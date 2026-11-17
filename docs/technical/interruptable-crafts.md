@@ -37,11 +37,11 @@ Read from the code on `main` at 0b12648a.
   needs included; an interruptable one yields to a same or higher tier. Craft, Build, Deconstruct,
   Harvest, Pickup, Withdraw, Deposit, PickupPackaged, PlacePackaged, Eat, Drink, and Toilet are
   non-interruptable. Sleep is the only interruptable action.
-- **Needs have two levels.** Below its seek threshold (hunger and thirst 50, energy, bladder and
-  digestion 30) a need is an option at tier 5. Below 10 it is tier 2. Critical has two definitions:
-  the tier comes from a constant in `AIDecisionSystem` (`kCriticalNeedThreshold`), while the
-  decide-at-once trigger (`criticalNeedMask`, `shouldReEvaluate`) uses the need's own
-  `criticalThreshold`. The thresholds are data in `assets/config/colonists/needs/`; the decay
+- **The AI acts on two of a need's three levels.** Below its seek threshold (hunger and thirst 50,
+  energy, bladder and digestion 30) a need is an option at tier 5. Below its critical threshold it
+  is tier 2; the tier and the decide-at-once trigger (`criticalNeedMask`, `shouldReEvaluate`) both
+  read the need's own `criticalThreshold`. The urgent threshold is read only by `Need::level()`.
+  The thresholds are data in `assets/config/colonists/needs/`; the decay
   rates are literals in `Needs.cpp`.
 - **Build progress is already on the thing built.** `StructureBlueprint::workDone` and `workTotal`;
   the Build action has no duration and adds work each tick. A builder who stops loses nothing and
@@ -372,8 +372,8 @@ struct Need {
 };
 ```
 
-**Need tuning as data.** The per-need decay rate and the three thresholds move out of C++ into the
-folder `assets/config/colonists/needs/`, loaded with the other colonist rules
+**Need tuning as data.** The three thresholds are in the folder `assets/config/colonists/needs/`,
+and the per-need decay rate moves out of `Needs.cpp` to join them. The folder is loaded with the other colonist rules
 ([Config Loading](./config-loading.md)): `assets::loadNeedsConfig` reads it, a later file replacing a
 `<Need>` by name, and `ecs::NeedLevels` checks that every need is given. There is no default in code.
 A colonist's `NeedsComponent` is constructed from the loaded levels and carries each need's thresholds,
@@ -469,7 +469,6 @@ Deleted, each in the change that replaces it:
 - `WorkQueue::progress`, the per-tick copy into it in `ActionSystem`, its resets in
   `applyCraftingEffect` and `removeJob`, and its two readers (`CraftingAdapter` and
   `CraftingDialogModel`). `kWorkUnitsPerSecond` in `CraftingDialogModel.cpp`.
-- `kCriticalNeedThreshold` in `AIDecisionSystem`, in favour of each need's own thresholds.
 - The decay literals in `Needs.cpp`.
 - Direct calls to `WorkQueue::removeJob` from the game, in favour of `cancelCraftingJob`.
 - The inline sleep quality choice in `NeedActions.cpp`, in favour of `sleepQuality`.
