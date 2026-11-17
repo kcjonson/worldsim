@@ -5,6 +5,7 @@
 #include "GameWorldState.h"
 #include "NewGameSetup.h"
 #include "SceneTypes.h"
+#include "UserSettings.h"
 #include "scenes/game/dev/CameraCommand.h"
 #include "scenes/game/dev/DevCommandHandler.h"
 #include "scenes/game/dev/GpuHold.h"
@@ -355,7 +356,13 @@ namespace {
 						if (m_roomOverlay) {
 							setRoomOverlayActive(!m_roomOverlay->isActive());
 						}
-					}
+					},
+				.onKeyGuideOpened =
+					[this]() {
+						if (m_drawingSystem) {
+							m_drawingSystem->toggleKeyGuide();
+						}
+					},
 			});
 
 			// Initialize ECS World
@@ -736,12 +743,16 @@ namespace {
 			);
 		}
 
-		// What salal's ui didn't take: Escape, the world's hotkeys, a press or release for the drawing tool, a
-		// release for placement or selection, and the scroll that zooms. The HUD takes no focus, so a key the ui
+		// What salal's ui didn't take: Escape, the world's hotkeys, the key guide's `?` and H while a drawing tool is
+		// on, a press or release for the drawing tool, a release for placement or selection, and the scroll that zooms. The HUD takes no focus, so a key the ui
 		// took is a dialog's. The tools' previews follow the pointer in update().
 		bool handleEvent(const foundation::InputEvent& event) override {
 			using Type = foundation::InputEvent::Type;
 			windowPresence.observe(event.type);
+			if (m_drawingSystem->isActive() && !modalDialogOpen() && world_sim::togglesKeyGuide(event)) {
+				m_drawingSystem->toggleKeyGuide();
+				return true;
+			}
 			if (event.type == Type::KeyDown && !event.repeat) {
 				if (event.key == foundation::Key::Escape) {
 					// The ui closes a dialog its focus is in; the dossier, opened from the world, has none. So
@@ -1020,8 +1031,9 @@ namespace {
 			);
 
 			// Push drawing-tool status to the config strip (drives its readouts and
-			// visibility).
+			// visibility), and the tool on to the key guide over it.
 			gameUI->setConstructionStatus(m_drawingSystem->status());
+			gameUI->setKeyGuide(m_drawingSystem->activeTool(), world_sim::UserSettings::Get().drawing, m_drawingSystem->keyGuideCollapsed());
 
 			m_lastUpdateMs = elapsedMs(updateStart, Clock::now());
 		}

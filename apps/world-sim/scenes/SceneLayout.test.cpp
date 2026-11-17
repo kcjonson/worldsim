@@ -6,7 +6,9 @@
 #include "GameStartConfig.h"
 #include "NewGameSetup.h"
 #include "SceneTesting.test.h"
+#include "UserSettings.h"
 #include "scenes/game/ui/GameUI.h"
+#include "scenes/game/world/WorldPointer.h"
 #include "scenes/game/world/construction/DrawingSystem.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
 #include "scenes/game/world/selection/SelectionTypes.h"
@@ -54,6 +56,8 @@ namespace world_sim::testing {
 		constexpr const char* kHudScene = "hud";
 		// A quarter second at 60 Hz: past the task models' 0.2 s refresh.
 		constexpr int kModelFillFrames = 15;
+		// Edges closer than this count as touching, as in the lint.
+		constexpr float kOverlapTolerance = 0.5F;
 
 		// What GameScene shows over the world, fed as GameScene feeds it, over a world of one colonist, a crafting
 		// spot, a box and a few structures being torn down. The colonist works on one, carries some gear and
@@ -89,6 +93,7 @@ namespace world_sim::testing {
 							pickedFoundationTools.push_back(tool);
 							drawingSystem->pickFoundationTool(tool);
 						},
+					.onKeyGuideOpened = [this] { drawingSystem->toggleKeyGuide(); },
 				});
 				drawingSystem =
 					std::make_unique<DrawingSystem>(DrawingSystem::Args{.world = &world, .camera = &camera, .navigation = nullptr});
@@ -116,6 +121,7 @@ namespace world_sim::testing {
 
 			void update(const app::FrameContext& frame) override {
 				gameUI->setConstructionStatus(drawingSystem->status());
+				gameUI->setKeyGuide(drawingSystem->activeTool(), drawingSettings, drawingSystem->keyGuideCollapsed());
 				gameUI->update(
 					static_cast<float>(frame.dt),
 					camera,
@@ -135,6 +141,9 @@ namespace world_sim::testing {
 			}
 
 			void openBuildMenu() { placement->toggleBuildMenu(); }
+
+			// The Drawing Settings the key guide reads, as GameScene reads the player's.
+			DrawingSettings drawingSettings{.showKeyGuide = true};
 
 		  private:
 			void spawnColonist() {
@@ -234,7 +243,83 @@ namespace world_sim::testing {
 				const auto* dossier = static_cast<const ui::Dialog*>(shown("colonist_dossier"));
 				return dossier != nullptr ? dossier->panel() : ui::Ref<ui::Rectangle>{};
 			}
+
+			// The key guide as it shows: its panel, or its chip while collapsed.
+			[[nodiscard]] const ui::Component* keyGuideShown() const {
+				const ui::Component* panel = shown("key_guide_panel");
+				return panel != nullptr ? panel : shown("key_guide_chip");
+			}
+
+			// Where the key guide meets the HUD round it, at every window size and interface size.
+			[[nodiscard]] std::string keyGuideCrowding() {
+				return everywhere([this](const WindowSize& window) {
+					(void)app::lintAt(*app, *platform, window.width, window.height);
+					std::vector<std::string> found;
+					const ui::Component*	 guide = keyGuideShown();
+					if (guide == nullptr) {
+						found.emplace_back("no key guide");
+						return found;
+					}
+					const Foundation::Rect box = guide->screenBounds();
+					for (const char* id :
+						 {"construction_config_strip", "gameplay_bar", "entity_panel", "task_list", "zoom_panel", "colonist_list", "right_stack", "top_bar"}) {
+						const ui::Component* other = shown(id);
+						if (other == nullptr) {
+							continue;
+						}
+						const Foundation::Rect near = other->screenBounds();
+						const float			   across = std::min(box.x + box.width, near.x + near.width) - std::max(box.x, near.x);
+						const float			   down = std::min(box.y + box.height, near.y + near.height) - std::max(box.y, near.y);
+						if (across > kOverlapTolerance && down > kOverlapTolerance) {
+							found.push_back(std::format("{} overlaps {} by {:g}x{:g}", guide->getId(), id, across, down));
+						}
+					}
+					return found;
+				});
+			}
 		};
+
+		// Every helper on, for the tallest legend.
+		DrawingSettings everyHelperOn() {
+			return {
+				.angleSteps = true,
+				.guidesFromShape = true,
+				.alignToExistingBuildings = true,
+				.guidesFromWorldAxes = true,
+				.guideCrossings = true,
+				.commonLengths = true,
+				.guideDistances = true,
+				.angleReadout = true,
+				.roundLengths = true,
+				.showKeyGuide = true,
+			};
+		}
+
+		// Each drawing tool, turned on in the HUD's drawing system; Add and Subtract on `floor`.
+		struct DrawingToolOn {
+			const char*										   name;
+			std::function<void(DrawingSystem&, construction::FoundationId)> activate;
+		};
+
+		std::vector<DrawingToolOn> everyDrawingTool() {
+			return {
+				{"Rectangle", [](DrawingSystem& drawing, construction::FoundationId) { drawing.activateRectangleTool(); }},
+				{"Freeform", [](DrawingSystem& drawing, construction::FoundationId) { drawing.activateFoundationTool(); }},
+				{"Wall", [](DrawingSystem& drawing, construction::FoundationId) { drawing.activateWallTool(); }},
+				{"Door", [](DrawingSystem& drawing, construction::FoundationId) { drawing.activateOpeningTool("Door"); }},
+				{"Add",
+				 [](DrawingSystem& drawing, construction::FoundationId floor) {
+					 drawing.activateFoundationEditTool(floor, construction::FoundationEditMode::Add);
+				 }},
+			};
+		}
+
+		construction::FoundationId commitFloor(DrawingSystem& drawing) {
+			const auto floor =
+				drawing.world().commitFoundation(std::vector<Foundation::Vec2>{{0.0F, 0.0F}, {4.0F, 0.0F}, {4.0F, 4.0F}, {0.0F, 4.0F}}, "Wood");
+			EXPECT_TRUE(floor.ok());
+			return floor.id;
+		}
 
 		// The prototype modal's cap, which the dossier's panel keeps to.
 		constexpr float kDossierMaxWidthShare = 0.92F;
@@ -533,6 +618,111 @@ namespace world_sim::testing {
 		EXPECT_EQ(lintEverywhere(), "");
 		EXPECT_EQ(unexpectedScrollbars({}), "");
 		EXPECT_TRUE(scene.hud().isStorageConfigVisible());
+	}
+
+	// With every helper on (the tallest legend) and the task list open over the entity panel, for each tool, open and
+	// collapsed: the HUD lints clean and the key guide meets nothing round it.
+	TEST_F(SceneLayout, TheKeyGuideHoldsTogetherOpenAndCollapsedWithEachTool) {
+		HudScene& scene = openHud([](HudScene& opened) { opened.drawingSettings = everyHelperOn(); });
+		scene.hud().toggleDecisionInspector();
+		const construction::FoundationId floor = commitFloor(scene.drawing());
+		for (const DrawingToolOn& tool : everyDrawingTool()) {
+			tool.activate(scene.drawing(), floor);
+			for (const bool collapsed : {false, true}) {
+				if (scene.drawing().keyGuideCollapsed() != collapsed) {
+					scene.drawing().toggleKeyGuide();
+				}
+				frame();
+				ASSERT_NE(shown("task_list"), nullptr);
+				ASSERT_NE(shown(collapsed ? "key_guide_chip" : "key_guide_panel"), nullptr) << tool.name;
+				EXPECT_EQ(lintEverywhere(), "") << tool.name << (collapsed ? ", collapsed" : ", open");
+				EXPECT_EQ(keyGuideCrowding(), "") << tool.name << (collapsed ? ", collapsed" : ", open");
+			}
+		}
+	}
+
+	TEST_F(SceneLayout, TheKeyGuideShowsOnlyWhileAToolIsOnAndTheSettingIs) {
+		HudScene& scene = openHud();
+		EXPECT_EQ(shown("key_guide"), nullptr) << "no tool";
+		scene.drawing().activateWallTool();
+		frame();
+		EXPECT_NE(shown("key_guide_panel"), nullptr);
+		scene.drawingSettings.showKeyGuide = false;
+		frame();
+		EXPECT_EQ(shown("key_guide"), nullptr) << "the setting off";
+		scene.drawingSettings.showKeyGuide = true;
+		frame();
+		EXPECT_NE(shown("key_guide_panel"), nullptr);
+		scene.drawing().deactivate();
+		frame();
+		EXPECT_EQ(shown("key_guide"), nullptr) << "the tool off";
+	}
+
+	// Collapsed under one tool it stays collapsed under the next, and a click on the chip opens it.
+	TEST_F(SceneLayout, TheKeyGuideStaysCollapsedAcrossToolsAndItsChipOpensIt) {
+		HudScene& scene = openHud([](HudScene& opened) { opened.drawing().activateRectangleTool(); });
+		scene.drawing().toggleKeyGuide();
+		frame();
+		ASSERT_NE(shown("key_guide_chip"), nullptr);
+		const construction::FoundationId floor = commitFloor(scene.drawing());
+		for (const DrawingToolOn& tool : everyDrawingTool()) {
+			tool.activate(scene.drawing(), floor);
+			frame();
+			EXPECT_NE(shown("key_guide_chip"), nullptr) << tool.name;
+			EXPECT_EQ(shown("key_guide_panel"), nullptr) << tool.name;
+		}
+		scene.drawing().deactivate();
+		scene.drawing().activateWallTool();
+		frame();
+		EXPECT_NE(shown("key_guide_chip"), nullptr) << "after the tool went off and on";
+		press("key_guide_chip");
+		EXPECT_FALSE(scene.drawing().keyGuideCollapsed());
+		frame();
+		EXPECT_NE(shown("key_guide_panel"), nullptr);
+		EXPECT_EQ(shown("key_guide_chip"), nullptr);
+	}
+
+	TEST_F(SceneLayout, TheKeyGuideStartsOpenInANewGameScene) {
+		HudScene& scene = openHud([](HudScene& opened) { opened.drawing().activateWallTool(); });
+		scene.drawing().toggleKeyGuide();
+		frame();
+		ASSERT_NE(shown("key_guide_chip"), nullptr);
+		go(scenes::MainMenu.name);
+		go(kHudScene);
+		auto& again = *static_cast<HudScene*>(app->scenes().top());
+		again.drawing().activateWallTool();
+		frame();
+		EXPECT_NE(shown("key_guide_panel"), nullptr);
+		EXPECT_EQ(shown("key_guide_chip"), nullptr);
+	}
+
+	// The routing GameScene gives a left release: on the panel it is the interface's, so the tool places nothing; just
+	// above it, it is the world's, and the tool places the point.
+	TEST_F(SceneLayout, AClickOnTheKeyGuideMissesTheToolAndOneJustAboveItPlacesAPoint) {
+		HudScene& scene = openHud([](HudScene& opened) { opened.drawing().activateFoundationTool(); });
+		frame();
+		const ui::Component* panel = shown("key_guide_panel");
+		ASSERT_NE(panel, nullptr);
+		const ui::Context&	   context = app->scenes().top()->ui();
+		const float			   scale = app->uiLayoutScale();
+		const Foundation::Vec2 window = context.getCanvas() * scale;
+		const Foundation::Rect bounds = panel->screenBounds();
+		const auto			   releaseAt = [&](glm::vec2 point) {
+			  const PointerTarget target = pointerTarget(point, static_cast<int>(window.x), static_cast<int>(window.y), scale, [&context](glm::vec2 uiPoint) {
+				  return context.hitTest(uiPoint).valid();
+			  });
+			  return drawingPointerAction(
+				  PointerInput::Release, foundation::MouseButton::Left, target, true, scene.drawing().activeTool(), scene.drawing().hasPendingPress()
+			  );
+		};
+		constexpr float kAbovePanel = 4.0F; // ui px over its top edge
+		const glm::vec2 inside{(bounds.x + (bounds.width * 0.5F)) * scale, (bounds.y + (bounds.height * 0.5F)) * scale};
+		const glm::vec2 above{inside.x, (bounds.y - kAbovePanel) * scale};
+		EXPECT_NE(releaseAt(inside), PointerAction::DeliverClick);
+		ASSERT_EQ(releaseAt(above), PointerAction::DeliverClick);
+		scene.drawing().handleMouseMove(above.x, above.y, static_cast<int>(window.x), static_cast<int>(window.y), false);
+		EXPECT_TRUE(scene.drawing().handleClick(above.x, above.y, static_cast<int>(window.x), static_cast<int>(window.y), false));
+		EXPECT_EQ(scene.drawing().status().pointCount, 1);
 	}
 
 	TEST_F(SceneLayout, ThePauseMenuHoldsTogether) {

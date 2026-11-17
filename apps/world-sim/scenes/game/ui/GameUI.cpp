@@ -62,13 +62,15 @@ namespace world_sim {
 			.onZoomReset = args.onZoomReset,
 		});
 
-		// The bottom middle: the construction strip, while a structure tool is active, over the gameplay bar.
+		// The bottom middle: while a drawing tool is active the key guide over the construction strip, and the
+		// gameplay bar.
 		ui::Ref<ui::Component> dock = root.addChild<ui::Component>({
 			.id = "bottom_dock",
 			.layout =
 				stack({.right = 0.0F, .bottom = kDockBottom, .left = 0.0F}, ui::AlignItems::Center, theme.get(tokens::spacing::space1)),
 			.zIndex = kDockLayer,
 		});
+		keyGuide = dock.addChild<DrawingKeyGuide>({.id = "key_guide", .onOpen = args.onKeyGuideOpened});
 		configStrip = dock.addChild<ConstructionConfigStrip>({
 			.id = "construction_config_strip",
 			.onFoundationToolSelected = args.onFoundationToolSelected,
@@ -348,6 +350,10 @@ namespace world_sim {
 
 	void GameUI::setConstructionStatus(const DrawingStatus& status) {
 		configStrip.get()->setStatus(status);
+	}
+
+	void GameUI::setKeyGuide(std::optional<ToolKind> tool, const DrawingSettings& settings, bool collapsed) {
+		keyGuide.get()->show(tool, settings, collapsed);
 	}
 
 	void GameUI::setRoomsOverlayActive(bool active) {
