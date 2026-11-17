@@ -134,7 +134,8 @@ namespace ecs {
 		// Whether no back face within radiusMm can bound what an eye at `eye` sees: it is
 		// outside the solid (insideSolid), which it would see from within, over a
 		// millimetre from the line of every occluder in range, where the polygon's grazing
-		// rays need the back faces, and no occluder in range crosses another.
+		// rays need the back faces, and no occluder in range crosses or touches another other
+		// than end to end.
 		[[nodiscard]] bool backFacesHiddenFrom(geometry::Vec2i64 eye, std::int64_t radiusMm) const;
 
 		// Whether `point` is inside or on the solid the occluder loops enclose: the loops'
