@@ -26,12 +26,12 @@ namespace world_sim {
 	/// Where the ground bake stands after a step.
 	struct GroundBakeStep {
 		bool					 done = false; // nothing left to run
-		std::vector<std::string> errors;	   // once done: the asset library's validation errors, else the bake's
+		std::vector<std::string> errors;	   // once done: the asset library's validation and recipe errors, else the bake's
 	};
 
 	/// The one way the ground tiles are baked, once the asset library has loaded: it blocks on the library's
-	/// validation errors, then runs the bank's next step, a variant a step, so the scene keeps drawing between
-	/// them. The splash steps it a frame at a time; the loading scene finishes it when a --scene jump skipped
+	/// validation errors and the recipes' problems (prefixed [recipes]), then runs the bank's next step, a variant
+	/// a step, so the scene keeps drawing between them. The splash steps it a frame at a time; the loading scene finishes it when a --scene jump skipped
 	/// the splash; a dev switch straight to the game scene runs it to the end.
 	GroundBakeStep stepGroundBake();
 

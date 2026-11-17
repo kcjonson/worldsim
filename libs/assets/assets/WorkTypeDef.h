@@ -92,7 +92,7 @@ struct WorkCategoryDef {
     std::string description;
 
     /// Priority tier (lower = higher priority, 1-10+)
-    float tier = 5.0F;
+    float tier = 0.0F;
 
     /// Whether colonists can disable this category (false for Emergency)
     bool canDisable = true;

@@ -161,15 +161,22 @@ TEST_F(ThoughtConfigTest, MoodEffectsTakeHoursOrWhileButNotBoth) {
 		"one of the two"
 	));
 	EXPECT_TRUE(mentions(errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" hours="1"/></thought>)"), "need a mood amount"));
-	EXPECT_TRUE(
-		mentions(errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="0" hours="1"/></thought>)"), "other than 0")
-	);
-	EXPECT_TRUE(
-		mentions(errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="lots" hours="1"/></thought>)"), "other than 0")
-	);
 	EXPECT_TRUE(mentions(
-		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="-1" hours="-3"/></thought>)"), "not a positive number"
+		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="0" hours="1"/></thought>)"),
+		"base.xml: thought 'a' feeling 1 mood must be a signed number other than 0 (leave mood out for no effect), got \"0\""
 	));
+	EXPECT_TRUE(mentions(
+		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="lots" hours="1"/></thought>)"),
+		"base.xml: thought 'a' feeling 1 mood must be a number, got \"lots\""
+	));
+	EXPECT_TRUE(mentions(
+		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="-1" hours="-3"/></thought>)"),
+		"base.xml: thought 'a' feeling 1 hours must be a positive number of game hours, got \"-3\""
+	));
+	EXPECT_TRUE(mentions(
+		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood=" -1" hours="2"/></thought>)"),
+		"mood must be a number, got \" -1\""
+	)) << "attribute text is not trimmed, as in every loader";
 	EXPECT_TRUE(mentions(
 		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="-2" while="is_night"/></thought>)"), "has no cause="
 	));
@@ -233,7 +240,7 @@ TEST_F(ThoughtConfigTest, TuningIsRequiredAndChecked) {
 	EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "whileCheckMinutes must be a positive number"));
 
 	write("base.xml", R"(<tuning maxLineLength="40" whileCheckMinutes="15"/>)");
-	EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "maxSubjectNameLength must be a whole number"));
+	EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "base.xml: <tuning> maxSubjectNameLength is missing"));
 
 	write("base.xml", R"(<tuning maxLineLength="40" maxSubjectNameLength="2.5" whileCheckMinutes="15"/>)");
 	EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "maxSubjectNameLength must be a whole number"));
@@ -303,11 +310,11 @@ TEST_F(ThoughtConfigTest, NumbersThatAreNotFiniteAreRefused) {
 	for (const std::string number : {"nan", "inf", "-inf", "+nan", "infinity"}) {
 		EXPECT_TRUE(mentions(
 			errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood=")" + number + R"(" hours="1"/></thought>)"),
-			"other than 0"
+			"mood must be a number, got \"" + number + "\""
 		)) << "mood " << number;
 		EXPECT_TRUE(mentions(
 			errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="-1" hours=")" + number + R"("/></thought>)"),
-			"not a positive number"
+			"hours must be a number, got \"" + number + "\""
 		)) << "hours " << number;
 
 		write("base.xml", R"(<tuning maxLineLength=")" + number + R"(" maxSubjectNameLength="12" whileCheckMinutes="15"/>)");
@@ -316,7 +323,7 @@ TEST_F(ThoughtConfigTest, NumbersThatAreNotFiniteAreRefused) {
 		EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "maxSubjectNameLength must be a whole number"))
 			<< "maxSubjectNameLength " << number;
 		write("base.xml", R"(<tuning maxLineLength="40" maxSubjectNameLength="12" whileCheckMinutes=")" + number + R"("/>)");
-		EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "whileCheckMinutes must be a positive number"))
+		EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "whileCheckMinutes must be a number"))
 			<< "whileCheckMinutes " << number;
 	}
 }
@@ -377,7 +384,10 @@ TEST_F(ThoughtConfigTest, SourceMistakesNameTheirAttribute) {
 	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="actionFinishes" action="Sleep" on="sofa"/>)"), "on=\"sofa\""));
 	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="actionFinishes" action="Craft" first="yes"/>)"), "first=\"yes\""));
 	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="firstSight" of="ground"/>)"), "of=\"ground\""));
-	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="idle" chance="0.5"/>)"), "everyMinutes=\"\""));
-	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="idle" everyMinutes="60" chance="1.5"/>)"), "chance=\"1.5\""));
+	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="idle" chance="0.5"/>)"), "base.xml: thought 'a' source 1 everyMinutes is missing"));
+	EXPECT_TRUE(mentions(
+		errorsForSource(R"(<source trigger="idle" everyMinutes="60" chance="1.5"/>)"),
+		"base.xml: thought 'a' source 1 chance must be above 0 and at most 1, got \"1.5\""
+	));
 	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="recipeLearned" need="Hunger"/>)"), "unknown attribute 'need'"));
 }

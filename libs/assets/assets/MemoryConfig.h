@@ -3,7 +3,9 @@
 // Colonist memory tuning. Loaded from assets/config/colonists/memory.xml.
 // See /docs/design/game-systems/colonists/memory.md.
 
+#include <filesystem>
 #include <string>
+#include <vector>
 
 namespace assets {
 
@@ -12,9 +14,12 @@ namespace assets {
 		/// The game's memory config, filled by loadWorkConfig.
 		static MemoryConfig& Get();
 
-		/// Replaces everything with the file's contents. False, with the reason logged, when the file
-		/// can't be read or has no Memory root.
-		bool loadFromFile(const std::string& xmlPath);
+		/// Replaces everything with `configRoot / file`: false, with problems() saying why, when the file can't be
+		/// read or a value in it is missing or malformed. Errors name the file as `file` is written.
+		bool loadFromFile(const std::filesystem::path& configRoot, const std::filesystem::path& file);
+
+		/// What the file got wrong: each names the file, the element and the attribute.
+		[[nodiscard]] const std::vector<std::string>& problems() const { return problemList; }
 
 		void clear();
 
@@ -27,6 +32,7 @@ namespace assets {
 	  private:
 		bool  isLoaded = false;
 		float recentSightingMinutes = 0.0F;
+		std::vector<std::string> problemList;
 	};
 
 } // namespace assets

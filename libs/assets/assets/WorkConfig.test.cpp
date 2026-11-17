@@ -18,8 +18,11 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <map>
 #include <random>
 #include <string>
+#include <vector>
 
 using namespace assets;
 
@@ -66,6 +69,14 @@ class WorkConfigTest : public ::testing::Test {
         tempFiles.push_back(path.string());
         return path.string();
     }
+
+    /// Loads the temp file at `path` into `config`, naming it by its file name.
+    template <typename Config> static bool loadTemp(Config& config, const std::string& path) {
+        const std::filesystem::path file(path);
+        return config.loadFromFile(file.parent_path(), file.filename());
+    }
+
+    static std::string fileNameOf(const std::string& path) { return std::filesystem::path(path).filename().string(); }
 
     std::vector<std::string> tempFiles;
 };
@@ -153,7 +164,7 @@ TEST_F(WorkConfigTest, TaskChainRegistry_LoadValidXML) {
 </TaskChains>)";
 
     std::string path = writeTempFile(xml, ".xml");
-    bool loaded = TaskChainRegistry::Get().loadFromFile(path);
+    bool loaded = loadTemp(TaskChainRegistry::Get(), path);
 
     EXPECT_TRUE(loaded);
     EXPECT_EQ(TaskChainRegistry::Get().size(), 1);
@@ -172,7 +183,7 @@ TEST_F(WorkConfigTest, TaskChainRegistry_GetChain) {
 </TaskChains>)";
 
     std::string path = writeTempFile(xml, ".xml");
-    TaskChainRegistry::Get().loadFromFile(path);
+    loadTemp(TaskChainRegistry::Get(), path);
 
     const auto* chain = TaskChainRegistry::Get().getChain("Chain_Test");
     ASSERT_NE(chain, nullptr);
@@ -194,7 +205,7 @@ TEST_F(WorkConfigTest, TaskChainRegistry_ChainSteps) {
 </TaskChains>)";
 
     std::string path = writeTempFile(xml, ".xml");
-    TaskChainRegistry::Get().loadFromFile(path);
+    loadTemp(TaskChainRegistry::Get(), path);
 
     const auto* chain = TaskChainRegistry::Get().getChain("Chain_Multi");
     ASSERT_NE(chain, nullptr);
@@ -233,7 +244,7 @@ TEST_F(WorkConfigTest, WorkTypeRegistry_LoadValidXML) {
 </WorkTypes>)";
 
     std::string path = writeTempFile(xml, ".xml");
-    bool loaded = WorkTypeRegistry::Get().loadFromFile(path);
+    bool loaded = loadTemp(WorkTypeRegistry::Get(), path);
 
     EXPECT_TRUE(loaded);
     EXPECT_EQ(WorkTypeRegistry::Get().categoryCount(), 1);
@@ -252,7 +263,7 @@ TEST_F(WorkConfigTest, WorkTypeRegistry_GetCategory) {
 </WorkTypes>)";
 
     std::string path = writeTempFile(xml, ".xml");
-    WorkTypeRegistry::Get().loadFromFile(path);
+    loadTemp(WorkTypeRegistry::Get(), path);
 
     const auto* cat = WorkTypeRegistry::Get().getCategory("Hauling");
     ASSERT_NE(cat, nullptr);
@@ -275,7 +286,7 @@ TEST_F(WorkConfigTest, WorkTypeRegistry_GetWorkTypesForCapability) {
 </WorkTypes>)";
 
     std::string path = writeTempFile(xml, ".xml");
-    WorkTypeRegistry::Get().loadFromFile(path);
+    loadTemp(WorkTypeRegistry::Get(), path);
 
     auto workTypes = WorkTypeRegistry::Get().getWorkTypesForCapability("Harvestable");
     EXPECT_EQ(workTypes.size(), 2);
@@ -296,7 +307,7 @@ TEST_F(WorkConfigTest, WorkTypeRegistry_CategoriesSortedByTier) {
 </WorkTypes>)";
 
     std::string path = writeTempFile(xml, ".xml");
-    WorkTypeRegistry::Get().loadFromFile(path);
+    loadTemp(WorkTypeRegistry::Get(), path);
 
     auto categories = WorkTypeRegistry::Get().getAllCategories();
     ASSERT_EQ(categories.size(), 3);
@@ -323,7 +334,7 @@ TEST_F(WorkConfigTest, PriorityConfig_LoadValidXML) {
 </PriorityTuning>)";
 
     std::string path = writeTempFile(xml, ".xml");
-    bool loaded = PriorityConfig::Get().loadFromFile(path);
+    bool loaded = loadTemp(PriorityConfig::Get(), path);
 
     EXPECT_TRUE(loaded);
     EXPECT_EQ(PriorityConfig::Get().getInProgressBonus(), 40);
@@ -354,7 +365,7 @@ TEST_F(WorkConfigTest, ConfigValidator_ValidConfig) {
   </Chain>
 </TaskChains>)";
     std::string chainPath = writeTempFile(chainXml, "_chains.xml");
-    TaskChainRegistry::Get().loadFromFile(chainPath);
+    loadTemp(TaskChainRegistry::Get(), chainPath);
 
     // Load valid work types that reference valid chains
     std::string workXml = R"(<?xml version="1.0"?>
@@ -367,7 +378,7 @@ TEST_F(WorkConfigTest, ConfigValidator_ValidConfig) {
   </Category>
 </WorkTypes>)";
     std::string workPath = writeTempFile(workXml, "_work.xml");
-    WorkTypeRegistry::Get().loadFromFile(workPath);
+    loadTemp(WorkTypeRegistry::Get(), workPath);
 
     // Validate
     EXPECT_TRUE(ConfigValidator::validateActionTypes());
@@ -396,7 +407,7 @@ TEST_F(WorkConfigTest, ConfigValidator_InvalidChainActionReference) {
   </Chain>
 </TaskChains>)";
     std::string chainPath = writeTempFile(chainXml, "_chains.xml");
-    TaskChainRegistry::Get().loadFromFile(chainPath);
+    loadTemp(TaskChainRegistry::Get(), chainPath);
 
     // Validate should fail
     EXPECT_FALSE(ConfigValidator::validateTaskChains());
@@ -422,7 +433,7 @@ TEST_F(WorkConfigTest, ConfigValidator_InvalidWorkTypeChainReference) {
   </Chain>
 </TaskChains>)";
     std::string chainPath = writeTempFile(chainXml, "_chains.xml");
-    TaskChainRegistry::Get().loadFromFile(chainPath);
+    loadTemp(TaskChainRegistry::Get(), chainPath);
 
     // Load work type with invalid chain reference
     std::string workXml = R"(<?xml version="1.0"?>
@@ -435,7 +446,7 @@ TEST_F(WorkConfigTest, ConfigValidator_InvalidWorkTypeChainReference) {
   </Category>
 </WorkTypes>)";
     std::string workPath = writeTempFile(workXml, "_work.xml");
-    WorkTypeRegistry::Get().loadFromFile(workPath);
+    loadTemp(WorkTypeRegistry::Get(), workPath);
 
     // Validate should fail
     EXPECT_FALSE(ConfigValidator::validateWorkTypes());
@@ -471,7 +482,7 @@ TEST_F(WorkConfigTest, Integration_FullConfigLoad) {
   </Chain>
 </TaskChains>)";
     std::string chainPath = writeTempFile(chainXml, "_chains.xml");
-    ASSERT_TRUE(TaskChainRegistry::Get().loadFromFile(chainPath));
+    ASSERT_TRUE(loadTemp(TaskChainRegistry::Get(), chainPath));
     ASSERT_TRUE(ConfigValidator::validateTaskChains());
 
     // 3. Work types (deps: chains)
@@ -490,7 +501,7 @@ TEST_F(WorkConfigTest, Integration_FullConfigLoad) {
   </Category>
 </WorkTypes>)";
     std::string workPath = writeTempFile(workXml, "_work.xml");
-    ASSERT_TRUE(WorkTypeRegistry::Get().loadFromFile(workPath));
+    ASSERT_TRUE(loadTemp(WorkTypeRegistry::Get(), workPath));
     ASSERT_TRUE(ConfigValidator::validateWorkTypes());
 
     // 4. Priority config (deps: work types for category order)
@@ -508,7 +519,7 @@ TEST_F(WorkConfigTest, Integration_FullConfigLoad) {
   </Bonuses>
 </PriorityTuning>)";
     std::string priorityPath = writeTempFile(priorityXml, "_priority.xml");
-    ASSERT_TRUE(PriorityConfig::Get().loadFromFile(priorityPath));
+    ASSERT_TRUE(loadTemp(PriorityConfig::Get(), priorityPath));
     ASSERT_TRUE(ConfigValidator::validatePriorityConfig());
 
     // Verify everything loaded correctly
@@ -558,7 +569,7 @@ namespace {
 } // namespace
 
 TEST_F(WorkConfigTest, PriorityConfig_ShippedValuesArePinned) {
-    ASSERT_TRUE(PriorityConfig::Get().loadFromFile((shippedConfigRoot() / "work" / "priority-tuning.xml").string()));
+    ASSERT_TRUE(PriorityConfig::Get().loadFromFile(shippedConfigRoot(), "work/priority-tuning.xml"));
     const PriorityConfig& config = PriorityConfig::Get();
     EXPECT_TRUE(config.problems().empty());
     EXPECT_FLOAT_EQ(config.getDistanceFactorConfig().maxDistance, 60.0F);
@@ -577,7 +588,7 @@ TEST_F(WorkConfigTest, PriorityConfig_ShippedValuesArePinned) {
 
 TEST_F(WorkConfigTest, MoodConfig_ShippedValuesArePinned) {
     MoodConfig config;
-    ASSERT_TRUE(config.loadFromFile((shippedConfigRoot() / "colonists" / "mood.xml").string()));
+    ASSERT_TRUE(config.loadFromFile(shippedConfigRoot(), "colonists/mood.xml"));
     EXPECT_TRUE(config.problems().empty());
     EXPECT_FLOAT_EQ(config.pointsPerGameHour(), 5.0F);
     EXPECT_FLOAT_EQ(config.needPenaltyCurve().comfortable, 70.0F);
@@ -591,7 +602,7 @@ TEST_F(WorkConfigTest, PriorityConfig_BadNumbersAreErrorsNamingFileElementAndAtt
     const auto errorsFor = [this](const std::string& xml) {
         const std::string path = writeTempFile(xml, ".xml");
         PriorityConfig::Get().clear();
-        EXPECT_FALSE(PriorityConfig::Get().loadFromFile(path));
+        EXPECT_FALSE(loadTemp(PriorityConfig::Get(), path));
         std::vector<std::string> missingTiers;
         EXPECT_FALSE(PriorityConfig::Get().validateTaskTiers({"Craft"}, missingTiers)) << "a bad file leaves no tier behind";
         ConfigValidator::clearErrors();
@@ -600,7 +611,7 @@ TEST_F(WorkConfigTest, PriorityConfig_BadNumbersAreErrorsNamingFileElementAndAtt
         for (const ValidationError& error : ConfigValidator::getErrors()) {
             joined += error.message + "\n";
         }
-        EXPECT_NE(joined.find(path), std::string::npos) << joined;
+        EXPECT_NE(joined.find(fileNameOf(path) + ": "), std::string::npos) << joined;
         return joined;
     };
 
@@ -621,7 +632,7 @@ TEST_F(WorkConfigTest, PriorityConfig_ElementTextIsTrimmedAndALeadingPlusIsRead)
         "<InProgress><bonus>-32768</bonus></InProgress><TaskAge><bonusPerMinute> 1 </bonusPerMinute><maxBonus>32767</maxBonus></TaskAge>"
         "<StoragePriority><weight>32767</weight></StoragePriority></Bonuses></PriorityTuning>",
         ".xml");
-    ASSERT_TRUE(PriorityConfig::Get().loadFromFile(path));
+    ASSERT_TRUE(loadTemp(PriorityConfig::Get(), path));
     const PriorityConfig& config = PriorityConfig::Get();
     EXPECT_FLOAT_EQ(config.getDistanceFactorConfig().maxDistance, 60.0F);
     EXPECT_FLOAT_EQ(config.getDistanceFactorConfig().maxFactor, 300.0F);
@@ -636,7 +647,7 @@ TEST_F(WorkConfigTest, PriorityConfig_NumbersInSixteenBitFieldsAreRangeChecked) 
         "<InProgress><bonus>40000</bonus></InProgress><TaskAge><bonusPerMinute> 1 </bonusPerMinute><maxBonus>-32769</maxBonus></TaskAge>"
         "<StoragePriority><weight>32767</weight></StoragePriority></Bonuses></PriorityTuning>",
         ".xml");
-    EXPECT_FALSE(PriorityConfig::Get().loadFromFile(path));
+    EXPECT_FALSE(loadTemp(PriorityConfig::Get(), path));
     const PriorityConfig& config = PriorityConfig::Get();
     ASSERT_EQ(config.problems().size(), 2U);
     EXPECT_NE(config.problems()[0].find("<InProgress> bonus must be a whole number from -32768 to 32767, got \"40000\""), std::string::npos)
@@ -649,14 +660,14 @@ TEST_F(WorkConfigTest, MoodConfig_BadNumbersAreErrorsNamingFileElementAndAttribu
     const auto errorsFor = [this](const std::string& xml) {
         const std::string path = writeTempFile(xml, ".xml");
         MoodConfig config;
-        EXPECT_FALSE(config.loadFromFile(path));
+        EXPECT_FALSE(loadTemp(config, path));
         ConfigValidator::clearErrors();
         EXPECT_FALSE(ConfigValidator::validateMood(config)) << xml;
         std::string joined;
         for (const ValidationError& error : ConfigValidator::getErrors()) {
             joined += error.message + "\n";
         }
-        EXPECT_NE(joined.find(path), std::string::npos) << joined;
+        EXPECT_NE(joined.find(fileNameOf(path) + ": "), std::string::npos) << joined;
         return joined;
     };
 
@@ -677,22 +688,146 @@ TEST_F(WorkConfigTest, LoadWorkConfig_MissingFolderReportsError) {
 }
 
 TEST_F(WorkConfigTest, ConfigValidator_MemoryWindowMustBeAPositiveNumber) {
-    for (const char* window : {"30", "0.5"}) {
+    for (const char* window : {"30", "0.5", "+30"}) {
         MemoryConfig config;
-        ASSERT_TRUE(config.loadFromFile(writeTempFile(std::string("<Memory><RecentSighting gameMinutes=\"") + window + "\"/></Memory>", ".xml")));
+        ASSERT_TRUE(loadTemp(config, writeTempFile(std::string("<Memory><RecentSighting gameMinutes=\"") + window + "\"/></Memory>", ".xml")));
         ConfigValidator::clearErrors();
         EXPECT_TRUE(ConfigValidator::validateMemory(config)) << window;
     }
 
-    const auto refused = [this](const std::string& sighting) {
+    for (const char* window : {"0", "-5"}) {
         MemoryConfig config;
-        EXPECT_TRUE(config.loadFromFile(writeTempFile("<Memory>" + sighting + "</Memory>", ".xml")));
+        ASSERT_TRUE(loadTemp(config, writeTempFile(std::string("<Memory><RecentSighting gameMinutes=\"") + window + "\"/></Memory>", ".xml")));
         ConfigValidator::clearErrors();
-        return !ConfigValidator::validateMemory(config) && ConfigValidator::getErrorCount() == 1;
-    };
-    EXPECT_TRUE(refused(""));
-    EXPECT_TRUE(refused("<RecentSighting/>"));
-    for (const char* window : {"0", "-5", "abc", "30abc", "", " 30", "nan", "inf"}) {
-        EXPECT_TRUE(refused(std::string("<RecentSighting gameMinutes=\"") + window + "\"/>")) << '"' << window << '"';
+        EXPECT_FALSE(ConfigValidator::validateMemory(config)) << window;
+        EXPECT_EQ(ConfigValidator::getErrorCount(), 1);
     }
+
+    const auto problemFor = [this](const std::string& sighting) {
+        const std::string path = writeTempFile("<Memory>" + sighting + "</Memory>", ".xml");
+        MemoryConfig config;
+        EXPECT_FALSE(loadTemp(config, path)) << sighting;
+        EXPECT_FALSE(config.loaded());
+        return config.problems().size() == 1 ? config.problems().front().substr(fileNameOf(path).size()) : std::string("several problems");
+    };
+    EXPECT_EQ(problemFor(""), ": <RecentSighting> gameMinutes is missing");
+    EXPECT_EQ(problemFor("<RecentSighting/>"), ": <RecentSighting> gameMinutes is missing");
+    for (const char* window : {"abc", "30abc", "", " 30", "nan", "inf"}) {
+        EXPECT_EQ(problemFor(std::string("<RecentSighting gameMinutes=\"") + window + "\"/>"),
+                  std::string(": <RecentSighting> gameMinutes must be a number, got \"") + window + "\"");
+    }
+}
+
+TEST_F(WorkConfigTest, LoadWorkConfig_ShippedValuesArePinned) {
+    ASSERT_TRUE(loadWorkConfig(shippedConfigRoot()).empty());
+
+    const TaskChainDef* haul = TaskChainRegistry::Get().getChain("Chain_PickupDeposit");
+    ASSERT_NE(haul, nullptr);
+    ASSERT_EQ(haul->stepCount(), 2U);
+    EXPECT_EQ(haul->steps[0].order, 0);
+    EXPECT_EQ(haul->steps[1].order, 1);
+    const TaskChainDef* craft = TaskChainRegistry::Get().getChain("Chain_CraftWithGather");
+    ASSERT_NE(craft, nullptr);
+    ASSERT_EQ(craft->stepCount(), 3U);
+    EXPECT_EQ(craft->steps[2].order, 2);
+    EXPECT_EQ(craft->steps[2].actionDefName, "Deposit");
+
+    const std::map<std::string, float> tiers = {
+        {"Emergency", 1.0F}, {"Medical", 2.0F}, {"Farming", 3.0F}, {"Crafting", 4.0F}, {"Construction", 5.0F}, {"Hauling", 6.0F}, {"Cleaning", 7.0F}};
+    ASSERT_EQ(WorkTypeRegistry::Get().categoryCount(), tiers.size());
+    for (const auto& [name, tier] : tiers) {
+        const WorkCategoryDef* category = WorkTypeRegistry::Get().getCategory(name);
+        ASSERT_NE(category, nullptr) << name;
+        EXPECT_EQ(category->tier, tier) << name;
+    }
+    EXPECT_FALSE(WorkTypeRegistry::Get().getCategory("Emergency")->canDisable);
+    EXPECT_TRUE(WorkTypeRegistry::Get().getCategory("Hauling")->canDisable) << "canDisable left out means it can be disabled";
+    EXPECT_EQ(WorkTypeRegistry::Get().getWorkType("Work_Doctoring")->minSkillLevel, 1.0F);
+    EXPECT_EQ(WorkTypeRegistry::Get().getWorkType("Work_HarvestCrops")->minSkillLevel, 0.0F) << "minSkillLevel left out means no minimum";
+    EXPECT_EQ(MemoryConfig::Get().recentSightingGameMinutes(), 30.0F);
+}
+
+TEST_F(WorkConfigTest, TaskChainRegistry_MistakesNameTheChainAndLoadNothing) {
+    const auto problemsFor = [this](const std::string& steps) {
+        const std::string path = writeTempFile(
+            "<TaskChains><Chain defName=\"Chain_Ok\"><steps><Step order=\"0\" action=\"A\" target=\"t\"/></steps></Chain>"
+            "<Chain defName=\"Chain_Haul\"><steps>" + steps + "</steps></Chain></TaskChains>",
+            ".xml");
+        EXPECT_FALSE(loadTemp(TaskChainRegistry::Get(), path));
+        EXPECT_EQ(TaskChainRegistry::Get().size(), 0U) << "a file with any mistake loads no chain";
+        std::vector<std::string> problems = TaskChainRegistry::Get().problems();
+        for (std::string& problem : problems) {
+            EXPECT_EQ(problem.rfind(fileNameOf(path) + ": ", 0), 0U) << problem;
+            problem.erase(0, fileNameOf(path).size() + 2);
+        }
+        return problems;
+    };
+    const std::string pickup = "<Step order=\"0\" action=\"Pickup\" target=\"source\"/>";
+
+    EXPECT_EQ(problemsFor(pickup + "<Step action=\"Deposit\" target=\"dest\"/>"),
+              std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2 order is missing"});
+    EXPECT_EQ(problemsFor(pickup + "<Step order=\"1x\" action=\"Deposit\" target=\"dest\"/>"),
+              std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2 order must be a whole number from 0 to 255, got \"1x\""});
+    EXPECT_EQ(problemsFor(pickup + "<Step order=\"256\" action=\"Deposit\" target=\"dest\"/>"),
+              std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2 order must be a whole number from 0 to 255, got \"256\""});
+    EXPECT_EQ(problemsFor(pickup + "<Step order=\"1\" target=\"dest\"/>"), std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2 has no action"});
+    EXPECT_EQ(problemsFor(pickup + "<Step order=\"1\" action=\"Deposit\" target=\"dest\" priority=\"2\"/>"),
+              std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2: unknown attribute 'priority'"});
+    EXPECT_EQ(problemsFor(""), std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> has no <Step>"});
+}
+
+TEST_F(WorkConfigTest, WorkTypeRegistry_MistakesNameTheInstanceAndLoadNothing) {
+    const auto problemsFor = [this](const std::string& categoryAttributes, const std::string& workTypeBody) {
+        const std::string path = writeTempFile(
+            "<WorkTypes><Category defName=\"Emergency\" tier=\"1\"><WorkType defName=\"Work_Rescue\"><triggerCapability>Incapacitated</triggerCapability></WorkType></Category>"
+            "<Category defName=\"Medical\"" + categoryAttributes + "><WorkType defName=\"Work_Doctoring\">" + workTypeBody + "</WorkType></Category></WorkTypes>",
+            ".xml");
+        EXPECT_FALSE(loadTemp(WorkTypeRegistry::Get(), path));
+        EXPECT_EQ(WorkTypeRegistry::Get().categoryCount(), 0U) << "a file with any mistake loads no category";
+        EXPECT_EQ(WorkTypeRegistry::Get().workTypeCount(), 0U);
+        std::vector<std::string> problems = WorkTypeRegistry::Get().problems();
+        for (std::string& problem : problems) {
+            EXPECT_EQ(problem.rfind(fileNameOf(path) + ": ", 0), 0U) << problem;
+            problem.erase(0, fileNameOf(path).size() + 2);
+        }
+        return problems;
+    };
+
+    EXPECT_EQ(problemsFor("", ""), std::vector<std::string>{"<Category defName=\"Medical\"> tier is missing"});
+    EXPECT_EQ(problemsFor(" tier=\"second\"", ""), std::vector<std::string>{"<Category defName=\"Medical\"> tier must be a number, got \"second\""});
+    EXPECT_EQ(problemsFor(" tier=\"2\"", "<skillRequired>Medicine</skillRequired><minSkillLevel>high</minSkillLevel>"),
+              std::vector<std::string>{"<WorkType defName=\"Work_Doctoring\"> minSkillLevel must be a number, got \"high\""});
+    EXPECT_EQ(problemsFor(" tier=\"2\" order=\"1\"", ""), std::vector<std::string>{"<Category defName=\"Medical\">: unknown attribute 'order'"});
+    EXPECT_EQ(problemsFor(" tier=\"2\"", "<skill>Medicine</skill>"),
+              std::vector<std::string>{"<WorkType defName=\"Work_Doctoring\">: unknown element <skill>"});
+}
+
+TEST_F(WorkConfigTest, PriorityConfig_TaskAgeBonusIsCappedAtAnyAge) {
+    ASSERT_TRUE(loadTemp(PriorityConfig::Get(), writeTempFile(priorityTuningWith("<maxDistance>60</maxDistance>"), ".xml")));
+    const PriorityConfig& config = PriorityConfig::Get();
+    EXPECT_EQ(config.calculateTaskAgeBonus(0.0F), 0);
+    EXPECT_EQ(config.calculateTaskAgeBonus(30.0F * 60.0F), 30);
+    EXPECT_EQ(config.calculateTaskAgeBonus(100.0F * 60.0F), 100);
+    EXPECT_EQ(config.calculateTaskAgeBonus(40000.0F * 60.0F), 100) << "past the int16 range of minutes";
+    EXPECT_EQ(config.calculateTaskAgeBonus(1.0e30F), 100);
+}
+
+TEST_F(WorkConfigTest, LoadWorkConfig_ErrorsNameFilesRelativeToTheConfigRoot) {
+    const std::filesystem::path root = writeTempFile("", "_root");
+    std::filesystem::remove(root);
+    std::filesystem::copy(shippedConfigRoot(), root, std::filesystem::copy_options::recursive);
+    {
+        std::ifstream in(root / "work" / "task-chains.xml");
+        std::string	  text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        in.close();
+        const std::string step = "<Step order=\"1\" action=\"Deposit\" target=\"destination\"";
+        ASSERT_NE(text.find(step), std::string::npos);
+        text.replace(text.find(step), step.size(), "<Step order=\"one\" action=\"Deposit\" target=\"destination\"");
+        std::ofstream(root / "work" / "task-chains.xml") << text;
+    }
+    const std::vector<std::string> errors = loadWorkConfig(root);
+    std::filesystem::remove_all(root);
+    EXPECT_EQ(errors, std::vector<std::string>{
+                          "work/task-chains.xml: <Chain defName=\"Chain_PickupDeposit\"> step 2 order must be a whole number from 0 to 255, got \"one\""});
+    EXPECT_EQ(TaskChainRegistry::Get().size(), 0U);
 }

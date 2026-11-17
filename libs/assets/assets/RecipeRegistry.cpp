@@ -3,110 +3,148 @@
 
 #include "assets/RecipeRegistry.h"
 #include "assets/AssetRegistry.h"
+#include "assets/ConfigFiles.h"
+#include "assets/ConfigNumber.h"
+#include "assets/ConfigXml.h"
 
 #include <utils/Log.h>
 
 #include <pugixml.hpp>
 
-#include <filesystem>
+#include <optional>
+#include <string_view>
+#include <utility>
 
 namespace assets {
+
+	namespace {
+
+		/// The <input> or <output> lines of `list`, each naming a thing and an optional count.
+		template <typename Line>
+		std::vector<Line> linesFrom(
+			pugi::xml_node list, const char* lineName, const std::string& what, const std::string& source, std::vector<std::string>& errors
+		) {
+			std::vector<Line> lines;
+			for (const pugi::xml_node node : list.children()) {
+				if (node.type() != pugi::node_element) {
+					continue;
+				}
+				if (std::string_view(node.name()) != lineName) {
+					errors.push_back(source + ": " + what + ": unknown element <" + node.name() + "> in <" + list.name() + ">");
+					continue;
+				}
+				const std::string lineWhat = what + " <" + lineName + "> " + std::to_string(lines.size() + 1);
+				onlyAttributes(node, {"thing", "count"}, lineWhat, source, errors);
+				Line line;
+				line.defName = node.attribute("thing").as_string();
+				if (line.defName.empty()) {
+					errors.push_back(source + ": " + lineWhat + " has no thing");
+				}
+				line.count = node.attribute("count").as_uint(1);
+				lines.push_back(std::move(line));
+			}
+			return lines;
+		}
+
+		/// The recipe a <RecipeDef> file holds; nothing when it has any mistake, each added to `errors`.
+		std::optional<RecipeDef> recipeFrom(const std::filesystem::path& file, const std::string& source, std::vector<std::string>& errors) {
+			pugi::xml_document	 document;
+			const pugi::xml_node node = readRootElement(document, file, "RecipeDef", source, errors);
+			if (!node) {
+				return std::nullopt;
+			}
+			const std::size_t errorsBefore = errors.size();
+			ConfigReader	  reader(source);
+			const std::string what = ConfigReader::describe(node, "RecipeDef");
+			onlyAttributes(node, {}, what, source, errors);
+
+			RecipeDef recipe;
+			for (const pugi::xml_node child : node.children()) {
+				if (child.type() != pugi::node_element) {
+					continue;
+				}
+				const std::string_view element = child.name();
+				if (element == "defName") {
+					recipe.defName = child.text().as_string();
+				} else if (element == "label") {
+					recipe.label = child.text().as_string();
+				} else if (element == "description") {
+					recipe.description = child.text().as_string();
+				} else if (element == "inputs") {
+					recipe.inputs = linesFrom<RecipeInput>(child, "input", what, source, errors);
+				} else if (element == "outputs") {
+					recipe.outputs = linesFrom<RecipeOutput>(child, "output", what, source, errors);
+				} else if (element == "station") {
+					recipe.stationDefName = child.text().as_string();
+				} else if (element == "skill") {
+					recipe.skillDefName = child.text().as_string();
+				} else if (element == "innate") {
+					recipe.innate = child.text().as_bool(false);
+				} else if (element != "workAmount") {
+					errors.push_back(source + ": " + what + ": unknown element <" + std::string(element) + ">");
+				}
+			}
+			if (recipe.defName.empty()) {
+				errors.push_back(source + ": the <RecipeDef> has no <defName>");
+			}
+			if (recipe.label.empty()) {
+				recipe.label = recipe.defName;
+			}
+			recipe.workAmount = reader.childNumber(node, "RecipeDef", "workAmount");
+			if (recipe.workAmount < 0.0F) {
+				reader.refuseChild(node, "RecipeDef", "workAmount", "a number of work ticks, 0 or more");
+			}
+
+			std::vector<std::string> numbers = reader.takeProblems();
+			errors.insert(errors.end(), numbers.begin(), numbers.end());
+			if (errors.size() != errorsBefore) {
+				return std::nullopt;
+			}
+			return recipe;
+		}
+
+	} // namespace
 
 	RecipeRegistry& RecipeRegistry::Get() {
 		static RecipeRegistry instance;
 		return instance;
 	}
 
-	bool RecipeRegistry::loadRecipes(const std::string& xmlPath) {
-		pugi::xml_document	   doc;
-		pugi::xml_parse_result result = doc.load_file(xmlPath.c_str());
+	bool RecipeRegistry::loadRecipesFromFolder(const std::filesystem::path& folder) {
+		clear();
 
-		if (!result) {
-			LOG_ERROR(Engine, "Failed to load recipe XML: %s - %s", xmlPath.c_str(), result.description());
+		const ConfigFiles found = configFilesIn(folder);
+		if (found.error.has_value()) {
+			m_problems.push_back(*found.error);
+			return false;
+		}
+		for (const std::filesystem::path& file : found.files) {
+			const std::string		 source = configFileName(file, folder);
+			std::optional<RecipeDef> recipe = recipeFrom(file, source, m_problems);
+			if (!recipe.has_value()) {
+				continue;
+			}
+			const std::string defName = recipe->defName;
+			if (!m_recipes.emplace(defName, std::move(*recipe)).second) {
+				m_problems.push_back(source + ": <RecipeDef defName=\"" + defName + "\"> is declared in another file too");
+			}
+		}
+		if (!m_problems.empty()) {
+			m_recipes.clear();
+			LOG_ERROR(Engine, "Recipes in %s have %zu problem(s)", folder.generic_string().c_str(), m_problems.size());
 			return false;
 		}
 
-		// Try both singular and plural root element names
-		pugi::xml_node root = doc.child("RecipeDef");
-		if (root) {
-			// Single recipe file
-			return parseRecipeFromNode(&root);
-		}
-
-		root = doc.child("recipes");
-		if (!root) {
-			root = doc.child("Recipes");
-		}
-
-		if (!root) {
-			LOG_WARNING(Engine, "No recipes or RecipeDef root element in: %s", xmlPath.c_str());
-			return false;
-		}
-
-		// Multiple recipes in one file
-		bool anyLoaded = false;
-		for (pugi::xml_node recipeNode : root.children("RecipeDef")) {
-			if (parseRecipeFromNode(&recipeNode)) {
-				anyLoaded = true;
-			}
-		}
-		// Also try lowercase
-		for (pugi::xml_node recipeNode : root.children("recipe")) {
-			if (parseRecipeFromNode(&recipeNode)) {
-				anyLoaded = true;
-			}
-		}
-
-		return anyLoaded;
-	}
-
-	size_t RecipeRegistry::loadRecipesFromFolder(const std::string& folderPath) {
-		namespace fs = std::filesystem;
-
-		if (!fs::exists(folderPath)) {
-			LOG_ERROR(Engine, "Recipe folder not found: %s", folderPath.c_str());
-			return 0;
-		}
-
-		if (!fs::is_directory(folderPath)) {
-			LOG_ERROR(Engine, "Path is not a directory: %s", folderPath.c_str());
-			return 0;
-		}
-
-		size_t loadedBefore = m_recipes.size();
-
-		try {
-			for (const auto& entry : fs::recursive_directory_iterator(folderPath)) {
-				if (!entry.is_regular_file()) {
-					continue;
-				}
-
-				if (entry.path().extension() != ".xml") {
-					continue;
-				}
-
-				loadRecipes(entry.path().string());
-			}
-		} catch (const std::exception& e) {
-			LOG_ERROR(Engine, "Error scanning recipe folder: %s", e.what());
-		}
-
-		size_t loadedNow = m_recipes.size();
-		size_t newRecipes = loadedNow - loadedBefore;
-
-		// Always, new recipes or not: the definition index may have been rebuilt since the last load.
 		populateDefNameIds();
-		if (newRecipes > 0) {
-			LOG_INFO(Engine, "Loaded %zu recipes from %s", newRecipes, folderPath.c_str());
-		}
-
-		return newRecipes;
+		LOG_INFO(Engine, "Loaded %zu recipes from %s", m_recipes.size(), folder.generic_string().c_str());
+		return true;
 	}
 
 	void RecipeRegistry::clear() {
 		m_recipes.clear();
 		m_byStation.clear();
 		m_innateRecipes.clear();
+		m_problems.clear();
 	}
 
 	const RecipeDef* RecipeRegistry::getRecipe(const std::string& defName) const {
@@ -182,105 +220,6 @@ namespace assets {
 				m_innateRecipes.push_back(&it->second);
 			}
 		}
-	}
-
-	bool RecipeRegistry::parseRecipeFromNode(const void* nodePtr) {
-		const pugi::xml_node& node = *static_cast<const pugi::xml_node*>(nodePtr);
-
-		RecipeDef recipe;
-
-		// Required: defName
-		pugi::xml_node defNameNode = node.child("defName");
-		if (!defNameNode) {
-			LOG_WARNING(Engine, "Recipe missing defName");
-			return false;
-		}
-		recipe.defName = defNameNode.text().as_string();
-
-		if (recipe.defName.empty()) {
-			LOG_WARNING(Engine, "Recipe has empty defName");
-			return false;
-		}
-
-		// Optional fields
-		if (auto labelNode = node.child("label")) {
-			recipe.label = labelNode.text().as_string();
-		} else {
-			recipe.label = recipe.defName;
-		}
-
-		if (auto descNode = node.child("description")) {
-			recipe.description = descNode.text().as_string();
-		}
-
-		// Parse inputs
-		if (auto inputsNode = node.child("inputs")) {
-			for (auto inputNode : inputsNode.children("input")) {
-				RecipeInput input;
-				input.defName = inputNode.attribute("thing").as_string();
-				if (input.defName.empty()) {
-					// Try alternate attribute names
-					input.defName = inputNode.attribute("defName").as_string();
-				}
-				if (input.defName.empty()) {
-					input.defName = inputNode.attribute("material").as_string();
-				}
-				input.count = inputNode.attribute("count").as_uint(1);
-
-				if (!input.defName.empty()) {
-					recipe.inputs.push_back(input);
-				}
-			}
-		}
-
-		// Parse outputs
-		if (auto outputsNode = node.child("outputs")) {
-			for (auto outputNode : outputsNode.children("output")) {
-				RecipeOutput output;
-				output.defName = outputNode.attribute("thing").as_string();
-				if (output.defName.empty()) {
-					output.defName = outputNode.attribute("item").as_string();
-				}
-				if (output.defName.empty()) {
-					output.defName = outputNode.attribute("defName").as_string();
-				}
-				output.count = outputNode.attribute("count").as_uint(1);
-
-				if (!output.defName.empty()) {
-					recipe.outputs.push_back(output);
-				}
-			}
-		}
-
-		// Station
-		if (auto stationNode = node.child("station")) {
-			recipe.stationDefName = stationNode.text().as_string();
-		}
-
-		// Skill
-		if (auto skillNode = node.child("skill")) {
-			recipe.skillDefName = skillNode.text().as_string();
-		}
-
-		// Work amount
-		if (auto workNode = node.child("workAmount")) {
-			recipe.workAmount = workNode.text().as_float(500.0F);
-		}
-
-		// Innate flag
-		if (auto innateNode = node.child("innate")) {
-			recipe.innate = innateNode.text().as_bool(false);
-		}
-
-		// Store recipe
-		auto [it, inserted] = m_recipes.emplace(recipe.defName, std::move(recipe));
-		if (!inserted) {
-			LOG_WARNING(Engine, "Duplicate recipe defName: %s", recipe.defName.c_str());
-			return false;
-		}
-
-		LOG_DEBUG(Engine, "Loaded recipe: %s", it->first.c_str());
-		return true;
 	}
 
 	void RecipeRegistry::populateDefNameIds() {

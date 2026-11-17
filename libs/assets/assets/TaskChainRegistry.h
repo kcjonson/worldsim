@@ -8,6 +8,7 @@
 
 #include "assets/TaskChainDef.h"
 
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -23,10 +24,12 @@ class TaskChainRegistry {
 
     // --- Loading ---
 
-    /// Load task chains from an XML file
-    /// @param xmlPath Path to the XML file (e.g., task-chains.xml)
-    /// @return true if loading succeeded
-    bool loadFromFile(const std::string& xmlPath);
+    /// Replaces every chain with those in `configRoot / file`: false, with problems() saying why and no chains
+    /// held, when the file can't be read or has any mistake. Errors name the file as `file` is written.
+    bool loadFromFile(const std::filesystem::path& configRoot, const std::filesystem::path& file);
+
+    /// What the file got wrong: each names the file, the <Chain> and the step or attribute.
+    [[nodiscard]] const std::vector<std::string>& problems() const { return problemList; }
 
     /// Clear all loaded chains
     void clear();
@@ -57,13 +60,12 @@ class TaskChainRegistry {
   private:
     TaskChainRegistry() = default;
 
-    /// Parse a single chain from XML node
-    bool parseChainFromNode(const void* node); // pugi::xml_node passed as void*
-
     // --- Storage ---
 
     /// All loaded chains by defName
     std::unordered_map<std::string, TaskChainDef> chains;
+
+    std::vector<std::string> problemList;
 };
 
 } // namespace assets

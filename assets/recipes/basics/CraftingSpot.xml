@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Crafting Spot - Innate recipe known by all colonists from start -->
+<!-- workAmount is required. Left out: an input or output count is 1, innate is false. -->
 <RecipeDef>
     <defName>Recipe_CraftingSpot</defName>
     <label>Crafting Spot</label>

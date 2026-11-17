@@ -8,6 +8,7 @@
 
 #include "assets/WorkTypeDef.h"
 
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -23,15 +24,12 @@ class WorkTypeRegistry {
 
     // --- Loading ---
 
-    /// Load work types from an XML file
-    /// @param xmlPath Path to the XML file (e.g., work-types.xml)
-    /// @return true if loading succeeded
-    bool loadFromFile(const std::string& xmlPath);
+    /// Replaces every category and work type with those in `configRoot / file`: false, with problems() saying why
+    /// and nothing held, when the file can't be read or has any mistake. Errors name the file as `file` is written.
+    bool loadFromFile(const std::filesystem::path& configRoot, const std::filesystem::path& file);
 
-    /// Load all work types from a folder recursively
-    /// @param folderPath Path to the work types folder
-    /// @return Number of work types loaded
-    size_t loadFromFolder(const std::string& folderPath);
+    /// What the file got wrong: each names the file, the <Category> or <WorkType>, and the attribute.
+    [[nodiscard]] const std::vector<std::string>& problems() const { return problemList; }
 
     /// Clear all loaded categories and work types
     void clear();
@@ -85,15 +83,6 @@ class WorkTypeRegistry {
   private:
     WorkTypeRegistry() = default;
 
-    /// Parse a category from XML node
-    bool parseCategoryFromNode(const void* node);
-
-    /// Parse a work type from XML node
-    bool parseWorkTypeFromNode(const void* node, const std::string& categoryDefName);
-
-    /// Parse filter conditions from XML node
-    WorkTypeFilter parseFilter(const void* node);
-
     /// Build capability index after loading
     void buildCapabilityIndex();
 
@@ -107,6 +96,8 @@ class WorkTypeRegistry {
 
     /// Work types indexed by trigger capability
     std::unordered_map<std::string, std::vector<const WorkTypeDef*>> byCapability;
+
+    std::vector<std::string> problemList;
 };
 
 } // namespace assets

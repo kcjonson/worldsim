@@ -4,6 +4,7 @@
 #include "assets/PriorityConfig.h"
 
 #include "assets/ConfigNumber.h"
+#include "assets/ConfigXml.h"
 
 #include <utils/Log.h>
 
@@ -27,24 +28,17 @@ namespace assets {
 		return instance;
 	}
 
-	bool PriorityConfig::loadFromFile(const std::string& xmlPath) {
-		pugi::xml_document	   doc;
-		pugi::xml_parse_result result = doc.load_file(xmlPath.c_str());
-
-		if (!result) {
-			LOG_ERROR(Engine, "Failed to load priority config XML: %s - %s", xmlPath.c_str(), result.description());
-			return false;
-		}
-
-		pugi::xml_node root = doc.child("PriorityTuning");
-		if (!root) {
-			LOG_ERROR(Engine, "No PriorityTuning root element in: %s", xmlPath.c_str());
-			return false;
-		}
-
+	bool PriorityConfig::loadFromFile(const std::filesystem::path& configRoot, const std::filesystem::path& file) {
 		clear();
 
-		ConfigReader reader(xmlPath);
+		const std::string	source = file.generic_string();
+		pugi::xml_document	document;
+		const pugi::xml_node root = readRootElement(document, configRoot / file, "PriorityTuning", source, problemList);
+		if (!root) {
+			return false;
+		}
+
+		ConfigReader reader(source);
 
 		if (auto tiersNode = root.child("TaskTiers")) {
 			parseTaskTiers(&tiersNode, reader);
@@ -61,11 +55,11 @@ namespace assets {
 		if (!problems.empty()) {
 			clear();
 			problemList = std::move(problems);
-			LOG_ERROR(Engine, "Priority config %s has %zu bad value(s)", xmlPath.c_str(), problemList.size());
+			LOG_ERROR(Engine, "Priority config %s has %zu bad value(s)", source.c_str(), problemList.size());
 			return false;
 		}
 
-		LOG_INFO(Engine, "Loaded priority config from %s", xmlPath.c_str());
+		LOG_INFO(Engine, "Loaded priority config from %s", source.c_str());
 		return true;
 	}
 
@@ -119,9 +113,9 @@ namespace assets {
 	}
 
 	int16_t PriorityConfig::calculateTaskAgeBonus(float taskAge) const {
-		float	minutes = taskAge / 60.0F;
-		int16_t bonus = static_cast<int16_t>(minutes * static_cast<float>(taskAgeConfig.bonusPerMinute));
-		return std::min(bonus, taskAgeConfig.maxBonus);
+		const float minutes = taskAge / 60.0F;
+		const float bonus = minutes * static_cast<float>(taskAgeConfig.bonusPerMinute);
+		return static_cast<int16_t>(std::clamp(bonus, static_cast<float>(kInt16Min), static_cast<float>(taskAgeConfig.maxBonus)));
 	}
 
 	void PriorityConfig::parseTaskTiers(const void* nodePtr, ConfigReader& reader) {

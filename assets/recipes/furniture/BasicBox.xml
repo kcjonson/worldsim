@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- BasicBox Recipe - Craft a simple wooden box for material storage -->
+<!-- workAmount is required. Left out: an input or output count is 1, innate is false. -->
 <RecipeDef>
     <defName>Recipe_BasicBox</defName>
     <label>Basic Box</label>

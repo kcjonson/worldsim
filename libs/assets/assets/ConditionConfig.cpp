@@ -263,20 +263,28 @@ namespace assets {
 			}
 
 			void loadNight(pugi::xml_node node, const std::string& source) {
-				const auto hourOf = [](pugi::xml_attribute attribute) -> std::optional<float> {
-					const std::optional<float> hour = parseConfigNumber(attribute.as_string());
-					return hour.has_value() && *hour >= 0.0F && *hour < 24.0F ? hour : std::nullopt;
+				if (!onlyAttributes(node, {"start", "end"}, "<Night>", source, result.errors)) {
+					return;
+				}
+				ConfigReader reader(source);
+				const auto	 hourOf = [&](const char* attribute) {
+					const float hour = reader.attributeNumber(node, "Night", attribute);
+					if (hour < 0.0F || hour >= 24.0F) {
+						reader.refuseAttribute("<Night>", node, attribute, "an hour from 0 up to 24");
+					}
+					return hour;
 				};
-				const std::optional<float> start = hourOf(node.attribute("start"));
-				const std::optional<float> end = hourOf(node.attribute("end"));
-				if (!start.has_value() || !end.has_value()) {
-					fail(source, "<Night> needs start and end hours, numbers from 0 up to 24");
+				const float				 start = hourOf("start");
+				const float				 end = hourOf("end");
+				std::vector<std::string> problems = reader.takeProblems();
+				if (!problems.empty()) {
+					result.errors.insert(result.errors.end(), problems.begin(), problems.end());
 					return;
 				}
 				if (result.config.night.has_value()) {
 					LOG_INFO(Engine, "Condition <Night>: %s replaces the hours from %s", source.c_str(), nightSource.c_str());
 				}
-				result.config.night = NightHours{.start = *start, .end = *end};
+				result.config.night = NightHours{.start = start, .end = end};
 				nightSource = source;
 			}
 
@@ -298,7 +306,7 @@ namespace assets {
 
 		Loader loader(result);
 		for (const std::filesystem::path& file : found.files) {
-			loader.loadFile(file, std::filesystem::relative(file, folder).generic_string());
+			loader.loadFile(file, configFileName(file, folder));
 		}
 		loader.check();
 		return result;

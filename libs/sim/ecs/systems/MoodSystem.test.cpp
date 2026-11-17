@@ -114,7 +114,7 @@ namespace ecs::test {
 				std::filesystem::temp_directory_path() / ("moodconfig_" + token + "_" + std::to_string(tempFiles.size()) + ".xml");
 			std::ofstream(path) << xml;
 			tempFiles.push_back(path);
-			return config.loadFromFile(path.string());
+			return config.loadFromFile(path.parent_path(), path.filename());
 		}
 
 		EntityID spawnColonist() {
@@ -176,7 +176,7 @@ namespace ecs::test {
 
 	TEST_F(MoodSystemTest, ShippedConfigIsValidAndWeightsEveryNeed) {
 		assets::MoodConfig shipped;
-		ASSERT_TRUE(shipped.loadFromFile(shippedMoodConfig().string()));
+		ASSERT_TRUE(shipped.loadFromFile(shippedMoodConfig().parent_path(), shippedMoodConfig().filename()));
 		assets::ConfigValidator::clearErrors();
 		EXPECT_TRUE(assets::ConfigValidator::validateMood(shipped));
 		EXPECT_TRUE(moodConfigErrors(shipped).empty());
@@ -187,7 +187,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(MoodSystemTest, ShippedTuningGivesTheOriginalNeedsScore) {
-		ASSERT_TRUE(config.loadFromFile(shippedMoodConfig().string()));
+		ASSERT_TRUE(config.loadFromFile(shippedMoodConfig().parent_path(), shippedMoodConfig().filename()));
 		setNeed(colonist, NeedType::Hunger, 50.0F);
 		setNeed(colonist, NeedType::Thirst, 20.0F);
 		setNeed(colonist, NeedType::Energy, 70.0F);

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Primitive Axe - First tool in progression chain -->
+<!-- workAmount is required. Left out: an input or output count is 1, innate is false. -->
 <RecipeDef>
     <defName>Recipe_AxePrimitive</defName>
     <label>Primitive Axe</label>

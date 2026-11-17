@@ -42,7 +42,7 @@ struct RecipeDef {
     std::vector<RecipeOutput> outputs; ///< Produced things
 
     // --- Work ---
-    float workAmount = 500.0F;         ///< Work ticks to complete
+    float workAmount = 0.0F;           ///< Work ticks to complete
 
     // --- Flags ---
     bool innate = false;               ///< If true, all colonists know this from start

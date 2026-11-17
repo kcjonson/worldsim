@@ -18,8 +18,7 @@ namespace assets {
 	namespace {
 
 		/// The <Need> elements of one file; nothing when the file has any error, each reported in `errors`.
-		std::vector<NeedThresholdsDef> needsInFile(const std::filesystem::path& file, std::vector<std::string>& errors) {
-			const std::string source = file.generic_string();
+		std::vector<NeedThresholdsDef> needsInFile(const std::filesystem::path& file, const std::string& source, std::vector<std::string>& errors) {
 			const std::size_t errorsBefore = errors.size();
 			const auto		  fail = [&](const std::string& message) {
 				   errors.push_back(source + ": " + message);
@@ -104,7 +103,7 @@ namespace assets {
 			return result;
 		}
 		for (const std::filesystem::path& file : found.files) {
-			for (NeedThresholdsDef& need : needsInFile(file, result.errors)) {
+			for (NeedThresholdsDef& need : needsInFile(file, configFileName(file, folder), result.errors)) {
 				const auto existing = std::ranges::find(result.config.needs, need.need, &NeedThresholdsDef::need);
 				if (existing == result.config.needs.end()) {
 					result.config.needs.push_back(std::move(need));

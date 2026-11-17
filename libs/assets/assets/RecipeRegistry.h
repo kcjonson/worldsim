@@ -8,6 +8,7 @@
 
 #include "assets/RecipeDef.h"
 
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -24,13 +25,14 @@ class RecipeRegistry {
 
     // --- Loading ---
 
-    /// Load all recipes from a folder recursively
-    /// Scans for all *.xml files in the folder and subfolders, adds the recipes not already held,
-    /// and resolves every recipe's def-name ids against AssetRegistry's index as it stands, so
-    /// AssetRegistry must already hold the definitions (loadAssetSystem orders the two).
-    /// @param folderPath Path to the recipes folder
-    /// @return Number of recipes added
-    size_t loadRecipesFromFolder(const std::string& folderPath);
+    /// Replace every recipe with those in the .xml files under `folder` (configFilesIn's order), one
+    /// <RecipeDef> a file, and resolve their def-name ids against AssetRegistry's index as it stands, so
+    /// AssetRegistry must already hold the definitions (loadAssetSystem orders the two). False, with
+    /// problems() saying why and no recipes held, when the folder can't be read or any file has a mistake.
+    bool loadRecipesFromFolder(const std::filesystem::path& folder);
+
+    /// What the files got wrong: each names the file (relative to the folder), the <RecipeDef> and the element.
+    [[nodiscard]] const std::vector<std::string>& problems() const { return m_problems; }
 
     /// Clear all loaded recipes
     void clear();
@@ -78,12 +80,6 @@ class RecipeRegistry {
   private:
     RecipeRegistry() = default;
 
-    /// Parse the recipes in one XML file; true if any was added
-    bool loadRecipes(const std::string& xmlPath);
-
-    /// Parse a single recipe from XML node
-    bool parseRecipeFromNode(const void* node); // pugi::xml_node passed as void*
-
     /// Resolve every recipe's def-name ids against AssetRegistry's index, which must already hold
     /// the loaded definitions; a name it doesn't hold is logged as an error.
     void populateDefNameIds();
@@ -98,6 +94,8 @@ class RecipeRegistry {
 
     /// Innate recipes (known from start)
     std::vector<const RecipeDef*> m_innateRecipes;
+
+    std::vector<std::string> m_problems;
 };
 
 } // namespace assets

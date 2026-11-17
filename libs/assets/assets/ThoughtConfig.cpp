@@ -19,15 +19,6 @@ namespace assets {
 
 	namespace {
 
-		/// A whole number of characters, 1 or more.
-		std::optional<std::size_t> characterCountOf(pugi::xml_attribute attribute) {
-			const std::optional<float> number = parseConfigNumber(attribute.as_string());
-			if (!number.has_value() || *number < 1.0F || *number != std::floor(*number)) {
-				return std::nullopt;
-			}
-			return static_cast<std::size_t>(*number);
-		}
-
 		std::optional<ThoughtImportance> importanceFromName(std::string_view name) {
 			if (name == "trivial") {
 				return ThoughtImportance::Trivial;
@@ -100,6 +91,13 @@ namespace assets {
 		  private:
 			void fail(const std::string& source, const std::string& message) { result.errors.push_back(source + ": " + message); }
 
+			/// Moves what `reader` found into the errors; true when it found nothing.
+			bool absorb(ConfigReader& reader) {
+				const std::vector<std::string> problems = reader.takeProblems();
+				result.errors.insert(result.errors.end(), problems.begin(), problems.end());
+				return problems.empty();
+			}
+
 			/// Adds `declared`, or replaces the one with its id from an earlier file; one with its id from this
 			/// file is an error.
 			template <typename Def>
@@ -161,12 +159,12 @@ namespace assets {
 					}
 					return std::nullopt;
 				}
-				const std::optional<float> amount = parseConfigNumber(mood.as_string());
-				if (!amount.has_value() || *amount == 0.0F) {
-					fail(
-						source,
-						what + ": mood=\"" + mood.as_string() + "\" is not a signed number other than 0 (leave mood out for no effect)"
-					);
+				ConfigReader reader(source);
+				const float	 amount = reader.labeledNumber(what, node, "mood");
+				if (amount == 0.0F) {
+					reader.refuseAttribute(what, node, "mood", "a signed number other than 0 (leave mood out for no effect)");
+				}
+				if (!absorb(reader)) {
 					valid = false;
 					return std::nullopt;
 				}
@@ -175,11 +173,13 @@ namespace assets {
 					valid = false;
 					return std::nullopt;
 				}
-				ThoughtMoodDef effect{.amount = *amount};
+				ThoughtMoodDef effect{.amount = amount};
 				if (hours) {
-					effect.hours = parseConfigNumber(hours.as_string());
-					if (!effect.hours.has_value() || *effect.hours <= 0.0F) {
-						fail(source, what + ": hours=\"" + hours.as_string() + "\" is not a positive number");
+					effect.hours = reader.labeledNumber(what, node, "hours");
+					if (*effect.hours <= 0.0F) {
+						reader.refuseAttribute(what, node, "hours", "a positive number of game hours");
+					}
+					if (!absorb(reader)) {
 						valid = false;
 						return std::nullopt;
 					}
@@ -276,23 +276,16 @@ namespace assets {
 						break;
 					case ThoughtTrigger::Idle: {
 						valid = onlyAttributes(node, {"trigger", "everyMinutes", "chance"}, what, source, result.errors);
-						const std::optional<float> everyMinutes = parseConfigNumber(node.attribute("everyMinutes").as_string());
-						if (!everyMinutes.has_value() || *everyMinutes <= 0.0F) {
-							fail(
-								source,
-								what + ": everyMinutes=\"" + node.attribute("everyMinutes").as_string() + "\" is not a positive number of game minutes"
-							);
-							valid = false;
-						} else {
-							parsed.everyMinutes = *everyMinutes;
+						ConfigReader reader(source);
+						parsed.everyMinutes = reader.labeledNumber(what, node, "everyMinutes");
+						if (parsed.everyMinutes <= 0.0F) {
+							reader.refuseAttribute(what, node, "everyMinutes", "a positive number of game minutes");
 						}
-						const std::optional<float> chance = parseConfigNumber(node.attribute("chance").as_string());
-						if (!chance.has_value() || *chance <= 0.0F || *chance > 1.0F) {
-							fail(source, what + ": chance=\"" + node.attribute("chance").as_string() + "\" is not above 0 and at most 1");
-							valid = false;
-						} else {
-							parsed.chance = *chance;
+						parsed.chance = reader.labeledNumber(what, node, "chance");
+						if (parsed.chance <= 0.0F || parsed.chance > 1.0F) {
+							reader.refuseAttribute(what, node, "chance", "above 0 and at most 1");
 						}
+						valid = absorb(reader) && valid;
 						break;
 					}
 				}
@@ -395,19 +388,14 @@ namespace assets {
 				if (!onlyAttributes(node, {"maxLineLength", "maxSubjectNameLength", "whileCheckMinutes"}, "<tuning>", source, result.errors)) {
 					return;
 				}
-				const std::optional<std::size_t> maxLineLength = characterCountOf(node.attribute("maxLineLength"));
-				const std::optional<std::size_t> maxSubjectNameLength = characterCountOf(node.attribute("maxSubjectNameLength"));
-				const std::optional<float>		 whileCheckMinutes = parseConfigNumber(node.attribute("whileCheckMinutes").as_string());
-				if (!maxLineLength.has_value()) {
-					fail(source, "<tuning> maxLineLength must be a whole number of characters, 1 or more");
-					return;
+				ConfigReader reader(source);
+				const int	 maxLineLength = reader.attributeInteger(node, "tuning", "maxLineLength", 1);
+				const int	 maxSubjectNameLength = reader.attributeInteger(node, "tuning", "maxSubjectNameLength", 1);
+				const float	 whileCheckMinutes = reader.attributeNumber(node, "tuning", "whileCheckMinutes");
+				if (whileCheckMinutes <= 0.0F) {
+					reader.refuseAttribute("<tuning>", node, "whileCheckMinutes", "a positive number of game minutes");
 				}
-				if (!maxSubjectNameLength.has_value()) {
-					fail(source, "<tuning> maxSubjectNameLength must be a whole number of characters, 1 or more");
-					return;
-				}
-				if (!whileCheckMinutes.has_value() || *whileCheckMinutes <= 0.0F) {
-					fail(source, "<tuning> whileCheckMinutes must be a positive number of game minutes");
+				if (!absorb(reader)) {
 					return;
 				}
 				const std::optional<ThoughtKeptTuning> kept = keptOf(node, source);
@@ -418,9 +406,9 @@ namespace assets {
 					LOG_INFO(Engine, "Thought config: <tuning> in %s replaces the one in %s", source.c_str(), tuningSource.c_str());
 				}
 				result.config.tuning = ThoughtTuning{
-					.maxLineLength = *maxLineLength,
-					.maxSubjectNameLength = *maxSubjectNameLength,
-					.whileCheckMinutes = *whileCheckMinutes,
+					.maxLineLength = static_cast<std::size_t>(maxLineLength),
+					.maxSubjectNameLength = static_cast<std::size_t>(maxSubjectNameLength),
+					.whileCheckMinutes = whileCheckMinutes,
 					.kept = *kept,
 				};
 				tuningSource = source;
@@ -464,9 +452,7 @@ namespace assets {
 					.trivialWeight = reader.attributeNumber(kept, "kept", "trivialWeight"),
 					.normalWeight = reader.attributeNumber(kept, "kept", "normalWeight"),
 				};
-				const std::vector<std::string> problems = reader.takeProblems();
-				result.errors.insert(result.errors.end(), problems.begin(), problems.end());
-				if (!problems.empty() || !valid) {
+				if (!absorb(reader) || !valid) {
 					return std::nullopt;
 				}
 				if (!(parsed.pruneStopsAt > 0.0F && parsed.pruneStopsAt < parsed.pruneStartsAt && parsed.pruneStartsAt <= 1.0F)) {
@@ -513,7 +499,7 @@ namespace assets {
 
 		Loader loader(result);
 		for (const std::filesystem::path& file : found.files) {
-			loader.loadFile(file, std::filesystem::relative(file, folder).generic_string());
+			loader.loadFile(file, configFileName(file, folder));
 		}
 		loader.check();
 		return result;

@@ -48,7 +48,20 @@ TEST(AssetRegistryAsyncTest, AsyncBootstrapLoadsDefinitionsThenRecipes) {
 	EXPECT_GT(reg.loadProgress().defsLoaded.load(), 0);
 	EXPECT_EQ(reg.getValidationReport().errorCount(), 0); // shipped library is clean
 
-	ASSERT_GT(recipes.size(), 0U);
+	EXPECT_TRUE(recipes.problems().empty());
+	const std::map<std::string, float> workAmounts = {
+		{"Recipe_CraftingSpot", 0.0F}, {"Recipe_BasicBox", 90.0F}, {"Recipe_BasicShelf", 120.0F}, {"Recipe_AxePrimitive", 500.0F}};
+	ASSERT_EQ(recipes.size(), workAmounts.size());
+	for (const auto& [name, workAmount] : workAmounts) {
+		const RecipeDef* recipe = recipes.getRecipe(name);
+		ASSERT_NE(recipe, nullptr) << name;
+		EXPECT_EQ(recipe->workAmount, workAmount) << name;
+	}
+	EXPECT_EQ(recipes.getRecipe("Recipe_AxePrimitive")->inputs.size(), 3U);
+	EXPECT_EQ(recipes.getRecipe("Recipe_AxePrimitive")->inputs[0].count, 2U);
+	EXPECT_EQ(recipes.getRecipe("Recipe_AxePrimitive")->skillDefName, "Woodworking");
+	EXPECT_TRUE(recipes.getRecipe("Recipe_BasicBox")->innate);
+	EXPECT_FALSE(recipes.getRecipe("Recipe_AxePrimitive")->innate);
 	for (const auto& [name, recipe] : recipes.allRecipes()) {
 		ASSERT_FALSE(recipe.inputs.empty() && recipe.outputs.empty()) << name;
 		for (const RecipeInput& input : recipe.inputs) {
@@ -89,6 +102,7 @@ namespace {
   <inputs><input thing="Test_Stone" count="2"/><input thing="Test_Stick" count="1"/></inputs>
   <station>Test_Bench</station>
   <outputs><output thing="Test_Axe" count="1"/></outputs>
+  <workAmount>500</workAmount>
 </RecipeDef>)");
 	}
 
@@ -141,6 +155,35 @@ TEST(AssetBootstrapTest, ReloadResolvesRecipesAgainstTheNewIndex) {
 
 	recipes.clear();
 	reg.clear();
+}
+
+// A recipe file with a mistake names it by its path under the recipes folder and the <RecipeDef>, and the
+// recipes load nothing, the good files included.
+TEST(AssetBootstrapTest, RecipeMistakesNameTheFileAndTheRecipeAndLoadNoRecipes) {
+	auto& recipes = RecipeRegistry::Get();
+	const auto problemsFor = [&recipes](const std::string& body) {
+		const TempAssetFolder folder;
+		writeAxeRecipe(folder);
+		folder.write("tools/Bad.xml", "<RecipeDef><defName>Recipe_Bad</defName><outputs><output thing=\"Test_Axe\"/></outputs>" + body + "</RecipeDef>");
+		EXPECT_FALSE(recipes.loadRecipesFromFolder(folder.root));
+		EXPECT_EQ(recipes.size(), 0U);
+		return recipes.problems();
+	};
+
+	EXPECT_EQ(problemsFor(""), std::vector<std::string>{"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> workAmount is missing"});
+	EXPECT_EQ(
+		problemsFor("<workAmount>lots</workAmount>"),
+		std::vector<std::string>{"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> workAmount must be a number, got \"lots\""}
+	);
+	EXPECT_EQ(
+		problemsFor("<workAmount>-5</workAmount>"),
+		std::vector<std::string>{"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> workAmount must be a number of work ticks, 0 or more, got \"-5\""}
+	);
+	EXPECT_EQ(
+		problemsFor("<workAmount> 90 </workAmount><time>3</time>"),
+		std::vector<std::string>{"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\">: unknown element <time>"}
+	) << "element text is trimmed, so only the unknown element is a mistake";
+	recipes.clear();
 }
 
 // A load that fails early must leave the validation report reflecting the failure

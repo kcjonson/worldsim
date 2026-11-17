@@ -31,4 +31,8 @@ namespace assets {
 		return found;
 	}
 
+	std::string configFileName(const std::filesystem::path& file, const std::filesystem::path& folder) {
+		return std::filesystem::relative(file, folder).generic_string();
+	}
+
 } // namespace assets

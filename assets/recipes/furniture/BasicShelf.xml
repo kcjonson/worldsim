@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- BasicShelf Recipe - Craft a simple wooden shelf for tool storage -->
+<!-- workAmount is required. Left out: an input or output count is 1, innate is false. -->
 <RecipeDef>
     <defName>Recipe_BasicShelf</defName>
     <label>Basic Shelf</label>

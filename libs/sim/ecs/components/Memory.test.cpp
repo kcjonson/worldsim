@@ -257,7 +257,7 @@ namespace {
 			file << "<Memory><RecentSighting gameMinutes=\"" << gameMinutes << "\"/></Memory>";
 		}
 		assets::MemoryConfig config;
-		EXPECT_TRUE(config.loadFromFile(path.string()));
+		EXPECT_TRUE(config.loadFromFile(path.parent_path(), path.filename()));
 		std::filesystem::remove(path);
 		EXPECT_TRUE(assets::ConfigValidator::validateMemory(config)) << gameMinutes;
 		return config.recentSightingGameMinutes();
@@ -304,7 +304,7 @@ TEST(MemoryQueries, TheVisitorEndsTheQuery) {
 // a mover of another kind never answers.
 TEST(MemoryQueries, MoversSeenWithinTheShippedWindow) {
 	assets::MemoryConfig config;
-	ASSERT_TRUE(config.loadFromFile(shippedMemoryConfig().string()));
+	ASSERT_TRUE(config.loadFromFile(shippedMemoryConfig().parent_path(), shippedMemoryConfig().filename()));
 	ASSERT_TRUE(assets::ConfigValidator::validateMemory(config));
 	const double window = config.recentSightingGameMinutes();
 

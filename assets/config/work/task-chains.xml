@@ -4,7 +4,9 @@
   Defines multi-step task sequences where colonists receive priority bonuses
   for completing the next step (+2000 chain continuation bonus).
 
-  Each step references an action from action-types.xml.
+  Each step references an action from action-types.xml and gives its order, a whole
+  number from 0 to 255. Left out: optional means the step must be done (false);
+  requiresPreviousStep means it waits for the step before it (true). Any mistake fails the load.
 
   See /docs/design/game-systems/colonists/task-chains.md for details.
 -->

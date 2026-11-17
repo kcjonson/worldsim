@@ -12,7 +12,7 @@ namespace ecs {
 		// <root>/libs/sim/ecs/systems/ShippedPriorityConfig.test.h -> <root>/assets/config/work/priority-tuning.xml
 		const std::filesystem::path path = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path().parent_path() /
 										   "assets" / "config" / "work" / "priority-tuning.xml";
-		return assets::PriorityConfig::Get().loadFromFile(path.string());
+		return assets::PriorityConfig::Get().loadFromFile(path.parent_path(), path.filename());
 	}
 
 } // namespace ecs

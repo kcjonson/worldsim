@@ -6,6 +6,10 @@
   Work types specify which entity capabilities trigger task generation.
   For example, any entity with "Harvestable" capability generates a harvest task.
 
+  Every <Category> gives defName and tier. Left out: canDisable means the category can
+  be disabled; minSkillLevel means no minimum; label is the defName. Any mistake (a
+  missing or malformed number, an unknown element or attribute) fails the load.
+
   See /docs/design/game-systems/colonists/work-types-config.md for details.
 -->
 <WorkTypes>

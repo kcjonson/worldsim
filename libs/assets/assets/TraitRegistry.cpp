@@ -196,7 +196,7 @@ namespace assets {
 
 		Loader loader;
 		for (const std::filesystem::path& file : found.files) {
-			loader.loadFile(file, std::filesystem::relative(file, folder).generic_string());
+			loader.loadFile(file, configFileName(file, folder));
 		}
 		loader.check();
 		if (!loader.errors.empty()) {
