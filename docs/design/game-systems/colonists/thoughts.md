@@ -35,7 +35,9 @@ A thought with a mood effect is **held** while the effect lasts, then it ends. I
 
 A recorded thought is part of the colonist's [memory](./memory.md). Memory holds what a colonist knows about the world; thoughts are what they went through in it. Thoughts are kept up to a high limit per colonist; see [What is kept](#what-is-kept).
 
-Thoughts of the same event type do not pile up on one colonist unless the type says it stacks. A stacking thought shows a count.
+A repeat of a held thought, meaning the same event type about the same subject, does not pile up: it refreshes the held thought and restarts its timer. The same event about a different subject is a separate thought.
+
+A type can say it stacks. A stacking thought counts its repeats and shows the count; its mood effect is the amount times the count, the whole stack shares one timer that restarts on each repeat, and it ends as a whole.
 
 ### Event and feeling
 

@@ -75,9 +75,6 @@ namespace world_sim {
 		/// the rows changed.
 		[[nodiscard]] bool extractTasksData(ecs::World& world, ecs::EntityID colonistId, float deltaTime, bool force);
 
-		/// Get mood label from mood value
-		[[nodiscard]] static std::string getMoodLabel(float mood);
-
 		// State
 		ecs::EntityID currentColonistId{0};
 		bool		  valid = false;

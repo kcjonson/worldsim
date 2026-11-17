@@ -378,7 +378,7 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
 | `what=` | Returns |
 |---------|---------|
 | `summary` | `{colonists, foundations, chunks}` |
-| `colonists` | `[{id, name, x, y, needs{}, action, inventory{}, hands{}, belt{}, cargoKg, carryCapacityKg}]` |
+| `colonists` | `[{id, name, x, y, needs{}, mood{value, target, band, cause: {need} or {thought} or null}, action, inventory{}, hands{}, belt{}, cargoKg, carryCapacityKg}]` |
 | `stations` | `[{id, x, y, jobs:[{recipe, completed, quantity}], store{}}]` |
 | `storage` | `[{id, defName, x, y, inventory{}, slots, maxSlots, rules:[{item, category, priority, min, max}]}]` |
 | `construction` | `{foundations:[{id, material, state, entity, area, required{}, delivered{}, progress, phase}], walls:[{id, material, state, entity, x0, y0, x1, y1, required{}, delivered{}, progress}]}` |

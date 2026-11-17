@@ -1,6 +1,6 @@
 #pragma once
 
-// Work configuration: action types, task chains, work types, priority tuning, and construction,
+// Work configuration: action types, task chains, work types, priority tuning, construction, and mood,
 // loaded from one config folder into their registries and cross-validated.
 
 #include <array>
@@ -17,7 +17,7 @@ namespace assets {
 	};
 
 	/// Clears the work-config registries and loads them from configRoot (the folder holding
-	/// actions/, work/, and construction/), in dependency order, then cross-validates them.
+	/// actions/, work/, construction/, and colonists/), in dependency order, then cross-validates them.
 	/// Returns every error found; an empty list means the configuration is loaded and valid.
 	[[nodiscard]] std::vector<std::string> loadWorkConfig(const std::filesystem::path& configRoot);
 

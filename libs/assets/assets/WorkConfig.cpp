@@ -3,6 +3,7 @@
 #include "assets/ActionTypeRegistry.h"
 #include "assets/ConfigValidator.h"
 #include "assets/ConstructionRegistry.h"
+#include "assets/MoodConfig.h"
 #include "assets/PriorityConfig.h"
 #include "assets/TaskChainRegistry.h"
 #include "assets/WorkTypeRegistry.h"
@@ -15,6 +16,7 @@ namespace assets {
 		WorkTypeRegistry::Get().clear();
 		PriorityConfig::Get().clear();
 		ConstructionRegistry::Get().clear();
+		MoodConfig::Get().clear();
 		ConfigValidator::clearErrors();
 
 		auto loadFailure = [](const std::filesystem::path& path) {
@@ -56,6 +58,11 @@ namespace assets {
 		const auto construction = configRoot / "construction";
 		if (!ConstructionRegistry::Get().load(construction.string())) {
 			return loadFailure(construction);
+		}
+
+		const auto mood = configRoot / "colonists" / "mood.xml";
+		if (!MoodConfig::Get().loadFromFile(mood.string())) {
+			return loadFailure(mood);
 		}
 
 		if (ConfigValidator::validateAll()) {

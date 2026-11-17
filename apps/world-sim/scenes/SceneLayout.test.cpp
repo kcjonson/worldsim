@@ -23,6 +23,7 @@
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/Task.h>
 #include <ecs/components/Transform.h>
+#include <ecs/systems/MoodSystem.h>
 #include <ecs/systems/TimeSystem.h>
 #include <theme/Theme.h>
 #include <ui/components/Dialog.h>
@@ -86,6 +87,7 @@ namespace world_sim::testing {
 				gameUI->setMinimapContext({0.0F, 0.0F}, 45.0, 10.0, 8.0F);
 
 				world.registerSystem<ecs::TimeSystem>();
+				world.registerSystem<ecs::MoodSystem>(assets::MoodConfig::Get());
 				spawnColonist();
 				placement = std::make_unique<PlacementSystem>(PlacementSystem::Args{
 					.world = &world,
@@ -132,6 +134,7 @@ namespace world_sim::testing {
 				world.addComponent<ecs::Position>(spawned.colonist, ecs::Position{{0.0F, 0.0F}});
 				world.addComponent<ecs::Colonist>(spawned.colonist, ecs::Colonist{"Ada Lovelace"});
 				world.addComponent<ecs::NeedsComponent>(spawned.colonist, ecs::NeedsComponent::createDefault());
+				world.getSystem<ecs::MoodSystem>().startMood(spawned.colonist);
 
 				ecs::Inventory inventory = ecs::Inventory::createForColonist();
 				inventory.leftHand = ecs::ItemStack{.defName = "AxePrimitive", .quantity = 1};
@@ -175,6 +178,7 @@ namespace world_sim::testing {
 				world.addComponent<ecs::Position>(spawned.newcomer, ecs::Position{{2.0F, 0.0F}});
 				world.addComponent<ecs::Colonist>(spawned.newcomer, ecs::Colonist{"Grace Hopper"});
 				world.addComponent<ecs::NeedsComponent>(spawned.newcomer, ecs::NeedsComponent::createDefault());
+				world.getSystem<ecs::MoodSystem>().startMood(spawned.newcomer);
 				world.addComponent<ecs::Inventory>(spawned.newcomer, ecs::Inventory::createForColonist());
 			}
 

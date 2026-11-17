@@ -28,7 +28,7 @@ A colonist's mood has two parts, added together and clamped to 0-100.
 - **Needs.** A base score from how well the eight needs are met, weighted per need. Defined in [Needs](./needs.md).
 - **Mood effects.** Signed amounts carried by the [thoughts](./thoughts.md) the colonist is holding, from things that happened to them or that they are living with.
 
-A mood effect always belongs to a thought. It is either timed ("slept on the ground", -10 for a day; "vented to Idris", +8 for 12 hours) or lasts while its cause does ("something reeks", "crowded", "soaked"). Thoughts of the same type do not pile up unless the type says they stack; a stacking thought shows its count ("bottled up x3"). Every other system that affects how a colonist feels does so by giving a thought. What a thought is, what creates one, and which ones the player sees as bubbles are defined in [Thoughts](./thoughts.md).
+A mood effect always belongs to a thought. It is either timed ("slept on the ground", -10 for a day; "vented to Idris", +8 for 12 hours) or lasts while its cause does ("something reeks", "crowded", "soaked"). A repeat of a held thought about the same subject does not pile up unless the type says it stacks; a stacking thought shows its count ("bottled up x3"). Every other system that affects how a colonist feels does so by giving a thought. What a thought is, what creates one, and which ones the player sees as bubbles are defined in [Thoughts](./thoughts.md).
 
 The sum of the two parts is the colonist's **target mood**. Mood itself moves toward the target at up to 5 points per game hour, so one bad event is felt as a slide the player can watch, never a jump.
 

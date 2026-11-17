@@ -79,20 +79,20 @@ namespace assets {
 		tree.setCollision(0, {.type = CollisionShapeType::Rect, .offsetMeters = {0.0F, 0.0F}, .halfExtentsMeters = {0.04F, 0.04F}});
 		tree.setCollision(1, {.type = CollisionShapeType::Rect, .offsetMeters = {0.0F, 0.05F}, .halfExtentsMeters = {0.1F, 0.1F}});
 		const MeshYExtent mesh{.minY = -3.0F, .maxY = 0.6F};
-		EXPECT_FLOAT_EQ(anchorLocalY(&tree, 0, mesh), 0.04F);
-		EXPECT_FLOAT_EQ(anchorLocalY(&tree, 1, mesh), 0.15F);
-		EXPECT_FLOAT_EQ(computeAnchorY(10.0F, anchorLocalY(&tree, 1, mesh), 2.0F), 10.3F);
+		EXPECT_FLOAT_EQ(anchorLocalY(&tree, 0, mesh, 0.0F), 0.04F);
+		EXPECT_FLOAT_EQ(anchorLocalY(&tree, 1, mesh, 0.0F), 0.15F);
+		EXPECT_FLOAT_EQ(computeAnchorY(10.0F, anchorLocalY(&tree, 1, mesh, 0.0F), 2.0F), 10.3F);
 
 		const AssetDefinition bush;
-		EXPECT_FLOAT_EQ(anchorLocalY(&bush, 0, mesh), 0.6F);
-		EXPECT_FLOAT_EQ(anchorLocalY(nullptr, 0, mesh), 0.6F);
+		EXPECT_FLOAT_EQ(anchorLocalY(&bush, 0, mesh, 0.0F), 0.6F);
+		EXPECT_FLOAT_EQ(anchorLocalY(nullptr, 0, mesh, 0.0F), 0.6F);
 	}
 
-	// A simple (SVG) def's metadata collider is authored about the drawing's bbox centre, and its
-	// mesh is drawn from the SVG's origin; the anchor is the collider's lower edge where the mesh
-	// draws it. The drawing spans y 10 to 100 at 1.5 m, so 1/60 m a unit, and the collider's lower
-	// edge is y 70: 70/60 m below the origin, not the 0.25 m below the bbox centre it is authored at.
-	TEST(WorldDepthSort, SimpleDefAnchorsAtItsMetadataColliderInTheMeshFrame) {
+	// A simple (SVG) def's mesh and metadata collider are both about its pivot, the drawing's bbox
+	// centre. The drawing spans x 0 to 60, y 10 to 100 at 1.5 m, so 1/60 m a unit about (30, 55); the
+	// collider, x 10 to 50 and y 40 to 70, has its lower edge 15/60 m below the pivot, and turned a
+	// quarter its lower edge is its 20/60 m half width.
+	TEST(WorldDepthSort, SimpleDefAnchorsAtItsMetadataColliderAboutThePivot) {
 		namespace fs = std::filesystem;
 		const fs::path root = fs::temp_directory_path() / "world_depth_sort_simple_anchor";
 		fs::remove_all(root);
@@ -112,8 +112,9 @@ namespace assets {
 		ASSERT_NE(def, nullptr);
 		ASSERT_EQ(def->collisionFor(0).type, CollisionShapeType::Rect);
 		const MeshYExtent mesh = meshYExtent(registry.getTemplate("Boulder", {}));
-		EXPECT_NEAR(mesh.maxY, 100.0F / 60.0F, 1e-5F);
-		EXPECT_NEAR(anchorLocalY(def, 0, mesh), 70.0F / 60.0F, 1e-5F);
+		EXPECT_NEAR(mesh.maxY, 45.0F / 60.0F, 1e-5F);
+		EXPECT_NEAR(anchorLocalY(def, 0, mesh, 0.0F), 15.0F / 60.0F, 1e-5F);
+		EXPECT_NEAR(anchorLocalY(def, 0, mesh, 3.14159265F / 2.0F), 20.0F / 60.0F, 1e-5F);
 
 		registry.clearDefinitions();
 		fs::remove_all(root);

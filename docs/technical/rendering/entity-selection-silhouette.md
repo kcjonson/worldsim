@@ -36,16 +36,16 @@ From the product owner, not the literature:
 ```
 AssetRegistry::getSilhouette(defName) ──► AssetSilhouette { outerRings (local mm),
    (lazy, on bake worker)                    hitRegion (closed, for whole-clump),
-        │                                     boundsCenterMeters, valid }
+        │                                     valid }
         │  built from contour rings (NOT triangle boundary)
         ▼
 geometry::silhouetteOfRings(rings) ──► outer CCW loops, holes filled, disjoint preserved
         │
-        ├──► outline:   assetInstanceTransform(local→world→screen), stroke thick, entity-layer z
-        └──► hit-test:  assetInstanceTransform⁻¹(click→local mm), pointInPolygon
+        ├──► outline:   InstanceTransform(local→world→screen), stroke thick, entity-layer z
+        └──► hit-test:  InstanceTransform⁻¹(click→local mm), pointInPolygon
 ```
 
-The silhouette is computed **once per resolved `defName`**, in template-local integer millimetres, cached beside the tessellated template. A single shared transform maps local↔world for both the static (baked) and dynamic (ECS) render conventions, so the outline, the hit-test, and the renderer never disagree.
+The silhouette is computed **once per resolved `defName`**, in the template's pivot frame in integer millimetres, cached beside the tessellated template. One shared transform maps local↔world for every instance, static or dynamic, so the outline, the hit-test, and the renderer never disagree.
 
 ## 4. The silhouette primitive
 
@@ -72,23 +72,19 @@ Blockiness is bounded by `targetResolution` and invisible under a thick stroke. 
 struct AssetSilhouette {
     std::vector<geometry::Ring> rings;        // local mm — crisp; used for the outline + shadows
     std::vector<geometry::Ring> hitRegion;    // local mm — closed (whole-clump); used for hit-testing
-    glm::vec2 boundsCenterMeters;             // == the render centerOffset, stored to stay drift-free
     bool valid;
 };
 ```
 
-Stored in `AssetRegistry` in a `unordered_map<string, AssetSilhouette>` guarded by its own mutex, mirroring the `getMotion` cache (own mutex, heavy raster off-lock, short lock to check/insert). `getSilhouette(defName)` ensures `getTemplate` (so the mesh is materialized), rasterizes its triangles for `rings` (close 0) and `hitRegion` (small close), caches. Key = resolved `defName`, so directional colonist variants (`_down/_up/_left/_right`) each get their own rest-pose silhouette. Safe to call from the chunk-bake worker (like `getTemplate`). Invalidated with `templateCache` on `clear()` / `clearDefinitions()`. `boundsCenterMeters` = `computeBounds(template)` centre == the dynamic render `-centerOffset` (drift-free). One template per `defName`, so one silhouette serves every instance regardless of position/rotation/scale/tint.
+Stored in `AssetRegistry` in a `unordered_map<string, AssetSilhouette>` guarded by its own mutex, mirroring the `getMotion` cache (own mutex, heavy raster off-lock, short lock to check/insert). `getSilhouette(defName)` ensures `getTemplate` (so the mesh is materialized), rasterizes its triangles for `rings` (close 0) and `hitRegion` (small close), caches. Key = resolved `defName`, so directional colonist variants (`_down/_up/_left/_right`) each get their own rest-pose silhouette. Safe to call from the chunk-bake worker (like `getTemplate`). Invalidated with `templateCache` on `clear()` / `clearDefinitions()`. One template per `defName`, so one silhouette serves every instance regardless of position/rotation/scale/tint.
 
 For a single connected asset, `hitRegion ≈ rings`. They diverge for multi-blob assets, where the close bridges the gaps (§7).
 
 ## 6. Shared instance transform (mandatory, one-path)
 
-The #1 shared risk is the hit-test inverse or the outline forward-map drifting from what the renderer draws — the same collider-drift failure class the `SvgMeterFrame` comments already warn about. There are two conventions, and they must live in exactly one place:
+The #1 shared risk is the hit-test inverse or the outline forward-map drifting from what the renderer draws. Every template mesh is built about its def's pivot, and an entity's position is that pivot in the world (collision-shapes.md, "One pivot per def"), so there is one convention: `world = R(rotation)·(local·scale) + position`, with rotation 0 for a dynamic entity.
 
-- **Static / baked** (`BakedEntityMesh`): `world = R(rot)·(local·scale) + position`, **no centering**.
-- **Dynamic / ECS** (`DynamicEntityRenderSystem`): `world = local·scale + position + centerOffset`, **rotation forced 0**, where `centerOffset = -(min+max)/2`. Note `getTemplate` returns `nullptr` for a 0-shape asset and `centerOffset` silently stays 0 — the inverse must reproduce that exact behavior.
-
-`assetInstanceTransform` provides forward (local→world) and inverse (world→local mm) for both conventions, consumed by `BakedEntityMesh`, `DynamicEntityRenderSystem`, the outline, and the hit-test. The duplicated `centerOffset` math in `DynamicEntityRenderSystem` is deleted (one source of truth). A `packagedLayout` helper is extracted the same way (crate back, item fitted inside from its template bounds, crate front) so the packaged composite matches the sprite. Round-trip tests (`world→local→world`) per convention, including the nullptr-template path and the `FacingDirection` suffix.
+`assets::InstanceTransform` (`libs/assets/assets/placement/InstanceTransform.h`) is that transform, forward (local→world) and inverse (world→local). The baked statics, the batcher, the animated path, the outline, the hit-test, the placement ghost and footprint, the canopy measure, and nav's placed obstacles all place through it; the GPU instancing shader applies the same formula, and `InstanceTransform.BakedStaticsEmitIt` pins the bake to it. A `packagedLayout` helper (crate back, item fitted inside from its template bounds, crate front) and a `pileLayout` helper give the sprites render and selection share.
 
 ## 7. Whole-clump hit area (PO decision)
 
@@ -100,7 +96,7 @@ The **outline still strokes the exact `outerRings`** (each visible bloom gets a 
 
 Broad phase stays a cheap cull but must be widened: today's single-chunk `queryRadius(2m)` would cull a click on a big canopy far from its trunk anchor before the precise test runs, and a tree whose anchor sits in an adjacent chunk but whose canopy overhangs the clicked point lives in the neighbor's index. So: size the broad-phase radius from the **registry's max silhouette half-extent** (per-`defName` max-extent keeps small assets tight) and query the click chunk **plus its 8 neighbors**.
 
-Narrow phase replaces the centroid `dist < kSelectionRadius` accept for colonist / station / furniture / world-entity with `pointInPolygon(assetInstanceTransform⁻¹(click), hitRegion)`. Packaged furniture tests crate back, item, and crate front at their `packagedLayout` transforms. `kSelectionRadius` survives **only** as the broad-phase radius; the accept comparisons and the generic `kIndicatorRadius` circle are deleted (one-path).
+Narrow phase replaces the centroid `dist < kSelectionRadius` accept for colonist / station / furniture / world-entity with `pointInPolygon(InstanceTransform⁻¹(click), hitRegion)`. Packaged furniture tests crate back, item, and crate front at their `packagedLayout` transforms. `kSelectionRadius` survives **only** as the broad-phase radius; the accept comparisons and the generic `kIndicatorRadius` circle are deleted (one-path).
 
 **Overlapping entities cycle (PO decision).** With canopy-sized hit areas, overlapping tree canopies are the norm. `gatherCandidates` pushes **every** world entity whose `hitRegion` contains the click (not just the closest anchor), ordered topmost-first so repeated clicks step front-to-back through the existing cycle machinery. "Topmost" = entity draw/sort order (the depth-sort anchorY), falling back to smallest-area-containing on ties. `candidateKey` (currently quantized position) is extended to disambiguate co-located entities.
 
@@ -126,13 +122,13 @@ Deferred (Tier-2, documented not built): a per-frame posed outline for the singl
 - A2 Unit tests: 8 ring fixtures + 4 triangle fixtures (§4). Tessellator coverage-oracle cross-check in Story B (renderer not linkable from `libs/geometry`).
 
 **Story B — per-`defName` silhouette cache** (`AssetRegistry`) — DONE
-- B1 `AssetSilhouette{rings, hitRegion, boundsCenterMeters, valid}` + `silhouetteCache` + mutex + `getSilhouette(defName)`; `getMotion`-style (compute off-lock). Rasterize the **template mesh triangles** (quantized to mm) via `silhouetteOfTriangles` — `rings` at close 0, `hitRegion` at a small close (D3). Captures stroke bands; no fill-contour path.
+- B1 `AssetSilhouette{rings, hitRegion, valid}` + `silhouetteCache` + mutex + `getSilhouette(defName)`; `getMotion`-style (compute off-lock). Rasterize the **template mesh triangles** (quantized to mm) via `silhouetteOfTriangles` — `rings` at close 0, `hitRegion` at a small close (D3). Captures stroke bands; no fill-contour path.
 - B2 Only a truly empty mesh yields no silhouette (`valid=false`); stroke-only assets (`plant_fiber.svg`) now produce a real strand silhouette, so the AABB fallback was removed. `clear()`/`clearDefinitions()` wiring.
 
 **Story C — shared instance transform** (extract, one-path)
-- C1 `assetInstanceTransform` forward+inverse (static uncentered; dynamic centered rot-0; nullptr-template/0-offset; `FacingDirection` suffix), consumed by `BakedEntityMesh`, `DynamicEntityRenderSystem`, outline, hit-test. Delete the duplicated `centerOffset` math.
+- C1 shared instance transform forward+inverse, consumed by render, outline, hit-test (since 2026-11 `assets::InstanceTransform`, one convention about each def's pivot).
 - C2 `packagedLayout` helper extracted from `DynamicEntityRenderSystem`, consumed by render + selection.
-- C3 `world→local→world` round-trip tests per convention incl. nullptr-template.
+- C3 `world→local→world` round-trip tests.
 
 **Story D — precise hit-testing** (`SelectionSystem`)
 - D1 Widen broad phase: query radius from registry max silhouette half-extent (per-`defName`), query click chunk + 8 neighbors.
@@ -163,7 +159,7 @@ Deferred (Tier-2, documented not built): a per-frame posed outline for the singl
 
 Each tree draws its own (def, age class, variant) mesh, so the silhouette is cached per template id (`getSilhouette(templateId)`, or `getSilhouette(defName, traits)`). A placed entity uses its stored `templateId`; a dynamic entity resolves its `Appearance` defName (with the facing suffix) and traits. A simple (SVG) asset is one drawing, so all its traits share one template.
 
-Triangles whose three vertices are all below `AssetRegistry::kSilhouetteMinAlpha` (0.5) are left out of the raster, so a drop shadow is not part of the outline, the hit area, or the flora view's canopy cover. `boundsCenterMeters` still comes from the whole drawn mesh, since it must match the render transform.
+Triangles whose three vertices are all below `AssetRegistry::kSilhouetteMinAlpha` (0.5) are left out of the raster, so a drop shadow is not part of the outline, the hit area, or the flora view's canopy cover.
 
 The world-entity broad phase queries out to `AssetRegistry::maxReachMeters` (the farthest any non-groundcover template reaches from its origin, times its def's largest placement scale, never under `kSelectionRadius`) instead of a fixed 8 m.
 

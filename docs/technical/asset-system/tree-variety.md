@@ -19,7 +19,7 @@ Surveyed 2026-11-10, before the first tasks of this spec landed. "Built so far" 
 - `deciduous.lua` predates the converged flora style: one wobbly blob, one to three concentric layers, a highlight, orange-red limbs drawn over the canopy, an offset grey drop shadow.
 - Its variation is independent uniform jitter on every parameter, which sums toward an average tree.
 - Placed entities are not saved. Each chunk is regenerated from the world seed, with one RNG shared by every def in spawn order, so an extra RNG draw per tree would reshuffle every later placement in the chunk.
-- Collision is one rect per def, captured at load from variant 0, and scaled by `entity.scale` in `NavInputBuilder` and `StaticRectCollisionSystem`.
+- Collision is one rect per def, captured at load from variant 0, and scaled by `entity.scale` in `NavInputBuilder` and `PlacedObstacleCollisionSystem`.
 - Yield and work come straight from the def's `<harvestable>` (`HarvestActions.cpp`, `NeedActions.cpp`); the roll is a fresh random. The sim, colonist memory, and selection identify a tree by defName and position.
 - Scale: a colonist is 1.0 m tall, an oak crown nominally 1.6 m across, a maple 1.2 m. A real open-grown oak is 15 to 24 m across, so today's trees are about 12x compressed. Measured with R11's flora view on 2026-11-10: a 100 m square centred on the quickstart landing holds 36.9 trees per 1,000 m2 (oak 19.4, maple 17.5) at 13.3% canopy cover, with 800 wood per 1,000 m2. The default camera view there (128 m x 72 m) reads 37.4 trees and 13.6%. The square takes in the river, so the forest away from it is somewhat denser. Cover includes the oak's offset drop shadow, which `getSilhouette` keeps until R3.
 - Nothing fades. `rendering/world-depth-sorting.md` cut canopy fade outright ("a pawn may be fully hidden behind a tree"), which was the right call for 1.6 m crowns.
@@ -180,7 +180,7 @@ Thousands of plants share GPU meshes, so a plant is drawn at the nearest of a fi
 - The rect comes from the trunk foot the generator drew at that growth step, through `asset:setCollisionRect`, never from a named scale and never from the individual.
 - It is captured per growth step at load, during the prewarm, from individual 0 of each step. A def that does not age keeps the one eager capture, stored as step 0. One accessor on the def returns the rect for a step; XML and SVG-metadata colliders apply to every step. The storage, accessor, and variant-independence check built for age classes on the unmerged branch carry over with "age class" read as "growth step".
 - It must not depend on the individual. `asset-cli validate --render-smoke` generates two individuals at each step and fails the def, naming the step, if their rects differ (the XML validator never runs a generator). The twin-crowned form forks above the foot, so the foot is one trunk for every individual.
-- `NavInputBuilder` and `StaticRectCollisionSystem` read the rect for the entity's growth step (`PlacedEntity::traits`). When a tree steps, its chunk's nav input changes if the rect did (R12).
+- `NavInputBuilder` and `PlacedObstacleCollisionSystem` read the rect for the entity's growth step (`PlacedEntity::traits`). When a tree steps, its chunk's nav input changes if the rect did (R12).
 
 ### R5 Generator
 
