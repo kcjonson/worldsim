@@ -55,6 +55,8 @@
 
 #include <worldgen/sampling/PondNetwork2D.h>
 
+#include <utils/Log.h>
+
 #include <gtest/gtest.h>
 
 #include <glm/geometric.hpp>
@@ -64,6 +66,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -353,6 +356,45 @@ namespace ecs::test {
 
 		// Update should not crash and should not affect partial entity
 		EXPECT_NO_THROW(world->update(0.016F));
+	}
+
+	namespace {
+		struct MissingComponentWarnings {
+			int count = 0;
+			static void sink(void* context, const foundation::LogRecord& record) {
+				if (record.level == foundation::LogLevel::Warning && std::strstr(record.message, "never decides anything") != nullptr) {
+					++static_cast<MissingComponentWarnings*>(context)->count;
+				}
+			}
+		};
+		struct SinkGuard {
+			explicit SinkGuard(MissingComponentWarnings& warnings) { foundation::Logger::setSink(&MissingComponentWarnings::sink, &warnings); }
+			~SinkGuard() { foundation::Logger::setSink(nullptr, nullptr); }
+		};
+	} // namespace
+
+	TEST_F(AIDecisionSystemTest, ColonistMissingDecisionComponentsWarnsOnceAndCompleteOneStillDecides) {
+		auto noMemo = createColonist({0.0F, 0.0F});
+		world->removeComponent<SourceReachMemo>(noMemo);
+		auto noTrace = createColonist({1.0F, 0.0F});
+		world->removeComponent<DecisionTrace>(noTrace);
+		auto complete = createColonist({2.0F, 0.0F});
+
+		MissingComponentWarnings warnings;
+		{
+			const SinkGuard guard(warnings);
+			for (int i = 0; i < 3; ++i) {
+				EXPECT_NO_THROW(world->update(0.016F));
+			}
+		}
+
+		EXPECT_FALSE(getTask(noMemo)->isActive());
+		EXPECT_FALSE(getTask(noTrace)->isActive());
+		EXPECT_TRUE(getTask(complete)->isActive());
+#ifdef DEVELOPMENT_BUILD
+		// One per broken colonist, none repeated over the three ticks.
+		EXPECT_EQ(warnings.count, 2);
+#endif
 	}
 
 	// =============================================================================

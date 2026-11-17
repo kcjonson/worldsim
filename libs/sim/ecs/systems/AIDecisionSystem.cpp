@@ -2301,6 +2301,13 @@ namespace ecs {
 						task.targetPosition.y
 					);
 				}
+			} else if (warnedMissingDecisionComponents.insert(entity).second) {
+				LOG_WARNING(
+					Engine,
+					"[AI] Entity %llu has no %s, so it never decides anything",
+					static_cast<unsigned long long>(entity),
+					trace == nullptr ? (sourceReach == nullptr ? "DecisionTrace and SourceReachMemo" : "DecisionTrace") : "SourceReachMemo"
+				);
 			}
 			task.routeFailureDecided = task.routeFailureDecided || decidingOnFailedRoute;
 		}
