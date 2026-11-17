@@ -1298,11 +1298,13 @@ TEST_F(DrawingRectangleTest, ADragCommitsTheRectangle) {
 	EXPECT_EQ(drawing->status().pointCount, 0);
 }
 
-// Within doubleClickDistancePx of its press, a release is a click: the corner waits.
+// The press places the first corner, before any release; within doubleClickDistancePx of its
+// press, the release is a click and the corner waits.
 TEST_F(DrawingRectangleTest, APressReleasedInPlaceIsTheFirstClick) {
 	const float		threshold = assets::ConstructionRegistry::Get().snapping().doubleClickDistancePx;
 	const glm::vec2 corner = seen.screenOf({2.0F, 1.0F});
 	pressAt(corner);
+	EXPECT_EQ(drawing->status().pointCount, 1) << "the corner shows on the press";
 	releaseAt(corner + glm::vec2{threshold, 0.0F});
 	EXPECT_EQ(drawing->status().pointCount, 1);
 	EXPECT_TRUE(drawing->world().foundations().empty());
@@ -1336,6 +1338,111 @@ TEST_F(DrawingRectangleTest, AReleaseOverTheInterfaceCancelsTheDrag) {
 	press({6.0F, 4.0F});
 	drawing->cancelPress();
 	EXPECT_EQ(drawing->status().pointCount, 1);
+	EXPECT_TRUE(drawing->world().foundations().empty());
+}
+
+TEST_F(DrawingRectangleTest, EscDropsTheFirstCornerAndASecondEscExits) {
+	clickCorner({2.0F, 1.0F});
+	ASSERT_EQ(drawing->status().pointCount, 1);
+	drawing->cancel();
+	EXPECT_EQ(drawing->status().pointCount, 0);
+	EXPECT_TRUE(drawing->isRectangleTool());
+	drawing->cancel();
+	EXPECT_FALSE(drawing->isActive());
+	EXPECT_TRUE(drawing->world().foundations().empty());
+}
+
+// GameScene hands a right release to cancel(), as Esc. Mid-drag it drops the corner the press
+// placed, and the left release that ends the drag commits nothing.
+TEST_F(DrawingRectangleTest, RightClickDropsTheFirstCorner) {
+	press({2.0F, 1.0F});
+	hover({6.0F, 4.0F});
+	drawing->cancel();
+	EXPECT_EQ(drawing->status().pointCount, 0);
+	EXPECT_FALSE(drawing->hasPendingPress());
+	EXPECT_TRUE(drawing->isRectangleTool());
+	release({6.0F, 4.0F});
+	EXPECT_EQ(drawing->status().pointCount, 0);
+	EXPECT_TRUE(drawing->world().foundations().empty());
+}
+
+// The next click after Backspace places a first corner again, not the second.
+TEST_F(DrawingRectangleTest, BackspaceDropsTheFirstCorner) {
+	clickCorner({2.0F, 1.0F});
+	EXPECT_TRUE(drawing->removeLastPoint());
+	EXPECT_EQ(drawing->status().pointCount, 0);
+	EXPECT_TRUE(drawing->isRectangleTool());
+	clickCorner({6.0F, 4.0F});
+	EXPECT_EQ(drawing->status().pointCount, 1);
+	EXPECT_TRUE(drawing->world().foundations().empty());
+}
+
+// What placed the corner reaches the preview's plan, which draws the cross only for the grid.
+TEST_F(DrawingRectangleTest, TheFeedbackKnowsWhatPlacedTheCorner) {
+	builtFloor({{20.0F, 0.0F}, {24.0F, 0.0F}, {24.0F, 4.0F}, {20.0F, 4.0F}});
+	const assets::PreviewStyle style;
+	const auto				   kindAt = [&](glm::vec2 meters, bool freeform) {
+		  const glm::vec2 screen = seen.screenOf(meters);
+		  drawing->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, freeform);
+		  return drawing->feedbackInput(style, kViewportWidth, kViewportHeight, 1.0F, world_sim::measureFeedbackText).rectangleSnap;
+	};
+	EXPECT_EQ(kindAt({6.3F, 0.8F}, false), construction::RectangleSnapKind::Grid);
+	EXPECT_EQ(kindAt({20.1F, 0.1F}, false), construction::RectangleSnapKind::Vertex);
+	EXPECT_EQ(kindAt({22.3F, -0.1F}, false), construction::RectangleSnapKind::Edge);
+	EXPECT_EQ(kindAt({6.3F, 0.8F}, true), construction::RectangleSnapKind::None);
+	EXPECT_EQ(kindAt({6.3F, 0.8F}, false), construction::RectangleSnapKind::Grid) << "from the snap memo";
+}
+
+namespace {
+
+	// The Build menu's Foundation entry and the strip's tool picker, through a DrawingSystem new
+	// to the session.
+	class DrawingFoundationPickTest : public DrawingCloseTest {};
+
+} // namespace
+
+TEST_F(DrawingFoundationPickTest, TheFirstFoundationPickThisSessionOpensRectangle) {
+	EXPECT_EQ(drawing->lastFoundationTool(), world_sim::FoundationTool::Rectangle);
+	drawing->pickFoundationTool(drawing->lastFoundationTool());
+	EXPECT_TRUE(drawing->isRectangleTool());
+	EXPECT_EQ(drawing->status().foundationTool, world_sim::FoundationTool::Rectangle);
+}
+
+TEST_F(DrawingFoundationPickTest, AfterPickingFreeformTheFoundationEntryOpensFreeform) {
+	drawing->pickFoundationTool(drawing->lastFoundationTool());
+	drawing->pickFoundationTool(world_sim::FoundationTool::Freeform);
+	EXPECT_EQ(drawing->status().foundationTool, world_sim::FoundationTool::Freeform);
+	drawing->deactivate();
+	drawing->activateWallTool();
+	drawing->deactivate();
+	EXPECT_EQ(drawing->lastFoundationTool(), world_sim::FoundationTool::Freeform);
+	drawing->pickFoundationTool(drawing->lastFoundationTool());
+	EXPECT_EQ(drawing->status().foundationTool, world_sim::FoundationTool::Freeform);
+	EXPECT_FALSE(drawing->isRectangleTool());
+}
+
+// Switching tools drops the shape in progress, as the prototype's tool buttons do; picking the
+// tool already on keeps it.
+TEST_F(DrawingFoundationPickTest, ThePickerSwitchesToolsAndDropsTheShapeInProgress) {
+	drawing->pickFoundationTool(world_sim::FoundationTool::Rectangle);
+	const glm::vec2 corner = seen.screenOf({2.0F, 1.0F});
+	drawing->handlePress(corner.x, corner.y, kViewportWidth, kViewportHeight, false);
+	drawing->handleClick(corner.x, corner.y, kViewportWidth, kViewportHeight, false);
+	ASSERT_EQ(drawing->status().pointCount, 1);
+	drawing->pickFoundationTool(world_sim::FoundationTool::Rectangle);
+	EXPECT_EQ(drawing->status().pointCount, 1) << "the same tool keeps its corner";
+
+	drawing->pickFoundationTool(world_sim::FoundationTool::Freeform);
+	EXPECT_EQ(drawing->status().foundationTool, world_sim::FoundationTool::Freeform);
+	EXPECT_EQ(drawing->status().pointCount, 0);
+	place({{0.0F, 0.0F}, {6.0F, 0.0F}});
+	ASSERT_EQ(drawing->status().pointCount, 2) << lastToast();
+	drawing->pickFoundationTool(world_sim::FoundationTool::Freeform);
+	EXPECT_EQ(drawing->status().pointCount, 2);
+
+	drawing->pickFoundationTool(world_sim::FoundationTool::Rectangle);
+	EXPECT_TRUE(drawing->isRectangleTool());
+	EXPECT_EQ(drawing->status().pointCount, 0);
 	EXPECT_TRUE(drawing->world().foundations().empty());
 }
 

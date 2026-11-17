@@ -87,15 +87,22 @@ namespace world_sim {
 		Opening,
 	};
 
+	/// The two foundation tools, between which the Build menu's Foundation entry and the
+	/// config strip's tool picker choose.
+	enum class FoundationTool {
+		Rectangle,
+		Freeform,
+	};
+
 	/// Live status of the in-progress shape, surfaced to the config strip.
 	struct DrawingStatus {
-		bool		active = false;			// tool is on (config strip visible)
-		bool		wall = false;			// true while the wall tool is active (config strip shows presets)
-		bool		opening = false;		// true while the opening tool is active (config strip shows the opening type)
-		bool		foundationEdit = false; // true while Add / Subtract is active (material locked to the target's)
-		bool		rectangle = false;		// true while the Rectangle tool is active
-		std::string toolLabel;				// the foundation tools' name: "Rectangle foundation", "Add to foundation", ...
-		int			pointCount = 0;
+		bool						  active = false;		  // tool is on (config strip visible)
+		bool						  wall = false;			  // true while the wall tool is active (config strip shows presets)
+		bool						  opening = false;		  // true while the opening tool is active (config strip shows the opening type)
+		bool						  foundationEdit = false; // true while Add / Subtract is active (material locked to the target's)
+		std::optional<FoundationTool> foundationTool;		  // the Rectangle or Freeform tool, while one is active (the strip's tool picker)
+		std::string					  editLabel;			  // "Add to foundation" / "Subtract from foundation" (foundationEdit only)
+		int							  pointCount = 0;
 		float		areaSquareMeters = 0.0F;	  // the shape's area: the closed polygon (0 until >= 3 pts), the pending rectangle, an edit's outline
 		float		areaDeltaSquareMeters = 0.0F; // edit: resulting area minus the target's current area
 		bool		valid = true;				  // current cursor placement / shape validity
@@ -151,11 +158,22 @@ namespace world_sim {
 
 		// --- Tool lifecycle ---
 
-		/// Activate the Freeform foundation tool (from the Build menu). Enters Drawing.
+		/// Activate the Freeform foundation tool, the polygon point by point. Enters Drawing
+		/// and makes it the session's foundation pick.
 		void activateFoundationTool();
 
-		/// Activate the Rectangle foundation tool (from the Build menu). Enters Drawing.
+		/// Activate the Rectangle foundation tool. Enters Drawing and makes it the session's
+		/// foundation pick.
 		void activateRectangleTool();
+
+		/// The foundation tool last activated this session, Rectangle before either was:
+		/// what the Build menu's Foundation entry opens.
+		[[nodiscard]] FoundationTool lastFoundationTool() const { return lastFoundationTool_; }
+
+		/// The Build menu's Foundation entry and the config strip's tool picker: activate
+		/// `tool`, dropping any other tool's shape in progress. With `tool` already on, nothing
+		/// changes and its shape in progress stays.
+		void pickFoundationTool(FoundationTool tool);
 
 		/// Activate the wall tool (from the Build menu). Enters Drawing in wall mode.
 		void activateWallTool();
@@ -422,13 +440,17 @@ namespace world_sim {
 		/// Enter Drawing with `tool` and nothing placed, and show the config strip.
 		void startTool(ToolKind tool);
 
+		/// The Rectangle or Freeform tool while one is on.
+		[[nodiscard]] std::optional<FoundationTool> activeFoundationTool() const;
+
 		// --- Rectangle tool ---
 
 		/// The corner snap (snapRectangleCorner) and, with a first corner placed, the rectangle the
 		/// two corners span, judged as the closing click would judge it.
 		void handleRectangleMove(Foundation::Vec2 world, bool freeform);
 
-		/// The pending rectangle's fill and outline, the first corner, and the size label. INTERIM.
+		/// The pending rectangle's fill and outline, the first corner, the size label, and the
+		/// grid cross or the existing corner's or edge's ring; no snapped-point marker. INTERIM.
 		void renderRectanglePreview(int viewportWidth, int viewportHeight, float uiScale);
 
 		/// Forget the pending rectangle and any press (the first corner is points_, cleared by the caller).
@@ -671,6 +693,12 @@ namespace world_sim {
 		std::vector<Foundation::Vec2>  rectangleCorners_;
 		std::optional<Foundation::Vec2> rectanglePress_;
 		bool							rectanglePressPlacedCorner_ = false;
+		// What placed the snapped corner (lastSnap_ holds the point), and the memo's copy.
+		construction::RectangleSnapKind rectangleSnapKind_ = construction::RectangleSnapKind::None;
+		construction::RectangleSnapKind snapMemoRectangleSnapKind_ = construction::RectangleSnapKind::None;
+
+		// The foundation tool the Build menu's Foundation entry opens: the last one activated.
+		FoundationTool lastFoundationTool_ = FoundationTool::Rectangle;
 
 		// True when the opening tool's snapped opening is not all on seen ground.
 		bool openingUnexplored_ = false;

@@ -308,6 +308,7 @@ namespace world_sim {
 		cursorOffBuildableGround = false;
 		wallHost_ = ec::kInvalidFoundation;
 		clearRectangle();
+		rectangleSnapKind_ = ec::RectangleSnapKind::None;
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(true);
 		}
@@ -315,12 +316,42 @@ namespace world_sim {
 
 	void DrawingSystem::activateFoundationTool() {
 		startTool(ToolKind::Foundation);
+		lastFoundationTool_ = FoundationTool::Freeform;
 		LOG_INFO(Game, "Freeform foundation tool activated (material=%s)", activeMaterial_.c_str());
 	}
 
 	void DrawingSystem::activateRectangleTool() {
 		startTool(ToolKind::FoundationRectangle);
+		lastFoundationTool_ = FoundationTool::Rectangle;
 		LOG_INFO(Game, "Rectangle foundation tool activated (material=%s)", activeMaterial_.c_str());
+	}
+
+	void DrawingSystem::pickFoundationTool(FoundationTool tool) {
+		if (activeFoundationTool() == tool) {
+			return;
+		}
+		if (tool == FoundationTool::Rectangle) {
+			activateRectangleTool();
+		} else {
+			activateFoundationTool();
+		}
+	}
+
+	std::optional<FoundationTool> DrawingSystem::activeFoundationTool() const {
+		if (!isActive()) {
+			return std::nullopt;
+		}
+		switch (activeTool_) {
+			case ToolKind::FoundationRectangle:
+				return FoundationTool::Rectangle;
+			case ToolKind::Foundation:
+				return FoundationTool::Freeform;
+			case ToolKind::FoundationEdit:
+			case ToolKind::Wall:
+			case ToolKind::Opening:
+				return std::nullopt;
+		}
+		return std::nullopt;
 	}
 
 	void DrawingSystem::activateWallTool() {
@@ -650,9 +681,11 @@ namespace world_sim {
 		if (!reuseSnapMemo(key)) {
 			const ec::RectangleCornerSnap corner = ec::snapRectangleCorner(constructionWorld_, registry.snapping(), key.aids, world, freeform);
 			snapMemoResult_ = ec::SnapResult{.point = corner.point};
+			snapMemoRectangleSnapKind_ = corner.kind;
 			snapMemoValidation_ = {};
 		}
 		lastSnap_ = snapMemoResult_;
+		rectangleSnapKind_ = snapMemoRectangleSnapKind_;
 		cursor_ = lastSnap_.point;
 		lastValidation_ = snapMemoValidation_;
 		cursorOffBuildableGround = !pointOnBuildableGround(cursor_);
@@ -738,6 +771,7 @@ namespace world_sim {
 			.snappedPointInvalid = verdict.markerInvalid,
 			.invalidColor = invalidColor_,
 			.keepClear = keepClear,
+			.rectangleSnap = activeTool_ == ToolKind::FoundationRectangle ? rectangleSnapKind_ : construction::RectangleSnapKind::None,
 		};
 	}
 
@@ -1897,7 +1931,7 @@ namespace world_sim {
 			// Material is locked to the target's (Add requires the same material).
 			// Readouts track the outline the edit would produce once there is a polygon.
 			s.foundationEdit = true;
-			s.toolLabel = editMode_ == ec::FoundationEditMode::Add ? "Add to foundation" : "Subtract from foundation";
+			s.editLabel = editMode_ == ec::FoundationEditMode::Add ? "Add to foundation" : "Subtract from foundation";
 			if (const auto* target = constructionWorld_.get(editTarget_)) {
 				s.material = target->material;
 			}
@@ -1912,8 +1946,7 @@ namespace world_sim {
 
 		// The foundation tools: the area tracks the shape whatever its validity, once there is
 		// a closed one (three placed points, or a rectangle's two corners).
-		s.rectangle = activeTool_ == ToolKind::FoundationRectangle;
-		s.toolLabel = s.rectangle ? "Rectangle foundation" : "Freeform foundation";
+		s.foundationTool = activeFoundationTool();
 		if (closingShape().size() >= kMinClosingShapePoints) {
 			s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(toRingMm(closingShape()))));
 		}
@@ -2173,7 +2206,8 @@ namespace world_sim {
 			}
 		}
 
-		// The size label and the corner marker, above the rectangle (keys from 904).
+		// The size label, and the grid cross or the existing corner's or edge's ring, above the
+		// rectangle (keys from 904).
 		drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight, uiScale, measureFeedbackText));
 
 		if (!points_.empty()) {

@@ -306,16 +306,20 @@ namespace {
 						if (m_placementSystem) {
 							m_placementSystem->cancel();
 						}
-						if (structure == "rectangle-foundation") {
-							m_drawingSystem->activateRectangleTool();
-						} else if (structure == "freeform-foundation") {
-							m_drawingSystem->activateFoundationTool();
+						if (structure == "foundation") {
+							m_drawingSystem->pickFoundationTool(m_drawingSystem->lastFoundationTool());
 						} else if (structure == "wall") {
 							m_drawingSystem->activateWallTool();
 						} else if (structure == "door") {
 							m_drawingSystem->activateOpeningTool("Door");
 						} else if (structure == "window") {
 							m_drawingSystem->activateOpeningTool("Window");
+						}
+					},
+				.onFoundationToolSelected =
+					[this](world_sim::FoundationTool tool) {
+						if (m_drawingSystem) {
+							m_drawingSystem->pickFoundationTool(tool);
 						}
 					},
 				.onConstructionMaterialSelected =

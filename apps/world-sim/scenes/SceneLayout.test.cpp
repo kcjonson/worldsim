@@ -320,6 +320,21 @@ namespace world_sim::testing {
 		EXPECT_NE(shown("toast_stack"), nullptr);
 	}
 
+	// The foundation tools' strip carries the tool picker beside the material cards.
+	TEST_F(SceneLayout, TheHudHoldsTogetherWithEachFoundationToolOn) {
+		HudScene& scene = openHud([](HudScene& opened) { opened.drawing().activateRectangleTool(); });
+		frame();
+		ASSERT_NE(shown("config_strip_tools"), nullptr);
+		ASSERT_NE(shown("config_strip_tool_Rectangle"), nullptr);
+		EXPECT_EQ(lintEverywhere(), "");
+		EXPECT_EQ(unexpectedScrollbars({}), "");
+		scene.drawing().activateFoundationTool();
+		frame();
+		ASSERT_NE(shown("config_strip_tools"), nullptr);
+		EXPECT_EQ(lintEverywhere(), "");
+		EXPECT_EQ(unexpectedScrollbars({}), "");
+	}
+
 	TEST_F(SceneLayout, TheHudHoldsTogetherWithTheWallToolOn) {
 		openHud([](HudScene& opened) { opened.drawing().activateWallTool(); });
 		frame();

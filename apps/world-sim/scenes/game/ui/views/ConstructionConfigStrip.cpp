@@ -5,6 +5,7 @@
 #include <ui/Context.h>
 #include <ui/components/Control.h>
 
+#include <array>
 #include <format>
 
 namespace world_sim {
@@ -32,6 +33,17 @@ namespace world_sim {
 		std::string thicknessText(float meters) {
 			return std::format("{:.2f} m", meters);
 		}
+
+		// The tool picker's cards, in the order they show.
+		struct FoundationToolCard {
+			FoundationTool tool;
+			const char*	   name;
+			const char*	   detail;
+		};
+		constexpr std::array<FoundationToolCard, 2> kFoundationToolCards{{
+			{FoundationTool::Rectangle, "Rectangle", "Two corners"},
+			{FoundationTool::Freeform, "Freeform", "Point by point"},
+		}};
 
 		// A material or thickness card: its name over a detail line. Picked, it takes the active wash and
 		// a thick accent border. A press picks it.
@@ -109,7 +121,8 @@ namespace world_sim {
 	} // namespace
 
 	ConstructionConfigStrip::ConstructionConfigStrip(const Args& args)
-		: onMaterialSelected(args.onMaterialSelected),
+		: onFoundationToolSelected(args.onFoundationToolSelected),
+		  onMaterialSelected(args.onMaterialSelected),
 		  onThicknessSelected(args.onThicknessSelected) {}
 
 	void ConstructionConfigStrip::onMount() {
@@ -134,6 +147,24 @@ namespace world_sim {
 		setVisible(status.active);
 
 		const ui::Layout cards{.display = ui::Display::Flex, .gap = kCardSpacing, .alignItems = ui::AlignItems::Center};
+		toolPicker =
+			addChild<ui::Component>({.id = "config_strip_tools", .margin = {0.0F, kCardSpacing * 2.0F, 0.0F, 0.0F}, .layout = cards});
+		toolCards.clear();
+		for (const FoundationToolCard& card : kFoundationToolCards) {
+			toolCards.push_back(toolPicker.addChild<StripCard>({
+				.id = std::string("config_strip_tool_") + card.name,
+				.size = {ui::kAuto, kCardHeight},
+				.minSize = {kPresetCardWidth, ui::kAuto},
+				.name = card.name,
+				.detail = card.detail,
+				.picked = status.foundationTool == card.tool,
+				.onPick = [this, tool = card.tool](const std::string&) {
+					if (onFoundationToolSelected) {
+						onFoundationToolSelected(tool);
+					}
+				},
+			}));
+		}
 		materialCards = addChild<ui::Component>({.id = "config_strip_materials", .layout = cards});
 		presetCards =
 			addChild<ui::Component>({.id = "config_strip_presets", .margin = {0.0F, 0.0F, 0.0F, kCardSpacing * 2.0F}, .layout = cards});
@@ -172,7 +203,8 @@ namespace world_sim {
 
 	void ConstructionConfigStrip::setStatus(const DrawingStatus& value) {
 		const bool picksChanged = status.material != value.material || status.thicknessPreset != value.thicknessPreset ||
-								  status.wall != value.wall || status.foundationEdit != value.foundationEdit;
+								  status.wall != value.wall || status.foundationEdit != value.foundationEdit ||
+								  status.foundationTool != value.foundationTool;
 		status = value;
 		setVisible(status.active);
 		if (picksChanged) {
@@ -182,10 +214,17 @@ namespace world_sim {
 	}
 
 	void ConstructionConfigStrip::showCards() {
+		ui::Component* toolRow = toolPicker.get();
 		ui::Component* materialRow = materialCards.get();
 		ui::Component* presetRow = presetCards.get();
-		if (materialRow == nullptr || presetRow == nullptr) {
+		if (toolRow == nullptr || materialRow == nullptr || presetRow == nullptr) {
 			return;
+		}
+		toolRow->setVisible(status.foundationTool.has_value());
+		for (std::size_t index = 0; index < toolCards.size(); ++index) {
+			if (auto* card = static_cast<StripCard*>(toolCards[index].get())) {
+				card->show(kFoundationToolCards[index].detail, status.foundationTool == kFoundationToolCards[index].tool);
+			}
 		}
 		// Add / Subtract keeps the edited foundation's material, so there's nothing to pick.
 		materialRow->setVisible(!status.foundationEdit && !materials.empty());
@@ -237,27 +276,26 @@ namespace world_sim {
 		}
 		const ui::Theme& theme = getContext()->getTheme();
 
-		// The foundation tools and edits name themselves on the top line, which needs the wider column.
-		const bool	named = !status.toolLabel.empty();
-		const float offset = named ? kEditMessageOffset : kMessageOffset;
+		const float offset = status.foundationEdit ? kEditMessageOffset : kMessageOffset;
 		if (readouts.get()->getSizeSpec().width.resolve(0.0F) != offset - kCardSpacing) {
 			readouts.get()->setSize({offset - kCardSpacing, ui::kAuto});
 			ui::Style topStyle = top->getDeclaredStyle();
-			topStyle.color = theme.get(named ? tokens::color::textBright : tokens::color::text);
+			topStyle.color = theme.get(status.foundationEdit ? tokens::color::textBright : tokens::color::text);
 			top->setStyle(topStyle);
 		}
 
-		if (named) {
-			// The tool and its material, then the shape's area; for an edit, the outline it would leave
-			// and how much it changes the foundation by.
-			top->setText(status.toolLabel + " (" + status.material + ")");
-			if (status.foundationEdit) {
-				bottom->setText(std::format("Area: {:.1f} m\xC2\xB2 ({:+.1f})", status.areaSquareMeters, status.areaDeltaSquareMeters));
-			} else if (status.rectangle) {
-				bottom->setText(std::format("Area: {:.1f} m\xC2\xB2", status.areaSquareMeters));
-			} else {
-				bottom->setText(std::format("Area: {:.1f} m\xC2\xB2  Points: {}", status.areaSquareMeters, status.pointCount));
-			}
+		const bool rectangle = status.foundationTool == FoundationTool::Rectangle;
+		// A rectangle has no points to count, and its size reads at the cursor.
+		bottom->setVisible(!rectangle);
+		if (status.foundationEdit) {
+			// The mode and its locked material, then the outline the edit would leave and how much it
+			// changes the foundation by.
+			top->setText(status.editLabel + " (" + status.material + ")");
+			bottom->setText(std::format("Area: {:.1f} m\xC2\xB2 ({:+.1f})", status.areaSquareMeters, status.areaDeltaSquareMeters));
+		} else if (status.foundationTool) {
+			// The tool picker names the tool.
+			top->setText(std::format("Area: {:.1f} m\xC2\xB2", status.areaSquareMeters));
+			bottom->setText(std::format("Points: {}", status.pointCount));
 		} else if (status.opening) {
 			// The type comes from the Build menu; the validity line carries the snap and placement feedback.
 			top->setText("Opening: " + status.openingType);
@@ -290,7 +328,7 @@ namespace world_sim {
 				color = tokens::color::statusCrit;
 				text = status.message;
 			}
-		} else if (status.rectangle) {
+		} else if (rectangle) {
 			text = status.pointCount == 0 ? "Click or drag from a corner" : "Click the opposite corner";
 			if (!status.valid && !status.message.empty()) {
 				color = tokens::color::statusCrit;

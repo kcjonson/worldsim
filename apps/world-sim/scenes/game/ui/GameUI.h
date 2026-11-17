@@ -81,7 +81,8 @@ namespace world_sim {
 			std::function<void()> onDemolishWallSegment;	///< Called when Demolish button clicked for a wall segment
 			std::function<void()> onDemolishOpening;		///< Called when Demolish button clicked for an opening
 			ResourceQueryCallback queryResources;			///< Query remaining resource count for harvestable entities
-			std::function<void(const std::string&)> onStructureSelected; ///< Called when a structure tool (e.g. "rectangle-foundation") is chosen
+			std::function<void(const std::string&)> onStructureSelected; ///< Called when a structure tool (e.g. "foundation") is chosen
+			std::function<void(FoundationTool)>		onFoundationToolSelected; ///< Called when the config strip's tool picker picks a foundation tool
 			std::function<void(const std::string&)> onConstructionMaterialSelected; ///< Called when a config-strip material card is clicked
 			std::function<void(const std::string&)> onConstructionThicknessSelected; ///< Called when a wall thickness preset is clicked
 			std::function<void()>					onRoomsToggle; ///< Called when the GameplayBar Rooms toggle is clicked

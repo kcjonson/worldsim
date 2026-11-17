@@ -23,7 +23,7 @@ namespace world_sim {
 			UI_COMMON_ARGS
 			std::function<void(const std::string&)> onProductionSelected;
 			std::function<void(const std::string&)> onFurnitureSelected;
-			std::function<void(const std::string&)> onStructureSelected; // a structure tool, such as "rectangle-foundation"
+			std::function<void(const std::string&)> onStructureSelected; // a structure tool, such as "foundation"
 			std::function<void()>					onRoomsToggle;		 // the rooms overlay, as the R hotkey flips it
 		};
 
