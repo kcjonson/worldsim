@@ -95,7 +95,7 @@ TEST(NeedsConfig, MistakesNameTheFileTheNeedAndTheAttributeAndLoadNothingFromThe
 	EXPECT_TRUE(mentions(errorsFor(R"(<Needs><Need seek="50" urgent="25" critical="10"/></Needs>)"), "a <Need> has no name"));
 	EXPECT_TRUE(mentions(
 		errorsFor(R"(<Needs><Need name="Hunger" seek="50" urgent="25" critical="10" mild="60"/></Needs>)"),
-		"<Need name=\"Hunger\"> unknown attribute 'mild'"
+		"<Need name=\"Hunger\">: unknown attribute 'mild'"
 	));
 	EXPECT_TRUE(
 		mentions(errorsFor(R"(<Needs><Need name="Hunger" seek="50" critical="10"/></Needs>)"), "<Need name=\"Hunger\"> urgent is missing")

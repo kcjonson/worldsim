@@ -40,6 +40,7 @@ add_library(sim
     ecs/components/Mood.cpp
     ecs/components/Needs.cpp
     ecs/components/Thoughts.cpp
+    ecs/components/Traits.cpp
     ecs/components/ToiletLocationFinder.cpp
     conditions/ColonistTerms.cpp
     conditions/ConditionParser.cpp

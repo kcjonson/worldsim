@@ -18,12 +18,13 @@ namespace ecs {
 		}
 	} // namespace
 
-	std::vector<std::string> loadConditionVocabulary(conditions::ConditionVocabulary& vocabulary, const std::filesystem::path& folder) {
+	std::vector<std::string>
+	loadConditionVocabulary(conditions::ConditionVocabulary& vocabulary, const std::filesystem::path& folder, const assets::TraitRegistry& traits) {
 		const assets::ConditionConfigLoad config = assets::loadConditionConfig(folder);
 		if (!config.errors.empty()) {
 			return config.errors;
 		}
-		std::vector<std::string> errors = conditions::buildSimVocabulary(vocabulary, config.config);
+		std::vector<std::string> errors = conditions::buildSimVocabulary(vocabulary, config.config, traits);
 		if (errors.empty()) {
 			LOG_INFO(Engine, "Loaded condition vocabulary from %s: %zu terms", folder.generic_string().c_str(), vocabulary.termCount());
 		}
@@ -63,16 +64,26 @@ namespace ecs {
 
 	ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot) {
 		ColonistRulesLoad load;
+		load.rules.traits = std::make_unique<assets::TraitRegistry>();
 		load.rules.vocabulary = std::make_unique<conditions::ConditionVocabulary>();
 		load.rules.thoughtTypes = std::make_unique<ThoughtTypes>(*load.rules.vocabulary);
 		load.rules.needLevels = std::make_unique<NeedLevels>();
 
-		addErrors(load.errors, "conditions", loadConditionVocabulary(*load.rules.vocabulary, configRoot / "conditions"));
+		addErrors(load.errors, "traits", load.rules.traits->loadFromFolder(configRoot / "colonists" / "traits"));
+		if (!load.errors.empty()) {
+			return load;
+		}
+		const assets::TraitRegistry& traits = *load.rules.traits;
+		LOG_INFO(Engine, "Loaded %zu traits from %s", traits.traits().size(), (configRoot / "colonists" / "traits").generic_string().c_str());
+		addErrors(load.errors, "needs", loadNeedLevels(*load.rules.needLevels, configRoot / "colonists" / "needs"));
+		if (!load.errors.empty()) {
+			return load;
+		}
+		addErrors(load.errors, "conditions", loadConditionVocabulary(*load.rules.vocabulary, configRoot / "conditions", traits));
 		if (!load.errors.empty()) {
 			return load;
 		}
 		addErrors(load.errors, "thoughts", loadThoughtTypes(*load.rules.thoughtTypes, configRoot / "thoughts"));
-		addErrors(load.errors, "colonists", loadNeedLevels(*load.rules.needLevels, configRoot / "colonists" / "needs"));
 		return load;
 	}
 

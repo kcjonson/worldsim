@@ -4,7 +4,7 @@
 
 #include "ActionSystem.h"
 
-#include "../ShippedNeeds.test.h"
+#include "../ShippedConfig.test.h"
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/Inventory.h"
@@ -97,7 +97,7 @@ namespace ecs::test {
 		EntityID createBuilder(float constructionSkill, glm::vec2 position = {0.0F, 0.0F}) {
 			auto entity = world->createEntity();
 			world->addComponent<Position>(entity, Position{position});
-			world->addComponent<NeedsComponent>(entity, shippedNeeds());
+			world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 			world->addComponent<Memory>(entity, Memory{});
 			world->addComponent<Inventory>(entity, Inventory::createForColonist());
 			world->addComponent<Task>(entity, Task{});

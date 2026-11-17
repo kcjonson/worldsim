@@ -20,7 +20,7 @@
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/NavPath.h"
-#include "../ShippedNeeds.test.h"
+#include "../ShippedConfig.test.h"
 #include "../components/Needs.h"
 #include "../components/SourceReachMemo.h"
 #include "../components/Task.h"
@@ -504,7 +504,7 @@ TEST_F(NavigationSystemTest, DoorBesideCornerRoutesThroughDoorNotFlanks) {
 	settle(sys);
 
 	for (const glm::vec2 from : {glm::vec2{0.8F, -1.0F}, glm::vec2{0.15F, -1.0F}, glm::vec2{3.0F, -1.0F}}) {
-		SCOPED_TRACE(testing::Message() << "from (" << from.x << ", " << from.y << ")");
+		SCOPED_TRACE(::testing::Message() << "from (" << from.x << ", " << from.y << ")");
 		const std::optional<std::vector<glm::vec2>> route = routeBetween(sys, from, {0.6F, 1.5F});
 		ASSERT_TRUE(route.has_value());
 		std::vector<glm::vec2> walked{from};
@@ -2277,7 +2277,7 @@ namespace {
 		world.addComponent<Position>(c, Position{at});
 		world.addComponent<Velocity>(c, Velocity{{0.0F, 0.0F}});
 		world.addComponent<MovementTarget>(c, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world.addComponent<NeedsComponent>(c, shippedNeeds());
+		world.addComponent<NeedsComponent>(c, ecs::testing::shippedNeeds());
 		world.addComponent<Memory>(c, Memory{});
 		world.addComponent<Inventory>(c, Inventory::createForColonist());
 		world.addComponent<Task>(c, Task{});

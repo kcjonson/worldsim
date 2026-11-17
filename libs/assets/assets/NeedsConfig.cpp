@@ -1,6 +1,7 @@
 #include "assets/NeedsConfig.h"
 #include "assets/ConfigFiles.h"
 #include "assets/ConfigNumber.h"
+#include "assets/ConfigXml.h"
 
 #include <utils/Log.h>
 
@@ -56,12 +57,7 @@ namespace assets {
 				if (!named.insert(need.need).second) {
 					fail(what + " is given twice");
 				}
-				for (const pugi::xml_attribute attribute : node.attributes()) {
-					const std::string name = attribute.name();
-					if (name != "name" && needThresholdIndex(name) == kNeedThresholdNames.size()) {
-						fail(what + " unknown attribute '" + name + "'");
-					}
-				}
+				onlyAttributes(node, {"name", "seek", "urgent", "critical"}, what, source, errors);
 				bool numbersRead = true;
 				for (std::size_t index = 0; index < kNeedThresholdNames.size(); ++index) {
 					const char* name = kNeedThresholdNames[index];

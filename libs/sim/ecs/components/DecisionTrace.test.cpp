@@ -122,6 +122,7 @@ namespace ecs::test {
 		hunger.distanceToTarget = 4.0F;
 		EXPECT_EQ(describeOption(world, hunger), "Hunger at 40% (reserved by Alice)");
 		hunger.needValue = 5.0F;
+		hunger.critical = true;
 		EXPECT_EQ(describeOption(world, hunger), "Hunger at 5% (critical) (reserved by Alice)") << "how urgent, and who holds it";
 
 		EvaluatedOption gather = hunger;
@@ -148,6 +149,7 @@ namespace ecs::test {
 		hunger.targetPosition.reset();
 		EXPECT_EQ(describeOption(world, hunger), "Hunger at 40% (no known source)");
 		hunger.needValue = 5.0F;
+		hunger.critical = true;
 		hunger.status = OptionStatus::Selected;
 		hunger.reason = "from inventory";
 		EXPECT_EQ(describeOption(world, hunger), "Hunger at 5% (critical) (from inventory)");

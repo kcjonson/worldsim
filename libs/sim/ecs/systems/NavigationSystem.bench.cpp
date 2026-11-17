@@ -39,7 +39,7 @@
 #include "../components/Memory.h"
 #include "../components/MemoryQueries.h"
 #include "../components/Movement.h"
-#include "../ShippedNeeds.test.h"
+#include "../ShippedConfig.test.h"
 #include "../components/Needs.h"
 #include "../components/SourceReachMemo.h"
 #include "../components/Task.h"
@@ -816,7 +816,7 @@ namespace {
 				rig.world.addComponent<ecs::Position>(e, ecs::Position{at});
 				rig.world.addComponent<ecs::Velocity>(e, ecs::Velocity{{0.0F, 0.0F}});
 				rig.world.addComponent<ecs::MovementTarget>(e, ecs::MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-				ecs::NeedsComponent needs = ecs::shippedNeeds();
+				ecs::NeedsComponent needs = ecs::testing::shippedNeeds();
 				for (const ecs::NeedType need : {ecs::NeedType::Hunger, ecs::NeedType::Thirst, ecs::NeedType::Energy, ecs::NeedType::Bladder,
 												 ecs::NeedType::Digestion}) {
 					needs.get(need).value = 100.0F;
@@ -933,7 +933,7 @@ namespace {
 			rig.world.addComponent<ecs::Position>(e, ecs::Position{kColony});
 			rig.world.addComponent<ecs::Velocity>(e, ecs::Velocity{{0.0F, 0.0F}});
 			rig.world.addComponent<ecs::MovementTarget>(e, ecs::MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-			ecs::NeedsComponent needs = ecs::shippedNeeds();
+			ecs::NeedsComponent needs = ecs::testing::shippedNeeds();
 			for (const ecs::NeedType need : {ecs::NeedType::Hunger, ecs::NeedType::Energy, ecs::NeedType::Bladder, ecs::NeedType::Digestion}) {
 				needs.get(need).value = 100.0F;
 			}

@@ -39,6 +39,7 @@ namespace ecs {
 		// Need state at evaluation time
 		float needValue = 100.0F; // Current value (0-100%)
 		float threshold = 50.0F;  // Seek threshold for this need
+		bool  critical = false;   // Below this need's critical threshold
 
 		// Fulfillment status
 		OptionStatus status = OptionStatus::Satisfied;

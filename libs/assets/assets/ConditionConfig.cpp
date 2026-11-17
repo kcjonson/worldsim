@@ -1,13 +1,13 @@
 #include "assets/ConditionConfig.h"
 #include "assets/ConfigFiles.h"
 #include "assets/ConfigNumber.h"
+#include "assets/ConfigXml.h"
 
 #include <utils/Log.h>
 
 #include <pugixml.hpp>
 
 #include <algorithm>
-#include <sstream>
 #include <string_view>
 #include <utility>
 
@@ -17,6 +17,7 @@ namespace assets {
 
 		constexpr const char* kKindSet = "kind";
 		constexpr const char* kTaskSet = "task";
+		constexpr const char* kTraitSet = "trait";
 
 		std::optional<ConditionValueType> valueTypeFromName(std::string_view name) {
 			if (name == "Truth") {
@@ -39,16 +40,6 @@ namespace assets {
 				   std::ranges::equal(first.parameters, second.parameters, [](const ConditionParameterDef& left, const ConditionParameterDef& right) {
 					   return left.type == right.type && left.symbols == right.symbols;
 				   });
-		}
-
-		std::vector<std::string> splitNames(const char* text) {
-			std::vector<std::string> names;
-			std::istringstream		 stream(text);
-			std::string				 name;
-			while (stream >> name) {
-				names.push_back(std::move(name));
-			}
-			return names;
 		}
 
 		bool contains(const std::vector<std::string>& names, std::string_view name) {
@@ -95,6 +86,7 @@ namespace assets {
 
 			void check() {
 				ConditionConfig& config = result.config;
+				config.symbolSets.try_emplace(kTraitSet);
 				for (const ConditionKindDef& kind : config.kinds) {
 					config.symbolSets[kKindSet].names.push_back(kind.name);
 				}
@@ -198,6 +190,10 @@ namespace assets {
 				}
 				if (set == kKindSet) {
 					fail(source, "kinds are declared with <Kind>, not <Symbols name=\"kind\">");
+					return;
+				}
+				if (set == kTraitSet) {
+					fail(source, "trait names come from the trait definitions (colonists/traits), not <Symbols name=\"trait\">");
 					return;
 				}
 				ConditionSymbolSetDef& declared = result.config.symbolSets[set];

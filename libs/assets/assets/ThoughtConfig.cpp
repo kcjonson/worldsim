@@ -2,6 +2,7 @@
 #include "assets/AssetDefinition.h"
 #include "assets/ConfigFiles.h"
 #include "assets/ConfigNumber.h"
+#include "assets/ConfigXml.h"
 
 #include <utils/Log.h>
 
@@ -10,7 +11,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <initializer_list>
 #include <set>
 #include <string_view>
 #include <utility>
@@ -100,23 +100,6 @@ namespace assets {
 		  private:
 			void fail(const std::string& source, const std::string& message) { result.errors.push_back(source + ": " + message); }
 
-			/// False, with each one reported, when the element has an attribute it does not take.
-			bool onlyAttributes(
-				pugi::xml_node							node,
-				std::initializer_list<std::string_view> allowed,
-				const std::string&						what,
-				const std::string&						source
-			) {
-				bool clean = true;
-				for (const pugi::xml_attribute attribute : node.attributes()) {
-					if (std::ranges::find(allowed, std::string_view(attribute.name())) == allowed.end()) {
-						fail(source, what + ": unknown attribute '" + attribute.name() + "'");
-						clean = false;
-					}
-				}
-				return clean;
-			}
-
 			/// Adds `declared`, or replaces the one with its id from an earlier file; one with its id from this
 			/// file is an error.
 			template <typename Def>
@@ -148,7 +131,7 @@ namespace assets {
 					fail(source, "a <feeling> has no id");
 					return;
 				}
-				if (!onlyAttributes(node, {"id"}, "feeling '" + feeling.id + "'", source)) {
+				if (!onlyAttributes(node, {"id"}, "feeling '" + feeling.id + "'", source, result.errors)) {
 					return;
 				}
 				declare(result.config.feelings, std::move(feeling), "feeling", inFile);
@@ -219,7 +202,7 @@ namespace assets {
 				switch (*trigger) {
 					case ThoughtTrigger::NeedFalls:
 					case ThoughtTrigger::NeedRises: {
-						valid = onlyAttributes(node, {"trigger", "need", "threshold"}, what, source);
+						valid = onlyAttributes(node, {"trigger", "need", "threshold"}, what, source, result.errors);
 						parsed.need = node.attribute("need").as_string();
 						if (parsed.need.empty()) {
 							fail(source, what + " has no need=\"<need>\"");
@@ -235,7 +218,7 @@ namespace assets {
 					}
 					case ThoughtTrigger::ActionStarts:
 					case ThoughtTrigger::ActionFinishes: {
-						valid = onlyAttributes(node, {"trigger", "action", "on", "first"}, what, source);
+						valid = onlyAttributes(node, {"trigger", "action", "on", "first"}, what, source, result.errors);
 						parsed.action = node.attribute("action").as_string();
 						if (parsed.action.empty()) {
 							fail(source, what + " has no action=\"<action>\"");
@@ -257,7 +240,7 @@ namespace assets {
 						break;
 					}
 					case ThoughtTrigger::FirstSight:
-						valid = onlyAttributes(node, {"trigger", "of"}, what, source);
+						valid = onlyAttributes(node, {"trigger", "of"}, what, source, result.errors);
 						parsed.thing = node.attribute("of").as_string();
 						if (!knownThing(parsed.thing, false)) {
 							fail(source, what + ": of=\"" + parsed.thing + "\" is not a capability");
@@ -265,10 +248,10 @@ namespace assets {
 						}
 						break;
 					case ThoughtTrigger::RecipeLearned:
-						valid = onlyAttributes(node, {"trigger"}, what, source);
+						valid = onlyAttributes(node, {"trigger"}, what, source, result.errors);
 						break;
 					case ThoughtTrigger::Idle: {
-						valid = onlyAttributes(node, {"trigger", "everyMinutes", "chance"}, what, source);
+						valid = onlyAttributes(node, {"trigger", "everyMinutes", "chance"}, what, source, result.errors);
 						const std::optional<float> everyMinutes = parseConfigNumber(node.attribute("everyMinutes").as_string());
 						if (!everyMinutes.has_value() || *everyMinutes <= 0.0F) {
 							fail(
@@ -299,7 +282,7 @@ namespace assets {
 					return;
 				}
 				const std::string what = "thought '" + type.id + "'";
-				bool			  valid = onlyAttributes(node, {"id", "importance", "stacks"}, what, source);
+				bool			  valid = onlyAttributes(node, {"id", "importance", "stacks"}, what, source, result.errors);
 
 				const std::optional<ThoughtImportance> importance = importanceFromName(node.attribute("importance").as_string());
 				if (!importance.has_value()) {
@@ -326,7 +309,7 @@ namespace assets {
 					const std::string_view element = child.name();
 					if (element == "feeling") {
 						const std::string feelingWhat = what + " feeling " + std::to_string(type.feelings.size() + 1);
-						valid = onlyAttributes(child, {"is", "when", "mood", "hours", "while"}, feelingWhat, source) && valid;
+						valid = onlyAttributes(child, {"is", "when", "mood", "hours", "while"}, feelingWhat, source, result.errors) && valid;
 						ThoughtFeelingDef feeling{
 							.feeling = child.attribute("is").as_string(), .when = child.attribute("when").as_string()
 						};
@@ -338,7 +321,7 @@ namespace assets {
 						type.feelings.push_back(std::move(feeling));
 					} else if (element == "line") {
 						const std::string lineWhat = what + " line " + std::to_string(type.lines.size() + 1);
-						valid = onlyAttributes(child, {"feeling", "when"}, lineWhat, source) && valid;
+						valid = onlyAttributes(child, {"feeling", "when"}, lineWhat, source, result.errors) && valid;
 						ThoughtLineDef line{
 							.text = child.text().as_string(),
 							.feeling = child.attribute("feeling").as_string(),
@@ -357,7 +340,7 @@ namespace assets {
 							valid = false;
 						}
 					} else if (element == "ends") {
-						valid = onlyAttributes(child, {"thought"}, what + " <ends>", source) && valid;
+						valid = onlyAttributes(child, {"thought"}, what + " <ends>", source, result.errors) && valid;
 						if (!type.ends.empty()) {
 							fail(source, what + " has more than one <ends>");
 							valid = false;
@@ -378,7 +361,7 @@ namespace assets {
 			}
 
 			void loadTuning(pugi::xml_node node, const std::string& source) {
-				if (!onlyAttributes(node, {"maxLineLength", "maxSubjectNameLength", "whileCheckMinutes"}, "<tuning>", source)) {
+				if (!onlyAttributes(node, {"maxLineLength", "maxSubjectNameLength", "whileCheckMinutes"}, "<tuning>", source, result.errors)) {
 					return;
 				}
 				const std::optional<std::size_t> maxLineLength = characterCountOf(node.attribute("maxLineLength"));

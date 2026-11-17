@@ -11,6 +11,7 @@ add_library(assets
     assets/GroundTransition.cpp
     assets/TessellatedPaths.cpp
     assets/TreeDefSchema.cpp
+    assets/TraitRegistry.cpp
     assets/TreeTraits.cpp
     assets/ConstructionRegistry.cpp
     assets/AssetBatcher.cpp

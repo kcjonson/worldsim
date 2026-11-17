@@ -31,6 +31,8 @@ namespace world_sim {
 	class ColonistDetailsDialog {
 	  public:
 		struct Args {
+			// What the Bio tab names a colonist's trait ids by: the traits the world's colonists were rolled from.
+			const assets::TraitRegistry& traits;
 			// The player closed it: its close button, cancel or the footer's Close. Not called by close().
 			std::function<void()> onClose;
 		};

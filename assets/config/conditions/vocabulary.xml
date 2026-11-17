@@ -11,6 +11,8 @@
   </Term>                         names come from.
   <Symbols name [open]>names</Symbols>  a set of names; files that name the same set add to it. An
                                   open="true" set takes any name; one nothing answers reads Unknown.
+                                  "kind" and "trait" are not declared here: <Kind> fills "kind",
+                                  and the trait files (colonists/traits) fill "trait".
   <TaskGroup name>tasks</TaskGroup>  a name current_task() takes for several task types.
   <Night start end/>              the hours is_night is true.
 
@@ -23,7 +25,6 @@
   <Symbols name="task"/>
 
   <!-- Open until their own definitions fill them. -->
-  <Symbols name="trait" open="true"/>
   <Symbols name="event" open="true"/>
   <Symbols name="behavior" open="true"/>
   <Symbols name="mood_cause" open="true"/>

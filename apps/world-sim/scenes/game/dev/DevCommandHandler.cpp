@@ -44,6 +44,7 @@
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/StructureHealth.h>
+#include <ecs/components/Traits.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
 #include <ecs/systems/AIDecisionSystem.h>
@@ -1238,7 +1239,13 @@ namespace world_sim {
 			out << (first ? "" : ",");
 			first = false;
 			out << "{\"id\":" << static_cast<unsigned long long>(entity) << ",\"name\":\"" << jsonEscape(colonist.name) << "\""
-				<< ",\"x\":" << pos.value.x << ",\"y\":" << pos.value.y << ",\"needs\":{";
+				<< ",\"x\":" << pos.value.x << ",\"y\":" << pos.value.y << ",\"traits\":[";
+			if (const auto* traits = m_ctx.world->getComponent<ecs::Traits>(entity)) {
+				for (size_t i = 0; i < traits->ids.size(); ++i) {
+					out << (i > 0 ? "," : "") << "\"" << jsonEscape(traits->ids[i]) << "\"";
+				}
+			}
+			out << "],\"needs\":{";
 			for (size_t i = 0; i < ecs::kNeedLabels.size(); ++i) {
 				out << (i > 0 ? "," : "") << "\"" << ecs::kNeedLabels[i] << "\":" << needs.get(static_cast<ecs::NeedType>(i)).value;
 			}

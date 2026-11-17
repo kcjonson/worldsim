@@ -10,7 +10,7 @@
 
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
-#include "../ShippedNeeds.test.h"
+#include "../ShippedConfig.test.h"
 #include "../World.h"
 #include "../WorldSource.h"
 #include "../components/Action.h"
@@ -199,7 +199,7 @@ namespace ecs::test {
 				world->addComponent<Position>(entity, Position{position});
 				world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 				world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-				world->addComponent<NeedsComponent>(entity, shippedNeeds());
+				world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 				world->addComponent<Inventory>(entity, Inventory::createForColonist());
 				world->addComponent<Task>(entity, Task{});
 				world->addComponent<Action>(entity, Action{});

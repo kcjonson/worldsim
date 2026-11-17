@@ -378,7 +378,7 @@ folder `assets/config/colonists/needs/`, loaded with the other colonist rules
 `<Need>` by name, and `ecs::NeedLevels` checks that every need is given. There is no default in code.
 A colonist's `NeedsComponent` is constructed from the loaded levels and carries each need's thresholds,
 which the AI and the thought sources both read, so one edit moves both. The tests and benches build
-theirs from the shipped folder through one helper (`libs/sim/ecs/ShippedNeeds.test.h`).
+theirs from the shipped folder through one helper (`libs/sim/ecs/ShippedConfig.test.h`).
 
 ```xml
 <Needs>

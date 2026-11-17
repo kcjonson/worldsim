@@ -1,6 +1,6 @@
 #include "ThoughtSourceSystem.h"
 
-#include "../ShippedNeeds.test.h"
+#include "../ShippedConfig.test.h"
 #include "../ThoughtTesting.test.h"
 #include "../World.h"
 #include "../components/Appearance.h"
@@ -105,7 +105,7 @@ namespace ecs::test {
 				const EntityID added = world.createEntity();
 				world.addComponent<Colonist>(added, Colonist{.name = name});
 				world.addComponent<Position>(added, Position{{0.0F, 0.0F}});
-				world.addComponent<NeedsComponent>(added, shippedNeeds());
+				world.addComponent<NeedsComponent>(added, ecs::testing::shippedNeeds());
 				world.addComponent<Memory>(added, Memory{});
 				world.addComponent<Knowledge>(added, Knowledge{});
 				world.addComponent<Inventory>(added, Inventory::createForColonist());

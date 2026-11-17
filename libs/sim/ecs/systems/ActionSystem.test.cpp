@@ -17,7 +17,7 @@
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/Movement.h"
-#include "../ShippedNeeds.test.h"
+#include "../ShippedConfig.test.h"
 #include "../components/Needs.h"
 #include "../components/Packaged.h"
 #include "../components/ResourceStack.h"
@@ -230,7 +230,7 @@ class ActionSystemTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{position});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world->addComponent<NeedsComponent>(entity, shippedNeeds());
+		world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 		world->addComponent<Memory>(entity, Memory{});
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Task>(entity, Task{});
@@ -573,7 +573,7 @@ class ActionSystemGoalTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{position});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world->addComponent<NeedsComponent>(entity, shippedNeeds());
+		world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 		world->addComponent<Memory>(entity, Memory{});
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Task>(entity, Task{});
@@ -1603,7 +1603,7 @@ class FellingTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{position});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world->addComponent<NeedsComponent>(entity, shippedNeeds());
+		world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 		world->addComponent<Memory>(entity, Memory{});
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Task>(entity, Task{});
@@ -1991,7 +1991,7 @@ class LoosePileHaulTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{position});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world->addComponent<NeedsComponent>(entity, shippedNeeds());
+		world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 		world->addComponent<Memory>(entity, Memory{});
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Task>(entity, Task{});
@@ -2300,7 +2300,7 @@ class HandMaterialActionTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{position});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world->addComponent<NeedsComponent>(entity, shippedNeeds());
+		world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 		world->addComponent<Memory>(entity, Memory{});
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Task>(entity, Task{});
@@ -2772,7 +2772,7 @@ class ActionSystemTimeTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{position});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world->addComponent<NeedsComponent>(entity, shippedNeeds());
+		world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 		world->addComponent<Memory>(entity, Memory{});
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Task>(entity, Task{});
@@ -2933,7 +2933,7 @@ class ActionSystemHarvestTimeTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{treePos});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world->addComponent<NeedsComponent>(entity, shippedNeeds());
+		world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Action>(entity, Action{});
 
@@ -3043,7 +3043,7 @@ class ActionSystemHarvestLocateTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{standPos});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world->addComponent<NeedsComponent>(entity, shippedNeeds());
+		world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Action>(entity, Action{});
 
@@ -3235,7 +3235,7 @@ class ClearHarvestTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{bushPos + glm::vec2{1.0F, 0.0F}});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world->addComponent<NeedsComponent>(entity, shippedNeeds());
+		world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Action>(entity, Action{});
 
