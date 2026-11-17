@@ -126,6 +126,48 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 11. When Bob finishes (the L-shaped foundation leaves `?what=construction`), the row leaves the Tasks panel and the Known work list.
 
+12. Open the Build menu: it has one Foundation entry. Pick it: the Rectangle tool opens, the first pick this session. The config strip shows the tool picker with Rectangle picked, the material cards, and "Click or drag from a corner".
+
+13. Move the pointer over open ground near Bob: the white snapped-point marker (a dot with four ticks) sits on the whole-metre grid point nearest the pointer.
+
+14. Click once: a dot marks the first corner, and the strip reads "Click the opposite corner" in its usual colour, not red.
+
+15. Move the pointer about 4 m right and 3 m up: a faint fill and outline follow it, labelled `4 m x 3 m` up and to the right of the marker.
+
+16. Click: `?what=construction` lists another foundation with `"area":12`.
+
+17. Press on open ground, drag from the grid point under the pointer to the grid point 5 m right and 4 m up (the size label reads `5 m x 4 m`), and release: `?what=construction` lists another foundation with `"area":20`, and the strip reads "Click or drag from a corner".
+
+18. Move the pointer onto a corner of a new blueprint: an amber ring sits round the marker's dot. Along one of its edges, the ring is cyan.
+
+19. Click open ground once, then move the pointer until the rectangle covers one of the new blueprints: the fill, the outline, and the marker's dot turn red, and the strip names the reason.
+
+20. Click there: nothing is added, a toast says why, and the first corner keeps waiting.
+
+21. Move the pointer to make a 1 m by 1 m rectangle: it previews red with a reason.
+
+22. Press Esc: the first corner goes, and the tool stays on.
+
+23. Press Esc again: the tool closes.
+
+24. Pick Foundation again (Rectangle opens), press on open ground, drag onto the gameplay bar, and release there: nothing is added, and the first corner keeps waiting.
+
+25. Click open ground about 3 m right and 3 m up of that corner: `?what=construction` lists another foundation with `"area":9`.
+
+26. Pick Freeform in the strip's picker and click a first point: the strip shows no too-close refusal while the pointer has not moved since the click.
+
+27. Click three more points round a square, then the first point again: it closes into another foundation.
+
+28. Press Esc to leave the tool and pick Foundation in the Build menu: Freeform opens, picked in the strip.
+
+29. Pick Rectangle in the picker: the Rectangle tool is on again.
+
+30. Pick Freeform, click two points, and move the pointer out of the game's window (a person can also bring another window to the front; a `--background` launch ignores focus, so only leaving the window counts there): the rubber band, the marker, and its label go, the two points and their edge stay, and the strip shows no red reason.
+
+31. Move the pointer back over the world: the rubber band follows it again from the second point, and a click places a third point.
+
+32. Pick Rectangle, click a first corner, and move the pointer out of the window: the pending fill, outline, and size label go and the corner's dot stays; come back and click the opposite corner: the rectangle is added.
+
 ---
 
 ## Expected state

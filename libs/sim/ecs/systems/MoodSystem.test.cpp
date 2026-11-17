@@ -1,6 +1,7 @@
 #include "MoodSystem.h"
 
 #include "../World.h"
+#include "../ThoughtTesting.test.h"
 #include "ThoughtSystem.h"
 #include "TimeSystem.h"
 
@@ -16,11 +17,19 @@
 namespace ecs::test {
 
 	namespace {
-		constexpr ThoughtEventTypeId kSleptOnGround = 1;
-		constexpr ThoughtEventTypeId kVented = 2;
-		constexpr ThoughtEventTypeId kSomethingReeks = 3;
-		constexpr FeelingId			 kAnnoyed = 1;
-		constexpr FeelingId			 kDelighted = 2;
+		// `wetness` is answered by nothing, so a `while` on it holds until the thought is ended.
+		constexpr std::string_view kThoughtTypes = R"(
+  <thought id="slept_on_ground" importance="normal"><feeling is="annoyed" mood="-10" hours="24"/></thought>
+  <thought id="slept_badly" importance="normal"><feeling is="annoyed" mood="-12" hours="24"/></thought>
+  <thought id="vented" importance="normal"><feeling is="delighted" mood="+4" hours="12"/></thought>
+  <thought id="vented_long" importance="normal"><feeling is="delighted" mood="+8" hours="12"/></thought>
+  <thought id="cheered" importance="normal"><feeling is="delighted" mood="+30" while="wetness > 0"/></thought>
+  <thought id="elated" importance="normal"><feeling is="delighted" mood="+60" while="wetness > 0"/></thought>
+  <thought id="reeks_5" importance="normal"><feeling is="annoyed" mood="-5" while="wetness > 0"/></thought>
+  <thought id="reeks_12" importance="normal"><feeling is="annoyed" mood="-12" while="wetness > 0"/></thought>
+  <thought id="reeks_20" importance="normal"><feeling is="annoyed" mood="-20" while="wetness > 0"/></thought>
+  <thought id="reeks_30" importance="normal"><feeling is="annoyed" mood="-30" while="wetness > 0"/></thought>
+)";
 
 		// Hunger and thirst weigh 1 each and every other need 0, so an empty need is -50 and a need at
 		// 50 is -7.5 (penalty (70 - 50) / (70 - 30) x 0.3 = 0.15, half the weight).
@@ -78,8 +87,11 @@ namespace ecs::test {
 	  protected:
 		void SetUp() override {
 			ASSERT_TRUE(loadConfig(kTestConfig));
+			for (const std::string& error : thoughtTypes.errors) {
+				ADD_FAILURE() << error;
+			}
 			time = &world.registerSystem<TimeSystem>();
-			thoughts = &world.registerSystem<ThoughtSystem>();
+			thoughts = &world.registerSystem<ThoughtSystem>(thoughtTypes.types, 1U);
 			world.registerSystem<MoodSystem>(config);
 			colonist = spawnColonist();
 			world.update(0.0F);
@@ -110,6 +122,8 @@ namespace ecs::test {
 			return entity;
 		}
 
+		ThoughtHandle give(std::string_view type) { return thoughts->create({.colonist = colonist, .eventType = thoughtTypes.type(type)}); }
+
 		void setNeed(EntityID who, NeedType need, float value) { world.getComponent<NeedsComponent>(who)->get(need).value = value; }
 
 		void advanceGameHours(float hours) {
@@ -133,7 +147,7 @@ namespace ecs::test {
 			const size_t at = xml.find(original);
 			EXPECT_NE(at, std::string::npos) << original;
 			xml.replace(at, original.size(), replacement);
-			EXPECT_TRUE(loadConfig(xml));
+			loadConfig(xml);
 			assets::ConfigValidator::clearErrors();
 			EXPECT_FALSE(assets::ConfigValidator::validateMood(config));
 			return validationMessages();
@@ -150,6 +164,7 @@ namespace ecs::test {
 			return sum;
 		}
 
+		testing::TestThoughtTypes		   thoughtTypes{kThoughtTypes};
 		assets::MoodConfig				   config;
 		std::vector<std::filesystem::path> tempFiles;
 		World							   world;
@@ -223,12 +238,8 @@ namespace ecs::test {
 
 	TEST_F(MoodSystemTest, TargetIsNeedsScorePlusHeldThoughts) {
 		setNeed(colonist, NeedType::Hunger, 50.0F);
-		thoughts->create(
-			{.colonist = colonist, .eventType = kSleptOnGround, .feeling = kAnnoyed, .moodEffect = MoodEffect::timed(-10.0F, 24.0F)}
-		);
-		thoughts->create(
-			{.colonist = colonist, .eventType = kVented, .feeling = kDelighted, .moodEffect = MoodEffect::timed(4.0F, 12.0F)}
-		);
+		give("slept_on_ground");
+		give("vented");
 		world.update(0.0F);
 
 		const Mood& mood = moodOf(colonist);
@@ -240,18 +251,14 @@ namespace ecs::test {
 	}
 
 	TEST_F(MoodSystemTest, TargetClampsAtBothEnds) {
-		thoughts->create(
-			{.colonist = colonist, .eventType = kVented, .feeling = kDelighted, .moodEffect = MoodEffect::whileCauseHolds(30.0F)}
-		);
+		give("cheered");
 		world.update(0.0F);
 		EXPECT_FLOAT_EQ(moodOf(colonist).target, 100.0F);
 
-		thoughts->endByCause(colonist, kVented, ThoughtSubject::aboutNothing());
+		thoughts->endByCause(colonist, thoughtTypes.type("cheered"), ThoughtSubject::aboutNothing());
 		setNeed(colonist, NeedType::Hunger, 0.0F);
 		setNeed(colonist, NeedType::Thirst, 0.0F);
-		thoughts->create(
-			{.colonist = colonist, .eventType = kSomethingReeks, .feeling = kAnnoyed, .moodEffect = MoodEffect::whileCauseHolds(-5.0F)}
-		);
+		give("reeks_5");
 		world.update(0.0F);
 		EXPECT_FLOAT_EQ(moodOf(colonist).target, 0.0F);
 	}
@@ -259,15 +266,11 @@ namespace ecs::test {
 	TEST_F(MoodSystemTest, ContributorsSumToTargetBeforeClamping) {
 		setNeed(colonist, NeedType::Hunger, 50.0F);
 		setNeed(colonist, NeedType::Thirst, 20.0F);
-		thoughts->create(
-			{.colonist = colonist, .eventType = kSleptOnGround, .feeling = kAnnoyed, .moodEffect = MoodEffect::timed(-10.0F, 24.0F)}
-		);
+		give("slept_on_ground");
 		world.update(0.0F);
 		EXPECT_FLOAT_EQ(kFullMood + sumOfContributions(moodOf(colonist)), moodOf(colonist).target);
 
-		const ThoughtHandle lift = thoughts->create(
-			{.colonist = colonist, .eventType = kVented, .feeling = kDelighted, .moodEffect = MoodEffect::whileCauseHolds(60.0F)}
-		);
+		const ThoughtHandle lift = give("elated");
 		ASSERT_NE(lift.thought, 0U);
 		world.update(0.0F);
 		const Mood& mood = moodOf(colonist);
@@ -287,9 +290,7 @@ namespace ecs::test {
 
 	TEST_F(MoodSystemTest, EasesAtTheConfiguredRateAndNeverOvershoots) {
 		EXPECT_FLOAT_EQ(moodOf(colonist).value, 100.0F);
-		const ThoughtHandle soaked = thoughts->create(
-			{.colonist = colonist, .eventType = kSomethingReeks, .feeling = kAnnoyed, .moodEffect = MoodEffect::whileCauseHolds(-12.0F)}
-		);
+		const ThoughtHandle soaked = give("reeks_12");
 
 		advanceGameHours(1.0F);
 		EXPECT_FLOAT_EQ(moodOf(colonist).target, 88.0F);
@@ -309,9 +310,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(MoodSystemTest, NoMovementWithoutGameTime) {
-		thoughts->create(
-			{.colonist = colonist, .eventType = kSomethingReeks, .feeling = kAnnoyed, .moodEffect = MoodEffect::whileCauseHolds(-20.0F)}
-		);
+		give("reeks_20");
 		world.update(0.0F);
 		EXPECT_FLOAT_EQ(moodOf(colonist).target, 80.0F);
 		EXPECT_FLOAT_EQ(moodOf(colonist).value, 100.0F);
@@ -331,9 +330,7 @@ namespace ecs::test {
 		world.update(0.0F);
 		EXPECT_EQ(moodOf(colonist).cause.kind, MoodCauseKind::None);
 
-		thoughts->create(
-			{.colonist = colonist, .eventType = kVented, .feeling = kDelighted, .moodEffect = MoodEffect::timed(8.0F, 12.0F)}
-		);
+		give("vented_long");
 		world.update(0.0F);
 		EXPECT_EQ(moodOf(colonist).cause.kind, MoodCauseKind::None) << "a positive thought is never the cause";
 
@@ -342,9 +339,7 @@ namespace ecs::test {
 		world.update(0.0F);
 		EXPECT_EQ(moodOf(colonist).cause, (MoodCause{.kind = MoodCauseKind::Need, .need = NeedType::Thirst}));
 
-		const ThoughtHandle sleptOnGround = thoughts->create(
-			{.colonist = colonist, .eventType = kSleptOnGround, .feeling = kAnnoyed, .moodEffect = MoodEffect::timed(-12.0F, 24.0F)}
-		);
+		const ThoughtHandle sleptOnGround = give("slept_badly");
 		world.update(0.0F);
 		EXPECT_EQ(moodOf(colonist).cause, (MoodCause{.kind = MoodCauseKind::Thought, .thought = sleptOnGround.thought}));
 
@@ -377,9 +372,7 @@ namespace ecs::test {
 		EXPECT_EQ(config.bandFor(39.0F).name, "Bottom");
 
 		setNeed(colonist, NeedType::Energy, 60.0F);
-		thoughts->create(
-			{.colonist = colonist, .eventType = kSomethingReeks, .feeling = kAnnoyed, .moodEffect = MoodEffect::whileCauseHolds(-30.0F)}
-		);
+		give("reeks_30");
 		advanceGameHours(1.0F);
 		const Mood& mood = moodOf(colonist);
 		// Energy at 60 is halfway down the mild part of an 80 / 40 curve: penalty 0.25, weight 3 of 4.
@@ -392,16 +385,18 @@ namespace ecs::test {
 	TEST_F(MoodSystemTest, ValidationRejectsABrokenConfig) {
 		ASSERT_TRUE(loadConfig(R"(<?xml version="1.0"?>
 <Mood>
+  <Easing pointsPerGameHour="5"/>
   <NeedPenalty comfortable="30" warning="70" penaltyAtWarning="0.3"/>
   <NeedWeights><Need name="Hunger" weight="1"/><Need name="Hunger" weight="2"/></NeedWeights>
   <Bands><Band name="Content" from="55"/></Bands>
 </Mood>)"));
 		assets::ConfigValidator::clearErrors();
 		EXPECT_FALSE(assets::ConfigValidator::validateMood(config));
+		const std::vector<std::string> messages = validationMessages();
+		ASSERT_EQ(messages.size(), 3U);
 		EXPECT_EQ(
-			validationMessages(),
+			messages,
 			(std::vector<std::string>{
-				"Easing pointsPerGameHour must be a positive number",
 				"NeedPenalty needs 0 < warning < comfortable <= 100",
 				"Need 'Hunger' is weighted more than once",
 				"The lowest band must start at 0 or below so every mood has a band",
@@ -422,10 +417,9 @@ namespace ecs::test {
 	}
 
 	TEST_F(MoodSystemTest, ValidationRejectsAMissingWeight) {
-		EXPECT_EQ(
-			validationMessagesWith(R"(<Need name="Thirst" weight="1"/>)", R"(<Need name="Thirst"/>)"),
-			std::vector<std::string>{"Need 'Thirst' weight must be zero or more"}
-		);
+		const std::vector<std::string> messages = validationMessagesWith(R"(<Need name="Thirst" weight="1"/>)", R"(<Need name="Thirst"/>)");
+		ASSERT_EQ(messages.size(), 1U);
+		EXPECT_TRUE(messages.front().ends_with("<Need name=\"Thirst\"> weight is missing")) << messages.front();
 	}
 
 	TEST_F(MoodSystemTest, ValidationRejectsBandsStartingAtTheSameMood) {

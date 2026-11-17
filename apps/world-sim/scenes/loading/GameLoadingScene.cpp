@@ -21,6 +21,7 @@
 #include <assets/placement/AsyncChunkProcessor.h>
 #include <assets/placement/CanopyCover.h>
 #include <assets/placement/PlacementExecutor.h>
+#include <ecs/ColonistRules.h>
 #include <ecs/GoalTaskRegistry.h>
 #include <ecs/components/Mood.h>
 #include <graphics/Color.h>
@@ -332,6 +333,9 @@ namespace {
 				const std::vector<std::string> moodErrors = ecs::moodConfigErrors(assets::MoodConfig::Get());
 				configErrors.insert(configErrors.end(), moodErrors.begin(), moodErrors.end());
 			}
+			ecs::ColonistRulesLoad colonistRules = ecs::loadColonistRules("assets/config");
+			configErrors.insert(configErrors.end(), colonistRules.errors.begin(), colonistRules.errors.end());
+			worldState->colonistRules = std::move(colonistRules.rules);
 			if (!configErrors.empty()) {
 				for (const auto& error : configErrors) {
 					LOG_ERROR(Game, "%s", error.c_str());

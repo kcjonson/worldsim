@@ -33,21 +33,6 @@ namespace conditions {
 		);
 		static_assert(assets::kTaskTypeNames.size() == static_cast<std::size_t>(ecs::TaskType::Wander), "a name for every TaskType");
 
-		/// An engine name as conditions write it: "FulfillNeed" and "Work Ethic" are fulfill_need and work_ethic.
-		std::string conditionName(std::string_view engineName) {
-			std::string name;
-			for (const char character : engineName) {
-				const bool upper = std::isupper(static_cast<unsigned char>(character)) != 0;
-				if ((character == ' ' || upper) && !name.empty() && name.back() != '_') {
-					name += '_';
-				}
-				if (character != ' ') {
-					name += static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
-				}
-			}
-			return name;
-		}
-
 		/// The engine's names for `term`'s first parameter, added to its symbol set and bound to their values.
 		/// Names the set holds that the engine lacks (a mod's) stay unbound and are reported.
 		template <typename Value>
@@ -216,6 +201,20 @@ namespace conditions {
 		}
 
 	} // namespace
+
+	std::string conditionName(std::string_view engineName) {
+		std::string name;
+		for (const char character : engineName) {
+			const bool upper = std::isupper(static_cast<unsigned char>(character)) != 0;
+			if ((character == ' ' || upper) && !name.empty() && name.back() != '_') {
+				name += '_';
+			}
+			if (character != ' ') {
+				name += static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+			}
+		}
+		return name;
+	}
 
 	void provideColonistTerms(
 		ConditionVocabulary&		   vocabulary,

@@ -1,5 +1,7 @@
 #include "Traits.h"
 
+#include <utils/Log.h>
+
 #include <algorithm>
 
 namespace ecs {
@@ -21,6 +23,9 @@ namespace ecs {
 			std::erase_if(candidates, [&](const assets::TraitDef* candidate) {
 				return candidate->id == chosen || registry.exclusive(candidate->id, chosen);
 			});
+		}
+		if (static_cast<int>(traits.ids.size()) < wanted) {
+			LOG_WARNING(Game, "Rolled %zu traits where %d were wanted: the exclusions left too few to draw", traits.ids.size(), wanted);
 		}
 		return traits;
 	}

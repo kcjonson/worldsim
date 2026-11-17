@@ -27,13 +27,14 @@ namespace assets {
 
 	class TraitRegistry {
 	  public:
-		/// The game's traits, filled by loadWorkConfig.
+		/// The game's traits, filled by ecs::loadColonistRules.
 		static TraitRegistry& Get();
 
 		/// Replace everything with the .xml files under `folder`: its own files first, then its subfolders'
 		/// files, each in path order. A later file replaces a trait of the same id (logged at info level,
-		/// naming both files) and may replace <Count>; exclusions accumulate. Returns every problem found,
-		/// each naming its file; an empty list means the set loaded clean.
+		/// naming both files) and may replace <Count>; exclusions accumulate, so a trait in several groups is
+		/// excluded from all of their members. Returns every problem found, each naming its file; any problem
+		/// leaves the registry empty, and an empty list means the set loaded clean.
 		[[nodiscard]] std::vector<std::string> loadFromFolder(const std::filesystem::path& folder);
 
 		void clear();

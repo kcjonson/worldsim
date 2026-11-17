@@ -3,6 +3,7 @@
 // and DecisionTrace generation for task queue display.
 
 #include "AIDecisionSystem.h"
+#include "ShippedPriorityConfig.test.h"
 #include "ActionSystem.h"
 #include "MovementSystem.h"
 #include "NavigationSystem.h"
@@ -105,12 +106,9 @@ namespace ecs::test {
 			// can't leak into another.
 			GoalTaskRegistry::Get().clear();
 
-			// PriorityConfig is a singleton too. These tests rely on its DEFAULT arbitration tiers
-			// (installed in the constructor) because they never load priority-tuning.xml. An earlier
-			// suite that loads a partial XML now (post the loadFromFile-clears-taskTiers fix) leaves
-			// the singleton's tier table empty, so getTaskTier would return the unassigned sentinel
-			// here. Reset to defaults so classifyTier sees the real per-task tiers regardless of order.
-			assets::PriorityConfig::Get().clear();
+			// PriorityConfig is a singleton too: load the shipped tuning so classifyTier sees the real
+			// per-task tiers regardless of what an earlier suite left in it.
+			ASSERT_TRUE(loadShippedPriorityConfig());
 
 			// Initialize AssetRegistry (singleton) - needed for capability lookups
 			auto& registry = assets::AssetRegistry::Get();
@@ -2945,10 +2943,9 @@ namespace ecs::test {
 		void SetUp() override {
 			world = std::make_unique<World>();
 
-			// Reset the PriorityConfig singleton to its default arbitration tiers: task selection here
-			// depends on the per-task tier table, and an earlier suite that loads a partial
-			// priority-tuning.xml now leaves it empty (loadFromFile is authoritative post-fix).
-			assets::PriorityConfig::Get().clear();
+			// Task selection here depends on the per-task tier table, so load the shipped tuning rather
+			// than what an earlier suite left in the PriorityConfig singleton.
+			ASSERT_TRUE(loadShippedPriorityConfig());
 
 			auto& registry = assets::AssetRegistry::Get();
 

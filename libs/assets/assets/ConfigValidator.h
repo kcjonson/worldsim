@@ -11,6 +11,7 @@
 
 namespace assets {
 
+class MemoryConfig;
 class MoodConfig;
 
 /// Validation error information
@@ -57,10 +58,14 @@ class ConfigValidator {
     /// @return true if valid
     static bool validateMood(const MoodConfig& config);
 
+    /// Validate a memory config: a positive recent-sighting window.
+    /// @return true if valid
+    static bool validateMemory(const MemoryConfig& config);
+
     // --- Full Validation ---
 
     /// Validate all registries (call after all configs loaded).
-    /// Includes construction and mood config if they have been loaded.
+    /// Includes construction, mood, and memory config if they have been loaded.
     /// @return true if all valid
     static bool validateAll();
 

@@ -5,9 +5,10 @@
 #include "assets/ActionTypeRegistry.h"
 #include "assets/ConfigValidator.h"
 #include "assets/ConstructionRegistry.h"
+#include "assets/MemoryConfig.h"
+#include "assets/MoodConfig.h"
 #include "assets/PriorityConfig.h"
 #include "assets/TaskChainRegistry.h"
-#include "assets/TraitRegistry.h"
 #include "assets/WorkConfig.h"
 #include "assets/WorkTypeRegistry.h"
 
@@ -312,9 +313,12 @@ TEST_F(WorkConfigTest, PriorityConfig_LoadValidXML) {
     std::string xml = R"(<?xml version="1.0"?>
 <PriorityTuning>
   <Bonuses>
+    <DistanceFactor><maxDistance>60</maxDistance><maxFactor>300</maxFactor></DistanceFactor>
     <InProgress>
       <bonus>40</bonus>
     </InProgress>
+    <TaskAge><bonusPerMinute>1</bonusPerMinute><maxBonus>100</maxBonus></TaskAge>
+    <StoragePriority><weight>300</weight></StoragePriority>
   </Bonuses>
 </PriorityTuning>)";
 
@@ -496,6 +500,12 @@ TEST_F(WorkConfigTest, Integration_FullConfigLoad) {
     <Category name="Farming" tier="3"/>
     <Category name="Hauling" tier="6"/>
   </WorkCategoryOrder>
+  <Bonuses>
+    <DistanceFactor><maxDistance>60</maxDistance><maxFactor>300</maxFactor></DistanceFactor>
+    <InProgress><bonus>50</bonus></InProgress>
+    <TaskAge><bonusPerMinute>1</bonusPerMinute><maxBonus>100</maxBonus></TaskAge>
+    <StoragePriority><weight>300</weight></StoragePriority>
+  </Bonuses>
 </PriorityTuning>)";
     std::string priorityPath = writeTempFile(priorityXml, "_priority.xml");
     ASSERT_TRUE(PriorityConfig::Get().loadFromFile(priorityPath));
@@ -528,9 +538,161 @@ TEST_F(WorkConfigTest, LoadWorkConfig_ShippedConfigLoadsClean) {
     EXPECT_GT(TaskChainRegistry::Get().size(), 0);
     EXPECT_GT(WorkTypeRegistry::Get().workTypeCount(), 0);
     EXPECT_TRUE(ConstructionRegistry::Get().materialsLoaded());
-    EXPECT_TRUE(TraitRegistry::Get().loaded());
+}
+
+namespace {
+    std::string priorityTuningWith(const std::string& maxDistance, const std::string& tier = "5") {
+        return "<PriorityTuning><TaskTiers><Task name=\"Craft\" tier=\"" + tier + "\"/></TaskTiers><Bonuses>" +
+               "<DistanceFactor>" + maxDistance + "<maxFactor>300</maxFactor></DistanceFactor>" +
+               "<InProgress><bonus>50</bonus></InProgress>" +
+               "<TaskAge><bonusPerMinute>1</bonusPerMinute><maxBonus>100</maxBonus></TaskAge>" +
+               "<StoragePriority><weight>300</weight></StoragePriority></Bonuses></PriorityTuning>";
+    }
+
+    std::string moodWith(const std::string& easing) {
+        return "<Mood>" + easing +
+               "<NeedPenalty comfortable=\"70\" warning=\"30\" penaltyAtWarning=\"0.3\"/>"
+               "<NeedWeights><Need name=\"Hunger\" weight=\"1\"/></NeedWeights>"
+               "<Bands><Band name=\"Content\" from=\"0\"/></Bands></Mood>";
+    }
+} // namespace
+
+TEST_F(WorkConfigTest, PriorityConfig_ShippedValuesArePinned) {
+    ASSERT_TRUE(PriorityConfig::Get().loadFromFile((shippedConfigRoot() / "work" / "priority-tuning.xml").string()));
+    const PriorityConfig& config = PriorityConfig::Get();
+    EXPECT_TRUE(config.problems().empty());
+    EXPECT_FLOAT_EQ(config.getDistanceFactorConfig().maxDistance, 60.0F);
+    EXPECT_FLOAT_EQ(config.getDistanceFactorConfig().maxFactor, 300.0F);
+    EXPECT_EQ(config.getInProgressBonus(), 50);
+    EXPECT_EQ(config.getStoragePriorityWeight(), 300);
+    EXPECT_EQ(config.getTaskAgeConfig().bonusPerMinute, 1);
+    EXPECT_EQ(config.getTaskAgeConfig().maxBonus, 100);
+    EXPECT_EQ(config.getTaskTier("FulfillNeed"), 5);
+    EXPECT_EQ(config.getTaskTier("Craft"), 4);
+    EXPECT_EQ(config.getTaskTier("Haul"), 6);
+    EXPECT_EQ(config.getTaskTier("Wander"), 7);
+    EXPECT_EQ(config.getCategoryOrder().size(), 7U);
+    EXPECT_EQ(config.getCategoryOrder().front(), "Emergency");
+}
+
+TEST_F(WorkConfigTest, MoodConfig_ShippedValuesArePinned) {
+    MoodConfig config;
+    ASSERT_TRUE(config.loadFromFile((shippedConfigRoot() / "colonists" / "mood.xml").string()));
+    EXPECT_TRUE(config.problems().empty());
+    EXPECT_FLOAT_EQ(config.pointsPerGameHour(), 5.0F);
+    EXPECT_FLOAT_EQ(config.needPenaltyCurve().comfortable, 70.0F);
+    EXPECT_FLOAT_EQ(config.needPenaltyCurve().warning, 30.0F);
+    EXPECT_FLOAT_EQ(config.needPenaltyCurve().penaltyAtWarning, 0.3F);
+    ASSERT_EQ(config.bands().size(), 4U);
+    EXPECT_FLOAT_EQ(config.bands().front().from, 55.0F);
+}
+
+TEST_F(WorkConfigTest, PriorityConfig_BadNumbersAreErrorsNamingFileElementAndAttribute) {
+    const auto errorsFor = [this](const std::string& xml) {
+        const std::string path = writeTempFile(xml, ".xml");
+        PriorityConfig::Get().clear();
+        EXPECT_FALSE(PriorityConfig::Get().loadFromFile(path));
+        std::vector<std::string> missingTiers;
+        EXPECT_FALSE(PriorityConfig::Get().validateTaskTiers({"Craft"}, missingTiers)) << "a bad file leaves no tier behind";
+        ConfigValidator::clearErrors();
+        EXPECT_FALSE(ConfigValidator::validatePriorityConfig()) << xml;
+        std::string joined;
+        for (const ValidationError& error : ConfigValidator::getErrors()) {
+            joined += error.message + "\n";
+        }
+        EXPECT_NE(joined.find(path), std::string::npos) << joined;
+        return joined;
+    };
+
+    EXPECT_NE(errorsFor(priorityTuningWith("")).find("<DistanceFactor> maxDistance is missing"), std::string::npos);
+    for (const char* text : {"30abc", "abc", "", "nan"}) {
+        const std::string joined = errorsFor(priorityTuningWith(std::string("<maxDistance>") + text + "</maxDistance>"));
+        EXPECT_NE(joined.find(std::string("<DistanceFactor> maxDistance must be a number, got \"") + text + "\""), std::string::npos) << text << ": " << joined;
+    }
+    for (const char* text : {"5x", "x", "", "2.5", "99999999999"}) {
+        const std::string joined = errorsFor(priorityTuningWith("<maxDistance>60</maxDistance>", text));
+        EXPECT_NE(joined.find(std::string("<Task name=\"Craft\"> tier must be a whole number, got \"") + text + "\""), std::string::npos) << text << ": " << joined;
+    }
+}
+
+TEST_F(WorkConfigTest, PriorityConfig_ElementTextIsTrimmedAndALeadingPlusIsRead) {
+    const std::string path = writeTempFile(
+        "<PriorityTuning><Bonuses><DistanceFactor><maxDistance>\n  60\n</maxDistance><maxFactor>+300</maxFactor></DistanceFactor>"
+        "<InProgress><bonus>-32768</bonus></InProgress><TaskAge><bonusPerMinute> 1 </bonusPerMinute><maxBonus>32767</maxBonus></TaskAge>"
+        "<StoragePriority><weight>32767</weight></StoragePriority></Bonuses></PriorityTuning>",
+        ".xml");
+    ASSERT_TRUE(PriorityConfig::Get().loadFromFile(path));
+    const PriorityConfig& config = PriorityConfig::Get();
+    EXPECT_FLOAT_EQ(config.getDistanceFactorConfig().maxDistance, 60.0F);
+    EXPECT_FLOAT_EQ(config.getDistanceFactorConfig().maxFactor, 300.0F);
+    EXPECT_EQ(config.getTaskAgeConfig().bonusPerMinute, 1);
+    EXPECT_EQ(config.getStoragePriorityWeight(), 32767);
+    EXPECT_TRUE(config.problems().empty());
+}
+
+TEST_F(WorkConfigTest, PriorityConfig_NumbersInSixteenBitFieldsAreRangeChecked) {
+    const std::string path = writeTempFile(
+        "<PriorityTuning><Bonuses><DistanceFactor><maxDistance>\n  60\n</maxDistance><maxFactor>+300</maxFactor></DistanceFactor>"
+        "<InProgress><bonus>40000</bonus></InProgress><TaskAge><bonusPerMinute> 1 </bonusPerMinute><maxBonus>-32769</maxBonus></TaskAge>"
+        "<StoragePriority><weight>32767</weight></StoragePriority></Bonuses></PriorityTuning>",
+        ".xml");
+    EXPECT_FALSE(PriorityConfig::Get().loadFromFile(path));
+    const PriorityConfig& config = PriorityConfig::Get();
+    ASSERT_EQ(config.problems().size(), 2U);
+    EXPECT_NE(config.problems()[0].find("<InProgress> bonus must be a whole number from -32768 to 32767, got \"40000\""), std::string::npos)
+        << config.problems()[0];
+    EXPECT_NE(config.problems()[1].find("<TaskAge> maxBonus must be a whole number from -32768 to 32767, got \"-32769\""), std::string::npos)
+        << config.problems()[1];
+}
+
+TEST_F(WorkConfigTest, MoodConfig_BadNumbersAreErrorsNamingFileElementAndAttribute) {
+    const auto errorsFor = [this](const std::string& xml) {
+        const std::string path = writeTempFile(xml, ".xml");
+        MoodConfig config;
+        EXPECT_FALSE(config.loadFromFile(path));
+        ConfigValidator::clearErrors();
+        EXPECT_FALSE(ConfigValidator::validateMood(config)) << xml;
+        std::string joined;
+        for (const ValidationError& error : ConfigValidator::getErrors()) {
+            joined += error.message + "\n";
+        }
+        EXPECT_NE(joined.find(path), std::string::npos) << joined;
+        return joined;
+    };
+
+    EXPECT_NE(errorsFor(moodWith("")).find("<Easing> pointsPerGameHour is missing"), std::string::npos);
+    EXPECT_NE(errorsFor("<Mood><Easing pointsPerGameHour=\"5\"/><NeedPenalty comfortable=\"70\" warning=\"30\" penaltyAtWarning=\"0.3\"/>"
+                        "<NeedWeights><Need name=\"Hunger\" weight=\"6abc\"/></NeedWeights><Bands><Band name=\"Content\" from=\"0\"/></Bands></Mood>")
+                  .find("<Need name=\"Hunger\"> weight must be a number, got \"6abc\""),
+              std::string::npos);
+    EXPECT_NE(errorsFor(moodWith("<Easing/>")).find("<Easing> pointsPerGameHour is missing"), std::string::npos);
+    for (const char* text : {"30abc", "abc", "", "nan"}) {
+        const std::string joined = errorsFor(moodWith(std::string("<Easing pointsPerGameHour=\"") + text + "\"/>"));
+        EXPECT_NE(joined.find(std::string("<Easing> pointsPerGameHour must be a number, got \"") + text + "\""), std::string::npos) << text << ": " << joined;
+    }
 }
 
 TEST_F(WorkConfigTest, LoadWorkConfig_MissingFolderReportsError) {
     EXPECT_FALSE(loadWorkConfig(std::filesystem::temp_directory_path() / "no-such-work-config").empty());
+}
+
+TEST_F(WorkConfigTest, ConfigValidator_MemoryWindowMustBeAPositiveNumber) {
+    for (const char* window : {"30", "0.5"}) {
+        MemoryConfig config;
+        ASSERT_TRUE(config.loadFromFile(writeTempFile(std::string("<Memory><RecentSighting gameMinutes=\"") + window + "\"/></Memory>", ".xml")));
+        ConfigValidator::clearErrors();
+        EXPECT_TRUE(ConfigValidator::validateMemory(config)) << window;
+    }
+
+    const auto refused = [this](const std::string& sighting) {
+        MemoryConfig config;
+        EXPECT_TRUE(config.loadFromFile(writeTempFile("<Memory>" + sighting + "</Memory>", ".xml")));
+        ConfigValidator::clearErrors();
+        return !ConfigValidator::validateMemory(config) && ConfigValidator::getErrorCount() == 1;
+    };
+    EXPECT_TRUE(refused(""));
+    EXPECT_TRUE(refused("<RecentSighting/>"));
+    for (const char* window : {"0", "-5", "abc", "30abc", "", " 30", "nan", "inf"}) {
+        EXPECT_TRUE(refused(std::string("<RecentSighting gameMinutes=\"") + window + "\"/>")) << '"' << window << '"';
+    }
 }

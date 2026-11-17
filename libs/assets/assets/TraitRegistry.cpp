@@ -1,11 +1,13 @@
 #include "assets/TraitRegistry.h"
 
+#include "assets/ConfigNumber.h"
+
 #include <utils/Log.h>
 
 #include <pugixml.hpp>
 
 #include <algorithm>
-#include <charconv>
+#include <initializer_list>
 #include <map>
 #include <optional>
 #include <sstream>
@@ -14,18 +16,6 @@
 namespace assets {
 
 	namespace {
-
-		/// The attribute's whole text as an integer; nothing for a missing attribute, empty text, or text
-		/// that is not entirely an integer.
-		std::optional<int> integerOf(pugi::xml_attribute attribute) {
-			const std::string_view text = attribute.as_string();
-			int					   number = 0;
-			const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), number);
-			if (text.empty() || error != std::errc() || end != text.data() + text.size()) {
-				return std::nullopt;
-			}
-			return number;
-		}
 
 		bool isSnakeCase(std::string_view id) {
 			if (id.empty() || id.front() < 'a' || id.front() > 'z') {
@@ -44,6 +34,33 @@ namespace assets {
 				names.push_back(std::move(name));
 			}
 			return names;
+		}
+
+		bool excludes(const std::vector<std::vector<std::string>>& groups, const std::string& first, const std::string& second) {
+			return std::ranges::any_of(groups, [&](const std::vector<std::string>& group) {
+				return std::ranges::find(group, first) != group.end() && std::ranges::find(group, second) != group.end();
+			});
+		}
+
+		/// Whether `wanted` of `ids`, from `from` on, can be chosen on top of `chosen` with no pair excluded.
+		bool canChoose(
+			const std::vector<std::string>& ids, const std::vector<std::vector<std::string>>& groups, std::vector<std::string>& chosen, std::size_t from,
+			std::size_t wanted
+		) {
+			if (chosen.size() >= wanted) {
+				return true;
+			}
+			for (std::size_t next = from; next < ids.size() && chosen.size() + (ids.size() - next) >= wanted; ++next) {
+				if (std::ranges::any_of(chosen, [&](const std::string& held) { return excludes(groups, held, ids[next]); })) {
+					continue;
+				}
+				chosen.push_back(ids[next]);
+				if (canChoose(ids, groups, chosen, next + 1, wanted)) {
+					return true;
+				}
+				chosen.pop_back();
+			}
+			return false;
 		}
 
 		struct ExclusiveGroup {
@@ -99,6 +116,9 @@ namespace assets {
 					}
 					groups.push_back(group.ids);
 				}
+				for (const TraitDef& trait : traits) {
+					allIds.push_back(trait.id);
+				}
 				if (traits.empty()) {
 					fail("traits", "no file declares a <Trait>");
 				}
@@ -106,11 +126,29 @@ namespace assets {
 					fail("traits", "no file gives <Count> min and max");
 				} else if (static_cast<std::size_t>(count.min) > traits.size()) {
 					fail(*countSource, "<Count> min is " + std::to_string(count.min) + ", more than the " + std::to_string(traits.size()) + " declared traits");
+				} else if (std::vector<std::string> chosen; !canChoose(allIds, groups, chosen, 0, static_cast<std::size_t>(count.min))) {
+					fail(
+						*countSource,
+						"<Count> min is " + std::to_string(count.min) + ", but the <Exclusive> groups leave no way to hold that many of the " +
+							std::to_string(traits.size()) + " declared traits at once"
+					);
 				}
 			}
 
 		  private:
 			void fail(const std::string& source, const std::string& message) { errors.push_back(source + ": " + message); }
+
+			/// False, with each one reported, when the element has an attribute it does not take.
+			bool onlyAttributes(pugi::xml_node node, std::initializer_list<std::string_view> allowed, const std::string& what, const std::string& source) {
+				bool clean = true;
+				for (const pugi::xml_attribute attribute : node.attributes()) {
+					if (std::ranges::find(allowed, std::string_view(attribute.name())) == allowed.end()) {
+						fail(source, what + ": unknown attribute '" + attribute.name() + "'");
+						clean = false;
+					}
+				}
+				return clean;
+			}
 
 			bool isDeclared(const std::string& id) const {
 				return std::ranges::any_of(traits, [&](const TraitDef& trait) { return trait.id == id; });
@@ -127,6 +165,9 @@ namespace assets {
 					return;
 				}
 				const std::string what = "trait '" + trait.id + "'";
+				if (!onlyAttributes(node, {"id", "name", "description"}, what, source)) {
+					return;
+				}
 				if (trait.name.empty()) {
 					fail(source, what + " has no name");
 					return;
@@ -152,33 +193,41 @@ namespace assets {
 			}
 
 			void loadCount(pugi::xml_node node, const std::string& source) {
-				const std::optional<int> min = integerOf(node.attribute("min"));
-				const std::optional<int> max = integerOf(node.attribute("max"));
-				if (!min.has_value() || !max.has_value()) {
-					fail(source, "<Count> needs min and max, whole numbers");
+				if (!onlyAttributes(node, {"min", "max"}, "<Count>", source)) {
 					return;
 				}
-				if (*min < 0 || *min > *max) {
-					fail(source, "<Count> min must be at least 0 and no more than max");
+				ConfigReader reader(source);
+				const int	 min = reader.attributeInteger(node, "Count", "min", 0);
+				const int	 max = reader.attributeInteger(node, "Count", "max", 0);
+				if (std::vector<std::string> problems = reader.takeProblems(); !problems.empty()) {
+					errors.insert(errors.end(), problems.begin(), problems.end());
+					return;
+				}
+				if (min > max) {
+					fail(source, "<Count> min is " + std::to_string(min) + ", more than max " + std::to_string(max));
 					return;
 				}
 				if (countSource.has_value()) {
 					LOG_INFO(Engine, "Trait <Count>: %s replaces the range from %s", source.c_str(), countSource->c_str());
 				}
-				count = {.min = *min, .max = *max};
+				count = {.min = min, .max = max};
 				countSource = source;
 			}
 
 			void loadExclusive(pugi::xml_node node, const std::string& source) {
 				std::vector<std::string> ids = splitNames(node.text().as_string());
+				const std::string		 what = "<Exclusive>" + std::string(node.text().as_string()) + "</Exclusive>";
+				if (!onlyAttributes(node, {}, what, source)) {
+					return;
+				}
 				if (ids.size() < 2) {
-					fail(source, "an <Exclusive> lists at least two trait ids");
+					fail(source, what + ": lists at least two trait ids");
 					return;
 				}
 				std::vector<std::string> sorted = ids;
 				std::ranges::sort(sorted);
 				if (std::ranges::adjacent_find(sorted) != sorted.end()) {
-					fail(source, "an <Exclusive> lists a trait id twice");
+					fail(source, what + ": lists a trait id twice");
 					return;
 				}
 				pending.push_back({.ids = std::move(ids), .source = source});
@@ -188,6 +237,7 @@ namespace assets {
 			TraitCount&							   count;
 			std::vector<std::vector<std::string>>& groups;
 			std::vector<ExclusiveGroup>			   pending;
+			std::vector<std::string>			   allIds;
 			std::map<std::string, std::string>	   traitSources;
 			std::optional<std::string>			   countSource;
 		};
@@ -222,6 +272,9 @@ namespace assets {
 			loader.loadFile(file, std::filesystem::relative(file, folder).generic_string());
 		}
 		loader.check();
+		if (!loader.errors.empty()) {
+			clear();
+		}
 		return std::move(loader.errors);
 	}
 

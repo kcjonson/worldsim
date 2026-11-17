@@ -132,6 +132,15 @@ TEST_F(TraitRegistryTest, ExclusionsFromSeveralFilesAccumulate) {
 	EXPECT_FALSE(registry.exclusive("one", "three"));
 }
 
+TEST_F(TraitRegistryTest, ATraitInSeveralExclusiveGroupsIsExcludedFromAllOfTheirMembers) {
+	write("a.xml", std::string(kCount) + trait("one") + trait("two") + trait("three") + trait("four") + "<Exclusive>one two</Exclusive><Exclusive>two three</Exclusive>");
+	ASSERT_TRUE(registry.loadFromFolder(folder).empty());
+	EXPECT_TRUE(registry.exclusive("two", "one"));
+	EXPECT_TRUE(registry.exclusive("two", "three"));
+	EXPECT_FALSE(registry.exclusive("one", "three"));
+	EXPECT_FALSE(registry.exclusive("four", "two"));
+}
+
 TEST_F(TraitRegistryTest, LoadingAgainReplacesWhatWasThere) {
 	write("a.xml", std::string(kCount) + trait("brave"));
 	ASSERT_TRUE(registry.loadFromFolder(folder).empty());
@@ -164,19 +173,29 @@ TEST_F(TraitRegistryTest, ATraitDeclaredTwiceInOneFileIsAnError) {
 
 TEST_F(TraitRegistryTest, CountMustBeWholeNumbersInOrder) {
 	write("a.xml", trait("brave") + R"(<Count min="1"/>)");
-	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "<Count> needs min and max, whole numbers"));
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "a.xml: <Count> max is missing"));
 
 	write("a.xml", trait("brave") + R"(<Count min="1" max="2.5"/>)");
-	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "<Count> needs min and max, whole numbers"));
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "<Count> max must be a whole number from 0 to 2147483647, got \"2.5\""));
 
 	write("a.xml", trait("brave") + R"(<Count min="1" max="3x"/>)");
-	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "<Count> needs min and max, whole numbers"));
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "got \"3x\""));
 
 	write("a.xml", trait("brave") + R"(<Count min="3" max="1"/>)");
-	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "<Count> min must be at least 0 and no more than max"));
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "<Count> min is 3, more than max 1"));
 
 	write("a.xml", trait("brave") + R"(<Count min="-1" max="1"/>)");
-	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "<Count> min must be at least 0 and no more than max"));
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "<Count> min must be a whole number from 0 to 2147483647, got \"-1\""));
+
+	write("a.xml", trait("brave") + R"(<Count min="+0" max="+1"/>)");
+	EXPECT_TRUE(registry.loadFromFolder(folder).empty()) << "a leading plus is read, as everywhere";
+	EXPECT_EQ(registry.count().max, 1);
+}
+
+TEST_F(TraitRegistryTest, ACountOfZeroIsLegal) {
+	write("a.xml", R"(<Count min="0" max="2"/>)" + trait("brave") + trait("calm"));
+	ASSERT_TRUE(registry.loadFromFolder(folder).empty());
+	EXPECT_EQ(registry.count().min, 0);
 }
 
 TEST_F(TraitRegistryTest, ACountIsRequiredAndCannotAskForMoreTraitsThanExist) {
@@ -185,6 +204,40 @@ TEST_F(TraitRegistryTest, ACountIsRequiredAndCannotAskForMoreTraitsThanExist) {
 
 	write("a.xml", R"(<Count min="2" max="3"/>)" + trait("brave"));
 	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "<Count> min is 2, more than the 1 declared traits"));
+}
+
+TEST_F(TraitRegistryTest, CountMinMustBeReachableUnderTheExclusiveGroups) {
+	write("a.xml", R"(<Count min="2" max="3"/>)" + trait("one") + trait("two") + trait("three") + "<Exclusive>one two three</Exclusive>");
+	const std::vector<std::string> errors = registry.loadFromFolder(folder);
+	EXPECT_TRUE(mentions(errors, "a.xml: <Count> min is 2, but the <Exclusive> groups leave no way to hold that many of the 3 declared traits at once"))
+		<< ::testing::PrintToString(errors);
+
+	write("a.xml", R"(<Count min="2" max="3"/>)" + trait("one") + trait("two") + trait("three") + "<Exclusive>one two</Exclusive><Exclusive>one three</Exclusive>");
+	EXPECT_TRUE(registry.loadFromFolder(folder).empty()) << "two and three can be held together";
+
+	write("a.xml", R"(<Count min="3" max="3"/>)" + trait("one") + trait("two") + trait("three") + "<Exclusive>one two</Exclusive><Exclusive>one three</Exclusive>");
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "<Count> min is 3"));
+}
+
+TEST_F(TraitRegistryTest, AnyProblemLoadsNothing) {
+	write("a.xml", std::string(kCount) + trait("brave") + trait("calm"));
+	write("mods/b.xml", trait("Loud"));
+	ASSERT_FALSE(registry.loadFromFolder(folder).empty());
+	EXPECT_FALSE(registry.loaded());
+	EXPECT_TRUE(registry.traits().empty());
+	EXPECT_EQ(registry.find("brave"), nullptr);
+	EXPECT_EQ(registry.count().max, 0);
+}
+
+TEST_F(TraitRegistryTest, UnknownAttributesAreErrors) {
+	write("a.xml", std::string(kCount) + R"(<Trait id="brave" name="Brave" description="Faces danger." color="red"/>)");
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "a.xml: trait 'brave': unknown attribute 'color'"));
+
+	write("a.xml", R"(<Count min="1" max="2" typo="3"/>)" + trait("brave"));
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "a.xml: <Count>: unknown attribute 'typo'"));
+
+	write("a.xml", std::string(kCount) + trait("brave") + trait("calm") + R"(<Exclusive id="x">brave calm</Exclusive>)");
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "unknown attribute 'id'"));
 }
 
 TEST_F(TraitRegistryTest, AtLeastOneTraitIsRequired) {
@@ -196,8 +249,8 @@ TEST_F(TraitRegistryTest, ExclusionsNeedTwoKnownDistinctTraits) {
 	write("a.xml", std::string(kCount) + trait("brave") + trait("calm") + "<Exclusive>brave</Exclusive><Exclusive>brave brave</Exclusive>" +
 					   "<Exclusive>brave ghost</Exclusive>");
 	const std::vector<std::string> errors = registry.loadFromFolder(folder);
-	EXPECT_TRUE(mentions(errors, "an <Exclusive> lists at least two trait ids")) << ::testing::PrintToString(errors);
-	EXPECT_TRUE(mentions(errors, "an <Exclusive> lists a trait id twice"));
+	EXPECT_TRUE(mentions(errors, "<Exclusive>brave</Exclusive>: lists at least two trait ids")) << ::testing::PrintToString(errors);
+	EXPECT_TRUE(mentions(errors, "<Exclusive>brave brave</Exclusive>: lists a trait id twice"));
 	EXPECT_TRUE(mentions(errors, "<Exclusive> names 'ghost', which no file declares as a trait"));
 	EXPECT_EQ(errors.size(), 3U) << ::testing::PrintToString(errors);
 }

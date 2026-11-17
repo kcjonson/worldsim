@@ -41,12 +41,22 @@ namespace world_sim {
 		constexpr float kCursorTickLengthPx = 5.0F; // to 16 px at the default radius
 		constexpr float kCursorTickWidthPx = 2.0F;
 		constexpr float kCursorTickOutlineWidthPx = 6.0F;
+		// The Rectangle tool's cross on the grid point that placed its corner, and its ring on an
+		// existing corner or edge, from the prototype.
+		constexpr float kGridCrossArmPx = 5.0F;
+		constexpr float kGridCrossWidthPx = 1.25F;
+		constexpr float kGridCrossOpacity = 0.55F;
+		constexpr float kRectangleCornerRingRadiusPx = 8.0F;
+		constexpr float kRectangleEdgeRingRadiusPx = 7.0F;
 		constexpr float kSegmentLabelPx = 12.0F;
 		// At the snapped end, the segment label's plate sits this far diagonally off the snapped
 		// point (its text 12 px off at an interface size of 100%). The gap is the plate's, so it
 		// holds as the plate grows with the interface size and the plate stays off the marker.
 		constexpr float kSegmentPlateOffsetPx = 9.0F;
-		constexpr float kLabelGapPx = 10.0F; // a guide label off its guide, a long segment's label off the segment
+		// A guide label's plate off its guide, and a long segment's label's plate off the segment
+		// (the text 10 px off at an interface size of 100%). Like the end label's, the gap is
+		// the plate's, so it holds as the plate grows with the interface size.
+		constexpr float kLabelPlateGapPx = 7.0F;
 		constexpr float kGuideLabelMinimumStrokePx = 40.0F;
 		constexpr float kGuideLabelShiftPaddingPx = 8.0F;
 		constexpr int	kGuideLabelShiftAttempts = 6;
@@ -123,8 +133,8 @@ namespace world_sim {
 
 		// Every size the feedback draws or plans with, in window pixels. The label text and its
 		// plate (padding, corner) are interface text, so they take the ui scale and follow the
-		// Interface size (the end label's text offset grows only by the plate's padding, keeping
-		// the plate's own gap fixed); everything else (strokes, markers, rings, clearances, thresholds)
+		// Interface size (a label's text offset from what it labels grows only by the plate's
+		// padding, keeping the plate's own gap fixed); everything else (strokes, markers, rings, clearances, thresholds)
 		// stays in window pixels like the preview's own lines and dots. That is main's rule for
 		// text drawn in the world (docs/design/ui/ui-scale-setting.md, "World text"). lookAt is
 		// the one place the scale is applied; nothing else reads a pixel constant.
@@ -141,6 +151,10 @@ namespace world_sim {
 			float cursorTickLengthPx;
 			float cursorTickWidthPx;
 			float cursorTickOutlineWidthPx;
+			float gridCrossArmPx;
+			float gridCrossWidthPx;
+			float rectangleCornerRingRadiusPx;
+			float rectangleEdgeRingRadiusPx;
 			float segmentLabelPx;
 			float segmentLabelOffsetPx;
 			float segmentLabelCursorClearancePx;
@@ -176,11 +190,15 @@ namespace world_sim {
 				.cursorTickLengthPx = kCursorTickLengthPx,
 				.cursorTickWidthPx = kCursorTickWidthPx,
 				.cursorTickOutlineWidthPx = kCursorTickOutlineWidthPx,
+				.gridCrossArmPx = kGridCrossArmPx,
+				.gridCrossWidthPx = kGridCrossWidthPx,
+				.rectangleCornerRingRadiusPx = kRectangleCornerRingRadiusPx,
+				.rectangleEdgeRingRadiusPx = kRectangleEdgeRingRadiusPx,
 				.segmentLabelPx = kSegmentLabelPx * uiScale,
 				.segmentLabelOffsetPx = kSegmentPlateOffsetPx + kLabelPlatePaddingPx * uiScale,
 				.segmentLabelCursorClearancePx = kSegmentLabelCursorClearancePx,
 				.guideLabelPx = style.guideLabelPx * uiScale,
-				.labelGapPx = kLabelGapPx,
+				.labelGapPx = kLabelPlateGapPx + kLabelPlatePaddingPx * uiScale,
 				.guideLabelMinimumStrokePx = kGuideLabelMinimumStrokePx,
 				.guideLabelShiftPaddingPx = kGuideLabelShiftPaddingPx,
 				.labelPlatePaddingPx = kLabelPlatePaddingPx * uiScale,
@@ -469,8 +487,13 @@ namespace world_sim {
 					}
 				}
 				planCloseHalo();
+				planGridCross();
 				seedLabelObstacles();
-				planSegmentLabel();
+				if (rectangleTool()) {
+					planSizeLabel();
+				} else {
+					planSegmentLabel();
+				}
 				if (input.display.guideDistances) {
 					for (std::size_t index = 0; index < input.snap.guideCount; ++index) {
 						if (guides[index].strokeEnd) {
@@ -488,6 +511,7 @@ namespace world_sim {
 			struct SnapTarget {
 				Circle			  circle;
 				Foundation::Color color;
+				FeedbackLayer	  layer;
 			};
 
 			const DrawingFeedbackInput&					 input;
@@ -534,10 +558,28 @@ namespace world_sim {
 				return Circle{*center, radius};
 			}
 
-			// The wall tool's snap-target ring, outside the marker's ticks: amber on a vertex
-			// (a wall endpoint or a foundation corner), cyan on a segment or edge.
+			bool rectangleTool() const { return input.tool == ToolKind::FoundationRectangle; }
+
+			// The snap-target ring: amber on a vertex (a wall endpoint or a foundation corner),
+			// cyan on a segment or edge. The wall tool's sits over the marker, outside its ticks;
+			// the Rectangle tool's, the prototype's, sits closer in and under the marker.
 			std::optional<SnapTarget> snapTargetRing() const {
-				if (input.tool != ToolKind::Wall || !isFinite(snappedPoint)) {
+				if (!isFinite(snappedPoint)) {
+					return std::nullopt;
+				}
+				if (rectangleTool()) {
+					const construction::RectangleSnapKind kind = input.rectangleSnap;
+					if (kind != construction::RectangleSnapKind::Vertex && kind != construction::RectangleSnapKind::Edge) {
+						return std::nullopt;
+					}
+					const bool onCorner = kind == construction::RectangleSnapKind::Vertex;
+					return SnapTarget{
+						.circle = {snappedPoint, onCorner ? look.rectangleCornerRingRadiusPx : look.rectangleEdgeRingRadiusPx},
+						.color = colorOf(onCorner ? style.snapVertexColor : style.snapEdgeColor),
+						.layer = FeedbackLayer::Marker,
+					};
+				}
+				if (input.tool != ToolKind::Wall) {
 					return std::nullopt;
 				}
 				const SnapKind kind = input.snap.kind;
@@ -549,6 +591,7 @@ namespace world_sim {
 				return SnapTarget{
 					.circle = {snappedPoint, tickOuterRadius + look.snapTargetTickClearancePx},
 					.color = colorOf(onVertex ? style.snapVertexColor : style.snapEdgeColor),
+					.layer = FeedbackLayer::Target,
 				};
 			}
 
@@ -720,6 +763,22 @@ namespace world_sim {
 				}
 			}
 
+			// The Rectangle tool's cross on the grid point that placed its corner, in the world
+			// guide color: an alignment, under the rectangle, as the prototype draws it.
+			void planGridCross() {
+				if (!rectangleTool() || input.rectangleSnap != construction::RectangleSnapKind::Grid || !isFinite(snappedPoint)) {
+					return;
+				}
+				const Foundation::Color color = withOpacity(guideColor(style, GuideSource::WorldAxes), kGridCrossOpacity);
+				const float				arm = look.gridCrossArmPx;
+				result.strokes.push_back(segmentStroke(
+					{snappedPoint.x - arm, snappedPoint.y}, {snappedPoint.x + arm, snappedPoint.y}, color, look.gridCrossWidthPx, FeedbackLayer::Alignment
+				));
+				result.strokes.push_back(segmentStroke(
+					{snappedPoint.x, snappedPoint.y - arm}, {snappedPoint.x, snappedPoint.y + arm}, color, look.gridCrossWidthPx, FeedbackLayer::Alignment
+				));
+			}
+
 			// Guide labels keep clear of the snapped-point marker out to its ticks, and of the
 			// common obstacles.
 			void seedLabelObstacles() {
@@ -846,6 +905,25 @@ namespace world_sim {
 				);
 			}
 
+			// The Rectangle tool's size label ("4 m x 3 m"), beside the snapped corner, where the
+			// pointer sits, as the segment label's end placements are: up right, else up left, else
+			// down left, the first whose plate fits the screen; never down right, where the pointer
+			// hangs, unless only a move inside fits it. Nothing while the two corners span no
+			// rectangle.
+			void planSizeLabel() {
+				if (input.sizeLabel.empty() || !isFinite(snappedPoint)) {
+					return;
+				}
+				const Foundation::Vec2 size = measure(input.sizeLabel, look.segmentLabelPx);
+				const FeedbackBox	   anchor = endAnchorBox();
+				std::array<Placement, kEndPlacementCount> placements{};
+				for (std::size_t index = 0; index < kEndPlacementCount; ++index) {
+					const Foundation::Vec2 topLeft = inQuarter(anchor, kUpRightFirst[index], size);
+					placements[index] = {topLeft, topLeft};
+				}
+				addLabel(input.sizeLabel, firstOnScreen(placements, size), look.segmentLabelPx, size, kSegmentLabelColor);
+			}
+
 			// Beside the segment's middle, 10 px off it on the side away from the shape, then
 			// the other side; only when the preferred side keeps it 40 px from the snapped
 			// point, where the pointer sits, and only a placement that is still that far once on
@@ -881,11 +959,14 @@ namespace world_sim {
 			static constexpr Foundation::Vec2 kUpLeft{-1.0F, -1.0F};
 			static constexpr Foundation::Vec2 kDownLeft{-1.0F, 1.0F};
 
+			// The end placements starting up right; the size label always takes them in this order.
+			static constexpr std::array<Foundation::Vec2, kEndPlacementCount> kUpRightFirst{kUpRight, kUpLeft, kDownLeft};
+
 			// For each quarter, in kUpRight, kUpLeft, kDownLeft order, the end placements to try:
 			// that quarter, then it flipped left to right, then top to bottom, then both, leaving
 			// out whichever of those is down right.
 			static constexpr std::array<std::array<Foundation::Vec2, kEndPlacementCount>, 3> kEndPlacementOrders{{
-				{kUpRight, kUpLeft, kDownLeft},
+				kUpRightFirst,
 				{kUpLeft, kUpRight, kDownLeft},
 				{kDownLeft, kUpLeft, kUpRight},
 			}};
@@ -932,18 +1013,21 @@ namespace world_sim {
 				const Foundation::Vec2 along = segmentLength > 0.0F ? Foundation::Vec2{segment.x / segmentLength, segment.y / segmentLength}
 																	: Foundation::Vec2{0.0F, 0.0F};
 				const FeedbackBox	   end = endAnchorBox();
-				const auto			   inQuarter = [&](Foundation::Vec2 corner, float width) -> Foundation::Vec2 {
-					return {
-						corner.x > 0.0F ? end.right + look.segmentLabelOffsetPx : end.left - look.segmentLabelOffsetPx - width,
-						corner.y < 0.0F ? end.top - look.segmentLabelOffsetPx - layout.size.y : end.bottom + look.segmentLabelOffsetPx,
-					};
-				};
 				const std::array<Foundation::Vec2, kEndPlacementCount>& order = kEndPlacementOrders[endQuarter(along)];
 				std::array<Placement, kEndPlacementCount>				placements{};
 				for (std::size_t index = 0; index < kEndPlacementCount; ++index) {
-					placements[index] = {inQuarter(order[index], layout.size.x), inQuarter(order[index], layout.reserve.x)};
+					placements[index] = {inQuarter(end, order[index], layout.size), inQuarter(end, order[index], layout.reserve)};
 				}
 				return placements;
+			}
+
+			// The top-left of a box `size` diagonally off `anchor` in the quarter `corner` points
+			// to, anchored by its corner nearest the anchor.
+			Foundation::Vec2 inQuarter(const FeedbackBox& anchor, Foundation::Vec2 corner, Foundation::Vec2 size) const {
+				return {
+					corner.x > 0.0F ? anchor.right + look.segmentLabelOffsetPx : anchor.left - look.segmentLabelOffsetPx - size.x,
+					corner.y < 0.0F ? anchor.top - look.segmentLabelOffsetPx - size.y : anchor.bottom + look.segmentLabelOffsetPx,
+				};
 			}
 
 			// `normal` (the segment's, on screen) or its reverse, whichever points away from the
@@ -1149,7 +1233,7 @@ namespace world_sim {
 					.radius = snapTarget->circle.radius,
 					.color = snapTarget->color,
 					.width = look.snapTargetRingWidthPx,
-					.layer = FeedbackLayer::Target,
+					.layer = snapTarget->layer,
 				});
 			}
 		};
@@ -1230,6 +1314,10 @@ namespace world_sim {
 		}
 
 	} // namespace
+
+	std::int32_t feedbackLayerKey(ToolKind tool, FeedbackLayer layer) {
+		return layerKey(toolLayers(tool), layer);
+	}
 
 	DrawingFeedbackPlan planSnapFeedback(const DrawingFeedbackInput& input, const MeasureTextSize& measure) {
 		// An input that leaves uiScale out is 0, and every label would plan at size 0.

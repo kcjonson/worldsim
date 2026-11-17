@@ -4,9 +4,11 @@
   a mod adds traits with a file of its own. This folder's files load first, then subfolders' files in
   path order; a later file replaces a trait of the same id, and the replacement is logged.
 
-  <Count min max/>              how many traits a colonist gets, from min to max.
+  <Count min max/>              how many traits a colonist gets, from min to max. min may be 0, and must be
+                                reachable with the <Exclusive> groups.
   <Trait id name description/>  id is snake_case and is what conditions write: trait(night_owl).
-  <Exclusive>ids</Exclusive>    traits no colonist has together.
+  <Exclusive>ids</Exclusive>    traits no colonist has together. Groups accumulate, across files too, so a
+                                trait listed in several is excluded from every member of each.
 
   A trait has no effect of its own. Thoughts and behaviors read it with trait(id) in their conditions.
   See /docs/design/game-systems/colonists/attributes.md (Traits).

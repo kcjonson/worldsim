@@ -89,22 +89,17 @@ TEST(RollTraits, TheSameSeedGivesTheSameTraits) {
 	}
 }
 
-TEST(RollTraits, FewerComeBackWhenExclusionsLeaveTooFewToDraw) {
-	const assets::TraitRegistry registry =
-		registryOf(R"(<Count min="3" max="3"/>)" + traitXml("one") + traitXml("two") + traitXml("three") + "<Exclusive>one two three</Exclusive>");
-	for (uint32_t seed = 0; seed < 20; ++seed) {
+TEST(RollTraits, FewerComeBackWhenADrawLeavesTooFewCompatibleToFinish) {
+	const assets::TraitRegistry registry = registryOf(
+		R"(<Count min="3" max="3"/>)" + traitXml("one") + traitXml("two") + traitXml("three") + traitXml("four") +
+		"<Exclusive>one two</Exclusive><Exclusive>one three</Exclusive>"
+	);
+	std::set<std::size_t> counts;
+	for (uint32_t seed = 0; seed < 50; ++seed) {
 		std::mt19937 rng(seed);
-		EXPECT_EQ(rollTraits(registry, rng).ids.size(), 1U);
+		counts.insert(rollTraits(registry, rng).ids.size());
 	}
-}
-
-TEST(RollTraits, AFixedCountGivesExactlyThatMany) {
-	const assets::TraitRegistry registry =
-		registryOf(R"(<Count min="2" max="2"/>)" + traitXml("one") + traitXml("two") + traitXml("three") + traitXml("four"));
-	for (uint32_t seed = 0; seed < 20; ++seed) {
-		std::mt19937 rng(seed);
-		EXPECT_EQ(rollTraits(registry, rng).ids.size(), 2U);
-	}
+	EXPECT_EQ(counts, (std::set<std::size_t>{2, 3})) << "drawing one first leaves only four to add";
 }
 
 TEST(RollTraits, ACountOfZeroGivesNone) {

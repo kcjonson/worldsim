@@ -151,8 +151,9 @@ namespace construction {
 		::Foundation::Vec2 point{0.0F, 0.0F};
 		SnapKind		   kind = SnapKind::None;
 
-		// The guides behind the snap: one for a GuideLine or an Angle snap, two for a
-		// GuideCrossing, none otherwise. A guide whose cursor sits exactly on its node
+		// The guides behind the snap: one for a GuideLine, an Angle snap, or an Edge or
+		// WallSegment hit squared by a guide; two for a GuideCrossing; an Origin from the
+		// guide step keeps its guides; none otherwise. A guide whose cursor sits exactly on its node
 		// has from == to and draws nothing.
 		std::array<SnapGuide, kMaxSnapGuides> guides{};
 		std::size_t							  guideCount = 0;
@@ -257,6 +258,9 @@ namespace construction {
 		// The wall tool's half-thickness, by which foundation corner and edge hits are
 		// inset for outer-face-flush alignment. Unused by snap().
 		std::int64_t wallHalfThicknessMm = 0;
+		// The constraints' point limit. A wall chain has no cap, so its guides use its first
+		// point and its most recent maxPoints - 1. Unused by snap().
+		int maxPoints = assets::ConstraintConfig{}.maxPoints;
 	};
 
 	class SnapEngine {

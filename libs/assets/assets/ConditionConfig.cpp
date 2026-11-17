@@ -1,11 +1,12 @@
 #include "assets/ConditionConfig.h"
+#include "assets/ConfigFiles.h"
+#include "assets/ConfigNumber.h"
 
 #include <utils/Log.h>
 
 #include <pugixml.hpp>
 
 #include <algorithm>
-#include <charconv>
 #include <sstream>
 #include <string_view>
 #include <utility>
@@ -39,18 +40,6 @@ namespace assets {
 				return std::nullopt;
 			}
 			return static_cast<CapabilityType>(found - kCapabilityNames.begin());
-		}
-
-		/// The attribute's whole text as a number; nothing for a missing attribute, empty text, or text
-		/// that is not entirely a number.
-		std::optional<float> numberOf(pugi::xml_attribute attribute) {
-			const std::string_view text = attribute.as_string();
-			float				   number = 0.0F;
-			const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), number);
-			if (text.empty() || error != std::errc() || end != text.data() + text.size()) {
-				return std::nullopt;
-			}
-			return number;
 		}
 
 		bool sameSignature(const ConditionTermDef& first, const ConditionTermDef& second) {
@@ -243,10 +232,23 @@ namespace assets {
 					return;
 				}
 				const std::string what = "kind '" + kind.name + "'";
-				if (const pugi::xml_attribute capability = node.attribute("capability")) {
+				const pugi::xml_attribute capability = node.attribute("capability");
+				const pugi::xml_attribute mover = node.attribute("mover");
+				if (capability && mover) {
+					fail(source, what + ": a kind is a capability or a mover, not both");
+					return;
+				}
+				if (capability) {
 					kind.capability = capabilityFromName(capability.as_string());
 					if (!kind.capability.has_value()) {
 						fail(source, what + ": '" + capability.as_string() + "' is not a capability");
+						return;
+					}
+				}
+				if (mover) {
+					kind.mover = mover.as_string();
+					if (kind.mover.empty()) {
+						fail(source, what + ": mover=\"\" names no definition");
 						return;
 					}
 				}
@@ -277,7 +279,7 @@ namespace assets {
 
 			void loadNight(pugi::xml_node node, const std::string& source) {
 				const auto hourOf = [](pugi::xml_attribute attribute) -> std::optional<float> {
-					const std::optional<float> hour = numberOf(attribute);
+					const std::optional<float> hour = parseConfigNumber(attribute.as_string());
 					return hour.has_value() && *hour >= 0.0F && *hour < 24.0F ? hour : std::nullopt;
 				};
 				const std::optional<float> start = hourOf(node.attribute("start"));
@@ -303,28 +305,14 @@ namespace assets {
 
 	ConditionConfigLoad loadConditionConfig(const std::filesystem::path& folder) {
 		ConditionConfigLoad result;
-		std::error_code		error;
-		if (!std::filesystem::is_directory(folder, error)) {
-			result.errors.push_back(folder.generic_string() + ": not a folder");
+		const ConfigFiles	found = configFilesIn(folder);
+		if (found.error.has_value()) {
+			result.errors.push_back(*found.error);
 			return result;
 		}
-
-		std::vector<std::filesystem::path> files;
-		for (const auto& entry : std::filesystem::recursive_directory_iterator(folder, error)) {
-			if (entry.is_regular_file() && entry.path().extension() == ".xml") {
-				files.push_back(entry.path());
-			}
-		}
-		if (error) {
-			result.errors.push_back(folder.generic_string() + ": " + error.message());
-			return result;
-		}
-		std::ranges::sort(files, {}, [&folder](const std::filesystem::path& file) {
-			return std::pair(file.parent_path() != folder, file);
-		});
 
 		Loader loader(result);
-		for (const std::filesystem::path& file : files) {
+		for (const std::filesystem::path& file : found.files) {
 			loader.loadFile(file, std::filesystem::relative(file, folder).generic_string());
 		}
 		loader.check();
