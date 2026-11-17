@@ -78,9 +78,13 @@ namespace ecs {
 		// queryOccluders less the back faces for an eye at `eye` when backFacesHiddenFrom it,
 		// for a visibility polygon from that eye alone: the polygon is the same, but for where
 		// a ray aimed at a back face's hidden end hits a slanted face, a vertex that rounds off
-		// the face by under a millimetre.
-		void queryFacingOccluders(geometry::Vec2i64 eye, std::int64_t radiusMm,
+		// the face by under a millimetre. Returns whether it culled them: backFacesHiddenFrom(eye,
+		// radiusMm) when an occluder is in range, false when none is.
+		bool queryFacingOccluders(geometry::Vec2i64 eye, std::int64_t radiusMm,
 								  std::vector<geometry::OccluderSegment>& out) const;
+
+		// Whether queryFacingOccluders(eye, radiusMm) would give any occluder, without listing them.
+		[[nodiscard]] bool anyFacingOccluder(geometry::Vec2i64 eye, std::int64_t radiusMm) const;
 
 		// Whether no back face within radiusMm can bound what an eye at `eye` sees: it is
 		// outside the solid (insideSolid), which it would see from within, and off the line

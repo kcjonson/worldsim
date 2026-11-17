@@ -28,6 +28,53 @@ namespace ecs {
 			return {a.x + std::llround(static_cast<double>(b.x - a.x) * fraction), a.y + std::llround(static_cast<double>(b.y - a.y) * fraction)};
 		}
 
+		// An eye against the occluder loops, one occluder at a time: the winding number round it,
+		// whether it lies on an occluder, and whether it grazes one in range.
+		//
+		// computeVisibilityPolygon blocks a ray that runs along an occluder on both of its sides and
+		// takes the polygon's next edge from the next direction round, which a back face's end can
+		// be; and it drops a hit that snaps onto the eye, where the back face behind it is what stops
+		// the ray. Either needs the back faces of the occluders in range.
+		class EyeTally {
+		  public:
+			explicit EyeTally(geometry::Vec2i64 eye)
+				: m_eye(eye) {}
+
+			void add(const geometry::OccluderSegment& edge, bool inRange) {
+				const geometry::Vec2i64& from = edge.a;
+				const geometry::Vec2i64& to	  = edge.b;
+				const int				 side = geometry::cross(to - from, m_eye - from).sign();
+				if (inRange && (side == 0 || geometry::withinDistanceOfSegment(m_eye, from, to, kHitSnapsOntoTheEyeMm))) {
+					m_grazed = true;
+				}
+				if (side == 0 && m_eye.x >= std::min(from.x, to.x) && m_eye.x <= std::max(from.x, to.x) && m_eye.y >= std::min(from.y, to.y) &&
+					m_eye.y <= std::max(from.y, to.y)) {
+					m_onOccluder = true;
+					return;
+				}
+				if (from.y <= m_eye.y) {
+					if (to.y > m_eye.y && side > 0) {
+						++m_winding;
+					}
+				} else if (to.y <= m_eye.y && side < 0) {
+					--m_winding;
+				}
+			}
+
+			// Nothing added after can hide the back faces again, nor take the eye off an occluder.
+			[[nodiscard]] bool settled() const { return m_onOccluder || m_grazed; }
+
+			[[nodiscard]] bool insideSolid() const { return m_onOccluder || m_winding != 0; }
+
+			[[nodiscard]] bool backFacesHidden() const { return !m_grazed && !insideSolid(); }
+
+		  private:
+			geometry::Vec2i64 m_eye;
+			int				  m_winding	   = 0;
+			bool			  m_onOccluder = false;
+			bool			  m_grazed	   = false;
+		};
+
 	} // namespace
 
 	void GeometryIndex::setConstructionWorld(const cw::ConstructionWorld* world) {
@@ -158,27 +205,62 @@ namespace ecs {
 		}
 	}
 
-	void GeometryIndex::queryFacingOccluders(geometry::Vec2i64 eye, std::int64_t radiusMm,
+	bool GeometryIndex::queryFacingOccluders(geometry::Vec2i64 eye, std::int64_t radiusMm,
 											 std::vector<geometry::OccluderSegment>& out) const {
-		queryOccluders(eye, radiusMm, out);
-		if (backFacesHiddenFrom(eye, radiusMm)) {
+		out.clear();
+		if (radiusMm <= 0) {
+			return false;
+		}
+		const auto inRange = [&](const OccluderRecord& rec) { return geometry::withinDistanceOfSegment(eye, rec.seg.a, rec.seg.b, radiusMm); };
+		// Outdoors no occluder is in range, and the range test is all the query costs.
+		const auto first = std::ranges::find_if(m_occluders, inRange);
+		if (first == m_occluders.end()) {
+			return false;
+		}
+		// The winding round the eye counts every occluder, the occluders before the first in range too.
+		EyeTally tally(eye);
+		for (auto it = m_occluders.begin(); it != m_occluders.end(); ++it) {
+			const bool kept = it >= first && (it == first || inRange(*it));
+			if (kept) {
+				out.push_back(it->seg);
+			}
+			if (!tally.settled()) {
+				tally.add(it->seg, kept);
+			}
+		}
+		const bool culled = tally.backFacesHidden();
+		if (culled) {
 			std::erase_if(out, [&](const geometry::OccluderSegment& edge) { return facesAway(edge, eye); });
 		}
+		return culled;
+	}
+
+	bool GeometryIndex::anyFacingOccluder(geometry::Vec2i64 eye, std::int64_t radiusMm) const {
+		if (radiusMm <= 0) {
+			return false;
+		}
+		bool anyInRange = false;
+		for (const OccluderRecord& rec : m_occluders) {
+			if (geometry::withinDistanceOfSegment(eye, rec.seg.a, rec.seg.b, radiusMm)) {
+				if (!facesAway(rec.seg, eye)) {
+					return true; // kept, culled or not
+				}
+				anyInRange = true;
+			}
+		}
+		// Every occluder in range faces away: rare enough to pay the guards' walk.
+		return anyInRange && !backFacesHiddenFrom(eye, radiusMm);
 	}
 
 	bool GeometryIndex::backFacesHiddenFrom(geometry::Vec2i64 eye, std::int64_t radiusMm) const {
-		// computeVisibilityPolygon blocks a ray that runs along an occluder on both of its
-		// sides and takes the polygon's next edge from the next direction round, which a back
-		// face's end can be; and it drops a hit that snaps onto the eye, where the back face
-		// behind it is what stops the ray.
+		EyeTally tally(eye);
 		for (const OccluderRecord& rec : m_occluders) {
-			if (geometry::withinDistanceOfSegment(eye, rec.seg.a, rec.seg.b, radiusMm) &&
-				(geometry::cross(rec.seg.b - rec.seg.a, eye - rec.seg.a).sign() == 0 ||
-				 geometry::withinDistanceOfSegment(eye, rec.seg.a, rec.seg.b, kHitSnapsOntoTheEyeMm))) {
+			tally.add(rec.seg, geometry::withinDistanceOfSegment(eye, rec.seg.a, rec.seg.b, radiusMm));
+			if (tally.settled()) {
 				return false;
 			}
 		}
-		return !insideSolid(eye);
+		return tally.backFacesHidden();
 	}
 
 	bool GeometryIndex::facesAway(const geometry::OccluderSegment& edge, geometry::Vec2i64 eye) {
@@ -186,24 +268,14 @@ namespace ecs {
 	}
 
 	bool GeometryIndex::insideSolid(geometry::Vec2i64 point) const {
-		int winding = 0;
+		EyeTally tally(point);
 		for (const OccluderRecord& rec : m_occluders) {
-			const geometry::Vec2i64& from = rec.seg.a;
-			const geometry::Vec2i64& to	  = rec.seg.b;
-			const int				 side = geometry::cross(to - from, point - from).sign();
-			if (side == 0 && point.x >= std::min(from.x, to.x) && point.x <= std::max(from.x, to.x) && point.y >= std::min(from.y, to.y) &&
-				point.y <= std::max(from.y, to.y)) {
-				return true;
-			}
-			if (from.y <= point.y) {
-				if (to.y > point.y && side > 0) {
-					++winding;
-				}
-			} else if (to.y <= point.y && side < 0) {
-				--winding;
+			tally.add(rec.seg, false);
+			if (tally.settled()) {
+				break; // on an occluder
 			}
 		}
-		return winding != 0;
+		return tally.insideSolid();
 	}
 
 } // namespace ecs

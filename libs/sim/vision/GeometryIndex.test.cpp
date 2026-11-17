@@ -197,7 +197,9 @@ namespace {
 	// The visibility polygon from every eye of a 250 mm grid over the box, and from points
 	// on the line of each occluder past both its ends (an eye looking exactly along a face or
 	// an end cap), is the same built from the facing occluders as from all of them: ring for
-	// ring, or with `toleranceMm`, every vertex of each within it of the other's boundary.
+	// ring, or with `toleranceMm`, every vertex of each within it of the other's boundary. The
+	// query says it culled when backFacesHiddenFrom the eye holds with an occluder in range, and
+	// anyFacingOccluder agrees with it, from those eyes and one out of range of every wall.
 	void expectFacingSightIsTheSame(const ConstructionWorld& cw, Vec2i64 low, Vec2i64 high, std::int64_t toleranceMm = 0) {
 		constexpr std::int64_t kGridMm	= 250;
 		constexpr std::int64_t kSightMm = 20000;
@@ -215,14 +217,21 @@ namespace {
 			eyes.push_back(occluder.seg.a - along);
 			eyes.push_back(occluder.seg.b + along);
 		}
+		eyes.push_back({high.x + 2 * kSightMm, high.y});
 		std::vector<OccluderSegment> all;
 		std::vector<OccluderSegment> facing;
-		int							 differ = 0;
-		std::size_t				 culled = 0;
+		int							 differ		= 0;
+		int							 misreported = 0;
+		std::size_t				 culled		= 0;
 		for (const Vec2i64& eye : eyes) {
 			index.queryOccluders(eye, kSightMm, all);
-			index.queryFacingOccluders(eye, kSightMm, facing);
+			const bool culledHere = index.queryFacingOccluders(eye, kSightMm, facing);
 			culled += all.size() - facing.size();
+			if ((culledHere != (!all.empty() && index.backFacesHiddenFrom(eye, kSightMm)) ||
+				 index.anyFacingOccluder(eye, kSightMm) != !facing.empty()) &&
+				++misreported <= 5) {
+				ADD_FAILURE() << "the query from (" << eye.x << ", " << eye.y << ") misreports";
+			}
 			const geometry::Ring fromAll	= geometry::computeVisibilityPolygon(eye, kSightMm, all);
 			const geometry::Ring fromFacing = geometry::computeVisibilityPolygon(eye, kSightMm, facing);
 			const bool			 same		= toleranceMm == 0 ? fromAll == fromFacing : ringsAgree(fromAll, fromFacing, toleranceMm);
@@ -231,6 +240,7 @@ namespace {
 			}
 		}
 		EXPECT_EQ(differ, 0);
+		EXPECT_EQ(misreported, 0);
 		EXPECT_GT(culled, 0u);
 	}
 
