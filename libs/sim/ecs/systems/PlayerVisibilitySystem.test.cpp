@@ -476,20 +476,16 @@ TEST(PlayerVisibilitySystem, DrawnVisibleInSeenInSweptPastADoorway) {
 	assets::ConstructionRegistry::Get().clear();
 }
 
-// Outdoors the bright shape is the disc of the drawn radius round where he stands, cut by the forest
-// shape of equal ranges drawn in as far; a sight too small to hold a leg draws none, since nothing
-// records it.
+// On open ground, with nothing in sight, the bright shape is the disc of the drawn radius round where
+// he stands; a sight too small to hold a leg draws none, since nothing records it.
 TEST(PlayerVisibilitySystem, DrawnVisibleOutdoorsIsTheDiscRoundWhereHeStands) {
 	Colony		   colony;
 	const EntityID colonist = colony.addColonist({0.0F, 0.0F});
 	colony.walk(colonist, {4.0F, -2.0F}, 0.05F);
 	const std::optional<std::vector<Vec2i64>> drawn = colony.visibility.drawnVisible(colonist);
 	ASSERT_TRUE(drawn.has_value());
-	const Vec2i64			  standing = nav::toMm({4.0F, -2.0F});
-	const std::int64_t		  drawnMm  = vision::drawnVisibleRadiusMm(std::llround(kSight * 1000.0F));
-	geometry::SightSideValues ranges{};
-	ranges.fill(drawnMm);
-	EXPECT_EQ(*drawn, geometry::starClippedToConvex(geometry::sightPolygon(standing, drawnMm), standing, geometry::forestShape(standing, ranges)));
+	EXPECT_EQ(*drawn, geometry::sightPolygon(nav::toMm({4.0F, -2.0F}), vision::drawnVisibleRadiusMm(std::llround(kSight * 1000.0F))));
+	EXPECT_EQ(colony.visibility.drawnForestBuildCount(), 0U) << "the open path draws no forest cut";
 
 	const EntityID shortSighted = colony.addColonist({100.0F, 0.0F});
 	colony.world.getComponent<Memory>(shortSighted)->sightRadius = 1.0F;

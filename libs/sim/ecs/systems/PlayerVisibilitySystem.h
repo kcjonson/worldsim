@@ -98,6 +98,8 @@ namespace ecs {
 
 		// Wall and opening footprints queued so far, each once.
 		[[nodiscard]] std::size_t footprintsEntered() const { return enteredFootprints.size(); }
+		// Test-only: how many drawn forest shapes drawnVisible has built, one a colonist a build.
+		[[nodiscard]] std::uint64_t drawnForestBuildCount() const { return drawnForestBuilds; }
 
 	  private:
 		// A leg's held positions, kept as what bounds the leg's end: the directions from its start
@@ -147,7 +149,20 @@ namespace ecs {
 		// Rebuilds the footprints by structure when the construction world has changed.
 		void refreshFootprints();
 
+		// One colonist's drawn forest shape round the origin for the build of `buildRevision`: the forest
+		// shape with every range drawn in to `drawnMm`, and on a leg the drawn disc cut by it. Both are
+		// moved to where he stands each frame, so a frame between builds builds neither.
+		struct DrawnForest {
+			std::uint64_t  buildRevision = 0;
+			std::int64_t   drawnMm		 = 0;
+			geometry::Ring forest;
+			geometry::Ring bright;
+		};
+		const DrawnForest& drawnForestFor(EntityID colonist, const VisionSystem::SightShape& shape, std::int64_t sightMm, std::int64_t drawnMm) const;
+
 		vision::SeenArea			 seen;
+		mutable std::map<EntityID, DrawnForest> drawnForests;
+		mutable std::uint64_t					drawnForestBuilds = 0;
 		const VisionSystem*			 sweepVision = nullptr; // the vision the record's sweeps build their polygons with
 		std::map<EntityID, Observer> observers;
 		bool						 revealedFlag = false;

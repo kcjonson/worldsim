@@ -1313,9 +1313,12 @@ TEST_F(NavigationSystemTest, ForestShapeAmongSoftTreesPullsTheRimInTowardThem) {
 }
 
 // Walking among soft trees with a movement target and frame times jittering across a lead step (at
-// 6 m/s a pass walks 97.8 or 102.6 mm, taken up to 100 or 200), his forest shape is carried with him:
-// the first build at 0, the one longer lead at 0.1 m, then a step past it at 0.7, 1.3, and 1.9 m,
-// five builds, every one on a leg and none a polygon.
+// 6 m/s a pass walks 97.8 mm on an even pass or 102.6 mm on an odd one, taken up to 100 or 200), his
+// forest shape is carried with him and keeps the longer lead once a pass has given it. Walking 0.11 m
+// a pass for 24 passes, so step rebuilds fall on short and long frames alike: the first build at 0,
+// the longer lead at 0.11 m, then a step past it at 0.66, 1.21, 1.76, and 2.31 m, six builds, every
+// one on a leg and none a polygon. A step build on a short frame that took that frame's shorter lead
+// would be rebuilt on the next long one, eight builds.
 TEST_F(NavigationSystemTest, ForestShapeIsBuiltOnceAStepWalkingAmongSoftTrees) {
 	registerSightBodies();
 	PlacementExecutor					executor(AssetRegistry::Get());
@@ -1337,18 +1340,18 @@ TEST_F(NavigationSystemTest, ForestShapeIsBuiltOnceAStepWalkingAmongSoftTrees) {
 
 	std::vector<geometry::SightSideValues> built;
 	std::uint64_t						   builds = vision.buildCount();
-	for (int pass = 0; pass < 20; ++pass) {
-		world.getComponent<Position>(observer)->value = {0.1F * static_cast<float>(pass), 0.0F};
+	for (int pass = 0; pass < 24; ++pass) {
+		world.getComponent<Position>(observer)->value = {0.11F * static_cast<float>(pass), 0.0F};
 		world.update(pass % 2 == 0 ? 0.0163F : 0.0171F);
 		const std::optional<VisionSystem::SightShape> shape = vision.sightShape(observer);
 		ASSERT_EQ(shape->path, VisionSystem::SightPath::Leg);
-		EXPECT_FLOAT_EQ(shape->center.x, 0.1F * static_cast<float>(pass)) << "the forest shape is carried with him";
+		EXPECT_FLOAT_EQ(shape->center.x, 0.11F * static_cast<float>(pass)) << "the forest shape is carried with him";
 		if (vision.buildCount() != builds) {
 			builds = vision.buildCount();
 			built.push_back(*shape->ranges);
 		}
 	}
-	EXPECT_EQ(built.size(), 5U);
+	EXPECT_EQ(built.size(), 6U);
 	EXPECT_EQ(vision.sightBodies(observer)->leadMm, VisionSystem::kSightRebuildStepMm + 2 * VisionSystem::kLeadWalkStepMm);
 	EXPECT_EQ(vision.polygonBuildCount(), 0U);
 	EXPECT_NE(built.front(), built.back()) << "each build takes the ranges where it stands";
@@ -1384,30 +1387,40 @@ TEST_F(NavigationSystemTest, RingArrivingPastSightKeepsTheBuild) {
 }
 
 // The bright shape is the drawn disc cut by the forest shape where he stands on every path, so a
-// BigRock coming into reach moves no rim in a forested direction; it stays inside his sight shape and
-// inside seen ground.
+// BigRock or a wall coming into reach moves no rim in a forested direction; it stays inside his sight
+// shape and inside seen ground. It is what cutting by the forest shape built where he stands gives,
+// and the forest shape is built once a build: frames between builds build none.
 TEST_F(NavigationSystemTest, BrightRimInForestIsTheSameOnEveryPath) {
+	enum class Blocker : std::uint8_t { None, Rock, Wall };
 	registerSightBodies();
-	std::array<std::int64_t, 2> eastmost{};
-	for (const bool withRock : {false, true}) {
+	const glm::vec2		 standing{0.3F, 0.2F};
+	const geometry::Vec2i64 standingMm = nav::toMm(standing);
+	std::array<std::int64_t, 3> eastmost{};
+	for (const Blocker blocker : {Blocker::None, Blocker::Rock, Blocker::Wall}) {
 		PlacementExecutor					executor(AssetRegistry::Get());
 		std::unordered_set<ChunkCoordinate> processed;
 		std::vector<std::pair<std::string, glm::vec2>> placed = trunkClump({10.0F, 0.0F});
-		if (withRock) {
+		if (blocker == Blocker::Rock) {
 			placed.push_back({kSightRock, {-27.0F, 10.0F}});
 		}
 		placeMixed(executor, processed, placed);
+		ConstructionWorld cw;
+		if (blocker == Blocker::Wall) {
+			buildWall(cw, {-27000, 6000}, {-27000, 10000});
+		}
 
-		World			  world;
-		TimeSystem&		  time	 = world.registerSystem<TimeSystem>();
-		VisionSystem&	  vision = world.registerSystem<VisionSystem>();
-		NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
+		World					world;
+		TimeSystem&				time	   = world.registerSystem<TimeSystem>();
+		VisionSystem&			vision	   = world.registerSystem<VisionSystem>();
+		NavigationSystem&		sys		   = world.registerSystem<NavigationSystem>();
 		PlayerVisibilitySystem& visibility = world.registerSystem<PlayerVisibilitySystem>();
 		vision.setUpdateInterval(1);
+		vision.setConstructionWorld(&cw);
 		sys.setChunkManager(landChunks());
 		sys.setPlacementData(&executor, &processed);
+		sys.setConstructionWorld(&cw);
 		meshingMover(world, {0.0F, 0.0F});
-		const EntityID observer = sightObserver(world, {0.0F, 0.0F});
+		const EntityID observer = sightObserver(world, standing);
 		world.addComponent<Colonist>(observer, Colonist{});
 		settle(sys);
 		time.skipTime(10.0F);
@@ -1416,22 +1429,46 @@ TEST_F(NavigationSystemTest, BrightRimInForestIsTheSameOnEveryPath) {
 
 		const std::optional<VisionSystem::SightShape> shape = vision.sightShape(observer);
 		ASSERT_TRUE(shape.has_value());
-		ASSERT_EQ(shape->path, withRock ? VisionSystem::SightPath::Polygon : VisionSystem::SightPath::Leg);
+		ASSERT_EQ(shape->path, blocker == Blocker::None ? VisionSystem::SightPath::Leg : VisionSystem::SightPath::Polygon);
 		const std::optional<std::vector<geometry::Vec2i64>> bright = visibility.drawnVisible(observer);
 		ASSERT_TRUE(bright.has_value());
+
+		// The same cut made where he stands, from the ranges the build gives.
+		const std::int64_t		  sightMm = 30000;
+		const std::int64_t		  drawnMm = vision::drawnVisibleRadiusMm(sightMm);
+		geometry::SightSideValues drawnRanges{};
+		for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
+			drawnRanges[side] = (*shape->ranges)[side] - (sightMm - drawnMm);
+		}
+		const geometry::Ring forest = geometry::forestShape(standingMm, drawnRanges);
+		const geometry::Ring disc	= geometry::sightPolygon(standingMm, drawnMm);
+		const geometry::Vec2i64 build = nav::toMm(shape->center);
+		const geometry::Ring expected = shape->polygon == nullptr
+											? geometry::starClippedToConvex(disc, standingMm, forest)
+											: geometry::starClippedToConvex(geometry::starClippedToConvex(*shape->polygon, build, disc), build, forest);
+		EXPECT_EQ(*bright, expected);
+
+		const std::uint64_t forestBuilds = visibility.drawnForestBuildCount();
+		world.update(0.016F);
+		ASSERT_TRUE(visibility.drawnVisible(observer).has_value());
+		EXPECT_EQ(visibility.drawnForestBuildCount(), forestBuilds) << "a frame between builds builds no forest shape";
+
 		std::int64_t east = 0;
 		for (const geometry::Vec2i64& vertex : *bright) {
 			east = std::max(east, vertex.x);
-			// Two millimetres in toward him, off the boundary's rounding.
-			const double	  length = std::sqrt(static_cast<double>(vertex.x * vertex.x + vertex.y * vertex.y));
-			const glm::vec2 inward = nav::toMeters(vertex) * static_cast<float>((length - 2.0) / length);
-			EXPECT_TRUE(shape->holds({0.0F, 0.0F}, inward)) << vertex.x << ", " << vertex.y;
+			// The vertex itself is in his sight shape (its boundary counts); for seen ground, two
+			// millimetres in toward him, off the boundary's rounding.
+			const geometry::Vec2i64 offset = vertex - standingMm;
+			const double			length = std::sqrt(static_cast<double>(offset.x * offset.x + offset.y * offset.y));
+			const glm::vec2			inward = standing + (nav::toMeters(vertex) - standing) * static_cast<float>((length - 2.0) / length);
+			EXPECT_TRUE(shape->holds(standing, nav::toMeters(vertex))) << vertex.x << ", " << vertex.y;
 			EXPECT_TRUE(visibility.isSeen(inward)) << vertex.x << ", " << vertex.y;
 		}
 		EXPECT_LT(east, 26000) << "the clump pulls the bright rim in";
-		eastmost[withRock ? 1 : 0] = east;
+		eastmost[static_cast<std::size_t>(blocker)] = east;
 	}
 	EXPECT_LE(std::abs(eastmost[0] - eastmost[1]), 10) << "a BigRock in reach moves no forested rim";
+	EXPECT_LE(std::abs(eastmost[0] - eastmost[2]), 10) << "a wall in reach moves no forested rim";
 }
 
 // A BigRock among trees: the shape is computeVisibilityPolygon's for the rock rings, cut by the

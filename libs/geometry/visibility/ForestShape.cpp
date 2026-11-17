@@ -97,13 +97,13 @@ namespace geometry {
 			if (Int128::product(lengthSquared, kNormalMostSquared) <= Int128::product(halfPlanes.leastOffset, halfPlanes.leastOffset)) {
 				return true;
 			}
-			const std::size_t near = sightDirectionAtOrBefore(offset);
-			if (outsideSide(halfPlanes, offset, near)) {
+			const std::size_t nearestSide = sightDirectionAtOrBefore(offset);
+			if (outsideSide(halfPlanes, offset, nearestSide)) {
 				return false;
 			}
 			for (std::size_t apart = 1; apart <= halfPlanes.window; ++apart) {
-				if (outsideSide(halfPlanes, offset, (near + apart) % kSightSides) ||
-					outsideSide(halfPlanes, offset, (near + kSightSides - apart) % kSightSides)) {
+				if (outsideSide(halfPlanes, offset, (nearestSide + apart) % kSightSides) ||
+					outsideSide(halfPlanes, offset, (nearestSide + kSightSides - apart) % kSightSides)) {
 					return false;
 				}
 			}

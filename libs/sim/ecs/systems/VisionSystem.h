@@ -157,6 +157,7 @@ class VisionSystem : public ISystem {
 		SightPath			   path	  = SightPath::Open;
 		const geometry::Ring* polygon = nullptr;  // set on the polygon path
 		std::uint64_t		   polygonRevision = 0;
+		std::uint64_t		   buildRevision   = 0; // changes at every build, on every path
 		// The 64 ranges of the build's forest shape of `radius`, in mm from where it is placed; every one
 		// `radius` on the open path.
 		const geometry::SightSideValues* ranges = nullptr;
@@ -246,6 +247,8 @@ class VisionSystem : public ISystem {
 		geometry::Vec2i64 builtMm{0, 0};
 		float			  radius = 0.0F;		// meters, the sight radius of the last pass or build
 		std::int64_t	  leadMm = 0;			// the lead the shape was built with
+		double			  leadSpeed = 0.0;		// his walking speed at that build, m/s
+		std::uint64_t	  buildRevision = 0;	// bumps at every build
 		std::int64_t	  reachMm = 0;			// sight plus that lead
 		std::uint64_t	  polygonRevision = 0; // bumps when the polygon is rebuilt or dropped
 		std::uint64_t	  builtVersion = 0; // GeometryIndex generation the shape was built against
