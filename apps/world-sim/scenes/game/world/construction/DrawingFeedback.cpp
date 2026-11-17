@@ -3,8 +3,10 @@
 #include "DrawingSystem.h"
 
 #include <assets/ConstructionRegistry.h>
+#include <construction/CornerAngles.h>
 #include <graphics/Rect.h>
 #include <primitives/Primitives.h>
+#include <theme/Fonts.h>
 #include <world/camera/WorldCamera.h>
 
 #include <algorithm>
@@ -25,6 +27,7 @@ namespace world_sim {
 		using construction::GuideRelation;
 		using construction::GuideSource;
 		using construction::kMaxSnapGuides;
+		using construction::LengthSnapKind;
 		using construction::SnapGuide;
 		using construction::SnapKind;
 
@@ -48,6 +51,24 @@ namespace world_sim {
 		constexpr float kGridCrossOpacity = 0.55F;
 		constexpr float kRectangleCornerRingRadiusPx = 8.0F;
 		constexpr float kRectangleEdgeRingRadiusPx = 7.0F;
+		// Common lengths: a tick across the segment at the snapped end, and on each edge of the
+		// matched group a faint band and the drafting double tick at its middle.
+		constexpr float kLengthEndTickHalfPx = 8.0F;
+		constexpr float kLengthEndTickWidthPx = 2.0F;
+		constexpr float kMatchedEdgeBandWidthPx = 6.0F;
+		constexpr float kMatchedEdgeBandOpacity = 0.22F;
+		constexpr float kMatchedEdgeTickHalfPx = 6.0F;
+		constexpr float kMatchedEdgeTickWidthPx = 1.75F;
+		constexpr float kMatchedEdgeTickSpacingPx = 4.0F;
+		// The angle readout's arc round a corner that is not square. Its degrees sit outside the
+		// arc on the corner's bisector, the plate this far off the arc (the text 6 px off at an
+		// interface size of 100%, the prototype's); like the other labels' gaps, it is the
+		// plate's, so it holds as the plate grows with the interface size.
+		constexpr float kAngleArcRadiusPx = 18.0F;
+		constexpr float kAngleArcWidthPx = 1.5F;
+		constexpr float kAngleLabelPlateGapPx = 3.0F;
+		// The closing corner reads within this many close radii of the first point.
+		constexpr float kClosingReachInCloseRadii = 2.0F;
 		constexpr float kSegmentLabelPx = 12.0F;
 		// At the snapped end, the segment label's plate sits this far diagonally off the snapped
 		// point (its text 12 px off at an interface size of 100%). The gap is the plate's, so it
@@ -77,6 +98,14 @@ namespace world_sim {
 		// length's label (or the real one, when wider), so the label growing a digit at 10 m or
 		// 100 m can't change where it sits. The label draws at its own width inside that box.
 		constexpr float kSegmentLabelReserveMeters = 999.0F;
+
+		// A length label reads this after its length when the length matches a kept common
+		// length: the length step caught it, or it lies within the merge distance of one (plus
+		// the grouping's own 1e-9 m).
+		constexpr const char* kMatchedLengthSuffix = " =";
+		constexpr double	  kLengthMatchToleranceMeters = 1e-9;
+
+		constexpr const char* kDegreeSign = "\xC2\xB0"; // U+00B0 in UTF-8
 
 		// A label beside an anchor centers on it along an axis its side leans on by less than
 		// this (a unit vector's component: under about 11 degrees off the other axis), so a side
@@ -116,12 +145,17 @@ namespace world_sim {
 		constexpr int	kRingMaximumSegments = 360;
 
 		// Bounds on what one frame plans: each guide's stroke and marker, the marker's eight
-		// ticks; the close ring, halo, and snap-target ring; the marker's and crossing dots;
-		// the segment's and each guide's label.
-		constexpr std::size_t kMaxStrokes = kMaxSnapGuides * 2 + 8;
+		// ticks, each read corner's right-angle marker; the close ring, halo, and snap-target
+		// ring; the marker's and crossing dots; the segment's, each guide's, and each read
+		// corner's label. The common-length marks add theirs, and the read corners their arcs.
+		constexpr std::size_t kMaxReadCorners = std::tuple_size_v<decltype(construction::CornerAngles::corners)>;
+		constexpr std::size_t kMaxStrokes = kMaxSnapGuides * 2 + 8 + kMaxReadCorners;
 		constexpr std::size_t kMaxRings = 3;
 		constexpr std::size_t kMaxDots = 2;
-		constexpr std::size_t kMaxLabels = 1 + kMaxSnapGuides;
+		constexpr std::size_t kMaxLabels = 1 + kMaxSnapGuides + kMaxReadCorners;
+		// The end tick, and each matched edge's band and two ticks.
+		constexpr std::size_t kEndTickStrokes = 1;
+		constexpr std::size_t kStrokesPerMatchedEdge = 3;
 		// What the guide labels keep off besides each other: the marker, the close halo, the
 		// snap-target ring, and the keep-clear box.
 		constexpr std::size_t kMaxLabelObstacles = 4;
@@ -174,6 +208,15 @@ namespace world_sim {
 			float guideGapPx;
 			float rightAngleMarkerPx;
 			float guideCrossingDotPx;
+			float lengthEndTickHalfPx;
+			float lengthEndTickWidthPx;
+			float matchedEdgeBandWidthPx;
+			float matchedEdgeTickHalfPx;
+			float matchedEdgeTickWidthPx;
+			float matchedEdgeTickSpacingPx;
+			float angleArcRadiusPx;
+			float angleArcWidthPx;
+			float angleLabelGapPx;
 		};
 
 		Look lookAt(const assets::PreviewStyle& style, float uiScale) {
@@ -213,6 +256,15 @@ namespace world_sim {
 				.guideGapPx = style.guideGapPx,
 				.rightAngleMarkerPx = style.rightAngleMarkerPx,
 				.guideCrossingDotPx = style.guideCrossingDotPx,
+				.lengthEndTickHalfPx = kLengthEndTickHalfPx,
+				.lengthEndTickWidthPx = kLengthEndTickWidthPx,
+				.matchedEdgeBandWidthPx = kMatchedEdgeBandWidthPx,
+				.matchedEdgeTickHalfPx = kMatchedEdgeTickHalfPx,
+				.matchedEdgeTickWidthPx = kMatchedEdgeTickWidthPx,
+				.matchedEdgeTickSpacingPx = kMatchedEdgeTickSpacingPx,
+				.angleArcRadiusPx = kAngleArcRadiusPx,
+				.angleArcWidthPx = kAngleArcWidthPx,
+				.angleLabelGapPx = kAngleLabelPlateGapPx + kLabelPlatePaddingPx * uiScale,
 			};
 		}
 
@@ -397,6 +449,25 @@ namespace world_sim {
 			return text;
 		}
 
+		std::string lengthLabelText(float meters, int decimals, bool matched) {
+			std::string text = lengthText(meters, decimals);
+			if (matched) {
+				text += kMatchedLengthSuffix;
+			}
+			return text;
+		}
+
+		std::string degreesText(float degrees, int decimals) {
+			char text[32];
+			std::snprintf(text, sizeof(text), "%.*f%s", clampedDecimals(decimals), static_cast<double>(degrees), kDegreeSign);
+			return text;
+		}
+
+		// Half a unit in the readout's last place: a corner that close to 90 degrees reads square.
+		float squareToleranceDegrees(int decimals) {
+			return static_cast<float>(0.5 * std::pow(10.0, -clampedDecimals(decimals)));
+		}
+
 		Foundation::Color withOpacity(const assets::StyleColor& color, float opacity) {
 			return {color.r, color.g, color.b, opacity};
 		}
@@ -418,6 +489,11 @@ namespace world_sim {
 					return style.guideColorWorld;
 			}
 			return style.guideColor;
+		}
+
+		// The common-length marks take the one guide color, or by source their own.
+		const assets::StyleColor& lengthMarkColor(const assets::PreviewStyle& style) {
+			return style.guideColorMode == assets::GuideColorMode::One ? style.guideColor : style.guideColorLength;
 		}
 
 		std::optional<Foundation::DashPattern> alignmentDash(const assets::PreviewStyle& style, const Look& look) {
@@ -444,6 +520,8 @@ namespace world_sim {
 		// fit is judged by: the reserved width and its own height.
 		struct SegmentLabelLayout {
 			std::string				 text;
+			FeedbackTextWeight		 weight = FeedbackTextWeight::Regular;
+			Foundation::Color		 color;
 			Foundation::Vec2		 last; // the previous point, screen pixels
 			Foundation::Vec2		 size;
 			Foundation::Vec2		 reserve;
@@ -469,8 +547,10 @@ namespace world_sim {
 				  snapTarget(snapTargetRing()) {}
 
 			DrawingFeedbackPlan plan() {
-				result.strokes.reserve(kMaxStrokes);
+				const construction::CornerAngles corners = readCorners();
+				result.strokes.reserve(kMaxStrokes + commonLengthMarkStrokes());
 				result.rings.reserve(kMaxRings);
+				result.arcs.reserve(corners.count);
 				result.dots.reserve(kMaxDots);
 				result.labels.reserve(kMaxLabels);
 				placedLabels.reserve(kMaxLabels + kMaxLabelObstacles);
@@ -488,6 +568,8 @@ namespace world_sim {
 				}
 				planCloseHalo();
 				planGridCross();
+				planCommonLengthMarks();
+				const std::array<std::optional<CornerOnScreen>, kMaxReadCorners> cornersOnScreen = planCornerMarks(corners);
 				seedLabelObstacles();
 				if (rectangleTool()) {
 					planSizeLabel();
@@ -501,6 +583,11 @@ namespace world_sim {
 						}
 					}
 				}
+				for (const std::optional<CornerOnScreen>& corner : cornersOnScreen) {
+					if (corner) {
+						planDegreesLabel(*corner);
+					}
+				}
 				planCursor();
 				planCrossingDot();
 				planSnapTarget();
@@ -512,6 +599,13 @@ namespace world_sim {
 				Circle			  circle;
 				Foundation::Color color;
 				FeedbackLayer	  layer;
+			};
+
+			// A corner the angle readout draws an arc at, on screen, for its degrees label.
+			struct CornerOnScreen {
+				Foundation::Vec2 vertex;
+				float			 bisectorRadians = 0.0F; // screen space, y down
+				float			 degrees = 0.0F;
 			};
 
 			const DrawingFeedbackInput&					 input;
@@ -779,6 +873,195 @@ namespace world_sim {
 				));
 			}
 
+			std::size_t commonLengthMarkStrokes() const {
+				if (input.snap.lengthSnap != LengthSnapKind::CommonLength) {
+					return 0;
+				}
+				return kEndTickStrokes + matchedEdgeCount() * kStrokesPerMatchedEdge;
+			}
+
+			std::size_t matchedEdgeCount() const { return std::min(input.snap.matchedEdgeCount, input.snap.matchedEdges.size()); }
+
+			// A length matches when it lies within the merge distance of a kept common length.
+			bool matchesKeptLength(float meters) const {
+				const std::size_t count = std::min(input.snap.commonLengthCount, input.snap.commonLengths.size());
+				const double	  within = static_cast<double>(input.commonLengthMergeMeters) + kLengthMatchToleranceMeters;
+				return std::any_of(input.snap.commonLengths.begin(), input.snap.commonLengths.begin() + static_cast<std::ptrdiff_t>(count), [&](float kept) {
+					return std::abs(static_cast<double>(meters) - static_cast<double>(kept)) <= within;
+				});
+			}
+
+			// When the length step caught a common length: a tick across the segment at the snapped
+			// end, and on every edge of the matched group a faint band and a double tick at its
+			// middle. Facts, small and solid, in the common-length color; the bands are an
+			// alignment's faint highlight, under the guides.
+			void planCommonLengthMarks() {
+				if (input.snap.lengthSnap != LengthSnapKind::CommonLength) {
+					return;
+				}
+				const assets::StyleColor& color = lengthMarkColor(style);
+				const Foundation::Color	  tickColor = withOpacity(color, style.markerOpacity);
+				const Foundation::Color	  bandColor = withOpacity(color, kMatchedEdgeBandOpacity);
+				for (std::size_t index = 0; index < matchedEdgeCount(); ++index) {
+					const construction::LengthEdge& edge = input.snap.matchedEdges[index];
+					const Foundation::Vec2			start = toScreen(edge.start);
+					const Foundation::Vec2			end = toScreen(edge.end);
+					const std::optional<Foundation::Vec2> along = unitBetween(start, end);
+					if (!along) {
+						continue;
+					}
+					result.strokes.push_back(segmentStroke(start, end, bandColor, look.matchedEdgeBandWidthPx, FeedbackLayer::Alignment));
+					const Foundation::Vec2 middle{(start.x + end.x) * 0.5F, (start.y + end.y) * 0.5F};
+					for (const float side : {-0.5F, 0.5F}) {
+						const float offset = side * look.matchedEdgeTickSpacingPx;
+						planTickAcross({middle.x + along->x * offset, middle.y + along->y * offset}, *along, look.matchedEdgeTickHalfPx, tickColor, look.matchedEdgeTickWidthPx);
+					}
+				}
+				if (input.points.empty()) {
+					return;
+				}
+				if (const std::optional<Foundation::Vec2> along = unitBetween(toScreen(input.points.back()), snappedPoint)) {
+					planTickAcross(snappedPoint, *along, look.lengthEndTickHalfPx, tickColor, look.lengthEndTickWidthPx);
+				}
+			}
+
+			// The unit vector from `start` to `end` on screen, when both are finite and they lie
+			// far enough apart to give one.
+			std::optional<Foundation::Vec2> unitBetween(Foundation::Vec2 start, Foundation::Vec2 end) const {
+				if (!isFinite(start) || !isFinite(end)) {
+					return std::nullopt;
+				}
+				const Foundation::Vec2 delta{end.x - start.x, end.y - start.y};
+				const float			   deltaLength = length(delta);
+				if (deltaLength < look.minimumStrokePx) {
+					return std::nullopt;
+				}
+				return Foundation::Vec2{delta.x / deltaLength, delta.y / deltaLength};
+			}
+
+			// A marker tick across the line running along `along` at `center`, `halfLength` each side.
+			void planTickAcross(Foundation::Vec2 center, Foundation::Vec2 along, float halfLength, Foundation::Color color, float width) {
+				const Foundation::Vec2 across{-along.y * halfLength, along.x * halfLength};
+				result.strokes.push_back(
+					segmentStroke({center.x - across.x, center.y - across.y}, {center.x + across.x, center.y + across.y}, color, width, FeedbackLayer::Marker)
+				);
+			}
+
+			// The angle readout's tool, if the tool on reads corners: the Freeform tool and Add or
+			// Subtract read a polygon, the wall tool an open chain until it closes.
+			std::optional<construction::AngleReadoutTool> angleReadoutTool() const {
+				switch (input.tool) {
+					case ToolKind::Foundation:
+					case ToolKind::FoundationEdit:
+						return construction::AngleReadoutTool::Foundation;
+					case ToolKind::Wall:
+						return construction::AngleReadoutTool::Wall;
+					case ToolKind::FoundationRectangle:
+					case ToolKind::Opening:
+						return std::nullopt;
+				}
+				return std::nullopt;
+			}
+
+			// The corners the angle readout shows: with the helper on, not under Alt, and not in the
+			// Rectangle tool. The path is the placed points and the snapped point, the closing
+			// reach twice the close radius the snap was given.
+			construction::CornerAngles readCorners() const {
+				const std::optional<construction::AngleReadoutTool> readoutTool = angleReadoutTool();
+				if (!input.display.angleReadout || input.freeform || !readoutTool) {
+					return {};
+				}
+				return construction::cornerAngles({
+					.points = input.points,
+					.cursor = input.cursor,
+					.closes = input.snap.closesShape(),
+					.tool = *readoutTool,
+					.closingReachMeters = kClosingReachInCloseRadii * input.closeRadiusMeters,
+					.squareToleranceDegrees = squareToleranceDegrees(style.angleReadoutDecimals),
+				});
+			}
+
+			// Each read corner: a square one the right-angle marker along its two edges, any other
+			// an arc from the edge toward the previous vertex to the edge toward the next. Returns,
+			// for each corner with an arc, where its degrees go.
+			std::array<std::optional<CornerOnScreen>, kMaxReadCorners> planCornerMarks(const construction::CornerAngles& corners) {
+				std::array<std::optional<CornerOnScreen>, kMaxReadCorners> arcs{};
+				const Foundation::Color color = withOpacity(guideColor(style, GuideSource::DrawnShape), style.markerOpacity);
+				for (std::size_t index = 0; index < std::min(corners.count, corners.corners.size()); ++index) {
+					const construction::CornerAngle& corner = corners.corners[index];
+					const Foundation::Vec2			 vertex = toScreen(corner.vertex);
+					const std::optional<Foundation::Vec2> toPrevious = unitBetween(vertex, toScreen(corner.vertex + corner.toPrevious));
+					const std::optional<Foundation::Vec2> toNext = unitBetween(vertex, toScreen(corner.vertex + corner.toNext));
+					if (!toPrevious || !toNext) {
+						continue;
+					}
+					if (corner.square) {
+						const float	   size = look.rightAngleMarkerPx;
+						FeedbackStroke marker{.color = color, .width = look.markerLineWidthPx, .layer = FeedbackLayer::Marker};
+						marker.points[0] = {vertex.x + toPrevious->x * size, vertex.y + toPrevious->y * size};
+						marker.points[1] = {vertex.x + (toPrevious->x + toNext->x) * size, vertex.y + (toPrevious->y + toNext->y) * size};
+						marker.points[2] = {vertex.x + toNext->x * size, vertex.y + toNext->y * size};
+						marker.pointCount = 3;
+						result.strokes.push_back(marker);
+						continue;
+					}
+					// The world to screen scale's handedness turns the sweep with it.
+					const float startRadians = std::atan2(toPrevious->y, toPrevious->x);
+					const float sweepRadians = corner.sweepRadians * screenHandedness(corner.vertex);
+					result.arcs.push_back({
+						.center = vertex,
+						.radius = look.angleArcRadiusPx,
+						.startRadians = startRadians,
+						.sweepRadians = sweepRadians,
+						.color = color,
+						.width = look.angleArcWidthPx,
+						.layer = FeedbackLayer::Marker,
+					});
+					arcs[index] = CornerOnScreen{.vertex = vertex, .bisectorRadians = startRadians + sweepRadians * 0.5F, .degrees = corner.degrees};
+				}
+				return arcs;
+			}
+
+			// 1 when the world's x and y axes keep their turn on screen, -1 when the screen
+			// mirrors them.
+			float screenHandedness(Foundation::Vec2 around) const {
+				const Foundation::Vec2 origin = toScreen(around);
+				const Foundation::Vec2 alongX = toScreen({around.x + 1.0F, around.y});
+				const Foundation::Vec2 alongY = toScreen({around.x, around.y + 1.0F});
+				const float turn = (alongX.x - origin.x) * (alongY.y - origin.y) - (alongX.y - origin.y) * (alongY.x - origin.x);
+				return turn < 0.0F ? -1.0F : 1.0F;
+			}
+
+			// A corner's degrees, outside its arc on the corner's bisector, its plate a fixed gap
+			// off the arc. When that spot covers a label placed before it, the marker, or another
+			// obstacle, it moves out along the bisector by its own extent there plus 8 px, up to
+			// six times, each spot moved just inside the screen; it is dropped when none is clear,
+			// and when the corner itself is off the screen.
+			void planDegreesLabel(const CornerOnScreen& corner) {
+				if (!insideViewport({corner.vertex.x, corner.vertex.y, corner.vertex.x, corner.vertex.y})) {
+					return;
+				}
+				const std::string	   text = degreesText(corner.degrees, style.angleReadoutDecimals);
+				const float			   sizePx = look.guideLabelPx;
+				const Foundation::Vec2 size = measure(text, sizePx, FeedbackTextWeight::Regular);
+				const Foundation::Vec2 bisector{std::cos(corner.bisectorRadians), std::sin(corner.bisectorRadians)};
+				const float			   reach = look.angleArcRadiusPx + look.angleLabelGapPx;
+				const float			   step = std::abs(bisector.x) * size.x + std::abs(bisector.y) * size.y + look.guideLabelShiftPaddingPx;
+				for (int attempt = 0; attempt <= kGuideLabelShiftAttempts; ++attempt) {
+					const float			   outward = static_cast<float>(attempt) * step;
+					const Foundation::Vec2 center{
+						corner.vertex.x + bisector.x * (reach + outward + size.x * 0.5F),
+						corner.vertex.y + bisector.y * (reach + outward + size.y * 0.5F),
+					};
+					const Foundation::Vec2 topLeft = moveInside({center.x - size.x * 0.5F, center.y - size.y * 0.5F}, size);
+					const FeedbackBox	   box = plateBox(topLeft, size, look.labelPlatePaddingPx);
+					if (std::none_of(placedLabels.begin(), placedLabels.end(), [&](const FeedbackBox& other) { return overlaps(box, other); })) {
+						addLabel(text, topLeft, sizePx, size, withOpacity(guideColor(style, GuideSource::DrawnShape), 1.0F), FeedbackTextWeight::Regular);
+						return;
+					}
+				}
+			}
+
 			// Guide labels keep clear of the snapped-point marker out to its ticks, and of the
 			// common obstacles.
 			void seedLabelObstacles() {
@@ -869,7 +1152,10 @@ namespace world_sim {
 			// otherwise at the snapped end. Every placement is judged at the reserved width.
 			// With no clear placement at either, it takes the first end placement that fits
 			// the screen unmoved, even over what it keeps off, and moves the first one inside
-			// only when none fits. Nothing is labelled while the length rounds to zero.
+			// only when none fits. Nothing is labelled while the length rounds to zero. A length
+			// that matches a kept common length reads " =", bold in the accent color; while Common
+			// lengths is on, the reserved box holds that matched form too, so the " =" coming or
+			// going changes neither whether the label fits a placement nor which one it takes.
 			void planSegmentLabel() {
 				if (input.points.empty() || !isFinite(snappedPoint)) {
 					return;
@@ -879,19 +1165,30 @@ namespace world_sim {
 				if (!isFinite(last) || !std::isfinite(meters) || roundsToZero(meters, clampedDecimals(style.guideDistanceDecimals))) {
 					return;
 				}
+				const bool matched = input.snap.lengthSnap == LengthSnapKind::CommonLength || matchesKeptLength(meters);
 				SegmentLabelLayout layout{
-					.text = lengthText(meters, style.guideDistanceDecimals),
+					.text = lengthLabelText(meters, style.guideDistanceDecimals, matched),
+					.weight = matched ? FeedbackTextWeight::Bold : FeedbackTextWeight::Regular,
+					.color = matched ? input.accentColor : kSegmentLabelColor,
 					.last = last,
 					.obstacles = segmentLabelObstacles(),
 				};
-				layout.size = measure(layout.text, look.segmentLabelPx);
+				layout.size = measure(layout.text, look.segmentLabelPx, layout.weight);
 				layout.reserve = {
-					std::max(layout.size.x, measure(lengthText(kSegmentLabelReserveMeters, style.guideDistanceDecimals), look.segmentLabelPx).x),
+					std::max(
+						layout.size.x,
+						measure(lengthText(kSegmentLabelReserveMeters, style.guideDistanceDecimals), look.segmentLabelPx, FeedbackTextWeight::Regular).x
+					),
 					layout.size.y,
 				};
+				if (input.display.commonLengths) {
+					const Foundation::Vec2 matchedReserve =
+						measure(lengthLabelText(kSegmentLabelReserveMeters, style.guideDistanceDecimals, true), look.segmentLabelPx, FeedbackTextWeight::Bold);
+					layout.reserve = {std::max(layout.reserve.x, matchedReserve.x), std::max(layout.reserve.y, matchedReserve.y)};
+				}
 
 				if (const std::optional<Foundation::Vec2> atMiddle = middlePlacement(layout)) {
-					addLabel(layout.text, *atMiddle, look.segmentLabelPx, layout.size, kSegmentLabelColor);
+					addLabel(layout.text, *atMiddle, look.segmentLabelPx, layout.size, layout.color, layout.weight);
 					return;
 				}
 				const std::array<Placement, kEndPlacementCount> atEnd = endPlacements(layout);
@@ -901,7 +1198,8 @@ namespace world_sim {
 					firstClear(atEnd, layout.reserve, clear).value_or(firstOnScreen(atEnd, layout.reserve)),
 					look.segmentLabelPx,
 					layout.size,
-					kSegmentLabelColor
+					layout.color,
+					layout.weight
 				);
 			}
 
@@ -914,14 +1212,14 @@ namespace world_sim {
 				if (input.sizeLabel.empty() || !isFinite(snappedPoint)) {
 					return;
 				}
-				const Foundation::Vec2 size = measure(input.sizeLabel, look.segmentLabelPx);
+				const Foundation::Vec2 size = measure(input.sizeLabel, look.segmentLabelPx, FeedbackTextWeight::Regular);
 				const FeedbackBox	   anchor = endAnchorBox();
 				std::array<Placement, kEndPlacementCount> placements{};
 				for (std::size_t index = 0; index < kEndPlacementCount; ++index) {
 					const Foundation::Vec2 topLeft = inQuarter(anchor, kUpRightFirst[index], size);
 					placements[index] = {topLeft, topLeft};
 				}
-				addLabel(input.sizeLabel, firstOnScreen(placements, size), look.segmentLabelPx, size, kSegmentLabelColor);
+				addLabel(input.sizeLabel, firstOnScreen(placements, size), look.segmentLabelPx, size, kSegmentLabelColor, FeedbackTextWeight::Regular);
 			}
 
 			// Beside the segment's middle, 10 px off it on the side away from the shape, then
@@ -1116,9 +1414,12 @@ namespace world_sim {
 				const Foundation::Vec2 middle{(start.x + end.x) * 0.5F, (start.y + end.y) * 0.5F};
 				const Foundation::Vec2 side = awayFromSegment(middle, {-along.y, along.x});
 
-				const std::string	   text = lengthText(guide.distanceFromNodeMeters, style.guideDistanceDecimals);
-				const float			   sizePx = look.guideLabelPx;
-				const Foundation::Vec2 size = measure(text, sizePx);
+				const bool				 matched = matchesKeptLength(guide.distanceFromNodeMeters);
+				const std::string		 text = lengthLabelText(guide.distanceFromNodeMeters, style.guideDistanceDecimals, matched);
+				const FeedbackTextWeight weight = matched ? FeedbackTextWeight::Bold : FeedbackTextWeight::Regular;
+				const Foundation::Color	 color = matched ? input.accentColor : withOpacity(guideColor(style, guide.source), 1.0F);
+				const float				 sizePx = look.guideLabelPx;
+				const Foundation::Vec2	 size = measure(text, sizePx, weight);
 				const float			   halfPart = partLength * 0.5F;
 				bool				   triedBackEnd = false;
 				bool				   triedForwardEnd = false;
@@ -1143,7 +1444,7 @@ namespace world_sim {
 					const FeedbackBox			   box = plateBox(topLeft, size, look.labelPlatePaddingPx);
 					const bool covers = std::any_of(placedLabels.begin(), placedLabels.end(), [&](const FeedbackBox& other) { return overlaps(box, other); });
 					if (!covers) {
-						addLabel(text, topLeft, sizePx, size, withOpacity(guideColor(style, guide.source), 1.0F));
+						addLabel(text, topLeft, sizePx, size, color, weight);
 						return;
 					}
 				}
@@ -1165,7 +1466,9 @@ namespace world_sim {
 				return facingUpOrLeft(normal);
 			}
 
-			void addLabel(const std::string& text, Foundation::Vec2 topLeft, float sizePx, Foundation::Vec2 size, Foundation::Color color) {
+			void addLabel(
+				const std::string& text, Foundation::Vec2 topLeft, float sizePx, Foundation::Vec2 size, Foundation::Color color, FeedbackTextWeight weight
+			) {
 				const FeedbackBox plate = plateBox(topLeft, size, look.labelPlatePaddingPx);
 				placedLabels.push_back(plate);
 				result.labels.push_back({
@@ -1175,6 +1478,7 @@ namespace world_sim {
 					.plate = plate,
 					.plateCornerRadius = look.labelPlateCornerPx,
 					.color = color,
+					.weight = weight,
 				});
 			}
 
@@ -1277,6 +1581,12 @@ namespace world_sim {
 			return layers.alignmentId;
 		}
 
+		// The game's default face has no bold cut; bold text takes the theme's display face, a
+		// semibold.
+		Renderer::FontFamily fontOf(FeedbackTextWeight weight) {
+			return weight == FeedbackTextWeight::Bold ? theme::fontDisplay : Renderer::FontFamily::Default;
+		}
+
 		void drawRing(const FeedbackRing& ring, const ToolLayers& layers, float segmentPx) {
 			if (!std::isfinite(ring.radius) || ring.radius <= 0.0F) {
 				return;
@@ -1325,12 +1635,12 @@ namespace world_sim {
 		return Planner(input, measure).plan();
 	}
 
-	Foundation::Vec2 measureFeedbackText(const std::string& text, float sizePx) {
+	Foundation::Vec2 measureFeedbackText(const std::string& text, float sizePx, FeedbackTextWeight weight) {
 		Renderer::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
 		if (fontRenderer == nullptr) {
 			return {0.0F, 0.0F};
 		}
-		const auto size = fontRenderer->MeasureText(text, sizePx / kRendererFontBaseSizePx);
+		const auto size = fontRenderer->MeasureText(text, sizePx / kRendererFontBaseSizePx, fontOf(weight));
 		return {size.x, size.y};
 	}
 
@@ -1352,6 +1662,18 @@ namespace world_sim {
 		}
 		for (const FeedbackRing& ring : plan.rings) {
 			drawRing(ring, layers, look.ringSegmentPx);
+		}
+		for (const FeedbackArc& arc : plan.arcs) {
+			Renderer::Primitives::drawArc({
+				.center = arc.center,
+				.innerRadius = arc.radius - arc.width * 0.5F,
+				.outerRadius = arc.radius + arc.width * 0.5F,
+				.startAngle = arc.startRadians,
+				.sweep = arc.sweepRadians,
+				.color = arc.color,
+				.id = layerId(layers, arc.layer),
+				.key = layerKey(layers, arc.layer),
+			});
 		}
 		for (const FeedbackDot& dot : plan.dots) {
 			Foundation::CircleStyle style{.fill = dot.fill};
@@ -1378,6 +1700,7 @@ namespace world_sim {
 				.position = label.position,
 				.scale = label.sizePx / kRendererFontBaseSizePx,
 				.color = label.color,
+				.font = fontOf(label.weight),
 				.id = layerId(layers, FeedbackLayer::Label),
 				.key = layerKey(layers, FeedbackLayer::Label),
 			});

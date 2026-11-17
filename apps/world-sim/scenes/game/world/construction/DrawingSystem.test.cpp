@@ -1088,7 +1088,7 @@ TEST_F(DrawingCloseTest, TheBoxTheLabelsKeepOffIsWhereTheReasonDrawsAtTheUiScale
 	ASSERT_FALSE(drawing->previewVerdict().editReason.empty());
 
 	constexpr float kUiScale = 2.0F;
-	const auto		measure = [](const std::string& text, float sizePx) {
+	const auto		measure = [](const std::string& text, float sizePx, world_sim::FeedbackTextWeight /*weight*/) {
 		 return Foundation::Vec2{0.5F * sizePx * static_cast<float>(text.size()), 1.25F * sizePx};
 	};
 	const std::optional<world_sim::DrawingSystem::EditReason> reason = drawing->editReason(kViewportWidth, kViewportHeight, kUiScale, measure);
@@ -1103,7 +1103,7 @@ TEST_F(DrawingCloseTest, TheBoxTheLabelsKeepOffIsWhereTheReasonDrawsAtTheUiScale
 	);
 	EXPECT_FLOAT_EQ(input.uiScale, kUiScale);
 	ASSERT_TRUE(input.keepClear.has_value());
-	const Foundation::Vec2 drawnSize = measure(reason->text, reason->textScale * world_sim::kRendererFontBaseSizePx);
+	const Foundation::Vec2 drawnSize = measure(reason->text, reason->textScale * world_sim::kRendererFontBaseSizePx, world_sim::FeedbackTextWeight::Regular);
 	constexpr float		   kShadowPx = 1.0F;
 	EXPECT_FLOAT_EQ(input.keepClear->left, reason->position.x);
 	EXPECT_FLOAT_EQ(input.keepClear->top, reason->position.y);

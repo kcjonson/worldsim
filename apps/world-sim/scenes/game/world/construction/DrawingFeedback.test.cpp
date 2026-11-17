@@ -28,6 +28,7 @@ namespace {
 	using construction::SnapGuide;
 	using construction::SnapKind;
 	using world_sim::DrawingFeedbackPlan;
+	using world_sim::FeedbackArc;
 	using world_sim::FeedbackBox;
 	using world_sim::FeedbackDot;
 	using world_sim::FeedbackLabel;
@@ -47,8 +48,16 @@ namespace {
 	// hair past it (1000.00006).
 	constexpr float kViewportTolerancePx = 1e-3F;
 
-	Foundation::Vec2 fakeSize(const std::string& text, float sizePx) {
-		return {0.6F * sizePx * static_cast<float>(text.size()), kLineHeightOfSize * sizePx};
+	// Bold is wider and its face's line taller, as the game's bold face is.
+	constexpr float kBoldWidthFactor = 1.1F;
+	constexpr float kBoldLineHeightOfSize = 1.3F;
+
+	Foundation::Vec2 fakeSize(const std::string& text, float sizePx, world_sim::FeedbackTextWeight weight) {
+		const Foundation::Vec2 regular{0.6F * sizePx * static_cast<float>(text.size()), kLineHeightOfSize * sizePx};
+		if (weight == world_sim::FeedbackTextWeight::Bold) {
+			return {regular.x * kBoldWidthFactor, kBoldLineHeightOfSize * sizePx};
+		}
+		return regular;
 	}
 
 	bool overlaps(const FeedbackBox& first, const FeedbackBox& second) {
@@ -107,6 +116,9 @@ namespace {
 		bool							willClose = false;
 		bool							snappedPointInvalid = false;
 		Foundation::Color				invalidColor{0.9F, 0.2F, 0.2F, 1.0F};
+		Foundation::Color				accentColor{0.91F, 0.64F, 0.24F, 1.0F};
+		float							commonLengthMergeMeters = 0.05F;
+		bool							freeform = false;
 		std::optional<FeedbackBox>		keepClear;
 		construction::RectangleSnapKind rectangleSnap = construction::RectangleSnapKind::None;
 		std::string						sizeLabel;
@@ -143,6 +155,7 @@ namespace {
 				.snap = snap,
 				.points = points,
 				.cursor = cursor,
+				.freeform = freeform,
 				.display = display,
 				.style = style,
 				.camera = camera,
@@ -155,15 +168,21 @@ namespace {
 				.willClose = willClose,
 				.snappedPointInvalid = snappedPointInvalid,
 				.invalidColor = invalidColor,
+				.accentColor = accentColor,
+				.commonLengthMergeMeters = commonLengthMergeMeters,
 				.keepClear = keepClear,
 				.rectangleSnap = rectangleSnap,
 				.sizeLabel = sizeLabel,
 			};
 			char reserved[32];
 			std::snprintf(reserved, sizeof(reserved), "%.*f m", style.guideDistanceDecimals, 999.0);
-			return world_sim::planSnapFeedback(input, [&](const std::string& text, float sizePx) {
-				const Foundation::Vec2 size = fakeSize(text, sizePx);
-				return text == reserved ? size : Foundation::Vec2{size.x - 0.6F * sizePx * static_cast<float>(narrowerByCharacters), size.y};
+			const std::string matchedReserved = std::string(reserved) + " =";
+			return world_sim::planSnapFeedback(input, [&](const std::string& text, float sizePx, world_sim::FeedbackTextWeight weight) {
+				const Foundation::Vec2 size = fakeSize(text, sizePx, weight);
+				if (text == reserved || text == matchedReserved) {
+					return size;
+				}
+				return Foundation::Vec2{size.x - 0.6F * sizePx * static_cast<float>(narrowerByCharacters), size.y};
 			});
 		}
 
@@ -733,7 +752,7 @@ TEST_F(DrawingFeedbackTest, LabelsSitOnPlatesAsTallAsTheFontsLineHeight) {
 	points = {{0.0F, 0.0F}};
 	cursor = {1.0F, 0.0F};
 	const FeedbackLabel	   label = plan().labels[0];
-	const Foundation::Vec2 size = fakeSize(label.text, label.sizePx);
+	const Foundation::Vec2 size = fakeSize(label.text, label.sizePx, label.weight);
 	EXPECT_FLOAT_EQ(size.y, kLineHeightOfSize * label.sizePx);
 	EXPECT_FLOAT_EQ(label.plate.left, label.position.x - kPlatePaddingPx);
 	EXPECT_FLOAT_EQ(label.plate.top, label.position.y - kPlatePaddingPx);
@@ -1347,6 +1366,9 @@ TEST_F(DrawingFeedbackTest, OnlyTheLabelsFollowTheUiScale) {
 		bool						  canClose;
 		bool						  willClose;
 		bool						  guideDistances;
+		bool						  commonLengths;
+		bool						  angleReadout;
+		bool						  freeform;
 		std::optional<FeedbackBox>	  keepClear;
 	};
 	std::vector<Frame> frames;
@@ -1405,6 +1427,26 @@ TEST_F(DrawingFeedbackTest, OnlyTheLabelsFollowTheUiScale) {
 		frame.canClose = chance(0.5F);
 		frame.willClose = frame.canClose && chance(0.5F);
 		frame.guideDistances = chance(0.8F);
+		// Common lengths, their marks, and the angle readout: a kept length near the segment's
+		// and each guide's, the length step catching one, edges matched across the screen.
+		frame.commonLengths = chance(0.6F);
+		frame.angleReadout = chance(0.6F);
+		frame.freeform = chance(0.1F);
+		if (frame.commonLengths && pointCount > 0) {
+			const Foundation::Vec2 last = frame.points.back();
+			const float			   segmentMeters = std::hypot(frame.cursor.x - last.x, frame.cursor.y - last.y);
+			frame.snap.commonLengths[frame.snap.commonLengthCount++] = segmentMeters + between(-0.08F, 0.08F);
+			for (std::size_t guideIndex = 0; guideIndex < frame.snap.guideCount; ++guideIndex) {
+				frame.snap.commonLengths[frame.snap.commonLengthCount++] = frame.snap.guides[guideIndex].distanceFromNodeMeters + between(-0.08F, 0.08F);
+			}
+			if (chance(0.5F)) {
+				frame.snap.lengthSnap = construction::LengthSnapKind::CommonLength;
+				const int edgeCount = oneOf(4);
+				for (int edge = 0; edge < edgeCount; ++edge) {
+					frame.snap.matchedEdges[frame.snap.matchedEdgeCount++] = {.start = onScreen(), .end = onScreen()};
+				}
+			}
+		}
 		if (chance(0.3F)) {
 			// Where the preview puts its rejection reason: below and right of the snapped point.
 			camera.setZoom(frame.zoom);
@@ -1426,6 +1468,9 @@ TEST_F(DrawingFeedbackTest, OnlyTheLabelsFollowTheUiScale) {
 		canClose = frame.canClose;
 		willClose = frame.willClose;
 		display.guideDistances = frame.guideDistances;
+		display.commonLengths = frame.commonLengths;
+		display.angleReadout = frame.angleReadout;
+		freeform = frame.freeform;
 		keepClear = frame.keepClear;
 		viewportWidth = kWidth;
 		viewportHeight = kHeight;
@@ -1456,6 +1501,10 @@ TEST_F(DrawingFeedbackTest, OnlyTheLabelsFollowTheUiScale) {
 	std::size_t withCloseRing = 0;
 	std::size_t withWallRing = 0;
 	std::size_t withKeepClear = 0;
+	std::size_t withArc = 0;
+	std::size_t withLengthMarks = 0;
+	std::size_t withMatchedLabel = 0;
+	std::size_t withDegrees = 0;
 	for (std::size_t index = 0; index < frames.size(); ++index) {
 		const Frame&			  frame = frames[index];
 		const DrawingFeedbackPlan reference = planFor(frame, 1.0F);
@@ -1465,6 +1514,14 @@ TEST_F(DrawingFeedbackTest, OnlyTheLabelsFollowTheUiScale) {
 		withCloseRing += ringsIn(reference, FeedbackLayer::Alignment).empty() ? 0 : 1;
 		withWallRing += ringsIn(reference, FeedbackLayer::Target).empty() ? 0 : 1;
 		withKeepClear += frame.keepClear ? 1 : 0;
+		withArc += reference.arcs.empty() ? 0 : 1;
+		withLengthMarks += frame.snap.lengthSnap == construction::LengthSnapKind::CommonLength ? 1 : 0;
+		withMatchedLabel += std::any_of(reference.labels.begin(), reference.labels.end(), [](const FeedbackLabel& label) {
+			return label.weight == world_sim::FeedbackTextWeight::Bold;
+		}) ? 1 : 0;
+		withDegrees += std::any_of(reference.labels.begin(), reference.labels.end(), [](const FeedbackLabel& label) {
+			return label.text.find('\xB0') != std::string::npos;
+		}) ? 1 : 0;
 		for (const float scale : {0.6F, 0.8F, 1.25F, 1.5F, 2.0F, 3.0F}) {
 			SCOPED_TRACE(::testing::Message() << "scale " << scale << ", frame " << index);
 			const DrawingFeedbackPlan scaled = planFor(frame, scale);
@@ -1492,6 +1549,18 @@ TEST_F(DrawingFeedbackTest, OnlyTheLabelsFollowTheUiScale) {
 				EXPECT_EQ(actual.radius, expected.radius);
 				EXPECT_EQ(actual.width, expected.width);
 				expectSameDash(actual.dash, expected.dash);
+			}
+			ASSERT_EQ(scaled.arcs.size(), reference.arcs.size());
+			for (std::size_t item = 0; item < scaled.arcs.size(); ++item) {
+				const FeedbackArc& actual = scaled.arcs[item];
+				const FeedbackArc& expected = reference.arcs[item];
+				EXPECT_EQ(actual.layer, expected.layer);
+				EXPECT_EQ(actual.center.x, expected.center.x);
+				EXPECT_EQ(actual.center.y, expected.center.y);
+				EXPECT_EQ(actual.radius, expected.radius);
+				EXPECT_EQ(actual.width, expected.width);
+				EXPECT_EQ(actual.startRadians, expected.startRadians);
+				EXPECT_EQ(actual.sweepRadians, expected.sweepRadians);
 			}
 			ASSERT_EQ(scaled.dots.size(), reference.dots.size());
 			for (std::size_t item = 0; item < scaled.dots.size(); ++item) {
@@ -1567,6 +1636,10 @@ TEST_F(DrawingFeedbackTest, OnlyTheLabelsFollowTheUiScale) {
 	EXPECT_GT(withCloseRing, 50U);
 	EXPECT_GT(withWallRing, 50U);
 	EXPECT_GT(withKeepClear, 100U);
+	EXPECT_GT(withArc, 50U);
+	EXPECT_GT(withLengthMarks, 50U);
+	EXPECT_GT(withMatchedLabel, 50U);
+	EXPECT_GT(withDegrees, 50U);
 
 	// A label beside a line keeps its plate 7 px off it at every scale, its text 10 px off at
 	// 100%: the gap is the plate's, as at the snapped end, so a growing plate never closes on it.
@@ -1600,6 +1673,411 @@ TEST_F(DrawingFeedbackTest, OnlyTheLabelsFollowTheUiScale) {
 			EXPECT_NEAR(std::min(std::abs(textTop - lineY), std::abs(textBottom - lineY)), 10.0F, 1e-3F);
 		}
 	}
+}
+
+namespace {
+
+	constexpr const char* kDegreeSign = "\xC2\xB0";
+	constexpr float		  kDegreesToRadians = std::numbers::pi_v<float> / 180.0F;
+
+	void expectSameColor(const Foundation::Color& actual, const Foundation::Color& expected) {
+		EXPECT_FLOAT_EQ(actual.r, expected.r);
+		EXPECT_FLOAT_EQ(actual.g, expected.g);
+		EXPECT_FLOAT_EQ(actual.b, expected.b);
+		EXPECT_FLOAT_EQ(actual.a, expected.a);
+	}
+
+	std::optional<FeedbackLabel> degreesLabel(const DrawingFeedbackPlan& result) {
+		const auto found = std::find_if(result.labels.begin(), result.labels.end(), [](const FeedbackLabel& label) {
+			return label.text.find(kDegreeSign) != std::string::npos;
+		});
+		return found == result.labels.end() ? std::nullopt : std::optional<FeedbackLabel>(*found);
+	}
+
+	Foundation::Vec2 unitOf(Foundation::Vec2 vector) {
+		const float size = std::hypot(vector.x, vector.y);
+		return {vector.x / size, vector.y / size};
+	}
+
+	Foundation::Vec2 middleOf(const FeedbackStroke& stroke) {
+		return {(stroke.points[0].x + stroke.points[1].x) * 0.5F, (stroke.points[0].y + stroke.points[1].y) * 0.5F};
+	}
+
+	float lengthOf(const FeedbackStroke& stroke) {
+		return std::hypot(stroke.points[1].x - stroke.points[0].x, stroke.points[1].y - stroke.points[0].y);
+	}
+
+} // namespace
+
+TEST_F(DrawingFeedbackTest, SegmentLabelMatchesWhenTheLengthStepCaughtACommonLength) {
+	points = {{0.0F, 0.0F}};
+	cursor = {4.0F, 0.0F};
+	snap.lengthSnap = construction::LengthSnapKind::CommonLength;
+	const DrawingFeedbackPlan matched = plan();
+	ASSERT_EQ(matched.labels.size(), 1U);
+	EXPECT_EQ(matched.labels[0].text, "4.00 m =");
+	EXPECT_EQ(matched.labels[0].weight, world_sim::FeedbackTextWeight::Bold);
+	expectSameColor(matched.labels[0].color, accentColor);
+
+	snap.lengthSnap = construction::LengthSnapKind::Rounded;
+	const DrawingFeedbackPlan rounded = plan();
+	ASSERT_EQ(rounded.labels.size(), 1U);
+	EXPECT_EQ(rounded.labels[0].text, "4.00 m");
+	EXPECT_EQ(rounded.labels[0].weight, world_sim::FeedbackTextWeight::Regular);
+	EXPECT_NE(rounded.labels[0].color.b, accentColor.b);
+}
+
+// Another rule can land on a kept length (a crossing, say): the label reads matched within
+// the merge distance of a kept group's length, and only there.
+TEST_F(DrawingFeedbackTest, SegmentLabelMatchesWithinTheMergeDistanceOfAKeptLengthAndOnlyThere) {
+	points = {{0.0F, 0.0F}};
+	snap.commonLengths[0] = 3.0F;
+	snap.commonLengths[1] = 4.0F;
+	snap.commonLengthCount = 2;
+	for (const auto& [meters, text] : {
+			 std::pair{4.04F, "4.04 m ="},
+			 std::pair{3.96F, "3.96 m ="},
+			 std::pair{4.06F, "4.06 m"},
+			 std::pair{3.5F, "3.50 m"},
+		 }) {
+		SCOPED_TRACE(text);
+		cursor = {meters, 0.0F};
+		const DrawingFeedbackPlan result = plan();
+		ASSERT_EQ(result.labels.size(), 1U);
+		EXPECT_EQ(result.labels[0].text, text);
+		const bool matched = result.labels[0].text.ends_with(" =");
+		EXPECT_EQ(result.labels[0].weight == world_sim::FeedbackTextWeight::Bold, matched);
+		EXPECT_EQ(result.labels[0].color.b == accentColor.b, matched);
+	}
+
+	snap.commonLengthCount = 0;
+	cursor = {4.0F, 0.0F};
+	EXPECT_EQ(plan().labels[0].text, "4.00 m") << "no kept length";
+}
+
+TEST_F(DrawingFeedbackTest, GuideDistanceLabelMatchesAKeptLengthInBoldAccent) {
+	display.guideDistances = true;
+	points = {{0.0F, 0.0F}};
+	cursor = {0.0F, 3.0F};
+	addGuide({.from = {2.0F, 3.0F}, .to = cursor, .source = GuideSource::WorldAxes}); // 2 m
+	snap.commonLengths[0] = 2.02F;
+	snap.commonLengthCount = 1;
+	const DrawingFeedbackPlan matched = plan();
+	ASSERT_EQ(matched.labels.size(), 2U);
+	EXPECT_EQ(matched.labels[1].text, "2.00 m =");
+	EXPECT_EQ(matched.labels[1].weight, world_sim::FeedbackTextWeight::Bold);
+	expectSameColor(matched.labels[1].color, accentColor);
+
+	snap.commonLengths[0] = 2.1F;
+	const DrawingFeedbackPlan plain = plan();
+	ASSERT_EQ(plain.labels.size(), 2U);
+	EXPECT_EQ(plain.labels[1].text, "2.00 m");
+	expectColor(plain.labels[1].color, style.guideColor, 1.0F);
+}
+
+TEST_F(DrawingFeedbackTest, CommonLengthEndTickCrossesTheSegmentAtTheSnappedEnd) {
+	points = {{0.0F, 0.0F}};
+	cursor = {4.0F, 0.0F};
+	snap.lengthSnap = construction::LengthSnapKind::CommonLength;
+	const auto ticks = strokesIn(plan(), FeedbackLayer::Marker);
+	ASSERT_EQ(ticks.size(), 1U);
+	ASSERT_EQ(ticks[0].pointCount, 2U);
+	const Foundation::Vec2 tip = screen(cursor);
+	expectNear(middleOf(ticks[0]), tip);
+	EXPECT_NEAR(ticks[0].points[0].x, tip.x, 1e-3F) << "across the segment";
+	EXPECT_NEAR(lengthOf(ticks[0]), 16.0F, 1e-3F);
+	EXPECT_FLOAT_EQ(ticks[0].width, 2.0F);
+	EXPECT_FALSE(ticks[0].dash.has_value());
+	expectColor(ticks[0].color, style.guideColor, style.markerOpacity);
+
+	style.guideColorMode = assets::GuideColorMode::BySource;
+	expectColor(strokesIn(plan(), FeedbackLayer::Marker)[0].color, style.guideColorLength, style.markerOpacity);
+
+	snap.lengthSnap = construction::LengthSnapKind::Rounded;
+	EXPECT_TRUE(strokesIn(plan(), FeedbackLayer::Marker).empty());
+}
+
+TEST_F(DrawingFeedbackTest, EachMatchedEdgeGetsAFaintBandAndADoubleTickAtItsMiddle) {
+	points = {{0.0F, 0.0F}};
+	cursor = {0.0F, 4.0F};
+	snap.lengthSnap = construction::LengthSnapKind::CommonLength;
+	const std::array<construction::LengthEdge, 2> edges{{{.start = {2.0F, 0.0F}, .end = {6.0F, 0.0F}}, {.start = {2.0F, 2.0F}, .end = {2.0F, 6.0F}}}};
+	for (const construction::LengthEdge& edge : edges) {
+		snap.matchedEdges[snap.matchedEdgeCount++] = edge;
+	}
+
+	const DrawingFeedbackPlan result = plan();
+	const auto				  bands = strokesIn(result, FeedbackLayer::Alignment);
+	ASSERT_EQ(bands.size(), edges.size());
+	const auto ticks = strokesIn(result, FeedbackLayer::Marker);
+	ASSERT_EQ(ticks.size(), 1U + 2U * edges.size()) << "the end tick, and two on each edge";
+	for (std::size_t index = 0; index < edges.size(); ++index) {
+		SCOPED_TRACE(index);
+		const Foundation::Vec2 start = screen(edges[index].start);
+		const Foundation::Vec2 end = screen(edges[index].end);
+		expectNear(bands[index].points[0], start);
+		expectNear(bands[index].points[1], end);
+		EXPECT_FLOAT_EQ(bands[index].width, 6.0F);
+		expectColor(bands[index].color, style.guideColor, 0.22F);
+
+		const Foundation::Vec2		middle{(start.x + end.x) * 0.5F, (start.y + end.y) * 0.5F};
+		const Foundation::Vec2		along = unitOf({end.x - start.x, end.y - start.y});
+		std::vector<FeedbackStroke> atMiddle;
+		std::copy_if(ticks.begin(), ticks.end(), std::back_inserter(atMiddle), [&](const FeedbackStroke& tick) {
+			return std::hypot(middleOf(tick).x - middle.x, middleOf(tick).y - middle.y) <= 2.0F + 1e-3F;
+		});
+		ASSERT_EQ(atMiddle.size(), 2U);
+		const Foundation::Vec2 apart{middleOf(atMiddle[1]).x - middleOf(atMiddle[0]).x, middleOf(atMiddle[1]).y - middleOf(atMiddle[0]).y};
+		EXPECT_NEAR(std::abs(apart.x * along.x + apart.y * along.y), 4.0F, 1e-3F) << "4 px apart along the edge";
+		for (const FeedbackStroke& tick : atMiddle) {
+			EXPECT_NEAR(lengthOf(tick), 12.0F, 1e-3F);
+			EXPECT_FLOAT_EQ(tick.width, 1.75F);
+			const Foundation::Vec2 tickAlong = unitOf({tick.points[1].x - tick.points[0].x, tick.points[1].y - tick.points[0].y});
+			EXPECT_NEAR(tickAlong.x * along.x + tickAlong.y * along.y, 0.0F, 1e-3F) << "across the edge";
+			expectColor(tick.color, style.guideColor, style.markerOpacity);
+		}
+	}
+
+	snap.lengthSnap = construction::LengthSnapKind::None;
+	const DrawingFeedbackPlan unmatched = plan();
+	EXPECT_TRUE(strokesIn(unmatched, FeedbackLayer::Alignment).empty());
+	EXPECT_TRUE(strokesIn(unmatched, FeedbackLayer::Marker).empty());
+}
+
+TEST_F(DrawingFeedbackTest, AngleReadoutDrawsAnArcAndItsDegreesAtACornerThatIsNotSquare) {
+	display.angleReadout = true;
+	points = {{0.0F, 0.0F}, {4.0F, 0.0F}};
+	cursor = {6.0F, 2.0F}; // 135 degrees at (4, 0)
+
+	const DrawingFeedbackPlan result = plan();
+	ASSERT_EQ(result.arcs.size(), 1U);
+	const FeedbackArc&	   arc = result.arcs[0];
+	const Foundation::Vec2 vertex = screen(points[1]);
+	expectNear(arc.center, vertex);
+	EXPECT_FLOAT_EQ(arc.radius, 18.0F);
+	EXPECT_FLOAT_EQ(arc.width, 1.5F);
+	EXPECT_EQ(arc.layer, FeedbackLayer::Marker);
+	expectColor(arc.color, style.guideColor, style.markerOpacity);
+	EXPECT_NEAR(std::abs(arc.sweepRadians), 135.0F * kDegreesToRadians, 1e-4F);
+	// From the edge toward the previous point, through the inside of the corner.
+	const Foundation::Vec2 toPrevious = unitOf({screen(points[0]).x - vertex.x, screen(points[0]).y - vertex.y});
+	const Foundation::Vec2 toNext = unitOf({screen(cursor).x - vertex.x, screen(cursor).y - vertex.y});
+	EXPECT_NEAR(std::cos(arc.startRadians), toPrevious.x, 1e-4F);
+	EXPECT_NEAR(std::sin(arc.startRadians), toPrevious.y, 1e-4F);
+	const float			   middle = arc.startRadians + arc.sweepRadians * 0.5F;
+	const Foundation::Vec2 bisector = unitOf({toPrevious.x + toNext.x, toPrevious.y + toNext.y});
+	EXPECT_GT(std::cos(middle) * bisector.x + std::sin(middle) * bisector.y, 0.999F);
+	EXPECT_TRUE(strokesIn(result, FeedbackLayer::Marker).empty()) << "no right-angle marker";
+
+	const std::optional<FeedbackLabel> degrees = degreesLabel(result);
+	ASSERT_TRUE(degrees.has_value());
+	EXPECT_EQ(degrees->text, std::string("135.0") + kDegreeSign);
+	EXPECT_FLOAT_EQ(degrees->sizePx, style.guideLabelPx);
+	EXPECT_EQ(degrees->weight, world_sim::FeedbackTextWeight::Regular);
+	expectColor(degrees->color, style.guideColor, 1.0F);
+	// Outside the arc, on the inside of the corner.
+	const Foundation::Vec2 labelCenter = centerOf(degrees->plate);
+	EXPECT_GT(distanceToBox(vertex, degrees->plate), 18.0F);
+	EXPECT_GT((labelCenter.x - vertex.x) * bisector.x + (labelCenter.y - vertex.y) * bisector.y, 0.0F);
+
+	style.angleReadoutDecimals = 2;
+	EXPECT_EQ(degreesLabel(plan())->text, std::string("135.00") + kDegreeSign);
+}
+
+// Within half a unit in the readout's last place of 90 degrees, a corner is square: the
+// right-angle marker along its two edges, and no arc or degrees.
+TEST_F(DrawingFeedbackTest, AngleReadoutDrawsTheRightAngleMarkerAtACornerWithinTheSquareTolerance) {
+	display.angleReadout = true;
+	points = {{0.0F, 0.0F}, {4.0F, 0.0F}};
+	const auto cursorAt = [&](float degreesOffSquare) {
+		const float radians = (90.0F - degreesOffSquare) * kDegreesToRadians;
+		return Foundation::Vec2{4.0F + 3.0F * std::cos(radians), 3.0F * std::sin(radians)};
+	};
+	for (const float offSquare : {0.0F, 0.04F, -0.04F}) {
+		SCOPED_TRACE(offSquare);
+		cursor = cursorAt(offSquare);
+		const DrawingFeedbackPlan result = plan();
+		EXPECT_TRUE(result.arcs.empty());
+		EXPECT_FALSE(degreesLabel(result).has_value());
+		const auto markers = strokesIn(result, FeedbackLayer::Marker);
+		ASSERT_EQ(markers.size(), 1U);
+		ASSERT_EQ(markers[0].pointCount, 3U);
+		const Foundation::Vec2 vertex = screen(points[1]);
+		const Foundation::Vec2 toPrevious = unitOf({screen(points[0]).x - vertex.x, screen(points[0]).y - vertex.y});
+		const Foundation::Vec2 toNext = unitOf({screen(cursor).x - vertex.x, screen(cursor).y - vertex.y});
+		const float			   size = style.rightAngleMarkerPx;
+		expectNear(markers[0].points[0], {vertex.x + toPrevious.x * size, vertex.y + toPrevious.y * size});
+		expectNear(markers[0].points[1], {vertex.x + (toPrevious.x + toNext.x) * size, vertex.y + (toPrevious.y + toNext.y) * size});
+		expectNear(markers[0].points[2], {vertex.x + toNext.x * size, vertex.y + toNext.y * size});
+		EXPECT_FLOAT_EQ(markers[0].width, 1.5F);
+		expectColor(markers[0].color, style.guideColor, style.markerOpacity);
+	}
+
+	cursor = cursorAt(0.06F);
+	const DrawingFeedbackPlan offSquare = plan();
+	EXPECT_EQ(offSquare.arcs.size(), 1U);
+	EXPECT_TRUE(strokesIn(offSquare, FeedbackLayer::Marker).empty());
+	EXPECT_EQ(degreesLabel(offSquare)->text, std::string("90.1") + kDegreeSign);
+
+	style.angleReadoutDecimals = 2; // the tolerance is now 0.005 degrees
+	cursor = cursorAt(0.04F);
+	EXPECT_EQ(plan().arcs.size(), 1U);
+}
+
+// The corner at the first point reads too with three or more points placed, when the
+// snapped point is within twice the close radius of it or the click closes.
+TEST_F(DrawingFeedbackTest, AngleReadoutReadsTheClosingCornerOnlyNearTheFirstPoint) {
+	display.angleReadout = true;
+	closeRadiusMeters = 0.5F; // a closing reach of 1 m
+	points = {{0.0F, 0.0F}, {4.0F, 0.0F}, {4.0F, 3.0F}};
+
+	cursor = {0.3F, 0.8F}; // 0.85 m from the first point
+	const DrawingFeedbackPlan near = plan();
+	ASSERT_EQ(near.arcs.size(), 2U);
+	expectNear(near.arcs[0].center, screen(points[2]));
+	expectNear(near.arcs[1].center, screen(points[0]));
+
+	cursor = {0.3F, 1.2F}; // 1.24 m
+	const DrawingFeedbackPlan far = plan();
+	ASSERT_EQ(far.arcs.size(), 1U);
+	expectNear(far.arcs[0].center, screen(points[2]));
+
+	snap.kind = SnapKind::Origin; // the click closes: the path is the placed points
+	points = {{0.0F, 0.0F}, {4.0F, -1.0F}, {4.0F, 3.0F}, {0.0F, 3.0F}};
+	cursor = points[0];
+	const DrawingFeedbackPlan closing = plan();
+	EXPECT_EQ(strokesIn(closing, FeedbackLayer::Marker).size(), 1U) << "square at (0, 3)";
+	ASSERT_EQ(closing.arcs.size(), 1U);
+	expectNear(closing.arcs[0].center, screen(points[0]));
+	EXPECT_EQ(degreesLabel(closing)->text, std::string("104.0") + kDegreeSign);
+
+	snap.kind = SnapKind::None;
+	points = {{0.0F, 0.0F}, {4.0F, 0.0F}};
+	cursor = {0.3F, 0.8F};
+	const DrawingFeedbackPlan twoPoints = plan();
+	ASSERT_EQ(twoPoints.arcs.size(), 1U) << "no closing corner with two points";
+	expectNear(twoPoints.arcs[0].center, screen(points[1]));
+}
+
+// A foundation reads the interior angle of the shape so far; an open wall chain the angle
+// between its two segments.
+TEST_F(DrawingFeedbackTest, AngleReadoutReadsAFoundationsInteriorAngleAndAWallChainsTurn) {
+	display.angleReadout = true;
+	points = {{0.0F, 0.0F}, {4.0F, 0.0F}, {4.0F, 3.0F}};
+	cursor = {6.0F, 5.0F}; // a reflex corner at (4, 3)
+	for (const auto& [drawingTool, degrees] : {
+			 std::pair{world_sim::ToolKind::Foundation, "225.0"},
+			 std::pair{world_sim::ToolKind::FoundationEdit, "225.0"},
+			 std::pair{world_sim::ToolKind::Wall, "135.0"},
+		 }) {
+		SCOPED_TRACE(degrees);
+		tool = drawingTool;
+		const std::optional<FeedbackLabel> label = degreesLabel(plan());
+		ASSERT_TRUE(label.has_value());
+		EXPECT_EQ(label->text, std::string(degrees) + kDegreeSign);
+	}
+}
+
+TEST_F(DrawingFeedbackTest, AngleReadoutShowsNothingUnderAltInTheRectangleToolBelowTwoPointsOrSwitchedOff) {
+	display.angleReadout = true;
+	points = {{0.0F, 0.0F}, {4.0F, 0.0F}};
+	cursor = {6.0F, 2.0F};
+	ASSERT_EQ(plan().arcs.size(), 1U);
+
+	const auto expectNothing = [&](const char* why) {
+		SCOPED_TRACE(why);
+		const DrawingFeedbackPlan result = plan();
+		EXPECT_TRUE(result.arcs.empty());
+		EXPECT_TRUE(strokesIn(result, FeedbackLayer::Marker).empty());
+		EXPECT_FALSE(degreesLabel(result).has_value());
+	};
+	freeform = true;
+	expectNothing("Alt");
+	freeform = false;
+	tool = world_sim::ToolKind::FoundationRectangle;
+	expectNothing("the Rectangle tool");
+	tool = world_sim::ToolKind::Foundation;
+	points = {{4.0F, 0.0F}};
+	expectNothing("one point");
+	points = {{0.0F, 0.0F}, {4.0F, 0.0F}};
+	display.angleReadout = false;
+	expectNothing("switched off");
+}
+
+TEST_F(DrawingFeedbackTest, DegreesLabelKeepsOffEveryObstacleAndIsDroppedWhenNothingIsClear) {
+	display.angleReadout = true;
+	points = {{0.0F, 0.0F}, {4.0F, 0.0F}};
+	cursor = {6.0F, 2.0F};
+	const std::optional<FeedbackLabel> firstSpot = degreesLabel(plan());
+	ASSERT_TRUE(firstSpot.has_value());
+
+	keepClear = firstSpot->plate; // its first spot is taken
+	const DrawingFeedbackPlan moved = plan();
+	const std::optional<FeedbackLabel> degrees = degreesLabel(moved);
+	ASSERT_TRUE(degrees.has_value());
+	EXPECT_FALSE(overlaps(degrees->plate, *keepClear));
+	for (const FeedbackBox& marker : markerBoxes(screen(cursor))) {
+		EXPECT_FALSE(overlaps(degrees->plate, marker));
+	}
+	for (const FeedbackLabel& label : moved.labels) {
+		if (label.text != degrees->text) {
+			EXPECT_FALSE(overlaps(degrees->plate, label.plate)) << label.text;
+		}
+	}
+	const Foundation::Vec2 vertex = screen(points[1]);
+	EXPECT_GT(distanceToBox(vertex, degrees->plate), distanceToBox(vertex, firstSpot->plate)) << "further out along the bisector";
+
+	keepClear = FeedbackBox{0.0F, 0.0F, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)};
+	EXPECT_FALSE(degreesLabel(plan()).has_value());
+}
+
+// While Common lengths is on, every segment-label placement is judged at a box that also
+// holds the matched form, " =" in bold, so the label sits the same whether or not its length
+// matches, along rays from points across the screen at many zooms.
+TEST_F(DrawingFeedbackTest, SegmentLabelKeepsItsPlacementWhenItsLengthComesToMatch) {
+	display.commonLengths = true;
+	std::mt19937 random(896);
+	const auto	 between = [&](float low, float high) { return std::uniform_real_distribution<float>(low, high)(random); };
+	constexpr float kWidthPx = static_cast<float>(kViewportWidth);
+	constexpr float kHeightPx = static_cast<float>(kViewportHeight);
+	constexpr int kRays = 200;
+	constexpr int kSteps = 150;
+	int			  compared = 0;
+	int			  atMiddle = 0;
+	for (int ray = 0; ray < kRays; ++ray) {
+		camera.setZoom(between(1.0F, 12.0F));
+		const Foundation::Vec2 origin = worldAt({between(0.0F, kWidthPx), between(0.0F, kHeightPx)});
+		const float			   heading = between(0.0F, 2.0F * std::numbers::pi_v<float>);
+		const float			   stepMeters = between(5.0F, 15.0F) / (kPixelsPerMeter * camera.zoom()); // 5 to 15 px a step
+		points = {origin};
+		const int earlier = static_cast<int>(between(0.0F, 2.99F));
+		for (int point = 0; point < earlier; ++point) {
+			points.insert(points.begin(), worldAt({between(0.0F, kWidthPx), between(0.0F, kHeightPx)}));
+		}
+		for (int step = 1; step <= kSteps; ++step) {
+			const float distance = stepMeters * static_cast<float>(step);
+			cursor = {origin.x + std::cos(heading) * distance, origin.y + std::sin(heading) * distance};
+			const Foundation::Vec2 tip = screen(cursor);
+			if (tip.x < 0.0F || tip.y < 0.0F || tip.x > kWidthPx || tip.y > kHeightPx) {
+				break;
+			}
+			snap.lengthSnap = construction::LengthSnapKind::None;
+			const DrawingFeedbackPlan plain = plan();
+			snap.lengthSnap = construction::LengthSnapKind::CommonLength;
+			const DrawingFeedbackPlan matched = plan();
+			if (plain.labels.empty()) {
+				continue;
+			}
+			ASSERT_EQ(matched.labels.size(), plain.labels.size());
+			ASSERT_TRUE(matched.labels[0].text.ends_with(" ="));
+			const SegmentLabelPlacement placement = segmentLabelPlacement(plain);
+			EXPECT_EQ(segmentLabelPlacement(matched), placement) << "ray " << ray << ", step " << step;
+			++compared;
+			atMiddle += placement.atMiddle ? 1 : 0;
+		}
+	}
+	EXPECT_GT(compared, 8000);
+	EXPECT_GT(atMiddle, 1000);
 }
 
 namespace {
