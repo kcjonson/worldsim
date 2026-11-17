@@ -135,14 +135,6 @@ add_custom_target(world-sim-shaders ALL
 )
 add_dependencies(world-sim-shaders world-view-shaders planet-view-shaders)
 
-# Copy fonts to executable directory
-add_custom_command(TARGET world-sim POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_SOURCE_DIR}/fonts
-    $<TARGET_FILE_DIR:world-sim>/fonts
-    COMMENT "Copying fonts to world-sim directory"
-)
-
 # Mirror assets to the executable directory every build.
 # Uses cmake/mirror-assets.cmake which mirrors each source subdir independently
 # via robocopy /MIR (Win) / rsync --delete (non-Win). Per-subdir mirroring means
