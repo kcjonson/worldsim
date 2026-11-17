@@ -555,6 +555,22 @@ TEST_F(DrawingFeedbackTest, SegmentLabelReadsTheLengthClearOfThePointer) {
 	EXPECT_NEAR(centerOf(longLabel.plate).x, middle.x, 1e-3F) << "centered on the middle";
 }
 
+// With no placed points' center off the line to pick a side, the label faces up the screen, or
+// left when the line is within about 11 degrees of vertical (its normal's y under 0.2).
+TEST_F(DrawingFeedbackTest, SegmentLabelOnANearVerticalLineTakesTheLeftAndOnOneFurtherOffTheUpSide) {
+	points = {{0.0F, 0.0F}};
+	for (const auto& [degreesOffVertical, expectLeft] : {std::pair{4.0F, true}, std::pair{20.0F, false}}) {
+		SCOPED_TRACE(::testing::Message() << degreesOffVertical << " degrees off vertical");
+		const float radians = degreesOffVertical * std::numbers::pi_v<float> / 180.0F;
+		cursor = {6.0F * std::sin(radians), 6.0F * std::cos(radians)};
+		const DrawingFeedbackPlan result = plan();
+		ASSERT_EQ(result.labels.size(), 1U);
+		const Foundation::Vec2 middle = screen({cursor.x * 0.5F, cursor.y * 0.5F});
+		const float			   sideOfMiddle = centerOf(result.labels[0].plate).x - middle.x;
+		EXPECT_EQ(sideOfMiddle < 0.0F, expectLeft);
+	}
+}
+
 TEST_F(DrawingFeedbackTest, SegmentLabelChangesSideAtMostOnceAlongARay) {
 	const float diagonal = std::numbers::sqrt2_v<float> * 0.5F;
 	for (const auto& [name, direction] : {
@@ -1243,12 +1259,12 @@ TEST_F(DrawingFeedbackTest, SegmentLabelChangesPlacementAtMostOnceAwayFromTheEdg
 	EXPECT_LT(plans, 100000);
 }
 
-// Two placed points, the earlier one a hair inside the 0.5 px a placed points' centre must sit
+// Two placed points, the earlier one a hair inside the 0.5 px a placed points' center must sit
 // off the segment's line to pick a side of it. Measured from screen floats, the snapped point's
-// rounding carried it across that threshold from one centimetre to the next, and the label
+// rounding carried it across that threshold from one centimeter to the next, and the label
 // crossed the segment each time. The reviewer's ray (its earlier point as printed, to three
 // places), then two built to sit a ten-thousandth of a pixel inside.
-TEST_F(DrawingFeedbackTest, SegmentLabelSideHoldsWithTheShapesCentreAtTheEdgeOfTheDeadZone) {
+TEST_F(DrawingFeedbackTest, SegmentLabelSideHoldsWithTheShapesCenterAtTheEdgeOfTheDeadZone) {
 	viewportWidth = 1366;
 	viewportHeight = 768;
 	camera.setZoom(8.0F);

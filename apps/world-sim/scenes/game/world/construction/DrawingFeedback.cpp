@@ -64,9 +64,9 @@ namespace world_sim {
 		// 100 m can't change where it sits. The label draws at its own width inside that box.
 		constexpr float kSegmentLabelReserveMeters = 999.0F;
 
-		// A label beside an anchor centres on it along an axis its side leans on by less than
+		// A label beside an anchor centers on it along an axis its side leans on by less than
 		// this (a unit vector's component: under about 11 degrees off the other axis), so a side
-		// the snap made exact (an axis) can't jitter between flush and centred.
+		// the snap made exact (an axis) can't jitter between flush and centered.
 		constexpr float kLabelLeanMinimum = 0.2F;
 
 		// The end quarter's scores are unit dot products in [-1, 1]; one within this of the best
@@ -866,7 +866,7 @@ namespace world_sim {
 			// from the previous point it then moves only with the ray's direction, which the
 			// snapped point's rounding barely turns, so a center near kSideMinimumPx off the line
 			// stays on one side of that threshold. Measured from screen floats and the segment's
-			// middle, it wandered by a ten-thousandth of a pixel from one centimetre to the next and
+			// middle, it wandered by a ten-thousandth of a pixel from one centimeter to the next and
 			// flipped the label across the segment each time. The world to screen scale is
 			// positive on both axes, so the world normal points the same way as `normal`.
 			Foundation::Vec2 awayFromShape(Foundation::Vec2 normal) const {
