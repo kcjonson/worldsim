@@ -414,29 +414,15 @@ TEST_F(SimTermsTest, AMoverKindAddedThroughDataWorksWithNear) {
 	EXPECT_EQ(evaluateModded("near(unicorn, 5)"), Truth::Unknown) << "no asset is defined as Unicorn";
 }
 
-TEST(SimTermsData, ANeedNameTheSimLacksIsUnknownAndLoggedOncePerCondition) {
-	const assets::ConditionConfigLoad load = loadWithMod(R"(<Symbols name="need">morale</Symbols>)");
+TEST(SimTermsData, AModAddsNamesToTheSetsTheConditionsFilesFill) {
+	const assets::ConditionConfigLoad load =
+		loadWithMod(R"(<Symbols name="behavior">hoard</Symbols><Symbols name="resource">wood</Symbols>)");
 	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
 	ConditionVocabulary vocabulary;
 	ASSERT_TRUE(buildSimVocabulary(vocabulary, load.config, ecs::testing::shippedTraits()).empty());
-
-	ecs::World			world;
-	const ecs::EntityID colonist = world.createEntity();
-	world.addComponent<ecs::NeedsComponent>(colonist, ecs::testing::shippedNeeds());
-
-	UnansweredLog log;
-	foundation::Logger::setSink(&UnansweredLog::sink, &log);
-	const ParseResult result = vocabulary.parse("need(morale) < 20 or need(morale) > 80");
-	const ParseResult known = vocabulary.parse("need(hunger) > 80");
-	foundation::Logger::setSink(nullptr, nullptr);
-	ASSERT_TRUE(result.ok()) << result.error->describe();
-	ASSERT_TRUE(known.ok()) << known.error->describe();
-	EXPECT_EQ(vocabulary.evaluate(result.condition, {.world = world, .colonist = colonist}), Truth::Unknown);
-	EXPECT_EQ(vocabulary.evaluate(known.condition, {.world = world, .colonist = colonist}), Truth::True);
-#ifdef DEVELOPMENT_BUILD
-	ASSERT_EQ(log.messages.size(), 1U);
-	EXPECT_NE(log.messages[0].find("'morale'"), std::string::npos) << log.messages[0];
-#endif
+	const ParseResult result = vocabulary.parse("affinity(hoard) >= 2 or scarcity(wood) is short");
+	EXPECT_TRUE(result.ok()) << result.error->describe();
+	EXPECT_FALSE(vocabulary.parse("scarcity(stone) is short").ok());
 }
 
 TEST(SimTermsData, TaskGroupMistakesAreReportedWhenTheSimBinds) {
@@ -445,7 +431,7 @@ TEST(SimTermsData, TaskGroupMistakesAreReportedWhenTheSimBinds) {
 	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
 	ConditionVocabulary			   vocabulary;
 	const std::vector<std::string> errors = buildSimVocabulary(vocabulary, load.config, ecs::testing::shippedTraits());
-	const auto mentions = [&](const std::string& text) {
+	const auto					   mentions = [&](const std::string& text) {
 		return std::ranges::any_of(errors, [&](const std::string& error) { return error.find(text) != std::string::npos; });
 	};
 	EXPECT_TRUE(mentions("task group 'busy': the sim has no task type 'dance'")) << ::testing::PrintToString(errors);

@@ -11,19 +11,16 @@
   </Term>                         names come from.
   <Symbols name [open]>names</Symbols>  a set of names; files that name the same set add to it. An
                                   open="true" set takes any name; one nothing answers reads Unknown.
-                                  "kind" and "trait" are not declared here: <Kind> fills "kind",
-                                  and the trait files (colonists/traits) fill "trait".
+                                  The owned sets are closed and never declared here: <Kind> fills
+                                  "kind", the trait files (colonists/traits) fill "trait", the sim
+                                  fills "need" and "attribute", and the sim's task types and
+                                  <TaskGroup> fill "task".
   <TaskGroup name>tasks</TaskGroup>  a name current_task() takes for several task types.
   <Night start end/>              the hours is_night is true.
 
   See /docs/design/game-systems/colonists/mood.md (Conditions).
 -->
 <ConditionVocabulary>
-  <!-- Filled by the sim from its needs, attributes, and task types. -->
-  <Symbols name="need"/>
-  <Symbols name="attribute"/>
-  <Symbols name="task"/>
-
   <!-- Open until their own definitions fill them. -->
   <Symbols name="event" open="true"/>
   <Symbols name="behavior" open="true"/>

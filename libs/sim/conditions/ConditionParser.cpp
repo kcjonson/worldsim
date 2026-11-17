@@ -16,9 +16,6 @@ namespace conditions {
 
 		constexpr std::size_t kMaxDepth = 64;
 
-		constexpr std::string_view kSelf = "self";
-		constexpr std::string_view kTarget = "target";
-
 		const char* typeName(ValueType type) {
 			switch (type) {
 				case ValueType::Truth:
@@ -57,7 +54,11 @@ namespace conditions {
 		}
 
 		std::string expectedNames(const ConditionVocabulary& vocabulary, uint32_t set) {
-			return vocabulary.isOpenSet(set) ? std::string("a name") : "one of: " + joinNames(vocabulary.symbolSet(set));
+			if (vocabulary.isOpenSet(set)) {
+				return "expected a name";
+			}
+			const std::span<const DeclaredSymbol> names = vocabulary.symbolSet(set);
+			return names.empty() ? "no \"" + vocabulary.symbolSetName(set) + "\" names are declared" : "expected one of: " + joinNames(names);
 		}
 
 		/// The first count past `bound`: every count from there compares against `bound` the same way.
@@ -119,13 +120,13 @@ namespace conditions {
 					++end;
 				}
 				token.spelling = text.substr(index, end - index);
-				if (token.spelling == "and") {
+				if (token.spelling == assets::kConditionAnd) {
 					token.kind = TokenKind::And;
-				} else if (token.spelling == "or") {
+				} else if (token.spelling == assets::kConditionOr) {
 					token.kind = TokenKind::Or;
-				} else if (token.spelling == "not") {
+				} else if (token.spelling == assets::kConditionNot) {
 					token.kind = TokenKind::Not;
-				} else if (token.spelling == "is") {
+				} else if (token.spelling == assets::kConditionIs) {
 					token.kind = TokenKind::Is;
 				} else {
 					token.kind = TokenKind::Name;
@@ -313,7 +314,8 @@ namespace conditions {
 		if (!symbol.has_value()) {
 			fail(
 				name.position,
-				"'" + std::string(name.spelling) + "' is not a value of " + signature.name + " (expected " + expectedNames(vocabulary, set) + ")"
+				"'" + std::string(name.spelling) + "' is not a value of " + signature.name + " (" +
+					expectedNames(vocabulary, set) + ")"
 			);
 			return std::nullopt;
 		}
@@ -366,12 +368,12 @@ namespace conditions {
 				return inner;
 			}
 			case TokenKind::Name: {
-				if (token.spelling != kSelf && token.spelling != kTarget) {
+				if (token.spelling != assets::kConditionSelf && token.spelling != assets::kConditionTarget) {
 					return parseTerm();
 				}
 				advance();
 				const std::optional<uint16_t> node =
-					addNode({.kind = token.spelling == kSelf ? NodeKind::Self : NodeKind::BoundTarget}, token.position);
+					addNode({.kind = token.spelling == assets::kConditionSelf ? NodeKind::Self : NodeKind::BoundTarget}, token.position);
 				if (!node.has_value()) {
 					return std::nullopt;
 				}
@@ -458,7 +460,7 @@ namespace conditions {
 		if (expected.type == ValueType::Symbol) {
 			const uint32_t set = *expected.symbolSet;
 			if (!bareName) {
-				fail(token.position, ordinal + " is " + expectedNames(vocabulary, set));
+				fail(token.position, ordinal + " needs a name (" + expectedNames(vocabulary, set) + ")");
 				return std::nullopt;
 			}
 			advance();
@@ -466,7 +468,8 @@ namespace conditions {
 			if (!symbol.has_value()) {
 				fail(
 					token.position,
-					"'" + std::string(token.spelling) + "' is not accepted as " + ordinal + " (expected " + expectedNames(vocabulary, set) + ")"
+					"'" + std::string(token.spelling) + "' is not accepted as " + ordinal + " (" + expectedNames(vocabulary, set) +
+						")"
 				);
 				return std::nullopt;
 			}
@@ -480,8 +483,8 @@ namespace conditions {
 			return Operand{.node = *node, .type = ValueType::Symbol, .position = token.position};
 		}
 
-		if (expected.type == ValueType::Target && bareName && token.spelling != kSelf && token.spelling != kTarget &&
-			!vocabulary.findTerm(token.spelling).has_value()) {
+		if (expected.type == ValueType::Target && bareName && token.spelling != assets::kConditionSelf &&
+			token.spelling != assets::kConditionTarget && !vocabulary.findTerm(token.spelling).has_value()) {
 			fail(
 				token.position,
 				"'" + std::string(token.spelling) + "' is not a target; " + ordinal + " is self, target, or a term that names one"

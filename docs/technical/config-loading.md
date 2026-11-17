@@ -120,10 +120,20 @@ the result matches across platforms); there are no values in C++, so an `Attribu
 
 The registry is no singleton: `ecs::loadColonistRules` builds it as the first stage and `ecs::ColonistRules` owns it
 beside the vocabulary and the thought types, so whatever needs it (the colonist spawn, the dossier's Bio tab) takes it
-from the rules the world was built with. The conditions take their `trait` names from it: the condition loader declares
-the `trait` symbol set itself, and a conditions file declaring `<Symbols name="trait">` is an error naming that file.
-So a `trait(...)` naming an id no file declares is a condition error naming the thought or condition file. Its errors
-are prefixed `[traits]` and reach the loading screen and the splash the same way as theirs.
+from the rules the world was built with. The conditions take their `trait` names from it. Its errors are prefixed
+`[traits]` and reach the loading screen and the splash the same way as theirs.
+
+Five condition symbol sets are owned, listed in `assets::kOwnedSymbolSets` (libs/assets/assets/ConditionConfig.h)
+with their owners: `kind` (the `<Kind>` declarations), `trait` (the trait registry), `need` (`ecs::kNeedLabels`),
+`attribute` (`ecs::kAttributeFields`), and `task` (the sim's task types, `assets::kTaskTypeNames`, and the `<TaskGroup>`
+declarations). The condition loader declares each one closed and empty before filling `kind` and `task` from their
+declarations, and a conditions file declaring any of them with `<Symbols>`, to add names or to open it, is an error
+naming that file. The sim adds the rest when it builds the vocabulary (`conditions::buildSimVocabulary`), and
+`ConditionVocabulary::addSymbols` refuses a set that is not owned, so the sim never adds to a set the conditions files
+fill. A condition naming a need, attribute, trait, or task the owner lacks is a parse error, and the thought loader
+reports it naming the file, the thought, and the feeling or line that holds the condition, with the set's valid names.
+The other sets (`event`, `behavior`, `mood_cause`, `resource`, `scarcity_level`) are the conditions files' own: any file
+may add names, and the open ones take any name.
 
 ### Mod Paths (Future)
 

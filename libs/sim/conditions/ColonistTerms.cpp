@@ -34,7 +34,7 @@ namespace conditions {
 		static_assert(assets::kTaskTypeNames.size() == static_cast<std::size_t>(ecs::TaskType::Wander), "a name for every TaskType");
 
 		/// The engine's names for `term`'s first parameter, added to its symbol set and bound to their values.
-		/// Names the set holds that the engine lacks (a mod's) stay unbound and are reported.
+		/// The set is owned (assets::kOwnedSymbolSets), so these are all the names it holds.
 		template <typename Value>
 		std::shared_ptr<const SymbolBindings<Value>> bindEngineNames(
 			ConditionVocabulary&								vocabulary,
@@ -56,7 +56,6 @@ namespace conditions {
 					bindings->bind(symbol.id, found->second);
 				}
 			}
-			vocabulary.reportUnbound(term, 0, *bindings);
 			return bindings;
 		}
 
@@ -95,7 +94,7 @@ namespace conditions {
 		}
 
 		void provideNeed(ConditionVocabulary& vocabulary, std::vector<std::string>& errors) {
-			auto needs = bindEngineNames(vocabulary, "need", engineNeeds(), errors);
+			auto needs = bindEngineNames(vocabulary, assets::kNeedSymbols, engineNeeds(), errors);
 			record(errors, vocabulary.provide("need", ValueType::Number, {ValueType::Symbol}, [needs](const TermCall& call) {
 				const ecs::NeedType*	   need = needs->find(call.arguments[0].symbol());
 				const ecs::NeedsComponent* component = call.context.world.getComponent<ecs::NeedsComponent>(call.context.colonist);
@@ -107,7 +106,7 @@ namespace conditions {
 		}
 
 		void provideAttribute(ConditionVocabulary& vocabulary, std::vector<std::string>& errors) {
-			auto attributes = bindEngineNames(vocabulary, "attribute", engineAttributes(), errors);
+			auto attributes = bindEngineNames(vocabulary, assets::kAttributeSymbols, engineAttributes(), errors);
 			record(errors, vocabulary.provide("attribute", ValueType::Number, {ValueType::Symbol}, [attributes](const TermCall& call) {
 				const AttributeMember* field = attributes->find(call.arguments[0].symbol());
 				const ecs::Attributes* component = call.context.world.getComponent<ecs::Attributes>(call.context.colonist);
@@ -123,7 +122,7 @@ namespace conditions {
 			for (const assets::TraitDef& trait : registry.traits()) {
 				ids.emplace_back(trait.id, trait.id);
 			}
-			auto traits = bindEngineNames(vocabulary, "trait", ids, errors);
+			auto traits = bindEngineNames(vocabulary, assets::kTraitSymbols, ids, errors);
 			record(errors, vocabulary.provide("trait", ValueType::Truth, {ValueType::Symbol}, [traits](const TermCall& call) {
 				const std::string* id = traits->find(call.arguments[0].symbol());
 				const ecs::Traits* component = call.context.world.getComponent<ecs::Traits>(call.context.colonist);
