@@ -531,7 +531,7 @@ private:
 	std::optional<glm::vec2> m_colonyOrigin;
 
 	/// Colonists already warned about for lacking DecisionTrace or SourceReachMemo, so each is warned once
-	std::unordered_set<EntityID> m_warnedMissingDecisionComponents;
+	std::unordered_set<EntityID> warnedMissingDecisionComponents;
 
 	/// Reused candidate storage for need-source queries, so a decision allocates nothing once it has grown
 	std::vector<SourceCandidate> sourceScratch;
