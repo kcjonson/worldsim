@@ -85,8 +85,8 @@
          (guideColor) or bySource. Guide colors carry an alpha of FF: guideOpacity sets the
          alignment lines' opacity and markerOpacity the markers'. Labels draw at full opacity on
          a dark plate, and the dotted close-radius ring takes its alpha from originHaloColor.
-         Sizes are screen pixels and never scale with zoom; only the label text (guideLabelPx)
-         follows the interface size. -->
+         Sizes are screen pixels and never scale with zoom; only the labels (guideLabelPx, the
+         segment and size labels, and their plates) follow the interface size. -->
     <guideLineStyle>dotted</guideLineStyle>
     <guideDashPx>1.0</guideDashPx>
     <guideGapPx>4.5</guideGapPx>

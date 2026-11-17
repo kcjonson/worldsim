@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Thoughts about things that happen to a colonist or in front of them.
+
+  <thought id importance="trivial|normal|major" [stacks="true"]>
+    <feeling is [when] [mood hours | mood while]/>  the most specific feeling whose when holds is the one
+                                                    the colonist has; one with no when is the fallback
+    <line [feeling] [when]>text</line>              a quip; {subject} names who or what it is about
+    <ends thought/>                                 created when a held thought of this type ends
+  </thought>
+
+  See /docs/design/game-systems/colonists/thoughts.md (Data).
+-->
+<thoughts>
+  <thought id="ate_good_meal" importance="normal">
+    <feeling is="content" mood="+5" hours="6"/>
+    <feeling is="grateful" when="attribute(kindness) >= 14" mood="+5" hours="6"/>
+    <line>That hit the spot.</line>
+    <line>Mmm. Crunchy.</line>
+    <line feeling="grateful">Whoever cooked this, I love you.</line>
+    <line feeling="grateful">That sauce deserves a statue.</line>
+  </thought>
+
+  <thought id="slept_on_ground" importance="normal">
+    <feeling is="miserable" mood="-10" hours="24"/>
+    <feeling is="resigned" when="attribute(sanity) >= 14" mood="-6" hours="24"/>
+    <feeling is="furious" when="attribute(civility) &lt; 6 and attribute(sanity) &lt; 8" mood="-12" hours="24"/>
+    <line>My back hates me now.</line>
+    <line>Something crawled across my face.</line>
+    <line feeling="resigned">Dirt's just a big mattress.</line>
+    <line feeling="resigned">Stars for a ceiling. Free of charge.</line>
+    <line feeling="furious">Who put that rock there?!</line>
+    <line feeling="furious">I'm suing the ground.</line>
+  </thought>
+
+  <thought id="accident_in_public" importance="major">
+    <feeling is="mortified" mood="-20" hours="24"/>
+    <feeling is="amused" when="attribute(sanity) >= 15" mood="-8" hours="24"/>
+    <line>Nobody saw that. Right?</line>
+    <line>I'm moving to a cave.</line>
+    <line feeling="amused">Well. That happened.</line>
+    <line feeling="amused">I meant to do that. Mostly.</line>
+  </thought>
+
+  <thought id="talked_with_friend" importance="normal">
+    <feeling is="content" mood="+5" hours="6"/>
+    <feeling is="delighted" when="attribute(social_need) >= 14" mood="+8" hours="6"/>
+    <line>{subject} gets me.</line>
+    <line>Good chat.</line>
+    <line feeling="delighted">Same time tomorrow, {subject}?</line>
+    <line feeling="delighted">{subject} laughs at my bad jokes.</line>
+  </thought>
+</thoughts>

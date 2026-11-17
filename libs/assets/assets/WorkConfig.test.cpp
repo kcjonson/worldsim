@@ -604,10 +604,29 @@ TEST_F(WorkConfigTest, PriorityConfig_BadNumbersAreErrorsNamingFileElementAndAtt
         const std::string joined = errorsFor(priorityTuningWith(std::string("<maxDistance>") + text + "</maxDistance>"));
         EXPECT_NE(joined.find(std::string("<DistanceFactor> maxDistance must be a number, got \"") + text + "\""), std::string::npos) << text << ": " << joined;
     }
-    for (const char* text : {"5x", "x", "", "2.5"}) {
+    for (const char* text : {"5x", "x", "", "2.5", "99999999999"}) {
         const std::string joined = errorsFor(priorityTuningWith("<maxDistance>60</maxDistance>", text));
-        EXPECT_NE(joined.find(std::string("<Task> tier must be a whole number, got \"") + text + "\""), std::string::npos) << text << ": " << joined;
+        EXPECT_NE(joined.find(std::string("<Task name=\"Craft\"> tier must be a whole number, got \"") + text + "\""), std::string::npos) << text << ": " << joined;
     }
+}
+
+TEST_F(WorkConfigTest, PriorityConfig_NumbersInSixteenBitFieldsAreRangeCheckedAndElementTextIsTrimmed) {
+    const std::string path = writeTempFile(
+        "<PriorityTuning><Bonuses><DistanceFactor><maxDistance>\n  60\n</maxDistance><maxFactor>+300</maxFactor></DistanceFactor>"
+        "<InProgress><bonus>40000</bonus></InProgress><TaskAge><bonusPerMinute> 1 </bonusPerMinute><maxBonus>-32769</maxBonus></TaskAge>"
+        "<StoragePriority><weight>32767</weight></StoragePriority></Bonuses></PriorityTuning>",
+        ".xml");
+    ASSERT_TRUE(PriorityConfig::Get().loadFromFile(path));
+    const PriorityConfig& config = PriorityConfig::Get();
+    EXPECT_FLOAT_EQ(config.getDistanceFactorConfig().maxDistance, 60.0F);
+    EXPECT_FLOAT_EQ(config.getDistanceFactorConfig().maxFactor, 300.0F);
+    EXPECT_EQ(config.getTaskAgeConfig().bonusPerMinute, 1);
+    EXPECT_EQ(config.getStoragePriorityWeight(), 32767);
+    ASSERT_EQ(config.problems().size(), 2U);
+    EXPECT_NE(config.problems()[0].find("<InProgress> bonus must be a whole number from -32768 to 32767, got \"40000\""), std::string::npos)
+        << config.problems()[0];
+    EXPECT_NE(config.problems()[1].find("<TaskAge> maxBonus must be a whole number from -32768 to 32767, got \"-32769\""), std::string::npos)
+        << config.problems()[1];
 }
 
 TEST_F(WorkConfigTest, MoodConfig_BadNumbersAreErrorsNamingFileElementAndAttribute) {
@@ -626,6 +645,10 @@ TEST_F(WorkConfigTest, MoodConfig_BadNumbersAreErrorsNamingFileElementAndAttribu
     };
 
     EXPECT_NE(errorsFor(moodWith("")).find("<Easing> pointsPerGameHour is missing"), std::string::npos);
+    EXPECT_NE(errorsFor("<Mood><Easing pointsPerGameHour=\"5\"/><NeedPenalty comfortable=\"70\" warning=\"30\" penaltyAtWarning=\"0.3\"/>"
+                        "<NeedWeights><Need name=\"Hunger\" weight=\"6abc\"/></NeedWeights><Bands><Band name=\"Content\" from=\"0\"/></Bands></Mood>")
+                  .find("<Need name=\"Hunger\"> weight must be a number, got \"6abc\""),
+              std::string::npos);
     EXPECT_NE(errorsFor(moodWith("<Easing/>")).find("<Easing> pointsPerGameHour is missing"), std::string::npos);
     for (const char* text : {"30abc", "abc", "", "nan"}) {
         const std::string joined = errorsFor(moodWith(std::string("<Easing pointsPerGameHour=\"") + text + "\"/>"));

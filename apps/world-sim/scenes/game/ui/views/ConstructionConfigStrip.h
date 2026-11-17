@@ -1,8 +1,9 @@
 #pragma once
 
 // ConstructionConfigStrip - the strip docked above the GameplayBar while a structure tool is active
-// (building-construction D11), hidden otherwise. Material cards (click to pick), then in wall mode the
-// active material's thickness presets, the tool's readouts, and a validity line in a status colour.
+// (building-construction D11), hidden otherwise. For the foundation tools, the tool picker (Rectangle,
+// Freeform); then material cards (click to pick), in wall mode the active material's thickness
+// presets, the tool's readouts, and a validity line in a status color.
 // Foundation Add / Subtract shows no material cards (the edited foundation's material is locked), its
 // label instead, and the area the edit would leave with its change. 60% of its parent's width and
 // kHeight tall unless its size says otherwise.
@@ -30,6 +31,7 @@ namespace world_sim {
 
 		struct Args {
 			UI_COMMON_ARGS
+			std::function<void(FoundationTool)>		onFoundationToolSelected; // a tool picker card
 			std::function<void(const std::string&)> onMaterialSelected;
 			std::function<void(const std::string&)> onThicknessSelected; // wall mode
 		};
@@ -53,12 +55,15 @@ namespace world_sim {
 		void showCards();
 		void showReadouts();
 
+		std::function<void(FoundationTool)>		   onFoundationToolSelected;
 		std::function<void(const std::string&)>	   onMaterialSelected;
 		std::function<void(const std::string&)>	   onThicknessSelected;
 		std::vector<std::pair<std::string, float>> materials;
 		std::vector<ThicknessPresetInfo>		   presets;
 		DrawingStatus							   status;
 		ui::ColorToken							   messageColor{};
+		ui::Ref<ui::Component>					   toolPicker;
+		std::vector<ui::Ref<ui::Component>>		   toolCards;
 		ui::Ref<ui::Component>					   materialCards;
 		ui::Ref<ui::Component>					   presetCards;
 		ui::Ref<ui::Component>					   readouts;

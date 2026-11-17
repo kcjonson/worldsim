@@ -47,6 +47,18 @@ namespace geometry {
 		return out;
 	}
 
+	// The outward normals of the sides of a regular polygon whose vertices lie along directionTable<Sides>:
+	// side k runs from vertex k to vertex k + 1, so its normal is half a turn-step past direction k,
+	// the odd entries of directionTable<2 * Sides>.
+	template <std::size_t Sides> consteval std::array<std::array<std::int64_t, 2>, Sides> sideNormalTable(std::int64_t scale) {
+		const std::array<std::array<std::int64_t, 2>, 2 * Sides> doubled = directionTable<2 * Sides>(scale);
+		std::array<std::array<std::int64_t, 2>, Sides>			 out{};
+		for (std::size_t k = 0; k < Sides; ++k) {
+			out[k] = doubled[2 * k + 1];
+		}
+		return out;
+	}
+
 	// cos(pi / Sides) times `scale`, rounded to nearest: a side's distance from the centre over the
 	// circumradius.
 	template <std::size_t Sides> consteval std::int64_t cosineOfHalfSide(std::int64_t scale) {

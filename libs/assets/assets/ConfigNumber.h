@@ -13,19 +13,32 @@
 
 namespace assets {
 
-	/// A config attribute's whole text as a number: nothing for empty text or text that is not entirely a
-	/// number, so "30abc" is refused rather than read as 30.
+	/// A config attribute's whole text as a finite number, a leading '+' allowed: nothing for empty text,
+	/// text that is not entirely a number ("30abc" is refused rather than read as 30), or nan and inf.
 	[[nodiscard]] inline std::optional<float> parseConfigNumber(std::string_view text) {
+		if (text.starts_with('+')) {
+			text.remove_prefix(1);
+			if (text.starts_with('-') || text.starts_with('+')) {
+				return std::nullopt;
+			}
+		}
 		float number = 0.0F;
 		const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), number);
-		if (text.empty() || error != std::errc() || end != text.data() + text.size()) {
+		if (text.empty() || error != std::errc() || end != text.data() + text.size() || !std::isfinite(number)) {
 			return std::nullopt;
 		}
 		return number;
 	}
 
-	/// A config attribute's whole text as a whole number, with the same refusals as parseConfigNumber.
+	/// A config attribute's whole text as a whole number: a leading '+' allowed, and nothing for empty text,
+	/// trailing characters, or a value too large for int.
 	[[nodiscard]] inline std::optional<int> parseConfigInteger(std::string_view text) {
+		if (text.starts_with('+')) {
+			text.remove_prefix(1);
+			if (text.starts_with('-') || text.starts_with('+')) {
+				return std::nullopt;
+			}
+		}
 		int number = 0;
 		const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), number);
 		if (text.empty() || error != std::errc() || end != text.data() + text.size()) {
@@ -34,63 +47,84 @@ namespace assets {
 		return number;
 	}
 
-	/// Reads the numbers of one config file and keeps what is wrong with them. A missing or malformed
-	/// value reads as NaN (or 0 for a whole number) and adds a problem naming the file, the element and
-	/// the attribute (a number that is not finite counts as malformed), which the config's validation reports; nothing falls back to a value written in C++.
+	/// Collects what is wrong with the numbers of one config file, for the config's validation to report.
+	/// A bad value reads as NaN (0 for a whole number) and a problem names the file, the element with its
+	/// name attribute, and the attribute; nothing falls back to a value written in C++. Element text is
+	/// trimmed before it is parsed.
 	class ConfigReader {
 	  public:
 		explicit ConfigReader(std::string fileName)
 			: file(std::move(fileName)) {}
 
-		/// A number held in an attribute of element.
 		float attributeNumber(const pugi::xml_node& element, const char* elementName, const char* attribute) {
-			return number(elementName, attribute, element.attribute(attribute));
+			return number(describe(element, elementName), attribute, element.attribute(attribute));
 		}
 
-		/// A whole number held in an attribute of element.
-		int attributeInteger(const pugi::xml_node& element, const char* elementName, const char* attribute) {
-			return integer(elementName, attribute, element.attribute(attribute));
+		int attributeInteger(
+			const pugi::xml_node& element, const char* elementName, const char* attribute, int minimum = std::numeric_limits<int>::min(),
+			int maximum = std::numeric_limits<int>::max()) {
+			return integer(describe(element, elementName), attribute, element.attribute(attribute), minimum, maximum);
 		}
 
-		/// A number held as the text of the child element of parent.
 		float childNumber(const pugi::xml_node& parent, const char* parentName, const char* child) {
-			return number(parentName, child, parent.child(child));
+			return number(describe(parent, parentName), child, parent.child(child));
 		}
 
-		/// A whole number held as the text of the child element of parent.
-		int childInteger(const pugi::xml_node& parent, const char* parentName, const char* child) {
-			return integer(parentName, child, parent.child(child));
+		int childInteger(
+			const pugi::xml_node& parent, const char* parentName, const char* child, int minimum = std::numeric_limits<int>::min(),
+			int maximum = std::numeric_limits<int>::max()) {
+			return integer(describe(parent, parentName), child, parent.child(child), minimum, maximum);
 		}
 
 		[[nodiscard]] const std::vector<std::string>& problems() const { return problemList; }
 		[[nodiscard]] std::vector<std::string>		  takeProblems() { return std::exchange(problemList, {}); }
 
 	  private:
-		static const char* textOf(const pugi::xml_attribute& attribute) { return attribute.as_string(); }
-		static const char* textOf(const pugi::xml_node& element) { return element.text().as_string(); }
-		static bool		   present(const pugi::xml_attribute& attribute) { return !attribute.empty(); }
-		static bool		   present(const pugi::xml_node& element) { return !element.empty(); }
+		static constexpr const char* kWhitespace = " \t\r\n";
 
-		template <typename Source> float number(const char* element, const char* name, const Source& source) {
+		static std::string textOf(const pugi::xml_attribute& attribute) { return attribute.as_string(); }
+		static std::string textOf(const pugi::xml_node& element) {
+			const std::string text = element.text().as_string();
+			const std::size_t first = text.find_first_not_of(kWhitespace);
+			if (first == std::string::npos) {
+				return {};
+			}
+			return text.substr(first, text.find_last_not_of(kWhitespace) - first + 1);
+		}
+		static bool present(const pugi::xml_attribute& attribute) { return !attribute.empty(); }
+		static bool present(const pugi::xml_node& element) { return !element.empty(); }
+
+		static std::string describe(const pugi::xml_node& element, const char* elementName) {
+			std::string label = std::string("<") + elementName;
+			const std::string instance = element.attribute("name").as_string();
+			if (!instance.empty()) {
+				label += " name=\"" + instance + "\"";
+			}
+			return label + ">";
+		}
+
+		template <typename Source> float number(const std::string& element, const char* name, const Source& source) {
 			const std::optional<float> parsed = present(source) ? parseConfigNumber(textOf(source)) : std::nullopt;
-			if (parsed.has_value() && std::isfinite(*parsed)) {
+			if (parsed.has_value()) {
 				return *parsed;
 			}
 			report(element, name, source, "a number");
 			return std::numeric_limits<float>::quiet_NaN();
 		}
 
-		template <typename Source> int integer(const char* element, const char* name, const Source& source) {
+		template <typename Source> int integer(const std::string& element, const char* name, const Source& source, int minimum, int maximum) {
 			const std::optional<int> parsed = present(source) ? parseConfigInteger(textOf(source)) : std::nullopt;
-			if (parsed.has_value()) {
+			if (parsed.has_value() && *parsed >= minimum && *parsed <= maximum) {
 				return *parsed;
 			}
-			report(element, name, source, "a whole number");
+			const bool bounded = minimum != std::numeric_limits<int>::min() || maximum != std::numeric_limits<int>::max();
+			report(element, name, source,
+				   bounded ? ("a whole number from " + std::to_string(minimum) + " to " + std::to_string(maximum)).c_str() : "a whole number");
 			return 0;
 		}
 
-		template <typename Source> void report(const char* element, const char* name, const Source& source, const char* expected) {
-			std::string problem = file + ": <" + element + "> " + name;
+		template <typename Source> void report(const std::string& element, const char* name, const Source& source, const char* expected) {
+			std::string problem = file + ": " + element + " " + name;
 			problem += present(source) ? std::string(" must be ") + expected + ", got \"" + textOf(source) + "\"" : " is missing";
 			problemList.push_back(std::move(problem));
 		}
