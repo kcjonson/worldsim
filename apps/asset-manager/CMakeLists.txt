@@ -27,13 +27,4 @@ target_link_libraries(asset-manager
         assets
 )
 
-# Mirror assets to the executable directory on every build.
-# See cmake/mirror-assets.cmake — per-subdir mirror that prunes deleted files
-# without touching separately-staged dirs (e.g. assets/planets/).
-add_custom_command(TARGET asset-manager POST_BUILD
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/assets
-        -DDEST_DIR=$<TARGET_FILE_DIR:asset-manager>/assets
-        -P ${CMAKE_SOURCE_DIR}/cmake/mirror-assets.cmake
-    COMMENT "Mirroring assets to asset-manager directory"
-)
+# Fonts and assets are staged beside the exe by the root CMakeLists (stage_fonts, stage_assets).
