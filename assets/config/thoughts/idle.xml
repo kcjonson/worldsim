@@ -2,6 +2,7 @@
 <!-- Idle quips: what a colonist thinks about when nothing else is on their mind. No mood effect. -->
 <thoughts>
   <thought id="idle_musing" importance="trivial">
+    <source trigger="idle" everyMinutes="180" chance="0.25"/>
     <feeling is="bored"/>
     <feeling is="amused" when="attribute(intelligence) >= 14"/>
     <line>My butt itches.</line>

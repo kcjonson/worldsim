@@ -4,6 +4,7 @@
 
 #include <assets/AttributeConfig.h>
 #include <assets/ConditionConfig.h>
+#include <assets/NeedsConfig.h>
 #include <assets/ThoughtConfig.h>
 
 #include <utils/Log.h>
@@ -56,11 +57,24 @@ namespace ecs {
 		if (errors.empty()) {
 			LOG_INFO(
 				Engine,
-				"Loaded thought config from %s: %zu feelings, %zu thought types",
+				"Loaded thought config from %s: %zu feelings, %zu thought types, %zu sources",
 				folder.generic_string().c_str(),
 				config.config.feelings.size(),
-				types.typeCount()
+				types.typeCount(),
+				types.sources().size()
 			);
+		}
+		return errors;
+	}
+
+	std::vector<std::string> loadNeedLevels(NeedLevels& levels, const std::filesystem::path& folder) {
+		const assets::NeedsConfigLoad config = assets::loadNeedsConfig(folder);
+		if (!config.errors.empty()) {
+			return config.errors;
+		}
+		std::vector<std::string> errors = levels.load(config.config, folder);
+		if (errors.empty()) {
+			LOG_INFO(Engine, "Loaded need levels from %s: %zu needs", folder.generic_string().c_str(), config.config.needs.size());
 		}
 		return errors;
 	}
@@ -71,6 +85,7 @@ namespace ecs {
 		load.rules.attributes = std::make_unique<AttributeRolls>();
 		load.rules.vocabulary = std::make_unique<conditions::ConditionVocabulary>();
 		load.rules.thoughtTypes = std::make_unique<ThoughtTypes>(*load.rules.vocabulary);
+		load.rules.needLevels = std::make_unique<NeedLevels>();
 
 		addErrors(load.errors, "traits", load.rules.traits->loadFromFolder(configRoot / "colonists" / "traits"));
 		if (!load.errors.empty()) {
@@ -79,6 +94,10 @@ namespace ecs {
 		const assets::TraitRegistry& traits = *load.rules.traits;
 		LOG_INFO(Engine, "Loaded %zu traits from %s", traits.traits().size(), (configRoot / "colonists" / "traits").generic_string().c_str());
 		addErrors(load.errors, "attributes", loadAttributeRolls(*load.rules.attributes, configRoot / "colonists" / "attributes"));
+		if (!load.errors.empty()) {
+			return load;
+		}
+		addErrors(load.errors, "needs", loadNeedLevels(*load.rules.needLevels, configRoot / "colonists" / "needs"));
 		if (!load.errors.empty()) {
 			return load;
 		}

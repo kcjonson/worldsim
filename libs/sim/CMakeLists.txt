@@ -4,6 +4,7 @@ add_library(sim
     ecs/systems/PhysicsSystem.cpp
     ecs/systems/NeedsDecaySystem.cpp
     ecs/systems/ThoughtSystem.cpp
+    ecs/systems/ThoughtSourceSystem.cpp
     ecs/systems/MoodSystem.cpp
     ecs/systems/VisionSystem.cpp
     ecs/systems/AIDecisionSystem.cpp
@@ -30,12 +31,14 @@ add_library(sim
     ecs/ClaimIndex.cpp
     ecs/ColonistRules.cpp
     ecs/GoalTaskRegistry.cpp
+    ecs/NeedLevels.cpp
     ecs/StoreOrDrop.cpp
     ecs/ThoughtTypes.cpp
     ecs/WorldSource.cpp
     ecs/components/DecisionTrace.cpp
     ecs/components/MemoryQueries.cpp
     ecs/components/Mood.cpp
+    ecs/components/Needs.cpp
     ecs/components/Thoughts.cpp
     ecs/components/Attributes.cpp
     ecs/components/Traits.cpp

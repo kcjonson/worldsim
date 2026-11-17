@@ -38,12 +38,11 @@ namespace {
 	constexpr uint32_t kCrate = 12;
 
 	std::filesystem::path shippedConditions() {
-		// <root>/libs/sim/conditions/SimTerms.test.cpp -> <root>/assets/config/conditions
-		return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "assets" / "config" / "conditions";
+		return ecs::testing::repoConfig() / "conditions";
 	}
 
 	std::filesystem::path shippedMemoryConfig() {
-		return shippedConditions().parent_path() / "colonists" / "memory.xml";
+		return ecs::testing::repoConfig() / "colonists" / "memory.xml";
 	}
 
 	/// The mover definitions these tests see, each with a non-zero id (id 0 is the registry's "none").
@@ -99,7 +98,7 @@ namespace {
 			build(shippedConditions());
 
 			colonist = spawnColonist({0.0F, 0.0F});
-			ecs::NeedsComponent& needs = world.addComponent<ecs::NeedsComponent>(colonist, ecs::NeedsComponent::createDefault());
+			ecs::NeedsComponent& needs = world.addComponent<ecs::NeedsComponent>(colonist, ecs::testing::shippedNeeds());
 			needs.hunger().value = 15.0F;
 			ecs::Attributes attributes = ecs::testing::attributesAt(10.0F, {{&ecs::Attributes::sanity, 17.0F}});
 			world.addComponent<ecs::Attributes>(colonist, attributes);
@@ -423,7 +422,7 @@ TEST(SimTermsData, ANeedNameTheSimLacksIsUnknownAndLoggedOncePerCondition) {
 
 	ecs::World			world;
 	const ecs::EntityID colonist = world.createEntity();
-	world.addComponent<ecs::NeedsComponent>(colonist, ecs::NeedsComponent::createDefault());
+	world.addComponent<ecs::NeedsComponent>(colonist, ecs::testing::shippedNeeds());
 
 	UnansweredLog log;
 	foundation::Logger::setSink(&UnansweredLog::sink, &log);

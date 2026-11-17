@@ -73,10 +73,21 @@ class VisionSystem : public ISystem {
 	/// Set the chunk manager for shore discovery
 	void setChunkManager(world::ChunkManager* chunkManager) { m_chunkManager = chunkManager; }
 
-	/// Set callback for recipe discovery notifications ("Aha!" moments)
-	/// Called with recipe label when colonist learns something that unlocks a new recipe
-	using RecipeDiscoveryCallback = std::function<void(const std::string& recipeLabel)>;
-	void setRecipeDiscoveryCallback(RecipeDiscoveryCallback callback) { m_onRecipeDiscovery = std::move(callback); }
+	enum class DiscoveryKind : uint8_t { NewKind, Recipe };
+
+	/// A colonist saw a kind of thing for the first time, or learned a recipe by it ("Aha!").
+	struct Discovery {
+		EntityID	  colonist = kInvalidEntity;
+		DiscoveryKind kind = DiscoveryKind::NewKind;
+		/// NewKind: the AssetRegistry id of the kind seen. Recipe: of the recipe's first output.
+		uint32_t definition = 0;
+		/// Recipe: its label.
+		std::string recipeLabel;
+	};
+	using DiscoveryObserver = std::function<void(const Discovery& discovery)>;
+
+	/// Hears the discoveries each pass of update() makes, once the pass is over. rememberArea's look is silent.
+	void addDiscoveryObserver(DiscoveryObserver observer) { m_discoveryObservers.push_back(std::move(observer)); }
 
 	/// Wire the construction topology that walls block sight from. Forwards to the
 	/// owned GeometryIndex. Null leaves the index inert (zero occluders), so every
@@ -129,8 +140,9 @@ class VisionSystem : public ISystem {
 	[[nodiscard]] const GeometryIndex& geometry() const { return m_geometry; }
 
 	/// Give `observer` what a look over the disc of `radiusMeters` round `center` would give him,
-	/// through the same passes as his sight each tick. The landing crew's memory of the landing area
-	/// (player-visibility.md 3.8). Leaves his sight shape alone.
+	/// through the same passes as his sight each tick, but silently: what he learns there is told to no
+	/// discovery observer. The landing crew's memory of the landing area (player-visibility.md 3.8).
+	/// Leaves his sight shape alone.
 	void rememberArea(EntityID observer, glm::vec2 center, float radiusMeters);
 
   private:
@@ -164,8 +176,12 @@ class VisionSystem : public ISystem {
 	uint16_t m_shoreCapabilityMask = 0;
 	bool	 m_terrainDefsRegistered = false;
 
-	// Callback for recipe discovery notifications
-	RecipeDiscoveryCallback m_onRecipeDiscovery = nullptr;
+	/// The observer learns `defNameId`; when it is new, it and the recipe it unlocks join m_learnedScratch.
+	void learn(EntityID observer, Knowledge& knowledge, uint32_t defNameId);
+
+	std::vector<DiscoveryObserver> m_discoveryObservers;
+	// What lookOver learned, until update() tells the observers or rememberArea drops it.
+	std::vector<Discovery> m_learnedScratch;
 
 	// --- Occlusion gate ---
 

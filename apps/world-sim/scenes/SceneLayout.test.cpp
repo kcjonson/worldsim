@@ -16,6 +16,7 @@
 #include <assets/RecipeRegistry.h>
 #include <assets/TraitRegistry.h>
 #include <ecs/GoalTaskRegistry.h>
+#include <ecs/ShippedConfig.test.h>
 #include <ecs/World.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Inventory.h>
@@ -144,7 +145,7 @@ namespace world_sim::testing {
 				spawned.colonist = world.createEntity();
 				world.addComponent<ecs::Position>(spawned.colonist, ecs::Position{{0.0F, 0.0F}});
 				world.addComponent<ecs::Colonist>(spawned.colonist, ecs::Colonist{"Ada Lovelace"});
-				world.addComponent<ecs::NeedsComponent>(spawned.colonist, ecs::NeedsComponent::createDefault());
+				world.addComponent<ecs::NeedsComponent>(spawned.colonist, ecs::testing::shippedNeeds());
 				world.getSystem<ecs::MoodSystem>().startMood(spawned.colonist);
 
 				ecs::Inventory inventory = ecs::Inventory::createForColonist();
@@ -188,7 +189,7 @@ namespace world_sim::testing {
 				spawned.newcomer = world.createEntity();
 				world.addComponent<ecs::Position>(spawned.newcomer, ecs::Position{{2.0F, 0.0F}});
 				world.addComponent<ecs::Colonist>(spawned.newcomer, ecs::Colonist{"Grace Hopper"});
-				world.addComponent<ecs::NeedsComponent>(spawned.newcomer, ecs::NeedsComponent::createDefault());
+				world.addComponent<ecs::NeedsComponent>(spawned.newcomer, ecs::testing::shippedNeeds());
 				world.getSystem<ecs::MoodSystem>().startMood(spawned.newcomer);
 				world.addComponent<ecs::Inventory>(spawned.newcomer, ecs::Inventory::createForColonist());
 			}

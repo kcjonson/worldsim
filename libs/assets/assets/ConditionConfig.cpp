@@ -35,14 +35,6 @@ namespace assets {
 			return std::nullopt;
 		}
 
-		std::optional<CapabilityType> capabilityFromName(std::string_view name) {
-			const auto found = std::ranges::find(kCapabilityNames, name, [](const char* capability) { return std::string_view(capability); });
-			if (found == kCapabilityNames.end()) {
-				return std::nullopt;
-			}
-			return static_cast<CapabilityType>(found - kCapabilityNames.begin());
-		}
-
 		bool sameSignature(const ConditionTermDef& first, const ConditionTermDef& second) {
 			return first.result == second.result && first.resultSymbols == second.resultSymbols &&
 				   std::ranges::equal(first.parameters, second.parameters, [](const ConditionParameterDef& left, const ConditionParameterDef& right) {

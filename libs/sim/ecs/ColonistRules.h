@@ -1,9 +1,10 @@
 #pragma once
 
 // The rules from data that colonists are made and think by: the trait definitions, the attribute ranges,
-// the condition vocabulary (declared from its own config, then frozen) and the thought types written in it.
-// Loaded once per game.
+// the need levels colonists' needs are built from, the condition vocabulary (declared from its own config,
+// then frozen) and the thought types written in it. Loaded once per game.
 
+#include "NeedLevels.h"
 #include "ThoughtTypes.h"
 #include "components/Attributes.h"
 
@@ -25,6 +26,7 @@ namespace ecs {
 		std::unique_ptr<AttributeRolls>					 attributes;
 		std::unique_ptr<conditions::ConditionVocabulary> vocabulary;
 		std::unique_ptr<ThoughtTypes>					 thoughtTypes;
+		std::unique_ptr<NeedLevels>						 needLevels;
 	};
 
 	struct ColonistRulesLoad {
@@ -43,14 +45,18 @@ namespace ecs {
 	loadConditionVocabulary(conditions::ConditionVocabulary& vocabulary, const std::filesystem::path& folder, const assets::TraitRegistry& traits);
 
 	/// Build `types` from the thought config in `folder`. An empty error list means they are ready; that is
-	/// logged with the feeling and thought type counts.
+	/// logged with the feeling, thought type, and source counts.
 	[[nodiscard]] std::vector<std::string> loadThoughtTypes(ThoughtTypes& types, const std::filesystem::path& folder);
 
+	/// Build `levels` from the need config in `folder`. An empty error list means they are ready; that is
+	/// logged with the need count.
+	[[nodiscard]] std::vector<std::string> loadNeedLevels(NeedLevels& levels, const std::filesystem::path& folder);
+
 	/// Load the traits from `configRoot`/colonists/traits, the attribute ranges from
-	/// `configRoot`/colonists/attributes, build the vocabulary from `configRoot`/conditions,
-	/// then the thought types from `configRoot`/thoughts, stopping at the first stage with errors. Errors name
-	/// their folder; an empty list means all are ready. Every part of the rules exists either way; failed
-	/// traits are empty.
+	/// `configRoot`/colonists/attributes, the need levels from `configRoot`/colonists/needs, build the
+	/// vocabulary from `configRoot`/conditions, then the thought types from `configRoot`/thoughts, stopping at
+	/// the first stage with errors. Errors name their stage; an empty list means all are ready. Every part of
+	/// the rules exists either way; a stage that failed or never ran is empty.
 	[[nodiscard]] ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot);
 
 } // namespace ecs
