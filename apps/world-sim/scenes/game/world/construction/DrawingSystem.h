@@ -246,18 +246,26 @@ namespace world_sim {
 		/// Drawn under the regular polygon preview. INTERIM.
 		void renderEditOutlinePreview(int viewportWidth, int viewportHeight, float uiScale);
 
+	  public:
 		/// A rejected edit's reason, drawn beside the cursor, where, and how large.
 		struct EditReason {
 			std::string		 text;
 			Foundation::Vec2 position;	// the text's top-left, screen pixels
 			float			 textScale; // the renderer's text scale
+			FeedbackBox		 box;		// the text and its shadow, screen pixels: the snap labels keep off it
 		};
 
 		/// The reason text renderEditOutlinePreview draws, while the outline the edit
-		/// would produce is invalid, sized and placed in ui px of `uiScale` logical px.
-		[[nodiscard]] std::optional<EditReason> editReason(int viewportWidth, int viewportHeight, float uiScale) const;
+		/// would produce is invalid, sized and placed in ui px of `uiScale` logical px and
+		/// measured with `measure`.
+		[[nodiscard]] std::optional<EditReason>
+		editReason(int viewportWidth, int viewportHeight, float uiScale, const MeasureTextSize& measure) const;
 
-	  public:
+		/// The snap feedback's input for the current frame, its text measured with `measure`.
+		[[nodiscard]] DrawingFeedbackInput feedbackInput(
+			const assets::PreviewStyle& style, int viewportWidth, int viewportHeight, float uiScale, const MeasureTextSize& measure
+		) const;
+
 		// --- Status for the config strip ---
 
 		[[nodiscard]] DrawingStatus status() const;
@@ -411,10 +419,6 @@ namespace world_sim {
 		/// results still hold. Otherwise records `key` and the points as the inputs about
 		/// to be evaluated and returns false.
 		bool reuseSnapMemo(const SnapMemoKey& key);
-
-		/// The snap feedback's input for the current frame.
-		[[nodiscard]] DrawingFeedbackInput
-		feedbackInput(const assets::PreviewStyle& style, int viewportWidth, int viewportHeight, float uiScale) const;
 
 		/// Origin-close catch radius in world meters, floored to `originHaloMinRadiusPx` on
 		/// screen so it stays reachable at every zoom. Drives the snap() override and the

@@ -636,18 +636,14 @@ namespace world_sim {
 		return false;
 	}
 
-	DrawingFeedbackInput DrawingSystem::feedbackInput(const assets::PreviewStyle& style, int viewportWidth, int viewportHeight, float uiScale) const {
+	DrawingFeedbackInput DrawingSystem::feedbackInput(
+		const assets::PreviewStyle& style, int viewportWidth, int viewportHeight, float uiScale, const MeasureTextSize& measure
+	) const {
 		const PreviewVerdict verdict = previewVerdict();
-		// Labels keep off the rejected edit's reason, measured as the feedback measures its own text.
+		// Labels keep off the rejected edit's reason.
 		std::optional<FeedbackBox> keepClear;
-		if (const std::optional<EditReason> reason = editReason(viewportWidth, viewportHeight, uiScale)) {
-			const Foundation::Vec2 size = measureFeedbackText(reason->text, reason->textScale * kRendererFontBaseSizePx);
-			keepClear = FeedbackBox{
-				reason->position.x,
-				reason->position.y,
-				reason->position.x + size.x + kEditReasonShadowPx,
-				reason->position.y + size.y + kEditReasonShadowPx,
-			};
+		if (const std::optional<EditReason> reason = editReason(viewportWidth, viewportHeight, uiScale, measure)) {
+			keepClear = reason->box;
 		}
 		return DrawingFeedbackInput{
 			.tool = activeTool_,
@@ -659,6 +655,7 @@ namespace world_sim {
 			.camera = *camera_,
 			.viewportWidth = viewportWidth,
 			.viewportHeight = viewportHeight,
+			.uiScale = uiScale,
 			.pixelsPerMeter = kPixelsPerMeter,
 			.closeRadiusMeters = effectiveOriginCloseRadiusMeters(),
 			.canClose = points_.size() >= (activeTool_ == ToolKind::Wall ? construction::kMinClosingWallChainPoints : kMinClosingShapePoints),
@@ -2037,7 +2034,7 @@ namespace world_sim {
 		}
 
 		// Above the edges, the rubber band, and the vertex dots (its keys start at 904).
-		drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight, uiScale));
+		drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight, uiScale, measureFeedbackText));
 
 		// Vertex dots.
 		for (const auto& vertex : screen) {
@@ -2361,7 +2358,8 @@ namespace world_sim {
 		drawOpeningFill(screen, tint, window, footprintWidthMeters(footprint), os.ghostAlpha, os.outlineWidthBuilt);
 	}
 
-	std::optional<DrawingSystem::EditReason> DrawingSystem::editReason(int viewportWidth, int viewportHeight, float uiScale) const {
+	std::optional<DrawingSystem::EditReason>
+	DrawingSystem::editReason(int viewportWidth, int viewportHeight, float uiScale, const MeasureTextSize& measure) const {
 		if (camera_ == nullptr) {
 			return std::nullopt;
 		}
@@ -2369,11 +2367,15 @@ namespace world_sim {
 		if (text.empty()) {
 			return std::nullopt;
 		}
+		const Foundation::Vec2 position = camera_->worldToScreen(cursor_.x, cursor_.y, viewportWidth, viewportHeight, kPixelsPerMeter) +
+										  Foundation::Vec2{kEditReasonOffset.x * uiScale, kEditReasonOffset.y * uiScale};
+		const float			   textScale = kEditReasonScale * uiScale;
+		const Foundation::Vec2 size = measure(text, textScale * kRendererFontBaseSizePx);
 		return EditReason{
 			.text = std::move(text),
-			.position = camera_->worldToScreen(cursor_.x, cursor_.y, viewportWidth, viewportHeight, kPixelsPerMeter) +
-						Foundation::Vec2{kEditReasonOffset.x * uiScale, kEditReasonOffset.y * uiScale},
-			.textScale = kEditReasonScale * uiScale,
+			.position = position,
+			.textScale = textScale,
+			.box = {position.x, position.y, position.x + size.x + kEditReasonShadowPx, position.y + size.y + kEditReasonShadowPx},
 		};
 	}
 
@@ -2403,7 +2405,7 @@ namespace world_sim {
 			}
 		}
 
-		if (const std::optional<EditReason> reason = editReason(viewportWidth, viewportHeight, uiScale)) {
+		if (const std::optional<EditReason> reason = editReason(viewportWidth, viewportHeight, uiScale, measureFeedbackText)) {
 			Renderer::Primitives::drawText({
 				.text = reason->text,
 				.position = reason->position,
@@ -2491,7 +2493,7 @@ namespace world_sim {
 		}
 
 		// Above the band, the centerlines, and the vertex dots (its keys start at 911).
-		drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight, uiScale));
+		drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight, uiScale, measureFeedbackText));
 
 		// Vertex dots. The snap-target ring (endpoint / T-junction / foundation-vertex snaps)
 		// is drawSnapFeedback's, over the snapped-point marker.

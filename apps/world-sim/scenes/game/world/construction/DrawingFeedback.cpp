@@ -117,6 +117,79 @@ namespace world_sim {
 
 		static_assert(kMaxSnapGuides == 2, "guide labels rank guides[0] above guides[1]");
 
+		// Every size the feedback draws or plans with, in screen pixels at the interface's
+		// scale: the constants above and the style's pixel keys, each times the ui scale.
+		// lookAt is the one place they are scaled; nothing else reads a pixel constant.
+		struct Look {
+			float markerLineWidthPx;
+			float closeRingWidthPx;
+			float closeHaloWidthPx;
+			float closeHaloTickClearancePx;
+			float snapTargetTickClearancePx;
+			float snapTargetRingWidthPx;
+			float cursorRadiusPx;
+			float cursorOutlineWidthPx;
+			float cursorTickGapPx;
+			float cursorTickLengthPx;
+			float cursorTickWidthPx;
+			float cursorTickOutlineWidthPx;
+			float segmentLabelPx;
+			float segmentLabelOffsetPx;
+			float segmentLabelCursorClearancePx;
+			float guideLabelPx;
+			float labelGapPx;
+			float guideLabelMinimumStrokePx;
+			float guideLabelShiftPaddingPx;
+			float labelPlatePaddingPx;
+			float labelPlateCornerPx;
+			float sideMinimumPx;
+			float duplicateGuidePx;
+			float solidSegmentClearancePx;
+			float minimumStrokePx;
+			float ringSegmentPx;
+			float guideWidthPx;
+			float guideDashPx;
+			float guideGapPx;
+			float rightAngleMarkerPx;
+			float guideCrossingDotPx;
+		};
+
+		Look lookAt(const assets::PreviewStyle& style, float uiScale) {
+			return {
+				.markerLineWidthPx = kMarkerLineWidthPx * uiScale,
+				.closeRingWidthPx = kCloseRingWidthPx * uiScale,
+				.closeHaloWidthPx = kCloseHaloWidthPx * uiScale,
+				.closeHaloTickClearancePx = kCloseHaloTickClearancePx * uiScale,
+				.snapTargetTickClearancePx = kSnapTargetTickClearancePx * uiScale,
+				.snapTargetRingWidthPx = kSnapTargetRingWidthPx * uiScale,
+				.cursorRadiusPx = std::max(kCursorMinimumRadiusPx, style.cursorRadiusPx) * uiScale,
+				.cursorOutlineWidthPx = kCursorOutlineWidthPx * uiScale,
+				.cursorTickGapPx = kCursorTickGapPx * uiScale,
+				.cursorTickLengthPx = kCursorTickLengthPx * uiScale,
+				.cursorTickWidthPx = kCursorTickWidthPx * uiScale,
+				.cursorTickOutlineWidthPx = kCursorTickOutlineWidthPx * uiScale,
+				.segmentLabelPx = kSegmentLabelPx * uiScale,
+				.segmentLabelOffsetPx = kSegmentLabelOffsetPx * uiScale,
+				.segmentLabelCursorClearancePx = kSegmentLabelCursorClearancePx * uiScale,
+				.guideLabelPx = style.guideLabelPx * uiScale,
+				.labelGapPx = kLabelGapPx * uiScale,
+				.guideLabelMinimumStrokePx = kGuideLabelMinimumStrokePx * uiScale,
+				.guideLabelShiftPaddingPx = kGuideLabelShiftPaddingPx * uiScale,
+				.labelPlatePaddingPx = kLabelPlatePaddingPx * uiScale,
+				.labelPlateCornerPx = kLabelPlateCornerPx * uiScale,
+				.sideMinimumPx = kSideMinimumPx * uiScale,
+				.duplicateGuidePx = kDuplicateGuidePx * uiScale,
+				.solidSegmentClearancePx = kSolidSegmentClearancePx * uiScale,
+				.minimumStrokePx = kMinimumStrokePx * uiScale,
+				.ringSegmentPx = kRingSegmentPx * uiScale,
+				.guideWidthPx = style.guideWidth * uiScale,
+				.guideDashPx = style.guideDashPx * uiScale,
+				.guideGapPx = style.guideGapPx * uiScale,
+				.rightAngleMarkerPx = style.rightAngleMarkerPx * uiScale,
+				.guideCrossingDotPx = style.guideCrossingDotPx * uiScale,
+			};
+		}
+
 		// Where a label draws, and where the box its fit is judged by sits: the same, or a
 		// wider box holding the label, anchored the same way.
 		struct Placement {
@@ -171,12 +244,12 @@ namespace world_sim {
 			return boxAround(circle.center, circle.radius + strokeWidth * 0.5F);
 		}
 
-		FeedbackBox plateBox(Foundation::Vec2 topLeft, Foundation::Vec2 size) {
+		FeedbackBox plateBox(Foundation::Vec2 topLeft, Foundation::Vec2 size, float padding) {
 			return {
-				topLeft.x - kLabelPlatePaddingPx,
-				topLeft.y - kLabelPlatePaddingPx,
-				topLeft.x + size.x + kLabelPlatePaddingPx,
-				topLeft.y + size.y + kLabelPlatePaddingPx,
+				topLeft.x - padding,
+				topLeft.y - padding,
+				topLeft.x + size.x + padding,
+				topLeft.y + size.y + padding,
 			};
 		}
 
@@ -321,14 +394,14 @@ namespace world_sim {
 			return style.guideColor;
 		}
 
-		std::optional<Foundation::DashPattern> alignmentDash(const assets::PreviewStyle& style) {
+		std::optional<Foundation::DashPattern> alignmentDash(const assets::PreviewStyle& style, const Look& look) {
 			switch (style.guideLineStyle) {
 				case assets::GuideLineStyle::Solid:
 					return std::nullopt;
 				case assets::GuideLineStyle::Dashed:
-					return Foundation::DashPattern{.dash = style.guideDashPx, .gap = style.guideGapPx, .phase = 0.0F, .cap = Foundation::DashCap::Butt};
+					return Foundation::DashPattern{.dash = look.guideDashPx, .gap = look.guideGapPx, .phase = 0.0F, .cap = Foundation::DashCap::Butt};
 				case assets::GuideLineStyle::Dotted:
-					return Foundation::DashPattern{.dash = style.guideDashPx, .gap = style.guideGapPx, .phase = 0.0F, .cap = Foundation::DashCap::Round};
+					return Foundation::DashPattern{.dash = look.guideDashPx, .gap = look.guideGapPx, .phase = 0.0F, .cap = Foundation::DashCap::Round};
 			}
 			return std::nullopt;
 		}
@@ -361,9 +434,10 @@ namespace world_sim {
 				: input(input),
 				  style(input.style),
 				  measure(measure),
+				  look(lookAt(input.style, input.uiScale)),
 				  screenPixelsPerMeter(input.pixelsPerMeter * input.camera.zoom()),
-				  markerRadius(std::max(kCursorMinimumRadiusPx, style.cursorRadiusPx)),
-				  tickOuterRadius(markerRadius + kCursorTickGapPx + kCursorTickLengthPx),
+				  markerRadius(look.cursorRadiusPx),
+				  tickOuterRadius(markerRadius + look.cursorTickGapPx + look.cursorTickLengthPx),
 				  snappedPoint(toScreen(input.cursor)),
 				  halo(closeHalo()),
 				  snapTarget(snapTargetRing()) {}
@@ -411,6 +485,7 @@ namespace world_sim {
 			const DrawingFeedbackInput&					 input;
 			const assets::PreviewStyle&					 style;
 			const MeasureTextSize&						 measure;
+			const Look									 look;
 			float										 screenPixelsPerMeter;
 			float										 markerRadius;
 			float										 tickOuterRadius;
@@ -444,7 +519,7 @@ namespace world_sim {
 					return std::nullopt;
 				}
 				const std::optional<Foundation::Vec2> center = firstPointOnScreen();
-				const float radius = std::max(tickOuterRadius + kCloseHaloTickClearancePx, input.closeRadiusMeters * screenPixelsPerMeter * 0.5F);
+				const float radius = std::max(tickOuterRadius + look.closeHaloTickClearancePx, input.closeRadiusMeters * screenPixelsPerMeter * 0.5F);
 				if (!center || !std::isfinite(radius) || radius <= 0.0F) {
 					return std::nullopt;
 				}
@@ -464,14 +539,14 @@ namespace world_sim {
 					return std::nullopt;
 				}
 				return SnapTarget{
-					.circle = {snappedPoint, tickOuterRadius + kSnapTargetTickClearancePx},
+					.circle = {snappedPoint, tickOuterRadius + look.snapTargetTickClearancePx},
 					.color = colorOf(onVertex ? style.snapVertexColor : style.snapEdgeColor),
 				};
 			}
 
 			bool sameEnds(std::size_t first, std::size_t second) const {
-				return closeTo(guides[first].from, guides[second].from, kDuplicateGuidePx) &&
-					   closeTo(guides[first].to, guides[second].to, kDuplicateGuidePx);
+				return closeTo(guides[first].from, guides[second].from, look.duplicateGuidePx) &&
+					   closeTo(guides[first].to, guides[second].to, look.duplicateGuidePx);
 			}
 
 			// A guide's stroke and label draw when both its ends are finite, it is not the same
@@ -523,8 +598,8 @@ namespace world_sim {
 					.center = *center,
 					.radius = radius,
 					.color = colorOf(style.originHaloColor),
-					.width = kCloseRingWidthPx,
-					.dash = alignmentDash(style),
+					.width = look.closeRingWidthPx,
+					.dash = alignmentDash(style, look),
 					.layer = FeedbackLayer::Alignment,
 				});
 			}
@@ -538,7 +613,7 @@ namespace world_sim {
 			std::optional<Foundation::Vec2> visibleStrokeEnd(Foundation::Vec2 from, Foundation::Vec2 to) const {
 				const Foundation::Vec2 along{to.x - from.x, to.y - from.y};
 				const float			   alongLength = length(along);
-				if (alongLength < kMinimumStrokePx) {
+				if (alongLength < look.minimumStrokePx) {
 					return std::nullopt;
 				}
 				const Foundation::Vec2 unit{along.x / alongLength, along.y / alongLength};
@@ -546,13 +621,13 @@ namespace world_sim {
 				if (!input.points.empty() && isFinite(snappedPoint)) {
 					const Foundation::Vec2 previous = toScreen(input.points.back());
 					if (isFinite(previous)) {
-						const auto closeStretch = stretchWithinReach(from, unit, previous, snappedPoint, kSolidSegmentClearancePx);
+						const auto closeStretch = stretchWithinReach(from, unit, previous, snappedPoint, look.solidSegmentClearancePx);
 						if (closeStretch && closeStretch->second >= 0.0F && closeStretch->first <= alongLength) {
 							visibleLength = std::clamp(closeStretch->first, 0.0F, alongLength);
 						}
 					}
 				}
-				if (visibleLength < kMinimumStrokePx) {
+				if (visibleLength < look.minimumStrokePx) {
 					return std::nullopt;
 				}
 				return Foundation::Vec2{from.x + unit.x * visibleLength, from.y + unit.y * visibleLength};
@@ -560,16 +635,16 @@ namespace world_sim {
 
 			void planGuideStroke(const SnapGuide& guide, Foundation::Vec2 from, Foundation::Vec2 strokeEnd) {
 				FeedbackStroke stroke = segmentStroke(
-					from, strokeEnd, withOpacity(guideColor(style, guide.source), style.guideOpacity), style.guideWidth, FeedbackLayer::Alignment
+					from, strokeEnd, withOpacity(guideColor(style, guide.source), style.guideOpacity), look.guideWidthPx, FeedbackLayer::Alignment
 				);
-				stroke.dash = alignmentDash(style);
+				stroke.dash = alignmentDash(style, look);
 				result.strokes.push_back(stroke);
 			}
 
 			void planRightAngleMarker(const SnapGuide& guide, Foundation::Vec2 from, Foundation::Vec2 to) {
 				const Foundation::Vec2 along{to.x - from.x, to.y - from.y};
 				const float			   alongLength = length(along);
-				if (alongLength < kMinimumStrokePx) {
+				if (alongLength < look.minimumStrokePx) {
 					return;
 				}
 				const assets::StyleColor& color = guideColor(style, guide.source);
@@ -585,11 +660,11 @@ namespace world_sim {
 				if (std::abs(edgeUnit.x * guideUnit.y - edgeUnit.y * guideUnit.x) < kRightAngleMinimumSine) {
 					return;
 				}
-				const float			   size = style.rightAngleMarkerPx;
+				const float			   size = look.rightAngleMarkerPx;
 				const Foundation::Vec2 edgeLeg{edgeUnit.x * size, edgeUnit.y * size};
 				const Foundation::Vec2 guideLeg{guideUnit.x * size, guideUnit.y * size};
 				FeedbackStroke		   marker{
-							.color = withOpacity(color, style.markerOpacity), .width = kMarkerLineWidthPx, .layer = FeedbackLayer::Marker
+							.color = withOpacity(color, style.markerOpacity), .width = look.markerLineWidthPx, .layer = FeedbackLayer::Marker
 				};
 				marker.points[0] = {from.x + edgeLeg.x, from.y + edgeLeg.y};
 				marker.points[1] = {from.x + edgeLeg.x + guideLeg.x, from.y + edgeLeg.y + guideLeg.y};
@@ -606,7 +681,7 @@ namespace world_sim {
 					.center = halo->center,
 					.radius = halo->radius,
 					.color = withOpacity(guideColor(style, GuideSource::DrawnShape), style.markerOpacity),
-					.width = kCloseHaloWidthPx,
+					.width = look.closeHaloWidthPx,
 					.layer = FeedbackLayer::Marker,
 				});
 			}
@@ -615,14 +690,14 @@ namespace world_sim {
 				if (!halo) {
 					return std::nullopt;
 				}
-				return ringBox(*halo, kCloseHaloWidthPx);
+				return ringBox(*halo, look.closeHaloWidthPx);
 			}
 
 			std::optional<FeedbackBox> snapTargetBox() const {
 				if (!snapTarget) {
 					return std::nullopt;
 				}
-				return ringBox(snapTarget->circle, kSnapTargetRingWidthPx);
+				return ringBox(snapTarget->circle, look.snapTargetRingWidthPx);
 			}
 
 			// What every label keeps off besides the marker: the close halo, the wall tool's
@@ -639,7 +714,7 @@ namespace world_sim {
 			// common obstacles.
 			void seedLabelObstacles() {
 				if (isFinite(snappedPoint)) {
-					placedLabels.push_back(boxAround(snappedPoint, tickOuterRadius + kCursorTickOutlineWidthPx * 0.5F));
+					placedLabels.push_back(boxAround(snappedPoint, tickOuterRadius + look.cursorTickOutlineWidthPx * 0.5F));
 				}
 				addCommonObstacles(placedLabels);
 			}
@@ -648,13 +723,13 @@ namespace world_sim {
 			// with its outline, and the common obstacles. The ticks are a cross, not a square,
 			// so the label can sit in a quarter between them.
 			std::vector<FeedbackBox> segmentLabelObstacles() const {
-				const float				 reach = tickOuterRadius + kCursorTickOutlineWidthPx * 0.5F;
-				const float				 halfWidth = kCursorTickOutlineWidthPx * 0.5F;
+				const float				 reach = tickOuterRadius + look.cursorTickOutlineWidthPx * 0.5F;
+				const float				 halfWidth = look.cursorTickOutlineWidthPx * 0.5F;
 				const Foundation::Vec2	 center = snappedPoint;
 				std::vector<FeedbackBox> obstacles{
 					{center.x - reach, center.y - halfWidth, center.x + reach, center.y + halfWidth},
 					{center.x - halfWidth, center.y - reach, center.x + halfWidth, center.y + reach},
-					boxAround(center, markerRadius + kCursorOutlineWidthPx * 0.5F),
+					boxAround(center, markerRadius + look.cursorOutlineWidthPx * 0.5F),
 				};
 				addCommonObstacles(obstacles);
 				return obstacles;
@@ -666,7 +741,7 @@ namespace world_sim {
 			}
 
 			Foundation::Vec2 moveInside(Foundation::Vec2 topLeft, Foundation::Vec2 size) const {
-				const FeedbackBox box = plateBox(topLeft, size);
+				const FeedbackBox box = plateBox(topLeft, size, look.labelPlatePaddingPx);
 				const auto		  shift = [](float low, float high, float limit) {
 					   if (high > limit) {
 						   return std::max(limit - high, -low);
@@ -692,7 +767,7 @@ namespace world_sim {
 			// all, the first one moved just inside.
 			Foundation::Vec2 firstOnScreen(std::span<const Placement> placements, Foundation::Vec2 judgedSize) const {
 				for (const Placement& placement : placements) {
-					if (insideViewport(plateBox(placement.judgedTopLeft, judgedSize))) {
+					if (insideViewport(plateBox(placement.judgedTopLeft, judgedSize, look.labelPlatePaddingPx))) {
 						return placement.topLeft;
 					}
 				}
@@ -707,14 +782,14 @@ namespace world_sim {
 			std::optional<Foundation::Vec2>
 			firstClear(std::span<const Placement> placements, Foundation::Vec2 judgedSize, const Accept& accept) const {
 				for (const Placement& placement : placements) {
-					const FeedbackBox judged = plateBox(placement.judgedTopLeft, judgedSize);
+					const FeedbackBox judged = plateBox(placement.judgedTopLeft, judgedSize, look.labelPlatePaddingPx);
 					if (insideViewport(judged) && accept(judged)) {
 						return placement.topLeft;
 					}
 				}
 				for (const Placement& placement : placements) {
 					const Foundation::Vec2 moved = moveInside(placement.judgedTopLeft, judgedSize);
-					if (accept(plateBox(moved, judgedSize))) {
+					if (accept(plateBox(moved, judgedSize, look.labelPlatePaddingPx))) {
 						return movedWith(placement, moved);
 					}
 				}
@@ -740,14 +815,14 @@ namespace world_sim {
 					.last = last,
 					.obstacles = segmentLabelObstacles(),
 				};
-				layout.size = measure(layout.text, kSegmentLabelPx);
+				layout.size = measure(layout.text, look.segmentLabelPx);
 				layout.reserve = {
-					std::max(layout.size.x, measure(lengthText(kSegmentLabelReserveMeters, style.guideDistanceDecimals), kSegmentLabelPx).x),
+					std::max(layout.size.x, measure(lengthText(kSegmentLabelReserveMeters, style.guideDistanceDecimals), look.segmentLabelPx).x),
 					layout.size.y,
 				};
 
 				if (const std::optional<Foundation::Vec2> atMiddle = middlePlacement(layout)) {
-					addLabel(layout.text, *atMiddle, kSegmentLabelPx, layout.size, kSegmentLabelColor);
+					addLabel(layout.text, *atMiddle, look.segmentLabelPx, layout.size, kSegmentLabelColor);
 					return;
 				}
 				const std::array<Placement, kEndPlacementCount> atEnd = endPlacements(layout);
@@ -755,7 +830,7 @@ namespace world_sim {
 				addLabel(
 					layout.text,
 					firstClear(atEnd, layout.reserve, clear).value_or(firstOnScreen(atEnd, layout.reserve)),
-					kSegmentLabelPx,
+					look.segmentLabelPx,
 					layout.size,
 					kSegmentLabelColor
 				);
@@ -774,18 +849,19 @@ namespace world_sim {
 				}
 				const Foundation::Vec2 middle{(layout.last.x + tip.x) * 0.5F, (layout.last.y + tip.y) * 0.5F};
 				const Foundation::Vec2 side = awayFromShape({-segment.y / segmentLength, segment.x / segmentLength});
-				const Foundation::Vec2 anchor{middle.x + side.x * kLabelGapPx, middle.y + side.y * kLabelGapPx};
-				if (distanceToBox(tip, plateBox(labelBeside(anchor, side, layout.reserve), layout.reserve)) < kSegmentLabelCursorClearancePx) {
+				const Foundation::Vec2 anchor{middle.x + side.x * look.labelGapPx, middle.y + side.y * look.labelGapPx};
+				const FeedbackBox preferredPlate = plateBox(labelBeside(anchor, side, layout.reserve), layout.reserve, look.labelPlatePaddingPx);
+				if (distanceToBox(tip, preferredPlate) < look.segmentLabelCursorClearancePx) {
 					return std::nullopt;
 				}
 				const Foundation::Vec2		   otherSide{-side.x, -side.y};
-				const Foundation::Vec2		   otherAnchor{middle.x + otherSide.x * kLabelGapPx, middle.y + otherSide.y * kLabelGapPx};
+				const Foundation::Vec2		   otherAnchor{middle.x + otherSide.x * look.labelGapPx, middle.y + otherSide.y * look.labelGapPx};
 				const std::array<Placement, 2> placements{{
 					{labelBeside(anchor, side, layout.size), labelBeside(anchor, side, layout.reserve)},
 					{labelBeside(otherAnchor, otherSide, layout.size), labelBeside(otherAnchor, otherSide, layout.reserve)},
 				}};
 				return firstClear(placements, layout.reserve, [&](const FeedbackBox& plate) {
-					return distanceToBox(tip, plate) >= kSegmentLabelCursorClearancePx && layout.clearOfObstacles(plate);
+					return distanceToBox(tip, plate) >= look.segmentLabelCursorClearancePx && layout.clearOfObstacles(plate);
 				});
 			}
 
@@ -848,8 +924,8 @@ namespace world_sim {
 				const FeedbackBox	   end = endAnchorBox();
 				const auto			   inQuarter = [&](Foundation::Vec2 corner, float width) -> Foundation::Vec2 {
 					return {
-						corner.x > 0.0F ? end.right + kSegmentLabelOffsetPx : end.left - kSegmentLabelOffsetPx - width,
-						corner.y < 0.0F ? end.top - kSegmentLabelOffsetPx - layout.size.y : end.bottom + kSegmentLabelOffsetPx,
+						corner.x > 0.0F ? end.right + look.segmentLabelOffsetPx : end.left - look.segmentLabelOffsetPx - width,
+						corner.y < 0.0F ? end.top - look.segmentLabelOffsetPx - layout.size.y : end.bottom + look.segmentLabelOffsetPx,
 					};
 				};
 				const std::array<Foundation::Vec2, kEndPlacementCount>& order = kEndPlacementOrders[endQuarter(along)];
@@ -886,7 +962,7 @@ namespace world_sim {
 					const double alongLength = std::hypot(alongX, alongY);
 					if (alongLength > 0.0) {
 						const double sidePx = (offsetY * alongX - offsetX * alongY) / alongLength * screenPixelsPerMeter;
-						if (std::abs(sidePx) > kSideMinimumPx) {
+						if (std::abs(sidePx) > look.sideMinimumPx) {
 							return sidePx > 0.0 ? Foundation::Vec2{-normal.x, -normal.y} : normal;
 						}
 					}
@@ -939,7 +1015,7 @@ namespace world_sim {
 				}
 				const auto [start, end] = *onScreen;
 				const float partLength = length({end.x - start.x, end.y - start.y});
-				if (partLength < kGuideLabelMinimumStrokePx) {
+				if (partLength < look.guideLabelMinimumStrokePx) {
 					return;
 				}
 				const Foundation::Vec2 along{(end.x - start.x) / partLength, (end.y - start.y) / partLength};
@@ -947,14 +1023,14 @@ namespace world_sim {
 				const Foundation::Vec2 side = awayFromSegment(middle, {-along.y, along.x});
 
 				const std::string	   text = lengthText(guide.distanceFromNodeMeters, style.guideDistanceDecimals);
-				const float			   sizePx = style.guideLabelPx;
+				const float			   sizePx = look.guideLabelPx;
 				const Foundation::Vec2 size = measure(text, sizePx);
 				const float			   halfPart = partLength * 0.5F;
 				bool				   triedBackEnd = false;
 				bool				   triedForwardEnd = false;
 				for (int attempt = 0; attempt <= kGuideLabelShiftAttempts; ++attempt) {
 					const float steps = static_cast<float>((attempt + 1) / 2);
-					const float wanted = (attempt % 2 == 0 ? steps : -steps) * (size.x + kGuideLabelShiftPaddingPx);
+					const float wanted = (attempt % 2 == 0 ? steps : -steps) * (size.x + look.guideLabelShiftPaddingPx);
 					const float shift = std::clamp(wanted, -halfPart, halfPart);
 					if (shift != wanted) {
 						bool& tried = shift < 0.0F ? triedBackEnd : triedForwardEnd;
@@ -965,12 +1041,12 @@ namespace world_sim {
 					}
 					const Foundation::Vec2 onGuide{middle.x + along.x * shift, middle.y + along.y * shift};
 					const Foundation::Vec2 preferred =
-						labelBeside({onGuide.x + side.x * kLabelGapPx, onGuide.y + side.y * kLabelGapPx}, side, size);
+						labelBeside({onGuide.x + side.x * look.labelGapPx, onGuide.y + side.y * look.labelGapPx}, side, size);
 					const Foundation::Vec2 opposite =
-						labelBeside({onGuide.x - side.x * kLabelGapPx, onGuide.y - side.y * kLabelGapPx}, {-side.x, -side.y}, size);
+						labelBeside({onGuide.x - side.x * look.labelGapPx, onGuide.y - side.y * look.labelGapPx}, {-side.x, -side.y}, size);
 					const std::array<Placement, 2> candidates{{{preferred, preferred}, {opposite, opposite}}};
 					const Foundation::Vec2		   topLeft = firstOnScreen(candidates, size);
-					const FeedbackBox			   box = plateBox(topLeft, size);
+					const FeedbackBox			   box = plateBox(topLeft, size, look.labelPlatePaddingPx);
 					const bool covers = std::any_of(placedLabels.begin(), placedLabels.end(), [&](const FeedbackBox& other) { return overlaps(box, other); });
 					if (!covers) {
 						addLabel(text, topLeft, sizePx, size, withOpacity(guideColor(style, guide.source), 1.0F));
@@ -987,7 +1063,7 @@ namespace world_sim {
 					if (isFinite(last)) {
 						const Foundation::Vec2 segmentMiddle{(last.x + snappedPoint.x) * 0.5F, (last.y + snappedPoint.y) * 0.5F};
 						const float			   lean = dot({segmentMiddle.x - middle.x, segmentMiddle.y - middle.y}, normal);
-						if (std::abs(lean) > kSideMinimumPx) {
+						if (std::abs(lean) > look.sideMinimumPx) {
 							return lean > 0.0F ? Foundation::Vec2{-normal.x, -normal.y} : normal;
 						}
 					}
@@ -996,9 +1072,16 @@ namespace world_sim {
 			}
 
 			void addLabel(const std::string& text, Foundation::Vec2 topLeft, float sizePx, Foundation::Vec2 size, Foundation::Color color) {
-				const FeedbackBox plate = plateBox(topLeft, size);
+				const FeedbackBox plate = plateBox(topLeft, size, look.labelPlatePaddingPx);
 				placedLabels.push_back(plate);
-				result.labels.push_back({.text = text, .position = topLeft, .sizePx = sizePx, .plate = plate, .color = color});
+				result.labels.push_back({
+					.text = text,
+					.position = topLeft,
+					.sizePx = sizePx,
+					.plate = plate,
+					.plateCornerRadius = look.labelPlateCornerPx,
+					.color = color,
+				});
 			}
 
 			// Off buildable ground the dot takes the invalid color; the outline and ticks stay.
@@ -1007,11 +1090,11 @@ namespace world_sim {
 					return;
 				}
 				const Foundation::Vec2						 center = snappedPoint;
-				const float									 inner = markerRadius + kCursorTickGapPx;
+				const float									 inner = markerRadius + look.cursorTickGapPx;
 				static const std::array<Foundation::Vec2, 4> kTickDirections{{{-1.0F, 0.0F}, {1.0F, 0.0F}, {0.0F, -1.0F}, {0.0F, 1.0F}}};
 				for (const auto& [layer, color, width] : {
-						 std::tuple{FeedbackLayer::CursorOutline, kCursorOutlineColor, kCursorTickOutlineWidthPx},
-						 std::tuple{FeedbackLayer::Cursor, kCursorFillColor, kCursorTickWidthPx},
+						 std::tuple{FeedbackLayer::CursorOutline, kCursorOutlineColor, look.cursorTickOutlineWidthPx},
+						 std::tuple{FeedbackLayer::Cursor, kCursorFillColor, look.cursorTickWidthPx},
 					 }) {
 					for (const Foundation::Vec2& direction : kTickDirections) {
 						result.strokes.push_back(segmentStroke(
@@ -1028,7 +1111,7 @@ namespace world_sim {
 					.radius = markerRadius,
 					.fill = input.snappedPointInvalid ? input.invalidColor : kCursorFillColor,
 					.outline = kCursorOutlineColor,
-					.outlineWidth = kCursorOutlineWidthPx,
+					.outlineWidth = look.cursorOutlineWidthPx,
 					.layer = FeedbackLayer::Cursor,
 				});
 			}
@@ -1041,7 +1124,7 @@ namespace world_sim {
 				const GuideSource source = input.snap.guideCount > 0 ? input.snap.guides[0].source : GuideSource::DrawnShape;
 				result.dots.push_back({
 					.center = snappedPoint,
-					.radius = style.guideCrossingDotPx,
+					.radius = look.guideCrossingDotPx,
 					.fill = withOpacity(guideColor(style, source), style.markerOpacity),
 					.layer = FeedbackLayer::Target,
 				});
@@ -1055,7 +1138,7 @@ namespace world_sim {
 					.center = snapTarget->circle.center,
 					.radius = snapTarget->circle.radius,
 					.color = snapTarget->color,
-					.width = kSnapTargetRingWidthPx,
+					.width = look.snapTargetRingWidthPx,
 					.layer = FeedbackLayer::Target,
 				});
 			}
@@ -1100,7 +1183,7 @@ namespace world_sim {
 			return layers.alignmentId;
 		}
 
-		void drawRing(const FeedbackRing& ring, const ToolLayers& layers) {
+		void drawRing(const FeedbackRing& ring, const ToolLayers& layers, float segmentPx) {
 			if (!std::isfinite(ring.radius) || ring.radius <= 0.0F) {
 				return;
 			}
@@ -1117,7 +1200,7 @@ namespace world_sim {
 			// A circle's border takes no dash, so a dashed ring is a closed polyline round it.
 			const float circumference = 2.0F * std::numbers::pi_v<float> * ring.radius;
 			const int	segments = static_cast<int>(
-				  std::clamp(std::ceil(circumference / kRingSegmentPx), static_cast<float>(kRingMinimumSegments), static_cast<float>(kRingMaximumSegments))
+				  std::clamp(std::ceil(circumference / segmentPx), static_cast<float>(kRingMinimumSegments), static_cast<float>(kRingMaximumSegments))
 			  );
 			std::vector<Foundation::Vec2> outline;
 			outline.reserve(static_cast<std::size_t>(segments));
@@ -1154,6 +1237,7 @@ namespace world_sim {
 	void drawSnapFeedback(const DrawingFeedbackInput& input) {
 		const DrawingFeedbackPlan plan = planSnapFeedback(input, measureFeedbackText);
 		const ToolLayers		  layers = toolLayers(input.tool);
+		const Look				  look = lookAt(input.style, input.uiScale);
 
 		for (const FeedbackStroke& stroke : plan.strokes) {
 			Renderer::Primitives::drawPolyline({
@@ -1167,7 +1251,7 @@ namespace world_sim {
 			});
 		}
 		for (const FeedbackRing& ring : plan.rings) {
-			drawRing(ring, layers);
+			drawRing(ring, layers, look.ringSegmentPx);
 		}
 		for (const FeedbackDot& dot : plan.dots) {
 			Foundation::CircleStyle style{.fill = dot.fill};
@@ -1185,7 +1269,7 @@ namespace world_sim {
 		for (const FeedbackLabel& label : plan.labels) {
 			Renderer::Primitives::drawRect({
 				.bounds = Foundation::Rect{label.plate.left, label.plate.top, label.plate.right - label.plate.left, label.plate.bottom - label.plate.top},
-				.style = {.fill = kLabelPlateColor, .border = Foundation::BorderStyle{.width = 0.0F, .cornerRadius = kLabelPlateCornerPx}},
+				.style = {.fill = kLabelPlateColor, .border = Foundation::BorderStyle{.width = 0.0F, .cornerRadius = label.plateCornerRadius}},
 				.id = layerId(layers, FeedbackLayer::LabelPlate),
 				.key = layerKey(layers, FeedbackLayer::LabelPlate),
 			});

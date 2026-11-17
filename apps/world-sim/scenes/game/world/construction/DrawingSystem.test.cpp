@@ -1007,6 +1007,39 @@ TEST_F(DrawingCloseTest, AddApartFromTheFloorIsRefused) {
 	EXPECT_EQ(lastToast(), "Can't edit foundation: " + reason);
 }
 
+// At twice the interface size the reason draws twice as large and twice as far off the
+// pointer, and the snap labels keep off the box it draws in.
+TEST_F(DrawingCloseTest, TheBoxTheLabelsKeepOffIsWhereTheReasonDrawsAtTheUiScale) {
+	const construction::FoundationId target = builtFloor({{0.0F, 0.0F}, {8.0F, 0.0F}, {8.0F, 8.0F}, {0.0F, 8.0F}});
+	drawing->activateFoundationEditTool(target, construction::FoundationEditMode::Add);
+	place({{20.0F, 0.0F}, {24.0F, 0.0F}, {24.0F, 4.0F}});
+	hoverFreeform({22.0F, 6.0F});
+	ASSERT_FALSE(drawing->previewVerdict().editReason.empty());
+
+	constexpr float kUiScale = 2.0F;
+	const auto		measure = [](const std::string& text, float sizePx) {
+		 return Foundation::Vec2{0.5F * sizePx * static_cast<float>(text.size()), 1.25F * sizePx};
+	};
+	const std::optional<world_sim::DrawingSystem::EditReason> reason = drawing->editReason(kViewportWidth, kViewportHeight, kUiScale, measure);
+	ASSERT_TRUE(reason.has_value());
+	const glm::vec2 pointer = seen.screenOf({22.0F, 6.0F});
+	EXPECT_FLOAT_EQ(reason->position.x, pointer.x + 14.0F * kUiScale);
+	EXPECT_FLOAT_EQ(reason->position.y, pointer.y - 22.0F * kUiScale);
+	EXPECT_FLOAT_EQ(reason->textScale, 0.8F * kUiScale);
+
+	const world_sim::DrawingFeedbackInput input = drawing->feedbackInput(
+		assets::ConstructionRegistry::Get().rendering().preview, kViewportWidth, kViewportHeight, kUiScale, measure
+	);
+	EXPECT_FLOAT_EQ(input.uiScale, kUiScale);
+	ASSERT_TRUE(input.keepClear.has_value());
+	const Foundation::Vec2 drawnSize = measure(reason->text, reason->textScale * world_sim::kRendererFontBaseSizePx);
+	constexpr float		   kShadowPx = 1.0F;
+	EXPECT_FLOAT_EQ(input.keepClear->left, reason->position.x);
+	EXPECT_FLOAT_EQ(input.keepClear->top, reason->position.y);
+	EXPECT_FLOAT_EQ(input.keepClear->right, reason->position.x + drawnSize.x + kShadowPx);
+	EXPECT_FLOAT_EQ(input.keepClear->bottom, reason->position.y + drawnSize.y + kShadowPx);
+}
+
 TEST_F(DrawingCloseTest, AddOntoUnexploredGroundIsRefused) {
 	seen.visibility.revealLanding({60.0F, 0.0F}, 15.0F);
 	const construction::FoundationId target = builtFloor({{20.0F, -5.0F}, {30.0F, -5.0F}, {30.0F, 5.0F}, {20.0F, 5.0F}});

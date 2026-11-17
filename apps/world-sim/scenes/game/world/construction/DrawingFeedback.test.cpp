@@ -14,6 +14,8 @@
 #include <iterator>
 #include <limits>
 #include <numbers>
+#include <optional>
+#include <random>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -108,6 +110,7 @@ namespace {
 		std::optional<FeedbackBox>	  keepClear;
 		int							  viewportWidth = kViewportWidth;
 		int							  viewportHeight = kViewportHeight;
+		float						  uiScale = 1.0F;
 		// Measures every label but the reserved "999.00 m" this many characters narrower: the
 		// same frame with one digit fewer.
 		int narrowerByCharacters = 0;
@@ -143,6 +146,7 @@ namespace {
 				.camera = camera,
 				.viewportWidth = viewportWidth,
 				.viewportHeight = viewportHeight,
+				.uiScale = uiScale,
 				.pixelsPerMeter = kPixelsPerMeter,
 				.closeRadiusMeters = closeRadiusMeters,
 				.canClose = canClose,
@@ -1302,4 +1306,163 @@ TEST_F(DrawingFeedbackTest, SegmentLabelSideHoldsWithTheShapesCenterAtTheEdgeOfT
 		}
 		EXPECT_LE(placements.size(), 2U);
 	}
+}
+
+// Every size the feedback plans is in ui px. A frame at a ui scale of s plans what the same
+// frame plans at 1 on a screen s times smaller (viewport, zoom, and keep-clear box divided by
+// s, so the world lands at 1/s the pixels), with every pixel in the plan times s.
+TEST_F(DrawingFeedbackTest, EverySizeFollowsTheUiScale) {
+	constexpr int kWidth = 1200; // divisible by every scale below
+	constexpr int kHeight = 960;
+	std::mt19937  random(894);
+	const auto	  between = [&](float low, float high) { return std::uniform_real_distribution<float>(low, high)(random); };
+	const auto	  chance = [&](float odds) { return between(0.0F, 1.0F) < odds; };
+	const auto	  oneOf = [&](int count) { return std::uniform_int_distribution<int>(0, count - 1)(random); };
+
+	struct Frame {
+		world_sim::ToolKind			  tool;
+		construction::SnapResult	  snap;
+		std::vector<Foundation::Vec2> points;
+		Foundation::Vec2			  cursor;
+		float						  zoom;
+		float						  closeRadiusMeters;
+		bool						  canClose;
+		bool						  willClose;
+		bool						  guideDistances;
+		std::optional<FeedbackBox>	  keepClear;
+	};
+	std::vector<Frame> frames;
+	for (int index = 0; index < 400; ++index) {
+		Frame frame{};
+		frame.tool = chance(0.5F) ? world_sim::ToolKind::Wall : world_sim::ToolKind::Foundation;
+		frame.zoom = between(1.0F, 12.0F);
+		// Across the screen and a little past its edges, so labels meet the edges too.
+		const float halfWidthMeters = static_cast<float>(kWidth) / (2.0F * kPixelsPerMeter * frame.zoom);
+		const float halfHeightMeters = static_cast<float>(kHeight) / (2.0F * kPixelsPerMeter * frame.zoom);
+		const auto	onScreen = [&] {
+			 return Foundation::Vec2{between(-1.1F, 1.1F) * halfWidthMeters, between(-1.1F, 1.1F) * halfHeightMeters};
+		};
+		frame.cursor = onScreen();
+		const int pointCount = oneOf(5);
+		for (int point = 0; point < pointCount; ++point) {
+			frame.points.push_back(
+				chance(0.3F) ? Foundation::Vec2{frame.cursor.x + between(-3.0F, 3.0F), frame.cursor.y + between(-3.0F, 3.0F)} : onScreen()
+			);
+		}
+		frame.snap.kind = static_cast<SnapKind>(oneOf(static_cast<int>(SnapKind::GuideCrossing) + 1));
+		frame.snap.point = frame.cursor;
+		const int guideCount = oneOf(3);
+		for (int guideIndex = 0; guideIndex < guideCount; ++guideIndex) {
+			SnapGuide guide;
+			guide.from = pointCount > 0 && chance(0.5F) ? frame.points[static_cast<std::size_t>(oneOf(pointCount))] : onScreen();
+			guide.to = frame.cursor;
+			guide.source = static_cast<GuideSource>(oneOf(3));
+			guide.relation = static_cast<GuideRelation>(oneOf(3));
+			guide.rightAngle = chance(0.5F);
+			const float angle = between(0.0F, 2.0F * std::numbers::pi_v<float>);
+			guide.rightAngleEdgeDirection = {std::cos(angle), std::sin(angle)};
+			guide.distanceFromNodeMeters = std::hypot(guide.to.x - guide.from.x, guide.to.y - guide.from.y);
+			frame.snap.guides[frame.snap.guideCount++] = guide;
+		}
+		frame.closeRadiusMeters = between(0.1F, 2.0F);
+		frame.canClose = chance(0.5F);
+		frame.willClose = frame.canClose && chance(0.5F);
+		frame.guideDistances = chance(0.8F);
+		if (chance(0.3F)) {
+			const float left = between(0.0F, static_cast<float>(kWidth));
+			const float top = between(0.0F, static_cast<float>(kHeight));
+			frame.keepClear = FeedbackBox{left, top, left + between(40.0F, 200.0F), top + between(10.0F, 30.0F)};
+		}
+		frames.push_back(std::move(frame));
+	}
+
+	// The frame on a screen `screenScale` times smaller than kWidth by kHeight, at `frameUiScale`.
+	const auto planFor = [&](const Frame& frame, float screenScale, float frameUiScale) {
+		tool = frame.tool;
+		snap = frame.snap;
+		points = frame.points;
+		cursor = frame.cursor;
+		closeRadiusMeters = frame.closeRadiusMeters;
+		canClose = frame.canClose;
+		willClose = frame.willClose;
+		display.guideDistances = frame.guideDistances;
+		keepClear.reset();
+		if (frame.keepClear) {
+			const FeedbackBox& box = *frame.keepClear;
+			keepClear = FeedbackBox{box.left / screenScale, box.top / screenScale, box.right / screenScale, box.bottom / screenScale};
+		}
+		viewportWidth = static_cast<int>(static_cast<float>(kWidth) / screenScale);
+		viewportHeight = static_cast<int>(static_cast<float>(kHeight) / screenScale);
+		camera.setZoom(frame.zoom / screenScale);
+		uiScale = frameUiScale;
+		return plan();
+	};
+
+	std::size_t compared = 0;
+	for (const float scale : {1.25F, 1.5F, 2.0F, 3.0F}) {
+		for (std::size_t index = 0; index < frames.size(); ++index) {
+			SCOPED_TRACE(::testing::Message() << "scale " << scale << ", frame " << index);
+			const DrawingFeedbackPlan scaled = planFor(frames[index], 1.0F, scale);
+			const DrawingFeedbackPlan reference = planFor(frames[index], scale, 1.0F);
+			const auto				  near = [&](float actual, float referenceValue) {
+				 const float expected = referenceValue * scale;
+				 EXPECT_NEAR(actual, expected, 1e-2F + 1e-4F * std::abs(expected));
+			};
+			const auto nearPoint = [&](Foundation::Vec2 actual, Foundation::Vec2 referencePoint) {
+				near(actual.x, referencePoint.x);
+				near(actual.y, referencePoint.y);
+			};
+			const auto nearDash = [&](
+				const std::optional<Foundation::DashPattern>& actual, const std::optional<Foundation::DashPattern>& referenceDash
+			) {
+				ASSERT_EQ(actual.has_value(), referenceDash.has_value());
+				if (actual) {
+					near(actual->dash, referenceDash->dash);
+					near(actual->gap, referenceDash->gap);
+				}
+			};
+			ASSERT_EQ(scaled.strokes.size(), reference.strokes.size());
+			for (std::size_t item = 0; item < scaled.strokes.size(); ++item) {
+				const FeedbackStroke& actual = scaled.strokes[item];
+				const FeedbackStroke& expected = reference.strokes[item];
+				ASSERT_EQ(actual.pointCount, expected.pointCount);
+				EXPECT_EQ(actual.layer, expected.layer);
+				for (std::size_t point = 0; point < actual.pointCount; ++point) {
+					nearPoint(actual.points[point], expected.points[point]);
+				}
+				near(actual.width, expected.width);
+				nearDash(actual.dash, expected.dash);
+			}
+			ASSERT_EQ(scaled.rings.size(), reference.rings.size());
+			for (std::size_t item = 0; item < scaled.rings.size(); ++item) {
+				EXPECT_EQ(scaled.rings[item].layer, reference.rings[item].layer);
+				nearPoint(scaled.rings[item].center, reference.rings[item].center);
+				near(scaled.rings[item].radius, reference.rings[item].radius);
+				near(scaled.rings[item].width, reference.rings[item].width);
+				nearDash(scaled.rings[item].dash, reference.rings[item].dash);
+			}
+			ASSERT_EQ(scaled.dots.size(), reference.dots.size());
+			for (std::size_t item = 0; item < scaled.dots.size(); ++item) {
+				EXPECT_EQ(scaled.dots[item].layer, reference.dots[item].layer);
+				nearPoint(scaled.dots[item].center, reference.dots[item].center);
+				near(scaled.dots[item].radius, reference.dots[item].radius);
+				near(scaled.dots[item].outlineWidth, reference.dots[item].outlineWidth);
+			}
+			ASSERT_EQ(scaled.labels.size(), reference.labels.size());
+			for (std::size_t item = 0; item < scaled.labels.size(); ++item) {
+				const FeedbackLabel& actual = scaled.labels[item];
+				const FeedbackLabel& expected = reference.labels[item];
+				EXPECT_EQ(actual.text, expected.text);
+				nearPoint(actual.position, expected.position);
+				near(actual.sizePx, expected.sizePx);
+				near(actual.plate.left, expected.plate.left);
+				near(actual.plate.top, expected.plate.top);
+				near(actual.plate.right, expected.plate.right);
+				near(actual.plate.bottom, expected.plate.bottom);
+				near(actual.plateCornerRadius, expected.plateCornerRadius);
+			}
+			compared += scaled.strokes.size() + scaled.rings.size() + scaled.dots.size() + scaled.labels.size();
+		}
+	}
+	EXPECT_GT(compared, 4000U); // the frames plan plenty to compare
 }
