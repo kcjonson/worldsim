@@ -28,6 +28,8 @@ namespace world_sim {
 		bool  roundLengths = false;
 		bool  showKeyGuide = false;
 		float rectangleGridSpacingMeters = 1.0F;
+
+		bool operator==(const DrawingSettings&) const = default;
 	};
 
 	class UserSettings {

@@ -246,6 +246,12 @@ namespace world_sim {
 		[[nodiscard]] bool isRectangleTool() const { return isActive() && activeTool_ == ToolKind::FoundationRectangle; }
 		[[nodiscard]] bool isOpeningTool() const { return activeTool_ == ToolKind::Opening; }
 
+		/// The key guide (architecture D15) collapsed to its chip: session state, open when the
+		/// system is made, kept across tools, never saved.
+		[[nodiscard]] bool keyGuideCollapsed() const { return keyGuideCollapsed_; }
+		/// `?` or H, or a click on the chip.
+		void toggleKeyGuide() { keyGuideCollapsed_ = !keyGuideCollapsed_; }
+
 		// --- Material selection (from the config strip) ---
 
 		void							 setActiveMaterial(const std::string& material);
@@ -799,6 +805,8 @@ namespace world_sim {
 
 		// The foundation tool the Build menu's Foundation entry opens: the last one activated.
 		FoundationTool lastFoundationTool_ = FoundationTool::Rectangle;
+
+		bool keyGuideCollapsed_ = false;
 
 		// True when the opening tool's snapped opening is not all on seen ground.
 		bool openingUnexplored_ = false;

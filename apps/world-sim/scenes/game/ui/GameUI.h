@@ -2,7 +2,7 @@
 
 // GameUI - the game scene's ui, mounted under the scene's root: the top bar, the roster down the left,
 // the selected entity's panel and its task list at the bottom left, the minimap, resources and global
-// task list down the right, the gameplay bar and construction strip at the bottom middle, the zoom
+// task list down the right, the gameplay bar, construction strip and key guide at the bottom middle, the zoom
 // column at the bottom right, the build menu, toasts, the three dialogs and the pause menu. It feeds
 // them from the world each frame; salal's ui lays them out, draws them and takes their input, so a
 // press on any of them never reaches the world.
@@ -19,6 +19,7 @@
 #include "scenes/game/ui/views/ColonistListView.h"
 #include "scenes/game/ui/views/ConstructionConfigStrip.h"
 #include "scenes/game/ui/views/DebugOverlay.h"
+#include "scenes/game/ui/views/DrawingKeyGuide.h"
 #include "scenes/game/ui/views/EntityInfoView.h"
 #include "scenes/game/ui/views/GameplayBar.h"
 #include "scenes/game/ui/views/GlobalTaskListView.h"
@@ -88,6 +89,7 @@ namespace world_sim {
 			std::function<void(const std::string&)> onConstructionMaterialSelected; ///< Called when a config-strip material card is clicked
 			std::function<void(const std::string&)> onConstructionThicknessSelected; ///< Called when a wall thickness preset is clicked
 			std::function<void()>					onRoomsToggle; ///< Called when the GameplayBar Rooms toggle is clicked
+			std::function<void()>					onKeyGuideOpened; ///< Called when the collapsed key guide's chip is clicked
 		};
 
 		explicit GameUI(const Args& args);
@@ -134,6 +136,8 @@ namespace world_sim {
 		// The wall thickness cards for `material`, when the player picks another.
 		void			   showWallThicknesses(const assets::ConstructionRegistry& construction, const std::string& material);
 		void			   setConstructionStatus(const DrawingStatus& status);
+		// The key guide over the strip, for the drawing tool on (none while none is).
+		void			   setKeyGuide(std::optional<ToolKind> tool, const DrawingSettings& settings, bool collapsed);
 		void			   setRoomsOverlayActive(bool active);
 
 		void			   showColonistDetails(ecs::EntityID colonistId);
@@ -161,6 +165,7 @@ namespace world_sim {
 		ui::Ref<DebugOverlay>				   debugOverlay;
 		ui::Ref<ZoomControlPanel>			   zoomControlPanel;
 		ui::Ref<GameplayBar>				   gameplayBar;
+		ui::Ref<DrawingKeyGuide>			   keyGuide;
 		ui::Ref<ConstructionConfigStrip>	   configStrip;
 		ui::Ref<BuildMenu>					   buildMenu;
 		ui::Ref<ColonistListView>			   colonistList;

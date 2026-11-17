@@ -74,6 +74,7 @@ add_library(world-sim-game STATIC
     scenes/game/world/vision/VisionOverlay.cpp
     scenes/game/world/terrain/TerrainPolygonOverlay.cpp
     scenes/game/ui/views/ConstructionConfigStrip.cpp
+    scenes/game/ui/views/DrawingKeyGuide.cpp
     # Scenes
     scenes/shared/GlobeView.cpp
     scenes/shared/DecorativePlanet.cpp
@@ -172,6 +173,7 @@ if(BUILD_TESTING)
         scenes/game/ui/adapters/SelectionAdapter.test.cpp
         scenes/game/ui/adapters/TaskRowText.test.cpp
         scenes/game/ui/models/ThoughtLogModel.test.cpp
+        scenes/game/ui/views/DrawingKeyGuide.test.cpp
         scenes/SceneLayout.test.cpp
     )
     # Not beside world-sim: the tests must not find the files staged for the game (the quickstart
