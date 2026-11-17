@@ -19,6 +19,7 @@ add_library(assets
     assets/ConfigValidator.cpp
     assets/MemoryConfig.cpp
     assets/MoodConfig.cpp
+    assets/NeedsConfig.cpp
     assets/PriorityConfig.cpp
     assets/RecipeRegistry.cpp
     assets/TaskChainRegistry.cpp

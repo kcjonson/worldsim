@@ -35,6 +35,8 @@ Pick a spot on open ground, a few meters from the river bank, with no berry bush
 
 4. Drop 10 berries 1 m from Eve on the side away from the box (`/api/dev/give?material=Berry&n=10&where=loose&at=<her x+1>,<her y>`) and set her Hunger to 5: she takes 2 berries from the heap or the box, whichever is nearer, never more, and her Hunger rises past 50.
 
+5. Read Eve in `what=colonists`: her `thoughts.recent` holds one `starving` from step 4 (not `getting_peckish` or `very_hungry` as well) and an `ate_good_meal`, and `thoughts.held` holds `ate_good_meal`. Read it again a few seconds later: nothing new has arrived while her Hunger stays where it is.
+
 ---
 
 ## Expected state
@@ -45,6 +47,7 @@ GET /api/state?what=storage
 
 GET /api/state?what=colonists
   -> each colonist that ate has needs.Hunger > 50 afterwards
+  -> Eve's thoughts: one starving after step 4, ate_good_meal held, nothing new while her needs hold
 ```
 
 ---

@@ -73,10 +73,21 @@ class VisionSystem : public ISystem {
 	/// Set the chunk manager for shore discovery
 	void setChunkManager(world::ChunkManager* chunkManager) { m_chunkManager = chunkManager; }
 
-	/// Set callback for recipe discovery notifications ("Aha!" moments)
-	/// Called with recipe label when colonist learns something that unlocks a new recipe
-	using RecipeDiscoveryCallback = std::function<void(const std::string& recipeLabel)>;
-	void setRecipeDiscoveryCallback(RecipeDiscoveryCallback callback) { m_onRecipeDiscovery = std::move(callback); }
+	enum class DiscoveryKind : uint8_t { NewKind, Recipe };
+
+	/// A colonist saw a kind of thing for the first time, or learned a recipe by it ("Aha!").
+	struct Discovery {
+		EntityID	  colonist = kInvalidEntity;
+		DiscoveryKind kind = DiscoveryKind::NewKind;
+		/// NewKind: the AssetRegistry id of the kind seen. Recipe: of the recipe's first output.
+		uint32_t definition = 0;
+		/// Recipe: its label.
+		std::string recipeLabel;
+	};
+	using DiscoveryObserver = std::function<void(const Discovery& discovery)>;
+
+	/// Hears every discovery, from inside the update: an observer must not create or destroy entities.
+	void addDiscoveryObserver(DiscoveryObserver observer) { m_discoveryObservers.push_back(std::move(observer)); }
 
 	/// Wire the construction topology that walls block sight from. Forwards to the
 	/// owned GeometryIndex. Null leaves the index inert (zero occluders), so every
@@ -164,8 +175,10 @@ class VisionSystem : public ISystem {
 	uint16_t m_shoreCapabilityMask = 0;
 	bool	 m_terrainDefsRegistered = false;
 
-	// Callback for recipe discovery notifications
-	RecipeDiscoveryCallback m_onRecipeDiscovery = nullptr;
+	/// The observer learns `defNameId`; when it is new, the observers hear of it and of the recipe it unlocks.
+	void learn(EntityID observer, Knowledge& knowledge, uint32_t defNameId);
+
+	std::vector<DiscoveryObserver> m_discoveryObservers;
 
 	// --- Occlusion gate ---
 

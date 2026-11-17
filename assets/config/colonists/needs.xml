@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Need thresholds: the levels each need moves between. See /docs/technical/interruptable-crafts.md
+  (Needs in three levels) and /docs/design/game-systems/colonists/needs.md.
+
+  <Need name seek urgent critical/>   need percentages, each below the one before. A need is at its top
+                                      level at or above seek, and one level lower below each threshold.
+
+  Names are the needs' labels; every need is listed once. Thought sources name a threshold a need falls
+  below or rises back to (assets/config/thoughts).
+-->
+<Needs>
+  <Need name="Hunger"      seek="50" urgent="25" critical="10"/>
+  <Need name="Thirst"      seek="50" urgent="25" critical="10"/>
+  <Need name="Energy"      seek="30" urgent="20" critical="10"/>
+  <Need name="Bladder"     seek="30" urgent="20" critical="10"/>
+  <Need name="Digestion"   seek="30" urgent="20" critical="10"/>
+  <Need name="Hygiene"     seek="40" urgent="25" critical="15"/>
+  <Need name="Recreation"  seek="30" urgent="20" critical="10"/>
+  <Need name="Temperature" seek="40" urgent="25" critical="15"/>
+</Needs>

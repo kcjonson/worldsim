@@ -10,6 +10,7 @@
 #include "../EntityID.h"
 #include "../ISystem.h"
 #include "../LoosePileIndex.h"
+#include "../components/Action.h"
 
 #include <glm/vec2.hpp>
 
@@ -18,8 +19,23 @@
 #include <optional>
 #include <random>
 #include <string>
+#include <vector>
 
 namespace ecs {
+
+enum class ActionMoment : uint8_t { Started, Finished };
+
+/// A colonist started or finished an action. An action cut short never finishes.
+struct ActionEvent {
+	EntityID	 colonist = kInvalidEntity;
+	ActionType	 type = ActionType::None;
+	ActionMoment moment = ActionMoment::Started;
+	/// The AssetRegistry id of the kind of thing the action is about (the food eaten, the bed slept in,
+	/// the item crafted, the plant harvested); 0 when it is about no thing, as a sleep on the ground is.
+	uint32_t aboutDefinition = 0;
+};
+
+using ActionObserver = std::function<void(const ActionEvent& event)>;
 
 class ActionSystem : public ISystem {
 public:
@@ -83,6 +99,10 @@ public:
 	/// same-material piles in one cell would otherwise alias each other.
 	using RemoveEntityByIdCallback = std::function<void(EntityID entity)>;
 	void setRemoveEntityByIdCallback(RemoveEntityByIdCallback callback) { m_onRemoveEntityById = std::move(callback); }
+
+	/// Hears every action a colonist starts and finishes, from inside the update: an observer must not
+	/// create or destroy entities or touch a colonist's task or action.
+	void addActionObserver(ActionObserver observer) { m_actionObservers.push_back(std::move(observer)); }
 
 	/// The loose ground piles a pickup draws from, filed by makeLoosePile and unfiled by
 	/// destroyWorldEntity.
@@ -295,6 +315,17 @@ private:
 		glm::vec2 dropPosition,
 		const char* handName
 	);
+
+	/// Tell every action observer the colonist started or finished the action.
+	void notifyActionObservers(
+		EntityID entity,
+		const struct Action& action,
+		ActionMoment moment,
+		const struct Task& task,
+		const struct Memory& memory
+	);
+
+	std::vector<ActionObserver> m_actionObservers;
 
 	/// Callback for item crafted notifications
 	ItemCraftedCallback m_onItemCrafted = nullptr;

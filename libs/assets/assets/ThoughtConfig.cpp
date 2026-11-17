@@ -1,4 +1,5 @@
 #include "assets/ThoughtConfig.h"
+#include "assets/AssetDefinition.h"
 #include "assets/ConfigFiles.h"
 #include "assets/ConfigNumber.h"
 
@@ -7,6 +8,7 @@
 #include <pugixml.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <initializer_list>
 #include <set>
@@ -37,6 +39,20 @@ namespace assets {
 				return ThoughtImportance::Major;
 			}
 			return std::nullopt;
+		}
+
+		std::optional<ThoughtTrigger> triggerFromName(std::string_view name) {
+			constexpr std::array<std::pair<std::string_view, ThoughtTrigger>, 7> kTriggers = {{
+				{"needFalls", ThoughtTrigger::NeedFalls},
+				{"needRises", ThoughtTrigger::NeedRises},
+				{"actionStarts", ThoughtTrigger::ActionStarts},
+				{"actionFinishes", ThoughtTrigger::ActionFinishes},
+				{"firstSight", ThoughtTrigger::FirstSight},
+				{"recipeLearned", ThoughtTrigger::RecipeLearned},
+				{"idle", ThoughtTrigger::Idle},
+			}};
+			const auto found = std::ranges::find(kTriggers, name, &std::pair<std::string_view, ThoughtTrigger>::first);
+			return found == kTriggers.end() ? std::nullopt : std::optional(found->second);
 		}
 
 		class Loader {
@@ -182,6 +198,100 @@ namespace assets {
 				return effect;
 			}
 
+			/// A capability name, or for an action's `on` also kGroundName; empty stays empty, for any.
+			bool knownThing(const std::string& thing, bool groundAllowed) {
+				return thing.empty() || capabilityFromName(thing).has_value() || (groundAllowed && thing == kGroundName);
+			}
+
+			std::optional<ThoughtSourceDef> sourceOf(pugi::xml_node node, const std::string& what, const std::string& source) {
+				const std::string_view		  triggerName = node.attribute("trigger").as_string();
+				const std::optional<ThoughtTrigger> trigger = triggerFromName(triggerName);
+				if (!trigger.has_value()) {
+					fail(
+						source,
+						what + ": trigger=\"" + std::string(triggerName) +
+							"\" is not needFalls, needRises, actionStarts, actionFinishes, firstSight, recipeLearned, or idle"
+					);
+					return std::nullopt;
+				}
+				ThoughtSourceDef parsed{.trigger = *trigger};
+				bool			 valid = true;
+				switch (*trigger) {
+					case ThoughtTrigger::NeedFalls:
+					case ThoughtTrigger::NeedRises: {
+						valid = onlyAttributes(node, {"trigger", "need", "threshold"}, what, source);
+						parsed.need = node.attribute("need").as_string();
+						if (parsed.need.empty()) {
+							fail(source, what + " has no need=\"<need>\"");
+							valid = false;
+						}
+						const std::string threshold = node.attribute("threshold").as_string();
+						parsed.threshold = needThresholdIndex(threshold);
+						if (parsed.threshold == kNeedThresholdNames.size()) {
+							fail(source, what + ": threshold=\"" + threshold + "\" is not seek, urgent, or critical");
+							valid = false;
+						}
+						break;
+					}
+					case ThoughtTrigger::ActionStarts:
+					case ThoughtTrigger::ActionFinishes: {
+						valid = onlyAttributes(node, {"trigger", "action", "on", "first"}, what, source);
+						parsed.action = node.attribute("action").as_string();
+						if (parsed.action.empty()) {
+							fail(source, what + " has no action=\"<action>\"");
+							valid = false;
+						}
+						parsed.thing = node.attribute("on").as_string();
+						if (!knownThing(parsed.thing, true)) {
+							fail(source, what + ": on=\"" + parsed.thing + "\" is not ground or a capability");
+							valid = false;
+						}
+						if (const pugi::xml_attribute first = node.attribute("first")) {
+							const std::string_view value = first.as_string();
+							if (value != "true" && value != "false") {
+								fail(source, what + ": first=\"" + std::string(value) + "\" is not \"true\" or \"false\"");
+								valid = false;
+							}
+							parsed.first = value == "true";
+						}
+						break;
+					}
+					case ThoughtTrigger::FirstSight:
+						valid = onlyAttributes(node, {"trigger", "of"}, what, source);
+						parsed.thing = node.attribute("of").as_string();
+						if (!knownThing(parsed.thing, false)) {
+							fail(source, what + ": of=\"" + parsed.thing + "\" is not a capability");
+							valid = false;
+						}
+						break;
+					case ThoughtTrigger::RecipeLearned:
+						valid = onlyAttributes(node, {"trigger"}, what, source);
+						break;
+					case ThoughtTrigger::Idle: {
+						valid = onlyAttributes(node, {"trigger", "everyMinutes", "chance"}, what, source);
+						const std::optional<float> everyMinutes = parseConfigNumber(node.attribute("everyMinutes").as_string());
+						if (!everyMinutes.has_value() || *everyMinutes <= 0.0F) {
+							fail(
+								source,
+								what + ": everyMinutes=\"" + node.attribute("everyMinutes").as_string() + "\" is not a positive number of game minutes"
+							);
+							valid = false;
+						} else {
+							parsed.everyMinutes = *everyMinutes;
+						}
+						const std::optional<float> chance = parseConfigNumber(node.attribute("chance").as_string());
+						if (!chance.has_value() || *chance <= 0.0F || *chance > 1.0F) {
+							fail(source, what + ": chance=\"" + node.attribute("chance").as_string() + "\" is not above 0 and at most 1");
+							valid = false;
+						} else {
+							parsed.chance = *chance;
+						}
+						break;
+					}
+				}
+				return valid ? std::optional(std::move(parsed)) : std::nullopt;
+			}
+
 			void loadThought(pugi::xml_node node, const std::string& source, std::set<std::string>& inFile) {
 				ThoughtTypeDef type{.id = node.attribute("id").as_string(), .source = source};
 				if (type.id.empty()) {
@@ -239,6 +349,13 @@ namespace assets {
 							valid = false;
 						}
 						type.lines.push_back(std::move(line));
+					} else if (element == "source") {
+						const std::string sourceWhat = what + " source " + std::to_string(type.sources.size() + 1);
+						if (std::optional<ThoughtSourceDef> parsed = sourceOf(child, sourceWhat, source)) {
+							type.sources.push_back(std::move(*parsed));
+						} else {
+							valid = false;
+						}
 					} else if (element == "ends") {
 						valid = onlyAttributes(child, {"thought"}, what + " <ends>", source) && valid;
 						if (!type.ends.empty()) {

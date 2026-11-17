@@ -109,6 +109,7 @@
 #include <ecs/systems/RoomDetectionSystem.h>
 #include <ecs/systems/PlacedObstacleCollisionSystem.h>
 #include <ecs/systems/StorageGoalSystem.h>
+#include <ecs/systems/ThoughtSourceSystem.h>
 #include <ecs/systems/ThoughtSystem.h>
 #include <ecs/systems/TimeSystem.h>
 #include <ecs/systems/VisionSystem.h>
@@ -1316,6 +1317,8 @@ namespace {
 			ecsWorld->registerSystem<ecs::WallCollisionSystem>();		// Priority 260 - wall safety-net after agent separation
 			ecsWorld->registerSystem<ecs::PlacedObstacleCollisionSystem>(); // Priority 270 - placed-obstacle safety-net after wall collision
 			ecsWorld->registerSystem<ecs::ActionSystem>(systemSeeds.action); // Priority 350
+			ecsWorld->registerSystem<ecs::ThoughtSourceSystem>(*colonistRules.thoughtTypes, *colonistRules.needLevels, systemSeeds.thoughtSource)
+				.listenTo(ecsWorld->getSystem<ecs::ActionSystem>(), ecsWorld->getSystem<ecs::VisionSystem>()); // Priority 360
 			ecsWorld->registerSystem<world_sim::DeferredEditsSystem>([this] { drainDeferredEdits(); }); // Priority 800
 			ecsWorld->registerSystem<worldview::DynamicEntityRenderSystem>(); // Priority 900
 
@@ -1325,9 +1328,12 @@ namespace {
 			visionSystem.setChunkManager(m_chunkManager.get());
 
 			// Wire up "Aha!" notification callback for recipe discoveries
-			visionSystem.setRecipeDiscoveryCallback([this](const std::string& recipeLabel) {
-				gameUI->pushNotification("Aha!", "Discovered: " + recipeLabel, ui::ToastSeverity::Info);
-				LOG_INFO(Game, "Recipe discovered: %s", recipeLabel.c_str());
+			visionSystem.addDiscoveryObserver([this](const ecs::VisionSystem::Discovery& discovery) {
+				if (discovery.kind != ecs::VisionSystem::DiscoveryKind::Recipe) {
+					return;
+				}
+				gameUI->pushNotification("Aha!", "Discovered: " + discovery.recipeLabel, ui::ToastSeverity::Info);
+				LOG_INFO(Game, "Recipe discovered: %s", discovery.recipeLabel.c_str());
 			});
 
 			// Wire NavigationSystem resources (same data VisionSystem consumes). The

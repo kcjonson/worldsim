@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Thoughts about a need changing level. They carry no mood effect: a low need already lowers mood
+  through the needs score (assets/config/colonists/mood.xml). Thresholds are in
+  assets/config/colonists/needs.xml; the <source> form is described in events.xml.
+-->
+<thoughts>
+  <thought id="getting_peckish" importance="trivial">
+    <source trigger="needFalls" need="Hunger" threshold="seek"/>
+    <feeling is="bored"/>
+    <line>Is it snack time yet?</line>
+    <line>My stomach just said something.</line>
+  </thought>
+
+  <thought id="very_hungry" importance="normal">
+    <source trigger="needFalls" need="Hunger" threshold="urgent"/>
+    <feeling is="annoyed"/>
+    <feeling is="resigned" when="attribute(sanity) >= 14"/>
+    <line>I could eat a whole bush.</line>
+    <line>Food. Food would be nice.</line>
+  </thought>
+
+  <thought id="starving" importance="normal">
+    <source trigger="needFalls" need="Hunger" threshold="critical"/>
+    <feeling is="desperate"/>
+    <line>I'd fight a squirrel for a nut.</line>
+    <line>So hungry I can hear colors.</line>
+  </thought>
+
+  <thought id="getting_thirsty" importance="trivial">
+    <source trigger="needFalls" need="Thirst" threshold="seek"/>
+    <feeling is="bored"/>
+    <line>Mouth's a bit dry.</line>
+    <line>Could use a sip of something.</line>
+  </thought>
+
+  <thought id="very_thirsty" importance="normal">
+    <source trigger="needFalls" need="Thirst" threshold="urgent"/>
+    <feeling is="annoyed"/>
+    <line>I'd drink a puddle right now.</line>
+    <line>Water. Now, please.</line>
+  </thought>
+
+  <thought id="parched" importance="normal">
+    <source trigger="needFalls" need="Thirst" threshold="critical"/>
+    <feeling is="desperate"/>
+    <line>I'm basically a raisin.</line>
+    <line>Is that a lake, or am I dreaming?</line>
+  </thought>
+
+  <thought id="quenched" importance="trivial">
+    <source trigger="needRises" need="Thirst" threshold="seek"/>
+    <feeling is="relieved"/>
+    <line>Ahh. Water is great.</line>
+    <line>Best drink of my life.</line>
+  </thought>
+
+  <thought id="getting_tired" importance="trivial">
+    <source trigger="needFalls" need="Energy" threshold="seek"/>
+    <feeling is="weary"/>
+    <line>I could use a nap.</line>
+    <line>Eyelids getting heavy.</line>
+  </thought>
+
+  <thought id="exhausted" importance="normal">
+    <source trigger="needFalls" need="Energy" threshold="urgent"/>
+    <feeling is="weary"/>
+    <line>I could sleep standing up.</line>
+    <line>Must. Stay. Upright.</line>
+  </thought>
+
+  <thought id="dead_on_my_feet" importance="normal">
+    <source trigger="needFalls" need="Energy" threshold="critical"/>
+    <feeling is="desperate"/>
+    <line>Is the ground a bed? It's a bed now.</line>
+    <line>I think I just slept blinking.</line>
+  </thought>
+
+  <thought id="need_to_go" importance="trivial">
+    <source trigger="needFalls" need="Bladder" threshold="urgent"/>
+    <feeling is="uneasy"/>
+    <line>Where's a good bush?</line>
+    <line>I really need to go.</line>
+  </thought>
+
+  <thought id="bursting" importance="normal">
+    <source trigger="needFalls" need="Bladder" threshold="critical"/>
+    <feeling is="desperate"/>
+    <line>This is an emergency.</line>
+    <line>Don't make me laugh right now.</line>
+  </thought>
+
+  <thought id="tummy_rumbling" importance="trivial">
+    <source trigger="needFalls" need="Digestion" threshold="urgent"/>
+    <feeling is="uneasy"/>
+    <line>My gut has opinions.</line>
+    <line>Something's brewing in there.</line>
+  </thought>
+
+  <thought id="gut_emergency" importance="normal">
+    <source trigger="needFalls" need="Digestion" threshold="critical"/>
+    <feeling is="desperate"/>
+    <line>Nature is calling. Loudly.</line>
+    <line>I need a bush. Any bush.</line>
+  </thought>
+
+  <thought id="sweet_relief" importance="trivial">
+    <source trigger="needRises" need="Bladder" threshold="seek"/>
+    <source trigger="needRises" need="Digestion" threshold="seek"/>
+    <feeling is="relieved"/>
+    <line>Sweet relief.</line>
+    <line>A weight off my mind.</line>
+  </thought>
+
+  <thought id="feeling_grubby" importance="trivial">
+    <source trigger="needFalls" need="Hygiene" threshold="seek"/>
+    <feeling is="annoyed"/>
+    <line>I could use a wash.</line>
+    <line>I'm getting a bit ripe.</line>
+  </thought>
+
+  <thought id="filthy" importance="normal">
+    <source trigger="needFalls" need="Hygiene" threshold="urgent"/>
+    <feeling is="miserable"/>
+    <feeling is="amused" when="attribute(sanity) >= 15"/>
+    <line>Even the flies keep their distance.</line>
+    <line>I smell like a goat's armpit.</line>
+  </thought>
+
+  <thought id="bored_stiff" importance="trivial">
+    <source trigger="needFalls" need="Recreation" threshold="seek"/>
+    <feeling is="bored"/>
+    <line>All work and no play.</line>
+    <line>I need something fun to do.</line>
+  </thought>
+
+  <thought id="stir_crazy" importance="normal">
+    <source trigger="needFalls" need="Recreation" threshold="urgent"/>
+    <feeling is="annoyed"/>
+    <line>One more rock and I'll scream.</line>
+    <line>I've started naming the grass.</line>
+  </thought>
+</thoughts>

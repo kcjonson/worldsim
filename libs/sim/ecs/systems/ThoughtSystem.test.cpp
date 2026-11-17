@@ -869,7 +869,14 @@ namespace ecs::test {
   <thought id="b" importance="normal"><feeling is="content"/><ends thought="c"/></thought>
   <thought id="c" importance="normal"><feeling is="content"/><ends thought="a"/></thought>
 )");
-		ASSERT_EQ(cycle.size(), 1U) << "a cycle is reported once";
+		EXPECT_TRUE(mentions(
+			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content"/><source trigger="needFalls" need="Mojo" threshold="seek"/></thought>)"),
+			"source 1: no need is called 'Mojo'"
+		));
+		EXPECT_TRUE(mentions(
+			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content"/><source trigger="actionFinishes" action="Juggle"/></thought>)"),
+			"source 1: no action is called 'Juggle'"
+		));		ASSERT_EQ(cycle.size(), 1U) << "a cycle is reported once";
 		EXPECT_TRUE(mentions(cycle, "makes a cycle (a -> b -> c -> a)"));
 	}
 
@@ -895,6 +902,7 @@ namespace ecs::test {
 			EXPECT_TRUE(types.findType(name).has_value()) << name;
 		}
 		EXPECT_TRUE(types.type(*types.findType("bottled_up")).stacks);
+		EXPECT_TRUE(std::ranges::any_of(types.sources(), [](const ThoughtSource& source) { return source.trigger == ThoughtTrigger::Idle; }));
 		EXPECT_EQ(types.type(*types.findType("accident_in_public")).importance, ThoughtImportance::Major);
 		for (const std::string_view name : {"content", "resigned", "furious", "amused"}) {
 			EXPECT_TRUE(types.findFeeling(name).has_value()) << name;

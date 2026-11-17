@@ -115,6 +115,7 @@ namespace ecs {
 						actionTypeName(action.type),
 						action.duration
 					);
+					notifyActionObservers(entity, action, ActionMoment::Started, task, memory);
 				}
 
 				// A start routine that starts nothing has either handed the task to its next leg (a haul
@@ -234,6 +235,8 @@ namespace ecs {
 		Inventory&		inventory,
 		Memory&			memory
 	) {
+		notifyActionObservers(entity, action, ActionMoment::Finished, task, memory);
+
 		// What a cut or a pickup lands is what its collection adds to the colonist; what it held of the
 		// item before is not this chain's.
 		const bool		   cutLands = task.type == TaskType::Harvest && action.type == ActionType::Harvest;
@@ -409,6 +412,29 @@ namespace ecs {
 		action.clear();
 		task.clear();
 		task.timeSinceEvaluation = 0.0F;
+	}
+
+	void ActionSystem::notifyActionObservers(EntityID entity, const Action& action, ActionMoment moment, const Task& task, const Memory& memory) {
+		if (m_actionObservers.empty()) {
+			return;
+		}
+		const auto& registry = assets::AssetRegistry::Get();
+		uint32_t	about = 0;
+		if (action.hasConsumptionEffect()) {
+			about = registry.getDefNameId(action.consumptionEffect().itemDefName);
+		} else if (action.hasCraftingEffect() && !action.craftingEffect().outputs.empty()) {
+			about = registry.getDefNameId(action.craftingEffect().outputs.front().first);
+		} else if (action.hasCollectionEffect()) {
+			about = registry.getDefNameId(action.collectionEffect().sourceDefName);
+		} else if (action.hasDepositEffect()) {
+			about = registry.getDefNameId(action.depositEffect().itemDefName);
+		} else if (const KnownWorldEntity* source = memory.getWorldEntity(task.needSourceKey); source != nullptr) {
+			about = source->defNameId;
+		}
+		const ActionEvent event{.colonist = entity, .type = action.type, .moment = moment, .aboutDefinition = about};
+		for (const ActionObserver& observer : m_actionObservers) {
+			observer(event);
+		}
 	}
 
 	void ActionSystem::headToDeposit(EntityID entity, Task& task) {

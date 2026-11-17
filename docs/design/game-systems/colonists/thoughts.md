@@ -24,7 +24,7 @@ A thought is an event and a feeling about it.
 | Part | Meaning |
 |---|---|
 | Event | What happened or what is true: "soaked", "saw a new kind of tree", "masterwork destroyed" |
-| Subject | Who or what it is about: a colonist, an entity, a place, or nothing |
+| Subject | Who or what it is about: a colonist, an entity, a kind of thing, a place, or nothing |
 | Feeling | How this colonist takes it: an emotion word such as annoyed, delighted, resigned, vengeful |
 | Mood effect | Optional. A signed amount and either a duration or a cause it lasts as long as |
 | Importance | Major, normal, or trivial. Set per event type |
@@ -53,7 +53,7 @@ Feelings are a shared list of emotion words. Each has an icon and a colonist exp
 
 | Source | When | Example | Mood effect |
 |---|---|---|---|
-| Needs | a need changes level, in either direction | "I'm starving", "that hit the spot" | yes |
+| Needs | a need changes level, in either direction | "I'm starving", "ahh, water" | no; a low need already lowers mood through the needs score ([Mood](./mood.md)) |
 | Environment | smell, noise, wetness, crowding, or temperature crosses a threshold, in either direction | "this toilet smells", "finally dry" | yes |
 | Events | something happens to the colonist or in front of them: a meal, a night's sleep, an accident, a fight witnessed | "slept on the ground" | yes |
 | Likes and dislikes | the colonist meets something they favor or can't stand: a food, a material, an animal, a kind of room | "ugh, turnips again" | yes |
@@ -191,6 +191,7 @@ Event types, their feelings, lines, importance, mood effects, and animations are
   <feeling id="furious"/>
   <feeling id="relieved"/>
   <feeling id="bored"/>
+  <feeling id="annoyed"/>
 
   <thought id="soaked" importance="normal">
     <feeling is="miserable" mood="-6" while="wetness > 0.6"/>
@@ -206,7 +207,14 @@ Event types, their feelings, lines, importance, mood effects, and animations are
     <line>Finally dry.</line>
   </thought>
 
+  <thought id="very_hungry" importance="normal">
+    <source trigger="needFalls" need="Hunger" threshold="urgent"/>
+    <feeling is="annoyed"/>
+    <line>I could eat a whole bush.</line>
+  </thought>
+
   <thought id="itchy" importance="trivial">
+    <source trigger="idle" everyMinutes="180" chance="0.25"/>
     <feeling is="bored"/>
     <line>My butt itches.</line>
     <line>{subject} looks itchy too.</line>
@@ -221,6 +229,13 @@ Event types, their feelings, lines, importance, mood effects, and animations are
 - A feeling's or line's specificity is the number of terms its conditions name, a line's `feeling` counting as one; the most specific that holds wins, and between feelings of equal specificity the one written first does. Unknown never holds, and when no feeling holds the colonist has no thought.
 - A line is at most `maxLineLength` characters, counting `{subject}` as `maxSubjectNameLength`. `{subject}` in a line is the subject's name as it was when the thought arrived, cut to `maxSubjectNameLength` characters when it is longer. A line that names the subject fits only a subject that has a name: a colonist's own name, or an entity's asset label (its definition name when it has no label). A colonist with no name has none.
 - `<ends thought>` names the type created when a held thought of this type ends, however it ends. Endings may not loop.
+- A `<source>` names a change in the sim that creates a thought of its type, and a type may have any number. Its `trigger` is one of:
+  - `needFalls` or `needRises`, with `need` (the need's label) and `threshold` (`seek`, `urgent`, or `critical`, the need's thresholds in `assets/config/colonists/needs.xml`): the need falls below the threshold, or rises back to it. A change across several thresholds at once is told once, by the level it lands in.
+  - `actionStarts` or `actionFinishes`, with `action` (`Eat`, `Sleep`, `Craft`, `Build`, and the other actions), an optional `on`, either `ground` for an action about no thing or a capability the kind of thing it is about has (`sleepable`), and `first="true"` for only the first time for each kind of thing. An action cut short does not finish.
+  - `firstSight`, the first time the colonist sees a kind of thing, with an optional `of` naming a capability the kind has.
+  - `recipeLearned`.
+  - `idle`, with `everyMinutes` and `chance`: a roll every `everyMinutes` game minutes, taken only when no thought has arrived on the colonist in that time.
+  A source's subject is the kind of thing its change is about, when it is about one. A source naming a need or an action the sim does not have is an error.
 - Conditions are written in the [condition vocabulary](./mood.md#conditions); a `<` inside an attribute is written `&lt;`.
 
 ## Related documents

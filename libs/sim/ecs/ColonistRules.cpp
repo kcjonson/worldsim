@@ -3,6 +3,7 @@
 #include <conditions/SimTerms.h>
 
 #include <assets/ConditionConfig.h>
+#include <assets/NeedsConfig.h>
 #include <assets/ThoughtConfig.h>
 
 #include <utils/Log.h>
@@ -38,25 +39,36 @@ namespace ecs {
 		if (errors.empty()) {
 			LOG_INFO(
 				Engine,
-				"Loaded thought config from %s: %zu feelings, %zu thought types",
+				"Loaded thought config from %s: %zu feelings, %zu thought types, %zu sources",
 				folder.generic_string().c_str(),
 				config.config.feelings.size(),
-				types.typeCount()
+				types.typeCount(),
+				types.sources().size()
 			);
 		}
 		return errors;
+	}
+
+	std::vector<std::string> loadNeedLevels(NeedLevels& levels, const std::filesystem::path& file) {
+		const assets::NeedsConfigLoad config = assets::loadNeedsConfig(file);
+		if (!config.errors.empty()) {
+			return config.errors;
+		}
+		return levels.load(config.config);
 	}
 
 	ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot) {
 		ColonistRulesLoad load;
 		load.rules.vocabulary = std::make_unique<conditions::ConditionVocabulary>();
 		load.rules.thoughtTypes = std::make_unique<ThoughtTypes>(*load.rules.vocabulary);
+		load.rules.needLevels = std::make_unique<NeedLevels>();
 
 		addErrors(load.errors, "conditions", loadConditionVocabulary(*load.rules.vocabulary, configRoot / "conditions"));
 		if (!load.errors.empty()) {
 			return load;
 		}
 		addErrors(load.errors, "thoughts", loadThoughtTypes(*load.rules.thoughtTypes, configRoot / "thoughts"));
+		addErrors(load.errors, "colonists", loadNeedLevels(*load.rules.needLevels, configRoot / "colonists" / "needs.xml"));
 		return load;
 	}
 
