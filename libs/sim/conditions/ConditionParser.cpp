@@ -54,7 +54,11 @@ namespace conditions {
 		}
 
 		std::string expectedNames(const ConditionVocabulary& vocabulary, uint32_t set) {
-			return vocabulary.isOpenSet(set) ? std::string("a name") : "one of: " + joinNames(vocabulary.symbolSet(set));
+			if (vocabulary.isOpenSet(set)) {
+				return "expected a name";
+			}
+			const std::span<const DeclaredSymbol> names = vocabulary.symbolSet(set);
+			return names.empty() ? "no \"" + vocabulary.symbolSetName(set) + "\" names are declared" : "expected one of: " + joinNames(names);
 		}
 
 		/// The first count past `bound`: every count from there compares against `bound` the same way.
@@ -310,7 +314,7 @@ namespace conditions {
 		if (!symbol.has_value()) {
 			fail(
 				name.position,
-				"'" + std::string(name.spelling) + "' is not a value of " + signature.name + " (expected " +
+				"'" + std::string(name.spelling) + "' is not a value of " + signature.name + " (" +
 					expectedNames(vocabulary, set) + ")"
 			);
 			return std::nullopt;
@@ -456,7 +460,7 @@ namespace conditions {
 		if (expected.type == ValueType::Symbol) {
 			const uint32_t set = *expected.symbolSet;
 			if (!bareName) {
-				fail(token.position, ordinal + " is " + expectedNames(vocabulary, set));
+				fail(token.position, ordinal + " needs a name (" + expectedNames(vocabulary, set) + ")");
 				return std::nullopt;
 			}
 			advance();
@@ -464,7 +468,7 @@ namespace conditions {
 			if (!symbol.has_value()) {
 				fail(
 					token.position,
-					"'" + std::string(token.spelling) + "' is not accepted as " + ordinal + " (expected " + expectedNames(vocabulary, set) +
+					"'" + std::string(token.spelling) + "' is not accepted as " + ordinal + " (" + expectedNames(vocabulary, set) +
 						")"
 				);
 				return std::nullopt;

@@ -96,6 +96,7 @@ namespace conditions {
 		[[nodiscard]] bool							  isProvided(uint32_t term) const { return static_cast<bool>(terms[term].provider); }
 		[[nodiscard]] std::span<const DeclaredSymbol> symbolSet(uint32_t set) const { return symbolSets[set].symbols; }
 		[[nodiscard]] bool							  isOpenSet(uint32_t set) const { return symbolSets[set].open; }
+		[[nodiscard]] const std::string& symbolSetName(uint32_t set) const { return symbolSets[set].name; }
 
 	  private:
 		struct Term {

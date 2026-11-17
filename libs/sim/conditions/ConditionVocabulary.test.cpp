@@ -357,12 +357,14 @@ TEST(ConditionVocabularyLifecycle, OwnedNamesAreAddedAndUnboundKindsAndUnlistedN
 	using enum ValueType;
 	assets::ConditionConfig config;
 	config.symbolSets["need"] = {};
+	config.symbolSets["trait"] = {};
 	config.symbolSets["kind"] = {.names = {"bed", "fire"}};
 	config.symbolSets["flavor"] = {.names = {"sweet"}, .open = true};
 	config.terms = {
 		term("hungry", Truth, {parameter(Symbol, "need")}),
 		term("near", Truth, {parameter(Symbol, "kind")}),
 		term("taste", Truth, {parameter(Symbol, "flavor")}),
+		term("brave", Truth, {parameter(Symbol, "trait")}),
 		{.name = "craving", .result = Symbol, .resultSymbols = "flavor"},
 	};
 	ConditionVocabulary vocabulary;
@@ -385,6 +387,7 @@ TEST(ConditionVocabularyLifecycle, OwnedNamesAreAddedAndUnboundKindsAndUnlistedN
 		const bool* known = kinds.find(call.arguments[0].symbol());
 		return known == nullptr ? TermValue::unknown() : TermValue::fromTruth(*known);
 	}));
+	ASSERT_FALSE(vocabulary.provide("taste", Truth, {Symbol}, [](const TermCall&) { return TermValue::unknown(); }));
 	const SymbolId sweet = *vocabulary.findSymbol("sweet");
 	ASSERT_FALSE(vocabulary.provide("craving", Symbol, {}, [sweet](const TermCall&) { return TermValue::fromSymbol(sweet); }));
 	vocabulary.freeze();
@@ -409,14 +412,20 @@ TEST(ConditionVocabularyLifecycle, OwnedNamesAreAddedAndUnboundKindsAndUnlistedN
 	EXPECT_EQ(evaluate("hungry(hunger) and near(bed) and craving is sweet"), Truth::True);
 	EXPECT_EQ(evaluate("near(fire) or near(fire)"), Truth::Unknown);
 	EXPECT_EQ(evaluate("craving is bitter"), Truth::Unknown);
+	EXPECT_EQ(evaluate("taste(bitter) or taste(bitter)"), Truth::Unknown);
 	foundation::Logger::setSink(nullptr, nullptr);
 #ifdef DEVELOPMENT_BUILD
-	EXPECT_EQ(log.count, 2);
+	EXPECT_EQ(log.count, 3);
 #endif
 	const ParseResult misspelled = vocabulary.parse("hungry(hungr)");
 	ASSERT_FALSE(misspelled.ok());
 	EXPECT_NE(misspelled.error->message.find("expected one of: hunger"), std::string::npos) << misspelled.error->message;
 	EXPECT_FALSE(vocabulary.parse("craving is target").ok());
+	const ParseResult reserved = vocabulary.parse("taste(self)");
+	ASSERT_FALSE(reserved.ok()) << "a reserved word is no name, even in an open set";
+	const ParseResult empty = vocabulary.parse("brave(courage)");
+	ASSERT_FALSE(empty.ok());
+	EXPECT_NE(empty.error->message.find("no \"trait\" names are declared"), std::string::npos) << empty.error->message;
 }
 
 TEST(ConditionVocabularyLifecycle, DeclaringRefusesNamesAConditionCannotUse) {

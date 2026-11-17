@@ -38,12 +38,15 @@ namespace assets {
 
 	inline constexpr std::string_view kKindSymbols = "kind";
 	inline constexpr std::string_view kTaskSymbols = "task";
+	inline constexpr std::string_view kTraitSymbols = "trait";
+	inline constexpr std::string_view kNeedSymbols = "need";
+	inline constexpr std::string_view kAttributeSymbols = "attribute";
 
 	inline constexpr std::array<OwnedSymbolSet, 5> kOwnedSymbolSets = {{
 		{.name = kKindSymbols, .owner = "the <Kind> declarations"},
-		{.name = "trait", .owner = "the trait definitions (colonists/traits)"},
-		{.name = "need", .owner = "the sim's needs"},
-		{.name = "attribute", .owner = "the sim's attributes"},
+		{.name = kTraitSymbols, .owner = "the trait definitions (colonists/traits)"},
+		{.name = kNeedSymbols, .owner = "the sim's needs"},
+		{.name = kAttributeSymbols, .owner = "the sim's attributes"},
 		{.name = kTaskSymbols, .owner = "the sim's task types and the <TaskGroup> declarations"},
 	}};
 

@@ -94,7 +94,7 @@ namespace conditions {
 		}
 
 		void provideNeed(ConditionVocabulary& vocabulary, std::vector<std::string>& errors) {
-			auto needs = bindEngineNames(vocabulary, "need", engineNeeds(), errors);
+			auto needs = bindEngineNames(vocabulary, assets::kNeedSymbols, engineNeeds(), errors);
 			record(errors, vocabulary.provide("need", ValueType::Number, {ValueType::Symbol}, [needs](const TermCall& call) {
 				const ecs::NeedType*	   need = needs->find(call.arguments[0].symbol());
 				const ecs::NeedsComponent* component = call.context.world.getComponent<ecs::NeedsComponent>(call.context.colonist);
@@ -106,7 +106,7 @@ namespace conditions {
 		}
 
 		void provideAttribute(ConditionVocabulary& vocabulary, std::vector<std::string>& errors) {
-			auto attributes = bindEngineNames(vocabulary, "attribute", engineAttributes(), errors);
+			auto attributes = bindEngineNames(vocabulary, assets::kAttributeSymbols, engineAttributes(), errors);
 			record(errors, vocabulary.provide("attribute", ValueType::Number, {ValueType::Symbol}, [attributes](const TermCall& call) {
 				const AttributeMember* field = attributes->find(call.arguments[0].symbol());
 				const ecs::Attributes* component = call.context.world.getComponent<ecs::Attributes>(call.context.colonist);
@@ -122,7 +122,7 @@ namespace conditions {
 			for (const assets::TraitDef& trait : registry.traits()) {
 				ids.emplace_back(trait.id, trait.id);
 			}
-			auto traits = bindEngineNames(vocabulary, "trait", ids, errors);
+			auto traits = bindEngineNames(vocabulary, assets::kTraitSymbols, ids, errors);
 			record(errors, vocabulary.provide("trait", ValueType::Truth, {ValueType::Symbol}, [traits](const TermCall& call) {
 				const std::string* id = traits->find(call.arguments[0].symbol());
 				const ecs::Traits* component = call.context.world.getComponent<ecs::Traits>(call.context.colonist);

@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -897,12 +898,12 @@ namespace ecs::test {
 	}
 
 	TEST(ThoughtTypeDefinitions, AnUnknownSimNameIsAnErrorNamingTheFileTheThoughtAndTheNames) {
-		const std::pair<std::string, std::string> cases[] = {
-			{"need(Hungr) &lt; 30", "'Hungr' is not accepted as argument 1 of 'need' (expected one of: hunger, thirst"},
-			{"attribute(luck) > 1", "'luck' is not accepted as argument 1 of 'attribute' (expected one of: "},
-			{"current_task(dance)", "'dance' is not accepted as argument 1 of 'current_task' (expected one of: "},
+		const std::tuple<std::string, std::string, std::string> cases[] = {
+			{"need(Hungr) &lt; 30", "'Hungr' is not accepted as argument 1 of 'need' (expected one of", "hunger"},
+			{"attribute(luck) > 1", "'luck' is not accepted as argument 1 of 'attribute' (expected one of", ""},
+			{"current_task(dance)", "'dance' is not accepted as argument 1 of 'current_task' (expected one of", ""},
 		};
-		for (const auto& [condition, message] : cases) {
+		for (const auto& [condition, message, listed] : cases) {
 			const std::vector<std::string> errors =
 				testing::TestThoughtTypes(
 					"", R"(<thought id="modded" label="Modded" importance="normal"><feeling is="content" when=")" + condition + R"("/></thought>)"
@@ -911,6 +912,7 @@ namespace ecs::test {
 			ASSERT_EQ(errors.size(), 1U) << condition;
 			EXPECT_TRUE(mentions(errors, "mods/later.xml: thought 'modded' feeling 1 ('content') when: ")) << errors.front();
 			EXPECT_TRUE(mentions(errors, message)) << errors.front();
+			EXPECT_TRUE(mentions(errors, listed)) << errors.front();
 		}
 	}
 
