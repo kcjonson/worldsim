@@ -90,7 +90,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 5. At the Quick Start creek, `walls?pts=6.5,8;9.5,8&host=0&close=0&built=0` and `spawn?def=BasicBox&at=7.9,8` both answer 400 and create nothing.
 6. With the wall tool held over the creek at (7.9, 8), the status reads "not on buildable ground" and a click adds no point.
-7. On the east bank, `walls?pts=9.9,5;9.9,11&host=0&close=0&built=0` and `spawn?def=BasicBox&at=9.9,8` both answer 200.
+7. On the east bank, `walls?pts=9.9,5;9.9,8&host=0&close=0&built=0` and `spawn?def=BasicBox&at=9.9,8` both answer 200. The chain adds a fifth wall.
 8. `ground?pts=7.9,8` reads `valid` true and `buildableNow` false, and Bob still walks through the creek.
 
 ---
@@ -99,9 +99,9 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 ```
 GET /api/state?what=construction
-  -> walls.length == 4
-  -> walls.every(w => w.state == "Built" && w.progress == 1.0)
-  -> walls.every(w => w.material == "Wood")
+  -> walls.length == 4 before step 7 and 5 after it; walls[0..3] are the Setup walls, walls[4] is step 7's
+  -> each of walls[0..3]: state == "Built" && progress == 1.0
+  -> each of walls[0..3]: material == "Wood"
 ```
 
 ---
