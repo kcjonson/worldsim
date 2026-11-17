@@ -379,9 +379,9 @@ namespace ecs::test {
 		actionSystem->addActionObserver([&heard](const ActionEvent& event) { heard.push_back(event); });
 		auto  builder = createBuilder(0.0F);
 		auto  blueprint = createBlueprint(100.0F);
-		auto* bp = world->getComponent<StructureBlueprint>(blueprint);
-		bp->workDone = 50.0F;
-		bp->demolishing = true;
+		auto* halfBuilt = world->getComponent<StructureBlueprint>(blueprint);
+		halfBuilt->workDone = 50.0F;
+		halfBuilt->demolishing = true;
 		assignDeconstructTask(builder, blueprint);
 
 		world->update(1.0F);

@@ -1583,6 +1583,44 @@ TEST_F(ActionSystemGoalTest, PlacePackagedWithoutPickupKeepsHeldTool) {
 	EXPECT_FALSE(inventory->leftHand.has_value());
 }
 
+// A package placed by someone else while this colonist carried it is left where it is: the hands
+// are released, the task ends, and the install does not finish.
+TEST_F(ActionSystemGoalTest, PlacePackagedOfAnAlreadyPlacedBoxLeavesItAndReleasesTheHands) {
+	std::vector<ActionEvent> heard;
+	world->getSystem<ActionSystem>().addActionObserver([&heard](const ActionEvent& event) { heard.push_back(event); });
+	const glm::vec2 boxPos{8.0F, 8.0F};
+	const glm::vec2 targetPos{3.0F, 2.0F};
+	EntityID		box = world->createEntity();
+	world->addComponent<Position>(box, Position{boxPos});
+	world->addComponent<Appearance>(box, Appearance{"BasicBox", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+
+	auto  colonist = createColonist(targetPos);
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	inventory->carryingPackagedEntity = static_cast<uint64_t>(box);
+	inventory->leftHand = ItemStack{"BasicBox", 1};
+	inventory->rightHand = ItemStack{"BasicBox", 1};
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::PlacePackaged;
+	task->state = TaskState::Arrived;
+	task->placePackagedEntityId = static_cast<uint64_t>(box);
+	task->placeSourcePosition = targetPos;
+	task->placeTargetPosition = targetPos;
+	task->targetPosition = targetPos;
+
+	world->update(0.1F);
+	world->update(2.0F);
+
+	EXPECT_EQ(world->getComponent<Position>(box)->value, boxPos) << "the box stays where it is";
+	EXPECT_FALSE(inventory->carryingPackagedEntity.has_value());
+	EXPECT_FALSE(inventory->leftHand.has_value());
+	EXPECT_FALSE(inventory->rightHand.has_value());
+	EXPECT_FALSE(task->isActive());
+	for (const ActionEvent& event : heard) {
+		EXPECT_NE(event.moment, ActionMoment::Finished);
+	}
+}
+
 // A package another colonist lifted while this one was bending for it is not there to pick up: the
 // task ends, the colonist's hands keep what they held, and the pickup does not finish.
 TEST_F(ActionSystemGoalTest, PickupPackagedOfABoxAlreadyCarriedTakesNothing) {
@@ -2443,10 +2481,44 @@ TEST_F(HandMaterialActionTest, DepositFromHandsBouncesStorageFullRemainderToBoth
 	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U - 8U) << "No wood lost: 8 landed + 6 held == the original 14";
 }
 
+// A storage with no room takes none of it: the goods stay with the colonist and the deposit does not
+// finish.
+TEST_F(HandMaterialActionTest, DepositIntoAFullStorageKeepsTheGoodsAndDoesNotFinish) {
+	std::vector<ActionEvent> heard;
+	world->getSystem<ActionSystem>().addActionObserver([&heard](const ActionEvent& event) { heard.push_back(event); });
+
+	auto	  storage = world->createEntity();
+	Inventory storageInv;
+	storageInv.maxCapacity = 1;
+	storageInv.addItem("Wood", 40);
+	world->addComponent<Inventory>(storage, storageInv);
+
+	auto  colonist = createColonist({0.0F, 0.0F});
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	seatArmful(*inventory, 14);
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->targetPosition = {0.0F, 0.0F};
+	*world->getComponent<Action>(colonist) = Action::Deposit("Wood", 14, static_cast<uint64_t>(storage), {0.0F, 0.0F});
+
+	world->update(0.1F);
+	world->update(2.0F);
+
+	EXPECT_EQ(world->getComponent<Inventory>(storage)->getQuantity("Wood"), 40U);
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U) << "all 14 stay with the colonist";
+	for (const ActionEvent& event : heard) {
+		EXPECT_NE(event.moment, ActionMoment::Finished);
+	}
+}
+
 // Deposit targeting a non-existent storage entity: all 14 bounce back to the hands
 // (mirrored), the goal is credited 0, and nothing is lost.
 TEST_F(HandMaterialActionTest, DepositFromHandsToMissingStorageReturnsAllToBothHands) {
 	auto& registry = GoalTaskRegistry::Get();
+	std::vector<ActionEvent> heard;
+	world->getSystem<ActionSystem>().addActionObserver([&heard](const ActionEvent& event) { heard.push_back(event); });
 
 	constexpr uint64_t kMissingStorage = 999999ULL;
 	ASSERT_FALSE(world->isAlive(static_cast<EntityID>(kMissingStorage)));
@@ -2478,6 +2550,9 @@ TEST_F(HandMaterialActionTest, DepositFromHandsToMissingStorageReturnsAllToBothH
 	EXPECT_EQ(inventory->leftHand->quantity, 14U);
 	EXPECT_EQ(inventory->rightHand->quantity, 14U) << "All 14 return mirrored across both hands";
 	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U) << "Nothing lost when storage is gone";
+	for (const ActionEvent& event : heard) {
+		EXPECT_NE(event.moment, ActionMoment::Finished) << "a deposit nothing took does not finish";
+	}
 }
 
 // A build site holds NO Inventory: a deposit records straight onto the blueprint's delivered[]
@@ -2686,6 +2761,54 @@ TEST_F(HandMaterialActionTest, CraftConsumesWoodFromStationStoreAndProducesOutpu
 	EXPECT_EQ(heard[2].moment, ActionMoment::Finished);
 }
 
+// A recipe listing one item on two lines needs the sum of them: a store holding less than the total
+// makes nothing and spends nothing, rather than passing each line alone and spending part.
+TEST_F(HandMaterialActionTest, CraftWhoseRecipeListsAnItemTwiceNeedsTheTotal) {
+	assets::RecipeDef recipe;
+	recipe.defName = "Recipe_Plank";
+	recipe.label = "Plank";
+	recipe.stationDefName = "CraftingSpot";
+	recipe.workAmount = 50.0F;
+	recipe.inputs.push_back({"Wood", 0, 2});
+	recipe.inputs.push_back({"Wood", 0, 2});
+	recipe.outputs.push_back({"Plank", 0, 1});
+	assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+
+	EntityID station = world->createEntity();
+	world->addComponent<Position>(station, Position{{0.0F, 0.0F}});
+	WorkQueue queue;
+	queue.addJob("Recipe_Plank", 1);
+	world->addComponent<WorkQueue>(station, queue);
+	auto stationInv = Inventory::createForStorage();
+	stationInv.addItem("Wood", 3);
+	world->addComponent<Inventory>(station, stationInv);
+
+	auto  colonist = createColonist({0.0F, 0.0F});
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Craft;
+	task->state = TaskState::Arrived;
+	task->craftRecipeDefName = "Recipe_Plank";
+	task->targetStationId = static_cast<uint64_t>(station);
+	task->targetPosition = {0.0F, 0.0F};
+	world->update(0.1F);
+	EXPECT_FALSE(world->getComponent<Action>(colonist)->hasCraftingEffect()) << "3 Wood is short of the 4 the two lines total";
+
+	world->getComponent<Inventory>(station)->addItem("Wood", 1);
+	task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Craft;
+	task->state = TaskState::Arrived;
+	task->craftRecipeDefName = "Recipe_Plank";
+	task->targetStationId = static_cast<uint64_t>(station);
+	task->targetPosition = {0.0F, 0.0F};
+	world->update(0.1F);
+	ASSERT_TRUE(world->getComponent<Action>(colonist)->hasCraftingEffect());
+	world->getComponent<Inventory>(station)->removeItem("Wood", 1);
+	world->update(1.0F);
+
+	EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Wood"), 3U) << "nothing spent";
+	EXPECT_EQ(ecs::availableQuantity(*world->getComponent<Inventory>(colonist), "Plank"), 0U) << "nothing made";
+}
+
 // A craft whose station lost an input before the work ended makes nothing, spends nothing, counts no
 // unit, and does not finish.
 TEST_F(HandMaterialActionTest, CraftWhoseInputsLeftTheStationMakesNothing) {
@@ -2721,11 +2844,15 @@ TEST_F(HandMaterialActionTest, CraftWhoseInputsLeftTheStationMakesNothing) {
 	ASSERT_TRUE(world->getComponent<Action>(colonist)->hasCraftingEffect());
 
 	world->getComponent<Inventory>(station)->removeItem("Wood", 1);
+	world->getComponent<WorkQueue>(station)->progress = 0.6F;
 	world->update(1.0F);
 
 	EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Wood"), 3U) << "nothing spent";
 	EXPECT_EQ(ecs::availableQuantity(*world->getComponent<Inventory>(colonist), "Plank"), 0U) << "nothing made";
 	EXPECT_EQ(world->getComponent<WorkQueue>(station)->jobs.front().completed, 0U);
+	EXPECT_FLOAT_EQ(world->getComponent<WorkQueue>(station)->progress, 0.0F) << "the job's progress starts over";
+	EXPECT_FALSE(world->getComponent<Action>(colonist)->isActive());
+	EXPECT_FALSE(world->getComponent<Task>(colonist)->isActive());
 	ASSERT_EQ(heard.size(), 1U);
 	EXPECT_EQ(heard[0].moment, ActionMoment::Started);
 }

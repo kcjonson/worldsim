@@ -21,6 +21,18 @@
 
 namespace ecs {
 
+	namespace {
+		// A recipe may list one item on several lines; checking and spending need its total.
+		void addRequired(std::vector<std::pair<std::string, uint32_t>>& required, const std::string& itemName, uint32_t count) {
+			const auto line = std::ranges::find(required, itemName, &std::pair<std::string, uint32_t>::first);
+			if (line != required.end()) {
+				line->second += count;
+			} else {
+				required.emplace_back(itemName, count);
+			}
+		}
+	} // namespace
+
 	bool ActionSystem::applyCraftingEffect(const Action& action, Inventory& inventory) {
 		const auto& craftEff = action.craftingEffect();
 
@@ -32,7 +44,11 @@ namespace ecs {
 		// the build consumes from the on-site manifest). The crafted output goes to the colonist.
 		// A store that no longer holds every input makes nothing and spends nothing.
 		auto* stationInv = world->getComponent<Inventory>(static_cast<EntityID>(craftEff.stationEntityId));
-		if (stationInv == nullptr || std::ranges::any_of(craftEff.inputs, [&](const std::pair<std::string, uint32_t>& input) {
+		std::vector<std::pair<std::string, uint32_t>> required;
+		for (const auto& [itemName, count] : craftEff.inputs) {
+			addRequired(required, itemName, count);
+		}
+		if (stationInv == nullptr || std::ranges::any_of(required, [&](const std::pair<std::string, uint32_t>& input) {
 				return stationInv->getQuantity(input.first) < input.second;
 			})) {
 			LOG_WARNING(
@@ -46,7 +62,7 @@ namespace ecs {
 			}
 			return false;
 		}
-		for (const auto& [itemName, count] : craftEff.inputs) {
+		for (const auto& [itemName, count] : required) {
 			stationInv->removeItem(itemName, count);
 		}
 
@@ -144,21 +160,19 @@ namespace ecs {
 			action.clear();
 			return;
 		}
+		std::vector<std::pair<std::string, uint32_t>> inputs;
 		for (const auto& input : recipe->inputs) {
-			if (stationInv->getQuantity(input.defName) < input.count) {
-				LOG_WARNING(
-					Engine, "[Action] Cannot craft %s - station missing %u x %s", recipe->label.c_str(), input.count, input.defName.c_str()
-				);
+			addRequired(inputs, input.defName, input.count);
+		}
+		for (const auto& [itemName, count] : inputs) {
+			if (stationInv->getQuantity(itemName) < count) {
+				LOG_WARNING(Engine, "[Action] Cannot craft %s - station missing %u x %s", recipe->label.c_str(), count, itemName.c_str());
 				action.clear();
 				return;
 			}
 		}
 
-		// Build inputs and outputs vectors for the action
-		std::vector<std::pair<std::string, uint32_t>> inputs;
-		for (const auto& input : recipe->inputs) {
-			inputs.emplace_back(input.defName, input.count);
-		}
+		// Build the outputs vector for the action
 
 		std::vector<std::pair<std::string, uint32_t>> outputs;
 		for (const auto& output : recipe->outputs) {

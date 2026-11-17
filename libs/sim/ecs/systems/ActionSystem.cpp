@@ -347,8 +347,8 @@ namespace ecs {
 
 		// Special handling for PlacePackaged tasks - two-phase (PickupPackaged→PlacePackaged)
 		if (task.type == TaskType::PlacePackaged && action.type == ActionType::PickupPackaged) {
-			const auto& placeEff = action.placePackagedEffect();
-			const auto	packagedEntity = static_cast<EntityID>(placeEff.packagedEntityId);
+			const auto& placeEffect = action.placePackagedEffect();
+			const auto	packagedEntity = static_cast<EntityID>(placeEffect.packagedEntityId);
 			// A package gone, placed, or in another colonist's hands is not there to lift: the task ends
 			// with the colonist's hands as they were.
 			if (!took) {
@@ -370,7 +370,7 @@ namespace ecs {
 
 			// Mark the entity as being carried (hides from world rendering)
 			world->getComponent<Packaged>(packagedEntity)->beingCarried = true;
-			inventory.carryingPackagedEntity = placeEff.packagedEntityId;
+			inventory.carryingPackagedEntity = placeEffect.packagedEntityId;
 
 			// Put the entity's defName in both hands (for UI display)
 			auto* appearance = world->getComponent<Appearance>(packagedEntity);
@@ -381,7 +381,7 @@ namespace ecs {
 					Engine,
 					"[Action] Picked up %s (entity %llu) - now carrying in both hands",
 					appearance->defName.c_str(),
-					static_cast<unsigned long long>(placeEff.packagedEntityId)
+					static_cast<unsigned long long>(placeEffect.packagedEntityId)
 				);
 			} else {
 				LOG_WARNING(
