@@ -2,6 +2,9 @@
 
 #include "PlacedObstacle.h"
 
+#include "NavCoords.h"
+#include "NavInputBuilder.h"
+
 #include <assets/AssetRegistry.h>
 #include <assets/placement/InstanceTransform.h>
 #include <assets/placement/SpatialIndex.h>
@@ -104,27 +107,30 @@ TEST(PlacedObstacle, ColliderCornerLandsOnTheDrawnCorner) {
 		const renderer::TessellatedMesh* mesh = registry.getTemplate(entity.templateId);
 		ASSERT_NE(mesh, nullptr);
 
-		const std::optional<nav::OrientedRect> box = nav::placedObstacleBox(entity, def->collisionFor(0));
-		ASSERT_TRUE(box.has_value());
-		const float		pad	   = std::abs(entity.scale) * static_cast<float>(nav::kPlacedObstaclePadMm) / 1000.0F;
-		const glm::vec2 corner = box->center + box->axisX * (box->halfExtents.x - pad) + box->axisY * (box->halfExtents.y - pad);
-		const glm::vec2 drawn  = assets::InstanceTransform(entity.position, entity.rotation, entity.scale).toWorld(meshOuterCorner(*mesh));
-		EXPECT_NEAR(corner.x, drawn.x, 1e-4F);
-		EXPECT_NEAR(corner.y, drawn.y, 1e-4F);
+		// The ring's padded outer corner is the drawn corner moved out by the pad on both of the
+		// pivot frame's axes, then put in the world.
+		geometry::Ring outline;
+		ASSERT_TRUE(nav::placedObstacleOutline(entity, registry, outline));
+		const float		pad	   = static_cast<float>(nav::kPlacedObstaclePadMm) / 1000.0F;
+		const glm::vec2 padded = assets::InstanceTransform(entity.position, entity.rotation, entity.scale).toWorld(meshOuterCorner(*mesh) + glm::vec2{pad, pad});
+		float			nearest = std::numeric_limits<float>::max();
+		for (const geometry::Vec2i64& corner : outline) {
+			nearest = std::min(nearest, glm::length(nav::toMeters(corner) - padded));
+		}
+		EXPECT_LT(nearest, 1e-3F);
 	}
 }
 
 namespace {
 
-	// How far the farthest corner of a placed entity's padded box stands from its position.
-	float paddedBoxReach(const assets::PlacedEntity& entity, const assets::CollisionShape& collision) {
-		const std::optional<nav::OrientedRect> box	 = nav::placedObstacleBox(entity, collision);
-		float								   reach = 0.0F;
-		for (const float alongX : {-1.0F, 1.0F}) {
-			for (const float alongY : {-1.0F, 1.0F}) {
-				const glm::vec2 corner = box->center + box->axisX * (alongX * box->halfExtents.x) + box->axisY * (alongY * box->halfExtents.y);
-				reach				   = std::max(reach, glm::length(corner - entity.position));
-			}
+	// How far the farthest point of a placed entity's outline, the padded ring nav cuts, stands from
+	// its position.
+	float outlineReach(const assets::PlacedEntity& entity) {
+		geometry::Ring outline;
+		EXPECT_TRUE(nav::placedObstacleOutline(entity, assets::AssetRegistry::Get(), outline));
+		float reach = 0.0F;
+		for (const geometry::Vec2i64& corner : outline) {
+			reach = std::max(reach, glm::length(nav::toMeters(corner) - entity.position));
 		}
 		return reach;
 	}
@@ -161,13 +167,14 @@ TEST(PlacedObstacle, ReachCoversEveryPaddedCollider) {
 	registry.registerTestDefinition(small);
 
 	const float reach = nav::placedObstacleReachMeters(registry);
-	EXPECT_LE(paddedBoxReach(placedAt("Test_LargeCollider", 0.7F, 3.0F), largeShape), reach + 1e-4F);
-	EXPECT_LE(paddedBoxReach(placedAt("Test_SmallRangeCollider", 2.0F, 1.0F), smallShape), reach + 1e-4F);
+	EXPECT_LE(outlineReach(placedAt("Test_LargeCollider", 0.7F, 3.0F)), reach + 1e-3F);
+	EXPECT_LE(outlineReach(placedAt("Test_SmallRangeCollider", 2.0F, 1.0F)), reach + 1e-3F);
 	registry.clearDefinitions();
 }
 
-// The reach over the shipped colliding defs is BigRock's: its corner, (42, 33) SVG units from its
-// pivot at 1/60 m a unit, at its 1.2 largest scale, plus the 50 mm pad's corner at that scale.
+// The reach over the shipped colliding defs is BigRock's: its polygon's farthest point, the rim's
+// (136, 70), (58, 9) SVG units from its pivot at 1/60 m a unit, at its 1.2 largest scale, plus the
+// 50 mm pad's corner at that scale (the reach takes the pad whatever the shape).
 // docs/technical/nav-mesh-variable-resolution.md quotes it.
 TEST(PlacedObstacle, ShippedReach) {
 	const std::filesystem::path repo	 = SIM_TEST_REPO_DIR;
@@ -178,7 +185,7 @@ TEST(PlacedObstacle, ShippedReach) {
 		 {"misc/BigRock/BigRock.xml", "flora/OakTree/OakTree.xml", "flora/MapleTree/MapleTree.xml", "flora/PineTree/PineTree.xml", "flora/PalmTree/PalmTree.xml"}) {
 		ASSERT_TRUE(registry.loadDefinitions((repo / "assets" / "world" / xml).string())) << xml;
 	}
-	const float bigRock = std::hypot(42.0F, 33.0F) * (1.5F / 90.0F) * 1.2F;
+	const float bigRock = std::hypot(58.0F, 9.0F) * (1.5F / 90.0F) * 1.2F;
 	const float pad		= std::sqrt(2.0F) * 0.05F * 1.2F;
 	EXPECT_NEAR(nav::placedObstacleReachMeters(registry), bigRock + pad, 1e-3F);
 	registry.clearDefinitions();

@@ -1,4 +1,4 @@
-#include "StaticRectCollisionSystem.h"
+#include "PlacedObstacleCollisionSystem.h"
 
 #include "NavigationSystem.h"
 #include "PlacedNothing.test.h"
@@ -10,10 +10,15 @@
 
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
+#include <assets/placement/InstanceTransform.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <assets/placement/SpatialIndex.h>
 
+#include <nav/NavCoords.h>
+#include <nav/NavInputBuilder.h>
 #include <nav/PlacedObstacle.h>
+
+#include <predicates/Predicates.h>
 
 #include <world/chunk/ChunkCoordinate.h>
 #include <world/chunk/ChunkManager.h>
@@ -22,12 +27,18 @@
 #include <glm/geometric.hpp>
 #include <glm/vec2.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
+#include <limits>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -41,29 +52,36 @@ using assets::SpatialIndex;
 
 namespace {
 
-	// An axis-aligned rect centered at `center` with the given half-extents (no
-	// rotation, unit scale equivalent).
-	nav::OrientedRect axisAlignedRect(glm::vec2 center, glm::vec2 halfExtents) {
-		nav::OrientedRect rect;
-		rect.center		 = center;
-		rect.axisX		 = {1.0F, 0.0F};
-		rect.axisY		 = {0.0F, 1.0F};
-		rect.halfExtents = halfExtents;
-		return rect;
+	// The pad nav puts round a Rect collider, in metres.
+	constexpr float kPadMeters = static_cast<float>(nav::kPlacedObstaclePadMm) / 1000.0F;
+
+	geometry::Ring ringMm(std::initializer_list<glm::vec2> points) {
+		geometry::Ring ring;
+		for (const glm::vec2 point : points) {
+			ring.push_back(nav::toMm(point));
+		}
+		return ring;
 	}
 
-	nav::OrientedRect rotatedRect(glm::vec2 center, glm::vec2 halfExtents, float angle) {
-		const float	 c = std::cos(angle);
-		const float	 s = std::sin(angle);
-		nav::OrientedRect rect;
-		rect.center		 = center;
-		rect.axisX		 = {c, s};
-		rect.axisY		 = {-s, c};
-		rect.halfExtents = halfExtents;
-		return rect;
+	// The axis-aligned box about `center`, corners in the order nav builds a rect's.
+	geometry::Ring boxMm(glm::vec2 center, glm::vec2 half) {
+		return ringMm({center + glm::vec2{-half.x, -half.y}, center + glm::vec2{half.x, -half.y}, center + glm::vec2{half.x, half.y},
+					   center + glm::vec2{-half.x, half.y}});
 	}
 
-	constexpr float kClearance = 0.05F;
+	// How far `point` is from the ring's boundary, in mm.
+	double distanceToRingMm(glm::vec2 point, const geometry::Ring& ring) {
+		double nearest = std::numeric_limits<double>::max();
+		for (std::size_t i = 0; i < ring.size(); ++i) {
+			nearest = std::min(nearest, geometry::distanceToSegment(nav::toMm(point), ring[i], ring[(i + 1) % ring.size()]));
+		}
+		return nearest;
+	}
+
+	// A U, 4 m by 2 m about its pivot, notched 1 m wide and 1 m deep from its top edge: concave, with
+	// two reflex corners at (+-0.5, 0).
+	const std::vector<glm::vec2> kNotchedPoints{{-2.0F, -1.0F}, {2.0F, -1.0F}, {2.0F, 1.0F}, {0.5F, 1.0F},
+												{0.5F, 0.0F},	{-0.5F, 0.0F}, {-0.5F, 1.0F}, {-2.0F, 1.0F}};
 
 	// A simple (SVG) obstacle 6 m by 1 m, pivot at its centre, whose 0.2 m square collider is at its
 	// east end, kFarColliderOffset from the pivot: past the 2 m the query used to reach.
@@ -76,7 +94,7 @@ namespace {
 		static std::atomic<int>		counter{0};
 		const std::filesystem::path root =
 			std::filesystem::temp_directory_path() /
-			("static_rect_collision_test_" + std::to_string(reinterpret_cast<std::uintptr_t>(&counter)) + "_" + std::to_string(counter++));
+			("placed_obstacle_collision_test_" + std::to_string(reinterpret_cast<std::uintptr_t>(&counter)) + "_" + std::to_string(counter++));
 		const std::filesystem::path folder = root / kFarColliderDefName;
 		std::filesystem::create_directories(folder);
 		std::ofstream(folder / "shape.svg") << "<?xml version=\"1.0\"?>"
@@ -101,82 +119,92 @@ namespace {
 
 } // namespace
 
-// --- Pure helper: resolveCenterAgainstRect ---------------------------------
+// --- Pure helper: resolveCenterAgainstOutline -------------------------------
 
-// A center well outside the inflated rect is not touched.
-TEST(StaticRectResolveTest, OutsideReturnsNullopt) {
-	const nav::OrientedRect rect = axisAlignedRect({0.0F, 0.0F}, {0.3F, 0.3F});
-	EXPECT_FALSE(resolveCenterAgainstRect({5.0F, 5.0F}, kClearance, rect).has_value());
+// A center well outside the outline is not touched.
+TEST(PlacedObstacleResolveTest, OutsideReturnsNullopt) {
+	EXPECT_FALSE(resolveCenterAgainstOutline({5.0F, 5.0F}, boxMm({0.0F, 0.0F}, {0.35F, 0.35F})).has_value());
 }
 
-// A center just inside the inflated +X face is pushed to exactly halfExtent+clearance
-// along X, y unchanged.
-TEST(StaticRectResolveTest, JustInsidePlusXPushedToBoundary) {
-	const nav::OrientedRect rect = axisAlignedRect({0.0F, 0.0F}, {0.3F, 0.3F});
-	const float		   ex	= 0.3F + kClearance;
-	// Slightly inside the +X boundary, well within the band in Y (so X is least pen).
-	const glm::vec2 start{ex - 0.01F, 0.0F};
-
-	auto corrected = resolveCenterAgainstRect(start, kClearance, rect);
+// A center just inside a box's +X face goes to the face, y unchanged.
+TEST(PlacedObstacleResolveTest, JustInsidePlusXPushedToBoundary) {
+	const std::optional<glm::vec2> corrected = resolveCenterAgainstOutline({0.34F, 0.0F}, boxMm({0.0F, 0.0F}, {0.35F, 0.35F}));
 	ASSERT_TRUE(corrected.has_value());
-	EXPECT_FLOAT_EQ(corrected->x, ex);
+	EXPECT_FLOAT_EQ(corrected->x, 0.35F);
 	EXPECT_FLOAT_EQ(corrected->y, 0.0F);
 }
 
-// A center deep inside an axis-aligned rect is pushed out the NEAREST face.
-TEST(StaticRectResolveTest, DeepInsidePushedNearestFace) {
-	const nav::OrientedRect rect = axisAlignedRect({0.0F, 0.0F}, {0.3F, 0.3F});
-	// Closer to the +X face than to +Y: x penetration is smaller.
-	const glm::vec2 start{0.2F, 0.05F};
-
-	auto corrected = resolveCenterAgainstRect(start, kClearance, rect);
+// A center deep inside a box goes out the NEAREST face, along it only.
+TEST(PlacedObstacleResolveTest, DeepInsidePushedNearestFace) {
+	const std::optional<glm::vec2> corrected = resolveCenterAgainstOutline({0.2F, 0.05F}, boxMm({0.0F, 0.0F}, {0.35F, 0.35F}));
 	ASSERT_TRUE(corrected.has_value());
-	EXPECT_FLOAT_EQ(corrected->x, 0.3F + kClearance);
-	EXPECT_FLOAT_EQ(corrected->y, 0.05F); // unchanged: pushed along X only
+	EXPECT_FLOAT_EQ(corrected->x, 0.35F);
+	EXPECT_FLOAT_EQ(corrected->y, 0.05F);
 }
 
-// A ROTATED, non-square rect: the corrected center lands on the inflated oriented
-// face. Verify by projecting onto the rect axes: the least-penetration local coord
-// equals +/-(halfExtent+clearance); the other local coord is unchanged.
-TEST(StaticRectResolveTest, RotatedRectPushesAlongOrientedFace) {
-	const float		   angle = 0.5235987756F; // 30 degrees
-	const glm::vec2	   center{2.0F, -1.0F};
-	const glm::vec2	   half{0.4F, 0.15F};
-	const nav::OrientedRect rect = rotatedRect(center, half, angle);
-
-	// Start a point a little inside the +axisX inflated face: local coords
-	// (lx slightly less than ex, ly small so X is least penetration).
-	const float		ex = half.x + kClearance;
-	const float		ly = 0.03F;
-	const glm::vec2 start = center + (ex - 0.02F) * rect.axisX + ly * rect.axisY;
-
-	auto corrected = resolveCenterAgainstRect(start, kClearance, rect);
+// Inside a convex hexagon near a slanted edge, the center goes onto that edge along its normal: on the
+// boundary, the move square to the edge.
+TEST(PlacedObstacleResolveTest, ConvexPolygonPushesAlongTheEdgeNormal) {
+	const glm::vec2		 a{1.0F, 0.0F};
+	const glm::vec2		 b{0.5F, 0.866F};
+	const geometry::Ring hexagon = ringMm({a, b, {-0.5F, 0.866F}, {-1.0F, 0.0F}, {-0.5F, -0.866F}, {0.5F, -0.866F}});
+	const glm::vec2		 start	 = (a + b) * 0.5F - glm::vec2{0.866F, 0.5F} * 0.1F; // 0.1 m in from the edge's middle
+	const std::optional<glm::vec2> corrected = resolveCenterAgainstOutline(start, hexagon);
 	ASSERT_TRUE(corrected.has_value());
-
-	const glm::vec2 d		 = *corrected - center;
-	const float		newLx	 = glm::dot(d, rect.axisX);
-	const float		newLy	 = glm::dot(d, rect.axisY);
-	EXPECT_NEAR(newLx, ex, 1e-5F);	  // pushed to the inflated oriented face on X
-	EXPECT_NEAR(newLy, ly, 1e-5F);	  // other axis unchanged
+	EXPECT_LE(distanceToRingMm(*corrected, hexagon), 1.0);
+	const glm::vec2 move = *corrected - start;
+	EXPECT_NEAR(glm::length(move), 0.1F, 1e-3F);
+	EXPECT_NEAR(glm::dot(move, glm::normalize(b - a)), 0.0F, 1e-3F);
 }
 
-// A center exactly at the rect center resolves deterministically: least-penetration
-// axis with sign +. For a wider-than-tall rect, Y is the smaller half-extent so the
-// Y penetration is least -> push +Y.
-TEST(StaticRectResolveTest, ExactCenterDeterministicPush) {
-	const nav::OrientedRect rect = axisAlignedRect({0.0F, 0.0F}, {0.4F, 0.2F});
-	auto			   corrected = resolveCenterAgainstRect({0.0F, 0.0F}, kClearance, rect);
+// Inside a concave U's arm beside the notch, the nearest way out is INTO the notch, not out the arm's
+// far side; beside a reflex corner it is the corner itself, equally near both its edges, and still a
+// finite point.
+TEST(PlacedObstacleResolveTest, ConcaveNotchPushesIntoTheNotchAndOntoTheCorner) {
+	geometry::Ring notched;
+	for (const glm::vec2 point : kNotchedPoints) {
+		notched.push_back(nav::toMm(point));
+	}
+
+	const std::optional<glm::vec2> beside = resolveCenterAgainstOutline({0.6F, 0.05F}, notched);
+	ASSERT_TRUE(beside.has_value());
+	EXPECT_FLOAT_EQ(beside->x, 0.5F);
+	EXPECT_FLOAT_EQ(beside->y, 0.05F);
+
+	const std::optional<glm::vec2> nearCorner = resolveCenterAgainstOutline({0.53F, -0.03F}, notched);
+	ASSERT_TRUE(nearCorner.has_value());
+	EXPECT_FLOAT_EQ(nearCorner->x, 0.5F);
+	EXPECT_FLOAT_EQ(nearCorner->y, 0.0F);
+}
+
+// A center exactly on an edge, or on a corner, is not inside: no push and no NaN.
+TEST(PlacedObstacleResolveTest, CenterOnTheBoundaryIsLeftAlone) {
+	const geometry::Ring box = boxMm({0.0F, 0.0F}, {0.35F, 0.35F});
+	EXPECT_FALSE(resolveCenterAgainstOutline({0.35F, 0.1F}, box).has_value());
+	EXPECT_FALSE(resolveCenterAgainstOutline({0.35F, 0.35F}, box).has_value());
+}
+
+// A center exactly at a shape's centroid, every edge of a wide box or a square equally near on some
+// axis, resolves deterministically onto the boundary at the least depth: the first of the nearest
+// edges in ring order.
+TEST(PlacedObstacleResolveTest, CenterAtTheCentroidResolvesDeterministically) {
+	const geometry::Ring		   wide		 = boxMm({0.0F, 0.0F}, {0.45F, 0.25F});
+	const std::optional<glm::vec2> corrected = resolveCenterAgainstOutline({0.0F, 0.0F}, wide);
 	ASSERT_TRUE(corrected.has_value());
-	// penX = 0.4+c, penY = 0.2+c -> penY < penX -> push along +Y to 0.2+c.
 	EXPECT_FLOAT_EQ(corrected->x, 0.0F);
-	EXPECT_FLOAT_EQ(corrected->y, 0.2F + kClearance);
+	EXPECT_FLOAT_EQ(std::abs(corrected->y), 0.25F);
+	EXPECT_EQ(resolveCenterAgainstOutline({0.0F, 0.0F}, wide), corrected);
+
+	const std::optional<glm::vec2> square = resolveCenterAgainstOutline({0.0F, 0.0F}, boxMm({0.0F, 0.0F}, {0.3F, 0.3F}));
+	ASSERT_TRUE(square.has_value());
+	EXPECT_NEAR(glm::length(*square), 0.3F, 1e-6F);
 }
 
 // --- System integration ----------------------------------------------------
 
 namespace {
 
-	class StaticRectCollisionSystemTest : public ::testing::Test {
+	class PlacedObstacleCollisionSystemTest : public ::testing::Test {
 	  protected:
 		void TearDown() override { AssetRegistry::Get().clearDefinitions(); }
 
@@ -204,13 +232,13 @@ namespace {
 		// A NavigationSystem over `executor`'s flora, settled, so the trees round the world's movers
 		// are in the nav mesh. The collision system pushes only out of those. It is not ticked, so the
 		// forward snap has not moved anyone and each test sees the push alone.
-		static StaticRectCollisionSystem& wire(World& world, PlacementExecutor& executor) {
+		static PlacedObstacleCollisionSystem& wire(World& world, PlacementExecutor& executor) {
 			auto& nav = world.registerSystem<NavigationSystem>();
 			nav.setChunkManager(landChunk());
 			placeNothingElsewhere(executor, nullptr);
 			nav.setPlacementData(&executor, nullptr);
 			nav.finishPendingBuilds();
-			auto& sys = world.registerSystem<StaticRectCollisionSystem>();
+			auto& sys = world.registerSystem<PlacedObstacleCollisionSystem>();
 			sys.setPlacementData(&executor);
 			sys.setDetailSource(&nav);
 			return sys;
@@ -220,12 +248,12 @@ namespace {
 } // namespace
 
 // update() with no placement wired is a safe no-op.
-TEST_F(StaticRectCollisionSystemTest, UnwiredUpdateIsNoOp) {
+TEST_F(PlacedObstacleCollisionSystemTest, UnwiredUpdateIsNoOp) {
 	World world;
 	const glm::vec2 start{1.0F, 1.0F};
 	EntityID		agent = spawnAgent(world, start);
 
-	auto& sys = world.registerSystem<StaticRectCollisionSystem>();
+	auto& sys = world.registerSystem<PlacedObstacleCollisionSystem>();
 	// Deliberately wire neither placement nor detail.
 	sys.update(0.0F);
 
@@ -237,10 +265,10 @@ TEST_F(StaticRectCollisionSystemTest, UnwiredUpdateIsNoOp) {
 
 // A blocking flora rect: an agent whose CENTER is inside it is pushed out past the
 // 0.05 m inflated boundary; an agent far away is untouched.
-TEST_F(StaticRectCollisionSystemTest, AgentInsideRectIsPushedOut) {
+TEST_F(PlacedObstacleCollisionSystemTest, AgentInsideRectIsPushedOut) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
-	tree.defName					 = "Test_StaticRectTree";
+	tree.defName					 = "Test_PlacedRectTree";
 	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
 	reg.registerTestDefinition(tree);
 
@@ -250,7 +278,7 @@ TEST_F(StaticRectCollisionSystemTest, AgentInsideRectIsPushedOut) {
 	const world::ChunkCoordinate coord = world::worldToChunk({treeAt.x, treeAt.y});
 	SpatialIndex					   index;
 	PlacedEntity					   pe;
-	pe.defName	= "Test_StaticRectTree";
+	pe.defName	= "Test_PlacedRectTree";
 	pe.position = treeAt;
 	index.insert(pe);
 	assets::AsyncChunkPlacementResult result;
@@ -272,8 +300,8 @@ TEST_F(StaticRectCollisionSystemTest, AgentInsideRectIsPushedOut) {
 	// aligned, so check the agent escaped the inflated AABB.
 	auto* nearPos = world.getComponent<Position>(near);
 	ASSERT_NE(nearPos, nullptr);
-	const float ex	  = tree.collisionFor(0).halfExtentsMeters.x + kStaticRectClearanceMeters;
-	const float ey	  = tree.collisionFor(0).halfExtentsMeters.y + kStaticRectClearanceMeters;
+	const float ex	  = tree.collisionFor(0).halfExtentsMeters.x + kPadMeters;
+	const float ey	  = tree.collisionFor(0).halfExtentsMeters.y + kPadMeters;
 	const float dx	  = std::abs(nearPos->value.x - treeAt.x);
 	const float dy	  = std::abs(nearPos->value.y - treeAt.y);
 	EXPECT_TRUE(dx >= ex - 1e-4F || dy >= ey - 1e-4F) << "agent center still inside inflated rect";
@@ -287,10 +315,10 @@ TEST_F(StaticRectCollisionSystemTest, AgentInsideRectIsPushedOut) {
 
 // The rect an agent hits is the one of the entity's age class: an agent 0.2 m off the trunk is
 // clear of a sapling's rect (half-extent 0.1 m) and inside a mature tree's (0.3 m).
-TEST_F(StaticRectCollisionSystemTest, RectFollowsAgeClass) {
+TEST_F(PlacedObstacleCollisionSystemTest, RectFollowsAgeClass) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
-	tree.defName	= "Test_StaticRectAged";
+	tree.defName	= "Test_PlacedRectAged";
 	tree.ageClasses = {{.name = "sapling", .weight = 0.5F, .variants = 1}, {.name = "mature", .weight = 0.5F, .variants = 1}};
 	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.1F, 0.1F}});
 	tree.setCollision(1, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
@@ -302,7 +330,7 @@ TEST_F(StaticRectCollisionSystemTest, RectFollowsAgeClass) {
 		const world::ChunkCoordinate coord = world::worldToChunk({treeAt.x, treeAt.y});
 		SpatialIndex					   index;
 		PlacedEntity					   pe;
-		pe.defName		= "Test_StaticRectAged";
+		pe.defName		= "Test_PlacedRectAged";
 		pe.position		= treeAt;
 		pe.traits.ageClass = ageClass;
 		index.insert(pe);
@@ -326,10 +354,10 @@ TEST_F(StaticRectCollisionSystemTest, RectFollowsAgeClass) {
 }
 
 // Same setup run twice yields an identical corrected position (determinism).
-TEST_F(StaticRectCollisionSystemTest, DeterministicCorrection) {
+TEST_F(PlacedObstacleCollisionSystemTest, DeterministicCorrection) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
-	tree.defName					 = "Test_StaticRectTreeDet";
+	tree.defName					 = "Test_PlacedRectTreeDet";
 	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
 	reg.registerTestDefinition(tree);
 
@@ -338,7 +366,7 @@ TEST_F(StaticRectCollisionSystemTest, DeterministicCorrection) {
 		const world::ChunkCoordinate coord = world::worldToChunk({treeAt.x, treeAt.y});
 		SpatialIndex					   index;
 		PlacedEntity					   pe;
-		pe.defName	= "Test_StaticRectTreeDet";
+		pe.defName	= "Test_PlacedRectTreeDet";
 		pe.position = treeAt;
 		index.insert(pe);
 		assets::AsyncChunkPlacementResult result;
@@ -370,11 +398,11 @@ TEST_F(StaticRectCollisionSystemTest, DeterministicCorrection) {
 // 0.05 m pad, producing world boundary = scale*halfExtent + 0.05. The nav built
 // scale*(halfExtent + 0.05). At scale 0.8 the collision boundary was 0.01 m OUTSIDE
 // the nav boundary, spuriously pushing agents on valid nav routes. After the fix
-// both read nav::placedObstacleBox, scale*(halfExtent + 0.05), so boundaries coincide.
+// both read nav::placedObstacleOutline, scale*(halfExtent + 0.05), so boundaries coincide.
 //
 // Rect halfExtents {0.3, 0.3}, scale 0.8:
 //   expected boundary = 0.8 * (0.3 + 0.05) = 0.28 m from center on each axis.
-TEST_F(StaticRectCollisionSystemTest, NonUnitScaleRegressionJustOutside) {
+TEST_F(PlacedObstacleCollisionSystemTest, NonUnitScaleRegressionJustOutside) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_ScaleRect_JustOutside";
@@ -398,7 +426,7 @@ TEST_F(StaticRectCollisionSystemTest, NonUnitScaleRegressionJustOutside) {
 	}
 
 	// Expected boundary at scale 0.8: 0.8 * (0.3 + 0.05) = 0.28 m from tree center.
-	const float boundary = 0.8F * (0.3F + kStaticRectClearanceMeters);
+	const float boundary = 0.8F * (0.3F + kPadMeters);
 
 	// (a) Agent just OUTSIDE the boundary (0.285 m along +X) must NOT be moved.
 	World	 worldA;
@@ -422,7 +450,7 @@ TEST_F(StaticRectCollisionSystemTest, NonUnitScaleRegressionJustOutside) {
 }
 
 // An agent inside the query box but clearly OUTSIDE the inflated OBB is not moved.
-TEST_F(StaticRectCollisionSystemTest, AgentInQueryBoxButOutsideObbNotMoved) {
+TEST_F(PlacedObstacleCollisionSystemTest, AgentInQueryBoxButOutsideObbNotMoved) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_ScaleRect_InBox";
@@ -457,49 +485,86 @@ TEST_F(StaticRectCollisionSystemTest, AgentInQueryBoxButOutsideObbNotMoved) {
 	EXPECT_FLOAT_EQ(pos->value.y, start.y);
 }
 
-// A non-Rect collision entity (Polygon) overlapping an agent is ignored.
-TEST_F(StaticRectCollisionSystemTest, NonRectCollisionIgnored) {
-	AssetRegistry&	reg = AssetRegistry::Get();
-	AssetDefinition poly;
-	poly.defName		  = "Test_PolyCollision_Ignored";
-	poly.setCollision(
-		0, {.type = CollisionShapeType::Polygon, .pointsMeters = {{-1.0F, -1.0F}, {1.0F, -1.0F}, {1.0F, 1.0F}, {-1.0F, 1.0F}}}
-	);
-	reg.registerTestDefinition(poly);
+namespace {
 
-	const glm::vec2					   treeAt{40.0F, 40.0F};
-	const world::ChunkCoordinate coord = world::worldToChunk({treeAt.x, treeAt.y});
-	PlacementExecutor				   executor(reg);
-	{
-		SpatialIndex index;
+	constexpr const char* kNotchedDefName = "Test_NotchedPolygon";
+	constexpr glm::vec2	  kNotchedAt{40.0F, 40.0F};
+	constexpr float		  kNotchedRotation = 0.6F;
+	constexpr float		  kNotchedScale	   = 1.5F;
+
+	// The notched U, turned and scaled, placed at kNotchedAt.
+	PlacedEntity placeNotched(PlacementExecutor& executor) {
+		AssetDefinition notched;
+		notched.defName = kNotchedDefName;
+		notched.setCollision(0, {.type = CollisionShapeType::Polygon, .pointsMeters = kNotchedPoints});
+		AssetRegistry::Get().registerTestDefinition(notched);
+
 		PlacedEntity pe;
-		pe.defName	= "Test_PolyCollision_Ignored";
-		pe.position = treeAt;
+		pe.defName	= kNotchedDefName;
+		pe.position = kNotchedAt;
+		pe.rotation = kNotchedRotation;
+		pe.scale	= kNotchedScale;
+		SpatialIndex index;
 		index.insert(pe);
 		assets::AsyncChunkPlacementResult result;
-		result.coord		= coord;
+		result.coord		= world::worldToChunk({kNotchedAt.x, kNotchedAt.y});
 		result.spatialIndex = std::move(index);
 		executor.storeChunkResult(std::move(result));
+		return pe;
 	}
 
-	// Agent is squarely inside the polygon's bounds -- it must not be moved because
-	// StaticRectCollisionSystem only handles Rect collision shapes.
-	const glm::vec2 start{treeAt.x + 0.1F, treeAt.y};
-	World	 world;
-	EntityID agent = spawnAgent(world, start);
+} // namespace
+
+// A turned and scaled concave polygon collider is pushed against like a rect: an agent in the U's arm
+// beside the notch goes into the notch, to the point its pivot-frame (0.5, 0.05) lands on.
+TEST_F(PlacedObstacleCollisionSystemTest, TurnedScaledConcavePolygonPushesOut) {
+	PlacementExecutor				executor(AssetRegistry::Get());
+	const PlacedEntity				placed = placeNotched(executor);
+	const assets::InstanceTransform transform(placed.position, placed.rotation, placed.scale);
+
+	const glm::vec2 start = transform.toWorld({0.6F, 0.05F});
+	World			world;
+	const EntityID	agent = spawnAgent(world, start);
+	PlacedObstacleCollisionSystem& sys = wire(world, executor);
+	ASSERT_FALSE(world.getSystem<NavigationSystem>().isValidPosition(start)) << "the polygon is in the mesh";
+	sys.update(0.0F);
+
+	const glm::vec2 expected = transform.toWorld({0.5F, 0.05F});
+	const glm::vec2 end		 = world.getComponent<Position>(agent)->value;
+	EXPECT_NEAR(end.x, expected.x, 1.5e-3F);
+	EXPECT_NEAR(end.y, expected.y, 1.5e-3F);
+}
+
+// The outline collision pushes against is the ring the nav mesh cuts, point for point: the polygon's
+// pivot-frame points put in the world by the instance transform, and the pushed agent stands on it.
+TEST_F(PlacedObstacleCollisionSystemTest, CollisionOutlineIsTheNavRing) {
+	PlacementExecutor				executor(AssetRegistry::Get());
+	const PlacedEntity				placed = placeNotched(executor);
+	const assets::InstanceTransform transform(placed.position, placed.rotation, placed.scale);
+
+	const std::optional<geometry::nav::NavInputPolygon> navRing = nav::placedObstacleRing(placed, AssetRegistry::Get());
+	ASSERT_TRUE(navRing.has_value());
+	ASSERT_EQ(navRing->ring.size(), kNotchedPoints.size());
+	for (const glm::vec2 point : kNotchedPoints) {
+		const geometry::Vec2i64 worldMm = nav::toMm(transform.toWorld(point));
+		EXPECT_NE(std::find(navRing->ring.begin(), navRing->ring.end(), worldMm), navRing->ring.end()) << point.x << "," << point.y;
+	}
+
+	// Beside the reflex corner: pushed onto the corner, which is one of the ring's points.
+	World		   world;
+	const EntityID agent = spawnAgent(world, transform.toWorld({0.53F, -0.03F}));
 	wire(world, executor).update(0.0F);
-	auto* pos = world.getComponent<Position>(agent);
-	ASSERT_NE(pos, nullptr);
-	EXPECT_FLOAT_EQ(pos->value.x, start.x);
-	EXPECT_FLOAT_EQ(pos->value.y, start.y);
+	const glm::vec2 end = world.getComponent<Position>(agent)->value;
+	EXPECT_LE(distanceToRingMm(end, navRing->ring), 1.0);
+	EXPECT_LE(glm::length(end - transform.toWorld({0.5F, 0.0F})), 1.5e-3F);
 }
 
 // Collision has no camera: two movers 650 m apart, each inside a tree its own disc meshed, one a
 // colonist and one not, are both pushed out.
-TEST_F(StaticRectCollisionSystemTest, PushedOutOfAMeshedObstacleWhereverItIs) {
+TEST_F(PlacedObstacleCollisionSystemTest, PushedOutOfAMeshedObstacleWhereverItIs) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
-	tree.defName					 = "Test_StaticRectTreeMeshed";
+	tree.defName					 = "Test_PlacedRectTreeMeshed";
 	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
 	reg.registerTestDefinition(tree);
 
@@ -512,7 +577,7 @@ TEST_F(StaticRectCollisionSystemTest, PushedOutOfAMeshedObstacleWhereverItIs) {
 		SpatialIndex index;
 		for (const glm::vec2 at : {nearTree, farTree}) {
 			PlacedEntity pe;
-			pe.defName	= "Test_StaticRectTreeMeshed";
+			pe.defName	= "Test_PlacedRectTreeMeshed";
 			pe.position = at;
 			index.insert(pe);
 		}
@@ -527,23 +592,23 @@ TEST_F(StaticRectCollisionSystemTest, PushedOutOfAMeshedObstacleWhereverItIs) {
 	const EntityID mover	= spawnAgent(world, nearTree + offset);
 	const EntityID colonist = spawnAgent(world, farTree + offset);
 	world.addComponent<Colonist>(colonist, Colonist{"Far"});
-	StaticRectCollisionSystem& sys = wire(world, executor);
+	PlacedObstacleCollisionSystem& sys = wire(world, executor);
 	const NavigationSystem&	   nav = world.getSystem<NavigationSystem>();
 	ASSERT_FALSE(nav.isValidPosition(nearTree + glm::vec2{0.0F, 0.1F})) << "the near tree is in the mesh";
 	ASSERT_FALSE(nav.isValidPosition(farTree + glm::vec2{0.0F, 0.1F})) << "the far tree is in the mesh";
 	sys.update(0.0F);
 
-	EXPECT_NEAR(world.getComponent<Position>(mover)->value.x, nearTree.x + 0.3F + kStaticRectClearanceMeters, 1e-4F) << "the mover wasn't pushed out";
-	EXPECT_NEAR(world.getComponent<Position>(colonist)->value.x, farTree.x + 0.3F + kStaticRectClearanceMeters, 1e-4F)
+	EXPECT_NEAR(world.getComponent<Position>(mover)->value.x, nearTree.x + 0.3F + kPadMeters, 1e-4F) << "the mover wasn't pushed out";
+	EXPECT_NEAR(world.getComponent<Position>(colonist)->value.x, farTree.x + 0.3F + kPadMeters, 1e-4F)
 		<< "the colonist wasn't pushed out";
 }
 
 // A tree whose placement has landed but which is not in the nav mesh yet is not pushed out of, even
 // where detail is on: the forward snap gets the first look once the mesh has it.
-TEST_F(StaticRectCollisionSystemTest, TreeNotYetInNavMeshIsNotPushed) {
+TEST_F(PlacedObstacleCollisionSystemTest, TreeNotYetInNavMeshIsNotPushed) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
-	tree.defName					 = "Test_StaticRectTreeLate";
+	tree.defName					 = "Test_PlacedRectTreeLate";
 	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
 	reg.registerTestDefinition(tree);
 
@@ -552,11 +617,11 @@ TEST_F(StaticRectCollisionSystemTest, TreeNotYetInNavMeshIsNotPushed) {
 	PlacementExecutor executor(reg);
 	World			  world;
 	EntityID		  agent = spawnAgent(world, inside);
-	StaticRectCollisionSystem& sys = wire(world, executor);
+	PlacedObstacleCollisionSystem& sys = wire(world, executor);
 
 	SpatialIndex index;
 	PlacedEntity pe;
-	pe.defName	= "Test_StaticRectTreeLate";
+	pe.defName	= "Test_PlacedRectTreeLate";
 	pe.position = treeAt;
 	index.insert(pe);
 	assets::AsyncChunkPlacementResult result;
@@ -569,8 +634,8 @@ TEST_F(StaticRectCollisionSystemTest, TreeNotYetInNavMeshIsNotPushed) {
 
 // A tree mirrored by a negative scale is collided with like any other: its box is the same size
 // (|scale| times the padded half extents), its offset mirrored through its position, the box the mesh
-// ring is built from (nav::placedObstacleBox).
-TEST_F(StaticRectCollisionSystemTest, MirroredTreeIsCollidedWith) {
+// ring nav cuts (nav::placedObstacleOutline).
+TEST_F(PlacedObstacleCollisionSystemTest, MirroredTreeIsCollidedWith) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_MirroredRect";
@@ -599,13 +664,13 @@ TEST_F(StaticRectCollisionSystemTest, MirroredTreeIsCollidedWith) {
 	World			world;
 	const EntityID	agent = spawnAgent(world, boxCentre + glm::vec2{0.1F, 0.0F});
 	wire(world, executor).update(0.0F);
-	EXPECT_NEAR(world.getComponent<Position>(agent)->value.x, boxCentre.x + 0.3F + kStaticRectClearanceMeters, 1e-4F)
+	EXPECT_NEAR(world.getComponent<Position>(agent)->value.x, boxCentre.x + 0.3F + kPadMeters, 1e-4F)
 		<< "the mirrored tree was not collided with";
 }
 
 // A collider 2.7 m from its entity's position, past where the query box used to reach, is still
 // found: an agent on it is pushed out, and one at the entity's position, off the rect, is left alone.
-TEST_F(StaticRectCollisionSystemTest, ColliderFarFromItsPositionIsFound) {
+TEST_F(PlacedObstacleCollisionSystemTest, ColliderFarFromItsPositionIsFound) {
 	AssetRegistry& reg = AssetRegistry::Get();
 
 	const glm::vec2				 rockAt{20.0F, 20.0F};
@@ -633,7 +698,7 @@ TEST_F(StaticRectCollisionSystemTest, ColliderFarFromItsPositionIsFound) {
 	wire(world, executor).update(0.0F);
 
 	EXPECT_NEAR(
-		world.getComponent<Position>(onDrawing)->value.x, boxCentre.x + kFarColliderHalfExtent + kStaticRectClearanceMeters, 1e-4F
+		world.getComponent<Position>(onDrawing)->value.x, boxCentre.x + kFarColliderHalfExtent + kPadMeters, 1e-4F
 	) << "the far collider was not found";
 	EXPECT_FLOAT_EQ(world.getComponent<Position>(onPosition)->value.x, atOrigin.x);
 	EXPECT_FLOAT_EQ(world.getComponent<Position>(onPosition)->value.y, atOrigin.y);

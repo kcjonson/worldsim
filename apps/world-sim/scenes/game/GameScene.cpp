@@ -102,7 +102,7 @@
 #include <ecs/systems/PhysicsSystem.h>
 #include <ecs/systems/PlayerVisibilitySystem.h>
 #include <ecs/systems/RoomDetectionSystem.h>
-#include <ecs/systems/StaticRectCollisionSystem.h>
+#include <ecs/systems/PlacedObstacleCollisionSystem.h>
 #include <ecs/systems/StorageGoalSystem.h>
 #include <ecs/systems/TimeSystem.h>
 #include <ecs/systems/VisionSystem.h>
@@ -1210,7 +1210,7 @@ namespace {
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
 			ecsWorld->registerSystem<ecs::CollisionSystem>();			// Priority 250 - positional separation after physics
 			ecsWorld->registerSystem<ecs::WallCollisionSystem>();		// Priority 260 - wall safety-net after agent separation
-			ecsWorld->registerSystem<ecs::StaticRectCollisionSystem>(); // Priority 270 - flora-rect safety-net after wall collision
+			ecsWorld->registerSystem<ecs::PlacedObstacleCollisionSystem>(); // Priority 270 - placed-obstacle safety-net after wall collision
 			ecsWorld->registerSystem<ecs::ActionSystem>(systemSeeds.action); // Priority 350
 			ecsWorld->registerSystem<world_sim::DeferredEditsSystem>([this] { drainDeferredEdits(); }); // Priority 800
 			ecsWorld->registerSystem<worldview::DynamicEntityRenderSystem>(); // Priority 900
@@ -1234,10 +1234,10 @@ namespace {
 			navSystem.setChunkManager(m_chunkManager.get());
 			navSystem.setPlacementData(m_placementExecutor.get(), &m_processedChunks);
 
-			// Tier-3 flora-rect safety net gathers placed rects locally each frame.
-			auto& staticRectCollisionSystem = ecsWorld->getSystem<ecs::StaticRectCollisionSystem>();
-			staticRectCollisionSystem.setPlacementData(m_placementExecutor.get());
-			staticRectCollisionSystem.setDetailSource(&navSystem);
+			// Tier-3 placed-obstacle safety net gathers placed colliders locally each frame.
+			auto& placedObstacleCollisionSystem = ecsWorld->getSystem<ecs::PlacedObstacleCollisionSystem>();
+			placedObstacleCollisionSystem.setPlacementData(m_placementExecutor.get());
+			placedObstacleCollisionSystem.setDetailSource(&navSystem);
 
 			// Wire up AIDecisionSystem with chunk manager for toilet location queries
 			auto& aiDecisionSystem = ecsWorld->getSystem<ecs::AIDecisionSystem>();

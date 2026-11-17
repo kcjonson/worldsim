@@ -10,6 +10,7 @@
 #include "assets/lua/LuaGenerator.h"
 #include "assets/placement/FloraRouting.h"
 
+#include <polygon/Polygon.h>
 #include <silhouette/Silhouette.h>
 #include <threading/TaskPool.h>
 #include <utils/Log.h>
@@ -1291,7 +1292,7 @@ namespace assets {
 
 		// Every shape set so far counts now, so no later early return in a load leaves the reach short;
 		// prewarmTreeVariants records the aged defs' shapes it sets.
-		recordCollisionReach({loadedNames.begin() + static_cast<std::ptrdiff_t>(firstNew), loadedNames.end()});
+		admitCollisionShapes({loadedNames.begin() + static_cast<std::ptrdiff_t>(firstNew), loadedNames.end()});
 
 		LOG_DEBUG(Engine, "Loaded %d asset definitions from %s", loadedCount, xmlPath.c_str());
 		return loadedCount > 0;
@@ -1317,6 +1318,7 @@ namespace assets {
 			return 0;
 		}
 
+		m_validationReport.issues.clear();
 		size_t totalLoaded = 0;
 		size_t filesProcessed = 0;
 		std::vector<std::string> loadedNames;
@@ -1379,8 +1381,10 @@ namespace assets {
 		buildDefNameIndex();
 
 		// Validate on load so the game (at launch) and the Asset Manager share one
-		// report. No GL; safe on the load worker thread.
-		m_validationReport = AssetValidator::validate(folderPath, m_sharedScriptsPath);
+		// report, after what loading itself found (a collision polygon the nav mesh can't take).
+		// No GL; safe on the load worker thread.
+		const ValidationReport validated = AssetValidator::validate(folderPath, m_sharedScriptsPath);
+		m_validationReport.issues.insert(m_validationReport.issues.end(), validated.issues.begin(), validated.issues.end());
 		prewarmTreeVariants(loadedNames);
 		LOG_INFO(
 			Engine, "Asset validation: %d error(s), %d warning(s)", m_validationReport.errorCount(), m_validationReport.warningCount()
@@ -1482,6 +1486,76 @@ namespace assets {
 				}
 			}
 			return std::sqrt(reachSq);
+		}
+
+		// The smallest scale an instance of a def stands at: the low end of its placement range, or 1
+		// (what the player places and dev spawn makes) when that is smaller.
+		float smallestPlacedScale(const PlacementScale& range) {
+			float smallest = 1.0F;
+			for (const float bound : {std::abs(range.min), std::abs(range.max)}) {
+				if (bound > 0.0F) {
+					smallest = std::min(smallest, bound);
+				}
+			}
+			return smallest;
+		}
+
+		// The nav mesh's floor, in mm, on a placed obstacle's point spacing and on the gap between its
+		// edges: at least this far apart, two points stay distinct and two edges uncrossed after an
+		// instance's rotation rounds each point to the mm (by at most half a mm on each axis).
+		constexpr std::int64_t kMinCollisionPolygonGapMm = 2;
+
+		geometry::Ring collisionPolygonMm(const CollisionShape& shape, float scale) {
+			geometry::Ring ring;
+			ring.reserve(shape.pointsMeters.size());
+			const double toMm = static_cast<double>(scale) * static_cast<double>(geometry::kMillimetersPerMeter);
+			for (const glm::vec2& point : shape.pointsMeters) {
+				ring.push_back({std::llround(static_cast<double>(point.x) * toMm), std::llround(static_cast<double>(point.y) * toMm)});
+			}
+			return ring;
+		}
+
+		std::string formatted(const char* format, auto... values) {
+			std::array<char, 256> buffer{};
+			std::snprintf(buffer.data(), buffer.size(), format, values...);
+			return buffer.data();
+		}
+
+		// Why a collision polygon can't be a nav mesh obstacle at `scale` (the smallest it is placed at),
+		// empty when it can. The mesh takes a simple closed ring (no repeated closing point) with area
+		// and no zero-length edge; its winding it normalises itself.
+		std::string collisionPolygonProblem(const CollisionShape& shape, float scale) {
+			const geometry::Ring ring = collisionPolygonMm(shape, scale);
+			if (ring.size() < 3) {
+				return formatted("has %zu points; it needs at least 3", ring.size());
+			}
+			if (const geometry::ConstraintResult spacing = geometry::minVertexSpacing(ring, kMinCollisionPolygonGapMm); !spacing.pass) {
+				return formatted(
+					"has points %zu and %zu %.1f mm apart at scale %.2f, under the %lld mm the nav mesh needs (a repeated closing point is one)",
+					spacing.vertexIndex,
+					spacing.otherIndex,
+					spacing.measuredValue * 1000.0,
+					static_cast<double>(scale),
+					static_cast<long long>(kMinCollisionPolygonGapMm)
+				);
+			}
+			if (const geometry::ConstraintResult simple = geometry::isSimple(ring); !simple.pass) {
+				return formatted("crosses itself (edges %zu and %zu): it must be one simple outline", simple.vertexIndex, simple.otherIndex);
+			}
+			if (geometry::windingOrder(ring) == geometry::Winding::Degenerate) {
+				return "has no area";
+			}
+			if (const geometry::ConstraintResult clearance = geometry::minEdgeClearance(ring, kMinCollisionPolygonGapMm); !clearance.pass) {
+				return formatted(
+					"has edges %zu and %zu %.1f mm apart at scale %.2f, under the %lld mm the nav mesh needs",
+					clearance.vertexIndex,
+					clearance.otherIndex,
+					clearance.measuredValue * 1000.0,
+					static_cast<double>(scale),
+					static_cast<long long>(kMinCollisionPolygonGapMm)
+				);
+			}
+			return {};
 		}
 
 		void raiseTo(std::atomic<float>& target, float value) {
@@ -1744,7 +1818,7 @@ namespace assets {
 			}
 		}
 		if (jobs.empty()) {
-			recordCollisionReach(names);
+			admitCollisionShapes(names);
 			return;
 		}
 		// The def's mature variant 0 first, so filing the rest finds its routing decided. Ordered by
@@ -1775,7 +1849,7 @@ namespace assets {
 			}
 			insertTemplate(*job.def, job.traits, std::move(job.built));
 		}
-		recordCollisionReach(names);
+		admitCollisionShapes(names);
 		LOG_INFO(
 			Engine,
 			"Prewarmed %zu tree variants in %.1f ms",
@@ -1784,16 +1858,35 @@ namespace assets {
 		);
 	}
 
-	void AssetRegistry::recordCollisionReach(const std::vector<std::string>& defNames) {
+	void AssetRegistry::admitCollisionShapes(const std::vector<std::string>& defNames) {
 		for (const std::string& name : defNames) {
 			const auto found = definitions.find(name);
 			if (found == definitions.end()) {
 				continue;
 			}
-			const AssetDefinition& def	 = found->second;
+			AssetDefinition& def = found->second;
 			// At least 1: what the player places and what dev spawn makes stand at scale 1, whatever the
 			// def's placement range.
-			const float scale = std::max({1.0F, std::abs(def.placement.scale.min), std::abs(def.placement.scale.max)});
+			const float scale	 = std::max({1.0F, std::abs(def.placement.scale.min), std::abs(def.placement.scale.max)});
+			const float smallest = smallestPlacedScale(def.placement.scale);
+			for (size_t ageClass = 0; ageClass < def.collisions.size(); ++ageClass) {
+				CollisionShape& shape = def.collisions[ageClass];
+				if (shape.type != CollisionShapeType::Polygon) {
+					continue;
+				}
+				const std::string problem = collisionPolygonProblem(shape, smallest);
+				if (problem.empty()) {
+					if (geometry::windingOrder(collisionPolygonMm(shape, 1.0F)) == geometry::Winding::Clockwise) {
+						std::reverse(shape.pointsMeters.begin(), shape.pointsMeters.end());
+					}
+					continue;
+				}
+				const std::string message = "collision polygon (age class " + std::to_string(ageClass) + ") " + problem +
+											"; the nav mesh can't take it, so it is dropped and the asset blocks nothing";
+				LOG_ERROR(Engine, "AssetDef '%s' %s", name.c_str(), message.c_str());
+				m_validationReport.add(Severity::Error, name, "collision", message);
+				shape = CollisionShape{};
+			}
 			for (const CollisionShape& shape : def.collisions) {
 				if (shape.blocks()) {
 					raiseTo(largestCollisionReach, collisionReach(shape) * scale);
@@ -2561,7 +2654,7 @@ namespace assets {
 			m_edibleItemIds.erase(edibleIdAt);
 		}
 
-		recordCollisionReach({defName});
+		admitCollisionShapes({defName});
 		LOG_DEBUG(Engine, "Registered test definition: %s", defName.c_str());
 	}
 

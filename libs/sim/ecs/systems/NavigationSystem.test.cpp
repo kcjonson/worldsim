@@ -7,7 +7,7 @@
 #include "PlayerVisibilitySystem.h"
 #include "MeshBand.test.h"
 #include "PlacedNothing.test.h"
-#include "StaticRectCollisionSystem.h"
+#include "PlacedObstacleCollisionSystem.h"
 #include "TimeSystem.h"
 #include "VisionSystem.h"
 #include "../World.h"
@@ -2734,7 +2734,7 @@ TEST_F(NavigationSystemTest, WalkerShovedIntoAnObstacleKeepsItsTask) {
 		ai.setNavigationSystem(&nav);
 		world.registerSystem<MovementSystem>();
 		world.registerSystem<PhysicsSystem>();
-		auto& collision = world.registerSystem<StaticRectCollisionSystem>();
+		auto& collision = world.registerSystem<PlacedObstacleCollisionSystem>();
 		collision.setPlacementData(&executor);
 		collision.setDetailSource(&nav);
 
@@ -3146,7 +3146,7 @@ namespace {
 			ai->setNavigationSystem(&nav);
 			world.registerSystem<MovementSystem>();
 			world.registerSystem<PhysicsSystem>();
-			auto& collision = world.registerSystem<StaticRectCollisionSystem>();
+			auto& collision = world.registerSystem<PlacedObstacleCollisionSystem>();
 			collision.setPlacementData(&executor);
 			collision.setDetailSource(&nav);
 		}
@@ -5105,7 +5105,7 @@ TEST_F(NavigationSystemTest, RouteStressRunsRepeatExactly) {
 // one with nothing clear ahead stays, is held (collision doesn't push it), and steps out, not behind
 // its leg, once no new route has come.
 TEST_F(ForwardSnapTest, SnapAndCollisionNeverTakeAMoverBack) {
-	auto& collision = world.registerSystem<StaticRectCollisionSystem>();
+	auto& collision = world.registerSystem<PlacedObstacleCollisionSystem>();
 	collision.setPlacementData(&executor);
 	collision.setDetailSource(sys);
 	// Chunks (-1, 0) and (-1, -1), past the ground the fixture meshed.
