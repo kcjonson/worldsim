@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Colonist memory tuning. See /docs/design/game-systems/colonists/memory.md.
+-->
+<Memory>
+  <!-- A mover (another colonist) seen within this many game minutes counts as company: someone near.
+       An older sighting is only where they were. -->
+  <RecentSighting gameMinutes="30"/>
+</Memory>

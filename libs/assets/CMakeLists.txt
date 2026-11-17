@@ -15,6 +15,7 @@ add_library(assets
     assets/ConstructionRegistry.cpp
     assets/AssetBatcher.cpp
     assets/ConfigValidator.cpp
+    assets/MemoryConfig.cpp
     assets/MoodConfig.cpp
     assets/PriorityConfig.cpp
     assets/RecipeRegistry.cpp

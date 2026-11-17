@@ -146,7 +146,8 @@ class VisionSystem : public ISystem {
 	);
 
 	/// What the disc of `radiusMeters` round `center` shows, inside `polygon` when walls clip it
-	/// (null outdoors), into memory: reconciliation, then placed entities, ECS entities, and shore.
+	/// (null outdoors), into memory: reconciliation, then placed entities, ECS entities (movers among them,
+	/// stamped with the game time), and shore.
 	void lookOver(
 		EntityID observer, glm::vec2 center, float radiusMeters, const geometry::Ring* polygon, Memory& memory, Knowledge* knowledge
 	);
@@ -196,6 +197,9 @@ class VisionSystem : public ISystem {
 		bool	  seen = false;
 	};
 	std::vector<StaleCandidate> m_staleScratch;
+
+	// The game time movers seen this pass are stamped with, read from the clock at the first such sighting.
+	std::optional<double> m_sightingTime;
 
 	// Test-only diagnostic: incremented on each actual polygon (re)build.
 	uint64_t m_polygonBuildCount = 0;

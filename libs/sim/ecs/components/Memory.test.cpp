@@ -12,8 +12,13 @@
 #include "MemoryQueries.h"
 #include "SourceReachMemo.h"
 
+#include <assets/ConfigValidator.h>
+#include <assets/MemoryConfig.h>
+
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <filesystem>
 #include <limits>
 #include <utility>
 #include <vector>
@@ -217,6 +222,63 @@ TEST(MemoryComponent, DefListsFollowRememberForgetAndEvict) {
 	m.clear();
 	EXPECT_TRUE(m.worldEntitiesOfDef(kDefId).empty());
 	expectDefListsMatch(m);
+}
+
+namespace {
+
+	constexpr uint32_t kColonistKind = 11;
+	constexpr uint32_t kOtherKind = 12;
+
+	std::vector<ecs::EntityID> moversSeenWithin(const ecs::Memory& memory, uint32_t kind, double now, double window) {
+		std::vector<ecs::EntityID> seen;
+		memory.forEachDynamicEntitySeenWithin(kind, now, window, [&](const ecs::KnownDynamicEntity& known) { seen.push_back(known.entityId); });
+		std::ranges::sort(seen);
+		return seen;
+	}
+
+} // namespace
+
+// The recency query, with the shipped window: a sighting inside it is company, one older is not, and
+// a mover of another kind never answers.
+TEST(MemoryQueries, MoversSeenWithinTheConfiguredWindow) {
+	assets::MemoryConfig config;
+	const std::filesystem::path shipped =
+		std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path().parent_path() / "assets" / "config" /
+		"colonists" / "memory.xml";
+	ASSERT_TRUE(config.loadFromFile(shipped.string()));
+	ASSERT_TRUE(assets::ConfigValidator::validateMemory(config));
+	const double window = config.recentSightingGameMinutes();
+
+	const ecs::EntityID fresh = ecs::makeEntityID(1, 1);
+	const ecs::EntityID stale = ecs::makeEntityID(2, 1);
+	const ecs::EntityID otherKind = ecs::makeEntityID(3, 1);
+	const double		now = 1000.0;
+	ecs::Memory			memory;
+	memory.rememberDynamicEntity(fresh, kColonistKind, {1.0F, 2.0F}, now - window * 0.5);
+	memory.rememberDynamicEntity(stale, kColonistKind, {3.0F, 4.0F}, now - window - 1.0);
+	memory.rememberDynamicEntity(otherKind, kOtherKind, {5.0F, 6.0F}, now);
+
+	EXPECT_EQ(moversSeenWithin(memory, kColonistKind, now, window), std::vector<ecs::EntityID>{fresh});
+	EXPECT_EQ(moversSeenWithin(memory, kOtherKind, now, window), std::vector<ecs::EntityID>{otherKind});
+	EXPECT_TRUE(memory.knowsDynamicEntity(stale)) << "an old sighting is still where he was, only not company";
+}
+
+// Movers are bounded: a new one past the cap forgets the one seen longest ago, and seeing one again
+// keeps its single entry.
+TEST(MemoryComponent, MoverMemoryForgetsTheLongestUnseen) {
+	ecs::Memory memory;
+	for (uint32_t index = 1; index <= ecs::Memory::kMaxDynamicEntities; ++index) {
+		memory.rememberDynamicEntity(ecs::makeEntityID(index, 1), kColonistKind, {0.0F, 0.0F}, static_cast<double>(index));
+	}
+	memory.rememberDynamicEntity(ecs::makeEntityID(1, 1), kColonistKind, {9.0F, 9.0F}, 10000.0);
+	EXPECT_EQ(memory.knownDynamicEntities.size(), ecs::Memory::kMaxDynamicEntities);
+
+	const ecs::EntityID newcomer = ecs::makeEntityID(100000, 1);
+	memory.rememberDynamicEntity(newcomer, kColonistKind, {0.0F, 0.0F}, 10001.0);
+	EXPECT_EQ(memory.knownDynamicEntities.size(), ecs::Memory::kMaxDynamicEntities);
+	EXPECT_TRUE(memory.knowsDynamicEntity(newcomer));
+	EXPECT_TRUE(memory.knowsDynamicEntity(ecs::makeEntityID(1, 1))) << "seen again, so not the longest unseen";
+	EXPECT_FALSE(memory.knowsDynamicEntity(ecs::makeEntityID(2, 1)));
 }
 
 namespace {
