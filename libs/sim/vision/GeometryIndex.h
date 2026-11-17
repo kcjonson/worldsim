@@ -67,8 +67,8 @@ namespace ecs {
 		// the last rebuild. Cheap synchronous extraction; safe to call every tick.
 		void rebuildIfStale();
 
-		// Append every cached opaque occluder whose source segment lies within
-		// radiusMm of center to `out` (clearing it first). Exact integer range test
+		// Append every cached opaque occluder that lies within radiusMm of center
+		// to `out` (clearing it first). Exact integer range test
 		// (geometry::withinDistanceOfSegment on the occluder endpoints). Linear scan
 		// over the cache: at the modest wall counts a colony reaches this is fine; a
 		// flat spatial grid is the obvious future optimization if it ever isn't.
