@@ -18,9 +18,8 @@ namespace assets {
 	inline constexpr float kAttributeScaleMax = 20.0F;
 
 	struct AttributeRange {
-		std::string name;
-		float		min = 0.0F;
-		float		max = 0.0F;
+		float min = 0.0F;
+		float max = 0.0F;
 	};
 
 	struct AttributeConfigLoad {

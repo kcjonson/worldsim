@@ -20,7 +20,6 @@
 
 #include <ui/components/Toast.h>
 
-
 #include <construction/ConstructionValidator.h>
 #include <construction/ConstructionWorld.h>
 #include <construction/SnapEngine.h>
@@ -489,7 +488,7 @@ namespace world_sim {
 		}
 		attributes->*(field->value) = value;
 		LOG_INFO(Game, "[DevAPI] attribute: %s=%.1f on #%llu", name.c_str(), static_cast<double>(value), static_cast<unsigned long long>(id));
-		m_ctx.ui->pushNotification("Dev", std::string(field->label) + " set", ui::ToastSeverity::Info);
+		m_ctx.ui->pushNotification("Dev", std::string(field->id) + " set", ui::ToastSeverity::Info);
 		return {};
 	}
 

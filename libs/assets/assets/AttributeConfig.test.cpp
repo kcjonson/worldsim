@@ -52,9 +52,7 @@ TEST_F(AttributeConfigTest, LoadsEveryNameInTheOrderGivenAndALaterFileReplaces) 
 	const AttributeConfigLoad result = load();
 	ASSERT_TRUE(result.errors.empty()) << result.errors.front();
 	ASSERT_EQ(result.ranges.size(), 2U);
-	EXPECT_EQ(result.ranges[0].name, "strength");
 	EXPECT_FLOAT_EQ(result.ranges[0].max, 14.0F);
-	EXPECT_EQ(result.ranges[1].name, "work_ethic");
 	EXPECT_FLOAT_EQ(result.ranges[1].min, 5.0F);
 	EXPECT_FLOAT_EQ(result.ranges[1].max, 7.0F);
 }
@@ -71,6 +69,7 @@ TEST_F(AttributeConfigTest, EachProblemNamesItsFileAndAttributeAndLoadsNothing) 
 		{R"(<Attribute name="strength" min="1" max="2"/><Attribute name="strength" min="1" max="2"/>)",
 		 "bad.xml: <Attribute name=\"strength\"> is given twice"},
 		{R"(<Range name="strength"/>)", "bad.xml: unknown element <Range>"},
+		{"stray words", "bad.xml: unexpected text inside <Attributes>"},
 	};
 	for (const auto& [body, expected] : cases) {
 		write("a.xml", kBoth);
@@ -79,6 +78,14 @@ TEST_F(AttributeConfigTest, EachProblemNamesItsFileAndAttributeAndLoadsNothing) 
 		EXPECT_TRUE(mentions(result, expected)) << expected << " in " << (result.errors.empty() ? "no errors" : result.errors.front());
 		EXPECT_TRUE(result.ranges.empty()) << expected;
 	}
+}
+
+TEST_F(AttributeConfigTest, ABadFileIsTheOnlyErrorForTheAttributesItHeld) {
+	write("a.xml", R"(<Attribute name="strength" min="6" max="14"/>)");
+	write("bad.xml", R"(<Attribute name="work_ethic" min="9" max="3"/>)");
+	const AttributeConfigLoad result = load();
+	ASSERT_EQ(result.errors.size(), 1U);
+	EXPECT_NE(result.errors.front().find("bad.xml"), std::string::npos);
 }
 
 TEST_F(AttributeConfigTest, AnAttributeNoFileGivesIsAnErrorAndSoIsAMissingFolder) {

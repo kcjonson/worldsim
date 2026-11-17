@@ -9,8 +9,8 @@
 #include <pugixml.hpp>
 
 #include <algorithm>
-#include <cmath>
 #include <map>
+#include <set>
 #include <utility>
 
 namespace assets {
@@ -36,27 +36,39 @@ namespace assets {
 				: names(knownNames) {}
 
 			std::map<std::string, Declared> declared;
+			std::set<std::string>			failed;
 			std::vector<std::string>		errors;
+			bool							unreadable = false;
 
 			void loadFile(const std::filesystem::path& path, const std::string& source) {
 				pugi::xml_document			 document;
 				const pugi::xml_parse_result parsed = document.load_file(path.string().c_str());
 				if (!parsed) {
+					unreadable = true;
 					fail(source, std::string("not readable XML: ") + parsed.description());
 					return;
 				}
 				const pugi::xml_node root = document.child("Attributes");
 				if (!root) {
+					unreadable = true;
 					fail(source, "the root element is not <Attributes>");
 					return;
 				}
 				std::vector<std::string> declaredHere;
 				for (const pugi::xml_node node : root.children()) {
+					if (node.type() == pugi::node_pcdata || node.type() == pugi::node_cdata) {
+						fail(source, "unexpected text inside <Attributes>");
+						continue;
+					}
 					if (node.type() != pugi::node_element) {
 						continue;
 					}
 					if (std::string_view(node.name()) == "Attribute") {
+						const std::size_t errorsBefore = errors.size();
 						loadAttribute(node, source, declaredHere);
+						if (errors.size() > errorsBefore) {
+							failed.insert(node.attribute("name").as_string());
+						}
 					} else {
 						fail(source, "unknown element <" + std::string(node.name()) + ">");
 					}
@@ -64,8 +76,11 @@ namespace assets {
 			}
 
 			void check() {
+				if (unreadable) {
+					return;
+				}
 				for (const std::string_view name : names) {
-					if (!declared.contains(std::string(name))) {
+					if (!declared.contains(std::string(name)) && !failed.contains(std::string(name))) {
 						fail("attributes", "no file gives <Attribute name=\"" + std::string(name) + "\"> a range");
 					}
 				}
@@ -91,7 +106,7 @@ namespace assets {
 				declaredHere.push_back(name);
 
 				ConfigReader reader(source);
-				AttributeRange range{.name = name};
+				AttributeRange range;
 				range.min = reader.attributeNumber(node, "Attribute", "min");
 				range.max = reader.attributeNumber(node, "Attribute", "max");
 				if (std::vector<std::string> problems = reader.takeProblems(); !problems.empty()) {

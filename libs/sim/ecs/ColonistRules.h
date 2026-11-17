@@ -1,7 +1,8 @@
 #pragma once
 
 // The rules from data that colonists are made and think by: the trait definitions, the attribute ranges,
-// the condition vocabulary built from them and frozen, and the thought types written in it. Loaded once per game.
+// the condition vocabulary (declared from its own config, then frozen) and the thought types written in it.
+// Loaded once per game.
 
 #include "ThoughtTypes.h"
 #include "components/Attributes.h"

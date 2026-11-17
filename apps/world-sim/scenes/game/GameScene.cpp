@@ -1615,10 +1615,10 @@ namespace {
 
 			// Roll attributes and traits from one generator seeded per entity, so colonists vary
 			// deterministically.
-			std::mt19937		  attrRng(static_cast<uint32_t>(entity));
-			const ecs::Attributes attributes = ecs::rollAttributes(*colonistRules.attributes, attrRng);
+			std::mt19937		  colonistRng(static_cast<uint32_t>(entity));
+			const ecs::Attributes attributes = ecs::rollAttributes(*colonistRules.attributes, colonistRng);
 			ecsWorld->addComponent<ecs::Attributes>(entity, attributes);
-			ecsWorld->addComponent<ecs::Traits>(entity, ecs::rollTraits(*colonistRules.traits, attrRng));
+			ecsWorld->addComponent<ecs::Traits>(entity, ecs::rollTraits(*colonistRules.traits, colonistRng));
 
 			// Carry weight scales with Strength (an average colonist lands at the prior 35kg).
 			auto inventory = ecs::Inventory::createForColonist();

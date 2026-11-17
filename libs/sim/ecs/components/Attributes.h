@@ -37,23 +37,22 @@ namespace ecs {
 		}
 	};
 
-	/// One attribute: the name conditions and the config write (attribute(work_ethic)), the display
-	/// label, and its member. The one table every reader of attributes goes through.
+	/// One attribute: the name conditions and the config write (attribute(work_ethic)), and its member.
+	/// The one table every reader of attributes goes through.
 	struct AttributeField {
 		std::string_view   id;
-		const char*		   label;
 		float Attributes::* value;
 	};
 
 	inline constexpr std::array<AttributeField, 8> kAttributeFields = {{
-		{"strength", "Strength", &Attributes::strength},
-		{"agility", "Agility", &Attributes::agility},
-		{"intelligence", "Intelligence", &Attributes::intelligence},
-		{"civility", "Civility", &Attributes::civility},
-		{"sanity", "Sanity", &Attributes::sanity},
-		{"kindness", "Kindness", &Attributes::kindness},
-		{"work_ethic", "Work Ethic", &Attributes::workEthic},
-		{"social_need", "Social Need", &Attributes::socialNeed},
+		{"strength", &Attributes::strength},
+		{"agility", &Attributes::agility},
+		{"intelligence", &Attributes::intelligence},
+		{"civility", &Attributes::civility},
+		{"sanity", &Attributes::sanity},
+		{"kindness", &Attributes::kindness},
+		{"work_ethic", &Attributes::workEthic},
+		{"social_need", &Attributes::socialNeed},
 	}};
 
 	/// The range each attribute is rolled in, in kAttributeFields order. Loaded by loadColonistRules.
@@ -62,7 +61,6 @@ namespace ecs {
 	};
 
 	/// Roll every attribute from `rng`, one draw each in kAttributeFields order, evenly across its range.
-	/// Hand-rolled on the raw engine output so a seed gives the same colonist on every platform.
 	[[nodiscard]] Attributes rollAttributes(const AttributeRolls& rolls, std::mt19937& rng);
 
 } // namespace ecs
