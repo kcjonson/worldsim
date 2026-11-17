@@ -13,6 +13,8 @@
 #include "tabs/SocialTabView.h"
 #include "tabs/TasksTabView.h"
 
+#include "scenes/game/ui/models/ThoughtLogModel.h"
+
 #include <assets/TraitRegistry.h>
 #include <ecs/ClaimIndex.h>
 #include <ecs/EntityID.h>
@@ -97,6 +99,7 @@ namespace world_sim {
 		// Previous values for change detection
 		std::array<float, 8> prevNeedValues{};
 		float				 prevMood = 0.0F;
+		MoodBreakdown		 prevMoodBreakdown;
 		std::string			 prevGearSig;
 		size_t				 prevMemoryCount = 0;
 		// The bio "Current:" line is derived from task type + state + navState + labels;

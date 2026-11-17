@@ -2,14 +2,16 @@
 
 // EntityInfoView - the selected entity, in a Panel at the bottom left; hidden while nothing is selected.
 // - A colonist: a header (mood-ringed Avatar, name, mood and task meters, the dossier and close
-//   buttons), a TabBar (Needs, Bio, Gear, Log) over the chosen tab's body, and an action row (Draft or
+//   buttons), a TabBar (Needs, Bio, Gear, and Log, the colonist's thoughts) over the chosen tab's body, and an action row (Draft or
 //   Release, Go to, and Priorities, disabled until a priorities system exists).
 // - Anything else: the title and a dim subtitle with the close button, then the model's InfoSlot rows,
 //   built again when the selection's structure changes and updated in place when only values do.
 // kWidth wide unless its size says otherwise; its height follows the content.
 
 #include "scenes/game/ui/components/NeedBar.h"
+#include "scenes/game/ui/components/ThoughtLogList.h"
 #include "scenes/game/ui/models/EntityInfoModel.h"
+#include "scenes/game/ui/models/ThoughtLogModel.h"
 #include "scenes/game/world/selection/SelectionTypes.h"
 
 #include <assets/AssetRegistry.h>
@@ -85,6 +87,7 @@ namespace world_sim {
 		void setActiveTab(const std::string& tabId);
 
 		EntityInfoModel					   model;
+		ThoughtLogModel					   thoughtLog;
 		EntityInfoModel::Callbacks		   modelCallbacks;
 		std::function<void()>			   onClose;
 		std::function<void()>			   onDetails;
@@ -110,6 +113,7 @@ namespace world_sim {
 		ui::Ref<ui::Component>			bioBody;
 		ui::Ref<ui::Component>			gearBody;
 		ui::Ref<ui::Component>			logBody;
+		ui::Ref<ThoughtLogList>			logList;
 		ui::Ref<ui::Component>			actionRow;
 		ui::Ref<ui::Button>				draftButton;
 		ui::Ref<ui::Component>			slotsBody;

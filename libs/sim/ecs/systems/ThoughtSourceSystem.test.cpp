@@ -32,45 +32,45 @@ namespace ecs::test {
 		constexpr uint32_t kSeed = 20261117;
 
 		constexpr std::string_view kNeedTypes = R"(
-  <thought id="peckish" importance="trivial">
+  <thought id="peckish" label="Peckish" importance="trivial">
     <source trigger="needFalls" need="Hunger" threshold="seek"/>
     <feeling is="annoyed"/>
   </thought>
-  <thought id="starving" importance="normal">
+  <thought id="starving" label="Starving" importance="normal">
     <source trigger="needFalls" need="Hunger" threshold="critical"/>
     <feeling is="miserable"/>
   </thought>
-  <thought id="fed" importance="trivial">
+  <thought id="fed" label="Fed" importance="trivial">
     <source trigger="needRises" need="Hunger" threshold="seek"/>
     <feeling is="relieved"/>
   </thought>
 )";
 
 		constexpr std::string_view kActionTypes = R"(
-  <thought id="dozing_off" importance="trivial">
+  <thought id="dozing_off" label="Dozing off" importance="trivial">
     <source trigger="actionStarts" action="Sleep"/>
     <feeling is="content"/>
   </thought>
-  <thought id="slept_rough" importance="normal">
+  <thought id="slept_rough" label="Slept rough" importance="normal">
     <source trigger="actionFinishes" action="Sleep" on="ground"/>
     <feeling is="annoyed" mood="-5" hours="8"/>
   </thought>
-  <thought id="slept_well" importance="normal">
+  <thought id="slept_well" label="Slept well" importance="normal">
     <source trigger="actionFinishes" action="Sleep" on="sleepable"/>
     <feeling is="content"/>
   </thought>
-  <thought id="first_night_there" importance="normal">
+  <thought id="first_night_there" label="First night there" importance="normal">
     <source trigger="actionFinishes" action="Sleep" first="true"/>
     <feeling is="delighted"/>
   </thought>
 )";
 
 		constexpr std::string_view kIdleTypes = R"(
-  <thought id="musing" importance="trivial">
+  <thought id="musing" label="Musing" importance="trivial">
     <source trigger="idle" everyMinutes="60" chance="1"/>
     <feeling is="content"/>
   </thought>
-  <thought id="coin_toss" importance="trivial">
+  <thought id="coin_toss" label="Coin toss" importance="trivial">
     <source trigger="idle" everyMinutes="10" chance="0.5"/>
     <feeling is="delighted"/>
   </thought>
@@ -215,11 +215,11 @@ namespace ecs::test {
 
 	TEST(ThoughtSources, AnIdleRollWaitsForQuietAndFollowsTheSeed) {
 		Harness harness(R"(
-  <thought id="musing" importance="trivial">
+  <thought id="musing" label="Musing" importance="trivial">
     <source trigger="idle" everyMinutes="60" chance="1"/>
     <feeling is="content"/>
   </thought>
-  <thought id="nudge" importance="trivial">
+  <thought id="nudge" label="Nudge" importance="trivial">
     <feeling is="annoyed"/>
   </thought>
 )");
@@ -276,16 +276,16 @@ namespace ecs::test {
 		assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 
 		Harness	   harness(R"(
-  <thought id="noticed" importance="trivial">
+  <thought id="noticed" label="Noticed" importance="trivial">
     <source trigger="firstSight"/>
     <feeling is="content"/>
     <line>Look, a {subject}.</line>
   </thought>
-  <thought id="noticed_food" importance="trivial">
+  <thought id="noticed_food" label="Noticed food" importance="trivial">
     <source trigger="firstSight" of="edible"/>
     <feeling is="delighted"/>
   </thought>
-  <thought id="aha" importance="normal">
+  <thought id="aha" label="Aha" importance="normal">
     <source trigger="recipeLearned"/>
     <feeling is="delighted"/>
   </thought>

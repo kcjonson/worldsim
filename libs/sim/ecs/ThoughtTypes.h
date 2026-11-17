@@ -29,16 +29,18 @@ namespace ecs {
 
 	struct FeelingDefinition {
 		std::string name;
+		std::string label;
 	};
 
-	/// One feeling a thought type can produce. `whileCondition` is set when the mood effect lasts while it
-	/// holds.
+	/// One feeling a thought type can produce. `whileCondition` and `cause`, what the log calls the condition
+	/// ("soaked"), are set when the mood effect lasts while it holds.
 	struct ThoughtFeeling {
 		FeelingId							 feeling = 0;
 		std::optional<conditions::Condition> when;
 		uint32_t							 specificity = 0;
 		std::optional<MoodEffect>			 moodEffect;
 		std::optional<conditions::Condition> whileCondition;
+		std::string							 cause;
 	};
 
 	struct ThoughtLine {
@@ -75,6 +77,7 @@ namespace ecs {
 	/// Feelings and lines are kept most specific first, file order within the same specificity.
 	struct ThoughtType {
 		std::string						  name;
+		std::string						  label;
 		ThoughtImportance				  importance = ThoughtImportance::Normal;
 		bool							  stacks = false;
 		std::vector<ThoughtFeeling>		  feelings;

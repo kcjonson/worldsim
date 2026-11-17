@@ -189,7 +189,7 @@ A colonist in an episode is seen doing it: walking off, arguing face to face, si
 ### Colonist details dialog
 
 - **Header.** Mood in the stat grid, with the band.
-- **Health tab.** The full mood breakdown: the meter with target mood marked on it, then every contributor as a row with its name, signed amount, and time left. Needs and thoughts share the list, largest first. "Bottled up" shows its stack count. Refusal states are listed with how far mood must climb to clear them.
+- **Needs tab.** The full mood breakdown: the meter with target mood marked on it, then every contributor as a row with its name, signed amount, and time left. Needs and thoughts share the list, largest first. "Bottled up" shows its stack count. Refusal states are listed with how far mood must climb to clear them.
 - **Bio tab.** Tendencies, by name, with a line on how each was earned ("Picks fights · 4 times this season").
 - **Social tab.** Each relationship row shows the opinion score and the last few events that moved it ("Argued · 2 days ago").
 - **Log tab.** As in the info panel, with the full history.

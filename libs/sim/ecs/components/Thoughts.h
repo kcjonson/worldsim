@@ -4,6 +4,7 @@
 // still running marked as held. ThoughtSystem is the only writer.
 // See /docs/design/game-systems/colonists/thoughts.md.
 
+#include "../ClockTime.h"
 #include "../EntityID.h"
 
 #include <assets/ThoughtConfig.h>
@@ -90,6 +91,8 @@ namespace ecs {
 		double					  arrivedAt = 0.0;
 		/// The latest repeat folded into this thought; equals arrivedAt until one arrives.
 		double lastRepeatedAt = 0.0;
+		/// lastRepeatedAt on the day clock, stamped then: a dev time set later moves the clock, not this.
+		ClockTime lastRepeatedClock{};
 		/// A timed effect's end. Unused for a cause-bound or momentary thought.
 		double expiresAt = 0.0;
 		/// When a cause-bound effect's `while` condition is next checked. Unused otherwise.
@@ -104,6 +107,8 @@ namespace ecs {
 		std::vector<Thought>   record;
 		std::vector<ThoughtId> heldIds;
 		ThoughtId			   nextId = 1;
+		/// Bumped each time a thought arrives, folds a repeat, or ends, so a reader can tell the record changed.
+		uint64_t revision = 0;
 		/// The line this colonist was last given for each event type, so the next pick can avoid it.
 		std::unordered_map<ThoughtEventTypeId, uint16_t> lastLines;
 		/// Each subject name this colonist's thoughts have given, once: a thought holds an index, not a copy.

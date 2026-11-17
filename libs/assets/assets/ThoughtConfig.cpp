@@ -126,12 +126,21 @@ namespace assets {
 			}
 
 			void loadFeeling(pugi::xml_node node, const std::string& source, std::set<std::string>& inFile) {
-				FeelingDef feeling{.id = node.attribute("id").as_string(), .source = source};
+				FeelingDef feeling{.id = node.attribute("id").as_string(), .label = node.attribute("label").as_string(), .source = source};
 				if (feeling.id.empty()) {
 					fail(source, "a <feeling> has no id");
 					return;
 				}
-				if (!onlyAttributes(node, {"id"}, "feeling '" + feeling.id + "'", source, result.errors)) {
+				const std::string what = "feeling '" + feeling.id + "'";
+				if (!onlyAttributes(node, {"id", "label"}, what, source, result.errors)) {
+					return;
+				}
+				if (feeling.label.empty()) {
+					fail(source, what + " has no label=\"<display name>\"");
+					return;
+				}
+				if (feeling.label.ends_with('.')) {
+					fail(source, what + ": label=\"" + feeling.label + "\" ends in a period; the log adds its own");
 					return;
 				}
 				declare(result.config.feelings, std::move(feeling), "feeling", inFile);
@@ -141,6 +150,10 @@ namespace assets {
 				const pugi::xml_attribute mood = node.attribute("mood");
 				const pugi::xml_attribute hours = node.attribute("hours");
 				const pugi::xml_attribute whileAttribute = node.attribute("while");
+				if (node.attribute("cause") && !whileAttribute) {
+					fail(source, what + ": cause names what holds a while effect, so it needs while");
+					valid = false;
+				}
 				if (!mood) {
 					if (hours || whileAttribute) {
 						fail(source, what + ": hours and while need a mood amount");
@@ -174,6 +187,17 @@ namespace assets {
 					effect.whileCondition = whileAttribute.as_string();
 					if (effect.whileCondition.empty()) {
 						fail(source, what + ": while is empty");
+						valid = false;
+						return std::nullopt;
+					}
+					effect.cause = node.attribute("cause").as_string();
+					if (effect.cause.empty()) {
+						fail(source, what + ": a while effect has no cause=\"<what holds it>\"");
+						valid = false;
+						return std::nullopt;
+					}
+					if (effect.cause.ends_with('.')) {
+						fail(source, what + ": cause=\"" + effect.cause + "\" ends in a period; the log adds its own");
 						valid = false;
 						return std::nullopt;
 					}
@@ -276,13 +300,20 @@ namespace assets {
 			}
 
 			void loadThought(pugi::xml_node node, const std::string& source, std::set<std::string>& inFile) {
-				ThoughtTypeDef type{.id = node.attribute("id").as_string(), .source = source};
+				ThoughtTypeDef type{.id = node.attribute("id").as_string(), .label = node.attribute("label").as_string(), .source = source};
 				if (type.id.empty()) {
 					fail(source, "a <thought> has no id");
 					return;
 				}
 				const std::string what = "thought '" + type.id + "'";
-				bool			  valid = onlyAttributes(node, {"id", "importance", "stacks"}, what, source, result.errors);
+				bool			  valid = onlyAttributes(node, {"id", "label", "importance", "stacks"}, what, source, result.errors);
+				if (type.label.empty()) {
+					fail(source, what + " has no label=\"<display name>\"");
+					valid = false;
+				} else if (type.label.ends_with('.')) {
+					fail(source, what + ": label=\"" + type.label + "\" ends in a period; the log adds its own");
+					valid = false;
+				}
 
 				const std::optional<ThoughtImportance> importance = importanceFromName(node.attribute("importance").as_string());
 				if (!importance.has_value()) {
@@ -309,7 +340,7 @@ namespace assets {
 					const std::string_view element = child.name();
 					if (element == "feeling") {
 						const std::string feelingWhat = what + " feeling " + std::to_string(type.feelings.size() + 1);
-						valid = onlyAttributes(child, {"is", "when", "mood", "hours", "while"}, feelingWhat, source, result.errors) && valid;
+						valid = onlyAttributes(child, {"is", "when", "mood", "hours", "while", "cause"}, feelingWhat, source, result.errors) && valid;
 						ThoughtFeelingDef feeling{
 							.feeling = child.attribute("is").as_string(), .when = child.attribute("when").as_string()
 						};

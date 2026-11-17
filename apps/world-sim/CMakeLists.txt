@@ -25,6 +25,7 @@ add_library(world-sim-game STATIC
     scenes/game/ui/components/NeedBar.cpp
     scenes/game/ui/components/ZoomControl.cpp
     scenes/game/ui/components/SpeedButton.cpp
+    scenes/game/ui/components/ThoughtLogList.cpp
     # Game scene UI - adapters
     scenes/game/ui/adapters/ColonistAdapter.cpp
     scenes/game/ui/adapters/CraftingAdapter.cpp
@@ -38,6 +39,7 @@ add_library(world-sim-game STATIC
     scenes/game/ui/models/GlobalTaskListModel.cpp
     scenes/game/ui/models/EntityInfoModel.cpp
     scenes/game/ui/models/ResourcesModel.cpp
+    scenes/game/ui/models/ThoughtLogModel.cpp
     scenes/game/ui/models/TimeModel.cpp
     # Game scene UI - dialogs
     scenes/game/ui/dialogs/ColonistDetailsDialog.cpp
@@ -169,6 +171,7 @@ if(BUILD_TESTING)
         scenes/game/ui/adapters/GlobalTaskAdapter.test.cpp
         scenes/game/ui/adapters/SelectionAdapter.test.cpp
         scenes/game/ui/adapters/TaskRowText.test.cpp
+        scenes/game/ui/models/ThoughtLogModel.test.cpp
         scenes/SceneLayout.test.cpp
     )
     # Not beside world-sim: the tests must not find the files staged for the game (the quickstart

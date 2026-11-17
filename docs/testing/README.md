@@ -251,6 +251,7 @@ spec, and the `/perf-nightly` skill runs it.
 | 15 | Builder work spots | [scenarios/15-builder-work-spots.md](./scenarios/15-builder-work-spots.md) |
 | 16 | Rooms inside rooms | [scenarios/16-rooms-inside-rooms.md](./scenarios/16-rooms-inside-rooms.md) |
 | 17 | Interface size | [scenarios/17-interface-size.md](./scenarios/17-interface-size.md) |
+| 18 | Colonist thoughts | [scenarios/18-colonist-thoughts.md](./scenarios/18-colonist-thoughts.md) |
 
 **Scenarios that look away from the colonists turn reveal on** (`/api/dev/reveal?on=1`), since ground no colonist has seen is black (player visibility); a launch starts with it off. Scenario 14 is the one that tests the cover itself.
 

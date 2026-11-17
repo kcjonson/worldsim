@@ -4,7 +4,9 @@
 // 2x2 Stat grid) over eight tabs, Bio, Needs, Skills, Social, Gear, Memory, Tasks and Log, and a footer
 // of Close, Work Priorities and Draft. Only the selected tab's view is mounted. It is 760 wide and as tall
 // as its tallest tab needs, measured when it opens and held until it closes, whatever tab or colonist it then
-// shows. The game runs on while it is open, and update() feeds it from the world every frame.
+// shows. Tasks and Log, lists that grow with what the colonist knows and has thought, aren't measured: they
+// fill the tab area the others set, and scroll. The game runs on while it is open, and update() feeds it from
+// the world every frame.
 
 #include "ColonistDetailsModel.h"
 #include "tabs/BioTabView.h"
@@ -72,6 +74,8 @@ namespace world_sim {
 		bool				  fresh = false; // opened or moved since the last feed
 		bool				  sized = false; // this opening's size is worked out
 		ColonistDetailsModel  model;
+		// Built only while the Log tab is shown.
+		ThoughtLogModel thoughtLog;
 
 		ui::Ref<ui::Dialog>	   dialog;
 		ui::Ref<ui::Component> avatarSlot;

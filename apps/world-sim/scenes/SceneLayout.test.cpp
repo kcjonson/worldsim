@@ -17,6 +17,7 @@
 #include <assets/TraitRegistry.h>
 #include <ecs/GoalTaskRegistry.h>
 #include <ecs/ShippedConfig.test.h>
+#include <ecs/ThoughtTesting.test.h>
 #include <ecs/World.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Inventory.h>
@@ -26,6 +27,7 @@
 #include <ecs/components/Task.h>
 #include <ecs/components/Transform.h>
 #include <ecs/systems/MoodSystem.h>
+#include <ecs/systems/ThoughtSystem.h>
 #include <ecs/systems/TimeSystem.h>
 #include <theme/Theme.h>
 #include <ui/components/Dialog.h>
@@ -60,6 +62,23 @@ namespace world_sim::testing {
 		// What GameScene shows over the world, fed as GameScene feeds it, over a world of one colonist, a crafting
 		// spot, a box and a few structures being torn down. The colonist works on one, carries some gear and
 		// remembers what's around, so the dossier's tabs have rows. `open` opens something on it once it's built.
+		// The colonist's thoughts, written here so the layout doesn't hang on the shipped thought ids.
+		constexpr std::string_view kHudThoughts = R"(
+  <thought id="slept_on_ground" label="Slept on the ground" importance="normal">
+    <feeling is="miserable" mood="-10" hours="24"/>
+    <line>My back hates me now.</line>
+  </thought>
+  <thought id="bottled_up" label="Bottled up" importance="normal" stacks="true">
+    <feeling is="resigned" mood="-2" hours="24"/>
+  </thought>
+  <thought id="very_hungry" label="Very hungry" importance="normal">
+    <feeling is="annoyed"/>
+  </thought>
+  <thought id="saw_something_new" label="Saw something new" importance="major">
+    <feeling is="delighted"/>
+  </thought>
+)";
+
 		class HudScene final : public app::Scene {
 		  public:
 			struct Entities {
@@ -78,6 +97,7 @@ namespace world_sim::testing {
 			[[nodiscard]] GameUI&		  hud() { return *gameUI; }
 			[[nodiscard]] const Entities& entities() const { return spawned; }
 			[[nodiscard]] ecs::World&	  ecsWorld() { return world; }
+			[[nodiscard]] ecs::ThoughtEventTypeId thoughtType(std::string_view name) const { return thoughtTypes.type(name); }
 			[[nodiscard]] DrawingSystem&  drawing() { return *drawingSystem; }
 			// What the strip's tool picker asked for, in order.
 			[[nodiscard]] const std::vector<FoundationTool>& foundationToolPicks() const { return pickedFoundationTools; }
@@ -100,6 +120,10 @@ namespace world_sim::testing {
 
 				world.registerSystem<ecs::TimeSystem>();
 				world.registerSystem<ecs::MoodSystem>(assets::MoodConfig::Get());
+				for (const std::string& error : thoughtTypes.errors) {
+					ADD_FAILURE() << error;
+				}
+				world.registerSystem<ecs::ThoughtSystem>(thoughtTypes.types, 7U);
 				spawnColonist();
 				placement = std::make_unique<PlacementSystem>(PlacementSystem::Args{
 					.world = &world,
@@ -186,6 +210,13 @@ namespace world_sim::testing {
 				task.buildBlueprintEntityId = static_cast<uint64_t>(worked);
 				world.addComponent<ecs::Task>(spawned.colonist, task);
 
+				// A held thought, a stack of two, and one with no mood effect, summed into the mood as a tick does.
+				auto& thoughtSystem = world.getSystem<ecs::ThoughtSystem>();
+				for (const char* type : {"slept_on_ground", "bottled_up", "bottled_up", "very_hungry"}) {
+					thoughtSystem.create({.colonist = spawned.colonist, .eventType = thoughtTypes.type(type)});
+				}
+				world.getSystem<ecs::MoodSystem>().update(0.0F);
+
 				spawned.newcomer = world.createEntity();
 				world.addComponent<ecs::Position>(spawned.newcomer, ecs::Position{{2.0F, 0.0F}});
 				world.addComponent<ecs::Colonist>(spawned.newcomer, ecs::Colonist{"Grace Hopper"});
@@ -196,6 +227,7 @@ namespace world_sim::testing {
 
 			Open							 open;
 			assets::TraitRegistry			 traits; // none: these colonists have no Traits
+			ecs::testing::TestThoughtTypes	 thoughtTypes{kHudThoughts};
 			ecs::World						 world;
 			world::WorldCamera				 camera;
 			world::ChunkManager				 chunks{std::make_unique<world::SyntheticWorldSampler>(7U, world::SyntheticMap{})};
@@ -393,8 +425,9 @@ namespace world_sim::testing {
 		EXPECT_EQ(unexpectedScrollbars({}), "");
 	}
 
-	// Every tab, through the dialog's own tab bar. The panel is its tallest tab's height, held on every tab, and inside
-	// the cap; the tab scrolls only where the cap holds the panel shorter than that.
+	// Every tab, through the dialog's own tab bar. The panel is the height of its tallest tab that sets it, held on every
+	// tab, and inside the cap; the tab scrolls only where the cap holds the panel shorter than that. Tasks and Log, lists
+	// that grow with the colonist, fill the tab area the others set.
 	TEST_F(SceneLayout, TheColonistDossierHoldsItsSizeOnEveryTabWithOnlyItsTabScrolling) {
 		HudScene& scene = openHud([](HudScene& opened) { opened.hud().showColonistDetails(opened.entities().colonist); });
 		ASSERT_TRUE(scene.hud().isColonistDetailsVisible());
@@ -428,9 +461,15 @@ namespace world_sim::testing {
 		};
 		// The tabs fed from the colonist's gear, memory and known work, each by the id its rows share.
 		static const std::map<std::string_view, std::string_view> kRowIds{
-			{"dossier_gear", "gear_pack_row"}, {"dossier_memory", "memory_row"}, {"dossier_tasks", "dossier_task_row"}
+			{"dossier_gear", "gear_pack_row"},
+			{"dossier_memory", "memory_row"},
+			{"dossier_tasks", "dossier_task_row"},
+			{"dossier_needs", "mood_breakdown_row"},
+			{"dossier_log", "thought_log_block"}
 		};
-		// On the reference canvas, where the cap doesn't reach it, the tallest tab fills the tab area exactly.
+		// The list tabs, which don't set the height.
+		static const std::array<std::string_view, 2> kListTabs{"dossier_tasks", "dossier_log"};
+		// On the reference canvas, where the cap doesn't reach it, the tallest tab that sets the height fills the tab area exactly.
 		float areaInside = 0.0F;
 		float tallestTab = 0.0F;
 		for (const char* tab : kTabs) {
@@ -444,7 +483,9 @@ namespace world_sim::testing {
 			const ui::Component* view = app->scenes().top()->ui().find(area->getChildren().front());
 			ASSERT_NE(view, nullptr);
 			areaInside = area->getSize().y - area->getLayout().padding.vertical();
-			tallestTab = std::max(tallestTab, view->getSize().y);
+			if (std::ranges::find(kListTabs, std::string_view(tab)) == kListTabs.end()) {
+				tallestTab = std::max(tallestTab, view->getSize().y);
+			}
 			if (const auto rows = kRowIds.find(tab); rows != kRowIds.end()) {
 				ASSERT_GT(shownCount(rows->second), 0U) << "no rows on the " << tab << " tab";
 			}
@@ -459,7 +500,7 @@ namespace world_sim::testing {
 			EXPECT_EQ(unexpectedScrollbars({tabScrolls}), "") << "on the " << tab << " tab";
 			EXPECT_TRUE(scene.hud().isColonistDetailsVisible()) << "after the sizes on the " << tab << " tab";
 		}
-		EXPECT_NEAR(areaInside, tallestTab, 1.0F) << "the tab area against its tallest tab";
+		EXPECT_NEAR(areaInside, tallestTab, 1.0F) << "the tab area against its tallest tab that sets the height";
 	}
 
 	// A pack that fills under the open dossier grows its Gear tab and leaves the panel as it opened. Then the entity
@@ -521,6 +562,44 @@ namespace world_sim::testing {
 		ASSERT_NE(reopened.get(), nullptr);
 		EXPECT_EQ(title(), "Grace Hopper");
 		EXPECT_LT(reopened.get()->getSize().y, opened.y) << "the newcomer's own, shorter dossier";
+	}
+
+	// A long log neither grows the dossier nor moves it: it opens at the size it opened at with a short one, and its Log
+	// tab shows the newest page of notable thoughts until "Show older" adds the next.
+	TEST_F(SceneLayout, TheColonistDossierIsTheSameSizeWithALongLogAndPagesIt) {
+		HudScene& scene = openHud([](HudScene& opened) { opened.hud().showColonistDetails(opened.entities().colonist); });
+		const ui::Ref<ui::Rectangle> panel = dossierPanel();
+		ASSERT_NE(panel.get(), nullptr);
+		const Foundation::Vec2 shortLog = panel.get()->getSize();
+		press("dossier_close");
+
+		// Each one a thought of its own: a major one with no mood effect is never held, so nothing folds.
+		const std::size_t kSightings = kThoughtLogPage + 10;
+		auto&			  thoughts = scene.ecsWorld().getSystem<ecs::ThoughtSystem>();
+		for (std::size_t sighting = 0; sighting < kSightings; ++sighting) {
+			thoughts.create({.colonist = scene.entities().colonist, .eventType = scene.thoughtType("saw_something_new")});
+		}
+		scene.hud().showColonistDetails(scene.entities().colonist);
+		for (int tick = 0; tick < kModelFillFrames; ++tick) {
+			frame();
+		}
+		const ui::Ref<ui::Rectangle> reopened = dossierPanel();
+		ASSERT_NE(reopened.get(), nullptr);
+		EXPECT_EQ(reopened.get()->getSize().x, shortLog.x);
+		EXPECT_EQ(reopened.get()->getSize().y, shortLog.y) << "with a long log";
+
+		press("tab_dossier_log");
+		EXPECT_EQ(reopened.get()->getSize().y, shortLog.y) << "on the Log tab";
+		EXPECT_EQ(shownCount("thought_log_block"), kThoughtLogPage);
+		ui::Component* area = shown("dossier_tab_area");
+		ASSERT_NE(area, nullptr);
+		area->scrollTo({0.0F, 1.0e6F});
+		press("thought_log_older");
+		// The sightings, the night on the ground and the bottled-up stack; the hunger has no mood effect and isn't major.
+		EXPECT_EQ(shownCount("thought_log_block"), kSightings + 2);
+		EXPECT_EQ(shown("thought_log_older"), nullptr);
+		EXPECT_EQ(reopened.get()->getSize().y, shortLog.y) << "after Show older";
+		EXPECT_EQ(lintEverywhere(), "");
 	}
 
 	TEST_F(SceneLayout, TheCraftingDialogHoldsTogether) {

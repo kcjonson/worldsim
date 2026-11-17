@@ -136,7 +136,8 @@ namespace ecs {
 			return {};
 		}
 		const ThoughtFeeling& feeling = type.feelings[*typeFeeling];
-		const double		  now = world->getSystem<TimeSystem>().simulationSeconds();
+		const TimeSystem&	  time = world->getSystem<TimeSystem>();
+		const double		  now = time.simulationSeconds();
 
 		// A repeat the colonist feels nothing about ends what he held. Ending it may run observers and its
 		// <ends> thought, so the record is looked up after.
@@ -178,8 +179,10 @@ namespace ecs {
 				held->moodEffect = feeling.moodEffect;
 				held->importance = type.importance;
 				held->lastRepeatedAt = now;
+				held->lastRepeatedClock = time.clockTime();
 				held->expiresAt = expiryFor(*feeling.moodEffect, now);
 				held->nextCheckAt = nextCheckAt;
+				++thoughts->revision;
 				// Observers get a copy: one that creates a thought of its own may grow the record under them.
 				const Thought repeated = *held;
 				for (size_t index = 0, count = arrivedObservers.size(); index < count; ++index) {
@@ -201,6 +204,7 @@ namespace ecs {
 			.importance = type.importance,
 			.arrivedAt = now,
 			.lastRepeatedAt = now,
+			.lastRepeatedClock = time.clockTime(),
 			.expiresAt = feeling.moodEffect.has_value() ? expiryFor(*feeling.moodEffect, now) : 0.0,
 			.nextCheckAt = nextCheckAt,
 		};
@@ -208,6 +212,7 @@ namespace ecs {
 			thoughts->heldIds.push_back(thought.id);
 		}
 		thoughts->record.push_back(thought);
+		++thoughts->revision;
 
 		for (size_t index = 0, count = arrivedObservers.size(); index < count; ++index) {
 			arrivedObservers[index](args.colonist, thought, ThoughtArrival::New);
@@ -310,6 +315,7 @@ namespace ecs {
 	void ThoughtSystem::endHeld(EntityID colonist, Thoughts& thoughts, Thought& thought, double endedAt) {
 		thought.endedAt = endedAt;
 		thoughts.heldIds.erase(std::find(thoughts.heldIds.begin(), thoughts.heldIds.end(), thought.id));
+		++thoughts.revision;
 		const Thought ended = thought;
 		for (size_t index = 0, count = endedObservers.size(); index < count; ++index) {
 			endedObservers[index](colonist, ended);
