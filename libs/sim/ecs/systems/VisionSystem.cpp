@@ -1,6 +1,9 @@
 #include "VisionSystem.h"
 
+#include "TimeSystem.h"
+
 #include "../World.h"
+#include "../components/AgentRadius.h"
 #include "../components/Appearance.h"
 #include "../components/Knowledge.h"
 #include "../components/Memory.h"
@@ -100,6 +103,7 @@ namespace ecs {
 			return;
 		}
 		m_frameCounter = 0;
+		m_sightingTime.reset();
 
 		// Refresh the wall-occluder cache before any observer reads it (version-gated,
 		// so this is a no-op when the construction graph hasn't changed). With no
@@ -197,6 +201,7 @@ namespace ecs {
 		}
 		m_geometry.rebuildIfStale();
 		ensureTerrainDefinitionsRegistered();
+		m_sightingTime.reset();
 
 		const std::int64_t					   radiusMm = std::llround(static_cast<double>(radiusMeters) * 1000.0);
 		const geometry::Vec2i64				   centerMm = nav::toMm(center);
@@ -436,7 +441,8 @@ namespace ecs {
 		}
 
 		// Pass 2: ECS entities with Appearance (e.g., bio piles created by ActionSystem).
-		// These are runtime-spawned entities, as opposed to those placed during world generation.
+		// These are runtime-spawned entities, as opposed to those placed during world generation, movers
+		// (other colonists) among them.
 		for (auto [otherEntity, otherPos, appearance] : world->view<Position, Appearance>()) {
 			// Don't "see" yourself
 			if (otherEntity == observer) {
@@ -454,6 +460,15 @@ namespace ecs {
 
 				// Get defNameId and capability mask from registry
 				uint32_t defNameId = registry.getDefNameId(appearance.defName);
+				if (defNameId != 0 && world->hasComponent<AgentRadius>(otherEntity)) {
+					// A mover (navigation's Position + AgentRadius): remembered where and when it was seen,
+					// its kind the def it appears as. Never a world entity, which is keyed by where it stands.
+					if (!m_sightingTime.has_value()) {
+						m_sightingTime = simulationSeconds(*world);
+					}
+					memory.rememberDynamicEntity(otherEntity, defNameId, otherPos.value, *m_sightingTime);
+					continue;
+				}
 				if (defNameId != 0) {
 					if (!stale.empty()) {
 						const uint64_t key = hashWorldEntity(otherPos.value, defNameId);

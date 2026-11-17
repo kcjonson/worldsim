@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  The kinds near() and count_near() look for, and the capability a colonist's memory holds each under,
-  spelled as asset definitions spell it under <capabilities>. A kind with no capability is declared but
-  nothing answers it, so it reads Unknown and a condition naming it is logged.
-  A mod adds a kind, or gives one a capability, with a <Kind> in a file of its own.
+  The kinds near() and count_near() look for. A kind maps to one of:
+    capability="..."  things a colonist's memory holds under that capability, spelled as asset
+                      definitions spell it under <capabilities>;
+    mover="..."       movers of that asset definition the colonist saw within the recent-sighting
+                      window (assets/config/colonists/memory.xml), at the places he last saw them.
+  A kind with neither is declared but nothing answers it, so it reads Unknown and a condition naming it
+  is logged. A mod adds a kind, or replaces one's mapping, with a <Kind> in a file of its own.
 -->
 <ConditionVocabulary>
-  <Kind name="colonist"/>
+  <Kind name="colonist" mover="Colonist"/>
   <Kind name="food" capability="edible"/>
   <Kind name="storage" capability="storage"/>
   <Kind name="station" capability="craftable"/>

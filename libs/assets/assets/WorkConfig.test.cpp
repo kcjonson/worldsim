@@ -5,6 +5,7 @@
 #include "assets/ActionTypeRegistry.h"
 #include "assets/ConfigValidator.h"
 #include "assets/ConstructionRegistry.h"
+#include "assets/MemoryConfig.h"
 #include "assets/PriorityConfig.h"
 #include "assets/TaskChainRegistry.h"
 #include "assets/WorkConfig.h"
@@ -531,4 +532,25 @@ TEST_F(WorkConfigTest, LoadWorkConfig_ShippedConfigLoadsClean) {
 
 TEST_F(WorkConfigTest, LoadWorkConfig_MissingFolderReportsError) {
     EXPECT_FALSE(loadWorkConfig(std::filesystem::temp_directory_path() / "no-such-work-config").empty());
+}
+
+TEST_F(WorkConfigTest, ConfigValidator_MemoryWindowMustBeAPositiveNumber) {
+    for (const char* window : {"30", "0.5"}) {
+        MemoryConfig config;
+        ASSERT_TRUE(config.loadFromFile(writeTempFile(std::string("<Memory><RecentSighting gameMinutes=\"") + window + "\"/></Memory>", ".xml")));
+        ConfigValidator::clearErrors();
+        EXPECT_TRUE(ConfigValidator::validateMemory(config)) << window;
+    }
+
+    const auto refused = [this](const std::string& sighting) {
+        MemoryConfig config;
+        EXPECT_TRUE(config.loadFromFile(writeTempFile("<Memory>" + sighting + "</Memory>", ".xml")));
+        ConfigValidator::clearErrors();
+        return !ConfigValidator::validateMemory(config) && ConfigValidator::getErrorCount() == 1;
+    };
+    EXPECT_TRUE(refused(""));
+    EXPECT_TRUE(refused("<RecentSighting/>"));
+    for (const char* window : {"0", "-5", "abc", "30abc", "", " 30", "nan", "inf"}) {
+        EXPECT_TRUE(refused(std::string("<RecentSighting gameMinutes=\"") + window + "\"/>")) << '"' << window << '"';
+    }
 }
