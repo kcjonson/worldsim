@@ -152,8 +152,8 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 114 (entry files; the Major Milestones list below highlights notable ones)
-- **Latest Entry:** 2026-11-16
+- **Total Entries:** 115 (entry files; the Major Milestones list below highlights notable ones)
+- **Latest Entry:** 2026-11-17
 - **Major Milestones:**
   - Cryosphere: physical sea ice, snow, and glaciers (PDD + perfect-plastic) with a two-pass ice-climate feedback (2026-06-20)
   - Navigation P4: belief-filtered navigation, colonists path against what they've personally seen, not the live truth (2026-06-19)
