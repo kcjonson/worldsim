@@ -318,7 +318,7 @@ Conditions are data and need no scripting. A behavior's effect, what the colonis
 | Relationships | an opinion score per pair of colonists, moved by shared events |
 | Workload | hours worked against hours rested over the last day or two |
 | Scarcity | days of food and water left, as the colony knows it |
-| [Crowding](../world/crowding.md) | people nearby against the colonist's tolerance |
+| [Crowding](../world/crowding.md) | people nearby against the range the colonist's Social Need sets |
 | [Fire](../world/fire.md) | a lit fire in reach, what is flammable |
 | [Germs](../world/germs.md) | contamination on food and beds, sickness |
 | [Smell](../world/smell.md), [Noise](../world/noise.md), [Wetness](../world/wetness.md) | thoughts that lower or raise mood |

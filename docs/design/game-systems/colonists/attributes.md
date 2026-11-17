@@ -34,7 +34,7 @@ These are fixed values assigned at colonist creation, each on a 0 to 20 scale (0
 | Sanity | Mental stability, breakdown resistance |
 | Kindness | Empathy, willingness to help others |
 | Work Ethic | Task dedication, resistance to distraction |
-| Social Need | How much interaction they require (high = extrovert) |
+| Social Need | How much interaction they require (high = extrovert); also sets how many people nearby they are comfortable with ([Crowding](../world/crowding.md)) |
 
 ### Rolling
 
