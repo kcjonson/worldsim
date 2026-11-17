@@ -45,6 +45,24 @@ namespace {
 			   (1.0 - distanceMm * distanceMm / (static_cast<double>(kSightMm) * kSightMm));
 	}
 
+	std::int64_t circularDistance(std::size_t first, std::size_t second) {
+		const std::int64_t apart = std::abs(static_cast<std::int64_t>(first) - static_cast<std::int64_t>(second));
+		return std::min(apart, static_cast<std::int64_t>(kSightSides) - apart);
+	}
+
+	// The slope limit by brute force: each side's capped depth, or another's plus the slope for each
+	// step between them round the wrap, whichever is least.
+	SightSideValues slopeLimitOracle(const SightSideValues& raw, std::int64_t capMm, std::int64_t slopeMm) {
+		SightSideValues limited{};
+		for (std::size_t side = 0; side < kSightSides; ++side) {
+			limited[side] = std::min(raw[side], capMm);
+			for (std::size_t other = 0; other < kSightSides; ++other) {
+				limited[side] = std::min(limited[side], std::min(raw[other], capMm) + slopeMm * circularDistance(side, other));
+			}
+		}
+		return limited;
+	}
+
 	// A square lattice of trunks `spacingMm` apart covering the sight disc round the origin.
 	std::vector<ForestBody> lattice(std::int64_t spacingMm, std::int64_t widthFactor) {
 		std::vector<ForestBody> bodies;
@@ -186,6 +204,13 @@ TEST(ForestDepth, RingComingIntoSightAddsNothingAtTheRim) {
 	}
 	const std::vector<ForestBody> justInside{{eye + Vec2i64{-21213, -21200}, kFractionOne, kFractionOne}};
 	EXPECT_LE(maximum(rawDepth(eye, justInside)), 1);
+	// In the box round the sight disc but outside the disc.
+	const std::vector<ForestBody> inTheCorners{
+		{eye + Vec2i64{21214, 21214}, kFractionOne, kFractionOne}, {eye + Vec2i64{29000, 29000}, kFractionOne, kFractionOne}
+	};
+	const SightSideValues cornerDepth = rawDepth(eye, inTheCorners);
+	EXPECT_EQ(maximum(cornerDepth), 0);
+	EXPECT_GE(*std::min_element(cornerDepth.begin(), cornerDepth.end()), 0);
 	std::int64_t previous = 0;
 	for (std::int64_t distanceMm = 29990; distanceMm >= 25000; distanceMm -= 10) {
 		const std::int64_t depth = maximum(rawDepth(eye, {{eye + Vec2i64{0, distanceMm}, kFractionOne, kFractionOne}}));
@@ -203,7 +228,7 @@ TEST(ForestDepth, ArrivalRampsABodysDepth) {
 	std::int64_t		 previous = -1;
 	const std::int64_t	 full = maximum(rawDepth(eye, {{centre, kFractionOne, kFractionOne}}));
 	for (std::int64_t elapsedMs = 0; elapsedMs <= 2500; elapsedMs += 100) {
-		const std::int64_t arrival = geometry::forestArrivalFraction(10000 + elapsedMs, 10000, tunables);
+		const std::int64_t arrival = std::min(elapsedMs, tunables.forestArrivalMs) * kFractionOne / tunables.forestArrivalMs;
 		const std::int64_t depth = maximum(rawDepth(eye, {{centre, kFractionOne, arrival}}));
 		EXPECT_GE(depth, previous);
 		EXPECT_NEAR(static_cast<double>(depth), static_cast<double>(full) * std::min<double>(1.0, elapsedMs / 2000.0), 2.0) << elapsedMs;
@@ -213,11 +238,14 @@ TEST(ForestDepth, ArrivalRampsABodysDepth) {
 }
 
 // After the slope limit no side's depth exceeds a neighbour's by more than forestSlopeMm, it only
-// lowers depth, and every side is within the cap, over seeded random stands and clumps.
+// lowers depth, every side is within the cap, and each side is the least of every side's capped
+// depth plus the slope for each step between, over seeded random stands and clumps where the limit
+// bites, and round the wrap.
 TEST(ForestDepth, SlopeLimitHoldsNeighboursWithinTheSlope) {
 	std::mt19937		 rng(986);
 	const ForestTunables tunables;
 	const std::int64_t	 capMm = kSightMm - geometry::forestFloorMm(kSightMm, tunables);
+	int					 steepNeighbours = 0;
 	for (int stand = 0; stand < 60; ++stand) {
 		std::vector<ForestBody> bodies;
 		const int				count = 20 + static_cast<int>(rng() % 400);
@@ -235,13 +263,101 @@ TEST(ForestDepth, SlopeLimitHoldsNeighboursWithinTheSlope) {
 		}
 		const SightSideValues raw = rawDepth({0, 0}, bodies);
 		const SightSideValues limited = geometry::forestLimitedDepth(raw, kSightMm, tunables);
+		EXPECT_EQ(limited, slopeLimitOracle(raw, capMm, tunables.forestSlopeMm)) << "stand " << stand;
 		for (std::size_t side = 0; side < kSightSides; ++side) {
 			const std::size_t next = (side + 1) % kSightSides;
+			if (std::abs(std::min(raw[side], capMm) - std::min(raw[next], capMm)) > tunables.forestSlopeMm) {
+				++steepNeighbours;
+			}
 			EXPECT_LE(std::abs(limited[side] - limited[next]), tunables.forestSlopeMm) << "stand " << stand << " side " << side;
 			EXPECT_LE(limited[side], std::min(raw[side], capMm));
 			EXPECT_GE(limited[side], 0);
 		}
 	}
+	EXPECT_GT(steepNeighbours, 0);
+
+	// A lone spike at side 0, and one at side 63, falls off round the wrap to its neighbours.
+	for (const std::size_t spike : {std::size_t{0}, kSightSides - 1}) {
+		SightSideValues raw{};
+		raw.fill(2000);
+		raw[spike] = 7000;
+		const SightSideValues limited = geometry::forestLimitedDepth(raw, kSightMm, tunables);
+		EXPECT_EQ(limited, slopeLimitOracle(raw, capMm, tunables.forestSlopeMm)) << "spike " << spike;
+		EXPECT_EQ(limited[spike], 3000) << "spike " << spike;
+		EXPECT_EQ(limited[(spike + 1) % kSightSides], 2000) << "spike " << spike;
+		EXPECT_EQ(limited[(spike + kSightSides - 1) % kSightSides], 2000) << "spike " << spike;
+	}
+	SightSideValues plateau{};
+	plateau.fill(5000);
+	plateau[0] = 0;
+	const SightSideValues limited = geometry::forestLimitedDepth(plateau, kSightMm, tunables);
+	EXPECT_EQ(limited, slopeLimitOracle(plateau, capMm, tunables.forestSlopeMm));
+	EXPECT_EQ(limited[1], 1000);
+	EXPECT_EQ(limited[kSightSides - 1], 1000);
+	EXPECT_EQ(limited[kSightSides - 2], 2000);
+}
+
+// Bodies at the eye and within 123 mm of it take no depth and nothing fails; a body straight along
+// -x spends its depth evenly either side of the 180 degree direction.
+TEST(ForestDepth, BodiesAtTheEyeAndOnAnAxis) {
+	const Vec2i64 eye{-2000, 3000};
+	for (const Vec2i64 offset : {Vec2i64{0, 0}, Vec2i64{123, 0}, Vec2i64{87, -87}, Vec2i64{0, -100}}) {
+		EXPECT_EQ(rawDepth(eye, {{eye + offset, kFractionOne, kFractionOne}}), SightSideValues{});
+	}
+	const SightSideValues depth = rawDepth(eye, {{eye + Vec2i64{-10000, 0}, kFractionOne, kFractionOne}});
+	const std::size_t	  half = kSightSides / 2;
+	EXPECT_GT(depth[half], 0);
+	EXPECT_EQ(depth[half - 1], depth[half]);
+	EXPECT_EQ(maximum(depth), depth[half]);
+	for (std::size_t step = 0; step < half; ++step) {
+		EXPECT_EQ(depth[half - 1 - step], depth[half + step]) << step;
+	}
+}
+
+// Clamping puts each tunable at the nearest edge of its range, forestNearMm's upper edge the sight
+// radius, and leaves tunables within range alone.
+TEST(ForestDepth, ClampedToRanges) {
+	const ForestTunables defaults;
+	const ForestTunables clampedDefaults = geometry::clampedToRanges(defaults, kSightMm);
+	EXPECT_EQ(clampedDefaults.forestCapMm, defaults.forestCapMm);
+	EXPECT_EQ(clampedDefaults.forestNearMm, defaults.forestNearMm);
+	EXPECT_EQ(clampedDefaults.forestFloorPercent, defaults.forestFloorPercent);
+	ForestTunables low;
+	low.forestCapMm = -1;
+	low.forestWindowSteps = 0;
+	low.forestNearMm = 10;
+	low.forestFloorPercent = 0;
+	low.forestSlopeMm = -50;
+	low.forestFullPerimeterMm = 1;
+	low.forestArrivalMs = 0;
+	const ForestTunables clampedLow = geometry::clampedToRanges(low, kSightMm);
+	EXPECT_EQ(clampedLow.forestCapMm, 0);
+	EXPECT_EQ(clampedLow.forestWindowSteps, 1);
+	EXPECT_EQ(clampedLow.forestNearMm, 1000);
+	EXPECT_EQ(clampedLow.forestFloorPercent, 1);
+	EXPECT_EQ(clampedLow.forestSlopeMm, 0);
+	EXPECT_EQ(clampedLow.forestFullPerimeterMm, 100);
+	EXPECT_EQ(clampedLow.forestArrivalMs, 100);
+	ForestTunables high;
+	high.forestCapMm = 9000;
+	high.forestWindowSteps = 64;
+	high.forestNearMm = 50000;
+	high.forestFloorPercent = 150;
+	high.forestSlopeMm = 20000;
+	high.forestFullPerimeterMm = 20000;
+	high.forestArrivalMs = 60000;
+	const ForestTunables clampedHigh = geometry::clampedToRanges(high, kSightMm);
+	EXPECT_EQ(clampedHigh.forestCapMm, 5000);
+	EXPECT_EQ(clampedHigh.forestWindowSteps, 32);
+	EXPECT_EQ(clampedHigh.forestNearMm, kSightMm);
+	EXPECT_EQ(clampedHigh.forestFloorPercent, 100);
+	EXPECT_EQ(clampedHigh.forestSlopeMm, 10000);
+	EXPECT_EQ(clampedHigh.forestFullPerimeterMm, 10000);
+	EXPECT_EQ(clampedHigh.forestArrivalMs, 10000);
+	EXPECT_EQ(geometry::clampedToRanges(high, 600).forestNearMm, 1000);
+	// Clamped tunables pass the geometry's own range checks.
+	EXPECT_EQ(geometry::forestRawDepth({0, 0}, kSightMm, {}, clampedHigh), SightSideValues{});
+	EXPECT_EQ(geometry::forestRawDepth({0, 0}, kSightMm, {}, clampedLow), SightSideValues{});
 }
 
 // Fixed input, fixed output: forest depth is integer arithmetic, so every toolchain must give these
