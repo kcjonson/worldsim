@@ -58,9 +58,3 @@ export interface ThoughtTypeState {
   name: string;
   label: string;
 }
-
-/** A thought type as listed by /api/state?what=thoughttypes. */
-export interface ThoughtTypeState {
-  name: string;
-  label: string;
-}

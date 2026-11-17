@@ -79,12 +79,16 @@ function DevToolsPanel({ serverUrl }: DevToolsPanelProps) {
         setSelected(r.body.colonists[0].id);
       }
     }
+    report('state colonists', r);
     const types = await svc.getState('thoughttypes');
     if (types.ok && Array.isArray(types.body?.types)) {
       setThoughtTypes(types.body.types);
       setThoughtType((current) => current || (types.body.types.length ? types.body.types[0].name : ''));
+    } else {
+      setThoughtTypes([]);
+      setThoughtType('');
+      report('state thoughttypes', types);
     }
-    report('state colonists', r);
   }, [svc, report, selected]);
 
   const showState = useCallback(
