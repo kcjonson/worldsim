@@ -4,7 +4,6 @@
 #include <assets/AssetBootstrap.h>
 #include <assets/AssetRegistry.h>
 #include <assets/AssetValidator.h>
-#include <ecs/ColonistRules.h>
 #include <storage/UserDirectories.h>
 #include <world/AppIdentity.h>
 #include <world/rendering/GroundTileBank.h>
@@ -13,11 +12,15 @@
 #include <cassert>
 #include <memory>
 #include <optional>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace world_sim {
 
 	namespace {
 		std::optional<worldview::GroundTileCache>  g_groundCache;
+		std::vector<std::string>				   g_colonistRulesErrors;
 		std::unique_ptr<worldview::GroundTileBank> g_groundTiles;
 	} // namespace
 
@@ -59,8 +62,12 @@ namespace world_sim {
 		return {.done = true, .errors = bank.errors()};
 	}
 
-	std::vector<std::string> colonistRulesErrors() {
-		return ecs::loadColonistRules("assets/config").errors;
+	void failColonistRules(std::vector<std::string> errors) {
+		g_colonistRulesErrors = std::move(errors);
+	}
+
+	const std::vector<std::string>& failedColonistRules() {
+		return g_colonistRulesErrors;
 	}
 
 } // namespace world_sim

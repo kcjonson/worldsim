@@ -18,7 +18,7 @@
     <line>That hit the spot.</line>
     <line>Mmm. Crunchy.</line>
     <line feeling="grateful">Whoever cooked this, I love you.</line>
-    <line feeling="grateful">Compliments to the chef. Seriously.</line>
+    <line feeling="grateful">That sauce deserves a statue.</line>
   </thought>
 
   <thought id="slept_on_ground" importance="normal">
@@ -26,9 +26,9 @@
     <feeling is="resigned" when="attribute(sanity) >= 14" mood="-6" hours="24"/>
     <feeling is="furious" when="attribute(civility) &lt; 6 and attribute(sanity) &lt; 8" mood="-12" hours="24"/>
     <line>My back hates me now.</line>
-    <line>A rock. All night. One rock.</line>
+    <line>Something crawled across my face.</line>
     <line feeling="resigned">Dirt's just a big mattress.</line>
-    <line feeling="resigned">Stars for a ceiling. Could be worse.</line>
+    <line feeling="resigned">Stars for a ceiling. Free of charge.</line>
     <line feeling="furious">Who put that rock there?!</line>
     <line feeling="furious">I'm suing the ground.</line>
   </thought>
@@ -39,7 +39,7 @@
     <line>Nobody saw that. Right?</line>
     <line>I'm moving to a cave.</line>
     <line feeling="amused">Well. That happened.</line>
-    <line feeling="amused">Ten out of ten, would trip again.</line>
+    <line feeling="amused">I meant to do that. Mostly.</line>
   </thought>
 
   <thought id="talked_with_friend" importance="normal">
@@ -48,6 +48,6 @@
     <line>{subject} gets me.</line>
     <line>Good chat.</line>
     <line feeling="delighted">Same time tomorrow, {subject}?</line>
-    <line feeling="delighted">{subject}, you're a treasure.</line>
+    <line feeling="delighted">{subject} laughs at my bad jokes.</line>
   </thought>
 </thoughts>

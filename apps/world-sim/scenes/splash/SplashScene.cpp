@@ -267,9 +267,9 @@ namespace {
 			return true;
 		}
 
-		// Once the ground is baked: the colonist rules load clean, or their errors block here.
+		// Once the ground is baked: errors a scene handed over for the colonist rules block here.
 		bool checkColonistRules() {
-			const std::vector<std::string> errors = world_sim::colonistRulesErrors();
+			const std::vector<std::string>& errors = world_sim::failedColonistRules();
 			if (errors.empty()) {
 				return true;
 			}
