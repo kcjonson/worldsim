@@ -48,6 +48,16 @@ namespace assets {
 		Storage		// Entity is a storage container that holds items
 	};
 
+	/// Each capability's element name under an asset definition's <capabilities>, by CapabilityType.
+	inline constexpr std::array<const char*, 9> kCapabilityNames = {
+		"edible", "drinkable", "sleepable", "toilet", "waste", "carryable", "harvestable", "craftable", "storage"
+	};
+	static_assert(kCapabilityNames.size() == static_cast<std::size_t>(CapabilityType::Storage) + 1, "a name for every CapabilityType");
+
+	[[nodiscard]] constexpr const char* capabilityName(CapabilityType type) {
+		return kCapabilityNames[static_cast<std::size_t>(type)];
+	}
+
 	// ─────────────────────────────────────────────────────────────────────────
 	// Item Category System
 	// Categories define what TYPE of thing an entity is (for storage matching

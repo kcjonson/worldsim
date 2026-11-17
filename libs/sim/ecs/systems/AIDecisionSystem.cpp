@@ -41,6 +41,7 @@
 #include "assets/PriorityConfig.h"
 #include "assets/RecipeDef.h"
 #include "assets/RecipeRegistry.h"
+#include "assets/WorkConfig.h"
 #include "world/chunk/ChunkManager.h"
 
 #include <utils/Log.h>
@@ -229,27 +230,8 @@ namespace ecs {
 		/// Config name for a TaskType, used to look up its BASE tier in PriorityConfig's TaskTiers
 		/// table. Must match the names in priority-tuning.xml's <TaskTiers> block.
 		[[nodiscard]] const char* taskTypeConfigName(TaskType type) {
-			switch (type) {
-				case TaskType::FulfillNeed:
-					return "FulfillNeed";
-				case TaskType::Harvest:
-					return "Harvest";
-				case TaskType::Craft:
-					return "Craft";
-				case TaskType::Haul:
-					return "Haul";
-				case TaskType::PlacePackaged:
-					return "PlacePackaged";
-				case TaskType::Build:
-					return "Build";
-				case TaskType::Deconstruct:
-					return "Deconstruct";
-				case TaskType::Wander:
-					return "Wander";
-				case TaskType::None:
-					return "None";
-			}
-			return "None";
+			static_assert(assets::kTaskTypeNames.size() == static_cast<size_t>(TaskType::Wander), "a config name for every TaskType");
+			return type == TaskType::None ? "None" : assets::kTaskTypeNames[static_cast<size_t>(type) - 1];
 		}
 
 		/// PriorityConfig's base tier of every TaskType, by its config name.
