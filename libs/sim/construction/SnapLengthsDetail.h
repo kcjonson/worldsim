@@ -29,19 +29,18 @@ namespace construction::snap_lengths {
 
 	using geometry::Vec2d;
 
-	/// Who lends an entry its length.
-	enum class LengthOwner {
-		Shape,		// an edge between two placed points
-		Foundation, // a ring edge, or in the wall tool an edge between two inset corners
-		WallChain,	// a wall segment; one committed chain is one owner
-	};
-
+	/// Member and Merged differ only for the tests; the step reads whether an entry was dropped.
 	enum class LengthEntryStatus {
 		Member,		  // in a group, within 1 mm of its length
 		Merged,		  // in a group whose length differs from its own by more than 1 mm
 		UnderMinimum, // shorter than commonLengthMinimumMeters
 		OutOfRange,	  // its owner is farther than commonLengthRangeMeters from the cursor
 	};
+
+	/// An owner whose bounds are farther than the range by more than this lends no entries at
+	/// all (not even OutOfRange ones): bounds and edge distances round differently, and this is
+	/// far above double rounding at world scale, so every owner skipped is one the range drops.
+	inline constexpr double kRangeCullSlackMeters = 1e-6;
 
 	/// The shape ranks newest of all.
 	inline constexpr std::uint64_t kShapeRecency = std::numeric_limits<std::uint64_t>::max();
@@ -50,8 +49,6 @@ namespace construction::snap_lengths {
 		Vec2d			  start;
 		Vec2d			  end;
 		double			  lengthMeters = 0.0;
-		LengthOwner		  owner = LengthOwner::Shape;
-		std::uint64_t	  ownerId = 0;		 // the foundation id, or the chain's placement order
 		std::uint64_t	  recency = 0;		 // placement order; kShapeRecency for the shape
 		double			  ownerMeters = 0.0; // the cursor's distance to the owner's nearest edge
 		std::size_t		  order = 0;		 // generation order
@@ -64,7 +61,6 @@ namespace construction::snap_lengths {
 		std::size_t	  memberCount = 0;
 		std::uint64_t newest = 0;
 		double		  nearestOwnerMeters = 0.0;
-		std::size_t	  rank = 0; // position in LengthStudy::ranked
 	};
 
 	/// A run of wall segments sharing one placement order, while collecting entries.
@@ -74,7 +70,9 @@ namespace construction::snap_lengths {
 	};
 
 	struct LengthStudy {
-		std::vector<LengthEntry> entries; // generation order: the shape, foundations, then wall chains
+		// Generation order: the shape, foundations, then wall chains. An owner culled by its
+		// bounds (kRangeCullSlackMeters) has none.
+		std::vector<LengthEntry> entries;
 		std::vector<std::size_t> walk;	  // the entries not dropped, highest priority first
 		std::vector<LengthGroup> groups;  // in the order they were created
 		std::vector<std::size_t> ranked;  // indices into groups, best first

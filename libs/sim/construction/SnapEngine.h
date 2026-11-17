@@ -18,11 +18,18 @@
 // are in SnapGuidesDetail.h. A guide result within the close radius of the first point
 // closes onto it. Guides and the angle step follow the player's DrawingAids and are
 // suppressed when `freeform` is set (the tool maps this to holding Alt, per the design).
-// Where the point can still slide along a line (a single guide, the angle step, the raw
-// direction), the length step follows (SnapLengthsDetail.h): a common length that catches,
-// else the length rounded to the increment, each behind its DrawingAids switch. Vertex and
-// edge snapping to existing geometry are always on; they are the zero-gap
+// Vertex and edge snapping to existing geometry are always on; they are the zero-gap
 // adjacency the clearance rule depends on, not a stylistic nicety.
+//
+// The length step (SnapLengthsDetail.h) runs last, and only where the point can still
+// slide along a line: a single guide, the angle step's ray, or the raw direction from the
+// previous point. There a common length that catches sets the segment's length, else the
+// length rounds to the increment, each behind its DrawingAids switch. It never moves a
+// point something else fixed: a close onto the first point, a vertex, edge, wall endpoint,
+// or wall segment hit, or a crossing (unless commonLengthBeatsCrossing holds and a common
+// length catches on one of its two lines), and nothing under freeform. It follows the
+// guide, angle, and raw stages because they choose the line; a length only slides the
+// point along it, so it can never change which line won.
 //
 // Snap radii and the angle increment come from assets::SnappingConfig
 // (D10); the engine does not hardcode them.
@@ -48,6 +55,8 @@
 #include "ConstructionWorld.h"
 #include "DrawingAids.h"
 
+#include <assets/ConstructionRegistry.h>
+
 #include <core/Vec2i64.h>
 #include <math/Types.h>
 
@@ -55,10 +64,6 @@
 #include <cstddef>
 #include <optional>
 #include <vector>
-
-namespace assets {
-	struct SnappingConfig;
-}
 
 namespace construction {
 
@@ -131,9 +136,12 @@ namespace construction {
 		::Foundation::Vec2 end{0.0F, 0.0F};
 	};
 
-	// The result's bounds, so a snap never allocates: commonLengthMaxCount ships at 6 and a
-	// group rarely holds more than a few buildings' edges. Past them the rest are left out.
-	inline constexpr std::size_t kMaxReportedCommonLengths = 16;
+	// The result's bounds, so a snap never allocates. Every kept length is reported: the
+	// engine keeps at most this many whatever commonLengthMaxCount says, and the validator
+	// refuses more. Matched edges are capped too, and normal play reaches it (eight square
+	// shacks in range give one 32-edge group): past it the lowest-priority edges are left
+	// out, and only the ticks miss them.
+	inline constexpr std::size_t kMaxReportedCommonLengths = static_cast<std::size_t>(assets::kMaxCommonLengthCount);
 	inline constexpr std::size_t kMaxMatchedLengthEdges = 32;
 
 	struct SnapResult {
@@ -158,7 +166,8 @@ namespace construction {
 		SegmentId hitSegment = kInvalidSegment;
 		VertexId  hitVertex = kInvalidVertex;
 
-		// The length step. lengthMeters is the length it set, measured from lengthFrom:
+		// The length step's report. Nothing on screen reads these fields yet (the look slice does).
+		// lengthMeters is the length it set, measured from lengthFrom:
 		// the previous point, or for RoundedAlongGuide the guide's node (guides[0].from).
 		LengthSnapKind	   lengthSnap = LengthSnapKind::None;
 		float			   lengthMeters = 0.0F;

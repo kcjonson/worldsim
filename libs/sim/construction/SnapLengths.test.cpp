@@ -336,7 +336,9 @@ TEST_F(CommonLengths, MinimumAndRange) {
 	const Vec2		  start{0.0F, -8.0F};
 	const LengthStudy study = lengths({start}, {3.9F, -8.0F});
 	EXPECT_EQ(countEntries(study, LengthEntryStatus::UnderMinimum), 2U);
-	EXPECT_EQ(countEntries(study, LengthEntryStatus::OutOfRange), 4U);
+	// The far building's bounds lie past the range, so it lends no entries at all.
+	EXPECT_EQ(study.entries.size(), 4U);
+	EXPECT_EQ(countEntries(study, LengthEntryStatus::OutOfRange), 0U);
 
 	snapping.commonLengthAllBuildings = true;
 	const SnapResult everywhere = snap({start}, {6.9F, -8.0F});
@@ -351,7 +353,8 @@ TEST_F(CommonLengths, MinimumAndRangeBoundaries) {
 	built.addFoundation(rectangle(30.0, 22.001, 0.0, 7.0, 7.0));
 	const LengthStudy study = lengths({}, {20.0F, -8.0F});
 	EXPECT_EQ(countEntries(study, LengthEntryStatus::UnderMinimum), 0U);
-	EXPECT_EQ(countEntries(study, LengthEntryStatus::OutOfRange), 4U);
+	EXPECT_EQ(study.entries.size(), 8U);
+	EXPECT_EQ(countEntries(study, LengthEntryStatus::OutOfRange), 0U);
 	expectLengths(keptLengths(study), {3.0, 0.5, 4.0});
 }
 

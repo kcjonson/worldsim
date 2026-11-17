@@ -9,6 +9,8 @@
 namespace construction::snap_lengths {
 
 	using snap_guides::distanceBetween;
+	using snap_guides::distanceToBounds;
+	using snap_guides::distanceToBox;
 	using snap_guides::distanceToSegment;
 	using snap_guides::dot;
 	using snap_guides::GuideContext;
@@ -54,14 +56,16 @@ namespace construction::snap_lengths {
 		const double				  minimum = static_cast<double>(snapping.commonLengthMinimumMeters);
 		const double				  range = static_cast<double>(snapping.commonLengthRangeMeters);
 		const bool					  everywhere = snapping.commonLengthAllBuildings;
-		const auto add = [&](Vec2d start, Vec2d end, LengthOwner owner, std::uint64_t ownerId, std::uint64_t recency, double ownerMeters) {
+		// Where the range applies, an owner whose bounds lie past it is skipped unread.
+		const bool	 culling = !everywhere;
+		const double cullBeyond = range + kRangeCullSlackMeters;
+		// The range applies to every owner but the shape.
+		const auto add = [&](Vec2d start, Vec2d end, bool ranged, std::uint64_t recency, double ownerMeters) {
 			LengthEntry& entry = study.entries.emplace_back(
 				LengthEntry{
 					.start = start,
 					.end = end,
 					.lengthMeters = distanceBetween(start, end),
-					.owner = owner,
-					.ownerId = ownerId,
 					.recency = recency,
 					.ownerMeters = ownerMeters,
 					.order = study.entries.size(),
@@ -69,7 +73,7 @@ namespace construction::snap_lengths {
 			);
 			if (entry.lengthMeters < minimum) {
 				entry.status = LengthEntryStatus::UnderMinimum;
-			} else if (owner != LengthOwner::Shape && !everywhere && ownerMeters > range) {
+			} else if (ranged && !everywhere && ownerMeters > range) {
 				entry.status = LengthEntryStatus::OutOfRange;
 			}
 		};
@@ -77,16 +81,19 @@ namespace construction::snap_lengths {
 		if (snapping.commonLengthSourceShape) {
 			const std::vector<::Foundation::Vec2>& points = *context.points;
 			for (std::size_t index = 0; index + 1 < points.size(); ++index) {
-				add(toVec2d(points[index]), toVec2d(points[index + 1]), LengthOwner::Shape, 0, kShapeRecency, 0.0);
+				add(toVec2d(points[index]), toVec2d(points[index + 1]), false, kShapeRecency, 0.0);
 			}
 		}
 
 		if (snapping.commonLengthSourceBuildings) {
 			const bool wallTool = context.tool == snap_guides::SnapTool::Wall;
-			const bool inset = wallTool && snapping.commonLengthWallsReadInsetFoundation;
+			const bool inset = wallTool && context.wallHalfThicknessMm > 0 && snapping.commonLengthWallsReadInsetFoundation;
 			for (const Foundation& foundation : world.foundations()) {
 				const geometry::Ring& ring = foundation.ring;
 				const std::size_t	  count = ring.size();
+				if (count == 0 || (culling && distanceToBounds(context.cursor, ring) > cullBeyond)) {
+					continue;
+				}
 				double				  ownerMeters = std::numeric_limits<double>::infinity();
 				for (std::size_t index = 0; index < count; ++index) {
 					ownerMeters = std::min(ownerMeters, distanceToSegment(context.cursor, meters(ring[index]), meters(ring[(index + 1) % count])));
@@ -94,13 +101,14 @@ namespace construction::snap_lengths {
 				// Only an owner in reach pays for its insets; the others are dropped whatever their length.
 				const bool reachable = everywhere || ownerMeters <= range;
 				const auto corner = [&](std::size_t index) {
-					return inset && reachable ? toVec2d(outerFaceFlushCorner(ring, index, context.wallHalfThicknessMm)) : meters(ring[index]);
+					return inset && reachable ? snap_guides::outerFaceFlushCornerDouble(ring, index, context.wallHalfThicknessMm)
+											  : meters(ring[index]);
 				};
 				const Vec2d first = corner(0);
 				Vec2d		start = first;
 				for (std::size_t index = 0; index < count; ++index) {
 					const Vec2d end = index + 1 < count ? corner(index + 1) : first;
-					add(start, end, LengthOwner::Foundation, foundation.id, foundation.placementOrder, ownerMeters);
+					add(start, end, true, foundation.placementOrder, ownerMeters);
 					start = end;
 				}
 			}
@@ -115,14 +123,25 @@ namespace construction::snap_lengths {
 				};
 				for (const ChainRun& chain : study.chains) {
 					double ownerMeters = std::numeric_limits<double>::infinity();
+					bool   anyNear = false;
 					for (std::size_t member = chain.first; member < chain.first + chain.count; ++member) {
 						const auto [start, end] = endpoints(study.chainSegments[member].second);
+						const Vec2d low{std::min(start.x, end.x), std::min(start.y, end.y)};
+						const Vec2d high{std::max(start.x, end.x), std::max(start.y, end.y)};
+						if (culling && distanceToBox(context.cursor, low, high) > cullBeyond) {
+							continue;
+						}
+						anyNear = true;
 						ownerMeters = std::min(ownerMeters, distanceToSegment(context.cursor, start, end));
+					}
+					// Every segment past the range: the chain lends nothing.
+					if (!anyNear) {
+						continue;
 					}
 					const std::uint64_t placementOrder = study.chainSegments[chain.first].first;
 					for (std::size_t member = chain.first; member < chain.first + chain.count; ++member) {
 						const auto [start, end] = endpoints(study.chainSegments[member].second);
-						add(start, end, LengthOwner::WallChain, placementOrder, placementOrder, ownerMeters);
+						add(start, end, true, placementOrder, ownerMeters);
 					}
 				}
 			}
@@ -133,7 +152,10 @@ namespace construction::snap_lengths {
 				study.walk.push_back(index);
 			}
 		}
-		// Newest owner first (the shape, then the highest placement order), then nearest, then generation order.
+		// Newest owner first (the shape, then the highest placement order), then nearest, then
+		// generation order. Recency leads because the first entry of a group sets its length: a
+		// building just placed is the one being matched, so its edge wins a merge over an older,
+		// nearer one's.
 		std::sort(study.walk.begin(), study.walk.end(), [&](std::size_t first, std::size_t second) {
 			const LengthEntry& firstEntry = study.entries[first];
 			const LengthEntry& secondEntry = study.entries[second];
@@ -191,10 +213,9 @@ namespace construction::snap_lengths {
 			}
 			return firstGroup.lengthMeters < secondGroup.lengthMeters;
 		});
-		for (std::size_t rank = 0; rank < study.ranked.size(); ++rank) {
-			study.groups[study.ranked[rank]].rank = rank;
-		}
-		study.keptCount = std::min(study.groups.size(), static_cast<std::size_t>(std::max(0, snapping.commonLengthMaxCount)));
+		// Never more than the result reports, so no length catches without its label.
+		const auto maxCount = std::min(static_cast<std::size_t>(std::max(0, snapping.commonLengthMaxCount)), kMaxReportedCommonLengths);
+		study.keptCount = std::min(study.groups.size(), maxCount);
 	}
 
 	std::optional<Vec2d> targetAtLength(Vec2d segmentStart, double length, Vec2d lineOrigin, Vec2d lineDirection, Vec2d nearPoint) {

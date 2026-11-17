@@ -39,26 +39,6 @@ namespace construction::snap_guides {
 			return std::atan2(vector.y, vector.x);
 		}
 
-		// Distance from `point` to the axis-aligned bounds of `ring`: no ring vertex or edge
-		// is nearer, so a ring farther than the range is out of range whole.
-		double distanceToBounds(Vec2d point, const geometry::Ring& ring) {
-			std::int64_t minimumX = std::numeric_limits<std::int64_t>::max();
-			std::int64_t minimumY = std::numeric_limits<std::int64_t>::max();
-			std::int64_t maximumX = std::numeric_limits<std::int64_t>::min();
-			std::int64_t maximumY = std::numeric_limits<std::int64_t>::min();
-			for (const geometry::Vec2i64& vertex : ring) {
-				minimumX = std::min(minimumX, vertex.x);
-				minimumY = std::min(minimumY, vertex.y);
-				maximumX = std::max(maximumX, vertex.x);
-				maximumY = std::max(maximumY, vertex.y);
-			}
-			const Vec2d	 low = meters({minimumX, minimumY});
-			const Vec2d	 high = meters({maximumX, maximumY});
-			const double outsideX = std::max({low.x - point.x, 0.0, point.x - high.x});
-			const double outsideY = std::max({low.y - point.y, 0.0, point.y - high.y});
-			return std::sqrt(outsideX * outsideX + outsideY * outsideY);
-		}
-
 		// How far a corner's outer-face-flush inset can sit from the raw corner: the two
 		// inset lines meet on the bisector at inset / sin(half the angle between the edges).
 		// Infinite for a spike, so such a corner is always computed.
@@ -230,6 +210,26 @@ namespace construction::snap_guides {
 			return distanceBetween(point, end);
 		}
 		return distanceBetween(point, start + edge * parameter);
+	}
+
+	double distanceToBox(Vec2d point, Vec2d low, Vec2d high) {
+		const double outsideX = std::max({low.x - point.x, 0.0, point.x - high.x});
+		const double outsideY = std::max({low.y - point.y, 0.0, point.y - high.y});
+		return std::sqrt(outsideX * outsideX + outsideY * outsideY);
+	}
+
+	double distanceToBounds(Vec2d point, const geometry::Ring& ring) {
+		std::int64_t minimumX = std::numeric_limits<std::int64_t>::max();
+		std::int64_t minimumY = std::numeric_limits<std::int64_t>::max();
+		std::int64_t maximumX = std::numeric_limits<std::int64_t>::min();
+		std::int64_t maximumY = std::numeric_limits<std::int64_t>::min();
+		for (const geometry::Vec2i64& vertex : ring) {
+			minimumX = std::min(minimumX, vertex.x);
+			minimumY = std::min(minimumY, vertex.y);
+			maximumX = std::max(maximumX, vertex.x);
+			maximumY = std::max(maximumY, vertex.y);
+		}
+		return distanceToBox(point, meters({minimumX, minimumY}), meters({maximumX, maximumY}));
 	}
 
 	double roundHalfUp(double value) {
