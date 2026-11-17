@@ -71,14 +71,37 @@ TEST(InventoryMassTests, PerTrip_DrivesMultipleTripsForLargeManifest) {
 	EXPECT_EQ(trips, 3);
 }
 
+// Stick is one-hand; Wood and Log are two-hand. Two of the same def in both hands is a mirrored
+// armful only for a two-hand def; for a one-hand def it is two units.
+class HandsTest : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		auto& reg = assets::AssetRegistry::Get();
+		reg.clearDefinitions();
+		registerItem("Stick", 1, 0.5F);
+		registerItem("Wood", 2, 2.5F);
+		registerItem("Log", 2, 2.0F);
+	}
+
+	void TearDown() override { assets::AssetRegistry::Get().clearDefinitions(); }
+
+	static void registerItem(const char* name, uint8_t hands, float massKg) {
+		assets::AssetDefinition def;
+		def.defName = name;
+		def.handsRequired = hands;
+		def.itemProperties = assets::ItemProperties{};
+		def.itemProperties->massKg = massKg;
+		assets::AssetRegistry::Get().registerTestDefinition(std::move(def));
+	}
+};
+
 // ============================================================================
 // Hand-carried bulk materials: a two-hand armful occupies BOTH hands as one
-// logical stack, so it must be counted once and the mirror kept in sync. These
-// are registry-free (pure inventory ops); the weight-clamped addArmful is
-// exercised end-to-end once Wood becomes two-hand.
+// logical stack, so it must be counted once and the mirror kept in sync. A
+// one-hand def in both hands is two units instead (Stick below).
 // ============================================================================
 
-TEST(InventoryMassTests, HandHeldQuantity_TwoHandMirrorCountsOnce) {
+TEST_F(HandsTest, HandHeldQuantity_TwoHandMirrorCountsOnce) {
 	Inventory inv;
 	inv.leftHand = ItemStack{"Wood", 12};
 	inv.rightHand = ItemStack{"Wood", 12}; // same stack mirrored across both hands
@@ -94,7 +117,7 @@ TEST(InventoryMassTests, HandHeldQuantity_DistinctOneHandItemsCountPerHand) {
 	EXPECT_EQ(handHeldQuantity(inv, "Wood"), 0U);
 }
 
-TEST(InventoryMassTests, AvailableQuantity_SumsBackpackAndHands) {
+TEST_F(HandsTest, AvailableQuantity_SumsBackpackAndHands) {
 	Inventory inv;
 	inv.addItem("Stone", 5);
 	inv.leftHand = ItemStack{"Wood", 10};
@@ -103,7 +126,7 @@ TEST(InventoryMassTests, AvailableQuantity_SumsBackpackAndHands) {
 	EXPECT_EQ(availableQuantity(inv, "Stone"), 5U); // backpack
 }
 
-TEST(InventoryMassTests, RemoveFromHands_DecrementsMirrorInSync) {
+TEST_F(HandsTest, RemoveFromHands_DecrementsMirrorInSync) {
 	Inventory inv;
 	inv.leftHand = ItemStack{"Wood", 10};
 	inv.rightHand = ItemStack{"Wood", 10};
@@ -114,7 +137,7 @@ TEST(InventoryMassTests, RemoveFromHands_DecrementsMirrorInSync) {
 	EXPECT_EQ(inv.rightHand->quantity, 6U); // both hands stay equal
 }
 
-TEST(InventoryMassTests, RemoveFromHands_ClearsBothHandsWhenEmptied) {
+TEST_F(HandsTest, RemoveFromHands_ClearsBothHandsWhenEmptied) {
 	Inventory inv;
 	inv.leftHand = ItemStack{"Wood", 8};
 	inv.rightHand = ItemStack{"Wood", 8};
@@ -358,4 +381,42 @@ TEST_F(GiveItemCascadeTest, StowHeldTool_TwoHandArmfulLeftAlone) {
 	// A two-hand armful can't be stowed and isn't in its own way; it stays put.
 	EXPECT_EQ(handHeldQuantity(inv, "BulkLog"), 5U) << "Two-hand armful untouched";
 	EXPECT_EQ(drops.total, 0U);
+}
+
+// ============================================================================
+// One-hand units of the same def, one per hand, are two units: counted,
+// weighed, and removed individually.
+// ============================================================================
+
+TEST_F(HandsTest, OneHandPair_CountsBothUnits) {
+	Inventory inv;
+	inv.leftHand = ItemStack{"Stick", 1};
+	inv.rightHand = ItemStack{"Stick", 1};
+	EXPECT_EQ(handHeldQuantity(inv, "Stick"), 2U);
+}
+
+TEST_F(HandsTest, OneHandPair_WeighsBothUnits) {
+	Inventory inv;
+	inv.leftHand = ItemStack{"Stick", 1};
+	inv.rightHand = ItemStack{"Stick", 1};
+	EXPECT_FLOAT_EQ(carriedCargoMassKg(inv, assets::AssetRegistry::Get()), 1.0F);
+}
+
+TEST_F(HandsTest, OneHandPair_RemoveFromHandsTakesOneUnitAtATime) {
+	Inventory inv;
+	inv.leftHand = ItemStack{"Stick", 1};
+	inv.rightHand = ItemStack{"Stick", 1};
+	EXPECT_EQ(removeFromHands(inv, "Stick", 1), 1U);
+	EXPECT_EQ(handHeldQuantity(inv, "Stick"), 1U);
+	EXPECT_EQ(removeFromHands(inv, "Stick", 5), 1U);
+	EXPECT_FALSE(inv.leftHand.has_value());
+	EXPECT_FALSE(inv.rightHand.has_value());
+}
+
+TEST_F(HandsTest, TwoHandMirrorStillCountsAndWeighsOnce) {
+	Inventory inv;
+	inv.leftHand = ItemStack{"Log", 3};
+	inv.rightHand = ItemStack{"Log", 3};
+	EXPECT_EQ(handHeldQuantity(inv, "Log"), 3U);
+	EXPECT_FLOAT_EQ(carriedCargoMassKg(inv, assets::AssetRegistry::Get()), 6.0F);
 }
