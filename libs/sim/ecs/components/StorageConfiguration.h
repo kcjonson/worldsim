@@ -199,6 +199,16 @@ struct StorageConfiguration {
 	/// Add a new rule
 	void addRule(StorageRule rule) { rules.push_back(std::move(rule)); }
 
+	/// Set the rule for an item: drops every rule with the same defName and category, then adds this
+	/// one. Returns how many it dropped.
+	size_t setRule(StorageRule rule) {
+		const size_t before = rules.size();
+		std::erase_if(rules, [&](const StorageRule& existing) { return existing.defName == rule.defName && existing.category == rule.category; });
+		const size_t dropped = before - rules.size();
+		rules.push_back(std::move(rule));
+		return dropped;
+	}
+
 	/// Remove a rule by index
 	void removeRule(size_t index) {
 		if (index < rules.size()) {

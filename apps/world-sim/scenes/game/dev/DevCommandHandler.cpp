@@ -1075,20 +1075,21 @@ namespace world_sim {
 		rule.priority = priority;
 		rule.minAmount = minAmount;
 		rule.maxAmount = maxAmount;
-		storageConfig->addRule(std::move(rule));
+		const size_t replaced = storageConfig->setRule(std::move(rule));
 
 		LOG_INFO(
 			Game,
-			"[DevAPI] storage: added rule to #%llu (item=%s, category=%u, priority=%s, min=%u, max=%u)",
+			"[DevAPI] storage: set rule on #%llu (item=%s, category=%u, priority=%s, min=%u, max=%u, replaced=%zu)",
 			static_cast<unsigned long long>(id),
 			defName.c_str(),
 			static_cast<unsigned>(category),
 			priorityStr.c_str(),
 			minAmount,
-			maxAmount
+			maxAmount,
+			replaced
 		);
-		m_ctx.ui->pushNotification("Dev", "Added storage rule: " + defName, ui::ToastSeverity::Info);
-		return app::DevResponse{.body = R"({"status":"ok","verb":"storage"})"};
+		m_ctx.ui->pushNotification("Dev", "Set storage rule: " + defName, ui::ToastSeverity::Info);
+		return app::DevResponse{.body = "{\"status\":\"ok\",\"verb\":\"storage\",\"replaced\":" + std::to_string(replaced) + "}"};
 	}
 
 	Foundation::Vec2 DevCommandHandler::parsePoint(const std::string& spec) {
@@ -1133,7 +1134,8 @@ namespace world_sim {
 				};
 				add(inv->leftHand);
 				// Two-handed items mirror in both hands; don't double-count.
-				if (!(inv->leftHand.has_value() && inv->rightHand.has_value() && inv->leftHand->defName == inv->rightHand->defName)) {
+				if (!(inv->leftHand.has_value() && inv->rightHand.has_value() && inv->leftHand->defName == inv->rightHand->defName &&
+					  ecs::itemIsTwoHand(assets::AssetRegistry::Get(), inv->leftHand->defName))) {
 					add(inv->rightHand);
 				}
 				for (const auto& stack : inv->items) {
