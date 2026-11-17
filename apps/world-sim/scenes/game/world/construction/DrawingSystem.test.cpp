@@ -1656,54 +1656,40 @@ TEST_F(DrawingStripVerdictTest, AFreeformPointerOnThePointJustPlacedProposesNoth
 // Alt leaves the pointer where it is, with the same result.
 TEST_F(DrawingStripVerdictTest, AFreeformPointerRestingOnAValidSnappedPointProposesItAndTheClickPlacesIt) {
 	world_sim::UserSettings::Get().drawing = world_sim::DrawingSettings{.angleSteps = true, .roundLengths = true, .showKeyGuide = true};
-	drawing->activateFoundationTool();
-	const glm::vec2 origin{0.0F, 0.0F};
-	const glm::vec2 pointer{10.0F, 1.0F};
-	ASSERT_TRUE(click(origin));
-	ASSERT_TRUE(click(pointer));
-	ASSERT_EQ(drawing->status().pointCount, 2) << lastToast();
+	for (const bool freeform : {false, true}) {
+		SCOPED_TRACE(::testing::Message() << "Alt " << freeform);
+		drawing->activateFoundationTool();
+		const glm::vec2 origin{0.0F, 0.0F};
+		const glm::vec2 pointer{10.0F, 1.0F};
+		ASSERT_TRUE(click(origin));
+		ASSERT_TRUE(click(pointer));
+		ASSERT_EQ(drawing->status().pointCount, 2) << lastToast();
 
-	hover(pointer);
-	expectTheStripReadsThePreview();
-	ASSERT_TRUE(click(pointer));
-	EXPECT_EQ(drawing->status().pointCount, 3) << lastToast();
-	EXPECT_FLOAT_EQ(drawing->status().areaSquareMeters, 5.0F);
+		const glm::vec2 screen = seen.screenOf(pointer);
+		drawing->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, freeform);
+		expectTheStripReadsThePreview();
+		ASSERT_TRUE(drawing->handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight, freeform));
+		EXPECT_EQ(drawing->status().pointCount, 3) << lastToast();
+		EXPECT_FLOAT_EQ(drawing->status().areaSquareMeters, 5.0F);
+	}
 }
 
-TEST_F(DrawingStripVerdictTest, AnAltTogglePointerRestingOnAValidSnappedPointProposesItAndTheClickPlacesIt) {
-	world_sim::UserSettings::Get().drawing = world_sim::DrawingSettings{.angleSteps = true, .roundLengths = true, .showKeyGuide = true};
-	drawing->activateFoundationTool();
-	const glm::vec2 origin{0.0F, 0.0F};
-	const glm::vec2 pointer{10.0F, 1.0F};
-	ASSERT_TRUE(click(origin));
-	ASSERT_TRUE(click(pointer));
-	ASSERT_EQ(drawing->status().pointCount, 2) << lastToast();
-
-	const glm::vec2 screen = seen.screenOf(pointer);
-	drawing->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
-	expectTheStripReadsThePreview();
-	ASSERT_TRUE(drawing->handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight, true));
-	EXPECT_EQ(drawing->status().pointCount, 3) << lastToast();
-	EXPECT_FLOAT_EQ(drawing->status().areaSquareMeters, 5.0F);
-}
-
-// The rest belongs to the click that placed the last point: after Backspace removes it, the same
-// pointer is a fresh proposal and its click places the point again.
-TEST_F(DrawingStripVerdictTest, AClickWithThePointerStillAfterBackspacePlacesThePointAgain) {
+// The rest belongs to the point just placed, so once that point is removed the same pointer is
+// judged afresh and its too-close refusal shows.
+TEST_F(DrawingStripVerdictTest, AfterBackspaceTheRestNoLongerHidesATooCloseRefusal) {
 	world_sim::UserSettings::Get().drawing = world_sim::DrawingSettings{.roundLengths = true, .showKeyGuide = true};
 	drawing->activateFoundationTool();
 	ASSERT_TRUE(click({0.0F, 0.0F}));
-	ASSERT_TRUE(click({6.0F, 0.0F}));
+	ASSERT_TRUE(click({0.45F, 0.0F}));
 	ASSERT_EQ(drawing->status().pointCount, 2) << lastToast();
-	hover({6.0F, 0.0F});
 	ASSERT_TRUE(drawing->removeLastPoint());
-	ASSERT_EQ(drawing->status().pointCount, 1);
-	EXPECT_TRUE(click({6.0F, 0.0F}));
-	EXPECT_EQ(drawing->status().pointCount, 2) << lastToast();
+	hoverFreeform({0.45F, 0.0F});
+	EXPECT_FALSE(drawing->status().valid);
+	EXPECT_FALSE(drawing->status().message.empty());
 }
 
-// The rest is the Freeform tool's: an Add edit's pointer on the point it just placed reads the
-// refusal.
+// The rest is the Freeform tool's rule only: an Add edit's pointer on the point it just placed
+// still reads the too-close refusal, so this fails if the rest leaks into the other tools.
 TEST_F(DrawingStripVerdictTest, AnEditPointerOnThePointJustPlacedReadsTheTooCloseRefusal) {
 	const construction::FoundationId target = blueprintFloor();
 	drawing->activateFoundationEditTool(target, construction::FoundationEditMode::Add);
