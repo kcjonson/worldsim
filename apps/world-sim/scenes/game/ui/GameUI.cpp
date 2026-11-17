@@ -155,7 +155,7 @@ namespace world_sim {
 		);
 
 		colonistDetailsDialog =
-			std::make_unique<ColonistDetailsDialog>(ColonistDetailsDialog::Args{.onClose = [this] { hideColonistDetails(); }});
+			std::make_unique<ColonistDetailsDialog>(ColonistDetailsDialog::Args{.traits = args.traits, .onClose = [this] { hideColonistDetails(); }});
 		craftingDialog = std::make_unique<CraftingDialog>(CraftingDialog::Args{
 			.onClose = [this] { hideCraftingDialog(); }, .onQueueRecipe = args.onQueueRecipe, .onCancelJob = args.onCancelJob
 		});

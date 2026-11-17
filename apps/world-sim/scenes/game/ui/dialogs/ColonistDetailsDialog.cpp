@@ -53,7 +53,8 @@ namespace world_sim {
 	} // namespace
 
 	ColonistDetailsDialog::ColonistDetailsDialog(const Args& args)
-		: onClose(args.onClose) {}
+		: onClose(args.onClose),
+		  model(args.traits) {}
 
 	void ColonistDetailsDialog::open(ui::Component& opener, ecs::EntityID newColonistId, int player) {
 		colonistId = newColonistId;

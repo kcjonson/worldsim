@@ -82,6 +82,7 @@ TEST_F(ConditionConfigTest, MistakesAreLoadErrors) {
 		<Kind name="pond" capability="Wet"/>
 		<Kind name="well" capability="Drinkable"/>
 		<Symbols name="kind">rock</Symbols>
+		<Symbols name="trait">brave</Symbols>
 		<Symbols name="mood" open="maybe"/>
 		<TaskGroup name="busy">haul</TaskGroup>
 		<Bogus/>)");
@@ -93,10 +94,11 @@ TEST_F(ConditionConfigTest, MistakesAreLoadErrors) {
 	EXPECT_TRUE(mentions(errors, "'Wet' is not a capability"));
 	EXPECT_TRUE(mentions(errors, "'Drinkable' is not a capability"));
 	EXPECT_TRUE(mentions(errors, "kinds are declared with <Kind>"));
+	EXPECT_TRUE(mentions(errors, "a.xml: trait names come from the trait definitions"));
 	EXPECT_TRUE(mentions(errors, "open=\"maybe\""));
 	EXPECT_TRUE(mentions(errors, "b.xml: task group 'busy' is already declared in a.xml"));
 	EXPECT_TRUE(mentions(errors, "unknown element <Bogus>"));
-	EXPECT_EQ(errors.size(), 9U);
+	EXPECT_EQ(errors.size(), 10U);
 }
 
 TEST_F(ConditionConfigTest, NightHoursAreRequired) {
@@ -129,8 +131,10 @@ TEST_F(ConditionConfigTest, TheShippedVocabularyListsNoEngineNames) {
 	const auto& sets = load.config.symbolSets;
 	EXPECT_TRUE(sets.at("need").names.empty());
 	EXPECT_TRUE(sets.at("attribute").names.empty());
+	EXPECT_TRUE(sets.at("trait").names.empty());
+	EXPECT_FALSE(sets.at("trait").open);
 	EXPECT_EQ(sets.at("task").names, (std::vector<std::string>{"work"}));
-	for (const char* open : {"trait", "behavior", "event", "mood_cause"}) {
+	for (const char* open : {"behavior", "event", "mood_cause"}) {
 		EXPECT_TRUE(sets.at(open).open) << open;
 		EXPECT_TRUE(sets.at(open).names.empty()) << open;
 	}

@@ -7,9 +7,10 @@
 
 namespace conditions {
 
-	std::vector<std::string> buildSimVocabulary(ConditionVocabulary& vocabulary, const assets::ConditionConfig& config) {
+	std::vector<std::string>
+	buildSimVocabulary(ConditionVocabulary& vocabulary, const assets::ConditionConfig& config, const assets::TraitRegistry& traits) {
 		std::vector<std::string> errors = vocabulary.declare(config);
-		provideColonistTerms(vocabulary, config, errors);
+		provideColonistTerms(vocabulary, config, traits, errors);
 		provideNearbyTerms(vocabulary, config, errors);
 		provideTimeTerms(vocabulary, config, errors);
 		vocabulary.freeze();

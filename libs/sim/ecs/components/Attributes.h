@@ -1,9 +1,9 @@
 #pragma once
 
 // Attributes Component - a colonist's static physical and mental attributes.
-// Assigned at generation, 0.0-20.0 scale (mirrors Skills). Today only Strength is wired:
+// Assigned at generation, 0.0-20.0 scale (mirrors Skills). Only Strength is read by a system so far:
 // it derives hand-carry capacity. The rest are defined so upcoming systems (melee, labor
-// speed, social) have a home; backstory/trait-driven rolls come later.
+// speed, social) have a home. Traits never change an attribute; they act through conditions.
 //
 // See /docs/design/game-systems/colonists/attributes.md for design details.
 

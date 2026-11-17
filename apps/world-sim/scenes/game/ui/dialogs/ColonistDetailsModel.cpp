@@ -12,6 +12,7 @@
 #include <ecs/components/Mood.h>
 #include <ecs/components/Needs.h>
 #include <ecs/components/Task.h>
+#include <ecs/components/Traits.h>
 #include <ecs/components/Transform.h>
 
 #include <ecs/InventoryMass.h>
@@ -135,6 +136,13 @@ namespace world_sim {
 		// Placeholder data
 		bioData.age = "--";
 		bioData.traits.clear();
+		if (const auto* colonistTraits = world.getComponent<ecs::Traits>(colonistId)) {
+			for (const std::string& id : colonistTraits->ids) {
+				const assets::TraitDef* trait = traits.find(id);
+				assert(trait != nullptr && "Every colonist's traits are rolled from the registry the model is given");
+				bioData.traits.push_back(trait->name);
+			}
+		}
 		bioData.background = "No background";
 
 		const auto* mood = world.getComponent<ecs::Mood>(colonistId);

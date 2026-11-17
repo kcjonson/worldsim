@@ -841,6 +841,9 @@ namespace ecs::test {
 		);
 		EXPECT_TRUE(mentions(errorsFor(R"(<thought id="a" importance="normal"><line>Hi.</line></thought>)"), "lists no feeling"));
 		EXPECT_TRUE(mentions(
+			errorsFor(R"x(<thought id="a" importance="normal"><feeling is="content" when="trait(nonesuch)"/></thought>)x"), "nonesuch"
+		));
+		EXPECT_TRUE(mentions(
 			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content" when="attribute(sanity) >"/></thought>)"), "at column"
 		));
 		EXPECT_TRUE(mentions(

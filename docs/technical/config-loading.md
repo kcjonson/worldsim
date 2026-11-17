@@ -74,16 +74,17 @@ assets/config/work/work-types.xml
 assets/config/work/priority-tuning.xml
 assets/config/construction/*.xml
 assets/config/colonists/mood.xml
+assets/config/colonists/traits/*.xml
 assets/config/conditions/*.xml
 assets/config/thoughts/*.xml
 ```
 
-`conditions/` and `thoughts/` load through `ecs::loadColonistRules(configRoot)` (libs/sim/ecs/ColonistRules.h):
-the condition vocabulary is declared, answered by the sim's terms, and frozen first, then the thought
+`colonists/traits/`, `conditions/` and `thoughts/` load through `ecs::loadColonistRules(configRoot)` (libs/sim/ecs/ColonistRules.h):
+the traits first, then the condition vocabulary is declared, answered by the sim's terms, and frozen, then the thought
 types are read and their conditions parsed against it (`loadConditionVocabulary` and `loadThoughtTypes`,
 which the tests use too). Each folder's own files load before its subfolders' (`assets::configFilesIn`),
 so a mod adds or replaces by adding a file there. A clean load logs its counts at info level (terms;
-feelings and thought types). `GameLoadingScene` adds its errors, prefixed `[conditions]` or
+feelings and thought types). `GameLoadingScene` adds its errors, prefixed `[traits]`, `[conditions]` or
 `[thoughts]`, to the config errors the loading screen shows, and hands the rules to `GameScene` through
 `GameWorldState`. A direct switch to the game scene skips the loading scene, so `GameScene` loads them
 itself, once; when they are broken it hands the errors to the splash (`world_sim::failColonistRules`),
@@ -93,6 +94,24 @@ which shows them after the ground bake and loads nothing.
 weights by need name, and the band names) and is checked by `ConfigValidator::validateMood`.
 The need names belong to the sim, so `GameLoadingScene` adds `ecs::moodConfigErrors` (a name that is
 no need, a need with no weight) to `loadWorkConfig`'s errors before the game scene is entered.
+
+Every `.xml` file under `colonists/traits/` loads into an `assets::TraitRegistry` (the trait ids, names and
+descriptions, the 1 to 3 count, and the exclusive groups): the folder's own files first, then its subfolders' in
+path order, a later file replacing a trait of the same id with a log line. `<Exclusive>` groups from every file
+accumulate, so a trait in several groups is excluded from all of their members. A `<Count>` min of 0 is legal; a min
+the exclusive groups make unreachable is an error, and a max above what they allow is legal (the roll gives as many
+as fit). `TraitRegistry::reachable` answers both the load check and each draw of `ecs::rollTraits`, so a roll never
+gives fewer than the min; it rejects an unreachable min by a bound (at most one of each group) before any search. A
+trait id that is a word of the condition language (`assets::kConditionReservedWords`, which the condition parser
+also reads) is an error. Like the conditions and thoughts, any problem (a bad number, an unknown element or attribute)
+means the folder loads nothing.
+
+The registry is no singleton: `ecs::loadColonistRules` builds it as the first stage and `ecs::ColonistRules` owns it
+beside the vocabulary and the thought types, so whatever needs it (the colonist spawn, the dossier's Bio tab) takes it
+from the rules the world was built with. The conditions take their `trait` names from it: the condition loader declares
+the `trait` symbol set itself, and a conditions file declaring `<Symbols name="trait">` is an error naming that file.
+So a `trait(...)` naming an id no file declares is a condition error naming the thought or condition file. Its errors
+are prefixed `[traits]` and reach the loading screen and the splash the same way as theirs.
 
 ### Mod Paths (Future)
 
