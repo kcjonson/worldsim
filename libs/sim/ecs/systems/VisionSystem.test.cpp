@@ -581,6 +581,36 @@ TEST_F(VisionSystemTest, SeenWallRememberedHiddenWallNot) {
 	EXPECT_FALSE(mem->knowsSegment(behind)) << "a wall behind the first is occluded and must not be seen";
 }
 
+// The shortest wall the tools allow is a soft body: it is left out of the visibility polygon, so a
+// target behind it is seen and the polygon is the plain sight polygon to his reach, yet a colonist who
+// sees it remembers it, and it is among his sight bodies.
+TEST_F(VisionSystemTest, WallStubIsLeftOutOfThePolygonAndStillRemembered) {
+	ConstructionWorld cw;
+	const SegmentId	  stub = buildWall(cw, {3000, -250}, {3000, 250});
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	const EntityID	observer = spawnObserver(world, {0.0F, 0.0F});
+	const glm::vec2 behind{5.0F, 0.0F};
+	spawnTarget(world, behind);
+	tick(sys);
+
+	EXPECT_TRUE(remembers(world, observer, behind)) << "the stub hides nothing";
+	const Memory* mem = world.getComponent<Memory>(observer);
+	EXPECT_TRUE(mem->knowsSegment(stub)) << "a stub he sees joins memory";
+	const std::optional<VisionSystem::SightShape> shape = sys.sightShape(observer);
+	ASSERT_TRUE(shape.has_value());
+	ASSERT_NE(shape->polygon, nullptr) << "any wall in reach takes the polygon, so the structure pass runs";
+	const std::optional<VisionSystem::SightBodies> bodies = sys.sightBodies(observer);
+	ASSERT_TRUE(bodies.has_value());
+	EXPECT_EQ(*shape->polygon, geometry::sightPolygon({0, 0}, bodies->reachMm)) << "nothing occludes";
+	ASSERT_EQ(bodies->bodies->size(), 1U);
+	EXPECT_EQ(bodies->bodies->front().source, vision::SightBody::Source::Wall);
+	EXPECT_EQ(bodies->bodies->front().kind, vision::BodyKind::Soft);
+	EXPECT_TRUE(bodies->shadowEdges->empty());
+}
+
 // An opening on a seen wall is recorded too.
 TEST_F(VisionSystemTest, OpeningOnSeenWallRemembered) {
 	ConstructionWorld cw;

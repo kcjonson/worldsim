@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <random>
 #include <string>
 #include <utility>
@@ -231,8 +232,8 @@ namespace {
 	// from points on the line of each occluder past both its ends (an eye looking exactly along a
 	// face or an end cap), is the same built from the facing occluders as from all of them
 	// (culledSightIsTheSame with `toleranceMm`). The query says it culled when
-	// backFacesHiddenFrom the eye holds with an occluder in range, and anyFacingOccluder agrees
-	// with it, from those eyes and one out of range of every wall.
+	// backFacesHiddenFrom the eye holds with an occluder in range, from those eyes and one out of
+	// range of every wall.
 	void expectFacingSightIsTheSame(
 		const ConstructionWorld&	world,
 		Vec2i64						low,
@@ -267,9 +268,7 @@ namespace {
 			index.queryOccluders(eye, kSightMm, all);
 			const bool culledHere = index.queryFacingOccluders(eye, kSightMm, facing);
 			culled += all.size() - facing.size();
-			if ((culledHere != (!all.empty() && index.backFacesHiddenFrom(eye, kSightMm)) ||
-				 index.anyFacingOccluder(eye, kSightMm) != !facing.empty()) &&
-				++misreported <= 5) {
+			if (culledHere != (!all.empty() && index.backFacesHiddenFrom(eye, kSightMm)) && ++misreported <= 5) {
 				ADD_FAILURE() << "the query from (" << eye.x << ", " << eye.y << ") misreports";
 			}
 			if (!culledSightIsTheSame(index, eye, kSightMm, toleranceMm) && ++differ <= 5) {
@@ -505,6 +504,88 @@ TEST_F(GeometryIndexTest, RejectedGraphOccludesAsRawBands) {
 		EXPECT_NE(std::find(band.begin(), band.end(), occluder.seg.a), band.end());
 		EXPECT_NE(std::find(band.begin(), band.end(), occluder.seg.b), band.end());
 	}
+}
+
+// --- Bodies -------------------------------------------------------------------
+
+// The shortest wall the tools allow is a soft body: left out of every sight query, so sight passes it
+// and a point inside it is not inside the solid, while queryOccluders still holds its four edges for
+// StoreOrDrop. A 2 m wall is opaque, and so is the stub once the threshold falls below its diameter.
+TEST_F(GeometryIndexTest, WallStubIsSoftAndLeftOutOfSight) {
+	ConstructionWorld world;
+	buildWall(world, {0, 0}, {500, 0});
+	buildWall(world, {5000, 0}, {7000, 0});
+	GeometryIndex index;
+	index.setConstructionWorld(&world);
+	index.rebuildIfStale();
+	ASSERT_EQ(index.bodies().size(), 2U) << "one body a connected graph";
+	const auto stubIndex = static_cast<std::size_t>(index.bodies()[0].low.x < 1000 ? 0 : 1);
+	const GeometryIndex::WallBody& stub = index.bodies()[stubIndex];
+	EXPECT_EQ(stub.kind, vision::BodyKind::Soft) << "diameter " << stub.diameterMm;
+	EXPECT_EQ(index.bodies()[1 - stubIndex].kind, vision::BodyKind::Opaque);
+
+	const Vec2i64				 eye{250, -1000};
+	std::vector<OccluderSegment> facing;
+	EXPECT_FALSE(index.queryFacingOccluders(eye, 1500, facing));
+	EXPECT_TRUE(facing.empty()) << "the visibility polygon never sees a stub";
+	EXPECT_TRUE(sees(facing, eye, {250, 1000}));
+	EXPECT_FALSE(index.insideSolid({250, 0}));
+	EXPECT_TRUE(index.insideSolid({6000, 0}));
+	std::vector<OccluderSegment> all;
+	index.queryOccluders(eye, 1500, all);
+	EXPECT_EQ(all.size(), 4U) << "StoreOrDrop's walls keep it";
+	std::vector<std::size_t> near;
+	index.bodiesWithin(eye, 1500, near);
+	EXPECT_EQ(near, std::vector<std::size_t>{stubIndex});
+
+	const std::uint64_t generation = index.generation();
+	index.setOpaqueLeastDiameterMm(500);
+	index.rebuildIfStale();
+	EXPECT_GT(index.generation(), generation) << "a threshold change rebuilds";
+	EXPECT_EQ(index.bodies()[stubIndex].kind, vision::BodyKind::Opaque);
+	index.queryFacingOccluders(eye, 1500, facing);
+	EXPECT_FALSE(facing.empty());
+}
+
+// A graph the offsetter rejects is one body of all its walls' raw bands, its diameter taken over all
+// their corners, so it takes the kind its walls take together: the 50 mm wall in it, a soft stub on
+// its own, occludes with the rest. An accepted graph of the same corner without that wall is within a
+// band's width of its diameter, and away from the threshold both take one kind.
+TEST_F(GeometryIndexTest, RejectedGraphIsOneBodyOfItsWalls) {
+	const std::vector<geometry::WallSegment> rejected = {
+		{{19000, 500}, {20000, 0}, 150}, {{20000, 0}, {20050, 0}, 150}, {{20050, 0}, {21050, 500}, 150}};
+	const std::vector<geometry::WallSegment> accepted = {{{19000, 500}, {20000, 0}, 150}, {{20000, 0}, {21050, 500}, 150}};
+	ASSERT_NE(geometry::resolveWallBands(rejected, geometry::kDefaultMiterLimit).status, geometry::OffsetStatus::Ok);
+	ASSERT_TRUE(geometry::bandsAccepted(geometry::resolveWallBands(accepted, geometry::kDefaultMiterLimit)));
+
+	const auto bodiesOf = [](const std::vector<geometry::WallSegment>& walls, std::int64_t leastMm) {
+		auto world = std::make_unique<ConstructionWorld>();
+		for (const geometry::WallSegment& wall : walls) {
+			buildWall(*world, wall.a, wall.b, "Heavy");
+		}
+		GeometryIndex index;
+		index.setOpaqueLeastDiameterMm(leastMm);
+		index.setConstructionWorld(world.get());
+		index.rebuildIfStale();
+		return index.bodies();
+	};
+	const std::vector<GeometryIndex::WallBody> together = bodiesOf(rejected, 600);
+	ASSERT_EQ(together.size(), 1U);
+	EXPECT_EQ(together[0].edges.size(), 12U) << "four edges a wall";
+	std::vector<Vec2i64> corners;
+	for (const geometry::WallSegment& wall : rejected) {
+		const geometry::Ring band = geometry::band(wall.a, wall.b, 150);
+		corners.insert(corners.end(), band.begin(), band.end());
+	}
+	EXPECT_EQ(together[0].diameterSquared, vision::diameterSquared(corners));
+	EXPECT_EQ(together[0].kind, vision::BodyKind::Opaque);
+
+	const std::vector<GeometryIndex::WallBody> joined = bodiesOf(accepted, 600);
+	ASSERT_EQ(joined.size(), 1U);
+	EXPECT_NEAR(static_cast<double>(together[0].diameterMm), static_cast<double>(joined[0].diameterMm), 300.0);
+	EXPECT_EQ(joined[0].kind, vision::BodyKind::Opaque);
+	EXPECT_EQ(bodiesOf(rejected, 3000)[0].kind, vision::BodyKind::Soft);
+	EXPECT_EQ(bodiesOf(accepted, 3000)[0].kind, vision::BodyKind::Soft);
 }
 
 // A graph the offsetter rejects still passes sight through its doors and windows: a

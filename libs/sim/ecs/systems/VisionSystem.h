@@ -9,6 +9,9 @@
 #include "../EntityID.h"
 
 #include <vision/GeometryIndex.h>
+#include <vision/PlacedOccluderIndex.h>
+#include <vision/SightBody.h>
+#include <vision/SightTunables.h>
 
 #include <world/chunk/ChunkCoordinate.h>
 
@@ -45,14 +48,42 @@ struct Memory;
 ///
 /// Performance: Throttled to run every N frames (default 5) since colonists don't
 /// move fast enough to need per-frame vision updates.
+///
+/// Sight reads bodies (sight-softening.md 2): wall bodies from the GeometryIndex it owns, placed rings
+/// from NavigationSystem's placed occluder index, never the nav mesh. Opaque bodies occlude; soft
+/// ones (a tree, a wall stub) do not, and a mover, water, a ford, or the mesh's bounds never do.
 class VisionSystem : public ISystem {
   public:
-	/// How far an observer may move from where his visibility polygon was built before it is rebuilt.
-	/// The polygon is built this much past sight, so it holds his sight from anywhere in that stretch
-	/// (player-visibility.md 3.3); what vision decides with it is also held to his sight radius.
-	static constexpr float kSightRebuildStepMeters = 0.5F;
+	/// How far an observer may move from where his sight shape was built before it is rebuilt.
+	/// The shape is built to `reach`, sight plus `lead`, so it holds his sight from anywhere he can be
+	/// before the next pass (sight-softening.md 2.4); what vision decides with it is held to his sight.
+	static constexpr float		  kSightRebuildStepMeters = 0.5F;
+	static constexpr std::int64_t kSightRebuildStepMm	   = 500;
 
 	void update(float deltaTime) override;
+
+	/// The sight tunables (sight-softening.md 9). The setter clamps every field to its range; a change
+	/// re-decides every body's kind where a threshold moved and rebuilds every observer's shape at the
+	/// next pass.
+	[[nodiscard]] const vision::SightTunables& sightTunables() const { return m_tunables; }
+	void									   setSightTunables(const vision::SightTunables& tunables);
+
+	/// The bodies within `reach` of an observer's last build (sight-softening.md 2.4), each with its
+	/// outline, kind, serial or wall body, and arrival fraction; the build's shadow edges, indexing
+	/// into `bodies`; and the `lead` that pass computed. Valid until vision's next pass. Empty for an
+	/// entity vision has not observed.
+	struct SightBodies {
+		const std::vector<vision::SightBody>*  bodies	   = nullptr;
+		const std::vector<vision::ShadowEdge>* shadowEdges = nullptr;
+		std::int64_t						   leadMm	   = 0;
+		std::int64_t						   reachMm	   = 0;
+		geometry::Vec2i64					   eyeCentre{0, 0};
+	};
+	[[nodiscard]] std::optional<SightBodies> sightBodies(EntityID observer) const;
+
+	/// The visibility polygon round `centre` out to `reachMm` that the opaque bodies there leave:
+	/// the walls' facing occluders and the opaque placed rings in reach. What the sweep builds.
+	[[nodiscard]] geometry::Ring hardPolygon(const geometry::Vec2i64& centre, std::int64_t reachMm) const;
 
 	[[nodiscard]] int priority() const override { return 45; }
 	[[nodiscard]] const char* name() const override { return "Vision"; }
@@ -103,14 +134,14 @@ class VisionSystem : public ISystem {
 
 	/// An observer's sight as vision last built it. With no polygon the shape is the plain
 	/// circle; with one, his sight is the circle of `radius` round where he stands now inside the
-	/// wall-clipped star-shaped polygon (mm, same frame as the occluders) built round `center` out to
-	/// `radius` plus kSightRebuildStepMeters. polygonRevision changes whenever the observer's polygon
+	/// star-shaped polygon the opaque bodies leave (mm, same frame as the occluders) built round
+	/// `center` out to his reach. polygonRevision changes whenever the observer's polygon
 	/// is rebuilt or dropped, so a consumer can tell a new polygon from the one it already used.
 	/// The polygon pointer is valid until the next update().
 	struct SightShape {
 		glm::vec2			   center{0.0F, 0.0F}; // world position (meters) the shape was built at
 		float				   radius = 0.0F;	   // meters
-		const geometry::Ring* polygon = nullptr;  // null when no wall is in sight
+		const geometry::Ring* polygon = nullptr;  // null when no wall or opaque body is in reach
 		std::uint64_t		   polygonRevision = 0;
 		// The built walls and openings the polygon bounds or crosses within `radius` of `center`, as the
 		// structure pass found them when it was built (vision-architecture D4). Empty without a polygon.
@@ -129,7 +160,7 @@ class VisionSystem : public ISystem {
 		return SightShape{
 			.center = entry.builtPos,
 			.radius = entry.radius,
-			.polygon = entry.hadOccluders ? &entry.polygon : nullptr,
+			.polygon = entry.hasPolygon ? &entry.polygon : nullptr,
 			.polygonRevision = entry.polygonRevision,
 			.segmentsSeen = &entry.segmentsSeen,
 			.openingsSeen = &entry.openingsSeen,
@@ -187,26 +218,51 @@ class VisionSystem : public ISystem {
 
 	// --- Occlusion gate ---
 
-	// Source of opaque wall occluders (built from the construction graph). Inert
+	// Source of wall bodies (built from the construction graph). Inert
 	// until setConstructionWorld() wires a world; rebuilt (version-gated) at the
 	// top of each throttled tick.
 	GeometryIndex m_geometry;
 
+	vision::SightTunables m_tunables;
+	// Bumped by every change of the tunables: a shape built before it is rebuilt.
+	std::uint64_t m_tunablesVersion = 0;
+
 	// Per-observer sight cache, one entry per observer. A stationary colonist indoors builds
 	// its star-shaped sight polygon once, then reuses it every tick. The polygon is
 	// in integer mm (same frame as the occluders); builtPos is the observer's
-	// meters position the polygon was built from (the current position outdoors).
+	// meters position the shape was built from (the current position outdoors).
 	struct VisibilityCache {
-		glm::vec2	   builtPos{0.0F, 0.0F};
-		float		   radius = 0.0F;		// meters, the sight radius of the last pass or build
-		std::uint64_t  polygonRevision = 0; // bumps when the polygon is rebuilt or dropped
-		std::uint64_t  builtVersion = 0; // GeometryIndex generation the polygon was built against
-		geometry::Ring polygon;			 // empty when hadOccluders == false (outdoors)
+		glm::vec2		  builtPos{0.0F, 0.0F};
+		geometry::Vec2i64 builtMm{0, 0};
+		float			  radius = 0.0F;		// meters, the sight radius of the last pass or build
+		std::int64_t	  leadMm = 0;			// the lead the shape was built with
+		std::int64_t	  reachMm = 0;			// sight plus that lead
+		std::uint64_t	  polygonRevision = 0; // bumps when the polygon is rebuilt or dropped
+		std::uint64_t	  builtVersion = 0; // GeometryIndex generation the shape was built against
+		std::uint64_t	  tunablesVersion = 0;
+		// The sorted serials of the placed rings within reach of the build.
+		std::vector<std::uint64_t> placedSerials;
+		geometry::Ring	  polygon;			 // empty when hasPolygon == false (outdoors)
 		std::vector<construction::SegmentId> segmentsSeen; // what the structure pass found for the polygon
 		std::vector<construction::OpeningId> openingsSeen;
-		bool		   hadOccluders = false;
+		std::vector<vision::SightBody>		 bodies;	  // within reach of the build
+		std::vector<vision::ShadowEdge>		 shadowEdges; // of the polygon, into bodies
+		bool		   built = false;
+		bool		   hasPolygon = false;
 		bool		   seenThisTick = false; // mark-and-sweep prune flag
 	};
+
+	// The opaque wall bodies' facing occluders within `reachMm` of `eye`, then the edges of the
+	// opaque rings among `placed`, into `out` (cleared first). Returns what queryFacingOccluders did.
+	bool opaqueOccluders(
+		const geometry::Vec2i64&							eye,
+		std::int64_t										reachMm,
+		const std::vector<const vision::PlacedOccluder*>& placed,
+		std::vector<geometry::OccluderSegment>&				out
+	) const;
+
+	// The placed occluder index of the world's NavigationSystem, or null without one.
+	[[nodiscard]] const vision::PlacedOccluderIndex* placedIndex() const;
 	std::unordered_map<EntityID, VisibilityCache> m_visibilityCache;
 
 	// A remembered entity in view that the placement index doesn't hold: forgotten unless pass 2

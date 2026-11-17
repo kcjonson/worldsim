@@ -51,3 +51,12 @@ export interface ColonistState {
   needs: Record<string, number>;
   action?: string;
 }
+
+/** A sight tunable as serialized by /api/state?what=sightTunables and answered by /api/dev/sight. */
+export interface SightTunable {
+  name: string;
+  value: number;
+  least: number;
+  most: number;
+  start: number;
+}

@@ -7,7 +7,9 @@
 #include <offset/WallOffset.h>
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
+#include <map>
 #include <unordered_map>
 #include <vector>
 
@@ -27,12 +29,43 @@ namespace ecs {
 			};
 		}
 
-		// An occluder from `from` to `to` of wall `source`, with its box.
-		GeometryIndex::OccluderRecord record(construction::SegmentId source, geometry::Vec2i64 from, geometry::Vec2i64 to) {
+		// An occluder from `from` to `to` of wall `source` in body `body`, with its box.
+		GeometryIndex::OccluderRecord record(construction::SegmentId source, std::size_t body, geometry::Vec2i64 from, geometry::Vec2i64 to) {
 			return {.source = source,
 					.seg	= {from, to},
+					.body	= body,
 					.low	= {std::min(from.x, to.x), std::min(from.y, to.y)},
 					.high	= {std::max(from.x, to.x), std::max(from.y, to.y)}};
+		}
+
+		// The body's box, centre, diameter, and kind from its edges, and each edge's previous edge.
+		void measure(GeometryIndex::WallBody& body, std::int64_t opaqueLeastDiameterMm) {
+			std::vector<geometry::Vec2i64>						 corners;
+			std::map<geometry::Vec2i64, std::uint32_t> edgeEndingAt;
+			corners.reserve(body.edges.size());
+			body.low  = body.edges.front().a;
+			body.high = body.edges.front().a;
+			geometry::Vec2i64 sum{0, 0};
+			for (std::uint32_t index = 0; index < body.edges.size(); ++index) {
+				const geometry::Vec2i64& corner = body.edges[index].a;
+				corners.push_back(corner);
+				edgeEndingAt.emplace(body.edges[index].b, index);
+				body.low  = {std::min(body.low.x, corner.x), std::min(body.low.y, corner.y)};
+				body.high = {std::max(body.high.x, corner.x), std::max(body.high.y, corner.y)};
+				sum		  = sum + corner;
+			}
+			const auto count = static_cast<std::int64_t>(corners.size());
+			body.centre		 = {sum.x / count, sum.y / count};
+			body.previousEdge.resize(body.edges.size());
+			for (std::uint32_t index = 0; index < body.edges.size(); ++index) {
+				// Every outline loop closes, so some edge ends at each corner.
+				const auto previous = edgeEndingAt.find(body.edges[index].a);
+				assert(previous != edgeEndingAt.end());
+				body.previousEdge[index] = previous != edgeEndingAt.end() ? previous->second : index;
+			}
+			body.diameterSquared = vision::diameterSquared(corners);
+			body.diameterMm		 = vision::wholeSquareRoot(body.diameterSquared);
+			body.kind			 = vision::kindOf(body.diameterSquared, opaqueLeastDiameterMm);
 		}
 
 		// How far past the face an opening's face span lies. Three roundings can each move it up to
@@ -86,17 +119,21 @@ namespace ecs {
 			return first.a == second.a || first.a == second.b || first.b == second.a || first.b == second.b;
 		}
 
-		// Marks every occluder that touches, crosses or runs along another: any contact with an
-		// occluder of another loop group, and within one any but two edges meeting end to end, how a
-		// loop runs on from an edge or passes a vertex again. Two walls of one graph can still
-		// overlap where they share no vertex, since the outline cancels edges only between rings
-		// meeting at one. `loop` numbers each occluder's group (one per offset graph, one per wall
-		// of a rejected graph). Occluders are swept in order of their boxes' low x, and only those
-		// whose boxes overlap are tested.
-		void markCrossings(std::vector<GeometryIndex::OccluderRecord>& occluders, const std::vector<std::size_t>& loop) {
-			std::vector<std::size_t> byLowX(occluders.size());
-			for (std::size_t index = 0; index < byLowX.size(); ++index) {
-				byLowX[index] = index;
+		// Marks every opaque body's occluder that touches, crosses or runs along another opaque
+		// body's: any contact with an occluder of another loop group, and within one any but two edges
+		// meeting end to end, how a loop runs on from an edge or passes a vertex again. Two walls of
+		// one graph can still overlap where they share no vertex, since the outline cancels edges only
+		// between rings meeting at one. `loop` numbers each occluder's group (one per offset graph, one
+		// per wall of a rejected graph). Soft bodies never reach a visibility polygon, so they cross
+		// nothing. Occluders are swept in order of their boxes' low x, and only those whose boxes
+		// overlap are tested.
+		void markCrossings(std::vector<GeometryIndex::OccluderRecord>& occluders, const std::vector<std::size_t>& loop,
+						   const std::vector<GeometryIndex::WallBody>& bodies) {
+			std::vector<std::size_t> byLowX;
+			for (std::size_t index = 0; index < occluders.size(); ++index) {
+				if (bodies[occluders[index].body].kind == vision::BodyKind::Opaque) {
+					byLowX.push_back(index);
+				}
 			}
 			std::ranges::sort(byLowX, {}, [&](std::size_t index) { return occluders[index].low.x; });
 			std::vector<std::size_t> open;
@@ -197,6 +234,7 @@ namespace ecs {
 		// header promises; a non-null world repopulates on the next rebuildIfStale.
 		m_occluders.clear();
 		m_openings.clear();
+		m_bodies.clear();
 		// Clearing the occluder set is itself a change consumers must see, so move
 		// the generation -- a cache keyed on it (e.g. VisionSystem's polygons) would
 		// otherwise keep serving occluders from the old world after a swap to null.
@@ -218,6 +256,7 @@ namespace ecs {
 		++m_generation; // every actual rebuild moves the generation a cache can gate on
 		m_occluders.clear();
 		m_openings.clear();
+		m_bodies.clear();
 
 		const construction::ConstructionWorld& world = *m_world;
 
@@ -266,6 +305,13 @@ namespace ecs {
 		std::vector<std::size_t> loop;
 		std::size_t				 loops = 0;
 		for (const std::vector<std::size_t>& graph : geometry::connectedWallGraphs(walls)) {
+			const std::size_t body = m_bodies.size();
+			WallBody&		  outline = m_bodies.emplace_back();
+			const auto		  add	  = [&](construction::SegmentId source, geometry::Vec2i64 from, geometry::Vec2i64 to) {
+				 m_occluders.push_back(record(source, body, from, to));
+				 outline.edges.push_back({from, to});
+				 loop.push_back(loops);
+			};
 			std::vector<geometry::WallSegment>			members;
 			std::vector<std::vector<geometry::WallGap>> memberGaps;
 			members.reserve(graph.size());
@@ -277,27 +323,30 @@ namespace ecs {
 			const geometry::WallBands bands = geometry::resolveWallBands(members, geometry::kDefaultMiterLimit);
 			if (!geometry::bandsAccepted(bands)) {
 				// Rejected as nav rejects it: each wall is its raw band, untrimmed, outlined as a
-				// lone wall's, so its transparent openings still pass sight.
+				// lone wall's, so its transparent openings still pass sight. The graph is still one body.
 				for (const std::size_t index : graph) {
 					const geometry::WallSegment& wall = walls[index];
 					const geometry::WallBands	 rawBand{
 						   .bands = {geometry::band(wall.a, wall.b, wall.halfThicknessMm)}, .trimAtA = {0}, .trimAtB = {0}
 					   };
 					for (const geometry::OutlineEdge& edge : geometry::wallPiecesAndOutline({wall}, {sightGaps[index]}, rawBand).outline) {
-						m_occluders.push_back(record(wallIds[index], edge.from, edge.to));
-						loop.push_back(loops);
+						add(wallIds[index], edge.from, edge.to);
 					}
 					++loops;
 				}
+			} else {
+				for (const geometry::OutlineEdge& edge : geometry::wallPiecesAndOutline(members, memberGaps, bands).outline) {
+					add(wallIds[graph[edge.index]], edge.from, edge.to);
+				}
+				++loops;
+			}
+			if (outline.edges.empty()) {
+				m_bodies.pop_back();
 				continue;
 			}
-			for (const geometry::OutlineEdge& edge : geometry::wallPiecesAndOutline(members, memberGaps, bands).outline) {
-				m_occluders.push_back(record(wallIds[graph[edge.index]], edge.from, edge.to));
-				loop.push_back(loops);
-			}
-			++loops;
+			measure(outline, m_opaqueLeastDiameterMm);
 		}
-		markCrossings(m_occluders, loop);
+		markCrossings(m_occluders, loop, m_bodies);
 		// Each wall's edges together, so the structure pass is done with a wall at its first seen edge.
 		std::ranges::stable_sort(m_occluders, {}, &OccluderRecord::source);
 	}
@@ -323,15 +372,19 @@ namespace ecs {
 		if (radiusMm <= 0) {
 			return false;
 		}
-		const auto inRange = [&](const OccluderRecord& rec) { return rec.within(eye, radiusMm); };
+		const auto opaque  = [&](const OccluderRecord& rec) { return m_bodies[rec.body].kind == vision::BodyKind::Opaque; };
+		const auto inRange = [&](const OccluderRecord& rec) { return opaque(rec) && rec.within(eye, radiusMm); };
 		// Outdoors no occluder is in range, and the range test is all the query costs.
 		const auto first = std::ranges::find_if(m_occluders, inRange);
 		if (first == m_occluders.end()) {
 			return false;
 		}
-		// The winding round the eye counts every occluder, the occluders before the first in range too.
+		// The winding round the eye counts every opaque occluder, those before the first in range too.
 		EyeTally tally(eye);
 		for (auto occluder = m_occluders.begin(); occluder != m_occluders.end(); ++occluder) {
+			if (!opaque(*occluder)) {
+				continue;
+			}
 			const bool kept = occluder >= first && (occluder == first || inRange(*occluder));
 			if (kept) {
 				out.push_back(occluder->seg);
@@ -347,26 +400,41 @@ namespace ecs {
 		return culled;
 	}
 
-	bool GeometryIndex::anyFacingOccluder(geometry::Vec2i64 eye, std::int64_t radiusMm) const {
-		if (radiusMm <= 0) {
-			return false;
+	void GeometryIndex::bodiesWithin(geometry::Vec2i64 point, std::int64_t radiusMm, std::vector<std::size_t>& out) const {
+		out.clear();
+		if (radiusMm < 0) {
+			return;
 		}
-		bool anyInRange = false;
-		for (const OccluderRecord& rec : m_occluders) {
-			if (rec.within(eye, radiusMm)) {
-				if (!facesAway(rec.seg, eye)) {
-					return true; // kept, culled or not
-				}
-				anyInRange = true;
+		for (std::size_t index = 0; index < m_bodies.size(); ++index) {
+			if (m_bodies[index].within(point, radiusMm)) {
+				out.push_back(index);
 			}
 		}
-		// Every occluder in range faces away: rare enough to pay the guards' walk.
-		return anyInRange && !backFacesHiddenFrom(eye, radiusMm);
+	}
+
+	bool GeometryIndex::WallBody::within(geometry::Vec2i64 point, std::int64_t radiusMm) const {
+		if (point.x + radiusMm < low.x || point.x - radiusMm > high.x || point.y + radiusMm < low.y || point.y - radiusMm > high.y) {
+			return false;
+		}
+		return std::ranges::any_of(edges, [&](const geometry::OccluderSegment& edge) {
+			return geometry::withinDistanceOfSegment(point, edge.a, edge.b, radiusMm);
+		});
+	}
+
+	void GeometryIndex::setOpaqueLeastDiameterMm(std::int64_t leastMm) {
+		if (leastMm == m_opaqueLeastDiameterMm) {
+			return;
+		}
+		m_opaqueLeastDiameterMm = leastMm;
+		m_builtVersion			= kInvalidVersion;
 	}
 
 	bool GeometryIndex::backFacesHiddenFrom(geometry::Vec2i64 eye, std::int64_t radiusMm) const {
 		EyeTally tally(eye);
 		for (const OccluderRecord& rec : m_occluders) {
+			if (m_bodies[rec.body].kind != vision::BodyKind::Opaque) {
+				continue;
+			}
 			tally.add(rec, rec.within(eye, radiusMm));
 			if (tally.settled()) {
 				return false;
@@ -382,6 +450,9 @@ namespace ecs {
 	bool GeometryIndex::insideSolid(geometry::Vec2i64 point) const {
 		EyeTally tally(point);
 		for (const OccluderRecord& rec : m_occluders) {
+			if (m_bodies[rec.body].kind != vision::BodyKind::Opaque) {
+				continue;
+			}
 			tally.add(rec, false);
 			if (tally.settled()) {
 				break; // on an occluder

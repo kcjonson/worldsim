@@ -64,7 +64,10 @@ add_library(sim
     nav/NavInputBuilder.cpp
     nav/RouteQueue.cpp
     vision/GeometryIndex.cpp
+    vision/PlacedOccluderIndex.cpp
     vision/SeenArea.cpp
+    vision/SightBody.cpp
+    vision/SightTunables.cpp
 )
 
 target_include_directories(sim

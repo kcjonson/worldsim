@@ -8,6 +8,7 @@
 #include "scenes/game/dev/GiveShortfall.h"
 #include "scenes/game/dev/GroundRefusal.h"
 #include "scenes/game/dev/PointList.h"
+#include "scenes/game/dev/SightJson.h"
 #include "scenes/game/ui/GameUI.h"
 #include "scenes/game/world/construction/DrawingSystem.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
@@ -52,6 +53,7 @@
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/PlayerVisibilitySystem.h>
 #include <ecs/systems/ThoughtSystem.h>
+#include <ecs/systems/VisionSystem.h>
 #include <ecs/systems/TimeSystem.h>
 
 #include <assets/RecipeRegistry.h>
@@ -164,6 +166,11 @@ namespace world_sim {
 		view("landing", &DevCommandHandler::serializeLanding);
 		view("summary", &DevCommandHandler::serializeSummary);
 		registrations.push_back(server.stateProvider("visibility", [this] { return visibilityJson({}); }));
+		registrations.push_back(server.stateProvider("sightBodies", [this] { return sightBodiesView(); }));
+		registrations.push_back(server.stateProvider("sightTunables", [this] {
+			return sightTunablesJson(m_ctx.world->getSystem<ecs::VisionSystem>().sightTunables());
+		}));
+		registrations.push_back(server.route("sight", [this](const app::DevRequest& cmd) { return devSight(cmd); }));
 		registrations.push_back(server.stateProvider("tunables", [] { return Foundation::Tunables::instance().toJson(); }));
 		return registrations;
 	}
@@ -200,6 +207,49 @@ namespace world_sim {
 			return;
 		}
 		LOG_INFO(Game, "[DevAPI] tunable '%s' = %s", name.c_str(), spec.c_str());
+	}
+
+	app::DevResponse DevCommandHandler::devSight(const app::DevRequest& cmd) {
+		// sight?name=wallOpaqueLeastDiameterMm&value=600, or sight?reset=1 for the start values. The
+		// answer is every tunable as the setter clamped it.
+		ecs::VisionSystem&	  vision   = m_ctx.world->getSystem<ecs::VisionSystem>();
+		vision::SightTunables tunables = vision.sightTunables();
+		if (hasParam(cmd, "reset")) {
+			tunables = {};
+		} else {
+			const std::string name	= param(cmd, "name");
+			const std::string value = param(cmd, "value");
+			char*			  end	= nullptr;
+			const long long	  number = std::strtoll(value.c_str(), &end, 10);
+			if (value.empty() || end == nullptr || *end != '\0' || !setSightTunable(tunables, name, number)) {
+				const std::string refusal = refuse("sight: no tunable '" + name + "' or no whole number '" + value + "'").message;
+				return app::DevResponse{.status = 400, .body = "{\"error\":\"" + jsonEscape(refusal) + "\"}"};
+			}
+		}
+		vision.setSightTunables(tunables);
+		LOG_INFO(Game, "[DevAPI] sight tunables set");
+		return app::DevResponse{.body = sightTunablesJson(vision.sightTunables())};
+	}
+
+	std::string DevCommandHandler::sightBodiesView() {
+		const ecs::VisionSystem&		 vision = m_ctx.world->getSystem<ecs::VisionSystem>();
+		std::vector<ColonistSightBodies> colonists;
+		for (auto [entity, colonist, position] : m_ctx.world->view<ecs::Colonist, ecs::Position>()) {
+			const std::optional<ecs::VisionSystem::SightBodies> bodies = vision.sightBodies(entity);
+			if (!bodies.has_value()) {
+				continue;
+			}
+			colonists.push_back({
+				.id			 = static_cast<std::uint64_t>(entity),
+				.name		 = colonist.name,
+				.eyeCentre	 = bodies->eyeCentre,
+				.leadMm		 = bodies->leadMm,
+				.reachMm	 = bodies->reachMm,
+				.bodies		 = bodies->bodies,
+				.shadowEdges = bodies->shadowEdges,
+			});
+		}
+		return sightBodiesJson(colonists);
 	}
 
 	void DevCommandHandler::devFreeBuild(const app::DevRequest& cmd) {

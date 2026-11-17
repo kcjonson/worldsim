@@ -145,7 +145,7 @@ namespace ecs {
 		void refreshFootprints();
 
 		vision::SeenArea			 seen;
-		const GeometryIndex*		 sweepWalls = nullptr; // the walls the record's sweeps build their polygons against
+		const VisionSystem*			 sweepVision = nullptr; // the vision the record's sweeps build their polygons with
 		std::map<EntityID, Observer> observers;
 		bool						 revealedFlag = false;
 
