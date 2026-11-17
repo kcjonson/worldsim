@@ -1,6 +1,7 @@
 #include "FloraMeasure.h"
 
 #include "assets/AssetDefinition.h"
+#include "assets/placement/InstanceTransform.h"
 
 #include <algorithm>
 #include <cmath>
@@ -216,16 +217,13 @@ namespace assets {
 			if (crown == nullptr) {
 				continue;
 			}
-			// world = R(rotation) * (local * scale) + position, the static instance transform
-			const double c = std::cos(entity->rotation);
-			const double s = std::sin(entity->rotation);
-			const double k = entity->scale * kMillimetersToMeters;
+			const InstanceTransform transform(entity->position, entity->rotation, entity->scale);
 			for (const geometry::Ring& ring : *crown) {
 				worldRing.clear();
 				for (const auto& p : ring) {
-					const double lx = static_cast<double>(p.x) * k;
-					const double ly = static_cast<double>(p.y) * k;
-					worldRing.push_back({lx * c - ly * s + x, lx * s + ly * c + y});
+					const glm::dvec2 world =
+						transform.toWorldPrecise(glm::dvec2{static_cast<double>(p.x) * kMillimetersToMeters, static_cast<double>(p.y) * kMillimetersToMeters});
+					worldRing.push_back({world.x, world.y});
 				}
 				grid.fillRing(worldRing);
 			}

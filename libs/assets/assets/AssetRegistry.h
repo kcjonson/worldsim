@@ -40,18 +40,14 @@ namespace assets {
 	/// Cached per-defName selection silhouette: the filled outer outline of the
 	/// asset's RENDERED footprint (rasterized from the tessellated mesh triangles, so
 	/// it captures fills AND stroke bands — e.g. a reed's stroke stem — exactly what is
-	/// drawn), in the template-local (scaled, uncentered) frame in integer millimeters.
+	/// drawn), in the template's pivot frame in integer millimeters.
 	/// `rings` is the crisp outline (holes filled, disjoint blobs kept separate) used for
 	/// the selection outline and later shadows; `hitRegion` is the same closed with a
 	/// small morphological radius so gaps between disjoint blobs are clickable
 	/// (whole-clump) and narrow concavities forgive slightly — used for hit-testing.
-	/// `boundsCenterMeters` is the template mesh bbox centre in the same frame — it
-	/// equals the dynamic render path's -centerOffset, stored so outline and hit-test
-	/// share the render transform and can't drift.
 	struct AssetSilhouette {
 		std::vector<geometry::Ring> rings;
 		std::vector<geometry::Ring> hitRegion;
-		glm::vec2					boundsCenterMeters{0.0F, 0.0F};
 		bool						valid = false;
 	};
 
@@ -140,9 +136,18 @@ namespace assets {
 		/// <detailLevels> is measured at its reference level and widened by kLevelReachMargin.
 		[[nodiscard]] float maxReachMeters() const { return m_maxReach.load(std::memory_order_relaxed); }
 
+		/// The farthest any loaded def's collision shape reaches from its pivot, times the def's
+		/// largest placement scale (at least 1), over every def and age class: how far from its position a
+		/// placed entity's collider can stand. Kept as definitions load and their shapes are set.
+		[[nodiscard]] float maxCollisionReachMeters() const { return largestCollisionReach.load(std::memory_order_relaxed); }
+
+		/// The largest placement scale (at least 1) of any loaded def with a blocking collision shape, kept with
+		/// maxCollisionReachMeters: how much a pad added around a collider can grow.
+		[[nodiscard]] float maxCollidingScale() const { return largestCollidingScale.load(std::memory_order_relaxed); }
+
 		/// Get the resolved motion (animation clips) for a def, or nullptr if it declares none.
 		/// Driver pivots are resolved against the def's SVG nodes (find_node, by authored node
-		/// index) into the mesh's scaled meter frame, so a part rotates about the right joint.
+		/// index) into the mesh's pivot frame, so a part rotates about the right joint.
 		/// Rotation amps are returned in radians, posX/posY amps in meters. Lazily loaded + cached.
 		const MotionDef* getMotion(const std::string& defName);
 
@@ -253,10 +258,10 @@ namespace assets {
 
 		/// Parse a collision shape from an SVG file's <metadata><collision> block.
 		/// Simple (SVG-backed) assets can author a collider directly in the SVG; the
-		/// authored points are in SVG user units and are converted to the local-meter
-		/// frame using the SAME scaleFactor (worldHeight / svgHeight) and centering
-		/// (svg center -> origin) the render mesh uses in getTemplate +
-		/// DynamicEntityRenderSystem, so the collider lands on the rendered art.
+		/// authored points are in SVG user units and are converted to the def's pivot
+		/// frame by the same SvgMeterFrame (pivot at the drawing's bbox centre, scaled by
+		/// worldHeight / svgHeight) that buildTemplate moves the mesh by, so the collider
+		/// lands on the rendered art.
 		///
 		/// Returns nullopt (without loading the SVG) when the file carries no
 		/// collision metadata, and nullopt + a warning when the authored shape is
@@ -439,6 +444,12 @@ namespace assets {
 		/// Both load entry points end here, so a def is complete however it was loaded.
 		void prewarmTreeVariants(const std::vector<std::string>& defNames);
 
+		/// Admits the named defs' collision shapes as they stand: a polygon the nav mesh can't take (a
+		/// crossing, a point spacing or edge gap under 3 mm rounded at the def's smallest scale, no area) is an
+		/// error in the validation report naming the def and is dropped, a clockwise one is turned
+		/// counter-clockwise; then raises maxCollisionReachMeters to cover the shapes that stay.
+		void admitCollisionShapes(const std::vector<std::string>& defNames);
+
 		/// Drops every template, silhouette, and resolved motion.
 		void clearCaches();
 
@@ -451,6 +462,8 @@ namespace assets {
 		std::vector<std::unique_ptr<TemplateEntry>>				m_templates;
 		mutable std::mutex										templateCacheMutex;
 		std::atomic<float>										m_maxReach{0.0F};
+		std::atomic<float>										largestCollisionReach{0.0F};
+		std::atomic<float>										largestCollidingScale{0.0F};
 
 		// Resolved motion per def (empty MotionDef = "resolved, has none"). Guarded separately.
 		std::unordered_map<std::string, MotionDef> m_motionCache;

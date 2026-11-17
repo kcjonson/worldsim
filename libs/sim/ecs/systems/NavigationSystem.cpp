@@ -743,6 +743,10 @@ namespace ecs {
 		wallsVersion	  = UINT64_MAX;
 	}
 
+	float NavigationSystem::footprintReachMeters() {
+		return nav::placedObstacleReachMeters(assets::AssetRegistry::Get());
+	}
+
 	void NavigationSystem::appendAnchors(std::vector<world::ChunkAnchor>& out) const {
 		// Null only in headless tests with no colonists.
 		if (world == nullptr) {
@@ -753,7 +757,7 @@ namespace ecs {
 			const float circumradius = static_cast<float>(gnav::limitCircumradius(radiusMm(meshingRange(entity)))) /
 									   static_cast<float>(geometry::kMillimetersPerMeter);
 			out.push_back({{position.value.x, position.value.y},
-						   circumradius + kFootprintReachMeters + static_cast<float>(kLimitRetakeStepMm) / static_cast<float>(geometry::kMillimetersPerMeter)});
+						   circumradius + footprintReachMeters() + static_cast<float>(kLimitRetakeStepMm) / static_cast<float>(geometry::kMillimetersPerMeter)});
 		}
 	}
 
@@ -862,7 +866,7 @@ namespace ecs {
 						.rangeMm		= radiusMm(rangeMeters),
 						.circumradiusMm = gnav::limitCircumradius(radiusMm(rangeMeters))};
 		limit.outline			= nav::meshLimit(centre, radiusMm(rangeMeters)).ring;
-		const std::int64_t reach = limit.circumradiusMm + radiusMm(kFootprintReachMeters);
+		const std::int64_t reach = limit.circumradiusMm + radiusMm(footprintReachMeters());
 		limit.query				= {{centre.x - reach, centre.y - reach}, {centre.x + reach, centre.y + reach}};
 		return limit;
 	}
@@ -1426,7 +1430,6 @@ namespace ecs {
 		const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
 		const glm::vec2				 lo		  = nav::toMeters(limit.query.lo);
 		const glm::vec2				 hi		  = nav::toMeters(limit.query.hi);
-		const std::int64_t			 reachMm  = radiusMm(kFootprintReachMeters);
 		everyChunkIn(limit.query.lo, limit.query.hi, [&](world::ChunkCoordinate coord) {
 			for (const assets::PlacedEntity* e : placement->getChunkIndex(coord)->queryRect(lo.x, lo.y, hi.x, hi.y)) {
 				ObstacleKey key{coord, std::bit_cast<std::uint32_t>(e->position.x), std::bit_cast<std::uint32_t>(e->position.y), e->defName};
@@ -1438,19 +1441,11 @@ namespace ecs {
 					continue;
 				}
 				// The footprint's box against the disc the limit circumscribes.
-				const geometry::Vec2i64 at = nav::toMm(e->position);
-				geometry::Vec2i64		boxLo = ring->ring.front();
-				geometry::Vec2i64		boxHi = boxLo;
-				std::int64_t			reach = 0;
+				geometry::Vec2i64 boxLo = ring->ring.front();
+				geometry::Vec2i64 boxHi = boxLo;
 				for (const geometry::Vec2i64& p : ring->ring) {
 					boxLo = {std::min(boxLo.x, p.x), std::min(boxLo.y, p.y)};
 					boxHi = {std::max(boxHi.x, p.x), std::max(boxHi.y, p.y)};
-					reach = std::max({reach, std::abs(p.x - at.x), std::abs(p.y - at.y)});
-				}
-				if (reach > reachMm && overreachingDefs.insert(e->defName).second) {
-					LOG_ERROR(Engine, "[Nav] %s's footprint reaches %lld mm from its position, past kFootprintReachMeters: where it pokes into a limit "
-									  "from outside the limit's query box, meshed ground goes in without it",
-							  e->defName.c_str(), static_cast<long long>(reach));
 				}
 				const std::int64_t gx = std::max<std::int64_t>({0, boxLo.x - limit.centre.x, limit.centre.x - boxHi.x});
 				const std::int64_t gy = std::max<std::int64_t>({0, boxLo.y - limit.centre.y, limit.centre.y - boxHi.y});

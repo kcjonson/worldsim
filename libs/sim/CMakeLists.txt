@@ -22,7 +22,7 @@ add_library(sim
     ecs/systems/RoomDetectionSystem.cpp
     ecs/systems/CollisionSystem.cpp
     ecs/systems/WallCollisionSystem.cpp
-    ecs/systems/StaticRectCollisionSystem.cpp
+    ecs/systems/PlacedObstacleCollisionSystem.cpp
     ecs/systems/NavigationSystem.cpp
     ecs/systems/PlayerVisibilitySystem.cpp
     ecs/spatial/AgentSpatialHash.cpp
@@ -104,6 +104,8 @@ if(BUILD_TESTING)
                 GTest::gtest
                 GTest::gtest_main
         )
+        # Where the shipped asset defs are, whatever the working directory.
+        target_compile_definitions(sim-tests PRIVATE SIM_TEST_REPO_DIR="${CMAKE_SOURCE_DIR}")
         if(MSVC)
             target_compile_options(sim-tests PRIVATE /Od)
         else()

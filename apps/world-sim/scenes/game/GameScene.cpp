@@ -102,7 +102,7 @@
 #include <ecs/systems/PhysicsSystem.h>
 #include <ecs/systems/PlayerVisibilitySystem.h>
 #include <ecs/systems/RoomDetectionSystem.h>
-#include <ecs/systems/StaticRectCollisionSystem.h>
+#include <ecs/systems/PlacedObstacleCollisionSystem.h>
 #include <ecs/systems/StorageGoalSystem.h>
 #include <ecs/systems/ThoughtSystem.h>
 #include <ecs/systems/TimeSystem.h>
@@ -1212,7 +1212,7 @@ namespace {
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
 			ecsWorld->registerSystem<ecs::CollisionSystem>();			// Priority 250 - positional separation after physics
 			ecsWorld->registerSystem<ecs::WallCollisionSystem>();		// Priority 260 - wall safety-net after agent separation
-			ecsWorld->registerSystem<ecs::StaticRectCollisionSystem>(); // Priority 270 - flora-rect safety-net after wall collision
+			ecsWorld->registerSystem<ecs::PlacedObstacleCollisionSystem>(); // Priority 270 - placed-obstacle safety-net after wall collision
 			ecsWorld->registerSystem<ecs::ActionSystem>(systemSeeds.action); // Priority 350
 			ecsWorld->registerSystem<world_sim::DeferredEditsSystem>([this] { drainDeferredEdits(); }); // Priority 800
 			ecsWorld->registerSystem<worldview::DynamicEntityRenderSystem>(); // Priority 900
@@ -1236,10 +1236,10 @@ namespace {
 			navSystem.setChunkManager(m_chunkManager.get());
 			navSystem.setPlacementData(m_placementExecutor.get(), &m_processedChunks);
 
-			// Tier-3 flora-rect safety net gathers placed rects locally each frame.
-			auto& staticRectCollisionSystem = ecsWorld->getSystem<ecs::StaticRectCollisionSystem>();
-			staticRectCollisionSystem.setPlacementData(m_placementExecutor.get());
-			staticRectCollisionSystem.setDetailSource(&navSystem);
+			// Tier-3 placed-obstacle safety net gathers placed colliders locally each frame.
+			auto& placedObstacleCollisionSystem = ecsWorld->getSystem<ecs::PlacedObstacleCollisionSystem>();
+			placedObstacleCollisionSystem.setPlacementData(m_placementExecutor.get());
+			placedObstacleCollisionSystem.setDetailSource(&navSystem);
 
 			// Wire up AIDecisionSystem with chunk manager for toilet location queries
 			auto& aiDecisionSystem = ecsWorld->getSystem<ecs::AIDecisionSystem>();
@@ -1703,8 +1703,7 @@ namespace {
 		GroundSurvey surveyGround(const std::string& dropDef) {
 			auto& registry = assets::AssetRegistry::Get();
 
-			// Computed at each pile's own scale: the dynamic transform re-centers by the unscaled bbox
-			// center, so the footprint isn't linear in scale and a scale-1 radius can't be multiplied.
+			// Computed at each pile's own scale, from the pile layout itself.
 			std::unordered_map<std::string, std::pair<Foundation::Rect, worldview::PileItem>> layoutInputsByDef;
 			auto pileRadius = [&](const std::string& pileDef, float scale) {
 				auto it = layoutInputsByDef.find(pileDef);

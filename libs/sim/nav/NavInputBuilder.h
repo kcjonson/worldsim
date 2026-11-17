@@ -67,9 +67,9 @@ namespace nav {
 	// --- Placed obstacles --------------------------------------------------------
 
 	// One blocked ring for a single placed entity whose AssetDefinition has a
-	// blocking collision shape, transformed into world mm by the entity's position
-	// (tiles), rotation, and scale. Rect -> a padded oriented quad; Polygon -> its
-	// points transformed. Returns nullopt when the entity has no blocking collision
+	// blocking collision shape, transformed from its def's pivot frame into world mm by
+	// the entity's position (tiles), rotation, and scale, as its mesh is drawn. Rect -> a
+	// padded oriented quad; Polygon -> its points transformed. Returns nullopt when the entity has no blocking collision
 	// (most placed entities) or the resulting ring is degenerate.
 	[[nodiscard]] std::optional<geometry::nav::NavInputPolygon>
 	placedObstacleRing(const assets::PlacedEntity& entity, const assets::AssetRegistry& registry);
@@ -77,6 +77,14 @@ namespace nav {
 	// The outline placedObstacleRing puts in the mesh, written into `out` (cleared first, its storage
 	// reused): false when there is none. What a clear-ground test reads, so the two never differ.
 	[[nodiscard]] bool placedObstacleOutline(const assets::PlacedEntity& entity, const assets::AssetRegistry& registry, geometry::Ring& out);
+
+	// The same from the collider already looked up for the entity's age class.
+	[[nodiscard]] bool placedObstacleOutline(const assets::PlacedEntity& entity, const assets::CollisionShape& collision, geometry::Ring& out);
+
+	// How far the outline of `collision` can reach from the entity's position at scale 1: the shape's
+	// reach plus the pad's corner, the rule placedObstacleReachMeters takes over every def. What a
+	// caller holding positions tests before building the outline.
+	[[nodiscard]] float placedObstacleLocalReachMeters(const assets::CollisionShape& collision);
 
 	// --- Walls / doors -----------------------------------------------------------
 

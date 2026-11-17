@@ -69,7 +69,7 @@ Navigation is one persistent mesh, never rebuilt: each nav update gathers what m
 | 14 | 200 | `PhysicsSystem` | Integrates velocity by game-scaled dt |
 | 15 | 250 | `CollisionSystem` | Pushes agents apart, two relaxation passes |
 | 16 | 260 | `WallCollisionSystem` | Pushes agents out of built walls |
-| 17 | 270 | `StaticRectCollisionSystem` | Pushes agents out of placed obstacles' rects |
+| 17 | 270 | `PlacedObstacleCollisionSystem` | Pushes agents out of placed obstacles' colliders, rect or polygon |
 | 18 | 350 | `ActionSystem` | Arrival within 0.4 m, then starts, advances, and completes actions; queues removals and drops |
 | 19 | 800 | `DeferredEditsSystem` (`apps/world-sim/scenes/game/world/`) | Drains deferred entity removals (`destroyWorldEntity`), then deferred spawns (packaged furniture, loose piles through `dropResourcePiles`); work only when queued |
 | 20 | 900 | `DynamicEntityRenderSystem` | Collects render data for dynamic entities |
@@ -106,7 +106,7 @@ Clocks: **F** frame count; **R** real seconds (the frame delta, unscaled, still 
 | Movement | `MovementSystem::update` | every frame | arrival 0.1 m, waypoint advance 0.15 m, speed 2 m/s (`Movement.h`) | G | runs; nothing moves |
 | Physics | `PhysicsSystem::update` | every frame | none | G | integrates zero |
 | Agent collision | `CollisionSystem::update` | every frame, two passes | `kMaxAgentRadius` 0.5 m | F (a positional push per frame, no dt) | runs |
-| Wall and placed-obstacle collision | `WallCollisionSystem`, `StaticRectCollisionSystem` | every frame | none | F | runs |
+| Wall and placed-obstacle collision | `WallCollisionSystem`, `PlacedObstacleCollisionSystem` | every frame | none | F | runs |
 | Actions | `ActionSystem::update` | every frame | `kActionReachMeters` 0.4 m (`ActionSystem.cpp`) | G for progress, F for the arrival check | arrival check runs, progress stops |
 | Removal and spawn drains | `DeferredEditsSystem::update` at 800 | every frame, work when queued | none | F | runs |
 | Render data collect | `DynamicEntityRenderSystem::update` | every frame | none | F | runs |

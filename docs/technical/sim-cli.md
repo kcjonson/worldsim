@@ -337,7 +337,7 @@ Two stores hold world things, and which one a thing lives in decides what sees i
 
 - The placement index (`PlacementExecutor`'s per-chunk `SpatialIndex`) holds static world entities.
   Nav builds obstacles only from the index (`nav::placedObstacleRing` in NavInputBuilder.h, one ring
-  per placed obstacle), and `StaticRectCollisionSystem` reads only the index. Vision pass 1 reads it,
+  per placed obstacle), and `PlacedObstacleCollisionSystem` reads only the index. Vision pass 1 reads it,
   harvest decrements and removes through it.
 - ECS entities with `Appearance` hold runtime things: stations, storage, piles, packaged items,
   colonists. Vision pass 2 reads them.
