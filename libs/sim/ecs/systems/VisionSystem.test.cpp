@@ -736,7 +736,8 @@ TEST_F(VisionSystemTest, StructurePassSkippingBackFacesSeesTheSameWalls) {
 			if (shape->polygon != nullptr) {
 				const Vec2i64		 centre	  = nav::toMm(shape->center);
 				const std::int64_t	 radiusMm = std::llround(static_cast<double>(shape->radius) * 1000.0);
-				const geometry::Ring sight	  = geometry::starClippedToConvex(*shape->polygon, centre, geometry::sightPolygon(centre, radiusMm));
+				const geometry::Ring sight =
+					geometry::starClippedToConvex(*shape->polygon, centre, geometry::sightPolygon(centre, radiusMm));
 				for (const GeometryIndex::OccluderRecord& occluder : sys.geometry().occluders()) {
 					if (!geometry::withinDistanceOfSegment(centre, occluder.seg.a, occluder.seg.b, radiusMm)) {
 						continue;
@@ -744,8 +745,8 @@ TEST_F(VisionSystemTest, StructurePassSkippingBackFacesSeesTheSameWalls) {
 					bool seen = geometry::pointInPolygon(occluder.seg.a, sight) != geometry::PointInPolygon::Outside ||
 								geometry::pointInPolygon(occluder.seg.b, sight) != geometry::PointInPolygon::Outside;
 					for (std::size_t edge = 0; edge < sight.size() && !seen; ++edge) {
-						seen = geometry::intersectSegments(occluder.seg.a, occluder.seg.b, sight[edge], sight[(edge + 1) % sight.size()]).relation !=
-							   geometry::SegmentRelation::Disjoint;
+						seen = geometry::intersectSegments(occluder.seg.a, occluder.seg.b, sight[edge], sight[(edge + 1) % sight.size()])
+								   .relation != geometry::SegmentRelation::Disjoint;
 					}
 					if (seen) {
 						expected.push_back(occluder.source);
@@ -757,7 +758,8 @@ TEST_F(VisionSystemTest, StructurePassSkippingBackFacesSeesTheSameWalls) {
 			std::vector<SegmentId> found = *shape->segmentsSeen;
 			std::ranges::sort(found);
 			if (found != expected && ++differ <= 5) {
-				ADD_FAILURE() << "from (" << x << ", " << y << ") the pass sees " << found.size() << " walls, every edge " << expected.size();
+				ADD_FAILURE() << "from (" << x << ", " << y << ") the pass sees " << found.size() << " walls, every edge "
+							  << expected.size();
 			}
 		}
 	}

@@ -181,7 +181,9 @@ namespace ecs {
 					// same structures, already in memory, so re-scanning every tick is wasted.
 					// New structures appear only via a geometry change, which bumps the
 					// generation and forces a rebuild here.
-					rememberStructures(observerMm, radiusMm, entry.polygon, backFacesHidden, memory, entry.segmentsSeen, entry.openingsSeen);
+					rememberStructures(
+						observerMm, radiusMm, entry.polygon, backFacesHidden, memory, entry.segmentsSeen, entry.openingsSeen
+					);
 				}
 				polygon = &entry.polygon;
 			}
@@ -253,7 +255,9 @@ namespace ecs {
 		// boundary: a long wall facing the observer can have both corners out of
 		// sight radius while its middle is the boundary seen along, which an
 		// endpoint-only test would miss.
-		const auto pointSeen = [&](geometry::Vec2i64 point) { return geometry::pointInPolygon(point, polygon) != geometry::PointInPolygon::Outside; };
+		const auto pointSeen = [&](geometry::Vec2i64 point) {
+			return geometry::pointInPolygon(point, polygon) != geometry::PointInPolygon::Outside;
+		};
 		const auto structureSeen = [&](geometry::Vec2i64 p0, geometry::Vec2i64 p1) -> bool {
 			if (pointSeen(p0) || pointSeen(p1)) {
 				return true;
