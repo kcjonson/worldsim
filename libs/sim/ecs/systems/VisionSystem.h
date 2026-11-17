@@ -135,11 +135,13 @@ class VisionSystem : public ISystem {
 	void ensureTerrainDefinitionsRegistered();
 
 	/// The walls and openings that bound or cross the part of `builtPolygon` within `radiusMm` of `centerMm`, into memory
-	/// (vision-architecture D4) and into `segments` and `openings` (cleared first).
+	/// (vision-architecture D4) and into `segments` and `openings` (cleared first). `backFacesHidden` is what the query
+	/// the polygon was built from returned.
 	void rememberStructures(
 		geometry::Vec2i64						 centerMm,
 		std::int64_t							 radiusMm,
 		const geometry::Ring&					 builtPolygon,
+		bool									 backFacesHidden,
 		Memory&									 memory,
 		std::vector<construction::SegmentId>&	 segments,
 		std::vector<construction::OpeningId>&	 openings
@@ -182,6 +184,7 @@ class VisionSystem : public ISystem {
 		geometry::Ring polygon;			 // empty when hadOccluders == false (outdoors)
 		std::vector<construction::SegmentId> segmentsSeen; // what the structure pass found for the polygon
 		std::vector<construction::OpeningId> openingsSeen;
+		bool		   backFacesHidden = false; // the polygon was built without the back faces
 		bool		   hadOccluders = false;
 		bool		   seenThisTick = false; // mark-and-sweep prune flag
 	};
