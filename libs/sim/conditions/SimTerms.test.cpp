@@ -94,7 +94,7 @@ namespace {
 	  protected:
 		void SetUp() override {
 			registerMoverDefinitions();
-			ASSERT_TRUE(assets::MemoryConfig::Get().loadFromFile(shippedMemoryConfig().string()));
+			ASSERT_TRUE(assets::MemoryConfig::Get().loadFromFile(shippedMemoryConfig().parent_path(), shippedMemoryConfig().filename()));
 			build(shippedConditions());
 
 			colonist = spawnColonist({0.0F, 0.0F});

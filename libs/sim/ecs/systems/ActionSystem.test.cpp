@@ -32,6 +32,7 @@
 #include "assets/AssetRegistry.h"
 #include "assets/ConstructionRegistry.h"
 #include "assets/RecipeDef.h"
+#include "assets/RecipeDef.test.h"
 #include "assets/RecipeRegistry.h"
 #include "assets/placement/PlacementExecutor.h"
 
@@ -638,6 +639,7 @@ TEST_F(ActionSystemGoalTest, HarvestBecomesItsDepositLegAndDeliversTheYield) {
 	recipe.defName = "Recipe_TwoStick";
 	recipe.label = "Two Stick";
 	recipe.inputs.push_back({"Stick", 0, 2});
+	recipe.workAmount = assets::kTestRecipeWorkAmount;
 	assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 
 	// A crafting station entity: WorkQueue marks it a station; Inventory is its material store.
@@ -928,6 +930,7 @@ TEST_F(ActionSystemGoalTest, CraftDepositMetersToRecipeNeedAndKeepsSurplus) {
 	recipe.defName = "Recipe_OneFiber";
 	recipe.label = "One Fiber";
 	recipe.inputs.push_back({"PlantFiber", 0, 1}); // recipe needs exactly 1
+	recipe.workAmount = assets::kTestRecipeWorkAmount;
 	assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 
 	auto&			registry = GoalTaskRegistry::Get();
@@ -1130,6 +1133,7 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 	recipe.defName = "Recipe_TwoStone";
 	recipe.label = "Two Stone";
 	recipe.inputs.push_back({"SmallStone", 0, 2});
+	recipe.workAmount = assets::kTestRecipeWorkAmount;
 	assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 
 	auto&			registry = GoalTaskRegistry::Get();

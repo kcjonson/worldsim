@@ -432,53 +432,7 @@ Later definitions can:
 
 ## WorkTypeRegistry (Code)
 
-### API
-
-```cpp
-class WorkTypeRegistry {
-public:
-    static WorkTypeRegistry& Get();
-
-    // Loading
-    bool loadFromFile(const std::string& xmlPath);
-    size_t loadFromFolder(const std::string& folderPath);
-
-    // Queries
-    const WorkType* getWorkType(const std::string& defName) const;
-    const WorkCategory* getCategory(const std::string& defName) const;
-    std::vector<const WorkType*> getWorkTypesInCategory(const std::string& categoryDefName) const;
-    std::vector<const WorkCategory*> getAllCategories() const;  // Sorted by tier
-
-    // For task generation
-    std::vector<const WorkType*> getWorkTypesForCapability(CapabilityType cap) const;
-};
-```
-
-### Usage in Task Generation
-
-```cpp
-void TaskRegistry::generateTasksFromEntity(const DiscoveredEntity& entity) {
-    // Get capabilities from asset definition
-    auto caps = AssetRegistry::Get().getCapabilities(entity.defNameId);
-
-    // Find work types that match these capabilities
-    for (auto cap : caps) {
-        auto workTypes = WorkTypeRegistry::Get().getWorkTypesForCapability(cap);
-        for (auto* workType : workTypes) {
-            // Check filters
-            if (!workType->filter.passes(entity)) continue;
-
-            // Create task
-            GlobalTask task;
-            task.type = workType->defName;
-            task.targetEntity = entity.entityId;
-            task.position = entity.position;
-            task.chainDefName = workType->taskChain;
-            addTask(task);
-        }
-    }
-}
-```
+`assets::WorkTypeRegistry` (libs/assets/assets/WorkTypeRegistry.h) holds the categories and work types from `work/work-types.xml`, loaded by `assets::loadWorkConfig` (see [Config Loading](../../../technical/config-loading.md)). Task generation asks it for the work types a capability triggers, checks each one's filter against the entity, and makes a task naming the work type and its chain.
 
 ---
 

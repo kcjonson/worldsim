@@ -1,8 +1,8 @@
 #include "MoodSystem.h"
 
-#include "../World.h"
 #include "../ShippedConfig.test.h"
 #include "../ThoughtTesting.test.h"
+#include "../World.h"
 #include "ThoughtSystem.h"
 #include "TimeSystem.h"
 
@@ -114,7 +114,7 @@ namespace ecs::test {
 				std::filesystem::temp_directory_path() / ("moodconfig_" + token + "_" + std::to_string(tempFiles.size()) + ".xml");
 			std::ofstream(path) << xml;
 			tempFiles.push_back(path);
-			return config.loadFromFile(path.string());
+			return config.loadFromFile(path.parent_path(), path.filename());
 		}
 
 		EntityID spawnColonist() {
@@ -144,7 +144,7 @@ namespace ecs::test {
 
 		/// The validator's messages for a config built from kTestConfig with one part swapped out.
 		std::vector<std::string> validationMessagesWith(const std::string& original, const std::string& replacement) {
-			std::string xml = kTestConfig;
+			std::string	 xml = kTestConfig;
 			const size_t at = xml.find(original);
 			EXPECT_NE(at, std::string::npos) << original;
 			xml.replace(at, original.size(), replacement);
@@ -176,7 +176,7 @@ namespace ecs::test {
 
 	TEST_F(MoodSystemTest, ShippedConfigIsValidAndWeightsEveryNeed) {
 		assets::MoodConfig shipped;
-		ASSERT_TRUE(shipped.loadFromFile(shippedMoodConfig().string()));
+		ASSERT_TRUE(shipped.loadFromFile(shippedMoodConfig().parent_path(), shippedMoodConfig().filename()));
 		assets::ConfigValidator::clearErrors();
 		EXPECT_TRUE(assets::ConfigValidator::validateMood(shipped));
 		EXPECT_TRUE(moodConfigErrors(shipped).empty());
@@ -187,7 +187,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(MoodSystemTest, ShippedTuningGivesTheOriginalNeedsScore) {
-		ASSERT_TRUE(config.loadFromFile(shippedMoodConfig().string()));
+		ASSERT_TRUE(config.loadFromFile(shippedMoodConfig().parent_path(), shippedMoodConfig().filename()));
 		setNeed(colonist, NeedType::Hunger, 50.0F);
 		setNeed(colonist, NeedType::Thirst, 20.0F);
 		setNeed(colonist, NeedType::Energy, 70.0F);
@@ -205,7 +205,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(MoodSystemTest, UnknownAndUnweightedNeedsAreConfigErrors) {
-		std::string xml = kTestConfig;
+		std::string		  xml = kTestConfig;
 		const std::string hygiene = R"(<Need name="Hygiene" weight="0"/>)";
 		xml.replace(xml.find(hygiene), hygiene.size(), R"(<Need name="Hygeine" weight="1"/>)");
 		const std::string temperature = R"(<Need name="Temperature" weight="0"/>)";

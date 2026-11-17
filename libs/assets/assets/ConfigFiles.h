@@ -17,4 +17,8 @@ namespace assets {
 	/// folder's own files first, in path order (the base set), then its subfolders' files, in path order.
 	[[nodiscard]] ConfigFiles configFilesIn(const std::filesystem::path& folder);
 
+	/// How a config error names `file`: its path relative to the folder the load was given, with forward slashes
+	/// on every platform (`tools/AxePrimitive.xml` under the recipes folder).
+	[[nodiscard]] std::string configFileName(const std::filesystem::path& file, const std::filesystem::path& folder);
+
 } // namespace assets

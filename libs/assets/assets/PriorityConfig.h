@@ -10,6 +10,7 @@
 // See /docs/design/game-systems/colonists/priority-config.md for design details.
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -41,7 +42,7 @@ namespace assets {
 	/// Task age bonus config
 	struct TaskAgeBonusConfig {
 		int16_t bonusPerMinute = 0; // Bonus per minute unclaimed
-		int16_t maxBonus = 0;	   // Cap for age bonus
+		int16_t maxBonus = 0;		// Cap for age bonus
 	};
 
 	/// Storage-priority weight config (AI arbitration, within tier 6 only).
@@ -63,13 +64,11 @@ namespace assets {
 
 		// --- Loading ---
 
-		/// Load priority config from an XML file
-		/// @param xmlPath Path to the XML file (e.g., priority-tuning.xml)
-		/// @return true if loading succeeded
-		bool loadFromFile(const std::string& xmlPath);
+		/// Replaces everything with `configRoot / file`: false, with problems() saying why, when the file can't be
+		/// read or a value in it is missing or malformed. Errors name the file as `file` is written.
+		bool loadFromFile(const std::filesystem::path& configRoot, const std::filesystem::path& file);
 
-		/// What the file got wrong in its numbers: each names the file, the element and the attribute. Reported
-		/// by ConfigValidator::validatePriorityConfig.
+		/// What the file got wrong: each names the file, the element and the attribute.
 		[[nodiscard]] const std::vector<std::string>& problems() const { return problemList; }
 
 		/// Clear all loaded config

@@ -20,8 +20,9 @@ namespace {
 	}
 
 	constexpr const char* kTuningOpen = R"(<tuning maxLineLength="48" maxSubjectNameLength="12" whileCheckMinutes="15">)";
-	constexpr const char* kKept = R"(<kept limit="2000" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="10" trivialWeight="1" normalWeight="3"/>)";
-	const std::string	  kTuning = std::string(kTuningOpen) + kKept + "</tuning>";
+	constexpr const char* kKept =
+		R"(<kept limit="2000" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="10" trivialWeight="1" normalWeight="3"/>)";
+	const std::string kTuning = std::string(kTuningOpen) + kKept + "</tuning>";
 
 	class ThoughtConfigTest : public ::testing::Test {
 	  protected:
@@ -155,26 +156,41 @@ TEST_F(ThoughtConfigTest, TheSameIdTwiceInOneFileIsAnError) {
 }
 
 TEST_F(ThoughtConfigTest, MoodEffectsTakeHoursOrWhileButNotBoth) {
-	EXPECT_TRUE(mentions(errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="-2"/></thought>)"), "one of the two"));
+	EXPECT_TRUE(
+		mentions(errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="-2"/></thought>)"), "one of the two")
+	);
 	EXPECT_TRUE(mentions(
-		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="-2" hours="1" while="is_night" cause="the cause"/></thought>)"),
+		errorsFor(
+			R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="-2" hours="1" while="is_night" cause="the cause"/></thought>)"
+		),
 		"one of the two"
 	));
-	EXPECT_TRUE(mentions(errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" hours="1"/></thought>)"), "need a mood amount"));
 	EXPECT_TRUE(
-		mentions(errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="0" hours="1"/></thought>)"), "other than 0")
-	);
-	EXPECT_TRUE(
-		mentions(errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="lots" hours="1"/></thought>)"), "other than 0")
+		mentions(errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" hours="1"/></thought>)"), "need a mood amount")
 	);
 	EXPECT_TRUE(mentions(
-		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="-1" hours="-3"/></thought>)"), "not a positive number"
+		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="0" hours="1"/></thought>)"),
+		"base.xml: thought 'a' feeling 1 mood must be a signed number other than 0 (leave mood out for no effect), got \"0\""
 	));
 	EXPECT_TRUE(mentions(
-		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="-2" while="is_night"/></thought>)"), "has no cause="
+		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="lots" hours="1"/></thought>)"),
+		"base.xml: thought 'a' feeling 1 mood must be a number, got \"lots\""
 	));
 	EXPECT_TRUE(mentions(
-		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="-2" hours="1" cause="night"/></thought>)"), "needs while"
+		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="-1" hours="-3"/></thought>)"),
+		"base.xml: thought 'a' feeling 1 hours must be a positive number of game hours, got \"-3\""
+	));
+	EXPECT_TRUE(mentions(
+		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood=" -1" hours="2"/></thought>)"),
+		"mood must be a number, got \" -1\""
+	)) << "attribute text is not trimmed, as in every loader";
+	EXPECT_TRUE(mentions(
+		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="-2" while="is_night"/></thought>)"),
+		"has no cause="
+	));
+	EXPECT_TRUE(mentions(
+		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="-2" hours="1" cause="night"/></thought>)"),
+		"needs while"
 	));
 }
 
@@ -185,39 +201,51 @@ TEST_F(ThoughtConfigTest, FeelingsAndTypesNeedALabel) {
 
 // The log writes "Soaked. Miserable. -6 mood, while soaked", so a label or cause of its own period would double it.
 TEST_F(ThoughtConfigTest, ALabelOrCauseEndingInAPeriodIsAnError) {
-	EXPECT_TRUE(mentions(errorsFor(R"(<feeling id="x" label="Miserable."/>)"), "base.xml: feeling 'x': label=\"Miserable.\" ends in a period"));
+	EXPECT_TRUE(
+		mentions(errorsFor(R"(<feeling id="x" label="Miserable."/>)"), "base.xml: feeling 'x': label=\"Miserable.\" ends in a period")
+	);
 	EXPECT_TRUE(mentions(
 		errorsFor(R"(<thought id="a" label="Got soaked." importance="normal"><feeling is="x"/></thought>)"),
 		"base.xml: thought 'a': label=\"Got soaked.\" ends in a period"
 	));
 	EXPECT_TRUE(mentions(
-		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="-2" while="is_night" cause="the dark."/></thought>)"),
+		errorsFor(
+			R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="-2" while="is_night" cause="the dark."/></thought>)"
+		),
 		"cause=\"the dark.\" ends in a period"
 	));
 }
 
 TEST_F(ThoughtConfigTest, ShapeMistakesAreReported) {
-	EXPECT_TRUE(
-		mentions(errorsFor(R"(<thought id="a" label="A" importance="huge"><feeling is="x"/></thought>)"), "is not trivial, normal, or major")
-	);
-	EXPECT_TRUE(mentions(errorsFor(R"(<thought id="a" label="A"><feeling is="x"/></thought>)"), "is not trivial, normal, or major"));
-	EXPECT_TRUE(mentions(errorsFor(R"(<thought id="a" label="A" importance="normal" stacks="yes"><feeling is="x"/></thought>)"), "stacks=\"yes\""));
 	EXPECT_TRUE(mentions(
-		errorsFor(R"(<thought id="a" label="A" importance="normal" source="idle"><feeling is="x"/></thought>)"), "unknown attribute 'source'"
+		errorsFor(R"(<thought id="a" label="A" importance="huge"><feeling is="x"/></thought>)"), "is not trivial, normal, or major"
 	));
+	EXPECT_TRUE(mentions(errorsFor(R"(<thought id="a" label="A"><feeling is="x"/></thought>)"), "is not trivial, normal, or major"));
 	EXPECT_TRUE(
-		mentions(errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" hour="1"/></thought>)"), "unknown attribute 'hour'")
+		mentions(errorsFor(R"(<thought id="a" label="A" importance="normal" stacks="yes"><feeling is="x"/></thought>)"), "stacks=\"yes\"")
 	);
+	EXPECT_TRUE(mentions(
+		errorsFor(R"(<thought id="a" label="A" importance="normal" source="idle"><feeling is="x"/></thought>)"),
+		"unknown attribute 'source'"
+	));
+	EXPECT_TRUE(mentions(
+		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" hour="1"/></thought>)"), "unknown attribute 'hour'"
+	));
 	EXPECT_TRUE(mentions(errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling/></thought>)"), "has no is="));
-	EXPECT_TRUE(mentions(errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x"/><line/></thought>)"), "line 1 has no text"));
-	EXPECT_TRUE(mentions(errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x"/><ends/></thought>)"), "<ends> has no thought="));
 	EXPECT_TRUE(
-		mentions(errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x"/><sound/></thought>)"), "unknown element <sound>")
+		mentions(errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x"/><line/></thought>)"), "line 1 has no text")
 	);
+	EXPECT_TRUE(
+		mentions(errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x"/><ends/></thought>)"), "<ends> has no thought=")
+	);
+	EXPECT_TRUE(mentions(
+		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x"/><sound/></thought>)"), "unknown element <sound>"
+	));
 	EXPECT_TRUE(mentions(errorsFor(R"(<thought importance="normal"><feeling is="x"/></thought>)"), "a <thought> has no id"));
 	EXPECT_TRUE(mentions(errorsFor(R"(<feeling id="x" label="X" icon="a"/>)"), "feeling 'x': unknown attribute 'icon'"));
 	EXPECT_TRUE(mentions(
-		errorsFor(R"(<thought id="a" label="A" importance="normal" animation="rain_drop"><feeling is="x"/></thought>)"), "unknown attribute 'animation'"
+		errorsFor(R"(<thought id="a" label="A" importance="normal" animation="rain_drop"><feeling is="x"/></thought>)"),
+		"unknown attribute 'animation'"
 	));
 	EXPECT_TRUE(mentions(errorsFor(R"(<mood/>)"), "unknown element <mood>"));
 }
@@ -233,7 +261,7 @@ TEST_F(ThoughtConfigTest, TuningIsRequiredAndChecked) {
 	EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "whileCheckMinutes must be a positive number"));
 
 	write("base.xml", R"(<tuning maxLineLength="40" whileCheckMinutes="15"/>)");
-	EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "maxSubjectNameLength must be a whole number"));
+	EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "base.xml: <tuning> maxSubjectNameLength is missing"));
 
 	write("base.xml", R"(<tuning maxLineLength="40" maxSubjectNameLength="2.5" whileCheckMinutes="15"/>)");
 	EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "maxSubjectNameLength must be a whole number"));
@@ -248,7 +276,9 @@ TEST_F(ThoughtConfigTest, KeptIsRequiredAndChecked) {
 	EXPECT_TRUE(mentions(errorsForKept(std::string(kKept) + kKept), "base.xml: <tuning> has more than one <kept>"));
 	EXPECT_TRUE(mentions(errorsForKept(std::string(kKept) + "<keep/>"), "base.xml: <tuning>: unknown element <keep>"));
 	EXPECT_TRUE(mentions(
-		errorsForKept(R"(<kept limit="2000" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="10" trivialWeight="1" normalWeight="3" majorWeight="9"/>)"),
+		errorsForKept(
+			R"(<kept limit="2000" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="10" trivialWeight="1" normalWeight="3" majorWeight="9"/>)"
+		),
 		"base.xml: <kept>: unknown attribute 'majorWeight'"
 	));
 	EXPECT_TRUE(mentions(
@@ -256,7 +286,9 @@ TEST_F(ThoughtConfigTest, KeptIsRequiredAndChecked) {
 		"base.xml: <kept> limit must be a whole number from 1"
 	));
 	EXPECT_TRUE(mentions(
-		errorsForKept(R"(<kept limit="2000.5" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="10" trivialWeight="1" normalWeight="3"/>)"),
+		errorsForKept(
+			R"(<kept limit="2000.5" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="10" trivialWeight="1" normalWeight="3"/>)"
+		),
 		"base.xml: <kept> limit must be a whole number"
 	));
 	EXPECT_TRUE(mentions(
@@ -267,8 +299,11 @@ TEST_F(ThoughtConfigTest, KeptIsRequiredAndChecked) {
 		errorsForKept(R"(<kept limit="2000" pruneStartsAt="0.9" pruneStopsAt="nan" recentDays="10" trivialWeight="1" normalWeight="3"/>)"),
 		"base.xml: <kept> pruneStopsAt must be a number, got \"nan\""
 	));
-	for (const std::string fractions : {R"(pruneStartsAt="0.8" pruneStopsAt="0.9")", R"(pruneStartsAt="0.8" pruneStopsAt="0.8")",
-										R"(pruneStartsAt="1.1" pruneStopsAt="0.8")", R"(pruneStartsAt="0.9" pruneStopsAt="0")"}) {
+	for (const std::string fractions :
+		 {R"(pruneStartsAt="0.8" pruneStopsAt="0.9")",
+		  R"(pruneStartsAt="0.8" pruneStopsAt="0.8")",
+		  R"(pruneStartsAt="1.1" pruneStopsAt="0.8")",
+		  R"(pruneStartsAt="0.9" pruneStopsAt="0")"}) {
 		EXPECT_TRUE(mentions(
 			errorsForKept(R"(<kept limit="2000" )" + fractions + R"( recentDays="10" trivialWeight="1" normalWeight="3"/>)"),
 			"0 < pruneStopsAt < pruneStartsAt <= 1"
@@ -290,8 +325,10 @@ TEST_F(ThoughtConfigTest, KeptIsRequiredAndChecked) {
 		errorsForKept(R"(<kept limit="2" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="10" trivialWeight="1" normalWeight="3"/>)"),
 		"base.xml: <kept> limit=\"2\" is too small: pruneStartsAt and pruneStopsAt round to 2 and 2 thoughts"
 	));
-	EXPECT_TRUE(errorsForKept(R"(<kept limit="5" pruneStartsAt="0.9" pruneStopsAt="0.1" recentDays="10" trivialWeight="1" normalWeight="3"/>)").empty())
-		<< "sizes 4 and 1 differ";
+	EXPECT_TRUE(
+		errorsForKept(R"(<kept limit="5" pruneStartsAt="0.9" pruneStopsAt="0.1" recentDays="10" trivialWeight="1" normalWeight="3"/>)")
+			.empty()
+	) << "sizes 4 and 1 differ";
 	EXPECT_TRUE(mentions(
 		errorsForKept(R"(<kept limit="5" pruneStartsAt="0.9" pruneStopsAt="0.05" recentDays="10" trivialWeight="1" normalWeight="3"/>)"),
 		"round to 4 and 0 thoughts"
@@ -303,12 +340,14 @@ TEST_F(ThoughtConfigTest, NumbersThatAreNotFiniteAreRefused) {
 	for (const std::string number : {"nan", "inf", "-inf", "+nan", "infinity"}) {
 		EXPECT_TRUE(mentions(
 			errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood=")" + number + R"(" hours="1"/></thought>)"),
-			"other than 0"
-		)) << "mood " << number;
+			"mood must be a number, got \"" + number + "\""
+		)) << "mood "
+		   << number;
 		EXPECT_TRUE(mentions(
 			errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="-1" hours=")" + number + R"("/></thought>)"),
-			"not a positive number"
-		)) << "hours " << number;
+			"hours must be a number, got \"" + number + "\""
+		)) << "hours "
+		   << number;
 
 		write("base.xml", R"(<tuning maxLineLength=")" + number + R"(" maxSubjectNameLength="12" whileCheckMinutes="15"/>)");
 		EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "maxLineLength must be a whole number")) << "maxLineLength " << number;
@@ -316,8 +355,7 @@ TEST_F(ThoughtConfigTest, NumbersThatAreNotFiniteAreRefused) {
 		EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "maxSubjectNameLength must be a whole number"))
 			<< "maxSubjectNameLength " << number;
 		write("base.xml", R"(<tuning maxLineLength="40" maxSubjectNameLength="12" whileCheckMinutes=")" + number + R"("/>)");
-		EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "whileCheckMinutes must be a positive number"))
-			<< "whileCheckMinutes " << number;
+		EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "whileCheckMinutes must be a number")) << "whileCheckMinutes " << number;
 	}
 }
 
@@ -368,7 +406,10 @@ TEST_F(ThoughtConfigTest, ReadsEachSourceTrigger) {
 
 TEST_F(ThoughtConfigTest, SourceMistakesNameTheirAttribute) {
 	const auto errorsForSource = [this](const std::string& source) {
-		return errorsFor(R"(<feeling id="content" label="Content"/><thought id="a" label="A" importance="normal"><feeling is="content"/>)" + source + "</thought>");
+		return errorsFor(
+			R"(<feeling id="content" label="Content"/><thought id="a" label="A" importance="normal"><feeling is="content"/>)" + source +
+			"</thought>"
+		);
 	};
 	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="sneezes"/>)"), "source 1: trigger=\"sneezes\""));
 	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="needFalls" threshold="seek"/>)"), "has no need="));
@@ -377,7 +418,12 @@ TEST_F(ThoughtConfigTest, SourceMistakesNameTheirAttribute) {
 	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="actionFinishes" action="Sleep" on="sofa"/>)"), "on=\"sofa\""));
 	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="actionFinishes" action="Craft" first="yes"/>)"), "first=\"yes\""));
 	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="firstSight" of="ground"/>)"), "of=\"ground\""));
-	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="idle" chance="0.5"/>)"), "everyMinutes=\"\""));
-	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="idle" everyMinutes="60" chance="1.5"/>)"), "chance=\"1.5\""));
+	EXPECT_TRUE(
+		mentions(errorsForSource(R"(<source trigger="idle" chance="0.5"/>)"), "base.xml: thought 'a' source 1 everyMinutes is missing")
+	);
+	EXPECT_TRUE(mentions(
+		errorsForSource(R"(<source trigger="idle" everyMinutes="60" chance="1.5"/>)"),
+		"base.xml: thought 'a' source 1 chance must be above 0 and at most 1, got \"1.5\""
+	));
 	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="recipeLearned" need="Hunger"/>)"), "unknown attribute 'need'"));
 }

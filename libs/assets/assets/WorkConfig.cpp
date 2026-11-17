@@ -21,30 +21,30 @@ namespace assets {
 		MemoryConfig::Get().clear();
 		ConfigValidator::clearErrors();
 
-		auto loadFailure = [](const std::filesystem::path& path, const std::vector<std::string>& problems = {}) {
+		const auto loadFailure = [](const std::filesystem::path& file, const std::vector<std::string>& problems = {}) {
 			if (!problems.empty()) {
 				return problems;
 			}
-			return std::vector<std::string>{"Failed to load " + path.generic_string()};
+			return std::vector<std::string>{"Failed to load " + file.generic_string()};
 		};
 
-		const auto actionTypes = configRoot / "actions" / "action-types.xml";
-		if (!ActionTypeRegistry::Get().loadFromFile(actionTypes.string())) {
+		const std::filesystem::path actionTypes = "actions/action-types.xml";
+		if (!ActionTypeRegistry::Get().loadFromFile((configRoot / actionTypes).string())) {
 			return loadFailure(actionTypes);
 		}
 
-		const auto taskChains = configRoot / "work" / "task-chains.xml";
-		if (!TaskChainRegistry::Get().loadFromFile(taskChains.string())) {
-			return loadFailure(taskChains);
+		const std::filesystem::path taskChains = "work/task-chains.xml";
+		if (!TaskChainRegistry::Get().loadFromFile(configRoot, taskChains)) {
+			return loadFailure(taskChains, TaskChainRegistry::Get().problems());
 		}
 
-		const auto workTypes = configRoot / "work" / "work-types.xml";
-		if (!WorkTypeRegistry::Get().loadFromFile(workTypes.string())) {
-			return loadFailure(workTypes);
+		const std::filesystem::path workTypes = "work/work-types.xml";
+		if (!WorkTypeRegistry::Get().loadFromFile(configRoot, workTypes)) {
+			return loadFailure(workTypes, WorkTypeRegistry::Get().problems());
 		}
 
-		const auto priorityTuning = configRoot / "work" / "priority-tuning.xml";
-		if (!PriorityConfig::Get().loadFromFile(priorityTuning.string())) {
+		const std::filesystem::path priorityTuning = "work/priority-tuning.xml";
+		if (!PriorityConfig::Get().loadFromFile(configRoot, priorityTuning)) {
 			return loadFailure(priorityTuning, PriorityConfig::Get().problems());
 		}
 
@@ -57,22 +57,22 @@ namespace assets {
 			for (const auto& name : missingTiers) {
 				joined += (joined.empty() ? "" : ", ") + name;
 			}
-			return {"priority-tuning.xml is missing an arbitration tier for task type(s): " + joined};
+			return {priorityTuning.generic_string() + " is missing an arbitration tier for task type(s): " + joined};
 		}
 
-		const auto construction = configRoot / "construction";
-		if (!ConstructionRegistry::Get().load(construction.string())) {
+		const std::filesystem::path construction = "construction";
+		if (!ConstructionRegistry::Get().load((configRoot / construction).string())) {
 			return loadFailure(construction);
 		}
 
-		const auto mood = configRoot / "colonists" / "mood.xml";
-		if (!MoodConfig::Get().loadFromFile(mood.string())) {
+		const std::filesystem::path mood = "colonists/mood.xml";
+		if (!MoodConfig::Get().loadFromFile(configRoot, mood)) {
 			return loadFailure(mood, MoodConfig::Get().problems());
 		}
 
-		const auto memory = configRoot / "colonists" / "memory.xml";
-		if (!MemoryConfig::Get().loadFromFile(memory.string())) {
-			return loadFailure(memory);
+		const std::filesystem::path memory = "colonists/memory.xml";
+		if (!MemoryConfig::Get().loadFromFile(configRoot, memory)) {
+			return loadFailure(memory, MemoryConfig::Get().problems());
 		}
 
 		if (ConfigValidator::validateAll()) {

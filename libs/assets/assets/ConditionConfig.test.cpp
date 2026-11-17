@@ -11,6 +11,8 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 using namespace assets;
 
@@ -126,10 +128,18 @@ TEST_F(ConditionConfigTest, NightHoursAreRequired) {
 }
 
 TEST_F(ConditionConfigTest, NightHoursMustBeNumbers) {
-	for (const char* night : {R"(start="abc" end="6")", R"(start="20" end="6x")", R"(start="" end="6")", R"(start="24" end="6")"}) {
-		write("a.xml", std::string("<Night ") + night + "/>");
+	const std::vector<std::pair<std::string, std::string>> cases = {
+		{R"(start="abc" end="6")", "a.xml: <Night> start must be a number, got \"abc\""},
+		{R"(start="20" end="6x")", "a.xml: <Night> end must be a number, got \"6x\""},
+		{R"(start="" end="6")", "a.xml: <Night> start must be a number, got \"\""},
+		{R"(end="6")", "a.xml: <Night> start is missing"},
+		{R"(start="24" end="6")", "a.xml: <Night> start must be an hour from 0 up to 24, got \"24\""},
+		{R"(start="20" end="6" length="10")", "a.xml: <Night>: unknown attribute 'length'"},
+	};
+	for (const auto& [night, error] : cases) {
+		write("a.xml", "<Night " + night + "/>");
 		const ConditionConfigLoad load = loadConditionConfig(folder);
-		EXPECT_TRUE(mentions(load.errors, "<Night> needs start and end hours")) << night;
+		EXPECT_TRUE(mentions(load.errors, error)) << night;
 		EXPECT_FALSE(load.config.night.has_value()) << night;
 	}
 }

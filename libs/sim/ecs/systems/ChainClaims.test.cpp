@@ -44,6 +44,7 @@
 #include "assets/AssetRegistry.h"
 #include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
+#include "assets/RecipeDef.test.h"
 #include "assets/RecipeRegistry.h"
 
 #include <construction/ConstructionWorld.h>
@@ -250,6 +251,7 @@ namespace ecs::test {
 			recipe.defName = "Recipe_" + item;
 			recipe.label = recipe.defName;
 			recipe.inputs.push_back({item, 0, count});
+			recipe.workAmount = assets::kTestRecipeWorkAmount;
 			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 			world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);
 			world->addComponent<Inventory>(station, Inventory::createForStorage());
@@ -4014,6 +4016,7 @@ namespace ecs::test {
 			recipe.label = recipe.defName;
 			recipe.inputs.push_back({"Stone", 0, 2});
 			recipe.inputs.push_back({"Stick", 0, 1});
+			recipe.workAmount = assets::kTestRecipeWorkAmount;
 			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 			world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);
 			world->addComponent<Inventory>(station, Inventory::createForStorage());

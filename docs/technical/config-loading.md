@@ -12,7 +12,35 @@ This document specifies **when** and **how** work configuration files are loaded
 
 ## Numbers
 
-Config numbers go through the strict parsers (`parseConfigNumber` and `parseConfigInteger`, read by `ConfigReader`, in `libs/assets/assets/ConfigNumber.h`). A leading `+` is accepted; empty text, trailing characters ("30abc"), `nan`, `inf`, and values too large for the type are refused rather than read as a number. Text inside an element is trimmed first. A missing, malformed, or out-of-range value (a field stored in 16 bits is checked against its range, never truncated) is a config error naming the file, the element (with its `name` attribute when it has one, as in `<Task name="Haul"> tier`), and the attribute, shown on the loading scene ([where load errors surface](#where-load-errors-surface)). Base tuning lives in XML, so there is no C++ default for it.
+Config numbers and true-or-false values go through the strict parsers (`parseConfigNumber` and `parseConfigInteger`, read by `ConfigReader`, in `libs/assets/assets/ConfigNumber.h`). A leading `+` is accepted; empty text, trailing characters ("30abc"), `nan`, `inf`, and values too large for the type are refused rather than read as a number. A true-or-false value (`ConfigReader`'s boolean readers) is exactly `true` or `false`; `1`, `yes`, and `ture` are refused rather than read as true or false. Text inside an element is trimmed first. Attribute text is not trimmed, so `gameMinutes=" 30"` is refused. A missing, malformed, or out-of-range value (a field stored in 16 bits or 8 bits is checked against its range, never truncated) is a config error naming the file, the element by its instance (its `name` or `defName` attribute, or its `<defName>` child, as in `<Task name="Haul"> tier`, `<Chain defName="Chain_Rescue"> step 2 order`, or `<RecipeDef defName="Recipe_AxePrimitive"> workAmount`), and the attribute, in the shape `<file>: <element> <attribute> must be <what is allowed>, got "<text>"` or `... is missing`. A loader that names a nested element itself (the thoughts' `thought 'ate' feeling 1 mood`) uses the same shape. The errors are shown on the loading scene ([where load errors surface](#where-load-errors-surface)). Base tuning lives in XML, so there is no C++ default for it.
+
+A file is named by its path relative to the folder its load was given, with forward slashes on every platform: `loadWorkConfig`'s files relative to the config root (`work/priority-tuning.xml`), each colonist-rules folder's files relative to that folder after its stage prefix (`[needs] needs.xml`), and the recipes relative to `assets/recipes` after `[recipes]` (`[recipes] tools/AxePrimitive.xml`).
+
+Any problem in a file (a bad number, an unknown element or attribute, a missing name, a name declared twice) means the load fails: the registry holds nothing from it and its errors reach the loading failure view.
+
+### Attributes that may be left out
+
+Everything not listed here must be given. Leaving one of these out has the stated meaning; it is not a fallback for a forgotten value.
+
+| Loader | File | Attribute | Left out means |
+|--------|------|-----------|----------------|
+| WorkTypeRegistry | `work/work-types.xml` | `<Category canDisable>` | the player can disable the category |
+| WorkTypeRegistry | `work/work-types.xml` | `<WorkType><minSkillLevel>` | no minimum skill level (0); when given, a number, 0 or more |
+| WorkTypeRegistry | `work/work-types.xml` | `<filter>` elements `<looseItem>`, `<indoor>`, `<neededByRecipe>`, `<neededByBlueprint>`, `<hasPlacementTarget>` | no condition on that property; when given, `true` or `false` |
+| WorkTypeRegistry | `work/work-types.xml` | `<label>`, `<description>`, `<triggerCapability>`, `<targetCapability>`, `<skillRequired>`, `<taskChain>`, `<filter>`, `<entityGroup>`, `<stationType>` | the label is the defName; the rest are absent (no skill needed, no chain, no filter condition) |
+| TaskChainRegistry | `work/task-chains.xml` | `<Step optional>` | the step must be done (false) |
+| TaskChainRegistry | `work/task-chains.xml` | `<Step requiresPreviousStep>` | the step waits for the one before it (true) |
+| TaskChainRegistry | `work/task-chains.xml` | `<label>`, `<description>` | the label is the defName |
+| RecipeRegistry | `assets/recipes/**/*.xml` | `<input count>`, `<output count>` | one of the thing; when given, a whole number, 1 or more |
+| RecipeRegistry | `assets/recipes/**/*.xml` | `<innate>` | colonists learn the recipe (false) |
+| RecipeRegistry | `assets/recipes/**/*.xml` | `<label>`, `<description>`, `<station>`, `<skill>`, `<inputs>`, `<outputs>` | the label is the defName; no station (as is `<station>none</station>`), no skill, no inputs or outputs |
+| PriorityConfig | `work/priority-tuning.xml` | `<TaskTiers>`, `<WorkCategoryOrder>` | no tiers or order from this file (`loadWorkConfig` then reports every task type without a tier) |
+| ThoughtConfig | `thoughts/*.xml` | a feeling's `mood` | the feeling has no mood effect |
+| ThoughtConfig | `thoughts/*.xml` | `stacks`, an action source's `first` | false |
+
+The `<Category canDisable>`, `<Step optional>`, `<Step requiresPreviousStep>`, and `<innate>` values above are `true` or `false` when given.
+
+Required tuning includes a work category's `tier` (a number, 0 or more), a chain step's `order` (a whole number from 0 to 255, no two steps of a chain the same) and `target` (the role the step's action works on, as `source` or `station`), a recipe's `<workAmount>` (work ticks, 0 or more), and `<RecentSighting gameMinutes>` in `colonists/memory.xml`, beside the priority, mood, needs, attribute, trait, condition, and thought numbers. A recipe is one `<RecipeDef>` root per file whose `<input>` and `<output>` lines name their item with `thing`. Each `thing`, and a `<station>` other than `none`, must name a loaded asset definition: one that names nothing is a problem in the file, as in `[recipes] tools/AxePrimitive.xml: <RecipeDef defName="Recipe_AxePrimitive"> input thing "Wod" names no definition`. The asset manager's Reload loads the recipes the same way; it shows no recipes, so their problems surface when the game loads.
 
 ---
 
@@ -82,7 +110,7 @@ assets/config/thoughts/*.xml
 ```
 
 `colonists/traits/`, `colonists/attributes/`, `colonists/needs/`, `conditions/`, and `thoughts/` load through `ecs::loadColonistRules(configRoot)` (libs/sim/ecs/ColonistRules.h),
-stopping at the first stage with errors. The traits load first, then the attribute ranges, then the need thresholds (`loadNeedLevels`: `assets::loadNeedsConfig` reads the folder, a later file's `<Need>` replacing an earlier one of the same name and logged at info level, and `ecs::NeedLevels` checks that every need is given and each name is a need). A needs file with any error adds nothing, and its errors name the file's path as loaded and the `<Need name="...">`. There is no C++ default for a threshold: every colonist's `NeedsComponent` is constructed from the loaded `NeedLevels`, so the AI and the thought sources read the same numbers. Then the condition vocabulary is declared, answered by the sim's terms, and frozen, then the thought
+stopping at the first stage with errors. The traits load first, then the attribute ranges, then the need thresholds (`loadNeedLevels`: `assets::loadNeedsConfig` reads the folder, a later file's `<Need>` replacing an earlier one of the same name and logged at info level, and `ecs::NeedLevels` checks that every need is given and each name is a need). A needs file with any error adds nothing, and its errors name the file (relative to the needs folder) and the `<Need name="...">`. There is no C++ default for a threshold: every colonist's `NeedsComponent` is constructed from the loaded `NeedLevels`, so the AI and the thought sources read the same numbers. Then the condition vocabulary is declared, answered by the sim's terms, and frozen, then the thought
 types are read and their conditions parsed against it (`loadConditionVocabulary` and `loadThoughtTypes`,
 which the tests use too). Each folder's own files load before its subfolders' (`assets::configFilesIn`),
 so a mod adds or replaces by adding a file there. A clean load logs its counts at info level (traits; needs; terms;
@@ -176,7 +204,8 @@ if (!configErrors.empty()) {
 
 Every way a game load fails goes through the loading scene's one `fail(messages)`, which logs each message at
 error level, keeps them for the scene's state view, and moves to the `Failed` phase. The causes are the asset
-library's validation errors and a failed ground bake (when a `--scene` jump skipped the splash), a missing or
+library's validation errors and the recipes' errors (prefixed `[recipes]`, read by `world_sim::stepGroundBake` from
+`RecipeRegistry::problems()`, which the asset system's load fills), a failed ground bake (when a `--scene` jump skipped the splash), a missing or
 unreadable quickstart planet, and the config errors above: `loadWorkConfig`'s, `ecs::moodConfigErrors`, and
 `ecs::loadColonistRules`'s, each prefixed with its stage.
 
@@ -187,7 +216,7 @@ the run's log file (`foundation::logFilePath()`, under `%TEMP%\world-sim\logs\` 
 message, and "Press Esc to return to the menu". Esc returns to the main menu, where the next game's load reads
 a corrected file again.
 
-The splash shows the same view for what blocks it: the asset library's validation errors and the ground bake's
+The splash shows the same view for what blocks it: the asset library's validation and recipe errors and the ground bake's
 at startup, and the colonist rules' errors a direct switch to the game scene hands it
 (`world_sim::failColonistRules`). The view takes the boot log's place under the identity block, Enter
 Expedition stays disabled, and its line under the messages says to fix the files and restart.
@@ -216,7 +245,7 @@ The loading scene's status line while it works:
 
 ### Unit Tests (existing)
 
-The 19 tests in `WorkConfig.test.cpp` cover registry loading and validation.
+`WorkConfig.test.cpp` covers registry loading and validation, pins the shipped work config's values, and checks each loader's missing, malformed, and unknown values; `AssetRegistryAsync.test.cpp` does the same for the recipes.
 
 ### Integration Test (manual)
 
