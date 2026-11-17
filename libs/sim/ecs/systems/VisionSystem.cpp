@@ -170,7 +170,6 @@ namespace ecs {
 			} else {
 				if (polygonDue) {
 					entry.polygon = geometry::computeVisibilityPolygon(observerMm, polygonRadiusMm, occluderScratch);
-					entry.backFacesHidden = backFacesHidden;
 					entry.builtPos = pos.value;
 					entry.builtVersion = m_geometry.generation();
 					entry.hadOccluders = true;
@@ -182,7 +181,7 @@ namespace ecs {
 					// same structures, already in memory, so re-scanning every tick is wasted.
 					// New structures appear only via a geometry change, which bumps the
 					// generation and forces a rebuild here.
-					rememberStructures(observerMm, radiusMm, entry.polygon, entry.backFacesHidden, memory, entry.segmentsSeen, entry.openingsSeen);
+					rememberStructures(observerMm, radiusMm, entry.polygon, backFacesHidden, memory, entry.segmentsSeen, entry.openingsSeen);
 				}
 				polygon = &entry.polygon;
 			}
@@ -272,7 +271,7 @@ namespace ecs {
 		// A wall's edges are listed together, so one already seen is the last one added.
 		for (const GeometryIndex::OccluderRecord& occluder : m_geometry.occluders()) {
 			if ((!segments.empty() && segments.back() == occluder.source) ||
-				!geometry::withinDistanceOfSegment(centerMm, occluder.seg.a, occluder.seg.b, radiusMm)) {
+				!occluder.within(centerMm, radiusMm)) {
 				continue;
 			}
 			const bool seen = backFacesHidden && GeometryIndex::facesAway(occluder.seg, centerMm)

@@ -215,6 +215,7 @@ namespace construction {
 			const double half	= static_cast<double>(type->widthMm) * 0.5;
 			gaps.gaps.push_back({std::llround(centre - half), std::llround(centre + half)});
 			gaps.openings.push_back(opening.id);
+			gaps.types.push_back(type);
 		}
 
 		double lengthOf(const ConstructionWorld& world, const WallSegment& segment) {

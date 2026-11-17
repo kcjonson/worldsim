@@ -20,6 +20,10 @@
 #include <unordered_map>
 #include <vector>
 
+namespace assets {
+	struct OpeningTypeDef;
+}
+
 namespace construction {
 
 	/// Half the segment's thickness preset in mm, or 0 when the preset is unknown.
@@ -68,12 +72,13 @@ namespace construction {
 	};
 
 	/// The centerline spans a segment's openings leave open, in whole mm from its v0 end,
-	/// and in step with them the opening each belongs to, in the world's opening order. An
+	/// and in step with them the opening each belongs to and its type, in the world's opening order. An
 	/// opening at t with clear width w on a segment of length L spans t*L -/+ w/2, rounded;
 	/// geometry::wallSpans and wallPiecesAndOutline clamp and merge them.
 	struct OpeningGaps {
-		std::vector<geometry::WallGap> gaps;
-		std::vector<OpeningId>		   openings;
+		std::vector<geometry::WallGap>				gaps;
+		std::vector<OpeningId>						openings;
+		std::vector<const assets::OpeningTypeDef*> types; // never null; the registry's, valid until it reloads
 	};
 	[[nodiscard]] OpeningGaps openingGaps(const ConstructionWorld& world, const WallSegment& segment, OpeningGapFilter filter);
 

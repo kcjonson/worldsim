@@ -31,6 +31,7 @@
 #include <construction/ConstructionWorld.h> // SegmentId/OpeningId typedefs used in records
 
 #include <core/Vec2i64.h>
+#include <predicates/Predicates.h>
 #include <visibility/Visibility.h>
 
 #include <cstddef>
@@ -53,6 +54,19 @@ namespace ecs {
 			// another wall's band, which overlap at every joint; or in its own graph one it does not
 			// meet end to end, where two walls' bands overlap without a shared vertex.
 			bool crossesAnotherOccluder = false;
+			// Its bounding box.
+			geometry::Vec2i64 low;
+			geometry::Vec2i64 high;
+
+			// Whether any of it lies within radiusMm of `point`: off the box by more than that
+			// on either axis it does not, else geometry::withinDistanceOfSegment decides.
+			[[nodiscard]] bool within(geometry::Vec2i64 point, std::int64_t radiusMm) const {
+				if (point.x + radiusMm < low.x || point.x - radiusMm > high.x || point.y + radiusMm < low.y ||
+					point.y - radiusMm > high.y) {
+					return false;
+				}
+				return geometry::withinDistanceOfSegment(point, seg.a, seg.b, radiusMm);
+			}
 		};
 
 		// A built opening, kept for the same V3 pass. jambA/jambB are the two

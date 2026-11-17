@@ -188,7 +188,6 @@ class VisionSystem : public ISystem {
 		geometry::Ring polygon;			 // empty when hadOccluders == false (outdoors)
 		std::vector<construction::SegmentId> segmentsSeen; // what the structure pass found for the polygon
 		std::vector<construction::OpeningId> openingsSeen;
-		bool		   backFacesHidden = false; // the polygon was built without the back faces
 		bool		   hadOccluders = false;
 		bool		   seenThisTick = false; // mark-and-sweep prune flag
 	};
