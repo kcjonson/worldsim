@@ -355,6 +355,23 @@ namespace ecs::test {
 		EXPECT_NO_THROW(world->update(0.016F));
 	}
 
+	// The warning line itself is unasserted (the tests have no log capture); this holds the behaviour.
+	TEST_F(AIDecisionSystemTest, ColonistMissingDecisionComponentsSelectsNothingAndCompleteOneStillDecides) {
+		auto noMemo = createColonist({0.0F, 0.0F});
+		world->removeComponent<SourceReachMemo>(noMemo);
+		auto noTrace = createColonist({1.0F, 0.0F});
+		world->removeComponent<DecisionTrace>(noTrace);
+		auto complete = createColonist({2.0F, 0.0F});
+
+		for (int i = 0; i < 3; ++i) {
+			EXPECT_NO_THROW(world->update(0.016F));
+		}
+
+		EXPECT_FALSE(getTask(noMemo)->isActive());
+		EXPECT_FALSE(getTask(noTrace)->isActive());
+		EXPECT_TRUE(getTask(complete)->isActive());
+	}
+
 	// =============================================================================
 	// Tier Priority Tests
 	// =============================================================================
