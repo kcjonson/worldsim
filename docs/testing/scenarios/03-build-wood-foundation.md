@@ -168,7 +168,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 32. Pick Rectangle, click a first corner, and move the pointer out of the window: the pending fill, outline, and size label go and the corner's dot stays; come back and click the opposite corner: the rectangle is added.
 
-Run steps 33 to 49 after the pass / fail check below: they go to the main menu and start a fresh game, which loses the foundation that check reads.
+Run steps 33 to 60 after the pass / fail check below: they go to the main menu and start a fresh game, which loses the foundation that check reads.
 
 33. Press Esc: the Rectangle tool closes.
 
@@ -203,6 +203,28 @@ Run steps 33 to 49 after the pass / fail check below: they go to the main menu a
 48. Pick Back, then Quick Start: a new game shows.
 
 49. Repeat steps 38 to 42: no arc, no degrees, no `=`, and no marks.
+
+50. Look above the strip: the key guide lists the Freeform tool's keys (Click, Click point 1, Backspace, Esc / Right-click, Esc again, Alt), then "Lined up with something" and "A square corner", each with a small mark drawn like the world's, then "? or H hides this".
+
+51. Click on the key guide: no point is placed. Click just above it: a point is placed.
+
+52. Press `?`: the key guide folds to a "Keys ?" chip.
+
+53. Press Esc twice, then pick Wall in the Build menu: the chip stays folded.
+
+54. Press H: the key guide opens with the wall tool's keys, "Ctrl+click a foundation edge" among them.
+
+55. Press H, then click the chip: the key guide opens again.
+
+56. Press Esc: the tool closes and the key guide goes with it.
+
+57. Pick Foundation, then Rectangle in the picker: the key guide lists the Rectangle tool's keys and no marks.
+
+58. Press Esc, open the top bar's Menu, pick Main Menu, then Settings, and switch Show key guide while drawing off: it reads off.
+
+59. Pick Back, then Quick Start: a new game shows.
+
+60. Pick Foundation in the Build menu: the strip shows, with no key guide over it.
 
 ---
 
