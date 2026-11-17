@@ -29,8 +29,8 @@ namespace assets {
 		};
 
 		const std::filesystem::path actionTypes = "actions/action-types.xml";
-		if (!ActionTypeRegistry::Get().loadFromFile((configRoot / actionTypes).string())) {
-			return loadFailure(actionTypes);
+		if (!ActionTypeRegistry::Get().loadFromFile(configRoot, actionTypes)) {
+			return loadFailure(actionTypes, ActionTypeRegistry::Get().problems());
 		}
 
 		const std::filesystem::path taskChains = "work/task-chains.xml";

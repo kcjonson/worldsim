@@ -77,6 +77,7 @@ A whole-library check, runnable in the GUI and headless in CI, sharing one rule 
 - No duplicate `defName`s.
 - Documented-but-ignored fields flagged as warnings (so a def that sets `<variation>` knows it does nothing today).
 - Render smoke test: every asset renders without error, and every procedural generator produces a form without error. This is the payoff of having a render API, it turns "does the whole library still draw" into one command.
+- Recipes load against the library: a recipe file with a mistake, or a thing or station that names no definition, is an error. The GUI counts these in its header's errors and lists them in full at the top of the asset tree, since a recipe has no asset to select; Reload reads them again. The recipes are not browsed.
 
 Validation output is human-readable in the GUI and machine-readable from the CLI, with a non-zero exit on failure so CI can gate on it.
 

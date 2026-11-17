@@ -115,14 +115,15 @@ namespace assets {
 			return recipe;
 		}
 
-		/// Sets the interned ids of the things and station `recipe` names from AssetRegistry's index; a name it
-		/// doesn't hold is added to `errors`.
+		/// Sets the interned ids of the things and station `recipe` names from AssetRegistry's index; a name with
+		/// no loaded definition is added to `errors`. The index also holds names with none: a harvest yield no
+		/// definition defines, and the synthetic terrain names.
 		void resolveNames(RecipeDef& recipe, const std::string& source, std::vector<std::string>& errors) {
 			const AssetRegistry& definitions = AssetRegistry::Get();
 			const std::string	 what = source + ": <RecipeDef defName=\"" + recipe.defName + "\"> ";
 			const auto			 resolve = [&](const char* role, const std::string& defName) {
 				  const uint32_t id = definitions.getDefNameId(defName);
-				  if (id == 0) {
+				  if (definitions.getDefinitionById(id) == nullptr) {
 					  errors.push_back(what + role + " \"" + defName + "\" names no definition");
 				  }
 				  return id;

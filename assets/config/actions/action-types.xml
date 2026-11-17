@@ -7,6 +7,9 @@
   - If needsHands="false": Can continue carrying item while doing action
   - If needsHands="true": Must stow (1-hand items) or drop (2-hand items) first
 
+  needsHands is true or false; left out, the action leaves the hands free (false).
+  <description> may be left out. Any other attribute or element is an error.
+
   See /docs/design/game-systems/colonists/task-chains.md for details.
 -->
 <ActionTypes>
