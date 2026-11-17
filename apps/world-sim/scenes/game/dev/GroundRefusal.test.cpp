@@ -88,3 +88,11 @@ TEST_F(GroundRefusalTest, SpawnPutsANonFurnitureDefInTheCreek) {
 	EXPECT_TRUE(world_sim::spawnGroundRefusal(placement, &navigation, kLooseStone, {10.0F, kCreekY}).empty());
 	EXPECT_FALSE(world_sim::spawnGroundRefusal(placement, &navigation, kLooseStone, {500.0F, 500.0F}).empty()) << "ground no mover has meshed";
 }
+
+// A mover goes anywhere he could stand, and onto ground no mover has meshed, which his own limit meshes.
+TEST_F(GroundRefusalTest, AMoverIsTakenOnUnmeshedGroundWhereALooseItemIsNot) {
+	EXPECT_TRUE(world_sim::moverGroundRefusal(&navigation, {10.0F, kCreekY}).empty()) << "he wades the creek";
+	EXPECT_TRUE(world_sim::moverGroundRefusal(&navigation, {500.0F, 500.0F}).empty()) << "ground no mover has meshed";
+	EXPECT_NE(world_sim::putDownRefusal(&navigation, {500.0F, 500.0F}).find("no mover has meshed"), std::string::npos);
+	EXPECT_FALSE(world_sim::moverGroundRefusal(nullptr, {10.0F, kCreekY}).empty()) << "no nav mesh to stand on";
+}

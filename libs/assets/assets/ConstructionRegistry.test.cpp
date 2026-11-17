@@ -329,19 +329,21 @@ TEST_F(ConstructionRegistryTest, Snapping_Parsed) {
 	EXPECT_EQ(s.lengthRoundingOnGuides, GuideRounding::GuideDistance);
 	EXPECT_TRUE(s.rectangleAdjacencySnaps);
 
-	// Today's behaviour: angle steps, world-axis guides, and align on; the rest off.
+	// The shipped XML and the in-code defaults (which the engine tests read through
+	// shippedAids) are two copies of the player's starting settings; they must not drift.
 	const DrawingSettingsDefaults& d = s.drawingSettingsDefaults;
-	EXPECT_TRUE(d.angleSteps);
-	EXPECT_FALSE(d.guidesFromShape);
-	EXPECT_TRUE(d.alignToExistingBuildings);
-	EXPECT_TRUE(d.guidesFromWorldAxes);
-	EXPECT_FALSE(d.guideCrossings);
-	EXPECT_FALSE(d.commonLengths);
-	EXPECT_FALSE(d.guideDistances);
-	EXPECT_FALSE(d.angleReadout);
-	EXPECT_FALSE(d.roundLengths);
-	EXPECT_FALSE(d.showKeyGuide);
-	EXPECT_FLOAT_EQ(d.rectangleGridSpacingMeters, 1.0F);
+	const DrawingSettingsDefaults  inCode;
+	EXPECT_EQ(d.angleSteps, inCode.angleSteps);
+	EXPECT_EQ(d.guidesFromShape, inCode.guidesFromShape);
+	EXPECT_EQ(d.alignToExistingBuildings, inCode.alignToExistingBuildings);
+	EXPECT_EQ(d.guidesFromWorldAxes, inCode.guidesFromWorldAxes);
+	EXPECT_EQ(d.guideCrossings, inCode.guideCrossings);
+	EXPECT_EQ(d.commonLengths, inCode.commonLengths);
+	EXPECT_EQ(d.guideDistances, inCode.guideDistances);
+	EXPECT_EQ(d.angleReadout, inCode.angleReadout);
+	EXPECT_EQ(d.roundLengths, inCode.roundLengths);
+	EXPECT_EQ(d.showKeyGuide, inCode.showKeyGuide);
+	EXPECT_FLOAT_EQ(d.rectangleGridSpacingMeters, inCode.rectangleGridSpacingMeters);
 }
 
 // Every key the drawing-tools change added or renamed, set away from its default, so a
@@ -382,7 +384,7 @@ TEST_F(ConstructionRegistryTest, Snapping_EveryNewKeyParses) {
     <guidesFromShape>true</guidesFromShape>
     <alignToExistingBuildings>false</alignToExistingBuildings>
     <guidesFromWorldAxes>false</guidesFromWorldAxes>
-    <guideCrossings>true</guideCrossings>
+    <guideCrossings>false</guideCrossings>
     <commonLengths>true</commonLengths>
     <guideDistances>true</guideDistances>
     <angleReadout>true</angleReadout>
@@ -435,7 +437,7 @@ TEST_F(ConstructionRegistryTest, Snapping_EveryNewKeyParses) {
 	EXPECT_TRUE(d.guidesFromShape);
 	EXPECT_FALSE(d.alignToExistingBuildings);
 	EXPECT_FALSE(d.guidesFromWorldAxes);
-	EXPECT_TRUE(d.guideCrossings);
+	EXPECT_FALSE(d.guideCrossings);
 	EXPECT_TRUE(d.commonLengths);
 	EXPECT_TRUE(d.guideDistances);
 	EXPECT_TRUE(d.angleReadout);

@@ -252,6 +252,23 @@ namespace assets {
 			return assetFolder / scriptPath;
 		}
 
+		// True when the folder's own def XML (<folder>/<folder>.xml) names xmlFile in a <motion>
+		// element, which is how the loader finds a motion clips file; it is not an orphan.
+		bool isReferencedMotionFile(const fs::path& xmlFile) {
+			const fs::path	   folder = xmlFile.parent_path();
+			pugi::xml_document doc;
+			if (!doc.load_file((folder / (folder.filename().string() + ".xml")).string().c_str())) {
+				return false;
+			}
+			for (const pugi::xml_node assetDef : doc.child("AssetDefinitions").children("AssetDef")) {
+				const std::string motion = assetDef.child_value("motion");
+				if (!motion.empty() && (folder / motion).lexically_normal() == xmlFile.lexically_normal()) {
+					return true;
+				}
+			}
+			return false;
+		}
+
 	} // namespace
 
 	ValidationReport AssetValidator::validate(const fs::path& assetsRoot, const fs::path& sharedScriptsPath) {
@@ -297,6 +314,9 @@ namespace assets {
 			const std::string stem = entry.path().stem().string();
 			const std::string parentFolder = entry.path().parent_path().filename().string();
 			if (stem != parentFolder) {
+				if (isReferencedMotionFile(entry.path())) {
+					continue;
+				}
 				report.add(Severity::Warning, "", "", "XML filename does not match its folder; the loader skips it", entry.path().string());
 				continue;
 			}

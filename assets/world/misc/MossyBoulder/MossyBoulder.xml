@@ -14,7 +14,6 @@
 
     <rendering>
       <complexity>simple</complexity>
-      <tier>instanced</tier>
     </rendering>
 
     <capabilities>

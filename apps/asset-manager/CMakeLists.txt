@@ -27,15 +27,6 @@ target_link_libraries(asset-manager
         assets
 )
 
-# Stage fonts and assets next to the executable (the base shader is compiled in);
-# fonts stay POST_BUILD.
-add_custom_command(TARGET asset-manager POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_SOURCE_DIR}/fonts
-    $<TARGET_FILE_DIR:asset-manager>/fonts
-    COMMENT "Copying fonts to asset-manager directory"
-)
-
 # Mirror assets to the executable directory on every build.
 # See cmake/mirror-assets.cmake — per-subdir mirror that prunes deleted files
 # without touching separately-staged dirs (e.g. assets/planets/).

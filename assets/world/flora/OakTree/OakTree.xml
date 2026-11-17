@@ -49,7 +49,6 @@
 
     <rendering>
       <complexity>complex</complexity>
-      <tier>batched</tier>
     </rendering>
 
     <!-- Trunk-foot collision comes from the generator (asset:setCollisionRect, half the age

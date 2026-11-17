@@ -89,9 +89,9 @@ namespace world_sim {
 		explicit DevCommandHandler(DevCommandContext context) : m_ctx(std::move(context)) {}
 
 		/// Registers every verb as a route and every view as a state provider, for as long as the
-		/// returned registrations live. Most verbs answer {"status":"ok","verb":...}; spawn, foundation,
-		/// walls and opening answer a 400 with {"error":...} when they create nothing, ground they refuse
-		/// included; verbs with an outcome to report (foundation-edit) answer with it, and flora answers
+		/// returned registrations live. Most verbs answer {"status":"ok","verb":...}; spawn, colonist,
+		/// teleport, give, foundation, walls and opening answer a 400 with {"error":...} when they create
+		/// or move nothing, ground they refuse included; verbs with an outcome to report (foundation-edit) answer with it, and flora answers
 		/// with its measurement. The views are colonists, construction, stations, storage, time,
 		/// landing, tunables and summary.
 		std::vector<app::DevServer::Registration> registerWith(app::DevServer& server);
@@ -101,14 +101,20 @@ namespace world_sim {
 		void devFreeBuild(const app::DevRequest& cmd);
 		// reveal?on=1|0: player visibility off or on (player-visibility.md 3.10)
 		void devReveal(const app::DevRequest& cmd);
-		void devGive(const app::DevRequest& cmd);
+		// give?material=&n=&where=site|loose|colonist|storage&at=x,y&slot=pack|hands|belt: answers ok with
+		// added and asked, and with shortfall (what was in the way) when it added fewer than asked. A give
+		// that added nothing is a 400 naming why, as is one with nowhere or nothing to give.
+		app::DevResponse devGive(const app::DevRequest& cmd);
 		// spawn?def=&at=x,y&n=&scatter=: spawnGroundRefusal at the centre and at each scattered spot, which is
 		// snapped off water and skipped when refused; a refusal when nothing is spawned.
 		DevRefusal devSpawn(const app::DevRequest& cmd);
-		void devColonist(const app::DevRequest& cmd);
+		// colonist?at=x,y&n=&name=: refused on water or a placed obstacle (moverGroundRefusal).
+		DevRefusal devColonist(const app::DevRequest& cmd);
 		void devNeed(const app::DevRequest& cmd);
 		void devTime(const app::DevRequest& cmd);
-		void devTeleport(const app::DevRequest& cmd);
+		// teleport?colonist=<id>&to=x,y: refused for an entity that does not exist, and on water or a placed
+		// obstacle (moverGroundRefusal); ground no mover has meshed takes him.
+		DevRefusal devTeleport(const app::DevRequest& cmd);
 		void devSelect(const app::DevRequest& cmd);
 		void devKill(const app::DevRequest& cmd);
 		void devComplete(const app::DevRequest& cmd);
@@ -142,16 +148,6 @@ namespace world_sim {
 		// item is a 400. category= picks the wildcard's category, RawMaterial by default.
 		app::DevResponse devStorage(const app::DevRequest& cmd);
 		void		devTunable(const app::DevRequest& cmd);
-
-		// --- world-position validity (the gates for every placing/moving verb) ---
-		// True when `at` is on an active walkable nav face. On false, logs+toasts the
-		// refusal, saying whether `at` is off the meshed ground or on water or a placed
-		// obstacle, and the caller creates/moves NOTHING.
-		bool requireValidPosition(Foundation::Vec2 at, const char* verb);
-
-		// Where a mover may be put: ground no mover has meshed yet (his own limit lands
-		// there at once, outside every budget), else requireValidPosition.
-		bool requireMoverPosition(Foundation::Vec2 at, const char* verb);
 
 		// Logs and toasts a verb's refusal message, when it is not empty, and returns it as the refusal.
 		DevRefusal refuse(const std::string& message);

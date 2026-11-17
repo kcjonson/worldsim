@@ -15,7 +15,6 @@
 
     <rendering>
       <complexity>simple</complexity>
-      <tier>instanced</tier>
     </rendering>
 
     <!-- No item, no capabilities: this is a fixed obstacle, not loot. -->
