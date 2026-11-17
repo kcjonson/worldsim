@@ -146,14 +146,16 @@ bool ConfigValidator::validateMood(const MoodConfig& config) {
     const std::string source = "Mood";
     bool valid = true;
 
-    if (!config.loaded()) {
-        addError(source, "No mood config loaded", "Ensure assets/config/colonists/mood.xml exists and is valid");
-        return false;
-    }
-
     for (const std::string& problem : config.problems()) {
         addError(source, problem);
         valid = false;
+    }
+
+    if (!config.loaded()) {
+        if (config.problems().empty()) {
+            addError(source, "No mood config loaded", "Ensure assets/config/colonists/mood.xml exists and is valid");
+        }
+        return false;
     }
 
     if (std::isfinite(config.pointsPerGameHour()) && config.pointsPerGameHour() <= 0.0F) {

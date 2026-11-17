@@ -57,7 +57,13 @@ namespace assets {
 			parseCategoryOrder(&orderNode, reader);
 		}
 
-		problemList = reader.takeProblems();
+		std::vector<std::string> problems = reader.takeProblems();
+		if (!problems.empty()) {
+			clear();
+			problemList = std::move(problems);
+			LOG_ERROR(Engine, "Priority config %s has %zu bad value(s)", xmlPath.c_str(), problemList.size());
+			return false;
+		}
 
 		LOG_INFO(Engine, "Loaded priority config from %s", xmlPath.c_str());
 		return true;

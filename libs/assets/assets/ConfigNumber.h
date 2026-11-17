@@ -13,14 +13,20 @@
 
 namespace assets {
 
+	/// Drops one leading '+' from config text; false when a sign still follows it ("+-5", "++5").
+	[[nodiscard]] inline bool dropLeadingPlus(std::string_view& text) {
+		if (text.starts_with('+')) {
+			text.remove_prefix(1);
+			return !text.starts_with('-') && !text.starts_with('+');
+		}
+		return true;
+	}
+
 	/// A config attribute's whole text as a finite number, a leading '+' allowed: nothing for empty text,
 	/// text that is not entirely a number ("30abc" is refused rather than read as 30), or nan and inf.
 	[[nodiscard]] inline std::optional<float> parseConfigNumber(std::string_view text) {
-		if (text.starts_with('+')) {
-			text.remove_prefix(1);
-			if (text.starts_with('-') || text.starts_with('+')) {
-				return std::nullopt;
-			}
+		if (!dropLeadingPlus(text)) {
+			return std::nullopt;
 		}
 		float number = 0.0F;
 		const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), number);
@@ -33,11 +39,8 @@ namespace assets {
 	/// A config attribute's whole text as a whole number: a leading '+' allowed, and nothing for empty text,
 	/// trailing characters, or a value too large for int.
 	[[nodiscard]] inline std::optional<int> parseConfigInteger(std::string_view text) {
-		if (text.starts_with('+')) {
-			text.remove_prefix(1);
-			if (text.starts_with('-') || text.starts_with('+')) {
-				return std::nullopt;
-			}
+		if (!dropLeadingPlus(text)) {
+			return std::nullopt;
 		}
 		int number = 0;
 		const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), number);
@@ -76,7 +79,6 @@ namespace assets {
 			return integer(describe(parent, parentName), child, parent.child(child), minimum, maximum);
 		}
 
-		[[nodiscard]] const std::vector<std::string>& problems() const { return problemList; }
 		[[nodiscard]] std::vector<std::string>		  takeProblems() { return std::exchange(problemList, {}); }
 
 	  private:

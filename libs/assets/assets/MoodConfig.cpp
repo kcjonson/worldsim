@@ -50,7 +50,13 @@ namespace assets {
 		}
 		std::stable_sort(bandList.begin(), bandList.end(), [](const MoodBand& left, const MoodBand& right) { return left.from > right.from; });
 
-		problemList = reader.takeProblems();
+		std::vector<std::string> problems = reader.takeProblems();
+		if (!problems.empty()) {
+			clear();
+			problemList = std::move(problems);
+			LOG_ERROR(Engine, "Mood config %s has %zu bad value(s)", xmlPath.c_str(), problemList.size());
+			return false;
+		}
 		isLoaded = true;
 		LOG_INFO(Engine, "Loaded mood config from %s", xmlPath.c_str());
 		return true;

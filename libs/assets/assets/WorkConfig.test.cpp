@@ -313,9 +313,12 @@ TEST_F(WorkConfigTest, PriorityConfig_LoadValidXML) {
     std::string xml = R"(<?xml version="1.0"?>
 <PriorityTuning>
   <Bonuses>
+    <DistanceFactor><maxDistance>60</maxDistance><maxFactor>300</maxFactor></DistanceFactor>
     <InProgress>
       <bonus>40</bonus>
     </InProgress>
+    <TaskAge><bonusPerMinute>1</bonusPerMinute><maxBonus>100</maxBonus></TaskAge>
+    <StoragePriority><weight>300</weight></StoragePriority>
   </Bonuses>
 </PriorityTuning>)";
 
@@ -588,7 +591,9 @@ TEST_F(WorkConfigTest, PriorityConfig_BadNumbersAreErrorsNamingFileElementAndAtt
     const auto errorsFor = [this](const std::string& xml) {
         const std::string path = writeTempFile(xml, ".xml");
         PriorityConfig::Get().clear();
-        EXPECT_TRUE(PriorityConfig::Get().loadFromFile(path));
+        EXPECT_FALSE(PriorityConfig::Get().loadFromFile(path));
+        std::vector<std::string> missingTiers;
+        EXPECT_FALSE(PriorityConfig::Get().validateTaskTiers({"Craft"}, missingTiers)) << "a bad file leaves no tier behind";
         ConfigValidator::clearErrors();
         EXPECT_FALSE(ConfigValidator::validatePriorityConfig()) << xml;
         std::string joined;
@@ -610,10 +615,10 @@ TEST_F(WorkConfigTest, PriorityConfig_BadNumbersAreErrorsNamingFileElementAndAtt
     }
 }
 
-TEST_F(WorkConfigTest, PriorityConfig_NumbersInSixteenBitFieldsAreRangeCheckedAndElementTextIsTrimmed) {
+TEST_F(WorkConfigTest, PriorityConfig_ElementTextIsTrimmedAndALeadingPlusIsRead) {
     const std::string path = writeTempFile(
         "<PriorityTuning><Bonuses><DistanceFactor><maxDistance>\n  60\n</maxDistance><maxFactor>+300</maxFactor></DistanceFactor>"
-        "<InProgress><bonus>40000</bonus></InProgress><TaskAge><bonusPerMinute> 1 </bonusPerMinute><maxBonus>-32769</maxBonus></TaskAge>"
+        "<InProgress><bonus>-32768</bonus></InProgress><TaskAge><bonusPerMinute> 1 </bonusPerMinute><maxBonus>32767</maxBonus></TaskAge>"
         "<StoragePriority><weight>32767</weight></StoragePriority></Bonuses></PriorityTuning>",
         ".xml");
     ASSERT_TRUE(PriorityConfig::Get().loadFromFile(path));
@@ -622,6 +627,17 @@ TEST_F(WorkConfigTest, PriorityConfig_NumbersInSixteenBitFieldsAreRangeCheckedAn
     EXPECT_FLOAT_EQ(config.getDistanceFactorConfig().maxFactor, 300.0F);
     EXPECT_EQ(config.getTaskAgeConfig().bonusPerMinute, 1);
     EXPECT_EQ(config.getStoragePriorityWeight(), 32767);
+    EXPECT_TRUE(config.problems().empty());
+}
+
+TEST_F(WorkConfigTest, PriorityConfig_NumbersInSixteenBitFieldsAreRangeChecked) {
+    const std::string path = writeTempFile(
+        "<PriorityTuning><Bonuses><DistanceFactor><maxDistance>\n  60\n</maxDistance><maxFactor>+300</maxFactor></DistanceFactor>"
+        "<InProgress><bonus>40000</bonus></InProgress><TaskAge><bonusPerMinute> 1 </bonusPerMinute><maxBonus>-32769</maxBonus></TaskAge>"
+        "<StoragePriority><weight>32767</weight></StoragePriority></Bonuses></PriorityTuning>",
+        ".xml");
+    EXPECT_FALSE(PriorityConfig::Get().loadFromFile(path));
+    const PriorityConfig& config = PriorityConfig::Get();
     ASSERT_EQ(config.problems().size(), 2U);
     EXPECT_NE(config.problems()[0].find("<InProgress> bonus must be a whole number from -32768 to 32767, got \"40000\""), std::string::npos)
         << config.problems()[0];
@@ -633,7 +649,7 @@ TEST_F(WorkConfigTest, MoodConfig_BadNumbersAreErrorsNamingFileElementAndAttribu
     const auto errorsFor = [this](const std::string& xml) {
         const std::string path = writeTempFile(xml, ".xml");
         MoodConfig config;
-        EXPECT_TRUE(config.loadFromFile(path));
+        EXPECT_FALSE(config.loadFromFile(path));
         ConfigValidator::clearErrors();
         EXPECT_FALSE(ConfigValidator::validateMood(config)) << xml;
         std::string joined;
