@@ -34,12 +34,12 @@ For testers: `/api/state?what=drawing` and `/api/state?what=camera`, corners and
 
 ### Where the code lives
 
-- **Config.** `assets/config/construction/snapping.xml` holds the tuning keys and the `<DrawingSettingsDefaults>` block; `rendering.xml` `<Preview>` holds the look keys. `libs/assets/assets/ConstructionRegistry.{h,cpp}` loads them (`SnappingConfig`, `PreviewStyle`), `ConfigValidator.cpp` bounds every number.
-- **Engine, pure, in `libs/sim/construction`.** `SnapEngine` (`snap`, `snapWall`), `SnapGuidesDetail` (lines, capture, merge, crossings, ranking, edge squaring), `SnapLengthsDetail` (common lengths, length step), `RectangleSnap` (`snapRectangleCorner`, `rectangleFromCorners`), `CornerAngles`, `DrawingAids.h`. `ConstructionWorld` records a placement order on foundations and wall segments.
-- **Settings.** `apps/world-sim/UserSettings.h` (`DrawingSettings`, `drawingAids()`), the pane in `scenes/settings/SettingsScene.cpp`.
-- **Tools and feedback, `apps/world-sim/scenes/game/world`.** `construction/DrawingSystem` (the tools, the click verdict, the pause), `construction/DrawingFeedback` (the plan and the drawing), `WorldPointer` (pointer routing, `WindowPresence`, `WallDoubleClick`), `construction/DrawingStatusHint`, `construction/KeyGuideVisibility`.
-- **UI.** `scenes/game/ui/views/DrawingKeyGuide` (rows, toggle, panel), `ConstructionConfigStrip` (tool picker, hint).
-- **Dev views.** `scenes/game/dev/DrawingStateJson`, `CameraStateJson`, `ConstructionStateJson`, `DevJson`.
+- Config: `assets/config/construction/snapping.xml` holds the tuning keys and the `<DrawingSettingsDefaults>` block; `rendering.xml` `<Preview>` holds the look keys. `libs/assets/assets/ConstructionRegistry.{h,cpp}` loads them (`SnappingConfig`, `PreviewStyle`), `ConfigValidator.cpp` bounds every number.
+- Engine (pure, in `libs/sim/construction`): `SnapEngine` (`snap`, `snapWall`), `SnapGuidesDetail` (lines, capture, merge, crossings, ranking, edge squaring), `SnapLengthsDetail` (common lengths, length step), `RectangleSnap` (`snapRectangleCorner`, `rectangleFromCorners`), `CornerAngles`, `DrawingAids.h`. `ConstructionWorld` records a placement order on foundations and wall segments.
+- Settings: `apps/world-sim/UserSettings.h` (`DrawingSettings`, `drawingAids()`), the pane in `scenes/settings/SettingsScene.cpp`.
+- Tools and feedback (in `apps/world-sim/scenes/game/world`): `construction/DrawingSystem` (the tools, the click verdict, the pause), `construction/DrawingFeedback` (the plan and the drawing), `WorldPointer` (pointer routing, `WindowPresence`, `WallDoubleClick`), `construction/DrawingStatusHint`, `construction/KeyGuideVisibility`.
+- UI: `scenes/game/ui/views/DrawingKeyGuide` (rows, toggle, panel), `ConstructionConfigStrip` (tool picker, hint).
+- Dev views: `scenes/game/dev/DrawingStateJson`, `CameraStateJson`, `ConstructionStateJson`, `DevJson`.
 
 ### Decisions and why
 
@@ -63,10 +63,10 @@ For testers: `/api/state?what=drawing` and `/api/state?what=camera`, corners and
 
 **The degrees label.** It sits just beyond its arc, inside the corner. When the corner's own edges or the segment being drawn are in the way it moves to the outside; when neither side has room, neither the arc nor the number is drawn. A corner whose shorter edge is under 18 px on screen draws no readout. The readout reads at most two corners (`kMaxReadCorners`). Nothing shows under Alt, in the Rectangle tool, or on the first segment.
 
-**Units.** Snap and guide distances are world metres, the same at every zoom, except two pixel values: the origin-close radius (the larger of the config value and an 8 screen pixel floor, `effectiveOriginCloseRadiusMeters`) and `doubleClickDistancePx`. What the preview draws, and what scales with the Interface size, is set out in D12 and D16 of the architecture doc.
+**Units.** Snap and guide distances are world metres, the same at every zoom, except where a pixel value comes in: the origin-close radius is the larger of its config value in metres and an 8 screen pixel floor (`effectiveOriginCloseRadiusMeters`), and `doubleClickDistancePx` is in pixels. What the preview draws, and what scales with the Interface size, is set out in D12 and D16 of the architecture doc.
 
 **Other decisions worth keeping.**
-- One `closeVerdict()` (later `clickVerdict()` for every tool) feeds the click, the preview and the strip, so the halo promises a close only when the click closes. While a click would close the shape, the preview's colour, halo, marker and the strip all read that one verdict (`previewVerdict`). Before this the band could read red while the halo promised a close.
+- One `closeVerdict()` (later `clickVerdict()` for every tool) feeds the click, the preview and the strip, so the halo promises a close only when the click closes. While a click would close the shape, the preview's colour, halo and marker read `previewVerdict` and the strip reads `clickVerdict`, which `previewVerdict` is built from, so all of them follow the one close verdict. Before this the band could read red while the halo promised a close.
 - The snap and point validation sit behind a memo keyed on tool, pointer world position, aids, construction world version, freeform, zoom, wall preset and host, edit target and placed points.
 - Common lengths decide "newest first" by a placement order, the world version when placement began, stored on each foundation and wall segment; every segment of one drawn chain shares one value. A future save format must carry it.
 - Ties between guides fall to generation order; `ConstructionWorld::getVertex` and `getSegment` became binary searches.
