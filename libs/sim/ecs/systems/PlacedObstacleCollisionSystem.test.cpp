@@ -203,13 +203,10 @@ TEST(PlacedObstacleResolveTest, CenterAtTheCentroidResolvesDeterministically) {
 	EXPECT_NEAR(glm::length(*square), 0.3F, kLandingMeters);
 }
 
-// A push lands where the next tick, rounding the stored position to the mm as nav does, finds it
-// strictly outside, so it is never pushed again and the forward snap never takes it for standing in
-// the obstacle. Checked on slanted edges, where the nearest boundary point is off the mm lattice: a
-// turned, scaled, notched polygon and a turned rect, with centres a fifth of a mm to 5 mm in from
-// every edge along its length, and in from every corner.
-TEST(PlacedObstacleResolveTest, PushLandsStrictlyOutsideAfterRounding) {
-	const auto worldRing = [](const std::vector<glm::vec2>& local, glm::vec2 at, float rotation, float scale) {
+namespace {
+
+	// A pivot-frame ring turned, scaled and placed, in world mm, counter-clockwise.
+	geometry::Ring placedRing(const std::vector<glm::vec2>& local, glm::vec2 at, float rotation, float scale) {
 		const assets::InstanceTransform transform(at, rotation, scale);
 		geometry::Ring					ring;
 		for (const glm::vec2 point : local) {
@@ -217,42 +214,117 @@ TEST(PlacedObstacleResolveTest, PushLandsStrictlyOutsideAfterRounding) {
 		}
 		geometry::ensureCounterClockwise(ring);
 		return ring;
-	};
-	const std::vector<geometry::Ring> rings{
-		worldRing(kNotchedPoints, {123.4F, -56.7F}, 0.6F, 1.5F),
-		worldRing({{-0.35F, -0.2F}, {0.35F, -0.2F}, {0.35F, 0.2F}, {-0.35F, 0.2F}}, {10.3F, 7.9F}, 0.4F, 0.9F),
-	};
+	}
 
-	int pushed = 0;
-	for (const geometry::Ring& ring : rings) {
-		const std::size_t count = ring.size();
+	// Points `depth` metres in from every edge of a counter-clockwise ring along its length (out from
+	// it for a negative depth), and in along each corner's bisector.
+	std::vector<glm::vec2> startsBeside(const geometry::Ring& ring, std::initializer_list<float> depths) {
+		const std::size_t	   count = ring.size();
 		std::vector<glm::vec2> starts;
 		for (std::size_t i = 0; i < count; ++i) {
-			const glm::vec2 from	= nav::toMeters(ring[i]);
-			const glm::vec2 to		= nav::toMeters(ring[(i + 1) % count]);
-			const glm::vec2 along	= glm::normalize(to - from);
+			const glm::vec2 from   = nav::toMeters(ring[i]);
+			const glm::vec2 to	   = nav::toMeters(ring[(i + 1) % count]);
+			const glm::vec2 along  = glm::normalize(to - from);
 			const glm::vec2 inward{-along.y, along.x}; // left of a counter-clockwise edge
 			for (const float t : {0.05F, 0.2F, 0.37F, 0.5F, 0.63F, 0.8F, 0.95F}) {
-				for (const float depth : {0.0002F, 0.0007F, 0.0013F, 0.005F}) {
+				for (const float depth : depths) {
 					starts.push_back(from + (to - from) * t + inward * depth);
 				}
 			}
 			const glm::vec2 previous = nav::toMeters(ring[(i + count - 1) % count]);
-			const glm::vec2 bisector = glm::normalize(glm::normalize(previous - from) + along);
-			starts.push_back(from + bisector * 0.002F);
+			const glm::vec2 bisector = glm::normalize(previous - from) + along;
+			if (glm::length(bisector) > 1e-6F) {
+				for (const float depth : depths) {
+					starts.push_back(from + glm::normalize(bisector) * depth);
+				}
+			}
 		}
+		return starts;
+	}
+
+	// A 1 m square notched 3 mm wide, half a metre deep, from its top edge: the narrowest notch the
+	// registry lets through, with walls whose landings must stop inside the notch.
+	const std::vector<glm::vec2> kSlotPoints{{-0.5F, -0.5F},	{0.5F, -0.5F}, {0.5F, 0.5F},	 {0.0015F, 0.5F},
+											 {0.0015F, 0.0F}, {-0.0015F, 0.0F}, {-0.0015F, 0.5F}, {-0.5F, 0.5F}};
+
+	// Resolves every start whose mm rounding is inside and checks the landing: rounded as nav rounds
+	// it, strictly outside; resolved again, untouched; and within `nearMm` of the ring. Returns how
+	// many starts were pushed.
+	int checkLandings(const geometry::Ring& ring, const std::vector<glm::vec2>& starts, double nearMm) {
+		int pushed = 0;
 		for (const glm::vec2 start : starts) {
+			if (geometry::pointInPolygon(nav::toMm(start), ring) != geometry::PointInPolygon::Inside) {
+				EXPECT_FALSE(resolveCenterAgainstOutline(start, ring).has_value()) << start.x << "," << start.y;
+				continue;
+			}
 			const std::optional<glm::vec2> landing = resolveCenterAgainstOutline(start, ring);
+			EXPECT_TRUE(landing.has_value()) << start.x << "," << start.y;
 			if (!landing.has_value()) {
 				continue;
 			}
 			++pushed;
 			EXPECT_EQ(geometry::pointInPolygon(nav::toMm(*landing), ring), geometry::PointInPolygon::Outside) << start.x << "," << start.y;
 			EXPECT_FALSE(resolveCenterAgainstOutline(*landing, ring).has_value()) << start.x << "," << start.y;
-			EXPECT_LE(distanceToRingMm(*landing, ring), 2.0) << start.x << "," << start.y;
+			EXPECT_LE(distanceToRingMm(*landing, ring), nearMm) << start.x << "," << start.y;
 		}
+		return pushed;
 	}
-	EXPECT_GT(pushed, 150) << "most starts should have been inside";
+
+} // namespace
+
+// A push lands where the next tick, rounding the stored position to the mm as nav does, finds it
+// strictly outside, so it is never pushed again and the forward snap never takes it for standing in
+// the obstacle. Checked on slanted edges, where the nearest boundary point is off the mm lattice: a
+// turned, scaled, notched polygon, a turned rect, and a turned square with a 3 mm notch, with centres
+// a fifth of a mm to 5 mm in from every edge along its length, and in from every corner.
+TEST(PlacedObstacleResolveTest, PushLandsStrictlyOutsideAfterRounding) {
+	const std::vector<geometry::Ring> rings{
+		placedRing(kNotchedPoints, {123.4F, -56.7F}, 0.6F, 1.5F),
+		placedRing({{-0.35F, -0.2F}, {0.35F, -0.2F}, {0.35F, 0.2F}, {-0.35F, 0.2F}}, {10.3F, 7.9F}, 0.4F, 0.9F),
+		placedRing(kSlotPoints, {-7.2F, 3.1F}, 0.3F, 1.0F),
+	};
+	int pushed = 0;
+	for (const geometry::Ring& ring : rings) {
+		pushed += checkLandings(ring, startsBeside(ring, {0.0002F, 0.0007F, 0.0013F, 0.005F}), 2.0);
+	}
+	EXPECT_GT(pushed, 200) << "most starts should have been inside";
+}
+
+// A centre a hair OUTSIDE a slanted edge whose mm rounding is inside is moved further out, never in:
+// the push direction comes from the unrounded centre's side of the boundary, not from the rounding.
+TEST(PlacedObstacleResolveTest, CentreJustOutsideWithRoundingInsideMovesOut) {
+	const std::vector<geometry::Ring> rings{
+		placedRing(kNotchedPoints, {123.4F, -56.7F}, 0.6F, 1.5F),
+		placedRing({{-0.35F, -0.2F}, {0.35F, -0.2F}, {0.35F, 0.2F}, {-0.35F, 0.2F}}, {10.3F, 7.9F}, 0.4F, 0.9F),
+		placedRing(kSlotPoints, {-7.2F, 3.1F}, 0.3F, 1.0F),
+	};
+	int pushed = 0;
+	for (const geometry::Ring& ring : rings) {
+		pushed += checkLandings(ring, startsBeside(ring, {-0.0001F, -0.0002F, -0.0003F, -0.0004F, -0.0005F, -0.0006F}), 2.0);
+	}
+	EXPECT_GT(pushed, 10) << "some starts outside should round inside";
+}
+
+// Far from the origin a stored float position is coarser than the mm: 4 mm apart 50 km out, half a
+// metre at (-34, 5999994), a place the game has reached. Gameplay positions are float metres from the
+// landing site with no rebasing, so the landing steps by that spacing and still rounds outside.
+TEST(PlacedObstacleResolveTest, PushLandsOutsideFarFromTheOrigin) {
+	const std::vector<glm::vec2> square{{-2.0F, -2.0F}, {2.0F, -2.0F}, {2.0F, 2.0F}, {-2.0F, 2.0F}};
+
+	const geometry::Ring fiftyKilometres = placedRing(square, {50000.3F, 50000.7F}, 0.4F, 1.0F);
+	EXPECT_GT(checkLandings(fiftyKilometres, startsBeside(fiftyKilometres, {0.004F, 0.01F, 0.05F}), 10.0), 20);
+
+	// Built in mm directly: a float transform there would put every corner on the half-metre lattice.
+	const geometry::Vec2i64 far{-34000, 5999994000};
+	const double			cosine = std::cos(0.4);
+	const double			sine   = std::sin(0.4);
+	geometry::Ring			farRing;
+	for (const glm::vec2 corner : square) {
+		const double x = static_cast<double>(corner.x) * 1000.0;
+		const double y = static_cast<double>(corner.y) * 1000.0;
+		farRing.push_back({far.x + std::llround(x * cosine - y * sine), far.y + std::llround(x * sine + y * cosine)});
+	}
+	EXPECT_GT(checkLandings(farRing, startsBeside(farRing, {0.5F, 1.0F}), 1500.0), 5);
 }
 
 // --- System integration ----------------------------------------------------

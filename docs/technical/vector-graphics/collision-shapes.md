@@ -144,8 +144,17 @@ along the edge stays where it was). That nearest point is the push along the out
 the penetration depth. On a slanted edge it is off the mm lattice, and rounded back to the mm
 next tick it would be inside about half the time: pushed again, and taken by the nav mesh for
 standing in the obstacle, which hands the mover to the forward snap. So the landing steps
-outward a quarter mm at a time until the stored position, rounded as nav rounds it, is strictly
-outside; it ends at most about a millimetre past the boundary. Box2D (`b2CollidePolygonAndCircle`) finds the same
+outward until the stored position, rounded as nav rounds it, is strictly outside. Outward is
+judged from the unrounded centre: one a hair outside a slanted edge whose rounding is inside is
+moved further out, never in. A step is a quarter mm, or the float spacing at that position when
+that is coarser, so near the landing site a push ends within about a millimetre of the boundary
+(rounding moves a point at most 0.71 mm, plus one step). Positions are float metres from the
+landing site with no rebasing, so far out the spacing sets the scale: 4 mm 50 km out, half a
+metre 6,000 km out, where every millimetre rule here (this one, the mm rounding of nav rings)
+works on that coarse lattice. If no step within 16 lands outside (heading out of a corner at
+the bottom of a slot a few mm wide, every rounded step can land on a wall), the nearest point
+of a 9 by 9 grid round the boundary point that rounds outside is taken instead; failing that
+the push is skipped rather than leaving the mover inside, and the forward snap has it. Box2D (`b2CollidePolygonAndCircle`) finds the same
 contact by separating axes, which needs a convex polygon, so Box2D, Godot
 (`CollisionPolygon2D`), and Unity (`PolygonCollider2D`) split a concave collider into convex
 pieces. A push out of one piece can land inside its neighbour, across the diagonal the split
@@ -156,8 +165,9 @@ inside and is left alone; edges equally near (a centre at a box's middle) go to 
 ring order. A rect is this four-point case: the nearest face.
 
 Each agent gathers the obstacles whose positions are within the query reach, skips any whose
-own collider can't reach it (a squared-distance test against that def's reach at the
-instance's scale, before any ring is built), sorts the rest by position, and resolves them in
+own collider can't reach it (a squared-distance test against the shape's reach plus the pad's
+corner at the instance's scale, plus 2 mm for rounding, before any ring is built; the reach is
+`CollisionShape::reachMeters`, the one the registry records too), sorts the rest by position, and resolves them in
 that order, twice, so an agent wedged between two settles against both.
 
 ### What a polygon must be
@@ -169,8 +179,8 @@ smallest placement scale: at least 3 points, simple, with area, and consecutive 
 non-adjacent edges at least 3 mm apart, measured on the points rounded to the mm. Rounding
 moves a point at most 0.71 mm, so that is over 1.58 mm as authored, and a rotated instance,
 each point rounded to the mm again, keeps its points distinct and its edges uncrossed. One that
-fails is one error per def in the validation report (field `collision`, the first failing age
-class named when a def has several), is logged, and is dropped rather than handed to the mesh.
+fails is one error per def in the validation report (field `collision`, naming every failing
+age class when a def has several), is logged, and is dropped rather than handed to the mesh.
 In the game an error stops startup: the loading scene fails on any validation error and goes
 back to the splash, so a bad polygon never reaches a running world. The drop matters only
 where loading carries on past errors: the asset manager, asset-cli, and tests. A clockwise

@@ -10,9 +10,6 @@
 #include <offset/WallOffset.h>
 #include <polygon/Polygon.h>
 
-#include <glm/common.hpp>
-#include <glm/geometric.hpp>
-
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -55,43 +52,41 @@ namespace nav {
 		});
 	}
 
-	std::optional<gnav::NavInputPolygon> placedObstacleRing(const assets::PlacedEntity& e, const assets::AssetRegistry& registry) {
+	std::optional<gnav::NavInputPolygon> placedObstacleRing(const assets::PlacedEntity& entity, const assets::AssetRegistry& registry) {
 		geometry::Ring ring;
-		if (!placedObstacleOutline(e, registry, ring)) {
+		if (!placedObstacleOutline(entity, registry, ring)) {
 			return std::nullopt;
 		}
 		return gnav::NavInputPolygon{std::move(ring), true, kProvenancePlaced};
 	}
 
+	namespace {
+
+		// How far the pad can add to a collider's reach: its corner, at scale 1.
+		float padCornerReachMeters() {
+			return std::sqrt(2.0F) * static_cast<float>(kPlacedObstaclePadMm) / static_cast<float>(kTileMm);
+		}
+
+	} // namespace
+
 	float placedObstacleReachMeters(const assets::AssetRegistry& registry) {
-		const float pad = static_cast<float>(kPlacedObstaclePadMm) / static_cast<float>(kTileMm);
-		return registry.maxCollisionReachMeters() + std::sqrt(2.0F) * pad * registry.maxCollidingScale();
+		return registry.maxCollisionReachMeters() + padCornerReachMeters() * registry.maxCollidingScale();
 	}
 
 	float placedObstacleLocalReachMeters(const assets::CollisionShape& collision) {
-		float reachSquared = 0.0F;
-		if (collision.type == assets::CollisionShapeType::Rect) {
-			const float		pad	   = static_cast<float>(kPlacedObstaclePadMm) / static_cast<float>(kTileMm);
-			const glm::vec2 corner = glm::abs(collision.offsetMeters) + collision.halfExtentsMeters + glm::vec2{pad, pad};
-			reachSquared		   = glm::dot(corner, corner);
-		} else if (collision.type == assets::CollisionShapeType::Polygon) {
-			for (const glm::vec2& point : collision.pointsMeters) {
-				reachSquared = std::max(reachSquared, glm::dot(point, point));
-			}
-		}
-		return std::sqrt(reachSquared);
+		return collision.reachMeters() + padCornerReachMeters();
 	}
 
-	bool placedObstacleOutline(const assets::PlacedEntity& e, const assets::AssetRegistry& registry, geometry::Ring& ring) {
-		const assets::AssetDefinition* def = registry.getDefinition(e.defName);
+	bool placedObstacleOutline(const assets::PlacedEntity& entity, const assets::AssetRegistry& registry, geometry::Ring& ring) {
+		const assets::AssetDefinition* def = registry.getDefinition(entity.defName);
 		if (def == nullptr) {
 			ring.clear();
 			return false;
 		}
-		return placedObstacleOutline(e, def->collisionFor(e.traits.ageClass), ring);
+		return placedObstacleOutline(entity, def->collisionFor(entity.traits.ageClass), ring);
 	}
 
-	bool placedObstacleOutline(const assets::PlacedEntity& e, const assets::CollisionShape& collision, geometry::Ring& ring) {
+	bool placedObstacleOutline(const assets::PlacedEntity& entity, const assets::CollisionShape& collision, geometry::Ring& ring) {
 		ring.clear();
 		if (!collision.blocks()) {
 			return false;
@@ -99,7 +94,7 @@ namespace nav {
 
 		// Every shape goes to the world through the one instance transform: a rect as its four
 		// corners, padded in its local frame before scale, a polygon as its points.
-		const assets::InstanceTransform transform(e.position, e.rotation, e.scale);
+		const assets::InstanceTransform transform(entity.position, entity.rotation, entity.scale);
 		if (collision.type == assets::CollisionShapeType::Rect) {
 			const float		pad	  = static_cast<float>(kPlacedObstaclePadMm) / static_cast<float>(kTileMm);
 			const glm::vec2 reach = collision.halfExtentsMeters + glm::vec2{pad, pad};
@@ -109,8 +104,8 @@ namespace nav {
 			}
 		} else if (collision.type == assets::CollisionShapeType::Polygon) {
 			ring.reserve(collision.pointsMeters.size());
-			for (const glm::vec2& p : collision.pointsMeters) {
-				ring.push_back(toMm(transform.toWorld(p)));
+			for (const glm::vec2& point : collision.pointsMeters) {
+				ring.push_back(toMm(transform.toWorld(point)));
 			}
 		}
 

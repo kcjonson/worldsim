@@ -1473,21 +1473,6 @@ namespace assets {
 			return maxY - minY;
 		}
 
-		// How far a collision shape reaches from its pivot.
-		float collisionReach(const CollisionShape& shape) {
-			float reachSq = 0.0F;
-			if (shape.type == CollisionShapeType::Rect) {
-				for (const glm::vec2& corner : shape.rectCornersLocal()) {
-					reachSq = std::max(reachSq, glm::dot(corner, corner));
-				}
-			} else if (shape.type == CollisionShapeType::Polygon) {
-				for (const glm::vec2& point : shape.pointsMeters) {
-					reachSq = std::max(reachSq, glm::dot(point, point));
-				}
-			}
-			return std::sqrt(reachSq);
-		}
-
 		// The smallest scale an instance of a def stands at: the low end of its placement range, or 1
 		// (what the player places and dev spawn makes) when that is smaller.
 		float smallestPlacedScale(const PlacementScale& range) {
@@ -1870,9 +1855,9 @@ namespace assets {
 			// def's placement range.
 			const float scale	 = std::max({1.0F, std::abs(def.placement.scale.min), std::abs(def.placement.scale.max)});
 			const float smallest = smallestPlacedScale(def.placement.scale);
-			// One error per def: age classes that share a polygon (an XML or SVG collider is every
-			// class's) fail together, and the first failure names the problem.
-			std::string firstProblem;
+			// One error per def naming every failing age class, those with the same problem (an XML or
+			// SVG collider is every class's polygon) listed together.
+			std::vector<std::pair<std::string, std::vector<size_t>>> problems;
 			for (size_t ageClass = 0; ageClass < def.collisions.size(); ++ageClass) {
 				CollisionShape& shape = def.collisions[ageClass];
 				if (shape.type != CollisionShapeType::Polygon) {
@@ -1885,20 +1870,35 @@ namespace assets {
 					}
 					continue;
 				}
-				if (firstProblem.empty()) {
-					firstProblem = def.collisions.size() > 1 ? "(age class " + std::to_string(ageClass) + ") " + problem : problem;
+				const auto same = std::find_if(problems.begin(), problems.end(), [&](const auto& entry) { return entry.first == problem; });
+				if (same != problems.end()) {
+					same->second.push_back(ageClass);
+				} else {
+					problems.push_back({problem, {ageClass}});
 				}
 				shape = CollisionShape{};
 			}
-			if (!firstProblem.empty()) {
+			if (!problems.empty()) {
+				std::string described;
+				for (const auto& [problem, ageClasses] : problems) {
+					described += described.empty() ? "" : "; ";
+					if (def.collisions.size() > 1) {
+						described += ageClasses.size() > 1 ? "(age classes " : "(age class ";
+						for (size_t i = 0; i < ageClasses.size(); ++i) {
+							described += (i == 0 ? "" : ", ") + std::to_string(ageClasses[i]);
+						}
+						described += ") ";
+					}
+					described += problem;
+				}
 				const std::string message =
-					"collision polygon " + firstProblem + "; the nav mesh can't take it, so it is dropped and the asset blocks nothing";
+					"collision polygon " + described + "; the nav mesh can't take it, so it is dropped and the asset blocks nothing";
 				LOG_ERROR(Engine, "AssetDef '%s' %s", name.c_str(), message.c_str());
 				m_validationReport.add(Severity::Error, name, "collision", message);
 			}
 			for (const CollisionShape& shape : def.collisions) {
 				if (shape.blocks()) {
-					raiseTo(largestCollisionReach, collisionReach(shape) * scale);
+					raiseTo(largestCollisionReach, shape.reachMeters() * scale);
 					raiseTo(largestCollidingScale, scale);
 				}
 			}

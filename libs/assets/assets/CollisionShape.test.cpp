@@ -261,6 +261,33 @@ TEST(CollisionShapeTest, PolygonTheNavMeshCannotTakeIsAnError) {
 	AssetRegistry::Get().clearDefinitions();
 }
 
+// A def whose age classes have different bad polygons gets one error that names each class.
+TEST(CollisionShapeTest, OneErrorNamesEveryFailingAgeClass) {
+	AssetRegistry& registry = AssetRegistry::Get();
+	registry.clearDefinitions();
+	AssetDefinition def;
+	def.defName	   = "Test_TwoBadClasses";
+	def.ageClasses = {{.name = "young", .weight = 0.5F, .variants = 1}, {.name = "old", .weight = 0.5F, .variants = 1}};
+	def.setCollision(0, {.type = CollisionShapeType::Polygon, .pointsMeters = {{0.0F, 0.0F}, {1.0F, 1.0F}, {1.0F, 0.0F}, {0.0F, 1.0F}}});
+	def.setCollision(1, {.type = CollisionShapeType::Polygon, .pointsMeters = {{0.0F, 0.0F}, {1.0F, 0.0F}, {0.5F, 1.0F}, {0.0F, 0.0F}}});
+	registry.registerTestDefinition(def);
+
+	int		   errors = 0;
+	std::string message;
+	for (const ValidationIssue& issue : registry.getValidationReport().issues) {
+		if (issue.defName == "Test_TwoBadClasses" && issue.field == "collision") {
+			++errors;
+			message = issue.message;
+		}
+	}
+	EXPECT_EQ(errors, 1);
+	EXPECT_NE(message.find("age class 0"), std::string::npos) << message;
+	EXPECT_NE(message.find("age class 1"), std::string::npos) << message;
+	EXPECT_FALSE(registry.getDefinition("Test_TwoBadClasses")->collisionFor(0).blocks());
+	EXPECT_FALSE(registry.getDefinition("Test_TwoBadClasses")->collisionFor(1).blocks());
+	registry.clearDefinitions();
+}
+
 // A clockwise polygon is a good one, stored counter-clockwise as CollisionShape says.
 TEST(CollisionShapeTest, ClockwisePolygonIsStoredCounterClockwise) {
 	TempAssets			   t;
