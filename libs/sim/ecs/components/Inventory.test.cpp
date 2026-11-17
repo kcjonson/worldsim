@@ -634,3 +634,79 @@ TEST(InventoryTests, ClearAllEmptiesBelt) {
 	EXPECT_TRUE(inv.beltHasFreeSlot());
 	EXPECT_TRUE(inv.isCompletelyEmpty());
 }
+
+// ============================================================================
+// Hands: a two-hand item mirrors one stack across both hands; one-hand units of
+// the same def sit one per hand. putDown and stowToBackpack must tell them apart
+// so nothing a colonist holds vanishes.
+// ============================================================================
+
+class InventoryHandsTest : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		auto& assets = assets::AssetRegistry::Get();
+		assets.clearDefinitions();
+		registerWithHands("Stick", 1);
+		registerWithHands("Log", 2);
+	}
+
+	void TearDown() override { assets::AssetRegistry::Get().clearDefinitions(); }
+
+	static void registerWithHands(const char* name, uint8_t hands) {
+		assets::AssetDefinition def;
+		def.defName = name;
+		def.label = name;
+		def.handsRequired = hands;
+		assets::AssetRegistry::Get().registerTestDefinition(std::move(def));
+	}
+};
+
+TEST_F(InventoryHandsTest, PutDownOneHandPairKeepsTheOtherUnit) {
+	Inventory inv;
+	ASSERT_TRUE(inv.pickUp("Stick"));
+	ASSERT_TRUE(inv.pickUp("Stick"));
+	const auto dropped = inv.putDown("Stick");
+	ASSERT_TRUE(dropped.has_value());
+	EXPECT_EQ(dropped->quantity, 1U);
+	EXPECT_NE(inv.leftHand.has_value(), inv.rightHand.has_value()) << "exactly one Stick still held";
+	const auto second = inv.putDown("Stick");
+	ASSERT_TRUE(second.has_value());
+	EXPECT_EQ(second->quantity, 1U);
+	EXPECT_FALSE(inv.leftHand.has_value());
+	EXPECT_FALSE(inv.rightHand.has_value());
+}
+
+TEST_F(InventoryHandsTest, PutDownEverythingOneHandPairKeepsTheOtherUnit) {
+	Inventory inv;
+	inv.pickUp("Stick");
+	inv.pickUp("Stick");
+	ASSERT_TRUE(inv.putDown().has_value());
+	EXPECT_TRUE(inv.leftHand.has_value() || inv.rightHand.has_value());
+}
+
+TEST_F(InventoryHandsTest, PutDownTwoHandItemClearsBothHandsAsOneItem) {
+	Inventory inv;
+	ASSERT_TRUE(inv.pickUp("Log", 2));
+	const auto dropped = inv.putDown("Log");
+	ASSERT_TRUE(dropped.has_value());
+	EXPECT_EQ(dropped->quantity, 1U);
+	EXPECT_FALSE(inv.leftHand.has_value());
+	EXPECT_FALSE(inv.rightHand.has_value());
+}
+
+TEST_F(InventoryHandsTest, StowToBackpackTakesOneStickFromAPair) {
+	Inventory inv;
+	inv.pickUp("Stick");
+	inv.pickUp("Stick");
+	EXPECT_TRUE(inv.stowToBackpack("Stick"));
+	EXPECT_EQ(inv.getQuantity("Stick"), 1U);
+	EXPECT_NE(inv.leftHand.has_value(), inv.rightHand.has_value());
+}
+
+TEST_F(InventoryHandsTest, StowToBackpackRefusesATwoHandItem) {
+	Inventory inv;
+	inv.pickUp("Log", 2);
+	EXPECT_FALSE(inv.stowToBackpack("Log"));
+	EXPECT_TRUE(inv.leftHand.has_value());
+	EXPECT_TRUE(inv.rightHand.has_value());
+}

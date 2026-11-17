@@ -340,7 +340,15 @@ namespace ecs {
 			return false; // No free hands
 		}
 
-		/// Put down item(s) from hands
+		/// True if `defName` is a two-hand item, which sits mirrored in both hands as one stack. Unknown
+		/// defs read as one-hand, so the same def in both hands is then two separate units.
+		[[nodiscard]] static bool isTwoHandItem(const std::string& defName) {
+			const auto* def = assets::AssetRegistry::Get().getDefinition(defName);
+			return def != nullptr && def->handsRequired >= 2;
+		}
+
+		/// Put down item(s) from hands. A two-hand item clears both hands (one mirrored stack); a
+		/// one-hand item clears one hand, so a second unit in the other hand stays held.
 		/// @param defName If specified, only put down this item; otherwise put down everything
 		/// @return The item that was put down (nullopt if nothing)
 		std::optional<ItemStack> putDown(const std::string& defName = "") {
@@ -348,8 +356,7 @@ namespace ecs {
 				// Put down everything - prioritize right hand
 				if (rightHand.has_value()) {
 					auto item = rightHand.value();
-					// Check if two-handed (same item in both hands)
-					if (leftHand.has_value() && leftHand->defName == item.defName) {
+					if (leftHand.has_value() && leftHand->defName == item.defName && isTwoHandItem(item.defName)) {
 						leftHand.reset();
 					}
 					rightHand.reset();
@@ -366,8 +373,7 @@ namespace ecs {
 			// Put down specific item
 			if (rightHand.has_value() && rightHand->defName == defName) {
 				auto item = rightHand.value();
-				// Check if two-handed
-				if (leftHand.has_value() && leftHand->defName == defName) {
+				if (leftHand.has_value() && leftHand->defName == defName && isTwoHandItem(defName)) {
 					leftHand.reset();
 				}
 				rightHand.reset();
@@ -397,7 +403,7 @@ namespace ecs {
 			}
 
 			// Two-handed items can't go in backpack
-			if (inRight && inLeft) {
+			if (inRight && inLeft && isTwoHandItem(defName)) {
 				return false;
 			}
 

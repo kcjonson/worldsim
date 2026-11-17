@@ -1138,7 +1138,8 @@ namespace world_sim {
 				};
 				add(inv->leftHand);
 				// Two-handed items mirror in both hands; don't double-count.
-				if (!(inv->leftHand.has_value() && inv->rightHand.has_value() && inv->leftHand->defName == inv->rightHand->defName)) {
+				if (!(inv->leftHand.has_value() && inv->rightHand.has_value() && inv->leftHand->defName == inv->rightHand->defName &&
+					  ecs::Inventory::isTwoHandItem(inv->leftHand->defName))) {
 					add(inv->rightHand);
 				}
 				for (const auto& stack : inv->items) {
