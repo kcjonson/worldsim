@@ -60,12 +60,7 @@ namespace world_sim::adapters {
 		std::vector<ColonistData> result;
 
 		// Query all colonist entities
-		for (auto [entity, colonist] : world.view<ecs::Colonist>()) {
-			float mood = 100.0F;
-			if (const auto* colonistMood = world.getComponent<ecs::Mood>(entity)) {
-				mood = colonistMood->value;
-			}
-
+		for (auto [entity, colonist, mood] : world.view<ecs::Colonist, ecs::Mood>()) {
 			Foundation::Vec2 position{0.0F, 0.0F};
 			if (const auto* pos = world.getComponent<ecs::Position>(entity)) {
 				position = {pos->value.x, pos->value.y};
@@ -75,7 +70,7 @@ namespace world_sim::adapters {
 			result.push_back({
 				.id = entity,
 				.name = colonist.name,
-				.mood = mood,
+				.mood = mood.value,
 				.position = position,
 				.activity = std::move(activity.label),
 				.activityProgress = activity.progress,

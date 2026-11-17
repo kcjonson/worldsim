@@ -20,7 +20,7 @@ namespace world_sim::adapters {
 struct ColonistData {
 	ecs::EntityID id;
 	std::string name;
-	float mood;  // 0-100, computed from needs
+	float mood;  // 0-100, the sim's mood
 
 	// World position (meters). Ticks every frame while walking; deliberately
 	// excluded from ColonistListModel's change detection (it feeds the region

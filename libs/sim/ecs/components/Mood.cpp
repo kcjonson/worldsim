@@ -1,25 +1,46 @@
 #include "Mood.h"
 
-#include <utils/Log.h>
-
 #include <algorithm>
 #include <string_view>
 
 namespace ecs {
 
-	NeedMoodWeights resolveNeedMoodWeights(const assets::MoodConfig& config) {
-		NeedMoodWeights weights{};
+	ResolvedNeedMoodWeights resolveNeedMoodWeights(const assets::MoodConfig& config) {
+		ResolvedNeedMoodWeights resolved;
+		std::array<bool, kNeedCount> weighted{};
 		for (const assets::NeedMoodWeight& needWeight : config.needWeights()) {
 			const auto found = std::find_if(kNeedLabels.begin(), kNeedLabels.end(), [&needWeight](const char* label) {
 				return std::string_view(label) == needWeight.need;
 			});
 			if (found == kNeedLabels.end()) {
-				LOG_ERROR(Engine, "Mood config weights '%s', which is no need; it is ignored", needWeight.need.c_str());
+				resolved.unknownNeeds.push_back(needWeight.need);
 				continue;
 			}
-			weights[static_cast<size_t>(found - kNeedLabels.begin())] = needWeight.weight;
+			const auto index = static_cast<size_t>(found - kNeedLabels.begin());
+			resolved.weights[index] = needWeight.weight;
+			weighted[index] = true;
 		}
-		return weights;
+		for (size_t i = 0; i < kNeedCount; ++i) {
+			if (!weighted[i]) {
+				resolved.unweightedNeeds.push_back(static_cast<NeedType>(i));
+			}
+		}
+		return resolved;
+	}
+
+	std::vector<std::string> moodConfigErrors(const assets::MoodConfig& config) {
+		const ResolvedNeedMoodWeights resolved = resolveNeedMoodWeights(config);
+		std::vector<std::string>	  errors;
+		for (const std::string& name : resolved.unknownNeeds) {
+			errors.push_back("[Mood] Need '" + name + "' is weighted but no need has that name");
+		}
+		for (const NeedType need : resolved.unweightedNeeds) {
+			const std::string label = needLabel(need);
+			errors.push_back(
+				"[Mood] Need '" + label + "' has no weight (add <Need name=\"" + label + "\" weight=\"...\"/>; 0 leaves it out of mood)"
+			);
+		}
+		return errors;
 	}
 
 	float needPenalty(float value, const assets::NeedPenaltyCurve& curve) {

@@ -4,6 +4,7 @@
 #include "scenes/game/ui/adapters/GlobalTaskAdapter.h"
 #include "scenes/game/ui/models/GlobalTaskListModel.h"
 
+#include <assets/MoodConfig.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Memory.h>
@@ -135,14 +136,8 @@ namespace world_sim {
 		bioData.traits.clear();
 		bioData.background = "No background";
 
-		const auto* mood = world.getComponent<ecs::Mood>(colonistId);
-		if (mood != nullptr) {
-			bioData.mood = mood->value;
-			bioData.moodLabel = getMoodLabel(bioData.mood);
-		} else {
-			bioData.mood = 100.0F;
-			bioData.moodLabel = "Unknown";
-		}
+		bioData.mood = world.getComponent<ecs::Mood>(colonistId)->value;
+		bioData.moodLabel = assets::MoodConfig::Get().bandFor(bioData.mood).name;
 
 		// Get current task
 		const auto* task = world.getComponent<ecs::Task>(colonistId);
@@ -257,13 +252,8 @@ namespace world_sim {
 			needsData.needsAttention.fill(false);
 			needsData.isCritical.fill(false);
 		}
-		if (const auto* mood = world.getComponent<ecs::Mood>(colonistId); mood != nullptr) {
-			needsData.mood = mood->value;
-			needsData.moodLabel = getMoodLabel(needsData.mood);
-		} else {
-			needsData.mood = 100.0F;
-			needsData.moodLabel = "Unknown";
-		}
+		needsData.mood = world.getComponent<ecs::Mood>(colonistId)->value;
+		needsData.moodLabel = assets::MoodConfig::Get().bandFor(needsData.mood).name;
 	}
 
 	void ColonistDetailsModel::extractSocialData() {
@@ -411,22 +401,6 @@ namespace world_sim {
 		for (const auto& category : memoryData.categories) {
 			memoryData.totalKnown += category.count;
 		}
-	}
-
-	std::string ColonistDetailsModel::getMoodLabel(float mood) {
-		if (mood >= 80.0F) {
-			return "Happy";
-		}
-		if (mood >= 60.0F) {
-			return "Content";
-		}
-		if (mood >= 40.0F) {
-			return "Neutral";
-		}
-		if (mood >= 20.0F) {
-			return "Stressed";
-		}
-		return "Miserable";
 	}
 
 	bool ColonistDetailsModel::extractTasksData(ecs::World& world, ecs::EntityID colonistId, float deltaTime, bool force) {

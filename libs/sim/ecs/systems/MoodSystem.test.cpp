@@ -22,7 +22,7 @@ namespace ecs::test {
 		constexpr FeelingId			 kAnnoyed = 1;
 		constexpr FeelingId			 kDelighted = 2;
 
-		// Hunger and thirst weigh 1 each and nothing else counts, so an empty need is -50 and a need at
+		// Hunger and thirst weigh 1 each and every other need 0, so an empty need is -50 and a need at
 		// 50 is -7.5 (penalty (70 - 50) / (70 - 30) x 0.3 = 0.15, half the weight).
 		constexpr const char* kTestConfig = R"(<?xml version="1.0"?>
 <Mood>
@@ -31,6 +31,12 @@ namespace ecs::test {
   <NeedWeights>
     <Need name="Hunger" weight="1"/>
     <Need name="Thirst" weight="1"/>
+    <Need name="Energy" weight="0"/>
+    <Need name="Bladder" weight="0"/>
+    <Need name="Digestion" weight="0"/>
+    <Need name="Hygiene" weight="0"/>
+    <Need name="Recreation" weight="0"/>
+    <Need name="Temperature" weight="0"/>
   </NeedWeights>
   <Bands>
     <Band name="Content" from="55"/>
@@ -47,6 +53,12 @@ namespace ecs::test {
   <NeedWeights>
     <Need name="Hunger" weight="1"/>
     <Need name="Energy" weight="3"/>
+    <Need name="Bladder" weight="0"/>
+    <Need name="Digestion" weight="0"/>
+    <Need name="Hygiene" weight="0"/>
+    <Need name="Recreation" weight="0"/>
+    <Need name="Temperature" weight="0"/>
+    <Need name="Thirst" weight="0"/>
   </NeedWeights>
   <Bands>
     <Band name="Bottom" from="0"/>
@@ -107,6 +119,26 @@ namespace ecs::test {
 
 		[[nodiscard]] const Mood& moodOf(EntityID who) const { return *world.getComponent<Mood>(who); }
 
+		[[nodiscard]] static std::vector<std::string> validationMessages() {
+			std::vector<std::string> messages;
+			for (const assets::ValidationError& error : assets::ConfigValidator::getErrors()) {
+				messages.push_back(error.message);
+			}
+			return messages;
+		}
+
+		/// The validator's messages for a config built from kTestConfig with one part swapped out.
+		std::vector<std::string> validationMessagesWith(const std::string& original, const std::string& replacement) {
+			std::string xml = kTestConfig;
+			const size_t at = xml.find(original);
+			EXPECT_NE(at, std::string::npos) << original;
+			xml.replace(at, original.size(), replacement);
+			EXPECT_TRUE(loadConfig(xml));
+			assets::ConfigValidator::clearErrors();
+			EXPECT_FALSE(assets::ConfigValidator::validateMood(config));
+			return validationMessages();
+		}
+
 		[[nodiscard]] static float sumOfContributions(const Mood& mood) {
 			float sum = 0.0F;
 			for (const float contribution : mood.needContributions) {
@@ -131,11 +163,62 @@ namespace ecs::test {
 		ASSERT_TRUE(shipped.loadFromFile(shippedMoodConfig().string()));
 		assets::ConfigValidator::clearErrors();
 		EXPECT_TRUE(assets::ConfigValidator::validateMood(shipped));
-		EXPECT_EQ(shipped.needWeights().size(), kNeedCount) << "every weighted name is a need";
-		const NeedMoodWeights weights = resolveNeedMoodWeights(shipped);
+		EXPECT_TRUE(moodConfigErrors(shipped).empty());
+		const NeedMoodWeights weights = resolveNeedMoodWeights(shipped).weights;
 		for (size_t i = 0; i < kNeedCount; ++i) {
 			EXPECT_GT(weights[i], 0.0F) << needLabel(static_cast<NeedType>(i));
 		}
+	}
+
+	TEST_F(MoodSystemTest, ShippedTuningGivesTheOriginalNeedsScore) {
+		ASSERT_TRUE(config.loadFromFile(shippedMoodConfig().string()));
+		setNeed(colonist, NeedType::Hunger, 50.0F);
+		setNeed(colonist, NeedType::Thirst, 20.0F);
+		setNeed(colonist, NeedType::Energy, 70.0F);
+		setNeed(colonist, NeedType::Bladder, 100.0F);
+		setNeed(colonist, NeedType::Digestion, 0.0F);
+		setNeed(colonist, NeedType::Hygiene, 30.0F);
+		setNeed(colonist, NeedType::Recreation, 90.0F);
+		setNeed(colonist, NeedType::Temperature, 10.0F);
+		world.update(0.0F);
+		// Weights 1.0 hygiene, 1.0 temperature, 0.9 recreation, 0.7 energy, 0.6 hunger, 0.6 thirst, 0.3
+		// bladder, 0.3 digestion (5.4 in all). Penalties: hunger 0.15, thirst 0.3 + 0.7 x 10/30, digestion 1,
+		// hygiene 0.3, temperature 0.3 + 0.7 x 20/30, the rest 0. Weighted sum 1.776667; 100 x (1 - 1.776667
+		// / 5.4) = 67.0988.
+		EXPECT_NEAR(moodOf(colonist).target, 67.0988F, 0.001F);
+	}
+
+	TEST_F(MoodSystemTest, UnknownAndUnweightedNeedsAreConfigErrors) {
+		std::string xml = kTestConfig;
+		const std::string hygiene = R"(<Need name="Hygiene" weight="0"/>)";
+		xml.replace(xml.find(hygiene), hygiene.size(), R"(<Need name="Hygeine" weight="1"/>)");
+		const std::string temperature = R"(<Need name="Temperature" weight="0"/>)";
+		xml.erase(xml.find(temperature), temperature.size());
+		ASSERT_TRUE(loadConfig(xml));
+
+		const ResolvedNeedMoodWeights resolved = resolveNeedMoodWeights(config);
+		EXPECT_EQ(resolved.unknownNeeds, std::vector<std::string>{"Hygeine"});
+		EXPECT_EQ(resolved.unweightedNeeds, (std::vector<NeedType>{NeedType::Hygiene, NeedType::Temperature}));
+		EXPECT_EQ(
+			moodConfigErrors(config),
+			(std::vector<std::string>{
+				"[Mood] Need 'Hygeine' is weighted but no need has that name",
+				"[Mood] Need 'Hygiene' has no weight (add <Need name=\"Hygiene\" weight=\"...\"/>; 0 leaves it out of mood)",
+				"[Mood] Need 'Temperature' has no weight (add <Need name=\"Temperature\" weight=\"...\"/>; 0 leaves it out of mood)",
+			})
+		);
+	}
+
+	TEST_F(MoodSystemTest, StartMoodGivesASpawnedColonistItsTargetAtOnce) {
+		advanceGameHours(3.0F);
+		const EntityID newcomer = spawnColonist();
+		setNeed(newcomer, NeedType::Hunger, 0.0F);
+		const Mood& mood = world.getSystem<MoodSystem>().startMood(newcomer);
+		EXPECT_EQ(&mood, world.getComponent<Mood>(newcomer));
+		EXPECT_FLOAT_EQ(mood.target, 50.0F);
+		EXPECT_FLOAT_EQ(mood.value, 50.0F);
+		EXPECT_EQ(mood.cause, (MoodCause{.kind = MoodCauseKind::Need, .need = NeedType::Hunger}));
+		EXPECT_DOUBLE_EQ(mood.easedAt, time->simulationSeconds());
 	}
 
 	TEST_F(MoodSystemTest, TargetIsNeedsScorePlusHeldThoughts) {
@@ -278,6 +361,7 @@ namespace ecs::test {
 		EXPECT_EQ(config.bandFor(30.0F).name, "Low");
 		EXPECT_EQ(config.bandFor(29.0F).name, "Very low");
 		EXPECT_EQ(config.bandFor(12.0F).name, "Very low");
+		EXPECT_EQ(config.bandFor(11.9F).name, "Collapsing");
 		EXPECT_EQ(config.bandFor(11.0F).name, "Collapsing");
 		EXPECT_EQ(config.bandFor(0.0F).name, "Collapsing");
 	}
@@ -314,8 +398,41 @@ namespace ecs::test {
 </Mood>)"));
 		assets::ConfigValidator::clearErrors();
 		EXPECT_FALSE(assets::ConfigValidator::validateMood(config));
-		// No rate, a backwards curve, a need weighted twice, and no band below 55.
-		EXPECT_EQ(assets::ConfigValidator::getErrorCount(), 4U);
+		EXPECT_EQ(
+			validationMessages(),
+			(std::vector<std::string>{
+				"Easing pointsPerGameHour must be a positive number",
+				"NeedPenalty needs 0 < warning < comfortable <= 100",
+				"Need 'Hunger' is weighted more than once",
+				"The lowest band must start at 0 or below so every mood has a band",
+			})
+		);
+	}
+
+	TEST_F(MoodSystemTest, ValidationRejectsAZeroOrNegativeEasingRate) {
+		const std::string easing = R"(<Easing pointsPerGameHour="5"/>)";
+		EXPECT_EQ(
+			validationMessagesWith(easing, R"(<Easing pointsPerGameHour="0"/>)"),
+			std::vector<std::string>{"Easing pointsPerGameHour must be a positive number"}
+		);
+		EXPECT_EQ(
+			validationMessagesWith(easing, R"(<Easing pointsPerGameHour="-2"/>)"),
+			std::vector<std::string>{"Easing pointsPerGameHour must be a positive number"}
+		);
+	}
+
+	TEST_F(MoodSystemTest, ValidationRejectsAMissingWeight) {
+		EXPECT_EQ(
+			validationMessagesWith(R"(<Need name="Thirst" weight="1"/>)", R"(<Need name="Thirst"/>)"),
+			std::vector<std::string>{"Need 'Thirst' weight must be zero or more"}
+		);
+	}
+
+	TEST_F(MoodSystemTest, ValidationRejectsBandsStartingAtTheSameMood) {
+		EXPECT_EQ(
+			validationMessagesWith(R"(<Band name="Very low" from="12"/>)", R"(<Band name="Very low" from="30"/>)"),
+			std::vector<std::string>{"Bands 'Low' and 'Very low' start at the same mood"}
+		);
 	}
 
 } // namespace ecs::test

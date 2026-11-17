@@ -74,6 +74,8 @@ assets/config/colonists/mood.xml
 
 `mood.xml` loads into `assets::MoodConfig` (the mood rate, the need penalty curve, the per-need
 weights by need name, and the band names) and is checked by `ConfigValidator::validateMood`.
+The need names belong to the sim, so `GameLoadingScene` adds `ecs::moodConfigErrors` (a name that is
+no need, a need with no weight) to `loadWorkConfig`'s errors before the game scene is entered.
 
 ### Mod Paths (Future)
 

@@ -13,7 +13,7 @@
        then steeply to 1 at an empty need. Values are need percentages. -->
   <NeedPenalty comfortable="70" warning="30" penaltyAtWarning="0.3"/>
 
-  <!-- Names are the needs' labels. A need left out carries no weight in mood. -->
+  <!-- Names are the needs' labels. Every need is listed once; weight 0 leaves one out of mood. -->
   <NeedWeights>
     <Need name="Hygiene" weight="1.0"/>
     <Need name="Temperature" weight="1.0"/>

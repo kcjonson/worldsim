@@ -1510,6 +1510,7 @@ namespace {
 			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{"Colonist", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 			ecsWorld->addComponent<ecs::Colonist>(entity, ecs::Colonist{newName});
 			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());
+			ecsWorld->getSystem<ecs::MoodSystem>().startMood(entity);
 
 			// Roll static attributes (0-20), seeded per-entity so colonists vary
 			// deterministically. Only Strength is consumed today: it sets hand-carry

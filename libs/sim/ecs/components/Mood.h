@@ -11,6 +11,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace ecs {
@@ -57,9 +58,20 @@ namespace ecs {
 	/// A need's mood weight per NeedType, resolved from the config's need names.
 	using NeedMoodWeights = std::array<float, kNeedCount>;
 
-	/// The config's need weights by NeedType. A need the config leaves out weighs nothing; a name that
-	/// is no need's label is logged and ignored.
-	[[nodiscard]] NeedMoodWeights resolveNeedMoodWeights(const assets::MoodConfig& config);
+	struct ResolvedNeedMoodWeights {
+		NeedMoodWeights			 weights{};
+		/// Weighted names that are no need's label, in file order.
+		std::vector<std::string> unknownNeeds;
+		/// Needs the config gives no weight, in NeedType order.
+		std::vector<NeedType>	 unweightedNeeds;
+	};
+
+	/// The config's need weights by NeedType, and the names it could not place.
+	[[nodiscard]] ResolvedNeedMoodWeights resolveNeedMoodWeights(const assets::MoodConfig& config);
+
+	/// Config errors the assets library can't see: weighted names that are no need, and needs with no
+	/// weight. Formatted like loadWorkConfig's errors; empty when every need is weighted once by name.
+	[[nodiscard]] std::vector<std::string> moodConfigErrors(const assets::MoodConfig& config);
 
 	/// A need's penalty, 0 to 1, from its value on the config's curve.
 	[[nodiscard]] float needPenalty(float value, const assets::NeedPenaltyCurve& curve);
