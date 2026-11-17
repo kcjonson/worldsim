@@ -10,6 +10,10 @@
 
 This document specifies **when** and **how** work configuration files are loaded during the game lifecycle. The design supports hot-reloading mods from the main menu without restarting the application.
 
+## Numbers
+
+Config numbers go through the strict parser (`parseConfigNumber` and `parseConfigInteger`, read by `ConfigReader`, in `libs/assets/assets/ConfigNumber.h`), so "30abc", "nan", and empty text are refused rather than read as a number. A missing or malformed value is a config error naming the file, element, and attribute, shown on the loading screen; there is no C++ default for a base tuning number, since base tuning lives in XML.
+
 ---
 
 ## Design Goals

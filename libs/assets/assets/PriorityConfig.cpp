@@ -3,6 +3,8 @@
 
 #include "assets/PriorityConfig.h"
 
+#include "assets/ConfigNumber.h"
+
 #include <utils/Log.h>
 
 #include <pugixml.hpp>
@@ -16,28 +18,6 @@ namespace assets {
 	PriorityConfig& PriorityConfig::Get() {
 		static PriorityConfig instance;
 		return instance;
-	}
-
-	namespace {
-		/// Default per-task-type BASE tiers for the (tier, score) arbitration (lower = higher
-		/// priority). These mirror the spec's tier ladder; runtime classifiers in AIDecisionSystem
-		/// promote specific options (critical need -> 2, serves-work-order -> 4, etc.). The XML
-		/// <TaskTiers> block overrides these so designers can retune without a code change; these
-		/// defaults are the same values, kept in sync as the validation/tuning source of truth.
-		void installDefaultTaskTiers(std::unordered_map<std::string, int>& tiers) {
-			tiers["FulfillNeed"] = 5; // base = actionable need; promoted to 2 (critical) or 7 (gathering food)
-			tiers["Craft"] = 4;
-			tiers["Build"] = 4;
-			tiers["Deconstruct"] = 4;
-			tiers["Haul"] = 6;			// base = opportunistic; promoted to 4 when serving a work order
-			tiers["Harvest"] = 6;		// base = opportunistic; promoted to 4 when serving a work order
-			tiers["PlacePackaged"] = 6; // base = opportunistic; promoted to 4 when serving/carrying
-			tiers["Wander"] = 7;
-		}
-	} // namespace
-
-	PriorityConfig::PriorityConfig() {
-		installDefaultTaskTiers(taskTiers);
 	}
 
 	bool PriorityConfig::loadFromFile(const std::string& xmlPath) {
@@ -55,26 +35,22 @@ namespace assets {
 			return false;
 		}
 
-		// The loaded XML is the authoritative source for arbitration tiers: clear the
-		// constructor-installed defaults BEFORE parsing <TaskTiers> so a type missing from the XML
-		// (or a deleted <TaskTiers> block) actually fails validateTaskTiers rather than silently
-		// falling back to a C++ default. A default-constructed PriorityConfig (unit tests that never
-		// load XML) keeps the constructor's defaults; only this file-load path is authoritative.
-		taskTiers.clear();
-		++m_generation;
+		clear();
 
-		// Parse sections
+		ConfigReader reader(xmlPath);
+
 		if (auto tiersNode = root.child("TaskTiers")) {
-			parseTaskTiers(&tiersNode);
+			parseTaskTiers(&tiersNode, reader);
 		}
 
-		if (auto bonusesNode = root.child("Bonuses")) {
-			parseBonuses(&bonusesNode);
-		}
+		const pugi::xml_node bonusesNode = root.child("Bonuses");
+		parseBonuses(&bonusesNode, reader);
 
 		if (auto orderNode = root.child("WorkCategoryOrder")) {
-			parseCategoryOrder(&orderNode);
+			parseCategoryOrder(&orderNode, reader);
 		}
+
+		problemList = reader.takeProblems();
 
 		LOG_INFO(Engine, "Loaded priority config from %s", xmlPath.c_str());
 		return true;
@@ -83,13 +59,13 @@ namespace assets {
 	void PriorityConfig::clear() {
 		++m_generation;
 		taskTiers.clear();
-		installDefaultTaskTiers(taskTiers);
 
 		distanceFactorConfig = DistanceFactorConfig{};
 		inProgressConfig = InProgressBonusConfig{};
 		storagePriorityConfig = StoragePriorityConfig{};
 		taskAgeConfig = TaskAgeBonusConfig{};
 		categoryOrder.clear();
+		problemList.clear();
 	}
 
 	int PriorityConfig::getTaskTier(const std::string& taskTypeName) const {
@@ -104,10 +80,7 @@ namespace assets {
 		missingOut.clear();
 		for (const auto& name : requiredTypeNames) {
 			auto it = taskTiers.find(name);
-			// Absent key OR a sentinel value (malformed/non-integer tier= parsed to kUnassignedTier)
-			// both count as unassigned, so a <Task name="Craft"/> with no valid tier fails loud
-			// rather than silently sorting to the bottom.
-			if (it == taskTiers.end() || it->second == kUnassignedTier) {
+			if (it == taskTiers.end()) {
 				missingOut.push_back(name);
 			}
 		}
@@ -138,7 +111,7 @@ namespace assets {
 		return std::min(bonus, taskAgeConfig.maxBonus);
 	}
 
-	void PriorityConfig::parseTaskTiers(const void* nodePtr) {
+	void PriorityConfig::parseTaskTiers(const void* nodePtr, ConfigReader& reader) {
 		const pugi::xml_node& node = *static_cast<const pugi::xml_node*>(nodePtr);
 
 		for (pugi::xml_node tierNode : node.children("Task")) {
@@ -146,56 +119,29 @@ namespace assets {
 			if (name.empty()) {
 				continue;
 			}
-			// tier attribute is required per task; a missing/zero attribute is a config error caught
-			// by validateTaskTiers only when the whole entry is absent, so default to the sentinel
-			// here so a malformed entry surfaces as "unassigned" rather than silently tier 0.
-			int tier = tierNode.attribute("tier").as_int(kUnassignedTier);
+			const int tier = reader.attributeInteger(tierNode, "Task", "tier");
 			taskTiers[name] = tier;
 			LOG_DEBUG(Engine, "Task tier: %s = %d", name.c_str(), tier);
 		}
 	}
 
-	void PriorityConfig::parseBonuses(const void* nodePtr) {
+	void PriorityConfig::parseBonuses(const void* nodePtr, ConfigReader& reader) {
 		const pugi::xml_node& node = *static_cast<const pugi::xml_node*>(nodePtr);
 
-		// Within-tier distance factor (arbitration)
-		if (auto dfNode = node.child("DistanceFactor")) {
-			if (auto n = dfNode.child("maxDistance")) {
-				distanceFactorConfig.maxDistance = n.text().as_float(60.0F);
-			}
-			if (auto n = dfNode.child("maxFactor")) {
-				distanceFactorConfig.maxFactor = n.text().as_float(300.0F);
-			}
-		}
+		const pugi::xml_node distanceNode = node.child("DistanceFactor");
+		distanceFactorConfig.maxDistance = reader.childNumber(distanceNode, "DistanceFactor", "maxDistance");
+		distanceFactorConfig.maxFactor = reader.childNumber(distanceNode, "DistanceFactor", "maxFactor");
 
-		// In-progress
-		if (auto ipNode = node.child("InProgress")) {
-			if (auto n = ipNode.child("bonus")) {
-				// Fallback matches the struct default and the XML value (50):
-				// the within-tier hysteresis margin. An empty node must not yield the old 200.
-				inProgressConfig.bonus = static_cast<int16_t>(n.text().as_int(50));
-			}
-		}
+		inProgressConfig.bonus = static_cast<int16_t>(reader.childInteger(node.child("InProgress"), "InProgress", "bonus"));
 
-		// Storage priority (within-tier arbitration weight per priority rank)
-		if (auto spNode = node.child("StoragePriority")) {
-			if (auto n = spNode.child("weight")) {
-				storagePriorityConfig.weight = static_cast<int16_t>(n.text().as_int(300));
-			}
-		}
+		storagePriorityConfig.weight = static_cast<int16_t>(reader.childInteger(node.child("StoragePriority"), "StoragePriority", "weight"));
 
-		// Task age
-		if (auto ageNode = node.child("TaskAge")) {
-			if (auto n = ageNode.child("bonusPerMinute")) {
-				taskAgeConfig.bonusPerMinute = static_cast<int16_t>(n.text().as_int(1));
-			}
-			if (auto n = ageNode.child("maxBonus")) {
-				taskAgeConfig.maxBonus = static_cast<int16_t>(n.text().as_int(100));
-			}
-		}
+		const pugi::xml_node ageNode = node.child("TaskAge");
+		taskAgeConfig.bonusPerMinute = static_cast<int16_t>(reader.childInteger(ageNode, "TaskAge", "bonusPerMinute"));
+		taskAgeConfig.maxBonus = static_cast<int16_t>(reader.childInteger(ageNode, "TaskAge", "maxBonus"));
 	}
 
-	void PriorityConfig::parseCategoryOrder(const void* nodePtr) {
+	void PriorityConfig::parseCategoryOrder(const void* nodePtr, ConfigReader& reader) {
 		const pugi::xml_node& node = *static_cast<const pugi::xml_node*>(nodePtr);
 
 		struct CategoryTier {
@@ -206,9 +152,9 @@ namespace assets {
 
 		for (pugi::xml_node catNode : node.children("Category")) {
 			std::string name = catNode.attribute("name").as_string();
-			float		tier = catNode.attribute("tier").as_float(999.0F);
+			const float tier = reader.attributeNumber(catNode, "Category", "tier");
 
-			if (!name.empty()) {
+			if (!name.empty() && std::isfinite(tier)) {
 				categories.push_back({name, tier});
 			}
 		}

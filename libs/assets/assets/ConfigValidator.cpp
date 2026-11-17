@@ -97,6 +97,17 @@ bool ConfigValidator::validatePriorityConfig() {
 
     bool valid = true;
 
+    for (const std::string& problem : priorityConfig.problems()) {
+        addError("PriorityConfig", problem);
+        valid = false;
+    }
+
+    const float maxDistance = priorityConfig.getDistanceFactorConfig().maxDistance;
+    if (std::isfinite(maxDistance) && maxDistance <= 0.0F) {
+        addError("PriorityConfig", "DistanceFactor maxDistance must be a positive number", "got " + std::to_string(maxDistance));
+        valid = false;
+    }
+
     // Check that category order references valid categories
     for (const auto& categoryName : priorityConfig.getCategoryOrder()) {
         if (!workTypeRegistry.hasCategory(categoryName)) {
@@ -140,17 +151,18 @@ bool ConfigValidator::validateMood(const MoodConfig& config) {
         return false;
     }
 
-    if (!std::isfinite(config.pointsPerGameHour()) || config.pointsPerGameHour() <= 0.0F) {
+    for (const std::string& problem : config.problems()) {
+        addError(source, problem);
+        valid = false;
+    }
+
+    if (std::isfinite(config.pointsPerGameHour()) && config.pointsPerGameHour() <= 0.0F) {
         addError(source, "Easing pointsPerGameHour must be a positive number", "Set <Easing pointsPerGameHour=\"...\"/>");
         valid = false;
     }
 
     const NeedPenaltyCurve& curve = config.needPenaltyCurve();
-    if (!std::isfinite(curve.comfortable) || !std::isfinite(curve.warning) || !std::isfinite(curve.penaltyAtWarning)) {
-        addError(source, "NeedPenalty needs comfortable, warning, and penaltyAtWarning",
-                 "Set <NeedPenalty comfortable=\"...\" warning=\"...\" penaltyAtWarning=\"...\"/>");
-        valid = false;
-    } else {
+    if (std::isfinite(curve.comfortable) && std::isfinite(curve.warning) && std::isfinite(curve.penaltyAtWarning)) {
         if (curve.warning <= 0.0F || curve.comfortable <= curve.warning || curve.comfortable > 100.0F) {
             addError(source, "NeedPenalty needs 0 < warning < comfortable <= 100",
                      "comfortable " + std::to_string(curve.comfortable) + ", warning " + std::to_string(curve.warning));
@@ -175,7 +187,10 @@ bool ConfigValidator::validateMood(const MoodConfig& config) {
             addError(source, "Need '" + needWeight.need + "' is weighted more than once");
             valid = false;
         }
-        if (!std::isfinite(needWeight.weight) || needWeight.weight < 0.0F) {
+        if (!std::isfinite(needWeight.weight)) {
+            continue;
+        }
+        if (needWeight.weight < 0.0F) {
             addError(source, "Need '" + needWeight.need + "' weight must be zero or more");
             valid = false;
             continue;
@@ -197,10 +212,7 @@ bool ConfigValidator::validateMood(const MoodConfig& config) {
             addError(source, "A <Band> has no name");
             valid = false;
         }
-        if (!std::isfinite(bands[i].from)) {
-            addError(source, "Band '" + bands[i].name + "' needs a from value");
-            valid = false;
-        } else if (i > 0 && bands[i].from == bands[i - 1].from) {
+        if (std::isfinite(bands[i].from) && i > 0 && bands[i].from == bands[i - 1].from) {
             addError(source, "Bands '" + bands[i - 1].name + "' and '" + bands[i].name + "' start at the same mood");
             valid = false;
         }

@@ -398,10 +398,13 @@ namespace ecs::test {
 </Mood>)"));
 		assets::ConfigValidator::clearErrors();
 		EXPECT_FALSE(assets::ConfigValidator::validateMood(config));
+		std::vector<std::string> messages = validationMessages();
+		ASSERT_EQ(messages.size(), 4U);
+		EXPECT_TRUE(messages.front().ends_with("<Easing> pointsPerGameHour is missing")) << messages.front();
+		messages.erase(messages.begin());
 		EXPECT_EQ(
-			validationMessages(),
+			messages,
 			(std::vector<std::string>{
-				"Easing pointsPerGameHour must be a positive number",
 				"NeedPenalty needs 0 < warning < comfortable <= 100",
 				"Need 'Hunger' is weighted more than once",
 				"The lowest band must start at 0 or below so every mood has a band",
@@ -422,10 +425,9 @@ namespace ecs::test {
 	}
 
 	TEST_F(MoodSystemTest, ValidationRejectsAMissingWeight) {
-		EXPECT_EQ(
-			validationMessagesWith(R"(<Need name="Thirst" weight="1"/>)", R"(<Need name="Thirst"/>)"),
-			std::vector<std::string>{"Need 'Thirst' weight must be zero or more"}
-		);
+		const std::vector<std::string> messages = validationMessagesWith(R"(<Need name="Thirst" weight="1"/>)", R"(<Need name="Thirst"/>)");
+		ASSERT_EQ(messages.size(), 1U);
+		EXPECT_TRUE(messages.front().ends_with("<Need> weight is missing")) << messages.front();
 	}
 
 	TEST_F(MoodSystemTest, ValidationRejectsBandsStartingAtTheSameMood) {
