@@ -1,9 +1,11 @@
 #include "assets/ConditionConfig.h"
 
+#include <utils/Log.h>
+
 #include <pugixml.hpp>
 
 #include <algorithm>
-#include <array>
+#include <charconv>
 #include <sstream>
 #include <string_view>
 #include <utility>
@@ -32,23 +34,30 @@ namespace assets {
 		}
 
 		std::optional<CapabilityType> capabilityFromName(std::string_view name) {
-			constexpr std::array<std::pair<std::string_view, CapabilityType>, 9> kCapabilities = {{
-				{"Edible", CapabilityType::Edible},
-				{"Drinkable", CapabilityType::Drinkable},
-				{"Sleepable", CapabilityType::Sleepable},
-				{"Toilet", CapabilityType::Toilet},
-				{"Waste", CapabilityType::Waste},
-				{"Carryable", CapabilityType::Carryable},
-				{"Harvestable", CapabilityType::Harvestable},
-				{"Craftable", CapabilityType::Craftable},
-				{"Storage", CapabilityType::Storage},
-			}};
-			for (const auto& [capabilityName, capability] : kCapabilities) {
-				if (capabilityName == name) {
-					return capability;
-				}
+			const auto found = std::ranges::find(kCapabilityNames, name, [](const char* capability) { return std::string_view(capability); });
+			if (found == kCapabilityNames.end()) {
+				return std::nullopt;
 			}
-			return std::nullopt;
+			return static_cast<CapabilityType>(found - kCapabilityNames.begin());
+		}
+
+		/// The attribute's whole text as a number; nothing for a missing attribute, empty text, or text
+		/// that is not entirely a number.
+		std::optional<float> numberOf(pugi::xml_attribute attribute) {
+			const std::string_view text = attribute.as_string();
+			float				   number = 0.0F;
+			const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), number);
+			if (text.empty() || error != std::errc() || end != text.data() + text.size()) {
+				return std::nullopt;
+			}
+			return number;
+		}
+
+		bool sameSignature(const ConditionTermDef& first, const ConditionTermDef& second) {
+			return first.result == second.result && first.resultSymbols == second.resultSymbols &&
+				   std::ranges::equal(first.parameters, second.parameters, [](const ConditionParameterDef& left, const ConditionParameterDef& right) {
+					   return left.type == right.type && left.symbols == right.symbols;
+				   });
 		}
 
 		std::vector<std::string> splitNames(const char* text) {
@@ -106,21 +115,15 @@ namespace assets {
 			void check() {
 				ConditionConfig& config = result.config;
 				for (const ConditionKindDef& kind : config.kinds) {
-					config.symbolSets[kKindSet].push_back(kind.name);
+					config.symbolSets[kKindSet].names.push_back(kind.name);
 				}
 				for (const ConditionTaskGroupDef& group : config.taskGroups) {
-					const std::vector<std::string>& tasks = config.symbolSets[kTaskSet];
-					for (const std::string& task : group.tasks) {
-						if (!contains(tasks, task)) {
-							fail("task group '" + group.name + "'", "'" + task + "' is not a name in the \"task\" symbols");
-						}
-					}
+					std::vector<std::string>& tasks = config.symbolSets[kTaskSet].names;
 					if (contains(tasks, group.name)) {
 						fail("task group '" + group.name + "'", "its name is already a name in the \"task\" symbols");
+						continue;
 					}
-				}
-				for (const ConditionTaskGroupDef& group : config.taskGroups) {
-					config.symbolSets[kTaskSet].push_back(group.name);
+					tasks.push_back(group.name);
 				}
 				for (const ConditionTermDef& term : config.terms) {
 					const auto checkSet = [&](const std::string& set) {
@@ -199,11 +202,11 @@ namespace assets {
 					term.parameters.push_back(std::move(parameter));
 				}
 				const auto existing = std::ranges::find(result.config.terms, term.name, &ConditionTermDef::name);
-				if (existing != result.config.terms.end()) {
-					fail(source, what + " is already declared in " + existing->source);
-					return;
+				if (existing == result.config.terms.end()) {
+					result.config.terms.push_back(std::move(term));
+				} else if (!sameSignature(*existing, term)) {
+					fail(source, what + " is declared in " + existing->source + " with a different signature");
 				}
-				result.config.terms.push_back(std::move(term));
 			}
 
 			void loadSymbols(pugi::xml_node node, const std::string& source) {
@@ -216,13 +219,19 @@ namespace assets {
 					fail(source, "kinds are declared with <Kind>, not <Symbols name=\"kind\">");
 					return;
 				}
-				std::vector<std::string>& names = result.config.symbolSets[set];
-				for (std::string& name : splitNames(node.text().as_string())) {
-					if (contains(names, name)) {
-						fail(source, "'" + name + "' is already in the \"" + set + "\" symbols");
-						continue;
+				ConditionSymbolSetDef& declared = result.config.symbolSets[set];
+				if (const pugi::xml_attribute open = node.attribute("open")) {
+					const std::string_view value = open.as_string();
+					if (value != "true" && value != "false") {
+						fail(source, "symbol set \"" + set + "\": open=\"" + std::string(value) + "\" is not \"true\" or \"false\"");
+					} else if (value == "true") {
+						declared.open = true;
 					}
-					names.push_back(std::move(name));
+				}
+				for (std::string& name : splitNames(node.text().as_string())) {
+					if (!contains(declared.names, name)) {
+						declared.names.push_back(std::move(name));
+					}
 				}
 			}
 
@@ -241,22 +250,15 @@ namespace assets {
 						return;
 					}
 				}
-				if (const pugi::xml_attribute remembered = node.attribute("remembered")) {
-					if (std::string_view(remembered.as_string()) != "colonists") {
-						fail(source, what + ": remembered=\"" + remembered.as_string() + "\" is not \"colonists\"");
-						return;
-					}
-					kind.colonists = true;
+				std::string& declaredIn = kindSources[kind.name];
+				const auto	 existing = std::ranges::find(result.config.kinds, kind.name, &ConditionKindDef::name);
+				if (existing == result.config.kinds.end()) {
+					result.config.kinds.push_back(std::move(kind));
+				} else {
+					LOG_INFO(Engine, "Condition %s: %s replaces the declaration in %s", what.c_str(), source.c_str(), declaredIn.c_str());
+					*existing = std::move(kind);
 				}
-				if (kind.capability.has_value() && kind.colonists) {
-					fail(source, what + " has both a capability and remembered=\"colonists\"");
-					return;
-				}
-				if (std::ranges::find(result.config.kinds, kind.name, &ConditionKindDef::name) != result.config.kinds.end()) {
-					fail(source, what + " is already declared");
-					return;
-				}
-				result.config.kinds.push_back(std::move(kind));
+				declaredIn = source;
 			}
 
 			void loadTaskGroup(pugi::xml_node node, const std::string& source) {
@@ -265,32 +267,36 @@ namespace assets {
 					fail(source, "a <TaskGroup> has no name");
 					return;
 				}
-				if (std::ranges::find(result.config.taskGroups, group.name, &ConditionTaskGroupDef::name) !=
-					result.config.taskGroups.end()) {
-					fail(source, "task group '" + group.name + "' is already declared");
+				const auto [declared, added] = taskGroupSources.try_emplace(group.name, source);
+				if (!added) {
+					fail(source, "task group '" + group.name + "' is already declared in " + declared->second);
 					return;
 				}
 				result.config.taskGroups.push_back(std::move(group));
 			}
 
 			void loadNight(pugi::xml_node node, const std::string& source) {
-				if (result.config.night.has_value()) {
-					fail(source, "<Night> is already given");
-					return;
-				}
-				const pugi::xml_attribute start = node.attribute("start");
-				const pugi::xml_attribute end = node.attribute("end");
-				const auto				  isHour = [](pugi::xml_attribute hour) {
-					   return hour && hour.as_float(-1.0F) >= 0.0F && hour.as_float() < 24.0F;
+				const auto hourOf = [](pugi::xml_attribute attribute) -> std::optional<float> {
+					const std::optional<float> hour = numberOf(attribute);
+					return hour.has_value() && *hour >= 0.0F && *hour < 24.0F ? hour : std::nullopt;
 				};
-				if (!isHour(start) || !isHour(end)) {
-					fail(source, "<Night> needs start and end hours from 0 up to 24");
+				const std::optional<float> start = hourOf(node.attribute("start"));
+				const std::optional<float> end = hourOf(node.attribute("end"));
+				if (!start.has_value() || !end.has_value()) {
+					fail(source, "<Night> needs start and end hours, numbers from 0 up to 24");
 					return;
 				}
-				result.config.night = NightHours{.start = start.as_float(), .end = end.as_float()};
+				if (result.config.night.has_value()) {
+					LOG_INFO(Engine, "Condition <Night>: %s replaces the hours from %s", source.c_str(), nightSource.c_str());
+				}
+				result.config.night = NightHours{.start = *start, .end = *end};
+				nightSource = source;
 			}
 
-			ConditionConfigLoad& result;
+			ConditionConfigLoad&			   result;
+			std::map<std::string, std::string> kindSources;
+			std::map<std::string, std::string> taskGroupSources;
+			std::string						   nightSource;
 		};
 
 	} // namespace
@@ -313,7 +319,9 @@ namespace assets {
 			result.errors.push_back(folder.generic_string() + ": " + error.message());
 			return result;
 		}
-		std::ranges::sort(files);
+		std::ranges::sort(files, {}, [&folder](const std::filesystem::path& file) {
+			return std::pair(file.parent_path() != folder, file);
+		});
 
 		Loader loader(result);
 		for (const std::filesystem::path& file : files) {

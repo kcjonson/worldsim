@@ -17,8 +17,12 @@
 #include <assets/AssetDefinition.h>
 #include <assets/ConditionConfig.h>
 
+#include <utils/Log.h>
+
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 
@@ -37,6 +41,32 @@ namespace {
 	uint16_t capabilityBit(assets::CapabilityType capability) {
 		return static_cast<uint16_t>(1U << static_cast<unsigned>(capability));
 	}
+
+	/// The shipped vocabulary with one more file, as a mod would add it.
+	assets::ConditionConfigLoad loadWithMod(const std::string& body) {
+		const std::filesystem::path folder =
+			std::filesystem::temp_directory_path() /
+			("worldsim-conditions-" + std::string(::testing::UnitTest::GetInstance()->current_test_info()->name()));
+		std::filesystem::remove_all(folder);
+		std::filesystem::copy(shippedConditions(), folder, std::filesystem::copy_options::recursive);
+		std::filesystem::create_directories(folder / "mods" / "test");
+		{
+			std::ofstream mod(folder / "mods" / "test" / "mod.xml");
+			mod << "<ConditionVocabulary>" << body << "</ConditionVocabulary>";
+		}
+		assets::ConditionConfigLoad load = assets::loadConditionConfig(folder);
+		std::filesystem::remove_all(folder);
+		return load;
+	}
+
+	struct UnansweredLog {
+		std::vector<std::string> messages;
+		static void				 sink(void* context, const foundation::LogRecord& record) {
+			 if (std::strstr(record.message, "which nothing answers") != nullptr) {
+				 static_cast<UnansweredLog*>(context)->messages.emplace_back(record.message);
+			 }
+		}
+	};
 
 	class SimTermsTest : public ::testing::Test {
 	  protected:
@@ -221,26 +251,43 @@ TEST_F(SimTermsTest, NearCountsRememberedThingsWithinTheRadius) {
 	EXPECT_EQ(evaluate("near(station, 100) or near(bed, 100) or near(loose_item, 100) or near(latrine, 100)"), Truth::False);
 }
 
-TEST_F(SimTermsTest, NearColonistUsesRememberedColonistsOnly) {
-	const ecs::EntityID friendly = spawnColonist({3.0F, 0.0F});
-	const ecs::EntityID distant = spawnColonist({50.0F, 0.0F});
-	spawnColonist({1.0F, 0.0F}); // beside him, but not remembered
-
-	EXPECT_EQ(evaluate("near(colonist, 5)"), Truth::False);
-
-	memory().rememberDynamicEntity(friendly, {3.0F, 0.0F});
-	memory().rememberDynamicEntity(distant, {50.0F, 0.0F});
-	memory().rememberDynamicEntity(colonist, {0.0F, 0.0F});
-
-	EXPECT_EQ(evaluate("near(colonist, 5)"), Truth::True);
-	EXPECT_EQ(evaluate("count_near(colonist, 5) >= 2"), Truth::False);
-	EXPECT_EQ(evaluate("count_near(colonist, 60) == 2"), Truth::True);
-}
-
-TEST_F(SimTermsTest, KindsWithNoMappingAreUnknown) {
-	EXPECT_EQ(evaluate("near(lit_fire, 5)"), Truth::Unknown);
+TEST_F(SimTermsTest, KindsWithNoMappingAreUnknownAndLoggedOncePerCondition) {
+	spawnColonist({1.0F, 0.0F});
+	UnansweredLog log;
+	foundation::Logger::setSink(&UnansweredLog::sink, &log);
+	EXPECT_EQ(evaluate("near(colonist, 5)"), Truth::Unknown);
+	EXPECT_EQ(evaluate("not near(colonist, 10)"), Truth::Unknown);
+	EXPECT_EQ(evaluate("count_near(colonist, 5) >= 2"), Truth::Unknown);
+	EXPECT_EQ(evaluate("near(lit_fire, 5) and not near(lit_fire, 2)"), Truth::Unknown);
 	EXPECT_EQ(evaluate("count_near(structure, 5) > 0"), Truth::Unknown);
 	EXPECT_EQ(evaluate("near(door, 5) or near(tool, 5) or near(prepared_food, 5)"), Truth::Unknown);
+	EXPECT_EQ(evaluate("near(food, 5)"), Truth::False);
+	foundation::Logger::setSink(nullptr, nullptr);
+#ifdef DEVELOPMENT_BUILD
+	ASSERT_EQ(log.messages.size(), 6U);
+	EXPECT_NE(log.messages[0].find("'colonist'"), std::string::npos) << log.messages[0];
+	EXPECT_NE(log.messages[3].find("'lit_fire'"), std::string::npos) << log.messages[3];
+	EXPECT_NE(log.messages[5].find("'prepared_food'"), std::string::npos) << log.messages[5];
+#endif
+}
+
+TEST_F(SimTermsTest, EngineNamesComeFromTheEngine) {
+	EXPECT_EQ(evaluate("need(digestion) >= 0 and need(temperature) >= 0"), Truth::True);
+	EXPECT_EQ(evaluate("attribute(social_need) == 10 and attribute(strength) == 10"), Truth::True);
+	task().type = ecs::TaskType::PlacePackaged;
+	EXPECT_EQ(evaluate("current_task(place_packaged) and current_task(work)"), Truth::True);
+	EXPECT_FALSE(vocabulary.parse("current_task(None)").ok());
+	EXPECT_FALSE(vocabulary.parse("current_task(none)").ok());
+}
+
+TEST_F(SimTermsTest, OpenSetsTakeAnyName) {
+	EXPECT_EQ(evaluate("trait(night_owl) or trait(anything_a_mod_adds)"), Truth::Unknown);
+	EXPECT_EQ(evaluate("affinity(made_up_behavior) > 1"), Truth::Unknown);
+	EXPECT_EQ(evaluate("recent_event(self, any_event, 24)"), Truth::Unknown);
+	EXPECT_EQ(evaluate("mood_cause is anything"), Truth::Unknown);
+	EXPECT_FALSE(vocabulary.parse("trait(self)").ok());
+	EXPECT_FALSE(vocabulary.parse("trait(5)").ok());
+	EXPECT_FALSE(vocabulary.parse("scarcity(gold) is short").ok());
 }
 
 TEST_F(SimTermsTest, AnEntityWithoutTheComponentsIsUnknown) {
@@ -259,17 +306,7 @@ TEST_F(SimTermsTest, ASpecConditionMixesProvidedAndUnprovidedTerms) {
 }
 
 TEST(SimTermsData, AKindAddedThroughDataWorksWithNear) {
-	const std::filesystem::path folder = std::filesystem::temp_directory_path() / "worldsim-conditions-mod-test";
-	std::filesystem::remove_all(folder);
-	std::filesystem::create_directories(folder);
-	std::filesystem::copy(shippedConditions(), folder / "base", std::filesystem::copy_options::recursive);
-	std::filesystem::create_directories(folder / "mods" / "wells");
-	{
-		std::ofstream mod(folder / "mods" / "wells" / "kinds.xml");
-		mod << R"(<ConditionVocabulary><Kind name="well" capability="Drinkable"/></ConditionVocabulary>)";
-	}
-	const assets::ConditionConfigLoad load = assets::loadConditionConfig(folder);
-	std::filesystem::remove_all(folder);
+	const assets::ConditionConfigLoad load = loadWithMod(R"(<Kind name="well" capability="drinkable"/>)");
 	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
 
 	ConditionVocabulary vocabulary;
@@ -284,4 +321,43 @@ TEST(SimTermsData, AKindAddedThroughDataWorksWithNear) {
 	const ParseResult result = vocabulary.parse("near(well, 5) and count_near(well, 3) == 0");
 	ASSERT_TRUE(result.ok()) << result.error->describe();
 	EXPECT_EQ(vocabulary.evaluate(result.condition, {.world = world, .colonist = colonist}), Truth::True);
+}
+
+TEST(SimTermsData, ANeedNameTheSimLacksIsUnknownAndLoggedOncePerCondition) {
+	const assets::ConditionConfigLoad load = loadWithMod(R"(<Symbols name="need">morale</Symbols>)");
+	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
+	ConditionVocabulary vocabulary;
+	ASSERT_TRUE(buildSimVocabulary(vocabulary, load.config).empty());
+
+	ecs::World			world;
+	const ecs::EntityID colonist = world.createEntity();
+	world.addComponent<ecs::NeedsComponent>(colonist, ecs::NeedsComponent::createDefault());
+
+	UnansweredLog log;
+	foundation::Logger::setSink(&UnansweredLog::sink, &log);
+	const ParseResult result = vocabulary.parse("need(morale) < 20 or need(morale) > 80");
+	const ParseResult known = vocabulary.parse("need(hunger) > 80");
+	foundation::Logger::setSink(nullptr, nullptr);
+	ASSERT_TRUE(result.ok()) << result.error->describe();
+	ASSERT_TRUE(known.ok()) << known.error->describe();
+	EXPECT_EQ(vocabulary.evaluate(result.condition, {.world = world, .colonist = colonist}), Truth::Unknown);
+	EXPECT_EQ(vocabulary.evaluate(known.condition, {.world = world, .colonist = colonist}), Truth::True);
+#ifdef DEVELOPMENT_BUILD
+	ASSERT_EQ(log.messages.size(), 1U);
+	EXPECT_NE(log.messages[0].find("'morale'"), std::string::npos) << log.messages[0];
+#endif
+}
+
+TEST(SimTermsData, TaskGroupMistakesAreReportedWhenTheSimBinds) {
+	const assets::ConditionConfigLoad load =
+		loadWithMod(R"(<TaskGroup name="busy">haul dance</TaskGroup><TaskGroup name="craft">build</TaskGroup>)");
+	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
+	ConditionVocabulary			   vocabulary;
+	const std::vector<std::string> errors = buildSimVocabulary(vocabulary, load.config);
+	const auto mentions = [&](const std::string& text) {
+		return std::ranges::any_of(errors, [&](const std::string& error) { return error.find(text) != std::string::npos; });
+	};
+	EXPECT_TRUE(mentions("task group 'busy': the sim has no task type 'dance'")) << ::testing::PrintToString(errors);
+	EXPECT_TRUE(mentions("task group 'craft': its name is already a task type")) << ::testing::PrintToString(errors);
+	EXPECT_EQ(errors.size(), 2U) << ::testing::PrintToString(errors);
 }

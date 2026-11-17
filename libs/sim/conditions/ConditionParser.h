@@ -28,14 +28,19 @@ namespace conditions {
 	///   term := name ("(" arguments? ")")?
 	///
 	/// Every value is typed: Truth, Number, Symbol, or Target. A term's arguments follow its signature: a
-	/// Symbol parameter takes a bare name from its symbol set, a Number parameter a Number operand, and a
-	/// Target parameter `self`, `target`, or a Target term. Numbers compare with any comparison, Targets
-	/// with == and != only; `is` compares a Symbol term against a name from its result set.
+	/// Symbol parameter takes a bare name from its symbol set (any name, when the set is open), a Number
+	/// parameter a Number operand, and a Target parameter `self`, `target`, or a Target term. Numbers
+	/// compare with any comparison, Targets with == and != only; `is` compares a Symbol term against a
+	/// name from its result set.
 	class ConditionParser {
 	  public:
 		ConditionParser(const ConditionVocabulary& vocabulary, std::string_view text);
 
 		[[nodiscard]] ParseResult parse();
+
+		/// The names the parsed condition gives a provided term that nothing answers, quoted and joined
+		/// for a log line; empty when there are none.
+		[[nodiscard]] const std::string& unansweredNames() const { return unanswered; }
 
 	  private:
 		enum class TokenKind : uint8_t { Name, Number, Minus, LeftParenthesis, RightParenthesis, Comma, Comparison, And, Or, Not, Is, End };
@@ -69,6 +74,8 @@ namespace conditions {
 		[[nodiscard]] std::optional<Operand> parseTerm();
 		[[nodiscard]] std::optional<Operand> parseArgument(uint32_t term, std::size_t parameter);
 
+		[[nodiscard]] std::optional<SymbolId> findName(uint32_t set, std::string_view name) const;
+		void								  noteUnanswered(uint32_t term, std::string_view name);
 		void								  limitCount(const Operand& counted, const Operand& bound);
 		[[nodiscard]] bool					  requireTruth(const Operand& operand);
 		[[nodiscard]] std::optional<uint16_t> addNode(const ConditionNode& node, std::size_t position);
@@ -87,6 +94,7 @@ namespace conditions {
 		std::size_t					  depth = 0;
 		Condition					  condition;
 		std::optional<ConditionError> error;
+		std::string					  unanswered;
 	};
 
 } // namespace conditions

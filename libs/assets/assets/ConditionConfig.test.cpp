@@ -2,9 +2,12 @@
 
 #include "assets/ConditionConfig.h"
 
+#include <utils/Log.h>
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -51,47 +54,48 @@ TEST_F(ConditionConfigTest, TheShippedVocabularyLoadsClean) {
 	}
 	EXPECT_FALSE(load.config.terms.empty());
 	EXPECT_TRUE(load.config.night.has_value());
-	const std::vector<std::string>& tasks = load.config.symbolSets.at("task");
+	const std::vector<std::string>& tasks = load.config.symbolSets.at("task").names;
 	EXPECT_NE(std::ranges::find(tasks, "work"), tasks.end());
-	const std::vector<std::string>& kinds = load.config.symbolSets.at("kind");
+	const std::vector<std::string>& kinds = load.config.symbolSets.at("kind").names;
 	EXPECT_NE(std::ranges::find(kinds, "bed"), kinds.end());
 }
 
 TEST_F(ConditionConfigTest, FilesInSubfoldersAddToTheSameVocabulary) {
 	write("base.xml", R"(<Symbols name="weather">rain</Symbols><Night start="20" end="6"/>
 		<Term name="weather_is" result="Truth"><Parameter type="Symbol" symbols="weather"/></Term>)");
-	write("mods/storms/more.xml", R"(<Symbols name="weather">storm</Symbols><Kind name="well" capability="Drinkable"/>
+	write("mods/storms/more.xml", R"(<Symbols name="weather">storm</Symbols><Kind name="well" capability="drinkable"/>
 		<Term name="lightning" result="Number"/>)");
 	const ConditionConfigLoad load = loadConditionConfig(folder);
 	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
 	EXPECT_EQ(load.config.terms.size(), 2U);
-	EXPECT_EQ(load.config.symbolSets.at("weather"), (std::vector<std::string>{"rain", "storm"}));
-	EXPECT_EQ(load.config.symbolSets.at("kind"), (std::vector<std::string>{"well"}));
+	EXPECT_EQ(load.config.symbolSets.at("weather").names, (std::vector<std::string>{"rain", "storm"}));
+	EXPECT_EQ(load.config.symbolSets.at("kind").names, (std::vector<std::string>{"well"}));
 	ASSERT_EQ(load.config.kinds.size(), 1U);
 	EXPECT_EQ(load.config.kinds[0].capability, CapabilityType::Drinkable);
 }
 
 TEST_F(ConditionConfigTest, MistakesAreLoadErrors) {
-	write("a.xml", R"(<Night start="20" end="6"/><Symbols name="task">haul</Symbols>
-		<Term name="twice" result="Truth"/>
+	write("a.xml", R"(<Night start="20" end="6"/>
 		<Term name="bad_type" result="Boolean"/>
 		<Term name="no_set" result="Truth"><Parameter type="Symbol"/></Term>
 		<Term name="missing_set" result="Truth"><Parameter type="Symbol" symbols="nowhere"/></Term>
 		<Kind name="pond" capability="Wet"/>
-		<TaskGroup name="busy">haul dance</TaskGroup>
+		<Kind name="well" capability="Drinkable"/>
 		<Symbols name="kind">rock</Symbols>
+		<Symbols name="mood" open="maybe"/>
+		<TaskGroup name="busy">haul</TaskGroup>
 		<Bogus/>)");
-	write("b.xml", R"(<Term name="twice" result="Number"/><Night start="21" end="5"/>)");
+	write("b.xml", R"(<TaskGroup name="busy">craft</TaskGroup>)");
 	const std::vector<std::string> errors = loadConditionConfig(folder).errors;
-	EXPECT_TRUE(mentions(errors, "term 'twice' is already declared in a.xml"));
 	EXPECT_TRUE(mentions(errors, "'Boolean' is not a type"));
 	EXPECT_TRUE(mentions(errors, "term 'no_set' parameter 1 is a Symbol"));
 	EXPECT_TRUE(mentions(errors, "\"nowhere\", which no file declares"));
 	EXPECT_TRUE(mentions(errors, "'Wet' is not a capability"));
-	EXPECT_TRUE(mentions(errors, "'dance' is not a name in the \"task\" symbols"));
+	EXPECT_TRUE(mentions(errors, "'Drinkable' is not a capability"));
 	EXPECT_TRUE(mentions(errors, "kinds are declared with <Kind>"));
+	EXPECT_TRUE(mentions(errors, "open=\"maybe\""));
+	EXPECT_TRUE(mentions(errors, "b.xml: task group 'busy' is already declared in a.xml"));
 	EXPECT_TRUE(mentions(errors, "unknown element <Bogus>"));
-	EXPECT_TRUE(mentions(errors, "<Night> is already given"));
 	EXPECT_EQ(errors.size(), 9U);
 }
 
@@ -99,4 +103,114 @@ TEST_F(ConditionConfigTest, NightHoursAreRequired) {
 	write("a.xml", R"(<Term name="calm" result="Truth"/>)");
 	EXPECT_TRUE(mentions(loadConditionConfig(folder).errors, "<Night>"));
 	EXPECT_FALSE(loadConditionConfig(folder / "missing").errors.empty());
+}
+
+TEST_F(ConditionConfigTest, NightHoursMustBeNumbers) {
+	for (const char* night : {R"(start="abc" end="6")", R"(start="20" end="6x")", R"(start="" end="6")", R"(start="24" end="6")"}) {
+		write("a.xml", std::string("<Night ") + night + "/>");
+		const ConditionConfigLoad load = loadConditionConfig(folder);
+		EXPECT_TRUE(mentions(load.errors, "<Night> needs start and end hours")) << night;
+		EXPECT_FALSE(load.config.night.has_value()) << night;
+	}
+}
+
+TEST_F(ConditionConfigTest, KindsNameCapabilitiesAsAssetDefinitionsSpellThem) {
+	write("a.xml", R"(<Night start="20" end="6"/><Kind name="well" capability="drinkable"/><Kind name="pile" capability="waste"/>)");
+	const ConditionConfigLoad load = loadConditionConfig(folder);
+	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
+	ASSERT_EQ(load.config.kinds.size(), 2U);
+	EXPECT_EQ(load.config.kinds[0].capability, CapabilityType::Drinkable);
+	EXPECT_EQ(load.config.kinds[1].capability, CapabilityType::Waste);
+}
+
+TEST_F(ConditionConfigTest, TheShippedVocabularyListsNoEngineNames) {
+	const ConditionConfigLoad load = loadConditionConfig(shippedConditions());
+	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
+	const auto& sets = load.config.symbolSets;
+	EXPECT_TRUE(sets.at("need").names.empty());
+	EXPECT_TRUE(sets.at("attribute").names.empty());
+	EXPECT_EQ(sets.at("task").names, (std::vector<std::string>{"work"}));
+	for (const char* open : {"trait", "behavior", "event", "mood_cause"}) {
+		EXPECT_TRUE(sets.at(open).open) << open;
+		EXPECT_TRUE(sets.at(open).names.empty()) << open;
+	}
+	EXPECT_FALSE(sets.at("resource").open);
+	const auto colonist = std::ranges::find(load.config.kinds, "colonist", &ConditionKindDef::name);
+	ASSERT_NE(colonist, load.config.kinds.end());
+	EXPECT_FALSE(colonist->capability.has_value());
+}
+
+TEST_F(ConditionConfigTest, TheFolderLoadsBeforeItsSubfolders) {
+	write("z_base.xml", R"(<Night start="20" end="6"/><Kind name="water" capability="drinkable"/>)");
+	write("a_mod/more.xml", R"(<Night start="21" end="5"/><Kind name="water" capability="edible"/>)");
+	const ConditionConfigLoad load = loadConditionConfig(folder);
+	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
+	ASSERT_TRUE(load.config.night.has_value());
+	EXPECT_EQ(load.config.night->start, 21.0F);
+	ASSERT_EQ(load.config.kinds.size(), 1U);
+	EXPECT_EQ(load.config.kinds[0].capability, CapabilityType::Edible);
+}
+
+TEST_F(ConditionConfigTest, ALaterFileAddsSymbolsTermsAndKinds) {
+	write("base.xml", R"(<Night start="20" end="6"/><Symbols name="weather">rain</Symbols>
+		<Term name="calm" result="Truth"/><Kind name="water" capability="drinkable"/>)");
+	write("mods/storms/more.xml", R"(<Symbols name="weather">rain storm</Symbols>
+		<Term name="lightning" result="Number"/><Kind name="bed" capability="sleepable"/>)");
+	const ConditionConfigLoad load = loadConditionConfig(folder);
+	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
+	EXPECT_EQ(load.config.symbolSets.at("weather").names, (std::vector<std::string>{"rain", "storm"}));
+	EXPECT_EQ(load.config.terms.size(), 2U);
+	EXPECT_EQ(load.config.kinds.size(), 2U);
+}
+
+namespace {
+
+	struct OverrideLog {
+		std::vector<std::string> messages;
+		static void				 sink(void* context, const foundation::LogRecord& record) {
+			 if (record.level == foundation::LogLevel::Info && std::strstr(record.message, "replaces") != nullptr) {
+				 static_cast<OverrideLog*>(context)->messages.emplace_back(record.message);
+			 }
+		}
+	};
+
+} // namespace
+
+TEST_F(ConditionConfigTest, ALaterFileReplacesAKindMappingAndTheNightAndSaysSo) {
+	write("base.xml", R"(<Night start="20" end="6"/><Kind name="water" capability="drinkable"/><Kind name="fire"/>)");
+	write("mods/fire/kinds.xml", R"(<Kind name="water" capability="edible"/><Kind name="fire" capability="craftable"/>
+		<Night start="22" end="4"/>)");
+	OverrideLog log;
+	foundation::Logger::setSink(&OverrideLog::sink, &log);
+	const ConditionConfigLoad load = loadConditionConfig(folder);
+	foundation::Logger::setSink(nullptr, nullptr);
+	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
+	ASSERT_EQ(load.config.kinds.size(), 2U);
+	EXPECT_EQ(load.config.kinds[0].capability, CapabilityType::Edible);
+	EXPECT_EQ(load.config.kinds[1].capability, CapabilityType::Craftable);
+	ASSERT_TRUE(load.config.night.has_value());
+	EXPECT_EQ(load.config.night->start, 22.0F);
+	EXPECT_EQ(load.config.night->end, 4.0F);
+#ifdef DEVELOPMENT_BUILD
+	ASSERT_EQ(log.messages.size(), 3U);
+	for (const std::string& message : log.messages) {
+		EXPECT_NE(message.find("base.xml"), std::string::npos) << message;
+		EXPECT_NE(message.find("mods/fire/kinds.xml"), std::string::npos) << message;
+	}
+#endif
+}
+
+TEST_F(ConditionConfigTest, RedeclaringATermIdenticallyIsAcceptedAndDifferentlyIsAnError) {
+	write("base.xml", R"(<Night start="20" end="6"/><Symbols name="weather">rain</Symbols>
+		<Term name="same" result="Number"><Parameter type="Symbol" symbols="weather"/></Term>
+		<Term name="retyped" result="Truth"/>
+		<Term name="regrown" result="Truth"><Parameter type="Number"/></Term>)");
+	write("mods/x/terms.xml", R"(<Term name="same" result="Number"><Parameter type="Symbol" symbols="weather"/></Term>
+		<Term name="retyped" result="Number"/>
+		<Term name="regrown" result="Truth"><Parameter type="Number"/><Parameter type="Number"/></Term>)");
+	const ConditionConfigLoad load = loadConditionConfig(folder);
+	EXPECT_TRUE(mentions(load.errors, "mods/x/terms.xml: term 'retyped' is declared in base.xml with a different signature"));
+	EXPECT_TRUE(mentions(load.errors, "mods/x/terms.xml: term 'regrown' is declared in base.xml with a different signature"));
+	EXPECT_EQ(load.errors.size(), 2U);
+	EXPECT_EQ(load.config.terms.size(), 3U);
 }

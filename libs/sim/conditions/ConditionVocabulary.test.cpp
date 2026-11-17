@@ -31,8 +31,8 @@ namespace {
 	assets::ConditionConfig testConfig() {
 		using enum ValueType;
 		assets::ConditionConfig config;
-		config.symbolSets["weather"] = {"rain", "sun"};
-		config.symbolSets["kind"] = {"food", "bed", "colonist"};
+		config.symbolSets["weather"] = {.names = {"rain", "sun"}};
+		config.symbolSets["kind"] = {.names = {"food", "bed", "colonist"}};
 		config.terms = {
 			term("yes", Truth),
 			term("no", Truth),
@@ -353,10 +353,66 @@ TEST(ConditionVocabularyLifecycle, ProvidingIsRefusedOnConflicts) {
 	EXPECT_TRUE(vocabulary.provide("observed", ValueType::Truth, {}, nullptr).has_value());
 }
 
+TEST(ConditionVocabularyLifecycle, AddedUnboundAndUnlistedNamesReadUnknownAndAreLogged) {
+	using enum ValueType;
+	assets::ConditionConfig config;
+	config.symbolSets["flavor"] = {.names = {"sweet"}, .open = true};
+	config.terms = {
+		term("taste", Truth, {parameter(Symbol, "flavor")}),
+		{.name = "craving", .result = Symbol, .resultSymbols = "flavor"},
+	};
+	ConditionVocabulary vocabulary;
+	ASSERT_TRUE(vocabulary.declare(config).empty());
+	const std::vector<std::string> added = {"sour"};
+	EXPECT_FALSE(vocabulary.addSymbols("taste", 0, added).has_value());
+	EXPECT_TRUE(vocabulary.addSymbols("taste", 0, std::vector<std::string>{"not"}).has_value());
+	EXPECT_TRUE(vocabulary.addSymbols("craving", 0, added).has_value());
+	EXPECT_TRUE(vocabulary.addSymbols("bitter", 0, added).has_value());
+
+	SymbolBindings<bool> tastes;
+	const SymbolId		 sweet = *vocabulary.findSymbol("sweet");
+	tastes.bind(sweet, true);
+	vocabulary.reportUnbound("taste", 0, tastes);
+	ASSERT_FALSE(vocabulary.provide("taste", Truth, {Symbol}, [tastes](const TermCall& call) {
+		const bool* liked = tastes.find(call.arguments[0].symbol());
+		return liked == nullptr ? TermValue::unknown() : TermValue::fromTruth(*liked);
+	}));
+	ASSERT_FALSE(vocabulary.provide("craving", Symbol, {}, [sweet](const TermCall&) { return TermValue::fromSymbol(sweet); }));
+	vocabulary.freeze();
+	EXPECT_TRUE(vocabulary.addSymbols("taste", 0, added).has_value());
+
+	ecs::World			world;
+	const ecs::EntityID colonist = world.createEntity();
+	struct Log {
+		int			count = 0;
+		static void sink(void* context, const foundation::LogRecord& record) {
+			if (std::strstr(record.message, "which nothing answers") != nullptr) {
+				++static_cast<Log*>(context)->count;
+			}
+		}
+	} log;
+	const auto evaluate = [&](std::string_view text) {
+		const ParseResult result = vocabulary.parse(text);
+		EXPECT_TRUE(result.ok()) << text;
+		return result.ok() ? vocabulary.evaluate(result.condition, {.world = world, .colonist = colonist}) : Truth::Unknown;
+	};
+	foundation::Logger::setSink(&Log::sink, &log);
+	EXPECT_EQ(evaluate("taste(sweet) and craving is sweet"), Truth::True);
+	EXPECT_EQ(evaluate("taste(sour) or taste(sour)"), Truth::Unknown);
+	EXPECT_EQ(evaluate("taste(bitter)"), Truth::Unknown);
+	EXPECT_EQ(evaluate("craving is bitter"), Truth::Unknown);
+	foundation::Logger::setSink(nullptr, nullptr);
+#ifdef DEVELOPMENT_BUILD
+	EXPECT_EQ(log.count, 3);
+#endif
+	EXPECT_FALSE(vocabulary.parse("taste(self)").ok());
+	EXPECT_FALSE(vocabulary.parse("craving is target").ok());
+}
+
 TEST(ConditionVocabularyLifecycle, DeclaringRefusesNamesAConditionCannotUse) {
 	using enum ValueType;
 	assets::ConditionConfig config;
-	config.symbolSets["bad"] = {"fine", "not", "2nd"};
+	config.symbolSets["bad"] = {.names = {"fine", "not", "2nd"}};
 	config.terms = {
 		term("and", Truth),
 		term("self", Target),

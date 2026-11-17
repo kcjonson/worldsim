@@ -54,9 +54,8 @@ namespace conditions {
 			return joined;
 		}
 
-		std::optional<SymbolId> findIn(std::span<const DeclaredSymbol> symbols, std::string_view name) {
-			const auto found = std::ranges::find(symbols, name, &DeclaredSymbol::name);
-			return found == symbols.end() ? std::nullopt : std::optional<SymbolId>(found->id);
+		std::string expectedNames(const ConditionVocabulary& vocabulary, uint32_t set) {
+			return vocabulary.isOpenSet(set) ? std::string("a name") : "one of: " + joinNames(vocabulary.symbolSet(set));
 		}
 
 		/// The first count past `bound`: every count from there compares against `bound` the same way.
@@ -308,14 +307,17 @@ namespace conditions {
 		}
 		const Token&		 name = advance();
 		const TermSignature& signature = vocabulary.signature(*left.term);
-		const auto			 values = vocabulary.symbolSet(*signature.resultSymbolSet);
-		const auto			 symbol = findIn(values, name.spelling);
+		const uint32_t		 set = *signature.resultSymbolSet;
+		const auto			 symbol = findName(set, name.spelling);
 		if (!symbol.has_value()) {
 			fail(
 				name.position,
-				"'" + std::string(name.spelling) + "' is not a value of " + signature.name + " (expected one of: " + joinNames(values) + ")"
+				"'" + std::string(name.spelling) + "' is not a value of " + signature.name + " (expected " + expectedNames(vocabulary, set) + ")"
 			);
 			return std::nullopt;
+		}
+		if (*symbol == kUnlistedSymbol) {
+			noteUnanswered(*left.term, name.spelling);
 		}
 		const std::optional<uint16_t> node = addNode({.symbol = *symbol, .left = left.node, .kind = NodeKind::Is}, left.position);
 		if (!node.has_value()) {
@@ -453,19 +455,22 @@ namespace conditions {
 		const bool			 bareName = token.kind == TokenKind::Name && peek(1).kind != TokenKind::LeftParenthesis;
 
 		if (expected.type == ValueType::Symbol) {
-			const auto names = vocabulary.symbolSet(*expected.symbolSet);
+			const uint32_t set = *expected.symbolSet;
 			if (!bareName) {
-				fail(token.position, ordinal + " is a name (one of: " + joinNames(names) + ")");
+				fail(token.position, ordinal + " is " + expectedNames(vocabulary, set));
 				return std::nullopt;
 			}
 			advance();
-			const auto symbol = findIn(names, token.spelling);
+			const auto symbol = findName(set, token.spelling);
 			if (!symbol.has_value()) {
 				fail(
 					token.position,
-					"'" + std::string(token.spelling) + "' is not accepted as " + ordinal + " (expected one of: " + joinNames(names) + ")"
+					"'" + std::string(token.spelling) + "' is not accepted as " + ordinal + " (expected " + expectedNames(vocabulary, set) + ")"
 				);
 				return std::nullopt;
+			}
+			if (*symbol == kUnlistedSymbol || vocabulary.isUnbound(term, parameter, *symbol)) {
+				noteUnanswered(term, token.spelling);
 			}
 			const std::optional<uint16_t> node = addNode({.symbol = *symbol, .kind = NodeKind::SymbolLiteral}, token.position);
 			if (!node.has_value()) {
@@ -492,6 +497,28 @@ namespace conditions {
 			return std::nullopt;
 		}
 		return argument;
+	}
+
+	std::optional<SymbolId> ConditionParser::findName(uint32_t set, std::string_view name) const {
+		const std::span<const DeclaredSymbol> listed = vocabulary.symbolSet(set);
+		const auto							  found = std::ranges::find(listed, name, &DeclaredSymbol::name);
+		if (found != listed.end()) {
+			return found->id;
+		}
+		if (vocabulary.isOpenSet(set) && isConditionName(name)) {
+			return kUnlistedSymbol;
+		}
+		return std::nullopt;
+	}
+
+	void ConditionParser::noteUnanswered(uint32_t term, std::string_view name) {
+		if (!vocabulary.isProvided(term)) {
+			return;
+		}
+		const std::string quoted = "'" + std::string(name) + "'";
+		if (unanswered.find(quoted) == std::string::npos) {
+			unanswered += (unanswered.empty() ? "" : ", ") + quoted;
+		}
 	}
 
 	void ConditionParser::limitCount(const Operand& counted, const Operand& bound) {

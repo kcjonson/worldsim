@@ -16,11 +16,11 @@ namespace conditions {
 
 	namespace {
 
-		/// How many things of `kind` the colonist remembers within `radius` of where he stands, counting no
-		/// further than `limit`. Memory has no spatial index, so this walks every remembered thing of the
-		/// kind. Nothing when the colonist cannot be answered for.
+		/// How many things with `capability` the colonist remembers within `radius` of where he stands,
+		/// counting no further than `limit`. Memory has no spatial index, so this walks every remembered
+		/// thing with it. Nothing when the colonist cannot be answered for.
 		std::optional<uint32_t>
-		countRemembered(const assets::ConditionKindDef& kind, float radius, uint32_t limit, const ConditionContext& context) {
+		countRemembered(assets::CapabilityType capability, float radius, uint32_t limit, const ConditionContext& context) {
 			const ecs::Memory*	 memory = context.world.getComponent<ecs::Memory>(context.colonist);
 			const ecs::Position* position = context.world.getComponent<ecs::Position>(context.colonist);
 			if (memory == nullptr || position == nullptr) {
@@ -36,16 +36,7 @@ namespace conditions {
 			if (count >= limit) {
 				return count;
 			}
-			if (kind.colonists) {
-				// Memory keeps no kind for a remembered mover; every one it holds is counted as a colonist.
-				for (const auto& [entity, known] : memory->knownDynamicEntities) {
-					if (entity != context.colonist && within(known.lastKnownPosition) && ++count >= limit) {
-						break;
-					}
-				}
-				return count;
-			}
-			for (const uint64_t key : memory->getEntitiesWithCapability(*kind.capability)) {
+			for (const uint64_t key : memory->getEntitiesWithCapability(capability)) {
 				const ecs::KnownWorldEntity* entity = memory->getWorldEntity(key);
 				if (entity != nullptr && within(entity->position) && ++count >= limit) {
 					break;
@@ -57,20 +48,22 @@ namespace conditions {
 	} // namespace
 
 	void provideNearbyTerms(ConditionVocabulary& vocabulary, const assets::ConditionConfig& config, std::vector<std::string>& errors) {
-		auto kinds = std::make_shared<SymbolBindings<assets::ConditionKindDef>>();
+		auto kinds = std::make_shared<SymbolBindings<assets::CapabilityType>>();
 		for (const assets::ConditionKindDef& kind : config.kinds) {
 			const std::optional<SymbolId> symbol = vocabulary.findSymbol(kind.name);
-			if (symbol.has_value() && (kind.colonists || kind.capability.has_value())) {
-				kinds->bind(*symbol, kind);
+			if (symbol.has_value() && kind.capability.has_value()) {
+				kinds->bind(*symbol, *kind.capability);
 			}
 		}
+		vocabulary.reportUnbound("near", 0, *kinds);
+		vocabulary.reportUnbound("count_near", 0, *kinds);
 
 		const auto answer = [kinds](const TermCall& call, uint32_t limit) -> std::optional<uint32_t> {
-			const assets::ConditionKindDef* kind = kinds->find(call.arguments[0].symbol());
-			if (kind == nullptr) {
+			const assets::CapabilityType* capability = kinds->find(call.arguments[0].symbol());
+			if (capability == nullptr) {
 				return std::nullopt;
 			}
-			return countRemembered(*kind, static_cast<float>(call.arguments[1].number()), limit, call.context);
+			return countRemembered(*capability, static_cast<float>(call.arguments[1].number()), limit, call.context);
 		};
 
 		const auto nearRefused =

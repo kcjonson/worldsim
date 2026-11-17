@@ -16,8 +16,8 @@ namespace conditions {
 			errors.emplace_back("the condition vocabulary is frozen; nothing more can be declared");
 			return errors;
 		}
-		for (const auto& [name, names] : config.symbolSets) {
-			declareSymbolSet(name, names, errors);
+		for (const auto& [name, set] : config.symbolSets) {
+			declareSymbolSet(name, set, errors);
 		}
 
 		for (const assets::ConditionTermDef& declaration : config.terms) {
@@ -67,25 +67,54 @@ namespace conditions {
 	}
 
 	void ConditionVocabulary::declareSymbolSet(
-		const std::string&				name,
-		const std::vector<std::string>& names,
-		std::vector<std::string>&		errors
+		const std::string&					name,
+		const assets::ConditionSymbolSetDef& declared,
+		std::vector<std::string>&			errors
 	) {
 		if (symbolSetsByName.contains(name)) {
 			errors.push_back("symbol set \"" + name + "\" is already declared");
 			return;
 		}
-		SymbolSet set{.name = name};
-		for (const std::string& symbol : names) {
+		SymbolSet set{.name = name, .open = declared.open};
+		for (const std::string& symbol : declared.names) {
 			if (!isConditionName(symbol)) {
 				errors.push_back("'" + symbol + "' in \"" + name + "\" is not a name a condition can use");
 				continue;
 			}
-			set.symbols.push_back(DeclaredSymbol{.name = symbol, .id = intern(symbol)});
+			addSymbol(set, symbol);
 		}
 		const auto index = static_cast<uint32_t>(symbolSets.size());
 		symbolSetsByName.emplace(name, index);
 		symbolSets.push_back(std::move(set));
+	}
+
+	void ConditionVocabulary::addSymbol(SymbolSet& set, const std::string& name) {
+		if (std::ranges::find(set.symbols, name, &DeclaredSymbol::name) == set.symbols.end()) {
+			set.symbols.push_back(DeclaredSymbol{.name = name, .id = intern(name)});
+		}
+	}
+
+	std::optional<std::string>
+	ConditionVocabulary::addSymbols(std::string_view term, std::size_t parameter, std::span<const std::string> names) {
+		if (frozen) {
+			return "the condition vocabulary is frozen; names for '" + std::string(term) + "' cannot be added now";
+		}
+		const std::optional<uint32_t> slot = findTerm(term);
+		if (!slot.has_value()) {
+			return "'" + std::string(term) + "' is not declared in the condition vocabulary";
+		}
+		const TermSignature& declared = terms[*slot].signature;
+		if (parameter >= declared.parameters.size() || !declared.parameters[parameter].symbolSet.has_value()) {
+			return "argument " + std::to_string(parameter + 1) + " of '" + std::string(term) + "' does not take names";
+		}
+		SymbolSet& set = symbolSets[*declared.parameters[parameter].symbolSet];
+		for (const std::string& name : names) {
+			if (!isConditionName(name)) {
+				return "'" + name + "' for '" + std::string(term) + "' is not a name a condition can use";
+			}
+			addSymbol(set, name);
+		}
+		return std::nullopt;
 	}
 
 	SymbolId ConditionVocabulary::intern(const std::string& name) {
@@ -127,9 +156,18 @@ namespace conditions {
 				}
 			};
 		}
-		ParseResult result = ConditionParser(*this, text).parse();
+		ConditionParser parser(*this, text);
+		ParseResult		result = parser.parse();
 		if (!result.ok()) {
 			return result;
+		}
+		if (!parser.unansweredNames().empty()) {
+			LOG_INFO(
+				Game,
+				"Condition '%s' names %s, which nothing answers; it reads Unknown",
+				result.condition.text.c_str(),
+				parser.unansweredNames().c_str()
+			);
 		}
 
 		std::string unprovided;
@@ -245,7 +283,7 @@ namespace conditions {
 			}
 			case NodeKind::Is: {
 				const TermValue value = valueOf(condition, current.left, context);
-				if (!value.known()) {
+				if (!value.known() || current.symbol == kUnlistedSymbol) {
 					return Truth::Unknown;
 				}
 				return value.symbol() == current.symbol ? Truth::True : Truth::False;

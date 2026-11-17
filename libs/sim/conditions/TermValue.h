@@ -15,6 +15,9 @@ namespace conditions {
 	/// entity.
 	enum class SymbolId : uint32_t {};
 
+	/// A name an open set takes that nothing lists, so nothing answers it.
+	inline constexpr SymbolId kUnlistedSymbol{};
+
 	/// A condition's answer. Unknown is what a term nothing answers gives, and spreads by Kleene logic:
 	/// `false and unknown` is false, `true or unknown` is true, `not unknown` is unknown.
 	enum class Truth : uint8_t { False, True, Unknown };

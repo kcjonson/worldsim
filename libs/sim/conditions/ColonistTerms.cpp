@@ -9,8 +9,11 @@
 #include <ecs/components/Needs.h>
 #include <ecs/components/Task.h>
 
+#include <assets/WorkConfig.h>
+
 #include <algorithm>
-#include <array>
+#include <cctype>
+#include <limits>
 #include <memory>
 #include <string_view>
 #include <utility>
@@ -23,64 +26,79 @@ namespace conditions {
 
 		/// One bit per TaskType: the task types a current_task() name stands for.
 		using TaskMask = uint16_t;
+		static_assert(
+			static_cast<unsigned>(ecs::TaskType::Wander) < std::numeric_limits<TaskMask>::digits, "TaskMask has a bit for every TaskType"
+		);
+		static_assert(assets::kTaskTypeNames.size() == static_cast<std::size_t>(ecs::TaskType::Wander), "a name for every TaskType");
 
-		constexpr std::array<std::pair<std::string_view, ecs::NeedType>, 8> kNeeds = {{
-			{"hunger", ecs::NeedType::Hunger},
-			{"thirst", ecs::NeedType::Thirst},
-			{"energy", ecs::NeedType::Energy},
-			{"bladder", ecs::NeedType::Bladder},
-			{"digestion", ecs::NeedType::Digestion},
-			{"hygiene", ecs::NeedType::Hygiene},
-			{"recreation", ecs::NeedType::Recreation},
-			{"temperature", ecs::NeedType::Temperature},
-		}};
-
-		constexpr std::array<std::pair<std::string_view, AttributeField>, 8> kAttributes = {{
-			{"strength", &ecs::Attributes::strength},
-			{"agility", &ecs::Attributes::agility},
-			{"intelligence", &ecs::Attributes::intelligence},
-			{"civility", &ecs::Attributes::civility},
-			{"sanity", &ecs::Attributes::sanity},
-			{"kindness", &ecs::Attributes::kindness},
-			{"work_ethic", &ecs::Attributes::workEthic},
-			{"social_need", &ecs::Attributes::socialNeed},
-		}};
-
-		constexpr std::array<std::pair<std::string_view, ecs::TaskType>, 8> kTaskTypes = {{
-			{"fulfill_need", ecs::TaskType::FulfillNeed},
-			{"harvest", ecs::TaskType::Harvest},
-			{"craft", ecs::TaskType::Craft},
-			{"haul", ecs::TaskType::Haul},
-			{"place_packaged", ecs::TaskType::PlacePackaged},
-			{"build", ecs::TaskType::Build},
-			{"deconstruct", ecs::TaskType::Deconstruct},
-			{"wander", ecs::TaskType::Wander},
-		}};
-
-		/// The sim's value for a declared name, by the engine's own names; nothing for a name the sim lacks.
-		template <typename Value, std::size_t Count>
-		const Value* engineValue(const std::array<std::pair<std::string_view, Value>, Count>& table, std::string_view name) {
-			const auto found = std::ranges::find(table, name, &std::pair<std::string_view, Value>::first);
-			return found == table.end() ? nullptr : &found->second;
-		}
-
-		template <typename Value, std::size_t Count>
-		SymbolBindings<Value> bindParameter(
-			const ConditionVocabulary&									 vocabulary,
-			std::string_view											 term,
-			const std::array<std::pair<std::string_view, Value>, Count>& table
-		) {
-			SymbolBindings<Value> bindings;
-			for (const DeclaredSymbol& symbol : vocabulary.parameterSymbols(term, 0)) {
-				if (const Value* value = engineValue(table, symbol.name)) {
-					bindings.bind(symbol.id, *value);
+		/// An engine name as conditions write it: "FulfillNeed" and "Work Ethic" are fulfill_need and work_ethic.
+		std::string conditionName(std::string_view engineName) {
+			std::string name;
+			for (const char character : engineName) {
+				const bool upper = std::isupper(static_cast<unsigned char>(character)) != 0;
+				if ((character == ' ' || upper) && !name.empty() && name.back() != '_') {
+					name += '_';
+				}
+				if (character != ' ') {
+					name += static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
 				}
 			}
+			return name;
+		}
+
+		/// The engine's names for `term`'s first parameter, added to its symbol set and bound to their values.
+		/// Names the set holds that the engine lacks (a mod's) stay unbound and are reported.
+		template <typename Value>
+		std::shared_ptr<const SymbolBindings<Value>> bindEngineNames(
+			ConditionVocabulary&								vocabulary,
+			std::string_view									term,
+			const std::vector<std::pair<std::string, Value>>& engineNames,
+			std::vector<std::string>&							errors
+		) {
+			std::vector<std::string> names;
+			for (const auto& [name, value] : engineNames) {
+				names.push_back(name);
+			}
+			if (const std::optional<std::string> refused = vocabulary.addSymbols(term, 0, names)) {
+				errors.push_back(*refused);
+			}
+			auto bindings = std::make_shared<SymbolBindings<Value>>();
+			for (const DeclaredSymbol& symbol : vocabulary.parameterSymbols(term, 0)) {
+				const auto found = std::ranges::find(engineNames, symbol.name, &std::pair<std::string, Value>::first);
+				if (found != engineNames.end()) {
+					bindings->bind(symbol.id, found->second);
+				}
+			}
+			vocabulary.reportUnbound(term, 0, *bindings);
 			return bindings;
+		}
+
+		std::vector<std::pair<std::string, ecs::NeedType>> engineNeeds() {
+			std::vector<std::pair<std::string, ecs::NeedType>> needs;
+			for (std::size_t index = 0; index < ecs::kNeedLabels.size(); ++index) {
+				needs.emplace_back(conditionName(ecs::kNeedLabels[index]), static_cast<ecs::NeedType>(index));
+			}
+			return needs;
+		}
+
+		std::vector<std::pair<std::string, AttributeField>> engineAttributes() {
+			std::vector<std::pair<std::string, AttributeField>> attributes;
+			for (const ecs::AttributeField& field : ecs::kAttributeFields) {
+				attributes.emplace_back(conditionName(field.label), field.value);
+			}
+			return attributes;
 		}
 
 		TaskMask maskOf(ecs::TaskType type) {
 			return static_cast<TaskMask>(1U << static_cast<unsigned>(type));
+		}
+
+		std::vector<std::pair<std::string, TaskMask>> engineTaskTypes() {
+			std::vector<std::pair<std::string, TaskMask>> types;
+			for (std::size_t index = 0; index < assets::kTaskTypeNames.size(); ++index) {
+				types.emplace_back(conditionName(assets::kTaskTypeNames[index]), maskOf(static_cast<ecs::TaskType>(index + 1)));
+			}
+			return types;
 		}
 
 		void record(std::vector<std::string>& errors, std::optional<std::string> refused) {
@@ -90,7 +108,7 @@ namespace conditions {
 		}
 
 		void provideNeed(ConditionVocabulary& vocabulary, std::vector<std::string>& errors) {
-			auto needs = std::make_shared<const SymbolBindings<ecs::NeedType>>(bindParameter(vocabulary, "need", kNeeds));
+			auto needs = bindEngineNames(vocabulary, "need", engineNeeds(), errors);
 			record(errors, vocabulary.provide("need", ValueType::Number, {ValueType::Symbol}, [needs](const TermCall& call) {
 				const ecs::NeedType*	   need = needs->find(call.arguments[0].symbol());
 				const ecs::NeedsComponent* component = call.context.world.getComponent<ecs::NeedsComponent>(call.context.colonist);
@@ -102,7 +120,7 @@ namespace conditions {
 		}
 
 		void provideAttribute(ConditionVocabulary& vocabulary, std::vector<std::string>& errors) {
-			auto attributes = std::make_shared<const SymbolBindings<AttributeField>>(bindParameter(vocabulary, "attribute", kAttributes));
+			auto attributes = bindEngineNames(vocabulary, "attribute", engineAttributes(), errors);
 			record(errors, vocabulary.provide("attribute", ValueType::Number, {ValueType::Symbol}, [attributes](const TermCall& call) {
 				const AttributeField*  field = attributes->find(call.arguments[0].symbol());
 				const ecs::Attributes* component = call.context.world.getComponent<ecs::Attributes>(call.context.colonist);
@@ -113,26 +131,35 @@ namespace conditions {
 			}));
 		}
 
-		void provideCurrentTask(ConditionVocabulary& vocabulary, const assets::ConditionConfig& config, std::vector<std::string>& errors) {
-			auto kinds = std::make_shared<SymbolBindings<TaskMask>>();
-			for (const DeclaredSymbol& symbol : vocabulary.parameterSymbols("current_task", 0)) {
-				const auto group = std::ranges::find(config.taskGroups, symbol.name, &assets::ConditionTaskGroupDef::name);
-				if (group == config.taskGroups.end()) {
-					if (const ecs::TaskType* type = engineValue(kTaskTypes, symbol.name)) {
-						kinds->bind(symbol.id, maskOf(*type));
-					}
+		/// Each task group's mask, from the engine task types it names; mistakes in a group are errors.
+		std::vector<std::pair<std::string, TaskMask>>
+		taskGroups(const assets::ConditionConfig& config, const std::vector<std::pair<std::string, TaskMask>>& types, std::vector<std::string>& errors) {
+			std::vector<std::pair<std::string, TaskMask>> groups;
+			for (const assets::ConditionTaskGroupDef& group : config.taskGroups) {
+				const std::string where = "task group '" + group.name + "'";
+				if (std::ranges::find(types, group.name, &std::pair<std::string, TaskMask>::first) != types.end()) {
+					errors.push_back(where + ": its name is already a task type");
 					continue;
 				}
 				TaskMask mask = 0;
-				for (const std::string& task : group->tasks) {
-					if (const ecs::TaskType* type = engineValue(kTaskTypes, task)) {
-						mask |= maskOf(*type);
+				for (const std::string& task : group.tasks) {
+					const auto type = std::ranges::find(types, task, &std::pair<std::string, TaskMask>::first);
+					if (type == types.end()) {
+						errors.push_back(where + ": the sim has no task type '" + task + "'");
 					} else {
-						errors.push_back("task group '" + group->name + "': the sim has no task type '" + task + "'");
+						mask |= type->second;
 					}
 				}
-				kinds->bind(symbol.id, mask);
+				groups.emplace_back(group.name, mask);
 			}
+			return groups;
+		}
+
+		void provideCurrentTask(ConditionVocabulary& vocabulary, const assets::ConditionConfig& config, std::vector<std::string>& errors) {
+			std::vector<std::pair<std::string, TaskMask>> names = engineTaskTypes();
+			std::vector<std::pair<std::string, TaskMask>> groups = taskGroups(config, names, errors);
+			names.insert(names.end(), std::make_move_iterator(groups.begin()), std::make_move_iterator(groups.end()));
+			auto kinds = bindEngineNames(vocabulary, "current_task", names, errors);
 			record(errors, vocabulary.provide("current_task", ValueType::Truth, {ValueType::Symbol}, [kinds](const TermCall& call) {
 				const TaskMask*	 mask = kinds->find(call.arguments[0].symbol());
 				const ecs::Task* task = call.context.world.getComponent<ecs::Task>(call.context.colonist);

@@ -7,6 +7,8 @@
 //
 // See /docs/design/game-systems/colonists/attributes.md for design details.
 
+#include <array>
+
 namespace ecs {
 
 	/// Static colonist attributes (0.0 = none, 20.0 = exceptional). Rolled at generation.
@@ -30,5 +32,22 @@ namespace ecs {
 			return 20.0F + 1.5F * strengthLevel;
 		}
 	};
+
+	struct AttributeField {
+		const char*		   label;
+		float Attributes::* value;
+	};
+
+	/// Every attribute, by its display label.
+	inline constexpr std::array<AttributeField, 8> kAttributeFields = {{
+		{"Strength", &Attributes::strength},
+		{"Agility", &Attributes::agility},
+		{"Intelligence", &Attributes::intelligence},
+		{"Civility", &Attributes::civility},
+		{"Sanity", &Attributes::sanity},
+		{"Kindness", &Attributes::kindness},
+		{"Work Ethic", &Attributes::workEthic},
+		{"Social Need", &Attributes::socialNeed},
+	}};
 
 } // namespace ecs
