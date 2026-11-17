@@ -1,5 +1,6 @@
 #include "scenes/game/dev/GiveShortfall.h"
 
+#include <assets/AssetDefinition.h>
 #include <ecs/components/Inventory.h>
 
 namespace world_sim {
@@ -21,7 +22,21 @@ namespace world_sim {
 		if (!others.empty()) {
 			return "hands occupied by " + others;
 		}
+		// Empty hands take any one-hand item, so only an armful comes up short here, and only on weight.
+		if (!inventory.leftHand.has_value() && !inventory.rightHand.has_value()) {
+			return "no " + material + " fits under his carry weight";
+		}
 		return "the hands hold all the " + material + " they can";
+	}
+
+	std::string giveMaterialRefusal(const assets::AssetDefinition* definition, const std::string& material) {
+		if (definition == nullptr) {
+			return "unknown asset '" + material + "'";
+		}
+		if (!definition->itemProperties.has_value()) {
+			return "'" + material + "' is not an item";
+		}
+		return {};
 	}
 
 } // namespace world_sim

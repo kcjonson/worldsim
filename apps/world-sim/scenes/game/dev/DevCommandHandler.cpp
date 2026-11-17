@@ -196,11 +196,14 @@ namespace world_sim {
 
 	app::DevResponse DevCommandHandler::devGive(const app::DevRequest& cmd) {
 		const auto reject = [this](const std::string& message) {
-			LOG_WARNING(Game, "[DevAPI] give: %s", message.c_str());
-			m_ctx.ui->pushNotification("Dev", "Give: " + message, ui::ToastSeverity::Warning);
-			return app::DevResponse{.status = 400, .body = "{\"error\":\"give: " + jsonEscape(message) + "\"}"};
+			return app::DevResponse{.status = 400, .body = "{\"error\":\"" + jsonEscape(refuse("give: " + message).message) + "\"}"};
 		};
 		const std::string material = param(cmd, "material", "Wood");
+		// An inventory takes any string, so a misspelt name would be added as an item that does not exist.
+		const auto* def = assets::AssetRegistry::Get().getDefinition(material);
+		if (const std::string refusal = giveMaterialRefusal(def, material); !refusal.empty()) {
+			return reject(refusal);
+		}
 		const long		  nRaw = std::strtol(param(cmd, "n", "100").c_str(), nullptr, 10);
 		if (nRaw <= 0) {
 			return reject("n must be > 0");
@@ -230,14 +233,6 @@ namespace world_sim {
 		}
 
 		if (where == "loose") {
-			const auto* def = assets::AssetRegistry::Get().getDefinition(material);
-			if (def == nullptr) {
-				return reject("unknown asset '" + material + "'");
-			}
-			// Spawning a furniture or station def would make a live box/station that is also a pile.
-			if (!def->itemProperties.has_value()) {
-				return reject("'" + material + "' is not an item");
-			}
 			// Each new pile is cleared against every pile already placed, so the pile count (not
 			// the unit count) is what a big n costs.
 			constexpr uint32_t kMaxLoosePiles = 50;

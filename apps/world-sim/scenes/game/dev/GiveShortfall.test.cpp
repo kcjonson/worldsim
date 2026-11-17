@@ -1,5 +1,6 @@
 #include "scenes/game/dev/GiveShortfall.h"
 
+#include <assets/AssetDefinition.h>
 #include <ecs/components/Inventory.h>
 
 #include <gtest/gtest.h>
@@ -26,6 +27,21 @@ TEST(GiveShortfallTest, HandsFullOfTheMaterialSaySo) {
 	ASSERT_TRUE(inventory.pickUp("SmallStone"));
 	ASSERT_TRUE(inventory.pickUp("SmallStone"));
 	EXPECT_EQ(world_sim::giveShortfallReason(inventory, "SmallStone", "hands"), "the hands hold all the SmallStone they can");
+}
+
+// With nothing in the hands, an armful that lifted nothing was stopped by weight.
+TEST(GiveShortfallTest, EmptyHandsThatTookNoArmfulBlameCarryWeight) {
+	const ecs::Inventory inventory;
+	EXPECT_EQ(world_sim::giveShortfallReason(inventory, "Wood", "hands"), "no Wood fits under his carry weight");
+}
+
+// An unknown name and a def that is not an item are given nowhere; an item is.
+TEST(GiveShortfallTest, OnlyAnItemIsGiven) {
+	EXPECT_EQ(world_sim::giveMaterialRefusal(nullptr, "Wod"), "unknown asset 'Wod'");
+	assets::AssetDefinition definition;
+	EXPECT_EQ(world_sim::giveMaterialRefusal(&definition, "BasicBox"), "'BasicBox' is not an item");
+	definition.itemProperties = assets::ItemProperties{};
+	EXPECT_TRUE(world_sim::giveMaterialRefusal(&definition, "Wood").empty());
 }
 
 TEST(GiveShortfallTest, BeltAndPackGiveTheirOwnReason) {

@@ -29,7 +29,7 @@ The developer client is an external TypeScript/Vite web application that connect
   store, so a stalled craft can be inspected without screenshots. colonist and teleport
   refuse water and placed obstacles and take ground no mover has meshed; a loose give refuses all
   three. Each answers a 400 with `{"error":...}` when refused, and give answers the count it added
-  (a 400 when that is none). spawn, foundation, and walls refuse ground
+  (a 400 when that is none, or when the material is not an item). spawn, foundation, and walls refuse ground
   the game would not build on and answer a 400 with `{"error":...}` when they create nothing: spawn
   sets furniture (a crafting station or storage container) only where its footprint is clear ground
   out of any fordable stream and anything else on clear ground, a ford included, and refuses when no
