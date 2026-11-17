@@ -70,7 +70,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
-# -> walls[N].state stays "Blueprint" while walls[N].progress rises above 0 (poll about every 0.2 s at speed 3, or read progress between 0 and 1), then "Built"
+# -> at least one wall shows progress above 0 while its state is still "Blueprint" (at speed 3 one wall can finish between two polls), and all end "Built"
 ```
 
 3. Keep Bob's needs up every ~2 real minutes:
@@ -127,7 +127,7 @@ The drawing steps below read `/api/state?what=drawing`. Their points are world p
 10. Move the pointer back over the foundation: the band follows it from the second point (`followingPointer` true), and a click places a third point (`status.pointCount` 3).
 11. Double-click a fourth point: the chain ends, `?what=construction` lists three more wall segments, the strip reads "Click a foundation to start" (`status.hint`, `status.pointCount` 0), and no toast says the wall is too short.
 12. Click two different points on the foundation a second apart: each places a point and the chain goes on (`status.pointCount` 2); Enter ends it (`status.pointCount` 0, one more wall segment).
-13. With no point placed, press Esc: the wall tool closes (`tool` `none`). With a chain of two or more points Esc ends the wall first, so press Enter to end the chain, then Esc.
+13. With no point placed, press Esc: the wall tool closes (`tool` `none`). With a chain of two or more points Esc ends the wall first and keeps the tool; press Esc again to close it.
 14. Open the top bar's Menu and pick Main Menu: the main menu shows.
 15. Pick Settings and, under Drawing Settings, switch Angle readout on if it is off: it reads on.
 16. Pick Back, then Quick Start: a new game shows, and `settings.angleReadout` is true.
