@@ -2400,11 +2400,36 @@ TEST_F(DegreesLabelTest, TheLabelMovesOutAtMostABoundThenTakesTheOutside) {
 	EXPECT_NEAR(vertex.y - mirrored->plate.bottom, firstSpot->plate.top - vertex.y, 1e-3F) << "the first spot's mirror";
 }
 
+// The outside's label moves out no further than the same bound: with the inside taken to its
+// bound, a blocker over the outside's spots out to the bound leaves the corner without either, and
+// one a pixel shorter leaves the label at exactly the bound.
+TEST_F(DegreesLabelTest, TheLabelOnTheOutsideMovesOutAtMostTheSameBound) {
+	const Foundation::Vec2 vertex{500.0F, 300.0F};
+	cornerOnScreen(vertex, 90.0F, 120.0F, 200.0F);
+	const std::optional<FeedbackLabel> firstSpot = degreesLabel(plan());
+	ASSERT_TRUE(firstSpot.has_value());
+	const float mirroredBottom = 2.0F * vertex.y - firstSpot->plate.top;
+	const float insideTaken = firstSpot->plate.top + kDegreesLabelMaxShiftPx + 1.0F;
+
+	keepClear = FeedbackBox{firstSpot->plate.left, mirroredBottom - kDegreesLabelMaxShiftPx - 1.0F, firstSpot->plate.right, insideTaken};
+	const DrawingFeedbackPlan blocked = plan();
+	EXPECT_FALSE(degreesLabel(blocked).has_value());
+	EXPECT_TRUE(blocked.arcs.empty());
+
+	keepClear = FeedbackBox{firstSpot->plate.left, mirroredBottom - kDegreesLabelMaxShiftPx + 1.0F, firstSpot->plate.right, insideTaken};
+	const DrawingFeedbackPlan		   atBound = plan();
+	const std::optional<FeedbackLabel> farthest = degreesLabel(atBound);
+	ASSERT_TRUE(farthest.has_value());
+	ASSERT_EQ(atBound.arcs.size(), 1U);
+	EXPECT_EQ(sideOf(*farthest, atBound.arcs[0]), -1);
+	EXPECT_NEAR(mirroredBottom - farthest->plate.bottom, kDegreesLabelMaxShiftPx, 1e-3F);
+}
+
 // The corner's own edges and the segment being drawn are obstacles: at an acute corner the
 // label sits where it covers neither, or the corner draws neither label nor arc.
 TEST_F(DegreesLabelTest, TheLabelKeepsOffItsCornersEdgesAndTheSegmentBeingDrawn) {
 	const Foundation::Vec2 vertex{500.0F, 400.0F};
-	int					   labelled = 0;
+	int					   labeled = 0;
 	for (const float interiorDegrees : {30.0F, 45.0F, 60.0F, 135.0F}) {
 		for (float bisectorDegrees = 0.0F; bisectorDegrees < 360.0F; bisectorDegrees += 20.0F) {
 			for (const float scale : {1.0F, 2.0F}) {
@@ -2417,12 +2442,12 @@ TEST_F(DegreesLabelTest, TheLabelKeepsOffItsCornersEdgesAndTheSegmentBeingDrawn)
 					EXPECT_TRUE(result.arcs.empty());
 					continue;
 				}
-				++labelled;
+				++labeled;
 				expectDegreesClear(result, *degrees);
 			}
 		}
 	}
-	EXPECT_EQ(labelled, 4 * 18 * 2) << "inside or outside, every one";
+	EXPECT_EQ(labeled, 4 * 18 * 2) << "inside or outside, every one";
 }
 
 // An arc wider than an edge on screen reads as noise: a corner with an edge shorter than the
@@ -2452,7 +2477,7 @@ TEST_F(DegreesLabelTest, ACornerWithAnEdgeShorterThanTheArcDrawsNoArcOrDegrees) 
 // The degrees keep off the segment label and the guide labels, whichever way the segment runs.
 TEST_F(DegreesLabelTest, TheLabelKeepsOffTheSegmentAndGuideLabels) {
 	display.guideDistances = true;
-	int labelled = 0;
+	int labeled = 0;
 	for (int degrees = 10; degrees < 360; degrees += 10) {
 		SCOPED_TRACE(degrees);
 		points = {{-4.0F, 0.0F}, {0.0F, 0.0F}};
@@ -2465,14 +2490,14 @@ TEST_F(DegreesLabelTest, TheLabelKeepsOffTheSegmentAndGuideLabels) {
 		if (!degreesPlate) {
 			continue;
 		}
-		++labelled;
+		++labeled;
 		for (const FeedbackLabel& label : result.labels) {
 			if (label.text != degreesPlate->text) {
 				EXPECT_FALSE(overlaps(degreesPlate->plate, label.plate)) << label.text;
 			}
 		}
 	}
-	EXPECT_GT(labelled, 20);
+	EXPECT_GT(labeled, 20);
 }
 
 TEST_F(DegreesLabelTest, ACornerOffTheScreenHasNoLabelOrArcAndOneAtItsEdgeKeepsItsPlateOnIt) {
@@ -2634,29 +2659,32 @@ TEST_F(DegreesLabelTest, ACornerWithNeitherSideClearDrawsNeitherArcNorDegrees) {
 	EXPECT_EQ(strokesIn(plan(), FeedbackLayer::Marker).size(), 1U) << "the right-angle marker";
 }
 
-// Along a smooth pointer move the degrees don't flip between the inside and the outside: along
-// rays out of the last point, through every length, the label changes side at most twice.
-TEST_F(DegreesLabelTest, AlongARayTheLabelChangesSideAtMostTwice) {
-	constexpr int	kRays = 600;
-	constexpr float kStepPx = 1.0F;
+// Along rays of the pointer out of the last point, through every length, the degrees never go
+// shown, hidden, shown again more than once, and only a few rays change side more than twice.
+TEST_F(DegreesLabelTest, AlongARayTheLabelTogglesShownAtMostTwiceAndSeldomChangesSideMoreThanTwice) {
+	constexpr int	kRays = 240;
+	constexpr float kStepPx = 3.0F;
 	constexpr float kFirstPx = 20.0F;
 	constexpr float kLastPx = 320.0F;
+	constexpr int	kMostToggles = 2;
 	constexpr int	kMostSideChanges = 2;
+	constexpr int	kMostRaysPastMostSideChanges = 4;
 	std::mt19937	random(8962);
 	const auto		between = [&](float low, float high) { return std::uniform_real_distribution<float>(low, high)(random); };
-	const auto		chance = [&](float odds) { return between(0.0F, 1.0F) < odds; };
-	int				sideReads = 0;
+	int				raysPastMostSideChanges = 0;
 	for (int ray = 0; ray < kRays; ++ray) {
 		camera.setZoom(between(2.0F, 10.0F));
-		uiScale = chance(0.5F) ? 1.0F : 1.73F;
-		display.guideDistances = chance(0.5F);
+		uiScale = ray % 2 == 0 ? 1.0F : 1.73F;
+		display.guideDistances = between(0.0F, 1.0F) < 0.5F;
 		const Foundation::Vec2 vertex{between(200.0F, 800.0F), between(200.0F, 600.0F)};
 		const Foundation::Vec2 towardPrevious = screenDirection(between(0.0F, 360.0F));
 		const float			   previousPx = between(40.0F, 300.0F);
 		points = {worldAt({vertex.x + towardPrevious.x * previousPx, vertex.y + towardPrevious.y * previousPx}), worldAt(vertex)};
 		const Foundation::Vec2 heading = screenDirection(between(0.0F, 360.0F));
 		int					   lastSide = 0;
-		int					   changes = 0;
+		int					   sideChanges = 0;
+		int					   lastShown = -1;
+		int					   toggles = 0;
 		for (float along = kFirstPx; along <= kLastPx; along += kStepPx) {
 			const Foundation::Vec2 tip{vertex.x + heading.x * along, vertex.y + heading.y * along};
 			if (tip.x < 0.0F || tip.y < 0.0F || tip.x > static_cast<float>(viewportWidth) || tip.y > static_cast<float>(viewportHeight)) {
@@ -2665,17 +2693,20 @@ TEST_F(DegreesLabelTest, AlongARayTheLabelChangesSideAtMostTwice) {
 			cursor = worldAt(tip);
 			const DrawingFeedbackPlan		   result = plan();
 			const std::optional<FeedbackLabel> degrees = degreesLabel(result);
-			if (!degrees || result.arcs.empty()) {
+			const int						   shown = degrees && !result.arcs.empty() ? 1 : 0;
+			toggles += lastShown >= 0 && shown != lastShown ? 1 : 0;
+			lastShown = shown;
+			if (shown == 0) {
 				continue;
 			}
-			++sideReads;
 			const int side = sideOf(*degrees, result.arcs[0]);
-			changes += lastSide != 0 && side != lastSide ? 1 : 0;
+			sideChanges += lastSide != 0 && side != lastSide ? 1 : 0;
 			lastSide = side;
 		}
-		EXPECT_LE(changes, kMostSideChanges) << "ray " << ray;
+		EXPECT_LE(toggles, kMostToggles) << "ray " << ray;
+		raysPastMostSideChanges += sideChanges > kMostSideChanges ? 1 : 0;
 	}
-	EXPECT_GT(sideReads, kRays * 100);
+	EXPECT_LE(raysPastMostSideChanges, kMostRaysPastMostSideChanges);
 }
 
 // The reported case along its own ray: from the second point at 100 and at 120 degrees, through

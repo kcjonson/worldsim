@@ -605,7 +605,7 @@ namespace world_sim {
 				planCloseHalo();
 				planGridCross();
 				planCommonLengthTicks();
-				std::array<std::optional<CornerOnScreen>, kMaxReadCorners> labelledCorners = planCornerMarks(corners);
+				std::array<std::optional<CornerOnScreen>, kMaxReadCorners> labeledCorners = planCornerMarks(corners);
 				seedLabelObstacles();
 				if (rectangleTool()) {
 					planSizeLabel();
@@ -619,7 +619,7 @@ namespace world_sim {
 						}
 					}
 				}
-				planCornerReadouts(labelledCorners);
+				planCornerReadouts(labeledCorners);
 				planCursor();
 				planCrossingDot();
 				planSnapTarget();
@@ -1077,7 +1077,7 @@ namespace world_sim {
 			// radius, where an arc would read as noise. Returns the corners that would draw an arc,
 			// which draws only with its degrees.
 			std::array<std::optional<CornerOnScreen>, kMaxReadCorners> planCornerMarks(const construction::CornerAngles& corners) {
-				std::array<std::optional<CornerOnScreen>, kMaxReadCorners> labelledCorners{};
+				std::array<std::optional<CornerOnScreen>, kMaxReadCorners> labeledCorners{};
 				const Foundation::Color color = withOpacity(guideColor(style, GuideSource::DrawnShape), style.markerOpacity);
 				for (std::size_t index = 0; index < std::min(corners.count, corners.corners.size()); ++index) {
 					const construction::CornerAngle& corner = corners.corners[index];
@@ -1102,7 +1102,7 @@ namespace world_sim {
 					// The world to screen scale's handedness turns the sweep with it.
 					const float startRadians = std::atan2(toPrevious->y, toPrevious->x);
 					const float sweepRadians = corner.sweepRadians * screenHandedness(corner.vertex);
-					labelledCorners[index] = CornerOnScreen{
+					labeledCorners[index] = CornerOnScreen{
 						.vertex = vertex,
 						.previous = previous,
 						.next = next,
@@ -1120,7 +1120,7 @@ namespace world_sim {
 							},
 					};
 				}
-				return labelledCorners;
+				return labeledCorners;
 			}
 
 			// 1 when the world's x and y axes keep their turn on screen, -1 when the screen
@@ -1136,13 +1136,13 @@ namespace world_sim {
 			// Each corner's arc and degrees, in corner order, drawn together or not at all: a bare
 			// arc reads as broken. A corner whose degrees find no clear spot is dropped, and the
 			// corners after it no longer keep off its arc.
-			void planCornerReadouts(std::array<std::optional<CornerOnScreen>, kMaxReadCorners>& labelledCorners) {
-				for (std::optional<CornerOnScreen>& corner : labelledCorners) {
-					if (corner && !planDegreesLabel(*corner, labelledCorners)) {
+			void planCornerReadouts(std::array<std::optional<CornerOnScreen>, kMaxReadCorners>& labeledCorners) {
+				for (std::optional<CornerOnScreen>& corner : labeledCorners) {
+					if (corner && !planDegreesLabel(*corner, labeledCorners)) {
 						corner.reset();
 					}
 				}
-				for (const std::optional<CornerOnScreen>& corner : labelledCorners) {
+				for (const std::optional<CornerOnScreen>& corner : labeledCorners) {
 					if (corner) {
 						result.arcs.push_back(corner->arc);
 					}
@@ -1151,11 +1151,11 @@ namespace world_sim {
 
 			// A corner's degrees beyond its arc, on one side of the corner, else on the other: the
 			// inside (along the bisector) leads unless the corner's own lines cross its first spot,
-			// as they do in a narrow corner. Along a pointer's ray that test changes at most once,
-			// so the label changes side only when every spot on its side is taken. False, with
+			// as they do in a narrow corner. Along a pointer's ray that test changes at most once;
+			// the label also changes side when another label takes every spot on its side. False, with
 			// nothing placed, when neither side has a clear spot or the corner itself is off the
 			// screen.
-			bool planDegreesLabel(const CornerOnScreen& corner, const std::array<std::optional<CornerOnScreen>, kMaxReadCorners>& labelledCorners) {
+			bool planDegreesLabel(const CornerOnScreen& corner, const std::array<std::optional<CornerOnScreen>, kMaxReadCorners>& labeledCorners) {
 				if (!insideViewport({corner.vertex.x, corner.vertex.y, corner.vertex.x, corner.vertex.y})) {
 					return false;
 				}
@@ -1168,7 +1168,7 @@ namespace world_sim {
 				for (const Foundation::Vec2 direction : insideLeads ? std::array{inside, outside} : std::array{outside, inside}) {
 					for (int step = 0; step <= kDegreesLabelShiftSteps; ++step) {
 						const Foundation::Vec2 topLeft = degreesSpot(corner, direction, size, step);
-						if (degreesPlateClear(plateBox(topLeft, size, look.labelPlatePaddingPx), corner, labelledCorners)) {
+						if (degreesPlateClear(plateBox(topLeft, size, look.labelPlatePaddingPx), corner, labeledCorners)) {
 							addLabel(text, topLeft, sizePx, size, withOpacity(guideColor(style, GuideSource::DrawnShape), 1.0F), FeedbackTextWeight::Regular);
 							return true;
 						}
@@ -1191,16 +1191,16 @@ namespace world_sim {
 			}
 
 			// Whether a degrees plate keeps off the labels placed before it and their obstacles,
-			// every labelled corner's arc and the gap round it, and its corner's lines.
+			// the arc of every corner that has one, later corners' included, and the gap round it, and its corner's lines.
 			bool degreesPlateClear(
-				const FeedbackBox& plate, const CornerOnScreen& corner, const std::array<std::optional<CornerOnScreen>, kMaxReadCorners>& labelledCorners
+				const FeedbackBox& plate, const CornerOnScreen& corner, const std::array<std::optional<CornerOnScreen>, kMaxReadCorners>& labeledCorners
 			) const {
 				if (std::any_of(placedLabels.begin(), placedLabels.end(), [&](const FeedbackBox& other) { return overlaps(plate, other); })) {
 					return false;
 				}
 				const float arcReach = look.angleArcRadiusPx + look.angleLabelGapPx - kPlateRoundingPx;
-				for (const std::optional<CornerOnScreen>& labelled : labelledCorners) {
-					if (labelled && distanceToBox(labelled->vertex, plate) < arcReach) {
+				for (const std::optional<CornerOnScreen>& labeled : labeledCorners) {
+					if (labeled && distanceToBox(labeled->vertex, plate) < arcReach) {
 						return false;
 					}
 				}
