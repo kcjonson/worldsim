@@ -565,6 +565,7 @@ bool ConfigValidator::validateConstruction() {
     require(snappingSource, s.commonLengthMinimumMeters >= 0.0F, "commonLengthMinimumMeters", s.commonLengthMinimumMeters,
             "non-negative");
     require(snappingSource, s.lengthIncrementMeters >= 0.0F, "lengthIncrementMeters", s.lengthIncrementMeters, "non-negative");
+    require(snappingSource, s.doubleClickSeconds > 0.0F, "doubleClickSeconds", s.doubleClickSeconds, "positive");
     require(snappingSource, s.doubleClickDistancePx >= 0.0F, "doubleClickDistancePx", s.doubleClickDistancePx, "non-negative");
 
     const float grid = s.drawingSettingsDefaults.rectangleGridSpacingMeters;

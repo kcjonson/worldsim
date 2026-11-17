@@ -2,6 +2,8 @@
 
 #include "scenes/game/world/construction/DrawingSystem.h"
 
+#include <cmath>
+
 namespace world_sim {
 
 	PointerTarget pointerTarget(
@@ -18,19 +20,50 @@ namespace world_sim {
 		return interfaceHit(windowPointer / uiScale) ? PointerTarget::Interface : PointerTarget::World;
 	}
 
+	void WindowPresence::observe(foundation::InputEvent::Type type) {
+		using Type = foundation::InputEvent::Type;
+		switch (type) {
+			case Type::PointerEnter:
+				pointerInWindow = true;
+				break;
+			case Type::PointerLeave:
+				pointerInWindow = false;
+				break;
+			case Type::FocusGained:
+			case Type::KeyDown:
+			case Type::Char:
+			case Type::PointerDown:
+				windowFocused = true;
+				break;
+			case Type::FocusLost:
+				windowFocused = false;
+				break;
+			default:
+				break;
+		}
+	}
+
+	void WindowPresence::syncPointer(bool snapshotPointerInWindow) {
+		pointerInWindow = snapshotPointerInWindow;
+	}
+
+	bool pointerWithTool(PointerTarget target, bool pointerInWindow, bool windowFocused, bool backgroundLaunch) {
+		return pointerInWindow && target != PointerTarget::OutsideWindow && (windowFocused || backgroundLaunch);
+	}
+
 	PointerAction drawingPointerAction(
 		PointerInput			input,
 		foundation::MouseButton button,
 		PointerTarget			target,
+		bool					withTool,
 		std::optional<ToolKind> activeTool,
 		bool					pressPending
 	) {
 		const bool rectangleTool = activeTool == ToolKind::FoundationRectangle;
+		const bool onWorld = withTool && target == PointerTarget::World;
 		switch (input) {
 			case PointerInput::Press:
-				return rectangleTool && button == foundation::MouseButton::Left && target == PointerTarget::World
-						   ? PointerAction::DeliverPress
-						   : PointerAction::Ignore;
+				return rectangleTool && button == foundation::MouseButton::Left && onWorld ? PointerAction::DeliverPress : PointerAction::Ignore;
 			case PointerInput::LeftButtonUpThisFrame:
 				return pressPending ? PointerAction::CancelPress : PointerAction::Ignore;
 			case PointerInput::Release:
@@ -43,9 +76,35 @@ namespace world_sim {
 				if (button != foundation::MouseButton::Left) {
 					return PointerAction::Ignore;
 				}
-				return rectangleTool && target != PointerTarget::World ? PointerAction::CancelPress : PointerAction::DeliverClick;
+				if (onWorld) {
+					return PointerAction::DeliverClick;
+				}
+				return rectangleTool ? PointerAction::CancelPress : PointerAction::Ignore;
 		}
 		return PointerAction::Ignore;
+	}
+
+	bool secondClickOfDoubleClick(
+		const std::optional<PointerRelease>& previous, const PointerRelease& release, const DoubleClickLimits& limits
+	) {
+		if (!previous) {
+			return false;
+		}
+		const glm::vec2 offset = release.position - previous->position;
+		return release.timeSeconds - previous->timeSeconds <= limits.seconds && std::hypot(offset.x, offset.y) <= limits.pixels;
+	}
+
+	ReleaseAction WallDoubleClick::release(const PointerRelease& release, ToolKind tool, const DoubleClickLimits& limits) {
+		if (tool != ToolKind::Wall) {
+			forget();
+			return ReleaseAction::Click;
+		}
+		if (secondClickOfDoubleClick(lastRelease, release, limits)) {
+			forget();
+			return ReleaseAction::EndChain;
+		}
+		lastRelease = release;
+		return ReleaseAction::Click;
 	}
 
 } // namespace world_sim

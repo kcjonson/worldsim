@@ -261,8 +261,12 @@ namespace assets {
 
 		bool rectangleAdjacencySnaps = true;
 
+		// Two left releases on the world this close in time are a double-click: with the wall
+		// tool, the second ends the chain.
+		float doubleClickSeconds = 0.4F;
 		// A left release this close to its press, in logical pixels, is a click: in the
-		// rectangle tool it leaves the first corner waiting rather than finishing a drag.
+		// rectangle tool it leaves the first corner waiting rather than finishing a drag. A
+		// double-click's second release must also be this close to the first.
 		float doubleClickDistancePx = 4.0F;
 
 		DrawingSettingsDefaults drawingSettingsDefaults;

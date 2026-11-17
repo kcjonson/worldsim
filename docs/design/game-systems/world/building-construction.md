@@ -68,6 +68,8 @@ The wall tool has no rectangle; it follows the same helper settings (Walls > Dra
 
 Select Foundation in the Build menu: it opens the foundation tool last picked this session, Rectangle the first time. A config strip appears with the tool picker, which switches between Rectangle and Freeform, material choices, and a live cost readout. Material is picked **before** drawing; the ghost renders in that material's blueprint style. While the tool is active a small [key guide](#key-guide) panel lists its keys.
 
+Every drawing tool pauses while the pointer is outside the game's window or the game is in the background: nothing follows the pointer and nothing reads refused, the points already placed stay, and the tool picks up from the pointer when it comes back.
+
 #### Rectangle tool
 
 1. Click one corner, then the opposite corner. Or press on one corner, drag, and release on the other: a release more than 4 screen pixels (logical pixels, before any HiDPI scaling) from the press finishes the rectangle, and a shorter one counts as a click, so the next click finishes it.
@@ -327,7 +329,7 @@ On a shared edge between two snapped foundations there is no co-ownership. The w
 
 ### Drawing
 
-Walls draw as a polyline chain: click to commit each point, the chain continues from the last point. The chain does not need to close, but it may: clicking the chain's first point closes the loop and ends the chain. Once the chain has three points, the cursor snaps onto the first point when near it, as it does when closing a foundation; holding Alt skips that snap, so a point near the start is placed as an ordinary one. **Right-click, Esc, or Enter** ends the chain, as today. Double-click ends it too, and is new with this work: its first click places the final point, the second places nothing and ends the chain. A second Esc, with no chain in progress, exits the tool.
+Walls draw as a polyline chain: click to commit each point, the chain continues from the last point. The chain does not need to close, but it may: clicking the chain's first point closes the loop and ends the chain. Once the chain has three points, the cursor snaps onto the first point when near it, as it does when closing a foundation; holding Alt skips that snap, so a point near the start is placed as an ordinary one. **Right-click, Esc, Enter, or a double-click** ends the chain: a double-click's first click places the final point, the second places nothing and ends the chain. A second Esc, with no chain in progress, exits the tool.
 
 The wall tool has no rectangle and no grid. It follows the same Drawing Settings as the Freeform tool (Foundations > Snapping and guides): with every helper off it keeps its adjacency snaps (steps 1 to 5 below) and length rounding, which is the basic level for walls, since walls mostly go onto foundations whose corners and edges are already snaps and a grid would fight a rotated building. With helpers on, the same angle steps and guides apply for every chain, along the foundation edge or standing mid-floor; the wall tool also reads walls' corners and directions, and takes foundation corners at their outer-face-flush inset. Whole priority order, first that applies wins (the helper a step needs is in brackets):
 
@@ -562,7 +564,7 @@ Foundations, wall segments, and openings are first-class selectable entities, in
 
 Clicking again in the same spot cycles down the stack (click a door, click again to get the wall, again for the foundation). Standard colony-game behavior, and it resolves the "everything is stacked on a foundation" problem without modifier gymnastics.
 
-**Multi-select:** Shift-click adds to the selection. Mixed selections reduce the action set to what's shared (e.g., Demolish). Double-clicking a wall segment (not built yet; the world input has no double-click) selects the whole connected run of the same material and thickness, the common case for "demolish this wall, all of it."
+**Multi-select:** Shift-click adds to the selection. Mixed selections reduce the action set to what's shared (e.g., Demolish). Double-clicking a wall segment (not built yet) selects the whole connected run of the same material and thickness, the common case for "demolish this wall, all of it."
 
 ### Selection Visuals
 
@@ -592,7 +594,7 @@ Wall blueprints have no vertex editing in v1; segments are cheap, cancel and red
 | Click | Place point / select; in the rectangle tool, place a corner (two opposite corners make the rectangle) |
 | Press, drag, release | Rectangle tool: draw the rectangle from the press to the release |
 | Click origin point | Close foundation polygon; close a wall loop |
-| Double-click | End wall chain (the first click places the final point; new with this work); expand wall selection to connected run (not built yet) |
+| Double-click | End wall chain (the first click places the final point, the second places nothing); expand wall selection to connected run (not built yet) |
 | Enter | End wall chain |
 | Right-click / Esc | End wall chain; cancel in-progress shape or the rectangle's first corner; second Esc exits tool |
 | Backspace | Undo last point (drawing); drop the rectangle's first corner; delete vertex (shape editing) |
