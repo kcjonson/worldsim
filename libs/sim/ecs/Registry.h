@@ -3,6 +3,9 @@
 #include "ComponentPool.h"
 #include "EntityID.h"
 
+#include <utils/Log.h>
+
+#include <cassert>
 #include <memory>
 #include <queue>
 #include <typeindex>
@@ -74,10 +77,22 @@ public:
         return index < generations.size() && generations[index] == generation;
     }
 
-    /// Add a component to an entity
+    /// Add a component to a live entity. A destroyed id is a caller bug: it asserts, and in a
+    /// release build the component is attached to nothing (never to the index's new occupant).
     template <typename T, typename... Args>
     T& addComponent(EntityID entity, Args&&... args) {
-        return getOrCreatePool<T>().add(entity, std::forward<Args>(args)...);
+        ComponentPool<T>& pool = getOrCreatePool<T>();
+        if (!isAlive(entity)) {
+            assert(false && "addComponent on an entity that is not alive");
+            LOG_ERROR(
+                Engine,
+                "addComponent<%s>: entity %llu is not alive; component not attached",
+                typeid(T).name(),
+                static_cast<unsigned long long>(entity)
+            );
+            return pool.refuse(std::forward<Args>(args)...);
+        }
+        return pool.add(entity, std::forward<Args>(args)...);
     }
 
     /// Get a component from an entity (returns nullptr if not found)

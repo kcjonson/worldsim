@@ -86,9 +86,6 @@ namespace ecs {
 		// Handled after the walk, and each one looked up again: an ended observer, or an <ends> thought, may
 		// create or end thoughts or destroy the colonist.
 		for (const DueThought& due : dueScratch) {
-			if (!world->isAlive(due.colonist)) {
-				continue;
-			}
 			Thoughts* thoughts = world->getComponent<Thoughts>(due.colonist);
 			if (thoughts == nullptr) {
 				continue;
@@ -274,9 +271,6 @@ namespace ecs {
 	}
 
 	bool ThoughtSystem::end(ThoughtHandle handle) {
-		if (!world->isAlive(handle.colonist)) {
-			return false;
-		}
 		Thoughts* thoughts = world->getComponent<Thoughts>(handle.colonist);
 		if (thoughts == nullptr) {
 			return false;
@@ -290,9 +284,6 @@ namespace ecs {
 	}
 
 	bool ThoughtSystem::endByCause(EntityID colonist, ThoughtEventTypeId eventType, const ThoughtSubject& subject) {
-		if (!world->isAlive(colonist)) {
-			return false;
-		}
 		Thoughts* thoughts = world->getComponent<Thoughts>(colonist);
 		if (thoughts == nullptr) {
 			return false;

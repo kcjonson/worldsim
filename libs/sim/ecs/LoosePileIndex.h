@@ -53,7 +53,7 @@ namespace ecs {
 			EntityID found = kInvalidEntity;
 			auto [first, last] = m_byKey.equal_range(hashWorldEntity(position, defNameId));
 			for (; first != last; ++first) {
-				const ResourceStack* stack = world.isAlive(first->second) ? world.getComponent<ResourceStack>(first->second) : nullptr;
+				const ResourceStack* stack = world.getComponent<ResourceStack>(first->second);
 				if (stack != nullptr && stack->quantity > 0 && (found == kInvalidEntity || first->second < found)) {
 					found = first->second;
 				}

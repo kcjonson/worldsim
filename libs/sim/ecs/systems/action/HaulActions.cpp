@@ -190,7 +190,7 @@ namespace ecs {
 		}
 
 		// A package gone, or already placed by someone else, is not placed again.
-		if (!world->isAlive(packagedEntity) || !world->hasComponent<Packaged>(packagedEntity)) {
+		if (!world->hasComponent<Packaged>(packagedEntity)) {
 			LOG_WARNING(
 				Engine,
 				"[Action] Packaged entity %llu is gone or already placed at placement time",

@@ -470,7 +470,7 @@ namespace world_sim {
 	DevRefusal DevCommandHandler::devAttribute(const app::DevRequest& cmd) {
 		const ecs::EntityID id = parseEntity(param(cmd, "colonist"));
 		auto*				attributes = m_ctx.world->getComponent<ecs::Attributes>(id);
-		if (!m_ctx.world->isAlive(id) || attributes == nullptr) {
+		if (attributes == nullptr) {
 			return refuse("attribute: no colonist #" + param(cmd, "colonist"));
 		}
 		const std::string name = param(cmd, "attribute");
@@ -1136,7 +1136,7 @@ namespace world_sim {
 		const ecs::ThoughtTypes& types = thoughtSystem.types();
 
 		const ecs::EntityID colonist = parseEntity(param(cmd, "colonist"));
-		if (!m_ctx.world->isAlive(colonist) || m_ctx.world->getComponent<ecs::Colonist>(colonist) == nullptr) {
+		if (m_ctx.world->getComponent<ecs::Colonist>(colonist) == nullptr) {
 			return reject("no colonist #" + param(cmd, "colonist"));
 		}
 		const std::optional<ecs::ThoughtEventTypeId> type = types.findType(param(cmd, "type"));
