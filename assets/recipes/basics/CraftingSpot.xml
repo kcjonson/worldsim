@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Crafting Spot - Innate recipe known by all colonists from start -->
+<!-- workAmount is required. Left out: an input or output count is 1 (a whole number, 1 or more, when given), innate is false (true or false when given). Each thing, and a station other than none, names a definition. -->
 <RecipeDef>
     <defName>Recipe_CraftingSpot</defName>
     <label>Crafting Spot</label>

@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <set>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 namespace ecs::test {
@@ -893,6 +895,25 @@ namespace ecs::test {
 		ASSERT_EQ(errors.size(), 1U);
 		EXPECT_TRUE(mentions(errors, "thoughts.xml: thought 'a' feeling 1 ('content') when: ")) << errors.front();
 		EXPECT_TRUE(mentions(errors, "at column 22 in 'attribute(sanity) >= '")) << errors.front();
+	}
+
+	TEST(ThoughtTypeDefinitions, AnUnknownSimNameIsAnErrorNamingTheFileTheThoughtAndTheNames) {
+		const std::tuple<std::string, std::string, std::string> cases[] = {
+			{"need(Hungr) &lt; 30", "'Hungr' is not accepted as argument 1 of 'need' (expected one of", "hunger"},
+			{"attribute(luck) > 1", "'luck' is not accepted as argument 1 of 'attribute' (expected one of", ""},
+			{"current_task(dance)", "'dance' is not accepted as argument 1 of 'current_task' (expected one of", ""},
+		};
+		for (const auto& [condition, message, listed] : cases) {
+			const std::vector<std::string> errors =
+				testing::TestThoughtTypes(
+					"", R"(<thought id="modded" label="Modded" importance="normal"><feeling is="content" when=")" + condition + R"("/></thought>)"
+				)
+					.errors;
+			ASSERT_EQ(errors.size(), 1U) << condition;
+			EXPECT_TRUE(mentions(errors, "mods/later.xml: thought 'modded' feeling 1 ('content') when: ")) << errors.front();
+			EXPECT_TRUE(mentions(errors, message)) << errors.front();
+			EXPECT_TRUE(mentions(errors, listed)) << errors.front();
+		}
 	}
 
 	TEST(ThoughtTypeDefinitions, TheShippedRulesLoadClean) {

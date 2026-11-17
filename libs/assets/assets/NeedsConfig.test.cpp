@@ -77,7 +77,7 @@ TEST(NeedsConfig, ALaterFileReplacesANeedByName) {
 	EXPECT_TRUE(load.errors.empty());
 	ASSERT_EQ(load.config.needs.size(), 2U);
 	EXPECT_EQ(load.config.needs[0].thresholds[0], 60.0F);
-	EXPECT_EQ(load.config.needs[0].source, (folder.folder / "mods" / "later.xml").generic_string());
+	EXPECT_EQ(load.config.needs[0].source, "mods/later.xml") << "a file is named relative to the needs folder, with forward slashes";
 	EXPECT_EQ(load.config.needs[1].thresholds[0], 50.0F);
 }
 
@@ -86,8 +86,7 @@ TEST(NeedsConfig, MistakesNameTheFileTheNeedAndTheAttributeAndLoadNothingFromThe
 		R"(<Needs><Need name="Thirst" seek="50" urgent="25" critical="10"/><Need name="Hunger" seek="50%" urgent="25" critical="10"/></Needs>)"
 	);
 	const NeedsConfigLoad load = broken.load();
-	const std::string	  file = (broken.folder / "needs.xml").generic_string();
-	EXPECT_TRUE(mentions(load.errors, file + ": <Need name=\"Hunger\"> seek must be a number, got \"50%\""));
+	EXPECT_TRUE(mentions(load.errors, "needs.xml: <Need name=\"Hunger\"> seek must be a number, got \"50%\""));
 	EXPECT_TRUE(load.config.needs.empty()) << "a file with any error adds nothing, its good <Need> included";
 
 	EXPECT_TRUE(mentions(errorsFor("<Mood/>"), "the root element is not <Needs>"));

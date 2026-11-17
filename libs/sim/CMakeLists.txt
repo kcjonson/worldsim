@@ -33,6 +33,7 @@ add_library(sim
     ecs/GoalTaskRegistry.cpp
     ecs/NeedLevels.cpp
     ecs/StoreOrDrop.cpp
+    ecs/ThoughtPruning.cpp
     ecs/ThoughtTypes.cpp
     ecs/WorldSource.cpp
     ecs/components/DecisionTrace.cpp

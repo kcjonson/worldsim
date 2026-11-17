@@ -22,7 +22,9 @@ namespace ecs::testing {
 
 	/// The tuning and feelings every test's types are written against.
 	inline constexpr std::string_view kTestPreamble = R"(
-  <tuning maxLineLength="40" maxSubjectNameLength="12" whileCheckMinutes="15"/>
+  <tuning maxLineLength="40" maxSubjectNameLength="12" whileCheckMinutes="15">
+    <kept limit="2000" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="10" trivialWeight="1" normalWeight="3"/>
+  </tuning>
   <feeling id="content" label="Content"/>
   <feeling id="delighted" label="Delighted"/>
   <feeling id="annoyed" label="Annoyed"/>

@@ -35,9 +35,9 @@ namespace conditions {
 	/// frozen: the terms and symbol sets are declared from data (assets/config/conditions), then each system
 	/// provides the terms it answers. Conditions are parsed only once it is frozen.
 	///
-	/// A name no file declares is a parse error, except in an open set, which takes any name. A declared
-	/// term nothing provides, and a name its provider binds to nothing (an unlisted name in an open set
-	/// included), parse, evaluate to Unknown, and are logged once per condition when it is parsed.
+	/// A name its set does not hold is a parse error, except in an open set, which takes any name. A
+	/// declared term nothing provides, a kind with no mapping, and an unlisted name in an open set parse,
+	/// evaluate to Unknown, and are logged once per condition when it is parsed.
 	///
 	/// Unknown is returned as is. Consumers: a `requires` that is Unknown fails; a weight whose condition is
 	/// Unknown is not applied; a `while` that is Unknown keeps its last state.
@@ -67,9 +67,10 @@ namespace conditions {
 		/// Providers bind to these when they provide.
 		[[nodiscard]] std::span<const DeclaredSymbol> parameterSymbols(std::string_view term, std::size_t parameter) const;
 
-		/// Add the names a system knows to the set a declared term's Symbol parameter takes, so data need not
-		/// list them; names already there are kept. Returns why it was refused (not declared, not a Symbol
-		/// parameter, a name a condition cannot use, the vocabulary frozen), or nothing.
+		/// Add the names a system knows to the owned set (assets::kOwnedSymbolSets) a declared term's Symbol
+		/// parameter takes; names already there are kept. Returns why it was refused (not declared, not a
+		/// Symbol parameter, a set the conditions files fill, a name a condition cannot use, the vocabulary
+		/// frozen), or nothing.
 		std::optional<std::string> addSymbols(std::string_view term, std::size_t parameter, std::span<const std::string> names);
 
 		/// Record each name the term's Symbol parameter takes that `bindings` leaves without a value; a
@@ -95,6 +96,7 @@ namespace conditions {
 		[[nodiscard]] bool							  isProvided(uint32_t term) const { return static_cast<bool>(terms[term].provider); }
 		[[nodiscard]] std::span<const DeclaredSymbol> symbolSet(uint32_t set) const { return symbolSets[set].symbols; }
 		[[nodiscard]] bool							  isOpenSet(uint32_t set) const { return symbolSets[set].open; }
+		[[nodiscard]] const std::string& symbolSetName(uint32_t set) const { return symbolSets[set].name; }
 
 	  private:
 		struct Term {

@@ -1213,7 +1213,8 @@ namespace world_sim {
 				  << jsonEscape(types.feeling(thought.feeling).name) << "\"";
 		};
 
-		out << ",\"thoughts\":{\"held\":[";
+		const auto merged = std::ranges::count_if(thoughts.record, [](const ecs::Thought& thought) { return thought.merged; });
+		out << ",\"thoughts\":{\"recorded\":" << thoughts.record.size() << ",\"merged\":" << merged << ",\"held\":[";
 		bool first = true;
 		ecs::forEachHeldThought(thoughts, [&](const ecs::Thought& thought) {
 			out << (first ? "" : ",");

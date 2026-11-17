@@ -1,11 +1,12 @@
 #include "assets/MemoryConfig.h"
 #include "assets/ConfigNumber.h"
+#include "assets/ConfigXml.h"
 
 #include <utils/Log.h>
 
 #include <pugixml.hpp>
 
-#include <limits>
+#include <utility>
 
 namespace assets {
 
@@ -14,34 +15,35 @@ namespace assets {
 		return instance;
 	}
 
-	bool MemoryConfig::loadFromFile(const std::string& xmlPath) {
+	bool MemoryConfig::loadFromFile(const std::filesystem::path& configRoot, const std::filesystem::path& file) {
 		clear();
 
-		pugi::xml_document			 document;
-		const pugi::xml_parse_result result = document.load_file(xmlPath.c_str());
-		if (!result) {
-			LOG_ERROR(Engine, "Failed to load memory config XML: %s - %s", xmlPath.c_str(), result.description());
-			return false;
-		}
-		const pugi::xml_node root = document.child("Memory");
+		const std::string	 source = file.generic_string();
+		pugi::xml_document	 document;
+		const pugi::xml_node root = readRootElement(document, configRoot / file, "Memory", source, problemList);
 		if (!root) {
-			LOG_ERROR(Engine, "No Memory root element in: %s", xmlPath.c_str());
 			return false;
 		}
 
-		// Missing or not entirely a number reads as NaN, which validation reports, rather than as a silent
-		// zero or the number it starts with.
-		recentSightingMinutes = parseConfigNumber(root.child("RecentSighting").attribute("gameMinutes").as_string())
-									.value_or(std::numeric_limits<float>::quiet_NaN());
+		ConfigReader reader(source);
+		recentSightingMinutes = reader.attributeNumber(root.child("RecentSighting"), "RecentSighting", "gameMinutes");
 
+		std::vector<std::string> problems = reader.takeProblems();
+		if (!problems.empty()) {
+			clear();
+			problemList = std::move(problems);
+			LOG_ERROR(Engine, "Memory config %s has %zu bad value(s)", source.c_str(), problemList.size());
+			return false;
+		}
 		isLoaded = true;
-		LOG_INFO(Engine, "Loaded memory config from %s", xmlPath.c_str());
+		LOG_INFO(Engine, "Loaded memory config from %s", source.c_str());
 		return true;
 	}
 
 	void MemoryConfig::clear() {
 		isLoaded = false;
 		recentSightingMinutes = 0.0F;
+		problemList.clear();
 	}
 
 } // namespace assets

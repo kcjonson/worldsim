@@ -17,6 +17,7 @@
 #include "VisionSystem.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/RecipeDef.test.h>
 #include <assets/RecipeRegistry.h>
 
 #include <gtest/gtest.h>
@@ -273,6 +274,7 @@ namespace ecs::test {
 		recipe.label = "Berry on a stick";
 		recipe.inputs.push_back({"Berry", 0, 1});
 		recipe.outputs.push_back({"Stick", 0, 1});
+		recipe.workAmount = assets::kTestRecipeWorkAmount;
 		assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 
 		Harness	   harness(R"(

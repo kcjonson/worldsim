@@ -1,4 +1,4 @@
-# Scenario 19: Drawing tools
+# Scenario 20: Drawing tools
 
 **Status:** ready
 

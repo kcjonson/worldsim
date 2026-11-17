@@ -252,7 +252,8 @@ spec, and the `/perf-nightly` skill runs it.
 | 16 | Rooms inside rooms | [scenarios/16-rooms-inside-rooms.md](./scenarios/16-rooms-inside-rooms.md) |
 | 17 | Interface size | [scenarios/17-interface-size.md](./scenarios/17-interface-size.md) |
 | 18 | Colonist thoughts | [scenarios/18-colonist-thoughts.md](./scenarios/18-colonist-thoughts.md) |
-| 19 | Drawing tools | [scenarios/19-drawing-tools.md](./scenarios/19-drawing-tools.md) |
+| 19 | Load errors on screen | [scenarios/19-load-errors-on-screen.md](./scenarios/19-load-errors-on-screen.md) |
+| 20 | Drawing tools | [scenarios/20-drawing-tools.md](./scenarios/20-drawing-tools.md) |
 
 **Scenarios that look away from the colonists turn reveal on** (`/api/dev/reveal?on=1`), since ground no colonist has seen is black (player visibility); a launch starts with it off. Scenario 14 is the one that tests the cover itself.
 
@@ -289,7 +290,7 @@ world-sim's own test executable (the scene layout lint) builds to `apps/world-si
 
 A worktree needs `planets/quickstart.wsplanet` (~1.3 GiB, gitignored). Junction it from the main
 checkout; see the "Sharing the pre-generated world across worktrees" note in [../CLAUDE.md](../../CLAUDE.md).
-Missing file causes an immediate `ConfigError` on launch.
+A missing file fails the load at once, naming the path it expected on the loading scene.
 
 ### Launch
 
@@ -382,7 +383,7 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
 | `what=` | Returns |
 |---------|---------|
 | `summary` | `{colonists, foundations, chunks}` |
-| `colonists` | `[{id, name, x, y, traits[], needs{}, mood{value, target, band, cause: {need} or {thought} or null}, attributes{strength, agility, ...}, thoughts{held:[{id, type, feeling, mood, left, count}], recent:[{id, type, feeling, line, arrivedAt}]}, action, inventory{}, hands{}, belt{}, cargoKg, carryCapacityKg}]`. `attributes` is every attribute, 0 to 20, by the name conditions use (`social_need`). `thoughts` is there once the colonist has had one: `held` is every thought whose mood effect is running, `mood` its amount (times `count` for a stack), `left` the game hours to go or `"while"` for one that lasts while its condition holds; `recent` is the last five recorded, newest first, `line` the rendered quip or null. |
+| `colonists` | `[{id, name, x, y, traits[], needs{}, mood{value, target, band, cause: {need} or {thought} or null}, attributes{strength, agility, ...}, thoughts{recorded, merged, held:[{id, type, feeling, mood, left, count}], recent:[{id, type, feeling, line, arrivedAt}]}, action, inventory{}, hands{}, belt{}, cargoKg, carryCapacityKg}]`. `attributes` is every attribute, 0 to 20, by the name conditions use (`social_need`). `thoughts` is there once the colonist has had one: `recorded` is the record's size and `merged` how many of its entries pruning merged; `held` is every thought whose mood effect is running, `mood` its amount (times `count` for a stack), `left` the game hours to go or `"while"` for one that lasts while its condition holds; `recent` is the last five recorded, newest first, `line` the rendered quip or null. |
 | `stations` | `[{id, x, y, jobs:[{recipe, completed, quantity}], store{}}]` |
 | `storage` | `[{id, defName, x, y, inventory{}, slots, maxSlots, rules:[{item, category, priority, min, max}]}]` |
 | `construction` | `{foundations:[{id, material, state, entity, area, corners:[{x, y}], required{}, delivered{}, progress, phase}], walls:[{id, material, state, entity, x0, y0, x1, y1, required{}, delivered{}, progress}], openings:[{id, type, material, wall, fractionAlongWall, state, entity, x, y, phase, required{}, delivered{}, progress}]}`. `state` is `Blueprint` or `Built`. `corners` is the foundation's ring in world meters, to three decimals, in ring order without repeating the first corner, so two foundations that share an edge share two corner coordinates exactly. An opening's `wall` is the wall segment id it sits on, `fractionAlongWall` how far along that wall it is (0 at the wall's `x0,y0` end, 1 at `x1,y1`), and `x,y` that point in world meters; they are left out when the wall or one of its ends is missing. `phase` and the material keys come with an `entity` that carries a blueprint, as on a foundation, and `phase` is `Clearing`, `AwaitingMaterials`, `UnderConstruction` or `Complete` |
@@ -515,7 +516,7 @@ Keys, from `ev=keydown,<key>`, as the key guide lists them. `escape` closes an o
 | `escape` | drops the first corner; with none, leaves the tool | cancels the shape; with none, leaves the tool | with two or more points, ends the wall and keeps the tool; with one, clears the chain and keeps the tool; with none, leaves the tool | leaves the tool |
 | `enter` | not listed | not listed | ends the wall | not listed |
 
-Injected input holds no modifier keys (no Alt for the raw cursor, no Ctrl for walling a whole edge), cannot send a key's auto-repeat (a second `keydown` is a second press), and cannot send a loss of focus. A move and a click sent in one request (`ev=move,x,y&ev=click,x,y`) place at the click's own position, so no wait between them is needed: ten such pairs each in the Freeform and Rectangle tools, every one starting far from the last hover, placed the click's world point (Freeform, to the millimeter) or the grid point nearest it (Rectangle), never the earlier hover. A move to a pixel outside the window (`ev=move,-5,-5`) pauses the tool as a real exit does: `followingPointer` reads false, `pointer` and `snap` are null and the placed `points` stay, until a move back over the world resumes it.
+Injected input holds no modifier keys (no Alt for the raw cursor, no Ctrl for walling a whole edge), cannot send a key's auto-repeat (a second `keydown` is a second press), and cannot send a loss of focus. A move and a click sent in one request (`ev=move,x,y&ev=click,x,y`) place at the click's own position, so no wait between them is needed. A move to a pixel outside the window (`ev=move,-5,-5`) pauses the tool as a real exit does: `followingPointer` reads false, `pointer` and `snap` are null and the placed `points` stay, until a move back over the world resumes it.
 
 ### Other endpoints
 

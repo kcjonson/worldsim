@@ -175,7 +175,9 @@ class PriorityConfig {
 public:
     static PriorityConfig& Get();
 
-    bool loadFromFile(const std::string& xmlPath);
+    // false, with problems() naming the file and element, when configRoot / file has any mistake
+    bool loadFromFile(const std::filesystem::path& configRoot, const std::filesystem::path& file);
+    const std::vector<std::string>& problems() const;
 
     // Task tier queries (AI arbitration). Tier is compared first; lower = higher priority.
     int getTaskTier(const std::string& taskTypeName) const;            // base tier, or kUnassignedTier
@@ -198,18 +200,7 @@ private:
 
 ### Loading at Startup
 
-```cpp
-// In AppLauncher.cpp or similar
-void initializeGameSystems() {
-    // ... existing asset loading ...
-
-    // Load priority tuning
-    std::string configPath = Foundation::findResourceString("assets/config/work/priority-tuning.xml");
-    if (!PriorityConfig::Get().loadFromFile(configPath)) {
-        LOG_ERROR(Engine, "Failed to load priority config from %s", configPath.c_str());
-    }
-}
-```
+`assets::loadWorkConfig(configRoot)` loads priority-tuning.xml after the work types, as `PriorityConfig::Get().loadFromFile(configRoot, "work/priority-tuning.xml")`, and then checks that every task type has a tier. Any problem fails the game load and is shown on the loading scene ([Config Loading](../../../technical/config-loading.md)).
 
 ---
 

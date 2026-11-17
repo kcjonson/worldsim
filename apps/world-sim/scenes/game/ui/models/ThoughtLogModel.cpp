@@ -92,6 +92,13 @@ namespace world_sim {
 		return std::format("Day {}, {:02}:{:02}", clock.day, clock.minuteOfDay / kMinutesPerHour, clock.minuteOfDay % kMinutesPerHour);
 	}
 
+	std::string thoughtWhenText(const ecs::Thought& thought) {
+		if (thought.merged) {
+			return gameDateText(thought.arrivedClock) + " to " + gameDateText(thought.lastRepeatedClock);
+		}
+		return gameDateText(thought.lastRepeatedClock);
+	}
+
 	std::string thoughtEventText(const ecs::ThoughtTypes& types, const ecs::Thought& thought) {
 		const std::string& label = types.type(thought.eventType).label;
 		return thought.count > 1 ? std::format("{} x{}", label, thought.count) : label;
@@ -100,8 +107,12 @@ namespace world_sim {
 	std::string thoughtSummary(const ecs::ThoughtTypes& types, const ecs::Thought& thought) {
 		std::string text = thoughtEventText(types, thought) + ". " + types.feeling(thought.feeling).label + ".";
 		if (thought.moodEffect.has_value()) {
-			const float amount = thought.moodEffect->amount * static_cast<float>(thought.count);
-			text += " " + moodAmountText(amount) + " mood, " + effectLength(types, thought);
+			if (thought.merged) {
+				text += " " + moodAmountText(thought.moodEffect->amount) + " mood each, " + effectLength(types, thought);
+			} else {
+				const float amount = thought.moodEffect->amount * static_cast<float>(thought.count);
+				text += " " + moodAmountText(amount) + " mood, " + effectLength(types, thought);
+			}
 		}
 		return text;
 	}
@@ -199,6 +210,7 @@ namespace world_sim {
 			const ecs::Thought& thought = *matching[index];
 			const EntryKey		key{
 					 .count = thought.count,
+					 .merged = thought.merged,
 					 .lastRepeatedAt = thought.lastRepeatedAt,
 					 .feeling = thought.feeling,
 					 .typeFeeling = thought.typeFeeling,
@@ -216,7 +228,7 @@ namespace world_sim {
 							 .entry =
 					 {
 						 .id = thought.id,
-						 .when = gameDateText(thought.lastRepeatedClock),
+						 .when = thoughtWhenText(thought),
 						 .summary = thoughtSummary(types, thought),
 						 .line = ecs::renderThoughtLine(types, *thoughts, thought),
 					 },

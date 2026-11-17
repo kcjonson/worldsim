@@ -13,7 +13,8 @@
 // a timed effect restarts its duration from the repeat, and a stacking one counts up. A thought without
 // a mood effect is momentary and is always its own record; as a repeat of a held thought it ends that
 // one first. A `while` effect ends at its next check once its condition is False or its subject is gone.
-// When a held thought ends, however it ends, its type's <ends> thought is created.
+// When a held thought ends, however it ends, its type's <ends> thought is created. A new thought that
+// brings the record to the kept tuning's start size prunes it (ThoughtPruning.h).
 
 #include "../ISystem.h"
 #include "../ThoughtTypes.h"
@@ -103,6 +104,7 @@ namespace ecs {
 		std::deque<ThoughtEndedObserver>   endedObservers;
 		std::vector<DueThought>			   dueScratch;
 		std::vector<uint16_t>			   lineScratch;
+		ThoughtPruneScratch				   pruneScratch;
 	};
 
 } // namespace ecs

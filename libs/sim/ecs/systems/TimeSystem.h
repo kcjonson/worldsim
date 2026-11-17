@@ -36,6 +36,7 @@ enum class Season {
 
 /// One game minute on the day clock is one TimeSystem::simulationSeconds() unit.
 inline constexpr double kSimulationSecondsPerGameHour = 60.0;
+inline constexpr double kSimulationSecondsPerGameDay = 24.0 * kSimulationSecondsPerGameHour;
 
 /// Game time state snapshot (for UI/serialization)
 struct GameTimeSnapshot {

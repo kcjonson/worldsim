@@ -5,6 +5,7 @@
 #include <pugixml.hpp>
 
 #include <algorithm>
+#include <filesystem>
 #include <initializer_list>
 #include <sstream>
 #include <string>
@@ -42,6 +43,28 @@ namespace assets {
 			}
 		}
 		return clean;
+	}
+
+	/// The `rootName` element of the XML file at `path`, which errors call `source`; an empty node, with the reason
+	/// added to `errors` as "<source>: not readable XML: ..." or "<source>: the root element is not <rootName>", when
+	/// the file can't be read or has another root.
+	inline pugi::xml_node readRootElement(
+		pugi::xml_document&			 document,
+		const std::filesystem::path& path,
+		const char*					 rootName,
+		const std::string&			 source,
+		std::vector<std::string>&	 errors
+	) {
+		const pugi::xml_parse_result parsed = document.load_file(path.string().c_str());
+		if (!parsed) {
+			errors.push_back(source + ": not readable XML: " + parsed.description());
+			return {};
+		}
+		const pugi::xml_node root = document.child(rootName);
+		if (!root) {
+			errors.push_back(source + ": the root element is not <" + rootName + ">");
+		}
+		return root;
 	}
 
 } // namespace assets

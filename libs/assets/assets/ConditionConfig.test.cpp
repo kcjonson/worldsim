@@ -11,6 +11,8 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 using namespace assets;
 
@@ -93,12 +95,30 @@ TEST_F(ConditionConfigTest, MistakesAreLoadErrors) {
 	EXPECT_TRUE(mentions(errors, "\"nowhere\", which no file declares"));
 	EXPECT_TRUE(mentions(errors, "'Wet' is not a capability"));
 	EXPECT_TRUE(mentions(errors, "'Drinkable' is not a capability"));
-	EXPECT_TRUE(mentions(errors, "kinds are declared with <Kind>"));
-	EXPECT_TRUE(mentions(errors, "a.xml: trait names come from the trait definitions"));
+	EXPECT_TRUE(mentions(errors, "a.xml: the \"kind\" names come only from the <Kind> declarations"));
+	EXPECT_TRUE(mentions(errors, "a.xml: the \"trait\" names come only from the trait definitions"));
 	EXPECT_TRUE(mentions(errors, "open=\"maybe\""));
 	EXPECT_TRUE(mentions(errors, "b.xml: task group 'busy' is already declared in a.xml"));
 	EXPECT_TRUE(mentions(errors, "unknown element <Bogus>"));
 	EXPECT_EQ(errors.size(), 10U);
+}
+
+TEST_F(ConditionConfigTest, AFileDeclaringOrOpeningAnOwnedSetIsAnErrorNamingIt) {
+	write("base.xml", R"(<Night start="20" end="6"/>)");
+	for (const OwnedSymbolSet& owned : kOwnedSymbolSets) {
+		const std::string set(owned.name);
+		for (const std::string& declaration :
+			 {"<Symbols name=\"" + set + "\">morale</Symbols>", "<Symbols name=\"" + set + "\" open=\"true\"/>"}) {
+			write("mods/typo/conditions.xml", declaration);
+			const ConditionConfigLoad load = loadConditionConfig(folder);
+			ASSERT_EQ(load.errors.size(), 1U) << declaration;
+			EXPECT_TRUE(
+				mentions(load.errors, "mods/typo/conditions.xml: the \"" + set + "\" names come only from " + std::string(owned.owner))
+			) << load.errors.front();
+			EXPECT_TRUE(load.config.symbolSets.at(set).names.empty()) << declaration;
+			EXPECT_FALSE(load.config.symbolSets.at(set).open) << declaration;
+		}
+	}
 }
 
 TEST_F(ConditionConfigTest, NightHoursAreRequired) {
@@ -108,10 +128,18 @@ TEST_F(ConditionConfigTest, NightHoursAreRequired) {
 }
 
 TEST_F(ConditionConfigTest, NightHoursMustBeNumbers) {
-	for (const char* night : {R"(start="abc" end="6")", R"(start="20" end="6x")", R"(start="" end="6")", R"(start="24" end="6")"}) {
-		write("a.xml", std::string("<Night ") + night + "/>");
+	const std::vector<std::pair<std::string, std::string>> cases = {
+		{R"(start="abc" end="6")", "a.xml: <Night> start must be a number, got \"abc\""},
+		{R"(start="20" end="6x")", "a.xml: <Night> end must be a number, got \"6x\""},
+		{R"(start="" end="6")", "a.xml: <Night> start must be a number, got \"\""},
+		{R"(end="6")", "a.xml: <Night> start is missing"},
+		{R"(start="24" end="6")", "a.xml: <Night> start must be an hour from 0 up to 24, got \"24\""},
+		{R"(start="20" end="6" length="10")", "a.xml: <Night>: unknown attribute 'length'"},
+	};
+	for (const auto& [night, error] : cases) {
+		write("a.xml", "<Night " + night + "/>");
 		const ConditionConfigLoad load = loadConditionConfig(folder);
-		EXPECT_TRUE(mentions(load.errors, "<Night> needs start and end hours")) << night;
+		EXPECT_TRUE(mentions(load.errors, error)) << night;
 		EXPECT_FALSE(load.config.night.has_value()) << night;
 	}
 }
@@ -129,10 +157,12 @@ TEST_F(ConditionConfigTest, TheShippedVocabularyListsNoEngineNames) {
 	const ConditionConfigLoad load = loadConditionConfig(shippedConditions());
 	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
 	const auto& sets = load.config.symbolSets;
+	for (const OwnedSymbolSet& owned : kOwnedSymbolSets) {
+		EXPECT_FALSE(sets.at(std::string(owned.name)).open) << owned.name;
+	}
 	EXPECT_TRUE(sets.at("need").names.empty());
 	EXPECT_TRUE(sets.at("attribute").names.empty());
 	EXPECT_TRUE(sets.at("trait").names.empty());
-	EXPECT_FALSE(sets.at("trait").open);
 	EXPECT_EQ(sets.at("task").names, (std::vector<std::string>{"work"}));
 	for (const char* open : {"behavior", "event", "mood_cause"}) {
 		EXPECT_TRUE(sets.at(open).open) << open;

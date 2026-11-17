@@ -73,11 +73,16 @@ namespace world_sim {
 	/// "Day 2, 07:55".
 	[[nodiscard]] std::string gameDateText(const ecs::ClockTime& clock);
 
-	/// The event's label, with " x<count>" for a stack of more than one.
+	/// When a thought arrived: its latest arrival ("Day 9, 17:42"), or a merged entry's range from its first
+	/// ("Day 3, 08:10 to Day 9, 17:42").
+	[[nodiscard]] std::string thoughtWhenText(const ecs::Thought& thought);
+
+	/// The event's label, with " x<count>" for a stack or a merged entry of more than one.
 	[[nodiscard]] std::string thoughtEventText(const ecs::ThoughtTypes& types, const ecs::Thought& thought);
 
 	/// "Slept on the ground. Miserable. -10 mood, 1 day", "... -6 mood, while soaked", or with no mood
-	/// effect just "Very hungry. Annoyed.". A stack's amount is its whole effect.
+	/// effect just "Very hungry. Annoyed.". A stack's amount is its whole effect; a merged entry's is one
+	/// thought's ("Slept on the ground x12. Miserable. -10 mood each, 1 day").
 	[[nodiscard]] std::string thoughtSummary(const ecs::ThoughtTypes& types, const ecs::Thought& thought);
 
 	/// Major, or with a mood effect: what the log shows by default.
@@ -124,6 +129,7 @@ namespace world_sim {
 		/// What an entry's text is made from; the same key, the same text.
 		struct EntryKey {
 			uint32_t				count = 0;
+			bool					merged = false;
 			double					lastRepeatedAt = 0.0;
 			ecs::FeelingId			feeling = 0;
 			uint16_t				typeFeeling = 0;

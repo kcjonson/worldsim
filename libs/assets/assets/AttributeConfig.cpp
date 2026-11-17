@@ -105,7 +105,7 @@ namespace assets {
 				}
 				declaredHere.push_back(name);
 
-				ConfigReader reader(source);
+				ConfigReader   reader(source);
 				AttributeRange range;
 				range.min = reader.attributeNumber(node, "Attribute", "min");
 				range.max = reader.attributeNumber(node, "Attribute", "max");
@@ -142,7 +142,7 @@ namespace assets {
 		}
 		Loader loader(names);
 		for (const std::filesystem::path& file : found.files) {
-			loader.loadFile(file, std::filesystem::relative(file, folder).generic_string());
+			loader.loadFile(file, configFileName(file, folder));
 		}
 		loader.check();
 		if (!loader.errors.empty()) {
