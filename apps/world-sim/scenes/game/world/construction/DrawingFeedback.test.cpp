@@ -1355,6 +1355,18 @@ TEST_F(DrawingFeedbackTest, EverySizeFollowsTheUiScale) {
 		for (int guideIndex = 0; guideIndex < guideCount; ++guideIndex) {
 			SnapGuide guide;
 			guide.from = pointCount > 0 && chance(0.5F) ? frame.points[static_cast<std::size_t>(oneOf(pointCount))] : onScreen();
+			// Near the pixel thresholds: a node a pixel or two off the first guide's (a
+			// duplicate or not), or about a pixel from the snapped point (a stroke too short).
+			const float metersPerPixel = 1.0F / (kPixelsPerMeter * frame.zoom);
+			const float angleOff = between(0.0F, 2.0F * std::numbers::pi_v<float>);
+			const auto	pixelsOff = [&](Foundation::Vec2 around, float pixels) {
+				 return Foundation::Vec2{around.x + std::cos(angleOff) * pixels * metersPerPixel, around.y + std::sin(angleOff) * pixels * metersPerPixel};
+			};
+			if (guideIndex == 1 && chance(0.4F)) {
+				guide.from = pixelsOff(frame.snap.guides[0].from, between(0.0F, 2.5F));
+			} else if (chance(0.15F)) {
+				guide.from = pixelsOff(frame.cursor, between(0.0F, 2.0F));
+			}
 			guide.to = frame.cursor;
 			guide.source = static_cast<GuideSource>(oneOf(3));
 			guide.relation = static_cast<GuideRelation>(oneOf(3));
