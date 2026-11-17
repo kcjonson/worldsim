@@ -211,7 +211,7 @@ namespace assets {
 			}
 
 			std::optional<ThoughtSourceDef> sourceOf(pugi::xml_node node, const std::string& what, const std::string& source) {
-				const std::string_view		  triggerName = node.attribute("trigger").as_string();
+				const std::string_view				triggerName = node.attribute("trigger").as_string();
 				const std::optional<ThoughtTrigger> trigger = triggerFromName(triggerName);
 				if (!trigger.has_value()) {
 					fail(
@@ -333,7 +333,9 @@ namespace assets {
 					const std::string_view element = child.name();
 					if (element == "feeling") {
 						const std::string feelingWhat = what + " feeling " + std::to_string(type.feelings.size() + 1);
-						valid = onlyAttributes(child, {"is", "when", "mood", "hours", "while", "cause"}, feelingWhat, source, result.errors) && valid;
+						valid =
+							onlyAttributes(child, {"is", "when", "mood", "hours", "while", "cause"}, feelingWhat, source, result.errors) &&
+							valid;
 						ThoughtFeelingDef feeling{
 							.feeling = child.attribute("is").as_string(), .when = child.attribute("when").as_string()
 						};
@@ -385,7 +387,9 @@ namespace assets {
 			}
 
 			void loadTuning(pugi::xml_node node, const std::string& source) {
-				if (!onlyAttributes(node, {"maxLineLength", "maxSubjectNameLength", "whileCheckMinutes"}, "<tuning>", source, result.errors)) {
+				if (!onlyAttributes(
+						node, {"maxLineLength", "maxSubjectNameLength", "whileCheckMinutes"}, "<tuning>", source, result.errors
+					)) {
 					return;
 				}
 				ConfigReader reader(source);
@@ -456,7 +460,10 @@ namespace assets {
 					return std::nullopt;
 				}
 				if (!(parsed.pruneStopsAt > 0.0F && parsed.pruneStopsAt < parsed.pruneStartsAt && parsed.pruneStartsAt <= 1.0F)) {
-					fail(source, "<kept> pruneStopsAt and pruneStartsAt must be fractions of the limit with 0 < pruneStopsAt < pruneStartsAt <= 1");
+					fail(
+						source,
+						"<kept> pruneStopsAt and pruneStartsAt must be fractions of the limit with 0 < pruneStopsAt < pruneStartsAt <= 1"
+					);
 					valid = false;
 				}
 				if (parsed.recentDays <= 0.0F) {

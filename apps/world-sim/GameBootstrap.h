@@ -31,8 +31,8 @@ namespace world_sim {
 
 	/// The one way the ground tiles are baked, once the asset library has loaded: it blocks on the library's
 	/// validation errors and the recipes' problems (prefixed [recipes]), then runs the bank's next step, a variant
-	/// a step, so the scene keeps drawing between them. The splash steps it a frame at a time; the loading scene finishes it when a --scene jump skipped
-	/// the splash; a dev switch straight to the game scene runs it to the end.
+	/// a step, so the scene keeps drawing between them. The splash steps it a frame at a time; the loading scene finishes it when a --scene
+	/// jump skipped the splash; a dev switch straight to the game scene runs it to the end.
 	GroundBakeStep stepGroundBake();
 
 	/// The colonist rules (the condition vocabulary and the thought types under assets/config) load once, in

@@ -268,11 +268,11 @@ namespace assets {
 				}
 				ConfigReader reader(source);
 				const auto	 hourOf = [&](const char* attribute) {
-					const float hour = reader.attributeNumber(node, "Night", attribute);
-					if (hour < 0.0F || hour >= 24.0F) {
-						reader.refuseAttribute("<Night>", node, attribute, "an hour from 0 up to 24");
-					}
-					return hour;
+					  const float hour = reader.attributeNumber(node, "Night", attribute);
+					  if (hour < 0.0F || hour >= 24.0F) {
+						  reader.refuseAttribute("<Night>", node, attribute, "an hour from 0 up to 24");
+					  }
+					  return hour;
 				};
 				const float				 start = hourOf("start");
 				const float				 end = hourOf("end");

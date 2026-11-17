@@ -31,8 +31,8 @@ namespace assets {
 	bool PriorityConfig::loadFromFile(const std::filesystem::path& configRoot, const std::filesystem::path& file) {
 		clear();
 
-		const std::string	source = file.generic_string();
-		pugi::xml_document	document;
+		const std::string	 source = file.generic_string();
+		pugi::xml_document	 document;
 		const pugi::xml_node root = readRootElement(document, configRoot / file, "PriorityTuning", source, problemList);
 		if (!root) {
 			return false;
@@ -139,12 +139,15 @@ namespace assets {
 		distanceFactorConfig.maxDistance = reader.childNumber(distanceNode, "DistanceFactor", "maxDistance");
 		distanceFactorConfig.maxFactor = reader.childNumber(distanceNode, "DistanceFactor", "maxFactor");
 
-		inProgressConfig.bonus = static_cast<int16_t>(reader.childInteger(node.child("InProgress"), "InProgress", "bonus", kInt16Min, kInt16Max));
+		inProgressConfig.bonus =
+			static_cast<int16_t>(reader.childInteger(node.child("InProgress"), "InProgress", "bonus", kInt16Min, kInt16Max));
 
-		storagePriorityConfig.weight = static_cast<int16_t>(reader.childInteger(node.child("StoragePriority"), "StoragePriority", "weight", kInt16Min, kInt16Max));
+		storagePriorityConfig.weight =
+			static_cast<int16_t>(reader.childInteger(node.child("StoragePriority"), "StoragePriority", "weight", kInt16Min, kInt16Max));
 
 		const pugi::xml_node ageNode = node.child("TaskAge");
-		taskAgeConfig.bonusPerMinute = static_cast<int16_t>(reader.childInteger(ageNode, "TaskAge", "bonusPerMinute", kInt16Min, kInt16Max));
+		taskAgeConfig.bonusPerMinute =
+			static_cast<int16_t>(reader.childInteger(ageNode, "TaskAge", "bonusPerMinute", kInt16Min, kInt16Max));
 		taskAgeConfig.maxBonus = static_cast<int16_t>(reader.childInteger(ageNode, "TaskAge", "maxBonus", kInt16Min, kInt16Max));
 	}
 

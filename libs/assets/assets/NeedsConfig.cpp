@@ -18,7 +18,8 @@ namespace assets {
 	namespace {
 
 		/// The <Need> elements of one file; nothing when the file has any error, each reported in `errors`.
-		std::vector<NeedThresholdsDef> needsInFile(const std::filesystem::path& file, const std::string& source, std::vector<std::string>& errors) {
+		std::vector<NeedThresholdsDef>
+		needsInFile(const std::filesystem::path& file, const std::string& source, std::vector<std::string>& errors) {
 			const std::size_t errorsBefore = errors.size();
 			const auto		  fail = [&](const std::string& message) {
 				   errors.push_back(source + ": " + message);

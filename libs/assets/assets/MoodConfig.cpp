@@ -38,13 +38,17 @@ namespace assets {
 		};
 
 		for (const pugi::xml_node needNode : root.child("NeedWeights").children("Need")) {
-			weights.push_back({.need = needNode.attribute("name").as_string(), .weight = reader.attributeNumber(needNode, "Need", "weight")});
+			weights.push_back(
+				{.need = needNode.attribute("name").as_string(), .weight = reader.attributeNumber(needNode, "Need", "weight")}
+			);
 		}
 
 		for (const pugi::xml_node bandNode : root.child("Bands").children("Band")) {
 			bandList.push_back({.name = bandNode.attribute("name").as_string(), .from = reader.attributeNumber(bandNode, "Band", "from")});
 		}
-		std::stable_sort(bandList.begin(), bandList.end(), [](const MoodBand& left, const MoodBand& right) { return left.from > right.from; });
+		std::stable_sort(bandList.begin(), bandList.end(), [](const MoodBand& left, const MoodBand& right) {
+			return left.from > right.from;
+		});
 
 		std::vector<std::string> problems = reader.takeProblems();
 		if (!problems.empty()) {

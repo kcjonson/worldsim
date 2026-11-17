@@ -59,7 +59,8 @@ namespace assets {
 		}
 
 		/// The recipe a <RecipeDef> file holds; nothing when it has any mistake, each added to `errors`.
-		std::optional<RecipeDef> recipeFrom(const std::filesystem::path& file, const std::string& source, std::vector<std::string>& errors) {
+		std::optional<RecipeDef>
+		recipeFrom(const std::filesystem::path& file, const std::string& source, std::vector<std::string>& errors) {
 			pugi::xml_document	 document;
 			const pugi::xml_node node = readRootElement(document, file, "RecipeDef", source, errors);
 			if (!node) {
@@ -120,11 +121,11 @@ namespace assets {
 			const AssetRegistry& definitions = AssetRegistry::Get();
 			const std::string	 what = source + ": <RecipeDef defName=\"" + recipe.defName + "\"> ";
 			const auto			 resolve = [&](const char* role, const std::string& defName) {
-				const uint32_t id = definitions.getDefNameId(defName);
-				if (id == 0) {
-					errors.push_back(what + role + " \"" + defName + "\" names no definition");
-				}
-				return id;
+				  const uint32_t id = definitions.getDefNameId(defName);
+				  if (id == 0) {
+					  errors.push_back(what + role + " \"" + defName + "\" names no definition");
+				  }
+				  return id;
 			};
 			recipe.inputDefNameIds.clear();
 			for (RecipeInput& input : recipe.inputs) {

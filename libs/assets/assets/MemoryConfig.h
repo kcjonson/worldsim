@@ -30,8 +30,8 @@ namespace assets {
 		[[nodiscard]] float recentSightingGameMinutes() const { return recentSightingMinutes; }
 
 	  private:
-		bool  isLoaded = false;
-		float recentSightingMinutes = 0.0F;
+		bool					 isLoaded = false;
+		float					 recentSightingMinutes = 0.0F;
 		std::vector<std::string> problemList;
 	};
 

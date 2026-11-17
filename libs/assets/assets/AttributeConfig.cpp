@@ -105,7 +105,7 @@ namespace assets {
 				}
 				declaredHere.push_back(name);
 
-				ConfigReader reader(source);
+				ConfigReader   reader(source);
 				AttributeRange range;
 				range.min = reader.attributeNumber(node, "Attribute", "min");
 				range.max = reader.attributeNumber(node, "Attribute", "max");

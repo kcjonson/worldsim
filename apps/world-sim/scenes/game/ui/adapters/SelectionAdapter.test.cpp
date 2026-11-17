@@ -24,7 +24,9 @@ namespace world_sim {
 
 	class SelectionAdapterTest : public ::testing::Test {
 	  protected:
-		void SetUp() override { ASSERT_TRUE(assets::MoodConfig::Get().loadFromFile(shippedMoodConfig().parent_path(), shippedMoodConfig().filename())); }
+		void SetUp() override {
+			ASSERT_TRUE(assets::MoodConfig::Get().loadFromFile(shippedMoodConfig().parent_path(), shippedMoodConfig().filename()));
+		}
 		void TearDown() override { assets::MoodConfig::Get().clear(); }
 
 		ecs::World world;

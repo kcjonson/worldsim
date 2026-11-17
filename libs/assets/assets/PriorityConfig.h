@@ -42,7 +42,7 @@ namespace assets {
 	/// Task age bonus config
 	struct TaskAgeBonusConfig {
 		int16_t bonusPerMinute = 0; // Bonus per minute unclaimed
-		int16_t maxBonus = 0;	   // Cap for age bonus
+		int16_t maxBonus = 0;		// Cap for age bonus
 	};
 
 	/// Storage-priority weight config (AI arbitration, within tier 6 only).

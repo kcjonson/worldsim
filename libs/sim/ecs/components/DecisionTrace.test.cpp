@@ -17,7 +17,7 @@ namespace ecs::test {
 	class DecisionTraceTextTest : public ::testing::Test {
 	  protected:
 		void SetUp() override {
-			auto& registry = assets::AssetRegistry::Get();
+			auto&					registry = assets::AssetRegistry::Get();
 			assets::AssetDefinition wood;
 			wood.defName = "Wood";
 			wood.label = "Wood log";

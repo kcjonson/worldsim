@@ -51,7 +51,7 @@ namespace assets {
 		[[nodiscard]] const NeedPenaltyCurve&			 needPenaltyCurve() const { return penaltyCurve; }
 		[[nodiscard]] const std::vector<NeedMoodWeight>& needWeights() const { return weights; }
 		/// Highest `from` first.
-		[[nodiscard]] const std::vector<MoodBand>&		 bands() const { return bandList; }
+		[[nodiscard]] const std::vector<MoodBand>& bands() const { return bandList; }
 
 		/// What the file got wrong: each names the file, the element and the attribute.
 		[[nodiscard]] const std::vector<std::string>& problems() const { return problemList; }

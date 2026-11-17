@@ -27,7 +27,9 @@ namespace assets {
 			found.error = folder.generic_string() + ": " + error.message();
 			return found;
 		}
-		std::ranges::sort(found.files, {}, [&base](const std::filesystem::path& file) { return std::pair(file.parent_path() != base, file); });
+		std::ranges::sort(found.files, {}, [&base](const std::filesystem::path& file) {
+			return std::pair(file.parent_path() != base, file);
+		});
 		return found;
 	}
 

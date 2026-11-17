@@ -66,7 +66,8 @@ namespace assets {
 				onlyAttributes(stepNode, {"order", "action", "target", "optional", "requiresPreviousStep"}, stepWhat, source, errors);
 				ChainStep		  step;
 				const std::size_t problemsBefore = reader.problemCount();
-				step.order = static_cast<uint8_t>(reader.labeledInteger(stepWhat, stepNode, "order", 0, std::numeric_limits<uint8_t>::max()));
+				step.order =
+					static_cast<uint8_t>(reader.labeledInteger(stepWhat, stepNode, "order", 0, std::numeric_limits<uint8_t>::max()));
 				if (reader.problemCount() == problemsBefore && !ordersSeen.insert(step.order).second) {
 					reader.refuseAttribute(stepWhat, stepNode, "order", "different from every other step's order");
 				}

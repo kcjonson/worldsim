@@ -81,8 +81,12 @@ namespace assets {
 		}
 
 		int attributeInteger(
-			const pugi::xml_node& element, const char* elementName, const char* attribute, int minimum = std::numeric_limits<int>::min(),
-			int maximum = std::numeric_limits<int>::max()) {
+			const pugi::xml_node& element,
+			const char*			  elementName,
+			const char*			  attribute,
+			int					  minimum = std::numeric_limits<int>::min(),
+			int					  maximum = std::numeric_limits<int>::max()
+		) {
 			return labeledInteger(describe(element, elementName), element, attribute, minimum, maximum);
 		}
 
@@ -92,8 +96,12 @@ namespace assets {
 		}
 
 		int labeledInteger(
-			const std::string& label, const pugi::xml_node& element, const char* attribute, int minimum = std::numeric_limits<int>::min(),
-			int maximum = std::numeric_limits<int>::max()) {
+			const std::string&	  label,
+			const pugi::xml_node& element,
+			const char*			  attribute,
+			int					  minimum = std::numeric_limits<int>::min(),
+			int					  maximum = std::numeric_limits<int>::max()
+		) {
 			return integer(label, attribute, element.attribute(attribute), minimum, maximum);
 		}
 
@@ -102,8 +110,12 @@ namespace assets {
 		}
 
 		int childInteger(
-			const pugi::xml_node& parent, const char* parentName, const char* child, int minimum = std::numeric_limits<int>::min(),
-			int maximum = std::numeric_limits<int>::max()) {
+			const pugi::xml_node& parent,
+			const char*			  parentName,
+			const char*			  child,
+			int					  minimum = std::numeric_limits<int>::min(),
+			int					  maximum = std::numeric_limits<int>::max()
+		) {
 			return integer(describe(parent, parentName), child, parent.child(child), minimum, maximum);
 		}
 
@@ -153,7 +165,8 @@ namespace assets {
 		static bool present(const pugi::xml_attribute& attribute) { return !attribute.empty(); }
 		static bool present(const pugi::xml_node& element) { return !element.empty(); }
 
-		template <typename Source> float number(const std::string& element, const char* name, const Source& source) {
+		template <typename Source>
+		float number(const std::string& element, const char* name, const Source& source) {
 			const std::optional<float> parsed = present(source) ? parseConfigNumber(textOf(source)) : std::nullopt;
 			if (parsed.has_value()) {
 				return *parsed;
@@ -162,17 +175,24 @@ namespace assets {
 			return std::numeric_limits<float>::quiet_NaN();
 		}
 
-		template <typename Source> int integer(const std::string& element, const char* name, const Source& source, int minimum, int maximum) {
+		template <typename Source>
+		int integer(const std::string& element, const char* name, const Source& source, int minimum, int maximum) {
 			const std::optional<int> parsed = present(source) ? parseConfigInteger(textOf(source)) : std::nullopt;
 			if (parsed.has_value() && *parsed >= minimum && *parsed <= maximum) {
 				return *parsed;
 			}
 			const bool bounded = minimum != std::numeric_limits<int>::min() || maximum != std::numeric_limits<int>::max();
-			report(element, name, source, bounded ? "a whole number from " + std::to_string(minimum) + " to " + std::to_string(maximum) : "a whole number");
+			report(
+				element,
+				name,
+				source,
+				bounded ? "a whole number from " + std::to_string(minimum) + " to " + std::to_string(maximum) : "a whole number"
+			);
 			return 0;
 		}
 
-		template <typename Source> std::optional<bool> boolean(const std::string& element, const char* name, const Source& source) {
+		template <typename Source>
+		std::optional<bool> boolean(const std::string& element, const char* name, const Source& source) {
 			if (!present(source)) {
 				return std::nullopt;
 			}
@@ -184,7 +204,8 @@ namespace assets {
 			return std::nullopt;
 		}
 
-		template <typename Source> void report(const std::string& element, const char* name, const Source& source, const std::string& expected) {
+		template <typename Source>
+		void report(const std::string& element, const char* name, const Source& source, const std::string& expected) {
 			std::string problem = file + ": " + element + " " + name;
 			problem += present(source) ? " must be " + expected + ", got \"" + textOf(source) + "\"" : " is missing";
 			problemList.push_back(std::move(problem));

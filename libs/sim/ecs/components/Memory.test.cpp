@@ -243,15 +243,16 @@ namespace {
 	}
 
 	std::filesystem::path shippedMemoryConfig() {
-		return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path().parent_path() / "assets" /
-			   "config" / "colonists" / "memory.xml";
+		return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path().parent_path() / "assets" / "config" /
+			   "colonists" / "memory.xml";
 	}
 
 	/// The recency window a memory.xml with `gameMinutes` loads, validated.
 	double configuredWindow(const std::string& gameMinutes) {
 		const std::filesystem::path path =
 			std::filesystem::temp_directory_path() /
-			("worldsim-memory-" + std::string(::testing::UnitTest::GetInstance()->current_test_info()->name()) + "-" + gameMinutes + ".xml");
+			("worldsim-memory-" + std::string(::testing::UnitTest::GetInstance()->current_test_info()->name()) + "-" + gameMinutes +
+			 ".xml");
 		{
 			std::ofstream file(path);
 			file << "<Memory><RecentSighting gameMinutes=\"" << gameMinutes << "\"/></Memory>";
@@ -345,7 +346,9 @@ namespace {
 	constexpr auto	   kSourceCapability = assets::CapabilityType::Harvestable;
 	constexpr uint16_t kSourceMask = 1U << static_cast<unsigned>(kSourceCapability);
 
-	const auto anySource = [](uint64_t, const ecs::KnownWorldEntity&) { return true; };
+	const auto anySource = [](uint64_t, const ecs::KnownWorldEntity&) {
+		return true;
+	};
 
 } // namespace
 
@@ -355,7 +358,9 @@ TEST(MemoryQueries, NearestSourceTieBreaksOnKeyNotInsertionOrder) {
 	const glm::vec2 east{3.0F, 0.0F};
 	const glm::vec2 north{0.0F, 3.0F};
 	const glm::vec2 expected = ecs::hashWorldEntity(east, kDefId) < ecs::hashWorldEntity(north, kDefId) ? east : north;
-	const auto		anywhere = [](ecs::SourceCandidate&) { return true; };
+	const auto		anywhere = [](ecs::SourceCandidate&) {
+		 return true;
+	};
 	std::vector<ecs::SourceCandidate> scratch;
 	std::vector<ecs::SourceCandidate> chosen;
 
@@ -379,7 +384,7 @@ TEST(MemoryQueries, NearestSourceTieBreaksOnKeyNotInsertionOrder) {
 // filter, nearest first. Only the candidates down to the last one kept are asked about, and with fewer
 // than that many passing, all of them are, in order.
 TEST(MemoryQueries, NearestAdmittedKeepsTheNearestFewThatPass) {
-	ecs::Memory memory;
+	ecs::Memory		 memory;
 	constexpr size_t kSources = 20;
 	for (size_t i = 0; i < kSources; ++i) {
 		ASSERT_TRUE(memory.rememberWorldEntity(posFor(kSources - i), kDefId, kSourceMask));
@@ -421,7 +426,9 @@ TEST(MemoryQueries, HeadedForSourceIsKeptWhileItPasses) {
 	std::vector<ecs::SourceCandidate> scratch;
 	std::vector<ecs::SourceCandidate> chosen;
 	bool							  farthestPasses = true;
-	const auto admit = [&](ecs::SourceCandidate& candidate) { return candidate.key != farthest || farthestPasses; };
+	const auto						  admit = [&](ecs::SourceCandidate& candidate) {
+		   return candidate.key != farthest || farthestPasses;
+	};
 
 	ecs::collectWithCapability(memory, kSourceCapability, {0.0F, 0.0F}, anySource, scratch);
 	ecs::nearestAdmitted(scratch, chosen, admit, ecs::kNearestOfCount, farthest);
@@ -441,8 +448,8 @@ TEST(MemoryQueries, HeadedForSourceIsKeptWhileItPasses) {
 TEST(MemoryQueries, SourceReachMemoHoldsVerdictsUntilTheyMayNoLongerHold) {
 	ecs::SourceReachMemo			memo;
 	constexpr uint64_t				kSource = 77;
-	constexpr uint64_t				kOther	= 78;
-	constexpr uint64_t				kAge	= ecs::SourceReachMemo::kVerdictMinTicks;
+	constexpr uint64_t				kOther = 78;
+	constexpr uint64_t				kAge = ecs::SourceReachMemo::kVerdictMinTicks;
 	ecs::SourceReachMemo::Key		now{.connectivityEpoch = 3, .beliefVersion = 5};
 	const ecs::SourceReachMemo::Key beliefMoved{.connectivityEpoch = 100, .beliefVersion = 6};
 
@@ -485,4 +492,3 @@ TEST(MemoryQueries, SourceReachMemoStaysBounded) {
 		ASSERT_LE(memo.verdictCount(), ecs::SourceReachMemo::kMaxVerdicts);
 	}
 }
-

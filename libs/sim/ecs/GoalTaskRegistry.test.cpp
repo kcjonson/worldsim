@@ -23,8 +23,7 @@ namespace ecs::test {
 		void SetUp() override { GoalTaskRegistry::Get().clear(); }
 		void TearDown() override { GoalTaskRegistry::Get().clear(); }
 
-		static uint64_t make(
-			TaskType type, GoalOwner owner, EntityID destination, std::optional<uint64_t> parent = std::nullopt) {
+		static uint64_t make(TaskType type, GoalOwner owner, EntityID destination, std::optional<uint64_t> parent = std::nullopt) {
 			GoalTask goal;
 			goal.type = type;
 			goal.owner = owner;
@@ -80,10 +79,11 @@ namespace ecs::test {
 			}
 
 			// Owners with no goals left answer empty rather than stale.
-			for (GoalOwner owner : {GoalOwner::StorageGoalSystem,
-									GoalOwner::CraftingGoalSystem,
-									GoalOwner::BuildGoalSystem,
-									GoalOwner::ConstructionGoalSystem}) {
+			for (GoalOwner owner :
+				 {GoalOwner::StorageGoalSystem,
+				  GoalOwner::CraftingGoalSystem,
+				  GoalOwner::BuildGoalSystem,
+				  GoalOwner::ConstructionGoalSystem}) {
 				if (!byOwner.contains(owner)) {
 					EXPECT_TRUE(registry.getGoalsByOwner(owner).empty());
 					EXPECT_EQ(registry.goalCount(owner), 0U);
@@ -253,8 +253,20 @@ namespace ecs::test {
 		inventory.addItem("Stone", 30);
 		world.addComponent<Inventory>(box, std::move(inventory));
 		StorageConfiguration config;
-		config.addRule(StorageRule{.defName = "*", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Critical, .minAmount = 50});
-		config.addRule(StorageRule{.defName = "Stone", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Low, .minAmount = 5, .maxAmount = 40});
+		config.addRule(
+			StorageRule{
+				.defName = "*", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Critical, .minAmount = 50
+			}
+		);
+		config.addRule(
+			StorageRule{
+				.defName = "Stone",
+				.category = assets::ItemCategory::RawMaterial,
+				.priority = StoragePriority::Low,
+				.minAmount = 5,
+				.maxAmount = 40
+			}
+		);
 		world.addComponent<StorageConfiguration>(box, config);
 		const uint64_t root = make(TaskType::Haul, GoalOwner::StorageGoalSystem, box);
 
@@ -306,8 +318,8 @@ namespace ecs::test {
 	}
 
 	TEST_F(RemainingNeedTest, ConstructionNeedIsTheManifestWhileTheUmbrellaAcceptsTheItem) {
-		auto&		   registry = GoalTaskRegistry::Get();
-		const EntityID site = world.createEntity();
+		auto&			   registry = GoalTaskRegistry::Get();
+		const EntityID	   site = world.createEntity();
 		StructureBlueprint blueprint;
 		blueprint.required = {{"Stone", 6}};
 		blueprint.recordDelivery("Stone", 2);

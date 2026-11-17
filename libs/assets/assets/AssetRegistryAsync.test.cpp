@@ -50,7 +50,8 @@ TEST(AssetRegistryAsyncTest, AsyncBootstrapLoadsDefinitionsThenRecipes) {
 
 	EXPECT_TRUE(recipes.problems().empty());
 	const std::map<std::string, float> workAmounts = {
-		{"Recipe_CraftingSpot", 0.0F}, {"Recipe_BasicBox", 90.0F}, {"Recipe_BasicShelf", 120.0F}, {"Recipe_AxePrimitive", 500.0F}};
+		{"Recipe_CraftingSpot", 0.0F}, {"Recipe_BasicBox", 90.0F}, {"Recipe_BasicShelf", 120.0F}, {"Recipe_AxePrimitive", 500.0F}
+	};
 	ASSERT_EQ(recipes.size(), workAmounts.size());
 	for (const auto& [name, workAmount] : workAmounts) {
 		const RecipeDef* recipe = recipes.getRecipe(name);
@@ -183,7 +184,9 @@ TEST(AssetBootstrapTest, RecipeMistakesNameTheFileAndTheRecipeAndLoadNoRecipes) 
 		EXPECT_EQ(recipes.size(), 0U);
 		return recipes.problems();
 	};
-	const auto problemsFor = [&problemsWith](const std::string& body) { return problemsWith("<output thing=\"Test_Axe\"/>", body); };
+	const auto problemsFor = [&problemsWith](const std::string& body) {
+		return problemsWith("<output thing=\"Test_Axe\"/>", body);
+	};
 	const auto onlyProblem = [](const std::string& problem) {
 		return std::vector<std::string>{"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> " + problem};
 	};
@@ -195,7 +198,9 @@ TEST(AssetBootstrapTest, RecipeMistakesNameTheFileAndTheRecipeAndLoadNoRecipes) 
 	);
 	EXPECT_EQ(
 		problemsFor("<workAmount>-5</workAmount>"),
-		std::vector<std::string>{"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> workAmount must be a number of work ticks, 0 or more, got \"-5\""}
+		std::vector<std::string>{
+			"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> workAmount must be a number of work ticks, 0 or more, got \"-5\""
+		}
 	);
 	EXPECT_EQ(
 		problemsFor("<workAmount> 90 </workAmount><time>3</time>"),
@@ -203,10 +208,16 @@ TEST(AssetBootstrapTest, RecipeMistakesNameTheFileAndTheRecipeAndLoadNoRecipes) 
 	) << "element text is trimmed, so only the unknown element is a mistake";
 
 	const std::string work = "<workAmount>90</workAmount>";
-	EXPECT_EQ(problemsWith("<output thing=\"Test_Axe\" count=\"eight\"/>", work), onlyProblem("<output> 1 count must be a whole number, got \"eight\""));
-	EXPECT_EQ(problemsWith("<output thing=\"Test_Axe\" count=\"8x\"/>", work), onlyProblem("<output> 1 count must be a whole number, got \"8x\""));
 	EXPECT_EQ(
-		problemsWith("<output thing=\"Test_Axe\" count=\"0\"/>", work), onlyProblem("<output> 1 count must be a whole number, 1 or more, got \"0\"")
+		problemsWith("<output thing=\"Test_Axe\" count=\"eight\"/>", work),
+		onlyProblem("<output> 1 count must be a whole number, got \"eight\"")
+	);
+	EXPECT_EQ(
+		problemsWith("<output thing=\"Test_Axe\" count=\"8x\"/>", work), onlyProblem("<output> 1 count must be a whole number, got \"8x\"")
+	);
+	EXPECT_EQ(
+		problemsWith("<output thing=\"Test_Axe\" count=\"0\"/>", work),
+		onlyProblem("<output> 1 count must be a whole number, 1 or more, got \"0\"")
 	);
 	EXPECT_EQ(problemsFor(work + "<innate>ture</innate>"), onlyProblem("innate must be true or false, got \"ture\""));
 	EXPECT_EQ(problemsWith("<output thing=\"Test_Wod\"/>", work), onlyProblem("output thing \"Test_Wod\" names no definition"));
@@ -220,7 +231,11 @@ TEST(AssetBootstrapTest, RecipeMistakesNameTheFileAndTheRecipeAndLoadNoRecipes) 
 
 	const TempAssetFolder folder;
 	writeAxeRecipe(folder);
-	folder.write("Spot.xml", "<RecipeDef><defName>Recipe_Spot</defName><station>none</station><outputs><output thing=\"Test_Bench\"/></outputs>" + work + "<innate>true</innate></RecipeDef>");
+	folder.write(
+		"Spot.xml",
+		"<RecipeDef><defName>Recipe_Spot</defName><station>none</station><outputs><output thing=\"Test_Bench\"/></outputs>" + work +
+			"<innate>true</innate></RecipeDef>"
+	);
 	ASSERT_TRUE(recipes.loadRecipesFromFolder(folder.root)) << recipes.problems().front();
 	const RecipeDef* spot = recipes.getRecipe("Recipe_Spot");
 	ASSERT_NE(spot, nullptr);
@@ -258,7 +273,7 @@ TEST(AssetRegistryCapabilityTest, MaskCoversStorageAndCraftableHighBits) {
 	def.defName = "Test_StorageCraftable";
 	def.label = "Test Storage Craftable";
 	def.category = ItemCategory::Furniture;
-	def.capabilities.storage = StorageCapability{};   // bit 8 -- overflows uint8_t
+	def.capabilities.storage = StorageCapability{};		// bit 8 -- overflows uint8_t
 	def.capabilities.craftable = CraftableCapability{}; // bit 7 -- also fixed by the count bump
 	reg.registerTestDefinition(std::move(def));
 
