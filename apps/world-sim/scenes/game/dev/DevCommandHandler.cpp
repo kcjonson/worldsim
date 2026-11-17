@@ -1,5 +1,6 @@
 #include "DevCommandHandler.h"
 
+#include "scenes/game/dev/ConstructionStateJson.h"
 #include "scenes/game/dev/DevJson.h"
 #include "scenes/game/dev/DrawingStateJson.h"
 #include "scenes/game/dev/GiveShortfall.h"
@@ -68,7 +69,6 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <iomanip>
 #include <limits>
@@ -1230,6 +1230,16 @@ namespace world_sim {
 			return "Clearing";
 		};
 
+		// What an entity's blueprint adds to a foundation's or opening's entry: its phase and material progress.
+		const BlueprintFragment blueprintFragment = [&](ecs::EntityID entity) {
+			std::ostringstream fragment;
+			if (const auto* bp = m_ctx.world->getComponent<ecs::StructureBlueprint>(entity)) {
+				fragment << ",\"phase\":\"" << phaseName(bp->phase) << "\"";
+				emitMaterialProgress(fragment, *bp);
+			}
+			return fragment.str();
+		};
+
 		const auto& cworld = m_ctx.drawing->world();
 		out << "{\"foundations\":[";
 		bool first = true;
@@ -1240,20 +1250,11 @@ namespace world_sim {
 				<< "\",\"state\":\"" << (foundation.state == construction::FoundationState::Built ? "Built" : "Blueprint")
 				<< "\",\"entity\":" << static_cast<unsigned long long>(foundation.entity) << ",\"area\":" << cworld.areaSquareMeters(foundation.id);
 
-			// The ring's corners, world meters, in the ring's order.
-			out << ",\"corners\":[";
-			for (std::size_t corner = 0; corner < foundation.ring.size(); ++corner) {
-				out << (corner == 0 ? "" : ",") << "{\"x\":" << jsonNumber(static_cast<double>(foundation.ring[corner].x) / static_cast<double>(geometry::kMillimetersPerMeter))
-					<< ",\"y\":" << jsonNumber(static_cast<double>(foundation.ring[corner].y) / static_cast<double>(geometry::kMillimetersPerMeter)) << "}";
-			}
-			out << "]";
+			out << ",\"corners\":" << foundationCornersJson(foundation);
 
 			// Include material progress from the ECS mirror entity's StructureBlueprint
 			if (foundation.entity != ecs::kInvalidEntity) {
-				if (const auto* bp = m_ctx.world->getComponent<ecs::StructureBlueprint>(foundation.entity)) {
-					out << ",\"phase\":\"" << phaseName(bp->phase) << "\"";
-					emitMaterialProgress(out, *bp);
-				}
+				out << blueprintFragment(foundation.entity);
 			}
 
 			out << "}";
@@ -1288,38 +1289,8 @@ namespace world_sim {
 			out << "}";
 		}
 
-		// Openings: the wall each is on, where along it (t, 0 at the wall's first vertex, and that
-		// point in world meters), and its build state and, with an entity, its phase and progress.
-		out << "],\"openings\":[";
-		bool firstOpening = true;
-		for (const auto& opening : cworld.openings()) {
-			out << (firstOpening ? "" : ",");
-			firstOpening = false;
-			out << "{\"id\":" << static_cast<unsigned long long>(opening.id) << ",\"type\":\"" << jsonEscape(opening.type) << "\",\"material\":\""
-				<< jsonEscape(opening.material) << "\",\"wall\":" << static_cast<unsigned long long>(opening.segment)
-				<< ",\"t\":" << jsonNumber(static_cast<double>(opening.t)) << ",\"state\":\""
-				<< (opening.state == construction::FoundationState::Built ? "Built" : "Blueprint") << "\",\"entity\":"
-				<< static_cast<unsigned long long>(opening.entity);
-
-			const auto* segment = cworld.getSegment(opening.segment);
-			const auto* v0 = segment != nullptr ? cworld.getVertex(segment->v0) : nullptr;
-			const auto* v1 = segment != nullptr ? cworld.getVertex(segment->v1) : nullptr;
-			if (v0 != nullptr && v1 != nullptr) {
-				const double millimetersPerMeter = static_cast<double>(geometry::kMillimetersPerMeter);
-				const double along = static_cast<double>(opening.t);
-				out << ",\"x\":" << jsonNumber((static_cast<double>(v0->pos.x) + (static_cast<double>(v1->pos.x) - static_cast<double>(v0->pos.x)) * along) / millimetersPerMeter)
-					<< ",\"y\":" << jsonNumber((static_cast<double>(v0->pos.y) + (static_cast<double>(v1->pos.y) - static_cast<double>(v0->pos.y)) * along) / millimetersPerMeter);
-			}
-
-			if (opening.entity != ecs::kInvalidEntity) {
-				if (const auto* bp = m_ctx.world->getComponent<ecs::StructureBlueprint>(opening.entity)) {
-					out << ",\"phase\":\"" << phaseName(bp->phase) << "\"";
-					emitMaterialProgress(out, *bp);
-				}
-			}
-			out << "}";
-		}
-		out << "]}";
+		// Openings: the wall each is on, where along it, that point in world meters, its build state and, with an entity, its phase and progress.
+		out << "],\"openings\":" << openingsJson(cworld, blueprintFragment) << "}";
 	}
 
 	void DevCommandHandler::serializeStations(std::ostringstream& out) {

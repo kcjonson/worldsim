@@ -1,14 +1,25 @@
 #include "scenes/game/dev/DevJson.h"
 
+#include <cmath>
 #include <cstdio>
 
 namespace world_sim {
 
+	namespace {
+
+		constexpr unsigned char kFirstPrintableCharacter = 0x20;
+		constexpr int			kEscapeHexDigits = 4;
+		constexpr std::size_t	kEscapeBufferSize = 7; // backslash, u, four hex digits, terminator
+		constexpr int			kNumberDecimals = 3;
+		constexpr std::size_t	kNumberBufferSize = 32;
+
+	} // namespace
+
 	std::string jsonEscape(const std::string& text) {
 		std::string out;
 		out.reserve(text.size() + 8);
-		for (char c : text) {
-			switch (c) {
+		for (const char character : text) {
+			switch (character) {
 				case '"': out += "\\\""; break;
 				case '\\': out += "\\\\"; break;
 				case '\b': out += "\\b"; break;
@@ -17,13 +28,13 @@ namespace world_sim {
 				case '\r': out += "\\r"; break;
 				case '\t': out += "\\t"; break;
 				default:
-					if (static_cast<unsigned char>(c) < 0x20) {
+					if (static_cast<unsigned char>(character) < kFirstPrintableCharacter) {
 						// Other control chars: emit a \u00XX escape rather than dropping them.
-						char buf[7];
-						std::snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
-						out += buf;
+						char escape[kEscapeBufferSize];
+						std::snprintf(escape, sizeof(escape), "\\u%0*x", kEscapeHexDigits, static_cast<unsigned char>(character));
+						out += escape;
 					} else {
-						out += c;
+						out += character;
 					}
 			}
 		}
@@ -31,9 +42,12 @@ namespace world_sim {
 	}
 
 	std::string jsonNumber(double value) {
-		char buf[32];
-		std::snprintf(buf, sizeof(buf), "%.3f", value);
-		return buf;
+		if (!std::isfinite(value)) {
+			return "null";
+		}
+		char text[kNumberBufferSize];
+		std::snprintf(text, sizeof(text), "%.*f", kNumberDecimals, value);
+		return text;
 	}
 
 } // namespace world_sim
