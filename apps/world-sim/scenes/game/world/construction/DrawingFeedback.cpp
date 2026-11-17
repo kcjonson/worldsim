@@ -64,10 +64,19 @@ namespace world_sim {
 		// 100 m can't change where it sits. The label draws at its own width inside that box.
 		constexpr float kSegmentLabelReserveMeters = 999.0F;
 
-		// Placement choices compare unit dot products, whose range is [-1, 1]; a difference
-		// within a tenth of that is a tie, broken in a fixed order, so float noise in a
-		// direction the snap made exact (45 degrees, an axis) can't flip a label's side.
-		constexpr float kSideTieTolerance = 0.2F;
+		// A label beside an anchor centres on it along an axis its side leans on by less than
+		// this (a unit vector's component: under about 11 degrees off the other axis), so a side
+		// the snap made exact (an axis) can't jitter between flush and centred.
+		constexpr float kLabelLeanMinimum = 0.2F;
+
+		// The end quarter's scores are unit dot products in [-1, 1]; one within this of the best
+		// is a tie, broken in a fixed order, so float noise in a direction the snap made exact
+		// (45 degrees) can't flip the quarter.
+		constexpr float kQuarterTieTolerance = 0.2F;
+
+		// The fixed side faces up the screen, unless the line it is beside is within about 11
+		// degrees of vertical (its unit normal's y under this), where it faces left.
+		constexpr float kFacingUpMinimumNormalY = 0.2F;
 
 		// A point has to sit this far off a line to pick a side of it.
 		constexpr float kSideMinimumPx = 0.5F;
@@ -99,6 +108,12 @@ namespace world_sim {
 		constexpr std::size_t kMaxRings = 3;
 		constexpr std::size_t kMaxDots = 2;
 		constexpr std::size_t kMaxLabels = 1 + kMaxSnapGuides;
+		// What the guide labels keep off besides each other: the marker, the close halo, the
+		// snap-target ring, and the keep-clear box.
+		constexpr std::size_t kMaxLabelObstacles = 4;
+
+		// The segment label's end placements: three quarters round the snapped point.
+		constexpr std::size_t kEndPlacementCount = 3;
 
 		static_assert(kMaxSnapGuides == 2, "guide labels rank guides[0] above guides[1]");
 
@@ -107,15 +122,6 @@ namespace world_sim {
 		struct Placement {
 			Foundation::Vec2 topLeft;
 			Foundation::Vec2 judgedTopLeft;
-		};
-
-		// Placements to try in order.
-		struct PlacementList {
-			std::array<Placement, 4> items{};
-			std::size_t				 count = 0;
-
-			void						add(const Placement& placement) { items[count++] = placement; }
-			std::span<const Placement> all() const { return {items.data(), count}; }
 		};
 
 		// A ring's center and radius, screen pixels.
@@ -177,14 +183,14 @@ namespace world_sim {
 		// Top-left of a label beside `anchor` on `side`: its near edge at the anchor along an
 		// axis `side` leans on, centered on the anchor along one it hardly leans on.
 		Foundation::Vec2 labelBeside(Foundation::Vec2 anchor, Foundation::Vec2 side, Foundation::Vec2 size) {
-			const auto place = [](float at, float lean, float extent) {
-				if (lean > kSideTieTolerance) {
-					return at;
+			const auto place = [](float anchorCoordinate, float lean, float extent) {
+				if (lean > kLabelLeanMinimum) {
+					return anchorCoordinate;
 				}
-				if (lean < -kSideTieTolerance) {
-					return at - extent;
+				if (lean < -kLabelLeanMinimum) {
+					return anchorCoordinate - extent;
 				}
-				return at - extent * 0.5F;
+				return anchorCoordinate - extent * 0.5F;
 			};
 			return {place(anchor.x, side.x, size.x), place(anchor.y, side.y, size.y)};
 		}
@@ -209,7 +215,7 @@ namespace world_sim {
 		// normal to is near vertical: the fixed side when nothing else picks one.
 		Foundation::Vec2 facingUpOrLeft(Foundation::Vec2 normal) {
 			const Foundation::Vec2 reversed{-normal.x, -normal.y};
-			if (std::abs(normal.y) > kSideTieTolerance) {
+			if (std::abs(normal.y) > kFacingUpMinimumNormalY) {
 				return normal.y < 0.0F ? normal : reversed;
 			}
 			return normal.x <= 0.0F ? normal : reversed;
@@ -221,9 +227,9 @@ namespace world_sim {
 		// the span of its parts in each.
 		std::optional<std::pair<float, float>>
 		stretchWithinReach(Foundation::Vec2 origin, Foundation::Vec2 unit, Foundation::Vec2 start, Foundation::Vec2 end, float reach) {
-			constexpr float kNone = std::numeric_limits<float>::max();
-			float			low = kNone;
-			float			high = -kNone;
+			constexpr float kUnbounded = std::numeric_limits<float>::max();
+			float			low = kUnbounded;
+			float			high = -kUnbounded;
 			const auto		include = [&](float first, float second) {
 				 low = std::min(low, first);
 				 high = std::max(high, second);
@@ -244,14 +250,14 @@ namespace world_sim {
 				const Foundation::Vec2 axis{segment.x / segmentLength, segment.y / segmentLength};
 				const Foundation::Vec2 normal{-axis.y, axis.x};
 				const Foundation::Vec2 offset{origin.x - start.x, origin.y - start.y};
-				float				   bandLow = -kNone;
-				float				   bandHigh = kNone;
+				float				   bandLow = -kUnbounded;
+				float				   bandHigh = kUnbounded;
 				// Keeps the t where `base + rate * t` lies in [minimum, maximum].
 				const auto clip = [&](float base, float rate, float minimum, float maximum) {
 					if (rate == 0.0F) {
 						if (base < minimum || base > maximum) {
-							bandLow = kNone;
-							bandHigh = -kNone;
+							bandLow = kUnbounded;
+							bandHigh = -kUnbounded;
 						}
 						return;
 					}
@@ -367,7 +373,7 @@ namespace world_sim {
 				result.rings.reserve(kMaxRings);
 				result.dots.reserve(kMaxDots);
 				result.labels.reserve(kMaxLabels);
-				placedLabels.reserve(kMaxLabels + 4);
+				placedLabels.reserve(kMaxLabels + kMaxLabelObstacles);
 
 				chooseGuides();
 				planCloseRing();
@@ -744,11 +750,11 @@ namespace world_sim {
 					addLabel(layout.text, *atMiddle, kSegmentLabelPx, layout.size, kSegmentLabelColor);
 					return;
 				}
-				const PlacementList atEnd = endPlacements(layout);
-				const auto			clear = [&](const FeedbackBox& plate) { return layout.clearOfObstacles(plate); };
+				const std::array<Placement, kEndPlacementCount> atEnd = endPlacements(layout);
+				const auto clear = [&](const FeedbackBox& plate) { return layout.clearOfObstacles(plate); };
 				addLabel(
 					layout.text,
-					firstClear(atEnd.all(), layout.reserve, clear).value_or(firstOnScreen(atEnd.all(), layout.reserve)),
+					firstClear(atEnd, layout.reserve, clear).value_or(firstOnScreen(atEnd, layout.reserve)),
 					kSegmentLabelPx,
 					layout.size,
 					kSegmentLabelColor
@@ -767,7 +773,7 @@ namespace world_sim {
 					return std::nullopt;
 				}
 				const Foundation::Vec2 middle{(layout.last.x + tip.x) * 0.5F, (layout.last.y + tip.y) * 0.5F};
-				const Foundation::Vec2 side = awayFromShape(middle, {-segment.y / segmentLength, segment.x / segmentLength});
+				const Foundation::Vec2 side = awayFromShape({-segment.y / segmentLength, segment.x / segmentLength});
 				const Foundation::Vec2 anchor{middle.x + side.x * kLabelGapPx, middle.y + side.y * kLabelGapPx};
 				if (distanceToBox(tip, plateBox(labelBeside(anchor, side, layout.reserve), layout.reserve)) < kSegmentLabelCursorClearancePx) {
 					return std::nullopt;
@@ -783,22 +789,37 @@ namespace world_sim {
 				});
 			}
 
-			// Of up right, up left, and down left, the quarter round the snapped point that points
-			// most along the segment; near-ties go to the first in that order.
-			static Foundation::Vec2 endQuarter(Foundation::Vec2 along) {
-				static const std::array<Foundation::Vec2, 3> kQuarters{{{1.0F, -1.0F}, {-1.0F, -1.0F}, {-1.0F, 1.0F}}};
-				std::array<float, 3>						 scores{};
-				float										 best = -std::numeric_limits<float>::max();
+			// The quarters round the snapped point an end placement can take: up right, up left,
+			// and down left, never down right, where the pointer hangs.
+			static constexpr Foundation::Vec2 kUpRight{1.0F, -1.0F};
+			static constexpr Foundation::Vec2 kUpLeft{-1.0F, -1.0F};
+			static constexpr Foundation::Vec2 kDownLeft{-1.0F, 1.0F};
+
+			// For each quarter, in kUpRight, kUpLeft, kDownLeft order, the end placements to try:
+			// that quarter, then it flipped left to right, then top to bottom, then both, leaving
+			// out whichever of those is down right.
+			static constexpr std::array<std::array<Foundation::Vec2, kEndPlacementCount>, 3> kEndPlacementOrders{{
+				{kUpRight, kUpLeft, kDownLeft},
+				{kUpLeft, kUpRight, kDownLeft},
+				{kDownLeft, kUpLeft, kUpRight},
+			}};
+
+			// Of up right, up left, and down left, the index of the quarter that points most along
+			// the segment; near-ties go to the first in that order.
+			static std::size_t endQuarter(Foundation::Vec2 along) {
+				static constexpr std::array<Foundation::Vec2, 3> kQuarters{kUpRight, kUpLeft, kDownLeft};
+				std::array<float, 3>							 scores{};
+				float											 best = -std::numeric_limits<float>::max();
 				for (std::size_t index = 0; index < kQuarters.size(); ++index) {
 					scores[index] = dot(kQuarters[index], along) / std::numbers::sqrt2_v<float>;
 					best = std::max(best, scores[index]);
 				}
 				for (std::size_t index = 0; index < kQuarters.size(); ++index) {
-					if (scores[index] >= best - kSideTieTolerance) {
-						return kQuarters[index];
+					if (scores[index] >= best - kQuarterTieTolerance) {
+						return index;
 					}
 				}
-				return kQuarters[0];
+				return 0;
 			}
 
 			// The box the end placements sit diagonally off: the snapped point, grown to the
@@ -815,16 +836,15 @@ namespace world_sim {
 				return end;
 			}
 
-			// The end placements in order: the quarter that points most along the segment, then
-			// the same quarter mirrored across the snapped point, never into the lower right,
-			// where the pointer hangs. Each label is anchored at its near corner; its judged box,
+			// The end placements in order (kEndPlacementOrders): the quarter that points most
+			// along the segment, then that quarter flipped left to right, top to bottom, and both,
+			// skipping the lower right. Each label is anchored at its near corner; its judged box,
 			// the reserved width, is anchored at the same corner.
-			PlacementList endPlacements(const SegmentLabelLayout& layout) const {
+			std::array<Placement, kEndPlacementCount> endPlacements(const SegmentLabelLayout& layout) const {
 				const Foundation::Vec2 segment{snappedPoint.x - layout.last.x, snappedPoint.y - layout.last.y};
 				const float			   segmentLength = length(segment);
 				const Foundation::Vec2 along = segmentLength > 0.0F ? Foundation::Vec2{segment.x / segmentLength, segment.y / segmentLength}
 																	: Foundation::Vec2{0.0F, 0.0F};
-				const Foundation::Vec2 quarter = endQuarter(along);
 				const FeedbackBox	   end = endAnchorBox();
 				const auto			   inQuarter = [&](Foundation::Vec2 corner, float width) -> Foundation::Vec2 {
 					return {
@@ -832,32 +852,43 @@ namespace world_sim {
 						corner.y < 0.0F ? end.top - kSegmentLabelOffsetPx - layout.size.y : end.bottom + kSegmentLabelOffsetPx,
 					};
 				};
-				PlacementList list;
-				for (const Foundation::Vec2 mirror :
-					 {Foundation::Vec2{1.0F, 1.0F}, Foundation::Vec2{-1.0F, 1.0F}, Foundation::Vec2{1.0F, -1.0F}, Foundation::Vec2{-1.0F, -1.0F}}) {
-					const Foundation::Vec2 corner{quarter.x * mirror.x, quarter.y * mirror.y};
-					if (corner.x > 0.0F && corner.y > 0.0F) {
-						continue;
-					}
-					list.add({inQuarter(corner, layout.size.x), inQuarter(corner, layout.reserve.x)});
+				const std::array<Foundation::Vec2, kEndPlacementCount>& order = kEndPlacementOrders[endQuarter(along)];
+				std::array<Placement, kEndPlacementCount>				placements{};
+				for (std::size_t index = 0; index < kEndPlacementCount; ++index) {
+					placements[index] = {inQuarter(order[index], layout.size.x), inQuarter(order[index], layout.reserve.x)};
 				}
-				return list;
+				return placements;
 			}
 
-			// `normal` or its reverse, whichever points away from the placed points' center;
-			// with no center off the line, the fixed side.
-			Foundation::Vec2 awayFromShape(Foundation::Vec2 middle, Foundation::Vec2 normal) const {
-				if (input.points.size() >= 2) {
-					Foundation::Vec2 center{0.0F, 0.0F};
+			// `normal` (the segment's, on screen) or its reverse, whichever points away from the
+			// placed points' center; with no center off the line, the fixed side. The center's
+			// offset is measured from the previous point in world meters and doubles: along a ray
+			// from the previous point it then moves only with the ray's direction, which the
+			// snapped point's rounding barely turns, so a center near kSideMinimumPx off the line
+			// stays on one side of that threshold. Measured from screen floats and the segment's
+			// middle, it wandered by a ten-thousandth of a pixel from one centimetre to the next and
+			// flipped the label across the segment each time. The world to screen scale is
+			// positive on both axes, so the world normal points the same way as `normal`.
+			Foundation::Vec2 awayFromShape(Foundation::Vec2 normal) const {
+				const std::size_t count = input.points.size();
+				if (count >= 2) {
+					const Foundation::Vec2 last = input.points.back();
+					double				   offsetX = 0.0;
+					double				   offsetY = 0.0;
 					for (const Foundation::Vec2& point : input.points) {
-						const Foundation::Vec2 screen = toScreen(point);
-						center.x += screen.x;
-						center.y += screen.y;
+						offsetX += static_cast<double>(point.x) - last.x;
+						offsetY += static_cast<double>(point.y) - last.y;
 					}
-					const float count = static_cast<float>(input.points.size());
-					const float side = dot({center.x / count - middle.x, center.y / count - middle.y}, normal);
-					if (std::abs(side) > kSideMinimumPx) {
-						return side > 0.0F ? Foundation::Vec2{-normal.x, -normal.y} : normal;
+					offsetX /= static_cast<double>(count);
+					offsetY /= static_cast<double>(count);
+					const double alongX = static_cast<double>(input.cursor.x) - last.x;
+					const double alongY = static_cast<double>(input.cursor.y) - last.y;
+					const double alongLength = std::hypot(alongX, alongY);
+					if (alongLength > 0.0) {
+						const double sidePx = (offsetY * alongX - offsetX * alongY) / alongLength * screenPixelsPerMeter;
+						if (std::abs(sidePx) > kSideMinimumPx) {
+							return sidePx > 0.0 ? Foundation::Vec2{-normal.x, -normal.y} : normal;
+						}
 					}
 				}
 				return facingUpOrLeft(normal);
@@ -975,7 +1006,7 @@ namespace world_sim {
 				if (!isFinite(snappedPoint)) {
 					return;
 				}
-				const Foundation::Vec2						 at = snappedPoint;
+				const Foundation::Vec2						 center = snappedPoint;
 				const float									 inner = markerRadius + kCursorTickGapPx;
 				static const std::array<Foundation::Vec2, 4> kTickDirections{{{-1.0F, 0.0F}, {1.0F, 0.0F}, {0.0F, -1.0F}, {0.0F, 1.0F}}};
 				for (const auto& [layer, color, width] : {
@@ -984,8 +1015,8 @@ namespace world_sim {
 					 }) {
 					for (const Foundation::Vec2& direction : kTickDirections) {
 						result.strokes.push_back(segmentStroke(
-							{at.x + direction.x * inner, at.y + direction.y * inner},
-							{at.x + direction.x * tickOuterRadius, at.y + direction.y * tickOuterRadius},
+							{center.x + direction.x * inner, center.y + direction.y * inner},
+							{center.x + direction.x * tickOuterRadius, center.y + direction.y * tickOuterRadius},
 							color,
 							width,
 							layer
@@ -993,7 +1024,7 @@ namespace world_sim {
 					}
 				}
 				result.dots.push_back({
-					.center = at,
+					.center = center,
 					.radius = markerRadius,
 					.fill = input.snappedPointInvalid ? input.invalidColor : kCursorFillColor,
 					.outline = kCursorOutlineColor,

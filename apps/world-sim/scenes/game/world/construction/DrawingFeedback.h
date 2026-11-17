@@ -59,7 +59,7 @@ namespace world_sim {
 		float								 closeRadiusMeters; // the first point's close radius, zoom-floored
 		bool								 canClose;			// enough points placed for a click on the first point to close
 		bool								 willClose;			// the next click closes the shape and commits it: the close halo draws
-		bool								 snappedPointInvalid = false; // off buildable ground: the marker's dot takes invalidColor
+		bool								 snappedPointInvalid = false; // off buildable ground, or a refused close: the marker's dot takes invalidColor
 		Foundation::Color					 invalidColor{};
 		std::optional<FeedbackBox>			 keepClear; // something else the preview draws there (a rejection reason): labels keep off it
 	};
