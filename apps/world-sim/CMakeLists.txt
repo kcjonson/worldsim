@@ -154,6 +154,7 @@ if(BUILD_TESTING)
         scenes/game/dev/PointList.test.cpp
         scenes/game/world/MoveOrderGoal.test.cpp
         scenes/game/world/construction/CommittedGeometryCache.test.cpp
+        scenes/game/world/construction/DrawingFeedback.test.cpp
         scenes/game/world/construction/DrawingSystem.test.cpp
         scenes/game/world/placement/PlacementSystem.test.cpp
         scenes/game/world/selection/SelectionSystem.test.cpp
