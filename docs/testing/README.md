@@ -427,7 +427,7 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
     - `message` carries the refusal, and is empty when `valid` is true.
     - `hint` is the strip's line: the refusal or an instruction.
     - `hint` equals `message` when `valid` is false and `message` is not empty, whatever the tool and however many points are placed (a refusal beats `Keep placing points`).
-    - When `valid` is false and `message` is empty, `hint` stays an instruction: the opening tool's `Hover a built wall`, a wall's or Rectangle's usual line, and for Freeform or Add / Subtract with three or more points `Ready`.
+    - `valid` is false with an empty `message` only for the opening tool while paused, where `hint` is `Hover a built wall`; everywhere else a false `valid` carries a `message`, and `hint` is that message.
     - `verdict.reason` is the same text as `status.message` for every tool.
     - The view reports text only; the strip's colour for the line is not in it.
   - A scenario that checks a refusal asserts `status.valid` false and `status.message`.
@@ -473,7 +473,10 @@ Every key but the last is true or false. `rectangleGridSpacingMeters` is 1.000 o
 
 `what=camera` answers where the world camera looks, so a check can turn a world point into the pixel `/api/input` takes, and a pixel back into a world point. The game scene answers it. Numbers are printed to three decimals.
 
-- `center`: the camera's current position, `{x, y}` in world meters. It eases toward the position `/api/control?action=camera&x=&y=` or the pan keys set, so read the view again until `center` stops changing before converting. The view answers while the app is paused, but a control still pending has not applied.
+- `center`: the camera's current position, `{x, y}` in world meters.
+  - `/api/control?action=camera&x=&y=` sets it outright at the next update.
+  - While a pan is in progress (a pan key held, or `panx` / `pany` set), `center` eases toward its target, so read the view again until `center` stops changing before converting.
+  - The view answers while the app is paused, but a pending control has not applied.
 - `zoom`: the zoom factor (3.000 is the 100 percent view). `pixelsPerMeter`: the screen scale at that zoom, in logical pixels per world meter.
 - `window`: `{width, height}`, the window's logical pixels, the ones `/api/input` takes, in whole numbers. It does not change with the Interface size.
 - `visible`: `{minX, minY, maxX, maxY}`, the world rectangle the window shows.
@@ -495,19 +498,23 @@ For a scenario author. Everything goes through `/api/input`, the way a player's 
 
 1. Open the Build menu (`build_dropdown`) and pick Foundation, Wall, Door or Window. The menu's entries have no ids; they are the `MenuItem` nodes of the open `Menu` in `/api/ui/tree`, in the order Foundation, Wall, Door, Window, with their `screenBounds` in ui px.
 2. For Foundation, the strip's cards pick the tool: `config_strip_tool_Rectangle` or `config_strip_tool_Freeform`.
-3. On a selected foundation's panel, `entity_action_Add`, `entity_action_Subtract` and `entity_action_Demolish` start the Add and Subtract tools and the demolition. Selecting the foundation takes a `ev=move` to it before the `ev=click`. A foundation that hosts walls offers `entity_action_Demolish building` instead of `entity_action_Demolish`.
+3. The action buttons on a selected structure's panel have no ids. In `/api/ui/tree` each is a `Button` node whose label is a child `Text` node, so a tester finds the `Text` node by its content ("Add", "Subtract", "Demolish", or "Demolish building" once the foundation hosts walls) and takes the bounds from the `Button` that holds it (ui px; times `layoutScale` for `/api/input`).
+   - Add is offered for an editable blueprint, or for a built foundation that is not being demolished and has no pending extension. It starts the Add tool.
+   - Subtract is offered only for an editable blueprint. It starts the Subtract tool.
+   - Demolish starts the demolition; the wall and opening panels' only button is "Demolish".
+   - A foundation that hosts walls offers "Demolish building" instead of "Demolish".
 4. Place points with `ev=click,x,y`, the pixel from the camera formulas above. A point that is buildable at the Quick Start landing is (30, 10); the Rectangle from (30, 10) to (34, 13) places there, while (10, 10) is water.
 5. Read `what=construction` to see what was committed. The drawing view does not say that a shape was committed; it shows the tool's state, not the shapes it built.
 
-Keys, from `ev=keydown,<key>`, as the key guide lists them:
+Keys, from `ev=keydown,<key>`, as the key guide lists them. `escape` closes an open menu or dialog first and reaches the tool only when none is open:
 
 | Key | Rectangle | Freeform and Add / Subtract | Wall | Door and Window |
 |-----|-----------|-----------------------------|------|-----------------|
 | `backspace` | drops the first corner | undoes the last point | undoes the last point | not listed |
-| `escape` | drops the first corner; with none, leaves the tool | cancels the shape; with none, leaves the tool | ends the wall; with none, leaves the tool | leaves the tool |
+| `escape` | drops the first corner; with none, leaves the tool | cancels the shape; with none, leaves the tool | with two or more points, ends the wall and keeps the tool; with one, clears the chain and keeps the tool; with none, leaves the tool | leaves the tool |
 | `enter` | not listed | not listed | ends the wall | not listed |
 
-Injected input holds no modifier keys (no Alt for the raw cursor, no Ctrl for walling a whole edge), cannot repeat a key, and cannot move the pointer out of the window.
+Injected input holds no modifier keys (no Alt for the raw cursor, no Ctrl for walling a whole edge), cannot repeat a key, and cannot send the pointer leaving the window or a loss of focus. A move to a pixel outside the window (`ev=move,-5,-5`) pauses the tool as a real exit does: `followingPointer` reads false, `pointer` and `snap` are null and the placed `points` stay, until a move back over the world resumes it.
 
 ### Other endpoints
 

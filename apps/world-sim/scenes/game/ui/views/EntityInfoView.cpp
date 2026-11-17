@@ -460,7 +460,6 @@ namespace world_sim {
 						return column->addChild<NeedBar>({.label = row.text, .percent = row.percent});
 					case SlotRow::Kind::Button:
 						return column->addChild<ui::Button>({
-							.id = "entity_action_" + row.text,
 							.size = {ui::percent(100.0F), kSlotButtonHeight},
 							.label = row.text,
 							.variant = ui::ButtonVariant::Secondary,
