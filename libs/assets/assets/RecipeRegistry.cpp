@@ -12,8 +12,6 @@
 
 namespace assets {
 
-	const std::string RecipeRegistry::s_emptyString;
-
 	RecipeRegistry& RecipeRegistry::Get() {
 		static RecipeRegistry instance;
 		return instance;
@@ -96,9 +94,9 @@ namespace assets {
 		size_t loadedNow = m_recipes.size();
 		size_t newRecipes = loadedNow - loadedBefore;
 
+		// Always, new recipes or not: the definition index may have been rebuilt since the last load.
+		populateDefNameIds();
 		if (newRecipes > 0) {
-			// Rebuild indices after loading
-			populateDefNameIds();
 			LOG_INFO(Engine, "Loaded %zu recipes from %s", newRecipes, folderPath.c_str());
 		}
 

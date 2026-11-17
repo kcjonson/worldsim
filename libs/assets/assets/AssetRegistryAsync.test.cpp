@@ -72,6 +72,77 @@ TEST(AssetRegistryAsyncTest, AsyncBootstrapLoadsDefinitionsThenRecipes) {
 	EXPECT_FALSE(reg.loadProgress().started.load());
 }
 
+namespace {
+
+	void writeItem(const TempAssetFolder& folder, const std::string& name) {
+		folder.write(
+			name + "/" + name + ".xml",
+			"<?xml version=\"1.0\"?><AssetDefinitions><AssetDef><defName>" + name +
+				"</defName><assetType>simple</assetType></AssetDef></AssetDefinitions>"
+		);
+	}
+
+	// One recipe: two Test_Stone and a Test_Stick at Test_Bench make a Test_Axe.
+	void writeAxeRecipe(const TempAssetFolder& folder) {
+		folder.write("Axe.xml", R"(<?xml version="1.0"?><RecipeDef>
+  <defName>Recipe_TestAxe</defName>
+  <inputs><input thing="Test_Stone" count="2"/><input thing="Test_Stick" count="1"/></inputs>
+  <station>Test_Bench</station>
+  <outputs><output thing="Test_Axe" count="1"/></outputs>
+</RecipeDef>)");
+	}
+
+	AssetSources sourcesOf(const TempAssetFolder& definitions, const TempAssetFolder& recipes) {
+		return {.definitions = definitions.root.string(), .sharedScripts = "", .recipes = recipes.root.string()};
+	}
+
+} // namespace
+
+// A reload rebuilds the id index, where a name can land on another id and a definition that is
+// gone has none, so the recipes are resolved again with it.
+TEST(AssetBootstrapTest, ReloadResolvesRecipesAgainstTheNewIndex) {
+	auto& reg = AssetRegistry::Get();
+	auto& recipes = RecipeRegistry::Get();
+
+	const TempAssetFolder definitionFolder;
+	const TempAssetFolder recipeFolder;
+	for (const char* name : {"Test_Stone", "Test_Stick", "Test_Bench", "Test_Axe"}) {
+		writeItem(definitionFolder, name);
+	}
+	writeAxeRecipe(recipeFolder);
+
+	loadAssetSystem(sourcesOf(definitionFolder, recipeFolder), false);
+	const RecipeDef* axe = recipes.getRecipe("Recipe_TestAxe");
+	ASSERT_NE(axe, nullptr);
+	ASSERT_EQ(axe->inputs.size(), 2U);
+	EXPECT_NE(axe->inputs[0].defNameId, 0U);
+	EXPECT_NE(axe->inputs[1].defNameId, 0U);
+
+	// The library changes on disk: the stick is gone and there are enough new definitions to
+	// reorder the index.
+	std::filesystem::remove_all(definitionFolder.root / "Test_Stick");
+	for (int i = 0; i < 40; ++i) {
+		writeItem(definitionFolder, "Test_Extra" + std::to_string(i));
+	}
+	loadAssetSystem(sourcesOf(definitionFolder, recipeFolder), false);
+
+	EXPECT_EQ(recipes.size(), 1U);
+	EXPECT_EQ(recipes.getRecipesForStation("Test_Bench").size(), 1U);
+	axe = recipes.getRecipe("Recipe_TestAxe");
+	ASSERT_NE(axe, nullptr);
+	ASSERT_EQ(axe->inputs.size(), 2U);
+	EXPECT_EQ(axe->inputs[0].defNameId, reg.getDefNameId("Test_Stone"));
+	EXPECT_EQ(reg.getDefName(axe->inputs[0].defNameId), "Test_Stone");
+	EXPECT_EQ(axe->inputs[1].defNameId, 0U) << "the stick no longer has a definition";
+	EXPECT_EQ(axe->inputDefNameIds, std::vector<uint32_t>{reg.getDefNameId("Test_Stone")});
+	ASSERT_EQ(axe->outputs.size(), 1U);
+	EXPECT_EQ(reg.getDefName(axe->outputs[0].defNameId), "Test_Axe");
+	EXPECT_EQ(reg.getDefName(axe->stationDefNameId), "Test_Bench");
+
+	recipes.clear();
+	reg.clear();
+}
+
 // A load that fails early must leave the validation report reflecting the failure
 // (not stale/empty), so an async splash can reliably gate on it.
 TEST(AssetRegistryAsyncTest, MissingFolderRecordsValidationError) {
@@ -149,8 +220,8 @@ namespace {
 
 } // namespace
 
-// The yield index after a folder load, after clear(), and after the asset manager's Reload (clear,
-// then load the folder again): each time it names exactly the harvestables yielding each item.
+// The yield index after a folder load, after clear(), and after a clear and a second load of the
+// folder (what a reload through loadAssetSystem does to the definitions): each time it names exactly the harvestables yielding each item.
 TEST(AssetRegistryYieldIndexTest, MatchesDefinitionsAcrossReload) {
 	auto& reg = AssetRegistry::Get();
 	reg.clear();
