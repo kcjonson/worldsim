@@ -9,8 +9,8 @@
 // drawing outlines (geometry::wallPiecesAndOutline over each connected graph of
 // built walls): both faces, end caps, mitred and trimmed junctions, and the jambs
 // of every gap. Sight stops at a wall's near face, so the band itself is never in
-// sight. A graph the band offsetter rejects occludes as each wall's untrimmed band,
-// as nav blocks it.
+// sight. A graph the band offsetter rejects (by nav's test) occludes as each wall's
+// untrimmed band outlined on its own, cut at its transparent openings.
 //
 // Every occluder lies on a closed loop with the solid on its left, so an eye
 // outside the solid strictly on an edge's left is behind that edge's own solid,

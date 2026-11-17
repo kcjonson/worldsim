@@ -78,44 +78,75 @@ namespace {
 		return geometry::hasLineOfSight(from, to, kFarSightMm, occluders);
 	}
 
-	// Every straight line between two points clear of every wall's band that crosses a
-	// wall's centerline passes through the walls' joined shape, so the far point must
-	// lie outside the near one's visibility polygon. Points on a 250 mm grid over the
-	// box, a margin clear of each band. The polygon is the test, not hasLineOfSight,
-	// which lets a line through a bare vertex pass (its rule for grazing a wall's tip),
-	// and so a line exactly through two vertices of one outline.
+	// The solid stretches of each wall's centerline: the wall less the spans its built
+	// transparent openings leave open.
+	std::vector<std::pair<Vec2i64, Vec2i64>> solidCenterlines(const ConstructionWorld& cw, const GeometryIndex& index) {
+		std::vector<std::pair<Vec2i64, Vec2i64>> solid;
+		for (const construction::WallSegment& wall : cw.segments()) {
+			const Vec2i64		 start = cw.getVertex(wall.v0)->pos;
+			const Vec2i64		 end   = cw.getVertex(wall.v1)->pos;
+			std::vector<Vec2i64> cuts  = {start};
+			for (const GeometryIndex::OpeningRecord& opening : index.builtOpenings()) {
+				if (opening.segment == wall.id && opening.transparentToSight) {
+					cuts.push_back(opening.jambA);
+					cuts.push_back(opening.jambB);
+				}
+			}
+			cuts.push_back(end);
+			std::sort(cuts.begin() + 1, cuts.end() - 1, [&](const Vec2i64& first, const Vec2i64& second) {
+				return geometry::dot(first - start, first - start) < geometry::dot(second - start, second - start);
+			});
+			for (std::size_t cut = 0; cut + 1 < cuts.size(); cut += 2) {
+				solid.emplace_back(cuts[cut], cuts[cut + 1]);
+			}
+		}
+		return solid;
+	}
+
+	// Every straight line between two points clear of every wall's band that crosses the
+	// solid stretch of a wall's centerline passes through the walls' joined shape, so the
+	// far point must lie outside the near one's visibility polygon, built from the facing
+	// occluders. Points on a 250 mm grid over the box, a margin clear of each band. The
+	// polygon is the test, not hasLineOfSight, which lets a line through a bare vertex pass
+	// (its rule for grazing a wall's tip), and so a line exactly through two vertices of
+	// one outline.
 	void expectNoLeak(const ConstructionWorld& cw, Vec2i64 low, Vec2i64 high) {
 		constexpr std::int64_t kGridMm			 = 250;
 		constexpr std::int64_t kClearOfTheBandMm = 2; // past the millimetre the offset rounds to
+		GeometryIndex		   index;
+		index.setConstructionWorld(&cw);
+		index.rebuildIfStale();
 		std::vector<std::pair<Vec2i64, Vec2i64>> centerlines;
 		for (const construction::WallSegment& wall : cw.segments()) {
 			centerlines.emplace_back(cw.getVertex(wall.v0)->pos, cw.getVertex(wall.v1)->pos);
 		}
-		const std::int64_t half = halfThickness(cw);
-		std::vector<Vec2i64> points;
+		const std::vector<std::pair<Vec2i64, Vec2i64>> solid = solidCenterlines(cw, index);
+		const std::int64_t							   half	 = halfThickness(cw);
+		std::vector<Vec2i64>						   points;
 		for (std::int64_t x = low.x; x <= high.x; x += kGridMm) {
 			for (std::int64_t y = low.y; y <= high.y; y += kGridMm) {
 				bool clear = true;
-				for (const auto& [a, b] : centerlines) {
-					clear = clear && !geometry::withinDistanceOfSegment({x, y}, a, b, half + kClearOfTheBandMm);
+				for (const auto& [start, end] : centerlines) {
+					clear = clear && !geometry::withinDistanceOfSegment({x, y}, start, end, half + kClearOfTheBandMm);
 				}
 				if (clear) {
 					points.push_back({x, y});
 				}
 			}
 		}
-		const std::vector<OccluderSegment> occluders = occludersOf(cw);
-		int leaks = 0;
+		std::vector<OccluderSegment> occluders;
+		int							 leaks = 0;
 		for (std::size_t first = 0; first < points.size(); ++first) {
+			index.queryFacingOccluders(points[first], kFarSightMm, occluders);
 			const geometry::Ring polygon = geometry::computeVisibilityPolygon(points[first], kFarSightMm, occluders);
 			for (std::size_t second = 0; second < points.size(); ++second) {
 				if (second == first) {
 					continue;
 				}
 				bool crossesAWall = false;
-				for (const auto& [a, b] : centerlines) {
+				for (const auto& [start, end] : solid) {
 					crossesAWall = crossesAWall ||
-								   geometry::intersectSegments(points[first], points[second], a, b).relation != geometry::SegmentRelation::Disjoint;
+								   geometry::intersectSegments(points[first], points[second], start, end).relation != geometry::SegmentRelation::Disjoint;
 				}
 				if (crossesAWall && geometry::pointInPolygon(points[second], polygon) != geometry::PointInPolygon::Outside) {
 					if (++leaks <= 5) {
@@ -367,6 +398,33 @@ TEST_F(GeometryIndexTest, RejectedGraphOccludesAsRawBands) {
 		EXPECT_NE(std::find(band.begin(), band.end(), occluder.seg.a), band.end());
 		EXPECT_NE(std::find(band.begin(), band.end(), occluder.seg.b), band.end());
 	}
+}
+
+// A graph the offsetter rejects still passes sight through its doors and windows: a
+// closed room with a door and a window, and a stem outside meeting its south wall 150 mm
+// short of a corner, which leaves a piece shorter than its trims.
+TEST_F(GeometryIndexTest, RejectedGraphPassesSightThroughItsOpenings) {
+	ConstructionWorld cw;
+	buildWall(cw, {0, 0}, {4000, 0});
+	buildWall(cw, {4000, 0}, {4000, 4000});
+	const SegmentId north = buildWall(cw, {4000, 4000}, {0, 4000});
+	const SegmentId west  = buildWall(cw, {0, 4000}, {0, 0});
+	addBuiltOpening(cw, west, 0.5F, "Door");
+	addBuiltOpening(cw, north, 0.5F, "Window");
+	buildWall(cw, {3850, 0}, {2000, -3000});
+	std::vector<geometry::WallSegment> walls;
+	for (const construction::WallSegment& wall : cw.segments()) {
+		walls.push_back({cw.getVertex(wall.v0)->pos, cw.getVertex(wall.v1)->pos, construction::halfThicknessMm(wall)});
+	}
+	ASSERT_EQ(geometry::resolveWallBands(walls, geometry::kDefaultMiterLimit).status, geometry::OffsetStatus::TrimOverrunsSegment);
+
+	const std::vector<OccluderSegment> occluders = occludersOf(cw);
+	EXPECT_TRUE(sees(occluders, {-3000, 2000}, {2000, 2000})) << "through the door";
+	EXPECT_TRUE(sees(occluders, {2000, 7000}, {2000, 2000})) << "through the window";
+	EXPECT_FALSE(sees(occluders, {-3000, 1000}, {2000, 1000})) << "through the west wall beside the door";
+	EXPECT_FALSE(sees(occluders, {1000, 7000}, {1000, 2000})) << "through the north wall beside the window";
+	EXPECT_FALSE(sees(occluders, {2000, -1000}, {2000, 2000})) << "through the south wall";
+	expectNoLeak(cw, {-1000, -3000}, {5000, 5000});
 }
 
 // --- queryOccluders range ----------------------------------------------------

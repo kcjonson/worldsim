@@ -119,12 +119,14 @@ namespace ecs {
 				memberGaps.push_back(sightGaps[index]);
 			}
 			const geometry::WallBands bands = geometry::resolveWallBands(members, geometry::kDefaultMiterLimit);
-			if (bands.status != geometry::OffsetStatus::Ok) {
-				// Reject-don't-repair, as nav blocks such a graph: each wall's raw band, whole.
+			if (bands.status != geometry::OffsetStatus::Ok || bands.bands.size() != members.size()) {
+				// Rejected as nav rejects it: each wall is its raw band, untrimmed, outlined as a
+				// lone wall's, so its transparent openings still pass sight.
 				for (const std::size_t index : graph) {
-					const geometry::Ring ring = geometry::band(walls[index].a, walls[index].b, walls[index].halfThicknessMm);
-					for (std::size_t corner = 0; corner < ring.size(); ++corner) {
-						m_occluders.push_back({wallIds[index], {ring[corner], ring[(corner + 1) % ring.size()]}});
+					const geometry::WallSegment& wall = walls[index];
+					const geometry::WallBands	 rawBand{.bands = {geometry::band(wall.a, wall.b, wall.halfThicknessMm)}, .trimAtA = {0}, .trimAtB = {0}};
+					for (const geometry::OutlineEdge& edge : geometry::wallPiecesAndOutline({wall}, {sightGaps[index]}, rawBand).outline) {
+						m_occluders.push_back({wallIds[index], {edge.from, edge.to}});
 					}
 				}
 				continue;
