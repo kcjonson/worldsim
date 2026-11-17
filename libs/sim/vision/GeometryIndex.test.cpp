@@ -612,6 +612,21 @@ TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesForAnEyeAlongAFaceLine) {
 	EXPECT_TRUE(culledSightIsTheSame(index, {8156, 6995}, 6000, kSnappedRingsMm));
 }
 
+// The same beside a lone slanted wall, where nothing crosses: an eye 0.32 mm outside its left
+// face, whose near hits snap onto the eye and drop, so the far face is what stops those rays.
+TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesForAnEyeAlongALoneWallsFace) {
+	ConstructionWorld cw;
+	buildWall(cw, {0, 0}, {3000, 1000});
+	GeometryIndex index;
+	index.setConstructionWorld(&cw);
+	index.rebuildIfStale();
+	for (const GeometryIndex::OccluderRecord& occluder : index.occluders()) {
+		ASSERT_FALSE(occluder.crossesAnotherOccluder);
+	}
+	EXPECT_FALSE(index.insideSolid({1467, 595}));
+	EXPECT_TRUE(culledSightIsTheSame(index, {1467, 595}, 10000, kSnappedRingsMm));
+}
+
 // Occluders that cross keep their back faces: a graph the offsetter rejects (three walls at a
 // corner, one of them 0.48 m long to a fourth), whose raw bands overlap at each joint, two
 // walls of separate graphs whose bands overlap, and the same two walls joined into one graph.
