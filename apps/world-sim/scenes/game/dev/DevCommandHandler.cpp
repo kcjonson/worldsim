@@ -1,5 +1,6 @@
 #include "DevCommandHandler.h"
 
+#include "scenes/game/dev/GiveShortfall.h"
 #include "scenes/game/dev/GroundRefusal.h"
 #include "scenes/game/dev/PointList.h"
 #include "scenes/game/ui/GameUI.h"
@@ -30,12 +31,14 @@
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Movement.h>
 #include <ecs/components/Needs.h>
+#include <ecs/components/PlayerControlled.h>
 #include <ecs/components/StorageConfiguration.h>
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/StructureHealth.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
+#include <ecs/systems/AIDecisionSystem.h>
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/PlayerVisibilitySystem.h>
@@ -97,7 +100,6 @@ namespace world_sim {
 		verb("freebuild", &DevCommandHandler::devFreeBuild);
 		verb("construction", &DevCommandHandler::devFreeBuild);
 		verb("reveal", &DevCommandHandler::devReveal);
-		verb("give", &DevCommandHandler::devGive);
 		verb("spawn", &DevCommandHandler::devSpawn);
 		verb("colonist", &DevCommandHandler::devColonist);
 		verb("need", &DevCommandHandler::devNeed);
@@ -114,6 +116,7 @@ namespace world_sim {
 		registrations.push_back(server.route("foundation-edit", [this](const app::DevRequest& cmd) {
 			return app::DevResponse{.body = devFoundationEdit(cmd)};
 		}));
+		registrations.push_back(server.route("give", [this](const app::DevRequest& cmd) { return devGive(cmd); }));
 		registrations.push_back(server.route("flora", [this](const app::DevRequest& cmd) { return devFlora(cmd); }));
 		registrations.push_back(server.route("ground", [this](const app::DevRequest& cmd) { return devGround(cmd); }));
 		registrations.push_back(server.route("storage", [this](const app::DevRequest& cmd) { return devStorage(cmd); }));
@@ -191,35 +194,49 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", on ? "Reveal ON" : "Reveal OFF", ui::ToastSeverity::Info);
 	}
 
-	void DevCommandHandler::devGive(const app::DevRequest& cmd) {
+	app::DevResponse DevCommandHandler::devGive(const app::DevRequest& cmd) {
+		const auto reject = [this](const std::string& message) {
+			LOG_WARNING(Game, "[DevAPI] give: %s", message.c_str());
+			m_ctx.ui->pushNotification("Dev", "Give: " + message, ui::ToastSeverity::Warning);
+			return app::DevResponse{.status = 400, .body = "{\"error\":\"give: " + jsonEscape(message) + "\"}"};
+		};
 		const std::string material = param(cmd, "material", "Wood");
 		const long		  nRaw = std::strtol(param(cmd, "n", "100").c_str(), nullptr, 10);
 		if (nRaw <= 0) {
-			LOG_WARNING(Game, "[DevAPI] give: n must be > 0");
-			return;
+			return reject("n must be > 0");
 		}
 		const auto		  n = static_cast<uint32_t>(nRaw);
 		const std::string where = param(cmd, "where", "site");
 
+		// A give that added nothing is a refusal naming what was in the way; one that added fewer than
+		// asked answers ok with the count it added and the same reason.
+		const auto answer = [&](uint32_t added, const std::string& target, const std::string& shortfall) {
+			const std::string count = std::to_string(added) + " of " + std::to_string(n) + " " + material;
+			if (added == 0) {
+				return reject("added " + count + " to " + target + ": " + shortfall);
+			}
+			LOG_INFO(Game, "[DevAPI] give: added %s to %s", count.c_str(), target.c_str());
+			m_ctx.ui->pushNotification("Dev", "Gave " + count + " to " + target, ui::ToastSeverity::Info);
+			std::string body = "{\"status\":\"ok\",\"verb\":\"give\",\"added\":" + std::to_string(added) + ",\"asked\":" + std::to_string(n);
+			if (added < n) {
+				body += ",\"shortfall\":\"" + jsonEscape(shortfall) + "\"";
+			}
+			return app::DevResponse{.body = body + "}"};
+		};
+
 		if (where == "site") {
 			const uint32_t credited = m_ctx.world->getSystem<ecs::ConstructionSystem>().creditMaterialToSites(material, n);
-			LOG_INFO(Game, "[DevAPI] give: credited %u %s across build sites", credited, material.c_str());
-			m_ctx.ui->pushNotification("Dev", "Credited " + std::to_string(credited) + " " + material + " to sites", ui::ToastSeverity::Info);
-			return;
+			return answer(credited, "build sites", "no build site needs more " + material);
 		}
 
 		if (where == "loose") {
 			const auto* def = assets::AssetRegistry::Get().getDefinition(material);
 			if (def == nullptr) {
-				LOG_WARNING(Game, "[DevAPI] give loose: unknown asset '%s'", material.c_str());
-				m_ctx.ui->pushNotification("Dev", "Unknown asset: " + material, ui::ToastSeverity::Warning);
-				return;
+				return reject("unknown asset '" + material + "'");
 			}
 			// Spawning a furniture or station def would make a live box/station that is also a pile.
 			if (!def->itemProperties.has_value()) {
-				LOG_WARNING(Game, "[DevAPI] give loose: '%s' is not an item", material.c_str());
-				m_ctx.ui->pushNotification("Dev", "Not an item: " + material, ui::ToastSeverity::Warning);
-				return;
+				return reject("'" + material + "' is not an item");
 			}
 			// Each new pile is cleared against every pile already placed, so the pile count (not
 			// the unit count) is what a big n costs.
@@ -227,34 +244,31 @@ namespace world_sim {
 			const uint32_t	   stackSize = def->itemProperties->stackSize;
 			const uint32_t	   piles = stackSize == 0 ? 1U : (n - 1U) / stackSize + 1U;
 			if (piles > kMaxLoosePiles) {
-				LOG_WARNING(Game, "[DevAPI] give loose: %u '%s' is %u piles, over the %u limit", n, material.c_str(), piles, kMaxLoosePiles);
-				m_ctx.ui->pushNotification("Dev", "Too many: " + std::to_string(piles) + " piles of " + material, ui::ToastSeverity::Warning);
-				return;
+				return reject(
+					std::to_string(n) + " '" + material + "' is " + std::to_string(piles) + " piles, over the " + std::to_string(kMaxLoosePiles) +
+					" limit"
+				);
 			}
 			const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
-			if (!requireValidPosition(at, "give loose")) {
-				return;
+			if (const std::string refusal = putDownRefusal(m_ctx.navigation, at); !refusal.empty()) {
+				return reject(refusal);
 			}
 			m_ctx.dropLoose(material, at.x, at.y, n);
-			LOG_INFO(Game, "[DevAPI] give: dropped %u loose '%s' at (%.1f, %.1f)", n, material.c_str(), at.x, at.y);
-			m_ctx.ui->pushNotification("Dev", "Dropped " + std::to_string(n) + " " + material, ui::ToastSeverity::Info);
-			return;
+			return answer(n, "the ground", {});
 		}
 
 		if (where == "colonist" || where == "storage") {
 			const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
 			ecs::Inventory*		   inventory = (where == "colonist") ? nearestColonistInventory(at) : nearestStorageInventory(at);
 			if (inventory == nullptr) {
-				LOG_WARNING(Game, "[DevAPI] give %s: no target found", where.c_str());
-				m_ctx.ui->pushNotification("Dev", "No " + where + " to give to", ui::ToastSeverity::Warning);
-				return;
+				return reject("no " + where + " to give to");
 			}
 
 			// where=colonist takes slot=pack|hands|belt (default pack) so every gear
 			// surface can be filled for testing. hands respects the two-hand mirror.
-			const std::string slot = param(cmd, "slot", "pack");
+			const std::string slot = where == "colonist" ? param(cmd, "slot", "pack") : "pack";
 			uint32_t		  added = 0;
-			if (where == "colonist" && slot == "hands") {
+			if (slot == "hands") {
 				const auto& registry = assets::AssetRegistry::Get();
 				if (ecs::itemIsTwoHand(registry, material)) {
 					added = ecs::addArmful(*inventory, registry, material, n);
@@ -263,20 +277,18 @@ namespace world_sim {
 						++added;
 					}
 				}
-			} else if (where == "colonist" && slot == "belt") {
+			} else if (slot == "belt") {
 				while (added < n && inventory->stowToBelt(material)) {
 					++added;
 				}
 			} else {
 				added = inventory->addItem(material, n);
 			}
-			LOG_INFO(Game, "[DevAPI] give: added %u/%u %s to nearest %s (%s)", added, n, material.c_str(), where.c_str(), slot.c_str());
-			m_ctx.ui->pushNotification("Dev", "Gave " + std::to_string(added) + " " + material + " to " + where, ui::ToastSeverity::Info);
-			return;
+			const std::string target = where == "storage" ? "the nearest storage" : "the nearest colonist's " + slot;
+			return answer(added, target, added < n ? giveShortfallReason(*inventory, material, slot) : std::string{});
 		}
 
-		LOG_WARNING(Game, "[DevAPI] give: unknown where=%s (site|loose|colonist|storage)", where.c_str());
-		m_ctx.ui->pushNotification("Dev", "Unknown where: " + where, ui::ToastSeverity::Warning);
+		return reject("unknown where=" + where + " (site|loose|colonist|storage)");
 	}
 
 	DevRefusal DevCommandHandler::devSpawn(const app::DevRequest& cmd) {
@@ -319,10 +331,10 @@ namespace world_sim {
 		return {};
 	}
 
-	void DevCommandHandler::devColonist(const app::DevRequest& cmd) {
+	DevRefusal DevCommandHandler::devColonist(const app::DevRequest& cmd) {
 		const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
-		if (!requireMoverPosition(at, "colonist")) {
-			return;
+		if (const std::string refusal = moverGroundRefusal(m_ctx.navigation, at); !refusal.empty()) {
+			return refuse("colonist: " + refusal);
 		}
 		const long			   nRaw = std::strtol(param(cmd, "n", "1").c_str(), nullptr, 10);
 		const long			   n = nRaw < 1 ? 1 : nRaw;
@@ -335,29 +347,7 @@ namespace world_sim {
 		}
 		LOG_INFO(Game, "[DevAPI] colonist: spawned %ld at (%.1f, %.1f)", n, at.x, at.y);
 		m_ctx.ui->pushNotification("Dev", "Spawned " + std::to_string(n) + " colonist(s)", ui::ToastSeverity::Info);
-	}
-
-	bool DevCommandHandler::requireValidPosition(Foundation::Vec2 at, const char* verb) {
-		// Single validity gate: a world position is placeable IFF it is on an active
-		// walkable nav face (NavigationSystem::isValidPosition). No terrain/world-source
-		// reads here -- runtime walkability is owned by the nav mesh.
-		if (m_ctx.navigation != nullptr && m_ctx.navigation->isValidPosition({at.x, at.y})) {
-			return true;
-		}
-		const bool		  meshed = m_ctx.navigation != nullptr && m_ctx.navigation->inSimArea({at.x, at.y});
-		const char* const why	 = meshed ? "is water or a placed obstacle" : "is ground no mover has meshed (off the nav mesh)";
-		LOG_WARNING(Game, "[DevAPI] %s: error: %.1f,%.1f %s, refused", verb, at.x, at.y, why);
-		m_ctx.ui->pushNotification(
-			"Dev", "Refused: (" + std::to_string(at.x) + ", " + std::to_string(at.y) + ") " + why, ui::ToastSeverity::Warning
-		);
-		return false;
-	}
-
-	bool DevCommandHandler::requireMoverPosition(Foundation::Vec2 at, const char* verb) {
-		if (m_ctx.navigation != nullptr && !m_ctx.navigation->inSimArea({at.x, at.y})) {
-			return true;
-		}
-		return requireValidPosition(at, verb);
+		return {};
 	}
 
 	DevRefusal DevCommandHandler::refuse(const std::string& message) {
@@ -499,24 +489,34 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", acted ? "Time updated" : "time: speed|set|skip", acted ? ui::ToastSeverity::Info : ui::ToastSeverity::Warning);
 	}
 
-	void DevCommandHandler::devTeleport(const app::DevRequest& cmd) {
+	DevRefusal DevCommandHandler::devTeleport(const app::DevRequest& cmd) {
 		const ecs::EntityID id = parseEntity(param(cmd, "colonist"));
 		auto*				pos = m_ctx.world->getComponent<ecs::Position>(id);
 		if (pos == nullptr) {
-			LOG_WARNING(Game, "[DevAPI] teleport: no entity #%llu", static_cast<unsigned long long>(id));
-			m_ctx.ui->pushNotification("Dev", "No such entity", ui::ToastSeverity::Warning);
-			return;
+			return refuse("teleport: no entity #" + std::to_string(id));
 		}
 		const Foundation::Vec2 to = parsePoint(param(cmd, "to"));
-		if (!requireMoverPosition(to, "teleport")) {
-			return;
+		if (const std::string refusal = moverGroundRefusal(m_ctx.navigation, to); !refusal.empty()) {
+			return refuse("teleport: " + refusal);
 		}
 		pos->value = {to.x, to.y};
 		if (auto* target = m_ctx.world->getComponent<ecs::MovementTarget>(id)) {
 			target->active = false;
 		}
+		// A colonist drops his task, its route and claims, and his action, the way he does when the
+		// player takes him over: a task left Moving with no target holds him where he lands. One the
+		// player controls stays controlled; any other is released, and decides afresh.
+		if (m_ctx.world->getComponent<ecs::Task>(id) != nullptr) {
+			auto&	   decisions = m_ctx.world->getSystem<ecs::AIDecisionSystem>();
+			const bool controlled = m_ctx.world->getComponent<ecs::PlayerControlled>(id) != nullptr;
+			decisions.enterControl(id);
+			if (!controlled) {
+				decisions.releaseControl(id);
+			}
+		}
 		LOG_INFO(Game, "[DevAPI] teleport: #%llu -> (%.1f, %.1f)", static_cast<unsigned long long>(id), to.x, to.y);
 		m_ctx.ui->pushNotification("Dev", "Teleported", ui::ToastSeverity::Info);
+		return {};
 	}
 
 	void DevCommandHandler::devSelect(const app::DevRequest& cmd) {

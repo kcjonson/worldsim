@@ -327,17 +327,18 @@ colonist can wade (a ford): `foundation`, `walls`, and `spawn` of a station or s
 refuse it as they refuse water, and those three answer a refusal as 400 `{"error":"..."}`, creating
 nothing. Trees, reeds, and loose items still spawn in a ford: putting one there builds nothing.
 
-A plain `curl` prints a 400's body without failing, so read every reply. Other verbs (`teleport`, `give`,
-`colonist`, `kill`) answer `ok` even when they did nothing, so check the state view after each.
+A plain `curl` prints a 400's body without failing, so read every reply. `teleport`, `colonist`, and `give`
+answer a 400 the same way when they move, spawn, or add nothing. `kill` answers `ok` even when it did
+nothing, so check the state view after it.
 
 | Verb | Key params | Notes |
 |------|-----------|-------|
 | `spawn` | `def=<asset>&at=x,y&n=1&scatter=0` | Spawns a world entity (tree, station, container, loose item). A station or storage container goes where the placement tool would take it: its footprint (its collision outline, else its centre) on clear ground (no water, ford, placed obstacle, or unmeshed ground). Anything else goes on clear ground, a ford included. Refused ground is a 400. A scattered spot is snapped off water and skipped if refused; when every spot is skipped the answer is a 400. A missing or unknown `def` is a 400 too. |
-| `colonist` | `at=x,y&n=1&name=` | Spawns a colonist at the given position. |
-| `give` | `material=<defName>&n=<qty>&where=site\|loose\|colonist\|storage[&at=x,y]` | Gives material to the colonist, a site, or storage; `loose` drops it on the ground at `at` as stack-capped piles, refused over 50 piles or for a def that isn't an item (furniture, stations). |
+| `colonist` | `at=x,y&n=1&name=` | Spawns a colonist at the given position. Water or a placed obstacle is a 400; ground no mover has meshed takes him, and he meshes it. |
+| `give` | `material=<defName>&n=<qty>&where=site\|loose\|colonist\|storage[&at=x,y][&slot=pack\|hands\|belt]` | Gives material to the colonist, a site, or storage; `loose` drops it on the ground at `at` as stack-capped piles, refused over 50 piles or for a def that isn't an item (furniture, stations). `slot` is for `where=colonist` (pack by default). Answers `{"status":"ok","verb":"give","added":<count>,"asked":<n>}`, with `"shortfall":"<what was in the way>"` when it added fewer than asked (hands hold two one-hand items, or one armful of a two-hand material up to its weight). A give that added nothing is a 400 naming why, e.g. `{"error":"give: added 0 of 10 Wood to the nearest colonist's hands: hands occupied by AxePrimitive"}`; so is one with no target, an unknown `where`, or a refused `at`. |
 | `need` | `colonist=<id>&need=Hunger\|Thirst\|Energy\|...&value=0..100` | Sets a colonist's need to the given value. |
 | `time` | `speed=0..3` or `set=HH:MM` or `skip=Nh\|Nm` | Controls game time. `speed=3` accelerates. |
-| `teleport` | `colonist=<id>&to=x,y` | Teleports a colonist. |
+| `teleport` | `colonist=<id>&to=x,y` | Teleports a colonist and drops his task, route, and action, so he decides afresh at the next update (one the player controls stays controlled, without his move order). Water or a placed obstacle is a 400 `{"error":"teleport: (x, y) is water or a placed obstacle"}` and he stays put, as is an id that names nothing. Ground no mover has meshed takes him, and he meshes it. |
 | `select` | `colonist=<id>` or `at=x,y` | Selects a colonist for the UI. |
 | `kill` | `colonist=<id>` | Removes a colonist. |
 | `complete` | `id=<entity>` | Instantly completes a task/entity. |
