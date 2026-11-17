@@ -1,6 +1,7 @@
 #include "DrawingKeyGuide.h"
 
 #include "scenes/game/world/construction/DrawingSystem.h"
+#include "scenes/game/world/construction/KeyGuideVisibility.h"
 #include "scenes/shared/SalalUi.h"
 
 #include <assets/ConstructionRegistry.h>
@@ -221,10 +222,6 @@ namespace world_sim {
 			return event.codepoint == kToggleCharacter;
 		}
 		return event.type == Type::KeyDown && !event.repeat && event.key == foundation::Key::H;
-	}
-
-	bool keyGuideShown(std::optional<ToolKind> tool, const DrawingSettings& settings) {
-		return tool.has_value() && settings.showKeyGuide;
 	}
 
 	bool KeyGuideToggle::takes(const foundation::InputEvent& event, const State& state) {

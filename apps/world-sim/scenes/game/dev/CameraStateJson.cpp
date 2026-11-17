@@ -7,12 +7,12 @@
 namespace world_sim {
 
 	std::string cameraStateJson(const world::WorldCamera& camera, float pixelsPerMeter, int logicalWidth, int logicalHeight) {
-		const auto number = [](double value) { return jsonNumber(value); };
 		const Foundation::Rect visible = camera.getVisibleRect(logicalWidth, logicalHeight, pixelsPerMeter);
-		return "{\"center\":{\"x\":" + number(camera.position().x) + ",\"y\":" + number(camera.position().y) + "},\"zoom\":" + number(camera.zoom()) +
-			   ",\"pixelsPerMeter\":" + number(pixelsPerMeter * camera.zoom()) + ",\"window\":{\"width\":" + std::to_string(logicalWidth) +
-			   ",\"height\":" + std::to_string(logicalHeight) + "},\"visible\":{\"minX\":" + number(visible.x) + ",\"minY\":" + number(visible.y) +
-			   ",\"maxX\":" + number(visible.x + visible.width) + ",\"maxY\":" + number(visible.y + visible.height) + "}}";
+		return "{\"center\":{\"x\":" + jsonNumber(camera.position().x) + ",\"y\":" + jsonNumber(camera.position().y) +
+			   "},\"zoom\":" + jsonNumber(camera.zoom()) + ",\"pixelsPerMeter\":" + jsonNumber(pixelsPerMeter * camera.zoom()) +
+			   ",\"window\":{\"width\":" + std::to_string(logicalWidth) + ",\"height\":" + std::to_string(logicalHeight) +
+			   "},\"visible\":{\"minX\":" + jsonNumber(visible.x) + ",\"minY\":" + jsonNumber(visible.y) +
+			   ",\"maxX\":" + jsonNumber(visible.x + visible.width) + ",\"maxY\":" + jsonNumber(visible.y + visible.height) + "}}";
 	}
 
 } // namespace world_sim

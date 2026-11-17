@@ -1,8 +1,8 @@
 #include "scenes/game/dev/DrawingStateJson.h"
 
 #include "scenes/game/dev/DevJson.h"
-#include "scenes/game/ui/views/DrawingKeyGuide.h"
 #include "scenes/game/world/construction/DrawingStatusHint.h"
+#include "scenes/game/world/construction/KeyGuideVisibility.h"
 
 #include <sstream>
 
@@ -140,14 +140,17 @@ namespace world_sim {
 
 		std::string settingsJson(const DrawingSettings& settings) {
 			const auto flag = [](bool value) { return value ? "true" : "false"; };
+			// Binding every member fails to compile when DrawingSettings gains one, so a new setting cannot go unreported.
+			const auto& [angleSteps, guidesFromShape, alignToExistingBuildings, guidesFromWorldAxes, guideCrossings, commonLengths, guideDistances, angleReadout, roundLengths, showKeyGuide, rectangleGridSpacingMeters] =
+				settings;
 			std::ostringstream out;
-			out << "{\"angleSteps\":" << flag(settings.angleSteps) << ",\"guidesFromShape\":" << flag(settings.guidesFromShape)
-				<< ",\"alignToExistingBuildings\":" << flag(settings.alignToExistingBuildings)
-				<< ",\"guidesFromWorldAxes\":" << flag(settings.guidesFromWorldAxes) << ",\"guideCrossings\":" << flag(settings.guideCrossings)
-				<< ",\"commonLengths\":" << flag(settings.commonLengths) << ",\"guideDistances\":" << flag(settings.guideDistances)
-				<< ",\"angleReadout\":" << flag(settings.angleReadout) << ",\"roundLengths\":" << flag(settings.roundLengths)
-				<< ",\"showKeyGuide\":" << flag(settings.showKeyGuide)
-				<< ",\"rectangleGridSpacingMeters\":" << jsonNumber(static_cast<double>(settings.rectangleGridSpacingMeters)) << "}";
+			out << "{\"angleSteps\":" << flag(angleSteps) << ",\"guidesFromShape\":" << flag(guidesFromShape)
+				<< ",\"alignToExistingBuildings\":" << flag(alignToExistingBuildings)
+				<< ",\"guidesFromWorldAxes\":" << flag(guidesFromWorldAxes) << ",\"guideCrossings\":" << flag(guideCrossings)
+				<< ",\"commonLengths\":" << flag(commonLengths) << ",\"guideDistances\":" << flag(guideDistances)
+				<< ",\"angleReadout\":" << flag(angleReadout) << ",\"roundLengths\":" << flag(roundLengths)
+				<< ",\"showKeyGuide\":" << flag(showKeyGuide)
+				<< ",\"rectangleGridSpacingMeters\":" << jsonNumber(static_cast<double>(rectangleGridSpacingMeters)) << "}";
 			return out.str();
 		}
 

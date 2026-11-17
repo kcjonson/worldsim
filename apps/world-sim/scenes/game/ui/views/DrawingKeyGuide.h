@@ -56,10 +56,6 @@ namespace world_sim {
 	/// only), then the foot line.
 	[[nodiscard]] KeyGuideContent keyGuideContent(ToolKind tool, const DrawingSettings& settings);
 
-	/// Whether the panel is on screen: a drawing tool is active and Show key guide is on. Folded or open is
-	/// separate; a folded guide is still shown, as its chip.
-	[[nodiscard]] bool keyGuideShown(std::optional<ToolKind> tool, const DrawingSettings& settings);
-
 	/// Whether `event` collapses or opens the key guide: the `?` character, whatever keys typed it,
 	/// or a press of H that is not a repeat.
 	[[nodiscard]] bool togglesKeyGuide(const foundation::InputEvent& event);

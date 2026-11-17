@@ -127,6 +127,50 @@ TEST(DrawingStateJson, SettingsKeyGuideAndDialogAreThereWithOrWithoutATool) {
 	EXPECT_FALSE(parsed.at("settings").at("angleSteps").get<bool>());
 }
 
+TEST(DrawingStateJson, EachSettingAloneChangesItsOwnKeyAndNoOther) {
+	using world_sim::DrawingSettings;
+	struct Flag {
+		const char* key;
+		bool DrawingSettings::* member;
+	};
+	const std::vector<Flag> flags = {
+		{"angleSteps", &DrawingSettings::angleSteps},
+		{"guidesFromShape", &DrawingSettings::guidesFromShape},
+		{"alignToExistingBuildings", &DrawingSettings::alignToExistingBuildings},
+		{"guidesFromWorldAxes", &DrawingSettings::guidesFromWorldAxes},
+		{"guideCrossings", &DrawingSettings::guideCrossings},
+		{"commonLengths", &DrawingSettings::commonLengths},
+		{"guideDistances", &DrawingSettings::guideDistances},
+		{"angleReadout", &DrawingSettings::angleReadout},
+		{"roundLengths", &DrawingSettings::roundLengths},
+		{"showKeyGuide", &DrawingSettings::showKeyGuide},
+	};
+	const auto settingsOf = [](const DrawingSettings& settings) {
+		DrawingStateContext context;
+		context.settings = settings;
+		return nlohmann::json::parse(render(DrawingSnapshot{}, context)).at("settings");
+	};
+	const auto baseline = settingsOf(DrawingSettings{});
+	EXPECT_EQ(baseline.size(), flags.size() + 1);
+	for (const Flag& flag : flags) {
+		DrawingSettings changed;
+		changed.*flag.member = true;
+		auto expected = baseline;
+		expected[flag.key] = true;
+		EXPECT_EQ(settingsOf(changed), expected) << flag.key;
+	}
+	DrawingSettings finer;
+	finer.rectangleGridSpacingMeters = 0.5F;
+	auto expected = baseline;
+	expected["rectangleGridSpacingMeters"] = 0.5;
+	EXPECT_EQ(settingsOf(finer), expected);
+
+	DrawingStateContext context;
+	EXPECT_TRUE(contains(render(DrawingSnapshot{}, context), "\"rectangleGridSpacingMeters\":1.000"));
+	context.settings.rectangleGridSpacingMeters = 0.5F;
+	EXPECT_TRUE(contains(render(DrawingSnapshot{}, context), "\"rectangleGridSpacingMeters\":0.500"));
+}
+
 TEST(DrawingStateJson, TheKeyGuideIsShownWhenAToolIsActiveAndTheSettingIsOn) {
 	struct Case {
 		bool tool;
@@ -154,7 +198,7 @@ TEST(DrawingStateJson, TheKeyGuideIsShownWhenAToolIsActiveAndTheSettingIsOn) {
 	}
 }
 
-TEST(DrawingStateJson, TheHintIsTheStripsOwnLineForEachStateItDistinguishes) {
+TEST(DrawingStateJson, TheStatusHintAndTheJsonAgreeForEachStateItDistinguishes) {
 	using world_sim::DrawingStatus;
 	struct Case {
 		const char*	   name;
@@ -183,10 +227,27 @@ TEST(DrawingStateJson, TheHintIsTheStripsOwnLineForEachStateItDistinguishes) {
 		{"freeform, two points", freeform(2, true, ""), "Keep placing points", StatusHintTone::Warn},
 		{"freeform, three points", freeform(3, true, ""), "Click origin to close", StatusHintTone::Ok},
 		{"freeform, refused", freeform(3, false, "crosses itself"), "crosses itself", StatusHintTone::Crit},
+		{"freeform, refused with one point", freeform(1, false, "crosses itself"), "crosses itself", StatusHintTone::Crit},
+		{"freeform, invalid with no message", freeform(3, false, ""), "Ready", StatusHintTone::Ok},
 		{"edit, no point",
 		 DrawingStatus{.active = true, .foundationEdit = true, .pointCount = 0},
 		 "Draw a region across the foundation edge",
 		 StatusHintTone::Ok},
+		{"edit, add refused with two points",
+		 DrawingStatus{.active = true, .foundationEdit = true, .pointCount = 2, .valid = false, .message = "outside the foundation"},
+		 "outside the foundation",
+		 StatusHintTone::Crit},
+		{"edit, subtract refused with one point",
+		 DrawingStatus{
+			 .active = true,
+			 .foundationEdit = true,
+			 .editLabel = "Subtract from foundation",
+			 .pointCount = 1,
+			 .valid = false,
+			 .message = "leaves nothing"
+		 },
+		 "leaves nothing",
+		 StatusHintTone::Crit},
 		{"wall, no foundation yet", wall(0, true, ""), "Click a foundation to start", StatusHintTone::Warn},
 		{"wall, chain started", wall(2, true, ""), "Right-click / Enter to finish", StatusHintTone::Ok},
 		{"wall, refused", wall(2, false, "off the foundation"), "off the foundation", StatusHintTone::Crit},
