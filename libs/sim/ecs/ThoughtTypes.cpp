@@ -254,12 +254,6 @@ namespace ecs {
 			.trivialWeight = kept.trivialWeight,
 			.normalWeight = kept.normalWeight,
 		};
-		if (newKeeping.pruneStopCount >= newKeeping.pruneStartCount) {
-			errors.push_back(
-				"thoughts: <kept> limit=\"" + std::to_string(kept.limit) + "\" is too small: pruneStartsAt and pruneStopsAt both round to " +
-				std::to_string(newKeeping.pruneStartCount) + " thoughts"
-			);
-		}
 
 		if (!errors.empty()) {
 			return errors;

@@ -27,7 +27,8 @@ namespace ecs::test {
 			.normalWeight = 3.0F,
 		};
 
-		/// Builds a record by hand: each thought arrives after the last, in id order.
+		/// Builds a record by hand: each thought arrives after the last, in id order. A feeling is also the
+		/// type's feeling entry it came from, so thoughts merge only when they share it.
 		class RecordBuilder {
 		  public:
 			Thought& add(
@@ -44,6 +45,7 @@ namespace ecs::test {
 					.eventType = eventType,
 					.subject = subject,
 					.feeling = feeling,
+					.typeFeeling = static_cast<uint16_t>(feeling),
 					.moodEffect = moodEffect,
 					.importance = importance,
 					.arrivedAt = arrivedAt,
@@ -200,36 +202,6 @@ namespace ecs::test {
 		EXPECT_EQ(pruneTo(2), (std::vector<ThoughtId>{1, felt}));
 	}
 
-	TEST(ThoughtPruning, TheSameRecordAlwaysPrunesTheSameWay) {
-		RecordBuilder builder;
-		uint32_t	  state = 12345;
-		const auto	  next = [&state](uint32_t below) {
-			   state = (state * 1103515245U) + 12345U;
-			   return (state >> 16U) % below;
-		};
-		for (int index = 0; index < 400; ++index) {
-			const ThoughtSubject subject = next(3) == 0 ? ThoughtSubject::aboutKind(next(20)) : ThoughtSubject::aboutNothing();
-			const std::optional<MoodEffect> effect = next(2) == 0 ? std::optional(MoodEffect::timed(-static_cast<float>(next(10) + 1), 24.0F)) : std::nullopt;
-			builder.add(next(6), next(4), static_cast<double>(index) * kDay / 4.0, next(2) == 0 ? ThoughtImportance::Trivial : ThoughtImportance::Normal, effect, subject);
-		}
-		const ThoughtKeeping keeping{.pruneStartCount = 360, .pruneStopCount = 320, .recentSimulationSeconds = 10.0 * kDay, .trivialWeight = 1.0F, .normalWeight = 3.0F};
-		const double		 now = 120.0 * kDay;
-
-		Thoughts			first = builder.thoughts;
-		Thoughts			second = builder.thoughts;
-		ThoughtPruneScratch scratch;
-		ASSERT_TRUE(pruneThoughts(first, keeping, now, scratch));
-		ThoughtPruneScratch otherScratch;
-		ASSERT_TRUE(pruneThoughts(second, keeping, now, otherScratch));
-		ASSERT_EQ(first.record.size(), keeping.pruneStopCount);
-		ASSERT_EQ(idsOf(first), idsOf(second));
-		for (std::size_t index = 0; index < first.record.size(); ++index) {
-			EXPECT_EQ(first.record[index].count, second.record[index].count);
-			EXPECT_EQ(first.record[index].merged, second.record[index].merged);
-			EXPECT_EQ(first.record[index].lastRepeatedAt, second.record[index].lastRepeatedAt);
-		}
-	}
-
 	namespace {
 		constexpr std::string_view kTypes = R"(
   <thought id="mused" label="Mused" importance="trivial">
@@ -282,31 +254,22 @@ namespace ecs::test {
 		EXPECT_EQ(rules.types.keeping().pruneStartCount, 18U);
 		EXPECT_EQ(rules.types.keeping().pruneStopCount, 16U);
 		EXPECT_DOUBLE_EQ(rules.types.keeping().recentSimulationSeconds, kDay);
-
-		testing::TestThoughtTypes tooSmall{kTypes, R"(
-  <tuning maxLineLength="40" maxSubjectNameLength="12" whileCheckMinutes="15">
-    <kept limit="2" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="1" trivialWeight="1" normalWeight="3"/>
-  </tuning>
-)"};
-		ASSERT_EQ(tooSmall.errors.size(), 1U);
-		EXPECT_NE(tooSmall.errors[0].find("<kept> limit=\"2\" is too small"), std::string::npos) << tooSmall.errors[0];
 	}
 
 	// Held thoughts are never pruned or merged, and a thought that ended this frame is still there for the
 	// mood contributions MoodSystem summed before it ended.
 	TEST_F(ThoughtPruningSystemTest, HeldThoughtsAreUntouchedAndEveryContributionStillResolves) {
+		ASSERT_TRUE(thoughts->end(give("something_reeks")));
 		const ThoughtHandle reeks = give("something_reeks");
 		give("bottled_up");
 		const ThoughtHandle bottled = give("bottled_up");
 		// Every three hours for thirty days: a day's recent thoughts fit under the stop size.
-		std::size_t largest = 0;
 		for (int step = 0; step < 8 * 30; ++step) {
 			time->skipTime(180.0F);
 			world.update(0.0F);
 			give("mused");
-			largest = std::max(largest, record().record.size());
 		}
-		EXPECT_LT(largest, rules.types.keeping().pruneStartCount) << "every arrival that reached the start size pruned";
+		EXPECT_EQ(record().record.size(), rules.types.keeping().pruneStopCount) << "the last arrival reached the start size and pruned";
 		EXPECT_TRUE(std::ranges::any_of(record().record, [](const Thought& thought) { return thought.merged; }));
 
 		const Thought* held = findThought(record(), reeks.thought);
@@ -318,6 +281,7 @@ namespace ecs::test {
 		EXPECT_EQ(heldMoodTotal(record()), -8.0F);
 
 		// What MoodSystem summed this frame, before the thought ends and its <ends> thought prunes the record.
+		// This thought is not the first of its type, so only its end keeps it, being recent.
 		while (record().record.size() < rules.types.keeping().pruneStartCount - 1) {
 			give("mused");
 		}

@@ -151,16 +151,16 @@ Some thoughts are never pruned:
 - thoughts a colonist's attachment, like, or dislike grew from
 - everything whose last moment is in the last 10 game days
 
-When the thoughts that are never pruned alone reach 90%, pruning removes what it can, and the record stays above the limit until older thoughts can go.
+When the thoughts that are never pruned alone reach 90%, pruning removes what it can, and the record stays above the limit until older thoughts can go. When they alone hold the record at the start size, every thought that is not protected and is older than the recent window is removed.
 
 The rest are pruned in two passes.
 
-1. **Merge repeats.** Thoughts with the same event type, subject, and feeling collapse into one entry carrying a count and the first and last dates ("Hungry. Miserable. 40 times, spring to autumn"). The run whose first thought is oldest merges first, and a run takes in its thoughts oldest first, one at a time, so pruning stops at 80% exactly, even partway through a run. A merged entry is its earliest thought, with that thought's line and mood effect, standing for the whole run: its count is the sum of its thoughts' counts (a stack counting each repeat), its dates run from the earliest thought's arrival to the latest arrival among them, and its end is the latest of theirs. An entry merged before is merged into again like any other thought.
+1. **Merge repeats.** Thoughts with the same event type, subject, and feeling entry of their type (the one entry of the type's feelings that applied, so a run never mixes mood amounts) collapse into one entry carrying a count and the first and last dates ("Hungry. Miserable. 40 times, spring to autumn"). The run whose first thought is oldest merges first, and a run takes in its thoughts oldest first, one at a time, so pruning stops at 80% exactly, even partway through a run. A merged entry is its earliest thought, with that thought's line and mood effect, standing for the whole run: its count is the sum of its thoughts' counts (a stack counting each repeat), its dates run from the earliest thought's arrival to the latest arrival among them, and its end is the latest of theirs. An entry merged before is merged into again like any other thought.
 2. **Drop the least memorable.** If merging was not enough, entries are dropped lowest score first, where
 
    `score = importance x (1 + size of mood effect) x (1 + count) / age`
 
-   Importance is 1 for a trivial thought and 3 for a normal one; major thoughts are never dropped, so they have no weight. The size of the mood effect is the absolute amount of one occurrence (a stack's amount for one repeat), 0 for a thought with none. Count is the thought's count: 1 for a single thought, the repeats of a stack, the thoughts a merged entry stands for. Age is game days since the last moment. Trivial thoughts with no mood effect from long ago go first. A merged entry that stood for many thoughts outlasts a single stray one. Ties drop the one that arrived first.
+   Importance is the config's `trivialWeight` for a trivial thought and `normalWeight` for a normal one (1 and 3 as shipped); major thoughts are never dropped, so they have no weight. The size of the mood effect is the absolute amount of one occurrence (a stack's amount for one repeat), 0 for a thought with none. Count is the thought's count: 1 for a single thought, the repeats of a stack, the thoughts a merged entry stands for. Age is game days since the last moment. Trivial thoughts with no mood effect from long ago go first. A merged entry that stood for many thoughts outlasts a single stray one. Ties drop the one that arrived first.
 
 Pruning uses no randomness, so the same history always prunes the same way. A thought that survives keeps its identity, so whatever refers to it (the mood breakdown, a recall's link) still finds it.
 

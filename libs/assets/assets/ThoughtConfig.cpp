@@ -481,6 +481,19 @@ namespace assets {
 					fail(source, "<kept> trivialWeight and normalWeight must be positive numbers");
 					valid = false;
 				}
+				if (valid) {
+					const long startCount = std::lround(static_cast<double>(parsed.limit) * parsed.pruneStartsAt);
+					const long stopCount = std::lround(static_cast<double>(parsed.limit) * parsed.pruneStopsAt);
+					if (stopCount < 1 || stopCount >= startCount) {
+						fail(
+							source,
+							"<kept> limit=\"" + std::to_string(parsed.limit) + "\" is too small: pruneStartsAt and pruneStopsAt round to " +
+								std::to_string(startCount) + " and " + std::to_string(stopCount) +
+								" thoughts, which must differ with the stop at least 1"
+						);
+						valid = false;
+					}
+				}
 				return valid ? std::optional(parsed) : std::nullopt;
 			}
 

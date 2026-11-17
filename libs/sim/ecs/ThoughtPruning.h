@@ -1,9 +1,6 @@
 #pragma once
 
-// Bounding a colonist's thought record. When it reaches the start size, repeats merge and then the least
-// memorable thoughts drop until it is back at the stop size. Held and major thoughts, the first of each
-// event type, the first about each subject, and the recent ones are never touched. No randomness: the
-// same record always prunes the same way. See /docs/design/game-systems/colonists/thoughts.md (What is kept).
+// Bounding a colonist's thought record. See /docs/design/game-systems/colonists/thoughts.md (What is kept).
 
 #include "components/Thoughts.h"
 
@@ -26,6 +23,7 @@ namespace ecs {
 
 	/// Working space a pruner keeps between prunes, so pruning allocates only while the record grows.
 	struct ThoughtPruneScratch {
+		enum class Fate : uint8_t { Kept, Prunable, Removed };
 		struct Run {
 			uint32_t begin = 0;
 			uint32_t end = 0;
@@ -35,7 +33,7 @@ namespace ecs {
 			uint32_t index = 0;
 		};
 		std::vector<uint32_t> order;
-		std::vector<uint8_t>  fates;
+		std::vector<Fate>     fates;
 		std::vector<Run>	  runs;
 		std::vector<Scored>	  scored;
 	};

@@ -12,13 +12,13 @@ namespace ecs {
 
 	namespace {
 
-		enum class Fate : uint8_t { Kept, Prunable, Removed };
+		using Fate = ThoughtPruneScratch::Fate;
 
 		auto subjectKey(const ThoughtSubject& subject) {
 			return std::tuple(subject.kind, subject.entity, subject.definition, subject.place.x, subject.place.y);
 		}
 
-		auto repeatKey(const Thought& thought) { return std::tuple(thought.eventType, subjectKey(thought.subject), thought.feeling); }
+		auto repeatKey(const Thought& thought) { return std::tuple(thought.eventType, subjectKey(thought.subject), thought.typeFeeling); }
 
 		/// Keeps the first of the thoughts in scratch.order that share a key. The record is in first-arrival
 		/// order and never loses a first, so the lowest index with a key is the first thought ever with it.
@@ -30,7 +30,7 @@ namespace ecs {
 			for (std::size_t position = 0; position < scratch.order.size(); ++position) {
 				const uint32_t index = scratch.order[position];
 				if (position == 0 || key(record[scratch.order[position - 1]]) != key(record[index])) {
-					scratch.fates[index] = static_cast<uint8_t>(Fate::Kept);
+					scratch.fates[index] = Fate::Kept;
 				}
 			}
 		}
@@ -68,12 +68,12 @@ namespace ecs {
 		}
 		const auto	   size = static_cast<uint32_t>(record.size());
 		const double   recentFrom = now - keeping.recentSimulationSeconds;
-		std::vector<uint8_t>& fates = scratch.fates;
-		fates.assign(size, static_cast<uint8_t>(Fate::Prunable));
+		std::vector<Fate>& fates = scratch.fates;
+		fates.assign(size, Fate::Prunable);
 		for (uint32_t index = 0; index < size; ++index) {
 			const Thought& thought = record[index];
 			if (isHeld(thought) || thought.importance == ThoughtImportance::Major || thoughtLastMoment(thought) >= recentFrom) {
-				fates[index] = static_cast<uint8_t>(Fate::Kept);
+				fates[index] = Fate::Kept;
 			}
 		}
 
@@ -93,7 +93,7 @@ namespace ecs {
 		uint32_t remaining = size;
 		scratch.order.clear();
 		for (uint32_t index = 0; index < size; ++index) {
-			if (fates[index] == static_cast<uint8_t>(Fate::Prunable)) {
+			if (fates[index] == Fate::Prunable) {
 				scratch.order.push_back(index);
 			}
 		}
@@ -119,7 +119,7 @@ namespace ecs {
 			for (uint32_t position = run.begin + 1; position < run.end && remaining > keeping.pruneStopCount; ++position) {
 				const uint32_t index = scratch.order[position];
 				absorb(survivor, record[index]);
-				fates[index] = static_cast<uint8_t>(Fate::Removed);
+				fates[index] = Fate::Removed;
 				--remaining;
 			}
 		}
@@ -128,7 +128,7 @@ namespace ecs {
 		if (remaining > keeping.pruneStopCount) {
 			scratch.scored.clear();
 			for (uint32_t index = 0; index < size; ++index) {
-				if (fates[index] == static_cast<uint8_t>(Fate::Prunable)) {
+				if (fates[index] == Fate::Prunable) {
 					scratch.scored.push_back({.score = thoughtPruneScore(record[index], keeping, now), .index = index});
 				}
 			}
@@ -138,7 +138,7 @@ namespace ecs {
 			});
 			const std::size_t dropped = std::min<std::size_t>(remaining - keeping.pruneStopCount, scratch.scored.size());
 			for (std::size_t position = 0; position < dropped; ++position) {
-				fates[scratch.scored[position].index] = static_cast<uint8_t>(Fate::Removed);
+				fates[scratch.scored[position].index] = Fate::Removed;
 			}
 			remaining -= static_cast<uint32_t>(dropped);
 		}
@@ -148,7 +148,7 @@ namespace ecs {
 		}
 		uint32_t written = 0;
 		for (uint32_t index = 0; index < size; ++index) {
-			if (fates[index] != static_cast<uint8_t>(Fate::Removed)) {
+			if (fates[index] != Fate::Removed) {
 				if (written != index) {
 					record[written] = std::move(record[index]);
 				}

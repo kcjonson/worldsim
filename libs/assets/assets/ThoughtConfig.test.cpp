@@ -286,6 +286,16 @@ TEST_F(ThoughtConfigTest, KeptIsRequiredAndChecked) {
 		errorsForKept(R"(<kept limit="2000" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="10" trivialWeight="1" normalWeight="-3"/>)"),
 		"trivialWeight and normalWeight must be positive"
 	));
+	EXPECT_TRUE(mentions(
+		errorsForKept(R"(<kept limit="2" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="10" trivialWeight="1" normalWeight="3"/>)"),
+		"base.xml: <kept> limit=\"2\" is too small: pruneStartsAt and pruneStopsAt round to 2 and 2 thoughts"
+	));
+	EXPECT_TRUE(errorsForKept(R"(<kept limit="5" pruneStartsAt="0.9" pruneStopsAt="0.1" recentDays="10" trivialWeight="1" normalWeight="3"/>)").empty())
+		<< "sizes 4 and 1 differ";
+	EXPECT_TRUE(mentions(
+		errorsForKept(R"(<kept limit="5" pruneStartsAt="0.9" pruneStopsAt="0.05" recentDays="10" trivialWeight="1" normalWeight="3"/>)"),
+		"round to 4 and 0 thoughts"
+	));
 	EXPECT_TRUE(errorsForKept(kKept).empty());
 }
 

@@ -97,8 +97,7 @@ namespace ecs {
 		/// Replaces everything with `config`. Returns every error: an unknown feeling, a type with no
 		/// feeling, a line limited to a feeling its type cannot produce, a condition that does not parse
 		/// (with its position), an <ends> naming no type or making a cycle, a line longer than the tuning
-		/// allows, a source naming no need or no action, a kept limit too small for its two fractions to round
-		/// to different sizes. Nothing is kept when there are errors.
+		/// allows, or a source naming no need or no action. Nothing is kept when there are errors.
 		std::vector<std::string> load(const assets::ThoughtConfig& config);
 
 		[[nodiscard]] std::optional<ThoughtEventTypeId>		 findType(std::string_view name) const;

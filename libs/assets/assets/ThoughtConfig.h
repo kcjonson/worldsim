@@ -93,7 +93,8 @@ namespace assets {
 	/// How many thoughts a colonist keeps, and how pruning picks what goes. Major thoughts are never dropped,
 	/// so they carry no weight.
 	struct ThoughtKeptTuning {
-		/// The most thoughts a colonist keeps.
+		/// The size the two fractions are taken of. The record is pruned back toward it and can pass it
+		/// while protected thoughts fill it.
 		std::size_t limit = 0;
 		/// The fraction of the limit at which pruning starts, above pruneStopsAt and at most 1.
 		float pruneStartsAt = 0.0F;
@@ -131,10 +132,9 @@ namespace assets {
 	/// order; then the files in its subfolders, in path order.
 	///
 	/// Each file's root is <thoughts>, holding <feeling>, <thought>, and <tuning> elements; a <tuning> holds
-	/// one <kept>. A feeling or a
-	/// thought type declared again in a later file replaces the earlier one, and a later <tuning> replaces
-	/// the earlier numbers, each logged at info level naming both files; one declared twice in the same file
-	/// is an error. Unknown elements and attributes are errors. The checks that need the condition vocabulary
+	/// one <kept>. A feeling or a thought type declared again in a later file replaces the earlier one, and
+	/// a later <tuning> replaces the earlier numbers, each logged at info level naming both files; one
+	/// declared twice in the same file is an error. Unknown elements and attributes are errors. The checks that need the condition vocabulary
 	/// or the whole set (an unknown feeling, an <ends> cycle, a line too long) are the sim's, when it builds
 	/// the types. An empty error list means it loaded clean.
 	[[nodiscard]] ThoughtConfigLoad loadThoughtConfig(const std::filesystem::path& folder);

@@ -106,7 +106,7 @@ namespace ecs {
 		/// Repeats of a stacking held thought, the first included; its mood effect counts this many times. A
 		/// merged entry's is the sum of its thoughts' counts.
 		uint32_t count = 1;
-		/// Pruning collapsed repeats of this event, subject, and feeling into this entry, which keeps the
+		/// Pruning collapsed repeats of this event, subject, and typeFeeling into this entry, which keeps the
 		/// earliest one's id, line, and mood effect. Never held.
 		bool merged = false;
 	};

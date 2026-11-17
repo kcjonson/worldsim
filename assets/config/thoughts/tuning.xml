@@ -11,7 +11,8 @@
                         subject is gone.
 
   <kept> is how many thoughts a colonist keeps (thoughts.md, What is kept).
-  limit                 the most thoughts a colonist keeps.
+  limit                 the size the two fractions are taken of; the record is pruned back toward
+                        it and can pass it while protected thoughts fill it.
   pruneStartsAt         the fraction of the limit at which pruning starts.
   pruneStopsAt          the fraction of the limit pruning brings the record back to.
   recentDays            thoughts from this many recent game days are never pruned.
