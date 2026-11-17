@@ -174,8 +174,8 @@ Pruning changes only what the log can show. The bubble selector's novelty does n
 ## Where it shows in the UI
 
 - **World view.** Bubbles over colonists' heads, and matching expressions.
-- **Info panel and colonist details, Log tab.** Each thought is one block holding the event, the feeling, and the mood adjustment ("Slept on the ground. Miserable. -10 mood, 1 day"). By default the log shows the thoughts that bubbled, every major thought, and every low-mood episode and refusal, with a filter to show all of them. Merged entries show their count and date range. It is a reference for "why", not something to read through.
-- **Colonist details, Health tab.** The mood breakdown lists every held thought that has a mood effect, with its amount and time left. See [Mood](./mood.md).
+- **Info panel and colonist details, Log tab.** Each thought is one block holding the event, the feeling, and the mood adjustment ("Slept on the ground. Miserable. -10 mood, 1 day"). A Notable / All control above the blocks picks what shows: Notable, the default, is every thought that bubbled, every major thought, and every thought with a mood effect; All is every thought recorded. The newest 50 blocks show first, and "Show older" under them adds the next 50; another colonist starts again at 50. Merged entries show their count and date range. It is a reference for "why", not something to read through.
+- **Colonist details, Needs tab.** The mood breakdown lists every held thought that has a mood effect, with its amount and time left. See [Mood](./mood.md).
 - **Colony overview.** Held thoughts counted by event type across the colony ("slept on the ground: 5 colonists"), largest total mood effect first.
 - **Settings.** Bubble frequency (fewer, normal, more), and a switch per source to stop its trivial and normal thoughts from bubbling. Major thoughts always show.
 

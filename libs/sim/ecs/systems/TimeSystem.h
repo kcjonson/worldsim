@@ -36,6 +36,14 @@ enum class Season {
 /// One game minute on the day clock is one TimeSystem::simulationSeconds() unit.
 inline constexpr double kSimulationSecondsPerGameHour = 60.0;
 
+/// A moment on the day clock, to the minute.
+struct ClockTime {
+	int day = 1;
+	int minuteOfDay = 0;
+
+	bool operator==(const ClockTime& other) const = default;
+};
+
 /// Game time state snapshot (for UI/serialization)
 struct GameTimeSnapshot {
 	int day;			// Days since colony founding (1-indexed)
@@ -67,6 +75,9 @@ class TimeSystem : public ISystem {
 	[[nodiscard]] Season season() const { return currentSeason; }
 	[[nodiscard]] float timeOfDay() const { return currentTimeOfDay; }
 	[[nodiscard]] GameTimeSnapshot snapshot() const;
+	/// Now on the day clock. setTimeOfDay moves the day clock without moving simulationSeconds(), so an
+	/// earlier moment's clock time can't be worked back from its simulation seconds: stamp it when it happens.
+	[[nodiscard]] ClockTime clockTime() const;
 
 	/// Scaled seconds since the colony started: every frame's deltaTime * effectiveTimeScale(), the time
 	/// actions and movement run on, plus any skipTime. Stops while paused, runs 3x or 10x at speed, never

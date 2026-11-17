@@ -126,7 +126,7 @@ This is a read-only summary. The full gear paper-doll is in the Colonist Details
 
 ### Log tab
 
-The colonist's thoughts, the same blocks as the dossier's [Log tab](#log-tab-1), newest first. The list is at most 240px tall and scrolls inside the panel.
+The colonist's thoughts, the same list as the dossier's [Log tab](#log-tab-1): the Notable / All control, the blocks newest first, and "Show older". The list is at most 240px tall and scrolls inside the panel. It is built only while the tab is shown.
 
 ### Actions row
 
@@ -261,7 +261,7 @@ Opened by double-clicking a colonist card (roster or info panel eye button). A `
 > - **Skills, Social — placeholders.** Rendered as honest "not yet simulated" empty states; no backing systems exist yet (no skills or relationships systems).
 > - **Bio traits** render as plain text, not `Badge` chips. **Tasks** current-task panel is simpler than the prototype (no progress bar / type / distance breakdown). **Memory** entity rows show map coordinates, not distance-from-colonist, and "Threats" is a placeholder category.
 > - **Footer:** Close works; **Work Priorities** and **Draft** are visual-only (no backing systems).
-> - Size: the dialog is the prototype's 760 ui px wide, and as tall as its tallest tab needs for that colonist, measured when it opens and held until it closes, so switching tabs, new data, or pressing the eye button again for the same or another colonist never resizes it; a tab that later outgrows it scrolls. The interface scales to the window ([Interface scaling](../ui-scale-setting.md)). Its height is capped at 86% of the canvas (width 92%) and the tab area scrolls in what's left, so it fits the smallest canvas. The Gear tab's paper doll is the tallest for most colonists (about 480 ui px of tab, a 770 ui px dialog), so the Bio tab sits in more room than the mock's, which sized each tab on its own.
+> - Size: the dialog is the prototype's 760 ui px wide, and as tall as its tallest tab needs for that colonist (Tasks and Log aside, see [Tabs](#tabs-8)), measured when it opens and held until it closes, so switching tabs, new data, or pressing the eye button again for the same or another colonist never resizes it; a tab that later outgrows it scrolls. The interface scales to the window ([Interface scaling](../ui-scale-setting.md)). Its height is capped at 86% of the canvas (width 92%) and the tab area scrolls in what's left, so it fits the smallest canvas. The Gear tab's paper doll is the tallest for most colonists (about 480 ui px of tab, a 770 ui px dialog), so the Bio tab sits in more room than the mock's, which sized each tab on its own.
 > - Not yet stress-tested for text overflow with a **data-rich colonist** (long backstory, full gear, many known entities/tasks); only placeholder data has been exercised.
 
 ### Header area
@@ -270,17 +270,19 @@ Avatar (72px, mood-tinted) beside a 2×2 `Stat` grid: Role, Origin, Age (unit "y
 
 ### Tabs (8)
 
-Bio (user), Health (heart), Skills (hammer), Social (users), Gear (box), Memory (eye), Tasks (list), Log (clock).
+Bio (user), Needs (heart), Skills (hammer), Social (users), Gear (box), Memory (eye), Tasks (list), Log (clock).
 
-The tab set mirrors the real colonist systems (see the data notes in the prototype's `mock.ts`). Health folds in the former "Needs" tab, since in-engine health *is* the needs + mood system.
+The tab set mirrors the real colonist systems (see the data notes in the prototype's `mock.ts`). Needs is the prototype's Health tab, since in-engine health *is* the needs + mood system.
+
+The dialog's height is set by the tabs whose content is bounded: Bio, Needs, Skills, Social, Gear, and Memory, whose categories show at most three rows each. A tab whose content is a list that grows with the colonist (Tasks' known work, Log's thoughts) doesn't count; it fills the tab area the others set and scrolls there. So a colonist with a long log or a lot of known work opens the dialog no taller than one with none, and switching to those tabs never resizes it.
 
 #### Bio tab
 
 Backstory paragraph (`--fs-md`, `--lh-loose`). `Divider` "Traits." Trait `Badge` chips (same tone logic as party selection). Current task note: hammer icon + "Currently: {task}" in amber.
 
-#### Health tab
+#### Needs tab
 
-![Health tab](../mocks/in-game-dossier-health.png)
+![Needs tab](../mocks/in-game-dossier-health.png)
 
 The colonist's Needs + Mood system. A full-width `Meter` for Mood (tone `auto`) at the top, captioned that mood eases toward a target made of the needs and the thoughts the colonist holds. Then the eight needs in a 2-column grid; each row is an icon (14px, `--text-dim`) + `Meter` (size `sm`) colored against that need's *own* thresholds: `crit` below its critical threshold, `warn` below its seek threshold, else `ok`.
 
@@ -289,8 +291,10 @@ Two groups: **Vital Needs** (Hunger, Thirst, Energy, Bladder, Digestion — the 
 Beside the needs, a **Mood breakdown** divider over the parts of the mood target, the same contributions the target is summed from, so they add up to it:
 
 - Needs: the needs' share, signed (mono, "-5.6").
-- One row per held thought with a mood effect, in arrival order: the event's label (" x3" after a stack), its time left under it in the small print ("22 hours left", rounded up; "while soaked" for one held by a condition), and its amount at the right ("-10", a stack's whole amount). With none, the small print reads "No thought is moving this colonist's mood."
-- Target: the target as a percentage. 100 plus the needs' share plus every row is the target before it is clamped to 0 to 100.
+- One row per held thought with a mood effect, in arrival order: the event's label (" x3" after a stack), its time left under it in the small print, and its amount at the right ("-10", a stack's whole amount). Time left is in its largest unit, rounded to the nearest and never 0: minutes under an hour, hours under two days, then days ("12 min left", "22 hours left", "2 days left"); one held by a condition reads "while soaked". With none, the small print reads "No thought is moving this colonist's mood."
+- Target: the target as a percentage, to one decimal like the rows ("65.5%", "72%").
+
+Every amount is shown to one decimal, so 100 plus the needs' share plus every row adds to the target within rounding, before the target is clamped to 0 to 100. When the sum is clamped, the Target row reads the clamped value and a muted note under it gives the sum: "Clamped: the parts add to 112%".
 
 The value on the meter eases toward the target, so the two differ while mood moves.
 
@@ -346,13 +350,13 @@ Trailing muted note: colonists pick the highest-priority job they know about on 
 
 #### Log tab
 
-The colonist's thoughts ([Thoughts](../../game-systems/colonists/thoughts.md)), every one recorded, newest first by the latest arrival (a repeat folded into a held thought moves it up). Each thought is one block:
+The colonist's thoughts ([Thoughts](../../game-systems/colonists/thoughts.md)), newest first by the latest arrival (a repeat folded into a held thought moves it up). A `SegmentedControl` (size `sm`) above the blocks reads Notable / All: Notable, the default, shows the major thoughts and those with a mood effect, and All shows every one recorded. At most the newest 50 blocks show; a ghost "Show older" button under them adds the next 50, and is gone when none are left. Another colonist starts again at 50. Each thought is one block:
 
-- When it arrived, as the game date and time (mono, `--fs-2xs`, `--text-faint`): "Day 2, 07:55".
+- When it arrived, as the game date and time (mono, `--fs-2xs`, `--text-faint`): "Day 2, 07:55", the day clock as it read then, which setting the clock later doesn't change.
 - The event, the feeling, and the mood adjustment in one line (`--fs-sm`, `--text`): "Slept on the ground. Miserable. -10 mood, 1 day". A stack shows its count and its whole amount ("Bottled up x3. Resigned. -6 mood, 1 day"); one held by a condition reads "while" and its cause ("-6 mood, while soaked"); one with no mood effect has no mood part ("Very hungry. Annoyed.").
 - The quip in quotes, when the thought has one (`--fs-sm`, `--text-dim`).
 
-Event and feeling names are the `label`s in `assets/config/thoughts`. With no thoughts, an empty state reads "No thoughts yet". The tab grows with the log and the tab area scrolls it; the dialog's size does not change.
+Durations read in whole units: "45 min", "1 hour 15 min", "6 hours", "1 day". Event and feeling names are the `label`s in `assets/config/thoughts`, and none ends in a period (the loader refuses one). With no thoughts, an empty state reads "No thoughts yet"; with thoughts but none notable, "Nothing notable yet". The tab doesn't set the dialog's height ([Tabs](#tabs-8)): it fills the tab area and scrolls there. The log is built only while the tab is shown, and again only when the record changes.
 
 ### Dialog footer
 

@@ -10,11 +10,23 @@ effect in the dossier's mood breakdown. Spec: [thoughts.md](../../design/game-sy
 
 ## Steps
 
-Launch `world-sim --scene=game --background --no-settings` (RelWithDebInfo); the dev server is on 127.0.0.1:8081. Bob's id is in `/api/state?what=colonists`.
+Launch `world-sim --scene=game --background --no-settings` (RelWithDebInfo); the dev server is on 127.0.0.1:8081. Bob's id is in `/api/state?what=colonists`. Give thoughts with `/api/dev/thought?colonist=<id>&type=<type>`.
 
-1. Give Bob `slept_on_ground`, `bottled_up` three times, `very_hungry` and `ate_good_meal` (`/api/dev/thought?colonist=<id>&type=<type>`), then pause (`/api/dev/time?speed=0`).
-2. Click Bob's card, then the panel's LOG tab: one block per thought, newest first, each a "Day 1, hh:mm" line, a line like "Slept on the ground. Miserable. -10 mood, 1 day", and the quip in quotes; the list scrolls inside the panel.
-3. The bottled up block reads "Bottled up x3. Resigned. -6 mood, 1 day"; the very hungry block has no mood part ("Very hungry. Annoyed.").
-4. Press the panel's eye button and open the dossier's LOG tab: the same blocks, in the same order.
-5. Open the NEEDS tab: the dialog keeps its size; Mood breakdown lists Needs, a row per held thought with its amount and time left (such as "23 hours left"), and Target. Needs plus every row plus 100 is the Target, and it matches `mood.target` in `what=colonists`.
-6. `/api/ui/lint` on each tab: `"count":0`.
+1. Pause (`/api/dev/time?speed=0`): the HUD clock stops.
+2. Give Bob `slept_on_ground`, `bottled_up` three times, `very_hungry` and `ate_good_meal`: each answers ok.
+3. Click Bob's card: the info panel shows him.
+4. Press the panel's LOG tab: Notable is picked, with one block per thought that has a mood effect, newest first, and none for very hungry.
+5. Pick All: a very hungry block appears, with a feeling and no mood part.
+6. Read the bottled up block: "Bottled up x3. Resigned. -6 mood, 1 day".
+7. Read any block's first line: a "Day N, hh:mm" date.
+8. Set the clock (`/api/dev/time?set=20:00`): every block keeps its date.
+9. Press the panel's eye button: the dossier opens on Bio.
+10. Press the dossier's LOG tab: Notable is picked, over the blocks step 4 showed.
+11. Give Bob `very_hungry` 60 times: each answers ok.
+12. Pick All: 50 blocks, and a "Show older" button under them.
+13. Press "Show older": every thought shows, and the button is gone.
+14. Open the NEEDS tab: the dialog keeps the size it opened at.
+15. Read the Mood breakdown: Needs, a row per held thought with its amount and time left ("23 hours left"), and Target.
+16. Add 100, Needs and every row: the Target within 0.1, or the sum on the "Clamped" note under it.
+17. Close the dossier and open it on Bob again: it opens at the size it had in step 9, long log and all.
+18. `/api/ui/lint` on each tab: `"count":0`.

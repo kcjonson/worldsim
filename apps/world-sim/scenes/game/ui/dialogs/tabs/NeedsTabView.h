@@ -50,6 +50,7 @@ namespace world_sim {
 		ui::Ref<ui::Component>					thoughtRows;
 		ui::Ref<ui::Text>						noThoughts;
 		ui::Ref<ui::Text>						moodTarget;
+		ui::Ref<ui::Text>						clampedNote;
 		MoodBreakdown							shownBreakdown;
 		bool									breakdownShown = false;
 	};

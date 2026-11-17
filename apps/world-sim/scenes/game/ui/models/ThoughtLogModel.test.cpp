@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -33,7 +34,18 @@ namespace world_sim {
     <feeling is="annoyed"/>
     <line>I could eat a whole bush.</line>
   </thought>
+  <thought id="saw_the_sea" label="Saw the sea" importance="major">
+    <feeling is="delighted"/>
+  </thought>
 )";
+
+		std::vector<std::string> summaries(const ThoughtLogModel& model) {
+			std::vector<std::string> shown;
+			for (const ThoughtLogEntry& entry : model.entries()) {
+				shown.push_back(entry.summary);
+			}
+			return shown;
+		}
 
 	} // namespace
 
@@ -49,12 +61,18 @@ namespace world_sim {
 			}
 			time = &world.registerSystem<ecs::TimeSystem>();
 			thoughts = &world.registerSystem<ecs::ThoughtSystem>(rules.types, 7U);
-			colonist = world.createEntity();
-			world.addComponent<ecs::Colonist>(colonist, ecs::Colonist{.name = "Ada"});
-			world.addComponent<ecs::Attributes>(colonist, ecs::testing::attributesAt(10.0F));
+			colonist = spawn("Ada");
 		}
 
-		void give(std::string_view type) { thoughts->create({.colonist = colonist, .eventType = rules.type(type)}); }
+		ecs::EntityID spawn(const char* name) {
+			const ecs::EntityID spawned = world.createEntity();
+			world.addComponent<ecs::Colonist>(spawned, ecs::Colonist{.name = name});
+			world.addComponent<ecs::Attributes>(spawned, ecs::testing::attributesAt(10.0F));
+			return spawned;
+		}
+
+		void give(std::string_view type) { give(colonist, type); }
+		void give(ecs::EntityID who, std::string_view type) { thoughts->create({.colonist = who, .eventType = rules.type(type)}); }
 
 		void advanceMinutes(float minutes) { time->skipTime(minutes); }
 
@@ -74,15 +92,15 @@ namespace world_sim {
 
 		[[nodiscard]] const ecs::Thoughts& record() const { return *world.getComponent<ecs::Thoughts>(colonist); }
 
-		[[nodiscard]] ecs::Mood moodAsSummed() const {
+		[[nodiscard]] ecs::Mood moodAsSummed(float needs) const {
 			ecs::Mood mood;
-			mood.target = ecs::kFullMood;
-			mood.needContributions[0] = -12.0F;
-			mood.target -= 12.0F;
-			ecs::forEachHeldThought(record(), [&mood](const ecs::Thought& thought) {
+			mood.needContributions[0] = needs;
+			float unclamped = ecs::kFullMood + needs;
+			ecs::forEachHeldThought(record(), [&](const ecs::Thought& thought) {
 				mood.thoughtContributions.push_back({.thought = thought.id, .amount = ecs::heldMoodAmount(thought)});
-				mood.target += ecs::heldMoodAmount(thought);
+				unclamped += ecs::heldMoodAmount(thought);
 			});
+			mood.target = std::clamp(unclamped, 0.0F, ecs::kFullMood);
 			return mood;
 		}
 
@@ -93,26 +111,124 @@ namespace world_sim {
 		ecs::EntityID				   colonist{0};
 	};
 
-	TEST_F(ThoughtLogModelTest, EachThoughtIsOneBlockNewestFirst) {
+	TEST_F(ThoughtLogModelTest, TheNotableThoughtsShowFirstAndAllShowsTheRest) {
 		giveTheMorning();
-		const std::vector<ThoughtLogEntry> entries = thoughtLogEntries(rules.types, record(), gameClock(world));
+		give("saw_the_sea");
+		ThoughtLogModel model;
+		ASSERT_TRUE(model.refresh(world, colonist));
+		EXPECT_EQ(model.currentFilter(), ThoughtLogFilter::Notable);
+		EXPECT_EQ(
+			summaries(model),
+			(std::vector<std::string>{
+				"Saw the sea. Delighted.",
+				"Bottled up x3. Resigned. -6 mood, 1 day",
+				"Soaked. Miserable. -6 mood, while soaked",
+				"Slept on the ground. Miserable. -10 mood, 1 day",
+			})
+		);
+		EXPECT_EQ(model.entries()[1].when, "Day 1, 08:00");
+		EXPECT_EQ(model.entries()[1].line, "");
+		EXPECT_EQ(model.entries()[3].line, "My back hates me now.");
+		EXPECT_EQ(model.entries()[3].when, "Day 1, 06:00");
 
-		ASSERT_EQ(entries.size(), 4U);
-		EXPECT_EQ(entries[0].summary, "Bottled up x3. Resigned. -6 mood, 1 day");
-		EXPECT_EQ(entries[0].when, "Day 1, 08:00");
-		EXPECT_EQ(entries[0].line, "");
-		EXPECT_EQ(entries[1].summary, "Very hungry. Annoyed.");
-		EXPECT_EQ(entries[1].line, "I could eat a whole bush.");
-		EXPECT_EQ(entries[1].when, "Day 1, 07:30");
-		EXPECT_EQ(entries[2].summary, "Soaked. Miserable. -6 mood, while soaked");
-		EXPECT_EQ(entries[3].summary, "Slept on the ground. Miserable. -10 mood, 1 day");
-		EXPECT_EQ(entries[3].line, "My back hates me now.");
-		EXPECT_EQ(entries[3].when, "Day 1, 06:00");
+		model.setFilter(ThoughtLogFilter::All);
+		ASSERT_TRUE(model.refresh(world, colonist));
+		ASSERT_EQ(model.entries().size(), 5U);
+		EXPECT_EQ(model.entries()[2].summary, "Very hungry. Annoyed.");
+		EXPECT_EQ(model.entries()[2].line, "I could eat a whole bush.");
+		EXPECT_EQ(model.entries()[2].when, "Day 1, 07:30");
+	}
+
+	TEST_F(ThoughtLogModelTest, AColonistWithOnlyPassingThoughtsHasNothingNotable) {
+		give("very_hungry");
+		ThoughtLogModel model;
+		model.refresh(world, colonist);
+		EXPECT_TRUE(model.entries().empty());
+		EXPECT_TRUE(model.hasThoughts());
+
+		const ecs::EntityID newcomer = spawn("Grace");
+		model.refresh(world, newcomer);
+		EXPECT_TRUE(model.entries().empty());
+		EXPECT_FALSE(model.hasThoughts());
+	}
+
+	TEST_F(ThoughtLogModelTest, ShowsAPageAtATimeAndStartsAgainForAnotherColonist) {
+		const std::size_t kThoughts = (2 * kThoughtLogPage) + 7;
+		for (std::size_t index = 0; index < kThoughts; ++index) {
+			give("saw_the_sea");
+		}
+		ThoughtLogModel model;
+		model.refresh(world, colonist);
+		EXPECT_EQ(model.entries().size(), kThoughtLogPage);
+		EXPECT_TRUE(model.hasOlder());
+		EXPECT_EQ(model.entries().front().id, kThoughts) << "the newest first";
+
+		model.showOlder();
+		ASSERT_TRUE(model.refresh(world, colonist));
+		EXPECT_EQ(model.entries().size(), 2 * kThoughtLogPage);
+		model.showOlder();
+		ASSERT_TRUE(model.refresh(world, colonist));
+		EXPECT_EQ(model.entries().size(), kThoughts);
+		EXPECT_FALSE(model.hasOlder());
+		EXPECT_EQ(model.entries().back().id, 1U);
+
+		const ecs::EntityID other = spawn("Grace");
+		for (std::size_t index = 0; index < kThoughts; ++index) {
+			give(other, "saw_the_sea");
+		}
+		ASSERT_TRUE(model.refresh(world, other));
+		EXPECT_EQ(model.entries().size(), kThoughtLogPage);
+		EXPECT_TRUE(model.hasOlder());
+	}
+
+	TEST_F(ThoughtLogModelTest, TheLogIsBuiltAgainOnlyWhenTheRecordChanges) {
+		ThoughtLogModel model;
+		EXPECT_TRUE(model.refresh(world, colonist));
+		EXPECT_TRUE(model.entries().empty());
+		EXPECT_FALSE(model.refresh(world, colonist));
+
+		give("bottled_up");
+		EXPECT_TRUE(model.refresh(world, colonist));
+		EXPECT_FALSE(model.refresh(world, colonist));
+		const uint64_t built = model.version();
+
+		// A repeat folded into the held thought at the same simulation time.
+		give("bottled_up");
+		EXPECT_TRUE(model.refresh(world, colonist));
+		EXPECT_GT(model.version(), built);
+		ASSERT_EQ(model.entries().size(), 1U);
+		EXPECT_EQ(model.entries()[0].summary, "Bottled up x2. Resigned. -4 mood, 1 day");
+	}
+
+	TEST_F(ThoughtLogModelTest, EveryWriteToTheRecordMovesItsRevision) {
+		give("slept_on_ground");
+		uint64_t revision = record().revision;
+		give("slept_on_ground");
+		EXPECT_GT(record().revision, revision) << "a repeat folded in";
+		revision = record().revision;
+		give("very_hungry");
+		EXPECT_GT(record().revision, revision) << "a thought with no mood effect";
+		revision = record().revision;
+		advanceMinutes(25.0F * 60.0F);
+		thoughts->update(0.0F);
+		EXPECT_GT(record().revision, revision) << "a held thought ending";
+	}
+
+	TEST_F(ThoughtLogModelTest, ATimeSetDoesNotMoveWhenAThoughtArrived) {
+		give("slept_on_ground");
+		time->setTimeOfDay(20.0F);
+		give("very_hungry");
+		ThoughtLogModel model;
+		model.setFilter(ThoughtLogFilter::All);
+		model.refresh(world, colonist);
+		ASSERT_EQ(model.entries().size(), 2U);
+		EXPECT_EQ(model.entries()[0].when, "Day 1, 20:00");
+		EXPECT_EQ(model.entries()[1].when, "Day 1, 06:00");
 	}
 
 	TEST_F(ThoughtLogModelTest, TheBreakdownIsTheContributionsTheTargetSums) {
 		giveTheMorning();
-		const ecs::Mood		mood = moodAsSummed();
+		const ecs::Mood		mood = moodAsSummed(-12.0F);
 		const MoodBreakdown breakdown = moodBreakdown(rules.types, &record(), mood, time->simulationSeconds());
 
 		EXPECT_EQ(breakdown.needs, "-12");
@@ -126,22 +242,20 @@ namespace world_sim {
 		EXPECT_EQ(breakdown.thoughts[2].left, "24 hours left");
 		// 100 - 12 - 10 - 6 - 6
 		EXPECT_EQ(breakdown.target, "66%");
+		EXPECT_EQ(breakdown.clampedFrom, "");
 	}
 
-	TEST_F(ThoughtLogModelTest, TheLogIsBuiltAgainOnlyWhenItChanges) {
-		ThoughtLogModel model;
-		EXPECT_TRUE(model.refresh(world, colonist));
-		EXPECT_TRUE(model.entries().empty());
-		EXPECT_FALSE(model.refresh(world, colonist));
+	TEST_F(ThoughtLogModelTest, TheBreakdownSaysWhenTheTargetIsClamped) {
+		giveTheMorning();
+		const MoodBreakdown tenths = moodBreakdown(rules.types, &record(), moodAsSummed(-12.5F), time->simulationSeconds());
+		EXPECT_EQ(tenths.needs, "-12.5");
+		EXPECT_EQ(tenths.target, "65.5%");
+		EXPECT_EQ(tenths.clampedFrom, "");
 
-		give("bottled_up");
-		EXPECT_TRUE(model.refresh(world, colonist));
-		EXPECT_FALSE(model.refresh(world, colonist));
-
-		give("bottled_up");
-		EXPECT_TRUE(model.refresh(world, colonist));
-		ASSERT_EQ(model.entries().size(), 1U);
-		EXPECT_EQ(model.entries()[0].summary, "Bottled up x2. Resigned. -4 mood, 1 day");
+		const MoodBreakdown clamped = moodBreakdown(rules.types, &record(), moodAsSummed(-90.0F), time->simulationSeconds());
+		EXPECT_EQ(clamped.target, "0%");
+		// 100 - 90 - 10 - 6 - 6
+		EXPECT_EQ(clamped.clampedFrom, "-12%");
 	}
 
 	TEST(ThoughtLogText, AmountsAndLengths) {
@@ -152,11 +266,25 @@ namespace world_sim {
 		EXPECT_EQ(gameDurationText(72.0), "3 days");
 		EXPECT_EQ(gameDurationText(1.0), "1 hour");
 		EXPECT_EQ(gameDurationText(6.0), "6 hours");
-		EXPECT_EQ(gameDurationText(1.5), "1.5 hours");
+		EXPECT_EQ(gameDurationText(1.25), "1 hour 15 min");
+		EXPECT_EQ(gameDurationText(36.5), "36 hours 30 min");
 		EXPECT_EQ(gameDurationText(0.5), "30 min");
+	}
+
+	TEST(ThoughtLogText, TimeLeftIsItsLargestUnitRoundedToTheNearest) {
 		EXPECT_EQ(timeLeftText(0.2), "12 min left");
-		EXPECT_EQ(timeLeftText(5.1), "6 hours left");
+		EXPECT_EQ(timeLeftText(0.001), "1 min left");
+		EXPECT_EQ(timeLeftText(0.995), "1 hour left");
+		EXPECT_EQ(timeLeftText(5.1), "5 hours left");
+		EXPECT_EQ(timeLeftText(5.6), "6 hours left");
+		EXPECT_EQ(timeLeftText(47.0), "47 hours left");
+		EXPECT_EQ(timeLeftText(49.0), "2 days left");
 		EXPECT_EQ(timeLeftText(60.0), "3 days left");
+	}
+
+	TEST(ThoughtLogText, Dates) {
+		EXPECT_EQ(gameDateText({.day = 2, .minuteOfDay = (7 * 60) + 55}), "Day 2, 07:55");
+		EXPECT_EQ(gameDateText({.day = 1, .minuteOfDay = 0}), "Day 1, 00:00");
 	}
 
 } // namespace world_sim

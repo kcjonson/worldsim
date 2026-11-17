@@ -139,6 +139,10 @@ namespace assets {
 					fail(source, what + " has no label=\"<display name>\"");
 					return;
 				}
+				if (feeling.label.ends_with('.')) {
+					fail(source, what + ": label=\"" + feeling.label + "\" ends in a period; the log adds its own");
+					return;
+				}
 				declare(result.config.feelings, std::move(feeling), "feeling", inFile);
 			}
 
@@ -189,6 +193,11 @@ namespace assets {
 					effect.cause = node.attribute("cause").as_string();
 					if (effect.cause.empty()) {
 						fail(source, what + ": a while effect has no cause=\"<what holds it>\"");
+						valid = false;
+						return std::nullopt;
+					}
+					if (effect.cause.ends_with('.')) {
+						fail(source, what + ": cause=\"" + effect.cause + "\" ends in a period; the log adds its own");
 						valid = false;
 						return std::nullopt;
 					}
@@ -300,6 +309,9 @@ namespace assets {
 				bool			  valid = onlyAttributes(node, {"id", "label", "importance", "stacks"}, what, source, result.errors);
 				if (type.label.empty()) {
 					fail(source, what + " has no label=\"<display name>\"");
+					valid = false;
+				} else if (type.label.ends_with('.')) {
+					fail(source, what + ": label=\"" + type.label + "\" ends in a period; the log adds its own");
 					valid = false;
 				}
 

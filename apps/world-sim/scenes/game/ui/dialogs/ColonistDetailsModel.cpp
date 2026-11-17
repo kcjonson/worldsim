@@ -46,11 +46,6 @@ namespace world_sim {
 		extractGearData(world, colonistId);
 		extractMemoryData(world, colonistId);
 		const bool tasksChanged = extractTasksData(world, colonistId, deltaTime, colonistChanged);
-		const bool logChanged = thoughtLog.refresh(world, colonistId);
-		if (logChanged) {
-			logData.entries = thoughtLog.entries();
-			++logData.revision;
-		}
 
 		// Gear signature: hands, belt, and pack contents. Catches quantity-only
 		// changes (a growing armful) that a stack-count diff would miss.
@@ -96,7 +91,7 @@ namespace world_sim {
 			valuesChanged = true;
 		}
 
-		if (needsData.moodBreakdown != prevMoodBreakdown || logChanged) {
+		if (needsData.moodBreakdown != prevMoodBreakdown) {
 			valuesChanged = true;
 		}
 

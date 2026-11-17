@@ -173,6 +173,19 @@ TEST_F(ThoughtConfigTest, FeelingsAndTypesNeedALabel) {
 	EXPECT_TRUE(mentions(errorsFor(R"(<thought id="a" importance="normal"><feeling is="x"/></thought>)"), "thought 'a' has no label="));
 }
 
+// The log writes "Soaked. Miserable. -6 mood, while soaked", so a label or cause of its own period would double it.
+TEST_F(ThoughtConfigTest, ALabelOrCauseEndingInAPeriodIsAnError) {
+	EXPECT_TRUE(mentions(errorsFor(R"(<feeling id="x" label="Miserable."/>)"), "base.xml: feeling 'x': label=\"Miserable.\" ends in a period"));
+	EXPECT_TRUE(mentions(
+		errorsFor(R"(<thought id="a" label="Got soaked." importance="normal"><feeling is="x"/></thought>)"),
+		"base.xml: thought 'a': label=\"Got soaked.\" ends in a period"
+	));
+	EXPECT_TRUE(mentions(
+		errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="x" mood="-2" while="is_night" cause="the dark."/></thought>)"),
+		"cause=\"the dark.\" ends in a period"
+	));
+}
+
 TEST_F(ThoughtConfigTest, ShapeMistakesAreReported) {
 	EXPECT_TRUE(
 		mentions(errorsFor(R"(<thought id="a" label="A" importance="huge"><feeling is="x"/></thought>)"), "is not trivial, normal, or major")

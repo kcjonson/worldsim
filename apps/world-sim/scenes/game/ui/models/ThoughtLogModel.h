@@ -2,17 +2,22 @@
 
 // ThoughtLogModel - what a colonist's Log tab and the mood breakdown show of his thoughts. A log entry is
 // one block: the event, the feeling and the mood adjustment ("Slept on the ground. Miserable. -10 mood,
-// 1 day"), the quip when the thought has one, and when it arrived, newest first. The breakdown lists the
-// held thoughts MoodSystem summed into the mood target, from the same contributions.
+// 1 day"), the quip when the thought has one, and when it arrived, newest first. The log shows the notable
+// thoughts (major ones and those with a mood effect) or all of them, a page at a time. The breakdown lists
+// the held thoughts MoodSystem summed into the mood target, from the same contributions.
 // See /docs/design/game-systems/colonists/thoughts.md (Where it shows in the UI).
 
 #include <ecs/EntityID.h>
 #include <ecs/ThoughtTypes.h>
 #include <ecs/components/Mood.h>
 #include <ecs/components/Thoughts.h>
+#include <ecs/systems/TimeSystem.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ecs {
@@ -43,31 +48,30 @@ namespace world_sim {
 	struct MoodBreakdown {
 		std::string					needs; // "-12"
 		std::vector<MoodThoughtRow> thoughts;
-		std::string					target; // "72%"
+		std::string					target; // "72%", "65.5%"
+		/// What the parts add to when the target is clamped to 0 or 100 ("112%"); empty when it isn't.
+		std::string clampedFrom;
 
 		bool operator==(const MoodBreakdown& other) const = default;
 	};
 
-	/// What a thought's arrival is dated against: now on TimeSystem's simulation clock and on its day clock.
-	struct GameClock {
-		double simulationSeconds = 0.0;
-		int	   day = 1;
-		float  timeOfDay = 0.0F;
-	};
+	enum class ThoughtLogFilter : uint8_t { Notable, All };
 
-	[[nodiscard]] GameClock gameClock(const ecs::World& world);
+	/// The blocks the log shows at first, and how many more each "Show older" adds.
+	inline constexpr std::size_t kThoughtLogPage = 50;
 
 	/// "-10", "+4.5".
 	[[nodiscard]] std::string moodAmountText(float amount);
 
-	/// A mood effect's length: "45 min", "6 hours", "1 day", "3 days".
+	/// A mood effect's length: "45 min", "1 hour 15 min", "6 hours", "1 day", "3 days".
 	[[nodiscard]] std::string gameDurationText(double gameHours);
 
-	/// What is left of a timed effect, rounded up: "45 min left", "17 hours left", "3 days left".
+	/// What is left of a timed effect in its largest unit, rounded to the nearest and never 0: minutes under
+	/// an hour, hours under two days, then days ("12 min left", "17 hours left", "2 days left").
 	[[nodiscard]] std::string timeLeftText(double gameHours);
 
-	/// The game date and time a moment on the simulation clock fell at: "Day 2, 07:55".
-	[[nodiscard]] std::string gameDateText(const GameClock& clock, double simulationSeconds);
+	/// "Day 2, 07:55".
+	[[nodiscard]] std::string gameDateText(const ecs::ClockTime& clock);
 
 	/// The event's label, with " x<count>" for a stack of more than one.
 	[[nodiscard]] std::string thoughtEventText(const ecs::ThoughtTypes& types, const ecs::Thought& thought);
@@ -76,31 +80,68 @@ namespace world_sim {
 	/// effect just "Very hungry. Annoyed.". A stack's amount is its whole effect.
 	[[nodiscard]] std::string thoughtSummary(const ecs::ThoughtTypes& types, const ecs::Thought& thought);
 
-	/// Every recorded thought, latest arrival first (a repeat folded into a held thought counts as one),
-	/// then the higher id.
-	[[nodiscard]] std::vector<ThoughtLogEntry>
-	thoughtLogEntries(const ecs::ThoughtTypes& types, const ecs::Thoughts& thoughts, const GameClock& clock);
+	/// Major, or with a mood effect: what the log shows by default.
+	[[nodiscard]] bool isNotable(const ecs::Thought& thought);
 
 	/// The mood's parts as MoodSystem last summed them; `thoughts` is null for a colonist who has none yet.
 	[[nodiscard]] MoodBreakdown
 	moodBreakdown(const ecs::ThoughtTypes& types, const ecs::Thoughts* thoughts, const ecs::Mood& mood, double simulationSeconds);
 
-	/// One colonist's log, built again only when it changes: another colonist, a new thought, or a repeat
-	/// folded into a held one.
+	/// One colonist's log under a filter, the newest `shown` matching thoughts, latest arrival first (a repeat
+	/// folded into a held thought counts as one), then the higher id. Built again only when the colonist, his
+	/// record's revision, the filter or the page count changes, and then only the entries whose text moved.
 	class ThoughtLogModel {
 	  public:
-		/// True when the entries changed.
+		/// True on the first build and when the entries changed since. Another colonist starts again at one page.
 		bool refresh(const ecs::World& world, ecs::EntityID colonist);
 
+		void setFilter(ThoughtLogFilter newFilter) { filter = newFilter; }
+		void showOlder() { limit += kThoughtLogPage; }
+
+		[[nodiscard]] ThoughtLogFilter					  currentFilter() const { return filter; }
 		[[nodiscard]] const std::vector<ThoughtLogEntry>& entries() const { return logEntries; }
+		/// More thoughts match the filter than are shown.
+		[[nodiscard]] bool hasOlder() const { return older; }
+		/// The colonist has any thought at all, shown or not.
+		[[nodiscard]] bool hasThoughts() const { return anyThought; }
+		/// Counts the builds, so a view can tell it has shown the latest.
+		[[nodiscard]] uint64_t version() const { return builds; }
 
 	  private:
-		ecs::EntityID				 shownColonist{0};
-		ecs::ThoughtId				 shownNextId = 0;
-		double						 shownLatestRepeat = -1.0;
-		uint64_t					 shownHeldRepeats = 0;
-		bool						 built = false;
-		std::vector<ThoughtLogEntry> logEntries;
+		struct Signature {
+			ecs::EntityID	 colonist{0};
+			uint64_t		 revision = 0;
+			ThoughtLogFilter filter = ThoughtLogFilter::Notable;
+			std::size_t		 limit = 0;
+
+			bool operator==(const Signature& other) const = default;
+		};
+
+		/// What an entry's text is made from; the same key, the same text.
+		struct EntryKey {
+			uint32_t				count = 0;
+			double					lastRepeatedAt = 0.0;
+			ecs::FeelingId			feeling = 0;
+			uint16_t				typeFeeling = 0;
+			std::optional<uint16_t> line;
+			std::optional<uint32_t> subjectName;
+
+			bool operator==(const EntryKey& other) const = default;
+		};
+
+		struct CachedEntry {
+			EntryKey		key;
+			ThoughtLogEntry entry;
+		};
+
+		ThoughtLogFilter							   filter = ThoughtLogFilter::Notable;
+		std::size_t									   limit = kThoughtLogPage;
+		std::optional<Signature>					   shown;
+		std::vector<ThoughtLogEntry>				   logEntries;
+		std::unordered_map<ecs::ThoughtId, CachedEntry> cache;
+		bool										   older = false;
+		bool										   anyThought = false;
+		uint64_t									   builds = 0;
 	};
 
 } // namespace world_sim

@@ -2,7 +2,6 @@
 
 #include <ecs/World.h>
 #include <ecs/systems/ThoughtSystem.h>
-#include <ecs/systems/TimeSystem.h>
 
 #include <algorithm>
 #include <cmath>
@@ -13,11 +12,23 @@ namespace world_sim {
 	namespace {
 
 		constexpr long kMinutesPerHour = 60;
-		constexpr long kMinutesPerDay = 24 * kMinutesPerHour;
-		constexpr long kHoursShownBeforeDays = 48;
+		constexpr long kHoursPerDay = 24;
+		constexpr long kMinutesPerDay = kHoursPerDay * kMinutesPerHour;
+		constexpr long kHoursShownBeforeDays = 2 * kHoursPerDay;
+		// A sum this close to its clamped target was not clamped, only rounded.
+		constexpr float kClampTolerance = 0.05F;
 
 		std::string counted(long count, const char* one, const char* many) {
 			return std::format("{} {}", count, count == 1 ? one : many);
+		}
+
+		/// To the tenth, with no ".0" on a whole number, like moodAmountText.
+		std::string percentText(float value) {
+			const float tenths = std::round(value * 10.0F) / 10.0F;
+			if (tenths == std::round(tenths)) {
+				return std::format("{}%", static_cast<int>(tenths));
+			}
+			return std::format("{:.1f}%", tenths);
 		}
 
 		std::string effectLength(const ecs::ThoughtTypes& types, const ecs::Thought& thought) {
@@ -28,12 +39,14 @@ namespace world_sim {
 			return gameDurationText(effect.durationGameHours);
 		}
 
-	} // namespace
+		bool arrivedLater(const ecs::Thought* left, const ecs::Thought* right) {
+			if (left->lastRepeatedAt != right->lastRepeatedAt) {
+				return left->lastRepeatedAt > right->lastRepeatedAt;
+			}
+			return left->id > right->id;
+		}
 
-	GameClock gameClock(const ecs::World& world) {
-		const ecs::TimeSystem& time = world.getSystem<ecs::TimeSystem>();
-		return {.simulationSeconds = time.simulationSeconds(), .day = time.day(), .timeOfDay = time.timeOfDay()};
-	}
+	} // namespace
 
 	std::string moodAmountText(float amount) {
 		const float tenths = std::round(amount * 10.0F) / 10.0F;
@@ -54,31 +67,27 @@ namespace world_sim {
 		if (minutes % kMinutesPerDay == 0) {
 			return counted(minutes / kMinutesPerDay, "day", "days");
 		}
-		if (minutes % kMinutesPerHour == 0) {
-			return counted(minutes / kMinutesPerHour, "hour", "hours");
+		std::string text = counted(minutes / kMinutesPerHour, "hour", "hours");
+		if (const long rest = minutes % kMinutesPerHour; rest != 0) {
+			text += std::format(" {} min", rest);
 		}
-		return std::format("{:.1f} hours", static_cast<double>(minutes) / kMinutesPerHour);
+		return text;
 	}
 
 	std::string timeLeftText(double gameHours) {
-		const long minutes = std::max(1L, static_cast<long>(std::ceil(gameHours * kMinutesPerHour)));
+		const long minutes = std::max(1L, std::lround(gameHours * kMinutesPerHour));
 		if (minutes < kMinutesPerHour) {
 			return std::format("{} min left", minutes);
 		}
-		const long hours = (minutes + kMinutesPerHour - 1) / kMinutesPerHour;
+		const long hours = std::lround(static_cast<double>(minutes) / kMinutesPerHour);
 		if (hours < kHoursShownBeforeDays) {
 			return counted(hours, "hour", "hours") + " left";
 		}
-		return counted((hours + 23) / 24, "day", "days") + " left";
+		return counted(std::lround(static_cast<double>(hours) / kHoursPerDay), "day", "days") + " left";
 	}
 
-	std::string gameDateText(const GameClock& clock, double simulationSeconds) {
-		const double nowMinute =
-			static_cast<double>(clock.day - 1) * kMinutesPerDay + static_cast<double>(clock.timeOfDay) * kMinutesPerHour;
-		const double elapsedMinutes = (clock.simulationSeconds - simulationSeconds) * kMinutesPerHour / ecs::kSimulationSecondsPerGameHour;
-		const long	 minute = std::max(0L, std::lround(nowMinute - elapsedMinutes));
-		const long	 ofDay = minute % kMinutesPerDay;
-		return std::format("Day {}, {:02}:{:02}", minute / kMinutesPerDay + 1, ofDay / kMinutesPerHour, ofDay % kMinutesPerHour);
+	std::string gameDateText(const ecs::ClockTime& clock) {
+		return std::format("Day {}, {:02}:{:02}", clock.day, clock.minuteOfDay / kMinutesPerHour, clock.minuteOfDay % kMinutesPerHour);
 	}
 
 	std::string thoughtEventText(const ecs::ThoughtTypes& types, const ecs::Thought& thought) {
@@ -95,30 +104,8 @@ namespace world_sim {
 		return text;
 	}
 
-	std::vector<ThoughtLogEntry> thoughtLogEntries(const ecs::ThoughtTypes& types, const ecs::Thoughts& thoughts, const GameClock& clock) {
-		std::vector<const ecs::Thought*> order;
-		order.reserve(thoughts.record.size());
-		for (const ecs::Thought& thought : thoughts.record) {
-			order.push_back(&thought);
-		}
-		std::ranges::sort(order, [](const ecs::Thought* left, const ecs::Thought* right) {
-			if (left->lastRepeatedAt != right->lastRepeatedAt) {
-				return left->lastRepeatedAt > right->lastRepeatedAt;
-			}
-			return left->id > right->id;
-		});
-
-		std::vector<ThoughtLogEntry> entries;
-		entries.reserve(order.size());
-		for (const ecs::Thought* thought : order) {
-			entries.push_back({
-				.id = thought->id,
-				.when = gameDateText(clock, thought->lastRepeatedAt),
-				.summary = thoughtSummary(types, *thought),
-				.line = ecs::renderThoughtLine(types, thoughts, *thought),
-			});
-		}
-		return entries;
+	bool isNotable(const ecs::Thought& thought) {
+		return thought.importance == ecs::ThoughtImportance::Major || thought.moodEffect.has_value();
 	}
 
 	MoodBreakdown
@@ -127,9 +114,14 @@ namespace world_sim {
 		for (const float contribution : mood.needContributions) {
 			needs += contribution;
 		}
+		float sum = ecs::kFullMood + needs;
+		for (const ecs::MoodThoughtContribution& contribution : mood.thoughtContributions) {
+			sum += contribution.amount;
+		}
 		MoodBreakdown breakdown{
 			.needs = moodAmountText(needs),
-			.target = std::format("{}%", static_cast<int>(std::lround(mood.target))),
+			.target = percentText(mood.target),
+			.clampedFrom = std::abs(sum - mood.target) > kClampTolerance ? percentText(sum) : std::string(),
 		};
 		if (thoughts == nullptr) {
 			return breakdown;
@@ -150,30 +142,74 @@ namespace world_sim {
 	}
 
 	bool ThoughtLogModel::refresh(const ecs::World& world, ecs::EntityID colonist) {
-		const ecs::Thoughts* thoughts = world.getComponent<ecs::Thoughts>(colonist);
-		const ecs::ThoughtId nextId = thoughts != nullptr ? thoughts->nextId : 0;
-		// A repeat folded into a held thought moves its last arrival on, and a stacking one its count too.
-		double	 latestRepeat = -1.0;
-		uint64_t heldRepeats = 0;
-		if (thoughts != nullptr) {
-			ecs::forEachHeldThought(*thoughts, [&](const ecs::Thought& thought) {
-				latestRepeat = std::max(latestRepeat, thought.lastRepeatedAt);
-				heldRepeats += thought.count;
-			});
+		if (shown.has_value() && shown->colonist != colonist) {
+			limit = kThoughtLogPage;
+			cache.clear();
 		}
-		if (built && colonist == shownColonist && nextId == shownNextId && latestRepeat == shownLatestRepeat &&
-			heldRepeats == shownHeldRepeats) {
+		const ecs::Thoughts* thoughts = world.getComponent<ecs::Thoughts>(colonist);
+		const Signature		 signature{.colonist = colonist, .revision = thoughts != nullptr ? thoughts->revision : 0, .filter = filter, .limit = limit};
+		if (shown == signature) {
 			return false;
 		}
-		built = true;
-		shownColonist = colonist;
-		shownNextId = nextId;
-		shownLatestRepeat = latestRepeat;
-		shownHeldRepeats = heldRepeats;
-		logEntries.clear();
+		const bool first = !shown.has_value();
+		shown = signature;
+
+		std::vector<const ecs::Thought*> matching;
 		if (thoughts != nullptr) {
-			logEntries = thoughtLogEntries(world.getSystem<ecs::ThoughtSystem>().types(), *thoughts, gameClock(world));
+			matching.reserve(thoughts->record.size());
+			for (const ecs::Thought& thought : thoughts->record) {
+				if (filter == ThoughtLogFilter::All || isNotable(thought)) {
+					matching.push_back(&thought);
+				}
+			}
 		}
+		const std::size_t count = std::min(limit, matching.size());
+		std::partial_sort(matching.begin(), matching.begin() + static_cast<std::ptrdiff_t>(count), matching.end(), arrivedLater);
+
+		std::vector<ThoughtLogEntry>					next;
+		std::unordered_map<ecs::ThoughtId, CachedEntry> kept;
+		next.reserve(count);
+		kept.reserve(count);
+		for (std::size_t index = 0; index < count; ++index) {
+			const ecs::Thought& thought = *matching[index];
+			const EntryKey		key{
+					 .count = thought.count,
+					 .lastRepeatedAt = thought.lastRepeatedAt,
+					 .feeling = thought.feeling,
+					 .typeFeeling = thought.typeFeeling,
+					 .line = thought.line,
+					 .subjectName = thought.subjectName,
+			 };
+			if (const auto found = cache.find(thought.id); found != cache.end() && found->second.key == key) {
+				next.push_back(found->second.entry);
+				kept.emplace(thought.id, std::move(found->second));
+				continue;
+			}
+			const ecs::ThoughtTypes& types = world.getSystem<ecs::ThoughtSystem>().types();
+			CachedEntry				 built{
+							 .key = key,
+							 .entry =
+					 {
+						 .id = thought.id,
+						 .when = gameDateText(thought.lastRepeatedClock),
+						 .summary = thoughtSummary(types, thought),
+						 .line = ecs::renderThoughtLine(types, *thoughts, thought),
+					 },
+			 };
+			next.push_back(built.entry);
+			kept.emplace(thought.id, std::move(built));
+		}
+		cache = std::move(kept);
+
+		const bool nextOlder = matching.size() > count;
+		const bool nextAny = thoughts != nullptr && !thoughts->record.empty();
+		if (!first && next == logEntries && nextOlder == older && nextAny == anyThought) {
+			return false;
+		}
+		logEntries = std::move(next);
+		older = nextOlder;
+		anyThought = nextAny;
+		++builds;
 		return true;
 	}
 

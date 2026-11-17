@@ -263,7 +263,11 @@ namespace world_sim {
 				 .padding = {0.0F, kScrollbarReserve, 0.0F, 0.0F}},
 			.overflow = ui::Overflow::Scroll,
 		});
-		logList = logBody.addChild<ThoughtLogList>({.id = "entity_info_log_list"});
+		logList = logBody.addChild<ThoughtLogList>({
+			.id = "entity_info_log_list",
+			.onFilter = [this](ThoughtLogFilter filter) { thoughtLog.setFilter(filter); },
+			.onShowOlder = [this] { thoughtLog.showOlder(); },
+		});
 
 		actionRow = root.addChild<ui::Component>({.id = "entity_info_actions", .layout = {.display = ui::Display::Flex, .gap = gap}});
 		const auto actionButton = [&](const char* id, const char* label, bool enabled, std::function<void()> press) {
@@ -302,10 +306,6 @@ namespace world_sim {
 	) {
 		const auto updateType =
 			model.refresh(selection, world, assetRegistry, recipeRegistry, modelCallbacks, constructionWorld, roomDetection);
-		if (const auto* colonist = std::get_if<ColonistSelection>(&selection);
-			colonist != nullptr && world.isAlive(colonist->entityId) && thoughtLog.refresh(world, colonist->entityId)) {
-			logList.get()->show(thoughtLog.entries());
-		}
 		switch (updateType) {
 			case EntityInfoModel::UpdateType::None:
 				break;
@@ -322,6 +322,12 @@ namespace world_sim {
 			case EntityInfoModel::UpdateType::Values:
 				applyContent(model.content(), false);
 				break;
+		}
+		// The log is built only while its tab is the one shown.
+		if (const auto* colonist = std::get_if<ColonistSelection>(&selection);
+			colonist != nullptr && logBody.get()->isVisible() && world.isAlive(colonist->entityId)) {
+			thoughtLog.refresh(world, colonist->entityId);
+			logList.get()->show(thoughtLog);
 		}
 	}
 

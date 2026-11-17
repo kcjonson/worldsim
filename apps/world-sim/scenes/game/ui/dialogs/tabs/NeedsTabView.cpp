@@ -146,6 +146,7 @@ namespace world_sim {
 			.wrap = true,
 		});
 		moodTarget = sumRow("mood_breakdown_target", "Target");
+		clampedNote = right.addChild<ui::Text>({.id = "mood_breakdown_clamped", .visible = false, .style = tabs::smallText(theme), .wrap = true});
 		right.addChild<tabs::KickerDivider>({.margin = {kSectionGap, 0.0F, 0.0F, 0.0F}, .label = "Body & ailments"});
 		right.addChild<tabs::EmptyState>({
 			.minSize = {ui::kAuto, kAilmentsHeight},
@@ -183,6 +184,8 @@ namespace world_sim {
 		shownBreakdown = breakdown;
 		needsShare.get()->setText(breakdown.needs);
 		moodTarget.get()->setText(breakdown.target);
+		clampedNote.get()->setVisible(!breakdown.clampedFrom.empty());
+		clampedNote.get()->setText("Clamped: the parts add to " + breakdown.clampedFrom);
 		noThoughts.get()->setVisible(breakdown.thoughts.empty());
 		thoughtRows.get()->setVisible(!breakdown.thoughts.empty());
 		ui::Component& rows = *thoughtRows.get();

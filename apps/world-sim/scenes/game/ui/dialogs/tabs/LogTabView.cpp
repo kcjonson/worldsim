@@ -7,16 +7,11 @@ namespace world_sim {
 		column.display = ui::Display::Flex;
 		column.flexDirection = ui::FlexDirection::Column;
 		setLayout(column);
-		list = addChild<ThoughtLogList>({.id = "dossier_log_list"});
+		list = addChild<ThoughtLogList>({.id = "dossier_log_list", .onFilter = onFilter, .onShowOlder = onShowOlder});
 	}
 
-	void LogTabView::update(const LogData& data) {
-		if (shown && data.revision == shownRevision) {
-			return;
-		}
-		shown = true;
-		shownRevision = data.revision;
-		list.get()->show(data.entries);
+	void LogTabView::update(const ThoughtLogModel& log) {
+		list.get()->show(log);
 	}
 
 } // namespace world_sim
