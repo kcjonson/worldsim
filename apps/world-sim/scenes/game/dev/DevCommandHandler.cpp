@@ -163,6 +163,7 @@ namespace world_sim {
 		view("time", &DevCommandHandler::serializeTime);
 		view("landing", &DevCommandHandler::serializeLanding);
 		view("summary", &DevCommandHandler::serializeSummary);
+		view("thoughttypes", &DevCommandHandler::serializeThoughtTypes);
 		registrations.push_back(server.stateProvider("visibility", [this] { return visibilityJson({}); }));
 		registrations.push_back(server.stateProvider("tunables", [] { return Foundation::Tunables::instance().toJson(); }));
 		return registrations;
@@ -1584,6 +1585,16 @@ namespace world_sim {
 		}
 		out << "}";
 		return out.str();
+	}
+
+	void DevCommandHandler::serializeThoughtTypes(std::ostringstream& out) {
+		const ecs::ThoughtTypes& types = m_ctx.world->getSystem<ecs::ThoughtSystem>().types();
+		out << "{\"types\":[";
+		for (std::size_t index = 0; index < types.typeCount(); ++index) {
+			const ecs::ThoughtType& type = types.type(static_cast<ecs::ThoughtEventTypeId>(index));
+			out << (index > 0 ? "," : "") << "{\"name\":\"" << jsonEscape(type.name) << "\",\"label\":\"" << jsonEscape(type.label) << "\"}";
+		}
+		out << "]}";
 	}
 
 	void DevCommandHandler::serializeSummary(std::ostringstream& out) {
