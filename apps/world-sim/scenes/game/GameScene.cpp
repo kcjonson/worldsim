@@ -190,17 +190,11 @@ namespace {
 				world_sim::GroundBakeStep bake;
 				while (!(bake = world_sim::stepGroundBake()).done) {}
 				if (!bake.errors.empty()) {
-					LOG_ERROR(
-						Game,
-						"GameScene - asset validation or the ground bake failed (%zu error(s)); back to the splash",
-						bake.errors.size()
-					);
 					owner->scenes().switchTo(world_sim::scenes::Splash.name);
 				}
 				// Broken colonist rules go to the splash too, handed over for it to show; this is their only load on this path.
 				ecs::ColonistRulesLoad rulesLoad = ecs::loadColonistRules("assets/config");
 				if (!rulesLoad.errors.empty()) {
-					LOG_ERROR(Game, "GameScene - the colonist rules failed (%zu error(s)); back to the splash", rulesLoad.errors.size());
 					world_sim::failColonistRules(std::move(rulesLoad.errors));
 					owner->scenes().switchTo(world_sim::scenes::Splash.name);
 				}

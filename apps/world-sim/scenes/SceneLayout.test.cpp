@@ -784,7 +784,11 @@ namespace world_sim::testing {
 		const auto* more = static_cast<const ui::Text*>(shown("load_failure_more"));
 		ASSERT_NE(more, nullptr);
 		EXPECT_EQ(more->getText(), std::format("and {} more", kFailureMessageCount - LoadFailureView::kShownMessages));
+		const ui::Component* messages = shown("load_failure_messages");
+		ASSERT_NE(messages, nullptr);
+		EXPECT_NEAR(messages->getSize().y, LoadFailureView::kMessagesMaxHeight, 0.01F);
 		EXPECT_EQ(lintEverywhere(), "");
+		EXPECT_EQ(unexpectedScrollbars({{.id = "load_failure_messages"}}), "");
 	}
 
 	// With every helper on (the tallest legend) and the task list open over the entity panel, for each tool, open and

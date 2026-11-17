@@ -48,6 +48,7 @@ namespace {
 			m_timer = 0.0F;
 			m_lastShownCount = -1;
 			m_failed = false;
+			failureMessages.clear();
 			m_done = false;
 			m_shownBootLines = 0;
 			m_progress = 0.0F;
@@ -255,7 +256,6 @@ namespace {
 				return false;
 			}
 			if (!step.errors.empty()) {
-				LOG_ERROR(Game, "Asset validation or the ground bake failed: %zu error(s); blocking at splash", step.errors.size());
 				fail(step.errors);
 				return false;
 			}
@@ -270,11 +270,10 @@ namespace {
 
 		// Once the ground is baked: errors a scene handed over for the colonist rules block here.
 		bool checkColonistRules() {
-			const std::vector<std::string>& errors = world_sim::failedColonistRules();
+			const std::vector<std::string> errors = world_sim::takeFailedColonistRules();
 			if (errors.empty()) {
 				return true;
 			}
-			LOG_ERROR(Game, "The colonist rules failed to load: %zu error(s); blocking at splash", errors.size());
 			fail(errors);
 			return false;
 		}
@@ -305,6 +304,7 @@ namespace {
 		// canvas; the button stays disabled.
 		void fail(const std::vector<std::string>& messages) {
 			m_failed = true;
+			world_sim::logLoadFailure("SplashScene", messages);
 			failureMessages = messages;
 			if (ui::Component* bootLog = m_bootLog.get()) {
 				bootLog->setVisible(false);

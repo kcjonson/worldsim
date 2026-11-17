@@ -247,9 +247,7 @@ namespace {
 		// Every way a load fails ends here: the messages are logged, kept for the state view, and shown in place
 		// of the status line and the bar until Esc returns to the menu.
 		void fail(std::vector<std::string> messages) {
-			for (const std::string& message : messages) {
-				LOG_ERROR(Game, "GameLoadingScene - %s", message.c_str());
-			}
+			world_sim::logLoadFailure("GameLoadingScene", messages);
 			failureMessages = std::move(messages);
 			phase = LoadingPhase::Failed;
 			if (ui::Component* row = status.get()) {
