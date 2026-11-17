@@ -14,34 +14,40 @@
 
 #include <utils/Log.h>
 
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace ecs {
 
-	void ActionSystem::applyCraftingEffect(const Action& action, Inventory& inventory) {
+	bool ActionSystem::applyCraftingEffect(const Action& action, Inventory& inventory) {
 		const auto& craftEff = action.craftingEffect();
 
 		auto& assetRegistry = assets::AssetRegistry::Get();
+		auto* workQueue = world->getComponent<WorkQueue>(static_cast<EntityID>(craftEff.stationEntityId));
 
 		// Consume inputs from the STATION's store, not the colonist's pack: the materials were
 		// hauled into the station's Inventory during provisioning (mirroring construction, where
 		// the build consumes from the on-site manifest). The crafted output goes to the colonist.
+		// A store that no longer holds every input makes nothing and spends nothing.
 		auto* stationInv = world->getComponent<Inventory>(static_cast<EntityID>(craftEff.stationEntityId));
-		if (stationInv == nullptr) {
+		if (stationInv == nullptr || std::ranges::any_of(craftEff.inputs, [&](const std::pair<std::string, uint32_t>& input) {
+				return stationInv->getQuantity(input.first) < input.second;
+			})) {
 			LOG_WARNING(
 				Engine,
-				"[Action] Craft aborted: station %llu has no Inventory store to consume from",
+				"[Action] Craft of %s failed: station %llu no longer holds its inputs",
+				craftEff.recipeDefName.c_str(),
 				static_cast<unsigned long long>(craftEff.stationEntityId)
 			);
-			return;
+			if (workQueue != nullptr) {
+				workQueue->progress = 0.0F;
+			}
+			return false;
 		}
 		for (const auto& [itemName, count] : craftEff.inputs) {
-			uint32_t removed = stationInv->removeItem(itemName, count);
-			if (removed < count) {
-				LOG_WARNING(Engine, "[Action] Craft failed to consume %u x %s from station (only had %u)", count, itemName.c_str(), removed);
-			}
+			stationInv->removeItem(itemName, count);
 		}
 
 		// Route each output by category. FURNITURE (shelves, boxes, stations) is never seated in
@@ -103,8 +109,6 @@ namespace ecs {
 			}
 		}
 
-		// Update WorkQueue on the station
-		auto* workQueue = world->getComponent<WorkQueue>(static_cast<EntityID>(craftEff.stationEntityId));
 		if (workQueue != nullptr) {
 			auto* job = workQueue->getNextJob();
 			if (job != nullptr && job->recipeDefName == craftEff.recipeDefName) {
@@ -118,6 +122,7 @@ namespace ecs {
 			// Reset progress for next item (or 0 if queue empty)
 			workQueue->progress = 0.0F;
 		}
+		return true;
 	}
 
 	void ActionSystem::startCraftAction(Task& task, Action& action) {

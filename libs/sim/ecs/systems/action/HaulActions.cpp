@@ -28,11 +28,18 @@
 
 namespace ecs {
 
-	void ActionSystem::applyDepositEffect(const Action& action, Inventory& inventory) {
+	bool ActionSystem::applyDepositEffect(const Action& action, Inventory& inventory) {
 		const auto& depEff = action.depositEffect();
 
 		auto&	   registry = assets::AssetRegistry::Get();
 		const bool twoHand	= ecs::itemIsTwoHand(registry, depEff.itemDefName);
+		const auto giveBack = [&](uint32_t leftover) {
+			if (twoHand) {
+				ecs::addArmful(inventory, registry, depEff.itemDefName, leftover);
+			} else {
+				inventory.addItem(depEff.itemDefName, leftover);
+			}
+		};
 
 		// Craft-material delivery, mirroring the build-site path: the material is MOVED from the
 		// colonist's pack/hands into the crafting station's own Inventory store. The colonist's
@@ -50,7 +57,7 @@ namespace ecs {
 					depEff.itemDefName.c_str(),
 					static_cast<unsigned long long>(depEff.storageEntityId)
 				);
-				return;
+				return false;
 			}
 
 			// Meter the deposit to the station's REMAINING recipe need (same invariant as a build
@@ -66,13 +73,13 @@ namespace ecs {
 				// Station already holds the full requirement for this input; keep the surplus carried.
 				LOG_DEBUG(Engine, "[Action] Craft deposit skipped: station %llu already has enough %s",
 					static_cast<unsigned long long>(stationEntity), depEff.itemDefName.c_str());
-				return;
+				return false;
 			}
 			uint32_t removed = twoHand ? ecs::removeFromHands(inventory, depEff.itemDefName, toDeposit)
 									   : inventory.removeItem(depEff.itemDefName, toDeposit);
 			if (removed == 0) {
 				LOG_WARNING(Engine, "[Action] Craft deposit failed: %s not in inventory", depEff.itemDefName.c_str());
-				return;
+				return false;
 			}
 
 			// removed is already capped to the remaining recipe need, so the store has room for all
@@ -80,12 +87,7 @@ namespace ecs {
 			uint32_t added = stationInv->addItem(depEff.itemDefName, removed);
 			if (added < removed) {
 				// Defensive: store slot-limited below the metered amount. Keep the surplus carried.
-				uint32_t leftover = removed - added;
-				if (twoHand) {
-					ecs::addArmful(inventory, registry, depEff.itemDefName, leftover);
-				} else {
-					inventory.addItem(depEff.itemDefName, leftover);
-				}
+				giveBack(removed - added);
 				LOG_WARNING(Engine, "[Action] Craft station full: deposited %u of %u x %s", added, removed, depEff.itemDefName.c_str());
 			}
 
@@ -96,86 +98,72 @@ namespace ecs {
 				depEff.itemDefName.c_str(),
 				static_cast<unsigned long long>(depEff.storageEntityId)
 			);
-		} else {
+			return added > 0;
+		}
 
 		// Remove item from the colonist: two-hand goods come out of the hands, the rest the pack.
-		uint32_t removed = twoHand ? ecs::removeFromHands(inventory, depEff.itemDefName, depEff.quantity)
-								   : inventory.removeItem(depEff.itemDefName, depEff.quantity);
-		if (removed > 0) {
-			const auto storageEntity = static_cast<EntityID>(depEff.storageEntityId);
+		const uint32_t removed = twoHand ? ecs::removeFromHands(inventory, depEff.itemDefName, depEff.quantity)
+										 : inventory.removeItem(depEff.itemDefName, depEff.quantity);
+		if (removed == 0) {
+			LOG_WARNING(Engine, "[Action] Deposit failed: %s not in inventory", depEff.itemDefName.c_str());
+			return false;
+		}
+		const auto storageEntity = static_cast<EntityID>(depEff.storageEntityId);
 
-			// A build site (blueprint) holds no Inventory: the material is recorded straight onto
-			// the blueprint's delivered[] manifest, capped at its requirement. A storage container
-			// owns an Inventory and the goods land there. These are the only two deposit targets.
-			if (auto* blueprint = world->getComponent<StructureBlueprint>(storageEntity)) {
-				uint32_t recorded = blueprint->recordDelivery(depEff.itemDefName, removed);
-				if (recorded < removed) {
-					// Over the requirement: bounce the surplus back to the colonist (mirrored armful
-					// for two-hand goods, backpack otherwise) rather than overfilling the manifest.
-					uint32_t leftover = removed - recorded;
-					if (twoHand) {
-						ecs::addArmful(inventory, registry, depEff.itemDefName, leftover);
-					} else {
-						inventory.addItem(depEff.itemDefName, leftover);
-					}
-				}
+		// A build site (blueprint) holds no Inventory: the material is recorded straight onto
+		// the blueprint's delivered[] manifest, capped at its requirement. A storage container
+		// owns an Inventory and the goods land there. These are the only two deposit targets.
+		if (auto* blueprint = world->getComponent<StructureBlueprint>(storageEntity)) {
+			const uint32_t recorded = blueprint->recordDelivery(depEff.itemDefName, removed);
+			if (recorded < removed) {
+				// Over the requirement: bounce the surplus back to the colonist rather than overfilling
+				// the manifest.
+				giveBack(removed - recorded);
+			}
+			LOG_INFO(
+				Engine,
+				"[Action] Delivered %u x %s to build site %llu (recorded on manifest)",
+				recorded,
+				depEff.itemDefName.c_str(),
+				static_cast<unsigned long long>(depEff.storageEntityId)
+			);
+			return recorded > 0;
+		}
+		if (auto* storageInv = world->getComponent<Inventory>(storageEntity)) {
+			// A box takes what its configuration still wants, never past an item's configured max, and
+			// what fits; the colonist keeps the rest.
+			uint32_t takes = removed;
+			if (const auto* config = world->getComponent<StorageConfiguration>(storageEntity)) {
+				const auto* itemDef = registry.getDefinition(depEff.itemDefName);
+				takes = std::min(
+					removed,
+					storageRoomFor(*config, *storageInv, depEff.itemDefName, itemDef != nullptr ? itemDef->category : assets::ItemCategory::None)
+				);
+			}
+			const uint32_t added = storageInv->addItem(depEff.itemDefName, takes);
+			if (added < removed) {
+				giveBack(removed - added);
+				LOG_DEBUG(Engine, "[Action] Storage took %u of %u x %s; the rest stays carried", added, removed, depEff.itemDefName.c_str());
+			} else {
 				LOG_INFO(
 					Engine,
-					"[Action] Delivered %u x %s to build site %llu (recorded on manifest)",
-					recorded,
+					"[Action] Deposited %u x %s into storage %llu",
+					added,
 					depEff.itemDefName.c_str(),
 					static_cast<unsigned long long>(depEff.storageEntityId)
 				);
-			} else if (auto* storageInv = world->getComponent<Inventory>(storageEntity)) {
-				// A box takes what its configuration still wants, never past an item's configured max, and
-				// what fits; the colonist keeps the rest.
-				uint32_t takes = removed;
-				if (const auto* config = world->getComponent<StorageConfiguration>(storageEntity)) {
-					const auto* itemDef = registry.getDefinition(depEff.itemDefName);
-					takes = std::min(
-						removed,
-						storageRoomFor(*config, *storageInv, depEff.itemDefName, itemDef != nullptr ? itemDef->category : assets::ItemCategory::None)
-					);
-				}
-				uint32_t added = storageInv->addItem(depEff.itemDefName, takes);
-				if (added < removed) {
-					uint32_t leftover = removed - added;
-					if (twoHand) {
-						ecs::addArmful(inventory, registry, depEff.itemDefName, leftover);
-					} else {
-						inventory.addItem(depEff.itemDefName, leftover);
-					}
-					LOG_DEBUG(Engine, "[Action] Storage took %u of %u x %s; the rest stays carried", added, removed, depEff.itemDefName.c_str());
-				} else {
-					LOG_INFO(
-						Engine,
-						"[Action] Deposited %u x %s into storage %llu",
-						added,
-						depEff.itemDefName.c_str(),
-						static_cast<unsigned long long>(depEff.storageEntityId)
-					);
-				}
-			} else {
-				// Target is neither a build site nor a storage container (destroyed/gone) - put
-				// items back, credit nothing.
-				if (twoHand) {
-					ecs::addArmful(inventory, registry, depEff.itemDefName, removed);
-				} else {
-					inventory.addItem(depEff.itemDefName, removed);
-				}
-				LOG_WARNING(
-					Engine,
-					"[Action] Deposit target %llu not found, items returned to inventory",
-					static_cast<unsigned long long>(depEff.storageEntityId)
-				);
 			}
-		} else {
-			LOG_WARNING(Engine, "[Action] Deposit failed: %s not in inventory", depEff.itemDefName.c_str());
+			return added > 0;
 		}
-		} // end storage-deposit branch
+		// Target is neither a build site nor a storage container (destroyed/gone): put the items back.
+		giveBack(removed);
+		LOG_WARNING(
+			Engine, "[Action] Deposit target %llu not found, items returned to inventory", static_cast<unsigned long long>(depEff.storageEntityId)
+		);
+		return false;
 	}
 
-	void ActionSystem::applyPlacePackagedEffect(const Action& action, Inventory& inventory) {
+	bool ActionSystem::applyPlacePackagedEffect(const Action& action, Inventory& inventory) {
 		const auto& placeEff = action.placePackagedEffect();
 
 		// Get the packaged entity
@@ -201,30 +189,27 @@ namespace ecs {
 			inventory.rightHand.reset();
 		}
 
-		// Verify entity still exists before manipulating it
-		if (!world->isAlive(packagedEntity)) {
+		// A package gone, or already placed by someone else, is not placed again.
+		if (!world->isAlive(packagedEntity) || !world->hasComponent<Packaged>(packagedEntity)) {
 			LOG_WARNING(
 				Engine,
-				"[Action] Packaged entity %llu no longer alive at placement time",
+				"[Action] Packaged entity %llu is gone or already placed at placement time",
 				static_cast<unsigned long long>(placeEff.packagedEntityId)
 			);
-		} else {
-			// Move entity to target position
-			auto* entityPos = world->getComponent<Position>(packagedEntity);
-			if (entityPos != nullptr) {
-				entityPos->value = placeEff.targetPosition;
-				LOG_INFO(
-					Engine,
-					"[Action] Placed entity %llu at (%.1f, %.1f)",
-					static_cast<unsigned long long>(placeEff.packagedEntityId),
-					placeEff.targetPosition.x,
-					placeEff.targetPosition.y
-				);
-			}
-
-			// Remove Packaged component - entity is now placed
-			world->removeComponent<Packaged>(packagedEntity);
+			return false;
 		}
+		if (auto* entityPos = world->getComponent<Position>(packagedEntity); entityPos != nullptr) {
+			entityPos->value = placeEff.targetPosition;
+			LOG_INFO(
+				Engine,
+				"[Action] Placed entity %llu at (%.1f, %.1f)",
+				static_cast<unsigned long long>(placeEff.packagedEntityId),
+				placeEff.targetPosition.x,
+				placeEff.targetPosition.y
+			);
+		}
+		world->removeComponent<Packaged>(packagedEntity);
+		return true;
 	}
 
 	void ActionSystem::startHaulAction(EntityID entity, Task& task, Action& action, const Position& position, Memory& memory, const Inventory& inventory) {

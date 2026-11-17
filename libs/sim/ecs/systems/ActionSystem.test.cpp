@@ -285,9 +285,12 @@ TEST_F(ActionSystemTest, ClearsWanderTaskOnArrival) {
 	EXPECT_EQ(task->state, TaskState::Pending);
 }
 
-TEST_F(ActionSystemTest, StartsEatActionOnArrival) {
+TEST_F(ActionSystemTest, EatStartsOnArrivalAndFinishesOnceFed) {
+	std::vector<ActionEvent> heard;
+	world->getSystem<ActionSystem>().addActionObserver([&heard](const ActionEvent& event) { heard.push_back(event); });
 	auto colonist = createColonist();
 	setupArrivedForNeed(colonist, NeedType::Hunger);
+	setNeedValue(colonist, NeedType::Hunger, 20.0F);
 
 	// Give the colonist berries in inventory - primary way to eat now
 	auto* inventory = world->getComponent<Inventory>(colonist);
@@ -298,6 +301,38 @@ TEST_F(ActionSystemTest, StartsEatActionOnArrival) {
 	auto* action = world->getComponent<Action>(colonist);
 	EXPECT_TRUE(action->isActive());
 	EXPECT_EQ(action->type, ActionType::Eat);
+
+	world->update(2.0F);
+	EXPECT_EQ(inventory->getQuantity("Berry"), 2U);
+	EXPECT_GT(world->getComponent<NeedsComponent>(colonist)->hunger().value, 20.0F);
+	ASSERT_EQ(heard.size(), 2U);
+	EXPECT_EQ(heard[0].moment, ActionMoment::Started);
+	EXPECT_EQ(heard[1].moment, ActionMoment::Finished);
+	EXPECT_EQ(heard[1].aboutDefinition, assets::AssetRegistry::Get().getDefNameId("Berry"));
+}
+
+// Food gone from the pack by the time the meal ends feeds nothing and finishes nothing.
+TEST_F(ActionSystemTest, EatWhoseFoodVanishedFinishesNothing) {
+	std::vector<ActionEvent> heard;
+	world->getSystem<ActionSystem>().addActionObserver([&heard](const ActionEvent& event) { heard.push_back(event); });
+	auto colonist = createColonist();
+	setupArrivedForNeed(colonist, NeedType::Hunger);
+	setNeedValue(colonist, NeedType::Hunger, 20.0F);
+	setNeedValue(colonist, NeedType::Digestion, 80.0F);
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	inventory->addItem("Berry", 1);
+
+	world->update(0.1F);
+	ASSERT_EQ(world->getComponent<Action>(colonist)->type, ActionType::Eat);
+	inventory->removeItem("Berry", 1);
+	world->update(2.0F);
+
+	const auto* needs = world->getComponent<NeedsComponent>(colonist);
+	EXPECT_LE(needs->hunger().value, 20.0F) << "no hunger restored";
+	EXPECT_FLOAT_EQ(needs->digestion().value, 80.0F) << "nothing reached the gut";
+	EXPECT_FALSE(world->getComponent<Action>(colonist)->isActive());
+	ASSERT_EQ(heard.size(), 1U);
+	EXPECT_EQ(heard[0].moment, ActionMoment::Started);
 }
 
 // With an empty pack, the colonist harvests the food source its decision named by Memory key, even
@@ -1548,6 +1583,44 @@ TEST_F(ActionSystemGoalTest, PlacePackagedWithoutPickupKeepsHeldTool) {
 	EXPECT_FALSE(inventory->leftHand.has_value());
 }
 
+// A package another colonist lifted while this one was bending for it is not there to pick up: the
+// task ends, the colonist's hands keep what they held, and the pickup does not finish.
+TEST_F(ActionSystemGoalTest, PickupPackagedOfABoxAlreadyCarriedTakesNothing) {
+	std::vector<ActionEvent> heard;
+	world->getSystem<ActionSystem>().addActionObserver([&heard](const ActionEvent& event) { heard.push_back(event); });
+	const glm::vec2 sourcePos{2.0F, 2.0F};
+	const glm::vec2 targetPos{3.0F, 2.0F};
+	EntityID		box = world->createEntity();
+	world->addComponent<Position>(box, Position{sourcePos});
+	world->addComponent<Appearance>(box, Appearance{"BasicBox", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+	ecs::Packaged packaged;
+	packaged.targetPosition = targetPos;
+	world->addComponent<ecs::Packaged>(box, packaged);
+
+	auto  colonist = createColonist(sourcePos);
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	inventory->rightHand = ItemStack{"AxePrimitive", 1};
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::PlacePackaged;
+	task->state = TaskState::Arrived;
+	task->placePackagedEntityId = static_cast<uint64_t>(box);
+	task->placeSourcePosition = sourcePos;
+	task->placeTargetPosition = targetPos;
+	task->targetPosition = sourcePos;
+
+	world->update(0.1F);
+	ASSERT_EQ(world->getComponent<Action>(colonist)->type, ActionType::PickupPackaged);
+	world->getComponent<ecs::Packaged>(box)->beingCarried = true;
+	world->update(2.0F);
+
+	EXPECT_FALSE(inventory->carryingPackagedEntity.has_value());
+	ASSERT_TRUE(inventory->rightHand.has_value()) << "nothing cleared the hands for a box not lifted";
+	EXPECT_EQ(inventory->rightHand->defName, "AxePrimitive");
+	EXPECT_FALSE(task->isActive()) << "the task ends so the colonist decides again";
+	ASSERT_EQ(heard.size(), 1U);
+	EXPECT_EQ(heard[0].moment, ActionMoment::Started);
+}
+
 // =============================================================================
 // Tree felling: a two-hand bulk material (Wood) destructive harvest
 // =============================================================================
@@ -2611,6 +2684,50 @@ TEST_F(HandMaterialActionTest, CraftConsumesWoodFromStationStoreAndProducesOutpu
 	world->update(1.0F);
 	ASSERT_EQ(heard.size(), 3U) << "the batch's second unit finishes but does not start the batch again";
 	EXPECT_EQ(heard[2].moment, ActionMoment::Finished);
+}
+
+// A craft whose station lost an input before the work ended makes nothing, spends nothing, counts no
+// unit, and does not finish.
+TEST_F(HandMaterialActionTest, CraftWhoseInputsLeftTheStationMakesNothing) {
+	assets::RecipeDef recipe;
+	recipe.defName = "Recipe_Plank";
+	recipe.label = "Plank";
+	recipe.stationDefName = "CraftingSpot";
+	recipe.workAmount = 50.0F;
+	recipe.inputs.push_back({"Wood", 0, 4});
+	recipe.outputs.push_back({"Plank", 0, 1});
+	assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+
+	EntityID station = world->createEntity();
+	world->addComponent<Position>(station, Position{{0.0F, 0.0F}});
+	WorkQueue queue;
+	queue.addJob("Recipe_Plank", 1);
+	world->addComponent<WorkQueue>(station, queue);
+	auto stationInv = Inventory::createForStorage();
+	stationInv.addItem("Wood", 4);
+	world->addComponent<Inventory>(station, stationInv);
+
+	std::vector<ActionEvent> heard;
+	world->getSystem<ActionSystem>().addActionObserver([&heard](const ActionEvent& event) { heard.push_back(event); });
+
+	auto  colonist = createColonist({0.0F, 0.0F});
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Craft;
+	task->state = TaskState::Arrived;
+	task->craftRecipeDefName = "Recipe_Plank";
+	task->targetStationId = static_cast<uint64_t>(station);
+	task->targetPosition = {0.0F, 0.0F};
+	world->update(0.1F);
+	ASSERT_TRUE(world->getComponent<Action>(colonist)->hasCraftingEffect());
+
+	world->getComponent<Inventory>(station)->removeItem("Wood", 1);
+	world->update(1.0F);
+
+	EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Wood"), 3U) << "nothing spent";
+	EXPECT_EQ(ecs::availableQuantity(*world->getComponent<Inventory>(colonist), "Plank"), 0U) << "nothing made";
+	EXPECT_EQ(world->getComponent<WorkQueue>(station)->jobs.front().completed, 0U);
+	ASSERT_EQ(heard.size(), 1U);
+	EXPECT_EQ(heard[0].moment, ActionMoment::Started);
 }
 
 // A crafted FURNITURE output (BasicBox) does NOT seat in the colonist's hands: it routes to the

@@ -148,6 +148,7 @@ namespace ecs {
 
 		if (progressEff.deconstruct) {
 			blueprint->workDone -= delta;
+			blueprint->teardownBegun = true;
 			if (blueprint->workDone <= 0.0F) {
 				blueprint->workDone = 0.0F;
 				action.state = ActionState::Complete;
