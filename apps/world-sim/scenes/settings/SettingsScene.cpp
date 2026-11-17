@@ -1,9 +1,12 @@
 // Settings Scene - game options.
 //
 // Options screen: a title, then the interface size and the drawing settings, each under its kicker, one
-// switch (or choice) each. Every change applies at once. The interface size is the App's ui.scale, saved to
-// the settings file as it changes; the drawing settings are world_sim::UserSettings, for the session (no
-// cross-launch persistence yet). ESC, or Back, returns to the main menu.
+// switch (or choice) each. Every change applies at once and is saved to the settings file as it changes:
+// the interface size is the App's ui.scale, the drawing settings world_sim::UserSettings. Opened over the
+// main menu or the paused game, ESC or Back pops it; reached by name (--scene, the dev server's control),
+// with nothing under it, they go to the main menu.
+
+#include "SettingsScene.h"
 
 #include "SceneTypes.h"
 #include "UserSettings.h"
@@ -50,8 +53,15 @@ namespace {
 		return labels;
 	}
 
-	class SettingsScene : public app::Scene {
+	struct SettingsArgs {
+		bool overAnotherScene = false;
+	};
+
+	class SettingsScene : public app::TypedScene<SettingsArgs> {
 	  public:
+		explicit SettingsScene(SettingsArgs args)
+			: overAnotherScene(args.overAnotherScene) {}
+
 		void onEnter(app::App& app) override {
 			owner = &app;
 			LOG_INFO(Game, "SettingsScene - Entering");
@@ -73,7 +83,20 @@ namespace {
 		const char* name() const override { return kSceneName; }
 
 	  private:
-		void back() { owner->scenes().switchTo(world_sim::scenes::MainMenu.name); }
+		void back() {
+			if (overAnotherScene) {
+				owner->scenes().pop();
+			} else {
+				owner->scenes().switchTo(world_sim::scenes::MainMenu.name);
+			}
+		}
+
+		void saveDrawingSettings() {
+			world_sim::UserSettings::Get().store(owner->settings());
+			if (!owner->settings().save()) {
+				LOG_ERROR(Game, "SettingsScene: the settings file couldn't be saved");
+			}
+		}
 
 		void build() {
 			const ui::Theme& theme = ui().getTheme();
@@ -183,9 +206,10 @@ namespace {
 					.size = {kRowWidth, ui::kAuto},
 					.label = label,
 					.on = field,
-					.onChange = [&field, label](bool on) {
+					.onChange = [this, &field, label](bool on) {
 						field = on;
 						LOG_INFO(Game, "Setting: %s -> %s", label.c_str(), on ? "on" : "off");
+						saveDrawingSettings();
 					},
 				});
 				row.addChild<ui::Text>({
@@ -251,9 +275,10 @@ namespace {
 				.id = "drawing_grid_spacing",
 				.options = {"1 meter", "0.5 meters"},
 				.selected = drawing.rectangleGridSpacingMeters < 1.0F ? 1 : 0,
-				.onChange = [&drawing](int index) {
+				.onChange = [this, &drawing](int index) {
 					drawing.rectangleGridSpacingMeters = index == 1 ? 0.5F : 1.0F;
 					LOG_INFO(Game, "Setting: rectangle grid spacing -> %g m", drawing.rectangleGridSpacingMeters);
+					saveDrawingSettings();
 				},
 			});
 			grid.addChild<ui::Text>({
@@ -291,6 +316,7 @@ namespace {
 			}
 		}
 
+		bool						  overAnotherScene = false;
 		app::App*					  owner = nullptr;
 		ui::Ref<ui::SegmentedControl> sizeChoice;
 		ui::Ref<ui::Button>			  sizeReset;
@@ -298,7 +324,13 @@ namespace {
 
 } // namespace
 
+namespace world_sim {
+	void openSettings(app::SceneStack& stack) {
+		stack.push<SettingsScene>({.overAnotherScene = true});
+	}
+} // namespace world_sim
+
 // Export scene info for registry
 namespace world_sim::scenes {
-	extern const world_sim::SceneInfo Settings = {kSceneName, []() { return std::make_unique<SettingsScene>(); }};
+	extern const world_sim::SceneInfo Settings = {kSceneName, []() { return std::make_unique<SettingsScene>(SettingsArgs{}); }};
 } // namespace world_sim::scenes

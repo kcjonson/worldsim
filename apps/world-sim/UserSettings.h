@@ -1,15 +1,17 @@
 #pragma once
 
-// UserSettings - runtime, session-scoped user preferences.
+// UserSettings - the player's game preferences, set from the Settings scene.
 //
-// Minimal home for player-facing toggles set from the main-menu settings screen.
-// Values default from the base config XML (read once on first access) and are
-// mutated in place by the settings UI for the rest of the session. The drawing
-// settings here aren't saved across launches; the interface size and the window's
-// size are, in settings.json, through the App (see theme/InterfaceScale.h).
+// Values default from the base config XML (read once on first access), are read over from the settings
+// file at launch, and are changed in place by the Settings scene, which writes them back. The file is the
+// App's (settings.json, under "drawing"), so --no-settings neither reads nor saves them.
 
 #include <assets/ConstructionRegistry.h>
 #include <construction/DrawingAids.h>
+
+namespace app {
+	class Settings;
+} // namespace app
 
 namespace world_sim {
 
@@ -42,6 +44,11 @@ namespace world_sim {
 		/// Starts from snapping.xml's DrawingSettingsDefaults, read once when this
 		/// singleton is first touched.
 		DrawingSettings drawing;
+
+		/// Takes what the file holds over the defaults; a missing or malformed value keeps its default.
+		void load(const app::Settings& file);
+		/// Writes every value into the file's in-memory settings; the caller saves the file.
+		void store(app::Settings& file) const;
 
 		/// The engine-facing part of `drawing`.
 		[[nodiscard]] construction::DrawingAids drawingAids() const {

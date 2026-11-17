@@ -10,6 +10,7 @@
 #include "SceneTypes.h"
 #include "scenes/shared/DecorativePlanet.h"
 #include "scenes/shared/SalalUi.h"
+#include "scenes/settings/SettingsScene.h"
 #include "scenes/shared/Starfield.h"
 #include <theme/Theme.h>
 
@@ -262,7 +263,7 @@ namespace {
 				},
 			});
 			item({.id = "menu_settings", .label = "Settings", .icon = "gear", .onPress = [this] {
-					  owner->scenes().switchTo(world_sim::scenes::Settings.name);
+					  world_sim::openSettings(owner->scenes());
 				  }});
 			item({.id = "menu_credits", .enabled = false, .label = "Credits", .icon = "users"});
 			item({.id = "menu_exit", .label = "Exit", .icon = "close", .onPress = [this] { owner->requestExit(); }});
