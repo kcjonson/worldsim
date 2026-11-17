@@ -20,8 +20,6 @@
 
 #include <ui/components/Toast.h>
 
-#include <conditions/ColonistTerms.h>
-
 #include <construction/ConstructionValidator.h>
 #include <construction/ConstructionWorld.h>
 #include <construction/SnapEngine.h>
@@ -477,7 +475,7 @@ namespace world_sim {
 		}
 		const std::string name = param(cmd, "attribute");
 		const auto field = std::ranges::find_if(ecs::kAttributeFields, [&name](const ecs::AttributeField& candidate) {
-			return conditions::conditionName(candidate.label) == name;
+			return candidate.id == name;
 		});
 		if (field == ecs::kAttributeFields.end()) {
 			return refuse("attribute: no attribute '" + name + "'");
@@ -490,7 +488,7 @@ namespace world_sim {
 		}
 		attributes->*(field->value) = value;
 		LOG_INFO(Game, "[DevAPI] attribute: %s=%.1f on #%llu", name.c_str(), static_cast<double>(value), static_cast<unsigned long long>(id));
-		m_ctx.ui->pushNotification("Dev", std::string(field->label) + " set", ui::ToastSeverity::Info);
+		m_ctx.ui->pushNotification("Dev", std::string(field->id) + " set", ui::ToastSeverity::Info);
 		return {};
 	}
 
@@ -1267,7 +1265,7 @@ namespace world_sim {
 				out << ",\"attributes\":{";
 				for (size_t i = 0; i < ecs::kAttributeFields.size(); ++i) {
 					const ecs::AttributeField& field = ecs::kAttributeFields[i];
-					out << (i > 0 ? "," : "") << "\"" << conditions::conditionName(field.label) << "\":" << attributes->*(field.value);
+					out << (i > 0 ? "," : "") << "\"" << field.id << "\":" << attributes->*(field.value);
 				}
 				out << "}";
 			}

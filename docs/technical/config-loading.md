@@ -75,17 +75,18 @@ assets/config/work/priority-tuning.xml
 assets/config/construction/*.xml
 assets/config/colonists/mood.xml
 assets/config/colonists/traits/*.xml
+assets/config/colonists/attributes/*.xml
 assets/config/colonists/needs/*.xml
 assets/config/conditions/*.xml
 assets/config/thoughts/*.xml
 ```
 
-`colonists/traits/`, `colonists/needs/`, `conditions/`, and `thoughts/` load through `ecs::loadColonistRules(configRoot)` (libs/sim/ecs/ColonistRules.h),
-stopping at the first stage with errors. The traits load first, then the need thresholds (`loadNeedLevels`: `assets::loadNeedsConfig` reads the folder, a later file's `<Need>` replacing an earlier one of the same name and logged at info level, and `ecs::NeedLevels` checks that every need is given and each name is a need). A needs file with any error adds nothing, and its errors name the file's path as loaded and the `<Need name="...">`. There is no C++ default for a threshold: every colonist's `NeedsComponent` is constructed from the loaded `NeedLevels`, so the AI and the thought sources read the same numbers. Then the condition vocabulary is declared, answered by the sim's terms, and frozen, then the thought
+`colonists/traits/`, `colonists/attributes/`, `colonists/needs/`, `conditions/`, and `thoughts/` load through `ecs::loadColonistRules(configRoot)` (libs/sim/ecs/ColonistRules.h),
+stopping at the first stage with errors. The traits load first, then the attribute ranges, then the need thresholds (`loadNeedLevels`: `assets::loadNeedsConfig` reads the folder, a later file's `<Need>` replacing an earlier one of the same name and logged at info level, and `ecs::NeedLevels` checks that every need is given and each name is a need). A needs file with any error adds nothing, and its errors name the file's path as loaded and the `<Need name="...">`. There is no C++ default for a threshold: every colonist's `NeedsComponent` is constructed from the loaded `NeedLevels`, so the AI and the thought sources read the same numbers. Then the condition vocabulary is declared, answered by the sim's terms, and frozen, then the thought
 types are read and their conditions parsed against it (`loadConditionVocabulary` and `loadThoughtTypes`,
 which the tests use too). Each folder's own files load before its subfolders' (`assets::configFilesIn`),
 so a mod adds or replaces by adding a file there. A clean load logs its counts at info level (traits; needs; terms;
-feelings, thought types, and sources). `GameLoadingScene` adds its errors, prefixed `[traits]`, `[needs]`, `[conditions]`,
+feelings, thought types, and sources). `GameLoadingScene` adds its errors, prefixed `[traits]`, `[attributes]`, `[needs]`, `[conditions]`,
 or `[thoughts]`, to the config errors the loading screen shows, and hands the rules to `GameScene` through
 `GameWorldState`. A direct switch to the game scene skips the loading scene, so `GameScene` loads them
 itself, once; when they are broken it hands the errors to the splash (`world_sim::failColonistRules`),
@@ -106,6 +107,16 @@ gives fewer than the min; it rejects an unreachable min by a bound (at most one 
 trait id that is a word of the condition language (`assets::kConditionReservedWords`, which the condition parser
 also reads) is an error. Like the conditions and thoughts, any problem (a bad number, an unknown element or attribute)
 means the folder loads nothing.
+
+Every `.xml` file under `colonists/attributes/` loads through `assets::loadAttributeConfig` (libs/assets/assets/AttributeConfig.h)
+into an `ecs::AttributeRolls`, owned by `ecs::ColonistRules` beside the traits: one `<Attribute name min max/>` per
+attribute, the folder's own files first, then its subfolders' in path order, a later file replacing an attribute of the
+same name with a log line. The names come from `ecs::kAttributeFields` (libs/sim/ecs/components/Attributes.h), the one
+table the config, the `attribute(...)` condition term and the dev verb share, and the load is told them: a name not in
+it, an attribute no file gives, a bad or out-of-scale number (0 to 20, `min` at most `max`), or a name given twice in
+one file is an error naming the file and the `<Attribute name="...">`, and any error loads nothing.
+`ecs::rollAttributes` draws every attribute from the colonist's generator (one raw engine draw each, scaled by hand so
+the result matches across platforms); there are no values in C++, so an `Attributes` is only ever built from a roll.
 
 The registry is no singleton: `ecs::loadColonistRules` builds it as the first stage and `ecs::ColonistRules` owns it
 beside the vocabulary and the thought types, so whatever needs it (the colonist spawn, the dossier's Bio tab) takes it

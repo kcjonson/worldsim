@@ -6,12 +6,16 @@
 #include "NeedLevels.h"
 #include "components/Needs.h"
 
+#include "components/Attributes.h"
+
 #include <assets/TraitRegistry.h>
 
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <initializer_list>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace ecs::testing {
@@ -35,6 +39,19 @@ namespace ecs::testing {
 		assets::TraitRegistry traits;
 		stopOnErrors("traits", traits.loadFromFolder(repoConfig() / "colonists" / "traits"));
 		return traits;
+	}
+
+	/// Every attribute at `level` but the `overrides`, for tests that set only the ones they read. The
+	/// component has no values of its own; a colonist's come from a roll.
+	inline Attributes attributesAt(float level, std::initializer_list<std::pair<float Attributes::*, float>> overrides = {}) {
+		Attributes attributes{};
+		for (const AttributeField& field : kAttributeFields) {
+			attributes.*(field.value) = level;
+		}
+		for (const auto& [member, value] : overrides) {
+			attributes.*member = value;
+		}
+		return attributes;
 	}
 
 	/// The shipped need levels, loaded once, so a test's colonists seek at the thresholds the game's do.

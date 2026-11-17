@@ -16,7 +16,7 @@ For dynamic status (needs, mood), see [Needs System](./needs.md).
 
 ## Personality (Core Attributes)
 
-These are fixed traits assigned at colonist creation.
+These are fixed values assigned at colonist creation, each on a 0 to 20 scale (0 none, 20 exceptional).
 
 ### Physical Attributes
 
@@ -35,6 +35,14 @@ These are fixed traits assigned at colonist creation.
 | Kindness | Empathy, willingness to help others |
 | Work Ethic | Task dedication, resistance to distraction |
 | Social Need | How much interaction they require (high = extrovert) |
+
+### Rolling
+
+Every attribute is rolled once at spawn, evenly across a range, from the same seeded generator that rolls the colonist's traits, so a seed gives the same colonist on every platform. The ranges are data, in the XML files under `assets/config/colonists/attributes`: one `<Attribute name="kindness" min="4" max="16"/>` per attribute, named as conditions name it (`strength`, `agility`, `intelligence`, `civility`, `sanity`, `kindness`, `work_ethic`, `social_need`). A later file replaces an attribute by name and the replacement is logged; a mod can narrow or widen any range this way.
+
+The merged files give every attribute exactly one range. A name that is no attribute, a missing or non-numeric `min` or `max`, a range outside 0 to 20 or with `min` above `max`, a name given twice in one file, and an attribute no file gives are all load errors naming the file and the `<Attribute name="...">`; any error loads nothing.
+
+Where a colonist lands in a range is what the personality-keyed thoughts read: `attribute(kindness) >= 14` is true for the upper part of a colonist population and not for the rest. Strength also sets hand-carry capacity (20 kg plus 1.5 kg per point). Traits never change an attribute.
 
 ### Skills
 
