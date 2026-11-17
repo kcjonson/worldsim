@@ -126,10 +126,10 @@ A colonist who meets something tied to an old thought can have a new thought abo
 
 A recalled thought is a new thought. Its event is the recall, its subject is the old thought's subject, and it links to the old thought in the log.
 
-- **Strength.** Its mood effect is a fraction of the original's, a third by default, and shorter.
+- **Strength.** Its mood effect is a third of the original's and lasts half as long.
 - **Feeling.** It starts as the original feeling. An event type can say how its feeling changes with time: grief becomes fondness, mortification becomes amusement. A recall can therefore be a comfort where the original was a blow.
-- **Floor.** Only thoughts that were major, were a first, or had a mood effect above a threshold can be recalled. Being rained on once is not something a colonist carries.
-- **Cooldown.** Each old thought can be recalled at most once in a long interval, 5 game days by default.
+- **Floor.** Only thoughts that were major, were a first, or had a mood effect of 8 or more can be recalled. Being rained on once is not something a colonist carries.
+- **Rare.** A recall is an occasion. A colonist has at most one in 10 game days, and each old thought can be recalled at most once in 30 game days. A cue met inside either interval creates nothing.
 - **No chains.** A recalled thought cannot itself be recalled, and cannot cue another recall.
 
 Recall is what makes things matter to particular colonists.
@@ -273,6 +273,7 @@ A supplement, not part of the spec. Kevin, 2026-11-16.
 - The game should carry some of The Sims' joy; balance of harsh against gentle is tuned at playtest.
 - 2026-11-17: no per-source bubble switches. Bubble frequency is the one setting; making bubbles meaningful and not overwhelming is the selector's job, not the player's. A thought type carries no source group.
 - 2026-11-17: bubbles are gated by a moving bar per colonist, not by fixed gaps. The bar is set high when the colonist bubbles and falls as time passes, so bubbles are very unlikely back to back unless serious, and a colonist with only minor thoughts still shows a couple a day. It is a fixed line, not a roll. Other colonists' bubbles raise everyone's bar slightly, through a summed amount that drains away; there is no separate colony bar.
+- 2026-11-17: recall is a very rare occurrence. Starting values: a recallable thought has a mood effect of 8 or more (or is major, or a first); a recall has a third of the strength and half the duration; one recall per colonist in 10 game days, and one per old thought in 30.
 - 2026-11-17: need thoughts carry no mood effect, because the needs score already prices a low need into mood.
 - 2026-11-17: pruning's importance weights are trivial 1 and normal 3; major thoughts are never pruned, so they carry no weight.
 - 2026-11-17: recency and age count from a thought's last moment, the later of its latest arrival and its end, in game days. A thought held until recently stays, so nothing that read it while it was held loses it.
