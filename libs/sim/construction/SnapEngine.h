@@ -114,7 +114,8 @@ namespace construction {
 		::Foundation::Vec2 rightAngleEdgeDirection{0.0F, 0.0F}; // unit, from `from` along the perpendicular edge
 		// Measured from the guide's own node; it is the segment's length only when throughPreviousPoint.
 		// It is |to - from|, except after an angle step with a length snap, where it is the snapped length itself
-		// (which can differ from the measured distance in the last float bits).
+		// (the snapped point is stored as a float, so far from the origin the measured distance can differ
+		// from the snapped length by the point's float rounding, about a tenth of a millimeter a few kilometers out).
 		float distanceFromNodeMeters = 0.0F;
 		// True when the node is within 1 mm of the last placed point: with one point placed a guide
 		// through it is true, with three or more a guide through the FIRST point is false.

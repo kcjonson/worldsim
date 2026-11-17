@@ -294,10 +294,11 @@ namespace construction {
 		//     interior. See commitSegment in the .cpp for the split mechanics and
 		//     opening re-attach.
 		//
-		// `placementOrder` is stored on every segment the call creates (D12): a chain
-		// drawn as several calls passes the version() it read before its first, so the
-		// chain is one owner for common lengths. It must be a version() read taken when the placement
-		// began: never above the world's current version, and the same value for every segment of one chain.
+		// `placementOrder` (D12) is taken by the new segments of the chain; an existing segment split
+		// by the commit keeps its own order on both halves. A chain drawn as several calls passes one
+		// value, the world's version() read once at the start of the commit before the chain's first
+		// segment, so the chain is one owner for common lengths. It is never above the world's current
+		// version, and is the same for all the new segments of one drawn chain.
 		SegmentCommitResult commitSegment(
 			const geometry::Vec2i64& a,
 			const geometry::Vec2i64& b,

@@ -446,8 +446,8 @@ TEST_F(CommonLengths, WallToolReadsInsetAtAnyDistanceUnderAllBuildings) {
 }
 
 TEST_F(CommonLengths, WallToolReadsInsetLengthsExactlyFarFromTheOrigin) {
-	// Metres from the origin where a float step is half a millimetre: a float inset corner would
-	// round each end by up to a quarter of one and miss the exact length by far more than 1e-9.
+	// 4000 m from the origin a float step is 2^-12 m, about a quarter of a millimeter: float corners
+	// would round each coordinate by up to half a step and miss the exact length by far more than 1e-9.
 	built.addFoundation(rectangle(4000.123, 3000.321, 0.0, 4.0, 3.0));
 	const std::vector<double> kept = keptLengths(lengths({}, {4000.1F, 2994.0F}, snap_guides::SnapTool::Wall));
 	ASSERT_EQ(kept.size(), 2U);
