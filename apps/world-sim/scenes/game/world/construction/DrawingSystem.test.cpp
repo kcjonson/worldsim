@@ -8,7 +8,9 @@
 #include <construction/ConstructionValidator.h>
 #include <construction/ConstructionWorld.h>
 #include <construction/RoomDetection.h>
+#include <ecs/GoalTaskRegistry.h>
 #include <ecs/components/StructureBlueprint.h>
+#include <ecs/systems/ConstructionSystem.h>
 
 #include <glm/geometric.hpp>
 #include <gtest/gtest.h>
@@ -889,6 +891,12 @@ namespace {
 	// Closes with every tool on seen ground, and next to the edge of what is seen.
 	class DrawingCloseTest : public DrawingVisibilityTest {
 	  protected:
+		void SetUp() override {
+			DrawingVisibilityTest::SetUp();
+			// Reshaping a blueprint resets its goals through the construction system.
+			seen.world.registerSystem<ecs::ConstructionSystem>();
+		}
+
 		construction::FoundationId builtFloor(const std::vector<Foundation::Vec2>& ring) {
 			const auto floor = drawing->world().commitFoundation(ring, "Wood");
 			EXPECT_TRUE(floor.ok());
