@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <limits>
 #include <span>
@@ -1063,8 +1064,10 @@ namespace world_sim {
 		auto&					  registry = ConstructionRegistry::Get();
 		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
 
-		int committed = 0;
-		int rejected = 0;
+		// Read once: every segment of the chain shares it, so the chain is one owner (D12).
+		const std::uint64_t placementOrder = constructionWorld_.version();
+		int					committed = 0;
+		int					rejected = 0;
 		for (std::size_t i = 0; i + 1 < points_.size(); ++i) {
 			const Foundation::Vec2 a = points_[i];
 			const Foundation::Vec2 b = points_[i + 1];
@@ -1076,7 +1079,7 @@ namespace world_sim {
 			}
 
 			const auto result = constructionWorld_.commitSegment(
-				geometry::quantize(a), geometry::quantize(b), activeMaterial_, activeThicknessPreset_, wallHost_
+				geometry::quantize(a), geometry::quantize(b), activeMaterial_, activeThicknessPreset_, wallHost_, placementOrder
 			);
 			if (!result.ok()) {
 				rejected++;
@@ -1119,11 +1122,12 @@ namespace world_sim {
 		// consecutive pair straight to the topology with no soft-validator pass, so a
 		// caller can stamp a wall loop in one shot. commitSegment still enforces the
 		// hard topology invariants (zero-length, X-crossing, duplicate, T-split).
-		int committed = 0;
+		const std::uint64_t placementOrder = constructionWorld_.version();
+		int					committed = 0;
 		for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
 			const geometry::Vec2i64 qa = geometry::quantize(pts[i]);
 			const geometry::Vec2i64 qb = geometry::quantize(pts[i + 1]);
-			const auto				result = constructionWorld_.commitSegment(qa, qb, material, thicknessPreset, host);
+			const auto				result = constructionWorld_.commitSegment(qa, qb, material, thicknessPreset, host, placementOrder);
 			if (!result.ok()) {
 				continue;
 			}
@@ -1224,7 +1228,12 @@ namespace world_sim {
 		}
 
 		const auto result = constructionWorld_.commitSegment(
-			geometry::quantize(bestA), geometry::quantize(bestB), activeMaterial_, activeThicknessPreset_, host
+			geometry::quantize(bestA),
+			geometry::quantize(bestB),
+			activeMaterial_,
+			activeThicknessPreset_,
+			host,
+			constructionWorld_.version()
 		);
 		if (!result.ok()) {
 			if (callbacks_.onToast) {

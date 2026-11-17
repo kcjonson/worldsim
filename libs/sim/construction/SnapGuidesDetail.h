@@ -45,10 +45,15 @@ namespace construction::snap_guides {
 
 	/// The inward offset (meters) of an outer-face-flush wall of the given half-thickness.
 	[[nodiscard]] double flushInsetMeters(std::int64_t halfThicknessMm);
+	/// outerFaceFlushCorner computed in double (defined beside it in SnapEngine.cpp, from the
+	/// same code), for the length study, which measures the edges between inset corners.
+	[[nodiscard]] Vec2d outerFaceFlushCornerDouble(const geometry::Ring& ring, std::size_t vertexIndex, std::int64_t halfThicknessMm);
 
 	/// Integer millimeters as double meters, exactly.
 	[[nodiscard]] Vec2d meters(const geometry::Vec2i64& millimeters);
 	[[nodiscard]] Vec2d toVec2d(::Foundation::Vec2 point);
+	[[nodiscard]] double dot(Vec2d first, Vec2d second);
+	[[nodiscard]] double distanceBetween(Vec2d first, Vec2d second);
 
 	enum class SnapTool { Foundation, Wall };
 
@@ -214,6 +219,15 @@ namespace construction::snap_guides {
 	[[nodiscard]] double angularDifference(double first, double second, double period);
 	[[nodiscard]] double lineDistance(Vec2d point, const GuideLine& line);
 	[[nodiscard]] Vec2d	 footOnLine(Vec2d point, const GuideLine& line);
+	/// From `point` to the nearest point of the segment from `start` to `end`.
+	[[nodiscard]] double distanceToSegment(Vec2d point, Vec2d start, Vec2d end);
+	/// From `point` to the axis-aligned box from `low` to `high`; zero inside it.
+	[[nodiscard]] double distanceToBox(Vec2d point, Vec2d low, Vec2d high);
+	/// From `point` to the axis-aligned bounds of `ring`: no ring vertex or edge is nearer,
+	/// so a ring farther than a range is out of it whole.
+	[[nodiscard]] double distanceToBounds(Vec2d point, const geometry::Ring& ring);
+	/// The nearest whole number, halves up, as the tuned prototype rounds steps.
+	[[nodiscard]] double roundHalfUp(double value);
 
 	// --- The stages, in order ---------------------------------------------------
 

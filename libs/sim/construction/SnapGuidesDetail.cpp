@@ -26,16 +26,8 @@ namespace construction::snap_guides {
 		// A cursor this close to an anchor has no direction from it, so no angle to catch.
 		constexpr double kNoDirectionMeters = 1e-6;
 
-		double dot(Vec2d first, Vec2d second) {
-			return first.x * second.x + first.y * second.y;
-		}
-
 		double cross(Vec2d first, Vec2d second) {
 			return first.x * second.y - first.y * second.x;
-		}
-
-		double distanceBetween(Vec2d first, Vec2d second) {
-			return geometry::length(first - second);
 		}
 
 		Vec2d unit(Vec2d vector) {
@@ -45,41 +37,6 @@ namespace construction::snap_guides {
 
 		double angleOf(Vec2d vector) {
 			return std::atan2(vector.y, vector.x);
-		}
-
-		// A foot clamped to an end is that end exactly, so two edges whose nearest point is
-		// their shared corner tie exactly and fall to walk order.
-		double distanceToSegment(Vec2d point, Vec2d start, Vec2d end) {
-			const Vec2d	 edge = end - start;
-			const double lengthSquared = dot(edge, edge);
-			const double parameter = lengthSquared > 0.0 ? dot(point - start, edge) / lengthSquared : 0.0;
-			if (parameter <= 0.0) {
-				return distanceBetween(point, start);
-			}
-			if (parameter >= 1.0) {
-				return distanceBetween(point, end);
-			}
-			return distanceBetween(point, start + edge * parameter);
-		}
-
-		// Distance from `point` to the axis-aligned bounds of `ring`: no ring vertex or edge
-		// is nearer, so a ring farther than the range is out of range whole.
-		double distanceToBounds(Vec2d point, const geometry::Ring& ring) {
-			std::int64_t minimumX = std::numeric_limits<std::int64_t>::max();
-			std::int64_t minimumY = std::numeric_limits<std::int64_t>::max();
-			std::int64_t maximumX = std::numeric_limits<std::int64_t>::min();
-			std::int64_t maximumY = std::numeric_limits<std::int64_t>::min();
-			for (const geometry::Vec2i64& vertex : ring) {
-				minimumX = std::min(minimumX, vertex.x);
-				minimumY = std::min(minimumY, vertex.y);
-				maximumX = std::max(maximumX, vertex.x);
-				maximumY = std::max(maximumY, vertex.y);
-			}
-			const Vec2d	 low = meters({minimumX, minimumY});
-			const Vec2d	 high = meters({maximumX, maximumY});
-			const double outsideX = std::max({low.x - point.x, 0.0, point.x - high.x});
-			const double outsideY = std::max({low.y - point.y, 0.0, point.y - high.y});
-			return std::sqrt(outsideX * outsideX + outsideY * outsideY);
 		}
 
 		// How far a corner's outer-face-flush inset can sit from the raw corner: the two
@@ -192,6 +149,14 @@ namespace construction::snap_guides {
 
 	} // namespace
 
+	double dot(Vec2d first, Vec2d second) {
+		return first.x * second.x + first.y * second.y;
+	}
+
+	double distanceBetween(Vec2d first, Vec2d second) {
+		return geometry::length(first - second);
+	}
+
 	Vec2d meters(const geometry::Vec2i64& millimeters) {
 		const auto perMeter = static_cast<double>(geometry::kMillimetersPerMeter);
 		return {static_cast<double>(millimeters.x) / perMeter, static_cast<double>(millimeters.y) / perMeter};
@@ -230,6 +195,45 @@ namespace construction::snap_guides {
 
 	Vec2d footOnLine(Vec2d point, const GuideLine& line) {
 		return line.node.point + line.direction * dot(point - line.node.point, line.direction);
+	}
+
+	// A foot clamped to an end is that end exactly, so two edges whose nearest point is
+	// their shared corner tie exactly and fall to walk order.
+	double distanceToSegment(Vec2d point, Vec2d start, Vec2d end) {
+		const Vec2d	 edge = end - start;
+		const double lengthSquared = dot(edge, edge);
+		const double parameter = lengthSquared > 0.0 ? dot(point - start, edge) / lengthSquared : 0.0;
+		if (parameter <= 0.0) {
+			return distanceBetween(point, start);
+		}
+		if (parameter >= 1.0) {
+			return distanceBetween(point, end);
+		}
+		return distanceBetween(point, start + edge * parameter);
+	}
+
+	double distanceToBox(Vec2d point, Vec2d low, Vec2d high) {
+		const double outsideX = std::max({low.x - point.x, 0.0, point.x - high.x});
+		const double outsideY = std::max({low.y - point.y, 0.0, point.y - high.y});
+		return std::sqrt(outsideX * outsideX + outsideY * outsideY);
+	}
+
+	double distanceToBounds(Vec2d point, const geometry::Ring& ring) {
+		std::int64_t minimumX = std::numeric_limits<std::int64_t>::max();
+		std::int64_t minimumY = std::numeric_limits<std::int64_t>::max();
+		std::int64_t maximumX = std::numeric_limits<std::int64_t>::min();
+		std::int64_t maximumY = std::numeric_limits<std::int64_t>::min();
+		for (const geometry::Vec2i64& vertex : ring) {
+			minimumX = std::min(minimumX, vertex.x);
+			minimumY = std::min(minimumY, vertex.y);
+			maximumX = std::max(maximumX, vertex.x);
+			maximumY = std::max(maximumY, vertex.y);
+		}
+		return distanceToBox(point, meters({minimumX, minimumY}), meters({maximumX, maximumY}));
+	}
+
+	double roundHalfUp(double value) {
+		return std::floor(value + 0.5);
 	}
 
 	void collectShapeNodes(const GuideContext& context, GuideStudy& study) {

@@ -27,7 +27,7 @@ namespace {
 	// Commit a built wall between integer-mm endpoints and return its SegmentId. A
 	// T-junction commit also creates the split halves of its host; all are built.
 	SegmentId buildWall(ConstructionWorld& world, Vec2i64 a, Vec2i64 b) {
-		SegmentCommitResult r = world.commitSegment(a, b, "wood", "standard", kInvalidFoundation);
+		SegmentCommitResult r = world.commitSegment(a, b, "wood", "standard", kInvalidFoundation, world.version());
 		EXPECT_TRUE(r.ok());
 		for (SegmentId id : r.createdSegments) {
 			world.setSegmentState(id, FoundationState::Built);
@@ -145,7 +145,7 @@ namespace {
 
 	// Commit a wall left in Blueprint state.
 	SegmentId blueprintWall(ConstructionWorld& world, Vec2i64 a, Vec2i64 b) {
-		SegmentCommitResult r = world.commitSegment(a, b, "wood", "standard", kInvalidFoundation);
+		SegmentCommitResult r = world.commitSegment(a, b, "wood", "standard", kInvalidFoundation, world.version());
 		EXPECT_TRUE(r.ok());
 		return r.id;
 	}

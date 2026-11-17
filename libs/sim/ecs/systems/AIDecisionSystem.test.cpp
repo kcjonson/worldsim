@@ -5526,8 +5526,9 @@ namespace ecs::test {
 		// A built wall across x = 8 m with the bush at its middle, the colonist knowing every segment of
 		// it and the bush, hungry with an empty pack, and the mesh built with the wall in it.
 		EntityID makeHungryColonistBesideWall(bool withDoor) {
-			const auto commit = construction.commitSegment({8000, -2000}, {8000, 2000}, "Wood", "Standard",
-														   construction::kInvalidFoundation);
+			const auto commit = construction.commitSegment(
+				{8000, -2000}, {8000, 2000}, "Wood", "Standard", construction::kInvalidFoundation, construction.version()
+			);
 			EXPECT_TRUE(commit.ok());
 			wallSegment = commit.id;
 			for (const auto id : commit.createdSegments) {
@@ -5707,7 +5708,9 @@ namespace ecs::test {
 		site({0.0F, 4.0F}, "Wood");
 		site({0.0F, -4.0F}, "Stick");
 
-		const auto commit = construction.commitSegment({8000, -2000}, {8000, 2000}, "Wood", "Standard", construction::kInvalidFoundation);
+		const auto commit = construction.commitSegment(
+			{8000, -2000}, {8000, 2000}, "Wood", "Standard", construction::kInvalidFoundation, construction.version()
+		);
 		ASSERT_TRUE(commit.ok());
 		for (const auto id : commit.createdSegments) {
 			construction.setSegmentState(id, construction::FoundationState::Built);
@@ -6953,7 +6956,9 @@ namespace ecs::test {
 		const auto			 wallUp = [&](float x) {
 			const auto xMm	  = static_cast<std::int64_t>(x * 1000.0F);
 			const auto yMm	  = static_cast<std::int64_t>(kStart.y * 1000.0F);
-			const auto commit = construction.commitSegment({xMm, yMm - 3000}, {xMm, yMm + 3000}, "Wood", "Standard", construction::kInvalidFoundation);
+			const auto commit = construction.commitSegment(
+				{xMm, yMm - 3000}, {xMm, yMm + 3000}, "Wood", "Standard", construction::kInvalidFoundation, construction.version()
+			);
 			ASSERT_TRUE(commit.ok());
 			for (const auto id : commit.createdSegments) {
 				construction.setSegmentState(id, construction::FoundationState::Built);
@@ -7185,7 +7190,9 @@ namespace ecs::test {
 		water.defName = "Water";
 		water.label	  = "Water";
 		assets::AssetRegistry::Get().registerTestDefinition(water);
-		const auto commit = construction.commitSegment({-200000, 10000}, {60000, 10000}, "Wood", "Standard", construction::kInvalidFoundation);
+		const auto commit = construction.commitSegment(
+			{-200000, 10000}, {60000, 10000}, "Wood", "Standard", construction::kInvalidFoundation, construction.version()
+		);
 		ASSERT_TRUE(commit.ok());
 		const glm::vec2 waterAt{0.0F, 20.0F};
 		const auto		colonist = createColonist({0.0F, 0.0F});
@@ -7736,7 +7743,9 @@ namespace ecs::test {
 	// has none there), is chosen, routed, and reached: he meets the wall on the way and goes round it.
 	TEST_F(AIDecisionWallTest, WaterPastAWallHeDoesNotKnowIsChosenRoutedAndReached) {
 		constexpr glm::vec2 kWater{60.0F, 0.0F};
-		const auto			commit = construction.commitSegment({30000, -10000}, {30000, 10000}, "Wood", "Standard", construction::kInvalidFoundation);
+		const auto			commit = construction.commitSegment(
+			 {30000, -10000}, {30000, 10000}, "Wood", "Standard", construction::kInvalidFoundation, construction.version()
+		 );
 		ASSERT_TRUE(commit.ok());
 		for (const auto id : commit.createdSegments) {
 			construction.setSegmentState(id, construction::FoundationState::Built);
@@ -7774,12 +7783,13 @@ namespace ecs::test {
 		constexpr glm::vec2 kSpot{0.0F, 0.0F};
 		constexpr glm::vec2 kWater{60.0F, 0.0F};
 		const auto			buildWallAt = [&](geometry::Vec2i64 a, geometry::Vec2i64 b) {
-			   const auto commit = construction.commitSegment(a, b, "Wood", "Standard", construction::kInvalidFoundation);
-			   EXPECT_TRUE(commit.ok());
-			   for (const auto id : commit.createdSegments) {
-				   construction.setSegmentState(id, construction::FoundationState::Built);
-			   }
-			   return commit.createdSegments;
+			 const auto commit =
+				 construction.commitSegment(a, b, "Wood", "Standard", construction::kInvalidFoundation, construction.version());
+			 EXPECT_TRUE(commit.ok());
+			 for (const auto id : commit.createdSegments) {
+				 construction.setSegmentState(id, construction::FoundationState::Built);
+			 }
+			 return commit.createdSegments;
 		};
 		const auto besideWater = buildWallAt({64000, -3000}, {64000, 3000});
 		addLookout(kWater + glm::vec2{-4.0F, 0.0F});
@@ -7853,8 +7863,14 @@ namespace ecs::test {
 			const std::array<geometry::Vec2i64, 4> corners{{{6000, -2000}, {10000, -2000}, {10000, 2000}, {6000, 2000}}};
 			std::vector<construction::SegmentId>	 walls;
 			for (size_t i = 0; i < corners.size(); ++i) {
-				const auto commit = construction.commitSegment(corners[i], corners[(i + 1) % corners.size()], "Wood",
-															   "Standard", construction::kInvalidFoundation);
+				const auto commit = construction.commitSegment(
+					corners[i],
+					corners[(i + 1) % corners.size()],
+					"Wood",
+					"Standard",
+					construction::kInvalidFoundation,
+					construction.version()
+				);
 				EXPECT_TRUE(commit.ok());
 				for (const auto id : commit.createdSegments) {
 					construction.setSegmentState(id, construction::FoundationState::Built);
@@ -7887,8 +7903,9 @@ namespace ecs::test {
 		// A wall far from everything, so the region's mesh rebuilds without anything else changing.
 		void rebuildRegionMesh() {
 			const std::uint64_t before = nav->generation();
-			const auto commit = construction.commitSegment({30000, 30000}, {32000, 30000}, "Wood", "Standard",
-														   construction::kInvalidFoundation);
+			const auto			commit = construction.commitSegment(
+				 {30000, 30000}, {32000, 30000}, "Wood", "Standard", construction::kInvalidFoundation, construction.version()
+			 );
 			ASSERT_TRUE(commit.ok());
 			for (const auto id : commit.createdSegments) {
 				construction.setSegmentState(id, construction::FoundationState::Built);

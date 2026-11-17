@@ -11,6 +11,7 @@
 #include <utils/Log.h>
 
 #include <cmath>
+#include <string>
 
 namespace assets {
 
@@ -456,8 +457,10 @@ bool ConfigValidator::validateConstruction() {
     require(snappingSource, s.commonLengthCatchMeters >= 0.0F, "commonLengthCatchMeters", s.commonLengthCatchMeters, "non-negative");
     require(snappingSource, s.commonLengthMergeMeters >= 0.0F && s.commonLengthMergeMeters < s.commonLengthMinimumMeters,
             "commonLengthMergeMeters", s.commonLengthMergeMeters, "non-negative and below commonLengthMinimumMeters");
-    require(snappingSource, s.commonLengthMaxCount >= 0, "commonLengthMaxCount", static_cast<float>(s.commonLengthMaxCount),
-            "non-negative");
+    const std::string maxCountBound =
+        "in [0, " + std::to_string(kMaxCommonLengthCount) + "] (the most common lengths the snap engine reports)";
+    require(snappingSource, s.commonLengthMaxCount >= 0 && s.commonLengthMaxCount <= kMaxCommonLengthCount, "commonLengthMaxCount",
+            static_cast<float>(s.commonLengthMaxCount), maxCountBound.c_str());
     require(snappingSource, s.commonLengthMinimumMeters >= 0.0F, "commonLengthMinimumMeters", s.commonLengthMinimumMeters,
             "non-negative");
     require(snappingSource, s.lengthIncrementMeters >= 0.0F, "lengthIncrementMeters", s.lengthIncrementMeters, "non-negative");

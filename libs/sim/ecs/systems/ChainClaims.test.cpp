@@ -3782,7 +3782,8 @@ namespace ecs::test {
 			std::vector<construction::SegmentId>	 west;
 			geometry::Vec2i64						 from = min;
 			for (const geometry::Vec2i64 to : corners) {
-				const auto commit = construction.commitSegment(from, to, "Wood", "Standard", construction::kInvalidFoundation);
+				const auto commit =
+					construction.commitSegment(from, to, "Wood", "Standard", construction::kInvalidFoundation, construction.version());
 				EXPECT_TRUE(commit.ok());
 				for (const auto id : commit.createdSegments) {
 					construction.setSegmentState(id, construction::FoundationState::Built);
@@ -4077,7 +4078,8 @@ namespace ecs::test {
 	// sits on a built wall, whose stand point is pushed off it further than half the way to the next
 	// spot, so it is passed over for that next spot in the same decision.
 	TEST_F(ClaimsOnRealRoutesTest, ABuilderStandsAtItsSpotsStandPointAndPassesOverOneTheMeshCannotServe) {
-		const auto wall = construction.commitSegment({1000, 0}, {3000, 0}, "Wood", "Standard", construction::kInvalidFoundation);
+		const auto wall =
+			construction.commitSegment({1000, 0}, {3000, 0}, "Wood", "Standard", construction::kInvalidFoundation, construction.version());
 		ASSERT_TRUE(wall.ok());
 		for (const auto id : wall.createdSegments) {
 			construction.setSegmentState(id, construction::FoundationState::Built);
@@ -4110,7 +4112,8 @@ namespace ecs::test {
 	// second taking the far spot once the first holds the next; the third, narrow enough to stand off the
 	// wall within the limit, works the spot on it.
 	TEST_F(ClaimsOnRealRoutesTest, BuildersDecidingInOneUpdateGetTheStandPointsOfTheirOwnRadius) {
-		const auto wall = construction.commitSegment({1000, 0}, {3000, 0}, "Wood", "Standard", construction::kInvalidFoundation);
+		const auto wall =
+			construction.commitSegment({1000, 0}, {3000, 0}, "Wood", "Standard", construction::kInvalidFoundation, construction.version());
 		ASSERT_TRUE(wall.ok());
 		for (const auto id : wall.createdSegments) {
 			construction.setSegmentState(id, construction::FoundationState::Built);

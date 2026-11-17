@@ -106,6 +106,7 @@ namespace construction {
 		foundation.material = std::move(material);
 		foundation.state = FoundationState::Blueprint;
 		foundation.entity = ecs::kInvalidEntity;
+		foundation.placementOrder = version_;
 
 		const FoundationId id = foundation.id;
 		foundations_.push_back(std::move(foundation));
@@ -194,6 +195,7 @@ namespace construction {
 		extension.material = host->material;
 		extension.state = FoundationState::Blueprint;
 		extension.mergeTarget = target;
+		extension.placementOrder = version_;
 
 		const FoundationId id = extension.id;
 		foundations_.push_back(std::move(extension));
@@ -327,6 +329,7 @@ namespace construction {
 		const std::string	  preset = s->thicknessPreset;
 		const FoundationId	  hostFnd = s->hostFoundation;
 		const FoundationState state = s->state;
+		const std::uint64_t	  placementOrder = s->placementOrder;
 
 		const Vertex* v0 = findVertex(oldV0);
 		const Vertex* v1 = findVertex(oldV1);
@@ -353,6 +356,7 @@ namespace construction {
 		first.hostFoundation = hostFnd;
 		first.state = state;
 		first.entity = ecs::kInvalidEntity;
+		first.placementOrder = placementOrder;
 
 		WallSegment second;
 		second.id = nextSegmentId_++;
@@ -363,6 +367,7 @@ namespace construction {
 		second.hostFoundation = hostFnd;
 		second.state = state;
 		second.entity = ecs::kInvalidEntity;
+		second.placementOrder = placementOrder;
 
 		const SegmentId firstId = first.id;
 		const SegmentId secondId = second.id;
@@ -418,7 +423,8 @@ namespace construction {
 		const geometry::Vec2i64& b,
 		std::string				 material,
 		std::string				 thicknessPreset,
-		FoundationId			 host
+		FoundationId			 host,
+		std::uint64_t			 placementOrder
 	) {
 		if (a == b) {
 			return {SegmentStatus::ZeroLength, kInvalidSegment};
@@ -613,6 +619,7 @@ namespace construction {
 			segment.hostFoundation = host;
 			segment.state = FoundationState::Blueprint;
 			segment.entity = ecs::kInvalidEntity;
+			segment.placementOrder = placementOrder;
 
 			const SegmentId id = segment.id;
 			assert((segments_.empty() || segments_.back().id < id) && "ConstructionWorld: segments_ must stay in ascending id order");

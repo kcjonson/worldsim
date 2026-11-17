@@ -69,6 +69,7 @@
   <commonLengthAllBuildings>false</commonLengthAllBuildings>
   <commonLengthCatchMeters>0.3</commonLengthCatchMeters>
   <commonLengthMergeMeters>0.05</commonLengthMergeMeters>
+  <!-- Lengths kept after ranking; at most 16, the most the snap engine reports. -->
   <commonLengthMaxCount>6</commonLengthMaxCount>
   <commonLengthMinimumMeters>0.5</commonLengthMinimumMeters>
   <commonLengthAfterRawCursor>true</commonLengthAfterRawCursor>

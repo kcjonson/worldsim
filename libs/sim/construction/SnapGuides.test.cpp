@@ -71,7 +71,7 @@ namespace {
 		[[nodiscard]] GuideStudy study(
 			const std::vector<Vec2>& points,
 			Vec2					 cursor,
-			const DrawingAids&		 aids = allAidsOn(),
+			const DrawingAids&		 aids = guideAidsOn(),
 			SnapTool				 tool = SnapTool::Foundation
 		) const {
 			return studyGuides(snapping, built.world, points, cursor, aids, tool);
@@ -332,7 +332,7 @@ TEST_F(SnapGuides, GuideCornerLimit) {
 
 TEST_F(SnapGuides, GuideAlignToExistingOffDropsBuildingGuides) {
 	built.addFoundation(rectangle(6.0, -2.0, 37.0, 4.0, 3.0));
-	DrawingAids aids = allAidsOn();
+	DrawingAids aids = guideAidsOn();
 	aids.alignToExistingBuildings = false;
 	const std::vector<Vec2> points{kWorkedPoint0};
 	const Vec2				cursor = polar(kWorkedPoint0, 39.0, 5.0);
@@ -436,7 +436,7 @@ TEST_F(SnapGuides, WallGuideUsesInsetCorners) {
 	built.addWall({cornerMillimeters, {cornerMillimeters.x - 3000, cornerMillimeters.y - 5000}});
 	const Vec2 cursor{corner.x + 3.0F, corner.y + 0.05F};
 
-	const GuideStudy guides = study({}, cursor, allAidsOn(), SnapTool::Wall);
+	const GuideStudy guides = study({}, cursor, guideAidsOn(), SnapTool::Wall);
 	std::size_t		 kept = 0;
 	std::size_t		 merged = 0;
 	for (const snap_guides::GuideLine& line : guides.lines) {
@@ -486,17 +486,7 @@ TEST_F(SnapGuides, WallFoundationCornerSnapsToInset) {
 	expectPoint(result.point, 11.145269, 4.164965, 1e-5F);
 }
 
-// --- Helper switches (the prototype's levels cases, lengths off) ----------------------
-
-TEST_F(SnapGuides, HelpersOffRawDirectionRounded) {
-	const std::vector<Vec2> points{{0.0F, 0.0F}, {6.0F, 0.0F}};
-	const SnapResult		off = snap(points, {6.2F, 4.04F}, foundationInput(allAidsOff()));
-	EXPECT_EQ(off.kind, SnapKind::None);
-	expectPoint(off.point, 6.2, 4.04);
-	const SnapResult on = snap(points, {6.2F, 4.04F});
-	EXPECT_EQ(on.kind, SnapKind::GuideLine);
-	expectPoint(on.point, 6.0, 4.04);
-}
+// --- Helper switches (the prototype's levels cases; rounding is SnapLengths.test.cpp's) ---
 
 TEST_F(SnapGuides, HelpersOffKeepAdjacency) {
 	built.addFoundation({{9.0, 4.0}, {12.0, 4.0}, {12.0, 7.0}, {9.0, 7.0}});
@@ -513,7 +503,9 @@ TEST_F(SnapGuides, EachHelperAloneTurnsItsCandidatesOn) {
 	const GuideStudy none = study(points, cursor, allAidsOff());
 	EXPECT_TRUE(none.lines.empty());
 	EXPECT_EQ(none.cornersUsed, 0U);
-	EXPECT_EQ(snap(points, cursor, foundationInput(allAidsOff())).kind, SnapKind::None);
+	const SnapResult bare = snap(points, cursor, foundationInput(allAidsOff()));
+	EXPECT_EQ(bare.kind, SnapKind::None);
+	EXPECT_EQ(bare.commonLengthCount, 0U);
 
 	DrawingAids shape = allAidsOff();
 	shape.guidesFromShape = true;
@@ -537,6 +529,15 @@ TEST_F(SnapGuides, EachHelperAloneTurnsItsCandidatesOn) {
 	const SnapResult stepped = snap(points, cursor, foundationInput(angle));
 	EXPECT_EQ(stepped.kind, SnapKind::Angle);
 	expectPoint(stepped.point, 3.198215, 2.801785);
+
+	// The shape's 6 m edge, then the shed's 2 m and 3 m edges.
+	DrawingAids lengths = allAidsOff();
+	lengths.commonLengths = true;
+	const SnapResult measured = snap(points, cursor, foundationInput(lengths));
+	ASSERT_EQ(measured.commonLengthCount, 3U);
+	EXPECT_NEAR(measured.commonLengths[0], 6.0F, kNearTolerance);
+	EXPECT_NEAR(measured.commonLengths[1], 2.0F, kNearTolerance);
+	EXPECT_NEAR(measured.commonLengths[2], 3.0F, kNearTolerance);
 }
 
 TEST_F(SnapGuides, CrossingsSwitch) {
@@ -607,11 +608,11 @@ TEST_F(SnapGuides, GuideMergeDistance) {
 
 	SnapWorld apart;
 	apart.addFoundation({{3.0, 0.31}, {5.0, 0.31}, {5.0, 2.0}, {3.0, 2.0}});
-	EXPECT_EQ(keptEastWest(studyGuides(snapping, apart.world, points, cursor, allAidsOn())), 2);
+	EXPECT_EQ(keptEastWest(studyGuides(snapping, apart.world, points, cursor, guideAidsOn())), 2);
 
 	SnapWorld close;
 	close.addFoundation({{3.0, 0.29}, {5.0, 0.29}, {5.0, 2.0}, {3.0, 2.0}});
-	const GuideStudy merged = studyGuides(snapping, close.world, points, cursor, allAidsOn());
+	const GuideStudy merged = studyGuides(snapping, close.world, points, cursor, guideAidsOn());
 	EXPECT_EQ(keptEastWest(merged), 1);
 	const auto throughCorner = std::find_if(merged.lines.begin(), merged.lines.end(), [](const snap_guides::GuideLine& line) {
 		return line.source == GuideSource::WorldAxes && line.relation == GuideRelation::Parallel &&

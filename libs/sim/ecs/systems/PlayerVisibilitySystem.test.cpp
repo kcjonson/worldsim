@@ -86,7 +86,8 @@ namespace {
 	}
 
 	void buildWall(construction::ConstructionWorld& walls, Vec2i64 from, Vec2i64 to) {
-		const construction::SegmentCommitResult result = walls.commitSegment(from, to, "Wood", "Standard", construction::kInvalidFoundation);
+		const construction::SegmentCommitResult result =
+			walls.commitSegment(from, to, "Wood", "Standard", construction::kInvalidFoundation, walls.version());
 		ASSERT_TRUE(result.ok());
 		for (const construction::SegmentId segment : result.createdSegments) {
 			walls.setSegmentState(segment, construction::FoundationState::Built);

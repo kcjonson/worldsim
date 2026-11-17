@@ -97,7 +97,7 @@ namespace {
 
 	// Build a built wall segment (every created sub-segment marked Built).
 	SegmentId buildWall(ConstructionWorld& cw, Vec2i64 a, Vec2i64 b) {
-		SegmentCommitResult r = cw.commitSegment(a, b, "Wood", "Standard", kInvalidFoundation);
+		SegmentCommitResult r = cw.commitSegment(a, b, "Wood", "Standard", kInvalidFoundation, cw.version());
 		EXPECT_TRUE(r.ok());
 		for (SegmentId id : r.createdSegments) {
 			cw.setSegmentState(id, FoundationState::Built);
@@ -526,7 +526,7 @@ TEST_F(NavigationSystemTest, RejectedGraphElsewhereKeepsRoomCornersAndDoor) {
 	const std::array<std::pair<Vec2i64, Vec2i64>, 3> rejected = {
 		std::pair<Vec2i64, Vec2i64>{{19000, 500}, {20000, 0}}, {{20000, 0}, {20050, 0}}, {{20050, 0}, {21050, 500}}};
 	for (const auto& [a, b] : rejected) {
-		const SegmentCommitResult result = cw.commitSegment(a, b, "Wood", "Heavy", kInvalidFoundation);
+		const SegmentCommitResult result = cw.commitSegment(a, b, "Wood", "Heavy", kInvalidFoundation, cw.version());
 		ASSERT_TRUE(result.ok());
 		for (const SegmentId id : result.createdSegments) {
 			cw.setSegmentState(id, FoundationState::Built);
