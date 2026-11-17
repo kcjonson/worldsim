@@ -27,6 +27,14 @@ namespace geometry {
 	// radius.
 	constexpr std::int64_t kSightCosHalfSide = cosineOfHalfSide<kSightSides>(kSightDirectionScale);
 
+	// The outward normal of each side of the sight polygon, side k running from vertex k to vertex
+	// k + 1. At 2^22 two neighbouring sides cross within a tenth of a millimetre of where exact
+	// normals put them at 64 m (2^15 left 8 mm at 30 m), and a crossing's Cramer numerators, an
+	// offset at this scale times a normal, stay under 2^61.
+	constexpr std::int64_t kSightSideNormalScale = std::int64_t{1} << 22;
+
+	constexpr std::array<std::array<std::int64_t, 2>, kSightSides> kSightSideNormals = sideNormalTable<kSightSides>(kSightSideNormalScale);
+
 	// The sight polygon of `radius` round `centre`, counter-clockwise from the vertex along +x. Vertex
 	// k is direction k x radius / kSightDirectionScale, truncated toward the centre and then pulled
 	// in a millimetre at a time while it lies outside the circle, so every vertex is within `radius`.
