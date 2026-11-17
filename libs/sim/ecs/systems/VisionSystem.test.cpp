@@ -643,31 +643,57 @@ TEST_F(VisionSystemTest, LeadHoldsUnderFrameTimeJitter) {
 // On the plain disc an observer walking toward a wall takes the polygon path on the pass the wall's
 // near face comes within his reach, not at his next step-triggered build; until then he builds only
 // once a step.
+// A soft stub puts a build on the polygon path as an opaque wall does (spec 5.1), and is found the same.
 TEST_F(VisionSystemTest, PlainObserverTakesThePolygonOnThePassAWallComesIntoReach) {
+	for (const std::int64_t halfLengthMm : {std::int64_t{2000}, std::int64_t{250}}) {
+		ConstructionWorld cw;
+		buildWall(cw, {40000, -halfLengthMm}, {40000, halfLengthMm});
+		World		  world;
+		VisionSystem& sys = world.registerSystem<VisionSystem>();
+		sys.setConstructionWorld(&cw);
+		const EntityID	   observer = spawnObserver(world, {0.0F, 0.0F});
+		const std::int64_t reachMm	= 30000 + VisionSystem::kSightRebuildStepMm;
+		const std::int64_t faceMm	= 40000 - construction::halfThicknessMm(cw.segments().front());
+		int				   firstPolygon = -1;
+		for (int pass = 0; pass <= 150 && firstPolygon < 0; ++pass) {
+			world.getComponent<Position>(observer)->value = {0.1F * static_cast<float>(pass), 0.0F};
+			tick(sys);
+			if (sys.polygonBuildCount() > 0) {
+				firstPolygon = pass;
+			}
+		}
+		int expected = 0;
+		while (nav::toMm({0.1F * static_cast<float>(expected), 0.0F}).x + reachMm < faceMm) {
+			++expected;
+		}
+		EXPECT_EQ(firstPolygon, expected) << (halfLengthMm == 250 ? "the stub" : "the wall");
+		// One plain build a step walked (more than 0.5 m, so every sixth pass), then the polygon.
+		EXPECT_EQ(sys.buildCount(), static_cast<std::uint64_t>((expected - 1) / 6 + 1 + 1));
+		EXPECT_EQ(sys.polygonBuildCount(), 1U);
+		EXPECT_EQ(sys.sightBodies(observer)->bodies->front().kind,
+				  halfLengthMm == 250 ? vision::BodyKind::Soft : vision::BodyKind::Opaque);
+	}
+}
+
+// A walker whose walk to the next pass jitters across a 100 mm boundary (98 and 102 mm a pass) gets
+// one longer lead and keeps it, so he builds once a step plus that one build. Walking 0.1 m a pass
+// for 20 passes: the first build at 0, the longer lead at 0.1 m, then a step past it at 0.7, 1.3,
+// and 1.9 m: five builds.
+TEST_F(VisionSystemTest, LeadJitterAcrossAStepBoundaryRebuildsOnce) {
 	ConstructionWorld cw;
-	buildWall(cw, {40000, -2000}, {40000, 2000});
+	buildWall(cw, {4000, -2000}, {4000, 2000});
 	World		  world;
 	VisionSystem& sys = world.registerSystem<VisionSystem>();
 	sys.setConstructionWorld(&cw);
-	const EntityID	   observer = spawnObserver(world, {0.0F, 0.0F});
-	const std::int64_t reachMm	= 30000 + VisionSystem::kSightRebuildStepMm;
-	const std::int64_t faceMm	= 40000 - construction::halfThicknessMm(cw.segments().front());
-	int				   firstPolygon = -1;
-	for (int pass = 0; pass <= 150 && firstPolygon < 0; ++pass) {
+	sys.setUpdateInterval(1);
+	const EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	world.addComponent<MovementTarget>(observer, MovementTarget{.target = {5.0F, 0.0F}, .speed = 2.0F, .active = true});
+	for (int pass = 0; pass < 20; ++pass) {
 		world.getComponent<Position>(observer)->value = {0.1F * static_cast<float>(pass), 0.0F};
-		tick(sys);
-		if (sys.polygonBuildCount() > 0) {
-			firstPolygon = pass;
-		}
+		sys.update(pass % 2 == 0 ? 0.049F : 0.051F);
 	}
-	int expected = 0;
-	while (nav::toMm({0.1F * static_cast<float>(expected), 0.0F}).x + reachMm < faceMm) {
-		++expected;
-	}
-	EXPECT_EQ(firstPolygon, expected);
-	// One plain build a step walked (more than 0.5 m, so every sixth pass), then the polygon.
-	EXPECT_EQ(sys.buildCount(), static_cast<std::uint64_t>((expected - 1) / 6 + 1 + 1));
-	EXPECT_EQ(sys.polygonBuildCount(), 1U);
+	EXPECT_EQ(sys.polygonBuildCount(), 5U);
+	EXPECT_EQ(sys.sightBodies(observer)->leadMm, VisionSystem::kSightRebuildStepMm + 2 * VisionSystem::kLeadWalkStepMm);
 }
 
 // A tunable only the cover reads leaves every shape; one the shape is built from rebuilds it.

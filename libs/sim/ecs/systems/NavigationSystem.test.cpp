@@ -1263,6 +1263,15 @@ TEST_F(NavigationSystemTest, ArrivalWithoutARunningClockKeepsNoBuildDue) {
 			world.update(0.016F);
 			world.update(0.016F);
 			EXPECT_EQ(vision.polygonBuildCount(), 3U) << "an arriving ring rebuilds at each pass";
+			// Past the arrival's end one build records the ring whole, and the builds stop.
+			for (int i = 0; i < 6; ++i) {
+				world.update(0.5F);
+			}
+			EXPECT_EQ(vision.sightBodies(observer)->bodies->back().arrival, geometry::kFractionOne);
+			const std::uint64_t whole = vision.polygonBuildCount();
+			world.update(0.016F);
+			world.update(0.016F);
+			EXPECT_EQ(vision.polygonBuildCount(), whole) << "a ring recorded whole keeps rebuilding";
 		}
 	}
 }
