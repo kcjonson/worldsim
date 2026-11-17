@@ -294,6 +294,71 @@ namespace world_sim {
 		EXPECT_EQ(clamped.clampedFrom, "-12%");
 	}
 
+	TEST_F(ThoughtLogModelTest, AMergedEntryShowsItsCountAndDateRange) {
+		ecs::Thought thought{
+			.id = 9,
+			.eventType = rules.type("slept_on_ground"),
+			.feeling = rules.feeling("miserable"),
+			.moodEffect = ecs::MoodEffect::timed(-10.0F, 24.0F),
+			.arrivedClock = {.day = 3, .minuteOfDay = (8 * 60) + 10},
+			.lastRepeatedClock = {.day = 9, .minuteOfDay = (17 * 60) + 42},
+			.count = 12,
+			.merged = true,
+		};
+		EXPECT_EQ(thoughtWhenText(thought), "Day 3, 08:10 to Day 9, 17:42");
+		EXPECT_EQ(thoughtSummary(rules.types, thought), "Slept on the ground x12. Miserable. -10 mood each, 1 day");
+
+		thought.merged = false;
+		thought.count = 3;
+		EXPECT_EQ(thoughtWhenText(thought), "Day 9, 17:42") << "a stack shows its latest arrival";
+		EXPECT_EQ(thoughtSummary(rules.types, thought), "Slept on the ground x3. Miserable. -30 mood, 1 day");
+	}
+
+	// Pruning merges and drops around held thoughts, so the log shows merged entries and the breakdown still
+	// finds every held thought it was given.
+	TEST(ThoughtLogPruning, TheLogShowsMergedEntriesAndTheBreakdownStillResolves) {
+		ecs::testing::TestThoughtTypes rules{kTypes, R"(
+  <tuning maxLineLength="40" maxSubjectNameLength="12" whileCheckMinutes="15">
+    <kept limit="20" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="1" trivialWeight="1" normalWeight="3"/>
+  </tuning>
+)"};
+		ASSERT_TRUE(rules.errors.empty()) << rules.errors.front();
+		ecs::World			world;
+		ecs::TimeSystem&	time = world.registerSystem<ecs::TimeSystem>();
+		ecs::ThoughtSystem& thoughts = world.registerSystem<ecs::ThoughtSystem>(rules.types, 7U);
+		const ecs::EntityID colonist = world.createEntity();
+		world.addComponent<ecs::Colonist>(colonist, ecs::Colonist{.name = "Ada"});
+		world.addComponent<ecs::Attributes>(colonist, ecs::testing::attributesAt(10.0F));
+		const auto give = [&](std::string_view type) { thoughts.create({.colonist = colonist, .eventType = rules.type(type)}); };
+
+		give("soaked");
+		give("saw_the_sea");
+		for (int step = 0; step < 8 * 20; ++step) {
+			time.skipTime(180.0F);
+			give("very_hungry");
+		}
+		const ecs::Thoughts& record = *world.getComponent<ecs::Thoughts>(colonist);
+		ASSERT_LT(record.record.size(), rules.types.keeping().pruneStartCount);
+
+		ThoughtLogModel model;
+		model.setFilter(ThoughtLogFilter::All);
+		model.refresh(world, colonist);
+		const auto merged = std::ranges::find_if(model.entries(), [](const ThoughtLogEntry& entry) { return entry.when.find(" to ") != std::string::npos; });
+		ASSERT_NE(merged, model.entries().end());
+		EXPECT_TRUE(merged->summary.starts_with("Very hungry x")) << merged->summary;
+		EXPECT_TRUE(std::ranges::any_of(model.entries(), [](const ThoughtLogEntry& entry) { return entry.summary == "Saw the sea. Delighted."; }));
+
+		ecs::Mood mood;
+		ecs::forEachHeldThought(record, [&mood](const ecs::Thought& thought) {
+			mood.thoughtContributions.push_back({.thought = thought.id, .amount = ecs::heldMoodAmount(thought)});
+		});
+		mood.target = ecs::kFullMood - 6.0F;
+		const MoodBreakdown breakdown = moodBreakdown(rules.types, &record, mood, time.simulationSeconds());
+		ASSERT_EQ(breakdown.thoughts.size(), 1U);
+		EXPECT_EQ(breakdown.thoughts[0].label, "Soaked");
+		EXPECT_EQ(breakdown.target, "94%");
+	}
+
 	TEST(ThoughtLogText, AmountsAndLengths) {
 		EXPECT_EQ(moodAmountText(-10.0F), "-10");
 		EXPECT_EQ(moodAmountText(4.5F), "+4.5");

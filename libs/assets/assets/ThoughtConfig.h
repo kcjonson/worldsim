@@ -90,13 +90,30 @@ namespace assets {
 		std::string					   source;
 	};
 
+	/// How many thoughts a colonist keeps, and how pruning picks what goes. Major thoughts are never dropped,
+	/// so they carry no weight.
+	struct ThoughtKeptTuning {
+		/// The most thoughts a colonist keeps.
+		std::size_t limit = 0;
+		/// The fraction of the limit at which pruning starts, above pruneStopsAt and at most 1.
+		float pruneStartsAt = 0.0F;
+		/// The fraction of the limit pruning brings the record back to, above 0.
+		float pruneStopsAt = 0.0F;
+		/// Thoughts from this many recent game days are never pruned.
+		float recentDays = 0.0F;
+		/// The importance a trivial or a normal thought scores with.
+		float trivialWeight = 0.0F;
+		float normalWeight = 0.0F;
+	};
+
 	struct ThoughtTuning {
 		/// The longest a line may be, in characters, {subject} counted as maxSubjectNameLength.
 		std::size_t maxLineLength = 0;
 		/// The most characters of a subject's name a line shows; a longer name is cut to fit.
 		std::size_t maxSubjectNameLength = 0;
 		/// How often a held thought's `while` condition is checked, in game minutes.
-		float whileCheckMinutes = 0.0F;
+		float			  whileCheckMinutes = 0.0F;
+		ThoughtKeptTuning kept;
 	};
 
 	struct ThoughtConfig {
@@ -113,7 +130,8 @@ namespace assets {
 	/// Read every .xml file under `folder`. The folder's own files are the base set and load first, in path
 	/// order; then the files in its subfolders, in path order.
 	///
-	/// Each file's root is <thoughts>, holding <feeling>, <thought>, and <tuning> elements. A feeling or a
+	/// Each file's root is <thoughts>, holding <feeling>, <thought>, and <tuning> elements; a <tuning> holds
+	/// one <kept>. A feeling or a
 	/// thought type declared again in a later file replaces the earlier one, and a later <tuning> replaces
 	/// the earlier numbers, each logged at info level naming both files; one declared twice in the same file
 	/// is an error. Unknown elements and attributes are errors. The checks that need the condition vocabulary

@@ -19,7 +19,9 @@ namespace {
 		return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "assets" / "config" / "thoughts";
 	}
 
-	constexpr const char* kTuning = R"(<tuning maxLineLength="48" maxSubjectNameLength="12" whileCheckMinutes="15"/>)";
+	constexpr const char* kTuningOpen = R"(<tuning maxLineLength="48" maxSubjectNameLength="12" whileCheckMinutes="15">)";
+	constexpr const char* kKept = R"(<kept limit="2000" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="10" trivialWeight="1" normalWeight="3"/>)";
+	const std::string	  kTuning = std::string(kTuningOpen) + kKept + "</tuning>";
 
 	class ThoughtConfigTest : public ::testing::Test {
 	  protected:
@@ -114,7 +116,9 @@ TEST_F(ThoughtConfigTest, ALaterFileReplacesAFeelingATypeAndTheTuning) {
   <thought id="napped" label="Napped" importance="trivial"><feeling is="content"/></thought>
 )");
 	write("mods/tasty/more.xml", R"(
-  <tuning maxLineLength="60" maxSubjectNameLength="20" whileCheckMinutes="5"/>
+  <tuning maxLineLength="60" maxSubjectNameLength="20" whileCheckMinutes="5">
+    <kept limit="300" pruneStartsAt="1" pruneStopsAt="0.5" recentDays="2" trivialWeight="0.5" normalWeight="2"/>
+  </tuning>
   <feeling id="content" label="Content"/>
   <thought id="ate" label="Ate" importance="major"><feeling is="content" mood="+9" hours="3"/></thought>
 )");
@@ -131,6 +135,12 @@ TEST_F(ThoughtConfigTest, ALaterFileReplacesAFeelingATypeAndTheTuning) {
 	EXPECT_EQ(load.config.tuning->maxLineLength, 60U);
 	EXPECT_EQ(load.config.tuning->maxSubjectNameLength, 20U);
 	EXPECT_EQ(load.config.tuning->whileCheckMinutes, 5.0F);
+	EXPECT_EQ(load.config.tuning->kept.limit, 300U);
+	EXPECT_EQ(load.config.tuning->kept.pruneStartsAt, 1.0F);
+	EXPECT_EQ(load.config.tuning->kept.pruneStopsAt, 0.5F);
+	EXPECT_EQ(load.config.tuning->kept.recentDays, 2.0F);
+	EXPECT_EQ(load.config.tuning->kept.trivialWeight, 0.5F);
+	EXPECT_EQ(load.config.tuning->kept.normalWeight, 2.0F);
 }
 
 TEST_F(ThoughtConfigTest, TheSameIdTwiceInOneFileIsAnError) {
@@ -227,6 +237,56 @@ TEST_F(ThoughtConfigTest, TuningIsRequiredAndChecked) {
 
 	write("base.xml", R"(<tuning maxLineLength="40" maxSubjectNameLength="2.5" whileCheckMinutes="15"/>)");
 	EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "maxSubjectNameLength must be a whole number"));
+}
+
+TEST_F(ThoughtConfigTest, KeptIsRequiredAndChecked) {
+	const auto errorsForKept = [this](const std::string& kept) {
+		write("base.xml", std::string(kTuningOpen) + kept + "</tuning>");
+		return loadThoughtConfig(folder).errors;
+	};
+	EXPECT_TRUE(mentions(errorsForKept(""), "base.xml: <tuning> has no <kept>"));
+	EXPECT_TRUE(mentions(errorsForKept(std::string(kKept) + kKept), "base.xml: <tuning> has more than one <kept>"));
+	EXPECT_TRUE(mentions(errorsForKept(std::string(kKept) + "<keep/>"), "base.xml: <tuning>: unknown element <keep>"));
+	EXPECT_TRUE(mentions(
+		errorsForKept(R"(<kept limit="2000" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="10" trivialWeight="1" normalWeight="3" majorWeight="9"/>)"),
+		"base.xml: <kept>: unknown attribute 'majorWeight'"
+	));
+	EXPECT_TRUE(mentions(
+		errorsForKept(R"(<kept limit="0" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="10" trivialWeight="1" normalWeight="3"/>)"),
+		"base.xml: <kept> limit must be a whole number from 1"
+	));
+	EXPECT_TRUE(mentions(
+		errorsForKept(R"(<kept limit="2000.5" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="10" trivialWeight="1" normalWeight="3"/>)"),
+		"base.xml: <kept> limit must be a whole number"
+	));
+	EXPECT_TRUE(mentions(
+		errorsForKept(R"(<kept limit="2000" pruneStopsAt="0.8" recentDays="10" trivialWeight="1" normalWeight="3"/>)"),
+		"base.xml: <kept> pruneStartsAt is missing"
+	));
+	EXPECT_TRUE(mentions(
+		errorsForKept(R"(<kept limit="2000" pruneStartsAt="0.9" pruneStopsAt="nan" recentDays="10" trivialWeight="1" normalWeight="3"/>)"),
+		"base.xml: <kept> pruneStopsAt must be a number, got \"nan\""
+	));
+	for (const std::string fractions : {R"(pruneStartsAt="0.8" pruneStopsAt="0.9")", R"(pruneStartsAt="0.8" pruneStopsAt="0.8")",
+										R"(pruneStartsAt="1.1" pruneStopsAt="0.8")", R"(pruneStartsAt="0.9" pruneStopsAt="0")"}) {
+		EXPECT_TRUE(mentions(
+			errorsForKept(R"(<kept limit="2000" )" + fractions + R"( recentDays="10" trivialWeight="1" normalWeight="3"/>)"),
+			"0 < pruneStopsAt < pruneStartsAt <= 1"
+		)) << fractions;
+	}
+	EXPECT_TRUE(mentions(
+		errorsForKept(R"(<kept limit="2000" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="0" trivialWeight="1" normalWeight="3"/>)"),
+		"recentDays must be a positive number"
+	));
+	EXPECT_TRUE(mentions(
+		errorsForKept(R"(<kept limit="2000" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="10" trivialWeight="0" normalWeight="3"/>)"),
+		"trivialWeight and normalWeight must be positive"
+	));
+	EXPECT_TRUE(mentions(
+		errorsForKept(R"(<kept limit="2000" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="10" trivialWeight="1" normalWeight="-3"/>)"),
+		"trivialWeight and normalWeight must be positive"
+	));
+	EXPECT_TRUE(errorsForKept(kKept).empty());
 }
 
 TEST_F(ThoughtConfigTest, NumbersThatAreNotFiniteAreRefused) {

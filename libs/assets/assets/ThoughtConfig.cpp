@@ -410,6 +410,10 @@ namespace assets {
 					fail(source, "<tuning> whileCheckMinutes must be a positive number of game minutes");
 					return;
 				}
+				const std::optional<ThoughtKeptTuning> kept = keptOf(node, source);
+				if (!kept.has_value()) {
+					return;
+				}
 				if (result.config.tuning.has_value()) {
 					LOG_INFO(Engine, "Thought config: <tuning> in %s replaces the one in %s", source.c_str(), tuningSource.c_str());
 				}
@@ -417,8 +421,67 @@ namespace assets {
 					.maxLineLength = *maxLineLength,
 					.maxSubjectNameLength = *maxSubjectNameLength,
 					.whileCheckMinutes = *whileCheckMinutes,
+					.kept = *kept,
 				};
 				tuningSource = source;
+			}
+
+			std::optional<ThoughtKeptTuning> keptOf(pugi::xml_node tuning, const std::string& source) {
+				pugi::xml_node kept;
+				bool		   valid = true;
+				for (const pugi::xml_node child : tuning.children()) {
+					if (child.type() != pugi::node_element) {
+						continue;
+					}
+					if (std::string_view(child.name()) != "kept") {
+						fail(source, "<tuning>: unknown element <" + std::string(child.name()) + ">");
+						valid = false;
+					} else if (kept) {
+						fail(source, "<tuning> has more than one <kept>");
+						valid = false;
+					} else {
+						kept = child;
+					}
+				}
+				if (!kept) {
+					fail(source, "<tuning> has no <kept>");
+					return std::nullopt;
+				}
+				valid = onlyAttributes(
+							kept,
+							{"limit", "pruneStartsAt", "pruneStopsAt", "recentDays", "trivialWeight", "normalWeight"},
+							"<kept>",
+							source,
+							result.errors
+						) &&
+						valid;
+				ConfigReader			reader(source);
+				const ThoughtKeptTuning parsed{
+					.limit = static_cast<std::size_t>(reader.attributeInteger(kept, "kept", "limit", 1)),
+					.pruneStartsAt = reader.attributeNumber(kept, "kept", "pruneStartsAt"),
+					.pruneStopsAt = reader.attributeNumber(kept, "kept", "pruneStopsAt"),
+					.recentDays = reader.attributeNumber(kept, "kept", "recentDays"),
+					.trivialWeight = reader.attributeNumber(kept, "kept", "trivialWeight"),
+					.normalWeight = reader.attributeNumber(kept, "kept", "normalWeight"),
+				};
+				const std::vector<std::string> problems = reader.takeProblems();
+				result.errors.insert(result.errors.end(), problems.begin(), problems.end());
+				if (!problems.empty() || !valid) {
+					return std::nullopt;
+				}
+				if (!(parsed.pruneStopsAt > 0.0F && parsed.pruneStopsAt < parsed.pruneStartsAt && parsed.pruneStartsAt <= 1.0F)) {
+					fail(source, "<kept> pruneStopsAt and pruneStartsAt must be fractions of the limit with 0 < pruneStopsAt < pruneStartsAt <= 1");
+					valid = false;
+				}
+				if (parsed.recentDays <= 0.0F) {
+					fail(source, "<kept> recentDays must be a positive number of game days");
+					valid = false;
+				}
+				if (parsed.trivialWeight <= 0.0F || parsed.normalWeight <= 0.0F) {
+					fail(source, "<kept> trivialWeight and normalWeight must be positive numbers");
+					valid = false;
+				}
+				return valid ? std::optional(parsed) : std::nullopt;
 			}
 
 			ThoughtConfigLoad& result;

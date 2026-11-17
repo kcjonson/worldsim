@@ -139,26 +139,30 @@ Recalled thoughts go through the bubble selector like any other, and a first rec
 
 ### What is kept
 
-Each colonist keeps up to a fixed number of thoughts, 2,000 by default. The limit is high enough that a colonist's whole first years fit. Pruning starts when a colonist reaches 90% of the limit and runs until they are back at 80%, so it happens in occasional batches and never one thought at a time.
+Each colonist keeps up to a fixed number of thoughts, 2,000 by default. The limit is high enough that a colonist's whole first years fit. Pruning starts when a new thought brings a colonist to 90% of the limit and runs until they are back at 80%, each fraction rounded to a whole number of thoughts, so it happens in occasional batches and never one thought at a time.
+
+A thought's last moment is the later of its latest arrival and its end. Recency and age are measured from it, so a thought that was held until recently counts as recent.
 
 Some thoughts are never pruned:
 
 - held thoughts, whose mood effect is still running
 - major thoughts
-- the first thought of each event type, and the first about each subject (the first tree of a kind, the first meeting with a colonist)
+- the first thought of each event type, and the first about each subject (the first tree of a kind, the first meeting with a colonist); a thought about nothing has no subject
 - thoughts a colonist's attachment, like, or dislike grew from
-- everything from the last 10 game days
+- everything whose last moment is in the last 10 game days
+
+When the thoughts that are never pruned alone reach 90%, pruning removes what it can, and the record stays above the limit until older thoughts can go.
 
 The rest are pruned in two passes.
 
-1. **Merge repeats.** Thoughts with the same event type, subject, and feeling collapse into one entry carrying a count and the first and last dates ("Hungry. Miserable. 40 times, spring to autumn"). The oldest runs merge first. Merging keeps the shape of what the colonist lived through at a fraction of the cost.
+1. **Merge repeats.** Thoughts with the same event type, subject, and feeling collapse into one entry carrying a count and the first and last dates ("Hungry. Miserable. 40 times, spring to autumn"). The run whose first thought is oldest merges first, and a run takes in its thoughts oldest first, one at a time, so pruning stops at 80% exactly, even partway through a run. A merged entry is its earliest thought, with that thought's line and mood effect, standing for the whole run: its count is the sum of its thoughts' counts (a stack counting each repeat), its dates run from the earliest thought's arrival to the latest arrival among them, and its end is the latest of theirs. An entry merged before is merged into again like any other thought.
 2. **Drop the least memorable.** If merging was not enough, entries are dropped lowest score first, where
 
    `score = importance x (1 + size of mood effect) x (1 + count) / age`
 
-   Trivial thoughts with no mood effect from long ago go first. A merged entry that stood for many thoughts outlasts a single stray one. Ties drop the oldest.
+   Importance is 1 for a trivial thought and 3 for a normal one; major thoughts are never dropped, so they have no weight. The size of the mood effect is the absolute amount of one occurrence (a stack's amount for one repeat), 0 for a thought with none. Count is the thought's count: 1 for a single thought, the repeats of a stack, the thoughts a merged entry stands for. Age is game days since the last moment. Trivial thoughts with no mood effect from long ago go first. A merged entry that stood for many thoughts outlasts a single stray one. Ties drop the one that arrived first.
 
-Pruning uses no randomness, so the same history always prunes the same way.
+Pruning uses no randomness, so the same history always prunes the same way. A thought that survives keeps its identity, so whatever refers to it (the mood breakdown, a recall's link) still finds it.
 
 Pruning changes only what the log can show. The bubble selector's novelty does not read the record: each colonist keeps a count and last time per event type, which is small and never pruned, so an old habit does not become new again when its thoughts are merged or dropped.
 
@@ -174,7 +178,7 @@ Pruning changes only what the log can show. The bubble selector's novelty does n
 ## Where it shows in the UI
 
 - **World view.** Bubbles over colonists' heads, and matching expressions.
-- **Info panel and colonist details, Log tab.** Each thought is one block holding the event, the feeling, and the mood adjustment ("Slept on the ground. Miserable. -10 mood, 1 day"). A Notable / All control above the blocks picks what shows: Notable, the default, is every thought that bubbled, every major thought, and every thought with a mood effect; All is every thought recorded. The newest 50 blocks show first, and "Show older" under them adds the next 50; another colonist starts again at 50. Merged entries show their count and date range, and a repeated or stacked thought shows its count and its latest arrival. It is a reference for "why", not something to read through.
+- **Info panel and colonist details, Log tab.** Each thought is one block holding the event, the feeling, and the mood adjustment ("Slept on the ground. Miserable. -10 mood, 1 day"). A Notable / All control above the blocks picks what shows: Notable, the default, is every thought that bubbled, every major thought, and every thought with a mood effect; All is every thought recorded. The newest 50 blocks show first, and "Show older" under them adds the next 50; another colonist starts again at 50. Merged entries show their count, their date range ("Day 3, 08:10 to Day 9, 17:42"), and the mood effect of one of their thoughts ("Slept on the ground x12. Miserable. -10 mood each, 1 day"), and a repeated or stacked thought shows its count and its latest arrival. It is a reference for "why", not something to read through.
 - **Colonist details, Needs tab.** The mood breakdown lists every held thought that has a mood effect, with its amount and time left. See [Mood](./mood.md).
 - **Colony overview.** Held thoughts counted by event type across the colony ("slept on the ground: 5 colonists"), largest total mood effect first.
 - **Settings.** Bubble frequency (fewer, normal, more), and a switch per source to stop its trivial and normal thoughts from bubbling. Major thoughts always show.
@@ -185,7 +189,9 @@ Event types, their feelings, lines, importance, mood effects, and animations are
 
 ```xml
 <thoughts>
-  <tuning maxLineLength="48" maxSubjectNameLength="16" whileCheckMinutes="15"/>
+  <tuning maxLineLength="48" maxSubjectNameLength="16" whileCheckMinutes="15">
+    <kept limit="2000" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="10" trivialWeight="1" normalWeight="3"/>
+  </tuning>
 
   <feeling id="miserable" label="Miserable"/>
   <feeling id="furious" label="Furious"/>
@@ -225,6 +231,7 @@ Event types, their feelings, lines, importance, mood effects, and animations are
 - Every file's root is `<thoughts>`. The folder's own files load first, then its subfolders' in path order; a later file's feeling or thought type with the same id, or its `<tuning>`, replaces the earlier one, and the same id twice in one file is an error.
 - A feeling in the shared list is an `id` and a `label`, the word the log shows; the list is the closed set a type's feelings are checked against. A thought type has a `label`, the event as the log shows it ("Slept on the ground"), an `importance` (`trivial`, `normal`, or `major`), and `stacks="true"` when it stacks. A feeling or type with no label is an error.
 - A type lists at least one feeling. A feeling's mood effect is a signed `mood` with either `hours`, in game hours, or `while`, a condition, and `cause`, what the condition is in words ("soaked", shown as "while soaked"); with no `mood` it has no effect. A `while` with no `cause`, or a `cause` with no `while`, is an error. A `while` is checked every `whileCheckMinutes` game minutes and the thought ends when it is false, or when its subject, a colonist or an entity, no longer exists; otherwise Unknown keeps it.
+- `<tuning>` holds exactly one `<kept>`, the numbers of [What is kept](#what-is-kept): `limit`, a whole number of thoughts, 1 or more; `pruneStartsAt` and `pruneStopsAt`, fractions of the limit with 0 < `pruneStopsAt` < `pruneStartsAt` <= 1, which must round to different numbers of thoughts; `recentDays`, a positive number of game days; and `trivialWeight` and `normalWeight`, the positive importance a trivial or normal thought scores with. Each is required, and a later `<tuning>` replaces them with the rest.
 - A number is a plain decimal, with an optional leading sign and no units: `+4.5`, `-6`. Text that is not entirely a finite number (`nan`, `inf`, `4h`) is an error.
 - A feeling's or line's specificity is the number of terms its conditions name, a line's `feeling` counting as one; the most specific that holds wins, and between feelings of equal specificity the one written first does. Unknown never holds, and when no feeling holds the colonist has no thought.
 - A line is at most `maxLineLength` characters, counting `{subject}` as `maxSubjectNameLength`. `{subject}` in a line is the subject's name as it was when the thought arrived, cut to `maxSubjectNameLength` characters when it is longer. A line that names the subject fits only a subject that has a name: a colonist's own name, or an entity's asset label (its definition name when it has no label). A colonist with no name has none.
@@ -262,6 +269,13 @@ A supplement, not part of the spec. Kevin, 2026-11-16.
 - Recalling old thoughts on a cue, with attachment, developing likes, and softened feelings, is wanted ("kinda fun").
 - The game should carry some of The Sims' joy; balance of harsh against gentle is tuned at playtest.
 - 2026-11-17: need thoughts carry no mood effect, because the needs score already prices a low need into mood.
+- 2026-11-17: pruning's importance weights are trivial 1 and normal 3; major thoughts are never pruned, so they carry no weight.
+- 2026-11-17: recency and age count from a thought's last moment, the later of its latest arrival and its end, in game days. A thought held until recently stays, so nothing that read it while it was held loses it.
+- 2026-11-17: the size of a mood effect in the score is one occurrence's absolute amount, 0 with no effect; repeats count only through the count, so a stack is not counted twice.
+- 2026-11-17: a merged entry is its earliest thought (its identity, line, and mood effect) with the run's summed count, first and latest arrival, and latest end. The log shows its date range and one thought's effect, "each".
+- 2026-11-17: merging takes in one thought at a time, so pruning stops exactly at the stop size; the two fractions round to whole thoughts, and a limit too small for them to differ is a config error.
+- 2026-11-17: a thought about nothing has no subject, so no "first about" protects it.
+- 2026-11-17: when the protected thoughts alone keep the record at the start size, pruning removes what it can and runs again at the next arrival; the record may pass the limit until thoughts age out of protection.
 
 ## Addendum: prior work
 
