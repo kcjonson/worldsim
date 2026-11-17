@@ -414,6 +414,7 @@ namespace world_sim {
 		}
 		followingPointer_ = true;
 		const auto world = camera_->screenToWorld(screenX, screenY, viewportW, viewportH, kPixelsPerMeter);
+		pointerWorld_ = {world.x, world.y};
 
 		if (activeTool_ == ToolKind::Wall) {
 			handleWallMove({world.x, world.y}, freeform);
@@ -886,6 +887,11 @@ namespace world_sim {
 		}
 		if (activeTool_ == ToolKind::FoundationEdit && editPreviewActive_ && !editPreview_.ok()) {
 			return {.valid = false, .reason = construction::validationReason(editPreview_.validation.code)};
+		}
+		// A wall chain starts on a foundation: off every one, the first click places nothing. The strip
+		// keeps its neutral hint, so this is not a refusal.
+		if (activeTool_ == ToolKind::Wall && points_.empty() && constructionWorld_.foundationAt(geometry::quantize(cursor_)) == ec::kInvalidFoundation) {
+			return {.proposed = false};
 		}
 		return {};
 	}
@@ -1979,12 +1985,16 @@ namespace world_sim {
 		shot.lastFoundationTool = lastFoundationTool_;
 		shot.tool = activeTool();
 		if (!shot.tool) {
+			// The tool kind outlives the tool, so status() would still carry the last tool's extras.
 			shot.verdict = {.valid = true, .proposed = false};
-			shot.status = status();
+			shot.status = DrawingStatus{.active = false, .material = activeMaterial_};
 			return shot;
 		}
 
 		shot.followingPointer = followingPointer_;
+		if (followingPointer_) {
+			shot.pointer = pointerWorld_;
+		}
 		shot.pressPending = hasPendingPress();
 		shot.points = points_;
 		shot.rectangleCorners = rectangleCorners_;
@@ -2015,6 +2025,10 @@ namespace world_sim {
 		const ClickVerdict click = clickVerdict();
 		shot.verdict = {.valid = click.valid, .proposed = click.proposed, .reason = click.reason};
 		if (followingPointer_) {
+			std::optional<float> segmentLength;
+			if (!points_.empty()) {
+				segmentLength = std::hypot(lastSnap_.point.x - points_.back().x, lastSnap_.point.y - points_.back().y);
+			}
 			shot.snap = DrawingSnapshot::Snap{
 				.point = lastSnap_.point,
 				.kind = lastSnap_.kind,
@@ -2022,6 +2036,7 @@ namespace world_sim {
 				.guides = std::vector<construction::SnapGuide>(lastSnap_.guides.begin(), lastSnap_.guides.begin() + static_cast<std::ptrdiff_t>(lastSnap_.guideCount)),
 				.lengthSnap = lastSnap_.lengthSnap,
 				.lengthMeters = lastSnap_.lengthMeters,
+				.segmentLengthMeters = segmentLength,
 				.matchedEdgeCount = lastSnap_.matchedEdgeCount,
 				.commonLengths = std::vector<float>(lastSnap_.commonLengths.begin(), lastSnap_.commonLengths.begin() + static_cast<std::ptrdiff_t>(lastSnap_.commonLengthCount)),
 				.closesShape = willClose_,

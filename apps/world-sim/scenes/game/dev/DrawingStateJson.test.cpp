@@ -21,6 +21,7 @@ TEST(DrawingStateJson, NoToolIsNoneWithNothingProposed) {
 	EXPECT_TRUE(contains(json, "\"tool\":\"none\"")) << json;
 	EXPECT_TRUE(contains(json, "\"lastFoundationTool\":\"rectangle\"")) << json;
 	EXPECT_TRUE(contains(json, "\"points\":[]")) << json;
+	EXPECT_TRUE(contains(json, "\"pointer\":null")) << json;
 	EXPECT_TRUE(contains(json, "\"snap\":null")) << json;
 	EXPECT_TRUE(contains(json, "\"verdict\":{\"valid\":true,\"proposed\":false,\"reason\":\"\"}")) << json;
 }
@@ -30,6 +31,7 @@ TEST(DrawingStateJson, AFreeformShapeMidDrawNamesItsSnapGuidesAndRefusal) {
 	shot.tool = world_sim::ToolKind::Foundation;
 	shot.lastFoundationTool = world_sim::FoundationTool::Freeform;
 	shot.followingPointer = true;
+	shot.pointer = Foundation::Vec2{4.2F, -2.6F};
 	shot.points = {{0.0F, 0.0F}, {4.0F, 0.0F}};
 	shot.snap = DrawingSnapshot::Snap{
 		.point = {4.0F, -2.5F},
@@ -42,6 +44,7 @@ TEST(DrawingStateJson, AFreeformShapeMidDrawNamesItsSnapGuidesAndRefusal) {
 		}},
 		.lengthSnap = construction::LengthSnapKind::CommonLength,
 		.lengthMeters = 2.5F,
+		.segmentLengthMeters = 2.5F,
 		.matchedEdgeCount = 2,
 		.commonLengths = {2.5F, 4.0F},
 	};
@@ -51,10 +54,10 @@ TEST(DrawingStateJson, AFreeformShapeMidDrawNamesItsSnapGuidesAndRefusal) {
 	shot.status.material = "Wood";
 	const std::string json = world_sim::drawingStateJson(shot);
 	EXPECT_TRUE(contains(json, "\"tool\":\"foundationFreeform\"")) << json;
-	EXPECT_TRUE(contains(json, "\"points\":[{\"x\":0.000,\"y\":0.000},{\"x\":4.000,\"y\":0.000}]")) << json;
+	EXPECT_TRUE(contains(json, "\"pointer\":{\"x\":4.200,\"y\":-2.600},\"points\":[{\"x\":0.000,\"y\":0.000},{\"x\":4.000,\"y\":0.000}]")) << json;
 	EXPECT_TRUE(contains(json, "\"point\":{\"x\":4.000,\"y\":-2.500},\"kind\":\"GuideLine\"")) << json;
 	EXPECT_TRUE(contains(json, "\"source\":\"NearbyStructure\",\"relation\":\"Perpendicular\",\"from\":{\"x\":4.000,\"y\":0.000},\"distanceFromNodeMeters\":2.500")) << json;
-	EXPECT_TRUE(contains(json, "\"lengthSnap\":\"CommonLength\",\"lengthMeters\":2.500,\"matchedEdgeCount\":2,\"commonLengthsMeters\":[2.500,4.000]")) << json;
+	EXPECT_TRUE(contains(json, "\"lengthSnap\":\"CommonLength\",\"lengthMeters\":2.500,\"segmentLengthMeters\":2.500,\"matchedEdgeCount\":2,\"commonLengthsMeters\":[2.500,4.000]")) << json;
 	EXPECT_TRUE(contains(json, "\"closesShape\":false")) << json;
 	EXPECT_TRUE(contains(json, "\"reason\":\"the \\\"area\\\" is unexplored\"")) << json;
 	EXPECT_FALSE(contains(json, "\"rectangle\"")) << json;
@@ -74,4 +77,15 @@ TEST(DrawingStateJson, TheRectangleToolReportsItsCornersUnderTheRectangleKey) {
 	EXPECT_TRUE(contains(json, "\"rectangle\":{\"pressPending\":true,\"firstCorner\":{\"x\":2.000,\"y\":1.000},\"corners\":[")) << json;
 	EXPECT_TRUE(contains(json, "\"sizeLabel\":\"4 x 3 m\"")) << json;
 	EXPECT_TRUE(contains(json, "\"kind\":\"Grid\"")) << json;
+	EXPECT_TRUE(contains(json, "\"segmentLengthMeters\":null")) << json;
+}
+
+TEST(DrawingStateJson, TheOpeningToolNamesTheWallAndHowFarAlongItTheOpeningIs) {
+	DrawingSnapshot shot;
+	shot.tool = world_sim::ToolKind::Opening;
+	shot.followingPointer = true;
+	shot.openingType = "Door";
+	shot.openingSnap = construction::OpeningSnap{.segment = 7, .t = 0.5F, .point = {4.0F, -26.0F}, .valid = true};
+	const std::string json = world_sim::drawingStateJson(shot);
+	EXPECT_TRUE(contains(json, "\"opening\":{\"type\":\"Door\",\"snap\":{\"wall\":7,\"fractionAlongWall\":0.500,\"point\":{\"x\":4.000,\"y\":-26.000}}}")) << json;
 }

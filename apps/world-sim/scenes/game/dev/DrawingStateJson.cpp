@@ -102,6 +102,7 @@ namespace world_sim {
 					<< ",\"distanceFromNodeMeters\":" << jsonNumber(static_cast<double>(guide.distanceFromNodeMeters)) << "}";
 			}
 			out << "],\"lengthSnap\":\"" << lengthSnapName(snap.lengthSnap) << "\",\"lengthMeters\":" << jsonNumber(static_cast<double>(snap.lengthMeters))
+				<< ",\"segmentLengthMeters\":" << (snap.segmentLengthMeters ? jsonNumber(static_cast<double>(*snap.segmentLengthMeters)) : "null")
 				<< ",\"matchedEdgeCount\":" << snap.matchedEdgeCount << ",\"commonLengthsMeters\":[";
 			for (std::size_t index = 0; index < snap.commonLengths.size(); ++index) {
 				out << (index == 0 ? "" : ",") << jsonNumber(static_cast<double>(snap.commonLengths[index]));
@@ -140,7 +141,8 @@ namespace world_sim {
 		const bool rectangleTool = snapshot.tool == ToolKind::FoundationRectangle;
 		std::ostringstream out;
 		out << "{\"tool\":\"" << toolName(snapshot.tool) << "\",\"lastFoundationTool\":\"" << foundationToolName(snapshot.lastFoundationTool)
-			<< "\",\"followingPointer\":" << (snapshot.followingPointer ? "true" : "false") << ",\"points\":" << pointListJson(snapshot.points);
+			<< "\",\"followingPointer\":" << (snapshot.followingPointer ? "true" : "false")
+			<< ",\"pointer\":" << (snapshot.pointer ? pointJson(*snapshot.pointer) : "null") << ",\"points\":" << pointListJson(snapshot.points);
 
 		if (rectangleTool) {
 			out << ",\"rectangle\":{\"pressPending\":" << (snapshot.pressPending ? "true" : "false") << ",\"firstCorner\":"
@@ -158,7 +160,7 @@ namespace world_sim {
 			out << ",\"opening\":{\"type\":\"" << jsonEscape(snapshot.openingType) << "\",\"snap\":";
 			if (snapshot.openingSnap && snapshot.openingSnap->valid) {
 				out << "{\"wall\":" << static_cast<unsigned long long>(snapshot.openingSnap->segment)
-					<< ",\"t\":" << jsonNumber(static_cast<double>(snapshot.openingSnap->t)) << ",\"point\":" << pointJson(snapshot.openingSnap->point) << "}";
+					<< ",\"fractionAlongWall\":" << jsonNumber(static_cast<double>(snapshot.openingSnap->t)) << ",\"point\":" << pointJson(snapshot.openingSnap->point) << "}";
 			} else {
 				out << "null";
 			}

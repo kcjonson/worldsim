@@ -131,7 +131,8 @@ namespace world_sim {
 			construction::RectangleSnapKind		 rectangleKind = construction::RectangleSnapKind::None; // the Rectangle tool's corner snap
 			std::vector<construction::SnapGuide> guides;
 			construction::LengthSnapKind		 lengthSnap = construction::LengthSnapKind::None;
-			float								 lengthMeters = 0.0F;
+			float								 lengthMeters = 0.0F;			// what the length step set; 0 when it set nothing
+			std::optional<float>				 segmentLengthMeters;			// last placed point to the snapped point, whatever set it; none with no placed point
 			std::size_t							 matchedEdgeCount = 0;
 			std::vector<float>					 commonLengths;		 // the kept common lengths, best first
 			bool								 closesShape = false; // the next click closes the shape (the Rectangle tool: commits it)
@@ -151,6 +152,7 @@ namespace world_sim {
 		std::string										openingType;								   // the opening tool only
 		construction::FoundationId						wallHost = construction::kInvalidFoundation;   // the wall tool only
 		bool											followingPointer = false;
+		std::optional<Foundation::Vec2>					pointer;			  // the pointer's world position before any snap, while following it
 		bool											pressPending = false; // the Rectangle tool saw a press and awaits its release
 		std::vector<Foundation::Vec2>					points;				  // placed, world meters (the Rectangle tool: its first corner)
 		std::vector<Foundation::Vec2>					rectangleCorners;	  // the pending rectangle, empty when none
@@ -736,8 +738,9 @@ namespace world_sim {
 		construction::SnapResult			   lastSnap_;
 		// A move has proposed something since the tool started or last paused. It holds over the
 		// interface, where the preview stays at its last position on the world.
-		bool followingPointer_ = false;
-		construction::ValidationResult		   lastValidation_;
+		bool							followingPointer_ = false;
+		Foundation::Vec2				pointerWorld_{0.0F, 0.0F}; // the last move's pointer before any snap, read only while followingPointer_
+		construction::ValidationResult	lastValidation_;
 
 		// The last evaluated snap and point validation, and what they were evaluated
 		// for. Kept apart from lastSnap_ and lastValidation_, which other paths clear.

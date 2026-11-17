@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -2297,4 +2298,307 @@ TEST_F(DrawingSnapshotTest, APausedToolProposesNothingButKeepsItsPlacedPoints) {
 	EXPECT_FALSE(shot.snap.has_value());
 	EXPECT_FALSE(shot.verdict.proposed);
 	EXPECT_TRUE(shot.verdict.reason.empty());
+}
+
+// A wall chain starts on a foundation: before the first point, a pointer off every one proposes
+// nothing, and the strip, the preview and the click all agree (a neutral hint, no red, a toast, no point).
+TEST_F(DrawingSnapshotTest, AWallToolProposesNothingOffAFoundationBeforeItsFirstPoint) {
+	builtFloor({{-20.0F, -15.0F}, {20.0F, -15.0F}, {20.0F, 15.0F}, {-20.0F, 15.0F}});
+	drawing->activateWallTool();
+	hover({25.0F, 0.0F});
+	const world_sim::DrawingSnapshot off = drawing->snapshot();
+	EXPECT_FALSE(off.verdict.proposed);
+	EXPECT_TRUE(off.verdict.valid);
+	EXPECT_TRUE(off.verdict.reason.empty());
+	EXPECT_EQ(off.wallHost, construction::kInvalidFoundation);
+	EXPECT_TRUE(drawing->status().valid);
+	EXPECT_TRUE(drawing->status().message.empty());
+	EXPECT_TRUE(drawing->previewVerdict().valid);
+	EXPECT_FALSE(drawing->previewVerdict().markerInvalid);
+	click({25.0F, 0.0F});
+	EXPECT_EQ(drawing->status().pointCount, 0);
+	EXPECT_EQ(lastToast(), "No foundation: walls must start on a foundation");
+
+	hover({0.0F, 0.0F});
+	const world_sim::DrawingSnapshot on = drawing->snapshot();
+	EXPECT_TRUE(on.verdict.proposed);
+	EXPECT_TRUE(on.verdict.valid);
+	click({0.0F, 0.0F});
+	EXPECT_EQ(drawing->status().pointCount, 1);
+}
+
+TEST_F(DrawingSnapshotTest, WithNoToolOnlyWhatIsMeaningfulThenIsReportedWhateverToolWasLast) {
+	const construction::FoundationId target = builtFloor({{0.0F, 0.0F}, {8.0F, 0.0F}, {8.0F, 8.0F}, {0.0F, 8.0F}});
+	const auto expectNoToolExtras = [this] {
+		const world_sim::DrawingSnapshot shot = drawing->snapshot();
+		EXPECT_FALSE(shot.tool.has_value());
+		EXPECT_FALSE(shot.status.active);
+		EXPECT_FALSE(shot.status.wall);
+		EXPECT_FALSE(shot.status.foundationEdit);
+		EXPECT_FALSE(shot.status.opening);
+		EXPECT_TRUE(shot.status.thicknessPreset.empty());
+		EXPECT_TRUE(shot.status.editLabel.empty());
+		EXPECT_TRUE(shot.status.openingType.empty());
+		EXPECT_FLOAT_EQ(shot.status.segmentLengthMeters, 0.0F);
+		EXPECT_FLOAT_EQ(shot.status.wallCost, 0.0F);
+		EXPECT_FLOAT_EQ(shot.status.wallWork, 0.0F);
+		EXPECT_FLOAT_EQ(shot.status.areaDeltaSquareMeters, 0.0F);
+		EXPECT_FLOAT_EQ(shot.status.openingWidthMeters, 0.0F);
+		EXPECT_FALSE(shot.pointer.has_value());
+	};
+	{
+		SCOPED_TRACE("after the wall tool");
+		drawing->activateWallTool();
+		hover({2.0F, 2.0F});
+		drawing->deactivate();
+		expectNoToolExtras();
+	}
+	{
+		SCOPED_TRACE("after an edit");
+		drawing->activateFoundationEditTool(target, construction::FoundationEditMode::Add);
+		hover({2.0F, 2.0F});
+		drawing->deactivate();
+		expectNoToolExtras();
+	}
+	{
+		SCOPED_TRACE("after the opening tool");
+		drawing->activateOpeningTool("Door");
+		hover({2.0F, 2.0F});
+		drawing->deactivate();
+		expectNoToolExtras();
+	}
+}
+
+namespace {
+
+	// A built floor with a built wall from (1, -26) to (7, -26) on it.
+	class DrawingOpeningSnapshotTest : public DrawingSnapshotTest {
+	  protected:
+		void SetUp() override {
+			DrawingSnapshotTest::SetUp();
+			host = builtFloor({{-10.0F, -30.0F}, {10.0F, -30.0F}, {10.0F, -20.0F}, {-10.0F, -20.0F}});
+			construction::ConstructionWorld& built = drawing->world();
+			const auto						 placed = built.commitSegment(
+				geometry::quantize(Foundation::Vec2{1.0F, -26.0F}), geometry::quantize(Foundation::Vec2{7.0F, -26.0F}), "Wood", "Standard", host, built.version()
+			);
+			ASSERT_TRUE(placed.ok());
+			wall = placed.id;
+			built.setSegmentState(wall, construction::FoundationState::Built);
+			drawing->activateOpeningTool("Door");
+		}
+
+		construction::FoundationId host = construction::kInvalidFoundation;
+		construction::SegmentId	   wall = construction::kInvalidSegment;
+	};
+
+} // namespace
+
+TEST_F(DrawingOpeningSnapshotTest, TheOpeningToolReportsItsTypeAndTheWallItSnapsTo) {
+	hover({4.0F, -26.0F});
+	const world_sim::DrawingSnapshot shot = drawing->snapshot();
+	EXPECT_EQ(shot.tool, world_sim::ToolKind::Opening);
+	EXPECT_EQ(shot.openingType, "Door");
+	ASSERT_TRUE(shot.openingSnap.has_value());
+	EXPECT_TRUE(shot.openingSnap->valid);
+	EXPECT_EQ(shot.openingSnap->segment, wall);
+	EXPECT_NEAR(shot.openingSnap->t, 0.5F, 1e-4F);
+	expectPoint(shot.openingSnap->point, {4.0F, -26.0F});
+	EXPECT_TRUE(shot.verdict.valid) << shot.verdict.reason;
+	EXPECT_TRUE(shot.verdict.proposed);
+	EXPECT_FALSE(shot.snap.has_value());
+}
+
+TEST_F(DrawingOpeningSnapshotTest, OffAnyWallThereIsNoSnapAndTheStripsReason) {
+	hover({-8.0F, -22.0F});
+	const world_sim::DrawingSnapshot shot = drawing->snapshot();
+	EXPECT_FALSE(shot.openingSnap.has_value() && shot.openingSnap->valid);
+	EXPECT_FALSE(shot.verdict.valid);
+	EXPECT_TRUE(shot.verdict.proposed);
+	EXPECT_EQ(shot.verdict.reason, "no wall in range");
+	EXPECT_EQ(shot.verdict.reason, drawing->status().message);
+}
+
+TEST_F(DrawingOpeningSnapshotTest, OnASpotAnOpeningOccupiesTheVerdictIsRefusedWithTheStripsReason) {
+	click({4.0F, -26.0F});
+	ASSERT_EQ(drawing->world().openings().size(), 1U) << lastToast();
+	hover({4.0F, -26.0F});
+	const world_sim::DrawingSnapshot shot = drawing->snapshot();
+	ASSERT_TRUE(shot.openingSnap.has_value());
+	EXPECT_TRUE(shot.openingSnap->valid);
+	EXPECT_FALSE(shot.verdict.valid);
+	EXPECT_EQ(shot.verdict.reason, "openings overlap");
+	EXPECT_EQ(shot.verdict.reason, drawing->status().message);
+}
+
+TEST_F(DrawingOpeningSnapshotTest, ThePointerIsReportedBeforeTheWallSnapsIt) {
+	hover({4.2F, -25.8F});
+	const world_sim::DrawingSnapshot shot = drawing->snapshot();
+	ASSERT_TRUE(shot.pointer.has_value());
+	EXPECT_NEAR(shot.pointer->x, 4.2F, 1e-3F);
+	EXPECT_NEAR(shot.pointer->y, -25.8F, 1e-3F);
+	ASSERT_TRUE(shot.openingSnap.has_value());
+	EXPECT_NEAR(shot.openingSnap->point.x, 4.2F, 1e-3F);
+	EXPECT_NEAR(shot.openingSnap->point.y, -26.0F, 1e-3F);
+}
+
+TEST_F(DrawingSnapshotTest, AnAddThatClosesAValidShapeReportsItsTargetModeAndTheAreaItAdds) {
+	const construction::FoundationId target = builtFloor({{0.0F, 0.0F}, {8.0F, 0.0F}, {8.0F, 8.0F}, {0.0F, 8.0F}});
+	drawing->activateFoundationEditTool(target, construction::FoundationEditMode::Add);
+	place({{8.0F, 0.0F}, {12.0F, 0.0F}, {12.0F, 8.0F}, {8.0F, 8.0F}});
+	hover({8.0F, 0.0F});
+	const world_sim::DrawingSnapshot shot = drawing->snapshot();
+	EXPECT_EQ(shot.tool, world_sim::ToolKind::FoundationEdit);
+	EXPECT_EQ(shot.editTarget, target);
+	EXPECT_EQ(shot.editMode, construction::FoundationEditMode::Add);
+	ASSERT_TRUE(shot.snap.has_value());
+	EXPECT_TRUE(shot.snap->closesShape);
+	EXPECT_TRUE(shot.verdict.valid) << shot.verdict.reason;
+	EXPECT_TRUE(shot.status.foundationEdit);
+	EXPECT_GT(shot.status.areaDeltaSquareMeters, 0.0F);
+}
+
+TEST_F(DrawingSnapshotTest, AnAddApartFromTheFloorReportsTheReasonItIsRefused) {
+	const construction::FoundationId target = builtFloor({{0.0F, 0.0F}, {8.0F, 0.0F}, {8.0F, 8.0F}, {0.0F, 8.0F}});
+	drawing->activateFoundationEditTool(target, construction::FoundationEditMode::Add);
+	place({{20.0F, 0.0F}, {24.0F, 0.0F}, {24.0F, 4.0F}});
+	hover({20.0F, 0.0F});
+	const world_sim::DrawingSnapshot shot = drawing->snapshot();
+	EXPECT_EQ(shot.editMode, construction::FoundationEditMode::Add);
+	ASSERT_TRUE(shot.snap.has_value());
+	EXPECT_TRUE(shot.snap->closesShape);
+	EXPECT_FALSE(shot.verdict.valid);
+	EXPECT_FALSE(shot.verdict.reason.empty());
+	EXPECT_EQ(shot.verdict.reason, drawing->previewVerdict().editReason);
+}
+
+TEST_F(DrawingSnapshotTest, ASubtractFromABuiltFloorReportsItsModeAndTheReasonItIsRefused) {
+	const construction::FoundationId target = builtFloor({{0.0F, 0.0F}, {8.0F, 0.0F}, {8.0F, 8.0F}, {0.0F, 8.0F}});
+	drawing->activateFoundationEditTool(target, construction::FoundationEditMode::Subtract);
+	place({{4.0F, 4.0F}, {12.0F, 4.0F}, {12.0F, 12.0F}});
+	hover({4.0F, 4.0F});
+	const world_sim::DrawingSnapshot shot = drawing->snapshot();
+	EXPECT_EQ(shot.editTarget, target);
+	EXPECT_EQ(shot.editMode, construction::FoundationEditMode::Subtract);
+	EXPECT_FALSE(shot.verdict.valid);
+	EXPECT_FALSE(shot.verdict.reason.empty());
+	EXPECT_EQ(shot.verdict.reason, drawing->status().message);
+}
+
+TEST_F(DrawingSnapshotTest, APointerOnTheFirstPointReportsTheOriginSnapThatClosesTheShape) {
+	{
+		SCOPED_TRACE("a freeform shape");
+		drawing->activateFoundationTool();
+		place({{0.0F, 0.0F}, {8.0F, 0.0F}, {8.0F, 8.0F}});
+		hover({0.0F, 0.0F});
+		const world_sim::DrawingSnapshot shot = drawing->snapshot();
+		ASSERT_TRUE(shot.snap.has_value());
+		EXPECT_EQ(shot.snap->kind, construction::SnapKind::Origin);
+		EXPECT_TRUE(shot.snap->closesShape);
+		drawing->deactivate();
+	}
+	{
+		SCOPED_TRACE("a wall chain");
+		builtFloor({{-20.0F, -15.0F}, {20.0F, -15.0F}, {20.0F, 15.0F}, {-20.0F, 15.0F}});
+		drawing->activateWallTool();
+		place({{-12.0F, 0.0F}, {-4.0F, 0.0F}, {-4.0F, 6.0F}});
+		hover({-12.0F, 0.0F});
+		const world_sim::DrawingSnapshot shot = drawing->snapshot();
+		ASSERT_TRUE(shot.snap.has_value());
+		EXPECT_EQ(shot.snap->kind, construction::SnapKind::Origin);
+		EXPECT_TRUE(shot.snap->closesShape);
+	}
+}
+
+TEST_F(DrawingSnapshotTest, ARescueCloseClosesTheShapeWithoutAnOriginSnap) {
+	seen.camera.setZoom(kRescueZoom);
+	drawing->activateFoundationTool();
+	const glm::vec2 firstCorner{0.0F, 0.0F};
+	place({firstCorner, {8.0F, 0.0F}, {8.0F, 8.0F}, {0.0F, 8.0F}});
+	hoverFreeform(firstCorner + kPastTheCatch);
+	const world_sim::DrawingSnapshot shot = drawing->snapshot();
+	ASSERT_TRUE(shot.snap.has_value());
+	EXPECT_EQ(shot.snap->kind, construction::SnapKind::None);
+	EXPECT_TRUE(shot.snap->closesShape);
+}
+
+TEST_F(DrawingSnapshotTest, AGuideAndARoundedLengthAreReportedWithWhatTheyCameFrom) {
+	world_sim::UserSettings::Get().drawing = world_sim::DrawingSettings{
+		.angleSteps = true, .alignToExistingBuildings = true, .guidesFromWorldAxes = true, .guideCrossings = true, .roundLengths = true
+	};
+	drawing->activateFoundationTool();
+	place({{0.0F, 0.0F}, {8.0F, 0.0F}});
+	hover({8.2F, -4.1F});
+	const world_sim::DrawingSnapshot shot = drawing->snapshot();
+	ASSERT_TRUE(shot.snap.has_value());
+	expectPoint(shot.snap->point, {8.0F, -4.1F});
+	EXPECT_EQ(shot.snap->kind, construction::SnapKind::GuideLine);
+	ASSERT_EQ(shot.snap->guides.size(), 1U);
+	EXPECT_EQ(shot.snap->guides[0].source, construction::GuideSource::WorldAxes);
+	EXPECT_EQ(shot.snap->guides[0].relation, construction::GuideRelation::Perpendicular);
+	expectPoint(shot.snap->guides[0].from, {8.0F, 0.0F});
+	EXPECT_NEAR(shot.snap->guides[0].distanceFromNodeMeters, 4.1F, 1e-3F);
+	EXPECT_EQ(shot.snap->lengthSnap, construction::LengthSnapKind::Rounded);
+	EXPECT_NEAR(shot.snap->lengthMeters, 4.1F, 1e-3F);
+}
+
+// The length step reports what it set; the segment's length is whatever the point makes it.
+TEST_F(DrawingSnapshotTest, TheSegmentLengthIsMeasuredWhateverTheLengthStepDid) {
+	world_sim::UserSettings::Get().drawing = world_sim::DrawingSettings{
+		.angleSteps = true, .alignToExistingBuildings = true, .guidesFromWorldAxes = true, .guideCrossings = true, .roundLengths = true
+	};
+	drawing->activateFoundationTool();
+	hover({3.0F, 2.0F});
+	{
+		SCOPED_TRACE("no placed point");
+		const world_sim::DrawingSnapshot shot = drawing->snapshot();
+		ASSERT_TRUE(shot.snap.has_value());
+		EXPECT_FALSE(shot.snap->segmentLengthMeters.has_value());
+	}
+	place({{0.0F, 0.0F}, {8.0F, 0.0F}});
+	hover({12.2F, 0.1F});
+	{
+		SCOPED_TRACE("a length measured from the guide's node, not the last point");
+		const world_sim::DrawingSnapshot shot = drawing->snapshot();
+		ASSERT_TRUE(shot.snap.has_value());
+		EXPECT_EQ(shot.snap->lengthSnap, construction::LengthSnapKind::RoundedAlongGuide);
+		EXPECT_NEAR(shot.snap->lengthMeters, 12.2F, 1e-3F);
+		ASSERT_TRUE(shot.snap->segmentLengthMeters.has_value());
+		EXPECT_NEAR(*shot.snap->segmentLengthMeters, 4.2F, 1e-3F);
+	}
+	world_sim::UserSettings::Get().drawing = world_sim::DrawingSettings{};
+	hoverFreeform({8.0F, 4.0F});
+	{
+		SCOPED_TRACE("no length step ran");
+		const world_sim::DrawingSnapshot shot = drawing->snapshot();
+		ASSERT_TRUE(shot.snap.has_value());
+		EXPECT_EQ(shot.snap->lengthSnap, construction::LengthSnapKind::None);
+		EXPECT_FLOAT_EQ(shot.snap->lengthMeters, 0.0F);
+		ASSERT_TRUE(shot.snap->segmentLengthMeters.has_value());
+		EXPECT_NEAR(*shot.snap->segmentLengthMeters, 4.0F, 1e-3F);
+	}
+}
+
+TEST_F(DrawingSnapshotTest, ThePointerIsTheRawOneAndGoneWhileTheToolIsPaused) {
+	drawing->activateFoundationTool();
+	{
+		SCOPED_TRACE("before any move");
+		EXPECT_FALSE(drawing->snapshot().pointer.has_value());
+	}
+	world_sim::UserSettings::Get().drawing = testedSettings();
+	place({{0.0F, 0.0F}, {8.0F, 0.0F}});
+	hover({8.2F, -4.1F});
+	{
+		SCOPED_TRACE("after a move that snaps");
+		const world_sim::DrawingSnapshot shot = drawing->snapshot();
+		ASSERT_TRUE(shot.pointer.has_value());
+		EXPECT_NEAR(shot.pointer->x, 8.2F, 1e-3F);
+		EXPECT_NEAR(shot.pointer->y, -4.1F, 1e-3F);
+		ASSERT_TRUE(shot.snap.has_value());
+		EXPECT_NEAR(shot.snap->point.x, 8.0F, 1e-3F) << "the guide moved the point";
+	}
+	drawing->pause();
+	{
+		SCOPED_TRACE("paused");
+		EXPECT_FALSE(drawing->snapshot().pointer.has_value());
+	}
 }
