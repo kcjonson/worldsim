@@ -49,29 +49,30 @@ Navigation is one persistent mesh, never rebuilt: each nav update gathers what m
 
 ### ECS systems in execution order
 
-`World::update` sorts the systems by `priority()` alone (`std::sort`, on the first update after a registration; every priority is distinct) and, with `ECS_ENABLE_SYSTEM_TIMING` (on by default), times each `update`. Registration order in `GameScene::initializeECS` doesn't matter: `NavigationSystem` is registered after `RoomDetectionSystem` and still runs fifth.
+`World::update` sorts the systems by `priority()` alone (`std::sort`, on the first update after a registration; every priority is distinct) and, with `ECS_ENABLE_SYSTEM_TIMING` (on by default), times each `update`. Registration order in `GameScene::initializeECS` doesn't matter: `NavigationSystem` is registered after `RoomDetectionSystem` and still runs sixth.
 
 | Order | Priority | System | What it does each frame |
 |---|---|---|---|
 | 1 | 10 | `TimeSystem` | Advances the game clock by `dt * baseTimeScale * speed`; returns at once when paused |
-| 2 | 45 | `VisionSystem` | Every 5th frame: rebuilds the wall occluders if stale, then every observer's sight pass writes memory |
-| 3 | 46 | `PlayerVisibilitySystem` | Every colonist's sight shape from vision's last pass into the seen record: an outdoor colonist's open leg follows him and ends on a turn, a jump, going indoors, or his removal; each new visibility polygon is queued with his walk since the last, and one where he rests; then up to `kSeenRingsPerTick` queued shapes are tested, stopping at the first that adds ground, and one waiting piece is registered, or else one sweep polygon is built (player-visibility.md 3.3) |
-| 4 | 50 | `NeedsDecaySystem` | Decays every need by game minutes; nothing at game pause |
-| 5 | 51 | `NavigationSystem` | Joins the patch job `endTick` launched last frame (waiting for it if it is still running, unless a query already joined it) and publishes it; hands every patch report since the last route slice to the route queue, admits (finished answers become takeable, new requests join), drops answers untaken for `kUntakenAnswerTicks`, decides whether limits that are not urgent are held, and starts this tick's slice on the route worker; marks stale the routes whose movers strayed more than `kOffRouteMm` (2 m) off their leg; steps movers standing in a placed obstacle forward along their route or out to clear ground; then gathers the next patches: a mesh limit for each mover that is new, has walked `kLimitRetakeStepMm`, or changed range, walls and doors when the construction version moved, water re-derived for changed terrain, removed placed obstacles (up to `kDetailRemovalsPerTick` 128), urgent limits whole outside every budget, then the rest first in, first out (`kLimitsPerTick` 1 limit and `kDetailRingsPerTick` 32 placed obstacles), each limit's placed obstacles and its chunks' water ahead of or with its ground |
-| 6 | 55 | `StorageGoalSystem` | Every 60th frame: storage goals |
-| 7 | 56 | `CraftingGoalSystem` | Every 60th frame: crafting goals |
-| 8 | 57 | `BuildGoalSystem` | Every 30th frame: place goals for packaged items |
-| 9 | 58 | `ConstructionSystem` | Every 30th frame: blueprint lifecycle and its goals |
-| 10 | 59 | `RoomDetectionSystem` | Rebuilds rooms when the construction version moved |
-| 11 | 60 | `AIDecisionSystem` | Route upkeep for every colonist, then a decision for each colonist whose trigger fires (see Triggers) |
-| 12 | 100 | `MovementSystem` | Steers along routes; sets Arrived at the last waypoint |
-| 13 | 200 | `PhysicsSystem` | Integrates velocity by game-scaled dt |
-| 14 | 250 | `CollisionSystem` | Pushes agents apart, two relaxation passes |
-| 15 | 260 | `WallCollisionSystem` | Pushes agents out of built walls |
-| 16 | 270 | `StaticRectCollisionSystem` | Pushes agents out of placed obstacles' rects |
-| 17 | 350 | `ActionSystem` | Arrival within 0.4 m, then starts, advances, and completes actions; queues removals and drops |
-| 18 | 800 | `DeferredEditsSystem` (`apps/world-sim/scenes/game/world/`) | Drains deferred entity removals (`destroyWorldEntity`), then deferred spawns (packaged furniture, loose piles through `dropResourcePiles`); work only when queued |
-| 19 | 900 | `DynamicEntityRenderSystem` | Collects render data for dynamic entities |
+| 2 | 11 | `ThoughtSystem` | Ends every held thought whose timed mood effect has run out on the game clock; nothing else unless a source creates or ends one |
+| 3 | 45 | `VisionSystem` | Every 5th frame: rebuilds the wall occluders if stale, then every observer's sight pass writes memory |
+| 4 | 46 | `PlayerVisibilitySystem` | Every colonist's sight shape from vision's last pass into the seen record: an outdoor colonist's open leg follows him and ends on a turn, a jump, going indoors, or his removal; each new visibility polygon is queued with his walk since the last, and one where he rests; then up to `kSeenRingsPerTick` queued shapes are tested, stopping at the first that adds ground, and one waiting piece is registered, or else one sweep polygon is built (player-visibility.md 3.3) |
+| 5 | 50 | `NeedsDecaySystem` | Decays every need by game minutes; nothing at game pause |
+| 6 | 51 | `NavigationSystem` | Joins the patch job `endTick` launched last frame (waiting for it if it is still running, unless a query already joined it) and publishes it; hands every patch report since the last route slice to the route queue, admits (finished answers become takeable, new requests join), drops answers untaken for `kUntakenAnswerTicks`, decides whether limits that are not urgent are held, and starts this tick's slice on the route worker; marks stale the routes whose movers strayed more than `kOffRouteMm` (2 m) off their leg; steps movers standing in a placed obstacle forward along their route or out to clear ground; then gathers the next patches: a mesh limit for each mover that is new, has walked `kLimitRetakeStepMm`, or changed range, walls and doors when the construction version moved, water re-derived for changed terrain, removed placed obstacles (up to `kDetailRemovalsPerTick` 128), urgent limits whole outside every budget, then the rest first in, first out (`kLimitsPerTick` 1 limit and `kDetailRingsPerTick` 32 placed obstacles), each limit's placed obstacles and its chunks' water ahead of or with its ground |
+| 7 | 55 | `StorageGoalSystem` | Every 60th frame: storage goals |
+| 8 | 56 | `CraftingGoalSystem` | Every 60th frame: crafting goals |
+| 9 | 57 | `BuildGoalSystem` | Every 30th frame: place goals for packaged items |
+| 10 | 58 | `ConstructionSystem` | Every 30th frame: blueprint lifecycle and its goals |
+| 11 | 59 | `RoomDetectionSystem` | Rebuilds rooms when the construction version moved |
+| 12 | 60 | `AIDecisionSystem` | Route upkeep for every colonist, then a decision for each colonist whose trigger fires (see Triggers) |
+| 13 | 100 | `MovementSystem` | Steers along routes; sets Arrived at the last waypoint |
+| 14 | 200 | `PhysicsSystem` | Integrates velocity by game-scaled dt |
+| 15 | 250 | `CollisionSystem` | Pushes agents apart, two relaxation passes |
+| 16 | 260 | `WallCollisionSystem` | Pushes agents out of built walls |
+| 17 | 270 | `StaticRectCollisionSystem` | Pushes agents out of placed obstacles' rects |
+| 18 | 350 | `ActionSystem` | Arrival within 0.4 m, then starts, advances, and completes actions; queues removals and drops |
+| 19 | 800 | `DeferredEditsSystem` (`apps/world-sim/scenes/game/world/`) | Drains deferred entity removals (`destroyWorldEntity`), then deferred spawns (packaged furniture, loose piles through `dropResourcePiles`); work only when queued |
+| 20 | 900 | `DynamicEntityRenderSystem` | Collects render data for dynamic entities |
 
 The drains run inside the tick, after `ActionSystem` (the last system that queues) and before the render collect, so the render data shows a removal or a drop the same frame. They run there rather than after `World::update` because a drop's ground probe is a nav query: after the last `update`, `endTick` has launched the next patch job and the probe would wait for it.
 
