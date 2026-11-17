@@ -77,6 +77,8 @@
 #include <nav/PathQuery.h>
 #include <nav/RouteQueue.h>
 
+#include <vision/PlacedOccluderIndex.h>
+
 #include <world/chunk/ChunkCoordinate.h>
 #include <world/chunk/ChunkManager.h>
 
@@ -436,6 +438,13 @@ class NavigationSystem : public ISystem {
 	void							   resetNavQueryStats() { navStats = {}; }
 
 
+	// The placed occluder index (sight-softening.md 2.4): every placed ring in the mesh as sight reads
+	// it, updated as each patch job is collected, in patch order, and never by a query, so reading it
+	// never waits for a patch job. A ring shows here from the tick after nav collects it. Vision owns
+	// the kind threshold and sets it through the mutable overload.
+	[[nodiscard]] const vision::PlacedOccluderIndex& placedOccluders() const { return placedOccluderIndex; }
+	[[nodiscard]] vision::PlacedOccluderIndex&		 placedOccluders() { return placedOccluderIndex; }
+
 	// The mesh, for the debug overlay and tests. Dead triangle slots must be skipped
 	// (PatchableMesh::triangleLive). A reference is good until the next update() or endTick().
 	[[nodiscard]] const geometry::nav::PatchableMesh& navMesh() const;
@@ -680,6 +689,10 @@ class NavigationSystem : public ISystem {
 	// Every placed obstacle gathered, by key: its ring, kGatheredRing until its patch is joined.
 	std::map<ObstacleKey, RingId> obstacleInMesh;
 	std::vector<RingId>			  detailRemovals;
+	vision::PlacedOccluderIndex	  placedOccluderIndex;
+	// The sim clock in ms (TimeSystem::simulationSeconds), 0 in a world without a TimeSystem: what the
+	// placed occluder index stamps a ring's arrival with.
+	[[nodiscard]] std::int64_t clockMs() const;
 	// Limits waiting to go in, in the order they were taken, and the landing's until it goes in.
 	std::deque<MeshLimit>	 limitQueue;
 	std::optional<MeshLimit> landingLimit;

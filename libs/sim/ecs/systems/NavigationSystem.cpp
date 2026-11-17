@@ -6,6 +6,7 @@
 #include "../components/Movement.h"
 #include "../components/NavPath.h"
 #include "../components/Transform.h"
+#include "TimeSystem.h"
 
 #include "nav/NavCoords.h"
 #include "nav/NavInputBuilder.h"
@@ -1342,6 +1343,11 @@ namespace ecs {
 		return placement->getChunkIndex(coord) != nullptr && (processedChunks == nullptr || processedChunks->contains(coord));
 	}
 
+	std::int64_t NavigationSystem::clockMs() const {
+		const TimeSystem* time = world != nullptr ? world->tryGetSystem<TimeSystem>() : nullptr;
+		return time != nullptr ? std::llround(time->simulationSeconds() * 1000.0) : 0;
+	}
+
 	void NavigationSystem::queueRemovedDetail() {
 		if (placement == nullptr) {
 			return;
@@ -1365,9 +1371,14 @@ namespace ecs {
 		}
 		gnav::PatchEdits edits;
 		edits.removes.assign(detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(count));
+		// The ids it removes, for the placed occluder index: a count would not say which entries leave.
+		std::vector<RingId> removed = edits.removes;
 		gatheredJob.patches.push_back(std::move(edits));
-		gatheredJob.onPatched.emplace_back([count](const gnav::PatchReport& report, double) {
-			const auto what = [count] { return std::to_string(count) + " placed obstacles removed"; };
+		gatheredJob.onPatched.emplace_back([this, removed = std::move(removed)](const gnav::PatchReport& report, double) {
+			for (const RingId ring : removed) {
+				placedOccluderIndex.remove(ring);
+			}
+			const auto what = [count = removed.size()] { return std::to_string(count) + " placed obstacles removed"; };
 			logUnsupported(report, what, [&what](std::size_t) { return what(); });
 		});
 		detailRemovals.erase(detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(count));
@@ -1520,12 +1531,18 @@ namespace ecs {
 			if (ground.has_value()) {
 				noteServed(*ground);
 			}
-			std::size_t k = 0;
+			std::size_t		   k	   = 0;
+			const std::int64_t arrived = clockMs();
 			for (; k < keys.size(); ++k) {
 				if (added[k] == gnav::kNoRing) {
+					// Refused: it never enters the index, so sight and nav agree it is not there.
 					obstacleInMesh.erase(keys[k]);
 				} else {
 					obstacleInMesh.at(keys[k]) = added[k];
+					const gnav::NavInputPolygon& ring = detailMesh.ring(added[k]).polygon;
+					if (ring.provenanceId == nav::kProvenancePlaced && ring.blocked) {
+						placedOccluderIndex.add(added[k], ring.ring, keys[k].defName, arrived);
+					}
 				}
 			}
 			for (std::size_t c = 0; c < waterChunks.size(); ++c) {

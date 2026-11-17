@@ -98,6 +98,7 @@ add_library(world-sim-game STATIC
     scenes/game/dev/ConstructionStateJson.cpp
     scenes/game/dev/DevCommandHandler.cpp
     scenes/game/dev/DevJson.cpp
+    scenes/game/dev/SightJson.cpp
     scenes/game/dev/DrawingStateJson.cpp
     scenes/game/dev/GiveShortfall.cpp
     scenes/game/dev/GpuHold.cpp
@@ -167,6 +168,7 @@ if(BUILD_TESTING)
         scenes/game/dev/GpuHoldCommand.test.cpp
         scenes/game/dev/GroundRefusal.test.cpp
         scenes/game/dev/PointList.test.cpp
+        scenes/game/dev/SightJson.test.cpp
         scenes/game/world/MoveOrderGoal.test.cpp
         scenes/game/world/WorldPointer.test.cpp
         scenes/game/world/construction/CommittedGeometryCache.test.cpp

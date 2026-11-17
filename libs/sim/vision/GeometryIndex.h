@@ -1,16 +1,23 @@
 #pragma once
 
-// Vision occluder source: turns the construction wall graph into the opaque
-// occluder segments a visibility polygon is built from. The Vision System owns a
-// GeometryIndex, calls rebuildIfStale() each tick, and feeds queryFacingOccluders()
-// into geometry::computeVisibilityPolygon, and queryOccluders() into hasLineOfSight.
+// Vision occluder source: turns the construction wall graph into wall bodies and the occluder
+// segments a visibility polygon is built from. The Vision System owns a GeometryIndex, calls
+// rebuildIfStale() each tick, and feeds queryFacingOccluders() into
+// geometry::computeVisibilityPolygon; StoreOrDrop reads queryOccluders().
+//
+// Each connected graph of built walls is one body (sight-softening.md 2), whose kind is decided by
+// its diameter when the index is rebuilt: opaque from the opaque least diameter across, soft below
+// it. Only opaque bodies occlude: queryFacingOccluders, backFacesHiddenFrom, and insideSolid read
+// them alone, so the visibility polygon never sees a soft stub. queryOccluders keeps every wall, and
+// the structure pass reads every record, so a stub a colonist sees still joins memory.
 //
 // The occluders are the edges of the built walls' outline, the shape the wall
 // drawing outlines (geometry::wallPiecesAndOutline over each connected graph of
 // built walls): both faces, end caps, mitred and trimmed junctions, and the jambs
 // of every gap. Sight stops at a wall's near face, so the band itself is never in
 // sight. A graph the band offsetter rejects (by nav's test) occludes as each wall's
-// untrimmed band outlined on its own, cut at its transparent openings.
+// untrimmed band outlined on its own, cut at its transparent openings; its body is still the whole
+// graph, its outline the set of those band outlines and its diameter taken over all their vertices.
 //
 // Every occluder lies on a closed loop with the solid on its left, so an eye
 // outside the solid strictly on an edge's left is behind that edge's own solid,
@@ -27,6 +34,9 @@
 //
 // The rebuild resolves bands for every built wall, as nav's wall extraction does,
 // and runs inline, version-gated against ConstructionWorld::version().
+
+#include "SightBody.h"
+#include "SightTunables.h"
 
 #include <construction/ConstructionWorld.h> // SegmentId/OpeningId typedefs used in records
 
@@ -50,6 +60,8 @@ namespace ecs {
 		struct OccluderRecord {
 			construction::SegmentId source = 0;
 			geometry::OccluderSegment		seg;
+			// Its body's index in bodies().
+			std::size_t body = 0;
 			// It touches, crosses or runs along another occluder: another graph's; in a rejected graph
 			// another wall's band, which overlap at every joint; or in its own graph one it does not
 			// meet end to end, where two walls' bands overlap without a shared vertex.
@@ -102,6 +114,22 @@ namespace ecs {
 			}
 		};
 
+		// One connected wall graph's outline: its edges (solid on the left of each), per edge the edge
+		// ending at its start, its box, the mean of its corners, its diameter, and its kind.
+		struct WallBody {
+			std::vector<geometry::OccluderSegment> edges;
+			std::vector<std::uint32_t>			   previousEdge;
+			geometry::Vec2i64					   low;
+			geometry::Vec2i64					   high;
+			geometry::Vec2i64					   centre;
+			geometry::Int128					   diameterSquared;
+			std::int64_t						   diameterMm = 0;
+			vision::BodyKind					   kind		  = vision::BodyKind::Opaque;
+
+			// Whether any of its outline lies within radiusMm of `point`.
+			[[nodiscard]] bool within(geometry::Vec2i64 point, std::int64_t radiusMm) const;
+		};
+
 		// Wire the topology source. Passing nullptr leaves the index inert (no
 		// rebuild, no occluders). Does not take ownership.
 		void setConstructionWorld(const construction::ConstructionWorld* world);
@@ -110,7 +138,11 @@ namespace ecs {
 		// the last rebuild. Cheap synchronous extraction; safe to call every tick.
 		void rebuildIfStale();
 
-		// Append every cached opaque occluder that lies within radiusMm of center
+		// A wall body is opaque from this diameter, soft below it. A change takes effect at the next
+		// rebuildIfStale, which rebuilds.
+		void setOpaqueLeastDiameterMm(std::int64_t leastMm);
+
+		// Append every cached occluder that lies within radiusMm of center, soft bodies' included,
 		// to `out` (clearing it first). Exact integer range test
 		// (geometry::withinDistanceOfSegment on the whole occluder). Linear scan
 		// over the cache: at the modest wall counts a colony reaches this is fine; a
@@ -118,7 +150,8 @@ namespace ecs {
 		void queryOccluders(geometry::Vec2i64 center, std::int64_t radiusMm,
 							 std::vector<geometry::OccluderSegment>& out) const;
 
-		// queryOccluders less the back faces for an eye at `eye` when backFacesHiddenFrom it,
+		// The opaque bodies' occluders within radiusMm of `eye`, less the back faces for an eye at
+		// `eye` when backFacesHiddenFrom it,
 		// for a visibility polygon from that eye alone: the polygon is the same, but for where
 		// a ray aimed at a back face's hidden end hits a slanted face, a vertex that rounds off
 		// the face by under a millimetre. Each ring's vertices are snapped that way, so a vertex
@@ -128,17 +161,22 @@ namespace ecs {
 		bool queryFacingOccluders(geometry::Vec2i64 eye, std::int64_t radiusMm,
 								  std::vector<geometry::OccluderSegment>& out) const;
 
-		// Whether queryFacingOccluders(eye, radiusMm) would give any occluder, without listing them.
-		[[nodiscard]] bool anyFacingOccluder(geometry::Vec2i64 eye, std::int64_t radiusMm) const;
+		// The index in bodies() of every body, soft or opaque, with some of its outline within
+		// radiusMm of `point`, in order, into `out` (cleared first).
+		void bodiesWithin(geometry::Vec2i64 point, std::int64_t radiusMm, std::vector<std::size_t>& out) const;
 
-		// Whether no back face within radiusMm can bound what an eye at `eye` sees: it is
+		// Whether any body, soft or opaque, has some of its outline within radiusMm of `point`, without
+		// listing them: box first, then the exact edge distance.
+		[[nodiscard]] bool anyBodyWithin(geometry::Vec2i64 point, std::int64_t radiusMm) const;
+
+		// Whether no opaque body's back face within radiusMm can bound what an eye at `eye` sees: it is
 		// outside the solid (insideSolid), which it would see from within, over a
 		// millimetre from the line of every occluder in range, where the polygon's grazing
 		// rays need the back faces, and no occluder in range crosses or touches another other
 		// than end to end.
 		[[nodiscard]] bool backFacesHiddenFrom(geometry::Vec2i64 eye, std::int64_t radiusMm) const;
 
-		// Whether `point` is inside or on the solid the occluder loops enclose: the loops'
+		// Whether `point` is inside or on the solid the opaque bodies' occluder loops enclose: the loops'
 		// winding number round it is not zero (outer loops wind counter-clockwise, the
 		// inside of a closed room clockwise), or it lies on an occluder. Exact.
 		[[nodiscard]] bool insideSolid(geometry::Vec2i64 point) const;
@@ -160,6 +198,7 @@ namespace ecs {
 		// listed together.
 		[[nodiscard]] const std::vector<OccluderRecord>& occluders() const { return m_occluders; }
 		[[nodiscard]] const std::vector<OpeningRecord>&	 builtOpenings() const { return m_openings; }
+		[[nodiscard]] const std::vector<WallBody>&		 bodies() const { return wallBodies; }
 
 	  private:
 		void rebuild();
@@ -175,8 +214,11 @@ namespace ecs {
 		// Bumped by rebuild(); see generation().
 		std::uint64_t m_generation = 0;
 
+		std::int64_t opaqueLeastDiameterMm = vision::SightTunables{}.wallOpaqueLeastDiameterMm;
+
 		std::vector<OccluderRecord> m_occluders;
 		std::vector<OpeningRecord>	m_openings;
+		std::vector<WallBody>		wallBodies;
 	};
 
 } // namespace ecs

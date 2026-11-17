@@ -261,13 +261,9 @@ namespace ecs {
 
 	void PlayerVisibilitySystem::update(float /*deltaTime*/) {
 		const VisionSystem* vision = world->tryGetSystem<VisionSystem>();
-		if (vision != nullptr && sweepWalls != &vision->geometry()) {
-			sweepWalls = &vision->geometry();
-			seen.setSightBuilder([walls = sweepWalls](const Vec2i64& centre, std::int64_t reachMm) {
-				std::vector<geometry::OccluderSegment> occluders;
-				walls->queryFacingOccluders(centre, reachMm, occluders);
-				return geometry::computeVisibilityPolygon(centre, reachMm, occluders);
-			});
+		if (vision != nullptr && sweepVision != vision) {
+			sweepVision = vision;
+			seen.setSightBuilder([vision](const Vec2i64& centre, std::int64_t reachMm) { return vision->hardPolygon(centre, reachMm); });
 		}
 		if (vision != nullptr) {
 			for (auto [entity, position, colonist, memory] : world->view<Position, Colonist, Memory>()) {

@@ -7,6 +7,7 @@
 #include "../components/AgentRadius.h"
 #include "../components/Appearance.h"
 #include "../components/Memory.h"
+#include "../components/Movement.h"
 #include "../components/Transform.h"
 
 #include "nav/NavCoords.h"
@@ -17,6 +18,7 @@
 #include <assets/placement/PlacementExecutor.h>
 #include <assets/placement/SpatialIndex.h>
 #include <construction/ConstructionWorld.h>
+#include <construction/OpeningGeometry.h>
 #include <predicates/Predicates.h>
 #include <visibility/SightClip.h>
 #include <visibility/SightPolygon.h>
@@ -28,6 +30,7 @@
 #include <glm/geometric.hpp>
 
 #include <algorithm>
+#include <array>
 
 #include <memory>
 #include <unordered_map>
@@ -579,6 +582,141 @@ TEST_F(VisionSystemTest, SeenWallRememberedHiddenWallNot) {
 	ASSERT_NE(mem, nullptr);
 	EXPECT_TRUE(mem->knowsSegment(front)) << "the facing wall bounds the polygon and must be seen";
 	EXPECT_FALSE(mem->knowsSegment(behind)) << "a wall behind the first is occluded and must not be seen";
+}
+
+// The shortest wall the tools allow is a soft body: it is left out of the visibility polygon, so a
+// target behind it is seen and the polygon is the plain sight polygon to his reach, yet a colonist who
+// sees it remembers it, and it is among his sight bodies.
+TEST_F(VisionSystemTest, WallStubIsLeftOutOfThePolygonAndStillRemembered) {
+	ConstructionWorld cw;
+	const SegmentId	  stub = buildWall(cw, {3000, -250}, {3000, 250});
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	const EntityID	observer = spawnObserver(world, {0.0F, 0.0F});
+	const glm::vec2 behind{5.0F, 0.0F};
+	spawnTarget(world, behind);
+	tick(sys);
+
+	EXPECT_TRUE(remembers(world, observer, behind)) << "the stub hides nothing";
+	const Memory* mem = world.getComponent<Memory>(observer);
+	EXPECT_TRUE(mem->knowsSegment(stub)) << "a stub he sees joins memory";
+	const std::optional<VisionSystem::SightShape> shape = sys.sightShape(observer);
+	ASSERT_TRUE(shape.has_value());
+	ASSERT_NE(shape->polygon, nullptr) << "any wall in reach takes the polygon, so the structure pass runs";
+	const std::optional<VisionSystem::SightBodies> bodies = sys.sightBodies(observer);
+	ASSERT_TRUE(bodies.has_value());
+	EXPECT_EQ(*shape->polygon, geometry::sightPolygon({0, 0}, bodies->reachMm)) << "nothing occludes";
+	ASSERT_EQ(bodies->bodies->size(), 1U);
+	EXPECT_EQ(bodies->bodies->front().source, vision::SightBody::Source::Wall);
+	EXPECT_EQ(bodies->bodies->front().kind, vision::BodyKind::Soft);
+	EXPECT_TRUE(bodies->shadowEdges->empty());
+}
+
+// A colonist standing still with a movement target he is not following walks nothing, so his lead
+// holds whatever the frame time and he builds once; following it, his lead is his walk taken up to
+// whole steps, so frame-time jitter leaves it and the one longer lead rebuilds once.
+TEST_F(VisionSystemTest, LeadHoldsUnderFrameTimeJitter) {
+	ConstructionWorld cw;
+	buildWall(cw, {3000, -2000}, {3000, 2000});
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	sys.setUpdateInterval(1);
+	const EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	world.addComponent<MovementTarget>(observer, MovementTarget{.target = {5.0F, 0.0F}, .speed = 2.0F, .active = false});
+	constexpr std::array kFrames = {0.0121F, 0.0166F, 0.0213F, 0.0333F, 0.0158F};
+	for (int pass = 0; pass < 20; ++pass) {
+		sys.update(kFrames[static_cast<std::size_t>(pass) % kFrames.size()]);
+	}
+	EXPECT_EQ(sys.polygonBuildCount(), 1U) << "a still colonist rebuilt on frame time";
+
+	world.getComponent<MovementTarget>(observer)->active = true;
+	for (int pass = 0; pass < 20; ++pass) {
+		sys.update(pass % 2 == 0 ? 0.0163F : 0.0171F);
+	}
+	EXPECT_EQ(sys.polygonBuildCount(), 2U) << "jitter in the frame time moved the lead";
+	EXPECT_EQ(sys.sightBodies(observer)->leadMm, VisionSystem::kSightRebuildStepMm + VisionSystem::kLeadWalkStepMm);
+}
+
+// On the plain disc an observer walking toward a wall takes the polygon path on the pass the wall's
+// near face comes within his reach, not at his next step-triggered build; until then he builds only
+// once a step.
+// A soft stub puts a build on the polygon path as an opaque wall does (spec 5.1), and is found the same.
+TEST_F(VisionSystemTest, PlainObserverTakesThePolygonOnThePassAWallComesIntoReach) {
+	for (const std::int64_t halfLengthMm : {std::int64_t{2000}, std::int64_t{250}}) {
+		ConstructionWorld cw;
+		buildWall(cw, {40000, -halfLengthMm}, {40000, halfLengthMm});
+		World		  world;
+		VisionSystem& sys = world.registerSystem<VisionSystem>();
+		sys.setConstructionWorld(&cw);
+		const EntityID	   observer = spawnObserver(world, {0.0F, 0.0F});
+		const std::int64_t reachMm	= 30000 + VisionSystem::kSightRebuildStepMm;
+		const std::int64_t faceMm	= 40000 - construction::halfThicknessMm(cw.segments().front());
+		int				   firstPolygon = -1;
+		for (int pass = 0; pass <= 150 && firstPolygon < 0; ++pass) {
+			world.getComponent<Position>(observer)->value = {0.1F * static_cast<float>(pass), 0.0F};
+			tick(sys);
+			if (sys.polygonBuildCount() > 0) {
+				firstPolygon = pass;
+			}
+		}
+		int expected = 0;
+		while (nav::toMm({0.1F * static_cast<float>(expected), 0.0F}).x + reachMm < faceMm) {
+			++expected;
+		}
+		EXPECT_EQ(firstPolygon, expected) << (halfLengthMm == 250 ? "the stub" : "the wall");
+		// One plain build a step walked (more than 0.5 m, so every sixth pass), then the polygon.
+		EXPECT_EQ(sys.buildCount(), static_cast<std::uint64_t>((expected - 1) / 6 + 1 + 1));
+		EXPECT_EQ(sys.polygonBuildCount(), 1U);
+		EXPECT_EQ(sys.sightBodies(observer)->bodies->front().kind,
+				  halfLengthMm == 250 ? vision::BodyKind::Soft : vision::BodyKind::Opaque);
+	}
+}
+
+// A walker whose walk to the next pass jitters across a 100 mm boundary (98 and 102 mm a pass) gets
+// one longer lead and keeps it, so he builds once a step plus that one build. Walking 0.1 m a pass
+// for 20 passes: the first build at 0, the longer lead at 0.1 m, then a step past it at 0.7, 1.3,
+// and 1.9 m: five builds.
+TEST_F(VisionSystemTest, LeadJitterAcrossAStepBoundaryRebuildsOnce) {
+	ConstructionWorld cw;
+	buildWall(cw, {4000, -2000}, {4000, 2000});
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	sys.setUpdateInterval(1);
+	const EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	world.addComponent<MovementTarget>(observer, MovementTarget{.target = {5.0F, 0.0F}, .speed = 2.0F, .active = true});
+	for (int pass = 0; pass < 20; ++pass) {
+		world.getComponent<Position>(observer)->value = {0.1F * static_cast<float>(pass), 0.0F};
+		sys.update(pass % 2 == 0 ? 0.049F : 0.051F);
+	}
+	EXPECT_EQ(sys.polygonBuildCount(), 5U);
+	EXPECT_EQ(sys.sightBodies(observer)->leadMm, VisionSystem::kSightRebuildStepMm + 2 * VisionSystem::kLeadWalkStepMm);
+}
+
+// A tunable only the cover reads leaves every shape; one the shape is built from rebuilds it.
+TEST_F(VisionSystemTest, OnlyShapeTunablesRebuildShapes) {
+	ConstructionWorld cw;
+	buildWall(cw, {3000, -2000}, {3000, 2000});
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	spawnObserver(world, {0.0F, 0.0F});
+	tick(sys);
+	ASSERT_EQ(sys.polygonBuildCount(), 1U);
+	vision::SightTunables tunables = sys.sightTunables();
+	tunables.shadowEdgeWidthMm	   = 2000;
+	tunables.sightFeatherMm		   = 900;
+	sys.setSightTunables(tunables);
+	tick(sys);
+	EXPECT_EQ(sys.polygonBuildCount(), 1U) << "a cover tunable rebuilt the shape";
+	EXPECT_EQ(sys.sightTunables().shadowEdgeWidthMm, 2000);
+	tunables.wallOpaqueLeastDiameterMm = 900;
+	sys.setSightTunables(tunables);
+	tick(sys);
+	EXPECT_EQ(sys.polygonBuildCount(), 2U);
 }
 
 // An opening on a seen wall is recorded too.

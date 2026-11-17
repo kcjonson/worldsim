@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
-import { DevToolsService, DevResult, ColonistState, ThoughtTypeState } from '../services/DevToolsService';
+import { DevToolsService, DevResult, ColonistState, SightTunable, ThoughtTypeState } from '../services/DevToolsService';
 import styles from './DevToolsPanel.module.css';
 
 interface DevToolsPanelProps {
@@ -59,6 +59,9 @@ function DevToolsPanel({ serverUrl }: DevToolsPanelProps) {
   // World-state viewer
   const [stateView, setStateView] = useState('');
 
+  // Sight tunables (sight-softening.md 9): one slider each, sent when released
+  const [sightTunables, setSightTunables] = useState<SightTunable[]>([]);
+
   const report = useCallback((label: string, r: DevResult) => {
     const text = r.body?.error ? `${label} -> ${r.body.error}` : `${label} -> ${JSON.stringify(r.body)}`;
     setFeedback({ ok: r.ok && !r.body?.error, text });
@@ -98,6 +101,24 @@ function DevToolsPanel({ serverUrl }: DevToolsPanelProps) {
       setFeedback({ ok: r.ok && !r.body?.error, text: `state ${what} (${r.status})` });
     },
     [svc]
+  );
+
+  const takeSightTunables = useCallback((label: string, r: DevResult) => {
+    if (r.ok && Array.isArray(r.body?.tunables)) {
+      setSightTunables(r.body.tunables);
+    }
+    setFeedback({ ok: r.ok && !r.body?.error, text: r.body?.error ? `${label} -> ${r.body.error}` : `${label} (${r.status})` });
+  }, []);
+
+  const loadSightTunables = useCallback(async () => {
+    takeSightTunables('state sightTunables', await svc.getState('sightTunables'));
+  }, [svc, takeSightTunables]);
+
+  const sendSightTunable = useCallback(
+    async (name: string, value: number) => {
+      takeSightTunables(`sight ${name}=${value}`, await svc.callDev('sight', { name, value }));
+    },
+    [svc, takeSightTunables]
   );
 
   const attributeNames = Object.keys(colonists.find((c) => c.id === selected)?.attributes ?? {});
@@ -287,6 +308,35 @@ function DevToolsPanel({ serverUrl }: DevToolsPanelProps) {
           <button className={styles.button} disabled={completeId === ''}
             onClick={() => run('complete', 'complete', { id: completeId })}>Complete</button>
         </div>
+      </section>
+
+      {/* SIGHT */}
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>Sight tunables</h3>
+        <div className={styles.row}>
+          <div className={styles.buttonGroup}>
+            <button className={styles.buttonGhost} onClick={loadSightTunables}>Load</button>
+            <button className={styles.button}
+              onClick={async () => takeSightTunables('sight reset', await svc.callDev('sight', { reset: 1 }))}>
+              Reset to start
+            </button>
+            <button className={styles.buttonGhost} onClick={() => showState('sightBodies')}>Bodies</button>
+          </div>
+        </div>
+        {sightTunables.map((t) => (
+          <div className={styles.row} key={t.name}>
+            <label className={styles.fieldWide}>{t.name}: {t.value} (start {t.start})
+              <input type="range" min={t.least} max={t.most} value={t.value}
+                onChange={(e) => {
+                  const value = Number(e.target.value);
+                  setSightTunables((all) => all.map((o) => (o.name === t.name ? { ...o, value } : o)));
+                }}
+                onMouseUp={(e) => sendSightTunable(t.name, Number(e.currentTarget.value))}
+                onKeyUp={(e) => sendSightTunable(t.name, Number(e.currentTarget.value))}
+                onTouchEnd={(e) => sendSightTunable(t.name, Number(e.currentTarget.value))} />
+            </label>
+          </div>
+        ))}
       </section>
 
       {/* WORLD STATE */}

@@ -39,6 +39,7 @@
 
 #include <nav/LimitPolygon.h>
 #include <nav/PathQuery.h>
+#include <predicates/Predicates.h>
 
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/SyntheticWorldSampler.h>
@@ -936,6 +937,343 @@ TEST_F(NavigationSystemTest, GenerationIgnoresObstaclePatches) {
 	buildWall(cw, {20000, 20000}, {22000, 20000});
 	step(world, sys);
 	EXPECT_NE(sys.generation(), generation) << "a wall moves the generation";
+}
+
+// --- The placed occluder index (sight-softening.md 2.4) ---------------------------------------------
+
+namespace {
+	// A rock's collider, padded, is 1.7 m square, 2.4 m across: opaque. A trunk's is 0.4 m: soft.
+	constexpr const char* kSightRock  = "Test_SightRock";
+	constexpr const char* kSightTrunk = "Test_SightTrunk";
+
+	void registerSightBodies() {
+		registerObstacle(kSightRock, 0.8F);
+		registerObstacle(kSightTrunk, 0.15F);
+	}
+
+	// Stores each (def, position) as a placed entity, all of one chunk's in one index, and marks the
+	// chunks processed; every other fixture chunk is placed with nothing.
+	void placeMixed(PlacementExecutor& executor, std::unordered_set<ChunkCoordinate>& processed,
+					const std::vector<std::pair<std::string, glm::vec2>>& entities) {
+		std::unordered_map<ChunkCoordinate, assets::AsyncChunkPlacementResult> byChunk;
+		for (const auto& [defName, at] : entities) {
+			const ChunkCoordinate coord = world::worldToChunk({at.x, at.y});
+			auto&				  result = byChunk[coord];
+			result.coord				 = coord;
+			PlacedEntity entity;
+			entity.defName	= defName;
+			entity.position = at;
+			result.spatialIndex.insert(entity);
+		}
+		for (auto& [coord, result] : byChunk) {
+			executor.storeChunkResult(std::move(result));
+			processed.insert(coord);
+		}
+		placeNothingElsewhere(executor, &processed);
+	}
+
+	// A still observer: vision reads him, and without AgentRadius nav meshes nothing round him.
+	EntityID sightObserver(World& world, glm::vec2 at) {
+		const EntityID e = world.createEntity();
+		world.addComponent<Position>(e, Position{at});
+		world.addComponent<Memory>(e, Memory{});
+		return e;
+	}
+
+	// Where `meters` lies against the observer's sight shape: outside its polygon when a body hides it.
+	bool inShape(const VisionSystem& vision, EntityID observer, glm::vec2 meters) {
+		const std::optional<VisionSystem::SightShape> shape = vision.sightShape(observer);
+		return shape.has_value() &&
+			   (shape->polygon == nullptr || geometry::pointInPolygon(nav::toMm(meters), *shape->polygon) != geometry::PointInPolygon::Outside);
+	}
+} // namespace
+
+// The index holds each placed ring in the mesh with its kind, and nothing else: no water, no bounds,
+// no mover. Vision's shape is cut by the opaque rock and passes the soft trunk and the mover.
+TEST_F(NavigationSystemTest, PlacedObstaclesOccludeByKindAndNothingElseDoes) {
+	registerSightBodies();
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeMixed(executor, processed, {{kSightRock, {5.0F, 0.0F}}, {kSightTrunk, {0.0F, 5.0F}}});
+
+	World			  world;
+	world.registerSystem<TimeSystem>();
+	VisionSystem&	  vision = world.registerSystem<VisionSystem>();
+	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
+	vision.setUpdateInterval(1);
+	sys.setChunkManager(waterPatchChunks());
+	sys.setPlacementData(&executor, &processed);
+	meshAround(world, {0.0F, 0.0F}, 60.0F);
+	addColonist(world, {-3.0F, 0.0F}, "In the way");
+	const EntityID observer = sightObserver(world, {0.0F, 0.0F});
+	settle(sys);
+
+	const vision::PlacedOccluderIndex& index = sys.placedOccluders();
+	ASSERT_EQ(index.size(), 2U) << "the rock and the trunk, and no water, bounds, or mover";
+	std::vector<const vision::PlacedOccluder*> rings;
+	index.within({0, 0}, 100000, rings);
+	for (const vision::PlacedOccluder* ring : rings) {
+		EXPECT_EQ(sys.navMesh().ring(ring->ring).polygon.provenanceId, nav::kProvenancePlaced);
+		EXPECT_EQ(ring->kind, ring->defName == kSightRock ? vision::BodyKind::Opaque : vision::BodyKind::Soft) << ring->defName;
+	}
+	const std::int32_t pond = sys.navMesh().locate(nav::toMm({kPatchPond.cx, kPatchPond.cy}));
+	ASSERT_GE(pond, 0);
+	bool water = false;
+	for (const geometry::nav::RingId ring : sys.navMesh().cover(pond)) {
+		water = water || (ring != geometry::nav::kGroundToken && sys.navMesh().ring(ring).polygon.provenanceId == nav::kProvenanceWater);
+	}
+	EXPECT_TRUE(water) << "the pond is meshed, and the index never took it";
+
+	world.update(0.016F);
+	EXPECT_FALSE(inShape(vision, observer, {9.0F, 0.0F})) << "behind the rock";
+	EXPECT_TRUE(inShape(vision, observer, {4.0F, 0.0F})) << "short of the rock";
+	EXPECT_TRUE(inShape(vision, observer, {0.0F, 9.0F})) << "behind the trunk";
+	EXPECT_TRUE(inShape(vision, observer, {-6.0F, 0.0F})) << "behind the mover";
+	const std::optional<VisionSystem::SightBodies> bodies = vision.sightBodies(observer);
+	ASSERT_TRUE(bodies.has_value());
+	EXPECT_EQ(bodies->bodies->size(), 2U);
+	EXPECT_EQ(bodies->shadowEdges->size(), 2U) << "one shadow edge each side of the rock";
+}
+
+// Felling a tree in an observer's reach changes the serials there and rebuilds his shape; new ground
+// meshed with no obstacle on it leaves the shape alone.
+TEST_F(NavigationSystemTest, FellingATreeRebuildsSightAndNewGroundDoesNot) {
+	registerSightBodies();
+	const glm::vec2						tree{3.0F, 4.0F};
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeMixed(executor, processed, {{kSightTrunk, tree}});
+	ConstructionWorld cw;
+	buildWall(cw, {2000, -1000}, {2000, 1000});
+
+	World			  world;
+	TimeSystem&		  time	 = world.registerSystem<TimeSystem>();
+	VisionSystem&	  vision = world.registerSystem<VisionSystem>();
+	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
+	vision.setUpdateInterval(1);
+	vision.setConstructionWorld(&cw);
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	meshDisc(world, {0.0F, 0.0F}, kColonistRange);
+	const EntityID observer = sightObserver(world, {0.0F, 0.0F});
+	settle(sys);
+	time.skipTime(10.0F); // every ring has arrived
+	world.update(0.016F);
+	ASSERT_NE(vision.sightShape(observer)->polygon, nullptr) << "the wall puts him on the polygon path";
+	ASSERT_EQ(vision.sightBodies(observer)->bodies->size(), 2U) << "the wall and the tree";
+	const std::uint64_t built = vision.polygonBuildCount();
+
+	meshDisc(world, {200.0F, 200.0F}, kColonistRange);
+	for (int i = 0; i < 4; ++i) {
+		step(world, sys);
+	}
+	ASSERT_TRUE(sys.inSimArea({200.0F, 200.0F})) << "new ground went in";
+	EXPECT_EQ(vision.polygonBuildCount(), built) << "new ground with no obstacle rebuilt his shape";
+
+	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({tree.x, tree.y}), tree, kSightTrunk));
+	for (int i = 0; i < 3; ++i) {
+		step(world, sys);
+	}
+	EXPECT_EQ(sys.placedOccluders().size(), 0U);
+	// Two observers stand there: he and the still mover that meshed the ground, each rebuilt once.
+	EXPECT_EQ(vision.polygonBuildCount(), built + 2) << "the felled tree rebuilds each shape once";
+	EXPECT_EQ(vision.sightBodies(observer)->bodies->size(), 1U);
+}
+
+// A tree felled and another placed in one job, on the ring id the first freed: the index drops the
+// old entry before it takes the new one, so it holds one entry under a new serial, and the observer's
+// shape is rebuilt though the id is the same.
+TEST_F(NavigationSystemTest, ATreeOnARingIdFreedInTheSameJobIsOneEntry) {
+	registerSightBodies();
+	const glm::vec2						felled{10.0F, 0.0F};
+	const glm::vec2						grown{12.0F, 1.0F};
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeMixed(executor, processed, {{kSightTrunk, felled}});
+	ConstructionWorld cw;
+	buildWall(cw, {6000, -3000}, {6000, -1000});
+
+	World			  world;
+	TimeSystem&		  time	 = world.registerSystem<TimeSystem>();
+	VisionSystem&	  vision = world.registerSystem<VisionSystem>();
+	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
+	vision.setUpdateInterval(1);
+	vision.setConstructionWorld(&cw);
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	meshDisc(world, {0.0F, 0.0F}, 2.0F * kColonistRange);
+	const EntityID observer = sightObserver(world, {5.0F, 0.0F});
+	settle(sys);
+	time.skipTime(10.0F);
+	world.update(0.016F);
+	std::vector<const vision::PlacedOccluder*> rings;
+	sys.placedOccluders().within({0, 0}, 100000, rings);
+	ASSERT_EQ(rings.size(), 1U);
+	const geometry::nav::RingId freed	  = rings.front()->ring;
+	const std::uint64_t			oldSerial = rings.front()->serial;
+	const std::uint64_t			built	  = vision.polygonBuildCount();
+
+	// The removal and the limit that brings the new tree in are gathered in one tick, removal first: a
+	// mover whose first limit reaches back over the new tree and out past the meshed ground.
+	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({felled.x, felled.y}), felled, kSightTrunk));
+	placeMixed(executor, processed, {{kSightTrunk, grown}});
+	addColonist(world, grown + glm::vec2{0.9F * kColonistRange, 0.0F}, "Past the edge");
+	sys.resetNavQueryStats();
+	step(world, sys);
+	ASSERT_GE(sys.navQueryStats().navPatches, 2U) << "the removal and the limit went in one job";
+	step(world, sys); // collected
+	ASSERT_EQ(sys.placedOccluders().size(), 1U) << "one entry, not the old and the new";
+	sys.placedOccluders().within({0, 0}, 100000, rings);
+	ASSERT_EQ(rings.size(), 1U);
+	ASSERT_EQ(rings.front()->ring, freed) << "the new tree took the freed id";
+	EXPECT_NE(rings.front()->serial, oldSerial);
+	EXPECT_EQ(rings.front()->centre, nav::toMm(grown));
+	world.update(0.016F);
+	world.update(0.016F);
+	EXPECT_GT(vision.polygonBuildCount(), built) << "a new serial on the same id rebuilds his shape";
+}
+
+// Vision reads the placed occluder index alone and never waits for the patch job: a pass with a job
+// handed to the worker and not yet joined leaves it unjoined, and nav's own update joins it.
+TEST_F(NavigationSystemTest, VisionNeverJoinsThePatchJob) {
+	registerSightBodies();
+	const glm::vec2						tree{3.0F, 4.0F};
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeMixed(executor, processed, {{kSightTrunk, tree}, {kSightRock, {-4.0F, 0.0F}}});
+
+	World			  world;
+	world.registerSystem<TimeSystem>();
+	VisionSystem&	  vision = world.registerSystem<VisionSystem>();
+	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
+	vision.setUpdateInterval(1);
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	meshDisc(world, {0.0F, 0.0F}, kColonistRange);
+	sightObserver(world, {0.0F, 0.0F});
+	settle(sys);
+
+	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({tree.x, tree.y}), tree, kSightTrunk));
+	sys.update(0.016F);
+	sys.endTick(); // the removal's job goes to the worker
+	sys.resetNavQueryStats();
+	const std::uint64_t built = vision.polygonBuildCount();
+	vision.update(0.016F);
+	EXPECT_GT(vision.polygonBuildCount(), built) << "the pass read the rock from the index";
+	EXPECT_EQ(sys.navQueryStats().navPatches, 0U) << "vision joined the patch job";
+	EXPECT_EQ(sys.placedOccluders().size(), 2U) << "the job is not collected until nav's update";
+	sys.update(0.016F);
+	EXPECT_EQ(sys.navQueryStats().navPatches, 1U);
+	EXPECT_EQ(sys.placedOccluders().size(), 1U);
+}
+
+namespace {
+	// A still mover with no Memory, so vision does not read him: he meshes the disc of a colonist's
+	// range round `at`.
+	EntityID meshingMover(World& world, glm::vec2 at) {
+		const EntityID e = world.createEntity();
+		world.addComponent<Position>(e, Position{at});
+		world.addComponent<AgentRadius>(e, AgentRadius{});
+		return e;
+	}
+} // namespace
+
+// On open ground among soft trees only, his sight is the plain disc, built once and kept: standing
+// still, walking less than the rebuild step, and new ground meshed elsewhere leave the build; a walk
+// past the step builds again.
+TEST_F(NavigationSystemTest, PlainDiscKeepsItsBuildAmongSoftTrees) {
+	registerSightBodies();
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeMixed(executor, processed, {{kSightTrunk, {3.0F, 4.0F}}, {kSightTrunk, {-5.0F, 2.0F}}});
+
+	World			  world;
+	TimeSystem&		  time	 = world.registerSystem<TimeSystem>();
+	VisionSystem&	  vision = world.registerSystem<VisionSystem>();
+	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
+	vision.setUpdateInterval(1);
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	meshingMover(world, {0.0F, 0.0F});
+	const EntityID observer = sightObserver(world, {0.0F, 0.0F});
+	settle(sys);
+	time.skipTime(10.0F);
+	world.update(0.016F);
+	ASSERT_EQ(vision.sightShape(observer)->polygon, nullptr) << "soft trees alone leave the plain disc";
+	ASSERT_EQ(vision.sightBodies(observer)->bodies->size(), 2U);
+	EXPECT_EQ(vision.buildCount(), 1U);
+
+	for (int i = 0; i < 5; ++i) {
+		world.update(0.016F);
+	}
+	EXPECT_EQ(vision.buildCount(), 1U) << "standing still";
+	world.getComponent<Position>(observer)->value = {0.4F, 0.0F};
+	world.update(0.016F);
+	EXPECT_EQ(vision.buildCount(), 1U) << "under the rebuild step";
+	meshingMover(world, {200.0F, 200.0F});
+	for (int i = 0; i < 4; ++i) {
+		step(world, sys);
+	}
+	ASSERT_TRUE(sys.inSimArea({200.0F, 200.0F})) << "new ground went in";
+	EXPECT_EQ(vision.buildCount(), 1U) << "new ground with no obstacle";
+	EXPECT_FLOAT_EQ(vision.sightShape(observer)->center.x, 0.4F) << "the plain disc still follows him";
+	world.getComponent<Position>(observer)->value = {0.6F, 0.0F};
+	world.update(0.016F);
+	EXPECT_EQ(vision.buildCount(), 2U) << "past the rebuild step";
+	EXPECT_EQ(vision.polygonBuildCount(), 0U);
+}
+
+// A ring's arrival advances only with the clock. With no TimeSystem every ring has arrived; while the
+// game is paused a ring still arriving keeps no build due; once it runs again, the arriving ring
+// rebuilds him at each pass.
+TEST_F(NavigationSystemTest, ArrivalWithoutARunningClockKeepsNoBuildDue) {
+	registerSightBodies();
+	for (const bool withClock : {false, true}) {
+		PlacementExecutor					executor(AssetRegistry::Get());
+		std::unordered_set<ChunkCoordinate> processed;
+		placeMixed(executor, processed, {{kSightTrunk, {3.0F, 4.0F}}});
+		ConstructionWorld cw;
+		buildWall(cw, {2000, -1000}, {2000, 1000});
+
+		World		world;
+		TimeSystem* time = withClock ? &world.registerSystem<TimeSystem>() : nullptr;
+		VisionSystem&	  vision = world.registerSystem<VisionSystem>();
+		NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
+		vision.setUpdateInterval(1);
+		vision.setConstructionWorld(&cw);
+		sys.setChunkManager(landChunks());
+		sys.setPlacementData(&executor, &processed);
+		sys.setConstructionWorld(&cw);
+		meshingMover(world, {0.0F, 0.0F});
+		const EntityID observer = sightObserver(world, {0.0F, 0.0F});
+		settle(sys);
+		if (time != nullptr) {
+			time->pause();
+		}
+		for (int i = 0; i < 5; ++i) {
+			world.update(0.016F);
+		}
+		EXPECT_EQ(vision.polygonBuildCount(), 1U) << (withClock ? "paused" : "no clock");
+		const vision::SightBody& tree = vision.sightBodies(observer)->bodies->back();
+		EXPECT_EQ(tree.arrival, withClock ? 0 : geometry::kFractionOne);
+		if (time != nullptr) {
+			time->resume();
+			world.update(0.016F);
+			world.update(0.016F);
+			EXPECT_EQ(vision.polygonBuildCount(), 3U) << "an arriving ring rebuilds at each pass";
+			// Past the arrival's end one build records the ring whole, and the builds stop.
+			for (int i = 0; i < 6; ++i) {
+				world.update(0.5F);
+			}
+			EXPECT_EQ(vision.sightBodies(observer)->bodies->back().arrival, geometry::kFractionOne);
+			const std::uint64_t whole = vision.polygonBuildCount();
+			world.update(0.016F);
+			world.update(0.016F);
+			EXPECT_EQ(vision.polygonBuildCount(), whole) << "a ring recorded whole keeps rebuilding";
+		}
+	}
 }
 
 // Many placed obstacles leaving the world at once (felled) queue for removal. That backlog drains

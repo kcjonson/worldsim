@@ -38,6 +38,12 @@ The developer client is an external TypeScript/Vite web application that connect
   placed obstacle, or unmeshed ground. `ground?pts=x,y;...` reads each point's verdicts: `valid`
   (clear to stand on), `buildable` (a foundation may go there once it is cleared), and `buildableNow`
   (a wall or furniture may go there as the ground stands), beside the chunk's terrain at the point.
+  The Sight tunables section loads `what=sightTunables` (each sight tunable of sight-softening.md 9
+  with its value, range, and start value) and gives each a slider; releasing one sends
+  `sight?name=<tunable>&value=<whole number>` (`sight?reset=1` puts back the start values), which
+  answers every tunable as vision's setter clamped it. Its Bodies button shows `what=sightBodies`,
+  each colonist's sight bodies from vision's last pass: kind, diameter in millimetres, centre, a
+  placed body's def name, and the build's shadow edges.
   The Colonist section's thought entry gives the picked colonist a thought: its list is every loaded
   thought type from `GET /api/state?what=thoughttypes` (`{types:[{name, label}]}`, read with Refresh),
   and Give thought calls `thought?colonist=<id>&type=<name>`, the same verb the HTTP API documents. Its

@@ -53,6 +53,15 @@ export interface ColonistState {
   action?: string;
 }
 
+/** A sight tunable as serialized by /api/state?what=sightTunables and answered by /api/dev/sight. */
+export interface SightTunable {
+  name: string;
+  value: number;
+  least: number;
+  most: number;
+  start: number;
+}
+
 /** A thought type as listed by /api/state?what=thoughttypes. */
 export interface ThoughtTypeState {
   name: string;

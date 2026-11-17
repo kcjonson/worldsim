@@ -393,6 +393,8 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
 | `landing` | `{landingLatDeg, landingLonDeg, biome, waterClass, riverInTile}` |
 | `time` | `{...}` |
 | `tunables` | every registered tunable and its value |
+| `sightBodies` | `{colonists:[{id, name, eye{x, y}, leadMm, reachMm, bodies:[{source, kind, serial, defName, diameterMm, centre{x, y}, corners, arrival}], shadowEdges:[{body, corner, litTurn}]}]}`: each colonist's sight bodies within his reach of his last build (sight-softening.md 2.4). `source` is `placed` or `wall` (a wall body has `wallBody`, its index, in place of `serial` and `defName`), `kind` is `opaque` or `soft`, and a shadow edge's `body` indexes `bodies` |
+| `sightTunables` | `{tunables:[{name, value, least, most, start}]}`, the sight tunables (sight-softening.md 9); `/api/dev/sight?name=<tunable>&value=<whole number>` sets one through vision's clamping setter, `sight?reset=1` all, and answers the same |
 | `gpuhold` | `{enabled, target, passes, holdGpuMs, sceneGpuMs, frameMs}`, the GPU hold's state; the GPU times are a few frames old |
 | `uprights` | `{uprightDrawCalls, uprightTriangles, uprightOverlapSplits, ...}`, last frame's draws in the depth-sorted upright stream (tall statics and actors). `/api/metrics` already counts them in `drawCalls` and `triangleCount`; this splits them out |
 

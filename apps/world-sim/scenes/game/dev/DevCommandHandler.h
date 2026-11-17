@@ -157,6 +157,12 @@ namespace world_sim {
 		// subject is a 400.
 		app::DevResponse devThought(const app::DevRequest& cmd);
 		void		devTunable(const app::DevRequest& cmd);
+		// sight?name=<tunable>&value=<whole number>, or sight?reset=1: sets one sight tunable (or all to
+		// their start values) through VisionSystem's clamping setter and answers every tunable with its
+		// range. An unknown name or a value that is not a whole number is a 400.
+		app::DevResponse devSight(const app::DevRequest& cmd);
+		// /api/state?what=sightBodies: each colonist's sight bodies from vision's last pass.
+		std::string sightBodiesView();
 
 		// Logs and toasts a verb's refusal message, when it is not empty, and returns it as the refusal.
 		DevRefusal refuse(const std::string& message);
