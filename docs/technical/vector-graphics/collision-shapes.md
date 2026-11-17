@@ -153,7 +153,8 @@ landing site with no rebasing, so far out the spacing sets the scale: 4 mm 50 km
 metre 6,000 km out, where every millimetre rule here (this one, the mm rounding of nav rings)
 works on that coarse lattice. If no step within 16 lands outside (heading out of a corner at
 the bottom of a slot a few mm wide, every rounded step can land on a wall), the nearest point
-of a 9 by 9 grid round the boundary point that rounds outside is taken instead; failing that
+of a 9 by 9 grid round the boundary point that rounds outside is taken instead, which on a
+concave shape need not be in the same pocket the centre was pushed toward; failing that
 the push is skipped rather than leaving the mover inside, and the forward snap has it. Box2D (`b2CollidePolygonAndCircle`) finds the same
 contact by separating axes, which needs a convex polygon, so Box2D, Godot
 (`CollisionPolygon2D`), and Unity (`PolygonCollider2D`) split a concave collider into convex
@@ -166,7 +167,8 @@ ring order. A rect is this four-point case: the nearest face.
 
 Each agent gathers the obstacles whose positions are within the query reach, skips any whose
 own collider can't reach it (a squared-distance test against the shape's reach plus the pad's
-corner at the instance's scale, plus 2 mm for rounding, before any ring is built; the reach is
+corner at the instance's scale, plus 2 mm for the mm rounding near the landing site, which is
+not enough far out where float spacing is coarser (WOR-972), before any ring is built; the reach is
 `CollisionShape::reachMeters`, the one the registry records too), sorts the rest by position, and resolves them in
 that order, twice, so an agent wedged between two settles against both.
 

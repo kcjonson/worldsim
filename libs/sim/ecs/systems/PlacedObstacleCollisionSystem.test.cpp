@@ -218,9 +218,14 @@ namespace {
 
 	// Points `depth` metres in from every edge of a counter-clockwise ring along its length (out from
 	// it for a negative depth), and in along each corner's bisector.
-	std::vector<glm::vec2> startsBeside(const geometry::Ring& ring, std::initializer_list<float> depths) {
-		const std::size_t	   count = ring.size();
-		std::vector<glm::vec2> starts;
+	struct Start {
+		glm::vec2 position;
+		float	  depth = 0.0F; // metres from the edge or corner it was put beside
+	};
+
+	std::vector<Start> startsBeside(const geometry::Ring& ring, std::initializer_list<float> depths) {
+		const std::size_t  count = ring.size();
+		std::vector<Start> starts;
 		for (std::size_t i = 0; i < count; ++i) {
 			const glm::vec2 from   = nav::toMeters(ring[i]);
 			const glm::vec2 to	   = nav::toMeters(ring[(i + 1) % count]);
@@ -228,14 +233,14 @@ namespace {
 			const glm::vec2 inward{-along.y, along.x}; // left of a counter-clockwise edge
 			for (const float t : {0.05F, 0.2F, 0.37F, 0.5F, 0.63F, 0.8F, 0.95F}) {
 				for (const float depth : depths) {
-					starts.push_back(from + (to - from) * t + inward * depth);
+					starts.push_back({from + (to - from) * t + inward * depth, std::abs(depth)});
 				}
 			}
 			const glm::vec2 previous = nav::toMeters(ring[(i + count - 1) % count]);
 			const glm::vec2 bisector = glm::normalize(previous - from) + along;
 			if (glm::length(bisector) > 1e-6F) {
 				for (const float depth : depths) {
-					starts.push_back(from + glm::normalize(bisector) * depth);
+					starts.push_back({from + glm::normalize(bisector) * depth, std::abs(depth)});
 				}
 			}
 		}
@@ -248,11 +253,12 @@ namespace {
 											 {0.0015F, 0.0F}, {-0.0015F, 0.0F}, {-0.0015F, 0.5F}, {-0.5F, 0.5F}};
 
 	// Resolves every start whose mm rounding is inside and checks the landing: rounded as nav rounds
-	// it, strictly outside; resolved again, untouched; and within `nearMm` of the ring. Returns how
-	// many starts were pushed.
-	int checkLandings(const geometry::Ring& ring, const std::vector<glm::vec2>& starts, double nearMm) {
+	// it, strictly outside; resolved again, untouched; within `nearMm` of the ring; and no farther from
+	// the start than its depth plus `nearMm`, so a hop across a thin wall shows. Returns how many starts
+	// were pushed.
+	int checkLandings(const geometry::Ring& ring, const std::vector<Start>& starts, double nearMm) {
 		int pushed = 0;
-		for (const glm::vec2 start : starts) {
+		for (const auto& [start, depth] : starts) {
 			if (geometry::pointInPolygon(nav::toMm(start), ring) != geometry::PointInPolygon::Inside) {
 				EXPECT_FALSE(resolveCenterAgainstOutline(start, ring).has_value()) << start.x << "," << start.y;
 				continue;
@@ -266,6 +272,8 @@ namespace {
 			EXPECT_EQ(geometry::pointInPolygon(nav::toMm(*landing), ring), geometry::PointInPolygon::Outside) << start.x << "," << start.y;
 			EXPECT_FALSE(resolveCenterAgainstOutline(*landing, ring).has_value()) << start.x << "," << start.y;
 			EXPECT_LE(distanceToRingMm(*landing, ring), nearMm) << start.x << "," << start.y;
+			EXPECT_LE(static_cast<double>(glm::length(*landing - start)) * 1000.0, nearMm + static_cast<double>(depth) * 1000.0)
+				<< start.x << "," << start.y;
 		}
 		return pushed;
 	}
@@ -325,6 +333,24 @@ TEST(PlacedObstacleResolveTest, PushLandsOutsideFarFromTheOrigin) {
 		farRing.push_back({far.x + std::llround(x * cosine - y * sine), far.y + std::llround(x * sine + y * cosine)});
 	}
 	EXPECT_GT(checkLandings(farRing, startsBeside(farRing, {0.5F, 1.0F}), 1500.0), 5);
+}
+
+// When the straight walk can't get out (here it is sent inward, so every step stays inside), the grid
+// round the boundary point supplies the nearest point that rounds outside: 1 mm past the right edge.
+TEST(PlacedObstacleResolveTest, LandingFallsBackToTheGrid) {
+	const geometry::Ring		   square  = boxMm({0.0F, 0.0F}, {1.0F, 1.0F});
+	const std::optional<glm::vec2> landing = landOutside({1000.0, 0.0}, {-1.0, 0.0}, square);
+	ASSERT_TRUE(landing.has_value());
+	EXPECT_EQ(geometry::pointInPolygon(nav::toMm(*landing), square), geometry::PointInPolygon::Outside);
+	EXPECT_FLOAT_EQ(landing->x, 1.001F);
+	EXPECT_FLOAT_EQ(landing->y, 0.0F);
+}
+
+// With no point that rounds outside within the walk or the grid (a boundary point given deep inside,
+// 4 mm of walk and grid all inside), there is no landing rather than one inside.
+TEST(PlacedObstacleResolveTest, NoLandingInReachIsNullopt) {
+	const geometry::Ring square = boxMm({0.0F, 0.0F}, {1.0F, 1.0F});
+	EXPECT_FALSE(landOutside({0.0, 0.0}, {1.0, 0.0}, square).has_value());
 }
 
 // --- System integration ----------------------------------------------------

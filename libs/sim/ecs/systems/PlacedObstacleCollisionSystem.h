@@ -37,6 +37,7 @@
 
 #include "../ISystem.h"
 
+#include <core/Vec2d.h>
 #include <polygon/Polygon.h>
 
 #include <glm/vec2.hpp>
@@ -63,6 +64,12 @@ class NavigationSystem;
 // concave corner it is the corner itself. Ties between equally near edges go to the first in ring
 // order. No input gives a NaN. Pure and deterministic.
 [[nodiscard]] std::optional<glm::vec2> resolveCenterAgainstOutline(glm::vec2 center, const geometry::Ring& outlineMm);
+
+// The landing step of resolveCenterAgainstOutline: from `boundaryMm` (world mm, on the ring), walk along
+// the unit `outward` until the position, stored as a float and rounded to the mm, is strictly outside
+// the ring; failing that, the nearest point of a 9 by 9 grid round `boundaryMm` that is (in any pocket
+// of a concave ring); failing that, nullopt.
+[[nodiscard]] std::optional<glm::vec2> landOutside(const geometry::Vec2d& boundaryMm, const geometry::Vec2d& outward, const geometry::Ring& outlineMm);
 
 class PlacedObstacleCollisionSystem : public ISystem {
   public:

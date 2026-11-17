@@ -45,7 +45,8 @@ namespace {
 	// Cells each side of the boundary point the fallback grid searches.
 	constexpr int kLandingGridHalfSize = 4;
 
-	// Rounding the ring's points and the centre to the mm each moves a point up to 0.71 mm.
+	// Rounding the ring's points and the centre to the mm each moves a point up to 0.71 mm. That holds
+	// near the landing site; far out the float spacing is coarser and this is not enough (WOR-972).
 	constexpr float kReachSlackMeters = 0.002F;
 
 	glm::vec2 metersFromMm(const geometry::Vec2d& pointMm) {
@@ -71,107 +72,122 @@ namespace {
 		return unit(counterClockwise ? geometry::Vec2d{alongY, -alongX} : geometry::Vec2d{-alongY, alongX});
 	}
 
+	double dot(const geometry::Vec2d& left, const geometry::Vec2d& right) { return left.x * right.x + left.y * right.y; }
+
+	struct BoundaryPoint {
+		geometry::Vec2d point;
+		std::size_t		edge = 0;
+		double			t	 = 0.0; // along the edge; 0 or 1 at a corner
+	};
+
+	// The boundary point nearest `centerMm`, off the mm lattice, so a push keeps the coordinate along
+	// the edge. Ties go to the first edge in ring order.
+	BoundaryPoint nearestBoundaryPoint(const geometry::Vec2d& centerMm, const geometry::Ring& outlineMm) {
+		const std::size_t count		   = outlineMm.size();
+		double			  bestDistance = std::numeric_limits<double>::max();
+		BoundaryPoint	  nearest;
+		for (std::size_t i = 0; i < count; ++i) {
+			const geometry::Vec2i64&	 from	 = outlineMm[i];
+			const geometry::Vec2i64&	 to		 = outlineMm[(i + 1) % count];
+			const geometry::SegmentPoint closest = geometry::closestOnSegment(centerMm, from, to);
+			if (closest.distanceMm < bestDistance) {
+				bestDistance = closest.distanceMm;
+				nearest		 = {{static_cast<double>(from.x) + static_cast<double>(to.x - from.x) * closest.t,
+								 static_cast<double>(from.y) + static_cast<double>(to.y - from.y) * closest.t},
+								i,
+								closest.t};
+			}
+		}
+		return nearest;
+	}
+
+	struct CenterSide {
+		bool			inside = false;
+		geometry::Vec2d normal; // outward: the edge's, or at a corner the bisector of its two edges'
+	};
+
+	// Which side of the boundary the unrounded centre is on. Its rounding is inside, but beside a
+	// slanted edge the centre itself can be up to 0.71 mm outside, and pushing it toward the boundary
+	// from there would push it in. At a corner: inside a convex one when inside both edges, inside a
+	// reflex one when inside either.
+	CenterSide centerSide(const geometry::Vec2d& centerMm, const BoundaryPoint& nearest, const geometry::Ring& outlineMm) {
+		const std::size_t	  count			   = outlineMm.size();
+		const bool			  counterClockwise = geometry::windingOrder(outlineMm) != geometry::Winding::Clockwise;
+		const geometry::Vec2d fromNearest	   = centerMm - nearest.point;
+		const geometry::Vec2d edgeNormal = edgeOutward(outlineMm[nearest.edge], outlineMm[(nearest.edge + 1) % count], counterClockwise);
+		if (nearest.t > 0.0 && nearest.t < 1.0) {
+			return {dot(fromNearest, edgeNormal) < 0.0, edgeNormal};
+		}
+		const std::size_t		 corner			= nearest.t <= 0.0 ? nearest.edge : (nearest.edge + 1) % count;
+		const geometry::Vec2i64& before			= outlineMm[(corner + count - 1) % count];
+		const geometry::Vec2i64& at				= outlineMm[corner];
+		const geometry::Vec2i64& after			= outlineMm[(corner + 1) % count];
+		const geometry::Vec2d	 incomingNormal = edgeOutward(before, at, counterClockwise);
+		const geometry::Vec2d	 outgoingNormal = edgeOutward(at, after, counterClockwise);
+		const bool				 insideIncoming = dot(fromNearest, incomingNormal) < 0.0;
+		const bool				 insideOutgoing = dot(fromNearest, outgoingNormal) < 0.0;
+		const double turn = static_cast<double>(at.x - before.x) * static_cast<double>(after.y - at.y) -
+							static_cast<double>(at.y - before.y) * static_cast<double>(after.x - at.x);
+		const bool		convex	= counterClockwise ? turn > 0.0 : turn < 0.0;
+		geometry::Vec2d bisector = unit(incomingNormal + outgoingNormal);
+		if (geometry::length(bisector) == 0.0) {
+			bisector = edgeNormal;
+		}
+		return {convex ? (insideIncoming && insideOutgoing) : (insideIncoming || insideOutgoing), bisector};
+	}
+
 } // namespace
 
-std::optional<glm::vec2> resolveCenterAgainstOutline(glm::vec2 center, const geometry::Ring& outlineMm) {
-	const std::size_t count = outlineMm.size();
-	if (count < 3) {
-		return std::nullopt;
-	}
-	if (geometry::pointInPolygon(nav::toMm(center), outlineMm) != geometry::PointInPolygon::Inside) {
-		return std::nullopt;
-	}
+std::optional<glm::vec2> landOutside(const geometry::Vec2d& boundaryMm, const geometry::Vec2d& outward, const geometry::Ring& outlineMm) {
+	const auto roundsOutside = [&](glm::vec2 landing) {
+		return geometry::pointInPolygon(nav::toMm(landing), outlineMm) == geometry::PointInPolygon::Outside;
+	};
 
-	// The nearest boundary point to the centre as it stands, off the mm lattice, so the push leaves
-	// the coordinate along the edge exactly where it was.
-	const geometry::Vec2d centerMm{static_cast<double>(center.x) * kMillimetersPerMeter, static_cast<double>(center.y) * kMillimetersPerMeter};
-	double				  bestDistance = std::numeric_limits<double>::max();
-	geometry::Vec2d		  nearest;
-	std::size_t			  nearestEdge = 0;
-	double				  nearestT	  = 0.0;
-	for (std::size_t i = 0; i < count; ++i) {
-		const geometry::Vec2i64&	 from	 = outlineMm[i];
-		const geometry::Vec2i64&	 to		 = outlineMm[(i + 1) % count];
-		const geometry::SegmentPoint closest = geometry::closestOnSegment(centerMm, from, to);
-		if (closest.distanceMm < bestDistance) {
-			bestDistance = closest.distanceMm;
-			nearestEdge	 = i;
-			nearestT	 = closest.t;
-			nearest		 = {static_cast<double>(from.x) + static_cast<double>(to.x - from.x) * closest.t,
-							static_cast<double>(from.y) + static_cast<double>(to.y - from.y) * closest.t};
-		}
-	}
-
-	// Which side of the boundary the centre really is on. Rounded it is inside, but on a slanted edge
-	// the unrounded centre can be up to 0.71 mm outside, and pushing "toward the nearest point" from
-	// there would push it in. Against an edge's interior the side is the edge normal's; at a corner it
-	// is inside a convex corner when inside both edges, inside a reflex one when inside either.
-	const bool			  counterClockwise = geometry::windingOrder(outlineMm) != geometry::Winding::Clockwise;
-	const geometry::Vec2d edgeNormal	   = edgeOutward(outlineMm[nearestEdge], outlineMm[(nearestEdge + 1) % count], counterClockwise);
-	const geometry::Vec2d fromNearest	   = centerMm - nearest;
-	geometry::Vec2d		  cornerNormal	   = edgeNormal;
-	bool				  reallyInside	   = (fromNearest.x * edgeNormal.x + fromNearest.y * edgeNormal.y) < 0.0;
-	if (nearestT <= 0.0 || nearestT >= 1.0) {
-		const std::size_t		 corner	  = nearestT <= 0.0 ? nearestEdge : (nearestEdge + 1) % count;
-		const geometry::Vec2i64& before	  = outlineMm[(corner + count - 1) % count];
-		const geometry::Vec2i64& at		  = outlineMm[corner];
-		const geometry::Vec2i64& after	  = outlineMm[(corner + 1) % count];
-		const geometry::Vec2d	 normalIn = edgeOutward(before, at, counterClockwise);
-		const geometry::Vec2d	 normalOut = edgeOutward(at, after, counterClockwise);
-		const bool				 insideIn = (fromNearest.x * normalIn.x + fromNearest.y * normalIn.y) < 0.0;
-		const bool				 insideOut = (fromNearest.x * normalOut.x + fromNearest.y * normalOut.y) < 0.0;
-		const double			 turn = static_cast<double>(at.x - before.x) * static_cast<double>(after.y - at.y) -
-							static_cast<double>(at.y - before.y) * static_cast<double>(after.x - at.x);
-		const bool convex = counterClockwise ? turn > 0.0 : turn < 0.0;
-		reallyInside	  = convex ? (insideIn && insideOut) : (insideIn || insideOut);
-		cornerNormal	  = unit(normalIn + normalOut);
-		if (geometry::length(cornerNormal) == 0.0) {
-			cornerNormal = edgeNormal;
-		}
-	}
-
-	// Outward: away from the centre through the nearest point when it is inside (at a reflex corner that
-	// bisects the corner's two edges), away from the nearest point through the centre when it is already
-	// a hair outside. A centre on the boundary has no direction, so the edge's or corner's normal stands in.
-	geometry::Vec2d outward = unit(reallyInside ? nearest - centerMm : centerMm - nearest);
-	if (geometry::length(fromNearest) < 1e-6 || geometry::length(outward) == 0.0) {
-		outward = cornerNormal;
-	}
-
-	// Land where the next tick's rounding (the position as the float it is stored in, to the mm) is
-	// strictly outside: on the boundary or a rounded hair inside, nav would take the mover as standing in
-	// the obstacle and the forward snap would move it on. A step is never finer than the float spacing
-	// there, which far from the origin is coarser than the mm (see floatSpacingMm).
-	const double step = std::max({kLandingStepMm, floatSpacingMm(metersFromMm(nearest).x), floatSpacingMm(metersFromMm(nearest).y)});
+	// Never finer than the float spacing at the position, which far from the origin is coarser than a mm.
+	const glm::vec2 boundary = metersFromMm(boundaryMm);
+	const double	step	 = std::max({kLandingStepMm, floatSpacingMm(boundary.x), floatSpacingMm(boundary.y)});
 	for (int index = 0; index <= kLandingStepsMax; ++index) {
-		const glm::vec2 landing = metersFromMm(nearest + outward * (step * static_cast<double>(index)));
-		if (geometry::pointInPolygon(nav::toMm(landing), outlineMm) == geometry::PointInPolygon::Outside) {
+		const glm::vec2 landing = metersFromMm(boundaryMm + outward * (step * static_cast<double>(index)));
+		if (roundsOutside(landing)) {
 			return landing;
 		}
 	}
-	// The straight walk can miss in a slot a few mm wide (heading out of a corner at the bottom of it,
-	// every rounded step lands on a wall). Then the nearest point of a grid round the boundary point,
-	// a step apart, that rounds outside.
+
+	// The walk can miss in a slot a few mm wide (out of a corner at its bottom every rounded step lands
+	// on a wall). The grid's nearest outside point need not be in the same pocket of a concave shape.
 	const double			 cell = std::max(1.0, step);
 	std::optional<glm::vec2> closest;
 	double					 closestDistance = std::numeric_limits<double>::max();
 	for (int across = -kLandingGridHalfSize; across <= kLandingGridHalfSize; ++across) {
 		for (int down = -kLandingGridHalfSize; down <= kLandingGridHalfSize; ++down) {
-			const geometry::Vec2d candidate = nearest + geometry::Vec2d{static_cast<double>(across) * cell, static_cast<double>(down) * cell};
+			const geometry::Vec2d candidate = boundaryMm + geometry::Vec2d{static_cast<double>(across) * cell, static_cast<double>(down) * cell};
 			const glm::vec2		  landing	= metersFromMm(candidate);
-			if (geometry::pointInPolygon(nav::toMm(landing), outlineMm) != geometry::PointInPolygon::Outside) {
-				continue;
-			}
-			const double distance = geometry::length(candidate - nearest);
-			if (distance < closestDistance) {
+			const double		  distance	= geometry::length(candidate - boundaryMm);
+			if (distance < closestDistance && roundsOutside(landing)) {
 				closestDistance = distance;
 				closest			= landing;
 			}
 		}
 	}
-	// Nothing outside in reach either: leave the mover where it stands rather than put it somewhere
-	// inside; the forward snap owns a mover inside an obstacle.
+	// Nothing outside in reach: better the mover stays put than lands inside; the forward snap owns it.
 	return closest;
+}
+
+std::optional<glm::vec2> resolveCenterAgainstOutline(glm::vec2 center, const geometry::Ring& outlineMm) {
+	if (outlineMm.size() < 3 || geometry::pointInPolygon(nav::toMm(center), outlineMm) != geometry::PointInPolygon::Inside) {
+		return std::nullopt;
+	}
+	const geometry::Vec2d centerMm{static_cast<double>(center.x) * kMillimetersPerMeter, static_cast<double>(center.y) * kMillimetersPerMeter};
+	const BoundaryPoint	  nearest = nearestBoundaryPoint(centerMm, outlineMm);
+	const CenterSide	  side	  = centerSide(centerMm, nearest, outlineMm);
+
+	// Out through the boundary point from inside; on from it through the centre when the centre is a
+	// hair outside; along the normal when the centre is on the boundary.
+	geometry::Vec2d outward = unit(side.inside ? nearest.point - centerMm : centerMm - nearest.point);
+	if (geometry::length(centerMm - nearest.point) < 1e-6 || geometry::length(outward) == 0.0) {
+		outward = side.normal;
+	}
+	return landOutside(nearest.point, outward, outlineMm);
 }
 
 void PlacedObstacleCollisionSystem::update(float /*deltaTime*/) {
