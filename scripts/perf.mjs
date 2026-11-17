@@ -2,8 +2,8 @@
 // docs/testing/README.md ("Performance") is the rule; docs/testing/nightly-perf-batch.md the batch.
 //
 //   capture   --port 8081 (--view river|river-cover|coast|desert | --x 0 --y 20) [--zooms 3,1.5] [--no-scroll]
-//             [--no-gpu-hold] [--no-reveal] [--out file]      against a world-sim you started, in the game
-//             scene, with player visibility revealed unless --no-reveal (which times the cover);
+//             [--no-gpu-hold] [--no-reveal] [--out file]      against a world-sim you started with --no-settings,
+//             in the game scene, with player visibility revealed unless --no-reveal (which times the cover);
 //             river-cover is the river with the cover drawn, at zooms 3, 1.5 and 0.75, no scroll
 //   compare   --base a.json[,b.json] --tip c.json[,d.json] [--md file]
 //             --night <dir> --base <sha> --tip <sha> [--views river,coast|none] [--bench world,assets]
@@ -312,7 +312,7 @@ async function answers(url, timeoutMs = 2000) {
 async function withGame(dir, port, body) {
 	const base = `http://127.0.0.1:${port}`;
 	if (await answers(`${base}/api/state?what=scene`)) throw new Error(`something already answers on port ${port}`);
-	const child = spawn(path.join(dir, kWindows ? 'world-sim.exe' : 'world-sim'), ['--scene=game', '--http-port', String(port)], { cwd: dir, stdio: 'ignore' });
+	const child = spawn(path.join(dir, kWindows ? 'world-sim.exe' : 'world-sim'), ['--scene=game', '--no-settings', '--http-port', String(port)], { cwd: dir, stdio: 'ignore' });
 	let exited = false;
 	child.on('exit', () => { exited = true; });
 	child.on('error', () => { exited = true; });

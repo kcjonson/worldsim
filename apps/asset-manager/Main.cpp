@@ -10,6 +10,7 @@
 #include <assets/AssetBootstrap.h>
 #include <platform/Platform.h>
 #include <theme/Fonts.h>
+#include <theme/InterfaceScale.h>
 #include <world/AppIdentity.h>
 #include <world/rendering/GlVersion.h>
 
@@ -39,7 +40,11 @@ int main(int argc, char* argv[]) {
 	}
 
 	std::unique_ptr<app::Platform> platform = app::createGlfwPlatform(
-		{.title = kTitle, .background = commandLine.background, .glVersion = {.major = worldview::kGlMajor, .minor = worldview::kGlMinor}}
+		{.title = kTitle,
+		 .background = commandLine.background,
+		 .glVersion = {.major = worldview::kGlMajor, .minor = worldview::kGlMinor},
+		 .minWidth = theme::kMinWindowWidth,
+		 .minHeight = theme::kMinWindowHeight}
 	);
 	if (platform == nullptr) {
 		return 1;
@@ -49,6 +54,7 @@ int main(int argc, char* argv[]) {
 		 .applicationName = "asset-manager",
 		 // A background window never has the keyboard, so its ticks can't wait for it
 		 .frame = {.frameCapHz = 120, .freezeTicksOnFocusLoss = !commandLine.background},
+		 .uiScale = theme::uiScaleConfig(),
 		 .baseShader = base_shader::source(),
 		 .fontAtlases = theme::kFontAtlases,
 		 .defaultFont = theme::fontDefault,
@@ -71,6 +77,7 @@ int main(int argc, char* argv[]) {
 		app->scenes().switchTo(asset_manager::scenes::Browser.name);
 	}
 
+	const app::DevServer::Registration uiScaleView = theme::registerUiScaleView(*app);
 	app->run();
 	app->shutdown();
 	return 0;

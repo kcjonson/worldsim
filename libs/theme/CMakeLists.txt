@@ -1,9 +1,11 @@
 # Worldsim's design system on salal's ui: worldsim's theme as Design Tokens and its icon set, both
-# compiled in by salal's build steps, and worldsim's own components (Panel, Avatar). tokens/ and icons/
+# compiled in by salal's build steps, worldsim's own components (Panel, Avatar), and the interface scale
+# every app's App takes (theme/InterfaceScale.h, over salal's app). tokens/ and icons/
 # are written by docs/ui-prototype/scripts/gen-cpp-theme.mjs and gen-icon-geometry.mjs; don't edit them
 # by hand.
 add_library(theme STATIC
     theme/Avatar.cpp
+    theme/InterfaceScale.cpp
     theme/Panel.cpp
     theme/Theme.cpp
 )
@@ -18,6 +20,7 @@ target_compile_features(theme PUBLIC cxx_std_20)
 target_link_libraries(theme
     PUBLIC
         salal::ui
+        salal::app
 )
 
 salal_tokens(theme tokens NAMESPACE theme HEADER theme/Tokens.h)

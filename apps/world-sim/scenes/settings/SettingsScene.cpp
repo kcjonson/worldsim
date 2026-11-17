@@ -1,9 +1,9 @@
 // Settings Scene - game options.
 //
-// Options screen: a title, a kicker and the drawing settings, one switch (or choice) each, read
-// from and written to world_sim::UserSettings; changes apply at once for the
-// session (no cross-launch persistence yet). ESC, or Back, returns to the main
-// menu.
+// Options screen: a title, then the interface size and the drawing settings, each under its kicker, one
+// switch (or choice) each. Every change applies at once. The interface size is the App's ui.scale, saved to
+// the settings file as it changes; the drawing settings are world_sim::UserSettings, for the session (no
+// cross-launch persistence yet). ESC, or Back, returns to the main menu.
 
 #include "SceneTypes.h"
 #include "UserSettings.h"
@@ -12,6 +12,7 @@
 
 #include <application/App.h>
 #include <primitives/Primitives.h>
+#include <theme/InterfaceScale.h>
 #include <theme/Keys.h>
 #include <ui/components/Button.h>
 #include <ui/components/SegmentedControl.h>
@@ -19,14 +20,18 @@
 #include <ui/shapes/Text.h>
 #include <utils/Log.h>
 
+#include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace {
 
 	constexpr const char* kSceneName = "settings";
 	constexpr float		  kColX = 80.0F;
 	constexpr float		  kRowWidth = 480.0F;
+	constexpr float		  kScrollbarReserve = 16.0F; // so a row never sits under the list's scrollbar
 
 	namespace tokens = world_sim::tokens;
 	namespace family = ui::tokens::font::family;
@@ -35,6 +40,14 @@ namespace {
 		char text[32];
 		std::snprintf(text, sizeof(text), "%g", static_cast<double>(value));
 		return text;
+	}
+
+	std::vector<std::string> interfaceSizeLabels() {
+		std::vector<std::string> labels;
+		for (const float size : theme::kInterfaceSizes) {
+			labels.push_back(std::to_string(std::lround(size * 100.0F)) + "%");
+		}
+		return labels;
 	}
 
 	class SettingsScene : public app::Scene {
@@ -75,9 +88,11 @@ namespace {
 
 			const float space2 = theme.get(tokens::spacing::space2);
 			const float space4 = theme.get(tokens::spacing::space4);
+			const float space6 = theme.get(tokens::spacing::space6);
 			const float space8 = theme.get(tokens::spacing::space8);
 
-			// The title and Back stay put; the settings between them scroll when the window is short.
+			// The title and Back stay put; the settings between them scroll on a canvas shorter than the
+			// reference. The bottom padding keeps Back clear of the ESC hint.
 			ui::Ref<ui::Component> column = root().addChild<ui::Component>({
 				.id = "settings",
 				.size = {ui::percent(100.0F), ui::percent(100.0F)},
@@ -85,7 +100,7 @@ namespace {
 					.display = ui::Display::Flex,
 					.flexDirection = ui::FlexDirection::Column,
 					.gap = space4,
-					.padding = {space8, 0.0F, space8, kColX},
+					.padding = {space6, 0.0F, space8, kColX},
 					.alignItems = ui::AlignItems::Start,
 				},
 			});
@@ -101,18 +116,59 @@ namespace {
 				),
 				.text = "Settings",
 			});
-			column.addChild<ui::Text>({.id = "settings_kicker", .layout = {.flexShrink = 0.0F}, .style = kicker, .text = "// DRAWING SETTINGS"});
 
 			ui::Ref<ui::Component> list = column.addChild<ui::Component>({
-				.id = "settings_drawing",
-				.size = {kRowWidth, ui::kAuto},
+				.id = "settings_list",
+				.size = {kRowWidth + kScrollbarReserve, ui::kAuto},
 				.layout =
 					{.display = ui::Display::Flex,
 					 .flexDirection = ui::FlexDirection::Column,
 					 .gap = space4,
+					 .padding = {0.0F, kScrollbarReserve, 0.0F, 0.0F},
 					 .flexGrow = 1.0F},
 				.overflow = ui::Overflow::Scroll,
 			});
+
+			list.addChild<ui::Text>({.id = "settings_interface_kicker", .style = kicker, .text = "// INTERFACE"});
+			ui::Ref<ui::Component> size = list.addChild<ui::Component>({
+				.id = "interface_size",
+				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = space2},
+			});
+			size.addChild<ui::Text>({
+				.id = "interface_size_label",
+				.style = world_sim::text(theme, {.size = tokens::fontSize::fsBase, .color = tokens::color::text}),
+				.text = "Interface size",
+			});
+			ui::Ref<ui::Component> sizeControls = size.addChild<ui::Component>({
+				.layout = {.display = ui::Display::Flex, .gap = space4, .alignItems = ui::AlignItems::Center},
+			});
+			sizeChoice = sizeControls.addChild<ui::SegmentedControl>({
+				.id = "interface_size_choice",
+				.options = interfaceSizeLabels(),
+				.selected = static_cast<int>(theme::nearestInterfaceSize(owner->uiScale())),
+				.onChange = [this](int index) { setInterfaceSize(theme::kInterfaceSizes.at(static_cast<std::size_t>(index))); },
+			});
+			sizeReset = sizeControls.addChild<ui::Button>({
+				.id = "interface_size_reset",
+				.enabled = owner->uiScale() != theme::kDefaultInterfaceSize,
+				.label = "Reset",
+				.variant = ui::ButtonVariant::Ghost,
+				.controlSize = ui::ControlSize::Sm,
+				.onPress = [this] {
+					if (ui::SegmentedControl* choice = sizeChoice.get()) {
+						choice->setSelected(static_cast<int>(theme::nearestInterfaceSize(theme::kDefaultInterfaceSize)));
+					}
+					setInterfaceSize(theme::kDefaultInterfaceSize);
+				},
+			});
+			size.addChild<ui::Text>({
+				.id = "interface_size_line",
+				.style = description,
+				.text = "Scales menus, panels, and text. The smaller sizes stop where text would get too small to read on this screen.",
+				.wrap = true,
+			});
+
+			list.addChild<ui::Text>({.id = "settings_drawing_kicker", .style = kicker, .text = "// DRAWING SETTINGS"});
 
 			const assets::SnappingConfig& snapping = assets::ConstructionRegistry::Get().snapping();
 			world_sim::DrawingSettings&	  drawing = world_sim::UserSettings::Get().drawing;
@@ -166,24 +222,9 @@ namespace {
 				drawing.guidesFromWorldAxes
 			);
 			addSwitch("drawing_crossings", "Crossings", "Snap to where two guides meet.", drawing.guideCrossings);
-			addSwitch(
-				"drawing_common_lengths",
-				"Common lengths",
-				"Match the lengths of edges already built.",
-				drawing.commonLengths
-			);
-			addSwitch(
-				"drawing_guide_distances",
-				"Guide distances",
-				"Show how far the cursor is along each guide.",
-				drawing.guideDistances
-			);
-			addSwitch(
-				"drawing_angle_readout",
-				"Angle readout",
-				"Show the angle of a corner that is not square.",
-				drawing.angleReadout
-			);
+			addSwitch("drawing_common_lengths", "Common lengths", "Match the lengths of edges already built.", drawing.commonLengths);
+			addSwitch("drawing_guide_distances", "Guide distances", "Show how far the cursor is along each guide.", drawing.guideDistances);
+			addSwitch("drawing_angle_readout", "Angle readout", "Show the angle of a corner that is not square.", drawing.angleReadout);
 			addSwitch(
 				"drawing_round_lengths",
 				"Round lengths to " + formatNumber(snapping.lengthIncrementMeters) + " m",
@@ -210,11 +251,10 @@ namespace {
 				.id = "drawing_grid_spacing",
 				.options = {"1 meter", "0.5 meters"},
 				.selected = drawing.rectangleGridSpacingMeters < 1.0F ? 1 : 0,
-				.onChange =
-					[&drawing](int index) {
-						drawing.rectangleGridSpacingMeters = index == 1 ? 0.5F : 1.0F;
-						LOG_INFO(Game, "Setting: rectangle grid spacing -> %g m", drawing.rectangleGridSpacingMeters);
-					},
+				.onChange = [&drawing](int index) {
+					drawing.rectangleGridSpacingMeters = index == 1 ? 0.5F : 1.0F;
+					LOG_INFO(Game, "Setting: rectangle grid spacing -> %g m", drawing.rectangleGridSpacingMeters);
+				},
 			});
 			grid.addChild<ui::Text>({
 				.id = "drawing_grid_line",
@@ -240,7 +280,20 @@ namespace {
 			});
 		}
 
-		app::App* owner = nullptr;
+		void setInterfaceSize(float size) {
+			owner->setUiScale(size);
+			LOG_INFO(Game, "Setting: interface size -> %g", static_cast<double>(owner->uiScale()));
+			if (ui::Button* reset = sizeReset.get()) {
+				reset->setEnabled(owner->uiScale() != theme::kDefaultInterfaceSize);
+			}
+			if (!owner->settings().save()) {
+				LOG_ERROR(Game, "SettingsScene: the settings file couldn't be saved");
+			}
+		}
+
+		app::App*					  owner = nullptr;
+		ui::Ref<ui::SegmentedControl> sizeChoice;
+		ui::Ref<ui::Button>			  sizeReset;
 	};
 
 } // namespace

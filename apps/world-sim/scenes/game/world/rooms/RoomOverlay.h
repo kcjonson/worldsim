@@ -56,8 +56,9 @@ namespace world_sim {
 		void setSelectedRoom(std::uint64_t roomId) { selectedRoomId = roomId; }
 
 		/// Draw every current room (tint + outline + name) in world space, with a
-		/// brighter fill + gold outline on the selected room. No-op when inactive.
-		void render(int viewportW, int viewportH);
+		/// brighter fill + gold outline on the selected room, the names sized in ui px,
+		/// `uiScale` logical px each. No-op when inactive.
+		void render(int viewportW, int viewportH, float uiScale);
 
 	  private:
 		// A room's fill as last tessellated, with the geometry it came from so a
