@@ -92,6 +92,8 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 6. With the wall tool held over the creek at (7.9, 8), the status reads "not on buildable ground" and a click adds no point.
 7. On the east bank, `walls?pts=9.9,5;9.9,11&host=0&close=0&built=0` and `spawn?def=BasicBox&at=9.9,8` both answer 200.
 8. `ground?pts=7.9,8` reads `valid` true and `buildableNow` false, and Bob still walks through the creek.
+9. If Angle readout is off, switch it on (top bar's Menu, Main Menu, Settings, Drawing Settings), pick Back, Quick Start, and make the built foundation again with the precondition's `built=1` command.
+10. Pick Wall, click two points inside the built foundation, then move the pointer off at an angle that is not square: an arc and the angle between the two walls show at the middle point.
 
 ---
 

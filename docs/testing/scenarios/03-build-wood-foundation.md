@@ -162,21 +162,23 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 29. Pick Rectangle in the picker: the Rectangle tool is on again.
 
-30. Press Esc twice, open MENU > Main menu > Settings, and in Drawing Settings switch on Angle steps, Guides from the shape, Common lengths, and Angle readout; go back and Quick Start.
+30. Press Esc twice to put the tool away, open the top bar's Menu, and pick Main Menu: the main menu shows.
 
-31. Pick Foundation, then Freeform, and click two points 4 m apart, left to right.
+31. Pick Settings: the Settings scene shows a Drawing Settings section.
 
-32. Move the pointer up and to the right at 45 degrees, about 4 m out: an arc sits in the corner at the second point with `135.0°` beside it (a real degree sign).
+32. Switch on Angle steps, Guides from the shape, Common lengths, and Angle readout, pick Back, and pick Quick Start.
 
-33. Bring the pointer near 4 m along that line: the segment label reads `4.00 m =` in bold amber, and the first edge shows a faint band with a double tick at its middle.
+33. In the new game pick Foundation in the Build menu, pick Freeform in the strip's picker, and click two points 4 m apart, left to right.
 
-34. Move the pointer straight up from the second point: the arc and degrees give way to the right-angle marker, and the `=` and the marks go.
+34. Move the pointer up and to the right at 45 degrees, about 2.5 m out: an arc sits in the corner at the second point with `135.0°` beside it (a real degree sign), clear of the arc.
 
-35. Hold Alt: no arc, degrees, marker, `=`, or marks.
+35. Bring the pointer out along that line to 4 m: the segment label reads `4.00 m =` in bold amber, and the first edge shows a faint band with a double tick at its middle.
 
-36. Press Esc twice, pick Wall, and click two points inside a built foundation, then move the pointer off at an angle that is not square: the arc and the angle between the two walls show at the middle point.
+36. Move the pointer straight up from the second point, about 2.5 m: the arc and degrees give way to the right-angle marker, and the `=` and the marks go.
 
-37. Press Esc twice, switch Common lengths and Angle readout off in Drawing Settings, and repeat steps 31 to 33: no arc, no degrees, no `=`, and no marks.
+37. Move the pointer back to the 45 degree position and hold Alt: no arc, degrees, marker, `=`, or marks.
+
+38. Press Esc twice, go back to Settings through Menu and Main Menu, switch Common lengths and Angle readout off, pick Back and Quick Start, and repeat steps 33 to 35: no arc, no degrees, no `=`, and no marks.
 
 ---
 
