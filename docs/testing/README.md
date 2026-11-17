@@ -381,12 +381,39 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
 | `colonists` | `[{id, name, x, y, needs{}, mood{value, target, band, cause: {need} or {thought} or null}, action, inventory{}, hands{}, belt{}, cargoKg, carryCapacityKg}]` |
 | `stations` | `[{id, x, y, jobs:[{recipe, completed, quantity}], store{}}]` |
 | `storage` | `[{id, defName, x, y, inventory{}, slots, maxSlots, rules:[{item, category, priority, min, max}]}]` |
-| `construction` | `{foundations:[{id, material, state, entity, area, required{}, delivered{}, progress, phase}], walls:[{id, material, state, entity, x0, y0, x1, y1, required{}, delivered{}, progress}]}` |
+| `construction` | `{foundations:[{id, material, state, entity, area, corners:[{x, y}], required{}, delivered{}, progress, phase}], walls:[{id, material, state, entity, x0, y0, x1, y1, required{}, delivered{}, progress}], openings:[{id, type, material, wall, t, state, entity, x, y, phase, required{}, delivered{}, progress}]}`. `corners` is the foundation's ring in world metres to the millimeter, in ring order, so two foundations that share an edge share two corner coordinates exactly. An opening's `wall` is the wall segment id it sits on, `t` its position along that wall (0 at the wall's `x0,y0` end, 1 at `x1,y1`), `x,y` that point in world metres. `phase` and the material keys come with an `entity`, as on a foundation |
+| `drawing` | what the drawing tools hold right now: `{tool, lastFoundationTool, followingPointer, points:[{x, y}], rectangle?, edit?, wall?, opening?, snap, verdict, status}`. See [the drawing view](#the-drawing-view) |
 | `landing` | `{landingLatDeg, landingLonDeg, biome, waterClass, riverInTile}` |
 | `time` | `{...}` |
 | `tunables` | every registered tunable and its value |
 | `gpuhold` | `{enabled, target, passes, holdGpuMs, sceneGpuMs, frameMs}`, the GPU hold's state; the GPU times are a few frames old |
 | `uprights` | `{uprightDrawCalls, uprightTriangles, uprightOverlapSplits, ...}`, last frame's draws in the depth-sorted upright stream (tall statics and actors). `/api/metrics` already counts them in `drawCalls` and `triangleCount`; this splits them out |
+
+### The drawing view
+
+`what=drawing` answers what the drawing tools hold right now, so a check reads it instead of the screen. It is built when asked for and costs nothing between requests. Lengths and areas are to the millimeter, points are `{x, y}` in world metres, and the enum names are the engine's own.
+
+- `tool`: `none`, `foundationRectangle`, `foundationFreeform`, `foundationEdit`, `wall` or `opening`. `lastFoundationTool` (`rectangle` or `freeform`) is the foundation tool picked last this session, which the Build menu's Foundation entry opens.
+- `followingPointer`: false while the tool is paused (the pointer is outside the window, or the window is unfocused) and before its first move. Then `snap` is null and `verdict.proposed` is false, and the placed `points` stay.
+- `points`: the placed points. In the Rectangle tool, its first corner.
+- `rectangle` (Rectangle tool only): `pressPending` (a press awaits its release), `firstCorner` or null, `corners` (the pending rectangle's four, empty when the two corners make none) and `sizeLabel`.
+- `edit` (Add / Subtract only): `target` foundation id and `mode`. `wall`: `hostFoundation`, 0 until the chain's first point lands on one. `opening`: `type`, and `snap` (`wall` segment id, `t`, `point`) or null when no built wall is in range.
+- `snap`: the snapped point, `kind` (`SnapKind`, or `RectangleSnapKind` in the Rectangle tool), `guides` (each with `source`, `relation`, `from`, the node it runs from, and `distanceFromNodeMeters`), the length step (`lengthSnap`, `lengthMeters`, `matchedEdgeCount`, `commonLengthsMeters`), and `closesShape` (the next click closes the shape; in the Rectangle tool, commits it). Null while paused, and for the opening tool, whose snap is under `opening`.
+- `verdict`: what the next click would get, read from the same check the strip and the preview read: `valid`, `proposed` (false when the click would place nothing), and `reason` when refused.
+- `status`: the strip's readouts: `active`, `material`, `pointCount`, `areaSquareMeters`, `valid`, `message`, plus `thicknessPreset`, `segmentLengthMeters`, `totalLengthMeters`, `wallCost`, `wallWork` for a wall, `editLabel` and `areaDeltaSquareMeters` for Add / Subtract, `openingType` and `openingWidthMeters` for an opening.
+
+A Freeform shape with two points placed and the pointer on a third:
+
+```json
+{"tool":"foundationFreeform","lastFoundationTool":"freeform","followingPointer":true,
+ "points":[{"x":16.875,"y":-8.625},{"x":26.275,"y":-8.625}],
+ "snap":{"point":{"x":26.250,"y":-2.325},"kind":"None","guides":[],"lengthSnap":"Rounded",
+         "lengthMeters":6.300,"matchedEdgeCount":0,"commonLengthsMeters":[],"closesShape":false},
+ "verdict":{"valid":true,"proposed":true,"reason":""},
+ "status":{"active":true,"material":"Wood","pointCount":2,"areaSquareMeters":0.000,"valid":true,"message":""}}
+```
+
+With the pointer over the creek the same shape answers `"verdict":{"valid":false,"proposed":true,"reason":"not on buildable ground"}`.
 
 ### Other endpoints
 
