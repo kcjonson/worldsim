@@ -77,6 +77,10 @@ namespace ecs {
 		/// Work units completed so far by builders.
 		float workDone = 0.0F;
 
+		/// True once deconstruct work has gone into the structure: a Deconstruct taking it up after that
+		/// resumes the teardown rather than starting it.
+		bool teardownBegun = false;
+
 		// =========================================================================
 		// Query helpers
 		// =========================================================================

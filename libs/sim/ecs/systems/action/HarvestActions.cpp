@@ -59,7 +59,7 @@ namespace ecs {
 
 	} // namespace
 
-	void ActionSystem::applyCollectionEffect(
+	bool ActionSystem::applyCollectionEffect(
 		const Action& action,
 		glm::vec2	  colonistPosition,
 		Inventory&	  inventory,
@@ -79,6 +79,8 @@ namespace ecs {
 		const uint32_t wanted = std::min(collEff.quantity, room);
 
 		uint32_t added = 0;
+		// Whether the collection happened: something came off the source, or a clear removed it.
+		bool took = false;
 
 		// Take the source from the world and report what it was just before; a source that is gone,
 		// whoever took it, is forgotten so the colonist doesn't walk back to it.
@@ -129,7 +131,7 @@ namespace ecs {
 					"[Action] Withdraw failed: source box %llu has no Inventory",
 					static_cast<unsigned long long>(collEff.sourceStorageId)
 				);
-				return;
+				return false;
 			}
 			const uint32_t removed = sourceInv->removeItem(collEff.itemDefName, wanted);
 			// A two-hand good (wood) can't ride in the pack: it must seat into the hands as a
@@ -156,7 +158,7 @@ namespace ecs {
 				static_cast<unsigned long long>(collEff.sourceStorageId),
 				ecs::availableQuantity(inventory, collEff.itemDefName)
 			);
-			return; // a pull's harvest-goal credit is N/A; the deposit leg credits the umbrella
+			return added > 0;
 		}
 
 		// A loose ground pile: one world entity whose Appearance defName IS the material and
@@ -190,6 +192,7 @@ namespace ecs {
 			}
 
 			pile.stack->quantity -= added; // mutate the live component so the pile tracks what is left
+			took = added > 0;
 
 			if (pile.stack->quantity == 0) {
 				// Remove the exact entity we drained, not the first pile matching this position:
@@ -218,7 +221,6 @@ namespace ecs {
 					pile.stack->quantity
 				);
 			}
-			// Fall through to the shared harvest-goal credit at the end; skip pool/single-shot.
 		} else if (sourceHasResourcePool(harvestRegistry, collEff.sourceDefName) && m_onDecrementResource) {
 			// Withdraw only what the colonist can carry; the pool clamps to its own contents and
 			// reports depletion, so a bush's sticks are conserved across trips. A clear takes the
@@ -231,12 +233,14 @@ namespace ecs {
 			if (state != SourceState::Ready) {
 				if (state == SourceState::OnCooldown && collEff.clearsSource) {
 					takeSource(SourceTake::Remove); // a clear still removes a regrowing source, with no yield
+					took = true;
 				}
 			} else if (request > 0) {
 				const ResourceDraw draw =
 					m_onDecrementResource(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, request);
 				added = inventory.addItem(collEff.itemDefName, std::min(draw.removed, packRoom));
 				dropUncarried(draw.removed - added);
+				took = draw.removed > 0 || collEff.clearsSource;
 				LOG_INFO(
 					Engine,
 					"[Action] Chopped %u x %s (now carrying %u)",
@@ -281,6 +285,7 @@ namespace ecs {
 					stowHeldToolsForArmful(inventory, colonistPosition);
 					added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, collEff.quantity);
 					dropUncarried(collEff.quantity - added);
+					took = true;
 				}
 			} else {
 				// A loose-item fetch (source IS the material, e.g. picking up a SmallStone) yields
@@ -309,12 +314,14 @@ namespace ecs {
 					if (cut || collEff.clearsSource) {
 						dropUncarried(collEff.quantity - added);
 					}
+					took = true;
 				}
 			}
 
 			// Below the full yield when carry- or slot-limited, or the source was gone or regrowing.
 			LOG_INFO(Engine, "[Action] Collected %u of %u x %s", added, collEff.quantity, collEff.itemDefName.c_str());
 		}
+		return took;
 	}
 
 	void ActionSystem::startHarvestAction(Task& task, Action& action, Memory& memory, const Inventory& inventory) {

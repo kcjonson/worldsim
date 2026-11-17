@@ -372,6 +372,33 @@ namespace ecs::test {
 		EXPECT_EQ(notified, blueprint);
 	}
 
+	// The first colonist to tear down a half-built site starts the teardown, though the build was never
+	// finished; one taking the teardown up again does not, and the last of it finishes once.
+	TEST_F(BuildActionSystemTest, FreshDeconstructOfHalfBuiltSiteStartsOnce) {
+		std::vector<ActionEvent> heard;
+		actionSystem->addActionObserver([&heard](const ActionEvent& event) { heard.push_back(event); });
+		auto  builder = createBuilder(0.0F);
+		auto  blueprint = createBlueprint(100.0F);
+		auto* halfBuilt = world->getComponent<StructureBlueprint>(blueprint);
+		halfBuilt->workDone = 50.0F;
+		halfBuilt->demolishing = true;
+		assignDeconstructTask(builder, blueprint);
+
+		world->update(1.0F);
+		ASSERT_EQ(heard.size(), 1U);
+		EXPECT_EQ(heard[0].type, ActionType::Deconstruct);
+		EXPECT_EQ(heard[0].moment, ActionMoment::Started);
+
+		world->getComponent<Action>(builder)->clear();
+		assignDeconstructTask(builder, blueprint);
+		world->update(1.0F);
+		EXPECT_EQ(heard.size(), 1U) << "resuming the teardown is no new start";
+
+		world->update(10.0F);
+		ASSERT_EQ(heard.size(), 2U);
+		EXPECT_EQ(heard[1].moment, ActionMoment::Finished);
+	}
+
 	// A BUILT structure's salvage is dropped at tear-down COMPLETION, not at the demolish-order
 	// tick. The drop itself is GameScene's job (dropResourcePiles lives there), but it reads the
 	// blueprint's delivered[] inside the structure-deconstructed callback. This test pins the

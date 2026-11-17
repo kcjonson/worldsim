@@ -24,15 +24,16 @@ Launch `world-sim --scene=game --background --no-settings` (RelWithDebInfo); the
 10. Read any block's first line: a "Day N, hh:mm" date.
 11. Set the clock (`/api/dev/time?set=20:00`): every block keeps its date.
 12. Press the panel's eye button: the dossier opens on Bio.
-13. Press the dossier's LOG tab: Notable is picked, over the blocks step 7 showed.
-14. Give Bob `very_hungry` 60 times: each answers ok.
-15. Pick All: 50 blocks, and a "Show older" button under them.
-16. Press "Show older": every thought shows, and the button is gone.
-17. Open the NEEDS tab: the dialog keeps the size it opened at.
-18. Read the Mood breakdown: Needs, a row per held thought with its amount and time left ("24 hours left", the game being paused), largest amount first, and Target.
-19. Read the Target row: it reads 100 plus Needs plus the rows' amounts (-10, -6 and +5 for the scripted thoughts, so 89 plus Needs), within 0.1, or the sum on the "Clamped" note under it.
-20. Close the dossier and open it on Bob again: it opens at the size it had in step 12, long log and all.
-21. `/api/ui/lint` on each tab: `"count":0`.
+13. Read the dossier's bounds in `/api/ui/tree`: note its width and height.
+14. Press the dossier's LOG tab: Notable is picked, over the blocks step 7 showed.
+15. Give Bob `very_hungry` 60 times: each answers ok.
+16. Pick All: 50 blocks, and a "Show older" button under them.
+17. Press "Show older": every thought shows, and the button is gone.
+18. Open the NEEDS tab: the dialog keeps the size it opened at.
+19. Read the Mood breakdown: Needs, a row per held thought with its amount and time left ("24 hours left", the game being paused), largest amount first, and Target.
+20. Read the Target row: it reads 100 plus Needs plus the rows' amounts (-10, -6 and +5 for the scripted thoughts, so 89 plus Needs), within 0.1, or the sum on the "Clamped" note under it.
+21. Close the dossier and open it on Bob again: it opens at the width and height step 13 noted, long log and all.
+22. `/api/ui/lint` on each tab: `"count":0`.
 
 ### Pruning
 
@@ -42,7 +43,7 @@ A separate run on a fresh launch with a small record: a limit of 60 prunes at 54
 2. Write `build/apps/world-sim/RelWithDebInfo/assets/config/thoughts/mods/prune-test.xml` holding `<thoughts><tuning maxLineLength="48" maxSubjectNameLength="16" whileCheckMinutes="15"><kept limit="60" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="0.5" trivialWeight="1" normalWeight="3"/></tuning></thoughts>`.
 3. Launch `world-sim --scene=game --background --no-settings`: the game starts.
 4. Pause (`/api/dev/time?speed=0`): the HUD clock stops.
-5. Read Bob's `thoughts.recorded` in `/api/state?what=colonists`: 0.
+5. Read Bob in `/api/state?what=colonists`: he has no `thoughts` field, which a colonist only has once he has had a thought.
 6. Give Bob `accident_in_public`, `idle_musing`, and `very_hungry`: each answers ok, and `thoughts.recorded` is 3.
 7. Run `for i in $(seq 40); do curl -s "http://127.0.0.1:8081/api/dev/time?skip=1h"; curl -s "http://127.0.0.1:8081/api/dev/thought?colonist=ID&type=very_hungry"; done`: `thoughts.recorded` is 43.
 8. Skip 20 hours (`/api/dev/time?skip=20h`): the HUD clock moves on 20 hours.
