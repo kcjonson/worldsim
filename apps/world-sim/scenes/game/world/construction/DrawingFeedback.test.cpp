@@ -1018,8 +1018,17 @@ TEST_F(DrawingFeedbackTest, CloseRingWhileTheShapeCanCloseAndHaloOutsideTheTicks
 	willClose = true;
 	cursor = points[0];
 	const DrawingFeedbackPlan closing = plan();
-	ASSERT_EQ(closing.rings.size(), 2U);
-	const auto& halo = closing.rings[1];
+	ASSERT_EQ(closing.rings.size(), 1U) << "the halo alone marks the first point: no dotted close ring under it";
+	const auto& halo = closing.rings[0];
+	EXPECT_FALSE(halo.dash.has_value());
+
+	willClose = false; // a refused close draws no halo, so the dotted ring stays
+	cursor = points[0];
+	const DrawingFeedbackPlan refused = plan();
+	ASSERT_EQ(refused.rings.size(), 1U);
+	EXPECT_EQ(refused.rings[0].layer, FeedbackLayer::Alignment);
+	EXPECT_TRUE(refused.rings[0].dash.has_value());
+	willClose = true;
 	EXPECT_EQ(halo.layer, FeedbackLayer::Marker);
 	EXPECT_FLOAT_EQ(halo.radius, kTickOuterPx + 6.0F) << "the 20 px close radius halves to 10 px, inside the ticks: the floor holds";
 	EXPECT_FLOAT_EQ(halo.width, 3.0F);
@@ -1027,10 +1036,10 @@ TEST_F(DrawingFeedbackTest, CloseRingWhileTheShapeCanCloseAndHaloOutsideTheTicks
 	expectColor(halo.color, style.guideColor, style.markerOpacity);
 
 	closeRadiusMeters = 2.0F; // 80 px on screen: the halo is half of it
-	EXPECT_FLOAT_EQ(plan().rings[1].radius, 40.0F);
+	EXPECT_FLOAT_EQ(plan().rings[0].radius, 40.0F);
 
 	style.guideColorMode = assets::GuideColorMode::BySource;
-	expectColor(plan().rings[1].color, style.guideColorShape, style.markerOpacity);
+	expectColor(plan().rings[0].color, style.guideColorShape, style.markerOpacity);
 }
 
 TEST_F(DrawingFeedbackTest, NoPointsPlacedDrawsOnlyTheSnappedPointMarker) {

@@ -585,8 +585,10 @@ namespace world_sim {
 				return true;
 			}
 
+			// Only while the halo is not drawn: once the click will close, the halo alone marks
+			// the first point.
 			void planCloseRing() {
-				if (!input.canClose) {
+				if (!input.canClose || halo) {
 					return;
 				}
 				const std::optional<Foundation::Vec2> center = firstPointOnScreen();
