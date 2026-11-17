@@ -43,9 +43,9 @@ namespace construction {
 		}
 
 		// Whether the path's inside (even-odd) lies along `direction` right at path[index]: the
-		// ray from the vertex that way crosses the path's other edges an odd number of times. A
-		// probe a fixed distance out lands past a thin shape's far side; the ray has no length to
-		// overshoot with. An edge end on the ray's line counts as on its negative side, so a ray
+		// ray from the vertex that way crosses the path's other edges an odd number of times. The
+		// ray starts at the vertex because a thin shape's far side can lie closer to it than any
+		// fixed distance. An edge end on the ray's line counts as on its negative side, so a ray
 		// through a vertex counts the two edges meeting there once between them, or not at all.
 		bool insideAlong(const std::vector<Point>& path, std::size_t index, Point direction) {
 			const std::size_t count = path.size();
