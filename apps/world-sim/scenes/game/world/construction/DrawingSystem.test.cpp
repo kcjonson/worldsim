@@ -1650,6 +1650,71 @@ TEST_F(DrawingStripVerdictTest, AFreeformPointerOnThePointJustPlacedProposesNoth
 	}
 }
 
+// The rest silences only a too-close refusal. With angle steps and Round lengths on, a pointer at
+// (10, 1) lands the second point at (10, 0) on the 0 degree step; the still pointer then snaps to
+// (10, 1), a valid point on the 90 degree step, which the strip reads valid and the click places.
+// Alt leaves the pointer where it is, with the same result.
+TEST_F(DrawingStripVerdictTest, AFreeformPointerRestingOnAValidSnappedPointProposesItAndTheClickPlacesIt) {
+	world_sim::UserSettings::Get().drawing = world_sim::DrawingSettings{.angleSteps = true, .roundLengths = true, .showKeyGuide = true};
+	drawing->activateFoundationTool();
+	const glm::vec2 origin{0.0F, 0.0F};
+	const glm::vec2 pointer{10.0F, 1.0F};
+	ASSERT_TRUE(click(origin));
+	ASSERT_TRUE(click(pointer));
+	ASSERT_EQ(drawing->status().pointCount, 2) << lastToast();
+
+	hover(pointer);
+	expectTheStripReadsThePreview();
+	ASSERT_TRUE(click(pointer));
+	EXPECT_EQ(drawing->status().pointCount, 3) << lastToast();
+	EXPECT_FLOAT_EQ(drawing->status().areaSquareMeters, 5.0F);
+}
+
+TEST_F(DrawingStripVerdictTest, AnAltTogglePointerRestingOnAValidSnappedPointProposesItAndTheClickPlacesIt) {
+	world_sim::UserSettings::Get().drawing = world_sim::DrawingSettings{.angleSteps = true, .roundLengths = true, .showKeyGuide = true};
+	drawing->activateFoundationTool();
+	const glm::vec2 origin{0.0F, 0.0F};
+	const glm::vec2 pointer{10.0F, 1.0F};
+	ASSERT_TRUE(click(origin));
+	ASSERT_TRUE(click(pointer));
+	ASSERT_EQ(drawing->status().pointCount, 2) << lastToast();
+
+	const glm::vec2 screen = seen.screenOf(pointer);
+	drawing->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
+	expectTheStripReadsThePreview();
+	ASSERT_TRUE(drawing->handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight, true));
+	EXPECT_EQ(drawing->status().pointCount, 3) << lastToast();
+	EXPECT_FLOAT_EQ(drawing->status().areaSquareMeters, 5.0F);
+}
+
+// The rest belongs to the click that placed the last point: after Backspace removes it, the same
+// pointer is a fresh proposal and its click places the point again.
+TEST_F(DrawingStripVerdictTest, AClickWithThePointerStillAfterBackspacePlacesThePointAgain) {
+	world_sim::UserSettings::Get().drawing = world_sim::DrawingSettings{.roundLengths = true, .showKeyGuide = true};
+	drawing->activateFoundationTool();
+	ASSERT_TRUE(click({0.0F, 0.0F}));
+	ASSERT_TRUE(click({6.0F, 0.0F}));
+	ASSERT_EQ(drawing->status().pointCount, 2) << lastToast();
+	hover({6.0F, 0.0F});
+	ASSERT_TRUE(drawing->removeLastPoint());
+	ASSERT_EQ(drawing->status().pointCount, 1);
+	EXPECT_TRUE(click({6.0F, 0.0F}));
+	EXPECT_EQ(drawing->status().pointCount, 2) << lastToast();
+}
+
+// The rest is the Freeform tool's: an Add edit's pointer on the point it just placed reads the
+// refusal.
+TEST_F(DrawingStripVerdictTest, AnEditPointerOnThePointJustPlacedReadsTheTooCloseRefusal) {
+	const construction::FoundationId target = blueprintFloor();
+	drawing->activateFoundationEditTool(target, construction::FoundationEditMode::Add);
+	const glm::vec2 corner = kThreeCorners[0] + glm::vec2{6.0F, 2.0F};
+	ASSERT_TRUE(click(corner));
+	ASSERT_EQ(drawing->status().pointCount, 1) << lastToast();
+	hover(corner);
+	EXPECT_FALSE(drawing->status().valid);
+	EXPECT_FALSE(drawing->status().message.empty());
+}
+
 TEST_F(DrawingStripVerdictTest, AWallStripReadsThePreview) {
 	builtFloor({{-10.0F, -10.0F}, {10.0F, -10.0F}, {10.0F, 10.0F}, {-10.0F, 10.0F}});
 	drawing->activateWallTool();

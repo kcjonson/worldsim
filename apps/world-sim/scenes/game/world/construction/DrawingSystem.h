@@ -462,8 +462,8 @@ namespace world_sim {
 		/// What the next click would do, as the preview, the status strip, and the click read
 		/// it: while it closes (or in the Rectangle tool commits), the close's verdict;
 		/// otherwise whether the point may be placed, and why not. The Freeform tool's pointer
-		/// resting where it placed the last point proposes nothing: valid, and the click places
-		/// nothing.
+		/// resting where it placed the last point, with its snapped point refused as too close
+		/// to it, proposes nothing: valid, and the click places nothing.
 		struct ClickVerdict {
 			bool		valid = true;
 			bool		proposed = true;

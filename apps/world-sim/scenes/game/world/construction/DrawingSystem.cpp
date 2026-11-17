@@ -865,7 +865,10 @@ namespace world_sim {
 		if (willClose_) {
 			return {.valid = pendingClose_.accepted, .reason = pendingClose_.reason};
 		}
-		if (restsOnLastPoint()) {
+		// A pointer still where it placed the last point, whose snapped point is refused as too close
+		// to it, proposes nothing: no red the player did not cause by moving. A snapped point that is
+		// valid is placed, and any other refusal shows as it would anywhere.
+		if (restsOnLastPoint() && lastValidation_.code == construction::ValidationCode::VerticesTooClose) {
 			return {.proposed = false};
 		}
 		// Off-mesh cursor (on water) reads as invalid just like a geometry violation, so the
@@ -2171,8 +2174,8 @@ namespace world_sim {
 		// snap, or the near-start rescue): the point's verdict doesn't apply to a close.
 		// Gated on the geometry result (not `valid`) because lastValidation_.vertexIndex
 		// only indexes a placed vertex; off buildable ground, the snapped-point marker
-		// turns red instead (drawSnapFeedback). A pointer on the point just placed proposes
-		// nothing, so nothing is offending.
+		// turns red instead (drawSnapFeedback). A pointer resting on the point just placed, its
+		// snapped point refused as too close, proposes nothing, so nothing is offending.
 		if (!lastValidation_.ok() && !willClose_ && clickVerdict().proposed && !screen.empty()) {
 			const std::size_t offending = std::min(lastValidation_.vertexIndex, screen.size() - 1);
 			Renderer::Primitives::drawCircle({

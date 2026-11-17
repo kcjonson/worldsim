@@ -136,7 +136,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 16. Click: `?what=construction` lists another foundation with `"area":12`.
 
-17. Press on open ground, drag about 5 m by 4 m, and release: `?what=construction` lists another foundation with `"area":20`, and the strip reads "Click or drag from a corner".
+17. Press on open ground, drag from the grid point under the pointer to the grid point 5 m right and 4 m up (the size label reads `5 m x 4 m`), and release: `?what=construction` lists another foundation with `"area":20`, and the strip reads "Click or drag from a corner".
 
 18. Move the pointer onto a corner of a new blueprint: an amber ring sits round the marker's dot. Along one of its edges, the ring is cyan.
 
@@ -154,7 +154,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 25. Click open ground about 3 m right and 3 m up of that corner: `?what=construction` lists another foundation with `"area":9`.
 
-26. Pick Freeform in the strip's picker and click a first point: the strip shows no red text while the pointer rests on it.
+26. Pick Freeform in the strip's picker and click a first point: the strip shows no too-close refusal while the pointer has not moved since the click.
 
 27. Click three more points round a square, then the first point again: it closes into another foundation.
 

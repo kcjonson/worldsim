@@ -95,24 +95,24 @@ namespace {
 
 	class DrawingFeedbackTest : public ::testing::Test {
 	  protected:
-		world_sim::ToolKind			  tool = world_sim::ToolKind::Foundation;
-		construction::SnapResult	  snap;
-		std::vector<Foundation::Vec2> points;
-		Foundation::Vec2			  cursor{0.0F, 0.0F};
-		world_sim::DrawingSettings	  display;
-		assets::PreviewStyle		  style;
-		world::WorldCamera			  camera;
-		float						  closeRadiusMeters = 0.5F;
-		bool						  canClose = false;
-		bool						  willClose = false;
-		bool						  snappedPointInvalid = false;
-		Foundation::Color			  invalidColor{0.9F, 0.2F, 0.2F, 1.0F};
-		std::optional<FeedbackBox>	  keepClear;
+		world_sim::ToolKind				tool = world_sim::ToolKind::Foundation;
+		construction::SnapResult		snap;
+		std::vector<Foundation::Vec2>	points;
+		Foundation::Vec2				cursor{0.0F, 0.0F};
+		world_sim::DrawingSettings		display;
+		assets::PreviewStyle			style;
+		world::WorldCamera				camera;
+		float							closeRadiusMeters = 0.5F;
+		bool							canClose = false;
+		bool							willClose = false;
+		bool							snappedPointInvalid = false;
+		Foundation::Color				invalidColor{0.9F, 0.2F, 0.2F, 1.0F};
+		std::optional<FeedbackBox>		keepClear;
 		construction::RectangleSnapKind rectangleSnap = construction::RectangleSnapKind::None;
-		std::string					  sizeLabel;
-		int						  viewportWidth = kViewportWidth;
-		int							  viewportHeight = kViewportHeight;
-		float						  uiScale = 1.0F;
+		std::string						sizeLabel;
+		int								viewportWidth = kViewportWidth;
+		int								viewportHeight = kViewportHeight;
+		float							uiScale = 1.0F;
 		// Measures every label but the reserved "999.00 m" this many characters narrower: the
 		// same frame with one digit fewer.
 		int narrowerByCharacters = 0;
