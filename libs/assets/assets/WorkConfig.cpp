@@ -21,7 +21,10 @@ namespace assets {
 		MemoryConfig::Get().clear();
 		ConfigValidator::clearErrors();
 
-		auto loadFailure = [](const std::filesystem::path& path) {
+		auto loadFailure = [](const std::filesystem::path& path, const std::vector<std::string>& problems = {}) {
+			if (!problems.empty()) {
+				return problems;
+			}
 			return std::vector<std::string>{"Failed to load " + path.generic_string()};
 		};
 
@@ -42,7 +45,7 @@ namespace assets {
 
 		const auto priorityTuning = configRoot / "work" / "priority-tuning.xml";
 		if (!PriorityConfig::Get().loadFromFile(priorityTuning.string())) {
-			return loadFailure(priorityTuning);
+			return loadFailure(priorityTuning, PriorityConfig::Get().problems());
 		}
 
 		// Every task type the AI can evaluate must have an explicit arbitration tier, or the
@@ -64,7 +67,7 @@ namespace assets {
 
 		const auto mood = configRoot / "colonists" / "mood.xml";
 		if (!MoodConfig::Get().loadFromFile(mood.string())) {
-			return loadFailure(mood);
+			return loadFailure(mood, MoodConfig::Get().problems());
 		}
 
 		const auto memory = configRoot / "colonists" / "memory.xml";

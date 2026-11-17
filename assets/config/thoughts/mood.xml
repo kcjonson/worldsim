@@ -2,7 +2,7 @@
 <!-- Thoughts that come from mood itself. See /docs/design/game-systems/colonists/mood.md. -->
 <thoughts>
   <!-- Hold it together adds one each time; relief ends the stack. -->
-  <thought id="bottled_up" importance="normal" stacks="true">
+  <thought id="bottled_up" label="Bottled up" importance="normal" stacks="true">
     <feeling is="resigned" mood="-2" hours="24"/>
     <line>I'm fine. Totally fine.</line>
   </thought>

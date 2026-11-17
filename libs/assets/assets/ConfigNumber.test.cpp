@@ -28,3 +28,13 @@ TEST(ConfigNumber, RefusesNumbersThatAreNotFinite) {
 		EXPECT_FALSE(parseConfigNumber(text).has_value()) << text;
 	}
 }
+
+TEST(ConfigNumber, ReadsWholeNumbersWithTheSameRulesAsNumbers) {
+	using assets::parseConfigInteger;
+	EXPECT_EQ(parseConfigInteger("30"), 30);
+	EXPECT_EQ(parseConfigInteger("-6"), -6);
+	EXPECT_EQ(parseConfigInteger("+4"), 4);
+	for (const char* text : {"", "+", "++3", "+-3", "6abc", " 6", "2.5", "lots", "99999999999", "-99999999999"}) {
+		EXPECT_FALSE(parseConfigInteger(text).has_value()) << text;
+	}
+}

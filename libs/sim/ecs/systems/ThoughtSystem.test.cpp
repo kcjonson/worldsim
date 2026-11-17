@@ -22,29 +22,29 @@ namespace ecs::test {
 
 		// `wetness` is declared and answered by nothing, so a `while` on it is Unknown and holds the thought.
 		constexpr std::string_view kTypes = R"(
-  <thought id="saw_new_tree" importance="trivial">
+  <thought id="saw_new_tree" label="Saw new tree" importance="trivial">
     <feeling is="delighted"/>
   </thought>
-  <thought id="slept_on_ground" importance="normal">
+  <thought id="slept_on_ground" label="Slept on ground" importance="normal">
     <feeling is="annoyed" mood="-10" hours="24"/>
     <feeling is="resigned" when="attribute(sanity) >= 15" mood="-6" hours="24"/>
   </thought>
-  <thought id="something_reeks" importance="normal">
-    <feeling is="annoyed" mood="-4" while="wetness > 0"/>
+  <thought id="something_reeks" label="Something reeks" importance="normal">
+    <feeling is="annoyed" mood="-4" while="wetness > 0" cause="the cause"/>
   </thought>
-  <thought id="bottled_up" importance="normal" stacks="true">
+  <thought id="bottled_up" label="Bottled up" importance="normal" stacks="true">
     <feeling is="resigned" mood="-2" hours="12"/>
   </thought>
-  <thought id="vented" importance="normal">
-    <feeling is="delighted" mood="+3" while="wetness > 0"/>
+  <thought id="vented" label="Vented" importance="normal">
+    <feeling is="delighted" mood="+3" while="wetness > 0" cause="the cause"/>
   </thought>
-  <thought id="chatted" importance="normal">
+  <thought id="chatted" label="Chatted" importance="normal">
     <feeling is="delighted" mood="+8" hours="12"/>
   </thought>
-  <thought id="stubbed_toe" importance="trivial">
+  <thought id="stubbed_toe" label="Stubbed toe" importance="trivial">
     <feeling is="annoyed" mood="-1" hours="1"/>
   </thought>
-  <thought id="napped" importance="trivial">
+  <thought id="napped" label="Napped" importance="trivial">
     <feeling is="delighted" mood="+2" hours="2"/>
   </thought>
 )";
@@ -65,7 +65,7 @@ namespace ecs::test {
 		EntityID spawnColonist(const std::string& name) {
 			const EntityID entity = world.createEntity();
 			world.addComponent<Colonist>(entity, Colonist{.name = name});
-			world.addComponent<Attributes>(entity, Attributes{});
+			world.addComponent<Attributes>(entity, testing::attributesAt(10.0F));
 			return entity;
 		}
 
@@ -464,7 +464,7 @@ namespace ecs::test {
 
 	TEST(ThoughtFeelingSelection, MoreTermsWinAndFileOrderBreaksTies) {
 		testing::TestThoughtTypes rules(R"(
-  <thought id="smashed_chair" importance="normal">
+  <thought id="smashed_chair" label="Smashed chair" importance="normal">
     <feeling is="content"/>
     <feeling is="annoyed" when="attribute(civility) &lt; 8"/>
     <feeling is="miserable" when="attribute(sanity) &lt; 8"/>
@@ -477,7 +477,7 @@ namespace ecs::test {
 		ThoughtSystem& thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
 		const auto	   feelingFor = [&](float civility, float sanity) {
 			const EntityID who = world.createEntity();
-			world.addComponent<Attributes>(who, Attributes{.civility = civility, .sanity = sanity});
+			world.addComponent<Attributes>(who, testing::attributesAt(10.0F, {{&Attributes::civility, civility}, {&Attributes::sanity, sanity}}));
 			const ThoughtHandle handle = thoughts.create({.colonist = who, .eventType = rules.type("smashed_chair")});
 			return findThought(*world.getComponent<Thoughts>(who), handle.thought)->feeling;
 		};
@@ -488,7 +488,7 @@ namespace ecs::test {
 
 		// Both one-term feelings hold: the one written first wins.
 		testing::TestThoughtTypes tieRules(R"(
-  <thought id="tie" importance="normal">
+  <thought id="tie" label="Tie" importance="normal">
     <feeling is="miserable" when="attribute(sanity) &lt; 8"/>
     <feeling is="annoyed" when="attribute(civility) &lt; 8"/>
   </thought>
@@ -497,18 +497,18 @@ namespace ecs::test {
 		tieWorld.registerSystem<TimeSystem>();
 		ThoughtSystem& tieThoughts = tieWorld.registerSystem<ThoughtSystem>(tieRules.types, kSeed);
 		const EntityID tieColonist = tieWorld.createEntity();
-		tieWorld.addComponent<Attributes>(tieColonist, Attributes{.civility = 5.0F, .sanity = 5.0F});
+		tieWorld.addComponent<Attributes>(tieColonist, testing::attributesAt(10.0F, {{&Attributes::civility, 5.0F}, {&Attributes::sanity, 5.0F}}));
 		const ThoughtHandle tie = tieThoughts.create({.colonist = tieColonist, .eventType = tieRules.type("tie")});
 		EXPECT_EQ(findThought(*tieWorld.getComponent<Thoughts>(tieColonist), tie.thought)->feeling, tieRules.feeling("miserable"));
 	}
 
 	TEST(ThoughtFeelingSelection, UnknownDoesNotHoldAndNoFeelingCreatesNothing) {
 		testing::TestThoughtTypes rules(R"(
-  <thought id="cold_snap" importance="normal">
+  <thought id="cold_snap" label="Cold snap" importance="normal">
     <feeling is="content"/>
     <feeling is="miserable" when="wetness > 0.5" mood="-5" hours="2"/>
   </thought>
-  <thought id="only_when_calm" importance="normal">
+  <thought id="only_when_calm" label="Only when calm" importance="normal">
     <feeling is="content" when="attribute(sanity) >= 15" mood="+2" hours="2"/>
   </thought>
 )");
@@ -517,7 +517,7 @@ namespace ecs::test {
 		world.registerSystem<TimeSystem>();
 		ThoughtSystem& thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
 		const EntityID who = world.createEntity();
-		world.addComponent<Attributes>(who, Attributes{});
+		world.addComponent<Attributes>(who, testing::attributesAt(10.0F));
 
 		const ThoughtHandle cold = thoughts.create({.colonist = who, .eventType = rules.type("cold_snap")});
 		EXPECT_EQ(findThought(*world.getComponent<Thoughts>(who), cold.thought)->feeling, rules.feeling("content"))
@@ -532,11 +532,11 @@ namespace ecs::test {
 
 	TEST(ThoughtWhileEffect, EndsWhenItsConditionTurnsFalseStaysOnUnknownAndCreatesItsEnding) {
 		testing::TestThoughtTypes rules(R"(
-  <thought id="steady" importance="normal">
-    <feeling is="content" mood="+4" while="attribute(sanity) >= 10"/>
+  <thought id="steady" label="Steady" importance="normal">
+    <feeling is="content" mood="+4" while="attribute(sanity) >= 10" cause="the cause"/>
     <ends thought="wobbly"/>
   </thought>
-  <thought id="wobbly" importance="trivial">
+  <thought id="wobbly" label="Wobbly" importance="trivial">
     <feeling is="relieved"/>
   </thought>
 )");
@@ -545,9 +545,9 @@ namespace ecs::test {
 		TimeSystem&	   time = world.registerSystem<TimeSystem>();
 		ThoughtSystem& thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
 		const EntityID steady = world.createEntity();
-		world.addComponent<Attributes>(steady, Attributes{});
+		world.addComponent<Attributes>(steady, testing::attributesAt(10.0F));
 		const EntityID unknowable = world.createEntity();
-		world.addComponent<Attributes>(unknowable, Attributes{});
+		world.addComponent<Attributes>(unknowable, testing::attributesAt(10.0F));
 
 		const ThoughtHandle held = thoughts.create({.colonist = steady, .eventType = rules.type("steady")});
 		thoughts.create({.colonist = unknowable, .eventType = rules.type("steady")});
@@ -575,15 +575,15 @@ namespace ecs::test {
 
 	TEST(ThoughtWhileEffect, AnExplicitEndAndATimedEndAlsoCreateTheEnding) {
 		testing::TestThoughtTypes rules(R"(
-  <thought id="soaked" importance="normal">
-    <feeling is="miserable" mood="-6" while="wetness > 0.6"/>
+  <thought id="soaked" label="Soaked" importance="normal">
+    <feeling is="miserable" mood="-6" while="wetness > 0.6" cause="the cause"/>
     <ends thought="dried_off"/>
   </thought>
-  <thought id="sunburnt" importance="normal">
+  <thought id="sunburnt" label="Sunburnt" importance="normal">
     <feeling is="annoyed" mood="-2" hours="1"/>
     <ends thought="dried_off"/>
   </thought>
-  <thought id="dried_off" importance="trivial">
+  <thought id="dried_off" label="Dried off" importance="trivial">
     <feeling is="relieved" mood="+1" hours="2"/>
   </thought>
 )");
@@ -612,14 +612,14 @@ namespace ecs::test {
 
 	TEST(ThoughtLines, PickTheMostSpecificLineForTheFeelingAndCondition) {
 		testing::TestThoughtTypes rules(R"(
-  <thought id="soaked" importance="normal">
+  <thought id="soaked" label="Soaked" importance="normal">
     <feeling is="miserable"/>
     <feeling is="furious" when="attribute(civility) &lt; 6"/>
     <line>I'm soaked through.</line>
     <line feeling="furious">One more minute of this...</line>
     <line feeling="furious" when="attribute(strength) >= 15">I will fight this cloud.</line>
   </thought>
-  <thought id="quiet" importance="trivial">
+  <thought id="quiet" label="Quiet" importance="trivial">
     <feeling is="content"/>
   </thought>
 )");
@@ -633,16 +633,16 @@ namespace ecs::test {
 			const ThoughtHandle handle = thoughts.create({.colonist = who, .eventType = rules.type(type)});
 			return renderThoughtLine(rules.types, *world.getComponent<Thoughts>(who), *findThought(*world.getComponent<Thoughts>(who), handle.thought));
 		};
-		EXPECT_EQ(lineFor(Attributes{}, "soaked"), "I'm soaked through.");
-		EXPECT_EQ(lineFor(Attributes{.civility = 3.0F}, "soaked"), "One more minute of this...");
-		EXPECT_EQ(lineFor(Attributes{.strength = 18.0F, .civility = 3.0F}, "soaked"), "I will fight this cloud.");
-		EXPECT_EQ(lineFor(Attributes{.strength = 18.0F}, "soaked"), "I'm soaked through.") << "the strength line is the furious one's";
-		EXPECT_EQ(lineFor(Attributes{}, "quiet"), "") << "many thoughts have no line";
+		EXPECT_EQ(lineFor(testing::attributesAt(10.0F), "soaked"), "I'm soaked through.");
+		EXPECT_EQ(lineFor(testing::attributesAt(10.0F, {{&Attributes::civility, 3.0F}}), "soaked"), "One more minute of this...");
+		EXPECT_EQ(lineFor(testing::attributesAt(10.0F, {{&Attributes::strength, 18.0F}, {&Attributes::civility, 3.0F}}), "soaked"), "I will fight this cloud.");
+		EXPECT_EQ(lineFor(testing::attributesAt(10.0F, {{&Attributes::strength, 18.0F}}), "soaked"), "I'm soaked through.") << "the strength line is the furious one's";
+		EXPECT_EQ(lineFor(testing::attributesAt(10.0F), "quiet"), "") << "many thoughts have no line";
 	}
 
 	TEST(ThoughtLines, AvoidTheLastLineAndAreDeterministicUnderASeed) {
 		constexpr std::string_view kQuips = R"(
-  <thought id="idle" importance="trivial">
+  <thought id="idle" label="Idle" importance="trivial">
     <feeling is="content"/>
     <line>My butt itches.</line>
     <line>Is that cloud a horse?</line>
@@ -674,11 +674,11 @@ namespace ecs::test {
 
 	TEST(ThoughtLines, SubjectIsRenderedByNameAndALineNamingNoOneIsSkipped) {
 		testing::TestThoughtTypes rules(R"(
-  <thought id="talked" importance="normal">
+  <thought id="talked" label="Talked" importance="normal">
     <feeling is="content"/>
     <line>{subject} gets me.</line>
   </thought>
-  <thought id="admired" importance="normal">
+  <thought id="admired" label="Admired" importance="normal">
     <feeling is="content"/>
     <line>Nice {subject}.</line>
     <line>Huh.</line>
@@ -714,7 +714,7 @@ namespace ecs::test {
 
 	TEST(ThoughtLines, TheSubjectsNameOutlivesTheSubjectAndAnUnnamedColonistIsNotNamedByHisDefinition) {
 		testing::TestThoughtTypes rules(R"(
-  <thought id="talked" importance="normal">
+  <thought id="talked" label="Talked" importance="normal">
     <feeling is="content"/>
     <line>{subject} gets me.</line>
   </thought>
@@ -742,8 +742,8 @@ namespace ecs::test {
 
 	TEST(ThoughtWhileEffect, EndsAtItsNextCheckOnceItsSubjectIsGone) {
 		testing::TestThoughtTypes rules(R"(
-  <thought id="reeks" importance="normal">
-    <feeling is="annoyed" mood="-4" while="wetness > 0"/>
+  <thought id="reeks" label="Reeks" importance="normal">
+    <feeling is="annoyed" mood="-4" while="wetness > 0" cause="the cause"/>
   </thought>
 )");
 		ASSERT_TRUE(rules.errors.empty()) << rules.errors.front();
@@ -769,7 +769,7 @@ namespace ecs::test {
 
 	TEST(ThoughtRepeats, ARepeatWithNoMoodEffectEndsTheHeldThought) {
 		testing::TestThoughtTypes rules(R"(
-  <thought id="slept_on_ground" importance="normal">
+  <thought id="slept_on_ground" label="Slept on ground" importance="normal">
     <feeling is="annoyed" mood="-10" hours="24"/>
     <feeling is="content" when="attribute(sanity) >= 15"/>
   </thought>
@@ -781,7 +781,7 @@ namespace ecs::test {
 		std::vector<ThoughtId> ended;
 		thoughts.addEndedObserver([&](EntityID, const Thought& thought) { ended.push_back(thought.id); });
 		const EntityID who = world.createEntity();
-		world.addComponent<Attributes>(who, Attributes{});
+		world.addComponent<Attributes>(who, testing::attributesAt(10.0F));
 
 		const ThoughtHandle held = thoughts.create({.colonist = who, .eventType = rules.type("slept_on_ground")});
 		world.getComponent<Attributes>(who)->sanity = 16.0F;
@@ -798,7 +798,7 @@ namespace ecs::test {
 
 	TEST(ThoughtRepeats, ARepeatTakesTheNewFeelingAndAmountAcrossTheWholeStack) {
 		testing::TestThoughtTypes rules(R"(
-  <thought id="bottled_up" importance="normal" stacks="true">
+  <thought id="bottled_up" label="Bottled up" importance="normal" stacks="true">
     <feeling is="resigned" mood="-2" hours="12"/>
     <feeling is="furious" when="attribute(civility) &lt; 6" mood="-5" hours="12"/>
   </thought>
@@ -808,7 +808,7 @@ namespace ecs::test {
 		world.registerSystem<TimeSystem>();
 		ThoughtSystem& thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
 		const EntityID who = world.createEntity();
-		world.addComponent<Attributes>(who, Attributes{});
+		world.addComponent<Attributes>(who, testing::attributesAt(10.0F));
 
 		const ThoughtHandle first = thoughts.create({.colonist = who, .eventType = rules.type("bottled_up")});
 		EXPECT_EQ(heldMoodTotal(*world.getComponent<Thoughts>(who)), -2.0F);
@@ -837,37 +837,48 @@ namespace ecs::test {
 		};
 
 		EXPECT_TRUE(
-			mentions(errorsFor(R"(<thought id="a" importance="normal"><feeling is="giddy"/></thought>)"), "no feeling is called 'giddy'")
+			mentions(errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="giddy"/></thought>)"), "no feeling is called 'giddy'")
 		);
-		EXPECT_TRUE(mentions(errorsFor(R"(<thought id="a" importance="normal"><line>Hi.</line></thought>)"), "lists no feeling"));
+		EXPECT_TRUE(mentions(errorsFor(R"(<thought id="a" label="A" importance="normal"><line>Hi.</line></thought>)"), "lists no feeling"));
 		EXPECT_TRUE(mentions(
-			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content" when="attribute(sanity) >"/></thought>)"), "at column"
+			errorsFor(R"x(<thought id="a" label="A" importance="normal"><feeling is="content" when="trait(nonesuch)"/></thought>)x"), "nonesuch"
 		));
 		EXPECT_TRUE(mentions(
-			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content" mood="-1" while="sparkle > 1"/></thought>)"), "while: "
+			errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="content" when="attribute(sanity) >"/></thought>)"), "at column"
 		));
 		EXPECT_TRUE(mentions(
-			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content"/><line when="nonsense(">Hi.</line></thought>)"),
+			errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="content" mood="-1" while="sparkle > 1" cause="the cause"/></thought>)"), "while: "
+		));
+		EXPECT_TRUE(mentions(
+			errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="content"/><line when="nonsense(">Hi.</line></thought>)"),
 			"line 1 when"
 		));
 		EXPECT_TRUE(mentions(
-			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content"/><line feeling="furious">Grr.</line></thought>)"),
+			errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="content"/><line feeling="furious">Grr.</line></thought>)"),
 			"never feels 'furious'"
 		));
 		EXPECT_TRUE(mentions(
 			errorsFor(
-				R"(<thought id="a" importance="normal"><feeling is="content"/><line>This line goes on and on and on and on, far too long.</line></thought>)"
+				R"(<thought id="a" label="A" importance="normal"><feeling is="content"/><line>This line goes on and on and on and on, far too long.</line></thought>)"
 			),
 			"more than the 40"
 		));
 		EXPECT_TRUE(mentions(
-			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content"/><ends thought="b"/></thought>)"),
+			errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="content"/><ends thought="b"/></thought>)"),
 			"which is no thought type"
 		));
+		EXPECT_TRUE(mentions(
+			errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="content"/><source trigger="needFalls" need="Mojo" threshold="seek"/></thought>)"),
+			"source 1: no need is called 'Mojo'"
+		));
+		EXPECT_TRUE(mentions(
+			errorsFor(R"(<thought id="a" label="A" importance="normal"><feeling is="content"/><source trigger="actionFinishes" action="Juggle"/></thought>)"),
+			"source 1: no action is called 'Juggle'"
+		));
 		const std::vector<std::string> cycle = errorsFor(R"(
-  <thought id="a" importance="normal"><feeling is="content"/><ends thought="b"/></thought>
-  <thought id="b" importance="normal"><feeling is="content"/><ends thought="c"/></thought>
-  <thought id="c" importance="normal"><feeling is="content"/><ends thought="a"/></thought>
+  <thought id="a" label="A" importance="normal"><feeling is="content"/><ends thought="b"/></thought>
+  <thought id="b" label="B" importance="normal"><feeling is="content"/><ends thought="c"/></thought>
+  <thought id="c" label="C" importance="normal"><feeling is="content"/><ends thought="a"/></thought>
 )");
 		ASSERT_EQ(cycle.size(), 1U) << "a cycle is reported once";
 		EXPECT_TRUE(mentions(cycle, "makes a cycle (a -> b -> c -> a)"));
@@ -876,7 +887,7 @@ namespace ecs::test {
 	TEST(ThoughtTypeDefinitions, ConditionErrorsGiveTheirPosition) {
 		const std::vector<std::string> errors =
 			testing::TestThoughtTypes(
-				R"(<thought id="a" importance="normal"><feeling is="content" when="attribute(sanity) >= "/></thought>)"
+				R"(<thought id="a" label="A" importance="normal"><feeling is="content" when="attribute(sanity) >= "/></thought>)"
 			)
 				.errors;
 		ASSERT_EQ(errors.size(), 1U);
@@ -895,6 +906,7 @@ namespace ecs::test {
 			EXPECT_TRUE(types.findType(name).has_value()) << name;
 		}
 		EXPECT_TRUE(types.type(*types.findType("bottled_up")).stacks);
+		EXPECT_TRUE(std::ranges::any_of(types.sources(), [](const ThoughtSource& source) { return source.trigger == ThoughtTrigger::Idle; }));
 		EXPECT_EQ(types.type(*types.findType("accident_in_public")).importance, ThoughtImportance::Major);
 		for (const std::string_view name : {"content", "resigned", "furious", "amused"}) {
 			EXPECT_TRUE(types.findFeeling(name).has_value()) << name;
@@ -914,23 +926,23 @@ namespace ecs::test {
 
 	TEST(ThoughtTypeDefinitions, EndsMayNotLoopThroughATypeALaterFileReplaces) {
 		const std::vector<std::string> self =
-			testing::TestThoughtTypes(R"(<thought id="a" importance="normal"><feeling is="content"/><ends thought="a"/></thought>)").errors;
+			testing::TestThoughtTypes(R"(<thought id="a" label="A" importance="normal"><feeling is="content"/><ends thought="a"/></thought>)").errors;
 		ASSERT_EQ(self.size(), 1U);
 		EXPECT_TRUE(mentions(self, "makes a cycle (a -> a)")) << self.front();
 
 		constexpr std::string_view kChain = R"(
-  <thought id="a" importance="normal"><feeling is="content"/><ends thought="b"/></thought>
-  <thought id="b" importance="normal"><feeling is="content"/><ends thought="c"/></thought>
-  <thought id="c" importance="normal"><feeling is="content"/></thought>
+  <thought id="a" label="A" importance="normal"><feeling is="content"/><ends thought="b"/></thought>
+  <thought id="b" label="B" importance="normal"><feeling is="content"/><ends thought="c"/></thought>
+  <thought id="c" label="C" importance="normal"><feeling is="content"/></thought>
 )";
 		EXPECT_TRUE(testing::TestThoughtTypes(kChain).errors.empty()) << "a chain that ends is fine";
 		const std::vector<std::string> looped =
-			testing::TestThoughtTypes(kChain, R"(<thought id="c" importance="normal"><feeling is="content"/><ends thought="a"/></thought>)")
+			testing::TestThoughtTypes(kChain, R"(<thought id="c" label="C" importance="normal"><feeling is="content"/><ends thought="a"/></thought>)")
 				.errors;
 		ASSERT_EQ(looped.size(), 1U);
 		EXPECT_TRUE(mentions(looped, "makes a cycle (a -> b -> c -> a)")) << looped.front();
 
-		testing::TestThoughtTypes broken(kChain, R"(<thought id="b" importance="normal"><feeling is="content"/></thought>)");
+		testing::TestThoughtTypes broken(kChain, R"(<thought id="b" label="B" importance="normal"><feeling is="content"/></thought>)");
 		ASSERT_TRUE(broken.errors.empty()) << broken.errors.front();
 		EXPECT_FALSE(broken.types.type(broken.type("b")).ends.has_value()) << "the later file's b ends nothing";
 		EXPECT_EQ(broken.types.type(broken.type("a")).ends, broken.type("b"));
@@ -938,7 +950,7 @@ namespace ecs::test {
 
 	TEST(ThoughtTypeDefinitions, LineLengthCountsCharactersAndTheSubjectAsItsBudget) {
 		const auto errorsFor = [](const std::string& line) {
-			return testing::TestThoughtTypes(R"(<thought id="a" importance="normal"><feeling is="content"/><line>)" + line + "</line></thought>")
+			return testing::TestThoughtTypes(R"(<thought id="a" label="A" importance="normal"><feeling is="content"/><line>)" + line + "</line></thought>")
 				.errors;
 		};
 		// The budget is 40, {subject} 12.
@@ -962,7 +974,7 @@ namespace ecs::test {
 		EXPECT_EQ(shortenSubjectName("\xC3\x89lodie-Fran\xC3\xA7oise", 12), "\xC3\x89lodie-Fran\xC3\xA7") << "cut on a character, not a byte";
 
 		testing::TestThoughtTypes rules(R"(
-  <thought id="talked" importance="normal">
+  <thought id="talked" label="Talked" importance="normal">
     <feeling is="content"/>
     <line>{subject} gets me.</line>
   </thought>

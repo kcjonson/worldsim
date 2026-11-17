@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Thoughts about notable work starting or finishing, and the knowledge it brings. The subject is the
+  kind of thing being made. The <source> form is described in events.xml.
+-->
+<thoughts>
+  <thought id="starting_craft" label="Started a craft" importance="trivial">
+    <source trigger="actionStarts" action="Craft"/>
+    <feeling is="eager"/>
+    <feeling is="bored" when="attribute(intelligence) &lt; 7"/>
+    <line>One {subject}, coming up.</line>
+    <line>Let's get crafting.</line>
+    <line feeling="bored">Another {subject}. Yay.</line>
+    <line feeling="bored">Hands, do the thing.</line>
+  </thought>
+
+  <thought id="first_craft" label="Finished a first craft" importance="normal">
+    <source trigger="actionFinishes" action="Craft" first="true"/>
+    <feeling is="proud" mood="+3" hours="12"/>
+    <line>My very first {subject}!</line>
+    <line>Look what I made!</line>
+    <line>I'm basically an artisan now.</line>
+  </thought>
+
+  <thought id="finished_building" label="Finished building" importance="trivial">
+    <source trigger="actionFinishes" action="Build"/>
+    <feeling is="proud"/>
+    <line>Built that with my own hands.</line>
+    <line>Not bad, if I say so myself.</line>
+  </thought>
+
+  <thought id="saw_something_new" label="Saw something new" importance="trivial">
+    <source trigger="firstSight"/>
+    <feeling is="curious"/>
+    <line>{subject}? Fascinating.</line>
+    <line>First {subject} I've ever seen.</line>
+    <line>Well, what's this?</line>
+  </thought>
+
+  <thought id="learned_recipe" label="Learned a recipe" importance="normal">
+    <source trigger="recipeLearned"/>
+    <feeling is="delighted" mood="+2" hours="6"/>
+    <line>New idea: {subject}!</line>
+    <line>Ooh, I've got an idea.</line>
+  </thought>
+</thoughts>

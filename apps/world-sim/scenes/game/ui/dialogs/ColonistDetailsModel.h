@@ -13,6 +13,9 @@
 #include "tabs/SocialTabView.h"
 #include "tabs/TasksTabView.h"
 
+#include "scenes/game/ui/models/ThoughtLogModel.h"
+
+#include <assets/TraitRegistry.h>
 #include <ecs/ClaimIndex.h>
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
@@ -26,6 +29,10 @@ namespace world_sim {
 	/// Refreshes data for all tabs from ECS world
 	class ColonistDetailsModel {
 	  public:
+		/// `newTraits` are the ones the world's colonists were rolled from.
+		explicit ColonistDetailsModel(const assets::TraitRegistry& newTraits)
+			: traits(newTraits) {}
+
 		/// Type of update needed after refresh()
 		enum class UpdateType {
 			None,	   // No change
@@ -75,6 +82,8 @@ namespace world_sim {
 		/// the rows changed.
 		[[nodiscard]] bool extractTasksData(ecs::World& world, ecs::EntityID colonistId, float deltaTime, bool force);
 
+		const assets::TraitRegistry& traits;
+
 		// State
 		ecs::EntityID currentColonistId{0};
 		bool		  valid = false;
@@ -90,6 +99,7 @@ namespace world_sim {
 		// Previous values for change detection
 		std::array<float, 8> prevNeedValues{};
 		float				 prevMood = 0.0F;
+		MoodBreakdown		 prevMoodBreakdown;
 		std::string			 prevGearSig;
 		size_t				 prevMemoryCount = 0;
 		// The bio "Current:" line is derived from task type + state + navState + labels;

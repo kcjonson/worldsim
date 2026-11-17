@@ -2,6 +2,8 @@
 
 #include "ConditionVocabulary.h"
 
+#include <assets/ConditionConfig.h>
+
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -74,8 +76,7 @@ namespace conditions {
 		if (name.empty() || !isNameStart(name.front()) || !std::ranges::all_of(name, isNameCharacter)) {
 			return false;
 		}
-		constexpr std::array<std::string_view, 6> kReserved = {"and", "or", "not", "is", kSelf, kTarget};
-		return std::ranges::find(kReserved, name) == kReserved.end();
+		return std::ranges::find(assets::kConditionReservedWords, name) == assets::kConditionReservedWords.end();
 	}
 
 	ConditionParser::ConditionParser(const ConditionVocabulary& newVocabulary, std::string_view newText)

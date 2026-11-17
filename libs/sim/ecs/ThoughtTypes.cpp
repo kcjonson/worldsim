@@ -61,6 +61,48 @@ namespace ecs {
 			std::vector<std::string>&			   errors;
 		};
 
+		std::optional<NeedType> needFromLabel(std::string_view label) {
+			const auto found = std::ranges::find(kNeedLabels, label, [](const char* need) { return std::string_view(need); });
+			return found == kNeedLabels.end() ? std::nullopt : std::optional(static_cast<NeedType>(found - kNeedLabels.begin()));
+		}
+
+		/// The loader checked the trigger's own attributes; the names that belong to the sim are checked here.
+		std::optional<ThoughtSource> buildSource(
+			const assets::ThoughtSourceDef& def, ThoughtEventTypeId thought, const std::string& where, std::vector<std::string>& errors
+		) {
+			ThoughtSource source{
+				.thought = thought,
+				.trigger = def.trigger,
+				.threshold = def.threshold,
+				.first = def.first,
+				.rollEverySimulationSeconds = static_cast<double>(def.everyMinutes) * kSimulationSecondsPerGameHour / kGameMinutesPerHour,
+				.chance = def.chance,
+			};
+			if (def.trigger == ThoughtTrigger::NeedFalls || def.trigger == ThoughtTrigger::NeedRises) {
+				const std::optional<NeedType> need = needFromLabel(def.need);
+				if (!need.has_value()) {
+					errors.push_back(where + ": no need is called '" + def.need + "'");
+					return std::nullopt;
+				}
+				source.need = *need;
+			}
+			if (def.trigger == ThoughtTrigger::ActionStarts || def.trigger == ThoughtTrigger::ActionFinishes) {
+				const std::optional<ActionType> action = actionTypeFromName(def.action);
+				if (!action.has_value() || *action == ActionType::None) {
+					errors.push_back(where + ": no action is called '" + def.action + "'");
+					return std::nullopt;
+				}
+				source.action = *action;
+			}
+			if (def.thing == assets::kGroundName) {
+				source.thing = ThingFilter::Ground;
+			} else if (const std::optional<assets::CapabilityType> capability = assets::capabilityFromName(def.thing)) {
+				source.thing = ThingFilter::Capability;
+				source.capability = *capability;
+			}
+			return source;
+		}
+
 	} // namespace
 
 	uint32_t specificityOf(const std::optional<conditions::Condition>& condition) {
@@ -81,7 +123,7 @@ namespace ecs {
 		std::unordered_map<std::string, FeelingId> newFeelingsByName;
 		for (const assets::FeelingDef& def : config.feelings) {
 			newFeelingsByName.emplace(def.id, static_cast<FeelingId>(newFeelings.size()));
-			newFeelings.push_back({.name = def.id});
+			newFeelings.push_back({.name = def.id, .label = def.label});
 		}
 
 		std::unordered_map<std::string, ThoughtEventTypeId> newTypesByName;
@@ -95,10 +137,11 @@ namespace ecs {
 		}
 		const assets::ThoughtTuning& tuning = *config.tuning;
 
-		std::vector<ThoughtType> newTypes;
+		std::vector<ThoughtType>   newTypes;
+		std::vector<ThoughtSource> newSources;
 		for (const assets::ThoughtTypeDef& def : config.types) {
 			const std::string what = def.source + ": thought '" + def.id + "'";
-			ThoughtType		  type{.name = def.id, .importance = def.importance, .stacks = def.stacks};
+			ThoughtType		  type{.name = def.id, .label = def.label, .importance = def.importance, .stacks = def.stacks};
 
 			if (def.feelings.empty()) {
 				errors.push_back(what + " lists no feeling, so no colonist could ever have it");
@@ -120,6 +163,7 @@ namespace ecs {
 					} else {
 						feeling.moodEffect = MoodEffect::whileCauseHolds(mood.amount);
 						feeling.whileCondition = builder.condition(mood.whileCondition, where + " while");
+						feeling.cause = mood.cause;
 					}
 				}
 				type.feelings.push_back(std::move(feeling));
@@ -154,6 +198,13 @@ namespace ecs {
 				}
 				line.specificity = specificityOf(line.when) + (lineDef.feeling.empty() ? 0U : 1U);
 				type.lines.push_back(std::move(line));
+			}
+
+			for (std::size_t index = 0; index < def.sources.size(); ++index) {
+				if (std::optional<ThoughtSource> source =
+						buildSource(def.sources[index], newTypesByName.at(def.id), what + " source " + std::to_string(index + 1), errors)) {
+					newSources.push_back(*source);
+				}
 			}
 
 			if (!def.ends.empty()) {
@@ -199,6 +250,7 @@ namespace ecs {
 		feelings = std::move(newFeelings);
 		feelingsByName = std::move(newFeelingsByName);
 		types = std::move(newTypes);
+		thoughtSources = std::move(newSources);
 		typesByName = std::move(newTypesByName);
 		whileCheckSeconds = static_cast<double>(tuning.whileCheckMinutes) * kSimulationSecondsPerGameHour / kGameMinutesPerHour;
 		subjectNameLength = tuning.maxSubjectNameLength;
@@ -216,6 +268,13 @@ namespace ecs {
 	}
 
 	std::optional<std::string> thoughtSubjectName(const World& world, const ThoughtSubject& subject) {
+		if (subject.kind == ThoughtSubjectKind::Kind) {
+			const assets::AssetDefinition* definition = assets::AssetRegistry::Get().getDefinitionById(subject.definition);
+			if (definition == nullptr) {
+				return std::nullopt;
+			}
+			return definition->label.empty() ? definition->defName : definition->label;
+		}
 		if (subject.kind != ThoughtSubjectKind::Colonist && subject.kind != ThoughtSubjectKind::Entity) {
 			return std::nullopt;
 		}

@@ -3,6 +3,7 @@
 // and DecisionTrace generation for task queue display.
 
 #include "AIDecisionSystem.h"
+#include "ShippedPriorityConfig.test.h"
 #include "ActionSystem.h"
 #include "MovementSystem.h"
 #include "NavigationSystem.h"
@@ -15,6 +16,7 @@
 
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
+#include "../ShippedConfig.test.h"
 #include "../World.h"
 #include "../WorldSource.h"
 #include "../components/Action.h"
@@ -105,12 +107,9 @@ namespace ecs::test {
 			// can't leak into another.
 			GoalTaskRegistry::Get().clear();
 
-			// PriorityConfig is a singleton too. These tests rely on its DEFAULT arbitration tiers
-			// (installed in the constructor) because they never load priority-tuning.xml. An earlier
-			// suite that loads a partial XML now (post the loadFromFile-clears-taskTiers fix) leaves
-			// the singleton's tier table empty, so getTaskTier would return the unassigned sentinel
-			// here. Reset to defaults so classifyTier sees the real per-task tiers regardless of order.
-			assets::PriorityConfig::Get().clear();
+			// PriorityConfig is a singleton too: load the shipped tuning so classifyTier sees the real
+			// per-task tiers regardless of what an earlier suite left in it.
+			ASSERT_TRUE(loadShippedPriorityConfig());
 
 			// Initialize AssetRegistry (singleton) - needed for capability lookups
 			auto& registry = assets::AssetRegistry::Get();
@@ -145,7 +144,7 @@ namespace ecs::test {
 			world->addComponent<AgentRadius>(entity, AgentRadius{});
 			world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 			world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-			world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+			world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 			world->addComponent<Memory>(entity, Memory{});
 			world->addComponent<Inventory>(entity, Inventory::createForColonist());
 			world->addComponent<Task>(entity, Task{});
@@ -1834,7 +1833,7 @@ namespace ecs::test {
 		EXPECT_EQ(first.taskType, TaskType::FulfillNeed);
 		EXPECT_EQ(first.needType, NeedType::Hunger);
 		EXPECT_EQ(first.status, OptionStatus::Selected);
-		EXPECT_EQ(first.tier, 2) << "a critical need (<10%) is tier 2";
+		EXPECT_EQ(first.tier, 2) << "a critical need is tier 2";
 	}
 
 	// =============================================================================
@@ -2586,7 +2585,37 @@ namespace ecs::test {
 			<< "gather-food wins the (tier, score) key over wander";
 	}
 
-	// A critical need (needValue < 10%) classifies at tier 2 (above everything in Phase 1/2).
+	// A need is critical below its own threshold from config, not a fixed line.
+	TEST_F(AIDecisionSystemTest, NeedIsCriticalBelowItsOwnThreshold) {
+		auto colonist = createColonist({0.0F, 0.0F});
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 3);
+
+		setNeedValue(colonist, NeedType::Hunger, 12.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		const auto hungerOption = [this, colonist] {
+			world->update(0.016F);
+			const auto* trace = getTrace(colonist);
+			return trace == nullptr ? nullptr : findOption(*trace, [](const EvaluatedOption& o) {
+				return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger;
+			});
+		};
+
+		const auto* atShippedLevels = hungerOption();
+		ASSERT_NE(atShippedLevels, nullptr);
+		EXPECT_FALSE(atShippedLevels->critical);
+		EXPECT_EQ(atShippedLevels->tier, 5) << "12% is above Hunger's shipped critical threshold of 10";
+
+		world->getComponent<NeedsComponent>(colonist)->hunger().criticalThreshold = 15.0F;
+		const auto* raised = hungerOption();
+		ASSERT_NE(raised, nullptr);
+		EXPECT_TRUE(raised->critical);
+		EXPECT_EQ(raised->tier, 2) << "12% is below a critical threshold of 15";
+	}
+
+	// A critical need (below its critical threshold) classifies at tier 2 (above everything in Phase 1/2).
 	TEST_F(AIDecisionSystemTest, CriticalNeedClassifiesTier2) {
 		auto colonist = createColonist({0.0F, 0.0F});
 		auto* inventory = world->getComponent<Inventory>(colonist);
@@ -2605,7 +2634,7 @@ namespace ecs::test {
 			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger;
 		});
 		ASSERT_NE(hunger, nullptr);
-		EXPECT_EQ(hunger->tier, 2) << "a need below the 10% critical threshold classifies at tier 2";
+		EXPECT_EQ(hunger->tier, 2) << "a need below its critical threshold classifies at tier 2";
 	}
 
 	// An actionable need (below its seek threshold but not critical) classifies at tier 5.
@@ -2615,7 +2644,7 @@ namespace ecs::test {
 		addKnownEntity(colonist, {3.0F, 4.0F}, kWaterDefId, assets::CapabilityType::Drinkable);
 
 		setNeedValue(colonist, NeedType::Hunger, 100.0F);
-		setNeedValue(colonist, NeedType::Thirst, 40.0F); // actionable, above the 10% critical line
+		setNeedValue(colonist, NeedType::Thirst, 40.0F); // actionable, above Thirst's critical threshold
 		setNeedValue(colonist, NeedType::Energy, 100.0F);
 		setNeedValue(colonist, NeedType::Bladder, 100.0F);
 
@@ -2945,10 +2974,9 @@ namespace ecs::test {
 		void SetUp() override {
 			world = std::make_unique<World>();
 
-			// Reset the PriorityConfig singleton to its default arbitration tiers: task selection here
-			// depends on the per-task tier table, and an earlier suite that loads a partial
-			// priority-tuning.xml now leaves it empty (loadFromFile is authoritative post-fix).
-			assets::PriorityConfig::Get().clear();
+			// Task selection here depends on the per-task tier table, so load the shipped tuning rather
+			// than what an earlier suite left in the PriorityConfig singleton.
+			ASSERT_TRUE(loadShippedPriorityConfig());
 
 			auto& registry = assets::AssetRegistry::Get();
 
@@ -2981,7 +3009,7 @@ namespace ecs::test {
 			world->addComponent<AgentRadius>(entity, AgentRadius{});
 			world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 			world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-			world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+			world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 			world->addComponent<Memory>(entity, Memory{});
 			world->addComponent<Inventory>(entity, Inventory::createForColonist());
 			world->addComponent<Task>(entity, Task{});

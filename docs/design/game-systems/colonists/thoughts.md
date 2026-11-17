@@ -24,7 +24,7 @@ A thought is an event and a feeling about it.
 | Part | Meaning |
 |---|---|
 | Event | What happened or what is true: "soaked", "saw a new kind of tree", "masterwork destroyed" |
-| Subject | Who or what it is about: a colonist, an entity, a place, or nothing |
+| Subject | Who or what it is about: a colonist, an entity, a kind of thing, a place, or nothing |
 | Feeling | How this colonist takes it: an emotion word such as annoyed, delighted, resigned, vengeful |
 | Mood effect | Optional. A signed amount and either a duration or a cause it lasts as long as |
 | Importance | Major, normal, or trivial. Set per event type |
@@ -53,7 +53,7 @@ Feelings are a shared list of emotion words. Each has an icon and a colonist exp
 
 | Source | When | Example | Mood effect |
 |---|---|---|---|
-| Needs | a need changes level, in either direction | "I'm starving", "that hit the spot" | yes |
+| Needs | a need changes level, in either direction | "I'm starving", "ahh, water" | no; a low need already lowers mood through the needs score ([Mood](./mood.md)) |
 | Environment | smell, noise, wetness, crowding, or temperature crosses a threshold, in either direction | "this toilet smells", "finally dry" | yes |
 | Events | something happens to the colonist or in front of them: a meal, a night's sleep, an accident, a fight witnessed | "slept on the ground" | yes |
 | Likes and dislikes | the colonist meets something they favor or can't stand: a food, a material, an animal, a kind of room | "ugh, turnips again" | yes |
@@ -174,8 +174,8 @@ Pruning changes only what the log can show. The bubble selector's novelty does n
 ## Where it shows in the UI
 
 - **World view.** Bubbles over colonists' heads, and matching expressions.
-- **Info panel and colonist details, Log tab.** Each thought is one block holding the event, the feeling, and the mood adjustment ("Slept on the ground. Miserable. -10 mood, 1 day"). By default the log shows the thoughts that bubbled, every major thought, and every low-mood episode and refusal, with a filter to show all of them. Merged entries show their count and date range. It is a reference for "why", not something to read through.
-- **Colonist details, Health tab.** The mood breakdown lists every held thought that has a mood effect, with its amount and time left. See [Mood](./mood.md).
+- **Info panel and colonist details, Log tab.** Each thought is one block holding the event, the feeling, and the mood adjustment ("Slept on the ground. Miserable. -10 mood, 1 day"). A Notable / All control above the blocks picks what shows: Notable, the default, is every thought that bubbled, every major thought, and every thought with a mood effect; All is every thought recorded. The newest 50 blocks show first, and "Show older" under them adds the next 50; another colonist starts again at 50. Merged entries show their count and date range, and a repeated or stacked thought shows its count and its latest arrival. It is a reference for "why", not something to read through.
+- **Colonist details, Needs tab.** The mood breakdown lists every held thought that has a mood effect, with its amount and time left. See [Mood](./mood.md).
 - **Colony overview.** Held thoughts counted by event type across the colony ("slept on the ground: 5 colonists"), largest total mood effect first.
 - **Settings.** Bubble frequency (fewer, normal, more), and a switch per source to stop its trivial and normal thoughts from bubbling. Major thoughts always show.
 
@@ -187,26 +187,34 @@ Event types, their feelings, lines, importance, mood effects, and animations are
 <thoughts>
   <tuning maxLineLength="48" maxSubjectNameLength="16" whileCheckMinutes="15"/>
 
-  <feeling id="miserable"/>
-  <feeling id="furious"/>
-  <feeling id="relieved"/>
-  <feeling id="bored"/>
+  <feeling id="miserable" label="Miserable"/>
+  <feeling id="furious" label="Furious"/>
+  <feeling id="relieved" label="Relieved"/>
+  <feeling id="bored" label="Bored"/>
+  <feeling id="annoyed" label="Annoyed"/>
 
-  <thought id="soaked" importance="normal">
-    <feeling is="miserable" mood="-6" while="wetness > 0.6"/>
-    <feeling is="furious" when="trait(volatile)" mood="-9" while="wetness > 0.6"/>
+  <thought id="soaked" label="Soaked" importance="normal">
+    <feeling is="miserable" mood="-6" while="wetness > 0.6" cause="soaked"/>
+    <feeling is="furious" when="trait(volatile)" mood="-9" while="wetness > 0.6" cause="soaked"/>
     <line>I'm soaked through.</line>
     <line feeling="furious">One more minute of this...</line>
     <line feeling="furious">I will fight this cloud.</line>
     <ends thought="dried_off"/>
   </thought>
 
-  <thought id="dried_off" importance="trivial">
+  <thought id="dried_off" label="Dried off" importance="trivial">
     <feeling is="relieved" mood="+2" hours="3"/>
     <line>Finally dry.</line>
   </thought>
 
-  <thought id="itchy" importance="trivial">
+  <thought id="very_hungry" label="Very hungry" importance="normal">
+    <source trigger="needFalls" need="Hunger" threshold="urgent"/>
+    <feeling is="annoyed"/>
+    <line>I could eat a whole bush.</line>
+  </thought>
+
+  <thought id="itchy" label="Itchy" importance="trivial">
+    <source trigger="idle" everyMinutes="180" chance="0.25"/>
     <feeling is="bored"/>
     <line>My butt itches.</line>
     <line>{subject} looks itchy too.</line>
@@ -215,12 +223,19 @@ Event types, their feelings, lines, importance, mood effects, and animations are
 ```
 
 - Every file's root is `<thoughts>`. The folder's own files load first, then its subfolders' in path order; a later file's feeling or thought type with the same id, or its `<tuning>`, replaces the earlier one, and the same id twice in one file is an error.
-- A feeling in the shared list is an `id`; the list is the closed set a type's feelings are checked against. A thought type has an `importance` (`trivial`, `normal`, or `major`) and `stacks="true"` when it stacks.
-- A type lists at least one feeling. A feeling's mood effect is a signed `mood` with either `hours`, in game hours, or `while`, a condition; with no `mood` it has no effect. A `while` is checked every `whileCheckMinutes` game minutes and the thought ends when it is false, or when its subject, a colonist or an entity, no longer exists; otherwise Unknown keeps it.
+- A feeling in the shared list is an `id` and a `label`, the word the log shows; the list is the closed set a type's feelings are checked against. A thought type has a `label`, the event as the log shows it ("Slept on the ground"), an `importance` (`trivial`, `normal`, or `major`), and `stacks="true"` when it stacks. A feeling or type with no label is an error.
+- A type lists at least one feeling. A feeling's mood effect is a signed `mood` with either `hours`, in game hours, or `while`, a condition, and `cause`, what the condition is in words ("soaked", shown as "while soaked"); with no `mood` it has no effect. A `while` with no `cause`, or a `cause` with no `while`, is an error. A `while` is checked every `whileCheckMinutes` game minutes and the thought ends when it is false, or when its subject, a colonist or an entity, no longer exists; otherwise Unknown keeps it.
 - A number is a plain decimal, with an optional leading sign and no units: `+4.5`, `-6`. Text that is not entirely a finite number (`nan`, `inf`, `4h`) is an error.
 - A feeling's or line's specificity is the number of terms its conditions name, a line's `feeling` counting as one; the most specific that holds wins, and between feelings of equal specificity the one written first does. Unknown never holds, and when no feeling holds the colonist has no thought.
 - A line is at most `maxLineLength` characters, counting `{subject}` as `maxSubjectNameLength`. `{subject}` in a line is the subject's name as it was when the thought arrived, cut to `maxSubjectNameLength` characters when it is longer. A line that names the subject fits only a subject that has a name: a colonist's own name, or an entity's asset label (its definition name when it has no label). A colonist with no name has none.
 - `<ends thought>` names the type created when a held thought of this type ends, however it ends. Endings may not loop.
+- A `<source>` names a change in the sim that creates a thought of its type, and a type may have any number. Its `trigger` is one of:
+  - `needFalls` or `needRises`, with `need` (the need's label) and `threshold` (`seek`, `urgent`, or `critical`, the need's thresholds in `assets/config/colonists/needs/`, the same ones the colonists' AI seeks by): the need falls below the threshold, or rises back to it. A change across several thresholds at once is told once, by the level it lands in.
+  - `actionStarts` or `actionFinishes`, with `action` (`Eat`, `Sleep`, `Craft`, `Build`, and the other actions), an optional `on`, either `ground` for an action about no thing or a capability the kind of thing it is about has (`sleepable`), and `first="true"` for only the first time for each kind of thing. An action cut short does not finish, and taking up work already begun (a blueprint with work on it, a craft batch past its first unit) does not start.
+  - `firstSight`, the first time the colonist sees a kind of thing that has a display label, with an optional `of` naming a capability the kind has. What the landing crew learns of the landing area on arrival is no first sight.
+  - `recipeLearned`.
+  - `idle`, with `everyMinutes` and `chance`: a roll every `everyMinutes` game minutes, taken only when no thought has arrived on the colonist in that time.
+  A source's subject is the kind of thing its change is about, when it is about one. A source naming a need or an action the sim does not have is an error.
 - Conditions are written in the [condition vocabulary](./mood.md#conditions); a `<` inside an attribute is written `&lt;`.
 
 ## Related documents
@@ -246,6 +261,7 @@ A supplement, not part of the spec. Kevin, 2026-11-16.
 - Thoughts are kept up to a high bound per colonist, with an algorithm that prunes as the limit approaches.
 - Recalling old thoughts on a cue, with attachment, developing likes, and softened feelings, is wanted ("kinda fun").
 - The game should carry some of The Sims' joy; balance of harsh against gentle is tuned at playtest.
+- 2026-11-17: need thoughts carry no mood effect, because the needs score already prices a low need into mood.
 
 ## Addendum: prior work
 

@@ -5,6 +5,8 @@
 // type by adding a file. Conditions are kept as text here; the sim parses them against its vocabulary.
 // See /docs/design/game-systems/colonists/thoughts.md (Data).
 
+#include "assets/NeedsConfig.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -19,15 +21,17 @@ namespace assets {
 	/// An emotion word from the shared list, the closed set a thought type's feelings are checked against.
 	struct FeelingDef {
 		std::string id;
+		std::string label; // what the log shows: "Miserable"
 		std::string source; // the file it was declared in
 	};
 
 	/// A feeling's mood effect: a signed amount for `hours` game hours, or for as long as `whileCondition`
-	/// holds. Exactly one of the two is set.
+	/// holds. Exactly one of the two is set; a while effect's `cause` names what holds it ("soaked").
 	struct ThoughtMoodDef {
 		float				 amount = 0.0F;
 		std::optional<float> hours;
 		std::string			 whileCondition;
+		std::string			 cause;
 	};
 
 	/// One way a colonist can take a thought type's event: the feeling, the condition it needs (empty for
@@ -45,12 +49,43 @@ namespace assets {
 		std::string when;
 	};
 
+	/// What happens in the sim that creates a thought of a type. Each names a change, never a state.
+	enum class ThoughtTrigger : uint8_t {
+		NeedFalls,		// a need falls below one of its thresholds, the lowest one it crossed
+		NeedRises,		// a need rises back to one of its thresholds, the highest one it crossed
+		ActionStarts,	// a colonist starts an action
+		ActionFinishes, // a colonist finishes an action; one cut short does not finish
+		FirstSight,		// a colonist sees a kind of thing for the first time
+		RecipeLearned,	// a colonist learns a recipe
+		Idle,			// a slow random roll while no other thought has arrived
+	};
+
+	/// An action's `on` for one done on the bare ground, about no thing.
+	inline constexpr const char* kGroundName = "ground";
+
+	/// One <source>: the trigger, and the attributes that trigger reads. Names are checked against the
+	/// sim's needs and actions when it builds the types.
+	struct ThoughtSourceDef {
+		ThoughtTrigger trigger = ThoughtTrigger::Idle;
+		std::string	   need;			 // NeedFalls, NeedRises: the need's label
+		std::size_t	   threshold = 0;	 // NeedFalls, NeedRises: an index into kNeedThresholdNames
+		std::string	   action;			 // ActionStarts, ActionFinishes: the sim's action name
+		/// ActionStarts, ActionFinishes (`on`): kGroundName when the action is about no thing, or a capability
+		/// the kind of thing it is about has. FirstSight (`of`): a capability the kind seen has. Empty for any.
+		std::string thing;
+		bool		first = false;		// ActionStarts, ActionFinishes: only the first time for this kind of thing
+		float		everyMinutes = 0.0F; // Idle: game minutes between rolls
+		float		chance = 0.0F;		 // Idle: the chance a roll gives the thought, above 0 and at most 1
+	};
+
 	struct ThoughtTypeDef {
 		std::string					   id;
+		std::string					   label; // what the log shows for the event: "Slept on the ground"
 		ThoughtImportance			   importance = ThoughtImportance::Normal;
 		bool						   stacks = false;
 		std::vector<ThoughtFeelingDef> feelings;
 		std::vector<ThoughtLineDef>	   lines;
+		std::vector<ThoughtSourceDef>  sources;
 		std::string					   ends; // the thought type created when a held one of this type ends
 		std::string					   source;
 	};

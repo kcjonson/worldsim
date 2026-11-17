@@ -1,14 +1,16 @@
 #include "assets/ThoughtConfig.h"
+#include "assets/AssetDefinition.h"
 #include "assets/ConfigFiles.h"
 #include "assets/ConfigNumber.h"
+#include "assets/ConfigXml.h"
 
 #include <utils/Log.h>
 
 #include <pugixml.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
-#include <initializer_list>
 #include <set>
 #include <string_view>
 #include <utility>
@@ -37,6 +39,20 @@ namespace assets {
 				return ThoughtImportance::Major;
 			}
 			return std::nullopt;
+		}
+
+		std::optional<ThoughtTrigger> triggerFromName(std::string_view name) {
+			constexpr std::array<std::pair<std::string_view, ThoughtTrigger>, 7> kTriggers = {{
+				{"needFalls", ThoughtTrigger::NeedFalls},
+				{"needRises", ThoughtTrigger::NeedRises},
+				{"actionStarts", ThoughtTrigger::ActionStarts},
+				{"actionFinishes", ThoughtTrigger::ActionFinishes},
+				{"firstSight", ThoughtTrigger::FirstSight},
+				{"recipeLearned", ThoughtTrigger::RecipeLearned},
+				{"idle", ThoughtTrigger::Idle},
+			}};
+			const auto found = std::ranges::find(kTriggers, name, &std::pair<std::string_view, ThoughtTrigger>::first);
+			return found == kTriggers.end() ? std::nullopt : std::optional(found->second);
 		}
 
 		class Loader {
@@ -84,23 +100,6 @@ namespace assets {
 		  private:
 			void fail(const std::string& source, const std::string& message) { result.errors.push_back(source + ": " + message); }
 
-			/// False, with each one reported, when the element has an attribute it does not take.
-			bool onlyAttributes(
-				pugi::xml_node							node,
-				std::initializer_list<std::string_view> allowed,
-				const std::string&						what,
-				const std::string&						source
-			) {
-				bool clean = true;
-				for (const pugi::xml_attribute attribute : node.attributes()) {
-					if (std::ranges::find(allowed, std::string_view(attribute.name())) == allowed.end()) {
-						fail(source, what + ": unknown attribute '" + attribute.name() + "'");
-						clean = false;
-					}
-				}
-				return clean;
-			}
-
 			/// Adds `declared`, or replaces the one with its id from an earlier file; one with its id from this
 			/// file is an error.
 			template <typename Def>
@@ -127,12 +126,21 @@ namespace assets {
 			}
 
 			void loadFeeling(pugi::xml_node node, const std::string& source, std::set<std::string>& inFile) {
-				FeelingDef feeling{.id = node.attribute("id").as_string(), .source = source};
+				FeelingDef feeling{.id = node.attribute("id").as_string(), .label = node.attribute("label").as_string(), .source = source};
 				if (feeling.id.empty()) {
 					fail(source, "a <feeling> has no id");
 					return;
 				}
-				if (!onlyAttributes(node, {"id"}, "feeling '" + feeling.id + "'", source)) {
+				const std::string what = "feeling '" + feeling.id + "'";
+				if (!onlyAttributes(node, {"id", "label"}, what, source, result.errors)) {
+					return;
+				}
+				if (feeling.label.empty()) {
+					fail(source, what + " has no label=\"<display name>\"");
+					return;
+				}
+				if (feeling.label.ends_with('.')) {
+					fail(source, what + ": label=\"" + feeling.label + "\" ends in a period; the log adds its own");
 					return;
 				}
 				declare(result.config.feelings, std::move(feeling), "feeling", inFile);
@@ -142,6 +150,10 @@ namespace assets {
 				const pugi::xml_attribute mood = node.attribute("mood");
 				const pugi::xml_attribute hours = node.attribute("hours");
 				const pugi::xml_attribute whileAttribute = node.attribute("while");
+				if (node.attribute("cause") && !whileAttribute) {
+					fail(source, what + ": cause names what holds a while effect, so it needs while");
+					valid = false;
+				}
 				if (!mood) {
 					if (hours || whileAttribute) {
 						fail(source, what + ": hours and while need a mood amount");
@@ -178,18 +190,130 @@ namespace assets {
 						valid = false;
 						return std::nullopt;
 					}
+					effect.cause = node.attribute("cause").as_string();
+					if (effect.cause.empty()) {
+						fail(source, what + ": a while effect has no cause=\"<what holds it>\"");
+						valid = false;
+						return std::nullopt;
+					}
+					if (effect.cause.ends_with('.')) {
+						fail(source, what + ": cause=\"" + effect.cause + "\" ends in a period; the log adds its own");
+						valid = false;
+						return std::nullopt;
+					}
 				}
 				return effect;
 			}
 
+			/// A capability name, or for an action's `on` also kGroundName; empty stays empty, for any.
+			bool knownThing(const std::string& thing, bool groundAllowed) {
+				return thing.empty() || capabilityFromName(thing).has_value() || (groundAllowed && thing == kGroundName);
+			}
+
+			std::optional<ThoughtSourceDef> sourceOf(pugi::xml_node node, const std::string& what, const std::string& source) {
+				const std::string_view		  triggerName = node.attribute("trigger").as_string();
+				const std::optional<ThoughtTrigger> trigger = triggerFromName(triggerName);
+				if (!trigger.has_value()) {
+					fail(
+						source,
+						what + ": trigger=\"" + std::string(triggerName) +
+							"\" is not needFalls, needRises, actionStarts, actionFinishes, firstSight, recipeLearned, or idle"
+					);
+					return std::nullopt;
+				}
+				ThoughtSourceDef parsed{.trigger = *trigger};
+				bool			 valid = true;
+				switch (*trigger) {
+					case ThoughtTrigger::NeedFalls:
+					case ThoughtTrigger::NeedRises: {
+						valid = onlyAttributes(node, {"trigger", "need", "threshold"}, what, source, result.errors);
+						parsed.need = node.attribute("need").as_string();
+						if (parsed.need.empty()) {
+							fail(source, what + " has no need=\"<need>\"");
+							valid = false;
+						}
+						const std::string threshold = node.attribute("threshold").as_string();
+						parsed.threshold = needThresholdIndex(threshold);
+						if (parsed.threshold == kNeedThresholdNames.size()) {
+							fail(source, what + ": threshold=\"" + threshold + "\" is not seek, urgent, or critical");
+							valid = false;
+						}
+						break;
+					}
+					case ThoughtTrigger::ActionStarts:
+					case ThoughtTrigger::ActionFinishes: {
+						valid = onlyAttributes(node, {"trigger", "action", "on", "first"}, what, source, result.errors);
+						parsed.action = node.attribute("action").as_string();
+						if (parsed.action.empty()) {
+							fail(source, what + " has no action=\"<action>\"");
+							valid = false;
+						}
+						parsed.thing = node.attribute("on").as_string();
+						if (!knownThing(parsed.thing, true)) {
+							fail(source, what + ": on=\"" + parsed.thing + "\" is not ground or a capability");
+							valid = false;
+						}
+						if (const pugi::xml_attribute first = node.attribute("first")) {
+							const std::string_view value = first.as_string();
+							if (value != "true" && value != "false") {
+								fail(source, what + ": first=\"" + std::string(value) + "\" is not \"true\" or \"false\"");
+								valid = false;
+							}
+							parsed.first = value == "true";
+						}
+						break;
+					}
+					case ThoughtTrigger::FirstSight:
+						valid = onlyAttributes(node, {"trigger", "of"}, what, source, result.errors);
+						parsed.thing = node.attribute("of").as_string();
+						if (!knownThing(parsed.thing, false)) {
+							fail(source, what + ": of=\"" + parsed.thing + "\" is not a capability");
+							valid = false;
+						}
+						break;
+					case ThoughtTrigger::RecipeLearned:
+						valid = onlyAttributes(node, {"trigger"}, what, source, result.errors);
+						break;
+					case ThoughtTrigger::Idle: {
+						valid = onlyAttributes(node, {"trigger", "everyMinutes", "chance"}, what, source, result.errors);
+						const std::optional<float> everyMinutes = parseConfigNumber(node.attribute("everyMinutes").as_string());
+						if (!everyMinutes.has_value() || *everyMinutes <= 0.0F) {
+							fail(
+								source,
+								what + ": everyMinutes=\"" + node.attribute("everyMinutes").as_string() + "\" is not a positive number of game minutes"
+							);
+							valid = false;
+						} else {
+							parsed.everyMinutes = *everyMinutes;
+						}
+						const std::optional<float> chance = parseConfigNumber(node.attribute("chance").as_string());
+						if (!chance.has_value() || *chance <= 0.0F || *chance > 1.0F) {
+							fail(source, what + ": chance=\"" + node.attribute("chance").as_string() + "\" is not above 0 and at most 1");
+							valid = false;
+						} else {
+							parsed.chance = *chance;
+						}
+						break;
+					}
+				}
+				return valid ? std::optional(std::move(parsed)) : std::nullopt;
+			}
+
 			void loadThought(pugi::xml_node node, const std::string& source, std::set<std::string>& inFile) {
-				ThoughtTypeDef type{.id = node.attribute("id").as_string(), .source = source};
+				ThoughtTypeDef type{.id = node.attribute("id").as_string(), .label = node.attribute("label").as_string(), .source = source};
 				if (type.id.empty()) {
 					fail(source, "a <thought> has no id");
 					return;
 				}
 				const std::string what = "thought '" + type.id + "'";
-				bool			  valid = onlyAttributes(node, {"id", "importance", "stacks"}, what, source);
+				bool			  valid = onlyAttributes(node, {"id", "label", "importance", "stacks"}, what, source, result.errors);
+				if (type.label.empty()) {
+					fail(source, what + " has no label=\"<display name>\"");
+					valid = false;
+				} else if (type.label.ends_with('.')) {
+					fail(source, what + ": label=\"" + type.label + "\" ends in a period; the log adds its own");
+					valid = false;
+				}
 
 				const std::optional<ThoughtImportance> importance = importanceFromName(node.attribute("importance").as_string());
 				if (!importance.has_value()) {
@@ -216,7 +340,7 @@ namespace assets {
 					const std::string_view element = child.name();
 					if (element == "feeling") {
 						const std::string feelingWhat = what + " feeling " + std::to_string(type.feelings.size() + 1);
-						valid = onlyAttributes(child, {"is", "when", "mood", "hours", "while"}, feelingWhat, source) && valid;
+						valid = onlyAttributes(child, {"is", "when", "mood", "hours", "while", "cause"}, feelingWhat, source, result.errors) && valid;
 						ThoughtFeelingDef feeling{
 							.feeling = child.attribute("is").as_string(), .when = child.attribute("when").as_string()
 						};
@@ -228,7 +352,7 @@ namespace assets {
 						type.feelings.push_back(std::move(feeling));
 					} else if (element == "line") {
 						const std::string lineWhat = what + " line " + std::to_string(type.lines.size() + 1);
-						valid = onlyAttributes(child, {"feeling", "when"}, lineWhat, source) && valid;
+						valid = onlyAttributes(child, {"feeling", "when"}, lineWhat, source, result.errors) && valid;
 						ThoughtLineDef line{
 							.text = child.text().as_string(),
 							.feeling = child.attribute("feeling").as_string(),
@@ -239,8 +363,15 @@ namespace assets {
 							valid = false;
 						}
 						type.lines.push_back(std::move(line));
+					} else if (element == "source") {
+						const std::string sourceWhat = what + " source " + std::to_string(type.sources.size() + 1);
+						if (std::optional<ThoughtSourceDef> parsed = sourceOf(child, sourceWhat, source)) {
+							type.sources.push_back(std::move(*parsed));
+						} else {
+							valid = false;
+						}
 					} else if (element == "ends") {
-						valid = onlyAttributes(child, {"thought"}, what + " <ends>", source) && valid;
+						valid = onlyAttributes(child, {"thought"}, what + " <ends>", source, result.errors) && valid;
 						if (!type.ends.empty()) {
 							fail(source, what + " has more than one <ends>");
 							valid = false;
@@ -261,7 +392,7 @@ namespace assets {
 			}
 
 			void loadTuning(pugi::xml_node node, const std::string& source) {
-				if (!onlyAttributes(node, {"maxLineLength", "maxSubjectNameLength", "whileCheckMinutes"}, "<tuning>", source)) {
+				if (!onlyAttributes(node, {"maxLineLength", "maxSubjectNameLength", "whileCheckMinutes"}, "<tuning>", source, result.errors)) {
 					return;
 				}
 				const std::optional<std::size_t> maxLineLength = characterCountOf(node.attribute("maxLineLength"));

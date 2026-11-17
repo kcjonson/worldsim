@@ -17,6 +17,7 @@
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/Movement.h"
+#include "../ShippedConfig.test.h"
 #include "../components/Needs.h"
 #include "../components/Packaged.h"
 #include "../components/ResourceStack.h"
@@ -229,7 +230,7 @@ class ActionSystemTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{position});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 		world->addComponent<Memory>(entity, Memory{});
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Task>(entity, Task{});
@@ -572,7 +573,7 @@ class ActionSystemGoalTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{position});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 		world->addComponent<Memory>(entity, Memory{});
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Task>(entity, Task{});
@@ -1602,7 +1603,7 @@ class FellingTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{position});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 		world->addComponent<Memory>(entity, Memory{});
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Task>(entity, Task{});
@@ -1990,7 +1991,7 @@ class LoosePileHaulTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{position});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 		world->addComponent<Memory>(entity, Memory{});
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Task>(entity, Task{});
@@ -2299,7 +2300,7 @@ class HandMaterialActionTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{position});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 		world->addComponent<Memory>(entity, Memory{});
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Task>(entity, Task{});
@@ -2563,22 +2564,30 @@ TEST_F(HandMaterialActionTest, CraftConsumesWoodFromStationStoreAndProducesOutpu
 	// A crafting station holding 10 Wood in its store (hauled in during provisioning).
 	EntityID station = world->createEntity();
 	world->addComponent<Position>(station, Position{{0.0F, 0.0F}});
-	world->addComponent<WorkQueue>(station, WorkQueue{});
+	WorkQueue queue;
+	queue.addJob("Recipe_Plank", 2);
+	world->addComponent<WorkQueue>(station, queue);
 	auto stationInv = Inventory::createForStorage();
 	stationInv.addItem("Wood", 10);
 	world->addComponent<Inventory>(station, stationInv);
 
+	std::vector<ActionEvent> heard;
+	world->getSystem<ActionSystem>().addActionObserver([&heard](const ActionEvent& event) { heard.push_back(event); });
+
 	auto  colonist = createColonist({0.0F, 0.0F});
 	auto* inventory = world->getComponent<Inventory>(colonist);
 
-	auto* task = world->getComponent<Task>(colonist);
-	task->type = TaskType::Craft;
-	task->state = TaskState::Arrived;
-	task->craftRecipeDefName = "Recipe_Plank";
-	task->targetStationId = static_cast<uint64_t>(station);
-	task->targetPosition = {0.0F, 0.0F};
+	const auto craftOne = [&] {
+		auto* task = world->getComponent<Task>(colonist);
+		task->type = TaskType::Craft;
+		task->state = TaskState::Arrived;
+		task->craftRecipeDefName = "Recipe_Plank";
+		task->targetStationId = static_cast<uint64_t>(station);
+		task->targetPosition = {0.0F, 0.0F};
+		world->update(0.1F); // startCraftAction builds the Craft action (readiness gate sees station Wood)
+	};
 
-	world->update(0.1F); // startCraftAction builds the Craft action (readiness gate sees station Wood)
+	craftOne();
 	auto* action = world->getComponent<Action>(colonist);
 	ASSERT_TRUE(action->hasCraftingEffect()) << "Station-stored Wood satisfies the craft readiness gate";
 
@@ -2590,6 +2599,18 @@ TEST_F(HandMaterialActionTest, CraftConsumesWoodFromStationStoreAndProducesOutpu
 	// The canonical cascade seats a one-hand output in an empty hand first, so count hands + backpack.
 	EXPECT_EQ(ecs::availableQuantity(*inventory, "Plank"), 1U) << "Craft produced its output into the colonist";
 	EXPECT_TRUE(inventory->isHolding("Plank")) << "Output seats in an empty hand before the backpack";
+
+	const uint32_t plank = assets::AssetRegistry::Get().getDefNameId("Plank");
+	ASSERT_EQ(heard.size(), 2U);
+	EXPECT_EQ(heard[0].moment, ActionMoment::Started);
+	EXPECT_EQ(heard[1].moment, ActionMoment::Finished);
+	EXPECT_EQ(heard[0].aboutDefinition, plank) << "a craft is about what it makes";
+	EXPECT_EQ(heard[1].aboutDefinition, plank);
+
+	craftOne();
+	world->update(1.0F);
+	ASSERT_EQ(heard.size(), 3U) << "the batch's second unit finishes but does not start the batch again";
+	EXPECT_EQ(heard[2].moment, ActionMoment::Finished);
 }
 
 // A crafted FURNITURE output (BasicBox) does NOT seat in the colonist's hands: it routes to the
@@ -2751,7 +2772,7 @@ class ActionSystemTimeTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{position});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 		world->addComponent<Memory>(entity, Memory{});
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Task>(entity, Task{});
@@ -2912,7 +2933,7 @@ class ActionSystemHarvestTimeTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{treePos});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Action>(entity, Action{});
 
@@ -3022,7 +3043,7 @@ class ActionSystemHarvestLocateTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{standPos});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Action>(entity, Action{});
 
@@ -3214,7 +3235,7 @@ class ClearHarvestTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{bushPos + glm::vec2{1.0F, 0.0F}});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Action>(entity, Action{});
 

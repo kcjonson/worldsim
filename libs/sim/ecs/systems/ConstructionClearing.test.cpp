@@ -3,12 +3,14 @@
 // the blocker from the index. Movement is skipped: a colonist arrives the moment it takes a task.
 
 #include "AIDecisionSystem.h"
+#include "ShippedPriorityConfig.test.h"
 #include "ActionSystem.h"
 #include "ConstructionSystem.h"
 #include "TimeSystem.h"
 
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
+#include "../ShippedConfig.test.h"
 #include "../World.h"
 #include "../WorldSource.h"
 #include "../components/Action.h"
@@ -72,7 +74,7 @@ namespace ecs::test {
 		  protected:
 			void SetUp() override {
 				GoalTaskRegistry::Get().clear();
-				assets::PriorityConfig::Get().clear();
+				ASSERT_TRUE(loadShippedPriorityConfig());
 				auto& registry = assets::AssetRegistry::Get();
 				registry.clearDefinitions();
 
@@ -197,7 +199,7 @@ namespace ecs::test {
 				world->addComponent<Position>(entity, Position{position});
 				world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 				world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-				world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+				world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 				world->addComponent<Inventory>(entity, Inventory::createForColonist());
 				world->addComponent<Task>(entity, Task{});
 				world->addComponent<Action>(entity, Action{});

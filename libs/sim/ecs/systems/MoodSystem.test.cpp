@@ -1,6 +1,7 @@
 #include "MoodSystem.h"
 
 #include "../World.h"
+#include "../ShippedConfig.test.h"
 #include "../ThoughtTesting.test.h"
 #include "ThoughtSystem.h"
 #include "TimeSystem.h"
@@ -19,16 +20,16 @@ namespace ecs::test {
 	namespace {
 		// `wetness` is answered by nothing, so a `while` on it holds until the thought is ended.
 		constexpr std::string_view kThoughtTypes = R"(
-  <thought id="slept_on_ground" importance="normal"><feeling is="annoyed" mood="-10" hours="24"/></thought>
-  <thought id="slept_badly" importance="normal"><feeling is="annoyed" mood="-12" hours="24"/></thought>
-  <thought id="vented" importance="normal"><feeling is="delighted" mood="+4" hours="12"/></thought>
-  <thought id="vented_long" importance="normal"><feeling is="delighted" mood="+8" hours="12"/></thought>
-  <thought id="cheered" importance="normal"><feeling is="delighted" mood="+30" while="wetness > 0"/></thought>
-  <thought id="elated" importance="normal"><feeling is="delighted" mood="+60" while="wetness > 0"/></thought>
-  <thought id="reeks_5" importance="normal"><feeling is="annoyed" mood="-5" while="wetness > 0"/></thought>
-  <thought id="reeks_12" importance="normal"><feeling is="annoyed" mood="-12" while="wetness > 0"/></thought>
-  <thought id="reeks_20" importance="normal"><feeling is="annoyed" mood="-20" while="wetness > 0"/></thought>
-  <thought id="reeks_30" importance="normal"><feeling is="annoyed" mood="-30" while="wetness > 0"/></thought>
+  <thought id="slept_on_ground" label="Slept on ground" importance="normal"><feeling is="annoyed" mood="-10" hours="24"/></thought>
+  <thought id="slept_badly" label="Slept badly" importance="normal"><feeling is="annoyed" mood="-12" hours="24"/></thought>
+  <thought id="vented" label="Vented" importance="normal"><feeling is="delighted" mood="+4" hours="12"/></thought>
+  <thought id="vented_long" label="Vented long" importance="normal"><feeling is="delighted" mood="+8" hours="12"/></thought>
+  <thought id="cheered" label="Cheered" importance="normal"><feeling is="delighted" mood="+30" while="wetness > 0" cause="the cause"/></thought>
+  <thought id="elated" label="Elated" importance="normal"><feeling is="delighted" mood="+60" while="wetness > 0" cause="the cause"/></thought>
+  <thought id="reeks_5" label="Reeks 5" importance="normal"><feeling is="annoyed" mood="-5" while="wetness > 0" cause="the cause"/></thought>
+  <thought id="reeks_12" label="Reeks 12" importance="normal"><feeling is="annoyed" mood="-12" while="wetness > 0" cause="the cause"/></thought>
+  <thought id="reeks_20" label="Reeks 20" importance="normal"><feeling is="annoyed" mood="-20" while="wetness > 0" cause="the cause"/></thought>
+  <thought id="reeks_30" label="Reeks 30" importance="normal"><feeling is="annoyed" mood="-30" while="wetness > 0" cause="the cause"/></thought>
 )";
 
 		// Hunger and thirst weigh 1 each and every other need 0, so an empty need is -50 and a need at
@@ -118,7 +119,7 @@ namespace ecs::test {
 
 		EntityID spawnColonist() {
 			const EntityID entity = world.createEntity();
-			world.addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+			world.addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 			return entity;
 		}
 
@@ -147,7 +148,7 @@ namespace ecs::test {
 			const size_t at = xml.find(original);
 			EXPECT_NE(at, std::string::npos) << original;
 			xml.replace(at, original.size(), replacement);
-			EXPECT_TRUE(loadConfig(xml));
+			loadConfig(xml);
 			assets::ConfigValidator::clearErrors();
 			EXPECT_FALSE(assets::ConfigValidator::validateMood(config));
 			return validationMessages();
@@ -385,16 +386,18 @@ namespace ecs::test {
 	TEST_F(MoodSystemTest, ValidationRejectsABrokenConfig) {
 		ASSERT_TRUE(loadConfig(R"(<?xml version="1.0"?>
 <Mood>
+  <Easing pointsPerGameHour="5"/>
   <NeedPenalty comfortable="30" warning="70" penaltyAtWarning="0.3"/>
   <NeedWeights><Need name="Hunger" weight="1"/><Need name="Hunger" weight="2"/></NeedWeights>
   <Bands><Band name="Content" from="55"/></Bands>
 </Mood>)"));
 		assets::ConfigValidator::clearErrors();
 		EXPECT_FALSE(assets::ConfigValidator::validateMood(config));
+		const std::vector<std::string> messages = validationMessages();
+		ASSERT_EQ(messages.size(), 3U);
 		EXPECT_EQ(
-			validationMessages(),
+			messages,
 			(std::vector<std::string>{
-				"Easing pointsPerGameHour must be a positive number",
 				"NeedPenalty needs 0 < warning < comfortable <= 100",
 				"Need 'Hunger' is weighted more than once",
 				"The lowest band must start at 0 or below so every mood has a band",
@@ -415,10 +418,9 @@ namespace ecs::test {
 	}
 
 	TEST_F(MoodSystemTest, ValidationRejectsAMissingWeight) {
-		EXPECT_EQ(
-			validationMessagesWith(R"(<Need name="Thirst" weight="1"/>)", R"(<Need name="Thirst"/>)"),
-			std::vector<std::string>{"Need 'Thirst' weight must be zero or more"}
-		);
+		const std::vector<std::string> messages = validationMessagesWith(R"(<Need name="Thirst" weight="1"/>)", R"(<Need name="Thirst"/>)");
+		ASSERT_EQ(messages.size(), 1U);
+		EXPECT_TRUE(messages.front().ends_with("<Need name=\"Thirst\"> weight is missing")) << messages.front();
 	}
 
 	TEST_F(MoodSystemTest, ValidationRejectsBandsStartingAtTheSameMood) {

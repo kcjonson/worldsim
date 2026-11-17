@@ -56,6 +56,15 @@ TEST_F(ConfigFilesTest, TheFoldersOwnFilesComeFirstThenSubfoldersInPathOrder) {
 	);
 }
 
+TEST_F(ConfigFilesTest, ATrailingSeparatorOnTheFolderKeepsItsOwnFilesFirst) {
+	touch("zeta.xml");
+	touch("aaa/first.xml");
+
+	const assets::ConfigFiles found = assets::configFilesIn(folder / "");
+	ASSERT_FALSE(found.error.has_value()) << *found.error;
+	EXPECT_EQ(relativeNames(found), (std::vector<std::string>{"zeta.xml", "aaa/first.xml"}));
+}
+
 TEST_F(ConfigFilesTest, AMissingFolderIsAnError) {
 	const assets::ConfigFiles found = assets::configFilesIn(folder / "missing");
 	ASSERT_TRUE(found.error.has_value());

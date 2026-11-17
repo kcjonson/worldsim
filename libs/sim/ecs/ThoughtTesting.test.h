@@ -4,6 +4,7 @@
 // the body of a <thoughts> file, both loaded through the entry points the game's loadColonistRules uses.
 
 #include "ColonistRules.h"
+#include "ShippedConfig.test.h"
 #include "ThoughtTypes.h"
 
 #include <conditions/ConditionVocabulary.h>
@@ -19,20 +20,16 @@
 
 namespace ecs::testing {
 
-	inline std::filesystem::path repoConfig() {
-		return std::filesystem::path(SIM_TEST_REPO_DIR) / "assets" / "config";
-	}
-
 	/// The tuning and feelings every test's types are written against.
 	inline constexpr std::string_view kTestPreamble = R"(
   <tuning maxLineLength="40" maxSubjectNameLength="12" whileCheckMinutes="15"/>
-  <feeling id="content"/>
-  <feeling id="delighted"/>
-  <feeling id="annoyed"/>
-  <feeling id="miserable"/>
-  <feeling id="furious"/>
-  <feeling id="resigned"/>
-  <feeling id="relieved"/>
+  <feeling id="content" label="Content"/>
+  <feeling id="delighted" label="Delighted"/>
+  <feeling id="annoyed" label="Annoyed"/>
+  <feeling id="miserable" label="Miserable"/>
+  <feeling id="furious" label="Furious"/>
+  <feeling id="resigned" label="Resigned"/>
+  <feeling id="relieved" label="Relieved"/>
 )";
 
 	class TestThoughtTypes {
@@ -41,7 +38,7 @@ namespace ecs::testing {
 		/// may replace what the base declares. Load and build errors are kept in `errors`, not failed on.
 		explicit TestThoughtTypes(std::string_view body, std::string_view laterBody = {})
 			: types(vocabulary) {
-			for (const std::string& error : loadConditionVocabulary(vocabulary, repoConfig() / "conditions")) {
+			for (const std::string& error : loadConditionVocabulary(vocabulary, repoConfig() / "conditions", shippedTraits())) {
 				ADD_FAILURE() << error;
 			}
 

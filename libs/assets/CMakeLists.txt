@@ -1,5 +1,6 @@
 add_library(assets
     assets/ActionTypeRegistry.cpp
+    assets/AttributeConfig.cpp
     assets/AssetBootstrap.cpp
     assets/AssetRegistry.cpp
     assets/AssetRenderer.cpp
@@ -11,6 +12,7 @@ add_library(assets
     assets/GroundTransition.cpp
     assets/TessellatedPaths.cpp
     assets/TreeDefSchema.cpp
+    assets/TraitRegistry.cpp
     assets/TreeTraits.cpp
     assets/ConstructionRegistry.cpp
     assets/AssetBatcher.cpp
@@ -19,6 +21,7 @@ add_library(assets
     assets/ConfigValidator.cpp
     assets/MemoryConfig.cpp
     assets/MoodConfig.cpp
+    assets/NeedsConfig.cpp
     assets/PriorityConfig.cpp
     assets/RecipeRegistry.cpp
     assets/TaskChainRegistry.cpp

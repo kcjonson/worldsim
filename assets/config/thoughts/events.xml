@@ -2,17 +2,41 @@
 <!--
   Thoughts about things that happen to a colonist or in front of them.
 
-  <thought id importance="trivial|normal|major" [stacks="true"]>
-    <feeling is [when] [mood hours | mood while]/>  the most specific feeling whose when holds is the one
-                                                    the colonist has; one with no when is the fallback
+  <thought id label importance="trivial|normal|major" [stacks="true"]>
+                                                    label is the event as the colonist's log shows it
+    <feeling is [when] [mood hours | mood while cause]/>
+                                                    the most specific feeling whose when holds is the one
+                                                    the colonist has; one with no when is the fallback;
+                                                    cause names what a while holds on ("soaked")
     <line [feeling] [when]>text</line>              a quip; {subject} names who or what it is about
     <ends thought/>                                 created when a held thought of this type ends
+    <source trigger .../>                           what in the sim creates it; a type may have several or
+                                                    none, and every trigger is a change:
+      trigger="needFalls" need threshold            a need falls below a threshold (seek, urgent, critical in
+      trigger="needRises" need threshold            assets/config/colonists/needs) or rises back to it;
+                                                    a change across several is told once, by the level it
+                                                    lands in
+      trigger="actionStarts|actionFinishes" action [on] [first]
+                                                    a colonist starts or finishes an action (Eat, Sleep,
+                                                    Craft, Build, ...); on="ground" for one about no thing,
+                                                    or a capability its kind of thing has (sleepable);
+                                                    first="true" only the first time for that kind of thing
+                                                    Taking up work already begun (a blueprint with work
+                                                    on it, a craft batch past its first unit) is no start.
+      trigger="firstSight" [of]                     a colonist sees a kind of thing with a name for the first
+                                                    time (not on the landing look); of limits it to kinds
+                                                    with a capability
+      trigger="recipeLearned"                       a colonist learns a recipe
+      trigger="idle" everyMinutes chance            a roll every everyMinutes game minutes, taken only when
+                                                    no thought has arrived in that time
+      The subject is the kind of thing the change is about, when it is about one.
   </thought>
 
   See /docs/design/game-systems/colonists/thoughts.md (Data).
 -->
 <thoughts>
-  <thought id="ate_good_meal" importance="normal">
+  <thought id="ate_good_meal" label="Ate a good meal" importance="normal">
+    <source trigger="actionFinishes" action="Eat"/>
     <feeling is="content" mood="+5" hours="6"/>
     <feeling is="grateful" when="attribute(kindness) >= 14" mood="+5" hours="6"/>
     <line>That hit the spot.</line>
@@ -21,7 +45,8 @@
     <line feeling="grateful">That sauce deserves a statue.</line>
   </thought>
 
-  <thought id="slept_on_ground" importance="normal">
+  <thought id="slept_on_ground" label="Slept on the ground" importance="normal">
+    <source trigger="actionFinishes" action="Sleep" on="ground"/>
     <feeling is="miserable" mood="-10" hours="24"/>
     <feeling is="resigned" when="attribute(sanity) >= 14" mood="-6" hours="24"/>
     <feeling is="furious" when="attribute(civility) &lt; 6 and attribute(sanity) &lt; 8" mood="-12" hours="24"/>
@@ -33,7 +58,17 @@
     <line feeling="furious">I'm suing the ground.</line>
   </thought>
 
-  <thought id="accident_in_public" importance="major">
+  <thought id="slept_in_bed" label="Slept in a bed" importance="normal">
+    <source trigger="actionFinishes" action="Sleep" on="sleepable"/>
+    <feeling is="content" mood="+4" hours="12"/>
+    <feeling is="delighted" when="attribute(sanity) >= 15" mood="+5" hours="12"/>
+    <line>Slept like a log.</line>
+    <line>Beds. What an idea.</line>
+    <line feeling="delighted">Best sleep since we landed.</line>
+    <line feeling="delighted">I dreamt I was a cloud.</line>
+  </thought>
+
+  <thought id="accident_in_public" label="Had an accident in public" importance="major">
     <feeling is="mortified" mood="-20" hours="24"/>
     <feeling is="amused" when="attribute(sanity) >= 15" mood="-8" hours="24"/>
     <line>Nobody saw that. Right?</line>
@@ -42,7 +77,7 @@
     <line feeling="amused">I meant to do that. Mostly.</line>
   </thought>
 
-  <thought id="talked_with_friend" importance="normal">
+  <thought id="talked_with_friend" label="Talked with a friend" importance="normal">
     <feeling is="content" mood="+5" hours="6"/>
     <feeling is="delighted" when="attribute(social_need) >= 14" mood="+8" hours="6"/>
     <line>{subject} gets me.</line>

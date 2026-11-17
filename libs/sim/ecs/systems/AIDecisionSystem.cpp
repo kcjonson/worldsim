@@ -247,13 +247,12 @@ namespace ecs {
 		constexpr int	kTierCriticalNeed = 2; // a need past its critical threshold
 		constexpr int	kTierActiveWorkOrder = 4; // committed/queued work + its provisioning chain
 		constexpr int	kTierIdle = 7;			  // gathering food and Wander
-		constexpr float kCriticalNeedThreshold = 10.0F; // needValue below this is critical
 
 		/// Classify an option's arbitration tier: the config BASE tier for its task type, with a
 		/// small set of named runtime promotions layered on (mirrors the spec's classification
 		/// table exactly). Lower tier = higher priority.
 		///
-		///   FulfillNeed: needValue < 10%        -> tier 2 (critical need)
+		///   FulfillNeed: past critical threshold -> tier 2 (critical need)
 		///                gather food             -> tier 7 (idle)
 		///                else (actionable)       -> config base (5)
 		///   Haul/Harvest: servesActiveWorkOrder  -> tier 4 (work order, incl. mid-chain provisioning)
@@ -276,7 +275,7 @@ namespace ecs {
 					if (option.status == OptionStatus::Satisfied) {
 						return kTierIdle;
 					}
-					return option.needValue < kCriticalNeedThreshold ? kTierCriticalNeed : baseTier;
+					return option.critical ? kTierCriticalNeed : baseTier;
 				}
 				case TaskType::Haul:
 				case TaskType::Harvest:
@@ -301,7 +300,7 @@ namespace ecs {
 			if (!need.needsAttention()) {
 				return kTierIdle;
 			}
-			return need.value < kCriticalNeedThreshold ? kTierCriticalNeed : baseTiers[static_cast<size_t>(TaskType::FulfillNeed)];
+			return need.isCritical() ? kTierCriticalNeed : baseTiers[static_cast<size_t>(TaskType::FulfillNeed)];
 		}
 
 		/// Check if an option matches the current task (for the hysteresis margin)
@@ -2789,6 +2788,7 @@ namespace ecs {
 			option.needType = needType;
 			option.needValue = need.value;
 			option.threshold = need.seekThreshold;
+			option.critical = need.isCritical();
 
 			// Special handling for hunger: check inventory first
 			if (needType == NeedType::Hunger) {

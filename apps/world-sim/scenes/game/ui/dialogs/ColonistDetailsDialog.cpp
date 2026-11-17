@@ -24,10 +24,12 @@ namespace world_sim {
 		constexpr const char* kTabTasks = "dossier_tasks";
 		constexpr const char* kTabLog = "dossier_log";
 
-		// The bar's tabs, in order, and every tab the dossier measures for its height.
+		// The bar's tabs, in order. A tab whose content is a list that grows with the colonist (known work, thoughts)
+		// doesn't set the dossier's height: it fills the tab area the others set, and scrolls.
 		struct DossierTab {
 			const char* id;
 			const char* label;
+			bool		setsHeight = true;
 		};
 		constexpr std::array<DossierTab, 8> kTabs{{
 			{.id = kTabBio, .label = "Bio"},
@@ -36,8 +38,8 @@ namespace world_sim {
 			{.id = kTabSocial, .label = "Social"},
 			{.id = kTabGear, .label = "Gear"},
 			{.id = kTabMemory, .label = "Memory"},
-			{.id = kTabTasks, .label = "Tasks"},
-			{.id = kTabLog, .label = "Log"},
+			{.id = kTabTasks, .label = "Tasks", .setsHeight = false},
+			{.id = kTabLog, .label = "Log", .setsHeight = false},
 		}};
 
 		// The prototype dossier's width; its height is what its tallest tab needs. Held like the prototype's modal to
@@ -53,7 +55,8 @@ namespace world_sim {
 	} // namespace
 
 	ColonistDetailsDialog::ColonistDetailsDialog(const Args& args)
-		: onClose(args.onClose) {}
+		: onClose(args.onClose),
+		  model(args.traits) {}
 
 	void ColonistDetailsDialog::open(ui::Component& opener, ecs::EntityID newColonistId, int player) {
 		colonistId = newColonistId;
@@ -215,37 +218,40 @@ namespace world_sim {
 		} else if (tabId == kTabTasks) {
 			tabView = tasksTab = area->addChild<TasksTabView>({});
 		} else if (tabId == kTabLog) {
-			tabView = logTab = area->addChild<LogTabView>({});
+			tabView = logTab = area->addChild<LogTabView>({
+				.onFilter = [this](ThoughtLogFilter filter) { thoughtLog.setFilter(filter); },
+				.onShowOlder = [this] { thoughtLog.showOlder(); },
+			});
 		} else {
 			LOG_ERROR(Game, "ColonistDetailsDialog: no view for the tab \"%s\"", tabId.c_str());
 		}
 	}
 
-	// The panel's height for this opening: what it needs around the tab area, and the tallest tab as the model has it
-	// now, each tab mounted, fed and laid out once. The shown tab goes last, so it stays mounted. Held until it closes:
-	// a tab switch, new data or another colonist doesn't move it, and a tab that outgrows it scrolls.
+	// The panel's height for this opening: what it needs around the tab area, and the tallest tab that sets the height
+	// as the model has it now, each mounted, fed and laid out once. The shown tab goes last, so it stays mounted. Held
+	// until it closes: a tab switch, new data or another colonist doesn't move it, and a tab that outgrows it scrolls.
 	void ColonistDetailsDialog::sizeToContent() {
 		ui::Rectangle&	  panel = *dialog.get()->panel().get();
 		ui::Context&	  context = *panel.getContext();
 		const std::string shownTab = currentTab;
 		float			  around = 0.0F;
 		float			  tallest = 0.0F;
-		const auto		  measure = [&](const std::string& tabId) {
-			   mountTab(tabId);
+		const auto		  measure = [&](const DossierTab& tab) {
+			   mountTab(tab.id);
 			   feedTab();
 			   context.layout();
 			   around = panel.getSize().y - tabArea.get()->getSize().y;
-			   if (const ui::Component* view = tabView.get()) {
+			   if (const ui::Component* view = tabView.get(); view != nullptr && tab.setsHeight) {
 				   tallest = std::max(tallest, view->getBounds().height);
 			   }
 		};
 		panel.setSize({kDialogWidth, ui::kAuto});
 		for (const DossierTab& tab : kTabs) {
-			if (tab.id != shownTab) {
-				measure(tab.id);
+			if (tab.id != shownTab && tab.setsHeight) {
+				measure(tab);
 			}
 		}
-		measure(shownTab);
+		measure(*std::ranges::find_if(kTabs, [&shownTab](const DossierTab& tab) { return tab.id == shownTab; }));
 		panel.setSize({kDialogWidth, around + kTabTopPad + tallest});
 		sized = true;
 	}
@@ -255,7 +261,14 @@ namespace world_sim {
 			return;
 		}
 		const ColonistDetailsModel::UpdateType change = model.refresh(world, colonistId, deltaTime);
-		if (!model.isValid() || (!fresh && change == ColonistDetailsModel::UpdateType::None)) {
+		if (!model.isValid()) {
+			return;
+		}
+		if (LogTabView* tab = logTab.get()) {
+			thoughtLog.refresh(world, colonistId);
+			tab->update(thoughtLog);
+		}
+		if (!fresh && change == ColonistDetailsModel::UpdateType::None) {
 			return;
 		}
 		const bool opened = std::exchange(fresh, false);
@@ -287,7 +300,7 @@ namespace world_sim {
 		moodStat.get()->setTone(bio.mood < 40.0F ? ui::Tone::Danger : ui::Tone::Positive);
 	}
 
-	// The mounted tab; the others aren't built.
+	// The mounted tab; the others aren't built. The Log tab is fed by update(), which builds its log only while it's shown.
 	void ColonistDetailsDialog::feedTab() {
 		if (!model.isValid()) {
 			return;
@@ -312,9 +325,6 @@ namespace world_sim {
 		}
 		if (TasksTabView* tab = tasksTab.get()) {
 			tab->update(model.tasks());
-		}
-		if (LogTabView* tab = logTab.get()) {
-			tab->update(LogData{});
 		}
 	}
 

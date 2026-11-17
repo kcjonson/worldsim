@@ -34,27 +34,18 @@ namespace ecs {
 		// colonists stand to drink
 		constexpr const char* kShoreDefName = "Terrain_Shore";
 
-		/// Check if learning a new defNameId unlocks any recipes
-		/// @param knowledge The colonist's knowledge (after learning)
-		/// @param newlyLearnedId The defNameId that was just learned
-		/// @param registry Asset registry for ID lookups
-		/// @param recipeRegistry Recipe registry to check recipes
-		/// @return Label of newly unlocked recipe, or empty if none
-		std::string checkForRecipeUnlock(
+		/// The recipe learning `newlyLearnedId` unlocks: one that is not innate, has it as an input, and whose
+		/// inputs the colonist now all knows. None when there is none.
+		const assets::RecipeDef* recipeUnlockedBy(
 			const Knowledge& knowledge,
 			uint32_t newlyLearnedId,
 			const assets::AssetRegistry& registry,
 			const assets::RecipeRegistry& recipeRegistry
 		) {
-			// Only check non-innate recipes (innate recipes are always available)
-			// A recipe is "newly unlocked" when the colonist now knows all inputs,
-			// and the newly-learned item was the final missing input
 			for (const auto& [defName, recipe] : recipeRegistry.allRecipes()) {
 				if (recipe.innate) {
 					continue;
 				}
-
-				// Check if this recipe has the newly learned item as an input
 				bool hasNewInput = false;
 				std::vector<uint32_t> inputIds;
 				for (const auto& input : recipe.inputs) {
@@ -64,18 +55,11 @@ namespace ecs {
 						hasNewInput = true;
 					}
 				}
-
-				// Skip recipes that don't involve the newly learned item
-				if (!hasNewInput) {
-					continue;
-				}
-
-				// Check if all inputs are now known
-				if (knowledge.knowsAll(inputIds)) {
-					return recipe.label;
+				if (hasNewInput && knowledge.knowsAll(inputIds)) {
+					return &recipe;
 				}
 			}
-			return "";
+			return nullptr;
 		}
 	} // namespace
 
@@ -182,6 +166,13 @@ namespace ecs {
 			lookOver(entity, pos.value, memory.sightRadius, polygon, memory, knowledge);
 		}
 
+		for (const Discovery& discovery : m_learnedScratch) {
+			for (const DiscoveryObserver& listener : m_discoveryObservers) {
+				listener(discovery);
+			}
+		}
+		m_learnedScratch.clear();
+
 		// Prune cache entries for observers not seen this tick (dead/despawned).
 		// Mark-and-sweep keeps the map bounded.
 		for (auto it = m_visibilityCache.begin(); it != m_visibilityCache.end();) {
@@ -215,6 +206,7 @@ namespace ecs {
 			rememberStructures(centerMm, radiusMm, polygon, *memory, segments, openings);
 		}
 		lookOver(observer, center, radiusMeters, occluders.empty() ? nullptr : &polygon, *memory, world->getComponent<Knowledge>(observer));
+		m_learnedScratch.clear();
 	}
 
 	void VisionSystem::rememberStructures(
@@ -277,6 +269,24 @@ namespace ecs {
 		}
 	}
 
+	void VisionSystem::learn(EntityID observer, Knowledge& knowledge, uint32_t defNameId) {
+		if (!knowledge.learn(defNameId)) {
+			return;
+		}
+		auto& registry = assets::AssetRegistry::Get();
+		m_learnedScratch.push_back({.colonist = observer, .kind = DiscoveryKind::NewKind, .definition = defNameId});
+		const assets::RecipeDef* recipe = recipeUnlockedBy(knowledge, defNameId, registry, assets::RecipeRegistry::Get());
+		if (recipe == nullptr) {
+			return;
+		}
+		m_learnedScratch.push_back({
+			.colonist = observer,
+			.kind = DiscoveryKind::Recipe,
+			.definition = recipe->outputs.empty() ? 0U : registry.getDefNameId(recipe->outputs.front().defName),
+			.recipeLabel = recipe->label,
+		});
+	}
+
 	void VisionSystem::lookOver(
 		EntityID			  observer,
 		glm::vec2			  center,
@@ -289,7 +299,6 @@ namespace ecs {
 		constexpr float kChunkWorldSize = static_cast<float>(world::kChunkSize);
 
 		auto& registry = assets::AssetRegistry::Get();
-		auto& recipeRegistry = assets::RecipeRegistry::Get();
 
 		// Calculate bounding box of vision in world coordinates
 		float minX = center.x - radiusMeters;
@@ -427,13 +436,8 @@ namespace ecs {
 						// Remember in colonist's memory (returns true only for NEW discoveries)
 						bool isNewDiscovery = memory.rememberWorldEntity(placedEntity->position, defNameId, capabilityMask);
 
-						// Update permanent knowledge if Knowledge component exists
-						if (isNewDiscovery && knowledge != nullptr && knowledge->learn(defNameId)) {
-							// New discovery - check for recipe unlocks
-							std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, defNameId, registry, recipeRegistry);
-							if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
-								m_onRecipeDiscovery(unlockedRecipe);
-							}
+						if (isNewDiscovery && knowledge != nullptr) {
+							learn(observer, *knowledge, defNameId);
 						}
 					}
 				}
@@ -483,13 +487,8 @@ namespace ecs {
 					// Remember in colonist's memory (returns true only for NEW discoveries)
 					bool isNewDiscovery = memory.rememberWorldEntity(otherPos.value, defNameId, capabilityMask);
 
-					// Update permanent knowledge if Knowledge component exists
-					if (isNewDiscovery && knowledge != nullptr && knowledge->learn(defNameId)) {
-						// New discovery - check for recipe unlocks
-						std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, defNameId, registry, recipeRegistry);
-						if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
-							m_onRecipeDiscovery(unlockedRecipe);
-						}
+					if (isNewDiscovery && knowledge != nullptr) {
+						learn(observer, *knowledge, defNameId);
 					}
 				}
 			}
@@ -528,13 +527,8 @@ namespace ecs {
 
 							memory.rememberWorldEntity(shoreWorldPos, m_shoreDefNameId, m_shoreCapabilityMask);
 
-							// Update permanent knowledge for the shore
-							if (knowledge != nullptr && knowledge->learn(m_shoreDefNameId)) {
-								// New discovery - check for recipe unlocks (unlikely for the shore, but consistent)
-								std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, m_shoreDefNameId, registry, recipeRegistry);
-								if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
-									m_onRecipeDiscovery(unlockedRecipe);
-								}
+							if (knowledge != nullptr) {
+								learn(observer, *knowledge, m_shoreDefNameId);
 							}
 						}
 					}

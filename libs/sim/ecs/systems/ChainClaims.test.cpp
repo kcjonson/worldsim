@@ -4,6 +4,7 @@
 // update here also runs the development-build validator, which aborts on a violation.
 
 #include "AIDecisionSystem.h"
+#include "ShippedPriorityConfig.test.h"
 #include "ActionSystem.h"
 #include "ChainClaims.h"
 #include "CollisionSystem.h"
@@ -18,6 +19,7 @@
 #include "TimeSystem.h"
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
+#include "../ShippedConfig.test.h"
 #include "../World.h"
 #include "../WorldSource.h"
 #include "../components/Action.h"
@@ -77,7 +79,7 @@ namespace ecs::test {
 		void SetUp() override {
 			world = std::make_unique<World>();
 			GoalTaskRegistry::Get().clear();
-			assets::PriorityConfig::Get().clear();
+			ASSERT_TRUE(loadShippedPriorityConfig());
 
 			auto& registry = assets::AssetRegistry::Get();
 			registerItem("Berry", 1, 0.1F, 1, /*edible=*/true);
@@ -147,7 +149,7 @@ namespace ecs::test {
 			world->addComponent<AgentRadius>(entity, AgentRadius{});
 			world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 			world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-			auto needs = NeedsComponent::createDefault();
+			auto needs = ecs::testing::shippedNeeds();
 			for (auto need : NeedsComponent::kActionableNeeds) {
 				needs.get(need).value = 100.0F;
 			}

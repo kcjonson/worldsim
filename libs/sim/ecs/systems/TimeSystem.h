@@ -10,6 +10,7 @@
 // Other systems should call effectiveTimeScale() to get
 // speed-adjusted dt rather than using raw deltaTime.
 
+#include "../ClockTime.h"
 #include "../ISystem.h"
 
 namespace ecs {
@@ -67,6 +68,9 @@ class TimeSystem : public ISystem {
 	[[nodiscard]] Season season() const { return currentSeason; }
 	[[nodiscard]] float timeOfDay() const { return currentTimeOfDay; }
 	[[nodiscard]] GameTimeSnapshot snapshot() const;
+	/// Now on the day clock. setTimeOfDay moves the day clock without moving simulationSeconds(), so an
+	/// earlier moment's clock time can't be worked back from its simulation seconds: stamp it when it happens.
+	[[nodiscard]] ClockTime clockTime() const;
 
 	/// Scaled seconds since the colony started: every frame's deltaTime * effectiveTimeScale(), the time
 	/// actions and movement run on, plus any skipTime. Stops while paused, runs 3x or 10x at speed, never

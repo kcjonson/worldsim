@@ -93,6 +93,7 @@
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/StructureHealth.h>
 #include <ecs/components/Task.h>
+#include <ecs/components/Traits.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
 #include <ecs/systems/AIDecisionSystem.h>
@@ -110,6 +111,7 @@
 #include <ecs/systems/RoomDetectionSystem.h>
 #include <ecs/systems/PlacedObstacleCollisionSystem.h>
 #include <ecs/systems/StorageGoalSystem.h>
+#include <ecs/systems/ThoughtSourceSystem.h>
 #include <ecs/systems/ThoughtSystem.h>
 #include <ecs/systems/TimeSystem.h>
 #include <ecs/systems/VisionSystem.h>
@@ -232,6 +234,7 @@ namespace {
 			// Note: Callbacks for placement/selection are set up after systems are created below
 			gameUI = std::make_unique<world_sim::GameUI>(world_sim::GameUI::Args{
 				.root = root(),
+				.traits = *colonistRules.traits,
 				.onZoomIn = [this]() { m_camera->zoomIn(); },
 				.onZoomOut = [this]() { m_camera->zoomOut(); },
 				.onZoomReset = [this]() { m_camera->setZoomIndex(world::kDefaultZoomIndex); },
@@ -1336,6 +1339,8 @@ namespace {
 			ecsWorld->registerSystem<ecs::WallCollisionSystem>();		// Priority 260 - wall safety-net after agent separation
 			ecsWorld->registerSystem<ecs::PlacedObstacleCollisionSystem>(); // Priority 270 - placed-obstacle safety-net after wall collision
 			ecsWorld->registerSystem<ecs::ActionSystem>(systemSeeds.action); // Priority 350
+			ecsWorld->registerSystem<ecs::ThoughtSourceSystem>(*colonistRules.thoughtTypes, systemSeeds.thoughtSource)
+				.listenTo(ecsWorld->getSystem<ecs::ActionSystem>(), ecsWorld->getSystem<ecs::VisionSystem>()); // Priority 360
 			ecsWorld->registerSystem<world_sim::DeferredEditsSystem>([this] { drainDeferredEdits(); }); // Priority 800
 			ecsWorld->registerSystem<worldview::DynamicEntityRenderSystem>(); // Priority 900
 
@@ -1345,9 +1350,12 @@ namespace {
 			visionSystem.setChunkManager(m_chunkManager.get());
 
 			// Wire up "Aha!" notification callback for recipe discoveries
-			visionSystem.setRecipeDiscoveryCallback([this](const std::string& recipeLabel) {
-				gameUI->pushNotification("Aha!", "Discovered: " + recipeLabel, ui::ToastSeverity::Info);
-				LOG_INFO(Game, "Recipe discovered: %s", recipeLabel.c_str());
+			visionSystem.addDiscoveryObserver([this](const ecs::VisionSystem::Discovery& discovery) {
+				if (discovery.kind != ecs::VisionSystem::DiscoveryKind::Recipe) {
+					return;
+				}
+				gameUI->pushNotification("Aha!", "Discovered: " + discovery.recipeLabel, ui::ToastSeverity::Info);
+				LOG_INFO(Game, "Recipe discovered: %s", discovery.recipeLabel.c_str());
 			});
 
 			// Wire NavigationSystem resources (same data VisionSystem consumes). The
@@ -1628,16 +1636,15 @@ namespace {
 			ecsWorld->addComponent<ecs::AnimationState>(entity, ecs::AnimationState{});	  // Walk-cycle phase
 			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{"Colonist", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 			ecsWorld->addComponent<ecs::Colonist>(entity, ecs::Colonist{newName});
-			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());
+			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent(*colonistRules.needLevels));
 			ecsWorld->getSystem<ecs::MoodSystem>().startMood(entity);
 
-			// Roll static attributes (0-20), seeded per-entity so colonists vary
-			// deterministically. Only Strength is consumed today: it sets hand-carry
-			// capacity. The other attributes are placeholders for upcoming systems.
-			ecs::Attributes attributes;
-			std::mt19937	attrRng(static_cast<uint32_t>(entity));
-			attributes.strength = std::uniform_real_distribution<float>(6.0F, 14.0F)(attrRng);
+			// Roll attributes and traits from one generator seeded per entity, so colonists vary
+			// deterministically.
+			std::mt19937		  colonistRng(static_cast<uint32_t>(entity));
+			const ecs::Attributes attributes = ecs::rollAttributes(*colonistRules.attributes, colonistRng);
 			ecsWorld->addComponent<ecs::Attributes>(entity, attributes);
+			ecsWorld->addComponent<ecs::Traits>(entity, ecs::rollTraits(*colonistRules.traits, colonistRng));
 
 			// Carry weight scales with Strength (an average colonist lands at the prior 35kg).
 			auto inventory = ecs::Inventory::createForColonist();

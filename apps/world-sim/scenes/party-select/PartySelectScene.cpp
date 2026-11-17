@@ -18,7 +18,6 @@
 #include <theme/Avatar.h>
 #include <theme/Keys.h>
 #include <theme/Panel.h>
-#include <ui/components/Badge.h>
 #include <ui/components/Button.h>
 #include <ui/components/Control.h>
 #include <ui/components/Divider.h>
@@ -77,20 +76,8 @@ namespace {
 		return mood < 0.55F ? ui::Tone::Warning : ui::Tone::Positive;
 	}
 
-	ui::Tone traitTone(world_sim::TraitTone tone) {
-		switch (tone) {
-			case world_sim::TraitTone::Good:
-				return ui::Tone::Positive;
-			case world_sim::TraitTone::Bad:
-				return ui::Tone::Danger;
-			case world_sim::TraitTone::Neutral:
-				break;
-		}
-		return ui::Tone::Default;
-	}
-
 	struct RosterSlot {
-		const world_sim::CrewDef* def; // template: origin/backstory/skills/traits
+		const world_sim::CrewDef* def; // template: origin/backstory/skills
 		std::string				  name;
 		std::string				  role;
 		int						  age;
@@ -388,7 +375,7 @@ namespace {
 			select(selectedIndex);
 		}
 
-		// The dossier for `slot`: the hero line, the stats, the backstory, the skills and the traits.
+		// The dossier for `slot`: the hero line, the stats, the backstory and the skills.
 		void showDossier(const RosterSlot& slot) {
 			ui::Component* content = dossier.get();
 			if (content == nullptr) {
@@ -463,14 +450,6 @@ namespace {
 				row.addChild<ui::Text>({.size = {32.0F, ui::kAuto}, .style = value, .text = std::format("{:.0f}", skill.level)});
 			}
 
-			dossier.addChild<ui::Divider>({.label = "Traits"});
-			ui::Ref<ui::Component> traits =
-				dossier.addChild<ui::Component>({.layout = {.display = ui::Display::Flex, .gap = theme.get(tokens::spacing::space2)}});
-			for (const world_sim::CrewTraitDef& trait : slot.def->traits) {
-				if (trait.name != nullptr) {
-					traits.addChild<ui::Badge>({.label = trait.name, .tone = traitTone(trait.tone)});
-				}
-			}
 		}
 
 		void select(int idx) {
@@ -571,11 +550,6 @@ namespace {
 				member.mood = slot.mood;
 				for (const world_sim::CrewSkillDef& skill : slot.def->skills) {
 					member.skills.emplace(skill.name, skill.level);
-				}
-				for (const world_sim::CrewTraitDef& trait : slot.def->traits) {
-					if (trait.name != nullptr) {
-						member.traits.emplace_back(trait.name);
-					}
 				}
 				member.backstory = slot.def->backstory;
 				party.push_back(std::move(member));
