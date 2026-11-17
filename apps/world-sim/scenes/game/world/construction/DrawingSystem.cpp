@@ -1974,6 +1974,62 @@ namespace world_sim {
 		return s;
 	}
 
+	DrawingSnapshot DrawingSystem::snapshot() const {
+		DrawingSnapshot shot;
+		shot.lastFoundationTool = lastFoundationTool_;
+		shot.tool = activeTool();
+		if (!shot.tool) {
+			shot.verdict = {.valid = true, .proposed = false};
+			shot.status = status();
+			return shot;
+		}
+
+		shot.followingPointer = followingPointer_;
+		shot.pressPending = hasPendingPress();
+		shot.points = points_;
+		shot.rectangleCorners = rectangleCorners_;
+		shot.rectangleLabel = rectangleLabel_;
+		shot.status = status();
+		switch (activeTool_) {
+			case ToolKind::FoundationEdit:
+				shot.editTarget = editTarget_;
+				shot.editMode = editMode_;
+				break;
+			case ToolKind::Wall: shot.wallHost = wallHost_; break;
+			case ToolKind::Opening: shot.openingType = activeOpeningType_; break;
+			case ToolKind::Foundation:
+			case ToolKind::FoundationRectangle: break;
+		}
+
+		if (activeTool_ == ToolKind::Opening) {
+			// The strip's own verdict: clickVerdict() reads the foundation and wall tools' state.
+			if (followingPointer_) {
+				shot.openingSnap = openingSnap_;
+				shot.verdict = {.valid = shot.status.valid, .proposed = true, .reason = shot.status.message};
+			} else {
+				shot.verdict = {.valid = true, .proposed = false};
+			}
+			return shot;
+		}
+
+		const ClickVerdict click = clickVerdict();
+		shot.verdict = {.valid = click.valid, .proposed = click.proposed, .reason = click.reason};
+		if (followingPointer_) {
+			shot.snap = DrawingSnapshot::Snap{
+				.point = lastSnap_.point,
+				.kind = lastSnap_.kind,
+				.rectangleKind = rectangleSnapKind_,
+				.guides = std::vector<construction::SnapGuide>(lastSnap_.guides.begin(), lastSnap_.guides.begin() + static_cast<std::ptrdiff_t>(lastSnap_.guideCount)),
+				.lengthSnap = lastSnap_.lengthSnap,
+				.lengthMeters = lastSnap_.lengthMeters,
+				.matchedEdgeCount = lastSnap_.matchedEdgeCount,
+				.commonLengths = std::vector<float>(lastSnap_.commonLengths.begin(), lastSnap_.commonLengths.begin() + static_cast<std::ptrdiff_t>(lastSnap_.commonLengthCount)),
+				.closesShape = willClose_,
+			};
+		}
+		return shot;
+	}
+
 	// =========================================================================
 	// INTERIM rendering. Committed-foundation rendering here is a placeholder;
 	// C6 replaces it with the baked element-emitter + build-progress prefix.

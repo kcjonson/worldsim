@@ -2174,3 +2174,127 @@ TEST_F(DrawingPauseTest, WhatEndsAChainForgetsTheFirstClick) {
 		EXPECT_EQ(drawing->world().segments().size(), walls);
 	}
 }
+
+namespace {
+
+	// The dev state view's snapshot: what the tool holds, read from the state the strip and the
+	// preview read.
+	class DrawingSnapshotTest : public DrawingRectangleTest {
+	  protected:
+		static void expectPoint(Foundation::Vec2 actual, Foundation::Vec2 expected) {
+			EXPECT_FLOAT_EQ(actual.x, expected.x);
+			EXPECT_FLOAT_EQ(actual.y, expected.y);
+		}
+	};
+
+} // namespace
+
+TEST_F(DrawingSnapshotTest, NoToolHoldsNothingButTheLastFoundationPick) {
+	drawing->deactivate();
+	const world_sim::DrawingSnapshot shot = drawing->snapshot();
+	EXPECT_FALSE(shot.tool.has_value());
+	EXPECT_EQ(shot.lastFoundationTool, world_sim::FoundationTool::Rectangle);
+	EXPECT_FALSE(shot.followingPointer);
+	EXPECT_TRUE(shot.points.empty());
+	EXPECT_FALSE(shot.snap.has_value());
+	EXPECT_FALSE(shot.status.active);
+	EXPECT_FALSE(shot.verdict.proposed);
+}
+
+TEST_F(DrawingSnapshotTest, FreeformWithTwoPointsAndThePointerOnAThirdReportsTheProposal) {
+	drawing->activateFoundationTool();
+	place({{0.0F, 0.0F}, {4.0F, 0.0F}});
+	hoverFreeform({4.0F, -4.0F});
+	const world_sim::DrawingSnapshot shot = drawing->snapshot();
+	EXPECT_EQ(shot.tool, world_sim::ToolKind::Foundation);
+	EXPECT_EQ(shot.lastFoundationTool, world_sim::FoundationTool::Freeform);
+	EXPECT_TRUE(shot.followingPointer);
+	ASSERT_EQ(shot.points.size(), 2U);
+	expectPoint(shot.points[0], {0.0F, 0.0F});
+	expectPoint(shot.points[1], {4.0F, 0.0F});
+	ASSERT_TRUE(shot.snap.has_value());
+	expectPoint(shot.snap->point, {4.0F, -4.0F});
+	EXPECT_EQ(shot.snap->kind, construction::SnapKind::None) << "Alt: the raw pointer";
+	EXPECT_FALSE(shot.snap->closesShape);
+	EXPECT_TRUE(shot.verdict.valid);
+	EXPECT_TRUE(shot.verdict.proposed);
+	EXPECT_EQ(shot.status.pointCount, 2);
+}
+
+TEST_F(DrawingSnapshotTest, ARefusedPointReportsTheReasonTheStripShows) {
+	drawing->activateFoundationTool();
+	place({kSeenPoint});
+	hoverFreeform(kUnseenPoint);
+	const world_sim::DrawingSnapshot shot = drawing->snapshot();
+	EXPECT_FALSE(shot.verdict.valid);
+	EXPECT_TRUE(shot.verdict.proposed);
+	EXPECT_FALSE(shot.verdict.reason.empty());
+	EXPECT_EQ(shot.verdict.reason, drawing->status().message);
+	EXPECT_EQ(shot.status.message, drawing->status().message);
+	EXPECT_NE(shot.verdict.reason.find("unexplored"), std::string::npos) << shot.verdict.reason;
+}
+
+TEST_F(DrawingSnapshotTest, TheRectangleToolReportsItsCornerAndThePendingRectangle) {
+	{
+		SCOPED_TRACE("before the first press");
+		const world_sim::DrawingSnapshot shot = drawing->snapshot();
+		EXPECT_EQ(shot.tool, world_sim::ToolKind::FoundationRectangle);
+		EXPECT_TRUE(shot.points.empty());
+		EXPECT_FALSE(shot.pressPending);
+		EXPECT_FALSE(shot.snap.has_value()) << "no move yet";
+	}
+	press({2.0F, 1.0F});
+	{
+		SCOPED_TRACE("a press, before its release");
+		const world_sim::DrawingSnapshot shot = drawing->snapshot();
+		EXPECT_TRUE(shot.pressPending);
+		ASSERT_EQ(shot.points.size(), 1U);
+		expectPoint(shot.points.front(), {2.0F, 1.0F});
+	}
+	hover({6.3F, 4.2F});
+	const world_sim::DrawingSnapshot shot = drawing->snapshot();
+	ASSERT_TRUE(shot.snap.has_value());
+	expectPoint(shot.snap->point, {6.0F, 4.0F}); // the grid's, not the pointer's
+	EXPECT_EQ(shot.snap->rectangleKind, construction::RectangleSnapKind::Grid);
+	EXPECT_TRUE(shot.snap->closesShape) << "the next release commits the rectangle";
+	ASSERT_EQ(shot.rectangleCorners.size(), 4U);
+	expectPoint(shot.rectangleCorners[0], {2.0F, 1.0F});
+	expectPoint(shot.rectangleCorners[1], {6.0F, 1.0F});
+	expectPoint(shot.rectangleCorners[2], {6.0F, 4.0F});
+	expectPoint(shot.rectangleCorners[3], {2.0F, 4.0F});
+	EXPECT_FALSE(shot.rectangleLabel.empty());
+	const world_sim::DrawingFeedbackInput feedback =
+		drawing->feedbackInput(assets::PreviewStyle{}, kViewportWidth, kViewportHeight, 1.0F, world_sim::measureFeedbackText);
+	EXPECT_EQ(shot.rectangleLabel, feedback.sizeLabel);
+	EXPECT_FLOAT_EQ(shot.status.areaSquareMeters, 12.0F);
+}
+
+TEST_F(DrawingSnapshotTest, AWallChainReportsItsHostAndPoints) {
+	const construction::FoundationId host = builtFloor({{-20.0F, -15.0F}, {20.0F, -15.0F}, {20.0F, 15.0F}, {-20.0F, 15.0F}});
+	drawing->activateWallTool();
+	place({{-12.0F, 0.0F}, {-4.0F, 0.0F}});
+	hoverFreeform({-4.0F, 6.0F});
+	const world_sim::DrawingSnapshot shot = drawing->snapshot();
+	EXPECT_EQ(shot.tool, world_sim::ToolKind::Wall);
+	EXPECT_EQ(shot.wallHost, host);
+	ASSERT_EQ(shot.points.size(), 2U);
+	ASSERT_TRUE(shot.snap.has_value());
+	expectPoint(shot.snap->point, {-4.0F, 6.0F});
+	EXPECT_TRUE(shot.status.wall);
+	EXPECT_FLOAT_EQ(shot.status.segmentLengthMeters, 6.0F);
+	EXPECT_FLOAT_EQ(shot.status.totalLengthMeters, 14.0F);
+}
+
+TEST_F(DrawingSnapshotTest, APausedToolProposesNothingButKeepsItsPlacedPoints) {
+	drawing->activateFoundationTool();
+	place({{0.0F, 0.0F}, {4.0F, 0.0F}});
+	hoverFreeform({4.0F, -4.0F});
+	drawing->pause();
+	const world_sim::DrawingSnapshot shot = drawing->snapshot();
+	EXPECT_EQ(shot.tool, world_sim::ToolKind::Foundation);
+	EXPECT_FALSE(shot.followingPointer);
+	EXPECT_EQ(shot.points.size(), 2U);
+	EXPECT_FALSE(shot.snap.has_value());
+	EXPECT_FALSE(shot.verdict.proposed);
+	EXPECT_TRUE(shot.verdict.reason.empty());
+}
