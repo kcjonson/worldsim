@@ -550,7 +550,7 @@ The cover relies on these of the pinned salal's backend:
 
 - Blend states. `Alpha`, `Replace`, `Max`, `Min`, `MultiplyDestinationAlpha`, and `OverByDestinationAlpha`: the max and min equations on alpha, and the draw weighted by destination alpha.
 - Channel writes. `All`, `None`, `Alpha`, and `Colour`: alpha written alone, and colour and alpha both off for the depth pass.
-- Depth. The states `Off`, `GreaterOrEqual` (depth writes, a greater-or-equal test), and `Equal` (an equal test, no writes), and `clearDepth()`, which clears depth to a chosen value and puts GL's default back.
+- Depth. The states `Off`, `GreaterOrEqual` (depth writes, a greater-or-equal test), and `Equal` (an equal test, no writes), and `clearDepth()`, which clears depth to 0 and puts GL's default clear value, 1, back.
 - Targets. The window has 8 stencil, 8 alpha, and 24 depth bits, and the backend checks the default framebuffer at creation and warns when it has fewer. A `RenderTarget` made with `RenderTarget::Attachments::ColourAndStencil` has stencil and a 24-bit depth, and has alpha when its colour format carries it (every format but `Rgb8`). A masked rect on a target without stencil draws nothing, and one under an `svgMask` layer on a target without alpha or depth draws nothing, each logged once.
 
 ### 7.7 The sandbox test and its fallbacks
