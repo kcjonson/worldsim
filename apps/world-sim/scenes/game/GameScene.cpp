@@ -372,6 +372,7 @@ namespace {
 				.navigation = &ecsWorld->getSystem<ecs::NavigationSystem>(),
 				.validColor = ui().getTheme().get(world_sim::tokens::color::statusOk),
 				.invalidColor = ui().getTheme().get(world_sim::tokens::color::statusCrit),
+				.accentColor = ui().getTheme().get(world_sim::tokens::color::accent),
 				.callbacks = {
 					.onToolActive =
 						[this](bool /*active*/) {
