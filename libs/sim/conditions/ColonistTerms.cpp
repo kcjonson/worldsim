@@ -71,7 +71,7 @@ namespace conditions {
 		std::vector<std::pair<std::string, AttributeMember>> engineAttributes() {
 			std::vector<std::pair<std::string, AttributeMember>> attributes;
 			for (const ecs::AttributeField& field : ecs::kAttributeFields) {
-				attributes.emplace_back(conditionName(field.label), field.value);
+				attributes.emplace_back(std::string(field.id), field.value);
 			}
 			return attributes;
 		}

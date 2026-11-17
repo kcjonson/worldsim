@@ -65,7 +65,7 @@ namespace ecs::test {
 		EntityID spawnColonist(const std::string& name) {
 			const EntityID entity = world.createEntity();
 			world.addComponent<Colonist>(entity, Colonist{.name = name});
-			world.addComponent<Attributes>(entity, Attributes{});
+			world.addComponent<Attributes>(entity, testing::attributesAt(10.0F));
 			return entity;
 		}
 
@@ -477,7 +477,7 @@ namespace ecs::test {
 		ThoughtSystem& thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
 		const auto	   feelingFor = [&](float civility, float sanity) {
 			const EntityID who = world.createEntity();
-			world.addComponent<Attributes>(who, Attributes{.civility = civility, .sanity = sanity});
+			world.addComponent<Attributes>(who, testing::attributesAt(10.0F, {{&Attributes::civility, civility}, {&Attributes::sanity, sanity}}));
 			const ThoughtHandle handle = thoughts.create({.colonist = who, .eventType = rules.type("smashed_chair")});
 			return findThought(*world.getComponent<Thoughts>(who), handle.thought)->feeling;
 		};
@@ -497,7 +497,7 @@ namespace ecs::test {
 		tieWorld.registerSystem<TimeSystem>();
 		ThoughtSystem& tieThoughts = tieWorld.registerSystem<ThoughtSystem>(tieRules.types, kSeed);
 		const EntityID tieColonist = tieWorld.createEntity();
-		tieWorld.addComponent<Attributes>(tieColonist, Attributes{.civility = 5.0F, .sanity = 5.0F});
+		tieWorld.addComponent<Attributes>(tieColonist, testing::attributesAt(10.0F, {{&Attributes::civility, 5.0F}, {&Attributes::sanity, 5.0F}}));
 		const ThoughtHandle tie = tieThoughts.create({.colonist = tieColonist, .eventType = tieRules.type("tie")});
 		EXPECT_EQ(findThought(*tieWorld.getComponent<Thoughts>(tieColonist), tie.thought)->feeling, tieRules.feeling("miserable"));
 	}
@@ -517,7 +517,7 @@ namespace ecs::test {
 		world.registerSystem<TimeSystem>();
 		ThoughtSystem& thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
 		const EntityID who = world.createEntity();
-		world.addComponent<Attributes>(who, Attributes{});
+		world.addComponent<Attributes>(who, testing::attributesAt(10.0F));
 
 		const ThoughtHandle cold = thoughts.create({.colonist = who, .eventType = rules.type("cold_snap")});
 		EXPECT_EQ(findThought(*world.getComponent<Thoughts>(who), cold.thought)->feeling, rules.feeling("content"))
@@ -545,9 +545,9 @@ namespace ecs::test {
 		TimeSystem&	   time = world.registerSystem<TimeSystem>();
 		ThoughtSystem& thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
 		const EntityID steady = world.createEntity();
-		world.addComponent<Attributes>(steady, Attributes{});
+		world.addComponent<Attributes>(steady, testing::attributesAt(10.0F));
 		const EntityID unknowable = world.createEntity();
-		world.addComponent<Attributes>(unknowable, Attributes{});
+		world.addComponent<Attributes>(unknowable, testing::attributesAt(10.0F));
 
 		const ThoughtHandle held = thoughts.create({.colonist = steady, .eventType = rules.type("steady")});
 		thoughts.create({.colonist = unknowable, .eventType = rules.type("steady")});
@@ -633,11 +633,11 @@ namespace ecs::test {
 			const ThoughtHandle handle = thoughts.create({.colonist = who, .eventType = rules.type(type)});
 			return renderThoughtLine(rules.types, *world.getComponent<Thoughts>(who), *findThought(*world.getComponent<Thoughts>(who), handle.thought));
 		};
-		EXPECT_EQ(lineFor(Attributes{}, "soaked"), "I'm soaked through.");
-		EXPECT_EQ(lineFor(Attributes{.civility = 3.0F}, "soaked"), "One more minute of this...");
-		EXPECT_EQ(lineFor(Attributes{.strength = 18.0F, .civility = 3.0F}, "soaked"), "I will fight this cloud.");
-		EXPECT_EQ(lineFor(Attributes{.strength = 18.0F}, "soaked"), "I'm soaked through.") << "the strength line is the furious one's";
-		EXPECT_EQ(lineFor(Attributes{}, "quiet"), "") << "many thoughts have no line";
+		EXPECT_EQ(lineFor(testing::attributesAt(10.0F), "soaked"), "I'm soaked through.");
+		EXPECT_EQ(lineFor(testing::attributesAt(10.0F, {{&Attributes::civility, 3.0F}}), "soaked"), "One more minute of this...");
+		EXPECT_EQ(lineFor(testing::attributesAt(10.0F, {{&Attributes::strength, 18.0F}, {&Attributes::civility, 3.0F}}), "soaked"), "I will fight this cloud.");
+		EXPECT_EQ(lineFor(testing::attributesAt(10.0F, {{&Attributes::strength, 18.0F}}), "soaked"), "I'm soaked through.") << "the strength line is the furious one's";
+		EXPECT_EQ(lineFor(testing::attributesAt(10.0F), "quiet"), "") << "many thoughts have no line";
 	}
 
 	TEST(ThoughtLines, AvoidTheLastLineAndAreDeterministicUnderASeed) {
@@ -781,7 +781,7 @@ namespace ecs::test {
 		std::vector<ThoughtId> ended;
 		thoughts.addEndedObserver([&](EntityID, const Thought& thought) { ended.push_back(thought.id); });
 		const EntityID who = world.createEntity();
-		world.addComponent<Attributes>(who, Attributes{});
+		world.addComponent<Attributes>(who, testing::attributesAt(10.0F));
 
 		const ThoughtHandle held = thoughts.create({.colonist = who, .eventType = rules.type("slept_on_ground")});
 		world.getComponent<Attributes>(who)->sanity = 16.0F;
@@ -808,7 +808,7 @@ namespace ecs::test {
 		world.registerSystem<TimeSystem>();
 		ThoughtSystem& thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
 		const EntityID who = world.createEntity();
-		world.addComponent<Attributes>(who, Attributes{});
+		world.addComponent<Attributes>(who, testing::attributesAt(10.0F));
 
 		const ThoughtHandle first = thoughts.create({.colonist = who, .eventType = rules.type("bottled_up")});
 		EXPECT_EQ(heldMoodTotal(*world.getComponent<Thoughts>(who)), -2.0F);

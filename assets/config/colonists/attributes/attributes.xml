@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  How each colonist attribute is rolled at spawn. Every .xml file in this folder (and its subfolders) adds
+  to the set. This folder's files load first, then subfolders' files in path order; a later file replaces
+  an attribute of the same name, and the replacement is logged. Every attribute needs exactly one range
+  once the files are merged.
+
+  <Attribute name min max/>   name is the condition name: attribute(work_ethic). The roll is even across
+                              min to max, both on the 0 to 20 scale (0 none, 20 exceptional).
+
+  See /docs/design/game-systems/colonists/attributes.md (Rolling).
+-->
+<Attributes>
+  <Attribute name="strength" min="6" max="14"/>
+  <Attribute name="agility" min="4" max="16"/>
+  <Attribute name="intelligence" min="4" max="16"/>
+
+  <Attribute name="civility" min="4" max="16"/>
+  <Attribute name="sanity" min="4" max="16"/>
+  <Attribute name="kindness" min="4" max="16"/>
+  <Attribute name="work_ethic" min="4" max="16"/>
+  <Attribute name="social_need" min="4" max="16"/>
+</Attributes>

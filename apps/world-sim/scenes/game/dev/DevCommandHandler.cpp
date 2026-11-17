@@ -20,7 +20,6 @@
 
 #include <ui/components/Toast.h>
 
-#include <conditions/ColonistTerms.h>
 
 #include <construction/ConstructionValidator.h>
 #include <construction/ConstructionWorld.h>
@@ -477,7 +476,7 @@ namespace world_sim {
 		}
 		const std::string name = param(cmd, "attribute");
 		const auto field = std::ranges::find_if(ecs::kAttributeFields, [&name](const ecs::AttributeField& candidate) {
-			return conditions::conditionName(candidate.label) == name;
+			return candidate.id == name;
 		});
 		if (field == ecs::kAttributeFields.end()) {
 			return refuse("attribute: no attribute '" + name + "'");
@@ -1267,7 +1266,7 @@ namespace world_sim {
 				out << ",\"attributes\":{";
 				for (size_t i = 0; i < ecs::kAttributeFields.size(); ++i) {
 					const ecs::AttributeField& field = ecs::kAttributeFields[i];
-					out << (i > 0 ? "," : "") << "\"" << conditions::conditionName(field.label) << "\":" << attributes->*(field.value);
+					out << (i > 0 ? "," : "") << "\"" << field.id << "\":" << attributes->*(field.value);
 				}
 				out << "}";
 			}

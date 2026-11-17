@@ -2,6 +2,7 @@
 
 #include <conditions/SimTerms.h>
 
+#include <assets/AttributeConfig.h>
 #include <assets/ConditionConfig.h>
 #include <assets/ThoughtConfig.h>
 
@@ -16,6 +17,22 @@ namespace ecs {
 			}
 		}
 	} // namespace
+
+	std::vector<std::string> loadAttributeRolls(AttributeRolls& rolls, const std::filesystem::path& folder) {
+		std::vector<std::string_view> names;
+		for (const AttributeField& field : kAttributeFields) {
+			names.push_back(field.id);
+		}
+		assets::AttributeConfigLoad config = assets::loadAttributeConfig(folder, names);
+		if (!config.errors.empty()) {
+			return config.errors;
+		}
+		for (std::size_t index = 0; index < config.ranges.size(); ++index) {
+			rolls.ranges[index] = std::move(config.ranges[index]);
+		}
+		LOG_INFO(Engine, "Loaded %zu attribute ranges from %s", config.ranges.size(), folder.generic_string().c_str());
+		return {};
+	}
 
 	std::vector<std::string>
 	loadConditionVocabulary(conditions::ConditionVocabulary& vocabulary, const std::filesystem::path& folder, const assets::TraitRegistry& traits) {
@@ -51,6 +68,7 @@ namespace ecs {
 	ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot) {
 		ColonistRulesLoad load;
 		load.rules.traits = std::make_unique<assets::TraitRegistry>();
+		load.rules.attributes = std::make_unique<AttributeRolls>();
 		load.rules.vocabulary = std::make_unique<conditions::ConditionVocabulary>();
 		load.rules.thoughtTypes = std::make_unique<ThoughtTypes>(*load.rules.vocabulary);
 
@@ -60,6 +78,10 @@ namespace ecs {
 		}
 		const assets::TraitRegistry& traits = *load.rules.traits;
 		LOG_INFO(Engine, "Loaded %zu traits from %s", traits.traits().size(), (configRoot / "colonists" / "traits").generic_string().c_str());
+		addErrors(load.errors, "attributes", loadAttributeRolls(*load.rules.attributes, configRoot / "colonists" / "attributes"));
+		if (!load.errors.empty()) {
+			return load;
+		}
 		addErrors(load.errors, "conditions", loadConditionVocabulary(*load.rules.vocabulary, configRoot / "conditions", traits));
 		if (!load.errors.empty()) {
 			return load;

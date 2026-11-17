@@ -37,6 +37,7 @@ add_library(sim
     ecs/components/MemoryQueries.cpp
     ecs/components/Mood.cpp
     ecs/components/Thoughts.cpp
+    ecs/components/Attributes.cpp
     ecs/components/Traits.cpp
     ecs/components/ToiletLocationFinder.cpp
     conditions/ColonistTerms.cpp

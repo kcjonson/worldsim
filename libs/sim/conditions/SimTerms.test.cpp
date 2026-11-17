@@ -101,8 +101,7 @@ namespace {
 			colonist = spawnColonist({0.0F, 0.0F});
 			ecs::NeedsComponent& needs = world.addComponent<ecs::NeedsComponent>(colonist, ecs::NeedsComponent::createDefault());
 			needs.hunger().value = 15.0F;
-			ecs::Attributes attributes;
-			attributes.sanity = 17.0F;
+			ecs::Attributes attributes = ecs::testing::attributesAt(10.0F, {{&ecs::Attributes::sanity, 17.0F}});
 			world.addComponent<ecs::Attributes>(colonist, attributes);
 			world.addComponent<ecs::Task>(colonist, ecs::Task{});
 			world.addComponent<ecs::Memory>(colonist, ecs::Memory{});

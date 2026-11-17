@@ -1613,12 +1613,10 @@ namespace {
 			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());
 			ecsWorld->getSystem<ecs::MoodSystem>().startMood(entity);
 
-			// Roll static attributes (0-20) and traits, seeded per-entity so colonists vary
-			// deterministically. Only Strength is consumed today: it sets hand-carry
-			// capacity. The other attributes are placeholders for upcoming systems.
-			ecs::Attributes attributes;
-			std::mt19937	attrRng(static_cast<uint32_t>(entity));
-			attributes.strength = std::uniform_real_distribution<float>(6.0F, 14.0F)(attrRng);
+			// Roll attributes and traits from one generator seeded per entity, so colonists vary
+			// deterministically.
+			std::mt19937		  attrRng(static_cast<uint32_t>(entity));
+			const ecs::Attributes attributes = ecs::rollAttributes(*colonistRules.attributes, attrRng);
 			ecsWorld->addComponent<ecs::Attributes>(entity, attributes);
 			ecsWorld->addComponent<ecs::Traits>(entity, ecs::rollTraits(*colonistRules.traits, attrRng));
 
