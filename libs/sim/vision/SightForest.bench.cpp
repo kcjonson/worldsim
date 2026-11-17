@@ -606,6 +606,8 @@ namespace {
 			mostParts.shapesWaiting = std::max(mostParts.shapesWaiting, queue.shapesWaiting);
 			mostParts.piecesWaiting = std::max(mostParts.piecesWaiting, queue.piecesWaiting);
 			mostSweepsWaiting = std::max(mostSweepsWaiting, seen.sweepsWaiting());
+			backlogTicks = queue.shapesWaiting + queue.piecesWaiting > 0 ? backlogTicks + 1 : 0;
+			mostBacklogTicks = std::max(mostBacklogTicks, backlogTicks);
 			if (tickIndex + 1 == kTicks / 2) {
 				pendingAtHalf = queue.total();
 			}
@@ -644,6 +646,8 @@ namespace {
 		std::vector<double>		 visionMs;
 		std::vector<double>		 recordMs;
 		ForestRecord::Queue		 atPeak;
+		std::size_t				 backlogTicks = 0; // consecutive ticks with a shape or a piece waiting
+		std::size_t				 mostBacklogTicks = 0;
 		ForestRecord::Queue		 mostParts;
 		std::size_t				 pendingAtHalf = 0;
 		std::size_t				 mostSweepsWaiting = 0;
@@ -954,7 +958,7 @@ namespace {
 	// Arguments: colonists, game speed, the case (0 the shipped shape: no forest depth, rocks not
 	// occluding; 1 forest depth only; 2 rocks only; 3 both, as designed), the scheduler's options as
 	// bits (1 shapes tested while pieces wait, 2 four sweep points built every tick, 4 two pieces
-	// registered a tick), softLegToleranceMm (0 for 500 mm scaled by the distance between builds at
+	// registered a tick, 8 four), softLegToleranceMm (0 for 500 mm scaled by the distance between builds at
 	// the speed), and 1 to skip the sweep for placed opaque bodies.
 	void BM_SightForestWalk(benchmark::State& state) {
 		WalkSettings settings;
@@ -965,7 +969,7 @@ namespace {
 		const std::int64_t options = state.range(3);
 		settings.scheduler.testWhilePiecesWait = (options & 1) != 0;
 		settings.scheduler.sweepsPerTick = (options & 2) != 0 ? 4 : 0;
-		settings.scheduler.piecesPerTick = (options & 4) != 0 ? 2 : vision::kSeenPiecesRegisteredPerTick;
+		settings.scheduler.piecesPerTick = (options & 8) != 0 ? 4 : (options & 4) != 0 ? 2 : vision::kSeenPiecesRegisteredPerTick;
 		settings.toleranceMm =
 			state.range(4) > 0 ? state.range(4) : std::llround(500.0 * buildSpacingMm(settings.speed) / buildSpacingMm(1.0));
 		settings.skipSweep = state.range(5) != 0;
@@ -1003,7 +1007,7 @@ namespace {
 				options == 0 ? " as SeenArea's" : "",
 				settings.scheduler.testWhilePiecesWait ? " (i) tests while pieces wait" : "",
 				settings.scheduler.sweepsPerTick > 0 ? " (ii) four sweep points a tick" : "",
-				settings.scheduler.piecesPerTick > 1 ? " (iii) two pieces a tick" : "",
+				settings.scheduler.piecesPerTick == 2 ? " (iii) two pieces a tick" : settings.scheduler.piecesPerTick > 2 ? " four pieces a tick" : "",
 				static_cast<long long>(settings.toleranceMm),
 				settings.skipSweep ? "skipped" : "on",
 				static_cast<long long>(walk.leadMm)
@@ -1027,12 +1031,13 @@ namespace {
 			);
 			std::fprintf(
 				stderr,
-				"  sweep points waiting at most %zu, at the end %zu, built %zu; the longest wait to be tested %zu ticks; drained %zu ticks after "
-				"the walk%s\n",
+				"  sweep points waiting at most %zu, at the end %zu, built %zu; the longest wait to be tested %zu ticks; the longest backlog %zu "
+				"ticks; drained %zu ticks after the walk%s\n",
 				walk.mostSweepsWaiting,
 				sweepsAtEnd,
 				walk.seen.sweepsBuilt(),
 				counted.mostTicksToTest,
+				walk.mostBacklogTicks,
 				drainTicks,
 				drainTicks >= Walk::kDrainLimitTicks ? " (not drained, stopped)" : ""
 			);
@@ -1240,14 +1245,20 @@ BENCHMARK(BM_SightForestWalk)
 	->Unit(benchmark::kMillisecond);
 
 // The scheduler's options, each alone and together, on the shipped shape and the design at 50
-// colonists at 10x, together at 1x too; then the design-level options on the design.
+// colonists at 10x, together at 1x too and on forest depth and rocks apart; then the design-level
+// options on the design.
 BENCHMARK(BM_SightForestWalk)
 	->Name("BM_SightForestScheduler")
 	->ArgsProduct({{50}, {10}, {0, 3}, {1, 2, 4, 7}, {500}, {0}})
+	->Args({50, 10, 1, 7, 500, 0})
+	->Args({50, 10, 2, 7, 500, 0})
 	->Args({50, 1, 0, 7, 500, 0})
 	->Args({50, 1, 3, 7, 500, 0})
 	->Args({50, 10, 3, 7, 0, 0})
 	->Args({50, 10, 3, 7, 500, 1})
 	->Args({50, 10, 3, 7, 0, 1})
+	->Args({50, 10, 0, 11, 500, 0})
+	->Args({50, 10, 3, 11, 500, 0})
+	->Args({50, 10, 3, 11, 0, 1})
 	->Iterations(1)
 	->Unit(benchmark::kMillisecond);
