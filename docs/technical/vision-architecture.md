@@ -57,7 +57,7 @@ Simulation stays CPU-side and analytic; rendering consumes the shapes.
 
 ### D6: Sight model
 
-360° vision, radius per species from config (colonist default 30 m). No facing cone in v1 — cones arrive if/when stealth mechanics want them, and nothing here precludes them (the polygon clips to a wedge instead of a circle). Future modifiers, all config-shaped: night/light level, weather, concealment (trees as soft occluders — a forest you can hide in is a compelling future, but v1 occluders are walls only). [Sight Softening](./sight-softening.md) (2026-11-16) replaces the walls-only occluder set: every collidable object in the collision map, less movers, hides sight by its width against a 1 m eye, so trees thin sight and walls still block it.
+360-degree vision, radius per species from config (colonist default 30 m). No facing cone: cones arrive if stealth mechanics want them, and nothing here precludes them (the polygon clips to a wedge instead of a circle). Occluders are the collidable objects of the collision map less movers: walls by their band outline, so sight stops at a wall's near face, and placed things by the rings nav holds for them. A wall, and a thing wider than a 1 m eye, casts a full shadow; a narrower thing casts none and pulls sight in its direction in by a capped amount, so a stand of trees shortens sight and a post does nothing a player would notice ([Sight Softening](./sight-softening.md)). Future modifiers, all config-shaped: night and light level, weather, concealment.
 
 One assumption to not bake in: sight symmetry. With circles-and-walls, A-sees-B equals B-sees-A; cones and concealment break that later. Belief and AI code should always ask directionally.
 
