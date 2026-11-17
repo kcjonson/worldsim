@@ -141,16 +141,12 @@ Mood is a composite score from all contributors. Range 0-100%.
 
 ### Mood Contributors
 
-| Contributor | Source | Type |
-|-------------|--------|------|
-| Need Satisfaction | All needs above comfortable | Continuous |
-| Beauty | Aesthetic quality of surroundings | Environmental |
-| Comfort | Quality of furniture being used | Environmental |
-| Temperature | Comfort relative to tolerance | Environmental |
-| Social | Running tally of interaction quality | Social |
-| Fulfillment | Using preferred skills | Work |
-| Purpose | Completing meaningful tasks | Work |
-| Thoughts | Temporary event modifiers | Events |
+Mood has two parts ([Mood](./mood.md)):
+
+| Contributor | Source |
+|-------------|--------|
+| Need satisfaction | How well the needs are met, weighted as below |
+| Mood effects | Carried by [thoughts](./thoughts.md). Everything else that changes how a colonist feels (surroundings, comfort, company, work they like, things that happen to them) reaches mood as a thought |
 
 ### Need-to-Mood Weights (current tuning)
 

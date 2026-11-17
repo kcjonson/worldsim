@@ -41,7 +41,7 @@ Thoughts of the same event type do not pile up on one colonist unless the type s
 
 The system that creates a thought reports only the event and its subject. The colonist supplies the feeling.
 
-Each event type lists the feelings it can produce, each with a condition on the colonist's attributes, traits, likes and dislikes, and relationship to the subject. The most specific feeling whose condition holds is the one the colonist has. The feeling sets the size of the mood effect, and it can set it to nothing.
+Each event type lists the feelings it can produce, each with a condition on the colonist's attributes, traits, likes and dislikes, and relationship to the subject. The most specific feeling whose condition holds is the one the colonist has. The feeling sets the size of the mood effect, and it can set it to nothing. The one exception is relief from a low-mood behavior, whose size the behavior sets ([Mood](./mood.md)).
 
 One event, three colonists: a finished chair is smashed. The Volatile one is furious (-12). The one with low Work Ethic is resigned (no effect). The one who disliked its owner is quietly pleased (+3).
 
@@ -172,7 +172,7 @@ Pruning changes only what the log can show. The bubble selector's novelty does n
 ## Where it shows in the UI
 
 - **World view.** Bubbles over colonists' heads, and matching expressions.
-- **Info panel and colonist details, Log tab.** Each thought is one block holding the event, the feeling, and the mood adjustment ("Slept on the ground. Miserable. -10 mood, 1 day"). The log shows the thoughts that bubbled by default, with a filter to show all of them. Merged entries show their count and date range. It is a reference for "why", not something to read through.
+- **Info panel and colonist details, Log tab.** Each thought is one block holding the event, the feeling, and the mood adjustment ("Slept on the ground. Miserable. -10 mood, 1 day"). By default the log shows the thoughts that bubbled, every major thought, and every low-mood episode and refusal, with a filter to show all of them. Merged entries show their count and date range. It is a reference for "why", not something to read through.
 - **Colonist details, Health tab.** The mood breakdown lists every held thought that has a mood effect, with its amount and time left. See [Mood](./mood.md).
 - **Colony overview.** Held thoughts counted by event type across the colony ("slept on the ground: 5 colonists"), largest total mood effect first.
 - **Settings.** Bubble frequency (fewer, normal, more), and a switch per source to stop its trivial and normal thoughts from bubbling. Major thoughts always show.

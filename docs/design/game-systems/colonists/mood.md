@@ -41,7 +41,7 @@ Bands name a range for the player. They gate nothing; the curves below do the wo
 | Band | Mood | Reads as |
 |---|---|---|
 | Content | 55 and up | nothing to manage |
-| Low | 30 to 54 | episodes begin, mostly held in |
+| Low | 30 to 54 | below 45 episodes begin, mostly held in |
 | Very low | 12 to 29 | regular episodes, refusing work |
 | Collapsing | under 12 | dangerous behaviors, refusing food |
 
@@ -56,14 +56,14 @@ Bands name a range for the player. They gate nothing; the curves below do the wo
 
 ### When a colonist rolls
 
-`chance per hour = ((45 - mood) / 40)^2 x 30%`
+`chance per hour = ((45 - mood) / 40)^2 x 30%`, never more than 30%
 
 | Mood | Chance per game hour |
 |---|---|
 | 45 and up | 0 |
 | 35 | ~2% |
 | 20 | ~12% |
-| 5 | 30% |
+| 5 and under | 30% |
 
 Personality slides the curve along the mood axis: low Sanity or the Volatile trait shifts it up by as much as ten points of mood, high Sanity down by as much. Two colonists at mood 30 do not crack on the same day.
 
@@ -112,7 +112,7 @@ Each clears only once mood has climbed 5 points past where the state began, so a
 
 Every behavior lists its own end conditions; whichever comes first stops it. A critical need interrupts any behavior. Refusing food is the exception: hunger does not end it.
 
-Relief is a timed positive thought, sized per behavior:
+Relief is a timed positive thought. Its size comes from the behavior that gave it, not from the colonist's feeling about it:
 
 | Relief | Mood | Lasts |
 |---|---|---|
@@ -291,7 +291,7 @@ Every `requires` and multiplier is built from these.
 The behavior list, the thoughts, the roll curve, relief sizes, the cooldown, the mood rate, and the affinity rates are config. A behavior is one entry:
 
 ```xml
-<behavior id="soil_bed" rampStart="25" rampFull="12" base="4">
+<behavior id="soil_bed" rampStart="25" rampFull="15" base="4">
   <requires>near(bed, 15) and not owner_present(bed)</requires>
   <weight when="dislikes(owner(bed))" multiply="4"/>
   <weight when="not observed" multiply="2"/>

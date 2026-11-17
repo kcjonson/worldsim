@@ -81,12 +81,12 @@ World mechanics, rooms, resources, and entity interactions.
 | [Rooms](./game-systems/world/rooms.md) | Room types, detection, bonuses |
 | [Crafting](./game-systems/world/crafting.md) | Resource chains, recipes |
 | [Building & Construction](./game-systems/world/building-construction.md) | Freeform foundations, walls, doors/windows, rooms |
-| [Fire](./game-systems/world/fire.md) | Stub: lit entities, flammability, spread |
-| [Smell](./game-systems/world/smell.md) | Stub: smell emitters and colonist exposure |
-| [Germs](./game-systems/world/germs.md) | Stub: contamination, transfer, sickness |
-| [Noise](./game-systems/world/noise.md) | Stub: noise emitters, walls, sleep |
-| [Crowding](./game-systems/world/crowding.md) | Stub: people nearby against personal tolerance |
-| [Wetness](./game-systems/world/wetness.md) | Stub: rain, wet clothes, drying |
+| [Fire](./game-systems/world/fire.md) | Lit entities, flammability, spread |
+| [Smell](./game-systems/world/smell.md) | Smell emitters and colonist exposure |
+| [Germs](./game-systems/world/germs.md) | Contamination, transfer, sickness |
+| [Noise](./game-systems/world/noise.md) | Noise emitters, walls, sleep |
+| [Crowding](./game-systems/world/crowding.md) | People nearby against personal tolerance |
+| [Wetness](./game-systems/world/wetness.md) | Rain, wet clothes, drying |
 
 ### Features
 
