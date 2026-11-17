@@ -4,6 +4,7 @@
 // update here also runs the development-build validator, which aborts on a violation.
 
 #include "AIDecisionSystem.h"
+#include "ShippedPriorityConfig.test.h"
 #include "ActionSystem.h"
 #include "ChainClaims.h"
 #include "CollisionSystem.h"
@@ -77,7 +78,7 @@ namespace ecs::test {
 		void SetUp() override {
 			world = std::make_unique<World>();
 			GoalTaskRegistry::Get().clear();
-			assets::PriorityConfig::Get().clear();
+			ASSERT_TRUE(loadShippedPriorityConfig());
 
 			auto& registry = assets::AssetRegistry::Get();
 			registerItem("Berry", 1, 0.1F, 1, /*edible=*/true);

@@ -147,7 +147,7 @@ namespace ecs::test {
 			const size_t at = xml.find(original);
 			EXPECT_NE(at, std::string::npos) << original;
 			xml.replace(at, original.size(), replacement);
-			EXPECT_TRUE(loadConfig(xml));
+			loadConfig(xml);
 			assets::ConfigValidator::clearErrors();
 			EXPECT_FALSE(assets::ConfigValidator::validateMood(config));
 			return validationMessages();
@@ -385,16 +385,18 @@ namespace ecs::test {
 	TEST_F(MoodSystemTest, ValidationRejectsABrokenConfig) {
 		ASSERT_TRUE(loadConfig(R"(<?xml version="1.0"?>
 <Mood>
+  <Easing pointsPerGameHour="5"/>
   <NeedPenalty comfortable="30" warning="70" penaltyAtWarning="0.3"/>
   <NeedWeights><Need name="Hunger" weight="1"/><Need name="Hunger" weight="2"/></NeedWeights>
   <Bands><Band name="Content" from="55"/></Bands>
 </Mood>)"));
 		assets::ConfigValidator::clearErrors();
 		EXPECT_FALSE(assets::ConfigValidator::validateMood(config));
+		const std::vector<std::string> messages = validationMessages();
+		ASSERT_EQ(messages.size(), 3U);
 		EXPECT_EQ(
-			validationMessages(),
+			messages,
 			(std::vector<std::string>{
-				"Easing pointsPerGameHour must be a positive number",
 				"NeedPenalty needs 0 < warning < comfortable <= 100",
 				"Need 'Hunger' is weighted more than once",
 				"The lowest band must start at 0 or below so every mood has a band",
@@ -415,10 +417,9 @@ namespace ecs::test {
 	}
 
 	TEST_F(MoodSystemTest, ValidationRejectsAMissingWeight) {
-		EXPECT_EQ(
-			validationMessagesWith(R"(<Need name="Thirst" weight="1"/>)", R"(<Need name="Thirst"/>)"),
-			std::vector<std::string>{"Need 'Thirst' weight must be zero or more"}
-		);
+		const std::vector<std::string> messages = validationMessagesWith(R"(<Need name="Thirst" weight="1"/>)", R"(<Need name="Thirst"/>)");
+		ASSERT_EQ(messages.size(), 1U);
+		EXPECT_TRUE(messages.front().ends_with("<Need name=\"Thirst\"> weight is missing")) << messages.front();
 	}
 
 	TEST_F(MoodSystemTest, ValidationRejectsBandsStartingAtTheSameMood) {

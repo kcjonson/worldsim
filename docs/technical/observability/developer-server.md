@@ -16,7 +16,7 @@ The game scene registers everything in `GameScene::onEnter` and holds the regist
 |------|-------|--------|
 | Routes (`/api/dev/<verb>`) | `freebuild`, `construction`, `give`, `spawn`, `colonist`, `need`, `time`, `teleport`, `select`, `kill`, `complete`, `foundation`, `foundation-edit`, `walls`, `opening`, `ground` (what the nav mesh holds at each point, including `buildable` and `buildableNow`), `craft`, `tunable`, `flora`, `storage`, `visibility`, `reveal` | before input, at the start of the next frame |
 | Controls (`/api/control?action=`) | `camera`, `gpuhold` | before input, at the start of the next frame |
-| State views (`/api/state?what=`) | `colonists`, `construction`, `stations`, `storage`, `time`, `landing`, `summary`, `visibility`, `tunables`, `gpuhold`, `uprights` | after render |
+| State views (`/api/state?what=`) | `colonists`, `construction` (foundation corners and openings included), `drawing` (the drawing tools' state, [testing README](../../testing/README.md#the-drawing-view)), `stations`, `storage`, `time`, `landing`, `summary`, `visibility`, `tunables`, `gpuhold`, `uprights` | after render |
 
 The ui tree and lint come from the top scene's ui and need no registration; `what=scene` is answered by the server itself.
 

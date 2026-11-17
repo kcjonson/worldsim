@@ -1,5 +1,8 @@
 #include "DevCommandHandler.h"
 
+#include "scenes/game/dev/ConstructionStateJson.h"
+#include "scenes/game/dev/DevJson.h"
+#include "scenes/game/dev/DrawingStateJson.h"
 #include "scenes/game/dev/GiveShortfall.h"
 #include "scenes/game/dev/GroundRefusal.h"
 #include "scenes/game/dev/PointList.h"
@@ -70,7 +73,6 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <iomanip>
 #include <limits>
@@ -141,6 +143,7 @@ namespace world_sim {
 		};
 		view("colonists", &DevCommandHandler::serializeColonists);
 		view("construction", &DevCommandHandler::serializeConstruction);
+		registrations.push_back(server.stateProvider("drawing", [this] { return drawingStateJson(m_ctx.drawing->snapshot()); }));
 		view("stations", &DevCommandHandler::serializeStations);
 		view("storage", &DevCommandHandler::serializeStorage);
 		view("time", &DevCommandHandler::serializeTime);
@@ -1344,6 +1347,27 @@ namespace world_sim {
 			os << "},\"progress\":" << bp.progress();
 		};
 
+		// The phase a blueprint is in, as the foundation and opening entries name it.
+		const auto phaseName = [](ecs::StructureBlueprint::BuildPhase phase) {
+			switch (phase) {
+				case ecs::StructureBlueprint::BuildPhase::Clearing: return "Clearing";
+				case ecs::StructureBlueprint::BuildPhase::AwaitingMaterials: return "AwaitingMaterials";
+				case ecs::StructureBlueprint::BuildPhase::UnderConstruction: return "UnderConstruction";
+				case ecs::StructureBlueprint::BuildPhase::Complete: return "Complete";
+			}
+			return "Clearing";
+		};
+
+		// What an entity's blueprint adds to a foundation's or opening's entry: its phase and material progress.
+		const BlueprintFragment blueprintFragment = [&](ecs::EntityID entity) {
+			std::ostringstream fragment;
+			if (const auto* bp = m_ctx.world->getComponent<ecs::StructureBlueprint>(entity)) {
+				fragment << ",\"phase\":\"" << phaseName(bp->phase) << "\"";
+				emitMaterialProgress(fragment, *bp);
+			}
+			return fragment.str();
+		};
+
 		const auto& cworld = m_ctx.drawing->world();
 		out << "{\"foundations\":[";
 		bool first = true;
@@ -1354,19 +1378,11 @@ namespace world_sim {
 				<< "\",\"state\":\"" << (foundation.state == construction::FoundationState::Built ? "Built" : "Blueprint")
 				<< "\",\"entity\":" << static_cast<unsigned long long>(foundation.entity) << ",\"area\":" << cworld.areaSquareMeters(foundation.id);
 
+			out << ",\"corners\":" << foundationCornersJson(foundation);
+
 			// Include material progress from the ECS mirror entity's StructureBlueprint
 			if (foundation.entity != ecs::kInvalidEntity) {
-				if (const auto* bp = m_ctx.world->getComponent<ecs::StructureBlueprint>(foundation.entity)) {
-					const char* phaseStr = "Clearing";
-					switch (bp->phase) {
-						case ecs::StructureBlueprint::BuildPhase::Clearing: phaseStr = "Clearing"; break;
-						case ecs::StructureBlueprint::BuildPhase::AwaitingMaterials: phaseStr = "AwaitingMaterials"; break;
-						case ecs::StructureBlueprint::BuildPhase::UnderConstruction: phaseStr = "UnderConstruction"; break;
-						case ecs::StructureBlueprint::BuildPhase::Complete: phaseStr = "Complete"; break;
-					}
-					out << ",\"phase\":\"" << phaseStr << "\"";
-					emitMaterialProgress(out, *bp);
-				}
+				out << blueprintFragment(foundation.entity);
 			}
 
 			out << "}";
@@ -1400,7 +1416,9 @@ namespace world_sim {
 
 			out << "}";
 		}
-		out << "]}";
+
+		// Openings: the wall each is on, where along it, that point in world meters, its build state and, with an entity, its phase and progress.
+		out << "],\"openings\":" << openingsJson(cworld, blueprintFragment) << "}";
 	}
 
 	void DevCommandHandler::serializeStations(std::ostringstream& out) {
@@ -1555,32 +1573,6 @@ namespace world_sim {
 		}
 		out << "{\"colonists\":" << colonists << ",\"foundations\":" << m_ctx.drawing->world().foundations().size()
 			<< ",\"chunks\":" << m_ctx.chunks->loadedChunkCount() << "}";
-	}
-
-	std::string DevCommandHandler::jsonEscape(const std::string& s) {
-		std::string out;
-		out.reserve(s.size() + 8);
-		for (char c : s) {
-			switch (c) {
-				case '"': out += "\\\""; break;
-				case '\\': out += "\\\\"; break;
-				case '\b': out += "\\b"; break;
-				case '\f': out += "\\f"; break;
-				case '\n': out += "\\n"; break;
-				case '\r': out += "\\r"; break;
-				case '\t': out += "\\t"; break;
-				default:
-					if (static_cast<unsigned char>(c) < 0x20) {
-						// Other control chars: emit a \u00XX escape rather than dropping them.
-						char buf[7];
-						std::snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
-						out += buf;
-					} else {
-						out += c;
-					}
-			}
-		}
-		return out;
 	}
 
 } // namespace world_sim

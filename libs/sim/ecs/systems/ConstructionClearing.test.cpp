@@ -3,6 +3,7 @@
 // the blocker from the index. Movement is skipped: a colonist arrives the moment it takes a task.
 
 #include "AIDecisionSystem.h"
+#include "ShippedPriorityConfig.test.h"
 #include "ActionSystem.h"
 #include "ConstructionSystem.h"
 #include "TimeSystem.h"
@@ -72,7 +73,7 @@ namespace ecs::test {
 		  protected:
 			void SetUp() override {
 				GoalTaskRegistry::Get().clear();
-				assets::PriorityConfig::Get().clear();
+				ASSERT_TRUE(loadShippedPriorityConfig());
 				auto& registry = assets::AssetRegistry::Get();
 				registry.clearDefinitions();
 

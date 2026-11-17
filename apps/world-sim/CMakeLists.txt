@@ -88,7 +88,10 @@ add_library(world-sim-game STATIC
     scenes/landing/LandingSiteDetailsPanel.cpp
     scenes/loading/GameLoadingScene.cpp
     scenes/game/dev/CameraCommand.cpp
+    scenes/game/dev/ConstructionStateJson.cpp
     scenes/game/dev/DevCommandHandler.cpp
+    scenes/game/dev/DevJson.cpp
+    scenes/game/dev/DrawingStateJson.cpp
     scenes/game/dev/GiveShortfall.cpp
     scenes/game/dev/GpuHold.cpp
     scenes/game/dev/GpuHoldCommand.cpp
@@ -149,6 +152,9 @@ if(BUILD_TESTING)
     find_package(GTest CONFIG REQUIRED)
     add_executable(world-sim-tests
         scenes/game/dev/CameraCommand.test.cpp
+        scenes/game/dev/ConstructionStateJson.test.cpp
+        scenes/game/dev/DevJson.test.cpp
+        scenes/game/dev/DrawingStateJson.test.cpp
         scenes/game/dev/GiveShortfall.test.cpp
         scenes/game/dev/GpuHoldCommand.test.cpp
         scenes/game/dev/GroundRefusal.test.cpp

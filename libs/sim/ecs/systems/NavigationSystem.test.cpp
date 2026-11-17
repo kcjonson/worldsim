@@ -7,6 +7,7 @@
 #include "PlayerVisibilitySystem.h"
 #include "MeshBand.test.h"
 #include "PlacedNothing.test.h"
+#include "ShippedPriorityConfig.test.h"
 #include "PlacedObstacleCollisionSystem.h"
 #include "TimeSystem.h"
 #include "VisionSystem.h"
@@ -294,6 +295,7 @@ namespace {
 		void SetUp() override {
 			ConstructionRegistry::Get().clear();
 			ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder()));
+			ASSERT_TRUE(loadShippedPriorityConfig());
 		}
 		void TearDown() override { ConstructionRegistry::Get().clear(); }
 
