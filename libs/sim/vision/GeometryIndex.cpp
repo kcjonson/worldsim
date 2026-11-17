@@ -28,10 +28,18 @@ namespace ecs {
 			return {a.x + std::llround(static_cast<double>(b.x - a.x) * fraction), a.y + std::llround(static_cast<double>(b.y - a.y) * fraction)};
 		}
 
-		// Marks every occluder that touches, crosses or runs along an occluder of another loop:
-		// `loop` numbers each occluder's loop group (one per offset graph, one per wall of a rejected
-		// graph). Occluders are swept in order of their boxes' low x, and only those whose boxes
-		// overlap are tested.
+		// Whether the two edges share an end.
+		bool shareAnEnd(const geometry::OccluderSegment& first, const geometry::OccluderSegment& second) {
+			return first.a == second.a || first.a == second.b || first.b == second.a || first.b == second.b;
+		}
+
+		// Marks every occluder that touches, crosses or runs along another: any contact with an
+		// occluder of another loop group, and within one any but two edges meeting end to end, how a
+		// loop runs on from an edge or passes a vertex again. Two walls of one graph can still
+		// overlap where they share no vertex, since the outline cancels edges only between rings
+		// meeting at one. `loop` numbers each occluder's group (one per offset graph, one per wall
+		// of a rejected graph). Occluders are swept in order of their boxes' low x, and only those
+		// whose boxes overlap are tested.
 		void markCrossings(std::vector<GeometryIndex::OccluderRecord>& occluders, const std::vector<std::size_t>& loop) {
 			struct Box {
 				std::int64_t lowX;
@@ -53,13 +61,15 @@ namespace ecs {
 				for (const Box& other : open) {
 					GeometryIndex::OccluderRecord& first  = occluders[box.occluder];
 					GeometryIndex::OccluderRecord& second = occluders[other.occluder];
-					if (loop[other.occluder] == loop[box.occluder] || other.highY < box.lowY || box.highY < other.lowY ||
-						(first.crossesAnotherLoop && second.crossesAnotherLoop)) {
+					if (other.highY < box.lowY || box.highY < other.lowY || (first.crossesAnotherOccluder && second.crossesAnotherOccluder)) {
 						continue;
 					}
-					if (geometry::intersectSegments(first.seg.a, first.seg.b, second.seg.a, second.seg.b).relation != geometry::SegmentRelation::Disjoint) {
-						first.crossesAnotherLoop  = true;
-						second.crossesAnotherLoop = true;
+					const geometry::SegmentRelation relation = geometry::intersectSegments(first.seg.a, first.seg.b, second.seg.a, second.seg.b).relation;
+					const bool joined = loop[other.occluder] == loop[box.occluder] && relation == geometry::SegmentRelation::EndpointTouch &&
+										shareAnEnd(first.seg, second.seg);
+					if (relation != geometry::SegmentRelation::Disjoint && !joined) {
+						first.crossesAnotherOccluder  = true;
+						second.crossesAnotherOccluder = true;
 					}
 				}
 				open.push_back(box);
@@ -68,7 +78,7 @@ namespace ecs {
 
 		// An eye against the occluder loops, one occluder at a time: the winding number round it,
 		// whether it lies on an occluder, and whether it grazes one in range, within a millimetre
-		// of its line, or one in range crosses another loop.
+		// of its line, or one in range crosses another.
 		//
 		// computeVisibilityPolygon blocks a ray that runs along an occluder on both of its sides and
 		// takes the polygon's next edge from the next direction round, which a back face's end can
@@ -86,7 +96,7 @@ namespace ecs {
 				const geometry::Vec2i64& to	  = occluder.seg.b;
 				const geometry::Int128	 offLine = geometry::cross(to - from, m_eye - from);
 				const int				 side	 = offLine.sign();
-				if (inRange && (occluder.crossesAnotherLoop ||
+				if (inRange && (occluder.crossesAnotherOccluder ||
 								geometry::Int128::compareSquareToProduct(offLine, geometry::Int128::product(kHitSnapsOntoTheRayMm, kHitSnapsOntoTheRayMm),
 																		 geometry::dot(to - from, to - from)) <= 0)) {
 					m_grazed = true;

@@ -627,6 +627,23 @@ TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesWhereLoopsCross) {
 		ASSERT_EQ(geometry::connectedWallGraphs({{{0, 0}, {3970, 487}, 100}, {{988, 159}, {4958, 646}, 150}}).size(), 2u);
 		expectSameSight(cw, {-2708, 30284}, 30500);
 	}
+	{
+		// The same two walls joined into one graph round a far loop: the offsetter cancels
+		// edges only between rings meeting at a vertex, so their outlines still cross.
+		ConstructionWorld cw;
+		buildWall(cw, {0, 0}, {3970, 487});
+		buildWall(cw, {988, 159}, {4958, 646}, "Heavy");
+		buildWall(cw, {0, 0}, {0, -3000});
+		buildWall(cw, {0, -3000}, {4958, -3000});
+		buildWall(cw, {4958, -3000}, {4958, 646});
+		std::vector<geometry::WallSegment> walls;
+		for (const construction::WallSegment& wall : cw.segments()) {
+			walls.push_back({cw.getVertex(wall.v0)->pos, cw.getVertex(wall.v1)->pos, construction::halfThicknessMm(wall)});
+		}
+		ASSERT_EQ(geometry::connectedWallGraphs(walls).size(), 1u);
+		ASSERT_EQ(geometry::resolveWallBands(walls, geometry::kDefaultMiterLimit).status, geometry::OffsetStatus::Ok);
+		expectSameSight(cw, {-2708, 30284}, 30500);
+	}
 }
 
 // The solid is what the outline loops wind round: a band's inside and its edge, not a
