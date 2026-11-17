@@ -5,21 +5,19 @@
 // build, rings in sight, opaque bodies in reach, vertices out, what convexity takes from the
 // slope-limited ranges with and without the slope limit, and the depth the limit gives up.
 //
-// BM_SightForestWalk drives the real SeenArea, its budget included, as PlayerVisibilitySystem
-// will once step 4 is in: colonists walk the landing's forest as BM_PlayerVisibilityWalk walks open
-// ground (the landing polygon first, 2 m/s, 20 m/s at 10x, headings turning up to 60 degrees every
-// 2 to 15 s, turned back past 400 m), around every placed ring. Vision builds every 5th tick for
-// each colonist who moved a rebuild step since his last build: the open path, a leg, or the polygon
-// path (5.1, 6.1). Every tick each colonist on a leg joins the forest shape of his build's ranges
-// placed where he stands (setOpenLeg), and a leg ends by the open leg's rules, a forest-depth spread
-// past softLegToleranceMm, or kSoftLegMostVertices, the next leg holding the shape drawn that frame
-// (6.2, 6.3). On the polygon path each build is cut to its rim and queued with its walk, and the sweep
-// builds its points' shapes with the bodies (6.4). Arguments: colonists, game speed, the leg snap in
-// millimetres (6.6's first fallback, 0 for none), 1 to skip the sweep where every opaque body in reach
-// is placed (its third; with no walls here, that is every polygon), softLegToleranceMm (its second),
-// and 1 for legs that take the sight polygon in place of the forest shape (its fourth).
+// BM_SightForestWalk drives the bench's own record (SightForestRecord.bench.h), SeenArea's with
+// forest legs, as PlayerVisibilitySystem would once step 4 is in: colonists walk the landing's forest
+// as BM_PlayerVisibilityWalk walks open ground (the landing polygon first, 2 m/s, 20 m/s at 10x,
+// courses turning up to 60 degrees every 2 to 15 s, turned back past 400 m), stepping round every
+// placed ring and keeping their course. Vision builds every 5th tick for each colonist who moved a
+// rebuild step since his last build: the open path, a leg, or the polygon path (5.1, 6.1). Every
+// tick each colonist on a leg passes his position and his build's ranges (setOpenLeg), and a leg ends
+// by the open leg's rules, 6.2's spread past softLegToleranceMm, or kSoftLegMostVertices, the next
+// leg holding the shape drawn that frame (6.2, 6.3). On the polygon path each build is cut to its rim
+// and queued with its walk, and the sweep builds its points' shapes with the bodies (6.4). After the
+// walk every leg closes and the record runs until nothing waits.
 
-#include "SeenArea.h"
+#include "SightForestRecord.bench.h"
 
 #include <visibility/ForestDepth.h>
 #include <visibility/ForestShape.h>
@@ -36,8 +34,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <map>
 #include <numbers>
+#include <numeric>
 #include <optional>
 #include <random>
 #include <span>
@@ -48,8 +46,10 @@
 namespace {
 
 	using geometry::Vec2i64;
-	using vision::SeenArea;
-	using vision::SightRanges;
+	using sight_bench::ForestRecord;
+	using sight_bench::Origin;
+	using sight_bench::Scheduler;
+	using sight_bench::SightRanges;
 
 	constexpr std::int64_t	kSightMm = 30000;
 	constexpr std::int64_t	kStepMm = 500;
@@ -327,6 +327,12 @@ namespace {
 
 	// --- Vision's build (5.1) ----------------------------------------------------------------
 
+	// What the sight shape takes in: the shipped shape has neither.
+	struct ShapeRules {
+		bool forestDepth = true;
+		bool rocksOcclude = true;
+	};
+
 	enum class Path : std::uint8_t { Open, Leg, Polygon };
 
 	struct Build {
@@ -346,9 +352,9 @@ namespace {
 		std::vector<geometry::OccluderSegment> occluders;
 	};
 
-	// The bodies round `eye`: the forest bodies with centres within sight, and the opaque rings'
-	// edges whose boxes come within `reachMm`.
-	void gather(const Stand& stand, const Vec2i64& eye, std::int64_t reachMm, BuildScratch& scratch, std::size_t& opaqueInReach) {
+	// The bodies round `eye`: the forest bodies with centres within sight, and, when rocks occlude, the
+	// opaque rings' edges whose boxes come within `reachMm`.
+	void gather(const Stand& stand, const Vec2i64& eye, std::int64_t reachMm, const ShapeRules& rules, BuildScratch& scratch, std::size_t& opaqueInReach) {
 		stand.near(eye, reachMm, scratch.near);
 		scratch.bodies.clear();
 		scratch.occluders.clear();
@@ -359,7 +365,7 @@ namespace {
 			if (std::abs(offset.x) < kSightMm && std::abs(offset.y) < kSightMm) {
 				scratch.bodies.push_back(ring.body);
 			}
-			if (!ring.opaque) {
+			if (!ring.opaque || !rules.rocksOcclude) {
 				continue;
 			}
 			const std::int64_t gapX = std::max<std::int64_t>({ring.low.x - eye.x, eye.x - ring.high.x, 0});
@@ -381,26 +387,29 @@ namespace {
 		}));
 	}
 
-	Build buildAt(const Stand& stand, const Vec2i64& eye, std::int64_t reachMm, BuildScratch& scratch) {
+	SightRanges rangesAt(const Vec2i64& eye, std::int64_t radiusMm, const ShapeRules& rules, const BuildScratch& scratch) {
+		return rules.forestDepth ? geometry::forestRanges(eye, kSightMm, radiusMm, scratch.bodies, kTunables) : sight_bench::equalRanges(radiusMm);
+	}
+
+	Build buildAt(const Stand& stand, const Vec2i64& eye, std::int64_t reachMm, const ShapeRules& rules, BuildScratch& scratch) {
 		Build build;
 		build.eye = eye;
-		gather(stand, eye, reachMm, scratch, build.opaqueInReach);
+		gather(stand, eye, reachMm, rules, scratch, build.opaqueInReach);
 		build.ringsInSight = ringsWithin(scratch.bodies, eye);
-		build.rimRanges = geometry::forestRanges(eye, kSightMm, kSightMm, scratch.bodies, kTunables);
+		build.rimRanges = rangesAt(eye, kSightMm, rules, scratch);
 		if (build.opaqueInReach == 0) {
-			build.path = build.ringsInSight == 0 ? Path::Open : Path::Leg;
+			build.path = build.ringsInSight == 0 || !rules.forestDepth ? Path::Open : Path::Leg;
 			build.vertices = build.path == Path::Open ? geometry::kSightSides : geometry::forestShape(eye, build.rimRanges).size();
 			return build;
 		}
 		build.path = Path::Polygon;
 		const geometry::Ring hard = geometry::computeVisibilityPolygon(eye, reachMm, scratch.occluders);
-		const SightRanges	 reachRanges = geometry::forestRanges(eye, kSightMm, reachMm, scratch.bodies, kTunables);
-		const geometry::Ring shape = geometry::starClippedToConvex(hard, eye, geometry::forestShape(eye, reachRanges));
+		const geometry::Ring shape = geometry::starClippedToConvex(hard, eye, sight_bench::rimOf(eye, rangesAt(eye, reachMm, rules, scratch)));
 		build.vertices = shape.size();
 		if (!geometry::simpleAround(shape, eye)) {
 			return build;
 		}
-		build.recordShape = geometry::starClippedToConvex(shape, eye, vision::rimOf(eye, build.rimRanges));
+		build.recordShape = geometry::starClippedToConvex(shape, eye, sight_bench::rimOf(eye, build.rimRanges));
 		if (!geometry::simpleAround(build.recordShape, eye)) {
 			build.recordShape.clear();
 		}
@@ -409,17 +418,18 @@ namespace {
 
 	// The shape at a sweep point or a resting point (6.4): its own forest depth's ranges, no wider
 	// than `ranges`, with the opaque bodies standing, cut to that rim.
-	SeenArea::BuiltSight sweepShape(const Stand& stand, const Vec2i64& centre, const SightRanges& ranges, BuildScratch& scratch) {
+	ForestRecord::BuiltSight
+	sweepShape(const Stand& stand, const Vec2i64& centre, const SightRanges& ranges, const ShapeRules& rules, BuildScratch& scratch) {
 		std::size_t opaque = 0;
-		gather(stand, centre, kSightMm, scratch, opaque);
-		const SightRanges	 own = geometry::forestRanges(centre, kSightMm, kSightMm, scratch.bodies, kTunables);
-		SeenArea::BuiltSight built;
+		gather(stand, centre, kSightMm, rules, scratch, opaque);
+		const SightRanges		 own = rangesAt(centre, kSightMm, rules, scratch);
+		ForestRecord::BuiltSight built;
 		for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
 			built.rimRanges[side] = std::max(geometry::kForestShapeLeastRangeMm, std::min(own[side], ranges[side]));
 		}
 		const std::int64_t most = *std::max_element(built.rimRanges.begin(), built.rimRanges.end());
 		built.shape = geometry::starClippedToConvex(
-			geometry::computeVisibilityPolygon(centre, most, scratch.occluders), centre, vision::rimOf(centre, built.rimRanges)
+			geometry::computeVisibilityPolygon(centre, most, scratch.occluders), centre, sight_bench::rimOf(centre, built.rimRanges)
 		);
 		return built;
 	}
@@ -490,7 +500,7 @@ namespace {
 	struct Observer {
 		Vec2i64		  position;
 		Vec2i64		  lastPosition;
-		double		  heading = 0.0;
+		double		  course = 0.0;
 		double		  untilTurn = 0.0;
 		Build		  build;
 		bool		  built = false;
@@ -499,7 +509,6 @@ namespace {
 		bool				 legOpen = false;
 		Wedge				 leg;
 		SightRanges			 legLeast{};
-		SightRanges			 legMost{};
 		double				 legWalkedMm = 0.0;
 		bool				 polygonPath = false;
 		Wedge				 stretch;
@@ -514,16 +523,12 @@ namespace {
 
 	struct WalkCounts {
 		std::array<std::size_t, 3>								 buildsByPath{};
-		std::array<std::size_t, 3>								 ticksByPath{};
 		std::array<std::size_t, static_cast<int>(LegEnd::Count)> legEnds{};
-		std::size_t												 legs = 0;
+		std::size_t												 legsOpened = 0;
 		double													 legLengthMm = 0.0;
 		std::vector<double>										 legLengths;
 		double													 walkedMm = 0.0;
 		std::int64_t											 mostRangeChange = 0;
-		std::size_t												 ringsInSight = 0;
-		std::size_t												 opaqueInReach = 0;
-		std::size_t												 notSimple = 0;
 		std::size_t												 vertexHits = 0;
 	};
 
@@ -531,26 +536,39 @@ namespace {
 		return kSightMm - vision::kSeenSlackMm - (vision::drawnVisibleRadiusMm(kSightMm) - kRimEaseMm);
 	}
 
+	// The walk of 2 m/s a vision interval at `speed`, and how many intervals pass a rebuild step: the
+	// distance between builds.
+	double buildSpacingMm(double speed) {
+		const double perInterval = kWalkMps * speed * kVisionInterval * kTick * 1000.0;
+		return std::ceil(static_cast<double>(kStepMm) / perInterval) * perInterval;
+	}
+
+	struct WalkSettings {
+		int			 colonists = 50;
+		double		 speed = 1.0;
+		ShapeRules	 rules;
+		Scheduler	 scheduler;
+		std::int64_t toleranceMm = 500;
+		bool		 skipSweep = false;
+	};
+
 	class Walk {
 	  public:
-		Walk(const Stand& stand, int colonists, double speed, std::int64_t snapMm, bool skipSweep, std::int64_t toleranceMm, bool plainLegs)
+		Walk(const Stand& stand, const WalkSettings& settings)
 			: stand(stand),
-			  speed(speed),
-			  snapMm(snapMm),
-			  skipSweep(skipSweep),
-			  toleranceMm(toleranceMm),
-			  plainLegs(plainLegs),
+			  settings(settings),
+			  seen(settings.scheduler),
 			  random(29) {
-			leadMm = kStepMm + static_cast<std::int64_t>(std::llround(kWalkMps * speed * kVisionInterval * kTick * 1000.0));
+			leadMm = kStepMm + static_cast<std::int64_t>(std::llround(kWalkMps * settings.speed * kVisionInterval * kTick * 1000.0));
 			reachMm = kSightMm + leadMm;
 			seen.commitNow(geometry::sightPolygon({0, 0}, kLandingMm), {0, 0});
 			seen.setSightBuilder([this](const Vec2i64& centre, const SightRanges& ranges) {
-				return sweepShape(this->stand, centre, ranges, sweepScratch);
+				return sweepShape(this->stand, centre, ranges, this->settings.rules, sweepScratch);
 			});
-			for (int i = 0; i < colonists; ++i) {
+			for (int i = 0; i < settings.colonists; ++i) {
 				Observer	 observer;
-				const double angle = 2.0 * std::numbers::pi * static_cast<double>(i) / static_cast<double>(colonists);
-				observer.heading = angle;
+				const double angle = 2.0 * std::numbers::pi * static_cast<double>(i) / static_cast<double>(settings.colonists);
+				observer.course = angle;
 				observer.position = free({std::llround(std::cos(angle) * 3000.0), std::llround(std::sin(angle) * 3000.0)});
 				observer.lastPosition = observer.position;
 				observers.push_back(observer);
@@ -567,48 +585,65 @@ namespace {
 					rebuild(observer);
 				}
 			}
-			const auto recordStart = std::chrono::steady_clock::now();
+			const double countedBefore = seen.counts().ringsMetMs;
+			const auto	 recordStart = std::chrono::steady_clock::now();
 			for (std::size_t index = 0; index < observers.size(); ++index) {
 				follow(index, observers[index]);
 			}
-			const auto updateStart = std::chrono::steady_clock::now();
 			seen.update();
 			const auto end = std::chrono::steady_clock::now();
-			updateMs += std::chrono::duration<double, std::milli>(end - updateStart).count();
 			visionMs.push_back(std::chrono::duration<double, std::milli>(recordStart - visionStart).count());
-			recordMs.push_back(std::chrono::duration<double, std::milli>(end - recordStart).count());
-			mostPending = std::max(mostPending, seen.shapesPending());
+			recordMs.push_back(std::chrono::duration<double, std::milli>(end - recordStart).count() - (seen.counts().ringsMetMs - countedBefore));
+			const ForestRecord::Queue queue = seen.queue();
+			if (queue.total() > atPeak.total()) {
+				atPeak = queue;
+			}
+			mostParts.openLegs = std::max(mostParts.openLegs, queue.openLegs);
+			mostParts.shapesWaiting = std::max(mostParts.shapesWaiting, queue.shapesWaiting);
+			mostParts.piecesWaiting = std::max(mostParts.piecesWaiting, queue.piecesWaiting);
 			mostSweepsWaiting = std::max(mostSweepsWaiting, seen.sweepsWaiting());
 			if (tickIndex + 1 == kTicks / 2) {
-				pendingAtHalf = seen.shapesPending();
+				pendingAtHalf = queue.total();
 			}
 			if ((tickIndex + 1) % kTicksAMinute == 0) {
-				ringsByMinute.push_back(seen.ringsRegistered());
-				pendingByMinute.push_back(seen.shapesPending());
+				registeredByMinute.push_back(registrations());
 			}
 		}
 
+		// Everyone stops, every leg closes, and the record runs until nothing waits: the ticks it takes.
+		std::size_t drain() {
+			for (std::size_t index = 0; index < observers.size(); ++index) {
+				closeLeg(index, observers[index], LegEnd::Count);
+			}
+			std::size_t ticks = 0;
+			while ((seen.queue().total() > 0 || seen.sweepsWaiting() > 0) && ticks < kDrainLimitTicks) {
+				seen.update();
+				++ticks;
+			}
+			return ticks;
+		}
+
+		[[nodiscard]] std::size_t registrations() const {
+			const auto& byOrigin = seen.counts().registrations;
+			return std::accumulate(byOrigin.begin(), byOrigin.end(), std::size_t{0}) - byOrigin[static_cast<std::size_t>(Origin::Landing)];
+		}
+
+		static constexpr std::size_t kDrainLimitTicks = 360000;
+
 		const Stand&			 stand;
-		double					 speed;
-		std::int64_t			 snapMm;
-		bool					 skipSweep;
-		std::int64_t			 toleranceMm;
-		bool					 plainLegs;
+		WalkSettings			 settings;
 		std::int64_t			 leadMm = 0;
 		std::int64_t			 reachMm = 0;
-		SeenArea				 seen;
+		ForestRecord			 seen;
 		std::vector<Observer>	 observers;
 		WalkCounts				 counts;
 		std::vector<double>		 visionMs;
 		std::vector<double>		 recordMs;
-		double					 hullMs = 0.0;
-		double					 updateMs = 0.0;
-		std::size_t				 hullCalls = 0;
-		std::size_t				 mostPending = 0;
+		ForestRecord::Queue		 atPeak;
+		ForestRecord::Queue		 mostParts;
 		std::size_t				 pendingAtHalf = 0;
 		std::size_t				 mostSweepsWaiting = 0;
-		std::vector<std::size_t> ringsByMinute;
-		std::vector<std::size_t> pendingByMinute;
+		std::vector<std::size_t> registeredByMinute;
 
 	  private:
 		Vec2i64 free(Vec2i64 at) const {
@@ -618,34 +653,32 @@ namespace {
 			return at;
 		}
 
-		// A walk of 2 m/s times the speed, turning up to 60 degrees every 2 to 15 s, back toward the
-		// drop past 400 m, and around every ring: a step that would come within 0.3 m of one turns
-		// 45 degrees at a time until it does not.
+		// A walk of 2 m/s times the speed, its course turning up to 60 degrees every 2 to 15 s, back
+		// toward the drop past 400 m, and around every ring: a step that would come within 0.3 m of one
+		// is taken 45 degrees off the course at a time until it does not, and the course is kept.
 		void move(Observer& observer) {
 			std::uniform_real_distribution<double> unit(0.0, 1.0);
-			observer.untilTurn -= kTick * speed;
+			observer.untilTurn -= kTick * settings.speed;
 			if (observer.untilTurn <= 0.0) {
 				const double turn = (unit(random) - 0.5) * 2.0 * std::numbers::pi / 3.0;
-				observer.heading += turn;
+				observer.course += turn;
 				observer.untilTurn = 2.0 + 13.0 * unit(random);
 				const double fromDrop =
 					std::hypot(static_cast<double>(observer.position.x), static_cast<double>(observer.position.y)) / 1000.0;
 				if (fromDrop > kTurnBackMeters) {
-					observer.heading =
-						std::atan2(static_cast<double>(-observer.position.y), static_cast<double>(-observer.position.x)) + turn / 2.0;
+					observer.course = std::atan2(static_cast<double>(-observer.position.y), static_cast<double>(-observer.position.x)) + turn / 2.0;
 				}
 			}
-			const double stepMm = kWalkMps * speed * kTick * 1000.0;
+			const double stepMm = kWalkMps * settings.speed * kTick * 1000.0;
 			for (int attempt = 0; attempt < 8; ++attempt) {
+				const double  heading = observer.course + static_cast<double>(attempt) * std::numbers::pi / 4.0;
 				const Vec2i64 next =
-					observer.position +
-					Vec2i64{std::llround(std::cos(observer.heading) * stepMm), std::llround(std::sin(observer.heading) * stepMm)};
+					observer.position + Vec2i64{std::llround(std::cos(heading) * stepMm), std::llround(std::sin(heading) * stepMm)};
 				if (!stand.blocked(next, 300)) {
 					counts.walkedMm += stepMm;
 					observer.position = next;
 					return;
 				}
-				observer.heading += std::numbers::pi / 4.0;
 			}
 		}
 
@@ -656,46 +689,40 @@ namespace {
 					return;
 				}
 			}
-			Build build = buildAt(stand, observer.position, reachMm, buildScratch);
+			Build build = buildAt(stand, observer.position, reachMm, settings.rules, buildScratch);
 			build.serial = ++serials;
 			if (observer.built) {
 				for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
-					counts.mostRangeChange =
-						std::max(counts.mostRangeChange, std::abs(build.rimRanges[side] - observer.build.rimRanges[side]));
+					counts.mostRangeChange = std::max(counts.mostRangeChange, std::abs(build.rimRanges[side] - observer.build.rimRanges[side]));
 				}
 			}
 			++counts.buildsByPath[static_cast<std::size_t>(build.path)];
-			counts.ringsInSight += build.ringsInSight;
-			counts.opaqueInReach += build.opaqueInReach;
-			counts.notSimple += build.path == Path::Polygon && build.recordShape.empty() ? 1 : 0;
 			observer.build = std::move(build);
 			observer.built = true;
 		}
 
-		// A leg's ranges: the build's at the slack radius, snapped down to a multiple of snapMm when
-		// 6.6's first fallback is on.
-		SightRanges legRanges(const Build& build) const {
+		// A leg's ranges: the build's at the slack radius.
+		static SightRanges legRanges(const Build& build) {
 			SightRanges ranges;
 			for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
-				const std::int64_t range = (plainLegs ? kSightMm : build.rimRanges[side]) - vision::kSeenSlackMm;
-				ranges[side] = snapMm > 0 ? range / snapMm * snapMm : range;
+				ranges[side] = build.rimRanges[side] - vision::kSeenSlackMm;
 			}
 			return ranges;
 		}
 
 		// The ranges drawn this frame: the ease from where the rim was drawn to the newest build's.
-		SightRanges drawn(const Observer& observer) const {
+		static SightRanges drawn(const Observer& observer) {
 			SightRanges	 out;
 			const double blend = std::min(1.0, static_cast<double>(observer.easeWalkedMm) / static_cast<double>(kRimEaseMm));
 			for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
-				out[side] = static_cast<std::int64_t>(std::floor(
-					(1.0 - blend) * static_cast<double>(observer.easeStart[side]) + blend * static_cast<double>(observer.easeNewest[side])
-				));
+				out[side] = static_cast<std::int64_t>(
+					std::floor((1.0 - blend) * static_cast<double>(observer.easeStart[side]) + blend * static_cast<double>(observer.easeNewest[side]))
+				);
 			}
 			return out;
 		}
 
-		void ease(Observer& observer, double walkedMm, bool newBuild) {
+		static void ease(Observer& observer, double walkedMm, bool newBuild) {
 			observer.easeWalkedMm += static_cast<std::int64_t>(std::ceil(walkedMm));
 			if (!newBuild) {
 				return;
@@ -710,22 +737,21 @@ namespace {
 			observer.easeValid = true;
 		}
 
-		bool
-		join(std::size_t index, Observer& observer, const SightRanges& ranges, const std::optional<SeenArea::InheritedShape>& inherited) {
-			const auto start = std::chrono::steady_clock::now();
-			const bool joined = seen.setOpenLeg(index, observer.leg.start, observer.leg.end, ranges, inherited);
-			hullMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-			++hullCalls;
-			return joined;
+		bool join(std::size_t index, Observer& observer, const SightRanges& ranges, const std::optional<ForestRecord::InheritedShape>& inherited) {
+			return seen.setOpenLeg(index, observer.leg.start, observer.leg.end, ranges, inherited);
 		}
 
+		// Closes the open leg; LegEnd::Count when the walk itself ends.
 		void closeLeg(std::size_t index, Observer& observer, LegEnd reason) {
 			if (!observer.legOpen) {
 				return;
 			}
 			seen.closeLeg(index);
 			observer.legOpen = false;
-			++counts.legs;
+			if (reason == LegEnd::Count) {
+				++openAtEnd;
+				return;
+			}
 			++counts.legEnds[static_cast<std::size_t>(reason)];
 			counts.legLengthMm += observer.legWalkedMm;
 			counts.legLengths.push_back(observer.legWalkedMm);
@@ -735,35 +761,38 @@ namespace {
 			observer.legOpen = true;
 			observer.leg.begin(at);
 			observer.legLeast = ranges;
-			observer.legMost = ranges;
 			observer.legWalkedMm = 0.0;
+			++counts.legsOpened;
+		}
+
+		// 6.2's spread: a build's range on some side differs from that side's least over the leg by
+		// more than the tolerance.
+		bool spreads(const Observer& observer, const SightRanges& ranges) const {
+			for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
+				if (std::abs(ranges[side] - observer.legLeast[side]) > settings.toleranceMm) {
+					return true;
+				}
+			}
+			return false;
 		}
 
 		void followLeg(std::size_t index, Observer& observer, const Vec2i64& at, double walkedMm, bool newBuild, bool inheritable) {
-			const SightRanges							  ranges = legRanges(observer.build);
-			const std::optional<SeenArea::InheritedShape> inherited =
-				inheritable && observer.easeValid ? std::optional(SeenArea::InheritedShape{at, drawn(observer)}) : std::nullopt;
+			const SightRanges									ranges = legRanges(observer.build);
+			const std::optional<ForestRecord::InheritedShape> inherited =
+				inheritable && observer.easeValid ? std::optional(ForestRecord::InheritedShape{at, drawn(observer)}) : std::nullopt;
 			if (!observer.legOpen) {
 				openLeg(observer, at, ranges);
 				[[maybe_unused]] const bool opened = join(index, observer, ranges, inherited);
 				return;
 			}
-			const bool jumped =
-				std::hypot(static_cast<double>(at.x - observer.leg.end.x), static_cast<double>(at.y - observer.leg.end.y)) > kJumpMm;
+			const bool jumped = std::hypot(static_cast<double>(at.x - observer.leg.end.x), static_cast<double>(at.y - observer.leg.end.y)) > kJumpMm;
 			if (jumped) {
 				closeLeg(index, observer, LegEnd::Jump);
 				openLeg(observer, at, ranges);
 				[[maybe_unused]] const bool opened = join(index, observer, ranges, std::nullopt);
 				return;
 			}
-			bool spread = false;
-			if (newBuild) {
-				for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
-					spread = spread ||
-							 std::max(observer.legMost[side], ranges[side]) - std::min(observer.legLeast[side], ranges[side]) > toleranceMm;
-				}
-			}
-			if (spread) {
+			if (newBuild && spreads(observer, ranges)) {
 				closeLeg(index, observer, LegEnd::Spread);
 				openLeg(observer, at, ranges);
 				[[maybe_unused]] const bool opened = join(index, observer, ranges, inherited);
@@ -782,7 +811,6 @@ namespace {
 			observer.legWalkedMm += walkedMm;
 			for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
 				observer.legLeast[side] = std::min(observer.legLeast[side], ranges[side]);
-				observer.legMost[side] = std::max(observer.legMost[side], ranges[side]);
 			}
 			if (!join(index, observer, ranges, std::nullopt)) {
 				++counts.vertexHits;
@@ -792,7 +820,7 @@ namespace {
 			}
 		}
 
-		void dropPolygonPath(Observer& observer) {
+		static void dropPolygonPath(Observer& observer) {
 			observer.polygonPath = false;
 			observer.walk.clear();
 		}
@@ -802,14 +830,12 @@ namespace {
 				return;
 			}
 			const Vec2i64 at = observer.position;
-			const double  walkedMm =
-				std::hypot(static_cast<double>(at.x - observer.lastPosition.x), static_cast<double>(at.y - observer.lastPosition.y));
+			const double walkedMm = std::hypot(static_cast<double>(at.x - observer.lastPosition.x), static_cast<double>(at.y - observer.lastPosition.y));
 			observer.lastPosition = at;
 			const bool newBuild = observer.build.serial != observer.handled;
 			observer.handled = observer.build.serial;
 			const bool fromPolygon = observer.polygonPath;
 			ease(observer, walkedMm, newBuild);
-			++counts.ticksByPath[static_cast<std::size_t>(observer.build.path)];
 			if (observer.build.path != Path::Polygon) {
 				dropPolygonPath(observer);
 				followLeg(index, observer, at, walkedMm, newBuild, !fromPolygon);
@@ -822,8 +848,7 @@ namespace {
 			}
 			if (observer.polygonPath) {
 				const bool resting = at == observer.stretch.end;
-				if (std::hypot(static_cast<double>(at.x - observer.stretch.end.x), static_cast<double>(at.y - observer.stretch.end.y)) >
-					kJumpMm) {
+				if (std::hypot(static_cast<double>(at.x - observer.stretch.end.x), static_cast<double>(at.y - observer.stretch.end.y)) > kJumpMm) {
 					dropPolygonPath(observer);
 				} else {
 					if (!observer.stretch.holds(at)) {
@@ -846,7 +871,7 @@ namespace {
 						observer.build.recordShape,
 						observer.build.eye,
 						observer.build.rimRanges,
-						skipSweep ? std::vector<Vec2i64>{} : std::move(observer.walk),
+						settings.skipSweep ? std::vector<Vec2i64>{} : std::move(observer.walk),
 						observer.walkStartRanges
 					);
 				}
@@ -858,6 +883,10 @@ namespace {
 			}
 		}
 
+	  public:
+		std::size_t openAtEnd = 0;
+
+	  private:
 		std::mt19937  random;
 		BuildScratch  buildScratch;
 		BuildScratch  sweepScratch;
@@ -876,12 +905,8 @@ namespace {
 		}
 		std::vector<double> sorted = values;
 		std::sort(sorted.begin(), sorted.end());
-		double sum = 0.0;
-		for (const double value : values) {
-			sum += value;
-		}
 		return {
-			sum / static_cast<double>(values.size()),
+			std::accumulate(values.begin(), values.end(), 0.0) / static_cast<double>(values.size()),
 			sorted[static_cast<std::size_t>(0.99 * static_cast<double>(sorted.size() - 1))],
 			sorted.back()
 		};
@@ -900,133 +925,149 @@ namespace {
 		return stand;
 	}
 
+	constexpr std::array<const char*, 4> kCaseNames{
+		"(a) the shipped shape", "(b) forest depth only", "(c) rocks only", "(d) forest depth and rocks"
+	};
+
+	// Arguments: colonists, game speed, the case (0 the shipped shape: no forest depth, rocks not
+	// occluding; 1 forest depth only; 2 rocks only; 3 both, as designed), the scheduler's options as
+	// bits (1 shapes tested while pieces wait, 2 two sweep points built every tick, 4 two pieces
+	// registered a tick), softLegToleranceMm (0 for 500 mm scaled by the distance between builds at
+	// the speed), and 1 to skip the sweep for placed opaque bodies.
 	void BM_SightForestWalk(benchmark::State& state) {
-		const int		   colonists = static_cast<int>(state.range(0));
-		const double	   speed = static_cast<double>(state.range(1));
-		const std::int64_t snapMm = state.range(2);
-		const bool		   skipSweep = state.range(3) != 0;
-		const std::int64_t toleranceMm = state.range(4);
-		const bool		   plainLegs = state.range(5) != 0;
-		const Stand&	   stand = landingForest();
+		WalkSettings settings;
+		settings.colonists = static_cast<int>(state.range(0));
+		settings.speed = static_cast<double>(state.range(1));
+		const auto shapeCase = static_cast<std::size_t>(state.range(2));
+		settings.rules = {.forestDepth = shapeCase == 1 || shapeCase == 3, .rocksOcclude = shapeCase >= 2};
+		const std::int64_t options = state.range(3);
+		settings.scheduler.testWhilePiecesWait = (options & 1) != 0;
+		settings.scheduler.sweepsPerTick = (options & 2) != 0 ? 2 : 0;
+		settings.scheduler.piecesPerTick = (options & 4) != 0 ? 2 : vision::kSeenPiecesRegisteredPerTick;
+		settings.toleranceMm =
+			state.range(4) > 0 ? state.range(4) : std::llround(500.0 * buildSpacingMm(settings.speed) / buildSpacingMm(1.0));
+		settings.skipSweep = state.range(5) != 0;
+		const Stand& stand = landingForest();
 		for (auto iteration : state) {
-			Walk walk(stand, colonists, speed, snapMm, skipSweep, toleranceMm, plainLegs);
+			Walk walk(stand, settings);
 			for (int tick = 0; tick < kTicks; ++tick) {
 				walk.tick(tick);
 			}
-			const Times				record = timesOf(walk.recordMs);
-			const Times				vision = timesOf(walk.visionMs);
-			const SeenArea::Counts& counted = walk.seen.counts();
-			const WalkCounts&		counts = walk.counts;
-			const double			km = counts.walkedMm / 1e6;
-			const std::size_t		builds = counts.buildsByPath[0] + counts.buildsByPath[1] + counts.buildsByPath[2];
-			const double			kMean =
-				   counted.registrations > 0 ? static_cast<double>(counted.ringsMetTotal) / static_cast<double>(counted.registrations) : 0.0;
+			const ForestRecord::Queue atEnd = walk.seen.queue();
+			const std::size_t		  sweepsAtEnd = walk.seen.sweepsWaiting();
+			const Times				  record = timesOf(walk.recordMs);
+			const Times				  visionTimes = timesOf(walk.visionMs);
+			const ForestRecord::Counts counted = walk.seen.counts();
+			const std::size_t		  registered = walk.registrations();
+			const std::size_t		  drainTicks = walk.drain();
+			const WalkCounts&		  counts = walk.counts;
+			const double			  km = counts.walkedMm / 1e6;
+			const std::size_t		  builds = counts.buildsByPath[0] + counts.buildsByPath[1] + counts.buildsByPath[2];
+			const double kMean = registered > 0 ? static_cast<double>(counted.ringsMetTotal) / static_cast<double>(registered) : 0.0;
+			auto		 byOrigin = [&counted](Origin origin) { return counted.registrations[static_cast<std::size_t>(origin)]; };
+			std::size_t	 mostAMinute = 0;
+			std::string	 perMinute;
+			for (std::size_t minute = 0; minute < walk.registeredByMinute.size(); ++minute) {
+				const std::size_t inMinute = walk.registeredByMinute[minute] - (minute > 0 ? walk.registeredByMinute[minute - 1] : 0);
+				mostAMinute = std::max(mostAMinute, inMinute);
+				perMinute += std::to_string(inMinute) + (minute + 1 < walk.registeredByMinute.size() ? ", " : "");
+			}
 			std::fprintf(
 				stderr,
-				"[SightForestWalk] %d colonists at %.0fx, snap %lld mm, sweep %s, tolerance %lld mm, legs %s, lead %lld mm\n",
-				colonists,
-				speed,
-				static_cast<long long>(snapMm),
-				skipSweep ? "skipped" : "on",
-				static_cast<long long>(toleranceMm),
-				plainLegs ? "the sight polygon" : "the forest shape",
+				"[SightForestWalk] %s, %d colonists at %.0fx, scheduler%s%s%s%s, tolerance %lld mm, sweep %s, lead %lld mm\n",
+				kCaseNames[shapeCase],
+				settings.colonists,
+				settings.speed,
+				options == 0 ? " as SeenArea's" : "",
+				settings.scheduler.testWhilePiecesWait ? " (i) tests while pieces wait" : "",
+				settings.scheduler.sweepsPerTick > 0 ? " (ii) two sweep points a tick" : "",
+				settings.scheduler.piecesPerTick > 1 ? " (iii) two pieces a tick" : "",
+				static_cast<long long>(settings.toleranceMm),
+				settings.skipSweep ? "skipped" : "on",
 				static_cast<long long>(walk.leadMm)
 			);
 			std::fprintf(
 				stderr,
-				"  record tick ms mean %.4f p99 %.4f max %.3f; vision tick ms mean %.4f p99 %.4f max %.3f; hull merge %.2f us a call over "
-				"%zu calls; SeenArea::update %.4f ms a tick\n",
-				record.mean,
-				record.p99,
-				record.most,
-				vision.mean,
-				vision.p99,
-				vision.most,
-				walk.hullCalls > 0 ? walk.hullMs * 1000.0 / static_cast<double>(walk.hullCalls) : 0.0,
-				walk.hullCalls,
-				walk.updateMs / kTicks
-			);
-			std::fprintf(
-				stderr,
-				"  pending at most %zu, at minute 5 %zu, at the end %zu; sweeps built %zu, waiting at most %zu, at the end %zu\n",
-				walk.mostPending,
+				"  queue at its peak %zu: open legs %zu, shapes waiting %zu, pieces waiting %zu; each part's most %zu, %zu, %zu; at minute 5 "
+				"%zu; at the end %zu: %zu, %zu, %zu\n",
+				walk.atPeak.total(),
+				walk.atPeak.openLegs,
+				walk.atPeak.shapesWaiting,
+				walk.atPeak.piecesWaiting,
+				walk.mostParts.openLegs,
+				walk.mostParts.shapesWaiting,
+				walk.mostParts.piecesWaiting,
 				walk.pendingAtHalf,
-				walk.seen.shapesPending(),
-				walk.seen.sweepsBuilt(),
+				atEnd.total(),
+				atEnd.openLegs,
+				atEnd.shapesWaiting,
+				atEnd.piecesWaiting
+			);
+			std::fprintf(
+				stderr,
+				"  sweep points waiting at most %zu, at the end %zu, built %zu; the longest wait to be tested %zu ticks; drained %zu ticks after "
+				"the walk%s\n",
 				walk.mostSweepsWaiting,
-				walk.seen.sweepsWaiting()
+				sweepsAtEnd,
+				walk.seen.sweepsBuilt(),
+				counted.mostTicksToTest,
+				drainTicks,
+				drainTicks >= Walk::kDrainLimitTicks ? " (not drained, stopped)" : ""
 			);
 			std::fprintf(
 				stderr,
-				"  K where registered mean %.1f max %zu over %zu registrations; rings %zu (%.1f a km)\n",
+				"  registrations %zu: legs %zu, polygon path %zu, sweep %zu; most in a minute %zu (%s); K mean %.1f max %zu\n",
+				registered - byOrigin(Origin::Landing),
+				byOrigin(Origin::Leg),
+				byOrigin(Origin::Polygon),
+				byOrigin(Origin::Sweep),
+				mostAMinute,
+				perMinute.c_str(),
 				kMean,
-				counted.ringsMetMost,
-				counted.registrations,
-				walk.seen.ringsRegistered(),
-				static_cast<double>(walk.seen.ringsRegistered()) / km
+				counted.ringsMetMost
 			);
-			std::string perMinute;
-			for (std::size_t minute = 0; minute < walk.ringsByMinute.size(); ++minute) {
-				perMinute += std::to_string(walk.ringsByMinute[minute] - (minute > 0 ? walk.ringsByMinute[minute - 1] : 1)) +
-							 (minute + 1 < walk.ringsByMinute.size() ? ", " : "");
-			}
-			std::string pendingMinutes;
-			for (std::size_t minute = 0; minute < walk.pendingByMinute.size(); ++minute) {
-				pendingMinutes += std::to_string(walk.pendingByMinute[minute]) + (minute + 1 < walk.pendingByMinute.size() ? ", " : "");
-			}
-			std::fprintf(stderr, "  rings a minute %s; pending at each minute %s\n", perMinute.c_str(), pendingMinutes.c_str());
 			std::fprintf(
 				stderr,
-				"  legs %zu (%.1f a km), tested %zu, covered %zu, pieces %zu (%.2f a leg tested); leg length m mean %.2f median %.2f p90 "
-				"%.2f\n",
-				counts.legs,
-				static_cast<double>(counts.legs) / km,
+				"  legs opened %zu (%.1f a km), ended by turn %zu, jump %zu, spread %zu, vertices %zu, path %zu, open at the end %zu; tested %zu, "
+				"covered %zu; length m mean %.2f median %.2f p90 %.2f\n",
+				counts.legsOpened,
+				static_cast<double>(counts.legsOpened) / km,
+				counts.legEnds[0],
+				counts.legEnds[1],
+				counts.legEnds[2],
+				counts.legEnds[3],
+				counts.legEnds[4],
+				walk.openAtEnd,
 				counted.legsTested,
 				counted.legsCovered,
-				counted.legPieces,
-				counted.legsTested > 0 ? static_cast<double>(counted.legPieces) / static_cast<double>(counted.legsTested) : 0.0,
-				counts.legs > 0 ? counts.legLengthMm / static_cast<double>(counts.legs) / 1000.0 : 0.0,
+				counts.legLengths.empty() ? 0.0 : counts.legLengthMm / static_cast<double>(counts.legLengths.size()) / 1000.0,
 				percentile(counts.legLengths, 0.5) / 1000.0,
 				percentile(counts.legLengths, 0.9) / 1000.0
 			);
 			std::fprintf(
 				stderr,
-				"  legs ended by turn %zu, jump %zu, spread %zu, vertices %zu, path %zu\n",
-				counts.legEnds[0],
-				counts.legEnds[1],
-				counts.legEnds[2],
-				counts.legEnds[3],
-				counts.legEnds[4]
-			);
-			std::fprintf(
-				stderr,
-				"  builds %zu: open %zu, leg %zu, polygon %zu (%.1f%%); colonist ticks by path open %zu leg %zu polygon %zu; not simple "
-				"%zu\n",
+				"  builds %zu: open %zu, leg %zu, polygon %zu (%.1f%%); greatest change of a side between builds %lld mm; walked %.1f km; seen "
+				"%.0f m2\n",
 				builds,
 				counts.buildsByPath[0],
 				counts.buildsByPath[1],
 				counts.buildsByPath[2],
 				builds > 0 ? 100.0 * static_cast<double>(counts.buildsByPath[2]) / static_cast<double>(builds) : 0.0,
-				counts.ticksByPath[0],
-				counts.ticksByPath[1],
-				counts.ticksByPath[2],
-				counts.notSimple
-			);
-			std::fprintf(
-				stderr,
-				"  rings in sight %.0f, opaque in reach %.2f a build; greatest change of a side between builds %lld mm; walked %.1f km; "
-				"seen %.0f m2\n",
-				builds > 0 ? static_cast<double>(counts.ringsInSight) / static_cast<double>(builds) : 0.0,
-				builds > 0 ? static_cast<double>(counts.opaqueInReach) / static_cast<double>(builds) : 0.0,
 				static_cast<long long>(counts.mostRangeChange),
 				km,
 				walk.seen.committedSquareMeters()
 			);
+			std::fprintf(
+				stderr,
+				"  record tick ms mean %.4f p99 %.4f max %.3f (K counter excluded); vision tick ms mean %.4f\n",
+				record.mean,
+				record.p99,
+				record.most,
+				visionTimes.mean
+			);
 			state.counters["recordMeanMs"] = record.mean;
-			state.counters["recordMaxMs"] = record.most;
-			state.counters["pendingMost"] = static_cast<double>(walk.mostPending);
+			state.counters["pendingMost"] = static_cast<double>(walk.atPeak.total());
 			state.counters["kMean"] = kMean;
-			state.counters["kMost"] = static_cast<double>(counted.ringsMetMost);
 			benchmark::DoNotOptimize(iteration);
 		}
 	}
@@ -1092,7 +1133,7 @@ namespace {
 					eye = {coordinate(random), coordinate(random)};
 				}
 				const auto	start = std::chrono::steady_clock::now();
-				const Build build = buildAt(stand, eye, kSightMm + 667, scratch);
+				const Build build = buildAt(stand, eye, kSightMm + 667, ShapeRules{}, scratch);
 				buildUs.push_back(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count());
 				++byPath[static_cast<std::size_t>(build.path)];
 				ringsInSight += static_cast<double>(build.ringsInSight);
@@ -1169,20 +1210,22 @@ namespace {
 
 BENCHMARK(BM_SightForestBuild)->DenseRange(0, 6)->Iterations(1)->Unit(benchmark::kMillisecond);
 
+// The four cases at 50 colonists at 1x and 10x and at 10 colonists at 10x, SeenArea's scheduler.
 BENCHMARK(BM_SightForestWalk)
-	->Args({1, 1, 0, 0, 500, 0})
-	->Args({10, 1, 0, 0, 500, 0})
-	->Args({50, 1, 0, 0, 500, 0})
-	->Args({1, 10, 0, 0, 500, 0})
-	->Args({10, 10, 0, 0, 500, 0})
-	->Args({50, 10, 0, 0, 500, 0})
-	->Args({50, 1, 500, 0, 500, 0})
-	->Args({50, 10, 500, 0, 500, 0})
-	->Args({50, 1, 500, 1, 500, 0})
-	->Args({50, 10, 500, 1, 500, 0})
-	->Args({50, 1, 500, 1, 2000, 0})
-	->Args({50, 10, 500, 1, 2000, 0})
-	->Args({50, 1, 0, 1, 500, 1})
-	->Args({50, 10, 0, 1, 500, 1})
+	->ArgsProduct({{50}, {1, 10}, {0, 1, 2, 3}, {0}, {500}, {0}})
+	->ArgsProduct({{10}, {10}, {0, 1, 2, 3}, {0}, {500}, {0}})
+	->Iterations(1)
+	->Unit(benchmark::kMillisecond);
+
+// The scheduler's options, each alone and together, on the shipped shape and the design at 50
+// colonists at 10x, together at 1x too; then the design-level options on the design.
+BENCHMARK(BM_SightForestWalk)
+	->Name("BM_SightForestScheduler")
+	->ArgsProduct({{50}, {10}, {0, 3}, {1, 2, 4, 7}, {500}, {0}})
+	->Args({50, 1, 0, 7, 500, 0})
+	->Args({50, 1, 3, 7, 500, 0})
+	->Args({50, 10, 3, 7, 0, 0})
+	->Args({50, 10, 3, 7, 500, 1})
+	->Args({50, 10, 3, 7, 0, 1})
 	->Iterations(1)
 	->Unit(benchmark::kMillisecond);
