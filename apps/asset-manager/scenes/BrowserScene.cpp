@@ -91,7 +91,7 @@ namespace {
 			if (const std::filesystem::path src = findSourceAssetsRoot(); !src.empty()) {
 				assetsRoot = (src / "world").string();
 				sharedScripts = (src / "shared" / "scripts").string();
-				recipes = (src / "recipes").string();
+				recipes = std::filesystem::exists(src / "recipes") ? (src / "recipes").string() : Foundation::findResourceString("assets/recipes");
 				LOG_INFO(Engine, "AssetManager: live source assets at %s", assetsRoot.c_str());
 			} else {
 				assetsRoot = Foundation::findResourceString("assets/world");

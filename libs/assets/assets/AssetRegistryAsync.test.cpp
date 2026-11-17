@@ -98,8 +98,8 @@ namespace {
 
 } // namespace
 
-// A reload gives every definition a new id (the index is rebuilt, and a definition that is gone
-// has none), so the recipes are resolved again with it.
+// A reload rebuilds the id index, where a name can land on another id and a definition that is
+// gone has none, so the recipes are resolved again with it.
 TEST(AssetBootstrapTest, ReloadResolvesRecipesAgainstTheNewIndex) {
 	auto& reg = AssetRegistry::Get();
 	auto& recipes = RecipeRegistry::Get();
@@ -127,6 +127,7 @@ TEST(AssetBootstrapTest, ReloadResolvesRecipesAgainstTheNewIndex) {
 	loadAssetSystem(sourcesOf(definitionFolder, recipeFolder), false);
 
 	EXPECT_EQ(recipes.size(), 1U);
+	EXPECT_EQ(recipes.getRecipesForStation("Test_Bench").size(), 1U);
 	axe = recipes.getRecipe("Recipe_TestAxe");
 	ASSERT_NE(axe, nullptr);
 	ASSERT_EQ(axe->inputs.size(), 2U);
@@ -137,33 +138,6 @@ TEST(AssetBootstrapTest, ReloadResolvesRecipesAgainstTheNewIndex) {
 	ASSERT_EQ(axe->outputs.size(), 1U);
 	EXPECT_EQ(reg.getDefName(axe->outputs[0].defNameId), "Test_Axe");
 	EXPECT_EQ(reg.getDefName(axe->stationDefNameId), "Test_Bench");
-
-	recipes.clear();
-	reg.clear();
-}
-
-// Loading twice leaves one copy of each recipe, in the station and innate lists too.
-TEST(AssetBootstrapTest, LoadingTwiceDoesNotDuplicateRecipes) {
-	auto& reg = AssetRegistry::Get();
-	auto& recipes = RecipeRegistry::Get();
-
-	const TempAssetFolder definitionFolder;
-	const TempAssetFolder recipeFolder;
-	for (const char* name : {"Test_Stone", "Test_Stick", "Test_Bench", "Test_Axe"}) {
-		writeItem(definitionFolder, name);
-	}
-	writeAxeRecipe(recipeFolder);
-
-	loadAssetSystem(sourcesOf(definitionFolder, recipeFolder), false);
-	loadAssetSystem(sourcesOf(definitionFolder, recipeFolder), false);
-
-	EXPECT_EQ(recipes.size(), 1U);
-	EXPECT_EQ(recipes.getRecipesForStation("Test_Bench").size(), 1U);
-	const RecipeDef* axe = recipes.getRecipe("Recipe_TestAxe");
-	ASSERT_NE(axe, nullptr);
-	ASSERT_EQ(axe->inputs.size(), 2U);
-	EXPECT_EQ(reg.getDefName(axe->inputs[0].defNameId), "Test_Stone");
-	EXPECT_EQ(reg.getDefName(axe->inputs[1].defNameId), "Test_Stick");
 
 	recipes.clear();
 	reg.clear();
@@ -246,8 +220,8 @@ namespace {
 
 } // namespace
 
-// The yield index after a folder load, after clear(), and after the asset manager's Reload (clear,
-// then load the folder again): each time it names exactly the harvestables yielding each item.
+// The yield index after a folder load, after clear(), and after a clear and a second load of the
+// folder (what a reload through loadAssetSystem does to the definitions): each time it names exactly the harvestables yielding each item.
 TEST(AssetRegistryYieldIndexTest, MatchesDefinitionsAcrossReload) {
 	auto& reg = AssetRegistry::Get();
 	reg.clear();
