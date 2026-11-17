@@ -2660,14 +2660,19 @@ namespace ecs {
 			}
 			// The sources each option's route request names, nearest first: a meal for the Hunger option, a
 			// bush for the gather option. Either is complete at kNearestOfCount, or at the one he is heading
-			// for when it comes first (it comes off first when it is a candidate).
+			// for when it comes first (it comes off first when it is a candidate). That one is kept only when
+			// he heads for it for the option this search answers: a bush he walks to for idle gathering is
+			// not his meal, so turning hungry on the way looks for the nearest food.
 			SourceChoices&	  foodChoices	= m_needChoices[needChoiceSlot(NeedType::Hunger, false)];
 			SourceChoices&	  gatherChoices = m_needChoices[needChoiceSlot(NeedType::Hunger, true)];
 			const std::size_t foodRound		= roundSize(needChoiceSlot(NeedType::Hunger, false));
 			const std::size_t gatherRound	= roundSize(needChoiceSlot(NeedType::Hunger, true));
-			const auto		  complete		= [&](const SourceChoices& choices) {
+			const bool		  keepsHeading	= currentTask.type == TaskType::FulfillNeed &&
+										  needSlotOf(currentTask) == needChoiceSlot(NeedType::Hunger, !seeksFood);
+			const std::optional<std::uint64_t> keptFood = keepsHeading ? headingFor : std::nullopt;
+			const auto						   complete = [&](const SourceChoices& choices) {
 				 const std::size_t round = &choices == &foodChoices ? foodRound : gatherRound;
-				 return choices.size() >= round || (choices.size() == 1 && headingFor == choices[0].sourceKey);
+				 return choices.size() >= round || (choices.size() == 1 && keptFood == choices[0].sourceKey);
 			};
 			const auto mealChoice = [&](const SourceCandidate& source, uint32_t left) {
 				SourceChoice choice = choiceOf(source);
@@ -2687,7 +2692,7 @@ namespace ecs {
 				foodChoices.push(mealChoice(source, left));
 			};
 			const auto answered = [&] { return seeksFood ? complete(foodChoices) : complete(gatherChoices); };
-			putKeptFirst(sourceScratch, headingFor);
+			putKeptFirst(sourceScratch, keptFood);
 			searchExhausted = visitNearestFirst(sourceScratch, [&](SourceCandidate& source) {
 				if (isBush(source)) {
 					if (const auto readyAt = sourceRegrowingUntil(source.entity->defNameId, source.position)) {

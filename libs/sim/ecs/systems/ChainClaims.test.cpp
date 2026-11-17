@@ -3247,6 +3247,65 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(colonist)->needSourceKey, hashWorldEntity(pilePos, berryId));
 	}
 
+	// A colonist walking to a bush to gather idly turns hungry beside a box and a pile: the bush it was
+	// gathering from is not its meal, so the meal is the nearest food, not that bush.
+	TEST_F(HungerWalkTest, TurningHungryOnTheWayToGatherEatsTheNearerFood) {
+		const glm::vec2 pilePos{0.0F, 21.0F};
+		const EntityID	boxEater = hungryColonist({0.0F, 0.0F}, 90.0F);
+		const EntityID	pileEater = hungryColonist({0.0F, 20.0F}, 90.0F);
+		rememberBush(boxEater, {10.0F, 0.0F});
+		rememberBush(pileEater, {10.0F, 20.0F});
+		const EntityID box = foodBox({-1.0F, 0.0F}, 10, {boxEater});
+		berryPile(pilePos, 10, {pileEater});
+
+		for (const EntityID colonist : {boxEater, pileEater}) {
+			decide(colonist);
+			ASSERT_EQ(getTask(colonist)->type, TaskType::FulfillNeed);
+			ASSERT_EQ(getTask(colonist)->needQuantity, 0U) << "it is gathering, not eating";
+		}
+
+		world->getComponent<NeedsComponent>(boxEater)->get(NeedType::Hunger).value = 40.0F;
+		decide(boxEater);
+		EXPECT_EQ(getTask(boxEater)->needSourceStorageId, static_cast<uint64_t>(box)) << getTask(boxEater)->reason;
+
+		world->getComponent<NeedsComponent>(pileEater)->get(NeedType::Hunger).value = 5.0F;
+		decide(pileEater);
+		EXPECT_EQ(getTask(pileEater)->needSourceKey, hashWorldEntity(pilePos, berryId)) << getTask(pileEater)->reason;
+
+		for (const EntityID colonist : {boxEater, pileEater}) {
+			const uint64_t instanceId = getTask(colonist)->instanceId;
+			const uint64_t storageId = getTask(colonist)->needSourceStorageId;
+			const uint64_t sourceKey = getTask(colonist)->needSourceKey;
+			for (int pass = 0; pass < 2; ++pass) {
+				decide(colonist);
+				EXPECT_EQ(getTask(colonist)->instanceId, instanceId) << "the meal task is kept, not rebuilt";
+				EXPECT_EQ(getTask(colonist)->needSourceStorageId, storageId) << "no flip-flop between targets";
+				EXPECT_EQ(getTask(colonist)->needSourceKey, sourceKey) << "no flip-flop between targets";
+			}
+		}
+	}
+
+	// Not hungry, gathering toward a bush with a box nearer: stored food does not disturb the gather leg.
+	TEST_F(HungerWalkTest, AColonistGatheringKeepsItsBushWithAStoredBoxNearer) {
+		const glm::vec2 bushPos{10.0F, 0.0F};
+		const EntityID	colonist = hungryColonist({0.0F, 0.0F}, 90.0F);
+		rememberBush(colonist, bushPos);
+		foodBox({-1.0F, 0.0F}, 10, {colonist});
+
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->type, TaskType::FulfillNeed);
+		ASSERT_EQ(getTask(colonist)->needQuantity, 0U) << "it is gathering, not eating";
+		ASSERT_EQ(getTask(colonist)->needSourceKey, hashWorldEntity(bushPos, bushId));
+		const uint64_t instanceId = getTask(colonist)->instanceId;
+
+		for (int pass = 0; pass < 2; ++pass) {
+			decide(colonist);
+			EXPECT_EQ(getTask(colonist)->instanceId, instanceId);
+			EXPECT_EQ(getTask(colonist)->needSourceStorageId, 0U) << getTask(colonist)->reason;
+			EXPECT_EQ(getTask(colonist)->needSourceKey, hashWorldEntity(bushPos, bushId));
+		}
+	}
+
 	// One berry left in a box and two routinely hungry colonists: the first to claim it keeps it from the
 	// other, who looks elsewhere. The second then turns critical: now it is the more urgent and the berry
 	// is its meal. Only one of them eats it.
