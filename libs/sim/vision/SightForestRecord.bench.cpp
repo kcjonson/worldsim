@@ -371,7 +371,7 @@ namespace sight_bench {
 			return false;
 		}
 		if (changed) {
-			shape.legHeld = shape.outline;
+			shape.legHeld = ring;
 			shape.legShape = newShape;
 			shape.legRanges = ranges;
 		}
@@ -392,7 +392,6 @@ namespace sight_bench {
 	}
 
 	void ForestRecord::update() {
-		++ticks;
 		if (scheduler.testWhilePiecesWait) {
 			for (std::size_t tested = 0; tested < vision::kSeenRingsPerTick && !waiting.empty(); ++tested) {
 				if (!covered(waiting.front())) {
@@ -401,12 +400,14 @@ namespace sight_bench {
 				waiting.pop_front();
 			}
 			for (std::size_t cut = 0; entering.size() < scheduler.piecesPerTick && cut < vision::kSeenRingsPerTick && !uncovered.empty(); ++cut) {
+				counted.mostTicksToCut = std::max(counted.mostTicksToCut, ticks - uncovered.front().queuedTick);
 				enter(uncovered.front());
 				uncovered.pop_front();
 			}
 		} else {
 			for (std::size_t tested = 0; entering.size() < scheduler.piecesPerTick && tested < vision::kSeenRingsPerTick && !waiting.empty(); ++tested) {
 				if (!covered(waiting.front())) {
+					counted.mostTicksToCut = std::max(counted.mostTicksToCut, ticks - waiting.front().queuedTick);
 					enter(waiting.front());
 				}
 				waiting.pop_front();
@@ -416,20 +417,18 @@ namespace sight_bench {
 		for (std::size_t count = 0; count < scheduler.piecesPerTick && !entering.empty(); ++count) {
 			registerPiece();
 		}
-		if (!sightBuilder) {
-			return;
-		}
-		if (scheduler.sweepsPerTick > 0) {
+		if (sightBuilder && scheduler.sweepsPerTick > 0) {
 			for (std::size_t built = 0; built < scheduler.sweepsPerTick && !sweeps.empty(); ++built) {
 				const PendingShape point = std::move(sweeps.front());
 				sweeps.pop_front();
 				commitSweep(point);
 			}
-		} else if (!registering && !sweeps.empty()) {
+		} else if (sightBuilder && scheduler.sweepsPerTick == 0 && !registering && !sweeps.empty()) {
 			const PendingShape point = std::move(sweeps.front());
 			sweeps.pop_front();
 			commitSweep(point);
 		}
+		++ticks;
 	}
 
 	ForestRecord::Queue ForestRecord::queue() const { return {openLegs.size(), waiting.size() + uncovered.size(), entering.size()}; }

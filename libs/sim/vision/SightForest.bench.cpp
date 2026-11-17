@@ -34,11 +34,11 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <numbers>
 #include <numeric>
 #include <optional>
 #include <random>
-#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -174,14 +174,13 @@ namespace {
 	// Ring sizes, padded as nav pads them (sight-softening.md 2.1): a trunk's Rect collider is its
 	// trunk width at the age class (OakTree.xml, MapleTree.xml), plus kPlacedObstaclePadMm a side.
 	struct TreeSize {
-		const char*	 name;
 		std::int64_t sideMm;
 	};
-	constexpr TreeSize				  kPine{"pine", 280};
-	constexpr TreeSize				  kMatureOak{"mature oak", 550};
-	constexpr TreeSize				  kVeteranOak{"veteran oak", 820};
-	constexpr std::array<TreeSize, 3> kOakAges{{{"oak sapling", 350}, kMatureOak, kVeteranOak}};
-	constexpr std::array<TreeSize, 3> kMapleAges{{{"maple sapling", 290}, {"mature maple", 440}, {"veteran maple", 600}}};
+	constexpr TreeSize				  kPine{280};
+	constexpr TreeSize				  kMatureOak{550};
+	constexpr TreeSize				  kVeteranOak{820};
+	constexpr std::array<TreeSize, 3> kOakAges{{{350}, kMatureOak, kVeteranOak}};
+	constexpr std::array<TreeSize, 3> kMapleAges{{{290}, {440}, {600}}};
 	constexpr std::array<double, 3>	  kAgeWeights{0.15, 0.60, 0.25};
 
 	// The landing square's measured stand (tree-variety.md, D27): 78.3 trees per 1,000 m2, maple to
@@ -192,7 +191,7 @@ namespace {
 	struct StandSpec {
 		std::string name;
 		double		spacingMeters = 0.0; // a uniform stand of one tree at 1 / spacing^2; 0 for the landing's mix
-		TreeSize	tree{"", 0};
+		TreeSize	tree{0};
 	};
 
 	// BigRocks as placement puts them in TemperateDeciduousForest (BigRock.xml): one candidate a 4 m
@@ -244,8 +243,8 @@ namespace {
 		auto													cellKey = [](std::int64_t x, std::int64_t y) {
 			   return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(x)) << 32) | static_cast<std::uint32_t>(y);
 		};
-		auto cellOf = [](std::int64_t mm) {
-			return mm >= 0 ? mm / cellMm : -((-mm + cellMm - 1) / cellMm);
+		auto cellOf = [](std::int64_t millimetres) {
+			return millimetres >= 0 ? millimetres / cellMm : -((-millimetres + cellMm - 1) / cellMm);
 		};
 		std::size_t placed = 0;
 		for (std::size_t attempt = 0; placed < count && attempt < count * 20; ++attempt) {
@@ -513,6 +512,7 @@ namespace {
 		bool				 legOpen = false;
 		Wedge				 leg;
 		SightRanges			 legLeast{};
+		SightRanges			 legMost{};
 		double				 legWalkedMm = 0.0;
 		bool				 polygonPath = false;
 		Wedge				 stretch;
@@ -533,7 +533,6 @@ namespace {
 		std::vector<double>										 legLengths;
 		double													 walkedMm = 0.0;
 		std::int64_t											 mostRangeChange = 0;
-		std::size_t												 vertexHits = 0;
 	};
 
 	std::int64_t drawnRangeOffsetMm() {
@@ -554,6 +553,7 @@ namespace {
 		Scheduler	 scheduler;
 		std::int64_t toleranceMm = 500;
 		bool		 skipSweep = false;
+		bool		 parity = false; // feed vision::SeenArea the same legs; the shipped shape with every option off only
 	};
 
 	class Walk {
@@ -566,6 +566,10 @@ namespace {
 			leadMm = kStepMm + static_cast<std::int64_t>(std::llround(kWalkMps * settings.speed * kVisionInterval * kTick * 1000.0));
 			reachMm = kSightMm + leadMm;
 			seen.commitNow(geometry::sightPolygon({0, 0}, kLandingMm), {0, 0});
+			if (settings.parity) {
+				parity = std::make_unique<vision::SeenArea>();
+				parity->commitNow(geometry::sightPolygon({0, 0}, kLandingMm), {0, 0});
+			}
 			seen.setSightBuilder([this](const Vec2i64& centre, const SightRanges& ranges) {
 				return sweepShape(this->stand, centre, ranges, this->settings.rules, sweepScratch);
 			});
@@ -609,7 +613,16 @@ namespace {
 			backlogTicks = queue.shapesWaiting + queue.piecesWaiting > 0 ? backlogTicks + 1 : 0;
 			mostBacklogTicks = std::max(mostBacklogTicks, backlogTicks);
 			if (tickIndex + 1 == kTicks / 2) {
-				pendingAtHalf = queue.total();
+				atHalf = queue;
+			}
+			if (parity) {
+				parity->update();
+				const bool pendingDiffers = parity->shapesPending() != queue.total();
+				const bool registeredDiffers = parity->ringsRegistered() != seen.ringsRegistered();
+				parityPendingTicks += pendingDiffers ? 1 : 0;
+				parityRegisteredTicks += registeredDiffers ? 1 : 0;
+				const std::size_t pendingGap = parity->shapesPending() > queue.total() ? parity->shapesPending() - queue.total() : queue.total() - parity->shapesPending();
+				parityMostPendingGap = std::max(parityMostPendingGap, pendingGap);
 			}
 			if ((tickIndex + 1) % kTicksAMinute == 0) {
 				registeredByMinute.push_back(registrations());
@@ -649,9 +662,17 @@ namespace {
 		std::size_t				 backlogTicks = 0; // consecutive ticks with a shape or a piece waiting
 		std::size_t				 mostBacklogTicks = 0;
 		ForestRecord::Queue		 mostParts;
-		std::size_t				 pendingAtHalf = 0;
+		ForestRecord::Queue		 atHalf;
 		std::size_t				 mostSweepsWaiting = 0;
 		std::vector<std::size_t> registeredByMinute;
+		std::size_t				 openAtEnd = 0;
+		// The shipped SeenArea fed the same legs, on the shipped shape with every option off: ticks whose
+		// pending count or registered rings differ from the bench record's, and the most the pending
+		// counts differ by.
+		std::unique_ptr<vision::SeenArea> parity;
+		std::size_t						  parityPendingTicks = 0;
+		std::size_t						  parityRegisteredTicks = 0;
+		std::size_t						  parityMostPendingGap = 0;
 
 	  private:
 		Vec2i64 free(Vec2i64 at) const {
@@ -764,6 +785,9 @@ namespace {
 		}
 
 		bool join(std::size_t index, Observer& observer, const SightRanges& ranges, const std::optional<ForestRecord::InheritedShape>& inherited) {
+			if (parity) {
+				parity->setOpenLeg(index, observer.leg.start, observer.leg.end, ranges.front());
+			}
 			return seen.setOpenLeg(index, observer.leg.start, observer.leg.end, ranges, inherited);
 		}
 
@@ -773,6 +797,9 @@ namespace {
 				return;
 			}
 			seen.closeLeg(index);
+			if (parity) {
+				parity->closeLeg(index);
+			}
 			observer.legOpen = false;
 			if (reason == LegEnd::Count) {
 				++openAtEnd;
@@ -787,15 +814,16 @@ namespace {
 			observer.legOpen = true;
 			observer.leg.begin(at);
 			observer.legLeast = ranges;
+			observer.legMost = ranges;
 			observer.legWalkedMm = 0.0;
 			++counts.legsOpened;
 		}
 
-		// 6.2's spread: a build's range on some side differs from that side's least over the leg by
-		// more than the tolerance.
+		// 6.2's spread: with a build's ranges, some side's greatest range over the leg exceeds its least
+		// by more than the tolerance.
 		bool spreads(const Observer& observer, const SightRanges& ranges) const {
 			for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
-				if (std::abs(ranges[side] - observer.legLeast[side]) > settings.toleranceMm) {
+				if (std::max(observer.legMost[side], ranges[side]) - std::min(observer.legLeast[side], ranges[side]) > settings.toleranceMm) {
 					return true;
 				}
 			}
@@ -808,20 +836,20 @@ namespace {
 				inheritable && observer.easeValid ? std::optional(ForestRecord::InheritedShape{at, drawn(observer)}) : std::nullopt;
 			if (!observer.legOpen) {
 				openLeg(observer, at, ranges);
-				[[maybe_unused]] const bool opened = join(index, observer, ranges, inherited);
+				static_cast<void>(join(index, observer, ranges, inherited));
 				return;
 			}
 			const bool jumped = std::hypot(static_cast<double>(at.x - observer.leg.end.x), static_cast<double>(at.y - observer.leg.end.y)) > kJumpMm;
 			if (jumped) {
 				closeLeg(index, observer, LegEnd::Jump);
 				openLeg(observer, at, ranges);
-				[[maybe_unused]] const bool opened = join(index, observer, ranges, std::nullopt);
+				static_cast<void>(join(index, observer, ranges, std::nullopt));
 				return;
 			}
 			if (newBuild && spreads(observer, ranges)) {
 				closeLeg(index, observer, LegEnd::Spread);
 				openLeg(observer, at, ranges);
-				[[maybe_unused]] const bool opened = join(index, observer, ranges, inherited);
+				static_cast<void>(join(index, observer, ranges, inherited));
 				return;
 			}
 			if (!observer.leg.holds(at)) {
@@ -830,19 +858,19 @@ namespace {
 				openLeg(observer, turnedAt, ranges);
 				observer.leg.hold(at);
 				observer.legWalkedMm = walkedMm;
-				[[maybe_unused]] const bool opened = join(index, observer, ranges, inherited);
+				static_cast<void>(join(index, observer, ranges, inherited));
 				return;
 			}
 			observer.leg.hold(at);
 			observer.legWalkedMm += walkedMm;
 			for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
 				observer.legLeast[side] = std::min(observer.legLeast[side], ranges[side]);
+				observer.legMost[side] = std::max(observer.legMost[side], ranges[side]);
 			}
 			if (!join(index, observer, ranges, std::nullopt)) {
-				++counts.vertexHits;
 				closeLeg(index, observer, LegEnd::Vertices);
 				openLeg(observer, at, ranges);
-				[[maybe_unused]] const bool opened = join(index, observer, ranges, inherited);
+				static_cast<void>(join(index, observer, ranges, inherited));
 			}
 		}
 
@@ -869,7 +897,7 @@ namespace {
 			}
 			if (observer.legOpen) {
 				observer.leg.hold(at);
-				[[maybe_unused]] const bool joined = join(index, observer, legRanges(observer.build), std::nullopt);
+				static_cast<void>(join(index, observer, legRanges(observer.build), std::nullopt));
 				closeLeg(index, observer, LegEnd::Path);
 			}
 			if (observer.polygonPath) {
@@ -884,7 +912,12 @@ namespace {
 					}
 					observer.stretch.hold(at);
 					if (resting && !newBuild && !observer.walk.empty() && observer.walk.front() != at) {
-						seen.queueSightAt(at, observer.build.rimRanges, std::move(observer.walk), observer.walkStartRanges);
+						seen.queueSightAt(
+							at,
+							observer.build.rimRanges,
+							settings.skipSweep ? std::vector<Vec2i64>{} : std::move(observer.walk),
+							observer.walkStartRanges
+						);
 						observer.walk.assign(1, at);
 						observer.walkStartRanges = observer.build.rimRanges;
 						observer.stretch.begin(at);
@@ -909,10 +942,6 @@ namespace {
 			}
 		}
 
-	  public:
-		std::size_t openAtEnd = 0;
-
-	  private:
 		std::mt19937  random;
 		BuildScratch  buildScratch;
 		BuildScratch  sweepScratch;
@@ -958,7 +987,7 @@ namespace {
 	// Arguments: colonists, game speed, the case (0 the shipped shape: no forest depth, rocks not
 	// occluding; 1 forest depth only; 2 rocks only; 3 both, as designed), the scheduler's options as
 	// bits (1 shapes tested while pieces wait, 2 four sweep points built every tick, 4 two pieces
-	// registered a tick, 8 four), softLegToleranceMm (0 for 500 mm scaled by the distance between builds at
+	// registered a tick, 8 four, 16 the shipped SeenArea fed beside it to check parity), softLegToleranceMm (0 for 500 mm scaled by the distance between builds at
 	// the speed), and 1 to skip the sweep for placed opaque bodies.
 	void BM_SightForestWalk(benchmark::State& state) {
 		WalkSettings settings;
@@ -973,6 +1002,7 @@ namespace {
 		settings.toleranceMm =
 			state.range(4) > 0 ? state.range(4) : std::llround(500.0 * buildSpacingMm(settings.speed) / buildSpacingMm(1.0));
 		settings.skipSweep = state.range(5) != 0;
+		settings.parity = (options & 16) != 0;
 		const Stand& stand = landingForest();
 		for (auto iteration : state) {
 			Walk walk(stand, settings);
@@ -980,6 +1010,20 @@ namespace {
 				walk.tick(tick);
 			}
 			const ForestRecord::Queue atEnd = walk.seen.queue();
+			if (walk.parity) {
+				std::fprintf(
+					stderr,
+					"  parity with SeenArea: pending differs on %zu ticks (by at most %zu), rings registered on %zu ticks; at the end rings %zu "
+					"and %zu, committed %.1f and %.1f m2\n",
+					walk.parityPendingTicks,
+					walk.parityMostPendingGap,
+					walk.parityRegisteredTicks,
+					walk.parity->ringsRegistered(),
+					walk.seen.ringsRegistered(),
+					walk.parity->committedSquareMeters(),
+					walk.seen.committedSquareMeters()
+				);
+			}
 			const std::size_t		  sweepsAtEnd = walk.seen.sweepsWaiting();
 			const Times				  record = timesOf(walk.recordMs);
 			const Times				  visionTimes = timesOf(walk.visionMs);
@@ -987,9 +1031,9 @@ namespace {
 			const std::size_t		  registered = walk.registrations();
 			const std::size_t		  drainTicks = walk.drain();
 			const WalkCounts&		  counts = walk.counts;
-			const double			  km = counts.walkedMm / 1e6;
+			const double			  walkedKm = counts.walkedMm / 1e6;
 			const std::size_t		  builds = counts.buildsByPath[0] + counts.buildsByPath[1] + counts.buildsByPath[2];
-			const double kMean = registered > 0 ? static_cast<double>(counted.ringsMetTotal) / static_cast<double>(registered) : 0.0;
+			const double ringsMetMean = registered > 0 ? static_cast<double>(counted.ringsMetTotal) / static_cast<double>(registered) : 0.0;
 			auto		 byOrigin = [&counted](Origin origin) { return counted.registrations[static_cast<std::size_t>(origin)]; };
 			std::size_t	 mostAMinute = 0;
 			std::string	 perMinute;
@@ -1004,7 +1048,7 @@ namespace {
 				kCaseNames[shapeCase],
 				settings.colonists,
 				settings.speed,
-				options == 0 ? " as SeenArea's" : "",
+				(options & 15) == 0 ? " as SeenArea's" : "",
 				settings.scheduler.testWhilePiecesWait ? " (i) tests while pieces wait" : "",
 				settings.scheduler.sweepsPerTick > 0 ? " (ii) four sweep points a tick" : "",
 				settings.scheduler.piecesPerTick == 2 ? " (iii) two pieces a tick" : settings.scheduler.piecesPerTick > 2 ? " four pieces a tick" : "",
@@ -1015,7 +1059,7 @@ namespace {
 			std::fprintf(
 				stderr,
 				"  queue at its peak %zu: open legs %zu, shapes waiting %zu, pieces waiting %zu; each part's most %zu, %zu, %zu; at minute 5 "
-				"%zu; at the end %zu: %zu, %zu, %zu\n",
+				"%zu: %zu, %zu, %zu; at the end %zu: %zu, %zu, %zu\n",
 				walk.atPeak.total(),
 				walk.atPeak.openLegs,
 				walk.atPeak.shapesWaiting,
@@ -1023,7 +1067,10 @@ namespace {
 				walk.mostParts.openLegs,
 				walk.mostParts.shapesWaiting,
 				walk.mostParts.piecesWaiting,
-				walk.pendingAtHalf,
+				walk.atHalf.total(),
+				walk.atHalf.openLegs,
+				walk.atHalf.shapesWaiting,
+				walk.atHalf.piecesWaiting,
 				atEnd.total(),
 				atEnd.openLegs,
 				atEnd.shapesWaiting,
@@ -1031,12 +1078,13 @@ namespace {
 			);
 			std::fprintf(
 				stderr,
-				"  sweep points waiting at most %zu, at the end %zu, built %zu; the longest wait to be tested %zu ticks; the longest backlog %zu "
-				"ticks; drained %zu ticks after the walk%s\n",
+				"  sweep points waiting at most %zu, at the end %zu, built %zu; the longest wait to be tested %zu ticks, to be cut %zu; the longest "
+				"backlog %zu ticks; drained %zu ticks after the walk%s\n",
 				walk.mostSweepsWaiting,
 				sweepsAtEnd,
 				walk.seen.sweepsBuilt(),
 				counted.mostTicksToTest,
+				counted.mostTicksToCut,
 				walk.mostBacklogTicks,
 				drainTicks,
 				drainTicks >= Walk::kDrainLimitTicks ? " (not drained, stopped)" : ""
@@ -1050,7 +1098,7 @@ namespace {
 				byOrigin(Origin::Sweep),
 				mostAMinute,
 				perMinute.c_str(),
-				kMean,
+				ringsMetMean,
 				counted.ringsMetMost
 			);
 			std::fprintf(
@@ -1058,7 +1106,7 @@ namespace {
 				"  legs opened %zu (%.1f a km), ended by turn %zu, jump %zu, spread %zu, vertices %zu, path %zu, open at the end %zu; tested %zu, "
 				"covered %zu; length m mean %.2f median %.2f p90 %.2f\n",
 				counts.legsOpened,
-				static_cast<double>(counts.legsOpened) / km,
+				static_cast<double>(counts.legsOpened) / walkedKm,
 				counts.legEnds[0],
 				counts.legEnds[1],
 				counts.legEnds[2],
@@ -1081,7 +1129,7 @@ namespace {
 				counts.buildsByPath[2],
 				builds > 0 ? 100.0 * static_cast<double>(counts.buildsByPath[2]) / static_cast<double>(builds) : 0.0,
 				static_cast<long long>(counts.mostRangeChange),
-				km,
+				walkedKm,
 				walk.seen.committedSquareMeters()
 			);
 			std::fprintf(
@@ -1094,7 +1142,7 @@ namespace {
 			);
 			state.counters["recordMeanMs"] = record.mean;
 			state.counters["pendingMost"] = static_cast<double>(walk.atPeak.total());
-			state.counters["kMean"] = kMean;
+			state.counters["kMean"] = ringsMetMean;
 			benchmark::DoNotOptimize(iteration);
 		}
 	}
@@ -1129,7 +1177,7 @@ namespace {
 			{"mature oaks 3 m apart", 3.0, kMatureOak},
 			{"pines 2 m apart", 2.0, kPine},
 			{"veteran oaks 3 m apart", 3.0, kVeteranOak},
-			{"the landing's forest", 0.0, {"", 0}},
+			{"the landing's forest", 0.0, {0}},
 		};
 		const StandSpec& spec = kStands[static_cast<std::size_t>(state.range(0))];
 		const auto		 halfExtentMm = std::int64_t{120000};
@@ -1246,7 +1294,7 @@ BENCHMARK(BM_SightForestWalk)
 
 // The scheduler's options, each alone and together, on the shipped shape and the design at 50
 // colonists at 10x, together at 1x too and on forest depth and rocks apart; then the design-level
-// options on the design.
+// options on the design, and the go with each of its changes taken out.
 BENCHMARK(BM_SightForestWalk)
 	->Name("BM_SightForestScheduler")
 	->ArgsProduct({{50}, {10}, {0, 3}, {1, 2, 4, 7}, {500}, {0}})
@@ -1267,5 +1315,17 @@ BENCHMARK(BM_SightForestWalk)
 	->Args({10, 10, 0, 11, 500, 0})
 	->Args({10, 10, 3, 11, 0, 0})
 	->Args({10, 10, 3, 11, 0, 1})
+	->Args({50, 10, 3, 10, 0, 1})
+	->Args({50, 10, 3, 9, 0, 1})
+	->Args({50, 10, 3, 9, 0, 0})
+	->Args({50, 10, 3, 11, 500, 1})
+	->Iterations(1)
+	->Unit(benchmark::kMillisecond);
+
+// The shipped SeenArea fed the control's legs beside the bench record, every option off.
+BENCHMARK(BM_SightForestWalk)
+	->Name("BM_SightForestParity")
+	->Args({50, 1, 0, 16, 500, 0})
+	->Args({50, 10, 0, 16, 500, 0})
 	->Iterations(1)
 	->Unit(benchmark::kMillisecond);

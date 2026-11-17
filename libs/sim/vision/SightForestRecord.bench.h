@@ -1,6 +1,7 @@
 #pragma once
 
-// The seen record as sight-softening.md 6 has it, for the step 1a bench only: SeenArea's record
+// Step 1a's measurement copy of the record; step 4 deletes this pair and runs BM_SightForestWalk on
+// SeenArea. The seen record as sight-softening.md 6 has it: SeenArea's record
 // (player-visibility.md 3.3) with forest legs, rims through the skirt and the sweep, the K counter,
 // and the scheduler options of 12.1, so the bench measures the design without touching the shipped
 // SeenArea. With every range equal, no scheduler option on, and no sight builder it is SeenArea.
@@ -18,6 +19,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace geometry::nav {
@@ -89,8 +91,9 @@ namespace sight_bench {
 			std::size_t ringsMetTotal = 0;
 			std::size_t ringsMetMost = 0;
 			double		ringsMetMs = 0.0; // the counter's own time, which is not the record's
-			// The most ticks a queued shape waited before its covered test.
+			// The most ticks a queued shape waited before its covered test, and before its frontier cut.
 			std::size_t mostTicksToTest = 0;
+			std::size_t mostTicksToCut = 0;
 		};
 
 		explicit ForestRecord(const Scheduler& scheduler);
