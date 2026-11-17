@@ -23,8 +23,7 @@ namespace world_sim {
 	} // namespace
 
 	GameplayBar::GameplayBar(const Args& args)
-		: onActionSelected(args.onActionSelected),
-		  onProductionSelected(args.onProductionSelected),
+		: onProductionSelected(args.onProductionSelected),
 		  onFurnitureSelected(args.onFurnitureSelected),
 		  onStructureSelected(args.onStructureSelected),
 		  onRoomsToggle(args.onRoomsToggle) {}
@@ -58,11 +57,6 @@ namespace world_sim {
 			dropdowns.push_back(made);
 			return made;
 		};
-		dropdown(
-			"actions_dropdown",
-			"Actions",
-			{item("Hunt", onActionSelected, "hunt"), item("Harvest", onActionSelected, "harvest"), item("Haul", onActionSelected, "haul")}
-		);
 		dropdown(
 			"build_dropdown",
 			"Build",
