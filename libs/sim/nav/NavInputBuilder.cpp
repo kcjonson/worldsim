@@ -52,55 +52,60 @@ namespace nav {
 		});
 	}
 
-	std::optional<gnav::NavInputPolygon> placedObstacleRing(const assets::PlacedEntity& e, const assets::AssetRegistry& registry) {
+	std::optional<gnav::NavInputPolygon> placedObstacleRing(const assets::PlacedEntity& entity, const assets::AssetRegistry& registry) {
 		geometry::Ring ring;
-		if (!placedObstacleOutline(e, registry, ring)) {
+		if (!placedObstacleOutline(entity, registry, ring)) {
 			return std::nullopt;
 		}
 		return gnav::NavInputPolygon{std::move(ring), true, kProvenancePlaced};
 	}
 
-	std::optional<OrientedRect> placedObstacleBox(const assets::PlacedEntity& e, const assets::CollisionShape& collision) {
-		if (collision.type != assets::CollisionShapeType::Rect) {
-			return std::nullopt;
+	namespace {
+
+		// How far the pad can add to a collider's reach: its corner, at scale 1.
+		float padCornerReachMeters() {
+			return std::sqrt(2.0F) * static_cast<float>(kPlacedObstaclePadMm) / static_cast<float>(kTileMm);
 		}
-		const assets::InstanceTransform transform(e.position, e.rotation, e.scale);
-		const float						pad = static_cast<float>(kPlacedObstaclePadMm) / static_cast<float>(kTileMm);
-		OrientedRect					box;
-		box.center		= transform.toWorld(collision.offsetMeters);
-		box.axisX		= transform.axisX();
-		box.axisY		= transform.axisY();
-		box.halfExtents = std::abs(e.scale) * (collision.halfExtentsMeters + glm::vec2{pad, pad});
-		return box;
-	}
+
+	} // namespace
 
 	float placedObstacleReachMeters(const assets::AssetRegistry& registry) {
-		const float pad = static_cast<float>(kPlacedObstaclePadMm) / static_cast<float>(kTileMm);
-		return registry.maxCollisionReachMeters() + std::sqrt(2.0F) * pad * registry.maxCollidingScale();
+		return registry.maxCollisionReachMeters() + padCornerReachMeters() * registry.maxCollidingScale();
 	}
 
-	bool placedObstacleOutline(const assets::PlacedEntity& e, const assets::AssetRegistry& registry, geometry::Ring& ring) {
-		ring.clear();
-		const assets::AssetDefinition* def = registry.getDefinition(e.defName);
+	float placedObstacleLocalReachMeters(const assets::CollisionShape& collision) {
+		return collision.reachMeters() + padCornerReachMeters();
+	}
+
+	bool placedObstacleOutline(const assets::PlacedEntity& entity, const assets::AssetRegistry& registry, geometry::Ring& ring) {
+		const assets::AssetDefinition* def = registry.getDefinition(entity.defName);
 		if (def == nullptr) {
+			ring.clear();
 			return false;
 		}
-		const assets::CollisionShape& collision = def->collisionFor(e.traits.ageClass);
+		return placedObstacleOutline(entity, def->collisionFor(entity.traits.ageClass), ring);
+	}
+
+	bool placedObstacleOutline(const assets::PlacedEntity& entity, const assets::CollisionShape& collision, geometry::Ring& ring) {
+		ring.clear();
 		if (!collision.blocks()) {
 			return false;
 		}
 
+		// Every shape goes to the world through the one instance transform: a rect as its four
+		// corners, padded in its local frame before scale, a polygon as its points.
+		const assets::InstanceTransform transform(entity.position, entity.rotation, entity.scale);
 		if (collision.type == assets::CollisionShapeType::Rect) {
-			const OrientedRect box = *placedObstacleBox(e, collision);
+			const float		pad	  = static_cast<float>(kPlacedObstaclePadMm) / static_cast<float>(kTileMm);
+			const glm::vec2 reach = collision.halfExtentsMeters + glm::vec2{pad, pad};
 			ring.reserve(4);
 			for (const glm::vec2 corner : {glm::vec2{-1.0F, -1.0F}, glm::vec2{1.0F, -1.0F}, glm::vec2{1.0F, 1.0F}, glm::vec2{-1.0F, 1.0F}}) {
-				ring.push_back(toMm(box.center + box.axisX * (corner.x * box.halfExtents.x) + box.axisY * (corner.y * box.halfExtents.y)));
+				ring.push_back(toMm(transform.toWorld(collision.offsetMeters + corner * reach)));
 			}
 		} else if (collision.type == assets::CollisionShapeType::Polygon) {
-			const assets::InstanceTransform transform(e.position, e.rotation, e.scale);
 			ring.reserve(collision.pointsMeters.size());
-			for (const glm::vec2& p : collision.pointsMeters) {
-				ring.push_back(toMm(transform.toWorld(p)));
+			for (const glm::vec2& point : collision.pointsMeters) {
+				ring.push_back(toMm(transform.toWorld(point)));
 			}
 		}
 
