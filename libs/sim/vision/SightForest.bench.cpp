@@ -63,6 +63,8 @@ namespace {
 	constexpr double		kTick = 1.0 / 60.0;
 	constexpr double		kWalkMps = 2.0;
 	constexpr double		kTurnBackMeters = 400.0;
+	// How far a colonist keeps to a heading taken round a ring before trying his course again.
+	constexpr double		kDetourMm = 1000.0;
 	constexpr double		kJumpMm = vision::kSeenJumpMeters * 1000.0;
 	constexpr std::uint64_t kWorldSeed = 424242;
 
@@ -501,6 +503,8 @@ namespace {
 		Vec2i64		  position;
 		Vec2i64		  lastPosition;
 		double		  course = 0.0;
+		double		  detour = 0.0; // the heading he steps round a ring on, for detourLeftMm more
+		double		  detourLeftMm = 0.0;
 		double		  untilTurn = 0.0;
 		Build		  build;
 		bool		  built = false;
@@ -655,13 +659,15 @@ namespace {
 
 		// A walk of 2 m/s times the speed, its course turning up to 60 degrees every 2 to 15 s, back
 		// toward the drop past 400 m, and around every ring: a step that would come within 0.3 m of one
-		// is taken 45 degrees off the course at a time until it does not, and the course is kept.
+		// is taken 45 degrees off the course at a time until it does not, and he keeps that heading for
+		// kDetourMm, or until it is blocked or his course turns, before trying his course again.
 		void move(Observer& observer) {
 			std::uniform_real_distribution<double> unit(0.0, 1.0);
 			observer.untilTurn -= kTick * settings.speed;
 			if (observer.untilTurn <= 0.0) {
 				const double turn = (unit(random) - 0.5) * 2.0 * std::numbers::pi / 3.0;
 				observer.course += turn;
+				observer.detourLeftMm = 0.0;
 				observer.untilTurn = 2.0 + 13.0 * unit(random);
 				const double fromDrop =
 					std::hypot(static_cast<double>(observer.position.x), static_cast<double>(observer.position.y)) / 1000.0;
@@ -670,13 +676,29 @@ namespace {
 				}
 			}
 			const double stepMm = kWalkMps * settings.speed * kTick * 1000.0;
-			for (int attempt = 0; attempt < 8; ++attempt) {
-				const double  heading = observer.course + static_cast<double>(attempt) * std::numbers::pi / 4.0;
+			auto		 stepAlong = [&](double heading) {
 				const Vec2i64 next =
 					observer.position + Vec2i64{std::llround(std::cos(heading) * stepMm), std::llround(std::sin(heading) * stepMm)};
-				if (!stand.blocked(next, 300)) {
-					counts.walkedMm += stepMm;
-					observer.position = next;
+				if (stand.blocked(next, 300)) {
+					return false;
+				}
+				counts.walkedMm += stepMm;
+				observer.position = next;
+				return true;
+			};
+			if (observer.detourLeftMm > 0.0) {
+				observer.detourLeftMm -= stepMm;
+				if (stepAlong(observer.detour)) {
+					return;
+				}
+			} else if (stepAlong(observer.course)) {
+				return;
+			}
+			for (int attempt = 1; attempt < 8; ++attempt) {
+				const double heading = observer.course + static_cast<double>(attempt) * std::numbers::pi / 4.0;
+				if (stepAlong(heading)) {
+					observer.detour = heading;
+					observer.detourLeftMm = kDetourMm - stepMm;
 					return;
 				}
 			}
@@ -1017,7 +1039,7 @@ namespace {
 			std::fprintf(
 				stderr,
 				"  registrations %zu: legs %zu, polygon path %zu, sweep %zu; most in a minute %zu (%s); K mean %.1f max %zu\n",
-				registered - byOrigin(Origin::Landing),
+				registered,
 				byOrigin(Origin::Leg),
 				byOrigin(Origin::Polygon),
 				byOrigin(Origin::Sweep),
