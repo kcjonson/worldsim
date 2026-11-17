@@ -689,9 +689,6 @@ namespace {
 			gameUI->showCatalogue(assets::RecipeRegistry::Get(), assets::ConstructionRegistry::Get(), m_drawingSystem->activeMaterial());
 		}
 
-		// What salal's ui didn't take: Escape, the world's hotkeys, a release for the drawing tool, placement or
-		// selection, and the scroll that zooms. The HUD takes no focus, so a key the ui took is a dialog's. The
-		// tools' previews follow the pointer in update().
 		// The pointer, in the window's logical px, on the world, on the ui, or outside the window.
 		world_sim::PointerTarget pointerTargetOf(glm::vec2 windowPointer) {
 			int logicalW = 0;
@@ -702,6 +699,9 @@ namespace {
 			});
 		}
 
+		// What salal's ui didn't take: Escape, the world's hotkeys, a press or release for the drawing tool, a
+		// release for placement or selection, and the scroll that zooms. The HUD takes no focus, so a key the ui
+		// took is a dialog's. The tools' previews follow the pointer in update().
 		bool handleEvent(const foundation::InputEvent& event) override {
 			using Type = foundation::InputEvent::Type;
 			if (event.type == Type::KeyDown && !event.repeat) {
@@ -734,40 +734,36 @@ namespace {
 			int logicalH = 0;
 			Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
 
-			// The Rectangle tool alone takes a press: a drag from it draws the rectangle. A press on
-			// the interface never starts one.
-			if (event.type == Type::PointerDown) {
-				if (event.mouseButton != foundation::MouseButton::Left || !m_drawingSystem->isRectangleTool() ||
-					pointerTargetOf(event.position) != world_sim::PointerTarget::World) {
-					return false;
-				}
-				const bool freeform = (event.mods & foundation::ModAlt) != 0;
-				return m_drawingSystem->handlePress(event.position.x, event.position.y, logicalW, logicalH, freeform);
-			}
-			if (event.type != Type::PointerUp) {
+			if (event.type != Type::PointerDown && event.type != Type::PointerUp) {
 				return false;
 			}
-
-			// The drawing tool takes clicks before placement and selection while it's active.
-			if (m_drawingSystem->isActive()) {
-				if (event.mouseButton == foundation::MouseButton::Right) {
+			// The drawing tool takes presses and releases before placement and selection while it's active.
+			const bool freeform = (event.mods & foundation::ModAlt) != 0;
+			switch (world_sim::drawingPointerAction(
+				event.type == Type::PointerDown ? world_sim::PointerInput::Press : world_sim::PointerInput::Release,
+				event.mouseButton,
+				pointerTargetOf(event.position),
+				m_drawingSystem->activeTool(),
+				m_drawingSystem->hasPendingPress()
+			)) {
+				case world_sim::PointerAction::DeliverPress:
+					return m_drawingSystem->handlePress(event.position.x, event.position.y, logicalW, logicalH, freeform);
+				case world_sim::PointerAction::DeliverClick:
+					m_drawingSystem->handleClick(
+						event.position.x, event.position.y, logicalW, logicalH, freeform, (event.mods & foundation::ModControl) != 0
+					);
+					return true;
+				case world_sim::PointerAction::CancelPress:
+					m_drawingSystem->cancelPress();
+					return true;
+				case world_sim::PointerAction::CancelTool:
 					// Foundation: cancel the shape. Wall: end (commit) the chain.
 					m_drawingSystem->cancel();
 					return true;
-				}
-				if (event.mouseButton == foundation::MouseButton::Left && m_drawingSystem->isRectangleTool() &&
-					pointerTargetOf(event.position) != world_sim::PointerTarget::World) {
-					// A drag released over the interface or outside the window draws nothing.
-					m_drawingSystem->cancelPress();
-					return true;
-				}
-				if (event.mouseButton == foundation::MouseButton::Left) {
-					const bool freeform = (event.mods & foundation::ModAlt) != 0;
-					const bool ctrl = (event.mods & foundation::ModControl) != 0;
-					m_drawingSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH, freeform, ctrl);
-					return true;
-				}
-				return false;
+				case world_sim::PointerAction::Ignore:
+					return false;
+				case world_sim::PointerAction::PassOn:
+					break;
 			}
 
 			if (m_placementSystem->isActive()) {
@@ -816,15 +812,23 @@ namespace {
 				return worldKeys && theme::key(frame.input, key).down;
 			};
 
-			// A Rectangle drag whose release the interface took (the release never reached handleEvent) draws
-			// nothing.
-			if (m_drawingSystem->hasPendingPress() && !frame.input.mouse[static_cast<std::size_t>(foundation::MouseButton::Left)].down) {
+			// A Rectangle drag whose release the interface took, or that ended without the window's focus, never
+			// reached handleEvent.
+			const world_sim::PointerTarget pointer = pointerTargetOf(frame.input.pointer);
+			if (!frame.input.mouse[static_cast<std::size_t>(foundation::MouseButton::Left)].down &&
+				world_sim::drawingPointerAction(
+					world_sim::PointerInput::LeftButtonUpThisFrame,
+					foundation::MouseButton::Left,
+					pointer,
+					m_drawingSystem->activeTool(),
+					m_drawingSystem->hasPendingPress()
+				) == world_sim::PointerAction::CancelPress) {
 				m_drawingSystem->cancelPress();
 			}
 
 			// The drawing tool's and placement's previews follow the pointer every frame, so they track the world
 			// moving under a still cursor, but not while the pointer is over the ui.
-			if (frame.input.pointerInWindow && pointerTargetOf(frame.input.pointer) == world_sim::PointerTarget::World) {
+			if (frame.input.pointerInWindow && pointer == world_sim::PointerTarget::World) {
 				int logicalW = 0;
 				int logicalH = 0;
 				Renderer::Primitives::getLogicalViewport(logicalW, logicalH);

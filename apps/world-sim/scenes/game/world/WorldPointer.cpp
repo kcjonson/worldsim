@@ -1,5 +1,7 @@
 #include "WorldPointer.h"
 
+#include "scenes/game/world/construction/DrawingSystem.h"
+
 namespace world_sim {
 
 	PointerTarget pointerTarget(
@@ -14,6 +16,36 @@ namespace world_sim {
 			return PointerTarget::OutsideWindow;
 		}
 		return interfaceHit(windowPointer / uiScale) ? PointerTarget::Interface : PointerTarget::World;
+	}
+
+	PointerAction drawingPointerAction(
+		PointerInput			input,
+		foundation::MouseButton button,
+		PointerTarget			target,
+		std::optional<ToolKind> activeTool,
+		bool					pressPending
+	) {
+		const bool rectangleTool = activeTool == ToolKind::FoundationRectangle;
+		switch (input) {
+			case PointerInput::Press:
+				return rectangleTool && button == foundation::MouseButton::Left && target == PointerTarget::World
+						   ? PointerAction::DeliverPress
+						   : PointerAction::Ignore;
+			case PointerInput::LeftButtonUpThisFrame:
+				return pressPending ? PointerAction::CancelPress : PointerAction::Ignore;
+			case PointerInput::Release:
+				if (!activeTool) {
+					return PointerAction::PassOn;
+				}
+				if (button == foundation::MouseButton::Right) {
+					return PointerAction::CancelTool;
+				}
+				if (button != foundation::MouseButton::Left) {
+					return PointerAction::Ignore;
+				}
+				return rectangleTool && target != PointerTarget::World ? PointerAction::CancelPress : PointerAction::DeliverClick;
+		}
+		return PointerAction::Ignore;
 	}
 
 } // namespace world_sim
