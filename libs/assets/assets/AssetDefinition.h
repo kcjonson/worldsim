@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -46,6 +47,16 @@ namespace assets {
 		Craftable,	// Entity is a crafting station where items can be made
 		Storage		// Entity is a storage container that holds items
 	};
+
+	/// Each capability's element name under an asset definition's <capabilities>, by CapabilityType.
+	inline constexpr std::array<const char*, 9> kCapabilityNames = {
+		"edible", "drinkable", "sleepable", "toilet", "waste", "carryable", "harvestable", "craftable", "storage"
+	};
+	static_assert(kCapabilityNames.size() == static_cast<std::size_t>(CapabilityType::Storage) + 1, "a name for every CapabilityType");
+
+	[[nodiscard]] constexpr const char* capabilityName(CapabilityType type) {
+		return kCapabilityNames[static_cast<std::size_t>(type)];
+	}
 
 	// ─────────────────────────────────────────────────────────────────────────
 	// Item Category System
@@ -334,6 +345,21 @@ namespace assets {
 			const float     hy = halfExtentsMeters.y;
 			return {glm::vec2{c.x - hx, c.y - hy}, glm::vec2{c.x + hx, c.y - hy},
 					glm::vec2{c.x + hx, c.y + hy}, glm::vec2{c.x - hx, c.y + hy}};
+		}
+
+		// How far the shape reaches from its pivot, in local meters: its farthest corner or point.
+		[[nodiscard]] float reachMeters() const {
+			float reachSquared = 0.0F;
+			if (type == CollisionShapeType::Rect) {
+				for (const glm::vec2& corner : rectCornersLocal()) {
+					reachSquared = std::max(reachSquared, corner.x * corner.x + corner.y * corner.y);
+				}
+			} else if (type == CollisionShapeType::Polygon) {
+				for (const glm::vec2& point : pointsMeters) {
+					reachSquared = std::max(reachSquared, point.x * point.x + point.y * point.y);
+				}
+			}
+			return std::sqrt(reachSquared);
 		}
 	};
 

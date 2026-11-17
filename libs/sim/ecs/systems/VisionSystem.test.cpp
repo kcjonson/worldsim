@@ -1,8 +1,10 @@
 #include "VisionSystem.h"
 
 #include "NavigationSystem.h"
+#include "TimeSystem.h"
 
 #include "../World.h"
+#include "../components/AgentRadius.h"
 #include "../components/Appearance.h"
 #include "../components/Memory.h"
 #include "../components/Transform.h"
@@ -111,6 +113,25 @@ namespace {
 		return e;
 	}
 
+	// A colonist-like mover: Position + AgentRadius (navigation's mover), an Appearance of the mover def,
+	// and its own Memory, so it looks back.
+	constexpr const char* kMoverDefName = "Test_VisionMover";
+
+	EntityID spawnMover(World& world, glm::vec2 where) {
+		const EntityID mover = spawnObserver(world, where);
+		Appearance	   appearance;
+		appearance.defName = kMoverDefName;
+		world.addComponent<Appearance>(mover, appearance);
+		world.addComponent<AgentRadius>(mover, AgentRadius{});
+		return mover;
+	}
+
+	const KnownDynamicEntity* sightingOf(World& world, EntityID observer, EntityID mover) {
+		const Memory* memory = world.getComponent<Memory>(observer);
+		const auto	  found = memory->knownDynamicEntities.find(mover);
+		return found == memory->knownDynamicEntities.end() ? nullptr : &found->second;
+	}
+
 	// Did the observer's Memory record the target's def at `at`?
 	bool remembers(World& world, EntityID observer, glm::vec2 at) {
 		const Memory* mem = world.getComponent<Memory>(observer);
@@ -147,19 +168,25 @@ namespace {
 		void SetUp() override {
 			ConstructionRegistry::Get().clear();
 			ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder()));
-			// ID 0 is the AssetRegistry's "invalid" sentinel. A fresh registry (these
-			// tests don't load assets) has an empty index, so prime a throwaway def to
-			// claim ID 0 before the target def, guaranteeing the target gets non-zero.
+			// ID 0 is the AssetRegistry's "invalid" sentinel. These tests don't load assets,
+			// so start from an empty index (an earlier suite can leave the shore def, which
+			// the system registers on its first tick, holding ID 0) and prime a throwaway def
+			// to claim ID 0 before the target and shore defs, guaranteeing both get non-zero.
 			auto& reg = AssetRegistry::Get();
-			if (reg.getDefNameId("Test_Vision_IdZeroReservation") == 0) {
-				reg.registerSyntheticDefinition("Test_Vision_IdZeroReservation", 0);
-			}
+			reg.clearDefinitions();
+			reg.registerSyntheticDefinition("Test_Vision_IdZeroReservation", 0);
 			// A synthetic discoverable def with one capability so memory keeps it.
 			reg.registerSyntheticDefinition(
 				kTargetDefName, static_cast<uint16_t>(1u << static_cast<size_t>(CapabilityType::Edible)));
 			ASSERT_NE(reg.getDefNameId(kTargetDefName), 0u) << "target def must get a non-zero id";
+			// Movers have no capabilities, like the colonist def.
+			reg.registerSyntheticDefinition(kMoverDefName, 0);
+			ASSERT_NE(reg.getDefNameId(kMoverDefName), 0u) << "mover def must get a non-zero id";
 		}
-		void TearDown() override { ConstructionRegistry::Get().clear(); }
+		void TearDown() override {
+			ConstructionRegistry::Get().clear();
+			AssetRegistry::Get().clearDefinitions();
+		}
 	};
 
 	// Drive a single immediate vision tick (interval 1 so update() never throttles).
@@ -956,4 +983,113 @@ TEST_F(VisionSystemTest, LaterColonistDoesNotKnowTheLandingArea) {
 	EXPECT_TRUE(remembers(world, arrival, inSight));
 	EXPECT_FALSE(remembers(world, arrival, nearPlaced)) << "a later arrival was not in the crash";
 	EXPECT_TRUE(remembers(world, member, nearPlaced)) << "the crew keeps the landing area past its first look";
+}
+
+// --- Movers -------------------------------------------------------------------
+
+// Two colonists in sight of each other each remember the other: its kind, where it stood, and the game
+// time of the sighting. Neither remembers itself, and neither becomes a world entity.
+TEST_F(VisionSystemTest, MoverInSightIsRememberedWithKindPositionAndTime) {
+	World		  world;
+	TimeSystem&	  clock = world.registerSystem<TimeSystem>();
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	clock.skipTime(42.0F);
+
+	const EntityID first = spawnMover(world, {0.0F, 0.0F});
+	const EntityID second = spawnMover(world, {5.0F, 0.0F});
+	tick(sys);
+
+	const KnownDynamicEntity* sighting = sightingOf(world, first, second);
+	ASSERT_NE(sighting, nullptr);
+	EXPECT_EQ(sighting->entityId, second);
+	EXPECT_EQ(sighting->defNameId, AssetRegistry::Get().getDefNameId(kMoverDefName));
+	EXPECT_EQ(sighting->lastKnownPosition, glm::vec2(5.0F, 0.0F));
+	EXPECT_DOUBLE_EQ(sighting->lastSeenAt, clock.simulationSeconds());
+	EXPECT_NE(sightingOf(world, second, first), nullptr) << "the other looks back";
+	EXPECT_EQ(sightingOf(world, first, first), nullptr) << "a colonist does not record itself";
+	EXPECT_EQ(world.getComponent<Memory>(first)->knownDynamicEntities.size(), 1u);
+	EXPECT_EQ(world.getComponent<Memory>(first)->worldEntityCount(), 0u);
+}
+
+// The rule static things go by holds for movers: out of sight radius, or behind a wall, is unseen.
+TEST_F(VisionSystemTest, MoverOutOfRangeOrBehindAWallIsNotRemembered) {
+	ConstructionWorld cw;
+	buildWall(cw, {1500, 0}, {1500, 3000});
+
+	World		  world;
+	world.registerSystem<TimeSystem>();
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	const EntityID observer = spawnMover(world, {0.5F, 1.5F});
+	const EntityID behindWall = spawnMover(world, {2.5F, 1.5F});
+	const EntityID farAway = spawnMover(world, {0.5F, 1.5F + kDefaultSightRadius + 5.0F});
+	const EntityID sameSide = spawnMover(world, {0.5F, -3.0F});
+	tick(sys);
+
+	EXPECT_EQ(sightingOf(world, observer, behindWall), nullptr) << "a wall hides him";
+	EXPECT_EQ(sightingOf(world, observer, farAway), nullptr) << "past sight radius";
+	EXPECT_NE(sightingOf(world, observer, sameSide), nullptr);
+}
+
+// Seeing a mover again moves its one entry to the new place and time.
+TEST_F(VisionSystemTest, SecondSightingUpdatesTheSameEntry) {
+	World		  world;
+	TimeSystem&	  clock = world.registerSystem<TimeSystem>();
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+
+	const EntityID observer = spawnMover(world, {0.0F, 0.0F});
+	const EntityID walker = spawnMover(world, {5.0F, 0.0F});
+	tick(sys);
+	const double firstSeen = sightingOf(world, observer, walker)->lastSeenAt;
+
+	world.getComponent<Position>(walker)->value = {8.0F, 3.0F};
+	clock.skipTime(15.0F);
+	tick(sys);
+
+	const KnownDynamicEntity* sighting = sightingOf(world, observer, walker);
+	ASSERT_NE(sighting, nullptr);
+	EXPECT_EQ(world.getComponent<Memory>(observer)->knownDynamicEntities.size(), 1u);
+	EXPECT_EQ(sighting->lastKnownPosition, glm::vec2(8.0F, 3.0F));
+	EXPECT_DOUBLE_EQ(sighting->lastSeenAt, firstSeen + 15.0);
+}
+
+// A mover that no longer exists stays in memory as last seen (memory is a snapshot), ages out of the
+// recency query, and is never read back through the world. One born into its reused index is another
+// mover with its own entry, not an update of the old one.
+TEST_F(VisionSystemTest, DestroyedMoverStaysAsSeenAndAReusedIndexIsAnotherMover) {
+	World		  world;
+	TimeSystem&	  clock = world.registerSystem<TimeSystem>();
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+
+	const EntityID observer = spawnMover(world, {0.0F, 0.0F});
+	const EntityID gone = spawnMover(world, {5.0F, 0.0F});
+	tick(sys);
+	const double seenAt = sightingOf(world, observer, gone)->lastSeenAt;
+
+	world.destroyEntity(gone);
+	clock.skipTime(10.0F);
+	tick(sys);
+	const KnownDynamicEntity* kept = sightingOf(world, observer, gone);
+	ASSERT_NE(kept, nullptr);
+	EXPECT_EQ(kept->lastKnownPosition, glm::vec2(5.0F, 0.0F));
+	EXPECT_DOUBLE_EQ(kept->lastSeenAt, seenAt);
+
+	const EntityID newcomer = spawnMover(world, {-4.0F, 2.0F});
+	ASSERT_EQ(getIndex(newcomer), getIndex(gone)) << "precondition: the index is reused";
+	ASSERT_NE(newcomer, gone);
+	tick(sys);
+
+	const Memory& memory = *world.getComponent<Memory>(observer);
+	EXPECT_EQ(memory.knownDynamicEntities.size(), 2u);
+	EXPECT_EQ(sightingOf(world, observer, gone)->lastKnownPosition, glm::vec2(5.0F, 0.0F)) << "the old entry is untouched";
+	EXPECT_EQ(sightingOf(world, observer, newcomer)->lastKnownPosition, glm::vec2(-4.0F, 2.0F));
+
+	const uint32_t			   kind = AssetRegistry::Get().getDefNameId(kMoverDefName);
+	std::vector<EntityID>	   company;
+	memory.forEachDynamicEntitySeenWithin(kind, clock.simulationSeconds(), 5.0, [&](const KnownDynamicEntity& known) {
+		company.push_back(known.entityId);
+		return true;
+	});
+	EXPECT_EQ(company, std::vector<EntityID>{newcomer}) << "the gone mover was seen 10 minutes ago";
 }

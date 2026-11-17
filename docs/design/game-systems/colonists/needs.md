@@ -137,31 +137,18 @@ Highest priority. See Panic in [AI Behavior](./ai-behavior.md).
 
 Mood is a composite score from all contributors. Range 0-100%.
 
-**Implementation Status:** Mood is computed in code from needs using weighted penalties (see table below) and shown near the colonist portrait/sidebar. Needs above ~70% contribute no penalty; below ~30% the penalty ramps quickly.
-
 ### Mood Contributors
 
 Mood has two parts ([Mood](./mood.md)):
 
 | Contributor | Source |
 |-------------|--------|
-| Need satisfaction | How well the needs are met, weighted as below |
+| Need satisfaction | How well the needs are met, weighted per need |
 | Mood effects | Carried by [thoughts](./thoughts.md). Everything else that changes how a colonist feels (surroundings, comfort, company, work they like, things that happen to them) reaches mood as a thought |
 
-### Need-to-Mood Weights (current tuning)
+### Need-to-Mood Weights
 
-| Need | Weight | Notes |
-|------|--------|-------|
-| Hygiene | 1.0 | Biggest comfort/social driver |
-| Temperature | 1.0 | Thermal comfort is critical to morale |
-| Recreation | 0.9 | Fun/leisure strongly affects mood |
-| Energy | 0.7 | Tiredness hurts mood meaningfully |
-| Hunger | 0.6 | Survival need, medium mood impact |
-| Thirst | 0.6 | Survival need, medium mood impact |
-| Bladder | 0.3 | Minor mood hit unless accidents |
-| Digestion | 0.3 | Minor mood hit unless accidents |
-
-Penalty curve per need: 0 when value ≥ ~70%; mild up to ~0.3 penalty down to 30%; steep to 1.0 below 30%. Mood = 100 × (1 − weightedPenalty/totalWeight), clamped 0-100.
+The per-need weights and the penalty curve live in `assets/config/colonists/mood.xml`. A need at or above the comfortable level costs nothing, the penalty rises gently to the warning level and then steeply to the full penalty at an empty need, and the needs score is 100 minus the weighted penalties averaged over the total weight.
 
 ### What low mood does
 

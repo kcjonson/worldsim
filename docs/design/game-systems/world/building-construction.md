@@ -68,6 +68,8 @@ The wall tool has no rectangle; it follows the same helper settings (Walls > Dra
 
 Select Foundation in the Build menu: it opens the foundation tool last picked this session, Rectangle the first time. A config strip appears with the tool picker, which switches between Rectangle and Freeform, material choices, and a live cost readout. Material is picked **before** drawing; the ghost renders in that material's blueprint style. While the tool is active a small [key guide](#key-guide) panel lists its keys.
 
+Every drawing tool pauses while the pointer is outside the game's window or the game is in the background: nothing follows the pointer and nothing reads refused, the points already placed stay, and the tool picks up from the pointer when it comes back.
+
 #### Rectangle tool
 
 1. Click one corner, then the opposite corner. Or press on one corner, drag, and release on the other: a release more than 4 screen pixels (logical pixels, before any HiDPI scaling) from the press finishes the rectangle, and a shorter one counts as a click, so the next click finishes it.
@@ -168,11 +170,11 @@ When the cursor comes within 0.3 m of a guide it locks on and the guide draws. G
 **Look.** One rule: solid means geometry, dotted and part transparent means alignment, small solid markers state a fact.
 
 - Geometry, solid: placed edges, the segment being drawn, buildings, and walls.
-- Alignment, dotted and part transparent: every guide, drawn from its point to the snapped cursor; the close radius ring.
-- Facts, small and solid: the right-angle marker (where a guide is perpendicular to an edge at its point, the shape's edge or that of the building the corner belongs to), the crossing dot, the common-length ticks, and the close halo (a ring half the close radius across on screen, at least 8 px, round the first point when a click would close).
+- Alignment, dotted and part transparent: every guide, drawn from its point to the snapped cursor; the close radius ring, which gives way to the halo once the click will close.
+- Facts, small and solid: the right-angle marker (where a guide is perpendicular to an edge at its point, the shape's edge or that of the building the corner belongs to), the crossing dot, the common-length ticks, and the close halo (a ring round the first point whose radius on screen is half the close radius, never so small that it falls inside the snapped-point marker's ticks, drawn when a click would close the shape and commit it; a close the click would refuse draws none, and the shape reads red).
 - The cursor: the operating system's pointer stays at the raw position, and where the point will go the game draws the snapped-point marker, a white dot with a dark outline and four short ticks. Unlike the prototype, the game draws no raw-pointer ring and no pull line from the raw pointer to the snapped point; the system pointer already shows where the hand is.
-- Guides are one muted teal; colour by source (shape, nearby building, world, common length) is the config alternative. Colours are written with an alpha of FF; their opacity comes from the guide and marker opacity keys. Sizes are screen pixels and never scale with zoom. Values: [architecture D16](../../../technical/building-construction-architecture.md#d16-guide-rendering-look).
-- **Guide distances** (helper). Each guide drawn carries its distance from its own point to the snapped cursor, to two decimals, beside the guide's middle on the side away from the segment, nudged along so labels don't overlap. A guide through the previous point is not labelled, since that distance is the segment's own length and its label already says it; at a crossing both guides are labelled (unless one runs through the previous point). A label reads `=` when the distance matches a kept common length. A guide too short on screen for a label (under 40 px) goes without.
+- Guides are one muted teal; colour by source (shape, nearby building, world, common length) is the config alternative. Colours are written with an alpha of FF; their opacity comes from the guide and marker opacity keys. Sizes are screen pixels and never scale with zoom; label text follows the Interface size. Values: [architecture D16](../../../technical/building-construction-architecture.md#d16-guide-rendering-look).
+- **Guide distances** (helper). Each guide drawn carries its distance from its own point to the snapped cursor, to two decimals, beside the guide's middle on the side away from the segment, nudged along so labels don't overlap. A guide from the previous point is not labelled, since that distance is the segment's own length and its label already says it; at a crossing both guides are labelled (unless one runs from the previous point). A label reads `=` when the distance matches a kept common length. A guide too short on screen for a label (under 40 px) goes without.
 - **Angle readout** (helper). While drawing, the corner at the previous point (and, once three points are placed and the cursor is within twice the origin radius of the first point, the closing corner there) shows its angle: a foundation reads the interior angle of the shape so far, an open wall chain the angle between its two segments. A corner within 0.05 degrees of square gets the right-angle marker; any other gets an arc and its angle in degrees to one decimal (`75.0` and a degree sign). Nothing shows on the first segment, or under Alt.
 
 **Alt.** Holding **Alt** is true freeform: no angle steps, no guides, no squaring, no common lengths, no rounding. Snaps to existing corners, edges, and walls stay on (they are adjacency, not style), and so does the close onto the first point. Distance and validity constraints still apply.
@@ -327,7 +329,7 @@ On a shared edge between two snapped foundations there is no co-ownership. The w
 
 ### Drawing
 
-Walls draw as a polyline chain: click to commit each point, the chain continues from the last point. The chain does not need to close, but it may: clicking the chain's first point closes the loop and ends the chain. Once the chain has three points, the cursor snaps onto the first point when near it, as it does when closing a foundation; holding Alt skips that snap, so a point near the start is placed as an ordinary one. **Right-click, Esc, or Enter** ends the chain, as today. Double-click ends it too, and is new with this work: its first click places the final point, the second places nothing and ends the chain. A second Esc, with no chain in progress, exits the tool.
+Walls draw as a polyline chain: click to commit each point, the chain continues from the last point. The chain does not need to close, but it may: clicking the chain's first point closes the loop and ends the chain. Once the chain has three points, the cursor snaps onto the first point when near it, as it does when closing a foundation; holding Alt skips that snap, so a point near the start is placed as an ordinary one. **Right-click, Esc, Enter, or a double-click** ends the chain: a double-click's first click places the final point, the second places nothing and ends the chain. A second Esc, with no chain in progress, exits the tool.
 
 The wall tool has no rectangle and no grid. It follows the same Drawing Settings as the Freeform tool (Foundations > Snapping and guides): with every helper off it keeps its adjacency snaps (steps 1 to 5 below) and length rounding, which is the basic level for walls, since walls mostly go onto foundations whose corners and edges are already snaps and a grid would fight a rotated building. With helpers on, the same angle steps and guides apply for every chain, along the foundation edge or standing mid-floor; the wall tool also reads walls' corners and directions, and takes foundation corners at their outer-face-flush inset. Whole priority order, first that applies wins (the helper a step needs is in brackets):
 
@@ -562,7 +564,7 @@ Foundations, wall segments, and openings are first-class selectable entities, in
 
 Clicking again in the same spot cycles down the stack (click a door, click again to get the wall, again for the foundation). Standard colony-game behavior, and it resolves the "everything is stacked on a foundation" problem without modifier gymnastics.
 
-**Multi-select:** Shift-click adds to the selection. Mixed selections reduce the action set to what's shared (e.g., Demolish). Double-clicking a wall segment (not built yet; the world input has no double-click) selects the whole connected run of the same material and thickness, the common case for "demolish this wall, all of it."
+**Multi-select:** Shift-click adds to the selection. Mixed selections reduce the action set to what's shared (e.g., Demolish). Double-clicking a wall segment (not built yet) selects the whole connected run of the same material and thickness, the common case for "demolish this wall, all of it."
 
 ### Selection Visuals
 
@@ -592,7 +594,7 @@ Wall blueprints have no vertex editing in v1; segments are cheap, cancel and red
 | Click | Place point / select; in the rectangle tool, place a corner (two opposite corners make the rectangle) |
 | Press, drag, release | Rectangle tool: draw the rectangle from the press to the release |
 | Click origin point | Close foundation polygon; close a wall loop |
-| Double-click | End wall chain (the first click places the final point; new with this work); expand wall selection to connected run (not built yet) |
+| Double-click | End wall chain (the first click places the final point, the second places nothing); expand wall selection to connected run (not built yet) |
 | Enter | End wall chain |
 | Right-click / Esc | End wall chain; cancel in-progress shape or the rectangle's first corner; second Esc exits tool |
 | Backspace | Undo last point (drawing); drop the rectangle's first corner; delete vertex (shape editing) |

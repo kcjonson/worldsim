@@ -26,6 +26,7 @@ namespace ecs {
 	class World;
 	class NavigationSystem;
 	struct Inventory;
+	struct Thoughts;
 	enum class NeedType : std::uint8_t;
 }
 namespace world {
@@ -92,7 +93,7 @@ namespace world_sim {
 		/// returned registrations live. Most verbs answer {"status":"ok","verb":...}; spawn, colonist,
 		/// teleport, give, foundation, walls and opening answer a 400 with {"error":...} when they create
 		/// or move nothing, ground they refuse included; verbs with an outcome to report (foundation-edit) answer with it, and flora answers
-		/// with its measurement. The views are colonists, construction, stations, storage, time,
+		/// with its measurement. The views are colonists, construction, drawing, stations, storage, time,
 		/// landing, tunables and summary.
 		std::vector<app::DevServer::Registration> registerWith(app::DevServer& server);
 
@@ -111,6 +112,8 @@ namespace world_sim {
 		// colonist?at=x,y&n=&name=: refused on water or a placed obstacle (moverGroundRefusal).
 		DevRefusal devColonist(const app::DevRequest& cmd);
 		void devNeed(const app::DevRequest& cmd);
+		/// Sets one attribute (its condition name, e.g. kindness or social_need) on one colonist, 0 to 20.
+		DevRefusal devAttribute(const app::DevRequest& cmd);
 		void devTime(const app::DevRequest& cmd);
 		// teleport?colonist=<id>&to=x,y: refused for an entity that does not exist, and on water or a placed
 		// obstacle (moverGroundRefusal); ground no mover has meshed takes him.
@@ -147,6 +150,11 @@ namespace world_sim {
 		// named item's category comes from its definition (category= may only repeat it); an unknown
 		// item is a 400. category= picks the wildcard's category, RawMaterial by default.
 		app::DevResponse devStorage(const app::DevRequest& cmd);
+		// thought?colonist=<id>&type=<thought type>&subject=<entity id>: creates the thought the way a source
+		// would, the colonist's feeling and line picked from the type. Answers created (false when none of
+		// the type's feelings applies) with the thought's id, feeling and line. An unknown colonist, type or
+		// subject is a 400.
+		app::DevResponse devThought(const app::DevRequest& cmd);
 		void		devTunable(const app::DevRequest& cmd);
 
 		// Logs and toasts a verb's refusal message, when it is not empty, and returns it as the refusal.
@@ -160,6 +168,9 @@ namespace world_sim {
 
 		// --- state serialization ---
 		void serializeColonists(std::ostringstream& out);
+		// A colonist's "thoughts": held (type, feeling, mood, left in game hours or "while", count) and the
+		// most recent few, newest first, with the rendered line.
+		void serializeThoughts(std::ostringstream& out, const ecs::Thoughts& thoughts);
 		void serializeConstruction(std::ostringstream& out);
 		void serializeStations(std::ostringstream& out);
 		void serializeStorage(std::ostringstream& out);
@@ -180,7 +191,6 @@ namespace world_sim {
 		static float						 parseDuration(const std::string& spec);
 		static Foundation::Vec2				 parsePoint(const std::string& spec);
 		static Foundation::Vec2				 spreadOffset(long i, long n, float radius);
-		static std::string					 jsonEscape(const std::string& s);
 
 		DevCommandContext m_ctx;
 	};

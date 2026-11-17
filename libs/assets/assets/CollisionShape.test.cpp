@@ -6,10 +6,14 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <string>
+#include <vector>
 
 using namespace assets;
 
@@ -213,6 +217,93 @@ TEST(CollisionShapeTest, PolygonTooFewPointsIsNone) {
 
 	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::None);
 	EXPECT_FALSE(def->collisionFor(0).blocks());
+}
+
+namespace {
+
+	// Loads TestAsset with the polygon `points` ("x,y" pairs) as its <collision>.
+	const AssetDefinition* loadPolygonDef(TempAssets& t, std::initializer_list<glm::vec2> points) {
+		std::string inner = "<collision><polygon>";
+		for (const glm::vec2 point : points) {
+			inner += "<point x=\"" + std::to_string(point.x) + "\" y=\"" + std::to_string(point.y) + "\"/>";
+		}
+		inner += "</polygon></collision>";
+		t.writeXml("PolygonDef", wrapDef(inner));
+		AssetRegistry::Get().clearDefinitions();
+		AssetRegistry::Get().loadDefinitionsFromFolder(t.root.string());
+		return AssetRegistry::Get().getDefinition("TestAsset");
+	}
+
+	bool reportsCollisionError(const std::string& defName) {
+		for (const ValidationIssue& issue : AssetRegistry::Get().getValidationReport().issues) {
+			if (issue.severity == Severity::Error && issue.defName == defName && issue.field == "collision") {
+				return true;
+			}
+		}
+		return false;
+	}
+
+} // namespace
+
+// A polygon the nav mesh can't take is an error naming the def, and the def blocks nothing rather
+// than handing the mesh a ring it can't cut: one that crosses itself, and one that repeats its first
+// point at the end (a zero-length closing edge).
+TEST(CollisionShapeTest, PolygonTheNavMeshCannotTakeIsAnError) {
+	for (const bool crossing : {true, false}) {
+		SCOPED_TRACE(crossing ? "crossing" : "repeated closing point");
+		TempAssets			   t;
+		const AssetDefinition* def = crossing ? loadPolygonDef(t, {{0.0F, 0.0F}, {1.0F, 1.0F}, {1.0F, 0.0F}, {0.0F, 1.0F}})
+											  : loadPolygonDef(t, {{0.0F, 0.0F}, {1.0F, 0.0F}, {0.5F, 1.0F}, {0.0F, 0.0F}});
+		ASSERT_NE(def, nullptr);
+		EXPECT_FALSE(def->collisionFor(0).blocks());
+		EXPECT_TRUE(reportsCollisionError("TestAsset"));
+	}
+	AssetRegistry::Get().clearDefinitions();
+}
+
+// A def whose age classes have different bad polygons gets one error that names each class.
+TEST(CollisionShapeTest, OneErrorNamesEveryFailingAgeClass) {
+	AssetRegistry& registry = AssetRegistry::Get();
+	registry.clearDefinitions();
+	AssetDefinition def;
+	def.defName	   = "Test_TwoBadClasses";
+	def.ageClasses = {{.name = "young", .weight = 0.5F, .variants = 1}, {.name = "old", .weight = 0.5F, .variants = 1}};
+	def.setCollision(0, {.type = CollisionShapeType::Polygon, .pointsMeters = {{0.0F, 0.0F}, {1.0F, 1.0F}, {1.0F, 0.0F}, {0.0F, 1.0F}}});
+	def.setCollision(1, {.type = CollisionShapeType::Polygon, .pointsMeters = {{0.0F, 0.0F}, {1.0F, 0.0F}, {0.5F, 1.0F}, {0.0F, 0.0F}}});
+	registry.registerTestDefinition(def);
+
+	int		   errors = 0;
+	std::string message;
+	for (const ValidationIssue& issue : registry.getValidationReport().issues) {
+		if (issue.defName == "Test_TwoBadClasses" && issue.field == "collision") {
+			++errors;
+			message = issue.message;
+		}
+	}
+	EXPECT_EQ(errors, 1);
+	EXPECT_NE(message.find("age class 0"), std::string::npos) << message;
+	EXPECT_NE(message.find("age class 1"), std::string::npos) << message;
+	EXPECT_FALSE(registry.getDefinition("Test_TwoBadClasses")->collisionFor(0).blocks());
+	EXPECT_FALSE(registry.getDefinition("Test_TwoBadClasses")->collisionFor(1).blocks());
+	registry.clearDefinitions();
+}
+
+// A clockwise polygon is a good one, stored counter-clockwise as CollisionShape says.
+TEST(CollisionShapeTest, ClockwisePolygonIsStoredCounterClockwise) {
+	TempAssets			   t;
+	const AssetDefinition* def = loadPolygonDef(t, {{0.0F, 0.0F}, {0.5F, 1.0F}, {1.0F, 0.0F}});
+	ASSERT_NE(def, nullptr);
+	ASSERT_EQ(def->collisionFor(0).type, CollisionShapeType::Polygon);
+	EXPECT_FALSE(reportsCollisionError("TestAsset"));
+	const std::vector<glm::vec2>& points = def->collisionFor(0).pointsMeters;
+	float						  area2	 = 0.0F;
+	for (size_t i = 0; i < points.size(); ++i) {
+		const glm::vec2& a = points[i];
+		const glm::vec2& b = points[(i + 1) % points.size()];
+		area2 += a.x * b.y - b.x * a.y;
+	}
+	EXPECT_GT(area2, 0.0F);
+	AssetRegistry::Get().clearDefinitions();
 }
 
 TEST(CollisionShapeTest, EmptyCollisionBlockIsNone) {
@@ -580,9 +671,10 @@ TEST(CollisionShapeTest, SvgMetadataPolygon) {
 	EXPECT_TRUE(def->collisionFor(0).blocks());
 }
 
-// Real-asset smoke: the shipped BigRock declares its collider in SVG metadata,
-// so it should load as a blocking Rect end-to-end.
-TEST(CollisionShapeTest, BigRockHasRectFromSvgMetadata) {
+// Real-asset smoke: the shipped BigRock declares its collider in SVG metadata, a polygon on its
+// rim's eleven points, so it loads as that polygon end-to-end, in the pivot frame (the rim's bbox
+// centre, (78, 61), at 1.5 m over 90 units) and with nothing for the validation report.
+TEST(CollisionShapeTest, BigRockHasRimPolygonFromSvgMetadata) {
 	namespace fs = std::filesystem;
 
 	auto&	 reg = AssetRegistry::Get();
@@ -597,18 +689,19 @@ TEST(CollisionShapeTest, BigRockHasRectFromSvgMetadata) {
 
 	const AssetDefinition* def = reg.getDefinition("BigRock");
 	ASSERT_NE(def, nullptr);
-	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::Rect);
-	EXPECT_TRUE(def->collisionFor(0).blocks());
-	// A tree-sized footprint: non-trivial half-extents, well under the 1.5 m height.
-	EXPECT_GT(def->collisionFor(0).halfExtentsMeters.x, 0.1F);
-	EXPECT_GT(def->collisionFor(0).halfExtentsMeters.y, 0.1F);
-	EXPECT_LT(def->collisionFor(0).halfExtentsMeters.x, 0.75F);
-	EXPECT_LT(def->collisionFor(0).halfExtentsMeters.y, 0.9F);
-	// The aabb is authored symmetric about the silhouette bbox center, so the Rect
-	// lands centered on the entity (offset ~ origin). This is what makes the
-	// cyan asset-manager overlay sit on the boulder.
-	EXPECT_NEAR(def->collisionFor(0).offsetMeters.x, 0.0F, 0.1F);
-	EXPECT_NEAR(def->collisionFor(0).offsetMeters.y, 0.0F, 0.1F);
+	ASSERT_EQ(def->collisionFor(0).type, CollisionShapeType::Polygon);
+	EXPECT_FALSE(reportsCollisionError("BigRock"));
+	const std::vector<glm::vec2>& points = def->collisionFor(0).pointsMeters;
+	const std::vector<glm::vec2>  rim{{40, 26}, {72, 16}, {104, 22}, {128, 42}, {136, 70}, {122, 96}, {92, 106}, {58, 104}, {32, 90}, {20, 62}, {26, 40}};
+	ASSERT_EQ(points.size(), rim.size());
+	for (const glm::vec2 svg : rim) {
+		const glm::vec2 expected = (svg - glm::vec2{78.0F, 61.0F}) * (1.5F / 90.0F);
+		const bool		found	 = std::any_of(points.begin(), points.end(), [&](glm::vec2 point) {
+			   return std::abs(point.x - expected.x) < 1e-4F && std::abs(point.y - expected.y) < 1e-4F;
+		   });
+		EXPECT_TRUE(found) << "rim point " << svg.x << "," << svg.y;
+	}
+	reg.clearDefinitions();
 }
 
 // A simple (SVG-backed) asset with no <metadata> block in its SVG but a <collision>

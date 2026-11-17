@@ -17,7 +17,7 @@ namespace world_sim {
 		std::vector<std::string> traits;
 		std::string				 background = "No background";
 		float					 mood = 100.0F; // 0-100
-		std::string				 moodLabel;		// "Happy", "Content", etc.
+		std::string				 moodLabel;		// band name from the mood config, e.g. "Content"
 		std::string				 currentTask;	// "Going to food", "Re-routing"
 	};
 

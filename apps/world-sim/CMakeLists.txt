@@ -59,6 +59,7 @@ add_library(world-sim-game STATIC
     scenes/game/ui/GameUI.cpp
     # Game scene - world subsystems
     scenes/game/world/MoveOrderGoal.cpp
+    scenes/game/world/WorldPointer.cpp
     scenes/game/world/placement/GhostRenderer.cpp
     scenes/game/world/placement/PlacementMode.cpp
     scenes/game/world/placement/PlacementSystem.cpp
@@ -87,7 +88,10 @@ add_library(world-sim-game STATIC
     scenes/landing/LandingSiteDetailsPanel.cpp
     scenes/loading/GameLoadingScene.cpp
     scenes/game/dev/CameraCommand.cpp
+    scenes/game/dev/ConstructionStateJson.cpp
     scenes/game/dev/DevCommandHandler.cpp
+    scenes/game/dev/DevJson.cpp
+    scenes/game/dev/DrawingStateJson.cpp
     scenes/game/dev/GiveShortfall.cpp
     scenes/game/dev/GpuHold.cpp
     scenes/game/dev/GpuHoldCommand.cpp
@@ -148,16 +152,22 @@ if(BUILD_TESTING)
     find_package(GTest CONFIG REQUIRED)
     add_executable(world-sim-tests
         scenes/game/dev/CameraCommand.test.cpp
+        scenes/game/dev/ConstructionStateJson.test.cpp
+        scenes/game/dev/DevJson.test.cpp
+        scenes/game/dev/DrawingStateJson.test.cpp
         scenes/game/dev/GiveShortfall.test.cpp
         scenes/game/dev/GpuHoldCommand.test.cpp
         scenes/game/dev/GroundRefusal.test.cpp
         scenes/game/dev/PointList.test.cpp
         scenes/game/world/MoveOrderGoal.test.cpp
+        scenes/game/world/WorldPointer.test.cpp
         scenes/game/world/construction/CommittedGeometryCache.test.cpp
+        scenes/game/world/construction/DrawingFeedback.test.cpp
         scenes/game/world/construction/DrawingSystem.test.cpp
         scenes/game/world/placement/PlacementSystem.test.cpp
         scenes/game/world/selection/SelectionSystem.test.cpp
         scenes/game/ui/adapters/GlobalTaskAdapter.test.cpp
+        scenes/game/ui/adapters/SelectionAdapter.test.cpp
         scenes/game/ui/adapters/TaskRowText.test.cpp
         scenes/SceneLayout.test.cpp
     )

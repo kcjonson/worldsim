@@ -40,6 +40,9 @@ struct Memory;
 /// Also scans chunks for shore points (land beside water) with Drinkable capability.
 /// Priority: 45 (runs early, before needs decay and AI decisions)
 ///
+/// Needs a TimeSystem in the same world: a mover's sighting is stamped with the game clock, and a world
+/// without one aborts in development builds the first time a mover is seen (ecs::simulationSeconds).
+///
 /// Performance: Throttled to run every N frames (default 5) since colonists don't
 /// move fast enough to need per-frame vision updates.
 class VisionSystem : public ISystem {
@@ -148,7 +151,8 @@ class VisionSystem : public ISystem {
 	);
 
 	/// What the disc of `radiusMeters` round `center` shows, inside `polygon` when walls clip it
-	/// (null outdoors), into memory: reconciliation, then placed entities, ECS entities, and shore.
+	/// (null outdoors), into memory: reconciliation, then placed entities, ECS entities (movers among them,
+	/// stamped with the game time), and shore.
 	void lookOver(
 		EntityID observer, glm::vec2 center, float radiusMeters, const geometry::Ring* polygon, Memory& memory, Knowledge* knowledge
 	);
@@ -199,6 +203,9 @@ class VisionSystem : public ISystem {
 		bool	  seen = false;
 	};
 	std::vector<StaleCandidate> m_staleScratch;
+
+	// The game time movers seen this pass are stamped with, read from the clock at the first such sighting.
+	std::optional<double> m_sightingTime;
 
 	// Test-only diagnostic: incremented on each actual polygon (re)build.
 	uint64_t m_polygonBuildCount = 0;

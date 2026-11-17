@@ -3,6 +3,8 @@
 #include "assets/ActionTypeRegistry.h"
 #include "assets/ConfigValidator.h"
 #include "assets/ConstructionRegistry.h"
+#include "assets/MemoryConfig.h"
+#include "assets/MoodConfig.h"
 #include "assets/PriorityConfig.h"
 #include "assets/TaskChainRegistry.h"
 #include "assets/WorkTypeRegistry.h"
@@ -15,9 +17,14 @@ namespace assets {
 		WorkTypeRegistry::Get().clear();
 		PriorityConfig::Get().clear();
 		ConstructionRegistry::Get().clear();
+		MoodConfig::Get().clear();
+		MemoryConfig::Get().clear();
 		ConfigValidator::clearErrors();
 
-		auto loadFailure = [](const std::filesystem::path& path) {
+		auto loadFailure = [](const std::filesystem::path& path, const std::vector<std::string>& problems = {}) {
+			if (!problems.empty()) {
+				return problems;
+			}
 			return std::vector<std::string>{"Failed to load " + path.generic_string()};
 		};
 
@@ -38,16 +45,14 @@ namespace assets {
 
 		const auto priorityTuning = configRoot / "work" / "priority-tuning.xml";
 		if (!PriorityConfig::Get().loadFromFile(priorityTuning.string())) {
-			return loadFailure(priorityTuning);
+			return loadFailure(priorityTuning, PriorityConfig::Get().problems());
 		}
 
 		// Every task type the AI can evaluate must have an explicit arbitration tier, or the
 		// (tier, score) ordering would put a new type in an unintended tier. Fail loud instead.
-		static const std::vector<std::string> kRequiredTaskTiers = {
-			"FulfillNeed", "Harvest", "Craft", "Haul", "PlacePackaged", "Build", "Deconstruct", "Wander"
-		};
-		std::vector<std::string> missingTiers;
-		if (!PriorityConfig::Get().validateTaskTiers(kRequiredTaskTiers, missingTiers)) {
+		const std::vector<std::string> requiredTaskTiers(kTaskTypeNames.begin(), kTaskTypeNames.end());
+		std::vector<std::string>	   missingTiers;
+		if (!PriorityConfig::Get().validateTaskTiers(requiredTaskTiers, missingTiers)) {
 			std::string joined;
 			for (const auto& name : missingTiers) {
 				joined += (joined.empty() ? "" : ", ") + name;
@@ -58,6 +63,16 @@ namespace assets {
 		const auto construction = configRoot / "construction";
 		if (!ConstructionRegistry::Get().load(construction.string())) {
 			return loadFailure(construction);
+		}
+
+		const auto mood = configRoot / "colonists" / "mood.xml";
+		if (!MoodConfig::Get().loadFromFile(mood.string())) {
+			return loadFailure(mood, MoodConfig::Get().problems());
+		}
+
+		const auto memory = configRoot / "colonists" / "memory.xml";
+		if (!MemoryConfig::Get().loadFromFile(memory.string())) {
+			return loadFailure(memory);
 		}
 
 		if (ConfigValidator::validateAll()) {

@@ -183,22 +183,19 @@ namespace assets {
 	/// How competing guides are ranked: by source first, or purely by distance.
 	enum class GuidePriorityRule { SourceFirst, Closest };
 
-	/// Starting value of each player-facing Drawing Setting, one field per setting.
-	/// The initializers follow the drawing tools from before the settings existed;
-	/// crossings are on because the old two-axis lock is a crossing of two world guides.
-	/// Not exactly the old tools: with align on, a nearby building also gives lines
-	/// parallel and perpendicular to its edges, and crossings form between any two guides.
+	/// Starting value of each player-facing Drawing Setting, one field per setting: what a
+	/// new player meets, every helper off, Round lengths and Show key guide on, a 1 m grid.
 	struct DrawingSettingsDefaults {
-		bool  angleSteps = true;
+		bool  angleSteps = false;
 		bool  guidesFromShape = false;
-		bool  alignToExistingBuildings = true;
-		bool  guidesFromWorldAxes = true;
-		bool  guideCrossings = true;
+		bool  alignToExistingBuildings = false;
+		bool  guidesFromWorldAxes = false;
+		bool  guideCrossings = false;
 		bool  commonLengths = false;
 		bool  guideDistances = false;
 		bool  angleReadout = false;
-		bool  roundLengths = false;
-		bool  showKeyGuide = false;
+		bool  roundLengths = true;
+		bool  showKeyGuide = true;
 		float rectangleGridSpacingMeters = 1.0F;
 	};
 
@@ -263,6 +260,14 @@ namespace assets {
 		GuideRounding lengthRoundingOnGuides = GuideRounding::GuideDistance;
 
 		bool rectangleAdjacencySnaps = true;
+
+		// Two left releases on the world this close in time are a double-click: with the wall
+		// tool, the second ends the chain.
+		float doubleClickSeconds = 0.4F;
+		// A left release this close to its press, in logical pixels, is a click: in the
+		// rectangle tool it leaves the first corner waiting rather than finishing a drag. A
+		// double-click's second release must also be this close to the first.
+		float doubleClickDistancePx = 4.0F;
 
 		DrawingSettingsDefaults drawingSettingsDefaults;
 
@@ -368,24 +373,25 @@ namespace assets {
 	enum class GuideColorMode { One, BySource };
 
 	/// Drawing-tool preview chrome that is construction-specific (the validity green/red
-	/// still comes from the shared UI theme). guideColor is the angle-snap guide; the
-	/// origin-close halo uses originHaloColor when it can't yet close; snap-target rings
-	/// use snapVertexColor (vertex/endpoint) and snapEdgeColor (edge/T-junction). The
-	/// alphas tint the in-progress polygon fill and the wall-band preview; the *Px radii
-	/// and widths are screen-space line weights.
-	/// guideColor and guideWidth are what the renderer draws guides with today; the
-	/// keys after originHaloMinRadiusPx are the redesigned guide look, not read yet.
-	/// Until the look is switched over, guideColor keeps its old value (with its own
-	/// alpha) and guideWidth its old width.
+	/// still comes from the shared UI theme). guideColor is the one guide color (guide
+	/// lines, right-angle markers, crossing dots; the common-length marks, not drawn yet),
+	/// opaque: its opacity comes from guideOpacity and markerOpacity. guideColorLength and
+	/// angleReadoutDecimals are loaded and validated, but nothing draws with them yet.
+	/// originHaloColor is the dotted close-radius ring round the first point; snap-target
+	/// rings use snapVertexColor (vertex/endpoint) and snapEdgeColor (edge/T-junction). The
+	/// alphas tint the in-progress polygon fill and the wall-band preview; the *Px radii and
+	/// widths are screen-space sizes that never scale with zoom. Of them, only the labels
+	/// (guideLabelPx, the segment and size labels, and the plates behind them) follow the
+	/// interface size.
 	struct PreviewStyle {
-		StyleColor guideColor{0.7F, 0.85F, 1.0F, 0.4F};
+		StyleColor guideColor{0.373F, 0.702F, 0.784F, 1.0F};
 		StyleColor originHaloColor{0.7F, 0.85F, 1.0F, 0.6F};
 		StyleColor snapVertexColor{1.0F, 0.85F, 0.3F, 0.9F};
 		StyleColor snapEdgeColor{0.4F, 0.85F, 1.0F, 0.9F};
 		float	   fillPreviewAlpha = 0.15F;
 		float	   bandPreviewAlpha = 0.2F;
 		float	   lineWidth = 2.0F;
-		float	   guideWidth = 1.0F;
+		float	   guideWidth = 1.5F;
 		float	   vertexRadiusPx = 4.0F;
 		float	   invalidVertexRadiusPx = 7.0F;
 		float	   originHaloMinRadiusPx = 8.0F;

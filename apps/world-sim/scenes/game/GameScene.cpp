@@ -1,6 +1,7 @@
 // Game Scene - Main gameplay with chunk-based world rendering
 
 #include "GameBootstrap.h"
+#include "GameContext.h"
 #include "GameWorldState.h"
 #include "NewGameSetup.h"
 #include "SceneTypes.h"
@@ -17,6 +18,7 @@
 #include "scenes/game/world/selection/SelectionSystem.h"
 #include "scenes/game/world/terrain/TerrainPolygonOverlay.h"
 #include "scenes/game/world/vision/VisionOverlay.h"
+#include "scenes/game/world/WorldPointer.h"
 #include "scenes/shared/SalalUi.h"
 #include <theme/Theme.h>
 
@@ -53,6 +55,7 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/DetailLevels.h>
+#include <assets/MoodConfig.h>
 #include <assets/RecipeRegistry.h>
 #include <assets/placement/AsyncChunkProcessor.h>
 #include <assets/placement/CanopyCover.h>
@@ -61,6 +64,7 @@
 // ECS
 #include <construction/ConstructionWorld.h>
 #include <core/Vec2i64.h>
+#include <ecs/ColonistRules.h>
 #include <ecs/GoalTaskRegistry.h>
 #include <ecs/SystemSeeds.h>
 #include <ecs/World.h>
@@ -96,14 +100,16 @@
 #include <ecs/systems/CollisionSystem.h>
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/CraftingGoalSystem.h>
+#include <ecs/systems/MoodSystem.h>
 #include <ecs/systems/MovementSystem.h>
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/NeedsDecaySystem.h>
 #include <ecs/systems/PhysicsSystem.h>
 #include <ecs/systems/PlayerVisibilitySystem.h>
 #include <ecs/systems/RoomDetectionSystem.h>
-#include <ecs/systems/StaticRectCollisionSystem.h>
+#include <ecs/systems/PlacedObstacleCollisionSystem.h>
 #include <ecs/systems/StorageGoalSystem.h>
+#include <ecs/systems/ThoughtSystem.h>
 #include <ecs/systems/TimeSystem.h>
 #include <ecs/systems/VisionSystem.h>
 #include <ecs/systems/WallCollisionSystem.h>
@@ -139,6 +145,9 @@ namespace {
 	  public:
 		void onEnter(app::App& app) override {
 			owner = &app;
+			backgroundLaunch = app.context<world_sim::GameContext>().backgroundLaunch;
+			// The pointer may have entered the window while another scene was on.
+			windowPresence.pointerInWindow = app.input().frame().pointerInWindow;
 			LOG_INFO(Game, "GameScene - Entering");
 			theme::apply(ui());
 
@@ -159,6 +168,7 @@ namespace {
 				m_landingLatDeg = preloadedState->landingLatDeg;
 				m_landingLonDeg = preloadedState->landingLonDeg;
 				m_party = std::move(preloadedState->party);
+				colonistRules = std::move(preloadedState->colonistRules);
 
 				LOG_INFO(Game, "Pre-loaded state: %zu chunks, %zu processed", m_chunkManager->loadedChunkCount(), m_processedChunks.size());
 			} else {
@@ -184,6 +194,14 @@ namespace {
 					);
 					owner->scenes().switchTo(world_sim::scenes::Splash.name);
 				}
+				// Broken colonist rules go to the splash too, handed over for it to show; this is their only load on this path.
+				ecs::ColonistRulesLoad rulesLoad = ecs::loadColonistRules("assets/config");
+				if (!rulesLoad.errors.empty()) {
+					LOG_ERROR(Game, "GameScene - the colonist rules failed (%zu error(s)); back to the splash", rulesLoad.errors.size());
+					world_sim::failColonistRules(std::move(rulesLoad.errors));
+					owner->scenes().switchTo(world_sim::scenes::Splash.name);
+				}
+				colonistRules = std::move(rulesLoad.rules);
 				m_renderer = std::make_unique<worldview::ChunkRenderer>(kPixelsPerMeter, world_sim::groundTiles());
 
 				m_entityRenderer = std::make_unique<worldview::EntityRenderer>(kPixelsPerMeter);
@@ -303,13 +321,19 @@ namespace {
 							m_placementSystem->cancel();
 						}
 						if (structure == "foundation") {
-							m_drawingSystem->activateFoundationTool();
+							m_drawingSystem->pickFoundationTool(m_drawingSystem->lastFoundationTool());
 						} else if (structure == "wall") {
 							m_drawingSystem->activateWallTool();
 						} else if (structure == "door") {
 							m_drawingSystem->activateOpeningTool("Door");
 						} else if (structure == "window") {
 							m_drawingSystem->activateOpeningTool("Window");
+						}
+					},
+				.onFoundationToolSelected =
+					[this](world_sim::FoundationTool tool) {
+						if (m_drawingSystem) {
+							m_drawingSystem->pickFoundationTool(tool);
 						}
 					},
 				.onConstructionMaterialSelected =
@@ -363,10 +387,9 @@ namespace {
 				.validColor = ui().getTheme().get(world_sim::tokens::color::statusOk),
 				.invalidColor = ui().getTheme().get(world_sim::tokens::color::statusCrit),
 				.callbacks = {
-					.onToolActive =
-						[this](bool /*active*/) {
-							// Visibility is driven by the per-frame status push in update().
-						},
+					// The config strip's visibility follows the per-frame status push in update(); a tool turning
+					// on or off also drops the wall double-click record, so a click made under one tool never pairs with one under another.
+					.onToolActive = [this](bool /*active*/) { wallDoubleClick.forget(); },
 					.onToast = [this](
 								   const std::string& title, const std::string& message
 							   ) { gameUI->pushNotification(title, message, ui::ToastSeverity::Warning); }
@@ -679,11 +702,45 @@ namespace {
 			gameUI->showCatalogue(assets::RecipeRegistry::Get(), assets::ConstructionRegistry::Get(), m_drawingSystem->activeMaterial());
 		}
 
-		// What salal's ui didn't take: Escape, the world's hotkeys, a release for the drawing tool, placement or
-		// selection, and the scroll that zooms. The HUD takes no focus, so a key the ui took is a dialog's. The
-		// tools' previews follow the pointer in update().
+		// The pointer, in the window's logical px, on the world, on the ui, or outside the window.
+		world_sim::PointerTarget pointerTargetOf(glm::vec2 windowPointer) {
+			int logicalW = 0;
+			int logicalH = 0;
+			Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
+			return world_sim::pointerTarget(windowPointer, logicalW, logicalH, ui().getScale(), [this](glm::vec2 uiPoint) {
+				return ui().hitTest(uiPoint).valid();
+			});
+		}
+
+		// A left release on the world, for the drawing tool on: a click, or the second click of a wall
+		// double-click, which places nothing and ends the chain.
+		void deliverClick(const foundation::InputEvent& event, int logicalWidth, int logicalHeight) {
+			const auto& snapping = assets::ConstructionRegistry::Get().snapping();
+			const world_sim::ReleaseAction action = wallDoubleClick.release(
+				{.timeSeconds = event.time, .position = event.position},
+				*m_drawingSystem->activeTool(),
+				{.seconds = snapping.doubleClickSeconds, .pixels = snapping.doubleClickDistancePx}
+			);
+			if (action == world_sim::ReleaseAction::EndChain) {
+				m_drawingSystem->finishChain();
+				return;
+			}
+			m_drawingSystem->handleClick(
+				event.position.x,
+				event.position.y,
+				logicalWidth,
+				logicalHeight,
+				(event.mods & foundation::ModAlt) != 0,
+				(event.mods & foundation::ModControl) != 0
+			);
+		}
+
+		// What salal's ui didn't take: Escape, the world's hotkeys, a press or release for the drawing tool, a
+		// release for placement or selection, and the scroll that zooms. The HUD takes no focus, so a key the ui
+		// took is a dialog's. The tools' previews follow the pointer in update().
 		bool handleEvent(const foundation::InputEvent& event) override {
 			using Type = foundation::InputEvent::Type;
+			windowPresence.observe(event.type);
 			if (event.type == Type::KeyDown && !event.repeat) {
 				if (event.key == foundation::Key::Escape) {
 					// The ui closes a dialog its focus is in; the dossier, opened from the world, has none. So
@@ -693,6 +750,7 @@ namespace {
 						return true;
 					}
 					if (m_drawingSystem->isActive()) {
+						wallDoubleClick.forget();
 						m_drawingSystem->cancel();
 					} else if (m_placementSystem->isActive()) {
 						m_placementSystem->cancel();
@@ -710,28 +768,41 @@ namespace {
 				}
 				return true;
 			}
-			if (event.type != Type::PointerUp) {
-				return false;
-			}
-
 			int logicalW = 0;
 			int logicalH = 0;
 			Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
 
-			// The drawing tool takes clicks before placement and selection while it's active.
-			if (m_drawingSystem->isActive()) {
-				if (event.mouseButton == foundation::MouseButton::Right) {
+			if (event.type != Type::PointerDown && event.type != Type::PointerUp) {
+				return false;
+			}
+			// The drawing tool takes presses and releases before placement and selection while it's active.
+			const bool						freeform = (event.mods & foundation::ModAlt) != 0;
+			const world_sim::PointerTarget target = pointerTargetOf(event.position);
+			switch (world_sim::drawingPointerAction(
+				event.type == Type::PointerDown ? world_sim::PointerInput::Press : world_sim::PointerInput::Release,
+				event.mouseButton,
+				target,
+				world_sim::pointerWithTool(target, windowPresence.pointerInWindow, windowPresence.windowFocused, backgroundLaunch),
+				m_drawingSystem->activeTool(),
+				m_drawingSystem->hasPendingPress()
+			)) {
+				case world_sim::PointerAction::DeliverPress:
+					return m_drawingSystem->handlePress(event.position.x, event.position.y, logicalW, logicalH, freeform);
+				case world_sim::PointerAction::DeliverClick:
+					deliverClick(event, logicalW, logicalH);
+					return true;
+				case world_sim::PointerAction::CancelPress:
+					m_drawingSystem->cancelPress();
+					return true;
+				case world_sim::PointerAction::CancelTool:
 					// Foundation: cancel the shape. Wall: end (commit) the chain.
+					wallDoubleClick.forget();
 					m_drawingSystem->cancel();
 					return true;
-				}
-				if (event.mouseButton == foundation::MouseButton::Left) {
-					const bool freeform = (event.mods & foundation::ModAlt) != 0;
-					const bool ctrl = (event.mods & foundation::ModControl) != 0;
-					m_drawingSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH, freeform, ctrl);
-					return true;
-				}
-				return false;
+				case world_sim::PointerAction::Ignore:
+					return false;
+				case world_sim::PointerAction::PassOn:
+					break;
 			}
 
 			if (m_placementSystem->isActive()) {
@@ -773,6 +844,8 @@ namespace {
 		}
 
 		void update(const app::FrameContext& frame) override {
+			// The frame's snapshot is the window system's word at frame end; events moved the flag within the frame, and none are dispatched while paused.
+			windowPresence.syncPointer(frame.input.pointerInWindow);
 			const auto dt = static_cast<float>(frame.dt);
 			// The camera's held keys are polled whatever the ui took, so a modal dialog holds them off the world.
 			const bool worldKeys = !modalDialogOpen();
@@ -780,16 +853,42 @@ namespace {
 				return worldKeys && theme::key(frame.input, key).down;
 			};
 
+			// A Rectangle drag whose release the interface took, or that ended without the window's focus, never
+			// reached handleEvent.
+			const world_sim::PointerTarget pointer = pointerTargetOf(frame.input.pointer);
+			const bool withTool =
+				world_sim::pointerWithTool(pointer, windowPresence.pointerInWindow, windowPresence.windowFocused, backgroundLaunch);
+			if (!frame.input.mouse[static_cast<std::size_t>(foundation::MouseButton::Left)].down &&
+				world_sim::drawingPointerAction(
+					world_sim::PointerInput::LeftButtonUpThisFrame,
+					foundation::MouseButton::Left,
+					pointer,
+					withTool,
+					m_drawingSystem->activeTool(),
+					m_drawingSystem->hasPendingPress()
+				) == world_sim::PointerAction::CancelPress) {
+				m_drawingSystem->cancelPress();
+			}
+
+			// The drawing tool pauses while the pointer is not with it, outside the window or with the window in the
+			// background, and resumes at the pointer on its next move.
+			if (pointerWasWithTool && !withTool) {
+				wallDoubleClick.forget();
+				m_drawingSystem->pause();
+			}
+			pointerWasWithTool = withTool;
+
 			// The drawing tool's and placement's previews follow the pointer every frame, so they track the world
-			// moving under a still cursor, but not while the pointer is over the ui. The pointer is in the window's
-			// logical px, which the world takes, and the ui's hit test in its own.
-			if (frame.input.pointerInWindow && !ui().hitTest(frame.input.pointer / ui().getScale()).valid()) {
+			// moving under a still cursor, but not while the pointer is over the ui.
+			if (windowPresence.pointerInWindow && pointer == world_sim::PointerTarget::World) {
 				int logicalW = 0;
 				int logicalH = 0;
 				Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
 				const glm::vec2 at = frame.input.pointer;
 				if (m_drawingSystem->isActive()) {
-					m_drawingSystem->handleMouseMove(at.x, at.y, logicalW, logicalH, (frame.input.mods & foundation::ModAlt) != 0);
+					if (withTool) {
+						m_drawingSystem->handleMouseMove(at.x, at.y, logicalW, logicalH, (frame.input.mods & foundation::ModAlt) != 0);
+					}
 				} else if (m_placementSystem->isActive()) {
 					m_placementSystem->handleMouseMove(at.x, at.y, logicalW, logicalH);
 				}
@@ -1069,6 +1168,7 @@ namespace {
 			m_asyncProcessor.reset();
 			gameUI.reset();
 			ecsWorld.reset();
+			colonistRules = {};
 			m_placementExecutor.reset();
 			m_chunkManager.reset();
 			m_camera.reset();
@@ -1094,12 +1194,14 @@ namespace {
 					if (!m_drawingSystem->isActive()) {
 						return false;
 					}
+					wallDoubleClick.forget();
 					m_drawingSystem->removeLastPoint();
 					return true;
 				case foundation::Key::Enter: // finishes a wall chain; the foundation tool closes on its origin instead
 					if (!m_drawingSystem->isActive()) {
 						return false;
 					}
+					wallDoubleClick.forget();
 					m_drawingSystem->finishChain();
 					return true;
 				case foundation::Key::B: // build mode, never while the drawing tool owns world input
@@ -1195,6 +1297,8 @@ namespace {
 			auto& assetRegistry = assets::AssetRegistry::Get();
 			auto& recipeRegistry = assets::RecipeRegistry::Get();
 			ecsWorld->registerSystem<ecs::TimeSystem>();									// Priority 10 - runs first
+			ecsWorld->registerSystem<ecs::ThoughtSystem>(*colonistRules.thoughtTypes, systemSeeds.thought); // Priority 11 - ends mood effects
+			ecsWorld->registerSystem<ecs::MoodSystem>(assets::MoodConfig::Get());			// Priority 12 - mood follows needs and thoughts
 			ecsWorld->registerSystem<ecs::VisionSystem>();									// Priority 45
 			ecsWorld->registerSystem<ecs::PlayerVisibilitySystem>();							// Priority 46
 			ecsWorld->registerSystem<ecs::NeedsDecaySystem>();								// Priority 50
@@ -1210,7 +1314,7 @@ namespace {
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
 			ecsWorld->registerSystem<ecs::CollisionSystem>();			// Priority 250 - positional separation after physics
 			ecsWorld->registerSystem<ecs::WallCollisionSystem>();		// Priority 260 - wall safety-net after agent separation
-			ecsWorld->registerSystem<ecs::StaticRectCollisionSystem>(); // Priority 270 - flora-rect safety-net after wall collision
+			ecsWorld->registerSystem<ecs::PlacedObstacleCollisionSystem>(); // Priority 270 - placed-obstacle safety-net after wall collision
 			ecsWorld->registerSystem<ecs::ActionSystem>(systemSeeds.action); // Priority 350
 			ecsWorld->registerSystem<world_sim::DeferredEditsSystem>([this] { drainDeferredEdits(); }); // Priority 800
 			ecsWorld->registerSystem<worldview::DynamicEntityRenderSystem>(); // Priority 900
@@ -1234,10 +1338,10 @@ namespace {
 			navSystem.setChunkManager(m_chunkManager.get());
 			navSystem.setPlacementData(m_placementExecutor.get(), &m_processedChunks);
 
-			// Tier-3 flora-rect safety net gathers placed rects locally each frame.
-			auto& staticRectCollisionSystem = ecsWorld->getSystem<ecs::StaticRectCollisionSystem>();
-			staticRectCollisionSystem.setPlacementData(m_placementExecutor.get());
-			staticRectCollisionSystem.setDetailSource(&navSystem);
+			// Tier-3 placed-obstacle safety net gathers placed colliders locally each frame.
+			auto& placedObstacleCollisionSystem = ecsWorld->getSystem<ecs::PlacedObstacleCollisionSystem>();
+			placedObstacleCollisionSystem.setPlacementData(m_placementExecutor.get());
+			placedObstacleCollisionSystem.setDetailSource(&navSystem);
 
 			// Wire up AIDecisionSystem with chunk manager for toilet location queries
 			auto& aiDecisionSystem = ecsWorld->getSystem<ecs::AIDecisionSystem>();
@@ -1505,6 +1609,7 @@ namespace {
 			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{"Colonist", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 			ecsWorld->addComponent<ecs::Colonist>(entity, ecs::Colonist{newName});
 			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());
+			ecsWorld->getSystem<ecs::MoodSystem>().startMood(entity);
 
 			// Roll static attributes (0-20), seeded per-entity so colonists vary
 			// deterministically. Only Strength is consumed today: it sets hand-carry
@@ -2133,6 +2238,9 @@ namespace {
 		// Crew assembled in PartySelect, forwarded through GameWorldState.
 		// Empty -> single default colonist.
 		std::vector<world_sim::PartyMember>				   m_party;
+		// The thought types ThoughtSystem creates from, and the vocabulary their conditions are written in.
+		// Declared before ecsWorld, so the systems that read them are destroyed first.
+		ecs::ColonistRules								   colonistRules;
 		std::unique_ptr<worldview::ChunkRenderer>		   m_renderer;
 		std::unique_ptr<worldview::EntityRenderer>		   m_entityRenderer;
 		std::unique_ptr<worldview::VisibilityCoverRenderer> m_visibilityCover;
@@ -2164,6 +2272,15 @@ namespace {
 
 		// The App this scene is on, from onEnter
 		app::App* owner = nullptr;
+
+		// Whether the drawing tools follow the pointer (world_sim::pointerWithTool): the window as
+		// handleEvent's events tell it (the one source, for events and for update()), whether this is a
+		// --background launch, and last frame's answer, so the tool is paused once.
+		world_sim::WindowPresence windowPresence;
+		bool					  backgroundLaunch = false;
+		bool					  pointerWasWithTool = false;
+
+		world_sim::WallDoubleClick wallDoubleClick;
 
 		// The camera control's last request, until update applies it, and the persistent pan
 		// direction it set (held-key style)

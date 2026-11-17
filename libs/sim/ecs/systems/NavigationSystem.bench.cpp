@@ -26,6 +26,7 @@
 #include "NavigationSystem.h"
 
 #include "AIDecisionSystem.h"
+#include "ShippedPriorityConfig.test.h"
 #include "MovementSystem.h"
 #include "PhysicsSystem.h"
 #include "PlacedNothing.test.h"
@@ -797,6 +798,10 @@ namespace {
 	// 20 colonists, the real AI and movement, each walking a move order 80 m east with placed obstacles
 	// streaming in ahead of them. Counts the path requests each tick: the replans. range(0): gap.
 	void BM_ReplanWalk(benchmark::State& state) {
+		if (!ecs::loadShippedPriorityConfig()) {
+			state.SkipWithError("priority-tuning.xml did not load");
+			return;
+		}
 		for (auto _ : state) {
 			Rig					   rig(state.range(0));
 			ecs::AIDecisionSystem& ai = rig.world.registerSystem<ecs::AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234U);
@@ -914,6 +919,10 @@ namespace {
 	// requests it makes; nav runs between decisions so routes are answered.
 	void BM_NeedDecision(benchmark::State& state) {
 		const int sources = static_cast<int>(state.range(0));
+		if (!ecs::loadShippedPriorityConfig()) {
+			state.SkipWithError("priority-tuning.xml did not load");
+			return;
+		}
 		for (auto _ : state) {
 			Rig					   rig(0);
 			ecs::AIDecisionSystem& ai = rig.world.registerSystem<ecs::AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234U);

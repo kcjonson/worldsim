@@ -3,7 +3,6 @@
 #include <ecs/components/Action.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Mood.h>
-#include <ecs/components/Needs.h>
 #include <ecs/components/PlayerControlled.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/Transform.h>
@@ -61,14 +60,7 @@ namespace world_sim::adapters {
 		std::vector<ColonistData> result;
 
 		// Query all colonist entities
-		for (auto [entity, colonist] : world.view<ecs::Colonist>()) {
-			float mood = 100.0F; // Default to full mood
-
-			// Compute mood from needs if available
-			if (auto* needs = world.getComponent<ecs::NeedsComponent>(entity)) {
-				mood = ecs::computeMood(*needs);
-			}
-
+		for (auto [entity, colonist, mood] : world.view<ecs::Colonist, ecs::Mood>()) {
 			Foundation::Vec2 position{0.0F, 0.0F};
 			if (const auto* pos = world.getComponent<ecs::Position>(entity)) {
 				position = {pos->value.x, pos->value.y};
@@ -78,7 +70,7 @@ namespace world_sim::adapters {
 			result.push_back({
 				.id = entity,
 				.name = colonist.name,
-				.mood = mood,
+				.mood = mood.value,
 				.position = position,
 				.activity = std::move(activity.label),
 				.activityProgress = activity.progress,

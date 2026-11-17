@@ -14,10 +14,15 @@ add_library(assets
     assets/TreeTraits.cpp
     assets/ConstructionRegistry.cpp
     assets/AssetBatcher.cpp
+    assets/ConditionConfig.cpp
+    assets/ConfigFiles.cpp
     assets/ConfigValidator.cpp
+    assets/MemoryConfig.cpp
+    assets/MoodConfig.cpp
     assets/PriorityConfig.cpp
     assets/RecipeRegistry.cpp
     assets/TaskChainRegistry.cpp
+    assets/ThoughtConfig.cpp
     assets/WorkTypeRegistry.cpp
     assets/WorkConfig.cpp
     assets/lua/LuaEngine.cpp

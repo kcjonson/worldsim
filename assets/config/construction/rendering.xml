@@ -68,36 +68,38 @@
 
   <!-- Drawing-tool preview chrome (construction-specific; validity green/red comes from the UI theme). -->
   <Preview>
-    <guideColor>#B3D9FF66</guideColor>               <!-- angle-snap guide line -->
-    <originHaloColor>#B3D9FF99</originHaloColor>      <!-- origin-close halo when it can't yet close -->
+    <guideColor>#5FB3C8FF</guideColor>               <!-- guide lines, right-angle markers, crossing dots; common-length marks are not drawn yet -->
+    <originHaloColor>#B3D9FF99</originHaloColor>      <!-- the dotted close-radius ring round the first point; it gives way to the halo once the click will close -->
     <snapVertexColor>#FFD94DE6</snapVertexColor>     <!-- vertex/endpoint snap ring (amber) -->
     <snapEdgeColor>#66D9FFE6</snapEdgeColor>         <!-- edge/T-junction snap ring (cyan) -->
     <fillPreviewAlpha>0.15</fillPreviewAlpha>        <!-- in-progress polygon fill tint -->
     <bandPreviewAlpha>0.2</bandPreviewAlpha>         <!-- wall-band preview tint -->
     <lineWidth>2.0</lineWidth>                        <!-- committed edges / rubber-band / centerline -->
-    <guideWidth>1.0</guideWidth>
+    <guideWidth>1.5</guideWidth>
     <vertexRadiusPx>4.0</vertexRadiusPx>
     <invalidVertexRadiusPx>7.0</invalidVertexRadiusPx>
     <originHaloMinRadiusPx>8.0</originHaloMinRadiusPx>
 
-    <!-- Redesigned guide look (not drawn yet). Solid is geometry; dotted and part transparent
-         is alignment. guideLineStyle: solid, dashed, or dotted. guideColorMode: one (guideColor)
-         or bySource. The colors below carry no alpha of their own; guideOpacity and markerOpacity
-         apply. guideColor and guideWidth above are still the old solid guide's values; the
-         redesigned look wants #5FB3C8 and 1.5 for them. -->
+    <!-- Guide look. Solid is geometry; dotted and part transparent is alignment; small solid
+         markers state a fact. guideLineStyle: solid, dashed, or dotted. guideColorMode: one
+         (guideColor) or bySource. Guide colors carry an alpha of FF: guideOpacity sets the
+         alignment lines' opacity and markerOpacity the markers'. Labels draw at full opacity on
+         a dark plate, and the dotted close-radius ring takes its alpha from originHaloColor.
+         Sizes are screen pixels and never scale with zoom; only the labels (guideLabelPx, the
+         segment and size labels, and their plates) follow the interface size. -->
     <guideLineStyle>dotted</guideLineStyle>
     <guideDashPx>1.0</guideDashPx>
     <guideGapPx>4.5</guideGapPx>
     <guideOpacity>0.6</guideOpacity>              <!-- alignment lines -->
-    <markerOpacity>0.9</markerOpacity>            <!-- right angle, crossing dot, ticks, labels -->
+    <markerOpacity>0.9</markerOpacity>            <!-- right-angle marker, crossing dot, close halo -->
     <guideColorMode>one</guideColorMode>
     <guideColorShape>#8CC4FFFF</guideColorShape>
     <guideColorNearby>#FFAD5CFF</guideColorNearby>
     <guideColorWorld>#7FE0A6FF</guideColorWorld>
-    <guideColorLength>#F29AD8FF</guideColorLength>
+    <guideColorLength>#F29AD8FF</guideColorLength>   <!-- not drawn yet: a matched length -->
     <guideDistanceDecimals>2</guideDistanceDecimals>
     <guideLabelPx>11.0</guideLabelPx>
-    <angleReadoutDecimals>1</angleReadoutDecimals>
+    <angleReadoutDecimals>1</angleReadoutDecimals>      <!-- not drawn yet: the angle readout -->
     <rightAngleMarkerPx>8.0</rightAngleMarkerPx>
     <guideCrossingDotPx>3.0</guideCrossingDotPx>  <!-- radius -->
     <cursorRadiusPx>6.0</cursorRadiusPx>          <!-- the snapped-point dot's radius -->

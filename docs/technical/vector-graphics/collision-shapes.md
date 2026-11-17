@@ -27,15 +27,14 @@ struct CollisionShape {
 ```
 
 Rect or polygon, nothing else. A **Rect** is the default (a trunk-base rect for
-trees); a **Polygon** is the rare complex case. There is no Circle and no
+trees); a **Polygon**, convex or concave, follows an outline a box can't (a boulder's rim). There is no Circle and no
 compound shape; an asset never carries more than one collider.
 
 The rect is authored axis-aligned in local meters (`offsetMeters` center +
 `halfExtentsMeters`). It is **not** a world-space AABB: entities rotate, so at
 runtime the 4 local corners (`rectCornersLocal()`) are transformed by the
 entity's scale, rotation, and position into a world-space **oriented quad**
-(OBB). `rectCornersLocal()` is the single source of the corner set. There is no
-world-AABB fast path.
+(OBB), padded as below. There is no world-AABB fast path.
 
 ## Authoring (three homes, by asset type)
 
@@ -74,7 +73,8 @@ world-AABB fast path.
    scaleFactor` with `scaleFactor = worldHeight / svgHeight` over the loaded
    path-vertex bbox, the same conversion the template mesh and the motion pivots
    go through. SVG metadata wins over XML for simple assets. First consumer:
-   `assets/world/misc/BigRock` (a tree-sized boulder you can't walk through).
+   `assets/world/misc/BigRock` (a tree-sized boulder you can't walk through), whose
+   collider is a polygon on its rim path's eleven points, the outline seen from above.
 
 ## One pivot per def
 
@@ -98,29 +98,95 @@ footprint in the same frame, turned by the entity's rotation (`anchorLocalY`).
 `PlacedObstacle.ColliderCornerLandsOnTheDrawnCorner` pins the collider to the drawing for
 both asset types, and `InstanceTransform.BakedStaticsEmitIt` pins the bake to the transform.
 
-## Consumers (the collider feeds two systems at the same clearance)
+## Consumers (one outline, two systems)
 
-- **Navigation.** `NavInputBuilder` (`libs/sim/nav/`) carves the rect into the
-  viewport-anchored simulation-area navmesh as an obstacle ring, inflated outward
-  by the placed-obstacle pad `kPlacedObstaclePadMm` (0.05 m) so a routed agent clears the
-  trunk. Polygon and rect both transform through the same scale/rotate/translate.
-  Agents route around the obstacle.
+Both consumers read one ring: `nav::placedObstacleOutline` (`libs/sim/nav/NavInputBuilder.h`),
+the placed entity's collider in world mm. It takes the shape for the entity's age class from
+the registry and puts it in the world through `assets::InstanceTransform`, one rule for every
+shape:
 
-- **Tier-3 static collision.** `StaticRectCollisionSystem` (priority 270) pushes
-  an agent **center** out of the rect inflated by the **same** 0.05 m pad (a
-  point-vs-oriented-OBB push-out), so an agent shoved into a trunk by other
-  forces can't walk through it. It does not use the agent's disc radius as the
-  clearance. It finds rects by entity position within
-  `nav::placedObstacleReachMeters` (the farthest any def's collider stands from
-  its pivot at the def's largest placement scale, `AssetRegistry::maxCollisionReachMeters`,
-  recorded as each def's shapes are set, plus the pad's corner at the largest
-  colliding scale), the same reach nav grows its limits' obstacle query by, so a
-  collider far from its pivot is never missed.
+- a **Rect** is its four corners, each pushed out by the placed-obstacle pad
+  `kPlacedObstaclePadMm` (0.05 m) in the local frame *before* scale, so the world boundary is
+  `|scale| * (halfExtent + 0.05)` and a routed agent clears the trunk rather than grazing it;
+- a **Polygon** is its points as authored, convex or concave, with no pad and no
+  simplification: the polygon is drawn on the solid footprint, and an author who wants
+  clearance draws it in.
 
-The two boundaries coincide on purpose: the pad is applied in local space
-*before* the entity scale in both (`scale * (halfExtent + pad)`), so nav and
-Tier-3 agree at every entity scale and never fight (no boundary jitter). Keep any
-future Tier-3 clearance `<=` the nav pad.
+The ring is normalised counter-clockwise (a negative scale mirrors it) and dropped if it has
+no area. The consumers:
+
+- **Navigation.** `NavInputBuilder` (`libs/sim/nav/`) carves the ring into the nav mesh as a
+  blocked obstacle (`placedObstacleRing`). Agents route their centre around it.
+
+- **Tier-3 placed-obstacle collision.** `PlacedObstacleCollisionSystem` (priority 270,
+  `libs/sim/ecs/systems/`) pushes an agent **center** out of that same ring, so an agent
+  shoved into an obstacle by other forces can't walk through it. It does not use the agent's
+  disc radius as the clearance: the nav mesh routes the centre, so a disc push would stand
+  the agent off the path the mesh gives it and the two would fight. It finds obstacles by
+  entity position within `nav::placedObstacleReachMeters` (the farthest any def's collider
+  stands from its pivot at the def's largest placement scale,
+  `AssetRegistry::maxCollisionReachMeters`, recorded as each def's shapes are admitted, plus
+  the pad's corner at the largest colliding scale, taken for every shape so it covers both),
+  the same reach nav grows its limits' obstacle query by, so a collider far from its pivot is
+  never missed.
+
+Because collision reads the ring nav cuts, mm for mm, the two boundaries coincide at every
+position, rotation, and scale and never fight (no boundary jitter);
+`PlacedObstacleCollisionSystemTest.CollisionOutlineIsTheNavRing` pins it.
+
+### The push-out
+
+`resolveCenterAgainstOutline` is the usual circle-versus-polygon contact with a circle of
+radius zero: if the centre is strictly inside the ring (`geometry::pointInPolygon`, exact, on
+the centre rounded to mm), move it to the nearest point on the ring's boundary
+(`geometry::closestOnSegment` over every edge, from the unrounded centre, so the coordinate
+along the edge stays where it was). That nearest point is the push along the outward normal by
+the penetration depth. On a slanted edge it is off the mm lattice, and rounded back to the mm
+next tick it would be inside about half the time: pushed again, and taken by the nav mesh for
+standing in the obstacle, which hands the mover to the forward snap. So the landing steps
+outward until the stored position, rounded as nav rounds it, is strictly outside. Outward is
+judged from the unrounded centre: one a hair outside a slanted edge whose rounding is inside is
+moved further out, never in. A step is a quarter mm, or the float spacing at that position when
+that is coarser, so near the landing site a push ends within about a millimetre of the boundary
+(rounding moves a point at most 0.71 mm, plus one step). Positions are float metres from the
+landing site with no rebasing, so far out the spacing sets the scale: 4 mm 50 km out, half a
+metre 6,000 km out, where every millimetre rule here (this one, the mm rounding of nav rings)
+works on that coarse lattice. If no step within 16 lands outside (heading out of a corner at
+the bottom of a slot a few mm wide, every rounded step can land on a wall), the nearest point
+of a 9 by 9 grid round the boundary point that rounds outside is taken instead, which on a
+concave shape need not be in the same pocket the centre was pushed toward; failing that
+the push is skipped rather than leaving the mover inside, and the forward snap has it. Box2D (`b2CollidePolygonAndCircle`) finds the same
+contact by separating axes, which needs a convex polygon, so Box2D, Godot
+(`CollisionPolygon2D`), and Unity (`PolygonCollider2D`) split a concave collider into convex
+pieces. A push out of one piece can land inside its neighbour, across the diagonal the split
+made, so for a zero-radius centre the nearest point on the whole outline is the exact answer
+and needs no split: next to a notch it goes into the notch, and beside a reflex corner it is
+the corner. Nothing is normalised, so no input gives a NaN; a centre exactly on an edge is not
+inside and is left alone; edges equally near (a centre at a box's middle) go to the first in
+ring order. A rect is this four-point case: the nearest face.
+
+Each agent gathers the obstacles whose positions are within the query reach, skips any whose
+own collider can't reach it (a squared-distance test against the shape's reach plus the pad's
+corner at the instance's scale, plus 2 mm for the mm rounding near the landing site, which is
+not enough far out where float spacing is coarser (WOR-972), before any ring is built; the reach is
+`CollisionShape::reachMeters`, the one the registry records too), sorts the rest by position, and resolves them in
+that order, twice, so an agent wedged between two settles against both.
+
+### What a polygon must be
+
+The nav mesh takes a simple closed ring: no crossing edges, no repeated closing point, area,
+and no zero-length edge (it asserts on one). It normalises winding itself. The registry checks
+each polygon as it admits a def's shapes (`AssetRegistry::admitCollisionShapes`) at the def's
+smallest placement scale: at least 3 points, simple, with area, and consecutive points and
+non-adjacent edges at least 3 mm apart, measured on the points rounded to the mm. Rounding
+moves a point at most 0.71 mm, so that is over 1.58 mm as authored, and a rotated instance,
+each point rounded to the mm again, keeps its points distinct and its edges uncrossed. One that
+fails is one error per def in the validation report (field `collision`, naming every failing
+age class when a def has several), is logged, and is dropped rather than handed to the mesh.
+In the game an error stops startup: the loading scene fails on any validation error and goes
+back to the splash, so a bad polygon never reaches a running world. The drop matters only
+where loading carries on past errors: the asset manager, asset-cli, and tests. A clockwise
+polygon is fine and is stored counter-clockwise.
 
 ## Tooling
 

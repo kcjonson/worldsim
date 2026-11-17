@@ -151,6 +151,12 @@ public:
         return it == systemMap.end() ? nullptr : static_cast<T*>(it->second);
     }
 
+    template <typename T>
+    [[nodiscard]] const T* tryGetSystem() const {
+        auto it = systemMap.find(std::type_index(typeid(T)));
+        return it == systemMap.end() ? nullptr : static_cast<const T*>(it->second);
+    }
+
     /// Update all systems in priority order
     void update(float deltaTime) {
         sortSystemsIfNeeded();

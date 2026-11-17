@@ -703,10 +703,10 @@ limit. The snap and collision with placed obstacles are one rule.
 3. Standing in one with no route, or with a route still stale from an earlier tick (no new route came): it steps to the nearest spot within 4 m, ring by ring, where its disc is clear, the straight step crosses no wall or water, and the spot is not behind its heading (the leg it steers along, else its velocity).
 4. Nowhere to go: it stays, its route goes stale, and the snap holds it (`snapHolds`).
 
-`StaticRectCollisionSystem` pushes a mover out of a placed obstacle that is in the mesh, except
+`PlacedObstacleCollisionSystem` pushes a mover out of a placed obstacle that is in the mesh, except
 one the snap holds: for collision the snap's movers are the snap's, and collision only keeps a
-mover that is outside from entering. Its push goes along the axis of least penetration, usually
-backward, so leaving a held mover alone is what keeps it from undoing the snap. A held mover
+mover that is outside from entering. Its push goes to the nearest point on the obstacle's outline,
+usually backward, so leaving a held mover alone is what keeps it from undoing the snap. A held mover
 walking on, or the next route starting where it stands, takes it out ahead.
 
 The result is a function of the mover's position, its remaining waypoints and heading, and the
@@ -782,7 +782,7 @@ Beyond the mesh are two things, and neither is this epic:
 | `kLimitSides` | 16 | `libs/geometry/nav/LimitPolygon.h` | The sides of a limit polygon. Fewer sides overshoot R farther at the corners; more add vertices to the meshed edge |
 | `kSightBufferMeters` | 16 m | `NavigationSystem.h` | Added to sight to make R. It covers the step to a mover's next limit, a step more for that limit to land in once urgent, and his travel during one landing; a `static_assert` holds it above twice the step. The polygon's overshoot only adds margin |
 | `kLandingSightMeters` | 150 m | `NavigationSystem.h` | The radius of ground the landing meshes round the drop |
-| `footprintReachMeters()` | from the loaded defs: 1.15 m with the shipped ones (BigRock, `PlacedObstacle.ShippedReach`) | `NavigationSystem.h` | The farthest a placed obstacle's padded footprint reaches from its entity's position (`nav::placedObstacleReachMeters`): a limit's obstacle query box is grown by it |
+| `footprintReachMeters()` | from the loaded defs: 1.26 m with the shipped ones (BigRock, `PlacedObstacle.ShippedReach`) | `NavigationSystem.h` | The farthest a placed obstacle's padded footprint reaches from its entity's position (`nav::placedObstacleReachMeters`): a limit's obstacle query box is grown by it |
 | `kLimitsPerTick` | 1 | `NavigationSystem.h` | Limits that are not urgent whose ground goes in a tick |
 | `kDetailRingsPerTick` | 32 | `NavigationSystem.h` | Placed obstacles of limits that are not urgent a tick |
 | `kDetailRemovalsPerTick` | 128 | `NavigationSystem.h` | Placed obstacles taken out a tick |

@@ -2,7 +2,7 @@
 
 // What the scene layout tests share: the App on salal's headless platform with the game's own ui scale, minimum
 // window and fonts, and no settings file, since a player's saved interface size would move every canvas; the
-// asset library and construction config the game loads, read from the source tree; and the top scene linted at
+// asset library, construction config and mood config the game loads, read from the source tree; and the top scene linted at
 // the window sizes and interface sizes the players have, through salal's HeadlessLayout.
 
 #include "BaseShader.h"
@@ -12,6 +12,7 @@
 #include <assets/AssetBootstrap.h>
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
+#include <assets/MoodConfig.h>
 #include <assets/RecipeRegistry.h>
 #include <input/InputTypes.h>
 #include <platform/HeadlessPlatform.h>
@@ -80,9 +81,11 @@ namespace world_sim::testing {
 			ASSERT_NE(assets::AssetRegistry::Get().getDefinition("CraftingSpot"), nullptr);
 			ASSERT_GT(assets::RecipeRegistry::Get().size(), 0U);
 			ASSERT_TRUE(assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string()));
+			ASSERT_TRUE(assets::MoodConfig::Get().loadFromFile((projectRoot() / "assets" / "config" / "colonists" / "mood.xml").string()));
 		}
 
 		static void TearDownTestSuite() {
+			assets::MoodConfig::Get().clear();
 			assets::ConstructionRegistry::Get().clear();
 			assets::RecipeRegistry::Get().clear();
 			assets::AssetRegistry::Get().clear();

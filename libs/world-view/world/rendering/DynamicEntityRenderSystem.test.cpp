@@ -7,6 +7,7 @@
 #include <ecs/components/Memory.h>
 #include <ecs/components/Transform.h>
 #include <ecs/systems/PlayerVisibilitySystem.h>
+#include <ecs/systems/TimeSystem.h>
 #include <ecs/systems/VisionSystem.h>
 
 #include <gtest/gtest.h>
@@ -20,6 +21,7 @@ namespace {
 	class MoverRenderTest : public ::testing::Test {
 	  protected:
 		void SetUp() override {
+			world.registerSystem<ecs::TimeSystem>();
 			colonist = addEntity({0.0F, 0.0F}, "Test_RenderedColonist");
 			world.addComponent<ecs::Colonist>(colonist, ecs::Colonist{"Tester"});
 			ecs::Memory memory;
