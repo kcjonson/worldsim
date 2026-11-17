@@ -74,5 +74,17 @@ jobs:
     - name: Build
       run: cmake --build build -j$(nproc)
 
+    # The build regenerates fonts/*-SDF.json in the source tree from the TTFs. A tool change committed
+    # without the regenerated JSON ships a pair that disagrees with the (gitignored) PNG. The PNGs are
+    # ignored, so only the tracked JSON is compared. --ignore-cr-at-eol: the tool writes native line
+    # endings, which on a CRLF checkout is not a content change.
+    - name: Check font atlas JSON is committed
+      run: |
+        if ! git diff --exit-code --ignore-cr-at-eol --stat -- fonts/; then
+          git diff --ignore-cr-at-eol -- fonts/ | head -n 40
+          echo "::error::fonts/*-SDF.json does not match what the font-atlas target generates. Run 'cmake --build build --target font-atlas' and commit the regenerated fonts/*-SDF.json."
+          exit 1
+        fi
+
     - name: sccache stats
       run: sccache --show-stats
