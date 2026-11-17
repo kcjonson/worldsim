@@ -168,6 +168,8 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 32. Pick Rectangle, click a first corner, and move the pointer out of the window: the pending fill, outline, and size label go and the corner's dot stays; come back and click the opposite corner: the rectangle is added.
 
+Run steps 33 to 49 after the pass / fail check below: they go to the main menu and start a fresh game, which loses the foundation that check reads.
+
 33. Press Esc: the Rectangle tool closes.
 
 34. Open the top bar's Menu and pick Main Menu: the main menu shows.
@@ -188,7 +190,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 42. Look at the first edge: it shows a faint band with a double tick at its middle.
 
-43. Move the pointer straight up from the second point, about 2.5 m: the arc and degrees give way to the right-angle marker, and the `=` and the marks go.
+43. Move the pointer straight up from the second point, about 2.5 m: the arc and degrees give way to the right-angle marker; the `=` and the marks show only while the segment matches another edge, so at about 2.5 m there are none.
 
 44. Move the pointer back to the 45 degree position and hold Alt: no arc, degrees, marker, `=`, or marks.
 
@@ -200,7 +202,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 48. Pick Back, then Quick Start: a new game shows.
 
-49. Repeat steps 38 to 41: no arc, no degrees, no `=`, and no marks.
+49. Repeat steps 38 to 42: no arc, no degrees, no `=`, and no marks.
 
 ---
 
