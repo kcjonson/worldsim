@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### November 2026
 
+- [2026-11-17 - Drawing tools redesign: Rectangle, Freeform, helpers, and the key guide (WOR-741)](./entries/2026-11-17-drawing-tools-redesign.md)
 - [2026-11-16 - Interface scaling: the ui scales from the window, with an Interface size setting](./entries/2026-11-16-interface-scaling.md)
 - [2026-11-13 - Player visibility: unseen ground black, seen ground tinted](./entries/2026-11-13-player-visibility.md)
 - [2026-11-13 - Task claims close-out (WOR-820, WOR-811, WOR-634)](./entries/2026-11-13-task-claims-close-out.md)
@@ -152,8 +153,8 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 114 (entry files; the Major Milestones list below highlights notable ones)
-- **Latest Entry:** 2026-11-16
+- **Total Entries:** 121 (entry files; the Major Milestones list below highlights notable ones)
+- **Latest Entry:** 2026-11-17
 - **Major Milestones:**
   - Cryosphere: physical sea ice, snow, and glaciers (PDD + perfect-plastic) with a two-pass ice-climate feedback (2026-06-20)
   - Navigation P4: belief-filtered navigation, colonists path against what they've personally seen, not the live truth (2026-06-19)

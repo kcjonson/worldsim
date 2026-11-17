@@ -804,9 +804,6 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 		// Loose pile: every sprite of the shared pile layout at its instance
 		// transform, unioned into one outline around the heap as drawn. A drained (destroyed)
 		// pile -> invalid outline.
-		if (!ecsWorld->isAlive(pileSel->entityId)) {
-			return outline;
-		}
 		const auto* pos = ecsWorld->getComponent<ecs::Position>(pileSel->entityId);
 		const auto* appearance = ecsWorld->getComponent<ecs::Appearance>(pileSel->entityId);
 		const auto* stack = ecsWorld->getComponent<ecs::ResourceStack>(pileSel->entityId);

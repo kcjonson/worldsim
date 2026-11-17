@@ -525,6 +525,8 @@ We implement our own ECS system in `libs/sim/ecs/`. Key concepts:
 using EntityID = uint64_t;
 ```
 
+An id is an index (low 32 bits) and a generation (high 32 bits). Destroying an entity removes its components and bumps its index's generation, and a later entity may reuse the index. Component lookups take the whole id: a stale id (one whose entity was destroyed, or `kInvalidEntity`) has no components, so `getComponent` returns null, `hasComponent` is false, `removeComponent` does nothing and no view yields it. Holding an id across frames is therefore safe without an `isAlive` check before a lookup; `isAlive` is for asking whether the entity exists at all. `addComponent` takes only a live id: a destroyed one asserts, and in a release build logs an error and attaches nothing. Always carry the full id an entity was created with; never rebuild one from an index.
+
 **Components** are pure data (POD structs):
 ```cpp
 struct Position {

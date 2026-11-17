@@ -404,8 +404,8 @@ namespace world_sim {
 		threats.count = 0;
 		memoryData.categories.push_back(threats);
 
-		// Movers seen, the latest sighting first, where each was then. A mover no longer alive (its index
-		// possibly reused by another) is named by its kind: the pool would answer for the new holder.
+		// Movers seen, the latest sighting first, where each was then. A mover no longer alive is named by
+		// its kind.
 		std::vector<const ecs::KnownDynamicEntity*> sightings;
 		sightings.reserve(memory->knownDynamicEntities.size());
 		for (const auto& [entityId, knownEntity] : memory->knownDynamicEntities) {
@@ -418,7 +418,7 @@ namespace world_sim {
 		others.name = "Others Seen";
 		others.count = sightings.size();
 		for (const ecs::KnownDynamicEntity* sighting : sightings) {
-			const auto*	 colonist = world.isAlive(sighting->entityId) ? world.getComponent<ecs::Colonist>(sighting->entityId) : nullptr;
+			const auto*	 colonist = world.getComponent<ecs::Colonist>(sighting->entityId);
 			MemoryEntity memEntity;
 			memEntity.name = colonist != nullptr ? colonist->name : assetRegistry.getDefName(sighting->defNameId);
 			memEntity.x = sighting->lastKnownPosition.x;

@@ -44,6 +44,11 @@ The developer client is an external TypeScript/Vite web application that connect
   answers every tunable as vision's setter clamped it. Its Bodies button shows `what=sightBodies`,
   each colonist's sight bodies from vision's last pass: kind, diameter in millimetres, centre, a
   placed body's def name, and the build's shadow edges.
+  The Colonist section's thought entry gives the picked colonist a thought: its list is every loaded
+  thought type from `GET /api/state?what=thoughttypes` (`{types:[{name, label}]}`, read with Refresh),
+  and Give thought calls `thought?colonist=<id>&type=<name>`, the same verb the HTTP API documents. Its
+  attribute entry lists the picked colonist's attributes from `what=colonists` and calls
+  `attribute?colonist=<id>&attribute=<name>&value=<0 to 20>`. Both stay disabled until a colonist is picked.
   `DevToolsService.ts` wraps these;
   `DevToolsPanel.tsx` is the form. Still no web server of its own — the static `file://` page reaches
   the debug server because it sets CORS `*`. Dev builds only. See the

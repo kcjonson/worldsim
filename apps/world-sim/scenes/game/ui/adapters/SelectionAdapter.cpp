@@ -114,7 +114,7 @@ namespace world_sim {
 					}
 					return adaptFurniture(registry, sel);
 				} else if constexpr (std::is_same_v<T, ResourcePileSelection>) {
-					if (!world.isAlive(sel.entityId) || world.getComponent<ecs::ResourceStack>(sel.entityId) == nullptr) {
+					if (world.getComponent<ecs::ResourceStack>(sel.entityId) == nullptr) {
 						return std::nullopt;
 					}
 					return adaptResourcePile(world, registry, sel);
@@ -565,11 +565,9 @@ namespace world_sim {
 
 		// Build state + progress come from the ECS mirror's blueprint, exactly like a
 		// wall: a built opening has no blueprint progress; a blueprint shows phase, a
-		// 0-100 work bar, and the delivered/required materials summary. Guard the entity
-		// handle: getComponent indexes by entity index without a generation check, so a
-		// kInvalidEntity (0) or stale handle would alias entity 0's components.
-		const bool hasMirror = opening != nullptr && opening->entity != ecs::kInvalidEntity && world.isAlive(opening->entity);
-		const ecs::StructureBlueprint* blueprint = hasMirror ? world.getComponent<ecs::StructureBlueprint>(opening->entity) : nullptr;
+		// 0-100 work bar, and the delivered/required materials summary.
+		const ecs::StructureBlueprint* blueprint =
+			opening != nullptr ? world.getComponent<ecs::StructureBlueprint>(opening->entity) : nullptr;
 
 		// Progress (state, materials, work bar) only while building; a finished opening
 		// shows none of it (type, material, pathable already describe it). Same rule as
@@ -607,10 +605,8 @@ namespace world_sim {
 		// Enclosing-wall count from the Room ECS component on the record's mirror
 		// entity. The component carries the bounding segment ids (the record does
 		// not), so this is the one fact sourced from the component rather than the
-		// detection record. Guard the entity handle: a record whose entity has been
-		// destroyed shows no count rather than aliasing entity 0's components.
-		const ecs::Room* room =
-			(record.entity != ecs::kInvalidEntity && world.isAlive(record.entity)) ? world.getComponent<ecs::Room>(record.entity) : nullptr;
+		// detection record. A record whose entity has been destroyed shows no count.
+		const ecs::Room* room = world.getComponent<ecs::Room>(record.entity);
 		if (room != nullptr) {
 			content.slots.push_back(TextSlot{"Enclosing walls", std::to_string(room->boundingSegmentIds.size())});
 		}

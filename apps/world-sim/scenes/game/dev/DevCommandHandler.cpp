@@ -165,6 +165,7 @@ namespace world_sim {
 		view("time", &DevCommandHandler::serializeTime);
 		view("landing", &DevCommandHandler::serializeLanding);
 		view("summary", &DevCommandHandler::serializeSummary);
+		view("thoughttypes", &DevCommandHandler::serializeThoughtTypes);
 		registrations.push_back(server.stateProvider("visibility", [this] { return visibilityJson({}); }));
 		registrations.push_back(server.stateProvider("sightBodies", [this] { return sightBodiesView(); }));
 		registrations.push_back(server.stateProvider("sightTunables", [this] {
@@ -535,7 +536,7 @@ namespace world_sim {
 	DevRefusal DevCommandHandler::devAttribute(const app::DevRequest& cmd) {
 		const ecs::EntityID id = parseEntity(param(cmd, "colonist"));
 		auto*				attributes = m_ctx.world->getComponent<ecs::Attributes>(id);
-		if (!m_ctx.world->isAlive(id) || attributes == nullptr) {
+		if (attributes == nullptr) {
 			return refuse("attribute: no colonist #" + param(cmd, "colonist"));
 		}
 		const std::string name = param(cmd, "attribute");
@@ -1201,7 +1202,7 @@ namespace world_sim {
 		const ecs::ThoughtTypes& types = thoughtSystem.types();
 
 		const ecs::EntityID colonist = parseEntity(param(cmd, "colonist"));
-		if (!m_ctx.world->isAlive(colonist) || m_ctx.world->getComponent<ecs::Colonist>(colonist) == nullptr) {
+		if (m_ctx.world->getComponent<ecs::Colonist>(colonist) == nullptr) {
 			return reject("no colonist #" + param(cmd, "colonist"));
 		}
 		const std::optional<ecs::ThoughtEventTypeId> type = types.findType(param(cmd, "type"));
@@ -1634,6 +1635,16 @@ namespace world_sim {
 		}
 		out << "}";
 		return out.str();
+	}
+
+	void DevCommandHandler::serializeThoughtTypes(std::ostringstream& out) {
+		const ecs::ThoughtTypes& types = m_ctx.world->getSystem<ecs::ThoughtSystem>().types();
+		out << "{\"types\":[";
+		for (std::size_t index = 0; index < types.typeCount(); ++index) {
+			const ecs::ThoughtType& type = types.type(static_cast<ecs::ThoughtEventTypeId>(index));
+			out << (index > 0 ? "," : "") << "{\"name\":\"" << jsonEscape(type.name) << "\",\"label\":\"" << jsonEscape(type.label) << "\"}";
+		}
+		out << "]}";
 	}
 
 	void DevCommandHandler::serializeSummary(std::ostringstream& out) {

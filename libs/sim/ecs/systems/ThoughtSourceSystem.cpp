@@ -75,7 +75,7 @@ namespace ecs {
 		std::swap(heardScratch, heardEvents);
 		heardEvents.clear();
 		for (const HeardEvent& event : heardScratch) {
-			if (world->isAlive(event.colonist) && world->hasComponent<Colonist>(event.colonist)) {
+			if (world->hasComponent<Colonist>(event.colonist)) {
 				hear(event, now);
 			}
 		}
