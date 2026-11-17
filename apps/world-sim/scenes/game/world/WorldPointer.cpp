@@ -43,6 +43,10 @@ namespace world_sim {
 		}
 	}
 
+	void WindowPresence::syncPointer(bool snapshotPointerInWindow) {
+		pointerInWindow = snapshotPointerInWindow;
+	}
+
 	bool pointerWithTool(PointerTarget target, bool pointerInWindow, bool windowFocused, bool backgroundLaunch) {
 		return pointerInWindow && target != PointerTarget::OutsideWindow && (windowFocused || backgroundLaunch);
 	}

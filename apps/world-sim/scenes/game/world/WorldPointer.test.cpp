@@ -143,7 +143,6 @@ TEST(WorldPointer, AReleaseOffTheWorldOrAwayFromTheToolPlacesNothing) {
 	EXPECT_EQ(action(PointerInput::Press, MouseButton::Left, PointerTarget::World, false, ToolKind::FoundationRectangle), PointerAction::Ignore);
 }
 
-
 // With no drawing tool on, a release goes to placement or selection wherever the pointer is.
 TEST(WorldPointer, WithNoDrawingToolAReleaseAwayFromTheToolPassesOn) {
 	for (const PointerTarget target : {PointerTarget::World, PointerTarget::Interface, PointerTarget::OutsideWindow}) {
@@ -189,6 +188,23 @@ TEST(WorldPointer, AReleaseIsJudgedByTheEventsBeforeIt) {
 		releasesAfter(inWindow, {Event::PointerLeave, Event::PointerEnter, Event::PointerMove, Event::PointerDown, Event::PointerUp}), clicked
 	);
 	EXPECT_EQ(releasesAfter({}, {Event::PointerEnter, Event::PointerMove, Event::PointerDown, Event::PointerUp}), clicked);
+}
+
+// No event is dispatched while the app is paused, so an enter or a leave can be lost; the frame's
+// snapshot recovers it, and the events within the frame then move the flag from there.
+TEST(WorldPointer, AnEnterOrLeaveLostWhileEventsWereNotDeliveredIsRecoveredFromTheFrameSnapshot) {
+	world_sim::WindowPresence presence;
+	presence.syncPointer(true);
+	EXPECT_TRUE(presence.pointerInWindow);
+	presence.syncPointer(false);
+	EXPECT_FALSE(presence.pointerInWindow);
+
+	presence.syncPointer(true);
+	presence.observe(Event::PointerLeave);
+	EXPECT_FALSE(presence.pointerInWindow);
+	presence.syncPointer(false);
+	presence.observe(Event::PointerEnter);
+	EXPECT_TRUE(presence.pointerInWindow);
 }
 
 // The focus follows FocusLost and FocusGained, and a key, a character, or a button pressed proves
@@ -279,7 +295,7 @@ TEST(WorldPointer, AForgottenReleaseStartsNoPair) {
 
 // Only the wall tool has a double-click: under any other tool every release is a click, and one
 // between two wall releases breaks their pair.
-TEST(WorldPointer, OnlyTheWallToolsReleasesMakeADoubleClick) {
+TEST(WorldPointer, OnlyWallToolReleasesMakeADoubleClick) {
 	for (const ToolKind tool : {ToolKind::Foundation, ToolKind::FoundationRectangle, ToolKind::FoundationEdit, ToolKind::Opening}) {
 		world_sim::WallDoubleClick record;
 		EXPECT_EQ(record.release(releaseAt(2.0), tool, kLimits), world_sim::ReleaseAction::Click) << static_cast<int>(tool);

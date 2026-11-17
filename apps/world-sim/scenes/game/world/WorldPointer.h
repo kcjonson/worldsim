@@ -43,6 +43,10 @@ namespace world_sim {
 		bool windowFocused = true; // no event comes when the window opens
 
 		void observe(foundation::InputEvent::Type type);
+
+		/// Each frame starts from the frame's snapshot, which is the window system's word at the frame's
+		/// end; it recovers an enter or a leave that was never dispatched because the app was paused.
+		void syncPointer(bool snapshotPointerInWindow);
 	};
 
 	/// Whether the drawing tools follow the pointer: it is in the window (`pointerInWindow`, the

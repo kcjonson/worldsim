@@ -377,7 +377,8 @@ namespace {
 				.validColor = ui().getTheme().get(world_sim::tokens::color::statusOk),
 				.invalidColor = ui().getTheme().get(world_sim::tokens::color::statusCrit),
 				.callbacks = {
-					// The config strip's visibility follows the per-frame status push in update().
+					// The config strip's visibility follows the per-frame status push in update(); a tool turning
+					// on or off also drops the wall double-click record, so a click made under one tool never pairs with one under another.
 					.onToolActive = [this](bool /*active*/) { wallDoubleClick.forget(); },
 					.onToast = [this](
 								   const std::string& title, const std::string& message
@@ -833,6 +834,8 @@ namespace {
 		}
 
 		void update(const app::FrameContext& frame) override {
+			// The frame's snapshot is the window system's word at frame end; events moved the flag within the frame, and none are dispatched while paused.
+			windowPresence.syncPointer(frame.input.pointerInWindow);
 			const auto dt = static_cast<float>(frame.dt);
 			// The camera's held keys are polled whatever the ui took, so a modal dialog holds them off the world.
 			const bool worldKeys = !modalDialogOpen();
