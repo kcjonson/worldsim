@@ -85,9 +85,13 @@ namespace {
 	}
 
 	// The shipped construction config with one more opening type, "Shutter", that passes
-	// neither movement nor sight, in place of what the fixture loaded.
+	// neither movement nor sight: the config folder copied with the type added to its materials.
 	bool loadWithAShutter() {
-		std::ifstream real(std::filesystem::path(constructionConfigFolder()) / "materials.xml");
+		const std::filesystem::path shipped = constructionConfigFolder();
+		const std::filesystem::path folder =
+			std::filesystem::temp_directory_path() / ("vision-system-shutter-" + std::to_string(std::random_device{}()));
+		std::filesystem::copy(shipped, folder);
+		std::ifstream real(shipped / "materials.xml");
 		std::string	  materials((std::istreambuf_iterator<char>(real)), std::istreambuf_iterator<char>());
 		const std::size_t end = materials.find("</Opening>");
 		if (end == std::string::npos) {
@@ -102,12 +106,10 @@ namespace {
       <workUnits>40.0</workUnits>
     </Type>
   )");
-		const std::filesystem::path path =
-			std::filesystem::temp_directory_path() / ("vision-system-shutter-" + std::to_string(std::random_device{}()) + ".xml");
-		std::ofstream(path) << materials;
+		std::ofstream(folder / "materials.xml", std::ios::trunc) << materials;
 		ConstructionRegistry::Get().clear();
-		const bool loaded = ConstructionRegistry::Get().loadMaterials(path.string());
-		std::filesystem::remove(path);
+		const bool loaded = ConstructionRegistry::Get().load(folder.string());
+		std::filesystem::remove_all(folder);
 		return loaded && ConstructionRegistry::Get().getOpeningType("Shutter") != nullptr;
 	}
 
