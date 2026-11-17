@@ -17,7 +17,7 @@ How to see and drive a running app's ui from outside it: the ui tree, layout lin
 
 "After render" is the frame's post-render point and "before input" its pre-frame point; [Main Loop Timing](../main-loop-timing.md) places both. A request waits for the next frame to reach its point, so a screenshot shows a whole frame and input lands as real input does.
 
-The tree and lint walk the scene's ui roots. A scene that draws without ui components answers an empty tree, and its `"count":0` checks nothing. The asset-manager's tree rows don't report their laid-out positions, so its lint count isn't zero; read its top-bar entries instead.
+The tree and lint walk the scene's ui roots. A scene that draws without ui components answers an empty tree, and its `"count":0` checks nothing.
 
 ## Use
 
