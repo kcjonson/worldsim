@@ -256,8 +256,9 @@ namespace ecs {
 		// From outside the solid a back face is hidden but for its ends (GeometryIndex.h),
 		// which can touch the polygon where another wall's face meets it.
 		const bool backFacesHidden = m_geometry.backFacesHiddenFrom(centerMm, radiusMm);
+		// A wall's edges are listed together, so one already seen is the last one added.
 		for (const GeometryIndex::OccluderRecord& occluder : m_geometry.occluders()) {
-			if (std::ranges::find(segments, occluder.source) != segments.end() ||
+			if ((!segments.empty() && segments.back() == occluder.source) ||
 				!geometry::withinDistanceOfSegment(centerMm, occluder.seg.a, occluder.seg.b, radiusMm)) {
 				continue;
 			}

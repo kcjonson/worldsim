@@ -106,7 +106,8 @@ namespace ecs {
 		// makes it 1, so a never-built index (generation 0) is distinguishable.
 		[[nodiscard]] std::uint64_t generation() const { return m_generation; }
 
-		// Accessors for the V3 structure-as-observable pass.
+		// Accessors for the V3 structure-as-observable pass. Each source's occluders are
+		// listed together.
 		[[nodiscard]] const std::vector<OccluderRecord>& occluders() const { return m_occluders; }
 		[[nodiscard]] const std::vector<OpeningRecord>&	 builtOpenings() const { return m_openings; }
 

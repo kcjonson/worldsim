@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 #include <vector>
 
 namespace ecs {
@@ -69,7 +70,9 @@ namespace ecs {
 
 		// The built walls as the offsetter takes them, the spans their transparent
 		// openings leave open, and the id of each.
-		std::vector<geometry::WallSegment>			walls;
+		const std::unordered_map<cw::SegmentId, cw::OpeningGaps> openingsByWall = cw::openingGapsBySegment(world, {.builtOnly = true});
+		const cw::OpeningGaps									 noOpenings;
+		std::vector<geometry::WallSegment>						 walls;
 		std::vector<std::vector<geometry::WallGap>> sightGaps;
 		std::vector<cw::SegmentId>					wallIds;
 		for (const cw::WallSegment& segment : world.segments()) {
@@ -89,7 +92,8 @@ namespace ecs {
 				continue; // degenerate; a built zero-length wall should not exist
 			}
 
-			const cw::OpeningGaps			openings = cw::openingGaps(world, segment, {.builtOnly = true});
+			const auto						found	 = openingsByWall.find(segment.id);
+			const cw::OpeningGaps&			openings = found != openingsByWall.end() ? found->second : noOpenings;
 			std::vector<geometry::WallGap>	gaps;
 			for (std::size_t index = 0; index < openings.openings.size(); ++index) {
 				const cw::Opening*			  opening = world.getOpening(openings.openings[index]);
@@ -135,6 +139,8 @@ namespace ecs {
 				m_occluders.push_back({wallIds[graph[edge.index]], {edge.from, edge.to}});
 			}
 		}
+		// Each wall's edges together, so the structure pass is done with a wall at its first seen edge.
+		std::ranges::stable_sort(m_occluders, {}, &OccluderRecord::source);
 	}
 
 	void GeometryIndex::queryOccluders(geometry::Vec2i64 center, std::int64_t radiusMm,

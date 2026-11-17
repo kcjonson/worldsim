@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 namespace construction {
@@ -75,5 +76,9 @@ namespace construction {
 		std::vector<OpeningId>		   openings;
 	};
 	[[nodiscard]] OpeningGaps openingGaps(const ConstructionWorld& world, const WallSegment& segment, OpeningGapFilter filter);
+
+	/// openingGaps for every segment at once, one walk over the openings, by segment id. A
+	/// segment the filter leaves no opening on may be missing or hold none.
+	[[nodiscard]] std::unordered_map<SegmentId, OpeningGaps> openingGapsBySegment(const ConstructionWorld& world, OpeningGapFilter filter);
 
 } // namespace construction

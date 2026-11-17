@@ -10,6 +10,9 @@
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -343,6 +346,61 @@ TEST_F(GeometryIndexTest, WindowGapPassesSight) {
 	const std::vector<OccluderSegment> occluders = occludersOf(cw);
 	EXPECT_TRUE(sees(occluders, {2000, 3000}, {2000, -3000}));
 	EXPECT_FALSE(sees(occluders, {500, 3000}, {500, -3000}));
+}
+
+// A door and a window on one wall leave two gaps, three solid pieces between them.
+TEST_F(GeometryIndexTest, DoorAndWindowOnOneWallLeaveTwoGaps) {
+	ConstructionWorld cw;
+	SegmentId		  seg = buildWall(cw, {0, 0}, {6000, 0});
+	addBuiltOpening(cw, seg, 0.25F, "Door");
+	addBuiltOpening(cw, seg, 0.75F, "Window");
+	const std::vector<OccluderSegment> occluders = occludersOf(cw);
+	EXPECT_EQ(occluders.size(), 12u) << "three pieces, each two faces and two ends";
+	EXPECT_TRUE(sees(occluders, {1500, 3000}, {1500, -3000})) << "through the door";
+	EXPECT_TRUE(sees(occluders, {4500, 3000}, {4500, -3000})) << "through the window";
+	for (const std::int64_t solid : {500, 3000, 5500}) {
+		EXPECT_FALSE(sees(occluders, {solid, 3000}, {solid, -3000})) << "through the wall at x = " << solid;
+	}
+}
+
+// A built opening whose type does not pass sight leaves its wall whole.
+TEST_F(GeometryIndexTest, OpaqueOpeningLeavesTheWallSolid) {
+	const std::filesystem::path folder = constructionConfigFolder();
+	std::ifstream				real(folder / "materials.xml");
+	std::string					materials((std::istreambuf_iterator<char>(real)), std::istreambuf_iterator<char>());
+	const std::size_t			end = materials.find("</Opening>");
+	ASSERT_NE(end, std::string::npos);
+	materials.insert(end, R"(<Type name="Shutter">
+      <material>Wood</material>
+      <widthMeters>0.6</widthMeters>
+      <pathable>false</pathable>
+      <transparentToSight>false</transparentToSight>
+      <costItems>2.0</costItems>
+      <workUnits>40.0</workUnits>
+    </Type>
+  )");
+	const std::filesystem::path path =
+		std::filesystem::temp_directory_path() / ("geometry-index-opaque-opening-" + std::to_string(std::random_device{}()) + ".xml");
+	std::ofstream(path) << materials;
+	ConstructionRegistry& registry = ConstructionRegistry::Get();
+	registry.clear();
+	ASSERT_TRUE(registry.loadMaterials(path.string()));
+	std::filesystem::remove(path);
+	ASSERT_NE(registry.getOpeningType("Shutter"), nullptr);
+	ASSERT_FALSE(registry.getOpeningType("Shutter")->transparentToSight);
+
+	ConstructionWorld cw;
+	SegmentId		  seg = buildWall(cw, {0, 0}, {4000, 0});
+	addBuiltOpening(cw, seg, 0.5F, "Shutter");
+	GeometryIndex index;
+	index.setConstructionWorld(&cw);
+	index.rebuildIfStale();
+	EXPECT_EQ(index.occluderCount(), 4u);
+	ASSERT_EQ(index.builtOpenings().size(), 1u);
+	EXPECT_FALSE(index.builtOpenings().front().transparentToSight);
+	std::vector<OccluderSegment> occluders;
+	index.queryOccluders({2000, 0}, kFarSightMm, occluders);
+	EXPECT_FALSE(sees(occluders, {2000, 3000}, {2000, -3000}));
 }
 
 // --- Blueprint handling ------------------------------------------------------
