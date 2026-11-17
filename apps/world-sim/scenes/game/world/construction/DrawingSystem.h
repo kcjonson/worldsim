@@ -12,8 +12,8 @@
 //   Foundation: a CLOSED polygon. snap() / validatePoint / validateRing /
 //     commitFoundation. Origin-close commits.
 //   FoundationEdit: Add / Subtract on one existing foundation (Epic G3). The
-//     same closed-polygon flow; validateEditPoint per point, and the close runs
-//     applyFoundationEdit (validateFoundationEdit on the resulting outline).
+//     same closed-polygon flow; validateEditPoint per point, and the close applies
+//     the edit with the validateFoundationEdit result the move already holds.
 //   Wall:       a polyline chain on a single host foundation
 //     (building-construction Walls). snapWall() / validateWallPoint /
 //     validateWallSegment / commitSegment per consecutive pair. The chain ends
@@ -49,6 +49,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -216,8 +217,8 @@ namespace world_sim {
 
 		/// In-progress drawing feedback (preview polygon/chain, snap guides,
 		/// opening ghost). Called after the entity pass, alongside the placement
-		/// ghost, below UI.
-		void renderPreview(int viewportW, int viewportH);
+		/// ghost, below UI. Its text is sized in ui px, `uiScale` logical px each.
+		void renderPreview(int viewportWidth, int viewportHeight, float uiScale);
 
 	  private:
 		/// Draw the cached wall bands + junction polygons that intersect
@@ -238,21 +239,52 @@ namespace world_sim {
 
 		/// Render the in-progress wall chain: centerline, thickness band preview,
 		/// snap guides, and validity colorize. INTERIM.
-		void renderWallChainPreview(int viewportW, int viewportH);
-
-		/// The ring around a closeable shape's or chain's first point, bold and valid-colored
-		/// while the next click closes it (willClose_). INTERIM.
-		void renderOriginHalo(Foundation::Vec2 firstScreen, float scale, std::int32_t key) const;
+		void renderWallChainPreview(int viewportWidth, int viewportHeight, float uiScale);
 
 		/// Foundation Add / Subtract: the outline the edit would produce (merged or
 		/// remainder), colorized for validity, with the reason next to the cursor.
 		/// Drawn under the regular polygon preview. INTERIM.
-		void renderEditOutlinePreview(int viewportW, int viewportH);
+		void renderEditOutlinePreview(int viewportWidth, int viewportHeight, float uiScale);
 
 	  public:
+		/// A rejected edit's reason, drawn beside the cursor, where, and how large.
+		struct EditReason {
+			std::string		 text;
+			Foundation::Vec2 position;	// the text's top-left, screen pixels
+			float			 textScale; // the renderer's text scale
+			FeedbackBox		 box;		// the text and its shadow, screen pixels: the snap labels keep off it
+		};
+
+		/// The reason text renderEditOutlinePreview draws, while the outline the edit
+		/// would produce is invalid, sized and placed in ui px of `uiScale` logical px and
+		/// measured with `measure`.
+		[[nodiscard]] std::optional<EditReason>
+		editReason(int viewportWidth, int viewportHeight, float uiScale, const MeasureTextSize& measure) const;
+
+		/// The snap feedback's input for the current frame, its text measured with `measure`.
+		[[nodiscard]] DrawingFeedbackInput feedbackInput(
+			const assets::PreviewStyle& style, int viewportWidth, int viewportHeight, float uiScale, const MeasureTextSize& measure
+		) const;
+
 		// --- Status for the config strip ---
 
 		[[nodiscard]] DrawingStatus status() const;
+
+		/// What the preview shows this frame: whether the band and fill read valid, and
+		/// whether the close halo draws. While the next click closes, both come from
+		/// closeVerdict() as of the last move: a halo means the checks the click runs before
+		/// committing pass (the commit itself can still be refused, with a toast, and the
+		/// picture can lag a world change by a frame). Otherwise both come from the point the
+		/// click would place. The snapped-point marker's red dot, and an Add / Subtract's
+		/// outline color and reason text, follow the same verdict.
+		struct PreviewVerdict {
+			bool		valid = true;
+			bool		closeHalo = false;
+			bool		markerInvalid = false;	 // the snapped-point marker's dot takes the invalid color
+			bool		editOutlineValid = true; // the outline an Add / Subtract would produce
+			std::string editReason;				 // why that edit is refused, drawn beside the pointer; empty when it isn't
+		};
+		[[nodiscard]] PreviewVerdict previewVerdict() const;
 
 		// --- Topology access for consumers (selection, ConstructionSystem) ---
 
@@ -324,12 +356,16 @@ namespace world_sim {
 		/// verbs' permissive fallback and treat the point as placeable.
 		[[nodiscard]] bool pointOnBuildableGround(Foundation::Vec2 p) const;
 
-		/// True when the WHOLE footprint of `pts` may be placed. A FOUNDATION validates its polygon
-		/// area against footprintBuildable. A WALL validates its chain centerline against
-		/// isLineBuildableNow (no wall footprint-clearing yet, so it still needs clear ground). The SAME
-		/// shared predicates the /api/dev verbs use. On failure toasts "Can't build here" and returns
-		/// false so the caller commits NOTHING -- no partial structure.
-		[[nodiscard]] bool requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what);
+		/// True when the WHOLE `footprint` may be placed (placementRefusal is empty). On
+		/// failure toasts "Can't build here" and returns false so the caller commits NOTHING --
+		/// no partial structure.
+		[[nodiscard]] bool requirePlaceable(const std::vector<Foundation::Vec2>& footprint, const char* what);
+
+		/// Why the WHOLE `footprint` may not be placed, or empty when it may. A FOUNDATION
+		/// validates its polygon area against footprintBuildable. A WALL validates its chain
+		/// centerline against isLineBuildableNow (no wall footprint-clearing yet, so it still needs
+		/// clear ground). The SAME shared predicates the /api/dev verbs use.
+		[[nodiscard]] std::string placementRefusal(const std::vector<Foundation::Vec2>& footprint) const;
 
 		/// Player visibility (player-visibility.md 3.7): the tools build only on ground the colonists have
 		/// seen, and each of these is true when player visibility is off. A point; a closed shape's whole
@@ -384,14 +420,46 @@ namespace world_sim {
 		/// to be evaluated and returns false.
 		bool reuseSnapMemo(const SnapMemoKey& key);
 
-		/// The snap feedback's input for the current frame.
-		[[nodiscard]] DrawingFeedbackInput
-		feedbackInput(const assets::PreviewStyle& style, int viewportW, int viewportH) const;
-
-		/// Origin-close catch radius in world meters, floored so it never shrinks below
-		/// the on-screen origin halo: what you can click to close matches what you see,
-		/// at any zoom. Drives both the snap() override and (x scale) the halo radius.
+		/// Origin-close catch radius in world meters, floored to `originHaloMinRadiusPx` on
+		/// screen so it stays reachable at every zoom. Drives the snap() override and the
+		/// dotted close ring, drawn at this radius so it shows the catch exactly; the close
+		/// halo (DrawingFeedback) has its own floor.
 		[[nodiscard]] float effectiveOriginCloseRadiusMeters() const;
+
+		/// Whether a close of the placed points passes, or why not: a toast's title and its
+		/// reason. Foundation and Add / Subtract: the checks the closing click runs before it
+		/// commits (commitShape, commitFoundationEdit), refused here exactly when the click
+		/// refuses. Wall: the chain with the closing point added, accepted only when its ground
+		/// passes and every segment passes the check commitWallChain gives it, so a refusal
+		/// means not all of the chain would be built; the wall click does not run this, and
+		/// still builds the segments that pass. The preview, the marker, the status strip, and
+		/// the edit's outline and reason read it while the next click closes. Reads the move
+		/// that just ran (its snap, and for an edit editPreview_), so call it after one.
+		struct CloseVerdict {
+			bool		accepted = true;
+			std::string title;
+			std::string reason;
+		};
+		[[nodiscard]] CloseVerdict closeVerdict();
+		[[nodiscard]] static CloseVerdict refusedClose(std::string title, std::string reason);
+
+		/// The part of closeVerdict() that reads only what the snap memo's key covers (the
+		/// points, the snapped point, the world's version, the wall's preset and host), kept
+		/// with the snap while the memo holds. A foundation's ring validation; the wall
+		/// chain's segment checks. Edits have none: theirs reads the target's blueprint.
+		[[nodiscard]] const CloseVerdict& closedShapeCheck();
+
+		/// The wall chain's segments, committed into `into` the way commitWallChain commits
+		/// them: each consecutive pair through validateWallSegment, then commitSegment,
+		/// skipping a pair that fails either. commitWallChain runs it on the construction
+		/// world; the close verdict runs it on a copy, to learn whether all of it would build.
+		struct WallChainCommit {
+			int			committed = 0;	 // segments created, a split counting each part
+			int			rejected = 0;	 // pairs skipped
+			std::string firstRefusal; // why the first skipped pair was, empty when none was
+		};
+		[[nodiscard]] WallChainCommit
+		commitWallSegments(construction::ConstructionWorld& into, const std::vector<Foundation::Vec2>& chain, const assets::ThicknessPreset& preset) const;
 
 		/// Radius (world meters) around the start vertex within which a click that would
 		/// otherwise be rejected closes the shape instead (the "snap not block" rescue).
@@ -404,13 +472,26 @@ namespace world_sim {
 
 		// --- Foundation Add / Subtract tool ---
 
-		/// Validity of the closed shape the tool would commit: validateRing for a new
-		/// foundation, validateFoundationEdit (the resulting outline) for an edit.
-		[[nodiscard]] construction::ValidationResult validateClosed(const std::vector<Foundation::Vec2>& ring) const;
+		/// validateFoundationEdit of the drawn polygon `drawn` on the active target.
+		[[nodiscard]] construction::FoundationEditResult validateDrawnEdit(const std::vector<Foundation::Vec2>& drawn) const;
 
 		/// Refresh editPreview_ from the drawn polygon the next click would produce
-		/// (placed points, plus the cursor unless the click closes).
-		void refreshEditPreview();
+		/// (placed points, plus the cursor unless the click closes). `closedEdit`, when the
+		/// move already validated the placed points alone, is that result, taken while closing.
+		void refreshEditPreview(std::optional<construction::FoundationEditResult> closedEdit);
+
+		/// Apply an edit already validated as `result` (validateFoundationEdit of `drawn`),
+		/// refusing it when editRefusal does. applyFoundationEdit validates, then lands here.
+		FoundationEditOutcome applyValidatedFoundationEdit(
+			construction::FoundationId			 target,
+			const std::vector<Foundation::Vec2>& drawn,
+			construction::FoundationEditMode	 mode,
+			const construction::FoundationEditResult& result
+		);
+
+		/// Why the edit `result` (validateFoundationEdit's) would be refused before it
+		/// commits, or empty: its validation, then for an Add the ground it builds on.
+		[[nodiscard]] std::string editRefusal(const construction::FoundationEditResult& result, construction::FoundationEditMode mode) const;
 
 		/// Apply the edit for the closed polygon points_, toast the outcome, and clear
 		/// the points (the tool stays on).
@@ -434,8 +515,8 @@ namespace world_sim {
 		[[nodiscard]] const assets::ThicknessPreset* activePreset() const;
 
 		/// Commit every consecutive pair of the in-progress chain as a wall segment
-		/// (validateWallSegment then commitSegment) and spawn a blueprint entity per
-		/// segment. Clears the chain. Host is wallHost_.
+		/// (commitWallSegments) and spawn a blueprint entity per segment. Clears the chain.
+		/// Host is wallHost_.
 		void commitWallChain();
 
 		/// Ctrl+click edge fill: instantly commit a wall blueprint along the entire
@@ -510,14 +591,18 @@ namespace world_sim {
 		std::vector<Foundation::Vec2>	snapMemoPoints_;
 		construction::SnapResult		snapMemoResult_;
 		construction::ValidationResult	snapMemoValidation_;
+		std::optional<CloseVerdict>		snapMemoClosedShape_; // closedShapeCheck(), filled when first needed
 		std::uint64_t					snapEvaluationCount_ = 0;
 
 		// Foundation tool: true when the next click will CLOSE the shape rather than
 		// place a vertex -- either the explicit origin-close (lastSnap_ Origin) or the
 		// near-start "snap not block" rescue (a would-be-rejected vertex near the start
-		// whose closed ring is valid). Recomputed every move; drives the closing-halo
-		// feedback and suppresses the invalid highlight.
+		// whose closed ring is valid). Recomputed every move; suppresses the invalid highlight.
 		bool willClose_ = false;
+
+		// While willClose_: closeVerdict() as of the last move. Drives previewVerdict (the
+		// color and the close halo), the marker, the status strip, and the edit's reason.
+		CloseVerdict pendingClose_;
 
 		// True when the snapped cursor is at a NON-PLACEABLE point for the active tool (foundation:
 		// water, a ford, or off-mesh; wall: those or a placed obstacle; or no active mesh). Recomputed

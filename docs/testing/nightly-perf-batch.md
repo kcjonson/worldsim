@@ -57,7 +57,7 @@ Everything relevant is already together on the tip, so the first run covers the 
 
 ## R4. The run
 
-A dedicated worktree, `perf-nightly`, with its own build directory. RelWithDebInfo, at the game's own window size on this machine (3072x1728; there is no flag for it).
+A dedicated worktree, `perf-nightly`, with its own build directory. RelWithDebInfo, in the capture conditions of [README.md](./README.md#capture-conditions): `--no-settings`, so the window is the game's default size on this machine (3072x1728) and the interface 100%, whatever the player last saved.
 
 The batch never bakes a planet. Each build copy gets a hard link to the main checkout's `planets/quickstart.wsplanet`, the planet the game is played on. A planet baked today from `main` is a different world, with the landing river drawn dry (WOR-701), and timings from it compare with nothing. A SHA that can't load the shared planet, after a worldgen format change, fails its captures and the report says so.
 

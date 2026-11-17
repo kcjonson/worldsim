@@ -3,6 +3,8 @@
 #include "scenes/game/ui/adapters/ColonistAdapter.h"
 
 #include <assets/ConstructionRegistry.h>
+#include <assets/MoodConfig.h>
+#include <cassert>
 #include <core/Vec2i64.h>
 #include <ecs/InventoryMass.h>
 #include <ecs/components/Colonist.h>
@@ -25,23 +27,6 @@ namespace world_sim {
 	namespace {
 		// Use ecs::kNeedLabels from Needs.h - single source of truth
 		constexpr size_t kNeedCount = ecs::kNeedLabels.size();
-
-		// Convert mood value (0-100) to descriptive label
-		std::string moodToLabel(float moodValue) {
-			if (moodValue >= 80.0F) {
-				return "Happy";
-			}
-			if (moodValue >= 60.0F) {
-				return "Content";
-			}
-			if (moodValue >= 40.0F) {
-				return "Neutral";
-			}
-			if (moodValue >= 20.0F) {
-				return "Stressed";
-			}
-			return "Miserable";
-		}
 
 		// Format task description
 		std::string formatTask(const ecs::Task& task) {
@@ -154,12 +139,10 @@ namespace world_sim {
 		data.name = colonist ? colonist->name : "Colonist";
 		content.title = data.name;
 
-		if (auto* needs = world.getComponent<ecs::NeedsComponent>(entityId)) {
-			data.moodValue = ecs::computeMood(*needs);
-		} else {
-			data.moodValue = 50.0F;
-		}
-		data.moodLabel = moodToLabel(data.moodValue);
+		const auto* mood = world.getComponent<ecs::Mood>(entityId);
+		assert(mood != nullptr && "Every colonist is given a Mood at spawn");
+		data.moodValue = mood->value;
+		data.moodLabel = assets::MoodConfig::Get().bandFor(data.moodValue).name;
 
 		data.controlled = world.getComponent<ecs::PlayerControlled>(entityId) != nullptr;
 

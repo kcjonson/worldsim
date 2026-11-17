@@ -3,6 +3,8 @@ add_library(sim
     ecs/systems/MovementSystem.cpp
     ecs/systems/PhysicsSystem.cpp
     ecs/systems/NeedsDecaySystem.cpp
+    ecs/systems/ThoughtSystem.cpp
+    ecs/systems/MoodSystem.cpp
     ecs/systems/VisionSystem.cpp
     ecs/systems/AIDecisionSystem.cpp
     ecs/systems/ActionSystem.cpp
@@ -21,7 +23,7 @@ add_library(sim
     ecs/systems/RoomDetectionSystem.cpp
     ecs/systems/CollisionSystem.cpp
     ecs/systems/WallCollisionSystem.cpp
-    ecs/systems/StaticRectCollisionSystem.cpp
+    ecs/systems/PlacedObstacleCollisionSystem.cpp
     ecs/systems/NavigationSystem.cpp
     ecs/systems/PlayerVisibilitySystem.cpp
     ecs/spatial/AgentSpatialHash.cpp
@@ -31,6 +33,8 @@ add_library(sim
     ecs/WorldSource.cpp
     ecs/components/DecisionTrace.cpp
     ecs/components/MemoryQueries.cpp
+    ecs/components/Mood.cpp
+    ecs/components/Thoughts.cpp
     ecs/components/ToiletLocationFinder.cpp
     construction/BuilderSpots.cpp
     construction/ConstructionWorld.cpp
@@ -102,6 +106,8 @@ if(BUILD_TESTING)
                 GTest::gtest
                 GTest::gtest_main
         )
+        # Where the shipped asset defs are, whatever the working directory.
+        target_compile_definitions(sim-tests PRIVATE SIM_TEST_REPO_DIR="${CMAKE_SOURCE_DIR}")
         if(MSVC)
             target_compile_options(sim-tests PRIVATE /Od)
         else()

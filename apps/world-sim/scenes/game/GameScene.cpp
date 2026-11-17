@@ -53,6 +53,7 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/DetailLevels.h>
+#include <assets/MoodConfig.h>
 #include <assets/RecipeRegistry.h>
 #include <assets/placement/AsyncChunkProcessor.h>
 #include <assets/placement/CanopyCover.h>
@@ -96,14 +97,16 @@
 #include <ecs/systems/CollisionSystem.h>
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/CraftingGoalSystem.h>
+#include <ecs/systems/MoodSystem.h>
 #include <ecs/systems/MovementSystem.h>
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/NeedsDecaySystem.h>
 #include <ecs/systems/PhysicsSystem.h>
 #include <ecs/systems/PlayerVisibilitySystem.h>
 #include <ecs/systems/RoomDetectionSystem.h>
-#include <ecs/systems/StaticRectCollisionSystem.h>
+#include <ecs/systems/PlacedObstacleCollisionSystem.h>
 #include <ecs/systems/StorageGoalSystem.h>
+#include <ecs/systems/ThoughtSystem.h>
 #include <ecs/systems/TimeSystem.h>
 #include <ecs/systems/VisionSystem.h>
 #include <ecs/systems/WallCollisionSystem.h>
@@ -316,7 +319,7 @@ namespace {
 					[this](const std::string& material) {
 						if (m_drawingSystem) {
 							m_drawingSystem->setActiveMaterial(material);
-							refreshThicknessPresets(material);
+							gameUI->showWallThicknesses(assets::ConstructionRegistry::Get(), material);
 						}
 					},
 				.onConstructionThicknessSelected =
@@ -333,21 +336,6 @@ namespace {
 						}
 					}
 			});
-
-			// Populate Production dropdown with placeable stations (recipes where station="none")
-			{
-				auto& recipeRegistry = assets::RecipeRegistry::Get();
-				auto  innateRecipes = recipeRegistry.getInnateRecipes();
-
-				std::vector<std::pair<std::string, std::string>> productionItems;
-				for (const auto* recipe : innateRecipes) {
-					// Only include recipes that don't require a station (directly placeable)
-					if (recipe->isStationless() && !recipe->outputs.empty()) {
-						productionItems.emplace_back(recipe->outputs[0].defName, recipe->label);
-					}
-				}
-				gameUI->setProductionItems(productionItems);
-			}
 
 			// Initialize ECS World
 			initializeECS();
@@ -691,18 +679,7 @@ namespace {
 				.chunks = m_chunkManager.get(),
 			});
 
-			// Populate the config strip's material cards from construction config.
-			{
-				std::vector<std::pair<std::string, float>> materials;
-				for (const auto& [name, def] : assets::ConstructionRegistry::Get().getAllMaterials()) {
-					materials.emplace_back(name, def.costRatePerSquareMeter);
-				}
-				gameUI->setConstructionMaterials(materials);
-			}
-
-			// Populate the config strip's wall thickness-preset cards for the active
-			// material (Wood). Refreshed in onConstructionMaterialSelected too.
-			refreshThicknessPresets(m_drawingSystem->activeMaterial());
+			gameUI->showCatalogue(assets::RecipeRegistry::Get(), assets::ConstructionRegistry::Get(), m_drawingSystem->activeMaterial());
 		}
 
 		// What salal's ui didn't take: Escape, the world's hotkeys, a release for the drawing tool, placement or
@@ -807,8 +784,9 @@ namespace {
 			};
 
 			// The drawing tool's and placement's previews follow the pointer every frame, so they track the world
-			// moving under a still cursor, but not while the pointer is over the ui.
-			if (frame.input.pointerInWindow && !ui().hitTest(frame.input.pointer).valid()) {
+			// moving under a still cursor, but not while the pointer is over the ui. The pointer is in the window's
+			// logical px, which the world takes, and the ui's hit test in its own.
+			if (frame.input.pointerInWindow && !ui().hitTest(frame.input.pointer / ui().getScale()).valid()) {
 				int logicalW = 0;
 				int logicalH = 0;
 				Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
@@ -1000,7 +978,7 @@ namespace {
 			// rides above the entities like the placement ghost; committed
 			// construction already went out in the ground sub-layer before the
 			// entity pass.
-			m_drawingSystem->renderPreview(w, h);
+			m_drawingSystem->renderPreview(w, h, ui().getScale());
 
 			// Terrain polygon debug overlay (waterline rings + clipped navRings,
 			// per chunk), sitting just above the tile ground. No-op unless on (G).
@@ -1008,7 +986,7 @@ namespace {
 
 			// Rooms overlay (tint/outline/label) above committed construction and
 			// entities. No-op unless toggled on (R).
-			m_roomOverlay->render(w, h);
+			m_roomOverlay->render(w, h, ui().getScale());
 
 			// Nav debug overlay (navmesh wireframe + agent routes) above wall bands.
 			// No-op unless toggled on (N).
@@ -1220,6 +1198,8 @@ namespace {
 			auto& assetRegistry = assets::AssetRegistry::Get();
 			auto& recipeRegistry = assets::RecipeRegistry::Get();
 			ecsWorld->registerSystem<ecs::TimeSystem>();									// Priority 10 - runs first
+			ecsWorld->registerSystem<ecs::ThoughtSystem>();									// Priority 11 - ends timed mood effects
+			ecsWorld->registerSystem<ecs::MoodSystem>(assets::MoodConfig::Get());			// Priority 12 - mood follows needs and thoughts
 			ecsWorld->registerSystem<ecs::VisionSystem>();									// Priority 45
 			ecsWorld->registerSystem<ecs::PlayerVisibilitySystem>();							// Priority 46
 			ecsWorld->registerSystem<ecs::NeedsDecaySystem>();								// Priority 50
@@ -1235,7 +1215,7 @@ namespace {
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
 			ecsWorld->registerSystem<ecs::CollisionSystem>();			// Priority 250 - positional separation after physics
 			ecsWorld->registerSystem<ecs::WallCollisionSystem>();		// Priority 260 - wall safety-net after agent separation
-			ecsWorld->registerSystem<ecs::StaticRectCollisionSystem>(); // Priority 270 - flora-rect safety-net after wall collision
+			ecsWorld->registerSystem<ecs::PlacedObstacleCollisionSystem>(); // Priority 270 - placed-obstacle safety-net after wall collision
 			ecsWorld->registerSystem<ecs::ActionSystem>(systemSeeds.action); // Priority 350
 			ecsWorld->registerSystem<world_sim::DeferredEditsSystem>([this] { drainDeferredEdits(); }); // Priority 800
 			ecsWorld->registerSystem<worldview::DynamicEntityRenderSystem>(); // Priority 900
@@ -1259,10 +1239,10 @@ namespace {
 			navSystem.setChunkManager(m_chunkManager.get());
 			navSystem.setPlacementData(m_placementExecutor.get(), &m_processedChunks);
 
-			// Tier-3 flora-rect safety net gathers placed rects locally each frame.
-			auto& staticRectCollisionSystem = ecsWorld->getSystem<ecs::StaticRectCollisionSystem>();
-			staticRectCollisionSystem.setPlacementData(m_placementExecutor.get());
-			staticRectCollisionSystem.setDetailSource(&navSystem);
+			// Tier-3 placed-obstacle safety net gathers placed colliders locally each frame.
+			auto& placedObstacleCollisionSystem = ecsWorld->getSystem<ecs::PlacedObstacleCollisionSystem>();
+			placedObstacleCollisionSystem.setPlacementData(m_placementExecutor.get());
+			placedObstacleCollisionSystem.setDetailSource(&navSystem);
 
 			// Wire up AIDecisionSystem with chunk manager for toilet location queries
 			auto& aiDecisionSystem = ecsWorld->getSystem<ecs::AIDecisionSystem>();
@@ -1530,6 +1510,7 @@ namespace {
 			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{"Colonist", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 			ecsWorld->addComponent<ecs::Colonist>(entity, ecs::Colonist{newName});
 			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());
+			ecsWorld->getSystem<ecs::MoodSystem>().startMood(entity);
 
 			// Roll static attributes (0-20), seeded per-entity so colonists vary
 			// deterministically. Only Strength is consumed today: it sets hand-carry
@@ -1609,19 +1590,6 @@ namespace {
 
 		/// Handle furniture placement request from info panel.
 		/// Enters placement mode to relocate the selected packaged furniture.
-		/// Refresh the config strip's wall thickness-preset cards for `material`.
-		/// A material with no wall presets clears the cards (the wall tool then
-		/// rejects commits with a "no wall preset" toast).
-		void refreshThicknessPresets(const std::string& material) {
-			std::vector<world_sim::ConstructionConfigStrip::ThicknessPresetInfo> presets;
-			if (const auto* mat = assets::ConstructionRegistry::Get().getWallMaterial(material)) {
-				for (const auto& p : mat->wallThicknesses) {
-					presets.push_back({p.name, p.thicknessMeters});
-				}
-			}
-			gameUI->setConstructionThicknessPresets(presets);
-		}
-
 		void handlePlaceFurniture() {
 			// Get currently selected furniture from selection system
 			const auto& sel = m_selectionSystem->current();
@@ -1739,8 +1707,7 @@ namespace {
 		GroundSurvey surveyGround(const std::string& dropDef) {
 			auto& registry = assets::AssetRegistry::Get();
 
-			// Computed at each pile's own scale: the dynamic transform re-centers by the unscaled bbox
-			// center, so the footprint isn't linear in scale and a scale-1 radius can't be multiplied.
+			// Computed at each pile's own scale, from the pile layout itself.
 			std::unordered_map<std::string, std::pair<Foundation::Rect, worldview::PileItem>> layoutInputsByDef;
 			auto pileRadius = [&](const std::string& pileDef, float scale) {
 				auto it = layoutInputsByDef.find(pileDef);

@@ -137,55 +137,22 @@ Highest priority. See Panic in [AI Behavior](./ai-behavior.md).
 
 Mood is a composite score from all contributors. Range 0-100%.
 
-**Implementation Status:** Mood is computed in code from needs using weighted penalties (see table below) and shown near the colonist portrait/sidebar. Needs above ~70% contribute no penalty; below ~30% the penalty ramps quickly.
-
 ### Mood Contributors
 
-| Contributor | Source | Type |
-|-------------|--------|------|
-| Need Satisfaction | All needs above comfortable | Continuous |
-| Beauty | Aesthetic quality of surroundings | Environmental |
-| Comfort | Quality of furniture being used | Environmental |
-| Temperature | Comfort relative to tolerance | Environmental |
-| Social | Running tally of interaction quality | Social |
-| Fulfillment | Using preferred skills | Work |
-| Purpose | Completing meaningful tasks | Work |
-| Thoughts | Temporary event modifiers | Events |
+Mood has two parts ([Mood](./mood.md)):
 
-### Need-to-Mood Weights (current tuning)
+| Contributor | Source |
+|-------------|--------|
+| Need satisfaction | How well the needs are met, weighted per need |
+| Mood effects | Carried by [thoughts](./thoughts.md). Everything else that changes how a colonist feels (surroundings, comfort, company, work they like, things that happen to them) reaches mood as a thought |
 
-| Need | Weight | Notes |
-|------|--------|-------|
-| Hygiene | 1.0 | Biggest comfort/social driver |
-| Temperature | 1.0 | Thermal comfort is critical to morale |
-| Recreation | 0.9 | Fun/leisure strongly affects mood |
-| Energy | 0.7 | Tiredness hurts mood meaningfully |
-| Hunger | 0.6 | Survival need, medium mood impact |
-| Thirst | 0.6 | Survival need, medium mood impact |
-| Bladder | 0.3 | Minor mood hit unless accidents |
-| Digestion | 0.3 | Minor mood hit unless accidents |
+### Need-to-Mood Weights
 
-Penalty curve per need: 0 when value ≥ ~70%; mild up to ~0.3 penalty down to 30%; steep to 1.0 below 30%. Mood = 100 × (1 − weightedPenalty/totalWeight), clamped 0-100.
+The per-need weights and the penalty curve live in `assets/config/colonists/mood.xml`. A need at or above the comfortable level costs nothing, the penalty rises gently to the warning level and then steeply to the full penalty at an empty need, and the needs score is 100 minus the weighted penalties averaged over the total weight.
 
-### Thoughts (Temporary Modifiers)
+### What low mood does
 
-Examples:
-- "Ate a good meal" (+5, 6 hours)
-- "Slept on ground" (-10, 1 day)
-- "Had accident in public" (-20, 1 day)
-- "Talked with friend" (+5, 6 hours)
-
-### Breakdown Thresholds
-
-| Mood Level | Risk |
-|------------|------|
-| Below 35% | Minor break (wandering, sadness) |
-| Below 20% | Major break (binging, withdrawal) |
-| Below 5% | Extreme break (destructive behavior) |
-
-After a breakdown ends, colonist receives temporary mood boost (catharsis).
-
-**MVP Status:** Basic mood (need satisfaction only) in Phase 1. Full mood system deferred to Phase 3.
+See [Colonist Mood](./mood.md): the roll curve, the behavior list, refusing work and food, and relief.
 
 ---
 

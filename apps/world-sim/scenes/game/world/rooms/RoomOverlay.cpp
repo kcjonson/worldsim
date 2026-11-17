@@ -101,7 +101,7 @@ namespace world_sim {
 		}
 	}
 
-	void RoomOverlay::render(int viewportW, int viewportH) {
+	void RoomOverlay::render(int viewportW, int viewportH, float uiScale) {
 		if (!active || camera == nullptr || roomDetection == nullptr) {
 			return;
 		}
@@ -188,6 +188,7 @@ namespace world_sim {
 					Renderer::Primitives::TextArgs{
 						.text = room.name,
 						.position = project(room.rep),
+						.scale = uiScale,
 						.color = kLabel,
 						.id = labelId.c_str(),
 						.key = kZLabel,

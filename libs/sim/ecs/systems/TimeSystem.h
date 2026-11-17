@@ -33,6 +33,9 @@ enum class Season {
 /// Returns display name for a season
 [[nodiscard]] const char* seasonName(Season season);
 
+/// One game minute on the day clock is one TimeSystem::simulationSeconds() unit.
+inline constexpr double kSimulationSecondsPerGameHour = 60.0;
+
 /// Game time state snapshot (for UI/serialization)
 struct GameTimeSnapshot {
 	int day;			// Days since colony founding (1-indexed)

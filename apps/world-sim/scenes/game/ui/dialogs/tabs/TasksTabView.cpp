@@ -162,7 +162,7 @@ namespace world_sim {
 			rows,
 			[](const adapters::GlobalTaskDisplayData& task) { return std::to_string(task.id); },
 			[&list](const adapters::GlobalTaskDisplayData& task) -> ui::Ref<ui::Component> {
-				ui::Ref<KnownTaskRow> row = list.addChild<KnownTaskRow>({});
+				ui::Ref<KnownTaskRow> row = list.addChild<KnownTaskRow>({.id = "dossier_task_row"});
 				row.get()->setTask(task);
 				return row;
 			},

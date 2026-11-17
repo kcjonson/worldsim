@@ -368,24 +368,24 @@ namespace assets {
 	enum class GuideColorMode { One, BySource };
 
 	/// Drawing-tool preview chrome that is construction-specific (the validity green/red
-	/// still comes from the shared UI theme). guideColor is the angle-snap guide; the
-	/// origin-close halo uses originHaloColor when it can't yet close; snap-target rings
-	/// use snapVertexColor (vertex/endpoint) and snapEdgeColor (edge/T-junction). The
-	/// alphas tint the in-progress polygon fill and the wall-band preview; the *Px radii
-	/// and widths are screen-space line weights.
-	/// guideColor and guideWidth are what the renderer draws guides with today; the
-	/// keys after originHaloMinRadiusPx are the redesigned guide look, not read yet.
-	/// Until the look is switched over, guideColor keeps its old value (with its own
-	/// alpha) and guideWidth its old width.
+	/// still comes from the shared UI theme). guideColor is the one guide color (guide
+	/// lines, right-angle markers, crossing dots; the common-length marks, not drawn yet),
+	/// opaque: its opacity comes from guideOpacity and markerOpacity. guideColorLength and
+	/// angleReadoutDecimals are loaded and validated, but nothing draws with them yet.
+	/// originHaloColor is the dotted close-radius ring round the first point; snap-target
+	/// rings use snapVertexColor (vertex/endpoint) and snapEdgeColor (edge/T-junction). The
+	/// alphas tint the in-progress polygon fill and the wall-band preview; the *Px radii and
+	/// widths are screen-space sizes that never scale with zoom. Of them, only label text
+	/// (guideLabelPx) follows the interface size.
 	struct PreviewStyle {
-		StyleColor guideColor{0.7F, 0.85F, 1.0F, 0.4F};
+		StyleColor guideColor{0.373F, 0.702F, 0.784F, 1.0F};
 		StyleColor originHaloColor{0.7F, 0.85F, 1.0F, 0.6F};
 		StyleColor snapVertexColor{1.0F, 0.85F, 0.3F, 0.9F};
 		StyleColor snapEdgeColor{0.4F, 0.85F, 1.0F, 0.9F};
 		float	   fillPreviewAlpha = 0.15F;
 		float	   bandPreviewAlpha = 0.2F;
 		float	   lineWidth = 2.0F;
-		float	   guideWidth = 1.0F;
+		float	   guideWidth = 1.5F;
 		float	   vertexRadiusPx = 4.0F;
 		float	   invalidVertexRadiusPx = 7.0F;
 		float	   originHaloMinRadiusPx = 8.0F;

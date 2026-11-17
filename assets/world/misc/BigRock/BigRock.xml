@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Big Rock - tree-sized boulder that blocks movement.
      Pure obstacle: not collectible, not harvestable. Its collider lives in the
-     SVG <metadata> (an AABB -> Rect) so nav routes around it and Tier-3 static
-     collision pushes agents out, exactly like a tree trunk. -->
+     SVG <metadata> (a polygon on its rim) so nav routes around it and Tier-3
+     placed-obstacle collision pushes agents out, exactly like a tree trunk. -->
 <AssetDefinitions>
   <AssetDef>
     <defName>BigRock</defName>

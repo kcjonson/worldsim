@@ -49,7 +49,7 @@ namespace world_sim {
 		ecs::EntityID id{0};
 		std::string	  name;
 		float		  moodValue{0.0F};	   // 0-100
-		std::string	  moodLabel;		   // "Content", "Happy", ...
+		std::string	  moodLabel;		   // band name from the mood config, e.g. "Content"
 		std::string	  currentTask;		   // header task meter label ("Idle" when none)
 		float		  taskProgress{-1.0F}; // 0..1 while an action runs, <0 otherwise
 		bool		  controlled{false};   // direct player control (drives Draft/Release)

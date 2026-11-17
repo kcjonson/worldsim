@@ -19,7 +19,7 @@ assets/world/flora/<Name>/<name>.svg      <- for simple assets, referenced by <s
 - `assetType` — `procedural` (Lua) or `simple` (SVG).
 - `generator` (procedural) — `<scriptPath>` + `<params>` (each child is a named float/int/string read by `getFloat`/`getInt`/`getString`).
 - `svgPath` (simple) — SVG filename.
-- `worldHeight` (simple) — meters; SVG is scaled so its bounding-box height maps to this. Procedural geometry is already in meters, so procedural defs omit it.
+- `worldHeight` (simple) — meters; SVG is scaled so its bounding-box height maps to this. Procedural geometry is already in meters, so procedural defs omit it. A simple asset's pivot, the point an entity's position stands for, is the centre of the drawing's path bbox, taken over every path in the SVG (a `#shadow` group counts too, so a shadow reaching past the art shifts the pivot); a procedural asset's is the generator's (0,0), a tree's trunk foot. An XML `<collision>` is in metres about that pivot.
 - `rendering` — `<complexity>` `simple` | `complex`. Nothing else in it is read.
 - `variantCount` — top-level only; number of pre-generated mesh variants. Inside `<rendering>` it is ignored (validator warning).
 - `animation` (optional) — `<type>parametric</type>`, `<windResponse>` 0..1, `<swayFrequency>min,max</swayFrequency>`.

@@ -11,6 +11,7 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
+#include <assets/MoodConfig.h>
 #include <assets/placement/FloraMeasure.h>
 #include <assets/placement/PlacementExecutor.h>
 
@@ -29,6 +30,7 @@
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Inventory.h>
+#include <ecs/components/Mood.h>
 #include <ecs/components/Movement.h>
 #include <ecs/components/Needs.h>
 #include <ecs/components/PlayerControlled.h>
@@ -1112,13 +1114,26 @@ namespace world_sim {
 	void DevCommandHandler::serializeColonists(std::ostringstream& out) {
 		out << "{\"colonists\":[";
 		bool first = true;
-		for (auto [entity, colonist, pos, needs] : m_ctx.world->view<ecs::Colonist, ecs::Position, ecs::NeedsComponent>()) {
+		for (auto [entity, colonist, pos, needs, mood] : m_ctx.world->view<ecs::Colonist, ecs::Position, ecs::NeedsComponent, ecs::Mood>()) {
 			out << (first ? "" : ",");
 			first = false;
 			out << "{\"id\":" << static_cast<unsigned long long>(entity) << ",\"name\":\"" << jsonEscape(colonist.name) << "\""
 				<< ",\"x\":" << pos.value.x << ",\"y\":" << pos.value.y << ",\"needs\":{";
 			for (size_t i = 0; i < ecs::kNeedLabels.size(); ++i) {
 				out << (i > 0 ? "," : "") << "\"" << ecs::kNeedLabels[i] << "\":" << needs.get(static_cast<ecs::NeedType>(i)).value;
+			}
+			out << "},\"mood\":{\"value\":" << mood.value << ",\"target\":" << mood.target << ",\"band\":\""
+				<< jsonEscape(assets::MoodConfig::Get().bandFor(mood.value).name) << "\",\"cause\":";
+			switch (mood.cause.kind) {
+				case ecs::MoodCauseKind::None:
+					out << "null";
+					break;
+				case ecs::MoodCauseKind::Need:
+					out << "{\"need\":\"" << ecs::needLabel(mood.cause.need) << "\"}";
+					break;
+				case ecs::MoodCauseKind::Thought:
+					out << "{\"thought\":" << mood.cause.thought << "}";
+					break;
 			}
 			out << "}";
 			if (const auto* action = m_ctx.world->getComponent<ecs::Action>(entity)) {

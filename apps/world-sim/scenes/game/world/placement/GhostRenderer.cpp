@@ -1,10 +1,10 @@
 #include "GhostRenderer.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/placement/InstanceTransform.h>
 #include <primitives/Primitives.h>
 #include <vector/Types.h>
 
-#include <limits>
 
 namespace world_sim {
 
@@ -34,36 +34,13 @@ void GhostRenderer::render(const std::string& defName,
 		return;
 	}
 
-	// Calculate mesh bounds to find center offset
-	// Mesh vertices are in local space but NOT centered on origin
-	float minX = std::numeric_limits<float>::max();
-	float maxX = std::numeric_limits<float>::lowest();
-	float minY = std::numeric_limits<float>::max();
-	float maxY = std::numeric_limits<float>::lowest();
-	for (const auto& v : mesh->vertices) {
-		minX = std::min(minX, v.x);
-		maxX = std::max(maxX, v.x);
-		minY = std::min(minY, v.y);
-		maxY = std::max(maxY, v.y);
-	}
-	// Center offset: shift so mesh center aligns with worldPos
-	float centerOffsetX = (minX + maxX) * 0.5F;
-	float centerOffsetY = (minY + maxY) * 0.5F;
-
-	// Calculate screen position from world position
-	auto screenPos = camera.worldToScreen(worldPos.x, worldPos.y, viewportWidth, viewportHeight, kPixelsPerMeter);
-
-	// Get the scale factor (pixels per meter * zoom)
-	float scale = kPixelsPerMeter * camera.zoom();
-
-	// Transform vertices from local space to screen space, centered on cursor
+	// The ghost is drawn as the entity will be placed: upright at scale 1, its pivot at worldPos
+	// (PlacementSystem::spawnEntity).
+	const assets::InstanceTransform placed = assets::uprightInstance({worldPos.x, worldPos.y});
 	m_transformedVertices.resize(mesh->vertices.size());
 	for (size_t i = 0; i < mesh->vertices.size(); ++i) {
-		const auto& v = mesh->vertices[i];
-		m_transformedVertices[i] = {
-			screenPos.x + (v.x - centerOffsetX) * scale,
-			screenPos.y + (v.y - centerOffsetY) * scale
-		};
+		const glm::vec2 world	 = placed.toWorld({mesh->vertices[i].x, mesh->vertices[i].y});
+		m_transformedVertices[i] = camera.worldToScreen(world.x, world.y, viewportWidth, viewportHeight, kPixelsPerMeter);
 	}
 
 	// Create ghost colors with transparency

@@ -143,19 +143,22 @@ namespace {
 		void SetUp() override {
 			ConstructionRegistry::Get().clear();
 			ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder()));
-			// ID 0 is the AssetRegistry's "invalid" sentinel. A fresh registry (these
-			// tests don't load assets) has an empty index, so prime a throwaway def to
-			// claim ID 0 before the target def, guaranteeing the target gets non-zero.
+			// ID 0 is the AssetRegistry's "invalid" sentinel. These tests don't load assets,
+			// so start from an empty index (an earlier suite can leave the shore def, which
+			// the system registers on its first tick, holding ID 0) and prime a throwaway def
+			// to claim ID 0 before the target and shore defs, guaranteeing both get non-zero.
 			auto& reg = AssetRegistry::Get();
-			if (reg.getDefNameId("Test_Vision_IdZeroReservation") == 0) {
-				reg.registerSyntheticDefinition("Test_Vision_IdZeroReservation", 0);
-			}
+			reg.clearDefinitions();
+			reg.registerSyntheticDefinition("Test_Vision_IdZeroReservation", 0);
 			// A synthetic discoverable def with one capability so memory keeps it.
 			reg.registerSyntheticDefinition(
 				kTargetDefName, static_cast<uint16_t>(1u << static_cast<size_t>(CapabilityType::Edible)));
 			ASSERT_NE(reg.getDefNameId(kTargetDefName), 0u) << "target def must get a non-zero id";
 		}
-		void TearDown() override { ConstructionRegistry::Get().clear(); }
+		void TearDown() override {
+			ConstructionRegistry::Get().clear();
+			AssetRegistry::Get().clearDefinitions();
+		}
 	};
 
 	// Drive a single immediate vision tick (interval 1 so update() never throttles).
