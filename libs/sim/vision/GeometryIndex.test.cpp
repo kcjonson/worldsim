@@ -596,7 +596,8 @@ TEST_F(GeometryIndexTest, FacingOccludersGiveTheSameSight) {
 
 // An eye 0.4 mm off the line of a face it looks along, at the edge of its sight beside a 14
 // degree T: its rays snap their hits onto the face's line, where the back faces stop them, so
-// the query keeps the back faces, or the polygon would lose floor the eye sees.
+// the query keeps the back faces, or the polygon would lose floor the eye sees. The T's stem
+// band also overlaps the wall's away from their joint, so the crossing guard keeps them too.
 TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesForAnEyeAlongAFaceLine) {
 	ConstructionWorld cw;
 	buildWall(cw, {107, 1145}, {2659, 2827}, "Light");
