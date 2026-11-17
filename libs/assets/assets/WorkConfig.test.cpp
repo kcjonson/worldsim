@@ -7,6 +7,7 @@
 #include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
 #include "assets/TaskChainRegistry.h"
+#include "assets/TraitRegistry.h"
 #include "assets/WorkConfig.h"
 #include "assets/WorkTypeRegistry.h"
 
@@ -527,6 +528,7 @@ TEST_F(WorkConfigTest, LoadWorkConfig_ShippedConfigLoadsClean) {
     EXPECT_GT(TaskChainRegistry::Get().size(), 0);
     EXPECT_GT(WorkTypeRegistry::Get().workTypeCount(), 0);
     EXPECT_TRUE(ConstructionRegistry::Get().materialsLoaded());
+    EXPECT_TRUE(TraitRegistry::Get().loaded());
 }
 
 TEST_F(WorkConfigTest, LoadWorkConfig_MissingFolderReportsError) {

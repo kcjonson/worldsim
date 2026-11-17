@@ -1,6 +1,6 @@
 #pragma once
 
-// Work configuration: action types, task chains, work types, priority tuning, construction, and mood,
+// Work configuration: action types, task chains, work types, priority tuning, construction, mood, and traits,
 // loaded from one config folder into their registries and cross-validated.
 
 #include <array>

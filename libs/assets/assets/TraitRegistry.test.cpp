@@ -1,0 +1,222 @@
+// Loading the colonist traits from data: the shipped files, merging files, and load errors.
+
+#include "assets/TraitRegistry.h"
+
+#include <utils/Log.h>
+
+#include <gtest/gtest.h>
+
+#include <algorithm>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <string>
+
+using namespace assets;
+
+namespace {
+
+	std::filesystem::path shippedTraits() {
+		// <root>/libs/assets/assets/TraitRegistry.test.cpp -> <root>/assets/config/colonists/traits
+		return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "assets" / "config" / "colonists" /
+			   "traits";
+	}
+
+	constexpr const char* kCount = R"(<Count min="1" max="3"/>)";
+
+	class TraitRegistryTest : public ::testing::Test {
+	  protected:
+		void SetUp() override {
+			folder = std::filesystem::temp_directory_path() /
+					 ("worldsim-traits-" + std::string(::testing::UnitTest::GetInstance()->current_test_info()->name()));
+			std::filesystem::remove_all(folder);
+			std::filesystem::create_directories(folder);
+		}
+
+		void TearDown() override { std::filesystem::remove_all(folder); }
+
+		void write(const std::string& name, const std::string& body) {
+			std::filesystem::create_directories((folder / name).parent_path());
+			std::ofstream file(folder / name);
+			file << "<Traits>" << body << "</Traits>";
+		}
+
+		static std::string trait(const std::string& id, const std::string& name = "Name", const std::string& description = "A description.") {
+			return "<Trait id=\"" + id + "\" name=\"" + name + "\" description=\"" + description + "\"/>";
+		}
+
+		static bool mentions(const std::vector<std::string>& errors, const std::string& text) {
+			return std::ranges::any_of(errors, [&](const std::string& error) { return error.find(text) != std::string::npos; });
+		}
+
+		TraitRegistry		  registry;
+		std::filesystem::path folder;
+	};
+
+	struct InfoLog {
+		std::vector<std::string> messages;
+		static void				 sink(void* context, const foundation::LogRecord& record) {
+			 static_cast<InfoLog*>(context)->messages.emplace_back(record.message);
+		}
+	};
+
+} // namespace
+
+TEST_F(TraitRegistryTest, TheShippedTraitsLoadClean) {
+	const std::vector<std::string> errors = registry.loadFromFolder(shippedTraits());
+	for (const std::string& error : errors) {
+		ADD_FAILURE() << error;
+	}
+	std::vector<std::string> ids;
+	for (const TraitDef& trait : registry.traits()) {
+		ids.push_back(trait.id);
+		EXPECT_FALSE(trait.name.empty()) << trait.id;
+		EXPECT_FALSE(trait.description.empty()) << trait.id;
+	}
+	EXPECT_EQ(ids, (std::vector<std::string>{"hard_worker", "night_owl", "gourmand", "ascetic", "volatile"}));
+	EXPECT_EQ(registry.count().min, 1);
+	EXPECT_EQ(registry.count().max, 3);
+	EXPECT_TRUE(registry.exclusive("gourmand", "ascetic"));
+	EXPECT_FALSE(registry.exclusive("volatile", "ascetic"));
+}
+
+TEST_F(TraitRegistryTest, ValidDefinitionsLoadWithTheirTextCountAndExclusions) {
+	write("traits.xml", std::string(kCount) + trait("brave", "Brave", "Faces danger.") + trait("timid") + trait("calm") +
+							"<Exclusive>brave timid</Exclusive>");
+	ASSERT_TRUE(registry.loadFromFolder(folder).empty());
+	ASSERT_EQ(registry.traits().size(), 3U);
+	const TraitDef* brave = registry.find("brave");
+	ASSERT_NE(brave, nullptr);
+	EXPECT_EQ(brave->name, "Brave");
+	EXPECT_EQ(brave->description, "Faces danger.");
+	EXPECT_EQ(registry.find("missing"), nullptr);
+	EXPECT_TRUE(registry.exclusive("timid", "brave"));
+	EXPECT_FALSE(registry.exclusive("brave", "calm"));
+	EXPECT_TRUE(registry.loaded());
+}
+
+TEST_F(TraitRegistryTest, ALaterFileReplacesATraitAndTheCountAndLogsIt) {
+	write("a_base.xml", R"(<Count min="1" max="3"/>)" + trait("brave", "Brave") + trait("calm"));
+	write("mods/more.xml", R"(<Count min="2" max="2"/>)" + trait("brave", "Fearless") + trait("quick"));
+	InfoLog log;
+	foundation::Logger::setSink(&InfoLog::sink, &log);
+	const std::vector<std::string> errors = registry.loadFromFolder(folder);
+	foundation::Logger::setSink(nullptr, nullptr);
+	ASSERT_TRUE(errors.empty()) << errors.front();
+	ASSERT_EQ(registry.traits().size(), 3U);
+	EXPECT_EQ(registry.traits()[0].id, "brave");
+	EXPECT_EQ(registry.find("brave")->name, "Fearless");
+	EXPECT_EQ(registry.count().min, 2);
+	EXPECT_EQ(registry.count().max, 2);
+#ifdef DEVELOPMENT_BUILD
+	EXPECT_TRUE(std::ranges::any_of(log.messages, [](const std::string& message) {
+		return message.find("brave") != std::string::npos && message.find("mods/more.xml") != std::string::npos &&
+			   message.find("a_base.xml") != std::string::npos;
+	}));
+#endif
+}
+
+TEST_F(TraitRegistryTest, TheFolderLoadsBeforeItsSubfolders) {
+	write("z_base.xml", std::string(kCount) + trait("brave", "Base"));
+	write("a_mod/more.xml", trait("brave", "Mod"));
+	ASSERT_TRUE(registry.loadFromFolder(folder).empty());
+	EXPECT_EQ(registry.find("brave")->name, "Mod");
+}
+
+TEST_F(TraitRegistryTest, ExclusionsFromSeveralFilesAccumulate) {
+	write("a.xml", std::string(kCount) + trait("one") + trait("two") + trait("three") + "<Exclusive>one two</Exclusive>");
+	write("mods/b.xml", "<Exclusive>two three</Exclusive>");
+	ASSERT_TRUE(registry.loadFromFolder(folder).empty());
+	EXPECT_TRUE(registry.exclusive("one", "two"));
+	EXPECT_TRUE(registry.exclusive("two", "three"));
+	EXPECT_FALSE(registry.exclusive("one", "three"));
+}
+
+TEST_F(TraitRegistryTest, LoadingAgainReplacesWhatWasThere) {
+	write("a.xml", std::string(kCount) + trait("brave"));
+	ASSERT_TRUE(registry.loadFromFolder(folder).empty());
+	write("a.xml", std::string(kCount) + trait("calm"));
+	ASSERT_TRUE(registry.loadFromFolder(folder).empty());
+	EXPECT_EQ(registry.find("brave"), nullptr);
+	EXPECT_NE(registry.find("calm"), nullptr);
+}
+
+TEST_F(TraitRegistryTest, ATraitNeedsAnIdInSnakeCaseANameAndADescription) {
+	write(
+		"a.xml",
+		std::string(kCount) + trait("Brave") + trait("two words") + trait("_lead") + trait("") + trait("nameless", "") +
+			trait("silent", "Silent", "") + trait("fine")
+	);
+	const std::vector<std::string> errors = registry.loadFromFolder(folder);
+	EXPECT_TRUE(mentions(errors, "a.xml: a <Trait> needs an id in snake_case, not 'Brave'")) << ::testing::PrintToString(errors);
+	EXPECT_TRUE(mentions(errors, "not 'two words'"));
+	EXPECT_TRUE(mentions(errors, "not '_lead'"));
+	EXPECT_TRUE(mentions(errors, "not ''"));
+	EXPECT_TRUE(mentions(errors, "trait 'nameless' has no name"));
+	EXPECT_TRUE(mentions(errors, "trait 'silent' has no description"));
+	EXPECT_EQ(errors.size(), 6U) << ::testing::PrintToString(errors);
+}
+
+TEST_F(TraitRegistryTest, ATraitDeclaredTwiceInOneFileIsAnError) {
+	write("a.xml", std::string(kCount) + trait("brave") + trait("brave"));
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "a.xml: trait 'brave' is declared twice in this file"));
+}
+
+TEST_F(TraitRegistryTest, CountMustBeWholeNumbersInOrder) {
+	write("a.xml", trait("brave") + R"(<Count min="1"/>)");
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "<Count> needs min and max, whole numbers"));
+
+	write("a.xml", trait("brave") + R"(<Count min="1" max="2.5"/>)");
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "<Count> needs min and max, whole numbers"));
+
+	write("a.xml", trait("brave") + R"(<Count min="1" max="3x"/>)");
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "<Count> needs min and max, whole numbers"));
+
+	write("a.xml", trait("brave") + R"(<Count min="3" max="1"/>)");
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "<Count> min must be at least 0 and no more than max"));
+
+	write("a.xml", trait("brave") + R"(<Count min="-1" max="1"/>)");
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "<Count> min must be at least 0 and no more than max"));
+}
+
+TEST_F(TraitRegistryTest, ACountIsRequiredAndCannotAskForMoreTraitsThanExist) {
+	write("a.xml", trait("brave"));
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "no file gives <Count> min and max"));
+
+	write("a.xml", R"(<Count min="2" max="3"/>)" + trait("brave"));
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "<Count> min is 2, more than the 1 declared traits"));
+}
+
+TEST_F(TraitRegistryTest, AtLeastOneTraitIsRequired) {
+	write("a.xml", kCount);
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "no file declares a <Trait>"));
+}
+
+TEST_F(TraitRegistryTest, ExclusionsNeedTwoKnownDistinctTraits) {
+	write("a.xml", std::string(kCount) + trait("brave") + trait("calm") + "<Exclusive>brave</Exclusive><Exclusive>brave brave</Exclusive>" +
+					   "<Exclusive>brave ghost</Exclusive>");
+	const std::vector<std::string> errors = registry.loadFromFolder(folder);
+	EXPECT_TRUE(mentions(errors, "an <Exclusive> lists at least two trait ids")) << ::testing::PrintToString(errors);
+	EXPECT_TRUE(mentions(errors, "an <Exclusive> lists a trait id twice"));
+	EXPECT_TRUE(mentions(errors, "<Exclusive> names 'ghost', which no file declares as a trait"));
+	EXPECT_EQ(errors.size(), 3U) << ::testing::PrintToString(errors);
+}
+
+TEST_F(TraitRegistryTest, BrokenFilesAndMissingFoldersAreErrors) {
+	write("a.xml", std::string(kCount) + trait("brave") + "<Mystery/>");
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "a.xml: unknown element <Mystery>"));
+
+	{
+		std::ofstream broken(folder / "a.xml");
+		broken << "<Traits><Trait";
+	}
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "a.xml: not readable XML"));
+
+	{
+		std::ofstream wrongRoot(folder / "a.xml");
+		wrongRoot << "<Mood/>";
+	}
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "a.xml: the root element is not <Traits>"));
+
+	EXPECT_TRUE(mentions(registry.loadFromFolder(folder / "missing"), "not a folder"));
+}

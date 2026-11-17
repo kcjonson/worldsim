@@ -52,7 +52,7 @@ namespace assets {
 		float end = 0.0F;
 	};
 
-	/// The names a Symbol takes. The sim adds the names it knows (needs, attributes, task types) when it
+	/// The names a Symbol takes. The sim adds the names it knows (needs, attributes, traits, task types) when it
 	/// binds. An open set takes any name, listed or not; one nothing answers reads Unknown.
 	struct ConditionSymbolSetDef {
 		std::vector<std::string> names;

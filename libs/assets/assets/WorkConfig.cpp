@@ -6,6 +6,7 @@
 #include "assets/MoodConfig.h"
 #include "assets/PriorityConfig.h"
 #include "assets/TaskChainRegistry.h"
+#include "assets/TraitRegistry.h"
 #include "assets/WorkTypeRegistry.h"
 
 namespace assets {
@@ -17,6 +18,7 @@ namespace assets {
 		PriorityConfig::Get().clear();
 		ConstructionRegistry::Get().clear();
 		MoodConfig::Get().clear();
+		TraitRegistry::Get().clear();
 		ConfigValidator::clearErrors();
 
 		auto loadFailure = [](const std::filesystem::path& path) {
@@ -63,6 +65,10 @@ namespace assets {
 		const auto mood = configRoot / "colonists" / "mood.xml";
 		if (!MoodConfig::Get().loadFromFile(mood.string())) {
 			return loadFailure(mood);
+		}
+
+		if (std::vector<std::string> traitErrors = TraitRegistry::Get().loadFromFolder(configRoot / "colonists" / "traits"); !traitErrors.empty()) {
+			return traitErrors;
 		}
 
 		if (ConfigValidator::validateAll()) {

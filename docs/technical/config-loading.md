@@ -70,12 +70,18 @@ assets/config/work/work-types.xml
 assets/config/work/priority-tuning.xml
 assets/config/construction/*.xml
 assets/config/colonists/mood.xml
+assets/config/colonists/traits/*.xml
 ```
 
 `mood.xml` loads into `assets::MoodConfig` (the mood rate, the need penalty curve, the per-need
 weights by need name, and the band names) and is checked by `ConfigValidator::validateMood`.
 The need names belong to the sim, so `GameLoadingScene` adds `ecs::moodConfigErrors` (a name that is
 no need, a need with no weight) to `loadWorkConfig`'s errors before the game scene is entered.
+
+Every `.xml` file under `colonists/traits/` loads into `assets::TraitRegistry` (the trait ids, names and
+descriptions, the 1 to 3 count, and the exclusive pairs): the folder's own files first, then its subfolders' in
+path order, a later file replacing a trait of the same id with a log line. Its errors are `loadWorkConfig`'s errors
+and reach the loading screen the same way. The sim fills the condition vocabulary's `trait` names from the registry.
 
 ### Mod Paths (Future)
 

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The traits a colonist can have. Every .xml file in this folder (and its subfolders) adds to the set, so
+  a mod adds traits with a file of its own. This folder's files load first, then subfolders' files in
+  path order; a later file replaces a trait of the same id, and the replacement is logged.
+
+  <Count min max/>              how many traits a colonist gets, from min to max.
+  <Trait id name description/>  id is snake_case and is what conditions write: trait(night_owl).
+  <Exclusive>ids</Exclusive>    traits no colonist has together.
+
+  A trait has no effect of its own. Thoughts and behaviors read it with trait(id) in their conditions.
+  See /docs/design/game-systems/colonists/attributes.md (Traits).
+-->
+<Traits>
+  <Count min="1" max="3"/>
+
+  <Trait id="hard_worker" name="Hard Worker" description="Drives themselves through long shifts and takes pride in a finished job."/>
+  <Trait id="night_owl" name="Night Owl" description="Comes alive after dark and drags through the morning."/>
+  <Trait id="gourmand" name="Gourmand" description="Lives for a good meal and suffers on plain rations."/>
+  <Trait id="ascetic" name="Ascetic" description="Needs little comfort and thinks less of those who demand it."/>
+  <Trait id="volatile" name="Volatile" description="Feelings swing hard and fast in both directions."/>
+
+  <Exclusive>gourmand ascetic</Exclusive>
+</Traits>

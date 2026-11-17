@@ -55,6 +55,7 @@
 #include <assets/DetailLevels.h>
 #include <assets/MoodConfig.h>
 #include <assets/RecipeRegistry.h>
+#include <assets/TraitRegistry.h>
 #include <assets/placement/AsyncChunkProcessor.h>
 #include <assets/placement/CanopyCover.h>
 #include <assets/placement/PlacementExecutor.h>
@@ -89,6 +90,7 @@
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/StructureHealth.h>
 #include <ecs/components/Task.h>
+#include <ecs/components/Traits.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
 #include <ecs/systems/AIDecisionSystem.h>
@@ -1512,13 +1514,14 @@ namespace {
 			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());
 			ecsWorld->getSystem<ecs::MoodSystem>().startMood(entity);
 
-			// Roll static attributes (0-20), seeded per-entity so colonists vary
+			// Roll static attributes (0-20) and traits, seeded per-entity so colonists vary
 			// deterministically. Only Strength is consumed today: it sets hand-carry
 			// capacity. The other attributes are placeholders for upcoming systems.
 			ecs::Attributes attributes;
 			std::mt19937	attrRng(static_cast<uint32_t>(entity));
 			attributes.strength = std::uniform_real_distribution<float>(6.0F, 14.0F)(attrRng);
 			ecsWorld->addComponent<ecs::Attributes>(entity, attributes);
+			ecsWorld->addComponent<ecs::Traits>(entity, ecs::rollTraits(assets::TraitRegistry::Get(), attrRng));
 
 			// Carry weight scales with Strength (an average colonist lands at the prior 35kg).
 			auto inventory = ecs::Inventory::createForColonist();

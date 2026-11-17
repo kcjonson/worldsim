@@ -5,6 +5,7 @@
 #include "scenes/game/ui/models/GlobalTaskListModel.h"
 
 #include <assets/MoodConfig.h>
+#include <assets/TraitRegistry.h>
 #include <cassert>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Inventory.h>
@@ -12,6 +13,7 @@
 #include <ecs/components/Mood.h>
 #include <ecs/components/Needs.h>
 #include <ecs/components/Task.h>
+#include <ecs/components/Traits.h>
 #include <ecs/components/Transform.h>
 
 #include <ecs/InventoryMass.h>
@@ -135,6 +137,13 @@ namespace world_sim {
 		// Placeholder data
 		bioData.age = "--";
 		bioData.traits.clear();
+		if (const auto* traits = world.getComponent<ecs::Traits>(colonistId)) {
+			for (const std::string& id : traits->ids) {
+				const assets::TraitDef* trait = assets::TraitRegistry::Get().find(id);
+				assert(trait != nullptr && "Every colonist trait is a defined trait");
+				bioData.traits.push_back(trait->name);
+			}
+		}
 		bioData.background = "No background";
 
 		const auto* mood = world.getComponent<ecs::Mood>(colonistId);

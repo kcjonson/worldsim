@@ -21,9 +21,8 @@ struct PartyMember {
 	float		mood = 1.0F; // 0..1
 	// Skill defName -> level (0-20). Applied via ecs::Skills at spawn.
 	std::unordered_map<std::string, float> skills;
-	// Traits and backstory are display-only for now (no backing ECS components).
-	std::vector<std::string> traits;
-	std::string				 backstory;
+	// Display-only for now (no backing ECS component).
+	std::string backstory;
 };
 
 struct NewGameSetup {

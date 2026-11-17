@@ -129,8 +129,10 @@ TEST_F(ConditionConfigTest, TheShippedVocabularyListsNoEngineNames) {
 	const auto& sets = load.config.symbolSets;
 	EXPECT_TRUE(sets.at("need").names.empty());
 	EXPECT_TRUE(sets.at("attribute").names.empty());
+	EXPECT_TRUE(sets.at("trait").names.empty());
+	EXPECT_FALSE(sets.at("trait").open);
 	EXPECT_EQ(sets.at("task").names, (std::vector<std::string>{"work"}));
-	for (const char* open : {"trait", "behavior", "event", "mood_cause"}) {
+	for (const char* open : {"behavior", "event", "mood_cause"}) {
 		EXPECT_TRUE(sets.at(open).open) << open;
 		EXPECT_TRUE(sets.at(open).names.empty()) << open;
 	}

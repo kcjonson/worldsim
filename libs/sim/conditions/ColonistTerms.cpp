@@ -8,7 +8,9 @@
 #include <ecs/components/Attributes.h>
 #include <ecs/components/Needs.h>
 #include <ecs/components/Task.h>
+#include <ecs/components/Traits.h>
 
+#include <assets/TraitRegistry.h>
 #include <assets/WorkConfig.h>
 
 #include <algorithm>
@@ -131,6 +133,22 @@ namespace conditions {
 			}));
 		}
 
+		void provideTrait(ConditionVocabulary& vocabulary, const assets::TraitRegistry& registry, std::vector<std::string>& errors) {
+			std::vector<std::pair<std::string, std::string>> ids;
+			for (const assets::TraitDef& trait : registry.traits()) {
+				ids.emplace_back(trait.id, trait.id);
+			}
+			auto traits = bindEngineNames(vocabulary, "trait", ids, errors);
+			record(errors, vocabulary.provide("trait", ValueType::Truth, {ValueType::Symbol}, [traits](const TermCall& call) {
+				const std::string* id = traits->find(call.arguments[0].symbol());
+				const ecs::Traits* component = call.context.world.getComponent<ecs::Traits>(call.context.colonist);
+				if (id == nullptr || component == nullptr) {
+					return TermValue::unknown();
+				}
+				return TermValue::fromTruth(std::ranges::find(component->ids, *id) != component->ids.end());
+			}));
+		}
+
 		/// Each task group's mask, from the engine task types it names; mistakes in a group are errors.
 		std::vector<std::pair<std::string, TaskMask>>
 		taskGroups(const assets::ConditionConfig& config, const std::vector<std::pair<std::string, TaskMask>>& types, std::vector<std::string>& errors) {
@@ -199,9 +217,15 @@ namespace conditions {
 
 	} // namespace
 
-	void provideColonistTerms(ConditionVocabulary& vocabulary, const assets::ConditionConfig& config, std::vector<std::string>& errors) {
+	void provideColonistTerms(
+		ConditionVocabulary&		   vocabulary,
+		const assets::ConditionConfig& config,
+		const assets::TraitRegistry&   traits,
+		std::vector<std::string>&	   errors
+	) {
 		provideNeed(vocabulary, errors);
 		provideAttribute(vocabulary, errors);
+		provideTrait(vocabulary, traits, errors);
 		provideCurrentTask(vocabulary, config, errors);
 		provideMidCraft(vocabulary, errors);
 	}

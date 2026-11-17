@@ -17,13 +17,13 @@
   See /docs/design/game-systems/colonists/mood.md (Conditions).
 -->
 <ConditionVocabulary>
-  <!-- Filled by the sim from its needs, attributes, and task types. -->
+  <!-- Filled by the sim from its needs, attributes, trait definitions, and task types. -->
   <Symbols name="need"/>
   <Symbols name="attribute"/>
+  <Symbols name="trait"/>
   <Symbols name="task"/>
 
   <!-- Open until their own definitions fill them. -->
-  <Symbols name="trait" open="true"/>
   <Symbols name="event" open="true"/>
   <Symbols name="behavior" open="true"/>
   <Symbols name="mood_cause" open="true"/>

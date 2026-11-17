@@ -64,9 +64,13 @@ Each colonist has a procedurally generated backstory affecting:
 
 ## Traits
 
-Traits are special modifiers beyond the core attributes. Each colonist has 1-3 traits.
+Traits are special modifiers beyond the core attributes. Each colonist has 1-3 traits, rolled at creation; a pair marked mutually exclusive never lands on one colonist.
 
-**Example Traits:**
+Traits are data, not code. Each has an id written in snake_case (`volatile`), a display name, and a one-line description, in the XML files under `assets/config/colonists/traits`; the same files give the 1-3 range and the exclusive pairs. A mod adds a trait, or replaces one by reusing its id, with a file of its own.
+
+A trait has no effect of its own. Thoughts and behaviors read it through conditions, `trait(volatile)`, so what a trait does is written in the same XML as everything else it touches (see [Mood](./mood.md), Conditions).
+
+**Base traits:**
 - "Hard Worker" — All work slightly faster
 - "Night Owl" — Works better at night, sleep need shifts
 - "Gourmand" — Higher mood from good food, lower from bad
