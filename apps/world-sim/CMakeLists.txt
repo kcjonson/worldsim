@@ -68,7 +68,9 @@ add_library(world-sim-game STATIC
     scenes/game/world/selection/SelectionSystem.cpp
     scenes/game/world/construction/CommittedGeometryCache.cpp
     scenes/game/world/construction/DrawingFeedback.cpp
+    scenes/game/world/construction/DrawingStatusHint.cpp
     scenes/game/world/construction/DrawingSystem.cpp
+    scenes/game/world/construction/KeyGuideVisibility.cpp
     scenes/game/world/rooms/RoomOverlay.cpp
     scenes/game/world/nav/NavOverlay.cpp
     scenes/game/world/vision/VisionOverlay.cpp
@@ -92,6 +94,7 @@ add_library(world-sim-game STATIC
     scenes/landing/LandingSiteDetailsPanel.cpp
     scenes/loading/GameLoadingScene.cpp
     scenes/game/dev/CameraCommand.cpp
+    scenes/game/dev/CameraStateJson.cpp
     scenes/game/dev/ConstructionStateJson.cpp
     scenes/game/dev/DevCommandHandler.cpp
     scenes/game/dev/DevJson.cpp
@@ -156,6 +159,7 @@ if(BUILD_TESTING)
     find_package(GTest CONFIG REQUIRED)
     add_executable(world-sim-tests
         scenes/game/dev/CameraCommand.test.cpp
+        scenes/game/dev/CameraStateJson.test.cpp
         scenes/game/dev/ConstructionStateJson.test.cpp
         scenes/game/dev/DevJson.test.cpp
         scenes/game/dev/DrawingStateJson.test.cpp
@@ -183,6 +187,7 @@ if(BUILD_TESTING)
     target_link_libraries(world-sim-tests
         PRIVATE
             world-sim-game
+            nlohmann_json::nlohmann_json
             GTest::gtest
             GTest::gtest_main
     )

@@ -1,6 +1,8 @@
 #include "scenes/game/dev/DrawingStateJson.h"
 
 #include "scenes/game/dev/DevJson.h"
+#include "scenes/game/world/construction/DrawingStatusHint.h"
+#include "scenes/game/world/construction/KeyGuideVisibility.h"
 
 #include <sstream>
 
@@ -116,7 +118,8 @@ namespace world_sim {
 			std::ostringstream	 out;
 			out << "{\"active\":" << (status.active ? "true" : "false") << ",\"material\":\"" << jsonEscape(status.material)
 				<< "\",\"pointCount\":" << status.pointCount << ",\"areaSquareMeters\":" << jsonNumber(static_cast<double>(status.areaSquareMeters))
-				<< ",\"valid\":" << (status.valid ? "true" : "false") << ",\"message\":\"" << jsonEscape(status.message) << "\"";
+				<< ",\"valid\":" << (status.valid ? "true" : "false") << ",\"message\":\"" << jsonEscape(status.message)
+				<< "\",\"hint\":\"" << jsonEscape(statusHint(status).text) << "\"";
 			if (status.wall) {
 				out << ",\"thicknessPreset\":\"" << jsonEscape(status.thicknessPreset)
 					<< "\",\"segmentLengthMeters\":" << jsonNumber(static_cast<double>(status.segmentLengthMeters))
@@ -135,9 +138,25 @@ namespace world_sim {
 			return out.str();
 		}
 
+		std::string settingsJson(const DrawingSettings& settings) {
+			const auto flag = [](bool value) { return value ? "true" : "false"; };
+			// Binding every member fails to compile when DrawingSettings gains one, so a new setting cannot go unreported.
+			const auto& [angleSteps, guidesFromShape, alignToExistingBuildings, guidesFromWorldAxes, guideCrossings, commonLengths, guideDistances, angleReadout, roundLengths, showKeyGuide, rectangleGridSpacingMeters] =
+				settings;
+			std::ostringstream out;
+			out << "{\"angleSteps\":" << flag(angleSteps) << ",\"guidesFromShape\":" << flag(guidesFromShape)
+				<< ",\"alignToExistingBuildings\":" << flag(alignToExistingBuildings)
+				<< ",\"guidesFromWorldAxes\":" << flag(guidesFromWorldAxes) << ",\"guideCrossings\":" << flag(guideCrossings)
+				<< ",\"commonLengths\":" << flag(commonLengths) << ",\"guideDistances\":" << flag(guideDistances)
+				<< ",\"angleReadout\":" << flag(angleReadout) << ",\"roundLengths\":" << flag(roundLengths)
+				<< ",\"showKeyGuide\":" << flag(showKeyGuide)
+				<< ",\"rectangleGridSpacingMeters\":" << jsonNumber(static_cast<double>(rectangleGridSpacingMeters)) << "}";
+			return out.str();
+		}
+
 	} // namespace
 
-	std::string drawingStateJson(const DrawingSnapshot& snapshot) {
+	std::string drawingStateJson(const DrawingSnapshot& snapshot, const DrawingStateContext& context) {
 		const bool rectangleTool = snapshot.tool == ToolKind::FoundationRectangle;
 		std::ostringstream out;
 		out << "{\"tool\":\"" << toolName(snapshot.tool) << "\",\"lastFoundationTool\":\"" << foundationToolName(snapshot.lastFoundationTool)
@@ -169,7 +188,10 @@ namespace world_sim {
 
 		out << ",\"snap\":" << (snapshot.snap ? snapJson(*snapshot.snap, rectangleTool) : "null") << ",\"verdict\":{\"valid\":"
 			<< (snapshot.verdict.valid ? "true" : "false") << ",\"proposed\":" << (snapshot.verdict.proposed ? "true" : "false")
-			<< ",\"reason\":\"" << jsonEscape(snapshot.verdict.reason) << "\"},\"status\":" << statusJson(snapshot) << "}";
+			<< ",\"reason\":\"" << jsonEscape(snapshot.verdict.reason) << "\"},\"status\":" << statusJson(snapshot)
+			<< ",\"settings\":" << settingsJson(context.settings) << ",\"keyGuide\":{\"shown\":"
+			<< (keyGuideShown(snapshot.tool, context.settings) ? "true" : "false")
+			<< ",\"collapsed\":" << (context.keyGuideCollapsed ? "true" : "false") << "},\"dialogOpen\":" << (context.dialogOpen ? "true" : "false") << "}";
 		return out.str();
 	}
 

@@ -1,5 +1,7 @@
 #include "DevCommandHandler.h"
 
+#include "UserSettings.h"
+#include "scenes/game/dev/CameraStateJson.h"
 #include "scenes/game/dev/ConstructionStateJson.h"
 #include "scenes/game/dev/DevJson.h"
 #include "scenes/game/dev/DrawingStateJson.h"
@@ -142,7 +144,20 @@ namespace world_sim {
 		};
 		view("colonists", &DevCommandHandler::serializeColonists);
 		view("construction", &DevCommandHandler::serializeConstruction);
-		registrations.push_back(server.stateProvider("drawing", [this] { return drawingStateJson(m_ctx.drawing->snapshot()); }));
+		registrations.push_back(server.stateProvider("drawing", [this] {
+			return drawingStateJson(
+				m_ctx.drawing->snapshot(),
+				{.settings = UserSettings::Get().drawing,
+				 .keyGuideCollapsed = m_ctx.drawing->keyGuideCollapsed(),
+				 .dialogOpen = m_ctx.dialogOpen && m_ctx.dialogOpen()}
+			);
+		}));
+		registrations.push_back(server.stateProvider("camera", [this] {
+			int width = 0;
+			int height = 0;
+			Renderer::Primitives::getLogicalViewport(width, height);
+			return cameraStateJson(*m_ctx.camera, m_ctx.pixelsPerMeter, width, height);
+		}));
 		view("stations", &DevCommandHandler::serializeStations);
 		view("storage", &DevCommandHandler::serializeStorage);
 		view("time", &DevCommandHandler::serializeTime);

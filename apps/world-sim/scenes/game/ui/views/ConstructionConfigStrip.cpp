@@ -1,5 +1,6 @@
 #include "ConstructionConfigStrip.h"
 
+#include "scenes/game/world/construction/DrawingStatusHint.h"
 #include "scenes/shared/SalalUi.h"
 
 #include <ui/Context.h>
@@ -305,52 +306,11 @@ namespace world_sim {
 			bottom->setText(std::format("Cost: {:.0f}  Work: {:.0f}", status.wallCost, status.wallWork));
 		}
 
-		ui::ColorToken color = tokens::color::statusOk;
-		std::string	   text = "Ready";
-		if (status.opening) {
-			if (status.valid) {
-				text = "Click a wall to place";
-			} else {
-				// No wall in range is pending (move onto a built wall); a wall in range that fails the
-				// placement gate is blocked.
-				const bool blocked = !status.message.empty() && status.message != "no wall in range";
-				color = blocked ? tokens::color::statusCrit : tokens::color::statusWarn;
-				text = status.message.empty() ? "Hover a built wall" : status.message;
-			}
-		} else if (status.wall) {
-			if (status.pointCount == 0) {
-				color = tokens::color::statusWarn;
-				text = "Click a foundation to start";
-			} else {
-				text = "Right-click / Enter to finish";
-			}
-			if (!status.valid && !status.message.empty()) {
-				color = tokens::color::statusCrit;
-				text = status.message;
-			}
-		} else if (rectangle) {
-			text = status.pointCount == 0 ? "Click or drag from a corner" : "Click the opposite corner";
-			if (!status.valid && !status.message.empty()) {
-				color = tokens::color::statusCrit;
-				text = status.message;
-			}
-		} else {
-			if (status.foundationEdit && status.pointCount == 0) {
-				text = "Draw a region across the foundation edge";
-			}
-			if (status.pointCount > 0 && status.pointCount < 3) {
-				color = tokens::color::statusWarn;
-				text = "Keep placing points";
-			}
-			if (!status.valid && !status.message.empty()) {
-				color = tokens::color::statusCrit;
-				text = status.message;
-			} else if (status.valid && status.pointCount >= 3) {
-				color = tokens::color::statusOk;
-				text = "Click origin to close";
-			}
-		}
-		line->setText(std::move(text));
+		StatusHint			 hint = statusHint(status);
+		const ui::ColorToken color = hint.tone == StatusHintTone::Crit	 ? tokens::color::statusCrit
+									 : hint.tone == StatusHintTone::Warn ? tokens::color::statusWarn
+																		 : tokens::color::statusOk;
+		line->setText(std::move(hint.text));
 		if (!sameColor(color, messageColor)) {
 			messageColor = color;
 			ui::Style lineStyle = line->getDeclaredStyle();
