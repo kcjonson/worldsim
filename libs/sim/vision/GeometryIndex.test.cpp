@@ -696,8 +696,29 @@ TEST_F(GeometryIndexTest, SightPolygonEndsAtTheNearFace) {
 
 // An eye inside a wall's band (nav carves walls out, so only by mistake) sees the
 // inside of the band and nothing past it, without failing: the facing query culls
-// nothing for it.
+// nothing for it, in a closed room's band too when its sight leaves out the walls
+// listed before the one it is in, which the winding round it still counts.
 TEST_F(GeometryIndexTest, EyeInsideTheBandSeesOnlyTheBand) {
+	{
+		ConstructionWorld room;
+		buildRoomWithADoor(room);
+		for (const construction::WallSegment& wall : room.segments()) {
+			if (room.getVertex(wall.v0)->pos == Vec2i64{4000, 4000}) {
+				addBuiltOpening(room, wall.id, 0.3F, "Window"); // the north wall, run east to west
+			}
+		}
+		GeometryIndex roomIndex;
+		roomIndex.setConstructionWorld(&room);
+		roomIndex.rebuildIfStale();
+		const Vec2i64				 inNorthWall{2498, 4098};
+		std::vector<OccluderSegment> all;
+		std::vector<OccluderSegment> facing;
+		roomIndex.queryOccluders(inNorthWall, 1500, all);
+		ASSERT_TRUE(roomIndex.insideSolid(inNorthWall));
+		EXPECT_FALSE(roomIndex.queryFacingOccluders(inNorthWall, 1500, facing));
+		EXPECT_EQ(facing.size(), all.size());
+	}
+
 	ConstructionWorld cw;
 	buildWall(cw, {0, 0}, {4000, 0});
 	const std::int64_t half = halfThickness(cw);
