@@ -237,15 +237,21 @@ namespace world_sim {
 		std::vector<ColonistSightBodies> colonists;
 		for (auto [entity, colonist, position] : m_ctx.world->view<ecs::Colonist, ecs::Position>()) {
 			const std::optional<ecs::VisionSystem::SightBodies> bodies = vision.sightBodies(entity);
-			if (!bodies.has_value()) {
+			const std::optional<ecs::VisionSystem::SightShape>	shape  = vision.sightShape(entity);
+			if (!bodies.has_value() || !shape.has_value()) {
 				continue;
 			}
+			const char* path = shape->path == ecs::VisionSystem::SightPath::Polygon ? "polygon"
+							   : shape->path == ecs::VisionSystem::SightPath::Leg	? "leg"
+																					: "open";
 			colonists.push_back({
 				.id			 = static_cast<std::uint64_t>(entity),
 				.name		 = colonist.name,
 				.eyeCentre	 = bodies->eyeCentre,
 				.leadMm		 = bodies->leadMm,
 				.reachMm	 = bodies->reachMm,
+				.path		 = path,
+				.ranges		 = shape->ranges,
 				.bodies		 = bodies->bodies,
 				.shadowEdges = bodies->shadowEdges,
 			});

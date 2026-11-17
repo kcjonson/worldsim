@@ -40,6 +40,7 @@
 #include <nav/LimitPolygon.h>
 #include <nav/PathQuery.h>
 #include <predicates/Predicates.h>
+#include <visibility/SightClip.h>
 
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/SyntheticWorldSampler.h>
@@ -1223,6 +1224,236 @@ TEST_F(NavigationSystemTest, PlainDiscKeepsItsBuildAmongSoftTrees) {
 	world.update(0.016F);
 	EXPECT_EQ(vision.buildCount(), 2U) << "past the rebuild step";
 	EXPECT_EQ(vision.polygonBuildCount(), 0U);
+}
+
+namespace {
+	// A clump of 16 trunks on a 0.8 m grid centred `centre`, about 1.2 m round it.
+	std::vector<std::pair<std::string, glm::vec2>> trunkClump(glm::vec2 centre) {
+		std::vector<std::pair<std::string, glm::vec2>> clump;
+		for (int column = 0; column < 4; ++column) {
+			for (int row = 0; row < 4; ++row) {
+				clump.push_back({kSightTrunk, centre + glm::vec2{0.8F * static_cast<float>(column) - 1.2F, 0.8F * static_cast<float>(row) - 1.2F}});
+			}
+		}
+		return clump;
+	}
+
+	// Forest depth's ranges at `radiusMm` round `eye` from every whole ring in the index within the
+	// observer's reach, as sight-softening.md 4 takes them.
+	geometry::SightSideValues
+	expectedRanges(const vision::PlacedOccluderIndex& index, geometry::Vec2i64 eye, std::int64_t reachMm, std::int64_t radiusMm) {
+		const geometry::ForestTunables			   tunables = vision::SightTunables{}.forest();
+		std::vector<const vision::PlacedOccluder*> rings;
+		index.within(eye, reachMm, rings);
+		std::vector<geometry::ForestBody> bodies;
+		for (const vision::PlacedOccluder* ring : rings) {
+			bodies.push_back({.centre = ring->centre, .widthFactor = geometry::forestWidthFactor(ring->perimeterMm, tunables)});
+		}
+		return geometry::forestRanges(eye, 30000, radiusMm, bodies, tunables);
+	}
+
+	// The side whose normal points nearest `degrees` from +x.
+	std::size_t sideToward(double degrees) {
+		const double sides = static_cast<double>(geometry::kSightSides);
+		return static_cast<std::size_t>(std::lround(degrees / (360.0 / sides) - 0.5 + sides)) % geometry::kSightSides;
+	}
+} // namespace
+
+// Among soft trees only, his sight is the forest shape of his sight placed where he stands: the clump
+// to the east pulls the rim in that way, a clear direction keeps its whole range, and nothing casts a
+// shadow. A ring arriving in sight comes into forest depth over forestArrivalMs of sim time, the shape
+// rebuilt at each pass until a build records it whole, and then kept.
+TEST_F(NavigationSystemTest, ForestShapeAmongSoftTreesPullsTheRimInTowardThem) {
+	registerSightBodies();
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeMixed(executor, processed, trunkClump({10.0F, 0.0F}));
+
+	World			  world;
+	world.registerSystem<TimeSystem>();
+	VisionSystem&	  vision = world.registerSystem<VisionSystem>();
+	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
+	vision.setUpdateInterval(1);
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	meshingMover(world, {0.0F, 0.0F});
+	const EntityID observer = sightObserver(world, {0.0F, 0.0F});
+	settle(sys);
+	ASSERT_EQ(sys.placedOccluders().size(), 16U);
+
+	const std::size_t east = sideToward(0.0);
+	const std::size_t west = sideToward(180.0);
+	world.update(0.016F);
+	const std::int64_t arriving = (*vision.sightShape(observer)->ranges)[east];
+	EXPECT_GT(arriving, 29000) << "a ring just arrived adds next to nothing";
+	std::int64_t last = arriving;
+	for (int pass = 0; pass < 5; ++pass) {
+		world.update(0.5F);
+		const std::int64_t now = (*vision.sightShape(observer)->ranges)[east];
+		EXPECT_LE(now, last) << "arriving rings only deepen the forest";
+		last = now;
+	}
+	const std::uint64_t whole = vision.buildCount();
+	world.update(0.016F);
+	world.update(0.016F);
+	EXPECT_EQ(vision.buildCount(), whole) << "rings recorded whole keep the build";
+
+	const std::optional<VisionSystem::SightShape> shape = vision.sightShape(observer);
+	ASSERT_TRUE(shape.has_value());
+	EXPECT_EQ(shape->path, VisionSystem::SightPath::Leg);
+	EXPECT_EQ(shape->polygon, nullptr) << "soft trees cast no shadow";
+	ASSERT_NE(shape->forest, nullptr);
+	EXPECT_EQ(*shape->ranges, expectedRanges(sys.placedOccluders(), {0, 0}, vision.sightBodies(observer)->reachMm, 30000));
+	EXPECT_LT((*shape->ranges)[east], 26000) << "the clump pulls the rim in toward it";
+	EXPECT_GE((*shape->ranges)[east], 20100) << "never past the floor";
+	EXPECT_EQ((*shape->ranges)[west], 30000) << "a clear direction is untouched";
+	EXPECT_TRUE(shape->holds({0.0F, 0.0F}, {13.0F, 0.0F})) << "behind a trunk, short of the rim";
+	EXPECT_FALSE(shape->holds({0.0F, 0.0F}, {27.0F, 0.0F})) << "past the pulled-in rim";
+	EXPECT_TRUE(shape->holds({0.0F, 0.0F}, {-29.9F, 0.0F})) << "the whole sight where nothing stands";
+}
+
+// Walking among soft trees with a movement target and jittering frame times, his forest shape is
+// carried with him and rebuilt once a step: walking 0.1 m a pass for 20 passes, at 0, 0.6, 1.2, and
+// 1.8 m, four builds, every one on a leg and none a polygon.
+TEST_F(NavigationSystemTest, ForestShapeIsBuiltOnceAStepWalkingAmongSoftTrees) {
+	registerSightBodies();
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeMixed(executor, processed, trunkClump({8.0F, 3.0F}));
+
+	World			  world;
+	TimeSystem&		  time	 = world.registerSystem<TimeSystem>();
+	VisionSystem&	  vision = world.registerSystem<VisionSystem>();
+	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
+	vision.setUpdateInterval(1);
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	meshingMover(world, {0.0F, 0.0F});
+	const EntityID observer = sightObserver(world, {0.0F, 0.0F});
+	world.addComponent<MovementTarget>(observer, MovementTarget{.target = {5.0F, 0.0F}, .speed = 2.0F, .active = true});
+	settle(sys);
+	time.skipTime(10.0F);
+
+	std::vector<geometry::SightSideValues> built;
+	std::uint64_t						   builds = vision.buildCount();
+	for (int pass = 0; pass < 20; ++pass) {
+		world.getComponent<Position>(observer)->value = {0.1F * static_cast<float>(pass), 0.0F};
+		world.update(pass % 2 == 0 ? 0.0163F : 0.0171F);
+		const std::optional<VisionSystem::SightShape> shape = vision.sightShape(observer);
+		ASSERT_EQ(shape->path, VisionSystem::SightPath::Leg);
+		EXPECT_FLOAT_EQ(shape->center.x, 0.1F * static_cast<float>(pass)) << "the forest shape is carried with him";
+		if (vision.buildCount() != builds) {
+			builds = vision.buildCount();
+			built.push_back(*shape->ranges);
+		}
+	}
+	EXPECT_EQ(built.size(), 4U);
+	EXPECT_EQ(vision.polygonBuildCount(), 0U);
+	EXPECT_NE(built.front(), built.back()) << "each build takes the ranges where it stands";
+}
+
+// A BigRock among trees: the shape is computeVisibilityPolygon's for the rock rings, cut by the
+// forest shape of his reach. The near rock's shadow edges are tagged; a rock past the forest rim the
+// clump pulls in keeps its body and loses its tags, since its shadow lies past the rim.
+TEST_F(NavigationSystemTest, BigRockShapeIsItsVisibilityPolygonCutByTheForestShape) {
+	registerSightBodies();
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	std::vector<std::pair<std::string, glm::vec2>> placed = trunkClump({-10.0F, 0.0F});
+	placed.push_back({kSightRock, {5.0F, 0.0F}});
+	placed.push_back({kSightRock, {-28.5F, 0.0F}});
+	placeMixed(executor, processed, placed);
+
+	World			  world;
+	TimeSystem&		  time	 = world.registerSystem<TimeSystem>();
+	VisionSystem&	  vision = world.registerSystem<VisionSystem>();
+	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
+	vision.setUpdateInterval(1);
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	meshingMover(world, {0.0F, 0.0F});
+	const EntityID observer = sightObserver(world, {0.0F, 0.0F});
+	settle(sys);
+	time.skipTime(10.0F);
+	world.update(0.016F);
+
+	const std::optional<VisionSystem::SightShape>  shape  = vision.sightShape(observer);
+	const std::optional<VisionSystem::SightBodies> bodies = vision.sightBodies(observer);
+	ASSERT_TRUE(shape.has_value() && bodies.has_value());
+	ASSERT_EQ(shape->path, VisionSystem::SightPath::Polygon);
+	std::vector<const vision::PlacedOccluder*> rings;
+	sys.placedOccluders().within({0, 0}, bodies->reachMm, rings);
+	std::vector<geometry::OccluderSegment> rockEdges;
+	for (const vision::PlacedOccluder* ring : rings) {
+		if (ring->kind == vision::BodyKind::Opaque) {
+			for (std::size_t corner = 0; corner < ring->outline.size(); ++corner) {
+				rockEdges.push_back({ring->outline[corner], ring->outline[(corner + 1) % ring->outline.size()]});
+			}
+		}
+	}
+	ASSERT_EQ(rockEdges.size(), 8U);
+	const geometry::Ring expected = geometry::starClippedToConvex(
+		geometry::computeVisibilityPolygon({0, 0}, bodies->reachMm, rockEdges),
+		{0, 0},
+		geometry::forestShape({0, 0}, expectedRanges(sys.placedOccluders(), {0, 0}, bodies->reachMm, bodies->reachMm))
+	);
+	EXPECT_EQ(*shape->polygon, expected);
+	EXPECT_LT((*shape->ranges)[sideToward(180.0)], 26000) << "the clump pulls the west rim in";
+	EXPECT_EQ(bodies->bodies->size(), 18U) << "16 trunks and both rocks";
+	ASSERT_EQ(bodies->shadowEdges->size(), 2U) << "the near rock's two, none for the rock past the rim";
+	for (const vision::ShadowEdge& edge : *bodies->shadowEdges) {
+		EXPECT_EQ((*bodies->bodies)[edge.body].centre, nav::toMm({5.0F, 0.0F}));
+	}
+	EXPECT_FALSE(shape->holds({0.0F, 0.0F}, {9.0F, 0.0F})) << "behind the near rock";
+	EXPECT_TRUE(shape->holds({0.0F, 0.0F}, {4.0F, 0.0F})) << "short of the near rock";
+	EXPECT_TRUE(shape->holds({0.0F, 0.0F}, {-12.0F, 0.0F})) << "behind a trunk";
+	EXPECT_TRUE(shape->holds({0.0F, 0.0F}, {0.0F, -29.9F})) << "a clear direction";
+}
+
+// Among the same clump, an opaque wall run cuts its exact shadow and a wall stub nothing: each shape
+// is the visibility polygon of the opaque walls' facing occluders cut by the forest shape of his
+// reach, and the stub's is the unoccluded disc so cut.
+TEST_F(NavigationSystemTest, WallRunCutsItsExactShadowAmongTreesAndAStubNothing) {
+	registerSightBodies();
+	for (const std::int64_t halfLengthMm : {std::int64_t{1000}, std::int64_t{250}}) {
+		PlacementExecutor					executor(AssetRegistry::Get());
+		std::unordered_set<ChunkCoordinate> processed;
+		placeMixed(executor, processed, trunkClump({-10.0F, 0.0F}));
+		ConstructionWorld cw;
+		buildWall(cw, {3000, -halfLengthMm}, {3000, halfLengthMm});
+
+		World			  world;
+		TimeSystem&		  time	 = world.registerSystem<TimeSystem>();
+		VisionSystem&	  vision = world.registerSystem<VisionSystem>();
+		NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
+		vision.setUpdateInterval(1);
+		vision.setConstructionWorld(&cw);
+		sys.setChunkManager(landChunks());
+		sys.setPlacementData(&executor, &processed);
+		sys.setConstructionWorld(&cw);
+		meshingMover(world, {0.0F, 0.0F});
+		const EntityID observer = sightObserver(world, {0.0F, 0.0F});
+		settle(sys);
+		time.skipTime(10.0F);
+		world.update(0.016F);
+
+		const std::optional<VisionSystem::SightShape>  shape  = vision.sightShape(observer);
+		const std::optional<VisionSystem::SightBodies> bodies = vision.sightBodies(observer);
+		ASSERT_TRUE(shape.has_value() && bodies.has_value());
+		ASSERT_EQ(shape->path, VisionSystem::SightPath::Polygon) << "any wall in reach";
+		std::vector<geometry::OccluderSegment> facing;
+		vision.geometry().queryFacingOccluders({0, 0}, bodies->reachMm, facing);
+		EXPECT_EQ(facing.empty(), halfLengthMm == 250) << "the stub is soft and left out";
+		const geometry::Ring expected = geometry::starClippedToConvex(
+			geometry::computeVisibilityPolygon({0, 0}, bodies->reachMm, facing),
+			{0, 0},
+			geometry::forestShape({0, 0}, expectedRanges(sys.placedOccluders(), {0, 0}, bodies->reachMm, bodies->reachMm))
+		);
+		EXPECT_EQ(*shape->polygon, expected);
+		EXPECT_EQ(shape->holds({0.0F, 0.0F}, {6.0F, 0.0F}), halfLengthMm == 250) << "behind the wall";
+		EXPECT_TRUE(shape->holds({0.0F, 0.0F}, {2.0F, 0.0F})) << "short of the wall";
+		EXPECT_FALSE(shape->holds({0.0F, 0.0F}, {-27.0F, 0.0F})) << "past the rim the clump pulls in";
+	}
 }
 
 // A ring's arrival advances only with the clock. With no TimeSystem every ring has arrived; while the

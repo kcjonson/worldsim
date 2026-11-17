@@ -4,12 +4,13 @@
 // polygons. Mirrors NavOverlay: plain class, same ctor pattern, setActive/isActive,
 // render(w, h) calling Renderer::Primitives directly at kPixelsPerMeter.
 //
-// When active (V key) it draws for every entity with Position + Memory:
-//   - Faint filled triangle fan from observer to each polygon edge (z 62)
-//   - Polygon outline ring (z 64)
-//   - GeometryIndex occluder segments in red (z 65)
+// When active (V key) it draws for every entity with Position + Memory (sight-softening.md 5.2):
+//   - His sight shape as a faint cyan fan (z 62)
+//   - The forest shape of his sight where he stands in green, and on the polygon path the hard
+//     polygon the opaque bodies leave, cut to his sight, in cyan (z 64)
+//   - His sight bodies, opaque in red and soft in yellow, and the soft ray's width as a magenta
+//     circle that wide round the build eye (z 65)
 //
-// Outdoor observers (no cached polygon) are silently skipped.
 // Off by default; GameScene toggles it with V.
 
 #include <ecs/systems/VisionSystem.h>

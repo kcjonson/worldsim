@@ -343,19 +343,7 @@ namespace ecs {
 		}
 		for (auto [entity, position, colonist, memory] : world->view<Position, Colonist, Memory>()) {
 			const std::optional<VisionSystem::SightShape> shape = vision->sightShape(entity);
-			if (!shape.has_value()) {
-				continue;
-			}
-			if (shape->polygon != nullptr) {
-				const glm::vec2 offset = meters - position.value;
-				if (offset.x * offset.x + offset.y * offset.y <= shape->radius * shape->radius &&
-					geometry::pointInPolygon(nav::toMm(meters), *shape->polygon) != geometry::PointInPolygon::Outside) {
-					return true;
-				}
-				continue;
-			}
-			const glm::vec2 offset = meters - shape->center;
-			if (offset.x * offset.x + offset.y * offset.y <= shape->radius * shape->radius) {
+			if (shape.has_value() && shape->holds(position.value, meters)) {
 				return true;
 			}
 		}

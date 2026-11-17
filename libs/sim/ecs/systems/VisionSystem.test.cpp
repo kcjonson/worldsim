@@ -321,10 +321,11 @@ TEST_F(VisionSystemTest, TargetOnSameSideIsVisible) {
 }
 
 // Indoors the polygon is built a rebuild step past sight, and what vision decides with it is held to
-// the sight circle round where the observer stands, as outdoors: a target just inside 30 m in a
-// direction between two of the polygon's rim vertices is seen, one 0.3 m past it is not though the
-// polygon covers it, and after a move short of the rebuild step the circle moves with him.
-TEST_F(VisionSystemTest, IndoorSightEndsAtTheSightCircle) {
+// the sight polygon round where the observer stands, the forest shape of equal ranges, as outdoors: a
+// target just inside the 64-gon's flat (29.963 m out) in a direction between two of its rim vertices
+// is seen, one 0.3 m past sight is not though the polygon covers it, and after a move short of the
+// rebuild step the sight polygon moves with him.
+TEST_F(VisionSystemTest, IndoorSightEndsAtTheSightPolygon) {
 	// West, half a side past rim vertex 32 (which lies along -x).
 	const float		angle = 3.14159265F * (1.0F + 1.0F / 64.0F);
 	const glm::vec2 heading{std::cos(angle), std::sin(angle)};
@@ -347,7 +348,8 @@ TEST_F(VisionSystemTest, IndoorSightEndsAtTheSightCircle) {
 		EXPECT_EQ(vision.polygonBuildCount(), 1u) << "no rebuild";
 		return remembers(world, observer, targetPos);
 	};
-	EXPECT_TRUE(seenAt(29.985F, observerPos)) << "inside the circle, past the 64-gon's flat";
+	EXPECT_TRUE(seenAt(29.95F, observerPos)) << "inside the 64-gon's flat";
+	EXPECT_FALSE(seenAt(29.985F, observerPos)) << "inside the circle, past the 64-gon's flat";
 	EXPECT_FALSE(seenAt(30.3F, observerPos)) << "sight plus 0.3 m: in the polygon, out of sight";
 	EXPECT_TRUE(seenAt(30.3F, observerPos + heading * 0.4F)) << "0.4 m on, within sight of where he stands";
 	EXPECT_FALSE(seenAt(29.9F, observerPos - heading * 0.4F)) << "0.4 m back, out of sight of where he stands";
@@ -607,7 +609,11 @@ TEST_F(VisionSystemTest, WallStubIsLeftOutOfThePolygonAndStillRemembered) {
 	ASSERT_NE(shape->polygon, nullptr) << "any wall in reach takes the polygon, so the structure pass runs";
 	const std::optional<VisionSystem::SightBodies> bodies = sys.sightBodies(observer);
 	ASSERT_TRUE(bodies.has_value());
-	EXPECT_EQ(*shape->polygon, geometry::sightPolygon({0, 0}, bodies->reachMm)) << "nothing occludes";
+	geometry::SightSideValues reachRanges{};
+	reachRanges.fill(bodies->reachMm);
+	EXPECT_EQ(*shape->polygon, geometry::starClippedToConvex(geometry::computeVisibilityPolygon({0, 0}, bodies->reachMm, {}), {0, 0}, geometry::forestShape({0, 0}, reachRanges)))
+		<< "nothing occludes: the unoccluded disc of his reach cut by the forest shape of it";
+	EXPECT_EQ(shape->path, VisionSystem::SightPath::Polygon);
 	ASSERT_EQ(bodies->bodies->size(), 1U);
 	EXPECT_EQ(bodies->bodies->front().source, vision::SightBody::Source::Wall);
 	EXPECT_EQ(bodies->bodies->front().kind, vision::BodyKind::Soft);
@@ -1183,8 +1189,12 @@ TEST_F(VisionSystemTest, ShorePointsInSightAreRemembered) {
 
 // The landing crew knows the landing area at tick 0: placed and ECS things 100 m from the drop,
 // far past his own sight, and nothing past kLandingSightMeters. A thing the landing cleared from
-// round the crew before the call is not remembered.
+// round the crew before the call is not remembered. It is the plain disc the seen record commits
+// (sight-softening.md 5.3): a wall between the drop and a thing hides nothing, and no structure is
+// remembered.
 TEST_F(VisionSystemTest, LandingCrewKnowsTheLandingArea) {
+	ConstructionWorld cw;
+	const SegmentId	  wall = buildWall(cw, {250000, 195000}, {250000, 205000});
 	const glm::vec2						drop{200.0F, 200.0F};
 	const glm::vec2						nearPlaced = drop + glm::vec2{100.0F, 0.0F};
 	const glm::vec2						farPlaced = drop + glm::vec2{160.0F, 0.0F};
@@ -1197,6 +1207,7 @@ TEST_F(VisionSystemTest, LandingCrewKnowsTheLandingArea) {
 	World		  world;
 	VisionSystem& sys = world.registerSystem<VisionSystem>();
 	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
 	const glm::vec2 nearEcs = drop + glm::vec2{0.0F, 100.0F};
 	const glm::vec2 farEcs = drop + glm::vec2{0.0F, -160.0F};
 	spawnTarget(world, nearEcs);
@@ -1206,7 +1217,8 @@ TEST_F(VisionSystemTest, LandingCrewKnowsTheLandingArea) {
 	const EntityID member = spawnObserver(world, drop + glm::vec2{0.5F, 0.0F});
 	sys.rememberArea(member, drop, NavigationSystem::kLandingSightMeters);
 
-	EXPECT_TRUE(remembers(world, member, nearPlaced)) << "a placed thing 100 m from the drop";
+	EXPECT_TRUE(remembers(world, member, nearPlaced)) << "a placed thing 100 m from the drop, behind a wall";
+	EXPECT_FALSE(world.getComponent<Memory>(member)->knowsSegment(wall)) << "no structure pass";
 	EXPECT_TRUE(remembers(world, member, nearEcs)) << "an ECS thing 100 m from the drop";
 	EXPECT_FALSE(remembers(world, member, farPlaced)) << "160 m is past the landing area";
 	EXPECT_FALSE(remembers(world, member, farEcs)) << "160 m is past the landing area";

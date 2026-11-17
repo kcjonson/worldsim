@@ -46,8 +46,9 @@ namespace ecs {
 
 		// In the seen record or a pending shape.
 		[[nodiscard]] bool isSeen(glm::vec2 meters) const;
-		// In a player colonist's sight now, by vision's own test: within his sight radius of where
-		// vision last looked from, or within it of where he stands and in his visibility polygon.
+		// In a player colonist's sight now, by vision's own test (VisionSystem::SightShape::holds):
+		// within his sight radius of where he stands, in his polygon on the polygon path, and in the
+		// forest shape of his sight placed where he stands (sight-softening.md 5.2).
 		[[nodiscard]] bool isVisible(glm::vec2 meters) const;
 		// The ground drawn bright for `colonist` this frame (player-visibility.md 3.4), in millimetres:
 		// the sight polygon of vision::drawnVisibleRadiusMm round where he stands, and with walls in

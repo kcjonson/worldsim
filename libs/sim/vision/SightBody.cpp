@@ -135,6 +135,19 @@ namespace vision {
 		return tagged;
 	}
 
+	std::vector<ShadowEdge>
+	shadowEdgesKeptByClip(std::span<const ShadowEdge> tagged, const geometry::Ring& clipped, std::span<const SightBody> bodies) {
+		std::vector<geometry::Vec2i64> vertices(clipped.begin(), clipped.end());
+		std::ranges::sort(vertices);
+		std::vector<ShadowEdge> kept;
+		for (const ShadowEdge& edge : tagged) {
+			if (std::ranges::binary_search(vertices, bodies[edge.body].edges[edge.corner].a)) {
+				kept.push_back(edge);
+			}
+		}
+		return kept;
+	}
+
 	std::optional<Silhouette> silhouetteFrom(const SightBody& body, glm::dvec2 eyeMm) {
 		const std::optional<std::uint32_t> clockwise		= silhouetteEnd(body, eyeMm, -1);
 		const std::optional<std::uint32_t> counterClockwise = silhouetteEnd(body, eyeMm, 1);
