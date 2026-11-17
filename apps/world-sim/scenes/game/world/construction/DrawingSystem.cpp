@@ -2386,7 +2386,7 @@ namespace world_sim {
 		};
 
 		// Outline only: the committed foundation already shows under it, and the drawn
-		// region's own fill sits on top. While the click closes it takes the close's colour.
+		// region's own fill sits on top. While the click closes it takes the close's color.
 		if (editPreview_.ok()) {
 			const Foundation::Color color = previewVerdict().editOutlineValid ? validColor_ : invalidColor_;
 			const geometry::Ring&	outline = editPreview_.outline;

@@ -267,11 +267,11 @@ namespace world_sim {
 		/// committing pass (the commit itself can still be refused, with a toast, and the
 		/// picture can lag a world change by a frame). Otherwise both come from the point the
 		/// click would place. The snapped-point marker's red dot, and an Add / Subtract's
-		/// outline colour and reason text, follow the same verdict.
+		/// outline color and reason text, follow the same verdict.
 		struct PreviewVerdict {
 			bool		valid = true;
 			bool		closeHalo = false;
-			bool		markerInvalid = false;	 // the snapped-point marker's dot takes the invalid colour
+			bool		markerInvalid = false;	 // the snapped-point marker's dot takes the invalid color
 			bool		editOutlineValid = true; // the outline an Add / Subtract would produce
 			std::string editReason;				 // why that edit is refused, drawn beside the pointer; empty when it isn't
 		};
