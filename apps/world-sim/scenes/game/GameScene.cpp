@@ -743,13 +743,18 @@ namespace {
 			);
 		}
 
-		// What salal's ui didn't take: Escape, the world's hotkeys, the key guide's `?` and H while a drawing tool is
-		// on, a press or release for the drawing tool, a release for placement or selection, and the scroll that zooms. The HUD takes no focus, so a key the ui
-		// took is a dialog's. The tools' previews follow the pointer in update().
+		// What salal's ui didn't take: Escape, the world's hotkeys, the key guide's toggle, a press or release
+		// for the drawing tool, a release for placement or selection, and the scroll that zooms. The HUD takes
+		// no focus, so a key the ui took is a dialog's. The tools' previews follow the pointer in update().
 		bool handleEvent(const foundation::InputEvent& event) override {
 			using Type = foundation::InputEvent::Type;
 			windowPresence.observe(event.type);
-			if (m_drawingSystem->isActive() && !modalDialogOpen() && world_sim::togglesKeyGuide(event)) {
+			const world_sim::KeyGuideToggle::State keyGuideState{
+				.toolActive = m_drawingSystem->isActive(),
+				.modalDialogOpen = modalDialogOpen(),
+				.showKeyGuide = world_sim::UserSettings::Get().drawing.showKeyGuide,
+			};
+			if (keyGuideToggle.takes(event, keyGuideState)) {
 				m_drawingSystem->toggleKeyGuide();
 				return true;
 			}
@@ -1033,7 +1038,9 @@ namespace {
 			// Push drawing-tool status to the config strip (drives its readouts and
 			// visibility), and the tool on to the key guide over it.
 			gameUI->setConstructionStatus(m_drawingSystem->status());
-			gameUI->setKeyGuide(m_drawingSystem->activeTool(), world_sim::UserSettings::Get().drawing, m_drawingSystem->keyGuideCollapsed());
+			gameUI->setKeyGuide(
+				m_drawingSystem->activeTool(), world_sim::UserSettings::Get().drawing, m_drawingSystem->keyGuideCollapsed()
+			);
 
 			m_lastUpdateMs = elapsedMs(updateStart, Clock::now());
 		}
@@ -2292,6 +2299,8 @@ namespace {
 		world_sim::WindowPresence windowPresence;
 		bool					  backgroundLaunch = false;
 		bool					  pointerWasWithTool = false;
+
+		world_sim::KeyGuideToggle keyGuideToggle;
 
 		world_sim::WallDoubleClick wallDoubleClick;
 

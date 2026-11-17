@@ -17,7 +17,7 @@ namespace world_sim {
 
 	namespace {
 
-		constexpr char32_t kToggleCharacter = U'?';
+		constexpr char32_t	  kToggleCharacter = U'?';
 		constexpr const char* kChipText = "Keys ?";
 
 		KeyGuidePart key(std::string text) {
@@ -97,7 +97,8 @@ namespace world_sim {
 			if (!drawsHelpers(tool)) {
 				return rows;
 			}
-			const bool guides = settings.angleSteps || settings.guidesFromShape || settings.alignToExistingBuildings || settings.guidesFromWorldAxes;
+			const bool guides =
+				settings.angleSteps || settings.guidesFromShape || settings.alignToExistingBuildings || settings.guidesFromWorldAxes;
 			if (guides) {
 				rows.push_back({LegendGlyph::Guide, "Lined up with something"});
 			}
@@ -138,7 +139,8 @@ namespace world_sim {
 
 			void render() override { drawFeedbackPlan(plan, drawKey(), opacity()); }
 
-			[[nodiscard]] std::optional<Foundation::Vec2> intrinsicSize(std::optional<float> /*width*/, float /*availableWidth*/) const override {
+			[[nodiscard]] std::optional<Foundation::Vec2>
+			intrinsicSize(std::optional<float> /*width*/, float /*availableWidth*/) const override {
 				return Foundation::Vec2{kLegendGlyphWidth, kLegendGlyphHeight};
 			}
 
@@ -221,6 +223,17 @@ namespace world_sim {
 		return event.type == Type::KeyDown && !event.repeat && event.key == foundation::Key::H;
 	}
 
+	bool KeyGuideToggle::takes(const foundation::InputEvent& event, const State& state) {
+		using Type = foundation::InputEvent::Type;
+		if (event.type == Type::KeyDown) {
+			lastKeyDownRepeated = event.repeat;
+		}
+		if (event.type == Type::Char && lastKeyDownRepeated) {
+			return false;
+		}
+		return state.toolActive && !state.modalDialogOpen && state.showKeyGuide && togglesKeyGuide(event);
+	}
+
 	DrawingKeyGuide::DrawingKeyGuide(const Args& args)
 		: onOpen(args.onOpen) {}
 
@@ -238,13 +251,12 @@ namespace world_sim {
 					.padding = {gap, theme.get(tokens::spacing::space2)},
 					.alignItems = ui::AlignItems::Start,
 				},
-			.style =
-				{
-					.backgroundColor = theme.get(tokens::color::bgPanel),
-					.borderColor = theme.get(tokens::color::lineEdge),
-					.borderWidth = theme.get(tokens::border::bw),
-					.borderRadius = theme.get(tokens::radius::radiusSm),
-				},
+			.style = {
+				.backgroundColor = theme.get(tokens::color::bgPanel),
+				.borderColor = theme.get(tokens::color::lineEdge),
+				.borderWidth = theme.get(tokens::border::bw),
+				.borderRadius = theme.get(tokens::radius::radiusSm),
+			},
 		});
 		chip = addChild<KeyGuideChip>({.id = "key_guide_chip", .visible = false, .onOpen = [this] {
 										   if (onOpen) {
@@ -290,12 +302,17 @@ namespace world_sim {
 				 .alignItems = ui::AlignItems::Center,
 				 .gridTemplateColumns = {ui::kAuto, ui::kAuto},
 		 };
-		const ui::Layout keyRun{.display = ui::Display::Flex, .gap = theme.get(tokens::spacing::space05), .alignItems = ui::AlignItems::Center};
-		const ui::Style	 action = world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::text});
+		const ui::Layout keyRun{
+			.display = ui::Display::Flex, .gap = theme.get(tokens::spacing::space05), .alignItems = ui::AlignItems::Center
+		};
+		// The grid's one gap is too tight between the widest key group and its action; rows keep it.
+		ui::Layout keyCell = keyRun;
+		keyCell.padding = {0.0F, theme.get(tokens::spacing::space2), 0.0F, 0.0F};
+		const ui::Style action = world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::text});
 
 		ui::Ref<ui::Component> keys = box->addChild<ui::Component>({.id = "key_guide_keys", .layout = grid});
 		for (const KeyGuideKeyRow& row : content.keyRows) {
-			ui::Ref<ui::Component> cell = keys.addChild<ui::Component>({.id = "key_guide_key_row", .layout = keyRun});
+			ui::Ref<ui::Component> cell = keys.addChild<ui::Component>({.id = "key_guide_key_row", .layout = keyCell});
 			addParts(*cell.get(), row.keys, theme);
 			keys.addChild<ui::Text>({.style = action, .text = row.action});
 		}

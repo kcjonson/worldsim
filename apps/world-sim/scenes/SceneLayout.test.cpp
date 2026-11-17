@@ -31,6 +31,7 @@
 #include <ui/components/Dialog.h>
 #include <ui/components/TabBar.h>
 #include <ui/components/Toast.h>
+#include <ui/shapes/Text.h>
 #include <utils/ResourcePath.h>
 #include <world/camera/WorldCamera.h>
 #include <world/chunk/ChunkManager.h>
@@ -38,6 +39,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -250,7 +252,17 @@ namespace world_sim::testing {
 				return panel != nullptr ? panel : shown("key_guide_chip");
 			}
 
-			// Where the key guide meets the HUD round it, at every window size and interface size.
+			// `component`'s children, in order.
+			[[nodiscard]] std::vector<const ui::Component*> childrenOf(const ui::Component& component) const {
+				std::vector<const ui::Component*> children;
+				for (const ui::ComponentId id : component.getChildren()) {
+					children.push_back(app->scenes().top()->ui().find(id));
+				}
+				return children;
+			}
+
+			// Where the key guide meets the HUD round it, at every window size and interface size: it sits over the
+			// strip, centred on it, and overlaps nothing.
 			[[nodiscard]] std::string keyGuideCrowding() {
 				return everywhere([this](const WindowSize& window) {
 					(void)app::lintAt(*app, *platform, window.width, window.height);
@@ -261,8 +273,29 @@ namespace world_sim::testing {
 						return found;
 					}
 					const Foundation::Rect box = guide->screenBounds();
+					if (const ui::Component* strip = shown("construction_config_strip"); strip != nullptr) {
+						const Foundation::Rect stripBox = strip->screenBounds();
+						if (box.y + box.height > stripBox.y + kOverlapTolerance) {
+							found.push_back(
+								std::format("{} ends {:g} below the strip's top", guide->getId(), box.y + box.height - stripBox.y)
+							);
+						}
+						const float offCentre = (box.x + (box.width * 0.5F)) - (stripBox.x + (stripBox.width * 0.5F));
+						if (std::abs(offCentre) > kOverlapTolerance) {
+							found.push_back(std::format("{} is {:g} off the strip's centre", guide->getId(), offCentre));
+						}
+					} else {
+						found.emplace_back("no strip");
+					}
 					for (const char* id :
-						 {"construction_config_strip", "gameplay_bar", "entity_panel", "task_list", "zoom_panel", "colonist_list", "right_stack", "top_bar"}) {
+						 {"construction_config_strip",
+						  "gameplay_bar",
+						  "entity_panel",
+						  "task_list",
+						  "zoom_panel",
+						  "colonist_list",
+						  "right_stack",
+						  "top_bar"}) {
 						const ui::Component* other = shown(id);
 						if (other == nullptr) {
 							continue;
@@ -297,7 +330,7 @@ namespace world_sim::testing {
 
 		// Each drawing tool, turned on in the HUD's drawing system; Add and Subtract on `floor`.
 		struct DrawingToolOn {
-			const char*										   name;
+			const char*														name;
 			std::function<void(DrawingSystem&, construction::FoundationId)> activate;
 		};
 
@@ -307,16 +340,16 @@ namespace world_sim::testing {
 				{"Freeform", [](DrawingSystem& drawing, construction::FoundationId) { drawing.activateFoundationTool(); }},
 				{"Wall", [](DrawingSystem& drawing, construction::FoundationId) { drawing.activateWallTool(); }},
 				{"Door", [](DrawingSystem& drawing, construction::FoundationId) { drawing.activateOpeningTool("Door"); }},
-				{"Add",
-				 [](DrawingSystem& drawing, construction::FoundationId floor) {
+				{"Add", [](DrawingSystem& drawing, construction::FoundationId floor) {
 					 drawing.activateFoundationEditTool(floor, construction::FoundationEditMode::Add);
 				 }},
 			};
 		}
 
 		construction::FoundationId commitFloor(DrawingSystem& drawing) {
-			const auto floor =
-				drawing.world().commitFoundation(std::vector<Foundation::Vec2>{{0.0F, 0.0F}, {4.0F, 0.0F}, {4.0F, 4.0F}, {0.0F, 4.0F}}, "Wood");
+			const auto floor = drawing.world().commitFoundation(
+				std::vector<Foundation::Vec2>{{0.0F, 0.0F}, {4.0F, 0.0F}, {4.0F, 4.0F}, {0.0F, 4.0F}}, "Wood"
+			);
 			EXPECT_TRUE(floor.ok());
 			return floor.id;
 		}
@@ -656,6 +689,70 @@ namespace world_sim::testing {
 		scene.drawing().deactivate();
 		frame();
 		EXPECT_EQ(shown("key_guide"), nullptr) << "the tool off";
+
+		scene.drawing().activateWallTool();
+		scene.drawing().toggleKeyGuide();
+		frame();
+		const ui::Component* chip = shown("key_guide_chip");
+		ASSERT_NE(chip, nullptr);
+		const std::vector<const ui::Component*> chipText = childrenOf(*chip);
+		ASSERT_EQ(chipText.size(), 1U);
+		EXPECT_EQ(static_cast<const ui::Text*>(chipText[0])->getText(), "Keys ?");
+		scene.drawingSettings.showKeyGuide = false;
+		frame();
+		EXPECT_EQ(shown("key_guide"), nullptr) << "collapsed, the setting off";
+		EXPECT_EQ(shown("key_guide_chip"), nullptr) << "collapsed, the setting off";
+	}
+
+	// The panel's rows are the content's: a key cap for each key, dim text for the words among them, a glyph for each
+	// legend row, and the foot; built again when the tool or the settings change while it is open.
+	TEST_F(SceneLayout, TheKeyGuideBuildsItsRowsFromItsContent) {
+		HudScene& scene = openHud([](HudScene& opened) {
+			opened.drawingSettings = {.angleSteps = true, .commonLengths = true, .showKeyGuide = true};
+			opened.drawing().activateWallTool();
+		});
+		frame();
+		const auto expectBuiltFrom = [this](const KeyGuideContent& content, const std::string& when) {
+			const ui::Component* keys = shown("key_guide_keys");
+			ASSERT_NE(keys, nullptr) << when;
+			const std::vector<const ui::Component*> keyCells = childrenOf(*keys);
+			ASSERT_EQ(keyCells.size(), content.keyRows.size() * 2) << when;
+			for (std::size_t row = 0; row < content.keyRows.size(); ++row) {
+				const std::vector<const ui::Component*> parts = childrenOf(*keyCells[row * 2]);
+				ASSERT_EQ(parts.size(), content.keyRows[row].keys.size()) << when << ", row " << row;
+				for (std::size_t index = 0; index < parts.size(); ++index) {
+					const KeyGuidePart& part = content.keyRows[row].keys[index];
+					EXPECT_EQ(std::string_view(parts[index]->typeName()), part.chip ? "KeyCap" : "Text") << when << ", " << part.text;
+				}
+				EXPECT_EQ(static_cast<const ui::Text*>(keyCells[(row * 2) + 1])->getText(), content.keyRows[row].action) << when;
+			}
+			const ui::Component* legend = shown("key_guide_legend");
+			std::size_t			 glyphs = 0;
+			if (legend != nullptr) {
+				for (const ui::Component* child : childrenOf(*legend)) {
+					glyphs += std::string_view(child->typeName()) == "LegendGlyphView" ? 1 : 0;
+				}
+			}
+			EXPECT_EQ(glyphs, content.legendRows.size()) << when;
+			const ui::Component* foot = shown("key_guide_foot");
+			ASSERT_NE(foot, nullptr) << when;
+			EXPECT_EQ(childrenOf(*foot).size(), content.foot.size()) << when;
+		};
+		expectBuiltFrom(keyGuideContent(ToolKind::Wall, scene.drawingSettings), "the wall tool");
+		EXPECT_FALSE(keyGuideContent(ToolKind::Wall, scene.drawingSettings).legendRows.empty());
+
+		scene.drawing().activateFoundationTool();
+		frame();
+		expectBuiltFrom(keyGuideContent(ToolKind::Foundation, scene.drawingSettings), "the Freeform tool");
+
+		scene.drawingSettings = everyHelperOn();
+		frame();
+		expectBuiltFrom(keyGuideContent(ToolKind::Foundation, scene.drawingSettings), "every helper on");
+
+		scene.drawingSettings = {.showKeyGuide = true};
+		frame();
+		expectBuiltFrom(keyGuideContent(ToolKind::Foundation, scene.drawingSettings), "every helper off");
+		EXPECT_EQ(shown("key_guide_legend"), nullptr);
 	}
 
 	// Collapsed under one tool it stays collapsed under the next, and a click on the chip opens it.
@@ -708,12 +805,18 @@ namespace world_sim::testing {
 		const Foundation::Vec2 window = context.getCanvas() * scale;
 		const Foundation::Rect bounds = panel->screenBounds();
 		const auto			   releaseAt = [&](glm::vec2 point) {
-			  const PointerTarget target = pointerTarget(point, static_cast<int>(window.x), static_cast<int>(window.y), scale, [&context](glm::vec2 uiPoint) {
-				  return context.hitTest(uiPoint).valid();
-			  });
-			  return drawingPointerAction(
-				  PointerInput::Release, foundation::MouseButton::Left, target, true, scene.drawing().activeTool(), scene.drawing().hasPendingPress()
-			  );
+			const PointerTarget target =
+				pointerTarget(point, static_cast<int>(window.x), static_cast<int>(window.y), scale, [&context](glm::vec2 uiPoint) {
+					return context.hitTest(uiPoint).valid();
+				});
+			return drawingPointerAction(
+				PointerInput::Release,
+				foundation::MouseButton::Left,
+				target,
+				true,
+				scene.drawing().activeTool(),
+				scene.drawing().hasPendingPress()
+			);
 		};
 		constexpr float kAbovePanel = 4.0F; // ui px over its top edge
 		const glm::vec2 inside{(bounds.x + (bounds.width * 0.5F)) * scale, (bounds.y + (bounds.height * 0.5F)) * scale};

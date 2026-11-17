@@ -193,7 +193,8 @@ namespace world_sim {
 	/// `glyph` in a kLegendGlyphWidth by kLegendGlyphHeight box at the origin, planned with the
 	/// preview's own strokes, markers, and look keys. `geometryColor` is the solid edges', the
 	/// preview's valid color.
-	[[nodiscard]] DrawingFeedbackPlan planLegendGlyph(LegendGlyph glyph, const assets::PreviewStyle& style, Foundation::Color geometryColor);
+	[[nodiscard]] DrawingFeedbackPlan
+	planLegendGlyph(LegendGlyph glyph, const assets::PreviewStyle& style, Foundation::Color geometryColor);
 
 	/// Draw `plan` in a ui component's space: every layer at its draw key `key`, in the plan's
 	/// order, each color's alpha times `opacity`.

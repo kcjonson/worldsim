@@ -62,8 +62,8 @@ namespace world_sim {
 			.onZoomReset = args.onZoomReset,
 		});
 
-		// The bottom middle: while a drawing tool is active the key guide over the construction strip, and the
-		// gameplay bar.
+		// The bottom middle, top down: the key guide and the construction strip while a drawing tool is
+		// active, then the gameplay bar.
 		ui::Ref<ui::Component> dock = root.addChild<ui::Component>({
 			.id = "bottom_dock",
 			.layout =

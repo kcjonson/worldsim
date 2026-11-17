@@ -60,6 +60,25 @@ namespace world_sim {
 	/// or a press of H that is not a repeat.
 	[[nodiscard]] bool togglesKeyGuide(const foundation::InputEvent& event);
 
+	/// Whether the game takes an event as the key guide's toggle. It is fed every event the ui left, so
+	/// it knows whether the last key-down was a repeat: the `?` character carries no repeat flag, and a
+	/// held `?` would otherwise flip the guide at the key-repeat rate.
+	class KeyGuideToggle {
+	  public:
+		struct State {
+			bool toolActive = false;
+			bool modalDialogOpen = false;
+			bool showKeyGuide = false;
+		};
+
+		/// True when `event` toggles the key guide: `togglesKeyGuide`, while a drawing tool is active,
+		/// no modal dialog is open and the setting shows the guide, and not typed by a held key.
+		[[nodiscard]] bool takes(const foundation::InputEvent& event, const State& state);
+
+	  private:
+		bool lastKeyDownRepeated = false;
+	};
+
 	class DrawingKeyGuide : public ui::Component {
 	  public:
 		struct Args {
