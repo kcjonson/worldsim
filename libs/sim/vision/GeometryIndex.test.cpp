@@ -148,13 +148,13 @@ namespace {
 				}
 				bool crossesAWall = false;
 				for (const auto& [start, end] : solid) {
-					crossesAWall = crossesAWall ||
-								   geometry::intersectSegments(points[first], points[second], start, end).relation != geometry::SegmentRelation::Disjoint;
+					crossesAWall = crossesAWall || geometry::intersectSegments(points[first], points[second], start, end).relation !=
+													   geometry::SegmentRelation::Disjoint;
 				}
 				if (crossesAWall && geometry::pointInPolygon(points[second], polygon) != geometry::PointInPolygon::Outside) {
 					if (++leaks <= 5) {
-						ADD_FAILURE() << "sight leaks from (" << points[first].x << ", " << points[first].y << ") to (" << points[second].x << ", "
-									  << points[second].y << ")";
+						ADD_FAILURE() << "sight leaks from (" << points[first].x << ", " << points[first].y << ") to (" << points[second].x
+									  << ", " << points[second].y << ")";
 					}
 				}
 			}
@@ -317,7 +317,8 @@ TEST_F(GeometryIndexTest, StraightWallOccludersAreItsBandEdges) {
 	EXPECT_EQ(occluders.size(), 4u);
 	for (const OccluderSegment& occluder : occluders) {
 		for (const Vec2i64& end : {occluder.a, occluder.b}) {
-			EXPECT_TRUE(std::llabs(end.y) == half || end.x == 0 || end.x == 4000) << "(" << end.x << ", " << end.y << ") is off the band's edge";
+			EXPECT_TRUE(std::llabs(end.y) == half || end.x == 0 || end.x == 4000)
+				<< "(" << end.x << ", " << end.y << ") is off the band's edge";
 			EXPECT_LE(std::llabs(end.y), half);
 		}
 		const Vec2i64 middle{(occluder.a.x + occluder.b.x) / 2, (occluder.a.y + occluder.b.y) / 2};
@@ -750,14 +751,16 @@ TEST_F(GeometryIndexTest, SightPolygonEndsAtTheNearFace) {
 	bool				   alongTheFace = false;
 	for (const Vec2i64& vertex : polygon) {
 		if (vertex.x >= 0 && vertex.x <= 4000 && std::llabs(vertex.y) <= half + kOnTheFaceMm) {
-			EXPECT_LE(std::llabs(vertex.y - half), kOnTheFaceMm) << "vertex (" << vertex.x << ", " << vertex.y << ") is not on the near face";
+			EXPECT_LE(std::llabs(vertex.y - half), kOnTheFaceMm)
+				<< "vertex (" << vertex.x << ", " << vertex.y << ") is not on the near face";
 			alongTheFace = true;
 		}
 	}
 	EXPECT_TRUE(alongTheFace);
 	for (std::int64_t x = 50; x < 4000; x += 50) {
 		for (std::int64_t y = -half; y < half; y += 10) {
-			EXPECT_EQ(geometry::pointInPolygon({x, y}, polygon), geometry::PointInPolygon::Outside) << "(" << x << ", " << y << ") is in sight";
+			EXPECT_EQ(geometry::pointInPolygon({x, y}, polygon), geometry::PointInPolygon::Outside)
+				<< "(" << x << ", " << y << ") is in sight";
 		}
 	}
 }

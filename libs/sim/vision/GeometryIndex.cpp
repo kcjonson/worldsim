@@ -25,7 +25,9 @@ namespace ecs {
 		// and rounded to the millimetre.
 		geometry::Vec2i64 pointAlong(const geometry::Vec2i64& a, const geometry::Vec2i64& b, double lengthMm, std::int64_t alongMm) {
 			const double fraction = std::clamp(static_cast<double>(alongMm) / lengthMm, 0.0, 1.0);
-			return {a.x + std::llround(static_cast<double>(b.x - a.x) * fraction), a.y + std::llround(static_cast<double>(b.y - a.y) * fraction)};
+			return {
+				a.x + std::llround(static_cast<double>(b.x - a.x) * fraction), a.y + std::llround(static_cast<double>(b.y - a.y) * fraction)
+			};
 		}
 
 		// An occluder from `from` to `to` of wall `source`, with its box.
@@ -89,49 +91,52 @@ namespace ecs {
 		// are what make it a vertex. Each needs the back faces of the occluders in range.
 		class EyeTally {
 		  public:
-			explicit EyeTally(geometry::Vec2i64 eye)
-				: m_eye(eye) {}
+			explicit EyeTally(geometry::Vec2i64 point)
+				: eye(point) {}
 
 			void add(const GeometryIndex::OccluderRecord& occluder, bool inRange) {
 				// Out of range, an edge wholly above or below the eye neither holds it nor winds round it.
-				if (!inRange && (occluder.high.y < m_eye.y || occluder.low.y > m_eye.y)) {
+				if (!inRange && (occluder.high.y < eye.y || occluder.low.y > eye.y)) {
 					return;
 				}
 				const geometry::Vec2i64& from = occluder.seg.a;
-				const geometry::Vec2i64& to	  = occluder.seg.b;
-				const geometry::Int128	 offLine = geometry::cross(to - from, m_eye - from);
-				const int				 side	 = offLine.sign();
-				if (inRange && (occluder.crossesAnotherOccluder ||
-								geometry::Int128::compareSquareToProduct(offLine, geometry::Int128::product(kHitSnapsOntoTheRayMm, kHitSnapsOntoTheRayMm),
-																		 geometry::dot(to - from, to - from)) <= 0)) {
-					m_grazed = true;
+				const geometry::Vec2i64& to = occluder.seg.b;
+				const geometry::Int128	 offLine = geometry::cross(to - from, eye - from);
+				const int				 side = offLine.sign();
+				if (inRange &&
+					(occluder.crossesAnotherOccluder || geometry::Int128::compareSquareToProduct(
+															offLine,
+															geometry::Int128::product(kHitSnapsOntoTheRayMm, kHitSnapsOntoTheRayMm),
+															geometry::dot(to - from, to - from)
+														) <= 0)) {
+					grazed = true;
 				}
-				if (side == 0 && m_eye.x >= std::min(from.x, to.x) && m_eye.x <= std::max(from.x, to.x) && m_eye.y >= std::min(from.y, to.y) &&
-					m_eye.y <= std::max(from.y, to.y)) {
-					m_onOccluder = true;
+				if (side == 0 && eye.x >= std::min(from.x, to.x) && eye.x <= std::max(from.x, to.x) && eye.y >= std::min(from.y, to.y) &&
+					eye.y <= std::max(from.y, to.y)) {
+					onOccluder = true;
 					return;
 				}
-				if (from.y <= m_eye.y) {
-					if (to.y > m_eye.y && side > 0) {
-						++m_winding;
+				if (from.y <= eye.y) {
+					if (to.y > eye.y && side > 0) {
+						++winding;
 					}
-				} else if (to.y <= m_eye.y && side < 0) {
-					--m_winding;
+				} else if (to.y <= eye.y && side < 0) {
+					--winding;
 				}
 			}
 
 			// Nothing added after can hide the back faces again, nor take the eye off an occluder.
-			[[nodiscard]] bool settled() const { return m_onOccluder || m_grazed; }
+			[[nodiscard]] bool settled() const { return onOccluder || grazed; }
 
-			[[nodiscard]] bool insideSolid() const { return m_onOccluder || m_winding != 0; }
+			[[nodiscard]] bool insideSolid() const { return onOccluder || winding != 0; }
 
-			[[nodiscard]] bool backFacesHidden() const { return !m_grazed && !insideSolid(); }
+			[[nodiscard]] bool backFacesHidden() const { return !grazed && !insideSolid(); }
 
 		  private:
-			geometry::Vec2i64 m_eye;
-			int				  m_winding	   = 0;
-			bool			  m_onOccluder = false;
-			bool			  m_grazed	   = false;
+			geometry::Vec2i64 eye;
+			int				  winding = 0;
+			bool			  onOccluder = false;
+			bool			  grazed	   = false;
 		};
 
 	} // namespace
@@ -232,7 +237,9 @@ namespace ecs {
 				// lone wall's, so its transparent openings still pass sight.
 				for (const std::size_t index : graph) {
 					const geometry::WallSegment& wall = walls[index];
-					const geometry::WallBands	 rawBand{.bands = {geometry::band(wall.a, wall.b, wall.halfThicknessMm)}, .trimAtA = {0}, .trimAtB = {0}};
+					const geometry::WallBands	 rawBand{
+						   .bands = {geometry::band(wall.a, wall.b, wall.halfThicknessMm)}, .trimAtA = {0}, .trimAtB = {0}
+					   };
 					for (const geometry::OutlineEdge& edge : geometry::wallPiecesAndOutline({wall}, {sightGaps[index]}, rawBand).outline) {
 						m_occluders.push_back(record(wallIds[index], edge.from, edge.to));
 						loop.push_back(loops);
@@ -281,13 +288,13 @@ namespace ecs {
 		}
 		// The winding round the eye counts every occluder, the occluders before the first in range too.
 		EyeTally tally(eye);
-		for (auto it = m_occluders.begin(); it != m_occluders.end(); ++it) {
-			const bool kept = it >= first && (it == first || inRange(*it));
+		for (auto occluder = m_occluders.begin(); occluder != m_occluders.end(); ++occluder) {
+			const bool kept = occluder >= first && (occluder == first || inRange(*occluder));
 			if (kept) {
-				out.push_back(it->seg);
+				out.push_back(occluder->seg);
 			}
 			if (!tally.settled()) {
-				tally.add(*it, kept);
+				tally.add(*occluder, kept);
 			}
 		}
 		const bool culled = tally.backFacesHidden();
