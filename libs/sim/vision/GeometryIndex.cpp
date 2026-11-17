@@ -35,9 +35,10 @@ namespace ecs {
 					.high	= {std::max(from.x, to.x), std::max(from.y, to.y)}};
 		}
 
-		// An opening's span past the face it is seen on, so a face span rounded to the millimetre
-		// does not fall inside the wall.
-		constexpr std::int64_t kFaceSpanOutsideMm = 1;
+		// How far past the face an opening's face span lies. Three roundings can each move it up to
+		// 0.71 mm toward the wall: its own ends to the millimetre, the outline's corners, which set
+		// the face edge, and the snapped vertices of the polygon run along that edge.
+		constexpr std::int64_t kFaceSpanOutsideMm = 3;
 
 		// The record of `opening` of type `type`, spanning `gap` on the wall from `a` to `b`,
 		// `lengthMm` long and `halfThicknessMm` either side of its centerline.
@@ -51,18 +52,24 @@ namespace ecs {
 			std::int64_t				  halfThicknessMm,
 			const geometry::WallGap&	  gap
 		) {
-			const geometry::Vec2i64 start = pointAlong(a, b, lengthMm, gap.fromMm);
-			const geometry::Vec2i64 end	  = pointAlong(a, b, lengthMm, gap.toMm);
-			const double			reach = static_cast<double>(halfThicknessMm + kFaceSpanOutsideMm) / lengthMm;
-			const geometry::Vec2i64 left{
-				std::llround(-static_cast<double>(b.y - a.y) * reach), std::llround(static_cast<double>(b.x - a.x) * reach)
+			const double alongX = static_cast<double>(b.x - a.x) / lengthMm;
+			const double alongY = static_cast<double>(b.y - a.y) / lengthMm;
+			const double reach	= static_cast<double>(halfThicknessMm + kFaceSpanOutsideMm);
+			// The point `alongMm` along the centerline, clamped to it, `side` times reach to its left,
+			// rounded once.
+			const auto faceAt = [&](std::int64_t alongMm, double side) {
+				const double distance = std::clamp(static_cast<double>(alongMm), 0.0, lengthMm);
+				return geometry::Vec2i64{
+					a.x + std::llround(alongX * distance - alongY * reach * side),
+					a.y + std::llround(alongY * distance + alongX * reach * side)
+				};
 			};
 			GeometryIndex::OpeningRecord record{
 				.openingId			= opening,
 				.segment			= segment,
 				.type				= type.name,
-				.leftFace			= {start + left, end + left},
-				.rightFace			= {start - left, end - left},
+				.leftFace			= {faceAt(gap.fromMm, 1.0), faceAt(gap.toMm, 1.0)},
+				.rightFace			= {faceAt(gap.fromMm, -1.0), faceAt(gap.toMm, -1.0)},
 				.transparentToSight = type.transparentToSight,
 			};
 			record.low	= record.leftFace.start;

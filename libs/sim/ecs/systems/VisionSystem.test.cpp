@@ -75,8 +75,8 @@ namespace {
 	}
 
 	// Build a built wall segment (every created sub-segment marked Built).
-	SegmentId buildWall(ConstructionWorld& cw, Vec2i64 a, Vec2i64 b) {
-		SegmentCommitResult r = cw.commitSegment(a, b, "Wood", "Standard", kInvalidFoundation, cw.version());
+	SegmentId buildWall(ConstructionWorld& cw, Vec2i64 a, Vec2i64 b, const std::string& thickness = "Standard") {
+		SegmentCommitResult r = cw.commitSegment(a, b, "Wood", thickness, kInvalidFoundation, cw.version());
 		EXPECT_TRUE(r.ok());
 		for (SegmentId id : r.createdSegments) {
 			cw.setSegmentState(id, FoundationState::Built);
@@ -95,7 +95,7 @@ namespace {
 		}
 		materials.insert(end, R"(<Type name="Shutter">
       <material>Wood</material>
-      <widthMeters>0.6</widthMeters>
+      <widthMeters>0.9</widthMeters>
       <pathable>false</pathable>
       <transparentToSight>false</transparentToSight>
       <costItems>2.0</costItems>
@@ -636,6 +636,25 @@ TEST_F(VisionSystemTest, OpaqueOpeningSeenHeadOnFromEitherSideRemembered) {
 		ASSERT_NE(mem, nullptr);
 		EXPECT_TRUE(mem->knowsOpening(shutter)) << "from x = " << where.x;
 	}
+}
+
+// An opaque opening at the middle of a heavy wall that runs at a slant, seen head on: its face
+// span stays outside the wall's outlined face though both are rounded to the millimetre.
+TEST_F(VisionSystemTest, OpaqueOpeningOnASlantedWallSeenHeadOnRemembered) {
+	ASSERT_TRUE(loadWithAShutter());
+	ConstructionWorld cw;
+	const SegmentId wall	= buildWall(cw, {0, 0}, {1037, 1779}, "Heavy");
+	const OpeningId shutter = addBuiltOpening(cw, wall, 0.5F, "Shutter");
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	const EntityID observer = spawnObserver(world, {6.566F, -2.636F}); // 7 m off the right face's middle
+	tick(sys);
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_TRUE(mem->knowsSegment(wall));
+	EXPECT_TRUE(mem->knowsOpening(shutter));
 }
 
 // Openings on a wall hidden behind another are not seen through it, by either face: a door

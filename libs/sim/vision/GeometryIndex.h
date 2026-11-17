@@ -72,7 +72,7 @@ namespace ecs {
 		// A built opening, kept for the structure pass. Its span along the wall is
 		// construction::openingGaps' (clamped to the segment), the span a transparentToSight
 		// opening cuts; the opening is seen where either wall face across that span is, so
-		// each face's stretch is kept, a millimetre outside the face: from the jamb at the
+		// each face's stretch is kept, 3 mm outside the face: from the jamb at the
 		// span's start to the one at its end, on the wall's left (`leftFace`) and right.
 		struct OpeningRecord {
 			struct FaceSpan {

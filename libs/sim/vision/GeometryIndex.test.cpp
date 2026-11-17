@@ -91,7 +91,7 @@ namespace {
 			std::vector<Vec2i64> cuts  = {start};
 			for (const GeometryIndex::OpeningRecord& opening : index.builtOpenings()) {
 				if (opening.segment == wall.id && opening.transparentToSight) {
-					// The face spans are the jambs offset to either side by the same step.
+					// Midway between the face spans, to the millimetre, are the jambs.
 					const auto jamb = [](Vec2i64 left, Vec2i64 right) { return Vec2i64{(left.x + right.x) / 2, (left.y + right.y) / 2}; };
 					cuts.push_back(jamb(opening.leftFace.start, opening.rightFace.start));
 					cuts.push_back(jamb(opening.leftFace.end, opening.rightFace.end));
@@ -741,7 +741,7 @@ TEST_F(GeometryIndexTest, NoWorldIsInert) {
 }
 
 // A built opening's record holds its wall, its type, whether it passes sight, and the stretch
-// of each wall face across it, a millimetre outside the face, from one jamb to the other.
+// of each wall face across it, 3 mm outside the face, from one jamb to the other.
 TEST_F(GeometryIndexTest, OpeningRecordHoldsItsFaceSpansAndTransparency) {
 	ConstructionWorld world;
 	SegmentId		  seg = buildWall(world, {0, 0}, {4000, 0});
@@ -756,7 +756,7 @@ TEST_F(GeometryIndexTest, OpeningRecordHoldsItsFaceSpansAndTransparency) {
 	EXPECT_EQ(rec.segment, seg);
 	EXPECT_EQ(rec.type, "Window");
 	EXPECT_TRUE(rec.transparentToSight);
-	const std::int64_t outside = halfThickness(world) + 1;
+	const std::int64_t outside = halfThickness(world) + 3;
 	EXPECT_EQ(rec.leftFace.start, (Vec2i64{1700, outside}));
 	EXPECT_EQ(rec.leftFace.end, (Vec2i64{2300, outside}));
 	EXPECT_EQ(rec.rightFace.start, (Vec2i64{1700, -outside}));
