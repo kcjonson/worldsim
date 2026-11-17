@@ -160,8 +160,7 @@ namespace geometry {
 	// of a segment is `a`.
 	WallBands resolveWallBands(const std::vector<WallSegment>& segments, double miterLimit);
 
-	// Whether resolveWallBands accepted the graph, so every segment has its band. Nav and sight
-	// take a graph it rejects as each wall's raw band on its own.
+	// Whether resolveWallBands accepted the graph; a rejected one has no usable bands.
 	[[nodiscard]] inline bool bandsAccepted(const WallBands& bands) {
 		return bands.status == OffsetStatus::Ok;
 	}

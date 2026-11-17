@@ -103,7 +103,7 @@ namespace construction {
 		// The first wall's trims at its a and b ends, nothing for a graph the offsetter rejects.
 		std::optional<Trims> firstWallTrims(const std::vector<geometry::WallSegment>& walls) {
 			const geometry::WallBands bands = geometry::resolveWallBands(walls, geometry::kDefaultMiterLimit);
-			if (bands.status != geometry::OffsetStatus::Ok || bands.trimAtA.empty() || bands.trimAtB.empty()) {
+			if (!geometry::bandsAccepted(bands) || bands.trimAtA.empty() || bands.trimAtB.empty()) {
 				return std::nullopt;
 			}
 			return Trims{bands.trimAtA.front(), bands.trimAtB.front()};
