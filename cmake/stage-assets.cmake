@@ -1,7 +1,7 @@
 # stage_assets(<app>)
 # Mirror assets/ beside <app>'s exe, per config, through cmake/mirror-assets.cmake (per-subdir,
-# so a file deleted from assets/ is pruned and a separately staged dir such as assets/planets/ is
-# left alone). <app>-assets is an ALL target with no output, so it runs on every build of the app
+# so a file deleted inside a subdir of assets/ is pruned and a separately staged dir such as
+# assets/planets/ is left alone; a whole top-level subdir deleted from assets/ is not pruned). <app>-assets is an ALL target with no output, so it runs on every build of the app
 # and an asset-only edit restages with no exe relink; a mirror with nothing to copy is cheap.
 function(stage_assets app)
     if(NOT TARGET ${app})

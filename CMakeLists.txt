@@ -154,6 +154,7 @@ include(cmake/stage-assets.cmake)
 stage_assets(world-sim)
 stage_assets(ui-sandbox)
 stage_assets(asset-manager)
+stage_assets(asset-cli)
 # FontAtlases.test.cpp loads the atlases from fonts/: the PNGs aren't tracked, and the JSON is the current tool's
 if(TARGET theme-tests)
     add_dependencies(theme-tests font-atlas)
