@@ -37,6 +37,11 @@ Each rule is Kevin's, with the date it was given. A later rule replaces an earli
 20. The region minimap is not touched here. Showing the seen area on a map belongs to the Minimap epic. (2026-11-13.)
 21. A shape with walls in sight enters the record grown by a small skirt, while the covered test uses the true shape. Seen ground may reach up to the skirt past true sight. (2026-11-13.)
 22. A wall or opening a colonist has seen is seen ground: its footprint joins the record. (2026-11-13.)
+23. Collidable objects affect sight, and which do is read from the collision map less movers: "collidable objects. this needs to use the true collision map (minus movers) not bound to an arbitrary list." Walls still block; trees thin sight. This replaces rule 5. The model is [Sight Softening](./sight-softening.md). (2026-11-16.)
+24. Sight is less precise: "if there was just a single wall block a 0.1m in diameter, it really shouldn't effect sight. and right now trees have no effect, but they very slightly should and the cones/rays should kinda ... collapse behind things." The eye is a disc 1 m wide, ground is out of sight only when hidden from all of it, and each direction has the sight radius to spend, which things in the way shorten, smoothed so dents are scallops and never slits. (2026-11-16.)
+25. Both edges of the cover, visible to seen and seen to unseen, fade over about 1.5 m, drawn as vector geometry with alpha. The fade lies inside the brighter area on both edges, so nothing unseen is ever shown, even faintly. This replaces rule 11; rule 10 stands. (2026-11-16.)
+26. One sight shape serves colonist knowledge (memory, discovery) and player visibility. (2026-11-16.)
+27. The fade is drawn with alpha mask layers in salal, extending the CSS mask API (`mask-mode: alpha`, layers whose images carry alpha), with no offscreen texture and no blur, after a salal sandbox prototype shows overlapping shapes, the record, and pending shapes blend without seams. The API keeps CSS's names and exposes no GPU mechanics, as rule 19 says; the stencil buffer is no longer the stated mechanism. (2026-11-16.)
 
 ## 2. Current state
 
@@ -759,8 +764,8 @@ Each step was its own PR with its own done line. All are built: step 7 is PR 378
 ## 8. Not in the first build
 
 - **The last-seen record** for seen things (rule 13, 3.6).
-- **The style pass:** soft edges, a textured or stylised cover, desaturation, a reveal animation. "Visual design: the look of unexplored and seen areas" on Specboard becomes that pass and no longer gates the build.
-- **Vegetation thinning sight.** "Prototype: sight ray casting across the nav mesh with tree attenuation" stays a later exploration; the first build's sight is vision's, walls only.
+- **The style pass:** a textured or stylised cover, desaturation, a reveal animation. "Visual design: the look of unexplored and seen areas" on Specboard becomes that pass and no longer gates the build. Soft edges are specified in [Sight Softening](./sight-softening.md) (rule 25).
+- **Vegetation thinning sight.** Specified in [Sight Softening](./sight-softening.md): every collidable object, trees among them, thins sight by its width against the eye (rules 23, 24). Its first step is "Prototype: sight ray casting across the nav mesh with tree attenuation, measure perf" on Specboard.
 - **The seen area on a map** (Minimap epic).
 - **Saving** the record (3.11).
 - **Smooth shadow edges.** With walls in sight the rim of the lit area moves with the colonist over seen ground and the seen edge past a shadow steps by at most about 0.1 m (3.3, 3.4), but the shadow edges of the lit area, and its far edge ahead of him in ground nobody has seen, still step with vision's 0.5 m rebuilds.
@@ -789,10 +794,13 @@ None blocks the build.
 11. 2026-11-13, Kevin, asked "Should a wall a colonist has seen count as seen ground, so its footprint joins the record?": "Yes, walls join." Otherwise every wall is a hole in the record, drawn black inside rooms the player has seen, and the record's edge runs round every wall, which made each covered test near a building read all of it (6.4). With footprints in, that test fell from 0.4 to 0.7 ms to 15 us (6.6). (Rule 22.)
 12. 2026-11-13, "The seen area's edge is stepped near walls" on Specboard: in the game the seen edge beyond a building's shadow was a sawtooth of half-metre teeth, polygons built 0.5 m apart, and the lit area jumped in 0.5 m steps indoors. The brief: build vision's polygon a rebuild step long and hold what vision decides to the true radius (3.2); cut each leg's capsule to it and register that; cut the bright shape to the disc round where he stands (3.4). In review the teeth were found to be at the far end of each shadowed wedge, where a capsule's end cap is a rim arc too, and the in-game check showed the capsule cut did not remove them: registered, the cut also overshot the true edge at a widening shadow. So the record went back to vision's polygons at sight and gained the sweep (3.3), polygons 0.1 m apart on a walk that is opening ground; the cut leg was kept as the open, pending shape that the smooth bright rim is cut from. Joining consecutive shadow tips with a chord was the other option offered and was not built: it would register long sliver rings, the shape of the mesh's known validate failure.
 13. 2026-11-13, the cost pass on that change (6.7): the pending open leg cut to the polygon held ground near its far end that the walls hid from where he stood, so it could go from tinted back to black when the leg ended, against rule 16, and recutting it every frame was two thirds of the tick. It was removed, and the bright shape is cut to vision's polygon, its overreach ahead of him hidden by the unseen fill. Sweep points are held in by an inset so they stop registering slivers at rim vertices, a sweep polygon skips the covered test's exact fallback, and pieces register one a tick.
+14. 2026-11-16, Kevin: "we currently have hard edges on the sight cones, and visibilty edges, which we need to soften greatly ... to be less ... precise." After a design canvas comparing sight models and edge treatments: "lets go with C + 2", a 1 m wide eye for hard occluders combined with a sight budget, and a feathered edge. (Rules 24, 25.)
+15. 2026-11-16, question round: the budget and the wide eye combined, smoothed over plus or minus 5 degrees, hard shadows never smoothed; the feather inside the brighter area on both edges; one sight shape for colonist knowledge and player visibility; occluders from "the true collision map (minus movers) not bound to an arbitrary list"; the feather through alpha mask layers in salal, prototyped in its sandbox first. The design, and the author's proposals awaiting Kevin, are in [Sight Softening](./sight-softening.md) section 12. (Rules 23 to 27.)
 
 ## Related documents
 
 - [Vision Architecture](./vision-architecture.md): sight shapes, walls, doors and windows
+- [Sight Softening](./sight-softening.md): the wide eye, the sight budget from the collision map, and the feathered cover
 - [Nav Mesh: One Mesh, Variable Resolution](./nav-mesh-variable-resolution.md): the meshed area, rules 17, 27, 35, and 39 to 42
 - [Memory System](../design/game-systems/colonists/memory.md): what colonists know
 - [Game Overview](../design/game-overview.md): the design goal

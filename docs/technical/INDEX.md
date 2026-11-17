@@ -150,6 +150,7 @@ Applications:
 | [Pathfinding Architecture](./pathfinding-architecture.md) | Four-tier navigation: planet hex graph, chunk components, CDT navmesh, physical agents; multi-region sim area, runtime-validity predicate, findValidPositionNear |
 | [Vision Architecture](./vision-architecture.md) | Wall-occluded sight: visibility polygons, discovery and reconciliation (built), witnessing (planned), player visibility (built, in its own doc) |
 | [Player Visibility](./player-visibility.md) | Built: the player sees only what colonists have seen; unseen, seen, and visible areas; the seen record as an exact polygon union apart from the nav mesh; a hard-edged cover of two masked fills; nothing under the black drawn or loaded; input rules; measured costs |
+| [Sight Softening](./sight-softening.md) | Spec: a 1 m wide eye and a sight budget spent by the collision map (trees thin sight, walls block it), soft legs in the seen record, and a feathered cover through alpha mask layers in salal |
 
 ### Graphics & Rendering
 
