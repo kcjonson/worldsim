@@ -68,7 +68,7 @@
 
   <!-- Drawing-tool preview chrome (construction-specific; validity green/red comes from the UI theme). -->
   <Preview>
-    <guideColor>#5FB3C8FF</guideColor>               <!-- guide lines, right-angle markers, crossing dots, common-length marks -->
+    <guideColor>#5FB3C8FF</guideColor>               <!-- guide lines, right-angle markers, crossing dots; common-length marks are not drawn yet -->
     <originHaloColor>#B3D9FF99</originHaloColor>      <!-- the dotted close-radius ring round the first point -->
     <snapVertexColor>#FFD94DE6</snapVertexColor>     <!-- vertex/endpoint snap ring (amber) -->
     <snapEdgeColor>#66D9FFE6</snapEdgeColor>         <!-- edge/T-junction snap ring (cyan) -->
@@ -85,7 +85,8 @@
          (guideColor) or bySource. Guide colors carry an alpha of FF: guideOpacity sets the
          alignment lines' opacity and markerOpacity the markers'. Labels draw at full opacity on
          a dark plate, and the dotted close-radius ring takes its alpha from originHaloColor.
-         Sizes are screen pixels and never scale with zoom. -->
+         Sizes are screen pixels at an interface size of 100%: they grow with the interface size
+         and never scale with zoom. -->
     <guideLineStyle>dotted</guideLineStyle>
     <guideDashPx>1.0</guideDashPx>
     <guideGapPx>4.5</guideGapPx>
@@ -95,10 +96,10 @@
     <guideColorShape>#8CC4FFFF</guideColorShape>
     <guideColorNearby>#FFAD5CFF</guideColorNearby>
     <guideColorWorld>#7FE0A6FF</guideColorWorld>
-    <guideColorLength>#F29AD8FF</guideColorLength>
+    <guideColorLength>#F29AD8FF</guideColorLength>   <!-- not drawn yet: a matched length -->
     <guideDistanceDecimals>2</guideDistanceDecimals>
     <guideLabelPx>11.0</guideLabelPx>
-    <angleReadoutDecimals>1</angleReadoutDecimals>
+    <angleReadoutDecimals>1</angleReadoutDecimals>      <!-- not drawn yet: the angle readout -->
     <rightAngleMarkerPx>8.0</rightAngleMarkerPx>
     <guideCrossingDotPx>3.0</guideCrossingDotPx>  <!-- radius -->
     <cursorRadiusPx>6.0</cursorRadiusPx>          <!-- the snapped-point dot's radius -->
