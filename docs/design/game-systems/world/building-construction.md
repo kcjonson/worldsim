@@ -1,7 +1,5 @@
 # Building & Construction
 
-**Status:** Design
-**Created:** 2026-06-12
 **MVP Status:** See [MVP Scope](../../mvp-scope.md) — This feature: Phase 3 (Construction basics)
 
 ---
@@ -66,7 +64,7 @@ Drawing comes in three levels, and a new player meets the first. The point is on
 
 The wall tool has no rectangle; it follows the same helper settings (Walls > Drawing).
 
-Select Foundation in the Build menu: it opens the foundation tool last picked this session, Rectangle the first time. A config strip appears with the tool picker, which switches between Rectangle and Freeform, material choices, and a live cost readout. Material is picked **before** drawing; the ghost renders in that material's blueprint style. While the tool is active a small [key guide](#key-guide) panel lists its keys.
+Select Foundation in the Build menu: it opens the foundation tool last picked this session, Rectangle the first time. A config strip appears with the tool picker, which switches between Rectangle and Freeform, material choices, and a live cost readout ([Config strip](#config-strip)). Material is picked **before** drawing; the ghost renders in that material's blueprint style. While the tool is active a small [key guide](#key-guide) panel lists its keys.
 
 Every drawing tool pauses while the pointer is outside the game's window or the game is in the background: nothing follows the pointer and nothing reads refused, the points already placed stay, and the tool picks up from the pointer when it comes back.
 
@@ -88,17 +86,17 @@ Every drawing tool pauses while the pointer is outside the game's window or the 
 The flow is polygon drawing as in design software:
 
 1. First click places the origin point at the cursor.
-2. A line rubber-bands from the last point to the cursor. The line colorizes for validity: blueprint-blue when the placement is valid, red when not, with a short reason near the cursor ("corner too tight", "too close to existing wall").
+2. A line rubber-bands from the last point to the cursor. The line colorizes for validity: blueprint-blue when the placement is valid, red when not, with a short reason near the cursor and in the config strip ("corner too tight", "edges too close").
 3. Each click commits a point.
 4. Once three points exist, a faint fill previews the implied closed polygon.
-5. The user must click the origin point to close the shape. Once three points exist, a faint dotted ring the size of the close radius (0.5 m) circles the origin; inside it the cursor snaps to the origin and a solid halo marks it.
+5. The user must click the origin point to close the shape. Once three points exist, a faint dotted ring the size of the close radius (0.5 m, and never under 8 screen pixels, so it stays reachable zoomed far out) circles the origin; inside it the cursor snaps to the origin and a solid halo marks it.
 6. Closing the shape creates the foundation blueprint.
 
 While drawing:
 
 - **Backspace** removes the last committed point.
 - **Esc** (or right-click) cancels the in-progress shape. Pressing Esc again, with nothing in progress, exits the tool.
-- A label beside the cursor shows the current segment's length in meters, to two decimals (`4.00 m`); the config strip shows running area (m²), material cost, and work estimate.
+- A label beside the segment being drawn shows its length in meters, to two decimals (`4.00 m`); the config strip shows running area (m²), the point count, material cost, and work estimate.
 
 With every helper off a point goes, first that applies wins: onto the first point (the close), onto an existing corner, onto an existing edge, or else where the pointer is, with the segment's length rounded to 0.1 m along the line from the previous point toward the pointer. Snapping and guides below has the full order once helpers are on.
 
@@ -121,7 +119,7 @@ Length rounding is not a helper: it is basic behaviour, on by default, with its 
 
 ### Snapping and guides
 
-Pure freeform produces accidental 87-degree corners and 4.97 m walls that read as mistakes. The basic tools avoid them by construction (the grid, the length rounding); the helpers are the precise version, and each is escapable with Alt. Mechanism, config, and tests: [architecture D12](../../../technical/building-construction-architecture.md#d12-snap-engine-helpers-guides-lengths). The values below were tuned with the designer in an interactive prototype kept outside the repository.
+Pure freeform produces accidental 87-degree corners and 4.97 m walls that read as mistakes. The basic tools avoid them by construction (the grid, the length rounding); the helpers are the precise version, and each is escapable with Alt. Mechanism, config, and tests: [architecture D12](../../../technical/building-construction-architecture.md#d12-snap-engine-helpers-guides-lengths).
 
 **Whole priority order, Freeform tool** (first that applies wins; the helper a step needs is in brackets):
 
@@ -165,14 +163,14 @@ When the cursor comes within 0.3 m of a guide it locks on and the guide draws. G
 - *Where it applies.* Only where the point can still slide: a single guide, the angle step, or the raw cursor, and only once a point is placed. Never on the close, an existing corner or edge, a wall endpoint or junction, or a crossing, and never in the rectangle tool. A crossing keeps its point even when a common length would catch along one of its guides; a config switch lets the length win (the crossing then gives way to that guide alone), off by default.
 - *Look.* The segment's length label reads `4.00 m =`, bold in the accent colour. A short tick crosses the segment at the snapped end, and every edge that shares the length gets a faint highlight and the drafting double tick at its middle. A label also reads `=` when another rule (a crossing, say) happens to land on a kept length.
 
-**Length rounding.** With "Round lengths to 0.1 m" on (the default), a segment's length rounds to the nearest 0.1 m wherever the length step applies, unless a common length caught. On a single guide through a point other than the previous one (a building corner, an inset corner, the first point), the guide's own distance and the segment's length can't both be round, and the distance along the guide from its own point rounds instead, the number its label shows; before any point is placed that is the only one there is. The config can switch this to rounding the segment's length. Rounding never moves a fixed point, never applies under Alt, and never in the rectangle tool, whose grid does the job.
+**Length rounding.** With "Round lengths to 0.1 m" on (the default), a segment's length rounds to the nearest 0.1 m wherever the length step applies, unless a common length caught. On a single guide through a point other than the previous one (a building corner, an inset corner, the first point), the guide's own distance and the segment's length can't both be round, and the distance along the guide from its own point rounds instead, the number its label shows; before any point is placed that is the only one there is. The config can switch this to rounding the segment's length. The increment is in meters and the same at every zoom. Rounding never moves a fixed point, never applies under Alt, and never in the rectangle tool, whose grid does the job.
 
 **Look.** One rule: solid means geometry, dotted and part transparent means alignment, small solid markers state a fact.
 
 - Geometry, solid: placed edges, the segment being drawn, buildings, and walls.
 - Alignment, dotted and part transparent: every guide, drawn from its point to the snapped cursor; the close radius ring, which gives way to the halo once the click will close.
 - Facts, small and solid: the right-angle marker (where a guide is perpendicular to an edge at its point, the shape's edge or that of the building the corner belongs to), the crossing dot, the common-length ticks, and the close halo (a ring round the first point whose radius on screen is half the close radius, never so small that it falls inside the snapped-point marker's ticks, drawn when a click would close the shape and commit it; a close the click would refuse draws none, and the shape reads red).
-- The cursor: the operating system's pointer stays at the raw position, and where the point will go the game draws the snapped-point marker, a white dot with a dark outline and four short ticks. Unlike the prototype, the game draws no raw-pointer ring and no pull line from the raw pointer to the snapped point; the system pointer already shows where the hand is.
+- The cursor: the operating system's pointer stays at the raw position, and where the point will go the game draws the snapped-point marker, a white dot with a dark outline and four short ticks. The game draws no raw-pointer ring and no pull line from the raw pointer to the snapped point; the system pointer already shows where the hand is.
 - Guides are one muted teal; colour by source (shape, nearby building, world, common length) is the config alternative. Colours are written with an alpha of FF; their opacity comes from the guide and marker opacity keys. Sizes are screen pixels and never scale with zoom; label text follows the Interface size. Values: [architecture D16](../../../technical/building-construction-architecture.md#d16-guide-rendering-look).
 - **Guide distances** (helper). Each guide drawn carries its distance from its own point to the snapped cursor, to two decimals, beside the guide's middle on the side away from the segment, nudged along so labels don't overlap. A guide from the previous point is not labelled, since that distance is the segment's own length and its label already says it; at a crossing both guides are labelled (unless one runs from the previous point). A label reads `=` when the distance matches a kept common length. A guide too short on screen for a label (under 40 px) goes without.
 - **Angle readout** (helper). While drawing, the corner at the previous point (and, once three points are placed and the cursor is within twice the origin radius of the first point, the closing corner there) shows its angle: a foundation reads the interior angle of the shape so far, an open wall chain the angle between its two segments. A corner within 0.05 degrees of square gets the right-angle marker; any other gets an arc and its angle in degrees to one decimal (`75.0` and a degree sign). Nothing shows on the first segment, or under Alt.
@@ -209,32 +207,11 @@ The designer's case: four small shacks for the colonists, each the size of the f
 
 A third shack turned to some other angle takes its directions from the angle step and its lengths still catch 4.00 m and 3.00 m.
 
-#### Reading of the request
-
-The owner asked that the third point be offered "the perpendicular from the first point"; the spec reads that as the guide perpendicular to the first edge, which through point 2 places point 3 and through point 1 places point 4.
-
-The calls made while writing the first version of this section stand, confirmed in the tuned prototype: wall chains get the same guides, mid-floor chains included, and wall corners are guide points; Alt drops every guide; the setting is "Align to existing buildings" and also gates nearby-building directions; and the shape's guides through the first point catch by angle as well as those through the previous point. Two of that version's statements were reversed on 2026-11-16: there is a rectangle tool, and lengths do match.
-
 #### Not in this design
 
-- Guides from arcs or curves (there are none in v1), tangent guides, midpoint guides, and equal-spacing guides.
-- Locking a guide with a key (SketchUp's Shift lock). Revisit if players fight the priority order.
+- Guides from arcs or curves, tangent guides, midpoint guides, and equal-spacing guides.
+- Locking a guide with a key (SketchUp's Shift lock).
 - Guides from shape edges other than the first and the previous.
-
-#### Open questions
-
-The prototype answers the first eight by default; the designer hasn't ruled on them, and the prototype's answer is the spec until he does. The last two are where the game departs from the prototype or falls short of it, stated as the spec has them.
-
-1. **Length against a crossing.** A common length does not beat a crossing (the config switch that lets it is off).
-2. **Angle steps in plain freeform.** Plain freeform has no angle steps; they are a helper, off by default, and the rectangle tool covers the square case.
-3. **Rotating the rectangle tool.** It can't be rotated; rotated buildings are Freeform work.
-4. **Increment and zoom.** The length increment (0.1 m) does not change with zoom.
-5. **A grid for walls.** The wall tool uses no grid at the basic level; its adjacency snaps (wall endpoints, inset foundation corners and edges, T-junctions) and length rounding are all it has.
-6. **The close hint.** "Click point 1 to close" is a line in the key guide, not a hint drawn on the canvas.
-7. **Key guide start state.** The key guide starts open every time the game starts; collapsing it holds for the rest of that session, across tools, and is not saved.
-8. **Odd inset lengths.** A wall segment can match a foundation edge's inset length (4.796 m off a 5 m edge under a 0.2 m wall), which reads as an odd number.
-9. **No raw-pointer ring or pull line in the game.** The operating system's pointer shows the raw position, so the game draws only the snapped-point marker and the close halo, not the prototype's raw-pointer ring and pull line.
-10. **Drawing Settings during a game.** Drawing Settings cannot be changed during a game and reset at each launch. Persisting them and adding Settings to the pause menu is tracked separately and not part of this build.
 
 ### Shape Constraints
 
@@ -474,10 +451,10 @@ Foundations and walls are procedurally drawn from material definitions, not hand
 
 ### Drawing feedback
 
-- Rubber-band segment, validity colorization, reason text on invalid.
+- Rubber-band segment and validity colorization; on invalid, the reason beside the cursor and in the config strip.
 - Faint polygon fill after the third point; the rectangle tool's fill and outline while its second corner is pending.
 - Origin-point halo + snap when the shape can close.
-- Length readout (meters, two decimals) at the cursor, `=` when it matches a common length; the rectangle tool's size label instead (`4 m x 3 m`). Area/cost/work in the config strip.
+- Length readout (meters, two decimals) beside the segment being drawn, `=` when it matches a common length; the rectangle tool's size label at the cursor instead (`4 m x 3 m`). Area/cost/work in the config strip.
 - The snapped-point marker (a white dot with a dark outline and four short ticks) where the point will go; the system pointer marks the raw position, and nothing joins the two.
 - With helpers on: guides as dotted, part-transparent lines, a right-angle marker on a perpendicular guide, a dot where two guides cross, common-length ticks, and, if switched on, guide distances and the angle readout (Foundations > Snapping and guides, under Look).
 
@@ -493,18 +470,18 @@ The gameplay bar's [Build▾] menu gets a **Structure** category: Foundation, Wa
 
 A horizontal strip docked above the gameplay bar while a structure tool is active:
 
-- **Tool picker** (Foundation): switches between Rectangle and Freeform. The Build menu's Foundation entry opens the one last picked this session, Rectangle the first time, as the material persists for the session.
-- **Material cards:** icon, name, per-unit cost (per m² or per m). One selected at a time; selection persists per tool.
-- **Thickness presets** (Wall tool): the selected material's presets with their stat summary (HP, insulation, cost) on hover.
+- **Tool picker** (Foundation): switches between Rectangle ("Two corners") and Freeform ("Point by point"). The Build menu's Foundation entry opens the one last picked this session, Rectangle the first time.
+- **Material cards:** icon, name, per-unit cost (per m² or per m). One selected at a time; each tool keeps its own selection for the session. Add / Subtract shows none, since it keeps the edited foundation's material.
+- **Thickness presets** (Wall tool): the selected material's presets, each its name over its thickness in meters, with their stat summary (HP, insulation, cost) on hover.
 - **Type picker** (Door/Window tool): the opening types.
-- **Live readouts:** running area or length, total material cost, work estimate. Updates as the cursor moves.
-- **Validity message area:** when the cursor position is invalid, the reason shows here as well as at the cursor.
+- **Live readouts:** running area or length, total material cost, work estimate. Updates as the cursor moves. The Freeform tool also shows its point count (`Points`), which the Rectangle tool leaves out. Add / Subtract leads with the mode and the foundation's material ("Add to foundation (wood)") and reads the area of the outline the edit would leave and how much it changes by. The wall tool's length is the chain's with the segment being drawn, beside that segment's own length (`Len: 7.5 m  (seg 2.5 m)`). The door and window tools show the type and its width.
+- **Validity message area:** a hint for the next step ("Click or drag from a corner", "Click origin to close", "Right-click / Enter to finish"), or, when the cursor position is invalid, the reason, which also shows beside the cursor.
 
 Changing material or thickness mid-session applies to the next shape, not shapes already drawn.
 
 ### Drawing Settings
 
-A "Drawing Settings" pane in the game's Settings holds the player's choices about the drawing tools. Two limits of today's game apply: Settings opens only from the main menu (the pause menu has no Settings entry), so Drawing Settings cannot be changed during a game, and player settings last one session, so they reset to their defaults at each launch. Everything else about snapping (every radius, range, tolerance, count, the priority rule, the length increment's value, and the look) is tuning in the construction config file, not a player setting. Defaults are what a new player meets: the rectangle tool and no helpers.
+A "Drawing Settings" pane in the game's Settings holds the player's choices about the drawing tools. Everything else about snapping (every radius, range, tolerance, count, the priority rule, the length increment's value, and the look) is tuning in the construction config file, not a player setting. Defaults are what a new player meets: the rectangle tool and no helpers.
 
 | Setting | Default | What the player reads |
 |---------|---------|-----------------------|
@@ -520,11 +497,11 @@ A "Drawing Settings" pane in the game's Settings holds the player's choices abou
 | Show key guide while drawing | on | A small panel with the keys and what the lines mean. |
 | Grid spacing (rectangle tool) | 1 m (or 0.5 m) | Rectangle corners snap to this grid. |
 
-The first eight are the helpers (Foundations > Drawing > Helpers); each turns on its snapping and its drawing together, in the Freeform and wall tools. The "15 degree" and "0.1 m" in the labels come from the config values. "Align to existing buildings" replaces today's "Align to existing foundations".
+The first eight are the helpers (Foundations > Drawing > Helpers); each turns on its snapping and its drawing together, in the Freeform and wall tools. The "15 degree" and "0.1 m" in the labels come from the config values.
 
 ### Key guide
 
-While a drawing tool is active, a compact panel directly above the construction config strip, centred like it and stacked with it so the two never overlap, lists, in a player's words, the keys for that tool, then one legend line for each helper that is on. It is for new players: "Show key guide while drawing" in Drawing Settings, on by default, turns it off. **?** or **H** collapses it to a small "Keys ?" chip and reopens it, and clicking the chip reopens it too; a foot line says so ("? or H hides this"). `?` is the typed `?` character, whatever keys make it on the player's keyboard, and H toggles it as well. It takes clicks only inside its own box, never keyboard focus.
+While a drawing tool is active, a compact panel directly above the construction config strip, centred like it and stacked with it so the two never overlap, lists, in a player's words, the keys for that tool, then one legend line for each helper that is on. It is for new players: "Show key guide while drawing" in Drawing Settings, on by default, turns it off. **?** or **H** collapses it to a small "Keys ?" chip and reopens it, and clicking the chip reopens it too; a foot line says so ("? or H hides this"). `?` is the typed `?` character, whatever keys make it on the player's keyboard, and H toggles it as well. It starts open each time a game starts; collapsing it holds for the rest of that game, across tools, and is not saved. It takes clicks only inside its own box, never keyboard focus.
 
 Keys per tool:
 
@@ -536,6 +513,8 @@ Keys per tool:
 | Door or window | Click a wall: place it. Esc / Right-click: leave the tool. |
 | Add to or subtract from a foundation | Click: place a point. Click point 1: close the shape and apply it (the tool stays on for the next). Backspace: undo a point. Esc / Right-click: cancel the shape. Esc again: leave the tool. Alt: hold to turn snapping off. |
 
+The close is taught by the "Click point 1" row, and in the Freeform and Add / Subtract tools by the config strip's "Click origin to close" once three points are placed and the shape is valid; on the canvas the close ring and halo are all that mark it.
+
 Legend lines, in the Freeform, wall, and Add / Subtract tools only (the rectangle and opening tools draw no helpers), each with a small glyph painted the way the canvas paints it, so it follows the look config:
 
 | Shown when | Glyph | Line |
@@ -546,7 +525,7 @@ Legend lines, in the Freeform, wall, and Add / Subtract tools only (the rectangl
 | Common lengths is on | An edge with the double tick | = and ticks: same length as an edge already built |
 | Angle readout is on | An arc between two edges | Arc and degrees: the corner's angle |
 
-The selection keys (Shift+click adds to the selection; double-click a wall selects its run, not built yet) work only with no tool active, so they are in the reference below but not on the panel.
+The selection keys (Shift+click adds to the selection; double-click a wall selects its run) work only with no tool active, so they are in the reference below but not on the panel.
 
 ### What Is Selectable
 
@@ -564,7 +543,7 @@ Foundations, wall segments, and openings are first-class selectable entities, in
 
 Clicking again in the same spot cycles down the stack (click a door, click again to get the wall, again for the foundation). Standard colony-game behavior, and it resolves the "everything is stacked on a foundation" problem without modifier gymnastics.
 
-**Multi-select:** Shift-click adds to the selection. Mixed selections reduce the action set to what's shared (e.g., Demolish). Double-clicking a wall segment (not built yet) selects the whole connected run of the same material and thickness, the common case for "demolish this wall, all of it."
+**Multi-select:** Shift-click adds to the selection. Mixed selections reduce the action set to what's shared (e.g., Demolish). Double-clicking a wall segment selects the whole connected run of the same material and thickness, the common case for "demolish this wall, all of it."
 
 ### Selection Visuals
 
@@ -585,7 +564,7 @@ Per structure and state. All panels show name/type, material, and dimensions in 
 
 **Edit shape** (foundation blueprint) re-enters drawing-like editing: vertex handles appear, drag to move, click an edge midpoint to add a vertex, select a vertex and Backspace to delete, all constraint-checked live. Available until the first material is delivered.
 
-Wall blueprints have no vertex editing in v1; segments are cheap, cancel and redraw.
+Wall blueprints have no vertex editing; segments are cheap, cancel and redraw.
 
 ### Keyboard and mouse reference
 
@@ -594,7 +573,7 @@ Wall blueprints have no vertex editing in v1; segments are cheap, cancel and red
 | Click | Place point / select; in the rectangle tool, place a corner (two opposite corners make the rectangle) |
 | Press, drag, release | Rectangle tool: draw the rectangle from the press to the release |
 | Click origin point | Close foundation polygon; close a wall loop |
-| Double-click | End wall chain (the first click places the final point, the second places nothing); expand wall selection to connected run (not built yet) |
+| Double-click | End wall chain (the first click places the final point, the second places nothing); expand wall selection to connected run |
 | Enter | End wall chain |
 | Right-click / Esc | End wall chain; cancel in-progress shape or the rectangle's first corner; second Esc exits tool |
 | Backspace | Undo last point (drawing); drop the rectangle's first corner; delete vertex (shape editing) |
@@ -660,3 +639,26 @@ Every key, its default, and its meaning: [architecture D12 config](../../../tech
 - [Work Priorities](../colonists/work-priorities.md) — Construction work type
 - [MVP Scope](../../mvp-scope.md) — phase placement
 - [Vector Graphics](../../features/vector-graphics/README.md) — procedural vector pipeline
+
+---
+
+## Addendum: drawing tool decisions
+
+A supplement, not part of the spec. Where it and the spec disagree, the spec is right. What the drawing tools settle, over what, and why, where the sources give a reason.
+
+- **"The perpendicular from the first point."** The owner's words, read as the guide perpendicular to the first edge: through point 2 it places point 3, and through point 1 point 4.
+- **A rectangle tool, as the default.** Chosen over freeform-only drawing, which an earlier draft had: a first-time player draws a square building in two clicks, and freeform is one choice away.
+- **Common lengths.** Chosen over an earlier draft in which lengths did not match: a row of shacks needs the first one's sides again.
+- **Walls take the same guides as foundations**, mid-floor chains included, and wall corners are guide points: walls square a rotated chain as a foundation does.
+- **Alt drops every guide**: one key is true freeform; the adjacency snaps stay, since they are adjacency, not style.
+- **"Align to existing buildings"**, over "Align to existing foundations": the one switch gates everything that comes from existing structures, walls included, nearby directions as well as corners.
+- **The shape's guides through the first point catch by angle**, as those through the previous point do, over distance only: it is what makes the closing corner of a rotated rectangle as easy to hit as a right-angle turn.
+- **A crossing beats a common length**, over letting the length win (the config switch `commonLengthBeatsCrossing`, off): a crossing fixes the point.
+- **Angle steps are a helper, off by default**, over always-on steps in plain freeform: the basic level stays plain, and the rectangle tool covers the square case.
+- **The rectangle tool cannot rotate**, over a rotated rectangle: rotated buildings are Freeform work.
+- **The length increment is in meters, the same at every zoom**, over a screen-pixel increment that scales with zoom as the close radius does.
+- **No grid for walls**, over a wall grid: walls go onto foundations whose corners and edges are already snaps, and a grid would fight a rotated building.
+- **The close hint is the key guide's "Click point 1" row and the strip's "Click origin to close"**, over a hint drawn on the canvas.
+- **The key guide starts open in each game, and collapsing it is not saved**, over remembering the fold: the panel is for new players.
+- **Walls match a foundation edge's inset length** (4.796 m off a 5 m edge under a 0.2 m wall), over the edge's own length: a wall drawn to match an outer-face-flush perimeter wall comes out the same length, at the cost of an odd-looking number.
+- **No raw-pointer ring or pull line**, over the prototype's: the operating system's pointer already shows the raw position, so the game draws only the snapped-point marker and the close halo.
