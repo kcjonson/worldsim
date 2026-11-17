@@ -3,9 +3,8 @@
 **Status:** draft  
 **Last verified:** not yet run
 
-Two hungry colonists don't converge on one bush, a colonist waits on a regrowing bush, and a hungry
-colonist eats one meal from a storage box or a loose pile. Spec:
-[task-claims.md](../../technical/task-claims.md#need-tasks).
+Two hungry colonists never cut one bush at once, and a hungry colonist eats one meal from a storage
+box or a loose pile. Spec: [task-claims.md](../../technical/task-claims.md#need-tasks).
 
 ---
 
@@ -16,28 +15,38 @@ colonist here is spawned for the step, so its pack holds no food; a colonist wit
 eats that first and searches for nothing. If `what=colonists` shows `Berry` in a new colonist's
 `inventory` before its step starts (it gathered while idle), spawn another.
 
+A colonist with an empty pack starts gathering within about a second and finishes gather and eat
+quickly, so each step that spawns one runs with the game paused: pause (`/api/control?action=pause`),
+spawn, set Hunger, then resume (`/api/control?action=resume`). Dev verbs run while paused, and
+nothing moves until the resume.
+
+The Quick Start map has a berry bush within about 13 m of any spot, and no dev verb clears bushes, so
+a colonist can always go to another bush: a second colonist waiting on a reserved or regrowing bush
+(the "reserved by" and "source regrowing" task rows) is not checkable here.
+
 ---
 
 ## Setup
 
-Pick a spot on open ground, a few meters from the river bank, with no berry bush within about 30 m
-(colonists see 30 m; check a screenshot). Note it as `FX, FY`. Keep time at normal speed.
+Pick a spot on open ground, a few meters from the river bank. Note it as `FX, FY`. Keep time at
+normal speed, and don't skip time (`ate_good_meal` is held for 6 game hours, which steps 3 to 6
+rely on).
 
 ---
 
 ## Steps
 
-1. Spawn one bush (`/api/dev/spawn?def=Flora_BerryBush&at=<FX>,<FY>&n=1&scatter=0`) and two colonists 2 m from it (`/api/dev/colonist?at=<FX+2>,<FY>&n=2&name=Hungry`), then at once (an idle colonist with an empty pack goes to gather the bush) set both Hunger to 40 (`/api/dev/need?colonist=<id>&need=Hunger&value=40`): one walks to the bush; select the other (`/api/dev/select?colonist=<id>`) and its task list shows "Hunger at 40% (reserved by <the first>)"; they never both cut it.
+1. Pause, spawn one bush (`/api/dev/spawn?def=Flora_BerryBush&at=<FX>,<FY>&n=1&scatter=0`) and two colonists 2 m from it (`/api/dev/colonist?at=<FX+2>,<FY>&n=2&name=Hungry`), set both Hunger to 40 (`/api/dev/need?colonist=<id>&need=Hunger&value=40`), then resume: both walk to bushes and cut; they never cut the same bush at the same time.
 
-2. After the first cuts the bush, the second's row reads "Hunger at ... (source regrowing)" and it does something else; about a game minute later it walks to the bush and cuts it.
+2. Read `what=colonists` a little later: both Hungry colonists have eaten, each with `needs.Hunger` above 50.
 
-3. Spawn a `BasicBox` 20 m from the bush (`/api/dev/spawn?def=BasicBox&at=<FX+20>,<FY>&n=1&scatter=0`), put 10 berries in it (`/api/dev/give?material=Berry&n=10&where=storage&at=<FX+20>,<FY>`), spawn Eve 1 m from it (`/api/dev/colonist?at=<FX+21>,<FY>&name=Eve`), and set her Hunger to 40: she walks to the box, `what=storage` shows its `Berry` drop to 9, and her Hunger rises past 50.
+3. Pause, spawn a `BasicBox` 20 m from the bush (`/api/dev/spawn?def=BasicBox&at=<FX+20>,<FY>&n=1&scatter=0`), put 10 berries in it (`/api/dev/give?material=Berry&n=10&where=storage&at=<FX+20>,<FY>`), spawn Eve 1 m from it (`/api/dev/colonist?at=<FX+21>,<FY>&name=Eve`), set her Hunger to 40, then resume: she walks to the box, `what=storage` shows its `Berry` drop to 9, and her Hunger rises past 50.
 
-4. Drop 10 berries 1 m from Eve on the side away from the box (`/api/dev/give?material=Berry&n=10&where=loose&at=<her x+1>,<her y>`) and, after noting the highest `id` in her `thoughts.recent` (`what=colonists`), set her Hunger to 5: she takes 2 berries from the heap or the box, whichever is nearer, never more, and her Hunger rises past 50.
+4. Pause, drop 10 berries 1 m from Eve on the side away from the box (`/api/dev/give?material=Berry&n=10&where=loose&at=<her x+1>,<her y>`), note the highest `id` in her `thoughts.recent` (`what=colonists`), set her Hunger to 5, then resume: she takes 2 berries from the heap or the box, whichever is nearer, never more, and her Hunger rises past 50.
 
-5. Read Eve in `what=colonists`, looking only at the `thoughts.recent` entries with an `id` above the one noted in step 4: among them are exactly one `starving` and exactly one `ate_good_meal`, and no `getting_peckish` or `very_hungry`; `thoughts.held` holds `ate_good_meal`. Thoughts about other needs may be there too (eating fills the gut, so a Digestion one can land) and don't count.
+5. Read Eve in `what=colonists`, looking only at the `thoughts.recent` entries with an `id` above the one noted in step 4: among them is exactly one `starving`, and no `getting_peckish`, `very_hungry` or `ate_good_meal` (it is non-stacking and already held from step 3, so this meal folds into the held one and records nothing new); `thoughts.held` still holds `ate_good_meal`. Thoughts about other needs may be there too (eating fills the gut, so a Digestion one can land) and don't count.
 
-6. Read Eve again a few seconds later, with the same id cut-off: still exactly one `starving` and one `ate_good_meal` while her Hunger stays where it is.
+6. Read Eve again a few seconds later, with the same id cut-off: no new `starving`, `getting_peckish`, `very_hungry` or `ate_good_meal` has arrived, and `ate_good_meal` is still held. Her Hunger drifts down on its own and may be anywhere above 5 and below its post-meal value; only those thought kinds count.
 
 ---
 
@@ -49,17 +58,18 @@ GET /api/state?what=storage
 
 GET /api/state?what=colonists
   -> each colonist that ate has needs.Hunger > 50 afterwards
-  -> Eve's thoughts newer than step 4's noted id: exactly one starving and one ate_good_meal, no
-     getting_peckish or very_hungry, ate_good_meal held; other needs' thoughts may sit among them
+  -> Eve's thoughts.recent entries newer than step 4's noted id: exactly one starving; no
+     getting_peckish, very_hungry or ate_good_meal; thoughts.held still holds ate_good_meal; other
+     needs' thoughts may sit among them
 ```
 
 ---
 
 ## Pass / fail
 
-**Pass:** two colonists never cut one bush at once; the waiting colonist cuts the bush once it has
-regrown; each meal from a box or heap takes 1 or 2 berries, never a pack-full.
+**Pass:** two colonists never cut one bush at once and each eats; each meal from a box or heap takes
+1 or 2 berries, never a pack-full.
 
-**Fail:** both colonists walk to and cut the same bush in one go; the waiting colonist stands frozen
-after the bush has regrown, or loops on it while it is regrowing; a colonist empties the box or heap
-into its pack.
+**Fail:** both colonists cut the same bush in one go; a hungry colonist with food in reach stands
+frozen; a colonist empties the box or heap into its pack; a repeat meal records a second
+`ate_good_meal`.
