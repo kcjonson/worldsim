@@ -408,6 +408,8 @@ float GetTileElevation(const ChunkBiomeData& data,
 
 **Result**: Smooth elevation changes across chunk boundaries
 
+**Planned:** [Sub-Tile Relief](./sub-tile-relief.md) replaces isotropic micro-noise with detail that follows belt strike, massifs and drainage, evaluated by one `PlanetSampler` function.
+
 ## Procedural Detail Generation
 
 Add fine detail using deterministic noise:
