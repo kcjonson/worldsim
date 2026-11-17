@@ -896,8 +896,9 @@ TEST(SnapLengths, PrototypeGuideCasesWithLengthsOn) {
 
 // --- The shipped settings ---------------------------------------------------------------
 
-TEST(SnapLengths, ShippedAidsLeaveLengthsAlone) {
-	// Both length aids ship off: no length config, however set, moves a point or reports a length.
+TEST(SnapLengths, ShippedAidsRoundLengthsAndKeepNoCommonLengths) {
+	// Round lengths ships on and common lengths off: a segment's length rounds to whatever
+	// increment the config sets, and no common length catches however far its catch reaches.
 	SnapWorld built;
 	built.addFoundation(rectangle(0.0, 0.0, 0.0, 4.0, 3.0));
 	SnappingConfig shipped;
@@ -911,10 +912,10 @@ TEST(SnapLengths, ShippedAidsLeaveLengthsAlone) {
 		std::vector<Vec2> points;
 		Vec2			  cursor;
 	} inputs[] = {
-		{{{0.0F, -10.0F}}, polar({0.0F, -10.0F}, 31.0, 3.94)}, // angle step, near the shack's 4 m
-		{{{0.0F, -10.0F}}, {3.9F, -10.1F}},					   // the world line through the previous point
-		{{}, {-3.67F, 0.05F}},								   // a guide through the shack's corner
-		{{{0.0F, -10.0F}, {6.03F, -10.0F}, {6.03F, -5.93F}}, {0.15F, -6.0F}}, // a crossing
+		{{{0.0F, -10.0F}}, polar({0.0F, -10.0F}, 31.0, 3.94)}, // near the shack's 4 m, off any step
+		{{{0.0F, -10.0F}}, {3.9F, -10.1F}},					   // near the world line through the previous point
+		{{}, {-3.67F, 0.05F}},								   // near the line through the shack's corner
+		{{{0.0F, -10.0F}, {6.03F, -10.0F}, {6.03F, -5.93F}}, {0.15F, -6.0F}}, // near where two guides would cross
 	};
 	for (const bool wallTool : {false, true}) {
 		const SnapInput input = wallTool ? wallInput(shippedAids()) : foundationInput(shippedAids());
@@ -923,12 +924,18 @@ TEST(SnapLengths, ShippedAidsLeaveLengthsAlone) {
 											  : SnapEngine(shipped, built.world).snap(points, cursor, input);
 			const SnapResult pushed = wallTool ? SnapEngine(extreme, built.world).snapWall(points, cursor, input)
 											   : SnapEngine(extreme, built.world).snap(points, cursor, input);
-			EXPECT_EQ(usual.lengthSnap, LengthSnapKind::None);
 			EXPECT_EQ(usual.commonLengthCount, 0U);
-			EXPECT_EQ(pushed.kind, usual.kind);
-			EXPECT_EQ(pushed.point.x, usual.point.x);
-			EXPECT_EQ(pushed.point.y, usual.point.y);
-			EXPECT_EQ(pushed.lengthSnap, LengthSnapKind::None);
+			EXPECT_EQ(pushed.commonLengthCount, 0U);
+			EXPECT_EQ(usual.kind, SnapKind::None);
+			EXPECT_EQ(pushed.kind, SnapKind::None);
+			// With no point placed there is no segment, and no guide to round along.
+			const LengthSnapKind expected = points.empty() ? LengthSnapKind::None : LengthSnapKind::Rounded;
+			EXPECT_EQ(usual.lengthSnap, expected);
+			EXPECT_EQ(pushed.lengthSnap, expected);
+			if (!points.empty()) {
+				EXPECT_NEAR(usual.lengthMeters, std::round(usual.lengthMeters * 10.0F) / 10.0F, 1e-4F);
+				EXPECT_NEAR(pushed.lengthMeters, std::round(pushed.lengthMeters), 1e-4F);
+			}
 		}
 	}
 }

@@ -2,8 +2,9 @@
 
 // DrawingFeedback - the snap feedback the drawing tools draw over their preview: the
 // guides behind the snapped point, their markers and distance labels, the segment's
-// length label, the first point's close ring and halo, the snapped-point marker, and
-// the wall tool's snap-target ring.
+// length label, the first point's close ring and halo, the snapped-point marker, and the
+// wall tool's snap-target ring. The Rectangle tool draws the snapped-point marker and its
+// own: the size label, a cross on the grid point, and a ring on an existing corner or edge.
 // One rule: solid is geometry, dotted and part transparent is alignment, small solid
 // markers state a fact. Sizes are window pixels and never scale with zoom; only the
 // label text and its plate are in ui px, following the interface size.
@@ -13,6 +14,7 @@
 
 #include "UserSettings.h"
 
+#include <construction/RectangleSnap.h>
 #include <construction/SnapEngine.h>
 
 #include <graphics/Color.h>
@@ -21,6 +23,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -64,18 +67,23 @@ namespace world_sim {
 		bool								 snappedPointInvalid = false; // off buildable ground, or a refused close: the marker's dot takes invalidColor
 		Foundation::Color					 invalidColor{};
 		std::optional<FeedbackBox>			 keepClear; // something else the preview draws there (a rejection reason): labels keep off it
+		construction::RectangleSnapKind		 rectangleSnap = construction::RectangleSnapKind::None; // the Rectangle tool: what placed the corner
+		std::string							 sizeLabel; // the Rectangle tool: the pending rectangle's size ("4 m x 3 m"), empty while there is none
 	};
 
 	/// The order things draw in, each above the one before.
 	enum class FeedbackLayer {
-		Alignment,	   // guides and the close ring
-		Marker,		   // right-angle markers and the close halo
+		Alignment,	   // guides, the close ring, and the Rectangle tool's grid cross
+		Marker,		   // right-angle markers, the close halo, and the Rectangle tool's rings
 		LabelPlate,	   // the dark plate behind each label
-		Label,		   // the segment label and guide distance labels
+		Label,		   // the segment label, the size label, and guide distance labels
 		CursorOutline, // the dark strokes under the snapped-point marker's ticks
 		Cursor,		   // the snapped-point marker
 		Target,		   // over the marker: the crossing dot and the wall tool's snap-target ring
 	};
+
+	/// The renderer's draw-order key `tool`'s feedback draws `layer` at.
+	[[nodiscard]] std::int32_t feedbackLayerKey(ToolKind tool, FeedbackLayer layer);
 
 	/// An open stroke in screen pixels: a guide (two points) or a right-angle marker (three).
 	struct FeedbackStroke {

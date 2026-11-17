@@ -401,8 +401,7 @@ namespace construction {
 			.aids = input.aids,
 			.tool = wallTool ? snap_guides::SnapTool::Wall : snap_guides::SnapTool::Foundation,
 			.wallHalfThicknessMm = input.wallHalfThicknessMm,
-			// From the registry, not the injected config: the caller doesn't pass the point limit yet.
-			.maxPoints = assets::ConstructionRegistry::Get().constraints().maxPoints,
+			.maxPoints = input.maxPoints,
 		};
 	}
 

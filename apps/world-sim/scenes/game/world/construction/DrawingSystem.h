@@ -11,6 +11,9 @@
 // The tools share the one state machine, selected by activeTool_:
 //   Foundation: a CLOSED polygon. snap() / validatePoint / validateRing /
 //     commitFoundation. Origin-close commits.
+//   FoundationRectangle: two opposite corners, by two clicks or a press-drag-release.
+//     snapRectangleCorner / rectangleFromCorners, then the polygon's close checks and
+//     commit on the rectangle's ring.
 //   FoundationEdit: Add / Subtract on one existing foundation (Epic G3). The
 //     same closed-polygon flow; validateEditPoint per point, and the close applies
 //     the edit with the validateFoundationEdit result the move already holds.
@@ -77,21 +80,30 @@ namespace world_sim {
 
 	/// Which structure tool is active while Drawing.
 	enum class ToolKind {
-		Foundation,
+		Foundation,			 // the Freeform tool: a polygon, point by point
+		FoundationRectangle, // the Rectangle tool: two opposite corners on the grid (D13)
 		FoundationEdit, // Add / Subtract on an existing foundation (Epic G3)
 		Wall,
 		Opening,
 	};
 
+	/// The two foundation tools, between which the Build menu's Foundation entry and the
+	/// config strip's tool picker choose.
+	enum class FoundationTool {
+		Rectangle,
+		Freeform,
+	};
+
 	/// Live status of the in-progress shape, surfaced to the config strip.
 	struct DrawingStatus {
-		bool		active = false;			// tool is on (config strip visible)
-		bool		wall = false;			// true while the wall tool is active (config strip shows presets)
-		bool		opening = false;		// true while the opening tool is active (config strip shows the opening type)
-		bool		foundationEdit = false; // true while Add / Subtract is active (material locked to the target's)
-		std::string editLabel;				// "Add to foundation" / "Subtract from foundation"
-		int			pointCount = 0;
-		float		areaSquareMeters = 0.0F;	  // closed-polygon area preview (0 until >= 3 pts); edit: resulting outline
+		bool						  active = false;		  // tool is on (config strip visible)
+		bool						  wall = false;			  // true while the wall tool is active (config strip shows presets)
+		bool						  opening = false;		  // true while the opening tool is active (config strip shows the opening type)
+		bool						  foundationEdit = false; // true while Add / Subtract is active (material locked to the target's)
+		std::optional<FoundationTool> foundationTool;		  // the Rectangle or Freeform tool, while one is active (the strip's tool picker)
+		std::string					  editLabel;			  // "Add to foundation" / "Subtract from foundation" (foundationEdit only)
+		int							  pointCount = 0;
+		float		areaSquareMeters = 0.0F;	  // the shape's area: the closed polygon (0 until >= 3 pts), the pending rectangle, an edit's outline
 		float		areaDeltaSquareMeters = 0.0F; // edit: resulting area minus the target's current area
 		bool		valid = true;				  // current cursor placement / shape validity
 		std::string message;					  // validity reason (empty when valid)
@@ -146,8 +158,22 @@ namespace world_sim {
 
 		// --- Tool lifecycle ---
 
-		/// Activate the foundation tool (from the Build menu). Enters Drawing.
+		/// Activate the Freeform foundation tool, the polygon point by point. Enters Drawing
+		/// and makes it the session's foundation pick.
 		void activateFoundationTool();
+
+		/// Activate the Rectangle foundation tool. Enters Drawing and makes it the session's
+		/// foundation pick.
+		void activateRectangleTool();
+
+		/// The foundation tool last activated this session, Rectangle before either was:
+		/// what the Build menu's Foundation entry opens.
+		[[nodiscard]] FoundationTool lastFoundationTool() const { return lastFoundationTool_; }
+
+		/// The Build menu's Foundation entry and the config strip's tool picker: activate
+		/// `tool`, dropping any other tool's shape in progress. With `tool` already on, nothing
+		/// changes and its shape in progress stays.
+		void pickFoundationTool(FoundationTool tool);
 
 		/// Activate the wall tool (from the Build menu). Enters Drawing in wall mode.
 		void activateWallTool();
@@ -170,7 +196,10 @@ namespace world_sim {
 		[[nodiscard]] std::uint64_t snapEvaluationCount() const { return snapEvaluationCount_; }
 
 		[[nodiscard]] bool isActive() const { return state_ == DrawingState::Drawing; }
+		/// The tool on, while one is.
+		[[nodiscard]] std::optional<ToolKind> activeTool() const { return isActive() ? std::optional<ToolKind>(activeTool_) : std::nullopt; }
 		[[nodiscard]] bool isWallTool() const { return activeTool_ == ToolKind::Wall; }
+		[[nodiscard]] bool isRectangleTool() const { return isActive() && activeTool_ == ToolKind::FoundationRectangle; }
 		[[nodiscard]] bool isOpeningTool() const { return activeTool_ == ToolKind::Opening; }
 
 		// --- Material selection (from the config strip) ---
@@ -188,10 +217,26 @@ namespace world_sim {
 		/// Update the snapped cursor + live validity from a mouse move.
 		void handleMouseMove(float screenX, float screenY, int viewportW, int viewportH, bool freeform);
 
-		/// Left click: add a snapped point, or commit if it closes the shape
+		/// Left click, on its release: add a snapped point, or commit if it closes the shape
 		/// (foundation) / extends or closes the chain (wall). Ctrl held on the wall tool over a
-		/// foundation edge triggers edge fill. @return true if the click was consumed.
+		/// foundation edge triggers edge fill. In the Rectangle tool it ends the press
+		/// handlePress began: a release more than doubleClickDistancePx from that press, or
+		/// any release once a first corner was waiting before it, commits the rectangle when
+		/// the two corners make one; a release that ends no press the tool saw does nothing.
+		/// @return true if the click was consumed.
 		bool handleClick(float screenX, float screenY, int viewportW, int viewportH, bool freeform, bool ctrl = false);
+
+		/// Rectangle tool, left press on the world: places the first corner when none is
+		/// waiting, and remembers where the press was for the release. @return true if the
+		/// press was consumed (the Rectangle tool is active).
+		bool handlePress(float screenX, float screenY, int viewportW, int viewportH, bool freeform);
+
+		/// Rectangle tool: a press the release of which will never reach the world (released
+		/// over the interface or outside the window, or lost with the window's focus). Forgets
+		/// the press and commits nothing; a first corner, the press's own included, waits for
+		/// a later click.
+		void cancelPress();
+		[[nodiscard]] bool hasPendingPress() const { return rectanglePress_.has_value(); }
 
 		/// Esc / right-click: cancel the in-progress shape (foundation) or finish the
 		/// chain (wall, committing the segments). When nothing is in progress, exits
@@ -386,9 +431,50 @@ namespace world_sim {
 
 		// --- Foundation tool ---
 
-		/// Quantize, commit, and spawn the foundation blueprint entity. Surfaces
-		/// failures as a toast. Returns to an empty Drawing state on success.
+		/// Quantize, commit, and spawn the foundation blueprint entity for closingShape().
+		/// Surfaces failures as a toast. Returns to an empty Drawing state on success.
 		void commitShape();
+
+		/// The closed shape the next closing click commits: the placed points, or in the
+		/// Rectangle tool the pending rectangle's corners (empty when the two corners make none).
+		[[nodiscard]] const std::vector<Foundation::Vec2>& closingShape() const;
+
+		/// Enter Drawing with `tool` and nothing placed, and show the config strip.
+		void startTool(ToolKind tool);
+
+		/// The Rectangle or Freeform tool while one is on.
+		[[nodiscard]] std::optional<FoundationTool> activeFoundationTool() const;
+
+		// --- Rectangle tool ---
+
+		/// The corner snap (snapRectangleCorner) and, with a first corner placed, the rectangle the
+		/// two corners span, judged as the closing click would judge it. Level corners span none.
+		void handleRectangleMove(Foundation::Vec2 world, bool freeform);
+
+		/// The pending rectangle's fill and outline, the first corner, and planSnapFeedback's plan
+		/// (the size label, the grid cross, the existing corner's or edge's ring, and the
+		/// snapped-point marker). INTERIM.
+		void renderRectanglePreview(int viewportWidth, int viewportHeight, float uiScale);
+
+		/// Forget the pending rectangle and any press (the first corner is points_, cleared by the caller).
+		void clearRectangle();
+
+		/// What the next click would do, as the preview, the status strip, and the click read
+		/// it: while it closes (or in the Rectangle tool commits), the close's verdict;
+		/// otherwise whether the point may be placed, and why not. The Freeform tool's pointer
+		/// resting where it placed the last point, with its snapped point refused as too close
+		/// to it, proposes nothing: valid, and the click places nothing.
+		struct ClickVerdict {
+			bool		valid = true;
+			bool		proposed = true;
+			std::string reason;
+		};
+		[[nodiscard]] ClickVerdict clickVerdict() const;
+
+		/// The Freeform tool's pointer has not moved in the world since the click that placed the
+		/// last point. Its snapped point need not be that point: a length that rounds to zero
+		/// leaves the raw pointer, a few centimeters off.
+		[[nodiscard]] bool restsOnLastPoint() const;
 
 		/// Screen pixels per world meter at the current zoom (mirrors the render path:
 		/// kPixelsPerMeter * camera zoom). 1.0 fallback if no camera.
@@ -598,6 +684,8 @@ namespace world_sim {
 		// place a vertex -- either the explicit origin-close (lastSnap_ Origin) or the
 		// near-start "snap not block" rescue (a would-be-rejected vertex near the start
 		// whose closed ring is valid). Recomputed every move; suppresses the invalid highlight.
+		// In the Rectangle tool, true while the first corner and the snapped cursor span a
+		// rectangle: the next release commits it.
 		bool willClose_ = false;
 
 		// While willClose_: closeVerdict() as of the last move. Drives previewVerdict (the
@@ -610,6 +698,32 @@ namespace world_sim {
 		// they can't place there BEFORE committing. The commit gate re-checks every vertex regardless, so
 		// this is feedback only.
 		bool cursorOffBuildableGround = false;
+
+		// Rectangle tool: the corners and the size label of the rectangle the first corner
+		// (points_) and the snapped cursor span, refreshed every move; empty when they make
+		// none. And the press handlePress saw, in screen pixels, until its release; whether it
+		// placed the first corner.
+		std::vector<Foundation::Vec2>  rectangleCorners_;
+		std::string					   rectangleLabel_;
+		std::optional<Foundation::Vec2> rectanglePress_;
+		bool							rectanglePressPlacedCorner_ = false;
+		// What placed the snapped corner (lastSnap_ holds the point), and the memo's copies of
+		// it and of the rectangle, built once for each snap the memo holds.
+		construction::RectangleSnapKind rectangleSnapKind_ = construction::RectangleSnapKind::None;
+		construction::RectangleSnapKind snapMemoRectangleSnapKind_ = construction::RectangleSnapKind::None;
+		std::vector<Foundation::Vec2>	snapMemoRectangleCorners_;
+		std::string						snapMemoRectangleLabel_;
+
+		// Freeform tool: the pointer, world meters, of the click that placed a point, and how many
+		// points that made (restsOnLastPoint).
+		struct PointPlacement {
+			Foundation::Vec2 pointer{0.0F, 0.0F};
+			std::size_t		 pointCount = 0;
+		};
+		std::optional<PointPlacement> lastPlacement_;
+
+		// The foundation tool the Build menu's Foundation entry opens: the last one activated.
+		FoundationTool lastFoundationTool_ = FoundationTool::Rectangle;
 
 		// True when the opening tool's snapped opening is not all on seen ground.
 		bool openingUnexplored_ = false;

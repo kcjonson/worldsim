@@ -387,6 +387,7 @@ namespace assets {
 					  {{"guideDistance", GuideRounding::GuideDistance}, {"segmentLength", GuideRounding::SegmentLength}});
 
 		cfg.rectangleAdjacencySnaps = flag("rectangleAdjacencySnaps", cfg.rectangleAdjacencySnaps);
+		cfg.doubleClickDistancePx = number("doubleClickDistancePx", cfg.doubleClickDistancePx);
 
 		if (pugi::xml_node d = root.child("DrawingSettingsDefaults")) {
 			DrawingSettingsDefaults& defaults = cfg.drawingSettingsDefaults;

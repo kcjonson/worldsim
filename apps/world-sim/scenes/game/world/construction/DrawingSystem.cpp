@@ -4,6 +4,7 @@
 
 #include <assets/ConstructionRegistry.h>
 #include <construction/OpeningGeometry.h>
+#include <construction/RectangleSnap.h>
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/StructureHealth.h>
@@ -260,8 +261,9 @@ namespace world_sim {
 				return true;
 			}
 		}
-		return (activeTool_ == ToolKind::Foundation || activeTool_ == ToolKind::FoundationEdit) ? navigation_->isPointBuildableOnceCleared({p.x, p.y})
-																								: navigation_->isPointBuildableNow({p.x, p.y});
+		const bool foundationTool = activeTool_ == ToolKind::Foundation || activeTool_ == ToolKind::FoundationRectangle ||
+									activeTool_ == ToolKind::FoundationEdit;
+		return foundationTool ? navigation_->isPointBuildableOnceCleared({p.x, p.y}) : navigation_->isPointBuildableNow({p.x, p.y});
 	}
 
 	bool DrawingSystem::footprintBuildable(const std::vector<Foundation::Vec2>& pts) const {
@@ -295,51 +297,73 @@ namespace world_sim {
 		return false;
 	}
 
-	void DrawingSystem::activateFoundationTool() {
+	void DrawingSystem::startTool(ToolKind tool) {
 		state_ = DrawingState::Drawing;
-		activeTool_ = ToolKind::Foundation;
+		activeTool_ = tool;
 		points_.clear();
 		lastSnap_ = {};
 		lastValidation_ = {};
 		willClose_ = false;
+		pendingClose_ = {};
 		cursorOffBuildableGround = false;
 		wallHost_ = ec::kInvalidFoundation;
+		clearRectangle();
+		rectangleSnapKind_ = construction::RectangleSnapKind::None;
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(true);
 		}
-		LOG_INFO(Game, "Foundation tool activated (material=%s)", activeMaterial_.c_str());
+	}
+
+	void DrawingSystem::activateFoundationTool() {
+		startTool(ToolKind::Foundation);
+		lastFoundationTool_ = FoundationTool::Freeform;
+		LOG_INFO(Game, "Freeform foundation tool activated (material=%s)", activeMaterial_.c_str());
+	}
+
+	void DrawingSystem::activateRectangleTool() {
+		startTool(ToolKind::FoundationRectangle);
+		lastFoundationTool_ = FoundationTool::Rectangle;
+		LOG_INFO(Game, "Rectangle foundation tool activated (material=%s)", activeMaterial_.c_str());
+	}
+
+	void DrawingSystem::pickFoundationTool(FoundationTool tool) {
+		if (activeFoundationTool() == tool) {
+			return;
+		}
+		if (tool == FoundationTool::Rectangle) {
+			activateRectangleTool();
+		} else {
+			activateFoundationTool();
+		}
+	}
+
+	std::optional<FoundationTool> DrawingSystem::activeFoundationTool() const {
+		if (!isActive()) {
+			return std::nullopt;
+		}
+		switch (activeTool_) {
+			case ToolKind::FoundationRectangle:
+				return FoundationTool::Rectangle;
+			case ToolKind::Foundation:
+				return FoundationTool::Freeform;
+			case ToolKind::FoundationEdit:
+			case ToolKind::Wall:
+			case ToolKind::Opening:
+				return std::nullopt;
+		}
+		return std::nullopt;
 	}
 
 	void DrawingSystem::activateWallTool() {
-		state_ = DrawingState::Drawing;
-		activeTool_ = ToolKind::Wall;
-		points_.clear();
-		lastSnap_ = {};
-		lastValidation_ = {};
-		willClose_ = false;
-		cursorOffBuildableGround = false;
-		wallHost_ = ec::kInvalidFoundation;
-		if (callbacks_.onToolActive) {
-			callbacks_.onToolActive(true);
-		}
+		startTool(ToolKind::Wall);
 		LOG_INFO(Game, "Wall tool activated (material=%s, preset=%s)", activeMaterial_.c_str(), activeThicknessPreset_.c_str());
 	}
 
 	void DrawingSystem::activateOpeningTool(const std::string& openingType) {
-		state_ = DrawingState::Drawing;
-		activeTool_ = ToolKind::Opening;
 		activeOpeningType_ = openingType;
-		points_.clear();
-		lastSnap_ = {};
-		lastValidation_ = {};
-		willClose_ = false;
-		cursorOffBuildableGround = false;
-		wallHost_ = ec::kInvalidFoundation;
 		openingSnap_ = {};
 		openingValidation_ = {};
-		if (callbacks_.onToolActive) {
-			callbacks_.onToolActive(true);
-		}
+		startTool(ToolKind::Opening);
 		LOG_INFO(Game, "Opening tool activated (type=%s)", activeOpeningType_.c_str());
 	}
 
@@ -347,21 +371,11 @@ namespace world_sim {
 		if (constructionWorld_.get(target) == nullptr) {
 			return;
 		}
-		state_ = DrawingState::Drawing;
-		activeTool_ = ToolKind::FoundationEdit;
 		editTarget_ = target;
 		editMode_ = mode;
 		editPreview_ = {};
 		editPreviewActive_ = false;
-		points_.clear();
-		lastSnap_ = {};
-		lastValidation_ = {};
-		willClose_ = false;
-		cursorOffBuildableGround = false;
-		wallHost_ = ec::kInvalidFoundation;
-		if (callbacks_.onToolActive) {
-			callbacks_.onToolActive(true);
-		}
+		startTool(ToolKind::FoundationEdit);
 		LOG_INFO(
 			Game,
 			"Foundation %s tool activated on #%llu",
@@ -376,6 +390,8 @@ namespace world_sim {
 		lastSnap_ = {};
 		lastValidation_ = {};
 		willClose_ = false;
+		pendingClose_ = {};
+		clearRectangle();
 		cursorOffBuildableGround = false;
 		wallHost_ = ec::kInvalidFoundation;
 		openingSnap_ = {};
@@ -404,6 +420,10 @@ namespace world_sim {
 		}
 		if (activeTool_ == ToolKind::Opening) {
 			handleOpeningMove({world.x, world.y});
+			return;
+		}
+		if (activeTool_ == ToolKind::FoundationRectangle) {
+			handleRectangleMove({world.x, world.y}, freeform);
 			return;
 		}
 		const bool editing = activeTool_ == ToolKind::FoundationEdit;
@@ -477,6 +497,22 @@ namespace world_sim {
 			const auto world = camera_->screenToWorld(screenX, screenY, viewportW, viewportH, kPixelsPerMeter);
 			return handleOpeningClick({world.x, world.y});
 		}
+		if (activeTool_ == ToolKind::FoundationRectangle) {
+			if (!rectanglePress_) {
+				return true; // its press landed on the interface: the release does nothing
+			}
+			const Foundation::Vec2 press = *rectanglePress_;
+			const bool			   pressPlacedCorner = rectanglePressPlacedCorner_;
+			rectanglePress_.reset();
+			const float dragPx = std::hypot(screenX - press.x, screenY - press.y);
+			if (pressPlacedCorner && dragPx <= ConstructionRegistry::Get().snapping().doubleClickDistancePx) {
+				return true; // a click, not a drag: the first corner waits for the second click
+			}
+			if (!rectangleCorners_.empty()) {
+				commitShape();
+			}
+			return true;
+		}
 
 		// Close the shape (>= 3 points) when the click resolves to a close: the explicit
 		// origin-close, or the near-start "snap not block" rescue. willClose_ was set by
@@ -488,6 +524,10 @@ namespace world_sim {
 			} else {
 				commitShape();
 			}
+			return true;
+		}
+
+		if (!clickVerdict().proposed) {
 			return true;
 		}
 
@@ -511,6 +551,7 @@ namespace world_sim {
 		}
 
 		points_.push_back(cursor_);
+		lastPlacement_ = PointPlacement{.pointer = snapMemoKey_.cursorWorld, .pointCount = points_.size()};
 		return true;
 	}
 
@@ -553,6 +594,7 @@ namespace world_sim {
 			willClose_ = false;
 			pendingClose_ = {};
 			editPreviewActive_ = false;
+			clearRectangle();
 			return true;
 		}
 		// Nothing in progress: exit the tool.
@@ -584,12 +626,79 @@ namespace world_sim {
 		willClose_ = false;		// recomputed on the next move; don't leave a stale closing halo
 		cursorOffBuildableGround = false; // recomputed on the next move
 		editPreviewActive_ = false;
+		pendingClose_ = {};
 		if (points_.empty()) {
 			// The chain's host is determined by its first point; once empty, the next
-			// first click re-picks it.
+			// first click re-picks it. A rectangle's first corner was its only point.
 			wallHost_ = ec::kInvalidFoundation;
+			clearRectangle();
 		}
 		return true;
+	}
+
+	void DrawingSystem::clearRectangle() {
+		rectangleCorners_.clear();
+		rectangleLabel_.clear();
+		rectanglePress_.reset();
+		rectanglePressPlacedCorner_ = false;
+	}
+
+	bool DrawingSystem::handlePress(float screenX, float screenY, int viewportW, int viewportH, bool freeform) {
+		if (!isRectangleTool() || camera_ == nullptr) {
+			return false;
+		}
+		handleMouseMove(screenX, screenY, viewportW, viewportH, freeform);
+		rectanglePress_ = Foundation::Vec2{screenX, screenY};
+		rectanglePressPlacedCorner_ = false;
+		if (!points_.empty()) {
+			return true; // a corner is waiting: this press's release places the opposite one
+		}
+		if (cursorOffBuildableGround) {
+			rectanglePress_.reset();
+			if (callbacks_.onToast) {
+				callbacks_.onToast("Can't build here", "foundation: " + cursorGroundReason());
+			}
+			return true;
+		}
+		points_.push_back(cursor_);
+		rectanglePressPlacedCorner_ = true;
+		handleMouseMove(screenX, screenY, viewportW, viewportH, freeform);
+		return true;
+	}
+
+	void DrawingSystem::cancelPress() {
+		rectanglePress_.reset();
+		rectanglePressPlacedCorner_ = false;
+	}
+
+	void DrawingSystem::handleRectangleMove(Foundation::Vec2 world, bool freeform) {
+		auto&			  registry = ConstructionRegistry::Get();
+		const SnapMemoKey key = snapMemoKey(world, freeform, nullptr);
+		if (!reuseSnapMemo(key)) {
+			const construction::RectangleCornerSnap corner =
+				construction::snapRectangleCorner(constructionWorld_, registry.snapping(), key.aids, world, freeform);
+			snapMemoResult_ = construction::SnapResult{.point = corner.point};
+			snapMemoRectangleSnapKind_ = corner.kind;
+			snapMemoValidation_ = {};
+			snapMemoRectangleCorners_.clear();
+			snapMemoRectangleLabel_.clear();
+			if (!points_.empty()) {
+				if (const std::optional<construction::RectangleShape> rectangle = construction::rectangleFromCorners(points_.front(), corner.point)) {
+					snapMemoRectangleCorners_ = dequantizeRing(rectangle->ring);
+					snapMemoRectangleLabel_ = rectangle->label;
+				}
+			}
+		}
+		lastSnap_ = snapMemoResult_;
+		rectangleSnapKind_ = snapMemoRectangleSnapKind_;
+		cursor_ = lastSnap_.point;
+		lastValidation_ = snapMemoValidation_;
+		cursorOffBuildableGround = !pointOnBuildableGround(cursor_);
+
+		rectangleCorners_ = snapMemoRectangleCorners_;
+		rectangleLabel_ = snapMemoRectangleLabel_;
+		willClose_ = !rectangleCorners_.empty();
+		pendingClose_ = willClose_ ? closeVerdict() : CloseVerdict{};
 	}
 
 	float DrawingSystem::pixelsPerWorldMeter() const {
@@ -663,6 +772,8 @@ namespace world_sim {
 			.snappedPointInvalid = verdict.markerInvalid,
 			.invalidColor = invalidColor_,
 			.keepClear = keepClear,
+			.rectangleSnap = activeTool_ == ToolKind::FoundationRectangle ? rectangleSnapKind_ : construction::RectangleSnapKind::None,
+			.sizeLabel = rectangleLabel_,
 		};
 	}
 
@@ -718,7 +829,7 @@ namespace world_sim {
 		}
 		// The whole footprint must sit on walkable ground (interior + edges, not just the
 		// vertices). Refuse a foundation that spans water or clips an off-mesh hole.
-		if (const std::string refusal = placementRefusal(points_); !refusal.empty()) {
+		if (const std::string refusal = placementRefusal(closingShape()); !refusal.empty()) {
 			return refusedClose("Can't build here", "foundation: " + refusal);
 		}
 		return {};
@@ -743,20 +854,53 @@ namespace world_sim {
 			}
 			return *snapMemoClosedShape_;
 		}
+		const char* title = activeTool_ == ToolKind::FoundationRectangle ? "Cannot place" : "Cannot close";
 		const construction::ConstructionValidator validator(ConstructionRegistry::Get().constraints(), constructionWorld_);
-		const construction::ValidationResult	  ring = validator.validateRing(points_);
-		snapMemoClosedShape_ = ring.ok() ? CloseVerdict{} : refusedClose("Cannot close", construction::validationReason(ring.code));
+		const construction::ValidationResult	  ring = validator.validateRing(closingShape());
+		snapMemoClosedShape_ = ring.ok() ? CloseVerdict{} : refusedClose(title, construction::validationReason(ring.code));
 		return *snapMemoClosedShape_;
 	}
 
+	DrawingSystem::ClickVerdict DrawingSystem::clickVerdict() const {
+		if (willClose_) {
+			return {.valid = pendingClose_.accepted, .reason = pendingClose_.reason};
+		}
+		// A pointer still where it placed the last point, whose snapped point is refused as too close
+		// to it, proposes nothing: no red the player did not cause by moving. A snapped point that is
+		// valid is placed, and any other refusal shows as it would anywhere.
+		if (restsOnLastPoint() && lastValidation_.code == construction::ValidationCode::VerticesTooClose) {
+			return {.proposed = false};
+		}
+		// Off-mesh cursor (on water) reads as invalid just like a geometry violation, so the
+		// band and fill turn red before the player commits. A point the next click would refuse
+		// outranks the outline an edit would produce; then an edit reads red while that outline
+		// is invalid.
+		if (cursorOffBuildableGround) {
+			return {.valid = false, .reason = cursorGroundReason()};
+		}
+		if (!lastValidation_.ok()) {
+			return {.valid = false, .reason = construction::validationReason(lastValidation_.code)};
+		}
+		if (activeTool_ == ToolKind::FoundationEdit && editPreviewActive_ && !editPreview_.ok()) {
+			return {.valid = false, .reason = construction::validationReason(editPreview_.validation.code)};
+		}
+		return {};
+	}
+
+	bool DrawingSystem::restsOnLastPoint() const {
+		return activeTool_ == ToolKind::Foundation && lastPlacement_ && lastPlacement_->pointCount == points_.size() &&
+			   snapMemoKey_.cursorWorld == lastPlacement_->pointer;
+	}
+
 	DrawingSystem::PreviewVerdict DrawingSystem::previewVerdict() const {
-		const bool	   editing = activeTool_ == ToolKind::FoundationEdit && editPreviewActive_;
-		PreviewVerdict verdict;
+		const bool		   editing = activeTool_ == ToolKind::FoundationEdit && editPreviewActive_;
+		const ClickVerdict click = clickVerdict();
+		PreviewVerdict	   verdict{.valid = click.valid};
 		if (willClose_) {
 			// An edit's outline can be valid and its close still refused, for the ground it
-			// would build on: the outline and the reason take the close's verdict.
-			verdict.valid = pendingClose_.accepted;
-			verdict.closeHalo = pendingClose_.accepted;
+			// would build on: the outline and the reason take the close's verdict. A rectangle
+			// does not close onto a first point, so it draws no halo.
+			verdict.closeHalo = pendingClose_.accepted && activeTool_ != ToolKind::FoundationRectangle;
 			verdict.markerInvalid = !pendingClose_.accepted;
 			verdict.editOutlineValid = pendingClose_.accepted;
 			if (editing && !pendingClose_.accepted) {
@@ -764,13 +908,8 @@ namespace world_sim {
 			}
 			return verdict;
 		}
-		// Off-mesh cursor (on water) reads as invalid just like a geometry violation, so the
-		// band and fill turn red before the player commits. An edit also reads red while the
-		// outline it would produce is invalid.
-		const bool editRejected = editing && !editPreview_.ok();
-		verdict.valid = lastValidation_.ok() && !cursorOffBuildableGround && !editRejected;
 		verdict.markerInvalid = cursorOffBuildableGround;
-		if (editRejected) {
+		if (editing && !editPreview_.ok()) {
 			verdict.editReason = construction::validationReason(editPreview_.validation.code);
 		}
 		return verdict;
@@ -784,7 +923,7 @@ namespace world_sim {
 			return;
 		}
 
-		const auto commit = constructionWorld_.commitFoundation(points_, activeMaterial_);
+		const auto commit = constructionWorld_.commitFoundation(closingShape(), activeMaterial_);
 		if (!commit.ok()) {
 			// The structural/overlap reject path: surface it plainly. The validator
 			// already gates most of these, so this catches the rare race / rounding.
@@ -804,6 +943,12 @@ namespace world_sim {
 		points_.clear();
 		lastValidation_ = {};
 		willClose_ = false;
+		pendingClose_ = {};
+		clearRectangle();
+	}
+
+	const std::vector<Foundation::Vec2>& DrawingSystem::closingShape() const {
+		return activeTool_ == ToolKind::FoundationRectangle ? rectangleCorners_ : points_;
 	}
 
 	ecs::EntityID DrawingSystem::spawnBlueprintEntity(ec::FoundationId id) {
@@ -1091,6 +1236,7 @@ namespace world_sim {
 					.freeform = freeform,
 					.originCloseRadiusMeters = effectiveOriginCloseRadiusMeters(),
 					.wallHalfThicknessMm = preset != nullptr ? preset->halfThicknessMm : 0,
+					.maxPoints = registry.constraints().maxPoints,
 				}
 			);
 			snapMemoValidation_ = {};
@@ -1754,20 +1900,13 @@ namespace world_sim {
 			return s;
 		}
 
-		// While the next click closes, the strip reads the close's verdict, as the preview does.
-		const auto readPendingClose = [this](DrawingStatus& readout) {
-			readout.valid = pendingClose_.accepted;
-			readout.message = pendingClose_.reason;
-		};
+		// The strip reads the verdict the preview reads, so the two cannot disagree.
+		const ClickVerdict click = clickVerdict();
+		s.valid = click.valid;
+		s.message = click.reason;
 
 		if (activeTool_ == ToolKind::Wall) {
 			s.thicknessPreset = activeThicknessPreset_;
-			if (willClose_) {
-				readPendingClose(s);
-			} else {
-				s.valid = lastValidation_.ok() && !cursorOffBuildableGround;
-				s.message = cursorOffBuildableGround ? cursorGroundReason() : construction::validationReason(lastValidation_.code);
-			}
 
 			// Length of the committed chain so far, plus the live rubber-band segment.
 			auto dist = [](Foundation::Vec2 a, Foundation::Vec2 b) -> float {
@@ -1805,40 +1944,18 @@ namespace world_sim {
 			}
 			const float current = constructionWorld_.areaSquareMeters(editTarget_);
 			s.areaSquareMeters = current;
-			// A point the next click would refuse outranks the outline it would produce.
-			const bool					pointRefused = !lastValidation_.ok() && !willClose_;
-			const ec::ValidationResult& judged = (editPreviewActive_ && !pointRefused) ? editPreview_.validation : lastValidation_;
 			if (editPreviewActive_ && editPreview_.ok()) {
 				s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(editPreview_.outline)));
 				s.areaDeltaSquareMeters = s.areaSquareMeters - current;
 			}
-			if (willClose_) {
-				readPendingClose(s);
-			} else {
-				s.valid = judged.ok() && !cursorOffBuildableGround;
-				s.message = cursorOffBuildableGround ? cursorGroundReason() : construction::validationReason(judged.code);
-			}
 			return s;
 		}
 
-		// Foundation: area preview only meaningful once a closeable shape exists. The live
-		// off-mesh cursor flag folds into validity (same cheap signal the red preview uses);
-		// the authoritative whole-footprint walkability check runs at commit.
-		if (points_.size() >= kMinClosingShapePoints) {
-			if (willClose_) {
-				readPendingClose(s);
-			} else {
-				auto&					  registry = ConstructionRegistry::Get();
-				construction::ConstructionValidator validator(registry.constraints(), constructionWorld_);
-				const auto				  ring = validator.validateRing(points_);
-				s.valid = ring.ok() && !cursorOffBuildableGround;
-				s.message = cursorOffBuildableGround ? cursorGroundReason() : construction::validationReason(ring.code);
-			}
-			// Recompute area regardless of validity so the readout tracks the shape.
-			s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(toRingMm(points_))));
-		} else {
-			s.valid = lastValidation_.ok() && !cursorOffBuildableGround;
-			s.message = cursorOffBuildableGround ? cursorGroundReason() : ec::validationReason(lastValidation_.code);
+		// The foundation tools: the area tracks the shape whatever its validity, once there is
+		// a closed one (three placed points, or a rectangle's two corners).
+		s.foundationTool = activeFoundationTool();
+		if (closingShape().size() >= kMinClosingShapePoints) {
+			s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(toRingMm(closingShape()))));
 		}
 		return s;
 	}
@@ -1986,6 +2103,11 @@ namespace world_sim {
 			return;
 		}
 
+		if (activeTool_ == ToolKind::FoundationRectangle) {
+			renderRectanglePreview(viewportWidth, viewportHeight, uiScale);
+			return;
+		}
+
 		// Add / Subtract: the resulting outline under the drawn polygon's preview.
 		if (activeTool_ == ToolKind::FoundationEdit) {
 			renderEditOutlinePreview(viewportWidth, viewportHeight, uiScale);
@@ -2052,8 +2174,9 @@ namespace world_sim {
 		// snap, or the near-start rescue): the point's verdict doesn't apply to a close.
 		// Gated on the geometry result (not `valid`) because lastValidation_.vertexIndex
 		// only indexes a placed vertex; off buildable ground, the snapped-point marker
-		// turns red instead (drawSnapFeedback).
-		if (!lastValidation_.ok() && !willClose_ && !screen.empty()) {
+		// turns red instead (drawSnapFeedback). A pointer resting on the point just placed, its
+		// snapped point refused as too close, proposes nothing, so nothing is offending.
+		if (!lastValidation_.ok() && !willClose_ && clickVerdict().proposed && !screen.empty()) {
 			const std::size_t offending = std::min(lastValidation_.vertexIndex, screen.size() - 1);
 			Renderer::Primitives::drawCircle({
 				.center = screen[offending],
@@ -2063,6 +2186,48 @@ namespace world_sim {
 				.key = 905,
 			});
 		}
+	}
+
+	void DrawingSystem::renderRectanglePreview(int viewportWidth, int viewportHeight, float uiScale) {
+		const auto& previewStyle = ConstructionRegistry::Get().rendering().preview;
+		const auto	toScreen = [&](Foundation::Vec2 world) -> Foundation::Vec2 {
+			 return camera_->worldToScreen(world.x, world.y, viewportWidth, viewportHeight, kPixelsPerMeter);
+		};
+
+		// The prototype's order: the grid cross (the feedback's alignment layer), then the first
+		// corner, the fill, and the outline, then the rings, the size label, and the marker over
+		// them. The rectangle draws at the rings' key before the feedback, so the rings, drawn
+		// later at the same key, go over it.
+		const std::int32_t rectangleKey = feedbackLayerKey(ToolKind::FoundationRectangle, FeedbackLayer::Marker);
+		if (!points_.empty()) {
+			Renderer::Primitives::drawCircle({
+				.center = toScreen(points_.front()),
+				.radius = previewStyle.vertexRadiusPx,
+				.style = {.fill = validColor_},
+				.id = "drawing_vertex",
+				.key = rectangleKey,
+			});
+		}
+		// The fill and outline read what the release would do, as the freeform band does.
+		const Foundation::Color lineColor = previewVerdict().valid ? validColor_ : invalidColor_;
+		if (!rectangleCorners_.empty()) {
+			std::vector<Foundation::Vec2> screen;
+			screen.reserve(rectangleCorners_.size());
+			for (const Foundation::Vec2 corner : rectangleCorners_) {
+				screen.push_back(toScreen(corner));
+			}
+			fillPolygon(screen, {lineColor.r, lineColor.g, lineColor.b, previewStyle.fillPreviewAlpha}, "drawing_fill_preview", rectangleKey);
+			for (std::size_t index = 0; index < screen.size(); ++index) {
+				Renderer::Primitives::drawLine({
+					.start = screen[index],
+					.end = screen[(index + 1) % screen.size()],
+					.style = {.color = lineColor, .width = previewStyle.lineWidth},
+					.id = "drawing_rubberband",
+					.key = rectangleKey,
+				});
+			}
+		}
+		drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight, uiScale, measureFeedbackText));
 	}
 
 	namespace {

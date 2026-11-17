@@ -71,6 +71,7 @@ namespace world_sim {
 		});
 		configStrip = dock.addChild<ConstructionConfigStrip>({
 			.id = "construction_config_strip",
+			.onFoundationToolSelected = args.onFoundationToolSelected,
 			.onMaterialSelected = args.onConstructionMaterialSelected,
 			.onThicknessSelected = args.onConstructionThicknessSelected,
 		});
