@@ -72,7 +72,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/dev/time?speed=3"
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=storage"
-# -> storages[0].rules has an entry with item == "Wood", min == 200 (after the default "*" rules)
+# -> storages[0].rules has an entry with item == "Wood", min == 200, and the box's default "*" rules for Food, Tool, and Furniture still listed (the verb removed the RawMaterial one)
 ```
 
 2. Watch Bob chop a tree. After a fell, poll colonist state:
