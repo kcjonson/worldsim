@@ -2,6 +2,7 @@
 
 #include "scenes/game/world/CreekWorldFixture.test.h"
 #include "scenes/game/world/PlayerVisibilityFixture.test.h"
+#include "scenes/game/world/WorldPointer.h"
 #include "UserSettings.h"
 
 #include <assets/ConstructionRegistry.h>
@@ -1718,4 +1719,186 @@ TEST_F(DrawingStripVerdictTest, AnEditStripReadsThePreview) {
 	ASSERT_EQ(drawing->status().pointCount, 3) << lastToast();
 	hoverFreeform(kFourthCorner + across);
 	expectTheStripReadsThePreview();
+}
+
+namespace {
+
+	// The pointer leaves the tool (GameScene pauses it) and comes back (the next move resumes it).
+	// The Rectangle tool's input and the designed default settings, with a wall host 40 by 30 m.
+	class DrawingPauseTest : public DrawingRectangleTest {
+	  protected:
+		void hostWalls() { builtFloor({{-20.0F, -15.0F}, {20.0F, -15.0F}, {20.0F, 15.0F}, {-20.0F, 15.0F}}); }
+
+		// GameScene's left release with the wall tool: the second click of a double-click ends the
+		// chain in progress, any other release is a click.
+		void releaseWall(glm::vec2 meters, double timeSeconds) {
+			const glm::vec2					screen = seen.screenOf(meters);
+			const world_sim::PointerRelease release{.timeSeconds = timeSeconds, .position = screen};
+			const auto&						snapping = assets::ConstructionRegistry::Get().snapping();
+			if (world_sim::secondClickOfDoubleClick(lastWallRelease, release, snapping.doubleClickSeconds, snapping.doubleClickDistancePx)) {
+				lastWallRelease.reset();
+				if (drawing->chainInProgress()) {
+					drawing->finishChain();
+				}
+				return;
+			}
+			lastWallRelease = release;
+			releaseAt(screen);
+		}
+
+		// Nothing the pointer proposed shows: no halo, no red marker, no edit reason, and the strip
+		// refuses nothing.
+		void expectNothingProposed() {
+			const world_sim::DrawingSystem::PreviewVerdict verdict = drawing->previewVerdict();
+			EXPECT_TRUE(verdict.valid);
+			EXPECT_FALSE(verdict.closeHalo);
+			EXPECT_FALSE(verdict.markerInvalid);
+			EXPECT_TRUE(verdict.editReason.empty()) << verdict.editReason;
+			EXPECT_TRUE(drawing->status().message.empty()) << drawing->status().message;
+		}
+
+		std::optional<world_sim::PointerRelease> lastWallRelease;
+	};
+
+} // namespace
+
+// Each tool with the pointer on a refused spot, then paused: the refusal goes with the pointer.
+TEST_F(DrawingPauseTest, APausedToolProposesNothing) {
+	{
+		SCOPED_TRACE("Add");
+		const construction::FoundationId target = blueprintFloor();
+		drawing->activateFoundationEditTool(target, construction::FoundationEditMode::Add);
+		click({6.0F, 2.0F});
+		hover({6.0F, 2.0F});
+		ASSERT_FALSE(drawing->status().valid);
+		drawing->pause();
+		expectNothingProposed();
+		EXPECT_TRUE(drawing->status().valid);
+	}
+	{
+		SCOPED_TRACE("Freeform");
+		drawing->activateFoundationTool();
+		click(kSeenPoint);
+		hover(kUnseenPoint);
+		ASSERT_FALSE(drawing->status().valid);
+		drawing->pause();
+		expectNothingProposed();
+		EXPECT_TRUE(drawing->status().valid);
+	}
+	{
+		SCOPED_TRACE("Rectangle");
+		drawing->activateRectangleTool();
+		clickCorner({0.0F, 0.0F});
+		hover({1.0F, 1.0F});
+		ASSERT_FALSE(drawing->status().valid);
+		drawing->pause();
+		expectNothingProposed();
+		EXPECT_TRUE(drawing->status().valid);
+	}
+	{
+		SCOPED_TRACE("Wall");
+		buildAcrossTheEdge();
+		drawing->activateWallTool();
+		click({36.0F, 4.0F});
+		hover({50.0F, 4.0F});
+		ASSERT_FALSE(drawing->status().valid);
+		drawing->pause();
+		expectNothingProposed();
+		EXPECT_TRUE(drawing->status().valid);
+		EXPECT_FLOAT_EQ(drawing->status().segmentLengthMeters, 0.0F);
+	}
+	{
+		SCOPED_TRACE("Door");
+		drawing->activateOpeningTool("Door");
+		hover({55.0F, 0.0F});
+		ASSERT_FALSE(drawing->status().message.empty());
+		drawing->pause();
+		expectNothingProposed();
+		EXPECT_FALSE(drawing->status().valid) << "the strip's hint to hover a wall, not a refusal";
+	}
+}
+
+// The chain keeps its points through a pause, and the next move snaps from where the pointer is.
+TEST_F(DrawingPauseTest, PlacedPointsSurviveAPauseAndTheToolResumesAtThePointer) {
+	hostWalls();
+	drawing->activateWallTool();
+	click({-5.0F, 0.0F});
+	click({0.0F, 0.0F});
+	hover({0.0F, 3.0F});
+	ASSERT_NEAR(drawing->status().segmentLengthMeters, 3.0F, 1e-3F) << lastToast();
+	drawing->pause();
+	EXPECT_EQ(drawing->status().pointCount, 2);
+	EXPECT_FLOAT_EQ(drawing->status().segmentLengthMeters, 0.0F);
+	EXPECT_NEAR(drawing->status().totalLengthMeters, 5.0F, 1e-3F);
+	hover({0.0F, 4.0F});
+	EXPECT_NEAR(drawing->status().segmentLengthMeters, 4.0F, 1e-3F);
+	click({0.0F, 4.0F});
+	EXPECT_EQ(drawing->status().pointCount, 3) << lastToast();
+}
+
+// The Rectangle tool's first corner waits through a pause; the pending rectangle goes with the
+// pointer and comes back with it, the same snap the memo held.
+TEST_F(DrawingPauseTest, TheRectanglesWaitingCornerSurvivesAPause) {
+	clickCorner({2.0F, 1.0F});
+	hover({6.0F, 4.0F});
+	ASSERT_FLOAT_EQ(drawing->status().areaSquareMeters, 12.0F);
+	drawing->pause();
+	EXPECT_EQ(drawing->status().pointCount, 1);
+	EXPECT_FLOAT_EQ(drawing->status().areaSquareMeters, 0.0F);
+	hover({6.0F, 4.0F});
+	EXPECT_FLOAT_EQ(drawing->status().areaSquareMeters, 12.0F);
+	clickCorner({6.0F, 4.0F});
+	EXPECT_EQ(onlyFoundationRing(), ringOf({{2.0F, 1.0F}, {6.0F, 1.0F}, {6.0F, 4.0F}, {2.0F, 4.0F}})) << lastToast();
+}
+
+// A double-click's first click places the last point and its second ends the chain, as Enter does:
+// the chain commits, and the second click, on the point just placed, places nothing and is not
+// refused as a wall too short.
+TEST_F(DrawingPauseTest, ADoubleClickEndsTheChainAsEnterDoes) {
+	hostWalls();
+	drawing->activateWallTool();
+	releaseWall({-8.0F, -8.0F}, 1.0);
+	releaseWall({8.0F, -8.0F}, 2.0);
+	releaseWall({8.0F, 8.0F}, 3.0);
+	releaseWall({8.0F, 8.0F}, 3.25);
+	EXPECT_EQ(drawing->status().pointCount, 0);
+	EXPECT_EQ(drawing->world().segments().size(), 2U) << lastToast();
+	ASSERT_EQ(toasts.size(), 1U) << lastToast();
+	EXPECT_EQ(toasts.back().first, "Wall placed");
+	EXPECT_TRUE(drawing->isWallTool() && drawing->isActive()) << "the tool stays on for the next chain";
+}
+
+// A first click on the chain's first point closes and commits the loop; the second click finds no
+// chain in progress and places nothing, so no new chain starts there.
+TEST_F(DrawingPauseTest, ADoubleClickOnTheFirstPointClosesOnItsFirstClick) {
+	hostWalls();
+	drawing->activateWallTool();
+	double time = 1.0;
+	for (const glm::vec2 corner : {glm::vec2{-8.0F, -8.0F}, glm::vec2{8.0F, -8.0F}, glm::vec2{8.0F, 8.0F}, glm::vec2{-8.0F, 8.0F}}) {
+		releaseWall(corner, time);
+		time += 1.0;
+	}
+	releaseWall({-8.0F, -8.0F}, time);
+	ASSERT_EQ(drawing->world().segments().size(), 4U) << lastToast();
+	const std::size_t toastsAfterClose = toasts.size();
+	releaseWall({-8.0F, -8.0F}, time + 0.25);
+	EXPECT_EQ(drawing->status().pointCount, 0);
+	EXPECT_EQ(drawing->world().segments().size(), 4U);
+	EXPECT_EQ(toasts.size(), toastsAfterClose) << lastToast();
+}
+
+// A first click the tool refuses places nothing; the second still ends the chain, which commits
+// without it, as the prototype's double-click commits the chain it has.
+TEST_F(DrawingPauseTest, ADoubleClickOnARefusedPointCommitsTheChainWithoutIt) {
+	hostWalls();
+	drawing->activateWallTool();
+	releaseWall({-8.0F, 0.0F}, 1.0);
+	releaseWall({0.0F, 0.0F}, 2.0);
+	releaseWall({30.0F, 0.0F}, 3.0);
+	ASSERT_EQ(drawing->status().pointCount, 2);
+	ASSERT_EQ(toasts.back().first, "Off host foundation");
+	releaseWall({30.0F, 0.0F}, 3.25);
+	EXPECT_EQ(drawing->status().pointCount, 0);
+	EXPECT_EQ(drawing->world().segments().size(), 1U);
+	EXPECT_EQ(toasts.back().first, "Wall placed");
 }

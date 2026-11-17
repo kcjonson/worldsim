@@ -3,6 +3,7 @@
 
 #include "BaseShader.h"
 #include "GameBootstrap.h"
+#include "GameContext.h"
 #include "SceneTypes.h"
 
 #include <application/App.h>
@@ -63,6 +64,8 @@ int main(int argc, char* argv[]) {
 	if (platform == nullptr) {
 		return 1;
 	}
+	// Outlives the App, which holds a reference to it.
+	world_sim::GameContext	  gameContext{.backgroundLaunch = commandLine.background};
 	std::unique_ptr<app::App> app = app::App::create(
 		{.organization = worldview::kOrganization,
 		 .applicationName = worldview::kGameName,
@@ -84,6 +87,7 @@ int main(int argc, char* argv[]) {
 	if (app == nullptr) {
 		return 1;
 	}
+	app->setContext(gameContext);
 	// A hand-edited ui.scale between stops snaps to one, so Settings shows the scale the interface is at.
 	const float interfaceSize = theme::kInterfaceSizes.at(theme::nearestInterfaceSize(app->uiScale()));
 	if (interfaceSize != app->uiScale()) {

@@ -201,6 +201,8 @@ namespace world_sim {
 		[[nodiscard]] bool isWallTool() const { return activeTool_ == ToolKind::Wall; }
 		[[nodiscard]] bool isRectangleTool() const { return isActive() && activeTool_ == ToolKind::FoundationRectangle; }
 		[[nodiscard]] bool isOpeningTool() const { return activeTool_ == ToolKind::Opening; }
+		/// The wall tool is on with at least one point of a chain placed.
+		[[nodiscard]] bool chainInProgress() const { return isActive() && activeTool_ == ToolKind::Wall && !points_.empty(); }
 
 		// --- Material selection (from the config strip) ---
 
@@ -214,8 +216,14 @@ namespace world_sim {
 
 		// --- Input ---
 
-		/// Update the snapped cursor + live validity from a mouse move.
+		/// Update the snapped cursor + live validity from a mouse move. Resumes a paused tool.
 		void handleMouseMove(float screenX, float screenY, int viewportW, int viewportH, bool freeform);
+
+		/// The pointer is no longer with the tool (outside the window, or the window lost the
+		/// focus): forget everything it proposed, so nothing follows it and the status strip
+		/// refuses nothing, until the next handleMouseMove. Placed points, a waiting first
+		/// corner, and a pending press stay. A tool starts paused, until its first move.
+		void pause();
 
 		/// Left click, on its release: add a snapped point, or commit if it closes the shape
 		/// (foundation) / extends or closes the chain (wall). Ctrl held on the wall tool over a
@@ -463,7 +471,8 @@ namespace world_sim {
 		/// it: while it closes (or in the Rectangle tool commits), the close's verdict;
 		/// otherwise whether the point may be placed, and why not. The Freeform tool's pointer
 		/// resting where it placed the last point, with its snapped point refused as too close
-		/// to it, proposes nothing: valid, and the click places nothing.
+		/// to it, proposes nothing: valid, and the click places nothing. A paused tool proposes
+		/// nothing either.
 		struct ClickVerdict {
 			bool		valid = true;
 			bool		proposed = true;
@@ -666,8 +675,11 @@ namespace world_sim {
 		DrawingState						   state_ = DrawingState::Idle;
 		ToolKind							   activeTool_ = ToolKind::Foundation;
 		std::vector<Foundation::Vec2>		   points_;				// placed vertices, world meters
-		Foundation::Vec2					   cursor_{0.0F, 0.0F}; // snapped cursor
+		Foundation::Vec2					   cursor_{0.0F, 0.0F}; // snapped cursor, read only while pointerPresent_
 		construction::SnapResult			   lastSnap_;
+		// A move has proposed a point since the tool started or last paused: what follows the
+		// pointer (the cursor, the snap, the pending shape) is drawn only while this holds.
+		bool pointerPresent_ = false;
 		construction::ValidationResult		   lastValidation_;
 
 		// The last evaluated snap and point validation, and what they were evaluated

@@ -33,6 +33,12 @@ namespace world_sim {
 		const std::function<bool(glm::vec2 uiPoint)>& interfaceHit
 	);
 
+	/// Whether the drawing tools follow the pointer: it is in the window (`pointerInWindow`, the
+	/// window system's word, and `target` inside the window's bounds) and the window has the focus.
+	/// A background launch's window opens unfocused and is driven by injected input, so there the
+	/// focus does not count.
+	[[nodiscard]] bool pointerWithTool(PointerTarget target, bool pointerInWindow, bool windowFocused, bool backgroundLaunch);
+
 	/// What reaches the game scene: a button pressed or released over the window (handleEvent),
 	/// or a frame with the left button up (update(), which also sees a release the interface
 	/// took and a button let go while the window had no focus).
@@ -54,14 +60,28 @@ namespace world_sim {
 
 	/// The drawing tools' routing. The Rectangle tool alone takes a press, a left one on the
 	/// world; a left release off the world, or a frame with the left button up while a press
-	/// waits, cancels its press. Any drawing tool takes a left release as a click and a right
-	/// release as Esc. `activeTool` is the drawing tool on, if any.
+	/// waits, cancels its press. Any drawing tool takes a left release on the world as a click,
+	/// and a right release as Esc. A press or a left release while the pointer is not with the
+	/// tool (pointerWithTool) places nothing. `activeTool` is the drawing tool on, if any.
 	[[nodiscard]] PointerAction drawingPointerAction(
 		PointerInput			input,
 		foundation::MouseButton button,
 		PointerTarget			target,
+		bool					withTool,
 		std::optional<ToolKind> activeTool,
 		bool					pressPending
+	);
+
+	/// A left release, by the app's clock (seconds) and where it was (logical pixels).
+	struct PointerRelease {
+		double	  timeSeconds = 0.0;
+		glm::vec2 position{};
+	};
+
+	/// Whether `release` is the second click of a double-click: within `limitSeconds` and
+	/// `limitPixels` of `previous`, both limits inclusive. With no previous release, it is not.
+	[[nodiscard]] bool secondClickOfDoubleClick(
+		const std::optional<PointerRelease>& previous, const PointerRelease& release, double limitSeconds, float limitPixels
 	);
 
 } // namespace world_sim
