@@ -22,7 +22,7 @@ namespace conditions {
 
 	namespace {
 
-		using AttributeField = float ecs::Attributes::*;
+		using AttributeMember = float ecs::Attributes::*;
 
 		/// One bit per TaskType: the task types a current_task() name stands for.
 		using TaskMask = uint16_t;
@@ -81,8 +81,8 @@ namespace conditions {
 			return needs;
 		}
 
-		std::vector<std::pair<std::string, AttributeField>> engineAttributes() {
-			std::vector<std::pair<std::string, AttributeField>> attributes;
+		std::vector<std::pair<std::string, AttributeMember>> engineAttributes() {
+			std::vector<std::pair<std::string, AttributeMember>> attributes;
 			for (const ecs::AttributeField& field : ecs::kAttributeFields) {
 				attributes.emplace_back(conditionName(field.label), field.value);
 			}
@@ -122,7 +122,7 @@ namespace conditions {
 		void provideAttribute(ConditionVocabulary& vocabulary, std::vector<std::string>& errors) {
 			auto attributes = bindEngineNames(vocabulary, "attribute", engineAttributes(), errors);
 			record(errors, vocabulary.provide("attribute", ValueType::Number, {ValueType::Symbol}, [attributes](const TermCall& call) {
-				const AttributeField*  field = attributes->find(call.arguments[0].symbol());
+				const AttributeMember* field = attributes->find(call.arguments[0].symbol());
 				const ecs::Attributes* component = call.context.world.getComponent<ecs::Attributes>(call.context.colonist);
 				if (field == nullptr || component == nullptr) {
 					return TermValue::unknown();
