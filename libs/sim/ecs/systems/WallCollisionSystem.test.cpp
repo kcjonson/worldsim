@@ -42,7 +42,7 @@ namespace {
 	// Build a built wall segment (every created sub-segment marked Built). Mirrors
 	// NavigationSystem.test.cpp's helper.
 	SegmentId buildWall(ConstructionWorld& cw, Vec2i64 a, Vec2i64 b) {
-		SegmentCommitResult r = cw.commitSegment(a, b, "Wood", "Standard", kInvalidFoundation);
+		SegmentCommitResult r = cw.commitSegment(a, b, "Wood", "Standard", kInvalidFoundation, cw.version());
 		EXPECT_TRUE(r.ok());
 		for (SegmentId id : r.createdSegments) {
 			cw.setSegmentState(id, FoundationState::Built);
@@ -167,7 +167,7 @@ TEST_F(WallCollisionSystemTest, AgentAtWindowIsPushedOut) {
 TEST_F(WallCollisionSystemTest, BlueprintWallDoesNotCollide) {
 	ConstructionWorld cw;
 	// Commit but leave Blueprint (do NOT setSegmentState to Built).
-	SegmentCommitResult r = cw.commitSegment({0, 0}, {4000, 0}, "Wood", "Standard", kInvalidFoundation);
+	SegmentCommitResult r = cw.commitSegment({0, 0}, {4000, 0}, "Wood", "Standard", kInvalidFoundation, cw.version());
 	ASSERT_TRUE(r.ok());
 
 	World world;

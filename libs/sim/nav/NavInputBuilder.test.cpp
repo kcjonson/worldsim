@@ -94,7 +94,7 @@ namespace {
 
 	// Build a built wall segment (all created sub-segments marked Built).
 	SegmentId buildWall(ConstructionWorld& cw, Vec2i64 a, Vec2i64 b, const std::string& thickness = "Standard") {
-		SegmentCommitResult r = cw.commitSegment(a, b, "Wood", thickness, kInvalidFoundation);
+		SegmentCommitResult r = cw.commitSegment(a, b, "Wood", thickness, kInvalidFoundation, cw.version());
 		EXPECT_TRUE(r.ok());
 		for (SegmentId id : r.createdSegments) {
 			cw.setSegmentState(id, FoundationState::Built);
@@ -820,7 +820,7 @@ TEST_F(NavWallTest, NearStraightLightIntoHeavy_CoversBothFootprints) {
 
 TEST_F(NavWallTest, BlueprintSegment_EmitsNothing) {
 	ConstructionWorld cw;
-	SegmentCommitResult r = cw.commitSegment({0, 0}, {4000, 0}, "Wood", "Standard", kInvalidFoundation);
+	SegmentCommitResult r = cw.commitSegment({0, 0}, {4000, 0}, "Wood", "Standard", kInvalidFoundation, cw.version());
 	ASSERT_TRUE(r.ok());
 	// Leave state at Blueprint (do not mark Built).
 

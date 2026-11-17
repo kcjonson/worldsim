@@ -776,7 +776,7 @@ namespace {
 			geometry::Ring	 ring{{-10000, -10000}, {100000, -10000}, {100000, 100000}, {-10000, 100000}};
 			cw::CommitResult host = topology.commitFoundation(std::move(ring), "wood");
 			EXPECT_TRUE(host.ok());
-			cw::SegmentCommitResult seg = topology.commitSegment({0, 0}, {4000, 0}, "wood", "thin", host.id);
+			cw::SegmentCommitResult seg = topology.commitSegment({0, 0}, {4000, 0}, "wood", "thin", host.id, topology.version());
 			EXPECT_TRUE(seg.ok());
 			hostFoundation = host.id;
 			hostSegment = seg.id;
@@ -1086,7 +1086,7 @@ TEST_F(BuilderSpotEmissionTest, AReshapeBeforeDeliveryGivesTheNewUmbrellaSpotsFo
 TEST_F(BuilderSpotEmissionTest, AWallsUmbrellaHasNoSpots) {
 	const cw::FoundationId foundationId = commitTwentySquareMeterFoundation();
 	ASSERT_TRUE(topology.setState(foundationId, cw::FoundationState::Built));
-	cw::SegmentCommitResult segment = topology.commitSegment({0, 0}, {4000, 0}, "wood", "thin", foundationId);
+	cw::SegmentCommitResult segment = topology.commitSegment({0, 0}, {4000, 0}, "wood", "thin", foundationId, topology.version());
 	ASSERT_TRUE(segment.ok());
 	auto blueprint = createBlueprint(StructureKind::Wall, segment.id);
 	world->getComponent<StructureBlueprint>(blueprint)->recordDelivery("Wood", 10);

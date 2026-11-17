@@ -39,7 +39,8 @@ namespace {
 		static ecs::EntityID entityOf(SegmentId segment) { return 1000 + segment; }
 
 		SegmentId wall(Vec2i64 from, Vec2i64 to, FoundationState state) {
-			const construction::SegmentCommitResult result = world.commitSegment(from, to, "Wood", "Standard", construction::kInvalidFoundation);
+			const construction::SegmentCommitResult result =
+				world.commitSegment(from, to, "Wood", "Standard", construction::kInvalidFoundation, world.version());
 			EXPECT_TRUE(result.ok());
 			world.setSegmentState(result.id, state);
 			world.setSegmentEntity(result.id, entityOf(result.id));

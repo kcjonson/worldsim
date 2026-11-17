@@ -220,7 +220,7 @@ namespace {
 	}
 
 	SegmentId buildWall(ConstructionWorld& world, Vec2i64 a, Vec2i64 b, const std::string& thickness = "Standard") {
-		const SegmentCommitResult result = world.commitSegment(a, b, "Wood", thickness, kInvalidFoundation);
+		const SegmentCommitResult result = world.commitSegment(a, b, "Wood", thickness, kInvalidFoundation, world.version());
 		EXPECT_TRUE(result.ok());
 		for (const SegmentId id : result.createdSegments) {
 			world.setSegmentState(id, FoundationState::Built);

@@ -1848,7 +1848,8 @@ class FellingWallTest : public FellingTest {
 	}
 
 	void buildWall(geometry::Vec2i64 a, geometry::Vec2i64 b) {
-		const auto wall = constructionWorld.commitSegment(a, b, "Wood", "Standard", construction::kInvalidFoundation);
+		const auto wall =
+			constructionWorld.commitSegment(a, b, "Wood", "Standard", construction::kInvalidFoundation, constructionWorld.version());
 		ASSERT_TRUE(wall.ok());
 		for (construction::SegmentId id : wall.createdSegments) {
 			constructionWorld.setSegmentState(id, construction::FoundationState::Built);

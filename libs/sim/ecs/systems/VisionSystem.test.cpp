@@ -67,7 +67,7 @@ namespace {
 
 	// Build a built wall segment (every created sub-segment marked Built).
 	SegmentId buildWall(ConstructionWorld& cw, Vec2i64 a, Vec2i64 b) {
-		SegmentCommitResult r = cw.commitSegment(a, b, "Wood", "Standard", kInvalidFoundation);
+		SegmentCommitResult r = cw.commitSegment(a, b, "Wood", "Standard", kInvalidFoundation, cw.version());
 		EXPECT_TRUE(r.ok());
 		for (SegmentId id : r.createdSegments) {
 			cw.setSegmentState(id, FoundationState::Built);

@@ -163,9 +163,13 @@ namespace construction::snap_test {
 			return addFoundation(ring);
 		}
 
+		/// A free-standing chain drawn in one commit, so it is one owner for common lengths.
 		void addWall(const std::vector<geometry::Vec2i64>& chain) {
+			const std::uint64_t placementOrder = world.version();
 			for (std::size_t index = 0; index + 1 < chain.size(); ++index) {
-				EXPECT_TRUE(world.commitSegment(chain[index], chain[index + 1], "Wood", "Standard", kInvalidFoundation).ok());
+				EXPECT_TRUE(
+					world.commitSegment(chain[index], chain[index + 1], "Wood", "Standard", kInvalidFoundation, placementOrder).ok()
+				);
 			}
 		}
 	};

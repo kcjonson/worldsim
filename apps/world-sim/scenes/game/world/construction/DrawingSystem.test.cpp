@@ -66,7 +66,14 @@ namespace {
 			const auto foundation = built.commitFoundation(std::vector<Foundation::Vec2>{{30.0F, -10.0F}, {60.0F, -10.0F}, {60.0F, 10.0F}, {30.0F, 10.0F}}, "Wood");
 			ASSERT_TRUE(foundation.ok());
 			built.setState(foundation.id, construction::FoundationState::Built);
-			const auto wall = built.commitSegment(geometry::quantize(Foundation::Vec2{32.0F, 0.0F}), geometry::quantize(Foundation::Vec2{58.0F, 0.0F}), "Wood", "Standard", foundation.id);
+			const auto wall = built.commitSegment(
+				geometry::quantize(Foundation::Vec2{32.0F, 0.0F}),
+				geometry::quantize(Foundation::Vec2{58.0F, 0.0F}),
+				"Wood",
+				"Standard",
+				foundation.id,
+				built.version()
+			);
 			ASSERT_TRUE(wall.ok());
 			for (const construction::SegmentId id : wall.createdSegments) {
 				built.setSegmentState(id, construction::FoundationState::Built);

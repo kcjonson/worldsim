@@ -146,9 +146,9 @@ namespace construction {
 		FoundationId	hostFoundation = kInvalidFoundation;
 		FoundationState state = FoundationState::Blueprint;
 		ecs::EntityID	entity = ecs::kInvalidEntity;
-		// version() when the commitSegment call that made it began; segments sharing a
-		// value are one chain for common lengths (D12). The halves of a T-junction split
-		// keep the split segment's value.
+		// The placement order its commitSegment caller passed: version() read once before
+		// a drawn chain's first segment, so segments sharing a value are one chain for
+		// common lengths (D12). The halves of a T-junction split keep the split segment's.
 		std::uint64_t placementOrder = 0;
 	};
 
@@ -293,12 +293,17 @@ namespace construction {
 		//     so the committed graph never has a vertex sitting on a segment's
 		//     interior. See commitSegment in the .cpp for the split mechanics and
 		//     opening re-attach.
+		//
+		// `placementOrder` is stored on every segment the call creates (D12): a chain
+		// drawn as several calls passes the version() it read before its first, so the
+		// chain is one owner for common lengths.
 		SegmentCommitResult commitSegment(
 			const geometry::Vec2i64& a,
 			const geometry::Vec2i64& b,
 			std::string				 material,
 			std::string				 thicknessPreset,
-			FoundationId			 host
+			FoundationId			 host,
+			std::uint64_t			 placementOrder
 		);
 
 		// Remove a segment, drop it from its endpoints' adjacency, and delete any

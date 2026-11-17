@@ -423,7 +423,8 @@ namespace construction {
 		const geometry::Vec2i64& b,
 		std::string				 material,
 		std::string				 thicknessPreset,
-		FoundationId			 host
+		FoundationId			 host,
+		std::uint64_t			 placementOrder
 	) {
 		if (a == b) {
 			return {SegmentStatus::ZeroLength, kInvalidSegment};
@@ -618,7 +619,7 @@ namespace construction {
 			segment.hostFoundation = host;
 			segment.state = FoundationState::Blueprint;
 			segment.entity = ecs::kInvalidEntity;
-			segment.placementOrder = version_;
+			segment.placementOrder = placementOrder;
 
 			const SegmentId id = segment.id;
 			assert((segments_.empty() || segments_.back().id < id) && "ConstructionWorld: segments_ must stay in ascending id order");
