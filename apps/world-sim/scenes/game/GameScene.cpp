@@ -1701,8 +1701,7 @@ namespace {
 		GroundSurvey surveyGround(const std::string& dropDef) {
 			auto& registry = assets::AssetRegistry::Get();
 
-			// Computed at each pile's own scale: the dynamic transform re-centers by the unscaled bbox
-			// center, so the footprint isn't linear in scale and a scale-1 radius can't be multiplied.
+			// Computed at each pile's own scale, from the pile layout itself.
 			std::unordered_map<std::string, std::pair<Foundation::Rect, worldview::PileItem>> layoutInputsByDef;
 			auto pileRadius = [&](const std::string& pileDef, float scale) {
 				auto it = layoutInputsByDef.find(pileDef);

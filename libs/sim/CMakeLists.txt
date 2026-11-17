@@ -102,6 +102,8 @@ if(BUILD_TESTING)
                 GTest::gtest
                 GTest::gtest_main
         )
+        # Where the shipped asset defs are, whatever the working directory.
+        target_compile_definitions(sim-tests PRIVATE SIM_TEST_REPO_DIR="${CMAKE_SOURCE_DIR}")
         if(MSVC)
             target_compile_options(sim-tests PRIVATE /Od)
         else()
