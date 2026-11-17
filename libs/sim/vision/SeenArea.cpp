@@ -5,6 +5,7 @@
 #include <nav/SightCover.h>
 #include <nav/SightFrontier.h>
 #include <predicates/Predicates.h>
+#include <visibility/ForestShape.h>
 #include <visibility/SightClip.h>
 #include <visibility/SightPolygon.h>
 #include <visibility/SightSkirt.h>
@@ -13,6 +14,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <iterator>
 #include <numbers>
 #include <utility>
 
@@ -25,27 +27,6 @@ namespace vision {
 		// How many millimetres lastSeenToward steps back from a stretch's end for a point that rounds
 		// onto seen ground.
 		constexpr int kStepsBack = 8;
-
-		bool inLine(const Vec2i64& origin, const Vec2i64& first, const Vec2i64& second) {
-			return geometry::cross(first - origin, second - origin).sign() == 0;
-		}
-
-		// Drops repeated vertices and every vertex in line with its neighbours, round the ring.
-		void dropStraightVertices(std::vector<Vec2i64>& ring) {
-			bool changed = true;
-			while (changed && ring.size() >= 3) {
-				changed = false;
-				for (std::size_t i = 0; i < ring.size() && ring.size() >= 3; ++i) {
-					const Vec2i64& previous = ring[(i + ring.size() - 1) % ring.size()];
-					const Vec2i64& next		= ring[(i + 1) % ring.size()];
-					if (ring[i] == previous || inLine(previous, ring[i], next)) {
-						ring.erase(ring.begin() + static_cast<std::ptrdiff_t>(i));
-						changed = true;
-						--i;
-					}
-				}
-			}
-		}
 
 		bool convex(const std::vector<Vec2i64>& ring) {
 			for (std::size_t i = 0; i < ring.size(); ++i) {
@@ -114,17 +95,94 @@ namespace vision {
 			}
 		}
 
-		// Whether any vertex of `pieces` lies within kSeenSweepRimBandMm of the rim of sight
-		// `sightRadiusMm` round `centre`.
-		bool addsNearRim(const std::vector<std::vector<Vec2i64>>& pieces, const Vec2i64& centre, std::int64_t sightRadiusMm) {
+		// Whether any vertex of `pieces` lies within kSeenSweepRimBandMm of the convex ring `rim`, or
+		// past it, where the skirt can reach.
+		bool addsNearRim(const std::vector<std::vector<Vec2i64>>& pieces, const std::vector<Vec2i64>& rim) {
+			std::vector<std::array<double, 3>> lines; // unit inward normal and offset of each rim side
+			lines.reserve(rim.size());
+			for (std::size_t k = 0; k < rim.size(); ++k) {
+				const Vec2i64& start = rim[k];
+				const Vec2i64& end = rim[(k + 1) % rim.size()];
+				const double   alongX = static_cast<double>(end.x - start.x);
+				const double   alongY = static_cast<double>(end.y - start.y);
+				const double   length = std::sqrt(alongX * alongX + alongY * alongY);
+				const double   normalX = -alongY / length;
+				const double   normalY = alongX / length;
+				lines.push_back({normalX, normalY, normalX * static_cast<double>(start.x) + normalY * static_cast<double>(start.y)});
+			}
+			const double band = static_cast<double>(kSeenSweepRimBandMm);
 			for (const std::vector<Vec2i64>& piece : pieces) {
 				for (const Vec2i64& vertex : piece) {
-					if (!geometry::withinDistanceOfSegment(vertex, centre, centre, sightRadiusMm - kSeenSweepRimBandMm)) {
-						return true;
+					for (const auto& [normalX, normalY, offset] : lines) {
+						if (normalX * static_cast<double>(vertex.x) + normalY * static_cast<double>(vertex.y) - offset < band) {
+							return true;
+						}
 					}
 				}
 			}
 			return false;
+		}
+
+		bool allEqual(const SightRanges& ranges) {
+			return std::all_of(ranges.begin(), ranges.end(), [&ranges](std::int64_t range) { return range == ranges.front(); });
+		}
+
+		std::int64_t mostOf(const SightRanges& ranges) {
+			return *std::max_element(ranges.begin(), ranges.end());
+		}
+
+		// A convex ring's two chains between its lexicographically least and greatest vertices, each in
+		// increasing order: the lower runs counter-clockwise from the least, the upper clockwise.
+		void appendChains(const std::vector<Vec2i64>& ring, std::vector<Vec2i64>& lower, std::vector<Vec2i64>& upper) {
+			const std::size_t count = ring.size();
+			const std::size_t least = static_cast<std::size_t>(std::min_element(ring.begin(), ring.end()) - ring.begin());
+			const std::size_t most = static_cast<std::size_t>(std::max_element(ring.begin(), ring.end()) - ring.begin());
+			for (std::size_t k = least;; k = (k + 1) % count) {
+				lower.push_back(ring[k]);
+				if (k == most) {
+					break;
+				}
+			}
+			for (std::size_t k = least;; k = (k + count - 1) % count) {
+				upper.push_back(ring[k]);
+				if (k == most) {
+					break;
+				}
+			}
+		}
+
+		// One monotone chain of the hull over points in increasing order, turning left only. A leg's
+		// points lie well under 2^31 mm (2,000 km) apart, so the cross products of their differences
+		// fit an int64.
+		void hullChain(const std::vector<Vec2i64>& sorted, bool forward, std::vector<Vec2i64>& out) {
+			const std::size_t first = out.size();
+			const std::size_t count = sorted.size();
+			for (std::size_t k = 0; k < count; ++k) {
+				const Vec2i64& point = sorted[forward ? k : count - 1 - k];
+				while (out.size() >= first + 2) {
+					const Vec2i64 last = out.back() - out[out.size() - 2];
+					const Vec2i64 onward = point - out.back();
+					if (last.x * onward.y - last.y * onward.x > 0) {
+						break;
+					}
+					out.pop_back();
+				}
+				out.push_back(point);
+			}
+			out.pop_back();
+		}
+
+		std::vector<Vec2i64>& movedBy(const std::vector<Vec2i64>& ring, const Vec2i64& offset, std::vector<Vec2i64>& out) {
+			out.clear();
+			for (const Vec2i64& point : ring) {
+				out.push_back(point + offset);
+			}
+			return out;
+		}
+
+		double distanceBetween(const Vec2i64& first, const Vec2i64& second) {
+			const Vec2i64 gap = first - second;
+			return std::sqrt(geometry::dot(gap, gap).toDouble());
 		}
 
 		Vec2i64 pointAlong(const Vec2i64& from, const Vec2i64& direction, double along) {
@@ -141,42 +199,58 @@ namespace vision {
 		return geometry::sightInradius(sightMm - kSeenSlackMm) - diagonal;
 	}
 
-	// The hull of a convex polygon and its copy moved by the leg: each side faces back along the
-	// leg or not, the back sides stay at the start, the rest move to the end, and where the two
-	// kinds meet the hull runs along the leg from one copy to the other.
-	std::vector<Vec2i64> legCapsule(const Vec2i64& start, const Vec2i64& end, std::int64_t radiusMm) {
-		const std::vector<Vec2i64> atStart = geometry::sightPolygon(start, radiusMm);
-		const Vec2i64			   leg	   = end - start;
-		const std::size_t		   sides   = atStart.size();
-		std::vector<bool>		   facesBack(sides);
-		for (std::size_t k = 0; k < sides; ++k) {
-			facesBack[k] = geometry::cross(leg, atStart[(k + 1) % sides] - atStart[k]).sign() < 0;
+	SightRanges equalRanges(std::int64_t radiusMm) {
+		SightRanges ranges;
+		ranges.fill(radiusMm);
+		return ranges;
+	}
+
+	// Both are integer constructions in offsets from the centre, so moving the centre by a whole
+	// millimetre vector moves the ring by it exactly; legs place one ring at every held position.
+	std::vector<Vec2i64> rimOf(const Vec2i64& centre, const SightRanges& ranges) {
+		if (allEqual(ranges)) {
+			return geometry::sightPolygon(centre, ranges.front());
 		}
-		std::vector<Vec2i64> out;
-		out.reserve(sides + 4);
-		for (std::size_t k = 0; k < sides; ++k) {
-			const bool before = facesBack[(k + sides - 1) % sides];
-			const bool after  = facesBack[k];
-			if (before && after) {
-				out.push_back(atStart[k]);
-			} else if (!before && !after) {
-				out.push_back(atStart[k] + leg);
-			} else if (before) {
-				out.push_back(atStart[k]);
-				out.push_back(atStart[k] + leg);
-			} else {
-				out.push_back(atStart[k] + leg);
-				out.push_back(atStart[k]);
-			}
-		}
-		dropStraightVertices(out);
-		return out;
+		return geometry::forestShape(centre, ranges);
+	}
+
+	// The convex hull of two convex counter-clockwise rings, counter-clockwise from its least vertex,
+	// no three vertices in line: each ring's lower chains merged in order and swept once, and the
+	// upper the same, linear in the two rings. `out` may be `first`.
+	void SeenArea::hullOfConvex(const std::vector<Vec2i64>& first, const std::vector<Vec2i64>& second, std::vector<Vec2i64>& out) {
+		HullScratch& chains = *hullScratch;
+		chains.firstLower.clear();
+		chains.firstUpper.clear();
+		chains.secondLower.clear();
+		chains.secondUpper.clear();
+		chains.lower.clear();
+		chains.upper.clear();
+		appendChains(first, chains.firstLower, chains.firstUpper);
+		appendChains(second, chains.secondLower, chains.secondUpper);
+		std::merge(
+			chains.firstLower.begin(),
+			chains.firstLower.end(),
+			chains.secondLower.begin(),
+			chains.secondLower.end(),
+			std::back_inserter(chains.lower)
+		);
+		std::merge(
+			chains.firstUpper.begin(),
+			chains.firstUpper.end(),
+			chains.secondUpper.begin(),
+			chains.secondUpper.end(),
+			std::back_inserter(chains.upper)
+		);
+		out.clear();
+		hullChain(chains.lower, true, out);
+		hullChain(chains.upper, false, out);
 	}
 
 	SeenArea::SeenArea()
 		: mesh(std::make_unique<geometry::nav::PatchableMesh>()),
 		  scratch(std::make_unique<geometry::nav::SightCoverScratch>()),
-		  frontierScratch(std::make_unique<geometry::nav::SightFrontierScratch>()) {}
+		  frontierScratch(std::make_unique<geometry::nav::SightFrontierScratch>()),
+		  hullScratch(std::make_unique<HullScratch>()) {}
 
 	SeenArea::~SeenArea() = default;
 
@@ -194,8 +268,10 @@ namespace vision {
 	// that wait, pending, to be registered one a tick. A pending shape is entered whatever its skirt
 	// does, so nothing shown as seen is lost.
 	void SeenArea::test(const PendingShape& shape) {
+		counted.legsTested += shape.leg ? 1 : 0;
 		if (geometry::nav::sightShapeCovered(*mesh, shape.outline, shape.centre, *scratch)) {
 			++dropped;
+			counted.legsCovered += shape.leg ? 1 : 0;
 			return;
 		}
 		enter(shape);
@@ -203,16 +279,20 @@ namespace vision {
 
 	void SeenArea::enter(const PendingShape& shape) {
 		std::vector<Vec2i64> grown;
-		if (shape.sightRadius > 0) {
-			grown = geometry::skirtedSightShape(shape.outline, shape.centre, geometry::sightPolygon(shape.centre, shape.sightRadius), geometry::kSeenSkirtMm);
+		std::vector<Vec2i64> rim;
+		if (shape.sightPolygon) {
+			rim = rimOf(shape.centre, shape.ranges);
+			grown = geometry::skirtedSightShape(shape.outline, shape.centre, rim, geometry::kSeenSkirtMm);
 			skipped += grown.empty() ? 1 : 0;
 		}
 		if (geometry::nav::sightShapeFrontier(*mesh, grown.empty() ? shape.outline : grown, shape.centre, *frontierScratch, pieces) == geometry::nav::SightFrontier::Covered) {
 			++dropped;
+			counted.legsCovered += shape.leg ? 1 : 0;
 			return;
 		}
-		if (!shape.sweepPath.empty() && sightBuilder && addsNearRim(pieces, shape.centre, shape.sightRadius)) {
-			queueSweep(shape.sweepPath, shape.centre, shape.sightRadius);
+		counted.legPieces += shape.leg ? pieces.size() : 0;
+		if (!shape.sweepPath.empty() && sightBuilder && addsNearRim(pieces, rim)) {
+			queueSweep(shape);
 		}
 		for (std::vector<Vec2i64>& piece : pieces) {
 			entering.push_back(pendingOf(std::move(piece), shape.centre));
@@ -220,7 +300,15 @@ namespace vision {
 	}
 
 	void SeenArea::registerPiece() {
-		holdCommitted(entering.front().low, entering.front().high);
+		const Box box{entering.front().low, entering.front().high};
+		holdCommitted(box.low, box.high);
+		const auto met =
+			static_cast<std::size_t>(std::count_if(registeredBoxes.begin(), registeredBoxes.end(), [&box](const Box& registeredBox) {
+				return boxesMeet(box.low, box.high, registeredBox.low, registeredBox.high);
+			}));
+		++counted.registrations;
+		counted.ringsMetTotal += met;
+		counted.ringsMetMost = std::max(counted.ringsMetMost, met);
 		geometry::nav::PatchEdits edits;
 		edits.adds.push_back(geometry::nav::NavInputPolygon{.ring = std::move(entering.front().outline)});
 		entering.pop_front();
@@ -228,42 +316,67 @@ namespace vision {
 		for (const std::int32_t ring : report.added) {
 			if (ring != geometry::nav::kNoRing) {
 				registered.push_back(ring);
+				registeredBoxes.push_back(box);
 			}
 		}
 		mesh->refreshWidths();
 	}
 
 	// Points no farther apart than kSeenSweepSpacingMm along the walk from the build before to this
-	// one, its turns among them; the two builds had polygons of their own. Each point's sight is held
-	// in by how far the sight polygons of the nearer build reach short of its own along any ray: their
-	// vertices point the same ways, so a point `apart` from a build sees past that build's polygon by
-	// at most apart x pi / kSightSides plus apart squared over twice the sight, which would otherwise
-	// register a sliver beside every vertex.
-	void SeenArea::queueSweep(const std::vector<Vec2i64>& walk, const Vec2i64& to, std::int64_t sightRadiusMm) {
-		const double halfSideAngle = std::numbers::pi / static_cast<double>(geometry::kSightSides);
-		auto		 distance	   = [](const Vec2i64& first, const Vec2i64& second) {
-			  const Vec2i64 gap = first - second;
-			  return std::sqrt(geometry::dot(gap, gap).toDouble());
-		};
-		auto queuePoint = [&](const Vec2i64& point) {
-			const double apart = std::min(distance(point, walk.front()), distance(point, to));
-			const double inset = halfSideAngle * apart + apart * apart / (2.0 * static_cast<double>(sightRadiusMm));
-			PendingShape sweep;
-			sweep.centre	  = point;
-			sweep.sightRadius = sightRadiusMm - static_cast<std::int64_t>(std::ceil(inset)) - 1;
-			sweeps.push_back(std::move(sweep));
+	// one, its turns among them; the two builds had polygons of their own. Each point's rim takes on
+	// each side the two builds' ranges interpolated by where it lies along the walk (sight-softening.md
+	// 6.4), held in by how far the nearer build's rim reaches short of its own along any ray: their
+	// vertices point the same ways, so a rim whose vertices lie `apart` from the nearer build's sees
+	// past it by at most apart x pi / kSightSides plus apart squared over twice the sight, which would
+	// otherwise register a sliver beside every vertex. `apart` is the point's distance from that build
+	// and the most its interpolated range strays from that build's on any side.
+	void SeenArea::queueSweep(const PendingShape& shape) {
+		const std::vector<Vec2i64>& walk = shape.sweepPath;
+		const Vec2i64&				to = shape.centre;
+		const double				halfSideAngle = std::numbers::pi / static_cast<double>(geometry::kSightSides);
+		double						walkLength = 0.0;
+		for (std::size_t corner = 0; corner < walk.size(); ++corner) {
+			walkLength += distanceBetween(walk[corner], corner + 1 < walk.size() ? walk[corner + 1] : to);
+		}
+		double walked = 0.0;
+		auto   queuePoint = [&](const Vec2i64& point, double along) {
+			  const double		 fraction = walkLength > 0.0 ? std::clamp(along / walkLength, 0.0, 1.0) : 0.0;
+			  const bool		 nearStart = distanceBetween(point, walk.front()) <= distanceBetween(point, to);
+			  const SightRanges& nearer = nearStart ? shape.walkStartRanges : shape.ranges;
+			  SightRanges		 interpolated;
+			  std::int64_t		 strays = 0;
+			  for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
+				  const double start = static_cast<double>(shape.walkStartRanges[side]);
+				  interpolated[side] =
+					  static_cast<std::int64_t>(std::floor(start + (static_cast<double>(shape.ranges[side]) - start) * fraction));
+				  strays = std::max(strays, std::abs(interpolated[side] - nearer[side]));
+			  }
+			  const double apart = std::min(distanceBetween(point, walk.front()), distanceBetween(point, to)) + static_cast<double>(strays);
+			  const double inset = halfSideAngle * apart + apart * apart / (2.0 * static_cast<double>(mostOf(interpolated)));
+			  const auto   insetMm = static_cast<std::int64_t>(std::ceil(inset)) + 1;
+			  PendingShape sweep;
+			  sweep.centre = point;
+			  for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
+				  sweep.ranges[side] = interpolated[side] - insetMm;
+			  }
+			  sweeps.push_back(std::move(sweep));
 		};
 		for (std::size_t corner = 0; corner < walk.size(); ++corner) {
 			const Vec2i64&	   from	 = walk[corner];
 			const Vec2i64&	   until = corner + 1 < walk.size() ? walk[corner + 1] : to;
 			const Vec2i64	   along = until - from;
-			const std::int64_t steps = static_cast<std::int64_t>(std::ceil(distance(until, from) / static_cast<double>(kSeenSweepSpacingMm)));
+			const double	   stretch = distanceBetween(until, from);
+			const std::int64_t steps = static_cast<std::int64_t>(std::ceil(stretch / static_cast<double>(kSeenSweepSpacingMm)));
 			if (corner > 0) {
-				queuePoint(from);
+				queuePoint(from, walked);
 			}
 			for (std::int64_t step = 1; step < steps; ++step) {
-				queuePoint(from + Vec2i64{along.x * step / steps, along.y * step / steps});
+				queuePoint(
+					from + Vec2i64{along.x * step / steps, along.y * step / steps},
+					walked + stretch * static_cast<double>(step) / static_cast<double>(steps)
+				);
 			}
+			walked += stretch;
 		}
 	}
 
@@ -272,17 +385,19 @@ namespace vision {
 	// record is dense, and what it would settle lies within kSeenCoverToleranceMm of a ray.
 	void SeenArea::commitSweep(const PendingShape& point) {
 		++swept;
-		std::vector<Vec2i64> polygon = sightBuilder(point.centre, point.sightRadius);
-		if (!geometry::simpleAround(polygon, point.centre)) {
+		BuiltSight built = sightBuilder(point.centre, point.ranges);
+		if (!geometry::simpleAround(built.shape, point.centre)) {
 			++skipped;
 			return;
 		}
-		if (geometry::nav::sightShapeFrontier(*mesh, polygon, point.centre, *frontierScratch, pieces) == geometry::nav::SightFrontier::Covered) {
+		if (geometry::nav::sightShapeFrontier(*mesh, built.shape, point.centre, *frontierScratch, pieces) ==
+			geometry::nav::SightFrontier::Covered) {
 			++dropped;
 			return;
 		}
-		PendingShape shape = pendingOf(std::move(polygon), point.centre);
-		shape.sightRadius  = point.sightRadius;
+		PendingShape shape = pendingOf(std::move(built.shape), point.centre);
+		shape.sightPolygon = true;
+		shape.ranges = built.rimRanges;
 		enter(shape);
 	}
 
@@ -295,34 +410,82 @@ namespace vision {
 
 	void SeenArea::queue(std::vector<Vec2i64> shape, const Vec2i64& centre) { waiting.push_back(pendingOf(std::move(shape), centre)); }
 
-	void SeenArea::queueSightPolygon(std::vector<Vec2i64> polygon, const Vec2i64& centre, std::int64_t sightRadiusMm, std::vector<Vec2i64> walk) {
+	void SeenArea::queueSightPolygon(
+		std::vector<Vec2i64> polygon,
+		const Vec2i64&		 centre,
+		const SightRanges&	 rimRanges,
+		std::vector<Vec2i64> walk,
+		const SightRanges&	 walkStartRanges
+	) {
 		PendingShape shape = pendingOf(std::move(polygon), centre);
-		shape.sightRadius  = sightRadiusMm;
-		shape.sweepPath	   = std::move(walk);
+		shape.sightPolygon = true;
+		shape.ranges = rimRanges;
+		shape.sweepPath = std::move(walk);
+		shape.walkStartRanges = walkStartRanges;
 		waiting.push_back(std::move(shape));
 	}
 
-	void SeenArea::queueSightAt(const Vec2i64& point, std::int64_t sightRadiusMm, std::vector<Vec2i64> walk) {
+	void
+	SeenArea::queueSightAt(const Vec2i64& point, const SightRanges& ranges, std::vector<Vec2i64> walk, const SightRanges& walkStartRanges) {
 		if (!sightBuilder) {
 			return;
 		}
-		std::vector<Vec2i64> polygon = sightBuilder(point, sightRadiusMm);
-		if (geometry::simpleAround(polygon, point)) {
-			queueSightPolygon(std::move(polygon), point, sightRadiusMm, std::move(walk));
+		BuiltSight built = sightBuilder(point, ranges);
+		if (geometry::simpleAround(built.shape, point)) {
+			queueSightPolygon(std::move(built.shape), point, built.rimRanges, std::move(walk), walkStartRanges);
 		}
 	}
 
-	void SeenArea::setOpenLeg(LegId leg, const Vec2i64& start, const Vec2i64& end, std::int64_t radiusMm) {
-		assert(radiusMm >= kSeenLeastRadiusMm);
-		auto found = openLegs.find(leg);
-		if (found != openLegs.end() && found->second.legStart == start && found->second.legEnd == end && found->second.radius == radiusMm) {
-			return;
+	bool SeenArea::setOpenLeg(
+		LegId								 leg,
+		const Vec2i64&						 start,
+		const Vec2i64&						 position,
+		const SightRanges&					 ranges,
+		const std::optional<InheritedShape>& inherited
+	) {
+		assert(*std::min_element(ranges.begin(), ranges.end()) >= kSeenLeastRadiusMm);
+		std::vector<Vec2i64>& moved = hullScratch->moved;
+		std::vector<Vec2i64>& ring = hullScratch->ring;
+		auto				  found = openLegs.find(leg);
+		if (found == openLegs.end()) {
+			PendingShape shape;
+			shape.leg = true;
+			shape.legRanges = ranges;
+			shape.legShape = rimOf({0, 0}, ranges);
+			shape.legPosition = position;
+			movedBy(shape.legShape, start, ring);
+			if (inherited.has_value()) {
+				hullOfConvex(ring, rimOf(inherited->position, inherited->ranges), ring);
+			}
+			if (position != start) {
+				hullOfConvex(ring, movedBy(shape.legShape, position, moved), ring);
+			}
+			if (ring.size() > kSoftLegMostVertices) {
+				return false;
+			}
+			boxOf(ring, shape.low, shape.high);
+			shape.outline = ring;
+			shape.centre = start;
+			shape.convex = true;
+			openLegs.emplace(leg, std::move(shape));
+			return true;
 		}
-		PendingShape shape = pendingOf(legCapsule(start, end, radiusMm), start);
-		shape.legStart	   = start;
-		shape.legEnd	   = end;
-		shape.radius	   = radiusMm;
-		openLegs.insert_or_assign(leg, std::move(shape));
+		PendingShape& shape = found->second;
+		if (shape.legPosition == position && shape.legRanges == ranges) {
+			return true;
+		}
+		if (shape.legRanges != ranges) {
+			shape.legRanges = ranges;
+			shape.legShape = rimOf({0, 0}, ranges);
+		}
+		hullOfConvex(shape.outline, movedBy(shape.legShape, position, moved), ring);
+		if (ring.size() > kSoftLegMostVertices) {
+			return false;
+		}
+		shape.legPosition = position;
+		boxOf(ring, shape.low, shape.high);
+		std::swap(shape.outline, ring);
+		return true;
 	}
 
 	void SeenArea::closeLeg(LegId leg) {
