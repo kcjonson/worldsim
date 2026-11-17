@@ -400,12 +400,12 @@ namespace sight_bench {
 				}
 				waiting.pop_front();
 			}
-			for (std::size_t cut = 0; entering.empty() && cut < vision::kSeenRingsPerTick && !uncovered.empty(); ++cut) {
+			for (std::size_t cut = 0; entering.size() < scheduler.piecesPerTick && cut < vision::kSeenRingsPerTick && !uncovered.empty(); ++cut) {
 				enter(uncovered.front());
 				uncovered.pop_front();
 			}
 		} else {
-			for (std::size_t tested = 0; entering.empty() && tested < vision::kSeenRingsPerTick && !waiting.empty(); ++tested) {
+			for (std::size_t tested = 0; entering.size() < scheduler.piecesPerTick && tested < vision::kSeenRingsPerTick && !waiting.empty(); ++tested) {
 				if (!covered(waiting.front())) {
 					enter(waiting.front());
 				}

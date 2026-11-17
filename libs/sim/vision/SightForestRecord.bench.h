@@ -45,10 +45,10 @@ namespace sight_bench {
 
 	// How the record spends a tick. The defaults are SeenArea's: shapes are tested only while no piece
 	// waits, one piece registers a tick, and a sweep point is built only on a tick with nothing to
-	// register.
+	// register. Shapes are tested and cut while fewer pieces wait than a tick registers.
 	struct Scheduler {
 		// Covered tests go on while pieces wait, up to kSeenRingsPerTick a tick; a shape that adds
-		// ground waits, tested, for the frontier until no piece does.
+		// ground waits, tested, for the frontier until fewer pieces wait than a tick registers.
 		bool		testWhilePiecesWait = false;
 		// Sweep points built every tick, whatever waits; 0 keeps SeenArea's rule.
 		std::size_t sweepsPerTick = 0;

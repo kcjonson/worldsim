@@ -953,7 +953,7 @@ namespace {
 
 	// Arguments: colonists, game speed, the case (0 the shipped shape: no forest depth, rocks not
 	// occluding; 1 forest depth only; 2 rocks only; 3 both, as designed), the scheduler's options as
-	// bits (1 shapes tested while pieces wait, 2 two sweep points built every tick, 4 two pieces
+	// bits (1 shapes tested while pieces wait, 2 four sweep points built every tick, 4 two pieces
 	// registered a tick), softLegToleranceMm (0 for 500 mm scaled by the distance between builds at
 	// the speed), and 1 to skip the sweep for placed opaque bodies.
 	void BM_SightForestWalk(benchmark::State& state) {
@@ -964,7 +964,7 @@ namespace {
 		settings.rules = {.forestDepth = shapeCase == 1 || shapeCase == 3, .rocksOcclude = shapeCase >= 2};
 		const std::int64_t options = state.range(3);
 		settings.scheduler.testWhilePiecesWait = (options & 1) != 0;
-		settings.scheduler.sweepsPerTick = (options & 2) != 0 ? 2 : 0;
+		settings.scheduler.sweepsPerTick = (options & 2) != 0 ? 4 : 0;
 		settings.scheduler.piecesPerTick = (options & 4) != 0 ? 2 : vision::kSeenPiecesRegisteredPerTick;
 		settings.toleranceMm =
 			state.range(4) > 0 ? state.range(4) : std::llround(500.0 * buildSpacingMm(settings.speed) / buildSpacingMm(1.0));
@@ -1002,7 +1002,7 @@ namespace {
 				settings.speed,
 				options == 0 ? " as SeenArea's" : "",
 				settings.scheduler.testWhilePiecesWait ? " (i) tests while pieces wait" : "",
-				settings.scheduler.sweepsPerTick > 0 ? " (ii) two sweep points a tick" : "",
+				settings.scheduler.sweepsPerTick > 0 ? " (ii) four sweep points a tick" : "",
 				settings.scheduler.piecesPerTick > 1 ? " (iii) two pieces a tick" : "",
 				static_cast<long long>(settings.toleranceMm),
 				settings.skipSweep ? "skipped" : "on",
