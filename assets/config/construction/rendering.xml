@@ -68,7 +68,7 @@
 
   <!-- Drawing-tool preview chrome (construction-specific; validity green/red comes from the UI theme). -->
   <Preview>
-    <guideColor>#5FB3C8FF</guideColor>               <!-- guide lines, right-angle markers, crossing dots; common-length marks are not drawn yet -->
+    <guideColor>#5FB3C8FF</guideColor>               <!-- guide lines, right-angle markers, crossing dots, and, under one, the common-length marks -->
     <originHaloColor>#B3D9FF99</originHaloColor>      <!-- the dotted close-radius ring round the first point; it gives way to the halo once the click will close -->
     <snapVertexColor>#FFD94DE6</snapVertexColor>     <!-- vertex/endpoint snap ring (amber) -->
     <snapEdgeColor>#66D9FFE6</snapEdgeColor>         <!-- edge/T-junction snap ring (cyan) -->
@@ -96,10 +96,10 @@
     <guideColorShape>#8CC4FFFF</guideColorShape>
     <guideColorNearby>#FFAD5CFF</guideColorNearby>
     <guideColorWorld>#7FE0A6FF</guideColorWorld>
-    <guideColorLength>#F29AD8FF</guideColorLength>   <!-- not drawn yet: a matched length -->
+    <guideColorLength>#F29AD8FF</guideColorLength>   <!-- bySource: the common-length marks -->
     <guideDistanceDecimals>2</guideDistanceDecimals>
     <guideLabelPx>11.0</guideLabelPx>
-    <angleReadoutDecimals>1</angleReadoutDecimals>      <!-- not drawn yet: the angle readout -->
+    <angleReadoutDecimals>1</angleReadoutDecimals>      <!-- the angle readout's degrees; half a unit in the last place is its square tolerance -->
     <rightAngleMarkerPx>8.0</rightAngleMarkerPx>
     <guideCrossingDotPx>3.0</guideCrossingDotPx>  <!-- radius -->
     <cursorRadiusPx>6.0</cursorRadiusPx>          <!-- the snapped-point dot's radius -->
