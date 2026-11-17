@@ -28,8 +28,10 @@ add_library(sim
     ecs/systems/PlayerVisibilitySystem.cpp
     ecs/spatial/AgentSpatialHash.cpp
     ecs/ClaimIndex.cpp
+    ecs/ColonistRules.cpp
     ecs/GoalTaskRegistry.cpp
     ecs/StoreOrDrop.cpp
+    ecs/ThoughtTypes.cpp
     ecs/WorldSource.cpp
     ecs/components/DecisionTrace.cpp
     ecs/components/MemoryQueries.cpp

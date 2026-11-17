@@ -1,5 +1,8 @@
 #include "DevCommandHandler.h"
 
+#include "scenes/game/dev/ConstructionStateJson.h"
+#include "scenes/game/dev/DevJson.h"
+#include "scenes/game/dev/DrawingStateJson.h"
 #include "scenes/game/dev/GiveShortfall.h"
 #include "scenes/game/dev/GroundRefusal.h"
 #include "scenes/game/dev/PointList.h"
@@ -17,6 +20,8 @@
 
 #include <ui/components/Toast.h>
 
+#include <conditions/ColonistTerms.h>
+
 #include <construction/ConstructionValidator.h>
 #include <construction/ConstructionWorld.h>
 #include <construction/SnapEngine.h>
@@ -28,6 +33,7 @@
 #include <ecs/WorldSource.h>
 #include <ecs/components/Action.h>
 #include <ecs/components/Appearance.h>
+#include <ecs/components/Attributes.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Mood.h>
@@ -44,6 +50,7 @@
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/PlayerVisibilitySystem.h>
+#include <ecs/systems/ThoughtSystem.h>
 #include <ecs/systems/TimeSystem.h>
 
 #include <assets/RecipeRegistry.h>
@@ -66,7 +73,6 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <iomanip>
 #include <limits>
@@ -105,6 +111,7 @@ namespace world_sim {
 		verb("spawn", &DevCommandHandler::devSpawn);
 		verb("colonist", &DevCommandHandler::devColonist);
 		verb("need", &DevCommandHandler::devNeed);
+		verb("attribute", &DevCommandHandler::devAttribute);
 		verb("time", &DevCommandHandler::devTime);
 		verb("teleport", &DevCommandHandler::devTeleport);
 		verb("select", &DevCommandHandler::devSelect);
@@ -122,6 +129,7 @@ namespace world_sim {
 		registrations.push_back(server.route("flora", [this](const app::DevRequest& cmd) { return devFlora(cmd); }));
 		registrations.push_back(server.route("ground", [this](const app::DevRequest& cmd) { return devGround(cmd); }));
 		registrations.push_back(server.route("storage", [this](const app::DevRequest& cmd) { return devStorage(cmd); }));
+		registrations.push_back(server.route("thought", [this](const app::DevRequest& cmd) { return devThought(cmd); }));
 		registrations.push_back(server.route("visibility", [this](const app::DevRequest& cmd) {
 			return app::DevResponse{.body = visibilityJson(cmd)};
 		}));
@@ -135,6 +143,7 @@ namespace world_sim {
 		};
 		view("colonists", &DevCommandHandler::serializeColonists);
 		view("construction", &DevCommandHandler::serializeConstruction);
+		registrations.push_back(server.stateProvider("drawing", [this] { return drawingStateJson(m_ctx.drawing->snapshot()); }));
 		view("stations", &DevCommandHandler::serializeStations);
 		view("storage", &DevCommandHandler::serializeStorage);
 		view("time", &DevCommandHandler::serializeTime);
@@ -457,6 +466,31 @@ namespace world_sim {
 		needs->get(type).value = value;
 		LOG_INFO(Game, "[DevAPI] need: %s=%.1f on #%llu", ecs::needLabel(type), static_cast<double>(value), static_cast<unsigned long long>(id));
 		m_ctx.ui->pushNotification("Dev", std::string(ecs::needLabel(type)) + " set", ui::ToastSeverity::Info);
+	}
+
+	DevRefusal DevCommandHandler::devAttribute(const app::DevRequest& cmd) {
+		const ecs::EntityID id = parseEntity(param(cmd, "colonist"));
+		auto*				attributes = m_ctx.world->getComponent<ecs::Attributes>(id);
+		if (!m_ctx.world->isAlive(id) || attributes == nullptr) {
+			return refuse("attribute: no colonist #" + param(cmd, "colonist"));
+		}
+		const std::string name = param(cmd, "attribute");
+		const auto field = std::ranges::find_if(ecs::kAttributeFields, [&name](const ecs::AttributeField& candidate) {
+			return conditions::conditionName(candidate.label) == name;
+		});
+		if (field == ecs::kAttributeFields.end()) {
+			return refuse("attribute: no attribute '" + name + "'");
+		}
+		char*			  end = nullptr;
+		const std::string text = param(cmd, "value");
+		const float		  value = std::strtof(text.c_str(), &end);
+		if (text.empty() || end != text.c_str() + text.size() || !std::isfinite(value) || value < 0.0F || value > 20.0F) {
+			return refuse("attribute: value '" + text + "' is not a number from 0 to 20");
+		}
+		attributes->*(field->value) = value;
+		LOG_INFO(Game, "[DevAPI] attribute: %s=%.1f on #%llu", name.c_str(), static_cast<double>(value), static_cast<unsigned long long>(id));
+		m_ctx.ui->pushNotification("Dev", std::string(field->label) + " set", ui::ToastSeverity::Info);
+		return {};
 	}
 
 	void DevCommandHandler::devTime(const app::DevRequest& cmd) {
@@ -1094,6 +1128,51 @@ namespace world_sim {
 		return app::DevResponse{.body = "{\"status\":\"ok\",\"verb\":\"storage\",\"replaced\":" + std::to_string(replaced) + "}"};
 	}
 
+	app::DevResponse DevCommandHandler::devThought(const app::DevRequest& cmd) {
+		const auto reject = [](const std::string& message) {
+			LOG_WARNING(Game, "[DevAPI] thought: %s", message.c_str());
+			return app::DevResponse{.status = 400, .body = "{\"error\":\"thought: " + jsonEscape(message) + "\"}"};
+		};
+		ecs::ThoughtSystem&		 thoughtSystem = m_ctx.world->getSystem<ecs::ThoughtSystem>();
+		const ecs::ThoughtTypes& types = thoughtSystem.types();
+
+		const ecs::EntityID colonist = parseEntity(param(cmd, "colonist"));
+		if (!m_ctx.world->isAlive(colonist) || m_ctx.world->getComponent<ecs::Colonist>(colonist) == nullptr) {
+			return reject("no colonist #" + param(cmd, "colonist"));
+		}
+		const std::optional<ecs::ThoughtEventTypeId> type = types.findType(param(cmd, "type"));
+		if (!type.has_value()) {
+			return reject("no thought type '" + param(cmd, "type") + "'");
+		}
+		ecs::ThoughtSubject subject = ecs::ThoughtSubject::aboutNothing();
+		if (hasParam(cmd, "subject")) {
+			const ecs::EntityID entity = parseEntity(param(cmd, "subject"));
+			if (!m_ctx.world->isAlive(entity)) {
+				return reject("no entity #" + param(cmd, "subject"));
+			}
+			subject = m_ctx.world->getComponent<ecs::Colonist>(entity) != nullptr ? ecs::ThoughtSubject::aboutColonist(entity)
+																				  : ecs::ThoughtSubject::aboutEntity(entity);
+		}
+
+		const ecs::ThoughtHandle handle = thoughtSystem.create({.colonist = colonist, .eventType = *type, .subject = subject});
+		std::ostringstream		 out;
+		out << "{\"status\":\"ok\",\"verb\":\"thought\",\"created\":" << (handle.colonist != ecs::kInvalidEntity ? "true" : "false");
+		if (handle.colonist != ecs::kInvalidEntity) {
+			const ecs::Thoughts& thoughts = *m_ctx.world->getComponent<ecs::Thoughts>(colonist);
+			const ecs::Thought&	 thought = *ecs::findThought(thoughts, handle.thought);
+			const std::string	 line = ecs::renderThoughtLine(types, thoughts, thought);
+			out << ",\"thought\":" << thought.id << ",\"feeling\":\"" << jsonEscape(types.feeling(thought.feeling).name) << "\",\"line\":";
+			if (line.empty()) {
+				out << "null";
+			} else {
+				out << "\"" << jsonEscape(line) << "\"";
+			}
+		}
+		out << "}";
+		LOG_INFO(Game, "[DevAPI] thought: '%s' on #%llu", param(cmd, "type").c_str(), static_cast<unsigned long long>(colonist));
+		return app::DevResponse{.body = out.str()};
+	}
+
 	Foundation::Vec2 DevCommandHandler::parsePoint(const std::string& spec) {
 		const std::vector<Foundation::Vec2> pts = parsePointList(spec);
 		return pts.empty() ? Foundation::Vec2{0.0F, 0.0F} : pts.front();
@@ -1110,6 +1189,47 @@ namespace world_sim {
 	}
 
 	// ===================================================================== STATE READBACK
+
+	void DevCommandHandler::serializeThoughts(std::ostringstream& out, const ecs::Thoughts& thoughts) {
+		constexpr std::size_t	 kRecentThoughts = 5;
+		const ecs::ThoughtTypes& types = m_ctx.world->getSystem<ecs::ThoughtSystem>().types();
+		const double			 now = m_ctx.world->getSystem<ecs::TimeSystem>().simulationSeconds();
+		const auto				 header = [&](const ecs::Thought& thought) {
+			  out << "{\"id\":" << thought.id << ",\"type\":\"" << jsonEscape(types.type(thought.eventType).name) << "\",\"feeling\":\""
+				  << jsonEscape(types.feeling(thought.feeling).name) << "\"";
+		};
+
+		out << ",\"thoughts\":{\"held\":[";
+		bool first = true;
+		ecs::forEachHeldThought(thoughts, [&](const ecs::Thought& thought) {
+			out << (first ? "" : ",");
+			first = false;
+			header(thought);
+			out << ",\"mood\":" << ecs::heldMoodAmount(thought) << ",\"left\":";
+			if (thought.moodEffect->lasts == ecs::MoodEffectLasts::WhileCauseHolds) {
+				out << "\"while\"";
+			} else {
+				out << (thought.expiresAt - now) / ecs::kSimulationSecondsPerGameHour;
+			}
+			out << ",\"count\":" << thought.count << "}";
+		});
+		out << "],\"recent\":[";
+		const std::size_t shown = std::min(kRecentThoughts, thoughts.record.size());
+		for (std::size_t index = 0; index < shown; ++index) {
+			const ecs::Thought& thought = thoughts.record[thoughts.record.size() - 1 - index];
+			out << (index > 0 ? "," : "");
+			header(thought);
+			const std::string line = ecs::renderThoughtLine(types, thoughts, thought);
+			out << ",\"line\":";
+			if (line.empty()) {
+				out << "null";
+			} else {
+				out << "\"" << jsonEscape(line) << "\"";
+			}
+			out << ",\"arrivedAt\":" << thought.arrivedAt << "}";
+		}
+		out << "]}";
+	}
 
 	void DevCommandHandler::serializeColonists(std::ostringstream& out) {
 		out << "{\"colonists\":[";
@@ -1136,6 +1256,17 @@ namespace world_sim {
 					break;
 			}
 			out << "}";
+			if (const auto* attributes = m_ctx.world->getComponent<ecs::Attributes>(entity)) {
+				out << ",\"attributes\":{";
+				for (size_t i = 0; i < ecs::kAttributeFields.size(); ++i) {
+					const ecs::AttributeField& field = ecs::kAttributeFields[i];
+					out << (i > 0 ? "," : "") << "\"" << conditions::conditionName(field.label) << "\":" << attributes->*(field.value);
+				}
+				out << "}";
+			}
+			if (const auto* thoughts = m_ctx.world->getComponent<ecs::Thoughts>(entity)) {
+				serializeThoughts(out, *thoughts);
+			}
 			if (const auto* action = m_ctx.world->getComponent<ecs::Action>(entity)) {
 				out << ",\"action\":\"" << ecs::actionTypeName(action->type) << "\"";
 			}
@@ -1216,6 +1347,27 @@ namespace world_sim {
 			os << "},\"progress\":" << bp.progress();
 		};
 
+		// The phase a blueprint is in, as the foundation and opening entries name it.
+		const auto phaseName = [](ecs::StructureBlueprint::BuildPhase phase) {
+			switch (phase) {
+				case ecs::StructureBlueprint::BuildPhase::Clearing: return "Clearing";
+				case ecs::StructureBlueprint::BuildPhase::AwaitingMaterials: return "AwaitingMaterials";
+				case ecs::StructureBlueprint::BuildPhase::UnderConstruction: return "UnderConstruction";
+				case ecs::StructureBlueprint::BuildPhase::Complete: return "Complete";
+			}
+			return "Clearing";
+		};
+
+		// What an entity's blueprint adds to a foundation's or opening's entry: its phase and material progress.
+		const BlueprintFragment blueprintFragment = [&](ecs::EntityID entity) {
+			std::ostringstream fragment;
+			if (const auto* bp = m_ctx.world->getComponent<ecs::StructureBlueprint>(entity)) {
+				fragment << ",\"phase\":\"" << phaseName(bp->phase) << "\"";
+				emitMaterialProgress(fragment, *bp);
+			}
+			return fragment.str();
+		};
+
 		const auto& cworld = m_ctx.drawing->world();
 		out << "{\"foundations\":[";
 		bool first = true;
@@ -1226,19 +1378,11 @@ namespace world_sim {
 				<< "\",\"state\":\"" << (foundation.state == construction::FoundationState::Built ? "Built" : "Blueprint")
 				<< "\",\"entity\":" << static_cast<unsigned long long>(foundation.entity) << ",\"area\":" << cworld.areaSquareMeters(foundation.id);
 
+			out << ",\"corners\":" << foundationCornersJson(foundation);
+
 			// Include material progress from the ECS mirror entity's StructureBlueprint
 			if (foundation.entity != ecs::kInvalidEntity) {
-				if (const auto* bp = m_ctx.world->getComponent<ecs::StructureBlueprint>(foundation.entity)) {
-					const char* phaseStr = "Clearing";
-					switch (bp->phase) {
-						case ecs::StructureBlueprint::BuildPhase::Clearing: phaseStr = "Clearing"; break;
-						case ecs::StructureBlueprint::BuildPhase::AwaitingMaterials: phaseStr = "AwaitingMaterials"; break;
-						case ecs::StructureBlueprint::BuildPhase::UnderConstruction: phaseStr = "UnderConstruction"; break;
-						case ecs::StructureBlueprint::BuildPhase::Complete: phaseStr = "Complete"; break;
-					}
-					out << ",\"phase\":\"" << phaseStr << "\"";
-					emitMaterialProgress(out, *bp);
-				}
+				out << blueprintFragment(foundation.entity);
 			}
 
 			out << "}";
@@ -1272,7 +1416,9 @@ namespace world_sim {
 
 			out << "}";
 		}
-		out << "]}";
+
+		// Openings: the wall each is on, where along it, that point in world meters, its build state and, with an entity, its phase and progress.
+		out << "],\"openings\":" << openingsJson(cworld, blueprintFragment) << "}";
 	}
 
 	void DevCommandHandler::serializeStations(std::ostringstream& out) {
@@ -1427,32 +1573,6 @@ namespace world_sim {
 		}
 		out << "{\"colonists\":" << colonists << ",\"foundations\":" << m_ctx.drawing->world().foundations().size()
 			<< ",\"chunks\":" << m_ctx.chunks->loadedChunkCount() << "}";
-	}
-
-	std::string DevCommandHandler::jsonEscape(const std::string& s) {
-		std::string out;
-		out.reserve(s.size() + 8);
-		for (char c : s) {
-			switch (c) {
-				case '"': out += "\\\""; break;
-				case '\\': out += "\\\\"; break;
-				case '\b': out += "\\b"; break;
-				case '\f': out += "\\f"; break;
-				case '\n': out += "\\n"; break;
-				case '\r': out += "\\r"; break;
-				case '\t': out += "\\t"; break;
-				default:
-					if (static_cast<unsigned char>(c) < 0x20) {
-						// Other control chars: emit a \u00XX escape rather than dropping them.
-						char buf[7];
-						std::snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
-						out += buf;
-					} else {
-						out += c;
-					}
-			}
-		}
-		return out;
 	}
 
 } // namespace world_sim

@@ -35,4 +35,13 @@ namespace world_sim {
 	/// the splash; a dev switch straight to the game scene runs it to the end.
 	GroundBakeStep stepGroundBake();
 
+	/// The colonist rules (the condition vocabulary and the thought types under assets/config) load once, in
+	/// the loading scene, which shows their errors itself. A scene that loads them without it (the game
+	/// scene, jumped to directly) hands the errors here and switches to the splash, which blocks on them
+	/// after the ground bake and shows them; it never loads the rules.
+	void failColonistRules(std::vector<std::string> errors);
+
+	/// The errors handed to failColonistRules, each naming its folder; empty when none were.
+	const std::vector<std::string>& failedColonistRules();
+
 } // namespace world_sim

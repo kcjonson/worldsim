@@ -70,7 +70,20 @@ assets/config/work/work-types.xml
 assets/config/work/priority-tuning.xml
 assets/config/construction/*.xml
 assets/config/colonists/mood.xml
+assets/config/conditions/*.xml
+assets/config/thoughts/*.xml
 ```
+
+`conditions/` and `thoughts/` load through `ecs::loadColonistRules(configRoot)` (libs/sim/ecs/ColonistRules.h):
+the condition vocabulary is declared, answered by the sim's terms, and frozen first, then the thought
+types are read and their conditions parsed against it (`loadConditionVocabulary` and `loadThoughtTypes`,
+which the tests use too). Each folder's own files load before its subfolders' (`assets::configFilesIn`),
+so a mod adds or replaces by adding a file there. A clean load logs its counts at info level (terms;
+feelings and thought types). `GameLoadingScene` adds its errors, prefixed `[conditions]` or
+`[thoughts]`, to the config errors the loading screen shows, and hands the rules to `GameScene` through
+`GameWorldState`. A direct switch to the game scene skips the loading scene, so `GameScene` loads them
+itself, once; when they are broken it hands the errors to the splash (`world_sim::failColonistRules`),
+which shows them after the ground bake and loads nothing.
 
 `mood.xml` loads into `assets::MoodConfig` (the mood rate, the need penalty curve, the per-need
 weights by need name, and the band names) and is checked by `ConfigValidator::validateMood`.

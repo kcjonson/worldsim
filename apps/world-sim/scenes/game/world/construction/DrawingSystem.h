@@ -121,6 +121,48 @@ namespace world_sim {
 		float		openingWidthMeters = 0.0F; // clear width of the active opening type
 	};
 
+	/// What the tool holds right now, as plain data for the dev state view (`what=drawing`). Built on
+	/// request by DrawingSystem::snapshot(); nothing in the frame loop fills it.
+	struct DrawingSnapshot {
+		/// What the pointer proposed on its last move: the snapped point and what placed it.
+		struct Snap {
+			Foundation::Vec2					 point{0.0F, 0.0F};
+			construction::SnapKind				 kind = construction::SnapKind::None;
+			construction::RectangleSnapKind		 rectangleKind = construction::RectangleSnapKind::None; // the Rectangle tool's corner snap
+			std::vector<construction::SnapGuide> guides;
+			construction::LengthSnapKind		 lengthSnap = construction::LengthSnapKind::None;
+			float								 lengthMeters = 0.0F;			// what the length step set; 0 when it set nothing
+			std::optional<float>				 segmentLengthMeters;			// last placed point to the snapped point, whatever set it; none with no placed point
+			std::size_t							 matchedEdgeCount = 0;
+			std::vector<float>					 commonLengths;		 // the kept common lengths, best first
+			bool								 closesShape = false; // the next click closes the shape (the Rectangle tool: commits it)
+		};
+
+		/// What the next click would do, as clickVerdict() reads it (the opening tool's: the strip's).
+		struct Verdict {
+			bool		valid = true;
+			bool		proposed = true;
+			std::string reason; // empty unless refused
+		};
+
+		std::optional<ToolKind>							tool;
+		FoundationTool									lastFoundationTool = FoundationTool::Rectangle;
+		construction::FoundationId						editTarget = construction::kInvalidFoundation; // the Add / Subtract tool only
+		std::optional<construction::FoundationEditMode> editMode;									   // the Add / Subtract tool only
+		std::string										openingType;								   // the opening tool only
+		construction::FoundationId						wallHost = construction::kInvalidFoundation;   // the wall tool only
+		bool											followingPointer = false;
+		std::optional<Foundation::Vec2>					pointer;			  // the pointer's world position before any snap, while following it
+		bool											pressPending = false; // the Rectangle tool saw a press and awaits its release
+		std::vector<Foundation::Vec2>					points;				  // placed, world meters (the Rectangle tool: its first corner)
+		std::vector<Foundation::Vec2>					rectangleCorners;	  // the pending rectangle, empty when none
+		std::string										rectangleLabel;
+		std::optional<Snap>								snap;		 // none while paused, and for the opening tool
+		std::optional<construction::OpeningSnap>		openingSnap; // the opening tool, while following the pointer
+		Verdict											verdict;
+		DrawingStatus									status;
+	};
+
 	class DrawingSystem {
 	  public:
 		struct Callbacks {
@@ -326,6 +368,10 @@ namespace world_sim {
 		// --- Status for the config strip ---
 
 		[[nodiscard]] DrawingStatus status() const;
+
+		/// Everything the dev state view reports, read from the state the strip and the preview read.
+		/// Read-only, and built only when asked for.
+		[[nodiscard]] DrawingSnapshot snapshot() const;
 
 		/// What the preview shows this frame: whether the band and fill read valid, and
 		/// whether the close halo draws. While the next click closes, both come from
@@ -695,8 +741,9 @@ namespace world_sim {
 		construction::SnapResult			   lastSnap_;
 		// A move has proposed something since the tool started or last paused. It holds over the
 		// interface, where the preview stays at its last position on the world.
-		bool followingPointer_ = false;
-		construction::ValidationResult		   lastValidation_;
+		bool							followingPointer_ = false;
+		Foundation::Vec2				pointerWorld_{0.0F, 0.0F}; // the last move's pointer before any snap, read only while followingPointer_
+		construction::ValidationResult	lastValidation_;
 
 		// The last evaluated snap and point validation, and what they were evaluated
 		// for. Kept apart from lastSnap_ and lastValidation_, which other paths clear.

@@ -7,6 +7,7 @@
 #include "NewGameSetup.h"
 
 #include <assets/placement/PlacementExecutor.h>
+#include <ecs/ColonistRules.h>
 #include <ecs/components/Colony.h>
 #include <world/camera/WorldCamera.h>
 #include <world/chunk/ChunkCoordinate.h>
@@ -58,6 +59,9 @@ namespace world_sim {
 		/// (only the planet itself round-trips via PlanetIO), so for now it is a durable
 		/// in-session value. Wiring it into a session save is a follow-up.
 		ecs::Colony colony;
+
+		/// The condition vocabulary and thought types, loaded with the rest of the config.
+		ecs::ColonistRules colonistRules;
 
 		/// Store pending state (call from GameLoadingScene when done)
 		static void SetPending(std::unique_ptr<GameWorldState> state);
