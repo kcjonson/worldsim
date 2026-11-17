@@ -232,3 +232,55 @@ TEST_F(ThoughtConfigTest, ARootThatIsNotThoughtsIsAnError) {
 	EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "wrong.xml: the root element is not <thoughts>"));
 	EXPECT_TRUE(mentions(loadThoughtConfig(folder / "missing").errors, "not a folder"));
 }
+
+TEST_F(ThoughtConfigTest, ReadsEachSourceTrigger) {
+	write("base.xml", std::string(kTuning) + R"(
+  <feeling id="content"/>
+  <thought id="sources" importance="normal">
+    <feeling is="content"/>
+    <source trigger="needFalls" need="Hunger" threshold="urgent"/>
+    <source trigger="needRises" need="Thirst" threshold="seek"/>
+    <source trigger="actionStarts" action="Craft"/>
+    <source trigger="actionFinishes" action="Sleep" on="ground"/>
+    <source trigger="actionFinishes" action="Craft" on="sleepable" first="true"/>
+    <source trigger="firstSight" of="harvestable"/>
+    <source trigger="recipeLearned"/>
+    <source trigger="idle" everyMinutes="90" chance="0.5"/>
+  </thought>
+)");
+	const ThoughtConfigLoad load = loadThoughtConfig(folder);
+	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
+	const std::vector<ThoughtSourceDef>& sources = load.config.types.front().sources;
+	ASSERT_EQ(sources.size(), 8U);
+	EXPECT_EQ(sources[0].trigger, ThoughtTrigger::NeedFalls);
+	EXPECT_EQ(sources[0].need, "Hunger");
+	EXPECT_EQ(sources[0].threshold, 1U);
+	EXPECT_EQ(sources[1].trigger, ThoughtTrigger::NeedRises);
+	EXPECT_EQ(sources[1].threshold, 0U);
+	EXPECT_EQ(sources[2].action, "Craft");
+	EXPECT_TRUE(sources[2].thing.empty());
+	EXPECT_EQ(sources[3].thing, "ground");
+	EXPECT_EQ(sources[4].thing, "sleepable");
+	EXPECT_TRUE(sources[4].first);
+	EXPECT_EQ(sources[5].trigger, ThoughtTrigger::FirstSight);
+	EXPECT_EQ(sources[5].thing, "harvestable");
+	EXPECT_EQ(sources[6].trigger, ThoughtTrigger::RecipeLearned);
+	EXPECT_EQ(sources[7].everyMinutes, 90.0F);
+	EXPECT_EQ(sources[7].chance, 0.5F);
+}
+
+TEST_F(ThoughtConfigTest, SourceMistakesNameTheirAttribute) {
+	const auto errorsForSource = [this](const std::string& source) {
+		return errorsFor(R"(<feeling id="content"/><thought id="a" importance="normal"><feeling is="content"/>)" + source + "</thought>");
+	};
+	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="sneezes"/>)"), "source 1: trigger=\"sneezes\""));
+	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="needFalls" threshold="seek"/>)"), "has no need="));
+	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="needFalls" need="Hunger" threshold="peckish"/>)"), "threshold=\"peckish\""));
+	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="actionFinishes"/>)"), "has no action="));
+	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="actionFinishes" action="Sleep" on="sofa"/>)"), "on=\"sofa\""));
+	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="actionFinishes" action="Craft" first="yes"/>)"), "first=\"yes\""));
+	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="firstSight" of="ground"/>)"), "of=\"ground\""));
+	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="idle" chance="0.5"/>)"), "everyMinutes=\"\""));
+	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="idle" everyMinutes="60" chance="1.5"/>)"), "chance=\"1.5\""));
+	EXPECT_TRUE(mentions(errorsForSource(R"(<source trigger="recipeLearned" need="Hunger"/>)"), "unknown attribute 'need'"));
+}

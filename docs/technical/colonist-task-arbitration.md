@@ -110,7 +110,7 @@ within the same tier only and can never lift a lower-tier option above a higher-
 | Tier | Name | Trigger | Status |
 |------|------|---------|--------|
 | 1 | Survival / danger | Active threat, flee | RESERVED — not this epic |
-| 2 | Critical needs | Any need past its critical threshold (~10%) | Implemented |
+| 2 | Critical needs | Any need past its own critical threshold (`colonists/needs` config) | Implemented |
 | 3 | Forced player orders | Player queues a direct command | RESERVED — separate epic |
 | 4 | Active work orders | A queued craft/build and its provisioning chain | Implemented — STICKY |
 | 5 | Actionable needs | A need past the comfort threshold | Implemented |

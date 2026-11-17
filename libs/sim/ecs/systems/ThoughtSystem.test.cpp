@@ -867,6 +867,14 @@ namespace ecs::test {
 			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content"/><ends thought="b"/></thought>)"),
 			"which is no thought type"
 		));
+		EXPECT_TRUE(mentions(
+			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content"/><source trigger="needFalls" need="Mojo" threshold="seek"/></thought>)"),
+			"source 1: no need is called 'Mojo'"
+		));
+		EXPECT_TRUE(mentions(
+			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content"/><source trigger="actionFinishes" action="Juggle"/></thought>)"),
+			"source 1: no action is called 'Juggle'"
+		));
 		const std::vector<std::string> cycle = errorsFor(R"(
   <thought id="a" importance="normal"><feeling is="content"/><ends thought="b"/></thought>
   <thought id="b" importance="normal"><feeling is="content"/><ends thought="c"/></thought>
@@ -898,6 +906,7 @@ namespace ecs::test {
 			EXPECT_TRUE(types.findType(name).has_value()) << name;
 		}
 		EXPECT_TRUE(types.type(*types.findType("bottled_up")).stacks);
+		EXPECT_TRUE(std::ranges::any_of(types.sources(), [](const ThoughtSource& source) { return source.trigger == ThoughtTrigger::Idle; }));
 		EXPECT_EQ(types.type(*types.findType("accident_in_public")).importance, ThoughtImportance::Major);
 		for (const std::string_view name : {"content", "resigned", "furious", "amused"}) {
 			EXPECT_TRUE(types.findFeeling(name).has_value()) << name;

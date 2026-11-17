@@ -10,6 +10,7 @@
 #include "../EntityID.h"
 #include "../ISystem.h"
 #include "../LoosePileIndex.h"
+#include "../components/Action.h"
 
 #include <glm/vec2.hpp>
 
@@ -18,8 +19,24 @@
 #include <optional>
 #include <random>
 #include <string>
+#include <vector>
 
 namespace ecs {
+
+enum class ActionMoment : uint8_t { Started, Finished };
+
+/// A colonist started or finished an action. An action cut short never finishes, and one taking up work
+/// already begun (a blueprint with work on it, a craft batch with a unit made) does not start.
+struct ActionEvent {
+	EntityID	 colonist = kInvalidEntity;
+	ActionType	 type = ActionType::None;
+	ActionMoment moment = ActionMoment::Started;
+	/// The AssetRegistry id of the kind of thing the action is about (the food eaten, the bed slept in,
+	/// the item crafted, the plant harvested); 0 when it is about no thing, as a sleep on the ground is.
+	uint32_t aboutDefinition = 0;
+};
+
+using ActionObserver = std::function<void(const ActionEvent& event)>;
 
 class ActionSystem : public ISystem {
 public:
@@ -83,6 +100,9 @@ public:
 	/// same-material piles in one cell would otherwise alias each other.
 	using RemoveEntityByIdCallback = std::function<void(EntityID entity)>;
 	void setRemoveEntityByIdCallback(RemoveEntityByIdCallback callback) { m_onRemoveEntityById = std::move(callback); }
+
+	/// Hears every action a colonist starts and finishes, once the update's pass over the colonists is over.
+	void addActionObserver(ActionObserver observer) { m_actionObservers.push_back(std::move(observer)); }
 
 	/// The loose ground piles a pickup draws from, filed by makeLoosePile and unfiled by
 	/// destroyWorldEntity.
@@ -295,6 +315,22 @@ private:
 		glm::vec2 dropPosition,
 		const char* handName
 	);
+
+	/// Hold for the action observers that the colonist started or finished the action.
+	void reportAction(
+		EntityID entity,
+		const struct Action& action,
+		ActionMoment moment,
+		const struct Task& task,
+		const struct Memory& memory
+	);
+
+	/// True when starting the action takes up work already begun: a Build or Deconstruct on a blueprint
+	/// with work done toward it, or a Craft of a batch with a unit already made.
+	[[nodiscard]] bool continuesWork(const struct Action& action) const;
+
+	std::vector<ActionObserver> m_actionObservers;
+	std::vector<ActionEvent>	m_reportedActions;
 
 	/// Callback for item crafted notifications
 	ItemCraftedCallback m_onItemCrafted = nullptr;

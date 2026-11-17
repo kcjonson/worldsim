@@ -27,13 +27,16 @@ namespace ecs {
 
 	using ThoughtImportance = assets::ThoughtImportance;
 
-	enum class ThoughtSubjectKind : uint8_t { Nothing, Colonist, Entity, Place };
+	enum class ThoughtSubjectKind : uint8_t { Nothing, Colonist, Entity, Kind, Place };
 
-	/// Who or what a thought is about.
+	/// Who or what a thought is about. A kind is a kind of thing, by its asset definition: the first oak a
+	/// colonist saw is about oaks, not one tree.
 	struct ThoughtSubject {
 		ThoughtSubjectKind kind = ThoughtSubjectKind::Nothing;
 		EntityID		   entity = kInvalidEntity;
-		glm::vec2		   place{0.0F, 0.0F};
+		/// The definition's AssetRegistry id, for a kind.
+		uint32_t  definition = 0;
+		glm::vec2 place{0.0F, 0.0F};
 
 		[[nodiscard]] static ThoughtSubject aboutNothing() { return {}; }
 		[[nodiscard]] static ThoughtSubject aboutColonist(EntityID colonistId) {
@@ -41,6 +44,9 @@ namespace ecs {
 		}
 		[[nodiscard]] static ThoughtSubject aboutEntity(EntityID entityId) {
 			return {.kind = ThoughtSubjectKind::Entity, .entity = entityId};
+		}
+		[[nodiscard]] static ThoughtSubject aboutKind(uint32_t definitionId) {
+			return {.kind = ThoughtSubjectKind::Kind, .definition = definitionId};
 		}
 		[[nodiscard]] static ThoughtSubject aboutPlace(glm::vec2 position) {
 			return {.kind = ThoughtSubjectKind::Place, .place = position};

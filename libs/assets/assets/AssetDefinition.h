@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <variant>
@@ -56,6 +57,15 @@ namespace assets {
 
 	[[nodiscard]] constexpr const char* capabilityName(CapabilityType type) {
 		return kCapabilityNames[static_cast<std::size_t>(type)];
+	}
+
+	/// The capability an element name names; none for a name that is no capability.
+	[[nodiscard]] inline std::optional<CapabilityType> capabilityFromName(std::string_view name) {
+		const auto found = std::ranges::find(kCapabilityNames, name, [](const char* capability) { return std::string_view(capability); });
+		if (found == kCapabilityNames.end()) {
+			return std::nullopt;
+		}
+		return static_cast<CapabilityType>(found - kCapabilityNames.begin());
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────

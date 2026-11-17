@@ -4,6 +4,7 @@
 
 #include "ActionSystem.h"
 
+#include "../ShippedConfig.test.h"
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/Inventory.h"
@@ -96,7 +97,7 @@ namespace ecs::test {
 		EntityID createBuilder(float constructionSkill, glm::vec2 position = {0.0F, 0.0F}) {
 			auto entity = world->createEntity();
 			world->addComponent<Position>(entity, Position{position});
-			world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+			world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 			world->addComponent<Memory>(entity, Memory{});
 			world->addComponent<Inventory>(entity, Inventory::createForColonist());
 			world->addComponent<Task>(entity, Task{});
@@ -197,10 +198,16 @@ namespace ecs::test {
 	}
 
 	TEST_F(BuildActionSystemTest, MultipleSessionsAccumulate) {
+		std::vector<ActionEvent> heard;
+		actionSystem->addActionObserver([&heard](const ActionEvent& event) { heard.push_back(event); });
 		auto builder = createBuilder(0.0F);
 		auto blueprint = createBlueprint(1000.0F);
 		assignBuildTask(builder, blueprint);
 		world->update(1.0F);
+		ASSERT_EQ(heard.size(), 1U);
+		EXPECT_EQ(heard[0].moment, ActionMoment::Started);
+		EXPECT_EQ(heard[0].type, ActionType::Build);
+		EXPECT_EQ(heard[0].aboutDefinition, 0U) << "a build is about no kind of thing";
 
 		float afterFirst = world->getComponent<StructureBlueprint>(blueprint)->workDone;
 
@@ -213,6 +220,7 @@ namespace ecs::test {
 		auto* bp = world->getComponent<StructureBlueprint>(blueprint);
 		EXPECT_GT(bp->workDone, afterFirst);
 		EXPECT_FLOAT_EQ(bp->workDone, afterFirst * 2.0F);
+		EXPECT_EQ(heard.size(), 1U) << "taking up a blueprint with work on it is no new start";
 	}
 
 	TEST_F(BuildActionSystemTest, FiresStructureCompletedCallbackOnce) {

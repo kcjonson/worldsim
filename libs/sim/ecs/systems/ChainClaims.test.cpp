@@ -19,6 +19,7 @@
 #include "TimeSystem.h"
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
+#include "../ShippedConfig.test.h"
 #include "../World.h"
 #include "../WorldSource.h"
 #include "../components/Action.h"
@@ -148,7 +149,7 @@ namespace ecs::test {
 			world->addComponent<AgentRadius>(entity, AgentRadius{});
 			world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 			world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-			auto needs = NeedsComponent::createDefault();
+			auto needs = ecs::testing::shippedNeeds();
 			for (auto need : NeedsComponent::kActionableNeeds) {
 				needs.get(need).value = 100.0F;
 			}

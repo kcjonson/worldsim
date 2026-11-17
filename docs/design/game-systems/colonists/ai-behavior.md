@@ -21,7 +21,7 @@ Colonists always evaluate what to do in this fixed order. Higher tiers (lower nu
 | Tier | Name                | Trigger                                         | Example                               | Status                   |
 | ---- | ------------------- | ----------------------------------------------- | ------------------------------------- | ------------------------ |
 | 1    | Survival / danger   | Active threat, flee                             | Being chased by predator              | RESERVED (no threats yet) |
-| 2    | Critical Needs      | Need below ~10%                                 | Bladder emergency                     | Implemented              |
+| 2    | Critical Needs      | Need below its critical threshold               | Bladder emergency                     | Implemented              |
 | 3    | Forced player orders | Player queues a direct command                 | Direct movement mode                  | RESERVED (separate epic) |
 | 4    | Active Work Orders  | Colonist has a queued craft/build in progress   | Finish the house foundation           | Implemented, STICKY      |
 | 5    | Actionable Needs    | Need below comfort threshold                    | Hungry, seeks food                    | Implemented              |
@@ -42,7 +42,7 @@ Colonist is actively threatened — chased by predator, caught in fire, etc.
 
 ### Tier 2: Critical Needs
 
-Any physical need hits critical threshold (~10%). Colonist immediately addresses it, bypassing all other priorities including active work orders.
+Any physical need falls below its critical threshold (set per need in the needs config, ~10% for most). Colonist immediately addresses it, bypassing all other priorities including active work orders.
 
 **MVP Status:** Included in Phase 1
 
