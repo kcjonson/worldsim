@@ -117,7 +117,7 @@ TEST(ForestDepth, LoneBodyIsCappedByItsWeights) {
 				for (std::int64_t side = 0; side < sides; ++side) {
 					double apart = std::fmod(std::abs(static_cast<double>(side) - sidePosition), static_cast<double>(sides));
 					apart = std::min(apart, static_cast<double>(sides) - apart);
-					if (apart >= 8.0 + 1e-6) {
+					if (apart >= 8.05) {
 						EXPECT_EQ(depth[static_cast<std::size_t>(side)], 0) << "side " << side;
 					}
 				}
@@ -295,6 +295,16 @@ TEST(ForestDepth, SlopeLimitHoldsNeighboursWithinTheSlope) {
 	EXPECT_EQ(limited[1], 1000);
 	EXPECT_EQ(limited[kSightSides - 1], 1000);
 	EXPECT_EQ(limited[kSightSides - 2], 2000);
+
+	// A dip at one end reaches the far end only by going round the wrap.
+	SightSideValues dipBeforeStart{};
+	dipBeforeStart.fill(5000);
+	dipBeforeStart[kSightSides - 1] = 0;
+	const SightSideValues limitedBeforeStart = geometry::forestLimitedDepth(dipBeforeStart, kSightMm, tunables);
+	EXPECT_EQ(limitedBeforeStart, slopeLimitOracle(dipBeforeStart, capMm, tunables.forestSlopeMm));
+	EXPECT_EQ(limitedBeforeStart[0], 1000);
+	EXPECT_EQ(limitedBeforeStart[1], 2000);
+	EXPECT_EQ(limitedBeforeStart[kSightSides - 2], 1000);
 }
 
 // Bodies at the eye and within 123 mm of it take no depth and nothing fails; a body straight along

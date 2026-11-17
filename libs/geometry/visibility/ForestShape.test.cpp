@@ -279,7 +279,7 @@ TEST(ForestShape, SideNormalsArePinned) {
 }
 
 // With every range equal the forest shape is the sight polygon of that radius, vertex for vertex, to
-// 2 mm.
+// 2 mm; with no bodies the ranges are the radius on every side.
 TEST(ForestShape, EqualRangesGiveTheSightPolygon) {
 	std::mt19937			  rng(64);
 	std::vector<std::int64_t> radii{1000, 1999, 20100, 29950, 30000, 32200, 38000, 65535};
@@ -288,6 +288,10 @@ TEST(ForestShape, EqualRangesGiveTheSightPolygon) {
 	}
 	for (const std::int64_t radius : radii) {
 		for (const Vec2i64 centre : {Vec2i64{0, 0}, Vec2i64{-123457, 98765}, Vec2i64{37123456, -18456789}}) {
+			if (radius > kSightMm - geometry::forestFloorMm(kSightMm, ForestTunables{})) {
+				EXPECT_EQ(geometry::forestRanges(centre, kSightMm, radius, {}, ForestTunables{}), equalRanges(radius))
+					<< "radius " << radius;
+			}
 			const Ring shape = geometry::forestShape(centre, equalRanges(radius));
 			const Ring polygon = geometry::sightPolygon(centre, radius);
 			ASSERT_EQ(shape.size(), polygon.size()) << "radius " << radius;
@@ -295,22 +299,6 @@ TEST(ForestShape, EqualRangesGiveTheSightPolygon) {
 				const Vec2i64 apart = shape[index] - polygon[index];
 				EXPECT_LE(apart.x * apart.x + apart.y * apart.y, 4) << "radius " << radius << " vertex " << index;
 			}
-		}
-	}
-}
-
-// With no bodies every range is the radius and the shape is the sight polygon to 2 mm.
-TEST(ForestShape, NoBodiesGiveTheSightPolygon) {
-	const Vec2i64 eye{-5432, 2109};
-	for (const std::int64_t radiusMm : {kSightMm, std::int64_t{32200}}) {
-		const SightSideValues ranges = geometry::forestRanges(eye, kSightMm, radiusMm, {}, ForestTunables{});
-		EXPECT_EQ(ranges, equalRanges(radiusMm));
-		const Ring shape = geometry::forestShape(eye, ranges);
-		const Ring polygon = geometry::sightPolygon(eye, radiusMm);
-		ASSERT_EQ(shape.size(), polygon.size());
-		for (std::size_t index = 0; index < shape.size(); ++index) {
-			const Vec2i64 apart = shape[index] - polygon[index];
-			EXPECT_LE(apart.x * apart.x + apart.y * apart.y, 4) << "vertex " << index;
 		}
 	}
 }
