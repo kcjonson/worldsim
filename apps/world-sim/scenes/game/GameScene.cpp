@@ -64,6 +64,7 @@
 // ECS
 #include <construction/ConstructionWorld.h>
 #include <core/Vec2i64.h>
+#include <ecs/ColonistRules.h>
 #include <ecs/GoalTaskRegistry.h>
 #include <ecs/SystemSeeds.h>
 #include <ecs/World.h>
@@ -167,6 +168,7 @@ namespace {
 				m_landingLatDeg = preloadedState->landingLatDeg;
 				m_landingLonDeg = preloadedState->landingLonDeg;
 				m_party = std::move(preloadedState->party);
+				colonistRules = std::move(preloadedState->colonistRules);
 
 				LOG_INFO(Game, "Pre-loaded state: %zu chunks, %zu processed", m_chunkManager->loadedChunkCount(), m_processedChunks.size());
 			} else {
@@ -192,6 +194,14 @@ namespace {
 					);
 					owner->scenes().switchTo(world_sim::scenes::Splash.name);
 				}
+				// Broken colonist rules go to the splash too, handed over for it to show; this is their only load on this path.
+				ecs::ColonistRulesLoad rulesLoad = ecs::loadColonistRules("assets/config");
+				if (!rulesLoad.errors.empty()) {
+					LOG_ERROR(Game, "GameScene - the colonist rules failed (%zu error(s)); back to the splash", rulesLoad.errors.size());
+					world_sim::failColonistRules(std::move(rulesLoad.errors));
+					owner->scenes().switchTo(world_sim::scenes::Splash.name);
+				}
+				colonistRules = std::move(rulesLoad.rules);
 				m_renderer = std::make_unique<worldview::ChunkRenderer>(kPixelsPerMeter, world_sim::groundTiles());
 
 				m_entityRenderer = std::make_unique<worldview::EntityRenderer>(kPixelsPerMeter);
@@ -1158,6 +1168,7 @@ namespace {
 			m_asyncProcessor.reset();
 			gameUI.reset();
 			ecsWorld.reset();
+			colonistRules = {};
 			m_placementExecutor.reset();
 			m_chunkManager.reset();
 			m_camera.reset();
@@ -1286,7 +1297,7 @@ namespace {
 			auto& assetRegistry = assets::AssetRegistry::Get();
 			auto& recipeRegistry = assets::RecipeRegistry::Get();
 			ecsWorld->registerSystem<ecs::TimeSystem>();									// Priority 10 - runs first
-			ecsWorld->registerSystem<ecs::ThoughtSystem>();									// Priority 11 - ends timed mood effects
+			ecsWorld->registerSystem<ecs::ThoughtSystem>(*colonistRules.thoughtTypes, systemSeeds.thought); // Priority 11 - ends mood effects
 			ecsWorld->registerSystem<ecs::MoodSystem>(assets::MoodConfig::Get());			// Priority 12 - mood follows needs and thoughts
 			ecsWorld->registerSystem<ecs::VisionSystem>();									// Priority 45
 			ecsWorld->registerSystem<ecs::PlayerVisibilitySystem>();							// Priority 46
@@ -2227,6 +2238,9 @@ namespace {
 		// Crew assembled in PartySelect, forwarded through GameWorldState.
 		// Empty -> single default colonist.
 		std::vector<world_sim::PartyMember>				   m_party;
+		// The thought types ThoughtSystem creates from, and the vocabulary their conditions are written in.
+		// Declared before ecsWorld, so the systems that read them are destroyed first.
+		ecs::ColonistRules								   colonistRules;
 		std::unique_ptr<worldview::ChunkRenderer>		   m_renderer;
 		std::unique_ptr<worldview::EntityRenderer>		   m_entityRenderer;
 		std::unique_ptr<worldview::VisibilityCoverRenderer> m_visibilityCover;
