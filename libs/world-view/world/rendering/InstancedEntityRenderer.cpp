@@ -1,6 +1,7 @@
 #include "InstancedEntityRenderer.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/placement/InstanceTransform.h>
 #include <primitives/Primitives.h>
 #include <utils/Log.h>
 #include <vector/Types.h>
@@ -159,11 +160,10 @@ namespace worldview {
 			}
 		}
 
-		const float entityScale = entity.scale;
+		const assets::InstanceTransform transform(entity.position, entity.rotation, entity.scale);
 		for (size_t i = 0; i < animVerts.size(); ++i) {
-			const float worldX = animVerts[i].x * entityScale + entity.position.x;
-			const float worldY = animVerts[i].y * entityScale + entity.position.y;
-			animVertices.emplace_back((worldX - camX) * scale + halfViewW, (worldY - camY) * scale + halfViewH);
+			const glm::vec2 world = transform.toWorld({animVerts[i].x, animVerts[i].y});
+			animVertices.emplace_back((world.x - camX) * scale + halfViewW, (world.y - camY) * scale + halfViewH);
 			if (hasMeshColors) {
 				const auto& mc = mesh->colors[i];
 				animColors.emplace_back(

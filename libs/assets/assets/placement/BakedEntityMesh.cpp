@@ -1,5 +1,7 @@
 #include "BakedEntityMesh.h"
 
+#include "InstanceTransform.h"
+
 #include <algorithm>
 #include <cmath>
 #include <unordered_map>
@@ -68,34 +70,15 @@ namespace assets {
 				float worldHeight = heights.of(templateMesh) * entityScale;
 				bucket.maxEntityHeight = std::max(bucket.maxEntityHeight, worldHeight);
 
-				float posX = entity->position.x;
-				float posY = entity->position.y;
-				bool  hasMeshColors = templateMesh->hasColors();
-
-				constexpr float kRotationEpsilon = 0.0001F;
-				bool			noRotation = std::abs(entity->rotation) < kRotationEpsilon;
-
-				float cosR = 1.0F;
-				float sinR = 0.0F;
-				if (!noRotation) {
-					cosR = std::cos(entity->rotation);
-					sinR = std::sin(entity->rotation);
-				}
+				const InstanceTransform transform(entity->position, entity->rotation, entityScale);
+				const bool				hasMeshColors = templateMesh->hasColors();
 
 				for (size_t i = 0; i < templateMesh->vertices.size(); ++i) {
-					const auto& v = templateMesh->vertices[i];
-					BakedVertex baked;
-
-					float sx = v.x * entityScale;
-					float sy = v.y * entityScale;
-
-					if (noRotation) {
-						baked.position.x = sx + posX;
-						baked.position.y = sy + posY;
-					} else {
-						baked.position.x = sx * cosR - sy * sinR + posX;
-						baked.position.y = sx * sinR + sy * cosR + posY;
-					}
+					const auto&		v = templateMesh->vertices[i];
+					BakedVertex		baked;
+					const glm::vec2 world = transform.toWorld({v.x, v.y});
+					baked.position.x	  = world.x;
+					baked.position.y	  = world.y;
 
 					if (hasMeshColors) {
 						const auto& meshColor = templateMesh->colors[i];

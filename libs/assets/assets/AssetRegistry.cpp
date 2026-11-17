@@ -525,19 +525,16 @@ namespace assets {
 		/// path and the collision path flatten identically.
 		constexpr float kSvgCurveTolerance = 0.5F;
 
-		/// The SVG-unit -> world-meter frame shared by the render path (getTemplate
-		/// scales the mesh by scaleFactor) and the collision path
-		/// (loadCollisionFromSvgMetadata maps metadata points into the local-meter
-		/// frame). They MUST agree or the collider drifts off the sprite, so the vertex
-		/// bbox, scaleFactor (height-normalized), and center live here once. `center` is
-		/// the full vertex-bbox center -- DynamicEntityRenderSystem centers the sprite on
-		/// the entity using it, so the collision frame's origin matches. NB: the bbox is
-		/// over path vertices; an asymmetric stroked outline could shift the render center
-		/// by up to half the stroke width, so keep colliders fill-only.
+		/// A simple (SVG) def's pivot frame: SVG user units to meters about the def's pivot, the
+		/// centre of the drawing's path-vertex bbox, scaled so the bbox is worldHeight tall.
+		/// The template mesh, the metadata collider and the motion pivots all go through
+		/// toPivotMeters, so they share the one origin an entity's position stands for.
 		struct SvgMeterFrame {
 			bool	  valid		  = false;
 			float	  scaleFactor = 1.0F;
 			glm::vec2 center{0.0F, 0.0F};
+
+			[[nodiscard]] glm::vec2 toPivotMeters(glm::vec2 svgPoint) const { return (svgPoint - center) * scaleFactor; }
 		};
 
 		SvgMeterFrame computeSvgMeterFrame(const std::vector<renderer::LoadedSVGShape>& shapes, float worldHeight) {
@@ -692,9 +689,7 @@ namespace assets {
 			return std::nullopt;
 		}
 
-		// Convert an authored SVG point into the collision local-meter frame, the same
-		// frame the procedural collider uses (entity.position == scaled-mesh bbox center).
-		auto toLocalMeters = [&](const glm::vec2& p) -> glm::vec2 { return (p - frame.center) * frame.scaleFactor; };
+		auto toLocalMeters = [&](const glm::vec2& p) -> glm::vec2 { return frame.toPivotMeters(p); };
 
 		const std::string type = shapeNode.attribute("type").as_string();
 
@@ -1294,6 +1289,10 @@ namespace assets {
 			}
 		}
 
+		// Every shape set so far counts now, so no later early return in a load leaves the reach short;
+		// prewarmTreeVariants records the aged defs' shapes it sets.
+		recordCollisionReach({loadedNames.begin() + static_cast<std::ptrdiff_t>(firstNew), loadedNames.end()});
+
 		LOG_DEBUG(Engine, "Loaded %d asset definitions from %s", loadedCount, xmlPath.c_str());
 		return loadedCount > 0;
 	}
@@ -1470,6 +1469,21 @@ namespace assets {
 			return maxY - minY;
 		}
 
+		// How far a collision shape reaches from its pivot.
+		float collisionReach(const CollisionShape& shape) {
+			float reachSq = 0.0F;
+			if (shape.type == CollisionShapeType::Rect) {
+				for (const glm::vec2& corner : shape.rectCornersLocal()) {
+					reachSq = std::max(reachSq, glm::dot(corner, corner));
+				}
+			} else if (shape.type == CollisionShapeType::Polygon) {
+				for (const glm::vec2& point : shape.pointsMeters) {
+					reachSq = std::max(reachSq, glm::dot(point, point));
+				}
+			}
+			return std::sqrt(reachSq);
+		}
+
 		void raiseTo(std::atomic<float>& target, float value) {
 			float current = target.load(std::memory_order_relaxed);
 			while (value > current && !target.compare_exchange_weak(current, value, std::memory_order_relaxed)) {
@@ -1540,18 +1554,18 @@ namespace assets {
 				return out;
 			}
 
-			const SvgMeterFrame frame		= computeSvgMeterFrame(shapes, def.worldHeight);
-			const float			scaleFactor = frame.valid ? frame.scaleFactor : 1.0F;
-			LOG_INFO(Engine, "SVG '%s': worldHeight=%.2f, scaleFactor=%.4f", def.defName.c_str(), def.worldHeight, scaleFactor);
+			const SvgMeterFrame frame = computeSvgMeterFrame(shapes, def.worldHeight);
+			LOG_INFO(Engine, "SVG '%s': worldHeight=%.2f, scaleFactor=%.4f", def.defName.c_str(), def.worldHeight, frame.scaleFactor);
 
 			// Tessellate each shape (baking solid/gradient per-vertex colors) in SVG space, then
-			// normalize the whole mesh to worldHeight.
+			// move the whole mesh into the def's pivot frame.
 			for (const auto& shape : shapes) {
 				renderer::appendShapeMesh(shape, mesh);
 			}
 			for (auto& v : mesh.vertices) {
-				v.x *= scaleFactor;
-				v.y *= scaleFactor;
+				const glm::vec2 local = frame.toPivotMeters({v.x, v.y});
+				v.x					  = local.x;
+				v.y					  = local.y;
 			}
 
 			if (mesh.vertices.empty()) {
@@ -1730,6 +1744,7 @@ namespace assets {
 			}
 		}
 		if (jobs.empty()) {
+			recordCollisionReach(names);
 			return;
 		}
 		// The def's mature variant 0 first, so filing the rest finds its routing decided. Ordered by
@@ -1760,12 +1775,32 @@ namespace assets {
 			}
 			insertTemplate(*job.def, job.traits, std::move(job.built));
 		}
+		recordCollisionReach(names);
 		LOG_INFO(
 			Engine,
 			"Prewarmed %zu tree variants in %.1f ms",
 			jobs.size(),
 			std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()
 		);
+	}
+
+	void AssetRegistry::recordCollisionReach(const std::vector<std::string>& defNames) {
+		for (const std::string& name : defNames) {
+			const auto found = definitions.find(name);
+			if (found == definitions.end()) {
+				continue;
+			}
+			const AssetDefinition& def	 = found->second;
+			// At least 1: what the player places and what dev spawn makes stand at scale 1, whatever the
+			// def's placement range.
+			const float scale = std::max({1.0F, std::abs(def.placement.scale.min), std::abs(def.placement.scale.max)});
+			for (const CollisionShape& shape : def.collisions) {
+				if (shape.blocks()) {
+					raiseTo(largestCollisionReach, collisionReach(shape) * scale);
+					raiseTo(largestCollidingScale, scale);
+				}
+			}
+		}
 	}
 
 	void AssetRegistry::checkCollisionVariantIndependence(ValidationReport& report) {
@@ -1935,11 +1970,6 @@ namespace assets {
 
 		const renderer::TessellatedMesh* tmpl = getTemplate(templateId);
 		if (tmpl != nullptr && !tmpl->vertices.empty() && !tmpl->indices.empty()) {
-			// Bounds centre of the whole drawn mesh in the template frame == the dynamic render
-			// path's -centerOffset, so the shared instance transform, outline, and hit-test never drift.
-			const Foundation::Rect b = renderer::computeBounds(*tmpl);
-			sil.boundsCenterMeters	 = {b.x + b.width * 0.5F, b.y + b.height * 0.5F};
-
 			// Rasterize the ACTUAL rendered geometry: expand the tessellated triangles into
 			// the template-local mm frame. This captures fills AND stroke bands (e.g. a reed's
 			// stroke stem, which a fill-contour silhouette would miss), so the outline hugs
@@ -2029,7 +2059,7 @@ namespace assets {
 						for (auto& drv : clip.drivers) {
 							const auto& nodes = nodesFor(drv.part);
 							if (drv.node >= 0 && static_cast<size_t>(drv.node) < nodes.size()) {
-								drv.pivot	 = nodes[static_cast<size_t>(drv.node)] * sf; // scaled, uncentered (= template space)
+								drv.pivot	 = frame.toPivotMeters(nodes[static_cast<size_t>(drv.node)]);
 								drv.hasPivot = true;
 							} else {
 								LOG_WARNING(
@@ -2233,6 +2263,8 @@ namespace assets {
 		}
 		definitions.clear();
 		clearCaches();
+		largestCollisionReach.store(0.0F, std::memory_order_relaxed);
+		largestCollidingScale.store(0.0F, std::memory_order_relaxed);
 		groupIndex.clear();
 		// Reset the string-interning index too (mirrors clearDefinitions); otherwise name<->id
 		// and capability lookups return stale mappings for now-destroyed defs until a reload.
@@ -2529,6 +2561,7 @@ namespace assets {
 			m_edibleItemIds.erase(edibleIdAt);
 		}
 
+		recordCollisionReach({defName});
 		LOG_DEBUG(Engine, "Registered test definition: %s", defName.c_str());
 	}
 
@@ -2552,6 +2585,8 @@ namespace assets {
 	void AssetRegistry::clearDefinitions() {
 		definitions.clear();
 		clearCaches();
+		largestCollisionReach.store(0.0F, std::memory_order_relaxed);
+		largestCollidingScale.store(0.0F, std::memory_order_relaxed);
 		groupIndex.clear();
 		m_defNameToId.clear();
 		m_idToDefName.clear();

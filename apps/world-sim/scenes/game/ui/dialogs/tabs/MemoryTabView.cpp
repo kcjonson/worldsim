@@ -82,6 +82,7 @@ namespace world_sim {
 				);
 				for (std::size_t i = 0; i < kMaxRowsPerCategory; ++i) {
 					rows[i] = addChild<ui::Component>({
+						.id = "memory_row",
 						.size = {ui::kAuto, kRowHeight},
 						.layout = {.display = ui::Display::Flex, .alignItems = ui::AlignItems::Center},
 					});

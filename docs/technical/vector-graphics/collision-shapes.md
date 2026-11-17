@@ -69,13 +69,34 @@ world-AABB fast path.
 3. **SVG `<metadata>` for simple (SVG-backed) assets** — `<metadata><collision>
    <shape type="aabb" min="x,y" max="x,y"/></collision></metadata>` (or a
    `type="polygon" vertices="x1,y1 ..."`), read via a pugixml second pass over the
-   .svg (NanoSVG ignores `<metadata>`) at load. The coords convert to the *same*
-   local-meter frame the render mesh uses — `(svgPoint - svgBboxCenter) *
-   scaleFactor`, where `scaleFactor = worldHeight / svgHeight` over the loaded
-   path-vertex bbox — via the shared `computeSvgMeterFrame` helper that
-   `getTemplate` also uses, so the collider can't drift off the sprite. SVG
-   metadata wins over XML for simple assets. First consumer:
+   .svg (NanoSVG ignores `<metadata>`) at load. The coords convert into the
+   def's pivot frame by `SvgMeterFrame::toPivotMeters`, `(svgPoint - pivot) *
+   scaleFactor` with `scaleFactor = worldHeight / svgHeight` over the loaded
+   path-vertex bbox, the same conversion the template mesh and the motion pivots
+   go through. SVG metadata wins over XML for simple assets. First consumer:
    `assets/world/misc/BigRock` (a tree-sized boulder you can't walk through).
+
+## One pivot per def
+
+Every def has one pivot: the point an entity's position stands for, as a Unity or Godot
+sprite's pivot is. The registry builds every template mesh about it and stores every
+collision shape about it, so nothing downstream converts anything:
+
+- A simple (SVG) def's pivot is the centre of its drawing's path-vertex bbox.
+  `buildTemplate` moves the mesh there; its metadata collider, an XML collider, and its
+  motion pivots are in the same frame.
+- A procedural (Lua) def's pivot is its generator's `(0,0)`. The trees put their trunk
+  foot there, which is where their collider, depth anchor, crown spacing, and harvest
+  stand points want the position to be.
+
+Every draw path (baked and instanced statics, dynamic entities, piles, the packaged
+crate, the placement ghost, the asset manager), the selection outline and hit-test, and
+the collider place the pivot-frame shape at the entity's position by
+`world = R(rotation) * (local * scale) + position`
+(`assets::InstanceTransform`, `libs/assets/assets/placement/InstanceTransform.h`; the GPU instancing shader applies the same formula). The depth anchor reads the
+footprint in the same frame, turned by the entity's rotation (`anchorLocalY`).
+`PlacedObstacle.ColliderCornerLandsOnTheDrawnCorner` pins the collider to the drawing for
+both asset types, and `InstanceTransform.BakedStaticsEmitIt` pins the bake to the transform.
 
 ## Consumers (the collider feeds two systems at the same clearance)
 
@@ -89,7 +110,12 @@ world-AABB fast path.
   an agent **center** out of the rect inflated by the **same** 0.05 m pad (a
   point-vs-oriented-OBB push-out), so an agent shoved into a trunk by other
   forces can't walk through it. It does not use the agent's disc radius as the
-  clearance.
+  clearance. It finds rects by entity position within
+  `nav::placedObstacleReachMeters` (the farthest any def's collider stands from
+  its pivot at the def's largest placement scale, `AssetRegistry::maxCollisionReachMeters`,
+  recorded as each def's shapes are set, plus the pad's corner at the largest
+  colliding scale), the same reach nav grows its limits' obstacle query by, so a
+  collider far from its pivot is never missed.
 
 The two boundaries coincide on purpose: the pad is applied in local space
 *before* the entity scale in both (`scale * (halfExtent + pad)`), so nav and

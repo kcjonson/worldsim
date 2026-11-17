@@ -216,8 +216,8 @@ namespace world_sim {
 
 		/// In-progress drawing feedback (preview polygon/chain, snap guides,
 		/// opening ghost). Called after the entity pass, alongside the placement
-		/// ghost, below UI.
-		void renderPreview(int viewportW, int viewportH);
+		/// ghost, below UI. Its text is sized in ui px, `uiScale` logical px each.
+		void renderPreview(int viewportW, int viewportH, float uiScale);
 
 	  private:
 		/// Draw the cached wall bands + junction polygons that intersect
@@ -247,7 +247,7 @@ namespace world_sim {
 		/// Foundation Add / Subtract: the outline the edit would produce (merged or
 		/// remainder), colorized for validity, with the reason next to the cursor.
 		/// Drawn under the regular polygon preview. INTERIM.
-		void renderEditOutlinePreview(int viewportW, int viewportH);
+		void renderEditOutlinePreview(int viewportW, int viewportH, float uiScale);
 
 	  public:
 		// --- Status for the config strip ---

@@ -2,8 +2,13 @@
 
 #include <ui/Context.h>
 #include <ui/components/Button.h>
+#include <utils/Log.h>
 
+#include <algorithm>
+#include <array>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace world_sim {
 
@@ -19,9 +24,27 @@ namespace world_sim {
 		constexpr const char* kTabTasks = "dossier_tasks";
 		constexpr const char* kTabLog = "dossier_log";
 
-		// The prototype dossier's proportions, 760x900 design px.
+		// The bar's tabs, in order, and every tab the dossier measures for its height.
+		struct DossierTab {
+			const char* id;
+			const char* label;
+		};
+		constexpr std::array<DossierTab, 8> kTabs{{
+			{.id = kTabBio, .label = "Bio"},
+			{.id = kTabNeeds, .label = "Needs"},
+			{.id = kTabSkills, .label = "Skills"},
+			{.id = kTabSocial, .label = "Social"},
+			{.id = kTabGear, .label = "Gear"},
+			{.id = kTabMemory, .label = "Memory"},
+			{.id = kTabTasks, .label = "Tasks"},
+			{.id = kTabLog, .label = "Log"},
+		}};
+
+		// The prototype dossier's width; its height is what its tallest tab needs. Held like the prototype's modal to
+		// 92% x 86% of the window, the tab scrolling in what's left.
 		constexpr float kDialogWidth = 760.0F;
-		constexpr float kDialogHeight = 900.0F;
+		constexpr float kDialogMaxWidthPercent = 92.0F;
+		constexpr float kDialogMaxHeightPercent = 86.0F;
 		constexpr float kAvatarSize = 72.0F;
 		constexpr float kBandGap = 20.0F;
 		constexpr float kStatRowGap = 8.0F;
@@ -37,12 +60,14 @@ namespace world_sim {
 		fresh = true;
 		model.invalidateTasks();
 		if (dialog.get() == nullptr) {
+			sized = false;
 			dialog = ui::Dialog::open(
 				opener,
 				{
+					.id = "colonist_dossier",
 					.title = "Colonist Details",
 					.kicker = "Personnel File",
-					.panelSize = {kDialogWidth, kDialogHeight},
+					.panelSize = {kDialogWidth, ui::kAuto},
 					.modal = false,
 					.footer = true,
 					.onClose =
@@ -56,6 +81,7 @@ namespace world_sim {
 				player
 			);
 			if (ui::Dialog* shown = dialog.get()) {
+				shown->panel().get()->setMaxSize({ui::percent(kDialogMaxWidthPercent), ui::percent(kDialogMaxHeightPercent)});
 				build(*shown);
 			}
 		}
@@ -63,6 +89,9 @@ namespace world_sim {
 			bar->setSelectedId(kTabBio);
 		}
 		showTab(kTabBio);
+		if (ui::Component* area = tabArea.get()) {
+			area->scrollTo({0.0F, 0.0F});
+		}
 	}
 
 	void ColonistDetailsDialog::close() {
@@ -109,21 +138,20 @@ namespace world_sim {
 			{.size = cell, .layout = {.flexGrow = 1.0F}, .label = "Mood", .value = "--", .controlSize = ui::ControlSize::Sm}
 		);
 
+		std::vector<ui::Tab> tabs;
+		tabs.reserve(kTabs.size());
+		for (const DossierTab& tab : kTabs) {
+			tabs.push_back({.id = tab.id, .label = tab.label});
+		}
 		tabBar = content.addChild<ui::TabBar>({
-			.tabs =
-				{{.id = kTabBio, .label = "Bio"},
-				 {.id = kTabNeeds, .label = "Needs"},
-				 {.id = kTabSkills, .label = "Skills"},
-				 {.id = kTabSocial, .label = "Social"},
-				 {.id = kTabGear, .label = "Gear"},
-				 {.id = kTabMemory, .label = "Memory"},
-				 {.id = kTabTasks, .label = "Tasks"},
-				 {.id = kTabLog, .label = "Log"}},
+			.id = "dossier_tabs",
+			.tabs = std::move(tabs),
 			.selectedId = kTabBio,
 			.onSelect = [this](const std::string& tabId) { showTab(tabId); },
 		});
 		// Takes what the band and the bar leave, and scrolls a taller tab.
 		tabArea = content.addChild<ui::Component>({
+			.id = "dossier_tab_area",
 			.size = {ui::kAuto, 0.0F},
 			.layout =
 				{.display = ui::Display::Flex,
@@ -135,6 +163,7 @@ namespace world_sim {
 
 		const ui::Ref<ui::Component> footer = shown.footer();
 		footer.addChild<ui::Button>({
+			.id = "dossier_close",
 			.label = "Close",
 			.variant = ui::ButtonVariant::Ghost,
 			.controlSize = ui::ControlSize::Sm,
@@ -158,6 +187,15 @@ namespace world_sim {
 		if (area == nullptr || (tabId == currentTab && tabView.get() != nullptr)) {
 			return;
 		}
+		mountTab(tabId);
+		area->scrollTo({0.0F, 0.0F});
+		if (!fresh) {
+			feedTab();
+		}
+	}
+
+	void ColonistDetailsDialog::mountTab(const std::string& tabId) {
+		ui::Component* area = tabArea.get();
 		currentTab = tabId;
 		if (tabView.get() != nullptr) {
 			area->removeChild(tabView);
@@ -178,11 +216,38 @@ namespace world_sim {
 			tabView = tasksTab = area->addChild<TasksTabView>({});
 		} else if (tabId == kTabLog) {
 			tabView = logTab = area->addChild<LogTabView>({});
+		} else {
+			LOG_ERROR(Game, "ColonistDetailsDialog: no view for the tab \"%s\"", tabId.c_str());
 		}
-		area->scrollTo({0.0F, 0.0F});
-		if (!fresh) {
-			feedTab();
+	}
+
+	// The panel's height for this opening: what it needs around the tab area, and the tallest tab as the model has it
+	// now, each tab mounted, fed and laid out once. The shown tab goes last, so it stays mounted. Held until it closes:
+	// a tab switch, new data or another colonist doesn't move it, and a tab that outgrows it scrolls.
+	void ColonistDetailsDialog::sizeToContent() {
+		ui::Rectangle&	  panel = *dialog.get()->panel().get();
+		ui::Context&	  context = *panel.getContext();
+		const std::string shownTab = currentTab;
+		float			  around = 0.0F;
+		float			  tallest = 0.0F;
+		const auto		  measure = [&](const std::string& tabId) {
+			   mountTab(tabId);
+			   feedTab();
+			   context.layout();
+			   around = panel.getSize().y - tabArea.get()->getSize().y;
+			   if (const ui::Component* view = tabView.get()) {
+				   tallest = std::max(tallest, view->getBounds().height);
+			   }
+		};
+		panel.setSize({kDialogWidth, ui::kAuto});
+		for (const DossierTab& tab : kTabs) {
+			if (tab.id != shownTab) {
+				measure(tab.id);
+			}
 		}
+		measure(shownTab);
+		panel.setSize({kDialogWidth, around + kTabTopPad + tallest});
+		sized = true;
 	}
 
 	void ColonistDetailsDialog::update(ecs::World& world, float deltaTime) {
@@ -193,13 +258,17 @@ namespace world_sim {
 		if (!model.isValid() || (!fresh && change == ColonistDetailsModel::UpdateType::None)) {
 			return;
 		}
-		fresh = false;
+		const bool opened = std::exchange(fresh, false);
 		// The title is the colonist's name; the kicker stays "Personnel File".
 		if (dialog.get()->getTitle() != model.bio().name) {
 			dialog.get()->setTitle(model.bio().name);
 		}
 		showHeader();
-		feedTab();
+		if (opened && !sized) {
+			sizeToContent();
+		} else {
+			feedTab();
+		}
 	}
 
 	void ColonistDetailsDialog::showHeader() {

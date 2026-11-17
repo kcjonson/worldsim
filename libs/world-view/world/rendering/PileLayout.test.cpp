@@ -18,16 +18,14 @@ TEST(PileLayout, SpriteCountFollowsFillFraction) {
 	EXPECT_EQ(pileSpriteCount(500, UINT32_MAX), 5U);
 }
 
-// A single unit draws where a lone dynamic entity draws, so a pile of one looks unchanged.
-TEST(PileLayout, SingleUnitMatchesDynamicTransform) {
+// A single unit draws where a lone dynamic entity draws, its pivot at the entity's position.
+TEST(PileLayout, SingleUnitDrawsAtThePosition) {
 	const glm::vec2 pos{10.0F, -4.0F};
-	const glm::vec2 boundsCenter{0.5F, 0.2F};
-	const auto		pile = pileLayout(pos, "Wood", 0, 1.0F, {1, 1, 1, 1}, Foundation::Rect{0.0F, 0.0F, 1.0F, 0.4F}, {0.4F, 40}, 1);
+	const auto		pile = pileLayout(pos, "Wood", 0, 1.0F, {1, 1, 1, 1}, Foundation::Rect{-0.5F, -0.2F, 1.0F, 0.4F}, {0.4F, 40}, 1);
 	ASSERT_EQ(pile.count, 1U);
-	const glm::vec2 want = worldview::dynamicInstanceTransform(pos, 1.0F, boundsCenter).origin;
-	EXPECT_FLOAT_EQ(pile.sprites[0].position.x, want.x);
-	EXPECT_FLOAT_EQ(pile.sprites[0].position.y, want.y);
-	EXPECT_FLOAT_EQ(pile.sprites[0].anchorY, want.y + 0.4F);
+	EXPECT_FLOAT_EQ(pile.sprites[0].position.x, pos.x);
+	EXPECT_FLOAT_EQ(pile.sprites[0].position.y, pos.y);
+	EXPECT_FLOAT_EQ(pile.sprites[0].anchorY, pos.y + 0.2F);
 }
 
 // A full stack of 0.4 m logs stays a compact heap centered on the entity: sprite centers

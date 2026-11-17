@@ -316,7 +316,7 @@ namespace {
 					[this](const std::string& material) {
 						if (m_drawingSystem) {
 							m_drawingSystem->setActiveMaterial(material);
-							refreshThicknessPresets(material);
+							gameUI->showWallThicknesses(assets::ConstructionRegistry::Get(), material);
 						}
 					},
 				.onConstructionThicknessSelected =
@@ -333,21 +333,6 @@ namespace {
 						}
 					}
 			});
-
-			// Populate Production dropdown with placeable stations (recipes where station="none")
-			{
-				auto& recipeRegistry = assets::RecipeRegistry::Get();
-				auto  innateRecipes = recipeRegistry.getInnateRecipes();
-
-				std::vector<std::pair<std::string, std::string>> productionItems;
-				for (const auto* recipe : innateRecipes) {
-					// Only include recipes that don't require a station (directly placeable)
-					if (recipe->isStationless() && !recipe->outputs.empty()) {
-						productionItems.emplace_back(recipe->outputs[0].defName, recipe->label);
-					}
-				}
-				gameUI->setProductionItems(productionItems);
-			}
 
 			// Initialize ECS World
 			initializeECS();
@@ -691,18 +676,7 @@ namespace {
 				.chunks = m_chunkManager.get(),
 			});
 
-			// Populate the config strip's material cards from construction config.
-			{
-				std::vector<std::pair<std::string, float>> materials;
-				for (const auto& [name, def] : assets::ConstructionRegistry::Get().getAllMaterials()) {
-					materials.emplace_back(name, def.costRatePerSquareMeter);
-				}
-				gameUI->setConstructionMaterials(materials);
-			}
-
-			// Populate the config strip's wall thickness-preset cards for the active
-			// material (Wood). Refreshed in onConstructionMaterialSelected too.
-			refreshThicknessPresets(m_drawingSystem->activeMaterial());
+			gameUI->showCatalogue(assets::RecipeRegistry::Get(), assets::ConstructionRegistry::Get(), m_drawingSystem->activeMaterial());
 		}
 
 		// What salal's ui didn't take: Escape, the world's hotkeys, a release for the drawing tool, placement or
@@ -807,8 +781,9 @@ namespace {
 			};
 
 			// The drawing tool's and placement's previews follow the pointer every frame, so they track the world
-			// moving under a still cursor, but not while the pointer is over the ui.
-			if (frame.input.pointerInWindow && !ui().hitTest(frame.input.pointer).valid()) {
+			// moving under a still cursor, but not while the pointer is over the ui. The pointer is in the window's
+			// logical px, which the world takes, and the ui's hit test in its own.
+			if (frame.input.pointerInWindow && !ui().hitTest(frame.input.pointer / ui().getScale()).valid()) {
 				int logicalW = 0;
 				int logicalH = 0;
 				Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
@@ -1000,7 +975,7 @@ namespace {
 			// rides above the entities like the placement ghost; committed
 			// construction already went out in the ground sub-layer before the
 			// entity pass.
-			m_drawingSystem->renderPreview(w, h);
+			m_drawingSystem->renderPreview(w, h, ui().getScale());
 
 			// Terrain polygon debug overlay (waterline rings + clipped navRings,
 			// per chunk), sitting just above the tile ground. No-op unless on (G).
@@ -1008,7 +983,7 @@ namespace {
 
 			// Rooms overlay (tint/outline/label) above committed construction and
 			// entities. No-op unless toggled on (R).
-			m_roomOverlay->render(w, h);
+			m_roomOverlay->render(w, h, ui().getScale());
 
 			// Nav debug overlay (navmesh wireframe + agent routes) above wall bands.
 			// No-op unless toggled on (N).
@@ -1609,19 +1584,6 @@ namespace {
 
 		/// Handle furniture placement request from info panel.
 		/// Enters placement mode to relocate the selected packaged furniture.
-		/// Refresh the config strip's wall thickness-preset cards for `material`.
-		/// A material with no wall presets clears the cards (the wall tool then
-		/// rejects commits with a "no wall preset" toast).
-		void refreshThicknessPresets(const std::string& material) {
-			std::vector<world_sim::ConstructionConfigStrip::ThicknessPresetInfo> presets;
-			if (const auto* mat = assets::ConstructionRegistry::Get().getWallMaterial(material)) {
-				for (const auto& p : mat->wallThicknesses) {
-					presets.push_back({p.name, p.thicknessMeters});
-				}
-			}
-			gameUI->setConstructionThicknessPresets(presets);
-		}
-
 		void handlePlaceFurniture() {
 			// Get currently selected furniture from selection system
 			const auto& sel = m_selectionSystem->current();
@@ -1739,8 +1701,7 @@ namespace {
 		GroundSurvey surveyGround(const std::string& dropDef) {
 			auto& registry = assets::AssetRegistry::Get();
 
-			// Computed at each pile's own scale: the dynamic transform re-centers by the unscaled bbox
-			// center, so the footprint isn't linear in scale and a scale-1 radius can't be multiplied.
+			// Computed at each pile's own scale, from the pile layout itself.
 			std::unordered_map<std::string, std::pair<Foundation::Rect, worldview::PileItem>> layoutInputsByDef;
 			auto pileRadius = [&](const std::string& pileDef, float scale) {
 				auto it = layoutInputsByDef.find(pileDef);

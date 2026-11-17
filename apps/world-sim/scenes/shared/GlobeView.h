@@ -60,7 +60,7 @@ class GlobeView {
 	// zoom gate). For scenes that drive the camera from held keys.
 	void panCamera(float dYaw, float dPitch) { camera.nudge(dYaw, dPitch); }
 
-	// Render the globe into `rect` (logical UI coordinates, top-left origin;
+	// Render the globe into `rect` (the window's logical px, top-left origin;
 	// may extend past the viewport — the framebuffer clips) on the window
 	// `window`. `alpha` fades the disc; around it the blit is transparent, so
 	// the scene backdrop shows.
@@ -71,10 +71,10 @@ class GlobeView {
 	// true when the event was consumed.
 	bool handleInput(ui::PointerEvent& event, const Foundation::Rect& rect, bool cycleOnRightClick);
 
-	// Ray-pick the lat/lon under a logical-coordinate position inside rect.
+	// Ray-pick the lat/lon under a position inside rect, both in one space.
 	std::optional<planetview::LatLon> pick(Foundation::Vec2 pos, const Foundation::Rect& rect) const;
 
-	// Project a lat/lon to logical coordinates inside rect (false if behind globe).
+	// Project a lat/lon to a position inside rect, in rect's space (false if behind globe).
 	bool projectLatLon(planetview::LatLon site, const Foundation::Rect& rect,
 	                   float& outX, float& outY) const;
 
