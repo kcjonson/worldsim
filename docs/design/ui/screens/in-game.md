@@ -126,10 +126,7 @@ This is a read-only summary. The full gear paper-doll is in the Colonist Details
 
 ### Log tab
 
-A short chronological log (mono, `--fs-xs`, `--text-dim`). Mock entries:
-- 09:40 — Started Foundation in Sector 4
-- 09:12 — Hauled Wood ×4 to Stockpile A
-- 08:30 — Ate a simple meal
+The colonist's thoughts, the same blocks as the dossier's [Log tab](#log-tab-1), newest first. The list is at most 240px tall and scrolls inside the panel.
 
 ### Actions row
 
@@ -261,7 +258,7 @@ Opened by double-clicking a colonist card (roster or info panel eye button). A `
 
 > **Implementation status (in-game C++ dossier).** The dialog shell, persistent header, kicker/footer, 8-tab bar, and the Bio / Health / Memory / Tasks tab layouts are built and match the prototype at the element level. Remaining gaps are tracked in Specboard under WOR-674, In-game dossier fidelity (remaining tabs and footer):
 > - **Gear tab — not implemented to the prototype.** The in-game tab is a sparse hands + inventory readout; the full paper-doll (3-column worn slots + figure + hand slots, weight-based pack, belt slots, carry meter) is **not built**. This is the biggest remaining gap.
-> - **Skills, Social, Log — placeholders.** Rendered as honest "not yet simulated" empty states; no backing systems exist yet (no skills, relationships, or activity-log systems).
+> - **Skills, Social — placeholders.** Rendered as honest "not yet simulated" empty states; no backing systems exist yet (no skills or relationships systems).
 > - **Bio traits** render as plain text, not `Badge` chips. **Tasks** current-task panel is simpler than the prototype (no progress bar / type / distance breakdown). **Memory** entity rows show map coordinates, not distance-from-colonist, and "Threats" is a placeholder category.
 > - **Footer:** Close works; **Work Priorities** and **Draft** are visual-only (no backing systems).
 > - Size: the dialog is the prototype's 760 ui px wide, and as tall as its tallest tab needs for that colonist, measured when it opens and held until it closes, so switching tabs, new data, or pressing the eye button again for the same or another colonist never resizes it; a tab that later outgrows it scrolls. The interface scales to the window ([Interface scaling](../ui-scale-setting.md)). Its height is capped at 86% of the canvas (width 92%) and the tab area scrolls in what's left, so it fits the smallest canvas. The Gear tab's paper doll is the tallest for most colonists (about 480 ui px of tab, a 770 ui px dialog), so the Bio tab sits in more room than the mock's, which sized each tab on its own.
@@ -285,9 +282,17 @@ Backstory paragraph (`--fs-md`, `--lh-loose`). `Divider` "Traits." Trait `Badge`
 
 ![Health tab](../mocks/in-game-dossier-health.png)
 
-The colonist's Needs + Mood system. A full-width `Meter` for Mood (tone `auto`) at the top, captioned that mood is computed from the needs below. Then the eight needs in a 2-column grid; each row is an icon (14px, `--text-dim`) + `Meter` (size `sm`) colored against that need's *own* thresholds: `crit` below its critical threshold, `warn` below its seek threshold, else `ok`.
+The colonist's Needs + Mood system. A full-width `Meter` for Mood (tone `auto`) at the top, captioned that mood eases toward a target made of the needs and the thoughts the colonist holds. Then the eight needs in a 2-column grid; each row is an icon (14px, `--text-dim`) + `Meter` (size `sm`) colored against that need's *own* thresholds: `crit` below its critical threshold, `warn` below its seek threshold, else `ok`.
 
 Two groups: **Vital Needs** (Hunger, Thirst, Energy, Bladder, Digestion — the five the AI acts on today) and **Comfort** (Hygiene, Recreation, Temperature — tracked but not yet pursued, rendered slightly dimmed), with a note that colonists don't act on comfort needs yet.
+
+Beside the needs, a **Mood breakdown** divider over the parts of the mood target, the same contributions the target is summed from, so they add up to it:
+
+- Needs: the needs' share, signed (mono, "-5.6").
+- One row per held thought with a mood effect, in arrival order: the event's label (" x3" after a stack), its time left under it in the small print ("22 hours left", rounded up; "while soaked" for one held by a condition), and its amount at the right ("-10", a stack's whole amount). With none, the small print reads "No thought is moving this colonist's mood."
+- Target: the target as a percentage. 100 plus the needs' share plus every row is the target before it is clamped to 0 to 100.
+
+The value on the meter eases toward the target, so the two differ while mood moves.
 
 A **Body & Ailments** divider closes the tab over a dashed empty-state panel ("No injuries or ailments / Wounds, illness, and treatment arrive with the medical update") — the injury/medical system isn't built yet.
 
@@ -341,12 +346,13 @@ Trailing muted note: colonists pick the highest-priority job they know about on 
 
 #### Log tab
 
-Chronological mono log entries (`--fs-xs`, `--text-dim`). Mock entries (newest first):
-- 09:40 — Started Foundation in Sector 4
-- 09:12 — Hauled Wood ×4 to Stockpile A
-- 08:30 — Ate a simple meal
-- 07:55 — Woke up (slept on the ground, −4 mood)
-- 06:10 — Finished repairing the salvage cutter
+The colonist's thoughts ([Thoughts](../../game-systems/colonists/thoughts.md)), every one recorded, newest first by the latest arrival (a repeat folded into a held thought moves it up). Each thought is one block:
+
+- When it arrived, as the game date and time (mono, `--fs-2xs`, `--text-faint`): "Day 2, 07:55".
+- The event, the feeling, and the mood adjustment in one line (`--fs-sm`, `--text`): "Slept on the ground. Miserable. -10 mood, 1 day". A stack shows its count and its whole amount ("Bottled up x3. Resigned. -6 mood, 1 day"); one held by a condition reads "while" and its cause ("-6 mood, while soaked"); one with no mood effect has no mood part ("Very hungry. Annoyed.").
+- The quip in quotes, when the thought has one (`--fs-sm`, `--text-dim`).
+
+Event and feeling names are the `label`s in `assets/config/thoughts`. With no thoughts, an empty state reads "No thoughts yet". The tab grows with the log and the tab area scrolls it; the dialog's size does not change.
 
 ### Dialog footer
 

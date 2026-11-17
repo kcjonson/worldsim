@@ -1,5 +1,4 @@
 #include "LogTabView.h"
-#include "MeterDraw.h"
 
 namespace world_sim {
 
@@ -8,9 +7,16 @@ namespace world_sim {
 		column.display = ui::Display::Flex;
 		column.flexDirection = ui::FlexDirection::Column;
 		setLayout(column);
-		addChild<tabs::EmptyState>({.title = "No activity log yet", .subtitle = "A chronological log arrives with the events update."});
+		list = addChild<ThoughtLogList>({.id = "dossier_log_list"});
 	}
 
-	void LogTabView::update(const LogData& /*data*/) {}
+	void LogTabView::update(const LogData& data) {
+		if (shown && data.revision == shownRevision) {
+			return;
+		}
+		shown = true;
+		shownRevision = data.revision;
+		list.get()->show(data.entries);
+	}
 
 } // namespace world_sim

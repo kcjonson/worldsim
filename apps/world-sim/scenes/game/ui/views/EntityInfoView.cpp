@@ -1,6 +1,5 @@
 #include "EntityInfoView.h"
 
-#include "scenes/game/ui/dialogs/tabs/MeterDraw.h"
 #include "scenes/shared/SalalUi.h"
 
 #include <ecs/components/Needs.h>
@@ -21,7 +20,8 @@ namespace world_sim {
 		constexpr float kIconButtonSize = 18.0F;
 		constexpr float kActionButtonHeight = 26.0F;
 		constexpr float kSlotButtonHeight = 28.0F;
-		constexpr float kLogEmptyHeight = 64.0F;
+		constexpr float kLogMaxHeight = 240.0F;
+		constexpr float kScrollbarReserve = 10.0F;
 		constexpr int	kBeltSlots = 2;
 
 		// One row of a generic selection's slots. A TextListSlot is its header row and a row per item; a
@@ -252,14 +252,18 @@ namespace world_sim {
 		gearPack =
 			gearBody.addChild<ui::Text>({.id = "entity_info_gear_pack", .style = dimText, .text = "Backpack: (empty)", .wrap = true});
 
-		// Log: a stub until an activity log exists.
-		logBody = root.addChild<tabs::EmptyState>({
+		// Log: the colonist's thoughts, newest first, scrolling past kLogMaxHeight.
+		logBody = root.addChild<ui::Component>({
 			.id = "entity_info_log",
 			.visible = false,
-			.minSize = {ui::kAuto, kLogEmptyHeight},
-			.title = "No activity log yet",
-			.subtitle = "A chronological log arrives with the events update.",
+			.maxSize = {ui::kAuto, kLogMaxHeight},
+			.layout =
+				{.display = ui::Display::Flex,
+				 .flexDirection = ui::FlexDirection::Column,
+				 .padding = {0.0F, kScrollbarReserve, 0.0F, 0.0F}},
+			.overflow = ui::Overflow::Scroll,
 		});
+		logList = logBody.addChild<ThoughtLogList>({.id = "entity_info_log_list"});
 
 		actionRow = root.addChild<ui::Component>({.id = "entity_info_actions", .layout = {.display = ui::Display::Flex, .gap = gap}});
 		const auto actionButton = [&](const char* id, const char* label, bool enabled, std::function<void()> press) {
@@ -298,6 +302,10 @@ namespace world_sim {
 	) {
 		const auto updateType =
 			model.refresh(selection, world, assetRegistry, recipeRegistry, modelCallbacks, constructionWorld, roomDetection);
+		if (const auto* colonist = std::get_if<ColonistSelection>(&selection);
+			colonist != nullptr && world.isAlive(colonist->entityId) && thoughtLog.refresh(world, colonist->entityId)) {
+			logList.get()->show(thoughtLog.entries());
+		}
 		switch (updateType) {
 			case EntityInfoModel::UpdateType::None:
 				break;
@@ -399,6 +407,7 @@ namespace world_sim {
 		if (structural) {
 			tabBar.get()->setSelectedId("needs");
 			setActiveTab("needs");
+			logBody.get()->scrollTo({0.0F, 0.0F});
 		}
 	}
 

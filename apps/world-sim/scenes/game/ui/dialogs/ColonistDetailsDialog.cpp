@@ -315,7 +315,7 @@ namespace world_sim {
 			tab->update(model.tasks());
 		}
 		if (LogTabView* tab = logTab.get()) {
-			tab->update(LogData{});
+			tab->update(model.log());
 		}
 	}
 

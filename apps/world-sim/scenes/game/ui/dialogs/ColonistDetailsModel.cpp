@@ -14,6 +14,8 @@
 #include <ecs/components/Task.h>
 #include <ecs/components/Traits.h>
 #include <ecs/components/Transform.h>
+#include <ecs/systems/ThoughtSystem.h>
+#include <ecs/systems/TimeSystem.h>
 
 #include <ecs/InventoryMass.h>
 
@@ -44,6 +46,11 @@ namespace world_sim {
 		extractGearData(world, colonistId);
 		extractMemoryData(world, colonistId);
 		const bool tasksChanged = extractTasksData(world, colonistId, deltaTime, colonistChanged);
+		const bool logChanged = thoughtLog.refresh(world, colonistId);
+		if (logChanged) {
+			logData.entries = thoughtLog.entries();
+			++logData.revision;
+		}
 
 		// Gear signature: hands, belt, and pack contents. Catches quantity-only
 		// changes (a growing armful) that a stack-count diff would miss.
@@ -65,6 +72,7 @@ namespace world_sim {
 			// Save current values for next comparison
 			prevNeedValues = needsData.needValues;
 			prevMood = needsData.mood;
+			prevMoodBreakdown = needsData.moodBreakdown;
 			prevGearSig = std::move(gearSig);
 			prevMemoryCount = memoryData.totalKnown;
 			prevBioTask = bioData.currentTask;
@@ -85,6 +93,10 @@ namespace world_sim {
 
 		// Check mood
 		if (std::abs(needsData.mood - prevMood) > 0.5F) {
+			valuesChanged = true;
+		}
+
+		if (needsData.moodBreakdown != prevMoodBreakdown || logChanged) {
 			valuesChanged = true;
 		}
 
@@ -117,6 +129,7 @@ namespace world_sim {
 		// Update previous values
 		prevNeedValues = needsData.needValues;
 		prevMood = needsData.mood;
+		prevMoodBreakdown = needsData.moodBreakdown;
 		prevGearSig = std::move(gearSig);
 		prevMemoryCount = memoryData.totalKnown;
 		prevBioTask = bioData.currentTask;
@@ -267,6 +280,12 @@ namespace world_sim {
 		assert(mood != nullptr && "Every colonist is given a Mood at spawn");
 		needsData.mood = mood->value;
 		needsData.moodLabel = assets::MoodConfig::Get().bandFor(needsData.mood).name;
+		needsData.moodBreakdown = moodBreakdown(
+			world.getSystem<ecs::ThoughtSystem>().types(),
+			world.getComponent<ecs::Thoughts>(colonistId),
+			*mood,
+			world.getSystem<ecs::TimeSystem>().simulationSeconds()
+		);
 	}
 
 	void ColonistDetailsModel::extractSocialData() {

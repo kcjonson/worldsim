@@ -3,29 +3,29 @@
   The shared list of feelings: the emotion words a colonist can have about an event. A thought type
   may only use feelings from this list.
 
-  <feeling id/>
+  <feeling id label/>  label is the word the colonist's log shows
 
   Every .xml file in this folder (and its subfolders) adds to the thoughts config; a later file that
   declares a feeling or thought type with the same id replaces it. This folder's files load first, then
   subfolders' files in path order. See /docs/design/game-systems/colonists/thoughts.md (Data).
 -->
 <thoughts>
-  <feeling id="content"/>
-  <feeling id="delighted"/>
-  <feeling id="grateful"/>
-  <feeling id="relieved"/>
-  <feeling id="amused"/>
-  <feeling id="smug"/>
-  <feeling id="bored"/>
-  <feeling id="annoyed"/>
-  <feeling id="miserable"/>
-  <feeling id="furious"/>
-  <feeling id="mortified"/>
-  <feeling id="resigned"/>
-  <feeling id="curious"/>
-  <feeling id="proud"/>
-  <feeling id="eager"/>
-  <feeling id="uneasy"/>
-  <feeling id="weary"/>
-  <feeling id="desperate"/>
+  <feeling id="content" label="Content"/>
+  <feeling id="delighted" label="Delighted"/>
+  <feeling id="grateful" label="Grateful"/>
+  <feeling id="relieved" label="Relieved"/>
+  <feeling id="amused" label="Amused"/>
+  <feeling id="smug" label="Smug"/>
+  <feeling id="bored" label="Bored"/>
+  <feeling id="annoyed" label="Annoyed"/>
+  <feeling id="miserable" label="Miserable"/>
+  <feeling id="furious" label="Furious"/>
+  <feeling id="mortified" label="Mortified"/>
+  <feeling id="resigned" label="Resigned"/>
+  <feeling id="curious" label="Curious"/>
+  <feeling id="proud" label="Proud"/>
+  <feeling id="eager" label="Eager"/>
+  <feeling id="uneasy" label="Uneasy"/>
+  <feeling id="weary" label="Weary"/>
+  <feeling id="desperate" label="Desperate"/>
 </thoughts>

@@ -123,7 +123,7 @@ namespace ecs {
 		std::unordered_map<std::string, FeelingId> newFeelingsByName;
 		for (const assets::FeelingDef& def : config.feelings) {
 			newFeelingsByName.emplace(def.id, static_cast<FeelingId>(newFeelings.size()));
-			newFeelings.push_back({.name = def.id});
+			newFeelings.push_back({.name = def.id, .label = def.label});
 		}
 
 		std::unordered_map<std::string, ThoughtEventTypeId> newTypesByName;
@@ -141,7 +141,7 @@ namespace ecs {
 		std::vector<ThoughtSource> newSources;
 		for (const assets::ThoughtTypeDef& def : config.types) {
 			const std::string what = def.source + ": thought '" + def.id + "'";
-			ThoughtType		  type{.name = def.id, .importance = def.importance, .stacks = def.stacks};
+			ThoughtType		  type{.name = def.id, .label = def.label, .importance = def.importance, .stacks = def.stacks};
 
 			if (def.feelings.empty()) {
 				errors.push_back(what + " lists no feeling, so no colonist could ever have it");
@@ -163,6 +163,7 @@ namespace ecs {
 					} else {
 						feeling.moodEffect = MoodEffect::whileCauseHolds(mood.amount);
 						feeling.whileCondition = builder.condition(mood.whileCondition, where + " while");
+						feeling.cause = mood.cause;
 					}
 				}
 				type.feelings.push_back(std::move(feeling));

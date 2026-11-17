@@ -21,15 +21,17 @@ namespace assets {
 	/// An emotion word from the shared list, the closed set a thought type's feelings are checked against.
 	struct FeelingDef {
 		std::string id;
+		std::string label; // what the log shows: "Miserable"
 		std::string source; // the file it was declared in
 	};
 
 	/// A feeling's mood effect: a signed amount for `hours` game hours, or for as long as `whileCondition`
-	/// holds. Exactly one of the two is set.
+	/// holds. Exactly one of the two is set; a while effect's `cause` names what holds it ("soaked").
 	struct ThoughtMoodDef {
 		float				 amount = 0.0F;
 		std::optional<float> hours;
 		std::string			 whileCondition;
+		std::string			 cause;
 	};
 
 	/// One way a colonist can take a thought type's event: the feeling, the condition it needs (empty for
@@ -78,6 +80,7 @@ namespace assets {
 
 	struct ThoughtTypeDef {
 		std::string					   id;
+		std::string					   label; // what the log shows for the event: "Slept on the ground"
 		ThoughtImportance			   importance = ThoughtImportance::Normal;
 		bool						   stacks = false;
 		std::vector<ThoughtFeelingDef> feelings;

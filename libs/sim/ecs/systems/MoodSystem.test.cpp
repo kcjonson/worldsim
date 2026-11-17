@@ -20,16 +20,16 @@ namespace ecs::test {
 	namespace {
 		// `wetness` is answered by nothing, so a `while` on it holds until the thought is ended.
 		constexpr std::string_view kThoughtTypes = R"(
-  <thought id="slept_on_ground" importance="normal"><feeling is="annoyed" mood="-10" hours="24"/></thought>
-  <thought id="slept_badly" importance="normal"><feeling is="annoyed" mood="-12" hours="24"/></thought>
-  <thought id="vented" importance="normal"><feeling is="delighted" mood="+4" hours="12"/></thought>
-  <thought id="vented_long" importance="normal"><feeling is="delighted" mood="+8" hours="12"/></thought>
-  <thought id="cheered" importance="normal"><feeling is="delighted" mood="+30" while="wetness > 0"/></thought>
-  <thought id="elated" importance="normal"><feeling is="delighted" mood="+60" while="wetness > 0"/></thought>
-  <thought id="reeks_5" importance="normal"><feeling is="annoyed" mood="-5" while="wetness > 0"/></thought>
-  <thought id="reeks_12" importance="normal"><feeling is="annoyed" mood="-12" while="wetness > 0"/></thought>
-  <thought id="reeks_20" importance="normal"><feeling is="annoyed" mood="-20" while="wetness > 0"/></thought>
-  <thought id="reeks_30" importance="normal"><feeling is="annoyed" mood="-30" while="wetness > 0"/></thought>
+  <thought id="slept_on_ground" label="Slept on ground" importance="normal"><feeling is="annoyed" mood="-10" hours="24"/></thought>
+  <thought id="slept_badly" label="Slept badly" importance="normal"><feeling is="annoyed" mood="-12" hours="24"/></thought>
+  <thought id="vented" label="Vented" importance="normal"><feeling is="delighted" mood="+4" hours="12"/></thought>
+  <thought id="vented_long" label="Vented long" importance="normal"><feeling is="delighted" mood="+8" hours="12"/></thought>
+  <thought id="cheered" label="Cheered" importance="normal"><feeling is="delighted" mood="+30" while="wetness > 0" cause="the cause"/></thought>
+  <thought id="elated" label="Elated" importance="normal"><feeling is="delighted" mood="+60" while="wetness > 0" cause="the cause"/></thought>
+  <thought id="reeks_5" label="Reeks 5" importance="normal"><feeling is="annoyed" mood="-5" while="wetness > 0" cause="the cause"/></thought>
+  <thought id="reeks_12" label="Reeks 12" importance="normal"><feeling is="annoyed" mood="-12" while="wetness > 0" cause="the cause"/></thought>
+  <thought id="reeks_20" label="Reeks 20" importance="normal"><feeling is="annoyed" mood="-20" while="wetness > 0" cause="the cause"/></thought>
+  <thought id="reeks_30" label="Reeks 30" importance="normal"><feeling is="annoyed" mood="-30" while="wetness > 0" cause="the cause"/></thought>
 )";
 
 		// Hunger and thirst weigh 1 each and every other need 0, so an empty need is -50 and a need at

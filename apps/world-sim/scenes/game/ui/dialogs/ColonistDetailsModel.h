@@ -8,10 +8,13 @@
 
 #include "tabs/BioTabView.h"
 #include "tabs/GearTabView.h"
+#include "tabs/LogTabView.h"
 #include "tabs/NeedsTabView.h"
 #include "tabs/MemoryTabView.h"
 #include "tabs/SocialTabView.h"
 #include "tabs/TasksTabView.h"
+
+#include "scenes/game/ui/models/ThoughtLogModel.h"
 
 #include <assets/TraitRegistry.h>
 #include <ecs/ClaimIndex.h>
@@ -58,6 +61,7 @@ namespace world_sim {
 		[[nodiscard]] const GearData&	 gear() const { return gearData; }
 		[[nodiscard]] const MemoryData&  memory() const { return memoryData; }
 		[[nodiscard]] const TasksTabData& tasks() const { return tasksData; }
+		[[nodiscard]] const LogData&	  log() const { return logData; }
 
 	  private:
 		/// Extract Bio tab data
@@ -93,10 +97,13 @@ namespace world_sim {
 		GearData	 gearData;
 		MemoryData	 memoryData;
 		TasksTabData tasksData;
+		LogData		 logData;
+		ThoughtLogModel thoughtLog;
 
 		// Previous values for change detection
 		std::array<float, 8> prevNeedValues{};
 		float				 prevMood = 0.0F;
+		MoodBreakdown		 prevMoodBreakdown;
 		std::string			 prevGearSig;
 		size_t				 prevMemoryCount = 0;
 		// The bio "Current:" line is derived from task type + state + navState + labels;

@@ -187,33 +187,33 @@ Event types, their feelings, lines, importance, mood effects, and animations are
 <thoughts>
   <tuning maxLineLength="48" maxSubjectNameLength="16" whileCheckMinutes="15"/>
 
-  <feeling id="miserable"/>
-  <feeling id="furious"/>
-  <feeling id="relieved"/>
-  <feeling id="bored"/>
-  <feeling id="annoyed"/>
+  <feeling id="miserable" label="Miserable"/>
+  <feeling id="furious" label="Furious"/>
+  <feeling id="relieved" label="Relieved"/>
+  <feeling id="bored" label="Bored"/>
+  <feeling id="annoyed" label="Annoyed"/>
 
-  <thought id="soaked" importance="normal">
-    <feeling is="miserable" mood="-6" while="wetness > 0.6"/>
-    <feeling is="furious" when="trait(volatile)" mood="-9" while="wetness > 0.6"/>
+  <thought id="soaked" label="Soaked" importance="normal">
+    <feeling is="miserable" mood="-6" while="wetness > 0.6" cause="soaked"/>
+    <feeling is="furious" when="trait(volatile)" mood="-9" while="wetness > 0.6" cause="soaked"/>
     <line>I'm soaked through.</line>
     <line feeling="furious">One more minute of this...</line>
     <line feeling="furious">I will fight this cloud.</line>
     <ends thought="dried_off"/>
   </thought>
 
-  <thought id="dried_off" importance="trivial">
+  <thought id="dried_off" label="Dried off" importance="trivial">
     <feeling is="relieved" mood="+2" hours="3"/>
     <line>Finally dry.</line>
   </thought>
 
-  <thought id="very_hungry" importance="normal">
+  <thought id="very_hungry" label="Very hungry" importance="normal">
     <source trigger="needFalls" need="Hunger" threshold="urgent"/>
     <feeling is="annoyed"/>
     <line>I could eat a whole bush.</line>
   </thought>
 
-  <thought id="itchy" importance="trivial">
+  <thought id="itchy" label="Itchy" importance="trivial">
     <source trigger="idle" everyMinutes="180" chance="0.25"/>
     <feeling is="bored"/>
     <line>My butt itches.</line>
@@ -223,8 +223,8 @@ Event types, their feelings, lines, importance, mood effects, and animations are
 ```
 
 - Every file's root is `<thoughts>`. The folder's own files load first, then its subfolders' in path order; a later file's feeling or thought type with the same id, or its `<tuning>`, replaces the earlier one, and the same id twice in one file is an error.
-- A feeling in the shared list is an `id`; the list is the closed set a type's feelings are checked against. A thought type has an `importance` (`trivial`, `normal`, or `major`) and `stacks="true"` when it stacks.
-- A type lists at least one feeling. A feeling's mood effect is a signed `mood` with either `hours`, in game hours, or `while`, a condition; with no `mood` it has no effect. A `while` is checked every `whileCheckMinutes` game minutes and the thought ends when it is false, or when its subject, a colonist or an entity, no longer exists; otherwise Unknown keeps it.
+- A feeling in the shared list is an `id` and a `label`, the word the log shows; the list is the closed set a type's feelings are checked against. A thought type has a `label`, the event as the log shows it ("Slept on the ground"), an `importance` (`trivial`, `normal`, or `major`), and `stacks="true"` when it stacks. A feeling or type with no label is an error.
+- A type lists at least one feeling. A feeling's mood effect is a signed `mood` with either `hours`, in game hours, or `while`, a condition, and `cause`, what the condition is in words ("soaked", shown as "while soaked"); with no `mood` it has no effect. A `while` with no `cause`, or a `cause` with no `while`, is an error. A `while` is checked every `whileCheckMinutes` game minutes and the thought ends when it is false, or when its subject, a colonist or an entity, no longer exists; otherwise Unknown keeps it.
 - A number is a plain decimal, with an optional leading sign and no units: `+4.5`, `-6`. Text that is not entirely a finite number (`nan`, `inf`, `4h`) is an error.
 - A feeling's or line's specificity is the number of terms its conditions name, a line's `feeling` counting as one; the most specific that holds wins, and between feelings of equal specificity the one written first does. Unknown never holds, and when no feeling holds the colonist has no thought.
 - A line is at most `maxLineLength` characters, counting `{subject}` as `maxSubjectNameLength`. `{subject}` in a line is the subject's name as it was when the thought arrived, cut to `maxSubjectNameLength` characters when it is longer. A line that names the subject fits only a subject that has a name: a colonist's own name, or an entity's asset label (its definition name when it has no label). A colonist with no name has none.
