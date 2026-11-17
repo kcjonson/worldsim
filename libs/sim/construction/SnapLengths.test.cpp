@@ -445,6 +445,16 @@ TEST_F(CommonLengths, WallToolReadsInsetAtAnyDistanceUnderAllBuildings) {
 	expectLengths(keptLengths(lengths({}, {0.0F, -6.0F}, snap_guides::SnapTool::Wall)), {kInsetThreeMeters, kInsetFourMeters});
 }
 
+TEST_F(CommonLengths, WallToolReadsInsetLengthsExactlyFarFromTheOrigin) {
+	// Metres from the origin where a float step is half a millimetre: a float inset corner would
+	// round each end by up to a quarter of one and miss the exact length by far more than 1e-9.
+	built.addFoundation(rectangle(4000.123, 3000.321, 0.0, 4.0, 3.0));
+	const std::vector<double> kept = keptLengths(lengths({}, {4000.1F, 2994.0F}, snap_guides::SnapTool::Wall));
+	ASSERT_EQ(kept.size(), 2U);
+	EXPECT_NEAR(kept[0], kInsetThreeMeters, kExactTolerance);
+	EXPECT_NEAR(kept[1], kInsetFourMeters, kExactTolerance);
+}
+
 TEST_F(CommonLengths, WallToolReadsInsetOfOwnerExactlyAtRange) {
 	built.addFoundation(rectangle(0.0, 22.0, 0.0, 4.0, 3.0)); // its nearest edge is 30 m from the cursor
 	expectLengths(keptLengths(lengths({}, {0.0F, -8.0F}, snap_guides::SnapTool::Wall)), {kInsetThreeMeters, kInsetFourMeters});

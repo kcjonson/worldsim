@@ -423,6 +423,57 @@ TEST_F(DrawingWallChainTest, DevClosedLoopBuiltFormsARoom) {
 	EXPECT_EQ(construction::detectRooms(drawing->world()).size(), 1U);
 }
 
+TEST_F(DrawingWallChainTest, DevCommittedChainSharesOnePlacementOrderEqualToTheVersionBefore) {
+	const construction::FoundationId host = hostFoundation(*drawing);
+	std::vector<Foundation::Vec2>	 loop;
+	for (const glm::vec2 corner : kRoom) {
+		loop.push_back({corner.x, corner.y});
+	}
+	loop.push_back(loop.front());
+	const std::uint64_t versionBefore = drawing->world().version();
+	ASSERT_EQ(drawing->devCommitWalls(loop, "Wood", "Standard", host, false), 4);
+	ASSERT_EQ(drawing->world().segments().size(), 4U);
+	for (const construction::WallSegment& segment : drawing->world().segments()) {
+		EXPECT_EQ(segment.placementOrder, versionBefore);
+	}
+}
+
+TEST_F(DrawingWallChainTest, ToolDrawnChainSharesOnePlacementOrder) {
+	hostFoundation(*drawing);
+	drawing->activateWallTool();
+	clickRoomCorners(*drawing);
+	clickWith(*drawing, kRoom[0]);
+	ASSERT_EQ(drawing->world().segments().size(), 4U) << lastToast();
+	const std::uint64_t order = drawing->world().segments().front().placementOrder;
+	for (const construction::WallSegment& segment : drawing->world().segments()) {
+		EXPECT_EQ(segment.placementOrder, order);
+	}
+}
+
+TEST_F(DrawingWallChainTest, ALaterChainTakesAGreaterPlacementOrder) {
+	hostFoundation(*drawing);
+	drawing->activateWallTool();
+	clickRoomCorners(*drawing);
+	clickWith(*drawing, kRoom[0]);
+	ASSERT_EQ(drawing->world().segments().size(), 4U) << lastToast();
+	const std::uint64_t firstOrder = drawing->world().segments().front().placementOrder;
+
+	for (const glm::vec2 point : {glm::vec2{-18.0F, -12.0F}, glm::vec2{-12.0F, -12.0F}, glm::vec2{-12.0F, -4.0F}}) {
+		clickWith(*drawing, point);
+	}
+	ASSERT_TRUE(drawing->finishChain());
+	ASSERT_EQ(drawing->world().segments().size(), 6U) << lastToast();
+	std::size_t laterChain = 0;
+	for (const construction::WallSegment& segment : drawing->world().segments()) {
+		if (segment.placementOrder == firstOrder) {
+			continue;
+		}
+		EXPECT_GT(segment.placementOrder, firstOrder);
+		++laterChain;
+	}
+	EXPECT_EQ(laterChain, 2U);
+}
+
 namespace {
 
 	// A chain started on a plain point of the host's bottom edge (y = -15), so its first point is the edge snap

@@ -296,7 +296,8 @@ namespace construction {
 		//
 		// `placementOrder` is stored on every segment the call creates (D12): a chain
 		// drawn as several calls passes the version() it read before its first, so the
-		// chain is one owner for common lengths.
+		// chain is one owner for common lengths. It must be a version() read taken when the placement
+		// began: never above the world's current version, and the same value for every segment of one chain.
 		SegmentCommitResult commitSegment(
 			const geometry::Vec2i64& a,
 			const geometry::Vec2i64& b,
