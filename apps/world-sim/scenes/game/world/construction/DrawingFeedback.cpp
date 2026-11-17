@@ -8,6 +8,7 @@
 #include <world/camera/WorldCamera.h>
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -41,8 +42,11 @@ namespace world_sim {
 		constexpr float kCursorTickWidthPx = 2.0F;
 		constexpr float kCursorTickOutlineWidthPx = 6.0F;
 		constexpr float kSegmentLabelPx = 12.0F;
-		constexpr float kSegmentLabelOffsetPx = 12.0F; // the label's near corner, diagonally off the snapped point
-		constexpr float kLabelGapPx = 10.0F;		   // a guide label off its guide, a long segment's label off the segment
+		// At the snapped end, the segment label's plate sits this far diagonally off the snapped
+		// point (its text 12 px off at an interface size of 100%). The gap is the plate's, so it
+		// holds as the plate grows with the interface size and the plate stays off the marker.
+		constexpr float kSegmentPlateOffsetPx = 9.0F;
+		constexpr float kLabelGapPx = 10.0F; // a guide label off its guide, a long segment's label off the segment
 		constexpr float kGuideLabelMinimumStrokePx = 40.0F;
 		constexpr float kGuideLabelShiftPaddingPx = 8.0F;
 		constexpr int	kGuideLabelShiftAttempts = 6;
@@ -117,9 +121,13 @@ namespace world_sim {
 
 		static_assert(kMaxSnapGuides == 2, "guide labels rank guides[0] above guides[1]");
 
-		// Every size the feedback draws or plans with, in screen pixels at the interface's
-		// scale: the constants above and the style's pixel keys, each times the ui scale.
-		// lookAt is the one place they are scaled; nothing else reads a pixel constant.
+		// Every size the feedback draws or plans with, in window pixels. The label text and its
+		// plate (padding, corner) are interface text, so they take the ui scale and follow the
+		// Interface size (the end label's text offset grows only by the plate's padding, keeping
+		// the plate's own gap fixed); everything else (strokes, markers, rings, clearances, thresholds)
+		// stays in window pixels like the preview's own lines and dots. That is main's rule for
+		// text drawn in the world (docs/design/ui/ui-scale-setting.md, "World text"). lookAt is
+		// the one place the scale is applied; nothing else reads a pixel constant.
 		struct Look {
 			float markerLineWidthPx;
 			float closeRingWidthPx;
@@ -156,37 +164,37 @@ namespace world_sim {
 
 		Look lookAt(const assets::PreviewStyle& style, float uiScale) {
 			return {
-				.markerLineWidthPx = kMarkerLineWidthPx * uiScale,
-				.closeRingWidthPx = kCloseRingWidthPx * uiScale,
-				.closeHaloWidthPx = kCloseHaloWidthPx * uiScale,
-				.closeHaloTickClearancePx = kCloseHaloTickClearancePx * uiScale,
-				.snapTargetTickClearancePx = kSnapTargetTickClearancePx * uiScale,
-				.snapTargetRingWidthPx = kSnapTargetRingWidthPx * uiScale,
-				.cursorRadiusPx = std::max(kCursorMinimumRadiusPx, style.cursorRadiusPx) * uiScale,
-				.cursorOutlineWidthPx = kCursorOutlineWidthPx * uiScale,
-				.cursorTickGapPx = kCursorTickGapPx * uiScale,
-				.cursorTickLengthPx = kCursorTickLengthPx * uiScale,
-				.cursorTickWidthPx = kCursorTickWidthPx * uiScale,
-				.cursorTickOutlineWidthPx = kCursorTickOutlineWidthPx * uiScale,
+				.markerLineWidthPx = kMarkerLineWidthPx,
+				.closeRingWidthPx = kCloseRingWidthPx,
+				.closeHaloWidthPx = kCloseHaloWidthPx,
+				.closeHaloTickClearancePx = kCloseHaloTickClearancePx,
+				.snapTargetTickClearancePx = kSnapTargetTickClearancePx,
+				.snapTargetRingWidthPx = kSnapTargetRingWidthPx,
+				.cursorRadiusPx = std::max(kCursorMinimumRadiusPx, style.cursorRadiusPx),
+				.cursorOutlineWidthPx = kCursorOutlineWidthPx,
+				.cursorTickGapPx = kCursorTickGapPx,
+				.cursorTickLengthPx = kCursorTickLengthPx,
+				.cursorTickWidthPx = kCursorTickWidthPx,
+				.cursorTickOutlineWidthPx = kCursorTickOutlineWidthPx,
 				.segmentLabelPx = kSegmentLabelPx * uiScale,
-				.segmentLabelOffsetPx = kSegmentLabelOffsetPx * uiScale,
-				.segmentLabelCursorClearancePx = kSegmentLabelCursorClearancePx * uiScale,
+				.segmentLabelOffsetPx = kSegmentPlateOffsetPx + kLabelPlatePaddingPx * uiScale,
+				.segmentLabelCursorClearancePx = kSegmentLabelCursorClearancePx,
 				.guideLabelPx = style.guideLabelPx * uiScale,
-				.labelGapPx = kLabelGapPx * uiScale,
-				.guideLabelMinimumStrokePx = kGuideLabelMinimumStrokePx * uiScale,
-				.guideLabelShiftPaddingPx = kGuideLabelShiftPaddingPx * uiScale,
+				.labelGapPx = kLabelGapPx,
+				.guideLabelMinimumStrokePx = kGuideLabelMinimumStrokePx,
+				.guideLabelShiftPaddingPx = kGuideLabelShiftPaddingPx,
 				.labelPlatePaddingPx = kLabelPlatePaddingPx * uiScale,
 				.labelPlateCornerPx = kLabelPlateCornerPx * uiScale,
-				.sideMinimumPx = kSideMinimumPx * uiScale,
-				.duplicateGuidePx = kDuplicateGuidePx * uiScale,
-				.solidSegmentClearancePx = kSolidSegmentClearancePx * uiScale,
-				.minimumStrokePx = kMinimumStrokePx * uiScale,
-				.ringSegmentPx = kRingSegmentPx * uiScale,
-				.guideWidthPx = style.guideWidth * uiScale,
-				.guideDashPx = style.guideDashPx * uiScale,
-				.guideGapPx = style.guideGapPx * uiScale,
-				.rightAngleMarkerPx = style.rightAngleMarkerPx * uiScale,
-				.guideCrossingDotPx = style.guideCrossingDotPx * uiScale,
+				.sideMinimumPx = kSideMinimumPx,
+				.duplicateGuidePx = kDuplicateGuidePx,
+				.solidSegmentClearancePx = kSolidSegmentClearancePx,
+				.minimumStrokePx = kMinimumStrokePx,
+				.ringSegmentPx = kRingSegmentPx,
+				.guideWidthPx = style.guideWidth,
+				.guideDashPx = style.guideDashPx,
+				.guideGapPx = style.guideGapPx,
+				.rightAngleMarkerPx = style.rightAngleMarkerPx,
+				.guideCrossingDotPx = style.guideCrossingDotPx,
 			};
 		}
 
@@ -942,8 +950,8 @@ namespace world_sim {
 			// placed points' center; with no center off the line, the fixed side. The center's
 			// offset is measured from the previous point in world meters and doubles: along a ray
 			// from the previous point it then moves only with the ray's direction, which the
-			// snapped point's rounding barely turns, so a center near kSideMinimumPx off the line
-			// stays on one side of that threshold. Measured from screen floats and the segment's
+			// snapped point's rounding barely turns, so a center near look.sideMinimumPx off the
+			// line stays on one side of that threshold. Measured from screen floats and the segment's
 			// middle, it wandered by a ten-thousandth of a pixel from one centimeter to the next and
 			// flipped the label across the segment each time. The world to screen scale is
 			// positive on both axes, so the world normal points the same way as `normal`.
@@ -1224,6 +1232,8 @@ namespace world_sim {
 	} // namespace
 
 	DrawingFeedbackPlan planSnapFeedback(const DrawingFeedbackInput& input, const MeasureTextSize& measure) {
+		// An input that leaves uiScale out is 0, and every label would plan at size 0.
+		assert(input.uiScale > 0.0F && "DrawingFeedbackInput::uiScale must be positive");
 		return Planner(input, measure).plan();
 	}
 

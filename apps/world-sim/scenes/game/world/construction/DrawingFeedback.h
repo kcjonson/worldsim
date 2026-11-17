@@ -5,8 +5,8 @@
 // length label, the first point's close ring and halo, the snapped-point marker, and
 // the wall tool's snap-target ring.
 // One rule: solid is geometry, dotted and part transparent is alignment, small solid
-// markers state a fact. Every size is in ui px, so it follows the interface size, and
-// never scales with zoom.
+// markers state a fact. Sizes are window pixels and never scale with zoom; only the
+// label text and its plate are in ui px, following the interface size.
 //
 // planSnapFeedback decides what to draw and where (pure, tested); drawSnapFeedback
 // draws that plan.
@@ -56,7 +56,7 @@ namespace world_sim {
 		const world::WorldCamera&			 camera;
 		int									 viewportWidth;
 		int									 viewportHeight;
-		float								 uiScale; // screen pixels per ui px, the interface size's scale
+		float								 uiScale; // screen pixels per ui px, the interface size's scale, positive; sizes the labels only
 		float								 pixelsPerMeter;	// before the camera's zoom, as worldToScreen takes it
 		float								 closeRadiusMeters; // the first point's close radius, zoom-floored
 		bool								 canClose;			// enough points placed for a click on the first point to close

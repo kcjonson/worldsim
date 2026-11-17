@@ -1317,18 +1317,23 @@ TEST_F(DrawingFeedbackTest, SegmentLabelSideHoldsWithTheShapesCenterAtTheEdgeOfT
 	}
 }
 
-// Every size the feedback plans is in ui px. A frame at a ui scale of s plans what the same
-// frame plans at 1 on a screen s times smaller (viewport, zoom, and keep-clear box divided by
-// s, so the world lands at 1/s the pixels), with every pixel in the plan times s.
-TEST_F(DrawingFeedbackTest, EverySizeFollowsTheUiScale) {
-	constexpr int kWidth = 1200; // divisible by every scale below
+// The interface size scales the label text and its plate only; every stroke, ring, and dot is
+// in window pixels, like the preview's own lines (main's rule for text drawn in the world). A
+// frame at a ui scale of s plans exactly the strokes, rings, and dots it plans at 1, and labels
+// whose text size, plate padding, and plate corner are s times the ones at 1. A bigger label
+// can sit elsewhere, so positions aren't compared; the placement rules hold at every scale.
+TEST_F(DrawingFeedbackTest, OnlyTheLabelsFollowTheUiScale) {
+	constexpr int kWidth = 1200;
 	constexpr int kHeight = 960;
-	std::mt19937  random(894);
-	const auto	  between = [&](float low, float high) { return std::uniform_real_distribution<float>(low, high)(random); };
-	const auto	  chance = [&](float odds) { return between(0.0F, 1.0F) < odds; };
-	const auto	  oneOf = [&](int count) { return std::uniform_int_distribution<int>(0, count - 1)(random); };
+	// The cursor at least this far inside every edge: a frame away from the screen edges.
+	constexpr float kAwayFromEdgesPx = 250.0F;
+	std::mt19937	random(894);
+	const auto		between = [&](float low, float high) { return std::uniform_real_distribution<float>(low, high)(random); };
+	const auto		chance = [&](float odds) { return between(0.0F, 1.0F) < odds; };
+	const auto		oneOf = [&](int count) { return std::uniform_int_distribution<int>(0, count - 1)(random); };
 
 	struct Frame {
+		assets::PreviewStyle		  style;
 		world_sim::ToolKind			  tool;
 		construction::SnapResult	  snap;
 		std::vector<Foundation::Vec2> points;
@@ -1341,8 +1346,15 @@ TEST_F(DrawingFeedbackTest, EverySizeFollowsTheUiScale) {
 		std::optional<FeedbackBox>	  keepClear;
 	};
 	std::vector<Frame> frames;
-	for (int index = 0; index < 400; ++index) {
+	for (int index = 0; index < 600; ++index) {
 		Frame frame{};
+		// The marker's radius below its 4 px floor and above it (up to 7 px: from 8 px its dot's box
+		// reaches the segment label's end placements, at every scale), every line style, both
+		// colour modes.
+		frame.style.cursorRadiusPx = std::array{2.0F, 6.0F, 7.0F}[static_cast<std::size_t>(oneOf(3))];
+		frame.style.guideLineStyle = static_cast<assets::GuideLineStyle>(oneOf(3));
+		frame.style.guideColorMode = chance(0.5F) ? assets::GuideColorMode::One : assets::GuideColorMode::BySource;
+		frame.style.guideLabelPx = chance(0.5F) ? 11.0F : 14.0F;
 		frame.tool = chance(0.5F) ? world_sim::ToolKind::Wall : world_sim::ToolKind::Foundation;
 		frame.zoom = between(1.0F, 12.0F);
 		// Across the screen and a little past its edges, so labels meet the edges too.
@@ -1390,15 +1402,18 @@ TEST_F(DrawingFeedbackTest, EverySizeFollowsTheUiScale) {
 		frame.willClose = frame.canClose && chance(0.5F);
 		frame.guideDistances = chance(0.8F);
 		if (chance(0.3F)) {
-			const float left = between(0.0F, static_cast<float>(kWidth));
-			const float top = between(0.0F, static_cast<float>(kHeight));
+			// Where the preview puts its rejection reason: below and right of the snapped point.
+			camera.setZoom(frame.zoom);
+			const Foundation::Vec2 tip = camera.worldToScreen(frame.cursor.x, frame.cursor.y, kWidth, kHeight, kPixelsPerMeter);
+			const float left = chance(0.5F) ? tip.x + between(10.0F, 30.0F) : between(0.0F, static_cast<float>(kWidth));
+			const float top = chance(0.5F) ? tip.y + between(10.0F, 30.0F) : between(0.0F, static_cast<float>(kHeight));
 			frame.keepClear = FeedbackBox{left, top, left + between(40.0F, 200.0F), top + between(10.0F, 30.0F)};
 		}
 		frames.push_back(std::move(frame));
 	}
 
-	// The frame on a screen `screenScale` times smaller than kWidth by kHeight, at `frameUiScale`.
-	const auto planFor = [&](const Frame& frame, float screenScale, float frameUiScale) {
+	const auto planFor = [&](const Frame& frame, float frameUiScale) {
+		style = frame.style;
 		tool = frame.tool;
 		snap = frame.snap;
 		points = frame.points;
@@ -1407,41 +1422,49 @@ TEST_F(DrawingFeedbackTest, EverySizeFollowsTheUiScale) {
 		canClose = frame.canClose;
 		willClose = frame.willClose;
 		display.guideDistances = frame.guideDistances;
-		keepClear.reset();
-		if (frame.keepClear) {
-			const FeedbackBox& box = *frame.keepClear;
-			keepClear = FeedbackBox{box.left / screenScale, box.top / screenScale, box.right / screenScale, box.bottom / screenScale};
-		}
-		viewportWidth = static_cast<int>(static_cast<float>(kWidth) / screenScale);
-		viewportHeight = static_cast<int>(static_cast<float>(kHeight) / screenScale);
-		camera.setZoom(frame.zoom / screenScale);
+		keepClear = frame.keepClear;
+		viewportWidth = kWidth;
+		viewportHeight = kHeight;
+		camera.setZoom(frame.zoom);
 		uiScale = frameUiScale;
 		return plan();
 	};
 
-	std::size_t compared = 0;
-	for (const float scale : {1.25F, 1.5F, 2.0F, 3.0F}) {
-		for (std::size_t index = 0; index < frames.size(); ++index) {
+	const auto expectSameDash = [](const std::optional<Foundation::DashPattern>& actual, const std::optional<Foundation::DashPattern>& expected) {
+		ASSERT_EQ(actual.has_value(), expected.has_value());
+		if (actual) {
+			EXPECT_EQ(actual->dash, expected->dash);
+			EXPECT_EQ(actual->gap, expected->gap);
+		}
+	};
+	const auto ringBox = [](const FeedbackRing& ring) {
+		return boxAround(ring.center, ring.radius + ring.width * 0.5F);
+	};
+	const auto paddingOf = [](const FeedbackLabel& label) {
+		return Foundation::Vec2{label.position.x - label.plate.left, label.position.y - label.plate.top};
+	};
+
+	std::size_t comparedLabels = 0;
+	std::size_t placementChecks = 0;
+	std::size_t withOneGuide = 0;
+	std::size_t withTwoGuides = 0;
+	std::size_t withHalo = 0;
+	std::size_t withCloseRing = 0;
+	std::size_t withWallRing = 0;
+	std::size_t withKeepClear = 0;
+	for (std::size_t index = 0; index < frames.size(); ++index) {
+		const Frame&			  frame = frames[index];
+		const DrawingFeedbackPlan reference = planFor(frame, 1.0F);
+		withOneGuide += frame.snap.guideCount == 1 ? 1 : 0;
+		withTwoGuides += frame.snap.guideCount == 2 ? 1 : 0;
+		withHalo += ringsIn(reference, FeedbackLayer::Marker).empty() ? 0 : 1;
+		withCloseRing += ringsIn(reference, FeedbackLayer::Alignment).empty() ? 0 : 1;
+		withWallRing += ringsIn(reference, FeedbackLayer::Target).empty() ? 0 : 1;
+		withKeepClear += frame.keepClear ? 1 : 0;
+		for (const float scale : {0.6F, 0.8F, 1.25F, 1.5F, 2.0F, 3.0F}) {
 			SCOPED_TRACE(::testing::Message() << "scale " << scale << ", frame " << index);
-			const DrawingFeedbackPlan scaled = planFor(frames[index], 1.0F, scale);
-			const DrawingFeedbackPlan reference = planFor(frames[index], scale, 1.0F);
-			const auto				  near = [&](float actual, float referenceValue) {
-				 const float expected = referenceValue * scale;
-				 EXPECT_NEAR(actual, expected, 1e-2F + 1e-4F * std::abs(expected));
-			};
-			const auto nearPoint = [&](Foundation::Vec2 actual, Foundation::Vec2 referencePoint) {
-				near(actual.x, referencePoint.x);
-				near(actual.y, referencePoint.y);
-			};
-			const auto nearDash = [&](
-				const std::optional<Foundation::DashPattern>& actual, const std::optional<Foundation::DashPattern>& referenceDash
-			) {
-				ASSERT_EQ(actual.has_value(), referenceDash.has_value());
-				if (actual) {
-					near(actual->dash, referenceDash->dash);
-					near(actual->gap, referenceDash->gap);
-				}
-			};
+			const DrawingFeedbackPlan scaled = planFor(frame, scale);
+
 			ASSERT_EQ(scaled.strokes.size(), reference.strokes.size());
 			for (std::size_t item = 0; item < scaled.strokes.size(); ++item) {
 				const FeedbackStroke& actual = scaled.strokes[item];
@@ -1449,41 +1472,95 @@ TEST_F(DrawingFeedbackTest, EverySizeFollowsTheUiScale) {
 				ASSERT_EQ(actual.pointCount, expected.pointCount);
 				EXPECT_EQ(actual.layer, expected.layer);
 				for (std::size_t point = 0; point < actual.pointCount; ++point) {
-					nearPoint(actual.points[point], expected.points[point]);
+					EXPECT_EQ(actual.points[point].x, expected.points[point].x);
+					EXPECT_EQ(actual.points[point].y, expected.points[point].y);
 				}
-				near(actual.width, expected.width);
-				nearDash(actual.dash, expected.dash);
+				EXPECT_EQ(actual.width, expected.width);
+				expectSameDash(actual.dash, expected.dash);
 			}
 			ASSERT_EQ(scaled.rings.size(), reference.rings.size());
 			for (std::size_t item = 0; item < scaled.rings.size(); ++item) {
-				EXPECT_EQ(scaled.rings[item].layer, reference.rings[item].layer);
-				nearPoint(scaled.rings[item].center, reference.rings[item].center);
-				near(scaled.rings[item].radius, reference.rings[item].radius);
-				near(scaled.rings[item].width, reference.rings[item].width);
-				nearDash(scaled.rings[item].dash, reference.rings[item].dash);
+				const FeedbackRing& actual = scaled.rings[item];
+				const FeedbackRing& expected = reference.rings[item];
+				EXPECT_EQ(actual.layer, expected.layer);
+				EXPECT_EQ(actual.center.x, expected.center.x);
+				EXPECT_EQ(actual.center.y, expected.center.y);
+				EXPECT_EQ(actual.radius, expected.radius);
+				EXPECT_EQ(actual.width, expected.width);
+				expectSameDash(actual.dash, expected.dash);
 			}
 			ASSERT_EQ(scaled.dots.size(), reference.dots.size());
 			for (std::size_t item = 0; item < scaled.dots.size(); ++item) {
-				EXPECT_EQ(scaled.dots[item].layer, reference.dots[item].layer);
-				nearPoint(scaled.dots[item].center, reference.dots[item].center);
-				near(scaled.dots[item].radius, reference.dots[item].radius);
-				near(scaled.dots[item].outlineWidth, reference.dots[item].outlineWidth);
+				const FeedbackDot& actual = scaled.dots[item];
+				const FeedbackDot& expected = reference.dots[item];
+				EXPECT_EQ(actual.layer, expected.layer);
+				EXPECT_EQ(actual.center.x, expected.center.x);
+				EXPECT_EQ(actual.center.y, expected.center.y);
+				EXPECT_EQ(actual.radius, expected.radius);
+				EXPECT_EQ(actual.outlineWidth, expected.outlineWidth);
 			}
-			ASSERT_EQ(scaled.labels.size(), reference.labels.size());
-			for (std::size_t item = 0; item < scaled.labels.size(); ++item) {
-				const FeedbackLabel& actual = scaled.labels[item];
-				const FeedbackLabel& expected = reference.labels[item];
-				EXPECT_EQ(actual.text, expected.text);
-				nearPoint(actual.position, expected.position);
-				near(actual.sizePx, expected.sizePx);
-				near(actual.plate.left, expected.plate.left);
-				near(actual.plate.top, expected.plate.top);
-				near(actual.plate.right, expected.plate.right);
-				near(actual.plate.bottom, expected.plate.bottom);
-				near(actual.plateCornerRadius, expected.plateCornerRadius);
+
+			// Labels in plan order, matched by text: a bigger label can be dropped where a
+			// smaller one fits, so the lists can differ in length.
+			std::size_t next = 0;
+			for (const FeedbackLabel& actual : scaled.labels) {
+				const auto match = std::find_if(reference.labels.begin() + static_cast<std::ptrdiff_t>(next), reference.labels.end(), [&](const FeedbackLabel& label) {
+					return label.text == actual.text;
+				});
+				if (match == reference.labels.end()) {
+					continue;
+				}
+				next = static_cast<std::size_t>(std::distance(reference.labels.begin(), match)) + 1;
+				EXPECT_EQ(actual.sizePx, match->sizePx * scale);
+				EXPECT_EQ(actual.plateCornerRadius, match->plateCornerRadius * scale);
+				const Foundation::Vec2 padding = paddingOf(actual);
+				const Foundation::Vec2 expectedPadding = paddingOf(*match);
+				EXPECT_NEAR(padding.x, expectedPadding.x * scale, 1e-3F);
+				EXPECT_NEAR(padding.y, expectedPadding.y * scale, 1e-3F);
+				++comparedLabels;
 			}
-			compared += scaled.strokes.size() + scaled.rings.size() + scaled.dots.size() + scaled.labels.size();
+
+			// The placement rules: every plate inside the viewport; away from the screen edges,
+			// off the marker, the halo, the wall ring, and the keep-clear box.
+			const Foundation::Vec2 tip = screen(frame.cursor);
+			const bool			   awayFromEdges = tip.x >= kAwayFromEdgesPx && tip.y >= kAwayFromEdgesPx &&
+										 tip.x <= static_cast<float>(kWidth) - kAwayFromEdgesPx &&
+										 tip.y <= static_cast<float>(kHeight) - kAwayFromEdgesPx;
+			std::vector<FeedbackBox> keepOff;
+			if (awayFromEdges) {
+				// The marker's ticks and dot with their outlines, at this frame's radius (floored at 4 px).
+				const float radius = std::max(4.0F, frame.style.cursorRadiusPx);
+				const float reach = radius + 10.0F + 3.0F;
+				keepOff = {
+					{tip.x - reach, tip.y - 3.0F, tip.x + reach, tip.y + 3.0F},
+					{tip.x - 3.0F, tip.y - reach, tip.x + 3.0F, tip.y + reach},
+					boxAround(tip, radius + 1.25F),
+				};
+				for (const FeedbackRing& ring : ringsIn(scaled, FeedbackLayer::Marker)) {
+					keepOff.push_back(ringBox(ring));
+				}
+				for (const FeedbackRing& ring : ringsIn(scaled, FeedbackLayer::Target)) {
+					keepOff.push_back(ringBox(ring));
+				}
+				if (frame.keepClear) {
+					keepOff.push_back(*frame.keepClear);
+				}
+			}
+			for (const FeedbackLabel& label : scaled.labels) {
+				expectInside(label.plate);
+				for (const FeedbackBox& obstacle : keepOff) {
+					EXPECT_FALSE(overlaps(label.plate, obstacle)) << "label " << label.text << " on an obstacle";
+				}
+				placementChecks += awayFromEdges ? 1 : 0;
+			}
 		}
 	}
-	EXPECT_GT(compared, 4000U); // the frames plan plenty to compare
+	EXPECT_GT(comparedLabels, 1000U);
+	EXPECT_GT(placementChecks, 300U);
+	EXPECT_GT(withOneGuide, 100U);
+	EXPECT_GT(withTwoGuides, 100U);
+	EXPECT_GT(withHalo, 50U);
+	EXPECT_GT(withCloseRing, 50U);
+	EXPECT_GT(withWallRing, 50U);
+	EXPECT_GT(withKeepClear, 100U);
 }
