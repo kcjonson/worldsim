@@ -1,15 +1,12 @@
 #pragma once
 
 // Thought types for tests: the shipped condition vocabulary, and thought types written in the test as
-// the body of a <thoughts> file, loaded through the same loader and registry the game uses.
+// the body of a <thoughts> file, both loaded through the entry points the game's loadColonistRules uses.
 
+#include "ColonistRules.h"
 #include "ThoughtTypes.h"
 
 #include <conditions/ConditionVocabulary.h>
-#include <conditions/SimTerms.h>
-
-#include <assets/ConditionConfig.h>
-#include <assets/ThoughtConfig.h>
 
 #include <gtest/gtest.h>
 
@@ -28,26 +25,23 @@ namespace ecs::testing {
 
 	/// The tuning and feelings every test's types are written against.
 	inline constexpr std::string_view kTestPreamble = R"(
-  <tuning maxLineLength="40" whileCheckMinutes="15"/>
-  <feeling id="content" icon="feeling_content" expression="smile"/>
-  <feeling id="delighted" icon="feeling_delighted" expression="grin"/>
-  <feeling id="annoyed" icon="feeling_annoyed" expression="frown"/>
-  <feeling id="miserable" icon="feeling_miserable" expression="droop"/>
-  <feeling id="furious" icon="feeling_furious" expression="scowl"/>
-  <feeling id="resigned" icon="feeling_resigned" expression="sigh"/>
-  <feeling id="relieved" icon="feeling_relieved" expression="exhale"/>
+  <tuning maxLineLength="40" maxSubjectNameLength="12" whileCheckMinutes="15"/>
+  <feeling id="content"/>
+  <feeling id="delighted"/>
+  <feeling id="annoyed"/>
+  <feeling id="miserable"/>
+  <feeling id="furious"/>
+  <feeling id="resigned"/>
+  <feeling id="relieved"/>
 )";
 
 	class TestThoughtTypes {
 	  public:
-		/// Loads kTestPreamble and `body`. Load and build errors are kept in `errors`, not failed on.
-		explicit TestThoughtTypes(std::string_view body)
+		/// Loads kTestPreamble and `body` as the base file, then `laterBody`, when given, as a later file that
+		/// may replace what the base declares. Load and build errors are kept in `errors`, not failed on.
+		explicit TestThoughtTypes(std::string_view body, std::string_view laterBody = {})
 			: types(vocabulary) {
-			const assets::ConditionConfigLoad conditionConfig = assets::loadConditionConfig(repoConfig() / "conditions");
-			for (const std::string& error : conditionConfig.errors) {
-				ADD_FAILURE() << error;
-			}
-			for (const std::string& error : conditions::buildSimVocabulary(vocabulary, conditionConfig.config)) {
+			for (const std::string& error : loadConditionVocabulary(vocabulary, repoConfig() / "conditions")) {
 				ADD_FAILURE() << error;
 			}
 
@@ -57,17 +51,17 @@ namespace ecs::testing {
 				("worldsim-thoughts-" + std::string(::testing::UnitTest::GetInstance()->current_test_info()->name()) + "-" +
 				 std::to_string(nextFolder++));
 			std::filesystem::remove_all(folder);
-			std::filesystem::create_directories(folder);
+			std::filesystem::create_directories(folder / "mods");
 			{
 				std::ofstream file(folder / "thoughts.xml");
 				file << "<thoughts>" << kTestPreamble << body << "</thoughts>";
 			}
-			const assets::ThoughtConfigLoad load = assets::loadThoughtConfig(folder);
-			std::filesystem::remove_all(folder);
-			errors = load.errors;
-			if (errors.empty()) {
-				errors = types.load(load.config);
+			if (!laterBody.empty()) {
+				std::ofstream file(folder / "mods" / "later.xml");
+				file << "<thoughts>" << laterBody << "</thoughts>";
 			}
+			errors = loadThoughtTypes(types, folder);
+			std::filesystem::remove_all(folder);
 		}
 
 		[[nodiscard]] ThoughtEventTypeId type(std::string_view name) const {

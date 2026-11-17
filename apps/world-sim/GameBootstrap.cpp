@@ -4,6 +4,7 @@
 #include <assets/AssetBootstrap.h>
 #include <assets/AssetRegistry.h>
 #include <assets/AssetValidator.h>
+#include <ecs/ColonistRules.h>
 #include <storage/UserDirectories.h>
 #include <world/AppIdentity.h>
 #include <world/rendering/GroundTileBank.h>
@@ -56,6 +57,10 @@ namespace world_sim {
 			return {};
 		}
 		return {.done = true, .errors = bank.errors()};
+	}
+
+	std::vector<std::string> colonistRulesErrors() {
+		return ecs::loadColonistRules("assets/config").errors;
 	}
 
 } // namespace world_sim

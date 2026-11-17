@@ -1,4 +1,5 @@
 #include "assets/ConditionConfig.h"
+#include "assets/ConfigFiles.h"
 #include "assets/ConfigNumber.h"
 
 #include <utils/Log.h>
@@ -304,28 +305,14 @@ namespace assets {
 
 	ConditionConfigLoad loadConditionConfig(const std::filesystem::path& folder) {
 		ConditionConfigLoad result;
-		std::error_code		error;
-		if (!std::filesystem::is_directory(folder, error)) {
-			result.errors.push_back(folder.generic_string() + ": not a folder");
+		const ConfigFiles	found = configFilesIn(folder);
+		if (found.error.has_value()) {
+			result.errors.push_back(*found.error);
 			return result;
 		}
-
-		std::vector<std::filesystem::path> files;
-		for (const auto& entry : std::filesystem::recursive_directory_iterator(folder, error)) {
-			if (entry.is_regular_file() && entry.path().extension() == ".xml") {
-				files.push_back(entry.path());
-			}
-		}
-		if (error) {
-			result.errors.push_back(folder.generic_string() + ": " + error.message());
-			return result;
-		}
-		std::ranges::sort(files, {}, [&folder](const std::filesystem::path& file) {
-			return std::pair(file.parent_path() != folder, file);
-		});
 
 		Loader loader(result);
-		for (const std::filesystem::path& file : files) {
+		for (const std::filesystem::path& file : found.files) {
 			loader.loadFile(file, std::filesystem::relative(file, folder).generic_string());
 		}
 		loader.check();

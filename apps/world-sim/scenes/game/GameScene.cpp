@@ -189,11 +189,10 @@ namespace {
 					);
 					owner->scenes().switchTo(world_sim::scenes::Splash.name);
 				}
+				// Broken colonist rules go to the splash too, which checks them after the bake and shows them.
 				ecs::ColonistRulesLoad rulesLoad = ecs::loadColonistRules("assets/config");
-				for (const std::string& error : rulesLoad.errors) {
-					LOG_ERROR(Game, "%s", error.c_str());
-				}
 				if (!rulesLoad.errors.empty()) {
+					LOG_ERROR(Game, "GameScene - the colonist rules failed (%zu error(s)); back to the splash", rulesLoad.errors.size());
 					owner->scenes().switchTo(world_sim::scenes::Splash.name);
 				}
 				colonistRules = std::move(rulesLoad.rules);

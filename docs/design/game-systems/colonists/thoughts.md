@@ -35,7 +35,7 @@ A thought with a mood effect is **held** while the effect lasts, then it ends. I
 
 A recorded thought is part of the colonist's [memory](./memory.md). Memory holds what a colonist knows about the world; thoughts are what they went through in it. Thoughts are kept up to a high limit per colonist; see [What is kept](#what-is-kept).
 
-A repeat of a held thought, meaning the same event type about the same subject, does not pile up: it refreshes the held thought and restarts its timer. The same event about a different subject is a separate thought.
+A repeat of a held thought, meaning the same event type about the same subject, does not pile up: it refreshes the held thought and restarts its timer. A repeat whose feeling has no mood effect ends the held thought instead, since the colonist no longer feels it, and is recorded as a momentary thought. The same event about a different subject is a separate thought.
 
 A type can say it stacks. A stacking thought counts its repeats and shows the count; its mood effect is the amount times the count, the whole stack shares one timer that restarts on each repeat, and it ends as a whole.
 
@@ -185,16 +185,19 @@ Event types, their feelings, lines, importance, mood effects, and animations are
 
 ```xml
 <thoughts>
-  <tuning maxLineLength="48" whileCheckMinutes="15"/>
+  <tuning maxLineLength="48" maxSubjectNameLength="16" whileCheckMinutes="15"/>
 
-  <feeling id="miserable" icon="feeling_miserable" expression="droop"/>
+  <feeling id="miserable"/>
+  <feeling id="furious"/>
+  <feeling id="relieved"/>
+  <feeling id="bored"/>
 
-  <thought id="soaked" importance="normal" animation="rain_drop">
+  <thought id="soaked" importance="normal">
     <feeling is="miserable" mood="-6" while="wetness > 0.6"/>
     <feeling is="furious" when="trait(volatile)" mood="-9" while="wetness > 0.6"/>
-    <feeling is="refreshed" when="feels_hot" mood="+4" hours="2"/>
     <line>I'm soaked through.</line>
     <line feeling="furious">One more minute of this...</line>
+    <line feeling="furious">I will fight this cloud.</line>
     <ends thought="dried_off"/>
   </thought>
 
@@ -206,15 +209,17 @@ Event types, their feelings, lines, importance, mood effects, and animations are
   <thought id="itchy" importance="trivial">
     <feeling is="bored"/>
     <line>My butt itches.</line>
+    <line>{subject} looks itchy too.</line>
   </thought>
 </thoughts>
 ```
 
 - Every file's root is `<thoughts>`. The folder's own files load first, then its subfolders' in path order; a later file's feeling or thought type with the same id, or its `<tuning>`, replaces the earlier one, and the same id twice in one file is an error.
-- A feeling in the shared list has an `icon` and an `expression`. A thought type has an `importance` (`trivial`, `normal`, or `major`), `stacks="true"` when it stacks, and an optional `animation`.
-- A type lists at least one feeling. A feeling's mood effect is a signed `mood` with either `hours`, in game hours, or `while`, a condition; with no `mood` it has no effect. A `while` is checked every `whileCheckMinutes` game minutes and the thought ends when it is false; Unknown keeps it.
+- A feeling in the shared list is an `id`; the list is the closed set a type's feelings are checked against. A thought type has an `importance` (`trivial`, `normal`, or `major`) and `stacks="true"` when it stacks.
+- A type lists at least one feeling. A feeling's mood effect is a signed `mood` with either `hours`, in game hours, or `while`, a condition; with no `mood` it has no effect. A `while` is checked every `whileCheckMinutes` game minutes and the thought ends when it is false, or when its subject, a colonist or an entity, no longer exists; otherwise Unknown keeps it.
+- Numbers are written whole: `+4.5`, `-6`. Text that is not entirely a finite number (`nan`, `inf`, `4h`) is an error.
 - A feeling's or line's specificity is the number of terms its conditions name, a line's `feeling` counting as one; the most specific that holds wins, and between feelings of equal specificity the one written first does. Unknown never holds, and when no feeling holds the colonist has no thought.
-- A line is at most `maxLineLength` characters. `{subject}` in a line is the subject's name, and a line that names the subject fits only a subject that has one.
+- A line is at most `maxLineLength` characters, counting `{subject}` as `maxSubjectNameLength`. `{subject}` in a line is the subject's name as it was when the thought arrived, cut to `maxSubjectNameLength` characters when it is longer. A line that names the subject fits only a subject that has a name: a colonist's own name, or an entity's asset label (its definition name when it has no label). A colonist with no name has none.
 - `<ends thought>` names the type created when a held thought of this type ends, however it ends. Endings may not loop.
 - Conditions are written in the [condition vocabulary](./mood.md#conditions); a `<` inside an attribute is written `&lt;`.
 

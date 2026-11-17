@@ -1,11 +1,13 @@
 #include "assets/ThoughtConfig.h"
+#include "assets/ConfigFiles.h"
+#include "assets/ConfigNumber.h"
 
 #include <utils/Log.h>
 
 #include <pugixml.hpp>
 
 #include <algorithm>
-#include <charconv>
+#include <cmath>
 #include <initializer_list>
 #include <set>
 #include <string_view>
@@ -15,19 +17,13 @@ namespace assets {
 
 	namespace {
 
-		/// The attribute's whole text as a number, a leading '+' allowed; nothing for empty text or text that
-		/// is not entirely a number.
-		std::optional<float> numberOf(pugi::xml_attribute attribute) {
-			std::string_view text = attribute.as_string();
-			if (!text.empty() && text.front() == '+') {
-				text.remove_prefix(1);
-			}
-			float number = 0.0F;
-			const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), number);
-			if (text.empty() || error != std::errc() || end != text.data() + text.size()) {
+		/// A whole number of characters, 1 or more.
+		std::optional<std::size_t> characterCountOf(pugi::xml_attribute attribute) {
+			const std::optional<float> number = parseConfigNumber(attribute.as_string());
+			if (!number.has_value() || *number < 1.0F || *number != std::floor(*number)) {
 				return std::nullopt;
 			}
-			return number;
+			return static_cast<std::size_t>(*number);
 		}
 
 		std::optional<ThoughtImportance> importanceFromName(std::string_view name) {
@@ -131,22 +127,12 @@ namespace assets {
 			}
 
 			void loadFeeling(pugi::xml_node node, const std::string& source, std::set<std::string>& inFile) {
-				FeelingDef feeling{
-					.id = node.attribute("id").as_string(),
-					.icon = node.attribute("icon").as_string(),
-					.expression = node.attribute("expression").as_string(),
-					.source = source,
-				};
+				FeelingDef feeling{.id = node.attribute("id").as_string(), .source = source};
 				if (feeling.id.empty()) {
 					fail(source, "a <feeling> has no id");
 					return;
 				}
-				const std::string what = "feeling '" + feeling.id + "'";
-				if (!onlyAttributes(node, {"id", "icon", "expression"}, what, source)) {
-					return;
-				}
-				if (feeling.icon.empty() || feeling.expression.empty()) {
-					fail(source, what + " needs an icon and an expression");
+				if (!onlyAttributes(node, {"id"}, "feeling '" + feeling.id + "'", source)) {
 					return;
 				}
 				declare(result.config.feelings, std::move(feeling), "feeling", inFile);
@@ -163,7 +149,7 @@ namespace assets {
 					}
 					return std::nullopt;
 				}
-				const std::optional<float> amount = numberOf(mood);
+				const std::optional<float> amount = parseConfigNumber(mood.as_string());
 				if (!amount.has_value() || *amount == 0.0F) {
 					fail(
 						source,
@@ -179,7 +165,7 @@ namespace assets {
 				}
 				ThoughtMoodDef effect{.amount = *amount};
 				if (hours) {
-					effect.hours = numberOf(hours);
+					effect.hours = parseConfigNumber(hours.as_string());
 					if (!effect.hours.has_value() || *effect.hours <= 0.0F) {
 						fail(source, what + ": hours=\"" + hours.as_string() + "\" is not a positive number");
 						valid = false;
@@ -203,7 +189,7 @@ namespace assets {
 					return;
 				}
 				const std::string what = "thought '" + type.id + "'";
-				bool			  valid = onlyAttributes(node, {"id", "importance", "stacks", "animation"}, what, source);
+				bool			  valid = onlyAttributes(node, {"id", "importance", "stacks"}, what, source);
 
 				const std::optional<ThoughtImportance> importance = importanceFromName(node.attribute("importance").as_string());
 				if (!importance.has_value()) {
@@ -222,7 +208,6 @@ namespace assets {
 					}
 					type.stacks = value == "true";
 				}
-				type.animation = node.attribute("animation").as_string();
 
 				for (const pugi::xml_node child : node.children()) {
 					if (child.type() != pugi::node_element) {
@@ -276,14 +261,18 @@ namespace assets {
 			}
 
 			void loadTuning(pugi::xml_node node, const std::string& source) {
-				if (!onlyAttributes(node, {"maxLineLength", "whileCheckMinutes"}, "<tuning>", source)) {
+				if (!onlyAttributes(node, {"maxLineLength", "maxSubjectNameLength", "whileCheckMinutes"}, "<tuning>", source)) {
 					return;
 				}
-				const std::optional<float> maxLineLength = numberOf(node.attribute("maxLineLength"));
-				const std::optional<float> whileCheckMinutes = numberOf(node.attribute("whileCheckMinutes"));
-				if (!maxLineLength.has_value() || *maxLineLength < 1.0F ||
-					*maxLineLength != static_cast<float>(static_cast<std::size_t>(*maxLineLength))) {
+				const std::optional<std::size_t> maxLineLength = characterCountOf(node.attribute("maxLineLength"));
+				const std::optional<std::size_t> maxSubjectNameLength = characterCountOf(node.attribute("maxSubjectNameLength"));
+				const std::optional<float>		 whileCheckMinutes = parseConfigNumber(node.attribute("whileCheckMinutes").as_string());
+				if (!maxLineLength.has_value()) {
 					fail(source, "<tuning> maxLineLength must be a whole number of characters, 1 or more");
+					return;
+				}
+				if (!maxSubjectNameLength.has_value()) {
+					fail(source, "<tuning> maxSubjectNameLength must be a whole number of characters, 1 or more");
 					return;
 				}
 				if (!whileCheckMinutes.has_value() || *whileCheckMinutes <= 0.0F) {
@@ -294,7 +283,8 @@ namespace assets {
 					LOG_INFO(Engine, "Thought config: <tuning> in %s replaces the one in %s", source.c_str(), tuningSource.c_str());
 				}
 				result.config.tuning = ThoughtTuning{
-					.maxLineLength = static_cast<std::size_t>(*maxLineLength),
+					.maxLineLength = *maxLineLength,
+					.maxSubjectNameLength = *maxSubjectNameLength,
 					.whileCheckMinutes = *whileCheckMinutes,
 				};
 				tuningSource = source;
@@ -308,28 +298,14 @@ namespace assets {
 
 	ThoughtConfigLoad loadThoughtConfig(const std::filesystem::path& folder) {
 		ThoughtConfigLoad result;
-		std::error_code	  error;
-		if (!std::filesystem::is_directory(folder, error)) {
-			result.errors.push_back(folder.generic_string() + ": not a folder");
+		const ConfigFiles found = configFilesIn(folder);
+		if (found.error.has_value()) {
+			result.errors.push_back(*found.error);
 			return result;
 		}
-
-		std::vector<std::filesystem::path> files;
-		for (const auto& entry : std::filesystem::recursive_directory_iterator(folder, error)) {
-			if (entry.is_regular_file() && entry.path().extension() == ".xml") {
-				files.push_back(entry.path());
-			}
-		}
-		if (error) {
-			result.errors.push_back(folder.generic_string() + ": " + error.message());
-			return result;
-		}
-		std::ranges::sort(files, {}, [&folder](const std::filesystem::path& file) {
-			return std::pair(file.parent_path() != folder, file);
-		});
 
 		Loader loader(result);
-		for (const std::filesystem::path& file : files) {
+		for (const std::filesystem::path& file : found.files) {
 			loader.loadFile(file, std::filesystem::relative(file, folder).generic_string());
 		}
 		loader.check();

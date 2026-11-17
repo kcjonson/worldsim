@@ -26,8 +26,6 @@ namespace ecs {
 
 	struct FeelingDefinition {
 		std::string name;
-		std::string icon;
-		std::string expression;
 	};
 
 	/// One feeling a thought type can produce. `whileCondition` is set when the mood effect lasts while it
@@ -54,7 +52,6 @@ namespace ecs {
 		std::string						  name;
 		ThoughtImportance				  importance = ThoughtImportance::Normal;
 		bool							  stacks = false;
-		std::string						  animation;
 		std::vector<ThoughtFeeling>		  feelings;
 		std::vector<ThoughtLine>		  lines;
 		std::optional<ThoughtEventTypeId> ends;
@@ -79,7 +76,7 @@ namespace ecs {
 		[[nodiscard]] const ThoughtType&					 type(ThoughtEventTypeId id) const { return types[id]; }
 		[[nodiscard]] const FeelingDefinition&				 feeling(FeelingId id) const { return feelings[id]; }
 		[[nodiscard]] std::size_t							 typeCount() const { return types.size(); }
-		[[nodiscard]] std::size_t							 feelingCount() const { return feelings.size(); }
+		[[nodiscard]] std::size_t							 maxSubjectNameLength() const { return subjectNameLength; }
 		[[nodiscard]] double								 whileCheckSimulationSeconds() const { return whileCheckSeconds; }
 		[[nodiscard]] const conditions::ConditionVocabulary& vocabulary() const { return conditionVocabulary; }
 
@@ -90,13 +87,20 @@ namespace ecs {
 		std::unordered_map<std::string, FeelingId>			feelingsByName;
 		std::unordered_map<std::string, ThoughtEventTypeId> typesByName;
 		double												whileCheckSeconds = 0.0;
+		std::size_t											subjectNameLength = 0;
 	};
 
-	/// The name a line gives the subject: a colonist's name, or an entity's asset label (its definition
-	/// name when it has no label). None for a place, nothing, or an entity with neither.
+	/// The name a line gives the subject: a colonist's own name, or another entity's asset label (its
+	/// definition name when it has no label). None for a place, nothing, an entity that is gone or has
+	/// neither, or a colonist with an empty name, who is never named by his definition.
 	[[nodiscard]] std::optional<std::string> thoughtSubjectName(const World& world, const ThoughtSubject& subject);
 
-	/// The thought's line with {subject} filled in; empty when it has no line.
-	[[nodiscard]] std::string renderThoughtLine(const ThoughtTypes& types, const World& world, const Thought& thought);
+	/// The first `maxCharacters` UTF-8 characters of `name` with trailing spaces dropped; the whole name when
+	/// it fits.
+	[[nodiscard]] std::string shortenSubjectName(std::string_view name, std::size_t maxCharacters);
+
+	/// The thought's line with {subject} filled in by the name the thought was given, shortened to the
+	/// tuning's maxSubjectNameLength; empty when it has no line.
+	[[nodiscard]] std::string renderThoughtLine(const ThoughtTypes& types, const Thoughts& thoughts, const Thought& thought);
 
 } // namespace ecs

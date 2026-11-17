@@ -112,6 +112,8 @@ namespace world_sim {
 		// colonist?at=x,y&n=&name=: refused on water or a placed obstacle (moverGroundRefusal).
 		DevRefusal devColonist(const app::DevRequest& cmd);
 		void devNeed(const app::DevRequest& cmd);
+		/// Sets one attribute (its condition name, e.g. kindness or social_need) on one colonist, 0 to 20.
+		DevRefusal devAttribute(const app::DevRequest& cmd);
 		void devTime(const app::DevRequest& cmd);
 		// teleport?colonist=<id>&to=x,y: refused for an entity that does not exist, and on water or a placed
 		// obstacle (moverGroundRefusal); ground no mover has meshed takes him.

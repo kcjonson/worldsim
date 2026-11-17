@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -74,7 +75,10 @@ namespace ecs {
 		/// Which of its type's feelings applied: an index into ThoughtType::feelings.
 		uint16_t typeFeeling = 0;
 		/// Its line, an index into ThoughtType::lines; none when no line fit.
-		std::optional<uint16_t>	  line{};
+		std::optional<uint16_t> line{};
+		/// The subject's name when the thought arrived, an index into Thoughts::subjectNames; none when the
+		/// subject had no name. Kept so a line still names a subject that is gone.
+		std::optional<uint32_t>	  subjectName{};
 		std::optional<MoodEffect> moodEffect{};
 		ThoughtImportance		  importance = ThoughtImportance::Normal;
 		double					  arrivedAt = 0.0;
@@ -96,6 +100,8 @@ namespace ecs {
 		ThoughtId			   nextId = 1;
 		/// The line this colonist was last given for each event type, so the next pick can avoid it.
 		std::unordered_map<ThoughtEventTypeId, uint16_t> lastLines;
+		/// Each subject name this colonist's thoughts have given, once: a thought holds an index, not a copy.
+		std::vector<std::string> subjectNames;
 	};
 
 	[[nodiscard]] const Thought* findThought(const Thoughts& thoughts, ThoughtId id);

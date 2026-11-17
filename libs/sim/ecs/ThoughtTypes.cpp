@@ -19,11 +19,23 @@ namespace ecs {
 		constexpr std::string_view kSubjectPlaceholder = "{subject}";
 		constexpr double		   kGameMinutesPerHour = 60.0;
 
+		bool startsCharacter(char byte) {
+			return (static_cast<unsigned char>(byte) & 0xC0U) != 0x80U;
+		}
+
 		/// Characters, not bytes: every byte that does not continue a UTF-8 sequence starts one.
 		std::size_t characterCount(std::string_view text) {
-			return static_cast<std::size_t>(std::ranges::count_if(text, [](char byte) {
-				return (static_cast<unsigned char>(byte) & 0xC0U) != 0x80U;
-			}));
+			return static_cast<std::size_t>(std::ranges::count_if(text, startsCharacter));
+		}
+
+		/// The line's length as shown, each {subject} counted as the longest name it can show.
+		std::size_t shownLength(std::string_view text, std::size_t maxSubjectNameLength) {
+			std::size_t length = characterCount(text);
+			for (std::size_t at = text.find(kSubjectPlaceholder); at != std::string_view::npos;
+				 at = text.find(kSubjectPlaceholder, at + kSubjectPlaceholder.size())) {
+				length = length - kSubjectPlaceholder.size() + maxSubjectNameLength;
+			}
+			return length;
 		}
 
 		class Builder {
@@ -69,7 +81,7 @@ namespace ecs {
 		std::unordered_map<std::string, FeelingId> newFeelingsByName;
 		for (const assets::FeelingDef& def : config.feelings) {
 			newFeelingsByName.emplace(def.id, static_cast<FeelingId>(newFeelings.size()));
-			newFeelings.push_back({.name = def.id, .icon = def.icon, .expression = def.expression});
+			newFeelings.push_back({.name = def.id});
 		}
 
 		std::unordered_map<std::string, ThoughtEventTypeId> newTypesByName;
@@ -77,15 +89,16 @@ namespace ecs {
 			newTypesByName.emplace(def.id, static_cast<ThoughtEventTypeId>(newTypesByName.size()));
 		}
 
-		const std::size_t maxLineLength = config.tuning.has_value() ? config.tuning->maxLineLength : 0;
 		if (!config.tuning.has_value()) {
 			errors.emplace_back("thoughts: no <tuning>");
+			return errors;
 		}
+		const assets::ThoughtTuning& tuning = *config.tuning;
 
 		std::vector<ThoughtType> newTypes;
 		for (const assets::ThoughtTypeDef& def : config.types) {
 			const std::string what = def.source + ": thought '" + def.id + "'";
-			ThoughtType		  type{.name = def.id, .importance = def.importance, .stacks = def.stacks, .animation = def.animation};
+			ThoughtType		  type{.name = def.id, .importance = def.importance, .stacks = def.stacks};
 
 			if (def.feelings.empty()) {
 				errors.push_back(what + " lists no feeling, so no colonist could ever have it");
@@ -120,10 +133,11 @@ namespace ecs {
 									  .when = builder.condition(lineDef.when, where + " when"),
 									  .namesSubject = lineDef.text.find(kSubjectPlaceholder) != std::string::npos,
 				  };
-				if (maxLineLength > 0 && characterCount(lineDef.text) > maxLineLength) {
+				if (const std::size_t length = shownLength(lineDef.text, tuning.maxSubjectNameLength); length > tuning.maxLineLength) {
 					errors.push_back(
-						where + ": '" + lineDef.text + "' is " + std::to_string(characterCount(lineDef.text)) +
-						" characters, more than the " + std::to_string(maxLineLength) + " a line may be"
+						where + ": '" + lineDef.text + "' is " + std::to_string(length) + " characters" +
+						(line.namesSubject ? " with {subject} as " + std::to_string(tuning.maxSubjectNameLength) : std::string{}) +
+						", more than the " + std::to_string(tuning.maxLineLength) + " a line may be"
 					);
 				}
 				if (!lineDef.feeling.empty()) {
@@ -186,7 +200,8 @@ namespace ecs {
 		feelingsByName = std::move(newFeelingsByName);
 		types = std::move(newTypes);
 		typesByName = std::move(newTypesByName);
-		whileCheckSeconds = static_cast<double>(config.tuning->whileCheckMinutes) * kSimulationSecondsPerGameHour / kGameMinutesPerHour;
+		whileCheckSeconds = static_cast<double>(tuning.whileCheckMinutes) * kSimulationSecondsPerGameHour / kGameMinutesPerHour;
+		subjectNameLength = tuning.maxSubjectNameLength;
 		return errors;
 	}
 
@@ -207,8 +222,8 @@ namespace ecs {
 		if (!world.isAlive(subject.entity)) {
 			return std::nullopt;
 		}
-		if (const Colonist* colonist = world.getComponent<Colonist>(subject.entity); colonist != nullptr && !colonist->name.empty()) {
-			return colonist->name;
+		if (const Colonist* colonist = world.getComponent<Colonist>(subject.entity); colonist != nullptr) {
+			return colonist->name.empty() ? std::nullopt : std::optional(colonist->name);
 		}
 		const Appearance* appearance = world.getComponent<Appearance>(subject.entity);
 		if (appearance == nullptr || appearance->defName.empty()) {
@@ -218,7 +233,22 @@ namespace ecs {
 		return definition != nullptr && !definition->label.empty() ? definition->label : appearance->defName;
 	}
 
-	std::string renderThoughtLine(const ThoughtTypes& types, const World& world, const Thought& thought) {
+	std::string shortenSubjectName(std::string_view name, std::size_t maxCharacters) {
+		std::size_t characters = 0;
+		std::size_t end = 0;
+		for (; end < name.size(); ++end) {
+			if (startsCharacter(name[end]) && characters++ == maxCharacters) {
+				break;
+			}
+		}
+		std::string_view shortened = name.substr(0, end);
+		while (end < name.size() && shortened.ends_with(' ')) {
+			shortened.remove_suffix(1);
+		}
+		return std::string(shortened);
+	}
+
+	std::string renderThoughtLine(const ThoughtTypes& types, const Thoughts& thoughts, const Thought& thought) {
 		if (!thought.line.has_value()) {
 			return {};
 		}
@@ -226,7 +256,9 @@ namespace ecs {
 		if (text.find(kSubjectPlaceholder) == std::string::npos) {
 			return text;
 		}
-		const std::string name = thoughtSubjectName(world, thought.subject).value_or(std::string{});
+		const std::string name = thought.subjectName.has_value()
+									 ? shortenSubjectName(thoughts.subjectNames[*thought.subjectName], types.maxSubjectNameLength())
+									 : std::string{};
 		for (std::size_t at = text.find(kSubjectPlaceholder); at != std::string::npos;
 			 at = text.find(kSubjectPlaceholder, at + name.size())) {
 			text.replace(at, kSubjectPlaceholder.size(), name);

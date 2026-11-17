@@ -17,6 +17,8 @@
 
 #include <ui/components/Toast.h>
 
+#include <conditions/ColonistTerms.h>
+
 #include <construction/ConstructionValidator.h>
 #include <construction/ConstructionWorld.h>
 #include <construction/SnapEngine.h>
@@ -28,6 +30,7 @@
 #include <ecs/WorldSource.h>
 #include <ecs/components/Action.h>
 #include <ecs/components/Appearance.h>
+#include <ecs/components/Attributes.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Mood.h>
@@ -106,6 +109,7 @@ namespace world_sim {
 		verb("spawn", &DevCommandHandler::devSpawn);
 		verb("colonist", &DevCommandHandler::devColonist);
 		verb("need", &DevCommandHandler::devNeed);
+		verb("attribute", &DevCommandHandler::devAttribute);
 		verb("time", &DevCommandHandler::devTime);
 		verb("teleport", &DevCommandHandler::devTeleport);
 		verb("select", &DevCommandHandler::devSelect);
@@ -459,6 +463,31 @@ namespace world_sim {
 		needs->get(type).value = value;
 		LOG_INFO(Game, "[DevAPI] need: %s=%.1f on #%llu", ecs::needLabel(type), static_cast<double>(value), static_cast<unsigned long long>(id));
 		m_ctx.ui->pushNotification("Dev", std::string(ecs::needLabel(type)) + " set", ui::ToastSeverity::Info);
+	}
+
+	DevRefusal DevCommandHandler::devAttribute(const app::DevRequest& cmd) {
+		const ecs::EntityID id = parseEntity(param(cmd, "colonist"));
+		auto*				attributes = m_ctx.world->getComponent<ecs::Attributes>(id);
+		if (!m_ctx.world->isAlive(id) || attributes == nullptr) {
+			return refuse("attribute: no colonist #" + param(cmd, "colonist"));
+		}
+		const std::string name = param(cmd, "attribute");
+		const auto field = std::ranges::find_if(ecs::kAttributeFields, [&name](const ecs::AttributeField& candidate) {
+			return conditions::conditionName(candidate.label) == name;
+		});
+		if (field == ecs::kAttributeFields.end()) {
+			return refuse("attribute: no attribute '" + name + "'");
+		}
+		char*			  end = nullptr;
+		const std::string text = param(cmd, "value");
+		const float		  value = std::strtof(text.c_str(), &end);
+		if (text.empty() || end != text.c_str() + text.size() || !std::isfinite(value) || value < 0.0F || value > 20.0F) {
+			return refuse("attribute: value '" + text + "' is not a number from 0 to 20");
+		}
+		attributes->*(field->value) = value;
+		LOG_INFO(Game, "[DevAPI] attribute: %s=%.1f on #%llu", name.c_str(), static_cast<double>(value), static_cast<unsigned long long>(id));
+		m_ctx.ui->pushNotification("Dev", std::string(field->label) + " set", ui::ToastSeverity::Info);
+		return {};
 	}
 
 	void DevCommandHandler::devTime(const app::DevRequest& cmd) {
@@ -1126,8 +1155,9 @@ namespace world_sim {
 		std::ostringstream		 out;
 		out << "{\"status\":\"ok\",\"verb\":\"thought\",\"created\":" << (handle.colonist != ecs::kInvalidEntity ? "true" : "false");
 		if (handle.colonist != ecs::kInvalidEntity) {
-			const ecs::Thought& thought = *ecs::findThought(*m_ctx.world->getComponent<ecs::Thoughts>(colonist), handle.thought);
-			const std::string	line = ecs::renderThoughtLine(types, *m_ctx.world, thought);
+			const ecs::Thoughts& thoughts = *m_ctx.world->getComponent<ecs::Thoughts>(colonist);
+			const ecs::Thought&	 thought = *ecs::findThought(thoughts, handle.thought);
+			const std::string	 line = ecs::renderThoughtLine(types, thoughts, thought);
 			out << ",\"thought\":" << thought.id << ",\"feeling\":\"" << jsonEscape(types.feeling(thought.feeling).name) << "\",\"line\":";
 			if (line.empty()) {
 				out << "null";
@@ -1186,7 +1216,7 @@ namespace world_sim {
 			const ecs::Thought& thought = thoughts.record[thoughts.record.size() - 1 - index];
 			out << (index > 0 ? "," : "");
 			header(thought);
-			const std::string line = ecs::renderThoughtLine(types, *m_ctx.world, thought);
+			const std::string line = ecs::renderThoughtLine(types, thoughts, thought);
 			out << ",\"line\":";
 			if (line.empty()) {
 				out << "null";
@@ -1223,6 +1253,14 @@ namespace world_sim {
 					break;
 			}
 			out << "}";
+			if (const auto* attributes = m_ctx.world->getComponent<ecs::Attributes>(entity)) {
+				out << ",\"attributes\":{";
+				for (size_t i = 0; i < ecs::kAttributeFields.size(); ++i) {
+					const ecs::AttributeField& field = ecs::kAttributeFields[i];
+					out << (i > 0 ? "," : "") << "\"" << conditions::conditionName(field.label) << "\":" << attributes->*(field.value);
+				}
+				out << "}";
+			}
 			if (const auto* thoughts = m_ctx.world->getComponent<ecs::Thoughts>(entity)) {
 				serializeThoughts(out, *thoughts);
 			}

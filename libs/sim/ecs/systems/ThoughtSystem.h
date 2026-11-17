@@ -11,8 +11,9 @@
 // event type and subject match one the colonist already holds, and whose timer has not run out, is
 // folded into it rather than held twice. The held thought takes the repeat's feeling, line, and effect,
 // a timed effect restarts its duration from the repeat, and a stacking one counts up. A thought without
-// a mood effect is momentary and is always its own record. When a held thought ends, however it ends,
-// its type's <ends> thought is created.
+// a mood effect is momentary and is always its own record; as a repeat of a held thought it ends that
+// one first. A `while` effect ends at its next check once its condition is False or its subject is gone.
+// When a held thought ends, however it ends, its type's <ends> thought is created.
 
 #include "../ISystem.h"
 #include "../ThoughtTypes.h"
@@ -86,10 +87,10 @@ namespace ecs {
 			const ThoughtType&					type,
 			FeelingId							feeling,
 			const conditions::ConditionContext& context,
-			const ThoughtSubject&				subject,
+			bool								subjectHasName,
 			std::optional<uint16_t>				lastLine
 		);
-		/// True when the held thought's `while` condition was checked and is False.
+		/// True when the held thought's `while` condition was checked and is False, or its subject is gone.
 		[[nodiscard]] bool causeHasPassed(EntityID colonist, const Thought& thought) const;
 		void			   endHeld(EntityID colonist, Thoughts& thoughts, Thought& thought, double endedAt);
 

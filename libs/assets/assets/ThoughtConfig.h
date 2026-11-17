@@ -16,11 +16,9 @@ namespace assets {
 
 	enum class ThoughtImportance : uint8_t { Trivial, Normal, Major };
 
-	/// An emotion word from the shared list, with the art that shows it without text.
+	/// An emotion word from the shared list, the closed set a thought type's feelings are checked against.
 	struct FeelingDef {
 		std::string id;
-		std::string icon;
-		std::string expression;
 		std::string source; // the file it was declared in
 	};
 
@@ -51,7 +49,6 @@ namespace assets {
 		std::string					   id;
 		ThoughtImportance			   importance = ThoughtImportance::Normal;
 		bool						   stacks = false;
-		std::string					   animation;
 		std::vector<ThoughtFeelingDef> feelings;
 		std::vector<ThoughtLineDef>	   lines;
 		std::string					   ends; // the thought type created when a held one of this type ends
@@ -59,8 +56,10 @@ namespace assets {
 	};
 
 	struct ThoughtTuning {
-		/// The longest a line may be, in characters.
+		/// The longest a line may be, in characters, {subject} counted as maxSubjectNameLength.
 		std::size_t maxLineLength = 0;
+		/// The most characters of a subject's name a line shows; a longer name is cut to fit.
+		std::size_t maxSubjectNameLength = 0;
 		/// How often a held thought's `while` condition is checked, in game minutes.
 		float whileCheckMinutes = 0.0F;
 	};

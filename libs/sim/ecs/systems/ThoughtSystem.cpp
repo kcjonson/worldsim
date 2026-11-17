@@ -45,6 +45,15 @@ namespace ecs {
 			return isEntity ? subject.entity : kInvalidEntity;
 		}
 
+		uint32_t internSubjectName(Thoughts& thoughts, const std::string& name) {
+			const auto found = std::ranges::find(thoughts.subjectNames, name);
+			if (found != thoughts.subjectNames.end()) {
+				return static_cast<uint32_t>(found - thoughts.subjectNames.begin());
+			}
+			thoughts.subjectNames.push_back(name);
+			return static_cast<uint32_t>(thoughts.subjectNames.size() - 1);
+		}
+
 		bool holds(
 			const conditions::ConditionVocabulary&		vocabulary,
 			const std::optional<conditions::Condition>& condition,
@@ -129,20 +138,33 @@ namespace ecs {
 		const ThoughtFeeling& feeling = type.feelings[*typeFeeling];
 		const double		  now = world->getSystem<TimeSystem>().simulationSeconds();
 
+		// A repeat the colonist feels nothing about ends what he held. Ending it may run observers and its
+		// <ends> thought, so the record is looked up after.
+		if (Thoughts* existing = world->getComponent<Thoughts>(args.colonist); existing != nullptr && !feeling.moodEffect.has_value()) {
+			if (Thought* held = findHeld(*existing, args.eventType, args.subject, now); held != nullptr) {
+				endHeld(args.colonist, *existing, *held, now);
+				if (!world->isAlive(args.colonist)) {
+					return {};
+				}
+			}
+		}
+
 		Thoughts* thoughts = world->getComponent<Thoughts>(args.colonist);
 		if (thoughts == nullptr) {
 			thoughts = &world->addComponent<Thoughts>(args.colonist);
 		}
 
-		std::optional<uint16_t> lastLine;
+		const std::optional<std::string> subjectName = thoughtSubjectName(*world, args.subject);
+		std::optional<uint16_t>			 lastLine;
 		if (const auto found = thoughts->lastLines.find(args.eventType); found != thoughts->lastLines.end()) {
 			lastLine = found->second;
 		}
-		const std::optional<uint16_t> line = chooseLine(type, feeling.feeling, context, args.subject, lastLine);
+		const std::optional<uint16_t> line = chooseLine(type, feeling.feeling, context, subjectName.has_value(), lastLine);
 		if (line.has_value()) {
 			thoughts->lastLines[args.eventType] = *line;
 		}
-		const double nextCheckAt = now + thoughtTypes.whileCheckSimulationSeconds();
+		const std::optional<uint32_t> subjectNameIndex = subjectName.has_value() ? std::optional(internSubjectName(*thoughts, *subjectName)) : std::nullopt;
+		const double				  nextCheckAt = now + thoughtTypes.whileCheckSimulationSeconds();
 
 		if (feeling.moodEffect.has_value()) {
 			if (Thought* held = findHeld(*thoughts, args.eventType, args.subject, now); held != nullptr) {
@@ -152,6 +174,7 @@ namespace ecs {
 				held->feeling = feeling.feeling;
 				held->typeFeeling = *typeFeeling;
 				held->line = line;
+				held->subjectName = subjectNameIndex;
 				held->moodEffect = feeling.moodEffect;
 				held->importance = type.importance;
 				held->lastRepeatedAt = now;
@@ -173,6 +196,7 @@ namespace ecs {
 			.feeling = feeling.feeling,
 			.typeFeeling = *typeFeeling,
 			.line = line,
+			.subjectName = subjectNameIndex,
 			.moodEffect = feeling.moodEffect,
 			.importance = type.importance,
 			.arrivedAt = now,
@@ -204,11 +228,9 @@ namespace ecs {
 		const ThoughtType&					type,
 		FeelingId							feeling,
 		const conditions::ConditionContext& context,
-		const ThoughtSubject&				subject,
+		bool								subjectHasName,
 		std::optional<uint16_t>				lastLine
 	) {
-		const bool subjectHasName =
-			std::ranges::any_of(type.lines, &ThoughtLine::namesSubject) && thoughtSubjectName(*world, subject).has_value();
 		lineScratch.clear();
 		// Lines are most specific first: the first specificity with a line that fits is the one picked from.
 		for (std::size_t index = 0; index < type.lines.size(); ++index) {
@@ -236,6 +258,9 @@ namespace ecs {
 			thoughtTypes.type(thought.eventType).feelings[thought.typeFeeling].whileCondition;
 		if (!condition.has_value()) {
 			return false;
+		}
+		if (targetOf(thought.subject) != kInvalidEntity && !world->isAlive(thought.subject.entity)) {
+			return true;
 		}
 		const conditions::ConditionContext context{.world = *world, .colonist = colonist, .target = targetOf(thought.subject)};
 		return thoughtTypes.vocabulary().evaluate(*condition, context) == conditions::Truth::False;

@@ -26,6 +26,14 @@ namespace ecs {
 		std::vector<std::string> errors;
 	};
 
+	/// Declare `vocabulary` from the condition config in `folder`, answer it with the sim's terms, and
+	/// freeze it. An empty error list means it is ready; that is logged with its term count.
+	[[nodiscard]] std::vector<std::string> loadConditionVocabulary(conditions::ConditionVocabulary& vocabulary, const std::filesystem::path& folder);
+
+	/// Build `types` from the thought config in `folder`. An empty error list means they are ready; that is
+	/// logged with the feeling and thought type counts.
+	[[nodiscard]] std::vector<std::string> loadThoughtTypes(ThoughtTypes& types, const std::filesystem::path& folder);
+
 	/// Build the vocabulary from `configRoot`/conditions, then the thought types from `configRoot`/thoughts.
 	/// Errors name their folder; an empty list means both are ready.
 	[[nodiscard]] ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot);

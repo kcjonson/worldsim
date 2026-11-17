@@ -2,10 +2,14 @@
 <!--
   The numbers the thought system runs on.
 
-  maxLineLength      the longest a line may be, in characters; a line is a quip, a few words.
-  whileCheckMinutes  how often, in game minutes, a held thought whose mood effect lasts while a
-                     condition holds checks it; it ends when the condition is false.
+  maxLineLength         the longest a line may be, in characters; a line is a quip, a few words.
+                        {subject} counts as maxSubjectNameLength.
+  maxSubjectNameLength  the most characters of a subject's name a line shows; a longer name is
+                        cut to fit.
+  whileCheckMinutes     how often, in game minutes, a held thought whose mood effect lasts while a
+                        condition holds checks it; it ends when the condition is false or its
+                        subject is gone.
 -->
 <thoughts>
-  <tuning maxLineLength="48" whileCheckMinutes="15"/>
+  <tuning maxLineLength="48" maxSubjectNameLength="16" whileCheckMinutes="15"/>
 </thoughts>

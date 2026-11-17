@@ -35,4 +35,9 @@ namespace world_sim {
 	/// the splash; a dev switch straight to the game scene runs it to the end.
 	GroundBakeStep stepGroundBake();
 
+	/// The colonist rules' errors (the condition vocabulary and the thought types under assets/config), each
+	/// naming its folder; empty when they load clean. The splash blocks on them after the ground bake, so a
+	/// scene that finds them broken switches to the splash, which shows them.
+	std::vector<std::string> colonistRulesErrors();
+
 } // namespace world_sim

@@ -162,7 +162,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(ThoughtSystemTest, CauseBoundEffectHoldsWhileUnknownUntilEnded) {
-		const ThoughtSubject toilet = ThoughtSubject::aboutEntity(7);
+		const ThoughtSubject toilet = ThoughtSubject::aboutEntity(world.createEntity());
 		give("something_reeks", toilet);
 
 		advanceGameHours(24.0F * 30.0F);
@@ -631,7 +631,7 @@ namespace ecs::test {
 			const EntityID who = world.createEntity();
 			world.addComponent<Attributes>(who, attributes);
 			const ThoughtHandle handle = thoughts.create({.colonist = who, .eventType = rules.type(type)});
-			return renderThoughtLine(rules.types, world, *findThought(*world.getComponent<Thoughts>(who), handle.thought));
+			return renderThoughtLine(rules.types, *world.getComponent<Thoughts>(who), *findThought(*world.getComponent<Thoughts>(who), handle.thought));
 		};
 		EXPECT_EQ(lineFor(Attributes{}, "soaked"), "I'm soaked through.");
 		EXPECT_EQ(lineFor(Attributes{.civility = 3.0F}, "soaked"), "One more minute of this...");
@@ -697,7 +697,7 @@ namespace ecs::test {
 
 		const auto lineOf = [&](std::string_view type, ThoughtSubject subject) {
 			const ThoughtHandle handle = thoughts.create({.colonist = ada, .eventType = rules.type(type), .subject = subject});
-			return renderThoughtLine(rules.types, world, *findThought(*world.getComponent<Thoughts>(ada), handle.thought));
+			return renderThoughtLine(rules.types, *world.getComponent<Thoughts>(ada), *findThought(*world.getComponent<Thoughts>(ada), handle.thought));
 		};
 		EXPECT_EQ(lineOf("talked", ThoughtSubject::aboutColonist(idris)), "Idris gets me.");
 		EXPECT_EQ(lineOf("talked", ThoughtSubject::aboutNothing()), "") << "the only line names a subject there is none of";
@@ -710,6 +710,117 @@ namespace ecs::test {
 		for (int pick = 0; pick < 5; ++pick) {
 			EXPECT_EQ(lineOf("admired", ThoughtSubject::aboutPlace({1.0F, 1.0F})), "Huh.") << "a place has no name to fill in";
 		}
+	}
+
+	TEST(ThoughtLines, TheSubjectsNameOutlivesTheSubjectAndAnUnnamedColonistIsNotNamedByHisDefinition) {
+		testing::TestThoughtTypes rules(R"(
+  <thought id="talked" importance="normal">
+    <feeling is="content"/>
+    <line>{subject} gets me.</line>
+  </thought>
+)");
+		ASSERT_TRUE(rules.errors.empty()) << rules.errors.front();
+		World world;
+		world.registerSystem<TimeSystem>();
+		ThoughtSystem& thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
+		const EntityID ada = world.createEntity();
+		const EntityID idris = world.createEntity();
+		world.addComponent<Colonist>(idris, Colonist{.name = "Idris"});
+		const EntityID nameless = world.createEntity();
+		world.addComponent<Colonist>(nameless, Colonist{});
+		world.addComponent<Appearance>(nameless, Appearance{.defName = "Colonist"});
+
+		const ThoughtHandle aboutIdris = thoughts.create({.colonist = ada, .eventType = rules.type("talked"), .subject = ThoughtSubject::aboutColonist(idris)});
+		world.destroyEntity(idris);
+		EXPECT_EQ(renderThoughtLine(rules.types, *world.getComponent<Thoughts>(ada), *findThought(*world.getComponent<Thoughts>(ada), aboutIdris.thought)), "Idris gets me.");
+
+		const ThoughtHandle aboutNameless =
+			thoughts.create({.colonist = ada, .eventType = rules.type("talked"), .subject = ThoughtSubject::aboutColonist(nameless)});
+		const Thought& unnamed = *findThought(*world.getComponent<Thoughts>(ada), aboutNameless.thought);
+		EXPECT_FALSE(unnamed.line.has_value()) << "a colonist with no name has none to fill in, not his definition's";
+	}
+
+	TEST(ThoughtWhileEffect, EndsAtItsNextCheckOnceItsSubjectIsGone) {
+		testing::TestThoughtTypes rules(R"(
+  <thought id="reeks" importance="normal">
+    <feeling is="annoyed" mood="-4" while="wetness > 0"/>
+  </thought>
+)");
+		ASSERT_TRUE(rules.errors.empty()) << rules.errors.front();
+		World		   world;
+		TimeSystem&	   time = world.registerSystem<TimeSystem>();
+		ThoughtSystem& thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
+		const EntityID who = world.createEntity();
+		const EntityID toilet = world.createEntity();
+		const EntityID kept = world.createEntity();
+
+		const ThoughtHandle aboutToilet = thoughts.create({.colonist = who, .eventType = rules.type("reeks"), .subject = ThoughtSubject::aboutEntity(toilet)});
+		const ThoughtHandle aboutKept = thoughts.create({.colonist = who, .eventType = rules.type("reeks"), .subject = ThoughtSubject::aboutEntity(kept)});
+		world.destroyEntity(toilet);
+		const EntityID reused = world.createEntity();
+		ASSERT_EQ(getIndex(reused), getIndex(toilet)) << "the slot is reused under a new generation";
+
+		time.skipTime(15.0F);
+		world.update(0.0F);
+		const Thoughts& record = *world.getComponent<Thoughts>(who);
+		EXPECT_FALSE(isHeld(*findThought(record, aboutToilet.thought))) << "its subject is gone, so its cause has passed";
+		EXPECT_TRUE(isHeld(*findThought(record, aboutKept.thought))) << "Unknown still keeps one whose subject is there";
+	}
+
+	TEST(ThoughtRepeats, ARepeatWithNoMoodEffectEndsTheHeldThought) {
+		testing::TestThoughtTypes rules(R"(
+  <thought id="slept_on_ground" importance="normal">
+    <feeling is="annoyed" mood="-10" hours="24"/>
+    <feeling is="content" when="attribute(sanity) >= 15"/>
+  </thought>
+)");
+		ASSERT_TRUE(rules.errors.empty()) << rules.errors.front();
+		World		   world;
+		world.registerSystem<TimeSystem>();
+		ThoughtSystem& thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
+		std::vector<ThoughtId> ended;
+		thoughts.addEndedObserver([&](EntityID, const Thought& thought) { ended.push_back(thought.id); });
+		const EntityID who = world.createEntity();
+		world.addComponent<Attributes>(who, Attributes{});
+
+		const ThoughtHandle held = thoughts.create({.colonist = who, .eventType = rules.type("slept_on_ground")});
+		world.getComponent<Attributes>(who)->sanity = 16.0F;
+		const ThoughtHandle repeat = thoughts.create({.colonist = who, .eventType = rules.type("slept_on_ground")});
+
+		const Thoughts& record = *world.getComponent<Thoughts>(who);
+		ASSERT_EQ(record.record.size(), 2U);
+		EXPECT_NE(repeat.thought, held.thought) << "the repeat is its own momentary record";
+		EXPECT_FALSE(isHeld(*findThought(record, held.thought))) << "the colonist no longer feels it";
+		EXPECT_EQ(heldMoodTotal(record), 0.0F);
+		EXPECT_EQ(ended, (std::vector{held.thought}));
+		EXPECT_EQ(findThought(record, repeat.thought)->feeling, rules.feeling("content"));
+	}
+
+	TEST(ThoughtRepeats, ARepeatTakesTheNewFeelingAndAmountAcrossTheWholeStack) {
+		testing::TestThoughtTypes rules(R"(
+  <thought id="bottled_up" importance="normal" stacks="true">
+    <feeling is="resigned" mood="-2" hours="12"/>
+    <feeling is="furious" when="attribute(civility) &lt; 6" mood="-5" hours="12"/>
+  </thought>
+)");
+		ASSERT_TRUE(rules.errors.empty()) << rules.errors.front();
+		World		   world;
+		world.registerSystem<TimeSystem>();
+		ThoughtSystem& thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
+		const EntityID who = world.createEntity();
+		world.addComponent<Attributes>(who, Attributes{});
+
+		const ThoughtHandle first = thoughts.create({.colonist = who, .eventType = rules.type("bottled_up")});
+		EXPECT_EQ(heldMoodTotal(*world.getComponent<Thoughts>(who)), -2.0F);
+		world.getComponent<Attributes>(who)->civility = 3.0F;
+		EXPECT_EQ(thoughts.create({.colonist = who, .eventType = rules.type("bottled_up")}).thought, first.thought);
+
+		const Thought& stack = *findThought(*world.getComponent<Thoughts>(who), first.thought);
+		EXPECT_EQ(stack.count, 2U);
+		EXPECT_EQ(stack.feeling, rules.feeling("furious"));
+		ASSERT_TRUE(stack.moodEffect.has_value());
+		EXPECT_EQ(stack.moodEffect->amount, -5.0F);
+		EXPECT_EQ(heldMoodTotal(*world.getComponent<Thoughts>(who)), -10.0F) << "the new amount counts for every repeat";
 	}
 
 	// --- definitions ---
@@ -785,7 +896,92 @@ namespace ecs::test {
 		}
 		EXPECT_TRUE(types.type(*types.findType("bottled_up")).stacks);
 		EXPECT_EQ(types.type(*types.findType("accident_in_public")).importance, ThoughtImportance::Major);
-		EXPECT_GE(types.feelingCount(), 10U);
+		for (const std::string_view name : {"content", "resigned", "furious", "amused"}) {
+			EXPECT_TRUE(types.findFeeling(name).has_value()) << name;
+		}
+
+		// A feeling-limited line alone would be the only thing that feeling ever says.
+		for (std::size_t index = 0; index < types.typeCount(); ++index) {
+			const ThoughtType& type = types.type(static_cast<ThoughtEventTypeId>(index));
+			for (const ThoughtLine& line : type.lines) {
+				if (line.feeling.has_value()) {
+					EXPECT_GE(std::ranges::count(type.lines, line.feeling, &ThoughtLine::feeling), 2)
+						<< type.name << ": '" << types.feeling(*line.feeling).name << "' has one line";
+				}
+			}
+		}
+	}
+
+	TEST(ThoughtTypeDefinitions, EndsMayNotLoopThroughATypeALaterFileReplaces) {
+		const std::vector<std::string> self =
+			testing::TestThoughtTypes(R"(<thought id="a" importance="normal"><feeling is="content"/><ends thought="a"/></thought>)").errors;
+		ASSERT_EQ(self.size(), 1U);
+		EXPECT_TRUE(mentions(self, "makes a cycle (a -> a)")) << self.front();
+
+		constexpr std::string_view kChain = R"(
+  <thought id="a" importance="normal"><feeling is="content"/><ends thought="b"/></thought>
+  <thought id="b" importance="normal"><feeling is="content"/><ends thought="c"/></thought>
+  <thought id="c" importance="normal"><feeling is="content"/></thought>
+)";
+		EXPECT_TRUE(testing::TestThoughtTypes(kChain).errors.empty()) << "a chain that ends is fine";
+		const std::vector<std::string> looped =
+			testing::TestThoughtTypes(kChain, R"(<thought id="c" importance="normal"><feeling is="content"/><ends thought="a"/></thought>)")
+				.errors;
+		ASSERT_EQ(looped.size(), 1U);
+		EXPECT_TRUE(mentions(looped, "makes a cycle (a -> b -> c -> a)")) << looped.front();
+
+		testing::TestThoughtTypes broken(kChain, R"(<thought id="b" importance="normal"><feeling is="content"/></thought>)");
+		ASSERT_TRUE(broken.errors.empty()) << broken.errors.front();
+		EXPECT_FALSE(broken.types.type(broken.type("b")).ends.has_value()) << "the later file's b ends nothing";
+		EXPECT_EQ(broken.types.type(broken.type("a")).ends, broken.type("b"));
+	}
+
+	TEST(ThoughtTypeDefinitions, LineLengthCountsCharactersAndTheSubjectAsItsBudget) {
+		const auto errorsFor = [](const std::string& line) {
+			return testing::TestThoughtTypes(R"(<thought id="a" importance="normal"><feeling is="content"/><line>)" + line + "</line></thought>")
+				.errors;
+		};
+		// The budget is 40, {subject} 12.
+		std::string accented;
+		for (int character = 0; character < 40; ++character) {
+			accented += "\xC3\xA9";
+		}
+		EXPECT_TRUE(errorsFor(accented).empty()) << "40 two-byte characters are 40 characters, not 80";
+		EXPECT_TRUE(mentions(errorsFor(accented + "\xC3\xA9"), "is 41 characters"));
+
+		const std::string withSubject = "{subject} is here, and I am glad.......";
+		ASSERT_EQ(withSubject.size(), 39U);
+		EXPECT_TRUE(mentions(errorsFor(withSubject), "is 42 characters with {subject} as 12, more than the 40")) << "9 written, 12 shown";
+		EXPECT_TRUE(errorsFor("{subject} is here, and I am glad").empty()) << "32 written, 35 shown";
+	}
+
+	TEST(ThoughtLines, ALongNameIsCutToTheBudgetCleanly) {
+		EXPECT_EQ(shortenSubjectName("Idris", 12), "Idris");
+		EXPECT_EQ(shortenSubjectName("Bartholomew Quince", 12), "Bartholomew") << "cut at 12, the trailing space dropped";
+		EXPECT_EQ(shortenSubjectName("Abcdefghijklmnop", 12), "Abcdefghijkl");
+		EXPECT_EQ(shortenSubjectName("\xC3\x89lodie-Fran\xC3\xA7oise", 12), "\xC3\x89lodie-Fran\xC3\xA7") << "cut on a character, not a byte";
+
+		testing::TestThoughtTypes rules(R"(
+  <thought id="talked" importance="normal">
+    <feeling is="content"/>
+    <line>{subject} gets me.</line>
+  </thought>
+)");
+		ASSERT_TRUE(rules.errors.empty()) << rules.errors.front();
+		World world;
+		world.registerSystem<TimeSystem>();
+		ThoughtSystem& thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
+		const EntityID ada = world.createEntity();
+		const EntityID longName = world.createEntity();
+		world.addComponent<Colonist>(longName, Colonist{.name = "Bartholomew Quince"});
+		const ThoughtHandle handle =
+			thoughts.create({.colonist = ada, .eventType = rules.type("talked"), .subject = ThoughtSubject::aboutColonist(longName)});
+		const Thoughts& record = *world.getComponent<Thoughts>(ada);
+		EXPECT_EQ(renderThoughtLine(rules.types, record, *findThought(record, handle.thought)), "Bartholomew gets me.");
+		EXPECT_EQ(record.subjectNames, (std::vector<std::string>{"Bartholomew Quince"})) << "the whole name is kept";
+
+		thoughts.create({.colonist = ada, .eventType = rules.type("talked"), .subject = ThoughtSubject::aboutColonist(longName)});
+		EXPECT_EQ(record.subjectNames.size(), 1U) << "a name is kept once per colonist, however many thoughts give it";
 	}
 
 } // namespace ecs::test

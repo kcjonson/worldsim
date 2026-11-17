@@ -2,7 +2,7 @@
 <!--
   Thoughts about things that happen to a colonist or in front of them.
 
-  <thought id importance="trivial|normal|major" [stacks="true"] [animation]>
+  <thought id importance="trivial|normal|major" [stacks="true"]>
     <feeling is [when] [mood hours | mood while]/>  the most specific feeling whose when holds is the one
                                                     the colonist has; one with no when is the fallback
     <line [feeling] [when]>text</line>              a quip; {subject} names who or what it is about
@@ -18,6 +18,7 @@
     <line>That hit the spot.</line>
     <line>Mmm. Crunchy.</line>
     <line feeling="grateful">Whoever cooked this, I love you.</line>
+    <line feeling="grateful">Compliments to the chef. Seriously.</line>
   </thought>
 
   <thought id="slept_on_ground" importance="normal">
@@ -27,7 +28,9 @@
     <line>My back hates me now.</line>
     <line>A rock. All night. One rock.</line>
     <line feeling="resigned">Dirt's just a big mattress.</line>
+    <line feeling="resigned">Stars for a ceiling. Could be worse.</line>
     <line feeling="furious">Who put that rock there?!</line>
+    <line feeling="furious">I'm suing the ground.</line>
   </thought>
 
   <thought id="accident_in_public" importance="major">
@@ -36,6 +39,7 @@
     <line>Nobody saw that. Right?</line>
     <line>I'm moving to a cave.</line>
     <line feeling="amused">Well. That happened.</line>
+    <line feeling="amused">Ten out of ten, would trip again.</line>
   </thought>
 
   <thought id="talked_with_friend" importance="normal">
@@ -44,5 +48,6 @@
     <line>{subject} gets me.</line>
     <line>Good chat.</line>
     <line feeling="delighted">Same time tomorrow, {subject}?</line>
+    <line feeling="delighted">{subject}, you're a treasure.</line>
   </thought>
 </thoughts>

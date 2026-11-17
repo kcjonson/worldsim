@@ -19,7 +19,7 @@ namespace {
 		return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "assets" / "config" / "thoughts";
 	}
 
-	constexpr const char* kTuning = R"(<tuning maxLineLength="48" whileCheckMinutes="15"/>)";
+	constexpr const char* kTuning = R"(<tuning maxLineLength="48" maxSubjectNameLength="12" whileCheckMinutes="15"/>)";
 
 	class ThoughtConfigTest : public ::testing::Test {
 	  protected:
@@ -65,9 +65,9 @@ TEST_F(ThoughtConfigTest, TheShippedThoughtsLoadClean) {
 
 TEST_F(ThoughtConfigTest, ReadsEveryPartOfAThoughtType) {
 	write("base.xml", std::string(kTuning) + R"(
-  <feeling id="miserable" icon="feeling_miserable" expression="droop"/>
-  <feeling id="furious" icon="feeling_furious" expression="scowl"/>
-  <thought id="soaked" importance="major" stacks="true" animation="rain_drop">
+  <feeling id="miserable"/>
+  <feeling id="furious"/>
+  <thought id="soaked" importance="major" stacks="true">
     <feeling is="miserable" mood="-6" while="wetness > 0.6"/>
     <feeling is="furious" when="attribute(civility) &lt; 6" mood="+4.5" hours="2"/>
     <feeling is="miserable" when="attribute(sanity) > 15"/>
@@ -81,14 +81,13 @@ TEST_F(ThoughtConfigTest, ReadsEveryPartOfAThoughtType) {
 	EXPECT_EQ(load.config.tuning->maxLineLength, 48U);
 	EXPECT_EQ(load.config.tuning->whileCheckMinutes, 15.0F);
 	ASSERT_EQ(load.config.feelings.size(), 2U);
-	EXPECT_EQ(load.config.feelings[1].icon, "feeling_furious");
-	EXPECT_EQ(load.config.feelings[1].expression, "scowl");
+	EXPECT_EQ(load.config.tuning->maxSubjectNameLength, 12U);
+	EXPECT_EQ(load.config.feelings[1].id, "furious");
 
 	ASSERT_EQ(load.config.types.size(), 1U);
 	const ThoughtTypeDef& soaked = load.config.types[0];
 	EXPECT_EQ(soaked.importance, ThoughtImportance::Major);
 	EXPECT_TRUE(soaked.stacks);
-	EXPECT_EQ(soaked.animation, "rain_drop");
 	EXPECT_EQ(soaked.ends, "dried_off");
 	EXPECT_EQ(soaked.source, "base.xml");
 	ASSERT_EQ(soaked.feelings.size(), 3U);
@@ -107,19 +106,19 @@ TEST_F(ThoughtConfigTest, ReadsEveryPartOfAThoughtType) {
 
 TEST_F(ThoughtConfigTest, ALaterFileReplacesAFeelingATypeAndTheTuning) {
 	write("base.xml", std::string(kTuning) + R"(
-  <feeling id="content" icon="feeling_content" expression="smile"/>
+  <feeling id="content"/>
   <thought id="ate" importance="normal"><feeling is="content" mood="+5" hours="6"/></thought>
   <thought id="napped" importance="trivial"><feeling is="content"/></thought>
 )");
 	write("mods/tasty/more.xml", R"(
-  <tuning maxLineLength="60" whileCheckMinutes="5"/>
-  <feeling id="content" icon="feeling_content_mod" expression="beam"/>
+  <tuning maxLineLength="60" maxSubjectNameLength="20" whileCheckMinutes="5"/>
+  <feeling id="content"/>
   <thought id="ate" importance="major"><feeling is="content" mood="+9" hours="3"/></thought>
 )");
 	const ThoughtConfigLoad load = loadThoughtConfig(folder);
 	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
 	ASSERT_EQ(load.config.feelings.size(), 1U);
-	EXPECT_EQ(load.config.feelings[0].icon, "feeling_content_mod");
+	EXPECT_EQ(load.config.feelings[0].source, "mods/tasty/more.xml");
 	ASSERT_EQ(load.config.types.size(), 2U);
 	EXPECT_EQ(load.config.types[0].id, "ate");
 	EXPECT_EQ(load.config.types[0].importance, ThoughtImportance::Major);
@@ -127,13 +126,14 @@ TEST_F(ThoughtConfigTest, ALaterFileReplacesAFeelingATypeAndTheTuning) {
 	EXPECT_EQ(load.config.types[0].source, "mods/tasty/more.xml");
 	EXPECT_EQ(load.config.types[1].id, "napped");
 	EXPECT_EQ(load.config.tuning->maxLineLength, 60U);
+	EXPECT_EQ(load.config.tuning->maxSubjectNameLength, 20U);
 	EXPECT_EQ(load.config.tuning->whileCheckMinutes, 5.0F);
 }
 
 TEST_F(ThoughtConfigTest, TheSameIdTwiceInOneFileIsAnError) {
 	const std::vector<std::string> errors = errorsFor(R"(
-  <feeling id="content" icon="a" expression="b"/>
-  <feeling id="content" icon="c" expression="d"/>
+  <feeling id="content"/>
+  <feeling id="content"/>
   <thought id="ate" importance="normal"><feeling is="content"/></thought>
   <thought id="ate" importance="normal"><feeling is="content"/></thought>
 )");
@@ -178,19 +178,50 @@ TEST_F(ThoughtConfigTest, ShapeMistakesAreReported) {
 		mentions(errorsFor(R"(<thought id="a" importance="normal"><feeling is="x"/><sound/></thought>)"), "unknown element <sound>")
 	);
 	EXPECT_TRUE(mentions(errorsFor(R"(<thought importance="normal"><feeling is="x"/></thought>)"), "a <thought> has no id"));
-	EXPECT_TRUE(mentions(errorsFor(R"(<feeling id="x" icon="a"/>)"), "needs an icon and an expression"));
+	EXPECT_TRUE(mentions(errorsFor(R"(<feeling id="x" icon="a"/>)"), "feeling 'x': unknown attribute 'icon'"));
+	EXPECT_TRUE(mentions(
+		errorsFor(R"(<thought id="a" importance="normal" animation="rain_drop"><feeling is="x"/></thought>)"), "unknown attribute 'animation'"
+	));
 	EXPECT_TRUE(mentions(errorsFor(R"(<mood/>)"), "unknown element <mood>"));
 }
 
 TEST_F(ThoughtConfigTest, TuningIsRequiredAndChecked) {
-	write("base.xml", R"(<feeling id="x" icon="a" expression="b"/>)");
+	write("base.xml", R"(<feeling id="x"/>)");
 	EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "no file gives <tuning>"));
 
-	write("base.xml", R"(<tuning maxLineLength="0" whileCheckMinutes="15"/>)");
+	write("base.xml", R"(<tuning maxLineLength="0" maxSubjectNameLength="12" whileCheckMinutes="15"/>)");
 	EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "maxLineLength must be a whole number"));
 
-	write("base.xml", R"(<tuning maxLineLength="40" whileCheckMinutes="0"/>)");
+	write("base.xml", R"(<tuning maxLineLength="40" maxSubjectNameLength="12" whileCheckMinutes="0"/>)");
 	EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "whileCheckMinutes must be a positive number"));
+
+	write("base.xml", R"(<tuning maxLineLength="40" whileCheckMinutes="15"/>)");
+	EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "maxSubjectNameLength must be a whole number"));
+
+	write("base.xml", R"(<tuning maxLineLength="40" maxSubjectNameLength="2.5" whileCheckMinutes="15"/>)");
+	EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "maxSubjectNameLength must be a whole number"));
+}
+
+TEST_F(ThoughtConfigTest, NumbersThatAreNotFiniteAreRefused) {
+	for (const std::string number : {"nan", "inf", "-inf", "+nan", "infinity"}) {
+		EXPECT_TRUE(mentions(
+			errorsFor(R"(<thought id="a" importance="normal"><feeling is="x" mood=")" + number + R"(" hours="1"/></thought>)"),
+			"other than 0"
+		)) << "mood " << number;
+		EXPECT_TRUE(mentions(
+			errorsFor(R"(<thought id="a" importance="normal"><feeling is="x" mood="-1" hours=")" + number + R"("/></thought>)"),
+			"not a positive number"
+		)) << "hours " << number;
+
+		write("base.xml", R"(<tuning maxLineLength=")" + number + R"(" maxSubjectNameLength="12" whileCheckMinutes="15"/>)");
+		EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "maxLineLength must be a whole number")) << "maxLineLength " << number;
+		write("base.xml", R"(<tuning maxLineLength="40" maxSubjectNameLength=")" + number + R"(" whileCheckMinutes="15"/>)");
+		EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "maxSubjectNameLength must be a whole number"))
+			<< "maxSubjectNameLength " << number;
+		write("base.xml", R"(<tuning maxLineLength="40" maxSubjectNameLength="12" whileCheckMinutes=")" + number + R"("/>)");
+		EXPECT_TRUE(mentions(loadThoughtConfig(folder).errors, "whileCheckMinutes must be a positive number"))
+			<< "whileCheckMinutes " << number;
+	}
 }
 
 TEST_F(ThoughtConfigTest, ARootThatIsNotThoughtsIsAnError) {
