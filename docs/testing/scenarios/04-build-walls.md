@@ -125,6 +125,13 @@ Run these after the pass / fail check above: they add blueprint wall segments, w
 10. Move the pointer back over the foundation: the band follows it from the second point, and a click places a third point.
 11. Double-click a fourth point: the chain ends, `?what=construction` lists three more wall segments, the strip reads "Click a foundation to start", and no toast says the wall is too short.
 12. Click two different points on the foundation a second apart: each places a point and the chain goes on; Enter ends it.
+13. Press Esc: the wall tool closes.
+14. Open the top bar's Menu and pick Main Menu: the main menu shows.
+15. Pick Settings and, under Drawing Settings, switch Angle readout on if it is off: it reads on.
+16. Pick Back, then Quick Start: a new game shows.
+17. Make the built foundation again with the precondition's `built=1` command: `?what=construction` lists it `Built`.
+18. Pick Wall in the Build menu and click two points inside the built foundation: the wall tool shows the two points and the band between them.
+19. Move the pointer off at an angle that is not square: an arc and the angle between the two walls show at the middle point.
 
 ---
 

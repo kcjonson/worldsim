@@ -388,6 +388,7 @@ namespace {
 				.navigation = &ecsWorld->getSystem<ecs::NavigationSystem>(),
 				.validColor = ui().getTheme().get(world_sim::tokens::color::statusOk),
 				.invalidColor = ui().getTheme().get(world_sim::tokens::color::statusCrit),
+				.accentColor = ui().getTheme().get(world_sim::tokens::color::accent),
 				.callbacks = {
 					// The config strip's visibility follows the per-frame status push in update(); a tool turning
 					// on or off also drops the wall double-click record, so a click made under one tool never pairs with one under another.

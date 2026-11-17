@@ -1093,7 +1093,7 @@ TEST_F(DrawingCloseTest, TheBoxTheLabelsKeepOffIsWhereTheReasonDrawsAtTheUiScale
 	ASSERT_FALSE(drawing->previewVerdict().editReason.empty());
 
 	constexpr float kUiScale = 2.0F;
-	const auto		measure = [](const std::string& text, float sizePx) {
+	const auto		measure = [](const std::string& text, float sizePx, world_sim::FeedbackTextWeight /*weight*/) {
 		 return Foundation::Vec2{0.5F * sizePx * static_cast<float>(text.size()), 1.25F * sizePx};
 	};
 	const std::optional<world_sim::DrawingSystem::EditReason> reason = drawing->editReason(kViewportWidth, kViewportHeight, kUiScale, measure);
@@ -1108,7 +1108,7 @@ TEST_F(DrawingCloseTest, TheBoxTheLabelsKeepOffIsWhereTheReasonDrawsAtTheUiScale
 	);
 	EXPECT_FLOAT_EQ(input.uiScale, kUiScale);
 	ASSERT_TRUE(input.keepClear.has_value());
-	const Foundation::Vec2 drawnSize = measure(reason->text, reason->textScale * world_sim::kRendererFontBaseSizePx);
+	const Foundation::Vec2 drawnSize = measure(reason->text, reason->textScale * world_sim::kRendererFontBaseSizePx, world_sim::FeedbackTextWeight::Regular);
 	constexpr float		   kShadowPx = 1.0F;
 	EXPECT_FLOAT_EQ(input.keepClear->left, reason->position.x);
 	EXPECT_FLOAT_EQ(input.keepClear->top, reason->position.y);
@@ -1285,6 +1285,42 @@ TEST_F(DrawingCloseTest, TheEditRescueRefusesAnEditThatFailsItsCheck) {
 	EXPECT_EQ(drawing->status().pointCount, 4);
 	EXPECT_NEAR(drawing->world().areaSquareMeters(target), 64.0F, 1e-3F);
 	EXPECT_EQ(toasts.back().first, "Invalid point") << lastToast();
+}
+
+// The preview's input carries the scene's accent, the registry's merge distance, Alt as the
+// snap had it, and the tool's own close, the near-start rescue included.
+TEST_F(DrawingCloseTest, TheFeedbackInputCarriesTheAccentTheMergeDistanceAltAndTheToolsClose) {
+	const Foundation::Color accent{0.25F, 0.5F, 0.75F, 1.0F};
+	drawing = std::make_unique<world_sim::DrawingSystem>(
+		world_sim::DrawingSystem::Args{.world = &seen.world, .camera = &seen.camera, .navigation = nullptr, .accentColor = accent}
+	);
+	seen.camera.setZoom(kRescueZoom);
+	drawing->activateFoundationTool();
+	const glm::vec2 firstCorner{0.0F, 0.0F};
+	place({firstCorner, {8.0F, 0.0F}, {8.0F, 8.0F}, {0.0F, 8.0F}});
+	ASSERT_EQ(drawing->status().pointCount, 4) << lastToast();
+	const assets::PreviewStyle& style = assets::ConstructionRegistry::Get().rendering().preview;
+	const auto					input = [&] {
+		 return drawing->feedbackInput(style, kViewportWidth, kViewportHeight, 1.0F, world_sim::measureFeedbackText);
+	};
+
+	hover({4.0F, 4.0F});
+	const world_sim::DrawingFeedbackInput open = input();
+	EXPECT_EQ(open.accentColor.r, accent.r);
+	EXPECT_EQ(open.accentColor.g, accent.g);
+	EXPECT_EQ(open.accentColor.b, accent.b);
+	EXPECT_EQ(open.accentColor.a, accent.a);
+	EXPECT_GT(open.commonLengthMergeMeters, 0.0F);
+	EXPECT_EQ(open.commonLengthMergeMeters, assets::ConstructionRegistry::Get().snapping().commonLengthMergeMeters);
+	EXPECT_FALSE(open.freeform);
+	EXPECT_FALSE(open.clickCloses);
+
+	hoverFreeform(firstCorner + kPastTheCatch);
+	ASSERT_TRUE(drawing->previewVerdict().closeHalo) << "the rescue reaches the pointer: " << drawing->status().message;
+	const world_sim::DrawingFeedbackInput rescue = input();
+	EXPECT_TRUE(rescue.freeform);
+	EXPECT_NE(rescue.snap.kind, construction::SnapKind::Origin) << "the snap is off the first point";
+	EXPECT_TRUE(rescue.clickCloses);
 }
 
 namespace {
