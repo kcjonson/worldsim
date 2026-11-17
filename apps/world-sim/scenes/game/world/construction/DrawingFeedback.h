@@ -2,7 +2,7 @@
 
 // DrawingFeedback - the snap feedback the drawing tools draw over their preview: the
 // guides behind the snapped point, their markers and distance labels, the segment's
-// length label, the first point's close ring and halo, the snapped-point marker, and
+// length label (the Rectangle tool's size label in its place), the first point's close ring and halo, the snapped-point marker, and
 // the wall tool's snap-target ring.
 // One rule: solid is geometry, dotted and part transparent is alignment, small solid
 // markers state a fact. Sizes are window pixels and never scale with zoom; only the

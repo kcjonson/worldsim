@@ -1350,7 +1350,7 @@ TEST_F(DrawingFeedbackTest, OnlyTheLabelsFollowTheUiScale) {
 		Frame frame{};
 		// The marker's radius below its 4 px floor and above it (up to 7 px: from 8 px its dot's box
 		// reaches the segment label's end placements, at every scale), every line style, both
-		// colour modes.
+		// color modes.
 		frame.style.cursorRadiusPx = std::array{2.0F, 6.0F, 7.0F}[static_cast<std::size_t>(oneOf(3))];
 		frame.style.guideLineStyle = static_cast<assets::GuideLineStyle>(oneOf(3));
 		frame.style.guideColorMode = chance(0.5F) ? assets::GuideColorMode::One : assets::GuideColorMode::BySource;
@@ -1563,4 +1563,72 @@ TEST_F(DrawingFeedbackTest, OnlyTheLabelsFollowTheUiScale) {
 	EXPECT_GT(withCloseRing, 50U);
 	EXPECT_GT(withWallRing, 50U);
 	EXPECT_GT(withKeepClear, 100U);
+
+	// A label beside a line keeps its plate 7 px off it at every scale, its text 10 px off at
+	// 100%: the gap is the plate's, as at the snapped end, so a growing plate never closes on it.
+	viewportWidth = kViewportWidth;
+	viewportHeight = kViewportHeight;
+	camera.setZoom(kZoom);
+	style = assets::PreviewStyle{};
+	tool = world_sim::ToolKind::Foundation;
+	keepClear.reset();
+	canClose = false;
+	willClose = false;
+	display.guideDistances = true;
+	points = {{0.0F, 0.0F}};
+	cursor = {0.0F, 3.0F};
+	snap = {};
+	addGuide({.from = {6.0F, 3.0F}, .to = cursor, .source = GuideSource::WorldAxes});
+	const float lineY = screen(cursor).y;
+	for (const float scale : {0.6F, 1.0F, 1.5F, 2.0F, 3.0F}) {
+		SCOPED_TRACE(::testing::Message() << "scale " << scale);
+		uiScale = scale;
+		const DrawingFeedbackPlan beside = plan();
+		const auto guideLabel = std::find_if(beside.labels.begin(), beside.labels.end(), [](const FeedbackLabel& label) {
+			return label.text == "6.00 m";
+		});
+		ASSERT_NE(guideLabel, beside.labels.end());
+		const float plateGap = std::min(std::abs(guideLabel->plate.top - lineY), std::abs(guideLabel->plate.bottom - lineY));
+		EXPECT_NEAR(plateGap, 7.0F, 1e-3F);
+		if (scale == 1.0F) {
+			const float textTop = guideLabel->position.y;
+			const float textBottom = textTop + kLineHeightOfSize * guideLabel->sizePx;
+			EXPECT_NEAR(std::min(std::abs(textTop - lineY), std::abs(textBottom - lineY)), 10.0F, 1e-3F);
+		}
+	}
+}
+
+// The Rectangle tool's size label: the rectangle the two corners span, beside the snapped
+// corner and never to its lower right; its text follows the interface size while the marker
+// does not. No segment length label, no close ring or halo.
+TEST_F(DrawingFeedbackTest, RectangleSizeLabelReadsTheRectangleAndFollowsTheUiScale) {
+	tool = world_sim::ToolKind::FoundationRectangle;
+	points = {{-2.0F, -1.0F}};
+	cursor = {2.0F, 2.0F};
+	const DrawingFeedbackPlan atOne = plan();
+	ASSERT_EQ(atOne.labels.size(), 1U);
+	EXPECT_EQ(atOne.labels[0].text, "4 m x 3 m");
+	EXPECT_TRUE(atOne.rings.empty());
+	const Foundation::Vec2 tip = screen(cursor);
+	const FeedbackBox&	   plate = atOne.labels[0].plate;
+	EXPECT_FALSE(plate.left >= tip.x && plate.top >= tip.y) << "lower right of the pointer";
+	for (const FeedbackBox& marker : markerBoxes(tip)) {
+		EXPECT_FALSE(overlaps(plate, marker));
+	}
+
+	uiScale = 1.5F;
+	const DrawingFeedbackPlan atOneAndAHalf = plan();
+	ASSERT_EQ(atOneAndAHalf.labels.size(), 1U);
+	EXPECT_EQ(atOneAndAHalf.labels[0].sizePx, atOne.labels[0].sizePx * 1.5F);
+	ASSERT_EQ(atOneAndAHalf.strokes.size(), atOne.strokes.size());
+	for (std::size_t index = 0; index < atOne.strokes.size(); ++index) {
+		EXPECT_EQ(atOneAndAHalf.strokes[index].width, atOne.strokes[index].width);
+	}
+	ASSERT_EQ(atOneAndAHalf.dots.size(), atOne.dots.size());
+	for (std::size_t index = 0; index < atOne.dots.size(); ++index) {
+		EXPECT_EQ(atOneAndAHalf.dots[index].radius, atOne.dots[index].radius);
+	}
+
+	cursor = {6.0F, -1.0F}; // level with the first corner: no rectangle, no label
+	EXPECT_TRUE(plan().labels.empty());
 }

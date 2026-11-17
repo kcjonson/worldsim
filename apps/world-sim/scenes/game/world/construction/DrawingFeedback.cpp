@@ -3,6 +3,7 @@
 #include "DrawingSystem.h"
 
 #include <assets/ConstructionRegistry.h>
+#include <construction/RectangleSnap.h>
 #include <graphics/Rect.h>
 #include <primitives/Primitives.h>
 #include <world/camera/WorldCamera.h>
@@ -46,7 +47,10 @@ namespace world_sim {
 		// point (its text 12 px off at an interface size of 100%). The gap is the plate's, so it
 		// holds as the plate grows with the interface size and the plate stays off the marker.
 		constexpr float kSegmentPlateOffsetPx = 9.0F;
-		constexpr float kLabelGapPx = 10.0F; // a guide label off its guide, a long segment's label off the segment
+		// A guide label's plate off its guide, and a long segment's label's plate off the segment
+		// (the text 10 px off at an interface size of 100%). Like the end label's, the gap is
+		// the plate's, so it holds as the plate grows with the interface size.
+		constexpr float kLabelPlateGapPx = 7.0F;
 		constexpr float kGuideLabelMinimumStrokePx = 40.0F;
 		constexpr float kGuideLabelShiftPaddingPx = 8.0F;
 		constexpr int	kGuideLabelShiftAttempts = 6;
@@ -123,8 +127,8 @@ namespace world_sim {
 
 		// Every size the feedback draws or plans with, in window pixels. The label text and its
 		// plate (padding, corner) are interface text, so they take the ui scale and follow the
-		// Interface size (the end label's text offset grows only by the plate's padding, keeping
-		// the plate's own gap fixed); everything else (strokes, markers, rings, clearances, thresholds)
+		// Interface size (a label's text offset from what it labels grows only by the plate's
+		// padding, keeping the plate's own gap fixed); everything else (strokes, markers, rings, clearances, thresholds)
 		// stays in window pixels like the preview's own lines and dots. That is main's rule for
 		// text drawn in the world (docs/design/ui/ui-scale-setting.md, "World text"). lookAt is
 		// the one place the scale is applied; nothing else reads a pixel constant.
@@ -180,7 +184,7 @@ namespace world_sim {
 				.segmentLabelOffsetPx = kSegmentPlateOffsetPx + kLabelPlatePaddingPx * uiScale,
 				.segmentLabelCursorClearancePx = kSegmentLabelCursorClearancePx,
 				.guideLabelPx = style.guideLabelPx * uiScale,
-				.labelGapPx = kLabelGapPx,
+				.labelGapPx = kLabelPlateGapPx + kLabelPlatePaddingPx * uiScale,
 				.guideLabelMinimumStrokePx = kGuideLabelMinimumStrokePx,
 				.guideLabelShiftPaddingPx = kGuideLabelShiftPaddingPx,
 				.labelPlatePaddingPx = kLabelPlatePaddingPx * uiScale,
@@ -470,7 +474,11 @@ namespace world_sim {
 				}
 				planCloseHalo();
 				seedLabelObstacles();
-				planSegmentLabel();
+				if (input.tool == ToolKind::FoundationRectangle) {
+					planSizeLabel();
+				} else {
+					planSegmentLabel();
+				}
 				if (input.display.guideDistances) {
 					for (std::size_t index = 0; index < input.snap.guideCount; ++index) {
 						if (guides[index].strokeEnd) {
@@ -835,6 +843,30 @@ namespace world_sim {
 					addLabel(layout.text, *atMiddle, look.segmentLabelPx, layout.size, kSegmentLabelColor);
 					return;
 				}
+				addEndLabel(layout);
+			}
+
+			// The Rectangle tool's size label ("4 m x 3 m"), beside the snapped corner in the
+			// quarter that points along the diagonal from the first corner, placed as the segment
+			// label's end placements are. Nothing while the two corners span no rectangle.
+			void planSizeLabel() {
+				if (input.points.empty() || !isFinite(snappedPoint)) {
+					return;
+				}
+				const std::optional<construction::RectangleShape> rectangle = construction::rectangleFromCorners(input.points.front(), input.cursor);
+				const Foundation::Vec2							  first = toScreen(input.points.front());
+				if (!rectangle || !isFinite(first)) {
+					return;
+				}
+				SegmentLabelLayout layout{.text = rectangle->label, .last = first, .obstacles = segmentLabelObstacles()};
+				layout.size = measure(layout.text, look.segmentLabelPx);
+				layout.reserve = layout.size;
+				addEndLabel(layout);
+			}
+
+			// At the snapped end: the first clear end placement, else the first that fits the
+			// screen unmoved, else the first moved just inside.
+			void addEndLabel(const SegmentLabelLayout& layout) {
 				const std::array<Placement, kEndPlacementCount> atEnd = endPlacements(layout);
 				const auto clear = [&](const FeedbackBox& plate) { return layout.clearOfObstacles(plate); };
 				addLabel(

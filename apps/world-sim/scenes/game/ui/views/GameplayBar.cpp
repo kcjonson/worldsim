@@ -60,7 +60,8 @@ namespace world_sim {
 		dropdown(
 			"build_dropdown",
 			"Build",
-			{item("Foundation", onStructureSelected, "foundation"),
+			{item("Rectangle foundation", onStructureSelected, "rectangle-foundation"),
+			 item("Freeform foundation", onStructureSelected, "freeform-foundation"),
 			 item("Wall", onStructureSelected, "wall"),
 			 item("Door", onStructureSelected, "door"),
 			 item("Window", onStructureSelected, "window")}

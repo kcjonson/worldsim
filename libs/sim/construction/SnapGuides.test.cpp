@@ -65,8 +65,8 @@ namespace {
 		[[nodiscard]] SnapResult snapWall(const std::vector<Vec2>& points, Vec2 cursor, const SnapInput& input = wallInput()) const {
 			return engine().snapWall(points, cursor, input);
 		}
-		[[nodiscard]] SnapResult snapShipped(bool wallTool, const std::vector<Vec2>& points, Vec2 cursor) const {
-			return wallTool ? snapWall(points, cursor, wallInput(shippedAids())) : snap(points, cursor, foundationInput(shippedAids()));
+		[[nodiscard]] SnapResult snapWith(bool wallTool, const std::vector<Vec2>& points, Vec2 cursor, const DrawingAids& aids) const {
+			return wallTool ? snapWall(points, cursor, wallInput(aids)) : snap(points, cursor, foundationInput(aids));
 		}
 		[[nodiscard]] GuideStudy study(
 			const std::vector<Vec2>& points,
@@ -741,14 +741,14 @@ TEST_F(SnapGuides, WallChainPointWindow) {
 	// make guides, so indices 1 and 2 do not; each is alone on its north-south line
 	// (x = -5 and x = 2). The window's far edge is pinned by index 2 (out) and 3 (in), its
 	// near edge by the first point, which stays in though it is long out of the last 31.
-	ASSERT_EQ(assets::ConstructionRegistry::Get().constraints().maxPoints, 32);
 	std::vector<Vec2> chain;
 	for (int index = 0; index < 34; ++index) {
 		chain.push_back(index == 1 ? Vec2{-5.0F, 10.0F} : Vec2{static_cast<float>(index), static_cast<float>((index % 2) * 3)});
 	}
 	DrawingAids aids = allAidsOff();
 	aids.guidesFromWorldAxes = true;
-	const SnapInput input = wallInput(aids);
+	SnapInput input = wallInput(aids);
+	input.maxPoints = 32;
 
 	const SnapResult outside = snapWall(chain, {-4.9F, 6.0F}, input);
 	EXPECT_EQ(outside.kind, SnapKind::None);
@@ -773,21 +773,38 @@ TEST_F(SnapGuides, WallChainPointWindow) {
 	const SnapResult		whole = snapWall(shortChain, {-4.9F, 6.0F}, input);
 	EXPECT_EQ(whole.kind, SnapKind::GuideLine);
 	expectPoint(whole.guides[0].from, -5.0, 10.0);
+
+	// The window is the input's limit: one as long as the chain takes index 1 back in.
+	SnapInput wider = input;
+	wider.maxPoints = static_cast<int>(chain.size());
+	const SnapResult widened = snapWall(chain, {-4.9F, 6.0F}, wider);
+	EXPECT_EQ(widened.kind, SnapKind::GuideLine);
+	expectPoint(widened.guides[0].from, -5.0, 10.0);
+	EXPECT_NE(snapWall(chain, {-4.9F, 6.0F}, input).kind, SnapKind::GuideLine);
 }
 
-// --- What ships ------------------------------------------------------------------------
-// The player's starting aids (shippedAids, from DrawingSettingsDefaults). The cases above
-// run with every helper on, as the prototype's do; these say what a player gets.
+// --- The world axes, and what ships ----------------------------------------------------
+// The fourth corner of an axis-aligned rectangle locks to both axes once world-axis guides
+// and crossings are on; the player's starting aids (shippedAids, from DrawingSettingsDefaults)
+// have every helper off and leave that corner to the pointer, the length rounded.
 
-TEST_F(SnapGuides, ShippedAidsLandFourthCornerOnBothAxes) {
-	// Before the guides, the fourth corner of an axis-aligned rectangle locked to both axes;
-	// that lock is now a crossing of two world guides: the north-south line through (0, 0)
-	// and the east-west line through (6, 6). Each is square to the shape's edge at its node,
-	// so each carries a marker.
+namespace {
+	DrawingAids worldAxesAndCrossings() {
+		DrawingAids aids;
+		aids.guidesFromWorldAxes = true;
+		aids.guideCrossings = true;
+		return aids;
+	}
+} // namespace
+
+TEST_F(SnapGuides, WorldAxesAndCrossingsLandFourthCornerOnBothAxes) {
+	// The lock is a crossing of two world guides: the north-south line through (0, 0) and the
+	// east-west line through (6, 6). Each is square to the shape's edge at its node, so each
+	// carries a marker.
 	const std::vector<Vec2> points{{0.0F, 0.0F}, {6.0F, 0.0F}, {6.0F, 6.0F}};
 	const Vec2				cursor{0.2F, 5.85F};
 	for (const bool wallTool : {false, true}) {
-		const SnapResult result = snapShipped(wallTool, points, cursor);
+		const SnapResult result = snapWith(wallTool, points, cursor, worldAxesAndCrossings());
 		EXPECT_EQ(result.kind, SnapKind::GuideCrossing) << wallTool;
 		expectPoint(result.point, 0.0, 6.0);
 		ASSERT_EQ(result.guideCount, 2U) << wallTool;
@@ -814,12 +831,12 @@ TEST_F(SnapGuides, ShippedAidsLandFourthCornerOnBothAxes) {
 	}
 }
 
-TEST_F(SnapGuides, ShippedAidsLockEitherAxis) {
+TEST_F(SnapGuides, WorldAxesLockEitherAxis) {
 	// Near one world guide and far from the other: the east-west line through (6, 6), then
 	// the north-south line through (0, 0).
 	const std::vector<Vec2> points{{0.0F, 0.0F}, {6.0F, 0.0F}, {6.0F, 6.0F}};
 	for (const bool wallTool : {false, true}) {
-		const SnapResult eastWest = snapShipped(wallTool, points, {3.0F, 5.85F});
+		const SnapResult eastWest = snapWith(wallTool, points, {3.0F, 5.85F}, worldAxesAndCrossings());
 		EXPECT_EQ(eastWest.kind, SnapKind::GuideLine) << wallTool;
 		expectPoint(eastWest.point, 3.0, 6.0);
 		ASSERT_EQ(eastWest.guideCount, 1U) << wallTool;
@@ -827,7 +844,7 @@ TEST_F(SnapGuides, ShippedAidsLockEitherAxis) {
 		EXPECT_EQ(eastWest.guides[0].relation, GuideRelation::Parallel);
 		expectPoint(eastWest.guides[0].from, 6.0, 6.0);
 
-		const SnapResult northSouth = snapShipped(wallTool, points, {0.2F, 3.0F});
+		const SnapResult northSouth = snapWith(wallTool, points, {0.2F, 3.0F}, worldAxesAndCrossings());
 		EXPECT_EQ(northSouth.kind, SnapKind::GuideLine) << wallTool;
 		expectPoint(northSouth.point, 0.0, 3.0);
 		ASSERT_EQ(northSouth.guideCount, 1U) << wallTool;
@@ -837,12 +854,20 @@ TEST_F(SnapGuides, ShippedAidsLockEitherAxis) {
 	}
 }
 
-TEST_F(SnapGuides, ShippedAidsStepTheAngleWhereNoGuideCatches) {
+TEST_F(SnapGuides, ShippedAidsOnlyRoundTheLength) {
+	// No guide, no crossing, no angle step: the point stays on the pointer's direction from
+	// the previous point, its length rounded to 0.1 m. That holds at the fourth corner too.
 	const std::vector<Vec2> points{{0.0F, 0.0F}, {6.0F, 0.0F}, {6.0F, 6.0F}};
-	const Vec2				cursor{4.0F, 3.0F};
 	for (const bool wallTool : {false, true}) {
-		const SnapResult result = snapShipped(wallTool, points, cursor);
-		EXPECT_EQ(result.kind, SnapKind::Angle) << wallTool;
-		expectPoint(result.point, 4.197224, 2.877501);
+		for (const Vec2 cursor : {Vec2{4.0F, 3.0F}, Vec2{0.2F, 5.85F}}) {
+			const SnapResult result = snapWith(wallTool, points, cursor, shippedAids());
+			EXPECT_EQ(result.kind, SnapKind::None) << wallTool;
+			EXPECT_EQ(result.guideCount, 0U) << wallTool;
+			EXPECT_EQ(result.lengthSnap, LengthSnapKind::Rounded) << wallTool;
+			const double rawLength = distanceBetween(points.back(), cursor);
+			const double rounded = std::round(rawLength * 10.0) / 10.0;
+			EXPECT_NEAR(result.lengthMeters, rounded, kOracleTolerance) << wallTool;
+			EXPECT_NEAR(distanceFromLine(points.back(), degreesOf({cursor.x - 6.0F, cursor.y - 6.0F}), result.point), 0.0, kOracleTolerance);
+		}
 	}
 }

@@ -328,6 +328,7 @@ TEST_F(ConstructionRegistryTest, Snapping_Parsed) {
 	EXPECT_FLOAT_EQ(s.lengthIncrementMeters, 0.1F);
 	EXPECT_EQ(s.lengthRoundingOnGuides, GuideRounding::GuideDistance);
 	EXPECT_TRUE(s.rectangleAdjacencySnaps);
+	EXPECT_FLOAT_EQ(s.doubleClickDistancePx, 4.0F);
 
 	// The shipped XML and the in-code defaults (which the engine tests read through
 	// shippedAids) are two copies of the player's starting settings; they must not drift.
@@ -344,6 +345,24 @@ TEST_F(ConstructionRegistryTest, Snapping_Parsed) {
 	EXPECT_EQ(d.roundLengths, inCode.roundLengths);
 	EXPECT_EQ(d.showKeyGuide, inCode.showKeyGuide);
 	EXPECT_FLOAT_EQ(d.rectangleGridSpacingMeters, inCode.rectangleGridSpacingMeters);
+}
+
+// A new player meets the Rectangle tool and no helpers: every helper off, Round lengths and
+// Show key guide on, a 1 m grid (building-construction D14).
+TEST_F(ConstructionRegistryTest, Snapping_ShipsTheDesignedPlayerDefaults) {
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+	const DrawingSettingsDefaults& shipped = ConstructionRegistry::Get().snapping().drawingSettingsDefaults;
+	EXPECT_FALSE(shipped.angleSteps);
+	EXPECT_FALSE(shipped.guidesFromShape);
+	EXPECT_FALSE(shipped.alignToExistingBuildings);
+	EXPECT_FALSE(shipped.guidesFromWorldAxes);
+	EXPECT_FALSE(shipped.guideCrossings);
+	EXPECT_FALSE(shipped.commonLengths);
+	EXPECT_FALSE(shipped.guideDistances);
+	EXPECT_FALSE(shipped.angleReadout);
+	EXPECT_TRUE(shipped.roundLengths);
+	EXPECT_TRUE(shipped.showKeyGuide);
+	EXPECT_FLOAT_EQ(shipped.rectangleGridSpacingMeters, 1.0F);
 }
 
 // Every key the drawing-tools change added or renamed, set away from its default, so a
@@ -379,17 +398,18 @@ TEST_F(ConstructionRegistryTest, Snapping_EveryNewKeyParses) {
   <lengthIncrementMeters>0.25</lengthIncrementMeters>
   <lengthRoundingOnGuides>segmentLength</lengthRoundingOnGuides>
   <rectangleAdjacencySnaps>false</rectangleAdjacencySnaps>
+  <doubleClickDistancePx>6.0</doubleClickDistancePx>
   <DrawingSettingsDefaults>
-    <angleSteps>false</angleSteps>
+    <angleSteps>true</angleSteps>
     <guidesFromShape>true</guidesFromShape>
-    <alignToExistingBuildings>false</alignToExistingBuildings>
-    <guidesFromWorldAxes>false</guidesFromWorldAxes>
-    <guideCrossings>false</guideCrossings>
+    <alignToExistingBuildings>true</alignToExistingBuildings>
+    <guidesFromWorldAxes>true</guidesFromWorldAxes>
+    <guideCrossings>true</guideCrossings>
     <commonLengths>true</commonLengths>
     <guideDistances>true</guideDistances>
     <angleReadout>true</angleReadout>
-    <roundLengths>true</roundLengths>
-    <showKeyGuide>true</showKeyGuide>
+    <roundLengths>false</roundLengths>
+    <showKeyGuide>false</showKeyGuide>
     <rectangleGridSpacingMeters>0.5</rectangleGridSpacingMeters>
   </DrawingSettingsDefaults>
 </ConstructionSnapping>)";
@@ -431,18 +451,19 @@ TEST_F(ConstructionRegistryTest, Snapping_EveryNewKeyParses) {
 	EXPECT_FLOAT_EQ(s.lengthIncrementMeters, 0.25F);
 	EXPECT_EQ(s.lengthRoundingOnGuides, GuideRounding::SegmentLength);
 	EXPECT_FALSE(s.rectangleAdjacencySnaps);
+	EXPECT_FLOAT_EQ(s.doubleClickDistancePx, 6.0F);
 
 	const DrawingSettingsDefaults& d = s.drawingSettingsDefaults;
-	EXPECT_FALSE(d.angleSteps);
+	EXPECT_TRUE(d.angleSteps);
 	EXPECT_TRUE(d.guidesFromShape);
-	EXPECT_FALSE(d.alignToExistingBuildings);
-	EXPECT_FALSE(d.guidesFromWorldAxes);
-	EXPECT_FALSE(d.guideCrossings);
+	EXPECT_TRUE(d.alignToExistingBuildings);
+	EXPECT_TRUE(d.guidesFromWorldAxes);
+	EXPECT_TRUE(d.guideCrossings);
 	EXPECT_TRUE(d.commonLengths);
 	EXPECT_TRUE(d.guideDistances);
 	EXPECT_TRUE(d.angleReadout);
-	EXPECT_TRUE(d.roundLengths);
-	EXPECT_TRUE(d.showKeyGuide);
+	EXPECT_FALSE(d.roundLengths);
+	EXPECT_FALSE(d.showKeyGuide);
 	EXPECT_FLOAT_EQ(d.rectangleGridSpacingMeters, 0.5F);
 }
 
@@ -740,6 +761,7 @@ TEST_F(ConstructionRegistryTest, Validation_RejectsOutOfRangeGuideAndLengthKeys)
 	// With the angle window tied to the 15 degree step it is 7.5, so 8 is not below it.
 	expectSnappingRejected("<guideDirectionToleranceDegrees>8</guideDirectionToleranceDegrees>", "guideDirectionToleranceDegrees");
 	expectSnappingRejected("<angleIncrementDegrees>100</angleIncrementDegrees>", "angleIncrementDegrees");
+	expectSnappingRejected("<doubleClickDistancePx>-1</doubleClickDistancePx>", "doubleClickDistancePx");
 }
 
 TEST_F(ConstructionRegistryTest, Validation_RejectsOutOfRangeLookKeys) {

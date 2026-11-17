@@ -2,6 +2,7 @@
 
 #include "scenes/game/world/CreekWorldFixture.test.h"
 #include "scenes/game/world/PlayerVisibilityFixture.test.h"
+#include "scenes/game/world/WorldPointer.h"
 #include "UserSettings.h"
 
 #include <assets/ConstructionRegistry.h>
@@ -37,11 +38,25 @@ namespace {
 		return (root / "assets" / "config" / "construction").string();
 	}
 
+	// The drawing settings these cases are written against, set explicitly so they don't follow
+	// the player's defaults: angle steps, align to existing buildings, world-axis guides, and
+	// crossings on, lengths unrounded.
+	world_sim::DrawingSettings testedSettings() {
+		return world_sim::DrawingSettings{
+			.angleSteps = true,
+			.alignToExistingBuildings = true,
+			.guidesFromWorldAxes = true,
+			.guideCrossings = true,
+		};
+	}
+
 	class DrawingVisibilityTest : public ::testing::Test {
 	  protected:
 		void SetUp() override {
 			assets::ConstructionRegistry::Get().clear();
 			ASSERT_TRUE(assets::ConstructionRegistry::Get().load(constructionConfigFolder()));
+			playerSettings = world_sim::UserSettings::Get().drawing;
+			world_sim::UserSettings::Get().drawing = testedSettings();
 			drawing = std::make_unique<world_sim::DrawingSystem>(world_sim::DrawingSystem::Args{
 				.world = &seen.world,
 				.camera = &seen.camera,
@@ -49,7 +64,10 @@ namespace {
 				.callbacks = {.onToast = [this](const std::string& title, const std::string& message) { toasts.emplace_back(title, message); }}
 			});
 		}
-		void TearDown() override { assets::ConstructionRegistry::Get().clear(); }
+		void TearDown() override {
+			world_sim::UserSettings::Get().drawing = playerSettings;
+			assets::ConstructionRegistry::Get().clear();
+		}
 
 		bool click(glm::vec2 meters) {
 			const glm::vec2 screen = seen.screenOf(meters);
@@ -84,6 +102,7 @@ namespace {
 		}
 
 		world_sim::testing::SeenWorld							   seen;
+		world_sim::DrawingSettings								   playerSettings;
 		std::vector<std::pair<std::string, std::string>>		   toasts;
 		std::unique_ptr<world_sim::DrawingSystem> drawing;
 	};
@@ -197,15 +216,6 @@ namespace {
 	// one of its inputs moved. Each case changes one input and counts evaluations.
 	class DrawingSnapMemoTest : public DrawingVisibilityTest {
 	  protected:
-		void SetUp() override {
-			DrawingVisibilityTest::SetUp();
-			savedSettings = world_sim::UserSettings::Get().drawing;
-		}
-		void TearDown() override {
-			world_sim::UserSettings::Get().drawing = savedSettings;
-			DrawingVisibilityTest::TearDown();
-		}
-
 		// The viewport's centre, which maps to the camera's position (the world origin)
 		// at every zoom, so a zoom change moves nothing else.
 		void hoverCentre(bool freeform = false) {
@@ -218,8 +228,6 @@ namespace {
 			hover(meters);
 			return drawing->snapEvaluationCount();
 		}
-
-		world_sim::DrawingSettings savedSettings;
 	};
 
 } // namespace
@@ -757,6 +765,8 @@ namespace {
 		void SetUp() override {
 			assets::ConstructionRegistry::Get().clear();
 			ASSERT_TRUE(assets::ConstructionRegistry::Get().load(constructionConfigFolder()));
+			playerSettings = world_sim::UserSettings::Get().drawing;
+			world_sim::UserSettings::Get().drawing = testedSettings();
 			navigation = &world_sim::testing::meshCreekWorld(seen.world, emptyPlacement);
 			drawing = std::make_unique<world_sim::DrawingSystem>(world_sim::DrawingSystem::Args{
 				.world = &seen.world,
@@ -765,7 +775,10 @@ namespace {
 				.callbacks = {.onToast = [this](const std::string& title, const std::string& message) { toasts.emplace_back(title, message); }}
 			});
 		}
-		void TearDown() override { assets::ConstructionRegistry::Get().clear(); }
+		void TearDown() override {
+			world_sim::UserSettings::Get().drawing = playerSettings;
+			assets::ConstructionRegistry::Get().clear();
+		}
 
 		void hostFoundation(float southY, float northY) {
 			const auto foundation =
@@ -800,6 +813,7 @@ namespace {
 		world_sim::testing::SeenWorld							   seen;
 		ecs::EmptyPlacement										   emptyPlacement;
 		ecs::NavigationSystem*									   navigation = nullptr;
+		world_sim::DrawingSettings								   playerSettings;
 		std::vector<std::pair<std::string, std::string>>		   toasts;
 		std::unique_ptr<world_sim::DrawingSystem> drawing;
 	};
@@ -1226,4 +1240,226 @@ TEST_F(DrawingCloseTest, TheEditRescueRefusesAnEditThatFailsItsCheck) {
 	EXPECT_EQ(drawing->status().pointCount, 4);
 	EXPECT_NEAR(drawing->world().areaSquareMeters(target), 64.0F, 1e-3F);
 	EXPECT_EQ(toasts.back().first, "Invalid point") << lastToast();
+}
+
+namespace {
+
+	// The Rectangle tool through its input: presses and releases at screen points, as GameScene
+	// hands them over. The player's drawing settings are the designed defaults; the grid is 1 m.
+	class DrawingRectangleTest : public DrawingCloseTest {
+	  protected:
+		void SetUp() override {
+			DrawingCloseTest::SetUp();
+			world_sim::UserSettings::Get().drawing = world_sim::DrawingSettings{.roundLengths = true, .showKeyGuide = true};
+			drawing->activateRectangleTool();
+		}
+
+		void pressAt(glm::vec2 screen) { drawing->handlePress(screen.x, screen.y, kViewportWidth, kViewportHeight, false); }
+		void releaseAt(glm::vec2 screen) { drawing->handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight, false); }
+		void press(glm::vec2 meters) { pressAt(seen.screenOf(meters)); }
+		void release(glm::vec2 meters) { releaseAt(seen.screenOf(meters)); }
+		void clickCorner(glm::vec2 meters) {
+			press(meters);
+			release(meters);
+		}
+		void drag(glm::vec2 from, glm::vec2 to) {
+			press(from);
+			hover(to);
+			release(to);
+		}
+		[[nodiscard]] std::vector<geometry::Vec2i64> onlyFoundationRing() const {
+			const auto& foundations = drawing->world().foundations();
+			return foundations.size() == 1 ? foundations.front().ring : std::vector<geometry::Vec2i64>{};
+		}
+		static std::vector<geometry::Vec2i64> ringOf(std::initializer_list<Foundation::Vec2> corners) {
+			std::vector<geometry::Vec2i64> ring;
+			for (const Foundation::Vec2 corner : corners) {
+				ring.push_back(geometry::quantize(corner));
+			}
+			return ring;
+		}
+	};
+
+} // namespace
+
+TEST_F(DrawingRectangleTest, TwoClicksCommitTheRectangleOnTheGrid) {
+	clickCorner({2.3F, 0.8F});
+	EXPECT_EQ(drawing->status().pointCount, 1);
+	EXPECT_TRUE(drawing->world().foundations().empty());
+	clickCorner({6.4F, 4.2F});
+	EXPECT_EQ(onlyFoundationRing(), ringOf({{2.0F, 1.0F}, {6.0F, 1.0F}, {6.0F, 4.0F}, {2.0F, 4.0F}})) << lastToast();
+	EXPECT_EQ(drawing->status().pointCount, 0);
+	EXPECT_TRUE(drawing->isRectangleTool()) << "the tool stays on for the next one";
+}
+
+TEST_F(DrawingRectangleTest, ADragCommitsTheRectangle) {
+	drag({2.0F, 1.0F}, {6.0F, 4.0F});
+	EXPECT_EQ(onlyFoundationRing(), ringOf({{2.0F, 1.0F}, {6.0F, 1.0F}, {6.0F, 4.0F}, {2.0F, 4.0F}})) << lastToast();
+	EXPECT_EQ(drawing->status().pointCount, 0);
+}
+
+// Within doubleClickDistancePx of its press, a release is a click: the corner waits.
+TEST_F(DrawingRectangleTest, APressReleasedInPlaceIsTheFirstClick) {
+	const float		threshold = assets::ConstructionRegistry::Get().snapping().doubleClickDistancePx;
+	const glm::vec2 corner = seen.screenOf({2.0F, 1.0F});
+	pressAt(corner);
+	releaseAt(corner + glm::vec2{threshold, 0.0F});
+	EXPECT_EQ(drawing->status().pointCount, 1);
+	EXPECT_TRUE(drawing->world().foundations().empty());
+	EXPECT_TRUE(toasts.empty()) << "a click tries no rectangle: " << lastToast();
+	clickCorner({6.0F, 4.0F});
+	EXPECT_EQ(onlyFoundationRing(), ringOf({{2.0F, 1.0F}, {6.0F, 1.0F}, {6.0F, 4.0F}, {2.0F, 4.0F}})) << lastToast();
+}
+
+// GameScene hands the tool no press that lands on the interface, so the release that follows
+// ends no press: it places no corner, and with a corner waiting it commits nothing.
+TEST_F(DrawingRectangleTest, AReleaseWhosePressTheToolNeverSawDoesNothing) {
+	release({6.0F, 4.0F});
+	EXPECT_EQ(drawing->status().pointCount, 0);
+	clickCorner({2.0F, 1.0F});
+	release({6.0F, 4.0F});
+	EXPECT_EQ(drawing->status().pointCount, 1);
+	EXPECT_TRUE(drawing->world().foundations().empty());
+}
+
+// A drag released over the interface drops the corner its press placed and keeps the tool; a
+// corner that was waiting before the press keeps waiting.
+TEST_F(DrawingRectangleTest, AReleaseOverTheInterfaceCancelsTheDrag) {
+	press({2.0F, 1.0F});
+	hover({6.0F, 4.0F});
+	drawing->cancelPress();
+	EXPECT_EQ(drawing->status().pointCount, 0);
+	EXPECT_TRUE(drawing->isRectangleTool());
+	EXPECT_FALSE(drawing->hasPendingPress());
+
+	clickCorner({2.0F, 1.0F});
+	press({6.0F, 4.0F});
+	drawing->cancelPress();
+	EXPECT_EQ(drawing->status().pointCount, 1);
+	EXPECT_TRUE(drawing->world().foundations().empty());
+}
+
+// Each refused rectangle previews red with the strip's reason, and its release commits nothing
+// and toasts that reason; the corner waits. The preview's verdict is what the release does.
+TEST_F(DrawingRectangleTest, ARefusedRectanglePreviewsRedAndDoesNotCommit) {
+	builtFloor({{20.0F, 0.0F}, {24.0F, 0.0F}, {24.0F, 4.0F}, {20.0F, 4.0F}});
+	const struct {
+		const char* what;
+		glm::vec2	first;
+		glm::vec2	second;
+	} refused[] = {
+		{"too small", {0.0F, 0.0F}, {1.0F, 1.0F}},
+		{"level corners", {0.0F, 0.0F}, {6.0F, 0.0F}},
+		{"over a building", {18.0F, 1.0F}, {22.0F, 3.0F}},
+		{"onto unexplored ground", {30.0F, 0.0F}, {50.0F, 5.0F}},
+	};
+	for (const auto& rectangle : refused) {
+		SCOPED_TRACE(rectangle.what);
+		drawing->activateRectangleTool();
+		clickCorner(rectangle.first);
+		ASSERT_EQ(drawing->status().pointCount, 1) << lastToast();
+		hover(rectangle.second);
+		EXPECT_FALSE(drawing->previewVerdict().valid);
+		EXPECT_FALSE(drawing->previewVerdict().closeHalo);
+		EXPECT_FALSE(drawing->status().valid);
+		const std::string shown = drawing->status().message;
+		EXPECT_FALSE(shown.empty());
+		const std::size_t toastsBefore = toasts.size();
+		clickCorner(rectangle.second);
+		EXPECT_EQ(drawing->world().foundations().size(), 1U);
+		EXPECT_EQ(drawing->status().pointCount, 1);
+		ASSERT_EQ(toasts.size(), toastsBefore + 1);
+		EXPECT_EQ(toasts.back().second, shown);
+	}
+	drawing->activateRectangleTool();
+	clickCorner({0.0F, 0.0F});
+	hover({4.0F, 3.0F});
+	EXPECT_TRUE(drawing->previewVerdict().valid) << drawing->status().message;
+	EXPECT_TRUE(drawing->status().valid);
+	clickCorner({4.0F, 3.0F});
+	EXPECT_EQ(drawing->world().foundations().size(), 2U) << lastToast();
+}
+
+// The world takes the pointer in window pixels and the interface in ui px; at every interface
+// scale the press lands the corner under the pointer, and a press on the interface starts nothing.
+TEST_F(DrawingRectangleTest, ThePressLandsTheCornerUnderThePointerAtEveryInterfaceScale) {
+	// A panel down the screen's left, 410 ui px wide: at 120% it covers the pointer on (-3, 1).
+	const auto		onPanel = [](glm::vec2 uiPoint) { return uiPoint.x < 410.0F; };
+	const glm::vec2 nearThePanel = seen.screenOf({-3.0F, 1.0F});
+	const auto pressIfOnTheWorld = [&](glm::vec2 screen, float uiScale) {
+		if (world_sim::pointerTarget(screen, kViewportWidth, kViewportHeight, uiScale, onPanel) == world_sim::PointerTarget::World) {
+			pressAt(screen);
+		}
+	};
+	float offset = 0.0F;
+	for (const float uiScale : {0.6F, 1.0F, 1.2F}) {
+		SCOPED_TRACE(uiScale);
+		pressIfOnTheWorld(nearThePanel, uiScale);
+		releaseAt(nearThePanel);
+		EXPECT_EQ(drawing->status().pointCount, uiScale > 1.1F ? 0 : 1) << "on the panel only at 120%";
+		drawing->activateRectangleTool();
+
+		const glm::vec2 first{2.0F + offset, 1.0F};
+		const glm::vec2 second{6.0F + offset, 4.0F};
+		pressIfOnTheWorld(seen.screenOf(first), uiScale);
+		hover(second);
+		pressIfOnTheWorld(seen.screenOf(second), uiScale);
+		releaseAt(seen.screenOf(second));
+		const auto& foundations = drawing->world().foundations();
+		ASSERT_FALSE(foundations.empty()) << lastToast();
+		EXPECT_EQ(foundations.back().ring, ringOf({{first.x, first.y}, {second.x, first.y}, {second.x, second.y}, {first.x, second.y}}));
+		offset += 10.0F;
+	}
+}
+
+namespace {
+
+	// The strip reads what the preview reads: three corners of a 6 by 3 m rectangle placed and
+	// the pointer on the fourth, with every helper off, so nothing closes the shape.
+	class DrawingStripVerdictTest : public DrawingCloseTest {
+	  protected:
+		void SetUp() override {
+			DrawingCloseTest::SetUp();
+			world_sim::UserSettings::Get().drawing = world_sim::DrawingSettings{};
+		}
+		void expectTheStripReadsThePreview() {
+			const world_sim::DrawingStatus status = drawing->status();
+			EXPECT_TRUE(status.valid) << status.message;
+			EXPECT_TRUE(status.message.empty()) << status.message;
+			EXPECT_EQ(status.valid, drawing->previewVerdict().valid);
+		}
+
+		static constexpr glm::vec2 kThreeCorners[] = {{0.0F, 0.0F}, {6.0F, 0.0F}, {6.0F, 3.0F}};
+		static constexpr glm::vec2 kFourthCorner{0.0F, 3.0F};
+	};
+
+} // namespace
+
+// WOR-973: the three placed points alone make a 26.6 degree corner, but the band to the pointer
+// is valid and the click places a point, so the strip reads valid.
+TEST_F(DrawingStripVerdictTest, AFreeformStripReadsThePointNotTheOpenShape) {
+	drawing->activateFoundationTool();
+	place({kThreeCorners[0], kThreeCorners[1], kThreeCorners[2]});
+	ASSERT_EQ(drawing->status().pointCount, 3) << lastToast();
+	hoverFreeform(kFourthCorner);
+	expectTheStripReadsThePreview();
+}
+
+TEST_F(DrawingStripVerdictTest, AWallStripReadsThePreview) {
+	builtFloor({{-10.0F, -10.0F}, {10.0F, -10.0F}, {10.0F, 10.0F}, {-10.0F, 10.0F}});
+	drawing->activateWallTool();
+	place({kThreeCorners[0], kThreeCorners[1], kThreeCorners[2]});
+	ASSERT_EQ(drawing->status().pointCount, 3) << lastToast();
+	hoverFreeform(kFourthCorner);
+	expectTheStripReadsThePreview();
+}
+
+TEST_F(DrawingStripVerdictTest, AnEditStripReadsThePreview) {
+	const construction::FoundationId target = blueprintFloor();
+	drawing->activateFoundationEditTool(target, construction::FoundationEditMode::Add);
+	const glm::vec2 across{6.0F, 2.0F};
+	place({kThreeCorners[0] + across, kThreeCorners[1] + across, kThreeCorners[2] + across});
+	ASSERT_EQ(drawing->status().pointCount, 3) << lastToast();
+	hoverFreeform(kFourthCorner + across);
+	expectTheStripReadsThePreview();
 }

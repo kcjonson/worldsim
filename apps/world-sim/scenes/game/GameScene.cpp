@@ -17,6 +17,7 @@
 #include "scenes/game/world/selection/SelectionSystem.h"
 #include "scenes/game/world/terrain/TerrainPolygonOverlay.h"
 #include "scenes/game/world/vision/VisionOverlay.h"
+#include "scenes/game/world/WorldPointer.h"
 #include "scenes/shared/SalalUi.h"
 #include <theme/Theme.h>
 
@@ -305,7 +306,9 @@ namespace {
 						if (m_placementSystem) {
 							m_placementSystem->cancel();
 						}
-						if (structure == "foundation") {
+						if (structure == "rectangle-foundation") {
+							m_drawingSystem->activateRectangleTool();
+						} else if (structure == "freeform-foundation") {
 							m_drawingSystem->activateFoundationTool();
 						} else if (structure == "wall") {
 							m_drawingSystem->activateWallTool();
@@ -685,6 +688,16 @@ namespace {
 		// What salal's ui didn't take: Escape, the world's hotkeys, a release for the drawing tool, placement or
 		// selection, and the scroll that zooms. The HUD takes no focus, so a key the ui took is a dialog's. The
 		// tools' previews follow the pointer in update().
+		// The pointer, in the window's logical px, on the world, on the ui, or outside the window.
+		world_sim::PointerTarget pointerTargetOf(glm::vec2 windowPointer) {
+			int logicalW = 0;
+			int logicalH = 0;
+			Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
+			return world_sim::pointerTarget(windowPointer, logicalW, logicalH, ui().getScale(), [this](glm::vec2 uiPoint) {
+				return ui().hitTest(uiPoint).valid();
+			});
+		}
+
 		bool handleEvent(const foundation::InputEvent& event) override {
 			using Type = foundation::InputEvent::Type;
 			if (event.type == Type::KeyDown && !event.repeat) {
@@ -713,19 +726,35 @@ namespace {
 				}
 				return true;
 			}
-			if (event.type != Type::PointerUp) {
-				return false;
-			}
-
 			int logicalW = 0;
 			int logicalH = 0;
 			Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
+
+			// The Rectangle tool alone takes a press: a drag from it draws the rectangle. A press on
+			// the interface never starts one.
+			if (event.type == Type::PointerDown) {
+				if (event.mouseButton != foundation::MouseButton::Left || !m_drawingSystem->isRectangleTool() ||
+					pointerTargetOf(event.position) != world_sim::PointerTarget::World) {
+					return false;
+				}
+				const bool freeform = (event.mods & foundation::ModAlt) != 0;
+				return m_drawingSystem->handlePress(event.position.x, event.position.y, logicalW, logicalH, freeform);
+			}
+			if (event.type != Type::PointerUp) {
+				return false;
+			}
 
 			// The drawing tool takes clicks before placement and selection while it's active.
 			if (m_drawingSystem->isActive()) {
 				if (event.mouseButton == foundation::MouseButton::Right) {
 					// Foundation: cancel the shape. Wall: end (commit) the chain.
 					m_drawingSystem->cancel();
+					return true;
+				}
+				if (event.mouseButton == foundation::MouseButton::Left && m_drawingSystem->isRectangleTool() &&
+					pointerTargetOf(event.position) != world_sim::PointerTarget::World) {
+					// A drag released over the interface or outside the window draws nothing.
+					m_drawingSystem->cancelPress();
 					return true;
 				}
 				if (event.mouseButton == foundation::MouseButton::Left) {
@@ -783,10 +812,15 @@ namespace {
 				return worldKeys && theme::key(frame.input, key).down;
 			};
 
+			// A Rectangle drag whose release the interface took (the release never reached handleEvent) draws
+			// nothing.
+			if (m_drawingSystem->hasPendingPress() && !frame.input.mouse[static_cast<std::size_t>(foundation::MouseButton::Left)].down) {
+				m_drawingSystem->cancelPress();
+			}
+
 			// The drawing tool's and placement's previews follow the pointer every frame, so they track the world
-			// moving under a still cursor, but not while the pointer is over the ui. The pointer is in the window's
-			// logical px, which the world takes, and the ui's hit test in its own.
-			if (frame.input.pointerInWindow && !ui().hitTest(frame.input.pointer / ui().getScale()).valid()) {
+			// moving under a still cursor, but not while the pointer is over the ui.
+			if (frame.input.pointerInWindow && pointerTargetOf(frame.input.pointer) == world_sim::PointerTarget::World) {
 				int logicalW = 0;
 				int logicalH = 0;
 				Renderer::Primitives::getLogicalViewport(logicalW, logicalH);

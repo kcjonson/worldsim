@@ -237,19 +237,27 @@ namespace world_sim {
 		}
 		const ui::Theme& theme = getContext()->getTheme();
 
-		const float offset = status.foundationEdit ? kEditMessageOffset : kMessageOffset;
+		// The foundation tools and edits name themselves on the top line, which needs the wider column.
+		const bool	named = !status.toolLabel.empty();
+		const float offset = named ? kEditMessageOffset : kMessageOffset;
 		if (readouts.get()->getSizeSpec().width.resolve(0.0F) != offset - kCardSpacing) {
 			readouts.get()->setSize({offset - kCardSpacing, ui::kAuto});
 			ui::Style topStyle = top->getDeclaredStyle();
-			topStyle.color = theme.get(status.foundationEdit ? tokens::color::textBright : tokens::color::text);
+			topStyle.color = theme.get(named ? tokens::color::textBright : tokens::color::text);
 			top->setStyle(topStyle);
 		}
 
-		if (status.foundationEdit) {
-			// The mode and its locked material, then the outline the edit would leave and how much it
-			// changes the foundation by.
-			top->setText(status.editLabel + " (" + status.material + ")");
-			bottom->setText(std::format("Area: {:.1f} m\xC2\xB2 ({:+.1f})", status.areaSquareMeters, status.areaDeltaSquareMeters));
+		if (named) {
+			// The tool and its material, then the shape's area; for an edit, the outline it would leave
+			// and how much it changes the foundation by.
+			top->setText(status.toolLabel + " (" + status.material + ")");
+			if (status.foundationEdit) {
+				bottom->setText(std::format("Area: {:.1f} m\xC2\xB2 ({:+.1f})", status.areaSquareMeters, status.areaDeltaSquareMeters));
+			} else if (status.rectangle) {
+				bottom->setText(std::format("Area: {:.1f} m\xC2\xB2", status.areaSquareMeters));
+			} else {
+				bottom->setText(std::format("Area: {:.1f} m\xC2\xB2  Points: {}", status.areaSquareMeters, status.pointCount));
+			}
 		} else if (status.opening) {
 			// The type comes from the Build menu; the validity line carries the snap and placement feedback.
 			top->setText("Opening: " + status.openingType);
@@ -257,9 +265,6 @@ namespace world_sim {
 		} else if (status.wall) {
 			top->setText(std::format("Len: {:.1f} m  (seg {:.1f} m)", status.totalLengthMeters, status.segmentLengthMeters));
 			bottom->setText(std::format("Cost: {:.0f}  Work: {:.0f}", status.wallCost, status.wallWork));
-		} else {
-			top->setText(std::format("Area: {:.1f} m\xC2\xB2", status.areaSquareMeters));
-			bottom->setText(std::format("Points: {}", status.pointCount));
 		}
 
 		ui::ColorToken color = tokens::color::statusOk;
@@ -281,6 +286,12 @@ namespace world_sim {
 			} else {
 				text = "Right-click / Enter to finish";
 			}
+			if (!status.valid && !status.message.empty()) {
+				color = tokens::color::statusCrit;
+				text = status.message;
+			}
+		} else if (status.rectangle) {
+			text = status.pointCount == 0 ? "Click or drag from a corner" : "Click the opposite corner";
 			if (!status.valid && !status.message.empty()) {
 				color = tokens::color::statusCrit;
 				text = status.message;
