@@ -1,6 +1,7 @@
 #pragma once
 
 #include "assets/AssetRegistry.h"
+#include "assets/placement/InstanceTransform.h"
 #include "assets/placement/SpatialIndex.h" // PlacedEntity
 #include "graphics/Rect.h"
 
@@ -75,12 +76,12 @@ namespace worldview {
 		out.crateBack = crateSprite("PackagingCrate");
 		out.crateFront = crateSprite("PackagingCrateFront");
 
-		// Position-as-origin instance: world = local * fit + position. Center the scaled bbox on
-		// the crate and put its bottom on the floor line.
-		const float itemCenterLocalX = itemBounds.x + itemBounds.width * 0.5F;
-		const float itemBottomLocalY = itemBounds.y + itemBounds.height;
-		out.item.defName = itemDefName;
-		out.item.position = {posValue.x - itemCenterLocalX * fit, crateTopLeft.y + kCrateFloorY - itemBottomLocalY * fit};
+		// The item's bottom-centre goes on the crate floor's centre: the position is that point less
+		// where the item's transform at the origin puts its bottom-centre.
+		const glm::vec2 itemBottomCentreLocal{itemBounds.x + itemBounds.width * 0.5F, itemBounds.y + itemBounds.height};
+		const glm::vec2 crateFloorCentre{posValue.x, crateTopLeft.y + kCrateFloorY};
+		out.item.defName  = itemDefName;
+		out.item.position = crateFloorCentre - assets::InstanceTransform({0.0F, 0.0F}, 0.0F, fit).toWorld(itemBottomCentreLocal);
 		out.item.rotation = 0.0F;
 		out.item.scale = fit;
 		out.item.colorTint = itemColorTint;

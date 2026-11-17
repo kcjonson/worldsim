@@ -1791,11 +1791,13 @@ namespace assets {
 				continue;
 			}
 			const AssetDefinition& def	 = found->second;
-			const float			   scale = std::max(std::abs(def.placement.scale.min), std::abs(def.placement.scale.max));
+			// At least 1: what the player places and what dev spawn makes stand at scale 1, whatever the
+			// def's placement range.
+			const float scale = std::max({1.0F, std::abs(def.placement.scale.min), std::abs(def.placement.scale.max)});
 			for (const CollisionShape& shape : def.collisions) {
 				if (shape.blocks()) {
-					raiseTo(m_maxCollisionReach, collisionReach(shape) * scale);
-					raiseTo(m_maxCollidingScale, scale);
+					raiseTo(largestCollisionReach, collisionReach(shape) * scale);
+					raiseTo(largestCollidingScale, scale);
 				}
 			}
 		}
@@ -2261,8 +2263,8 @@ namespace assets {
 		}
 		definitions.clear();
 		clearCaches();
-		m_maxCollisionReach.store(0.0F, std::memory_order_relaxed);
-		m_maxCollidingScale.store(0.0F, std::memory_order_relaxed);
+		largestCollisionReach.store(0.0F, std::memory_order_relaxed);
+		largestCollidingScale.store(0.0F, std::memory_order_relaxed);
 		groupIndex.clear();
 		// Reset the string-interning index too (mirrors clearDefinitions); otherwise name<->id
 		// and capability lookups return stale mappings for now-destroyed defs until a reload.
@@ -2583,8 +2585,8 @@ namespace assets {
 	void AssetRegistry::clearDefinitions() {
 		definitions.clear();
 		clearCaches();
-		m_maxCollisionReach.store(0.0F, std::memory_order_relaxed);
-		m_maxCollidingScale.store(0.0F, std::memory_order_relaxed);
+		largestCollisionReach.store(0.0F, std::memory_order_relaxed);
+		largestCollidingScale.store(0.0F, std::memory_order_relaxed);
 		groupIndex.clear();
 		m_defNameToId.clear();
 		m_idToDefName.clear();

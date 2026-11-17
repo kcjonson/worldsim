@@ -13,6 +13,7 @@
 // stay an unsorted background below this stream. GL_DEPTH_TEST stays disabled;
 // this is a pure CPU painter's sort.
 
+#include "assets/placement/InstanceTransform.h"
 #include "assets/placement/SpatialIndex.h"
 #include "world/chunk/ChunkCoordinate.h"
 
@@ -35,9 +36,10 @@ namespace assets {
 
 	// Canonical anchorY rule: the world-Y of a renderable's ground-contact line: its
 	// position's world-Y (the pivot every renderable is drawn about) plus the contact
-	// line's local-Y (anchorLocalY) scaled by the entity scale. Larger draws later / in front.
+	// line's local-Y (anchorLocalY, already turned by the rotation) scaled by the entity scale.
+	// Larger draws later / in front.
 	[[nodiscard]] inline float computeAnchorY(float originWorldY, float anchorLocalY, float scale) {
-		return originWorldY + anchorLocalY * scale;
+		return InstanceTransform({0.0F, originWorldY}, 0.0F, scale).toWorld({0.0F, anchorLocalY}).y;
 	}
 
 	// Local-space Y extent (min, max) of a template mesh; {0, 0} for null / empty.

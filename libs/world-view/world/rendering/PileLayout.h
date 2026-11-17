@@ -1,6 +1,7 @@
 #pragma once
 
 #include "assets/AssetDefinition.h"
+#include "assets/placement/InstanceTransform.h"
 #include "assets/placement/SpatialIndex.h"	 // PlacedEntity
 #include "assets/placement/WorldDepthSort.h" // computeAnchorY
 #include "graphics/Rect.h"
@@ -120,10 +121,12 @@ namespace worldview {
 		float			 reachX = 0.0F;
 		float			 reachY = 0.0F;
 		for (std::size_t i = 0; i < pile.count; ++i) {
-			const glm::vec2 lo = pile.sprites[i].position + glm::vec2{itemBounds.x, itemBounds.y} * scale;
-			const glm::vec2 hi = lo + glm::vec2{itemBounds.width, itemBounds.height} * scale;
-			reachX = std::max({reachX, std::abs(lo.x), std::abs(hi.x)});
-			reachY = std::max({reachY, std::abs(lo.y), std::abs(hi.y)});
+			const assets::PlacedEntity&		sprite = pile.sprites[i];
+			const assets::InstanceTransform drawn(sprite.position, sprite.rotation, sprite.scale);
+			const glm::vec2					low	 = drawn.toWorld({itemBounds.x, itemBounds.y});
+			const glm::vec2					high = drawn.toWorld({itemBounds.x + itemBounds.width, itemBounds.y + itemBounds.height});
+			reachX = std::max({reachX, std::abs(low.x), std::abs(high.x)});
+			reachY = std::max({reachY, std::abs(low.y), std::abs(high.y)});
 		}
 		return std::hypot(reachX, reachY);
 	}

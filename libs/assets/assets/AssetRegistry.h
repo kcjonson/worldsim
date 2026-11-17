@@ -137,13 +137,13 @@ namespace assets {
 		[[nodiscard]] float maxReachMeters() const { return m_maxReach.load(std::memory_order_relaxed); }
 
 		/// The farthest any loaded def's collision shape reaches from its pivot, times the def's
-		/// largest placement scale, over every def and age class: how far from its position a
+		/// largest placement scale (at least 1), over every def and age class: how far from its position a
 		/// placed entity's collider can stand. Kept as definitions load and their shapes are set.
-		[[nodiscard]] float maxCollisionReachMeters() const { return m_maxCollisionReach.load(std::memory_order_relaxed); }
+		[[nodiscard]] float maxCollisionReachMeters() const { return largestCollisionReach.load(std::memory_order_relaxed); }
 
-		/// The largest placement scale of any loaded def with a blocking collision shape, kept with
+		/// The largest placement scale (at least 1) of any loaded def with a blocking collision shape, kept with
 		/// maxCollisionReachMeters: how much a pad added around a collider can grow.
-		[[nodiscard]] float maxCollidingScale() const { return m_maxCollidingScale.load(std::memory_order_relaxed); }
+		[[nodiscard]] float maxCollidingScale() const { return largestCollidingScale.load(std::memory_order_relaxed); }
 
 		/// Get the resolved motion (animation clips) for a def, or nullptr if it declares none.
 		/// Driver pivots are resolved against the def's SVG nodes (find_node, by authored node
@@ -459,8 +459,8 @@ namespace assets {
 		std::vector<std::unique_ptr<TemplateEntry>>				m_templates;
 		mutable std::mutex										templateCacheMutex;
 		std::atomic<float>										m_maxReach{0.0F};
-		std::atomic<float>										m_maxCollisionReach{0.0F};
-		std::atomic<float>										m_maxCollidingScale{0.0F};
+		std::atomic<float>										largestCollisionReach{0.0F};
+		std::atomic<float>										largestCollidingScale{0.0F};
 
 		// Resolved motion per def (empty MotionDef = "resolved, has none"). Guarded separately.
 		std::unordered_map<std::string, MotionDef> m_motionCache;

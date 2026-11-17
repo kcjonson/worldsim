@@ -782,7 +782,7 @@ Beyond the mesh are two things, and neither is this epic:
 | `kLimitSides` | 16 | `libs/geometry/nav/LimitPolygon.h` | The sides of a limit polygon. Fewer sides overshoot R farther at the corners; more add vertices to the meshed edge |
 | `kSightBufferMeters` | 16 m | `NavigationSystem.h` | Added to sight to make R. It covers the step to a mover's next limit, a step more for that limit to land in once urgent, and his travel during one landing; a `static_assert` holds it above twice the step. The polygon's overshoot only adds margin |
 | `kLandingSightMeters` | 150 m | `NavigationSystem.h` | The radius of ground the landing meshes round the drop |
-| `footprintReachMeters()` | from the loaded defs (about 2.5 m today) | `NavigationSystem.h` | The farthest a placed obstacle's padded footprint reaches from its entity's position (`nav::placedObstacleReachMeters`): a limit's obstacle query box is grown by it |
+| `footprintReachMeters()` | from the loaded defs: 1.15 m with the shipped ones (BigRock, `PlacedObstacle.ShippedReach`) | `NavigationSystem.h` | The farthest a placed obstacle's padded footprint reaches from its entity's position (`nav::placedObstacleReachMeters`): a limit's obstacle query box is grown by it |
 | `kLimitsPerTick` | 1 | `NavigationSystem.h` | Limits that are not urgent whose ground goes in a tick |
 | `kDetailRingsPerTick` | 32 | `NavigationSystem.h` | Placed obstacles of limits that are not urgent a tick |
 | `kDetailRemovalsPerTick` | 128 | `NavigationSystem.h` | Placed obstacles taken out a tick |

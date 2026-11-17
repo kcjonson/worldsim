@@ -59,28 +59,28 @@ namespace {
 
 // world = R(rotation) * (local * scale) + position, worked by hand.
 TEST(InstanceTransform, TurnsScalesThenMoves) {
-	const InstanceTransform t({12.0F, -7.0F}, 3.14159265F / 2.0F, 2.0F);
-	expectVecNear(t.toWorld({1.0F, 0.0F}), {12.0F, -5.0F});
-	expectVecNear(t.toWorld({0.0F, 1.0F}), {10.0F, -7.0F});
-	expectVecNear(t.axisX(), {0.0F, 1.0F});
-	expectVecNear(t.axisY(), {-1.0F, 0.0F});
-	const glm::dvec2 precise = t.toWorldPrecise({1.0, 0.0});
+	const InstanceTransform transform({12.0F, -7.0F}, 3.14159265F / 2.0F, 2.0F);
+	expectVecNear(transform.toWorld({1.0F, 0.0F}), {12.0F, -5.0F});
+	expectVecNear(transform.toWorld({0.0F, 1.0F}), {10.0F, -7.0F});
+	expectVecNear(transform.axisX(), {0.0F, 1.0F});
+	expectVecNear(transform.axisY(), {-1.0F, 0.0F});
+	const glm::dvec2 precise = transform.toWorldPrecise({1.0, 0.0});
 	EXPECT_NEAR(precise.x, 12.0, 1e-6);
 	EXPECT_NEAR(precise.y, -5.0, 1e-6);
 }
 
 TEST(InstanceTransform, RoundTrip) {
-	const InstanceTransform t({12.0F, -7.0F}, 0.6F, 1.3F);
+	const InstanceTransform transform({12.0F, -7.0F}, 0.6F, 1.3F);
 	for (glm::vec2 local : {glm::vec2{0, 0}, glm::vec2{2, -1}, glm::vec2{-3, 4}}) {
-		expectVecNear(t.toLocal(t.toWorld(local)), local);
+		expectVecNear(transform.toLocal(transform.toWorld(local)), local);
 	}
 }
 
 TEST(InstanceTransform, ZeroScaleToLocalDoesNotDivideByZero) {
-	const InstanceTransform t({1.0F, 2.0F}, 0.0F, 0.0F);
-	const glm::vec2			l = t.toLocal({3.0F, 4.0F});
-	EXPECT_EQ(l.x, 0.0F);
-	EXPECT_EQ(l.y, 0.0F);
+	const InstanceTransform transform({1.0F, 2.0F}, 0.0F, 0.0F);
+	const glm::vec2			local = transform.toLocal({3.0F, 4.0F});
+	EXPECT_EQ(local.x, 0.0F);
+	EXPECT_EQ(local.y, 0.0F);
 }
 
 // The baked statics place every vertex of a real template exactly where InstanceTransform does,

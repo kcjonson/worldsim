@@ -6,8 +6,11 @@
 #include <assets/placement/InstanceTransform.h>
 #include <assets/placement/SpatialIndex.h>
 
+#include <glm/geometric.hpp>
+
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -27,12 +30,11 @@ namespace {
 		std::filesystem::path root;
 
 		ColliderDefs() {
-			namespace fs = std::filesystem;
 			static std::atomic<int> counter{0};
-			root = fs::temp_directory_path() /
+			root = std::filesystem::temp_directory_path() /
 				   ("placed_obstacle_test_" + std::to_string(reinterpret_cast<std::uintptr_t>(&counter)) + "_" + std::to_string(counter++));
-			fs::create_directories(root / "SvgBlock");
-			fs::create_directories(root / "LuaBlock");
+			std::filesystem::create_directories(root / "SvgBlock");
+			std::filesystem::create_directories(root / "LuaBlock");
 			std::ofstream(root / "SvgBlock" / "block.svg")
 				<< "<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\" width=\"100\" height=\"100\">"
 				   "<metadata><collision><shape type=\"aabb\" min=\"60,30\" max=\"80,40\"/></collision></metadata>"
@@ -110,4 +112,74 @@ TEST(PlacedObstacle, ColliderCornerLandsOnTheDrawnCorner) {
 		EXPECT_NEAR(corner.x, drawn.x, 1e-4F);
 		EXPECT_NEAR(corner.y, drawn.y, 1e-4F);
 	}
+}
+
+namespace {
+
+	// How far the farthest corner of a placed entity's padded box stands from its position.
+	float paddedBoxReach(const assets::PlacedEntity& entity, const assets::CollisionShape& collision) {
+		const std::optional<nav::OrientedRect> box	 = nav::placedObstacleBox(entity, collision);
+		float								   reach = 0.0F;
+		for (const float alongX : {-1.0F, 1.0F}) {
+			for (const float alongY : {-1.0F, 1.0F}) {
+				const glm::vec2 corner = box->center + box->axisX * (alongX * box->halfExtents.x) + box->axisY * (alongY * box->halfExtents.y);
+				reach				   = std::max(reach, glm::length(corner - entity.position));
+			}
+		}
+		return reach;
+	}
+
+	assets::PlacedEntity placedAt(const char* defName, float rotation, float scale) {
+		assets::PlacedEntity entity;
+		entity.defName	= defName;
+		entity.position = {10.0F, 10.0F};
+		entity.rotation = rotation;
+		entity.scale	= scale;
+		return entity;
+	}
+
+} // namespace
+
+// The reach covers every padded collider: one scaled up past 1 and turned, and one whose def only
+// places below scale 1 but stands at scale 1 when the player places it or dev spawn makes it.
+TEST(PlacedObstacle, ReachCoversEveryPaddedCollider) {
+	assets::AssetRegistry& registry = assets::AssetRegistry::Get();
+	registry.clearDefinitions();
+
+	const assets::CollisionShape largeShape{.type = assets::CollisionShapeType::Rect, .offsetMeters = {2.0F, 0.0F}, .halfExtentsMeters = {0.5F, 0.25F}};
+	assets::AssetDefinition		 large;
+	large.defName		  = "Test_LargeCollider";
+	large.placement.scale = {.min = 0.5F, .max = 3.0F};
+	large.setCollision(0, largeShape);
+	registry.registerTestDefinition(large);
+
+	const assets::CollisionShape smallShape{.type = assets::CollisionShapeType::Rect, .offsetMeters = {2.4F, 0.0F}, .halfExtentsMeters = {0.3F, 0.3F}};
+	assets::AssetDefinition		 small;
+	small.defName		  = "Test_SmallRangeCollider";
+	small.placement.scale = {.min = 0.4F, .max = 0.6F};
+	small.setCollision(0, smallShape);
+	registry.registerTestDefinition(small);
+
+	const float reach = nav::placedObstacleReachMeters(registry);
+	EXPECT_LE(paddedBoxReach(placedAt("Test_LargeCollider", 0.7F, 3.0F), largeShape), reach + 1e-4F);
+	EXPECT_LE(paddedBoxReach(placedAt("Test_SmallRangeCollider", 2.0F, 1.0F), smallShape), reach + 1e-4F);
+	registry.clearDefinitions();
+}
+
+// The reach over the shipped colliding defs is BigRock's: its corner, (42, 33) SVG units from its
+// pivot at 1/60 m a unit, at its 1.2 largest scale, plus the 50 mm pad's corner at that scale.
+// docs/technical/nav-mesh-variable-resolution.md quotes it.
+TEST(PlacedObstacle, ShippedReach) {
+	const std::filesystem::path repo	 = SIM_TEST_REPO_DIR;
+	assets::AssetRegistry&		registry = assets::AssetRegistry::Get();
+	registry.clearDefinitions();
+	registry.setSharedScriptsPath(repo / "assets" / "shared" / "scripts");
+	for (const char* xml :
+		 {"misc/BigRock/BigRock.xml", "flora/OakTree/OakTree.xml", "flora/MapleTree/MapleTree.xml", "flora/PineTree/PineTree.xml", "flora/PalmTree/PalmTree.xml"}) {
+		ASSERT_TRUE(registry.loadDefinitions((repo / "assets" / "world" / xml).string())) << xml;
+	}
+	const float bigRock = std::hypot(42.0F, 33.0F) * (1.5F / 90.0F) * 1.2F;
+	const float pad		= std::sqrt(2.0F) * 0.05F * 1.2F;
+	EXPECT_NEAR(nav::placedObstacleReachMeters(registry), bigRock + pad, 1e-3F);
+	registry.clearDefinitions();
 }
