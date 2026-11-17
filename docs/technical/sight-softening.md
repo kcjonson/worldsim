@@ -670,6 +670,57 @@ To measure:
 
 No-go at step 1a or 1b takes the fallbacks in order and measures again; a no-go after them is a change to this design. For vision's tick: builds budgeted per tick, oldest first, an observer past the budget keeping his last shape a tick longer (on a leg it moves with him and only its ranges are stale; on the polygon path the far side of his sight shortens by how far past a step he has gone); then `forestWindowSteps` 4 with `forestCapMm` raised to keep a stand's depth, halving the sides each ring adds to, with 10's limits checked again. For the drawn pieces: `drawnShadowRebuildMm` 100 mm in place of every frame; then a lowered `drawnShadowReachMm`. For the record, 6.6's fallbacks in order. For the cover, 7.7's.
 
+### 12.1 Measured: the sim bench (step 1a)
+
+"Step 1a: Sim bench for the sight shape and the forest record's cost (go or no-go)" on Specboard (WOR-984). `sim-benchmarks --benchmark_filter=BM_SightForest` (`libs/sim/vision/SightForest.bench.cpp`), RelWithDebInfo, headless, one run of each row, at the start values.
+
+**The stands.** Placed rings as nav holds them: a trunk is its Rect collider, the age class's trunk width (`OakTree.xml`, `MapleTree.xml`), padded 50 mm a side, an axis-aligned square; a BigRock is 1.40 by 1.07 m at a random angle. BigRocks are placed as placement places them in TemperateDeciduousForest: one candidate a 4 m block at spawn chance 0.004 scaled by the grove field (`GroveField.h`), none within 15 m of another. Each synthetic stand of 4.3 is its trees uniformly at random at one a `spacing^2`, no two centres nearer than 0.8 m, none within 2 m of a rock. The landing's forest is the landing square's measured stand (asset-system/tree-variety.md, D27), 78.3 trees per 1,000 m2, maple to oak 1.6 to 1, ages sapling, mature, and veteran at 15, 60, and 25%, thinned by the grove field's spawn share as spaced flora is, so glades and gaps open; it reads 80.5 trees per 1,000 m2 over the 100 m square round the drop and 2.26 BigRocks a hectare, one to about 4,400 m2 (the synthetic stands' rock layer, over a smaller square, 1.91 a hectare). Real placement through `PlacementExecutor` is not in the bench: a tree's collider and its crown spacing come from its Lua generator, which a headless sim bench does not run.
+
+**A build**, `BM_SightForestBuild`: 400 viewpoints a stand, outside every ring, `reach` 30.67 m (1x). "Convexity takes" is, on each side, how far the forest shape's support along the side's normal falls short of its range times `cos(pi / kSightSides)`; "given up" is the most one side's capped depth exceeds its slope-limited depth.
+
+| Stand | Trees per 1,000 m2 | Rim, mean | Sides at the floor | Rings in sight | Opaque in reach | Builds on the polygon path | Vertices out | Build us (mean / p99) | Convexity takes (mean / max) | The limit gives up (max) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Mature oaks 5 m apart | 41.9 | 26.41 m | 0% | 116 | 0.54 | 48% | 66.2 | 62 / 120 | 0 / 0.04 m | 0 |
+| Pines 3 m apart | 113.7 | 25.03 m | 0% | 317 | 0.52 | 47% | 66.0 | 88 / 150 | 0 / 0.01 m | 0 |
+| Veteran oaks 4 m apart | 65.5 | 22.10 m | 12.5% | 181 | 0.54 | 47% | 60.3 | 68 / 125 | 0.004 / 0.49 m | 0.35 m |
+| Mature oaks 3 m apart | 113.7 | 20.74 m | 47% | 317 | 0.51 | 45% | 61.8 | 87 / 160 | 0.002 / 0.32 m | 0 |
+| Pines 2 m apart | 254.8 | 20.12 m | 93.5% | 714 | 0.51 | 45% | 64.9 | 140 / 221 | 0 / 0.11 m | 0 |
+| Veteran oaks 3 m apart | 113.7 | 20.10 m | 99.2% | 317 | 0.52 | 46% | 64.8 | 79 / 133 | 0.001 / 0.35 m | 0 |
+| The landing's forest | 80.5 | 23.65 m | 0.3% | 225 | 0.58 | 54% | 64.6 | 83 / 142 | 0.001 / 0.19 m | 0.11 m |
+
+The rims match 4.3's table to 0.2 m but for mature oaks 3 m apart (20.7 m against 20.2 m). Without the slope limit (`forestSlopeMm` at its 10,000 mm bound) convexity takes the same at most in every stand: the limit binds only through veteran oaks 4 m apart and in the landing's forest. No side in these stands is clear, so 4.2's clear-direction loss does not arise in them. About half of all builds in forest have a BigRock in reach and take the polygon path.
+
+**The walk**, `BM_SightForestWalk`: BM_PlayerVisibilityWalk's walk (the landing polygon of 150 m first, colonists from the drop at 2 m/s, 20 m/s at 10x, headings turning up to 60 degrees every 2 to 15 s, turned back past 400 m, 36,000 ticks) through the landing's forest, each colonist's step turned 45 degrees at a time until it keeps 0.3 m off every ring. Vision builds every 5th tick for each colonist who moved past `step` since his last build, with `lead` 0.67 m at 1x and 2.17 m at 10x. The record is the real `SeenArea` with its budget, fed as 6 has it: every tick a colonist on a leg joins the forest shape of his build's ranges at the slack radius placed where he stands; a leg ends by an open leg's rules, a spread past `softLegToleranceMm`, `kSoftLegMostVertices`, or a change to the polygon path, and the next holds the shape drawn that frame by the eased rim; on the polygon path each build cut to its rim is queued with its walk, a resting colonist's shape is built where he rests, and the sweep builds its points' shapes with the bodies and the interpolated rim. Only `SeenArea::update` and that feeding are the record's tick; vision's builds are its own. A minute is 3,600 ticks, at either speed.
+
+| Colonists, speed | Record tick ms (mean / p99 / max) | Vision tick ms (mean) | Pending at most, at minute 5, at the end | Sweep points waiting at most, at the end | K where registered (mean / max) | Rings registered | Legs a km, mean length | Pieces a leg | Builds on the polygon path |
+|---|---|---|---|---|---|---|---|---|---|
+| 1, 1x | 0.001 / 0.014 / 0.05 | 0.005 | 1, 1, 0 | 0, 0 | none registered | 1 | 170, 1.28 m | 0 | 78% |
+| 10, 1x | 0.024 / 0.16 / 1.17 | 0.043 | 11, 4, 4 | 11, 6 | 37 / 144 | 315 | 318, 1.43 m | 0.04 | 54% |
+| 50, 1x | 0.221 / 1.45 / 4.94 | 0.31 | 42, 22, 27 | 672, 2 | 51 / 288 | 3,189 | 276, 1.35 m | 0.05 | 62% |
+| 1, 10x | 0.101 / 0.95 / 6.39 | 0.015 | 8, 1, 1 | 2,075, 0 | 27 / 188 | 2,984 | 327, 1.63 m | 0.32 | 38% |
+| 10, 10x | 0.460 / 1.51 / 4.20 | 0.20 | 54, 6, 5 | 52,692, 51,805 | 23 / 172 | 12,699 | 275, 1.64 m | 0.19 | 48% |
+| 50, 10x | 1.550 / 4.27 / 190 | 1.26 | 38,084, 35,828, 33 | 98,625, 95,198 | 22 / 109 | 18,606 | 285, 1.61 m | 0.05 | 46% |
+
+Pieces a leg are those the frontier cut from every leg tested: most legs are covered, and a leg that adds ground adds one piece (1.04 at 50 colonists and 10x). Of 18,606 rings registered at 50 colonists and 10x, 9,283 were legs' pieces and the rest the polygon path's and the sweep's. The greatest change of one side's range between consecutive builds is 0.53 m at 1x, inside limit 5's 0.7 m, and 1.46 to 1.53 m at 10x. The per-tick hull merge (`setOpenLeg`) costs 3 to 4 us a call at 1x and 8 to 12 us at 10x, where legs' rings hold more vertices.
+
+**The fallbacks of 6.6**, at 50 colonists. Snap is 500 mm, `softLegToleranceMm` 2,000 mm for the second, and with no walls in the bench every opaque body is placed, so the third skips every sweep:
+
+| Fallbacks | 1x: record tick ms (mean / max), pending at most, K (mean / max) | 10x: record tick ms (mean / max), pending at most (at minute 5, at the end), K (mean / max), sweep points waiting at the end | Legs a km, mean length (1x; 10x) |
+|---|---|---|---|
+| None | 0.221 / 4.94, 42, 51 / 288 | 1.550 / 190, 38,084 (35,828, 33), 22 / 109, 95,198 | 276, 1.35 m; 285, 1.61 m |
+| 1, legs snapped | 0.213 / 5.03, 40, 51 / 285 | 1.091 / 10.2, 27,237 (26,983, 33), 20 / 101, 94,879 | 236, 1.58 m; 238, 2.00 m |
+| 1 and 3, no sweep | 0.163 / 3.71, 40, 35 / 159 | 1.007 / 10.6, 27,147 (26,874, 33), 20 / 101, 0 | 236, 1.58 m; 238, 2.00 m |
+| 1, 3, and 2 | 0.138 / 2.36, 37, 36 / 150 | 0.712 / 3.46, 4,738 (31, 33), 18.5 / 98, 0 | 112, 3.34 m; 108, 4.87 m |
+| 3 and 4, legs on the sight polygon | 0.122 / 2.29, 37, 33 / 141 | 0.487 / 4.19, 1,283 (31, 33), 18 / 107, 0 | 90, 4.19 m; 80, 6.69 m |
+
+`SeenArea::update` is 0.49 ms of the 0.71 ms tick with 1, 3, and 2, and 0.35 ms of 0.49 ms with 3 and 4, at 10x.
+
+Machine load: the build bench `busy` before (CPU 60%, other sessions' tests); the first walk run, whose counts match these and whose hull merge was slower, `mostly-idle` before and after (CPU 22 to 25%); the run in the walk table and the first three fallback rows `mostly-idle` before (CPU 22%) and `busy` after (CPU 45%, GPU 48%, another session's game); the last two fallback rows `busy` before (CPU 24%, GPU 49%). Counts do not depend on load; every time here is under load, and the times worse than 6.6's thresholds are worse under load, unconfirmed. None is a baseline.
+
+**Verdict: no-go for the record at 50 colonists at 10x, after every fallback of 6.6.** K passes everywhere, at most 51 mean and 288 greatest against 100 and 400. The pending queue does not: at 10x it passes 1,000 in every row, from 38,084 with none to 1,283 with legs on the sight polygon. Its length at the end is no greater than at minute 5 only because the walk's 400 m disc is all seen by about minute 7, after which nothing registers; on ground that keeps opening it would not drain. The record's mean tick at 10x is 0.49 to 1.55 ms against 0.23 ms, and the worst ticks 3.5 to 10.6 ms but for one of 190 ms under load, against 5 ms. At 1x the record passes with fallbacks 1 and 3 (0.16 ms mean, 3.7 ms worst, queue 40, K 35 / 159) and, short of the mean, without them (0.22 ms against 0.20 ms, under load).
+
+What drives it is not 6.2's crescents but new ground opening fast. A forest leg is 1.3 to 2 m long and a polygon-path build comes every 2.2 m at 10x, on about half the builds with BigRocks at the landing's rate, and each one that reaches ground nobody has seen adds a piece: up to 3,259 registrations a minute while 50 colonists spread out at 10x, against the 3,600 a minute `kSeenPiecesRegisteredPerTick` allows. While pieces wait nothing is tested, so the shapes behind them, nearly all covered legs, pile up. Lengthening legs (fallbacks 2 and 4) cuts the queue from fallbacks 1 and 3's 27,147 to 4,738 and 1,283; what is left is the polygon path's. The sweep is unbounded on its own at 10x: its points, which the pending count leaves out, reach 52,692 waiting at 10 colonists and 98,625 at 50 and never drain, since one is built only on a tick with nothing to register; fallback 3 removes them and barely moves the rings registered (17,727 against 17,783). Vision's builds, 62 to 140 us each, cost 0.31 ms a tick at 50 colonists at 1x and 1.0 to 1.3 ms at 10x under load; no fallback for vision is taken, since 12's go for step 1a is the record's.
+
 ## 13. Build steps
 
 Each step is its own PR with its own done line and a `Perf:` line. Steps 1b and 2 build on the "wall sight occluders" work ("Wall sight occluders are the wall's center line, so the visibility tint starts mid-wall" on Specboard) once it is on `main`. No done line waits on a sign-off: the tunables are sliders (8), set afterwards in the running game. Steps 0, 1a, and step 3's geometry can start at once; the rest wait as each step's line says.
@@ -754,6 +805,7 @@ Each is unconfirmed by Kevin.
 40. Shadow edges tagged on `computeVisibilityPolygon`'s ring before the forest clip, from its exact corner vertices, a 1 mm test on the far end, and the ring's orientation, each tag kept when its corner survives the clip unchanged (3.1).
 41. The go thresholds for the record in forest (6.6): the pending queue no longer at ten minutes than at five and never over 1,000, K at most 100 mean and 400 greatest, the mean tick at most 0.20 ms at 1x and 0.23 ms at 10x, and the worst at most 5 ms, at 50 colonists. The order of 6.6's fallbacks by what each fixes, tolerance-snapped legs first.
 42. Each tunable's range in 9, clamped by `SightTunables`' setter, fixed bounds first and then the soft ray width raised above the larger kind threshold (8).
+43. Step 1a's verdict (12.1): no-go for the record at 50 colonists at 10x after every fallback of 6.6, so by 12 the record's cost in forest is a change to this design. Fallbacks 1 (legs snapped to 500 mm) and 3 (no sweep where every opaque body in reach is placed) were taken in the bench, and 2 (`softLegToleranceMm` 2,000 mm) and 4 (legs on the sight polygon) measured as well; none brings the pending queue under 1,000 or the mean tick under 0.23 ms at 10x. The bench reads 6.2's risk differently: crescents are rare (0.05 pieces a leg tested, about one a leg that adds ground), and the queue comes from short legs and polygon-path builds each adding a piece of new ground while colonists spread out at 10x, about half the builds being on the polygon path at the landing's BigRock rate. The sweep's waiting points, which the pending count leaves out, grow without bound at 10x; 6.6's bounded queue is read here to include them. Unconfirmed.
 
 ## Related documents
 
