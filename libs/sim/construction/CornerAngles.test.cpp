@@ -119,3 +119,43 @@ TEST(CornerAngles, AngleReadoutMatchesPrototype) {
 		}
 	}
 }
+
+// A nearly straight corner of a thin triangle reads its interior angle in either winding: the
+// inside is taken right at the corner, so nothing lands past the far side.
+TEST(CornerAngles, ANearlyStraightCornerOfAThinTriangleReadsItsInteriorAngle) {
+	for (const float bendDegrees : {0.2F, 0.5F, 1.0F, 1.5F, 3.0F}) {
+		for (const float winding : {1.0F, -1.0F}) {
+			SCOPED_TRACE(testing::Message() << "bend " << bendDegrees << ", winding " << winding);
+			const Vec2		   first{0.0F, 0.0F};
+			const Vec2		   second{4.0F, 0.0F};
+			const CornerAngles thin = read({first, second}, polar(second, winding * bendDegrees, 4.0F));
+			ASSERT_EQ(thin.count, 1U);
+			EXPECT_NEAR(thin.corners[0].degrees, 180.0F - bendDegrees, kDegreeTolerance);
+			EXPECT_LT(thin.corners[0].sweepRadians * winding, 0.0F) << "the sweep turns through the inside";
+		}
+	}
+}
+
+// A reflex corner reads over 180 degrees in either winding.
+TEST(CornerAngles, AReflexCornerReadsOverAHundredAndEightyInEitherWinding) {
+	for (const float winding : {1.0F, -1.0F}) {
+		SCOPED_TRACE(winding);
+		const std::vector<Vec2> points = {{0.0F, 0.0F}, {4.0F, 0.0F}, {4.0F, 3.0F * winding}};
+		const CornerAngles		reflex = read(points, {6.0F, 5.0F * winding});
+		ASSERT_EQ(reflex.count, 1U);
+		EXPECT_NEAR(reflex.corners[0].degrees, 225.0F, kDegreeTolerance);
+		EXPECT_NEAR(reflex.corners[0].sweepRadians, -winding * 225.0F * std::numbers::pi_v<float> / 180.0F, 1e-5F);
+	}
+}
+
+// A collinear path has no inside: its corner reads the plain angle between its edges, 180
+// degrees straight on and 0 folded back.
+TEST(CornerAngles, ACollinearPathReadsThePlainAngleBetweenItsEdges) {
+	const std::vector<Vec2> points = {{0.0F, 0.0F}, {4.0F, 0.0F}};
+	const CornerAngles		straight = read(points, {8.0F, 0.0F});
+	ASSERT_EQ(straight.count, 1U);
+	EXPECT_NEAR(straight.corners[0].degrees, 180.0F, kDegreeTolerance);
+	const CornerAngles folded = read(points, {2.0F, 0.0F});
+	ASSERT_EQ(folded.count, 1U);
+	EXPECT_NEAR(folded.corners[0].degrees, 0.0F, kDegreeTolerance);
+}
