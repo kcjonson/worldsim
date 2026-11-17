@@ -1,6 +1,8 @@
 #include "CornerAngles.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <gtest/gtest.h>
 #include <numbers>
 #include <vector>
@@ -118,4 +120,87 @@ TEST(CornerAngles, AngleReadoutMatchesPrototype) {
 			EXPECT_EQ(got.corners[index].square, c.corners[index].square);
 		}
 	}
+}
+
+// A nearly straight corner of a thin triangle reads its interior angle in either winding: the
+// inside is taken right at the corner, so nothing lands past the far side.
+TEST(CornerAngles, ANearlyStraightCornerOfAThinTriangleReadsItsInteriorAngle) {
+	for (const float bendDegrees : {0.2F, 0.5F, 1.0F, 1.5F, 3.0F}) {
+		for (const float winding : {1.0F, -1.0F}) {
+			SCOPED_TRACE(testing::Message() << "bend " << bendDegrees << ", winding " << winding);
+			const Vec2		   first{0.0F, 0.0F};
+			const Vec2		   second{4.0F, 0.0F};
+			const CornerAngles thin = read({first, second}, polar(second, winding * bendDegrees, 4.0F));
+			ASSERT_EQ(thin.count, 1U);
+			EXPECT_NEAR(thin.corners[0].degrees, 180.0F - bendDegrees, kDegreeTolerance);
+			EXPECT_LT(thin.corners[0].sweepRadians * winding, 0.0F) << "the sweep turns through the inside";
+		}
+	}
+}
+
+// Every corner of a closed square and of a closed regular hexagon, in either winding, reads its
+// interior angle. Each corner's bisector runs through the opposite corner, so the ray that finds
+// the inside passes through a vertex of the path.
+TEST(CornerAngles, EveryCornerOfASquareAndARegularHexagonReadsItsInteriorAngleInEitherWinding) {
+	constexpr float kSideMeters = 4.0F;
+	constexpr int	kHexagonCorners = 6;
+	struct Shape {
+		std::vector<Vec2> ring;
+		float			  interiorDegrees;
+		bool			  square;
+	};
+	Shape hexagon{.ring = {}, .interiorDegrees = 120.0F, .square = false};
+	Vec2  corner{0.0F, 0.0F};
+	for (int index = 0; index < kHexagonCorners; ++index) {
+		hexagon.ring.push_back(corner);
+		corner = polar(corner, 360.0F * static_cast<float>(index) / static_cast<float>(kHexagonCorners), kSideMeters);
+	}
+	const Shape square{
+		.ring = {{0.0F, 0.0F}, {kSideMeters, 0.0F}, {kSideMeters, kSideMeters}, {0.0F, kSideMeters}},
+		.interiorDegrees = 90.0F,
+		.square = true,
+	};
+	for (const Shape& shape : {square, hexagon}) {
+		for (const bool reversed : {false, true}) {
+			std::vector<Vec2> wound = shape.ring;
+			if (reversed) {
+				std::reverse(wound.begin(), wound.end());
+			}
+			for (std::size_t rotation = 0; rotation < wound.size(); ++rotation) {
+				SCOPED_TRACE(testing::Message() << wound.size() << " corners, reversed " << reversed << ", rotation " << rotation);
+				std::vector<Vec2> points = wound;
+				std::rotate(points.begin(), points.begin() + static_cast<std::ptrdiff_t>(rotation), points.end());
+				const CornerAngles closed = read(points, points.front(), true);
+				ASSERT_EQ(closed.count, 2U);
+				for (std::size_t index = 0; index < closed.count; ++index) {
+					EXPECT_NEAR(closed.corners[index].degrees, shape.interiorDegrees, kDegreeTolerance);
+					EXPECT_EQ(closed.corners[index].square, shape.square);
+				}
+			}
+		}
+	}
+}
+
+// A reflex corner reads over 180 degrees in either winding.
+TEST(CornerAngles, AReflexCornerReadsOverAHundredAndEightyInEitherWinding) {
+	for (const float winding : {1.0F, -1.0F}) {
+		SCOPED_TRACE(winding);
+		const std::vector<Vec2> points = {{0.0F, 0.0F}, {4.0F, 0.0F}, {4.0F, 3.0F * winding}};
+		const CornerAngles		reflex = read(points, {6.0F, 5.0F * winding});
+		ASSERT_EQ(reflex.count, 1U);
+		EXPECT_NEAR(reflex.corners[0].degrees, 225.0F, kDegreeTolerance);
+		EXPECT_NEAR(reflex.corners[0].sweepRadians, -winding * 225.0F * std::numbers::pi_v<float> / 180.0F, 1e-5F);
+	}
+}
+
+// A collinear path has no inside: its corner reads the plain angle between its edges, 180
+// degrees straight on and 0 folded back.
+TEST(CornerAngles, ACollinearPathReadsThePlainAngleBetweenItsEdges) {
+	const std::vector<Vec2> points = {{0.0F, 0.0F}, {4.0F, 0.0F}};
+	const CornerAngles		straight = read(points, {8.0F, 0.0F});
+	ASSERT_EQ(straight.count, 1U);
+	EXPECT_NEAR(straight.corners[0].degrees, 180.0F, kDegreeTolerance);
+	const CornerAngles folded = read(points, {2.0F, 0.0F});
+	ASSERT_EQ(folded.count, 1U);
+	EXPECT_NEAR(folded.corners[0].degrees, 0.0F, kDegreeTolerance);
 }

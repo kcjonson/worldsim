@@ -172,6 +172,7 @@ namespace world_sim {
 		: ecsWorld_(args.world),
 		  validColor_(args.validColor),
 		  invalidColor_(args.invalidColor),
+		  accentColor_(args.accentColor),
 		  camera_(args.camera),
 		  navigation_(args.navigation),
 		  callbacks_(args.callbacks) {}
@@ -760,6 +761,7 @@ namespace world_sim {
 			.snap = lastSnap_,
 			.points = points_,
 			.cursor = cursor_,
+			.freeform = snapMemoKey_.freeform,
 			.display = UserSettings::Get().drawing,
 			.style = style,
 			.camera = *camera_,
@@ -770,8 +772,11 @@ namespace world_sim {
 			.closeRadiusMeters = effectiveOriginCloseRadiusMeters(),
 			.canClose = points_.size() >= (activeTool_ == ToolKind::Wall ? construction::kMinClosingWallChainPoints : kMinClosingShapePoints),
 			.willClose = verdict.closeHalo,
+			.clickCloses = willClose_,
 			.snappedPointInvalid = verdict.markerInvalid,
 			.invalidColor = invalidColor_,
+			.accentColor = accentColor_,
+			.commonLengthMergeMeters = ConstructionRegistry::Get().snapping().commonLengthMergeMeters,
 			.keepClear = keepClear,
 			.rectangleSnap = activeTool_ == ToolKind::FoundationRectangle ? rectangleSnapKind_ : construction::RectangleSnapKind::None,
 			.sizeLabel = rectangleLabel_,
@@ -2627,7 +2632,7 @@ namespace world_sim {
 		const Foundation::Vec2 position = camera_->worldToScreen(cursor_.x, cursor_.y, viewportWidth, viewportHeight, kPixelsPerMeter) +
 										  Foundation::Vec2{kEditReasonOffset.x * uiScale, kEditReasonOffset.y * uiScale};
 		const float			   textScale = kEditReasonScale * uiScale;
-		const Foundation::Vec2 size = measure(text, textScale * kRendererFontBaseSizePx);
+		const Foundation::Vec2 size = measure(text, textScale * kRendererFontBaseSizePx, FeedbackTextWeight::Regular);
 		return EditReason{
 			.text = std::move(text),
 			.position = position,

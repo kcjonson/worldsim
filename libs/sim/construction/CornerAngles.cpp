@@ -1,6 +1,5 @@
 #include "CornerAngles.h"
 
-#include <algorithm>
 #include <cmath>
 #include <numbers>
 #include <vector>
@@ -11,7 +10,8 @@ namespace construction {
 
 		constexpr double kCoincidenceMeters = 0.001;
 		constexpr double kRadiansPerDegree = std::numbers::pi / 180.0;
-		constexpr double kProbeFraction = 0.01;
+		// A path whose doubled area is within this of zero has no inside: its points are collinear.
+		constexpr double kCollinearDoubleAreaSquareMeters = 1e-9;
 
 		struct Point {
 			double x = 0.0;
@@ -34,20 +34,6 @@ namespace construction {
 			return std::hypot(value.x, value.y);
 		}
 
-		bool pointInPolygon(Point point, const std::vector<Point>& ring) {
-			bool inside = false;
-			for (std::size_t index = 0, previous = ring.size() - 1; index < ring.size(); previous = index++) {
-				const Point current = ring[index];
-				const Point before = ring[previous];
-				const bool	crosses = (current.y > point.y) != (before.y > point.y) &&
-					point.x < (before.x - current.x) * (point.y - current.y) / (before.y - current.y) + current.x;
-				if (crosses) {
-					inside = !inside;
-				}
-			}
-			return inside;
-		}
-
 		::Foundation::Vec2 unitVector(Point value) {
 			const double size = length(value);
 			if (size <= 0.0) {
@@ -56,8 +42,38 @@ namespace construction {
 			return {static_cast<float>(value.x / size), static_cast<float>(value.y / size)};
 		}
 
+		// Whether the path's inside (even-odd) lies along `direction` right at path[index]: the
+		// ray from the vertex that way crosses the path's other edges an odd number of times. The
+		// ray starts at the vertex because a thin shape's far side can lie closer to it than any
+		// fixed distance. An edge end on the ray's line counts as on its negative side, so a ray
+		// through a vertex counts the two edges meeting there once between them, or not at all.
+		bool insideAlong(const std::vector<Point>& path, std::size_t index, Point direction) {
+			const std::size_t count = path.size();
+			const Point		  vertex = path[index];
+			const std::size_t previous = (index + count - 1) % count;
+			bool			  inside = false;
+			for (std::size_t start = 0; start < count; ++start) {
+				if (start == index || start == previous) {
+					continue; // the vertex's own edges meet the ray only at the vertex
+				}
+				const Point startOffset = path[start] - vertex;
+				const Point endOffset = path[(start + 1) % count] - vertex;
+				if ((cross(direction, startOffset) > 0.0) == (cross(direction, endOffset) > 0.0)) {
+					continue;
+				}
+				const Point edge = endOffset - startOffset;
+				if (cross(startOffset, edge) / cross(direction, edge) > 0.0) {
+					inside = !inside;
+				}
+			}
+			return inside;
+		}
+
 		// The corner at path[index]. `open` reads the plain angle between the two segments;
-		// otherwise the interior angle of the closed path. False when an edge is under 1 mm.
+		// otherwise the interior angle of the closed path: the sweep from the edge toward the
+		// previous vertex to the edge toward the next, the other way round when the inside does
+		// not lie along its bisector. A collinear path has no inside and reads the plain angle.
+		// False when an edge is under 1 mm.
 		bool cornerAt(const std::vector<Point>& path, std::size_t index, bool open, double doubleArea, double squareTolerance, CornerAngle& out) {
 			const std::size_t count = path.size();
 			const Point		  vertex = path[index];
@@ -68,11 +84,9 @@ namespace construction {
 			}
 			const double previousAngle = std::atan2(toPrevious.y, toPrevious.x);
 			double		 sweep = std::atan2(cross(toPrevious, toNext), dot(toPrevious, toNext));
-			if (!open && std::abs(doubleArea) > 1e-9) {
+			if (!open && std::abs(doubleArea) > kCollinearDoubleAreaSquareMeters) {
 				const double middle = previousAngle + sweep / 2.0;
-				const double reach = std::min(length(toPrevious), length(toNext)) * kProbeFraction;
-				const Point	 probe{vertex.x + std::cos(middle) * reach, vertex.y + std::sin(middle) * reach};
-				if (!pointInPolygon(probe, path)) {
+				if (!insideAlong(path, index, {std::cos(middle), std::sin(middle)})) {
 					sweep = sweep > 0.0 ? sweep - 2.0 * std::numbers::pi : sweep + 2.0 * std::numbers::pi;
 				}
 			}
