@@ -64,7 +64,7 @@ Drawing comes in three levels, and a new player meets the first. The point is on
 
 The wall tool has no rectangle; it follows the same helper settings (Walls > Drawing).
 
-Select Foundation in the Build menu: it opens the foundation tool last picked this session, Rectangle the first time. A config strip appears with the tool picker, which switches between Rectangle and Freeform, the material cards, and the shape's area ([Config strip](#config-strip)). Material is picked **before** drawing; the ghost renders in that material's blueprint style. While the tool is active a small [key guide](#key-guide) panel lists its keys.
+Select Foundation in the Build menu: it opens the foundation tool last picked this session, Rectangle the first time. A config strip appears with the tool picker, which switches between Rectangle and Freeform, material choices, and a live cost readout ([Config strip](#config-strip)). Material is picked **before** drawing; the ghost renders in that material's blueprint style. While the tool is active a small [key guide](#key-guide) panel lists its keys.
 
 Every drawing tool pauses while the pointer is outside the game's window or the game is in the background: nothing follows the pointer and nothing reads refused, the points already placed stay, and the tool picks up from the pointer when it comes back.
 
@@ -96,7 +96,7 @@ While drawing:
 
 - **Backspace** removes the last committed point.
 - **Esc** (or right-click) cancels the in-progress shape. Pressing Esc again, with nothing in progress, exits the tool.
-- A label beside the segment being drawn shows its length in meters, to two decimals (`4.00 m`); the config strip shows the shape's area (m²) and its point count.
+- A label beside the segment being drawn shows its length in meters, to two decimals (`4.00 m`); the config strip shows running area (m²), the point count, material cost, and work estimate.
 
 With every helper off a point goes, first that applies wins: onto the first point (the close), onto an existing corner, onto an existing edge, or else where the pointer is, with the segment's length rounded to 0.1 m along the line from the previous point toward the pointer. Snapping and guides below has the full order once helpers are on.
 
@@ -454,7 +454,7 @@ Foundations and walls are procedurally drawn from material definitions, not hand
 - Rubber-band segment and validity colorization; the reason in the config strip on invalid, and beside the cursor for a refused Add or Subtract.
 - Faint polygon fill after the third point; the rectangle tool's fill and outline while its second corner is pending.
 - Origin-point halo + snap when the shape can close.
-- Length readout (meters, two decimals) beside the segment being drawn, `=` when it matches a common length; the rectangle tool's size label at the cursor instead (`4 m x 3 m`). The tool's readouts in the config strip.
+- Length readout (meters, two decimals) beside the segment being drawn, `=` when it matches a common length; the rectangle tool's size label at the cursor instead (`4 m x 3 m`). Area/cost/work in the config strip.
 - The snapped-point marker (a white dot with a dark outline and four short ticks) where the point will go; the system pointer marks the raw position, and nothing joins the two.
 - With helpers on: guides as dotted, part-transparent lines, a right-angle marker on a perpendicular guide, a dot where two guides cross, common-length ticks, and, if switched on, guide distances and the angle readout (Foundations > Snapping and guides, under Look).
 
@@ -470,15 +470,11 @@ The gameplay bar's [Build▾] menu gets a **Structure** category: Foundation, Wa
 
 A horizontal strip docked above the gameplay bar while a structure tool is active:
 
-- **Tool picker** (Rectangle and Freeform tools): two cards, Rectangle ("Two corners") and Freeform ("Point by point"). The Build menu's Foundation entry opens the one last picked this session, Rectangle the first time.
-- **Material cards** (foundation and wall tools): each material's name over its cost per square meter. One is selected at a time, and the pick holds for the session, shared by those tools. The door and window tools show the cards with the opening type's own material picked; Add / Subtract shows none, since it keeps the edited foundation's material.
-- **Thickness presets** (Wall tool): the selected material's presets, each its name over its thickness in meters.
-- **Readouts**, updated as the cursor moves:
-  - Rectangle tool: `Area` (m²).
-  - Freeform tool: `Area` (m²) and `Points`, the count placed.
-  - Add / Subtract: the mode and the foundation's material ("Add to foundation (wood)"), then the `Area` of the outline the edit would leave and how much it changes by.
-  - Wall tool: `Len`, the chain's length with the segment being drawn and that segment's own length (`Len: 7.5 m  (seg 2.5 m)`), then the chain's material `Cost` and `Work`.
-  - Door or window tool: the opening type (it comes from the Build menu) and its width.
+- **Tool picker** (Foundation): switches between Rectangle ("Two corners") and Freeform ("Point by point"). The Build menu's Foundation entry opens the one last picked this session, Rectangle the first time, as the material persists for the session.
+- **Material cards:** icon, name, per-unit cost (per m² or per m). One selected at a time; selection persists per tool. Add / Subtract shows none, since it keeps the edited foundation's material.
+- **Thickness presets** (Wall tool): the selected material's presets, each its name over its thickness in meters, with their stat summary (HP, insulation, cost) on hover.
+- **Type picker** (Door/Window tool): the opening types.
+- **Live readouts:** running area or length, total material cost, work estimate. Updates as the cursor moves. The Freeform tool also shows its point count (`Points`), which the Rectangle tool leaves out. Add / Subtract leads with the mode and the foundation's material ("Add to foundation (wood)") and reads the area of the outline the edit would leave and how much it changes by. The wall tool's length is the chain's with the segment being drawn, beside that segment's own length (`Len: 7.5 m  (seg 2.5 m)`). The door and window tools show the type and its width.
 - **Validity message area:** a hint for the next step ("Click or drag from a corner", "Click origin to close", "Right-click / Enter to finish"), or, when the cursor position is invalid, the reason. Add / Subtract also shows a refused edit's reason beside the cursor.
 
 Changing material or thickness mid-session applies to the next shape, not shapes already drawn.
@@ -529,6 +525,8 @@ Legend lines, in the Freeform, wall, and Add / Subtract tools only (the rectangl
 | Common lengths is on | An edge with the double tick | = and ticks: same length as an edge already built |
 | Angle readout is on | An arc between two edges | Arc and degrees: the corner's angle |
 
+The selection keys (Shift+click adds to the selection; double-click a wall selects its run) work only with no tool active, so they are in the reference below but not on the panel.
+
 ### What Is Selectable
 
 Foundations, wall segments, and openings are first-class selectable entities, in both blueprint and built states, through the existing selection system. Rooms are not (overlay only, above).
@@ -544,6 +542,8 @@ Foundations, wall segments, and openings are first-class selectable entities, in
 7. Terrain
 
 Clicking again in the same spot cycles down the stack (click a door, click again to get the wall, again for the foundation). Standard colony-game behavior, and it resolves the "everything is stacked on a foundation" problem without modifier gymnastics.
+
+**Multi-select:** Shift-click adds to the selection. Mixed selections reduce the action set to what's shared (e.g., Demolish). Double-clicking a wall segment selects the whole connected run of the same material and thickness, the common case for "demolish this wall, all of it."
 
 ### Selection Visuals
 
@@ -573,12 +573,13 @@ Wall blueprints have no vertex editing in v1; segments are cheap, cancel and red
 | Click | Place point / select; in the rectangle tool, place a corner (two opposite corners make the rectangle) |
 | Press, drag, release | Rectangle tool: draw the rectangle from the press to the release |
 | Click origin point | Close foundation polygon; close a wall loop |
-| Double-click | End wall chain (the first click places the final point, the second places nothing) |
+| Double-click | End wall chain (the first click places the final point, the second places nothing); expand wall selection to connected run |
 | Enter | End wall chain |
 | Right-click / Esc | End wall chain; cancel in-progress shape or the rectangle's first corner; second Esc exits tool |
 | Backspace | Undo last point (drawing); drop the rectangle's first corner; delete vertex (shape editing) |
 | Alt (hold) | Freeform: no grid, angle steps, guides, or length snapping (snaps to existing corners, edges, and walls stay on, except in the rectangle tool, which takes the raw cursor) |
 | Ctrl+click foundation edge | Fill edge with wall |
+| Shift+click | Add to selection |
 | ? or H | Collapse or reopen the key guide (while a drawing tool is active) |
 
 ---
