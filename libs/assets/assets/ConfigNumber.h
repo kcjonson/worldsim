@@ -51,7 +51,7 @@ namespace assets {
 		return number;
 	}
 
-	/// Collects what is wrong with the numbers of one config file, for the config's validation to report.
+	/// Collects what is wrong with the numbers and true-or-false values of one config file, for the config's validation to report.
 	/// A bad value reads as NaN (0 for a whole number) and a problem names the file, the element by its
 	/// instance (its name or defName attribute, or its defName child), and the attribute; nothing falls back
 	/// to a value written in C++. Element text is trimmed before it is parsed.
@@ -107,6 +107,24 @@ namespace assets {
 			return integer(describe(parent, parentName), child, parent.child(child), minimum, maximum);
 		}
 
+		/// An optional true-or-false attribute: nothing when it is left out (the caller gives what that means), and
+		/// a problem when it is anything other than exactly `true` or `false`.
+		std::optional<bool> attributeBoolean(const pugi::xml_node& element, const char* elementName, const char* attribute) {
+			return labeledBoolean(describe(element, elementName), element, attribute);
+		}
+
+		std::optional<bool> labeledBoolean(const std::string& label, const pugi::xml_node& element, const char* attribute) {
+			return boolean(label, attribute, element.attribute(attribute));
+		}
+
+		std::optional<bool> childBoolean(const pugi::xml_node& parent, const char* parentName, const char* child) {
+			return labeledChildBoolean(describe(parent, parentName), parent, child);
+		}
+
+		std::optional<bool> labeledChildBoolean(const std::string& label, const pugi::xml_node& parent, const char* child) {
+			return boolean(label, child, parent.child(child));
+		}
+
 		/// Reports a number that was read but is outside what the loader allows, as "must be <expected>, got ...".
 		void refuseAttribute(const std::string& label, const pugi::xml_node& element, const char* attribute, const std::string& expected) {
 			report(label, attribute, element.attribute(attribute), expected);
@@ -115,6 +133,8 @@ namespace assets {
 		void refuseChild(const pugi::xml_node& parent, const char* parentName, const char* child, const std::string& expected) {
 			report(describe(parent, parentName), child, parent.child(child), expected);
 		}
+
+		[[nodiscard]] std::size_t problemCount() const { return problemList.size(); }
 
 		[[nodiscard]] std::vector<std::string> takeProblems() { return std::exchange(problemList, {}); }
 
@@ -150,6 +170,18 @@ namespace assets {
 			const bool bounded = minimum != std::numeric_limits<int>::min() || maximum != std::numeric_limits<int>::max();
 			report(element, name, source, bounded ? "a whole number from " + std::to_string(minimum) + " to " + std::to_string(maximum) : "a whole number");
 			return 0;
+		}
+
+		template <typename Source> std::optional<bool> boolean(const std::string& element, const char* name, const Source& source) {
+			if (!present(source)) {
+				return std::nullopt;
+			}
+			const std::string text = textOf(source);
+			if (text == "true" || text == "false") {
+				return text == "true";
+			}
+			report(element, name, source, "true or false");
+			return std::nullopt;
 		}
 
 		template <typename Source> void report(const std::string& element, const char* name, const Source& source, const std::string& expected) {

@@ -731,6 +731,12 @@ TEST_F(WorkConfigTest, LoadWorkConfig_ShippedValuesArePinned) {
     ASSERT_EQ(craft->stepCount(), 3U);
     EXPECT_EQ(craft->steps[2].order, 2);
     EXPECT_EQ(craft->steps[2].actionDefName, "Deposit");
+    EXPECT_EQ(craft->steps[2].target, "outputStorage");
+    EXPECT_TRUE(craft->steps[2].optional);
+    EXPECT_FALSE(craft->steps[1].optional) << "optional left out means the step must be done";
+    EXPECT_TRUE(craft->steps[1].requiresPreviousStep) << "requiresPreviousStep left out means it waits";
+    EXPECT_TRUE(WorkTypeRegistry::Get().getWorkType("Work_HaulToStorage")->filter.looseItem.value_or(false));
+    EXPECT_FALSE(WorkTypeRegistry::Get().getWorkType("Work_HaulToStorage")->filter.indoor.has_value()) << "a filter element left out is no condition";
 
     const std::map<std::string, float> tiers = {
         {"Emergency", 1.0F}, {"Medical", 2.0F}, {"Farming", 3.0F}, {"Crafting", 4.0F}, {"Construction", 5.0F}, {"Hauling", 6.0F}, {"Cleaning", 7.0F}};
@@ -774,6 +780,13 @@ TEST_F(WorkConfigTest, TaskChainRegistry_MistakesNameTheChainAndLoadNothing) {
     EXPECT_EQ(problemsFor(pickup + "<Step order=\"1\" action=\"Deposit\" target=\"dest\" priority=\"2\"/>"),
               std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2: unknown attribute 'priority'"});
     EXPECT_EQ(problemsFor(""), std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> has no <Step>"});
+    EXPECT_EQ(problemsFor(pickup + "<Step order=\"1\" action=\"Deposit\"/>"), std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2 has no target"});
+    EXPECT_EQ(problemsFor(pickup + "<Step order=\"0\" action=\"Deposit\" target=\"dest\"/>"),
+              std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2 order must be different from every other step's order, got \"0\""});
+    EXPECT_EQ(problemsFor(pickup + "<Step order=\"1\" action=\"Deposit\" target=\"dest\" optional=\"yes\"/>"),
+              std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2 optional must be true or false, got \"yes\""});
+    EXPECT_EQ(problemsFor(pickup + "<Step order=\"1\" action=\"Deposit\" target=\"dest\" requiresPreviousStep=\"ture\"/>"),
+              std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2 requiresPreviousStep must be true or false, got \"ture\""});
 }
 
 TEST_F(WorkConfigTest, WorkTypeRegistry_MistakesNameTheInstanceAndLoadNothing) {
@@ -800,6 +813,15 @@ TEST_F(WorkConfigTest, WorkTypeRegistry_MistakesNameTheInstanceAndLoadNothing) {
     EXPECT_EQ(problemsFor(" tier=\"2\" order=\"1\"", ""), std::vector<std::string>{"<Category defName=\"Medical\">: unknown attribute 'order'"});
     EXPECT_EQ(problemsFor(" tier=\"2\"", "<skill>Medicine</skill>"),
               std::vector<std::string>{"<WorkType defName=\"Work_Doctoring\">: unknown element <skill>"});
+    EXPECT_EQ(problemsFor(" tier=\"-1\"", ""), std::vector<std::string>{"<Category defName=\"Medical\"> tier must be a number, 0 or more, got \"-1\""});
+    EXPECT_EQ(problemsFor(" tier=\"2\"", "<skillRequired>Medicine</skillRequired><minSkillLevel>-2</minSkillLevel>"),
+              std::vector<std::string>{"<WorkType defName=\"Work_Doctoring\"> minSkillLevel must be a number, 0 or more, got \"-2\""});
+    EXPECT_EQ(problemsFor(" tier=\"2\" canDisable=\"no\"", ""),
+              std::vector<std::string>{"<Category defName=\"Medical\"> canDisable must be true or false, got \"no\""});
+    EXPECT_EQ(problemsFor(" tier=\"2\"", "<filter><looseItem>ture</looseItem></filter>"),
+              std::vector<std::string>{"<WorkType defName=\"Work_Doctoring\"> filter looseItem must be true or false, got \"ture\""});
+    EXPECT_EQ(problemsFor(" tier=\"2\"", "<filter><indoor>1</indoor></filter>"),
+              std::vector<std::string>{"<WorkType defName=\"Work_Doctoring\"> filter indoor must be true or false, got \"1\""});
 }
 
 TEST_F(WorkConfigTest, PriorityConfig_TaskAgeBonusIsCappedAtAnyAge) {

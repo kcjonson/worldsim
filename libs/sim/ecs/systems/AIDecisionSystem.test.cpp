@@ -43,6 +43,7 @@
 #include "assets/AssetRegistry.h"
 #include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
+#include "assets/RecipeDef.test.h"
 #include "assets/RecipeRegistry.h"
 #include "assets/placement/PlacementExecutor.h"
 
@@ -302,6 +303,7 @@ namespace ecs::test {
 			recipe.defName = "Recipe_Need_" + item;
 			recipe.label = recipe.defName;
 			recipe.inputs.push_back({item, 0, count});
+			recipe.workAmount = assets::kTestRecipeWorkAmount;
 			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 			world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);
 			world->addComponent<Inventory>(station, Inventory::createForStorage());
@@ -6102,6 +6104,7 @@ namespace ecs::test {
 			recipe.defName = "Recipe_BerryNeed";
 			recipe.label   = recipe.defName;
 			recipe.inputs.push_back({"Berry", 0, 3});
+			recipe.workAmount = assets::kTestRecipeWorkAmount;
 			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 		}
 
@@ -6883,6 +6886,7 @@ namespace ecs::test {
 		recipe.defName = "Recipe_StoneThree";
 		recipe.label   = recipe.defName;
 		recipe.inputs.push_back({"Stone", 0, 3});
+		recipe.workAmount = assets::kTestRecipeWorkAmount;
 		assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 		world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);
 		world->addComponent<Inventory>(station, Inventory::createForStorage());
@@ -7549,6 +7553,7 @@ namespace ecs::test {
 			recipe.defName = recipeName;
 			recipe.label   = recipeName;
 			recipe.inputs.push_back({"Stone", 0, count});
+			recipe.workAmount = assets::kTestRecipeWorkAmount;
 			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 			world->addComponent<WorkQueue>(e).addJob(recipeName, 1);
 			world->addComponent<Inventory>(e, Inventory::createForStorage());
@@ -8068,6 +8073,7 @@ namespace ecs::test {
 		recipe.defName = "Recipe_BerryNeed";
 		recipe.label = recipe.defName;
 		recipe.inputs.push_back({"Berry", 0, 3});
+		recipe.workAmount = assets::kTestRecipeWorkAmount;
 		assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 		const EntityID station = world->createEntity();
 		world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);

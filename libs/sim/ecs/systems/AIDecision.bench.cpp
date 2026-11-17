@@ -42,6 +42,7 @@
 #include "../components/WorkQueue.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/RecipeDef.test.h>
 #include <assets/RecipeRegistry.h>
 
 #include <benchmark/benchmark.h>
@@ -225,6 +226,7 @@ namespace {
 			recipe.defName = kRecipe;
 			recipe.label   = kRecipe;
 			recipe.inputs.push_back({kWoodDef, 0, 400});
+			recipe.workAmount = assets::kTestRecipeWorkAmount;
 			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 			return true;
 		}();

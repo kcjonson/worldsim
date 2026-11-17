@@ -112,8 +112,8 @@ namespace {
 
 } // namespace
 
-// A reload rebuilds the id index, where a name can land on another id and a definition that is
-// gone has none, so the recipes are resolved again with it.
+// A reload rebuilds the id index, where a name can land on another id, so the recipes are resolved
+// again with it; a recipe naming a definition that is gone fails the recipe load.
 TEST(AssetBootstrapTest, ReloadResolvesRecipesAgainstTheNewIndex) {
 	auto& reg = AssetRegistry::Get();
 	auto& recipes = RecipeRegistry::Get();
@@ -132,14 +132,13 @@ TEST(AssetBootstrapTest, ReloadResolvesRecipesAgainstTheNewIndex) {
 	EXPECT_NE(axe->inputs[0].defNameId, 0U);
 	EXPECT_NE(axe->inputs[1].defNameId, 0U);
 
-	// The library changes on disk: the stick is gone and there are enough new definitions to
-	// reorder the index.
-	std::filesystem::remove_all(definitionFolder.root / "Test_Stick");
+	// The library changes on disk: enough new definitions to reorder the index.
 	for (int i = 0; i < 40; ++i) {
 		writeItem(definitionFolder, "Test_Extra" + std::to_string(i));
 	}
 	loadAssetSystem(sourcesOf(definitionFolder, recipeFolder), false);
 
+	EXPECT_TRUE(recipes.problems().empty());
 	EXPECT_EQ(recipes.size(), 1U);
 	EXPECT_EQ(recipes.getRecipesForStation("Test_Bench").size(), 1U);
 	axe = recipes.getRecipe("Recipe_TestAxe");
@@ -147,11 +146,19 @@ TEST(AssetBootstrapTest, ReloadResolvesRecipesAgainstTheNewIndex) {
 	ASSERT_EQ(axe->inputs.size(), 2U);
 	EXPECT_EQ(axe->inputs[0].defNameId, reg.getDefNameId("Test_Stone"));
 	EXPECT_EQ(reg.getDefName(axe->inputs[0].defNameId), "Test_Stone");
-	EXPECT_EQ(axe->inputs[1].defNameId, 0U) << "the stick no longer has a definition";
-	EXPECT_EQ(axe->inputDefNameIds, std::vector<uint32_t>{reg.getDefNameId("Test_Stone")});
+	EXPECT_EQ(reg.getDefName(axe->inputs[1].defNameId), "Test_Stick");
+	EXPECT_EQ(axe->inputDefNameIds, (std::vector<uint32_t>{reg.getDefNameId("Test_Stone"), reg.getDefNameId("Test_Stick")}));
 	ASSERT_EQ(axe->outputs.size(), 1U);
 	EXPECT_EQ(reg.getDefName(axe->outputs[0].defNameId), "Test_Axe");
 	EXPECT_EQ(reg.getDefName(axe->stationDefNameId), "Test_Bench");
+
+	std::filesystem::remove_all(definitionFolder.root / "Test_Stick");
+	loadAssetSystem(sourcesOf(definitionFolder, recipeFolder), false);
+	EXPECT_EQ(recipes.size(), 0U);
+	EXPECT_EQ(
+		recipes.problems(),
+		std::vector<std::string>{"Axe.xml: <RecipeDef defName=\"Recipe_TestAxe\"> input thing \"Test_Stick\" names no definition"}
+	);
 
 	recipes.clear();
 	reg.clear();
@@ -160,14 +167,25 @@ TEST(AssetBootstrapTest, ReloadResolvesRecipesAgainstTheNewIndex) {
 // A recipe file with a mistake names it by its path under the recipes folder and the <RecipeDef>, and the
 // recipes load nothing, the good files included.
 TEST(AssetBootstrapTest, RecipeMistakesNameTheFileAndTheRecipeAndLoadNoRecipes) {
+	auto& definitions = AssetRegistry::Get();
 	auto& recipes = RecipeRegistry::Get();
-	const auto problemsFor = [&recipes](const std::string& body) {
+	definitions.clearDefinitions();
+	for (const char* name : {"Test_Stone", "Test_Stick", "Test_Bench", "Test_Axe"}) {
+		AssetDefinition definition;
+		definition.defName = name;
+		definitions.registerTestDefinition(std::move(definition));
+	}
+	const auto problemsWith = [&recipes](const std::string& outputs, const std::string& body) {
 		const TempAssetFolder folder;
 		writeAxeRecipe(folder);
-		folder.write("tools/Bad.xml", "<RecipeDef><defName>Recipe_Bad</defName><outputs><output thing=\"Test_Axe\"/></outputs>" + body + "</RecipeDef>");
+		folder.write("tools/Bad.xml", "<RecipeDef><defName>Recipe_Bad</defName><outputs>" + outputs + "</outputs>" + body + "</RecipeDef>");
 		EXPECT_FALSE(recipes.loadRecipesFromFolder(folder.root));
 		EXPECT_EQ(recipes.size(), 0U);
 		return recipes.problems();
+	};
+	const auto problemsFor = [&problemsWith](const std::string& body) { return problemsWith("<output thing=\"Test_Axe\"/>", body); };
+	const auto onlyProblem = [](const std::string& problem) {
+		return std::vector<std::string>{"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> " + problem};
 	};
 
 	EXPECT_EQ(problemsFor(""), std::vector<std::string>{"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> workAmount is missing"});
@@ -183,7 +201,35 @@ TEST(AssetBootstrapTest, RecipeMistakesNameTheFileAndTheRecipeAndLoadNoRecipes) 
 		problemsFor("<workAmount> 90 </workAmount><time>3</time>"),
 		std::vector<std::string>{"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\">: unknown element <time>"}
 	) << "element text is trimmed, so only the unknown element is a mistake";
+
+	const std::string work = "<workAmount>90</workAmount>";
+	EXPECT_EQ(problemsWith("<output thing=\"Test_Axe\" count=\"eight\"/>", work), onlyProblem("<output> 1 count must be a whole number, got \"eight\""));
+	EXPECT_EQ(problemsWith("<output thing=\"Test_Axe\" count=\"8x\"/>", work), onlyProblem("<output> 1 count must be a whole number, got \"8x\""));
+	EXPECT_EQ(
+		problemsWith("<output thing=\"Test_Axe\" count=\"0\"/>", work), onlyProblem("<output> 1 count must be a whole number, 1 or more, got \"0\"")
+	);
+	EXPECT_EQ(problemsFor(work + "<innate>ture</innate>"), onlyProblem("innate must be true or false, got \"ture\""));
+	EXPECT_EQ(problemsWith("<output thing=\"Test_Wod\"/>", work), onlyProblem("output thing \"Test_Wod\" names no definition"));
+	EXPECT_EQ(
+		problemsFor(work + "<inputs><input thing=\"Wod\"/></inputs><station>Test_Bnch</station>"),
+		(std::vector<std::string>{
+			"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> input thing \"Wod\" names no definition",
+			"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> station \"Test_Bnch\" names no definition"
+		})
+	);
+
+	const TempAssetFolder folder;
+	writeAxeRecipe(folder);
+	folder.write("Spot.xml", "<RecipeDef><defName>Recipe_Spot</defName><station>none</station><outputs><output thing=\"Test_Bench\"/></outputs>" + work + "<innate>true</innate></RecipeDef>");
+	ASSERT_TRUE(recipes.loadRecipesFromFolder(folder.root)) << recipes.problems().front();
+	const RecipeDef* spot = recipes.getRecipe("Recipe_Spot");
+	ASSERT_NE(spot, nullptr);
+	EXPECT_TRUE(spot->innate);
+	EXPECT_EQ(spot->outputs[0].count, 1U) << "a count left out is one";
+	EXPECT_FALSE(recipes.getRecipe("Recipe_TestAxe")->innate) << "innate left out is false";
+	EXPECT_EQ(recipes.getInnateRecipes(), std::vector<const RecipeDef*>{spot});
 	recipes.clear();
+	definitions.clearDefinitions();
 }
 
 // A load that fails early must leave the validation report reflecting the failure

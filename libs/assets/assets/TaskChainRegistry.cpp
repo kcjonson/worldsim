@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <set>
 #include <string_view>
 #include <utility>
 
@@ -52,6 +53,7 @@ namespace assets {
 				return std::nullopt;
 			}
 
+			std::set<uint8_t> ordersSeen;
 			for (const pugi::xml_node stepNode : steps.children()) {
 				if (stepNode.type() != pugi::node_element) {
 					continue;
@@ -62,15 +64,22 @@ namespace assets {
 					continue;
 				}
 				onlyAttributes(stepNode, {"order", "action", "target", "optional", "requiresPreviousStep"}, stepWhat, source, errors);
-				ChainStep step;
+				ChainStep		  step;
+				const std::size_t problemsBefore = reader.problemCount();
 				step.order = static_cast<uint8_t>(reader.labeledInteger(stepWhat, stepNode, "order", 0, std::numeric_limits<uint8_t>::max()));
+				if (reader.problemCount() == problemsBefore && !ordersSeen.insert(step.order).second) {
+					reader.refuseAttribute(stepWhat, stepNode, "order", "different from every other step's order");
+				}
 				step.actionDefName = stepNode.attribute("action").as_string();
 				if (step.actionDefName.empty()) {
 					errors.push_back(source + ": " + stepWhat + " has no action");
 				}
 				step.target = stepNode.attribute("target").as_string();
-				step.optional = stepNode.attribute("optional").as_bool(false);
-				step.requiresPreviousStep = stepNode.attribute("requiresPreviousStep").as_bool(true);
+				if (step.target.empty()) {
+					errors.push_back(source + ": " + stepWhat + " has no target");
+				}
+				step.optional = reader.labeledBoolean(stepWhat, stepNode, "optional").value_or(false);
+				step.requiresPreviousStep = reader.labeledBoolean(stepWhat, stepNode, "requiresPreviousStep").value_or(true);
 				chain.steps.push_back(std::move(step));
 			}
 			if (chain.steps.empty()) {

@@ -28,7 +28,8 @@ class RecipeRegistry {
     /// Replace every recipe with those in the .xml files under `folder` (configFilesIn's order), one
     /// <RecipeDef> a file, and resolve their def-name ids against AssetRegistry's index as it stands, so
     /// AssetRegistry must already hold the definitions (loadAssetSystem orders the two). False, with
-    /// problems() saying why and no recipes held, when the folder can't be read or any file has a mistake.
+    /// problems() saying why and no recipes held, when the folder can't be read or any file has a mistake,
+    /// a thing or station that names no definition included.
     bool loadRecipesFromFolder(const std::filesystem::path& folder);
 
     /// What the files got wrong: each names the file (relative to the folder), the <RecipeDef> and the element.
@@ -79,10 +80,6 @@ class RecipeRegistry {
 
   private:
     RecipeRegistry() = default;
-
-    /// Resolve every recipe's def-name ids against AssetRegistry's index, which must already hold
-    /// the loaded definitions; a name it doesn't hold is logged as an error.
-    void populateDefNameIds();
 
     // --- Storage ---
 

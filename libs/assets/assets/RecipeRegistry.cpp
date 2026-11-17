@@ -22,7 +22,12 @@ namespace assets {
 		/// The <input> or <output> lines of `list`, each naming a thing and an optional count.
 		template <typename Line>
 		std::vector<Line> linesFrom(
-			pugi::xml_node list, const char* lineName, const std::string& what, const std::string& source, std::vector<std::string>& errors
+			pugi::xml_node			  list,
+			const char*				  lineName,
+			const std::string&		  what,
+			const std::string&		  source,
+			ConfigReader&			  reader,
+			std::vector<std::string>& errors
 		) {
 			std::vector<Line> lines;
 			for (const pugi::xml_node node : list.children()) {
@@ -40,7 +45,14 @@ namespace assets {
 				if (line.defName.empty()) {
 					errors.push_back(source + ": " + lineWhat + " has no thing");
 				}
-				line.count = node.attribute("count").as_uint(1);
+				if (node.attribute("count")) {
+					const std::size_t problemsBefore = reader.problemCount();
+					const int		  count = reader.labeledInteger(lineWhat, node, "count");
+					if (count < 1 && reader.problemCount() == problemsBefore) {
+						reader.refuseAttribute(lineWhat, node, "count", "a whole number, 1 or more");
+					}
+					line.count = static_cast<uint32_t>(count);
+				}
 				lines.push_back(std::move(line));
 			}
 			return lines;
@@ -71,16 +83,14 @@ namespace assets {
 				} else if (element == "description") {
 					recipe.description = child.text().as_string();
 				} else if (element == "inputs") {
-					recipe.inputs = linesFrom<RecipeInput>(child, "input", what, source, errors);
+					recipe.inputs = linesFrom<RecipeInput>(child, "input", what, source, reader, errors);
 				} else if (element == "outputs") {
-					recipe.outputs = linesFrom<RecipeOutput>(child, "output", what, source, errors);
+					recipe.outputs = linesFrom<RecipeOutput>(child, "output", what, source, reader, errors);
 				} else if (element == "station") {
 					recipe.stationDefName = child.text().as_string();
 				} else if (element == "skill") {
 					recipe.skillDefName = child.text().as_string();
-				} else if (element == "innate") {
-					recipe.innate = child.text().as_bool(false);
-				} else if (element != "workAmount") {
+				} else if (element != "workAmount" && element != "innate") {
 					errors.push_back(source + ": " + what + ": unknown element <" + std::string(element) + ">");
 				}
 			}
@@ -94,6 +104,7 @@ namespace assets {
 			if (recipe.workAmount < 0.0F) {
 				reader.refuseChild(node, "RecipeDef", "workAmount", "a number of work ticks, 0 or more");
 			}
+			recipe.innate = reader.childBoolean(node, "RecipeDef", "innate").value_or(false);
 
 			std::vector<std::string> numbers = reader.takeProblems();
 			errors.insert(errors.end(), numbers.begin(), numbers.end());
@@ -101,6 +112,31 @@ namespace assets {
 				return std::nullopt;
 			}
 			return recipe;
+		}
+
+		/// Sets the interned ids of the things and station `recipe` names from AssetRegistry's index; a name it
+		/// doesn't hold is added to `errors`.
+		void resolveNames(RecipeDef& recipe, const std::string& source, std::vector<std::string>& errors) {
+			const AssetRegistry& definitions = AssetRegistry::Get();
+			const std::string	 what = source + ": <RecipeDef defName=\"" + recipe.defName + "\"> ";
+			const auto			 resolve = [&](const char* role, const std::string& defName) {
+				const uint32_t id = definitions.getDefNameId(defName);
+				if (id == 0) {
+					errors.push_back(what + role + " \"" + defName + "\" names no definition");
+				}
+				return id;
+			};
+			recipe.inputDefNameIds.clear();
+			for (RecipeInput& input : recipe.inputs) {
+				input.defNameId = resolve("input thing", input.defName);
+				recipe.inputDefNameIds.push_back(input.defNameId);
+			}
+			for (RecipeOutput& output : recipe.outputs) {
+				output.defNameId = resolve("output thing", output.defName);
+			}
+			if (!recipe.isStationless()) {
+				recipe.stationDefNameId = resolve("station", recipe.stationDefName);
+			}
 		}
 
 	} // namespace
@@ -124,6 +160,7 @@ namespace assets {
 			if (!recipe.has_value()) {
 				continue;
 			}
+			resolveNames(*recipe, source, m_problems);
 			const std::string defName = recipe->defName;
 			if (!m_recipes.emplace(defName, std::move(*recipe)).second) {
 				m_problems.push_back(source + ": <RecipeDef defName=\"" + defName + "\"> is declared in another file too");
@@ -135,7 +172,12 @@ namespace assets {
 			return false;
 		}
 
-		populateDefNameIds();
+		for (auto& [_, recipe] : m_recipes) {
+			m_byStation[recipe.stationDefName].push_back(&recipe);
+			if (recipe.innate) {
+				m_innateRecipes.push_back(&recipe);
+			}
+		}
 		LOG_INFO(Engine, "Loaded %zu recipes from %s", m_recipes.size(), folder.generic_string().c_str());
 		return true;
 	}
@@ -214,51 +256,9 @@ namespace assets {
 		}
 		auto [it, inserted] = m_recipes.emplace(defName, std::move(recipe));
 		if (inserted) {
-			// Index by station (don't need full populateDefNameIds for test recipes)
 			m_byStation[it->second.stationDefName].push_back(&it->second);
 			if (it->second.innate) {
 				m_innateRecipes.push_back(&it->second);
-			}
-		}
-	}
-
-	void RecipeRegistry::populateDefNameIds() {
-		auto& assetRegistry = AssetRegistry::Get();
-
-		m_byStation.clear();
-		m_innateRecipes.clear();
-
-		auto resolve = [&assetRegistry](const std::string& recipeName, const char* role, const std::string& defName) {
-			const uint32_t id = assetRegistry.getDefNameId(defName);
-			if (id == 0) {
-				LOG_ERROR(Engine, "Recipe %s names %s '%s', which is not a loaded definition", recipeName.c_str(), role, defName.c_str());
-			}
-			return id;
-		};
-
-		for (auto& [name, recipe] : m_recipes) {
-			recipe.inputDefNameIds.clear();
-			for (auto& input : recipe.inputs) {
-				input.defNameId = resolve(name, "input", input.defName);
-				if (input.defNameId != 0) {
-					recipe.inputDefNameIds.push_back(input.defNameId);
-				}
-			}
-
-			for (auto& output : recipe.outputs) {
-				output.defNameId = resolve(name, "output", output.defName);
-			}
-
-			if (!recipe.stationDefName.empty() && recipe.stationDefName != "none") {
-				recipe.stationDefNameId = resolve(name, "station", recipe.stationDefName);
-			}
-
-			// Index by station
-			m_byStation[recipe.stationDefName].push_back(&recipe);
-
-			// Track innate recipes
-			if (recipe.innate) {
-				m_innateRecipes.push_back(&recipe);
 			}
 		}
 	}

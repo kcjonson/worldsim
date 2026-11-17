@@ -7,6 +7,7 @@
 #include "Appearance.h"
 #include "Colonist.h"
 #include "assets/AssetRegistry.h"
+#include "assets/RecipeDef.test.h"
 #include "assets/RecipeRegistry.h"
 
 #include <gtest/gtest.h>
@@ -31,6 +32,7 @@ namespace ecs::test {
 			assets::RecipeDef recipe;
 			recipe.defName = "Recipe_Axe";
 			recipe.label = "Stone Axe";
+			recipe.workAmount = assets::kTestRecipeWorkAmount;
 			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 			woodId = registry.getDefNameId("Wood");
 			treeId = registry.getDefNameId("Flora_TreeOak");

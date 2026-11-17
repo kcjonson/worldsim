@@ -19,7 +19,10 @@ namespace assets {
 
 namespace {
 
-WorkTypeFilter filterFrom(pugi::xml_node node, const std::string& what, const std::string& source, std::vector<std::string>& errors) {
+WorkTypeFilter filterFrom(
+    pugi::xml_node node, const std::string& what, const std::string& source, ConfigReader& reader, std::vector<std::string>& errors
+) {
+    const std::string label = what + " filter";
     WorkTypeFilter filter;
     for (const pugi::xml_node child : node.children()) {
         if (child.type() != pugi::node_element) {
@@ -29,17 +32,17 @@ WorkTypeFilter filterFrom(pugi::xml_node node, const std::string& what, const st
         if (element == "entityGroup") {
             filter.entityGroup = child.text().as_string();
         } else if (element == "looseItem") {
-            filter.looseItem = child.text().as_bool();
+            filter.looseItem = reader.labeledChildBoolean(label, node, "looseItem");
         } else if (element == "indoor") {
-            filter.indoor = child.text().as_bool();
+            filter.indoor = reader.labeledChildBoolean(label, node, "indoor");
         } else if (element == "neededByRecipe") {
-            filter.neededByRecipe = child.text().as_bool();
+            filter.neededByRecipe = reader.labeledChildBoolean(label, node, "neededByRecipe");
         } else if (element == "neededByBlueprint") {
-            filter.neededByBlueprint = child.text().as_bool();
+            filter.neededByBlueprint = reader.labeledChildBoolean(label, node, "neededByBlueprint");
         } else if (element == "stationType") {
             filter.stationType = child.text().as_string();
         } else if (element == "hasPlacementTarget") {
-            filter.hasPlacementTarget = child.text().as_bool();
+            filter.hasPlacementTarget = reader.labeledChildBoolean(label, node, "hasPlacementTarget");
         } else {
             errors.push_back(source + ": " + what + ": unknown element <" + std::string(element) + "> in <filter>");
         }
@@ -78,10 +81,13 @@ std::optional<WorkTypeDef> workTypeFrom(
             workType.skillRequired = child.text().as_string();
         } else if (element == "minSkillLevel") {
             workType.minSkillLevel = reader.childNumber(node, "WorkType", "minSkillLevel");
+            if (workType.minSkillLevel < 0.0F) {
+                reader.refuseChild(node, "WorkType", "minSkillLevel", "a number, 0 or more");
+            }
         } else if (element == "taskChain") {
             workType.taskChain = child.text().as_string();
         } else if (element == "filter") {
-            workType.filter = filterFrom(child, what, source, errors);
+            workType.filter = filterFrom(child, what, source, reader, errors);
         } else {
             errors.push_back(source + ": " + what + ": unknown element <" + std::string(element) + ">");
         }
@@ -124,7 +130,10 @@ bool WorkTypeRegistry::loadFromFile(const std::filesystem::path& configRoot, con
         const std::string what = ConfigReader::describe(categoryNode, "Category");
         onlyAttributes(categoryNode, {"defName", "tier", "canDisable"}, what, source, problemList);
         category.tier = reader.attributeNumber(categoryNode, "Category", "tier");
-        category.canDisable = categoryNode.attribute("canDisable").as_bool(true);
+        if (category.tier < 0.0F) {
+            reader.refuseAttribute(what, categoryNode, "tier", "a number, 0 or more");
+        }
+        category.canDisable = reader.attributeBoolean(categoryNode, "Category", "canDisable").value_or(true);
         category.label = category.defName;
 
         for (const pugi::xml_node child : categoryNode.children()) {

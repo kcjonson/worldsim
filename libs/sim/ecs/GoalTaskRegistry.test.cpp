@@ -8,6 +8,7 @@
 #include "components/WorkQueue.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/RecipeDef.test.h>
 #include <assets/RecipeRegistry.h>
 
 #include <gtest/gtest.h>
@@ -191,6 +192,7 @@ namespace ecs::test {
 			recipe.defName = "Recipe_Need";
 			recipe.label = "Need";
 			recipe.inputs = {{.defName = "Stone", .count = 3}, {.defName = "Stick", .count = 1}};
+			recipe.workAmount = assets::kTestRecipeWorkAmount;
 			assets::RecipeRegistry::Get().registerTestRecipe(std::move(recipe));
 		}
 		void TearDown() override {
