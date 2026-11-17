@@ -1,6 +1,7 @@
 // Game Scene - Main gameplay with chunk-based world rendering
 
 #include "GameBootstrap.h"
+#include "GameContext.h"
 #include "GameWorldState.h"
 #include "NewGameSetup.h"
 #include "SceneTypes.h"
@@ -143,6 +144,9 @@ namespace {
 	  public:
 		void onEnter(app::App& app) override {
 			owner = &app;
+			backgroundLaunch = app.context<world_sim::GameContext>().backgroundLaunch;
+			// The pointer may have entered the window while another scene was on.
+			windowPresence.pointerInWindow = app.input().frame().pointerInWindow;
 			LOG_INFO(Game, "GameScene - Entering");
 			theme::apply(ui());
 
@@ -373,10 +377,9 @@ namespace {
 				.validColor = ui().getTheme().get(world_sim::tokens::color::statusOk),
 				.invalidColor = ui().getTheme().get(world_sim::tokens::color::statusCrit),
 				.callbacks = {
-					.onToolActive =
-						[this](bool /*active*/) {
-							// Visibility is driven by the per-frame status push in update().
-						},
+					// The config strip's visibility follows the per-frame status push in update(); a tool turning
+					// on or off also drops the wall double-click record, so a click made under one tool never pairs with one under another.
+					.onToolActive = [this](bool /*active*/) { wallDoubleClick.forget(); },
 					.onToast = [this](
 								   const std::string& title, const std::string& message
 							   ) { gameUI->pushNotification(title, message, ui::ToastSeverity::Warning); }
@@ -699,11 +702,35 @@ namespace {
 			});
 		}
 
+		// A left release on the world, for the drawing tool on: a click, or the second click of a wall
+		// double-click, which places nothing and ends the chain.
+		void deliverClick(const foundation::InputEvent& event, int logicalWidth, int logicalHeight) {
+			const auto& snapping = assets::ConstructionRegistry::Get().snapping();
+			const world_sim::ReleaseAction action = wallDoubleClick.release(
+				{.timeSeconds = event.time, .position = event.position},
+				*m_drawingSystem->activeTool(),
+				{.seconds = snapping.doubleClickSeconds, .pixels = snapping.doubleClickDistancePx}
+			);
+			if (action == world_sim::ReleaseAction::EndChain) {
+				m_drawingSystem->finishChain();
+				return;
+			}
+			m_drawingSystem->handleClick(
+				event.position.x,
+				event.position.y,
+				logicalWidth,
+				logicalHeight,
+				(event.mods & foundation::ModAlt) != 0,
+				(event.mods & foundation::ModControl) != 0
+			);
+		}
+
 		// What salal's ui didn't take: Escape, the world's hotkeys, a press or release for the drawing tool, a
 		// release for placement or selection, and the scroll that zooms. The HUD takes no focus, so a key the ui
 		// took is a dialog's. The tools' previews follow the pointer in update().
 		bool handleEvent(const foundation::InputEvent& event) override {
 			using Type = foundation::InputEvent::Type;
+			windowPresence.observe(event.type);
 			if (event.type == Type::KeyDown && !event.repeat) {
 				if (event.key == foundation::Key::Escape) {
 					// The ui closes a dialog its focus is in; the dossier, opened from the world, has none. So
@@ -713,6 +740,7 @@ namespace {
 						return true;
 					}
 					if (m_drawingSystem->isActive()) {
+						wallDoubleClick.forget();
 						m_drawingSystem->cancel();
 					} else if (m_placementSystem->isActive()) {
 						m_placementSystem->cancel();
@@ -738,26 +766,27 @@ namespace {
 				return false;
 			}
 			// The drawing tool takes presses and releases before placement and selection while it's active.
-			const bool freeform = (event.mods & foundation::ModAlt) != 0;
+			const bool						freeform = (event.mods & foundation::ModAlt) != 0;
+			const world_sim::PointerTarget target = pointerTargetOf(event.position);
 			switch (world_sim::drawingPointerAction(
 				event.type == Type::PointerDown ? world_sim::PointerInput::Press : world_sim::PointerInput::Release,
 				event.mouseButton,
-				pointerTargetOf(event.position),
+				target,
+				world_sim::pointerWithTool(target, windowPresence.pointerInWindow, windowPresence.windowFocused, backgroundLaunch),
 				m_drawingSystem->activeTool(),
 				m_drawingSystem->hasPendingPress()
 			)) {
 				case world_sim::PointerAction::DeliverPress:
 					return m_drawingSystem->handlePress(event.position.x, event.position.y, logicalW, logicalH, freeform);
 				case world_sim::PointerAction::DeliverClick:
-					m_drawingSystem->handleClick(
-						event.position.x, event.position.y, logicalW, logicalH, freeform, (event.mods & foundation::ModControl) != 0
-					);
+					deliverClick(event, logicalW, logicalH);
 					return true;
 				case world_sim::PointerAction::CancelPress:
 					m_drawingSystem->cancelPress();
 					return true;
 				case world_sim::PointerAction::CancelTool:
 					// Foundation: cancel the shape. Wall: end (commit) the chain.
+					wallDoubleClick.forget();
 					m_drawingSystem->cancel();
 					return true;
 				case world_sim::PointerAction::Ignore:
@@ -805,6 +834,8 @@ namespace {
 		}
 
 		void update(const app::FrameContext& frame) override {
+			// The frame's snapshot is the window system's word at frame end; events moved the flag within the frame, and none are dispatched while paused.
+			windowPresence.syncPointer(frame.input.pointerInWindow);
 			const auto dt = static_cast<float>(frame.dt);
 			// The camera's held keys are polled whatever the ui took, so a modal dialog holds them off the world.
 			const bool worldKeys = !modalDialogOpen();
@@ -815,26 +846,39 @@ namespace {
 			// A Rectangle drag whose release the interface took, or that ended without the window's focus, never
 			// reached handleEvent.
 			const world_sim::PointerTarget pointer = pointerTargetOf(frame.input.pointer);
+			const bool withTool =
+				world_sim::pointerWithTool(pointer, windowPresence.pointerInWindow, windowPresence.windowFocused, backgroundLaunch);
 			if (!frame.input.mouse[static_cast<std::size_t>(foundation::MouseButton::Left)].down &&
 				world_sim::drawingPointerAction(
 					world_sim::PointerInput::LeftButtonUpThisFrame,
 					foundation::MouseButton::Left,
 					pointer,
+					withTool,
 					m_drawingSystem->activeTool(),
 					m_drawingSystem->hasPendingPress()
 				) == world_sim::PointerAction::CancelPress) {
 				m_drawingSystem->cancelPress();
 			}
 
+			// The drawing tool pauses while the pointer is not with it, outside the window or with the window in the
+			// background, and resumes at the pointer on its next move.
+			if (pointerWasWithTool && !withTool) {
+				wallDoubleClick.forget();
+				m_drawingSystem->pause();
+			}
+			pointerWasWithTool = withTool;
+
 			// The drawing tool's and placement's previews follow the pointer every frame, so they track the world
 			// moving under a still cursor, but not while the pointer is over the ui.
-			if (frame.input.pointerInWindow && pointer == world_sim::PointerTarget::World) {
+			if (windowPresence.pointerInWindow && pointer == world_sim::PointerTarget::World) {
 				int logicalW = 0;
 				int logicalH = 0;
 				Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
 				const glm::vec2 at = frame.input.pointer;
 				if (m_drawingSystem->isActive()) {
-					m_drawingSystem->handleMouseMove(at.x, at.y, logicalW, logicalH, (frame.input.mods & foundation::ModAlt) != 0);
+					if (withTool) {
+						m_drawingSystem->handleMouseMove(at.x, at.y, logicalW, logicalH, (frame.input.mods & foundation::ModAlt) != 0);
+					}
 				} else if (m_placementSystem->isActive()) {
 					m_placementSystem->handleMouseMove(at.x, at.y, logicalW, logicalH);
 				}
@@ -1139,12 +1183,14 @@ namespace {
 					if (!m_drawingSystem->isActive()) {
 						return false;
 					}
+					wallDoubleClick.forget();
 					m_drawingSystem->removeLastPoint();
 					return true;
 				case foundation::Key::Enter: // finishes a wall chain; the foundation tool closes on its origin instead
 					if (!m_drawingSystem->isActive()) {
 						return false;
 					}
+					wallDoubleClick.forget();
 					m_drawingSystem->finishChain();
 					return true;
 				case foundation::Key::B: // build mode, never while the drawing tool owns world input
@@ -2212,6 +2258,15 @@ namespace {
 
 		// The App this scene is on, from onEnter
 		app::App* owner = nullptr;
+
+		// Whether the drawing tools follow the pointer (world_sim::pointerWithTool): the window as
+		// handleEvent's events tell it (the one source, for events and for update()), whether this is a
+		// --background launch, and last frame's answer, so the tool is paused once.
+		world_sim::WindowPresence windowPresence;
+		bool					  backgroundLaunch = false;
+		bool					  pointerWasWithTool = false;
+
+		world_sim::WallDoubleClick wallDoubleClick;
 
 		// The camera control's last request, until update applies it, and the persistent pan
 		// direction it set (held-key style)

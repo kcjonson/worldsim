@@ -329,6 +329,7 @@ TEST_F(ConstructionRegistryTest, Snapping_Parsed) {
 	EXPECT_FLOAT_EQ(s.lengthIncrementMeters, 0.1F);
 	EXPECT_EQ(s.lengthRoundingOnGuides, GuideRounding::GuideDistance);
 	EXPECT_TRUE(s.rectangleAdjacencySnaps);
+	EXPECT_FLOAT_EQ(s.doubleClickSeconds, 0.4F);
 	EXPECT_FLOAT_EQ(s.doubleClickDistancePx, 4.0F);
 
 	// The shipped XML and the in-code defaults (which the engine tests read through
@@ -348,15 +349,18 @@ TEST_F(ConstructionRegistryTest, Snapping_Parsed) {
 	EXPECT_FLOAT_EQ(d.rectangleGridSpacingMeters, inCode.rectangleGridSpacingMeters);
 }
 
-// The click distance is the designer's to tune in the file: the shipped snapping.xml sets it, so
-// the value in use is the file's and not the loader's default.
-TEST_F(ConstructionRegistryTest, Snapping_ShipsTheClickDistanceInTheFile) {
+// The click limits are the designer's to tune in the file: the shipped snapping.xml sets them, so
+// the values in use are the file's and not the loader's defaults.
+TEST_F(ConstructionRegistryTest, Snapping_ShipsTheClickLimitsInTheFile) {
 	pugi::xml_document shipped;
 	ASSERT_TRUE(shipped.load_file((constructionConfigFolder() / "snapping.xml").c_str()));
-	const pugi::xml_node key = shipped.child("ConstructionSnapping").child("doubleClickDistancePx");
-	ASSERT_TRUE(key) << "snapping.xml sets doubleClickDistancePx";
+	const pugi::xml_node seconds = shipped.child("ConstructionSnapping").child("doubleClickSeconds");
+	const pugi::xml_node distance = shipped.child("ConstructionSnapping").child("doubleClickDistancePx");
+	ASSERT_TRUE(seconds) << "snapping.xml sets doubleClickSeconds";
+	ASSERT_TRUE(distance) << "snapping.xml sets doubleClickDistancePx";
 	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
-	EXPECT_FLOAT_EQ(ConstructionRegistry::Get().snapping().doubleClickDistancePx, key.text().as_float());
+	EXPECT_FLOAT_EQ(ConstructionRegistry::Get().snapping().doubleClickSeconds, seconds.text().as_float());
+	EXPECT_FLOAT_EQ(ConstructionRegistry::Get().snapping().doubleClickDistancePx, distance.text().as_float());
 }
 
 // A new player meets the Rectangle tool and no helpers: every helper off, Round lengths and
@@ -410,6 +414,7 @@ TEST_F(ConstructionRegistryTest, Snapping_EveryNewKeyParses) {
   <lengthIncrementMeters>0.25</lengthIncrementMeters>
   <lengthRoundingOnGuides>segmentLength</lengthRoundingOnGuides>
   <rectangleAdjacencySnaps>false</rectangleAdjacencySnaps>
+  <doubleClickSeconds>0.25</doubleClickSeconds>
   <doubleClickDistancePx>6.0</doubleClickDistancePx>
   <DrawingSettingsDefaults>
     <angleSteps>true</angleSteps>
@@ -463,6 +468,7 @@ TEST_F(ConstructionRegistryTest, Snapping_EveryNewKeyParses) {
 	EXPECT_FLOAT_EQ(s.lengthIncrementMeters, 0.25F);
 	EXPECT_EQ(s.lengthRoundingOnGuides, GuideRounding::SegmentLength);
 	EXPECT_FALSE(s.rectangleAdjacencySnaps);
+	EXPECT_FLOAT_EQ(s.doubleClickSeconds, 0.25F);
 	EXPECT_FLOAT_EQ(s.doubleClickDistancePx, 6.0F);
 
 	const DrawingSettingsDefaults& d = s.drawingSettingsDefaults;
@@ -774,6 +780,8 @@ TEST_F(ConstructionRegistryTest, Validation_RejectsOutOfRangeGuideAndLengthKeys)
 	expectSnappingRejected("<guideDirectionToleranceDegrees>8</guideDirectionToleranceDegrees>", "guideDirectionToleranceDegrees");
 	expectSnappingRejected("<angleIncrementDegrees>100</angleIncrementDegrees>", "angleIncrementDegrees");
 	expectSnappingRejected("<doubleClickDistancePx>-1</doubleClickDistancePx>", "doubleClickDistancePx");
+	expectSnappingRejected("<doubleClickSeconds>0</doubleClickSeconds>", "doubleClickSeconds");
+	expectSnappingRejected("<doubleClickSeconds>-0.25</doubleClickSeconds>", "doubleClickSeconds");
 }
 
 TEST_F(ConstructionRegistryTest, Validation_RejectsOutOfRangeLookKeys) {

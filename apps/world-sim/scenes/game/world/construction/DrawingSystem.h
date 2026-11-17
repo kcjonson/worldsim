@@ -214,8 +214,14 @@ namespace world_sim {
 
 		// --- Input ---
 
-		/// Update the snapped cursor + live validity from a mouse move.
+		/// Update the snapped cursor + live validity from a mouse move. Resumes a paused tool.
 		void handleMouseMove(float screenX, float screenY, int viewportW, int viewportH, bool freeform);
+
+		/// The pointer is not with the tool (outside the window, or the window without the
+		/// focus): forget everything it proposed, so nothing follows it and the status strip
+		/// refuses nothing, until the next handleMouseMove. Placed points, a waiting first
+		/// corner, and a pending press stay. A tool starts paused, until its first move.
+		void pause();
 
 		/// Left click, on its release: add a snapped point, or commit if it closes the shape
 		/// (foundation) / extends or closes the chain (wall). Ctrl held on the wall tool over a
@@ -243,9 +249,10 @@ namespace world_sim {
 		/// the tool. @return true if it consumed the action.
 		bool cancel();
 
-		/// Enter / double-click: finish a wall chain (commit its segments). No-op for
-		/// the foundation tool (it closes on origin-click instead). @return true if
-		/// it consumed the action.
+		/// Enter / double-click: finish a wall chain (commit its segments); with one point or
+		/// none, the chain is dropped and nothing is committed or toasted. No-op for the
+		/// foundation tool (it closes on origin-click instead). @return true if it consumed
+		/// the action.
 		bool finishChain();
 
 		/// Backspace: remove the last placed point. @return true if a point was removed.
@@ -291,6 +298,9 @@ namespace world_sim {
 		/// Drawn under the regular polygon preview. INTERIM.
 		void renderEditOutlinePreview(int viewportWidth, int viewportHeight, float uiScale);
 
+		/// The snap feedback (drawSnapFeedback), while the tool follows the pointer.
+		void drawPointerFeedback(int viewportWidth, int viewportHeight, float uiScale) const;
+
 	  public:
 		/// A rejected edit's reason, drawn beside the cursor, where, and how large.
 		struct EditReason {
@@ -330,6 +340,17 @@ namespace world_sim {
 			std::string editReason;				 // why that edit is refused, drawn beside the pointer; empty when it isn't
 		};
 		[[nodiscard]] PreviewVerdict previewVerdict() const;
+
+		/// What renderPreview draws that follows the pointer, all of it gone while the tool is
+		/// paused: the rubber band (and the wall's band) to the snapped point with the snap
+		/// feedback, an Add or Subtract's trial outline of the foundation it would make with its
+		/// reason, and the opening tool's ghost on the wall it snapped to.
+		struct PointerPreview {
+			bool snapFeedback = false;
+			bool trialOutline = false;
+			bool openingGhost = false;
+		};
+		[[nodiscard]] PointerPreview pointerPreview() const;
 
 		// --- Topology access for consumers (selection, ConstructionSystem) ---
 
@@ -463,7 +484,8 @@ namespace world_sim {
 		/// it: while it closes (or in the Rectangle tool commits), the close's verdict;
 		/// otherwise whether the point may be placed, and why not. The Freeform tool's pointer
 		/// resting where it placed the last point, with its snapped point refused as too close
-		/// to it, proposes nothing: valid, and the click places nothing.
+		/// to it, proposes nothing: valid, and the click places nothing. A paused tool proposes
+		/// nothing either.
 		struct ClickVerdict {
 			bool		valid = true;
 			bool		proposed = true;
@@ -666,8 +688,11 @@ namespace world_sim {
 		DrawingState						   state_ = DrawingState::Idle;
 		ToolKind							   activeTool_ = ToolKind::Foundation;
 		std::vector<Foundation::Vec2>		   points_;				// placed vertices, world meters
-		Foundation::Vec2					   cursor_{0.0F, 0.0F}; // snapped cursor
+		Foundation::Vec2					   cursor_{0.0F, 0.0F}; // snapped cursor, read only while followingPointer_
 		construction::SnapResult			   lastSnap_;
+		// A move has proposed something since the tool started or last paused. It holds over the
+		// interface, where the preview stays at its last position on the world.
+		bool followingPointer_ = false;
 		construction::ValidationResult		   lastValidation_;
 
 		// The last evaluated snap and point validation, and what they were evaluated

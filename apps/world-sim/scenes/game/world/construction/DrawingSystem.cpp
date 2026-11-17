@@ -301,14 +301,9 @@ namespace world_sim {
 		state_ = DrawingState::Drawing;
 		activeTool_ = tool;
 		points_.clear();
-		lastSnap_ = {};
-		lastValidation_ = {};
-		willClose_ = false;
-		pendingClose_ = {};
-		cursorOffBuildableGround = false;
 		wallHost_ = ec::kInvalidFoundation;
-		clearRectangle();
-		rectangleSnapKind_ = construction::RectangleSnapKind::None;
+		cancelPress();
+		pause();
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(true);
 		}
@@ -361,8 +356,6 @@ namespace world_sim {
 
 	void DrawingSystem::activateOpeningTool(const std::string& openingType) {
 		activeOpeningType_ = openingType;
-		openingSnap_ = {};
-		openingValidation_ = {};
 		startTool(ToolKind::Opening);
 		LOG_INFO(Game, "Opening tool activated (type=%s)", activeOpeningType_.c_str());
 	}
@@ -373,8 +366,6 @@ namespace world_sim {
 		}
 		editTarget_ = target;
 		editMode_ = mode;
-		editPreview_ = {};
-		editPreviewActive_ = false;
 		startTool(ToolKind::FoundationEdit);
 		LOG_INFO(
 			Game,
@@ -387,21 +378,30 @@ namespace world_sim {
 	void DrawingSystem::deactivate() {
 		state_ = DrawingState::Idle;
 		points_.clear();
+		cancelPress();
+		wallHost_ = construction::kInvalidFoundation;
+		editTarget_ = construction::kInvalidFoundation;
+		pause();
+		if (callbacks_.onToolActive) {
+			callbacks_.onToolActive(false);
+		}
+	}
+
+	void DrawingSystem::pause() {
+		followingPointer_ = false;
 		lastSnap_ = {};
 		lastValidation_ = {};
 		willClose_ = false;
 		pendingClose_ = {};
-		clearRectangle();
 		cursorOffBuildableGround = false;
-		wallHost_ = ec::kInvalidFoundation;
-		openingSnap_ = {};
-		openingValidation_ = {};
-		editTarget_ = ec::kInvalidFoundation;
+		rectangleCorners_.clear();
+		rectangleLabel_.clear();
+		rectangleSnapKind_ = construction::RectangleSnapKind::None;
 		editPreview_ = {};
 		editPreviewActive_ = false;
-		if (callbacks_.onToolActive) {
-			callbacks_.onToolActive(false);
-		}
+		openingSnap_ = {};
+		openingValidation_ = {};
+		openingUnexplored_ = false;
 	}
 
 	void DrawingSystem::setActiveMaterial(const std::string& material) {
@@ -412,6 +412,7 @@ namespace world_sim {
 		if (state_ != DrawingState::Drawing || camera_ == nullptr) {
 			return;
 		}
+		followingPointer_ = true;
 		const auto world = camera_->screenToWorld(screenX, screenY, viewportW, viewportH, kPixelsPerMeter);
 
 		if (activeTool_ == ToolKind::Wall) {
@@ -639,8 +640,7 @@ namespace world_sim {
 	void DrawingSystem::clearRectangle() {
 		rectangleCorners_.clear();
 		rectangleLabel_.clear();
-		rectanglePress_.reset();
-		rectanglePressPlacedCorner_ = false;
+		cancelPress();
 	}
 
 	bool DrawingSystem::handlePress(float screenX, float screenY, int viewportW, int viewportH, bool freeform) {
@@ -862,6 +862,9 @@ namespace world_sim {
 	}
 
 	DrawingSystem::ClickVerdict DrawingSystem::clickVerdict() const {
+		if (!followingPointer_) {
+			return {.proposed = false};
+		}
 		if (willClose_) {
 			return {.valid = pendingClose_.accepted, .reason = pendingClose_.reason};
 		}
@@ -913,6 +916,14 @@ namespace world_sim {
 			verdict.editReason = construction::validationReason(editPreview_.validation.code);
 		}
 		return verdict;
+	}
+
+	DrawingSystem::PointerPreview DrawingSystem::pointerPreview() const {
+		return {
+			.snapFeedback = followingPointer_,
+			.trialOutline = activeTool_ == ToolKind::FoundationEdit && editPreviewActive_,
+			.openingGhost = activeTool_ == ToolKind::Opening && openingSnap_.valid,
+		};
 	}
 
 	void DrawingSystem::commitShape() {
@@ -1889,8 +1900,11 @@ namespace world_sim {
 			}
 			// Validity reflects the live snap + validateOpening. No built wall in range
 			// reads as "no wall to place on"; an in-range wall surfaces the validator's
-			// reason (margin / overlap / too short) when it rejects.
-			if (!openingSnap_.valid) {
+			// reason (margin / overlap / too short) when it rejects. Paused, it proposes
+			// nothing: the strip's hint, no reason.
+			if (!followingPointer_) {
+				s.valid = false;
+			} else if (!openingSnap_.valid) {
 				s.valid = false;
 				s.message = "no wall in range";
 			} else {
@@ -1918,7 +1932,7 @@ namespace world_sim {
 			for (std::size_t i = 0; i + 1 < points_.size(); ++i) {
 				total += dist(points_[i], points_[i + 1]);
 			}
-			if (!points_.empty()) {
+			if (!points_.empty() && followingPointer_) {
 				s.segmentLengthMeters = dist(points_.back(), cursor_);
 			}
 			s.totalLengthMeters = total + s.segmentLengthMeters;
@@ -2144,8 +2158,10 @@ namespace world_sim {
 			});
 		}
 
-		// Rubber-band from the last placed point to the snapped cursor.
-		if (!points_.empty()) {
+		// While the tool follows the pointer: the rubber band from the last placed point to the snapped
+		// point, then the snap feedback, whose keys (904 up) put it over the edges, the band, and the
+		// vertex dots.
+		if (pointerPreview().snapFeedback && !points_.empty()) {
 			Renderer::Primitives::drawLine({
 				.start = screen.back(),
 				.end = toScreen(cursor_),
@@ -2154,9 +2170,7 @@ namespace world_sim {
 				.key = 902,
 			});
 		}
-
-		// Above the edges, the rubber band, and the vertex dots (its keys start at 904).
-		drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight, uiScale, measureFeedbackText));
+		drawPointerFeedback(viewportWidth, viewportHeight, uiScale);
 
 		// Vertex dots.
 		for (const auto& vertex : screen) {
@@ -2227,7 +2241,14 @@ namespace world_sim {
 				});
 			}
 		}
-		drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight, uiScale, measureFeedbackText));
+		drawPointerFeedback(viewportWidth, viewportHeight, uiScale);
+	}
+
+	void DrawingSystem::drawPointerFeedback(int viewportWidth, int viewportHeight, float uiScale) const {
+		if (pointerPreview().snapFeedback) {
+			const auto& previewStyle = ConstructionRegistry::Get().rendering().preview;
+			drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight, uiScale, measureFeedbackText));
+		}
 	}
 
 	namespace {
@@ -2483,7 +2504,7 @@ namespace world_sim {
 
 	void DrawingSystem::renderOpeningGhost(int viewportW, int viewportH) {
 		const auto* type = activeOpeningType();
-		if (type == nullptr || !openingSnap_.valid) {
+		if (type == nullptr || !pointerPreview().openingGhost) {
 			return; // no wall in range: show nothing
 		}
 
@@ -2545,7 +2566,7 @@ namespace world_sim {
 	}
 
 	void DrawingSystem::renderEditOutlinePreview(int viewportWidth, int viewportHeight, float uiScale) {
-		if (!editPreviewActive_) {
+		if (!pointerPreview().trialOutline) {
 			return;
 		}
 		const auto& previewStyle = ConstructionRegistry::Get().rendering().preview;
@@ -2628,7 +2649,7 @@ namespace world_sim {
 			for (std::size_t i = 0; i + 1 < points_.size(); ++i) {
 				drawBand(points_[i], points_[i + 1], bandColor);
 			}
-			if (!points_.empty()) {
+			if (!points_.empty() && pointerPreview().snapFeedback) {
 				const Foundation::Color rubberBand = valid ? Foundation::Color{okColor.r, okColor.g, okColor.b, previewStyle.bandPreviewAlpha}
 												   : Foundation::Color{badColor.r, badColor.g, badColor.b, previewStyle.bandPreviewAlpha};
 				drawBand(points_.back(), cursor_, rubberBand);
@@ -2646,8 +2667,10 @@ namespace world_sim {
 			});
 		}
 
-		// Rubber-band centerline from the last point to the snapped cursor.
-		if (!points_.empty()) {
+		// While the tool follows the pointer: the rubber band's centerline from the last point to the
+		// snapped point, then the snap feedback, whose keys (911 up) put it over the bands, the
+		// centerlines, and the vertex dots.
+		if (pointerPreview().snapFeedback && !points_.empty()) {
 			Renderer::Primitives::drawLine({
 				.start = screen.back(),
 				.end = toScreen(cursor_),
@@ -2656,9 +2679,7 @@ namespace world_sim {
 				.key = 908,
 			});
 		}
-
-		// Above the band, the centerlines, and the vertex dots (its keys start at 911).
-		drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight, uiScale, measureFeedbackText));
+		drawPointerFeedback(viewportWidth, viewportHeight, uiScale);
 
 		// Vertex dots. The snap-target ring (endpoint / T-junction / foundation-vertex snaps)
 		// is drawSnapFeedback's, over the snapped-point marker.
