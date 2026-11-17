@@ -10,6 +10,9 @@
 #include <offset/WallOffset.h>
 #include <polygon/Polygon.h>
 
+#include <glm/common.hpp>
+#include <glm/geometric.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -65,13 +68,31 @@ namespace nav {
 		return registry.maxCollisionReachMeters() + std::sqrt(2.0F) * pad * registry.maxCollidingScale();
 	}
 
+	float placedObstacleLocalReachMeters(const assets::CollisionShape& collision) {
+		float reachSquared = 0.0F;
+		if (collision.type == assets::CollisionShapeType::Rect) {
+			const float		pad	   = static_cast<float>(kPlacedObstaclePadMm) / static_cast<float>(kTileMm);
+			const glm::vec2 corner = glm::abs(collision.offsetMeters) + collision.halfExtentsMeters + glm::vec2{pad, pad};
+			reachSquared		   = glm::dot(corner, corner);
+		} else if (collision.type == assets::CollisionShapeType::Polygon) {
+			for (const glm::vec2& point : collision.pointsMeters) {
+				reachSquared = std::max(reachSquared, glm::dot(point, point));
+			}
+		}
+		return std::sqrt(reachSquared);
+	}
+
 	bool placedObstacleOutline(const assets::PlacedEntity& e, const assets::AssetRegistry& registry, geometry::Ring& ring) {
-		ring.clear();
 		const assets::AssetDefinition* def = registry.getDefinition(e.defName);
 		if (def == nullptr) {
+			ring.clear();
 			return false;
 		}
-		const assets::CollisionShape& collision = def->collisionFor(e.traits.ageClass);
+		return placedObstacleOutline(e, def->collisionFor(e.traits.ageClass), ring);
+	}
+
+	bool placedObstacleOutline(const assets::PlacedEntity& e, const assets::CollisionShape& collision, geometry::Ring& ring) {
+		ring.clear();
 		if (!collision.blocks()) {
 			return false;
 		}

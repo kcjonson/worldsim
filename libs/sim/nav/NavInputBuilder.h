@@ -78,6 +78,13 @@ namespace nav {
 	// reused): false when there is none. What a clear-ground test reads, so the two never differ.
 	[[nodiscard]] bool placedObstacleOutline(const assets::PlacedEntity& entity, const assets::AssetRegistry& registry, geometry::Ring& out);
 
+	// The same from the collider already looked up for the entity's age class.
+	[[nodiscard]] bool placedObstacleOutline(const assets::PlacedEntity& entity, const assets::CollisionShape& collision, geometry::Ring& out);
+
+	// How far the outline of `collision` reaches from the entity's position at scale 1, pad included:
+	// what a caller holding positions tests before building the outline.
+	[[nodiscard]] float placedObstacleLocalReachMeters(const assets::CollisionShape& collision);
+
 	// --- Walls / doors -----------------------------------------------------------
 
 	// Over the BUILT wall segments: resolve band offsetting + junction trimming per

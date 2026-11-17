@@ -445,7 +445,7 @@ namespace assets {
 		void prewarmTreeVariants(const std::vector<std::string>& defNames);
 
 		/// Admits the named defs' collision shapes as they stand: a polygon the nav mesh can't take (a
-		/// crossing, a point spacing or edge gap under 2 mm at the def's smallest scale, no area) is an
+		/// crossing, a point spacing or edge gap under 3 mm rounded at the def's smallest scale, no area) is an
 		/// error in the validation report naming the def and is dropped, a clockwise one is turned
 		/// counter-clockwise; then raises maxCollisionReachMeters to cover the shapes that stay.
 		void admitCollisionShapes(const std::vector<std::string>& defNames);

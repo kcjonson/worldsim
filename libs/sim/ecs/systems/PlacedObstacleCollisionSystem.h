@@ -52,12 +52,13 @@ namespace ecs {
 class NavigationSystem;
 
 // Push `center` (world metres) out of `outlineMm`, a simple ring in world mm of either winding, convex
-// or concave. Returns the point on the ring's boundary nearest `center` when `center` is strictly
-// inside, nullopt when it is outside or on the boundary. The nearest boundary point is the push along
-// the outward normal by the penetration depth, and at a concave corner it is the corner itself, so
-// nothing is normalised and no input gives a NaN. Ties between equally near edges go to the first in
-// ring order. Pure and deterministic: the inside test is geometry::pointInPolygon's exact one on the
-// centre rounded to mm, the nearest point geometry::closestOnSegment's.
+// or concave. When `center` rounded to the mm is strictly inside (geometry::pointInPolygon, exact),
+// returns the boundary point nearest `center` (geometry::closestOnSegment on the unrounded centre, so
+// the coordinate along the edge is kept), stepped outward by the least multiple of a quarter mm that
+// makes the result, rounded to the mm as nav will round it, strictly outside; nullopt when the centre
+// is outside or on the boundary. The nearest boundary point is the push along the outward normal by
+// the penetration depth, and at a concave corner it is the corner itself. Ties between equally near
+// edges go to the first in ring order. No input gives a NaN. Pure and deterministic.
 [[nodiscard]] std::optional<glm::vec2> resolveCenterAgainstOutline(glm::vec2 center, const geometry::Ring& outlineMm);
 
 class PlacedObstacleCollisionSystem : public ISystem {

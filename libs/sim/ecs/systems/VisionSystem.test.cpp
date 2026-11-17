@@ -155,7 +155,10 @@ namespace {
 				kTargetDefName, static_cast<uint16_t>(1u << static_cast<size_t>(CapabilityType::Edible)));
 			ASSERT_NE(reg.getDefNameId(kTargetDefName), 0u) << "target def must get a non-zero id";
 		}
-		void TearDown() override { ConstructionRegistry::Get().clear(); }
+		void TearDown() override {
+			ConstructionRegistry::Get().clear();
+			AssetRegistry::Get().clearDefinitions();
+		}
 	};
 
 	// Drive a single immediate vision tick (interval 1 so update() never throttles).

@@ -1500,10 +1500,11 @@ namespace assets {
 			return smallest;
 		}
 
-		// The nav mesh's floor, in mm, on a placed obstacle's point spacing and on the gap between its
-		// edges: at least this far apart, two points stay distinct and two edges uncrossed after an
-		// instance's rotation rounds each point to the mm (by at most half a mm on each axis).
-		constexpr std::int64_t kMinCollisionPolygonGapMm = 2;
+		// The floor, in mm, on a collision polygon's point spacing and on the gap between its edges,
+		// checked on its points rounded to the mm. Rounding moves a point at most 0.71 mm (half a mm on
+		// each axis), so 3 mm rounded is over 1.58 mm as authored, and an instance's own rounding (another
+		// 0.71 mm a point) still leaves two points distinct and two edges uncrossed in the nav mesh.
+		constexpr std::int64_t kMinCollisionPolygonGapMm = 3;
 
 		geometry::Ring collisionPolygonMm(const CollisionShape& shape, float scale) {
 			geometry::Ring ring;
@@ -1869,6 +1870,9 @@ namespace assets {
 			// def's placement range.
 			const float scale	 = std::max({1.0F, std::abs(def.placement.scale.min), std::abs(def.placement.scale.max)});
 			const float smallest = smallestPlacedScale(def.placement.scale);
+			// One error per def: age classes that share a polygon (an XML or SVG collider is every
+			// class's) fail together, and the first failure names the problem.
+			std::string firstProblem;
 			for (size_t ageClass = 0; ageClass < def.collisions.size(); ++ageClass) {
 				CollisionShape& shape = def.collisions[ageClass];
 				if (shape.type != CollisionShapeType::Polygon) {
@@ -1881,11 +1885,16 @@ namespace assets {
 					}
 					continue;
 				}
-				const std::string message = "collision polygon (age class " + std::to_string(ageClass) + ") " + problem +
-											"; the nav mesh can't take it, so it is dropped and the asset blocks nothing";
+				if (firstProblem.empty()) {
+					firstProblem = def.collisions.size() > 1 ? "(age class " + std::to_string(ageClass) + ") " + problem : problem;
+				}
+				shape = CollisionShape{};
+			}
+			if (!firstProblem.empty()) {
+				const std::string message =
+					"collision polygon " + firstProblem + "; the nav mesh can't take it, so it is dropped and the asset blocks nothing";
 				LOG_ERROR(Engine, "AssetDef '%s' %s", name.c_str(), message.c_str());
 				m_validationReport.add(Severity::Error, name, "collision", message);
-				shape = CollisionShape{};
 			}
 			for (const CollisionShape& shape : def.collisions) {
 				if (shape.blocks()) {

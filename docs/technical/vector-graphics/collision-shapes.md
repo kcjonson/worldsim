@@ -139,8 +139,13 @@ position, rotation, and scale and never fight (no boundary jitter);
 `resolveCenterAgainstOutline` is the usual circle-versus-polygon contact with a circle of
 radius zero: if the centre is strictly inside the ring (`geometry::pointInPolygon`, exact, on
 the centre rounded to mm), move it to the nearest point on the ring's boundary
-(`geometry::closestOnSegment` over every edge). That nearest point is the push along the
-outward normal by the penetration depth. Box2D (`b2CollidePolygonAndCircle`) finds the same
+(`geometry::closestOnSegment` over every edge, from the unrounded centre, so the coordinate
+along the edge stays where it was). That nearest point is the push along the outward normal by
+the penetration depth. On a slanted edge it is off the mm lattice, and rounded back to the mm
+next tick it would be inside about half the time: pushed again, and taken by the nav mesh for
+standing in the obstacle, which hands the mover to the forward snap. So the landing steps
+outward a quarter mm at a time until the stored position, rounded as nav rounds it, is strictly
+outside; it ends at most about a millimetre past the boundary. Box2D (`b2CollidePolygonAndCircle`) finds the same
 contact by separating axes, which needs a convex polygon, so Box2D, Godot
 (`CollisionPolygon2D`), and Unity (`PolygonCollider2D`) split a concave collider into convex
 pieces. A push out of one piece can land inside its neighbour, across the diagonal the split
@@ -148,23 +153,28 @@ made, so for a zero-radius centre the nearest point on the whole outline is the 
 and needs no split: next to a notch it goes into the notch, and beside a reflex corner it is
 the corner. Nothing is normalised, so no input gives a NaN; a centre exactly on an edge is not
 inside and is left alone; edges equally near (a centre at a box's middle) go to the first in
-ring order. A rect is this four-point case: the nearest face, the same push the old
-rect-only system made (`StaticRectCollisionSystem`, which skipped polygons; deleted).
+ring order. A rect is this four-point case: the nearest face.
 
-Each agent gathers its obstacles, sorts them by position, and resolves them in that order,
-twice, so an agent wedged between two settles against both.
+Each agent gathers the obstacles whose positions are within the query reach, skips any whose
+own collider can't reach it (a squared-distance test against that def's reach at the
+instance's scale, before any ring is built), sorts the rest by position, and resolves them in
+that order, twice, so an agent wedged between two settles against both.
 
 ### What a polygon must be
 
 The nav mesh takes a simple closed ring: no crossing edges, no repeated closing point, area,
 and no zero-length edge (it asserts on one). It normalises winding itself. The registry checks
 each polygon as it admits a def's shapes (`AssetRegistry::admitCollisionShapes`) at the def's
-smallest placement scale: at least 3 points, consecutive points and non-adjacent edges at least
-2 mm apart (so a rotated instance, each point rounded to the mm, keeps them distinct and
-uncrossed), simple, with area. One that fails is an error in the validation report naming the
-def (field `collision`, shown in the asset manager), is logged, and is dropped: the def blocks
-nothing rather than handing the mesh a ring it can't cut. A clockwise polygon is fine and is
-stored counter-clockwise.
+smallest placement scale: at least 3 points, simple, with area, and consecutive points and
+non-adjacent edges at least 3 mm apart, measured on the points rounded to the mm. Rounding
+moves a point at most 0.71 mm, so that is over 1.58 mm as authored, and a rotated instance,
+each point rounded to the mm again, keeps its points distinct and its edges uncrossed. One that
+fails is one error per def in the validation report (field `collision`, the first failing age
+class named when a def has several), is logged, and is dropped rather than handed to the mesh.
+In the game an error stops startup: the loading scene fails on any validation error and goes
+back to the splash, so a bad polygon never reaches a running world. The drop matters only
+where loading carries on past errors: the asset manager, asset-cli, and tests. A clockwise
+polygon is fine and is stored counter-clockwise.
 
 ## Tooling
 

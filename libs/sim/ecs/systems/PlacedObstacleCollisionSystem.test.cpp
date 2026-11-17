@@ -55,6 +55,9 @@ namespace {
 	// The pad nav puts round a Rect collider, in metres.
 	constexpr float kPadMeters = static_cast<float>(nav::kPlacedObstaclePadMm) / 1000.0F;
 
+	// How far past the boundary a push lands: far enough that its mm rounding is outside.
+	constexpr float kLandingMeters = 1.5e-3F;
+
 	geometry::Ring ringMm(std::initializer_list<glm::vec2> points) {
 		geometry::Ring ring;
 		for (const glm::vec2 point : points) {
@@ -130,7 +133,7 @@ TEST(PlacedObstacleResolveTest, OutsideReturnsNullopt) {
 TEST(PlacedObstacleResolveTest, JustInsidePlusXPushedToBoundary) {
 	const std::optional<glm::vec2> corrected = resolveCenterAgainstOutline({0.34F, 0.0F}, boxMm({0.0F, 0.0F}, {0.35F, 0.35F}));
 	ASSERT_TRUE(corrected.has_value());
-	EXPECT_FLOAT_EQ(corrected->x, 0.35F);
+	EXPECT_NEAR(corrected->x, 0.35F, kLandingMeters);
 	EXPECT_FLOAT_EQ(corrected->y, 0.0F);
 }
 
@@ -138,7 +141,7 @@ TEST(PlacedObstacleResolveTest, JustInsidePlusXPushedToBoundary) {
 TEST(PlacedObstacleResolveTest, DeepInsidePushedNearestFace) {
 	const std::optional<glm::vec2> corrected = resolveCenterAgainstOutline({0.2F, 0.05F}, boxMm({0.0F, 0.0F}, {0.35F, 0.35F}));
 	ASSERT_TRUE(corrected.has_value());
-	EXPECT_FLOAT_EQ(corrected->x, 0.35F);
+	EXPECT_NEAR(corrected->x, 0.35F, kLandingMeters);
 	EXPECT_FLOAT_EQ(corrected->y, 0.05F);
 }
 
@@ -168,13 +171,13 @@ TEST(PlacedObstacleResolveTest, ConcaveNotchPushesIntoTheNotchAndOntoTheCorner) 
 
 	const std::optional<glm::vec2> beside = resolveCenterAgainstOutline({0.6F, 0.05F}, notched);
 	ASSERT_TRUE(beside.has_value());
-	EXPECT_FLOAT_EQ(beside->x, 0.5F);
+	EXPECT_NEAR(beside->x, 0.5F, kLandingMeters);
 	EXPECT_FLOAT_EQ(beside->y, 0.05F);
 
 	const std::optional<glm::vec2> nearCorner = resolveCenterAgainstOutline({0.53F, -0.03F}, notched);
 	ASSERT_TRUE(nearCorner.has_value());
-	EXPECT_FLOAT_EQ(nearCorner->x, 0.5F);
-	EXPECT_FLOAT_EQ(nearCorner->y, 0.0F);
+	EXPECT_NEAR(nearCorner->x, 0.5F, kLandingMeters);
+	EXPECT_NEAR(nearCorner->y, 0.0F, kLandingMeters);
 }
 
 // A center exactly on an edge, or on a corner, is not inside: no push and no NaN.
@@ -192,12 +195,64 @@ TEST(PlacedObstacleResolveTest, CenterAtTheCentroidResolvesDeterministically) {
 	const std::optional<glm::vec2> corrected = resolveCenterAgainstOutline({0.0F, 0.0F}, wide);
 	ASSERT_TRUE(corrected.has_value());
 	EXPECT_FLOAT_EQ(corrected->x, 0.0F);
-	EXPECT_FLOAT_EQ(std::abs(corrected->y), 0.25F);
+	EXPECT_NEAR(std::abs(corrected->y), 0.25F, kLandingMeters);
 	EXPECT_EQ(resolveCenterAgainstOutline({0.0F, 0.0F}, wide), corrected);
 
 	const std::optional<glm::vec2> square = resolveCenterAgainstOutline({0.0F, 0.0F}, boxMm({0.0F, 0.0F}, {0.3F, 0.3F}));
 	ASSERT_TRUE(square.has_value());
-	EXPECT_NEAR(glm::length(*square), 0.3F, 1e-6F);
+	EXPECT_NEAR(glm::length(*square), 0.3F, kLandingMeters);
+}
+
+// A push lands where the next tick, rounding the stored position to the mm as nav does, finds it
+// strictly outside, so it is never pushed again and the forward snap never takes it for standing in
+// the obstacle. Checked on slanted edges, where the nearest boundary point is off the mm lattice: a
+// turned, scaled, notched polygon and a turned rect, with centres a fifth of a mm to 5 mm in from
+// every edge along its length, and in from every corner.
+TEST(PlacedObstacleResolveTest, PushLandsStrictlyOutsideAfterRounding) {
+	const auto worldRing = [](const std::vector<glm::vec2>& local, glm::vec2 at, float rotation, float scale) {
+		const assets::InstanceTransform transform(at, rotation, scale);
+		geometry::Ring					ring;
+		for (const glm::vec2 point : local) {
+			ring.push_back(nav::toMm(transform.toWorld(point)));
+		}
+		geometry::ensureCounterClockwise(ring);
+		return ring;
+	};
+	const std::vector<geometry::Ring> rings{
+		worldRing(kNotchedPoints, {123.4F, -56.7F}, 0.6F, 1.5F),
+		worldRing({{-0.35F, -0.2F}, {0.35F, -0.2F}, {0.35F, 0.2F}, {-0.35F, 0.2F}}, {10.3F, 7.9F}, 0.4F, 0.9F),
+	};
+
+	int pushed = 0;
+	for (const geometry::Ring& ring : rings) {
+		const std::size_t count = ring.size();
+		std::vector<glm::vec2> starts;
+		for (std::size_t i = 0; i < count; ++i) {
+			const glm::vec2 from	= nav::toMeters(ring[i]);
+			const glm::vec2 to		= nav::toMeters(ring[(i + 1) % count]);
+			const glm::vec2 along	= glm::normalize(to - from);
+			const glm::vec2 inward{-along.y, along.x}; // left of a counter-clockwise edge
+			for (const float t : {0.05F, 0.2F, 0.37F, 0.5F, 0.63F, 0.8F, 0.95F}) {
+				for (const float depth : {0.0002F, 0.0007F, 0.0013F, 0.005F}) {
+					starts.push_back(from + (to - from) * t + inward * depth);
+				}
+			}
+			const glm::vec2 previous = nav::toMeters(ring[(i + count - 1) % count]);
+			const glm::vec2 bisector = glm::normalize(glm::normalize(previous - from) + along);
+			starts.push_back(from + bisector * 0.002F);
+		}
+		for (const glm::vec2 start : starts) {
+			const std::optional<glm::vec2> landing = resolveCenterAgainstOutline(start, ring);
+			if (!landing.has_value()) {
+				continue;
+			}
+			++pushed;
+			EXPECT_EQ(geometry::pointInPolygon(nav::toMm(*landing), ring), geometry::PointInPolygon::Outside) << start.x << "," << start.y;
+			EXPECT_FALSE(resolveCenterAgainstOutline(*landing, ring).has_value()) << start.x << "," << start.y;
+			EXPECT_LE(distanceToRingMm(*landing, ring), 2.0) << start.x << "," << start.y;
+		}
+	}
+	EXPECT_GT(pushed, 150) << "most starts should have been inside";
 }
 
 // --- System integration ----------------------------------------------------
@@ -263,8 +318,8 @@ TEST_F(PlacedObstacleCollisionSystemTest, UnwiredUpdateIsNoOp) {
 	EXPECT_FLOAT_EQ(pos->value.y, start.y);
 }
 
-// A blocking flora rect: an agent whose CENTER is inside it is pushed out past the
-// 0.05 m inflated boundary; an agent far away is untouched.
+// A rect collider: an agent whose CENTER is inside the rect padded by 0.05 m is pushed out
+// to that padded boundary; an agent far away is untouched.
 TEST_F(PlacedObstacleCollisionSystemTest, AgentInsideRectIsPushedOut) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
@@ -445,7 +500,7 @@ TEST_F(PlacedObstacleCollisionSystemTest, NonUnitScaleRegressionJustOutside) {
 	wire(worldB, executor).update(0.0F);
 	auto* posB = worldB.getComponent<Position>(agentB);
 	ASSERT_NE(posB, nullptr);
-	EXPECT_NEAR(posB->value.x, treeAt.x + boundary, 1e-4F) << "agent inside boundary not pushed to correct boundary (scale-0.8 bug)";
+	EXPECT_NEAR(posB->value.x, treeAt.x + boundary, kLandingMeters) << "agent inside boundary not pushed to correct boundary (scale-0.8 bug)";
 	EXPECT_NEAR(posB->value.y, treeAt.y, 1e-4F);
 }
 
@@ -531,8 +586,8 @@ TEST_F(PlacedObstacleCollisionSystemTest, TurnedScaledConcavePolygonPushesOut) {
 
 	const glm::vec2 expected = transform.toWorld({0.5F, 0.05F});
 	const glm::vec2 end		 = world.getComponent<Position>(agent)->value;
-	EXPECT_NEAR(end.x, expected.x, 1.5e-3F);
-	EXPECT_NEAR(end.y, expected.y, 1.5e-3F);
+	EXPECT_NEAR(end.x, expected.x, kLandingMeters);
+	EXPECT_NEAR(end.y, expected.y, kLandingMeters);
 }
 
 // The outline collision pushes against is the ring the nav mesh cuts, point for point: the polygon's
@@ -556,7 +611,7 @@ TEST_F(PlacedObstacleCollisionSystemTest, CollisionOutlineIsTheNavRing) {
 	wire(world, executor).update(0.0F);
 	const glm::vec2 end = world.getComponent<Position>(agent)->value;
 	EXPECT_LE(distanceToRingMm(end, navRing->ring), 1.0);
-	EXPECT_LE(glm::length(end - transform.toWorld({0.5F, 0.0F})), 1.5e-3F);
+	EXPECT_LE(glm::length(end - transform.toWorld({0.5F, 0.0F})), kLandingMeters);
 }
 
 // Collision has no camera: two movers 650 m apart, each inside a tree its own disc meshed, one a
@@ -598,8 +653,8 @@ TEST_F(PlacedObstacleCollisionSystemTest, PushedOutOfAMeshedObstacleWhereverItIs
 	ASSERT_FALSE(nav.isValidPosition(farTree + glm::vec2{0.0F, 0.1F})) << "the far tree is in the mesh";
 	sys.update(0.0F);
 
-	EXPECT_NEAR(world.getComponent<Position>(mover)->value.x, nearTree.x + 0.3F + kPadMeters, 1e-4F) << "the mover wasn't pushed out";
-	EXPECT_NEAR(world.getComponent<Position>(colonist)->value.x, farTree.x + 0.3F + kPadMeters, 1e-4F)
+	EXPECT_NEAR(world.getComponent<Position>(mover)->value.x, nearTree.x + 0.3F + kPadMeters, kLandingMeters) << "the mover wasn't pushed out";
+	EXPECT_NEAR(world.getComponent<Position>(colonist)->value.x, farTree.x + 0.3F + kPadMeters, kLandingMeters)
 		<< "the colonist wasn't pushed out";
 }
 
@@ -664,7 +719,7 @@ TEST_F(PlacedObstacleCollisionSystemTest, MirroredTreeIsCollidedWith) {
 	World			world;
 	const EntityID	agent = spawnAgent(world, boxCentre + glm::vec2{0.1F, 0.0F});
 	wire(world, executor).update(0.0F);
-	EXPECT_NEAR(world.getComponent<Position>(agent)->value.x, boxCentre.x + 0.3F + kPadMeters, 1e-4F)
+	EXPECT_NEAR(world.getComponent<Position>(agent)->value.x, boxCentre.x + 0.3F + kPadMeters, kLandingMeters)
 		<< "the mirrored tree was not collided with";
 }
 
@@ -698,7 +753,7 @@ TEST_F(PlacedObstacleCollisionSystemTest, ColliderFarFromItsPositionIsFound) {
 	wire(world, executor).update(0.0F);
 
 	EXPECT_NEAR(
-		world.getComponent<Position>(onDrawing)->value.x, boxCentre.x + kFarColliderHalfExtent + kPadMeters, 1e-4F
+		world.getComponent<Position>(onDrawing)->value.x, boxCentre.x + kFarColliderHalfExtent + kPadMeters, kLandingMeters
 	) << "the far collider was not found";
 	EXPECT_FLOAT_EQ(world.getComponent<Position>(onPosition)->value.x, atOrigin.x);
 	EXPECT_FLOAT_EQ(world.getComponent<Position>(onPosition)->value.y, atOrigin.y);
