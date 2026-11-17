@@ -4,8 +4,8 @@
 // still running marked as held. ThoughtSystem is the only writer.
 // See /docs/design/game-systems/colonists/thoughts.md.
 
+#include "../ClockTime.h"
 #include "../EntityID.h"
-#include "../systems/TimeSystem.h"
 
 #include <assets/ThoughtConfig.h>
 

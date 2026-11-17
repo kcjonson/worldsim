@@ -2,8 +2,10 @@
 
 #include <ecs/World.h>
 #include <ecs/systems/ThoughtSystem.h>
+#include <ecs/systems/TimeSystem.h>
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <format>
 
@@ -126,14 +128,31 @@ namespace world_sim {
 		if (thoughts == nullptr) {
 			return breakdown;
 		}
-		breakdown.thoughts.reserve(mood.thoughtContributions.size());
+		struct HeldRow {
+			const ecs::Thought* thought;
+			float				amount;
+		};
+		std::vector<HeldRow> held;
+		held.reserve(mood.thoughtContributions.size());
 		for (const ecs::MoodThoughtContribution& contribution : mood.thoughtContributions) {
-			const ecs::Thought& thought = *ecs::findThought(*thoughts, contribution.thought);
+			const ecs::Thought* thought = ecs::findThought(*thoughts, contribution.thought);
+			assert(thought != nullptr && thought->moodEffect.has_value() && "a mood contribution names a held thought of this record");
+			held.push_back({.thought = thought, .amount = contribution.amount});
+		}
+		std::ranges::sort(held, [](const HeldRow& left, const HeldRow& right) {
+			if (std::abs(left.amount) != std::abs(right.amount)) {
+				return std::abs(left.amount) > std::abs(right.amount);
+			}
+			return arrivedLater(left.thought, right.thought);
+		});
+		breakdown.thoughts.reserve(held.size());
+		for (const HeldRow& row : held) {
+			const ecs::Thought& thought = *row.thought;
 			const bool			timed = thought.moodEffect->lasts == ecs::MoodEffectLasts::ForDuration;
 			breakdown.thoughts.push_back({
 				.id = thought.id,
 				.label = thoughtEventText(types, thought),
-				.amount = moodAmountText(contribution.amount),
+				.amount = moodAmountText(row.amount),
 				.left = timed ? timeLeftText((thought.expiresAt - simulationSeconds) / ecs::kSimulationSecondsPerGameHour)
 							  : effectLength(types, thought),
 			});
@@ -141,11 +160,17 @@ namespace world_sim {
 		return breakdown;
 	}
 
-	bool ThoughtLogModel::refresh(const ecs::World& world, ecs::EntityID colonist) {
-		if (shown.has_value() && shown->colonist != colonist) {
-			limit = kThoughtLogPage;
-			cache.clear();
+	void ThoughtLogModel::select(ecs::EntityID colonist) {
+		if (selected == colonist) {
+			return;
 		}
+		selected = colonist;
+		limit = kThoughtLogPage;
+		cache.clear();
+	}
+
+	bool ThoughtLogModel::refresh(const ecs::World& world, ecs::EntityID colonist) {
+		select(colonist);
 		const ecs::Thoughts* thoughts = world.getComponent<ecs::Thoughts>(colonist);
 		const Signature		 signature{.colonist = colonist, .revision = thoughts != nullptr ? thoughts->revision : 0, .filter = filter, .limit = limit};
 		if (shown == signature) {

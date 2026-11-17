@@ -323,11 +323,13 @@ namespace world_sim {
 				applyContent(model.content(), false);
 				break;
 		}
-		// The log is built only while its tab is the one shown.
-		if (const auto* colonist = std::get_if<ColonistSelection>(&selection);
-			colonist != nullptr && logBody.get()->isVisible() && world.isAlive(colonist->entityId)) {
-			thoughtLog.refresh(world, colonist->entityId);
-			logList.get()->show(thoughtLog);
+		if (const auto* colonist = std::get_if<ColonistSelection>(&selection); colonist != nullptr) {
+			thoughtLog.select(colonist->entityId);
+			// The log is built only while its tab is the one shown.
+			if (logBody.get()->isVisible() && world.isAlive(colonist->entityId)) {
+				thoughtLog.refresh(world, colonist->entityId);
+				logList.get()->show(thoughtLog);
+			}
 		}
 	}
 

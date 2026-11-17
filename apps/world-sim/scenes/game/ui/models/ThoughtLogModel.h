@@ -7,11 +7,11 @@
 // the held thoughts MoodSystem summed into the mood target, from the same contributions.
 // See /docs/design/game-systems/colonists/thoughts.md (Where it shows in the UI).
 
+#include <ecs/ClockTime.h>
 #include <ecs/EntityID.h>
 #include <ecs/ThoughtTypes.h>
 #include <ecs/components/Mood.h>
 #include <ecs/components/Thoughts.h>
-#include <ecs/systems/TimeSystem.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -92,7 +92,11 @@ namespace world_sim {
 	/// record's revision, the filter or the page count changes, and then only the entries whose text moved.
 	class ThoughtLogModel {
 	  public:
-		/// True on the first build and when the entries changed since. Another colonist starts again at one page.
+		/// Another colonist starts again at one page. refresh does this too; a view calls it on its own when the
+		/// selection changes while the log is not being built.
+		void select(ecs::EntityID colonist);
+
+		/// True on the first build and when the entries changed since.
 		bool refresh(const ecs::World& world, ecs::EntityID colonist);
 
 		void setFilter(ThoughtLogFilter newFilter) { filter = newFilter; }
@@ -136,6 +140,7 @@ namespace world_sim {
 
 		ThoughtLogFilter							   filter = ThoughtLogFilter::Notable;
 		std::size_t									   limit = kThoughtLogPage;
+		ecs::EntityID								   selected{ecs::kInvalidEntity};
 		std::optional<Signature>					   shown;
 		std::vector<ThoughtLogEntry>				   logEntries;
 		std::unordered_map<ecs::ThoughtId, CachedEntry> cache;

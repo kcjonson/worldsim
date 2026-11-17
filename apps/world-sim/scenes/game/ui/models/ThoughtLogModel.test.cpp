@@ -154,11 +154,18 @@ namespace world_sim {
 
 	TEST_F(ThoughtLogModelTest, ShowsAPageAtATimeAndStartsAgainForAnotherColonist) {
 		const std::size_t kThoughts = (2 * kThoughtLogPage) + 7;
-		for (std::size_t index = 0; index < kThoughts; ++index) {
+		for (std::size_t index = 0; index < kThoughtLogPage; ++index) {
 			give("saw_the_sea");
 		}
 		ThoughtLogModel model;
 		model.refresh(world, colonist);
+		EXPECT_EQ(model.entries().size(), kThoughtLogPage);
+		EXPECT_FALSE(model.hasOlder()) << "exactly a page has nothing older";
+
+		for (std::size_t index = kThoughtLogPage; index < kThoughts; ++index) {
+			give("saw_the_sea");
+		}
+		ASSERT_TRUE(model.refresh(world, colonist));
 		EXPECT_EQ(model.entries().size(), kThoughtLogPage);
 		EXPECT_TRUE(model.hasOlder());
 		EXPECT_EQ(model.entries().front().id, kThoughts) << "the newest first";
@@ -179,6 +186,35 @@ namespace world_sim {
 		ASSERT_TRUE(model.refresh(world, other));
 		EXPECT_EQ(model.entries().size(), kThoughtLogPage);
 		EXPECT_TRUE(model.hasOlder());
+
+		model.showOlder();
+		model.select(colonist);
+		model.select(other);
+		model.refresh(world, other);
+		EXPECT_EQ(model.entries().size(), kThoughtLogPage) << "a selection change resets the page without a refresh in between";
+	}
+
+	TEST_F(ThoughtLogModelTest, TheNewestArrivalIsFirstAndEqualTimesGoByHigherId) {
+		give("slept_on_ground");
+		advanceMinutes(10.0F);
+		give("saw_the_sea");
+		advanceMinutes(10.0F);
+		give("saw_the_sea");
+		give("saw_the_sea");
+		ThoughtLogModel model;
+		model.refresh(world, colonist);
+		ASSERT_EQ(model.entries().size(), 4U);
+		EXPECT_EQ(model.entries()[0].id, 4U);
+		EXPECT_EQ(model.entries()[1].id, 3U) << "the same minute, the higher id first";
+		EXPECT_EQ(model.entries()[2].id, 2U);
+		EXPECT_EQ(model.entries()[3].id, 1U);
+
+		advanceMinutes(10.0F);
+		give("slept_on_ground");
+		ASSERT_TRUE(model.refresh(world, colonist));
+		ASSERT_EQ(model.entries().size(), 4U);
+		EXPECT_EQ(model.entries()[0].id, 1U) << "a repeat folded into an older thought moves it ahead of newer ones";
+		EXPECT_EQ(model.entries()[1].id, 4U);
 	}
 
 	TEST_F(ThoughtLogModelTest, TheLogIsBuiltAgainOnlyWhenTheRecordChanges) {
@@ -236,10 +272,10 @@ namespace world_sim {
 		EXPECT_EQ(
 			breakdown.thoughts[0], (MoodThoughtRow{.id = 1, .label = "Slept on the ground", .amount = "-10", .left = "22 hours left"})
 		);
-		EXPECT_EQ(breakdown.thoughts[1], (MoodThoughtRow{.id = 2, .label = "Soaked", .amount = "-6", .left = "while soaked"}));
-		EXPECT_EQ(breakdown.thoughts[2].label, "Bottled up x3");
-		EXPECT_EQ(breakdown.thoughts[2].amount, "-6");
-		EXPECT_EQ(breakdown.thoughts[2].left, "24 hours left");
+		EXPECT_EQ(breakdown.thoughts[1].label, "Bottled up x3") << "the amounts tie, the newest arrival first";
+		EXPECT_EQ(breakdown.thoughts[1].amount, "-6");
+		EXPECT_EQ(breakdown.thoughts[1].left, "24 hours left");
+		EXPECT_EQ(breakdown.thoughts[2], (MoodThoughtRow{.id = 2, .label = "Soaked", .amount = "-6", .left = "while soaked"}));
 		// 100 - 12 - 10 - 6 - 6
 		EXPECT_EQ(breakdown.target, "66%");
 		EXPECT_EQ(breakdown.clampedFrom, "");

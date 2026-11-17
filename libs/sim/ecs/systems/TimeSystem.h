@@ -10,6 +10,7 @@
 // Other systems should call effectiveTimeScale() to get
 // speed-adjusted dt rather than using raw deltaTime.
 
+#include "../ClockTime.h"
 #include "../ISystem.h"
 
 namespace ecs {
@@ -35,14 +36,6 @@ enum class Season {
 
 /// One game minute on the day clock is one TimeSystem::simulationSeconds() unit.
 inline constexpr double kSimulationSecondsPerGameHour = 60.0;
-
-/// A moment on the day clock, to the minute.
-struct ClockTime {
-	int day = 1;
-	int minuteOfDay = 0;
-
-	bool operator==(const ClockTime& other) const = default;
-};
 
 /// Game time state snapshot (for UI/serialization)
 struct GameTimeSnapshot {
