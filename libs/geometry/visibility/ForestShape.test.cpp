@@ -404,6 +404,65 @@ TEST(ForestShape, ConvexAndHoldsTheFloor) {
 	}
 }
 
+// The point test (one squared-length accept, a binary search by angle, and the sides within the
+// window) gives what testing all 64 half-planes gives: on a dense ring of points through each stand's
+// rim band, and on the integer points either side of each side's edge and nearest it (exactly on it
+// where one is an integer point), with equal ranges, random stands, and a lone deep dip beside full
+// ranges.
+TEST(ForestShape, PointTestAgreesWithEveryHalfPlane) {
+	const auto everySide = [](const geometry::ForestHalfPlanes& halfPlanes, const Vec2i64& offset) {
+		for (std::size_t side = 0; side < kSightSides; ++side) {
+			const auto& [normalX, normalY] = geometry::kSightSideNormals[side];
+			if (offset.x * normalX + offset.y * normalY > halfPlanes.offsets[side]) {
+				return false;
+			}
+		}
+		return true;
+	};
+	std::mt19937				 rng(20261117);
+	std::vector<SightSideValues> rangeSets = {equalRanges(kSightMm), equalRanges(32200)};
+	SightSideValues				 dip = equalRanges(kSightMm);
+	dip[10]							 = geometry::kForestShapeLeastRangeMm;
+	rangeSets.push_back(dip);
+	for (int stand = 0; stand < 12; ++stand) {
+		const Vec2i64 eye{static_cast<std::int64_t>(rng() % 200000), static_cast<std::int64_t>(rng() % 200000)};
+		rangeSets.push_back(geometry::forestRanges(eye, kSightMm, kSightMm, randomStand(rng, eye), ForestTunables{}));
+	}
+	const Vec2i64 point{-31000, 47000};
+	for (const SightSideValues& ranges : rangeSets) {
+		const geometry::ForestHalfPlanes halfPlanes = geometry::forestHalfPlanes(ranges);
+		const std::int64_t least = *std::min_element(ranges.begin(), ranges.end());
+		const std::int64_t most	 = *std::max_element(ranges.begin(), ranges.end());
+		for (int turn = 0; turn < 1024; ++turn) {
+			const double angle = 2.0 * kPi * turn / 1024.0;
+			for (std::int64_t radius = least - 400; radius <= most + 400; radius += 53) {
+				const Vec2i64 offset{std::llround(radius * std::cos(angle)), std::llround(radius * std::sin(angle))};
+				ASSERT_EQ(geometry::insideForestHalfPlanes(point, halfPlanes, point + offset), everySide(halfPlanes, offset))
+					<< offset.x << ", " << offset.y;
+			}
+		}
+		for (std::size_t side = 0; side < kSightSides; ++side) {
+			const auto& [normalX, normalY] = geometry::kSightSideNormals[side];
+			const std::int64_t offsetMm	   = halfPlanes.offsets[side];
+			const double	   lengthSquared = static_cast<double>(normalX) * normalX + static_cast<double>(normalY) * normalY;
+			const bool		   steep		 = std::abs(normalY) >= std::abs(normalX);
+			// Along the edge near the normal's foot, the integer points nearest it on either side.
+			const std::int64_t footAlong = std::llround(static_cast<double>(offsetMm) * (steep ? normalX : normalY) / lengthSquared);
+			const std::int64_t across	 = steep ? normalY : normalX;
+			const std::int64_t along	 = steep ? normalX : normalY;
+			for (std::int64_t step = footAlong - 2000; step <= footAlong + 2000; ++step) {
+				const std::int64_t rest	 = offsetMm - step * along;
+				const std::int64_t below = rest / across - (rest % across != 0 && ((rest < 0) != (across < 0)) ? 1 : 0);
+				for (std::int64_t other = below - 1; other <= below + 1; ++other) {
+					const Vec2i64 offset = steep ? Vec2i64{step, other} : Vec2i64{other, step};
+					ASSERT_EQ(geometry::insideForestHalfPlanes(point, halfPlanes, point + offset), everySide(halfPlanes, offset))
+						<< "side " << side << " at " << offset.x << ", " << offset.y;
+				}
+			}
+		}
+	}
+}
+
 // At the edges of each tunable's range forest depth gives positive ranges at or above the floor and
 // a shape that matches the exact intersection; a slope of 0 gives every side the least capped depth,
 // round the wrap.

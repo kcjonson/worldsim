@@ -293,6 +293,9 @@ class VisionSystem : public ISystem {
 	// The game time movers seen this pass are stamped with, read from the clock at the first such sighting.
 	std::optional<double> m_sightingTime;
 
+	// The forest clip's failure is logged once.
+	bool clipFailureLogged = false;
+
 	// Test-only diagnostic: incremented on each actual polygon (re)build.
 	uint64_t m_polygonBuildCount = 0;
 	uint64_t builds = 0;

@@ -51,8 +51,10 @@ namespace ecs {
 		// forest shape of his sight placed where he stands (sight-softening.md 5.2).
 		[[nodiscard]] bool isVisible(glm::vec2 meters) const;
 		// The ground drawn bright for `colonist` this frame (player-visibility.md 3.4), in millimetres:
-		// the sight polygon of vision::drawnVisibleRadiusMm round where he stands, and with walls in
-		// sight vision's polygon cut to it. Outdoors it lies in his open leg; with walls in sight it can
+		// the sight polygon of vision::drawnVisibleRadiusMm round where he stands cut by the forest shape
+		// of his sight placed there, every range drawn in as far as that radius, and with walls or an
+		// opaque body in sight vision's polygon cut to both (sight-softening.md 6.3, without the ease).
+		// Outdoors it lies in his open leg; with walls in sight it can
 		// reach up to a rebuild step past seen ground ahead of him, where the cover's unseen fill hides
 		// it. None when his sight is too small to hold a leg, or walls are in sight and a jump dropped
 		// his polygon (until vision builds the next).

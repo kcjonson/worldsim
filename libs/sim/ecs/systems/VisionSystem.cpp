@@ -270,10 +270,13 @@ namespace ecs {
 			if (!due && !entry.hasPolygon) {
 				due = m_geometry.anyBodyWithin(observerMm, reachMm);
 			}
-			// A body recorded at the build while still arriving rebuilds each pass the clock runs, until
-			// the build that records it whole.
-			due = due || (clockRuns && std::ranges::any_of(entry.bodies, [](const vision::SightBody& body) {
-							  return body.arrival < geometry::kFractionOne;
+			// A ring in sight of the build, so one that adds forest depth, recorded while still arriving
+			// rebuilds each pass the clock runs, until the build that records it whole. One between sight
+			// and reach weighs nothing and waits for a step.
+			const geometry::Int128 sightSquared = geometry::Int128::product(radiusMm, radiusMm);
+			due = due || (clockRuns && std::ranges::any_of(entry.bodies, [&](const vision::SightBody& body) {
+							  const geometry::Vec2i64 offset = body.centre - entry.builtMm;
+							  return body.arrival < geometry::kFractionOne && geometry::dot(offset, offset) < sightSquared;
 						  }));
 			if (!due && placed != nullptr) {
 				// He is within the rebuild step of the build, so a step more holds every ring in his reach.
@@ -375,14 +378,26 @@ namespace ecs {
 					// The hard polygon the opaque bodies leave, its shadow edges tagged before the forest
 					// shape of his reach cuts it (3.1, 5.1).
 					const bool backFacesHidden = opaqueOccluders(observerMm, reachMm, placedScratch, occluderScratch);
-					const geometry::Ring hard = geometry::computeVisibilityPolygon(observerMm, reachMm, occluderScratch);
-					const std::vector<vision::ShadowEdge> tagged = vision::tagShadowEdges(hard, observerMm, entry.bodies);
+					geometry::Ring hard = geometry::computeVisibilityPolygon(observerMm, reachMm, occluderScratch);
+					std::vector<vision::ShadowEdge> tagged = vision::tagShadowEdges(hard, observerMm, entry.bodies);
 					if (forestTaken) {
-						entry.polygon	  = geometry::starClippedToConvex(hard, observerMm, geometry::forestShape(observerMm, rangesFrom(reachMm, depthMm)));
-						entry.shadowEdges = vision::shadowEdgesKeptByClip(tagged, entry.polygon, entry.bodies);
+						vision::ForestCut cut = vision::cutByForest(
+							hard, observerMm, geometry::forestShape(observerMm, rangesFrom(reachMm, depthMm)), std::move(tagged), entry.bodies
+						);
+						if (!cut.cut && !clipFailureLogged) {
+							clipFailureLogged = true;
+							LOG_WARNING(
+								Engine,
+								"Vision: the forest clip could not cut the hard polygon at (%lld, %lld) mm; it serves uncut",
+								static_cast<long long>(observerMm.x),
+								static_cast<long long>(observerMm.y)
+							);
+						}
+						entry.polygon	  = std::move(cut.polygon);
+						entry.shadowEdges = std::move(cut.shadowEdges);
 					} else {
-						entry.polygon	  = hard;
-						entry.shadowEdges = tagged;
+						entry.polygon	  = std::move(hard);
+						entry.shadowEdges = std::move(tagged);
 					}
 					entry.hasPolygon = true;
 					++entry.polygonRevision;

@@ -366,15 +366,33 @@ namespace ecs {
 		if (sightMm - vision::kSeenSlackMm < vision::kSeenLeastRadiusMm) {
 			return std::nullopt;
 		}
-		std::vector<Vec2i64> disc = geometry::sightPolygon(nav::toMm(position->value), vision::drawnVisibleRadiusMm(sightMm));
+		const Vec2i64		 standing = nav::toMm(position->value);
+		const std::int64_t	 drawnMm  = vision::drawnVisibleRadiusMm(sightMm);
+		std::vector<Vec2i64> disc	  = geometry::sightPolygon(standing, drawnMm);
+		// The forest shape of his sight placed where he stands, every range drawn in as far as the disc
+		// is (sight-softening.md 6.3, without the ease).
+		std::optional<geometry::Ring> forest;
+		if (shape->forest != nullptr) {
+			geometry::SightSideValues drawnRanges{};
+			for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
+				drawnRanges[side] = std::max(geometry::kForestShapeLeastRangeMm, (*shape->ranges)[side] - (sightMm - drawnMm));
+			}
+			forest = geometry::forestShape(standing, drawnRanges);
+		}
+		std::vector<Vec2i64> cut;
 		if (shape->polygon == nullptr) {
-			return disc;
+			cut = forest.has_value() ? geometry::starClippedToConvex(disc, standing, *forest) : std::move(disc);
+		} else {
+			const auto observer = observers.find(colonist);
+			if (observer == observers.end() || !observer->second.wallSight || observer->second.polygonRevision != shape->polygonRevision) {
+				return std::nullopt;
+			}
+			const Vec2i64 build = nav::toMm(shape->center);
+			cut					= geometry::starClippedToConvex(*shape->polygon, build, disc);
+			if (forest.has_value() && !cut.empty()) {
+				cut = geometry::starClippedToConvex(cut, build, *forest);
+			}
 		}
-		const auto observer = observers.find(colonist);
-		if (observer == observers.end() || !observer->second.wallSight || observer->second.polygonRevision != shape->polygonRevision) {
-			return std::nullopt;
-		}
-		std::vector<Vec2i64> cut = geometry::starClippedToConvex(*shape->polygon, nav::toMm(shape->center), disc);
 		if (cut.empty()) {
 			return std::nullopt;
 		}

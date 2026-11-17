@@ -1,5 +1,7 @@
 #include "SightBody.h"
 
+#include <visibility/SightClip.h>
+
 #include <glm/geometric.hpp>
 
 #include <algorithm>
@@ -146,6 +148,21 @@ namespace vision {
 			}
 		}
 		return kept;
+	}
+
+	ForestCut cutByForest(
+		const geometry::Ring&	   hard,
+		const geometry::Vec2i64&   eye,
+		const geometry::Ring&	   forest,
+		std::vector<ShadowEdge>	   tagged,
+		std::span<const SightBody> bodies
+	) {
+		geometry::Ring clipped = geometry::starClippedToConvex(hard, eye, forest);
+		if (clipped.empty()) {
+			return ForestCut{.polygon = hard, .shadowEdges = std::move(tagged), .cut = false};
+		}
+		std::vector<ShadowEdge> kept = shadowEdgesKeptByClip(tagged, clipped, bodies);
+		return ForestCut{.polygon = std::move(clipped), .shadowEdges = std::move(kept), .cut = true};
 	}
 
 	std::optional<Silhouette> silhouetteFrom(const SightBody& body, glm::dvec2 eyeMm) {

@@ -2,6 +2,8 @@
 #include "SightBody.h"
 #include "SightTunables.h"
 
+#include <visibility/ForestShape.h>
+#include <visibility/SightClip.h>
 #include <visibility/Visibility.h>
 
 #include <algorithm>
@@ -110,6 +112,31 @@ TEST(SightBody, ShadowEdgesTagTheSilhouetteCorners) {
 		}
 	}
 	EXPECT_TRUE(vision::tagShadowEdges(polygon, eye, std::vector<SightBody>{bodies[1]}).empty());
+}
+
+// The polygon path's cut: a rock's shadow edges survive a forest shape that holds their corners; a
+// hard polygon with a vertex on the eye cannot be cut, and it serves as it is with every tag, so the
+// observer is never left with an empty shape.
+TEST(SightBody, ForestCutKeepsCornersInsideAndAnUncuttablePolygonServesAsItIs) {
+	const Vec2i64				 eye{0, 0};
+	const std::vector<SightBody> bodies = {placedBody(rectangle({5000, -500}, {6000, 500}), BodyKind::Opaque)};
+	std::vector<geometry::OccluderSegment> occluders = bodies[0].edges;
+	const geometry::Ring				   hard		 = geometry::computeVisibilityPolygon(eye, 30000, occluders);
+	geometry::SightSideValues			   ranges{};
+	ranges.fill(25000);
+	const geometry::Ring forest = geometry::forestShape(eye, ranges);
+	const vision::ForestCut cut = vision::cutByForest(hard, eye, forest, vision::tagShadowEdges(hard, eye, bodies), bodies);
+	EXPECT_TRUE(cut.cut);
+	EXPECT_EQ(cut.polygon, geometry::starClippedToConvex(hard, eye, forest));
+	EXPECT_EQ(cut.shadowEdges.size(), 2U) << "both corners lie inside the forest shape";
+
+	const geometry::Ring			  onEye = {eye, {20000, -10000}, {20000, 10000}, {-10000, 10000}};
+	const std::vector<vision::ShadowEdge> tags	= {{.body = 0, .corner = 1, .litTurn = 1}};
+	ASSERT_TRUE(geometry::starClippedToConvex(onEye, eye, forest).empty());
+	const vision::ForestCut uncut = vision::cutByForest(onEye, eye, forest, tags, bodies);
+	EXPECT_FALSE(uncut.cut);
+	EXPECT_EQ(uncut.polygon, onEye);
+	EXPECT_EQ(uncut.shadowEdges, tags);
 }
 
 // The index stores a ring counter-clockwise with its measures and a serial, never takes a refused
