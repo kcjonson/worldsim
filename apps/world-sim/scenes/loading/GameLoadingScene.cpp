@@ -10,6 +10,8 @@
 #include "GameStartConfig.h"
 #include "GameWorldState.h"
 #include "SceneTypes.h"
+#include "scenes/game/dev/DevJson.h"
+#include "scenes/shared/LoadFailureView.h"
 #include "scenes/shared/SalalUi.h"
 #include "scenes/shared/Starfield.h"
 #include <theme/Theme.h>
@@ -61,7 +63,7 @@ namespace {
 	namespace family = ui::tokens::font::family;
 
 	/// Loading phases
-	enum class LoadingPhase { BakingGround, PreparingPlanet, Initializing, ConfigError, LoadingChunks, PlacingEntities, Complete, Cancelling };
+	enum class LoadingPhase { BakingGround, PreparingPlanet, Initializing, Failed, LoadingChunks, PlacingEntities, Complete, Cancelling };
 
 	class GameLoadingScene : public app::Scene {
 	  public:
@@ -75,7 +77,7 @@ namespace {
 			progress = 0.0F;
 			chunksLoaded = 0;
 			chunksProcessed = 0;
-			configErrorLogged = false;
+			failureMessages.clear();
 			asyncProcessor.reset();
 
 			// Direct scene jumps (debug API, --scene=game) have no pending
@@ -94,9 +96,8 @@ namespace {
 		void update(const app::FrameContext& frame) override {
 			// Check for ESC to cancel loading or return from error
 			if (theme::key(frame.input, foundation::Key::Escape).pressed()) {
-				if (phase == LoadingPhase::ConfigError) {
-					// Config error - return to menu immediately
-					LOG_INFO(Game, "GameLoadingScene - Returning to menu from config error");
+				if (phase == LoadingPhase::Failed) {
+					LOG_INFO(Game, "GameLoadingScene - Returning to menu from a failed load");
 					owner->scenes().switchTo(world_sim::scenes::MainMenu.name);
 					return;
 				}
@@ -120,8 +121,7 @@ namespace {
 					initializeWorldSystems();
 					break;
 
-				case LoadingPhase::ConfigError:
-					handleConfigError();
+				case LoadingPhase::Failed:
 					break;
 
 				case LoadingPhase::LoadingChunks:
@@ -159,7 +159,8 @@ namespace {
 
 		std::string exportState() const override {
 			std::ostringstream oss;
-			oss << R"({"scene":"gameloading","progress":)" << progress << "}";
+			oss << R"({"scene":"gameloading","progress":)" << progress << R"(,"failed":)"
+				<< (phase == LoadingPhase::Failed ? "true" : "false") << R"(,"errors":)" << world_sim::jsonStrings(failureMessages) << "}";
 			return oss.str();
 		}
 
@@ -169,7 +170,7 @@ namespace {
 		app::App* owner = nullptr;
 
 		// In the splash's idiom, centred: a mono kicker over a display title, then the status line and
-		// its percentage over the bar.
+		// its percentage over the bar, which a failed load replaces with the failure view.
 		void build() {
 			const ui::Theme& theme = ui().getTheme();
 			const ui::Style	 mono = world_sim::text(
@@ -180,7 +181,7 @@ namespace {
 				  .tracking = tokens::letterSpacing::lsWide,
 				  .transform = Foundation::TextTransform::Uppercase}
 			 );
-			ui::Ref<ui::Component> column = root().addChild<ui::Component>({
+			column = root().addChild<ui::Component>({
 				.id = "loading",
 				.size = {ui::percent(100.0F), ui::percent(100.0F)},
 				.layout = {
@@ -214,7 +215,7 @@ namespace {
 				),
 				.text = "Making Planetfall",
 			});
-			ui::Ref<ui::Component> status = column.addChild<ui::Component>({
+			status = column.addChild<ui::Component>({
 				.id = "loading_status",
 				.size = {420.0F, ui::kAuto},
 				.layout = {.display = ui::Display::Flex, .justifyContent = ui::JustifyContent::SpaceBetween},
@@ -228,27 +229,38 @@ namespace {
 			);
 		}
 
-		// The status line, its percentage and the bar from the phase's progress; a config error turns the
-		// line red and hides the rest.
+		// The status line, its percentage and the bar from the phase's progress.
 		void showProgress() {
-			const bool		 failed = phase == LoadingPhase::ConfigError;
-			const ui::Theme& theme = ui().getTheme();
 			if (ui::Text* line = statusText.get()) {
 				if (line->getText() != statusMessage) {
 					line->setText(statusMessage);
 				}
-				ui::Style style = line->getStyle();
-				style.color = theme.get(failed ? tokens::color::statusCrit : tokens::color::text);
-				line->setStyle(style);
 			}
 			if (ui::Text* shown = percentText.get()) {
-				shown->setVisible(!failed);
 				shown->setText(std::to_string(static_cast<int>(progress * 100.0F)) + "%");
 			}
 			if (ui::ProgressBar* meter = bar.get()) {
-				meter->setVisible(!failed);
 				meter->setValue(std::clamp(progress, 0.0F, 1.0F));
 			}
+		}
+
+		// Every way a load fails ends here: the messages are logged, kept for the state view, and shown in place
+		// of the status line and the bar until Esc returns to the menu.
+		void fail(std::vector<std::string> messages) {
+			for (const std::string& message : messages) {
+				LOG_ERROR(Game, "GameLoadingScene - %s", message.c_str());
+			}
+			failureMessages = std::move(messages);
+			phase = LoadingPhase::Failed;
+			if (ui::Component* row = status.get()) {
+				row->setVisible(false);
+			}
+			if (ui::ProgressBar* meter = bar.get()) {
+				meter->setVisible(false);
+			}
+			column.addChild<world_sim::LoadFailureView>(
+				{.id = "loading_failure", .messages = failureMessages, .instruction = "Press Esc to return to the menu"}
+			);
 		}
 
 		/// Before phase 0: the ground tiles, which the splash bakes; a --scene jump skips it, so they're baked here,
@@ -262,10 +274,7 @@ namespace {
 				return;
 			}
 			if (!step.errors.empty()) {
-				for (const std::string& error : step.errors) {
-					LOG_ERROR(Game, "GameLoadingScene - %s", error.c_str());
-				}
-				phase = LoadingPhase::ConfigError;
+				fail(step.errors);
 				return;
 			}
 			phase = LoadingPhase::PreparingPlanet;
@@ -288,21 +297,17 @@ namespace {
 			if (!resolved) {
 				// Best-effort: show the primary expected path (exe-relative) so the user
 				// knows exactly what's missing, even though findResource searched several roots.
-				auto expectedPath = (Foundation::getExecutableDir() / world_sim::kQuickstartPlanetResource).string();
-				LOG_ERROR(
-					Game,
-					"No pre-generated planet found at '%s'. Cannot start game. "
-					"Bake it (target quickstart-planet) or junction planets/ from the main checkout.",
-					expectedPath.c_str()
+				const std::string expectedPath = (Foundation::getExecutableDir() / world_sim::kQuickstartPlanetResource).string();
+				fail(
+					{"No pre-generated planet found at '" + expectedPath +
+					 "'. Bake it (target quickstart-planet) or junction planets/ from the main checkout."}
 				);
-				phase = LoadingPhase::ConfigError;
 				return;
 			}
 
 			auto planet = worldgen::loadPlanet(*resolved);
 			if (!planet) {
-				LOG_ERROR(Game, "GameLoadingScene - Failed to load quickstart planet from %s", resolved->string().c_str());
-				phase = LoadingPhase::ConfigError;
+				fail({"The quickstart planet at '" + resolved->string() + "' failed to load; the log names why."});
 				return;
 			}
 
@@ -337,10 +342,7 @@ namespace {
 			configErrors.insert(configErrors.end(), colonistRules.errors.begin(), colonistRules.errors.end());
 			worldState->colonistRules = std::move(colonistRules.rules);
 			if (!configErrors.empty()) {
-				for (const auto& error : configErrors) {
-					LOG_ERROR(Game, "%s", error.c_str());
-				}
-				phase = LoadingPhase::ConfigError;
+				fail(std::move(configErrors));
 				return;
 			}
 			LOG_INFO(Game, "Configuration loaded successfully");
@@ -353,9 +355,8 @@ namespace {
 			worldState->landingLatDeg = startConfig->landingLatDeg;
 			worldState->landingLonDeg = startConfig->landingLonDeg;
 			worldState->party = std::move(startConfig->party);
-			worldState->chunkManager = std::make_unique<world::ChunkManager>(
-				std::move(sampler), assets::canopyCoverFromDefinitions(assets::AssetRegistry::Get())
-			);
+			worldState->chunkManager =
+				std::make_unique<world::ChunkManager>(std::move(sampler), assets::canopyCoverFromDefinitions(assets::AssetRegistry::Get()));
 
 			// Only load 3×3 grid (center + 8 adjacent) - chunks are large!
 			worldState->chunkManager->setLoadRadius(1);
@@ -495,22 +496,12 @@ namespace {
 
 		void updateStatusText(const std::string& text) { statusMessage = text; }
 
-		/// Handle config error state - show error and wait for ESC
-		void handleConfigError() {
-			// Only update UI once (errors are already logged by initializeWorldSystems)
-			if (!configErrorLogged) {
-				configErrorLogged = true;
-				updateStatusText("Loading failed - Press ESC to return to menu");
-			}
-			// ESC handling is done in update() before the switch
-		}
-
 		// Loading state
-		LoadingPhase phase = LoadingPhase::Initializing;
-		float		 progress = 0.0F;
-		int			 chunksLoaded = 0;
-		int			 chunksProcessed = 0;
-		bool		 configErrorLogged = false;
+		LoadingPhase			 phase = LoadingPhase::Initializing;
+		float					 progress = 0.0F;
+		int						 chunksLoaded = 0;
+		int						 chunksProcessed = 0;
+		std::vector<std::string> failureMessages; // why the load failed, once phase is Failed
 
 		// Async chunk processor (shared implementation)
 		std::unique_ptr<assets::AsyncChunkProcessor> asyncProcessor;
@@ -523,6 +514,8 @@ namespace {
 
 		// Loader status line, shown by the status text
 		std::string				 statusMessage;
+		ui::Ref<ui::Component>	 column;
+		ui::Ref<ui::Component>	 status;
 		ui::Ref<ui::Text>		 statusText;
 		ui::Ref<ui::Text>		 percentText;
 		ui::Ref<ui::ProgressBar> bar;

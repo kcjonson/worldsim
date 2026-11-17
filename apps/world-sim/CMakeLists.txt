@@ -77,6 +77,7 @@ add_library(world-sim-game STATIC
     # Scenes
     scenes/shared/GlobeView.cpp
     scenes/shared/DecorativePlanet.cpp
+    scenes/shared/LoadFailureView.cpp
     scenes/shared/SalalUi.cpp
     scenes/splash/SplashScene.cpp
     scenes/menu/MainMenuScene.cpp

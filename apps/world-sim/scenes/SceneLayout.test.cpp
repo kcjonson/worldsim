@@ -1,6 +1,7 @@
 // The main screens laid out at the window sizes and interface sizes the players have, linted clean, with a scrollbar
 // only on what is meant to scroll. The splash and the loading scene aren't here: their updates bake the ground tiles
-// and load the planet, which need the GPU and the quickstart planet. The game scene needs both too, so its HUD and
+// and load the planet, which need the GPU and the quickstart planet; the view they show a failed load in is here on
+// its own. The game scene needs both too, so its HUD and
 // dialogs are the game's GameUI over a small world of their own.
 
 #include "GameStartConfig.h"
@@ -10,6 +11,7 @@
 #include "scenes/game/world/construction/DrawingSystem.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
 #include "scenes/game/world/selection/SelectionTypes.h"
+#include "scenes/shared/LoadFailureView.h"
 
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
@@ -94,11 +96,11 @@ namespace world_sim::testing {
 
 			[[nodiscard]] const char* name() const override { return kHudScene; }
 
-			[[nodiscard]] GameUI&		  hud() { return *gameUI; }
-			[[nodiscard]] const Entities& entities() const { return spawned; }
-			[[nodiscard]] ecs::World&	  ecsWorld() { return world; }
+			[[nodiscard]] GameUI&				  hud() { return *gameUI; }
+			[[nodiscard]] const Entities&		  entities() const { return spawned; }
+			[[nodiscard]] ecs::World&			  ecsWorld() { return world; }
 			[[nodiscard]] ecs::ThoughtEventTypeId thoughtType(std::string_view name) const { return thoughtTypes.type(name); }
-			[[nodiscard]] DrawingSystem&  drawing() { return *drawingSystem; }
+			[[nodiscard]] DrawingSystem&		  drawing() { return *drawingSystem; }
 			// What the strip's tool picker asked for, in order.
 			[[nodiscard]] const std::vector<FoundationTool>& foundationToolPicks() const { return pickedFoundationTools; }
 
@@ -107,11 +109,10 @@ namespace world_sim::testing {
 				gameUI = std::make_unique<GameUI>(GameUI::Args{
 					.root = root(),
 					.traits = traits,
-					.onFoundationToolSelected =
-						[this](FoundationTool tool) {
-							pickedFoundationTools.push_back(tool);
-							drawingSystem->pickFoundationTool(tool);
-						},
+					.onFoundationToolSelected = [this](FoundationTool tool) {
+						pickedFoundationTools.push_back(tool);
+						drawingSystem->pickFoundationTool(tool);
+					},
 				});
 				drawingSystem =
 					std::make_unique<DrawingSystem>(DrawingSystem::Args{.world = &world, .camera = &camera, .navigation = nullptr});
@@ -236,6 +237,44 @@ namespace world_sim::testing {
 			std::unique_ptr<DrawingSystem>	 drawingSystem;
 			std::unique_ptr<PlacementSystem> placement;
 			std::vector<FoundationTool>		 pickedFoundationTools;
+		};
+
+		constexpr const char* kFailureScene = "load_failure";
+		constexpr std::size_t kFailureMessageCount = 12;
+
+		// The view the splash and the loading scene show a failed load in, centred as they centre it, over more
+		// messages than it shows, each long enough to wrap.
+		class FailureScene final : public app::Scene {
+		  public:
+			[[nodiscard]] const char* name() const override { return kFailureScene; }
+			void					  render(float /*alpha*/) override {}
+
+			void onEnter(app::App& /*app*/) override {
+				theme::apply(ui());
+				std::vector<std::string> messages;
+				for (std::size_t index = 0; index < kFailureMessageCount; ++index) {
+					messages.push_back(
+						std::format(
+							"[needs] assets/config/colonists/needs/needs-{}.xml: <Need name=\"Hunger\"> seek must be a number, got "
+							"\"abc\"; every threshold of a need is a number between 0 and 100, and a file with any error adds no "
+							"need, so each need it gave is missing too and named by the check that every need is given",
+							index
+						)
+					);
+				}
+				root()
+					.addChild<ui::Component>({
+						.size = {ui::percent(100.0F), ui::percent(100.0F)},
+						.layout =
+							{.display = ui::Display::Flex,
+							 .flexDirection = ui::FlexDirection::Column,
+							 .alignItems = ui::AlignItems::Center,
+							 .justifyContent = ui::JustifyContent::Center},
+					})
+					.addChild<LoadFailureView>(
+						{.id = "load_failure", .messages = std::move(messages), .instruction = "Press Esc to return to the menu"}
+					);
+			}
 		};
 
 		class SceneLayout : public SceneTest {
@@ -383,7 +422,7 @@ namespace world_sim::testing {
 
 	// A card fires the pick with its tool, and the picked card follows the tool on.
 	TEST_F(SceneLayout, ThePickerPicksItsToolAndMarksTheOneOn) {
-		HudScene& scene = openHud([](HudScene& opened) { opened.drawing().activateRectangleTool(); });
+		HudScene&  scene = openHud([](HudScene& opened) { opened.drawing().activateRectangleTool(); });
 		const auto borderOf = [this](std::string_view id) {
 			const ui::Component* card = shown(id);
 			return card != nullptr ? card->getStyle().borderWidth.value_or(0.0F) : 0.0F;
@@ -402,12 +441,13 @@ namespace world_sim::testing {
 
 	// Add and Subtract stay freeform, so the strip shows no tool picker.
 	TEST_F(SceneLayout, AFoundationEditShowsNoToolPicker) {
-		HudScene& scene = openHud();
+		HudScene&  scene = openHud();
 		const auto floor = scene.drawing().world().commitFoundation(
 			std::vector<Foundation::Vec2>{{0.0F, 0.0F}, {4.0F, 0.0F}, {4.0F, 4.0F}, {0.0F, 4.0F}}, "Wood"
 		);
 		ASSERT_TRUE(floor.ok());
-		for (const construction::FoundationEditMode mode : {construction::FoundationEditMode::Add, construction::FoundationEditMode::Subtract}) {
+		for (const construction::FoundationEditMode mode :
+			 {construction::FoundationEditMode::Add, construction::FoundationEditMode::Subtract}) {
 			scene.drawing().activateFoundationEditTool(floor.id, mode);
 			frame();
 			ASSERT_NE(shown("construction_config_strip"), nullptr);
@@ -616,6 +656,16 @@ namespace world_sim::testing {
 		EXPECT_EQ(lintEverywhere(), "");
 		EXPECT_EQ(unexpectedScrollbars({}), "");
 		EXPECT_TRUE(scene.hud().isStorageConfigVisible());
+	}
+
+	TEST_F(SceneLayout, TheLoadFailureViewShowsTheFirstMessagesWrappedAndCountsTheRest) {
+		app->scenes().add(kFailureScene, [] { return std::make_unique<FailureScene>(); });
+		go(kFailureScene);
+		EXPECT_EQ(shownCount("load_failure_message"), LoadFailureView::kShownMessages);
+		const auto* more = static_cast<const ui::Text*>(shown("load_failure_more"));
+		ASSERT_NE(more, nullptr);
+		EXPECT_EQ(more->getText(), std::format("and {} more", kFailureMessageCount - LoadFailureView::kShownMessages));
+		EXPECT_EQ(lintEverywhere(), "");
 	}
 
 	TEST_F(SceneLayout, ThePauseMenuHoldsTogether) {

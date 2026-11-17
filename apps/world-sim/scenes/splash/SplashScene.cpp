@@ -5,6 +5,8 @@
 
 #include "GameBootstrap.h"
 #include "SceneTypes.h"
+#include "scenes/game/dev/DevJson.h"
+#include "scenes/shared/LoadFailureView.h"
 #include "scenes/shared/SalalUi.h"
 #include "scenes/shared/Starfield.h"
 #include <application/App.h>
@@ -103,7 +105,8 @@ namespace {
 
 		std::string exportState() const override {
 			return R"({"scene": "splash", "loaded": )" + std::to_string(m_lastShownCount) + R"(, "failed": )" +
-				   (m_failed ? "true" : "false") + R"(, "done": )" + (m_done ? "true" : "false") + "}";
+				   (m_failed ? "true" : "false") + R"(, "done": )" + (m_done ? "true" : "false") + R"(, "errors": )" +
+				   world_sim::jsonStrings(failureMessages) + "}";
 		}
 
 		const char* name() const override { return kSceneName; }
@@ -115,19 +118,23 @@ namespace {
 			return world_sim::text(ui().getTheme(), {.family = family::mono, .size = size, .color = color});
 		}
 
-		// The identity block centred in the viewport; the error lines, the boot log and the button in a
-		// column centred at the foot; the version at the bottom right. The centre and the version take no
-		// pointer, so the foot's button sits over the full-screen centre on purpose.
+		// The identity block centred in the viewport, with a failed load's view under it; the boot log and the
+		// button in a column centred at the foot; the version at the bottom right. The centre and the version
+		// take no pointer, so the foot's button sits over the full-screen centre on purpose.
 		void build() {
 			const ui::Theme&	   theme = ui().getTheme();
 			ui::Ref<ui::Component> top = root();
 			const float			   space2 = theme.get(tokens::spacing::space2);
 
-			ui::Ref<ui::Component> centre = top.addChild<ui::Component>({
+			centre = top.addChild<ui::Component>({
 				.id = "splash_centre",
 				.size = {ui::percent(100.0F), ui::percent(100.0F)},
 				.layout =
-					{.display = ui::Display::Flex, .alignItems = ui::AlignItems::Center, .justifyContent = ui::JustifyContent::Center},
+					{.display = ui::Display::Flex,
+					 .flexDirection = ui::FlexDirection::Column,
+					 .gap = theme.get(tokens::spacing::space8),
+					 .alignItems = ui::AlignItems::Center,
+					 .justifyContent = ui::JustifyContent::Center},
 				.pointerEvents = ui::PointerEvents::None,
 			});
 			ui::Ref<ui::Component> identity = centre.addChild<ui::Component>({
@@ -182,11 +189,6 @@ namespace {
 					.position = ui::Position::Absolute,
 					.inset = {.bottom = theme.get(tokens::spacing::space12)}
 				},
-			});
-			m_errors = foot.addChild<ui::Component>({
-				.id = "splash_errors",
-				.visible = false,
-				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = 4.0F},
 			});
 			m_bootLog = foot.addChild<ui::Component>({
 				.id = "splash_bootlog",
@@ -253,9 +255,8 @@ namespace {
 				return false;
 			}
 			if (!step.errors.empty()) {
-				m_failed = true;
-				showErrorLines(step.errors);
 				LOG_ERROR(Game, "Asset validation or the ground bake failed: %zu error(s); blocking at splash", step.errors.size());
+				fail(step.errors);
 				return false;
 			}
 			if (ui::Text* stamp = groundStamp.get()) {
@@ -273,9 +274,8 @@ namespace {
 			if (errors.empty()) {
 				return true;
 			}
-			m_failed = true;
-			showErrorLines(errors);
 			LOG_ERROR(Game, "The colonist rules failed to load: %zu error(s); blocking at splash", errors.size());
+			fail(errors);
 			return false;
 		}
 
@@ -301,31 +301,32 @@ namespace {
 			}
 		}
 
-		// Up to eight error lines over the boot log; the button stays disabled.
-		void showErrorLines(const std::vector<std::string>& lines) {
-			ui::Component* errors = m_errors.get();
-			if (errors == nullptr) {
-				return;
+		// The failure view under the identity block in place of the boot log, whose room it needs on the smallest
+		// canvas; the button stays disabled.
+		void fail(const std::vector<std::string>& messages) {
+			m_failed = true;
+			failureMessages = messages;
+			if (ui::Component* bootLog = m_bootLog.get()) {
+				bootLog->setVisible(false);
 			}
-			constexpr size_t kMaxLines = 8;
-			for (size_t i = 0; i < std::min(lines.size(), kMaxLines); ++i) {
-				m_errors.addChild<ui::Text>({.style = mono(tokens::fontSize::fsXs, tokens::color::statusCrit), .text = lines[i]});
-			}
-			errors->setVisible(true);
+			centre.addChild<world_sim::LoadFailureView>(
+				{.id = "splash_failure", .messages = failureMessages, .instruction = "Fix the files named above, then restart the game"}
+			);
 		}
 
-		app::App*			   owner = nullptr;
-		float				   m_timer = 0.0F;
-		int					   m_lastShownCount = -1;
-		bool				   m_failed = false;
-		bool				   m_done = false;
-		int					   m_shownBootLines = 0;
-		float				   m_progress = 0.0F;
-		ui::Ref<ui::Component> m_bootLog;
-		ui::Ref<ui::Component> m_errors;
-		ui::Ref<ui::Text>	   groundStamp;
-		ui::Ref<ui::Text>	   groundText;
-		ui::Ref<ui::Button>	   m_enterButton;
+		app::App*				 owner = nullptr;
+		float					 m_timer = 0.0F;
+		int						 m_lastShownCount = -1;
+		bool					 m_failed = false;
+		bool					 m_done = false;
+		int						 m_shownBootLines = 0;
+		float					 m_progress = 0.0F;
+		std::vector<std::string> failureMessages; // why the load failed, once m_failed
+		ui::Ref<ui::Component>	 centre;
+		ui::Ref<ui::Component>	 m_bootLog;
+		ui::Ref<ui::Text>		 groundStamp;
+		ui::Ref<ui::Text>		 groundText;
+		ui::Ref<ui::Button>		 m_enterButton;
 	};
 
 } // namespace
