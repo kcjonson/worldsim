@@ -15,7 +15,7 @@
 // Every occluder lies on a closed loop with the solid on its left, so an eye
 // outside the solid strictly on an edge's left is behind that edge's own solid,
 // and the edge (a back face) can never bound what the eye sees. Where loops cross
-// (a rejected graph's bands, or two graphs' walls that meet without a joint) the
+// (a rejected graph's bands at its joints, or two graphs' walls that meet) the
 // back faces' ends are what turn the crossing into a polygon vertex, so the facing
 // query keeps them near such an occluder.
 //
@@ -48,8 +48,8 @@ namespace ecs {
 		struct OccluderRecord {
 			construction::SegmentId source = 0;
 			geometry::OccluderSegment		seg;
-			// It belongs to a rejected graph, or touches, crosses or runs along an occluder of
-			// another graph.
+			// It touches, crosses or runs along an occluder of another loop: another graph's, or
+			// in a rejected graph another wall's band, which overlap at every joint.
 			bool crossesAnotherLoop = false;
 		};
 

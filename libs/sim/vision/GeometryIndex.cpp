@@ -224,7 +224,7 @@ namespace ecs {
 					const geometry::WallSegment& wall = walls[index];
 					const geometry::WallBands	 rawBand{.bands = {geometry::band(wall.a, wall.b, wall.halfThicknessMm)}, .trimAtA = {0}, .trimAtB = {0}};
 					for (const geometry::OutlineEdge& edge : geometry::wallPiecesAndOutline({wall}, {sightGaps[index]}, rawBand).outline) {
-						m_occluders.push_back({wallIds[index], {edge.from, edge.to}, true}); // the raw bands overlap at every joint
+						m_occluders.push_back({wallIds[index], {edge.from, edge.to}});
 						loop.push_back(loops);
 					}
 					++loops;
