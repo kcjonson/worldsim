@@ -33,6 +33,7 @@
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/SyntheticWorldSampler.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -60,6 +61,7 @@ namespace world_sim::testing {
 		  public:
 			struct Entities {
 				ecs::EntityID colonist{0};
+				ecs::EntityID newcomer{0}; // empty-handed, remembering nothing: a shorter dossier
 				ecs::EntityID station{0};
 				ecs::EntityID box{0};
 			};
@@ -168,6 +170,12 @@ namespace world_sim::testing {
 				task.type = ecs::TaskType::Deconstruct;
 				task.buildBlueprintEntityId = static_cast<uint64_t>(worked);
 				world.addComponent<ecs::Task>(spawned.colonist, task);
+
+				spawned.newcomer = world.createEntity();
+				world.addComponent<ecs::Position>(spawned.newcomer, ecs::Position{{2.0F, 0.0F}});
+				world.addComponent<ecs::Colonist>(spawned.newcomer, ecs::Colonist{"Grace Hopper"});
+				world.addComponent<ecs::NeedsComponent>(spawned.newcomer, ecs::NeedsComponent::createDefault());
+				world.addComponent<ecs::Inventory>(spawned.newcomer, ecs::Inventory::createForColonist());
 			}
 
 			Open							 open;
@@ -352,12 +360,21 @@ namespace world_sim::testing {
 		static const std::map<std::string_view, std::string_view> kRowIds{
 			{"dossier_gear", "gear_pack_row"}, {"dossier_memory", "memory_row"}, {"dossier_tasks", "dossier_task_row"}
 		};
+		// On the reference canvas, where the cap doesn't reach it, the tallest tab fills the tab area exactly.
+		float areaInside = 0.0F;
+		float tallestTab = 0.0F;
 		for (const char* tab : kTabs) {
 			press(std::string("tab_") + tab);
 			const auto* bar = static_cast<const ui::TabBar*>(shown("dossier_tabs"));
 			ASSERT_NE(bar, nullptr);
 			ASSERT_EQ(bar->getSelectedId(), tab);
-			ASSERT_NE(shown("dossier_tab_area"), nullptr);
+			const ui::Component* area = shown("dossier_tab_area");
+			ASSERT_NE(area, nullptr);
+			ASSERT_EQ(area->getChildren().size(), 1U);
+			const ui::Component* view = app->scenes().top()->ui().find(area->getChildren().front());
+			ASSERT_NE(view, nullptr);
+			areaInside = area->getSize().y - area->getLayout().padding.vertical();
+			tallestTab = std::max(tallestTab, view->getSize().y);
 			if (const auto rows = kRowIds.find(tab); rows != kRowIds.end()) {
 				ASSERT_GT(shownCount(rows->second), 0U) << "no rows on the " << tab << " tab";
 			}
@@ -372,6 +389,7 @@ namespace world_sim::testing {
 			EXPECT_EQ(unexpectedScrollbars({tabScrolls}), "") << "on the " << tab << " tab";
 			EXPECT_TRUE(scene.hud().isColonistDetailsVisible()) << "after the sizes on the " << tab << " tab";
 		}
+		EXPECT_NEAR(areaInside, tallestTab, 1.0F) << "the tab area against its tallest tab";
 	}
 
 	// New gear under the open dossier adds rows to its Gear tab and leaves the panel as it opened.
@@ -389,6 +407,50 @@ namespace world_sim::testing {
 		EXPECT_GT(shownCount("gear_pack_row"), rows);
 		EXPECT_EQ(panel.get()->getSize().x, opened.x);
 		EXPECT_EQ(panel.get()->getSize().y, opened.y);
+	}
+
+	// The entity panel's Details again while the dossier is open, for the same colonist with a fuller pack and then for
+	// another: the content follows, the panel keeps the size it opened with. Closed and opened again, it measures afresh.
+	TEST_F(SceneLayout, TheColonistDossierHoldsItsSizeWhenOpenedAgainWhileOpen) {
+		HudScene& scene = openHud([](HudScene& opened) { opened.hud().showColonistDetails(opened.entities().colonist); });
+		const ui::Ref<ui::Rectangle> panel = dossierPanel();
+		ASSERT_NE(panel.get(), nullptr);
+		const Foundation::Vec2 opened = panel.get()->getSize();
+		const auto			   settle = [this] {
+			for (int tick = 0; tick < kModelFillFrames; ++tick) {
+				frame();
+			}
+		};
+		const auto title = [this] {
+			const auto* dossier = static_cast<const ui::Dialog*>(shown("colonist_dossier"));
+			return dossier != nullptr ? dossier->getTitle() : std::string{};
+		};
+
+		ecs::Inventory& pack = *scene.ecsWorld().getComponent<ecs::Inventory>(scene.entities().colonist);
+		for (const char* item : {"AxePrimitive", "Granite", "Basalt", "Sandstone", "RiverCobble"}) {
+			ASSERT_EQ(pack.addItem(item, 1), 1U) << item;
+		}
+		settle();
+		scene.hud().showColonistDetails(scene.entities().colonist);
+		settle();
+		EXPECT_EQ(panel.get()->getSize().x, opened.x);
+		EXPECT_EQ(panel.get()->getSize().y, opened.y) << "for the same colonist";
+
+		scene.hud().showColonistDetails(scene.entities().newcomer);
+		settle();
+		EXPECT_EQ(title(), "Grace Hopper");
+		EXPECT_EQ(panel.get()->getSize().x, opened.x);
+		EXPECT_EQ(panel.get()->getSize().y, opened.y) << "for another colonist";
+		EXPECT_EQ(lintEverywhere(), "");
+
+		scene.hud().hideColonistDetails();
+		frame();
+		scene.hud().showColonistDetails(scene.entities().newcomer);
+		settle();
+		const ui::Ref<ui::Rectangle> reopened = dossierPanel();
+		ASSERT_NE(reopened.get(), nullptr);
+		EXPECT_EQ(title(), "Grace Hopper");
+		EXPECT_LT(reopened.get()->getSize().y, opened.y) << "the newcomer's own, shorter dossier";
 	}
 
 	TEST_F(SceneLayout, TheCraftingDialogHoldsTogether) {
