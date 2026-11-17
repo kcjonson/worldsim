@@ -79,7 +79,7 @@ namespace ecs {
 					const std::string& food = registry.getDefName(task.needItemDefNameId);
 					if (task.needSourceStorageId != 0) {
 						const auto box = static_cast<EntityID>(task.needSourceStorageId);
-						if (!world->isAlive(box) || world->getComponent<Inventory>(box) == nullptr || world->hasComponent<Packaged>(box)) {
+						if (world->getComponent<Inventory>(box) == nullptr || world->hasComponent<Packaged>(box)) {
 							LOG_DEBUG(Engine, "[Action] Food box %llu is gone or being moved", static_cast<unsigned long long>(task.needSourceStorageId));
 							action.clear();
 							break;

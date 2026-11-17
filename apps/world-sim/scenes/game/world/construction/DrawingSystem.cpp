@@ -1021,7 +1021,7 @@ namespace world_sim {
 
 	void DrawingSystem::resizeBlueprintEntity(ec::FoundationId id) {
 		const auto* foundation = constructionWorld_.get(id);
-		if (ecsWorld_ == nullptr || foundation == nullptr || !ecsWorld_->isAlive(foundation->entity)) {
+		if (ecsWorld_ == nullptr || foundation == nullptr) {
 			return;
 		}
 		auto* blueprint = ecsWorld_->getComponent<ecs::StructureBlueprint>(foundation->entity);
@@ -1053,7 +1053,7 @@ namespace world_sim {
 
 	const ecs::StructureBlueprint* DrawingSystem::foundationBlueprint(ec::FoundationId id) const {
 		const auto* foundation = constructionWorld_.get(id);
-		if (ecsWorld_ == nullptr || foundation == nullptr || !ecsWorld_->isAlive(foundation->entity)) {
+		if (ecsWorld_ == nullptr || foundation == nullptr) {
 			return nullptr;
 		}
 		return ecsWorld_->getComponent<ecs::StructureBlueprint>(foundation->entity);
@@ -1139,7 +1139,7 @@ namespace world_sim {
 
 		// The merged foundation owns what both halves cost and did, so demolishing it
 		// refunds and un-builds the whole thing.
-		if (ecsWorld_ != nullptr && ecsWorld_->isAlive(targetEntity) && ecsWorld_->isAlive(extensionEntity)) {
+		if (ecsWorld_ != nullptr) {
 			auto*		targetBp = ecsWorld_->getComponent<ecs::StructureBlueprint>(targetEntity);
 			const auto* extensionBp = ecsWorld_->getComponent<ecs::StructureBlueprint>(extensionEntity);
 			if (targetBp != nullptr && extensionBp != nullptr) {
@@ -2059,10 +2059,7 @@ namespace world_sim {
 		if (built) {
 			return 1.0F;
 		}
-		// isAlive checks the generation word; ComponentPool::get matches by index
-		// only, so a stale cached handle whose index was recycled would otherwise
-		// read a DIFFERENT entity's blueprint progress.
-		if (ecsWorld_ != nullptr && entity != ecs::kInvalidEntity && ecsWorld_->isAlive(entity)) {
+		if (ecsWorld_ != nullptr) {
 			if (const auto* bp = ecsWorld_->getComponent<ecs::StructureBlueprint>(entity)) {
 				return bp->progress();
 			}

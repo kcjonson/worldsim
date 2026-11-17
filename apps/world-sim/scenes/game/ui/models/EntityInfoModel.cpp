@@ -155,7 +155,7 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 	}
 	if (isPile) {
 		const auto& pileSel = std::get<ResourcePileSelection>(selection);
-		if (!world.isAlive(pileSel.entityId) || !world.hasComponent<ecs::ResourceStack>(pileSel.entityId)) {
+		if (!world.hasComponent<ecs::ResourceStack>(pileSel.entityId)) {
 			isPile = false;
 		}
 	}

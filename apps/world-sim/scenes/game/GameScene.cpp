@@ -999,11 +999,9 @@ namespace {
 			ecsWorld->update(dt);
 
 			// A selected pile drains away as colonists haul from it; when it's gone, the
-			// selection goes with it (isAlive first: a recycled index could carry another
-			// entity's ResourceStack).
+			// selection goes with it.
 			if (const auto* pileSel = std::get_if<world_sim::ResourcePileSelection>(&m_selectionSystem->current());
-				pileSel != nullptr
-				&& (!ecsWorld->isAlive(pileSel->entityId) || !ecsWorld->hasComponent<ecs::ResourceStack>(pileSel->entityId))) {
+				pileSel != nullptr && !ecsWorld->hasComponent<ecs::ResourceStack>(pileSel->entityId)) {
 				m_selectionSystem->clearSelection();
 			}
 

@@ -290,9 +290,6 @@ namespace ecs {
 		if (subject.kind != ThoughtSubjectKind::Colonist && subject.kind != ThoughtSubjectKind::Entity) {
 			return std::nullopt;
 		}
-		if (!world.isAlive(subject.entity)) {
-			return std::nullopt;
-		}
 		if (const Colonist* colonist = world.getComponent<Colonist>(subject.entity); colonist != nullptr) {
 			return colonist->name.empty() ? std::nullopt : std::optional(colonist->name);
 		}
