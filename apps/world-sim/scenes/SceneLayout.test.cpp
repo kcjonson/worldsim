@@ -241,6 +241,7 @@ namespace world_sim::testing {
 	TEST_F(SceneLayout, SettingsHoldTogetherWithOnlyTheListScrollingWhereItCantFit) {
 		go(scenes::Settings.name);
 		ASSERT_NE(shown("settings_list"), nullptr);
+		ASSERT_NE(shown("interface_size_choice"), nullptr);
 		EXPECT_EQ(lintEverywhere(), "");
 		EXPECT_EQ(unexpectedScrollbars({{.id = "settings_list", .belowCanvasHeight = kSettingsListFitsFrom}}), "");
 	}
@@ -392,27 +393,10 @@ namespace world_sim::testing {
 		EXPECT_NEAR(areaInside, tallestTab, 1.0F) << "the tab area against its tallest tab";
 	}
 
-	// New gear under the open dossier adds rows to its Gear tab and leaves the panel as it opened.
-	TEST_F(SceneLayout, TheColonistDossierHoldsItsSizeAsItsColonistChanges) {
-		HudScene& scene = openHud([](HudScene& opened) { opened.hud().showColonistDetails(opened.entities().colonist); });
-		press("tab_dossier_gear");
-		const ui::Ref<ui::Rectangle> panel = dossierPanel();
-		ASSERT_NE(panel.get(), nullptr);
-		const Foundation::Vec2 opened = panel.get()->getSize();
-		const std::size_t	   rows = shownCount("gear_pack_row");
-		ASSERT_EQ(scene.ecsWorld().getComponent<ecs::Inventory>(scene.entities().colonist)->addItem("AxePrimitive", 1), 1U);
-		for (int tick = 0; tick < kModelFillFrames; ++tick) {
-			frame();
-		}
-		EXPECT_GT(shownCount("gear_pack_row"), rows);
-		EXPECT_EQ(panel.get()->getSize().x, opened.x);
-		EXPECT_EQ(panel.get()->getSize().y, opened.y);
-	}
-
-	// The entity panel's Details again while the dossier is open, for the same colonist with a pack full enough to grow its
-	// tallest tab and then for another: the content follows to the Bio tab at the top, the panel keeps the size it opened
-	// with. Closed through its own button and opened again, it measures afresh.
-	TEST_F(SceneLayout, TheColonistDossierHoldsItsSizeWhenOpenedAgainWhileOpen) {
+	// A pack that fills under the open dossier grows its Gear tab and leaves the panel as it opened. Then the entity
+	// panel's Details again while it's open, for that colonist and then for another: the content follows to the Bio tab at
+	// the top, the panel keeps the size it opened with. Closed through its own button and opened again, it measures afresh.
+	TEST_F(SceneLayout, TheColonistDossierHoldsItsSizeAsItsDataGrowsAndWhenOpenedAgainWhileOpen) {
 		HudScene& scene = openHud([](HudScene& opened) { opened.hud().showColonistDetails(opened.entities().colonist); });
 		const ui::Ref<ui::Rectangle> panel = dossierPanel();
 		ASSERT_NE(panel.get(), nullptr);
@@ -435,6 +419,8 @@ namespace world_sim::testing {
 		}
 		settle();
 		ASSERT_GT(shownCount("gear_pack_row"), rows) << "a fuller pack grows the Gear tab, so a re-measure would change the height";
+		EXPECT_EQ(panel.get()->getSize().x, opened.x);
+		EXPECT_EQ(panel.get()->getSize().y, opened.y) << "with a fuller pack";
 		ui::Component* area = shown("dossier_tab_area");
 		ASSERT_NE(area, nullptr);
 		area->scrollTo({0.0F, 1.0e6F});

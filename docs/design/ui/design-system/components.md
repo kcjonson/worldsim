@@ -115,7 +115,7 @@ The primitives:
 
 **Sizes** — `sm`, `md` (default), `lg`, setting the dialog width. The wrap also caps at 92% width and 86% height of the viewport so it never overflows.
 
-**Sizing rule.** A dialog is as big as its content needs, and never resizes once open. Its size is worked out when it opens and held until it closes: switching tabs, new data arriving, or switching it to another subject while it's open doesn't move it; content that later outgrows it scrolls, and content that needs less leaves room. Closed and opened again, it measures afresh. Each dialog's implementation sets its own width and height; a tabbed dialog takes the size its largest tab needs when it opens. The 92% x 86% cap still holds, with the content scrolling past it. The crafting and storage dialogs still hold fixed sizes larger than their content and are to be converted.
+**Sizing rule.** A dialog is as big as its content needs, and never resizes once open. Its size is worked out when it opens and held until it closes: switching tabs, new data arriving, or switching it to another subject while it's open doesn't move it; content that later outgrows it scrolls, and content that needs less leaves room. Closed and opened again, it measures afresh. Each dialog's implementation sets its own width and height; a tabbed dialog takes the size its largest tab needs when it opens. The 92% x 86% cap still holds, with the content scrolling past it.
 
 **Accents** — `accent` (default) or `data`, passed straight through to the underlying Panel.
 

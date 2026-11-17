@@ -213,7 +213,8 @@ namespace world_sim::testing {
 		app::HeadlessPlatform*	  platform = nullptr;
 		std::unique_ptr<app::App> app;
 
-		// `check` at every window size and interface size, each line it returns led by where it was found.
+		// `check` at every window size and interface size, each line it returns led by where it was found. The app is
+		// left as a test starts, on the reference window at the default size.
 		template <typename Check>
 		std::string everywhere(const Check& check) {
 			std::string found;
@@ -226,6 +227,8 @@ namespace world_sim::testing {
 				}
 			}
 			app->setUiScale(theme::kDefaultInterfaceSize);
+			const WindowSize reference = windowSizes()[1];
+			(void)app::lintAt(*app, *platform, reference.width, reference.height);
 			return found;
 		}
 	};

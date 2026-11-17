@@ -1,7 +1,5 @@
 # Interface scaling
 
-**Status:** built
-
 The interface lays out on a canvas whose size comes from the window's resolution, and the player's Interface size setting (60 to 120%) multiplies the scale. A ui px (the unit the design tokens, `fs_*`, `space_*` and component sizes are written in) is a pixel on a 1600 x 1000 screen, the prototype mocks' stage, so at 100% a 16:10 display shows the mock exactly and a 16:9 one shows the mock with more room to the right. The mechanism is salal's ui scale; see "UI scale" in salal's `docs/app-api.md` for the engine side. This doc is the numbers worldsim passes it, and why.
 
 ## The formula
@@ -60,7 +58,7 @@ Considered and rejected:
 - Input stays correct: salal hit-tests in ui px. World picking, the camera, drawing and placement previews and overlays stay in window pixels, and the places that mixed the two were fixed to convert: the hover gate that skips the world while the pointer is over the ui (`GameScene.cpp`), the minimap's view rectangle (`GameUI.cpp`), and the world creator's globe and marker (`WorldCreatorScene.cpp`, `GlobeView.h`).
 - Live: Settings calls `App::setUiScale`, which re-lays-out the open scene at once. With the salal tag worldsim pins, scenes' `onResize` runs on a scale change too.
 - Persisted: `settings.json` (`apps/world-sim/Main.cpp` passes it as the App's settings file) holds `ui.scale` and the window's size. `--no-settings` neither reads nor saves it, which perf captures use.
-- World text: text drawn in the world that a player reads as interface (the drawing tool's validation message, room names) is sized by the layout scale, so it follows Interface size while the world around it keeps its own.
+- World text: text drawn in the world that a player reads as interface (the edit tool's reason text at the cursor, room names) is sized by the layout scale, so it follows Interface size while the world around it keeps its own.
 - Crisp: the scale reaches the renderer, so text and tessellated shapes are drawn at the device size they end up at, not stretched from a smaller one.
 - Bounds and reset: `kInterfaceSizes` holds the factor to 0.6 through 1.2, and the Interface size row in `apps/world-sim/scenes/settings/SettingsScene.cpp` is a segmented control over the seven stops with a Reset button back to 100%. A saved value that isn't a stop is snapped to the nearest one (`nearestInterfaceSize`) at startup, and Settings shows that stop. Settings is reached from the main menu only.
 
@@ -68,13 +66,13 @@ The colonist dossier is 760 ui px wide and as tall as its tallest tab needs, mea
 
 ## What the tests cover
 
-`apps/world-sim/scenes/SceneLayout.test.cpp`, over `SceneTesting.test.h`, has 14 tests. Each lints its screen at five window sizes (1280 x 720, 1600 x 1000, 1920 x 1080, 3440 x 1440, 1600 x 1200) and three interface sizes (120%, 100%, 60%), through salal's `app::lintAt`, and checks that nothing shows a scrollbar except what's meant to scroll. Each first asserts that a known id is present or that its dialog reports visible, so a test can't pass over an empty screen.
+`apps/world-sim/scenes/SceneLayout.test.cpp`, over `SceneTesting.test.h`, has 13 tests. Each lints its screen at five window sizes (1280 x 720, 1600 x 1000, 1920 x 1080, 3440 x 1440, 1600 x 1200) and three interface sizes (120%, 100%, 60%), through salal's `app::lintAt`, and checks that nothing shows a scrollbar except what's meant to scroll. Each first asserts that a known id is present or that its dialog reports visible, so a test can't pass over an empty screen.
 
 - The main menu, settings, scenario select, party select and the world creator (configuring, before a world exists).
 - The HUD, plain.
 - The HUD with the build menu, the colony task list, the decision inspector and five toasts open.
 - The HUD with the wall tool on.
-- The colonist dossier, on each of its eight tabs: its panel is the same size on all eight at each window and interface size, inside the cap, and shorter than the cap on the reference canvas, where its tallest tab fills the tab area to within a pixel. A second test adds an item to the open colonist's pack and checks the panel keeps its size. A third opens it again while it's open, for the same colonist with a fuller pack and then for another: the panel keeps its size while the content follows, and closed and opened again for the other colonist it takes that colonist's own, shorter, size.
+- The colonist dossier, on each of its eight tabs: its panel is the same size on all eight at each window and interface size, inside the cap, and shorter than the cap on the reference canvas, where its tallest tab fills the tab area to within a pixel. A second test fills the open colonist's pack and checks the panel keeps its size, then opens it again while it's open, for the same colonist and then for another: the panel keeps its size while the content follows, and closed and opened again for the other colonist it takes that colonist's own, shorter, size.
 - The crafting, storage and pause dialogs over the HUD.
 
 Scrollbars: `tasks_scroll` may scroll at every size, and the dossier's tab area only on canvases too short for its held height under the 86% cap. The settings list fits the reference canvas height (1000 ui px, any 16:9, 16:10 or 21:9 screen) at the default size, and its bar is allowed only on shorter canvases, where its rows keep clear of the bar.
