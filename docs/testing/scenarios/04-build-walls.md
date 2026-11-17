@@ -89,7 +89,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 ```
 
 5. At the Quick Start creek, `walls?pts=6.5,8;9.5,8&host=0&close=0&built=0` and `spawn?def=BasicBox&at=7.9,8` both answer 400 and create nothing.
-6. With the wall tool held over the creek at (7.9, 8), the status reads "not on buildable ground" and a click adds no point.
+6. With the wall tool held over the creek at (7.9, 8), the status reads "not on buildable ground" and a click adds no point (`status.valid` false, `status.message` and `verdict.reason` "not on buildable ground", `status.pointCount` 0 after the click).
 7. On the east bank, `walls?pts=9.9,5;9.9,8&host=0&close=0&built=0` and `spawn?def=BasicBox&at=9.9,8` both answer 200. The chain adds a fifth wall.
 8. `ground?pts=7.9,8` reads `valid` true and `buildableNow` false, and Bob still walks through the creek.
 
@@ -121,16 +121,18 @@ segment has stalled (`state`, `progress`).
 
 Run these after the pass / fail check above: they add blueprint wall segments, which would break its every-wall-built check.
 
-9. Pick Wall in the Build menu, click two points on a built foundation, and move the pointer out of the game's window: the band to the pointer, the marker, and its label go, and the two points and the band between them stay.
-10. Move the pointer back over the foundation: the band follows it from the second point, and a click places a third point.
-11. Double-click a fourth point: the chain ends, `?what=construction` lists three more wall segments, the strip reads "Click a foundation to start", and no toast says the wall is too short.
-12. Click two different points on the foundation a second apart: each places a point and the chain goes on; Enter ends it.
-13. Press Esc: the wall tool closes.
+The drawing steps below read `/api/state?what=drawing`. Their points are world points inside the built foundation (convert them to pixels with `what=camera`, [the camera view](../README.md#the-camera-view)); for the four-corner foundation of the precondition, take points a meter or more in from its edges. A move out of the window is `ev=move,-5,-5`, which pauses a tool the way a real exit does.
+
+9. Pick Wall in the Build menu, click two points on a built foundation, and move the pointer out of the game's window: the band to the pointer, the marker, and its label go, and the two points and the band between them stay (`followingPointer` false, `pointer` and `snap` null, `points` still two, `status.hint` "Right-click / Enter to finish").
+10. Move the pointer back over the foundation: the band follows it from the second point (`followingPointer` true), and a click places a third point (`status.pointCount` 3).
+11. Double-click a fourth point: the chain ends, `?what=construction` lists three more wall segments, the strip reads "Click a foundation to start" (`status.hint`, `status.pointCount` 0), and no toast says the wall is too short.
+12. Click two different points on the foundation a second apart: each places a point and the chain goes on (`status.pointCount` 2); Enter ends it (`status.pointCount` 0, one more wall segment).
+13. Press Esc: the wall tool closes (`tool` `none`).
 14. Open the top bar's Menu and pick Main Menu: the main menu shows.
 15. Pick Settings and, under Drawing Settings, switch Angle readout on if it is off: it reads on.
-16. Pick Back, then Quick Start: a new game shows.
+16. Pick Back, then Quick Start: a new game shows, and `settings.angleReadout` is true.
 17. Make the built foundation again with the precondition's `built=1` command: `?what=construction` lists it `Built`.
-18. Pick Wall in the Build menu and click two points inside the built foundation: the wall tool shows the two points and the band between them.
+18. Pick Wall in the Build menu and click two points inside the built foundation: the wall tool shows the two points and the band between them (`status.pointCount` 2, `status.hint` "Right-click / Enter to finish").
 19. Move the pointer off at an angle that is not square: an arc and the angle between the two walls show at the middle point.
 
 ---

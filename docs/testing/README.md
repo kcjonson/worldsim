@@ -252,6 +252,7 @@ spec, and the `/perf-nightly` skill runs it.
 | 16 | Rooms inside rooms | [scenarios/16-rooms-inside-rooms.md](./scenarios/16-rooms-inside-rooms.md) |
 | 17 | Interface size | [scenarios/17-interface-size.md](./scenarios/17-interface-size.md) |
 | 18 | Colonist thoughts | [scenarios/18-colonist-thoughts.md](./scenarios/18-colonist-thoughts.md) |
+| 19 | Drawing tools | [scenarios/19-drawing-tools.md](./scenarios/19-drawing-tools.md) |
 
 **Scenarios that look away from the colonists turn reveal on** (`/api/dev/reveal?on=1`), since ground no colonist has seen is black (player visibility); a launch starts with it off. Scenario 14 is the one that tests the cover itself.
 
@@ -475,7 +476,7 @@ Every key but the last is true or false. `rectangleGridSpacingMeters` is 1.000 o
 
 - `center`: the camera's current position, `{x, y}` in world meters.
   - `/api/control?action=camera&x=&y=` sets it outright at the next update.
-  - While a pan is in progress (a pan key held, or `panx` / `pany` set), `center` eases toward its target, so read the view again until `center` stops changing before converting.
+  - While a pan is in progress (a pan key held, or `panx` / `pany` set), `center` eases toward its target, so read the view again until `center` stops changing before converting. A `panx` / `pany` pan keeps going until it is set back to 0, so `center` never settles until then.
   - The view answers while the app is paused, but a pending control has not applied.
 - `zoom`: the zoom factor (3.000 is the 100 percent view). `pixelsPerMeter`: the screen scale at that zoom, in logical pixels per world meter.
 - `window`: `{width, height}`, the window's logical pixels, the ones `/api/input` takes, in whole numbers. It does not change with the Interface size.
@@ -506,7 +507,7 @@ For a scenario author. Everything goes through `/api/input`, the way a player's 
 4. Place points with `ev=click,x,y`, the pixel from the camera formulas above. A point that is buildable at the Quick Start landing is (30, 10); the Rectangle from (30, 10) to (34, 13) places there, while (10, 10) is water.
 5. Read `what=construction` to see what was committed. The drawing view does not say that a shape was committed; it shows the tool's state, not the shapes it built.
 
-Keys, from `ev=keydown,<key>`, as the key guide lists them. `escape` closes an open menu or dialog first and reaches the tool only when none is open:
+Keys, from `ev=keydown,<key>`, as the key guide lists them. `escape` closes an open menu, dialog or panel first (any overlay but a toast or a tooltip), reaches the tool only when none is open, and with no tool either opens the pause menu, so a stray extra `escape` leaves a dialog over the game that takes the next click. The `?` key is a typed character: inject `char,63` (a `keydown` of `?` does nothing); `h` is `keydown,h`. A right-click is `click,x,y,right`, and a double-click is two `click` events in one request:
 
 | Key | Rectangle | Freeform and Add / Subtract | Wall | Door and Window |
 |-----|-----------|-----------------------------|------|-----------------|
@@ -514,7 +515,7 @@ Keys, from `ev=keydown,<key>`, as the key guide lists them. `escape` closes an o
 | `escape` | drops the first corner; with none, leaves the tool | cancels the shape; with none, leaves the tool | with two or more points, ends the wall and keeps the tool; with one, clears the chain and keeps the tool; with none, leaves the tool | leaves the tool |
 | `enter` | not listed | not listed | ends the wall | not listed |
 
-Injected input holds no modifier keys (no Alt for the raw cursor, no Ctrl for walling a whole edge), cannot repeat a key, and cannot send the pointer leaving the window or a loss of focus. A move to a pixel outside the window (`ev=move,-5,-5`) pauses the tool as a real exit does: `followingPointer` reads false, `pointer` and `snap` are null and the placed `points` stay, until a move back over the world resumes it.
+Injected input holds no modifier keys (no Alt for the raw cursor, no Ctrl for walling a whole edge), cannot send a key's auto-repeat (a second `keydown` is a second press), and cannot send a loss of focus. A move and a click sent in one request (`ev=move,x,y&ev=click,x,y`) place at the click's own position, so no wait between them is needed: ten such pairs each in the Freeform and Rectangle tools, every one starting far from the last hover, placed the click's world point (Freeform, to the millimeter) or the grid point nearest it (Rectangle), never the earlier hover. A move to a pixel outside the window (`ev=move,-5,-5`) pauses the tool as a real exit does: `followingPointer` reads false, `pointer` and `snap` are null and the placed `points` stay, until a move back over the world resumes it.
 
 ### Other endpoints
 
