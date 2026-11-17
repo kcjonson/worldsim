@@ -17,6 +17,9 @@ namespace ecs {
 
 		namespace cw = construction;
 
+		// A hit snaps to the millimetre, so one within 0.71 mm of the eye lands on it.
+		constexpr std::int64_t kHitSnapsOntoTheEyeMm = 1;
+
 		// The centerline point `alongMm` from `a` toward `b`, clamped to the segment
 		// and rounded to the millimetre.
 		geometry::Vec2i64 pointAlong(const geometry::Vec2i64& a, const geometry::Vec2i64& b, double lengthMm, std::int64_t alongMm) {
@@ -145,6 +148,54 @@ namespace ecs {
 				out.push_back(rec.seg);
 			}
 		}
+	}
+
+	void GeometryIndex::queryFacingOccluders(geometry::Vec2i64 eye, std::int64_t radiusMm,
+											 std::vector<geometry::OccluderSegment>& out) const {
+		queryOccluders(eye, radiusMm, out);
+		if (backFacesHiddenFrom(eye, radiusMm)) {
+			std::erase_if(out, [&](const geometry::OccluderSegment& edge) { return facesAway(edge, eye); });
+		}
+	}
+
+	bool GeometryIndex::backFacesHiddenFrom(geometry::Vec2i64 eye, std::int64_t radiusMm) const {
+		// computeVisibilityPolygon blocks a ray that runs along an occluder on both of its
+		// sides and takes the polygon's next edge from the next direction round, which a back
+		// face's end can be; and it drops a hit that snaps onto the eye, where the back face
+		// behind it is what stops the ray.
+		for (const OccluderRecord& rec : m_occluders) {
+			if (geometry::withinDistanceOfSegment(eye, rec.seg.a, rec.seg.b, radiusMm) &&
+				(geometry::cross(rec.seg.b - rec.seg.a, eye - rec.seg.a).sign() == 0 ||
+				 geometry::withinDistanceOfSegment(eye, rec.seg.a, rec.seg.b, kHitSnapsOntoTheEyeMm))) {
+				return false;
+			}
+		}
+		return !insideSolid(eye);
+	}
+
+	bool GeometryIndex::facesAway(const geometry::OccluderSegment& edge, geometry::Vec2i64 eye) {
+		return geometry::cross(edge.b - edge.a, eye - edge.a).sign() > 0;
+	}
+
+	bool GeometryIndex::insideSolid(geometry::Vec2i64 point) const {
+		int winding = 0;
+		for (const OccluderRecord& rec : m_occluders) {
+			const geometry::Vec2i64& from = rec.seg.a;
+			const geometry::Vec2i64& to	  = rec.seg.b;
+			const int				 side = geometry::cross(to - from, point - from).sign();
+			if (side == 0 && point.x >= std::min(from.x, to.x) && point.x <= std::max(from.x, to.x) && point.y >= std::min(from.y, to.y) &&
+				point.y <= std::max(from.y, to.y)) {
+				return true;
+			}
+			if (from.y <= point.y) {
+				if (to.y > point.y && side > 0) {
+					++winding;
+				}
+			} else if (to.y <= point.y && side < 0) {
+				--winding;
+			}
+		}
+		return winding != 0;
 	}
 
 } // namespace ecs

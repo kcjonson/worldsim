@@ -120,13 +120,13 @@ namespace ecs {
 
 			// --- Occlusion gate setup (per observer) ---
 			//
-			// Find the opaque wall occluders within this observer's sight radius. The
+			// Find the opaque wall occluders facing this observer within his sight radius. The
 			// meters->mm boundary is crossed here (and only here) via NavCoords.
 			// The polygon reaches a rebuild step past sight, so a wall that far out counts.
 			const std::int64_t	   radiusMm = std::llround(static_cast<double>(memory.sightRadius) * 1000.0);
 			const std::int64_t	   polygonRadiusMm = std::llround(static_cast<double>(memory.sightRadius + kSightRebuildStepMeters) * 1000.0);
 			const geometry::Vec2i64 observerMm = nav::toMm(pos.value);
-			m_geometry.queryOccluders(observerMm, polygonRadiusMm, occluderScratch);
+			m_geometry.queryFacingOccluders(observerMm, polygonRadiusMm, occluderScratch);
 			const bool outdoors = occluderScratch.empty();
 
 			// Outdoor fast path: no occluder anywhere in range means no polygon and no
@@ -201,7 +201,7 @@ namespace ecs {
 		const std::int64_t					   radiusMm = std::llround(static_cast<double>(radiusMeters) * 1000.0);
 		const geometry::Vec2i64				   centerMm = nav::toMm(center);
 		std::vector<geometry::OccluderSegment> occluders;
-		m_geometry.queryOccluders(centerMm, radiusMm, occluders);
+		m_geometry.queryFacingOccluders(centerMm, radiusMm, occluders);
 		geometry::Ring polygon;
 		if (!occluders.empty()) {
 			polygon = geometry::computeVisibilityPolygon(centerMm, radiusMm, occluders);
@@ -238,9 +238,9 @@ namespace ecs {
 		// boundary: a long wall facing the observer can have both corners out of
 		// sight radius while its middle is the boundary seen along, which an
 		// endpoint-only test would miss.
-		auto structureSeen = [&](geometry::Vec2i64 p0, geometry::Vec2i64 p1) -> bool {
-			if (geometry::pointInPolygon(p0, polygon) != geometry::PointInPolygon::Outside ||
-				geometry::pointInPolygon(p1, polygon) != geometry::PointInPolygon::Outside) {
+		const auto pointSeen = [&](geometry::Vec2i64 point) { return geometry::pointInPolygon(point, polygon) != geometry::PointInPolygon::Outside; };
+		const auto structureSeen = [&](geometry::Vec2i64 p0, geometry::Vec2i64 p1) -> bool {
+			if (pointSeen(p0) || pointSeen(p1)) {
 				return true;
 			}
 			for (std::size_t i = 0; i < polygon.size(); ++i) {
@@ -253,12 +253,18 @@ namespace ecs {
 			return false;
 		};
 
+		// From outside the solid a back face is hidden but for its ends (GeometryIndex.h),
+		// which can touch the polygon where another wall's face meets it.
+		const bool backFacesHidden = m_geometry.backFacesHiddenFrom(centerMm, radiusMm);
 		for (const GeometryIndex::OccluderRecord& occluder : m_geometry.occluders()) {
 			if (std::ranges::find(segments, occluder.source) != segments.end() ||
 				!geometry::withinDistanceOfSegment(centerMm, occluder.seg.a, occluder.seg.b, radiusMm)) {
 				continue;
 			}
-			if (structureSeen(occluder.seg.a, occluder.seg.b)) {
+			const bool seen = backFacesHidden && GeometryIndex::facesAway(occluder.seg, centerMm)
+								  ? pointSeen(occluder.seg.a) || pointSeen(occluder.seg.b)
+								  : structureSeen(occluder.seg.a, occluder.seg.b);
+			if (seen) {
 				memory.rememberSegment(occluder.source);
 				segments.push_back(occluder.source);
 			}

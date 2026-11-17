@@ -128,6 +128,78 @@ namespace {
 		EXPECT_EQ(leaks, 0);
 	}
 
+	// A closed 4 m room, a door in its south wall.
+	void buildRoomWithADoor(ConstructionWorld& cw) {
+		const SegmentId south = buildWall(cw, {0, 0}, {4000, 0});
+		buildWall(cw, {4000, 0}, {4000, 4000});
+		buildWall(cw, {4000, 4000}, {0, 4000});
+		buildWall(cw, {0, 4000}, {0, 0});
+		addBuiltOpening(cw, south, 0.5F, "Door");
+	}
+
+	// An L corner, a T junction, and a lone wall, apart.
+	void buildJunctions(ConstructionWorld& cw) {
+		buildWall(cw, {0, 0}, {4000, 0});
+		buildWall(cw, {4000, 0}, {4000, 3000});
+		buildWall(cw, {8000, 0}, {12000, 0});
+		buildWall(cw, {10000, 0}, {10000, 3000});
+		buildWall(cw, {16000, 0}, {16000, 3000});
+	}
+
+	// Every vertex of each ring within `toleranceMm` of the other's boundary.
+	bool ringsAgree(const geometry::Ring& first, const geometry::Ring& second, std::int64_t toleranceMm) {
+		const auto onBoundary = [&](const Vec2i64& point, const geometry::Ring& ring) {
+			for (std::size_t corner = 0; corner < ring.size(); ++corner) {
+				if (geometry::withinDistanceOfSegment(point, ring[corner], ring[(corner + 1) % ring.size()], toleranceMm)) {
+					return true;
+				}
+			}
+			return false;
+		};
+		return std::ranges::all_of(first, [&](const Vec2i64& point) { return onBoundary(point, second); }) &&
+			   std::ranges::all_of(second, [&](const Vec2i64& point) { return onBoundary(point, first); });
+	}
+
+	// The visibility polygon from every eye of a 250 mm grid over the box, and from points
+	// on the line of each occluder past both its ends (an eye looking exactly along a face or
+	// an end cap), is the same built from the facing occluders as from all of them: ring for
+	// ring, or with `toleranceMm`, every vertex of each within it of the other's boundary.
+	void expectFacingSightIsTheSame(const ConstructionWorld& cw, Vec2i64 low, Vec2i64 high, std::int64_t toleranceMm = 0) {
+		constexpr std::int64_t kGridMm	= 250;
+		constexpr std::int64_t kSightMm = 20000;
+		GeometryIndex		   index;
+		index.setConstructionWorld(&cw);
+		index.rebuildIfStale();
+		std::vector<Vec2i64> eyes;
+		for (std::int64_t x = low.x; x <= high.x; x += kGridMm) {
+			for (std::int64_t y = low.y; y <= high.y; y += kGridMm) {
+				eyes.push_back({x, y});
+			}
+		}
+		for (const GeometryIndex::OccluderRecord& occluder : index.occluders()) {
+			const Vec2i64 along = occluder.seg.b - occluder.seg.a;
+			eyes.push_back(occluder.seg.a - along);
+			eyes.push_back(occluder.seg.b + along);
+		}
+		std::vector<OccluderSegment> all;
+		std::vector<OccluderSegment> facing;
+		int							 differ = 0;
+		std::size_t				 culled = 0;
+		for (const Vec2i64& eye : eyes) {
+			index.queryOccluders(eye, kSightMm, all);
+			index.queryFacingOccluders(eye, kSightMm, facing);
+			culled += all.size() - facing.size();
+			const geometry::Ring fromAll	= geometry::computeVisibilityPolygon(eye, kSightMm, all);
+			const geometry::Ring fromFacing = geometry::computeVisibilityPolygon(eye, kSightMm, facing);
+			const bool			 same		= toleranceMm == 0 ? fromAll == fromFacing : ringsAgree(fromAll, fromFacing, toleranceMm);
+			if (!same && ++differ <= 5) {
+				ADD_FAILURE() << "sight from (" << eye.x << ", " << eye.y << ") differs";
+			}
+		}
+		EXPECT_EQ(differ, 0);
+		EXPECT_GT(culled, 0u);
+	}
+
 	class GeometryIndexTest : public ::testing::Test {
 	  protected:
 		void SetUp() override {
@@ -317,6 +389,75 @@ TEST_F(GeometryIndexTest, QueryRespectsRadius) {
 	EXPECT_TRUE(far.empty());
 }
 
+// --- Facing occluders --------------------------------------------------------
+
+// Above a straight wall only its north face faces the eye; both caps and the south
+// face are back faces.
+TEST_F(GeometryIndexTest, FacingOccludersLeaveOutBackFaces) {
+	ConstructionWorld cw;
+	buildWall(cw, {0, 0}, {4000, 0});
+	const std::int64_t half = halfThickness(cw);
+	GeometryIndex	   index;
+	index.setConstructionWorld(&cw);
+	index.rebuildIfStale();
+
+	std::vector<OccluderSegment> facing;
+	index.queryFacingOccluders({2000, 3000}, kFarSightMm, facing);
+	ASSERT_EQ(facing.size(), 1u);
+	EXPECT_EQ(facing.front().a.y, half);
+	EXPECT_EQ(facing.front().b.y, half);
+}
+
+// Culling the back faces changes no visibility polygon, round a room with a door and
+// round an L corner, a T junction and a lone wall's end. The turned room's grid has an
+// eye 0.12 mm off a face, whose ray into the wall snaps its hit onto the eye.
+TEST_F(GeometryIndexTest, FacingOccludersGiveTheSameSight) {
+	{
+		ConstructionWorld cw;
+		buildRoomWithADoor(cw);
+		expectFacingSightIsTheSame(cw, {-1500, -1500}, {5500, 5500});
+	}
+	{
+		ConstructionWorld cw;
+		buildJunctions(cw);
+		ASSERT_EQ(cw.segments().size(), 6u) << "the stem splits the T's wall";
+		expectFacingSightIsTheSame(cw, {-1500, -1500}, {17500, 4500});
+	}
+	{
+		// The room turned 30 degrees: a ray at a back face's hidden end rounds its hit on a
+		// slanted face to the millimetre, a vertex the facing polygon has no need of. Hits
+		// lie up to 0.71 mm off the face, so a vertex of one ring and a chord of the other
+		// up to twice that apart.
+		constexpr std::int64_t kHitRoundingMm = 2;
+		ConstructionWorld	   cw;
+		const SegmentId		   south = buildWall(cw, {0, 0}, {3464, 2000});
+		buildWall(cw, {3464, 2000}, {1464, 5464});
+		buildWall(cw, {1464, 5464}, {-2000, 3464});
+		buildWall(cw, {-2000, 3464}, {0, 0});
+		addBuiltOpening(cw, south, 0.5F, "Door");
+		expectFacingSightIsTheSame(cw, {-3500, -1500}, {5000, 7000}, kHitRoundingMm);
+	}
+}
+
+// The solid is what the outline loops wind round: a band's inside and its edge, not a
+// closed room's floor or the open ground.
+TEST_F(GeometryIndexTest, InsideSolidIsTheBandNotTheRoom) {
+	ConstructionWorld cw;
+	buildRoomWithADoor(cw);
+	const std::int64_t half = halfThickness(cw);
+	GeometryIndex	   index;
+	index.setConstructionWorld(&cw);
+	index.rebuildIfStale();
+	EXPECT_TRUE(index.insideSolid({1000, 0}));
+	EXPECT_TRUE(index.insideSolid({1000, half}));
+	EXPECT_TRUE(index.insideSolid({0, 0}));
+	EXPECT_TRUE(index.insideSolid({4000, 4000}));
+	EXPECT_FALSE(index.insideSolid({2000, 0})) << "the doorway";
+	EXPECT_FALSE(index.insideSolid({1000, half + 1}));
+	EXPECT_FALSE(index.insideSolid({2000, 2000})) << "the room's floor";
+	EXPECT_FALSE(index.insideSolid({-3000, 2000}));
+}
+
 // --- rebuildIfStale version gating -------------------------------------------
 
 // After a rebuild, mutating the world (adding a door bumps version) is reflected by
@@ -406,13 +547,19 @@ TEST_F(GeometryIndexTest, SightPolygonEndsAtTheNearFace) {
 }
 
 // An eye inside a wall's band (nav carves walls out, so only by mistake) sees the
-// inside of the band and nothing past it, without failing.
+// inside of the band and nothing past it, without failing: the facing query culls
+// nothing for it.
 TEST_F(GeometryIndexTest, EyeInsideTheBandSeesOnlyTheBand) {
 	ConstructionWorld cw;
 	buildWall(cw, {0, 0}, {4000, 0});
-	const std::int64_t				   half		 = halfThickness(cw);
-	const std::vector<OccluderSegment> occluders = occludersOf(cw);
-	const geometry::Ring			   polygon	 = geometry::computeVisibilityPolygon({2000, 0}, 20000, occluders);
+	const std::int64_t half = halfThickness(cw);
+	GeometryIndex	   index;
+	index.setConstructionWorld(&cw);
+	index.rebuildIfStale();
+	std::vector<OccluderSegment> occluders;
+	index.queryFacingOccluders({2000, 0}, 20000, occluders);
+	EXPECT_EQ(occluders.size(), 4u);
+	const geometry::Ring polygon = geometry::computeVisibilityPolygon({2000, 0}, 20000, occluders);
 	ASSERT_GE(polygon.size(), 3u);
 	EXPECT_NE(geometry::pointInPolygon({2000, 0}, polygon), geometry::PointInPolygon::Outside);
 	for (const Vec2i64& vertex : polygon) {

@@ -2,8 +2,8 @@
 
 // Vision occluder source: turns the construction wall graph into the opaque
 // occluder segments a visibility polygon is built from. The Vision System owns a
-// GeometryIndex, calls rebuildIfStale() each tick, and feeds queryOccluders()
-// into geometry::computeVisibilityPolygon / hasLineOfSight.
+// GeometryIndex, calls rebuildIfStale() each tick, and feeds queryFacingOccluders()
+// into geometry::computeVisibilityPolygon, and queryOccluders() into hasLineOfSight.
 //
 // The occluders are the edges of the built walls' outline, the shape the wall
 // drawing outlines (geometry::wallPiecesAndOutline over each connected graph of
@@ -11,6 +11,10 @@
 // of every gap. Sight stops at a wall's near face, so the band itself is never in
 // sight. A graph the band offsetter rejects occludes as each wall's untrimmed band,
 // as nav blocks it.
+//
+// Every occluder lies on a closed loop with the solid on its left, so an eye
+// outside the solid strictly on an edge's left is behind that edge's own solid,
+// and the edge (a back face) can never bound what the eye sees.
 //
 // Doors AND windows pass sight. This is the difference from navigation: nav treats
 // a door as a movement gap but a window as a movement-solid band, whereas for sight
@@ -70,6 +74,27 @@ namespace ecs {
 		// flat spatial grid is the obvious future optimization if it ever isn't.
 		void queryOccluders(geometry::Vec2i64 center, std::int64_t radiusMm,
 							 std::vector<geometry::OccluderSegment>& out) const;
+
+		// queryOccluders less the back faces for an eye at `eye` when backFacesHiddenFrom it,
+		// for a visibility polygon from that eye alone: the polygon is the same, but for where
+		// a ray aimed at a back face's hidden end hits a slanted face, a vertex that rounds off
+		// the face by under a millimetre.
+		void queryFacingOccluders(geometry::Vec2i64 eye, std::int64_t radiusMm,
+								  std::vector<geometry::OccluderSegment>& out) const;
+
+		// Whether no back face within radiusMm can bound what an eye at `eye` sees: it is
+		// outside the solid (insideSolid), which it would see from within, and off the line
+		// of every occluder in range and over a millimetre from each, where the polygon's
+		// grazing rays need the back faces.
+		[[nodiscard]] bool backFacesHiddenFrom(geometry::Vec2i64 eye, std::int64_t radiusMm) const;
+
+		// Whether `point` is inside or on the solid the occluder loops enclose: the loops'
+		// winding number round it is not zero (outer loops wind counter-clockwise, the
+		// inside of a closed room clockwise), or it lies on an occluder. Exact.
+		[[nodiscard]] bool insideSolid(geometry::Vec2i64 point) const;
+
+		// The eye strictly on the edge's solid side, the edge's left.
+		[[nodiscard]] static bool facesAway(const geometry::OccluderSegment& edge, geometry::Vec2i64 eye);
 
 		[[nodiscard]] std::size_t occluderCount() const { return m_occluders.size(); }
 		[[nodiscard]] bool		  hasWorld() const { return m_world != nullptr; }

@@ -16,12 +16,16 @@
 #include <assets/placement/SpatialIndex.h>
 #include <construction/ConstructionWorld.h>
 #include <predicates/Predicates.h>
+#include <visibility/SightClip.h>
+#include <visibility/SightPolygon.h>
 #include <world/chunk/ChunkCoordinate.h>
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/SyntheticWorldSampler.h>
 #include <world/chunk/TerrainPolygonQuery.h>
 
 #include <glm/geometric.hpp>
+
+#include <algorithm>
 
 #include <memory>
 #include <unordered_map>
@@ -538,6 +542,67 @@ TEST_F(VisionSystemTest, LongWallSeenViaEdgeCrossing) {
 	const Memory* mem = world.getComponent<Memory>(observer);
 	ASSERT_NE(mem, nullptr);
 	EXPECT_TRUE(mem->knowsSegment(wall)) << "long wall span must be seen via the edge-crossing fallback";
+}
+
+// The structure pass skips the walls' back faces and finds the same walls as testing every
+// edge would: from each eye of a grid round a room with a door and a window, an L corner and a
+// T junction, the walls seen are those with an edge on or across the sight polygon.
+TEST_F(VisionSystemTest, StructurePassSkippingBackFacesSeesTheSameWalls) {
+	ConstructionWorld cw;
+	const SegmentId south = buildWall(cw, {0, 0}, {4000, 0});
+	const SegmentId east  = buildWall(cw, {4000, 0}, {4000, 4000});
+	buildWall(cw, {4000, 4000}, {0, 4000});
+	buildWall(cw, {0, 4000}, {0, 0});
+	addBuiltOpening(cw, south, 0.5F, "Door");
+	addBuiltOpening(cw, east, 0.5F, "Window");
+	buildWall(cw, {7000, 0}, {11000, 0});
+	buildWall(cw, {11000, 0}, {11000, 3000});
+	buildWall(cw, {7000, 6000}, {11000, 6000});
+	buildWall(cw, {9000, 6000}, {9000, 9000});
+
+	constexpr float kSightMeters = 6.0F;
+	constexpr float kGridMeters	 = 0.5F;
+	int				differ		 = 0;
+	for (float x = -2.0F; x <= 13.0F; x += kGridMeters) {
+		for (float y = -2.0F; y <= 10.0F; y += kGridMeters) {
+			World		  world;
+			VisionSystem& sys = world.registerSystem<VisionSystem>();
+			sys.setConstructionWorld(&cw);
+			const EntityID observer							 = spawnObserver(world, {x, y});
+			world.getComponent<Memory>(observer)->sightRadius = kSightMeters;
+			tick(sys);
+			const auto shape = sys.sightShape(observer);
+			ASSERT_TRUE(shape.has_value());
+			std::vector<SegmentId> expected;
+			if (shape->polygon != nullptr) {
+				const Vec2i64		 centre	  = nav::toMm(shape->center);
+				const std::int64_t	 radiusMm = std::llround(static_cast<double>(shape->radius) * 1000.0);
+				const geometry::Ring sight	  = geometry::starClippedToConvex(*shape->polygon, centre, geometry::sightPolygon(centre, radiusMm));
+				for (const GeometryIndex::OccluderRecord& occluder : sys.geometry().occluders()) {
+					if (!geometry::withinDistanceOfSegment(centre, occluder.seg.a, occluder.seg.b, radiusMm)) {
+						continue;
+					}
+					bool seen = geometry::pointInPolygon(occluder.seg.a, sight) != geometry::PointInPolygon::Outside ||
+								geometry::pointInPolygon(occluder.seg.b, sight) != geometry::PointInPolygon::Outside;
+					for (std::size_t edge = 0; edge < sight.size() && !seen; ++edge) {
+						seen = geometry::intersectSegments(occluder.seg.a, occluder.seg.b, sight[edge], sight[(edge + 1) % sight.size()]).relation !=
+							   geometry::SegmentRelation::Disjoint;
+					}
+					if (seen) {
+						expected.push_back(occluder.source);
+					}
+				}
+			}
+			std::ranges::sort(expected);
+			expected.erase(std::unique(expected.begin(), expected.end()), expected.end());
+			std::vector<SegmentId> found = *shape->segmentsSeen;
+			std::ranges::sort(found);
+			if (found != expected && ++differ <= 5) {
+				ADD_FAILURE() << "from (" << x << ", " << y << ") the pass sees " << found.size() << " walls, every edge " << expected.size();
+			}
+		}
+	}
+	EXPECT_EQ(differ, 0);
 }
 
 // An outdoor observer (no walls in range) records no structures.
