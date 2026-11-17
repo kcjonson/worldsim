@@ -223,6 +223,10 @@ namespace world_sim {
 		return event.type == Type::KeyDown && !event.repeat && event.key == foundation::Key::H;
 	}
 
+	bool keyGuideShown(std::optional<ToolKind> tool, const DrawingSettings& settings) {
+		return tool.has_value() && settings.showKeyGuide;
+	}
+
 	bool KeyGuideToggle::takes(const foundation::InputEvent& event, const State& state) {
 		using Type = foundation::InputEvent::Type;
 		if (event.type == Type::KeyDown) {
@@ -271,7 +275,7 @@ namespace world_sim {
 			return;
 		}
 		shown = now;
-		setVisible(tool.has_value() && settings.showKeyGuide);
+		setVisible(keyGuideShown(tool, settings));
 		if (isVisible()) {
 			build();
 		}

@@ -1,6 +1,8 @@
 #include "scenes/game/dev/DrawingStateJson.h"
 
 #include "scenes/game/dev/DevJson.h"
+#include "scenes/game/ui/views/DrawingKeyGuide.h"
+#include "scenes/game/world/construction/DrawingStatusHint.h"
 
 #include <sstream>
 
@@ -116,7 +118,8 @@ namespace world_sim {
 			std::ostringstream	 out;
 			out << "{\"active\":" << (status.active ? "true" : "false") << ",\"material\":\"" << jsonEscape(status.material)
 				<< "\",\"pointCount\":" << status.pointCount << ",\"areaSquareMeters\":" << jsonNumber(static_cast<double>(status.areaSquareMeters))
-				<< ",\"valid\":" << (status.valid ? "true" : "false") << ",\"message\":\"" << jsonEscape(status.message) << "\"";
+				<< ",\"valid\":" << (status.valid ? "true" : "false") << ",\"message\":\"" << jsonEscape(status.message)
+				<< "\",\"hint\":\"" << jsonEscape(statusHint(status).text) << "\"";
 			if (status.wall) {
 				out << ",\"thicknessPreset\":\"" << jsonEscape(status.thicknessPreset)
 					<< "\",\"segmentLengthMeters\":" << jsonNumber(static_cast<double>(status.segmentLengthMeters))
@@ -135,9 +138,22 @@ namespace world_sim {
 			return out.str();
 		}
 
+		std::string settingsJson(const DrawingSettings& settings) {
+			const auto flag = [](bool value) { return value ? "true" : "false"; };
+			std::ostringstream out;
+			out << "{\"angleSteps\":" << flag(settings.angleSteps) << ",\"guidesFromShape\":" << flag(settings.guidesFromShape)
+				<< ",\"alignToExistingBuildings\":" << flag(settings.alignToExistingBuildings)
+				<< ",\"guidesFromWorldAxes\":" << flag(settings.guidesFromWorldAxes) << ",\"guideCrossings\":" << flag(settings.guideCrossings)
+				<< ",\"commonLengths\":" << flag(settings.commonLengths) << ",\"guideDistances\":" << flag(settings.guideDistances)
+				<< ",\"angleReadout\":" << flag(settings.angleReadout) << ",\"roundLengths\":" << flag(settings.roundLengths)
+				<< ",\"showKeyGuide\":" << flag(settings.showKeyGuide)
+				<< ",\"rectangleGridSpacingMeters\":" << jsonNumber(static_cast<double>(settings.rectangleGridSpacingMeters)) << "}";
+			return out.str();
+		}
+
 	} // namespace
 
-	std::string drawingStateJson(const DrawingSnapshot& snapshot) {
+	std::string drawingStateJson(const DrawingSnapshot& snapshot, const DrawingStateContext& context) {
 		const bool rectangleTool = snapshot.tool == ToolKind::FoundationRectangle;
 		std::ostringstream out;
 		out << "{\"tool\":\"" << toolName(snapshot.tool) << "\",\"lastFoundationTool\":\"" << foundationToolName(snapshot.lastFoundationTool)
@@ -169,7 +185,10 @@ namespace world_sim {
 
 		out << ",\"snap\":" << (snapshot.snap ? snapJson(*snapshot.snap, rectangleTool) : "null") << ",\"verdict\":{\"valid\":"
 			<< (snapshot.verdict.valid ? "true" : "false") << ",\"proposed\":" << (snapshot.verdict.proposed ? "true" : "false")
-			<< ",\"reason\":\"" << jsonEscape(snapshot.verdict.reason) << "\"},\"status\":" << statusJson(snapshot) << "}";
+			<< ",\"reason\":\"" << jsonEscape(snapshot.verdict.reason) << "\"},\"status\":" << statusJson(snapshot)
+			<< ",\"settings\":" << settingsJson(context.settings) << ",\"keyGuide\":{\"shown\":"
+			<< (keyGuideShown(snapshot.tool, context.settings) ? "true" : "false")
+			<< ",\"collapsed\":" << (context.keyGuideCollapsed ? "true" : "false") << "},\"dialogOpen\":" << (context.dialogOpen ? "true" : "false") << "}";
 		return out.str();
 	}
 

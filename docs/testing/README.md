@@ -386,6 +386,7 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
 | `storage` | `[{id, defName, x, y, inventory{}, slots, maxSlots, rules:[{item, category, priority, min, max}]}]` |
 | `construction` | `{foundations:[{id, material, state, entity, area, corners:[{x, y}], required{}, delivered{}, progress, phase}], walls:[{id, material, state, entity, x0, y0, x1, y1, required{}, delivered{}, progress}], openings:[{id, type, material, wall, fractionAlongWall, state, entity, x, y, phase, required{}, delivered{}, progress}]}`. `state` is `Blueprint` or `Built`. `corners` is the foundation's ring in world meters, to three decimals, in ring order without repeating the first corner, so two foundations that share an edge share two corner coordinates exactly. An opening's `wall` is the wall segment id it sits on, `fractionAlongWall` how far along that wall it is (0 at the wall's `x0,y0` end, 1 at `x1,y1`), and `x,y` that point in world meters; they are left out when the wall or one of its ends is missing. `phase` and the material keys come with an `entity` that carries a blueprint, as on a foundation, and `phase` is `Clearing`, `AwaitingMaterials`, `UnderConstruction` or `Complete` |
 | `drawing` | what the drawing tools hold; see [the drawing view](#the-drawing-view) |
+| `camera` | `{center{x, y}, zoom, pixelsPerMeter, window{width, height}, visible{minX, minY, maxX, maxY}}`; see [the camera view](#the-camera-view) |
 | `landing` | `{landingLatDeg, landingLonDeg, biome, waterClass, riverInTile}` |
 | `time` | `{...}` |
 | `tunables` | every registered tunable and its value |
@@ -409,7 +410,11 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
   - Each guide has `source` (`DrawnShape`, `NearbyStructure` or `WorldAxes`), `relation` (`Parallel`, `Perpendicular` or `AngleStep`), `from` (the node it runs from) and `distanceFromNodeMeters`.
   - `lengthSnap` is `None`, `Rounded`, `RoundedAlongGuide` or `CommonLength`; `lengthMeters` is the length the step set, and 0 when it set nothing. `segmentLengthMeters` is the distance from the last placed point to the snapped point whatever set it, or null with no placed point, so at a guide crossing `lengthMeters` can be 0 while the segment is 4.000. `matchedEdgeCount` and `commonLengthsMeters` are the common-length matches.
 - `verdict`: what the next click would get, read from the same check the strip and the preview read: `valid`, `proposed` (false when the click would place nothing), and `reason` when refused. The opening tool's verdict is the strip's own (`status.valid` and `status.message`).
-- `status`: the strip's readouts: `active`, `material`, `pointCount`, `areaSquareMeters`, `valid`, `message`, plus `thicknessPreset`, `segmentLengthMeters`, `totalLengthMeters`, `wallCost`, `wallWork` for a wall, `editLabel` and `areaDeltaSquareMeters` for Add / Subtract, `openingType` and `openingWidthMeters` for an opening. Each group is there only while its tool is active.
+- `settings`: the Drawing Settings as they are now, there with or without a tool: `angleSteps`, `guidesFromShape`, `alignToExistingBuildings`, `guidesFromWorldAxes`, `guideCrossings`, `commonLengths`, `guideDistances`, `angleReadout`, `roundLengths` and `showKeyGuide` (each true or false), and `rectangleGridSpacingMeters`, the Rectangle tool's grid step in meters (1.000 unless changed). A setting changed in the Settings scene shows here at once.
+- `keyGuide`: `{shown, collapsed}`, there with or without a tool. `shown` is true while a tool is active and `settings.showKeyGuide` is on, which is the panel's own rule; `collapsed` is true while it is folded to its chip (the `?` or H key, or the chip, toggles it), and stays what it was while the panel is hidden. A folded guide is still `shown`.
+- `dialogOpen`: true while a dialog is open over the game (the pause menu, Settings), false otherwise, tool or not. While it is true the world's hotkeys and the key guide's toggle do not act.
+- `status`: the strip's readouts: `active`, `material`, `pointCount`, `areaSquareMeters`, `valid`, `message`, `hint`, plus `thicknessPreset`, `segmentLengthMeters`, `totalLengthMeters`, `wallCost`, `wallWork` for a wall, `editLabel` and `areaDeltaSquareMeters` for Add / Subtract, `openingType` and `openingWidthMeters` for an opening. Each group is there only while its tool is active.
+  - `hint` is the line the strip shows under its readouts, from the same function the strip calls. With the Rectangle tool: `Click or drag from a corner` (no corner yet) or `Click the opposite corner`. With Freeform: `Ready` (no point), `Keep placing points` (one or two), `Click origin to close` (three or more, valid). With Add / Subtract: `Draw a region across the foundation edge` (no point yet, then as Freeform). With the wall tool: `Click a foundation to start` (nothing placed) or `Right-click / Enter to finish`. With the opening tool: `Click a wall to place`, `Hover a built wall` (no wall near) or the refusal. Whenever the tool refuses the cursor's placement the hint is `message` instead (`valid` false). With no tool it is `Ready`.
 
 A Freeform shape with two points placed and the pointer on a third:
 
@@ -424,6 +429,24 @@ A Freeform shape with two points placed and the pointer on a third:
 ```
 
 With the pointer over the creek the same shape answers `"verdict":{"valid":false,"proposed":true,"reason":"not on buildable ground"}`.
+
+### The camera view
+
+`what=camera` answers where the world camera looks, so a check can turn a world point into the pixel `/api/input` takes, and a pixel back into a world point. The game scene answers it. Numbers are printed to three decimals.
+
+- `center`: the camera's position, `{x, y}` in world meters. `/api/control?action=camera&x=&y=` sets it; the view shows where it is now, so after a pan it trails the target until it settles (a pinned camera, with no pan key held, is at rest within a few frames).
+- `zoom`: the zoom factor (3.000 is the 100 percent view). `pixelsPerMeter`: the screen scale at that zoom, in logical pixels per world meter.
+- `window`: `{width, height}`, the window's logical size, the same pixels `/api/input` takes.
+- `visible`: `{minX, minY, maxX, maxY}`, the world rectangle the window shows.
+
+Y runs down the screen and down the world alike: a larger world y is lower in the window, so pixel y grows with world y and there is no flip. The two formulas, with `c` the `center`, `s` the `pixelsPerMeter` and `w`, `h` the `window`:
+
+```
+pixelX = w / 2 + (worldX - c.x) * s        worldX = c.x + (pixelX - w / 2) / s
+pixelY = h / 2 + (worldY - c.y) * s        worldY = c.y + (pixelY - h / 2) / s
+```
+
+A pixel is in the window when it is within `0..w` and `0..h`, but a tool's click is taken by the ui first where a panel covers it (the dock, the strip, the key guide), so aim at open ground. Read `center` and `pixelsPerMeter` in the same request as the window and compute after a camera control has settled; a point the Rectangle or Freeform tool places lands on its snap, so with helpers off expect the world point to the 0.1 m rounding.
 
 ### Other endpoints
 

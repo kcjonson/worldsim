@@ -622,6 +622,7 @@ namespace {
 				.placementIndex = m_placementExecutor.get(),
 				.camera = m_camera.get(),
 				.pixelsPerMeter = kPixelsPerMeter,
+				.dialogOpen = [this] { return modalDialogOpen(); },
 				.planet = m_planet,
 				.landingLatDeg = m_landingLatDeg,
 				.landingLonDeg = m_landingLonDeg,
