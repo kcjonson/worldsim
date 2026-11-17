@@ -415,6 +415,12 @@ namespace ecs {
 		}
 	}
 
+	bool GeometryIndex::anyOpaqueBodyWithin(geometry::Vec2i64 point, std::int64_t radiusMm) const {
+		return radiusMm >= 0 && std::ranges::any_of(wallBodies, [&](const WallBody& body) {
+				   return body.kind == vision::BodyKind::Opaque && body.within(point, radiusMm);
+			   });
+	}
+
 	bool GeometryIndex::WallBody::within(geometry::Vec2i64 point, std::int64_t radiusMm) const {
 		if (point.x + radiusMm < low.x || point.x - radiusMm > high.x || point.y + radiusMm < low.y || point.y - radiusMm > high.y) {
 			return false;

@@ -165,6 +165,9 @@ namespace ecs {
 		// radiusMm of `point`, in order, into `out` (cleared first).
 		void bodiesWithin(geometry::Vec2i64 point, std::int64_t radiusMm, std::vector<std::size_t>& out) const;
 
+		// Whether any opaque body has some of its outline within radiusMm of `point`, without listing them.
+		[[nodiscard]] bool anyOpaqueBodyWithin(geometry::Vec2i64 point, std::int64_t radiusMm) const;
+
 		// Whether no opaque body's back face within radiusMm can bound what an eye at `eye` sees: it is
 		// outside the solid (insideSolid), which it would see from within, over a
 		// millimetre from the line of every occluder in range, where the polygon's grazing

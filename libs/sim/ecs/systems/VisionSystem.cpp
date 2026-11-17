@@ -209,16 +209,29 @@ namespace ecs {
 			// build yet; he moved more than the rebuild step from the build; the walls, the shape's
 			// tunables, or his sight changed; this pass's lead is longer than the build's, so its reach
 			// falls short; the placed rings within the build's reach of its eye are not the ones it was
-			// built with; or one of them is still arriving. A stationary colonist hits none of these and
-			// keeps his build, and so does one walking over ground with nothing on it.
+			// built with; or one of them is still arriving. On the plain disc, also the first pass an
+			// opaque body lies within his reach of where he stands, so where he takes the polygon path
+			// follows where he is, not where his last plain build fell. A stationary colonist hits none
+			// of these and keeps his build, and so does one walking over ground with nothing on it.
 			const geometry::Vec2i64 moved = observerMm - entry.builtMm;
 			bool due = !entry.built || geometry::dot(moved, moved) > geometry::Int128::product(kSightRebuildStepMm, kSightRebuildStepMm) ||
 					   entry.builtVersion != m_geometry.generation() || entry.tunablesVersion != tunablesVersion ||
 					   entry.radius != memory.sightRadius || leadMm > entry.leadMm;
+			if (!due && !entry.hasPolygon) {
+				due = m_geometry.anyOpaqueBodyWithin(observerMm, reachMm);
+			}
 			if (!due && placed != nullptr) {
-				placed->within(entry.builtMm, entry.reachMm, placedScratch);
+				// He is within the rebuild step of the build, so a step more holds every ring in his reach.
+				const std::int64_t queryMm = entry.hasPolygon ? entry.reachMm : std::max(entry.reachMm, reachMm) + kSightRebuildStepMm;
+				placed->within(entry.builtMm, queryMm, placedScratch);
 				serialScratch.clear();
 				for (const vision::PlacedOccluder* ring : placedScratch) {
+					if (!entry.hasPolygon && ring->kind == vision::BodyKind::Opaque && ring->within(observerMm, reachMm)) {
+						due = true;
+					}
+					if (!ring->within(entry.builtMm, entry.reachMm)) {
+						continue;
+					}
 					serialScratch.push_back(ring->serial);
 					due = due || (clockRuns && arrivalOf(*ring) < geometry::kFractionOne);
 				}
