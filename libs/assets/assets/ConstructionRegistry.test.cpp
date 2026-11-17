@@ -5,6 +5,7 @@
 #include "assets/ConfigValidator.h"
 
 #include <gtest/gtest.h>
+#include <pugixml.hpp>
 
 #include <atomic>
 #include <cstdio>
@@ -345,6 +346,17 @@ TEST_F(ConstructionRegistryTest, Snapping_Parsed) {
 	EXPECT_EQ(d.roundLengths, inCode.roundLengths);
 	EXPECT_EQ(d.showKeyGuide, inCode.showKeyGuide);
 	EXPECT_FLOAT_EQ(d.rectangleGridSpacingMeters, inCode.rectangleGridSpacingMeters);
+}
+
+// The click distance is the designer's to tune in the file: the shipped snapping.xml sets it, so
+// the value in use is the file's and not the loader's default.
+TEST_F(ConstructionRegistryTest, Snapping_ShipsTheClickDistanceInTheFile) {
+	pugi::xml_document shipped;
+	ASSERT_TRUE(shipped.load_file((constructionConfigFolder() / "snapping.xml").c_str()));
+	const pugi::xml_node key = shipped.child("ConstructionSnapping").child("doubleClickDistancePx");
+	ASSERT_TRUE(key) << "snapping.xml sets doubleClickDistancePx";
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+	EXPECT_FLOAT_EQ(ConstructionRegistry::Get().snapping().doubleClickDistancePx, key.text().as_float());
 }
 
 // A new player meets the Rectangle tool and no helpers: every helper off, Round lengths and
