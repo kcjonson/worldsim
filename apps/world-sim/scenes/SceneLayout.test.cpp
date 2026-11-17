@@ -697,6 +697,7 @@ namespace world_sim::testing {
 		ASSERT_NE(chip, nullptr);
 		const std::vector<const ui::Component*> chipText = childrenOf(*chip);
 		ASSERT_EQ(chipText.size(), 1U);
+		ASSERT_EQ(std::string_view(chipText[0]->typeName()), "Text");
 		EXPECT_EQ(static_cast<const ui::Text*>(chipText[0])->getText(), "Keys ?");
 		scene.drawingSettings.showKeyGuide = false;
 		frame();
@@ -724,6 +725,7 @@ namespace world_sim::testing {
 					const KeyGuidePart& part = content.keyRows[row].keys[index];
 					EXPECT_EQ(std::string_view(parts[index]->typeName()), part.chip ? "KeyCap" : "Text") << when << ", " << part.text;
 				}
+				ASSERT_EQ(std::string_view(keyCells[(row * 2) + 1]->typeName()), "Text") << when << ", row " << row;
 				EXPECT_EQ(static_cast<const ui::Text*>(keyCells[(row * 2) + 1])->getText(), content.keyRows[row].action) << when;
 			}
 			const ui::Component* legend = shown("key_guide_legend");

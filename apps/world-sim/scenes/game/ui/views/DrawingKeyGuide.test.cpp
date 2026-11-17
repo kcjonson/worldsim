@@ -11,7 +11,6 @@
 
 #include <array>
 #include <cmath>
-#include <numbers>
 #include <set>
 #include <string>
 #include <utility>
