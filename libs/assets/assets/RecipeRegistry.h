@@ -24,16 +24,12 @@ class RecipeRegistry {
 
     // --- Loading ---
 
-    /// Load recipes from an XML file
-    /// @param xmlPath Path to the XML recipe file
-    /// @return true if loading succeeded
-    bool loadRecipes(const std::string& xmlPath);
-
     /// Load all recipes from a folder recursively
-    /// Scans for all *.xml files in the folder and subfolders. Call only once AssetRegistry
-    /// holds the definitions the recipes name (see initializeAssetSystem).
+    /// Scans for all *.xml files in the folder and subfolders, adds the recipes not already held,
+    /// and resolves every recipe's def-name ids against AssetRegistry's index as it stands, so
+    /// AssetRegistry must already hold the definitions (loadAssetSystem orders the two).
     /// @param folderPath Path to the recipes folder
-    /// @return Number of recipes loaded
+    /// @return Number of recipes added
     size_t loadRecipesFromFolder(const std::string& folderPath);
 
     /// Clear all loaded recipes
@@ -82,6 +78,9 @@ class RecipeRegistry {
   private:
     RecipeRegistry() = default;
 
+    /// Parse the recipes in one XML file; true if any was added
+    bool loadRecipes(const std::string& xmlPath);
+
     /// Parse a single recipe from XML node
     bool parseRecipeFromNode(const void* node); // pugi::xml_node passed as void*
 
@@ -99,9 +98,6 @@ class RecipeRegistry {
 
     /// Innate recipes (known from start)
     std::vector<const RecipeDef*> m_innateRecipes;
-
-    /// Empty string for invalid ID lookups
-    static const std::string s_emptyString;
 };
 
 } // namespace assets

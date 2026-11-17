@@ -65,7 +65,8 @@ namespace ecs {
 		}
 		// A two-handed item shows in both hands as the same stack; counting both double-
 		// counts it. Skip the right hand when it mirrors the left.
-		if (inv.rightHand.has_value() && !(inv.leftHand.has_value() && inv.leftHand->defName == inv.rightHand->defName)) {
+		if (inv.rightHand.has_value() &&
+			!(inv.leftHand.has_value() && inv.leftHand->defName == inv.rightHand->defName && itemIsTwoHand(registry, inv.rightHand->defName))) {
 			addStack(inv.rightHand->defName, inv.rightHand->quantity);
 		}
 		for (const auto& stack : inv.items) {
@@ -127,18 +128,6 @@ namespace ecs {
 	// look at the hands, not just `items`. A two-hand armful occupies BOTH hands as the same
 	// logical stack (equal quantity, same defName); these helpers preserve that mirror.
 
-	/// True if `defName` must be carried in both hands (so it lives in the hands, not the pack).
-	[[nodiscard]] inline bool itemIsTwoHand(const assets::AssetRegistry& registry, const std::string& defName) {
-		const auto* def = registry.getDefinition(defName);
-		return def != nullptr && def->handsRequired >= 2;
-	}
-
-	/// itemIsTwoHand by interned item id.
-	[[nodiscard]] inline bool itemIsTwoHand(const assets::AssetRegistry& registry, uint32_t item) {
-		const auto* def = registry.getDefinitionById(item);
-		return def != nullptr && def->handsRequired >= 2;
-	}
-
 	/// Quantity of `defName` held in the hands. A two-hand item mirrors across both hands; it is
 	/// counted once (right skipped when it mirrors the left), matching carriedCargoMassKg.
 	[[nodiscard]] inline uint32_t handHeldQuantity(const Inventory& inv, const std::string& defName) {
@@ -147,7 +136,7 @@ namespace ecs {
 			qty += inv.leftHand->quantity;
 		}
 		if (inv.rightHand.has_value() && inv.rightHand->defName == defName &&
-			!(inv.leftHand.has_value() && inv.leftHand->defName == inv.rightHand->defName)) {
+			!(inv.leftHand.has_value() && inv.leftHand->defName == defName && itemIsTwoHand(assets::AssetRegistry::Get(), defName))) {
 			qty += inv.rightHand->quantity;
 		}
 		return qty;
@@ -159,30 +148,38 @@ namespace ecs {
 		return inv.getQuantity(defName) + handHeldQuantity(inv, defName);
 	}
 
-	/// Remove up to `quantity` of `defName` from the hands, keeping the two-hand mirror in sync
-	/// (both hands decrement together and clear together). Returns the amount removed.
+	/// Remove up to `quantity` of `defName` from the hands. A two-hand item mirrors across both hands
+	/// (both decrement together and clear together); one-hand units drain from each hand in turn, so a
+	/// unit in each hand is two units. Returns the amount removed.
 	inline uint32_t removeFromHands(Inventory& inv, const std::string& defName, uint32_t quantity) {
 		const bool inLeft = inv.leftHand.has_value() && inv.leftHand->defName == defName;
 		const bool inRight = inv.rightHand.has_value() && inv.rightHand->defName == defName;
 		if (!inLeft && !inRight) {
 			return 0;
 		}
-		const bool mirrored = inLeft && inRight; // a two-hand item occupies both hands
-		ItemStack& primary = inLeft ? inv.leftHand.value() : inv.rightHand.value();
-		const uint32_t toRemove = std::min(quantity, primary.quantity);
-		primary.quantity -= toRemove;
-		if (mirrored) {
-			(inLeft ? inv.rightHand : inv.leftHand)->quantity = primary.quantity; // stay mirrored
-		}
-		if (primary.quantity == 0) {
-			if (inLeft) {
+		if (inLeft && inRight && itemIsTwoHand(assets::AssetRegistry::Get(), defName)) {
+			const uint32_t toRemove = std::min(quantity, inv.leftHand->quantity);
+			inv.leftHand->quantity -= toRemove;
+			inv.rightHand->quantity = inv.leftHand->quantity; // stay mirrored
+			if (inv.leftHand->quantity == 0) {
 				inv.leftHand.reset();
-			}
-			if (inRight) {
 				inv.rightHand.reset();
 			}
+			return toRemove;
 		}
-		return toRemove;
+		uint32_t removed = 0;
+		for (auto* hand : {&inv.rightHand, &inv.leftHand}) {
+			if (removed >= quantity || !hand->has_value() || (*hand)->defName != defName) {
+				continue;
+			}
+			const uint32_t toRemove = std::min(quantity - removed, (*hand)->quantity);
+			(*hand)->quantity -= toRemove;
+			removed += toRemove;
+			if ((*hand)->quantity == 0) {
+				hand->reset();
+			}
+		}
+		return removed;
 	}
 
 	/// Units of `defName` an armful of it in the hands has room for, by weight and stack cap; whether

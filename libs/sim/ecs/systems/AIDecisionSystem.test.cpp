@@ -55,6 +55,8 @@
 
 #include <worldgen/sampling/PondNetwork2D.h>
 
+#include <utils/Log.h>
+
 #include <gtest/gtest.h>
 
 #include <glm/geometric.hpp>
@@ -64,6 +66,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -353,6 +356,45 @@ namespace ecs::test {
 
 		// Update should not crash and should not affect partial entity
 		EXPECT_NO_THROW(world->update(0.016F));
+	}
+
+	namespace {
+		struct MissingComponentWarnings {
+			int count = 0;
+			static void sink(void* context, const foundation::LogRecord& record) {
+				if (record.level == foundation::LogLevel::Warning && std::strstr(record.message, "never decides anything") != nullptr) {
+					++static_cast<MissingComponentWarnings*>(context)->count;
+				}
+			}
+		};
+		struct SinkGuard {
+			explicit SinkGuard(MissingComponentWarnings& warnings) { foundation::Logger::setSink(&MissingComponentWarnings::sink, &warnings); }
+			~SinkGuard() { foundation::Logger::setSink(nullptr, nullptr); }
+		};
+	} // namespace
+
+	TEST_F(AIDecisionSystemTest, ColonistMissingDecisionComponentsWarnsOnceAndCompleteOneStillDecides) {
+		auto noMemo = createColonist({0.0F, 0.0F});
+		world->removeComponent<SourceReachMemo>(noMemo);
+		auto noTrace = createColonist({1.0F, 0.0F});
+		world->removeComponent<DecisionTrace>(noTrace);
+		auto complete = createColonist({2.0F, 0.0F});
+
+		MissingComponentWarnings warnings;
+		{
+			const SinkGuard guard(warnings);
+			for (int i = 0; i < 3; ++i) {
+				EXPECT_NO_THROW(world->update(0.016F));
+			}
+		}
+
+		EXPECT_FALSE(getTask(noMemo)->isActive());
+		EXPECT_FALSE(getTask(noTrace)->isActive());
+		EXPECT_TRUE(getTask(complete)->isActive());
+#ifdef DEVELOPMENT_BUILD
+		// One per broken colonist, none repeated over the three ticks.
+		EXPECT_EQ(warnings.count, 2);
+#endif
 	}
 
 	// =============================================================================
@@ -3241,6 +3283,16 @@ namespace ecs::test {
 			axeDef.itemProperties->massKg = 1.0F;
 			registry.registerTestDefinition(std::move(axeDef));
 
+			assets::AssetDefinition stickDef;
+			stickDef.defName = "Stick";
+			stickDef.label = "Stick";
+			stickDef.handsRequired = 1;
+			stickDef.category = assets::ItemCategory::RawMaterial;
+			stickDef.itemProperties = assets::ItemProperties{};
+			stickDef.itemProperties->stackSize = 10;
+			stickDef.itemProperties->massKg = 0.5F;
+			registry.registerTestDefinition(std::move(stickDef));
+
 			assets::ActionTypeDef harvestAction;
 			harvestAction.defName = "Harvest";
 			harvestAction.needsHands = true;
@@ -3252,12 +3304,14 @@ namespace ecs::test {
 					++dropCalls;
 					droppedDef = defName;
 					droppedQty = quantity;
+					droppedTotal += quantity;
 				}
 			);
 		}
 
 		std::string droppedDef;
 		uint32_t	droppedQty = 0;
+		uint32_t	droppedTotal = 0;
 		int			dropCalls = 0;
 
 		void TearDown() override {
@@ -3273,6 +3327,31 @@ namespace ecs::test {
 			task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Axe");
 			task->state = TaskState::Moving;
 			return task;
+		}
+
+		// Put the colonist mid-Haul with one Stick in each hand.
+		Task* armMidHaulCarryingStickPair(EntityID colonist) {
+			auto* inventory = world->getComponent<Inventory>(colonist);
+			inventory->pickUp("Stick", 1);
+			inventory->pickUp("Stick", 1);
+			auto* task = armMidHaulCarryingAxe(colonist);
+			task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Stick");
+			return task;
+		}
+
+		static uint32_t beltUnits(const Inventory& inventory, const std::string& defName) {
+			uint32_t units = 0;
+			for (const auto& slot : inventory.belt) {
+				if (slot.has_value() && slot->defName == defName) {
+					units += slot->quantity;
+				}
+			}
+			return units;
+		}
+
+		// Units of `defName` held, belted, packed, or dropped: conserved across the interruption.
+		uint32_t stickUnits(const Inventory& inventory) const {
+			return handHeldQuantity(inventory, "Stick") + beltUnits(inventory, "Stick") + inventory.getQuantity("Stick") + droppedTotal;
 		}
 
 		// Drive the real handler for a switch to a hands-needing Harvest task.
@@ -3360,6 +3439,63 @@ namespace ecs::test {
 		EXPECT_EQ(dropCalls, 1) << "Axe dropped via the drop callback";
 		EXPECT_EQ(droppedDef, "Axe");
 		EXPECT_EQ(droppedQty, 1U);
+	}
+
+	// One Stick in each hand: both units leave the hands, by belt, then pack, then ground.
+	TEST_F(ChainInterruptionFixture, StickPairBothStowToBeltWhenBeltFree) {
+		auto  colonist = createColonist({5.0F, 5.0F});
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		auto* task = armMidHaulCarryingStickPair(colonist);
+		ASSERT_EQ(stickUnits(*inventory), 2U);
+		interruptForHarvest(colonist, *task);
+
+		EXPECT_FALSE(inventory->isHolding("Stick")) << "Both hands freed";
+		EXPECT_EQ(beltUnits(*inventory, "Stick"), 2U);
+		EXPECT_EQ(dropCalls, 0);
+		EXPECT_EQ(stickUnits(*inventory), 2U);
+	}
+
+	TEST_F(ChainInterruptionFixture, StickPairSplitsBeltThenBackpackWhenOneBeltSlotFree) {
+		auto  colonist = createColonist({5.0F, 5.0F});
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->belt[0] = ItemStack{"Knife", 1};
+		auto* task = armMidHaulCarryingStickPair(colonist);
+		interruptForHarvest(colonist, *task);
+
+		EXPECT_FALSE(inventory->isHolding("Stick"));
+		EXPECT_EQ(beltUnits(*inventory, "Stick"), 1U);
+		EXPECT_EQ(inventory->getQuantity("Stick"), 1U);
+		EXPECT_EQ(stickUnits(*inventory), 2U);
+	}
+
+	TEST_F(ChainInterruptionFixture, StickPairBothStowToBackpackWhenBeltFull) {
+		auto  colonist = createColonist({5.0F, 5.0F});
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->belt[0] = ItemStack{"Knife", 1};
+		inventory->belt[1] = ItemStack{"Hammer", 1};
+		auto* task = armMidHaulCarryingStickPair(colonist);
+		interruptForHarvest(colonist, *task);
+
+		EXPECT_FALSE(inventory->isHolding("Stick")) << "Both hands freed";
+		EXPECT_EQ(inventory->getQuantity("Stick"), 2U);
+		EXPECT_EQ(dropCalls, 0);
+		EXPECT_EQ(stickUnits(*inventory), 2U);
+	}
+
+	TEST_F(ChainInterruptionFixture, StickPairBothDroppedWhenBeltAndBackpackFull) {
+		auto  colonist = createColonist({5.0F, 5.0F});
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->belt[0] = ItemStack{"Knife", 1};
+		inventory->belt[1] = ItemStack{"Hammer", 1};
+		inventory->maxCapacity = 1;
+		inventory->addItem("Berry", 1);
+		auto* task = armMidHaulCarryingStickPair(colonist);
+		interruptForHarvest(colonist, *task);
+
+		EXPECT_FALSE(inventory->isHolding("Stick")) << "Both hands freed";
+		EXPECT_FALSE(inventory->hasItem("Stick"));
+		EXPECT_EQ(droppedTotal, 2U) << "Both units dropped, none lost";
+		EXPECT_EQ(stickUnits(*inventory), 2U);
 	}
 
 	// A two-hand armful is one stack mirrored across both hands: an interrupted haul drops it once,
