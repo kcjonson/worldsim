@@ -5,20 +5,20 @@
 // GeometryIndex, calls rebuildIfStale() each tick, and feeds queryOccluders()
 // into geometry::computeVisibilityPolygon / hasLineOfSight.
 //
-// Walls occlude sight; doors AND windows pass it. This is the key difference from
-// navigation: nav treats a door as a movement gap but a window as a movement-solid
-// band, whereas for SIGHT both a door and a window are gaps -- the glass and the
-// open doorway are equally transparent. So a transparentToSight opening is a GAP in
-// the occluder line, and only the solid wall portions between/around openings emit
-// occluders. The centerline gap span uses the SAME half-extent formula as
-// construction::openingFootprint, so the sight gap ends at the opening's jambs (the
-// nav door portal's). Nav cuts its door span at whole millimetres along the wall and
-// clamps it to the trimmed band, so its span can differ from the jambs by that rounding,
-// start at the corner trim, and run up to 6 mm past a jamb over a sliver of solid wall.
+// The occluders are the edges of the built walls' outline, the shape the wall
+// drawing outlines (geometry::wallPiecesAndOutline over each connected graph of
+// built walls): both faces, end caps, mitred and trimmed junctions, and the jambs
+// of every gap. Sight stops at a wall's near face, so the band itself is never in
+// sight. A graph the band offsetter rejects occludes as each wall's untrimmed band,
+// as nav blocks it.
 //
-// Extraction is synchronous and CPU-light (centerline segments, no triangulation,
-// no offsetting), so the rebuild runs inline, version-gated against
-// ConstructionWorld::version().
+// Doors AND windows pass sight. This is the difference from navigation: nav treats
+// a door as a movement gap but a window as a movement-solid band, whereas for sight
+// a transparentToSight opening is a gap in the outline, cut at the span
+// construction::openingGaps gives it, the span the wall drawing cuts.
+//
+// The rebuild resolves bands for every built wall, as nav's wall extraction does,
+// and runs inline, version-gated against ConstructionWorld::version().
 
 #include <construction/ConstructionWorld.h> // SegmentId/OpeningId typedefs used in records
 
@@ -35,25 +35,17 @@ namespace ecs {
 	class GeometryIndex {
 	  public:
 		// An opaque occluder plus the wall segment it came from. queryOccluders
-		// outputs bare geometry::OccluderSegment; the source id lets a later pass
-		// attribute a sight blockage to a wall and supports per-segment culling.
+		// outputs bare geometry::OccluderSegment; the source id lets the V3
+		// structure-as-observable pass find which walls a visibility polygon
+		// touches without re-walking the topology.
 		struct OccluderRecord {
 			construction::SegmentId source = 0;
 			geometry::OccluderSegment		seg;
 		};
 
-		// A built wall segment's centerline endpoints, kept so the V3
-		// structure-as-observable pass can find which walls a visibility polygon
-		// touches without re-walking the topology.
-		struct SegmentRecord {
-			construction::SegmentId id = 0;
-			geometry::Vec2i64				a;
-			geometry::Vec2i64				b;
-		};
-
 		// A built opening, kept for the same V3 pass. jambA/jambB are the two
-		// centerline points bounding the opening's clear span (the gap endpoints),
-		// computed from the same [t0,t1] used to cut the occluder line.
+		// centerline points bounding the opening's span (construction::openingGaps',
+		// clamped to the segment), the span a transparentToSight opening cuts.
 		struct OpeningRecord {
 			construction::OpeningId openingId = 0;
 			construction::SegmentId segment	  = 0;
@@ -91,7 +83,6 @@ namespace ecs {
 
 		// Accessors for the V3 structure-as-observable pass.
 		[[nodiscard]] const std::vector<OccluderRecord>& occluders() const { return m_occluders; }
-		[[nodiscard]] const std::vector<SegmentRecord>&	 builtSegments() const { return m_segments; }
 		[[nodiscard]] const std::vector<OpeningRecord>&	 builtOpenings() const { return m_openings; }
 
 	  private:
@@ -109,7 +100,6 @@ namespace ecs {
 		std::uint64_t m_generation = 0;
 
 		std::vector<OccluderRecord> m_occluders;
-		std::vector<SegmentRecord>	m_segments;
 		std::vector<OpeningRecord>	m_openings;
 	};
 

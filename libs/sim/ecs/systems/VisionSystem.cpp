@@ -231,11 +231,13 @@ namespace ecs {
 		// to dozens; the per-edge crossing test is O(structures * ring edges) but
 		// both are small. Deterministic: set inserts are order-independent.
 		//
-		// A structure point [p0,p1] is seen if either endpoint lies in/on the
-		// polygon, or the span crosses a ring edge. The crossing fallback matters
-		// because a wall IS (part of) the polygon boundary: a long wall facing the
-		// observer can have both endpoints out of sight radius while its middle is
-		// the boundary seen along, which an endpoint-only test would miss.
+		// A wall is seen when one of its outline edges (the occluders) is, an
+		// opening when its centerline span is. A span [p0,p1] is seen if either
+		// endpoint lies in/on the polygon, or the span crosses a ring edge. The
+		// crossing fallback matters because a wall's near face IS the polygon
+		// boundary: a long wall facing the observer can have both corners out of
+		// sight radius while its middle is the boundary seen along, which an
+		// endpoint-only test would miss.
 		auto structureSeen = [&](geometry::Vec2i64 p0, geometry::Vec2i64 p1) -> bool {
 			if (geometry::pointInPolygon(p0, polygon) != geometry::PointInPolygon::Outside ||
 				geometry::pointInPolygon(p1, polygon) != geometry::PointInPolygon::Outside) {
@@ -251,13 +253,14 @@ namespace ecs {
 			return false;
 		};
 
-		for (const auto& seg : m_geometry.builtSegments()) {
-			if (!geometry::withinDistanceOfSegment(centerMm, seg.a, seg.b, radiusMm)) {
+		for (const GeometryIndex::OccluderRecord& occluder : m_geometry.occluders()) {
+			if (std::ranges::find(segments, occluder.source) != segments.end() ||
+				!geometry::withinDistanceOfSegment(centerMm, occluder.seg.a, occluder.seg.b, radiusMm)) {
 				continue;
 			}
-			if (structureSeen(seg.a, seg.b)) {
-				memory.rememberSegment(seg.id);
-				segments.push_back(seg.id);
+			if (structureSeen(occluder.seg.a, occluder.seg.b)) {
+				memory.rememberSegment(occluder.source);
+				segments.push_back(occluder.source);
 			}
 		}
 

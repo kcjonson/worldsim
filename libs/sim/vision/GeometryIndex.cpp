@@ -2,12 +2,13 @@
 
 #include <assets/ConstructionRegistry.h>
 #include <construction/ConstructionWorld.h>
+#include <construction/OpeningGeometry.h>
 
+#include <offset/WallOffset.h>
 #include <predicates/Predicates.h>
 
 #include <algorithm>
 #include <cmath>
-#include <unordered_map>
 #include <vector>
 
 namespace ecs {
@@ -16,15 +17,11 @@ namespace ecs {
 
 		namespace cw = construction;
 
-		// Centerline lerp between integer-mm endpoints at parameter t, rounded to mm
-		// (same rounding policy as construction::openingFootprint's).
-		geometry::Vec2i64 lerp(const geometry::Vec2i64& a, const geometry::Vec2i64& b, float t) {
-			const double ax = static_cast<double>(a.x);
-			const double ay = static_cast<double>(a.y);
-			const double bx = static_cast<double>(b.x);
-			const double by = static_cast<double>(b.y);
-			return {static_cast<std::int64_t>(std::llround(ax + (bx - ax) * static_cast<double>(t))),
-					static_cast<std::int64_t>(std::llround(ay + (by - ay) * static_cast<double>(t)))};
+		// The centerline point `alongMm` from `a` toward `b`, clamped to the segment
+		// and rounded to the millimetre.
+		geometry::Vec2i64 pointAlong(const geometry::Vec2i64& a, const geometry::Vec2i64& b, double lengthMm, std::int64_t alongMm) {
+			const double fraction = std::clamp(static_cast<double>(alongMm) / lengthMm, 0.0, 1.0);
+			return {a.x + std::llround(static_cast<double>(b.x - a.x) * fraction), a.y + std::llround(static_cast<double>(b.y - a.y) * fraction)};
 		}
 
 	} // namespace
@@ -41,7 +38,6 @@ namespace ecs {
 		// occluders) until the next rebuild -- a null world stays inert, as the
 		// header promises; a non-null world repopulates on the next rebuildIfStale.
 		m_occluders.clear();
-		m_segments.clear();
 		m_openings.clear();
 		// Clearing the occluder set is itself a change consumers must see, so move
 		// the generation -- a cache keyed on it (e.g. VisionSystem's polygons) would
@@ -63,88 +59,75 @@ namespace ecs {
 	void GeometryIndex::rebuild() {
 		++m_generation; // every actual rebuild moves the generation a cache can gate on
 		m_occluders.clear();
-		m_segments.clear();
 		m_openings.clear();
 
-		const cw::ConstructionWorld&			   world = *m_world;
-		const assets::ConstructionRegistry& reg	  = assets::ConstructionRegistry::Get();
+		const cw::ConstructionWorld&		world	 = *m_world;
+		const assets::ConstructionRegistry& registry = assets::ConstructionRegistry::Get();
 
-		// A transparent gap span on a segment's centerline, in [0,1] from v0->v1.
-		struct Gap {
-			float t0;
-			float t1;
-		};
-
-		// Pre-group built openings by host segment so the per-segment loop is
-		// O(segments + openings), not O(segments * openings).
-		std::unordered_map<cw::SegmentId, std::vector<const cw::Opening*>> openingsBySegment;
-		for (const cw::Opening& op : world.openings()) {
-			if (op.state == cw::FoundationState::Built) {
-				openingsBySegment[op.segment].push_back(&op);
-			}
-		}
-
-		for (const cw::WallSegment& seg : world.segments()) {
-			if (seg.state != cw::FoundationState::Built) {
+		// The built walls as the offsetter takes them, the spans their transparent
+		// openings leave open, and the id of each.
+		std::vector<geometry::WallSegment>			walls;
+		std::vector<std::vector<geometry::WallGap>> sightGaps;
+		std::vector<cw::SegmentId>					wallIds;
+		for (const cw::WallSegment& segment : world.segments()) {
+			if (!cw::isBuilt(segment)) {
 				continue; // blueprint walls do not occlude
 			}
-			const cw::Vertex* v0 = world.getVertex(seg.v0);
-			const cw::Vertex* v1 = world.getVertex(seg.v1);
-			if (v0 == nullptr || v1 == nullptr) {
+			const cw::Vertex*  v0	= world.getVertex(segment.v0);
+			const cw::Vertex*  v1	= world.getVertex(segment.v1);
+			const std::int64_t half = cw::halfThicknessMm(segment);
+			if (v0 == nullptr || v1 == nullptr || half <= 0) {
 				continue;
 			}
-			const geometry::Vec2i64 a = v0->pos;
-			const geometry::Vec2i64 b = v1->pos;
-
-			m_segments.push_back({seg.id, a, b});
-
-			const double dx		  = static_cast<double>(b.x - a.x);
-			const double dy		  = static_cast<double>(b.y - a.y);
-			const double lengthMm = std::sqrt(dx * dx + dy * dy);
+			const geometry::Vec2i64 a		 = v0->pos;
+			const geometry::Vec2i64 b		 = v1->pos;
+			const double			lengthMm = std::hypot(static_cast<double>(b.x - a.x), static_cast<double>(b.y - a.y));
 			if (lengthMm <= 0.0) {
 				continue; // degenerate; a built zero-length wall should not exist
 			}
 
-			// Gather this segment's BUILT transparent-to-sight openings as gap spans.
-			// The half-extent formula matches construction::openingFootprint exactly, so a
-			// given opening's sight gap ends at its jambs. Nav cuts its door span at whole
-			// millimetres along the wall and clamps it to the wall's trimmed band, so it can
-			// differ from the jambs by that rounding, start at the corner trim, and run up to
-			// 6 mm past a jamb where a sliver of solid wall would be left.
-			std::vector<Gap> gaps;
-			auto			 openIt = openingsBySegment.find(seg.id);
-			if (openIt != openingsBySegment.end()) {
-				for (const cw::Opening* op : openIt->second) {
-					const assets::OpeningTypeDef* type = reg.getOpeningType(op->type);
-					if (type == nullptr) {
-						continue;
-					}
-					const float halfExtent = static_cast<float>((static_cast<double>(type->widthMm) * 0.5) / lengthMm);
-					const float t0		   = std::clamp(op->t - halfExtent, 0.0F, 1.0F);
-					const float t1		   = std::clamp(op->t + halfExtent, 0.0F, 1.0F);
-
-					m_openings.push_back({op->id, seg.id, op->type, lerp(a, b, t0), lerp(a, b, t1), type->transparentToSight});
-
-					if (type->transparentToSight) {
-						gaps.push_back({t0, t1});
-					}
+			const cw::OpeningGaps			openings = cw::openingGaps(world, segment, {.builtOnly = true});
+			std::vector<geometry::WallGap>	gaps;
+			for (std::size_t index = 0; index < openings.openings.size(); ++index) {
+				const cw::Opening*			  opening = world.getOpening(openings.openings[index]);
+				const assets::OpeningTypeDef* type	  = opening != nullptr ? registry.getOpeningType(opening->type) : nullptr;
+				if (type == nullptr) {
+					continue;
+				}
+				const geometry::WallGap& gap = openings.gaps[index];
+				m_openings.push_back({opening->id, segment.id, opening->type, pointAlong(a, b, lengthMm, gap.fromMm),
+									  pointAlong(a, b, lengthMm, gap.toMm), type->transparentToSight});
+				if (type->transparentToSight) {
+					gaps.push_back(gap);
 				}
 			}
+			walls.push_back({a, b, half});
+			sightGaps.push_back(std::move(gaps));
+			wallIds.push_back(segment.id);
+		}
 
-			// Subtract the gap spans from [0,1] and emit each remaining solid sub-span
-			// as one opaque occluder along the centerline. With no transparent opening
-			// this is the single full-centerline occluder.
-			std::sort(gaps.begin(), gaps.end(), [](const Gap& l, const Gap& r) { return l.t0 < r.t0; });
-
-			float cursor = 0.0F;
-			for (const Gap& g : gaps) {
-				if (g.t0 > cursor + 1e-6F) {
-					m_occluders.push_back({seg.id, {lerp(a, b, cursor), lerp(a, b, g.t0)}});
-				}
-				cursor = std::max(cursor, g.t1);
+		for (const std::vector<std::size_t>& graph : geometry::connectedWallGraphs(walls)) {
+			std::vector<geometry::WallSegment>			members;
+			std::vector<std::vector<geometry::WallGap>> memberGaps;
+			members.reserve(graph.size());
+			memberGaps.reserve(graph.size());
+			for (const std::size_t index : graph) {
+				members.push_back(walls[index]);
+				memberGaps.push_back(sightGaps[index]);
 			}
-			if (cursor < 1.0F - 1e-6F) {
-				m_occluders.push_back({seg.id, {lerp(a, b, cursor), lerp(a, b, 1.0F)}});
+			const geometry::WallBands bands = geometry::resolveWallBands(members, geometry::kDefaultMiterLimit);
+			if (bands.status != geometry::OffsetStatus::Ok) {
+				// Reject-don't-repair, as nav blocks such a graph: each wall's raw band, whole.
+				for (const std::size_t index : graph) {
+					const geometry::Ring ring = geometry::band(walls[index].a, walls[index].b, walls[index].halfThicknessMm);
+					for (std::size_t corner = 0; corner < ring.size(); ++corner) {
+						m_occluders.push_back({wallIds[index], {ring[corner], ring[(corner + 1) % ring.size()]}});
+					}
+				}
+				continue;
+			}
+			for (const geometry::OutlineEdge& edge : geometry::wallPiecesAndOutline(members, memberGaps, bands).outline) {
+				m_occluders.push_back({wallIds[graph[edge.index]], {edge.from, edge.to}});
 			}
 		}
 	}
