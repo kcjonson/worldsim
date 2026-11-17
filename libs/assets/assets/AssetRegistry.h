@@ -141,6 +141,10 @@ namespace assets {
 		/// placed entity's collider can stand. Kept as definitions load and their shapes are set.
 		[[nodiscard]] float maxCollisionReachMeters() const { return m_maxCollisionReach.load(std::memory_order_relaxed); }
 
+		/// The largest placement scale of any loaded def with a blocking collision shape, kept with
+		/// maxCollisionReachMeters: how much a pad added around a collider can grow.
+		[[nodiscard]] float maxCollidingScale() const { return m_maxCollidingScale.load(std::memory_order_relaxed); }
+
 		/// Get the resolved motion (animation clips) for a def, or nullptr if it declares none.
 		/// Driver pivots are resolved against the def's SVG nodes (find_node, by authored node
 		/// index) into the mesh's pivot frame, so a part rotates about the right joint.
@@ -456,6 +460,7 @@ namespace assets {
 		mutable std::mutex										templateCacheMutex;
 		std::atomic<float>										m_maxReach{0.0F};
 		std::atomic<float>										m_maxCollisionReach{0.0F};
+		std::atomic<float>										m_maxCollidingScale{0.0F};
 
 		// Resolved motion per def (empty MotionDef = "resolved, has none"). Guarded separately.
 		std::unordered_map<std::string, MotionDef> m_motionCache;

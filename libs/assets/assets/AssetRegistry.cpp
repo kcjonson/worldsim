@@ -1289,6 +1289,10 @@ namespace assets {
 			}
 		}
 
+		// Every shape set so far counts now, so no later early return in a load leaves the reach short;
+		// prewarmTreeVariants records the aged defs' shapes it sets.
+		recordCollisionReach({loadedNames.begin() + static_cast<std::ptrdiff_t>(firstNew), loadedNames.end()});
+
 		LOG_DEBUG(Engine, "Loaded %d asset definitions from %s", loadedCount, xmlPath.c_str());
 		return loadedCount > 0;
 	}
@@ -1789,7 +1793,10 @@ namespace assets {
 			const AssetDefinition& def	 = found->second;
 			const float			   scale = std::max(std::abs(def.placement.scale.min), std::abs(def.placement.scale.max));
 			for (const CollisionShape& shape : def.collisions) {
-				raiseTo(m_maxCollisionReach, collisionReach(shape) * scale);
+				if (shape.blocks()) {
+					raiseTo(m_maxCollisionReach, collisionReach(shape) * scale);
+					raiseTo(m_maxCollidingScale, scale);
+				}
 			}
 		}
 	}
@@ -2255,6 +2262,7 @@ namespace assets {
 		definitions.clear();
 		clearCaches();
 		m_maxCollisionReach.store(0.0F, std::memory_order_relaxed);
+		m_maxCollidingScale.store(0.0F, std::memory_order_relaxed);
 		groupIndex.clear();
 		// Reset the string-interning index too (mirrors clearDefinitions); otherwise name<->id
 		// and capability lookups return stale mappings for now-destroyed defs until a reload.
@@ -2576,6 +2584,7 @@ namespace assets {
 		definitions.clear();
 		clearCaches();
 		m_maxCollisionReach.store(0.0F, std::memory_order_relaxed);
+		m_maxCollidingScale.store(0.0F, std::memory_order_relaxed);
 		groupIndex.clear();
 		m_defNameToId.clear();
 		m_idToDefName.clear();

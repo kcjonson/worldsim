@@ -5,9 +5,12 @@
 #include "assets/placement/RenderContext.h"
 #include "assets/placement/WorldDepthSort.h"
 #include "world/camera/WorldCamera.h"
+#include "world/rendering/TemplateBounds.h"
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
@@ -97,4 +100,25 @@ TEST(PackagedLayout, LayersStayOrderedThroughDepthSort) {
 	};
 	EXPECT_LT(indexOf(&dynamics[1]), indexOf(&dynamics[2]));
 	EXPECT_LT(indexOf(&dynamics[2]), indexOf(&dynamics[3]));
+}
+
+// The two crate layers line up only because both drawings span the crate's whole 1.0 x 0.75 m box,
+// so both pivots are its centre (packagedLayout puts each at the box's centre). Trimming either
+// layer's drawing moves its pivot and misregisters it against the other.
+TEST(PackagedLayout, CrateLayersShareTheCrateBox) {
+	const std::filesystem::path xml = std::filesystem::path(WORLD_VIEW_ASSETS_DIR) / "ui" / "PackagingCrate" / "PackagingCrate.xml";
+	ASSERT_TRUE(std::filesystem::exists(xml)) << xml.string();
+	assets::AssetRegistry& registry = assets::AssetRegistry::Get();
+	registry.clearDefinitions();
+	ASSERT_TRUE(registry.loadDefinitions(xml.string()));
+
+	for (const char* layer : {"PackagingCrate", "PackagingCrateFront"}) {
+		SCOPED_TRACE(layer);
+		const Foundation::Rect bounds = templateBounds(registry.getTemplate(layer, {}));
+		EXPECT_NEAR(bounds.x, -kCrateWidth * 0.5F, 1e-4F);
+		EXPECT_NEAR(bounds.y, -kCrateHeight * 0.5F, 1e-4F);
+		EXPECT_NEAR(bounds.width, kCrateWidth, 1e-4F);
+		EXPECT_NEAR(bounds.height, kCrateHeight, 1e-4F);
+	}
+	registry.clearDefinitions();
 }

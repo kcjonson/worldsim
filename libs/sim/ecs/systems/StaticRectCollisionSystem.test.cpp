@@ -13,7 +13,7 @@
 #include <assets/placement/PlacementExecutor.h>
 #include <assets/placement/SpatialIndex.h>
 
-#include <nav/SimpleObstacleDef.test.h>
+#include <nav/PlacedObstacle.h>
 
 #include <world/chunk/ChunkCoordinate.h>
 #include <world/chunk/ChunkManager.h>
@@ -22,7 +22,11 @@
 #include <glm/geometric.hpp>
 #include <glm/vec2.hpp>
 
+#include <atomic>
 #include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -60,6 +64,40 @@ namespace {
 	}
 
 	constexpr float kClearance = 0.05F;
+
+	// A simple (SVG) obstacle 6 m by 1 m, pivot at its centre, whose 0.2 m square collider is at its
+	// east end, kFarColliderOffset from the pivot: past the 2 m the query used to reach.
+	constexpr const char* kFarColliderDefName = "Test_FarCollider";
+	constexpr glm::vec2	  kFarColliderOffset{2.7F, 0.0F};
+	constexpr float		  kFarColliderHalfExtent = 0.1F;
+
+	// Loads the def from a temporary folder and returns its template id.
+	std::uint32_t loadFarColliderDef(AssetRegistry& registry) {
+		static std::atomic<int>		counter{0};
+		const std::filesystem::path root =
+			std::filesystem::temp_directory_path() /
+			("static_rect_collision_test_" + std::to_string(reinterpret_cast<std::uintptr_t>(&counter)) + "_" + std::to_string(counter++));
+		const std::filesystem::path folder = root / kFarColliderDefName;
+		std::filesystem::create_directories(folder);
+		std::ofstream(folder / "shape.svg") << "<?xml version=\"1.0\"?>"
+											   "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 600 100\" width=\"600\" height=\"100\">"
+											   "<metadata><collision><shape type=\"aabb\" min=\"560,40\" max=\"580,60\"/></collision></metadata>"
+											   "<path d=\"M0,0 L600,0 L600,100 L0,100 Z\" fill=\"#777777\"/>"
+											   "</svg>";
+		std::ofstream(folder / (std::string(kFarColliderDefName) + ".xml")) << "<?xml version=\"1.0\"?><AssetDefinitions><AssetDef>"
+																			   "<defName>"
+																			<< kFarColliderDefName
+																			<< "</defName>"
+																			   "<assetType>simple</assetType>"
+																			   "<svgPath>shape.svg</svgPath>"
+																			   "<worldHeight>1.0</worldHeight>"
+																			   "</AssetDef></AssetDefinitions>";
+		registry.loadDefinitionsFromFolder(root.string());
+		const std::uint32_t templateId = registry.templateId(kFarColliderDefName, {});
+		std::error_code		ignored;
+		std::filesystem::remove_all(root, ignored);
+		return templateId;
+	}
 
 } // namespace
 
@@ -576,8 +614,8 @@ TEST_F(StaticRectCollisionSystemTest, ColliderFarFromItsPositionIsFound) {
 	{
 		SpatialIndex index;
 		PlacedEntity pe;
-		pe.defName	  = nav::testing::kSimpleObstacleDefName;
-		pe.templateId = nav::testing::loadSimpleObstacleDef(reg);
+		pe.defName	  = kFarColliderDefName;
+		pe.templateId = loadFarColliderDef(reg);
 		ASSERT_NE(pe.templateId, 0U);
 		pe.position = rockAt;
 		index.insert(pe);
@@ -587,7 +625,7 @@ TEST_F(StaticRectCollisionSystemTest, ColliderFarFromItsPositionIsFound) {
 		executor.storeChunkResult(std::move(result));
 	}
 
-	const glm::vec2 boxCentre = rockAt + nav::testing::kSimpleObstacleColliderOffset;
+	const glm::vec2 boxCentre = rockAt + kFarColliderOffset;
 	const glm::vec2 atOrigin  = rockAt + glm::vec2{0.02F, 0.01F};
 	World			world;
 	const EntityID	onDrawing  = spawnAgent(world, boxCentre + glm::vec2{0.05F, 0.0F});
@@ -595,7 +633,7 @@ TEST_F(StaticRectCollisionSystemTest, ColliderFarFromItsPositionIsFound) {
 	wire(world, executor).update(0.0F);
 
 	EXPECT_NEAR(
-		world.getComponent<Position>(onDrawing)->value.x, boxCentre.x + nav::testing::kSimpleObstacleHalfExtent + kStaticRectClearanceMeters, 1e-4F
+		world.getComponent<Position>(onDrawing)->value.x, boxCentre.x + kFarColliderHalfExtent + kStaticRectClearanceMeters, 1e-4F
 	) << "the far collider was not found";
 	EXPECT_FLOAT_EQ(world.getComponent<Position>(onPosition)->value.x, atOrigin.x);
 	EXPECT_FLOAT_EQ(world.getComponent<Position>(onPosition)->value.y, atOrigin.y);

@@ -2,6 +2,7 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
+#include <assets/placement/InstanceTransform.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <boolean/RingBoolean.h>
 #include <construction/ConstructionWorld.h>
@@ -76,7 +77,7 @@ namespace {
 	// click is mapped into the template-local frame and quantized to mm to match the
 	// silhouette rings (which are template-local integer millimeters).
 	bool silhouetteRingsContain(
-		const assets::AssetSilhouette& sil, const worldview::AssetInstanceTransform& t, glm::vec2 worldPos
+		const assets::AssetSilhouette& sil, const assets::InstanceTransform& t, glm::vec2 worldPos
 	) {
 		const glm::vec2			local = t.toLocal(worldPos);
 		const geometry::Vec2i64 localMm = geometry::quantize(Foundation::Vec2{local.x, local.y});
@@ -91,10 +92,10 @@ namespace {
 	}
 
 	// True if the click is under a placed (static/baked) entity's rendered silhouette,
-	// using the SAME position-as-origin transform the instanced and baked paths draw it with.
+	// placed by the same InstanceTransform the renderers draw it with.
 	// Falls back to a centroid radius test when the def has no cached silhouette so a
 	// silhouette-less asset stays selectable. Reused for world entities and for each
-	// packaged crate/item sub-entity (both are drawn as position-as-origin instances).
+	// packaged crate/item sub-entity.
 	bool placedUnderClick(const assets::PlacedEntity& pe, glm::vec2 worldPos, float fallbackRadius) {
 		const auto* sil = assets::AssetRegistry::Get().getSilhouette(pe.templateId);
 		if (sil == nullptr || !sil->valid) {
@@ -102,7 +103,7 @@ namespace {
 			const float dy = pe.position.y - worldPos.y;
 			return (dx * dx + dy * dy) < (fallbackRadius * fallbackRadius);
 		}
-		return silhouetteRingsContain(*sil, worldview::instanceTransform(pe.position, pe.rotation, pe.scale), worldPos);
+		return silhouetteRingsContain(*sil, assets::InstanceTransform(pe.position, pe.rotation, pe.scale), worldPos);
 	}
 
 	// True if the click is under a dynamic ECS entity's rendered silhouette. Resolves the
@@ -119,7 +120,7 @@ namespace {
 			return true;
 		}
 		return silhouetteRingsContain(
-			*sil, worldview::instanceTransform(entityPos, 0.0F, appearance.scale), worldPos
+			*sil, assets::InstanceTransform(entityPos, 0.0F, appearance.scale), worldPos
 		);
 	}
 
@@ -210,7 +211,7 @@ namespace {
 	// (<2 verts) are skipped so worldRings stays free of undrawable entries.
 	void appendWorldRings(
 		const std::vector<geometry::Ring>&			 rings,
-		const worldview::AssetInstanceTransform& t,
+		const assets::InstanceTransform& t,
 		std::vector<std::vector<Foundation::Vec2>>&	 out,
 		float&										 maxY
 	) {
@@ -232,7 +233,7 @@ namespace {
 
 	// The same mapping into world millimeters, for a composite outline's union.
 	void appendWorldRingsMm(
-		const std::vector<geometry::Ring>& rings, const worldview::AssetInstanceTransform& t, std::vector<geometry::Ring>& out
+		const std::vector<geometry::Ring>& rings, const assets::InstanceTransform& t, std::vector<geometry::Ring>& out
 	) {
 		for (const auto& ring : rings) {
 			if (ring.size() < 3) {
@@ -797,10 +798,10 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 			return outline;
 		}
 		appendWorldRings(
-			sil->rings, worldview::instanceTransform(pe->position, pe->rotation, pe->scale), outline.worldRings, maxY
+			sil->rings, assets::InstanceTransform(pe->position, pe->rotation, pe->scale), outline.worldRings, maxY
 		);
 	} else if (const auto* pileSel = std::get_if<ResourcePileSelection>(&selection)) {
-		// Loose pile: every sprite of the shared pile layout at its position-as-origin
+		// Loose pile: every sprite of the shared pile layout at its instance
 		// transform, unioned into one outline around the heap as drawn. A drained (destroyed)
 		// pile -> invalid outline.
 		if (!ecsWorld->isAlive(pileSel->entityId)) {
@@ -819,7 +820,7 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 		}
 		for (std::size_t i = 0; i < pile.count; ++i) {
 			const assets::PlacedEntity& sprite = pile.sprites[i];
-			appendWorldRingsMm(sil->rings, worldview::instanceTransform(sprite.position, sprite.rotation, sprite.scale), compositeMm);
+			appendWorldRingsMm(sil->rings, assets::InstanceTransform(sprite.position, sprite.rotation, sprite.scale), compositeMm);
 		}
 		canonicalAnchorY = pile.sprites[pile.count - 1].anchorY; // the front-most sprite's key
 	} else {
@@ -852,7 +853,7 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 			for (const assets::PlacedEntity* sub : {&pl.crateBack, &pl.item, &pl.crateFront}) {
 				const auto* sil = assetRegistry.getSilhouette(sub->templateId);
 				if (sil != nullptr && sil->valid) {
-					appendWorldRingsMm(sil->rings, worldview::instanceTransform(sub->position, sub->rotation, sub->scale), compositeMm);
+					appendWorldRingsMm(sil->rings, assets::InstanceTransform(sub->position, sub->rotation, sub->scale), compositeMm);
 				}
 			}
 			canonicalAnchorY = pl.crateFront.anchorY;
@@ -864,7 +865,7 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 				return outline;
 			}
 			appendWorldRings(
-				sil->rings, worldview::instanceTransform(pos->value, 0.0F, appearance->scale), outline.worldRings, maxY
+				sil->rings, assets::InstanceTransform(pos->value, 0.0F, appearance->scale), outline.worldRings, maxY
 			);
 		}
 	}

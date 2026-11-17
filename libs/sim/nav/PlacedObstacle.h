@@ -12,6 +12,10 @@
 #include <cstdint>
 #include <optional>
 
+namespace assets {
+	class AssetRegistry;
+}
+
 namespace nav {
 
 	// Pad added outward around a placed entity's collider, in mm, so an agent clears it rather than
@@ -32,5 +36,11 @@ namespace nav {
 	// mirrors the offset through the entity's position and leaves the box's size alone. nullopt for
 	// any other shape.
 	[[nodiscard]] std::optional<OrientedRect> placedObstacleBox(const assets::PlacedEntity& entity, const assets::CollisionShape& collision);
+
+	// The farthest any placed entity's padded collider can reach from its position, over the defs
+	// `registry` holds: its recorded collider reach plus the pad's corner reach at the largest
+	// placement scale of a colliding def. What finds placed obstacles by position (nav limits, static
+	// collision) must look this far, so no collider is missed by construction.
+	[[nodiscard]] float placedObstacleReachMeters(const assets::AssetRegistry& registry);
 
 } // namespace nav

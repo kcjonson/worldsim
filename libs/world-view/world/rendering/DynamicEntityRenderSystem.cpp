@@ -15,7 +15,6 @@
 #include "assets/AssetRegistry.h"
 #include "assets/MotionEval.h"
 #include "assets/placement/WorldDepthSort.h"		// computeAnchorY (canonical ground-contact rule)
-#include "world/rendering/AssetInstanceTransform.h" // shared local<->world affine (no drift)
 #include "world/rendering/PackagedLayout.h"			// shared crate+item placement (no drift)
 #include "world/rendering/PileLayout.h"				// shared loose-pile placement (no drift)
 #include "world/rendering/TemplateBounds.h"

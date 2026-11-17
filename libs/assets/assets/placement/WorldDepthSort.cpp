@@ -1,6 +1,7 @@
 #include "WorldDepthSort.h"
 
 #include "assets/AssetRegistry.h"
+#include "assets/placement/InstanceTransform.h"
 #include "assets/placement/RenderContext.h"
 
 #include <vector/Types.h>
@@ -32,12 +33,13 @@ namespace assets {
 			return mesh.maxY;
 		}
 		const CollisionShape& footprint = def->collisionFor(ageClass);
-		const float			  c = std::cos(rotation);
-		const float			  s = std::sin(rotation);
-		const auto			  turnedY = [&](glm::vec2 p) { return p.x * s + p.y * c; };
+		// Turned about the pivot, before scale and position (computeAnchorY applies those).
+		const InstanceTransform turned({0.0F, 0.0F}, rotation, 1.0F);
+		const auto				turnedY = [&](glm::vec2 p) { return turned.toWorld(p).y; };
 		switch (footprint.type) {
 			case CollisionShapeType::Rect:
-				return turnedY(footprint.offsetMeters) + std::abs(footprint.halfExtentsMeters.x * s) + std::abs(footprint.halfExtentsMeters.y * c);
+				return turnedY(footprint.offsetMeters) + std::abs(footprint.halfExtentsMeters.x * turned.axisX().y) +
+					   std::abs(footprint.halfExtentsMeters.y * turned.axisY().y);
 			case CollisionShapeType::Polygon:
 				if (!footprint.pointsMeters.empty()) {
 					float lowest = turnedY(footprint.pointsMeters.front());

@@ -3,6 +3,7 @@
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
 #include <assets/TreeTraits.h>
+#include <assets/placement/InstanceTransform.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Inventory.h>
@@ -126,17 +127,19 @@ namespace world_sim {
 
 	namespace {
 		// `defName`'s collision outline at `worldPos`, or just `worldPos` when it has no rect or polygon outline.
+		// What the player places is spawned upright at scale 1 (spawnEntity), so its footprint is too.
 		std::vector<glm::vec2> footprintAt(const std::string& defName, Foundation::Vec2 worldPos) {
-			std::vector<glm::vec2> outline;
+			std::vector<glm::vec2>			outline;
+			const assets::InstanceTransform placed = assets::uprightInstance({worldPos.x, worldPos.y});
 			if (const auto* def = assets::AssetRegistry::Get().getDefinition(defName); def != nullptr) {
 				const assets::CollisionShape& footprint = def->collisionFor(0);
 				if (footprint.type == assets::CollisionShapeType::Rect) {
 					for (const glm::vec2 corner : footprint.rectCornersLocal()) {
-						outline.push_back(corner + glm::vec2{worldPos.x, worldPos.y});
+						outline.push_back(placed.toWorld(corner));
 					}
 				} else if (footprint.type == assets::CollisionShapeType::Polygon) {
 					for (const glm::vec2 point : footprint.pointsMeters) {
-						outline.push_back(point + glm::vec2{worldPos.x, worldPos.y});
+						outline.push_back(placed.toWorld(point));
 					}
 				}
 			}

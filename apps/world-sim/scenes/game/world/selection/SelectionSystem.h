@@ -20,7 +20,6 @@
 #include <math/Types.h>
 #include <polygon/Polygon.h> // geometry::Ring
 #include <world/camera/WorldCamera.h>
-#include <world/rendering/AssetInstanceTransform.h> // shared local<->world affine
 #include <world/rendering/SelectionOutline.h>		 // entity outline injected into the depth-sort pass
 
 #include <cstdint>

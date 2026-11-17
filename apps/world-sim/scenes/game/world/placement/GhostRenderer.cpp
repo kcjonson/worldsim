@@ -1,6 +1,7 @@
 #include "GhostRenderer.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/placement/InstanceTransform.h>
 #include <primitives/Primitives.h>
 #include <vector/Types.h>
 
@@ -33,14 +34,13 @@ void GhostRenderer::render(const std::string& defName,
 		return;
 	}
 
-	auto screenPos = camera.worldToScreen(worldPos.x, worldPos.y, viewportWidth, viewportHeight, kPixelsPerMeter);
-	float scale = kPixelsPerMeter * camera.zoom();
-
-	// The mesh is about the def's pivot, which is where the placed entity's position will be.
+	// The ghost is drawn as the entity will be placed: upright at scale 1, its pivot at worldPos
+	// (PlacementSystem::spawnEntity).
+	const assets::InstanceTransform placed = assets::uprightInstance({worldPos.x, worldPos.y});
 	m_transformedVertices.resize(mesh->vertices.size());
 	for (size_t i = 0; i < mesh->vertices.size(); ++i) {
-		const auto& v = mesh->vertices[i];
-		m_transformedVertices[i] = {screenPos.x + v.x * scale, screenPos.y + v.y * scale};
+		const glm::vec2 world	 = placed.toWorld({mesh->vertices[i].x, mesh->vertices[i].y});
+		m_transformedVertices[i] = camera.worldToScreen(world.x, world.y, viewportWidth, viewportHeight, kPixelsPerMeter);
 	}
 
 	// Create ghost colors with transparency

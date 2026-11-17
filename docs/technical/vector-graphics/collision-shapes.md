@@ -93,10 +93,10 @@ Every draw path (baked and instanced statics, dynamic entities, piles, the packa
 crate, the placement ghost, the asset manager), the selection outline and hit-test, and
 the collider place the pivot-frame shape at the entity's position by
 `world = R(rotation) * (local * scale) + position`
-(`libs/world-view/world/rendering/AssetInstanceTransform.h`). The depth anchor reads the
+(`assets::InstanceTransform`, `libs/assets/assets/placement/InstanceTransform.h`; the GPU instancing shader applies the same formula). The depth anchor reads the
 footprint in the same frame, turned by the entity's rotation (`anchorLocalY`).
-`AssetInstanceTransform.ColliderCornerLandsOnTheDrawnCorner` pins the collider to the
-drawing for both asset types.
+`PlacedObstacle.ColliderCornerLandsOnTheDrawnCorner` pins the collider to the drawing for
+both asset types, and `InstanceTransform.BakedStaticsEmitIt` pins the bake to the transform.
 
 ## Consumers (the collider feeds two systems at the same clearance)
 
@@ -111,9 +111,11 @@ drawing for both asset types.
   point-vs-oriented-OBB push-out), so an agent shoved into a trunk by other
   forces can't walk through it. It does not use the agent's disc radius as the
   clearance. It finds rects by entity position within
-  `AssetRegistry::maxCollisionReachMeters()` (the farthest any def's collider
-  stands from its pivot, at the def's largest placement scale, kept as defs load)
-  plus the pad, so a collider far from its pivot is never missed.
+  `nav::placedObstacleReachMeters` (the farthest any def's collider stands from
+  its pivot at the def's largest placement scale, `AssetRegistry::maxCollisionReachMeters`,
+  recorded as each def's shapes are set, plus the pad's corner at the largest
+  colliding scale), the same reach nav grows its limits' obstacle query by, so a
+  collider far from its pivot is never missed.
 
 The two boundaries coincide on purpose: the pad is applied in local space
 *before* the entity scale in both (`scale * (halfExtent + pad)`), so nav and

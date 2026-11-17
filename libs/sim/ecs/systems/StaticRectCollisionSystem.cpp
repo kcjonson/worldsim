@@ -12,6 +12,9 @@
 #include <assets/placement/SpatialIndex.h>
 
 #include <nav/NavInputBuilder.h>
+#include <nav/PlacedObstacle.h>
+
+#include <utils/Log.h>
 
 #include <world/chunk/ChunkCoordinate.h>
 
@@ -24,16 +27,6 @@
 #include <vector>
 
 namespace ecs {
-
-namespace {
-
-	// Added to the registry's collision reach for the query box: the placed-obstacle pad's
-	// reach (0.05 m on each axis, about 0.07 m at a corner) at any placement scale up to 3.5,
-	// so queryRect (which filters by entity position) never misses a rect whose padded body
-	// overlaps the agent.
-	constexpr float kPadReachSlackMeters = 0.25F;
-
-} // namespace
 
 std::optional<glm::vec2> resolveCenterAgainstRect(glm::vec2 center, float clearance, const nav::OrientedRect& rect) {
 	const glm::vec2 d  = center - rect.center;
@@ -71,9 +64,8 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 	}
 
 	const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
-	// Any placed entity whose collider can reach the agent: its position is within the farthest
-	// any def's collider stands from its pivot, plus the pad.
-	const float boxHalf = registry.maxCollisionReachMeters() + kPadReachSlackMeters;
+	// Any placed entity whose padded collider can reach the agent has its position this close.
+	const float boxHalf = nav::placedObstacleReachMeters(registry);
 
 	std::vector<nav::OrientedRect> rects; // reused per agent
 
@@ -115,7 +107,13 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 							continue;
 						}
 						// Rect colliders only: a polygon one is in the nav mesh but not pushed against here.
-						if (const std::optional<nav::OrientedRect> box = nav::placedObstacleBox(*e, def->collisionFor(e->traits.ageClass))) {
+						const assets::CollisionShape& collision = def->collisionFor(e->traits.ageClass);
+						if (collision.blocks() && registry.maxCollisionReachMeters() == 0.0F && !warnedZeroReach) {
+							warnedZeroReach = true;
+							LOG_WARNING(Engine, "[StaticRect] %s blocks but no collider reach is recorded: colliders off their position are not pushed against",
+										e->defName.c_str());
+						}
+						if (const std::optional<nav::OrientedRect> box = nav::placedObstacleBox(*e, collision)) {
 							rects.push_back(*box);
 						}
 					}
