@@ -618,8 +618,9 @@ TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesForAnEyeAlongAFaceLine) {
 	EXPECT_TRUE(culledSightIsTheSame(index, {8156, 6995}, 6000, kSnappedRingsMm));
 }
 
-// The same beside a lone slanted wall, where nothing crosses: an eye 0.32 mm outside its left
-// face, whose near hits snap onto the eye and drop, so the far face is what stops those rays.
+// The same beside a lone slanted wall, where nothing crosses: an eye 0.32 mm off the outline
+// edge of its left face, outside it, whose near hits snap onto the eye and drop, so the far face
+// is what stops those rays.
 TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesForAnEyeAlongALoneWallsFace) {
 	ConstructionWorld world;
 	buildWall(world, {0, 0}, {3000, 1000});
