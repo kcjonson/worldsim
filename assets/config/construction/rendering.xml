@@ -69,7 +69,7 @@
   <!-- Drawing-tool preview chrome (construction-specific; validity green/red comes from the UI theme). -->
   <Preview>
     <guideColor>#5FB3C8FF</guideColor>               <!-- guide lines, right-angle markers, crossing dots; common-length marks are not drawn yet -->
-    <originHaloColor>#B3D9FF99</originHaloColor>      <!-- the dotted close-radius ring round the first point -->
+    <originHaloColor>#B3D9FF99</originHaloColor>      <!-- the dotted close-radius ring round the first point; it gives way to the halo once the click will close -->
     <snapVertexColor>#FFD94DE6</snapVertexColor>     <!-- vertex/endpoint snap ring (amber) -->
     <snapEdgeColor>#66D9FFE6</snapEdgeColor>         <!-- edge/T-junction snap ring (cyan) -->
     <fillPreviewAlpha>0.15</fillPreviewAlpha>        <!-- in-progress polygon fill tint -->
@@ -85,8 +85,8 @@
          (guideColor) or bySource. Guide colors carry an alpha of FF: guideOpacity sets the
          alignment lines' opacity and markerOpacity the markers'. Labels draw at full opacity on
          a dark plate, and the dotted close-radius ring takes its alpha from originHaloColor.
-         Sizes are screen pixels at an interface size of 100%: they grow with the interface size
-         and never scale with zoom. -->
+         Sizes are screen pixels and never scale with zoom; only the label text (guideLabelPx)
+         follows the interface size. -->
     <guideLineStyle>dotted</guideLineStyle>
     <guideDashPx>1.0</guideDashPx>
     <guideGapPx>4.5</guideGapPx>

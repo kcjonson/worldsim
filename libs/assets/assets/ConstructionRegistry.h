@@ -375,8 +375,8 @@ namespace assets {
 	/// originHaloColor is the dotted close-radius ring round the first point; snap-target
 	/// rings use snapVertexColor (vertex/endpoint) and snapEdgeColor (edge/T-junction). The
 	/// alphas tint the in-progress polygon fill and the wall-band preview; the *Px radii and
-	/// widths are screen-space sizes that never scale with zoom. The snap feedback's
-	/// (guideWidth and the guide look's *Px) also grow with the interface size.
+	/// widths are screen-space sizes that never scale with zoom. Of them, only label text
+	/// (guideLabelPx) follows the interface size.
 	struct PreviewStyle {
 		StyleColor guideColor{0.373F, 0.702F, 0.784F, 1.0F};
 		StyleColor originHaloColor{0.7F, 0.85F, 1.0F, 0.6F};
