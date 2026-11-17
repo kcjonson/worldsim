@@ -45,7 +45,7 @@ namespace world_sim {
 			{FoundationTool::Freeform, "Freeform", "Point by point"},
 		}};
 
-		// A material or thickness card: its name over a detail line. Picked, it takes the active wash and
+		// A tool, material, or thickness card: its name over a detail line. Picked, it takes the active wash and
 		// a thick accent border. A press picks it.
 		class StripCard : public ui::Control {
 		  public:
@@ -293,7 +293,7 @@ namespace world_sim {
 			top->setText(status.editLabel + " (" + status.material + ")");
 			bottom->setText(std::format("Area: {:.1f} m\xC2\xB2 ({:+.1f})", status.areaSquareMeters, status.areaDeltaSquareMeters));
 		} else if (status.foundationTool) {
-			// The tool picker names the tool.
+			// The shape's area and its point count (hidden for a rectangle).
 			top->setText(std::format("Area: {:.1f} m\xC2\xB2", status.areaSquareMeters));
 			bottom->setText(std::format("Points: {}", status.pointCount));
 		} else if (status.opening) {

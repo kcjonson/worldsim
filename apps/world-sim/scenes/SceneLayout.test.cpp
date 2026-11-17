@@ -77,10 +77,19 @@ namespace world_sim::testing {
 			[[nodiscard]] const Entities& entities() const { return spawned; }
 			[[nodiscard]] ecs::World&	  ecsWorld() { return world; }
 			[[nodiscard]] DrawingSystem&  drawing() { return *drawingSystem; }
+			// What the strip's tool picker asked for, in order.
+			[[nodiscard]] const std::vector<FoundationTool>& foundationToolPicks() const { return pickedFoundationTools; }
 
 			void onEnter(app::App& /*app*/) override {
 				theme::apply(ui());
-				gameUI = std::make_unique<GameUI>(GameUI::Args{.root = root()});
+				gameUI = std::make_unique<GameUI>(GameUI::Args{
+					.root = root(),
+					.onFoundationToolSelected =
+						[this](FoundationTool tool) {
+							pickedFoundationTools.push_back(tool);
+							drawingSystem->pickFoundationTool(tool);
+						},
+				});
 				drawingSystem =
 					std::make_unique<DrawingSystem>(DrawingSystem::Args{.world = &world, .camera = &camera, .navigation = nullptr});
 				gameUI->showCatalogue(assets::RecipeRegistry::Get(), assets::ConstructionRegistry::Get(), drawingSystem->activeMaterial());
@@ -190,6 +199,7 @@ namespace world_sim::testing {
 			std::unique_ptr<GameUI>			 gameUI;
 			std::unique_ptr<DrawingSystem>	 drawingSystem;
 			std::unique_ptr<PlacementSystem> placement;
+			std::vector<FoundationTool>		 pickedFoundationTools;
 		};
 
 		class SceneLayout : public SceneTest {
@@ -335,10 +345,46 @@ namespace world_sim::testing {
 		EXPECT_EQ(unexpectedScrollbars({}), "");
 	}
 
+	// A card fires the pick with its tool, and the picked card follows the tool on.
+	TEST_F(SceneLayout, ThePickerPicksItsToolAndMarksTheOneOn) {
+		HudScene& scene = openHud([](HudScene& opened) { opened.drawing().activateRectangleTool(); });
+		const auto borderOf = [this](std::string_view id) {
+			const ui::Component* card = shown(id);
+			return card != nullptr ? card->getStyle().borderWidth.value_or(0.0F) : 0.0F;
+		};
+		frame();
+		EXPECT_GT(borderOf("config_strip_tool_Rectangle"), borderOf("config_strip_tool_Freeform"));
+		press("config_strip_tool_Freeform");
+		EXPECT_EQ(scene.foundationToolPicks(), std::vector<FoundationTool>{FoundationTool::Freeform});
+		EXPECT_EQ(scene.drawing().status().foundationTool, FoundationTool::Freeform);
+		frame();
+		EXPECT_GT(borderOf("config_strip_tool_Freeform"), borderOf("config_strip_tool_Rectangle"));
+		press("config_strip_tool_Rectangle");
+		EXPECT_EQ(scene.foundationToolPicks().back(), FoundationTool::Rectangle);
+		EXPECT_TRUE(scene.drawing().isRectangleTool());
+	}
+
+	// Add and Subtract stay freeform, so the strip shows no tool picker.
+	TEST_F(SceneLayout, AFoundationEditShowsNoToolPicker) {
+		HudScene& scene = openHud();
+		const auto floor = scene.drawing().world().commitFoundation(
+			std::vector<Foundation::Vec2>{{0.0F, 0.0F}, {4.0F, 0.0F}, {4.0F, 4.0F}, {0.0F, 4.0F}}, "Wood"
+		);
+		ASSERT_TRUE(floor.ok());
+		for (const construction::FoundationEditMode mode : {construction::FoundationEditMode::Add, construction::FoundationEditMode::Subtract}) {
+			scene.drawing().activateFoundationEditTool(floor.id, mode);
+			frame();
+			ASSERT_NE(shown("construction_config_strip"), nullptr);
+			EXPECT_EQ(shown("config_strip_tools"), nullptr);
+			EXPECT_EQ(shown("config_strip_tool_Rectangle"), nullptr);
+		}
+	}
+
 	TEST_F(SceneLayout, TheHudHoldsTogetherWithTheWallToolOn) {
 		openHud([](HudScene& opened) { opened.drawing().activateWallTool(); });
 		frame();
 		ASSERT_NE(shown("construction_config_strip"), nullptr);
+		EXPECT_EQ(shown("config_strip_tools"), nullptr) << "the wall tool has no tool picker";
 		EXPECT_EQ(lintEverywhere(), "");
 		EXPECT_EQ(unexpectedScrollbars({}), "");
 	}
