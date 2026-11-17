@@ -1,7 +1,7 @@
 # Scenario 03: Build wood foundation over trees
 
 **Status:** ready  
-**Last verified:** 2026-11-13
+**Last verified:** 2026-11-17
 
 Verifies the full foundation construction lifecycle: a colonist clears on-footprint trees, chops
 for materials, and builds a `Wood` foundation to completion, unaided, without freezing.
@@ -126,9 +126,9 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 11. When Bob finishes (the L-shaped foundation leaves `?what=construction`), the row leaves the Tasks panel and the Known work list.
 
-Steps 12 to 61 read `/api/state?what=drawing`; keys are named as the README's drawing view has them. Their points are world points (x, y) in meters on open ground east of the creek, clear of the foundations built above: centre the camera on (40, 10) with `control?action=camera&x=40&y=10&zoom=3` and convert each to the pixel `/api/input` takes with `what=camera` ([the camera view](../README.md#the-camera-view)). A move out of the window is `ev=move,-5,-5`, which pauses a tool the way a real exit does.
+Steps 12 to 61 read `/api/state?what=drawing`; keys are named as the README's drawing view has them. Their points are world points (x, y) in meters on open ground east of the creek, clear of the foundations built above: centre the camera on (40, 10) with `control?action=camera&x=40&y=10&zoom=3` and convert each to the pixel `/api/input` takes with `what=camera` ([the camera view](../README.md#the-camera-view)). The camera resets with each new game, so centre it again after each Quick Start (steps 37, 48 and 60). A move out of the window is `ev=move,-5,-5`, which pauses a tool the way a real exit does.
 
-12. Open the Build menu: it has one Foundation entry. Pick it: the Rectangle tool opens, the first pick this session (`tool` `foundationRectangle`, `lastFoundationTool` `rectangle`). The config strip shows the tool picker with Rectangle picked, the material cards, and "Click or drag from a corner" (`status.hint`).
+12. Open the Build menu: it has one Foundation entry. Pick it: the Rectangle tool opens, the first pick this session (`tool` `foundationRectangle`, `lastFoundationTool` `rectangle`). The config strip shows the tool picker with Rectangle picked, the Wood material card, and "Click or drag from a corner" (`status.hint`).
 
 13. Move the pointer to (40.4, 10.3): the white snapped-point marker (a dot with four ticks) sits on the whole-metre grid point nearest the pointer (`snap.kind` `Grid`, `snap.point` (40, 10)).
 
@@ -138,11 +138,11 @@ Steps 12 to 61 read `/api/state?what=drawing`; keys are named as the README's dr
 
 16. Click: `?what=construction` lists another foundation with `"area":12`.
 
-17. Press at (48, 10), drag to (53, 6) and release (`ev=down`, `ev=move`, `ev=up`): while pressed `rectangle.pressPending` is true and the size label reads `5 m x 4 m`; after the release `?what=construction` lists another foundation with `"area":20`, the strip reads "Click or drag from a corner", and `rectangle.firstCorner` is null.
+17. Press at (48, 10), drag to (53, 6) and release (`ev=down`, `ev=move`, `ev=up`): while pressed `rectangle.pressPending` is true and the size label reads `5 m x 4 m`; after the release `?what=construction` lists another foundation with `"area":20`, the strip reads "Click or drag from a corner".
 
 18. Move the pointer to (44.1, 9.9), a corner of the 4 m x 3 m blueprint: an amber ring sits round the marker's dot (`snap.kind` `Vertex`). Move to (42, 10.1), along one of its edges: the ring is cyan (`Edge`).
 
-19. Click (38, 14), then move the pointer to (46, 8) so the rectangle covers the 4 m x 3 m blueprint: the fill, the outline, and the marker's dot turn red, and the strip names the reason (`verdict.valid` false, `status.message` "overlaps another foundation").
+19. Click (38, 14), then move the pointer to (46, 8) so the rectangle overlaps the 4 m x 3 m blueprint: the fill, the outline, and the marker's dot turn red, and the strip names the reason (`verdict.valid` false, `status.message` "overlaps another foundation").
 
 20. Click there: nothing is added (`?what=construction` is unchanged), a toast says why, and the first corner keeps waiting (`rectangle.firstCorner` (38, 14)).
 
@@ -164,7 +164,7 @@ Steps 12 to 61 read `/api/state?what=drawing`; keys are named as the README's dr
 
 29. Pick Rectangle in the picker: the Rectangle tool is on again (`tool` `foundationRectangle`).
 
-30. Pick Freeform, click (58, 6) and (62, 6), and move the pointer out of the game's window (a person can also bring another window to the front; a `--background` launch ignores focus, so only leaving the window counts there): the rubber band, the marker, and its label go, the two points and their edge stay, and the strip shows no red reason (`followingPointer` false, `pointer` and `snap` null, `points` still two, `status.valid` true).
+30. Pick Freeform, click (58, 6) and (62, 6), and move the pointer out of the game's window (a person can also bring another window to the front; a `--background` launch ignores focus, so only leaving the window counts there): the rubber band, the marker, and its label go, the two points and their edge stay, and the strip shows no red reason (`followingPointer` false, `points` still two).
 
 31. Move the pointer back over the world, to (62, 10): the rubber band follows it again from the second point (`followingPointer` true), and a click places a third point (`status.pointCount` 3).
 
@@ -210,7 +210,7 @@ Run steps 33 to 61 after the pass / fail check below: they go to the main menu a
 
 51. Click on the key guide: no point is placed (`points` unchanged). Click just above it: a point is placed (one more in `points`).
 
-52. Press `?` (inject `char,63`; a `keydown` of `?` does nothing): the key guide folds to a "Keys ?" chip (`keyGuide.collapsed` true).
+52. Press `?` (inject `char,63`; `keydown,?` answers 400): the key guide folds to a "Keys ?" chip (`keyGuide.collapsed` true).
 
 53. Person only, it needs a held key: hold `?` for about a second, then let go: the key guide opens once and stays open, with no flicker. Press `?` again: it folds to the chip.
 
@@ -220,7 +220,7 @@ Run steps 33 to 61 after the pass / fail check below: they go to the main menu a
 
 56. Press H, then click the chip: the key guide opens again (`collapsed` true, then false).
 
-57. Press Esc until the tool closes: the key guide goes with it (`keyGuide.shown` false).
+57. Press Esc: the tool closes and the key guide goes with it (`keyGuide.shown` false).
 
 58. Pick Foundation, then Rectangle in the picker: the key guide lists the Rectangle tool's keys and no marks (`tool` `foundationRectangle`).
 
