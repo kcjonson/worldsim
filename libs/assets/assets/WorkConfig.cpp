@@ -45,11 +45,9 @@ namespace assets {
 
 		// Every task type the AI can evaluate must have an explicit arbitration tier, or the
 		// (tier, score) ordering would put a new type in an unintended tier. Fail loud instead.
-		static const std::vector<std::string> kRequiredTaskTiers = {
-			"FulfillNeed", "Harvest", "Craft", "Haul", "PlacePackaged", "Build", "Deconstruct", "Wander"
-		};
-		std::vector<std::string> missingTiers;
-		if (!PriorityConfig::Get().validateTaskTiers(kRequiredTaskTiers, missingTiers)) {
+		const std::vector<std::string> requiredTaskTiers(kTaskTypeNames.begin(), kTaskTypeNames.end());
+		std::vector<std::string>	   missingTiers;
+		if (!PriorityConfig::Get().validateTaskTiers(requiredTaskTiers, missingTiers)) {
 			std::string joined;
 			for (const auto& name : missingTiers) {
 				joined += (joined.empty() ? "" : ", ") + name;
