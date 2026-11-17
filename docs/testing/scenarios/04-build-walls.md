@@ -93,6 +93,13 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 7. On the east bank, `walls?pts=9.9,5;9.9,11&host=0&close=0&built=0` and `spawn?def=BasicBox&at=9.9,8` both answer 200.
 8. `ground?pts=7.9,8` reads `valid` true and `buildableNow` false, and Bob still walks through the creek.
 
+### Drawing a chain with the wall tool
+
+9. Pick Wall in the Build menu, click two points on a built foundation, and move the pointer out of the game's window: the band to the pointer, the marker, and its label go, and the two points and the band between them stay.
+10. Move the pointer back over the foundation: the band follows it from the second point, and a click places a third point.
+11. Double-click a fourth point: the chain ends, `?what=construction` lists three more wall segments, the strip reads "Click a foundation to start", and no toast says the wall is too short.
+12. Click two points on the foundation a second apart: each places a point and the chain goes on; Enter ends it.
+
 ---
 
 ## Expected state

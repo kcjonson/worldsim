@@ -162,6 +162,12 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 29. Pick Rectangle in the picker: the Rectangle tool is on again.
 
+30. Pick Freeform, click two points, and move the pointer out of the game's window (or bring another window to the front): the rubber band, the marker, and its label go, the two points and their edge stay, and the strip shows no red reason.
+
+31. Move the pointer back over the world: the rubber band follows it again from the second point, and a click places a third point.
+
+32. Pick Rectangle, click a first corner, and move the pointer out of the window: the pending fill, outline, and size label go and the corner's dot stays; come back and click the opposite corner: the rectangle is added.
+
 ---
 
 ## Expected state
