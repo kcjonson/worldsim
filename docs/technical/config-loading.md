@@ -24,6 +24,8 @@ Everything not listed here must be given. Leaving one of these out has the state
 
 | Loader | File | Attribute | Left out means |
 |--------|------|-----------|----------------|
+| ActionTypeRegistry | `actions/action-types.xml` | `<Action needsHands>` | the action leaves the hands free (false) |
+| ActionTypeRegistry | `actions/action-types.xml` | `<description>` | no description |
 | WorkTypeRegistry | `work/work-types.xml` | `<Category canDisable>` | the player can disable the category |
 | WorkTypeRegistry | `work/work-types.xml` | `<WorkType><minSkillLevel>` | no minimum skill level (0); when given, a number, 0 or more |
 | WorkTypeRegistry | `work/work-types.xml` | `<filter>` elements `<looseItem>`, `<indoor>`, `<neededByRecipe>`, `<neededByBlueprint>`, `<hasPlacementTarget>` | no condition on that property; when given, `true` or `false` |
@@ -38,9 +40,9 @@ Everything not listed here must be given. Leaving one of these out has the state
 | ThoughtConfig | `thoughts/*.xml` | a feeling's `mood` | the feeling has no mood effect |
 | ThoughtConfig | `thoughts/*.xml` | `stacks`, an action source's `first` | false |
 
-The `<Category canDisable>`, `<Step optional>`, `<Step requiresPreviousStep>`, and `<innate>` values above are `true` or `false` when given.
+The `<Action needsHands>`, `<Category canDisable>`, `<Step optional>`, `<Step requiresPreviousStep>`, and `<innate>` values above are `true` or `false` when given.
 
-Required tuning includes a work category's `tier` (a number, 0 or more), a chain step's `order` (a whole number from 0 to 255, no two steps of a chain the same) and `target` (the role the step's action works on, as `source` or `station`), a recipe's `<workAmount>` (work ticks, 0 or more), and `<RecentSighting gameMinutes>` in `colonists/memory.xml`, beside the priority, mood, needs, attribute, trait, condition, and thought numbers. A recipe is one `<RecipeDef>` root per file whose `<input>` and `<output>` lines name their item with `thing`. Each `thing`, and a `<station>` other than `none`, must name a loaded asset definition: one that names nothing is a problem in the file, as in `[recipes] tools/AxePrimitive.xml: <RecipeDef defName="Recipe_AxePrimitive"> input thing "Wod" names no definition`. The asset manager's Reload loads the recipes the same way; it shows no recipes, so their problems surface when the game loads.
+Required tuning includes a work category's `tier` (a number, 0 or more), a chain step's `order` (a whole number from 0 to 255, no two steps of a chain the same) and `target` (the role the step's action works on, as `source` or `station`), a recipe's `<workAmount>` (work ticks, 0 or more), and `<RecentSighting gameMinutes>` in `colonists/memory.xml`, beside the priority, mood, needs, attribute, trait, condition, and thought numbers. A recipe is one `<RecipeDef>` root per file whose `<input>` and `<output>` lines name their item with `thing`. Each `thing`, and a `<station>` other than `none`, must name a loaded asset definition. A name the definition index holds with no definition behind it (a harvest yield no definition defines, or a synthetic terrain name such as the shore's `Terrain_Shore`) is not one; neither is crafted, hauled, or used as a station. One that names no definition is a problem in the file, as in `[recipes] tools/AxePrimitive.xml: <RecipeDef defName="Recipe_AxePrimitive"> input thing "Wod" names no definition`. The asset manager's Reload loads the recipes the same way and shows their problems: counted in its header's errors and listed in full at the top of its asset tree, cleared and read again on every Reload.
 
 ---
 

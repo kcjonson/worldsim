@@ -221,6 +221,21 @@ TEST(AssetBootstrapTest, RecipeMistakesNameTheFileAndTheRecipeAndLoadNoRecipes) 
 	);
 	EXPECT_EQ(problemsFor(work + "<innate>ture</innate>"), onlyProblem("innate must be true or false, got \"ture\""));
 	EXPECT_EQ(problemsWith("<output thing=\"Test_Wod\"/>", work), onlyProblem("output thing \"Test_Wod\" names no definition"));
+
+	AssetDefinition bush;
+	bush.defName = "Test_Bush";
+	bush.capabilities.harvestable = HarvestableCapability{};
+	bush.capabilities.harvestable->yieldDefName = "Test_Twig";
+	definitions.registerTestDefinition(std::move(bush));
+	definitions.registerSyntheticDefinition("Test_Shore", 0);
+	ASSERT_NE(definitions.getDefNameId("Test_Twig"), 0U) << "an undefined yield is interned";
+	EXPECT_EQ(
+		problemsWith("<output thing=\"Test_Twig\"/>", work + "<station>Test_Shore</station>"),
+		(std::vector<std::string>{
+			"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> output thing \"Test_Twig\" names no definition",
+			"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> station \"Test_Shore\" names no definition"
+		})
+	) << "an interned yield and a synthetic name have no definition";
 	EXPECT_EQ(
 		problemsFor(work + "<inputs><input thing=\"Wod\"/></inputs><station>Test_Bnch</station>"),
 		(std::vector<std::string>{

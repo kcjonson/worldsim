@@ -8,73 +8,72 @@
 
 #include "assets/ActionTypeDef.h"
 
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace assets {
 
-/// Central registry for action type definitions.
-/// Actions are loaded from XML definition files at startup.
-class ActionTypeRegistry {
-  public:
-    /// Get the singleton registry instance
-    static ActionTypeRegistry& Get();
+	/// Central registry for action type definitions.
+	/// Actions are loaded from XML definition files at startup.
+	class ActionTypeRegistry {
+	  public:
+		/// Get the singleton registry instance
+		static ActionTypeRegistry& Get();
 
-    // --- Loading ---
+		// --- Loading ---
 
-    /// Load action types from an XML file
-    /// @param xmlPath Path to the XML file (e.g., action-types.xml)
-    /// @return true if loading succeeded
-    bool loadFromFile(const std::string& xmlPath);
+		/// Replaces every action type with those in `configRoot / file`: false, with problems() saying why and no
+		/// action types held, when the file can't be read or has any mistake. Errors name the file as `file` is written.
+		bool loadFromFile(const std::filesystem::path& configRoot, const std::filesystem::path& file);
 
-    /// Clear all loaded action types
-    void clear();
+		/// What the file got wrong: each names the file, the <Action> and the attribute or element.
+		[[nodiscard]] const std::vector<std::string>& problems() const { return problemList; }
 
-    // --- Queries ---
+		/// Clear all loaded action types
+		void clear();
 
-    /// Get an action type by defName
-    /// @param defName The action definition name (e.g., "Eat", "Pickup")
-    /// @return Pointer to action type, or nullptr if not found
-    [[nodiscard]] const ActionTypeDef* getAction(const std::string& defName) const;
+		// --- Queries ---
 
-    /// Check if an action type exists
-    /// @param defName The action definition name
-    /// @return true if the action type is registered
-    [[nodiscard]] bool hasAction(const std::string& defName) const;
+		/// Get an action type by defName
+		/// @param defName The action definition name (e.g., "Eat", "Pickup")
+		/// @return Pointer to action type, or nullptr if not found
+		[[nodiscard]] const ActionTypeDef* getAction(const std::string& defName) const;
 
-    /// Check if an action requires free hands
-    /// @param defName The action definition name
-    /// @return true if the action needs hands, false if not found or doesn't need hands
-    [[nodiscard]] bool actionNeedsHands(const std::string& defName) const;
+		/// Check if an action type exists
+		/// @param defName The action definition name
+		/// @return true if the action type is registered
+		[[nodiscard]] bool hasAction(const std::string& defName) const;
 
-    /// Get all registered action defNames
-    /// @return Vector of all action defNames
-    [[nodiscard]] std::vector<std::string> getActionNames() const;
+		/// Check if an action requires free hands
+		/// @param defName The action definition name
+		/// @return true if the action needs hands, false if not found or doesn't need hands
+		[[nodiscard]] bool actionNeedsHands(const std::string& defName) const;
 
-    /// Get a comma-separated string of all action names (for error messages)
-    /// @return String like "Eat, Drink, Sleep, Pickup, ..."
-    [[nodiscard]] std::string getAvailableActionsString() const;
+		/// Get all registered action defNames
+		/// @return Vector of all action defNames
+		[[nodiscard]] std::vector<std::string> getActionNames() const;
 
-    /// Get count of loaded action types
-    [[nodiscard]] size_t size() const;
+		/// Get a comma-separated string of all action names (for error messages)
+		/// @return String like "Eat, Drink, Sleep, Pickup, ..."
+		[[nodiscard]] std::string getAvailableActionsString() const;
 
-    // --- Test Support ---
+		/// Get count of loaded action types
+		[[nodiscard]] size_t size() const;
 
-    /// Register an action type directly (for unit tests), bypassing XML loading.
-    /// @param action The action type to register
-    void registerTestAction(ActionTypeDef action);
+		// --- Test Support ---
 
-  private:
-    ActionTypeRegistry() = default;
+		/// Register an action type directly (for unit tests), bypassing XML loading.
+		/// @param action The action type to register
+		void registerTestAction(ActionTypeDef action);
 
-    /// Parse a single action from XML node
-    bool parseActionFromNode(const void* node); // pugi::xml_node passed as void*
+	  private:
+		ActionTypeRegistry() = default;
 
-    // --- Storage ---
-
-    /// All loaded action types by defName
-    std::unordered_map<std::string, ActionTypeDef> actions;
-};
+		/// All loaded action types by defName
+		std::unordered_map<std::string, ActionTypeDef> actions;
+		std::vector<std::string>					   problemList;
+	};
 
 } // namespace assets

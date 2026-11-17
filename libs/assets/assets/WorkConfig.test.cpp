@@ -100,7 +100,7 @@ TEST_F(WorkConfigTest, ActionTypeRegistry_LoadValidXML) {
 	std::string path = writeTempFile(xml, ".xml");
 	ASSERT_FALSE(path.empty());
 
-	bool loaded = ActionTypeRegistry::Get().loadFromFile(path);
+	bool loaded = loadTemp(ActionTypeRegistry::Get(), path);
 	EXPECT_TRUE(loaded);
 	EXPECT_EQ(ActionTypeRegistry::Get().size(), 2);
 }
@@ -112,7 +112,7 @@ TEST_F(WorkConfigTest, ActionTypeRegistry_GetAction) {
 </ActionTypes>)";
 
 	std::string path = writeTempFile(xml, ".xml");
-	ActionTypeRegistry::Get().loadFromFile(path);
+	loadTemp(ActionTypeRegistry::Get(), path);
 
 	const auto* action = ActionTypeRegistry::Get().getAction("Pickup");
 	ASSERT_NE(action, nullptr);
@@ -128,7 +128,7 @@ TEST_F(WorkConfigTest, ActionTypeRegistry_ActionNeedsHands) {
 </ActionTypes>)";
 
 	std::string path = writeTempFile(xml, ".xml");
-	ActionTypeRegistry::Get().loadFromFile(path);
+	loadTemp(ActionTypeRegistry::Get(), path);
 
 	EXPECT_TRUE(ActionTypeRegistry::Get().actionNeedsHands("Eat"));
 	EXPECT_FALSE(ActionTypeRegistry::Get().actionNeedsHands("Sleep"));
@@ -142,7 +142,7 @@ TEST_F(WorkConfigTest, ActionTypeRegistry_HasAction) {
 </ActionTypes>)";
 
 	std::string path = writeTempFile(xml, ".xml");
-	ActionTypeRegistry::Get().loadFromFile(path);
+	loadTemp(ActionTypeRegistry::Get(), path);
 
 	EXPECT_TRUE(ActionTypeRegistry::Get().hasAction("Craft"));
 	EXPECT_FALSE(ActionTypeRegistry::Get().hasAction("NonExistent"));
@@ -353,7 +353,7 @@ TEST_F(WorkConfigTest, ConfigValidator_ValidConfig) {
   <Action defName="Deposit" needsHands="true"/>
 </ActionTypes>)";
 	std::string actionPath = writeTempFile(actionXml, "_actions.xml");
-	ActionTypeRegistry::Get().loadFromFile(actionPath);
+	loadTemp(ActionTypeRegistry::Get(), actionPath);
 
 	// Load valid chains that reference valid actions
 	std::string chainXml = R"(<?xml version="1.0"?>
@@ -395,7 +395,7 @@ TEST_F(WorkConfigTest, ConfigValidator_InvalidChainActionReference) {
   <Action defName="Pickup" needsHands="true"/>
 </ActionTypes>)";
 	std::string actionPath = writeTempFile(actionXml, "_actions.xml");
-	ActionTypeRegistry::Get().loadFromFile(actionPath);
+	loadTemp(ActionTypeRegistry::Get(), actionPath);
 
 	// Load chain with invalid action reference
 	std::string chainXml = R"(<?xml version="1.0"?>
@@ -422,7 +422,7 @@ TEST_F(WorkConfigTest, ConfigValidator_InvalidWorkTypeChainReference) {
   <Action defName="Test" needsHands="true"/>
 </ActionTypes>)";
 	std::string actionPath = writeTempFile(actionXml, "_actions.xml");
-	ActionTypeRegistry::Get().loadFromFile(actionPath);
+	loadTemp(ActionTypeRegistry::Get(), actionPath);
 
 	// Load valid chain
 	std::string chainXml = R"(<?xml version="1.0"?>
@@ -470,7 +470,7 @@ TEST_F(WorkConfigTest, Integration_FullConfigLoad) {
   <Action defName="Harvest" needsHands="true"/>
 </ActionTypes>)";
 	std::string actionPath = writeTempFile(actionXml, "_actions.xml");
-	ASSERT_TRUE(ActionTypeRegistry::Get().loadFromFile(actionPath));
+	ASSERT_TRUE(loadTemp(ActionTypeRegistry::Get(), actionPath));
 
 	// 2. Task chains (deps: actions)
 	std::string chainXml = R"(<?xml version="1.0"?>
@@ -774,6 +774,74 @@ TEST_F(WorkConfigTest, LoadWorkConfig_ShippedValuesArePinned) {
 	EXPECT_EQ(WorkTypeRegistry::Get().getWorkType("Work_Doctoring")->minSkillLevel, 1.0F);
 	EXPECT_EQ(WorkTypeRegistry::Get().getWorkType("Work_HarvestCrops")->minSkillLevel, 0.0F) << "minSkillLevel left out means no minimum";
 	EXPECT_EQ(MemoryConfig::Get().recentSightingGameMinutes(), 30.0F);
+
+	const std::map<std::string, bool> needsHands = {
+		{"Eat", true},
+		{"Drink", true},
+		{"Sleep", false},
+		{"Toilet", false},
+		{"Harvest", true},
+		{"Craft", true},
+		{"Build", true},
+		{"Deconstruct", true},
+		{"Pickup", true},
+		{"Deposit", true},
+		{"Place", true},
+		{"Gather", true},
+		{"Talk", false},
+		{"Wander", false},
+		{"Flee", false},
+		{"MeleeAttack", true},
+		{"RangedAttack", true}
+	};
+	ASSERT_EQ(ActionTypeRegistry::Get().size(), needsHands.size());
+	for (const auto& [name, hands] : needsHands) {
+		const ActionTypeDef* action = ActionTypeRegistry::Get().getAction(name);
+		ASSERT_NE(action, nullptr) << name;
+		EXPECT_EQ(action->needsHands, hands) << name;
+		EXPECT_FALSE(action->description.empty()) << name;
+	}
+	EXPECT_EQ(ActionTypeRegistry::Get().getAction("Eat")->description, "Consuming food");
+}
+
+TEST_F(WorkConfigTest, ActionTypeRegistry_MistakesNameTheActionAndLoadNothing) {
+	const auto problemsFor = [this](const std::string& actions) {
+		const std::string path =
+			writeTempFile("<ActionTypes><Action defName=\"Eat\" needsHands=\"true\"/>" + actions + "</ActionTypes>", ".xml");
+		EXPECT_FALSE(loadTemp(ActionTypeRegistry::Get(), path));
+		EXPECT_EQ(ActionTypeRegistry::Get().size(), 0U) << "a file with any mistake loads no action type";
+		std::vector<std::string> problems = ActionTypeRegistry::Get().problems();
+		for (std::string& problem : problems) {
+			EXPECT_EQ(problem.rfind(fileNameOf(path) + ": ", 0), 0U) << problem;
+			problem.erase(0, fileNameOf(path).size() + 2);
+		}
+		return problems;
+	};
+
+	EXPECT_EQ(
+		problemsFor("<Action defName=\"Pickup\" needsHands=\"ture\"/>"),
+		std::vector<std::string>{"<Action defName=\"Pickup\"> needsHands must be true or false, got \"ture\""}
+	);
+	EXPECT_EQ(
+		problemsFor("<Action defName=\"Pickup\" hands=\"2\"/>"),
+		std::vector<std::string>{"<Action defName=\"Pickup\">: unknown attribute 'hands'"}
+	);
+	EXPECT_EQ(
+		problemsFor("<Action defName=\"Pickup\"><label>Pick up</label></Action>"),
+		std::vector<std::string>{"<Action defName=\"Pickup\">: unknown element <label>"}
+	);
+	EXPECT_EQ(problemsFor("<Action needsHands=\"true\"/>"), std::vector<std::string>{"an <Action> has no defName"});
+	EXPECT_EQ(problemsFor("<Action defName=\"Eat\"/>"), std::vector<std::string>{"<Action defName=\"Eat\"> is declared twice"});
+	EXPECT_EQ(problemsFor("<Chain defName=\"Pickup\"/>"), std::vector<std::string>{"unknown element <Chain>"});
+
+	const std::string path = writeTempFile("<ActionTypes><Action defName=\"Talk\"/></ActionTypes>", ".xml");
+	ASSERT_TRUE(loadTemp(ActionTypeRegistry::Get(), path));
+	EXPECT_FALSE(ActionTypeRegistry::Get().actionNeedsHands("Talk")) << "needsHands left out means the action leaves the hands free";
+	EXPECT_TRUE(ActionTypeRegistry::Get().getAction("Talk")->description.empty());
+
+	EXPECT_FALSE(loadTemp(ActionTypeRegistry::Get(), writeTempFile("<ActionTypes/>", ".xml")));
+	ASSERT_EQ(ActionTypeRegistry::Get().problems().size(), 1U);
+	EXPECT_NE(ActionTypeRegistry::Get().problems().front().find(": no <Action>"), std::string::npos);
 }
 
 TEST_F(WorkConfigTest, TaskChainRegistry_MistakesNameTheChainAndLoadNothing) {
@@ -906,22 +974,32 @@ TEST_F(WorkConfigTest, LoadWorkConfig_ErrorsNameFilesRelativeToTheConfigRoot) {
 	const std::filesystem::path root = writeTempFile("", "_root");
 	std::filesystem::remove(root);
 	std::filesystem::copy(shippedConfigRoot(), root, std::filesystem::copy_options::recursive);
-	{
-		std::ifstream in(root / "work" / "task-chains.xml");
+	const auto replaceIn = [&root](const std::filesystem::path& file, const std::string& from, const std::string& to) {
+		std::ifstream in(root / file);
 		std::string	  text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 		in.close();
-		const std::string step = "<Step order=\"1\" action=\"Deposit\" target=\"destination\"";
-		ASSERT_NE(text.find(step), std::string::npos);
-		text.replace(text.find(step), step.size(), "<Step order=\"one\" action=\"Deposit\" target=\"destination\"");
-		std::ofstream(root / "work" / "task-chains.xml") << text;
-	}
-	const std::vector<std::string> errors = loadWorkConfig(root);
-	std::filesystem::remove_all(root);
+		ASSERT_NE(text.find(from), std::string::npos) << from;
+		text.replace(text.find(from), from.size(), to);
+		std::ofstream(root / file) << text;
+	};
+	replaceIn(
+		"work/task-chains.xml",
+		"<Step order=\"1\" action=\"Deposit\" target=\"destination\"",
+		"<Step order=\"one\" action=\"Deposit\" target=\"destination\""
+	);
 	EXPECT_EQ(
-		errors,
+		loadWorkConfig(root),
 		std::vector<std::string>{
 			"work/task-chains.xml: <Chain defName=\"Chain_PickupDeposit\"> step 2 order must be a whole number from 0 to 255, got \"one\""
 		}
 	);
 	EXPECT_EQ(TaskChainRegistry::Get().size(), 0U);
+
+	replaceIn("actions/action-types.xml", "<Action defName=\"Eat\" needsHands=\"true\">", "<Action defName=\"Eat\" needsHands=\"ture\">");
+	EXPECT_EQ(
+		loadWorkConfig(root),
+		std::vector<std::string>{"actions/action-types.xml: <Action defName=\"Eat\"> needsHands must be true or false, got \"ture\""}
+	);
+	EXPECT_EQ(ActionTypeRegistry::Get().size(), 0U);
+	std::filesystem::remove_all(root);
 }
