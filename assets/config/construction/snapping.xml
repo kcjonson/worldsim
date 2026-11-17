@@ -85,8 +85,13 @@
   <!-- Rectangle tool: land on existing corners and edges before the grid. -->
   <rectangleAdjacencySnaps>true</rectangleAdjacencySnaps>
 
+  <!-- Two left releases on the world this close in time are a double-click: with the wall
+       tool, the second ends the chain. -->
+  <doubleClickSeconds>0.4</doubleClickSeconds>
+
   <!-- A left release within this many logical pixels of its press is a click, not a drag:
-       in the rectangle tool it leaves the first corner waiting. -->
+       in the rectangle tool it leaves the first corner waiting. A double-click's second
+       release must also be this close to the first. -->
   <doubleClickDistancePx>4.0</doubleClickDistancePx>
 
   <!-- The player's Drawing Settings at first launch, what a new player meets: every
