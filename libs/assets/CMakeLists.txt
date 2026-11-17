@@ -16,6 +16,7 @@ add_library(assets
     assets/AssetBatcher.cpp
     assets/ConditionConfig.cpp
     assets/ConfigValidator.cpp
+    assets/MemoryConfig.cpp
     assets/MoodConfig.cpp
     assets/PriorityConfig.cpp
     assets/RecipeRegistry.cpp

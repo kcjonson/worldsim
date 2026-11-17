@@ -382,24 +382,28 @@ namespace world_sim {
 		threats.count = 0;
 		memoryData.categories.push_back(threats);
 
-		// Known colonists/dynamic entities
-		MemoryCategory colonists;
-		colonists.name = "Other Colonists";
-		colonists.count = memory->knownDynamicEntities.size();
+		// Movers seen, the latest sighting first, where each was then. A mover no longer alive (its index
+		// possibly reused by another) is named by its kind: the pool would answer for the new holder.
+		std::vector<const ecs::KnownDynamicEntity*> sightings;
+		sightings.reserve(memory->knownDynamicEntities.size());
 		for (const auto& [entityId, knownEntity] : memory->knownDynamicEntities) {
-			// Try to get colonist name
-			const auto*	 colonist = world.getComponent<ecs::Colonist>(entityId);
-			MemoryEntity memEntity;
-			if (colonist != nullptr) {
-				memEntity.name = colonist->name;
-			} else {
-				memEntity.name = "Unknown Entity";
-			}
-			memEntity.x = knownEntity.lastKnownPosition.x;
-			memEntity.y = knownEntity.lastKnownPosition.y;
-			colonists.entities.push_back(memEntity);
+			sightings.push_back(&knownEntity);
 		}
-		memoryData.categories.push_back(colonists);
+		std::ranges::sort(sightings, [](const ecs::KnownDynamicEntity* left, const ecs::KnownDynamicEntity* right) {
+			return left->lastSeenAt != right->lastSeenAt ? left->lastSeenAt > right->lastSeenAt : left->entityId < right->entityId;
+		});
+		MemoryCategory others;
+		others.name = "Others Seen";
+		others.count = sightings.size();
+		for (const ecs::KnownDynamicEntity* sighting : sightings) {
+			const auto*	 colonist = world.isAlive(sighting->entityId) ? world.getComponent<ecs::Colonist>(sighting->entityId) : nullptr;
+			MemoryEntity memEntity;
+			memEntity.name = colonist != nullptr ? colonist->name : assetRegistry.getDefName(sighting->defNameId);
+			memEntity.x = sighting->lastKnownPosition.x;
+			memEntity.y = sighting->lastKnownPosition.y;
+			others.entities.push_back(memEntity);
+		}
+		memoryData.categories.push_back(others);
 
 		// Calculate total from category counts (not totalKnown() which includes entities with no capabilities)
 		memoryData.totalKnown = 0;
