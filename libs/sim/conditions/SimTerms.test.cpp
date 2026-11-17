@@ -5,6 +5,7 @@
 #include "ConditionVocabulary.h"
 
 #include <ecs/GoalTaskRegistry.h>
+#include <ecs/ShippedNeeds.test.h>
 #include <ecs/World.h>
 #include <ecs/components/Attributes.h>
 #include <ecs/components/Colonist.h>
@@ -97,7 +98,7 @@ namespace {
 			build(shippedConditions());
 
 			colonist = spawnColonist({0.0F, 0.0F});
-			ecs::NeedsComponent& needs = world.addComponent<ecs::NeedsComponent>(colonist, ecs::NeedsComponent::createDefault());
+			ecs::NeedsComponent& needs = world.addComponent<ecs::NeedsComponent>(colonist, ecs::shippedNeeds());
 			needs.hunger().value = 15.0F;
 			ecs::Attributes attributes;
 			attributes.sanity = 17.0F;
@@ -408,7 +409,7 @@ TEST(SimTermsData, ANeedNameTheSimLacksIsUnknownAndLoggedOncePerCondition) {
 
 	ecs::World			world;
 	const ecs::EntityID colonist = world.createEntity();
-	world.addComponent<ecs::NeedsComponent>(colonist, ecs::NeedsComponent::createDefault());
+	world.addComponent<ecs::NeedsComponent>(colonist, ecs::shippedNeeds());
 
 	UnansweredLog log;
 	foundation::Logger::setSink(&UnansweredLog::sink, &log);

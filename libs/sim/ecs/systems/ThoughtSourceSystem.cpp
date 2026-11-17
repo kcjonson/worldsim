@@ -10,6 +10,9 @@
 
 #include <assets/AssetRegistry.h>
 
+#include <random/Pcg32.h>
+#include <random/SplitMix64.h>
+
 #include <algorithm>
 #include <optional>
 #include <utility>
@@ -26,12 +29,24 @@ namespace ecs {
 			forEachHeldThought(thoughts, [&latest](const Thought& thought) { latest = std::max(latest, thought.lastRepeatedAt); });
 			return latest;
 		}
+
+		/// A kind a line can name: one with a definition that has a display label.
+		bool hasDisplayLabel(uint32_t definition) {
+			const assets::AssetDefinition* found = assets::AssetRegistry::Get().getDefinitionById(definition);
+			return found != nullptr && !found->label.empty();
+		}
 	} // namespace
 
-	ThoughtSourceSystem::ThoughtSourceSystem(const ThoughtTypes& types, const NeedLevels& levels, uint32_t randomSeed)
+	ThoughtSourceSystem::ThoughtSourceSystem(const ThoughtTypes& types, uint64_t randomSeed)
 		: thoughtTypes(types),
-		  needLevels(levels),
-		  random(randomSeed) {}
+		  seed(randomSeed) {
+		const std::vector<ThoughtSource>& sources = thoughtTypes.sources();
+		for (std::size_t index = 0; index < sources.size(); ++index) {
+			if (sources[index].trigger == ThoughtTrigger::Idle) {
+				idleSources.push_back(index);
+			}
+		}
+	}
 
 	void ThoughtSourceSystem::listenTo(ActionSystem& actions, VisionSystem& vision) {
 		actions.addActionObserver([this](const ActionEvent& event) {
@@ -45,7 +60,8 @@ namespace ecs {
 		vision.addDiscoveryObserver([this](const VisionSystem::Discovery& discovery) {
 			heardEvents.push_back({
 				.colonist = discovery.colonist,
-				.trigger = discovery.kind == VisionSystem::DiscoveryKind::NewKind ? ThoughtTrigger::FirstSight : ThoughtTrigger::RecipeLearned,
+				.trigger =
+					discovery.kind == VisionSystem::DiscoveryKind::NewKind ? ThoughtTrigger::FirstSight : ThoughtTrigger::RecipeLearned,
 				.definition = discovery.definition,
 			});
 		});
@@ -87,16 +103,19 @@ namespace ecs {
 		if (ThoughtSourceState* state = world->getComponent<ThoughtSourceState>(colonist); state != nullptr) {
 			return *state;
 		}
-		ThoughtSourceState state;
+		ThoughtSourceState				  state;
 		const std::vector<ThoughtSource>& sources = thoughtTypes.sources();
-		state.idleRollsAt.resize(sources.size());
-		for (std::size_t index = 0; index < sources.size(); ++index) {
-			state.idleRollsAt[index] = now + sources[index].rollEverySimulationSeconds;
+		state.idleRollsAt.reserve(idleSources.size());
+		for (const std::size_t index : idleSources) {
+			state.idleRollsAt.push_back(now + sources[index].rollEverySimulationSeconds);
 		}
 		return world->addComponent<ThoughtSourceState>(colonist, std::move(state));
 	}
 
 	void ThoughtSourceSystem::hear(const HeardEvent& event, double now) {
+		if (event.trigger == ThoughtTrigger::FirstSight && !hasDisplayLabel(event.definition)) {
+			return;
+		}
 		const std::vector<ThoughtSource>& sources = thoughtTypes.sources();
 		for (std::size_t index = 0; index < sources.size(); ++index) {
 			const ThoughtSource& source = sources[index];
@@ -121,10 +140,10 @@ namespace ecs {
 	}
 
 	void ThoughtSourceSystem::watchNeeds(EntityID colonist, ThoughtSourceState& state) {
-		const NeedsComponent&															  needs = *world->getComponent<NeedsComponent>(colonist);
+		const NeedsComponent&											   needs = *world->getComponent<NeedsComponent>(colonist);
 		std::array<std::size_t, static_cast<std::size_t>(NeedType::Count)> levels{};
 		for (std::size_t need = 0; need < levels.size(); ++need) {
-			levels[need] = needLevels.levelOf(static_cast<NeedType>(need), needs.needs[need].value);
+			levels[need] = needs.needs[need].level();
 		}
 		if (!state.needLevels.has_value()) {
 			state.needLevels = levels;
@@ -141,8 +160,8 @@ namespace ecs {
 			const auto		  need = static_cast<std::size_t>(source.need);
 			const std::size_t before = previous[need];
 			const std::size_t after = levels[need];
-			const bool fell = source.trigger == ThoughtTrigger::NeedFalls && after > before && after == source.threshold + 1;
-			const bool rose = source.trigger == ThoughtTrigger::NeedRises && after < before && after == source.threshold;
+			const bool		  fell = source.trigger == ThoughtTrigger::NeedFalls && after > before && after == source.threshold + 1;
+			const bool		  rose = source.trigger == ThoughtTrigger::NeedRises && after < before && after == source.threshold;
 			if ((fell || rose) && world->isAlive(colonist)) {
 				think(colonist, source.thought, 0);
 			}
@@ -151,19 +170,21 @@ namespace ecs {
 
 	void ThoughtSourceSystem::rollIdle(EntityID colonist, ThoughtSourceState& state, double now) {
 		const std::vector<ThoughtSource>& sources = thoughtTypes.sources();
-		for (std::size_t index = 0; index < sources.size(); ++index) {
-			const ThoughtSource& source = sources[index];
-			if (source.trigger != ThoughtTrigger::Idle || now < state.idleRollsAt[index]) {
+		for (std::size_t idle = 0; idle < idleSources.size(); ++idle) {
+			const ThoughtSource& source = sources[idleSources[idle]];
+			if (now < state.idleRollsAt[idle]) {
 				continue;
 			}
 			// One roll however long the jump since the last: rolls make no backlog.
-			state.idleRollsAt[index] = now + source.rollEverySimulationSeconds;
+			state.idleRollsAt[idle] = now + source.rollEverySimulationSeconds;
 			const Thoughts*				thoughts = world->getComponent<Thoughts>(colonist);
 			const std::optional<double> latest = thoughts != nullptr ? latestThoughtAt(*thoughts) : std::nullopt;
 			if (latest.has_value() && now - *latest < source.rollEverySimulationSeconds) {
 				continue;
 			}
-			if (std::uniform_real_distribution<float>(0.0F, 1.0F)(random) < source.chance && world->isAlive(colonist)) {
+			const uint64_t colonistStream = foundation::deriveSeed(seed, static_cast<uint64_t>(colonist));
+			const float	   roll = foundation::Pcg32(foundation::deriveSeed(colonistStream, state.idleRolls++)).nextFloat();
+			if (roll < source.chance && world->isAlive(colonist)) {
 				think(colonist, source.thought, 0);
 			}
 		}

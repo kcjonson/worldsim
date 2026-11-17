@@ -1,6 +1,7 @@
 #include "ConstructionSystem.h"
 
 #include "../GoalTaskRegistry.h"
+#include "../ShippedNeeds.test.h"
 #include "../World.h"
 #include "../components/Inventory.h"
 #include "../components/Needs.h"
@@ -360,7 +361,7 @@ namespace {
 		/// NeedsComponent marks it a colonist like a real one.
 		EntityID createColonistCarryingWood(uint32_t woodCarried) {
 			auto entity = world->createEntity();
-			world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+			world->addComponent<NeedsComponent>(entity, shippedNeeds());
 			auto inv = Inventory::createForColonist();
 			inv.addItem("Wood", woodCarried); // 10 slots x 40 stack holds well over one trip's worth
 			world->addComponent<Inventory>(entity, std::move(inv));

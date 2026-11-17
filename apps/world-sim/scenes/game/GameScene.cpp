@@ -1317,7 +1317,7 @@ namespace {
 			ecsWorld->registerSystem<ecs::WallCollisionSystem>();		// Priority 260 - wall safety-net after agent separation
 			ecsWorld->registerSystem<ecs::PlacedObstacleCollisionSystem>(); // Priority 270 - placed-obstacle safety-net after wall collision
 			ecsWorld->registerSystem<ecs::ActionSystem>(systemSeeds.action); // Priority 350
-			ecsWorld->registerSystem<ecs::ThoughtSourceSystem>(*colonistRules.thoughtTypes, *colonistRules.needLevels, systemSeeds.thoughtSource)
+			ecsWorld->registerSystem<ecs::ThoughtSourceSystem>(*colonistRules.thoughtTypes, systemSeeds.thoughtSource)
 				.listenTo(ecsWorld->getSystem<ecs::ActionSystem>(), ecsWorld->getSystem<ecs::VisionSystem>()); // Priority 360
 			ecsWorld->registerSystem<world_sim::DeferredEditsSystem>([this] { drainDeferredEdits(); }); // Priority 800
 			ecsWorld->registerSystem<worldview::DynamicEntityRenderSystem>(); // Priority 900
@@ -1614,7 +1614,7 @@ namespace {
 			ecsWorld->addComponent<ecs::AnimationState>(entity, ecs::AnimationState{});	  // Walk-cycle phase
 			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{"Colonist", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 			ecsWorld->addComponent<ecs::Colonist>(entity, ecs::Colonist{newName});
-			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());
+			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent(*colonistRules.needLevels));
 			ecsWorld->getSystem<ecs::MoodSystem>().startMood(entity);
 
 			// Roll static attributes (0-20), seeded per-entity so colonists vary

@@ -166,6 +166,13 @@ namespace ecs {
 			lookOver(entity, pos.value, memory.sightRadius, polygon, memory, knowledge);
 		}
 
+		for (const Discovery& discovery : m_learnedScratch) {
+			for (const DiscoveryObserver& listener : m_discoveryObservers) {
+				listener(discovery);
+			}
+		}
+		m_learnedScratch.clear();
+
 		// Prune cache entries for observers not seen this tick (dead/despawned).
 		// Mark-and-sweep keeps the map bounded.
 		for (auto it = m_visibilityCache.begin(); it != m_visibilityCache.end();) {
@@ -199,6 +206,7 @@ namespace ecs {
 			rememberStructures(centerMm, radiusMm, polygon, *memory, segments, openings);
 		}
 		lookOver(observer, center, radiusMeters, occluders.empty() ? nullptr : &polygon, *memory, world->getComponent<Knowledge>(observer));
+		m_learnedScratch.clear();
 	}
 
 	void VisionSystem::rememberStructures(
@@ -266,23 +274,17 @@ namespace ecs {
 			return;
 		}
 		auto& registry = assets::AssetRegistry::Get();
-		const Discovery newKind{.colonist = observer, .kind = DiscoveryKind::NewKind, .definition = defNameId};
-		for (const DiscoveryObserver& listener : m_discoveryObservers) {
-			listener(newKind);
-		}
+		m_learnedScratch.push_back({.colonist = observer, .kind = DiscoveryKind::NewKind, .definition = defNameId});
 		const assets::RecipeDef* recipe = recipeUnlockedBy(knowledge, defNameId, registry, assets::RecipeRegistry::Get());
 		if (recipe == nullptr) {
 			return;
 		}
-		const Discovery learned{
+		m_learnedScratch.push_back({
 			.colonist = observer,
 			.kind = DiscoveryKind::Recipe,
 			.definition = recipe->outputs.empty() ? 0U : registry.getDefNameId(recipe->outputs.front().defName),
 			.recipeLabel = recipe->label,
-		};
-		for (const DiscoveryObserver& listener : m_discoveryObservers) {
-			listener(learned);
-		}
+		});
 	}
 
 	void VisionSystem::lookOver(

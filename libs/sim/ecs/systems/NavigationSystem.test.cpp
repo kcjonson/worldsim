@@ -20,6 +20,7 @@
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/NavPath.h"
+#include "../ShippedNeeds.test.h"
 #include "../components/Needs.h"
 #include "../components/SourceReachMemo.h"
 #include "../components/Task.h"
@@ -2276,7 +2277,7 @@ namespace {
 		world.addComponent<Position>(c, Position{at});
 		world.addComponent<Velocity>(c, Velocity{{0.0F, 0.0F}});
 		world.addComponent<MovementTarget>(c, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-		world.addComponent<NeedsComponent>(c, NeedsComponent::createDefault());
+		world.addComponent<NeedsComponent>(c, shippedNeeds());
 		world.addComponent<Memory>(c, Memory{});
 		world.addComponent<Inventory>(c, Inventory::createForColonist());
 		world.addComponent<Task>(c, Task{});

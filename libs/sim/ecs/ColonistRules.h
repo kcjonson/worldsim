@@ -1,7 +1,7 @@
 #pragma once
 
 // The rules from data that colonists' minds run on: the condition vocabulary, built and frozen first,
-// the thought types written in it, and the need levels the thought sources watch. Loaded once per game.
+// the thought types written in it, and the need levels colonists' needs are built from. Loaded once per game.
 
 #include "NeedLevels.h"
 #include "ThoughtTypes.h"
@@ -36,11 +36,12 @@ namespace ecs {
 	/// logged with the feeling, thought type, and source counts.
 	[[nodiscard]] std::vector<std::string> loadThoughtTypes(ThoughtTypes& types, const std::filesystem::path& folder);
 
-	/// Build `levels` from the need config `file`. An empty error list means they are ready.
-	[[nodiscard]] std::vector<std::string> loadNeedLevels(NeedLevels& levels, const std::filesystem::path& file);
+	/// Build `levels` from the need config in `folder`. An empty error list means they are ready; that is
+	/// logged with the need count.
+	[[nodiscard]] std::vector<std::string> loadNeedLevels(NeedLevels& levels, const std::filesystem::path& folder);
 
 	/// Build the vocabulary from `configRoot`/conditions, then the thought types from `configRoot`/thoughts,
-	/// and the need levels from `configRoot`/colonists/needs.xml. Errors name their folder; an empty list
+	/// and the need levels from `configRoot`/colonists/needs. Errors name their folder; an empty list
 	/// means all are ready.
 	[[nodiscard]] ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot);
 

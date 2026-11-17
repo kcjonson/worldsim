@@ -66,15 +66,6 @@ namespace ecs {
 			return found == kNeedLabels.end() ? std::nullopt : std::optional(static_cast<NeedType>(found - kNeedLabels.begin()));
 		}
 
-		std::optional<ActionType> actionFromName(std::string_view name) {
-			for (auto value = static_cast<uint8_t>(ActionType::Eat); value <= static_cast<uint8_t>(ActionType::PlacePackaged); ++value) {
-				if (name == actionTypeName(static_cast<ActionType>(value))) {
-					return static_cast<ActionType>(value);
-				}
-			}
-			return std::nullopt;
-		}
-
 		/// The loader checked the trigger's own attributes; the names that belong to the sim are checked here.
 		std::optional<ThoughtSource> buildSource(
 			const assets::ThoughtSourceDef& def, ThoughtEventTypeId thought, const std::string& where, std::vector<std::string>& errors
@@ -96,8 +87,8 @@ namespace ecs {
 				source.need = *need;
 			}
 			if (def.trigger == ThoughtTrigger::ActionStarts || def.trigger == ThoughtTrigger::ActionFinishes) {
-				const std::optional<ActionType> action = actionFromName(def.action);
-				if (!action.has_value()) {
+				const std::optional<ActionType> action = actionTypeFromName(def.action);
+				if (!action.has_value() || *action == ActionType::None) {
 					errors.push_back(where + ": no action is called '" + def.action + "'");
 					return std::nullopt;
 				}

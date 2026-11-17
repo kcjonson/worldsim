@@ -1,7 +1,7 @@
 #pragma once
 
-// The levels each need moves between, from its thresholds in data (assets/config/colonists/needs.xml).
-// See /docs/technical/interruptable-crafts.md (Needs in three levels).
+// Each need's thresholds from data (assets/config/colonists/needs), which a colonist's NeedsComponent is
+// built from. See /docs/technical/interruptable-crafts.md (Needs in three levels).
 
 #include "components/Needs.h"
 
@@ -9,6 +9,7 @@
 
 #include <array>
 #include <cstddef>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -18,12 +19,10 @@ namespace ecs {
 	  public:
 		using Thresholds = std::array<float, assets::kNeedThresholdNames.size()>;
 
-		/// Replaces every need's thresholds with `config`'s. Returns every error: a name that is no need, a
-		/// need the config leaves out. Nothing is kept when there are errors.
-		std::vector<std::string> load(const assets::NeedsConfig& config);
-
-		/// 0 at or above the need's first threshold, and one more below each threshold after.
-		[[nodiscard]] std::size_t levelOf(NeedType need, float value) const;
+		/// Replaces every need's thresholds with `config`'s, read from `folder`. Returns every error: a name
+		/// that is no need (naming its file), a need the config leaves out (naming the folder). Nothing is
+		/// kept when there are errors.
+		std::vector<std::string> load(const assets::NeedsConfig& config, const std::filesystem::path& folder);
 
 		[[nodiscard]] const Thresholds& thresholdsOf(NeedType need) const { return thresholds[static_cast<std::size_t>(need)]; }
 

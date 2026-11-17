@@ -230,9 +230,9 @@ Event types, their feelings, lines, importance, mood effects, and animations are
 - A line is at most `maxLineLength` characters, counting `{subject}` as `maxSubjectNameLength`. `{subject}` in a line is the subject's name as it was when the thought arrived, cut to `maxSubjectNameLength` characters when it is longer. A line that names the subject fits only a subject that has a name: a colonist's own name, or an entity's asset label (its definition name when it has no label). A colonist with no name has none.
 - `<ends thought>` names the type created when a held thought of this type ends, however it ends. Endings may not loop.
 - A `<source>` names a change in the sim that creates a thought of its type, and a type may have any number. Its `trigger` is one of:
-  - `needFalls` or `needRises`, with `need` (the need's label) and `threshold` (`seek`, `urgent`, or `critical`, the need's thresholds in `assets/config/colonists/needs.xml`): the need falls below the threshold, or rises back to it. A change across several thresholds at once is told once, by the level it lands in.
-  - `actionStarts` or `actionFinishes`, with `action` (`Eat`, `Sleep`, `Craft`, `Build`, and the other actions), an optional `on`, either `ground` for an action about no thing or a capability the kind of thing it is about has (`sleepable`), and `first="true"` for only the first time for each kind of thing. An action cut short does not finish.
-  - `firstSight`, the first time the colonist sees a kind of thing, with an optional `of` naming a capability the kind has.
+  - `needFalls` or `needRises`, with `need` (the need's label) and `threshold` (`seek`, `urgent`, or `critical`, the need's thresholds in `assets/config/colonists/needs/`, the same ones the colonists' AI seeks by): the need falls below the threshold, or rises back to it. A change across several thresholds at once is told once, by the level it lands in.
+  - `actionStarts` or `actionFinishes`, with `action` (`Eat`, `Sleep`, `Craft`, `Build`, and the other actions), an optional `on`, either `ground` for an action about no thing or a capability the kind of thing it is about has (`sleepable`), and `first="true"` for only the first time for each kind of thing. An action cut short does not finish, and taking up work already begun (a blueprint with work on it, a craft batch past its first unit) does not start.
+  - `firstSight`, the first time the colonist sees a kind of thing that has a display label, with an optional `of` naming a capability the kind has. What the landing crew learns of the landing area on arrival is no first sight.
   - `recipeLearned`.
   - `idle`, with `everyMinutes` and `chance`: a roll every `everyMinutes` game minutes, taken only when no thought has arrived on the colonist in that time.
   A source's subject is the kind of thing its change is about, when it is about one. A source naming a need or an action the sim does not have is an error.
@@ -261,6 +261,7 @@ A supplement, not part of the spec. Kevin, 2026-11-16.
 - Thoughts are kept up to a high bound per colonist, with an algorithm that prunes as the limit approaches.
 - Recalling old thoughts on a cue, with attachment, developing likes, and softened feelings, is wanted ("kinda fun").
 - The game should carry some of The Sims' joy; balance of harsh against gentle is tuned at playtest.
+- 2026-11-17: need thoughts carry no mood effect, because the needs score already prices a low need into mood.
 
 ## Addendum: prior work
 

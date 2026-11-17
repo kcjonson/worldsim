@@ -1,6 +1,7 @@
 #include "MoodSystem.h"
 
 #include "../World.h"
+#include "../ShippedNeeds.test.h"
 #include "../ThoughtTesting.test.h"
 #include "ThoughtSystem.h"
 #include "TimeSystem.h"
@@ -118,7 +119,7 @@ namespace ecs::test {
 
 		EntityID spawnColonist() {
 			const EntityID entity = world.createEntity();
-			world.addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+			world.addComponent<NeedsComponent>(entity, shippedNeeds());
 			return entity;
 		}
 

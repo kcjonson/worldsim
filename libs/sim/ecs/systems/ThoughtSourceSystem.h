@@ -6,13 +6,12 @@
 // nothing new. See /docs/design/game-systems/colonists/thoughts.md (What creates thoughts).
 
 #include "../ISystem.h"
-#include "../NeedLevels.h"
 #include "../ThoughtTypes.h"
 #include "ActionSystem.h"
 #include "VisionSystem.h"
 
+#include <cstddef>
 #include <cstdint>
-#include <random>
 #include <vector>
 
 namespace ecs {
@@ -23,8 +22,9 @@ namespace ecs {
 	/// heard this tick become thoughts in the same tick.
 	class ThoughtSourceSystem : public ISystem {
 	  public:
-		/// `types` and `levels` must outlive the system. `randomSeed` drives the idle rolls.
-		ThoughtSourceSystem(const ThoughtTypes& types, const NeedLevels& levels, uint32_t randomSeed);
+		/// `types` must outlive the system. Each colonist's idle rolls are a stream of their own, derived
+		/// from `randomSeed` and the colonist's entity.
+		ThoughtSourceSystem(const ThoughtTypes& types, uint64_t randomSeed);
 
 		void update(float deltaTime) override;
 
@@ -51,8 +51,9 @@ namespace ecs {
 		void				think(EntityID colonist, ThoughtEventTypeId thought, uint32_t definition);
 
 		const ThoughtTypes& thoughtTypes;
-		const NeedLevels&	needLevels;
-		std::mt19937		random;
+		uint64_t			seed;
+		/// The idle sources, as indexes into ThoughtTypes::sources().
+		std::vector<std::size_t> idleSources;
 
 		std::vector<HeardEvent> heardEvents;
 		std::vector<HeardEvent> heardScratch;

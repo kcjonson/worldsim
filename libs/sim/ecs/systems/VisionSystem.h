@@ -86,7 +86,7 @@ class VisionSystem : public ISystem {
 	};
 	using DiscoveryObserver = std::function<void(const Discovery& discovery)>;
 
-	/// Hears every discovery, from inside the update: an observer must not create or destroy entities.
+	/// Hears the discoveries each pass of update() makes, once the pass is over. rememberArea's look is silent.
 	void addDiscoveryObserver(DiscoveryObserver observer) { m_discoveryObservers.push_back(std::move(observer)); }
 
 	/// Wire the construction topology that walls block sight from. Forwards to the
@@ -140,8 +140,9 @@ class VisionSystem : public ISystem {
 	[[nodiscard]] const GeometryIndex& geometry() const { return m_geometry; }
 
 	/// Give `observer` what a look over the disc of `radiusMeters` round `center` would give him,
-	/// through the same passes as his sight each tick. The landing crew's memory of the landing area
-	/// (player-visibility.md 3.8). Leaves his sight shape alone.
+	/// through the same passes as his sight each tick, but silently: what he learns there is told to no
+	/// discovery observer. The landing crew's memory of the landing area (player-visibility.md 3.8).
+	/// Leaves his sight shape alone.
 	void rememberArea(EntityID observer, glm::vec2 center, float radiusMeters);
 
   private:
@@ -175,10 +176,12 @@ class VisionSystem : public ISystem {
 	uint16_t m_shoreCapabilityMask = 0;
 	bool	 m_terrainDefsRegistered = false;
 
-	/// The observer learns `defNameId`; when it is new, the observers hear of it and of the recipe it unlocks.
+	/// The observer learns `defNameId`; when it is new, it and the recipe it unlocks join m_learnedScratch.
 	void learn(EntityID observer, Knowledge& knowledge, uint32_t defNameId);
 
 	std::vector<DiscoveryObserver> m_discoveryObservers;
+	// What lookOver learned, until update() tells the observers or rememberArea drops it.
+	std::vector<Discovery> m_learnedScratch;
 
 	// --- Occlusion gate ---
 

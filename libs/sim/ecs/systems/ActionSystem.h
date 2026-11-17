@@ -25,7 +25,8 @@ namespace ecs {
 
 enum class ActionMoment : uint8_t { Started, Finished };
 
-/// A colonist started or finished an action. An action cut short never finishes.
+/// A colonist started or finished an action. An action cut short never finishes, and one taking up work
+/// already begun (a blueprint with work on it, a craft batch with a unit made) does not start.
 struct ActionEvent {
 	EntityID	 colonist = kInvalidEntity;
 	ActionType	 type = ActionType::None;
@@ -100,8 +101,7 @@ public:
 	using RemoveEntityByIdCallback = std::function<void(EntityID entity)>;
 	void setRemoveEntityByIdCallback(RemoveEntityByIdCallback callback) { m_onRemoveEntityById = std::move(callback); }
 
-	/// Hears every action a colonist starts and finishes, from inside the update: an observer must not
-	/// create or destroy entities or touch a colonist's task or action.
+	/// Hears every action a colonist starts and finishes, once the update's pass over the colonists is over.
 	void addActionObserver(ActionObserver observer) { m_actionObservers.push_back(std::move(observer)); }
 
 	/// The loose ground piles a pickup draws from, filed by makeLoosePile and unfiled by
@@ -316,8 +316,8 @@ private:
 		const char* handName
 	);
 
-	/// Tell every action observer the colonist started or finished the action.
-	void notifyActionObservers(
+	/// Hold for the action observers that the colonist started or finished the action.
+	void reportAction(
 		EntityID entity,
 		const struct Action& action,
 		ActionMoment moment,
@@ -325,7 +325,12 @@ private:
 		const struct Memory& memory
 	);
 
+	/// True when starting the action takes up work already begun: a Build or Deconstruct on a blueprint
+	/// with work done toward it, or a Craft of a batch with a unit already made.
+	[[nodiscard]] bool continuesWork(const struct Action& action) const;
+
 	std::vector<ActionObserver> m_actionObservers;
+	std::vector<ActionEvent>	m_reportedActions;
 
 	/// Callback for item crafted notifications
 	ItemCraftedCallback m_onItemCrafted = nullptr;

@@ -16,6 +16,7 @@
 #include "../components/Needs.h"
 #include "../components/Packaged.h"
 #include "../components/Skills.h"
+#include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
@@ -115,7 +116,9 @@ namespace ecs {
 						actionTypeName(action.type),
 						action.duration
 					);
-					notifyActionObservers(entity, action, ActionMoment::Started, task, memory);
+					if (!continuesWork(action)) {
+						reportAction(entity, action, ActionMoment::Started, task, memory);
+					}
 				}
 
 				// A start routine that starts nothing has either handed the task to its next leg (a haul
@@ -172,6 +175,13 @@ namespace ecs {
 				completeAction(entity, position, action, needs, task, inventory, memory);
 			}
 		}
+
+		for (const ActionEvent& event : m_reportedActions) {
+			for (const ActionObserver& observer : m_actionObservers) {
+				observer(event);
+			}
+		}
+		m_reportedActions.clear();
 	}
 
 	void ActionSystem::startAction(
@@ -235,7 +245,7 @@ namespace ecs {
 		Inventory&		inventory,
 		Memory&			memory
 	) {
-		notifyActionObservers(entity, action, ActionMoment::Finished, task, memory);
+		reportAction(entity, action, ActionMoment::Finished, task, memory);
 
 		// What a cut or a pickup lands is what its collection adds to the colonist; what it held of the
 		// item before is not this chain's.
@@ -414,7 +424,7 @@ namespace ecs {
 		task.timeSinceEvaluation = 0.0F;
 	}
 
-	void ActionSystem::notifyActionObservers(EntityID entity, const Action& action, ActionMoment moment, const Task& task, const Memory& memory) {
+	void ActionSystem::reportAction(EntityID entity, const Action& action, ActionMoment moment, const Task& task, const Memory& memory) {
 		if (m_actionObservers.empty()) {
 			return;
 		}
@@ -431,10 +441,25 @@ namespace ecs {
 		} else if (const KnownWorldEntity* source = memory.getWorldEntity(task.needSourceKey); source != nullptr) {
 			about = source->defNameId;
 		}
-		const ActionEvent event{.colonist = entity, .type = action.type, .moment = moment, .aboutDefinition = about};
-		for (const ActionObserver& observer : m_actionObservers) {
-			observer(event);
+		m_reportedActions.push_back({.colonist = entity, .type = action.type, .moment = moment, .aboutDefinition = about});
+	}
+
+	bool ActionSystem::continuesWork(const Action& action) const {
+		if (action.hasProgressEffect()) {
+			const ProgressEffect&	  effect = action.progressEffect();
+			const StructureBlueprint* blueprint = world->getComponent<StructureBlueprint>(static_cast<EntityID>(effect.targetEntityId));
+			if (blueprint == nullptr) {
+				return false;
+			}
+			return effect.deconstruct ? blueprint->workDone < blueprint->workTotal : blueprint->workDone > 0.0F;
 		}
+		if (action.hasCraftingEffect()) {
+			const CraftingEffect& effect = action.craftingEffect();
+			const WorkQueue*	  queue = world->getComponent<WorkQueue>(static_cast<EntityID>(effect.stationEntityId));
+			const CraftingJob*	  job = queue != nullptr ? queue->getNextJob() : nullptr;
+			return job != nullptr && job->recipeDefName == effect.recipeDefName && job->completed > 0;
+		}
+		return false;
 	}
 
 	void ActionSystem::headToDeposit(EntityID entity, Task& task) {

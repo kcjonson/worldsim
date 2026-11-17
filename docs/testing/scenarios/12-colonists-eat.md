@@ -33,9 +33,9 @@ Pick a spot on open ground, a few meters from the river bank, with no berry bush
 
 3. Spawn a `BasicBox` 20 m from the bush (`/api/dev/spawn?def=BasicBox&at=<FX+20>,<FY>&n=1&scatter=0`), put 10 berries in it (`/api/dev/give?material=Berry&n=10&where=storage&at=<FX+20>,<FY>`), spawn Eve 1 m from it (`/api/dev/colonist?at=<FX+21>,<FY>&name=Eve`), and set her Hunger to 40: she walks to the box, `what=storage` shows its `Berry` drop to 9, and her Hunger rises past 50.
 
-4. Drop 10 berries 1 m from Eve on the side away from the box (`/api/dev/give?material=Berry&n=10&where=loose&at=<her x+1>,<her y>`) and set her Hunger to 5: she takes 2 berries from the heap or the box, whichever is nearer, never more, and her Hunger rises past 50.
+4. Drop 10 berries 1 m from Eve on the side away from the box (`/api/dev/give?material=Berry&n=10&where=loose&at=<her x+1>,<her y>`) and, after noting the highest `id` in her `thoughts.recent` (`what=colonists`), set her Hunger to 5: she takes 2 berries from the heap or the box, whichever is nearer, never more, and her Hunger rises past 50.
 
-5. Read Eve in `what=colonists`: her `thoughts.recent` holds one `starving` from step 4 (not `getting_peckish` or `very_hungry` as well) and an `ate_good_meal`, and `thoughts.held` holds `ate_good_meal`. Read it again a few seconds later: nothing new has arrived while her Hunger stays where it is.
+5. Read Eve in `what=colonists`, looking only at the `thoughts.recent` entries with an `id` above the one noted in step 4: they hold one `starving` (not `getting_peckish` or `very_hungry` as well) and an `ate_good_meal`, and `thoughts.held` holds `ate_good_meal`. Read it again a few seconds later: nothing newer has arrived while her Hunger stays where it is.
 
 ---
 
@@ -47,7 +47,7 @@ GET /api/state?what=storage
 
 GET /api/state?what=colonists
   -> each colonist that ate has needs.Hunger > 50 afterwards
-  -> Eve's thoughts: one starving after step 4, ate_good_meal held, nothing new while her needs hold
+  -> Eve's thoughts newer than step 4's noted id: one starving, ate_good_meal held, nothing new while her needs hold
 ```
 
 ---

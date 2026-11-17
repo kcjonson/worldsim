@@ -74,17 +74,17 @@ assets/config/work/work-types.xml
 assets/config/work/priority-tuning.xml
 assets/config/construction/*.xml
 assets/config/colonists/mood.xml
-assets/config/colonists/needs.xml
+assets/config/colonists/needs/*.xml
 assets/config/conditions/*.xml
 assets/config/thoughts/*.xml
 ```
 
-`conditions/`, `thoughts/`, and `colonists/needs.xml` load through `ecs::loadColonistRules(configRoot)` (libs/sim/ecs/ColonistRules.h):
+`conditions/`, `thoughts/`, and `colonists/needs/` load through `ecs::loadColonistRules(configRoot)` (libs/sim/ecs/ColonistRules.h):
 the condition vocabulary is declared, answered by the sim's terms, and frozen first, then the thought
 types are read and their conditions parsed against it (`loadConditionVocabulary` and `loadThoughtTypes`,
-which the tests use too), then the need thresholds the thought sources watch (`loadNeedLevels`: `assets::loadNeedsConfig` reads the file, and `ecs::NeedLevels` checks that every need is named once and nothing else is). Each folder's own files load before its subfolders' (`assets::configFilesIn`),
+which the tests use too), then the need thresholds (`loadNeedLevels`: `assets::loadNeedsConfig` reads the folder, a later file's `<Need>` replacing an earlier one of the same name and logged at info level, and `ecs::NeedLevels` checks that every need is given and each name is a need). A needs file with any error adds nothing, and its errors name the file's path as loaded and the `<Need name="...">`. There is no C++ default for a threshold: every colonist's `NeedsComponent` is constructed from the loaded `NeedLevels`, so the AI and the thought sources read the same numbers. Each folder's own files load before its subfolders' (`assets::configFilesIn`),
 so a mod adds or replaces by adding a file there. A clean load logs its counts at info level (terms;
-feelings, thought types, and sources). `GameLoadingScene` adds its errors, prefixed `[conditions]`,
+feelings, thought types, and sources; needs). `GameLoadingScene` adds its errors, prefixed `[conditions]`,
 `[thoughts]`, or `[colonists]`, to the config errors the loading screen shows, and hands the rules to `GameScene` through
 `GameWorldState`. A direct switch to the game scene skips the loading scene, so `GameScene` loads them
 itself, once; when they are broken it hands the errors to the splash (`world_sim::failColonistRules`),

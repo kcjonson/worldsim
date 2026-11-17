@@ -16,6 +16,7 @@
 
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
+#include "../ShippedNeeds.test.h"
 #include "../World.h"
 #include "../WorldSource.h"
 #include "../components/Action.h"
@@ -143,7 +144,7 @@ namespace ecs::test {
 			world->addComponent<AgentRadius>(entity, AgentRadius{});
 			world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 			world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-			world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+			world->addComponent<NeedsComponent>(entity, shippedNeeds());
 			world->addComponent<Memory>(entity, Memory{});
 			world->addComponent<Inventory>(entity, Inventory::createForColonist());
 			world->addComponent<Task>(entity, Task{});
@@ -2978,7 +2979,7 @@ namespace ecs::test {
 			world->addComponent<AgentRadius>(entity, AgentRadius{});
 			world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 			world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-			world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+			world->addComponent<NeedsComponent>(entity, shippedNeeds());
 			world->addComponent<Memory>(entity, Memory{});
 			world->addComponent<Inventory>(entity, Inventory::createForColonist());
 			world->addComponent<Task>(entity, Task{});

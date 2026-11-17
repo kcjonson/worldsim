@@ -864,11 +864,6 @@ namespace ecs::test {
 			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content"/><ends thought="b"/></thought>)"),
 			"which is no thought type"
 		));
-		const std::vector<std::string> cycle = errorsFor(R"(
-  <thought id="a" importance="normal"><feeling is="content"/><ends thought="b"/></thought>
-  <thought id="b" importance="normal"><feeling is="content"/><ends thought="c"/></thought>
-  <thought id="c" importance="normal"><feeling is="content"/><ends thought="a"/></thought>
-)");
 		EXPECT_TRUE(mentions(
 			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content"/><source trigger="needFalls" need="Mojo" threshold="seek"/></thought>)"),
 			"source 1: no need is called 'Mojo'"
@@ -876,7 +871,13 @@ namespace ecs::test {
 		EXPECT_TRUE(mentions(
 			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content"/><source trigger="actionFinishes" action="Juggle"/></thought>)"),
 			"source 1: no action is called 'Juggle'"
-		));		ASSERT_EQ(cycle.size(), 1U) << "a cycle is reported once";
+		));
+		const std::vector<std::string> cycle = errorsFor(R"(
+  <thought id="a" importance="normal"><feeling is="content"/><ends thought="b"/></thought>
+  <thought id="b" importance="normal"><feeling is="content"/><ends thought="c"/></thought>
+  <thought id="c" importance="normal"><feeling is="content"/><ends thought="a"/></thought>
+)");
+		ASSERT_EQ(cycle.size(), 1U) << "a cycle is reported once";
 		EXPECT_TRUE(mentions(cycle, "makes a cycle (a -> b -> c -> a)"));
 	}
 

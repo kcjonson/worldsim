@@ -16,11 +16,13 @@
 namespace ecs {
 
 	struct ThoughtSourceState {
-		/// Each need's level when last looked at (NeedLevels::levelOf), by NeedType; none before the first look.
+		/// Each need's level when last looked at (Need::level), by NeedType; none before the first look.
 		std::optional<std::array<std::size_t, static_cast<std::size_t>(NeedType::Count)>> needLevels;
-		/// When each idle source next rolls, on TimeSystem::simulationSeconds(), by source index; unused for
-		/// a source that is not idle.
+		/// When each idle source next rolls, on TimeSystem::simulationSeconds(), in the order of the idle
+		/// sources among ThoughtTypes::sources().
 		std::vector<double> idleRollsAt;
+		/// The idle rolls made so far: the position in this colonist's own stream of rolls.
+		uint64_t idleRolls = 0;
 		/// The first-only sources that have fired, each with the kind of thing it was about:
 		/// (source index << 32) | definition.
 		std::unordered_set<uint64_t> firstsFired;

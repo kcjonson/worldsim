@@ -49,12 +49,16 @@ namespace ecs {
 		return errors;
 	}
 
-	std::vector<std::string> loadNeedLevels(NeedLevels& levels, const std::filesystem::path& file) {
-		const assets::NeedsConfigLoad config = assets::loadNeedsConfig(file);
+	std::vector<std::string> loadNeedLevels(NeedLevels& levels, const std::filesystem::path& folder) {
+		const assets::NeedsConfigLoad config = assets::loadNeedsConfig(folder);
 		if (!config.errors.empty()) {
 			return config.errors;
 		}
-		return levels.load(config.config);
+		std::vector<std::string> errors = levels.load(config.config, folder);
+		if (errors.empty()) {
+			LOG_INFO(Engine, "Loaded need levels from %s: %zu needs", folder.generic_string().c_str(), config.config.needs.size());
+		}
+		return errors;
 	}
 
 	ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot) {
@@ -68,7 +72,7 @@ namespace ecs {
 			return load;
 		}
 		addErrors(load.errors, "thoughts", loadThoughtTypes(*load.rules.thoughtTypes, configRoot / "thoughts"));
-		addErrors(load.errors, "colonists", loadNeedLevels(*load.rules.needLevels, configRoot / "colonists" / "needs.xml"));
+		addErrors(load.errors, "colonists", loadNeedLevels(*load.rules.needLevels, configRoot / "colonists" / "needs"));
 		return load;
 	}
 

@@ -10,7 +10,7 @@
     <source trigger .../>                           what in the sim creates it; a type may have several or
                                                     none, and every trigger is a change:
       trigger="needFalls" need threshold            a need falls below a threshold (seek, urgent, critical in
-      trigger="needRises" need threshold            assets/config/colonists/needs.xml) or rises back to it;
+      trigger="needRises" need threshold            assets/config/colonists/needs) or rises back to it;
                                                     a change across several is told once, by the level it
                                                     lands in
       trigger="actionStarts|actionFinishes" action [on] [first]
@@ -18,13 +18,15 @@
                                                     Craft, Build, ...); on="ground" for one about no thing,
                                                     or a capability its kind of thing has (sleepable);
                                                     first="true" only the first time for that kind of thing
-      trigger="firstSight" [of]                     a colonist sees a kind of thing for the first time; of
-                                                    limits it to kinds with a capability
+                                                    Taking up work already begun (a blueprint with work
+                                                    on it, a craft batch past its first unit) is no start.
+      trigger="firstSight" [of]                     a colonist sees a kind of thing with a name for the first
+                                                    time (not on the landing look); of limits it to kinds
+                                                    with a capability
       trigger="recipeLearned"                       a colonist learns a recipe
       trigger="idle" everyMinutes chance            a roll every everyMinutes game minutes, taken only when
                                                     no thought has arrived in that time
-                                                    The subject is the kind of thing the change is
-                                                    about, when it is about one.
+      The subject is the kind of thing the change is about, when it is about one.
   </thought>
 
   See /docs/design/game-systems/colonists/thoughts.md (Data).

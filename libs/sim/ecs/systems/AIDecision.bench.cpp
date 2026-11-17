@@ -24,6 +24,7 @@
 
 #include "../ClaimIndex.h"
 #include "../GoalTaskRegistry.h"
+#include "../ShippedNeeds.test.h"
 #include "../World.h"
 #include "../components/AgentRadius.h"
 #include "../components/Appearance.h"
@@ -341,7 +342,7 @@ namespace {
 				world.addComponent<ecs::Position>(e, ecs::Position{home});
 				world.addComponent<ecs::Velocity>(e, ecs::Velocity{{0.0F, 0.0F}});
 				world.addComponent<ecs::MovementTarget>(e, ecs::MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-				ecs::NeedsComponent needs = ecs::NeedsComponent::createDefault();
+				ecs::NeedsComponent needs = ecs::shippedNeeds();
 				for (const ecs::NeedType need : ecs::NeedsComponent::kActionableNeeds) {
 					needs.get(need).value = 100.0F;
 				}
