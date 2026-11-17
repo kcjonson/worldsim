@@ -85,9 +85,6 @@ namespace ecs {
 		std::optional<double>	  endedAt{};
 		/// Repeats of a stacking held thought, the first included. Its mood effect counts this many times.
 		uint32_t				  count = 1;
-
-		[[nodiscard]] bool	isHeld() const { return moodEffect.has_value() && !endedAt.has_value(); }
-		[[nodiscard]] float heldMoodAmount() const { return isHeld() ? moodEffect->amount * static_cast<float>(count) : 0.0F; }
 	};
 
 	struct Thoughts {
@@ -100,8 +97,19 @@ namespace ecs {
 	[[nodiscard]] const Thought* findThought(const Thoughts& thoughts, ThoughtId id);
 	[[nodiscard]] Thought*		 findThought(Thoughts& thoughts, ThoughtId id);
 
-	/// The held thoughts in arrival order.
-	[[nodiscard]] std::vector<const Thought*> heldThoughts(const Thoughts& thoughts);
+	[[nodiscard]] bool isHeld(const Thought& thought);
+
+	/// A held thought's mood effect, a stacking one counted once per repeat; zero when not held.
+	[[nodiscard]] float heldMoodAmount(const Thought& thought);
+
+	/// Calls visitor(const Thought&) for each held thought in arrival order. The visitor must not create
+	/// or end thoughts.
+	template <typename Visitor>
+	void forEachHeldThought(const Thoughts& thoughts, Visitor&& visitor) {
+		for (const ThoughtId id : thoughts.heldIds) {
+			visitor(*findThought(thoughts, id));
+		}
+	}
 
 	/// The sum of every held thought's mood effect, a stacking thought counted once per repeat.
 	[[nodiscard]] float heldMoodTotal(const Thoughts& thoughts);

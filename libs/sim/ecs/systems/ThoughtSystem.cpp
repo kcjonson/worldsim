@@ -3,17 +3,24 @@
 #include "../World.h"
 #include "TimeSystem.h"
 
+#include <utils/Log.h>
+
 #include <algorithm>
-#include <cassert>
+#include <tuple>
 #include <utility>
 
 namespace ecs {
 
 	namespace {
-		Thought* findHeld(Thoughts& thoughts, ThoughtEventTypeId eventType, const ThoughtSubject& subject) {
+		bool hasRunOut(const Thought& thought, double now) {
+			return isHeld(thought) && thought.moodEffect->lasts == MoodEffectLasts::ForDuration && thought.expiresAt <= now;
+		}
+
+		/// A timed thought that has run out is no fold target; the next pass ends it.
+		Thought* findHeld(Thoughts& thoughts, ThoughtEventTypeId eventType, const ThoughtSubject& subject, double now) {
 			for (const ThoughtId id : thoughts.heldIds) {
 				Thought* thought = findThought(thoughts, id);
-				if (thought->eventType == eventType && thought->subject == subject) {
+				if (thought->eventType == eventType && thought->subject == subject && !hasRunOut(*thought, now)) {
 					return thought;
 				}
 			}
@@ -34,21 +41,42 @@ namespace ecs {
 		for (auto [colonist, thoughts] : world->view<Thoughts>()) {
 			for (const ThoughtId id : thoughts.heldIds) {
 				const Thought* thought = findThought(thoughts, id);
-				if (thought->moodEffect->lasts == MoodEffectLasts::ForDuration && thought->expiresAt <= now) {
-					expiredScratch.push_back({.colonist = colonist, .thought = id});
+				if (hasRunOut(*thought, now)) {
+					expiredScratch.push_back({.expiresAt = thought->expiresAt, .colonist = colonist, .thought = id});
 				}
 			}
 		}
-		// Ended after the walk: an ended observer may create thoughts, adding a Thoughts under the view.
-		for (const ThoughtHandle expired : expiredScratch) {
-			Thoughts& thoughts = *world->getComponent<Thoughts>(expired.colonist);
-			Thought&  thought = *findThought(thoughts, expired.thought);
-			endHeld(expired.colonist, thoughts, thought, thought.expiresAt);
+		std::sort(expiredScratch.begin(), expiredScratch.end(), [](const ExpiredThought& left, const ExpiredThought& right) {
+			return std::tie(left.expiresAt, left.colonist, left.thought) < std::tie(right.expiresAt, right.colonist, right.thought);
+		});
+		// Ended after the walk, and each one looked up again: an ended observer may create or end thoughts or
+		// destroy the colonist.
+		for (const ExpiredThought& expired : expiredScratch) {
+			if (!world->isAlive(expired.colonist)) {
+				continue;
+			}
+			Thoughts* thoughts = world->getComponent<Thoughts>(expired.colonist);
+			if (thoughts == nullptr) {
+				continue;
+			}
+			Thought* thought = findThought(*thoughts, expired.thought);
+			if (thought == nullptr || !hasRunOut(*thought, now)) {
+				continue;
+			}
+			endHeld(expired.colonist, *thoughts, *thought, thought->expiresAt);
 		}
 	}
 
 	ThoughtHandle ThoughtSystem::create(const CreateThoughtArgs& args) {
-		assert(world->isAlive(args.colonist) && "A thought needs a living colonist");
+		if (!world->isAlive(args.colonist)) {
+			LOG_ERROR(
+				Engine,
+				"ThoughtSystem::create: colonist %llu is not alive; thought type %u dropped",
+				static_cast<unsigned long long>(args.colonist),
+				args.eventType
+			);
+			return {};
+		}
 		const double now = world->getSystem<TimeSystem>().simulationSeconds();
 
 		Thoughts* thoughts = world->getComponent<Thoughts>(args.colonist);
@@ -57,7 +85,7 @@ namespace ecs {
 		}
 
 		if (args.moodEffect.has_value()) {
-			if (Thought* held = findHeld(*thoughts, args.eventType, args.subject); held != nullptr) {
+			if (Thought* held = findHeld(*thoughts, args.eventType, args.subject, now); held != nullptr) {
 				if (args.stacks) {
 					++held->count;
 				}
@@ -68,8 +96,8 @@ namespace ecs {
 				held->expiresAt = expiryFor(*args.moodEffect, now);
 				// Observers get a copy: one that creates a thought of its own may grow the record under them.
 				const Thought repeated = *held;
-				for (const auto& observer : arrivedObservers) {
-					observer(args.colonist, repeated, ThoughtArrival::Repeat);
+				for (size_t index = 0, count = arrivedObservers.size(); index < count; ++index) {
+					arrivedObservers[index](args.colonist, repeated, ThoughtArrival::Repeat);
 				}
 				return {.colonist = args.colonist, .thought = repeated.id};
 			}
@@ -91,19 +119,22 @@ namespace ecs {
 		}
 		thoughts->record.push_back(thought);
 
-		for (const auto& observer : arrivedObservers) {
-			observer(args.colonist, thought, ThoughtArrival::New);
+		for (size_t index = 0, count = arrivedObservers.size(); index < count; ++index) {
+			arrivedObservers[index](args.colonist, thought, ThoughtArrival::New);
 		}
 		return {.colonist = args.colonist, .thought = thought.id};
 	}
 
 	bool ThoughtSystem::end(ThoughtHandle handle) {
+		if (!world->isAlive(handle.colonist)) {
+			return false;
+		}
 		Thoughts* thoughts = world->getComponent<Thoughts>(handle.colonist);
 		if (thoughts == nullptr) {
 			return false;
 		}
 		Thought* thought = findThought(*thoughts, handle.thought);
-		if (thought == nullptr || !thought->isHeld()) {
+		if (thought == nullptr || !isHeld(*thought)) {
 			return false;
 		}
 		endHeld(handle.colonist, *thoughts, *thought, world->getSystem<TimeSystem>().simulationSeconds());
@@ -111,15 +142,19 @@ namespace ecs {
 	}
 
 	bool ThoughtSystem::endByCause(EntityID colonist, ThoughtEventTypeId eventType, const ThoughtSubject& subject) {
+		if (!world->isAlive(colonist)) {
+			return false;
+		}
 		Thoughts* thoughts = world->getComponent<Thoughts>(colonist);
 		if (thoughts == nullptr) {
 			return false;
 		}
-		Thought* thought = findHeld(*thoughts, eventType, subject);
+		const double now = world->getSystem<TimeSystem>().simulationSeconds();
+		Thought*	 thought = findHeld(*thoughts, eventType, subject, now);
 		if (thought == nullptr) {
 			return false;
 		}
-		endHeld(colonist, *thoughts, *thought, world->getSystem<TimeSystem>().simulationSeconds());
+		endHeld(colonist, *thoughts, *thought, now);
 		return true;
 	}
 
@@ -135,8 +170,8 @@ namespace ecs {
 		thought.endedAt = endedAt;
 		thoughts.heldIds.erase(std::find(thoughts.heldIds.begin(), thoughts.heldIds.end(), thought.id));
 		const Thought ended = thought;
-		for (const auto& observer : endedObservers) {
-			observer(colonist, ended);
+		for (size_t index = 0, count = endedObservers.size(); index < count; ++index) {
+			endedObservers[index](colonist, ended);
 		}
 	}
 

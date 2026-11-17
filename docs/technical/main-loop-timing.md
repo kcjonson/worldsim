@@ -85,6 +85,7 @@ Clocks: **F** frame count; **R** real seconds (the frame delta, unscaled, still 
 | Work | Where | Rate | Constant (value) | Clock | At game pause |
 |---|---|---|---|---|---|
 | Game clock | `TimeSystem::update` | every frame | `kSpeedMultipliers` {0, 1, 3, 10}, `baseTimeScale` 1 game minute per real second (`TimeSystem.h`) | G | stops |
+| Thought expiry | `ThoughtSystem::update` | every frame; ends each held thought whose timed mood effect has run out, in expiry order, stamped at its expiry time, so a jump ends several in the order they ran out | per thought, `MoodEffect::durationGameHours`, restarted by a repeat (`Thoughts.h`) | G | stops |
 | Vision | `VisionSystem::update` | every 5th frame, every observer in that frame; the counter starts at 5, so frames 1, 6, 11, ... | `m_updateInterval` 5 (`VisionSystem.h`) | F | runs |
 | Needs decay | `NeedsDecaySystem::update` | every frame | per-need `decayRate`, 0.01 to 0.12 % per game minute (`NeedsComponent::createDefault`, table below) | G | stops |
 | Nav join and gather | `NavigationSystem::update` | every frame; gathers only the mesh limits movers have taken and what isn't meshed, under per-tick counts (never a time budget), so a backlog drains over several frames; a mover's urgent limit goes in outside every budget; nothing is ever taken out but what leaves the world | `kLimitsPerTick` 1, `kDetailRingsPerTick` 32, `kDetailRemovalsPerTick` 128 (`NavigationSystem.h`) | F | runs |
@@ -172,6 +173,7 @@ The decision's readers: the `DecisionTrace` component, read the same frame by `T
 | What | Writer | Reader | Seen |
 |---|---|---|---|
 | Need decay | `NeedsDecaySystem` at 50 | AI at 60 | the same frame, so a need crossing critical is decided on the frame it crosses |
+| Held thoughts and their ended events | `ThoughtSystem` at 11; any source's `create` or `end` during the frame | mood readers later in the frame (`heldMoodTotal`, `forEachHeldThought`, the ended observers) | the same frame: a timed effect that ran out is ended before any later system reads the held set; a thought created later in the frame is held from that call on |
 | Vision memory | Vision at 45, every 5th frame | AI at 60 | the same frame on vision frames, else up to 4 frames old; `ActionSystem`'s forgets at 350 next frame |
 | Nav mesh | the patches gathered in frame N's nav update, applied by the job launched at frame N's `endTick` after frame N's route slice | AI at 60, every later query | frame N+1: its nav update at 51 joins the job, waiting for it if it is still running; a query before that (an earlier system, a dev route, the build tool) joins it instead and waits the same way, for the slice as well when a search is running. No query reads the mesh while it is patched |
 | Nav generation | the join of a job in which ground arrived, water was re-derived, walls changed, or a door was added or removed; placed obstacles never move it | AI replan and deferred retry | the same frame (nav before AI) |
