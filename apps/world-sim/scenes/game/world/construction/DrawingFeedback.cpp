@@ -178,7 +178,8 @@ namespace world_sim {
 		// padding, keeping the plate's own gap fixed); everything else (strokes, markers, rings, clearances, thresholds)
 		// stays in window pixels like the preview's own lines and dots. That is main's rule for
 		// text drawn in the world (docs/design/ui/ui-scale-setting.md, "World text"). lookAt is
-		// the one place the scale is applied; nothing else reads a pixel constant.
+		// the one place the scale is applied; nothing else reads a pixel constant but the dashed
+		// ring's segment length, which only shapes the polyline a ring is drawn as.
 		struct Look {
 			float markerLineWidthPx;
 			float closeRingWidthPx;
@@ -209,7 +210,6 @@ namespace world_sim {
 			float duplicateGuidePx;
 			float solidSegmentClearancePx;
 			float minimumStrokePx;
-			float ringSegmentPx;
 			float guideWidthPx;
 			float guideDashPx;
 			float guideGapPx;
@@ -258,7 +258,6 @@ namespace world_sim {
 				.duplicateGuidePx = kDuplicateGuidePx,
 				.solidSegmentClearancePx = kSolidSegmentClearancePx,
 				.minimumStrokePx = kMinimumStrokePx,
-				.ringSegmentPx = kRingSegmentPx,
 				.guideWidthPx = style.guideWidth,
 				.guideDashPx = style.guideDashPx,
 				.guideGapPx = style.guideGapPx,
@@ -551,6 +550,50 @@ namespace world_sim {
 			return stroke;
 		}
 
+		// A guide's dotted stroke from its node `from`, where the dash starts, to `to`.
+		FeedbackStroke guideStroke(Foundation::Vec2 from, Foundation::Vec2 to, GuideSource source, const assets::PreviewStyle& style, const Look& look) {
+			FeedbackStroke stroke =
+				segmentStroke(from, to, withOpacity(guideColor(style, source), style.guideOpacity), look.guideWidthPx, FeedbackLayer::Alignment);
+			stroke.dash = alignmentDash(style, look);
+			return stroke;
+		}
+
+		// The right-angle marker at `corner`: two legs `size` long along the unit directions `first`
+		// and `second`, joined by a line parallel to each.
+		FeedbackStroke rightAngleMarkerStroke(
+			Foundation::Vec2 corner, Foundation::Vec2 first, Foundation::Vec2 second, float size, Foundation::Color color, const Look& look
+		) {
+			const Foundation::Vec2 firstLeg{first.x * size, first.y * size};
+			const Foundation::Vec2 secondLeg{second.x * size, second.y * size};
+			FeedbackStroke		   marker{.color = color, .width = look.markerLineWidthPx, .layer = FeedbackLayer::Marker};
+			marker.points[0] = {corner.x + firstLeg.x, corner.y + firstLeg.y};
+			marker.points[1] = {corner.x + firstLeg.x + secondLeg.x, corner.y + firstLeg.y + secondLeg.y};
+			marker.points[2] = {corner.x + secondLeg.x, corner.y + secondLeg.y};
+			marker.pointCount = 3;
+			return marker;
+		}
+
+		// A marker tick across the line running along the unit `along` at `center`, `halfLength` each side.
+		FeedbackStroke tickAcross(Foundation::Vec2 center, Foundation::Vec2 along, float halfLength, Foundation::Color color, float width) {
+			const Foundation::Vec2 across{-along.y * halfLength, along.x * halfLength};
+			return segmentStroke({center.x - across.x, center.y - across.y}, {center.x + across.x, center.y + across.y}, color, width, FeedbackLayer::Marker);
+		}
+
+		// The drafting double tick at `middle` of an edge running along the unit `along`.
+		void appendDoubleTick(std::vector<FeedbackStroke>& strokes, Foundation::Vec2 middle, Foundation::Vec2 along, Foundation::Color color, const Look& look) {
+			for (const float side : {-0.5F, 0.5F}) {
+				const float offset = side * look.matchedEdgeTickSpacingPx;
+				strokes.push_back(tickAcross(
+					{middle.x + along.x * offset, middle.y + along.y * offset}, along, look.matchedEdgeTickHalfPx, color, look.matchedEdgeTickWidthPx
+				));
+			}
+		}
+
+		// A matched edge's faint band, the alignment layer's highlight.
+		FeedbackStroke matchedEdgeBand(Foundation::Vec2 start, Foundation::Vec2 end, const assets::PreviewStyle& style, const Look& look) {
+			return segmentStroke(start, end, withOpacity(lengthMarkColor(style), kMatchedEdgeBandOpacity), look.matchedEdgeBandWidthPx, FeedbackLayer::Alignment);
+		}
+
 		// The segment label's text, its size, and what it keeps off. `reserve` is the box its
 		// fit is judged by: the reserved width and its own height.
 		struct SegmentLabelLayout {
@@ -819,11 +862,7 @@ namespace world_sim {
 			}
 
 			void planGuideStroke(const SnapGuide& guide, Foundation::Vec2 from, Foundation::Vec2 strokeEnd) {
-				FeedbackStroke stroke = segmentStroke(
-					from, strokeEnd, withOpacity(guideColor(style, guide.source), style.guideOpacity), look.guideWidthPx, FeedbackLayer::Alignment
-				);
-				stroke.dash = alignmentDash(style, look);
-				result.strokes.push_back(stroke);
+				result.strokes.push_back(guideStroke(from, strokeEnd, guide.source, style, look));
 			}
 
 			void planRightAngleMarker(const SnapGuide& guide, Foundation::Vec2 from, Foundation::Vec2 to) {
@@ -849,18 +888,8 @@ namespace world_sim {
 				rightAngleMarkerCorners[rightAngleMarkerCount++] = from;
 			}
 
-			// The right-angle marker at `corner`: two legs along the unit directions `first` and
-			// `second`, joined by a line parallel to each.
 			FeedbackStroke rightAngleMarker(Foundation::Vec2 corner, Foundation::Vec2 first, Foundation::Vec2 second, Foundation::Color color) const {
-				const float			   size = look.rightAngleMarkerPx;
-				const Foundation::Vec2 firstLeg{first.x * size, first.y * size};
-				const Foundation::Vec2 secondLeg{second.x * size, second.y * size};
-				FeedbackStroke		   marker{.color = color, .width = look.markerLineWidthPx, .layer = FeedbackLayer::Marker};
-				marker.points[0] = {corner.x + firstLeg.x, corner.y + firstLeg.y};
-				marker.points[1] = {corner.x + firstLeg.x + secondLeg.x, corner.y + firstLeg.y + secondLeg.y};
-				marker.points[2] = {corner.x + secondLeg.x, corner.y + secondLeg.y};
-				marker.pointCount = 3;
-				return marker;
+				return rightAngleMarkerStroke(corner, first, second, look.rightAngleMarkerPx, color, look);
 			}
 
 			bool guideMarksRightAngleAt(Foundation::Vec2 corner) const {
@@ -968,10 +997,9 @@ namespace world_sim {
 				if (input.snap.lengthSnap != LengthSnapKind::CommonLength) {
 					return;
 				}
-				const Foundation::Color bandColor = withOpacity(lengthMarkColor(style), kMatchedEdgeBandOpacity);
 				for (std::size_t index = 0; index < matchedEdgeCount(); ++index) {
 					if (const std::optional<EdgeOnScreen> edge = matchedEdgeOnScreen(index)) {
-						result.strokes.push_back(segmentStroke(edge->start, edge->end, bandColor, look.matchedEdgeBandWidthPx, FeedbackLayer::Alignment));
+						result.strokes.push_back(matchedEdgeBand(edge->start, edge->end, style, look));
 					}
 				}
 			}
@@ -990,17 +1018,13 @@ namespace world_sim {
 						continue;
 					}
 					const Foundation::Vec2 middle{(edge->start.x + edge->end.x) * 0.5F, (edge->start.y + edge->end.y) * 0.5F};
-					const Foundation::Vec2 along = edge->along;
-					for (const float side : {-0.5F, 0.5F}) {
-						const float offset = side * look.matchedEdgeTickSpacingPx;
-						planTickAcross({middle.x + along.x * offset, middle.y + along.y * offset}, along, look.matchedEdgeTickHalfPx, tickColor, look.matchedEdgeTickWidthPx);
-					}
+					appendDoubleTick(result.strokes, middle, edge->along, tickColor, look);
 				}
 				if (input.points.empty()) {
 					return;
 				}
 				if (const std::optional<Foundation::Vec2> along = unitBetween(toScreen(input.points.back()), snappedPoint)) {
-					planTickAcross(snappedPoint, *along, look.lengthEndTickHalfPx, tickColor, look.lengthEndTickWidthPx);
+					result.strokes.push_back(tickAcross(snappedPoint, *along, look.lengthEndTickHalfPx, tickColor, look.lengthEndTickWidthPx));
 				}
 			}
 
@@ -1016,14 +1040,6 @@ namespace world_sim {
 					return std::nullopt;
 				}
 				return Foundation::Vec2{delta.x / deltaLength, delta.y / deltaLength};
-			}
-
-			// A marker tick across the line running along `along` at `center`, `halfLength` each side.
-			void planTickAcross(Foundation::Vec2 center, Foundation::Vec2 along, float halfLength, Foundation::Color color, float width) {
-				const Foundation::Vec2 across{-along.y * halfLength, along.x * halfLength};
-				result.strokes.push_back(
-					segmentStroke({center.x - across.x, center.y - across.y}, {center.x + across.x, center.y + across.y}, color, width, FeedbackLayer::Marker)
-				);
 			}
 
 			// The angle readout's tool, if the tool on reads corners: the Freeform tool and Add or
@@ -1305,7 +1321,7 @@ namespace world_sim {
 			// otherwise at the snapped end. Every placement is judged at the reserved width.
 			// With no clear placement at either, it takes the first end placement that fits
 			// the screen unmoved, even over what it keeps off, and moves the first one inside
-			// only when none fits. Nothing is labelled while the length rounds to zero. A length
+			// only when none fits. Nothing is labeled while the length rounds to zero. A length
 			// that matches a kept common length reads " =", bold in the accent color; while Common
 			// lengths is on, the reserved box holds that matched form too, so the " =" coming or
 			// going changes neither whether the label fits a placement nor which one it takes.
@@ -1740,7 +1756,22 @@ namespace world_sim {
 			return weight == FeedbackTextWeight::Bold ? theme::fontDisplay : Renderer::FontFamily::Default;
 		}
 
-		void drawRing(const FeedbackRing& ring, const ToolLayers& layers, float segmentPx) {
+		// The key guide's glyphs draw in a ui component, every layer at its one draw key.
+		const ToolLayers kLegendGlyphLayers{0, "key_guide_glyph", "key_guide_glyph", "key_guide_glyph", "key_guide_glyph"};
+
+		// Where a plan's draws go: the world preview's per-layer keys, or a ui component's one key, at
+		// which the plan draws in its own order. `opacity` scales every color's alpha.
+		struct PlanTarget {
+			ToolLayers					layers;
+			std::optional<std::int32_t> componentKey;
+			float						opacity = 1.0F;
+
+			[[nodiscard]] std::int32_t		key(FeedbackLayer layer) const { return componentKey ? *componentKey : layerKey(layers, layer); }
+			[[nodiscard]] const char*		id(FeedbackLayer layer) const { return layerId(layers, layer); }
+			[[nodiscard]] Foundation::Color color(Foundation::Color value) const { return {value.r, value.g, value.b, value.a * opacity}; }
+		};
+
+		void drawRing(const FeedbackRing& ring, const PlanTarget& target) {
 			if (!std::isfinite(ring.radius) || ring.radius <= 0.0F) {
 				return;
 			}
@@ -1748,16 +1779,16 @@ namespace world_sim {
 				Renderer::Primitives::drawCircle({
 					.center = ring.center,
 					.radius = ring.radius,
-					.style = {.fill = {0.0F, 0.0F, 0.0F, 0.0F}, .border = Foundation::BorderStyle{.color = ring.color, .width = ring.width}},
-					.id = layerId(layers, ring.layer),
-					.key = layerKey(layers, ring.layer),
+					.style = {.fill = {0.0F, 0.0F, 0.0F, 0.0F}, .border = Foundation::BorderStyle{.color = target.color(ring.color), .width = ring.width}},
+					.id = target.id(ring.layer),
+					.key = target.key(ring.layer),
 				});
 				return;
 			}
 			// A circle's border takes no dash, so a dashed ring is a closed polyline round it.
 			const float circumference = 2.0F * std::numbers::pi_v<float> * ring.radius;
 			const int	segments = static_cast<int>(
-				  std::clamp(std::ceil(circumference / segmentPx), static_cast<float>(kRingMinimumSegments), static_cast<float>(kRingMaximumSegments))
+				  std::clamp(std::ceil(circumference / kRingSegmentPx), static_cast<float>(kRingMinimumSegments), static_cast<float>(kRingMaximumSegments))
 			  );
 			std::vector<Foundation::Vec2> outline;
 			outline.reserve(static_cast<std::size_t>(segments));
@@ -1768,13 +1799,86 @@ namespace world_sim {
 			Renderer::Primitives::drawPolyline({
 				.points = outline,
 				.width = ring.width,
-				.color = ring.color,
+				.color = target.color(ring.color),
 				.closed = true,
 				.dash = ring.dash,
-				.id = layerId(layers, ring.layer),
-				.key = layerKey(layers, ring.layer),
+				.id = target.id(ring.layer),
+				.key = target.key(ring.layer),
 			});
 		}
+
+		void drawPlan(const DrawingFeedbackPlan& plan, const PlanTarget& target) {
+			for (const FeedbackStroke& stroke : plan.strokes) {
+				Renderer::Primitives::drawPolyline({
+					.points = std::span<const Foundation::Vec2>(stroke.points.data(), stroke.pointCount),
+					.width = stroke.width,
+					.color = target.color(stroke.color),
+					.join = Renderer::Primitives::LineJoin::Miter,
+					.dash = stroke.dash,
+					.id = target.id(stroke.layer),
+					.key = target.key(stroke.layer),
+				});
+			}
+			for (const FeedbackRing& ring : plan.rings) {
+				drawRing(ring, target);
+			}
+			for (const FeedbackArc& arc : plan.arcs) {
+				Renderer::Primitives::drawArc({
+					.center = arc.center,
+					.innerRadius = arc.radius - arc.width * 0.5F,
+					.outerRadius = arc.radius + arc.width * 0.5F,
+					.startAngle = arc.startRadians,
+					.sweep = arc.sweepRadians,
+					.color = target.color(arc.color),
+					.id = target.id(arc.layer),
+					.key = target.key(arc.layer),
+				});
+			}
+			for (const FeedbackDot& dot : plan.dots) {
+				Foundation::CircleStyle style{.fill = target.color(dot.fill)};
+				if (dot.outlineWidth > 0.0F) {
+					style.border = Foundation::BorderStyle{.color = target.color(dot.outline), .width = dot.outlineWidth};
+				}
+				Renderer::Primitives::drawCircle({
+					.center = dot.center,
+					.radius = dot.radius,
+					.style = style,
+					.id = target.id(dot.layer),
+					.key = target.key(dot.layer),
+				});
+			}
+			for (const FeedbackLabel& label : plan.labels) {
+				Renderer::Primitives::drawRect({
+					.bounds = Foundation::Rect{label.plate.left, label.plate.top, label.plate.right - label.plate.left, label.plate.bottom - label.plate.top},
+					.style = {.fill = target.color(kLabelPlateColor), .border = Foundation::BorderStyle{.width = 0.0F, .cornerRadius = label.plateCornerRadius}},
+					.id = target.id(FeedbackLayer::LabelPlate),
+					.key = target.key(FeedbackLayer::LabelPlate),
+				});
+				Renderer::Primitives::drawText({
+					.text = label.text,
+					.position = label.position,
+					.scale = label.sizePx / kRendererFontBaseSizePx,
+					.color = target.color(label.color),
+					.font = fontOf(label.weight),
+					.id = target.id(FeedbackLayer::Label),
+					.key = target.key(FeedbackLayer::Label),
+				});
+			}
+		}
+
+		// The legend glyphs' drawings in their box, the prototype's. Each stroke, dash, dot, and tick
+		// comes from the look; the right-angle marker's legs and the arc's radius are held to the
+		// box's room.
+		constexpr float kGlyphMiddleY = kLegendGlyphHeight * 0.5F;
+		constexpr float kGlyphSideInsetPx = 2.0F; // a guide or an edge stops this far inside the box's sides
+		constexpr float kGlyphSquareCornerX = 6.0F;
+		constexpr float kGlyphLowerEdgeY = 12.0F; // the square and the angle glyphs' horizontal edge
+		constexpr float kGlyphSquareTopY = 1.0F;
+		constexpr float kGlyphMarkerMaximumPx = 9.0F;
+		constexpr float kGlyphAngleVertexX = 4.0F;
+		constexpr float kGlyphAngleRayEndX = 13.0F;
+		constexpr float kGlyphAngleRayEndY = 1.0F;
+		constexpr float kGlyphArcRadiusPx = 10.0F;
 
 	} // namespace
 
@@ -1798,66 +1902,68 @@ namespace world_sim {
 	}
 
 	void drawSnapFeedback(const DrawingFeedbackInput& input) {
-		const DrawingFeedbackPlan plan = planSnapFeedback(input, measureFeedbackText);
-		const ToolLayers		  layers = toolLayers(input.tool);
-		const Look				  look = lookAt(input.style, input.uiScale);
+		drawPlan(planSnapFeedback(input, measureFeedbackText), {.layers = toolLayers(input.tool)});
+	}
 
-		for (const FeedbackStroke& stroke : plan.strokes) {
-			Renderer::Primitives::drawPolyline({
-				.points = std::span<const Foundation::Vec2>(stroke.points.data(), stroke.pointCount),
-				.width = stroke.width,
-				.color = stroke.color,
-				.join = Renderer::Primitives::LineJoin::Miter,
-				.dash = stroke.dash,
-				.id = layerId(layers, stroke.layer),
-				.key = layerKey(layers, stroke.layer),
-			});
-		}
-		for (const FeedbackRing& ring : plan.rings) {
-			drawRing(ring, layers, look.ringSegmentPx);
-		}
-		for (const FeedbackArc& arc : plan.arcs) {
-			Renderer::Primitives::drawArc({
-				.center = arc.center,
-				.innerRadius = arc.radius - arc.width * 0.5F,
-				.outerRadius = arc.radius + arc.width * 0.5F,
-				.startAngle = arc.startRadians,
-				.sweep = arc.sweepRadians,
-				.color = arc.color,
-				.id = layerId(layers, arc.layer),
-				.key = layerKey(layers, arc.layer),
-			});
-		}
-		for (const FeedbackDot& dot : plan.dots) {
-			Foundation::CircleStyle style{.fill = dot.fill};
-			if (dot.outlineWidth > 0.0F) {
-				style.border = Foundation::BorderStyle{.color = dot.outline, .width = dot.outlineWidth};
+	DrawingFeedbackPlan planLegendGlyph(LegendGlyph glyph, const assets::PreviewStyle& style, Foundation::Color geometryColor) {
+		const Look				look = lookAt(style, 1.0F);
+		const Foundation::Color markerColor = withOpacity(guideColor(style, GuideSource::DrawnShape), style.markerOpacity);
+		const Foundation::Vec2	left{kGlyphSideInsetPx, kGlyphMiddleY};
+		const Foundation::Vec2	right{kLegendGlyphWidth - kGlyphSideInsetPx, kGlyphMiddleY};
+		const Foundation::Vec2	middle{kLegendGlyphWidth * 0.5F, kGlyphMiddleY};
+		// The solid edges a mark sits on draw first, under it, as the preview's geometry does.
+		const auto edges = [&](Foundation::Vec2 first, Foundation::Vec2 corner, Foundation::Vec2 last) {
+			FeedbackStroke path{.color = geometryColor, .width = style.lineWidth, .layer = FeedbackLayer::Alignment};
+			path.points = {first, corner, last};
+			path.pointCount = 3;
+			return path;
+		};
+		DrawingFeedbackPlan plan;
+		switch (glyph) {
+			case LegendGlyph::Guide:
+				plan.strokes.push_back(guideStroke(left, right, GuideSource::DrawnShape, style, look));
+				return plan;
+			case LegendGlyph::RightAngle: {
+				const Foundation::Vec2 corner{kGlyphSquareCornerX, kGlyphLowerEdgeY};
+				plan.strokes.push_back(edges({corner.x, kGlyphSquareTopY}, corner, {right.x, corner.y}));
+				const float legs = std::min(look.rightAngleMarkerPx, kGlyphMarkerMaximumPx);
+				plan.strokes.push_back(rightAngleMarkerStroke(corner, {0.0F, -1.0F}, {1.0F, 0.0F}, legs, markerColor, look));
+				return plan;
 			}
-			Renderer::Primitives::drawCircle({
-				.center = dot.center,
-				.radius = dot.radius,
-				.style = style,
-				.id = layerId(layers, dot.layer),
-				.key = layerKey(layers, dot.layer),
-			});
+			case LegendGlyph::Crossing:
+				// Two guides through the crossing, each dotted out from it as from its node.
+				for (const Foundation::Vec2 end : {left, right, Foundation::Vec2{middle.x, 0.0F}, Foundation::Vec2{middle.x, kLegendGlyphHeight}}) {
+					plan.strokes.push_back(guideStroke(middle, end, GuideSource::DrawnShape, style, look));
+				}
+				plan.dots.push_back({.center = middle, .radius = look.guideCrossingDotPx, .fill = markerColor, .layer = FeedbackLayer::Target});
+				return plan;
+			case LegendGlyph::CommonLength:
+				plan.strokes.push_back(matchedEdgeBand(left, right, style, look));
+				plan.strokes.push_back(segmentStroke(left, right, geometryColor, style.lineWidth, FeedbackLayer::Alignment));
+				appendDoubleTick(plan.strokes, middle, {1.0F, 0.0F}, withOpacity(lengthMarkColor(style), style.markerOpacity), look);
+				return plan;
+			case LegendGlyph::AngleArc: {
+				const Foundation::Vec2 vertex{kGlyphAngleVertexX, kGlyphLowerEdgeY};
+				const Foundation::Vec2 rayEnd{kGlyphAngleRayEndX, kGlyphAngleRayEndY};
+				plan.strokes.push_back(edges(rayEnd, vertex, {right.x, vertex.y}));
+				const float rayRadians = std::atan2(rayEnd.y - vertex.y, rayEnd.x - vertex.x);
+				plan.arcs.push_back({
+					.center = vertex,
+					.radius = kGlyphArcRadiusPx,
+					.startRadians = rayRadians,
+					.sweepRadians = -rayRadians,
+					.color = markerColor,
+					.width = look.angleArcWidthPx,
+					.layer = FeedbackLayer::Marker,
+				});
+				return plan;
+			}
 		}
-		for (const FeedbackLabel& label : plan.labels) {
-			Renderer::Primitives::drawRect({
-				.bounds = Foundation::Rect{label.plate.left, label.plate.top, label.plate.right - label.plate.left, label.plate.bottom - label.plate.top},
-				.style = {.fill = kLabelPlateColor, .border = Foundation::BorderStyle{.width = 0.0F, .cornerRadius = label.plateCornerRadius}},
-				.id = layerId(layers, FeedbackLayer::LabelPlate),
-				.key = layerKey(layers, FeedbackLayer::LabelPlate),
-			});
-			Renderer::Primitives::drawText({
-				.text = label.text,
-				.position = label.position,
-				.scale = label.sizePx / kRendererFontBaseSizePx,
-				.color = label.color,
-				.font = fontOf(label.weight),
-				.id = layerId(layers, FeedbackLayer::Label),
-				.key = layerKey(layers, FeedbackLayer::Label),
-			});
-		}
+		return plan;
+	}
+
+	void drawFeedbackPlan(const DrawingFeedbackPlan& plan, std::int32_t key, float opacity) {
+		drawPlan(plan, {.layers = kLegendGlyphLayers, .componentKey = key, .opacity = opacity});
 	}
 
 } // namespace world_sim
