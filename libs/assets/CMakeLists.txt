@@ -20,6 +20,7 @@ add_library(assets
     assets/PriorityConfig.cpp
     assets/RecipeRegistry.cpp
     assets/TaskChainRegistry.cpp
+    assets/ThoughtConfig.cpp
     assets/WorkTypeRegistry.cpp
     assets/WorkConfig.cpp
     assets/lua/LuaEngine.cpp

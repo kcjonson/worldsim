@@ -44,6 +44,7 @@
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/PlayerVisibilitySystem.h>
+#include <ecs/systems/ThoughtSystem.h>
 #include <ecs/systems/TimeSystem.h>
 
 #include <assets/RecipeRegistry.h>
@@ -122,6 +123,7 @@ namespace world_sim {
 		registrations.push_back(server.route("flora", [this](const app::DevRequest& cmd) { return devFlora(cmd); }));
 		registrations.push_back(server.route("ground", [this](const app::DevRequest& cmd) { return devGround(cmd); }));
 		registrations.push_back(server.route("storage", [this](const app::DevRequest& cmd) { return devStorage(cmd); }));
+		registrations.push_back(server.route("thought", [this](const app::DevRequest& cmd) { return devThought(cmd); }));
 		registrations.push_back(server.route("visibility", [this](const app::DevRequest& cmd) {
 			return app::DevResponse{.body = visibilityJson(cmd)};
 		}));
@@ -1094,6 +1096,50 @@ namespace world_sim {
 		return app::DevResponse{.body = "{\"status\":\"ok\",\"verb\":\"storage\",\"replaced\":" + std::to_string(replaced) + "}"};
 	}
 
+	app::DevResponse DevCommandHandler::devThought(const app::DevRequest& cmd) {
+		const auto reject = [](const std::string& message) {
+			LOG_WARNING(Game, "[DevAPI] thought: %s", message.c_str());
+			return app::DevResponse{.status = 400, .body = "{\"error\":\"thought: " + jsonEscape(message) + "\"}"};
+		};
+		ecs::ThoughtSystem&		 thoughtSystem = m_ctx.world->getSystem<ecs::ThoughtSystem>();
+		const ecs::ThoughtTypes& types = thoughtSystem.types();
+
+		const ecs::EntityID colonist = parseEntity(param(cmd, "colonist"));
+		if (!m_ctx.world->isAlive(colonist) || m_ctx.world->getComponent<ecs::Colonist>(colonist) == nullptr) {
+			return reject("no colonist #" + param(cmd, "colonist"));
+		}
+		const std::optional<ecs::ThoughtEventTypeId> type = types.findType(param(cmd, "type"));
+		if (!type.has_value()) {
+			return reject("no thought type '" + param(cmd, "type") + "'");
+		}
+		ecs::ThoughtSubject subject = ecs::ThoughtSubject::aboutNothing();
+		if (hasParam(cmd, "subject")) {
+			const ecs::EntityID entity = parseEntity(param(cmd, "subject"));
+			if (!m_ctx.world->isAlive(entity)) {
+				return reject("no entity #" + param(cmd, "subject"));
+			}
+			subject = m_ctx.world->getComponent<ecs::Colonist>(entity) != nullptr ? ecs::ThoughtSubject::aboutColonist(entity)
+																				  : ecs::ThoughtSubject::aboutEntity(entity);
+		}
+
+		const ecs::ThoughtHandle handle = thoughtSystem.create({.colonist = colonist, .eventType = *type, .subject = subject});
+		std::ostringstream		 out;
+		out << "{\"status\":\"ok\",\"verb\":\"thought\",\"created\":" << (handle.colonist != ecs::kInvalidEntity ? "true" : "false");
+		if (handle.colonist != ecs::kInvalidEntity) {
+			const ecs::Thought& thought = *ecs::findThought(*m_ctx.world->getComponent<ecs::Thoughts>(colonist), handle.thought);
+			const std::string	line = ecs::renderThoughtLine(types, *m_ctx.world, thought);
+			out << ",\"thought\":" << thought.id << ",\"feeling\":\"" << jsonEscape(types.feeling(thought.feeling).name) << "\",\"line\":";
+			if (line.empty()) {
+				out << "null";
+			} else {
+				out << "\"" << jsonEscape(line) << "\"";
+			}
+		}
+		out << "}";
+		LOG_INFO(Game, "[DevAPI] thought: '%s' on #%llu", param(cmd, "type").c_str(), static_cast<unsigned long long>(colonist));
+		return app::DevResponse{.body = out.str()};
+	}
+
 	Foundation::Vec2 DevCommandHandler::parsePoint(const std::string& spec) {
 		const std::vector<Foundation::Vec2> pts = parsePointList(spec);
 		return pts.empty() ? Foundation::Vec2{0.0F, 0.0F} : pts.front();
@@ -1110,6 +1156,47 @@ namespace world_sim {
 	}
 
 	// ===================================================================== STATE READBACK
+
+	void DevCommandHandler::serializeThoughts(std::ostringstream& out, const ecs::Thoughts& thoughts) {
+		constexpr std::size_t	 kRecentThoughts = 5;
+		const ecs::ThoughtTypes& types = m_ctx.world->getSystem<ecs::ThoughtSystem>().types();
+		const double			 now = m_ctx.world->getSystem<ecs::TimeSystem>().simulationSeconds();
+		const auto				 header = [&](const ecs::Thought& thought) {
+			  out << "{\"id\":" << thought.id << ",\"type\":\"" << jsonEscape(types.type(thought.eventType).name) << "\",\"feeling\":\""
+				  << jsonEscape(types.feeling(thought.feeling).name) << "\"";
+		};
+
+		out << ",\"thoughts\":{\"held\":[";
+		bool first = true;
+		ecs::forEachHeldThought(thoughts, [&](const ecs::Thought& thought) {
+			out << (first ? "" : ",");
+			first = false;
+			header(thought);
+			out << ",\"mood\":" << ecs::heldMoodAmount(thought) << ",\"left\":";
+			if (thought.moodEffect->lasts == ecs::MoodEffectLasts::WhileCauseHolds) {
+				out << "\"while\"";
+			} else {
+				out << (thought.expiresAt - now) / ecs::kSimulationSecondsPerGameHour;
+			}
+			out << ",\"count\":" << thought.count << "}";
+		});
+		out << "],\"recent\":[";
+		const std::size_t shown = std::min(kRecentThoughts, thoughts.record.size());
+		for (std::size_t index = 0; index < shown; ++index) {
+			const ecs::Thought& thought = thoughts.record[thoughts.record.size() - 1 - index];
+			out << (index > 0 ? "," : "");
+			header(thought);
+			const std::string line = ecs::renderThoughtLine(types, *m_ctx.world, thought);
+			out << ",\"line\":";
+			if (line.empty()) {
+				out << "null";
+			} else {
+				out << "\"" << jsonEscape(line) << "\"";
+			}
+			out << ",\"arrivedAt\":" << thought.arrivedAt << "}";
+		}
+		out << "]}";
+	}
 
 	void DevCommandHandler::serializeColonists(std::ostringstream& out) {
 		out << "{\"colonists\":[";
@@ -1136,6 +1223,9 @@ namespace world_sim {
 					break;
 			}
 			out << "}";
+			if (const auto* thoughts = m_ctx.world->getComponent<ecs::Thoughts>(entity)) {
+				serializeThoughts(out, *thoughts);
+			}
 			if (const auto* action = m_ctx.world->getComponent<ecs::Action>(entity)) {
 				out << ",\"action\":\"" << ecs::actionTypeName(action->type) << "\"";
 			}

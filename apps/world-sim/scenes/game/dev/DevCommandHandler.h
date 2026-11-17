@@ -26,6 +26,7 @@ namespace ecs {
 	class World;
 	class NavigationSystem;
 	struct Inventory;
+	struct Thoughts;
 	enum class NeedType : std::uint8_t;
 }
 namespace world {
@@ -147,6 +148,11 @@ namespace world_sim {
 		// named item's category comes from its definition (category= may only repeat it); an unknown
 		// item is a 400. category= picks the wildcard's category, RawMaterial by default.
 		app::DevResponse devStorage(const app::DevRequest& cmd);
+		// thought?colonist=<id>&type=<thought type>&subject=<entity id>: creates the thought the way a source
+		// would, the colonist's feeling and line picked from the type. Answers created (false when none of
+		// the type's feelings applies) with the thought's id, feeling and line. An unknown colonist, type or
+		// subject is a 400.
+		app::DevResponse devThought(const app::DevRequest& cmd);
 		void		devTunable(const app::DevRequest& cmd);
 
 		// Logs and toasts a verb's refusal message, when it is not empty, and returns it as the refusal.
@@ -160,6 +166,9 @@ namespace world_sim {
 
 		// --- state serialization ---
 		void serializeColonists(std::ostringstream& out);
+		// A colonist's "thoughts": held (type, feeling, mood, left in game hours or "while", count) and the
+		// most recent few, newest first, with the rendered line.
+		void serializeThoughts(std::ostringstream& out, const ecs::Thoughts& thoughts);
 		void serializeConstruction(std::ostringstream& out);
 		void serializeStations(std::ostringstream& out);
 		void serializeStorage(std::ostringstream& out);

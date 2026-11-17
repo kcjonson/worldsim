@@ -181,24 +181,42 @@ Pruning changes only what the log can show. The bubble selector's novelty does n
 
 ## Data
 
-Event types, their feelings, lines, importance, mood effects, and animations are config, and mods add to them. The list of feelings is config. The scoring weights, the threshold, and the budget numbers are config.
+Event types, their feelings, lines, importance, mood effects, and animations are config (`assets/config/thoughts`), and mods add to them. The list of feelings is config. The scoring weights, the threshold, and the budget numbers are config.
 
 ```xml
-<thought id="soaked" importance="normal" animation="rain_drop">
-  <feeling is="miserable" mood="-6" while="wetness > 0.6"/>
-  <feeling is="furious" when="trait(volatile)" mood="-9" while="wetness > 0.6"/>
-  <feeling is="refreshed" when="feels_hot" mood="+4" while="wetness > 0.6"/>
-  <line>I'm soaked through.</line>
-  <line feeling="furious">One more minute of this...</line>
-  <ends id="dried_off">
-    <line>Finally dry.</line>
-  </ends>
-</thought>
+<thoughts>
+  <tuning maxLineLength="48" whileCheckMinutes="15"/>
 
-<thought id="itchy" importance="trivial" source="idle">
-  <line>My butt itches.</line>
-</thought>
+  <feeling id="miserable" icon="feeling_miserable" expression="droop"/>
+
+  <thought id="soaked" importance="normal" animation="rain_drop">
+    <feeling is="miserable" mood="-6" while="wetness > 0.6"/>
+    <feeling is="furious" when="trait(volatile)" mood="-9" while="wetness > 0.6"/>
+    <feeling is="refreshed" when="feels_hot" mood="+4" hours="2"/>
+    <line>I'm soaked through.</line>
+    <line feeling="furious">One more minute of this...</line>
+    <ends thought="dried_off"/>
+  </thought>
+
+  <thought id="dried_off" importance="trivial">
+    <feeling is="relieved" mood="+2" hours="3"/>
+    <line>Finally dry.</line>
+  </thought>
+
+  <thought id="itchy" importance="trivial">
+    <feeling is="bored"/>
+    <line>My butt itches.</line>
+  </thought>
+</thoughts>
 ```
+
+- Every file's root is `<thoughts>`. The folder's own files load first, then its subfolders' in path order; a later file's feeling or thought type with the same id, or its `<tuning>`, replaces the earlier one, and the same id twice in one file is an error.
+- A feeling in the shared list has an `icon` and an `expression`. A thought type has an `importance` (`trivial`, `normal`, or `major`), `stacks="true"` when it stacks, and an optional `animation`.
+- A type lists at least one feeling. A feeling's mood effect is a signed `mood` with either `hours`, in game hours, or `while`, a condition; with no `mood` it has no effect. A `while` is checked every `whileCheckMinutes` game minutes and the thought ends when it is false; Unknown keeps it.
+- A feeling's or line's specificity is the number of terms its conditions name, a line's `feeling` counting as one; the most specific that holds wins, and between feelings of equal specificity the one written first does. Unknown never holds, and when no feeling holds the colonist has no thought.
+- A line is at most `maxLineLength` characters. `{subject}` in a line is the subject's name, and a line that names the subject fits only a subject that has one.
+- `<ends thought>` names the type created when a held thought of this type ends, however it ends. Endings may not loop.
+- Conditions are written in the [condition vocabulary](./mood.md#conditions); a `<` inside an attribute is written `&lt;`.
 
 ## Related documents
 

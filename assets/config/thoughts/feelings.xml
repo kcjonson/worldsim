@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The shared list of feelings: the emotion words a colonist can have about an event. Each has an icon
+  and a colonist expression, so it can be shown without text.
+
+  <feeling id icon expression/>
+
+  Every .xml file in this folder (and its subfolders) adds to the thoughts config; a later file that
+  declares a feeling or thought type with the same id replaces it. This folder's files load first, then
+  subfolders' files in path order. See /docs/design/game-systems/colonists/thoughts.md (Data).
+-->
+<thoughts>
+  <feeling id="content" icon="feeling_content" expression="smile"/>
+  <feeling id="delighted" icon="feeling_delighted" expression="grin"/>
+  <feeling id="grateful" icon="feeling_grateful" expression="soft_smile"/>
+  <feeling id="relieved" icon="feeling_relieved" expression="exhale"/>
+  <feeling id="amused" icon="feeling_amused" expression="laugh"/>
+  <feeling id="smug" icon="feeling_smug" expression="smirk"/>
+  <feeling id="bored" icon="feeling_bored" expression="flat"/>
+  <feeling id="annoyed" icon="feeling_annoyed" expression="frown"/>
+  <feeling id="miserable" icon="feeling_miserable" expression="droop"/>
+  <feeling id="furious" icon="feeling_furious" expression="scowl"/>
+  <feeling id="mortified" icon="feeling_mortified" expression="blush"/>
+  <feeling id="resigned" icon="feeling_resigned" expression="sigh"/>
+</thoughts>

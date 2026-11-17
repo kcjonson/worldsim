@@ -1,32 +1,81 @@
 #include "ThoughtSystem.h"
 
+#include "../ColonistRules.h"
+#include "../ThoughtTesting.test.h"
 #include "../World.h"
+#include "../components/Appearance.h"
+#include "../components/Attributes.h"
+#include "../components/Colonist.h"
 #include "TimeSystem.h"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <set>
+#include <string>
 #include <vector>
 
 namespace ecs::test {
 
 	namespace {
-		constexpr ThoughtEventTypeId kSawNewTree = 1;
-		constexpr ThoughtEventTypeId kSleptOnGround = 2;
-		constexpr ThoughtEventTypeId kSomethingReeks = 3;
-		constexpr ThoughtEventTypeId kBottledUp = 4;
-		constexpr ThoughtEventTypeId kVented = 5;
-		constexpr FeelingId			 kDelighted = 1;
-		constexpr FeelingId			 kAnnoyed = 2;
-		constexpr FeelingId			 kResigned = 3;
+		constexpr uint32_t kSeed = 20261116;
+
+		// `wetness` is declared and answered by nothing, so a `while` on it is Unknown and holds the thought.
+		constexpr std::string_view kTypes = R"(
+  <thought id="saw_new_tree" importance="trivial">
+    <feeling is="delighted"/>
+  </thought>
+  <thought id="slept_on_ground" importance="normal">
+    <feeling is="annoyed" mood="-10" hours="24"/>
+    <feeling is="resigned" when="attribute(sanity) >= 15" mood="-6" hours="24"/>
+  </thought>
+  <thought id="something_reeks" importance="normal">
+    <feeling is="annoyed" mood="-4" while="wetness > 0"/>
+  </thought>
+  <thought id="bottled_up" importance="normal" stacks="true">
+    <feeling is="resigned" mood="-2" hours="12"/>
+  </thought>
+  <thought id="vented" importance="normal">
+    <feeling is="delighted" mood="+3" while="wetness > 0"/>
+  </thought>
+  <thought id="chatted" importance="normal">
+    <feeling is="delighted" mood="+8" hours="12"/>
+  </thought>
+  <thought id="stubbed_toe" importance="trivial">
+    <feeling is="annoyed" mood="-1" hours="1"/>
+  </thought>
+  <thought id="napped" importance="trivial">
+    <feeling is="delighted" mood="+2" hours="2"/>
+  </thought>
+)";
 	} // namespace
 
 	class ThoughtSystemTest : public ::testing::Test {
 	  protected:
 		void SetUp() override {
+			for (const std::string& error : rules.errors) {
+				ADD_FAILURE() << error;
+			}
 			time = &world.registerSystem<TimeSystem>();
-			thoughts = &world.registerSystem<ThoughtSystem>();
-			colonist = world.createEntity();
+			thoughts = &world.registerSystem<ThoughtSystem>(rules.types, kSeed);
+			colonist = spawnColonist("Ada");
 			thoughts->addEndedObserver([this](EntityID who, const Thought& thought) { ended.push_back({who, thought.id}); });
+		}
+
+		EntityID spawnColonist(const std::string& name) {
+			const EntityID entity = world.createEntity();
+			world.addComponent<Colonist>(entity, Colonist{.name = name});
+			world.addComponent<Attributes>(entity, Attributes{});
+			return entity;
+		}
+
+		Attributes& attributesOf(EntityID who) { return *world.getComponent<Attributes>(who); }
+
+		ThoughtHandle give(EntityID who, std::string_view type, ThoughtSubject subject = ThoughtSubject::aboutNothing()) {
+			return thoughts->create({.colonist = who, .eventType = rules.type(type), .subject = subject});
+		}
+		ThoughtHandle give(std::string_view type, ThoughtSubject subject = ThoughtSubject::aboutNothing()) {
+			return give(colonist, type, subject);
 		}
 
 		void advanceGameHours(float hours) {
@@ -35,6 +84,9 @@ namespace ecs::test {
 		}
 
 		[[nodiscard]] const Thoughts& recordOf(EntityID who) const { return *world.getComponent<Thoughts>(who); }
+		[[nodiscard]] const Thought&  thoughtOf(ThoughtHandle handle) const {
+			 return *findThought(recordOf(handle.colonist), handle.thought);
+		}
 
 		[[nodiscard]] std::vector<ThoughtId> heldIdsOf(EntityID who) const {
 			std::vector<ThoughtId> held;
@@ -42,6 +94,7 @@ namespace ecs::test {
 			return held;
 		}
 
+		testing::TestThoughtTypes  rules{kTypes};
 		World					   world;
 		TimeSystem*				   time = nullptr;
 		ThoughtSystem*			   thoughts = nullptr;
@@ -53,28 +106,43 @@ namespace ecs::test {
 		std::vector<ThoughtArrival> arrivals;
 		thoughts->addArrivedObserver([&](EntityID, const Thought&, ThoughtArrival arrival) { arrivals.push_back(arrival); });
 
-		thoughts->create(
-			{.colonist = colonist, .eventType = kSawNewTree, .subject = ThoughtSubject::aboutEntity(42), .feeling = kDelighted}
-		);
-		thoughts->create(
-			{.colonist = colonist, .eventType = kSawNewTree, .subject = ThoughtSubject::aboutEntity(42), .feeling = kDelighted}
-		);
+		give("saw_new_tree", ThoughtSubject::aboutEntity(42));
+		give("saw_new_tree", ThoughtSubject::aboutEntity(42));
 
 		const Thoughts& record = recordOf(colonist);
 		ASSERT_EQ(record.record.size(), 2U) << "a momentary repeat is its own record";
 		EXPECT_FALSE(isHeld(record.record[0]));
 		EXPECT_FALSE(record.record[0].endedAt.has_value());
+		EXPECT_EQ(record.record[0].feeling, rules.feeling("delighted"));
+		EXPECT_EQ(record.record[0].importance, ThoughtImportance::Trivial);
 		EXPECT_TRUE(heldIdsOf(colonist).empty());
 		EXPECT_EQ(heldMoodTotal(record), 0.0F);
 		EXPECT_EQ(arrivals, (std::vector{ThoughtArrival::New, ThoughtArrival::New}));
 		EXPECT_TRUE(ended.empty());
 	}
 
+	TEST_F(ThoughtSystemTest, MoodEffectImportanceAndStackingComeFromTheDefinition) {
+		const Thought& slept = thoughtOf(give("slept_on_ground"));
+		ASSERT_TRUE(slept.moodEffect.has_value());
+		EXPECT_EQ(slept.moodEffect->amount, -10.0F);
+		EXPECT_EQ(slept.moodEffect->lasts, MoodEffectLasts::ForDuration);
+		EXPECT_EQ(slept.moodEffect->durationGameHours, 24.0F);
+		EXPECT_EQ(slept.importance, ThoughtImportance::Normal);
+
+		const Thought& reeks = thoughtOf(give("something_reeks"));
+		ASSERT_TRUE(reeks.moodEffect.has_value());
+		EXPECT_EQ(reeks.moodEffect->lasts, MoodEffectLasts::WhileCauseHolds);
+
+		give("bottled_up");
+		give("slept_on_ground");
+		const ThoughtHandle bottled = give("bottled_up");
+		EXPECT_EQ(thoughtOf(bottled).count, 2U) << "bottled_up stacks";
+		EXPECT_EQ(findThought(recordOf(colonist), 1)->count, 1U) << "slept_on_ground refreshes, never stacks";
+	}
+
 	TEST_F(ThoughtSystemTest, TimedEffectExpiresOnGameTimeAndStaysInHistory) {
 		const double		arrived = time->simulationSeconds();
-		const ThoughtHandle handle = thoughts->create(
-			{.colonist = colonist, .eventType = kSleptOnGround, .feeling = kAnnoyed, .moodEffect = MoodEffect::timed(-10.0F, 24.0F)}
-		);
+		const ThoughtHandle handle = give("slept_on_ground");
 
 		advanceGameHours(23.5F);
 		EXPECT_EQ(heldIdsOf(colonist).size(), 1U);
@@ -88,38 +156,33 @@ namespace ecs::test {
 		const Thought& thought = record.record[0];
 		ASSERT_TRUE(thought.endedAt.has_value());
 		EXPECT_DOUBLE_EQ(*thought.endedAt, arrived + 24.0 * kSimulationSecondsPerGameHour);
-		EXPECT_EQ(thought.feeling, kAnnoyed);
+		EXPECT_EQ(thought.feeling, rules.feeling("annoyed"));
 		ASSERT_EQ(ended.size(), 1U);
 		EXPECT_EQ(ended[0].thought, handle.thought);
 	}
 
-	TEST_F(ThoughtSystemTest, CauseBoundEffectHoldsUntilEnded) {
+	TEST_F(ThoughtSystemTest, CauseBoundEffectHoldsWhileUnknownUntilEnded) {
 		const ThoughtSubject toilet = ThoughtSubject::aboutEntity(7);
-		thoughts->create(
-			{.colonist = colonist,
-			 .eventType = kSomethingReeks,
-			 .subject = toilet,
-			 .feeling = kAnnoyed,
-			 .moodEffect = MoodEffect::whileCauseHolds(-4.0F)}
-		);
+		give("something_reeks", toilet);
 
 		advanceGameHours(24.0F * 30.0F);
-		EXPECT_EQ(heldMoodTotal(recordOf(colonist)), -4.0F);
+		for (int check = 0; check < 8; ++check) {
+			advanceGameHours(0.25F);
+		}
+		EXPECT_EQ(heldMoodTotal(recordOf(colonist)), -4.0F) << "an Unknown `while` keeps it held through every check";
 
-		EXPECT_FALSE(thoughts->endByCause(colonist, kSomethingReeks, ThoughtSubject::aboutEntity(8)));
-		EXPECT_TRUE(thoughts->endByCause(colonist, kSomethingReeks, toilet));
-		EXPECT_FALSE(thoughts->endByCause(colonist, kSomethingReeks, toilet)) << "it is no longer held";
+		EXPECT_FALSE(thoughts->endByCause(colonist, rules.type("something_reeks"), ThoughtSubject::aboutEntity(8)));
+		EXPECT_TRUE(thoughts->endByCause(colonist, rules.type("something_reeks"), toilet));
+		EXPECT_FALSE(thoughts->endByCause(colonist, rules.type("something_reeks"), toilet)) << "it is no longer held";
 		EXPECT_EQ(heldMoodTotal(recordOf(colonist)), 0.0F);
 		EXPECT_EQ(recordOf(colonist).record.size(), 1U);
 		EXPECT_EQ(ended.size(), 1U);
 	}
 
 	TEST_F(ThoughtSystemTest, HandleEndsTheThoughtItNames) {
-		const ThoughtHandle handle = thoughts->create(
-			{.colonist = colonist, .eventType = kSomethingReeks, .feeling = kAnnoyed, .moodEffect = MoodEffect::whileCauseHolds(-4.0F)}
-		);
+		const ThoughtHandle handle = give("something_reeks");
 		EXPECT_TRUE(thoughts->end(handle));
-		EXPECT_FALSE(isHeld(*findThought(recordOf(colonist), handle.thought)));
+		EXPECT_FALSE(isHeld(thoughtOf(handle)));
 		EXPECT_TRUE(heldIdsOf(colonist).empty());
 		ASSERT_EQ(ended.size(), 1U);
 		EXPECT_EQ(ended[0].colonist, colonist);
@@ -133,20 +196,17 @@ namespace ecs::test {
 		std::vector<ThoughtArrival> arrivals;
 		thoughts->addArrivedObserver([&](EntityID, const Thought&, ThoughtArrival arrival) { arrivals.push_back(arrival); });
 
-		const ThoughtHandle first = thoughts->create(
-			{.colonist = colonist, .eventType = kSleptOnGround, .feeling = kAnnoyed, .moodEffect = MoodEffect::timed(-10.0F, 24.0F)}
-		);
+		const ThoughtHandle first = give("slept_on_ground");
 		advanceGameHours(20.0F);
+		attributesOf(colonist).sanity = 16.0F;
 		const double		repeatedAt = time->simulationSeconds();
-		const ThoughtHandle repeat = thoughts->create(
-			{.colonist = colonist, .eventType = kSleptOnGround, .feeling = kResigned, .moodEffect = MoodEffect::timed(-6.0F, 24.0F)}
-		);
+		const ThoughtHandle repeat = give("slept_on_ground");
 
 		EXPECT_EQ(repeat.thought, first.thought);
 		const Thoughts& record = recordOf(colonist);
 		ASSERT_EQ(record.record.size(), 1U);
 		EXPECT_EQ(record.record[0].count, 1U);
-		EXPECT_EQ(record.record[0].feeling, kResigned);
+		EXPECT_EQ(record.record[0].feeling, rules.feeling("resigned")) << "the repeat's feeling";
 		EXPECT_EQ(heldMoodTotal(record), -6.0F);
 		EXPECT_EQ(arrivals, (std::vector{ThoughtArrival::New, ThoughtArrival::Repeat}));
 
@@ -158,28 +218,19 @@ namespace ecs::test {
 	}
 
 	TEST_F(ThoughtSystemTest, StacksShareOneTimerAndEndAsAWhole) {
-		const auto bottleUp = [&](float amount) {
-			return thoughts->create(
-				{.colonist = colonist,
-				 .eventType = kBottledUp,
-				 .feeling = kResigned,
-				 .moodEffect = MoodEffect::timed(amount, 12.0F),
-				 .stacks = true}
-			);
-		};
-		const ThoughtHandle first = bottleUp(-2.0F);
+		const ThoughtHandle first = give("bottled_up");
 		advanceGameHours(4.0F);
-		bottleUp(-2.0F);
+		give("bottled_up");
 		advanceGameHours(4.0F);
-		EXPECT_EQ(bottleUp(-3.0F).thought, first.thought);
+		EXPECT_EQ(give("bottled_up").thought, first.thought);
 
 		const Thoughts& record = recordOf(colonist);
 		ASSERT_EQ(record.record.size(), 1U);
 		EXPECT_EQ(record.record[0].count, 3U);
-		EXPECT_EQ(heldMoodTotal(record), -9.0F) << "the latest repeat's amount, three times";
+		EXPECT_EQ(heldMoodTotal(record), -6.0F);
 
 		advanceGameHours(11.0F);
-		EXPECT_EQ(heldMoodTotal(recordOf(colonist)), -9.0F) << "the last repeat restarted the 12 hours";
+		EXPECT_EQ(heldMoodTotal(recordOf(colonist)), -6.0F) << "the last repeat restarted the 12 hours";
 		EXPECT_TRUE(ended.empty());
 		advanceGameHours(1.0F);
 		EXPECT_EQ(heldMoodTotal(recordOf(colonist)), 0.0F);
@@ -188,65 +239,41 @@ namespace ecs::test {
 	}
 
 	TEST_F(ThoughtSystemTest, SameEventAboutDifferentSubjectsIsHeldTwice) {
-		const EntityID idris = world.createEntity();
-		const EntityID mara = world.createEntity();
-		const auto	   ventedAbout = [&](EntityID subject, float amount) {
-			return thoughts->create(
-				{.colonist = colonist,
-					 .eventType = kVented,
-					 .subject = ThoughtSubject::aboutColonist(subject),
-					 .feeling = kDelighted,
-					 .moodEffect = MoodEffect::whileCauseHolds(amount)}
-			);
-		};
-		const ThoughtHandle aboutIdris = ventedAbout(idris, 3.0F);
-		const ThoughtHandle aboutMara = ventedAbout(mara, 5.0F);
+		const EntityID		idris = spawnColonist("Idris");
+		const EntityID		mara = spawnColonist("Mara");
+		const ThoughtHandle aboutIdris = give("vented", ThoughtSubject::aboutColonist(idris));
+		const ThoughtHandle aboutMara = give("vented", ThoughtSubject::aboutColonist(mara));
 
 		EXPECT_NE(aboutIdris.thought, aboutMara.thought);
 		EXPECT_EQ(heldIdsOf(colonist), (std::vector{aboutIdris.thought, aboutMara.thought}));
-		EXPECT_EQ(heldMoodTotal(recordOf(colonist)), 8.0F);
+		EXPECT_EQ(heldMoodTotal(recordOf(colonist)), 6.0F);
 
-		EXPECT_TRUE(thoughts->endByCause(colonist, kVented, ThoughtSubject::aboutColonist(idris)));
+		EXPECT_TRUE(thoughts->endByCause(colonist, rules.type("vented"), ThoughtSubject::aboutColonist(idris)));
 		EXPECT_EQ(heldIdsOf(colonist), (std::vector{aboutMara.thought}));
-		EXPECT_EQ(heldMoodTotal(recordOf(colonist)), 5.0F);
+		EXPECT_EQ(heldMoodTotal(recordOf(colonist)), 3.0F);
 	}
 
 	TEST_F(ThoughtSystemTest, HeldTotalSumsMixedSigns) {
-		const EntityID idris = world.createEntity();
-		thoughts->create(
-			{.colonist = colonist, .eventType = kSleptOnGround, .feeling = kAnnoyed, .moodEffect = MoodEffect::timed(-10.0F, 24.0F)}
-		);
-		thoughts->create(
-			{.colonist = colonist,
-			 .eventType = kVented,
-			 .subject = ThoughtSubject::aboutColonist(idris),
-			 .feeling = kDelighted,
-			 .moodEffect = MoodEffect::timed(8.0F, 12.0F)}
-		);
-		thoughts->create(
-			{.colonist = colonist, .eventType = kSomethingReeks, .feeling = kAnnoyed, .moodEffect = MoodEffect::whileCauseHolds(-3.0F)}
-		);
-		thoughts->create({.colonist = colonist, .eventType = kSawNewTree, .feeling = kDelighted});
+		const EntityID idris = spawnColonist("Idris");
+		give("slept_on_ground");
+		give("chatted", ThoughtSubject::aboutColonist(idris));
+		give("something_reeks");
+		give("saw_new_tree");
 
 		EXPECT_EQ(heldIdsOf(colonist).size(), 3U);
-		EXPECT_FLOAT_EQ(heldMoodTotal(recordOf(colonist)), -5.0F);
+		EXPECT_FLOAT_EQ(heldMoodTotal(recordOf(colonist)), -6.0F);
 
 		advanceGameHours(12.0F);
-		EXPECT_FLOAT_EQ(heldMoodTotal(recordOf(colonist)), -13.0F) << "the +8 for 12 hours ran out";
+		EXPECT_FLOAT_EQ(heldMoodTotal(recordOf(colonist)), -14.0F) << "the +8 for 12 hours ran out";
 		EXPECT_EQ(recordOf(colonist).record.size(), 4U);
 	}
 
 	TEST_F(ThoughtSystemTest, RepeatAfterTheThoughtEndedIsANewRecord) {
-		const auto sleptOnGround = [&] {
-			return thoughts->create(
-				{.colonist = colonist, .eventType = kSleptOnGround, .feeling = kAnnoyed, .moodEffect = MoodEffect::timed(-1.0F, 1.0F)}
-			);
-		};
-		const ThoughtHandle first = sleptOnGround();
-		thoughts->create({.colonist = colonist, .eventType = kSawNewTree, .feeling = kDelighted});
-		EXPECT_EQ(sleptOnGround().thought, first.thought) << "a repeat while held folds in";
+		const ThoughtHandle first = give("stubbed_toe");
+		give("saw_new_tree");
+		EXPECT_EQ(give("stubbed_toe").thought, first.thought) << "a repeat while held folds in";
 		advanceGameHours(2.0F);
-		const ThoughtHandle again = sleptOnGround();
+		const ThoughtHandle again = give("stubbed_toe");
 
 		const Thoughts& record = recordOf(colonist);
 		ASSERT_EQ(record.record.size(), 3U);
@@ -254,27 +281,23 @@ namespace ecs::test {
 		for (ThoughtId id = 1; id <= 3; ++id) {
 			EXPECT_EQ(findThought(record, id), &record.record[id - 1]);
 		}
-		EXPECT_EQ(record.record[0].eventType, kSleptOnGround);
+		EXPECT_EQ(record.record[0].eventType, rules.type("stubbed_toe"));
 		EXPECT_TRUE(record.record[0].endedAt.has_value()) << "an ended thought stays in the record";
-		EXPECT_EQ(record.record[1].eventType, kSawNewTree);
-		EXPECT_EQ(record.record[2].eventType, kSleptOnGround);
+		EXPECT_EQ(record.record[1].eventType, rules.type("saw_new_tree"));
+		EXPECT_EQ(record.record[2].eventType, rules.type("stubbed_toe"));
 		EXPECT_EQ(heldIdsOf(colonist), (std::vector{again.thought}));
 	}
 
 	TEST_F(ThoughtSystemTest, ColonistsKeepSeparateThoughts) {
-		const EntityID other = world.createEntity();
-		thoughts->create(
-			{.colonist = colonist, .eventType = kSleptOnGround, .feeling = kAnnoyed, .moodEffect = MoodEffect::timed(-10.0F, 24.0F)}
-		);
-		thoughts->create(
-			{.colonist = other, .eventType = kSleptOnGround, .feeling = kResigned, .moodEffect = MoodEffect::timed(-4.0F, 6.0F)}
-		);
+		const EntityID other = spawnColonist("Mara");
+		give("slept_on_ground");
+		give(other, "napped");
 
-		EXPECT_EQ(recordOf(colonist).record.size(), 1U) << "the other colonist's thought did not fold into this one";
+		EXPECT_EQ(recordOf(colonist).record.size(), 1U);
 		EXPECT_EQ(heldMoodTotal(recordOf(colonist)), -10.0F);
-		EXPECT_EQ(heldMoodTotal(recordOf(other)), -4.0F);
+		EXPECT_EQ(heldMoodTotal(recordOf(other)), 2.0F);
 
-		advanceGameHours(6.0F);
+		advanceGameHours(2.0F);
 		EXPECT_EQ(heldMoodTotal(recordOf(colonist)), -10.0F);
 		EXPECT_EQ(heldMoodTotal(recordOf(other)), 0.0F);
 		ASSERT_EQ(ended.size(), 1U);
@@ -282,12 +305,8 @@ namespace ecs::test {
 	}
 
 	TEST_F(ThoughtSystemTest, EndedObserverEndingAnotherExpiredThoughtEndsItOnce) {
-		thoughts->create(
-			{.colonist = colonist, .eventType = kSleptOnGround, .feeling = kAnnoyed, .moodEffect = MoodEffect::timed(-1.0F, 1.0F)}
-		);
-		const ThoughtHandle second = thoughts->create(
-			{.colonist = colonist, .eventType = kVented, .feeling = kDelighted, .moodEffect = MoodEffect::timed(2.0F, 2.0F)}
-		);
+		give("stubbed_toe");
+		const ThoughtHandle second = give("napped");
 		thoughts->addEndedObserver([&](EntityID, const Thought& thought) {
 			if (thought.id != second.thought) {
 				thoughts->end(second);
@@ -301,19 +320,13 @@ namespace ecs::test {
 	}
 
 	TEST_F(ThoughtSystemTest, RepeatFromAnEndedObserverDoesNotRefreshAnExpiredThought) {
-		thoughts->create(
-			{.colonist = colonist, .eventType = kSleptOnGround, .feeling = kAnnoyed, .moodEffect = MoodEffect::timed(-1.0F, 1.0F)}
-		);
-		const ThoughtHandle second = thoughts->create(
-			{.colonist = colonist, .eventType = kVented, .feeling = kDelighted, .moodEffect = MoodEffect::timed(2.0F, 2.0F)}
-		);
-		bool repeated = false;
+		give("stubbed_toe");
+		const ThoughtHandle second = give("napped");
+		bool				repeated = false;
 		thoughts->addEndedObserver([&](EntityID who, const Thought&) {
 			if (!repeated) {
 				repeated = true;
-				thoughts->create(
-					{.colonist = who, .eventType = kVented, .feeling = kDelighted, .moodEffect = MoodEffect::timed(2.0F, 2.0F)}
-				);
+				give(who, "napped");
 			}
 		});
 
@@ -327,10 +340,8 @@ namespace ecs::test {
 	}
 
 	TEST_F(ThoughtSystemTest, EndedObserverMayDestroyTheColonist) {
-		thoughts->create(
-			{.colonist = colonist, .eventType = kSleptOnGround, .feeling = kAnnoyed, .moodEffect = MoodEffect::timed(-1.0F, 1.0F)}
-		);
-		thoughts->create({.colonist = colonist, .eventType = kVented, .feeling = kDelighted, .moodEffect = MoodEffect::timed(2.0F, 2.0F)});
+		give("stubbed_toe");
+		give("napped");
 		thoughts->addEndedObserver([&](EntityID who, const Thought&) { world.destroyEntity(who); });
 
 		advanceGameHours(3.0F);
@@ -339,28 +350,22 @@ namespace ecs::test {
 	}
 
 	TEST_F(ThoughtSystemTest, StaleHandleCannotEndAnotherColonistsThought) {
-		const ThoughtHandle stale = thoughts->create(
-			{.colonist = colonist, .eventType = kSomethingReeks, .feeling = kAnnoyed, .moodEffect = MoodEffect::whileCauseHolds(-4.0F)}
-		);
+		const ThoughtHandle stale = give("something_reeks");
 		world.destroyEntity(colonist);
-		const EntityID reuser = world.createEntity();
+		const EntityID reuser = spawnColonist("Mara");
 		ASSERT_EQ(getIndex(reuser), getIndex(colonist));
-		const ThoughtHandle current = thoughts->create(
-			{.colonist = reuser, .eventType = kSomethingReeks, .feeling = kAnnoyed, .moodEffect = MoodEffect::whileCauseHolds(-4.0F)}
-		);
+		const ThoughtHandle current = give(reuser, "something_reeks");
 		ASSERT_EQ(current.thought, stale.thought);
 
 		EXPECT_FALSE(thoughts->end(stale));
-		EXPECT_FALSE(thoughts->endByCause(colonist, kSomethingReeks, ThoughtSubject::aboutNothing()));
+		EXPECT_FALSE(thoughts->endByCause(colonist, rules.type("something_reeks"), ThoughtSubject::aboutNothing()));
 		EXPECT_EQ(heldMoodTotal(recordOf(reuser)), -4.0F);
 		EXPECT_TRUE(ended.empty());
 	}
 
 	TEST_F(ThoughtSystemTest, CreateOnADeadColonistAttachesNothing) {
 		world.destroyEntity(colonist);
-		const ThoughtHandle handle = thoughts->create(
-			{.colonist = colonist, .eventType = kSomethingReeks, .feeling = kAnnoyed, .moodEffect = MoodEffect::whileCauseHolds(-4.0F)}
-		);
+		const ThoughtHandle handle = give("something_reeks");
 		EXPECT_EQ(handle.colonist, kInvalidEntity);
 		const EntityID reuser = world.createEntity();
 		ASSERT_EQ(getIndex(reuser), getIndex(colonist));
@@ -368,22 +373,10 @@ namespace ecs::test {
 	}
 
 	TEST_F(ThoughtSystemTest, RepeatAfterTheTimerRanOutIsANewThought) {
-		const ThoughtHandle first = thoughts->create(
-			{.colonist = colonist,
-			 .eventType = kBottledUp,
-			 .feeling = kResigned,
-			 .moodEffect = MoodEffect::timed(-2.0F, 1.0F),
-			 .stacks = true}
-		);
-		const double expiry = time->simulationSeconds() + kSimulationSecondsPerGameHour;
+		const ThoughtHandle first = give("stubbed_toe");
+		const double		expiry = time->simulationSeconds() + kSimulationSecondsPerGameHour;
 		time->skipTime(90.0F);
-		const ThoughtHandle repeat = thoughts->create(
-			{.colonist = colonist,
-			 .eventType = kBottledUp,
-			 .feeling = kResigned,
-			 .moodEffect = MoodEffect::timed(-2.0F, 1.0F),
-			 .stacks = true}
-		);
+		const ThoughtHandle repeat = give("stubbed_toe");
 		EXPECT_NE(repeat.thought, first.thought);
 
 		world.update(0.0F);
@@ -391,20 +384,14 @@ namespace ecs::test {
 		EXPECT_EQ(ended[0].thought, first.thought);
 		EXPECT_DOUBLE_EQ(*findThought(recordOf(colonist), first.thought)->endedAt, expiry);
 		EXPECT_EQ(findThought(recordOf(colonist), repeat.thought)->count, 1U);
-		EXPECT_EQ(heldMoodTotal(recordOf(colonist)), -2.0F);
+		EXPECT_EQ(heldMoodTotal(recordOf(colonist)), -1.0F);
 	}
 
 	TEST_F(ThoughtSystemTest, EndedEventsAfterABigJumpAreInExpiryOrder) {
-		const EntityID		other = world.createEntity();
-		const ThoughtHandle late = thoughts->create(
-			{.colonist = colonist, .eventType = kSleptOnGround, .feeling = kAnnoyed, .moodEffect = MoodEffect::timed(-1.0F, 10.0F)}
-		);
-		const ThoughtHandle middle = thoughts->create(
-			{.colonist = other, .eventType = kSleptOnGround, .feeling = kAnnoyed, .moodEffect = MoodEffect::timed(-1.0F, 5.0F)}
-		);
-		const ThoughtHandle early = thoughts->create(
-			{.colonist = colonist, .eventType = kVented, .feeling = kDelighted, .moodEffect = MoodEffect::timed(1.0F, 2.0F)}
-		);
+		const EntityID		other = spawnColonist("Mara");
+		const ThoughtHandle late = give("chatted");
+		const ThoughtHandle middle = give(other, "napped");
+		const ThoughtHandle early = give("stubbed_toe");
 
 		advanceGameHours(24.0F);
 		ASSERT_EQ(ended.size(), 3U);
@@ -444,14 +431,10 @@ namespace ecs::test {
 			endedTagSeen = tag;
 		});
 
-		const ThoughtHandle first = thoughts->create(
-			{.colonist = colonist, .eventType = kSomethingReeks, .feeling = kAnnoyed, .moodEffect = MoodEffect::whileCauseHolds(-1.0F)}
-		);
+		const ThoughtHandle first = give("something_reeks");
 		EXPECT_EQ(arrivedTagSeen, kTag) << "the observer being notified stays in place while observers are added";
 		EXPECT_EQ(lateArrivedCalls, 0);
-		const ThoughtHandle second = thoughts->create(
-			{.colonist = colonist, .eventType = kVented, .feeling = kDelighted, .moodEffect = MoodEffect::whileCauseHolds(1.0F)}
-		);
+		const ThoughtHandle second = give("vented");
 		EXPECT_EQ(lateArrivedCalls, kAddedObservers);
 
 		thoughts->end(first);
@@ -459,6 +442,350 @@ namespace ecs::test {
 		EXPECT_EQ(lateEndedCalls, 0);
 		thoughts->end(second);
 		EXPECT_EQ(lateEndedCalls, kAddedObservers);
+	}
+
+	TEST_F(ThoughtSystemTest, UnknownEventTypeCreatesNothing) {
+		const ThoughtHandle handle =
+			thoughts->create({.colonist = colonist, .eventType = static_cast<ThoughtEventTypeId>(rules.types.typeCount())});
+		EXPECT_EQ(handle.colonist, kInvalidEntity);
+		EXPECT_EQ(world.getComponent<Thoughts>(colonist), nullptr);
+	}
+
+	// --- feelings ---
+
+	TEST_F(ThoughtSystemTest, FeelingFollowsAnAttributeAndFallsBack) {
+		EXPECT_EQ(thoughtOf(give("slept_on_ground")).feeling, rules.feeling("annoyed")) << "sanity 10: the fallback";
+		const EntityID calm = spawnColonist("Mara");
+		attributesOf(calm).sanity = 18.0F;
+		const Thought& calmThought = thoughtOf(give(calm, "slept_on_ground"));
+		EXPECT_EQ(calmThought.feeling, rules.feeling("resigned"));
+		EXPECT_EQ(calmThought.moodEffect->amount, -6.0F) << "the feeling sets the size of the effect";
+	}
+
+	TEST(ThoughtFeelingSelection, MoreTermsWinAndFileOrderBreaksTies) {
+		testing::TestThoughtTypes rules(R"(
+  <thought id="smashed_chair" importance="normal">
+    <feeling is="content"/>
+    <feeling is="annoyed" when="attribute(civility) &lt; 8"/>
+    <feeling is="miserable" when="attribute(sanity) &lt; 8"/>
+    <feeling is="furious" when="attribute(civility) &lt; 8 and attribute(sanity) &lt; 8"/>
+  </thought>
+)");
+		ASSERT_TRUE(rules.errors.empty()) << rules.errors.front();
+		World world;
+		world.registerSystem<TimeSystem>();
+		ThoughtSystem& thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
+		const auto	   feelingFor = [&](float civility, float sanity) {
+			const EntityID who = world.createEntity();
+			world.addComponent<Attributes>(who, Attributes{.civility = civility, .sanity = sanity});
+			const ThoughtHandle handle = thoughts.create({.colonist = who, .eventType = rules.type("smashed_chair")});
+			return findThought(*world.getComponent<Thoughts>(who), handle.thought)->feeling;
+		};
+		EXPECT_EQ(feelingFor(5.0F, 5.0F), rules.feeling("furious")) << "two terms beat one";
+		EXPECT_EQ(feelingFor(5.0F, 12.0F), rules.feeling("annoyed"));
+		EXPECT_EQ(feelingFor(12.0F, 5.0F), rules.feeling("miserable"));
+		EXPECT_EQ(feelingFor(12.0F, 12.0F), rules.feeling("content")) << "the one with no condition is the fallback";
+
+		// Both one-term feelings hold: the one written first wins.
+		testing::TestThoughtTypes tieRules(R"(
+  <thought id="tie" importance="normal">
+    <feeling is="miserable" when="attribute(sanity) &lt; 8"/>
+    <feeling is="annoyed" when="attribute(civility) &lt; 8"/>
+  </thought>
+)");
+		World					  tieWorld;
+		tieWorld.registerSystem<TimeSystem>();
+		ThoughtSystem& tieThoughts = tieWorld.registerSystem<ThoughtSystem>(tieRules.types, kSeed);
+		const EntityID tieColonist = tieWorld.createEntity();
+		tieWorld.addComponent<Attributes>(tieColonist, Attributes{.civility = 5.0F, .sanity = 5.0F});
+		const ThoughtHandle tie = tieThoughts.create({.colonist = tieColonist, .eventType = tieRules.type("tie")});
+		EXPECT_EQ(findThought(*tieWorld.getComponent<Thoughts>(tieColonist), tie.thought)->feeling, tieRules.feeling("miserable"));
+	}
+
+	TEST(ThoughtFeelingSelection, UnknownDoesNotHoldAndNoFeelingCreatesNothing) {
+		testing::TestThoughtTypes rules(R"(
+  <thought id="cold_snap" importance="normal">
+    <feeling is="content"/>
+    <feeling is="miserable" when="wetness > 0.5" mood="-5" hours="2"/>
+  </thought>
+  <thought id="only_when_calm" importance="normal">
+    <feeling is="content" when="attribute(sanity) >= 15" mood="+2" hours="2"/>
+  </thought>
+)");
+		ASSERT_TRUE(rules.errors.empty()) << rules.errors.front();
+		World world;
+		world.registerSystem<TimeSystem>();
+		ThoughtSystem& thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
+		const EntityID who = world.createEntity();
+		world.addComponent<Attributes>(who, Attributes{});
+
+		const ThoughtHandle cold = thoughts.create({.colonist = who, .eventType = rules.type("cold_snap")});
+		EXPECT_EQ(findThought(*world.getComponent<Thoughts>(who), cold.thought)->feeling, rules.feeling("content"))
+			<< "Unknown is not a match";
+
+		const ThoughtHandle none = thoughts.create({.colonist = who, .eventType = rules.type("only_when_calm")});
+		EXPECT_EQ(none.colonist, kInvalidEntity);
+		EXPECT_EQ(world.getComponent<Thoughts>(who)->record.size(), 1U) << "no feeling applied, so nothing was recorded";
+	}
+
+	// --- while effects and endings ---
+
+	TEST(ThoughtWhileEffect, EndsWhenItsConditionTurnsFalseStaysOnUnknownAndCreatesItsEnding) {
+		testing::TestThoughtTypes rules(R"(
+  <thought id="steady" importance="normal">
+    <feeling is="content" mood="+4" while="attribute(sanity) >= 10"/>
+    <ends thought="wobbly"/>
+  </thought>
+  <thought id="wobbly" importance="trivial">
+    <feeling is="relieved"/>
+  </thought>
+)");
+		ASSERT_TRUE(rules.errors.empty()) << rules.errors.front();
+		World		   world;
+		TimeSystem&	   time = world.registerSystem<TimeSystem>();
+		ThoughtSystem& thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
+		const EntityID steady = world.createEntity();
+		world.addComponent<Attributes>(steady, Attributes{});
+		const EntityID unknowable = world.createEntity();
+		world.addComponent<Attributes>(unknowable, Attributes{});
+
+		const ThoughtHandle held = thoughts.create({.colonist = steady, .eventType = rules.type("steady")});
+		thoughts.create({.colonist = unknowable, .eventType = rules.type("steady")});
+		world.removeComponent<Attributes>(unknowable);
+
+		world.getComponent<Attributes>(steady)->sanity = 4.0F;
+		time.skipTime(14.0F);
+		world.update(0.0F);
+		EXPECT_TRUE(isHeld(*findThought(*world.getComponent<Thoughts>(steady), held.thought))) << "not checked again until 15 game minutes";
+
+		time.skipTime(1.0F);
+		world.update(0.0F);
+		const Thoughts& record = *world.getComponent<Thoughts>(steady);
+		ASSERT_EQ(record.record.size(), 2U);
+		EXPECT_FALSE(isHeld(record.record[0]));
+		EXPECT_DOUBLE_EQ(*record.record[0].endedAt, time.simulationSeconds());
+		EXPECT_EQ(record.record[1].eventType, rules.type("wobbly")) << "its <ends> thought";
+
+		for (int check = 0; check < 10; ++check) {
+			time.skipTime(15.0F);
+			world.update(0.0F);
+		}
+		EXPECT_EQ(heldMoodTotal(*world.getComponent<Thoughts>(unknowable)), 4.0F) << "Unknown keeps it held";
+	}
+
+	TEST(ThoughtWhileEffect, AnExplicitEndAndATimedEndAlsoCreateTheEnding) {
+		testing::TestThoughtTypes rules(R"(
+  <thought id="soaked" importance="normal">
+    <feeling is="miserable" mood="-6" while="wetness > 0.6"/>
+    <ends thought="dried_off"/>
+  </thought>
+  <thought id="sunburnt" importance="normal">
+    <feeling is="annoyed" mood="-2" hours="1"/>
+    <ends thought="dried_off"/>
+  </thought>
+  <thought id="dried_off" importance="trivial">
+    <feeling is="relieved" mood="+1" hours="2"/>
+  </thought>
+)");
+		ASSERT_TRUE(rules.errors.empty()) << rules.errors.front();
+		World				 world;
+		TimeSystem&			 time = world.registerSystem<TimeSystem>();
+		ThoughtSystem&		 thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
+		const EntityID		 who = world.createEntity();
+		const ThoughtSubject river = ThoughtSubject::aboutPlace({3.0F, 4.0F});
+
+		thoughts.create({.colonist = who, .eventType = rules.type("soaked"), .subject = river});
+		ASSERT_TRUE(thoughts.endByCause(who, rules.type("soaked"), river));
+		const Thoughts& record = *world.getComponent<Thoughts>(who);
+		ASSERT_EQ(record.record.size(), 2U);
+		EXPECT_EQ(record.record[1].eventType, rules.type("dried_off"));
+		EXPECT_EQ(record.record[1].subject, river) << "about what the ended thought was about";
+
+		thoughts.create({.colonist = who, .eventType = rules.type("sunburnt")});
+		time.skipTime(60.0F);
+		world.update(0.0F);
+		ASSERT_EQ(world.getComponent<Thoughts>(who)->record.size(), 4U);
+		EXPECT_EQ(world.getComponent<Thoughts>(who)->record[3].eventType, rules.type("dried_off"));
+	}
+
+	// --- lines ---
+
+	TEST(ThoughtLines, PickTheMostSpecificLineForTheFeelingAndCondition) {
+		testing::TestThoughtTypes rules(R"(
+  <thought id="soaked" importance="normal">
+    <feeling is="miserable"/>
+    <feeling is="furious" when="attribute(civility) &lt; 6"/>
+    <line>I'm soaked through.</line>
+    <line feeling="furious">One more minute of this...</line>
+    <line feeling="furious" when="attribute(strength) >= 15">I will fight this cloud.</line>
+  </thought>
+  <thought id="quiet" importance="trivial">
+    <feeling is="content"/>
+  </thought>
+)");
+		ASSERT_TRUE(rules.errors.empty()) << rules.errors.front();
+		World world;
+		world.registerSystem<TimeSystem>();
+		ThoughtSystem& thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
+		const auto	   lineFor = [&](Attributes attributes, std::string_view type) {
+			const EntityID who = world.createEntity();
+			world.addComponent<Attributes>(who, attributes);
+			const ThoughtHandle handle = thoughts.create({.colonist = who, .eventType = rules.type(type)});
+			return renderThoughtLine(rules.types, world, *findThought(*world.getComponent<Thoughts>(who), handle.thought));
+		};
+		EXPECT_EQ(lineFor(Attributes{}, "soaked"), "I'm soaked through.");
+		EXPECT_EQ(lineFor(Attributes{.civility = 3.0F}, "soaked"), "One more minute of this...");
+		EXPECT_EQ(lineFor(Attributes{.strength = 18.0F, .civility = 3.0F}, "soaked"), "I will fight this cloud.");
+		EXPECT_EQ(lineFor(Attributes{.strength = 18.0F}, "soaked"), "I'm soaked through.") << "the strength line is the furious one's";
+		EXPECT_EQ(lineFor(Attributes{}, "quiet"), "") << "many thoughts have no line";
+	}
+
+	TEST(ThoughtLines, AvoidTheLastLineAndAreDeterministicUnderASeed) {
+		constexpr std::string_view kQuips = R"(
+  <thought id="idle" importance="trivial">
+    <feeling is="content"/>
+    <line>My butt itches.</line>
+    <line>Is that cloud a horse?</line>
+    <line>I could eat a whole tree.</line>
+  </thought>
+)";
+		const auto				   pickLines = [&](uint32_t seed) {
+			testing::TestThoughtTypes rules(kQuips);
+			EXPECT_TRUE(rules.errors.empty());
+			World world;
+			world.registerSystem<TimeSystem>();
+			ThoughtSystem&		  thoughts = world.registerSystem<ThoughtSystem>(rules.types, seed);
+			const EntityID		  who = world.createEntity();
+			std::vector<uint16_t> lines;
+			for (int pick = 0; pick < 30; ++pick) {
+				const ThoughtHandle handle = thoughts.create({.colonist = who, .eventType = rules.type("idle")});
+				lines.push_back(*findThought(*world.getComponent<Thoughts>(who), handle.thought)->line);
+			}
+			return lines;
+		};
+		const std::vector<uint16_t> lines = pickLines(kSeed);
+		for (std::size_t index = 1; index < lines.size(); ++index) {
+			EXPECT_NE(lines[index], lines[index - 1]) << "pick " << index << " repeated the last line";
+		}
+		EXPECT_EQ(std::set<uint16_t>(lines.begin(), lines.end()).size(), 3U) << "every line gets used";
+		EXPECT_EQ(pickLines(kSeed), lines) << "the same seed picks the same lines";
+		EXPECT_NE(pickLines(kSeed + 1), lines);
+	}
+
+	TEST(ThoughtLines, SubjectIsRenderedByNameAndALineNamingNoOneIsSkipped) {
+		testing::TestThoughtTypes rules(R"(
+  <thought id="talked" importance="normal">
+    <feeling is="content"/>
+    <line>{subject} gets me.</line>
+  </thought>
+  <thought id="admired" importance="normal">
+    <feeling is="content"/>
+    <line>Nice {subject}.</line>
+    <line>Huh.</line>
+  </thought>
+)");
+		ASSERT_TRUE(rules.errors.empty()) << rules.errors.front();
+		World world;
+		world.registerSystem<TimeSystem>();
+		ThoughtSystem& thoughts = world.registerSystem<ThoughtSystem>(rules.types, kSeed);
+		const EntityID ada = world.createEntity();
+		const EntityID idris = world.createEntity();
+		world.addComponent<Colonist>(idris, Colonist{.name = "Idris"});
+		// No asset is defined by this name, so the entity is named by it.
+		const EntityID statue = world.createEntity();
+		world.addComponent<Appearance>(statue, Appearance{.defName = "TestStatue"});
+
+		const auto lineOf = [&](std::string_view type, ThoughtSubject subject) {
+			const ThoughtHandle handle = thoughts.create({.colonist = ada, .eventType = rules.type(type), .subject = subject});
+			return renderThoughtLine(rules.types, world, *findThought(*world.getComponent<Thoughts>(ada), handle.thought));
+		};
+		EXPECT_EQ(lineOf("talked", ThoughtSubject::aboutColonist(idris)), "Idris gets me.");
+		EXPECT_EQ(lineOf("talked", ThoughtSubject::aboutNothing()), "") << "the only line names a subject there is none of";
+
+		std::set<std::string> aboutStatue;
+		for (int pick = 0; pick < 2; ++pick) {
+			aboutStatue.insert(lineOf("admired", ThoughtSubject::aboutEntity(statue)));
+		}
+		EXPECT_EQ(aboutStatue, (std::set<std::string>{"Nice TestStatue.", "Huh."}));
+		for (int pick = 0; pick < 5; ++pick) {
+			EXPECT_EQ(lineOf("admired", ThoughtSubject::aboutPlace({1.0F, 1.0F})), "Huh.") << "a place has no name to fill in";
+		}
+	}
+
+	// --- definitions ---
+
+	namespace {
+		bool mentions(const std::vector<std::string>& errors, std::string_view text) {
+			return std::ranges::any_of(errors, [&](const std::string& error) { return error.find(text) != std::string::npos; });
+		}
+	} // namespace
+
+	TEST(ThoughtTypeDefinitions, EachMistakeIsReported) {
+		const auto errorsFor = [](std::string_view body) {
+			return testing::TestThoughtTypes(body).errors;
+		};
+
+		EXPECT_TRUE(
+			mentions(errorsFor(R"(<thought id="a" importance="normal"><feeling is="giddy"/></thought>)"), "no feeling is called 'giddy'")
+		);
+		EXPECT_TRUE(mentions(errorsFor(R"(<thought id="a" importance="normal"><line>Hi.</line></thought>)"), "lists no feeling"));
+		EXPECT_TRUE(mentions(
+			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content" when="attribute(sanity) >"/></thought>)"), "at column"
+		));
+		EXPECT_TRUE(mentions(
+			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content" mood="-1" while="sparkle > 1"/></thought>)"), "while: "
+		));
+		EXPECT_TRUE(mentions(
+			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content"/><line when="nonsense(">Hi.</line></thought>)"),
+			"line 1 when"
+		));
+		EXPECT_TRUE(mentions(
+			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content"/><line feeling="furious">Grr.</line></thought>)"),
+			"never feels 'furious'"
+		));
+		EXPECT_TRUE(mentions(
+			errorsFor(
+				R"(<thought id="a" importance="normal"><feeling is="content"/><line>This line goes on and on and on and on, far too long.</line></thought>)"
+			),
+			"more than the 40"
+		));
+		EXPECT_TRUE(mentions(
+			errorsFor(R"(<thought id="a" importance="normal"><feeling is="content"/><ends thought="b"/></thought>)"),
+			"which is no thought type"
+		));
+		const std::vector<std::string> cycle = errorsFor(R"(
+  <thought id="a" importance="normal"><feeling is="content"/><ends thought="b"/></thought>
+  <thought id="b" importance="normal"><feeling is="content"/><ends thought="c"/></thought>
+  <thought id="c" importance="normal"><feeling is="content"/><ends thought="a"/></thought>
+)");
+		ASSERT_EQ(cycle.size(), 1U) << "a cycle is reported once";
+		EXPECT_TRUE(mentions(cycle, "makes a cycle (a -> b -> c -> a)"));
+	}
+
+	TEST(ThoughtTypeDefinitions, ConditionErrorsGiveTheirPosition) {
+		const std::vector<std::string> errors =
+			testing::TestThoughtTypes(
+				R"(<thought id="a" importance="normal"><feeling is="content" when="attribute(sanity) >= "/></thought>)"
+			)
+				.errors;
+		ASSERT_EQ(errors.size(), 1U);
+		EXPECT_TRUE(mentions(errors, "thoughts.xml: thought 'a' feeling 1 ('content') when: ")) << errors.front();
+		EXPECT_TRUE(mentions(errors, "at column 22 in 'attribute(sanity) >= '")) << errors.front();
+	}
+
+	TEST(ThoughtTypeDefinitions, TheShippedRulesLoadClean) {
+		const ColonistRulesLoad load = loadColonistRules(testing::repoConfig());
+		for (const std::string& error : load.errors) {
+			ADD_FAILURE() << error;
+		}
+		const ThoughtTypes& types = *load.rules.thoughtTypes;
+		for (const std::string_view name :
+			 {"ate_good_meal", "slept_on_ground", "accident_in_public", "talked_with_friend", "idle_musing", "bottled_up"}) {
+			EXPECT_TRUE(types.findType(name).has_value()) << name;
+		}
+		EXPECT_TRUE(types.type(*types.findType("bottled_up")).stacks);
+		EXPECT_EQ(types.type(*types.findType("accident_in_public")).importance, ThoughtImportance::Major);
+		EXPECT_GE(types.feelingCount(), 10U);
 	}
 
 } // namespace ecs::test

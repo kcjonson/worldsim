@@ -3,6 +3,8 @@
 #include "../World.h"
 #include "TimeSystem.h"
 
+#include <conditions/ConditionVocabulary.h>
+
 #include <utils/Log.h>
 
 #include <algorithm>
@@ -14,6 +16,10 @@ namespace ecs {
 	namespace {
 		bool hasRunOut(const Thought& thought, double now) {
 			return isHeld(thought) && thought.moodEffect->lasts == MoodEffectLasts::ForDuration && thought.expiresAt <= now;
+		}
+
+		bool isCheckDue(const Thought& thought, double now) {
+			return isHeld(thought) && thought.moodEffect->lasts == MoodEffectLasts::WhileCauseHolds && thought.nextCheckAt <= now;
 		}
 
 		/// A timed thought that has run out is no fold target; the next pass ends it.
@@ -33,37 +39,64 @@ namespace ecs {
 			}
 			return from + static_cast<double>(effect.durationGameHours) * kSimulationSecondsPerGameHour;
 		}
+
+		EntityID targetOf(const ThoughtSubject& subject) {
+			const bool isEntity = subject.kind == ThoughtSubjectKind::Colonist || subject.kind == ThoughtSubjectKind::Entity;
+			return isEntity ? subject.entity : kInvalidEntity;
+		}
+
+		bool holds(
+			const conditions::ConditionVocabulary&		vocabulary,
+			const std::optional<conditions::Condition>& condition,
+			const conditions::ConditionContext&			context
+		) {
+			return !condition.has_value() || vocabulary.evaluate(*condition, context) == conditions::Truth::True;
+		}
 	} // namespace
+
+	ThoughtSystem::ThoughtSystem(const ThoughtTypes& types, uint32_t randomSeed)
+		: thoughtTypes(types),
+		  random(randomSeed) {}
 
 	void ThoughtSystem::update(float /*deltaTime*/) {
 		const double now = world->getSystem<TimeSystem>().simulationSeconds();
-		expiredScratch.clear();
+		dueScratch.clear();
 		for (auto [colonist, thoughts] : world->view<Thoughts>()) {
 			for (const ThoughtId id : thoughts.heldIds) {
 				const Thought* thought = findThought(thoughts, id);
 				if (hasRunOut(*thought, now)) {
-					expiredScratch.push_back({.expiresAt = thought->expiresAt, .colonist = colonist, .thought = id});
+					dueScratch.push_back({.dueAt = thought->expiresAt, .colonist = colonist, .thought = id});
+				} else if (isCheckDue(*thought, now)) {
+					dueScratch.push_back({.dueAt = thought->nextCheckAt, .colonist = colonist, .thought = id});
 				}
 			}
 		}
-		std::sort(expiredScratch.begin(), expiredScratch.end(), [](const ExpiredThought& left, const ExpiredThought& right) {
-			return std::tie(left.expiresAt, left.colonist, left.thought) < std::tie(right.expiresAt, right.colonist, right.thought);
+		std::sort(dueScratch.begin(), dueScratch.end(), [](const DueThought& left, const DueThought& right) {
+			return std::tie(left.dueAt, left.colonist, left.thought) < std::tie(right.dueAt, right.colonist, right.thought);
 		});
-		// Ended after the walk, and each one looked up again: an ended observer may create or end thoughts or
-		// destroy the colonist.
-		for (const ExpiredThought& expired : expiredScratch) {
-			if (!world->isAlive(expired.colonist)) {
+		// Handled after the walk, and each one looked up again: an ended observer, or an <ends> thought, may
+		// create or end thoughts or destroy the colonist.
+		for (const DueThought& due : dueScratch) {
+			if (!world->isAlive(due.colonist)) {
 				continue;
 			}
-			Thoughts* thoughts = world->getComponent<Thoughts>(expired.colonist);
+			Thoughts* thoughts = world->getComponent<Thoughts>(due.colonist);
 			if (thoughts == nullptr) {
 				continue;
 			}
-			Thought* thought = findThought(*thoughts, expired.thought);
-			if (thought == nullptr || !hasRunOut(*thought, now)) {
+			Thought* thought = findThought(*thoughts, due.thought);
+			if (thought == nullptr) {
 				continue;
 			}
-			endHeld(expired.colonist, *thoughts, *thought, thought->expiresAt);
+			if (hasRunOut(*thought, now)) {
+				endHeld(due.colonist, *thoughts, *thought, thought->expiresAt);
+			} else if (isCheckDue(*thought, now)) {
+				if (causeHasPassed(due.colonist, *thought)) {
+					endHeld(due.colonist, *thoughts, *thought, now);
+				} else {
+					thought->nextCheckAt = now + thoughtTypes.whileCheckSimulationSeconds();
+				}
+			}
 		}
 	}
 
@@ -77,23 +110,53 @@ namespace ecs {
 			);
 			return {};
 		}
-		const double now = world->getSystem<TimeSystem>().simulationSeconds();
+		if (args.eventType >= thoughtTypes.typeCount()) {
+			LOG_ERROR(Engine, "ThoughtSystem::create: no thought type %u", args.eventType);
+			return {};
+		}
+		const ThoughtType&				   type = thoughtTypes.type(args.eventType);
+		const conditions::ConditionContext context{.world = *world, .colonist = args.colonist, .target = targetOf(args.subject)};
+		const std::optional<uint16_t>	   typeFeeling = chooseFeeling(type, context);
+		if (!typeFeeling.has_value()) {
+			LOG_DEBUG(
+				Engine,
+				"Thought '%s' on colonist %llu: none of its feelings applies, nothing recorded",
+				type.name.c_str(),
+				static_cast<unsigned long long>(args.colonist)
+			);
+			return {};
+		}
+		const ThoughtFeeling& feeling = type.feelings[*typeFeeling];
+		const double		  now = world->getSystem<TimeSystem>().simulationSeconds();
 
 		Thoughts* thoughts = world->getComponent<Thoughts>(args.colonist);
 		if (thoughts == nullptr) {
 			thoughts = &world->addComponent<Thoughts>(args.colonist);
 		}
 
-		if (args.moodEffect.has_value()) {
+		std::optional<uint16_t> lastLine;
+		if (const auto found = thoughts->lastLines.find(args.eventType); found != thoughts->lastLines.end()) {
+			lastLine = found->second;
+		}
+		const std::optional<uint16_t> line = chooseLine(type, feeling.feeling, context, args.subject, lastLine);
+		if (line.has_value()) {
+			thoughts->lastLines[args.eventType] = *line;
+		}
+		const double nextCheckAt = now + thoughtTypes.whileCheckSimulationSeconds();
+
+		if (feeling.moodEffect.has_value()) {
 			if (Thought* held = findHeld(*thoughts, args.eventType, args.subject, now); held != nullptr) {
-				if (args.stacks) {
+				if (type.stacks) {
 					++held->count;
 				}
-				held->feeling = args.feeling;
-				held->moodEffect = args.moodEffect;
-				held->importance = args.importance;
+				held->feeling = feeling.feeling;
+				held->typeFeeling = *typeFeeling;
+				held->line = line;
+				held->moodEffect = feeling.moodEffect;
+				held->importance = type.importance;
 				held->lastRepeatedAt = now;
-				held->expiresAt = expiryFor(*args.moodEffect, now);
+				held->expiresAt = expiryFor(*feeling.moodEffect, now);
+				held->nextCheckAt = nextCheckAt;
 				// Observers get a copy: one that creates a thought of its own may grow the record under them.
 				const Thought repeated = *held;
 				for (size_t index = 0, count = arrivedObservers.size(); index < count; ++index) {
@@ -107,12 +170,15 @@ namespace ecs {
 			.id = thoughts->nextId++,
 			.eventType = args.eventType,
 			.subject = args.subject,
-			.feeling = args.feeling,
-			.moodEffect = args.moodEffect,
-			.importance = args.importance,
+			.feeling = feeling.feeling,
+			.typeFeeling = *typeFeeling,
+			.line = line,
+			.moodEffect = feeling.moodEffect,
+			.importance = type.importance,
 			.arrivedAt = now,
 			.lastRepeatedAt = now,
-			.expiresAt = args.moodEffect.has_value() ? expiryFor(*args.moodEffect, now) : 0.0,
+			.expiresAt = feeling.moodEffect.has_value() ? expiryFor(*feeling.moodEffect, now) : 0.0,
+			.nextCheckAt = nextCheckAt,
 		};
 		if (thought.moodEffect.has_value()) {
 			thoughts->heldIds.push_back(thought.id);
@@ -123,6 +189,56 @@ namespace ecs {
 			arrivedObservers[index](args.colonist, thought, ThoughtArrival::New);
 		}
 		return {.colonist = args.colonist, .thought = thought.id};
+	}
+
+	std::optional<uint16_t> ThoughtSystem::chooseFeeling(const ThoughtType& type, const conditions::ConditionContext& context) const {
+		for (std::size_t index = 0; index < type.feelings.size(); ++index) {
+			if (holds(thoughtTypes.vocabulary(), type.feelings[index].when, context)) {
+				return static_cast<uint16_t>(index);
+			}
+		}
+		return std::nullopt;
+	}
+
+	std::optional<uint16_t> ThoughtSystem::chooseLine(
+		const ThoughtType&					type,
+		FeelingId							feeling,
+		const conditions::ConditionContext& context,
+		const ThoughtSubject&				subject,
+		std::optional<uint16_t>				lastLine
+	) {
+		const bool subjectHasName =
+			std::ranges::any_of(type.lines, &ThoughtLine::namesSubject) && thoughtSubjectName(*world, subject).has_value();
+		lineScratch.clear();
+		// Lines are most specific first: the first specificity with a line that fits is the one picked from.
+		for (std::size_t index = 0; index < type.lines.size(); ++index) {
+			const ThoughtLine& line = type.lines[index];
+			if (!lineScratch.empty() && line.specificity < type.lines[lineScratch.front()].specificity) {
+				break;
+			}
+			const bool fits = (!line.feeling.has_value() || *line.feeling == feeling) && (!line.namesSubject || subjectHasName) &&
+							  holds(thoughtTypes.vocabulary(), line.when, context);
+			if (fits) {
+				lineScratch.push_back(static_cast<uint16_t>(index));
+			}
+		}
+		if (lineScratch.empty()) {
+			return std::nullopt;
+		}
+		if (lineScratch.size() > 1 && lastLine.has_value()) {
+			std::erase(lineScratch, *lastLine);
+		}
+		return lineScratch[random() % lineScratch.size()];
+	}
+
+	bool ThoughtSystem::causeHasPassed(EntityID colonist, const Thought& thought) const {
+		const std::optional<conditions::Condition>& condition =
+			thoughtTypes.type(thought.eventType).feelings[thought.typeFeeling].whileCondition;
+		if (!condition.has_value()) {
+			return false;
+		}
+		const conditions::ConditionContext context{.world = *world, .colonist = colonist, .target = targetOf(thought.subject)};
+		return thoughtTypes.vocabulary().evaluate(*condition, context) == conditions::Truth::False;
 	}
 
 	bool ThoughtSystem::end(ThoughtHandle handle) {
@@ -172,6 +288,10 @@ namespace ecs {
 		const Thought ended = thought;
 		for (size_t index = 0, count = endedObservers.size(); index < count; ++index) {
 			endedObservers[index](colonist, ended);
+		}
+		const std::optional<ThoughtEventTypeId> endsWith = thoughtTypes.type(ended.eventType).ends;
+		if (endsWith.has_value() && world->isAlive(colonist)) {
+			create({.colonist = colonist, .eventType = *endsWith, .subject = ended.subject});
 		}
 	}
 

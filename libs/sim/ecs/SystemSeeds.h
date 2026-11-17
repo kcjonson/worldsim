@@ -11,14 +11,17 @@ namespace ecs {
 	struct SystemSeeds {
 		uint32_t aiDecision;
 		uint32_t action;
+		uint32_t thought;
 	};
 
 	constexpr SystemSeeds deriveSystemSeeds(uint64_t sessionSeed) {
 		constexpr uint64_t kAiDecisionStream = 1;
 		constexpr uint64_t kActionStream = 2;
+		constexpr uint64_t kThoughtStream = 3;
 		return SystemSeeds{
 			.aiDecision = static_cast<uint32_t>(foundation::deriveSeed(sessionSeed, kAiDecisionStream)),
 			.action = static_cast<uint32_t>(foundation::deriveSeed(sessionSeed, kActionStream)),
+			.thought = static_cast<uint32_t>(foundation::deriveSeed(sessionSeed, kThoughtStream)),
 		};
 	}
 

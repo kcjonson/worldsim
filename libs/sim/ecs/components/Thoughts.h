@@ -6,33 +6,27 @@
 
 #include "../EntityID.h"
 
+#include <assets/ThoughtConfig.h>
+
 #include <glm/vec2.hpp>
 
 #include <cstdint>
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 namespace ecs {
 
-	/// An event type ("soaked", "saw a new kind of tree"), interned by whoever defines the types.
+	/// An event type ("soaked", "saw a new kind of tree"): its index in ThoughtTypes.
 	using ThoughtEventTypeId = uint32_t;
-	/// An emotion word from the shared feeling list ("annoyed", "delighted").
+	/// An emotion word from the shared feeling list ("annoyed", "delighted"): its index in ThoughtTypes.
 	using FeelingId = uint32_t;
 	/// A thought's id within one colonist's record, counted up from 1 in arrival order.
 	using ThoughtId = uint32_t;
 
-	enum class ThoughtImportance : uint8_t {
-		Trivial,
-		Normal,
-		Major
-	};
+	using ThoughtImportance = assets::ThoughtImportance;
 
-	enum class ThoughtSubjectKind : uint8_t {
-		Nothing,
-		Colonist,
-		Entity,
-		Place
-	};
+	enum class ThoughtSubjectKind : uint8_t { Nothing, Colonist, Entity, Place };
 
 	/// Who or what a thought is about.
 	struct ThoughtSubject {
@@ -44,18 +38,20 @@ namespace ecs {
 		[[nodiscard]] static ThoughtSubject aboutColonist(EntityID colonistId) {
 			return {.kind = ThoughtSubjectKind::Colonist, .entity = colonistId};
 		}
-		[[nodiscard]] static ThoughtSubject aboutEntity(EntityID entityId) { return {.kind = ThoughtSubjectKind::Entity, .entity = entityId}; }
-		[[nodiscard]] static ThoughtSubject aboutPlace(glm::vec2 position) { return {.kind = ThoughtSubjectKind::Place, .place = position}; }
+		[[nodiscard]] static ThoughtSubject aboutEntity(EntityID entityId) {
+			return {.kind = ThoughtSubjectKind::Entity, .entity = entityId};
+		}
+		[[nodiscard]] static ThoughtSubject aboutPlace(glm::vec2 position) {
+			return {.kind = ThoughtSubjectKind::Place, .place = position};
+		}
 
 		bool operator==(const ThoughtSubject& other) const = default;
 	};
 
-	enum class MoodEffectLasts : uint8_t {
-		ForDuration,
-		WhileCauseHolds
-	};
+	enum class MoodEffectLasts : uint8_t { ForDuration, WhileCauseHolds };
 
-	/// A signed mood amount, lasting either a stretch of game time or until its creator ends it.
+	/// A signed mood amount, lasting either a stretch of game time or while its type's `while` condition
+	/// holds (or until its creator ends it).
 	struct MoodEffect {
 		float			amount = 0.0F;
 		MoodEffectLasts lasts = MoodEffectLasts::ForDuration;
@@ -71,20 +67,26 @@ namespace ecs {
 
 	/// Times are on TimeSystem::simulationSeconds().
 	struct Thought {
-		ThoughtId				  id = 0;
-		ThoughtEventTypeId		  eventType = 0;
-		ThoughtSubject			  subject{};
-		FeelingId				  feeling = 0;
+		ThoughtId		   id = 0;
+		ThoughtEventTypeId eventType = 0;
+		ThoughtSubject	   subject{};
+		FeelingId		   feeling = 0;
+		/// Which of its type's feelings applied: an index into ThoughtType::feelings.
+		uint16_t typeFeeling = 0;
+		/// Its line, an index into ThoughtType::lines; none when no line fit.
+		std::optional<uint16_t>	  line{};
 		std::optional<MoodEffect> moodEffect{};
 		ThoughtImportance		  importance = ThoughtImportance::Normal;
 		double					  arrivedAt = 0.0;
 		/// The latest repeat folded into this thought; equals arrivedAt until one arrives.
-		double					  lastRepeatedAt = 0.0;
+		double lastRepeatedAt = 0.0;
 		/// A timed effect's end. Unused for a cause-bound or momentary thought.
-		double					  expiresAt = 0.0;
-		std::optional<double>	  endedAt{};
+		double expiresAt = 0.0;
+		/// When a cause-bound effect's `while` condition is next checked. Unused otherwise.
+		double				  nextCheckAt = 0.0;
+		std::optional<double> endedAt{};
 		/// Repeats of a stacking held thought, the first included. Its mood effect counts this many times.
-		uint32_t				  count = 1;
+		uint32_t count = 1;
 	};
 
 	struct Thoughts {
@@ -92,6 +94,8 @@ namespace ecs {
 		std::vector<Thought>   record;
 		std::vector<ThoughtId> heldIds;
 		ThoughtId			   nextId = 1;
+		/// The line this colonist was last given for each event type, so the next pick can avoid it.
+		std::unordered_map<ThoughtEventTypeId, uint16_t> lastLines;
 	};
 
 	[[nodiscard]] const Thought* findThought(const Thoughts& thoughts, ThoughtId id);
