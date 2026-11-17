@@ -88,6 +88,7 @@ add_executable(world-sim
     scenes/loading/GameLoadingScene.cpp
     scenes/game/dev/CameraCommand.cpp
     scenes/game/dev/DevCommandHandler.cpp
+    scenes/game/dev/GiveShortfall.cpp
     scenes/game/dev/GpuHold.cpp
     scenes/game/dev/GpuHoldCommand.cpp
     scenes/game/dev/GroundRefusal.cpp
@@ -157,6 +158,8 @@ if(BUILD_TESTING)
     add_executable(world-sim-tests
         scenes/game/dev/CameraCommand.cpp
         scenes/game/dev/CameraCommand.test.cpp
+        scenes/game/dev/GiveShortfall.cpp
+        scenes/game/dev/GiveShortfall.test.cpp
         scenes/game/dev/GpuHoldCommand.cpp
         scenes/game/dev/GpuHoldCommand.test.cpp
         scenes/game/dev/GroundRefusal.cpp

@@ -26,8 +26,10 @@ The developer client is an external TypeScript/Vite web application that connect
   N jobs at the nearest crafting station (entity with a WorkQueue) to `at` — the on-demand way to
   exercise the craft/provisioning chain without setting up a colony by hand. `what=stations` reads
   back each crafting station's id, position, queued jobs (recipe/completed/quantity), and material
-  store, so a stalled craft can be inspected without screenshots. give, colonist, and teleport
-  refuse an `at` that is off the active walkable navmesh. spawn, foundation, and walls refuse ground
+  store, so a stalled craft can be inspected without screenshots. colonist and teleport
+  refuse water and placed obstacles and take ground no mover has meshed; a loose give refuses all
+  three. Each answers a 400 with `{"error":...}` when refused, and give answers the count it added
+  (a 400 when that is none, or when the material is not an item). spawn, foundation, and walls refuse ground
   the game would not build on and answer a 400 with `{"error":...}` when they create nothing: spawn
   sets furniture (a crafting station or storage container) only where its footprint is clear ground
   out of any fordable stream and anything else on clear ground, a ford included, and refuses when no
