@@ -67,9 +67,9 @@ namespace conditions {
 	}
 
 	void ConditionVocabulary::declareSymbolSet(
-		const std::string&					name,
+		const std::string&					 name,
 		const assets::ConditionSymbolSetDef& declared,
-		std::vector<std::string>&			errors
+		std::vector<std::string>&			 errors
 	) {
 		if (symbolSetsByName.contains(name)) {
 			errors.push_back("symbol set \"" + name + "\" is already declared");
@@ -108,6 +108,10 @@ namespace conditions {
 			return "argument " + std::to_string(parameter + 1) + " of '" + std::string(term) + "' does not take names";
 		}
 		SymbolSet& set = symbolSets[*declared.parameters[parameter].symbolSet];
+		if (std::ranges::find(assets::kOwnedSymbolSets, set.name, &assets::OwnedSymbolSet::name) == assets::kOwnedSymbolSets.end()) {
+			return "argument " + std::to_string(parameter + 1) + " of '" + std::string(term) + "' takes names from \"" + set.name +
+				   "\", which the conditions files fill, not the sim";
+		}
 		for (const std::string& name : names) {
 			if (!isConditionName(name)) {
 				return "'" + name + "' for '" + std::string(term) + "' is not a name a condition can use";

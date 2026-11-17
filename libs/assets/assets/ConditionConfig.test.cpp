@@ -93,12 +93,30 @@ TEST_F(ConditionConfigTest, MistakesAreLoadErrors) {
 	EXPECT_TRUE(mentions(errors, "\"nowhere\", which no file declares"));
 	EXPECT_TRUE(mentions(errors, "'Wet' is not a capability"));
 	EXPECT_TRUE(mentions(errors, "'Drinkable' is not a capability"));
-	EXPECT_TRUE(mentions(errors, "kinds are declared with <Kind>"));
-	EXPECT_TRUE(mentions(errors, "a.xml: trait names come from the trait definitions"));
+	EXPECT_TRUE(mentions(errors, "a.xml: the \"kind\" names come only from the <Kind> declarations"));
+	EXPECT_TRUE(mentions(errors, "a.xml: the \"trait\" names come only from the trait definitions"));
 	EXPECT_TRUE(mentions(errors, "open=\"maybe\""));
 	EXPECT_TRUE(mentions(errors, "b.xml: task group 'busy' is already declared in a.xml"));
 	EXPECT_TRUE(mentions(errors, "unknown element <Bogus>"));
 	EXPECT_EQ(errors.size(), 10U);
+}
+
+TEST_F(ConditionConfigTest, AFileDeclaringOrOpeningAnOwnedSetIsAnErrorNamingIt) {
+	write("base.xml", R"(<Night start="20" end="6"/>)");
+	for (const OwnedSymbolSet& owned : kOwnedSymbolSets) {
+		const std::string set(owned.name);
+		for (const std::string& declaration :
+			 {"<Symbols name=\"" + set + "\">morale</Symbols>", "<Symbols name=\"" + set + "\" open=\"true\"/>"}) {
+			write("mods/typo/conditions.xml", declaration);
+			const ConditionConfigLoad load = loadConditionConfig(folder);
+			ASSERT_EQ(load.errors.size(), 1U) << declaration;
+			EXPECT_TRUE(
+				mentions(load.errors, "mods/typo/conditions.xml: the \"" + set + "\" names come only from " + std::string(owned.owner))
+			) << load.errors.front();
+			EXPECT_TRUE(load.config.symbolSets.at(set).names.empty()) << declaration;
+			EXPECT_FALSE(load.config.symbolSets.at(set).open) << declaration;
+		}
+	}
 }
 
 TEST_F(ConditionConfigTest, NightHoursAreRequired) {
@@ -129,10 +147,12 @@ TEST_F(ConditionConfigTest, TheShippedVocabularyListsNoEngineNames) {
 	const ConditionConfigLoad load = loadConditionConfig(shippedConditions());
 	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
 	const auto& sets = load.config.symbolSets;
+	for (const OwnedSymbolSet& owned : kOwnedSymbolSets) {
+		EXPECT_FALSE(sets.at(std::string(owned.name)).open) << owned.name;
+	}
 	EXPECT_TRUE(sets.at("need").names.empty());
 	EXPECT_TRUE(sets.at("attribute").names.empty());
 	EXPECT_TRUE(sets.at("trait").names.empty());
-	EXPECT_FALSE(sets.at("trait").open);
 	EXPECT_EQ(sets.at("task").names, (std::vector<std::string>{"work"}));
 	for (const char* open : {"behavior", "event", "mood_cause"}) {
 		EXPECT_TRUE(sets.at(open).open) << open;

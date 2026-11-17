@@ -353,33 +353,42 @@ TEST(ConditionVocabularyLifecycle, ProvidingIsRefusedOnConflicts) {
 	EXPECT_TRUE(vocabulary.provide("observed", ValueType::Truth, {}, nullptr).has_value());
 }
 
-TEST(ConditionVocabularyLifecycle, AddedUnboundAndUnlistedNamesReadUnknownAndAreLogged) {
+TEST(ConditionVocabularyLifecycle, OwnedNamesAreAddedAndUnboundKindsAndUnlistedNamesReadUnknownAndAreLogged) {
 	using enum ValueType;
 	assets::ConditionConfig config;
+	config.symbolSets["need"] = {};
+	config.symbolSets["kind"] = {.names = {"bed", "fire"}};
 	config.symbolSets["flavor"] = {.names = {"sweet"}, .open = true};
 	config.terms = {
+		term("hungry", Truth, {parameter(Symbol, "need")}),
+		term("near", Truth, {parameter(Symbol, "kind")}),
 		term("taste", Truth, {parameter(Symbol, "flavor")}),
 		{.name = "craving", .result = Symbol, .resultSymbols = "flavor"},
 	};
 	ConditionVocabulary vocabulary;
 	ASSERT_TRUE(vocabulary.declare(config).empty());
-	const std::vector<std::string> added = {"sour"};
-	EXPECT_FALSE(vocabulary.addSymbols("taste", 0, added).has_value());
-	EXPECT_TRUE(vocabulary.addSymbols("taste", 0, std::vector<std::string>{"not"}).has_value());
+	const std::vector<std::string> added = {"hunger"};
+	EXPECT_FALSE(vocabulary.addSymbols("hungry", 0, added).has_value());
+	EXPECT_TRUE(vocabulary.addSymbols("hungry", 0, std::vector<std::string>{"not"}).has_value());
+	EXPECT_TRUE(vocabulary.addSymbols("taste", 0, added).has_value()) << "the conditions files fill \"flavor\"";
 	EXPECT_TRUE(vocabulary.addSymbols("craving", 0, added).has_value());
 	EXPECT_TRUE(vocabulary.addSymbols("bitter", 0, added).has_value());
 
-	SymbolBindings<bool> tastes;
-	const SymbolId		 sweet = *vocabulary.findSymbol("sweet");
-	tastes.bind(sweet, true);
-	vocabulary.reportUnbound("taste", 0, tastes);
-	ASSERT_FALSE(vocabulary.provide("taste", Truth, {Symbol}, [tastes](const TermCall& call) {
-		const bool* liked = tastes.find(call.arguments[0].symbol());
-		return liked == nullptr ? TermValue::unknown() : TermValue::fromTruth(*liked);
+	const SymbolId hunger = *vocabulary.findSymbol("hunger");
+	ASSERT_FALSE(vocabulary.provide("hungry", Truth, {Symbol}, [hunger](const TermCall& call) {
+		return TermValue::fromTruth(call.arguments[0].symbol() == hunger);
 	}));
+	SymbolBindings<bool> kinds;
+	kinds.bind(*vocabulary.findSymbol("bed"), true);
+	vocabulary.reportUnbound("near", 0, kinds);
+	ASSERT_FALSE(vocabulary.provide("near", Truth, {Symbol}, [kinds](const TermCall& call) {
+		const bool* known = kinds.find(call.arguments[0].symbol());
+		return known == nullptr ? TermValue::unknown() : TermValue::fromTruth(*known);
+	}));
+	const SymbolId sweet = *vocabulary.findSymbol("sweet");
 	ASSERT_FALSE(vocabulary.provide("craving", Symbol, {}, [sweet](const TermCall&) { return TermValue::fromSymbol(sweet); }));
 	vocabulary.freeze();
-	EXPECT_TRUE(vocabulary.addSymbols("taste", 0, added).has_value());
+	EXPECT_TRUE(vocabulary.addSymbols("hungry", 0, added).has_value());
 
 	ecs::World			world;
 	const ecs::EntityID colonist = world.createEntity();
@@ -397,15 +406,16 @@ TEST(ConditionVocabularyLifecycle, AddedUnboundAndUnlistedNamesReadUnknownAndAre
 		return result.ok() ? vocabulary.evaluate(result.condition, {.world = world, .colonist = colonist}) : Truth::Unknown;
 	};
 	foundation::Logger::setSink(&Log::sink, &log);
-	EXPECT_EQ(evaluate("taste(sweet) and craving is sweet"), Truth::True);
-	EXPECT_EQ(evaluate("taste(sour) or taste(sour)"), Truth::Unknown);
-	EXPECT_EQ(evaluate("taste(bitter)"), Truth::Unknown);
+	EXPECT_EQ(evaluate("hungry(hunger) and near(bed) and craving is sweet"), Truth::True);
+	EXPECT_EQ(evaluate("near(fire) or near(fire)"), Truth::Unknown);
 	EXPECT_EQ(evaluate("craving is bitter"), Truth::Unknown);
 	foundation::Logger::setSink(nullptr, nullptr);
 #ifdef DEVELOPMENT_BUILD
-	EXPECT_EQ(log.count, 3);
+	EXPECT_EQ(log.count, 2);
 #endif
-	EXPECT_FALSE(vocabulary.parse("taste(self)").ok());
+	const ParseResult misspelled = vocabulary.parse("hungry(hungr)");
+	ASSERT_FALSE(misspelled.ok());
+	EXPECT_NE(misspelled.error->message.find("expected one of: hunger"), std::string::npos) << misspelled.error->message;
 	EXPECT_FALSE(vocabulary.parse("craving is target").ok());
 }
 

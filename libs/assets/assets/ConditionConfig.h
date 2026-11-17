@@ -18,8 +18,34 @@
 
 namespace assets {
 
+	inline constexpr std::string_view kConditionAnd = "and";
+	inline constexpr std::string_view kConditionOr = "or";
+	inline constexpr std::string_view kConditionNot = "not";
+	inline constexpr std::string_view kConditionIs = "is";
+	inline constexpr std::string_view kConditionSelf = "self";
+	inline constexpr std::string_view kConditionTarget = "target";
+
 	/// The words of the condition grammar, which no term, symbol, or trait id may be.
-	inline constexpr std::array<std::string_view, 6> kConditionReservedWords = {"and", "or", "not", "is", "self", "target"};
+	inline constexpr std::array<std::string_view, 6> kConditionReservedWords =
+		{kConditionAnd, kConditionOr, kConditionNot, kConditionIs, kConditionSelf, kConditionTarget};
+
+	/// A symbol set whose names belong to something other than the conditions files. It is closed, no
+	/// conditions file may declare it, and its names come only from its owner.
+	struct OwnedSymbolSet {
+		std::string_view name;
+		std::string_view owner;
+	};
+
+	inline constexpr std::string_view kKindSymbols = "kind";
+	inline constexpr std::string_view kTaskSymbols = "task";
+
+	inline constexpr std::array<OwnedSymbolSet, 5> kOwnedSymbolSets = {{
+		{.name = kKindSymbols, .owner = "the <Kind> declarations"},
+		{.name = "trait", .owner = "the trait definitions (colonists/traits)"},
+		{.name = "need", .owner = "the sim's needs"},
+		{.name = "attribute", .owner = "the sim's attributes"},
+		{.name = kTaskSymbols, .owner = "the sim's task types and the <TaskGroup> declarations"},
+	}};
 
 	/// What a term or an argument is. A Symbol is a name from a declared set (a kind, a need); a Target
 	/// is an entity.
@@ -59,22 +85,20 @@ namespace assets {
 		float end = 0.0F;
 	};
 
-	/// The names a Symbol takes. The sim adds the names it knows (needs, attributes, traits, task types) when it
-	/// binds. An open set takes any name, listed or not; one nothing answers reads Unknown.
+	/// The names a Symbol takes. An open set takes any name, listed or not; one nothing answers reads Unknown.
 	struct ConditionSymbolSetDef {
 		std::vector<std::string> names;
 		bool					 open = false;
 	};
 
-	/// The symbol sets "kind" and "task" are completed by the loader: every <Kind> is a name in "kind", and
-	/// every <TaskGroup> a name in "task". "trait" belongs to the trait definitions: the loader declares it
-	/// empty and closed, no file may declare it, and the sim fills it from the traits.
+	/// The loader declares every owned set (kOwnedSymbolSets) closed: every <Kind> is a name in "kind" and
+	/// every <TaskGroup> a name in "task", and the sim adds the rest (needs, attributes, traits, task types).
 	struct ConditionConfig {
-		std::vector<ConditionTermDef>				  terms;
+		std::vector<ConditionTermDef>				 terms;
 		std::map<std::string, ConditionSymbolSetDef> symbolSets;
-		std::vector<ConditionKindDef>				  kinds;
-		std::vector<ConditionTaskGroupDef>			  taskGroups;
-		std::optional<NightHours>					  night;
+		std::vector<ConditionKindDef>				 kinds;
+		std::vector<ConditionTaskGroupDef>			 taskGroups;
+		std::optional<NightHours>					 night;
 	};
 
 	struct ConditionConfigLoad {
@@ -88,8 +112,9 @@ namespace assets {
 	/// A later file may add names to a symbol set (a set any file declares open="true" is open), add a
 	/// term, add a kind, replace a kind's mapping, and replace <Night>; each replacement is logged at
 	/// info level naming both files. Redeclaring a term with the same signature is accepted; with a
-	/// different one it is an error naming both files, as is redeclaring a task group. Every symbol set a
-	/// term names must exist, and night hours must be given. An empty error list means it loaded clean.
+	/// different one it is an error naming both files, as is redeclaring a task group. Declaring an owned
+	/// set is an error naming the file. Every symbol set a term names must exist, and night hours must be
+	/// given. An empty error list means it loaded clean.
 	[[nodiscard]] ConditionConfigLoad loadConditionConfig(const std::filesystem::path& folder);
 
 } // namespace assets

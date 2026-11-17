@@ -34,7 +34,7 @@ namespace conditions {
 		static_assert(assets::kTaskTypeNames.size() == static_cast<std::size_t>(ecs::TaskType::Wander), "a name for every TaskType");
 
 		/// The engine's names for `term`'s first parameter, added to its symbol set and bound to their values.
-		/// Names the set holds that the engine lacks (a mod's) stay unbound and are reported.
+		/// The set is owned (assets::kOwnedSymbolSets), so these are all the names it holds.
 		template <typename Value>
 		std::shared_ptr<const SymbolBindings<Value>> bindEngineNames(
 			ConditionVocabulary&								vocabulary,
@@ -56,7 +56,6 @@ namespace conditions {
 					bindings->bind(symbol.id, found->second);
 				}
 			}
-			vocabulary.reportUnbound(term, 0, *bindings);
 			return bindings;
 		}
 

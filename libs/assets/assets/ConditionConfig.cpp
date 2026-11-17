@@ -15,10 +15,6 @@ namespace assets {
 
 	namespace {
 
-		constexpr const char* kKindSet = "kind";
-		constexpr const char* kTaskSet = "task";
-		constexpr const char* kTraitSet = "trait";
-
 		std::optional<ConditionValueType> valueTypeFromName(std::string_view name) {
 			if (name == "Truth") {
 				return ConditionValueType::Truth;
@@ -37,9 +33,11 @@ namespace assets {
 
 		bool sameSignature(const ConditionTermDef& first, const ConditionTermDef& second) {
 			return first.result == second.result && first.resultSymbols == second.resultSymbols &&
-				   std::ranges::equal(first.parameters, second.parameters, [](const ConditionParameterDef& left, const ConditionParameterDef& right) {
-					   return left.type == right.type && left.symbols == right.symbols;
-				   });
+				   std::ranges::equal(
+					   first.parameters, second.parameters, [](const ConditionParameterDef& left, const ConditionParameterDef& right) {
+						   return left.type == right.type && left.symbols == right.symbols;
+					   }
+				   );
 		}
 
 		bool contains(const std::vector<std::string>& names, std::string_view name) {
@@ -86,16 +84,15 @@ namespace assets {
 
 			void check() {
 				ConditionConfig& config = result.config;
-				config.symbolSets.try_emplace(kTraitSet);
-				for (const ConditionKindDef& kind : config.kinds) {
-					config.symbolSets[kKindSet].names.push_back(kind.name);
+				for (const OwnedSymbolSet& owned : kOwnedSymbolSets) {
+					config.symbolSets.try_emplace(std::string(owned.name));
 				}
+				std::vector<std::string>& kinds = config.symbolSets.at(std::string(kKindSymbols)).names;
+				for (const ConditionKindDef& kind : config.kinds) {
+					kinds.push_back(kind.name);
+				}
+				std::vector<std::string>& tasks = config.symbolSets.at(std::string(kTaskSymbols)).names;
 				for (const ConditionTaskGroupDef& group : config.taskGroups) {
-					std::vector<std::string>& tasks = config.symbolSets[kTaskSet].names;
-					if (contains(tasks, group.name)) {
-						fail("task group '" + group.name + "'", "its name is already a name in the \"task\" symbols");
-						continue;
-					}
 					tasks.push_back(group.name);
 				}
 				for (const ConditionTermDef& term : config.terms) {
@@ -188,12 +185,12 @@ namespace assets {
 					fail(source, "a <Symbols> has no name");
 					return;
 				}
-				if (set == kKindSet) {
-					fail(source, "kinds are declared with <Kind>, not <Symbols name=\"kind\">");
-					return;
-				}
-				if (set == kTraitSet) {
-					fail(source, "trait names come from the trait definitions (colonists/traits), not <Symbols name=\"trait\">");
+				if (const auto owned = std::ranges::find(kOwnedSymbolSets, set, &OwnedSymbolSet::name); owned != kOwnedSymbolSets.end()) {
+					fail(
+						source,
+						"the \"" + set + "\" names come only from " + std::string(owned->owner) +
+							"; a conditions file cannot declare <Symbols name=\"" + set + "\">"
+					);
 					return;
 				}
 				ConditionSymbolSetDef& declared = result.config.symbolSets[set];
@@ -219,7 +216,7 @@ namespace assets {
 					fail(source, "a <Kind> has no name");
 					return;
 				}
-				const std::string what = "kind '" + kind.name + "'";
+				const std::string		  what = "kind '" + kind.name + "'";
 				const pugi::xml_attribute capability = node.attribute("capability");
 				const pugi::xml_attribute mover = node.attribute("mover");
 				if (capability && mover) {
