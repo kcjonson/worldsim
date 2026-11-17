@@ -1,7 +1,7 @@
 # Scenario 12: Colonists eat
 
-**Status:** draft  
-**Last verified:** not yet run
+**Status:** ready  
+**Last verified:** 2026-11-17
 
 Two hungry colonists never cut one bush at once, and a hungry colonist eats one meal from a storage
 box or a loose pile. Spec: [task-claims.md](../../technical/task-claims.md#need-tasks).
@@ -50,7 +50,7 @@ rely on).
 
 3. Pause, spawn a `BasicBox` 20 m from the bush (`/api/dev/spawn?def=BasicBox&at=<FX+20>,<FY>&n=1&scatter=0`), put 10 berries in it (`/api/dev/give?material=Berry&n=10&where=storage&at=<FX+20>,<FY>`), spawn Eve 1 m from it (`/api/dev/colonist?at=<FX+21>,<FY>&name=Eve`), and read her `id` from `what=colonists`. Note it. On a retry, spawn only a new Eve (see Preconditions).
 
-4. Resume and set her Hunger straight after, as one command line with no wait: `curl.exe "http://127.0.0.1:<PORT>/api/control?action=resume" && curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<Eve id>&need=Hunger&value=40"`. She had already started the gather walk when Hunger was set, about 1 m from the box, and still eats from the box, the nearer food: `what=storage` shows its `Berry` drop by 1 (10 to 9). Pause as soon as her Hunger passes 50.
+4. Resume and set her Hunger straight after, as one command line with no wait: `curl.exe "http://127.0.0.1:<PORT>/api/control?action=resume" && curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<Eve id>&need=Hunger&value=40"`. She is on her first walk (a wander or the gather walk) and about 1 m from the box when Hunger is set, and eats from the box, the nearer food: `what=storage` shows its `Berry` drop by 1 (10 to 9). Pause as soon as her Hunger passes 50; she goes straight back to gathering, so a pause made by hand often lands after she has harvested.
 
 5. Check Eve's `inventory` has no `Berry` (if it has, spawn only another Eve beside the box and repeat steps 3 and 4; steps 5 to 7 only mean something for an Eve who ate the step 4 box meal, so `ate_good_meal` is held and `thoughts.recent` has entries to take an id from). Read her position, then drop 10 berries 1 m from her on the side away from the box (`/api/dev/give?material=Berry&n=10&where=loose&at=<her x+1>,<her y>` if her x is above the box's `FX+20`, else `<her x-1>,<her y>`), note the highest `id` in her `thoughts.recent` (`what=colonists`), set her Hunger to 5, then resume: she takes 2 berries from the heap or the box, whichever is nearer, never more, and her Hunger rises past 50.
 
