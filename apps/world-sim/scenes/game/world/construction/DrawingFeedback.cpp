@@ -42,6 +42,13 @@ namespace world_sim {
 		constexpr float kCursorTickLengthPx = 5.0F; // to 16 px at the default radius
 		constexpr float kCursorTickWidthPx = 2.0F;
 		constexpr float kCursorTickOutlineWidthPx = 6.0F;
+		// The Rectangle tool's cross on the grid point that placed its corner, and its ring on an
+		// existing corner or edge, from the prototype.
+		constexpr float kGridCrossArmPx = 5.0F;
+		constexpr float kGridCrossWidthPx = 1.25F;
+		constexpr float kGridCrossOpacity = 0.55F;
+		constexpr float kRectangleCornerRingRadiusPx = 8.0F;
+		constexpr float kRectangleEdgeRingRadiusPx = 7.0F;
 		constexpr float kSegmentLabelPx = 12.0F;
 		// At the snapped end, the segment label's plate sits this far diagonally off the snapped
 		// point (its text 12 px off at an interface size of 100%). The gap is the plate's, so it
@@ -145,6 +152,10 @@ namespace world_sim {
 			float cursorTickLengthPx;
 			float cursorTickWidthPx;
 			float cursorTickOutlineWidthPx;
+			float gridCrossArmPx;
+			float gridCrossWidthPx;
+			float rectangleCornerRingRadiusPx;
+			float rectangleEdgeRingRadiusPx;
 			float segmentLabelPx;
 			float segmentLabelOffsetPx;
 			float segmentLabelCursorClearancePx;
@@ -180,6 +191,10 @@ namespace world_sim {
 				.cursorTickLengthPx = kCursorTickLengthPx,
 				.cursorTickWidthPx = kCursorTickWidthPx,
 				.cursorTickOutlineWidthPx = kCursorTickOutlineWidthPx,
+				.gridCrossArmPx = kGridCrossArmPx,
+				.gridCrossWidthPx = kGridCrossWidthPx,
+				.rectangleCornerRingRadiusPx = kRectangleCornerRingRadiusPx,
+				.rectangleEdgeRingRadiusPx = kRectangleEdgeRingRadiusPx,
 				.segmentLabelPx = kSegmentLabelPx * uiScale,
 				.segmentLabelOffsetPx = kSegmentPlateOffsetPx + kLabelPlatePaddingPx * uiScale,
 				.segmentLabelCursorClearancePx = kSegmentLabelCursorClearancePx,
@@ -473,8 +488,9 @@ namespace world_sim {
 					}
 				}
 				planCloseHalo();
+				planGridCross();
 				seedLabelObstacles();
-				if (input.tool == ToolKind::FoundationRectangle) {
+				if (rectangleTool()) {
 					planSizeLabel();
 				} else {
 					planSegmentLabel();
@@ -486,7 +502,9 @@ namespace world_sim {
 						}
 					}
 				}
-				planCursor();
+				if (!rectangleTool()) {
+					planCursor();
+				}
 				planCrossingDot();
 				planSnapTarget();
 				return std::move(result);
@@ -542,10 +560,28 @@ namespace world_sim {
 				return Circle{*center, radius};
 			}
 
-			// The wall tool's snap-target ring, outside the marker's ticks: amber on a vertex
-			// (a wall endpoint or a foundation corner), cyan on a segment or edge.
+			// The Rectangle tool draws no snapped-point marker.
+			bool rectangleTool() const { return input.tool == ToolKind::FoundationRectangle; }
+
+			// The snap-target ring: amber on a vertex (a wall endpoint or a foundation corner),
+			// cyan on a segment or edge. The wall tool's sits outside the marker's ticks; the
+			// Rectangle tool, which has no marker, rings an existing corner or edge closer in.
 			std::optional<SnapTarget> snapTargetRing() const {
-				if (input.tool != ToolKind::Wall || !isFinite(snappedPoint)) {
+				if (!isFinite(snappedPoint)) {
+					return std::nullopt;
+				}
+				if (rectangleTool()) {
+					const construction::RectangleSnapKind kind = input.rectangleSnap;
+					if (kind != construction::RectangleSnapKind::Vertex && kind != construction::RectangleSnapKind::Edge) {
+						return std::nullopt;
+					}
+					const bool onCorner = kind == construction::RectangleSnapKind::Vertex;
+					return SnapTarget{
+						.circle = {snappedPoint, onCorner ? look.rectangleCornerRingRadiusPx : look.rectangleEdgeRingRadiusPx},
+						.color = colorOf(onCorner ? style.snapVertexColor : style.snapEdgeColor),
+					};
+				}
+				if (input.tool != ToolKind::Wall) {
 					return std::nullopt;
 				}
 				const SnapKind kind = input.snap.kind;
@@ -728,10 +764,26 @@ namespace world_sim {
 				}
 			}
 
+			// The Rectangle tool's cross on the grid point that placed its corner, in the world
+			// guide color.
+			void planGridCross() {
+				if (!rectangleTool() || input.rectangleSnap != construction::RectangleSnapKind::Grid || !isFinite(snappedPoint)) {
+					return;
+				}
+				const Foundation::Color color = withOpacity(guideColor(style, GuideSource::WorldAxes), kGridCrossOpacity);
+				const float				arm = look.gridCrossArmPx;
+				result.strokes.push_back(segmentStroke(
+					{snappedPoint.x - arm, snappedPoint.y}, {snappedPoint.x + arm, snappedPoint.y}, color, look.gridCrossWidthPx, FeedbackLayer::Marker
+				));
+				result.strokes.push_back(segmentStroke(
+					{snappedPoint.x, snappedPoint.y - arm}, {snappedPoint.x, snappedPoint.y + arm}, color, look.gridCrossWidthPx, FeedbackLayer::Marker
+				));
+			}
+
 			// Guide labels keep clear of the snapped-point marker out to its ticks, and of the
 			// common obstacles.
 			void seedLabelObstacles() {
-				if (isFinite(snappedPoint)) {
+				if (!rectangleTool() && isFinite(snappedPoint)) {
 					placedLabels.push_back(boxAround(snappedPoint, tickOuterRadius + look.cursorTickOutlineWidthPx * 0.5F));
 				}
 				addCommonObstacles(placedLabels);
@@ -843,30 +895,6 @@ namespace world_sim {
 					addLabel(layout.text, *atMiddle, look.segmentLabelPx, layout.size, kSegmentLabelColor);
 					return;
 				}
-				addEndLabel(layout);
-			}
-
-			// The Rectangle tool's size label ("4 m x 3 m"), beside the snapped corner in the
-			// quarter that points along the diagonal from the first corner, placed as the segment
-			// label's end placements are. Nothing while the two corners span no rectangle.
-			void planSizeLabel() {
-				if (input.points.empty() || !isFinite(snappedPoint)) {
-					return;
-				}
-				const std::optional<construction::RectangleShape> rectangle = construction::rectangleFromCorners(input.points.front(), input.cursor);
-				const Foundation::Vec2							  first = toScreen(input.points.front());
-				if (!rectangle || !isFinite(first)) {
-					return;
-				}
-				SegmentLabelLayout layout{.text = rectangle->label, .last = first, .obstacles = segmentLabelObstacles()};
-				layout.size = measure(layout.text, look.segmentLabelPx);
-				layout.reserve = layout.size;
-				addEndLabel(layout);
-			}
-
-			// At the snapped end: the first clear end placement, else the first that fits the
-			// screen unmoved, else the first moved just inside.
-			void addEndLabel(const SegmentLabelLayout& layout) {
 				const std::array<Placement, kEndPlacementCount> atEnd = endPlacements(layout);
 				const auto clear = [&](const FeedbackBox& plate) { return layout.clearOfObstacles(plate); };
 				addLabel(
@@ -876,6 +904,29 @@ namespace world_sim {
 					layout.size,
 					kSegmentLabelColor
 				);
+			}
+
+			// The Rectangle tool's size label ("4 m x 3 m"), beside the snapped corner, where the
+			// pointer sits, as the segment label's end placements are: up right, else up left, else
+			// down left, the first whose plate fits the screen; never down right, where the pointer
+			// hangs, unless only a move inside fits it. Nothing while the two corners span no
+			// rectangle.
+			void planSizeLabel() {
+				if (input.points.empty() || !isFinite(snappedPoint)) {
+					return;
+				}
+				const std::optional<construction::RectangleShape> rectangle = construction::rectangleFromCorners(input.points.front(), input.cursor);
+				if (!rectangle) {
+					return;
+				}
+				const Foundation::Vec2 size = measure(rectangle->label, look.segmentLabelPx);
+				const FeedbackBox	   anchor = endAnchorBox();
+				std::array<Placement, kEndPlacementCount> placements{};
+				for (std::size_t index = 0; index < kEndPlacementCount; ++index) {
+					const Foundation::Vec2 topLeft = inQuarter(anchor, kEndPlacementOrders[0][index], size);
+					placements[index] = {topLeft, topLeft};
+				}
+				addLabel(rectangle->label, firstOnScreen(placements, size), look.segmentLabelPx, size, kSegmentLabelColor);
 			}
 
 			// Beside the segment's middle, 10 px off it on the side away from the shape, then
@@ -964,18 +1015,21 @@ namespace world_sim {
 				const Foundation::Vec2 along = segmentLength > 0.0F ? Foundation::Vec2{segment.x / segmentLength, segment.y / segmentLength}
 																	: Foundation::Vec2{0.0F, 0.0F};
 				const FeedbackBox	   end = endAnchorBox();
-				const auto			   inQuarter = [&](Foundation::Vec2 corner, float width) -> Foundation::Vec2 {
-					return {
-						corner.x > 0.0F ? end.right + look.segmentLabelOffsetPx : end.left - look.segmentLabelOffsetPx - width,
-						corner.y < 0.0F ? end.top - look.segmentLabelOffsetPx - layout.size.y : end.bottom + look.segmentLabelOffsetPx,
-					};
-				};
 				const std::array<Foundation::Vec2, kEndPlacementCount>& order = kEndPlacementOrders[endQuarter(along)];
 				std::array<Placement, kEndPlacementCount>				placements{};
 				for (std::size_t index = 0; index < kEndPlacementCount; ++index) {
-					placements[index] = {inQuarter(order[index], layout.size.x), inQuarter(order[index], layout.reserve.x)};
+					placements[index] = {inQuarter(end, order[index], layout.size), inQuarter(end, order[index], layout.reserve)};
 				}
 				return placements;
+			}
+
+			// The top-left of a box `size` diagonally off `anchor` in the quarter `corner` points
+			// to, anchored by its corner nearest the anchor.
+			Foundation::Vec2 inQuarter(const FeedbackBox& anchor, Foundation::Vec2 corner, Foundation::Vec2 size) const {
+				return {
+					corner.x > 0.0F ? anchor.right + look.segmentLabelOffsetPx : anchor.left - look.segmentLabelOffsetPx - size.x,
+					corner.y < 0.0F ? anchor.top - look.segmentLabelOffsetPx - size.y : anchor.bottom + look.segmentLabelOffsetPx,
+				};
 			}
 
 			// `normal` (the segment's, on screen) or its reverse, whichever points away from the

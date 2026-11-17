@@ -108,6 +108,7 @@ namespace {
 		bool						  snappedPointInvalid = false;
 		Foundation::Color			  invalidColor{0.9F, 0.2F, 0.2F, 1.0F};
 		std::optional<FeedbackBox>	  keepClear;
+		construction::RectangleSnapKind rectangleSnap = construction::RectangleSnapKind::None;
 		int							  viewportWidth = kViewportWidth;
 		int							  viewportHeight = kViewportHeight;
 		float						  uiScale = 1.0F;
@@ -154,6 +155,7 @@ namespace {
 				.snappedPointInvalid = snappedPointInvalid,
 				.invalidColor = invalidColor,
 				.keepClear = keepClear,
+				.rectangleSnap = rectangleSnap,
 			};
 			char reserved[32];
 			std::snprintf(reserved, sizeof(reserved), "%.*f m", style.guideDistanceDecimals, 999.0);
@@ -1598,37 +1600,217 @@ TEST_F(DrawingFeedbackTest, OnlyTheLabelsFollowTheUiScale) {
 	}
 }
 
-// The Rectangle tool's size label: the rectangle the two corners span, beside the snapped
-// corner and never to its lower right; its text follows the interface size while the marker
-// does not. No segment length label, no close ring or halo.
-TEST_F(DrawingFeedbackTest, RectangleSizeLabelReadsTheRectangleAndFollowsTheUiScale) {
-	tool = world_sim::ToolKind::FoundationRectangle;
-	points = {{-2.0F, -1.0F}};
-	cursor = {2.0F, 2.0F};
+namespace {
+
+	// The Rectangle tool's look, from D13's Preview.
+	constexpr float kGridCrossArmPx = 5.0F;
+	constexpr float kGridCrossWidthPx = 1.25F;
+	constexpr float kGridCrossOpacity = 0.55F;
+	constexpr float kSizeLabelPlateGapPx = 9.0F; // the plate's corner off the snapped corner, diagonally
+
+	// The Rectangle tool with a first corner 4 m left of and 3 m below the snapped corner, which
+	// sits at `snappedScreen`: a 4 m x 3 m rectangle.
+	class RectangleFeedbackTest : public DrawingFeedbackTest {
+	  protected:
+		void SetUp() override {
+			DrawingFeedbackTest::SetUp();
+			tool = world_sim::ToolKind::FoundationRectangle;
+			style.guideColorMode = assets::GuideColorMode::BySource;
+		}
+
+		void cornerAt(Foundation::Vec2 snappedScreen, Foundation::Vec2 towardFirstCorner = {-4.0F, -3.0F}) {
+			cursor = worldAt(snappedScreen);
+			points = {{cursor.x + towardFirstCorner.x, cursor.y + towardFirstCorner.y}};
+		}
+
+		// The two strokes of a cross centered on `center`, if the plan has them.
+		static std::vector<FeedbackStroke> crossAt(const DrawingFeedbackPlan& result, Foundation::Vec2 center) {
+			std::vector<FeedbackStroke> found;
+			for (const FeedbackStroke& stroke : result.strokes) {
+				const Foundation::Vec2 middle{
+					(stroke.points[0].x + stroke.points[1].x) * 0.5F, (stroke.points[0].y + stroke.points[1].y) * 0.5F
+				};
+				if (stroke.pointCount == 2 && std::hypot(middle.x - center.x, middle.y - center.y) < 1e-3F) {
+					found.push_back(stroke);
+				}
+			}
+			return found;
+		}
+
+		// The plan's one label, the size label.
+		FeedbackLabel sizeLabel() {
+			const DrawingFeedbackPlan result = plan();
+			EXPECT_EQ(result.labels.size(), 1U);
+			return result.labels.empty() ? FeedbackLabel{} : result.labels.front();
+		}
+	};
+
+	bool lowerRightOf(const FeedbackBox& plate, Foundation::Vec2 point) {
+		return plate.left >= point.x && plate.top >= point.y;
+	}
+
+	bool insideViewport(const FeedbackBox& plate) {
+		return plate.left >= -kViewportTolerancePx && plate.top >= -kViewportTolerancePx &&
+			   plate.right <= kViewportWidth + kViewportTolerancePx && plate.bottom <= kViewportHeight + kViewportTolerancePx;
+	}
+
+} // namespace
+
+TEST_F(RectangleFeedbackTest, TheGridCrossIsPlannedExactlyWhenTheGridPlacedTheCorner) {
+	const Foundation::Vec2 corner{500.0F, 400.0F};
+	cornerAt(corner);
+	for (const auto kind :
+		 {construction::RectangleSnapKind::None, construction::RectangleSnapKind::Vertex, construction::RectangleSnapKind::Edge}) {
+		rectangleSnap = kind;
+		EXPECT_TRUE(crossAt(plan(), corner).empty()) << static_cast<int>(kind);
+	}
+	rectangleSnap = construction::RectangleSnapKind::Grid;
+	for (const float scale : {0.6F, 1.0F, 2.0F}) {
+		SCOPED_TRACE(::testing::Message() << "scale " << scale);
+		uiScale = scale;
+		const std::vector<FeedbackStroke> cross = crossAt(plan(), corner);
+		ASSERT_EQ(cross.size(), 2U);
+		for (const FeedbackStroke& arm : cross) {
+			const float halfLength = std::hypot(arm.points[1].x - arm.points[0].x, arm.points[1].y - arm.points[0].y) * 0.5F;
+			EXPECT_NEAR(halfLength, kGridCrossArmPx, 1e-3F) << "the arms stay in window pixels";
+			EXPECT_EQ(arm.width, kGridCrossWidthPx);
+			EXPECT_EQ(arm.layer, FeedbackLayer::Marker);
+			EXPECT_FALSE(arm.dash.has_value());
+			EXPECT_EQ(arm.color.r, style.guideColorWorld.r);
+			EXPECT_EQ(arm.color.g, style.guideColorWorld.g);
+			EXPECT_EQ(arm.color.b, style.guideColorWorld.b);
+			EXPECT_EQ(arm.color.a, kGridCrossOpacity);
+		}
+		EXPECT_NE(cross[0].points[0].x == cross[0].points[1].x, cross[1].points[0].x == cross[1].points[1].x) << "one across, one up";
+	}
+	points.clear();
+	EXPECT_EQ(crossAt(plan(), corner).size(), 2U) << "the first corner's grid point too";
+}
+
+TEST_F(RectangleFeedbackTest, NoSnappedPointMarkerIsPlannedForTheRectangleTool) {
+	cornerAt({500.0F, 400.0F});
+	for (const auto kind :
+		 {construction::RectangleSnapKind::None,
+		  construction::RectangleSnapKind::Vertex,
+		  construction::RectangleSnapKind::Edge,
+		  construction::RectangleSnapKind::Grid}) {
+		rectangleSnap = kind;
+		snappedPointInvalid = true;
+		const DrawingFeedbackPlan result = plan();
+		EXPECT_TRUE(strokesIn(result, FeedbackLayer::Cursor).empty());
+		EXPECT_TRUE(strokesIn(result, FeedbackLayer::CursorOutline).empty());
+		EXPECT_TRUE(dotsIn(result, FeedbackLayer::Cursor).empty());
+		EXPECT_TRUE(result.dots.empty()) << "no red dot either";
+	}
+}
+
+// The prototype's rings: amber 8 px round an existing corner, cyan 7 px on an existing edge.
+TEST_F(RectangleFeedbackTest, AnExistingCornerOrEdgeIsRingedAndNothingElseIs) {
+	const Foundation::Vec2 corner{500.0F, 400.0F};
+	cornerAt(corner);
+	rectangleSnap = construction::RectangleSnapKind::Vertex;
+	std::vector<FeedbackRing> rings = plan().rings;
+	ASSERT_EQ(rings.size(), 1U);
+	EXPECT_NEAR(rings[0].center.x, corner.x, 1e-3F);
+	EXPECT_NEAR(rings[0].center.y, corner.y, 1e-3F);
+	EXPECT_EQ(rings[0].radius, 8.0F);
+	EXPECT_EQ(rings[0].width, 2.0F);
+	EXPECT_EQ(rings[0].color.r, style.snapVertexColor.r);
+	EXPECT_EQ(rings[0].color.b, style.snapVertexColor.b);
+
+	rectangleSnap = construction::RectangleSnapKind::Edge;
+	rings = plan().rings;
+	ASSERT_EQ(rings.size(), 1U);
+	EXPECT_EQ(rings[0].radius, 7.0F);
+	EXPECT_EQ(rings[0].color.r, style.snapEdgeColor.r);
+	EXPECT_EQ(rings[0].color.b, style.snapEdgeColor.b);
+
+	for (const auto kind : {construction::RectangleSnapKind::None, construction::RectangleSnapKind::Grid}) {
+		rectangleSnap = kind;
+		EXPECT_TRUE(plan().rings.empty()) << static_cast<int>(kind);
+	}
+}
+
+// Beside the snapped corner, where the pointer sits: up right, its plate 9 px off diagonally,
+// whichever way the rectangle runs from its first corner, and never down right, where the
+// pointer's arrow hangs. No rectangle, no label.
+TEST_F(RectangleFeedbackTest, TheSizeLabelSitsUpRightOfTheCursorWhicheverWayTheRectangleRuns) {
+	const Foundation::Vec2 corner{500.0F, 400.0F};
+	for (const Foundation::Vec2 towardFirstCorner : {Foundation::Vec2{-4.0F, -3.0F}, {4.0F, -3.0F}, {4.0F, 3.0F}, {-4.0F, 3.0F}}) {
+		SCOPED_TRACE(::testing::Message() << towardFirstCorner.x << ", " << towardFirstCorner.y);
+		cornerAt(corner, towardFirstCorner);
+		for (const auto kind : {construction::RectangleSnapKind::Grid, construction::RectangleSnapKind::None}) {
+			rectangleSnap = kind;
+			const FeedbackLabel label = sizeLabel();
+			EXPECT_EQ(label.text, "4 m x 3 m");
+			EXPECT_NEAR(label.plate.left - corner.x, kSizeLabelPlateGapPx, 1e-3F);
+			EXPECT_NEAR(corner.y - label.plate.bottom, kSizeLabelPlateGapPx, 1e-3F);
+			EXPECT_FALSE(lowerRightOf(label.plate, corner));
+		}
+	}
+	points = {{cursor.x + 6.0F, cursor.y}}; // level with the snapped corner: no rectangle
+	EXPECT_TRUE(plan().labels.empty());
+}
+
+// Near each screen edge the label takes the first of up right, up left, and down left whose plate
+// fits, and stays on the screen and off the pointer's lower right.
+TEST_F(RectangleFeedbackTest, TheSizeLabelStaysOnScreenNearEachEdge) {
+	rectangleSnap = construction::RectangleSnapKind::Grid;
+	const struct {
+		const char*		 where;
+		Foundation::Vec2 corner;
+		int				 sideX; // the plate's side of the corner: 1 right, -1 left
+		int				 sideY; // 1 below, -1 above
+	} cases[] = {
+		{"right edge", {990.0F, 400.0F}, -1, -1},
+		{"top edge", {500.0F, 10.0F}, -1, 1},
+		{"top-right corner", {990.0F, 10.0F}, -1, 1},
+		{"bottom edge", {500.0F, 795.0F}, 1, -1},
+		{"left edge", {5.0F, 400.0F}, 1, -1},
+		{"bottom-right corner", {990.0F, 795.0F}, -1, -1},
+	};
+	for (const auto& place : cases) {
+		SCOPED_TRACE(place.where);
+		cornerAt(place.corner);
+		const FeedbackLabel label = sizeLabel();
+		EXPECT_TRUE(insideViewport(label.plate));
+		EXPECT_FALSE(lowerRightOf(label.plate, place.corner));
+		const Foundation::Vec2 middle = centerOf(label.plate);
+		EXPECT_EQ(signOf(middle.x - place.corner.x), place.sideX);
+		EXPECT_EQ(signOf(middle.y - place.corner.y), place.sideY);
+	}
+}
+
+// The label's text and plate follow the interface size and its 9 px gap does not; the cross and
+// the ring stay in window pixels.
+TEST_F(RectangleFeedbackTest, TheSizeLabelFollowsTheInterfaceSizeAndNothingElseDoes) {
+	const Foundation::Vec2 corner{500.0F, 400.0F};
+	cornerAt(corner);
+	rectangleSnap = construction::RectangleSnapKind::Grid;
 	const DrawingFeedbackPlan atOne = plan();
 	ASSERT_EQ(atOne.labels.size(), 1U);
-	EXPECT_EQ(atOne.labels[0].text, "4 m x 3 m");
-	EXPECT_TRUE(atOne.rings.empty());
-	const Foundation::Vec2 tip = screen(cursor);
-	const FeedbackBox&	   plate = atOne.labels[0].plate;
-	EXPECT_FALSE(plate.left >= tip.x && plate.top >= tip.y) << "lower right of the pointer";
-	for (const FeedbackBox& marker : markerBoxes(tip)) {
-		EXPECT_FALSE(overlaps(plate, marker));
+	const float sizeAtOne = atOne.labels[0].sizePx;
+	for (const float scale : {0.6F, 1.2F, 2.0F}) {
+		SCOPED_TRACE(::testing::Message() << "scale " << scale);
+		uiScale = scale;
+		const DrawingFeedbackPlan scaled = plan();
+		ASSERT_EQ(scaled.labels.size(), 1U);
+		const FeedbackLabel& label = scaled.labels[0];
+		EXPECT_FLOAT_EQ(label.sizePx, sizeAtOne * scale);
+		EXPECT_NEAR(label.plate.bottom - label.plate.top, (kLineHeightOfSize * label.sizePx) + 2.0F * kPlatePaddingPx * scale, 1e-3F);
+		EXPECT_NEAR(label.plate.left - corner.x, kSizeLabelPlateGapPx, 1e-3F);
+		EXPECT_NEAR(corner.y - label.plate.bottom, kSizeLabelPlateGapPx, 1e-3F);
+		ASSERT_EQ(scaled.strokes.size(), atOne.strokes.size());
+		for (std::size_t index = 0; index < atOne.strokes.size(); ++index) {
+			EXPECT_EQ(scaled.strokes[index].width, atOne.strokes[index].width);
+			for (std::size_t point = 0; point < atOne.strokes[index].pointCount; ++point) {
+				EXPECT_EQ(scaled.strokes[index].points[point].x, atOne.strokes[index].points[point].x);
+				EXPECT_EQ(scaled.strokes[index].points[point].y, atOne.strokes[index].points[point].y);
+			}
+		}
 	}
-
-	uiScale = 1.5F;
-	const DrawingFeedbackPlan atOneAndAHalf = plan();
-	ASSERT_EQ(atOneAndAHalf.labels.size(), 1U);
-	EXPECT_EQ(atOneAndAHalf.labels[0].sizePx, atOne.labels[0].sizePx * 1.5F);
-	ASSERT_EQ(atOneAndAHalf.strokes.size(), atOne.strokes.size());
-	for (std::size_t index = 0; index < atOne.strokes.size(); ++index) {
-		EXPECT_EQ(atOneAndAHalf.strokes[index].width, atOne.strokes[index].width);
-	}
-	ASSERT_EQ(atOneAndAHalf.dots.size(), atOne.dots.size());
-	for (std::size_t index = 0; index < atOne.dots.size(); ++index) {
-		EXPECT_EQ(atOneAndAHalf.dots[index].radius, atOne.dots[index].radius);
-	}
-
-	cursor = {6.0F, -1.0F}; // level with the first corner: no rectangle, no label
-	EXPECT_TRUE(plan().labels.empty());
+	rectangleSnap = construction::RectangleSnapKind::Vertex;
+	uiScale = 2.0F;
+	ASSERT_EQ(plan().rings.size(), 1U);
+	EXPECT_EQ(plan().rings[0].radius, 8.0F);
 }
