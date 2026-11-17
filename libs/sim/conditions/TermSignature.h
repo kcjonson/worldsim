@@ -4,7 +4,10 @@
 
 #include <ecs/EntityID.h>
 
+#include <cstdint>
 #include <functional>
+#include <limits>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -15,27 +18,36 @@ namespace ecs {
 
 namespace conditions {
 
-	/// Whom a condition is asked about, and the world his components live in.
+	/// Whom a condition is asked about, the world his components live in, and the entity `target` names
+	/// (a bed a behavior acts on); none leaves `target` Unknown.
 	struct ConditionContext {
 		const ecs::World& world;
 		ecs::EntityID	  colonist = ecs::kInvalidEntity;
+		ecs::EntityID	  target = ecs::kInvalidEntity;
 	};
 
-	/// Answers one term for one colonist. `arguments` are already evaluated, in parameter order, and all
-	/// known: a term with an unknown argument is unknown without being asked. Called during evaluation, so it
-	/// must not allocate.
-	using TermProvider = std::function<TermValue(std::span<const TermValue> arguments, const ConditionContext& context)>;
+	/// One call of a term: its arguments, evaluated, in parameter order and all known (a term with an
+	/// unknown argument is Unknown without being asked), and `countLimit`, past which a counting term's
+	/// answer changes nothing, so it may stop counting there (`count_near(colonist, 5) >= 2` needs 3).
+	struct TermCall {
+		std::span<const TermValue> arguments;
+		const ConditionContext&	   context;
+		uint32_t				   countLimit = std::numeric_limits<uint32_t>::max();
+	};
 
-	/// A term's name and types. A Symbol parameter takes a bare name; a Number parameter takes a number or a
-	/// Number term; a Target parameter takes a bare name or a Target term.
+	/// Answers one term. Called during evaluation, so it must not allocate.
+	using TermProvider = std::function<TermValue(const TermCall& call)>;
+
+	struct TermParameter {
+		ValueType				type = ValueType::Number;
+		std::optional<uint32_t> symbolSet; // a Symbol parameter's set, in the vocabulary
+	};
+
 	struct TermSignature {
-		std::string			   name;
-		ValueType			   result = ValueType::Boolean;
-		std::vector<ValueType> parameters;
-		/// Per parameter, the names a Symbol parameter accepts. Missing or empty accepts any name.
-		std::vector<std::vector<std::string>> parameterSymbols;
-		/// The names a Symbol result can be compared against with `is`. Empty accepts any name.
-		std::vector<std::string> resultSymbols;
+		std::string				   name;
+		ValueType				   result = ValueType::Truth;
+		std::optional<uint32_t>	   resultSymbolSet; // a Symbol result's set, for `is`
+		std::vector<TermParameter> parameters;
 	};
 
 } // namespace conditions

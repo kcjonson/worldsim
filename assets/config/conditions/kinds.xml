@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The kinds near() and count_near() look for, and what a colonist's memory holds each under:
+  capability="<Capability>" for remembered things with that capability, remembered="colonists" for
+  remembered colonists. A kind with neither is declared but nothing answers it, so it reads Unknown.
+  A mod adds a kind with a <Kind> in a file of its own.
+-->
+<ConditionVocabulary>
+  <Kind name="colonist" remembered="colonists"/>
+  <Kind name="food" capability="Edible"/>
+  <Kind name="storage" capability="Storage"/>
+  <Kind name="station" capability="Craftable"/>
+  <Kind name="bed" capability="Sleepable"/>
+  <Kind name="loose_item" capability="Carryable"/>
+  <Kind name="latrine" capability="Toilet"/>
+  <Kind name="structure"/>
+  <Kind name="lit_fire"/>
+  <Kind name="door"/>
+  <Kind name="tool"/>
+  <Kind name="prepared_food"/>
+</ConditionVocabulary>

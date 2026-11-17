@@ -1,22 +1,30 @@
 #pragma once
 
+#include "TermValue.h"
+
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace conditions {
 
+	/// The most nodes one condition may hold.
+	inline constexpr std::size_t kMaxConditionNodes = 256;
+
 	enum class NodeKind : uint8_t {
-		And,		   // left and right
-		Or,			   // left and right
+		And,		   // children, all Truth
+		Or,			   // children, all Truth
 		Not,		   // left
-		Compare,	   // left and right, both Number; comparison
-		Is,			   // left, a Symbol; symbol is what it is compared against
-		Term,		   // term is the vocabulary slot; firstArgument and argumentCount index Condition::arguments
+		Compare,	   // left and right, both Number or both Target (== and != only)
+		Is,			   // left, a Symbol term, against symbol
+		Term,		   // term is the vocabulary slot; children are its arguments
 		NumberLiteral, // number
-		SymbolLiteral  // symbol
+		SymbolLiteral, // symbol
+		Self,		   // the colonist the condition is asked about
+		BoundTarget	   // the entity the caller bound as `target`
 	};
 
 	enum class Comparison : uint8_t { Less, LessOrEqual, Greater, GreaterOrEqual, Equal, NotEqual };
@@ -25,11 +33,12 @@ namespace conditions {
 	struct ConditionNode {
 		double	   number = 0.0;
 		uint32_t   term = 0;
-		uint32_t   symbol = 0;
+		uint32_t   countLimit = std::numeric_limits<uint32_t>::max(); // a Term's TermCall::countLimit
+		SymbolId   symbol{};
 		uint16_t   left = 0;
 		uint16_t   right = 0;
-		uint16_t   firstArgument = 0;
-		uint8_t	   argumentCount = 0;
+		uint16_t   firstChild = 0; // into Condition::children
+		uint16_t   childCount = 0;
 		NodeKind   kind = NodeKind::NumberLiteral;
 		Comparison comparison = Comparison::Less;
 	};
@@ -38,7 +47,7 @@ namespace conditions {
 	/// children before parents; the root is the last node.
 	struct Condition {
 		std::vector<ConditionNode> nodes;
-		std::vector<uint16_t>	   arguments;
+		std::vector<uint16_t>	   children;
 		std::string				   text;
 
 		[[nodiscard]] uint16_t root() const { return static_cast<uint16_t>(nodes.size() - 1); }

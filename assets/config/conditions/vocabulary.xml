@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Condition vocabulary: the terms behaviors and thoughts write their conditions in.
+
+  Every .xml file in this folder (and its subfolders) adds to the vocabulary, so a mod adds terms,
+  names, and kinds with a file of its own. A term no system answers still parses and reads Unknown.
+
+  <Term name result [symbols]>    result is Truth, Number, Symbol, or Target; a Symbol result names
+    <Parameter type [symbols]/>   the set `is` compares against, and a Symbol parameter the set its
+  </Term>                         names come from.
+  <Symbols name>names</Symbols>   a set of names; files that name the same set add to it.
+  <TaskGroup name>tasks</TaskGroup>  a name current_task() takes for several task types.
+  <Night start end/>              the hours is_night is true.
+
+  See /docs/design/game-systems/colonists/mood.md (Conditions).
+-->
+<ConditionVocabulary>
+  <Symbols name="need">hunger thirst energy bladder digestion hygiene recreation temperature</Symbols>
+  <Symbols name="attribute">strength agility intelligence civility sanity kindness work_ethic social_need</Symbols>
+  <Symbols name="trait">hard_worker night_owl gourmand ascetic volatile</Symbols>
+  <Symbols name="task">fulfill_need harvest craft haul place_packaged build deconstruct wander</Symbols>
+  <Symbols name="event">argument insult fight</Symbols>
+  <Symbols name="resource">food water</Symbols>
+  <Symbols name="scarcity_level">plenty tight short</Symbols>
+  <Symbols name="mood_cause">hunger thirst energy bladder digestion hygiene recreation temperature argument</Symbols>
+  <Symbols name="behavior">
+    hold_together dawdle wander_off oversleep walk_into_unknown leave_colony
+    vent snipe argue spread_gloom fist_fight
+    binge_eat eat_the_last hoard
+    abandon_craft smash_item vandalize scatter_stockpile arson
+    skip_hygiene relieve_on_station hide_tool soil_bed dirty_hands
+  </Symbols>
+
+  <TaskGroup name="work">harvest craft haul place_packaged build deconstruct</TaskGroup>
+
+  <Night start="20" end="6"/>
+
+  <!-- Nearby -->
+  <Term name="near" result="Truth">
+    <Parameter type="Symbol" symbols="kind"/>
+    <Parameter type="Number"/>
+  </Term>
+  <Term name="count_near" result="Number">
+    <Parameter type="Symbol" symbols="kind"/>
+    <Parameter type="Number"/>
+  </Term>
+  <Term name="in_room" result="Truth"/>
+  <Term name="room_occupants" result="Number"/>
+  <Term name="unexplored_in_sight" result="Truth"/>
+
+  <!-- Observation -->
+  <Term name="observed" result="Truth"/>
+
+  <!-- Ownership -->
+  <Term name="owner" result="Target">
+    <Parameter type="Target"/>
+  </Term>
+  <Term name="owner_present" result="Truth">
+    <Parameter type="Target"/>
+  </Term>
+
+  <!-- Relationships -->
+  <Term name="opinion" result="Number">
+    <Parameter type="Target"/>
+  </Term>
+  <Term name="likes" result="Truth">
+    <Parameter type="Target"/>
+  </Term>
+  <Term name="dislikes" result="Truth">
+    <Parameter type="Target"/>
+  </Term>
+  <Term name="recent_event" result="Truth">
+    <Parameter type="Target"/>
+    <Parameter type="Symbol" symbols="event"/>
+    <Parameter type="Number"/>
+  </Term>
+
+  <!-- Self -->
+  <Term name="mood" result="Number"/>
+  <Term name="mood_cause" result="Symbol" symbols="mood_cause"/>
+  <Term name="need" result="Number">
+    <Parameter type="Symbol" symbols="need"/>
+  </Term>
+  <Term name="attribute" result="Number">
+    <Parameter type="Symbol" symbols="attribute"/>
+  </Term>
+  <Term name="trait" result="Truth">
+    <Parameter type="Symbol" symbols="trait"/>
+  </Term>
+  <Term name="current_task" result="Truth">
+    <Parameter type="Symbol" symbols="task"/>
+  </Term>
+  <Term name="mid_craft" result="Truth"/>
+  <Term name="hours_worked" result="Number">
+    <Parameter type="Number"/>
+  </Term>
+  <Term name="holds_in_a_row" result="Number"/>
+  <Term name="affinity" result="Number">
+    <Parameter type="Symbol" symbols="behavior"/>
+  </Term>
+  <Term name="time_below" result="Truth">
+    <Parameter type="Number"/>
+    <Parameter type="Number"/>
+  </Term>
+
+  <!-- Colony -->
+  <Term name="scarcity" result="Symbol" symbols="scarcity_level">
+    <Parameter type="Symbol" symbols="resource"/>
+  </Term>
+  <Term name="colony_mood" result="Number"/>
+
+  <!-- Time -->
+  <Term name="hour" result="Number"/>
+  <Term name="is_night" result="Truth"/>
+
+  <!-- Body, for thoughts -->
+  <Term name="wetness" result="Number"/>
+  <Term name="feels_hot" result="Truth"/>
+  <Term name="feels_cold" result="Truth"/>
+</ConditionVocabulary>

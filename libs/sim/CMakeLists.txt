@@ -35,8 +35,8 @@ add_library(sim
     conditions/ColonistTerms.cpp
     conditions/ConditionParser.cpp
     conditions/ConditionVocabulary.cpp
-    conditions/KnownTerms.cpp
     conditions/NearbyTerms.cpp
+    conditions/SimTerms.cpp
     conditions/TimeTerms.cpp
     construction/BuilderSpots.cpp
     construction/ConstructionWorld.cpp

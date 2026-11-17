@@ -185,9 +185,9 @@ Event types, their feelings, lines, importance, mood effects, and animations are
 <thought id="soaked" importance="normal" animation="rain_drop">
   <feeling is="miserable" mood="-6" while="wetness > 0.6"/>
   <feeling is="furious" when="trait(volatile)" mood="-9" while="wetness > 0.6"/>
-  <feeling is="refreshed" when="need(temperature) is hot" mood="+4" while="wetness > 0.6"/>
+  <feeling is="refreshed" when="feels_hot" mood="+4" while="wetness > 0.6"/>
   <line>I'm soaked through.</line>
-  <line when="feeling(furious)">One more minute of this...</line>
+  <line feeling="furious">One more minute of this...</line>
   <ends id="dried_off">
     <line>Finally dry.</line>
   </ends>

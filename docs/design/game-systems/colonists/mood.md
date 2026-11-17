@@ -285,6 +285,11 @@ Every `requires` and multiplier is built from these.
 | Self | `hours_worked(window)`, `holds_in_a_row`, `affinity(behavior)`, `time_below(mood, duration)` |
 | Colony | `scarcity(kind)`: plenty, tight, short; `colony_mood` |
 | Time | `hour`, `is_night` |
+| Targets | `self`, the colonist; `target`, the thing a behavior acts on |
+
+Every argument is typed: a kind or a need is a name from its declared list, and an argument that takes a target takes `self`, `target`, or a condition that names one, such as `owner(target)`. A condition can be Unknown, when nothing answers one of its terms or the colonist lacks what it reads: a `requires` that is Unknown fails, a weight whose condition is Unknown is not applied, and a `while` that is Unknown keeps its last state.
+
+The vocabulary is declared in data (`assets/config/conditions`): the conditions and their types, the names each takes, and the kinds `near` looks for and what memory holds them under. A mod adds conditions and kinds with a file of its own there.
 
 ## Data
 
@@ -292,13 +297,15 @@ The behavior list, the thoughts, the roll curve, relief sizes, the cooldown, the
 
 ```xml
 <behavior id="soil_bed" rampStart="25" rampFull="15" base="4">
-  <requires>near(bed, 15) and not owner_present(bed)</requires>
-  <weight when="dislikes(owner(bed))" multiply="4"/>
+  <target kind="bed" within="15" where="not owner_present(target) and owner(target) != self"/>
+  <weight when="dislikes(owner(target))" multiply="4"/>
   <weight when="not observed" multiply="2"/>
   <ends after="task"/>
   <relief amount="medium"/>
 </behavior>
 ```
+
+A behavior that acts on something names it with `<target>`. Each candidate of that kind in range that passes `where` takes part in the roll as its own entry, with the weights evaluated against it. A behavior with no target uses `<requires>`.
 
 Conditions are data and need no scripting. A behavior's effect, what the colonist physically does, is a script, so a mod adds a behavior by adding an entry and its effect.
 

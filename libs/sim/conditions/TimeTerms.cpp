@@ -5,32 +5,35 @@
 #include <ecs/World.h>
 #include <ecs/systems/TimeSystem.h>
 
-#include <cassert>
-
 namespace conditions {
 
-	void provideTimeTerms(ConditionVocabulary& vocabulary, NightHours night) {
-		[[maybe_unused]] const auto hourRefused = vocabulary.provide(
-			{.name = "hour", .result = ValueType::Number}, [](std::span<const TermValue>, const ConditionContext& context) {
-				const ecs::TimeSystem* time = context.world.tryGetSystem<ecs::TimeSystem>();
-				return time != nullptr ? TermValue::fromNumber(time->timeOfDay()) : TermValue::unknown();
-			}
-		);
-		assert(!hourRefused.has_value());
+	void provideTimeTerms(ConditionVocabulary& vocabulary, const assets::ConditionConfig& config, std::vector<std::string>& errors) {
+		const auto hourRefused = vocabulary.provide("hour", ValueType::Number, {}, [](const TermCall& call) {
+			const ecs::TimeSystem* time = call.context.world.tryGetSystem<ecs::TimeSystem>();
+			return time != nullptr ? TermValue::fromNumber(time->timeOfDay()) : TermValue::unknown();
+		});
+		if (hourRefused.has_value()) {
+			errors.push_back(*hourRefused);
+		}
 
-		[[maybe_unused]] const auto nightRefused = vocabulary.provide(
-			{.name = "is_night", .result = ValueType::Boolean}, [night](std::span<const TermValue>, const ConditionContext& context) {
-				const ecs::TimeSystem* time = context.world.tryGetSystem<ecs::TimeSystem>();
-				if (time == nullptr) {
-					return TermValue::unknown();
-				}
-				const float hour = time->timeOfDay();
-				const bool	wrapsMidnight = night.start > night.end;
-				const bool	isNight = wrapsMidnight ? (hour >= night.start || hour < night.end) : (hour >= night.start && hour < night.end);
-				return TermValue::fromBoolean(isNight);
+		if (!config.night.has_value()) {
+			errors.emplace_back("is_night needs <Night> hours in the condition vocabulary");
+			return;
+		}
+		const auto nightRefused = vocabulary.provide("is_night", ValueType::Truth, {}, [night = *config.night](const TermCall& call) {
+			const ecs::TimeSystem* time = call.context.world.tryGetSystem<ecs::TimeSystem>();
+			if (time == nullptr) {
+				return TermValue::unknown();
 			}
-		);
-		assert(!nightRefused.has_value());
+			const float hour = time->timeOfDay();
+			const bool	wrapsMidnight = night.start > night.end;
+			return TermValue::fromTruth(
+				wrapsMidnight ? (hour >= night.start || hour < night.end) : (hour >= night.start && hour < night.end)
+			);
+		});
+		if (nightRefused.has_value()) {
+			errors.push_back(*nightRefused);
+		}
 	}
 
 } // namespace conditions

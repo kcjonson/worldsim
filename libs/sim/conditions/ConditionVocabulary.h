@@ -7,9 +7,12 @@
 #include "TermSignature.h"
 #include "TermValue.h"
 
+#include <assets/ConditionConfig.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -20,36 +23,51 @@ namespace conditions {
 	/// The most arguments a term takes.
 	inline constexpr std::size_t kMaxArguments = 4;
 
-	/// Every term a condition may name, and the systems that answer them. It starts with the terms mood.md
-	/// lists, none of them provided; each system provides its own, and a mod adds new ones the same way.
-	/// Providers are registered before the conditions that use them are parsed, since a parse checks symbol
-	/// names against what each term accepts.
+	struct DeclaredSymbol {
+		std::string name;
+		SymbolId	id{};
+	};
+
+	/// Every term a condition may name, and the systems that answer them. It is built in two steps and then
+	/// frozen: the terms and symbol sets are declared from data (assets/config/conditions), then each system
+	/// provides the terms it answers. Conditions are parsed only once it is frozen.
 	///
-	/// A known term nothing provides parses, and evaluates to Unknown. A name that is neither known nor
-	/// provided is a parse error. A condition whose answer is Unknown does not hold: a behavior that requires
-	/// it is not in the roll, a weight or feeling with it does not apply.
+	/// A name no file declares is a parse error. A declared term nothing provides parses, evaluates to
+	/// Unknown, and is logged when a condition using it is parsed.
+	///
+	/// Unknown is returned as is. Consumers: a `requires` that is Unknown fails; a weight whose condition is
+	/// Unknown is not applied; a `while` that is Unknown keeps its last state.
 	class ConditionVocabulary {
 	  public:
-		ConditionVocabulary();
+		/// Declare the terms and symbol sets of `config`. Returns what was refused: a name that is not an
+		/// identifier or is a word of the grammar, a term declared twice, too many parameters, or a call
+		/// after the freeze.
+		std::vector<std::string> declare(const assets::ConditionConfig& config);
 
-		/// Provide a term. For a known term the result and parameter types must match the known ones; the
-		/// symbol names it gives narrow what parses. A new name adds a term. Returns why it was refused (a
-		/// type mismatch, a term already provided, too many parameters), or nothing when it was taken.
-		std::optional<std::string> provide(TermSignature signature, TermProvider provider);
+		/// Answer a declared term. Its types must match the declaration. Returns why it was refused (not
+		/// declared, a type mismatch, already provided, the vocabulary frozen), or nothing when it was taken.
+		std::optional<std::string>
+		provide(std::string_view name, ValueType result, std::vector<ValueType> parameters, TermProvider provider);
+
+		void			   freeze() { frozen = true; }
+		[[nodiscard]] bool isFrozen() const { return frozen; }
 
 		/// Parse an expression once, at load. Every error is reported here with its position, never later.
-		[[nodiscard]] ParseResult parse(std::string_view text);
+		/// Refused before the freeze.
+		[[nodiscard]] ParseResult parse(std::string_view text) const;
 
-		/// Run a condition this vocabulary parsed for one colonist. Does not allocate.
+		/// Run a condition this vocabulary parsed. Does not allocate.
 		[[nodiscard]] Truth evaluate(const Condition& condition, const ConditionContext& context) const;
 
-		/// The id of a symbol name, interned on first use. Providers take the ids of the names they answer
-		/// with or compare against when they are registered.
-		[[nodiscard]] uint32_t symbolId(std::string_view name);
+		/// The names a declared term's Symbol parameter takes, with their ids; empty for anything else.
+		/// Providers bind to these when they provide.
+		[[nodiscard]] std::span<const DeclaredSymbol> parameterSymbols(std::string_view term, std::size_t parameter) const;
 
-		[[nodiscard]] std::optional<uint32_t> findTerm(std::string_view name) const;
-		[[nodiscard]] const TermSignature&	  signature(uint32_t term) const { return terms[term].signature; }
-		[[nodiscard]] bool					  isProvided(uint32_t term) const { return static_cast<bool>(terms[term].provider); }
+		[[nodiscard]] std::optional<SymbolId>		  findSymbol(std::string_view name) const;
+		[[nodiscard]] std::optional<uint32_t>		  findTerm(std::string_view name) const;
+		[[nodiscard]] const TermSignature&			  signature(uint32_t term) const { return terms[term].signature; }
+		[[nodiscard]] bool							  isProvided(uint32_t term) const { return static_cast<bool>(terms[term].provider); }
+		[[nodiscard]] std::span<const DeclaredSymbol> symbolSet(uint32_t set) const { return symbolSets[set].symbols; }
 
 	  private:
 		struct Term {
@@ -57,12 +75,23 @@ namespace conditions {
 			TermProvider  provider;
 		};
 
+		struct SymbolSet {
+			std::string					name;
+			std::vector<DeclaredSymbol> symbols;
+		};
+
+		void	 declareSymbolSet(const std::string& name, const std::vector<std::string>& names, std::vector<std::string>& errors);
+		SymbolId intern(const std::string& name);
+
 		[[nodiscard]] Truth		truthOf(const Condition& condition, uint16_t node, const ConditionContext& context) const;
 		[[nodiscard]] TermValue valueOf(const Condition& condition, uint16_t node, const ConditionContext& context) const;
 
 		std::vector<Term>						  terms;
 		std::unordered_map<std::string, uint32_t> termsByName;
-		std::unordered_map<std::string, uint32_t> symbols;
+		std::vector<SymbolSet>					  symbolSets;
+		std::unordered_map<std::string, uint32_t> symbolSetsByName;
+		std::unordered_map<std::string, SymbolId> symbols;
+		bool									  frozen = false;
 	};
 
 } // namespace conditions
