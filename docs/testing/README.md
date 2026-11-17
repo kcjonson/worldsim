@@ -425,7 +425,10 @@ A Freeform shape with two points placed and the pointer on a third:
  "snap":{"point":{"x":26.250,"y":-2.325},"kind":"None","guides":[],"lengthSnap":"Rounded",
          "lengthMeters":6.300,"segmentLengthMeters":6.300,"matchedEdgeCount":0,"commonLengthsMeters":[],"closesShape":false},
  "verdict":{"valid":true,"proposed":true,"reason":""},
- "status":{"active":true,"material":"Wood","pointCount":2,"areaSquareMeters":0.000,"valid":true,"message":""}}
+ "status":{"active":true,"material":"Wood","pointCount":2,"areaSquareMeters":0.000,"valid":true,"message":"","hint":"Keep placing points"},
+ "settings":{"angleSteps":false,"guidesFromShape":false,"alignToExistingBuildings":false,"guidesFromWorldAxes":false,"guideCrossings":false,
+             "commonLengths":false,"guideDistances":false,"angleReadout":false,"roundLengths":true,"showKeyGuide":true,"rectangleGridSpacingMeters":1.000},
+ "keyGuide":{"shown":true,"collapsed":false},"dialogOpen":false}
 ```
 
 With the pointer over the creek the same shape answers `"verdict":{"valid":false,"proposed":true,"reason":"not on buildable ground"}`.
@@ -446,7 +449,7 @@ pixelX = w / 2 + (worldX - c.x) * s        worldX = c.x + (pixelX - w / 2) / s
 pixelY = h / 2 + (worldY - c.y) * s        worldY = c.y + (pixelY - h / 2) / s
 ```
 
-A pixel is in the window when it is within `0..w` and `0..h`, but a tool's click is taken by the ui first where a panel covers it (the dock, the strip, the key guide), so aim at open ground. Read `center` and `pixelsPerMeter` in the same request as the window and compute after a camera control has settled; a point the Rectangle or Freeform tool places lands on its snap, so with helpers off expect the world point to the 0.1 m rounding.
+A pixel is in the window when it is within `0..w` and `0..h`, but a tool's click is taken by the ui first where a panel covers it (the dock, the strip, the key guide), so aim at open ground. A point a tool places lands on its snap: with the Freeform tool and `roundLengths` on, a click at the pixel for (14.5, 22.0) read back as (14.499, 22.000), so allow the 0.1 m rounding.
 
 ### Other endpoints
 
