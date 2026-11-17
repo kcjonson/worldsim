@@ -232,7 +232,7 @@ namespace ecs {
 				memberGaps.push_back(sightGaps[index]);
 			}
 			const geometry::WallBands bands = geometry::resolveWallBands(members, geometry::kDefaultMiterLimit);
-			if (bands.status != geometry::OffsetStatus::Ok || bands.bands.size() != members.size()) {
+			if (!geometry::bandsAccepted(bands)) {
 				// Rejected as nav rejects it: each wall is its raw band, untrimmed, outlined as a
 				// lone wall's, so its transparent openings still pass sight.
 				for (const std::size_t index : graph) {
