@@ -312,6 +312,28 @@ TEST_F(VisionSystemTest, WallPastSightIsNotSeenThoughThePolygonReachesIt) {
 	EXPECT_EQ(*shape->segmentsSeen, std::vector<SegmentId>{nearWall});
 }
 
+// The polygon is built from the walls a rebuild step past sight, so a move short of the step
+// that brings a target behind such a wall into sight leaves it hidden.
+TEST_F(VisionSystemTest, WallPastSightHidesWhatAMoveBringsIntoSight) {
+	ConstructionWorld cw;
+	buildWall(cw, {1500, 0}, {1500, 3000});
+	buildWall(cw, {-30200, -2000}, {-30200, 2000});
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	const EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	tick(sys);
+	ASSERT_EQ(sys.polygonBuildCount(), 1u);
+
+	world.getComponent<Position>(observer)->value = {-0.4F, 0.0F};
+	const glm::vec2 targetPos{-30.38F, 0.0F};
+	spawnTarget(world, targetPos);
+	tick(sys);
+	EXPECT_EQ(sys.polygonBuildCount(), 1u) << "no rebuild";
+	EXPECT_FALSE(remembers(world, observer, targetPos)) << "29.98 m off, behind the wall";
+}
+
 // Demolishing the wall (demote to Blueprint) bumps the version: the next tick
 // rebuilds against an empty occluder set, the observer drops to the fast path,
 // and the previously hidden target becomes remembered.
