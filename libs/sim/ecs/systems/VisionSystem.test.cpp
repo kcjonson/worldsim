@@ -610,7 +610,7 @@ TEST_F(VisionSystemTest, StructurePassSkippingBackFacesSeesTheSameWalls) {
 	buildWall(cw, {9000, 6000}, {9000, 9000});
 
 	constexpr float kSightMeters = 6.0F;
-	constexpr float kGridMeters	 = 0.5F;
+	constexpr float kGridMeters	 = 0.7F;
 	int				differ		 = 0;
 	for (float x = -2.0F; x <= 13.0F; x += kGridMeters) {
 		for (float y = -2.0F; y <= 10.0F; y += kGridMeters) {

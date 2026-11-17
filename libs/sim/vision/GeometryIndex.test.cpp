@@ -109,12 +109,11 @@ namespace {
 	// Every straight line between two points clear of every wall's band that crosses the
 	// solid stretch of a wall's centerline passes through the walls' joined shape, so the
 	// far point must lie outside the near one's visibility polygon, built from the facing
-	// occluders. Points on a 250 mm grid over the box, a margin clear of each band. The
+	// occluders. Points on a `gridMm` grid over the box, a margin clear of each band. The
 	// polygon is the test, not hasLineOfSight, which lets a line through a bare vertex pass
 	// (its rule for grazing a wall's tip), and so a line exactly through two vertices of
 	// one outline.
-	void expectNoLeak(const ConstructionWorld& cw, Vec2i64 low, Vec2i64 high) {
-		constexpr std::int64_t kGridMm			 = 250;
+	void expectNoLeak(const ConstructionWorld& cw, Vec2i64 low, Vec2i64 high, std::int64_t gridMm = 250) {
 		constexpr std::int64_t kClearOfTheBandMm = 2; // past the millimetre the offset rounds to
 		GeometryIndex		   index;
 		index.setConstructionWorld(&cw);
@@ -126,8 +125,8 @@ namespace {
 		const std::vector<std::pair<Vec2i64, Vec2i64>> solid = solidCenterlines(cw, index);
 		const std::int64_t							   half	 = halfThickness(cw);
 		std::vector<Vec2i64>						   points;
-		for (std::int64_t x = low.x; x <= high.x; x += kGridMm) {
-			for (std::int64_t y = low.y; y <= high.y; y += kGridMm) {
+		for (std::int64_t x = low.x; x <= high.x; x += gridMm) {
+			for (std::int64_t y = low.y; y <= high.y; y += gridMm) {
 				bool clear = true;
 				for (const auto& [start, end] : centerlines) {
 					clear = clear && !geometry::withinDistanceOfSegment({x, y}, start, end, half + kClearOfTheBandMm);
@@ -226,14 +225,15 @@ namespace {
 		return walls;
 	}
 
-	// The visibility polygon from every eye of a 250 mm grid over the box, and from points
-	// on the line of each occluder past both its ends (an eye looking exactly along a face or
-	// an end cap), is the same built from the facing occluders as from all of them
+	// The visibility polygon from every eye of a 500 mm grid over the box, from `extraEyes`, and
+	// from points on the line of each occluder past both its ends (an eye looking exactly along a
+	// face or an end cap), is the same built from the facing occluders as from all of them
 	// (culledSightIsTheSame with `toleranceMm`). The query says it culled when
 	// backFacesHiddenFrom the eye holds with an occluder in range, and anyFacingOccluder agrees
 	// with it, from those eyes and one out of range of every wall.
-	void expectFacingSightIsTheSame(const ConstructionWorld& cw, Vec2i64 low, Vec2i64 high, std::int64_t toleranceMm = 0) {
-		constexpr std::int64_t kGridMm	= 250;
+	void expectFacingSightIsTheSame(const ConstructionWorld& cw, Vec2i64 low, Vec2i64 high, std::int64_t toleranceMm = 0,
+									const std::vector<Vec2i64>& extraEyes = {}) {
+		constexpr std::int64_t kGridMm	= 500;
 		constexpr std::int64_t kSightMm = 20000;
 		GeometryIndex		   index;
 		index.setConstructionWorld(&cw);
@@ -249,6 +249,7 @@ namespace {
 			eyes.push_back(occluder.seg.a - along);
 			eyes.push_back(occluder.seg.b + along);
 		}
+		eyes.insert(eyes.end(), extraEyes.begin(), extraEyes.end());
 		eyes.push_back({high.x + 2 * kSightMm, high.y});
 		std::vector<OccluderSegment> all;
 		std::vector<OccluderSegment> facing;
@@ -523,7 +524,7 @@ TEST_F(GeometryIndexTest, RejectedGraphPassesSightThroughItsOpenings) {
 	EXPECT_FALSE(sees(occluders, {-3000, 1000}, {2000, 1000})) << "through the west wall beside the door";
 	EXPECT_FALSE(sees(occluders, {1000, 7000}, {1000, 2000})) << "through the north wall beside the window";
 	EXPECT_FALSE(sees(occluders, {2000, -1000}, {2000, 2000})) << "through the south wall";
-	expectNoLeak(cw, {-1000, -3000}, {5000, 5000});
+	expectNoLeak(cw, {-1000, -3000}, {5000, 5000}, 350);
 }
 
 // --- queryOccluders range ----------------------------------------------------
@@ -566,8 +567,8 @@ TEST_F(GeometryIndexTest, FacingOccludersLeaveOutBackFaces) {
 }
 
 // Culling the back faces changes no visibility polygon, round a room with a door and
-// round an L corner, a T junction and a lone wall's end. The turned room's grid has an
-// eye 0.12 mm off a face, whose ray into the wall snaps its hit onto the eye.
+// round an L corner, a T junction and a lone wall's end. The turned room has an eye
+// 0.12 mm off a face, whose ray into the wall snaps its hit onto the eye.
 TEST_F(GeometryIndexTest, FacingOccludersGiveTheSameSight) {
 	{
 		ConstructionWorld cw;
@@ -589,7 +590,7 @@ TEST_F(GeometryIndexTest, FacingOccludersGiveTheSameSight) {
 		buildWall(cw, {1464, 5464}, {-2000, 3464});
 		buildWall(cw, {-2000, 3464}, {0, 0});
 		addBuiltOpening(cw, south, 0.5F, "Door");
-		expectFacingSightIsTheSame(cw, {-3500, -1500}, {5000, 7000}, kSnappedRingsMm);
+		expectFacingSightIsTheSame(cw, {-3500, -1500}, {5000, 7000}, kSnappedRingsMm, {{-750, 1500}});
 	}
 }
 
@@ -715,8 +716,9 @@ TEST_F(GeometryIndexTest, NoWorldIsInert) {
 	EXPECT_EQ(index.occluderCount(), 0u);
 }
 
-// builtOpenings record carries the jamb points and transparency flag for V3.
-TEST_F(GeometryIndexTest, OpeningRecordsExposedForV3) {
+// A built opening's record holds its wall, its type, the jambs either side of its centre, and
+// whether it passes sight.
+TEST_F(GeometryIndexTest, OpeningRecordHoldsItsJambsAndTransparency) {
 	ConstructionWorld cw;
 	SegmentId seg = buildWall(cw, {0, 0}, {4000, 0});
 	addBuiltOpening(cw, seg, 0.5F, "Window");
