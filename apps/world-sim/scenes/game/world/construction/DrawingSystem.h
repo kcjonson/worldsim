@@ -217,8 +217,8 @@ namespace world_sim {
 
 		/// In-progress drawing feedback (preview polygon/chain, snap guides,
 		/// opening ghost). Called after the entity pass, alongside the placement
-		/// ghost, below UI.
-		void renderPreview(int viewportWidth, int viewportHeight);
+		/// ghost, below UI. Its text is sized in ui px, `uiScale` logical px each.
+		void renderPreview(int viewportWidth, int viewportHeight, float uiScale);
 
 	  private:
 		/// Draw the cached wall bands + junction polygons that intersect
@@ -239,22 +239,23 @@ namespace world_sim {
 
 		/// Render the in-progress wall chain: centerline, thickness band preview,
 		/// snap guides, and validity colorize. INTERIM.
-		void renderWallChainPreview(int viewportWidth, int viewportHeight);
+		void renderWallChainPreview(int viewportWidth, int viewportHeight, float uiScale);
 
 		/// Foundation Add / Subtract: the outline the edit would produce (merged or
 		/// remainder), colorized for validity, with the reason next to the cursor.
 		/// Drawn under the regular polygon preview. INTERIM.
-		void renderEditOutlinePreview(int viewportWidth, int viewportHeight);
+		void renderEditOutlinePreview(int viewportWidth, int viewportHeight, float uiScale);
 
-		/// A rejected edit's reason, drawn beside the cursor, and where.
+		/// A rejected edit's reason, drawn beside the cursor, where, and how large.
 		struct EditReason {
 			std::string		 text;
-			Foundation::Vec2 position; // the text's top-left, screen pixels
+			Foundation::Vec2 position;	// the text's top-left, screen pixels
+			float			 textScale; // the renderer's text scale
 		};
 
 		/// The reason text renderEditOutlinePreview draws, while the outline the edit
-		/// would produce is invalid.
-		[[nodiscard]] std::optional<EditReason> editReason(int viewportWidth, int viewportHeight) const;
+		/// would produce is invalid, sized and placed in ui px of `uiScale` logical px.
+		[[nodiscard]] std::optional<EditReason> editReason(int viewportWidth, int viewportHeight, float uiScale) const;
 
 	  public:
 		// --- Status for the config strip ---
@@ -413,7 +414,7 @@ namespace world_sim {
 
 		/// The snap feedback's input for the current frame.
 		[[nodiscard]] DrawingFeedbackInput
-		feedbackInput(const assets::PreviewStyle& style, int viewportWidth, int viewportHeight) const;
+		feedbackInput(const assets::PreviewStyle& style, int viewportWidth, int viewportHeight, float uiScale) const;
 
 		/// Origin-close catch radius in world meters, floored to `originHaloMinRadiusPx` on
 		/// screen so it stays reachable at every zoom. Drives the snap() override and the

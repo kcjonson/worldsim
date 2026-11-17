@@ -636,12 +636,12 @@ namespace world_sim {
 		return false;
 	}
 
-	DrawingFeedbackInput DrawingSystem::feedbackInput(const assets::PreviewStyle& style, int viewportWidth, int viewportHeight) const {
+	DrawingFeedbackInput DrawingSystem::feedbackInput(const assets::PreviewStyle& style, int viewportWidth, int viewportHeight, float uiScale) const {
 		const PreviewVerdict verdict = previewVerdict();
 		// Labels keep off the rejected edit's reason, measured as the feedback measures its own text.
 		std::optional<FeedbackBox> keepClear;
-		if (const std::optional<EditReason> reason = editReason(viewportWidth, viewportHeight)) {
-			const Foundation::Vec2 size = measureFeedbackText(reason->text, kEditReasonScale * kRendererFontBaseSizePx);
+		if (const std::optional<EditReason> reason = editReason(viewportWidth, viewportHeight, uiScale)) {
+			const Foundation::Vec2 size = measureFeedbackText(reason->text, reason->textScale * kRendererFontBaseSizePx);
 			keepClear = FeedbackBox{
 				reason->position.x,
 				reason->position.y,
@@ -1966,7 +1966,7 @@ namespace world_sim {
 		renderCommittedOpenings(visibleWorld, viewportW, viewportH);
 	}
 
-	void DrawingSystem::renderPreview(int viewportWidth, int viewportHeight) {
+	void DrawingSystem::renderPreview(int viewportWidth, int viewportHeight, float uiScale) {
 		if (camera_ == nullptr || state_ != DrawingState::Drawing) {
 			return;
 		}
@@ -1979,7 +1979,7 @@ namespace world_sim {
 
 		// Wall chain preview is a centerline + thickness band, not a closed polygon.
 		if (activeTool_ == ToolKind::Wall) {
-			renderWallChainPreview(viewportWidth, viewportHeight);
+			renderWallChainPreview(viewportWidth, viewportHeight, uiScale);
 			return;
 		}
 
@@ -1991,7 +1991,7 @@ namespace world_sim {
 
 		// Add / Subtract: the resulting outline under the drawn polygon's preview.
 		if (activeTool_ == ToolKind::FoundationEdit) {
-			renderEditOutlinePreview(viewportWidth, viewportHeight);
+			renderEditOutlinePreview(viewportWidth, viewportHeight, uiScale);
 		}
 
 		// The band and fill read what the click would do: while it closes, whether the close
@@ -2037,7 +2037,7 @@ namespace world_sim {
 		}
 
 		// Above the edges, the rubber band, and the vertex dots (its keys start at 904).
-		drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight));
+		drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight, uiScale));
 
 		// Vertex dots.
 		for (const auto& vertex : screen) {
@@ -2361,7 +2361,7 @@ namespace world_sim {
 		drawOpeningFill(screen, tint, window, footprintWidthMeters(footprint), os.ghostAlpha, os.outlineWidthBuilt);
 	}
 
-	std::optional<DrawingSystem::EditReason> DrawingSystem::editReason(int viewportWidth, int viewportHeight) const {
+	std::optional<DrawingSystem::EditReason> DrawingSystem::editReason(int viewportWidth, int viewportHeight, float uiScale) const {
 		if (camera_ == nullptr) {
 			return std::nullopt;
 		}
@@ -2371,11 +2371,13 @@ namespace world_sim {
 		}
 		return EditReason{
 			.text = std::move(text),
-			.position = camera_->worldToScreen(cursor_.x, cursor_.y, viewportWidth, viewportHeight, kPixelsPerMeter) + kEditReasonOffset,
+			.position = camera_->worldToScreen(cursor_.x, cursor_.y, viewportWidth, viewportHeight, kPixelsPerMeter) +
+						Foundation::Vec2{kEditReasonOffset.x * uiScale, kEditReasonOffset.y * uiScale},
+			.textScale = kEditReasonScale * uiScale,
 		};
 	}
 
-	void DrawingSystem::renderEditOutlinePreview(int viewportWidth, int viewportHeight) {
+	void DrawingSystem::renderEditOutlinePreview(int viewportWidth, int viewportHeight, float uiScale) {
 		if (!editPreviewActive_) {
 			return;
 		}
@@ -2401,11 +2403,11 @@ namespace world_sim {
 			}
 		}
 
-		if (const std::optional<EditReason> reason = editReason(viewportWidth, viewportHeight)) {
+		if (const std::optional<EditReason> reason = editReason(viewportWidth, viewportHeight, uiScale)) {
 			Renderer::Primitives::drawText({
 				.text = reason->text,
 				.position = reason->position,
-				.scale = kEditReasonScale,
+				.scale = reason->textScale,
 				.color = invalidColor_,
 				.shadow = Foundation::BoxShadow{
 					.color = {0.0F, 0.0F, 0.0F, 0.8F}, .blur = 0.0F, .offset = {kEditReasonShadowPx, kEditReasonShadowPx}
@@ -2416,7 +2418,7 @@ namespace world_sim {
 		}
 	}
 
-	void DrawingSystem::renderWallChainPreview(int viewportWidth, int viewportHeight) {
+	void DrawingSystem::renderWallChainPreview(int viewportWidth, int viewportHeight, float uiScale) {
 		const auto& previewStyle = ConstructionRegistry::Get().rendering().preview;
 
 		auto toScreen = [&](Foundation::Vec2 world) -> Foundation::Vec2 {
@@ -2489,7 +2491,7 @@ namespace world_sim {
 		}
 
 		// Above the band, the centerlines, and the vertex dots (its keys start at 911).
-		drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight));
+		drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight, uiScale));
 
 		// Vertex dots. The snap-target ring (endpoint / T-junction / foundation-vertex snaps)
 		// is drawSnapFeedback's, over the snapped-point marker.

@@ -33,9 +33,11 @@ protected pixel for pixel: no golden images, no screenshot diffs, in CI or local
 - **GL tests run on the Linux CI job.** It installs Xvfb and Mesa llvmpipe and sets `WORLDSIM_REQUIRE_GL=1`, so `SurfaceFieldGolden`, `GroundTileBaker` and `AssetRenderer` fail there if no context comes up instead of skipping. Unset, they skip without one, as on the Windows job (GDI's GL 1.1) or a box with no GL.
 - **Unit tests are bounded.** Before adding one, look for a test covering the same path, and
   merge duplicates when touching a suite.
-- **Lint and tree are helpers, not tests.** While building or checking UI, call `/api/ui/lint`
-  (expect `"count":0` before screenshotting) and read element bounds from `/api/ui/tree` rather
-  than judging coordinates by eye. On demand only; never in CI.
+- **The dev server's lint and tree are helpers, not tests.** While building or checking UI, call
+  `/api/ui/lint` (expect `"count":0` before screenshotting) and read element bounds from
+  `/api/ui/tree` rather than judging coordinates by eye. On demand only. The headless scene lint at a
+  list of window and interface sizes (`SceneLayout.test.cpp`, through salal's `app::lintAt`) is a unit
+  test and runs under ctest in CI, where it gates.
 
 ---
 
@@ -139,6 +141,14 @@ sessions as much as the change. Decided 2026-11-10, after sessions lost days to 
 under load and to re-runs chasing regressions that were never there. The GPU hold keeps the card
 at P0; it does nothing about another process taking the card or the cores.
 
+### Capture conditions
+
+Every capture, a session's and the nightly batch's, runs world-sim with `--no-settings`: the player's
+`settings.json` is neither read nor saved, so the window opens at its default size, 80% of the primary
+monitor's work area (3072x1728 on this machine), with the interface at 100% and vsync on until the capture
+turns it off. Nothing the capture changes, the vsync it sets included, reaches the player's settings.
+`scripts/perf.mjs` passes the flag where it launches the game; a session launching its own passes it too.
+
 ### Timing your own work in a session
 
 Allowed when the change calls for it, with three conditions.
@@ -154,7 +164,7 @@ Allowed when the change calls for it, with three conditions.
 3. **Budgeted.** Every capture launches the game on Kevin's desktop and holds the machine while it
    runs. Decide the launches before the first one and stop when the question is answered.
 
-With world-sim in the game scene on your port, once on `main` and once on the branch:
+With world-sim in the game scene on your port, started with `--no-settings`, once on `main` and once on the branch:
 
 ```
 node scripts/perf.mjs capture --port <PORT> --view river --zooms 3,1.5 --no-scroll --out <file>.json
@@ -240,6 +250,7 @@ spec, and the `/perf-nightly` skill runs it.
 | 14 | Player visibility | [scenarios/14-player-visibility.md](./scenarios/14-player-visibility.md) |
 | 15 | Builder work spots | [scenarios/15-builder-work-spots.md](./scenarios/15-builder-work-spots.md) |
 | 16 | Rooms inside rooms | [scenarios/16-rooms-inside-rooms.md](./scenarios/16-rooms-inside-rooms.md) |
+| 17 | Interface size | [scenarios/17-interface-size.md](./scenarios/17-interface-size.md) |
 
 **Scenarios that look away from the colonists turn reveal on** (`/api/dev/reveal?on=1`), since ground no colonist has seen is black (player visibility); a launch starts with it off. Scenario 14 is the one that tests the cover itself.
 
@@ -270,6 +281,8 @@ build\libs\sim\Debug\sim-tests.exe
 # every library's tests: ctest --test-dir build -C Debug -LE heavy -E benchmarks
 ```
 
+world-sim's own test executable (the scene layout lint) builds to `apps/world-sim/tests/<config>/world-sim-tests.exe`.
+
 ### Pre-generated world
 
 A worktree needs `planets/quickstart.wsplanet` (~1.3 GiB, gitignored). Junction it from the main
@@ -279,14 +292,19 @@ Missing file causes an immediate `ConfigError` on launch.
 ### Launch
 
 ```
-build\apps\world-sim\RelWithDebInfo\world-sim.exe --scene=game --http-port <PORT> --background
+build\apps\world-sim\RelWithDebInfo\world-sim.exe --scene=game --http-port <PORT> --background --no-settings
 ```
 
 **Every launch an agent makes passes `--background`**, whichever app the scenario names
-(`world-sim`, `ui-sandbox`, `asset-manager`) and whatever other flags its launch line gives. The
+(`world-sim`, `ui-sandbox`, `asset-manager`) and whatever other flags its launch line gives. Every
+world-sim launch passes `--no-settings` too: the settings file (`%APPDATA%\kcjonson\world-sim\settings.json`)
+is shared by every worktree's build and Kevin's own play, and a run that stops midway, a resize, or the
+dev server's `vsync` control would otherwise leave its interface size, window size or vsync saved for
+every later launch. ui-sandbox and asset-manager have no settings file. Scenario 17 tests that the
+settings are saved, so it runs on the real file and restores it. The
 window opens behind every other window and unfocused, so a pass never lands on top of Kevin's work
 or takes his keyboard. Nothing else changes: the window is on the taskbar and drawn every frame,
-and screenshots, injected input and state read the same. The flag comes off only for a launch made
+and screenshots, injected input and state read the same. Both flags come off only for a launch made
 for Kevin to test something by hand, or one he asked for. Perf captures are the scripted exception;
 `scripts/perf.mjs` launches in the foreground, since a covered window isn't presented the same way.
 
@@ -378,7 +396,7 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
 | `GET /api/control?action=exit` | Shuts down the instance (blocking). |
 | `GET /api/control?action=camera&x=&y=&zoom=&panx=&pany=` | Moves the camera (the game scene's control; applied at its next update, so not while paused). `x` and `y` together; `panx`/`pany` -1..1 hold until set to 0. A bad or missing parameter is a 400. |
 | `GET /api/control?action=gpuhold&value=0\|1&target=0.8` | The game scene's GPU hold for perf captures: extra GPU work after the scene's timers, into its own offscreen target, sized each frame so scene plus hold GPU time sits near `target` (0.05 to 0.95) of the frame time, which keeps the card at P0. Off by default. Either parameter may be left out; it answers the hold's state, and a bad value is a 400. |
-| `GET /api/input?ev=click,x,y` | Synthetic input (logical pixels). Event types: `move`/`down`/`up`/`click`/`scroll,x,y,delta`, `keydown,<key>`/`keyup,<key>`, `char,<codepoint>`. It goes the way real input does: keys reach the focused ui component, a scroll the ui doesn't take zooms the camera, and while paused it waits for resume. A malformed event is a 400. The injected pointer position holds (hover persists) until the real cursor moves over the window or a real mouse button or scroll event lands. Since salal v0.41.1 an injected move also sets the window's pointer-in-window flag, so hover-driven things (the placement ghost, the drawing tools' preview) follow it. A screenshot is in framebuffer pixels, which on a HiDPI display are twice the logical size; compare the screenshot's width with the root width in `/api/ui/tree` to get the ratio. A click that lands on nothing still answers 200. |
+| `GET /api/input?ev=click,x,y` | Synthetic input (logical pixels). Event types: `move`/`down`/`up`/`click`/`scroll,x,y,delta`, `keydown,<key>`/`keyup,<key>`, `char,<codepoint>`. It goes the way real input does: keys reach the focused ui component, a scroll the ui doesn't take zooms the camera, and while paused it waits for resume. A malformed event is a 400. The injected pointer position holds (hover persists) until the real cursor moves over the window or a real mouse button or scroll event lands. Since salal v0.41.1 an injected move also sets the window's pointer-in-window flag, so hover-driven things (the placement ghost, the drawing tools' preview) follow it. A screenshot is in framebuffer pixels, which on a HiDPI display are twice the logical size (on Windows they're the same). `/api/ui/tree` and `/api/ui/lint` are in ui px, which the interface scale makes larger than a logical pixel: a tree position times `layoutScale` from `/api/state?what=uiscale` (`{factor, layoutScale, pixelScale}`, every scene, all three apps) is the logical position. A click that lands on nothing still answers 200. |
 
 ---
 

@@ -194,8 +194,9 @@ namespace asset_manager {
 	}
 
 	bool AssetThumbnail::ensureMesh() {
-		// Refetch when dirty, resized, moved to a screen of another pixel ratio, or after a reload cleared
-		// the cache, which means the art may have changed.
+		// Refetch when dirty, resized, rescaled, or after a reload cleared the cache, which means the art may
+		// have changed. A rescale redraws the picture at the new density from the same mesh, unless the mesh is a
+		// ground tile's, which is built at the density it lands at.
 		const Foundation::Vec2 size = getSize();
 		const float			   scale = pixelScale();
 		MeshCache&			   cache = meshCache();
@@ -216,7 +217,8 @@ namespace asset_manager {
 		}
 		// A tiled ground tile fits its centre tile; render() repeats it around that one.
 		const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(defName);
-		repeat = def != nullptr && def->role == assets::AssetRole::Ground ? tiles : 1;
+		const bool					   ground = def != nullptr && def->role == assets::AssetRole::Ground;
+		repeat = ground ? tiles : 1;
 		if (repeat > 1) {
 			const float cell = std::min(size.x, size.y) / static_cast<float>(repeat);
 			const float mid = static_cast<float>(repeat / 2);
@@ -228,7 +230,7 @@ namespace asset_manager {
 			};
 		}
 		const std::string key = defName + "@" + std::to_string(static_cast<int>(size.x)) + "x" + std::to_string(static_cast<int>(size.y)) +
-								"#" + std::to_string(seed) + "*" + std::to_string(repeat) + "/" + std::to_string(scale);
+								"#" + std::to_string(seed) + "*" + std::to_string(repeat) + (ground ? "/" + std::to_string(scale) : "");
 		auto it = cache.entries.find(key);
 		if (it == cache.entries.end()) {
 			assets::PreparedAsset prepared = assets::prepareAsset(defName, targetRect, seed, scale);

@@ -15,6 +15,7 @@ target_include_directories(asset-manager
 )
 
 target_compile_features(asset-manager PRIVATE cxx_std_20)
+salal_windows_manifest(asset-manager)
 
 # world-view holds the assembled base shader the App starts the renderer with.
 target_link_libraries(asset-manager

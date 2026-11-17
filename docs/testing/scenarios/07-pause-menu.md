@@ -9,7 +9,7 @@ Escape and the top bar's Menu button open the pause menu over the game, which pa
 
 ## Steps
 
-Launch `world-sim --scene=game` (RelWithDebInfo); the dev server is on 127.0.0.1:8081. `/api/state?what=time` reads `speed` and `paused`.
+Launch `world-sim --scene=game --background --no-settings` (RelWithDebInfo); the dev server is on 127.0.0.1:8081. `/api/state?what=time` reads `speed` and `paused`.
 
 1. Press Escape: a dialog titled Menu, kicker PAUSED, over the dimmed world; `paused` is `true`; Resume has focus (`/api/ui/tree`).
 2. Look at the rows: Resume, Main Menu and Quit Game lit, Save and Load dimmed. Click Save: nothing happens.

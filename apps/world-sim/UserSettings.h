@@ -4,9 +4,9 @@
 //
 // Minimal home for player-facing toggles set from the main-menu settings screen.
 // Values default from the base config XML (read once on first access) and are
-// mutated in place by the settings UI for the rest of the session. There is no
-// cross-launch persistence yet; when a user-settings file lands, this is where
-// load/save hangs.
+// mutated in place by the settings UI for the rest of the session. The drawing
+// settings here aren't saved across launches; the interface size and the window's
+// size are, in settings.json, through the App (see theme/InterfaceScale.h).
 
 #include <assets/ConstructionRegistry.h>
 #include <construction/DrawingAids.h>

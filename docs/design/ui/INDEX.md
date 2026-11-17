@@ -14,6 +14,10 @@ This covers interface chrome (panels, readouts, controls). For terrain and world
 - [design-system/components.md](./design-system/components.md) — the 14 primitives: variants, props, states, anatomy, behavior.
 - [design-system/icons.md](./design-system/icons.md) — the 51-glyph line-icon set. Canonical: [icons.json](./design-system/icons.json).
 
+## Interface scaling
+
+- [ui-scale-setting.md](./ui-scale-setting.md): how the interface scales to the window and the player's Interface size (60 to 120%): the formula, the numbers, the screens table, how to check a scene at a size.
+
 ## Screens
 
 The pre-game flow then the in-game HUD. See [screens/INDEX.md](./screens/INDEX.md).
