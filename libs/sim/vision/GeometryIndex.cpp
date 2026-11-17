@@ -5,7 +5,6 @@
 #include <construction/OpeningGeometry.h>
 
 #include <offset/WallOffset.h>
-#include <predicates/Predicates.h>
 
 #include <algorithm>
 #include <cmath>
@@ -15,8 +14,6 @@
 namespace ecs {
 
 	namespace {
-
-		namespace cw = construction;
 
 		// A hit snaps to the millimetre, so one within 0.71 mm of the eye or of a ray lands on it.
 		constexpr std::int64_t kHitSnapsOntoTheRayMm = 1;
@@ -31,7 +28,7 @@ namespace ecs {
 		}
 
 		// An occluder from `from` to `to` of wall `source`, with its box.
-		GeometryIndex::OccluderRecord record(cw::SegmentId source, geometry::Vec2i64 from, geometry::Vec2i64 to) {
+		GeometryIndex::OccluderRecord record(construction::SegmentId source, geometry::Vec2i64 from, geometry::Vec2i64 to) {
 			return {.source = source,
 					.seg	= {from, to},
 					.low	= {std::min(from.x, to.x), std::min(from.y, to.y)},
@@ -44,9 +41,16 @@ namespace ecs {
 
 		// The record of `opening` of type `type`, spanning `gap` on the wall from `a` to `b`,
 		// `lengthMm` long and `halfThicknessMm` either side of its centerline.
-		GeometryIndex::OpeningRecord openingRecord(cw::OpeningId opening, cw::SegmentId segment, const assets::OpeningTypeDef& type,
-												   geometry::Vec2i64 a, geometry::Vec2i64 b, double lengthMm, std::int64_t halfThicknessMm,
-												   const geometry::WallGap& gap) {
+		GeometryIndex::OpeningRecord openingRecord(
+			construction::OpeningId		  opening,
+			construction::SegmentId		  segment,
+			const assets::OpeningTypeDef& type,
+			geometry::Vec2i64			  a,
+			geometry::Vec2i64			  b,
+			double						  lengthMm,
+			std::int64_t				  halfThicknessMm,
+			const geometry::WallGap&	  gap
+		) {
 			const geometry::Vec2i64 start = pointAlong(a, b, lengthMm, gap.fromMm);
 			const geometry::Vec2i64 end	  = pointAlong(a, b, lengthMm, gap.toMm);
 			const double			reach = static_cast<double>(halfThicknessMm + kFaceSpanOutsideMm) / lengthMm;
@@ -173,7 +177,7 @@ namespace ecs {
 
 	} // namespace
 
-	void GeometryIndex::setConstructionWorld(const cw::ConstructionWorld* world) {
+	void GeometryIndex::setConstructionWorld(const construction::ConstructionWorld* world) {
 		if (world == m_world) {
 			return;
 		}
@@ -208,22 +212,23 @@ namespace ecs {
 		m_occluders.clear();
 		m_openings.clear();
 
-		const cw::ConstructionWorld& world = *m_world;
+		const construction::ConstructionWorld& world = *m_world;
 
 		// The built walls as the offsetter takes them, the spans their transparent
 		// openings leave open, and the id of each.
-		const std::unordered_map<cw::SegmentId, cw::OpeningGaps> openingsByWall = cw::openingGapsBySegment(world, {.builtOnly = true});
-		const cw::OpeningGaps									 noOpenings;
+		const std::unordered_map<construction::SegmentId, construction::OpeningGaps> openingsByWall =
+			construction::openingGapsBySegment(world, {.builtOnly = true});
+		const construction::OpeningGaps							 noOpenings;
 		std::vector<geometry::WallSegment>						 walls;
 		std::vector<std::vector<geometry::WallGap>> sightGaps;
-		std::vector<cw::SegmentId>					wallIds;
-		for (const cw::WallSegment& segment : world.segments()) {
-			if (!cw::isBuilt(segment)) {
+		std::vector<construction::SegmentId>					 wallIds;
+		for (const construction::WallSegment& segment : world.segments()) {
+			if (!construction::isBuilt(segment)) {
 				continue; // blueprint walls do not occlude
 			}
-			const cw::Vertex*  v0	= world.getVertex(segment.v0);
-			const cw::Vertex*  v1	= world.getVertex(segment.v1);
-			const std::int64_t half = cw::halfThicknessMm(segment);
+			const construction::Vertex* v0 = world.getVertex(segment.v0);
+			const construction::Vertex* v1 = world.getVertex(segment.v1);
+			const std::int64_t			half = construction::halfThicknessMm(segment);
 			if (v0 == nullptr || v1 == nullptr || half <= 0) {
 				continue;
 			}
@@ -235,7 +240,7 @@ namespace ecs {
 			}
 
 			const auto						found	 = openingsByWall.find(segment.id);
-			const cw::OpeningGaps&			openings = found != openingsByWall.end() ? found->second : noOpenings;
+			const construction::OpeningGaps& openings = found != openingsByWall.end() ? found->second : noOpenings;
 			std::vector<geometry::WallGap>	gaps;
 			for (std::size_t index = 0; index < openings.openings.size(); ++index) {
 				const assets::OpeningTypeDef& type = *openings.types[index];

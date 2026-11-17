@@ -47,30 +47,30 @@ namespace {
 	}
 
 	// Build a single built wall segment (every created sub-segment marked Built).
-	SegmentId buildWall(ConstructionWorld& cw, Vec2i64 a, Vec2i64 b, const std::string& thickness = "Standard") {
-		SegmentCommitResult r = cw.commitSegment(a, b, "Wood", thickness, kInvalidFoundation, cw.version());
+	SegmentId buildWall(ConstructionWorld& world, Vec2i64 a, Vec2i64 b, const std::string& thickness = "Standard") {
+		SegmentCommitResult r = world.commitSegment(a, b, "Wood", thickness, kInvalidFoundation, world.version());
 		EXPECT_TRUE(r.ok());
 		for (SegmentId id : r.createdSegments) {
-			cw.setSegmentState(id, FoundationState::Built);
+			world.setSegmentState(id, FoundationState::Built);
 		}
 		return r.id;
 	}
 
 	// Add a BUILT opening at parameter t.
-	OpeningId addBuiltOpening(ConstructionWorld& cw, SegmentId seg, float t, const std::string& type) {
-		OpeningId op = cw.addOpening(seg, t, type, "Wood");
+	OpeningId addBuiltOpening(ConstructionWorld& world, SegmentId seg, float t, const std::string& type) {
+		OpeningId op = world.addOpening(seg, t, type, "Wood");
 		EXPECT_NE(op, kInvalidOpening);
-		EXPECT_TRUE(cw.setOpeningState(op, FoundationState::Built));
+		EXPECT_TRUE(world.setOpeningState(op, FoundationState::Built));
 		return op;
 	}
 
-	std::int64_t halfThickness(const ConstructionWorld& cw) {
-		return construction::halfThicknessMm(cw.segments().front());
+	std::int64_t halfThickness(const ConstructionWorld& world) {
+		return construction::halfThicknessMm(world.segments().front());
 	}
 
-	std::vector<OccluderSegment> occludersOf(const ConstructionWorld& cw) {
+	std::vector<OccluderSegment> occludersOf(const ConstructionWorld& world) {
 		GeometryIndex index;
-		index.setConstructionWorld(&cw);
+		index.setConstructionWorld(&world);
 		index.rebuildIfStale();
 		std::vector<OccluderSegment> occluders;
 		index.queryOccluders({0, 0}, kFarSightMm, occluders);
@@ -83,11 +83,11 @@ namespace {
 
 	// The solid stretches of each wall's centerline: the wall less the spans its built
 	// transparent openings leave open.
-	std::vector<std::pair<Vec2i64, Vec2i64>> solidCenterlines(const ConstructionWorld& cw, const GeometryIndex& index) {
+	std::vector<std::pair<Vec2i64, Vec2i64>> solidCenterlines(const ConstructionWorld& world, const GeometryIndex& index) {
 		std::vector<std::pair<Vec2i64, Vec2i64>> solid;
-		for (const construction::WallSegment& wall : cw.segments()) {
-			const Vec2i64		 start = cw.getVertex(wall.v0)->pos;
-			const Vec2i64		 end   = cw.getVertex(wall.v1)->pos;
+		for (const construction::WallSegment& wall : world.segments()) {
+			const Vec2i64		 start = world.getVertex(wall.v0)->pos;
+			const Vec2i64		 end = world.getVertex(wall.v1)->pos;
 			std::vector<Vec2i64> cuts  = {start};
 			for (const GeometryIndex::OpeningRecord& opening : index.builtOpenings()) {
 				if (opening.segment == wall.id && opening.transparentToSight) {
@@ -115,17 +115,17 @@ namespace {
 	// polygon is the test, not hasLineOfSight, which lets a line through a bare vertex pass
 	// (its rule for grazing a wall's tip), and so a line exactly through two vertices of
 	// one outline.
-	void expectNoLeak(const ConstructionWorld& cw, Vec2i64 low, Vec2i64 high, std::int64_t gridMm = 250) {
+	void expectNoLeak(const ConstructionWorld& world, Vec2i64 low, Vec2i64 high, std::int64_t gridMm = 250) {
 		constexpr std::int64_t kClearOfTheBandMm = 2; // past the millimetre the offset rounds to
 		GeometryIndex		   index;
-		index.setConstructionWorld(&cw);
+		index.setConstructionWorld(&world);
 		index.rebuildIfStale();
 		std::vector<std::pair<Vec2i64, Vec2i64>> centerlines;
-		for (const construction::WallSegment& wall : cw.segments()) {
-			centerlines.emplace_back(cw.getVertex(wall.v0)->pos, cw.getVertex(wall.v1)->pos);
+		for (const construction::WallSegment& wall : world.segments()) {
+			centerlines.emplace_back(world.getVertex(wall.v0)->pos, world.getVertex(wall.v1)->pos);
 		}
-		const std::vector<std::pair<Vec2i64, Vec2i64>> solid = solidCenterlines(cw, index);
-		const std::int64_t							   half	 = halfThickness(cw);
+		const std::vector<std::pair<Vec2i64, Vec2i64>> solid = solidCenterlines(world, index);
+		const std::int64_t							   half = halfThickness(world);
 		std::vector<Vec2i64>						   points;
 		for (std::int64_t x = low.x; x <= high.x; x += gridMm) {
 			for (std::int64_t y = low.y; y <= high.y; y += gridMm) {
@@ -164,21 +164,21 @@ namespace {
 	}
 
 	// A closed 4 m room, a door in its south wall.
-	void buildRoomWithADoor(ConstructionWorld& cw) {
-		const SegmentId south = buildWall(cw, {0, 0}, {4000, 0});
-		buildWall(cw, {4000, 0}, {4000, 4000});
-		buildWall(cw, {4000, 4000}, {0, 4000});
-		buildWall(cw, {0, 4000}, {0, 0});
-		addBuiltOpening(cw, south, 0.5F, "Door");
+	void buildRoomWithADoor(ConstructionWorld& world) {
+		const SegmentId south = buildWall(world, {0, 0}, {4000, 0});
+		buildWall(world, {4000, 0}, {4000, 4000});
+		buildWall(world, {4000, 4000}, {0, 4000});
+		buildWall(world, {0, 4000}, {0, 0});
+		addBuiltOpening(world, south, 0.5F, "Door");
 	}
 
 	// An L corner, a T junction, and a lone wall, apart.
-	void buildJunctions(ConstructionWorld& cw) {
-		buildWall(cw, {0, 0}, {4000, 0});
-		buildWall(cw, {4000, 0}, {4000, 3000});
-		buildWall(cw, {8000, 0}, {12000, 0});
-		buildWall(cw, {10000, 0}, {10000, 3000});
-		buildWall(cw, {16000, 0}, {16000, 3000});
+	void buildJunctions(ConstructionWorld& world) {
+		buildWall(world, {0, 0}, {4000, 0});
+		buildWall(world, {4000, 0}, {4000, 3000});
+		buildWall(world, {8000, 0}, {12000, 0});
+		buildWall(world, {10000, 0}, {10000, 3000});
+		buildWall(world, {16000, 0}, {16000, 3000});
 	}
 
 	// Every vertex of each ring within `toleranceMm` of the other's boundary.
@@ -219,10 +219,10 @@ namespace {
 	}
 
 	// The built walls as the offsetter takes them.
-	std::vector<geometry::WallSegment> wallsOf(const ConstructionWorld& cw) {
+	std::vector<geometry::WallSegment> wallsOf(const ConstructionWorld& world) {
 		std::vector<geometry::WallSegment> walls;
-		for (const construction::WallSegment& wall : cw.segments()) {
-			walls.push_back({cw.getVertex(wall.v0)->pos, cw.getVertex(wall.v1)->pos, construction::halfThicknessMm(wall)});
+		for (const construction::WallSegment& wall : world.segments()) {
+			walls.push_back({world.getVertex(wall.v0)->pos, world.getVertex(wall.v1)->pos, construction::halfThicknessMm(wall)});
 		}
 		return walls;
 	}
@@ -233,12 +233,17 @@ namespace {
 	// (culledSightIsTheSame with `toleranceMm`). The query says it culled when
 	// backFacesHiddenFrom the eye holds with an occluder in range, and anyFacingOccluder agrees
 	// with it, from those eyes and one out of range of every wall.
-	void expectFacingSightIsTheSame(const ConstructionWorld& cw, Vec2i64 low, Vec2i64 high, std::int64_t toleranceMm = 0,
-									const std::vector<Vec2i64>& extraEyes = {}) {
+	void expectFacingSightIsTheSame(
+		const ConstructionWorld&	world,
+		Vec2i64						low,
+		Vec2i64						high,
+		std::int64_t				toleranceMm = 0,
+		const std::vector<Vec2i64>& extraEyes = {}
+	) {
 		constexpr std::int64_t kGridMm	= 500;
 		constexpr std::int64_t kSightMm = 20000;
 		GeometryIndex		   index;
-		index.setConstructionWorld(&cw);
+		index.setConstructionWorld(&world);
 		index.rebuildIfStale();
 		std::vector<Vec2i64> eyes;
 		for (std::int64_t x = low.x; x <= high.x; x += kGridMm) {
@@ -311,12 +316,12 @@ TEST_F(GeometryIndexTest, TransparencyConfigFlags) {
 // A straight wall's occluders are its band's four edges: both faces and both end
 // caps, none of them inside the band.
 TEST_F(GeometryIndexTest, StraightWallOccludersAreItsBandEdges) {
-	ConstructionWorld cw;
-	buildWall(cw, {0, 0}, {4000, 0});
-	const std::int64_t half = halfThickness(cw);
+	ConstructionWorld world;
+	buildWall(world, {0, 0}, {4000, 0});
+	const std::int64_t half = halfThickness(world);
 	ASSERT_GT(half, 0);
 
-	const std::vector<OccluderSegment> occluders = occludersOf(cw);
+	const std::vector<OccluderSegment> occluders = occludersOf(world);
 	EXPECT_EQ(occluders.size(), 4u);
 	for (const OccluderSegment& occluder : occluders) {
 		for (const Vec2i64& end : {occluder.a, occluder.b}) {
@@ -331,10 +336,10 @@ TEST_F(GeometryIndexTest, StraightWallOccludersAreItsBandEdges) {
 
 // Sight stops at the face on the observer's side, from either side, and at an end cap.
 TEST_F(GeometryIndexTest, SightStopsAtTheNearFace) {
-	ConstructionWorld cw;
-	buildWall(cw, {0, 0}, {4000, 0});
-	const std::int64_t				   half		 = halfThickness(cw);
-	const std::vector<OccluderSegment> occluders = occludersOf(cw);
+	ConstructionWorld world;
+	buildWall(world, {0, 0}, {4000, 0});
+	const std::int64_t				   half = halfThickness(world);
+	const std::vector<OccluderSegment> occluders = occludersOf(world);
 
 	EXPECT_TRUE(sees(occluders, {2000, 3000}, {2000, half + 1}));
 	EXPECT_FALSE(sees(occluders, {2000, 3000}, {2000, half - 1})) << "the near half of the band";
@@ -348,29 +353,29 @@ TEST_F(GeometryIndexTest, SightStopsAtTheNearFace) {
 // An L corner and a T junction (mitre and trims) leave no line of sight across a wall.
 TEST_F(GeometryIndexTest, CornerAndJunctionDoNotLeak) {
 	{
-		ConstructionWorld cw;
-		buildWall(cw, {0, 0}, {4000, 0});
-		buildWall(cw, {4000, 0}, {4000, 4000});
-		expectNoLeak(cw, {-1000, -1000}, {5000, 5000});
+		ConstructionWorld world;
+		buildWall(world, {0, 0}, {4000, 0});
+		buildWall(world, {4000, 0}, {4000, 4000});
+		expectNoLeak(world, {-1000, -1000}, {5000, 5000});
 	}
 	{
-		ConstructionWorld cw;
-		buildWall(cw, {0, 0}, {4000, 0});
-		buildWall(cw, {2000, 0}, {2000, 3000});
-		ASSERT_EQ(cw.segments().size(), 3u) << "the stem splits the wall";
-		expectNoLeak(cw, {-1000, -1000}, {5000, 4000});
+		ConstructionWorld world;
+		buildWall(world, {0, 0}, {4000, 0});
+		buildWall(world, {2000, 0}, {2000, 3000});
+		ASSERT_EQ(world.segments().size(), 3u) << "the stem splits the wall";
+		expectNoLeak(world, {-1000, -1000}, {5000, 4000});
 	}
 }
 
 // A door is a gap sight passes through, and its jambs block: a line into the gap
 // that turns into the solid wall through a jamb is hidden.
 TEST_F(GeometryIndexTest, DoorGapPassesSightAndItsJambsBlock) {
-	ConstructionWorld cw;
-	SegmentId		  seg = buildWall(cw, {0, 0}, {4000, 0});
-	addBuiltOpening(cw, seg, 0.5F, "Door");
-	const std::int64_t				   half		 = halfThickness(cw);
-	const std::int64_t				   gapStart	 = construction::openingGaps(cw, *cw.getSegment(seg), {}).gaps.front().fromMm;
-	const std::vector<OccluderSegment> occluders = occludersOf(cw);
+	ConstructionWorld world;
+	SegmentId		  seg = buildWall(world, {0, 0}, {4000, 0});
+	addBuiltOpening(world, seg, 0.5F, "Door");
+	const std::int64_t				   half = halfThickness(world);
+	const std::int64_t				   gapStart = construction::openingGaps(world, *world.getSegment(seg), {}).gaps.front().fromMm;
+	const std::vector<OccluderSegment> occluders = occludersOf(world);
 
 	EXPECT_TRUE(sees(occluders, {2000, 3000}, {2000, -3000})) << "straight through the door";
 	EXPECT_FALSE(sees(occluders, {gapStart - 50, 3000}, {gapStart - 50, -3000})) << "through the solid wall beside it";
@@ -383,21 +388,21 @@ TEST_F(GeometryIndexTest, DoorGapPassesSightAndItsJambsBlock) {
 // A window leaves the same sight gap as a door, though it is not pathable (nav
 // keeps a window's band solid).
 TEST_F(GeometryIndexTest, WindowGapPassesSight) {
-	ConstructionWorld cw;
-	SegmentId		  seg = buildWall(cw, {0, 0}, {4000, 0});
-	addBuiltOpening(cw, seg, 0.5F, "Window");
-	const std::vector<OccluderSegment> occluders = occludersOf(cw);
+	ConstructionWorld world;
+	SegmentId		  seg = buildWall(world, {0, 0}, {4000, 0});
+	addBuiltOpening(world, seg, 0.5F, "Window");
+	const std::vector<OccluderSegment> occluders = occludersOf(world);
 	EXPECT_TRUE(sees(occluders, {2000, 3000}, {2000, -3000}));
 	EXPECT_FALSE(sees(occluders, {500, 3000}, {500, -3000}));
 }
 
 // A door and a window on one wall leave two gaps, three solid pieces between them.
 TEST_F(GeometryIndexTest, DoorAndWindowOnOneWallLeaveTwoGaps) {
-	ConstructionWorld cw;
-	SegmentId		  seg = buildWall(cw, {0, 0}, {6000, 0});
-	addBuiltOpening(cw, seg, 0.25F, "Door");
-	addBuiltOpening(cw, seg, 0.75F, "Window");
-	const std::vector<OccluderSegment> occluders = occludersOf(cw);
+	ConstructionWorld world;
+	SegmentId		  seg = buildWall(world, {0, 0}, {6000, 0});
+	addBuiltOpening(world, seg, 0.25F, "Door");
+	addBuiltOpening(world, seg, 0.75F, "Window");
+	const std::vector<OccluderSegment> occluders = occludersOf(world);
 	EXPECT_EQ(occluders.size(), 12u) << "three pieces, each two faces and two ends";
 	EXPECT_TRUE(sees(occluders, {1500, 3000}, {1500, -3000})) << "through the door";
 	EXPECT_TRUE(sees(occluders, {4500, 3000}, {4500, -3000})) << "through the window";
@@ -433,11 +438,11 @@ TEST_F(GeometryIndexTest, OpaqueOpeningLeavesTheWallSolid) {
 	ASSERT_NE(registry.getOpeningType("Shutter"), nullptr);
 	ASSERT_FALSE(registry.getOpeningType("Shutter")->transparentToSight);
 
-	ConstructionWorld cw;
-	SegmentId		  seg = buildWall(cw, {0, 0}, {4000, 0});
-	addBuiltOpening(cw, seg, 0.5F, "Shutter");
+	ConstructionWorld world;
+	SegmentId		  seg = buildWall(world, {0, 0}, {4000, 0});
+	addBuiltOpening(world, seg, 0.5F, "Shutter");
 	GeometryIndex index;
-	index.setConstructionWorld(&cw);
+	index.setConstructionWorld(&world);
 	index.rebuildIfStale();
 	EXPECT_EQ(index.occluderCount(), 4u);
 	ASSERT_EQ(index.builtOpenings().size(), 1u);
@@ -454,26 +459,26 @@ TEST_F(GeometryIndexTest, OpaqueOpeningLeavesTheWallSolid) {
 TEST_F(GeometryIndexTest, BlueprintSegmentAndOpeningContributeNoCut) {
 	// Blueprint wall: commit but leave state Blueprint -> no occluder.
 	{
-		ConstructionWorld cw;
-		SegmentCommitResult r = cw.commitSegment({0, 0}, {4000, 0}, "Wood", "Standard", kInvalidFoundation, cw.version());
+		ConstructionWorld	world;
+		SegmentCommitResult r = world.commitSegment({0, 0}, {4000, 0}, "Wood", "Standard", kInvalidFoundation, world.version());
 		ASSERT_TRUE(r.ok());
 		// Deliberately do NOT mark Built.
 
 		GeometryIndex index;
-		index.setConstructionWorld(&cw);
+		index.setConstructionWorld(&world);
 		index.rebuildIfStale();
 		EXPECT_EQ(index.occluderCount(), 0u);
 	}
 
 	// Built wall + blueprint opening: the opening is not Built, so the wall stays solid.
 	{
-		ConstructionWorld cw;
-		SegmentId seg = buildWall(cw, {0, 0}, {4000, 0});
-		OpeningId op = cw.addOpening(seg, 0.5F, "Door", "Wood");
+		ConstructionWorld world;
+		SegmentId		  seg = buildWall(world, {0, 0}, {4000, 0});
+		OpeningId		  op = world.addOpening(seg, 0.5F, "Door", "Wood");
 		ASSERT_NE(op, kInvalidOpening);
 		// Opening left Blueprint.
 
-		const std::vector<OccluderSegment> occluders = occludersOf(cw);
+		const std::vector<OccluderSegment> occluders = occludersOf(world);
 		EXPECT_EQ(occluders.size(), 4u);
 		EXPECT_FALSE(sees(occluders, {2000, 3000}, {2000, -3000})) << "blueprint opening must not cut the wall";
 	}
@@ -481,22 +486,22 @@ TEST_F(GeometryIndexTest, BlueprintSegmentAndOpeningContributeNoCut) {
 
 // A graph the band offsetter rejects occludes as each wall's untrimmed band.
 TEST_F(GeometryIndexTest, RejectedGraphOccludesAsRawBands) {
-	ConstructionWorld cw;
+	ConstructionWorld world;
 	// Two sharp corners round a 50 mm wall, which the offsetter rejects (as nav's test).
 	const std::vector<geometry::WallSegment> rejected = {
 		{{19000, 500}, {20000, 0}, 150}, {{20000, 0}, {20050, 0}, 150}, {{20050, 0}, {21050, 500}, 150}};
 	ASSERT_NE(geometry::resolveWallBands(rejected, geometry::kDefaultMiterLimit).status, geometry::OffsetStatus::Ok);
 	for (const geometry::WallSegment& wall : rejected) {
-		buildWall(cw, wall.a, wall.b, "Heavy");
+		buildWall(world, wall.a, wall.b, "Heavy");
 	}
 	GeometryIndex index;
-	index.setConstructionWorld(&cw);
+	index.setConstructionWorld(&world);
 	index.rebuildIfStale();
 	ASSERT_EQ(index.occluderCount(), 12u) << "four edges a wall";
 	for (const GeometryIndex::OccluderRecord& occluder : index.occluders()) {
-		const construction::WallSegment* wall = cw.getSegment(occluder.source);
+		const construction::WallSegment* wall = world.getSegment(occluder.source);
 		ASSERT_NE(wall, nullptr);
-		const geometry::Ring band = geometry::band(cw.getVertex(wall->v0)->pos, cw.getVertex(wall->v1)->pos, 150);
+		const geometry::Ring band = geometry::band(world.getVertex(wall->v0)->pos, world.getVertex(wall->v1)->pos, 150);
 		EXPECT_NE(std::find(band.begin(), band.end(), occluder.seg.a), band.end());
 		EXPECT_NE(std::find(band.begin(), band.end(), occluder.seg.b), band.end());
 	}
@@ -506,38 +511,38 @@ TEST_F(GeometryIndexTest, RejectedGraphOccludesAsRawBands) {
 // closed room with a door and a window, and a stem outside meeting its south wall 150 mm
 // short of a corner, which leaves a piece shorter than its trims.
 TEST_F(GeometryIndexTest, RejectedGraphPassesSightThroughItsOpenings) {
-	ConstructionWorld cw;
-	buildWall(cw, {0, 0}, {4000, 0});
-	buildWall(cw, {4000, 0}, {4000, 4000});
-	const SegmentId north = buildWall(cw, {4000, 4000}, {0, 4000});
-	const SegmentId west  = buildWall(cw, {0, 4000}, {0, 0});
-	addBuiltOpening(cw, west, 0.5F, "Door");
-	addBuiltOpening(cw, north, 0.5F, "Window");
-	buildWall(cw, {3850, 0}, {2000, -3000});
+	ConstructionWorld world;
+	buildWall(world, {0, 0}, {4000, 0});
+	buildWall(world, {4000, 0}, {4000, 4000});
+	const SegmentId north = buildWall(world, {4000, 4000}, {0, 4000});
+	const SegmentId west = buildWall(world, {0, 4000}, {0, 0});
+	addBuiltOpening(world, west, 0.5F, "Door");
+	addBuiltOpening(world, north, 0.5F, "Window");
+	buildWall(world, {3850, 0}, {2000, -3000});
 	std::vector<geometry::WallSegment> walls;
-	for (const construction::WallSegment& wall : cw.segments()) {
-		walls.push_back({cw.getVertex(wall.v0)->pos, cw.getVertex(wall.v1)->pos, construction::halfThicknessMm(wall)});
+	for (const construction::WallSegment& wall : world.segments()) {
+		walls.push_back({world.getVertex(wall.v0)->pos, world.getVertex(wall.v1)->pos, construction::halfThicknessMm(wall)});
 	}
 	ASSERT_EQ(geometry::resolveWallBands(walls, geometry::kDefaultMiterLimit).status, geometry::OffsetStatus::TrimOverrunsSegment);
 
-	const std::vector<OccluderSegment> occluders = occludersOf(cw);
+	const std::vector<OccluderSegment> occluders = occludersOf(world);
 	EXPECT_TRUE(sees(occluders, {-3000, 2000}, {2000, 2000})) << "through the door";
 	EXPECT_TRUE(sees(occluders, {2000, 7000}, {2000, 2000})) << "through the window";
 	EXPECT_FALSE(sees(occluders, {-3000, 1000}, {2000, 1000})) << "through the west wall beside the door";
 	EXPECT_FALSE(sees(occluders, {1000, 7000}, {1000, 2000})) << "through the north wall beside the window";
 	EXPECT_FALSE(sees(occluders, {2000, -1000}, {2000, 2000})) << "through the south wall";
-	expectNoLeak(cw, {-1000, -3000}, {5000, 5000}, 350);
+	expectNoLeak(world, {-1000, -3000}, {5000, 5000}, 350);
 }
 
 // --- queryOccluders range ----------------------------------------------------
 
 // An observer within radius gets the nearby occluders; one far beyond it gets none.
 TEST_F(GeometryIndexTest, QueryRespectsRadius) {
-	ConstructionWorld cw;
-	buildWall(cw, {0, 0}, {4000, 0});
+	ConstructionWorld world;
+	buildWall(world, {0, 0}, {4000, 0});
 
 	GeometryIndex index;
-	index.setConstructionWorld(&cw);
+	index.setConstructionWorld(&world);
 	index.rebuildIfStale();
 
 	std::vector<OccluderSegment> near;
@@ -554,11 +559,11 @@ TEST_F(GeometryIndexTest, QueryRespectsRadius) {
 // Above a straight wall only its north face faces the eye; both caps and the south
 // face are back faces.
 TEST_F(GeometryIndexTest, FacingOccludersLeaveOutBackFaces) {
-	ConstructionWorld cw;
-	buildWall(cw, {0, 0}, {4000, 0});
-	const std::int64_t half = halfThickness(cw);
+	ConstructionWorld world;
+	buildWall(world, {0, 0}, {4000, 0});
+	const std::int64_t half = halfThickness(world);
 	GeometryIndex	   index;
-	index.setConstructionWorld(&cw);
+	index.setConstructionWorld(&world);
 	index.rebuildIfStale();
 
 	std::vector<OccluderSegment> facing;
@@ -573,26 +578,26 @@ TEST_F(GeometryIndexTest, FacingOccludersLeaveOutBackFaces) {
 // 0.12 mm off a face, whose ray into the wall snaps its hit onto the eye.
 TEST_F(GeometryIndexTest, FacingOccludersGiveTheSameSight) {
 	{
-		ConstructionWorld cw;
-		buildRoomWithADoor(cw);
-		expectFacingSightIsTheSame(cw, {-1500, -1500}, {5500, 5500});
+		ConstructionWorld world;
+		buildRoomWithADoor(world);
+		expectFacingSightIsTheSame(world, {-1500, -1500}, {5500, 5500});
 	}
 	{
-		ConstructionWorld cw;
-		buildJunctions(cw);
-		ASSERT_EQ(cw.segments().size(), 6u) << "the stem splits the T's wall";
-		expectFacingSightIsTheSame(cw, {-1500, -1500}, {17500, 4500});
+		ConstructionWorld world;
+		buildJunctions(world);
+		ASSERT_EQ(world.segments().size(), 6u) << "the stem splits the T's wall";
+		expectFacingSightIsTheSame(world, {-1500, -1500}, {17500, 4500});
 	}
 	{
 		// The room turned 30 degrees: a ray at a back face's hidden end rounds its hit on a
 		// slanted face to the millimetre, a vertex the facing polygon has no need of.
-		ConstructionWorld cw;
-		const SegmentId	  south = buildWall(cw, {0, 0}, {3464, 2000});
-		buildWall(cw, {3464, 2000}, {1464, 5464});
-		buildWall(cw, {1464, 5464}, {-2000, 3464});
-		buildWall(cw, {-2000, 3464}, {0, 0});
-		addBuiltOpening(cw, south, 0.5F, "Door");
-		expectFacingSightIsTheSame(cw, {-3500, -1500}, {5000, 7000}, kSnappedRingsMm, {{-750, 1500}});
+		ConstructionWorld world;
+		const SegmentId	  south = buildWall(world, {0, 0}, {3464, 2000});
+		buildWall(world, {3464, 2000}, {1464, 5464});
+		buildWall(world, {1464, 5464}, {-2000, 3464});
+		buildWall(world, {-2000, 3464}, {0, 0});
+		addBuiltOpening(world, south, 0.5F, "Door");
+		expectFacingSightIsTheSame(world, {-3500, -1500}, {5000, 7000}, kSnappedRingsMm, {{-750, 1500}});
 	}
 }
 
@@ -601,13 +606,13 @@ TEST_F(GeometryIndexTest, FacingOccludersGiveTheSameSight) {
 // the query keeps the back faces, or the polygon would lose floor the eye sees. The T's stem
 // band also overlaps the wall's away from their joint, so the crossing guard keeps them too.
 TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesForAnEyeAlongAFaceLine) {
-	ConstructionWorld cw;
-	buildWall(cw, {107, 1145}, {2659, 2827}, "Light");
-	buildWall(cw, {2659, 2827}, {4354, 4665}, "Light");
-	buildWall(cw, {2659, 2827}, {3407, 3320}, "Light");
-	buildWall(cw, {3407, 3320}, {5422, 4800}, "Heavy");
+	ConstructionWorld world;
+	buildWall(world, {107, 1145}, {2659, 2827}, "Light");
+	buildWall(world, {2659, 2827}, {4354, 4665}, "Light");
+	buildWall(world, {2659, 2827}, {3407, 3320}, "Light");
+	buildWall(world, {3407, 3320}, {5422, 4800}, "Heavy");
 	GeometryIndex index;
-	index.setConstructionWorld(&cw);
+	index.setConstructionWorld(&world);
 	index.rebuildIfStale();
 	EXPECT_TRUE(culledSightIsTheSame(index, {8156, 6995}, 6000, kSnappedRingsMm));
 }
@@ -615,10 +620,10 @@ TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesForAnEyeAlongAFaceLine) {
 // The same beside a lone slanted wall, where nothing crosses: an eye 0.32 mm outside its left
 // face, whose near hits snap onto the eye and drop, so the far face is what stops those rays.
 TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesForAnEyeAlongALoneWallsFace) {
-	ConstructionWorld cw;
-	buildWall(cw, {0, 0}, {3000, 1000});
+	ConstructionWorld world;
+	buildWall(world, {0, 0}, {3000, 1000});
 	GeometryIndex index;
-	index.setConstructionWorld(&cw);
+	index.setConstructionWorld(&world);
 	index.rebuildIfStale();
 	for (const GeometryIndex::OccluderRecord& occluder : index.occluders()) {
 		ASSERT_FALSE(occluder.crossesAnotherOccluder);
@@ -633,56 +638,56 @@ TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesForAnEyeAlongALoneWallsFac
 // Culled, the first polygon loses floor beside the stem that a line of sight over every
 // occluder reaches; the others cut a sliver off along the overlap.
 TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesWhereLoopsCross) {
-	const auto expectSameSight = [](const ConstructionWorld& cw, Vec2i64 eye, std::int64_t sightMm) {
+	const auto expectSameSight = [](const ConstructionWorld& world, Vec2i64 eye, std::int64_t sightMm) {
 		GeometryIndex index;
-		index.setConstructionWorld(&cw);
+		index.setConstructionWorld(&world);
 		index.rebuildIfStale();
 		geometry::Ring culled;
 		EXPECT_TRUE(culledSightIsTheSame(index, eye, sightMm, kSnappedRingsMm, &culled));
 		return culled;
 	};
 	{
-		ConstructionWorld cw;
-		buildWall(cw, {6771, 7724}, {7583, 9552}, "Heavy");
-		buildWall(cw, {7122, 8049}, {6771, 7724}, "Heavy");
-		buildWall(cw, {6771, 7724}, {4962, 6049}, "Heavy");
-		buildWall(cw, {7122, 8049}, {7813, 5130});
-		ASSERT_NE(geometry::resolveWallBands(wallsOf(cw), geometry::kDefaultMiterLimit).status, geometry::OffsetStatus::Ok);
+		ConstructionWorld world;
+		buildWall(world, {6771, 7724}, {7583, 9552}, "Heavy");
+		buildWall(world, {7122, 8049}, {6771, 7724}, "Heavy");
+		buildWall(world, {6771, 7724}, {4962, 6049}, "Heavy");
+		buildWall(world, {7122, 8049}, {7813, 5130});
+		ASSERT_NE(geometry::resolveWallBands(wallsOf(world), geometry::kDefaultMiterLimit).status, geometry::OffsetStatus::Ok);
 		const Vec2i64 eye{2824, 3859};
 		const Vec2i64 floor{7083, 7672};
-		ASSERT_TRUE(sees(occludersOf(cw), eye, floor));
-		EXPECT_NE(geometry::pointInPolygon(floor, expectSameSight(cw, eye, 6000)), geometry::PointInPolygon::Outside);
+		ASSERT_TRUE(sees(occludersOf(world), eye, floor));
+		EXPECT_NE(geometry::pointInPolygon(floor, expectSameSight(world, eye, 6000)), geometry::PointInPolygon::Outside);
 	}
 	{
-		ConstructionWorld cw;
-		buildWall(cw, {0, 0}, {3970, 487});
-		buildWall(cw, {988, 159}, {4958, 646}, "Heavy");
-		ASSERT_EQ(geometry::connectedWallGraphs(wallsOf(cw)).size(), 2u);
-		expectSameSight(cw, {-2708, 30284}, 30500);
+		ConstructionWorld world;
+		buildWall(world, {0, 0}, {3970, 487});
+		buildWall(world, {988, 159}, {4958, 646}, "Heavy");
+		ASSERT_EQ(geometry::connectedWallGraphs(wallsOf(world)).size(), 2u);
+		expectSameSight(world, {-2708, 30284}, 30500);
 	}
 	{
 		// The same two walls joined into one graph round a far loop: the offsetter cancels
 		// edges only between rings meeting at a vertex, so their outlines still cross.
-		ConstructionWorld cw;
-		buildWall(cw, {0, 0}, {3970, 487});
-		buildWall(cw, {988, 159}, {4958, 646}, "Heavy");
-		buildWall(cw, {0, 0}, {0, -3000});
-		buildWall(cw, {0, -3000}, {4958, -3000});
-		buildWall(cw, {4958, -3000}, {4958, 646});
-		ASSERT_EQ(geometry::connectedWallGraphs(wallsOf(cw)).size(), 1u);
-		ASSERT_EQ(geometry::resolveWallBands(wallsOf(cw), geometry::kDefaultMiterLimit).status, geometry::OffsetStatus::Ok);
-		expectSameSight(cw, {-2708, 30284}, 30500);
+		ConstructionWorld world;
+		buildWall(world, {0, 0}, {3970, 487});
+		buildWall(world, {988, 159}, {4958, 646}, "Heavy");
+		buildWall(world, {0, 0}, {0, -3000});
+		buildWall(world, {0, -3000}, {4958, -3000});
+		buildWall(world, {4958, -3000}, {4958, 646});
+		ASSERT_EQ(geometry::connectedWallGraphs(wallsOf(world)).size(), 1u);
+		ASSERT_EQ(geometry::resolveWallBands(wallsOf(world), geometry::kDefaultMiterLimit).status, geometry::OffsetStatus::Ok);
+		expectSameSight(world, {-2708, 30284}, 30500);
 	}
 }
 
 // The solid is what the outline loops wind round: a band's inside and its edge, not a
 // closed room's floor or the open ground.
 TEST_F(GeometryIndexTest, InsideSolidIsTheBandNotTheRoom) {
-	ConstructionWorld cw;
-	buildRoomWithADoor(cw);
-	const std::int64_t half = halfThickness(cw);
+	ConstructionWorld world;
+	buildRoomWithADoor(world);
+	const std::int64_t half = halfThickness(world);
 	GeometryIndex	   index;
-	index.setConstructionWorld(&cw);
+	index.setConstructionWorld(&world);
 	index.rebuildIfStale();
 	EXPECT_TRUE(index.insideSolid({1000, 0}));
 	EXPECT_TRUE(index.insideSolid({1000, half}));
@@ -699,31 +704,31 @@ TEST_F(GeometryIndexTest, InsideSolidIsTheBandNotTheRoom) {
 // After a rebuild, mutating the world (adding a door bumps version) is reflected by
 // the next rebuildIfStale; a call with unchanged version does not rebuild.
 TEST_F(GeometryIndexTest, RebuildIfStaleTracksVersion) {
-	ConstructionWorld cw;
-	SegmentId seg = buildWall(cw, {0, 0}, {4000, 0});
+	ConstructionWorld world;
+	SegmentId		  seg = buildWall(world, {0, 0}, {4000, 0});
 
 	GeometryIndex index;
-	index.setConstructionWorld(&cw);
+	index.setConstructionWorld(&world);
 	index.rebuildIfStale();
 	ASSERT_EQ(index.occluderCount(), 4u); // solid wall
 	const std::uint64_t generation = index.generation();
 
 	// No mutation: another rebuildIfStale is a no-op and the cache is unchanged.
-	const std::uint64_t versionBefore = cw.version();
+	const std::uint64_t versionBefore = world.version();
 	index.rebuildIfStale();
 	EXPECT_EQ(index.occluderCount(), 4u);
 	EXPECT_EQ(index.generation(), generation);
 
 	// Cut a built door: version bumps, next rebuildIfStale reflects the gap.
-	addBuiltOpening(cw, seg, 0.5F, "Door");
-	EXPECT_NE(cw.version(), versionBefore);
+	addBuiltOpening(world, seg, 0.5F, "Door");
+	EXPECT_NE(world.version(), versionBefore);
 
 	index.rebuildIfStale();
 	EXPECT_EQ(index.occluderCount(), 8u) << "two pieces, each two faces, a cap, and a jamb";
 
-	std::vector<OccluderSegment> occ;
-	index.queryOccluders({2000, 0}, kFarSightMm, occ);
-	EXPECT_TRUE(sees(occ, {2000, 3000}, {2000, -3000})) << "rebuild should now show the door gap";
+	std::vector<OccluderSegment> occluders;
+	index.queryOccluders({2000, 0}, kFarSightMm, occluders);
+	EXPECT_TRUE(sees(occluders, {2000, 3000}, {2000, -3000})) << "rebuild should now show the door gap";
 }
 
 // hasWorld / no-world inertness.
@@ -737,12 +742,12 @@ TEST_F(GeometryIndexTest, NoWorldIsInert) {
 // A built opening's record holds its wall, its type, whether it passes sight, and the stretch
 // of each wall face across it, a millimetre outside the face, from one jamb to the other.
 TEST_F(GeometryIndexTest, OpeningRecordHoldsItsFaceSpansAndTransparency) {
-	ConstructionWorld cw;
-	SegmentId seg = buildWall(cw, {0, 0}, {4000, 0});
-	addBuiltOpening(cw, seg, 0.5F, "Window");
+	ConstructionWorld world;
+	SegmentId		  seg = buildWall(world, {0, 0}, {4000, 0});
+	addBuiltOpening(world, seg, 0.5F, "Window");
 
 	GeometryIndex index;
-	index.setConstructionWorld(&cw);
+	index.setConstructionWorld(&world);
 	index.rebuildIfStale();
 
 	ASSERT_EQ(index.builtOpenings().size(), 1u);
@@ -750,7 +755,7 @@ TEST_F(GeometryIndexTest, OpeningRecordHoldsItsFaceSpansAndTransparency) {
 	EXPECT_EQ(rec.segment, seg);
 	EXPECT_EQ(rec.type, "Window");
 	EXPECT_TRUE(rec.transparentToSight);
-	const std::int64_t outside = halfThickness(cw) + 1;
+	const std::int64_t outside = halfThickness(world) + 1;
 	EXPECT_EQ(rec.leftFace.start, (Vec2i64{1700, outside}));
 	EXPECT_EQ(rec.leftFace.end, (Vec2i64{2300, outside}));
 	EXPECT_EQ(rec.rightFace.start, (Vec2i64{1700, -outside}));
@@ -762,10 +767,10 @@ TEST_F(GeometryIndexTest, OpeningRecordHoldsItsFaceSpansAndTransparency) {
 // The visibility polygon of an observer beside a wall runs along the wall's near
 // face, and no point of the band past that face is inside it.
 TEST_F(GeometryIndexTest, SightPolygonEndsAtTheNearFace) {
-	ConstructionWorld cw;
-	buildWall(cw, {0, 0}, {4000, 0});
-	const std::int64_t				   half		 = halfThickness(cw);
-	const std::vector<OccluderSegment> occluders = occludersOf(cw);
+	ConstructionWorld world;
+	buildWall(world, {0, 0}, {4000, 0});
+	const std::int64_t				   half = halfThickness(world);
+	const std::vector<OccluderSegment> occluders = occludersOf(world);
 	const geometry::Ring			   polygon	 = geometry::computeVisibilityPolygon({1500, 2500}, 20000, occluders);
 	ASSERT_GE(polygon.size(), 3u);
 
@@ -812,11 +817,11 @@ TEST_F(GeometryIndexTest, EyeInsideTheBandSeesOnlyTheBand) {
 		EXPECT_EQ(facing.size(), all.size());
 	}
 
-	ConstructionWorld cw;
-	buildWall(cw, {0, 0}, {4000, 0});
-	const std::int64_t half = halfThickness(cw);
+	ConstructionWorld world;
+	buildWall(world, {0, 0}, {4000, 0});
+	const std::int64_t half = halfThickness(world);
 	GeometryIndex	   index;
-	index.setConstructionWorld(&cw);
+	index.setConstructionWorld(&world);
 	index.rebuildIfStale();
 	std::vector<OccluderSegment> occluders;
 	index.queryFacingOccluders({2000, 0}, 20000, occluders);
