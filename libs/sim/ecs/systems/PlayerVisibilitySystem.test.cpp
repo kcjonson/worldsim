@@ -234,6 +234,8 @@ TEST(PlayerVisibilitySystem, IndoorPolygonsEnterSkirtedAndTheWallJoins) {
 	}
 	ASSERT_GT(polygons.size(), 10U) << "the wall came into sight";
 	EXPECT_EQ(colony.visibility.footprintsEntered(), 1U) << "one wall, one band";
+	EXPECT_TRUE(colony.visibility.isVisible({-0.11F, 5.0F})) << "short of the near face";
+	EXPECT_FALSE(colony.visibility.isVisible({-0.05F, 5.0F})) << "sight ends at the near face, so the wall's top is out of it";
 	colony.remove(colonist);
 	const vision::SeenArea& seen = colony.visibility.seenArea();
 	ASSERT_GE(seen.ringsRegistered(), 3U) << "the leg, polygons, the wall";

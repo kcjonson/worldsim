@@ -1,7 +1,7 @@
 # Scenario 03: Build wood foundation over trees
 
 **Status:** ready  
-**Last verified:** 2026-11-13
+**Last verified:** 2026-11-17
 
 Verifies the full foundation construction lifecycle: a colonist clears on-footprint trees, chops
 for materials, and builds a `Wood` foundation to completion, unaided, without freezing.
@@ -126,51 +126,53 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 11. When Bob finishes (the L-shaped foundation leaves `?what=construction`), the row leaves the Tasks panel and the Known work list.
 
-12. Open the Build menu: it has one Foundation entry. Pick it: the Rectangle tool opens, the first pick this session. The config strip shows the tool picker with Rectangle picked, the material cards, and "Click or drag from a corner".
+Steps 12 to 61 read `/api/state?what=drawing`; keys are named as the README's drawing view has them. Their points are world points (x, y) in meters on open ground east of the creek, clear of the foundations built above: centre the camera on (40, 10) with `control?action=camera&x=40&y=10&zoom=3` and convert each to the pixel `/api/input` takes with `what=camera` ([the camera view](../README.md#the-camera-view)). The camera resets with each new game, so centre it again after each Quick Start (steps 37, 48 and 60). A move out of the window is `ev=move,-5,-5`, which pauses a tool the way a real exit does.
 
-13. Move the pointer over open ground near Bob: the white snapped-point marker (a dot with four ticks) sits on the whole-metre grid point nearest the pointer.
+12. Open the Build menu: it has one Foundation entry. Pick it: the Rectangle tool opens, the first pick this session (`tool` `foundationRectangle`, `lastFoundationTool` `rectangle`). The config strip shows the tool picker with Rectangle picked, the Wood material card, and "Click or drag from a corner" (`status.hint`).
 
-14. Click once: a dot marks the first corner, and the strip reads "Click the opposite corner" in its usual colour, not red.
+13. Move the pointer to (40.4, 10.3): the white snapped-point marker (a dot with four ticks) sits on the whole-metre grid point nearest the pointer (`snap.kind` `Grid`, `snap.point` (40, 10)).
 
-15. Move the pointer about 4 m right and 3 m up: a faint fill and outline follow it, labelled `4 m x 3 m` up and to the right of the marker.
+14. Click: a dot marks the first corner (`rectangle.firstCorner` (40, 10)), and the strip reads "Click the opposite corner" in its usual colour, not red (`status.valid` true).
+
+15. Move the pointer to (44, 7), 4 m right and 3 m up: a faint fill and outline follow it, labelled `4 m x 3 m` up and to the right of the marker (`rectangle.sizeLabel`, four `rectangle.corners`).
 
 16. Click: `?what=construction` lists another foundation with `"area":12`.
 
-17. Press on open ground, drag from the grid point under the pointer to the grid point 5 m right and 4 m up (the size label reads `5 m x 4 m`), and release: `?what=construction` lists another foundation with `"area":20`, and the strip reads "Click or drag from a corner".
+17. Press at (48, 10), drag to (53, 6) and release (`ev=down`, `ev=move`, `ev=up`): while pressed `rectangle.pressPending` is true and the size label reads `5 m x 4 m`; after the release `?what=construction` lists another foundation with `"area":20`, the strip reads "Click or drag from a corner".
 
-18. Move the pointer onto a corner of a new blueprint: an amber ring sits round the marker's dot. Along one of its edges, the ring is cyan.
+18. Move the pointer to (44.1, 9.9), a corner of the 4 m x 3 m blueprint: an amber ring sits round the marker's dot (`snap.kind` `Vertex`). Move to (42, 10.1), along one of its edges: the ring is cyan (`Edge`).
 
-19. Click open ground once, then move the pointer until the rectangle covers one of the new blueprints: the fill, the outline, and the marker's dot turn red, and the strip names the reason.
+19. Click (38, 14), then move the pointer to (46, 8) so the rectangle overlaps the 4 m x 3 m blueprint: the fill, the outline, and the marker's dot turn red, and the strip names the reason (`verdict.valid` false, `status.message` "overlaps another foundation").
 
-20. Click there: nothing is added, a toast says why, and the first corner keeps waiting.
+20. Click there: nothing is added (`?what=construction` is unchanged), a toast says why, and the first corner keeps waiting (`rectangle.firstCorner` (38, 14)).
 
-21. Move the pointer to make a 1 m by 1 m rectangle: it previews red with a reason.
+21. Move the pointer to (39, 13) to make a 1 m by 1 m rectangle: it previews red with a reason (`status.message` "area too small").
 
-22. Press Esc: the first corner goes, and the tool stays on.
+22. Press Esc: the first corner goes (`rectangle.firstCorner` null), and the tool stays on (`tool` `foundationRectangle`).
 
-23. Press Esc again: the tool closes.
+23. Press Esc again: the tool closes (`tool` `none`).
 
-24. Pick Foundation again (Rectangle opens), press on open ground, drag onto the gameplay bar, and release there: nothing is added, and the first corner keeps waiting.
+24. Pick Foundation again (Rectangle opens), press on open ground at (40, 16), drag onto the gameplay bar, and release there: nothing is added, and the first corner keeps waiting (`rectangle.firstCorner` (40, 16), `rectangle.pressPending` false).
 
-25. Click open ground about 3 m right and 3 m up of that corner: `?what=construction` lists another foundation with `"area":9`.
+25. Click open ground at (43, 13), 3 m right and 3 m up of that corner: `?what=construction` lists another foundation with `"area":9`.
 
-26. Pick Freeform in the strip's picker and click a first point: the strip shows no too-close refusal while the pointer has not moved since the click.
+26. Pick Freeform in the strip's picker and click a first point at (50, 14): the strip shows no too-close refusal while the pointer has not moved since the click (`status.valid` true, `status.message` empty).
 
-27. Click three more points round a square, then the first point again: it closes into another foundation.
+27. Click (55, 14), (55, 19) and (50, 19), then move to (50.2, 14.1) (`snap.kind` `Origin`, `snap.closesShape` true) and click the first point again: it closes into another foundation with `"area":25`.
 
-28. Press Esc to leave the tool and pick Foundation in the Build menu: Freeform opens, picked in the strip.
+28. Press Esc to leave the tool and pick Foundation in the Build menu: Freeform opens (`tool` `foundationFreeform`, `lastFoundationTool` `freeform`), picked in the strip.
 
-29. Pick Rectangle in the picker: the Rectangle tool is on again.
+29. Pick Rectangle in the picker: the Rectangle tool is on again (`tool` `foundationRectangle`).
 
-30. Pick Freeform, click two points, and move the pointer out of the game's window (a person can also bring another window to the front; a `--background` launch ignores focus, so only leaving the window counts there): the rubber band, the marker, and its label go, the two points and their edge stay, and the strip shows no red reason.
+30. Pick Freeform, click (58, 6) and (62, 6), and move the pointer out of the game's window (a person can also bring another window to the front; a `--background` launch ignores focus, so only leaving the window counts there): the rubber band, the marker, and its label go, the two points and their edge stay, and the strip shows no red reason (`followingPointer` false, `points` still two).
 
-31. Move the pointer back over the world: the rubber band follows it again from the second point, and a click places a third point.
+31. Move the pointer back over the world, to (62, 10): the rubber band follows it again from the second point (`followingPointer` true), and a click places a third point (`status.pointCount` 3).
 
-32. Pick Rectangle, click a first corner, and move the pointer out of the window: the pending fill, outline, and size label go and the corner's dot stays; come back and click the opposite corner: the rectangle is added.
+32. Pick Rectangle, click a first corner at (60, 12), and move the pointer out of the window: the pending fill, outline, and size label go and the corner's dot stays (`rectangle.corners` empty, `rectangle.firstCorner` (60, 12), `followingPointer` false); come back, move to (64, 15) and click the opposite corner: the rectangle is added.
 
-Run steps 33 to 61 after the pass / fail check below: they go to the main menu and start a fresh game, which loses the foundation that check reads.
+Run steps 33 to 61 after the pass / fail check below: they go to the main menu and start a fresh game, which loses the foundation that check reads. The settings are read from `settings` once the new game shows, so a switch is asserted on the step that starts the game.
 
-33. Press Esc: the Rectangle tool closes.
+33. Press Esc: the Rectangle tool closes (`tool` `none`).
 
 34. Open the top bar's Menu and pick Main Menu: the main menu shows.
 
@@ -178,55 +180,55 @@ Run steps 33 to 61 after the pass / fail check below: they go to the main menu a
 
 36. Switch on Angle steps, Guides from the shape, Common lengths, and Angle readout: each reads on.
 
-37. Pick Back, then Quick Start: a new game shows.
+37. Pick Back, then Quick Start: a new game shows, and `settings` has `angleSteps`, `guidesFromShape`, `commonLengths` and `angleReadout` true.
 
-38. Pick Foundation in the Build menu, then Freeform in the strip's picker: the strip shows Freeform picked.
+38. Pick Foundation in the Build menu, then Freeform in the strip's picker: the strip shows Freeform picked (`tool` `foundationFreeform`).
 
-39. Click two points 4 m apart, left to right: a dot marks each, with an edge between them.
+39. Click (40, 12) and (44, 12), 4 m apart, left to right: a dot marks each, with an edge between them (`points` has both).
 
-40. Move the pointer up and to the right at 45 degrees, about 2.5 m out: an arc sits in the corner at the second point with `135.0°` beside it (a real degree sign), clear of the arc.
+40. Move the pointer to (45.77, 10.23), up and to the right at 45 degrees, about 2.5 m out: an arc sits in the corner at the second point with `135.0°` beside it (a real degree sign), clear of the arc (`snap.kind` `Angle`, its guide's `relation` `AngleStep`).
 
-41. Bring the pointer out along that line to 4 m: the segment label reads `4.00 m =` in bold amber.
+41. Bring the pointer out along that line to (46.83, 9.17), 4 m: the segment label reads `4.00 m =` in bold amber (`snap.segmentLengthMeters` 4.000, `snap.lengthSnap` `CommonLength`, `snap.matchedEdgeCount` 1).
 
-42. Look at the first edge: it shows a faint band with a double tick at its middle.
+42. Look at the first edge: it shows a faint band with a double tick at its middle (`snap.commonLengthsMeters` lists 4.000).
 
-43. Move the pointer straight up from the second point, about 2.5 m: the arc and degrees give way to the right-angle marker; the `=` and the marks show only while the segment matches another edge, so at about 2.5 m there are none.
+43. Move the pointer straight up from the second point, to (44, 9.5), about 2.5 m: the arc and degrees give way to the right-angle marker (`snap.kind` `GuideLine`, its guide's `relation` `Perpendicular`); the `=` and the marks show only while the segment matches another edge, so at about 2.5 m there are none (`snap.matchedEdgeCount` 0).
 
-44. Move the pointer back to the 45 degree position and hold Alt: no arc, degrees, marker, `=`, or marks.
+44. Person only, it needs Alt held: move the pointer back to the 45 degree position and hold Alt: no arc, degrees, marker, `=`, or marks.
 
-45. Release Alt and press Esc twice: the tool closes.
+45. Release Alt and press Esc twice: the tool closes (`tool` `none`).
 
 46. Open the top bar's Menu, pick Main Menu, then Settings: the Drawing Settings section shows.
 
 47. Switch Common lengths and Angle readout off: each reads off.
 
-48. Pick Back, then Quick Start: a new game shows.
+48. Pick Back, then Quick Start: a new game shows, and `settings` has `commonLengths` and `angleReadout` false.
 
-49. Repeat steps 38 to 42: no arc, no degrees, no `=`, and no marks.
+49. Repeat steps 38 to 42: no arc, no degrees, no `=`, and no marks (`snap.matchedEdgeCount` 0 and `snap.commonLengthsMeters` empty at 4 m, `snap.lengthSnap` `Rounded`).
 
-50. With Angle steps and Guides from the shape on, Common lengths and Angle readout off (steps 36 and 47), and Show key guide while drawing on (its default), look above the strip: the key guide lists the Freeform tool's keys (Click, Click point 1, Backspace, Esc / Right-click, Esc again, Alt), then "Lined up with something" and "A square corner", each with a small mark drawn like the world's, then "? or H hides this".
+50. With Angle steps and Guides from the shape on, Common lengths and Angle readout off (steps 36 and 47), and Show key guide while drawing on (its default), look above the strip: the key guide lists the Freeform tool's keys (Click, Click point 1, Backspace, Esc / Right-click, Esc again, Alt), then "Lined up with something" and "A square corner", each with a small mark drawn like the world's, then "? or H hides this" (`keyGuide` `shown` true, `collapsed` false).
 
-51. Click on the key guide: no point is placed. Click just above it: a point is placed.
+51. Click on the key guide: no point is placed (`points` unchanged). Click just above it: a point is placed (one more in `points`).
 
-52. Press `?`: the key guide folds to a "Keys ?" chip.
+52. Press `?` (inject `char,63`; `keydown,?` answers 400): the key guide folds to a "Keys ?" chip (`keyGuide.collapsed` true).
 
-53. Hold `?` for about a second, then let go: the key guide opens once and stays open, with no flicker. Press `?` again: it folds to the chip.
+53. Person only, it needs a held key: hold `?` for about a second, then let go: the key guide opens once and stays open, with no flicker. Press `?` again: it folds to the chip.
 
-54. Press Esc twice, then pick Wall in the Build menu: the chip stays folded.
+54. Press Esc twice, then pick Wall in the Build menu: the chip stays folded (`keyGuide.collapsed` true).
 
-55. Press H: the key guide opens with the wall tool's keys, "Ctrl+click a foundation edge" among them.
+55. Press H (`keydown,h`): the key guide opens with the wall tool's keys, "Ctrl+click a foundation edge" among them (`collapsed` false).
 
-56. Press H, then click the chip: the key guide opens again.
+56. Press H, then click the chip: the key guide opens again (`collapsed` true, then false).
 
-57. Press Esc until the tool closes: the key guide goes with it.
+57. Press Esc: the tool closes and the key guide goes with it (`keyGuide.shown` false).
 
-58. Pick Foundation, then Rectangle in the picker: the key guide lists the Rectangle tool's keys and no marks.
+58. Pick Foundation, then Rectangle in the picker: the key guide lists the Rectangle tool's keys and no marks (`tool` `foundationRectangle`).
 
 59. Press Esc, open the top bar's Menu, pick Main Menu, then Settings, and switch Show key guide while drawing off: it reads off.
 
-60. Pick Back, then Quick Start: a new game shows.
+60. Pick Back, then Quick Start: a new game shows, and `settings.showKeyGuide` is false.
 
-61. Pick Foundation in the Build menu: the strip shows, with no key guide over it.
+61. Pick Foundation in the Build menu: the strip shows, with no key guide over it (`keyGuide.shown` false).
 
 ---
 

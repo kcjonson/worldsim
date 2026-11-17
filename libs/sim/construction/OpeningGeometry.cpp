@@ -103,7 +103,7 @@ namespace construction {
 		// The first wall's trims at its a and b ends, nothing for a graph the offsetter rejects.
 		std::optional<Trims> firstWallTrims(const std::vector<geometry::WallSegment>& walls) {
 			const geometry::WallBands bands = geometry::resolveWallBands(walls, geometry::kDefaultMiterLimit);
-			if (bands.status != geometry::OffsetStatus::Ok || bands.trimAtA.empty() || bands.trimAtB.empty()) {
+			if (!geometry::bandsAccepted(bands) || bands.trimAtA.empty() || bands.trimAtB.empty()) {
 				return std::nullopt;
 			}
 			return Trims{bands.trimAtA.front(), bands.trimAtB.front()};
@@ -201,26 +201,52 @@ namespace construction {
 		return geometry::band(lerpMm(t0), lerpMm(t1), halfThick);
 	}
 
-	OpeningGaps openingGaps(const ConstructionWorld& world, const WallSegment& segment, OpeningGapFilter filter) {
-		OpeningGaps	  result;
-		const Vertex* v0 = world.getVertex(segment.v0);
-		const Vertex* v1 = world.getVertex(segment.v1);
-		if (v0 == nullptr || v1 == nullptr) {
-			return result;
-		}
-		const double lengthMm = std::hypot(static_cast<double>(v1->pos.x - v0->pos.x), static_cast<double>(v1->pos.y - v0->pos.y));
-		for (const Opening& opening : world.openings()) {
-			if (opening.segment != segment.id || (filter.builtOnly && opening.state != FoundationState::Built)) {
-				continue;
+	namespace {
+		// The opening's span on its wall `lengthMm` long into `gaps`, when the filter reads it.
+		void addGap(const Opening& opening, double lengthMm, OpeningGapFilter filter, OpeningGaps& gaps) {
+			if (filter.builtOnly && opening.state != FoundationState::Built) {
+				return;
 			}
 			const auto* type = assets::ConstructionRegistry::Get().getOpeningType(opening.type);
 			if (type == nullptr || type->widthMm <= 0 || (filter.doorsOnly && !type->pathable)) {
-				continue;
+				return;
 			}
 			const double centre = static_cast<double>(opening.t) * lengthMm;
 			const double half	= static_cast<double>(type->widthMm) * 0.5;
-			result.gaps.push_back({std::llround(centre - half), std::llround(centre + half)});
-			result.openings.push_back(opening.id);
+			gaps.gaps.push_back({std::llround(centre - half), std::llround(centre + half)});
+			gaps.openings.push_back(opening.id);
+			gaps.types.push_back(type);
+		}
+
+		double lengthOf(const ConstructionWorld& world, const WallSegment& segment) {
+			const Vertex* v0 = world.getVertex(segment.v0);
+			const Vertex* v1 = world.getVertex(segment.v1);
+			return std::hypot(static_cast<double>(v1->pos.x - v0->pos.x), static_cast<double>(v1->pos.y - v0->pos.y));
+		}
+	} // namespace
+
+	OpeningGaps openingGaps(const ConstructionWorld& world, const WallSegment& segment, OpeningGapFilter filter) {
+		OpeningGaps result;
+		if (world.getVertex(segment.v0) == nullptr || world.getVertex(segment.v1) == nullptr) {
+			return result;
+		}
+		const double lengthMm = lengthOf(world, segment);
+		for (const Opening& opening : world.openings()) {
+			if (opening.segment == segment.id) {
+				addGap(opening, lengthMm, filter, result);
+			}
+		}
+		return result;
+	}
+
+	std::unordered_map<SegmentId, OpeningGaps> openingGapsBySegment(const ConstructionWorld& world, OpeningGapFilter filter) {
+		std::unordered_map<SegmentId, OpeningGaps> result;
+		for (const Opening& opening : world.openings()) {
+			const WallSegment* segment = world.getSegment(opening.segment);
+			if (segment == nullptr || world.getVertex(segment->v0) == nullptr || world.getVertex(segment->v1) == nullptr) {
+				continue;
+			}
+			addGap(opening, lengthOf(world, *segment), filter, result[segment->id]);
 		}
 		return result;
 	}

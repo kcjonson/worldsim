@@ -265,7 +265,7 @@ namespace ecs {
 			sweepWalls = &vision->geometry();
 			seen.setSightBuilder([walls = sweepWalls](const Vec2i64& centre, std::int64_t reachMm) {
 				std::vector<geometry::OccluderSegment> occluders;
-				walls->queryOccluders(centre, reachMm, occluders);
+				walls->queryFacingOccluders(centre, reachMm, occluders);
 				return geometry::computeVisibilityPolygon(centre, reachMm, occluders);
 			});
 		}

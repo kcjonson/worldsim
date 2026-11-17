@@ -64,6 +64,7 @@ namespace world_sim {
 		const assets::PlacementExecutor* placementIndex = nullptr; // placed statics, for the flora view
 		const world::WorldCamera*		 camera = nullptr;		   // the flora view's default rect
 		float							 pixelsPerMeter = 0.0F;	   // world-to-screen at zoom 1
+		std::function<bool()>			 dialogOpen;			   // a dialog is open over the game (the drawing view's dialogOpen)
 
 		// Planet used for the current session; populated from GameStartConfig. Used by
 		// serializeLanding (/api/state?what=landing) for biome + water readback. May be
@@ -93,7 +94,7 @@ namespace world_sim {
 		/// returned registrations live. Most verbs answer {"status":"ok","verb":...}; spawn, colonist,
 		/// teleport, give, foundation, walls and opening answer a 400 with {"error":...} when they create
 		/// or move nothing, ground they refuse included; verbs with an outcome to report (foundation-edit) answer with it, and flora answers
-		/// with its measurement. The views are colonists, construction, drawing, stations, storage, time,
+		/// with its measurement. The views are camera, colonists, construction, drawing, stations, storage, time,
 		/// landing, tunables and summary.
 		std::vector<app::DevServer::Registration> registerWith(app::DevServer& server);
 
@@ -177,6 +178,7 @@ namespace world_sim {
 		void serializeTime(std::ostringstream& out);
 		void serializeLanding(std::ostringstream& out);
 		void serializeSummary(std::ostringstream& out);
+		void serializeThoughtTypes(std::ostringstream& out);
 		// The seen record's totals, and with x and y given, whether that point is seen and visible
 		// (/api/state?what=visibility takes no parameters; /api/dev/visibility?x=&y= answers the point).
 		std::string visibilityJson(const app::DevRequest& cmd);

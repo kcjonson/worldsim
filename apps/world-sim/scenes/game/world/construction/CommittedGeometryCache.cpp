@@ -195,7 +195,7 @@ namespace world_sim {
 			}
 
 			const geometry::WallBands bands = geometry::resolveWallBands(offsetSegs, geometry::kDefaultMiterLimit);
-			if (bands.status != geometry::OffsetStatus::Ok) {
+			if (!geometry::bandsAccepted(bands)) {
 				// Reject-don't-repair: a degenerate offset means the topology fed it
 				// bad input; show this graph as bare centerlines, never garbage bands.
 				// Logged once, not on every rebuild the graph survives unchanged.

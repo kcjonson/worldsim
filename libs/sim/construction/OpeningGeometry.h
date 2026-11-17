@@ -17,7 +17,12 @@
 
 #include <cstdint>
 #include <optional>
+#include <unordered_map>
 #include <vector>
+
+namespace assets {
+	struct OpeningTypeDef;
+}
 
 namespace construction {
 
@@ -67,13 +72,18 @@ namespace construction {
 	};
 
 	/// The centerline spans a segment's openings leave open, in whole mm from its v0 end,
-	/// and in step with them the opening each belongs to, in the world's opening order. An
+	/// and in step with them the opening each belongs to and its type, in the world's opening order. An
 	/// opening at t with clear width w on a segment of length L spans t*L -/+ w/2, rounded;
 	/// geometry::wallSpans and wallPiecesAndOutline clamp and merge them.
 	struct OpeningGaps {
-		std::vector<geometry::WallGap> gaps;
-		std::vector<OpeningId>		   openings;
+		std::vector<geometry::WallGap>				gaps;
+		std::vector<OpeningId>						openings;
+		std::vector<const assets::OpeningTypeDef*> types; // never null; the registry's, valid until it reloads
 	};
 	[[nodiscard]] OpeningGaps openingGaps(const ConstructionWorld& world, const WallSegment& segment, OpeningGapFilter filter);
+
+	/// openingGaps for every segment at once, one walk over the openings, by segment id. A
+	/// segment the filter leaves no opening on may be missing or hold none.
+	[[nodiscard]] std::unordered_map<SegmentId, OpeningGaps> openingGapsBySegment(const ConstructionWorld& world, OpeningGapFilter filter);
 
 } // namespace construction

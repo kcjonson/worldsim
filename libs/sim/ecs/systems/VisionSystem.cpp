@@ -108,22 +108,38 @@ namespace ecs {
 
 			// --- Occlusion gate setup (per observer) ---
 			//
-			// Find the opaque wall occluders within this observer's sight radius. The
+			// Find the opaque wall occluders facing this observer within his sight radius. The
 			// meters->mm boundary is crossed here (and only here) via NavCoords.
 			// The polygon reaches a rebuild step past sight, so a wall that far out counts.
 			const std::int64_t	   radiusMm = std::llround(static_cast<double>(memory.sightRadius) * 1000.0);
 			const std::int64_t	   polygonRadiusMm = std::llround(static_cast<double>(memory.sightRadius + kSightRebuildStepMeters) * 1000.0);
 			const geometry::Vec2i64 observerMm = nav::toMm(pos.value);
-			m_geometry.queryOccluders(observerMm, polygonRadiusMm, occluderScratch);
-			const bool outdoors = occluderScratch.empty();
+			VisibilityCache& entry = m_visibilityCache[entity];
+			entry.seenThisTick = true;
+
+			// Rebuild conditions (D3) for when a wall is in range: no usable polygon yet, the wall
+			// set changed (GeometryIndex generation moved), or the observer moved more than the
+			// rebuild step from where the polygon was built. A stationary indoor colonist hits none
+			// of these and reuses last tick's polygon, so he needs only whether a wall is in range.
+			const glm::vec2 moved = pos.value - entry.builtPos;
+			const bool		farFromBuild = moved.x * moved.x + moved.y * moved.y > kSightRebuildStepMeters * kSightRebuildStepMeters;
+			const bool		staleGen = entry.builtVersion != m_geometry.generation();
+			const bool		noPolygon = !entry.hadOccluders;
+			const bool		polygonDue = farFromBuild || staleGen || noPolygon;
+			bool			backFacesHidden = false;
+			bool			outdoors = false;
+			if (polygonDue) {
+				backFacesHidden = m_geometry.queryFacingOccluders(observerMm, polygonRadiusMm, occluderScratch);
+				outdoors = occluderScratch.empty();
+			} else {
+				outdoors = !m_geometry.anyFacingOccluder(observerMm, polygonRadiusMm);
+			}
 
 			// Outdoor fast path: no occluder anywhere in range means no polygon and no
 			// gate -- the radius test alone decides visibility, exactly as before walls
 			// existed. This is the common case and must stay as cheap as the (already
 			// cheap) occluder query. Only when a wall is nearby do we build/lookup a
 			// visibility polygon and gate candidates against it.
-			VisibilityCache& entry = m_visibilityCache[entity];
-			entry.seenThisTick = true;
 			const geometry::Ring* polygon = nullptr;
 			if (outdoors) {
 				if (entry.hadOccluders) {
@@ -136,16 +152,7 @@ namespace ecs {
 				entry.builtPos = pos.value;
 				entry.radius = memory.sightRadius;
 			} else {
-				// Rebuild conditions (D3): no usable polygon yet, the wall set changed
-				// (GeometryIndex generation moved), or the observer moved more than the rebuild
-				// step from where the polygon was built. A stationary indoor colonist hits none
-				// of these and reuses last tick's polygon.
-				const glm::vec2 moved = pos.value - entry.builtPos;
-				const bool		farFromBuild = moved.x * moved.x + moved.y * moved.y > kSightRebuildStepMeters * kSightRebuildStepMeters;
-				const bool		staleGen = entry.builtVersion != m_geometry.generation();
-				const bool		noPolygon = !entry.hadOccluders;
-				const bool		polygonRebuilt = farFromBuild || staleGen || noPolygon;
-				if (polygonRebuilt) {
+				if (polygonDue) {
 					entry.polygon = geometry::computeVisibilityPolygon(observerMm, polygonRadiusMm, occluderScratch);
 					entry.builtPos = pos.value;
 					entry.builtVersion = m_geometry.generation();
@@ -158,7 +165,9 @@ namespace ecs {
 					// same structures, already in memory, so re-scanning every tick is wasted.
 					// New structures appear only via a geometry change, which bumps the
 					// generation and forces a rebuild here.
-					rememberStructures(observerMm, radiusMm, entry.polygon, memory, entry.segmentsSeen, entry.openingsSeen);
+					rememberStructures(
+						observerMm, radiusMm, entry.polygon, backFacesHidden, memory, entry.segmentsSeen, entry.openingsSeen
+					);
 				}
 				polygon = &entry.polygon;
 			}
@@ -197,13 +206,13 @@ namespace ecs {
 		const std::int64_t					   radiusMm = std::llround(static_cast<double>(radiusMeters) * 1000.0);
 		const geometry::Vec2i64				   centerMm = nav::toMm(center);
 		std::vector<geometry::OccluderSegment> occluders;
-		m_geometry.queryOccluders(centerMm, radiusMm, occluders);
+		const bool backFacesHidden = m_geometry.queryFacingOccluders(centerMm, radiusMm, occluders);
 		geometry::Ring polygon;
 		if (!occluders.empty()) {
 			polygon = geometry::computeVisibilityPolygon(centerMm, radiusMm, occluders);
 			std::vector<construction::SegmentId> segments;
 			std::vector<construction::OpeningId> openings;
-			rememberStructures(centerMm, radiusMm, polygon, *memory, segments, openings);
+			rememberStructures(centerMm, radiusMm, polygon, backFacesHidden, *memory, segments, openings);
 		}
 		lookOver(observer, center, radiusMeters, occluders.empty() ? nullptr : &polygon, *memory, world->getComponent<Knowledge>(observer));
 		m_learnedScratch.clear();
@@ -213,6 +222,7 @@ namespace ecs {
 		geometry::Vec2i64					  centerMm,
 		std::int64_t						  radiusMm,
 		const geometry::Ring&				  builtPolygon,
+		bool								  backFacesHidden,
 		Memory&								  memory,
 		std::vector<construction::SegmentId>& segments,
 		std::vector<construction::OpeningId>& openings
@@ -228,14 +238,20 @@ namespace ecs {
 		// to dozens; the per-edge crossing test is O(structures * ring edges) but
 		// both are small. Deterministic: set inserts are order-independent.
 		//
-		// A structure point [p0,p1] is seen if either endpoint lies in/on the
-		// polygon, or the span crosses a ring edge. The crossing fallback matters
-		// because a wall IS (part of) the polygon boundary: a long wall facing the
-		// observer can have both endpoints out of sight radius while its middle is
-		// the boundary seen along, which an endpoint-only test would miss.
-		auto structureSeen = [&](geometry::Vec2i64 p0, geometry::Vec2i64 p1) -> bool {
-			if (geometry::pointInPolygon(p0, polygon) != geometry::PointInPolygon::Outside ||
-				geometry::pointInPolygon(p1, polygon) != geometry::PointInPolygon::Outside) {
+		// A wall is seen when one of its outline edges (the occluders) is, an
+		// opening when the stretch of either wall face across it is: a transparent
+		// opening's gap mouth, which a steep eye crosses though every ray then ends
+		// on the far jamb, or an opaque opening's face. A span [p0,p1] is seen if either
+		// endpoint lies in/on the polygon, or the span crosses a ring edge. The
+		// crossing fallback matters because a wall's near face IS the polygon
+		// boundary: a long wall facing the observer can have both corners out of
+		// sight radius while its middle is the boundary seen along, which an
+		// endpoint-only test would miss.
+		const auto pointSeen = [&](geometry::Vec2i64 point) {
+			return geometry::pointInPolygon(point, polygon) != geometry::PointInPolygon::Outside;
+		};
+		const auto structureSeen = [&](geometry::Vec2i64 p0, geometry::Vec2i64 p1) -> bool {
+			if (pointSeen(p0) || pointSeen(p1)) {
 				return true;
 			}
 			for (std::size_t i = 0; i < polygon.size(); ++i) {
@@ -248,21 +264,28 @@ namespace ecs {
 			return false;
 		};
 
-		for (const auto& seg : m_geometry.builtSegments()) {
-			if (!geometry::withinDistanceOfSegment(centerMm, seg.a, seg.b, radiusMm)) {
+		// From outside the solid a back face is hidden but for its ends (GeometryIndex.h),
+		// which can touch the polygon where another wall's face meets it.
+		// A wall's edges are listed together, so one already seen is the last one added.
+		for (const GeometryIndex::OccluderRecord& occluder : m_geometry.occluders()) {
+			if ((!segments.empty() && segments.back() == occluder.source) ||
+				!occluder.within(centerMm, radiusMm)) {
 				continue;
 			}
-			if (structureSeen(seg.a, seg.b)) {
-				memory.rememberSegment(seg.id);
-				segments.push_back(seg.id);
+			const bool seen = backFacesHidden && GeometryIndex::facesAway(occluder.seg, centerMm)
+								  ? pointSeen(occluder.seg.a) || pointSeen(occluder.seg.b)
+								  : structureSeen(occluder.seg.a, occluder.seg.b);
+			if (seen) {
+				memory.rememberSegment(occluder.source);
+				segments.push_back(occluder.source);
 			}
 		}
 
 		for (const auto& op : m_geometry.builtOpenings()) {
-			if (!geometry::withinDistanceOfSegment(centerMm, op.jambA, op.jambB, radiusMm)) {
+			if (!op.within(centerMm, radiusMm)) {
 				continue;
 			}
-			if (structureSeen(op.jambA, op.jambB)) {
+			if (structureSeen(op.leftFace.start, op.leftFace.end) || structureSeen(op.rightFace.start, op.rightFace.end)) {
 				memory.rememberOpening(op.openingId);
 				openings.push_back(op.openingId);
 			}

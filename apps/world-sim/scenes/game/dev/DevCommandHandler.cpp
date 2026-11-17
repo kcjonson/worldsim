@@ -1,5 +1,7 @@
 #include "DevCommandHandler.h"
 
+#include "UserSettings.h"
+#include "scenes/game/dev/CameraStateJson.h"
 #include "scenes/game/dev/ConstructionStateJson.h"
 #include "scenes/game/dev/DevJson.h"
 #include "scenes/game/dev/DrawingStateJson.h"
@@ -142,12 +144,26 @@ namespace world_sim {
 		};
 		view("colonists", &DevCommandHandler::serializeColonists);
 		view("construction", &DevCommandHandler::serializeConstruction);
-		registrations.push_back(server.stateProvider("drawing", [this] { return drawingStateJson(m_ctx.drawing->snapshot()); }));
+		registrations.push_back(server.stateProvider("drawing", [this] {
+			return drawingStateJson(
+				m_ctx.drawing->snapshot(),
+				{.settings = UserSettings::Get().drawing,
+				 .keyGuideCollapsed = m_ctx.drawing->keyGuideCollapsed(),
+				 .dialogOpen = m_ctx.dialogOpen && m_ctx.dialogOpen()}
+			);
+		}));
+		registrations.push_back(server.stateProvider("camera", [this] {
+			int width = 0;
+			int height = 0;
+			Renderer::Primitives::getLogicalViewport(width, height);
+			return cameraStateJson(*m_ctx.camera, m_ctx.pixelsPerMeter, width, height);
+		}));
 		view("stations", &DevCommandHandler::serializeStations);
 		view("storage", &DevCommandHandler::serializeStorage);
 		view("time", &DevCommandHandler::serializeTime);
 		view("landing", &DevCommandHandler::serializeLanding);
 		view("summary", &DevCommandHandler::serializeSummary);
+		view("thoughttypes", &DevCommandHandler::serializeThoughtTypes);
 		registrations.push_back(server.stateProvider("visibility", [this] { return visibilityJson({}); }));
 		registrations.push_back(server.stateProvider("tunables", [] { return Foundation::Tunables::instance().toJson(); }));
 		return registrations;
@@ -1569,6 +1585,16 @@ namespace world_sim {
 		}
 		out << "}";
 		return out.str();
+	}
+
+	void DevCommandHandler::serializeThoughtTypes(std::ostringstream& out) {
+		const ecs::ThoughtTypes& types = m_ctx.world->getSystem<ecs::ThoughtSystem>().types();
+		out << "{\"types\":[";
+		for (std::size_t index = 0; index < types.typeCount(); ++index) {
+			const ecs::ThoughtType& type = types.type(static_cast<ecs::ThoughtEventTypeId>(index));
+			out << (index > 0 ? "," : "") << "{\"name\":\"" << jsonEscape(type.name) << "\",\"label\":\"" << jsonEscape(type.label) << "\"}";
+		}
+		out << "]}";
 	}
 
 	void DevCommandHandler::serializeSummary(std::ostringstream& out) {

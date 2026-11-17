@@ -214,7 +214,7 @@ namespace nav {
 				members.push_back(geoSegments[i]);
 			}
 			const geometry::WallBands bands = geometry::resolveWallBands(members, geometry::kDefaultMiterLimit);
-			if (bands.status != geometry::OffsetStatus::Ok || bands.bands.size() != members.size()) {
+			if (!geometry::bandsAccepted(bands)) {
 				for (const std::size_t i : graph) {
 					geometry::Ring ring = geometry::band(geoSegments[i].a, geoSegments[i].b, geoSegments[i].halfThicknessMm);
 					if (ring.size() >= 3) {

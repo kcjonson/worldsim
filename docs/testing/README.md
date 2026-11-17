@@ -253,6 +253,7 @@ spec, and the `/perf-nightly` skill runs it.
 | 17 | Interface size | [scenarios/17-interface-size.md](./scenarios/17-interface-size.md) |
 | 18 | Colonist thoughts | [scenarios/18-colonist-thoughts.md](./scenarios/18-colonist-thoughts.md) |
 | 19 | Load errors on screen | [scenarios/19-load-errors-on-screen.md](./scenarios/19-load-errors-on-screen.md) |
+| 20 | Drawing tools | [scenarios/20-drawing-tools.md](./scenarios/20-drawing-tools.md) |
 
 **Scenarios that look away from the colonists turn reveal on** (`/api/dev/reveal?on=1`), since ground no colonist has seen is black (player visibility); a launch starts with it off. Scenario 14 is the one that tests the cover itself.
 
@@ -383,10 +384,12 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
 |---------|---------|
 | `summary` | `{colonists, foundations, chunks}` |
 | `colonists` | `[{id, name, x, y, traits[], needs{}, mood{value, target, band, cause: {need} or {thought} or null}, attributes{strength, agility, ...}, thoughts{recorded, merged, held:[{id, type, feeling, mood, left, count}], recent:[{id, type, feeling, line, arrivedAt}]}, action, inventory{}, hands{}, belt{}, cargoKg, carryCapacityKg}]`. `attributes` is every attribute, 0 to 20, by the name conditions use (`social_need`). `thoughts` is there once the colonist has had one: `recorded` is the record's size and `merged` how many of its entries pruning merged; `held` is every thought whose mood effect is running, `mood` its amount (times `count` for a stack), `left` the game hours to go or `"while"` for one that lasts while its condition holds; `recent` is the last five recorded, newest first, `line` the rendered quip or null. |
+| `thoughttypes` | `{types:[{name, label}]}`, every loaded thought type in load order; `name` is what the `thought` verb takes as `type`. The Dev Tools tab's thought list reads it. |
 | `stations` | `[{id, x, y, jobs:[{recipe, completed, quantity}], store{}}]` |
 | `storage` | `[{id, defName, x, y, inventory{}, slots, maxSlots, rules:[{item, category, priority, min, max}]}]` |
 | `construction` | `{foundations:[{id, material, state, entity, area, corners:[{x, y}], required{}, delivered{}, progress, phase}], walls:[{id, material, state, entity, x0, y0, x1, y1, required{}, delivered{}, progress}], openings:[{id, type, material, wall, fractionAlongWall, state, entity, x, y, phase, required{}, delivered{}, progress}]}`. `state` is `Blueprint` or `Built`. `corners` is the foundation's ring in world meters, to three decimals, in ring order without repeating the first corner, so two foundations that share an edge share two corner coordinates exactly. An opening's `wall` is the wall segment id it sits on, `fractionAlongWall` how far along that wall it is (0 at the wall's `x0,y0` end, 1 at `x1,y1`), and `x,y` that point in world meters; they are left out when the wall or one of its ends is missing. `phase` and the material keys come with an `entity` that carries a blueprint, as on a foundation, and `phase` is `Clearing`, `AwaitingMaterials`, `UnderConstruction` or `Complete` |
 | `drawing` | what the drawing tools hold; see [the drawing view](#the-drawing-view) |
+| `camera` | `{center{x, y}, zoom, pixelsPerMeter, window{width, height}, visible{minX, minY, maxX, maxY}}`; see [the camera view](#the-camera-view) |
 | `landing` | `{landingLatDeg, landingLonDeg, biome, waterClass, riverInTile}` |
 | `time` | `{...}` |
 | `tunables` | every registered tunable and its value |
@@ -399,18 +402,38 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
 
 - `tool`: `none`, `foundationRectangle`, `foundationFreeform`, `foundationEdit`, `wall` or `opening`. `lastFoundationTool` (`rectangle` or `freeform`) is the foundation tool picked last this session, which the Build menu's Foundation entry opens. With `none` the view holds nothing of the last tool: `snap`, `pointer` and the per-tool keys are null or absent, and `status` is `active` false and the material.
 - `followingPointer`: false while the tool is paused (the pointer is outside the window, or the window is unfocused) and before its first move. Then `snap` and `pointer` are null and `verdict.proposed` is false, and the placed `points` stay.
-- `pointer`: the pointer's world position as the tool last saw it, before any snap, or null when the tool is not following the pointer.
+- `pointer`: the pointer's world position as the tool last saw it, before any snap, or null when the tool is not following the pointer. A move over a HUD panel (the top bar, the zoom buttons, the strip, the key guide) leaves `pointer` and `snap` at their last values, and a click there is taken by the ui.
 - `points`: the placed points. In the Rectangle tool, its first corner.
 - `rectangle` (Rectangle tool only): `pressPending` (a press awaits its release), `firstCorner` or null, `corners` (the pending rectangle's four, empty when the two corners make none) and `sizeLabel`.
 - `edit` (Add / Subtract only): `target` foundation id and `mode`, `Add` or `Subtract`.
-- `wall`: `hostFoundation`, 0 until the chain's first point lands on one. Before that first point, `verdict.proposed` does not tell whether the pointer is on a foundation; read `hostFoundation` (0 means none).
+- `wall`: `hostFoundation`, the foundation the chain is on, 0 until the first point is placed; a pointer over a foundation does not set it.
+  - Before the first point, `verdict.proposed` is true with the pointer on a foundation and false off every one (a click there places nothing), and `status.valid` is true with the hint `Click a foundation to start` either way.
+  - A refusal for the ground outranks both: over ground that cannot be built on, `verdict.valid` is false, `proposed` is true and `reason` says why.
 - `opening`: `type`, and `snap` or null when no built wall is in range. The snap is `wall` (the segment id), `fractionAlongWall` (how far along that wall the opening sits: 0 at the wall's first vertex, 1 at its second) and `point`, which is on the wall's line.
 - `snap`: the snapped point, `kind`, `guides`, the length step, and `closesShape` (the next click closes the shape; in the Rectangle tool, commits it). Null while paused, and for the opening tool, whose snap is under `opening`.
   - `kind` is a `SnapKind`: `None`, `Angle`, `Vertex`, `Edge`, `Origin`, `WallEndpoint`, `WallSegment`, `GuideLine` or `GuideCrossing`. In the Rectangle tool it is a `RectangleSnapKind`: `None`, `Vertex`, `Edge` or `Grid`. A close the rescue makes, with the pointer near the first point but not on it, has `kind` `None` and `closesShape` true.
   - Each guide has `source` (`DrawnShape`, `NearbyStructure` or `WorldAxes`), `relation` (`Parallel`, `Perpendicular` or `AngleStep`), `from` (the node it runs from) and `distanceFromNodeMeters`.
   - `lengthSnap` is `None`, `Rounded`, `RoundedAlongGuide` or `CommonLength`; `lengthMeters` is the length the step set, and 0 when it set nothing. `segmentLengthMeters` is the distance from the last placed point to the snapped point whatever set it, or null with no placed point, so at a guide crossing `lengthMeters` can be 0 while the segment is 4.000. `matchedEdgeCount` and `commonLengthsMeters` are the common-length matches.
-- `verdict`: what the next click would get, read from the same check the strip and the preview read: `valid`, `proposed` (false when the click would place nothing), and `reason` when refused. The opening tool's verdict is the strip's own (`status.valid` and `status.message`).
-- `status`: the strip's readouts: `active`, `material`, `pointCount`, `areaSquareMeters`, `valid`, `message`, plus `thicknessPreset`, `segmentLengthMeters`, `totalLengthMeters`, `wallCost`, `wallWork` for a wall, `editLabel` and `areaDeltaSquareMeters` for Add / Subtract, `openingType` and `openingWidthMeters` for an opening. Each group is there only while its tool is active.
+- `verdict`: what the next click would get, read from the same check the strip and the preview read: `valid`, `proposed` (false when the click would place nothing), and `reason` when refused. The opening tool's verdict is the strip's own (`status.valid` and `status.message`), except while paused, where `verdict.valid` is true and `status.valid` false.
+- `settings`: the Drawing Settings as they are now, there with or without a tool; see [the settings keys](#the-settings-keys). The views exist only while a game is running (`what=drawing` and `what=camera` answer 404 in the Settings scene and the menus), and `settings` shows the values the Settings scene set once one is.
+- `keyGuide`: `{shown, collapsed}`, there with or without a tool. `shown` is true while a tool is active and `settings.showKeyGuide` is on, which is the panel's own rule; `collapsed` is true while it is folded to its chip (the `?` or H key, or the chip, toggles it), and stays what it was while the panel is hidden. A folded guide is still `shown`.
+- `dialogOpen`: true while a dialog is open over the game (the pause menu, Settings), false otherwise, tool or not. While it is true the world's hotkeys and the key guide's toggle do not act.
+- `status`: the strip's readouts: `active`, `material`, `pointCount`, `areaSquareMeters`, `valid`, `message`, `hint`, plus `thicknessPreset`, `segmentLengthMeters`, `totalLengthMeters`, `wallCost`, `wallWork` for a wall, `editLabel` and `areaDeltaSquareMeters` for Add / Subtract, `openingType` and `openingWidthMeters` for an opening. Each group is there only while its tool is active.
+  - `hint` is the line the strip shows under its readouts, from the same function the strip calls. It is the refusal or an instruction, by tool:
+    - Rectangle: `Click or drag from a corner` (no corner yet), `Click the opposite corner` (one corner placed).
+    - Freeform, and Add / Subtract once a point is placed: `Keep placing points` (one or two points), `Click origin to close` (three or more, valid).
+    - Add / Subtract with no point: `Draw a region across the foundation edge`.
+    - Freeform with no point, and no tool: `Ready`.
+    - Wall: `Click a foundation to start` (no point placed), `Right-click / Enter to finish` (one or more).
+    - Opening: `Click a wall to place` (valid), `no wall in range` (the pointer is not near a built wall), `Hover a built wall` (paused, nothing proposed), or the validator's refusal.
+  - How the keys relate:
+    - `message` carries the refusal, and is empty when `valid` is true.
+    - `hint` is the strip's line: the refusal or an instruction.
+    - `hint` equals `message` when `valid` is false and `message` is not empty, whatever the tool and however many points are placed (a refusal beats `Keep placing points`).
+    - `valid` is false with an empty `message` only for the opening tool while paused, where `hint` is `Hover a built wall`; everywhere else a false `valid` carries a `message`, and `hint` is that message.
+    - `verdict.reason` is the same text as `status.message` for every tool.
+    - The view reports text only; the strip's colour for the line is not in it.
+  - A scenario that checks a refusal asserts `status.valid` false and `status.message`.
 
 A Freeform shape with two points placed and the pointer on a third:
 
@@ -421,10 +444,81 @@ A Freeform shape with two points placed and the pointer on a third:
  "snap":{"point":{"x":26.250,"y":-2.325},"kind":"None","guides":[],"lengthSnap":"Rounded",
          "lengthMeters":6.300,"segmentLengthMeters":6.300,"matchedEdgeCount":0,"commonLengthsMeters":[],"closesShape":false},
  "verdict":{"valid":true,"proposed":true,"reason":""},
- "status":{"active":true,"material":"Wood","pointCount":2,"areaSquareMeters":0.000,"valid":true,"message":""}}
+ "status":{"active":true,"material":"Wood","pointCount":2,"areaSquareMeters":0.000,"valid":true,"message":"","hint":"Keep placing points"},
+ "settings":{"angleSteps":false,"guidesFromShape":false,"alignToExistingBuildings":false,"guidesFromWorldAxes":false,"guideCrossings":false,
+             "commonLengths":false,"guideDistances":false,"angleReadout":false,"roundLengths":true,"showKeyGuide":true,"rectangleGridSpacingMeters":1.000},
+ "keyGuide":{"shown":true,"collapsed":false},"dialogOpen":false}
 ```
 
 With the pointer over the creek the same shape answers `"verdict":{"valid":false,"proposed":true,"reason":"not on buildable ground"}`.
+
+#### The settings keys
+
+The defaults are `<DrawingSettingsDefaults>` in `assets/config/construction/snapping.xml`; the label is the row in the Settings scene.
+
+| Key | Default | Settings label |
+|-----|---------|----------------|
+| `angleSteps` | false | Angle steps |
+| `guidesFromShape` | false | Guides from the shape |
+| `alignToExistingBuildings` | false | Align to existing buildings |
+| `guidesFromWorldAxes` | false | Guides from the world axes |
+| `guideCrossings` | false | Crossings |
+| `commonLengths` | false | Common lengths |
+| `guideDistances` | false | Guide distances |
+| `angleReadout` | false | Angle readout |
+| `roundLengths` | true | Round lengths to 0.1 m |
+| `showKeyGuide` | true | Show key guide while drawing |
+| `rectangleGridSpacingMeters` | 1.000 | Grid spacing (rectangle tool): 1 meter or 0.5 meters |
+
+Every key but the last is true or false. `rectangleGridSpacingMeters` is 1.000 or 0.500.
+
+### The camera view
+
+`what=camera` answers where the world camera looks, so a check can turn a world point into the pixel `/api/input` takes, and a pixel back into a world point. The game scene answers it. Numbers are printed to three decimals.
+
+- `center`: the camera's current position, `{x, y}` in world meters.
+  - `/api/control?action=camera&x=&y=` sets it outright at the next update.
+  - While a pan is in progress (a pan key held, or `panx` / `pany` set), `center` eases toward its target, so read the view again until `center` stops changing before converting. A `panx` / `pany` pan keeps going until it is set back to 0, so `center` never settles until then.
+  - The view answers while the app is paused, but a pending control has not applied.
+- `zoom`: the zoom factor (3.000 is the 100 percent view). `pixelsPerMeter`: the screen scale at that zoom, in logical pixels per world meter.
+- `window`: `{width, height}`, the window's logical pixels, the ones `/api/input` takes, in whole numbers. It does not change with the Interface size.
+- `visible`: `{minX, minY, maxX, maxY}`, the world rectangle the window shows.
+
+A screenshot is in framebuffer pixels (twice the logical size on a HiDPI display), and `/api/ui/tree` is in ui px (times `layoutScale` from `what=uiscale` for logical pixels); neither is `window`'s unit without that conversion.
+
+Y runs down the screen and down the world alike: a larger world y is lower in the window, so pixel y grows with world y and there is no flip. The two formulas, with `c` the `center`, `s` the `pixelsPerMeter` and `w`, `h` the `window`:
+
+```
+pixelX = w / 2 + (worldX - c.x) * s        worldX = c.x + (pixelX - w / 2) / s
+pixelY = h / 2 + (worldY - c.y) * s        worldY = c.y + (pixelY - h / 2) / s
+```
+
+A pixel is in the window when it is within `0..w` and `0..h`, but a tool's click is taken by the ui first where a panel covers it (the dock, the strip, the key guide), so aim at open ground. A point a tool places lands on its snap: with the Freeform tool and `roundLengths` on, a click at the pixel for (14.5, 22.0) read back as (14.499, 22.000), so allow the 0.1 m rounding.
+
+### Driving a drawing tool
+
+For a scenario author. Everything goes through `/api/input`, the way a player's hands do.
+
+1. Open the Build menu (`build_dropdown`) and pick Foundation, Wall, Door or Window. The menu's entries have no ids; they are the `MenuItem` nodes of the open `Menu` in `/api/ui/tree`, in the order Foundation, Wall, Door, Window, with their `screenBounds` in ui px.
+2. For Foundation, the strip's cards pick the tool: `config_strip_tool_Rectangle` or `config_strip_tool_Freeform`.
+3. The action buttons on a selected structure's panel have no ids. In `/api/ui/tree` each is a `Button` node whose label is a child `Text` node, so a tester finds the `Text` node by its content ("Add", "Subtract", "Demolish", or "Demolish building" once the foundation hosts walls) and takes the bounds from the `Button` that holds it (ui px; times `layoutScale` for `/api/input`).
+   - Add is offered for an editable blueprint, or for a built foundation that is not being demolished and has no pending extension. It starts the Add tool.
+   - Subtract is offered only for an editable blueprint. It starts the Subtract tool.
+   - Demolish starts the demolition; the wall and opening panels' only button is "Demolish".
+   - A foundation that hosts walls offers "Demolish building" instead of "Demolish".
+4. The menus' and Settings' controls have ids in `/api/ui/tree`: `btn_enter_expedition` on the splash; `menu_quick_start` and `menu_settings` on the main menu; `top_bar_menu` and, in the pause menu, `pause_menu_main_menu`; in Settings `settings_back`, one `drawing_<name>_toggle` per switch (`drawing_align_existing_toggle`, `drawing_key_guide_toggle`) and `drawing_grid_spacing` (its segments are found by their text). A click on a Settings switch at the row's left switches it. A click or a menu pick can take a frame to show in a state view, so a read sent right after it can still show the state from before; read again after a moment.
+5. Place points with `ev=click,x,y`, the pixel from the camera formulas above. A point that is buildable at the Quick Start landing is (30, 10); the Rectangle from (30, 10) to (34, 13) places there, while (10, 10) is water.
+6. Read `what=construction` to see what was committed. The drawing view does not say that a shape was committed; it shows the tool's state, not the shapes it built.
+
+Keys, from `ev=keydown,<key>`, as the key guide lists them. `escape` closes an open menu, dialog or panel first (any overlay but a toast or a tooltip), reaches the tool only when none is open, and with no tool either opens the pause menu, so a stray extra `escape` leaves a dialog over the game that takes the next click:
+
+| Key | Rectangle | Freeform and Add / Subtract | Wall | Door and Window |
+|-----|-----------|-----------------------------|------|-----------------|
+| `backspace` | drops the first corner | undoes the last point | undoes the last point | not listed |
+| `escape` | drops the first corner; with none, leaves the tool | cancels the shape; with none, leaves the tool | with two or more points, ends the wall and keeps the tool; with one, clears the chain and keeps the tool; with none, leaves the tool | leaves the tool |
+| `enter` | not listed | not listed | ends the wall | not listed |
+
+The `?` key is a typed character: inject `char,63` (a `keydown` of `?` answers 400, since the key parser takes letters, digits, named keys and F1 to F12); `h` is `keydown,h`. A right-click is `click,x,y,right`, and a double-click is two `click` events in one request. Injected input holds no modifier keys (no Alt for the raw cursor, no Ctrl for walling a whole edge), cannot send a key's auto-repeat (a second `keydown` is a second press), and cannot send a loss of focus. A move and a click sent in one request (`ev=move,x,y&ev=click,x,y`) place at the click's own position, so no wait between them is needed. A move to a pixel outside the window (`ev=move,-5,-5`) pauses the tool as a real exit does: `followingPointer` reads false, `pointer` and `snap` are null and the placed `points` stay, until a move back over the world resumes it.
 
 ### Other endpoints
 

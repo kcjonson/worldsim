@@ -1,6 +1,7 @@
 #include "DrawingKeyGuide.h"
 
 #include "scenes/game/world/construction/DrawingSystem.h"
+#include "scenes/game/world/construction/KeyGuideVisibility.h"
 #include "scenes/shared/SalalUi.h"
 
 #include <assets/ConstructionRegistry.h>
@@ -271,7 +272,7 @@ namespace world_sim {
 			return;
 		}
 		shown = now;
-		setVisible(tool.has_value() && settings.showKeyGuide);
+		setVisible(keyGuideShown(tool, settings));
 		if (isVisible()) {
 			build();
 		}

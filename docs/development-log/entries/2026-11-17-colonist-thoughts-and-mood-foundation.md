@@ -4,7 +4,7 @@
 
 Over 2026-11-16 and 2026-11-17 the colonist mood and thoughts work went from design docs to a running system. Mood is now a simulated value instead of a number the UI computed each frame, colonists hold thoughts that in-game events create from XML definitions, the thoughts show in the log and the mood breakdown, and the record of kept thoughts is bounded. Traits and attributes are rolled at spawn, and colonists remember each other, so `near(colonist)` finally means something.
 
-Alongside it, the config loaders on the colonist side moved to strict reading: a file with any problem loads nothing, the message names the file, the element instance, and the attribute, and the loading failure view shows the messages on screen instead of only in the log. PR 492 (WOR-977, stale entity ids find no component) is open at the time of writing.
+Alongside it, the config loaders on the colonist side moved to strict reading: a file with any problem loads nothing, the message names the file, the element instance, and the attribute, and the loading failure view shows the messages on screen instead of only in the log. The ECS component pool also stopped answering stale entity ids.
 
 ## Details
 
@@ -27,6 +27,8 @@ PR 461 added the design docs for colonist mood and thoughts ([mood.md](../../des
 - Load errors on screen (PR 484, WOR-992, loading failure view), then closed symbol sets (PR 487, WOR-996, unknown names in a condition fail the load).
 - Action events (PR 488, WOR-999, an action reports Finished only when its effect took).
 - Strict loaders for work types, recipes, and task chains (PR 489, WOR-991), then recipe names, the asset manager, and action types (PR 490, WOR-1046).
+- Stale entity ids (PR 492, WOR-977, a stale entity id finds no component).
+- Dev tools (PR 494, WOR-947, give a thought and set an attribute from the Dev Tools tab).
 
 ### Decisions worth keeping
 
@@ -52,6 +54,8 @@ Trait and attribute rolls share a hand-rolled draw on raw `mt19937` output (`Ran
 
 `ActionSystem::completeAction` used to report Finished before applying the effect, so an Eat whose food had vanished still gave `ate_good_meal`. It now applies the effect first and reports Finished only when the effect took. The audit found three actions (Craft, PickupPackaged, PlacePackaged) crediting an effect that never happened, and all three are fixed. A Deconstruct also counts as resumed work only once `StructureBlueprint::teardownBegun` is set.
 
+`ComponentPool` used to look components up by entity index and ignore the generation, so an id held after its entity died reached whatever entity reused the index. The pool already stored the full id beside each component; lookups now compare it, so a stale id finds nothing, and `addComponent` on a dead id asserts in Debug and attaches nothing in release. The `isAlive` checks that existed only to guard a lookup were removed. The cost was reasoned from the code (one compare on `get`, one more load on `has`) and not measured.
+
 Load errors reach the player through a shared `LoadFailureView` (the first five messages in full, "and N more", the log path), used by both the loading scene and the splash. The asset manager lists recipe problems in a RECIPES block and counts them in its header.
 
 ## Related documentation
@@ -67,7 +71,7 @@ Load errors reach the player through a shared `LoadFailureView` (the first five 
 
 ## Next steps
 
-- PR 492 (WOR-977, stale entity ids find no component) is open.
+- The accident event and its thought source (WOR-1048): the sim has no accident event, so `accident_in_public` never fires.
 - The bubble selector (WOR-939) waits on two design decisions: what a thought's source is for the per-source switches (WOR-981), and starting numbers for the bubble budget (WOR-965).
 - Low-mood behaviors as data (WOR-951) wait on settling how several table entries are expressed and how a behavior's effect is scripted.
 - Need decay rates are still in C++ (WOR-834, need levels as data).

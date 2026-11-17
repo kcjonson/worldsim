@@ -1,7 +1,7 @@
 # Scenario 14: player visibility
 
 **Status:** draft  
-**Last verified:** 2026-11-14, steps 1, 10, 11 (the drawing, not the walk), 12 and 13; 2026-11-13, all steps (placement through injected input since salal v0.41.1)  
+**Last verified:** 2026-11-17, all steps  
 
 The player sees only what colonists have seen: bright ground round the crew, tinted ground out to the 150 m landing, black beyond. Things on seen ground select and place; on black ground they do not; a move order into the black walks the colonist to the edge of seen ground. Spec: [player-visibility.md](../../technical/player-visibility.md).
 
@@ -24,4 +24,6 @@ Build `world-sim` (RelWithDebInfo), launch it with `--background --no-settings` 
 11. `...reveal?on=0`: the black and the tint come back, with the ground Bob opened in step 9 still seen.
 12. Zoom 1 at the landing, then jump the camera east 300 m at a time to 2.4 km out, reading `...api/state?what=scene` (`chunks`, the `Chunks:` readout) at each: it never rises, and falls as the chunks the camera alone held unload.
 13. `...teleport?colonist=<BID>&to=479,10` (`/api/dev/teleport`), wait a second: `...visibility?x=509&y=10` is `seen`, `x=511` is not, a seen edge a few metres short of the chunk border at 512 m. Teleport him back to the landing, screenshot at `x=508&y=10&zoom=6`, jump to `x=4000` (chunks fall), and back: the same picture, the trees from past the border still drawn over the seen edge, and `...flora?age=mature&near=520,10` still lists trees east of 512 m.
-14. Click Release in Bob's panel, then `curl.exe "http://127.0.0.1:8081/api/control?action=exit"`.
+14. Read Bob again, build a wall 5 m east of him (`...api/dev/walls?pts=<BX+5>,<BY-3>;<BX+5>,<BY+3>&material=Wood&thickness=Standard&built=1&host=0`; a tree in the way refuses it, so move it a metre) and zoom 20 on it: the tint starts at the wall's west face, on Bob's side, and the ground east of it is dimmed.
+15. Look at the top of the wall: it is an even mid brown, with no lighter strip down its west half, and turns a light tan with `...reveal?on=1` (set it back to 0).
+16. Click Release in Bob's panel, then `curl.exe "http://127.0.0.1:8081/api/control?action=exit"`.
