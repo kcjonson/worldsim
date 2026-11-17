@@ -14,6 +14,8 @@ add_library(geometry
     contour/WarpField.cpp
     silhouette/Silhouette.cpp
     triangulation/ConstrainedDelaunay.cpp
+    visibility/ForestDepth.cpp
+    visibility/ForestShape.cpp
     visibility/SightClip.cpp
     visibility/SightSkirt.cpp
     visibility/Visibility.cpp

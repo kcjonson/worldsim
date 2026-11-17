@@ -138,6 +138,26 @@ TEST_F(ConditionConfigTest, TheShippedVocabularyListsNoEngineNames) {
 	const auto colonist = std::ranges::find(load.config.kinds, "colonist", &ConditionKindDef::name);
 	ASSERT_NE(colonist, load.config.kinds.end());
 	EXPECT_FALSE(colonist->capability.has_value());
+	EXPECT_EQ(colonist->mover, "Colonist");
+}
+
+TEST_F(ConditionConfigTest, AKindMapsToACapabilityOrAMoverDefinition) {
+	write("a.xml", R"(<Night start="20" end="6"/><Kind name="deer" mover="Deer"/><Kind name="well" capability="drinkable"/>)");
+	write("mods/herds/kinds.xml", R"(<Kind name="well" mover="WellKeeper"/>)");
+	const ConditionConfigLoad load = loadConditionConfig(folder);
+	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
+	ASSERT_EQ(load.config.kinds.size(), 2U);
+	EXPECT_EQ(load.config.kinds[0].mover, "Deer");
+	EXPECT_FALSE(load.config.kinds[0].capability.has_value());
+	EXPECT_EQ(load.config.kinds[1].mover, "WellKeeper") << "a later file replaces the whole mapping";
+	EXPECT_FALSE(load.config.kinds[1].capability.has_value());
+
+	write("a.xml", R"(<Night start="20" end="6"/><Kind name="both" capability="edible" mover="Deer"/><Kind name="blank" mover=""/>)");
+	std::filesystem::remove_all(folder / "mods");
+	const std::vector<std::string> errors = loadConditionConfig(folder).errors;
+	EXPECT_TRUE(mentions(errors, "kind 'both': a kind is a capability or a mover, not both"));
+	EXPECT_TRUE(mentions(errors, "kind 'blank': mover=\"\" names no definition"));
+	EXPECT_EQ(errors.size(), 2U);
 }
 
 TEST_F(ConditionConfigTest, TheFolderLoadsBeforeItsSubfolders) {

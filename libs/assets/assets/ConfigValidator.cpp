@@ -4,6 +4,7 @@
 #include "assets/ConfigValidator.h"
 #include "assets/ActionTypeRegistry.h"
 #include "assets/ConstructionRegistry.h"
+#include "assets/MemoryConfig.h"
 #include "assets/MoodConfig.h"
 #include "assets/PriorityConfig.h"
 #include "assets/TaskChainRegistry.h"
@@ -113,6 +114,21 @@ bool ConfigValidator::validatePriorityConfig() {
     }
 
     return valid;
+}
+
+bool ConfigValidator::validateMemory(const MemoryConfig& config) {
+    const std::string source = "Memory";
+
+    if (!config.loaded()) {
+        addError(source, "No memory config loaded", "Ensure assets/config/colonists/memory.xml exists and is valid");
+        return false;
+    }
+
+    if (!std::isfinite(config.recentSightingGameMinutes()) || config.recentSightingGameMinutes() <= 0.0F) {
+        addError(source, "RecentSighting gameMinutes must be a positive number", "Set <RecentSighting gameMinutes=\"...\"/>");
+        return false;
+    }
+    return true;
 }
 
 bool ConfigValidator::validateMood(const MoodConfig& config) {
@@ -619,6 +635,11 @@ bool ConfigValidator::validateAll() {
 
     if (MoodConfig::Get().loaded() && !validateMood(MoodConfig::Get())) {
         LOG_ERROR(Engine, "Mood config validation failed");
+        valid = false;
+    }
+
+    if (MemoryConfig::Get().loaded() && !validateMemory(MemoryConfig::Get())) {
+        LOG_ERROR(Engine, "Memory config validation failed");
         valid = false;
     }
 
