@@ -219,7 +219,7 @@ namespace world_sim {
 		/// Update the snapped cursor + live validity from a mouse move. Resumes a paused tool.
 		void handleMouseMove(float screenX, float screenY, int viewportW, int viewportH, bool freeform);
 
-		/// The pointer is no longer with the tool (outside the window, or the window lost the
+		/// The pointer is not with the tool (outside the window, or the window without the
 		/// focus): forget everything it proposed, so nothing follows it and the status strip
 		/// refuses nothing, until the next handleMouseMove. Placed points, a waiting first
 		/// corner, and a pending press stay. A tool starts paused, until its first move.
@@ -299,6 +299,9 @@ namespace world_sim {
 		/// Drawn under the regular polygon preview. INTERIM.
 		void renderEditOutlinePreview(int viewportWidth, int viewportHeight, float uiScale);
 
+		/// The snap feedback (drawSnapFeedback), while the tool follows the pointer.
+		void drawPointerFeedback(int viewportWidth, int viewportHeight, float uiScale) const;
+
 	  public:
 		/// A rejected edit's reason, drawn beside the cursor, where, and how large.
 		struct EditReason {
@@ -338,6 +341,17 @@ namespace world_sim {
 			std::string editReason;				 // why that edit is refused, drawn beside the pointer; empty when it isn't
 		};
 		[[nodiscard]] PreviewVerdict previewVerdict() const;
+
+		/// What renderPreview draws that follows the pointer, all of it gone while the tool is
+		/// paused: the rubber band (and the wall's band) to the snapped point with the snap
+		/// feedback, an Add or Subtract's trial outline of the foundation it would make with its
+		/// reason, and the opening tool's ghost on the wall it snapped to.
+		struct PointerPreview {
+			bool snapFeedback = false;
+			bool trialOutline = false;
+			bool openingGhost = false;
+		};
+		[[nodiscard]] PointerPreview pointerPreview() const;
 
 		// --- Topology access for consumers (selection, ConstructionSystem) ---
 
@@ -675,11 +689,11 @@ namespace world_sim {
 		DrawingState						   state_ = DrawingState::Idle;
 		ToolKind							   activeTool_ = ToolKind::Foundation;
 		std::vector<Foundation::Vec2>		   points_;				// placed vertices, world meters
-		Foundation::Vec2					   cursor_{0.0F, 0.0F}; // snapped cursor, read only while pointerPresent_
+		Foundation::Vec2					   cursor_{0.0F, 0.0F}; // snapped cursor, read only while followingPointer_
 		construction::SnapResult			   lastSnap_;
-		// A move has proposed a point since the tool started or last paused: what follows the
-		// pointer (the cursor, the snap, the pending shape) is drawn only while this holds.
-		bool pointerPresent_ = false;
+		// A move has proposed something since the tool started or last paused. It holds over the
+		// interface, where the preview stays at its last position on the world.
+		bool followingPointer_ = false;
 		construction::ValidationResult		   lastValidation_;
 
 		// The last evaluated snap and point validation, and what they were evaluated

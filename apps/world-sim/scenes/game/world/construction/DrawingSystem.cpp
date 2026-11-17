@@ -302,7 +302,7 @@ namespace world_sim {
 		activeTool_ = tool;
 		points_.clear();
 		wallHost_ = ec::kInvalidFoundation;
-		clearRectangle();
+		cancelPress();
 		pause();
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(true);
@@ -378,9 +378,9 @@ namespace world_sim {
 	void DrawingSystem::deactivate() {
 		state_ = DrawingState::Idle;
 		points_.clear();
-		clearRectangle();
-		wallHost_ = ec::kInvalidFoundation;
-		editTarget_ = ec::kInvalidFoundation;
+		cancelPress();
+		wallHost_ = construction::kInvalidFoundation;
+		editTarget_ = construction::kInvalidFoundation;
 		pause();
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(false);
@@ -388,7 +388,7 @@ namespace world_sim {
 	}
 
 	void DrawingSystem::pause() {
-		pointerPresent_ = false;
+		followingPointer_ = false;
 		lastSnap_ = {};
 		lastValidation_ = {};
 		willClose_ = false;
@@ -412,7 +412,7 @@ namespace world_sim {
 		if (state_ != DrawingState::Drawing || camera_ == nullptr) {
 			return;
 		}
-		pointerPresent_ = true;
+		followingPointer_ = true;
 		const auto world = camera_->screenToWorld(screenX, screenY, viewportW, viewportH, kPixelsPerMeter);
 
 		if (activeTool_ == ToolKind::Wall) {
@@ -640,8 +640,7 @@ namespace world_sim {
 	void DrawingSystem::clearRectangle() {
 		rectangleCorners_.clear();
 		rectangleLabel_.clear();
-		rectanglePress_.reset();
-		rectanglePressPlacedCorner_ = false;
+		cancelPress();
 	}
 
 	bool DrawingSystem::handlePress(float screenX, float screenY, int viewportW, int viewportH, bool freeform) {
@@ -863,7 +862,7 @@ namespace world_sim {
 	}
 
 	DrawingSystem::ClickVerdict DrawingSystem::clickVerdict() const {
-		if (!pointerPresent_) {
+		if (!followingPointer_) {
 			return {.proposed = false};
 		}
 		if (willClose_) {
@@ -917,6 +916,14 @@ namespace world_sim {
 			verdict.editReason = construction::validationReason(editPreview_.validation.code);
 		}
 		return verdict;
+	}
+
+	DrawingSystem::PointerPreview DrawingSystem::pointerPreview() const {
+		return {
+			.snapFeedback = followingPointer_,
+			.trialOutline = activeTool_ == ToolKind::FoundationEdit && editPreviewActive_,
+			.openingGhost = activeTool_ == ToolKind::Opening && openingSnap_.valid,
+		};
 	}
 
 	void DrawingSystem::commitShape() {
@@ -1895,7 +1902,7 @@ namespace world_sim {
 			// reads as "no wall to place on"; an in-range wall surfaces the validator's
 			// reason (margin / overlap / too short) when it rejects. Paused, it proposes
 			// nothing: the strip's hint, no reason.
-			if (!pointerPresent_) {
+			if (!followingPointer_) {
 				s.valid = false;
 			} else if (!openingSnap_.valid) {
 				s.valid = false;
@@ -1925,7 +1932,7 @@ namespace world_sim {
 			for (std::size_t i = 0; i + 1 < points_.size(); ++i) {
 				total += dist(points_[i], points_[i + 1]);
 			}
-			if (!points_.empty() && pointerPresent_) {
+			if (!points_.empty() && followingPointer_) {
 				s.segmentLengthMeters = dist(points_.back(), cursor_);
 			}
 			s.totalLengthMeters = total + s.segmentLengthMeters;
@@ -2151,20 +2158,19 @@ namespace world_sim {
 			});
 		}
 
-		// Rubber-band from the last placed point to the snapped cursor, and above the edges, the
-		// rubber band, and the vertex dots, the snap feedback (its keys start at 904).
-		if (pointerPresent_) {
-			if (!points_.empty()) {
-				Renderer::Primitives::drawLine({
-					.start = screen.back(),
-					.end = toScreen(cursor_),
-					.style = {.color = lineColor, .width = previewStyle.lineWidth},
-					.id = "drawing_rubberband",
-					.key = 902,
-				});
-			}
-			drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight, uiScale, measureFeedbackText));
+		// While the tool follows the pointer: the rubber band from the last placed point to the snapped
+		// point, then the snap feedback, whose keys (904 up) put it over the edges, the band, and the
+		// vertex dots.
+		if (pointerPreview().snapFeedback && !points_.empty()) {
+			Renderer::Primitives::drawLine({
+				.start = screen.back(),
+				.end = toScreen(cursor_),
+				.style = {.color = lineColor, .width = previewStyle.lineWidth},
+				.id = "drawing_rubberband",
+				.key = 902,
+			});
 		}
+		drawPointerFeedback(viewportWidth, viewportHeight, uiScale);
 
 		// Vertex dots.
 		for (const auto& vertex : screen) {
@@ -2235,7 +2241,12 @@ namespace world_sim {
 				});
 			}
 		}
-		if (pointerPresent_) {
+		drawPointerFeedback(viewportWidth, viewportHeight, uiScale);
+	}
+
+	void DrawingSystem::drawPointerFeedback(int viewportWidth, int viewportHeight, float uiScale) const {
+		if (pointerPreview().snapFeedback) {
+			const auto& previewStyle = ConstructionRegistry::Get().rendering().preview;
 			drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight, uiScale, measureFeedbackText));
 		}
 	}
@@ -2493,7 +2504,7 @@ namespace world_sim {
 
 	void DrawingSystem::renderOpeningGhost(int viewportW, int viewportH) {
 		const auto* type = activeOpeningType();
-		if (type == nullptr || !openingSnap_.valid) {
+		if (type == nullptr || !pointerPreview().openingGhost) {
 			return; // no wall in range: show nothing
 		}
 
@@ -2555,7 +2566,7 @@ namespace world_sim {
 	}
 
 	void DrawingSystem::renderEditOutlinePreview(int viewportWidth, int viewportHeight, float uiScale) {
-		if (!editPreviewActive_) {
+		if (!pointerPreview().trialOutline) {
 			return;
 		}
 		const auto& previewStyle = ConstructionRegistry::Get().rendering().preview;
@@ -2638,7 +2649,7 @@ namespace world_sim {
 			for (std::size_t i = 0; i + 1 < points_.size(); ++i) {
 				drawBand(points_[i], points_[i + 1], bandColor);
 			}
-			if (!points_.empty() && pointerPresent_) {
+			if (!points_.empty() && pointerPreview().snapFeedback) {
 				const Foundation::Color rubberBand = valid ? Foundation::Color{okColor.r, okColor.g, okColor.b, previewStyle.bandPreviewAlpha}
 												   : Foundation::Color{badColor.r, badColor.g, badColor.b, previewStyle.bandPreviewAlpha};
 				drawBand(points_.back(), cursor_, rubberBand);
@@ -2656,20 +2667,19 @@ namespace world_sim {
 			});
 		}
 
-		// Rubber-band centerline from the last point to the snapped cursor, and above the band, the
-		// centerlines, and the vertex dots, the snap feedback (its keys start at 911).
-		if (pointerPresent_) {
-			if (!points_.empty()) {
-				Renderer::Primitives::drawLine({
-					.start = screen.back(),
-					.end = toScreen(cursor_),
-					.style = {.color = valid ? okColor : badColor, .width = previewStyle.lineWidth},
-					.id = "wall_rubberband",
-					.key = 908,
-				});
-			}
-			drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight, uiScale, measureFeedbackText));
+		// While the tool follows the pointer: the rubber band's centerline from the last point to the
+		// snapped point, then the snap feedback, whose keys (911 up) put it over the bands, the
+		// centerlines, and the vertex dots.
+		if (pointerPreview().snapFeedback && !points_.empty()) {
+			Renderer::Primitives::drawLine({
+				.start = screen.back(),
+				.end = toScreen(cursor_),
+				.style = {.color = valid ? okColor : badColor, .width = previewStyle.lineWidth},
+				.id = "wall_rubberband",
+				.key = 908,
+			});
 		}
+		drawPointerFeedback(viewportWidth, viewportHeight, uiScale);
 
 		// Vertex dots. The snap-target ring (endpoint / T-junction / foundation-vertex snaps)
 		// is drawSnapFeedback's, over the snapped-point marker.
