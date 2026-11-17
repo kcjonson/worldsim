@@ -5,6 +5,7 @@
 #include "scenes/game/ui/models/GlobalTaskListModel.h"
 
 #include <assets/MoodConfig.h>
+#include <cassert>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Memory.h>
@@ -136,7 +137,9 @@ namespace world_sim {
 		bioData.traits.clear();
 		bioData.background = "No background";
 
-		bioData.mood = world.getComponent<ecs::Mood>(colonistId)->value;
+		const auto* mood = world.getComponent<ecs::Mood>(colonistId);
+		assert(mood != nullptr && "Every colonist is given a Mood at spawn");
+		bioData.mood = mood->value;
 		bioData.moodLabel = assets::MoodConfig::Get().bandFor(bioData.mood).name;
 
 		// Get current task
@@ -252,7 +255,9 @@ namespace world_sim {
 			needsData.needsAttention.fill(false);
 			needsData.isCritical.fill(false);
 		}
-		needsData.mood = world.getComponent<ecs::Mood>(colonistId)->value;
+		const auto* mood = world.getComponent<ecs::Mood>(colonistId);
+		assert(mood != nullptr && "Every colonist is given a Mood at spawn");
+		needsData.mood = mood->value;
 		needsData.moodLabel = assets::MoodConfig::Get().bandFor(needsData.mood).name;
 	}
 

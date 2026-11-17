@@ -4,6 +4,7 @@
 
 #include <assets/ConstructionRegistry.h>
 #include <assets/MoodConfig.h>
+#include <cassert>
 #include <core/Vec2i64.h>
 #include <ecs/InventoryMass.h>
 #include <ecs/components/Colonist.h>
@@ -138,7 +139,9 @@ namespace world_sim {
 		data.name = colonist ? colonist->name : "Colonist";
 		content.title = data.name;
 
-		data.moodValue = world.getComponent<ecs::Mood>(entityId)->value;
+		const auto* mood = world.getComponent<ecs::Mood>(entityId);
+		assert(mood != nullptr && "Every colonist is given a Mood at spawn");
+		data.moodValue = mood->value;
 		data.moodLabel = assets::MoodConfig::Get().bandFor(data.moodValue).name;
 
 		data.controlled = world.getComponent<ecs::PlayerControlled>(entityId) != nullptr;
