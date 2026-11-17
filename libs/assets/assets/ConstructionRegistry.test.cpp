@@ -781,6 +781,7 @@ TEST_F(ConstructionRegistryTest, Validation_RejectsOutOfRangeGuideAndLengthKeys)
 	expectSnappingRejected("<angleIncrementDegrees>100</angleIncrementDegrees>", "angleIncrementDegrees");
 	expectSnappingRejected("<doubleClickDistancePx>-1</doubleClickDistancePx>", "doubleClickDistancePx");
 	expectSnappingRejected("<doubleClickSeconds>0</doubleClickSeconds>", "doubleClickSeconds");
+	expectSnappingRejected("<doubleClickSeconds>-0.25</doubleClickSeconds>", "doubleClickSeconds");
 }
 
 TEST_F(ConstructionRegistryTest, Validation_RejectsOutOfRangeLookKeys) {
