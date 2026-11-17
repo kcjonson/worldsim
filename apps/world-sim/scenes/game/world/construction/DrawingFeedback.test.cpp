@@ -10,9 +10,11 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <iterator>
 #include <limits>
 #include <numbers>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -104,6 +106,11 @@ namespace {
 		bool						  snappedPointInvalid = false;
 		Foundation::Color			  invalidColor{0.9F, 0.2F, 0.2F, 1.0F};
 		std::optional<FeedbackBox>	  keepClear;
+		int							  viewportWidth = kViewportWidth;
+		int							  viewportHeight = kViewportHeight;
+		// Measures every label but the reserved "999.00 m" this many characters narrower: the
+		// same frame with one digit fewer.
+		int narrowerByCharacters = 0;
 
 		void SetUp() override { camera.setZoom(kZoom); }
 
@@ -113,7 +120,7 @@ namespace {
 		}
 
 		Foundation::Vec2 screen(Foundation::Vec2 world) const {
-			return camera.worldToScreen(world.x, world.y, kViewportWidth, kViewportHeight, kPixelsPerMeter);
+			return camera.worldToScreen(world.x, world.y, viewportWidth, viewportHeight, kPixelsPerMeter);
 		}
 
 		// The world point at `screenPoint`, at the camera's current zoom.
@@ -134,8 +141,8 @@ namespace {
 				.display = display,
 				.style = style,
 				.camera = camera,
-				.viewportWidth = kViewportWidth,
-				.viewportHeight = kViewportHeight,
+				.viewportWidth = viewportWidth,
+				.viewportHeight = viewportHeight,
 				.pixelsPerMeter = kPixelsPerMeter,
 				.closeRadiusMeters = closeRadiusMeters,
 				.canClose = canClose,
@@ -144,7 +151,12 @@ namespace {
 				.invalidColor = invalidColor,
 				.keepClear = keepClear,
 			};
-			return world_sim::planSnapFeedback(input, fakeSize);
+			char reserved[32];
+			std::snprintf(reserved, sizeof(reserved), "%.*f m", style.guideDistanceDecimals, 999.0);
+			return world_sim::planSnapFeedback(input, [&](const std::string& text, float sizePx) {
+				const Foundation::Vec2 size = fakeSize(text, sizePx);
+				return text == reserved ? size : Foundation::Vec2{size.x - 0.6F * sizePx * static_cast<float>(narrowerByCharacters), size.y};
+			});
 		}
 
 		static std::vector<FeedbackStroke> strokesIn(const DrawingFeedbackPlan& plan, FeedbackLayer layer) {
@@ -178,6 +190,21 @@ namespace {
 			return {signOf(center.x - tip.x), signOf(center.y - tip.y), signOf(cross)};
 		}
 
+		// Where the segment label sits: beside the middle, on one side of the segment, or at the
+		// end, in one quarter round the snapped point. Away from the middle, the end placements
+		// sit within 30 px of the snapped point, and the middle ones at least 40 px from it.
+		struct SegmentLabelPlacement {
+			bool						atMiddle = false;
+			std::tuple<int, int, int> side; // the segment's side at the middle; right and below at the end
+			bool						operator==(const SegmentLabelPlacement&) const = default;
+		};
+
+		SegmentLabelPlacement segmentLabelPlacement(const DrawingFeedbackPlan& result) const {
+			const bool atMiddle = distanceToBox(screen(cursor), result.labels[0].plate) >= 30.0F;
+			const auto [right, below, segmentSide] = segmentLabelSide(result);
+			return atMiddle ? SegmentLabelPlacement{true, {0, 0, segmentSide}} : SegmentLabelPlacement{false, {right, below, 0}};
+		}
+
 		struct SideSweep {
 			int changes = 0;
 			int returns = 0; // changes back to a side the label left earlier: flicker
@@ -196,7 +223,7 @@ namespace {
 				const float distance = startMeters + stepMeters * static_cast<float>(step);
 				cursor = {origin.x + direction.x * distance, origin.y + direction.y * distance};
 				const Foundation::Vec2 tip = screen(cursor);
-				if (tip.x < 0.0F || tip.y < 0.0F || tip.x > static_cast<float>(kViewportWidth) || tip.y > static_cast<float>(kViewportHeight)) {
+				if (tip.x < 0.0F || tip.y < 0.0F || tip.x > static_cast<float>(viewportWidth) || tip.y > static_cast<float>(viewportHeight)) {
 					continue;
 				}
 				const DrawingFeedbackPlan result = plan();
@@ -220,11 +247,11 @@ namespace {
 			return sweep;
 		}
 
-		static void expectInside(const FeedbackBox& box) {
+		void expectInside(const FeedbackBox& box) {
 			EXPECT_GE(box.left, -kViewportTolerancePx);
 			EXPECT_GE(box.top, -kViewportTolerancePx);
-			EXPECT_LE(box.right, static_cast<float>(kViewportWidth) + kViewportTolerancePx);
-			EXPECT_LE(box.bottom, static_cast<float>(kViewportHeight) + kViewportTolerancePx);
+			EXPECT_LE(box.right, static_cast<float>(viewportWidth) + kViewportTolerancePx);
+			EXPECT_LE(box.bottom, static_cast<float>(viewportHeight) + kViewportTolerancePx);
 		}
 	};
 
@@ -996,8 +1023,8 @@ TEST_F(DrawingFeedbackTest, NoPointsPlacedDrawsOnlyTheSnappedPointMarker) {
 	EXPECT_TRUE(strokesIn(result, FeedbackLayer::Alignment).empty());
 
 	ASSERT_EQ(result.dots.size(), 1U);
-	const Foundation::Vec2 at = screen(cursor);
-	expectNear(result.dots[0].center, at);
+	const Foundation::Vec2 snappedPoint = screen(cursor);
+	expectNear(result.dots[0].center, snappedPoint);
 	EXPECT_FLOAT_EQ(result.dots[0].radius, 6.0F);
 	EXPECT_FLOAT_EQ(result.dots[0].outlineWidth, 2.5F);
 	EXPECT_EQ(result.dots[0].layer, FeedbackLayer::Cursor);
@@ -1009,8 +1036,8 @@ TEST_F(DrawingFeedbackTest, NoPointsPlacedDrawsOnlyTheSnappedPointMarker) {
 	ASSERT_EQ(ticks.size(), 4U);
 	EXPECT_FLOAT_EQ(outlines[0].width, 6.0F);
 	EXPECT_FLOAT_EQ(ticks[0].width, 2.0F);
-	expectNear(ticks[0].points[0], {at.x - 11.0F, at.y});
-	expectNear(ticks[0].points[1], {at.x - 16.0F, at.y});
+	expectNear(ticks[0].points[0], {snappedPoint.x - 11.0F, snappedPoint.y});
+	expectNear(ticks[0].points[1], {snappedPoint.x - 16.0F, snappedPoint.y});
 
 	style.cursorRadiusPx = 2.0F;
 	EXPECT_FLOAT_EQ(plan().dots[0].radius, 4.0F);
@@ -1115,4 +1142,148 @@ TEST_F(DrawingFeedbackTest, ALengthThatRoundsToZeroHasNoSegmentLabel) {
 	snap.guides[0].distanceFromNodeMeters = -0.001F;
 	ASSERT_EQ(plan().labels.size(), 1U);
 	EXPECT_EQ(plan().labels[0].text, "0.00 m");
+}
+
+// The reviewer's frame: the wall tool on a foundation edge 3 px below the top of the screen.
+// The label has a clear placement, and it takes one off the snap-target ring.
+TEST_F(DrawingFeedbackTest, SegmentLabelAgainstTheTopEdgeKeepsOffTheWallSnapTargetRing) {
+	viewportWidth = 1366;
+	viewportHeight = 768;
+	camera.setZoom(4.373456F);
+	tool = world_sim::ToolKind::Wall;
+	snap.kind = SnapKind::Edge;
+	cursor = worldAt({83.8177795F, 3.28006268F});
+	points = {worldAt({84.871315F, 5.29141045F})};
+
+	const DrawingFeedbackPlan result = plan();
+	ASSERT_EQ(result.labels.size(), 1U);
+	const auto ring = ringsIn(result, FeedbackLayer::Target);
+	ASSERT_EQ(ring.size(), 1U);
+	const float reach = ring[0].radius + ring[0].width * 0.5F;
+	EXPECT_FALSE(overlaps(result.labels[0].plate, boxAround(ring[0].center, reach)));
+	expectInside(result.labels[0].plate);
+}
+
+// The reviewer's frame: a 5 cm segment against the top edge. Its end placements' fit and
+// clearance are judged at the reserved width, so the label one digit narrower takes the same one.
+TEST_F(DrawingFeedbackTest, SegmentLabelEndPlacementAgainstTheTopEdgeHoldsWithADigitFewer) {
+	viewportWidth = 1577;
+	viewportHeight = 1246;
+	camera.setZoom(0.575138092F);
+	cursor = worldAt({1519.06531F, 79.6971207F});
+	points = {worldAt({1518.91284F, 79.8374252F})};
+
+	const DrawingFeedbackPlan wide = plan();
+	narrowerByCharacters = 1;
+	const DrawingFeedbackPlan narrow = plan();
+	ASSERT_EQ(wide.labels.size(), 1U);
+	ASSERT_EQ(narrow.labels.size(), 1U);
+	EXPECT_EQ(segmentLabelSide(wide), segmentLabelSide(narrow));
+	EXPECT_FLOAT_EQ(wide.labels[0].plate.top, narrow.labels[0].plate.top);
+}
+
+// D16's bound on flicker: with the snapped point at least 120 px and the previous point at
+// least 100 px from every edge, and no halo or reason drawn, the segment label changes
+// placement at most once along a ray, from the end to the middle. Rays every 15 degrees from
+// a grid of previous points, with and without an earlier point.
+TEST_F(DrawingFeedbackTest, SegmentLabelChangesPlacementAtMostOnceAwayFromTheEdges) {
+	camera.setZoom(2.0F);
+	constexpr float kSnappedMarginPx = 120.0F;
+	constexpr float kPreviousMarginPx = 100.0F;
+	constexpr float kStepPx = 6.0F;
+	const float		width = static_cast<float>(viewportWidth);
+	const float		height = static_cast<float>(viewportHeight);
+	const auto		inside = [&](Foundation::Vec2 point, float margin) {
+		 return point.x >= margin && point.y >= margin && point.x <= width - margin && point.y <= height - margin;
+	};
+	int plans = 0;
+	for (int column = 0; column < 4; ++column) {
+		for (int row = 0; row < 3; ++row) {
+			const Foundation::Vec2 previous{
+				kPreviousMarginPx + (width - 2.0F * kPreviousMarginPx) * static_cast<float>(column) / 3.0F,
+				kPreviousMarginPx + (height - 2.0F * kPreviousMarginPx) * static_cast<float>(row) / 2.0F,
+			};
+			for (const bool withEarlierPoint : {false, true}) {
+				for (int degrees = 0; degrees < 360; degrees += 15) {
+					SCOPED_TRACE(::testing::Message() << "from " << previous.x << ", " << previous.y << " at " << degrees << " degrees"
+													  << (withEarlierPoint ? ", with an earlier point" : ""));
+					const float			   radians = static_cast<float>(degrees) * std::numbers::pi_v<float> / 180.0F;
+					const Foundation::Vec2 direction{std::cos(radians), std::sin(radians)};
+					points = {worldAt(previous)};
+					if (withEarlierPoint) {
+						points.insert(points.begin(), worldAt({previous.x - 300.0F * direction.y, previous.y + 300.0F * direction.x}));
+					}
+					std::vector<SegmentLabelPlacement> placements;
+					for (float along = kStepPx;; along += kStepPx) {
+						const Foundation::Vec2 tip{previous.x + direction.x * along, previous.y + direction.y * along};
+						if (!inside(tip, kSnappedMarginPx)) {
+							if (along > width + height) {
+								break;
+							}
+							continue;
+						}
+						cursor = worldAt(tip);
+						const DrawingFeedbackPlan result = plan();
+						++plans;
+						ASSERT_EQ(result.labels.size(), 1U);
+						const SegmentLabelPlacement placement = segmentLabelPlacement(result);
+						if (placements.empty() || placements.back() != placement) {
+							placements.push_back(placement);
+						}
+					}
+					EXPECT_LE(placements.size(), 2U);
+					if (placements.size() == 2U) {
+						EXPECT_FALSE(placements[0].atMiddle) << "from the end";
+						EXPECT_TRUE(placements[1].atMiddle) << "to the middle";
+					}
+				}
+			}
+		}
+	}
+	EXPECT_LT(plans, 100000);
+}
+
+// Two placed points, the earlier one a hair inside the 0.5 px a placed points' centre must sit
+// off the segment's line to pick a side of it. Measured from screen floats, the snapped point's
+// rounding carried it across that threshold from one centimetre to the next, and the label
+// crossed the segment each time. The reviewer's ray (its earlier point as printed, to three
+// places), then two built to sit a ten-thousandth of a pixel inside.
+TEST_F(DrawingFeedbackTest, SegmentLabelSideHoldsWithTheShapesCentreAtTheEdgeOfTheDeadZone) {
+	viewportWidth = 1366;
+	viewportHeight = 768;
+	camera.setZoom(8.0F);
+	const float			   pixelsPerMeter = kPixelsPerMeter * 8.0F;
+	const Foundation::Vec2 previous{470.0F, 600.0F};
+	const auto			   directionAt = [](float degrees) {
+		  const float radians = degrees * std::numbers::pi_v<float> / 180.0F;
+		  return Foundation::Vec2{std::cos(radians), std::sin(radians)};
+	};
+	// 333 px back along the ray and `offset` px off it, to its left looking along it.
+	const auto earlierPoint = [&](Foundation::Vec2 direction, double offset) {
+		return Foundation::Vec2{
+			static_cast<float>(previous.x - direction.x * 333.0 + direction.y * offset),
+			static_cast<float>(previous.y - direction.y * 333.0 - direction.x * offset),
+		};
+	};
+	constexpr double kGapPx = 1e-4;
+	for (const auto& [degrees, earlier] : {
+			 std::pair{327.0F, Foundation::Vec2{190.561F, 780.278F}},
+			 std::pair{20.0F, earlierPoint(directionAt(20.0F), 2.0 * (0.5 - kGapPx))},
+			 std::pair{200.0F, earlierPoint(directionAt(200.0F), -2.0 * (0.5 - kGapPx))},
+		 }) {
+		SCOPED_TRACE(::testing::Message() << degrees << " degrees");
+		const Foundation::Vec2 direction = directionAt(degrees);
+		points = {worldAt(earlier), worldAt(previous)};
+		std::vector<SegmentLabelPlacement> placements;
+		for (int centimeters = 100; centimeters <= 300; ++centimeters) {
+			const float along = static_cast<float>(centimeters) * 0.01F * pixelsPerMeter;
+			cursor = worldAt({previous.x + direction.x * along, previous.y + direction.y * along});
+			const DrawingFeedbackPlan result = plan();
+			ASSERT_EQ(result.labels.size(), 1U);
+			if (const SegmentLabelPlacement placement = segmentLabelPlacement(result); placements.empty() || placements.back() != placement) {
+				placements.push_back(placement);
+			}
+		}
+		EXPECT_LE(placements.size(), 2U);
+	}
 }
