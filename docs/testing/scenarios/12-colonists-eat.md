@@ -19,7 +19,7 @@ A colonist with an empty pack starts gathering within about a second and finishe
 quickly, so each step sets up with the game paused: pause (`/api/control?action=pause`), set up, then resume
 (`/api/control?action=resume`). Dev verbs run while paused, and nothing moves until the resume.
 Steps 3 and 4 are the exception on purpose: Eve is left to start her gathering walk before her
-Hunger is set, because turning hungry on the way to a bush is the case they check.
+Hunger is set (step 4 waits 1 s after the resume), because turning hungry on the way to a bush is the case they check.
 
 The Quick Start map has a berry bush within about 13 m of any spot, and no dev verb clears bushes, so
 a colonist can always go to another bush: a second colonist waiting on a reserved or regrowing bush
@@ -29,7 +29,7 @@ a colonist can always go to another bush: a second colonist waiting on a reserve
 
 ## Setup
 
-Pick a spot on open ground, a few meters from the river bank. Note it as `FX, FY`. Keep time at
+Pick a spot on open ground, one the `ground` state view (`/api/dev/ground?pts=<x>,<y>`) reads `valid` at, with room for the 20 m to the box. Note it as `FX, FY`. Keep time at
 normal speed, and don't skip time (`ate_good_meal` is held for 6 game hours, which steps 4 to 7
 rely on).
 
@@ -37,15 +37,15 @@ rely on).
 
 ## Steps
 
-1. Pause, spawn one bush (`/api/dev/spawn?def=Flora_BerryBush&at=<FX>,<FY>&n=1&scatter=0`) and two colonists 2 m from it (`/api/dev/colonist?at=<FX+2>,<FY>&n=2&name=Hungry`), set both Hunger to 40 (`/api/dev/need?colonist=<id>&need=Hunger&value=40`), then resume: both walk to bushes and cut; they never cut the same bush at the same time.
+1. Pause, spawn one bush (`/api/dev/spawn?def=Flora_BerryBush&at=<FX>,<FY>&n=1&scatter=0`) and two colonists 2 m from it (`/api/dev/colonist?at=<FX+2>,<FY>&n=2&name=Hungry`), set both Hunger to 40 (`/api/dev/need?colonist=<id>&need=Hunger&value=40`), then resume: each cuts a bush and eats, and at no time are both cutting the same bush (with other bushes around, one cuts the placed bush and the other walks to a different one).
 
 2. Read `what=colonists` a little later: both Hungry colonists have eaten, each with `needs.Hunger` above 50.
 
-3. Pause, spawn a `BasicBox` 20 m from the bush (`/api/dev/spawn?def=BasicBox&at=<FX+20>,<FY>&n=1&scatter=0`), put 10 berries in it (`/api/dev/give?material=Berry&n=10&where=storage&at=<FX+20>,<FY>`), spawn Eve 1 m from it (`/api/dev/colonist?at=<FX+21>,<FY>&name=Eve`), then resume: within a second or two she walks away from the box toward a bush to gather (her `position` in `what=colonists` moves off).
+3. Pause, spawn a `BasicBox` 20 m from the bush (`/api/dev/spawn?def=BasicBox&at=<FX+20>,<FY>&n=1&scatter=0`), put 10 berries in it (`/api/dev/give?material=Berry&n=10&where=storage&at=<FX+20>,<FY>`), spawn Eve 1 m from it (`/api/dev/colonist?at=<FX+21>,<FY>&name=Eve`), and read her `id` from `what=colonists`. Note it; a retry spawns a colonist with a different name and id.
 
-4. While she is still walking to the bush, set her Hunger to 40: she turns back and eats from the box, the nearer food; `what=storage` shows its `Berry` drop to 9, and her Hunger rises past 50.
+4. Resume and set her Hunger 1 s later, as one command line, since she has berries in her pack about 4 s after the resume: `curl.exe "http://127.0.0.1:<PORT>/api/control?action=resume" && sleep 1 && curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<Eve id>&need=Hunger&value=40"`. She walks off toward a bush, then turns back and eats from the box, the nearer food: `what=storage` shows its `Berry` drop to 9. Pause as soon as her Hunger passes 50.
 
-5. Pause, drop 10 berries 1 m from Eve on the side away from the box (`/api/dev/give?material=Berry&n=10&where=loose&at=<her x+1>,<her y>`), note the highest `id` in her `thoughts.recent` (`what=colonists`), set her Hunger to 5, then resume: she takes 2 berries from the heap or the box, whichever is nearer, never more, and her Hunger rises past 50.
+5. Check Eve's `inventory` has no `Berry` (if it has, spawn another Eve and repeat steps 3 and 4). Read her position, then drop 10 berries 1 m from her on the side away from the box (`/api/dev/give?material=Berry&n=10&where=loose&at=<her x+1>,<her y>` if her x is above the box's `FX+20`, else `<her x-1>,<her y>`), note the highest `id` in her `thoughts.recent` (`what=colonists`), set her Hunger to 5, then resume: she takes 2 berries from the heap or the box, whichever is nearer, never more, and her Hunger rises past 50.
 
 6. Read Eve in `what=colonists`, looking only at the `thoughts.recent` entries with an `id` above the one noted in step 5: among them is exactly one `starving`, and no `getting_peckish`, `very_hungry` or `ate_good_meal` (it is non-stacking and already held from step 4, so this meal folds into the held one and records nothing new); `thoughts.held` still holds `ate_good_meal`. Thoughts about other needs may be there too (eating fills the gut, so a Digestion one can land) and don't count.
 
