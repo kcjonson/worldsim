@@ -18,8 +18,8 @@ namespace ecs {
 
 		namespace cw = construction;
 
-		// A hit snaps to the millimetre, so one within 0.71 mm of the eye lands on it.
-		constexpr std::int64_t kHitSnapsOntoTheEyeMm = 1;
+		// A hit snaps to the millimetre, so one within 0.71 mm of the eye or of a ray lands on it.
+		constexpr std::int64_t kHitSnapsOntoTheRayMm = 1;
 
 		// The centerline point `alongMm` from `a` toward `b`, clamped to the segment
 		// and rounded to the millimetre.
@@ -29,12 +29,14 @@ namespace ecs {
 		}
 
 		// An eye against the occluder loops, one occluder at a time: the winding number round it,
-		// whether it lies on an occluder, and whether it grazes one in range.
+		// whether it lies on an occluder, and whether it grazes one in range, within a millimetre
+		// of its line.
 		//
 		// computeVisibilityPolygon blocks a ray that runs along an occluder on both of its sides and
 		// takes the polygon's next edge from the next direction round, which a back face's end can
-		// be; and it drops a hit that snaps onto the eye, where the back face behind it is what stops
-		// the ray. Either needs the back faces of the occluders in range.
+		// be; a ray from under a millimetre off the line snaps its hits onto it the same way; and it
+		// drops a hit that snaps onto the eye, where the back face behind it is what stops the ray.
+		// Each needs the back faces of the occluders in range.
 		class EyeTally {
 		  public:
 			explicit EyeTally(geometry::Vec2i64 eye)
@@ -43,8 +45,10 @@ namespace ecs {
 			void add(const geometry::OccluderSegment& edge, bool inRange) {
 				const geometry::Vec2i64& from = edge.a;
 				const geometry::Vec2i64& to	  = edge.b;
-				const int				 side = geometry::cross(to - from, m_eye - from).sign();
-				if (inRange && (side == 0 || geometry::withinDistanceOfSegment(m_eye, from, to, kHitSnapsOntoTheEyeMm))) {
+				const geometry::Int128	 offLine = geometry::cross(to - from, m_eye - from);
+				const int				 side	 = offLine.sign();
+				if (inRange && geometry::Int128::compareSquareToProduct(offLine, geometry::Int128::product(kHitSnapsOntoTheRayMm, kHitSnapsOntoTheRayMm),
+																		 geometry::dot(to - from, to - from)) <= 0) {
 					m_grazed = true;
 				}
 				if (side == 0 && m_eye.x >= std::min(from.x, to.x) && m_eye.x <= std::max(from.x, to.x) && m_eye.y >= std::min(from.y, to.y) &&

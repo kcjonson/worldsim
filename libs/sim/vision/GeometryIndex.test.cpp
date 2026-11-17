@@ -566,6 +566,27 @@ TEST_F(GeometryIndexTest, FacingOccludersGiveTheSameSight) {
 	}
 }
 
+// An eye 0.4 mm off the line of a face it looks along, at the edge of its sight beside a 14
+// degree T: its rays snap their hits onto the face's line, where the back faces stop them, so
+// the query keeps the back faces, or the polygon would lose floor the eye sees.
+TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesForAnEyeAlongAFaceLine) {
+	ConstructionWorld cw;
+	buildWall(cw, {107, 1145}, {2659, 2827}, "Light");
+	buildWall(cw, {2659, 2827}, {4354, 4665}, "Light");
+	buildWall(cw, {2659, 2827}, {3407, 3320}, "Light");
+	buildWall(cw, {3407, 3320}, {5422, 4800}, "Heavy");
+	GeometryIndex index;
+	index.setConstructionWorld(&cw);
+	index.rebuildIfStale();
+	constexpr std::int64_t		 kSightMm = 6000;
+	const Vec2i64				 eye{8156, 6995};
+	std::vector<OccluderSegment> all;
+	std::vector<OccluderSegment> facing;
+	index.queryOccluders(eye, kSightMm, all);
+	index.queryFacingOccluders(eye, kSightMm, facing);
+	EXPECT_TRUE(ringsAgree(geometry::computeVisibilityPolygon(eye, kSightMm, all), geometry::computeVisibilityPolygon(eye, kSightMm, facing), 2));
+}
+
 // The solid is what the outline loops wind round: a band's inside and its edge, not a
 // closed room's floor or the open ground.
 TEST_F(GeometryIndexTest, InsideSolidIsTheBandNotTheRoom) {
@@ -695,3 +716,4 @@ TEST_F(GeometryIndexTest, EyeInsideTheBandSeesOnlyTheBand) {
 		EXPECT_LE(vertex.x, 4000);
 	}
 }
+
