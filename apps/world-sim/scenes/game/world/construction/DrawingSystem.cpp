@@ -284,8 +284,8 @@ namespace world_sim {
 		return {};
 	}
 
-	bool DrawingSystem::requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what) {
-		const std::string refusal = placementRefusal(pts);
+	bool DrawingSystem::requirePlaceable(const std::vector<Foundation::Vec2>& footprint, const char* what) {
+		const std::string refusal = placementRefusal(footprint);
 		if (refusal.empty()) {
 			return true;
 		}
@@ -1247,16 +1247,16 @@ namespace world_sim {
 		// chain is one owner (D12). A trial on a copy reads the same value the real commit will.
 		const std::uint64_t placementOrder = into.version();
 		for (std::size_t i = 0; i + 1 < chain.size(); ++i) {
-			const Foundation::Vec2 a = chain[i];
-			const Foundation::Vec2 b = chain[i + 1];
+			const Foundation::Vec2 start = chain[i];
+			const Foundation::Vec2 end = chain[i + 1];
 
 			// Reject-don't-repair: skip the bad segment, keep the rest.
-			if (const construction::ValidationResult check = validator.validateWallSegment(a, b, preset, wallHost_); !check.ok()) {
+			if (const construction::ValidationResult check = validator.validateWallSegment(start, end, preset, wallHost_); !check.ok()) {
 				skip(construction::validationReason(check.code));
 				continue;
 			}
 			const construction::SegmentCommitResult result = into.commitSegment(
-				geometry::quantize(a), geometry::quantize(b), activeMaterial_, activeThicknessPreset_, wallHost_, placementOrder
+				geometry::quantize(start), geometry::quantize(end), activeMaterial_, activeThicknessPreset_, wallHost_, placementOrder
 			);
 			if (!result.ok()) {
 				skip("segment rejected");

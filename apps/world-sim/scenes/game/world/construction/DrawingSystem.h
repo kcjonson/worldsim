@@ -356,12 +356,12 @@ namespace world_sim {
 		/// verbs' permissive fallback and treat the point as placeable.
 		[[nodiscard]] bool pointOnBuildableGround(Foundation::Vec2 p) const;
 
-		/// True when the WHOLE footprint of `pts` may be placed (placementRefusal is empty). On
+		/// True when the WHOLE `footprint` may be placed (placementRefusal is empty). On
 		/// failure toasts "Can't build here" and returns false so the caller commits NOTHING --
 		/// no partial structure.
-		[[nodiscard]] bool requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what);
+		[[nodiscard]] bool requirePlaceable(const std::vector<Foundation::Vec2>& footprint, const char* what);
 
-		/// Why the WHOLE footprint of `pts` may not be placed, or empty when it may. A FOUNDATION
+		/// Why the WHOLE `footprint` may not be placed, or empty when it may. A FOUNDATION
 		/// validates its polygon area against footprintBuildable. A WALL validates its chain
 		/// centerline against isLineBuildableNow (no wall footprint-clearing yet, so it still needs
 		/// clear ground). The SAME shared predicates the /api/dev verbs use.

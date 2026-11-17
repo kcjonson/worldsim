@@ -606,6 +606,18 @@ TEST_F(DrawingWallChainTest, ToolDrawnChainSharesOnePlacementOrder) {
 	}
 }
 
+TEST_F(DrawingWallChainTest, ToolDrawnChainsPlacementOrderIsTheVersionBeforeTheClosingClick) {
+	hostFoundation(*drawing);
+	drawing->activateWallTool();
+	clickRoomCorners(*drawing);
+	const std::uint64_t versionBefore = drawing->world().version();
+	clickWith(*drawing, kRoom[0]);
+	ASSERT_EQ(drawing->world().segments().size(), 4U) << lastToast();
+	for (const construction::WallSegment& segment : drawing->world().segments()) {
+		EXPECT_EQ(segment.placementOrder, versionBefore);
+	}
+}
+
 TEST_F(DrawingWallChainTest, ALaterChainTakesAGreaterPlacementOrder) {
 	hostFoundation(*drawing);
 	drawing->activateWallTool();
@@ -942,6 +954,11 @@ namespace {
 			DrawingVisibilityTest::SetUp();
 			// Reshaping a blueprint resets its goals through the construction system.
 			seen.world.registerSystem<ecs::ConstructionSystem>();
+		}
+		// The goals it posts outlive the world in the registry singleton.
+		void TearDown() override {
+			ecs::GoalTaskRegistry::Get().clear();
+			DrawingVisibilityTest::TearDown();
 		}
 
 		construction::FoundationId builtFloor(const std::vector<Foundation::Vec2>& ring) {
