@@ -333,8 +333,8 @@ namespace {
 			state.counters["rings"]	  = static_cast<double>(visibility.seenArea().ringsRegistered());
 			state.counters["pending"] = static_cast<double>(mostPending);
 			const double visionTickMs = visionMs / static_cast<double>(kTicks);
-			std::fprintf(stderr, "  vision: %llu polygons built, %.3f ms a tick, %.1f ms a second at 60 ticks\n", static_cast<unsigned long long>(vision.polygonBuildCount()), visionTickMs,
-						 visionTickMs * 60.0);
+			std::fprintf(stderr, "  vision: %zu occluders, %llu polygons built, %.3f ms a tick, %.1f ms a second at 60 ticks\n", vision.geometry().occluderCount(),
+						 static_cast<unsigned long long>(vision.polygonBuildCount()), visionTickMs, visionTickMs * 60.0);
 			state.counters["visionTickMs"] = visionTickMs;
 			benchmark::DoNotOptimize(iteration);
 		}
