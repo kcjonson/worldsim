@@ -20,13 +20,27 @@ namespace world_sim {
 		out.reserve(text.size() + 8);
 		for (const char character : text) {
 			switch (character) {
-				case '"': out += "\\\""; break;
-				case '\\': out += "\\\\"; break;
-				case '\b': out += "\\b"; break;
-				case '\f': out += "\\f"; break;
-				case '\n': out += "\\n"; break;
-				case '\r': out += "\\r"; break;
-				case '\t': out += "\\t"; break;
+				case '"':
+					out += "\\\"";
+					break;
+				case '\\':
+					out += "\\\\";
+					break;
+				case '\b':
+					out += "\\b";
+					break;
+				case '\f':
+					out += "\\f";
+					break;
+				case '\n':
+					out += "\\n";
+					break;
+				case '\r':
+					out += "\\r";
+					break;
+				case '\t':
+					out += "\\t";
+					break;
 				default:
 					if (static_cast<unsigned char>(character) < kFirstPrintableCharacter) {
 						// Other control chars: emit a \u00XX escape rather than dropping them.
@@ -39,6 +53,17 @@ namespace world_sim {
 			}
 		}
 		return out;
+	}
+
+	std::string jsonStrings(const std::vector<std::string>& texts) {
+		std::string out = "[";
+		for (const std::string& text : texts) {
+			if (out.size() > 1) {
+				out += ',';
+			}
+			out += '"' + jsonEscape(text) + '"';
+		}
+		return out + "]";
 	}
 
 	std::string jsonNumber(double value) {

@@ -252,6 +252,7 @@ spec, and the `/perf-nightly` skill runs it.
 | 16 | Rooms inside rooms | [scenarios/16-rooms-inside-rooms.md](./scenarios/16-rooms-inside-rooms.md) |
 | 17 | Interface size | [scenarios/17-interface-size.md](./scenarios/17-interface-size.md) |
 | 18 | Colonist thoughts | [scenarios/18-colonist-thoughts.md](./scenarios/18-colonist-thoughts.md) |
+| 19 | Load errors on screen | [scenarios/19-load-errors-on-screen.md](./scenarios/19-load-errors-on-screen.md) |
 
 **Scenarios that look away from the colonists turn reveal on** (`/api/dev/reveal?on=1`), since ground no colonist has seen is black (player visibility); a launch starts with it off. Scenario 14 is the one that tests the cover itself.
 
@@ -288,7 +289,7 @@ world-sim's own test executable (the scene layout lint) builds to `apps/world-si
 
 A worktree needs `planets/quickstart.wsplanet` (~1.3 GiB, gitignored). Junction it from the main
 checkout; see the "Sharing the pre-generated world across worktrees" note in [../CLAUDE.md](../../CLAUDE.md).
-Missing file causes an immediate `ConfigError` on launch.
+A missing file fails the load at once, naming the path it expected on the loading scene.
 
 ### Launch
 

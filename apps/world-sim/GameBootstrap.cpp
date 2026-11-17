@@ -66,8 +66,8 @@ namespace world_sim {
 		g_colonistRulesErrors = std::move(errors);
 	}
 
-	const std::vector<std::string>& failedColonistRules() {
-		return g_colonistRulesErrors;
+	std::vector<std::string> takeFailedColonistRules() {
+		return std::exchange(g_colonistRulesErrors, {});
 	}
 
 } // namespace world_sim

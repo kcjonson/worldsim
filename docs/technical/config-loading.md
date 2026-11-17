@@ -12,7 +12,7 @@ This document specifies **when** and **how** work configuration files are loaded
 
 ## Numbers
 
-Config numbers go through the strict parsers (`parseConfigNumber` and `parseConfigInteger`, read by `ConfigReader`, in `libs/assets/assets/ConfigNumber.h`). A leading `+` is accepted; empty text, trailing characters ("30abc"), `nan`, `inf`, and values too large for the type are refused rather than read as a number. Text inside an element is trimmed first. A missing, malformed, or out-of-range value (a field stored in 16 bits is checked against its range, never truncated) is a config error naming the file, the element (with its `name` attribute when it has one, as in `<Task name="Haul"> tier`), and the attribute, shown on the loading screen. Base tuning lives in XML, so there is no C++ default for it.
+Config numbers go through the strict parsers (`parseConfigNumber` and `parseConfigInteger`, read by `ConfigReader`, in `libs/assets/assets/ConfigNumber.h`). A leading `+` is accepted; empty text, trailing characters ("30abc"), `nan`, `inf`, and values too large for the type are refused rather than read as a number. Text inside an element is trimmed first. A missing, malformed, or out-of-range value (a field stored in 16 bits is checked against its range, never truncated) is a config error naming the file, the element (with its `name` attribute when it has one, as in `<Task name="Haul"> tier`), and the attribute, shown on the loading scene ([where load errors surface](#where-load-errors-surface)). Base tuning lives in XML, so there is no C++ default for it.
 
 ---
 
@@ -154,74 +154,50 @@ then calls it in the `Initializing` phase:
 // GameLoadingScene.cpp, initializeWorldSystems()
 updateStatusText("Loading configuration...");
 ecs::GoalTaskRegistry::Get().clear();
-const auto configErrors = assets::loadWorkConfig("assets/config");
+std::vector<std::string> configErrors = assets::loadWorkConfig("assets/config");
+// ... the mood errors and the colonist rules' errors are added ...
 if (!configErrors.empty()) {
-    for (const auto& error : configErrors) {
-        LOG_ERROR(Game, "%s", error.c_str());
-    }
-    phase = LoadingPhase::ConfigError;
+    fail(std::move(configErrors));
     return;
 }
 ```
 
-### New Loading Phase: ConfigError
+### Where load errors surface
 
-Add error handling for config failures:
+Every way a game load fails goes through the loading scene's one `fail(messages)`, which logs each message at
+error level, keeps them for the scene's state view, and moves to the `Failed` phase. The causes are the asset
+library's validation errors and a failed ground bake (when a `--scene` jump skipped the splash), a missing or
+unreadable quickstart planet, and the config errors above: `loadWorkConfig`'s, `ecs::moodConfigErrors`, and
+`ecs::loadColonistRules`'s, each prefixed with its stage.
 
-```cpp
-enum class LoadingPhase {
-    Initializing,
-    ConfigError,      // NEW: Config load/validation failed
-    LoadingChunks,
-    PlacingEntities,
-    Complete,
-    Cancelling
-};
+`Failed` hides the status line and the bar and shows a `world_sim::LoadFailureView`
+(`apps/world-sim/scenes/shared/LoadFailureView.h`) in their place: an inset panel titled "Loading failed" with
+the first five messages in full, wrapped to the panel's width, "and N more" under them when there are more,
+the run's log file (`foundation::logFilePath()`, under `%TEMP%\world-sim\logs\` on Windows), which has every
+message, and "Press Esc to return to the menu". Esc returns to the main menu, where the next game's load reads
+a corrected file again.
 
-void update(float dt) override {
-    switch (phase) {
-        case LoadingPhase::ConfigError:
-            handleConfigError();
-            break;
-        // ... other cases ...
-    }
-}
+The splash shows the same view for what blocks it: the asset library's validation errors and the ground bake's
+at startup, and the colonist rules' errors a direct switch to the game scene hands it
+(`world_sim::failColonistRules`). The view takes the boot log's place under the identity block, Enter
+Expedition stays disabled, and its line under the messages says to fix the files and restart.
 
-void handleConfigError() {
-    // Show error details
-    updateStatusText("Configuration Error - Press ESC to return to menu");
-
-    // Build error message from ConfigValidator
-    std::string errorMsg;
-    for (const auto& error : ConfigValidator::getErrors()) {
-        errorMsg += error.source + ": " + error.message + "\n";
-        if (!error.context.empty()) {
-            errorMsg += "  " + error.context + "\n";
-        }
-    }
-
-    // Display in UI (or log for now)
-    LOG_ERROR(Game, "Config errors:\n%s", errorMsg.c_str());
-
-    // ESC returns to menu
-    if (theme::key(frame.input, foundation::Key::Escape).pressed()) {
-        owner->scenes().switchTo(world_sim::scenes::MainMenu.name);
-    }
-}
-```
+Both scenes put the messages in their `/api/state?what=scene` view, as `failed` and an `errors` array of the
+strings shown, so a test reads them without the screen.
 
 ---
 
-## Status Text Updates
+## Status Text
 
-The loading screen should show progress:
+The loading scene's status line while it works:
 
 | Phase | Status Text |
 |-------|-------------|
+| Ground bake | "Baking ground tiles..." |
+| Planet | "Loading planet..." |
 | Config loading | "Loading configuration..." |
-| Config error | "Configuration Error - Press ESC to return to menu" |
 | Terrain | "Generating terrain..." |
-| Entities | "Placing entities... X%" |
+| Entities | "Placing entities..." |
 | Complete | "Ready!" |
 
 ---
@@ -244,12 +220,8 @@ The 19 tests in `WorkConfig.test.cpp` cover registry loading and validation.
 
 ### Error Handling Test (manual)
 
-1. Introduce typo in `action-types.xml` (e.g., invalid XML)
-2. Start New Game
-3. Verify error screen shows with clear message
-4. Press ESC → return to menu
-5. Fix the typo
-6. Start New Game → should work
+[Scenario 19](../testing/scenarios/19-load-errors-on-screen.md): a broken value in a staged config file is named
+on the loading scene and on the splash, Esc returns to the menu, and the restored file loads.
 
 ---
 

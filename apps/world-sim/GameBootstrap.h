@@ -41,7 +41,8 @@ namespace world_sim {
 	/// after the ground bake and shows them; it never loads the rules.
 	void failColonistRules(std::vector<std::string> errors);
 
-	/// The errors handed to failColonistRules, each naming its folder; empty when none were.
-	const std::vector<std::string>& failedColonistRules();
+	/// The errors handed to failColonistRules, each naming its folder, which it takes: the handover happens once, and a
+	/// second call answers empty until the next failColonistRules.
+	std::vector<std::string> takeFailedColonistRules();
 
 } // namespace world_sim
