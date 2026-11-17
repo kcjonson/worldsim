@@ -3,7 +3,6 @@
 #include <ecs/components/Action.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Mood.h>
-#include <ecs/components/Needs.h>
 #include <ecs/components/PlayerControlled.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/Transform.h>
@@ -62,11 +61,9 @@ namespace world_sim::adapters {
 
 		// Query all colonist entities
 		for (auto [entity, colonist] : world.view<ecs::Colonist>()) {
-			float mood = 100.0F; // Default to full mood
-
-			// Compute mood from needs if available
-			if (auto* needs = world.getComponent<ecs::NeedsComponent>(entity)) {
-				mood = ecs::computeMood(*needs);
+			float mood = 100.0F;
+			if (const auto* colonistMood = world.getComponent<ecs::Mood>(entity)) {
+				mood = colonistMood->value;
 			}
 
 			Foundation::Vec2 position{0.0F, 0.0F};

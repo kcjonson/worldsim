@@ -4,6 +4,7 @@ add_library(sim
     ecs/systems/PhysicsSystem.cpp
     ecs/systems/NeedsDecaySystem.cpp
     ecs/systems/ThoughtSystem.cpp
+    ecs/systems/MoodSystem.cpp
     ecs/systems/VisionSystem.cpp
     ecs/systems/AIDecisionSystem.cpp
     ecs/systems/ActionSystem.cpp
@@ -32,6 +33,7 @@ add_library(sim
     ecs/WorldSource.cpp
     ecs/components/DecisionTrace.cpp
     ecs/components/MemoryQueries.cpp
+    ecs/components/Mood.cpp
     ecs/components/Thoughts.cpp
     ecs/components/ToiletLocationFinder.cpp
     construction/BuilderSpots.cpp

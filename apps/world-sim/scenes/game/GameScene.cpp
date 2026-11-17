@@ -53,6 +53,7 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/DetailLevels.h>
+#include <assets/MoodConfig.h>
 #include <assets/RecipeRegistry.h>
 #include <assets/placement/AsyncChunkProcessor.h>
 #include <assets/placement/CanopyCover.h>
@@ -96,6 +97,7 @@
 #include <ecs/systems/CollisionSystem.h>
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/CraftingGoalSystem.h>
+#include <ecs/systems/MoodSystem.h>
 #include <ecs/systems/MovementSystem.h>
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/NeedsDecaySystem.h>
@@ -1197,6 +1199,7 @@ namespace {
 			auto& recipeRegistry = assets::RecipeRegistry::Get();
 			ecsWorld->registerSystem<ecs::TimeSystem>();									// Priority 10 - runs first
 			ecsWorld->registerSystem<ecs::ThoughtSystem>();									// Priority 11 - ends timed mood effects
+			ecsWorld->registerSystem<ecs::MoodSystem>(assets::MoodConfig::Get());			// Priority 12 - mood follows needs and thoughts
 			ecsWorld->registerSystem<ecs::VisionSystem>();									// Priority 45
 			ecsWorld->registerSystem<ecs::PlayerVisibilitySystem>();							// Priority 46
 			ecsWorld->registerSystem<ecs::NeedsDecaySystem>();								// Priority 50

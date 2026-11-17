@@ -68,7 +68,12 @@ assets/config/actions/action-types.xml
 assets/config/work/task-chains.xml
 assets/config/work/work-types.xml
 assets/config/work/priority-tuning.xml
+assets/config/construction/*.xml
+assets/config/colonists/mood.xml
 ```
+
+`mood.xml` loads into `assets::MoodConfig` (the mood rate, the need penalty curve, the per-need
+weights by need name, and the band names) and is checked by `ConfigValidator::validateMood`.
 
 ### Mod Paths (Future)
 
@@ -87,9 +92,9 @@ Mods load alphabetically after base game, allowing later mods to override earlie
 
 `assets::loadWorkConfig(configRoot)` (libs/assets/assets/WorkConfig.h) clears the work-config
 registries (ActionTypeRegistry, TaskChainRegistry, WorkTypeRegistry, PriorityConfig,
-ConstructionRegistry, and ConfigValidator's errors), loads them from `configRoot` in the order above,
-checks that priority-tuning.xml gives every task type an arbitration tier, loads construction, and
-cross-validates. It returns every error as a string; an empty list means the config is loaded. It needs
+ConstructionRegistry, MoodConfig, and ConfigValidator's errors), loads them from `configRoot` in the
+order above, checks that priority-tuning.xml gives every task type an arbitration tier, loads
+construction and mood, and cross-validates. It returns every error as a string; an empty list means the config is loaded. It needs
 no GL and no scene, so the headless sim calls it too.
 
 The loading scene clears `ecs::GoalTaskRegistry` itself (a sim singleton libs/assets can't reach),

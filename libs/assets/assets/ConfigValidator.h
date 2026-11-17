@@ -11,6 +11,8 @@
 
 namespace assets {
 
+class MoodConfig;
+
 /// Validation error information
 struct ValidationError {
     /// Source config file/type
@@ -50,10 +52,15 @@ class ConfigValidator {
     /// @return true if valid
     static bool validatePriorityConfig();
 
+    /// Validate a mood config: a positive easing rate, a well-ordered penalty curve, finite
+    /// non-negative weights named once each, and named bands that cover every mood from 0.
+    /// @return true if valid
+    static bool validateMood(const MoodConfig& config);
+
     // --- Full Validation ---
 
     /// Validate all registries (call after all configs loaded).
-    /// Includes construction config if it has been loaded.
+    /// Includes construction and mood config if they have been loaded.
     /// @return true if all valid
     static bool validateAll();
 

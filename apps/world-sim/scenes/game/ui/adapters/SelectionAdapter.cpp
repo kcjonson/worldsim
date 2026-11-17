@@ -154,8 +154,8 @@ namespace world_sim {
 		data.name = colonist ? colonist->name : "Colonist";
 		content.title = data.name;
 
-		if (auto* needs = world.getComponent<ecs::NeedsComponent>(entityId)) {
-			data.moodValue = ecs::computeMood(*needs);
+		if (const auto* mood = world.getComponent<ecs::Mood>(entityId)) {
+			data.moodValue = mood->value;
 		} else {
 			data.moodValue = 50.0F;
 		}

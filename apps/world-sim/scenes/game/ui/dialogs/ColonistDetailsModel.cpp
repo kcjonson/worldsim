@@ -135,10 +135,9 @@ namespace world_sim {
 		bioData.traits.clear();
 		bioData.background = "No background";
 
-		// Get mood from needs
-		const auto* needs = world.getComponent<ecs::NeedsComponent>(colonistId);
-		if (needs != nullptr) {
-			bioData.mood = ecs::computeMood(*needs);
+		const auto* mood = world.getComponent<ecs::Mood>(colonistId);
+		if (mood != nullptr) {
+			bioData.mood = mood->value;
 			bioData.moodLabel = getMoodLabel(bioData.mood);
 		} else {
 			bioData.mood = 100.0F;
@@ -253,12 +252,15 @@ namespace world_sim {
 				needsData.needsAttention[i] = need.needsAttention();
 				needsData.isCritical[i] = need.isCritical();
 			}
-			needsData.mood = ecs::computeMood(*needs);
-			needsData.moodLabel = getMoodLabel(needsData.mood);
 		} else {
 			needsData.needValues.fill(100.0F);
 			needsData.needsAttention.fill(false);
 			needsData.isCritical.fill(false);
+		}
+		if (const auto* mood = world.getComponent<ecs::Mood>(colonistId); mood != nullptr) {
+			needsData.mood = mood->value;
+			needsData.moodLabel = getMoodLabel(needsData.mood);
+		} else {
 			needsData.mood = 100.0F;
 			needsData.moodLabel = "Unknown";
 		}
