@@ -66,7 +66,7 @@ namespace ecs {
 		// A two-handed item shows in both hands as the same stack; counting both double-
 		// counts it. Skip the right hand when it mirrors the left.
 		if (inv.rightHand.has_value() &&
-			!(inv.leftHand.has_value() && inv.leftHand->defName == inv.rightHand->defName && Inventory::isTwoHandItem(inv.rightHand->defName))) {
+			!(inv.leftHand.has_value() && inv.leftHand->defName == inv.rightHand->defName && itemIsTwoHand(registry, inv.rightHand->defName))) {
 			addStack(inv.rightHand->defName, inv.rightHand->quantity);
 		}
 		for (const auto& stack : inv.items) {
@@ -128,18 +128,6 @@ namespace ecs {
 	// look at the hands, not just `items`. A two-hand armful occupies BOTH hands as the same
 	// logical stack (equal quantity, same defName); these helpers preserve that mirror.
 
-	/// True if `defName` must be carried in both hands (so it lives in the hands, not the pack).
-	[[nodiscard]] inline bool itemIsTwoHand(const assets::AssetRegistry& registry, const std::string& defName) {
-		const auto* def = registry.getDefinition(defName);
-		return def != nullptr && def->handsRequired >= 2;
-	}
-
-	/// itemIsTwoHand by interned item id.
-	[[nodiscard]] inline bool itemIsTwoHand(const assets::AssetRegistry& registry, uint32_t item) {
-		const auto* def = registry.getDefinitionById(item);
-		return def != nullptr && def->handsRequired >= 2;
-	}
-
 	/// Quantity of `defName` held in the hands. A two-hand item mirrors across both hands; it is
 	/// counted once (right skipped when it mirrors the left), matching carriedCargoMassKg.
 	[[nodiscard]] inline uint32_t handHeldQuantity(const Inventory& inv, const std::string& defName) {
@@ -148,7 +136,7 @@ namespace ecs {
 			qty += inv.leftHand->quantity;
 		}
 		if (inv.rightHand.has_value() && inv.rightHand->defName == defName &&
-			!(inv.leftHand.has_value() && inv.leftHand->defName == defName && Inventory::isTwoHandItem(defName))) {
+			!(inv.leftHand.has_value() && inv.leftHand->defName == defName && itemIsTwoHand(assets::AssetRegistry::Get(), defName))) {
 			qty += inv.rightHand->quantity;
 		}
 		return qty;
@@ -169,7 +157,7 @@ namespace ecs {
 		if (!inLeft && !inRight) {
 			return 0;
 		}
-		if (inLeft && inRight && Inventory::isTwoHandItem(defName)) {
+		if (inLeft && inRight && itemIsTwoHand(assets::AssetRegistry::Get(), defName)) {
 			const uint32_t toRemove = std::min(quantity, inv.leftHand->quantity);
 			inv.leftHand->quantity -= toRemove;
 			inv.rightHand->quantity = inv.leftHand->quantity; // stay mirrored

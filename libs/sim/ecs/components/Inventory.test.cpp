@@ -644,8 +644,7 @@ TEST(InventoryTests, ClearAllEmptiesBelt) {
 class InventoryHandsTest : public ::testing::Test {
   protected:
 	void SetUp() override {
-		auto& assets = assets::AssetRegistry::Get();
-		assets.clearDefinitions();
+		assets::AssetRegistry::Get().clearDefinitions();
 		registerWithHands("Stick", 1);
 		registerWithHands("Log", 2);
 	}
@@ -680,8 +679,15 @@ TEST_F(InventoryHandsTest, PutDownEverythingOneHandPairKeepsTheOtherUnit) {
 	Inventory inv;
 	inv.pickUp("Stick");
 	inv.pickUp("Stick");
-	ASSERT_TRUE(inv.putDown().has_value());
-	EXPECT_TRUE(inv.leftHand.has_value() || inv.rightHand.has_value());
+	const auto first = inv.putDown();
+	ASSERT_TRUE(first.has_value());
+	EXPECT_EQ(first->quantity, 1U);
+	EXPECT_NE(inv.leftHand.has_value(), inv.rightHand.has_value()) << "one Stick still held";
+	const auto second = inv.putDown();
+	ASSERT_TRUE(second.has_value());
+	EXPECT_EQ(second->quantity, 1U);
+	EXPECT_FALSE(inv.leftHand.has_value());
+	EXPECT_FALSE(inv.rightHand.has_value());
 }
 
 TEST_F(InventoryHandsTest, PutDownTwoHandItemClearsBothHandsAsOneItem) {

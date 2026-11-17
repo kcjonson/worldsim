@@ -3796,28 +3796,36 @@ namespace ecs {
 			uint8_t		handsRequired = (assetDef != nullptr) ? assetDef->handsRequired : 1;
 
 			if (handsRequired == 1) {
-				// 1-handed item: try the belt (quick-draw slot) first, then the backpack. The item is
-				// in hand, so a belt stow seats a copy on the belt and clears the hand.
-				if (inventory.stowToBelt(item)) {
-					inventory.putDown(item);
-					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to belt", entityId, item.c_str());
+				// 1-handed item, one unit per hand: for each unit try the belt (quick-draw slot) first,
+				// then the backpack. A belt stow seats a copy on the belt and clears the hand.
+				while (inventory.isHolding(item)) {
+					if (inventory.stowToBelt(item)) {
+						inventory.putDown(item);
+						LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to belt", entityId, item.c_str());
+					} else if (inventory.stowToBackpack(item)) {
+						LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to backpack", entityId, item.c_str());
+					} else {
+						break;
+					}
+				}
+				if (!inventory.isHolding(item)) {
 					keepGoods();
 					return;
 				}
-				if (inventory.stowToBackpack(item)) {
-					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to backpack", entityId, item.c_str());
-					keepGoods();
-					return;
-				}
-				// Belt and backpack full - fall through to drop
+				// Belt and backpack full - fall through to drop what is left in hand
 				LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, dropping %s (belt and backpack full)", entityId, item.c_str());
 			} else {
 				LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, dropping %s (2-handed)", entityId, item.c_str());
 			}
 
-			auto dropped = inventory.putDown(item);
-			if (dropped.has_value() && dropped->quantity > 0) {
-				ecs::storeOrDrop(*world, dropped->defName, dropped->quantity, position.value, onDropResource, [this](EntityID box) { boxChanged(box); });
+			while (inventory.isHolding(item)) {
+				auto dropped = inventory.putDown(item);
+				if (!dropped.has_value()) {
+					break;
+				}
+				if (dropped->quantity > 0) {
+					ecs::storeOrDrop(*world, dropped->defName, dropped->quantity, position.value, onDropResource, [this](EntityID box) { boxChanged(box); });
+				}
 			}
 		}
 	}

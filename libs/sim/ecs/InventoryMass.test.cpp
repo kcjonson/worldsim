@@ -97,9 +97,8 @@ class HandsTest : public ::testing::Test {
 
 // ============================================================================
 // Hand-carried bulk materials: a two-hand armful occupies BOTH hands as one
-// logical stack, so it must be counted once and the mirror kept in sync. The
-// weight-clamped addArmful is
-// exercised end-to-end once Wood becomes two-hand.
+// logical stack, so it must be counted once and the mirror kept in sync. A
+// one-hand def in both hands is two units instead (Stick below).
 // ============================================================================
 
 TEST_F(HandsTest, HandHeldQuantity_TwoHandMirrorCountsOnce) {

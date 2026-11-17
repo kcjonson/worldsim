@@ -196,7 +196,7 @@ namespace world_sim {
 			const bool hasLeft = inventory->leftHand.has_value();
 			const bool hasRight = inventory->rightHand.has_value();
 			if (hasLeft && hasRight && inventory->leftHand->defName == inventory->rightHand->defName &&
-				ecs::Inventory::isTwoHandItem(inventory->leftHand->defName)) {
+				ecs::itemIsTwoHand(assets::AssetRegistry::Get(), inventory->leftHand->defName)) {
 				// Same item in both hands: a two-hand armful (counted once)
 				data.hands = inventory->leftHand->defName;
 				if (inventory->leftHand->quantity > 1) {

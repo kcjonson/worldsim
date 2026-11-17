@@ -36,6 +36,20 @@ namespace ecs {
 		uint32_t	quantity = 0;
 	};
 
+	/// True if `defName` must be carried in both hands (so it lives in the hands, not the pack). A
+	/// two-hand item sits mirrored across both hands as one stack; the same def in both hands is two
+	/// separate units when it is one-hand. Unknown defs read as one-hand.
+	[[nodiscard]] inline bool itemIsTwoHand(const assets::AssetRegistry& registry, const std::string& defName) {
+		const auto* def = registry.getDefinition(defName);
+		return def != nullptr && def->handsRequired >= 2;
+	}
+
+	/// itemIsTwoHand by interned item id.
+	[[nodiscard]] inline bool itemIsTwoHand(const assets::AssetRegistry& registry, uint32_t item) {
+		const auto* def = registry.getDefinitionById(item);
+		return def != nullptr && def->handsRequired >= 2;
+	}
+
 	/// Inventory component - stores items as physical stacks, with hand slots and a belt.
 	///
 	/// Colonists have:
@@ -61,8 +75,8 @@ namespace ecs {
 		// ============================================================================
 
 		/// Belt - fixed quick-draw slots, each holding exactly one one-hand item (a tool
-		/// or sidearm), quantity 1. Two-hand "bulky" items never fit here. Inventory has no
-		/// asset registry, so callers must guarantee what they stow is one-hand.
+		/// or sidearm), quantity 1. Two-hand "bulky" items never fit here. stowToBelt does not
+		/// check hand class, so callers must guarantee what they stow is one-hand.
 		std::array<std::optional<ItemStack>, 2> belt;
 
 		// ============================================================================
@@ -340,23 +354,17 @@ namespace ecs {
 			return false; // No free hands
 		}
 
-		/// True if `defName` is a two-hand item, which sits mirrored in both hands as one stack. Unknown
-		/// defs read as one-hand, so the same def in both hands is then two separate units.
-		[[nodiscard]] static bool isTwoHandItem(const std::string& defName) {
-			const auto* def = assets::AssetRegistry::Get().getDefinition(defName);
-			return def != nullptr && def->handsRequired >= 2;
-		}
-
 		/// Put down item(s) from hands. A two-hand item clears both hands (one mirrored stack); a
 		/// one-hand item clears one hand, so a second unit in the other hand stays held.
-		/// @param defName If specified, only put down this item; otherwise put down everything
+		/// @param defName If specified, only put down this item; otherwise put down what the right
+		///        hand holds (the left if the right is empty)
 		/// @return The item that was put down (nullopt if nothing)
 		std::optional<ItemStack> putDown(const std::string& defName = "") {
 			if (defName.empty()) {
-				// Put down everything - prioritize right hand
+				// No name: the right hand first
 				if (rightHand.has_value()) {
 					auto item = rightHand.value();
-					if (leftHand.has_value() && leftHand->defName == item.defName && isTwoHandItem(item.defName)) {
+					if (leftHand.has_value() && leftHand->defName == item.defName && itemIsTwoHand(assets::AssetRegistry::Get(), item.defName)) {
 						leftHand.reset();
 					}
 					rightHand.reset();
@@ -373,7 +381,7 @@ namespace ecs {
 			// Put down specific item
 			if (rightHand.has_value() && rightHand->defName == defName) {
 				auto item = rightHand.value();
-				if (leftHand.has_value() && leftHand->defName == defName && isTwoHandItem(defName)) {
+				if (leftHand.has_value() && leftHand->defName == defName && itemIsTwoHand(assets::AssetRegistry::Get(), defName)) {
 					leftHand.reset();
 				}
 				rightHand.reset();
@@ -403,7 +411,7 @@ namespace ecs {
 			}
 
 			// Two-handed items can't go in backpack
-			if (inRight && inLeft && isTwoHandItem(defName)) {
+			if (inRight && inLeft && itemIsTwoHand(assets::AssetRegistry::Get(), defName)) {
 				return false;
 			}
 
@@ -454,8 +462,8 @@ namespace ecs {
 		/// Stow a one-hand item into the first free belt slot
 		/// @param defName Item to stow (one slot holds exactly one, quantity 1)
 		/// @return true if seated, false if the belt is full
-		/// @note The belt only accepts one-hand items, but Inventory has no asset registry to
-		///       verify hand class - the CALLER must guarantee `defName` is one-hand.
+		/// @note The belt only accepts one-hand items; this does not check hand class, so the
+		///       CALLER must guarantee `defName` is one-hand.
 		bool stowToBelt(const std::string& defName) {
 			for (auto& slot : belt) {
 				if (!slot.has_value()) {
