@@ -194,7 +194,7 @@ namespace ecs {
 		// listed together.
 		[[nodiscard]] const std::vector<OccluderRecord>& occluders() const { return m_occluders; }
 		[[nodiscard]] const std::vector<OpeningRecord>&	 builtOpenings() const { return m_openings; }
-		[[nodiscard]] const std::vector<WallBody>&		 bodies() const { return m_bodies; }
+		[[nodiscard]] const std::vector<WallBody>&		 bodies() const { return wallBodies; }
 
 	  private:
 		void rebuild();
@@ -210,11 +210,11 @@ namespace ecs {
 		// Bumped by rebuild(); see generation().
 		std::uint64_t m_generation = 0;
 
-		std::int64_t m_opaqueLeastDiameterMm = vision::SightTunables{}.wallOpaqueLeastDiameterMm;
+		std::int64_t opaqueLeastDiameterMm = vision::SightTunables{}.wallOpaqueLeastDiameterMm;
 
 		std::vector<OccluderRecord> m_occluders;
 		std::vector<OpeningRecord>	m_openings;
-		std::vector<WallBody>		m_bodies;
+		std::vector<WallBody>		wallBodies;
 	};
 
 } // namespace ecs

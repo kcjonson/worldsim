@@ -81,13 +81,13 @@ namespace ecs {
 		m_terrainDefsRegistered = true;
 	}
 
-	void VisionSystem::setSightTunables(const vision::SightTunables& tunables) {
-		const vision::SightTunables clamped = vision::clampedToRanges(tunables);
-		if (clamped == m_tunables) {
-			return;
+	void VisionSystem::setSightTunables(const vision::SightTunables& next) {
+		const vision::SightTunables clamped = vision::clampedToRanges(next);
+		// Only a tunable the sim's shape reads rebuilds shapes; the cover's are read where drawn.
+		if (!vision::sameShapeTunables(clamped, tunables)) {
+			++tunablesVersion;
 		}
-		m_tunables = clamped;
-		++m_tunablesVersion;
+		tunables = clamped;
 	}
 
 	const vision::PlacedOccluderIndex* VisionSystem::placedIndex() const {
@@ -153,9 +153,9 @@ namespace ecs {
 		// moved, the placed index re-decides its kinds.
 		NavigationSystem* nav = world->tryGetSystem<NavigationSystem>();
 		if (nav != nullptr) {
-			nav->placedOccluders().setOpaqueLeastDiameterMm(m_tunables.placedOpaqueLeastDiameterMm);
+			nav->placedOccluders().setOpaqueLeastDiameterMm(tunables.placedOpaqueLeastDiameterMm);
 		}
-		m_geometry.setOpaqueLeastDiameterMm(m_tunables.wallOpaqueLeastDiameterMm);
+		m_geometry.setOpaqueLeastDiameterMm(tunables.wallOpaqueLeastDiameterMm);
 		// Refresh the wall bodies before any observer reads them (version-gated, so this is a no-op
 		// when the construction graph hasn't changed). With no construction world wired the index
 		// stays empty.
@@ -167,11 +167,17 @@ namespace ecs {
 
 		// The clock arrivals are read against, and how long until the next pass in sim time: the
 		// measured frame interval times the interval's frames times the game's speed.
+		// A ring's arrival advances only with the clock: with no clock every ring has arrived, and while
+		// the game is paused an arriving ring keeps no build due, since the next build would be the same.
 		const TimeSystem*		 time			 = world->tryGetSystem<TimeSystem>();
 		const std::int64_t		 clockMs		 = time != nullptr ? std::llround(time->simulationSeconds() * 1000.0) : 0;
 		const double			 timeScale		 = time != nullptr ? static_cast<double>(time->effectiveTimeScale()) : 1.0;
-		const double			 intervalSeconds = static_cast<double>(deltaTime) * static_cast<double>(m_updateInterval) * timeScale;
-		const geometry::ForestTunables forest	 = m_tunables.forest();
+		const bool						clockRuns		= time != nullptr && timeScale > 0.0;
+		const double					intervalSeconds = static_cast<double>(deltaTime) * static_cast<double>(m_updateInterval) * timeScale;
+		const geometry::ForestTunables forest			= tunables.forest();
+		const auto						arrivalOf		= [&](const vision::PlacedOccluder& ring) {
+			   return time != nullptr ? geometry::forestArrivalFraction(clockMs, ring.arrivedMs, forest) : geometry::kFractionOne;
+		};
 
 		// Scratch reused across observers to avoid per-observer allocation.
 		std::vector<geometry::OccluderSegment>	   occluderScratch;
@@ -189,34 +195,42 @@ namespace ecs {
 			// walks until then.
 			const std::int64_t		radiusMm   = std::llround(static_cast<double>(memory.sightRadius) * 1000.0);
 			const geometry::Vec2i64 observerMm = nav::toMm(pos.value);
-			const auto*				movement   = world->getComponent<MovementTarget>(entity);
-			const double			speed	   = movement != nullptr ? static_cast<double>(movement->speed) : 0.0;
-			const std::int64_t		leadMm = std::min(vision::kSightLeadMostMm, kSightRebuildStepMm + std::llround(speed * intervalSeconds * 1000.0));
+			// A still colonist walks nothing. A walk is taken up to whole kLeadWalkStepMm, so the frame
+			// time's jitter does not move the lead, and with it the rebuild a longer lead forces.
+			const auto*		   movement = world->getComponent<MovementTarget>(entity);
+			const double	   speed	= movement != nullptr && movement->active ? static_cast<double>(movement->speed) : 0.0;
+			const auto		   walkMm	= static_cast<std::int64_t>(std::ceil(speed * intervalSeconds * 1000.0 / kLeadWalkStepMm)) * kLeadWalkStepMm;
+			const std::int64_t leadMm	= std::min(vision::kSightLeadMostMm, kSightRebuildStepMm + walkMm);
 			const std::int64_t		reachMm = radiusMm + leadMm;
 			VisibilityCache&		entry	= m_visibilityCache[entity];
 			entry.seenThisTick				= true;
 
-			// Rebuild conditions (sight-softening.md 2.4): no shape, so he is on the outdoor fast path,
-			// looked at afresh each pass; he moved more than the rebuild step from the build; the walls,
-			// the tunables, or his sight changed; this pass's lead is longer than the shape's, so its
-			// reach falls short; the placed rings within the shape's reach of its build are not the ones
-			// it was built with; or one of them is still arriving. A stationary colonist hits none of
-			// these and keeps his shape.
+			// Rebuild conditions (sight-softening.md 2.4), on the plain disc and the polygon path alike: no
+			// build yet; he moved more than the rebuild step from the build; the walls, the shape's
+			// tunables, or his sight changed; this pass's lead is longer than the build's, so its reach
+			// falls short; the placed rings within the build's reach of its eye are not the ones it was
+			// built with; or one of them is still arriving. A stationary colonist hits none of these and
+			// keeps his build, and so does one walking over ground with nothing on it.
 			const geometry::Vec2i64 moved = observerMm - entry.builtMm;
-			bool					due	  = !entry.hasPolygon || moved.x * moved.x + moved.y * moved.y > kSightRebuildStepMm * kSightRebuildStepMm ||
-						entry.builtVersion != m_geometry.generation() || entry.tunablesVersion != m_tunablesVersion ||
-						entry.radius != memory.sightRadius || leadMm > entry.leadMm;
+			bool due = !entry.built || geometry::dot(moved, moved) > geometry::Int128::product(kSightRebuildStepMm, kSightRebuildStepMm) ||
+					   entry.builtVersion != m_geometry.generation() || entry.tunablesVersion != tunablesVersion ||
+					   entry.radius != memory.sightRadius || leadMm > entry.leadMm;
 			if (!due && placed != nullptr) {
 				placed->within(entry.builtMm, entry.reachMm, placedScratch);
 				serialScratch.clear();
 				for (const vision::PlacedOccluder* ring : placedScratch) {
 					serialScratch.push_back(ring->serial);
-					due = due || geometry::forestArrivalFraction(clockMs, ring->arrivedMs, forest) < geometry::kFractionOne;
+					due = due || (clockRuns && arrivalOf(*ring) < geometry::kFractionOne);
 				}
 				due = due || serialScratch != entry.placedSerials;
 			}
+			if (!due && !entry.hasPolygon) {
+				// On the plain disc his sight is the circle round where he stands.
+				entry.builtPos = pos.value;
+			}
 
 			if (due) {
+				++builds;
 				placedScratch.clear();
 				if (placed != nullptr) {
 					placed->within(observerMm, reachMm, placedScratch);
@@ -245,7 +259,7 @@ namespace ecs {
 						.diameterMm = ring->diameterMm,
 						.centre		= ring->centre,
 						.defName	= ring->defName,
-						.arrival	= geometry::forestArrivalFraction(clockMs, ring->arrivedMs, forest),
+						.arrival	= arrivalOf(*ring),
 					});
 					const auto corners = static_cast<std::uint32_t>(ring->outline.size());
 					for (std::uint32_t corner = 0; corner < corners; ++corner) {
@@ -285,7 +299,7 @@ namespace ecs {
 				}
 				entry.builtMm		  = observerMm;
 				entry.builtVersion	  = m_geometry.generation();
-				entry.tunablesVersion = m_tunablesVersion;
+				entry.tunablesVersion = tunablesVersion;
 				entry.radius		  = memory.sightRadius;
 				entry.leadMm		  = leadMm;
 				entry.reachMm		  = reachMm;

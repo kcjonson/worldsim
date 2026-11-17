@@ -7,6 +7,7 @@
 #include "../components/AgentRadius.h"
 #include "../components/Appearance.h"
 #include "../components/Memory.h"
+#include "../components/Movement.h"
 #include "../components/Transform.h"
 
 #include "nav/NavCoords.h"
@@ -28,6 +29,7 @@
 #include <glm/geometric.hpp>
 
 #include <algorithm>
+#include <array>
 
 #include <memory>
 #include <unordered_map>
@@ -609,6 +611,55 @@ TEST_F(VisionSystemTest, WallStubIsLeftOutOfThePolygonAndStillRemembered) {
 	EXPECT_EQ(bodies->bodies->front().source, vision::SightBody::Source::Wall);
 	EXPECT_EQ(bodies->bodies->front().kind, vision::BodyKind::Soft);
 	EXPECT_TRUE(bodies->shadowEdges->empty());
+}
+
+// A colonist standing still with a movement target he is not following walks nothing, so his lead
+// holds whatever the frame time and he builds once; following it, his lead is his walk taken up to
+// whole steps, so frame-time jitter leaves it and the one longer lead rebuilds once.
+TEST_F(VisionSystemTest, LeadHoldsUnderFrameTimeJitter) {
+	ConstructionWorld cw;
+	buildWall(cw, {3000, -2000}, {3000, 2000});
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	sys.setUpdateInterval(1);
+	const EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	world.addComponent<MovementTarget>(observer, MovementTarget{.target = {5.0F, 0.0F}, .speed = 2.0F, .active = false});
+	constexpr std::array kFrames = {0.0121F, 0.0166F, 0.0213F, 0.0333F, 0.0158F};
+	for (int pass = 0; pass < 20; ++pass) {
+		sys.update(kFrames[static_cast<std::size_t>(pass) % kFrames.size()]);
+	}
+	EXPECT_EQ(sys.polygonBuildCount(), 1U) << "a still colonist rebuilt on frame time";
+
+	world.getComponent<MovementTarget>(observer)->active = true;
+	for (int pass = 0; pass < 20; ++pass) {
+		sys.update(pass % 2 == 0 ? 0.0163F : 0.0171F);
+	}
+	EXPECT_EQ(sys.polygonBuildCount(), 2U) << "jitter in the frame time moved the lead";
+	EXPECT_EQ(sys.sightBodies(observer)->leadMm, VisionSystem::kSightRebuildStepMm + VisionSystem::kLeadWalkStepMm);
+}
+
+// A tunable only the cover reads leaves every shape; one the shape is built from rebuilds it.
+TEST_F(VisionSystemTest, OnlyShapeTunablesRebuildShapes) {
+	ConstructionWorld cw;
+	buildWall(cw, {3000, -2000}, {3000, 2000});
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	spawnObserver(world, {0.0F, 0.0F});
+	tick(sys);
+	ASSERT_EQ(sys.polygonBuildCount(), 1U);
+	vision::SightTunables tunables = sys.sightTunables();
+	tunables.shadowEdgeWidthMm	   = 2000;
+	tunables.sightFeatherMm		   = 900;
+	sys.setSightTunables(tunables);
+	tick(sys);
+	EXPECT_EQ(sys.polygonBuildCount(), 1U) << "a cover tunable rebuilt the shape";
+	EXPECT_EQ(sys.sightTunables().shadowEdgeWidthMm, 2000);
+	tunables.wallOpaqueLeastDiameterMm = 900;
+	sys.setSightTunables(tunables);
+	tick(sys);
+	EXPECT_EQ(sys.polygonBuildCount(), 2U);
 }
 
 // An opening on a seen wall is recorded too.

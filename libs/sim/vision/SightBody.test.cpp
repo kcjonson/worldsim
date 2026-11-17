@@ -153,4 +153,12 @@ TEST(PlacedOccluderIndex, AddsMeasuresFindsAndRemovesBySerial) {
 	EXPECT_EQ(index.byRing(4)->kind, BodyKind::Soft);
 	index.within({15000, 500}, 600, found);
 	EXPECT_TRUE(found.empty()) << "the old ring left its buckets";
+
+	// An id handed out again while still listed replaces its entry, buckets and all.
+	index.add(4, clockwise, "BigRock", 750);
+	ASSERT_EQ(index.size(), 1U);
+	index.within({0, 0}, 1000, found);
+	EXPECT_TRUE(found.empty()) << "the replaced ring left its buckets";
+	index.within({15000, 500}, 600, found);
+	EXPECT_EQ(found.size(), 1U);
 }

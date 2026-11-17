@@ -1169,6 +1169,104 @@ TEST_F(NavigationSystemTest, VisionNeverJoinsThePatchJob) {
 	EXPECT_EQ(sys.placedOccluders().size(), 1U);
 }
 
+namespace {
+	// A still mover with no Memory, so vision does not read him: he meshes the disc of a colonist's
+	// range round `at`.
+	EntityID meshingMover(World& world, glm::vec2 at) {
+		const EntityID e = world.createEntity();
+		world.addComponent<Position>(e, Position{at});
+		world.addComponent<AgentRadius>(e, AgentRadius{});
+		return e;
+	}
+} // namespace
+
+// On open ground among soft trees only, his sight is the plain disc, built once and kept: standing
+// still, walking less than the rebuild step, and new ground meshed elsewhere leave the build; a walk
+// past the step builds again.
+TEST_F(NavigationSystemTest, PlainDiscKeepsItsBuildAmongSoftTrees) {
+	registerSightBodies();
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeMixed(executor, processed, {{kSightTrunk, {3.0F, 4.0F}}, {kSightTrunk, {-5.0F, 2.0F}}});
+
+	World			  world;
+	TimeSystem&		  time	 = world.registerSystem<TimeSystem>();
+	VisionSystem&	  vision = world.registerSystem<VisionSystem>();
+	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
+	vision.setUpdateInterval(1);
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	meshingMover(world, {0.0F, 0.0F});
+	const EntityID observer = sightObserver(world, {0.0F, 0.0F});
+	settle(sys);
+	time.skipTime(10.0F);
+	world.update(0.016F);
+	ASSERT_EQ(vision.sightShape(observer)->polygon, nullptr) << "soft trees alone leave the plain disc";
+	ASSERT_EQ(vision.sightBodies(observer)->bodies->size(), 2U);
+	EXPECT_EQ(vision.buildCount(), 1U);
+
+	for (int i = 0; i < 5; ++i) {
+		world.update(0.016F);
+	}
+	EXPECT_EQ(vision.buildCount(), 1U) << "standing still";
+	world.getComponent<Position>(observer)->value = {0.4F, 0.0F};
+	world.update(0.016F);
+	EXPECT_EQ(vision.buildCount(), 1U) << "under the rebuild step";
+	meshingMover(world, {200.0F, 200.0F});
+	for (int i = 0; i < 4; ++i) {
+		step(world, sys);
+	}
+	ASSERT_TRUE(sys.inSimArea({200.0F, 200.0F})) << "new ground went in";
+	EXPECT_EQ(vision.buildCount(), 1U) << "new ground with no obstacle";
+	EXPECT_FLOAT_EQ(vision.sightShape(observer)->center.x, 0.4F) << "the plain disc still follows him";
+	world.getComponent<Position>(observer)->value = {0.6F, 0.0F};
+	world.update(0.016F);
+	EXPECT_EQ(vision.buildCount(), 2U) << "past the rebuild step";
+	EXPECT_EQ(vision.polygonBuildCount(), 0U);
+}
+
+// A ring's arrival advances only with the clock. With no TimeSystem every ring has arrived; while the
+// game is paused a ring still arriving keeps no build due; once it runs again, the arriving ring
+// rebuilds him at each pass.
+TEST_F(NavigationSystemTest, ArrivalWithoutARunningClockKeepsNoBuildDue) {
+	registerSightBodies();
+	for (const bool withClock : {false, true}) {
+		PlacementExecutor					executor(AssetRegistry::Get());
+		std::unordered_set<ChunkCoordinate> processed;
+		placeMixed(executor, processed, {{kSightTrunk, {3.0F, 4.0F}}});
+		ConstructionWorld cw;
+		buildWall(cw, {2000, -1000}, {2000, 1000});
+
+		World		world;
+		TimeSystem* time = withClock ? &world.registerSystem<TimeSystem>() : nullptr;
+		VisionSystem&	  vision = world.registerSystem<VisionSystem>();
+		NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
+		vision.setUpdateInterval(1);
+		vision.setConstructionWorld(&cw);
+		sys.setChunkManager(landChunks());
+		sys.setPlacementData(&executor, &processed);
+		sys.setConstructionWorld(&cw);
+		meshingMover(world, {0.0F, 0.0F});
+		const EntityID observer = sightObserver(world, {0.0F, 0.0F});
+		settle(sys);
+		if (time != nullptr) {
+			time->pause();
+		}
+		for (int i = 0; i < 5; ++i) {
+			world.update(0.016F);
+		}
+		EXPECT_EQ(vision.polygonBuildCount(), 1U) << (withClock ? "paused" : "no clock");
+		const vision::SightBody& tree = vision.sightBodies(observer)->bodies->back();
+		EXPECT_EQ(tree.arrival, withClock ? 0 : geometry::kFractionOne);
+		if (time != nullptr) {
+			time->resume();
+			world.update(0.016F);
+			world.update(0.016F);
+			EXPECT_EQ(vision.polygonBuildCount(), 3U) << "an arriving ring rebuilds at each pass";
+		}
+	}
+}
+
 // Many placed obstacles leaving the world at once (felled) queue for removal. That backlog drains
 // under its own budget and never holds back the obstacles entering a limit that is not urgent.
 TEST_F(NavigationSystemTest, FelledBacklogDoesntHoldBackAdds) {

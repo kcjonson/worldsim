@@ -588,6 +588,30 @@ TEST_F(GeometryIndexTest, RejectedGraphIsOneBodyOfItsWalls) {
 	EXPECT_EQ(bodiesOf(accepted, 3000)[0].kind, vision::BodyKind::Soft);
 }
 
+// In a rejected graph two collinear walls' raw bands share their corners where they meet, yet each
+// corner's previous edge is its own band's: walking back from any edge goes round its band.
+TEST_F(GeometryIndexTest, RejectedGraphCornersKeepTheirOwnBandsPreviousEdge) {
+	ConstructionWorld world;
+	for (const geometry::WallSegment& wall : std::vector<geometry::WallSegment>{
+			 {{19000, 500}, {20000, 0}, 150}, {{20000, 0}, {20050, 0}, 150}, {{20050, 0}, {21050, 500}, 150}, {{21050, 500}, {22050, 1000}, 150}}) {
+		buildWall(world, wall.a, wall.b, "Heavy");
+	}
+	GeometryIndex index;
+	index.setConstructionWorld(&world);
+	index.rebuildIfStale();
+	ASSERT_EQ(index.bodies().size(), 1U);
+	const GeometryIndex::WallBody& body = index.bodies()[0];
+	ASSERT_EQ(body.edges.size(), 16U) << "four raw bands";
+	for (std::uint32_t edge = 0; edge < body.edges.size(); ++edge) {
+		EXPECT_EQ(body.edges[body.previousEdge[edge]].b, body.edges[edge].a);
+		std::uint32_t walked = edge;
+		for (int step = 0; step < 4; ++step) {
+			walked = body.previousEdge[walked];
+		}
+		EXPECT_EQ(walked, edge) << "edge " << edge << " walks back into another band";
+	}
+}
+
 // A graph the offsetter rejects still passes sight through its doors and windows: a
 // closed room with a door and a window, and a stem outside meeting its south wall 150 mm
 // short of a corner, which leaves a piece shorter than its trims.

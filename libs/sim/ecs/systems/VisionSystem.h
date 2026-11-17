@@ -59,14 +59,16 @@ class VisionSystem : public ISystem {
 	/// before the next pass (sight-softening.md 2.4); what vision decides with it is held to his sight.
 	static constexpr float		  kSightRebuildStepMeters = 0.5F;
 	static constexpr std::int64_t kSightRebuildStepMm	   = 500;
+	/// A colonist's walk until the next pass is taken up to whole steps of this in `lead`.
+	static constexpr std::int64_t kLeadWalkStepMm = 100;
 
 	void update(float deltaTime) override;
 
 	/// The sight tunables (sight-softening.md 9). The setter clamps every field to its range; a change
 	/// re-decides every body's kind where a threshold moved and rebuilds every observer's shape at the
 	/// next pass.
-	[[nodiscard]] const vision::SightTunables& sightTunables() const { return m_tunables; }
-	void									   setSightTunables(const vision::SightTunables& tunables);
+	[[nodiscard]] const vision::SightTunables& sightTunables() const { return tunables; }
+	void									   setSightTunables(const vision::SightTunables& next);
 
 	/// The bodies within `reach` of an observer's last build (sight-softening.md 2.4), each with its
 	/// outline, kind, serial or wall body, and arrival fraction; the build's shadow edges, indexing
@@ -131,6 +133,8 @@ class VisionSystem : public ISystem {
 	/// Test-only: how many visibility polygons were actually rebuilt so far. A
 	/// stationary indoor observer should not bump this every tick (cache reuse).
 	[[nodiscard]] uint64_t polygonBuildCount() const { return m_polygonBuildCount; }
+	/// Test-only: how many sight builds, plain disc or polygon, were made so far.
+	[[nodiscard]] uint64_t buildCount() const { return builds; }
 
 	/// An observer's sight as vision last built it. With no polygon the shape is the plain
 	/// circle; with one, his sight is the circle of `radius` round where he stands now inside the
@@ -223,9 +227,9 @@ class VisionSystem : public ISystem {
 	// top of each throttled tick.
 	GeometryIndex m_geometry;
 
-	vision::SightTunables m_tunables;
+	vision::SightTunables tunables;
 	// Bumped by every change of the tunables: a shape built before it is rebuilt.
-	std::uint64_t m_tunablesVersion = 0;
+	std::uint64_t tunablesVersion = 0;
 
 	// Per-observer sight cache, one entry per observer. A stationary colonist indoors builds
 	// its star-shaped sight polygon once, then reuses it every tick. The polygon is
@@ -280,6 +284,7 @@ class VisionSystem : public ISystem {
 
 	// Test-only diagnostic: incremented on each actual polygon (re)build.
 	uint64_t m_polygonBuildCount = 0;
+	uint64_t builds = 0;
 
 	// Throttling: only update every N frames to reduce CPU overhead
 	// Initialize to interval so first update() call executes immediately

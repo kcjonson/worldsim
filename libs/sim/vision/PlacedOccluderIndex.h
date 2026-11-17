@@ -53,7 +53,8 @@ namespace vision {
 	class PlacedOccluderIndex {
 	  public:
 		// Takes the ring `ring` with `outline` (either winding) under a new serial, its kind by
-		// opaqueLeastDiameterMm. A ring the patch refused (geometry::nav::kNoRing) never enters.
+		// opaqueLeastDiameterMm. A ring the patch refused (geometry::nav::kNoRing) never enters, and an
+		// entry already under `ring` leaves first.
 		void add(geometry::nav::RingId ring, const geometry::Ring& outline, std::string defName, std::int64_t clockMs);
 		// Drops the entry for `ring`, if there is one.
 		void remove(geometry::nav::RingId ring);

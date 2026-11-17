@@ -49,6 +49,15 @@ namespace vision {
 
 	std::span<const SightTunableRange> sightTunableRanges() { return kRanges; }
 
+	bool sameShapeTunables(const SightTunables& first, const SightTunables& second) {
+		constexpr std::array kShapeFields = {
+			&SightTunables::wallOpaqueLeastDiameterMm, &SightTunables::placedOpaqueLeastDiameterMm, &SightTunables::forestCapMm,
+			&SightTunables::forestWindowSteps,		   &SightTunables::forestNearMm,				&SightTunables::forestFloorPercent,
+			&SightTunables::forestSlopeMm,			   &SightTunables::forestFullPerimeterMm,		&SightTunables::forestArrivalMs,
+		};
+		return std::ranges::all_of(kShapeFields, [&](std::int64_t SightTunables::* field) { return first.*field == second.*field; });
+	}
+
 	SightTunables clampedToRanges(const SightTunables& tunables) {
 		SightTunables clamped = tunables;
 		for (const SightTunableRange& range : kRanges) {

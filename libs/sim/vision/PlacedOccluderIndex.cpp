@@ -3,7 +3,6 @@
 #include <predicates/Predicates.h>
 
 #include <algorithm>
-#include <cassert>
 
 namespace vision {
 
@@ -51,7 +50,8 @@ namespace vision {
 		if (ring == geometry::nav::kNoRing || outline.size() < 3) {
 			return;
 		}
-		assert(!serialOfRing.contains(ring) && "a ring id still in the index was handed out again");
+		// A ring id handed out again while still listed replaces its old entry, buckets and all.
+		remove(ring);
 		PlacedOccluder entry{.serial = nextSerial++, .ring = ring, .outline = outline, .arrivedMs = clockMs, .defName = std::move(defName)};
 		if (doubledArea(entry.outline).sign() < 0) {
 			std::reverse(entry.outline.begin(), entry.outline.end());

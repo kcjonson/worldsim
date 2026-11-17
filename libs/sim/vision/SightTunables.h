@@ -59,6 +59,10 @@ namespace vision {
 	// colonist's sight (kDefaultSightRadius).
 	std::span<const SightTunableRange> sightTunableRanges();
 
+	// Whether the sim tunables, those the sight shape is built from (the kind thresholds and forest
+	// depth's), are the same in both. The rest are the record's and the cover's.
+	bool sameShapeTunables(const SightTunables& first, const SightTunables& second);
+
 	// `tunables` with every field clamped to its fixed bounds, then softShadowRayWidthMm raised to at
 	// least 1 mm more than the larger kind threshold, so a threshold slider pushes the ray width up
 	// rather than being held down by it.
