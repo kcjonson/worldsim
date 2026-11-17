@@ -1027,7 +1027,7 @@ namespace assets {
 			pugi::xml_node capabilitiesNode = defNode.child("capabilities");
 			if (capabilitiesNode) {
 				// Edible capability
-				pugi::xml_node edibleNode = capabilitiesNode.child("edible");
+				pugi::xml_node edibleNode = capabilitiesNode.child(capabilityName(CapabilityType::Edible));
 				if (edibleNode) {
 					EdibleCapability edible;
 					edible.nutrition = edibleNode.attribute("nutrition").as_float(0.3F);
@@ -1037,7 +1037,7 @@ namespace assets {
 				}
 
 				// Drinkable capability
-				pugi::xml_node drinkableNode = capabilitiesNode.child("drinkable");
+				pugi::xml_node drinkableNode = capabilitiesNode.child(capabilityName(CapabilityType::Drinkable));
 				if (drinkableNode) {
 					DrinkableCapability drinkable;
 					drinkable.quality = parseCapabilityQuality(drinkableNode.attribute("quality").as_string());
@@ -1045,7 +1045,7 @@ namespace assets {
 				}
 
 				// Sleepable capability
-				pugi::xml_node sleepableNode = capabilitiesNode.child("sleepable");
+				pugi::xml_node sleepableNode = capabilitiesNode.child(capabilityName(CapabilityType::Sleepable));
 				if (sleepableNode) {
 					SleepableCapability sleepable;
 					sleepable.quality = parseCapabilityQuality(sleepableNode.attribute("quality").as_string());
@@ -1054,7 +1054,7 @@ namespace assets {
 				}
 
 				// Toilet capability
-				pugi::xml_node toiletNode = capabilitiesNode.child("toilet");
+				pugi::xml_node toiletNode = capabilitiesNode.child(capabilityName(CapabilityType::Toilet));
 				if (toiletNode) {
 					ToiletCapability toilet;
 					toilet.hygieneBonus = toiletNode.attribute("hygieneBonus").as_bool(false);
@@ -1062,14 +1062,14 @@ namespace assets {
 				}
 
 				// Waste capability (marker for bio piles)
-				pugi::xml_node wasteNode = capabilitiesNode.child("waste");
+				pugi::xml_node wasteNode = capabilitiesNode.child(capabilityName(CapabilityType::Waste));
 				if (wasteNode) {
 					def.capabilities.waste = WasteCapability{};
 				}
 
 				// Carryable capability (ground items like stones)
 				// In unified model, the entity's defName IS the item - no separate itemDefName needed
-				pugi::xml_node carryableNode = capabilitiesNode.child("carryable");
+				pugi::xml_node carryableNode = capabilitiesNode.child(capabilityName(CapabilityType::Carryable));
 				if (carryableNode) {
 					CarryableCapability carryable;
 					carryable.quantity = carryableNode.attribute("quantity").as_uint(1);
@@ -1077,7 +1077,7 @@ namespace assets {
 				}
 
 				// Harvestable capability (bushes, plants that yield resources)
-				pugi::xml_node harvestableNode = capabilitiesNode.child("harvestable");
+				pugi::xml_node harvestableNode = capabilitiesNode.child(capabilityName(CapabilityType::Harvestable));
 				if (harvestableNode) {
 					std::string yieldName = harvestableNode.attribute("yield").as_string("");
 					if (yieldName.empty()) {
@@ -1144,13 +1144,13 @@ namespace assets {
 				}
 
 				// Craftable capability (crafting stations)
-				pugi::xml_node craftableNode = capabilitiesNode.child("craftable");
+				pugi::xml_node craftableNode = capabilitiesNode.child(capabilityName(CapabilityType::Craftable));
 				if (craftableNode) {
 					def.capabilities.craftable = CraftableCapability{};
 				}
 
 				// Storage capability (containers)
-				pugi::xml_node storageNode = capabilitiesNode.child("storage");
+				pugi::xml_node storageNode = capabilitiesNode.child(capabilityName(CapabilityType::Storage));
 				if (storageNode) {
 					StorageCapability storage;
 					storage.maxCapacity = storageNode.child("capacity").text().as_uint(50);

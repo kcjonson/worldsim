@@ -36,6 +36,12 @@ add_library(sim
     ecs/components/Mood.cpp
     ecs/components/Thoughts.cpp
     ecs/components/ToiletLocationFinder.cpp
+    conditions/ColonistTerms.cpp
+    conditions/ConditionParser.cpp
+    conditions/ConditionVocabulary.cpp
+    conditions/NearbyTerms.cpp
+    conditions/SimTerms.cpp
+    conditions/TimeTerms.cpp
     construction/BuilderSpots.cpp
     construction/ConstructionWorld.cpp
     construction/CornerAngles.cpp
@@ -61,7 +67,8 @@ target_include_directories(sim
 
 target_compile_features(sim PUBLIC cxx_std_20)
 
-# The simulation: the ECS and its systems, navigation, vision and construction. It links
+# The simulation: the ECS and its systems, navigation, vision, construction, and the conditions
+# behaviors and thoughts are written in. It links
 # neither renderer nor ui itself; assets still brings salal::renderer (its vector module).
 target_link_libraries(sim
     PUBLIC
