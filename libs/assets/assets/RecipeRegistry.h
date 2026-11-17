@@ -31,7 +31,8 @@ class RecipeRegistry {
 
     /// Load all recipes from a folder recursively
     /// Scans for all *.xml files in the folder and subfolders. Call only once AssetRegistry
-    /// holds the definitions the recipes name (see initializeAssetSystem).
+    /// holds the definitions the recipes name, and again whenever it reloads them: loadAssetSystem
+    /// does both.
     /// @param folderPath Path to the recipes folder
     /// @return Number of recipes loaded
     size_t loadRecipesFromFolder(const std::string& folderPath);
