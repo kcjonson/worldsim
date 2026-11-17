@@ -104,10 +104,9 @@ namespace world_sim {
 		constexpr float kSegmentLabelReserveMeters = 999.0F;
 
 		// A length label reads this after its length when the length matches a kept common
-		// length: the length step caught it, or it lies within the merge distance of one, the
-		// distance included as the engine's grouping includes it. Lengths compare in whole
-		// millimeters, the resolution the game's geometry is quantized to, so a float's last
-		// bit can't decide a match at the merge distance.
+		// length: the length step caught it, or it lies within the merge distance of one.
+		// Lengths are compared to the nearest millimeter, inclusive at the merge distance, which
+		// agrees with the engine's grouping to within a millimeter.
 		constexpr const char* kMatchedLengthSuffix = " =";
 		constexpr double	  kMillimetersPerMeter = 1000.0;
 
