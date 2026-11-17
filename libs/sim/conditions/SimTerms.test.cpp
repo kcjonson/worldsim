@@ -15,7 +15,9 @@
 #include <ecs/systems/TimeSystem.h>
 
 #include <assets/AssetDefinition.h>
+#include <assets/AssetRegistry.h>
 #include <assets/ConditionConfig.h>
+#include <assets/MemoryConfig.h>
 
 #include <utils/Log.h>
 
@@ -36,6 +38,25 @@ namespace {
 	std::filesystem::path shippedConditions() {
 		// <root>/libs/sim/conditions/SimTerms.test.cpp -> <root>/assets/config/conditions
 		return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "assets" / "config" / "conditions";
+	}
+
+	std::filesystem::path shippedMemoryConfig() {
+		return shippedConditions().parent_path() / "colonists" / "memory.xml";
+	}
+
+	/// The mover definitions these tests see, each with a non-zero id (id 0 is the registry's "none").
+	void registerMoverDefinitions() {
+		assets::AssetRegistry& registry = assets::AssetRegistry::Get();
+		registry.clearDefinitions();
+		registry.registerSyntheticDefinition("Test_SimTerms_IdZeroReservation", 0);
+		registry.registerSyntheticDefinition("Colonist", 0);
+		registry.registerSyntheticDefinition("Deer", 0);
+	}
+
+	uint32_t defId(const std::string& defName) {
+		const uint32_t id = assets::AssetRegistry::Get().getDefNameId(defName);
+		EXPECT_NE(id, 0U) << defName;
+		return id;
 	}
 
 	uint16_t capabilityBit(assets::CapabilityType capability) {
@@ -71,6 +92,8 @@ namespace {
 	class SimTermsTest : public ::testing::Test {
 	  protected:
 		void SetUp() override {
+			registerMoverDefinitions();
+			ASSERT_TRUE(assets::MemoryConfig::Get().loadFromFile(shippedMemoryConfig().string()));
 			build(shippedConditions());
 
 			colonist = spawnColonist({0.0F, 0.0F});
@@ -83,7 +106,11 @@ namespace {
 			world.addComponent<ecs::Memory>(colonist, ecs::Memory{});
 		}
 
-		void TearDown() override { ecs::GoalTaskRegistry::Get().clear(); }
+		void TearDown() override {
+			ecs::GoalTaskRegistry::Get().clear();
+			assets::MemoryConfig::Get().clear();
+			assets::AssetRegistry::Get().clearDefinitions();
+		}
 
 		void build(const std::filesystem::path& folder) {
 			const assets::ConditionConfigLoad load = assets::loadConditionConfig(folder);
@@ -252,23 +279,55 @@ TEST_F(SimTermsTest, NearCountsRememberedThingsWithinTheRadius) {
 }
 
 TEST_F(SimTermsTest, KindsWithNoMappingAreUnknownAndLoggedOncePerCondition) {
-	spawnColonist({1.0F, 0.0F});
 	UnansweredLog log;
 	foundation::Logger::setSink(&UnansweredLog::sink, &log);
-	EXPECT_EQ(evaluate("near(colonist, 5)"), Truth::Unknown);
-	EXPECT_EQ(evaluate("not near(colonist, 10)"), Truth::Unknown);
-	EXPECT_EQ(evaluate("count_near(colonist, 5) >= 2"), Truth::Unknown);
 	EXPECT_EQ(evaluate("near(lit_fire, 5) and not near(lit_fire, 2)"), Truth::Unknown);
 	EXPECT_EQ(evaluate("count_near(structure, 5) > 0"), Truth::Unknown);
 	EXPECT_EQ(evaluate("near(door, 5) or near(tool, 5) or near(prepared_food, 5)"), Truth::Unknown);
 	EXPECT_EQ(evaluate("near(food, 5)"), Truth::False);
+	EXPECT_EQ(evaluate("near(colonist, 5)"), Truth::Unknown) << "mapped, but there is no clock to judge recency by";
 	foundation::Logger::setSink(nullptr, nullptr);
 #ifdef DEVELOPMENT_BUILD
-	ASSERT_EQ(log.messages.size(), 6U);
-	EXPECT_NE(log.messages[0].find("'colonist'"), std::string::npos) << log.messages[0];
-	EXPECT_NE(log.messages[3].find("'lit_fire'"), std::string::npos) << log.messages[3];
-	EXPECT_NE(log.messages[5].find("'prepared_food'"), std::string::npos) << log.messages[5];
+	ASSERT_EQ(log.messages.size(), 3U);
+	EXPECT_NE(log.messages[0].find("'lit_fire'"), std::string::npos) << log.messages[0];
+	EXPECT_NE(log.messages[2].find("'prepared_food'"), std::string::npos) << log.messages[2];
 #endif
+}
+
+// A mover kind is company: the movers of its definition the colonist saw within the recency window, at
+// the places he last saw them. Memory answers it; where they stand now does not matter.
+TEST_F(SimTermsTest, NearAColonistIsARecentSightingWithinTheRadius) {
+	ecs::TimeSystem& time = world.registerSystem<ecs::TimeSystem>();
+	time.skipTime(600.0F);
+	const double		now = time.simulationSeconds();
+	const double		window = assets::MemoryConfig::Get().recentSightingGameMinutes();
+	const uint32_t		colonistDef = defId("Colonist");
+	const ecs::EntityID other = spawnColonist({50.0F, 0.0F});
+	const ecs::EntityID another = spawnColonist({50.0F, 0.0F});
+
+	EXPECT_EQ(evaluate("near(colonist, 5)"), Truth::False);
+	EXPECT_EQ(evaluate("count_near(colonist, 100) == 0"), Truth::True);
+
+	memory().rememberDynamicEntity(other, colonistDef, {4.0F, 0.0F}, now);
+	EXPECT_EQ(evaluate("near(colonist, 5)"), Truth::True) << "remembered at 4 m, though he stands 50 m off";
+	EXPECT_EQ(evaluate("near(colonist, 3)"), Truth::False);
+	EXPECT_EQ(evaluate("count_near(colonist, 5) == 1"), Truth::True);
+
+	memory().rememberDynamicEntity(another, colonistDef, {0.0F, 6.0F}, now - window);
+	EXPECT_EQ(evaluate("count_near(colonist, 10) >= 2"), Truth::True) << "seen exactly a window ago still counts";
+
+	memory().rememberDynamicEntity(other, colonistDef, {4.0F, 0.0F}, now - window - 1.0);
+	EXPECT_EQ(evaluate("count_near(colonist, 10) == 1"), Truth::True) << "seen longer ago than the window";
+	EXPECT_EQ(evaluate("near(colonist, 5)"), Truth::False);
+
+	memory().rememberDynamicEntity(other, defId("Deer"), {1.0F, 0.0F}, now);
+	EXPECT_EQ(evaluate("near(colonist, 5)"), Truth::False) << "a mover of another definition is not a colonist";
+}
+
+TEST_F(SimTermsTest, NearAMoverIsUnknownWithoutAClock) {
+	memory().rememberDynamicEntity(spawnColonist({1.0F, 0.0F}), defId("Colonist"), {1.0F, 0.0F}, 0.0);
+	EXPECT_EQ(evaluate("near(colonist, 5)"), Truth::Unknown);
+	EXPECT_EQ(evaluate("near(food, 5)"), Truth::False);
 }
 
 TEST_F(SimTermsTest, EngineNamesComeFromTheEngine) {
@@ -321,6 +380,24 @@ TEST(SimTermsData, AKindAddedThroughDataWorksWithNear) {
 	const ParseResult result = vocabulary.parse("near(well, 5) and count_near(well, 3) == 0");
 	ASSERT_TRUE(result.ok()) << result.error->describe();
 	EXPECT_EQ(vocabulary.evaluate(result.condition, {.world = world, .colonist = colonist}), Truth::True);
+}
+
+TEST_F(SimTermsTest, AMoverKindAddedThroughDataWorksWithNear) {
+	const assets::ConditionConfigLoad load = loadWithMod(R"(<Kind name="deer" mover="Deer"/><Kind name="unicorn" mover="Unicorn"/>)");
+	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
+	ConditionVocabulary modded;
+	ASSERT_TRUE(buildSimVocabulary(modded, load.config).empty());
+
+	const ecs::TimeSystem& time = world.registerSystem<ecs::TimeSystem>();
+	memory().rememberDynamicEntity(world.createEntity(), defId("Deer"), {3.0F, 0.0F}, time.simulationSeconds());
+
+	const auto evaluateModded = [&](std::string_view text) {
+		const ParseResult result = modded.parse(text);
+		EXPECT_TRUE(result.ok()) << (result.ok() ? "" : result.error->describe());
+		return result.ok() ? modded.evaluate(result.condition, {.world = world, .colonist = colonist}) : Truth::Unknown;
+	};
+	EXPECT_EQ(evaluateModded("near(deer, 5) and count_near(deer, 2) == 0 and not near(colonist, 5)"), Truth::True);
+	EXPECT_EQ(evaluateModded("near(unicorn, 5)"), Truth::Unknown) << "no asset is defined as Unicorn";
 }
 
 TEST(SimTermsData, ANeedNameTheSimLacksIsUnknownAndLoggedOncePerCondition) {
