@@ -285,7 +285,7 @@ namespace {
 	EntityID meshAround(World& world, glm::vec2 center, float halfExtentMeters) { return meshDisc(world, center, halfExtentMeters * 1.4143F); }
 
 	// The shared land chunks span [-1024, 1536) m on each axis: their middle, and a range whose
-	// limit's obstacle query (its circumradius plus kFootprintReachMeters) stays inside them.
+	// limit's obstacle query (its circumradius plus footprintReachMeters()) stays inside them.
 	constexpr glm::vec2 kAreaCentre{256.0F, 256.0F};
 	constexpr float		kAreaRangeMeters = 1240.0F;
 
@@ -4052,9 +4052,9 @@ TEST_F(NavigationSystemTest, AnchorsAreMoversWithSightPlusBuffer) {
 	ASSERT_EQ(anchors.size(), 2U);
 	std::sort(anchors.begin(), anchors.end(), [](const auto& a, const auto& b) { return a.position.x < b.position.x; });
 	// The reach of the limit's obstacle query for its R (the limit's circumradius plus
-	// kFootprintReachMeters), from up to a retake step away.
+	// footprintReachMeters()), from up to a retake step away.
 	const auto reach = [](float r) {
-		return static_cast<float>(geometry::nav::limitCircumradius(nav::toMm(glm::vec2{r, 0.0F}).x)) / 1000.0F + NavigationSystem::kFootprintReachMeters +
+		return static_cast<float>(geometry::nav::limitCircumradius(nav::toMm(glm::vec2{r, 0.0F}).x)) / 1000.0F + NavigationSystem::footprintReachMeters() +
 			   static_cast<float>(NavigationSystem::kLimitRetakeStepMm) / 1000.0F;
 	};
 	EXPECT_EQ(anchors[0].position.x, 10.0F);
@@ -5485,7 +5485,7 @@ TEST_F(NavigationSystemTest, MoverWhoseUrgentLimitCannotLandStopsShortAndWalksOn
 	// step short of that, and he stops R minus his sight past it.
 	const float r		= kDefaultSightRadius + NavigationSystem::kSightBufferMeters;
 	const float step	= static_cast<float>(NavigationSystem::kLimitRetakeStepMm) / 1000.0F;
-	const float reach	= static_cast<float>(geometry::nav::limitCircumradius(nav::toMm(glm::vec2{r, 0.0F}).x)) / 1000.0F + NavigationSystem::kFootprintReachMeters;
+	const float reach	= static_cast<float>(geometry::nav::limitCircumradius(nav::toMm(glm::vec2{r, 0.0F}).x)) / 1000.0F + NavigationSystem::footprintReachMeters();
 	const float stride	= MovementTarget{}.speed * world.getSystem<TimeSystem>().effectiveTimeScale() / 60.0F;
 	const float stopMin = edge - reach - step - stride + (r - kDefaultSightRadius);
 	const float stopMax = edge - reach + (r - kDefaultSightRadius);

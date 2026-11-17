@@ -60,7 +60,9 @@ Everything about colonist behavior, needs, and mechanics.
 |----------|-------------|
 | [README](./game-systems/colonists/README.md) | Overview and navigation |
 | [AI Behavior](./game-systems/colonists/ai-behavior.md) | Decision hierarchy, autonomous behavior |
-| [Needs System](./game-systems/colonists/needs.md) | Physical needs, mood, breakdowns |
+| [Needs System](./game-systems/colonists/needs.md) | Physical needs, how mood is computed |
+| [Mood](./game-systems/colonists/mood.md) | What low mood does: behaviors, triggers, weights, relief |
+| [Thoughts](./game-systems/colonists/thoughts.md) | What colonists notice and feel, mood effects, thought bubbles |
 | [Memory System](./game-systems/colonists/memory.md) | What colonists know |
 | [Attributes](./game-systems/colonists/attributes.md) | Personality, backstory |
 | [Skills](./game-systems/colonists/skills.md) | Learning, progression |
@@ -79,6 +81,12 @@ World mechanics, rooms, resources, and entity interactions.
 | [Rooms](./game-systems/world/rooms.md) | Room types, detection, bonuses |
 | [Crafting](./game-systems/world/crafting.md) | Resource chains, recipes |
 | [Building & Construction](./game-systems/world/building-construction.md) | Freeform foundations, walls, doors/windows, rooms |
+| [Fire](./game-systems/world/fire.md) | Lit entities, flammability, spread |
+| [Smell](./game-systems/world/smell.md) | Smell emitters and colonist exposure |
+| [Germs](./game-systems/world/germs.md) | Contamination, transfer, sickness |
+| [Noise](./game-systems/world/noise.md) | Noise emitters, walls, sleep |
+| [Crowding](./game-systems/world/crowding.md) | People nearby against personal tolerance |
+| [Wetness](./game-systems/world/wetness.md) | Rain, wet clothes, drying |
 
 ### Features
 

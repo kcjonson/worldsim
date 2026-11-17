@@ -516,12 +516,13 @@ in the same patch as its ground, and hang over unmeshed ground, where they add n
 doors are global (4.2) and hang the same way.
 
 **Placed obstacles by entity.** For a limit going in, each chunk its query box meets (the
-polygon's box grown by `kFootprintReachMeters`) is asked for its placed entities in that box
+polygon's box grown by `NavigationSystem::footprintReachMeters()`) is asked for its placed entities in that box
 (`SpatialIndex::queryRect`). An entity whose footprint box meets the disc the limit circumscribes,
 and that is not in the mesh already (`obstacleInMesh`, by `ObstacleKey`: chunk, position, def),
-goes in whole, in key order; its part outside the union is registry only. A footprint reaching
-past `kFootprintReachMeters` from its entity's position is logged as an error once per def, since
-where it pokes into a limit from outside the query box it is missed. A limit's placed obstacles go
+goes in whole, in key order; its part outside the union is registry only. The reach is
+`nav::placedObstacleReachMeters`: the farthest any loaded def's collider stands from its pivot at
+its largest placement scale (`AssetRegistry::maxCollisionReachMeters`, recorded as defs load),
+plus the pad's corner at the largest colliding scale, so no footprint reaches past it. A limit's placed obstacles go
 in ahead of its ground or in the same patch, so meshed ground is never without what stands on it. A
 placed obstacle that lands over ground already meshed (one back in the world after it left the
 mesh) marks the routes it crosses, as a wall does (4.6).
@@ -569,7 +570,7 @@ is applied and waited for, so the crew stands on open ground before the first ti
 
 `ChunkManager::update(cameraCenter, anchors)` takes one anchor per mover
 (`NavigationSystem::appendAnchors`), each with its own range: the reach of his limit's obstacle
-query (the limit's circumradius plus `kFootprintReachMeters`) plus `kLimitRetakeStepMm`, since his
+query (the limit's circumradius plus `footprintReachMeters()`) plus `kLimitRetakeStepMm`, since his
 newest limit was taken up to that far from where he stands. A mover loads every chunk within
 `anchorLoadRange` of that range, the larger of 128 m and it, and keeps every chunk within
 `anchorKeepRange`, the larger of 256 m and twice it. A colonist loads 128 m and keeps 256 m, as
@@ -781,7 +782,7 @@ Beyond the mesh are two things, and neither is this epic:
 | `kLimitSides` | 16 | `libs/geometry/nav/LimitPolygon.h` | The sides of a limit polygon. Fewer sides overshoot R farther at the corners; more add vertices to the meshed edge |
 | `kSightBufferMeters` | 16 m | `NavigationSystem.h` | Added to sight to make R. It covers the step to a mover's next limit, a step more for that limit to land in once urgent, and his travel during one landing; a `static_assert` holds it above twice the step. The polygon's overshoot only adds margin |
 | `kLandingSightMeters` | 150 m | `NavigationSystem.h` | The radius of ground the landing meshes round the drop |
-| `kFootprintReachMeters` | 8 m | `NavigationSystem.h` | The farthest a placed obstacle's footprint reaches from its entity's position: a limit's obstacle query box is grown by it, and a def found past it is logged as an error |
+| `footprintReachMeters()` | from the loaded defs: 1.15 m with the shipped ones (BigRock, `PlacedObstacle.ShippedReach`) | `NavigationSystem.h` | The farthest a placed obstacle's padded footprint reaches from its entity's position (`nav::placedObstacleReachMeters`): a limit's obstacle query box is grown by it |
 | `kLimitsPerTick` | 1 | `NavigationSystem.h` | Limits that are not urgent whose ground goes in a tick |
 | `kDetailRingsPerTick` | 32 | `NavigationSystem.h` | Placed obstacles of limits that are not urgent a tick |
 | `kDetailRemovalsPerTick` | 128 | `NavigationSystem.h` | Placed obstacles taken out a tick |

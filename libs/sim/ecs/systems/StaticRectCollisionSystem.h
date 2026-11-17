@@ -84,6 +84,7 @@ class StaticRectCollisionSystem : public ISystem {
   private:
 	const assets::PlacementExecutor* m_placement = nullptr;
 	const NavigationSystem*			 detail		 = nullptr;
+	bool							 warnedZeroReach = false;
 };
 
 } // namespace ecs

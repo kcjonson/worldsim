@@ -67,9 +67,9 @@ namespace nav {
 	// --- Placed obstacles --------------------------------------------------------
 
 	// One blocked ring for a single placed entity whose AssetDefinition has a
-	// blocking collision shape, transformed into world mm by the entity's position
-	// (tiles), rotation, and scale. Rect -> a padded oriented quad; Polygon -> its
-	// points transformed. Returns nullopt when the entity has no blocking collision
+	// blocking collision shape, transformed from its def's pivot frame into world mm by
+	// the entity's position (tiles), rotation, and scale, as its mesh is drawn. Rect -> a
+	// padded oriented quad; Polygon -> its points transformed. Returns nullopt when the entity has no blocking collision
 	// (most placed entities) or the resulting ring is degenerate.
 	[[nodiscard]] std::optional<geometry::nav::NavInputPolygon>
 	placedObstacleRing(const assets::PlacedEntity& entity, const assets::AssetRegistry& registry);

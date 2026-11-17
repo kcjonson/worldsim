@@ -280,18 +280,6 @@ namespace asset_manager {
 		};
 	}
 
-	// A point relative to the asset's bbox centre (the entity origin): fitToRect maps that centre to the
-	// box's centre, so this just scales from there.
-	Foundation::Vec2 AssetThumbnail::centeredToLocal(const glm::vec2& point) const {
-		const Foundation::Rect& src = sourceBounds;
-		const Foundation::Rect& dst = targetRect;
-		if (src.width <= 0.0F || src.height <= 0.0F) {
-			return {point.x, point.y};
-		}
-		const float scale = std::min(dst.width / src.width, dst.height / src.height);
-		return {dst.x + (dst.width * 0.5F) + (point.x * scale), dst.y + (dst.height * 0.5F) + (point.y * scale)};
-	}
-
 	void AssetThumbnail::render() {
 		if (ensureMesh()) {
 			pictureStale = true;
@@ -425,9 +413,7 @@ namespace asset_manager {
 		if (mesh == nullptr || mesh->meshes.empty()) {
 			return;
 		}
-		// Collision points are in the asset's local meter space. Simple (SVG) assets author the collider
-		// in SVG <metadata>, converted to the bbox-centred frame (relative to the entity origin);
-		// procedural colliders are in the generator's mesh-coord frame.
+		// The collider is in the def's pivot frame, the frame the mesh is in.
 		std::vector<glm::vec2> points;
 		if (collision.type == assets::CollisionShapeType::Rect) {
 			const std::array<glm::vec2, 4> corners = collision.rectCornersLocal();
@@ -438,14 +424,13 @@ namespace asset_manager {
 		if (points.size() < 2) {
 			return;
 		}
-		const bool				centered = def->assetType == assets::AssetType::Simple;
 		const Foundation::Color outline{0.0F, 1.0F, 1.0F, opacity()}; // bright cyan, high contrast on art
 		for (std::size_t i = 0; i < points.size(); ++i) {
 			const glm::vec2& a = points[i];
 			const glm::vec2& b = points[(i + 1) % points.size()];
 			Renderer::Primitives::drawLine({
-				.start = centered ? centeredToLocal(a) : meshToLocal(a),
-				.end = centered ? centeredToLocal(b) : meshToLocal(b),
+				.start = meshToLocal(a),
+				.end = meshToLocal(b),
 				.style = {.color = outline, .width = 2.0F},
 				.id = "am_collision_edge",
 				.key = drawKey(),

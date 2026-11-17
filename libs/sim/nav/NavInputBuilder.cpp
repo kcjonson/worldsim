@@ -4,6 +4,7 @@
 
 #include "construction/OpeningGeometry.h"
 
+#include <assets/placement/InstanceTransform.h>
 #include <core/Vec2i64.h>
 #include <nav/LimitPolygon.h>
 #include <offset/WallOffset.h>
@@ -63,16 +64,19 @@ namespace nav {
 		if (collision.type != assets::CollisionShapeType::Rect) {
 			return std::nullopt;
 		}
-		const float		c	= std::cos(e.rotation);
-		const float		s	= std::sin(e.rotation);
-		const float		pad = static_cast<float>(kPlacedObstaclePadMm) / static_cast<float>(kTileMm);
-		const glm::vec2 off = collision.offsetMeters * e.scale;
-		OrientedRect	box;
-		box.center		= e.position + glm::vec2{off.x * c - off.y * s, off.x * s + off.y * c};
-		box.axisX		= {c, s};
-		box.axisY		= {-s, c};
+		const assets::InstanceTransform transform(e.position, e.rotation, e.scale);
+		const float						pad = static_cast<float>(kPlacedObstaclePadMm) / static_cast<float>(kTileMm);
+		OrientedRect					box;
+		box.center		= transform.toWorld(collision.offsetMeters);
+		box.axisX		= transform.axisX();
+		box.axisY		= transform.axisY();
 		box.halfExtents = std::abs(e.scale) * (collision.halfExtentsMeters + glm::vec2{pad, pad});
 		return box;
+	}
+
+	float placedObstacleReachMeters(const assets::AssetRegistry& registry) {
+		const float pad = static_cast<float>(kPlacedObstaclePadMm) / static_cast<float>(kTileMm);
+		return registry.maxCollisionReachMeters() + std::sqrt(2.0F) * pad * registry.maxCollidingScale();
 	}
 
 	bool placedObstacleOutline(const assets::PlacedEntity& e, const assets::AssetRegistry& registry, geometry::Ring& ring) {
@@ -93,13 +97,10 @@ namespace nav {
 				ring.push_back(toMm(box.center + box.axisX * (corner.x * box.halfExtents.x) + box.axisY * (corner.y * box.halfExtents.y)));
 			}
 		} else if (collision.type == assets::CollisionShapeType::Polygon) {
-			const float c  = std::cos(e.rotation);
-			const float s  = std::sin(e.rotation);
-			const float sc = e.scale;
+			const assets::InstanceTransform transform(e.position, e.rotation, e.scale);
 			ring.reserve(collision.pointsMeters.size());
 			for (const glm::vec2& p : collision.pointsMeters) {
-				const glm::vec2 l = p * sc;
-				ring.push_back(toMm({e.position.x + (l.x * c - l.y * s), e.position.y + (l.x * s + l.y * c)}));
+				ring.push_back(toMm(transform.toWorld(p)));
 			}
 		}
 

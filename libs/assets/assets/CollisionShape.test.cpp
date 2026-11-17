@@ -857,3 +857,42 @@ TEST(CollisionShapeTest, LevelReachPastTheMarginFailsSmokeCheck) {
 	ASSERT_NE(reg.getTemplate(reg.templateId("Within", AssetRegistry::matureTraits(*within))), nullptr);
 	EXPECT_NEAR(reg.maxReachMeters(), 1.0F * within->placement.scale.max * kLevelReachMargin, 1e-5F);
 }
+
+// A simple def's template mesh is about its pivot, the drawing's bbox centre, and the registry
+// records how far the farthest collider stands from its pivot at the def's largest scale.
+TEST(CollisionShapeTest, SimpleDefMeshIsAboutItsPivotAndColliderReachIsRecorded) {
+	auto&	   reg = AssetRegistry::Get();
+	TempAssets t;
+
+	// Path bbox x 20..220, y 40..140 -> height 100, worldHeight 1.0 -> scaleFactor 0.01, pivot
+	// (120, 90). The aabb 180..220 x 100..140 has its far corner at (1.0, 0.5) m from the pivot.
+	const std::string meta = "<metadata><collision><shape type=\"aabb\" min=\"180,100\" max=\"220,140\"/></collision></metadata>";
+	t.writeFile("Pivot", "shape.svg", svgRect(20, 40, 220, 140, meta));
+	t.writeXml("Pivot", wrapSimpleDef("shape.svg", 1.0F));
+
+	reg.clearDefinitions();
+	reg.loadDefinitionsFromFolder(t.root.string());
+	const AssetDefinition* def = reg.getDefinition("TestAsset");
+	ASSERT_NE(def, nullptr);
+	const auto* mesh = reg.getTemplate("TestAsset", {});
+	ASSERT_NE(mesh, nullptr);
+	ASSERT_FALSE(mesh->vertices.empty());
+	float minX = mesh->vertices.front().x;
+	float maxX = minX;
+	float minY = mesh->vertices.front().y;
+	float maxY = minY;
+	for (const auto& v : mesh->vertices) {
+		minX = std::min(minX, v.x);
+		maxX = std::max(maxX, v.x);
+		minY = std::min(minY, v.y);
+		maxY = std::max(maxY, v.y);
+	}
+	EXPECT_NEAR(minX, -1.0F, 1e-5F);
+	EXPECT_NEAR(maxX, 1.0F, 1e-5F);
+	EXPECT_NEAR(minY, -0.5F, 1e-5F);
+	EXPECT_NEAR(maxY, 0.5F, 1e-5F);
+
+	EXPECT_NEAR(reg.maxCollisionReachMeters(), std::hypot(1.0F, 0.5F) * def->placement.scale.max, 1e-5F);
+	reg.clearDefinitions();
+	EXPECT_EQ(reg.maxCollisionReachMeters(), 0.0F);
+}

@@ -1,6 +1,7 @@
 #include "WorldDepthSort.h"
 
 #include "assets/AssetRegistry.h"
+#include "assets/placement/InstanceTransform.h"
 #include "assets/placement/RenderContext.h"
 
 #include <vector/Types.h>
@@ -27,22 +28,25 @@ namespace assets {
 		return ext;
 	}
 
-	float anchorLocalY(const AssetDefinition* def, uint8_t ageClass, MeshYExtent mesh) {
+	float anchorLocalY(const AssetDefinition* def, uint8_t ageClass, MeshYExtent mesh, float rotation) {
 		if (def == nullptr) {
 			return mesh.maxY;
 		}
 		const CollisionShape& footprint = def->collisionFor(ageClass);
-		const float			  frameY = def->assetType == AssetType::Simple ? (mesh.minY + mesh.maxY) * 0.5F : 0.0F;
+		// Turned about the pivot, before scale and position (computeAnchorY applies those).
+		const InstanceTransform turned({0.0F, 0.0F}, rotation, 1.0F);
+		const auto				turnedY = [&](glm::vec2 p) { return turned.toWorld(p).y; };
 		switch (footprint.type) {
 			case CollisionShapeType::Rect:
-				return frameY + footprint.offsetMeters.y + footprint.halfExtentsMeters.y;
+				return turnedY(footprint.offsetMeters) + std::abs(footprint.halfExtentsMeters.x * turned.axisX().y) +
+					   std::abs(footprint.halfExtentsMeters.y * turned.axisY().y);
 			case CollisionShapeType::Polygon:
 				if (!footprint.pointsMeters.empty()) {
-					float lowest = footprint.pointsMeters.front().y;
+					float lowest = turnedY(footprint.pointsMeters.front());
 					for (const glm::vec2& p : footprint.pointsMeters) {
-						lowest = std::max(lowest, p.y);
+						lowest = std::max(lowest, turnedY(p));
 					}
-					return frameY + lowest;
+					return lowest;
 				}
 				return mesh.maxY;
 			case CollisionShapeType::None:
