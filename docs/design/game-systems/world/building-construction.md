@@ -564,7 +564,7 @@ Foundations, wall segments, and openings are first-class selectable entities, in
 
 Clicking again in the same spot cycles down the stack (click a door, click again to get the wall, again for the foundation). Standard colony-game behavior, and it resolves the "everything is stacked on a foundation" problem without modifier gymnastics.
 
-**Multi-select:** Shift-click adds to the selection. Mixed selections reduce the action set to what's shared (e.g., Demolish). Double-clicking a wall segment (not built yet; the world input has no double-click) selects the whole connected run of the same material and thickness, the common case for "demolish this wall, all of it."
+**Multi-select:** Shift-click adds to the selection. Mixed selections reduce the action set to what's shared (e.g., Demolish). Double-clicking a wall segment (not built yet) selects the whole connected run of the same material and thickness, the common case for "demolish this wall, all of it."
 
 ### Selection Visuals
 
@@ -594,7 +594,7 @@ Wall blueprints have no vertex editing in v1; segments are cheap, cancel and red
 | Click | Place point / select; in the rectangle tool, place a corner (two opposite corners make the rectangle) |
 | Press, drag, release | Rectangle tool: draw the rectangle from the press to the release |
 | Click origin point | Close foundation polygon; close a wall loop |
-| Double-click | End wall chain (the first click places the final point; new with this work); expand wall selection to connected run (not built yet) |
+| Double-click | End wall chain (the first click places the final point, the second places nothing); expand wall selection to connected run (not built yet) |
 | Enter | End wall chain |
 | Right-click / Esc | End wall chain; cancel in-progress shape or the rectangle's first corner; second Esc exits tool |
 | Backspace | Undo last point (drawing); drop the rectangle's first corner; delete vertex (shape editing) |
