@@ -575,7 +575,8 @@ TEST_F(GeometryIndexTest, FacingOccludersLeaveOutBackFaces) {
 
 // Culling the back faces changes no visibility polygon, round a room with a door and
 // round an L corner, a T junction and a lone wall's end. The turned room has an eye
-// 0.12 mm off a face, whose ray into the wall snaps its hit onto the eye.
+// 0.12 mm off a face's outline edge (0.5 mm off the exact face, whose corners the outline
+// rounds to the millimetre), whose ray into the wall snaps its hit onto the eye.
 TEST_F(GeometryIndexTest, FacingOccludersGiveTheSameSight) {
 	{
 		ConstructionWorld world;
