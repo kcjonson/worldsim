@@ -495,7 +495,7 @@ A "Drawing Settings" pane in the game's Settings holds the player's choices abou
 | Angle readout | off | Show the angle of a corner that is not square. |
 | Round lengths to 0.1 m | on | Segment lengths come out round. |
 | Show key guide while drawing | on | A small panel with the keys and what the lines mean. |
-| Grid spacing (rectangle tool) | 1 m | Rectangle corners snap to this grid. |
+| Grid spacing (rectangle tool) | 1 m (or 0.5 m) | Rectangle corners snap to this grid. |
 
 The first eight are the helpers (Foundations > Drawing > Helpers); each turns on its snapping and its drawing together, in the Freeform and wall tools. The "15 degree" and "0.1 m" in the labels come from the config values.
 
