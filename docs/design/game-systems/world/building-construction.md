@@ -66,7 +66,7 @@ Drawing comes in three levels, and a new player meets the first. The point is on
 
 The wall tool has no rectangle; it follows the same helper settings (Walls > Drawing).
 
-Select Foundation in the Build menu: it opens the foundation tool last picked this session, Rectangle the first time. A config strip appears with the tool picker, which switches between Rectangle and Freeform, material choices, and a live cost readout. Material is picked **before** drawing; the ghost renders in that material's blueprint style. While the tool is active a small [key guide](#key-guide) panel lists its keys.
+The Build menu offers Rectangle foundation first and Freeform foundation second; each opens its tool. A config strip appears with the tool's name, material choices, and a live cost readout. Material is picked **before** drawing; the ghost renders in that material's blueprint style. While the tool is active a small [key guide](#key-guide) panel lists its keys.
 
 #### Rectangle tool
 
@@ -485,13 +485,13 @@ Foundations and walls are procedurally drawn from material definitions, not hand
 
 ### Build menu
 
-The gameplay bar's [Build▾] menu gets a **Structure** category: Foundation, Wall, Door, Window. Selecting one activates its tool and opens the config strip. Foundation opens the foundation tool last picked this session, Rectangle the first time; the strip's tool picker switches between Rectangle and Freeform.
+The gameplay bar's [Build▾] menu gets a **Structure** category: Rectangle foundation, Freeform foundation, Wall, Door, Window. Selecting one activates its tool and opens the config strip.
 
 ### Config strip
 
 A horizontal strip docked above the gameplay bar while a structure tool is active:
 
-- **Tool picker** (Foundation): switches between Rectangle and Freeform. The Build menu's Foundation entry opens the one last picked this session, Rectangle the first time, as the material persists for the session.
+- **Tool name** (Foundation): the strip names the active foundation tool, Rectangle or Freeform, beside its material; the Build menu switches between them.
 - **Material cards:** icon, name, per-unit cost (per m² or per m). One selected at a time; selection persists per tool.
 - **Thickness presets** (Wall tool): the selected material's presets with their stat summary (HP, insulation, cost) on hover.
 - **Type picker** (Door/Window tool): the opening types.
