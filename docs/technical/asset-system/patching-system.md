@@ -377,8 +377,8 @@ Shows the merged result of base definition + all patches.
   <Patch>
     <requiresMod>someone.bigtrees</requiresMod>
     <operation>replace</operation>
-    <xpath>AssetDef[defName="OakTree"]/rendering/lodLevels/li[@distance="100"]/@distance</xpath>
-    <value distance="200"/>
+    <xpath>AssetDef[defName="OakTree"]/placement/biome[@name="Forest"]/spawnChance</xpath>
+    <value>0.1</value>
   </Patch>
 </Patches>
 ```

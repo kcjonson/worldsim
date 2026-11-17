@@ -60,7 +60,6 @@ assets/world/flora/Daisy/
 
   <rendering>
     <complexity>simple</complexity>
-    <maxInstances>50000</maxInstances>
   </rendering>
 
   <placement>
@@ -123,10 +122,6 @@ assets/world/flora/OakTree/
 
   <rendering>
     <complexity>complex</complexity>
-    <lodLevels>
-      <li distance="100" tier="instanced" variantIndex="0" />
-      <li distance="50" tier="batched" />
-    </lodLevels>
   </rendering>
 
   <placement>
@@ -177,7 +172,6 @@ assets/world/flora/Flowers/
     <assetType>simple</assetType>
     <rendering>
       <complexity>simple</complexity>
-      <maxInstances>50000</maxInstances>
     </rendering>
     <variation>
       <scaleRange>0.8,1.2</scaleRange>
@@ -332,9 +326,7 @@ The reference level is the one the default view (24 px/m) picks. The load prewar
 
 | Element | Description |
 |---------|-------------|
-| `complexity` | `simple` (instanced) or `complex` (tessellated) |
-| `maxInstances` | Max GPU instances (instanced tier) |
-| `lodLevels/li` | LOD settings by distance |
+| `complexity` | `simple` (default) or `complex`. Parsed, but nothing reads it yet; `complex` is reserved for CPU Bezier deformation (deferred) |
 
 ### Placement Elements
 
