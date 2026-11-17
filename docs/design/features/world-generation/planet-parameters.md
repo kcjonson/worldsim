@@ -326,6 +326,8 @@ Technical settings that control generation detail and reproducibility.
 - Enter specific number to recreate a world
 - Share seeds in community
 
+**Planet code (planned):** sharing a bare seed is not enough, because the same seed with different sliders is a different world. The world creator shows a short, copyable **planet code** that packs the seed, every parameter, and the planet format version into one string (base36 with a checksum character, so a mistyped code is rejected rather than loading a different world). Pasting a code fills the creator. A code from an older format version is refused with a clear message instead of silently producing a different planet. Any future hand edits (for example plate edits) extend the code.
+
 ## Parameter Presets
 
 To help players get started, provide preset parameter sets:

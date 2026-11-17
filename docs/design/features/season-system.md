@@ -23,6 +23,8 @@ The season system owns the thin, see-through layer on top: how much seasonal sno
 
 The climate model already carries a seasonal temperature cycle per tile: `T(month) = T_mean_annual + A*cos(2*pi*month/12)`, where `A` is the seasonal half-amplitude (`temperatureRange`). The cryosphere's positive-degree-day model integrates over this cycle to decide where perennial ice can exist. The season system reuses this signal: instead of integrating the whole year, it samples a specific date.
 
+Planned: [Worldgen Seasonal Climate](../../technical/worldgen-seasonal-climate.md) replaces the zero-lag cosine with climate computed at seasonal samples across the planet's own orbital year, and stores a per-tile seasonal phase, precipitation seasonality and river regime. The season system then reads those instead of assuming `cos(2*pi*month/12)`. The orbit and insolation function stays owned here (WOR-50) and is shared, not duplicated.
+
 ## Functional requirements
 
 1. Date to climate. Map the slider position to a date, and the date (plus axial tilt and orbital position) to per-tile insolation and temperature. Reuse the existing seasonal cycle where possible.

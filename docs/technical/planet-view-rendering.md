@@ -115,6 +115,14 @@ Combined, Hydrology) are cycled by right-click. The base tier uses
 Switching modes calls `requestBake` on the colorizer; the old base texture serves
 as a fallback until the fresh bake arrives.
 
+**Planned: cover-based Terrain colors.** The Terrain/Combined colors become a mix,
+in linear light, of reference colors weighted by per-tile cover fractions (tree,
+grass, bare ground, snow, sea ice) derived from the biome and climate fields, with
+smooth S-curve transitions instead of per-biome flat colors. Reference colors are
+data on the biome and ground defs, not constants in the colorizer, so non-Earth
+planets (other vegetation colors, other rock) recolor from data. The EarthLike
+palette is fitted to satellite imagery as a starting point only.
+
 ---
 
 ## Related documentation

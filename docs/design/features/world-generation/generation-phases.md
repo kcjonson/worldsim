@@ -372,6 +372,8 @@ Each phase depends on previous phases:
 - Biomes: 15%
 - Snow: 5%
 
+**Preview tier (planned):** a full generation takes tens of seconds, which is too slow to explore sliders. The world creator gets a preview that runs the same pipeline at a small grid (and the coarse tectonic sim, which is resolution-independent) in a few seconds, updating as sliders change. Continent shapes come from the coarse sim, so the preview matches the full planet's layout; only detail differs. The full-resolution run happens when the player commits. One pipeline, two grid sizes: no separate approximate generator.
+
 ## Visual Feedback During Generation
 
 **Progressive Visualization**: Show planet updating as each phase completes
@@ -405,6 +407,15 @@ Each phase depends on previous phases:
 - Suggest parameter changes
 - Offer "regenerate with different seed" option
 
+## Planned Additions
+
+Specs for work not yet built. Each is driven by `PlanetParams`, never by Earth constants, because planets will be far from Earth-like.
+
+- **Phase 1:** [Plate Driving Forces](../../../technical/plate-driving-forces.md) replaces the sampled speed bands and scheduled pole evolution above with a torque balance. [Geology and Deposits](../../../technical/worldgen-geology-deposits.md) derives rock types and resource deposits from the history.
+- **Phases 4 and 5:** [Seasonal Climate](../../../technical/worldgen-seasonal-climate.md) computes temperature and precipitation at seasonal samples across the planet's year, adding precipitation seasonality, growing season and river regimes.
+- **Phases 5 and 6:** [Lakes and Rivers](../../../technical/worldgen-lakes-and-rivers.md) makes lakes obey a water budget and opens shallow sills to the sea.
+- **Sampling:** [Sub-Tile Relief](../../../technical/sub-tile-relief.md) makes detail below tile resolution follow belt strike and drainage.
+
 ## Next Steps
 
 - **[biomes.md](./biomes.md)**: Detailed biome classification system
@@ -415,4 +426,5 @@ Each phase depends on previous phases:
 
 - 2025-10-26: Initial generation phases documentation created
 - 2026-06-13: Phases 1-3 rewritten to document the as-built tectonic history simulation, crust upsampling, and isostasy/depth-age terrain (PR #136 — tectonic history simulation). Phases 4-8 unchanged.
+- 2026-11-17: Added Planned Additions linking the specs for force-driven plates, geology and deposits, seasonal climate, lakes and rivers, and sub-tile relief.
 - 2026-06-14: Phases 4-7 rewritten to document the as-built climate/biome/shelf retune (feature/worldgen-climate-biome). Phase 4: meridional wind (~30° tilt), continentality temperature (zero-sum mean nudge + range boost), shared distance-to-ocean field. Phase 5: downwind-ordered moisture-advection sweep with upwind-chain-depth topological ordering, new-peak orographic ratchet (resolution-independent rain shadows), latitude-dependent surface-recharge cap. Phase 6: piecewise continental shelf profile (flat -120 m shelf → break at -140 m → steep slope). Phase 7: biome rebalance with -10 C arctic floor, 12 C hot-desert floor, montane-forest decoupled from lowland base, Beach cutoff 50 m, flag hygiene (kFlagCoast/kFlagGlacier removed). Phase 8 unchanged.

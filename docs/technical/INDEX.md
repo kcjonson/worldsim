@@ -136,6 +136,11 @@ Applications:
 | [Planet-view Rendering](./planet-view-rendering.md) | Two-tier globe renderer: base mips + detail page cache |
 | [Cryosphere: Sea Ice, Snow & Glaciers](./cryosphere-ice-and-glaciers.md) | Physical ice model: PDD mass balance, perfect-plastic ice sheets, ice→climate two-pass feedback, land/ocean contrast, rendering |
 | [Continental Margins](./continental-margins.md) | Spec: shelves and inland seas from rift thinning, isostasy, flexure, sediment fill, and glacial lowstands (replaces the painted shelf ramp) |
+| [Worldgen Seasonal Climate](./worldgen-seasonal-climate.md) | Spec: climate at seasonal samples across the planet's own year (tilt, eccentricity), giving precipitation seasonality, growing season and river regimes |
+| [Worldgen Lakes and Rivers](./worldgen-lakes-and-rivers.md) | Spec: lakes that must be filled by their inflow, real hollows, sill-to-strait opening, discharge-scaled channel width, river directness |
+| [Worldgen Geology and Deposits](./worldgen-geology-deposits.md) | Spec: per-tile rock type and process-class deposit richness from the tectonic history; materials mapped in data |
+| [Plate Driving Forces](./plate-driving-forces.md) | Spec: plate angular velocity from a torque balance (slab pull, ridge push, mantle drag, basal drag, collision lock) scaled by planet params; replaces sampled Earth speed bands |
+| [Sub-Tile Relief](./sub-tile-relief.md) | Spec: detail below tile resolution that follows structure: strike-aligned ridges, massif masks, downhill erosion filter |
 | [Chunk Management System](./chunk-management-system.md) | Infinite 2D world from 3D sphere |
 | [3D to 2D Sampling](./3d-to-2d-sampling.md) | Converting spherical world to tiles (locateHex) |
 | [Flat Tile Storage Refactor](./flat-tile-storage-refactor.md) | Proposed: Replace layered tiles with flat array |
