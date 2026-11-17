@@ -1,5 +1,7 @@
 #include "DevCommandHandler.h"
 
+#include "scenes/game/dev/DevJson.h"
+#include "scenes/game/dev/DrawingStateJson.h"
 #include "scenes/game/dev/GiveShortfall.h"
 #include "scenes/game/dev/GroundRefusal.h"
 #include "scenes/game/dev/PointList.h"
@@ -135,6 +137,7 @@ namespace world_sim {
 		};
 		view("colonists", &DevCommandHandler::serializeColonists);
 		view("construction", &DevCommandHandler::serializeConstruction);
+		registrations.push_back(server.stateProvider("drawing", [this] { return drawingStateJson(m_ctx.drawing->snapshot()); }));
 		view("stations", &DevCommandHandler::serializeStations);
 		view("storage", &DevCommandHandler::serializeStorage);
 		view("time", &DevCommandHandler::serializeTime);
@@ -1216,6 +1219,17 @@ namespace world_sim {
 			os << "},\"progress\":" << bp.progress();
 		};
 
+		// The phase a blueprint is in, as the foundation and opening entries name it.
+		const auto phaseName = [](ecs::StructureBlueprint::BuildPhase phase) {
+			switch (phase) {
+				case ecs::StructureBlueprint::BuildPhase::Clearing: return "Clearing";
+				case ecs::StructureBlueprint::BuildPhase::AwaitingMaterials: return "AwaitingMaterials";
+				case ecs::StructureBlueprint::BuildPhase::UnderConstruction: return "UnderConstruction";
+				case ecs::StructureBlueprint::BuildPhase::Complete: return "Complete";
+			}
+			return "Clearing";
+		};
+
 		const auto& cworld = m_ctx.drawing->world();
 		out << "{\"foundations\":[";
 		bool first = true;
@@ -1226,17 +1240,18 @@ namespace world_sim {
 				<< "\",\"state\":\"" << (foundation.state == construction::FoundationState::Built ? "Built" : "Blueprint")
 				<< "\",\"entity\":" << static_cast<unsigned long long>(foundation.entity) << ",\"area\":" << cworld.areaSquareMeters(foundation.id);
 
+			// The ring's corners, world meters, in the ring's order.
+			out << ",\"corners\":[";
+			for (std::size_t corner = 0; corner < foundation.ring.size(); ++corner) {
+				out << (corner == 0 ? "" : ",") << "{\"x\":" << jsonNumber(static_cast<double>(foundation.ring[corner].x) / static_cast<double>(geometry::kMillimetersPerMeter))
+					<< ",\"y\":" << jsonNumber(static_cast<double>(foundation.ring[corner].y) / static_cast<double>(geometry::kMillimetersPerMeter)) << "}";
+			}
+			out << "]";
+
 			// Include material progress from the ECS mirror entity's StructureBlueprint
 			if (foundation.entity != ecs::kInvalidEntity) {
 				if (const auto* bp = m_ctx.world->getComponent<ecs::StructureBlueprint>(foundation.entity)) {
-					const char* phaseStr = "Clearing";
-					switch (bp->phase) {
-						case ecs::StructureBlueprint::BuildPhase::Clearing: phaseStr = "Clearing"; break;
-						case ecs::StructureBlueprint::BuildPhase::AwaitingMaterials: phaseStr = "AwaitingMaterials"; break;
-						case ecs::StructureBlueprint::BuildPhase::UnderConstruction: phaseStr = "UnderConstruction"; break;
-						case ecs::StructureBlueprint::BuildPhase::Complete: phaseStr = "Complete"; break;
-					}
-					out << ",\"phase\":\"" << phaseStr << "\"";
+					out << ",\"phase\":\"" << phaseName(bp->phase) << "\"";
 					emitMaterialProgress(out, *bp);
 				}
 			}
@@ -1270,6 +1285,38 @@ namespace world_sim {
 				}
 			}
 
+			out << "}";
+		}
+
+		// Openings: the wall each is on, where along it (t, 0 at the wall's first vertex, and that
+		// point in world meters), and its build state and, with an entity, its phase and progress.
+		out << "],\"openings\":[";
+		bool firstOpening = true;
+		for (const auto& opening : cworld.openings()) {
+			out << (firstOpening ? "" : ",");
+			firstOpening = false;
+			out << "{\"id\":" << static_cast<unsigned long long>(opening.id) << ",\"type\":\"" << jsonEscape(opening.type) << "\",\"material\":\""
+				<< jsonEscape(opening.material) << "\",\"wall\":" << static_cast<unsigned long long>(opening.segment)
+				<< ",\"t\":" << jsonNumber(static_cast<double>(opening.t)) << ",\"state\":\""
+				<< (opening.state == construction::FoundationState::Built ? "Built" : "Blueprint") << "\",\"entity\":"
+				<< static_cast<unsigned long long>(opening.entity);
+
+			const auto* segment = cworld.getSegment(opening.segment);
+			const auto* v0 = segment != nullptr ? cworld.getVertex(segment->v0) : nullptr;
+			const auto* v1 = segment != nullptr ? cworld.getVertex(segment->v1) : nullptr;
+			if (v0 != nullptr && v1 != nullptr) {
+				const double millimetersPerMeter = static_cast<double>(geometry::kMillimetersPerMeter);
+				const double along = static_cast<double>(opening.t);
+				out << ",\"x\":" << jsonNumber((static_cast<double>(v0->pos.x) + (static_cast<double>(v1->pos.x) - static_cast<double>(v0->pos.x)) * along) / millimetersPerMeter)
+					<< ",\"y\":" << jsonNumber((static_cast<double>(v0->pos.y) + (static_cast<double>(v1->pos.y) - static_cast<double>(v0->pos.y)) * along) / millimetersPerMeter);
+			}
+
+			if (opening.entity != ecs::kInvalidEntity) {
+				if (const auto* bp = m_ctx.world->getComponent<ecs::StructureBlueprint>(opening.entity)) {
+					out << ",\"phase\":\"" << phaseName(bp->phase) << "\"";
+					emitMaterialProgress(out, *bp);
+				}
+			}
 			out << "}";
 		}
 		out << "]}";
@@ -1427,32 +1474,6 @@ namespace world_sim {
 		}
 		out << "{\"colonists\":" << colonists << ",\"foundations\":" << m_ctx.drawing->world().foundations().size()
 			<< ",\"chunks\":" << m_ctx.chunks->loadedChunkCount() << "}";
-	}
-
-	std::string DevCommandHandler::jsonEscape(const std::string& s) {
-		std::string out;
-		out.reserve(s.size() + 8);
-		for (char c : s) {
-			switch (c) {
-				case '"': out += "\\\""; break;
-				case '\\': out += "\\\\"; break;
-				case '\b': out += "\\b"; break;
-				case '\f': out += "\\f"; break;
-				case '\n': out += "\\n"; break;
-				case '\r': out += "\\r"; break;
-				case '\t': out += "\\t"; break;
-				default:
-					if (static_cast<unsigned char>(c) < 0x20) {
-						// Other control chars: emit a \u00XX escape rather than dropping them.
-						char buf[7];
-						std::snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
-						out += buf;
-					} else {
-						out += c;
-					}
-			}
-		}
-		return out;
 	}
 
 } // namespace world_sim

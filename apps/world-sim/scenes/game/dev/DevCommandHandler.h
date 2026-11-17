@@ -92,7 +92,7 @@ namespace world_sim {
 		/// returned registrations live. Most verbs answer {"status":"ok","verb":...}; spawn, colonist,
 		/// teleport, give, foundation, walls and opening answer a 400 with {"error":...} when they create
 		/// or move nothing, ground they refuse included; verbs with an outcome to report (foundation-edit) answer with it, and flora answers
-		/// with its measurement. The views are colonists, construction, stations, storage, time,
+		/// with its measurement. The views are colonists, construction, drawing, stations, storage, time,
 		/// landing, tunables and summary.
 		std::vector<app::DevServer::Registration> registerWith(app::DevServer& server);
 
@@ -180,7 +180,6 @@ namespace world_sim {
 		static float						 parseDuration(const std::string& spec);
 		static Foundation::Vec2				 parsePoint(const std::string& spec);
 		static Foundation::Vec2				 spreadOffset(long i, long n, float radius);
-		static std::string					 jsonEscape(const std::string& s);
 
 		DevCommandContext m_ctx;
 	};
