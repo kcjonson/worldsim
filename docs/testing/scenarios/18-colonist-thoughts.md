@@ -33,7 +33,9 @@ Launch `world-sim --scene=game --background --no-settings` (RelWithDebInfo); the
 19. Read the Mood breakdown: Needs, a row per held thought with its amount and time left ("24 hours left", the game being paused), largest amount first, and Target.
 20. Read the Target row: it reads 100 plus Needs plus the rows' amounts (-10, -6 and +5 for the scripted thoughts, so 89 plus Needs), within 0.1, or the sum on the "Clamped" note under it.
 21. Close the dossier and open it on Bob again: it opens at the width and height step 13 noted, long log and all.
-22. `/api/ui/lint` on each tab: `"count":0`.
+22. In the Dev Tools tab (the developer client) press Refresh, pick Bob, pick `Idle musing` and press Give thought: the feedback line reads `thought -> ` with `"created":true`.
+23. In the panel's LOG tab pick All: an idle musing block is the newest.
+24. `/api/ui/lint` on each tab: `"count":0`.
 
 ### Pruning
 

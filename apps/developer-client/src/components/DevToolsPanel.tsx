@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
-import { DevToolsService, DevResult, ColonistState } from '../services/DevToolsService';
+import { DevToolsService, DevResult, ColonistState, ThoughtTypeState } from '../services/DevToolsService';
 import styles from './DevToolsPanel.module.css';
 
 interface DevToolsPanelProps {
@@ -43,6 +43,10 @@ function DevToolsPanel({ serverUrl }: DevToolsPanelProps) {
   const [selected, setSelected] = useState<number | ''>('');
   const [needType, setNeedType] = useState('Hunger');
   const [needValue, setNeedValue] = useState(50);
+  const [thoughtTypes, setThoughtTypes] = useState<ThoughtTypeState[]>([]);
+  const [thoughtType, setThoughtType] = useState('');
+  const [attributeName, setAttributeName] = useState('');
+  const [attributeValue, setAttributeValue] = useState(10);
   const [teleportTo, setTeleportTo] = useState('0,0');
 
   // Time
@@ -75,6 +79,11 @@ function DevToolsPanel({ serverUrl }: DevToolsPanelProps) {
         setSelected(r.body.colonists[0].id);
       }
     }
+    const types = await svc.getState('thoughttypes');
+    if (types.ok && Array.isArray(types.body?.types)) {
+      setThoughtTypes(types.body.types);
+      setThoughtType((current) => current || (types.body.types.length ? types.body.types[0].name : ''));
+    }
     report('state colonists', r);
   }, [svc, report, selected]);
 
@@ -86,6 +95,9 @@ function DevToolsPanel({ serverUrl }: DevToolsPanelProps) {
     },
     [svc]
   );
+
+  const attributeNames = Object.keys(colonists.find((c) => c.id === selected)?.attributes ?? {});
+  const attributePicked = attributeNames.includes(attributeName) ? attributeName : (attributeNames[0] ?? '');
 
   const colonistArg: Record<string, string | number> = selected === '' ? {} : { colonist: selected };
 
@@ -208,6 +220,30 @@ function DevToolsPanel({ serverUrl }: DevToolsPanelProps) {
           <button className={styles.button} disabled={selected === ''}
             onClick={() => run('teleport', 'teleport', { ...colonistArg, to: teleportTo })}>
             Teleport
+          </button>
+        </div>
+        <div className={styles.row}>
+          <label className={styles.field}>thought
+            <select className={styles.input} value={thoughtType} onChange={(e) => setThoughtType(e.target.value)}>
+              {thoughtTypes.map((t) => <option key={t.name} value={t.name}>{t.label || t.name}</option>)}
+            </select>
+          </label>
+          <button className={styles.button} disabled={selected === '' || thoughtType === ''}
+            onClick={() => run('thought', 'thought', { ...colonistArg, type: thoughtType })}>
+            Give thought
+          </button>
+          <label className={styles.field}>attribute
+            <select className={styles.input} value={attributePicked} onChange={(e) => setAttributeName(e.target.value)}>
+              {attributeNames.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+          <label className={styles.fieldNarrow}>value
+            <input className={styles.input} type="number" min={0} max={20} value={attributeValue}
+              onChange={(e) => setAttributeValue(Number(e.target.value))} />
+          </label>
+          <button className={styles.button} disabled={selected === '' || attributePicked === ''}
+            onClick={() => run('attribute', 'attribute', { ...colonistArg, attribute: attributePicked, value: attributeValue })}>
+            Set attribute
           </button>
         </div>
       </section>

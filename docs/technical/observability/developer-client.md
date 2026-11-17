@@ -38,6 +38,11 @@ The developer client is an external TypeScript/Vite web application that connect
   placed obstacle, or unmeshed ground. `ground?pts=x,y;...` reads each point's verdicts: `valid`
   (clear to stand on), `buildable` (a foundation may go there once it is cleared), and `buildableNow`
   (a wall or furniture may go there as the ground stands), beside the chunk's terrain at the point.
+  The Colonist section's thought entry gives the picked colonist a thought: its list is every loaded
+  thought type from `GET /api/state?what=thoughttypes` (`{types:[{name, label}]}`, read with Refresh),
+  and Give thought calls `thought?colonist=<id>&type=<name>`, the same verb the HTTP API documents. Its
+  attribute entry lists the picked colonist's attributes from `what=colonists` and calls
+  `attribute?colonist=<id>&attribute=<name>&value=<0 to 20>`. Both stay disabled until a colonist is picked.
   `DevToolsService.ts` wraps these;
   `DevToolsPanel.tsx` is the form. Still no web server of its own — the static `file://` page reaches
   the debug server because it sets CORS `*`. Dev builds only. See the
