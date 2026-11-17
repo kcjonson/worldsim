@@ -484,7 +484,7 @@ for (const FeatherPiece& piece : pendingEdgePieces) {
     unseenFeather.push_back({.points = piece.screenPoints, .paint = MaskPaint::linear(piece.from, piece.to, 1.0F, 0.0F), .blend = MaskBlend::Lighten});
 }
 std::vector<MaskLayer> unseenMask = {
-    {.image = MaskImage::content(unseenFeather), .mode = MaskMode::Luminance},
+    {.image = MaskImage::content(unseenFeather)},
     {.image = MaskImage::rect(view), .composite = MaskComposite::Subtract},
 };
 for (const InstancedMeshHandle& mesh : seenMeshes) {
@@ -498,21 +498,27 @@ Primitives::drawRect({.bounds = view, .style = {.fill = kUnseenColor}, .mask = u
 
 Layers are listed top first and composited bottom up, as CSS does. Below the top, the hard layers are the view less the union of the record's meshes and the pending shapes, 0 or 1 at each pixel. The top layer is the partial coverage, its children combined by `lighten`, the greatest at each pixel, so the record's pieces and the pending pieces overlapping draw no darker than either. It is added by `MaskComposite::Add`, which is source over: where the layers under it are 1 the result is 1, and where they are 0 it is the partial coverage, so between a binary layer and any other source over is the greater of the two, and nothing is darkened twice.
 
-The tint's mask is one partial layer: the view at 1, then one isolated group a colonist, combined with what is under it by `darken`. A colonist's group holds his bright shape at 0 and over it his feather pieces and drawn shadows, combined among themselves by `lighten`, each piece carrying a hard mask of his bright shape:
+The tint's mask is one partial layer: the view at 1, then one group a colonist, combined with what is under it by `darken`, which isolates it. A colonist's group holds his bright shape at 0 and over it his feather pieces and drawn shadows, combined among themselves by `lighten`, each piece carrying a hard mask of his bright shape:
 
 ```cpp
 std::vector<MaskShape> tint = {{.points = viewPoints, .paint = MaskPaint::flat(1.0F)}};
+// The pieces' masks, which the spans in `tint` point into: reserved, so no push_back moves them.
+std::vector<std::array<MaskLayer, 1>> insideBrightShapes;
+insideBrightShapes.reserve(colonistsInView.size());
 for (const ColonistCover& colonist : colonistsInView) {
-    const std::vector<MaskLayer> insideBrightShape = {{.image = MaskImage::polygon(colonist.brightShape)}};
-    MaskShape group{.blend = MaskBlend::Darken, .isolation = MaskIsolation::Isolate};
+    insideBrightShapes.push_back({{{.image = MaskImage::polygon(colonist.brightShape)}}});
+    MaskShape group{.blend = MaskBlend::Darken};
     group.children.push_back({.points = colonist.brightShape, .paint = MaskPaint::flat(0.0F)});
     for (const DarknessPiece& piece : colonist.pieces) {
-        group.children.push_back({.points = piece.screenPoints, .paint = piece.paint, .mask = insideBrightShape, .blend = MaskBlend::Lighten});
+        group.children.push_back({.points = piece.screenPoints, .paint = piece.paint, .mask = insideBrightShapes.back(), .blend = MaskBlend::Lighten});
     }
     tint.push_back(std::move(group));
 }
-Primitives::drawRect({.bounds = view, .style = {.fill = kTintColor}, .mask = {{.image = MaskImage::content(tint), .mode = MaskMode::Luminance}}, .key = coverKey});
+const std::array<MaskLayer, 1> tintMask = {{{.image = MaskImage::content(tint)}}};
+Primitives::drawRect({.bounds = view, .style = {.fill = kTintColor}, .mask = tintMask, .key = coverKey});
 ```
+
+A shape's `mask`, a draw's `mask`, and a polygon's points are spans, read during the `drawRect` call, so `tint`, `insideBrightShapes`, `tintMask`, and the points they name live until it returns.
 
 In SVG terms each piece is an element inside the group with its own mask, so it paints only inside the bright shape. Without that clip a fin or a triangle reaching past the bright shape would put a value under 1 in the group where it holds nothing else, and `darken` against the view's 1 would take that value, lightening ground the sim has out of sight. With it the group covers only the bright shape: outside, the group is empty and the view's 1 stands; inside, it is the greatest of his pieces over 0, his darkness, and `darken` takes the least of that and what the colonists before him left.
 
@@ -520,9 +526,8 @@ In SVG terms each piece is an element inside the group with its own mask, so it 
 
 salal's masks (`MaskImage.h`, salal `docs/masks.md`) are layers of `rect`, `polygon`, and `mesh` images composited by `MaskComposite::Add` and `Subtract`, each 0 or 1 at a pixel. Partial coverage takes CSS's and SVG's names and semantics:
 
-- `MaskMode`, CSS `mask-mode`, per layer. `Alpha` is the default and what every hard layer uses. `Luminance` reads the layer's content as luminance; a hard layer's content is white where it covers, so the two agree on it.
-- `MaskImage::content(children)`: an SVG `<mask>` whose content is the children. A child is a `<polygon>` (`.points`), an uploaded mesh under a camera (`.mesh`), or a group of children (`.children`, an SVG `<g>`). It is filled flat with a value (`MaskPaint::flat`) or by an SVG `linearGradient` in user space with two stops (`MaskPaint::linear(from, to, fromValue, toValue)`). A mesh child's vertices may each carry a value: a field linear over a triangle is one two-stop linear gradient, so each triangle is a `<polygon>` filled by the gradient its three values define. A child may carry its own `mask` of hard layers, as an element inside an SVG `<mask>` may.
-- `MaskBlend`, CSS `mix-blend-mode`, per child: `Lighten`, the greater of its value and what is under it, and `Darken`, the lesser. `MaskIsolation::Isolate`, CSS `isolation: isolate`, makes a group composite its children together before it blends with what is under it.
+- `MaskImage::content(children)`: an SVG `<mask>` whose content is the children, read by its luminance as `mask: url(#m)` reads an SVG `<mask>` (CSS `mask-mode: match-source`, SVG `mask-type: luminance`). A hard layer reads the same either way, so no layer carries a mode. A child is a `<polygon>` (`.points`), an uploaded mesh under a camera (`.mesh`), or a group of children (`.children`, an SVG `<g>`). It is filled flat with a value (`MaskPaint::flat`) or by an SVG `linearGradient` in user space with two stops (`MaskPaint::linear(from, to, fromValue, toValue)`). A mesh child's vertices may each carry a value: a field linear over a triangle is one two-stop linear gradient, so each triangle is a `<polygon>` filled by the gradient its three values define. A child may carry its own `mask` of hard layers, as an element inside an SVG `<mask>` may.
+- `MaskBlend`, CSS `mix-blend-mode`, per child: `Normal`, its value; `Lighten`, the greater of its value and what is under it; and `Darken`, the lesser. A group whose blend is not `Normal` is isolated, as CSS makes it: it composites its children together on nothing before it blends with what is under it, so no isolation flag is needed. Inside an isolated group every child after the first blends by `Lighten`, the greatest, which is what the cover asks of it.
 - `MaskComposite::Add` and `Subtract` keep CSS's meanings on partial values: `add` is source over, `subtract` is source out.
 
 Alpha mask layers (rule 26) are masks whose value at a point is a coverage between 0 and 1, which salal carries as alpha. CSS composites alpha only by its Porter-Duff operators, none of which is the greater or the lesser of two values; `lighten` and `darken` are, and they blend colour, so a layer whose content combines values that way is read as luminance, its content painted in grey and the grey the coverage. The coverage it yields masks the draw as an alpha mask's does.
@@ -740,7 +745,7 @@ Each is unconfirmed by Kevin.
 31. Rules 10 and 19 read against 7.6: destination alpha, depth, and the stencil are per-pixel state of the frame being drawn, written and read inside the cover's draws, holding no game data between frames, with no texture made, so rule 10's "no raster, grid, bitmap, or mask texture anywhere in this system" holds; rule 19's "drawn with the stencil buffer" covers the hard layers, and the partial layer uses the frame's alpha and depth beside it.
 32. The seen area's feather drawn for the union's boundary only, kept in cells rebuilt from changed boxes, with pending cuts held and redone where a leg's ring moves; a body face left hard in the tint (7.2).
 33. Departure from C as drawn: several colonists composed as the least darkness, each colonist's darkness the greatest of his pieces, each piece clipped to his bright shape; and the lens, where two sights overlap by under twice the feather, left dimmer than a fade from the union's edge (7.4).
-34. The salal surface: `MaskMode::Luminance`, `MaskImage::content`, `MaskBlend::Lighten` and `Darken`, `MaskIsolation::Isolate`, `MaskPaint::linear`, mesh children with a value at each vertex, and children carrying their own hard mask (7.6).
+34. The salal surface: `MaskImage::content` read by its luminance with no mode on any layer, `MaskBlend::Normal`, `Lighten`, and `Darken`, a group isolated by a blend other than `Normal` with no isolation flag, `MaskPaint::linear`, mesh children with a value at each vertex, and children carrying their own hard mask (7.6). The names follow salal's draft partial-coverage work, which dropped `MaskMode` and `MaskIsolation`, and still await Kevin.
 35. Every start value in 9, every acceptance limit in 10 (limit 2 at 0.06 on screen, leaving room over the 0.049 a stub gives at its diagonal; limits 5 and 8 at 1x, 10x reported), and 6.6's fourth fallback, a departure from rule 27.
 36. The bright rim eased over 400 mm of walk from where it is drawn to the newest build's side offsets, the blend restarting at 0 at every build and measured by the walk since, its start held per observer in `PlayerVisibilitySystem` and inherited by the next leg, so a restart moves nothing and the rim changes by at most 0.028 on screen a frame at 1x in dense stands (0.06 when a ring is felled or placed mid-ease); it lags a build by up to that walk, and at 10x a build's change lands within a frame or two. The bright shape is drawn the whole `rimEaseMm` inside `drawnVisibleRadiusMm` so it stays inside the leg's ring through restarts, a fully bright core of about 27.9 m in the open (6.2, 6.3).
 37. The polygon path's `isVisible`, discovery, and bright shape cut by the forest shape a leg would give at his position, so both paths give the same rim (5.2, 6.3).
