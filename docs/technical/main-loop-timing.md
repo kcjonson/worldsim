@@ -49,30 +49,31 @@ Navigation is one persistent mesh, never rebuilt: each nav update gathers what m
 
 ### ECS systems in execution order
 
-`World::update` sorts the systems by `priority()` alone (`std::sort`, on the first update after a registration; every priority is distinct) and, with `ECS_ENABLE_SYSTEM_TIMING` (on by default), times each `update`. Registration order in `GameScene::initializeECS` doesn't matter: `NavigationSystem` is registered after `RoomDetectionSystem` and still runs sixth.
+`World::update` sorts the systems by `priority()` alone (`std::sort`, on the first update after a registration; every priority is distinct) and, with `ECS_ENABLE_SYSTEM_TIMING` (on by default), times each `update`. Registration order in `GameScene::initializeECS` doesn't matter: `NavigationSystem` is registered after `RoomDetectionSystem` and still runs seventh.
 
 | Order | Priority | System | What it does each frame |
 |---|---|---|---|
 | 1 | 10 | `TimeSystem` | Advances the game clock by `dt * baseTimeScale * speed`; returns at once when paused |
 | 2 | 11 | `ThoughtSystem` | Ends every held thought whose timed mood effect has run out on the game clock; nothing else unless a source creates or ends one |
-| 3 | 45 | `VisionSystem` | Every 5th frame: rebuilds the wall occluders if stale, then every observer's sight pass writes memory |
-| 4 | 46 | `PlayerVisibilitySystem` | Every colonist's sight shape from vision's last pass into the seen record: an outdoor colonist's open leg follows him and ends on a turn, a jump, going indoors, or his removal; each new visibility polygon is queued with his walk since the last, and one where he rests; then up to `kSeenRingsPerTick` queued shapes are tested, stopping at the first that adds ground, and one waiting piece is registered, or else one sweep polygon is built (player-visibility.md 3.3) |
-| 5 | 50 | `NeedsDecaySystem` | Decays every need by game minutes; nothing at game pause |
-| 6 | 51 | `NavigationSystem` | Joins the patch job `endTick` launched last frame (waiting for it if it is still running, unless a query already joined it) and publishes it; hands every patch report since the last route slice to the route queue, admits (finished answers become takeable, new requests join), drops answers untaken for `kUntakenAnswerTicks`, decides whether limits that are not urgent are held, and starts this tick's slice on the route worker; marks stale the routes whose movers strayed more than `kOffRouteMm` (2 m) off their leg; steps movers standing in a placed obstacle forward along their route or out to clear ground; then gathers the next patches: a mesh limit for each mover that is new, has walked `kLimitRetakeStepMm`, or changed range, walls and doors when the construction version moved, water re-derived for changed terrain, removed placed obstacles (up to `kDetailRemovalsPerTick` 128), urgent limits whole outside every budget, then the rest first in, first out (`kLimitsPerTick` 1 limit and `kDetailRingsPerTick` 32 placed obstacles), each limit's placed obstacles and its chunks' water ahead of or with its ground |
-| 7 | 55 | `StorageGoalSystem` | Every 60th frame: storage goals |
-| 8 | 56 | `CraftingGoalSystem` | Every 60th frame: crafting goals |
-| 9 | 57 | `BuildGoalSystem` | Every 30th frame: place goals for packaged items |
-| 10 | 58 | `ConstructionSystem` | Every 30th frame: blueprint lifecycle and its goals |
-| 11 | 59 | `RoomDetectionSystem` | Rebuilds rooms when the construction version moved |
-| 12 | 60 | `AIDecisionSystem` | Route upkeep for every colonist, then a decision for each colonist whose trigger fires (see Triggers) |
-| 13 | 100 | `MovementSystem` | Steers along routes; sets Arrived at the last waypoint |
-| 14 | 200 | `PhysicsSystem` | Integrates velocity by game-scaled dt |
-| 15 | 250 | `CollisionSystem` | Pushes agents apart, two relaxation passes |
-| 16 | 260 | `WallCollisionSystem` | Pushes agents out of built walls |
-| 17 | 270 | `PlacedObstacleCollisionSystem` | Pushes agents out of placed obstacles' colliders, rect or polygon |
-| 18 | 350 | `ActionSystem` | Arrival within 0.4 m, then starts, advances, and completes actions; queues removals and drops |
-| 19 | 800 | `DeferredEditsSystem` (`apps/world-sim/scenes/game/world/`) | Drains deferred entity removals (`destroyWorldEntity`), then deferred spawns (packaged furniture, loose piles through `dropResourcePiles`); work only when queued |
-| 20 | 900 | `DynamicEntityRenderSystem` | Collects render data for dynamic entities |
+| 3 | 12 | `MoodSystem` | Each colonist's target mood from needs and held thoughts, its mood cause, and its mood eased toward the target by the game time since it last ran; a colonist without a mood (spawning gives one through `MoodSystem::startMood`) starts at the target |
+| 4 | 45 | `VisionSystem` | Every 5th frame: rebuilds the wall occluders if stale, then every observer's sight pass writes memory |
+| 5 | 46 | `PlayerVisibilitySystem` | Every colonist's sight shape from vision's last pass into the seen record: an outdoor colonist's open leg follows him and ends on a turn, a jump, going indoors, or his removal; each new visibility polygon is queued with his walk since the last, and one where he rests; then up to `kSeenRingsPerTick` queued shapes are tested, stopping at the first that adds ground, and one waiting piece is registered, or else one sweep polygon is built (player-visibility.md 3.3) |
+| 6 | 50 | `NeedsDecaySystem` | Decays every need by game minutes; nothing at game pause |
+| 7 | 51 | `NavigationSystem` | Joins the patch job `endTick` launched last frame (waiting for it if it is still running, unless a query already joined it) and publishes it; hands every patch report since the last route slice to the route queue, admits (finished answers become takeable, new requests join), drops answers untaken for `kUntakenAnswerTicks`, decides whether limits that are not urgent are held, and starts this tick's slice on the route worker; marks stale the routes whose movers strayed more than `kOffRouteMm` (2 m) off their leg; steps movers standing in a placed obstacle forward along their route or out to clear ground; then gathers the next patches: a mesh limit for each mover that is new, has walked `kLimitRetakeStepMm`, or changed range, walls and doors when the construction version moved, water re-derived for changed terrain, removed placed obstacles (up to `kDetailRemovalsPerTick` 128), urgent limits whole outside every budget, then the rest first in, first out (`kLimitsPerTick` 1 limit and `kDetailRingsPerTick` 32 placed obstacles), each limit's placed obstacles and its chunks' water ahead of or with its ground |
+| 8 | 55 | `StorageGoalSystem` | Every 60th frame: storage goals |
+| 9 | 56 | `CraftingGoalSystem` | Every 60th frame: crafting goals |
+| 10 | 57 | `BuildGoalSystem` | Every 30th frame: place goals for packaged items |
+| 11 | 58 | `ConstructionSystem` | Every 30th frame: blueprint lifecycle and its goals |
+| 12 | 59 | `RoomDetectionSystem` | Rebuilds rooms when the construction version moved |
+| 13 | 60 | `AIDecisionSystem` | Route upkeep for every colonist, then a decision for each colonist whose trigger fires (see Triggers) |
+| 14 | 100 | `MovementSystem` | Steers along routes; sets Arrived at the last waypoint |
+| 15 | 200 | `PhysicsSystem` | Integrates velocity by game-scaled dt |
+| 16 | 250 | `CollisionSystem` | Pushes agents apart, two relaxation passes |
+| 17 | 260 | `WallCollisionSystem` | Pushes agents out of built walls |
+| 18 | 270 | `PlacedObstacleCollisionSystem` | Pushes agents out of placed obstacles' colliders, rect or polygon |
+| 19 | 350 | `ActionSystem` | Arrival within 0.4 m, then starts, advances, and completes actions; queues removals and drops |
+| 20 | 800 | `DeferredEditsSystem` (`apps/world-sim/scenes/game/world/`) | Drains deferred entity removals (`destroyWorldEntity`), then deferred spawns (packaged furniture, loose piles through `dropResourcePiles`); work only when queued |
+| 21 | 900 | `DynamicEntityRenderSystem` | Collects render data for dynamic entities |
 
 The drains run inside the tick, after `ActionSystem` (the last system that queues) and before the render collect, so the render data shows a removal or a drop the same frame. They run there rather than after `World::update` because a drop's ground probe is a nav query: after the last `update`, `endTick` has launched the next patch job and the probe would wait for it.
 
@@ -86,6 +87,7 @@ Clocks: **F** frame count; **R** real seconds (the frame delta, unscaled, still 
 |---|---|---|---|---|---|
 | Game clock | `TimeSystem::update` | every frame | `kSpeedMultipliers` {0, 1, 3, 10}, `baseTimeScale` 1 game minute per real second (`TimeSystem.h`) | G | stops |
 | Thought expiry | `ThoughtSystem::update` | every frame; ends each held thought whose timed mood effect has run out, in expiry order, stamped at its expiry time, so a jump ends several in the order they ran out | per thought, `MoodEffect::durationGameHours`, restarted by a repeat (`Thoughts.h`) | G | stops |
+| Mood easing | `MoodSystem::update` | every frame; mood moves toward its target by the game time since the colonist's last update, never past it | `pointsPerGameHour` 5 (`assets/config/colonists/mood.xml`) | G | stops |
 | Vision | `VisionSystem::update` | every 5th frame, every observer in that frame; the counter starts at 5, so frames 1, 6, 11, ... | `m_updateInterval` 5 (`VisionSystem.h`) | F | runs |
 | Needs decay | `NeedsDecaySystem::update` | every frame | per-need `decayRate`, 0.01 to 0.12 % per game minute (`NeedsComponent::createDefault`, table below) | G | stops |
 | Nav join and gather | `NavigationSystem::update` | every frame; gathers only the mesh limits movers have taken and what isn't meshed, under per-tick counts (never a time budget), so a backlog drains over several frames; a mover's urgent limit goes in outside every budget; nothing is ever taken out but what leaves the world | `kLimitsPerTick` 1, `kDetailRingsPerTick` 32, `kDetailRemovalsPerTick` 128 (`NavigationSystem.h`) | F | runs |
@@ -174,6 +176,7 @@ The decision's readers: the `DecisionTrace` component, read the same frame by `T
 |---|---|---|---|
 | Need decay | `NeedsDecaySystem` at 50 | AI at 60 | the same frame, so a need crossing critical is decided on the frame it crosses |
 | Held thoughts and their ended events | `ThoughtSystem` at 11; any source's `create` or `end` during the frame | mood readers later in the frame (`heldMoodTotal`, `forEachHeldThought`, the ended observers) | the same frame: a timed effect that ran out is ended before any later system reads the held set; a thought created later in the frame is held from that call on |
+| Mood (value, target, cause, contributions) | `MoodSystem` at 12, from the held thoughts as of 12 and the needs as `NeedsDecaySystem` left them last frame | the UI after the tick | the same frame; a thought created or a need changed after 12 reaches mood next frame, and a thought ended after 12 still counts until next frame |
 | Vision memory | Vision at 45, every 5th frame | AI at 60 | the same frame on vision frames, else up to 4 frames old; `ActionSystem`'s forgets at 350 next frame |
 | Nav mesh | the patches gathered in frame N's nav update, applied by the job launched at frame N's `endTick` after frame N's route slice | AI at 60, every later query | frame N+1: its nav update at 51 joins the job, waiting for it if it is still running; a query before that (an earlier system, a dev route, the build tool) joins it instead and waits the same way, for the slice as well when a search is running. No query reads the mesh while it is patched |
 | Nav generation | the join of a job in which ground arrived, water was re-derived, walls changed, or a door was added or removed; placed obstacles never move it | AI replan and deferred retry | the same frame (nav before AI) |
