@@ -1,4 +1,5 @@
 #include "assets/MemoryConfig.h"
+#include "assets/ConfigNumber.h"
 
 #include <utils/Log.h>
 
@@ -28,9 +29,10 @@ namespace assets {
 			return false;
 		}
 
-		// A missing attribute reads as NaN, which validation reports, rather than as a silent zero.
-		recentSightingMinutes =
-			root.child("RecentSighting").attribute("gameMinutes").as_float(std::numeric_limits<float>::quiet_NaN());
+		// Missing or not entirely a number reads as NaN, which validation reports, rather than as a silent
+		// zero or the number it starts with.
+		recentSightingMinutes = parseConfigNumber(root.child("RecentSighting").attribute("gameMinutes").as_string())
+									.value_or(std::numeric_limits<float>::quiet_NaN());
 
 		isLoaded = true;
 		LOG_INFO(Engine, "Loaded memory config from %s", xmlPath.c_str());

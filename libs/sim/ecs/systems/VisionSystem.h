@@ -40,6 +40,9 @@ struct Memory;
 /// Also scans chunks for shore points (land beside water) with Drinkable capability.
 /// Priority: 45 (runs early, before needs decay and AI decisions)
 ///
+/// Needs a TimeSystem in the same world: a mover's sighting is stamped with the game clock, and a world
+/// without one aborts in development builds the first time a mover is seen (ecs::simulationSeconds).
+///
 /// Performance: Throttled to run every N frames (default 5) since colonists don't
 /// move fast enough to need per-frame vision updates.
 class VisionSystem : public ISystem {

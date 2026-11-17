@@ -33,11 +33,13 @@ namespace assets {
 		std::string						   source; // the file it was declared in, for errors
 	};
 
-	/// A kind near() and count_near() look for, and the capability memory holds it under. A kind with no
-	/// capability is declared but unanswered, and reads Unknown.
+	/// A kind near() and count_near() look for: a capability memory holds things under, or the asset
+	/// definition of a mover (`mover`, "Colonist") whose recent sightings memory keeps. A kind with
+	/// neither is declared but unanswered, and reads Unknown.
 	struct ConditionKindDef {
 		std::string					  name;
 		std::optional<CapabilityType> capability;
+		std::string					  mover;
 	};
 
 	/// A name current_task() takes that stands for several task types.
@@ -78,7 +80,7 @@ namespace assets {
 	/// the base set and load first, in path order; then the files in its subfolders, in path order.
 	///
 	/// A later file may add names to a symbol set (a set any file declares open="true" is open), add a
-	/// term, add a kind, replace a kind's capability, and replace <Night>; each replacement is logged at
+	/// term, add a kind, replace a kind's mapping, and replace <Night>; each replacement is logged at
 	/// info level naming both files. Redeclaring a term with the same signature is accepted; with a
 	/// different one it is an error naming both files, as is redeclaring a task group. Every symbol set a
 	/// term names must exist, and night hours must be given. An empty error list means it loaded clean.

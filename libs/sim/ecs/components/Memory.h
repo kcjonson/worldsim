@@ -258,14 +258,15 @@ namespace ecs {
 		}
 
 		/// Hand `visit` each remembered mover of kind `defNameId` last seen within `windowGameMinutes` before
-		/// `now` (both on TimeSystem::simulationSeconds), in no order. An older sighting is where someone was,
-		/// not company. The usual window is assets::MemoryConfig::recentSightingGameMinutes().
+		/// `now` (both on TimeSystem::simulationSeconds), in no order, until it returns false. An older
+		/// sighting is where someone was, not company. The usual window is
+		/// assets::MemoryConfig::recentSightingGameMinutes().
 		template <typename Visit>
 		void forEachDynamicEntitySeenWithin(uint32_t defNameId, double now, double windowGameMinutes, Visit&& visit) const {
 			const double since = now - windowGameMinutes;
 			for (const auto& [entityId, known] : knownDynamicEntities) {
-				if (known.defNameId == defNameId && known.lastSeenAt >= since) {
-					visit(known);
+				if (known.defNameId == defNameId && known.lastSeenAt >= since && !visit(known)) {
+					return;
 				}
 			}
 		}

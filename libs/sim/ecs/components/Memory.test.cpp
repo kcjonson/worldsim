@@ -18,8 +18,11 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <limits>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -231,21 +234,77 @@ namespace {
 
 	std::vector<ecs::EntityID> moversSeenWithin(const ecs::Memory& memory, uint32_t kind, double now, double window) {
 		std::vector<ecs::EntityID> seen;
-		memory.forEachDynamicEntitySeenWithin(kind, now, window, [&](const ecs::KnownDynamicEntity& known) { seen.push_back(known.entityId); });
+		memory.forEachDynamicEntitySeenWithin(kind, now, window, [&](const ecs::KnownDynamicEntity& known) {
+			seen.push_back(known.entityId);
+			return true;
+		});
 		std::ranges::sort(seen);
 		return seen;
 	}
 
+	std::filesystem::path shippedMemoryConfig() {
+		return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path().parent_path() / "assets" /
+			   "config" / "colonists" / "memory.xml";
+	}
+
+	/// The recency window a memory.xml with `gameMinutes` loads, validated.
+	double configuredWindow(const std::string& gameMinutes) {
+		const std::filesystem::path path =
+			std::filesystem::temp_directory_path() /
+			("worldsim-memory-" + std::string(::testing::UnitTest::GetInstance()->current_test_info()->name()) + "-" + gameMinutes + ".xml");
+		{
+			std::ofstream file(path);
+			file << "<Memory><RecentSighting gameMinutes=\"" << gameMinutes << "\"/></Memory>";
+		}
+		assets::MemoryConfig config;
+		EXPECT_TRUE(config.loadFromFile(path.string()));
+		std::filesystem::remove(path);
+		EXPECT_TRUE(assets::ConfigValidator::validateMemory(config)) << gameMinutes;
+		return config.recentSightingGameMinutes();
+	}
+
 } // namespace
+
+// The window is data: one sighting is company under a longer configured window and not under a shorter.
+TEST(MemoryQueries, TheConfiguredWindowDecidesWhoIsRecent) {
+	const ecs::EntityID seen = ecs::makeEntityID(1, 1);
+	const double		now = 1000.0;
+	ecs::Memory			memory;
+	memory.rememberDynamicEntity(seen, kColonistKind, {1.0F, 2.0F}, now - 20.0);
+
+	EXPECT_EQ(moversSeenWithin(memory, kColonistKind, now, configuredWindow("30")), std::vector<ecs::EntityID>{seen});
+	EXPECT_TRUE(moversSeenWithin(memory, kColonistKind, now, configuredWindow("10")).empty());
+}
+
+// A sighting exactly a window old is still recent; the least bit older is not.
+TEST(MemoryQueries, TheWindowIncludesItsOwnEdge) {
+	const double		window = 30.0;
+	const double		now = 1000.0;
+	const ecs::EntityID atEdge = ecs::makeEntityID(1, 1);
+	const ecs::EntityID pastEdge = ecs::makeEntityID(2, 1);
+	ecs::Memory			memory;
+	memory.rememberDynamicEntity(atEdge, kColonistKind, {0.0F, 0.0F}, now - window);
+	memory.rememberDynamicEntity(pastEdge, kColonistKind, {0.0F, 0.0F}, std::nextafter(now - window, 0.0));
+
+	EXPECT_EQ(moversSeenWithin(memory, kColonistKind, now, window), std::vector<ecs::EntityID>{atEdge});
+}
+
+// The query stops when the visitor says it has seen enough.
+TEST(MemoryQueries, TheVisitorEndsTheQuery) {
+	ecs::Memory memory;
+	for (uint32_t index = 1; index <= 5; ++index) {
+		memory.rememberDynamicEntity(ecs::makeEntityID(index, 1), kColonistKind, {0.0F, 0.0F}, 100.0);
+	}
+	int visits = 0;
+	memory.forEachDynamicEntitySeenWithin(kColonistKind, 100.0, 1.0, [&](const ecs::KnownDynamicEntity&) { return ++visits < 2; });
+	EXPECT_EQ(visits, 2);
+}
 
 // The recency query, with the shipped window: a sighting inside it is company, one older is not, and
 // a mover of another kind never answers.
-TEST(MemoryQueries, MoversSeenWithinTheConfiguredWindow) {
+TEST(MemoryQueries, MoversSeenWithinTheShippedWindow) {
 	assets::MemoryConfig config;
-	const std::filesystem::path shipped =
-		std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path().parent_path() / "assets" / "config" /
-		"colonists" / "memory.xml";
-	ASSERT_TRUE(config.loadFromFile(shipped.string()));
+	ASSERT_TRUE(config.loadFromFile(shippedMemoryConfig().string()));
 	ASSERT_TRUE(assets::ConfigValidator::validateMemory(config));
 	const double window = config.recentSightingGameMinutes();
 

@@ -1002,6 +1002,7 @@ TEST_F(VisionSystemTest, DestroyedMoverStaysAsSeenAndAReusedIndexIsAnotherMover)
 	std::vector<EntityID>	   company;
 	memory.forEachDynamicEntitySeenWithin(kind, clock.simulationSeconds(), 5.0, [&](const KnownDynamicEntity& known) {
 		company.push_back(known.entityId);
+		return true;
 	});
 	EXPECT_EQ(company, std::vector<EntityID>{newcomer}) << "the gone mover was seen 10 minutes ago";
 }
