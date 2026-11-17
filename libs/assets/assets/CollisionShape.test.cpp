@@ -857,3 +857,25 @@ TEST(CollisionShapeTest, LevelReachPastTheMarginFailsSmokeCheck) {
 	ASSERT_NE(reg.getTemplate(reg.templateId("Within", AssetRegistry::matureTraits(*within))), nullptr);
 	EXPECT_NEAR(reg.maxReachMeters(), 1.0F * within->placement.scale.max * kLevelReachMargin, 1e-5F);
 }
+
+// A simple def's collider is authored about its drawing's bbox centre, so its frame's origin in the
+// template mesh, which is scaled and not centred, is that centre in meters. No template, no offset.
+TEST(CollisionShapeTest, SimpleDefCollisionFrameOriginIsMeshBboxCentre) {
+	auto&	   reg = AssetRegistry::Get();
+	TempAssets t;
+
+	// Path bbox x 20..220, y 40..140 -> height 100, worldHeight 1.0 -> scaleFactor 0.01,
+	// centre (120, 90) -> (1.2, 0.9) m.
+	t.writeFile("Origin", "shape.svg", svgRect(20, 40, 220, 140));
+	t.writeXml("Origin", wrapSimpleDef("shape.svg", 1.0F));
+
+	reg.clearDefinitions();
+	reg.loadDefinitionsFromFolder(t.root.string());
+	const uint32_t id = reg.templateId("TestAsset", {});
+	ASSERT_NE(id, 0U);
+
+	EXPECT_NEAR(reg.collisionFrameOrigin(id).x, 1.2F, 1e-5F);
+	EXPECT_NEAR(reg.collisionFrameOrigin(id).y, 0.9F, 1e-5F);
+	EXPECT_FLOAT_EQ(reg.collisionFrameOrigin(0).x, 0.0F);
+	EXPECT_FLOAT_EQ(reg.collisionFrameOrigin(0).y, 0.0F);
+}

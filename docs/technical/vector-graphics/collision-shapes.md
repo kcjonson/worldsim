@@ -77,6 +77,19 @@ world-AABB fast path.
    metadata wins over XML for simple assets. First consumer:
    `assets/world/misc/BigRock` (a tree-sized boulder you can't walk through).
 
+## The two frames, and where a placed entity's collider stands
+
+A collider is stored in one of two frames, by asset type. A procedural def's is in its
+generator's mesh frame, the frame its template mesh is in. A simple (SVG) def's is about its
+drawing's bbox centre, whether it came from SVG `<metadata>` or XML. A placed (static) entity
+draws its template mesh from its position, scaled and rotated about the mesh's origin and not
+centred, so its collider is moved into the mesh's frame first:
+`AssetRegistry::collisionFrameOrigin(templateId)` is the mesh's bbox centre for a simple def and
+`{0,0}` for a procedural one, and `nav::placedObstacleBox` / `placedObstacleOutline` add it to
+the shape before the entity's scale, rotation, and position. Both consumers below read those
+two, so the nav hole and the collision rect land on the art for either asset type. The depth
+anchor makes the same move in Y (`anchorLocalY`).
+
 ## Consumers (the collider feeds two systems at the same clearance)
 
 - **Navigation.** `NavInputBuilder` (`libs/sim/nav/`) carves the rect into the

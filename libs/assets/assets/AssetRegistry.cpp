@@ -1470,6 +1470,19 @@ namespace assets {
 			return maxY - minY;
 		}
 
+		glm::vec2 meshBoundsCenter(const renderer::TessellatedMesh& mesh) {
+			if (mesh.vertices.empty()) {
+				return {0.0F, 0.0F};
+			}
+			glm::vec2 low{mesh.vertices.front().x, mesh.vertices.front().y};
+			glm::vec2 high = low;
+			for (const auto& v : mesh.vertices) {
+				low	 = {std::min(low.x, v.x), std::min(low.y, v.y)};
+				high = {std::max(high.x, v.x), std::max(high.y, v.y)};
+			}
+			return (low + high) * 0.5F;
+		}
+
 		void raiseTo(std::atomic<float>& target, float value) {
 			float current = target.load(std::memory_order_relaxed);
 			while (value > current && !target.compare_exchange_weak(current, value, std::memory_order_relaxed)) {
@@ -1597,6 +1610,8 @@ namespace assets {
 			isMature ? routesTall(built.mesh.has_value() ? meshHeight(*built.mesh) : 0.0F, groundcover) : isTallDef(def.defName);
 		const float levelMargin = def.detailLevels.empty() ? 1.0F : kLevelReachMargin;
 		const float reach = built.mesh.has_value() ? meshReach(*built.mesh) * def.placement.scale.max * levelMargin : 0.0F;
+		const glm::vec2 collisionFrameOrigin =
+			def.assetType == AssetType::Simple && built.mesh.has_value() ? meshBoundsCenter(*built.mesh) : glm::vec2{0.0F, 0.0F};
 
 		uint32_t id = 0;
 		{
@@ -1606,7 +1621,9 @@ namespace assets {
 				return it->second;
 			}
 			m_templates.push_back(std::make_unique<TemplateEntry>(
-				TemplateEntry{.def = &def, .traits = traits, .mesh = std::move(built.mesh), .defTall = defTall}
+				TemplateEntry{
+					.def = &def, .traits = traits, .mesh = std::move(built.mesh), .collisionFrameOrigin = collisionFrameOrigin, .defTall = defTall
+				}
 			));
 			id			= static_cast<uint32_t>(m_templates.size());
 			it->second = id;
@@ -1675,6 +1692,14 @@ namespace assets {
 		}
 		const std::optional<renderer::TessellatedMesh>& mesh = m_templates[templateId - 1]->mesh;
 		return mesh.has_value() ? &*mesh : nullptr;
+	}
+
+	glm::vec2 AssetRegistry::collisionFrameOrigin(uint32_t templateId) const {
+		std::lock_guard<std::mutex> lock(templateCacheMutex);
+		if (templateId == 0 || templateId > m_templates.size()) {
+			return {0.0F, 0.0F};
+		}
+		return m_templates[templateId - 1]->collisionFrameOrigin;
 	}
 
 	uint32_t AssetRegistry::templateCount() const {

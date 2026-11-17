@@ -13,6 +13,8 @@
 #include <assets/placement/PlacementExecutor.h>
 #include <assets/placement/SpatialIndex.h>
 
+#include <nav/SimpleObstacleDef.test.h>
+
 #include <world/chunk/ChunkCoordinate.h>
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/SyntheticWorldSampler.h>
@@ -561,4 +563,41 @@ TEST_F(StaticRectCollisionSystemTest, MirroredTreeIsCollidedWith) {
 	wire(world, executor).update(0.0F);
 	EXPECT_NEAR(world.getComponent<Position>(agent)->value.x, boxCentre.x + 0.3F + kStaticRectClearanceMeters, 1e-4F)
 		<< "the mirrored tree was not collided with";
+}
+
+// A simple (SVG) def's rect stands on its drawing, which a static draws from its position, uncentred:
+// an agent on the drawing's centre is pushed out, and one at the entity's position, off the rect, is
+// left alone.
+TEST_F(StaticRectCollisionSystemTest, SimpleDefRectStandsOnTheDrawing) {
+	AssetRegistry& reg = AssetRegistry::Get();
+
+	const glm::vec2				 rockAt{20.0F, 20.0F};
+	const world::ChunkCoordinate coord = world::worldToChunk({rockAt.x, rockAt.y});
+	PlacementExecutor			 executor(reg);
+	{
+		SpatialIndex index;
+		PlacedEntity pe;
+		pe.defName	  = nav::testing::kSimpleObstacleDefName;
+		pe.templateId = nav::testing::loadSimpleObstacleDef(reg);
+		ASSERT_NE(pe.templateId, 0U);
+		pe.position = rockAt;
+		index.insert(pe);
+		assets::AsyncChunkPlacementResult result;
+		result.coord		= coord;
+		result.spatialIndex = std::move(index);
+		executor.storeChunkResult(std::move(result));
+	}
+
+	const glm::vec2 boxCentre = rockAt + nav::testing::kSimpleObstacleFrameOrigin;
+	const glm::vec2 atOrigin  = rockAt + glm::vec2{0.02F, 0.01F};
+	World			world;
+	const EntityID	onDrawing  = spawnAgent(world, boxCentre + glm::vec2{0.05F, 0.0F});
+	const EntityID	onPosition = spawnAgent(world, atOrigin);
+	wire(world, executor).update(0.0F);
+
+	EXPECT_NEAR(
+		world.getComponent<Position>(onDrawing)->value.x, boxCentre.x + nav::testing::kSimpleObstacleHalfExtent + kStaticRectClearanceMeters, 1e-4F
+	) << "the rect is not on the drawing";
+	EXPECT_FLOAT_EQ(world.getComponent<Position>(onPosition)->value.x, atOrigin.x);
+	EXPECT_FLOAT_EQ(world.getComponent<Position>(onPosition)->value.y, atOrigin.y);
 }

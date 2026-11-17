@@ -98,6 +98,14 @@ namespace assets {
 		/// the cull margin) reads this mesh, so it doesn't change with the camera's zoom.
 		const renderer::TessellatedMesh* getTemplate(uint32_t templateId) const;
 
+		/// Where the origin of the def's collision shapes sits in a template's mesh frame, in meters:
+		/// the mesh's bbox centre for a simple (SVG) def, whose shapes are authored about it
+		/// (loadCollisionFromSvgMetadata), and {0,0} for a procedural def, whose shapes are in the
+		/// mesh's own frame. A static draws its mesh from its position, uncentred, so its collider
+		/// stands at this plus the shape. Its Y is the frame anchorLocalY adds. {0,0} for id 0 or a
+		/// template with no mesh.
+		[[nodiscard]] glm::vec2 collisionFrameOrigin(uint32_t templateId) const;
+
 		/// The highest template id handed out since the last clear; ids run from 1 to this.
 		[[nodiscard]] uint32_t templateCount() const;
 
@@ -414,6 +422,7 @@ namespace assets {
 			const AssetDefinition*					 def = nullptr;
 			TreeTraits								 traits;
 			std::optional<renderer::TessellatedMesh> mesh;
+			glm::vec2								 collisionFrameOrigin{0.0F, 0.0F};
 			bool									 defTall = false;
 		};
 

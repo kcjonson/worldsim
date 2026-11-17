@@ -28,11 +28,13 @@ namespace ecs {
 namespace {
 
 	// Generous fixed half-size margin added to the query box (meters). It MUST
-	// exceed the largest collider half-extent + clearance so queryRect (which
-	// filters by entity CENTER) never misses a rect whose body overlaps the agent
-	// while its center sits outside the unpadded box. Collider rects here are <= 0.1 m
-	// half-extent, so 2 m is safe with wide headroom.
-	constexpr float kStaticRectQueryMarginMeters = 2.0F;
+	// exceed how far any padded collider rect reaches from its entity's position, so
+	// queryRect (which filters by entity POSITION) never misses a rect whose body
+	// overlaps the agent while its entity sits outside the unpadded box. A simple
+	// (SVG) def's rect stands at its drawing's centre, half the drawing off the
+	// position: the farthest shipped is a 1.5 m boulder's, 3.1 m at the largest
+	// placement scale.
+	constexpr float kStaticRectQueryMarginMeters = 3.5F;
 
 } // namespace
 
@@ -116,7 +118,9 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 							continue;
 						}
 						// Rect colliders only: a polygon one is in the nav mesh but not pushed against here.
-						if (const std::optional<nav::OrientedRect> box = nav::placedObstacleBox(*e, def->collisionFor(e->traits.ageClass))) {
+						if (const std::optional<nav::OrientedRect> box = nav::placedObstacleBox(
+								*e, def->collisionFor(e->traits.ageClass), registry.collisionFrameOrigin(e->templateId)
+							)) {
 							rects.push_back(*box);
 						}
 					}
