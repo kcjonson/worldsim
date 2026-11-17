@@ -587,6 +587,48 @@ TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesForAnEyeAlongAFaceLine) {
 	EXPECT_TRUE(ringsAgree(geometry::computeVisibilityPolygon(eye, kSightMm, all), geometry::computeVisibilityPolygon(eye, kSightMm, facing), 2));
 }
 
+// Loops that cross keep their back faces: a graph the offsetter rejects (three walls at a
+// corner, one of them 0.48 m long to a fourth), whose raw bands overlap at each joint, and two
+// walls of separate graphs whose bands overlap. Culled, the first polygon loses floor beside the stem that a line of sight
+// over every occluder reaches; the second cuts a sliver off along the overlap.
+TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesWhereLoopsCross) {
+	const auto expectSameSight = [](const ConstructionWorld& cw, Vec2i64 eye, std::int64_t sightMm) {
+		GeometryIndex index;
+		index.setConstructionWorld(&cw);
+		index.rebuildIfStale();
+		std::vector<OccluderSegment> all;
+		std::vector<OccluderSegment> facing;
+		index.queryOccluders(eye, sightMm, all);
+		index.queryFacingOccluders(eye, sightMm, facing);
+		const geometry::Ring fromFacing = geometry::computeVisibilityPolygon(eye, sightMm, facing);
+		EXPECT_TRUE(ringsAgree(geometry::computeVisibilityPolygon(eye, sightMm, all), fromFacing, 2));
+		return fromFacing;
+	};
+	{
+		ConstructionWorld cw;
+		buildWall(cw, {6771, 7724}, {7583, 9552}, "Heavy");
+		buildWall(cw, {7122, 8049}, {6771, 7724}, "Heavy");
+		buildWall(cw, {6771, 7724}, {4962, 6049}, "Heavy");
+		buildWall(cw, {7122, 8049}, {7813, 5130});
+		std::vector<geometry::WallSegment> walls;
+		for (const construction::WallSegment& wall : cw.segments()) {
+			walls.push_back({cw.getVertex(wall.v0)->pos, cw.getVertex(wall.v1)->pos, construction::halfThicknessMm(wall)});
+		}
+		ASSERT_NE(geometry::resolveWallBands(walls, geometry::kDefaultMiterLimit).status, geometry::OffsetStatus::Ok);
+		const Vec2i64 eye{2824, 3859};
+		const Vec2i64 floor{7083, 7672};
+		ASSERT_TRUE(sees(occludersOf(cw), eye, floor));
+		EXPECT_NE(geometry::pointInPolygon(floor, expectSameSight(cw, eye, 6000)), geometry::PointInPolygon::Outside);
+	}
+	{
+		ConstructionWorld cw;
+		buildWall(cw, {0, 0}, {3970, 487});
+		buildWall(cw, {988, 159}, {4958, 646}, "Heavy");
+		ASSERT_EQ(geometry::connectedWallGraphs({{{0, 0}, {3970, 487}, 100}, {{988, 159}, {4958, 646}, 150}}).size(), 2u);
+		expectSameSight(cw, {-2708, 30284}, 30500);
+	}
+}
+
 // The solid is what the outline loops wind round: a band's inside and its edge, not a
 // closed room's floor or the open ground.
 TEST_F(GeometryIndexTest, InsideSolidIsTheBandNotTheRoom) {

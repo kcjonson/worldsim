@@ -14,7 +14,10 @@
 //
 // Every occluder lies on a closed loop with the solid on its left, so an eye
 // outside the solid strictly on an edge's left is behind that edge's own solid,
-// and the edge (a back face) can never bound what the eye sees.
+// and the edge (a back face) can never bound what the eye sees. Where loops cross
+// (a rejected graph's bands, or two graphs' walls that meet without a joint) the
+// back faces' ends are what turn the crossing into a polygon vertex, so the facing
+// query keeps them near such an occluder.
 //
 // Doors AND windows pass sight. This is the difference from navigation: nav treats
 // a door as a movement gap but a window as a movement-solid band, whereas for sight
@@ -45,6 +48,9 @@ namespace ecs {
 		struct OccluderRecord {
 			construction::SegmentId source = 0;
 			geometry::OccluderSegment		seg;
+			// It belongs to a rejected graph, or touches, crosses or runs along an occluder of
+			// another graph.
+			bool crossesAnotherLoop = false;
 		};
 
 		// A built opening, kept for the same V3 pass. jambA/jambB are the two
@@ -87,9 +93,9 @@ namespace ecs {
 		[[nodiscard]] bool anyFacingOccluder(geometry::Vec2i64 eye, std::int64_t radiusMm) const;
 
 		// Whether no back face within radiusMm can bound what an eye at `eye` sees: it is
-		// outside the solid (insideSolid), which it would see from within, and over a
+		// outside the solid (insideSolid), which it would see from within, over a
 		// millimetre from the line of every occluder in range, where the polygon's grazing
-		// rays need the back faces.
+		// rays need the back faces, and no occluder in range crosses another loop.
 		[[nodiscard]] bool backFacesHiddenFrom(geometry::Vec2i64 eye, std::int64_t radiusMm) const;
 
 		// Whether `point` is inside or on the solid the occluder loops enclose: the loops'

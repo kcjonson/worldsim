@@ -28,27 +28,67 @@ namespace ecs {
 			return {a.x + std::llround(static_cast<double>(b.x - a.x) * fraction), a.y + std::llround(static_cast<double>(b.y - a.y) * fraction)};
 		}
 
+		// Marks every occluder that touches, crosses or runs along an occluder of another loop:
+		// `loop` numbers each occluder's loop group (one per offset graph, one per wall of a rejected
+		// graph). Occluders are swept in order of their boxes' low x, and only those whose boxes
+		// overlap are tested.
+		void markCrossings(std::vector<GeometryIndex::OccluderRecord>& occluders, const std::vector<std::size_t>& loop) {
+			struct Box {
+				std::int64_t lowX;
+				std::int64_t highX;
+				std::int64_t lowY;
+				std::int64_t highY;
+				std::size_t	 occluder;
+			};
+			std::vector<Box> boxes;
+			boxes.reserve(occluders.size());
+			for (std::size_t index = 0; index < occluders.size(); ++index) {
+				const geometry::OccluderSegment& seg = occluders[index].seg;
+				boxes.push_back({std::min(seg.a.x, seg.b.x), std::max(seg.a.x, seg.b.x), std::min(seg.a.y, seg.b.y), std::max(seg.a.y, seg.b.y), index});
+			}
+			std::ranges::sort(boxes, {}, &Box::lowX);
+			std::vector<Box> open;
+			for (const Box& box : boxes) {
+				std::erase_if(open, [&](const Box& other) { return other.highX < box.lowX; });
+				for (const Box& other : open) {
+					GeometryIndex::OccluderRecord& first  = occluders[box.occluder];
+					GeometryIndex::OccluderRecord& second = occluders[other.occluder];
+					if (loop[other.occluder] == loop[box.occluder] || other.highY < box.lowY || box.highY < other.lowY ||
+						(first.crossesAnotherLoop && second.crossesAnotherLoop)) {
+						continue;
+					}
+					if (geometry::intersectSegments(first.seg.a, first.seg.b, second.seg.a, second.seg.b).relation != geometry::SegmentRelation::Disjoint) {
+						first.crossesAnotherLoop  = true;
+						second.crossesAnotherLoop = true;
+					}
+				}
+				open.push_back(box);
+			}
+		}
+
 		// An eye against the occluder loops, one occluder at a time: the winding number round it,
 		// whether it lies on an occluder, and whether it grazes one in range, within a millimetre
-		// of its line.
+		// of its line, or one in range crosses another loop.
 		//
 		// computeVisibilityPolygon blocks a ray that runs along an occluder on both of its sides and
 		// takes the polygon's next edge from the next direction round, which a back face's end can
 		// be; a ray from under a millimetre off the line snaps its hits onto it the same way; and it
 		// drops a hit that snaps onto the eye, where the back face behind it is what stops the ray.
-		// Each needs the back faces of the occluders in range.
+		// Where loops cross, the faces meet without an end at the crossing, and the back faces' ends
+		// are what make it a vertex. Each needs the back faces of the occluders in range.
 		class EyeTally {
 		  public:
 			explicit EyeTally(geometry::Vec2i64 eye)
 				: m_eye(eye) {}
 
-			void add(const geometry::OccluderSegment& edge, bool inRange) {
-				const geometry::Vec2i64& from = edge.a;
-				const geometry::Vec2i64& to	  = edge.b;
+			void add(const GeometryIndex::OccluderRecord& occluder, bool inRange) {
+				const geometry::Vec2i64& from = occluder.seg.a;
+				const geometry::Vec2i64& to	  = occluder.seg.b;
 				const geometry::Int128	 offLine = geometry::cross(to - from, m_eye - from);
 				const int				 side	 = offLine.sign();
-				if (inRange && geometry::Int128::compareSquareToProduct(offLine, geometry::Int128::product(kHitSnapsOntoTheRayMm, kHitSnapsOntoTheRayMm),
-																		 geometry::dot(to - from, to - from)) <= 0) {
+				if (inRange && (occluder.crossesAnotherLoop ||
+								geometry::Int128::compareSquareToProduct(offLine, geometry::Int128::product(kHitSnapsOntoTheRayMm, kHitSnapsOntoTheRayMm),
+																		 geometry::dot(to - from, to - from)) <= 0)) {
 					m_grazed = true;
 				}
 				if (side == 0 && m_eye.x >= std::min(from.x, to.x) && m_eye.x <= std::max(from.x, to.x) && m_eye.y >= std::min(from.y, to.y) &&
@@ -164,6 +204,9 @@ namespace ecs {
 			wallIds.push_back(segment.id);
 		}
 
+		// The loop group of each occluder, for markCrossings.
+		std::vector<std::size_t> loop;
+		std::size_t				 loops = 0;
 		for (const std::vector<std::size_t>& graph : geometry::connectedWallGraphs(walls)) {
 			std::vector<geometry::WallSegment>			members;
 			std::vector<std::vector<geometry::WallGap>> memberGaps;
@@ -181,15 +224,20 @@ namespace ecs {
 					const geometry::WallSegment& wall = walls[index];
 					const geometry::WallBands	 rawBand{.bands = {geometry::band(wall.a, wall.b, wall.halfThicknessMm)}, .trimAtA = {0}, .trimAtB = {0}};
 					for (const geometry::OutlineEdge& edge : geometry::wallPiecesAndOutline({wall}, {sightGaps[index]}, rawBand).outline) {
-						m_occluders.push_back({wallIds[index], {edge.from, edge.to}});
+						m_occluders.push_back({wallIds[index], {edge.from, edge.to}, true}); // the raw bands overlap at every joint
+						loop.push_back(loops);
 					}
+					++loops;
 				}
 				continue;
 			}
 			for (const geometry::OutlineEdge& edge : geometry::wallPiecesAndOutline(members, memberGaps, bands).outline) {
 				m_occluders.push_back({wallIds[graph[edge.index]], {edge.from, edge.to}});
+				loop.push_back(loops);
 			}
+			++loops;
 		}
+		markCrossings(m_occluders, loop);
 		// Each wall's edges together, so the structure pass is done with a wall at its first seen edge.
 		std::ranges::stable_sort(m_occluders, {}, &OccluderRecord::source);
 	}
@@ -229,7 +277,7 @@ namespace ecs {
 				out.push_back(it->seg);
 			}
 			if (!tally.settled()) {
-				tally.add(it->seg, kept);
+				tally.add(*it, kept);
 			}
 		}
 		const bool culled = tally.backFacesHidden();
@@ -259,7 +307,7 @@ namespace ecs {
 	bool GeometryIndex::backFacesHiddenFrom(geometry::Vec2i64 eye, std::int64_t radiusMm) const {
 		EyeTally tally(eye);
 		for (const OccluderRecord& rec : m_occluders) {
-			tally.add(rec.seg, geometry::withinDistanceOfSegment(eye, rec.seg.a, rec.seg.b, radiusMm));
+			tally.add(rec, geometry::withinDistanceOfSegment(eye, rec.seg.a, rec.seg.b, radiusMm));
 			if (tally.settled()) {
 				return false;
 			}
@@ -274,7 +322,7 @@ namespace ecs {
 	bool GeometryIndex::insideSolid(geometry::Vec2i64 point) const {
 		EyeTally tally(point);
 		for (const OccluderRecord& rec : m_occluders) {
-			tally.add(rec.seg, false);
+			tally.add(rec, false);
 			if (tally.settled()) {
 				break; // on an occluder
 			}
