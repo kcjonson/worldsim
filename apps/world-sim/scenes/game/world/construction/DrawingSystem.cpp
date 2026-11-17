@@ -551,6 +551,7 @@ namespace world_sim {
 		}
 
 		points_.push_back(cursor_);
+		lastPlacement_ = PointPlacement{.pointer = snapMemoKey_.cursorWorld, .pointCount = points_.size()};
 		return true;
 	}
 
@@ -884,7 +885,8 @@ namespace world_sim {
 	}
 
 	bool DrawingSystem::restsOnLastPoint() const {
-		return activeTool_ == ToolKind::Foundation && !points_.empty() && geometry::quantize(cursor_) == geometry::quantize(points_.back());
+		return activeTool_ == ToolKind::Foundation && lastPlacement_ && lastPlacement_->pointCount == points_.size() &&
+			   snapMemoKey_.cursorWorld == lastPlacement_->pointer;
 	}
 
 	DrawingSystem::PreviewVerdict DrawingSystem::previewVerdict() const {

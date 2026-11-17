@@ -462,7 +462,8 @@ namespace world_sim {
 		/// What the next click would do, as the preview, the status strip, and the click read
 		/// it: while it closes (or in the Rectangle tool commits), the close's verdict;
 		/// otherwise whether the point may be placed, and why not. The Freeform tool's pointer
-		/// resting on the point just placed proposes nothing: valid, and the click places nothing.
+		/// resting where it placed the last point proposes nothing: valid, and the click places
+		/// nothing.
 		struct ClickVerdict {
 			bool		valid = true;
 			bool		proposed = true;
@@ -470,7 +471,9 @@ namespace world_sim {
 		};
 		[[nodiscard]] ClickVerdict clickVerdict() const;
 
-		/// The Freeform tool's snapped point is the last placed point, to the millimeter.
+		/// The Freeform tool's pointer has not moved in the world since the click that placed the
+		/// last point. Its snapped point need not be that point: a length that rounds to zero
+		/// leaves the raw pointer, a few centimeters off.
 		[[nodiscard]] bool restsOnLastPoint() const;
 
 		/// Screen pixels per world meter at the current zoom (mirrors the render path:
@@ -710,6 +713,14 @@ namespace world_sim {
 		construction::RectangleSnapKind snapMemoRectangleSnapKind_ = construction::RectangleSnapKind::None;
 		std::vector<Foundation::Vec2>	snapMemoRectangleCorners_;
 		std::string						snapMemoRectangleLabel_;
+
+		// Freeform tool: the pointer, world meters, of the click that placed a point, and how many
+		// points that made (restsOnLastPoint).
+		struct PointPlacement {
+			Foundation::Vec2 pointer{0.0F, 0.0F};
+			std::size_t		 pointCount = 0;
+		};
+		std::optional<PointPlacement> lastPlacement_;
 
 		// The foundation tool the Build menu's Foundation entry opens: the last one activated.
 		FoundationTool lastFoundationTool_ = FoundationTool::Rectangle;

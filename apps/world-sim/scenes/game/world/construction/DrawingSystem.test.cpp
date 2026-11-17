@@ -1626,20 +1626,28 @@ TEST_F(DrawingStripVerdictTest, AFreeformStripReadsThePointNotTheOpenShape) {
 	expectTheStripReadsThePreview();
 }
 
-// After each click the pointer rests on the point just placed: nothing is proposed yet, so
-// nothing reads refused, and a click there places nothing and says nothing.
+// After each click the pointer rests where it placed the point: nothing is proposed yet, so
+// nothing reads refused, and a click there places nothing and says nothing. With Round lengths
+// on, as a new player has it, the point placed is the pointer's rounded a few centimeters along,
+// and the pointer's own spot, that close to it, is still no proposal; with Alt, the point is the
+// pointer's.
 TEST_F(DrawingStripVerdictTest, AFreeformPointerOnThePointJustPlacedProposesNothing) {
-	drawing->activateFoundationTool();
-	for (const glm::vec2 corner : kThreeCorners) {
-		place({corner});
-		hoverFreeform(corner);
-		expectTheStripReadsThePreview();
-		const int placed = drawing->status().pointCount;
-		place({corner});
-		EXPECT_EQ(drawing->status().pointCount, placed);
+	world_sim::UserSettings::Get().drawing = world_sim::DrawingSettings{.roundLengths = true, .showKeyGuide = true};
+	for (const bool freeform : {false, true}) {
+		SCOPED_TRACE(::testing::Message() << "Alt " << freeform);
+		drawing->activateFoundationTool();
+		for (const glm::vec2 corner : {glm::vec2{0.0F, 0.0F}, glm::vec2{6.03F, 0.02F}, glm::vec2{6.04F, 3.03F}}) {
+			const glm::vec2 screen = seen.screenOf(corner);
+			drawing->handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight, freeform);
+			const int placed = drawing->status().pointCount;
+			drawing->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, freeform);
+			expectTheStripReadsThePreview();
+			drawing->handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight, freeform);
+			EXPECT_EQ(drawing->status().pointCount, placed);
+		}
+		EXPECT_EQ(drawing->status().pointCount, 3);
+		EXPECT_TRUE(toasts.empty()) << lastToast();
 	}
-	EXPECT_EQ(drawing->status().pointCount, 3);
-	EXPECT_TRUE(toasts.empty()) << lastToast();
 }
 
 TEST_F(DrawingStripVerdictTest, AWallStripReadsThePreview) {
