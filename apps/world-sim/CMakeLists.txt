@@ -136,21 +136,9 @@ add_custom_target(world-sim-shaders ALL
 )
 add_dependencies(world-sim-shaders world-view-shaders planet-view-shaders)
 
-# Mirror assets to the executable directory every build.
-# Uses cmake/mirror-assets.cmake which mirrors each source subdir independently
-# via robocopy /MIR (Win) / rsync --delete (non-Win). Per-subdir mirroring means
-# extra dest dirs not in source (e.g. assets/planets/ staged separately) are left
-# untouched, while deletions within source-managed subdirs are propagated.
-add_custom_target(world-sim-assets ALL
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/assets
-        -DDEST_DIR=$<TARGET_FILE_DIR:world-sim>/assets
-        -P ${CMAKE_SOURCE_DIR}/cmake/mirror-assets.cmake
-    COMMENT "Mirroring assets to world-sim directory"
-)
-
-# Make world-sim depend on the shader and asset mirrors so they are in place before running
-add_dependencies(world-sim world-sim-assets world-sim-shaders)
+# Make world-sim depend on the shader mirror so it is in place before running. Assets and fonts
+# are staged by the root CMakeLists (stage_assets, stage_fonts).
+add_dependencies(world-sim world-sim-shaders)
 
 # world-sim's own pure code, which no library's test target reaches
 if(BUILD_TESTING)

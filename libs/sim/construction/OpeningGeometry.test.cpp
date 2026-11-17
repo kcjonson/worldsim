@@ -46,7 +46,7 @@ namespace {
 	// unless asked for a blueprint.
 	SegmentId addWall(ConstructionWorld& world, Vec2i64 a, Vec2i64 b, const std::string& thickness,
 					  FoundationState state = FoundationState::Built) {
-		const SegmentCommitResult result = world.commitSegment(a, b, "Wood", thickness, kInvalidFoundation);
+		const SegmentCommitResult result = world.commitSegment(a, b, "Wood", thickness, kInvalidFoundation, world.version());
 		EXPECT_TRUE(result.ok());
 		for (const SegmentId id : result.createdSegments) {
 			EXPECT_TRUE(world.setSegmentState(id, state));

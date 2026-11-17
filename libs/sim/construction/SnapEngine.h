@@ -21,6 +21,16 @@
 // Vertex and edge snapping to existing geometry are always on; they are the zero-gap
 // adjacency the clearance rule depends on, not a stylistic nicety.
 //
+// The length step (SnapLengthsDetail.h) runs last, and only where the point can still
+// slide along a line: a single guide, the angle step's ray, or the raw direction from the
+// previous point. There a common length that catches sets the segment's length, else the
+// length rounds to the increment, each behind its DrawingAids switch. It never moves a
+// point something else fixed: a close onto the first point, a vertex, edge, wall endpoint,
+// or wall segment hit, or a crossing (unless commonLengthBeatsCrossing holds and a common
+// length catches on one of its two lines), and nothing under freeform. It follows the
+// guide, angle, and raw stages because they choose the line; a length only slides the
+// point along it, so it can never change which line won.
+//
 // Snap radii and the angle increment come from assets::SnappingConfig
 // (D10); the engine does not hardcode them.
 //
@@ -45,6 +55,8 @@
 #include "ConstructionWorld.h"
 #include "DrawingAids.h"
 
+#include <assets/ConstructionRegistry.h>
+
 #include <core/Vec2i64.h>
 #include <math/Types.h>
 
@@ -53,16 +65,16 @@
 #include <optional>
 #include <vector>
 
-namespace assets {
-	struct SnappingConfig;
-}
-
 namespace construction {
 
 	namespace snap_guides {
 		struct GuideContext;
 		struct GuideStudy;
 	} // namespace snap_guides
+
+	namespace snap_lengths {
+		struct LengthStep;
+	} // namespace snap_lengths
 
 	enum class SnapKind {
 		None,		   // raw cursor, no snap applied
@@ -101,13 +113,39 @@ namespace construction {
 		bool			   rightAngle = false;
 		::Foundation::Vec2 rightAngleEdgeDirection{0.0F, 0.0F}; // unit, from `from` along the perpendicular edge
 		// Measured from the guide's own node; it is the segment's length only when throughPreviousPoint.
-		float distanceFromNodeMeters = 0.0F; // |to - from|
+		// It is |to - from|, except after an angle step with a length snap, where it is the snapped length itself
+		// (the snapped point is stored as a float, so far from the origin the measured distance can differ
+		// from the snapped length by the point's float rounding, about a tenth of a millimeter a few kilometers out).
+		float distanceFromNodeMeters = 0.0F;
 		// True when the node is within 1 mm of the last placed point: with one point placed a guide
 		// through it is true, with three or more a guide through the FIRST point is false.
 		bool throughPreviousPoint = false;
 	};
 
 	inline constexpr std::size_t kMaxSnapGuides = 2;
+
+	/// What the length step did to the point (D12, The length step).
+	enum class LengthSnapKind {
+		None,			   // nothing: no length rule ran, or none moved the point
+		Rounded,		   // the segment's length rounded to the increment
+		RoundedAlongGuide, // the distance along a guide from its node rounded to the increment
+		CommonLength,	   // the segment's length set to a kept common length
+	};
+
+	/// An edge whose length a common length came from: an earlier edge of the shape, a
+	/// foundation ring edge (in the wall tool between inset corners), or a wall segment.
+	struct LengthEdge {
+		::Foundation::Vec2 start{0.0F, 0.0F};
+		::Foundation::Vec2 end{0.0F, 0.0F};
+	};
+
+	// The result's bounds, so a snap never allocates. Every kept length is reported: the
+	// engine keeps at most this many whatever commonLengthMaxCount says, and the validator
+	// refuses more. Matched edges are capped too, and normal play reaches it (eight square
+	// shacks in range give one 32-edge group): past it the lowest-priority edges are left
+	// out, and only the ticks miss them.
+	inline constexpr std::size_t kMaxReportedCommonLengths = static_cast<std::size_t>(assets::kMaxCommonLengthCount);
+	inline constexpr std::size_t kMaxMatchedLengthEdges = 32;
 
 	struct SnapResult {
 		::Foundation::Vec2 point{0.0F, 0.0F};
@@ -130,6 +168,20 @@ namespace construction {
 		// Both are the invalid sentinel for every other (and every foundation) kind.
 		SegmentId hitSegment = kInvalidSegment;
 		VertexId  hitVertex = kInvalidVertex;
+
+		// The length step's report. Nothing on screen reads these fields yet (the look slice does).
+		// lengthMeters is the length it set, measured from lengthFrom:
+		// the previous point, or for RoundedAlongGuide the guide's node (guides[0].from).
+		LengthSnapKind	   lengthSnap = LengthSnapKind::None;
+		float			   lengthMeters = 0.0F;
+		::Foundation::Vec2 lengthFrom{0.0F, 0.0F};
+		// With CommonLength, the matched group's edges, highest priority first, for the ticks.
+		std::array<LengthEdge, kMaxMatchedLengthEdges> matchedEdges{};
+		std::size_t									   matchedEdgeCount = 0;
+		// The kept common lengths, best first, so a label can show "=" on a match. Empty
+		// when common lengths are off or freeform.
+		std::array<float, kMaxReportedCommonLengths> commonLengths{};
+		std::size_t									 commonLengthCount = 0;
 
 		// True when the snap closes the polygon onto its origin (kind == Origin):
 		// the tool reads this to know a click commits.
@@ -267,15 +319,22 @@ namespace construction {
 		// Angle-snap the segment (prev -> cursor) onto the nearest multiple of the
 		// configured increment, measured relative to the previous segment when one
 		// exists, else relative to the world +x axis. Distance along the ray is
-		// preserved.
-		[[nodiscard]] SnapResult snapAngle(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor) const;
+		// kept, then the length step runs along it. None when the cursor is on the
+		// previous point or the increment is not positive.
+		[[nodiscard]] std::optional<SnapResult> snapAngle(
+			const std::vector<::Foundation::Vec2>& points,
+			::Foundation::Vec2					   cursor,
+			const snap_lengths::LengthStep&		   lengths
+		) const;
 
 		// The guide step's winner, if any: a GuideLine or GuideCrossing, or Origin when it
 		// lands within the close radius of the first point once `points` holds
-		// `minClosePoints`.
+		// `minClosePoints`. A single line then takes the length step; a crossing keeps its
+		// point unless commonLengthBeatsCrossing holds and a common length catches.
 		[[nodiscard]] std::optional<SnapResult> alignToGuides(
 			const snap_guides::GuideContext& context,
 			const snap_guides::GuideStudy&	 study,
+			const snap_lengths::LengthStep&	 lengths,
 			std::size_t						 minClosePoints,
 			float							 originCloseRadiusMeters
 		) const;
@@ -288,7 +347,25 @@ namespace construction {
 			const SnapInput&					   input,
 			const snap_guides::GuideContext&	   context,
 			const snap_guides::GuideStudy&		   study,
+			const snap_lengths::LengthStep&		   lengths,
 			std::size_t							   minClosePoints
+		) const;
+
+		// snap()'s and snapWall()'s rules, first that applies wins; the callers add the
+		// kept common lengths.
+		[[nodiscard]] SnapResult foundationRules(
+			const std::vector<::Foundation::Vec2>& points,
+			::Foundation::Vec2					   cursor,
+			const SnapInput&					   input,
+			const snap_guides::GuideContext&	   context,
+			const snap_lengths::LengthStep&		   lengths
+		) const;
+		[[nodiscard]] SnapResult wallRules(
+			const std::vector<::Foundation::Vec2>& points,
+			::Foundation::Vec2					   cursor,
+			const SnapInput&					   input,
+			const snap_guides::GuideContext&	   context,
+			const snap_lengths::LengthStep&		   lengths
 		) const;
 
 		// What a guide study reads for this call.

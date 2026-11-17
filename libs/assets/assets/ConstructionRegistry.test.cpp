@@ -727,6 +727,12 @@ TEST_F(ConstructionRegistryTest, Validation_RejectsOutOfRangeGuideAndLengthKeys)
 	);
 	expectSnappingRejected("<guideCornerLimit>-1</guideCornerLimit>", "guideCornerLimit");
 	expectSnappingRejected("<commonLengthMergeMeters>0.6</commonLengthMergeMeters>", "commonLengthMergeMeters");
+	// Past the most lengths the snap engine reports, a kept length could catch with no label.
+	expectSnappingRejected("<commonLengthMaxCount>17</commonLengthMaxCount>", "commonLengthMaxCount must be in [0, 16]");
+	EXPECT_TRUE(validateWithSnapping(
+		"<?xml version=\"1.0\"?>\n<ConstructionSnapping><commonLengthMaxCount>16</commonLengthMaxCount></ConstructionSnapping>"
+	));
+	ConfigValidator::clearErrors();
 	expectSnappingRejected(
 		"<DrawingSettingsDefaults><rectangleGridSpacingMeters>0.75</rectangleGridSpacingMeters></DrawingSettingsDefaults>",
 		"rectangleGridSpacingMeters"

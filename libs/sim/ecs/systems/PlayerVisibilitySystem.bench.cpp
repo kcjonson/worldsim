@@ -147,8 +147,14 @@ namespace {
 	// A wall from `from` to `to` (metres from the base's origin), with a gap in its middle when `gap`.
 	void buildWall(construction::ConstructionWorld& walls, glm::vec2 from, glm::vec2 to, bool gap) {
 		auto commit = [&walls](glm::vec2 start, glm::vec2 end) {
-			const construction::SegmentCommitResult result =
-				walls.commitSegment(millimetres(kBaseOrigin + start), millimetres(kBaseOrigin + end), "Wood", "Standard", construction::kInvalidFoundation);
+			const construction::SegmentCommitResult result = walls.commitSegment(
+				millimetres(kBaseOrigin + start),
+				millimetres(kBaseOrigin + end),
+				"Wood",
+				"Standard",
+				construction::kInvalidFoundation,
+				walls.version()
+			);
 			for (const construction::SegmentId segment : result.createdSegments) {
 				walls.setSegmentState(segment, construction::FoundationState::Built);
 			}

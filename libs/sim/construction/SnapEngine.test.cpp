@@ -35,7 +35,7 @@ namespace {
 
 	// Every helper on unless a case says otherwise (D12, Tests), set here so no test depends
 	// on the player's defaults.
-	const DrawingAids kAllAids = snap_test::allAidsOn();
+	const DrawingAids kAllAids = snap_test::guideAidsOn();
 
 	SnapInput input(bool freeform = false, float originCloseRadiusMeters = -1.0F, const DrawingAids& aids = kAllAids) {
 		return SnapInput{.aids = aids, .freeform = freeform, .originCloseRadiusMeters = originCloseRadiusMeters};
@@ -338,7 +338,7 @@ namespace {
 		auto			  f = world.commitFoundation(sq, "Wood");
 		ASSERT_TRUE(f.ok());
 		host = f.id;
-		auto seg = world.commitSegment(mm(2.0F, 2.0F), mm(8.0F, 2.0F), "Wood", "Standard", host);
+		auto seg = world.commitSegment(mm(2.0F, 2.0F), mm(8.0F, 2.0F), "Wood", "Standard", host, world.version());
 		ASSERT_TRUE(seg.ok());
 	}
 
@@ -379,7 +379,7 @@ TEST(SnapEngine, WallEndpointBeatsFoundationVertex) {
 	// must win on priority even though both are equidistant.
 	std::vector<Vec2> sq = {{0.0F, 0.0F}, {10.0F, 0.0F}, {10.0F, 10.0F}, {0.0F, 10.0F}};
 	ASSERT_TRUE(world.commitFoundation(sq, "Wood").ok());
-	ASSERT_TRUE(world.commitSegment(mm(0.0F, 0.0F), mm(5.0F, 3.0F), "Wood", "Standard", 1).ok());
+	ASSERT_TRUE(world.commitSegment(mm(0.0F, 0.0F), mm(5.0F, 3.0F), "Wood", "Standard", 1, world.version()).ok());
 
 	SnapEngine engine(cfg, world);
 	auto	   r = engine.snapWall({}, {0.1F, 0.1F}, wallInput(/*freeform=*/false, /*wallHalfThicknessMm=*/100));
@@ -713,7 +713,7 @@ namespace {
 		std::vector<Vec2> sq = {{0.0F, 0.0F}, {20.0F, 0.0F}, {20.0F, 20.0F}, {0.0F, 20.0F}};
 		auto			  f = world.commitFoundation(sq, "Wood");
 		EXPECT_TRUE(f.ok());
-		auto seg = world.commitSegment(mm(2.0F, 6.0F), mm(2.0F + lengthMeters, 6.0F), "Wood", "Standard", f.id);
+		auto seg = world.commitSegment(mm(2.0F, 6.0F), mm(2.0F + lengthMeters, 6.0F), "Wood", "Standard", f.id, world.version());
 		EXPECT_TRUE(seg.ok());
 		EXPECT_TRUE(world.setSegmentState(seg.id, FoundationState::Built));
 		return seg.id;
@@ -772,7 +772,7 @@ TEST(SnapEngine, OpeningDoesNotSnapToBlueprintWall) {
 	std::vector<Vec2> sq = {{0.0F, 0.0F}, {20.0F, 0.0F}, {20.0F, 20.0F}, {0.0F, 20.0F}};
 	auto			  f = world.commitFoundation(sq, "Wood");
 	ASSERT_TRUE(f.ok());
-	auto seg = world.commitSegment(mm(2.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", f.id);
+	auto seg = world.commitSegment(mm(2.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", f.id, world.version());
 	ASSERT_TRUE(seg.ok());
 
 	SnapEngine engine(cfg, world);
@@ -875,9 +875,14 @@ TEST_F(OpeningSnapAtCorners, SnapStopsWhereTheValidatorStops) {
 			ConstructionWorld  world;
 			const FoundationId f = host(world);
 			const float		   radians = degrees * std::numbers::pi_v<float> / 180.0F;
-			auto			   seg = world.commitSegment(mm(4.0F, 4.0F), mm(8.0F, 4.0F), "Wood", thickness, f);
+			auto			   seg = world.commitSegment(mm(4.0F, 4.0F), mm(8.0F, 4.0F), "Wood", thickness, f, world.version());
 			auto			   other = world.commitSegment(
-				  mm(4.0F, 4.0F), mm(4.0F + 4.0F * std::cos(radians), 4.0F + 4.0F * std::sin(radians)), "Wood", otherThickness, f
+				  mm(4.0F, 4.0F),
+				  mm(4.0F + 4.0F * std::cos(radians), 4.0F + 4.0F * std::sin(radians)),
+				  "Wood",
+				  otherThickness,
+				  f,
+				  world.version()
 			  );
 			ASSERT_TRUE(seg.ok());
 			ASSERT_TRUE(other.ok());
@@ -893,8 +898,8 @@ TEST_F(OpeningSnapAtCorners, SnapStopsWhereTheValidatorStops) {
 TEST_F(OpeningSnapAtCorners, FreeEndAndStraightJoinSnapMarginPlusHalfWidthFromTheVertex) {
 	ConstructionWorld  world;
 	const FoundationId f = host(world);
-	auto			   first = world.commitSegment(mm(2.0F, 6.0F), mm(6.0F, 6.0F), "Wood", "Standard", f);
-	auto			   second = world.commitSegment(mm(6.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", f);
+	auto			   first = world.commitSegment(mm(2.0F, 6.0F), mm(6.0F, 6.0F), "Wood", "Standard", f, world.version());
+	auto			   second = world.commitSegment(mm(6.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", f, world.version());
 	ASSERT_TRUE(first.ok());
 	ASSERT_TRUE(second.ok());
 	ASSERT_TRUE(world.setSegmentState(first.id, FoundationState::Built));
@@ -917,9 +922,9 @@ TEST_F(OpeningSnapAtCorners, FreeEndAndStraightJoinSnapMarginPlusHalfWidthFromTh
 TEST_F(OpeningSnapAtCorners, SnapStopsWhereTheValidatorStopsAtATJunction) {
 	ConstructionWorld  world;
 	const FoundationId f = host(world);
-	ASSERT_TRUE(world.commitSegment(mm(4.0F, 4.0F), mm(12.0F, 4.0F), "Wood", "Light", f).ok());
+	ASSERT_TRUE(world.commitSegment(mm(4.0F, 4.0F), mm(12.0F, 4.0F), "Wood", "Light", f, world.version()).ok());
 	// A Heavy stem splits the Light wall at (8,4); the half ending there is the one under test.
-	ASSERT_TRUE(world.commitSegment(mm(8.0F, 4.0F), mm(8.0F, 8.0F), "Wood", "Heavy", f).ok());
+	ASSERT_TRUE(world.commitSegment(mm(8.0F, 4.0F), mm(8.0F, 8.0F), "Wood", "Heavy", f, world.version()).ok());
 	SegmentId through = kInvalidSegment;
 	for (const WallSegment& s : world.segments()) {
 		ASSERT_TRUE(world.setSegmentState(s.id, FoundationState::Built));

@@ -223,6 +223,19 @@ jobs:
       shell: bash
       run: cmake --build build
 
+    # Same check as build.yml's, here to catch a Windows/Linux disagreement in the atlas tool's output.
+    - name: Check font atlas JSON is committed
+      shell: bash
+      run: |
+        untracked="$(git ls-files --others --exclude-standard -- fonts/)"
+        if ! git diff --exit-code --ignore-cr-at-eol --stat -- fonts/ || [ -n "$untracked" ]; then
+          # head closes the pipe early; without the || true, pipefail would end the step before the message.
+          git diff --ignore-cr-at-eol -- fonts/ | head -n 40 || true
+          if [ -n "$untracked" ]; then echo "Generated but not committed: $untracked"; fi
+          echo "::error::fonts/*-SDF.json does not match what the font-atlas target generates. Run 'cmake --build build --target font-atlas' and commit fonts/*-SDF.json. If only one OS fails this check, the tool's output differs by platform and the tool needs fixing."
+          exit 1
+        fi
+
     - name: sccache stats
       shell: bash
       run: sccache --show-stats

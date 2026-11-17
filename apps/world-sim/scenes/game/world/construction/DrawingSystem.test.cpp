@@ -67,7 +67,14 @@ namespace {
 			const auto foundation = built.commitFoundation(std::vector<Foundation::Vec2>{{30.0F, -10.0F}, {60.0F, -10.0F}, {60.0F, 10.0F}, {30.0F, 10.0F}}, "Wood");
 			ASSERT_TRUE(foundation.ok());
 			built.setState(foundation.id, construction::FoundationState::Built);
-			const auto wall = built.commitSegment(geometry::quantize(Foundation::Vec2{32.0F, 0.0F}), geometry::quantize(Foundation::Vec2{58.0F, 0.0F}), "Wood", "Standard", foundation.id);
+			const auto wall = built.commitSegment(
+				geometry::quantize(Foundation::Vec2{32.0F, 0.0F}),
+				geometry::quantize(Foundation::Vec2{58.0F, 0.0F}),
+				"Wood",
+				"Standard",
+				foundation.id,
+				built.version()
+			);
 			ASSERT_TRUE(wall.ok());
 			for (const construction::SegmentId id : wall.createdSegments) {
 				built.setSegmentState(id, construction::FoundationState::Built);
@@ -461,7 +468,12 @@ namespace {
 			DrawingWallChainTest::SetUp();
 			const construction::FoundationId host = hostFoundation(*drawing);
 			const auto wall = drawing->world().commitSegment(
-				geometry::quantize(Foundation::Vec2{-1.0F, 0.0F}), geometry::quantize(Foundation::Vec2{1.0F, 0.0F}), "Wood", "Standard", host
+				geometry::quantize(Foundation::Vec2{-1.0F, 0.0F}),
+				geometry::quantize(Foundation::Vec2{1.0F, 0.0F}),
+				"Wood",
+				"Standard",
+				host,
+				drawing->world().version()
 			);
 			ASSERT_TRUE(wall.ok());
 			buildEverySegment(drawing->world());
@@ -530,6 +542,57 @@ TEST_F(DrawingWallChainTest, DevClosedLoopBuiltFormsARoom) {
 	EXPECT_EQ(drawing->devCommitWalls(loop, "Wood", "Standard", host, true), 4);
 	EXPECT_EQ(drawing->world().vertices().size(), 4U);
 	EXPECT_EQ(construction::detectRooms(drawing->world()).size(), 1U);
+}
+
+TEST_F(DrawingWallChainTest, DevCommittedChainSharesOnePlacementOrderEqualToTheVersionBefore) {
+	const construction::FoundationId host = hostFoundation(*drawing);
+	std::vector<Foundation::Vec2>	 loop;
+	for (const glm::vec2 corner : kRoom) {
+		loop.push_back({corner.x, corner.y});
+	}
+	loop.push_back(loop.front());
+	const std::uint64_t versionBefore = drawing->world().version();
+	ASSERT_EQ(drawing->devCommitWalls(loop, "Wood", "Standard", host, false), 4);
+	ASSERT_EQ(drawing->world().segments().size(), 4U);
+	for (const construction::WallSegment& segment : drawing->world().segments()) {
+		EXPECT_EQ(segment.placementOrder, versionBefore);
+	}
+}
+
+TEST_F(DrawingWallChainTest, ToolDrawnChainSharesOnePlacementOrder) {
+	hostFoundation(*drawing);
+	drawing->activateWallTool();
+	clickRoomCorners(*drawing);
+	clickWith(*drawing, kRoom[0]);
+	ASSERT_EQ(drawing->world().segments().size(), 4U) << lastToast();
+	const std::uint64_t order = drawing->world().segments().front().placementOrder;
+	for (const construction::WallSegment& segment : drawing->world().segments()) {
+		EXPECT_EQ(segment.placementOrder, order);
+	}
+}
+
+TEST_F(DrawingWallChainTest, ALaterChainTakesAGreaterPlacementOrder) {
+	hostFoundation(*drawing);
+	drawing->activateWallTool();
+	clickRoomCorners(*drawing);
+	clickWith(*drawing, kRoom[0]);
+	ASSERT_EQ(drawing->world().segments().size(), 4U) << lastToast();
+	const std::uint64_t firstOrder = drawing->world().segments().front().placementOrder;
+
+	for (const glm::vec2 point : {glm::vec2{-18.0F, -12.0F}, glm::vec2{-12.0F, -12.0F}, glm::vec2{-12.0F, -4.0F}}) {
+		clickWith(*drawing, point);
+	}
+	ASSERT_TRUE(drawing->finishChain());
+	ASSERT_EQ(drawing->world().segments().size(), 6U) << lastToast();
+	std::size_t laterChain = 0;
+	for (const construction::WallSegment& segment : drawing->world().segments()) {
+		if (segment.placementOrder == firstOrder) {
+			continue;
+		}
+		EXPECT_GT(segment.placementOrder, firstOrder);
+		++laterChain;
+	}
+	EXPECT_EQ(laterChain, 2U);
 }
 
 namespace {

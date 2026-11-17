@@ -29,11 +29,7 @@ namespace {
 		void onEnter(app::App& /*app*/) override {
 			LOG_INFO(UI, "Tree Scene - Lua Asset Generator Demo (40 trees)");
 
-			// Load the tree definition from XML
-			size_t loaded = assets::AssetRegistry::Get().loadDefinitionsFromFolder("assets/definitions");
-			LOG_INFO(UI, "Loaded %zu asset definitions", loaded);
-
-			// Verify the tree definition exists
+			// ui-sandbox loads the asset library at startup
 			const auto* treeDef = assets::AssetRegistry::Get().getDefinition(kTreeAssetName);
 			if (treeDef == nullptr) {
 				LOG_ERROR(UI, "Asset definition not found: %s", kTreeAssetName);

@@ -32,7 +32,7 @@ using geometry::Vec2i64;
 namespace {
 
 	SegmentId buildWall(ConstructionWorld& cw, Vec2i64 a, Vec2i64 b) {
-		SegmentCommitResult r = cw.commitSegment(a, b, "wood", "standard", kInvalidFoundation);
+		SegmentCommitResult r = cw.commitSegment(a, b, "wood", "standard", kInvalidFoundation, cw.version());
 		EXPECT_TRUE(r.ok());
 		// A T-junction commit can create several segments (the new span plus the
 		// split halves of any host it lands on); build every one of them.

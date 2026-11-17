@@ -46,10 +46,4 @@ add_custom_target(ui-sandbox-shaders ALL
 add_dependencies(ui-sandbox-shaders world-view-shaders planet-view-shaders)
 add_dependencies(ui-sandbox ui-sandbox-shaders)
 
-# Copy all assets to executable directory (definitions, svg, lua, etc.)
-add_custom_command(TARGET ui-sandbox POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_SOURCE_DIR}/assets
-    $<TARGET_FILE_DIR:ui-sandbox>/assets
-    COMMENT "Copying assets to ui-sandbox directory"
-)
+# Fonts and assets are staged beside the exe by the root CMakeLists (stage_fonts, stage_assets).

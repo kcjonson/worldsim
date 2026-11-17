@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <limits>
 #include <span>
@@ -1237,6 +1238,9 @@ namespace world_sim {
 				 commit.firstRefusal = std::move(reason);
 			 }
 		};
+		// Read once, from the world committed into: every segment of the chain shares it, so the
+		// chain is one owner (D12). A trial on a copy reads the same value the real commit will.
+		const std::uint64_t placementOrder = into.version();
 		for (std::size_t i = 0; i + 1 < chain.size(); ++i) {
 			const Foundation::Vec2 a = chain[i];
 			const Foundation::Vec2 b = chain[i + 1];
@@ -1246,8 +1250,9 @@ namespace world_sim {
 				skip(construction::validationReason(check.code));
 				continue;
 			}
-			const construction::SegmentCommitResult result =
-				into.commitSegment(geometry::quantize(a), geometry::quantize(b), activeMaterial_, activeThicknessPreset_, wallHost_);
+			const construction::SegmentCommitResult result = into.commitSegment(
+				geometry::quantize(a), geometry::quantize(b), activeMaterial_, activeThicknessPreset_, wallHost_, placementOrder
+			);
 			if (!result.ok()) {
 				skip("segment rejected");
 				continue;
@@ -1270,11 +1275,12 @@ namespace world_sim {
 		// consecutive pair straight to the topology with no soft-validator pass, so a
 		// caller can stamp a wall loop in one shot. commitSegment still enforces the
 		// hard topology invariants (zero-length, X-crossing, duplicate, T-split).
-		int committed = 0;
+		const std::uint64_t placementOrder = constructionWorld_.version();
+		int					committed = 0;
 		for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
 			const geometry::Vec2i64 qa = geometry::quantize(pts[i]);
 			const geometry::Vec2i64 qb = geometry::quantize(pts[i + 1]);
-			const auto				result = constructionWorld_.commitSegment(qa, qb, material, thicknessPreset, host);
+			const auto				result = constructionWorld_.commitSegment(qa, qb, material, thicknessPreset, host, placementOrder);
 			if (!result.ok()) {
 				continue;
 			}
@@ -1375,7 +1381,12 @@ namespace world_sim {
 		}
 
 		const auto result = constructionWorld_.commitSegment(
-			geometry::quantize(bestA), geometry::quantize(bestB), activeMaterial_, activeThicknessPreset_, host
+			geometry::quantize(bestA),
+			geometry::quantize(bestB),
+			activeMaterial_,
+			activeThicknessPreset_,
+			host,
+			constructionWorld_.version()
 		);
 		if (!result.ok()) {
 			if (callbacks_.onToast) {

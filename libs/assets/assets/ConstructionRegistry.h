@@ -202,6 +202,11 @@ namespace assets {
 		float rectangleGridSpacingMeters = 1.0F;
 	};
 
+	/// The most common lengths the snap engine keeps and reports, so a snap never allocates
+	/// and no length catches without its label. The validator refuses a larger
+	/// commonLengthMaxCount.
+	inline constexpr int kMaxCommonLengthCount = 16;
+
 	/// Snapping parameters for the drawing tools.
 	/// Float members are in meters/degrees.
 	/// Int64 members are pre-quantized to millimeters.

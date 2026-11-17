@@ -466,9 +466,14 @@ namespace {
 		}
 
 		void wall(glm::vec2 a, glm::vec2 b, bool door) {
-			const auto commit = construction.commitSegment({std::llround(a.x * 1000.0F), std::llround(a.y * 1000.0F)},
-														   {std::llround(b.x * 1000.0F), std::llround(b.y * 1000.0F)}, "Wood", "Standard",
-														   construction::kInvalidFoundation);
+			const auto commit = construction.commitSegment(
+				{std::llround(a.x * 1000.0F), std::llround(a.y * 1000.0F)},
+				{std::llround(b.x * 1000.0F), std::llround(b.y * 1000.0F)},
+				"Wood",
+				"Standard",
+				construction::kInvalidFoundation,
+				construction.version()
+			);
 			for (const auto id : commit.createdSegments) {
 				construction.setSegmentState(id, construction::FoundationState::Built);
 			}
