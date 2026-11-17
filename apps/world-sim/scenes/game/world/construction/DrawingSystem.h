@@ -147,7 +147,7 @@ namespace world_sim {
 			ecs::World*					world;
 			world::WorldCamera*			camera;
 			ecs::NavigationSystem*		navigation; // the ground gates (BuildableOnceCleared for foundations, BuildableNow for walls); the dev verbs' too
-			// The preview's colours where a shape can and can't go, and a matched length's
+			// The preview's colors where a shape can and can't go, and a matched length's
 			// label, from the scene's theme.
 			Foundation::Color validColor{};
 			Foundation::Color invalidColor{};

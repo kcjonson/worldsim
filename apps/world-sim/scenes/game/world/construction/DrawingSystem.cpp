@@ -771,6 +771,7 @@ namespace world_sim {
 			.closeRadiusMeters = effectiveOriginCloseRadiusMeters(),
 			.canClose = points_.size() >= (activeTool_ == ToolKind::Wall ? construction::kMinClosingWallChainPoints : kMinClosingShapePoints),
 			.willClose = verdict.closeHalo,
+			.clickCloses = willClose_,
 			.snappedPointInvalid = verdict.markerInvalid,
 			.invalidColor = invalidColor_,
 			.accentColor = accentColor_,

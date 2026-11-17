@@ -66,6 +66,7 @@ namespace world_sim {
 		float								 closeRadiusMeters; // the first point's close radius, zoom-floored, as the snap was given it
 		bool								 canClose;			// enough points placed for a click on the first point to close
 		bool								 willClose;			// the next click closes the shape and commits it: the close halo draws
+		bool								 clickCloses = false; // the tool's close: the next click closes the shape, on the first point or by the near-start rescue; the angle readout reads the closed shape
 		bool								 snappedPointInvalid = false; // off buildable ground, or a refused close: the marker's dot takes invalidColor
 		Foundation::Color					 invalidColor{};
 		Foundation::Color					 accentColor{}; // a length label that matches a kept common length, from the UI theme

@@ -61,12 +61,16 @@ namespace world_sim {
 		constexpr float kMatchedEdgeTickWidthPx = 1.75F;
 		constexpr float kMatchedEdgeTickSpacingPx = 4.0F;
 		// The angle readout's arc round a corner that is not square. Its degrees sit outside the
-		// arc on the corner's bisector, the plate this far off the arc (the text 6 px off at an
-		// interface size of 100%, the prototype's); like the other labels' gaps, it is the
-		// plate's, so it holds as the plate grows with the interface size.
+		// arc on the corner's bisector, the whole plate at least this far beyond the arc along
+		// the bisector; like the other labels' gaps, it is the plate's, so it holds as the plate
+		// grows with the interface size.
 		constexpr float kAngleArcRadiusPx = 18.0F;
 		constexpr float kAngleArcWidthPx = 1.5F;
 		constexpr float kAngleLabelPlateGapPx = 3.0F;
+		// A degrees label whose first spot is taken moves out along the bisector in these steps,
+		// at most this far, so it still reads as its corner's; past that it is dropped.
+		constexpr float kDegreesLabelShiftStepPx = 4.0F;
+		constexpr int	kDegreesLabelShiftSteps = 12; // 48 px
 		// The closing corner reads within this many close radii of the first point.
 		constexpr float kClosingReachInCloseRadii = 2.0F;
 		constexpr float kSegmentLabelPx = 12.0F;
@@ -100,10 +104,12 @@ namespace world_sim {
 		constexpr float kSegmentLabelReserveMeters = 999.0F;
 
 		// A length label reads this after its length when the length matches a kept common
-		// length: the length step caught it, or it lies within the merge distance of one (plus
-		// the grouping's own 1e-9 m).
+		// length: the length step caught it, or it lies within the merge distance of one, the
+		// distance included as the engine's grouping includes it. Lengths compare in whole
+		// millimeters, the resolution the game's geometry is quantized to, so a float's last
+		// bit can't decide a match at the merge distance.
 		constexpr const char* kMatchedLengthSuffix = " =";
-		constexpr double	  kLengthMatchToleranceMeters = 1e-9;
+		constexpr double	  kMillimetersPerMeter = 1000.0;
 
 		constexpr const char* kDegreeSign = "\xC2\xB0"; // U+00B0 in UTF-8
 
@@ -217,6 +223,7 @@ namespace world_sim {
 			float angleArcRadiusPx;
 			float angleArcWidthPx;
 			float angleLabelGapPx;
+			float degreesLabelShiftStepPx;
 		};
 
 		Look lookAt(const assets::PreviewStyle& style, float uiScale) {
@@ -264,7 +271,8 @@ namespace world_sim {
 				.matchedEdgeTickSpacingPx = kMatchedEdgeTickSpacingPx,
 				.angleArcRadiusPx = kAngleArcRadiusPx,
 				.angleArcWidthPx = kAngleArcWidthPx,
-				.angleLabelGapPx = kAngleLabelPlateGapPx + kLabelPlatePaddingPx * uiScale,
+				.angleLabelGapPx = kAngleLabelPlateGapPx,
+				.degreesLabelShiftStepPx = kDegreesLabelShiftStepPx,
 			};
 		}
 
@@ -296,6 +304,28 @@ namespace world_sim {
 
 		bool contains(const FeedbackBox& box, Foundation::Vec2 point) {
 			return point.x >= box.left && point.x <= box.right && point.y >= box.top && point.y <= box.bottom;
+		}
+
+		// Whether any of the segment from `start` to `end` lies in `box`.
+		bool segmentMeetsBox(Foundation::Vec2 start, Foundation::Vec2 end, const FeedbackBox& box) {
+			const Foundation::Vec2 delta{end.x - start.x, end.y - start.y};
+			float				   enter = 0.0F;
+			float				   leave = 1.0F;
+			// Keeps the t where `rate * t <= room`.
+			const auto clip = [&](float rate, float room) {
+				if (rate == 0.0F) {
+					return room >= 0.0F;
+				}
+				const float bound = room / rate;
+				if (rate < 0.0F) {
+					enter = std::max(enter, bound);
+				} else {
+					leave = std::min(leave, bound);
+				}
+				return enter <= leave;
+			};
+			return clip(-delta.x, start.x - box.left) && clip(delta.x, box.right - start.x) && clip(-delta.y, start.y - box.top) &&
+				   clip(delta.y, box.bottom - start.y);
 		}
 
 		FeedbackBox unionOf(const FeedbackBox& first, const FeedbackBox& second) {
@@ -429,6 +459,10 @@ namespace world_sim {
 			return std::pair{low, high};
 		}
 
+		std::int64_t millimetersOf(double meters) {
+			return std::llround(meters * kMillimetersPerMeter);
+		}
+
 		bool roundsToZero(double meters, int places) {
 			return std::abs(meters) < 0.5 * std::pow(10.0, -places);
 		}
@@ -556,6 +590,7 @@ namespace world_sim {
 				placedLabels.reserve(kMaxLabels + kMaxLabelObstacles);
 
 				chooseGuides();
+				planMatchedEdgeBands();
 				planCloseRing();
 				for (std::size_t index = 0; index < input.snap.guideCount; ++index) {
 					const GuideOnScreen& guide = guides[index];
@@ -568,8 +603,8 @@ namespace world_sim {
 				}
 				planCloseHalo();
 				planGridCross();
-				planCommonLengthMarks();
-				const std::array<std::optional<CornerOnScreen>, kMaxReadCorners> cornersOnScreen = planCornerMarks(corners);
+				planCommonLengthTicks();
+				const std::array<std::optional<CornerOnScreen>, kMaxReadCorners> labelledCorners = planCornerMarks(corners);
 				seedLabelObstacles();
 				if (rectangleTool()) {
 					planSizeLabel();
@@ -583,9 +618,9 @@ namespace world_sim {
 						}
 					}
 				}
-				for (const std::optional<CornerOnScreen>& corner : cornersOnScreen) {
+				for (const std::optional<CornerOnScreen>& corner : labelledCorners) {
 					if (corner) {
-						planDegreesLabel(*corner);
+						planDegreesLabel(*corner, labelledCorners);
 					}
 				}
 				planCursor();
@@ -601,9 +636,12 @@ namespace world_sim {
 				FeedbackLayer	  layer;
 			};
 
-			// A corner the angle readout draws an arc at, on screen, for its degrees label.
+			// A corner the angle readout draws an arc at, on screen, for its degrees label: its
+			// vertex and the path points either side of it.
 			struct CornerOnScreen {
 				Foundation::Vec2 vertex;
+				Foundation::Vec2 previous;
+				Foundation::Vec2 next;
 				float			 bisectorRadians = 0.0F; // screen space, y down
 				float			 degrees = 0.0F;
 			};
@@ -619,6 +657,8 @@ namespace world_sim {
 			std::optional<Circle>						 halo;
 			std::optional<SnapTarget>					 snapTarget;
 			std::array<GuideOnScreen, kMaxSnapGuides>	 guides{};
+			std::array<Foundation::Vec2, kMaxSnapGuides> rightAngleMarkerCorners{}; // where the guides' right-angle markers drew
+			std::size_t									 rightAngleMarkerCount = 0;
 			DrawingFeedbackPlan							 result;
 			std::vector<FeedbackBox>					 placedLabels;
 
@@ -807,17 +847,28 @@ namespace world_sim {
 				if (std::abs(edgeUnit.x * guideUnit.y - edgeUnit.y * guideUnit.x) < kRightAngleMinimumSine) {
 					return;
 				}
+				result.strokes.push_back(rightAngleMarker(from, edgeUnit, guideUnit, withOpacity(color, style.markerOpacity)));
+				rightAngleMarkerCorners[rightAngleMarkerCount++] = from;
+			}
+
+			// The right-angle marker at `corner`: two legs along the unit directions `first` and
+			// `second`, joined by a line parallel to each.
+			FeedbackStroke rightAngleMarker(Foundation::Vec2 corner, Foundation::Vec2 first, Foundation::Vec2 second, Foundation::Color color) const {
 				const float			   size = look.rightAngleMarkerPx;
-				const Foundation::Vec2 edgeLeg{edgeUnit.x * size, edgeUnit.y * size};
-				const Foundation::Vec2 guideLeg{guideUnit.x * size, guideUnit.y * size};
-				FeedbackStroke		   marker{
-							.color = withOpacity(color, style.markerOpacity), .width = look.markerLineWidthPx, .layer = FeedbackLayer::Marker
-				};
-				marker.points[0] = {from.x + edgeLeg.x, from.y + edgeLeg.y};
-				marker.points[1] = {from.x + edgeLeg.x + guideLeg.x, from.y + edgeLeg.y + guideLeg.y};
-				marker.points[2] = {from.x + guideLeg.x, from.y + guideLeg.y};
+				const Foundation::Vec2 firstLeg{first.x * size, first.y * size};
+				const Foundation::Vec2 secondLeg{second.x * size, second.y * size};
+				FeedbackStroke		   marker{.color = color, .width = look.markerLineWidthPx, .layer = FeedbackLayer::Marker};
+				marker.points[0] = {corner.x + firstLeg.x, corner.y + firstLeg.y};
+				marker.points[1] = {corner.x + firstLeg.x + secondLeg.x, corner.y + firstLeg.y + secondLeg.y};
+				marker.points[2] = {corner.x + secondLeg.x, corner.y + secondLeg.y};
 				marker.pointCount = 3;
-				result.strokes.push_back(marker);
+				return marker;
+			}
+
+			bool guideMarksRightAngleAt(Foundation::Vec2 corner) const {
+				return std::any_of(rightAngleMarkerCorners.begin(), rightAngleMarkerCorners.begin() + static_cast<std::ptrdiff_t>(rightAngleMarkerCount), [&](Foundation::Vec2 marked) {
+					return closeTo(marked, corner, look.duplicateGuidePx);
+				});
 			}
 
 			void planCloseHalo() {
@@ -884,37 +935,67 @@ namespace world_sim {
 
 			// A length matches when it lies within the merge distance of a kept common length.
 			bool matchesKeptLength(float meters) const {
-				const std::size_t count = std::min(input.snap.commonLengthCount, input.snap.commonLengths.size());
-				const double	  within = static_cast<double>(input.commonLengthMergeMeters) + kLengthMatchToleranceMeters;
+				const std::size_t  count = std::min(input.snap.commonLengthCount, input.snap.commonLengths.size());
+				const std::int64_t within = millimetersOf(input.commonLengthMergeMeters);
+				const std::int64_t length = millimetersOf(meters);
 				return std::any_of(input.snap.commonLengths.begin(), input.snap.commonLengths.begin() + static_cast<std::ptrdiff_t>(count), [&](float kept) {
-					return std::abs(static_cast<double>(meters) - static_cast<double>(kept)) <= within;
+					return std::llabs(length - millimetersOf(kept)) <= within;
 				});
 			}
 
-			// When the length step caught a common length: a tick across the segment at the snapped
-			// end, and on every edge of the matched group a faint band and a double tick at its
-			// middle. Facts, small and solid, in the common-length color; the bands are an
-			// alignment's faint highlight, under the guides.
-			void planCommonLengthMarks() {
+			// A matched edge on screen, with its direction there.
+			struct EdgeOnScreen {
+				Foundation::Vec2 start;
+				Foundation::Vec2 end;
+				Foundation::Vec2 along;
+			};
+
+			// The matched group's edge at `index` on screen, when it is long enough there to give a
+			// direction: a shorter one draws no marks.
+			std::optional<EdgeOnScreen> matchedEdgeOnScreen(std::size_t index) const {
+				const construction::LengthEdge&		  edge = input.snap.matchedEdges[index];
+				const Foundation::Vec2				  start = toScreen(edge.start);
+				const Foundation::Vec2				  end = toScreen(edge.end);
+				const std::optional<Foundation::Vec2> along = unitBetween(start, end);
+				if (!along) {
+					return std::nullopt;
+				}
+				return EdgeOnScreen{start, end, *along};
+			}
+
+			// When the length step caught a common length, a faint band along every edge of the
+			// matched group, an alignment's highlight: planned before the guides, so it draws
+			// under them.
+			void planMatchedEdgeBands() {
 				if (input.snap.lengthSnap != LengthSnapKind::CommonLength) {
 					return;
 				}
-				const assets::StyleColor& color = lengthMarkColor(style);
-				const Foundation::Color	  tickColor = withOpacity(color, style.markerOpacity);
-				const Foundation::Color	  bandColor = withOpacity(color, kMatchedEdgeBandOpacity);
+				const Foundation::Color bandColor = withOpacity(lengthMarkColor(style), kMatchedEdgeBandOpacity);
 				for (std::size_t index = 0; index < matchedEdgeCount(); ++index) {
-					const construction::LengthEdge& edge = input.snap.matchedEdges[index];
-					const Foundation::Vec2			start = toScreen(edge.start);
-					const Foundation::Vec2			end = toScreen(edge.end);
-					const std::optional<Foundation::Vec2> along = unitBetween(start, end);
-					if (!along) {
+					if (const std::optional<EdgeOnScreen> edge = matchedEdgeOnScreen(index)) {
+						result.strokes.push_back(segmentStroke(edge->start, edge->end, bandColor, look.matchedEdgeBandWidthPx, FeedbackLayer::Alignment));
+					}
+				}
+			}
+
+			// When the length step caught a common length: a tick across the segment at the snapped
+			// end, and on every edge of the matched group a double tick at its middle. Facts, small
+			// and solid, in the common-length color.
+			void planCommonLengthTicks() {
+				if (input.snap.lengthSnap != LengthSnapKind::CommonLength) {
+					return;
+				}
+				const Foundation::Color tickColor = withOpacity(lengthMarkColor(style), style.markerOpacity);
+				for (std::size_t index = 0; index < matchedEdgeCount(); ++index) {
+					const std::optional<EdgeOnScreen> edge = matchedEdgeOnScreen(index);
+					if (!edge) {
 						continue;
 					}
-					result.strokes.push_back(segmentStroke(start, end, bandColor, look.matchedEdgeBandWidthPx, FeedbackLayer::Alignment));
-					const Foundation::Vec2 middle{(start.x + end.x) * 0.5F, (start.y + end.y) * 0.5F};
+					const Foundation::Vec2 middle{(edge->start.x + edge->end.x) * 0.5F, (edge->start.y + edge->end.y) * 0.5F};
+					const Foundation::Vec2 along = edge->along;
 					for (const float side : {-0.5F, 0.5F}) {
 						const float offset = side * look.matchedEdgeTickSpacingPx;
-						planTickAcross({middle.x + along->x * offset, middle.y + along->y * offset}, *along, look.matchedEdgeTickHalfPx, tickColor, look.matchedEdgeTickWidthPx);
+						planTickAcross({middle.x + along.x * offset, middle.y + along.y * offset}, along, look.matchedEdgeTickHalfPx, tickColor, look.matchedEdgeTickWidthPx);
 					}
 				}
 				if (input.points.empty()) {
@@ -964,8 +1045,9 @@ namespace world_sim {
 			}
 
 			// The corners the angle readout shows: with the helper on, not under Alt, and not in the
-			// Rectangle tool. The path is the placed points and the snapped point, the closing
-			// reach twice the close radius the snap was given.
+			// Rectangle tool. The path is the placed points and the snapped point, or the placed
+			// points alone when the click closes, the closing reach twice the close radius the snap
+			// was given.
 			construction::CornerAngles readCorners() const {
 				const std::optional<construction::AngleReadoutTool> readoutTool = angleReadoutTool();
 				if (!input.display.angleReadout || input.freeform || !readoutTool) {
@@ -974,18 +1056,30 @@ namespace world_sim {
 				return construction::cornerAngles({
 					.points = input.points,
 					.cursor = input.cursor,
-					.closes = input.snap.closesShape(),
+					.closes = input.clickCloses,
 					.tool = *readoutTool,
 					.closingReachMeters = kClosingReachInCloseRadii * input.closeRadiusMeters,
 					.squareToleranceDegrees = squareToleranceDegrees(style.angleReadoutDecimals),
 				});
 			}
 
-			// Each read corner: a square one the right-angle marker along its two edges, any other
-			// an arc from the edge toward the previous vertex to the edge toward the next. Returns,
-			// for each corner with an arc, where its degrees go.
+			// The angle readout's path: the placed points, then the snapped point unless the click
+			// closes.
+			std::size_t readoutPathCount() const { return input.points.size() + (input.clickCloses ? 0U : 1U); }
+
+			// The readout path's point at `index`, round the path, on screen.
+			Foundation::Vec2 readoutPathPointOnScreen(std::size_t index) const {
+				const std::size_t wrapped = index % readoutPathCount();
+				return toScreen(wrapped < input.points.size() ? input.points[wrapped] : input.cursor);
+			}
+
+			// Each read corner: a square one the right-angle marker along its two edges, unless a
+			// guide's already marks that vertex; any other an arc from the edge toward the previous
+			// vertex to the edge toward the next, unless an edge is shorter on screen than the arc's
+			// radius, where an arc would read as noise. Returns the corners with an arc, for their
+			// degrees labels.
 			std::array<std::optional<CornerOnScreen>, kMaxReadCorners> planCornerMarks(const construction::CornerAngles& corners) {
-				std::array<std::optional<CornerOnScreen>, kMaxReadCorners> arcs{};
+				std::array<std::optional<CornerOnScreen>, kMaxReadCorners> labelledCorners{};
 				const Foundation::Color color = withOpacity(guideColor(style, GuideSource::DrawnShape), style.markerOpacity);
 				for (std::size_t index = 0; index < std::min(corners.count, corners.corners.size()); ++index) {
 					const construction::CornerAngle& corner = corners.corners[index];
@@ -996,13 +1090,15 @@ namespace world_sim {
 						continue;
 					}
 					if (corner.square) {
-						const float	   size = look.rightAngleMarkerPx;
-						FeedbackStroke marker{.color = color, .width = look.markerLineWidthPx, .layer = FeedbackLayer::Marker};
-						marker.points[0] = {vertex.x + toPrevious->x * size, vertex.y + toPrevious->y * size};
-						marker.points[1] = {vertex.x + (toPrevious->x + toNext->x) * size, vertex.y + (toPrevious->y + toNext->y) * size};
-						marker.points[2] = {vertex.x + toNext->x * size, vertex.y + toNext->y * size};
-						marker.pointCount = 3;
-						result.strokes.push_back(marker);
+						if (!guideMarksRightAngleAt(vertex)) {
+							result.strokes.push_back(rightAngleMarker(vertex, *toPrevious, *toNext, color));
+						}
+						continue;
+					}
+					const Foundation::Vec2 previous = readoutPathPointOnScreen(corner.vertexIndex + readoutPathCount() - 1);
+					const Foundation::Vec2 next = readoutPathPointOnScreen(corner.vertexIndex + 1);
+					const float			   shorterEdge = std::min(length({previous.x - vertex.x, previous.y - vertex.y}), length({next.x - vertex.x, next.y - vertex.y}));
+					if (!(shorterEdge >= look.angleArcRadiusPx)) {
 						continue;
 					}
 					// The world to screen scale's handedness turns the sweep with it.
@@ -1017,9 +1113,15 @@ namespace world_sim {
 						.width = look.angleArcWidthPx,
 						.layer = FeedbackLayer::Marker,
 					});
-					arcs[index] = CornerOnScreen{.vertex = vertex, .bisectorRadians = startRadians + sweepRadians * 0.5F, .degrees = corner.degrees};
+					labelledCorners[index] = CornerOnScreen{
+						.vertex = vertex,
+						.previous = previous,
+						.next = next,
+						.bisectorRadians = startRadians + sweepRadians * 0.5F,
+						.degrees = corner.degrees,
+					};
 				}
-				return arcs;
+				return labelledCorners;
 			}
 
 			// 1 when the world's x and y axes keep their turn on screen, -1 when the screen
@@ -1032,12 +1134,15 @@ namespace world_sim {
 				return turn < 0.0F ? -1.0F : 1.0F;
 			}
 
-			// A corner's degrees, outside its arc on the corner's bisector, its plate a fixed gap
-			// off the arc. When that spot covers a label placed before it, the marker, or another
-			// obstacle, it moves out along the bisector by its own extent there plus 8 px, up to
-			// six times, each spot moved just inside the screen; it is dropped when none is clear,
-			// and when the corner itself is off the screen.
-			void planDegreesLabel(const CornerOnScreen& corner) {
+			// A corner's degrees, outside its arc on the corner's bisector: the plate's center as far
+			// out as puts its nearest point the arc's radius and a gap out along the bisector (the
+			// plate's support distance there), so no corner of the plate reaches the arc. When that
+			// spot covers a label placed before it, the marker, another obstacle, the corner's own
+			// edges, the segment being drawn, or either corner's arc, it moves out along the
+			// bisector a few pixels at a time, each spot moved just inside the screen, at most a
+			// bound beyond the first spot so the label still reads as its corner's; it is dropped
+			// when none is clear, and when the corner itself is off the screen.
+			void planDegreesLabel(const CornerOnScreen& corner, const std::array<std::optional<CornerOnScreen>, kMaxReadCorners>& labelledCorners) {
 				if (!insideViewport({corner.vertex.x, corner.vertex.y, corner.vertex.x, corner.vertex.y})) {
 					return;
 				}
@@ -1045,21 +1150,38 @@ namespace world_sim {
 				const float			   sizePx = look.guideLabelPx;
 				const Foundation::Vec2 size = measure(text, sizePx, FeedbackTextWeight::Regular);
 				const Foundation::Vec2 bisector{std::cos(corner.bisectorRadians), std::sin(corner.bisectorRadians)};
-				const float			   reach = look.angleArcRadiusPx + look.angleLabelGapPx;
-				const float			   step = std::abs(bisector.x) * size.x + std::abs(bisector.y) * size.y + look.guideLabelShiftPaddingPx;
-				for (int attempt = 0; attempt <= kGuideLabelShiftAttempts; ++attempt) {
-					const float			   outward = static_cast<float>(attempt) * step;
-					const Foundation::Vec2 center{
-						corner.vertex.x + bisector.x * (reach + outward + size.x * 0.5F),
-						corner.vertex.y + bisector.y * (reach + outward + size.y * 0.5F),
-					};
+				const float			   plateSupport = std::abs(bisector.x) * (size.x * 0.5F + look.labelPlatePaddingPx) +
+										  std::abs(bisector.y) * (size.y * 0.5F + look.labelPlatePaddingPx);
+				const float firstReach = look.angleArcRadiusPx + look.angleLabelGapPx + plateSupport;
+				for (int step = 0; step <= kDegreesLabelShiftSteps; ++step) {
+					const float			   reach = firstReach + static_cast<float>(step) * look.degreesLabelShiftStepPx;
+					const Foundation::Vec2 center{corner.vertex.x + bisector.x * reach, corner.vertex.y + bisector.y * reach};
 					const Foundation::Vec2 topLeft = moveInside({center.x - size.x * 0.5F, center.y - size.y * 0.5F}, size);
-					const FeedbackBox	   box = plateBox(topLeft, size, look.labelPlatePaddingPx);
-					if (std::none_of(placedLabels.begin(), placedLabels.end(), [&](const FeedbackBox& other) { return overlaps(box, other); })) {
+					if (degreesPlateClear(plateBox(topLeft, size, look.labelPlatePaddingPx), corner, labelledCorners)) {
 						addLabel(text, topLeft, sizePx, size, withOpacity(guideColor(style, GuideSource::DrawnShape), 1.0F), FeedbackTextWeight::Regular);
 						return;
 					}
 				}
+			}
+
+			// Whether a degrees plate keeps off the labels placed before it and their obstacles,
+			// every labelled corner's arc, its own corner's two edges, and the segment being drawn.
+			bool degreesPlateClear(
+				const FeedbackBox& plate, const CornerOnScreen& corner, const std::array<std::optional<CornerOnScreen>, kMaxReadCorners>& labelledCorners
+			) const {
+				if (std::any_of(placedLabels.begin(), placedLabels.end(), [&](const FeedbackBox& other) { return overlaps(plate, other); })) {
+					return false;
+				}
+				const float arcReach = look.angleArcRadiusPx + look.angleArcWidthPx * 0.5F;
+				for (const std::optional<CornerOnScreen>& labelled : labelledCorners) {
+					if (labelled && distanceToBox(labelled->vertex, plate) < arcReach) {
+						return false;
+					}
+				}
+				if (segmentMeetsBox(corner.vertex, corner.previous, plate) || segmentMeetsBox(corner.vertex, corner.next, plate)) {
+					return false;
+				}
+				return input.points.empty() || !segmentMeetsBox(toScreen(input.points.back()), snappedPoint, plate);
 			}
 
 			// Guide labels keep clear of the snapped-point marker out to its ticks, and of the

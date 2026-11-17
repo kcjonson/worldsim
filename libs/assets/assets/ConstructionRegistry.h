@@ -373,12 +373,12 @@ namespace assets {
 	/// lines, right-angle markers, crossing dots, the common-length marks), opaque: its
 	/// opacity comes from guideOpacity and markerOpacity. By source, guideColorLength colors
 	/// the common-length marks. angleReadoutDecimals sets the angle readout's places and its
-	/// square tolerance. originHaloColor is the dotted close-radius ring round the first point; snap-target
-	/// rings use snapVertexColor (vertex/endpoint) and snapEdgeColor (edge/T-junction). The
-	/// alphas tint the in-progress polygon fill and the wall-band preview; the *Px radii and
-	/// widths are screen-space sizes that never scale with zoom. Of them, only the labels
-	/// (guideLabelPx, the segment and size labels, and the plates behind them) follow the
-	/// interface size.
+	/// square tolerance. originHaloColor is the dotted close-radius ring round the first
+	/// point; snap-target rings use snapVertexColor (vertex/endpoint) and snapEdgeColor
+	/// (edge/T-junction). The alphas tint the in-progress polygon fill and the wall-band
+	/// preview; the *Px radii and widths are screen-space sizes that never scale with zoom.
+	/// Of them, only the labels (guideLabelPx, the segment and size labels, and the plates
+	/// behind them) follow the interface size.
 	struct PreviewStyle {
 		StyleColor guideColor{0.373F, 0.702F, 0.784F, 1.0F};
 		StyleColor originHaloColor{0.7F, 0.85F, 1.0F, 0.6F};
