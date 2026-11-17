@@ -7,7 +7,6 @@
 // together. Nothing is ever removed.
 
 #include <core/Vec2i64.h>
-#include <visibility/ForestDepth.h>
 
 #include <array>
 #include <cstddef>
@@ -56,56 +55,21 @@ namespace vision {
 	// (appendSeenBoxes): a chunk's, so a chunk asks its own cell and the neighbours its reach crosses into.
 	constexpr std::int64_t kSeenBoxCellMm = 512000;
 
-	// The most vertices a leg's ring holds (sight-softening.md 6.2).
-	constexpr std::size_t kSoftLegMostVertices = 256;
-
 	// The radius of the disc drawn as visible round a colonist of sight `sightMm`. Every held
 	// position lies within kSeenSlackMm of his open leg's line and no more than kSeenSlackMm past its
-	// end, so within kSeenSlackMm x sqrt(2) of the segment; the leg's ring reaches at least
-	// sightInradius(sight - kSeenSlackMm) from it, so a disc this much smaller lies in the ring.
+	// end, so within kSeenSlackMm x sqrt(2) of the segment; the leg's capsule reaches at least
+	// sightInradius(sight - kSeenSlackMm) from it, so a disc this much smaller lies in the capsule.
 	std::int64_t drawnVisibleRadiusMm(std::int64_t sightMm);
 
-	// A shape's range on each side of the sight polygon, in millimetres from its point
-	// (sight-softening.md 6.3): absolute ranges, never depths.
-	using SightRanges = geometry::SightSideValues;
-
-	// Every side at `radiusMm`: sight with no forest.
-	SightRanges equalRanges(std::int64_t radiusMm);
-
-	// The convex ring of `ranges` round `centre`, counter-clockwise: the sight polygon when every range
-	// is equal, the forest shape otherwise (sight-softening.md 4.2). Each range lies in
-	// [geometry::kForestShapeLeastRangeMm, geometry::kForestRadiusLimitMm).
-	std::vector<geometry::Vec2i64> rimOf(const geometry::Vec2i64& centre, const SightRanges& ranges);
+	// A leg's capsule: the hull of the sight polygons of `radiusMm` round `start` and `end`,
+	// counter-clockwise, no three vertices in line.
+	std::vector<geometry::Vec2i64> legCapsule(const geometry::Vec2i64& start, const geometry::Vec2i64& end, std::int64_t radiusMm);
 
 	class SeenArea {
 	  public:
 		using LegId = std::uint64_t;
-		// A sight shape round `centre` with the bodies standing now, cut to its rim, and the rim's ranges:
-		// on each side the lesser of `ranges` and what the bodies round `centre` leave
-		// (sight-softening.md 6.4).
-		struct BuiltSight {
-			std::vector<geometry::Vec2i64> shape;
-			SightRanges					   rimRanges{};
-		};
-		using SightBuilder = std::function<BuiltSight(const geometry::Vec2i64& centre, const SightRanges& ranges)>;
-
-		// The shape a new leg holds first: the shape drawn round `position` on the frame it opens
-		// (sight-softening.md 6.2, 6.3).
-		struct InheritedShape {
-			geometry::Vec2i64 position;
-			SightRanges		  ranges{};
-		};
-
-		// What the record has done, for the state view and the benches (sight-softening.md 6.6, 8).
-		// K is the registered rings whose boxes meet a piece's box, taken as each piece registers.
-		struct Counts {
-			std::size_t legsTested = 0;
-			std::size_t legsCovered = 0;
-			std::size_t legPieces = 0; // pieces the frontier cut from legs that added ground
-			std::size_t registrations = 0;
-			std::size_t ringsMetTotal = 0; // K summed over the registrations
-			std::size_t ringsMetMost = 0;
-		};
+		// The visibility polygon round `centre` out to `reachMm`, with the walls standing now.
+		using SightBuilder = std::function<std::vector<geometry::Vec2i64>(const geometry::Vec2i64& centre, std::int64_t reachMm)>;
 
 		struct Triangle {
 			std::array<geometry::Vec2i64, 3> corners; // counter-clockwise
@@ -127,43 +91,21 @@ namespace vision {
 		// A shape waiting its turn. It must be simple and wind once round `centre`
 		// (geometry::simpleAround), which the covered test reads from.
 		void queue(std::vector<geometry::Vec2i64> shape, const geometry::Vec2i64& centre);
-		// A sight polygon on the polygon path round `centre`, cut to its rim, rimOf(centre, rimRanges),
-		// waiting its turn; `walk` is the path from the build before it on the same walk, with no jump
-		// between, to just short of it: that build, then every turn since, and `walkStartRanges` that
-		// build's rim ranges. Empty when there was none. It is pending and tested as it is; when not
-		// covered it enters grown by geometry::kSeenSkirtMm everywhere but along its rim
-		// (geometry::skirtedSightShape), or as it is when the grown ring is not simple. When it adds
-		// ground within kSeenSweepRimBandMm of its rim, the walk is swept (kSeenSweepSpacingMm), each
-		// point's rim ranges interpolated between the two builds' and held in by the sweep's inset.
-		// Same requirements as queue.
-		void queueSightPolygon(
-			std::vector<geometry::Vec2i64> polygon,
-			const geometry::Vec2i64&	   centre,
-			const SightRanges&			   rimRanges,
-			std::vector<geometry::Vec2i64> walk,
-			const SightRanges&			   walkStartRanges
-		);
-		// A sight polygon built now round `point` with the sight builder, no wider than `ranges`, and
-		// queued as queueSightPolygon queues one: where a walk on the polygon path comes to rest, or
-		// ends, away from vision's builds.
-		void queueSightAt(
-			const geometry::Vec2i64&	   point,
-			const SightRanges&			   ranges,
-			std::vector<geometry::Vec2i64> walk,
-			const SightRanges&			   walkStartRanges
-		);
+		// A visibility polygon with walls in sight, of sight `sightRadiusMm` round `centre`, waiting its
+		// turn; `walk` is the path from the build before it on the same walk, with no jump between, to
+		// just short of it: that build, then every turn since. Empty when there was none. It is pending
+		// and tested as it is; when not covered it enters grown by geometry::kSeenSkirtMm everywhere but
+		// along its rim (geometry::skirtedSightShape), or as it is when the grown ring is not simple.
+		// When it adds ground near its rim (kSeenSweepRimBandMm), the walk is swept
+		// (kSeenSweepSpacingMm). Same requirements as queue.
+		void queueSightPolygon(std::vector<geometry::Vec2i64> polygon, const geometry::Vec2i64& centre, std::int64_t sightRadiusMm, std::vector<geometry::Vec2i64> walk);
+		// A sight polygon built now round `point` with the sight builder and queued as queueSightPolygon
+		// queues one: where a walk with walls in sight comes to rest, or ends, away from vision's builds.
+		void queueSightAt(const geometry::Vec2i64& point, std::int64_t sightRadiusMm, std::vector<geometry::Vec2i64> walk);
 
-		// Joins rimOf(position, ranges) to the open leg `leg`'s ring, the convex hull of every shape it
-		// has taken, pending with `start` as its centre (sight-softening.md 6.2, 6.3). The call that
-		// opens the leg also joins the shape at `start` and `inherited`, when there is one. False,
-		// leaving the leg as it was, when the joined ring would pass kSoftLegMostVertices.
-		[[nodiscard]] bool setOpenLeg(
-			LegId								 leg,
-			const geometry::Vec2i64&			 start,
-			const geometry::Vec2i64&			 position,
-			const SightRanges&					 ranges,
-			const std::optional<InheritedShape>& inherited
-		);
+		// The open leg `leg` now runs from `start` to `end` with capsule radius `radiusMm`: its capsule
+		// is pending, with its start as the centre.
+		void setOpenLeg(LegId leg, const geometry::Vec2i64& start, const geometry::Vec2i64& end, std::int64_t radiusMm);
 		// Ends the open leg and queues its capsule.
 		void closeLeg(LegId leg);
 		// What builds the sweep's polygons. Without one nothing is swept.
@@ -212,9 +154,8 @@ namespace vision {
 		[[nodiscard]] std::size_t shapesSkipped() const { return skipped; }
 		// Sweep points whose polygons were built, and those waiting. A waiting point is not pending
 		// ground: it has no shape until its polygon is built.
-		[[nodiscard]] std::size_t	sweepsBuilt() const { return swept; }
-		[[nodiscard]] std::size_t	sweepsWaiting() const { return sweeps.size(); }
-		[[nodiscard]] const Counts& counts() const { return counted; }
+		[[nodiscard]] std::size_t sweepsBuilt() const { return swept; }
+		[[nodiscard]] std::size_t sweepsWaiting() const { return sweeps.size(); }
 
 	  private:
 		struct PendingShape {
@@ -223,34 +164,14 @@ namespace vision {
 			geometry::Vec2i64			   low;
 			geometry::Vec2i64			   high;
 			bool						   convex = false;
-			bool						   leg = false;
-			geometry::Vec2i64			   legPosition; // an open leg's last held position and the ranges it took there
-			SightRanges					   legRanges{};
-			std::vector<geometry::Vec2i64> legShape; // rimOf(origin, legRanges), placed at each held position by moving it
-			bool						   sightPolygon = false;
-			SightRanges					   ranges{};  // a sight polygon's rim ranges, or a sweep point's before its build
-			std::vector<geometry::Vec2i64> sweepPath; // a sight polygon's walk from the build before it
-			SightRanges					   walkStartRanges{};
-		};
-
-		// Buffers a leg's hull merge reuses each frame.
-		struct HullScratch {
-			std::vector<geometry::Vec2i64> firstLower;
-			std::vector<geometry::Vec2i64> firstUpper;
-			std::vector<geometry::Vec2i64> secondLower;
-			std::vector<geometry::Vec2i64> secondUpper;
-			std::vector<geometry::Vec2i64> lower;
-			std::vector<geometry::Vec2i64> upper;
-			std::vector<geometry::Vec2i64> moved;
-			std::vector<geometry::Vec2i64> ring;
+			geometry::Vec2i64			   legStart; // an open leg's ends and capsule radius
+			geometry::Vec2i64			   legEnd;
+			std::int64_t				   radius		= 0;
+			std::int64_t				   sightRadius	= 0; // a sight polygon's, for its skirt and sweep; 0 for any other shape
+			std::vector<geometry::Vec2i64> sweepPath;		 // a sight polygon's walk from the build before it
 		};
 
 		static PendingShape pendingOf(std::vector<geometry::Vec2i64> outline, const geometry::Vec2i64& centre);
-		void				hullOfConvex(
-						   const std::vector<geometry::Vec2i64>& first,
-						   const std::vector<geometry::Vec2i64>& second,
-						   std::vector<geometry::Vec2i64>&		 out
-					   );
 		// Drops the shape when the record covers it, else enters it.
 		void				test(const PendingShape& shape);
 		// Cuts the shape, skirted when it is a sight polygon, to the pieces it adds, which wait to be
@@ -260,31 +181,27 @@ namespace vision {
 		// Grows the committed boxes of the cells the box from `low` to `high` meets by its part in each.
 		void				holdCommitted(const geometry::Vec2i64& low, const geometry::Vec2i64& high);
 		// Builds a sweep point's polygon and enters it when it adds anything.
-		void commitSweep(const PendingShape& point);
-		// Queues the sweep's points along the shape's walk and on to its centre, short of the two ends,
-		// whose own polygons went in.
-		void queueSweep(const PendingShape& shape);
-		template <typename Visit>
-		void forEachPending(Visit visit) const;
+		void				commitSweep(const PendingShape& point);
+		// Queues the sweep's points along `walk` and on to `to`, short of its two ends, whose own
+		// polygons went in.
+		void				queueSweep(const std::vector<geometry::Vec2i64>& walk, const geometry::Vec2i64& to, std::int64_t sightRadiusMm);
+		template <typename Visit> void forEachPending(Visit visit) const;
 		// Calls `take` with each box appendSeenBoxes gives for the query.
 		template <typename Take> void forEachSeenBox(const geometry::Vec2i64& low, const geometry::Vec2i64& high, Take take) const;
 
 		std::unique_ptr<geometry::nav::PatchableMesh>		 mesh;
 		std::unique_ptr<geometry::nav::SightCoverScratch>	 scratch;
 		std::unique_ptr<geometry::nav::SightFrontierScratch> frontierScratch;
-		std::unique_ptr<HullScratch>						 hullScratch;
 		std::vector<std::vector<geometry::Vec2i64>>			 pieces;
 		std::size_t											 skipped = 0;
 		std::size_t											 swept	 = 0;
 		SightBuilder										 sightBuilder;
-		std::map<LegId, PendingShape>						 openLegs;
-		std::deque<PendingShape>							 waiting;
-		std::deque<PendingShape>							 entering;	 // pieces of shapes that add ground, waiting to be registered
-		std::deque<PendingShape>							 sweeps;	 // points (centre) with their rim ranges, polygons not yet built
-		std::vector<std::int32_t>							 registered; // ring ids, in the order they went in
-		std::vector<Box>									 registeredBoxes; // their boxes, for K
-		Counts												 counted;
-		std::size_t											 dropped = 0;
+		std::map<LegId, PendingShape>					  openLegs;
+		std::deque<PendingShape>						  waiting;
+		std::deque<PendingShape>						  entering; // pieces of shapes that add ground, waiting to be registered
+		std::deque<PendingShape>						  sweeps; // points (centre) with their sight radius, polygons not yet built
+		std::vector<std::int32_t>						  registered; // ring ids, in the order they went in
+		std::size_t										  dropped = 0;
 		std::map<std::pair<std::int64_t, std::int64_t>, Box> committedBoxes; // by cell of kSeenBoxCellMm, each cut to its cell
 	};
 

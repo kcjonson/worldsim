@@ -18,7 +18,6 @@
 #include <world/chunk/ChunkCoordinate.h>
 
 #include <algorithm>
-#include <cassert>
 #include <cmath>
 
 namespace ecs {
@@ -128,13 +127,7 @@ namespace ecs {
 		} else {
 			hold(leg, at);
 		}
-		const vision::SightRanges ranges = vision::equalRanges(leg.radiusMm);
-		if (!seen.setOpenLeg(colonist, leg.start, leg.end, ranges, std::nullopt)) {
-			closeLeg(colonist, leg);
-			beginLeg(leg, at, radiusMm);
-			[[maybe_unused]] const bool opened = seen.setOpenLeg(colonist, leg.start, leg.end, ranges, std::nullopt);
-			assert(opened);
-		}
+		seen.setOpenLeg(colonist, leg.start, leg.end, leg.radiusMm);
 	}
 
 	void PlayerVisibilitySystem::closeLeg(EntityID colonist, Leg& leg) {
@@ -171,8 +164,7 @@ namespace ecs {
 		if (!observer.wallSight || observer.walk.empty() || observer.walk.front() == at) {
 			return;
 		}
-		const vision::SightRanges rim = vision::equalRanges(observer.sightMm);
-		seen.queueSightAt(at, rim, std::move(observer.walk), rim);
+		seen.queueSightAt(at, observer.sightMm, std::move(observer.walk));
 		observer.walk.assign(1, at);
 		beginLeg(observer.stretch, at, 0);
 	}
@@ -184,10 +176,7 @@ namespace ecs {
 		const std::int64_t sightMm = std::llround(static_cast<double>(shape.radius) * 1000.0);
 		std::vector<Vec2i64> inSight = geometry::starClippedToConvex(*shape.polygon, build, geometry::sightPolygon(build, sightMm));
 		if (geometry::simpleAround(inSight, build)) {
-			const std::int64_t walkStartMm = observer.walk.empty() ? sightMm : observer.sightMm;
-			seen.queueSightPolygon(
-				std::move(inSight), build, vision::equalRanges(sightMm), std::move(observer.walk), vision::equalRanges(walkStartMm)
-			);
+			seen.queueSightPolygon(std::move(inSight), build, sightMm, std::move(observer.walk));
 		}
 		observer.walk.assign(1, build);
 		beginLeg(observer.stretch, build, 0);
@@ -274,15 +263,10 @@ namespace ecs {
 		const VisionSystem* vision = world->tryGetSystem<VisionSystem>();
 		if (vision != nullptr && sweepWalls != &vision->geometry()) {
 			sweepWalls = &vision->geometry();
-			seen.setSightBuilder([walls = sweepWalls](const Vec2i64& centre, const vision::SightRanges& ranges) {
-				const std::int64_t					   reachMm = *std::max_element(ranges.begin(), ranges.end());
+			seen.setSightBuilder([walls = sweepWalls](const Vec2i64& centre, std::int64_t reachMm) {
 				std::vector<geometry::OccluderSegment> occluders;
 				walls->queryOccluders(centre, reachMm, occluders);
-				vision::SeenArea::BuiltSight built{geometry::computeVisibilityPolygon(centre, reachMm, occluders), ranges};
-				if (*std::min_element(ranges.begin(), ranges.end()) != reachMm) {
-					built.shape = geometry::starClippedToConvex(built.shape, centre, vision::rimOf(centre, ranges));
-				}
-				return built;
+				return geometry::computeVisibilityPolygon(centre, reachMm, occluders);
 			});
 		}
 		if (vision != nullptr) {
