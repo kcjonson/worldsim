@@ -482,17 +482,17 @@ A colonist's darkness is 1 outside his bright shape and inside it the greatest o
 Each fill's mask is hard layers with one layer of partial coverage on top. The unseen fill:
 
 ```cpp
-std::vector<MaskShape> unseenFeather;
+std::vector<MaskElement> unseenFeather;
 for (const RecordFeatherCell& cell : recordFeatherCellsInView) {
     for (const InstancedMeshHandle& mesh : cell.meshes) {
-        unseenFeather.push_back({.mesh = {mesh, camera}, .mask = outsidePendingFeather, .blend = MaskBlend::Lighten});
+        unseenFeather.push_back({.mesh = {mesh, camera}, .mask = outsidePendingFeather, .blend = MixBlendMode::Lighten});
     }
 }
 for (const FeatherPiece& piece : pendingEdgePieces) {
-    unseenFeather.push_back({.points = piece.screenPoints, .paint = MaskPaint::linear(piece.from, piece.to, 1.0F, 0.0F), .blend = MaskBlend::Lighten});
+    unseenFeather.push_back({.points = piece.screenPoints, .paint = MaskPaint::linearGradient(piece.from, piece.to, 1.0F, 0.0F), .blend = MixBlendMode::Lighten});
 }
 std::vector<MaskLayer> unseenMask = {
-    {.image = MaskImage::content(unseenFeather)},
+    {.image = MaskImage::svgMask(unseenFeather)},
     {.image = MaskImage::rect(view), .composite = MaskComposite::Subtract},
 };
 for (const InstancedMeshHandle& mesh : seenMeshes) {
@@ -509,20 +509,20 @@ Layers are listed top first and composited bottom up, as CSS does. Below the top
 The tint's mask is one partial layer: the view at 1, then one group a colonist, combined with what is under it by `darken`, which isolates it. A colonist's group holds his bright shape at 0 and over it his feather pieces and drawn shadows, combined among themselves by `lighten`, each piece carrying a hard mask of his bright shape:
 
 ```cpp
-std::vector<MaskShape> tint = {{.points = viewPoints, .paint = MaskPaint::flat(1.0F)}};
+std::vector<MaskElement> tint = {{.points = viewPoints, .paint = MaskPaint::solid(1.0F)}};
 // The pieces' masks, which the spans in `tint` point into: reserved, so no push_back moves them.
 std::vector<std::array<MaskLayer, 1>> insideBrightShapes;
 insideBrightShapes.reserve(colonistsInView.size());
 for (const ColonistCover& colonist : colonistsInView) {
     insideBrightShapes.push_back({{{.image = MaskImage::polygon(colonist.brightShape)}}});
-    MaskShape group{.blend = MaskBlend::Darken};
-    group.children.push_back({.points = colonist.brightShape, .paint = MaskPaint::flat(0.0F)});
+    MaskElement group{.blend = MixBlendMode::Darken};
+    group.children.push_back({.points = colonist.brightShape, .paint = MaskPaint::solid(0.0F)});
     for (const DarknessPiece& piece : colonist.pieces) {
-        group.children.push_back({.points = piece.screenPoints, .paint = piece.paint, .mask = insideBrightShapes.back(), .blend = MaskBlend::Lighten});
+        group.children.push_back({.points = piece.screenPoints, .paint = piece.paint, .mask = insideBrightShapes.back(), .blend = MixBlendMode::Lighten});
     }
     tint.push_back(std::move(group));
 }
-const std::array<MaskLayer, 1> tintMask = {{{.image = MaskImage::content(tint)}}};
+const std::array<MaskLayer, 1> tintMask = {{{.image = MaskImage::svgMask(tint)}}};
 Primitives::drawRect({.bounds = view, .style = {.fill = kTintColor}, .mask = tintMask, .key = coverKey});
 ```
 
@@ -534,8 +534,8 @@ In SVG terms each piece is an element inside the group with its own mask, so it 
 
 salal's masks (`MaskImage.h`, salal `docs/masks.md`) are layers of `rect`, `polygon`, and `mesh` images composited by `MaskComposite::Add` and `Subtract`, each 0 or 1 at a pixel. Partial coverage takes CSS's and SVG's names and semantics:
 
-- `MaskImage::content(children)`: an SVG `<mask>` whose content is the children, read by its luminance as `mask: url(#m)` reads an SVG `<mask>` (CSS `mask-mode: match-source`, SVG `mask-type: luminance`). A hard layer reads the same either way, so no layer carries a mode. A child is a `<polygon>` (`.points`), an uploaded mesh under a camera (`.mesh`), or a group of children (`.children`, an SVG `<g>`). It is filled flat with a value (`MaskPaint::flat`) or by an SVG `linearGradient` in user space with two stops (`MaskPaint::linear(from, to, fromValue, toValue)`). A mesh child's vertices may each carry a value: a field linear over a triangle is one two-stop linear gradient, so each triangle is a `<polygon>` filled by the gradient its three values define. A child may carry its own `mask` of hard layers, as an element inside an SVG `<mask>` may.
-- `MaskBlend`, CSS `mix-blend-mode`, per child: `Normal`, its value; `Lighten`, the greater of its value and what is under it; and `Darken`, the lesser. A group whose blend is not `Normal` is isolated, as CSS makes it: it composites its children together on nothing before it blends with what is under it, so no isolation flag is needed. Inside an isolated group every child after the first blends by `Lighten`, the greatest, which is what the cover asks of it.
+- `MaskImage::svgMask(children)`: an SVG `<mask>` whose content is the children, read by its luminance as `mask: url(#m)` reads an SVG `<mask>` (CSS `mask-mode: match-source`, SVG `mask-type: luminance`). A hard layer reads the same either way, so no layer carries a mode. A child is a `<polygon>` (`.points`), an uploaded mesh under a camera (`.mesh`), or a group of children (`.children`, an SVG `<g>`). It is filled flat with a value (`MaskPaint::solid`) or by an SVG `linearGradient` in user space with two stops (`MaskPaint::linearGradient(from, to, fromValue, toValue)`). A mesh child's vertices may each carry a value: a field linear over a triangle is one two-stop linear gradient, so each triangle is a `<polygon>` filled by the gradient its three values define. A child may carry its own `mask` of hard layers, as an element inside an SVG `<mask>` may.
+- `MixBlendMode`, CSS `mix-blend-mode`, per child: `Normal`, its value; `Lighten`, the greater of its value and what is under it; and `Darken`, the lesser. A group whose blend is not `Normal` is isolated, as CSS makes it: it composites its children together on nothing before it blends with what is under it, so no isolation flag is needed. Inside an isolated group every child after the first blends by `Lighten`, the greatest, which is what the cover asks of it.
 - `MaskComposite::Add` and `Subtract` keep CSS's meanings on partial values: `add` is source over, `subtract` is source out.
 
 Alpha mask layers (rule 26) are masks whose value at a point is a coverage between 0 and 1, which salal carries as alpha. CSS composites alpha only by its Porter-Duff operators, none of which is the greater or the lesser of two values; `lighten` and `darken` are, and they blend colour, so a layer whose content combines values that way is read as luminance, its content painted in grey and the grey the coverage. The coverage it yields masks the draw as an alpha mask's does.
@@ -543,16 +543,15 @@ Alpha mask layers (rule 26) are masks whose value at a point is a coverage betwe
 How salal evaluates partial coverage on the GPU is named nowhere in the API. The GL backend evaluates it this way:
 
 - The hard layers are in the stencil's two bits.
-- The partial layer is accumulated in the target's destination alpha. salal blends every channel with `GL_ONE, GL_ONE_MINUS_SRC_ALPHA` (salal `GLBackend.cpp`, `applyBlend`), so after the world draws, destination alpha holds whatever the world left, and the cover owns it: before each fill it writes the layer's starting value over the view with only alpha written, combines its children with a max or a min blend on alpha, draws the fill weighted by destination alpha, and when the cover is done writes alpha back to 1 over the view, so nothing drawn after it reads cover values.
+- The partial layer is accumulated in the target's destination alpha. salal blends every channel with `GL_ONE, GL_ONE_MINUS_SRC_ALPHA`, so after the world draws, destination alpha holds whatever the world left, and the cover owns it: before each fill it writes the layer's starting value over the view with only alpha written, combines its elements with a max or a min blend on alpha, draws the fill weighted by destination alpha, and when the cover is done writes alpha back to 1 over the view, so nothing drawn after it reads cover values.
 - An isolated group's own greatest is kept in the depth buffer. Depth is cleared at the cover's start. For each colonist: his bright shape is drawn to a stencil bit and to depth 0; his pieces are drawn with each piece's value as its depth and the depth test keeping the greater, colour off, inside that bit; then the same pieces and the shape are drawn again with the depth test passing only where a piece's depth equals what is stored, writing their values to destination alpha with a min blend; the shape clears the bit last. Only the piece that holds the greatest passes the equal test at each pixel, so destination alpha takes the least over colonists of each colonist's greatest. The two passes share a vertex shader with an invariant position, so the equal test is exact. Each colonist costs his shape three times and his pieces twice, linear in the colonists.
 
-This needs backend work in salal, all of it step 0's (13):
+The cover relies on these of the pinned salal's backend:
 
-- Blend states. `BlendState` has only `Alpha` (salal `Backend.h:68`); the cover needs a max and a min blend equation (`GL_MAX`, `GL_MIN`) and the weighted draw against destination alpha.
-- Channel writes. Colour writes are all or nothing (`applyColourWrites`, `GLBackend.cpp:132-135`); the cover needs alpha written alone, and colour and alpha both off for the depth pass.
-- Depth. `applyFixedState` disables the depth test (`GLBackend.cpp:219`); the cover needs a depth state with depth writes and a greater-or-equal test, and one with an equal test and no writes.
-- A depth clear. The backend clears colour (`GLBackend.cpp:239`) and stencil (`:248`) only; the cover needs depth cleared at its start.
-- Targets. The window asks GLFW only for stencil bits (`GLFW_STENCIL_BITS` 8, salal `libs/app/platform/GlfwPlatform.cpp:593`); GLFW's defaults already give 8 alpha and 24 depth bits, and step 0 states them and checks at start that they are there. `createRenderTarget(colour, withStencil)` attaches `GL_DEPTH24_STENCIL8` only with stencil, so a target the cover draws into is made with stencil and an alpha-carrying colour texture.
+- Blend states. `Alpha`, `Replace`, `Max`, `Min`, `MultiplyDestinationAlpha`, and `OverByDestinationAlpha`: the max and min equations on alpha, and the draw weighted by destination alpha.
+- Channel writes. `All`, `None`, `Alpha`, and `Colour`: alpha written alone, and colour and alpha both off for the depth pass.
+- Depth. The states `Off`, `GreaterOrEqual` (depth writes, a greater-or-equal test), and `Equal` (an equal test, no writes), and `clearDepth()`, which clears depth to a chosen value and puts GL's default back.
+- Targets. The window has 8 stencil, 8 alpha, and 24 depth bits, and the backend checks the default framebuffer at creation and warns when it has fewer. A `RenderTarget` made with `RenderTarget::Attachments::ColourAndStencil` has stencil and a 24-bit depth, and has alpha when its colour format carries it (every format but `Rgb8`). A masked rect on a target without stencil draws nothing, and one under an `svgMask` layer on a target without alpha or depth draws nothing, each logged once.
 
 ### 7.7 The sandbox test and its fallbacks
 
@@ -800,7 +799,7 @@ The conclusions rest on counts: the queue and its parts, the waits, the backlog,
 
 Each step is its own PR with its own done line and a `Perf:` line. Steps 1b and 2 build on the "wall sight occluders" work ("Wall sight occluders are the wall's center line, so the visibility tint starts mid-wall" on Specboard) once it is on `main`. No done line waits on a sign-off: the tunables are sliders (8), set afterwards in the running game. Steps 0, 1a, and step 3's geometry can start at once; the rest wait as each step's line says.
 
-0. Partial coverage in salal. The backend work of 7.6 (min and max blend equations, alpha-only and no-colour writes, the two depth states, a depth clear, the targets' alpha and depth checked at start), the sandbox scene and test of 7.7, then the API of 7.6. Done: a tagged salal whose `mask` scene shows every case of 7.7 with no seam, nothing darkened twice, no piece lightening outside its colonist's shape, and no colonist's shadow over another's light at 50 colonists, the value test passing on the GL backend, `docs/masks.md` brought up to date (content read by its luminance, `mix-blend-mode`, a group isolated by a blend other than `Normal`, per-child masks, and the partial layer), and worldsim's pin on that tag; or the fallback of 7.7 that holds, with the test of its values. Depends on: nothing.
+0. Partial coverage in salal. The backend states 7.6 lists (min and max blend equations, alpha-only and no-colour writes, the two depth states, a depth clear, the targets' alpha and depth checked at start), the sandbox scene and test of 7.7, and the API of 7.6. Done: a tagged salal whose `mask` scene shows every case of 7.7 with no seam, nothing darkened twice, no piece lightening outside its colonist's shape, and no colonist's shadow over another's light at 50 colonists, the value test passing on the GL backend, `docs/masks.md` brought up to date (content read by its luminance, `mix-blend-mode`, a group isolated by a blend other than `Normal`, per-child masks, and the partial layer), and worldsim's pin on that tag; or the fallback of 7.7 that holds, with the test of its values. Depends on: nothing.
 1a. Sim bench. As 12, on a branch that builds 5's shape from nav's placed rings only, no wall bodies, and runs legs and the polygon path through a copy of the record beside the shipped shape on the same walk, with no rendering. Done: 12.1's counts in this document beside the shipped shape's, read against 6.6's count bars. 6.6's time bars are read before step 4 lands, on `sim-benchmarks --benchmark_filter=BM_SightForest` with `node scripts/machine-load.mjs` reading `idle` before and after (the nightly batch runs the world, assets, and worldgen benchmarks, not the sim's). Vision's tick has no bar here. Depends on: nothing; it reads nav's placed rings as they are.
 1b. Limits check. As 12, after step 0 and step 2: the bench branch, with step 2's wall bodies merged into it, draws 3's shadows and the eased rim with step 0's masks. Done: every limit of 10 measured and reported in this document at the start values, at 1x and 10x, and the cover's CPU time; a go, or 12's fallback taken, for the drawn pieces; 6.6's thresholds checked again in the game at 50 colonists at 1x and 10x, in the landing's forest and in a walled base among trees, where the sweep runs for walls and K with walls is measured. Depends on: step 0, step 1a's go by counts (12.1), and step 2 (the wall bodies it measures, on the "wall sight occluders" work).
 2. Bodies. Wall bodies in `GeometryIndex`: each record's body, one record a body with its edges, box, `diameter`, and kind, made in `rebuild()`, with the rejected graph's bands as one body; `queryFacingOccluders`, `backFacesHiddenFrom`, and `insideSolid` reading opaque bodies only. The placed occluder index in `NavigationSystem` with serials, perimeters, diameters, kinds, arrival times on `TimeSystem::simulationSeconds()`, and buckets, updated in `collect()` in patch order, the removal callback carrying its ids. Silhouettes, widths, distances; shadow edges tagged with their corners; the cache keyed on serials; `lead` from the measured frame interval and `sightBodies` to `reach`; `SightTunables`, its ranges, and its sliders; the `sightBodies` state view. Done: a placed obstacle occludes by its kind and a mover, water, a ford, and a bounds ring do not; a refused add never enters the index; a wall stub is left out of the visibility polygon and still joins memory and `StoreOrDrop`'s walls; a rejected graph takes the kind the same walls take when accepted, away from the threshold; felling a tree rebuilds an observer's shape and walking over new ground with no obstacle does not; a tree placed on a ring id freed in the same job rebuilds it and leaves the index with one entry; vision never joins the patch job (a test with the job held running); the state view lists a BigRock with kind opaque. Depends on: the "wall sight occluders" work on `main`; step 1a's go by counts (12.1) is in.
@@ -851,6 +850,7 @@ The wording of each option is the author's or the orchestrator's.
 15. One object's effect on range capped at a small amount, several adding up to a floor.
 16. A drawn shadow's strength scaled by the thing's width.
 17. Size decides, once per thing: small things always cast the soft triangle, real walls and big rocks are always opaque with soft edges, and nothing ever changes kind.
+34. The mask API's names are `MixBlendMode`, `MaskPaint::solid`, `MaskPaint::linearGradient`, `MaskImage::svgMask`, and `MaskElement`, as merged in salal v0.43.0, which has no `MaskMode` or `MaskIsolation`: an `svgMask` layer is read by its luminance with no mode on any layer, a group is isolated by a blend other than `Normal` with no isolation flag, a mesh element carries a value at each vertex, and an element may carry its own hard mask (7.6). Approved 2026-11-17.
 
 ### Author's proposals
 
@@ -872,7 +872,6 @@ Each is unconfirmed by Kevin.
 31. Rules 10 and 19 read against 7.6: destination alpha, depth, and the stencil are per-pixel state of the frame being drawn, written and read inside the cover's draws, holding no game data between frames, with no texture made, so rule 10's "no raster, grid, bitmap, or mask texture anywhere in this system" holds; rule 19's "drawn with the stencil buffer" covers the hard layers, and the partial layer uses the frame's alpha and depth beside it.
 32. The seen area's feather drawn for the union's boundary only, kept in cells rebuilt from changed boxes, with pending cuts held and redone where a leg's ring moves; a body face left hard in the tint (7.2).
 33. Departure from C as drawn: several colonists composed as the least darkness, each colonist's darkness the greatest of his pieces, each piece clipped to his bright shape; and the lens, where two sights overlap by under twice the feather, left dimmer than a fade from the union's edge (7.4).
-34. The salal surface: `MaskImage::content` read by its luminance with no mode on any layer, `MaskBlend::Normal`, `Lighten`, and `Darken`, a group isolated by a blend other than `Normal` with no isolation flag, `MaskPaint::linear`, mesh children with a value at each vertex, and children carrying their own hard mask (7.6). The names follow salal's draft partial-coverage work, which dropped `MaskMode` and `MaskIsolation`, and still await Kevin.
 35. Every start value in 9, every acceptance limit in 10 (limit 2 at 0.06 on screen, leaving room over the 0.049 a stub gives at its diagonal; limits 5 and 8 at 1x, 10x reported), and the record's legs on the sight polygon, which 6.6 leaves as what remains, a departure from rule 27.
 36. The bright rim eased over 400 mm of walk from where it is drawn to the newest build's side offsets, the blend restarting at 0 at every build and measured by the walk since, its start held per observer in `PlayerVisibilitySystem` and inherited by the next leg, so a restart moves nothing and the rim changes by at most 0.028 on screen a frame at 1x in dense stands (0.06 when a ring is felled or placed mid-ease); it lags a build by up to that walk, and at 10x a build's change lands within a frame or two. The bright shape is drawn the whole `rimEaseMm` inside `drawnVisibleRadiusMm` so it stays inside the leg's ring through restarts, a fully bright core of about 27.9 m in the open (6.2, 6.3).
 37. The polygon path's `isVisible`, discovery, and bright shape cut by the forest shape a leg would give at his position, so both paths give the same rim (5.2, 6.3).
