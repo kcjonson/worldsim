@@ -31,6 +31,19 @@ namespace {
 
 	constexpr float kOracleTolerance = 1e-4F;
 	constexpr float kNearTolerance = 1e-3F;
+	// Lengths between millimeter corners, in double: past this is a real difference, not rounding.
+	constexpr double kExactTolerance = 1e-9;
+	// A drawn corner reads square to the prototype check's three printed decimals.
+	constexpr double kSquareCornerToleranceDegrees = 0.005;
+	// A drawn edge to the millimeter it commits at.
+	constexpr double kHalfMillimeterMeters = 0.0005;
+	constexpr double kHalfMillimeter = 0.5;
+
+	// The wall tool reads a 4 m by 3 m foundation's edges between inset corners: each edge less
+	// twice the inset, the 0.1 m half thickness and its 2 mm safety (kFlushInsetSafetyMm), so
+	// 4 - 2 * 0.102 = 3.796 and 3 - 2 * 0.102 = 2.796.
+	constexpr double kInsetFourMeters = 3.796;
+	constexpr double kInsetThreeMeters = 2.796;
 
 	void expectPoint(Vec2 actual, double x, double y, float tolerance = kOracleTolerance) {
 		EXPECT_NEAR(actual.x, x, tolerance);
@@ -160,9 +173,9 @@ TEST_F(CommonLengths, SecondShackClosesSquare) {
 	for (std::size_t index = 0; index < count; ++index) {
 		const Vec2 previous = points[(index + count - 1) % count];
 		const Vec2 next = points[(index + 1) % count];
-		EXPECT_NEAR(cornerDegrees(previous, points[index], next), 90.0, 0.005) << index;
+		EXPECT_NEAR(cornerDegrees(previous, points[index], next), 90.0, kSquareCornerToleranceDegrees) << index;
 		const double edge = distanceBetween(points[index], next);
-		EXPECT_NEAR(edge, edges[index], 0.0005) << index;
+		EXPECT_NEAR(edge, edges[index], kHalfMillimeterMeters) << index;
 		const auto& kept = closing.commonLengths;
 		EXPECT_TRUE(std::any_of(kept.begin(), kept.begin() + static_cast<std::ptrdiff_t>(closing.commonLengthCount), [&](float length) {
 			return std::abs(static_cast<double>(length) - edge) <= static_cast<double>(snapping.commonLengthMergeMeters);
@@ -198,7 +211,7 @@ TEST_F(CommonLengths, MergeKeepsHigherPriorityLength) {
 	const LengthStudy study = lengths({{0.0F, -10.0F}}, {4.1F, -10.0F});
 	ASSERT_EQ(study.groups.size(), 1U);
 	EXPECT_EQ(study.groups[0].memberCount, 4U);
-	EXPECT_NEAR(study.groups[0].lengthMeters, 4.0, 1e-9);
+	EXPECT_NEAR(study.groups[0].lengthMeters, 4.0, kExactTolerance);
 	EXPECT_EQ(countEntries(study, LengthEntryStatus::Merged), 2U);
 	expectPoint(snap({{0.0F, -10.0F}}, {4.1F, -10.0F}).point, 4.0, -10.0);
 
@@ -217,7 +230,7 @@ TEST_F(CommonLengths, EntryJoinsFirstGroupInReach) {
 	built.addFoundation(rectangle(20.0, 0.0, 0.0, 4.0, 9.0));
 	const LengthStudy study = lengths({}, {0.0F, -5.0F});
 	ASSERT_EQ(study.groups.size(), 5U);
-	EXPECT_NEAR(study.groups[study.ranked[0]].lengthMeters, 4.0, 1e-9);
+	EXPECT_NEAR(study.groups[study.ranked[0]].lengthMeters, 4.0, kExactTolerance);
 	EXPECT_EQ(study.groups[study.ranked[0]].memberCount, 4U);
 }
 
@@ -347,7 +360,8 @@ TEST_F(CommonLengths, MinimumAndRange) {
 }
 
 TEST_F(CommonLengths, MinimumAndRangeBoundaries) {
-	// An edge exactly the minimum is kept; an owner exactly the range away lends, a millimeter farther does not.
+	// An edge exactly the minimum is kept; an owner exactly the range away lends, and one a
+	// millimeter farther, its bounds past the range, is skipped unread: no entries at all.
 	built.addFoundation(rectangle(0.0, 0.0, 0.0, 4.0, 0.5));
 	built.addFoundation(rectangle(20.0, 22.0, 0.0, 3.0, 3.0));
 	built.addFoundation(rectangle(30.0, 22.001, 0.0, 7.0, 7.0));
@@ -400,21 +414,96 @@ TEST_F(CommonLengths, WallToolReadsInsetAndWalls) {
 	const Vec2		 start{-0.5F, -6.0F};
 	const SnapResult result = snapWall({start}, {3.2F, -6.0F});
 	const auto		 kept = [&](const SnapResult& snapped, double length) {
-		  return std::any_of(snapped.commonLengths.begin(), snapped.commonLengths.begin() + static_cast<std::ptrdiff_t>(snapped.commonLengthCount), [&](float value) {
-			  return std::abs(static_cast<double>(value) - length) < 1e-4;
-		  });
+		  return std::any_of(
+			  snapped.commonLengths.begin(),
+			  snapped.commonLengths.begin() + static_cast<std::ptrdiff_t>(snapped.commonLengthCount),
+			  [&](float value) { return std::abs(static_cast<double>(value) - length) < static_cast<double>(kOracleTolerance); }
+		  );
 	};
-	EXPECT_TRUE(kept(result, 3.796));
-	EXPECT_TRUE(kept(result, 2.796));
+	EXPECT_TRUE(kept(result, kInsetFourMeters));
+	EXPECT_TRUE(kept(result, kInsetThreeMeters));
 	EXPECT_TRUE(kept(result, 2.5));
 	expectPoint(result.point, 3.296, -6.0);
-	EXPECT_NEAR(distanceBetween(start, result.point), 3.796, 1e-4);
+	EXPECT_NEAR(distanceBetween(start, result.point), kInsetFourMeters, kOracleTolerance);
 
 	snapping.commonLengthWallsReadInsetFoundation = false;
 	const SnapResult raw = snapWall({start}, {3.2F, -6.0F});
 	EXPECT_TRUE(kept(raw, 4.0));
 	EXPECT_TRUE(kept(raw, 3.0));
-	EXPECT_FALSE(kept(raw, 3.796));
+	EXPECT_FALSE(kept(raw, kInsetFourMeters));
+}
+
+TEST_F(CommonLengths, FoundationToolIgnoresWalls) {
+	built.addFoundation(rectangle(0.0, 0.0, 0.0, 4.0, 3.0));
+	built.addWall({millimeters(0.0, 10.0), millimeters(2.5, 10.0)});
+	expectLengths(keptLengths(lengths({}, {0.0F, -6.0F})), {3.0, 4.0});
+}
+
+TEST_F(CommonLengths, WallToolReadsInsetAtAnyDistanceUnderAllBuildings) {
+	snapping.commonLengthAllBuildings = true;
+	built.addFoundation(rectangle(60.0, 0.0, 0.0, 4.0, 3.0));
+	expectLengths(keptLengths(lengths({}, {0.0F, -6.0F}, snap_guides::SnapTool::Wall)), {kInsetThreeMeters, kInsetFourMeters});
+}
+
+TEST_F(CommonLengths, WallToolReadsInsetOfOwnerExactlyAtRange) {
+	built.addFoundation(rectangle(0.0, 22.0, 0.0, 4.0, 3.0)); // its nearest edge is 30 m from the cursor
+	expectLengths(keptLengths(lengths({}, {0.0F, -8.0F}, snap_guides::SnapTool::Wall)), {kInsetThreeMeters, kInsetFourMeters});
+}
+
+TEST_F(CommonLengths, OwnerDistanceIsToTheNearestEdge) {
+	// Beside the middle of a 100 m building: 8 m from its edge, over 50 m from any corner.
+	built.addFoundation(rectangle(0.0, 0.0, 0.0, 100.0, 3.0));
+	expectLengths(keptLengths(lengths({}, {50.0F, -8.0F})), {3.0, 100.0});
+}
+
+TEST_F(CommonLengths, BoundsInsideTheRangeAreRead) {
+	// Only bounds past the range cull (MinimumAndRangeBoundaries): a diamond whose box is 14 m
+	// away but whose edges are 35 m away, and a wall whose box holds the cursor but whose line
+	// is 35 m off, are read, and the range drops them, as it does every owner the cull skips.
+	SnapWorld diamond;
+	diamond.addFoundation({{30.0, 0.0}, {0.0, 30.0}, {-30.0, 0.0}, {0.0, -30.0}});
+	diamond.addWall({millimeters(0.0, 130.0), millimeters(130.0, 0.0)});
+	std::vector<Vec2>				points;
+	const snap_guides::GuideContext context{
+		.snapping = &snapping,
+		.world = &diamond.world,
+		.points = &points,
+		.cursor = {40.0, 40.0},
+		.aids = everyAidOn(),
+		.tool = snap_guides::SnapTool::Wall,
+		.wallHalfThicknessMm = kWallHalfThicknessMm,
+	};
+	LengthStudy study;
+	snap_lengths::studyCommonLengths(context, study);
+	EXPECT_EQ(countEntries(study, LengthEntryStatus::OutOfRange), 5U);
+	EXPECT_EQ(study.keptCount, 0U);
+}
+
+TEST_F(CommonLengths, RecencyRanksFoundationsAndChainsTogether) {
+	// A foundation, then a wall, then a foundation: the newest foundation's lengths lead, then the
+	// wall's, then the oldest foundation's (2.796 m leads, held by the newest and the oldest).
+	built.addFoundation(rectangle(20.0, 0.0, 0.0, 4.0, 3.0));
+	built.addWall({millimeters(0.0, 10.0), millimeters(7.0, 10.0)});
+	built.addFoundation(rectangle(30.0, 0.0, 0.0, 5.0, 3.0));
+	expectLengths(
+		keptLengths(lengths({{-0.5F, -6.0F}}, {3.9F, -6.0F}, snap_guides::SnapTool::Wall)),
+		{kInsetThreeMeters, 4.796, 7.0, kInsetFourMeters}
+	);
+}
+
+TEST_F(CommonLengths, ShapeIsTheNearestOwner) {
+	// The shape's owner distance is 0, and a group's nearest owner is its nearest member's: the
+	// 4 m and 6 m groups each hold a shape edge, so they lead the farther building's 3 m.
+	built.addFoundation(rectangle(0.0, 20.0, 0.0, 6.0, 3.0));
+	built.addFoundation(rectangle(0.0, 25.0, 0.0, 4.0, 3.0));
+	expectLengths(keptLengths(lengths({{0.0F, 0.0F}, {4.0F, 0.0F}, {4.0F, 6.0F}}, {0.0F, 6.0F})), {4.0, 6.0, 3.0});
+}
+
+TEST_F(CommonLengths, MoreMembersRankBeforeNearerOwner) {
+	built.addFoundation(rectangle(30.0, 0.0, 0.0, 4.0, 4.0));  // far: four 4 m edges
+	built.addFoundation(rectangle(2.0, 2.0, 0.0, 6.0, 9.0));   // near: 6 and 9
+	built.addFoundation(rectangle(-20.0, 0.0, 0.0, 4.0, 6.0)); // newest: 4 and 6
+	expectLengths(keptLengths(lengths({}, {0.0F, 0.0F})), {4.0, 6.0, 9.0});
 }
 
 TEST_F(CommonLengths, WallChainIsOneOwner) {
@@ -425,7 +514,151 @@ TEST_F(CommonLengths, WallChainIsOneOwner) {
 	built.addWall({millimeters(0.0, 0.0), millimeters(40.0, 0.0)});
 	const LengthStudy study = lengths({}, {0.0F, 1.0F}, snap_guides::SnapTool::Wall);
 	const auto		  lengthsKept = keptLengths(study);
-	EXPECT_NE(std::find_if(lengthsKept.begin(), lengthsKept.end(), [](double length) { return std::abs(length - 35.0) < 1e-6; }), lengthsKept.end());
+	EXPECT_NE(
+		std::find_if(lengthsKept.begin(), lengthsKept.end(), [](double length) { return std::abs(length - 35.0) < kExactTolerance; }),
+		lengthsKept.end()
+	);
+}
+
+TEST_F(CommonLengths, ChainDrawnInOneCommitIsOneOwner) {
+	// Three segments drawn as one chain share its placement order and its nearest segment's
+	// distance, so both 40 m segments, far outside a 5 m range, still lend, as one group of two.
+	snapping.commonLengthRangeMeters = 5.0F;
+	built.addWall({millimeters(0.0, 0.0), millimeters(5.0, 0.0), millimeters(5.0, 40.0), millimeters(45.0, 40.0)});
+	const LengthStudy study = lengths({}, {1.0F, 1.0F}, snap_guides::SnapTool::Wall);
+	ASSERT_EQ(study.entries.size(), 3U);
+	for (const snap_lengths::LengthEntry& entry : study.entries) {
+		EXPECT_EQ(entry.recency, study.entries[0].recency);
+		EXPECT_NEAR(entry.ownerMeters, 1.0, kExactTolerance);
+		EXPECT_EQ(entry.status, LengthEntryStatus::Member);
+	}
+	expectLengths(keptLengths(study), {40.0, 5.0});
+	EXPECT_EQ(study.groups[study.ranked[0]].memberCount, 2U);
+}
+
+TEST_F(CommonLengths, ChainsCommittedApartAreTwoOwners) {
+	built.addWall({millimeters(0.0, 0.0), millimeters(3.0, 0.0), millimeters(3.0, 2.0)});
+	built.addWall({millimeters(10.0, 0.0), millimeters(14.0, 0.0), millimeters(14.0, 6.0)});
+	const LengthStudy study = lengths({}, {0.0F, -5.0F}, snap_guides::SnapTool::Wall);
+	ASSERT_EQ(study.entries.size(), 4U);
+	EXPECT_LT(study.entries[0].recency, study.entries[2].recency);
+	expectLengths(keptLengths(study), {4.0, 6.0, 2.0, 3.0});
+}
+
+TEST_F(CommonLengths, ChainSegmentsFoundInAnyVectorOrder) {
+	// X, then a chain drawn through X's two vertices (one segment each side of it), then a far
+	// wall, then a tee that splits the chain's left segment: the halves go to the end of the
+	// world's segments, after the far wall, and still belong to the chain near the cursor.
+	snapping.commonLengthRangeMeters = 5.0F;
+	ConstructionWorld& world = built.world;
+	ASSERT_TRUE(world.commitSegment({0, 0}, {10000, 0}, "Wood", "Standard", kInvalidFoundation, world.version()).ok());
+	ASSERT_EQ(
+		world.commitSegment({-5000, 0}, {15000, 0}, "Wood", "Standard", kInvalidFoundation, world.version()).createdSegments.size(), 2U
+	);
+	ASSERT_TRUE(world.commitSegment({100000, 100000}, {100000, 103000}, "Wood", "Standard", kInvalidFoundation, world.version()).ok());
+	ASSERT_TRUE(world.commitSegment({-2500, -3000}, {-2500, 0}, "Wood", "Standard", kInvalidFoundation, world.version()).ok());
+	const LengthStudy study = lengths({}, {12.0F, 1.0F}, snap_guides::SnapTool::Wall);
+	expectLengths(keptLengths(study), {2.5, 5.0, 10.0});
+	// X's one segment and the chain's three; the far wall and the tee lie wholly past the range.
+	EXPECT_EQ(study.entries.size(), 4U);
+}
+
+TEST_F(CommonLengths, ReportedLengthsAreTheKeptOnes) {
+	snapping.commonLengthMaxCount = 2;
+	built.addFoundation(rectangle(0.0, 0.0, 0.0, 4.0, 3.0));
+	built.addFoundation(rectangle(10.0, 0.0, 0.0, 10.0, 5.0));
+	const SnapResult result = snap({{0.0F, -8.0F}}, {3.9F, -8.0F});
+	ASSERT_EQ(result.commonLengthCount, 2U);
+	EXPECT_NEAR(result.commonLengths[0], 5.0F, kOracleTolerance);
+	EXPECT_NEAR(result.commonLengths[1], 10.0F, kOracleTolerance);
+}
+
+TEST_F(CommonLengths, ReportedListsStopAtTheirCaps) {
+	// Twenty distinct lengths: the sixteen best kept and reported, in rank order, newest building
+	// first, however high commonLengthMaxCount is set (the validator refuses it past 16).
+	snapping.commonLengthMaxCount = 40;
+	snapping.commonLengthRangeMeters = 1000.0F;
+	for (int index = 0; index < 10; ++index) {
+		built.addFoundation(rectangle(10.0 * index, 0.0, 0.0, 1.0 + 0.5 * index, 2.25 + 0.5 * index));
+	}
+	const SnapResult many = snap({{0.0F, -5.0F}}, {5.1F, -5.0F});
+	ASSERT_EQ(many.commonLengthCount, kMaxReportedCommonLengths);
+	const double expected[] = {5.5, 6.75, 5.0, 6.25, 4.5, 5.75, 4.0, 5.25, 3.5, 4.75, 3.0, 4.25, 2.5, 3.75, 2.0, 3.25};
+	for (std::size_t rank = 0; rank < kMaxReportedCommonLengths; ++rank) {
+		EXPECT_NEAR(many.commonLengths[rank], expected[rank], kOracleTolerance) << rank;
+	}
+
+	// Thirty-six matched 4 m edges (seventeen sheds, one of them square): the 32 of highest
+	// priority, newest shed first, so the two oldest sheds' edges are the ones left out.
+	SnapWorld sheds;
+	for (int index = 0; index < 17; ++index) {
+		sheds.addFoundation(rectangle(10.0 * index, 0.0, 0.0, 4.0, 2.0 + 0.5 * index));
+	}
+	const SnapResult matched = SnapEngine(snapping, sheds.world).snap({{1.0F, -5.0F}}, {5.1F, -5.0F}, foundationInput(everyAidOn()));
+	ASSERT_EQ(matched.lengthSnap, LengthSnapKind::CommonLength);
+	ASSERT_EQ(matched.matchedEdgeCount, kMaxMatchedLengthEdges);
+	expectPoint(matched.matchedEdges[0].start, 160.0, 0.0);
+	expectPoint(matched.matchedEdges[0].end, 164.0, 0.0);
+	expectPoint(matched.matchedEdges[kMaxMatchedLengthEdges - 1].start, 24.0, 3.0);
+	expectPoint(matched.matchedEdges[kMaxMatchedLengthEdges - 1].end, 20.0, 3.0);
+}
+
+TEST_F(CommonLengths, MatchedEdgesLeaveOutDroppedEntries) {
+	// The shack's 0.4 m edges are under the minimum: only its two 4 m edges are ticked.
+	built.addFoundation(rectangle(0.0, 0.0, 0.0, 4.0, 0.4));
+	const SnapResult result = snap({{0.0F, -8.0F}}, {3.9F, -8.0F});
+	ASSERT_EQ(result.lengthSnap, LengthSnapKind::CommonLength);
+	EXPECT_EQ(result.matchedEdgeCount, 2U);
+}
+
+TEST_F(CommonLengths, ResultFieldsAfterACommonLength) {
+	// On a guide through another point, a common length measures the segment, from its start.
+	built.addFoundation(rectangle(0.0, 10.0, 0.0, 4.6, 3.0));
+	const SnapResult alongGuide = snap({{-6.0F, 6.0F}}, {-3.67F, 10.05F});
+	ASSERT_EQ(alongGuide.lengthSnap, LengthSnapKind::CommonLength);
+	expectPoint(alongGuide.point, -3.728437, 10.0);
+	expectPoint(alongGuide.lengthFrom, -6.0, 6.0);
+
+	// The guide is drawn to the point the length moved it to.
+	const SnapResult single = snap(
+		{{0.0F, 0.0F}, {5.5F, 0.0F}, {5.5F, 2.0F}}, {0.2F, 2.15F}, foundationInput(without(everyAidOn(), &DrawingAids::guideCrossings))
+	);
+	ASSERT_EQ(single.lengthSnap, LengthSnapKind::CommonLength);
+	expectPoint(single.lengthFrom, 5.5, 2.0);
+	ASSERT_EQ(single.guideCount, 1U);
+	expectPoint(single.guides[0].to, single.point.x, single.point.y);
+
+	// A crossing that yields reports the line the point slid along: the shape's, through (6, 4).
+	SnapWorld yielding;
+	yielding.addFoundation(rectangle(-3.0, 7.0, 0.0, 5.8, 2.0));
+	snapping.commonLengthBeatsCrossing = true;
+	const SnapResult yielded = SnapEngine(snapping, yielding.world)
+								   .snap({{0.0F, 0.0F}, {6.0F, 0.0F}, {6.0F, 4.0F}}, {0.18F, 4.05F}, foundationInput(everyAidOn()));
+	ASSERT_EQ(yielded.guideCount, 1U);
+	expectPoint(yielded.guides[0].from, 6.0, 4.0);
+}
+
+TEST_F(CommonLengths, WallEndAndJunctionKeepTheirPoints) {
+	// With lengths on, a snap onto a wall's end or interior keeps its point and reports no
+	// length, though 2.93 m would round and the 2.5 m wall lends a length.
+	built.addWall({millimeters(0.0, 10.0), millimeters(2.5, 10.0)});
+	const SnapResult end = snapWall({{-0.43F, 10.0F}}, {2.6F, 10.1F});
+	EXPECT_EQ(end.kind, SnapKind::WallEndpoint);
+	expectPoint(end.point, 2.5, 10.0);
+	EXPECT_EQ(end.lengthSnap, LengthSnapKind::None);
+	const SnapResult junction = snapWall({{-0.43F, 12.0F}}, {1.23F, 10.05F});
+	EXPECT_EQ(junction.kind, SnapKind::WallSegment);
+	expectPoint(junction.point, 1.23, 10.0);
+	EXPECT_EQ(junction.lengthSnap, LengthSnapKind::None);
+}
+
+TEST(SnapLengths, TargetAtLengthReachesTheTangent) {
+	// The line passes exactly 5 m from the start: 5 m reaches it at the foot, a hair less does not.
+	const auto tangent = snap_lengths::targetAtLength({0.0, 0.0}, 5.0, {5.0, 6.0}, {0.0, 1.0}, {5.0, 0.2});
+	ASSERT_TRUE(tangent.has_value());
+	EXPECT_NEAR(tangent->x, 5.0, kExactTolerance);
+	EXPECT_NEAR(tangent->y, 0.0, kExactTolerance);
+	EXPECT_FALSE(snap_lengths::targetAtLength({0.0, 0.0}, 4.999, {5.0, 6.0}, {0.0, 1.0}, {5.0, 0.2}).has_value());
 }
 
 // --- Rounding -------------------------------------------------------------------------
@@ -465,7 +698,7 @@ TEST_F(DrawingLevels, RoundedLengthCommitsToTheMillimeter) {
 	const SnapResult	diagonal = snap({{2.0F, 3.0F}}, polar({2.0F, 3.0F}, 31.0, 4.97));
 	const auto			diagonalEnd = geometry::quantize(diagonal.point);
 	const double		committed = std::hypot(static_cast<double>(diagonalEnd.x - 2000), static_cast<double>(diagonalEnd.y - 3000));
-	EXPECT_NEAR(committed, 5000.0, 0.5);
+	EXPECT_NEAR(committed, 5000.0, kHalfMillimeter);
 }
 
 TEST_F(DrawingLevels, CommonLengthBeatsRounding) {
@@ -514,13 +747,6 @@ TEST_F(GuideRounding, NoPointPlacedRoundsGuideDistance) {
 	expectPoint(result.lengthFrom, 0.0, 10.0);
 }
 
-TEST_F(GuideRounding, GuideThroughPreviousRoundsSegment) {
-	const SnapResult result = snap({{0.0F, 0.0F}, {6.0F, 0.0F}}, {6.1F, 3.67F});
-	EXPECT_EQ(result.kind, SnapKind::GuideLine);
-	expectPoint(result.point, 6.0, 3.7);
-	EXPECT_EQ(result.lengthSnap, LengthSnapKind::Rounded);
-}
-
 TEST_F(GuideRounding, GuideThroughOtherPointRoundsGuideDistance) {
 	built.addFoundation({{0.0, 10.0}, {3.0, 10.0}, {3.0, 13.0}, {0.0, 13.0}});
 	const SnapResult byGuide = snap({{-6.0F, 6.0F}}, {-3.67F, 10.05F});
@@ -556,19 +782,24 @@ TEST_F(GuideRounding, RoundingToZeroLeavesTheFoot) {
 }
 
 TEST_F(GuideRounding, RoundingLeavesCrossing) {
-	// With and without common lengths (levels' IncrementLeavesCrossing): 6.03 m stays.
+	// Levels' IncrementLeavesCrossing: 6.03 m stays. Common lengths on, a crossing holds by default;
+	// off, rounding never moves it, even where commonLengthBeatsCrossing lets a length try.
 	const std::vector<Vec2> points{{0.0F, 0.0F}, {6.03F, 0.0F}, {6.03F, 4.07F}};
-	for (const DrawingAids& aids : {everyAidOn(), without(everyAidOn(), &DrawingAids::commonLengths)}) {
-		const SnapResult result = snap(points, {0.15F, 4.0F}, foundationInput(aids));
-		EXPECT_EQ(result.kind, SnapKind::GuideCrossing);
+	for (const bool beatsCrossing : {false, true}) {
+		snapping.commonLengthBeatsCrossing = beatsCrossing;
+		const SnapResult result =
+			snap(points, {0.15F, 4.0F}, foundationInput(beatsCrossing ? without(everyAidOn(), &DrawingAids::commonLengths) : everyAidOn()));
+		EXPECT_EQ(result.kind, SnapKind::GuideCrossing) << beatsCrossing;
 		expectPoint(result.point, 0.0, 4.07);
-		EXPECT_EQ(result.lengthSnap, LengthSnapKind::None);
+		EXPECT_EQ(result.lengthSnap, LengthSnapKind::None) << beatsCrossing;
 	}
 }
 
 TEST_F(GuideRounding, RoundingOffLeavesRaw) {
 	built.addFoundation({{0.0, 10.0}, {3.0, 10.0}, {3.0, 13.0}, {0.0, 13.0}});
 	expectPoint(snap({}, {-3.67F, 10.05F}, foundationInput(without(everyAidOn(), &DrawingAids::roundLengths))).point, -3.67, 10.0);
+	// Freeform: no guide and no rounding, the raw cursor.
+	expectPoint(snap({}, {-3.67F, 10.05F}, SnapInput{.aids = everyAidOn(), .freeform = true}).point, -3.67, 10.05);
 	snapping.lengthIncrementMeters = 0.0F;
 	expectPoint(snap({}, {-3.67F, 10.05F}).point, -3.67, 10.0);
 	const Vec2 start{0.0F, 20.0F};
@@ -596,6 +827,9 @@ namespace {
 
 	// check.mjs's guide cases whose point moves once lengths are on, rerun through the
 	// prototype with the inputs as the port sees them (float points, millimeter world).
+	// The twelve "worked 3" rows put the cursor 0.5 m off one point of the guide through the
+	// previous point, in twelve directions 30 degrees apart, so its foot and the rounded segment
+	// length differ row to row.
 	const std::vector<LengthsOnCase> kLengthsOnCases = {
 		// clang-format off
 		{"worked 3: 0.5 m off the corner, perpendicular to the guide", false, false, {{0.0F, 0.0F}, {5.196F, 3.0F}}, {}, {}, {3.62901258F, 6.71400023F}, SnapKind::GuideLine, 3.195956, 6.464076, LengthSnapKind::Rounded, 4.0},
