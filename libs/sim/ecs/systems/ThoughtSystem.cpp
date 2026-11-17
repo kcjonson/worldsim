@@ -203,6 +203,7 @@ namespace ecs {
 			.moodEffect = feeling.moodEffect,
 			.importance = type.importance,
 			.arrivedAt = now,
+			.arrivedClock = time.clockTime(),
 			.lastRepeatedAt = now,
 			.lastRepeatedClock = time.clockTime(),
 			.expiresAt = feeling.moodEffect.has_value() ? expiryFor(*feeling.moodEffect, now) : 0.0,
@@ -213,6 +214,7 @@ namespace ecs {
 		}
 		thoughts->record.push_back(thought);
 		++thoughts->revision;
+		pruneThoughts(*thoughts, thoughtTypes.keeping(), now, pruneScratch);
 
 		for (size_t index = 0, count = arrivedObservers.size(); index < count; ++index) {
 			arrivedObservers[index](args.colonist, thought, ThoughtArrival::New);

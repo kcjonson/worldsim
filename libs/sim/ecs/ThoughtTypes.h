@@ -3,6 +3,7 @@
 // The thought types and feelings, built from data with their conditions parsed, which ThoughtSystem
 // creates thoughts from. See /docs/design/game-systems/colonists/thoughts.md.
 
+#include "ThoughtPruning.h"
 #include "components/Action.h"
 #include "components/Needs.h"
 #include "components/Thoughts.h"
@@ -96,7 +97,7 @@ namespace ecs {
 		/// Replaces everything with `config`. Returns every error: an unknown feeling, a type with no
 		/// feeling, a line limited to a feeling its type cannot produce, a condition that does not parse
 		/// (with its position), an <ends> naming no type or making a cycle, a line longer than the tuning
-		/// allows, a source naming no need or no action. Nothing is kept when there are errors.
+		/// allows, or a source naming no need or no action. Nothing is kept when there are errors.
 		std::vector<std::string> load(const assets::ThoughtConfig& config);
 
 		[[nodiscard]] std::optional<ThoughtEventTypeId>		 findType(std::string_view name) const;
@@ -108,6 +109,7 @@ namespace ecs {
 		[[nodiscard]] const std::vector<ThoughtSource>&		 sources() const { return thoughtSources; }
 		[[nodiscard]] std::size_t							 maxSubjectNameLength() const { return subjectNameLength; }
 		[[nodiscard]] double								 whileCheckSimulationSeconds() const { return whileCheckSeconds; }
+		[[nodiscard]] const ThoughtKeeping&					 keeping() const { return thoughtKeeping; }
 		[[nodiscard]] const conditions::ConditionVocabulary& vocabulary() const { return conditionVocabulary; }
 
 	  private:
@@ -119,6 +121,7 @@ namespace ecs {
 		std::unordered_map<std::string, ThoughtEventTypeId> typesByName;
 		double												whileCheckSeconds = 0.0;
 		std::size_t											subjectNameLength = 0;
+		ThoughtKeeping										thoughtKeeping;
 	};
 
 	/// The name a line gives the subject: a colonist's own name, or another entity's or a kind's asset label

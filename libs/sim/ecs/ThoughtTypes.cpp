@@ -10,6 +10,7 @@
 #include <assets/AssetRegistry.h>
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace ecs {
@@ -244,6 +245,16 @@ namespace ecs {
 			}
 		}
 
+		const assets::ThoughtKeptTuning& kept = tuning.kept;
+		const auto sizeAt = [&kept](float fraction) { return static_cast<std::size_t>(std::lround(static_cast<double>(kept.limit) * fraction)); };
+		const ThoughtKeeping newKeeping{
+			.pruneStartCount = sizeAt(kept.pruneStartsAt),
+			.pruneStopCount = sizeAt(kept.pruneStopsAt),
+			.recentSimulationSeconds = static_cast<double>(kept.recentDays) * kSimulationSecondsPerGameDay,
+			.trivialWeight = kept.trivialWeight,
+			.normalWeight = kept.normalWeight,
+		};
+
 		if (!errors.empty()) {
 			return errors;
 		}
@@ -254,6 +265,7 @@ namespace ecs {
 		typesByName = std::move(newTypesByName);
 		whileCheckSeconds = static_cast<double>(tuning.whileCheckMinutes) * kSimulationSecondsPerGameHour / kGameMinutesPerHour;
 		subjectNameLength = tuning.maxSubjectNameLength;
+		thoughtKeeping = newKeeping;
 		return errors;
 	}
 

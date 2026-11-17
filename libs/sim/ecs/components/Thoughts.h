@@ -88,26 +88,37 @@ namespace ecs {
 		std::optional<uint32_t>	  subjectName{};
 		std::optional<MoodEffect> moodEffect{};
 		ThoughtImportance		  importance = ThoughtImportance::Normal;
-		double					  arrivedAt = 0.0;
-		/// The latest repeat folded into this thought; equals arrivedAt until one arrives.
+		/// The first arrival: a merged entry's earliest thought.
+		double arrivedAt = 0.0;
+		/// arrivedAt on the day clock, stamped then: a dev time set later moves the clock, not this.
+		ClockTime arrivedClock{};
+		/// The latest arrival: a repeat folded into this thought, or a merged entry's latest thought; equals
+		/// arrivedAt until there is one.
 		double lastRepeatedAt = 0.0;
-		/// lastRepeatedAt on the day clock, stamped then: a dev time set later moves the clock, not this.
+		/// lastRepeatedAt on the day clock, stamped then.
 		ClockTime lastRepeatedClock{};
 		/// A timed effect's end. Unused for a cause-bound or momentary thought.
 		double expiresAt = 0.0;
 		/// When a cause-bound effect's `while` condition is next checked. Unused otherwise.
 		double				  nextCheckAt = 0.0;
+		/// The latest end among a merged entry's thoughts.
 		std::optional<double> endedAt{};
-		/// Repeats of a stacking held thought, the first included. Its mood effect counts this many times.
+		/// Repeats of a stacking held thought, the first included; its mood effect counts this many times. A
+		/// merged entry's is the sum of its thoughts' counts.
 		uint32_t count = 1;
+		/// Pruning collapsed repeats of this event, subject, and typeFeeling into this entry, which keeps the
+		/// earliest one's id, line, and mood effect. Never held.
+		bool merged = false;
 	};
 
 	struct Thoughts {
-		/// Every thought in arrival order (ids ascending), held or not.
+		/// Every thought in first-arrival order (ids ascending), held or not. Pruning removes and merges
+		/// entries, never held ones, and a surviving entry keeps its id.
 		std::vector<Thought>   record;
 		std::vector<ThoughtId> heldIds;
 		ThoughtId			   nextId = 1;
-		/// Bumped each time a thought arrives, folds a repeat, or ends, so a reader can tell the record changed.
+		/// Bumped each time a thought arrives, folds a repeat, or ends, and each time pruning changes the
+		/// record, so a reader can tell the record changed.
 		uint64_t revision = 0;
 		/// The line this colonist was last given for each event type, so the next pick can avoid it.
 		std::unordered_map<ThoughtEventTypeId, uint16_t> lastLines;
