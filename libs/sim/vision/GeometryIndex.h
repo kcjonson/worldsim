@@ -69,16 +69,37 @@ namespace ecs {
 			}
 		};
 
-		// A built opening, kept for the same V3 pass. jambA/jambB are the two
-		// centerline points bounding the opening's span (construction::openingGaps',
-		// clamped to the segment), the span a transparentToSight opening cuts.
+		// A built opening, kept for the structure pass. Its span along the wall is
+		// construction::openingGaps' (clamped to the segment), the span a transparentToSight
+		// opening cuts; the opening is seen where either wall face across that span is, so
+		// each face's stretch is kept, a millimetre outside the face: from the jamb at the
+		// span's start to the one at its end, on the wall's left (`leftFace`) and right.
 		struct OpeningRecord {
+			struct FaceSpan {
+				geometry::Vec2i64 start;
+				geometry::Vec2i64 end;
+			};
+
 			construction::OpeningId openingId = 0;
 			construction::SegmentId segment	  = 0;
 			std::string						type;
-			geometry::Vec2i64				jambA;
-			geometry::Vec2i64				jambB;
+			FaceSpan						leftFace;
+			FaceSpan						rightFace;
 			bool							transparentToSight = false;
+			// The box round both face spans.
+			geometry::Vec2i64 low;
+			geometry::Vec2i64 high;
+
+			// Whether either face span comes within radiusMm of `point`: off the box by more than
+			// that on either axis neither does, else geometry::withinDistanceOfSegment decides.
+			[[nodiscard]] bool within(geometry::Vec2i64 point, std::int64_t radiusMm) const {
+				if (point.x + radiusMm < low.x || point.x - radiusMm > high.x || point.y + radiusMm < low.y ||
+					point.y - radiusMm > high.y) {
+					return false;
+				}
+				return geometry::withinDistanceOfSegment(point, leftFace.start, leftFace.end, radiusMm) ||
+					   geometry::withinDistanceOfSegment(point, rightFace.start, rightFace.end, radiusMm);
+			}
 		};
 
 		// Wire the topology source. Passing nullptr leaves the index inert (no

@@ -38,6 +38,9 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <random>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -79,6 +82,33 @@ namespace {
 			cw.setSegmentState(id, FoundationState::Built);
 		}
 		return r.id;
+	}
+
+	// The shipped construction config with one more opening type, "Shutter", that passes
+	// neither movement nor sight, in place of what the fixture loaded.
+	bool loadWithAShutter() {
+		std::ifstream real(std::filesystem::path(constructionConfigFolder()) / "materials.xml");
+		std::string	  materials((std::istreambuf_iterator<char>(real)), std::istreambuf_iterator<char>());
+		const std::size_t end = materials.find("</Opening>");
+		if (end == std::string::npos) {
+			return false;
+		}
+		materials.insert(end, R"(<Type name="Shutter">
+      <material>Wood</material>
+      <widthMeters>0.6</widthMeters>
+      <pathable>false</pathable>
+      <transparentToSight>false</transparentToSight>
+      <costItems>2.0</costItems>
+      <workUnits>40.0</workUnits>
+    </Type>
+  )");
+		const std::filesystem::path path =
+			std::filesystem::temp_directory_path() / ("vision-system-shutter-" + std::to_string(std::random_device{}()) + ".xml");
+		std::ofstream(path) << materials;
+		ConstructionRegistry::Get().clear();
+		const bool loaded = ConstructionRegistry::Get().loadMaterials(path.string());
+		std::filesystem::remove(path);
+		return loaded && ConstructionRegistry::Get().getOpeningType("Shutter") != nullptr;
 	}
 
 	// Add a BUILT opening at parameter t.
@@ -567,6 +597,67 @@ TEST_F(VisionSystemTest, OpeningOnSeenWallRemembered) {
 	ASSERT_NE(mem, nullptr);
 	EXPECT_TRUE(mem->knowsSegment(wall));
 	EXPECT_TRUE(mem->knowsOpening(door)) << "an opening on a seen wall must be recorded";
+}
+
+// A door seen through its own gap at a steep angle, from 0.2 m off the wall's face and 2.25 m
+// short of the gap, is recorded: every ray through the gap ends on the far jamb before the
+// centerline, but crosses the gap's mouth on the near face.
+TEST_F(VisionSystemTest, DoorSeenSteeplyThroughItsGapRemembered) {
+	ConstructionWorld cw;
+	const SegmentId wall = buildWall(cw, {1500, 0}, {1500, 6000});
+	const OpeningId door = addBuiltOpening(cw, wall, 0.5F, "Door");
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	const EntityID observer = spawnObserver(world, {1.2F, 0.3F});
+	tick(sys);
+
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_TRUE(mem->knowsSegment(wall));
+	EXPECT_TRUE(mem->knowsOpening(door));
+}
+
+// An opening that does not pass sight leaves its wall solid, and is seen on the face toward the
+// observer: from either side, head on.
+TEST_F(VisionSystemTest, OpaqueOpeningSeenHeadOnFromEitherSideRemembered) {
+	ASSERT_TRUE(loadWithAShutter());
+	ConstructionWorld cw;
+	const SegmentId wall	= buildWall(cw, {1500, 0}, {1500, 3000});
+	const OpeningId shutter = addBuiltOpening(cw, wall, 0.5F, "Shutter");
+	for (const glm::vec2 where : {glm::vec2{0.5F, 1.5F}, glm::vec2{2.5F, 1.5F}}) {
+		World		  world;
+		VisionSystem& sys = world.registerSystem<VisionSystem>();
+		sys.setConstructionWorld(&cw);
+		const EntityID observer = spawnObserver(world, where);
+		tick(sys);
+		const Memory* mem = world.getComponent<Memory>(observer);
+		ASSERT_NE(mem, nullptr);
+		EXPECT_TRUE(mem->knowsOpening(shutter)) << "from x = " << where.x;
+	}
+}
+
+// Openings on a wall hidden behind another are not seen through it, by either face: a door
+// and a shutter on the hidden wall, a solid wall between them and the observer.
+TEST_F(VisionSystemTest, OpeningsBehindAWallNotRemembered) {
+	ASSERT_TRUE(loadWithAShutter());
+	ConstructionWorld cw;
+	buildWall(cw, {1500, -3000}, {1500, 6000});
+	const SegmentId hidden	= buildWall(cw, {3000, 0}, {3000, 3000});
+	const OpeningId door	= addBuiltOpening(cw, hidden, 0.3F, "Door");
+	const OpeningId shutter = addBuiltOpening(cw, hidden, 0.75F, "Shutter");
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	const EntityID observer = spawnObserver(world, {0.5F, 1.5F});
+	tick(sys);
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_FALSE(mem->knowsSegment(hidden));
+	EXPECT_FALSE(mem->knowsOpening(door));
+	EXPECT_FALSE(mem->knowsOpening(shutter));
 }
 
 // A long wall whose endpoints are beyond the sight radius but whose span the

@@ -245,7 +245,9 @@ namespace ecs {
 		// both are small. Deterministic: set inserts are order-independent.
 		//
 		// A wall is seen when one of its outline edges (the occluders) is, an
-		// opening when its centerline span is. A span [p0,p1] is seen if either
+		// opening when the stretch of either wall face across it is: a transparent
+		// opening's gap mouth, which a steep eye crosses though every ray then ends
+		// on the far jamb, or an opaque opening's face. A span [p0,p1] is seen if either
 		// endpoint lies in/on the polygon, or the span crosses a ring edge. The
 		// crossing fallback matters because a wall's near face IS the polygon
 		// boundary: a long wall facing the observer can have both corners out of
@@ -284,10 +286,10 @@ namespace ecs {
 		}
 
 		for (const auto& op : m_geometry.builtOpenings()) {
-			if (!geometry::withinDistanceOfSegment(centerMm, op.jambA, op.jambB, radiusMm)) {
+			if (!op.within(centerMm, radiusMm)) {
 				continue;
 			}
-			if (structureSeen(op.jambA, op.jambB)) {
+			if (structureSeen(op.leftFace.start, op.leftFace.end) || structureSeen(op.rightFace.start, op.rightFace.end)) {
 				memory.rememberOpening(op.openingId);
 				openings.push_back(op.openingId);
 			}

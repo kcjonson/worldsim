@@ -91,8 +91,10 @@ namespace {
 			std::vector<Vec2i64> cuts  = {start};
 			for (const GeometryIndex::OpeningRecord& opening : index.builtOpenings()) {
 				if (opening.segment == wall.id && opening.transparentToSight) {
-					cuts.push_back(opening.jambA);
-					cuts.push_back(opening.jambB);
+					// The face spans are the jambs offset to either side by the same step.
+					const auto jamb = [](Vec2i64 left, Vec2i64 right) { return Vec2i64{(left.x + right.x) / 2, (left.y + right.y) / 2}; };
+					cuts.push_back(jamb(opening.leftFace.start, opening.rightFace.start));
+					cuts.push_back(jamb(opening.leftFace.end, opening.rightFace.end));
 				}
 			}
 			cuts.push_back(end);
@@ -717,9 +719,9 @@ TEST_F(GeometryIndexTest, NoWorldIsInert) {
 	EXPECT_EQ(index.occluderCount(), 0u);
 }
 
-// A built opening's record holds its wall, its type, the jambs either side of its centre, and
-// whether it passes sight.
-TEST_F(GeometryIndexTest, OpeningRecordHoldsItsJambsAndTransparency) {
+// A built opening's record holds its wall, its type, whether it passes sight, and the stretch
+// of each wall face across it, a millimetre outside the face, from one jamb to the other.
+TEST_F(GeometryIndexTest, OpeningRecordHoldsItsFaceSpansAndTransparency) {
 	ConstructionWorld cw;
 	SegmentId seg = buildWall(cw, {0, 0}, {4000, 0});
 	addBuiltOpening(cw, seg, 0.5F, "Window");
@@ -733,9 +735,11 @@ TEST_F(GeometryIndexTest, OpeningRecordHoldsItsJambsAndTransparency) {
 	EXPECT_EQ(rec.segment, seg);
 	EXPECT_EQ(rec.type, "Window");
 	EXPECT_TRUE(rec.transparentToSight);
-	// Jamb points straddle the wall centerline midpoint (the window center).
-	EXPECT_LT(rec.jambA.x, 2000);
-	EXPECT_GT(rec.jambB.x, 2000);
+	const std::int64_t outside = halfThickness(cw) + 1;
+	EXPECT_EQ(rec.leftFace.start, (Vec2i64{1700, outside}));
+	EXPECT_EQ(rec.leftFace.end, (Vec2i64{2300, outside}));
+	EXPECT_EQ(rec.rightFace.start, (Vec2i64{1700, -outside}));
+	EXPECT_EQ(rec.rightFace.end, (Vec2i64{2300, -outside}));
 }
 
 // --- Sight polygon -----------------------------------------------------------

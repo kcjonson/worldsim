@@ -38,6 +38,38 @@ namespace ecs {
 					.high	= {std::max(from.x, to.x), std::max(from.y, to.y)}};
 		}
 
+		// An opening's span past the face it is seen on, so a face span rounded to the millimetre
+		// does not fall inside the wall.
+		constexpr std::int64_t kFaceSpanOutsideMm = 1;
+
+		// The record of `opening` of type `type`, spanning `gap` on the wall from `a` to `b`,
+		// `lengthMm` long and `halfThicknessMm` either side of its centerline.
+		GeometryIndex::OpeningRecord openingRecord(cw::OpeningId opening, cw::SegmentId segment, const assets::OpeningTypeDef& type,
+												   geometry::Vec2i64 a, geometry::Vec2i64 b, double lengthMm, std::int64_t halfThicknessMm,
+												   const geometry::WallGap& gap) {
+			const geometry::Vec2i64 start = pointAlong(a, b, lengthMm, gap.fromMm);
+			const geometry::Vec2i64 end	  = pointAlong(a, b, lengthMm, gap.toMm);
+			const double			reach = static_cast<double>(halfThicknessMm + kFaceSpanOutsideMm) / lengthMm;
+			const geometry::Vec2i64 left{
+				std::llround(-static_cast<double>(b.y - a.y) * reach), std::llround(static_cast<double>(b.x - a.x) * reach)
+			};
+			GeometryIndex::OpeningRecord record{
+				.openingId			= opening,
+				.segment			= segment,
+				.type				= type.name,
+				.leftFace			= {start + left, end + left},
+				.rightFace			= {start - left, end - left},
+				.transparentToSight = type.transparentToSight,
+			};
+			record.low	= record.leftFace.start;
+			record.high = record.leftFace.start;
+			for (const geometry::Vec2i64& corner : {record.leftFace.end, record.rightFace.start, record.rightFace.end}) {
+				record.low	= {std::min(record.low.x, corner.x), std::min(record.low.y, corner.y)};
+				record.high = {std::max(record.high.x, corner.x), std::max(record.high.y, corner.y)};
+			}
+			return record;
+		}
+
 		// Whether the two edges share an end.
 		bool shareAnEnd(const geometry::OccluderSegment& first, const geometry::OccluderSegment& second) {
 			return first.a == second.a || first.a == second.b || first.b == second.a || first.b == second.b;
@@ -208,8 +240,7 @@ namespace ecs {
 			for (std::size_t index = 0; index < openings.openings.size(); ++index) {
 				const assets::OpeningTypeDef& type = *openings.types[index];
 				const geometry::WallGap&	  gap  = openings.gaps[index];
-				m_openings.push_back({openings.openings[index], segment.id, type.name, pointAlong(a, b, lengthMm, gap.fromMm),
-									  pointAlong(a, b, lengthMm, gap.toMm), type.transparentToSight});
+				m_openings.push_back(openingRecord(openings.openings[index], segment.id, type, a, b, lengthMm, half, gap));
 				if (type.transparentToSight) {
 					gaps.push_back(gap);
 				}
