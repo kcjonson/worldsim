@@ -20,6 +20,7 @@
 // colonist holds, so the counts don't grow with the trees.
 
 #include "AIDecisionSystem.h"
+#include "ShippedPriorityConfig.test.h"
 
 #include "../ClaimIndex.h"
 #include "../GoalTaskRegistry.h"
@@ -301,6 +302,10 @@ namespace {
 		const int colonistCount = static_cast<int>(state.range(0));
 		const int treeCount		= static_cast<int>(state.range(1));
 		registerWorkDefs();
+		if (!ecs::loadShippedPriorityConfig()) {
+			state.SkipWithError("priority-tuning.xml did not load");
+			return;
+		}
 		const uint32_t treeId = assets::AssetRegistry::Get().getDefNameId(kTreeDef);
 		const auto	   harvestableMask = static_cast<std::uint16_t>(1U << static_cast<std::size_t>(assets::CapabilityType::Harvestable));
 

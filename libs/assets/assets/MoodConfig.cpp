@@ -1,18 +1,14 @@
 #include "assets/MoodConfig.h"
 
+#include "assets/ConfigNumber.h"
+
 #include <utils/Log.h>
 
 #include <pugixml.hpp>
 
 #include <algorithm>
-#include <limits>
 
 namespace assets {
-
-	namespace {
-		// A missing attribute reads as NaN, which validation reports, rather than as a silent zero.
-		constexpr float kMissing = std::numeric_limits<float>::quiet_NaN();
-	} // namespace
 
 	MoodConfig& MoodConfig::Get() {
 		static MoodConfig instance;
@@ -34,24 +30,33 @@ namespace assets {
 			return false;
 		}
 
-		easingPointsPerGameHour = root.child("Easing").attribute("pointsPerGameHour").as_float(kMissing);
+		ConfigReader reader(xmlPath);
+
+		easingPointsPerGameHour = reader.attributeNumber(root.child("Easing"), "Easing", "pointsPerGameHour");
 
 		const pugi::xml_node penaltyNode = root.child("NeedPenalty");
 		penaltyCurve = {
-			.comfortable = penaltyNode.attribute("comfortable").as_float(kMissing),
-			.warning = penaltyNode.attribute("warning").as_float(kMissing),
-			.penaltyAtWarning = penaltyNode.attribute("penaltyAtWarning").as_float(kMissing),
+			.comfortable = reader.attributeNumber(penaltyNode, "NeedPenalty", "comfortable"),
+			.warning = reader.attributeNumber(penaltyNode, "NeedPenalty", "warning"),
+			.penaltyAtWarning = reader.attributeNumber(penaltyNode, "NeedPenalty", "penaltyAtWarning"),
 		};
 
 		for (const pugi::xml_node needNode : root.child("NeedWeights").children("Need")) {
-			weights.push_back({.need = needNode.attribute("name").as_string(), .weight = needNode.attribute("weight").as_float(kMissing)});
+			weights.push_back({.need = needNode.attribute("name").as_string(), .weight = reader.attributeNumber(needNode, "Need", "weight")});
 		}
 
 		for (const pugi::xml_node bandNode : root.child("Bands").children("Band")) {
-			bandList.push_back({.name = bandNode.attribute("name").as_string(), .from = bandNode.attribute("from").as_float(kMissing)});
+			bandList.push_back({.name = bandNode.attribute("name").as_string(), .from = reader.attributeNumber(bandNode, "Band", "from")});
 		}
 		std::stable_sort(bandList.begin(), bandList.end(), [](const MoodBand& left, const MoodBand& right) { return left.from > right.from; });
 
+		std::vector<std::string> problems = reader.takeProblems();
+		if (!problems.empty()) {
+			clear();
+			problemList = std::move(problems);
+			LOG_ERROR(Engine, "Mood config %s has %zu bad value(s)", xmlPath.c_str(), problemList.size());
+			return false;
+		}
 		isLoaded = true;
 		LOG_INFO(Engine, "Loaded mood config from %s", xmlPath.c_str());
 		return true;
@@ -64,6 +69,7 @@ namespace assets {
 		penaltyCurve = {};
 		weights.clear();
 		bandList.clear();
+		problemList.clear();
 	}
 
 	const MoodBand& MoodConfig::bandFor(float mood) const {

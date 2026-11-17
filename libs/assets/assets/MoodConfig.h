@@ -52,6 +52,9 @@ namespace assets {
 		/// Highest `from` first.
 		[[nodiscard]] const std::vector<MoodBand>&		 bands() const { return bandList; }
 
+		/// What the file got wrong in its numbers: each names the file, the element and the attribute.
+		[[nodiscard]] const std::vector<std::string>& problems() const { return problemList; }
+
 		/// The band holding this mood: the one with the highest `from` at or below it. Valid only for a
 		/// config that passed ConfigValidator::validateMood.
 		[[nodiscard]] const MoodBand& bandFor(float mood) const;
@@ -63,6 +66,7 @@ namespace assets {
 		NeedPenaltyCurve			penaltyCurve{};
 		std::vector<NeedMoodWeight> weights{};
 		std::vector<MoodBand>		bandList{};
+		std::vector<std::string>	problemList{};
 	};
 
 } // namespace assets

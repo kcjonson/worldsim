@@ -10,6 +10,10 @@
 
 This document specifies **when** and **how** work configuration files are loaded during the game lifecycle. The design supports hot-reloading mods from the main menu without restarting the application.
 
+## Numbers
+
+Config numbers go through the strict parsers (`parseConfigNumber` and `parseConfigInteger`, read by `ConfigReader`, in `libs/assets/assets/ConfigNumber.h`). A leading `+` is accepted; empty text, trailing characters ("30abc"), `nan`, `inf`, and values too large for the type are refused rather than read as a number. Text inside an element is trimmed first. A missing, malformed, or out-of-range value (a field stored in 16 bits is checked against its range, never truncated) is a config error naming the file, the element (with its `name` attribute when it has one, as in `<Task name="Haul"> tier`), and the attribute, shown on the loading screen. Base tuning lives in XML, so there is no C++ default for it.
+
 ---
 
 ## Design Goals
