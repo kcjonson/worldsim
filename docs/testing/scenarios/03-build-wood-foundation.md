@@ -126,17 +126,21 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 11. When Bob finishes (the L-shaped foundation leaves `?what=construction`), the row leaves the Tasks panel and the Known work list.
 
-12. Open the Build menu: it lists "Rectangle foundation" first and "Freeform foundation" second. Pick Rectangle foundation: the config strip reads "Rectangle foundation (Wood)" and "Click or drag from a corner".
+12. Open the Build menu: it has one Foundation entry. Pick it: the Rectangle tool opens, the first pick this session. The config strip shows the tool picker with Rectangle picked, the material cards, and "Click or drag from a corner".
 
-13. Click open ground near Bob, then click about 4 m right and 3 m up: the corners land on whole metres, a faint fill and outline follow the pointer between the clicks with a label beside it reading `4 m x 3 m`, and the second click adds a foundation to `?what=construction` with whole-metre corners.
+13. Move the pointer over open ground near Bob: a small faint cross marks the grid point under it, and no white marker. Click, then click about 4 m right and 3 m up: the corners land on whole metres, a faint fill and outline follow the pointer between the clicks with a label up and to the right of the pointer reading `4 m x 3 m`, and the second click adds a foundation to `?what=construction` with whole-metre corners.
 
 14. Press on open ground, drag about 5 m by 4 m, and release: a second foundation appears on release, and the tool stays on (the strip reads "Click or drag from a corner").
 
-15. Click once, then move the pointer until the rectangle covers one of the two new blueprints: fill and outline turn red, the strip names the reason, and a click there adds nothing (a toast says why) while the first corner keeps waiting.
+15. Move the pointer onto a corner of a new blueprint: an amber ring marks the corner instead of the cross. Along one of its edges, a cyan ring.
 
-16. With a corner waiting, move the pointer to make a 1 m by 1 m rectangle: it previews red with a reason and a click adds nothing. Esc drops the corner; a second Esc leaves the tool.
+16. Click once, then move the pointer until the rectangle covers one of the two new blueprints: fill and outline turn red, the strip names the reason, and a click there adds nothing (a toast says why) while the first corner keeps waiting.
 
-17. Pick Freeform foundation and click four points round a square, then the first point again: it closes into a third foundation, as before the Rectangle tool existed.
+17. With a corner waiting, move the pointer to make a 1 m by 1 m rectangle: it previews red with a reason and a click adds nothing. Esc drops the corner; a second Esc leaves the tool.
+
+18. Pick Foundation again (Rectangle opens), then Freeform in the strip's picker, and click four points round a square, then the first point again: it closes into a third foundation.
+
+19. Press Esc to leave the tool and pick Foundation in the Build menu: Freeform opens, picked in the strip. Picking Rectangle in the picker switches back.
 
 ---
 
