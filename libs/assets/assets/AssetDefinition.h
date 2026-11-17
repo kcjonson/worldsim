@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -334,6 +335,21 @@ namespace assets {
 			const float     hy = halfExtentsMeters.y;
 			return {glm::vec2{c.x - hx, c.y - hy}, glm::vec2{c.x + hx, c.y - hy},
 					glm::vec2{c.x + hx, c.y + hy}, glm::vec2{c.x - hx, c.y + hy}};
+		}
+
+		// How far the shape reaches from its pivot, in local meters: its farthest corner or point.
+		[[nodiscard]] float reachMeters() const {
+			float reachSquared = 0.0F;
+			if (type == CollisionShapeType::Rect) {
+				for (const glm::vec2& corner : rectCornersLocal()) {
+					reachSquared = std::max(reachSquared, corner.x * corner.x + corner.y * corner.y);
+				}
+			} else if (type == CollisionShapeType::Polygon) {
+				for (const glm::vec2& point : pointsMeters) {
+					reachSquared = std::max(reachSquared, point.x * point.x + point.y * point.y);
+				}
+			}
+			return std::sqrt(reachSquared);
 		}
 	};
 

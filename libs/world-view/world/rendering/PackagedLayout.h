@@ -1,6 +1,7 @@
 #pragma once
 
 #include "assets/AssetRegistry.h"
+#include "assets/placement/InstanceTransform.h"
 #include "assets/placement/SpatialIndex.h" // PlacedEntity
 #include "graphics/Rect.h"
 
@@ -17,7 +18,8 @@
 //
 // The crate is PackagingCrate (back) + PackagingCrateFront: both SVGs span 0..100 x 0..75 at
 // worldHeight 0.75, so one SVG unit is 1 cm and the constants below are those coordinates in
-// meters, measured from the crate's top-left. The crate, not the item, sets the footprint.
+// meters, measured from the crate's top-left; each drawing's pivot is that box's centre. The
+// crate, not the item, sets the footprint.
 
 namespace worldview {
 
@@ -56,10 +58,12 @@ namespace worldview {
 			fit = std::min(fit, openingHeight / itemBounds.height);
 		}
 
+		// Each crate layer's drawing spans the crate's whole box, so its pivot (its bbox centre)
+		// is the box's centre.
 		auto crateSprite = [&](const char* defName) {
 			assets::PlacedEntity sprite;
 			sprite.defName = defName;
-			sprite.position = crateTopLeft;
+			sprite.position = crateTopLeft + glm::vec2{kCrateWidth, kCrateHeight} * 0.5F;
 			sprite.rotation = 0.0F;
 			sprite.scale = 1.0F;
 			sprite.colorTint = {1.0F, 1.0F, 1.0F, 1.0F};
@@ -72,12 +76,12 @@ namespace worldview {
 		out.crateBack = crateSprite("PackagingCrate");
 		out.crateFront = crateSprite("PackagingCrateFront");
 
-		// Position-as-origin instance: world = local * fit + position. Center the scaled bbox on
-		// the crate and put its bottom on the floor line.
-		const float itemCenterLocalX = itemBounds.x + itemBounds.width * 0.5F;
-		const float itemBottomLocalY = itemBounds.y + itemBounds.height;
-		out.item.defName = itemDefName;
-		out.item.position = {posValue.x - itemCenterLocalX * fit, crateTopLeft.y + kCrateFloorY - itemBottomLocalY * fit};
+		// The item's bottom-centre goes on the crate floor's centre: the position is that point less
+		// where the item's transform at the origin puts its bottom-centre.
+		const glm::vec2 itemBottomCentreLocal{itemBounds.x + itemBounds.width * 0.5F, itemBounds.y + itemBounds.height};
+		const glm::vec2 crateFloorCentre{posValue.x, crateTopLeft.y + kCrateFloorY};
+		out.item.defName  = itemDefName;
+		out.item.position = crateFloorCentre - assets::InstanceTransform({0.0F, 0.0F}, 0.0F, fit).toWorld(itemBottomCentreLocal);
 		out.item.rotation = 0.0F;
 		out.item.scale = fit;
 		out.item.colorTint = itemColorTint;

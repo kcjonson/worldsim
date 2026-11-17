@@ -13,6 +13,7 @@
 // stay an unsorted background below this stream. GL_DEPTH_TEST stays disabled;
 // this is a pure CPU painter's sort.
 
+#include "assets/placement/InstanceTransform.h"
 #include "assets/placement/SpatialIndex.h"
 #include "world/chunk/ChunkCoordinate.h"
 
@@ -33,13 +34,12 @@ namespace assets {
 	struct RenderContext;
 	struct AssetDefinition;
 
-	// Canonical anchorY rule: the world-Y of a renderable's ground-contact line. One
-	// formula reconciles the two position conventions (static: position == mesh
-	// origin; dynamic: position re-centered to the mesh bbox): the origin's world-Y
-	// plus the contact line's local-Y (anchorLocalY) scaled by the entity scale.
+	// Canonical anchorY rule: the world-Y of a renderable's ground-contact line: its
+	// position's world-Y (the pivot every renderable is drawn about) plus the contact
+	// line's local-Y (anchorLocalY, already turned by the rotation) scaled by the entity scale.
 	// Larger draws later / in front.
 	[[nodiscard]] inline float computeAnchorY(float originWorldY, float anchorLocalY, float scale) {
-		return originWorldY + anchorLocalY * scale;
+		return InstanceTransform({0.0F, originWorldY}, 0.0F, scale).toWorld({0.0F, anchorLocalY}).y;
 	}
 
 	// Local-space Y extent (min, max) of a template mesh; {0, 0} for null / empty.
@@ -49,14 +49,12 @@ namespace assets {
 	};
 	[[nodiscard]] MeshYExtent meshYExtent(const renderer::TessellatedMesh* mesh);
 
-	// The mesh-local Y of a renderable's ground-contact line: the lower edge of its def's
-	// footprint for that age class (a tree's trunk foot) when it has one, else the mesh's
-	// bottom-most local-Y. A footprint wins so what a tree draws below its foot (contact
-	// shadow, root flare, grass) does not pull it forward in the sort. A simple (SVG) def's
-	// footprint is authored about its drawing's bbox centre (SvgMeterFrame) and a procedural
-	// def's in its mesh's own frame; both come back in the mesh's frame, the one the
-	// renderable's position is the origin of.
-	[[nodiscard]] float anchorLocalY(const AssetDefinition* def, uint8_t ageClass, MeshYExtent mesh);
+	// The pivot-frame Y of a renderable's ground-contact line, before its scale: the lower
+	// edge of its def's footprint for that age class (a tree's trunk foot) turned by
+	// `rotation` when it has one, else the mesh's bottom-most local-Y. A footprint wins so
+	// what a tree draws below its foot (contact shadow, root flare, grass) does not pull it
+	// forward in the sort. The footprint and the mesh are both in the def's pivot frame.
+	[[nodiscard]] float anchorLocalY(const AssetDefinition* def, uint8_t ageClass, MeshYExtent mesh, float rotation);
 
 	// One upright of the stream, with what culling, sorting and drawing read copied out of its entity,
 	// so a frame walks these instead of the entities scattered over the spatial index's cells.

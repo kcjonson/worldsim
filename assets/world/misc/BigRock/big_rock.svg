@@ -7,12 +7,13 @@
        so the loaded-vertex bbox equals the authored coords exactly -- no Bezier
        bowing), no strokes-as-fills, tessellation-safe.
 
-       Collision: an AABB over the solid footprint. The rim polygon below sets
-       the loaded-vertex bbox to x:[20,136] y:[16,106] -> center (78,61). The
-       aabb is centered on that, so the resulting Rect lands on the entity. -->
+       Collision: a polygon on the rim's own eleven points, the rock's solid
+       footprint seen from above (the dark rim is the rock's edge, not a
+       shadow), so nav cuts and static collision push against the outline a
+       colonist would bump into. Keep it in step with the rim path. -->
   <metadata>
     <collision>
-      <shape type="aabb" min="36,30" max="120,94"/>
+      <shape type="polygon" vertices="40,26 72,16 104,22 128,42 136,70 122,96 92,106 58,104 32,90 20,62 26,40"/>
     </collision>
   </metadata>
 
