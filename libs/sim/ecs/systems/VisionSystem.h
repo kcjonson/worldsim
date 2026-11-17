@@ -247,7 +247,6 @@ class VisionSystem : public ISystem {
 		geometry::Vec2i64 builtMm{0, 0};
 		float			  radius = 0.0F;		// meters, the sight radius of the last pass or build
 		std::int64_t	  leadMm = 0;			// the lead the shape was built with
-		double			  leadSpeed = 0.0;		// his walking speed at that build, m/s
 		std::uint64_t	  buildRevision = 0;	// bumps at every build
 		std::int64_t	  reachMm = 0;			// sight plus that lead
 		std::uint64_t	  polygonRevision = 0; // bumps when the polygon is rebuilt or dropped

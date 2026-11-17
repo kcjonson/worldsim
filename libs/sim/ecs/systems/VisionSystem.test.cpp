@@ -621,8 +621,9 @@ TEST_F(VisionSystemTest, WallStubIsLeftOutOfThePolygonAndStillRemembered) {
 }
 
 // A colonist standing still with a movement target he is not following walks nothing, so his lead
-// holds whatever the frame time and he builds once; following it, his lead is his walk taken up to
-// whole steps, so frame-time jitter leaves it and the one longer lead rebuilds once.
+// holds whatever the frame time and he builds once. A build stores its pass's lead with one walk step
+// more, so following the target at 2 m/s, a pass's walk taken up to 100 mm, fits the still build's
+// lead and rebuilds nothing.
 TEST_F(VisionSystemTest, LeadHoldsUnderFrameTimeJitter) {
 	ConstructionWorld cw;
 	buildWall(cw, {3000, -2000}, {3000, 2000});
@@ -642,7 +643,7 @@ TEST_F(VisionSystemTest, LeadHoldsUnderFrameTimeJitter) {
 	for (int pass = 0; pass < 20; ++pass) {
 		sys.update(pass % 2 == 0 ? 0.0163F : 0.0171F);
 	}
-	EXPECT_EQ(sys.polygonBuildCount(), 2U) << "jitter in the frame time moved the lead";
+	EXPECT_EQ(sys.polygonBuildCount(), 1U) << "jitter in the frame time moved the lead";
 	EXPECT_EQ(sys.sightBodies(observer)->leadMm, VisionSystem::kSightRebuildStepMm + VisionSystem::kLeadWalkStepMm);
 }
 
@@ -658,7 +659,7 @@ TEST_F(VisionSystemTest, PlainObserverTakesThePolygonOnThePassAWallComesIntoReac
 		VisionSystem& sys = world.registerSystem<VisionSystem>();
 		sys.setConstructionWorld(&cw);
 		const EntityID	   observer = spawnObserver(world, {0.0F, 0.0F});
-		const std::int64_t reachMm	= 30000 + VisionSystem::kSightRebuildStepMm;
+		const std::int64_t reachMm	= 30000 + VisionSystem::kSightRebuildStepMm + VisionSystem::kLeadWalkStepMm;
 		const std::int64_t faceMm	= 40000 - construction::halfThicknessMm(cw.segments().front());
 		int				   firstPolygon = -1;
 		for (int pass = 0; pass <= 150 && firstPolygon < 0; ++pass) {
@@ -681,11 +682,10 @@ TEST_F(VisionSystemTest, PlainObserverTakesThePolygonOnThePassAWallComesIntoReac
 	}
 }
 
-// A walker whose walk to the next pass jitters across a 100 mm boundary (98 and 102 mm a pass) gets
-// one longer lead and keeps it, so he builds once a step plus that one build. Walking 0.1 m a pass
-// for 20 passes: the first build at 0, the longer lead at 0.1 m, then a step past it at 0.7, 1.3,
-// and 1.9 m: five builds.
-TEST_F(VisionSystemTest, LeadJitterAcrossAStepBoundaryRebuildsOnce) {
+// A walker whose walk to the next pass jitters across a 100 mm boundary (98 and 102 mm a pass) builds
+// once a step and no more: a build's stored lead holds one walk step past its pass's. Walking 0.1 m a
+// pass for 20 passes: builds at 0, 0.6, 1.2, and 1.8 m, four.
+TEST_F(VisionSystemTest, LeadJitterAcrossAStepBoundaryRebuildsNone) {
 	ConstructionWorld cw;
 	buildWall(cw, {4000, -2000}, {4000, 2000});
 	World		  world;
@@ -698,8 +698,94 @@ TEST_F(VisionSystemTest, LeadJitterAcrossAStepBoundaryRebuildsOnce) {
 		world.getComponent<Position>(observer)->value = {0.1F * static_cast<float>(pass), 0.0F};
 		sys.update(pass % 2 == 0 ? 0.049F : 0.051F);
 	}
-	EXPECT_EQ(sys.polygonBuildCount(), 5U);
+	EXPECT_EQ(sys.polygonBuildCount(), 4U);
 	EXPECT_EQ(sys.sightBodies(observer)->leadMm, VisionSystem::kSightRebuildStepMm + 2 * VisionSystem::kLeadWalkStepMm);
+}
+
+namespace {
+	// Walks `observer` to `x` metres along +x and runs one pass of `dt`; true when it built.
+	bool walkPass(World& world, VisionSystem& sys, EntityID observer, float x, float dt) {
+		const std::uint64_t before = sys.buildCount();
+		world.getComponent<Position>(observer)->value = {x, 0.0F};
+		sys.update(dt);
+		return sys.buildCount() != before;
+	}
+
+	constexpr std::int64_t kWalkingLeadMm = VisionSystem::kSightRebuildStepMm + 2 * VisionSystem::kLeadWalkStepMm;
+} // namespace
+
+// One hitch frame (0.29 s, a 580 mm walk taken up to 600) mid-walk rebuilds once with its longer lead, and the next
+// step build stores the walking lead again. Walking 0.11 m a pass at 2 m/s for 24 passes, the hitch
+// on pass 7: builds at passes 0, 5, 7 (the hitch), 12, 17, and 22.
+TEST_F(VisionSystemTest, HitchFrameLeadIsGoneAtTheNextStepBuild) {
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setUpdateInterval(1);
+	const EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	world.addComponent<MovementTarget>(observer, MovementTarget{.target = {50.0F, 0.0F}, .speed = 2.0F, .active = true});
+	std::vector<int>		  builtAt;
+	std::vector<std::int64_t> leads;
+	for (int pass = 0; pass < 24; ++pass) {
+		if (walkPass(world, sys, observer, 0.11F * static_cast<float>(pass), pass == 7 ? 0.29F : 0.0163F)) {
+			builtAt.push_back(pass);
+			leads.push_back(sys.sightBodies(observer)->leadMm);
+		}
+	}
+	EXPECT_EQ(builtAt, (std::vector<int>{0, 5, 7, 12, 17, 22}));
+	EXPECT_EQ(leads, (std::vector<std::int64_t>{kWalkingLeadMm, kWalkingLeadMm, 1200, kWalkingLeadMm, kWalkingLeadMm, kWalkingLeadMm}));
+}
+
+// At 10x a pass walks 326 mm, a lead of 900 that rebuilds once; back at 1x the 10x lead stays only
+// until the next step build, which stores the 1x lead. Walking 0.11 m a pass at 2 m/s, 10x from pass
+// 6 to 9: builds at passes 0, 5, 6 (10x), and 11.
+TEST_F(VisionSystemTest, TenTimesLeadIsGoneAtTheNextStepBuildAtOneTimes) {
+	World		  world;
+	TimeSystem&	  time = world.registerSystem<TimeSystem>();
+	VisionSystem& sys  = world.registerSystem<VisionSystem>();
+	sys.setUpdateInterval(1);
+	const EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	world.addComponent<MovementTarget>(observer, MovementTarget{.target = {50.0F, 0.0F}, .speed = 2.0F, .active = true});
+	const float		 oneTimes = time.effectiveTimeScale();
+	std::vector<int> builtAt;
+	for (int pass = 0; pass < 14; ++pass) {
+		time.setSpeed(pass >= 6 && pass <= 9 ? GameSpeed::VeryFast : GameSpeed::Normal);
+		if (walkPass(world, sys, observer, 0.11F * static_cast<float>(pass), 0.0163F / oneTimes)) {
+			builtAt.push_back(pass);
+			if (pass == 6) {
+				EXPECT_EQ(sys.sightBodies(observer)->leadMm, 1000);
+			}
+		}
+	}
+	EXPECT_EQ(builtAt, (std::vector<int>{0, 5, 6, 11}));
+	EXPECT_EQ(sys.sightBodies(observer)->leadMm, kWalkingLeadMm);
+}
+
+// A walker who hitches, stops, stands, and walks on stores a fresh walker's lead at his next step
+// build: nothing from before that build's pass is kept.
+TEST_F(VisionSystemTest, WalkingAgainAfterStandingStoresAFreshWalkersLead) {
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setUpdateInterval(1);
+	const EntityID walker = spawnObserver(world, {0.0F, 0.0F});
+	world.addComponent<MovementTarget>(walker, MovementTarget{.target = {50.0F, 0.0F}, .speed = 2.0F, .active = true});
+	walkPass(world, sys, walker, 0.0F, 0.0163F);
+	ASSERT_TRUE(walkPass(world, sys, walker, 0.1F, 0.29F)) << "the hitch";
+	ASSERT_EQ(sys.sightBodies(walker)->leadMm, 1200);
+	world.getComponent<MovementTarget>(walker)->active = false;
+	for (int pass = 0; pass < 10; ++pass) {
+		EXPECT_FALSE(walkPass(world, sys, walker, 0.1F, 0.0163F)) << "standing builds nothing";
+	}
+	world.getComponent<MovementTarget>(walker)->active = true;
+	float x = 0.1F;
+	while (!walkPass(world, sys, walker, x += 0.11F, 0.0163F)) {
+		ASSERT_LT(x, 2.0F);
+	}
+
+	const EntityID fresh = spawnObserver(world, {500.0F, 0.0F});
+	world.addComponent<MovementTarget>(fresh, MovementTarget{.target = {550.0F, 0.0F}, .speed = 2.0F, .active = true});
+	sys.update(0.0163F);
+	EXPECT_EQ(sys.sightBodies(walker)->leadMm, sys.sightBodies(fresh)->leadMm);
+	EXPECT_EQ(sys.sightBodies(walker)->leadMm, kWalkingLeadMm);
 }
 
 // A tunable only the cover reads leaves every shape; one the shape is built from rebuilds it.

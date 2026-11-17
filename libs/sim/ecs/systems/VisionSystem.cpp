@@ -245,19 +245,17 @@ namespace ecs {
 			// walks until then.
 			const std::int64_t		radiusMm   = std::llround(static_cast<double>(memory.sightRadius) * 1000.0);
 			const geometry::Vec2i64 observerMm = nav::toMm(pos.value);
-			// A still colonist walks nothing. A walk is taken up to whole kLeadWalkStepMm, and while he
-			// keeps walking at the speed his build was made for, every build keeps the longest lead any
-			// pass gave since, so a frame time jittering across a kLeadWalkStepMm boundary forces one
-			// longer-lead rebuild and no more. The lead comes back down at the first build after he
-			// stops or his speed changes.
-			const auto*		   movement = world->getComponent<MovementTarget>(entity);
-			const double	   speed	= movement != nullptr && movement->active ? static_cast<double>(movement->speed) : 0.0;
-			const auto		   walkMm	= static_cast<std::int64_t>(std::ceil(speed * intervalSeconds * 1000.0 / kLeadWalkStepMm)) * kLeadWalkStepMm;
+			// A still colonist walks nothing. A walk is taken up to whole kLeadWalkStepMm, and a build
+			// stores this pass's lead with one kLeadWalkStepMm more, so a frame time jittering across one
+			// such boundary at a steady walk never outgrows it, while a real speed-up does. Nothing older
+			// than the pass that builds goes into the lead it stores.
+			const auto*		   movement	  = world->getComponent<MovementTarget>(entity);
+			const double	   speed	  = movement != nullptr && movement->active ? static_cast<double>(movement->speed) : 0.0;
+			const auto		   walkMm	  = static_cast<std::int64_t>(std::ceil(speed * intervalSeconds * 1000.0 / kLeadWalkStepMm)) * kLeadWalkStepMm;
 			const std::int64_t passLeadMm = std::min(vision::kSightLeadMostMm, kSightRebuildStepMm + walkMm);
-			VisibilityCache&		entry	= m_visibilityCache[entity];
-			const bool		   sameWalk = entry.built && speed > 0.0 && speed == entry.leadSpeed;
-			const std::int64_t leadMm	= sameWalk ? std::max(entry.leadMm, passLeadMm) : passLeadMm;
-			const std::int64_t reachMm	= radiusMm + leadMm;
+			const std::int64_t leadMm	  = std::min(vision::kSightLeadMostMm, passLeadMm + kLeadWalkStepMm);
+			const std::int64_t reachMm	  = radiusMm + leadMm;
+			VisibilityCache&   entry	  = m_visibilityCache[entity];
 			entry.seenThisTick				= true;
 
 			// Rebuild conditions (sight-softening.md 2.4), on the plain disc and the polygon path alike: no
@@ -272,7 +270,7 @@ namespace ecs {
 			const geometry::Vec2i64 moved = observerMm - entry.builtMm;
 			bool due = !entry.built || geometry::dot(moved, moved) > geometry::Int128::product(kSightRebuildStepMm, kSightRebuildStepMm) ||
 					   entry.builtVersion != m_geometry.generation() || entry.tunablesVersion != tunablesVersion ||
-					   entry.radius != memory.sightRadius || leadMm > entry.leadMm;
+					   entry.radius != memory.sightRadius || passLeadMm > entry.leadMm;
 			if (!due && !entry.hasPolygon) {
 				due = m_geometry.anyBodyWithin(observerMm, reachMm);
 			}
@@ -422,7 +420,6 @@ namespace ecs {
 				entry.tunablesVersion = tunablesVersion;
 				entry.radius		  = memory.sightRadius;
 				entry.leadMm		  = leadMm;
-				entry.leadSpeed		  = speed;
 				entry.reachMm		  = reachMm;
 				entry.built			  = true;
 				++entry.buildRevision;

@@ -1314,11 +1314,10 @@ TEST_F(NavigationSystemTest, ForestShapeAmongSoftTreesPullsTheRimInTowardThem) {
 
 // Walking among soft trees with a movement target and frame times jittering across a lead step (at
 // 6 m/s a pass walks 97.8 mm on an even pass or 102.6 mm on an odd one, taken up to 100 or 200), his
-// forest shape is carried with him and keeps the longer lead once a pass has given it. Walking 0.11 m
-// a pass for 24 passes, so step rebuilds fall on short and long frames alike: the first build at 0,
-// the longer lead at 0.11 m, then a step past it at 0.66, 1.21, 1.76, and 2.31 m, six builds, every
-// one on a leg and none a polygon. A step build on a short frame that took that frame's shorter lead
-// would be rebuilt on the next long one, eight builds.
+// forest shape is carried with him and built once a step, since a build stores its pass's lead with
+// one walk step more. Walking 0.11 m a pass for 24 passes, so step builds fall on short and long
+// frames alike: at 0, 0.55, 1.10, 1.65, and 2.20 m, five builds, every one on a leg and none a
+// polygon; the last, on a short frame, stores the short frame's lead plus the step.
 TEST_F(NavigationSystemTest, ForestShapeIsBuiltOnceAStepWalkingAmongSoftTrees) {
 	registerSightBodies();
 	PlacementExecutor					executor(AssetRegistry::Get());
@@ -1351,7 +1350,7 @@ TEST_F(NavigationSystemTest, ForestShapeIsBuiltOnceAStepWalkingAmongSoftTrees) {
 			built.push_back(*shape->ranges);
 		}
 	}
-	EXPECT_EQ(built.size(), 6U);
+	EXPECT_EQ(built.size(), 5U);
 	EXPECT_EQ(vision.sightBodies(observer)->leadMm, VisionSystem::kSightRebuildStepMm + 2 * VisionSystem::kLeadWalkStepMm);
 	EXPECT_EQ(vision.polygonBuildCount(), 0U);
 	EXPECT_NE(built.front(), built.back()) << "each build takes the ranges where it stands";
@@ -1438,7 +1437,7 @@ TEST_F(NavigationSystemTest, BrightRimInForestIsTheSameOnEveryPath) {
 		const std::int64_t		  drawnMm = vision::drawnVisibleRadiusMm(sightMm);
 		geometry::SightSideValues drawnRanges{};
 		for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
-			drawnRanges[side] = (*shape->ranges)[side] - (sightMm - drawnMm);
+			drawnRanges[side] = std::max(geometry::kForestShapeLeastRangeMm, (*shape->ranges)[side] - (sightMm - drawnMm));
 		}
 		const geometry::Ring forest = geometry::forestShape(standingMm, drawnRanges);
 		const geometry::Ring disc	= geometry::sightPolygon(standingMm, drawnMm);
