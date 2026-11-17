@@ -545,6 +545,28 @@ TEST_F(DrawingWallCloseTest, ChainClearOfTheWallDrawsTheHaloAndBuildsWhole) {
 	EXPECT_EQ(segmentCount(), 1U + 3U) << lastToast();
 }
 
+// A wall committed across the closing segment between two hovers at the same spot: the
+// chain's segment checks are not reused from before it.
+TEST_F(DrawingWallCloseTest, AWallAddedBetweenHoversDropsTheHalo) {
+	placeFreeform({{3.0F, 1.0F}, {3.0F, -2.0F}, {6.0F, -1.0F}});
+	ASSERT_EQ(drawing->status().pointCount, 3) << lastToast();
+	hover({3.0F, 1.0F});
+	ASSERT_TRUE(drawing->previewVerdict().closeHalo);
+	const construction::FoundationId host = drawing->world().foundations().front().id;
+	const auto wall = drawing->world().commitSegment(
+		geometry::quantize(Foundation::Vec2{4.5F, 1.0F}),
+		geometry::quantize(Foundation::Vec2{4.5F, -1.0F}),
+		"Wood",
+		"Standard",
+		host,
+		drawing->world().version()
+	);
+	ASSERT_TRUE(wall.ok());
+	hover({3.0F, 1.0F});
+	EXPECT_FALSE(drawing->previewVerdict().closeHalo);
+	EXPECT_FALSE(drawing->status().valid);
+}
+
 TEST_F(DrawingWallChainTest, DevClosedLoopBuiltFormsARoom) {
 	const construction::FoundationId host = hostFoundation(*drawing);
 	std::vector<Foundation::Vec2> loop;
@@ -860,6 +882,20 @@ TEST_F(DrawingFordTest, AddAcrossTheCreekIsRefused) {
 	EXPECT_EQ(drawing->status().pointCount, 4);
 }
 
+// The dev verb's path refuses the same Add, with no tool and no close verdict before it.
+TEST_F(DrawingFordTest, AddAcrossTheCreekIsRefusedThroughTheDevVerb) {
+	hostFoundation(kCreekY - 14.0F, kCreekY - 2.0F);
+	const construction::FoundationId target = drawing->world().foundations().front().id;
+	const world_sim::DrawingSystem::FoundationEditOutcome outcome = drawing->applyFoundationEdit(
+		target,
+		{{4.0F, kCreekY - 2.0F}, {16.0F, kCreekY - 2.0F}, {16.0F, kCreekY + 3.0F}, {4.0F, kCreekY + 3.0F}},
+		construction::FoundationEditMode::Add
+	);
+	EXPECT_FALSE(outcome.ok);
+	EXPECT_EQ(outcome.reason, "not on buildable ground");
+	EXPECT_EQ(drawing->world().foundations().size(), 1U);
+}
+
 TEST_F(DrawingFordTest, FoundationCloseAcrossTheCreekIsRefused) {
 	drawing->activateFoundationTool();
 	for (const glm::vec2 point :
@@ -920,6 +956,10 @@ namespace {
 				const glm::vec2 screen = seen.screenOf(corner);
 				drawing->handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
 			}
+		}
+		void hoverFreeform(glm::vec2 meters) {
+			const glm::vec2 screen = seen.screenOf(meters);
+			drawing->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
 		}
 		// A blueprint foundation, 8 m square, drawn with the tool.
 		construction::FoundationId blueprintFloor() {
@@ -1071,4 +1111,69 @@ TEST_F(DrawingCloseTest, WorkOnTheBlueprintAfterAMoveReachesThePictureOnTheNext)
 	EXPECT_EQ(drawing->snapEvaluationCount(), evaluations);
 	EXPECT_FALSE(drawing->previewVerdict().closeHalo);
 	EXPECT_FALSE(drawing->previewVerdict().valid);
+}
+
+// A foundation committed inside the drawn ring between two hovers at the same spot: the
+// closed ring's check is not reused from before it.
+TEST_F(DrawingCloseTest, AFoundationAddedBetweenHoversDropsTheHalo) {
+	drawing->activateFoundationTool();
+	place({{0.0F, 0.0F}, {8.0F, 0.0F}, {8.0F, 8.0F}, {0.0F, 8.0F}});
+	ASSERT_EQ(drawing->status().pointCount, 4) << lastToast();
+	hover({0.0F, 0.0F});
+	ASSERT_TRUE(drawing->previewVerdict().closeHalo);
+	ASSERT_TRUE(drawing->world().commitFoundation(std::vector<Foundation::Vec2>{{2.0F, 2.0F}, {4.0F, 2.0F}, {4.0F, 4.0F}, {2.0F, 4.0F}}, "Wood").ok());
+	hover({0.0F, 0.0F});
+	EXPECT_FALSE(drawing->previewVerdict().closeHalo);
+	EXPECT_FALSE(drawing->status().valid);
+	click({0.0F, 0.0F});
+	EXPECT_EQ(lastToast(), "Cannot close: " + construction::validationReason(construction::ValidationCode::OverlapsExisting));
+}
+
+// Zoomed in, the close catch (0.5 m) is smaller than the rescue's reach (1 m), so a pointer
+// 0.8 m from the first corner, just outside the shape, is past the catch, refused as a point
+// (its edge crosses the first edge), and inside the rescue's reach.
+namespace {
+	constexpr float		kRescueZoom = 2.0F;
+	constexpr glm::vec2 kPastTheCatch{0.7F, -0.4F};
+} // namespace
+
+// The rescue closes only a shape that would close: once the ring takes in another foundation,
+// the click refuses the point instead of closing.
+TEST_F(DrawingCloseTest, TheFoundationRescueRefusesARingThatFailsItsCheck) {
+	seen.camera.setZoom(kRescueZoom);
+	drawing->activateFoundationTool();
+	const glm::vec2 firstCorner{0.0F, 0.0F};
+	place({firstCorner, {8.0F, 0.0F}, {8.0F, 8.0F}, {0.0F, 8.0F}});
+	ASSERT_EQ(drawing->status().pointCount, 4) << lastToast();
+	hoverFreeform(firstCorner + kPastTheCatch);
+	ASSERT_TRUE(drawing->previewVerdict().closeHalo) << "the rescue reaches the pointer: " << drawing->status().message;
+	ASSERT_TRUE(drawing->world().commitFoundation(std::vector<Foundation::Vec2>{{2.0F, 2.0F}, {4.0F, 2.0F}, {4.0F, 4.0F}, {2.0F, 4.0F}}, "Wood").ok());
+	hoverFreeform(firstCorner + kPastTheCatch);
+	EXPECT_FALSE(drawing->previewVerdict().closeHalo);
+	place({firstCorner + kPastTheCatch});
+	EXPECT_EQ(drawing->status().pointCount, 4);
+	EXPECT_EQ(drawing->world().foundations().size(), 1U);
+	EXPECT_EQ(toasts.back().first, "Invalid point") << lastToast();
+}
+
+// The same for an edit: once work on the blueprint makes the Subtract fail, the click refuses
+// the point instead of closing.
+TEST_F(DrawingCloseTest, TheEditRescueRefusesAnEditThatFailsItsCheck) {
+	seen.camera.setZoom(kRescueZoom);
+	const construction::FoundationId target = blueprintFloor();
+	drawing->activateFoundationEditTool(target, construction::FoundationEditMode::Subtract);
+	const glm::vec2 firstCorner{4.0F, 4.0F};
+	place({firstCorner, {12.0F, 4.0F}, {12.0F, 12.0F}, {4.0F, 12.0F}});
+	ASSERT_EQ(drawing->status().pointCount, 4) << lastToast();
+	hoverFreeform(firstCorner + kPastTheCatch);
+	ASSERT_TRUE(drawing->previewVerdict().closeHalo) << "the rescue reaches the pointer: " << drawing->status().message;
+	auto* blueprint = seen.world.getComponent<ecs::StructureBlueprint>(drawing->world().get(target)->entity);
+	ASSERT_NE(blueprint, nullptr);
+	blueprint->workDone = 1.0F;
+	hoverFreeform(firstCorner + kPastTheCatch);
+	EXPECT_FALSE(drawing->previewVerdict().closeHalo);
+	place({firstCorner + kPastTheCatch});
+	EXPECT_EQ(drawing->status().pointCount, 4);
+	EXPECT_NEAR(drawing->world().areaSquareMeters(target), 64.0F, 1e-3F);
+	EXPECT_EQ(toasts.back().first, "Invalid point") << lastToast();
 }
