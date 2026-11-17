@@ -181,7 +181,7 @@ Pruning changes only what the log can show. The bubble selector's novelty does n
 - **Info panel and colonist details, Log tab.** Each thought is one block holding the event, the feeling, and the mood adjustment ("Slept on the ground. Miserable. -10 mood, 1 day"). A Notable / All control above the blocks picks what shows: Notable, the default, is every thought that bubbled, every major thought, and every thought with a mood effect; All is every thought recorded. The newest 50 blocks show first, and "Show older" under them adds the next 50; another colonist starts again at 50. Merged entries show their count, their date range ("Day 3, 08:10 to Day 9, 17:42"), and the mood effect of one of their thoughts ("Slept on the ground x12. Miserable. -10 mood each, 1 day"), and a repeated or stacked thought shows its count and its latest arrival. It is a reference for "why", not something to read through.
 - **Colonist details, Needs tab.** The mood breakdown lists every held thought that has a mood effect, with its amount and time left. See [Mood](./mood.md).
 - **Colony overview.** Held thoughts counted by event type across the colony ("slept on the ground: 5 colonists"), largest total mood effect first.
-- **Settings.** Bubble frequency (fewer, normal, more), and a switch per source to stop its trivial and normal thoughts from bubbling. Major thoughts always show.
+- **Settings.** Bubble frequency (fewer, normal, more), which scales the budget. Major thoughts always show. There is no switch per source: how often each kind of thought bubbles is the selector's job.
 
 ## Data
 
@@ -268,6 +268,7 @@ A supplement, not part of the spec. Kevin, 2026-11-16.
 - Thoughts are kept up to a high bound per colonist, with an algorithm that prunes as the limit approaches.
 - Recalling old thoughts on a cue, with attachment, developing likes, and softened feelings, is wanted ("kinda fun").
 - The game should carry some of The Sims' joy; balance of harsh against gentle is tuned at playtest.
+- 2026-11-17: no per-source bubble switches. Bubble frequency is the one setting; making bubbles meaningful and not overwhelming is the selector's job, not the player's. A thought type carries no source group.
 - 2026-11-17: need thoughts carry no mood effect, because the needs score already prices a low need into mood.
 - 2026-11-17: pruning's importance weights are trivial 1 and normal 3; major thoughts are never pruned, so they carry no weight.
 - 2026-11-17: recency and age count from a thought's last moment, the later of its latest arrival and its end, in game days. A thought held until recently stays, so nothing that read it while it was held loses it.
