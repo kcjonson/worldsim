@@ -109,7 +109,8 @@ namespace {
 		Foundation::Color			  invalidColor{0.9F, 0.2F, 0.2F, 1.0F};
 		std::optional<FeedbackBox>	  keepClear;
 		construction::RectangleSnapKind rectangleSnap = construction::RectangleSnapKind::None;
-		int							  viewportWidth = kViewportWidth;
+		std::string					  sizeLabel;
+		int						  viewportWidth = kViewportWidth;
 		int							  viewportHeight = kViewportHeight;
 		float						  uiScale = 1.0F;
 		// Measures every label but the reserved "999.00 m" this many characters narrower: the
@@ -156,6 +157,7 @@ namespace {
 				.invalidColor = invalidColor,
 				.keepClear = keepClear,
 				.rectangleSnap = rectangleSnap,
+				.sizeLabel = sizeLabel,
 			};
 			char reserved[32];
 			std::snprintf(reserved, sizeof(reserved), "%.*f m", style.guideDistanceDecimals, 999.0);
@@ -1621,6 +1623,7 @@ namespace {
 		void cornerAt(Foundation::Vec2 snappedScreen, Foundation::Vec2 towardFirstCorner = {-4.0F, -3.0F}) {
 			cursor = worldAt(snappedScreen);
 			points = {{cursor.x + towardFirstCorner.x, cursor.y + towardFirstCorner.y}};
+			sizeLabel = construction::rectangleFromCorners(points.front(), cursor)->label;
 		}
 
 		// The two strokes of a cross centered on `center`, if the plan has them.
@@ -1638,7 +1641,7 @@ namespace {
 		}
 
 		// The plan's one label, the size label.
-		FeedbackLabel sizeLabel() {
+		FeedbackLabel plannedSizeLabel() {
 			const DrawingFeedbackPlan result = plan();
 			EXPECT_EQ(result.labels.size(), 1U);
 			return result.labels.empty() ? FeedbackLabel{} : result.labels.front();
@@ -1674,7 +1677,7 @@ TEST_F(RectangleFeedbackTest, TheGridCrossIsPlannedExactlyWhenTheGridPlacedTheCo
 			const float halfLength = std::hypot(arm.points[1].x - arm.points[0].x, arm.points[1].y - arm.points[0].y) * 0.5F;
 			EXPECT_NEAR(halfLength, kGridCrossArmPx, 1e-3F) << "the arms stay in window pixels";
 			EXPECT_EQ(arm.width, kGridCrossWidthPx);
-			EXPECT_EQ(arm.layer, FeedbackLayer::Marker);
+			EXPECT_EQ(arm.layer, FeedbackLayer::Alignment) << "under the rectangle, as the prototype draws it";
 			EXPECT_FALSE(arm.dash.has_value());
 			EXPECT_EQ(arm.color.r, style.guideColorWorld.r);
 			EXPECT_EQ(arm.color.g, style.guideColorWorld.g);
@@ -1687,20 +1690,43 @@ TEST_F(RectangleFeedbackTest, TheGridCrossIsPlannedExactlyWhenTheGridPlacedTheCo
 	EXPECT_EQ(crossAt(plan(), corner).size(), 2U) << "the first corner's grid point too";
 }
 
-TEST_F(RectangleFeedbackTest, NoSnappedPointMarkerIsPlannedForTheRectangleTool) {
-	cornerAt({500.0F, 400.0F});
-	for (const auto kind :
-		 {construction::RectangleSnapKind::None,
-		  construction::RectangleSnapKind::Vertex,
-		  construction::RectangleSnapKind::Edge,
-		  construction::RectangleSnapKind::Grid}) {
-		rectangleSnap = kind;
-		snappedPointInvalid = true;
-		const DrawingFeedbackPlan result = plan();
-		EXPECT_TRUE(strokesIn(result, FeedbackLayer::Cursor).empty());
-		EXPECT_TRUE(strokesIn(result, FeedbackLayer::CursorOutline).empty());
-		EXPECT_TRUE(dotsIn(result, FeedbackLayer::Cursor).empty());
-		EXPECT_TRUE(result.dots.empty()) << "no red dot either";
+// The snapped-point marker on the snapped corner, whatever placed it, with the first corner placed
+// and before it, over the cross and the rings; its dot red where the press or the rectangle is refused.
+TEST_F(RectangleFeedbackTest, TheSnappedPointMarkerSitsOnTheCornerOverTheCrossAndTheRings) {
+	const Foundation::Vec2 corner{500.0F, 400.0F};
+	cornerAt(corner);
+	for (const bool firstCornerPlaced : {true, false}) {
+		if (!firstCornerPlaced) {
+			points.clear();
+			sizeLabel.clear();
+		}
+		for (const auto kind :
+			 {construction::RectangleSnapKind::None,
+			  construction::RectangleSnapKind::Vertex,
+			  construction::RectangleSnapKind::Edge,
+			  construction::RectangleSnapKind::Grid}) {
+			rectangleSnap = kind;
+			for (const bool refused : {false, true}) {
+				SCOPED_TRACE(::testing::Message() << "kind " << static_cast<int>(kind) << ", first corner " << firstCornerPlaced << ", refused " << refused);
+				snappedPointInvalid = refused;
+				const DrawingFeedbackPlan result = plan();
+				const auto				  dots = dotsIn(result, FeedbackLayer::Cursor);
+				ASSERT_EQ(dots.size(), 1U);
+				expectNear(dots[0].center, corner);
+				EXPECT_FLOAT_EQ(dots[0].fill.r, refused ? invalidColor.r : 1.0F);
+				EXPECT_FLOAT_EQ(dots[0].fill.g, refused ? invalidColor.g : 1.0F);
+				EXPECT_EQ(strokesIn(result, FeedbackLayer::Cursor).size(), 4U);
+				EXPECT_EQ(strokesIn(result, FeedbackLayer::CursorOutline).size(), 4U);
+				for (const FeedbackRing& ring : result.rings) {
+					EXPECT_LT(ring.layer, FeedbackLayer::CursorOutline) << "the ring under the marker";
+				}
+				const std::vector<FeedbackStroke> cross = crossAt(result, corner);
+				EXPECT_EQ(cross.size(), kind == construction::RectangleSnapKind::Grid ? 2U : 0U);
+				for (const FeedbackStroke& arm : cross) {
+					EXPECT_LT(arm.layer, FeedbackLayer::CursorOutline) << "the cross under the marker";
+				}
+			}
+		}
 	}
 }
 
@@ -1711,6 +1737,7 @@ TEST_F(RectangleFeedbackTest, AnExistingCornerOrEdgeIsRingedAndNothingElseIs) {
 	rectangleSnap = construction::RectangleSnapKind::Vertex;
 	std::vector<FeedbackRing> rings = plan().rings;
 	ASSERT_EQ(rings.size(), 1U);
+	EXPECT_EQ(rings[0].layer, FeedbackLayer::Marker) << "under the marker, as the prototype draws it";
 	EXPECT_NEAR(rings[0].center.x, corner.x, 1e-3F);
 	EXPECT_NEAR(rings[0].center.y, corner.y, 1e-3F);
 	EXPECT_EQ(rings[0].radius, 8.0F);
@@ -1741,14 +1768,14 @@ TEST_F(RectangleFeedbackTest, TheSizeLabelSitsUpRightOfTheCursorWhicheverWayTheR
 		cornerAt(corner, towardFirstCorner);
 		for (const auto kind : {construction::RectangleSnapKind::Grid, construction::RectangleSnapKind::None}) {
 			rectangleSnap = kind;
-			const FeedbackLabel label = sizeLabel();
+			const FeedbackLabel label = plannedSizeLabel();
 			EXPECT_EQ(label.text, "4 m x 3 m");
 			EXPECT_NEAR(label.plate.left - corner.x, kSizeLabelPlateGapPx, 1e-3F);
 			EXPECT_NEAR(corner.y - label.plate.bottom, kSizeLabelPlateGapPx, 1e-3F);
 			EXPECT_FALSE(lowerRightOf(label.plate, corner));
 		}
 	}
-	points = {{cursor.x + 6.0F, cursor.y}}; // level with the snapped corner: no rectangle
+	sizeLabel.clear(); // the corners span no rectangle
 	EXPECT_TRUE(plan().labels.empty());
 }
 
@@ -1772,7 +1799,7 @@ TEST_F(RectangleFeedbackTest, TheSizeLabelStaysOnScreenNearEachEdge) {
 	for (const auto& place : cases) {
 		SCOPED_TRACE(place.where);
 		cornerAt(place.corner);
-		const FeedbackLabel label = sizeLabel();
+		const FeedbackLabel label = plannedSizeLabel();
 		EXPECT_TRUE(insideViewport(label.plate));
 		EXPECT_FALSE(lowerRightOf(label.plate, place.corner));
 		const Foundation::Vec2 middle = centerOf(label.plate);

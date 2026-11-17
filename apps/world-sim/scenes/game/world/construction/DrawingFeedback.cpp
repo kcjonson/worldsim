@@ -3,7 +3,6 @@
 #include "DrawingSystem.h"
 
 #include <assets/ConstructionRegistry.h>
-#include <construction/RectangleSnap.h>
 #include <graphics/Rect.h>
 #include <primitives/Primitives.h>
 #include <world/camera/WorldCamera.h>
@@ -502,9 +501,7 @@ namespace world_sim {
 						}
 					}
 				}
-				if (!rectangleTool()) {
-					planCursor();
-				}
+				planCursor();
 				planCrossingDot();
 				planSnapTarget();
 				return std::move(result);
@@ -514,6 +511,7 @@ namespace world_sim {
 			struct SnapTarget {
 				Circle			  circle;
 				Foundation::Color color;
+				FeedbackLayer	  layer;
 			};
 
 			const DrawingFeedbackInput&					 input;
@@ -560,12 +558,11 @@ namespace world_sim {
 				return Circle{*center, radius};
 			}
 
-			// The Rectangle tool draws no snapped-point marker.
 			bool rectangleTool() const { return input.tool == ToolKind::FoundationRectangle; }
 
 			// The snap-target ring: amber on a vertex (a wall endpoint or a foundation corner),
-			// cyan on a segment or edge. The wall tool's sits outside the marker's ticks; the
-			// Rectangle tool, which has no marker, rings an existing corner or edge closer in.
+			// cyan on a segment or edge. The wall tool's sits over the marker, outside its ticks;
+			// the Rectangle tool's, the prototype's, sits closer in and under the marker.
 			std::optional<SnapTarget> snapTargetRing() const {
 				if (!isFinite(snappedPoint)) {
 					return std::nullopt;
@@ -579,6 +576,7 @@ namespace world_sim {
 					return SnapTarget{
 						.circle = {snappedPoint, onCorner ? look.rectangleCornerRingRadiusPx : look.rectangleEdgeRingRadiusPx},
 						.color = colorOf(onCorner ? style.snapVertexColor : style.snapEdgeColor),
+						.layer = FeedbackLayer::Marker,
 					};
 				}
 				if (input.tool != ToolKind::Wall) {
@@ -593,6 +591,7 @@ namespace world_sim {
 				return SnapTarget{
 					.circle = {snappedPoint, tickOuterRadius + look.snapTargetTickClearancePx},
 					.color = colorOf(onVertex ? style.snapVertexColor : style.snapEdgeColor),
+					.layer = FeedbackLayer::Target,
 				};
 			}
 
@@ -765,7 +764,7 @@ namespace world_sim {
 			}
 
 			// The Rectangle tool's cross on the grid point that placed its corner, in the world
-			// guide color.
+			// guide color: an alignment, under the rectangle, as the prototype draws it.
 			void planGridCross() {
 				if (!rectangleTool() || input.rectangleSnap != construction::RectangleSnapKind::Grid || !isFinite(snappedPoint)) {
 					return;
@@ -773,17 +772,17 @@ namespace world_sim {
 				const Foundation::Color color = withOpacity(guideColor(style, GuideSource::WorldAxes), kGridCrossOpacity);
 				const float				arm = look.gridCrossArmPx;
 				result.strokes.push_back(segmentStroke(
-					{snappedPoint.x - arm, snappedPoint.y}, {snappedPoint.x + arm, snappedPoint.y}, color, look.gridCrossWidthPx, FeedbackLayer::Marker
+					{snappedPoint.x - arm, snappedPoint.y}, {snappedPoint.x + arm, snappedPoint.y}, color, look.gridCrossWidthPx, FeedbackLayer::Alignment
 				));
 				result.strokes.push_back(segmentStroke(
-					{snappedPoint.x, snappedPoint.y - arm}, {snappedPoint.x, snappedPoint.y + arm}, color, look.gridCrossWidthPx, FeedbackLayer::Marker
+					{snappedPoint.x, snappedPoint.y - arm}, {snappedPoint.x, snappedPoint.y + arm}, color, look.gridCrossWidthPx, FeedbackLayer::Alignment
 				));
 			}
 
 			// Guide labels keep clear of the snapped-point marker out to its ticks, and of the
 			// common obstacles.
 			void seedLabelObstacles() {
-				if (!rectangleTool() && isFinite(snappedPoint)) {
+				if (isFinite(snappedPoint)) {
 					placedLabels.push_back(boxAround(snappedPoint, tickOuterRadius + look.cursorTickOutlineWidthPx * 0.5F));
 				}
 				addCommonObstacles(placedLabels);
@@ -912,21 +911,17 @@ namespace world_sim {
 			// hangs, unless only a move inside fits it. Nothing while the two corners span no
 			// rectangle.
 			void planSizeLabel() {
-				if (input.points.empty() || !isFinite(snappedPoint)) {
+				if (input.sizeLabel.empty() || !isFinite(snappedPoint)) {
 					return;
 				}
-				const std::optional<construction::RectangleShape> rectangle = construction::rectangleFromCorners(input.points.front(), input.cursor);
-				if (!rectangle) {
-					return;
-				}
-				const Foundation::Vec2 size = measure(rectangle->label, look.segmentLabelPx);
+				const Foundation::Vec2 size = measure(input.sizeLabel, look.segmentLabelPx);
 				const FeedbackBox	   anchor = endAnchorBox();
 				std::array<Placement, kEndPlacementCount> placements{};
 				for (std::size_t index = 0; index < kEndPlacementCount; ++index) {
-					const Foundation::Vec2 topLeft = inQuarter(anchor, kEndPlacementOrders[0][index], size);
+					const Foundation::Vec2 topLeft = inQuarter(anchor, kUpRightFirst[index], size);
 					placements[index] = {topLeft, topLeft};
 				}
-				addLabel(rectangle->label, firstOnScreen(placements, size), look.segmentLabelPx, size, kSegmentLabelColor);
+				addLabel(input.sizeLabel, firstOnScreen(placements, size), look.segmentLabelPx, size, kSegmentLabelColor);
 			}
 
 			// Beside the segment's middle, 10 px off it on the side away from the shape, then
@@ -964,11 +959,14 @@ namespace world_sim {
 			static constexpr Foundation::Vec2 kUpLeft{-1.0F, -1.0F};
 			static constexpr Foundation::Vec2 kDownLeft{-1.0F, 1.0F};
 
+			// The end placements starting up right; the size label always takes them in this order.
+			static constexpr std::array<Foundation::Vec2, kEndPlacementCount> kUpRightFirst{kUpRight, kUpLeft, kDownLeft};
+
 			// For each quarter, in kUpRight, kUpLeft, kDownLeft order, the end placements to try:
 			// that quarter, then it flipped left to right, then top to bottom, then both, leaving
 			// out whichever of those is down right.
 			static constexpr std::array<std::array<Foundation::Vec2, kEndPlacementCount>, 3> kEndPlacementOrders{{
-				{kUpRight, kUpLeft, kDownLeft},
+				kUpRightFirst,
 				{kUpLeft, kUpRight, kDownLeft},
 				{kDownLeft, kUpLeft, kUpRight},
 			}};
@@ -1235,7 +1233,7 @@ namespace world_sim {
 					.radius = snapTarget->circle.radius,
 					.color = snapTarget->color,
 					.width = look.snapTargetRingWidthPx,
-					.layer = FeedbackLayer::Target,
+					.layer = snapTarget->layer,
 				});
 			}
 		};
@@ -1316,6 +1314,10 @@ namespace world_sim {
 		}
 
 	} // namespace
+
+	std::int32_t feedbackLayerKey(ToolKind tool, FeedbackLayer layer) {
+		return layerKey(toolLayers(tool), layer);
+	}
 
 	DrawingFeedbackPlan planSnapFeedback(const DrawingFeedbackInput& input, const MeasureTextSize& measure) {
 		// An input that leaves uiScale out is 0, and every label would plan at size 0.

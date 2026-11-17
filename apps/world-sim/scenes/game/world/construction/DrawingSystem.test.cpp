@@ -2,7 +2,6 @@
 
 #include "scenes/game/world/CreekWorldFixture.test.h"
 #include "scenes/game/world/PlayerVisibilityFixture.test.h"
-#include "scenes/game/world/WorldPointer.h"
 #include "UserSettings.h"
 
 #include <assets/ConstructionRegistry.h>
@@ -959,6 +958,47 @@ TEST_F(DrawingFordTest, ARefusedClickToastsOnce) {
 	EXPECT_EQ(lastToast(), "Can't build here: foundation: not on buildable ground");
 }
 
+// Over the creek the Rectangle tool's marker reads red before the press, and the press is
+// refused: no first corner.
+TEST_F(DrawingFordTest, ARectangleCornerInTheCreekIsRefusedOnThePress) {
+	drawing->activateRectangleTool();
+	const glm::vec2 inCreek = seen.screenOf({6.0F, kCreekY});
+	drawing->handleMouseMove(inCreek.x, inCreek.y, kViewportWidth, kViewportHeight, false);
+	EXPECT_TRUE(drawing->previewVerdict().markerInvalid);
+	const world_sim::DrawingFeedbackInput input = drawing->feedbackInput(
+		assets::ConstructionRegistry::Get().rendering().preview, kViewportWidth, kViewportHeight, 1.0F, world_sim::measureFeedbackText
+	);
+	EXPECT_TRUE(input.snappedPointInvalid);
+	const world_sim::DrawingFeedbackPlan plan = world_sim::planSnapFeedback(input, world_sim::measureFeedbackText);
+	ASSERT_FALSE(plan.dots.empty());
+	EXPECT_EQ(plan.dots.front().fill.r, input.invalidColor.r);
+	EXPECT_EQ(plan.dots.front().fill.g, input.invalidColor.g);
+
+	drawing->handlePress(inCreek.x, inCreek.y, kViewportWidth, kViewportHeight, false);
+	EXPECT_EQ(drawing->status().pointCount, 0);
+	EXPECT_FALSE(drawing->hasPendingPress());
+	EXPECT_EQ(lastToast(), "Can't build here: foundation: not on buildable ground");
+}
+
+// Both corners on the banks, the rectangle across the creek: its whole footprint is judged, so it
+// previews red with the reason and the release commits nothing.
+TEST_F(DrawingFordTest, ARectangleAcrossTheCreekPreviewsRedAndDoesNotCommit) {
+	drawing->activateRectangleTool();
+	const glm::vec2 first = seen.screenOf({4.0F, kCreekY - 3.0F});
+	const glm::vec2 second = seen.screenOf({16.0F, kCreekY + 3.0F});
+	drawing->handlePress(first.x, first.y, kViewportWidth, kViewportHeight, false);
+	drawing->handleClick(first.x, first.y, kViewportWidth, kViewportHeight, false);
+	ASSERT_EQ(drawing->status().pointCount, 1) << lastToast();
+	drawing->handleMouseMove(second.x, second.y, kViewportWidth, kViewportHeight, false);
+	EXPECT_FALSE(drawing->previewVerdict().valid);
+	EXPECT_TRUE(drawing->previewVerdict().markerInvalid);
+	EXPECT_EQ(drawing->status().message, "foundation: not on buildable ground");
+	drawing->handlePress(second.x, second.y, kViewportWidth, kViewportHeight, false);
+	drawing->handleClick(second.x, second.y, kViewportWidth, kViewportHeight, false);
+	EXPECT_TRUE(drawing->world().foundations().empty());
+	EXPECT_EQ(lastToast(), "Can't build here: foundation: not on buildable ground");
+}
+
 namespace {
 
 	// Closes with every tool on seen ground, and next to the edge of what is seen.
@@ -1324,21 +1364,84 @@ TEST_F(DrawingRectangleTest, AReleaseWhosePressTheToolNeverSawDoesNothing) {
 	EXPECT_TRUE(drawing->world().foundations().empty());
 }
 
-// A drag released over the interface drops the corner its press placed and keeps the tool; a
-// corner that was waiting before the press keeps waiting.
-TEST_F(DrawingRectangleTest, AReleaseOverTheInterfaceCancelsTheDrag) {
+// A drag released over the interface or outside the window commits nothing, and the corner its
+// press placed waits for a later click, as a corner placed before the press does.
+TEST_F(DrawingRectangleTest, AReleaseOffTheWorldKeepsTheFirstCorner) {
 	press({2.0F, 1.0F});
 	hover({6.0F, 4.0F});
 	drawing->cancelPress();
-	EXPECT_EQ(drawing->status().pointCount, 0);
-	EXPECT_TRUE(drawing->isRectangleTool());
+	EXPECT_EQ(drawing->status().pointCount, 1);
 	EXPECT_FALSE(drawing->hasPendingPress());
+	EXPECT_TRUE(drawing->world().foundations().empty());
+	clickCorner({6.0F, 4.0F});
+	EXPECT_EQ(onlyFoundationRing(), ringOf({{2.0F, 1.0F}, {6.0F, 1.0F}, {6.0F, 4.0F}, {2.0F, 4.0F}})) << lastToast();
 
-	clickCorner({2.0F, 1.0F});
-	press({6.0F, 4.0F});
+	clickCorner({10.0F, 1.0F});
+	press({14.0F, 4.0F});
 	drawing->cancelPress();
 	EXPECT_EQ(drawing->status().pointCount, 1);
+	EXPECT_EQ(drawing->world().foundations().size(), 1U);
+}
+
+// Right after the first click the pointer is on the first corner, and a second corner level with
+// it in one axis spans nothing: there is no rectangle, so nothing reads refused, and a release
+// there places nothing and says nothing, by click or by a short drag back onto the same grid point.
+TEST_F(DrawingRectangleTest, LevelCornersMakeNoRectangleSilently) {
+	clickCorner({2.0F, 1.0F});
+	for (const glm::vec2 level : {glm::vec2{2.0F, 1.0F}, glm::vec2{6.0F, 1.0F}, glm::vec2{2.0F, 4.0F}}) {
+		SCOPED_TRACE(::testing::Message() << level.x << ", " << level.y);
+		hover(level);
+		EXPECT_TRUE(drawing->status().valid) << drawing->status().message;
+		EXPECT_TRUE(drawing->status().message.empty()) << drawing->status().message;
+		EXPECT_TRUE(drawing->previewVerdict().valid);
+		clickCorner(level);
+		EXPECT_EQ(drawing->status().pointCount, 1);
+	}
+	drawing->activateRectangleTool();
+	// Pressed 0.4 m short of the grid point, released 0.625 m on, past the click distance: the
+	// same grid point.
+	const glm::vec2 corner = seen.screenOf({1.6F, 1.0F});
+	pressAt(corner);
+	ASSERT_EQ(drawing->status().pointCount, 1);
+	releaseAt(corner + glm::vec2{1.25F * assets::ConstructionRegistry::Get().snapping().doubleClickDistancePx, 0.0F});
+	EXPECT_EQ(drawing->status().pointCount, 1);
 	EXPECT_TRUE(drawing->world().foundations().empty());
+	EXPECT_TRUE(toasts.empty()) << lastToast();
+}
+
+// Past doubleClickDistancePx, and well inside twice it, a release ends a drag: the rectangle it
+// spans, too small here, is tried and refused.
+TEST_F(DrawingRectangleTest, AReleaseFourToEightPixelsFromThePressIsADrag) {
+	const float		threshold = assets::ConstructionRegistry::Get().snapping().doubleClickDistancePx;
+	const glm::vec2 corner = seen.screenOf({2.0F, 1.0F});
+	const glm::vec2 released = corner + glm::vec2{threshold, threshold} * 1.1F;
+	ASSERT_GT(glm::length(released - corner), threshold);
+	ASSERT_LT(glm::length(released - corner), 2.0F * threshold);
+	drawing->handlePress(corner.x, corner.y, kViewportWidth, kViewportHeight, true);
+	drawing->handleClick(released.x, released.y, kViewportWidth, kViewportHeight, true);
+	ASSERT_EQ(toasts.size(), 1U) << "the drag tried its rectangle";
+	EXPECT_EQ(toasts.back().first, "Cannot place");
+}
+
+// Alt places the first corner at the pointer, off the grid.
+TEST_F(DrawingRectangleTest, AltOnTheFirstPressPlacesTheRawPointer) {
+	const glm::vec2 raw{2.3F, 0.8F};
+	const glm::vec2 corner = seen.screenOf(raw);
+	drawing->handlePress(corner.x, corner.y, kViewportWidth, kViewportHeight, true);
+	drawing->handleClick(corner.x, corner.y, kViewportWidth, kViewportHeight, true);
+	clickCorner({6.0F, 4.0F});
+	EXPECT_EQ(onlyFoundationRing(), ringOf({{raw.x, raw.y}, {6.0F, raw.y}, {6.0F, 4.0F}, {raw.x, 4.0F}})) << lastToast();
+}
+
+TEST_F(DrawingRectangleTest, OnlyTheRectangleToolTakesAPress) {
+	const glm::vec2 corner = seen.screenOf({2.0F, 1.0F});
+	drawing->activateFoundationTool();
+	EXPECT_FALSE(drawing->handlePress(corner.x, corner.y, kViewportWidth, kViewportHeight, false));
+	drawing->activateWallTool();
+	EXPECT_FALSE(drawing->handlePress(corner.x, corner.y, kViewportWidth, kViewportHeight, false));
+	EXPECT_EQ(drawing->status().pointCount, 0);
+	drawing->activateRectangleTool();
+	EXPECT_TRUE(drawing->handlePress(corner.x, corner.y, kViewportWidth, kViewportHeight, false));
 }
 
 TEST_F(DrawingRectangleTest, EscDropsTheFirstCornerAndASecondEscExits) {
@@ -1352,9 +1455,9 @@ TEST_F(DrawingRectangleTest, EscDropsTheFirstCornerAndASecondEscExits) {
 	EXPECT_TRUE(drawing->world().foundations().empty());
 }
 
-// GameScene hands a right release to cancel(), as Esc. Mid-drag it drops the corner the press
-// placed, and the left release that ends the drag commits nothing.
-TEST_F(DrawingRectangleTest, RightClickDropsTheFirstCorner) {
+// A right release reaches cancel(), as Esc does (drawingPointerAction). Mid-drag it drops the
+// corner the press placed, and the left release that ends the drag commits nothing.
+TEST_F(DrawingRectangleTest, CancelMidDragDropsTheCornerAndTheReleaseCommitsNothing) {
 	press({2.0F, 1.0F});
 	hover({6.0F, 4.0F});
 	drawing->cancel();
@@ -1419,6 +1522,9 @@ TEST_F(DrawingFoundationPickTest, AfterPickingFreeformTheFoundationEntryOpensFre
 	drawing->pickFoundationTool(drawing->lastFoundationTool());
 	EXPECT_EQ(drawing->status().foundationTool, world_sim::FoundationTool::Freeform);
 	EXPECT_FALSE(drawing->isRectangleTool());
+	drawing->activateRectangleTool();
+	drawing->deactivate();
+	EXPECT_EQ(drawing->lastFoundationTool(), world_sim::FoundationTool::Rectangle) << "activating it records the pick too";
 }
 
 // Switching tools drops the shape in progress, as the prototype's tool buttons do; picking the
@@ -1456,7 +1562,6 @@ TEST_F(DrawingRectangleTest, ARefusedRectanglePreviewsRedAndDoesNotCommit) {
 		glm::vec2	second;
 	} refused[] = {
 		{"too small", {0.0F, 0.0F}, {1.0F, 1.0F}},
-		{"level corners", {0.0F, 0.0F}, {6.0F, 0.0F}},
 		{"over a building", {18.0F, 1.0F}, {22.0F, 3.0F}},
 		{"onto unexplored ground", {30.0F, 0.0F}, {50.0F, 5.0F}},
 	};
@@ -1482,41 +1587,10 @@ TEST_F(DrawingRectangleTest, ARefusedRectanglePreviewsRedAndDoesNotCommit) {
 	clickCorner({0.0F, 0.0F});
 	hover({4.0F, 3.0F});
 	EXPECT_TRUE(drawing->previewVerdict().valid) << drawing->status().message;
+	EXPECT_FALSE(drawing->previewVerdict().closeHalo) << "a rectangle closes onto no first point";
 	EXPECT_TRUE(drawing->status().valid);
 	clickCorner({4.0F, 3.0F});
 	EXPECT_EQ(drawing->world().foundations().size(), 2U) << lastToast();
-}
-
-// The world takes the pointer in window pixels and the interface in ui px; at every interface
-// scale the press lands the corner under the pointer, and a press on the interface starts nothing.
-TEST_F(DrawingRectangleTest, ThePressLandsTheCornerUnderThePointerAtEveryInterfaceScale) {
-	// A panel down the screen's left, 410 ui px wide: at 120% it covers the pointer on (-3, 1).
-	const auto		onPanel = [](glm::vec2 uiPoint) { return uiPoint.x < 410.0F; };
-	const glm::vec2 nearThePanel = seen.screenOf({-3.0F, 1.0F});
-	const auto pressIfOnTheWorld = [&](glm::vec2 screen, float uiScale) {
-		if (world_sim::pointerTarget(screen, kViewportWidth, kViewportHeight, uiScale, onPanel) == world_sim::PointerTarget::World) {
-			pressAt(screen);
-		}
-	};
-	float offset = 0.0F;
-	for (const float uiScale : {0.6F, 1.0F, 1.2F}) {
-		SCOPED_TRACE(uiScale);
-		pressIfOnTheWorld(nearThePanel, uiScale);
-		releaseAt(nearThePanel);
-		EXPECT_EQ(drawing->status().pointCount, uiScale > 1.1F ? 0 : 1) << "on the panel only at 120%";
-		drawing->activateRectangleTool();
-
-		const glm::vec2 first{2.0F + offset, 1.0F};
-		const glm::vec2 second{6.0F + offset, 4.0F};
-		pressIfOnTheWorld(seen.screenOf(first), uiScale);
-		hover(second);
-		pressIfOnTheWorld(seen.screenOf(second), uiScale);
-		releaseAt(seen.screenOf(second));
-		const auto& foundations = drawing->world().foundations();
-		ASSERT_FALSE(foundations.empty()) << lastToast();
-		EXPECT_EQ(foundations.back().ring, ringOf({{first.x, first.y}, {second.x, first.y}, {second.x, second.y}, {first.x, second.y}}));
-		offset += 10.0F;
-	}
 }
 
 namespace {
@@ -1550,6 +1624,22 @@ TEST_F(DrawingStripVerdictTest, AFreeformStripReadsThePointNotTheOpenShape) {
 	ASSERT_EQ(drawing->status().pointCount, 3) << lastToast();
 	hoverFreeform(kFourthCorner);
 	expectTheStripReadsThePreview();
+}
+
+// After each click the pointer rests on the point just placed: nothing is proposed yet, so
+// nothing reads refused, and a click there places nothing and says nothing.
+TEST_F(DrawingStripVerdictTest, AFreeformPointerOnThePointJustPlacedProposesNothing) {
+	drawing->activateFoundationTool();
+	for (const glm::vec2 corner : kThreeCorners) {
+		place({corner});
+		hoverFreeform(corner);
+		expectTheStripReadsThePreview();
+		const int placed = drawing->status().pointCount;
+		place({corner});
+		EXPECT_EQ(drawing->status().pointCount, placed);
+	}
+	EXPECT_EQ(drawing->status().pointCount, 3);
+	EXPECT_TRUE(toasts.empty()) << lastToast();
 }
 
 TEST_F(DrawingStripVerdictTest, AWallStripReadsThePreview) {

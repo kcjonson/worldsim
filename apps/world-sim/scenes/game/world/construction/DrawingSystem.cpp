@@ -308,7 +308,7 @@ namespace world_sim {
 		cursorOffBuildableGround = false;
 		wallHost_ = ec::kInvalidFoundation;
 		clearRectangle();
-		rectangleSnapKind_ = ec::RectangleSnapKind::None;
+		rectangleSnapKind_ = construction::RectangleSnapKind::None;
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(true);
 		}
@@ -508,7 +508,7 @@ namespace world_sim {
 			if (pressPlacedCorner && dragPx <= ConstructionRegistry::Get().snapping().doubleClickDistancePx) {
 				return true; // a click, not a drag: the first corner waits for the second click
 			}
-			if (!points_.empty()) {
+			if (!rectangleCorners_.empty()) {
 				commitShape();
 			}
 			return true;
@@ -524,6 +524,10 @@ namespace world_sim {
 			} else {
 				commitShape();
 			}
+			return true;
+		}
+
+		if (!clickVerdict().proposed) {
 			return true;
 		}
 
@@ -633,6 +637,7 @@ namespace world_sim {
 
 	void DrawingSystem::clearRectangle() {
 		rectangleCorners_.clear();
+		rectangleLabel_.clear();
 		rectanglePress_.reset();
 		rectanglePressPlacedCorner_ = false;
 	}
@@ -661,28 +666,27 @@ namespace world_sim {
 	}
 
 	void DrawingSystem::cancelPress() {
-		if (!rectanglePress_) {
-			return;
-		}
-		const bool placedCorner = rectanglePressPlacedCorner_;
 		rectanglePress_.reset();
 		rectanglePressPlacedCorner_ = false;
-		if (placedCorner) {
-			points_.clear();
-			willClose_ = false;
-			pendingClose_ = {};
-			rectangleCorners_.clear();
-		}
 	}
 
 	void DrawingSystem::handleRectangleMove(Foundation::Vec2 world, bool freeform) {
 		auto&			  registry = ConstructionRegistry::Get();
 		const SnapMemoKey key = snapMemoKey(world, freeform, nullptr);
 		if (!reuseSnapMemo(key)) {
-			const ec::RectangleCornerSnap corner = ec::snapRectangleCorner(constructionWorld_, registry.snapping(), key.aids, world, freeform);
-			snapMemoResult_ = ec::SnapResult{.point = corner.point};
+			const construction::RectangleCornerSnap corner =
+				construction::snapRectangleCorner(constructionWorld_, registry.snapping(), key.aids, world, freeform);
+			snapMemoResult_ = construction::SnapResult{.point = corner.point};
 			snapMemoRectangleSnapKind_ = corner.kind;
 			snapMemoValidation_ = {};
+			snapMemoRectangleCorners_.clear();
+			snapMemoRectangleLabel_.clear();
+			if (!points_.empty()) {
+				if (const std::optional<construction::RectangleShape> rectangle = construction::rectangleFromCorners(points_.front(), corner.point)) {
+					snapMemoRectangleCorners_ = dequantizeRing(rectangle->ring);
+					snapMemoRectangleLabel_ = rectangle->label;
+				}
+			}
 		}
 		lastSnap_ = snapMemoResult_;
 		rectangleSnapKind_ = snapMemoRectangleSnapKind_;
@@ -690,13 +694,9 @@ namespace world_sim {
 		lastValidation_ = snapMemoValidation_;
 		cursorOffBuildableGround = !pointOnBuildableGround(cursor_);
 
-		rectangleCorners_.clear();
-		willClose_ = !points_.empty();
-		if (willClose_) {
-			if (const std::optional<ec::RectangleShape> rectangle = ec::rectangleFromCorners(points_.front(), cursor_)) {
-				rectangleCorners_ = dequantizeRing(rectangle->ring);
-			}
-		}
+		rectangleCorners_ = snapMemoRectangleCorners_;
+		rectangleLabel_ = snapMemoRectangleLabel_;
+		willClose_ = !rectangleCorners_.empty();
 		pendingClose_ = willClose_ ? closeVerdict() : CloseVerdict{};
 	}
 
@@ -772,6 +772,7 @@ namespace world_sim {
 			.invalidColor = invalidColor_,
 			.keepClear = keepClear,
 			.rectangleSnap = activeTool_ == ToolKind::FoundationRectangle ? rectangleSnapKind_ : construction::RectangleSnapKind::None,
+			.sizeLabel = rectangleLabel_,
 		};
 	}
 
@@ -852,13 +853,7 @@ namespace world_sim {
 			}
 			return *snapMemoClosedShape_;
 		}
-		const bool rectangle = activeTool_ == ToolKind::FoundationRectangle;
-		const char* title = rectangle ? "Cannot place" : "Cannot close";
-		if (rectangle && rectangleCorners_.empty()) {
-			// The two corners are level in x or y: they span no rectangle.
-			snapMemoClosedShape_ = refusedClose(title, construction::validationReason(construction::ValidationCode::VerticesTooClose));
-			return *snapMemoClosedShape_;
-		}
+		const char* title = activeTool_ == ToolKind::FoundationRectangle ? "Cannot place" : "Cannot close";
 		const construction::ConstructionValidator validator(ConstructionRegistry::Get().constraints(), constructionWorld_);
 		const construction::ValidationResult	  ring = validator.validateRing(closingShape());
 		snapMemoClosedShape_ = ring.ok() ? CloseVerdict{} : refusedClose(title, construction::validationReason(ring.code));
@@ -868,6 +863,9 @@ namespace world_sim {
 	DrawingSystem::ClickVerdict DrawingSystem::clickVerdict() const {
 		if (willClose_) {
 			return {.valid = pendingClose_.accepted, .reason = pendingClose_.reason};
+		}
+		if (restsOnLastPoint()) {
+			return {.proposed = false};
 		}
 		// Off-mesh cursor (on water) reads as invalid just like a geometry violation, so the
 		// band and fill turn red before the player commits. A point the next click would refuse
@@ -883,6 +881,10 @@ namespace world_sim {
 			return {.valid = false, .reason = construction::validationReason(editPreview_.validation.code)};
 		}
 		return {};
+	}
+
+	bool DrawingSystem::restsOnLastPoint() const {
+		return activeTool_ == ToolKind::Foundation && !points_.empty() && geometry::quantize(cursor_) == geometry::quantize(points_.back());
 	}
 
 	DrawingSystem::PreviewVerdict DrawingSystem::previewVerdict() const {
@@ -2167,8 +2169,9 @@ namespace world_sim {
 		// snap, or the near-start rescue): the point's verdict doesn't apply to a close.
 		// Gated on the geometry result (not `valid`) because lastValidation_.vertexIndex
 		// only indexes a placed vertex; off buildable ground, the snapped-point marker
-		// turns red instead (drawSnapFeedback).
-		if (!lastValidation_.ok() && !willClose_ && !screen.empty()) {
+		// turns red instead (drawSnapFeedback). A pointer on the point just placed proposes
+		// nothing, so nothing is offending.
+		if (!lastValidation_.ok() && !willClose_ && clickVerdict().proposed && !screen.empty()) {
 			const std::size_t offending = std::min(lastValidation_.vertexIndex, screen.size() - 1);
 			Renderer::Primitives::drawCircle({
 				.center = screen[offending],
@@ -2186,6 +2189,20 @@ namespace world_sim {
 			 return camera_->worldToScreen(world.x, world.y, viewportWidth, viewportHeight, kPixelsPerMeter);
 		};
 
+		// The prototype's order: the grid cross (the feedback's alignment layer), then the first
+		// corner, the fill, and the outline, then the rings, the size label, and the marker over
+		// them. The rectangle draws at the rings' key before the feedback, so the rings, drawn
+		// later at the same key, go over it.
+		const std::int32_t rectangleKey = feedbackLayerKey(ToolKind::FoundationRectangle, FeedbackLayer::Marker);
+		if (!points_.empty()) {
+			Renderer::Primitives::drawCircle({
+				.center = toScreen(points_.front()),
+				.radius = previewStyle.vertexRadiusPx,
+				.style = {.fill = validColor_},
+				.id = "drawing_vertex",
+				.key = rectangleKey,
+			});
+		}
 		// The fill and outline read what the release would do, as the freeform band does.
 		const Foundation::Color lineColor = previewVerdict().valid ? validColor_ : invalidColor_;
 		if (!rectangleCorners_.empty()) {
@@ -2194,31 +2211,18 @@ namespace world_sim {
 			for (const Foundation::Vec2 corner : rectangleCorners_) {
 				screen.push_back(toScreen(corner));
 			}
-			fillPolygon(screen, {lineColor.r, lineColor.g, lineColor.b, previewStyle.fillPreviewAlpha}, "drawing_fill_preview", 900);
+			fillPolygon(screen, {lineColor.r, lineColor.g, lineColor.b, previewStyle.fillPreviewAlpha}, "drawing_fill_preview", rectangleKey);
 			for (std::size_t index = 0; index < screen.size(); ++index) {
 				Renderer::Primitives::drawLine({
 					.start = screen[index],
 					.end = screen[(index + 1) % screen.size()],
 					.style = {.color = lineColor, .width = previewStyle.lineWidth},
 					.id = "drawing_rubberband",
-					.key = 902,
+					.key = rectangleKey,
 				});
 			}
 		}
-
-		// The size label, and the grid cross or the existing corner's or edge's ring, above the
-		// rectangle (keys from 904).
 		drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight, uiScale, measureFeedbackText));
-
-		if (!points_.empty()) {
-			Renderer::Primitives::drawCircle({
-				.center = toScreen(points_.front()),
-				.radius = previewStyle.vertexRadiusPx,
-				.style = {.fill = validColor_},
-				.id = "drawing_vertex",
-				.key = 903,
-			});
-		}
 	}
 
 	namespace {

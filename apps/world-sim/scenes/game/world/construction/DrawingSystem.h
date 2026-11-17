@@ -196,6 +196,8 @@ namespace world_sim {
 		[[nodiscard]] std::uint64_t snapEvaluationCount() const { return snapEvaluationCount_; }
 
 		[[nodiscard]] bool isActive() const { return state_ == DrawingState::Drawing; }
+		/// The tool on, while one is.
+		[[nodiscard]] std::optional<ToolKind> activeTool() const { return isActive() ? std::optional<ToolKind>(activeTool_) : std::nullopt; }
 		[[nodiscard]] bool isWallTool() const { return activeTool_ == ToolKind::Wall; }
 		[[nodiscard]] bool isRectangleTool() const { return isActive() && activeTool_ == ToolKind::FoundationRectangle; }
 		[[nodiscard]] bool isOpeningTool() const { return activeTool_ == ToolKind::Opening; }
@@ -219,9 +221,9 @@ namespace world_sim {
 		/// (foundation) / extends or closes the chain (wall). Ctrl held on the wall tool over a
 		/// foundation edge triggers edge fill. In the Rectangle tool it ends the press
 		/// handlePress began: a release more than doubleClickDistancePx from that press, or
-		/// any release once a first corner was waiting before it, commits the rectangle; a
-		/// release that ends no press the tool saw does nothing. @return true if the click
-		/// was consumed.
+		/// any release once a first corner was waiting before it, commits the rectangle when
+		/// the two corners make one; a release that ends no press the tool saw does nothing.
+		/// @return true if the click was consumed.
 		bool handleClick(float screenX, float screenY, int viewportW, int viewportH, bool freeform, bool ctrl = false);
 
 		/// Rectangle tool, left press on the world: places the first corner when none is
@@ -230,9 +232,9 @@ namespace world_sim {
 		bool handlePress(float screenX, float screenY, int viewportW, int viewportH, bool freeform);
 
 		/// Rectangle tool: a press the release of which will never reach the world (released
-		/// over the interface or outside the window). Drops the first corner that press placed,
-		/// so the drag is cancelled and the tool stays on; a corner that was waiting before it
-		/// keeps waiting.
+		/// over the interface or outside the window, or lost with the window's focus). Forgets
+		/// the press and commits nothing; a first corner, the press's own included, waits for
+		/// a later click.
 		void cancelPress();
 		[[nodiscard]] bool hasPendingPress() const { return rectanglePress_.has_value(); }
 
@@ -446,24 +448,30 @@ namespace world_sim {
 		// --- Rectangle tool ---
 
 		/// The corner snap (snapRectangleCorner) and, with a first corner placed, the rectangle the
-		/// two corners span, judged as the closing click would judge it.
+		/// two corners span, judged as the closing click would judge it. Level corners span none.
 		void handleRectangleMove(Foundation::Vec2 world, bool freeform);
 
-		/// The pending rectangle's fill and outline, the first corner, the size label, and the
-		/// grid cross or the existing corner's or edge's ring; no snapped-point marker. INTERIM.
+		/// The pending rectangle's fill and outline, the first corner, and planSnapFeedback's plan
+		/// (the size label, the grid cross, the existing corner's or edge's ring, and the
+		/// snapped-point marker). INTERIM.
 		void renderRectanglePreview(int viewportWidth, int viewportHeight, float uiScale);
 
 		/// Forget the pending rectangle and any press (the first corner is points_, cleared by the caller).
 		void clearRectangle();
 
-		/// What the next click would do, as the preview and the status strip both read it:
-		/// while it closes (or in the Rectangle tool commits), the close's verdict; otherwise
-		/// whether the point may be placed, and why not.
+		/// What the next click would do, as the preview, the status strip, and the click read
+		/// it: while it closes (or in the Rectangle tool commits), the close's verdict;
+		/// otherwise whether the point may be placed, and why not. The Freeform tool's pointer
+		/// resting on the point just placed proposes nothing: valid, and the click places nothing.
 		struct ClickVerdict {
 			bool		valid = true;
+			bool		proposed = true;
 			std::string reason;
 		};
 		[[nodiscard]] ClickVerdict clickVerdict() const;
+
+		/// The Freeform tool's snapped point is the last placed point, to the millimeter.
+		[[nodiscard]] bool restsOnLastPoint() const;
 
 		/// Screen pixels per world meter at the current zoom (mirrors the render path:
 		/// kPixelsPerMeter * camera zoom). 1.0 fallback if no camera.
@@ -673,7 +681,8 @@ namespace world_sim {
 		// place a vertex -- either the explicit origin-close (lastSnap_ Origin) or the
 		// near-start "snap not block" rescue (a would-be-rejected vertex near the start
 		// whose closed ring is valid). Recomputed every move; suppresses the invalid highlight.
-		// In the Rectangle tool, true once the first corner is placed: the next release commits.
+		// In the Rectangle tool, true while the first corner and the snapped cursor span a
+		// rectangle: the next release commits it.
 		bool willClose_ = false;
 
 		// While willClose_: closeVerdict() as of the last move. Drives previewVerdict (the
@@ -687,15 +696,20 @@ namespace world_sim {
 		// this is feedback only.
 		bool cursorOffBuildableGround = false;
 
-		// Rectangle tool: the corners of the rectangle the first corner (points_) and the
-		// snapped cursor span, refreshed every move; empty when they make none. And the press
-		// handlePress saw, in screen pixels, until its release; whether it placed the first corner.
+		// Rectangle tool: the corners and the size label of the rectangle the first corner
+		// (points_) and the snapped cursor span, refreshed every move; empty when they make
+		// none. And the press handlePress saw, in screen pixels, until its release; whether it
+		// placed the first corner.
 		std::vector<Foundation::Vec2>  rectangleCorners_;
+		std::string					   rectangleLabel_;
 		std::optional<Foundation::Vec2> rectanglePress_;
 		bool							rectanglePressPlacedCorner_ = false;
-		// What placed the snapped corner (lastSnap_ holds the point), and the memo's copy.
+		// What placed the snapped corner (lastSnap_ holds the point), and the memo's copies of
+		// it and of the rectangle, built once for each snap the memo holds.
 		construction::RectangleSnapKind rectangleSnapKind_ = construction::RectangleSnapKind::None;
 		construction::RectangleSnapKind snapMemoRectangleSnapKind_ = construction::RectangleSnapKind::None;
+		std::vector<Foundation::Vec2>	snapMemoRectangleCorners_;
+		std::string						snapMemoRectangleLabel_;
 
 		// The foundation tool the Build menu's Foundation entry opens: the last one activated.
 		FoundationTool lastFoundationTool_ = FoundationTool::Rectangle;
