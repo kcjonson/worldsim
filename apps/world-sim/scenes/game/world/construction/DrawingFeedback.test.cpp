@@ -3,6 +3,7 @@
 #include "DrawingSystem.h"
 
 #include <assets/ConstructionRegistry.h>
+#include <construction/CornerAngles.h>
 #include <world/camera/WorldCamera.h>
 
 #include <gtest/gtest.h>
@@ -1351,7 +1352,8 @@ TEST_F(DrawingFeedbackTest, SegmentLabelSideHoldsWithTheShapesCenterAtTheEdgeOfT
 
 // The interface size scales the label text and its plate only; every stroke, ring, and dot is
 // in window pixels, like the preview's own lines (main's rule for text drawn in the world). A
-// frame at a ui scale of s plans exactly the strokes, rings, and dots it plans at 1, and labels
+// frame at a ui scale of s plans exactly the strokes, rings, and dots it plans at 1, the same
+// arcs where both place their degrees, and labels
 // whose text size, plate padding, and plate corner are s times the ones at 1. A bigger label
 // can sit elsewhere, so positions aren't compared; the placement rules hold at every scale.
 TEST_F(DrawingFeedbackTest, OnlyTheLabelsFollowTheUiScale) {
@@ -1585,10 +1587,16 @@ TEST_F(DrawingFeedbackTest, OnlyTheLabelsFollowTheUiScale) {
 				EXPECT_EQ(actual.width, expected.width);
 				expectSameDash(actual.dash, expected.dash);
 			}
-			ASSERT_EQ(scaled.arcs.size(), reference.arcs.size());
-			for (std::size_t item = 0; item < scaled.arcs.size(); ++item) {
-				const FeedbackArc& actual = scaled.arcs[item];
-				const FeedbackArc& expected = reference.arcs[item];
+			// An arc draws only with its degrees, which a bigger plate can lose: every arc both
+			// scales draw is the same arc.
+			for (const FeedbackArc& actual : scaled.arcs) {
+				const auto match = std::find_if(reference.arcs.begin(), reference.arcs.end(), [&](const FeedbackArc& arc) {
+					return arc.center.x == actual.center.x && arc.center.y == actual.center.y;
+				});
+				if (match == reference.arcs.end()) {
+					continue;
+				}
+				const FeedbackArc& expected = *match;
 				EXPECT_EQ(actual.layer, expected.layer);
 				EXPECT_EQ(actual.center.x, expected.center.x);
 				EXPECT_EQ(actual.center.y, expected.center.y);
@@ -1597,6 +1605,10 @@ TEST_F(DrawingFeedbackTest, OnlyTheLabelsFollowTheUiScale) {
 				EXPECT_EQ(actual.startRadians, expected.startRadians);
 				EXPECT_EQ(actual.sweepRadians, expected.sweepRadians);
 			}
+			const auto degreesLabels = std::count_if(scaled.labels.begin(), scaled.labels.end(), [](const FeedbackLabel& label) {
+				return label.text.find(kDegreeSign) != std::string::npos;
+			});
+			EXPECT_EQ(scaled.arcs.size(), static_cast<std::size_t>(degreesLabels)) << "no arc without its degrees";
 			ASSERT_EQ(scaled.dots.size(), reference.dots.size());
 			for (std::size_t item = 0; item < scaled.dots.size(); ++item) {
 				const FeedbackDot& actual = scaled.dots[item];
@@ -2045,7 +2057,7 @@ TEST_F(DrawingFeedbackTest, AngleReadoutShowsNothingUnderAltInTheRectangleToolBe
 	expectNothing("switched off");
 }
 
-TEST_F(DrawingFeedbackTest, DegreesLabelKeepsOffEveryObstacleAndIsDroppedWhenNothingIsClear) {
+TEST_F(DrawingFeedbackTest, DegreesLabelKeepsOffEveryObstacleAndDrawsNeitherItNorItsArcWhenNothingIsClear) {
 	display.angleReadout = true;
 	points = {{0.0F, 0.0F}, {4.0F, 0.0F}};
 	cursor = {6.0F, 2.0F};
@@ -2069,7 +2081,9 @@ TEST_F(DrawingFeedbackTest, DegreesLabelKeepsOffEveryObstacleAndIsDroppedWhenNot
 	EXPECT_GT(distanceToBox(vertex, degrees->plate), distanceToBox(vertex, firstSpot->plate)) << "further out along the bisector";
 
 	keepClear = FeedbackBox{0.0F, 0.0F, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)};
-	EXPECT_FALSE(degreesLabel(plan()).has_value());
+	const DrawingFeedbackPlan nothingClear = plan();
+	EXPECT_FALSE(degreesLabel(nothingClear).has_value());
+	EXPECT_TRUE(nothingClear.arcs.empty());
 }
 
 // While Common lengths is on, every segment-label placement is judged at a box that also
@@ -2273,8 +2287,10 @@ namespace {
 	}
 
 	constexpr float kArcRadiusPx = 18.0F;
-	constexpr float kArcOuterPx = kArcRadiusPx + 0.75F;
 	constexpr float kDegreesPlateGapPx = 3.0F;
+	// No plate comes nearer a corner than its arc and the gap round it (a float sum can land a
+	// hair inside).
+	constexpr float kArcClearancePx = kArcRadiusPx + kDegreesPlateGapPx - 1e-3F;
 	constexpr float kDegreesLabelMaxShiftPx = 48.0F;
 
 	// A drawing whose corner at the previous point sits at `vertex` on screen, `interiorDegrees`
@@ -2302,6 +2318,34 @@ namespace {
 			const float middle = arc.startRadians + arc.sweepRadians * 0.5F;
 			return {std::cos(middle), std::sin(middle)};
 		}
+
+		// Which side of its corner a degrees plate sits: 1 inside (along the arc's middle), -1
+		// outside.
+		static int sideOf(const FeedbackLabel& degrees, const FeedbackArc& arc) {
+			const Foundation::Vec2 middle = arcMiddle(arc);
+			const Foundation::Vec2 center = centerOf(degrees.plate);
+			return (center.x - arc.center.x) * middle.x + (center.y - arc.center.y) * middle.y > 0.0F ? 1 : -1;
+		}
+
+		// Expects the degrees plate clear of its arc and the gap round it, of the corner's two
+		// edges, of the segment being drawn, of the snapped-point marker, and of every other
+		// label.
+		void expectDegreesClear(const DrawingFeedbackPlan& result, const FeedbackLabel& degrees) {
+			ASSERT_FALSE(result.arcs.empty());
+			const Foundation::Vec2 vertex = result.arcs[0].center;
+			EXPECT_GE(distanceToBox(vertex, degrees.plate), kArcClearancePx);
+			EXPECT_FALSE(segmentMeetsBox(vertex, screen(points[points.size() - 2]), degrees.plate)) << "on the edge toward the previous point";
+			EXPECT_FALSE(segmentMeetsBox(vertex, screen(cursor), degrees.plate)) << "on the segment being drawn";
+			for (const FeedbackBox& marker : markerBoxes(screen(cursor))) {
+				EXPECT_FALSE(overlaps(degrees.plate, marker)) << "on the marker";
+			}
+			for (const FeedbackLabel& label : result.labels) {
+				if (label.text != degrees.text) {
+					EXPECT_FALSE(overlaps(degrees.plate, label.plate)) << label.text;
+				}
+			}
+			expectInside(degrees.plate);
+		}
 	};
 
 } // namespace
@@ -2328,10 +2372,11 @@ TEST_F(DegreesLabelTest, ThePlateSitsBeyondItsArcAlongTheBisectorAtEveryInterfac
 	}
 }
 
-// When its first spot is taken the label moves out along the bisector, no further than 48 px,
-// and is dropped past that.
-TEST_F(DegreesLabelTest, TheLabelMovesOutAtMostABoundAndIsDroppedPastIt) {
-	cornerOnScreen({500.0F, 300.0F}, 90.0F, 120.0F, 200.0F);
+// When its first spot is taken the label moves out along the bisector, no further than 48 px;
+// past that it goes to the outside of the corner, the same distances the other way.
+TEST_F(DegreesLabelTest, TheLabelMovesOutAtMostABoundThenTakesTheOutside) {
+	const Foundation::Vec2 vertex{500.0F, 300.0F};
+	cornerOnScreen(vertex, 90.0F, 120.0F, 200.0F);
 	const std::optional<FeedbackLabel> firstSpot = degreesLabel(plan());
 	ASSERT_TRUE(firstSpot.has_value());
 	const float plateHeight = firstSpot->plate.bottom - firstSpot->plate.top;
@@ -2347,11 +2392,16 @@ TEST_F(DegreesLabelTest, TheLabelMovesOutAtMostABoundAndIsDroppedPastIt) {
 	EXPECT_LE(moved->plate.top - firstSpot->plate.top, kDegreesLabelMaxShiftPx + 1e-3F);
 
 	keepClear = takenDownTo(kDegreesLabelMaxShiftPx - plateHeight + 1.0F);
-	EXPECT_FALSE(degreesLabel(plan()).has_value()) << "clear only past the bound";
+	const DrawingFeedbackPlan		   outside = plan();
+	const std::optional<FeedbackLabel> mirrored = degreesLabel(outside);
+	ASSERT_TRUE(mirrored.has_value()) << "clear inside only past the bound";
+	ASSERT_EQ(outside.arcs.size(), 1U);
+	EXPECT_EQ(sideOf(*mirrored, outside.arcs[0]), -1);
+	EXPECT_NEAR(vertex.y - mirrored->plate.bottom, firstSpot->plate.top - vertex.y, 1e-3F) << "the first spot's mirror";
 }
 
 // The corner's own edges and the segment being drawn are obstacles: at an acute corner the
-// label sits where it covers neither, or is dropped.
+// label sits where it covers neither, or the corner draws neither label nor arc.
 TEST_F(DegreesLabelTest, TheLabelKeepsOffItsCornersEdgesAndTheSegmentBeingDrawn) {
 	const Foundation::Vec2 vertex{500.0F, 400.0F};
 	int					   labelled = 0;
@@ -2364,17 +2414,15 @@ TEST_F(DegreesLabelTest, TheLabelKeepsOffItsCornersEdgesAndTheSegmentBeingDrawn)
 				const DrawingFeedbackPlan		   result = plan();
 				const std::optional<FeedbackLabel> degrees = degreesLabel(result);
 				if (!degrees) {
+					EXPECT_TRUE(result.arcs.empty());
 					continue;
 				}
 				++labelled;
-				const Foundation::Vec2 corner = result.arcs[0].center;
-				EXPECT_FALSE(segmentMeetsBox(corner, screen(points[0]), degrees->plate)) << "on the edge toward the previous point";
-				EXPECT_FALSE(segmentMeetsBox(corner, screen(cursor), degrees->plate)) << "on the segment being drawn";
-				EXPECT_GE(distanceToBox(corner, degrees->plate), kArcOuterPx);
+				expectDegreesClear(result, *degrees);
 			}
 		}
 	}
-	EXPECT_GT(labelled, 80);
+	EXPECT_EQ(labelled, 4 * 18 * 2) << "inside or outside, every one";
 }
 
 // An arc wider than an edge on screen reads as noise: a corner with an edge shorter than the
@@ -2427,10 +2475,10 @@ TEST_F(DegreesLabelTest, TheLabelKeepsOffTheSegmentAndGuideLabels) {
 	EXPECT_GT(labelled, 20);
 }
 
-TEST_F(DegreesLabelTest, ACornerOffTheScreenHasNoLabelAndOneAtItsEdgeKeepsItsPlateOnIt) {
+TEST_F(DegreesLabelTest, ACornerOffTheScreenHasNoLabelOrArcAndOneAtItsEdgeKeepsItsPlateOnIt) {
 	cornerOnScreen({-30.0F, 400.0F}, 0.0F, 120.0F, 200.0F);
 	const DrawingFeedbackPlan offScreen = plan();
-	EXPECT_EQ(offScreen.arcs.size(), 1U);
+	EXPECT_TRUE(offScreen.arcs.empty());
 	EXPECT_FALSE(degreesLabel(offScreen).has_value());
 
 	cornerOnScreen({2.0F, 400.0F}, 90.0F, 120.0F, 200.0F);
@@ -2511,13 +2559,256 @@ TEST_F(DegreesLabelTest, NearClosingEachLabelKeepsOffTheOtherCornersArc) {
 						continue;
 					}
 					for (const FeedbackArc& arc : result.arcs) {
-						EXPECT_GE(distanceToBox(arc.center, label.plate), kArcOuterPx) << label.text;
+						EXPECT_GE(distanceToBox(arc.center, label.plate), kArcClearancePx) << label.text;
 					}
 				}
 			}
 		}
 	}
 	EXPECT_GT(bothRead, 100);
+}
+
+// A 1.05 m second edge after a 4 m first one, at 40 px to the meter: at a 100 degree corner
+// turning up the screen the segment's own label takes the inside spots, so the degrees take the
+// outside, clear of everything, at every interface size up to a 4K window's default; turning
+// down they find a clear spot on one side or the other. A 30 degree corner has no room inside
+// between its edges.
+TEST_F(DegreesLabelTest, DegreesCrowdedOffTheInsideTakeTheOutside) {
+	constexpr int kOutside = -1;
+	const auto	  expectShown = [&](const char* text, std::optional<int> side) {
+		   SCOPED_TRACE(text);
+		   const DrawingFeedbackPlan		  result = plan();
+		   const std::optional<FeedbackLabel> degrees = degreesLabel(result);
+		   ASSERT_TRUE(degrees.has_value());
+		   ASSERT_EQ(result.arcs.size(), 1U);
+		   EXPECT_EQ(degrees->text, std::string(text) + kDegreeSign);
+		   if (side) {
+			   EXPECT_EQ(sideOf(*degrees, result.arcs[0]), *side);
+		   }
+		   expectDegreesClear(result, *degrees);
+	};
+	for (const float winding : {1.0F, -1.0F}) {
+		for (const float scale : {1.0F, 1.73F, 2.07F}) {
+			SCOPED_TRACE(::testing::Message() << "winding " << winding << ", scale " << scale);
+			uiScale = scale;
+			points = {{0.0F, 0.0F}, {4.0F, 0.0F}};
+			cursor = {4.0F + 1.05F * std::cos(80.0F * kDegreesToRadians), winding * 1.05F * std::sin(80.0F * kDegreesToRadians)};
+			expectShown("100.0", winding > 0.0F ? std::optional<int>(kOutside) : std::nullopt);
+			points = {{0.0F, 0.0F}, {4.0F, 0.0F}};
+			cursor = {4.0F + 4.0F * std::cos(150.0F * kDegreesToRadians), winding * 4.0F * std::sin(150.0F * kDegreesToRadians)};
+			expectShown("30.0", kOutside);
+		}
+	}
+}
+
+// A plate moved back onto the screen keeps the gap round its arc: with the corner a plate's width
+// and 20 px from the left edge and its inside pointing off the screen, every inside spot lands
+// 20 px from the corner, inside the arc and its 3 px gap, so the degrees go to the outside.
+TEST_F(DegreesLabelTest, APlateMovedOntoTheScreenKeepsTheGapRoundItsArc) {
+	constexpr float kArcToEdgePx = 20.0F;
+	cornerOnScreen({500.0F, 400.0F}, 180.0F, 120.0F, 200.0F);
+	const std::optional<FeedbackLabel> free = degreesLabel(plan());
+	ASSERT_TRUE(free.has_value());
+	const Foundation::Vec2 vertex{free->plate.right - free->plate.left + kArcToEdgePx, 400.0F};
+	cornerOnScreen(vertex, 180.0F, 120.0F, 200.0F);
+	const DrawingFeedbackPlan		   result = plan();
+	const std::optional<FeedbackLabel> degrees = degreesLabel(result);
+	ASSERT_TRUE(degrees.has_value());
+	ASSERT_EQ(result.arcs.size(), 1U);
+	EXPECT_GE(distanceToBox(vertex, degrees->plate), kArcClearancePx);
+	EXPECT_EQ(sideOf(*degrees, result.arcs[0]), -1);
+}
+
+// With no clear spot on either side the corner draws neither its arc nor its degrees; a square
+// corner's right-angle marker is unaffected.
+TEST_F(DegreesLabelTest, ACornerWithNeitherSideClearDrawsNeitherArcNorDegrees) {
+	constexpr float		   kBlockedHalfSizePx = 120.0F;
+	const Foundation::Vec2 vertex{500.0F, 400.0F};
+	keepClear = boxAround(vertex, kBlockedHalfSizePx);
+	cornerOnScreen(vertex, 90.0F, 120.0F, 200.0F);
+	const DrawingFeedbackPlan blocked = plan();
+	EXPECT_FALSE(degreesLabel(blocked).has_value());
+	EXPECT_TRUE(blocked.arcs.empty());
+
+	cornerOnScreen(vertex, 90.0F, 90.0F, 200.0F);
+	EXPECT_EQ(strokesIn(plan(), FeedbackLayer::Marker).size(), 1U) << "the right-angle marker";
+}
+
+// Along a smooth pointer move the degrees don't flip between the inside and the outside: along
+// rays out of the last point, through every length, the label changes side at most twice.
+TEST_F(DegreesLabelTest, AlongARayTheLabelChangesSideAtMostTwice) {
+	constexpr int	kRays = 600;
+	constexpr float kStepPx = 1.0F;
+	constexpr float kFirstPx = 20.0F;
+	constexpr float kLastPx = 320.0F;
+	constexpr int	kMostSideChanges = 2;
+	std::mt19937	random(8962);
+	const auto		between = [&](float low, float high) { return std::uniform_real_distribution<float>(low, high)(random); };
+	const auto		chance = [&](float odds) { return between(0.0F, 1.0F) < odds; };
+	int				sideReads = 0;
+	for (int ray = 0; ray < kRays; ++ray) {
+		camera.setZoom(between(2.0F, 10.0F));
+		uiScale = chance(0.5F) ? 1.0F : 1.73F;
+		display.guideDistances = chance(0.5F);
+		const Foundation::Vec2 vertex{between(200.0F, 800.0F), between(200.0F, 600.0F)};
+		const Foundation::Vec2 towardPrevious = screenDirection(between(0.0F, 360.0F));
+		const float			   previousPx = between(40.0F, 300.0F);
+		points = {worldAt({vertex.x + towardPrevious.x * previousPx, vertex.y + towardPrevious.y * previousPx}), worldAt(vertex)};
+		const Foundation::Vec2 heading = screenDirection(between(0.0F, 360.0F));
+		int					   lastSide = 0;
+		int					   changes = 0;
+		for (float along = kFirstPx; along <= kLastPx; along += kStepPx) {
+			const Foundation::Vec2 tip{vertex.x + heading.x * along, vertex.y + heading.y * along};
+			if (tip.x < 0.0F || tip.y < 0.0F || tip.x > static_cast<float>(viewportWidth) || tip.y > static_cast<float>(viewportHeight)) {
+				break;
+			}
+			cursor = worldAt(tip);
+			const DrawingFeedbackPlan		   result = plan();
+			const std::optional<FeedbackLabel> degrees = degreesLabel(result);
+			if (!degrees || result.arcs.empty()) {
+				continue;
+			}
+			++sideReads;
+			const int side = sideOf(*degrees, result.arcs[0]);
+			changes += lastSide != 0 && side != lastSide ? 1 : 0;
+			lastSide = side;
+		}
+		EXPECT_LE(changes, kMostSideChanges) << "ray " << ray;
+	}
+	EXPECT_GT(sideReads, kRays * 100);
+}
+
+// The reported case along its own ray: from the second point at 100 and at 120 degrees, through
+// the lengths where the degrees used to drop, the label is shown at every step and changes side
+// at most twice.
+TEST_F(DegreesLabelTest, AlongTheReportedRaysTheLabelIsAlwaysShown) {
+	constexpr float kFirstMeters = 0.5F;
+	constexpr float kLastMeters = 2.0F;
+	constexpr float kStepMeters = 0.01F;
+	for (const float interiorDegrees : {100.0F, 120.0F}) {
+		for (const float scale : {1.0F, 1.73F}) {
+			SCOPED_TRACE(::testing::Message() << interiorDegrees << " degrees, scale " << scale);
+			uiScale = scale;
+			points = {{0.0F, 0.0F}, {4.0F, 0.0F}};
+			const float heading = (180.0F - interiorDegrees) * kDegreesToRadians;
+			int			lastSide = 0;
+			int			changes = 0;
+			for (float meters = kFirstMeters; meters <= kLastMeters; meters += kStepMeters) {
+				cursor = {4.0F + meters * std::cos(heading), meters * std::sin(heading)};
+				const DrawingFeedbackPlan		   result = plan();
+				const std::optional<FeedbackLabel> degrees = degreesLabel(result);
+				ASSERT_TRUE(degrees.has_value()) << meters << " m";
+				const int side = sideOf(*degrees, result.arcs[0]);
+				changes += lastSide != 0 && side != lastSide ? 1 : 0;
+				lastSide = side;
+			}
+			EXPECT_LE(changes, 2);
+		}
+	}
+}
+
+// Over random frames of the kind the interface size test plans (guides, their labels, a kept
+// length, a reason box beside the pointer), the corner at the last point, with both its edges
+// at least 40 px on screen and 30 to 150 degrees, shows its degrees in all but a few frames
+// (about 99 in 100 at an Interface size of 100% and 98 in 100 at 173%).
+TEST_F(DegreesLabelTest, ACornerWithEdgesWellOnScreenShowsItsDegreesInNearlyEveryFrame) {
+	constexpr int	kWidth = 1200;
+	constexpr int	kHeight = 960;
+	constexpr float kMinimumEdgePx = 40.0F;
+	constexpr float kMaximumEdgePx = 400.0F;
+	constexpr float kLeastGuardedDegrees = 30.0F;
+	constexpr float kMostGuardedDegrees = 150.0F;
+	constexpr int	kFrames = 20000;
+	constexpr float kLeastShownShare = 0.95F;
+	viewportWidth = kWidth;
+	viewportHeight = kHeight;
+	for (const float scale : {1.0F, 1.73F}) {
+		SCOPED_TRACE(::testing::Message() << "scale " << scale);
+		std::mt19937 random(8961);
+		const auto	 between = [&](float low, float high) { return std::uniform_real_distribution<float>(low, high)(random); };
+		const auto	 chance = [&](float odds) { return between(0.0F, 1.0F) < odds; };
+		const auto	 oneOf = [&](int count) { return std::uniform_int_distribution<int>(0, count - 1)(random); };
+		int			 guarded = 0;
+		int			 guardedShown = 0;
+		for (int frame = 0; frame < kFrames;) {
+			style = {};
+			style.cursorRadiusPx = std::array{2.0F, 6.0F, 7.0F}[static_cast<std::size_t>(oneOf(3))];
+			style.guideLabelPx = chance(0.5F) ? 11.0F : 14.0F;
+			tool = chance(0.5F) ? world_sim::ToolKind::Wall : world_sim::ToolKind::Foundation;
+			camera.setZoom(between(1.0F, 12.0F));
+			uiScale = scale;
+			const Foundation::Vec2 vertex{between(0.0F, static_cast<float>(kWidth)), between(0.0F, static_cast<float>(kHeight))};
+			const float			   previousHeading = between(0.0F, 360.0F);
+			const float			   turn = between(1.0F, 359.0F);
+			const Foundation::Vec2 towardPrevious = screenDirection(previousHeading);
+			const Foundation::Vec2 towardNext = screenDirection(previousHeading + turn);
+			const float			   previousPx = between(kMinimumEdgePx, kMaximumEdgePx);
+			const float			   nextPx = between(kMinimumEdgePx, kMaximumEdgePx);
+			const Foundation::Vec2 tip{vertex.x + towardNext.x * nextPx, vertex.y + towardNext.y * nextPx};
+			if (tip.x < 0.0F || tip.y < 0.0F || tip.x > static_cast<float>(kWidth) || tip.y > static_cast<float>(kHeight)) {
+				continue; // the pointer is on the screen
+			}
+			++frame;
+			points = {worldAt({vertex.x + towardPrevious.x * previousPx, vertex.y + towardPrevious.y * previousPx}), worldAt(vertex)};
+			const int earlier = oneOf(3);
+			for (int point = 0; point < earlier; ++point) {
+				points.insert(points.begin(), worldAt({between(0.0F, static_cast<float>(kWidth)), between(0.0F, static_cast<float>(kHeight))}));
+			}
+			cursor = worldAt(tip);
+			snap = {};
+			const int guideCount = oneOf(3);
+			for (int guideIndex = 0; guideIndex < guideCount; ++guideIndex) {
+				SnapGuide guide;
+				guide.from = chance(0.5F) ? points[static_cast<std::size_t>(oneOf(static_cast<int>(points.size())))]
+										  : worldAt({between(0.0F, static_cast<float>(kWidth)), between(0.0F, static_cast<float>(kHeight))});
+				guide.to = cursor;
+				guide.source = static_cast<GuideSource>(oneOf(3));
+				guide.relation = static_cast<GuideRelation>(oneOf(3));
+				guide.rightAngle = chance(0.5F);
+				const float angle = between(0.0F, 2.0F * std::numbers::pi_v<float>);
+				guide.rightAngleEdgeDirection = {std::cos(angle), std::sin(angle)};
+				addGuide(guide);
+			}
+			closeRadiusMeters = between(0.1F, 2.0F);
+			canClose = chance(0.5F);
+			willClose = canClose && chance(0.5F);
+			display.guideDistances = chance(0.8F);
+			display.commonLengths = chance(0.6F);
+			if (display.commonLengths) {
+				const Foundation::Vec2 last = points.back();
+				snap.commonLengths[snap.commonLengthCount++] = std::hypot(cursor.x - last.x, cursor.y - last.y) + between(-0.08F, 0.08F);
+				if (chance(0.5F)) {
+					snap.lengthSnap = construction::LengthSnapKind::CommonLength;
+				}
+			}
+			keepClear.reset();
+			if (chance(0.3F)) {
+				const float left = tip.x + between(10.0F, 30.0F);
+				const float top = tip.y + between(10.0F, 30.0F);
+				keepClear = FeedbackBox{left, top, left + between(40.0F, 200.0F), top + between(10.0F, 30.0F)};
+			}
+			const construction::CornerAngles corners = construction::cornerAngles({
+				.points = points,
+				.cursor = cursor,
+				.tool = tool == world_sim::ToolKind::Wall ? construction::AngleReadoutTool::Wall : construction::AngleReadoutTool::Foundation,
+				.closingReachMeters = 2.0F * closeRadiusMeters,
+			});
+			if (corners.count == 0 || corners.corners[0].square) {
+				continue;
+			}
+			const float degrees = corners.corners[0].degrees;
+			if (degrees < kLeastGuardedDegrees || degrees > kMostGuardedDegrees) {
+				continue;
+			}
+			char expectedText[32];
+			std::snprintf(expectedText, sizeof(expectedText), "%.1f%s", static_cast<double>(degrees), kDegreeSign);
+			const DrawingFeedbackPlan result = plan();
+			++guarded;
+			guardedShown += std::any_of(result.labels.begin(), result.labels.end(), [&](const FeedbackLabel& label) { return label.text == expectedText; }) ? 1 : 0;
+		}
+		EXPECT_GT(guarded, kFrames / 4);
+		EXPECT_GE(static_cast<float>(guardedShown), kLeastShownShare * static_cast<float>(guarded)) << guardedShown << " of " << guarded;
+	}
 }
 
 namespace {

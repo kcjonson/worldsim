@@ -60,17 +60,19 @@ namespace world_sim {
 		constexpr float kMatchedEdgeTickHalfPx = 6.0F;
 		constexpr float kMatchedEdgeTickWidthPx = 1.75F;
 		constexpr float kMatchedEdgeTickSpacingPx = 4.0F;
-		// The angle readout's arc round a corner that is not square. Its degrees sit outside the
+		// The angle readout's arc round a corner that is not square. Its degrees sit beyond the
 		// arc on the corner's bisector, the whole plate at least this far beyond the arc along
 		// the bisector; like the other labels' gaps, it is the plate's, so it holds as the plate
 		// grows with the interface size.
 		constexpr float kAngleArcRadiusPx = 18.0F;
 		constexpr float kAngleArcWidthPx = 1.5F;
 		constexpr float kAngleLabelPlateGapPx = 3.0F;
-		// A degrees label whose first spot is taken moves out along the bisector in these steps,
-		// at most this far, so it still reads as its corner's; past that it is dropped.
+		// A degrees label whose first spot on a side is taken moves out along the bisector in
+		// these steps, at most this far, so it still reads as its corner's.
 		constexpr float kDegreesLabelShiftStepPx = 4.0F;
 		constexpr int	kDegreesLabelShiftSteps = 12; // 48 px
+		// A plate placed exactly at a bound can land this far inside it in float sums.
+		constexpr float kPlateRoundingPx = 1e-3F;
 		// The closing corner reads within this many close radii of the first point.
 		constexpr float kClosingReachInCloseRadii = 2.0F;
 		constexpr float kSegmentLabelPx = 12.0F;
@@ -603,7 +605,7 @@ namespace world_sim {
 				planCloseHalo();
 				planGridCross();
 				planCommonLengthTicks();
-				const std::array<std::optional<CornerOnScreen>, kMaxReadCorners> labelledCorners = planCornerMarks(corners);
+				std::array<std::optional<CornerOnScreen>, kMaxReadCorners> labelledCorners = planCornerMarks(corners);
 				seedLabelObstacles();
 				if (rectangleTool()) {
 					planSizeLabel();
@@ -617,11 +619,7 @@ namespace world_sim {
 						}
 					}
 				}
-				for (const std::optional<CornerOnScreen>& corner : labelledCorners) {
-					if (corner) {
-						planDegreesLabel(*corner, labelledCorners);
-					}
-				}
+				planCornerReadouts(labelledCorners);
 				planCursor();
 				planCrossingDot();
 				planSnapTarget();
@@ -635,14 +633,15 @@ namespace world_sim {
 				FeedbackLayer	  layer;
 			};
 
-			// A corner the angle readout draws an arc at, on screen, for its degrees label: its
-			// vertex and the path points either side of it.
+			// A corner the angle readout marks with an arc and its degrees, on screen: its vertex,
+			// the path points either side of it, and the arc it draws.
 			struct CornerOnScreen {
 				Foundation::Vec2 vertex;
 				Foundation::Vec2 previous;
 				Foundation::Vec2 next;
 				float			 bisectorRadians = 0.0F; // screen space, y down
 				float			 degrees = 0.0F;
+				FeedbackArc		 arc;
 			};
 
 			const DrawingFeedbackInput&					 input;
@@ -1075,8 +1074,8 @@ namespace world_sim {
 			// Each read corner: a square one the right-angle marker along its two edges, unless a
 			// guide's already marks that vertex; any other an arc from the edge toward the previous
 			// vertex to the edge toward the next, unless an edge is shorter on screen than the arc's
-			// radius, where an arc would read as noise. Returns the corners with an arc, for their
-			// degrees labels.
+			// radius, where an arc would read as noise. Returns the corners that would draw an arc,
+			// which draws only with its degrees.
 			std::array<std::optional<CornerOnScreen>, kMaxReadCorners> planCornerMarks(const construction::CornerAngles& corners) {
 				std::array<std::optional<CornerOnScreen>, kMaxReadCorners> labelledCorners{};
 				const Foundation::Color color = withOpacity(guideColor(style, GuideSource::DrawnShape), style.markerOpacity);
@@ -1103,21 +1102,22 @@ namespace world_sim {
 					// The world to screen scale's handedness turns the sweep with it.
 					const float startRadians = std::atan2(toPrevious->y, toPrevious->x);
 					const float sweepRadians = corner.sweepRadians * screenHandedness(corner.vertex);
-					result.arcs.push_back({
-						.center = vertex,
-						.radius = look.angleArcRadiusPx,
-						.startRadians = startRadians,
-						.sweepRadians = sweepRadians,
-						.color = color,
-						.width = look.angleArcWidthPx,
-						.layer = FeedbackLayer::Marker,
-					});
 					labelledCorners[index] = CornerOnScreen{
 						.vertex = vertex,
 						.previous = previous,
 						.next = next,
 						.bisectorRadians = startRadians + sweepRadians * 0.5F,
 						.degrees = corner.degrees,
+						.arc =
+							{
+								.center = vertex,
+								.radius = look.angleArcRadiusPx,
+								.startRadians = startRadians,
+								.sweepRadians = sweepRadians,
+								.color = color,
+								.width = look.angleArcWidthPx,
+								.layer = FeedbackLayer::Marker,
+							},
 					};
 				}
 				return labelledCorners;
@@ -1133,54 +1133,86 @@ namespace world_sim {
 				return turn < 0.0F ? -1.0F : 1.0F;
 			}
 
-			// A corner's degrees, outside its arc on the corner's bisector: the plate's center as far
-			// out as puts its nearest point the arc's radius and a gap out along the bisector (the
-			// plate's support distance there), so no corner of the plate reaches the arc. When that
-			// spot covers a label placed before it, the marker, another obstacle, the corner's own
-			// edges, the segment being drawn, or either corner's arc, it moves out along the
-			// bisector a few pixels at a time, each spot moved just inside the screen, at most a
-			// bound beyond the first spot so the label still reads as its corner's; it is dropped
-			// when none is clear, and when the corner itself is off the screen.
-			void planDegreesLabel(const CornerOnScreen& corner, const std::array<std::optional<CornerOnScreen>, kMaxReadCorners>& labelledCorners) {
-				if (!insideViewport({corner.vertex.x, corner.vertex.y, corner.vertex.x, corner.vertex.y})) {
-					return;
+			// Each corner's arc and degrees, in corner order, drawn together or not at all: a bare
+			// arc reads as broken. A corner whose degrees find no clear spot is dropped, and the
+			// corners after it no longer keep off its arc.
+			void planCornerReadouts(std::array<std::optional<CornerOnScreen>, kMaxReadCorners>& labelledCorners) {
+				for (std::optional<CornerOnScreen>& corner : labelledCorners) {
+					if (corner && !planDegreesLabel(*corner, labelledCorners)) {
+						corner.reset();
+					}
 				}
-				const std::string	   text = degreesText(corner.degrees, style.angleReadoutDecimals);
-				const float			   sizePx = look.guideLabelPx;
-				const Foundation::Vec2 size = measure(text, sizePx, FeedbackTextWeight::Regular);
-				const Foundation::Vec2 bisector{std::cos(corner.bisectorRadians), std::sin(corner.bisectorRadians)};
-				const float			   plateSupport = std::abs(bisector.x) * (size.x * 0.5F + look.labelPlatePaddingPx) +
-										  std::abs(bisector.y) * (size.y * 0.5F + look.labelPlatePaddingPx);
-				const float firstReach = look.angleArcRadiusPx + look.angleLabelGapPx + plateSupport;
-				for (int step = 0; step <= kDegreesLabelShiftSteps; ++step) {
-					const float			   reach = firstReach + static_cast<float>(step) * look.degreesLabelShiftStepPx;
-					const Foundation::Vec2 center{corner.vertex.x + bisector.x * reach, corner.vertex.y + bisector.y * reach};
-					const Foundation::Vec2 topLeft = moveInside({center.x - size.x * 0.5F, center.y - size.y * 0.5F}, size);
-					if (degreesPlateClear(plateBox(topLeft, size, look.labelPlatePaddingPx), corner, labelledCorners)) {
-						addLabel(text, topLeft, sizePx, size, withOpacity(guideColor(style, GuideSource::DrawnShape), 1.0F), FeedbackTextWeight::Regular);
-						return;
+				for (const std::optional<CornerOnScreen>& corner : labelledCorners) {
+					if (corner) {
+						result.arcs.push_back(corner->arc);
 					}
 				}
 			}
 
+			// A corner's degrees beyond its arc, on one side of the corner, else on the other: the
+			// inside (along the bisector) leads unless the corner's own lines cross its first spot,
+			// as they do in a narrow corner. Along a pointer's ray that test changes at most once,
+			// so the label changes side only when every spot on its side is taken. False, with
+			// nothing placed, when neither side has a clear spot or the corner itself is off the
+			// screen.
+			bool planDegreesLabel(const CornerOnScreen& corner, const std::array<std::optional<CornerOnScreen>, kMaxReadCorners>& labelledCorners) {
+				if (!insideViewport({corner.vertex.x, corner.vertex.y, corner.vertex.x, corner.vertex.y})) {
+					return false;
+				}
+				const std::string	   text = degreesText(corner.degrees, style.angleReadoutDecimals);
+				const float			   sizePx = look.guideLabelPx;
+				const Foundation::Vec2 size = measure(text, sizePx, FeedbackTextWeight::Regular);
+				const Foundation::Vec2 inside{std::cos(corner.bisectorRadians), std::sin(corner.bisectorRadians)};
+				const Foundation::Vec2 outside{-inside.x, -inside.y};
+				const bool insideLeads = !onCornerLines(plateBox(degreesSpot(corner, inside, size, 0), size, look.labelPlatePaddingPx), corner);
+				for (const Foundation::Vec2 direction : insideLeads ? std::array{inside, outside} : std::array{outside, inside}) {
+					for (int step = 0; step <= kDegreesLabelShiftSteps; ++step) {
+						const Foundation::Vec2 topLeft = degreesSpot(corner, direction, size, step);
+						if (degreesPlateClear(plateBox(topLeft, size, look.labelPlatePaddingPx), corner, labelledCorners)) {
+							addLabel(text, topLeft, sizePx, size, withOpacity(guideColor(style, GuideSource::DrawnShape), 1.0F), FeedbackTextWeight::Regular);
+							return true;
+						}
+					}
+				}
+				return false;
+			}
+
+			// The top-left of a degrees plate `step` spots out along `direction` from its vertex: the
+			// first spot's center as far out as puts the plate's nearest point the arc's radius and a
+			// gap out along `direction` (the plate's support distance there), so no corner of the
+			// plate reaches the arc, each later one a shift step further, at most a bound beyond the
+			// first so the label still reads as its corner's; each moved just inside the screen.
+			Foundation::Vec2 degreesSpot(const CornerOnScreen& corner, Foundation::Vec2 direction, Foundation::Vec2 size, int step) const {
+				const float plateSupport = std::abs(direction.x) * (size.x * 0.5F + look.labelPlatePaddingPx) +
+										   std::abs(direction.y) * (size.y * 0.5F + look.labelPlatePaddingPx);
+				const float reach = look.angleArcRadiusPx + look.angleLabelGapPx + plateSupport + static_cast<float>(step) * look.degreesLabelShiftStepPx;
+				const Foundation::Vec2 center{corner.vertex.x + direction.x * reach, corner.vertex.y + direction.y * reach};
+				return moveInside({center.x - size.x * 0.5F, center.y - size.y * 0.5F}, size);
+			}
+
 			// Whether a degrees plate keeps off the labels placed before it and their obstacles,
-			// every labelled corner's arc, its own corner's two edges, and the segment being drawn.
+			// every labelled corner's arc and the gap round it, and its corner's lines.
 			bool degreesPlateClear(
 				const FeedbackBox& plate, const CornerOnScreen& corner, const std::array<std::optional<CornerOnScreen>, kMaxReadCorners>& labelledCorners
 			) const {
 				if (std::any_of(placedLabels.begin(), placedLabels.end(), [&](const FeedbackBox& other) { return overlaps(plate, other); })) {
 					return false;
 				}
-				const float arcReach = look.angleArcRadiusPx + look.angleArcWidthPx * 0.5F;
+				const float arcReach = look.angleArcRadiusPx + look.angleLabelGapPx - kPlateRoundingPx;
 				for (const std::optional<CornerOnScreen>& labelled : labelledCorners) {
 					if (labelled && distanceToBox(labelled->vertex, plate) < arcReach) {
 						return false;
 					}
 				}
+				return !onCornerLines(plate, corner);
+			}
+
+			// Whether a plate lies on its corner's two edges or the segment being drawn.
+			bool onCornerLines(const FeedbackBox& plate, const CornerOnScreen& corner) const {
 				if (segmentMeetsBox(corner.vertex, corner.previous, plate) || segmentMeetsBox(corner.vertex, corner.next, plate)) {
-					return false;
+					return true;
 				}
-				return input.points.empty() || !segmentMeetsBox(toScreen(input.points.back()), snappedPoint, plate);
+				return !input.points.empty() && segmentMeetsBox(toScreen(input.points.back()), snappedPoint, plate);
 			}
 
 			// Guide labels keep clear of the snapped-point marker out to its ticks, and of the
