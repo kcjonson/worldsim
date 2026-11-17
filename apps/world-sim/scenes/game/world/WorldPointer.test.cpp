@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <initializer_list>
 #include <optional>
 #include <vector>
 
@@ -142,16 +143,88 @@ TEST(WorldPointer, AReleaseOffTheWorldOrAwayFromTheToolPlacesNothing) {
 	EXPECT_EQ(action(PointerInput::Press, MouseButton::Left, PointerTarget::World, false, ToolKind::FoundationRectangle), PointerAction::Ignore);
 }
 
+
+// With no drawing tool on, a release goes to placement or selection wherever the pointer is.
+TEST(WorldPointer, WithNoDrawingToolAReleaseAwayFromTheToolPassesOn) {
+	for (const PointerTarget target : {PointerTarget::World, PointerTarget::Interface, PointerTarget::OutsideWindow}) {
+		for (const MouseButton button : {MouseButton::Left, MouseButton::Right}) {
+			EXPECT_EQ(
+				world_sim::drawingPointerAction(PointerInput::Release, button, target, false, std::nullopt, false), PointerAction::PassOn
+			);
+		}
+	}
+}
+
 namespace {
 
-	constexpr double kLimitSeconds = 0.375; // exact in binary, so a release at the limit lands on it
-	constexpr float	 kLimitPixels = 4.0F;
+	using Event = foundation::InputEvent::Type;
+
+	// The wall tool's action for each left release on the world in `events`, judged as GameScene
+	// judges it: by the window as the events before it left it.
+	std::vector<PointerAction> releasesAfter(world_sim::WindowPresence presence, std::initializer_list<Event> events) {
+		std::vector<PointerAction> actions;
+		for (const Event event : events) {
+			presence.observe(event);
+			if (event == Event::PointerUp) {
+				const bool withTool =
+					world_sim::pointerWithTool(PointerTarget::World, presence.pointerInWindow, presence.windowFocused, false);
+				actions.push_back(world_sim::drawingPointerAction(
+					PointerInput::Release, MouseButton::Left, PointerTarget::World, withTool, ToolKind::Wall, false
+				));
+			}
+		}
+		return actions;
+	}
+
+} // namespace
+
+// A release the window saw before the pointer left in the same frame is a click; one after the
+// leave is not. An injected click leads with an enter, so the first one after a real leave lands.
+TEST(WorldPointer, AReleaseIsJudgedByTheEventsBeforeIt) {
+	const world_sim::WindowPresence inWindow{.pointerInWindow = true};
+	const std::vector				clicked{PointerAction::DeliverClick};
+	EXPECT_EQ(releasesAfter(inWindow, {Event::PointerDown, Event::PointerUp, Event::PointerLeave}), clicked);
+	EXPECT_EQ(releasesAfter(inWindow, {Event::PointerDown, Event::PointerLeave, Event::PointerUp}), std::vector{PointerAction::Ignore});
+	EXPECT_EQ(
+		releasesAfter(inWindow, {Event::PointerLeave, Event::PointerEnter, Event::PointerMove, Event::PointerDown, Event::PointerUp}), clicked
+	);
+	EXPECT_EQ(releasesAfter({}, {Event::PointerEnter, Event::PointerMove, Event::PointerDown, Event::PointerUp}), clicked);
+}
+
+// The focus follows FocusLost and FocusGained, and a key, a character, or a button pressed proves
+// it, so a FocusGained lost while the app was paused does not leave the tools paused.
+TEST(WorldPointer, InputThatReachesOnlyAFocusedWindowProvesTheFocus) {
+	world_sim::WindowPresence presence;
+	EXPECT_TRUE(presence.windowFocused);
+	presence.observe(Event::FocusLost);
+	EXPECT_FALSE(presence.windowFocused);
+	presence.observe(Event::FocusGained);
+	EXPECT_TRUE(presence.windowFocused);
+	for (const Event proof : {Event::KeyDown, Event::Char, Event::PointerDown}) {
+		presence.observe(Event::FocusLost);
+		for (const Event other : {Event::KeyUp, Event::PointerMove, Event::PointerUp, Event::Scroll, Event::PointerEnter}) {
+			presence.observe(other);
+		}
+		ASSERT_FALSE(presence.windowFocused) << static_cast<int>(proof);
+		presence.observe(proof);
+		EXPECT_TRUE(presence.windowFocused) << static_cast<int>(proof);
+	}
+}
+
+namespace {
+
+	// Exact in binary, so a release at the limit lands on it and the inclusive comparison cannot flake.
+	constexpr world_sim::DoubleClickLimits kLimits{.seconds = 0.375, .pixels = 4.0F};
 
 	bool doubleClick(std::optional<world_sim::PointerRelease> previous, world_sim::PointerRelease release) {
-		return world_sim::secondClickOfDoubleClick(previous, release, kLimitSeconds, kLimitPixels);
+		return world_sim::secondClickOfDoubleClick(previous, release, kLimits);
 	}
 
 	const world_sim::PointerRelease kFirstClick{.timeSeconds = 2.0, .position = {100.0F, 100.0F}};
+
+	world_sim::PointerRelease releaseAt(double timeSeconds) {
+		return {.timeSeconds = timeSeconds, .position = kFirstClick.position};
+	}
 
 } // namespace
 
@@ -161,6 +234,7 @@ TEST(WorldPointer, TwoReleasesWithinBothLimitsAreADoubleClick) {
 
 TEST(WorldPointer, ASecondReleaseTooLateIsAClick) {
 	EXPECT_FALSE(doubleClick(kFirstClick, {.timeSeconds = 2.5, .position = {100.0F, 100.0F}}));
+	EXPECT_FALSE(doubleClick(kFirstClick, {.timeSeconds = 2.375 + (1.0 / 1024.0), .position = {100.0F, 100.0F}}));
 }
 
 TEST(WorldPointer, ASecondReleaseTooFarIsAClick) {
@@ -174,16 +248,44 @@ TEST(WorldPointer, ADoubleClickIncludesBothLimits) {
 	EXPECT_TRUE(doubleClick(kFirstClick, {.timeSeconds = 2.375, .position = {104.0F, 100.0F}}));
 }
 
-// The pair is consumed: GameScene forgets the first click once the second is seen, so a third
-// release as quick and as close is a first click again, and a fourth completes the next pair.
+// The distance is the straight line, as the Rectangle tool's click-or-drag test measures it: 2 px
+// across and 3 px down is 3.6 px, inside 4; 3 px each way is 4.2 px, outside, though neither
+// offset alone reaches 4.
+TEST(WorldPointer, TheDistanceIsTheStraightLine) {
+	EXPECT_TRUE(doubleClick(kFirstClick, {.timeSeconds = 2.125, .position = {102.0F, 103.0F}}));
+	EXPECT_FALSE(doubleClick(kFirstClick, {.timeSeconds = 2.125, .position = {103.0F, 103.0F}}));
+}
+
+// The pair is consumed, so a third release as quick and as close is a first click again, and a
+// fourth completes the next pair.
 TEST(WorldPointer, AThirdReleaseStartsOver) {
-	std::optional<world_sim::PointerRelease> previous;
-	std::vector<bool>						 seconds;
+	world_sim::WallDoubleClick		   record;
+	std::vector<world_sim::ReleaseAction> actions;
 	for (const double time : {2.0, 2.125, 2.25, 2.375}) {
-		const world_sim::PointerRelease release{.timeSeconds = time, .position = {100.0F, 100.0F}};
-		const bool						second = doubleClick(previous, release);
-		seconds.push_back(second);
-		previous = second ? std::nullopt : std::optional(release);
+		actions.push_back(record.release(releaseAt(time), ToolKind::Wall, kLimits));
 	}
-	EXPECT_EQ(seconds, (std::vector<bool>{false, true, false, true}));
+	using world_sim::ReleaseAction;
+	EXPECT_EQ(actions, (std::vector{ReleaseAction::Click, ReleaseAction::EndChain, ReleaseAction::Click, ReleaseAction::EndChain}));
+}
+
+// Once forgotten, the release that would have been the second click is a first click.
+TEST(WorldPointer, AForgottenReleaseStartsNoPair) {
+	world_sim::WallDoubleClick record;
+	ASSERT_EQ(record.release(releaseAt(2.0), ToolKind::Wall, kLimits), world_sim::ReleaseAction::Click);
+	record.forget();
+	EXPECT_EQ(record.release(releaseAt(2.125), ToolKind::Wall, kLimits), world_sim::ReleaseAction::Click);
+	EXPECT_EQ(record.release(releaseAt(2.25), ToolKind::Wall, kLimits), world_sim::ReleaseAction::EndChain);
+}
+
+// Only the wall tool has a double-click: under any other tool every release is a click, and one
+// between two wall releases breaks their pair.
+TEST(WorldPointer, OnlyTheWallToolsReleasesMakeADoubleClick) {
+	for (const ToolKind tool : {ToolKind::Foundation, ToolKind::FoundationRectangle, ToolKind::FoundationEdit, ToolKind::Opening}) {
+		world_sim::WallDoubleClick record;
+		EXPECT_EQ(record.release(releaseAt(2.0), tool, kLimits), world_sim::ReleaseAction::Click) << static_cast<int>(tool);
+		EXPECT_EQ(record.release(releaseAt(2.125), tool, kLimits), world_sim::ReleaseAction::Click) << static_cast<int>(tool);
+		ASSERT_EQ(record.release(releaseAt(2.25), ToolKind::Wall, kLimits), world_sim::ReleaseAction::Click);
+		EXPECT_EQ(record.release(releaseAt(2.3125), tool, kLimits), world_sim::ReleaseAction::Click) << static_cast<int>(tool);
+		EXPECT_EQ(record.release(releaseAt(2.375), ToolKind::Wall, kLimits), world_sim::ReleaseAction::Click) << static_cast<int>(tool);
+	}
 }

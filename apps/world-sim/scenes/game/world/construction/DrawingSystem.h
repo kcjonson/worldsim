@@ -201,8 +201,6 @@ namespace world_sim {
 		[[nodiscard]] bool isWallTool() const { return activeTool_ == ToolKind::Wall; }
 		[[nodiscard]] bool isRectangleTool() const { return isActive() && activeTool_ == ToolKind::FoundationRectangle; }
 		[[nodiscard]] bool isOpeningTool() const { return activeTool_ == ToolKind::Opening; }
-		/// The wall tool is on with at least one point of a chain placed.
-		[[nodiscard]] bool chainInProgress() const { return isActive() && activeTool_ == ToolKind::Wall && !points_.empty(); }
 
 		// --- Material selection (from the config strip) ---
 
@@ -251,9 +249,10 @@ namespace world_sim {
 		/// the tool. @return true if it consumed the action.
 		bool cancel();
 
-		/// Enter / double-click: finish a wall chain (commit its segments). No-op for
-		/// the foundation tool (it closes on origin-click instead). @return true if
-		/// it consumed the action.
+		/// Enter / double-click: finish a wall chain (commit its segments); with one point or
+		/// none, the chain is dropped and nothing is committed or toasted. No-op for the
+		/// foundation tool (it closes on origin-click instead). @return true if it consumed
+		/// the action.
 		bool finishChain();
 
 		/// Backspace: remove the last placed point. @return true if a point was removed.

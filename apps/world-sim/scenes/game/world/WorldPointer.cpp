@@ -20,6 +20,29 @@ namespace world_sim {
 		return interfaceHit(windowPointer / uiScale) ? PointerTarget::Interface : PointerTarget::World;
 	}
 
+	void WindowPresence::observe(foundation::InputEvent::Type type) {
+		using Type = foundation::InputEvent::Type;
+		switch (type) {
+			case Type::PointerEnter:
+				pointerInWindow = true;
+				break;
+			case Type::PointerLeave:
+				pointerInWindow = false;
+				break;
+			case Type::FocusGained:
+			case Type::KeyDown:
+			case Type::Char:
+			case Type::PointerDown:
+				windowFocused = true;
+				break;
+			case Type::FocusLost:
+				windowFocused = false;
+				break;
+			default:
+				break;
+		}
+	}
+
 	bool pointerWithTool(PointerTarget target, bool pointerInWindow, bool windowFocused, bool backgroundLaunch) {
 		return pointerInWindow && target != PointerTarget::OutsideWindow && (windowFocused || backgroundLaunch);
 	}
@@ -58,13 +81,26 @@ namespace world_sim {
 	}
 
 	bool secondClickOfDoubleClick(
-		const std::optional<PointerRelease>& previous, const PointerRelease& release, double limitSeconds, float limitPixels
+		const std::optional<PointerRelease>& previous, const PointerRelease& release, const DoubleClickLimits& limits
 	) {
 		if (!previous) {
 			return false;
 		}
 		const glm::vec2 offset = release.position - previous->position;
-		return release.timeSeconds - previous->timeSeconds <= limitSeconds && std::hypot(offset.x, offset.y) <= limitPixels;
+		return release.timeSeconds - previous->timeSeconds <= limits.seconds && std::hypot(offset.x, offset.y) <= limits.pixels;
+	}
+
+	ReleaseAction WallDoubleClick::release(const PointerRelease& release, ToolKind tool, const DoubleClickLimits& limits) {
+		if (tool != ToolKind::Wall) {
+			forget();
+			return ReleaseAction::Click;
+		}
+		if (secondClickOfDoubleClick(lastRelease, release, limits)) {
+			forget();
+			return ReleaseAction::EndChain;
+		}
+		lastRelease = release;
+		return ReleaseAction::Click;
 	}
 
 } // namespace world_sim

@@ -33,6 +33,18 @@ namespace world_sim {
 		const std::function<bool(glm::vec2 uiPoint)>& interfaceHit
 	);
 
+	/// The window as the game scene's events tell it, one event at a time, so a release is judged by
+	/// the events before it and not by the frame's end: whether the pointer is in the window
+	/// (PointerEnter, PointerLeave) and whether the window has the focus (FocusGained, FocusLost).
+	/// No event is dispatched while the app is paused, so a FocusGained can be lost; a key pressed, a
+	/// character typed, or a button pressed reaches only a focused window, so each proves the focus.
+	struct WindowPresence {
+		bool pointerInWindow = false;
+		bool windowFocused = true; // no event comes when the window opens
+
+		void observe(foundation::InputEvent::Type type);
+	};
+
 	/// Whether the drawing tools follow the pointer: it is in the window (`pointerInWindow`, the
 	/// window system's word, and `target` inside the window's bounds) and the window has the focus.
 	/// A background launch's window opens unfocused and is driven by injected input, so there the
@@ -78,10 +90,41 @@ namespace world_sim {
 		glm::vec2 position{};
 	};
 
-	/// Whether `release` is the second click of a double-click: within `limitSeconds` and
-	/// `limitPixels` of `previous`, both limits inclusive. With no previous release, it is not.
+	/// How close two left releases are to make a double-click (snapping.xml): in time, and in
+	/// straight-line distance in logical pixels, each limit inclusive.
+	struct DoubleClickLimits {
+		double seconds = 0.0;
+		float  pixels = 0.0F;
+	};
+
+	/// Whether `release` is the second click of a double-click: within `limits` of `previous`.
+	/// With no previous release, it is not.
 	[[nodiscard]] bool secondClickOfDoubleClick(
-		const std::optional<PointerRelease>& previous, const PointerRelease& release, double limitSeconds, float limitPixels
+		const std::optional<PointerRelease>& previous, const PointerRelease& release, const DoubleClickLimits& limits
 	);
+
+	/// What a left release on the world does with a drawing tool on (WallDoubleClick::release).
+	enum class ReleaseAction {
+		Click,	  // DrawingSystem::handleClick
+		EndChain, // the second click of a wall double-click: it places nothing, DrawingSystem::finishChain
+	};
+
+	/// The wall tool's double-click: the last left release it was handed, the first click of a
+	/// possible pair. GameScene keeps one and forgets it wherever the chain ends or the pointer's
+	/// continuity breaks (Backspace, Enter, Esc, a right-click, a tool starting or ending, a pause).
+	class WallDoubleClick {
+	  public:
+		/// A left release on the world with `tool` on. With the wall tool, the second click of a
+		/// double-click ends the chain, as Enter does, and consumes the pair, so a third release is a
+		/// first click again; any other release is a click, remembered as the first of a pair. Under
+		/// any other tool a release is a click and remembers nothing.
+		[[nodiscard]] ReleaseAction release(const PointerRelease& release, ToolKind tool, const DoubleClickLimits& limits);
+
+		/// The next release is a first click.
+		void forget() { lastRelease.reset(); }
+
+	  private:
+		std::optional<PointerRelease> lastRelease;
+	};
 
 } // namespace world_sim
