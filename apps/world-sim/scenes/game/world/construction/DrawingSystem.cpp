@@ -550,6 +550,8 @@ namespace world_sim {
 			// the tool (matches the design: a second Esc, now empty, exits).
 			points_.clear();
 			lastValidation_ = {};
+			willClose_ = false;
+			pendingClose_ = {};
 			editPreviewActive_ = false;
 			return true;
 		}
@@ -1190,6 +1192,8 @@ namespace world_sim {
 			points_.clear();
 			wallHost_ = ec::kInvalidFoundation;
 			lastValidation_ = {};
+			willClose_ = false;
+			pendingClose_ = {};
 			return;
 		}
 
@@ -1199,6 +1203,8 @@ namespace world_sim {
 			points_.clear();
 			wallHost_ = ec::kInvalidFoundation;
 			lastValidation_ = {};
+			willClose_ = false;
+			pendingClose_ = {};
 			return;
 		}
 
@@ -1222,6 +1228,8 @@ namespace world_sim {
 		points_.clear();
 		wallHost_ = ec::kInvalidFoundation;
 		lastValidation_ = {};
+		willClose_ = false;
+		pendingClose_ = {};
 	}
 
 	DrawingSystem::WallChainCommit DrawingSystem::commitWallSegments(

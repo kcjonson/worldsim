@@ -509,6 +509,17 @@ TEST_F(DrawingWallCloseTest, ClosingSegmentAcrossAWallDrawsNoHaloAndTheClickBuil
 	EXPECT_EQ(toasts.back().second, "2 segments (Wood)");
 }
 
+// The close that built part of the chain cleared the tool: before any move, the strip and
+// the marker read as an empty tool's, not as the refused close.
+TEST_F(DrawingWallCloseTest, RightAfterAPartialCloseThePictureReadsValid) {
+	placeFreeform({{1.6F, 1.2F}, {1.6F, -0.8F}, {-0.6F, -1.1F}});
+	ASSERT_EQ(drawing->status().pointCount, 3) << lastToast();
+	clickWith(*drawing, {1.6F, 1.2F});
+	ASSERT_EQ(drawing->status().pointCount, 0);
+	EXPECT_TRUE(drawing->status().valid) << drawing->status().message;
+	EXPECT_FALSE(drawing->previewVerdict().markerInvalid);
+}
+
 // An earlier segment crosses the wall and the closing one does not: the same.
 TEST_F(DrawingWallCloseTest, EarlierSegmentAcrossAWallDrawsNoHaloAndTheClickBuildsTheRest) {
 	placeFreeform({{0.0F, 1.5F}, {0.0F, -1.5F}, {3.0F, -1.0F}});
