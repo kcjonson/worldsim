@@ -394,8 +394,9 @@ TEST_F(GeometryIndexTest, OpaqueOpeningLeavesTheWallSolid) {
 	std::ofstream(path) << materials;
 	ConstructionRegistry& registry = ConstructionRegistry::Get();
 	registry.clear();
-	ASSERT_TRUE(registry.loadMaterials(path.string()));
+	const bool loaded = registry.loadMaterials(path.string());
 	std::filesystem::remove(path);
+	ASSERT_TRUE(loaded);
 	ASSERT_NE(registry.getOpeningType("Shutter"), nullptr);
 	ASSERT_FALSE(registry.getOpeningType("Shutter")->transparentToSight);
 
