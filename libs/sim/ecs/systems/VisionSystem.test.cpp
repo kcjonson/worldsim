@@ -18,12 +18,16 @@
 #include <assets/placement/SpatialIndex.h>
 #include <construction/ConstructionWorld.h>
 #include <predicates/Predicates.h>
+#include <visibility/SightClip.h>
+#include <visibility/SightPolygon.h>
 #include <world/chunk/ChunkCoordinate.h>
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/SyntheticWorldSampler.h>
 #include <world/chunk/TerrainPolygonQuery.h>
 
 #include <glm/geometric.hpp>
+
+#include <algorithm>
 
 #include <memory>
 #include <unordered_map>
@@ -34,6 +38,9 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <random>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -68,13 +75,42 @@ namespace {
 	}
 
 	// Build a built wall segment (every created sub-segment marked Built).
-	SegmentId buildWall(ConstructionWorld& cw, Vec2i64 a, Vec2i64 b) {
-		SegmentCommitResult r = cw.commitSegment(a, b, "Wood", "Standard", kInvalidFoundation, cw.version());
+	SegmentId buildWall(ConstructionWorld& cw, Vec2i64 a, Vec2i64 b, const std::string& thickness = "Standard") {
+		SegmentCommitResult r = cw.commitSegment(a, b, "Wood", thickness, kInvalidFoundation, cw.version());
 		EXPECT_TRUE(r.ok());
 		for (SegmentId id : r.createdSegments) {
 			cw.setSegmentState(id, FoundationState::Built);
 		}
 		return r.id;
+	}
+
+	// The shipped construction config with one more opening type, "Shutter", that passes
+	// neither movement nor sight: the config folder copied with the type added to its materials.
+	bool loadWithAShutter() {
+		const std::filesystem::path shipped = constructionConfigFolder();
+		const std::filesystem::path folder =
+			std::filesystem::temp_directory_path() / ("vision-system-shutter-" + std::to_string(std::random_device{}()));
+		std::filesystem::copy(shipped, folder);
+		std::ifstream real(shipped / "materials.xml");
+		std::string	  materials((std::istreambuf_iterator<char>(real)), std::istreambuf_iterator<char>());
+		const std::size_t end = materials.find("</Opening>");
+		if (end == std::string::npos) {
+			return false;
+		}
+		materials.insert(end, R"(<Type name="Shutter">
+      <material>Wood</material>
+      <widthMeters>0.9</widthMeters>
+      <pathable>false</pathable>
+      <transparentToSight>false</transparentToSight>
+      <costItems>2.0</costItems>
+      <workUnits>40.0</workUnits>
+    </Type>
+  )");
+		std::ofstream(folder / "materials.xml", std::ios::trunc) << materials;
+		ConstructionRegistry::Get().clear();
+		const bool loaded = ConstructionRegistry::Get().load(folder.string());
+		std::filesystem::remove_all(folder);
+		return loaded && ConstructionRegistry::Get().getOpeningType("Shutter") != nullptr;
 	}
 
 	// Add a BUILT opening at parameter t.
@@ -335,6 +371,28 @@ TEST_F(VisionSystemTest, WallPastSightIsNotSeenThoughThePolygonReachesIt) {
 	EXPECT_EQ(*shape->segmentsSeen, std::vector<SegmentId>{nearWall});
 }
 
+// The polygon is built from the walls a rebuild step past sight, so a move short of the step
+// that brings a target behind such a wall into sight leaves it hidden.
+TEST_F(VisionSystemTest, WallPastSightHidesWhatAMoveBringsIntoSight) {
+	ConstructionWorld cw;
+	buildWall(cw, {1500, 0}, {1500, 3000});
+	buildWall(cw, {-30200, -2000}, {-30200, 2000});
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	const EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	tick(sys);
+	ASSERT_EQ(sys.polygonBuildCount(), 1u);
+
+	world.getComponent<Position>(observer)->value = {-0.4F, 0.0F};
+	const glm::vec2 targetPos{-30.38F, 0.0F};
+	spawnTarget(world, targetPos);
+	tick(sys);
+	EXPECT_EQ(sys.polygonBuildCount(), 1u) << "no rebuild";
+	EXPECT_FALSE(remembers(world, observer, targetPos)) << "29.98 m off, behind the wall";
+}
+
 // Demolishing the wall (demote to Blueprint) bumps the version: the next tick
 // rebuilds against an empty occluder set, the observer drops to the fast path,
 // and the previously hidden target becomes remembered.
@@ -543,6 +601,86 @@ TEST_F(VisionSystemTest, OpeningOnSeenWallRemembered) {
 	EXPECT_TRUE(mem->knowsOpening(door)) << "an opening on a seen wall must be recorded";
 }
 
+// A door seen through its own gap at a steep angle, from 0.2 m off the wall's face and 2.25 m
+// short of the gap, is recorded: every ray through the gap ends on the far jamb before the
+// centerline, but crosses the gap's mouth on the near face.
+TEST_F(VisionSystemTest, DoorSeenSteeplyThroughItsGapRemembered) {
+	ConstructionWorld cw;
+	const SegmentId wall = buildWall(cw, {1500, 0}, {1500, 6000});
+	const OpeningId door = addBuiltOpening(cw, wall, 0.5F, "Door");
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	const EntityID observer = spawnObserver(world, {1.2F, 0.3F});
+	tick(sys);
+
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_TRUE(mem->knowsSegment(wall));
+	EXPECT_TRUE(mem->knowsOpening(door));
+}
+
+// An opening that does not pass sight leaves its wall solid, and is seen on the face toward the
+// observer: from either side, head on.
+TEST_F(VisionSystemTest, OpaqueOpeningSeenHeadOnFromEitherSideRemembered) {
+	ASSERT_TRUE(loadWithAShutter());
+	ConstructionWorld cw;
+	const SegmentId wall	= buildWall(cw, {1500, 0}, {1500, 3000});
+	const OpeningId shutter = addBuiltOpening(cw, wall, 0.5F, "Shutter");
+	for (const glm::vec2 where : {glm::vec2{0.5F, 1.5F}, glm::vec2{2.5F, 1.5F}}) {
+		World		  world;
+		VisionSystem& sys = world.registerSystem<VisionSystem>();
+		sys.setConstructionWorld(&cw);
+		const EntityID observer = spawnObserver(world, where);
+		tick(sys);
+		const Memory* mem = world.getComponent<Memory>(observer);
+		ASSERT_NE(mem, nullptr);
+		EXPECT_TRUE(mem->knowsOpening(shutter)) << "from x = " << where.x;
+	}
+}
+
+// An opaque opening at the middle of a heavy wall that runs at a slant, seen head on: its face
+// span stays outside the wall's outlined face though both are rounded to the millimetre.
+TEST_F(VisionSystemTest, OpaqueOpeningOnASlantedWallSeenHeadOnRemembered) {
+	ASSERT_TRUE(loadWithAShutter());
+	ConstructionWorld cw;
+	const SegmentId wall	= buildWall(cw, {0, 0}, {1037, 1779}, "Heavy");
+	const OpeningId shutter = addBuiltOpening(cw, wall, 0.5F, "Shutter");
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	const EntityID observer = spawnObserver(world, {6.566F, -2.636F}); // 7 m off the right face's middle
+	tick(sys);
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_TRUE(mem->knowsSegment(wall));
+	EXPECT_TRUE(mem->knowsOpening(shutter));
+}
+
+// Openings on a wall hidden behind another are not seen through it, by either face: a door
+// and a shutter on the hidden wall, a solid wall between them and the observer.
+TEST_F(VisionSystemTest, OpeningsBehindAWallNotRemembered) {
+	ASSERT_TRUE(loadWithAShutter());
+	ConstructionWorld cw;
+	buildWall(cw, {1500, -3000}, {1500, 6000});
+	const SegmentId hidden	= buildWall(cw, {3000, 0}, {3000, 3000});
+	const OpeningId door	= addBuiltOpening(cw, hidden, 0.3F, "Door");
+	const OpeningId shutter = addBuiltOpening(cw, hidden, 0.75F, "Shutter");
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	const EntityID observer = spawnObserver(world, {0.5F, 1.5F});
+	tick(sys);
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_FALSE(mem->knowsSegment(hidden));
+	EXPECT_FALSE(mem->knowsOpening(door));
+	EXPECT_FALSE(mem->knowsOpening(shutter));
+}
+
 // A long wall whose endpoints are beyond the sight radius but whose span the
 // observer faces is still seen, via the ring-edge crossing fallback. Endpoint-only
 // tests would miss it.
@@ -565,6 +703,69 @@ TEST_F(VisionSystemTest, LongWallSeenViaEdgeCrossing) {
 	const Memory* mem = world.getComponent<Memory>(observer);
 	ASSERT_NE(mem, nullptr);
 	EXPECT_TRUE(mem->knowsSegment(wall)) << "long wall span must be seen via the edge-crossing fallback";
+}
+
+// The structure pass skips the walls' back faces and finds the same walls as testing every
+// edge would: from each eye of a grid round a room with a door and a window, an L corner and a
+// T junction, the walls seen are those with an edge on or across the sight polygon.
+TEST_F(VisionSystemTest, StructurePassSkippingBackFacesSeesTheSameWalls) {
+	ConstructionWorld cw;
+	const SegmentId south = buildWall(cw, {0, 0}, {4000, 0});
+	const SegmentId east  = buildWall(cw, {4000, 0}, {4000, 4000});
+	buildWall(cw, {4000, 4000}, {0, 4000});
+	buildWall(cw, {0, 4000}, {0, 0});
+	addBuiltOpening(cw, south, 0.5F, "Door");
+	addBuiltOpening(cw, east, 0.5F, "Window");
+	buildWall(cw, {7000, 0}, {11000, 0});
+	buildWall(cw, {11000, 0}, {11000, 3000});
+	buildWall(cw, {7000, 6000}, {11000, 6000});
+	buildWall(cw, {9000, 6000}, {9000, 9000});
+
+	constexpr float kSightMeters = 6.0F;
+	constexpr float kGridMeters	 = 0.7F;
+	int				differ		 = 0;
+	for (float x = -2.0F; x <= 13.0F; x += kGridMeters) {
+		for (float y = -2.0F; y <= 10.0F; y += kGridMeters) {
+			World		  world;
+			VisionSystem& sys = world.registerSystem<VisionSystem>();
+			sys.setConstructionWorld(&cw);
+			const EntityID observer							 = spawnObserver(world, {x, y});
+			world.getComponent<Memory>(observer)->sightRadius = kSightMeters;
+			tick(sys);
+			const auto shape = sys.sightShape(observer);
+			ASSERT_TRUE(shape.has_value());
+			std::vector<SegmentId> expected;
+			if (shape->polygon != nullptr) {
+				const Vec2i64		 centre	  = nav::toMm(shape->center);
+				const std::int64_t	 radiusMm = std::llround(static_cast<double>(shape->radius) * 1000.0);
+				const geometry::Ring sight =
+					geometry::starClippedToConvex(*shape->polygon, centre, geometry::sightPolygon(centre, radiusMm));
+				for (const GeometryIndex::OccluderRecord& occluder : sys.geometry().occluders()) {
+					if (!geometry::withinDistanceOfSegment(centre, occluder.seg.a, occluder.seg.b, radiusMm)) {
+						continue;
+					}
+					bool seen = geometry::pointInPolygon(occluder.seg.a, sight) != geometry::PointInPolygon::Outside ||
+								geometry::pointInPolygon(occluder.seg.b, sight) != geometry::PointInPolygon::Outside;
+					for (std::size_t edge = 0; edge < sight.size() && !seen; ++edge) {
+						seen = geometry::intersectSegments(occluder.seg.a, occluder.seg.b, sight[edge], sight[(edge + 1) % sight.size()])
+								   .relation != geometry::SegmentRelation::Disjoint;
+					}
+					if (seen) {
+						expected.push_back(occluder.source);
+					}
+				}
+			}
+			std::ranges::sort(expected);
+			expected.erase(std::unique(expected.begin(), expected.end()), expected.end());
+			std::vector<SegmentId> found = *shape->segmentsSeen;
+			std::ranges::sort(found);
+			if (found != expected && ++differ <= 5) {
+				ADD_FAILURE() << "from (" << x << ", " << y << ") the pass sees " << found.size() << " walls, every edge "
+							  << expected.size();
+			}
+		}
+	}
+	EXPECT_EQ(differ, 0);
 }
 
 // An outdoor observer (no walls in range) records no structures.
