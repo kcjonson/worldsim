@@ -470,7 +470,7 @@ The gameplay bar's [Build▾] menu gets a **Structure** category: Foundation, Wa
 
 A horizontal strip docked above the gameplay bar while a structure tool is active:
 
-- **Tool picker** (Foundation): switches between Rectangle ("Two corners") and Freeform ("Point by point"). The Build menu's Foundation entry opens the one last picked this session, Rectangle the first time, as each tool keeps its own material for the session.
+- **Tool picker** (Foundation): switches between Rectangle ("Two corners") and Freeform ("Point by point"). The Build menu's Foundation entry opens the one last picked this session, Rectangle the first time.
 - **Material cards:** icon, name, per-unit cost (per m² or per m). One selected at a time; each tool keeps its own selection for the session. Add / Subtract shows none, since it keeps the edited foundation's material.
 - **Thickness presets** (Wall tool): the selected material's presets, each its name over its thickness in meters, with their stat summary (HP, insulation, cost) on hover.
 - **Type picker** (Door/Window tool): the opening types.
