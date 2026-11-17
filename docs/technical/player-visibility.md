@@ -60,7 +60,7 @@ What the code did on `main` after the nav stack merged (PRs #369 to #373), read 
 
 ### 3.1 The three areas
 
-A point is **visible** when it lies in some player colonist's sight shape now. It is **seen** when it lies in the seen record. Everything else is **unseen**. Visible ground is always seen (3.3 holds that exactly; [Sight Softening](./sight-softening.md) 6.2 says how it holds when things in the way make the rim vary).
+A point is **visible** when it lies in some player colonist's sight shape now. It is **seen** when it lies in the seen record. Everything else is **unseen**. What is drawn bright is always seen (3.3 holds that exactly, and [Sight Softening](./sight-softening.md) 6.2 where things in the way make the rim vary); `isVisible` can run ahead of the record by a narrow band at the rim, under 0.15 m on an open leg in the open, `kSeenSlackMm` on a forest leg, and with walls or opaque bodies in sight up to the distance he has walked since vision's last build, ahead of him.
 
 Four areas nest, each inside the next, and each containment is held by construction, not by tolerance:
 
