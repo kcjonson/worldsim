@@ -13,7 +13,6 @@
 
     <rendering>
       <complexity>simple</complexity>
-      <tier>instanced</tier>
     </rendering>
 
     <animation>
@@ -64,7 +63,7 @@
       </biome>
 
       <!-- Riverbank/pond-shore thickets in forests with no upland block: woody bushes
-           line the water's edge (set back a step behind the reeds) -- it's where most
+           line the water's edge (set back a step behind the reeds), where most
            plants grow. near="Mud" keys on the muddy bank the post-processor lays down. -->
       <biome name="BorealForest" near="Mud" distance="2">
         <spawnChance>0.11</spawnChance>

@@ -27,8 +27,10 @@
 
   <!-- Guides. A guide is a line the cursor snaps onto when within the tolerance of it. -->
 
-  <!-- Range within which committed-building corners are considered as guide
-       targets (the in-progress shape's own nodes are always considered). -->
+  <!-- The reach of every guide from committed structures: a corner (a foundation
+       corner, or in the wall tool a wall vertex) within this distance of the cursor
+       gives guides, and an edge within it gives a nearby direction. The shape's own
+       points always give guides, whatever their distance. -->
   <guideRangeMeters>8.0</guideRangeMeters>
 
   <!-- Perpendicular distance within which the cursor snaps onto a guide, drawing it. -->
@@ -82,15 +84,19 @@
   <!-- Rectangle tool: land on existing corners and edges before the grid. -->
   <rectangleAdjacencySnaps>true</rectangleAdjacencySnaps>
 
-  <!-- The player's Drawing Settings at first launch. These are the drawing tools as they
-       behaved before the settings existed (angle steps, world-axis guides, and align on;
-       the rest off); a later change switches them to the designed defaults. -->
+  <!-- The player's Drawing Settings at first launch. These are the drawing tools as
+       they behaved before the settings existed (angle steps, world-axis guides, align,
+       and crossings on; the rest off). Crossings are on because the old two-axis lock,
+       which landed the fourth corner of an axis-aligned rectangle, is a crossing of two
+       world guides. Not exactly the old tools: with align on, a nearby building also
+       gives lines parallel and perpendicular to its edges, and crossings form between
+       any two guides. A later change switches them to the designed defaults. -->
   <DrawingSettingsDefaults>
     <angleSteps>true</angleSteps>
     <guidesFromShape>false</guidesFromShape>
     <alignToExistingBuildings>true</alignToExistingBuildings>
     <guidesFromWorldAxes>true</guidesFromWorldAxes>
-    <guideCrossings>false</guideCrossings>
+    <guideCrossings>true</guideCrossings>
     <commonLengths>false</commonLengths>
     <guideDistances>false</guideDistances>
     <angleReadout>false</angleReadout>

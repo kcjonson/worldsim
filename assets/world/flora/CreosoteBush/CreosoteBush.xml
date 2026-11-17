@@ -13,7 +13,6 @@
 
     <rendering>
       <complexity>simple</complexity>
-      <tier>instanced</tier>
     </rendering>
 
     <animation>

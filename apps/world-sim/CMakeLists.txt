@@ -88,6 +88,7 @@ add_library(world-sim-game STATIC
     scenes/loading/GameLoadingScene.cpp
     scenes/game/dev/CameraCommand.cpp
     scenes/game/dev/DevCommandHandler.cpp
+    scenes/game/dev/GiveShortfall.cpp
     scenes/game/dev/GpuHold.cpp
     scenes/game/dev/GpuHoldCommand.cpp
     scenes/game/dev/GroundRefusal.cpp
@@ -138,35 +139,16 @@ add_custom_target(world-sim-shaders ALL
 )
 add_dependencies(world-sim-shaders world-view-shaders planet-view-shaders)
 
-# Copy fonts to executable directory
-add_custom_command(TARGET world-sim POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_SOURCE_DIR}/fonts
-    $<TARGET_FILE_DIR:world-sim>/fonts
-    COMMENT "Copying fonts to world-sim directory"
-)
-
-# Mirror assets to the executable directory every build.
-# Uses cmake/mirror-assets.cmake which mirrors each source subdir independently
-# via robocopy /MIR (Win) / rsync --delete (non-Win). Per-subdir mirroring means
-# extra dest dirs not in source (e.g. assets/planets/ staged separately) are left
-# untouched, while deletions within source-managed subdirs are propagated.
-add_custom_target(world-sim-assets ALL
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/assets
-        -DDEST_DIR=$<TARGET_FILE_DIR:world-sim>/assets
-        -P ${CMAKE_SOURCE_DIR}/cmake/mirror-assets.cmake
-    COMMENT "Mirroring assets to world-sim directory"
-)
-
-# Make world-sim depend on the shader and asset mirrors so they are in place before running
-add_dependencies(world-sim world-sim-assets world-sim-shaders)
+# Make world-sim depend on the shader mirror so it is in place before running. Assets and fonts
+# are staged by the root CMakeLists (stage_assets, stage_fonts).
+add_dependencies(world-sim world-sim-shaders)
 
 # world-sim's own code, which no library's test target reaches, and its scenes laid out headless
 if(BUILD_TESTING)
     find_package(GTest CONFIG REQUIRED)
     add_executable(world-sim-tests
         scenes/game/dev/CameraCommand.test.cpp
+        scenes/game/dev/GiveShortfall.test.cpp
         scenes/game/dev/GpuHoldCommand.test.cpp
         scenes/game/dev/GroundRefusal.test.cpp
         scenes/game/dev/PointList.test.cpp

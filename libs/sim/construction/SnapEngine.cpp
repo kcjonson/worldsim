@@ -3,6 +3,7 @@
 #include "ConstructionValidator.h"
 #include "ConstructionWorld.h"
 #include "OpeningGeometry.h"
+#include "SnapGuidesDetail.h"
 
 #include <assets/ConstructionRegistry.h>
 
@@ -10,7 +11,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <numbers>
 #include <optional>
 
@@ -51,23 +51,38 @@ namespace construction {
 			return ((p.x - a.x) * abx + (p.y - a.y) * aby) / lenSq;
 		}
 
-		// Safety bias added to the outer-face-flush inset, applied to EVERY edge. Without
-		// it the flush corner would land the band's outer face right on the foundation
-		// edge, but the two mm roundings on a diagonal edge (the inset point's quantize
-		// plus geometry::band's perpendicular llround) can together push that corner
-		// ~1.4 mm outside the ring, tripping the validator's containment check. Biasing
-		// the inset 2 mm further in keeps the corner inside-or-on after rounding. Axis-
-		// aligned edges have no rounding, so the bias simply seats them a flat 2 mm inside
-		// the edge rather than exactly on it; 2 mm is sub-pixel at any zoom.
-		constexpr std::int64_t kFlushInsetSafetyMm = 2;
+		using geometry::Vec2d;
+		using snap_guides::GuideContext;
+		using snap_guides::GuideStudy;
+		using snap_guides::meters;
+		using snap_guides::toVec2d;
 
-		// A guide's node counts as a placed point within this distance of it.
-		constexpr float kSameNodeMeters = 0.001F;
+		// A foundation outline closes once it has this many points.
+		constexpr std::size_t kMinClosingShapePoints = 3;
 
-		// The inward offset distance (meters) for an outer-face-flush wall of the given
-		// half-thickness: half-thickness plus the rounding safety bias.
-		float flushInsetMeters(std::int64_t halfThicknessMm) {
-			return static_cast<float>(halfThicknessMm + kFlushInsetSafetyMm) / static_cast<float>(geometry::kMillimetersPerMeter);
+		::Foundation::Vec2 toVec2(Vec2d point) {
+			return {static_cast<float>(point.x), static_cast<float>(point.y)};
+		}
+
+		// The guide study's working storage, reused by every snap on this thread so a moving
+		// cursor allocates only while the inputs grow past anything seen before.
+		GuideStudy& scratchStudy() {
+			thread_local GuideStudy study;
+			return study;
+		}
+
+		// A geometry hit on the edge from `start` to `end`, moved to where a captured shape
+		// guide crosses it near the cursor (squareOntoEdge), keeping its kind and hit ids.
+		SnapResult
+		squareEdgeHit(SnapResult hit, const GuideContext& context, const GuideStudy& study, Vec2d start, Vec2d end, bool strictInterior) {
+			const auto squared = snap_guides::squareOntoEdge(context, study, start, end, strictInterior);
+			if (!squared) {
+				return hit;
+			}
+			hit.point = toVec2(squared->point);
+			hit.guides[0] = snap_guides::makeGuide(context, study, study.lines[squared->line], squared->point);
+			hit.guideCount = 1;
+			return hit;
 		}
 
 		// Unit interior normal (meters) of ring edge `edgeIndex` (ring[i] -> ring[i+1]),
@@ -112,7 +127,7 @@ namespace construction {
 			return v; // zero-thickness or degenerate ring: the corner is returned unchanged
 		}
 
-		const float				 d = flushInsetMeters(halfThicknessMm);
+		const auto				 d = static_cast<float>(snap_guides::flushInsetMeters(halfThicknessMm));
 		const std::size_t		 prevEdge = (vertexIndex + n - 1) % n; // edge prev -> v
 		const std::size_t		 nextEdge = vertexIndex;			   // edge v -> next
 		const ::Foundation::Vec2 prev = geometry::dequantize(ring[prevEdge]);
@@ -155,8 +170,7 @@ namespace construction {
 		return nearest;
 	}
 
-	std::optional<FoundationEdgeHit>
-	nearestFoundationEdge(const ConstructionWorld& world, ::Foundation::Vec2 cursor, float radiusMeters) {
+	std::optional<FoundationEdgeHit> nearestFoundationEdge(const ConstructionWorld& world, ::Foundation::Vec2 cursor, float radiusMeters) {
 		std::optional<FoundationEdgeHit> nearest;
 		float							 best = radiusMeters;
 		for (const Foundation& f : world.foundations()) {
@@ -235,141 +249,103 @@ namespace construction {
 	}
 
 	SnapResult SnapEngine::snapAngle(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor) const {
-		const ::Foundation::Vec2 prev = points.back();
-		const float				 dx = cursor.x - prev.x;
-		const float				 dy = cursor.y - prev.y;
-		const float				 dist = std::sqrt(dx * dx + dy * dy);
-		if (dist <= 0.0F) {
+		const Vec2d	 previous = toVec2d(points.back());
+		const Vec2d	 offset = toVec2d(cursor) - previous;
+		const double span = geometry::length(offset);
+		const double increment = static_cast<double>(snapping_->angleIncrementDegrees) * (std::numbers::pi / 180.0);
+		if (span <= 0.0 || increment <= 0.0) {
 			return {cursor, SnapKind::None};
 		}
 
 		// Reference direction: the previous segment if there is one, else +x axis.
-		float refAngle = 0.0F;
+		double reference = 0.0;
 		if (points.size() >= 2) {
-			const ::Foundation::Vec2 before = points[points.size() - 2];
-			refAngle = std::atan2(prev.y - before.y, prev.x - before.x);
+			const Vec2d before = toVec2d(points[points.size() - 2]);
+			reference = std::atan2(previous.y - before.y, previous.x - before.x);
 		}
-
-		const float increment = snapping_->angleIncrementDegrees * (static_cast<float>(std::numbers::pi) / 180.0F);
-		if (increment <= 0.0F) {
-			return {cursor, SnapKind::None};
-		}
-
-		const float rawAngle = std::atan2(dy, dx);
-		const float rel = rawAngle - refAngle;
-		const float snappedRel = std::round(rel / increment) * increment;
-		const float snappedAngle = refAngle + snappedRel;
-
-		const ::Foundation::Vec2 snapped{prev.x + std::cos(snappedAngle) * dist, prev.y + std::sin(snappedAngle) * dist};
+		// Half steps round up, as the tuned prototype rounds them.
+		const double steps = std::floor((std::atan2(offset.y, offset.x) - reference) / increment + 0.5);
+		const double snappedAngle = reference + steps * increment;
+		const Vec2d	 snapped = previous + Vec2d{std::cos(snappedAngle), std::sin(snappedAngle)} * span;
 
 		SnapResult result;
-		result.point = snapped;
+		result.point = toVec2(snapped);
 		result.kind = SnapKind::Angle;
 		result.guides[0] = SnapGuide{
-			.from = prev,
-			.to = snapped,
+			.from = points.back(),
+			.to = result.point,
 			.source = points.size() >= 2 ? GuideSource::DrawnShape : GuideSource::WorldAxes,
 			.relation = GuideRelation::AngleStep,
-			.distanceFromNodeMeters = distanceMeters(prev, snapped),
+			.distanceFromNodeMeters = static_cast<float>(span),
 			.throughPreviousPoint = true,
 		};
 		result.guideCount = 1;
 		return result;
 	}
 
-	SnapResult SnapEngine::alignToWorldAxes(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor,
-											bool alignToExistingBuildings) const {
-		const float tol = snapping_->guideToleranceMeters;
-		if (tol <= 0.0F) {
-			return {cursor, SnapKind::None};
-		}
-
-		// Track the strictly-nearest reference node (within tolerance) for each axis,
-		// independently: the X lock and the Y lock can be two different nodes.
-		bool			   haveX = false;
-		bool			   haveY = false;
-		float			   bestDX = std::numeric_limits<float>::max();
-		float			   bestDY = std::numeric_limits<float>::max();
-		::Foundation::Vec2 refX{};
-		::Foundation::Vec2 refY{};
-
-		auto consider = [&](::Foundation::Vec2 node) {
-			const float dX = std::abs(cursor.x - node.x);
-			if (dX <= tol && dX < bestDX) {
-				bestDX = dX;
-				refX = node;
-				haveX = true;
-			}
-			const float dY = std::abs(cursor.y - node.y);
-			if (dY <= tol && dY < bestDY) {
-				bestDY = dY;
-				refY = node;
-				haveY = true;
-			}
+	GuideContext SnapEngine::guideContext(
+		const std::vector<::Foundation::Vec2>& points,
+		::Foundation::Vec2					   cursor,
+		const SnapInput&					   input,
+		bool								   wallTool
+	) const {
+		return GuideContext{
+			.snapping = snapping_,
+			.world = world_,
+			.points = &points,
+			.cursor = toVec2d(cursor),
+			.aids = input.aids,
+			.tool = wallTool ? snap_guides::SnapTool::Wall : snap_guides::SnapTool::Foundation,
+			.wallHalfThicknessMm = input.wallHalfThicknessMm,
+			// From the registry, not the injected config: the caller doesn't pass the point limit yet.
+			.maxPoints = assets::ConstructionRegistry::Get().constraints().maxPoints,
 		};
-
-		// In-progress shape's own placed nodes are always alignment targets.
-		for (const ::Foundation::Vec2& p : points) {
-			consider(p);
-		}
-		// Committed-foundation vertices within guideRange of the cursor, opt-in.
-		if (alignToExistingBuildings) {
-			const float range = snapping_->guideRangeMeters;
-			const float rangeSq = range * range; // squared compare avoids a per-vertex sqrt
-			for (const Foundation& f : world_->foundations()) {
-				for (const geometry::Vec2i64& vq : f.ring) {
-					const ::Foundation::Vec2 v = geometry::dequantize(vq);
-					const float				 dxv = cursor.x - v.x;
-					const float				 dyv = cursor.y - v.y;
-					if (dxv * dxv + dyv * dyv <= rangeSq) {
-						consider(v);
-					}
-				}
-			}
-		}
-
-		if (!haveX && !haveY) {
-			return {cursor, SnapKind::None};
-		}
-
-		SnapResult r;
-		r.kind = haveX && haveY ? SnapKind::GuideCrossing : SnapKind::GuideLine;
-		r.point = {haveX ? refX.x : cursor.x, haveY ? refY.y : cursor.y};
-		// Each guide runs from its reference node to the snapped point: an X lock is
-		// the vertical (perpendicular to +x) through its node, a Y lock the horizontal
-		// (parallel to +x). With both, the X lock comes first.
-		auto addGuide = [&](::Foundation::Vec2 node, GuideRelation relation) {
-			const bool throughPrevious = !points.empty() && distanceMeters(node, points.back()) <= kSameNodeMeters;
-			r.guides[r.guideCount++] = SnapGuide{
-				.from = node,
-				.to = r.point,
-				.source = GuideSource::WorldAxes,
-				.relation = relation,
-				.distanceFromNodeMeters = distanceMeters(node, r.point),
-				.throughPreviousPoint = throughPrevious,
-			};
-		};
-		if (haveX) {
-			addGuide(refX, GuideRelation::Perpendicular);
-		}
-		if (haveY) {
-			addGuide(refY, GuideRelation::Parallel);
-		}
-		return r;
 	}
 
-	SnapResult SnapEngine::snapToHelpers(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor,
-										 const SnapInput& input) const {
+	std::optional<SnapResult> SnapEngine::alignToGuides(
+		const GuideContext& context,
+		const GuideStudy&	study,
+		std::size_t			minClosePoints,
+		float				originCloseRadiusMeters
+	) const {
+		if (!study.winner) {
+			return std::nullopt;
+		}
+		const snap_guides::GuideCandidate& winner = study.candidates[*study.winner];
+		const std::vector<Vec2d>&		   points = study.shapePoints;
+
+		SnapResult result;
+		Vec2d	   point = winner.point;
+		result.kind = winner.isCrossing ? SnapKind::GuideCrossing : SnapKind::GuideLine;
+		const float radius = originCloseRadiusMeters >= 0.0F ? originCloseRadiusMeters : snapping_->originCloseRadiusMeters;
+		if (points.size() >= minClosePoints && geometry::length(point - points.front()) <= static_cast<double>(radius)) {
+			// Closes onto the first point exactly, so the tool sees the close.
+			point = points.front();
+			result.kind = SnapKind::Origin;
+			result.point = context.points->front();
+		} else {
+			result.point = toVec2(point);
+		}
+		result.guides[result.guideCount++] = snap_guides::makeGuide(context, study, study.lines[winner.bestLine], point);
+		if (winner.isCrossing) {
+			result.guides[result.guideCount++] = snap_guides::makeGuide(context, study, study.lines[winner.otherLine], point);
+		}
+		return result;
+	}
+
+	SnapResult SnapEngine::snapToHelpers(
+		const std::vector<::Foundation::Vec2>& points,
+		::Foundation::Vec2					   cursor,
+		const SnapInput&					   input,
+		const GuideContext&					   context,
+		const GuideStudy&					   study,
+		std::size_t							   minClosePoints
+	) const {
 		if (input.freeform) {
 			return {cursor, SnapKind::None};
 		}
-		// World-axis guides beat the generic angle increment: aligning to a real node is
-		// more intentional than a fixed increment.
-		if (input.aids.guidesFromWorldAxes) {
-			const SnapResult axis = alignToWorldAxes(points, cursor, input.aids.alignToExistingBuildings);
-			if (axis.kind != SnapKind::None) {
-				return axis;
-			}
+		if (auto guided = alignToGuides(context, study, minClosePoints, input.originCloseRadiusMeters)) {
+			return *guided;
 		}
 		if (input.aids.angleSteps && !points.empty()) {
 			return snapAngle(points, cursor);
@@ -377,8 +353,12 @@ namespace construction {
 		return {cursor, SnapKind::None};
 	}
 
-	bool SnapEngine::snapToOrigin(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, std::size_t minPoints,
-								  float radiusMeters) const {
+	bool SnapEngine::snapToOrigin(
+		const std::vector<::Foundation::Vec2>& points,
+		::Foundation::Vec2					   cursor,
+		std::size_t							   minPoints,
+		float								   radiusMeters
+	) const {
 		if (points.size() < minPoints) {
 			return false;
 		}
@@ -386,11 +366,10 @@ namespace construction {
 		return distanceMeters(cursor, points.front()) <= radius;
 	}
 
-	SnapResult SnapEngine::snap(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor,
-								const SnapInput& input) const {
+	SnapResult SnapEngine::snap(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, const SnapInput& input) const {
 		// Origin-close: once a closeable shape exists (>= 3 points), being within
 		// the origin radius snaps onto the first point and signals a close.
-		if (snapToOrigin(points, cursor, 3, input.originCloseRadiusMeters)) {
+		if (snapToOrigin(points, cursor, kMinClosingShapePoints, input.originCloseRadiusMeters)) {
 			return {points.front(), SnapKind::Origin};
 		}
 
@@ -398,11 +377,30 @@ namespace construction {
 		if (const auto corner = nearestFoundationCorner(*world_, cursor, snapping_->vertexSnapRadiusMeters)) {
 			return {corner->point, SnapKind::Vertex};
 		}
-		if (const auto edge = nearestFoundationEdge(*world_, cursor, snapping_->edgeSnapRadiusMeters)) {
-			return {edge->point, SnapKind::Edge};
+
+		const GuideContext context = guideContext(points, cursor, input, /*wallTool=*/false);
+		GuideStudy&		   study = scratchStudy();
+		if (!input.freeform) {
+			snap_guides::studyGuides(context, study);
 		}
 
-		return snapToHelpers(points, cursor, input);
+		if (const auto edge = nearestFoundationEdge(*world_, cursor, snapping_->edgeSnapRadiusMeters)) {
+			const SnapResult hit{edge->point, SnapKind::Edge};
+			if (input.freeform) {
+				return hit;
+			}
+			const geometry::Ring& ring = world_->get(edge->foundation)->ring;
+			return squareEdgeHit(
+				hit,
+				context,
+				study,
+				meters(ring[edge->edgeIndex]),
+				meters(ring[(edge->edgeIndex + 1) % ring.size()]),
+				/*strictInterior=*/false
+			);
+		}
+
+		return snapToHelpers(points, cursor, input, context, study, kMinClosingShapePoints);
 	}
 
 	OpeningSnap SnapEngine::snapOpening(::Foundation::Vec2 cursor, float openingWidthMeters) const {
@@ -451,8 +449,8 @@ namespace construction {
 		return result;
 	}
 
-	SnapResult SnapEngine::snapWall(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor,
-									const SnapInput& input) const {
+	SnapResult
+	SnapEngine::snapWall(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, const SnapInput& input) const {
 		// Priority, most specific first (design Walls > Drawing), led by the close onto
 		// the chain's first point as in snap(). The point comes back exactly, so
 		// closesWallChain sees the close.
@@ -480,6 +478,12 @@ namespace construction {
 			return {point, SnapKind::Vertex};
 		}
 
+		const GuideContext context = guideContext(points, cursor, input, /*wallTool=*/true);
+		GuideStudy&		   study = scratchStudy();
+		if (!input.freeform) {
+			snap_guides::studyGuides(context, study);
+		}
+
 		::Foundation::Vec2 ws{};
 		SegmentId		   wsId = kInvalidSegment;
 		if (snapToWallSegment(cursor, ws, wsId)) {
@@ -487,23 +491,45 @@ namespace construction {
 			r.point = ws;
 			r.kind = SnapKind::WallSegment;
 			r.hitSegment = wsId;
-			return r;
+			if (input.freeform) {
+				return r;
+			}
+			// Squared strictly inside the segment, so the point stays a T-junction.
+			const WallSegment* segment = world_->getSegment(wsId);
+			return squareEdgeHit(
+				r,
+				context,
+				study,
+				meters(world_->getVertex(segment->v0)->pos),
+				meters(world_->getVertex(segment->v1)->pos),
+				/*strictInterior=*/true
+			);
 		}
 
 		// Foundation edge: proximity is to the raw edge, the point is the foot moved
-		// inward by the half-thickness (outer-face-flush).
+		// inward by the half-thickness (outer-face-flush), and squaring is on that inset line.
 		if (const auto edge = nearestFoundationEdge(*world_, cursor, snapping_->edgeSnapRadiusMeters)) {
-			::Foundation::Vec2 point = edge->point;
+			const geometry::Ring& ring = world_->get(edge->foundation)->ring;
+			Vec2d				  offset{};
 			if (insetMm > 0) {
-				const ::Foundation::Vec2 inward = inwardNormalMeters(world_->get(edge->foundation)->ring, edge->edgeIndex);
-				const float				 inset = flushInsetMeters(insetMm);
-				point = {point.x + inward.x * inset, point.y + inward.y * inset};
+				offset = toVec2d(inwardNormalMeters(ring, edge->edgeIndex)) * snap_guides::flushInsetMeters(insetMm);
 			}
-			return {point, SnapKind::Edge};
+			const SnapResult hit{toVec2(toVec2d(edge->point) + offset), SnapKind::Edge};
+			if (input.freeform) {
+				return hit;
+			}
+			return squareEdgeHit(
+				hit,
+				context,
+				study,
+				meters(ring[edge->edgeIndex]) + offset,
+				meters(ring[(edge->edgeIndex + 1) % ring.size()]) + offset,
+				/*strictInterior=*/false
+			);
 		}
 
 		// A wall's guide point is NOT inset for outer-face-flush: it lines up with a
 		// node's coordinate, not a foundation face, so the centerline lands on the guide.
-		return snapToHelpers(points, cursor, input);
+		return snapToHelpers(points, cursor, input, context, study, kMinClosingWallChainPoints);
 	}
 } // namespace construction
