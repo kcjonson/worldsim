@@ -4,6 +4,8 @@
 **Created:** 2025-01-02
 **MVP Status:** Phase 2+ (after basic hauling works)
 
+The generic mechanism for a creature carrying out a list of steps, and the chain format that replaces `task-chains.xml`, is specified in [Queries and chains](../../../technical/queries-and-chains.md). This document covers the hands rules and how the hand-written haul, carry-in, and placement chains keep together. The original chain structure is in the [Historical Addendum](#historical-addendum).
+
 ---
 
 ## Overview
@@ -186,7 +188,95 @@ def handle_interruption(colonist, interrupting_action, carried_item):
 
 ---
 
-## Chain Structure
+## Keeping a chain together
+
+There is no chain bonus, and `priority-tuning.xml` holds no chain value. Two things keep a colonist on its chain:
+
+- The next step is the same task. A pickup turns the haul into its deposit leg, and a landed cut converts in place into a carry-in (`ActionSystem::carryHarvestIn`), so arbitration sees the task it is already doing, with its hysteresis margin.
+- Provisioning that serves an active work order (a craft, a build site) is tier 4. Ordinary work and a non-critical need (tier 5) never interrupt it; a critical need (tier 2) does.
+
+### Example: Bob hauling wood to a build site
+
+His deposit leg is tier 4. A hungry Bob (Hunger at 40%, tier 5) finishes the delivery first. A critically hungry Bob (below 10%, tier 2) switches: a two-hand armful can't be stowed, so it goes into a box within reach that takes it, else onto the ground as a pile, and he eats.
+
+---
+
+## Resuming Broken Chains
+
+### Item Stowed
+
+1. Item on belt or in backpack
+2. If a need interrupted the work, the work, with its inbound and in-flight claims for the item, is
+   kept as the task's suspended record ([Task Claims](../../../technical/task-claims.md))
+3. After the need, the colonist's carry-in option, or a further cut for the same goal and item,
+   adopts the record and keeps its claims
+4. While the colonist sleeps the record holds nothing for anyone else, so another colonist may fetch
+   or cut what those goods would have covered; it holds again once the colonist wakes
+5. Choosing any other work discards the suspended record
+
+### Item Dropped
+
+1. Item goes into a box within reach (1.5 m, no wall between) that takes it, else spawns at the
+   colonist's position as a loose pile
+2. Original colonist's chain progress and claims for it end
+3. The pile is an ordinary source with no claims (anyone can haul it)
+4. No ownership: first colonist to select it starts new chain
+
+---
+
+## Config Summary
+
+| What | Where | Example |
+|------|-------|---------|
+| Item hands required | `assets/world/*/[item].xml` | `<carryable handsRequired="2"/>` |
+| Action needs hands | `assets/config/actions/action-types.xml` | `<Action defName="Eat" needsHands="true"/>` |
+| Chain definitions | [Queries and chains](../../../technical/queries-and-chains.md) | `<chain id="eat_a_meal">` |
+
+**All behavior is data-driven.** To change whether Sleep needs hands, edit XML. To add a new 3-hand item for giants, add XML. No code changes.
+
+---
+
+## Edge Cases
+
+### Multiple Items (Batch Haul)
+
+If colonist is hauling 5 sticks (1-hand each, batched):
+- All items share one chain
+- If interrupted, all items handled together
+- Items that fit stow to backpack, excess dropped
+
+### Storage Fills Mid-Haul
+
+1. The deposit takes what still fits; the colonist keeps the rest, which holds no claim
+2. The colonist re-evaluates; a carry-in to any box that wants the item takes it there
+
+### Several Colonists Bound for One Point
+
+Two carriers delivering to one station, or three thirsty colonists at one shore point, push one
+another apart, so no more than one of them could stand on the point itself. Each acts once it is
+within 0.4 m of its task's target (`ActionSystem`), so they deposit or drink side by side.
+
+### Colonist Dies (planned; colonist death does not exist yet)
+
+1. All carried items spawn at death location
+2. Items become new haul tasks
+3. Other colonists can pick up
+
+---
+
+## Related Documents
+
+- [Task Registry System](./task-registry.md) — Where chain tasks are stored
+- [Priority Config](./priority-config.md): priority tuning
+- [Entity Capabilities](../world/entity-capabilities.md) — Carryable capability
+- [AI Behavior](./ai-behavior.md) — Task selection hierarchy
+- [Queries and chains](../../../technical/queries-and-chains.md): the generic step chains and target queries
+
+---
+
+## Historical Addendum
+
+The chain structure below, from 2026-01-02, is superseded by [Queries and chains](../../../technical/queries-and-chains.md) (2026-11-17). `assets/config/work/task-chains.xml` holds these chains and is loaded and validated, and no simulation code reads it; the haul and placement chains that run are written by hand. Kept for reference.
 
 ### Data Model
 
@@ -244,88 +334,3 @@ struct ChainStep {
   </Chain>
 </TaskChains>
 ```
-
----
-
-## Keeping a chain together
-
-There is no chain bonus, and `priority-tuning.xml` holds no chain value. Two things keep a colonist on its chain:
-
-- The next step is the same task. A pickup turns the haul into its deposit leg, and a landed cut converts in place into a carry-in (`ActionSystem::carryHarvestIn`), so arbitration sees the task it is already doing, with its hysteresis margin.
-- Provisioning that serves an active work order (a craft, a build site) is tier 4. Ordinary work and a non-critical need (tier 5) never interrupt it; a critical need (tier 2) does.
-
-### Example: Bob hauling wood to a build site
-
-His deposit leg is tier 4. A hungry Bob (Hunger at 40%, tier 5) finishes the delivery first. A critically hungry Bob (below 10%, tier 2) switches: a two-hand armful can't be stowed, so it goes into a box within reach that takes it, else onto the ground as a pile, and he eats.
-
----
-
-## Resuming Broken Chains
-
-### Item Stowed
-
-1. Item on belt or in backpack
-2. If a need interrupted the work, the work, with its inbound and in-flight claims for the item, is
-   kept as the task's suspended record ([Task Claims](../../../technical/task-claims.md))
-3. After the need, the colonist's carry-in option, or a further cut for the same goal and item,
-   adopts the record and keeps its claims
-4. While the colonist sleeps the record holds nothing for anyone else, so another colonist may fetch
-   or cut what those goods would have covered; it holds again once the colonist wakes
-5. Choosing any other work discards the suspended record
-
-### Item Dropped
-
-1. Item goes into a box within reach (1.5 m, no wall between) that takes it, else spawns at the
-   colonist's position as a loose pile
-2. Original colonist's chain progress and claims for it end
-3. The pile is an ordinary source with no claims (anyone can haul it)
-4. No ownership: first colonist to select it starts new chain
-
----
-
-## Config Summary
-
-| What | Where | Example |
-|------|-------|---------|
-| Item hands required | `assets/world/*/[item].xml` | `<carryable handsRequired="2"/>` |
-| Action needs hands | `assets/config/actions/action-types.xml` | `<Action defName="Eat" needsHands="true"/>` |
-| Chain definitions | `assets/config/work/task-chains.xml` | `<Chain defName="Chain_PickupDeposit">` |
-
-**All behavior is data-driven.** To change whether Sleep needs hands, edit XML. To add a new 3-hand item for giants, add XML. No code changes.
-
----
-
-## Edge Cases
-
-### Multiple Items (Batch Haul)
-
-If colonist is hauling 5 sticks (1-hand each, batched):
-- All items share one chain
-- If interrupted, all items handled together
-- Items that fit stow to backpack, excess dropped
-
-### Storage Fills Mid-Haul
-
-1. The deposit takes what still fits; the colonist keeps the rest, which holds no claim
-2. The colonist re-evaluates; a carry-in to any box that wants the item takes it there
-
-### Several Colonists Bound for One Point
-
-Two carriers delivering to one station, or three thirsty colonists at one shore point, push one
-another apart, so no more than one of them could stand on the point itself. Each acts once it is
-within 0.4 m of its task's target (`ActionSystem`), so they deposit or drink side by side.
-
-### Colonist Dies (planned; colonist death does not exist yet)
-
-1. All carried items spawn at death location
-2. Items become new haul tasks
-3. Other colonists can pick up
-
----
-
-## Related Documents
-
-- [Task Registry System](./task-registry.md) — Where chain tasks are stored
-- [Priority Config](./priority-config.md): priority tuning
-- [Entity Capabilities](../world/entity-capabilities.md) — Carryable capability
-- [AI Behavior](./ai-behavior.md) — Task selection hierarchy

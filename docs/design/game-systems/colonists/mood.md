@@ -308,17 +308,28 @@ The behavior list, the thoughts, the roll curve, relief sizes, the cooldown, the
 
 ```xml
 <behavior id="soil_bed" rampStart="25" rampFull="15" base="4">
-  <target kind="bed" within="15" where="not owner_present(target) and owner(target) != self"/>
+  <target query="bed_to_soil"/>
   <weight when="dislikes(owner(target))" multiply="4"/>
   <weight when="not observed" multiply="2"/>
+  <effect chain="soil_bed"/>
   <ends after="task"/>
   <relief amount="medium"/>
 </behavior>
+
+<query id="bed_to_soil">
+  <from kind="bed"/>
+  <exclude fact="distance" above="15"/>
+  <exclude fact="has_owner" below="1"/>
+  <exclude fact="owned_by_self"/>
+  <exclude fact="owner_present"/>
+  <weigh fact="distance" by="-0.2"/>
+  <weigh fact="owner_opinion" by="-5"/>
+</query>
 ```
 
-A behavior that acts on something names it with `<target>`. Each candidate of that kind in range that passes `where` takes part in the roll as its own entry, with the weights evaluated against it. A behavior with no target uses `<requires>`.
+A behavior that acts on something names it with `<target>`, a query that picks the target from what the colonist knows; the behavior takes part in the roll once, with the weights evaluated against that target. A behavior with no target uses `<requires>`.
 
-Conditions are data and need no scripting. A behavior's effect, what the colonist physically does, is a script, so a mod adds a behavior by adding an entry and its effect.
+Conditions are data and need no scripting. A behavior's effect, what the colonist physically does, is a chain of steps, and its target a query, both data ([Queries and chains](../../../technical/queries-and-chains.md)), so a mod adds a behavior by adding an entry, its query, and its chain.
 
 ## Signals from other systems
 
@@ -374,6 +385,8 @@ Kevin, 2026-11-17: leaving defined. "They essentially become a non colony npc: n
 Kevin, 2026-11-17: the player cannot step in during an episode. A colonist in one cannot be drafted or directed until it ends; a critical need still interrupts it, and each behavior's own end conditions bound it.
 
 2026-11-17: the need, attribute, and task names close like the kind and trait names. A conditions file may no longer add to them or open them, so a misspelled name in a mod's condition fails the load instead of reading Unknown.
+
+Kevin, 2026-11-17: a behavior's target is a query and its effect a chain, XML always with optional Lua and no logic in the XML, specified in [Queries and chains](../../../technical/queries-and-chains.md).
 
 ## Addendum: superseded content
 
