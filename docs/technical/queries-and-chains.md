@@ -47,7 +47,7 @@ The code that hard-wires what a creature can do and how each thing is done:
   named on steps.
 - The fixed need list: `NeedType`, `kNeedLabels`, the fixed-size array in `NeedsComponent`,
   `kActionableNeeds`, `needToCapability`, `getFirstActionDefName`, the decay literals in `Needs.cpp`,
-  and every `switch` over a need.
+  `findToiletLocation`, whose rules become facts of a query, and every `switch` over a need.
 - The config that described this without being run: `assets/config/work/task-chains.xml` with
   `TaskChainRegistry`, `assets/config/work/work-types.xml` with `WorkTypeRegistry`, and
   `assets/config/actions/action-types.xml` with `ActionTypeRegistry`, of which only `needsHands` on a
@@ -327,6 +327,19 @@ Temperature has no `<satisfiedBy>` until there is a chain that seeks warmth or s
     <weigh fact="distance" by="-0.2"/>
     <weigh fact="comfort" by="5"/>
   </query>
+  <query id="place_to_relieve">
+    <from kind="latrine"/>
+    <from place="around" radius="20" count="16"/>
+    <exclude fact="on_shore"/>
+    <weigh fact="distance" by="-0.3"/>
+    <weigh fact="near_waste" by="2"/>
+    <weigh fact="near_food" by="-4"/>
+  </query>
+  <query id="pleasant_spot" pick="weighted">
+    <from place="around" radius="30" count="8"/>
+    <exclude fact="distance" above="30"/>
+    <weigh fact="distance" by="-0.1"/>
+  </query>
 </queries>
 ```
 
@@ -570,6 +583,9 @@ The starting set:
 | `built_by_self` | item | 0 or 1 | the creature built it | waits on structures recording who built them |
 | `flammable` | definition | 0 or 1 | the thing burns | waits on fire |
 | `colony_stock` | definition | 0 and up | how many of this definition the colony knows it holds | waits on scarcity |
+| `on_shore` | item | 0 or 1 | a place within 1.5 m of water | yes, `findToiletLocation`'s shore rule |
+| `near_waste` | item | 0 to 1 | how close remembered waste (a bio pile) is, 1 beside it | yes, `findToiletLocation`'s clustering |
+| `near_food` | item | 0 to 1 | how close remembered food is, 1 beside it | yes, `findToiletLocation`'s food penalty |
 | `held` | item | 0 or 1 | another task holds a claim on it that does not take it from this creature (food held by a less urgent eater or by work) | yes, the claim index's filtered holder lookups |
 | `below_destination` | item | 0 or 1 | for a box candidate, its priority for the goal's item is strictly below the destination's | yes, the storage pull gate |
 
@@ -1507,8 +1523,10 @@ Choices made in writing this document, not put to the owner:
 - `take` and `damage` moving from step kinds to actions; `drop` staying a step.
 - Claims named on `do` steps, taken at selection for the whole chain, held until their step completes.
 - Targets that carry claims being resolved at decision time with the first step's.
-- The new candidate rows (`place="around"`, `yields`, `pile`, `box`, `goal`) and the facts `held` and
-  `below_destination`, with food's taken and held line expressed as an automatic exclusion plus `held`
+- The new candidate rows (`place="around"`, `yields`, `pile`, `box`, `goal`); the facts `sleep_quality`,
+  `on_shore`, `near_waste`, `near_food`, `held`, and `below_destination`; the condition terms
+  `serves(need)` and `carried_food`; and the shipped query values for relief, the pleasant spot, and
+  wandering, with food's taken and held line expressed as an automatic exclusion plus `held`
   weighed by -1000.
 - Work entries per goal kind, item, and source kind, with `<tier>` rows taking the highest rung that
   applies, and the terms `serves_work_order`, `carrying`, and `holds_craft`.
