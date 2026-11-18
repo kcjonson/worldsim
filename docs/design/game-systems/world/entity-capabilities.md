@@ -41,7 +41,10 @@ When a colonist needs something, they search for entities matching the required 
 ```
 "I'm hungry" → Search memory for Edible entities → Find nearest → Go eat
 "I need sleep" → Search for Sleepable entities → Find nearest → Go sleep
+"I feel grubby" → Search for Washable entities → Find nearest → Go wash
 ```
+
+Water is not an entity. The shore points a colonist sees beside water (the synthetic `Terrain_Shore` definition) are remembered as Drinkable and Washable, so the same shore serves thirst and hygiene. A bath or shower is one more Washable entity, found by the same search.
 
 ### Capability Properties
 

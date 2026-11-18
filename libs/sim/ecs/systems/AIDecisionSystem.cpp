@@ -83,6 +83,7 @@ namespace ecs {
 					// Both bladder and digestion use Toilet capability
 					return assets::CapabilityType::Toilet;
 				case NeedType::Hygiene:
+					return assets::CapabilityType::Washable;
 				case NeedType::Recreation:
 				case NeedType::Temperature:
 					break; // Non-actionable for now
@@ -122,6 +123,7 @@ namespace ecs {
 						case NeedType::Digestion:
 							return "Toilet";
 						case NeedType::Hygiene:
+							return "Wash";
 						case NeedType::Recreation:
 						case NeedType::Temperature:
 						case NeedType::Count:
@@ -2794,6 +2796,8 @@ namespace ecs {
 			option.needValue = need.value;
 			option.threshold = need.seekThreshold;
 			option.critical = need.isCritical();
+			// Needs tied at one source (thirst and hygiene at one shore point) are taken in NeedType order.
+			option.tiebreakId = static_cast<uint64_t>(needType);
 
 			// Special handling for hunger: check inventory first
 			if (needType == NeedType::Hunger) {

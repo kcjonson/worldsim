@@ -331,7 +331,7 @@ namespace assets {
 
 		/// Get all capability types for a defName by ID (for capability indexing)
 		/// Returns a bitmask where bit N is set if capability N is present. 16-bit because there are
-		/// 9 capability types (Edible..Storage); Storage is bit 8, which overflows a uint8_t.
+		/// 10 capability types (Edible..Washable); Storage (bit 8) and Washable (bit 9) overflow a uint8_t.
 		/// @param id The defName ID
 		/// @return Capability bitmask (0 if not found)
 		[[nodiscard]] uint16_t getCapabilityMask(uint32_t id) const;
@@ -374,8 +374,8 @@ namespace assets {
 		/// @return The assigned defNameId, or 0 if registration failed
 		uint32_t registerSyntheticDefinition(const std::string& defName, uint16_t capabilityMask);
 
-		/// Get the total number of capability types (Edible..Storage)
-		static constexpr size_t kCapabilityTypeCount = 9;
+		/// Get the total number of capability types (Edible..Washable)
+		static constexpr size_t kCapabilityTypeCount = 10;
 
 #ifdef DEVELOPMENT_BUILD
 		/// Lookups keyed by a definition name (getDefinition, getDefNameId) while counting is on. Tests
@@ -483,7 +483,7 @@ namespace assets {
 		std::unordered_map<std::string, uint32_t> m_defNameToId;
 		std::vector<std::string>				  m_idToDefName; // Index 0 = empty string (invalid)
 
-		// Pre-computed capability masks by ID (for O(1) capability checks). 16-bit: 9 capability types.
+		// Pre-computed capability masks by ID (for O(1) capability checks). 16-bit: 10 capability types.
 		std::vector<uint16_t> m_capabilityMasks;
 
 		// Sorted names of the inventory-edible definitions; see edibleItemNames().

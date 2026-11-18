@@ -174,6 +174,16 @@ namespace ecs::test {
 			memory->rememberWorldEntity(position, defNameId, capabilityMask);
 		}
 
+		/// Remember a shore point as VisionSystem does: water a colonist both drinks and washes at.
+		void addKnownShore(EntityID entity, glm::vec2 position) {
+			auto* memory = world->getComponent<Memory>(entity);
+			ASSERT_NE(memory, nullptr);
+			const auto shoreMask = static_cast<uint16_t>(
+				(1U << static_cast<size_t>(assets::CapabilityType::Drinkable)) | (1U << static_cast<size_t>(assets::CapabilityType::Washable))
+			);
+			memory->rememberWorldEntity(position, kWaterDefId, shoreMask);
+		}
+
 		/// Get the current task for an entity
 		Task* getTask(EntityID entity) { return world->getComponent<Task>(entity); }
 
@@ -1322,7 +1332,7 @@ namespace ecs::test {
 		setNeedValue(colonist, NeedType::Digestion, 100.0F);
 
 		// Give colonist food in inventory to suppress Gather Food option
-		// (otherwise we'd get 7 options: 5 needs + gather food + wander)
+		// (otherwise we'd get 8 options: 6 needs + gather food + wander)
 		auto* inventory = world->getComponent<Inventory>(colonist);
 		ASSERT_NE(inventory, nullptr);
 		inventory->addItem("Berry", 1);
@@ -1332,11 +1342,12 @@ namespace ecs::test {
 		auto* trace = getTrace(colonist);
 		ASSERT_NE(trace, nullptr);
 
-		// Should have 6 options: 5 needs + wander (no Gather Food since inventory has food)
-		EXPECT_EQ(trace->options.size(), 6u);
+		// Should have 7 options: 6 needs + wander (no Gather Food since inventory has food)
+		EXPECT_EQ(trace->options.size(), 7u);
 
 		// Verify all need types are present
-		bool hasHunger = false, hasThirst = false, hasEnergy = false, hasBladder = false, hasDigestion = false, hasWander = false;
+		bool hasHunger = false, hasThirst = false, hasEnergy = false, hasBladder = false, hasDigestion = false, hasHygiene = false,
+			 hasWander = false;
 		for (const auto& option : trace->options) {
 			if (option.taskType == TaskType::Wander) {
 				hasWander = true;
@@ -1357,6 +1368,9 @@ namespace ecs::test {
 					case NeedType::Digestion:
 						hasDigestion = true;
 						break;
+					case NeedType::Hygiene:
+						hasHygiene = true;
+						break;
 					default:
 						break;
 				}
@@ -1368,7 +1382,27 @@ namespace ecs::test {
 		EXPECT_TRUE(hasEnergy);
 		EXPECT_TRUE(hasBladder);
 		EXPECT_TRUE(hasDigestion);
+		EXPECT_TRUE(hasHygiene);
 		EXPECT_TRUE(hasWander);
+	}
+
+	// Washing looks for Washable water only, and a colonist that knows none goes on with its day.
+	TEST_F(AIDecisionSystemTest, GrubbyColonistWithNoKnownWaterDoesNothingAboutIt) {
+		auto colonist = createColonist({0.0F, 0.0F});
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		addKnownEntity(colonist, {4.0F, 0.0F}, kWaterDefId, assets::CapabilityType::Drinkable);
+		setNeedValue(colonist, NeedType::Hygiene, 20.0F);
+
+		world->update(0.016F);
+
+		const Task* task = getTask(colonist);
+		EXPECT_EQ(task->type, TaskType::Wander) << "a colonist with nowhere to wash is not stuck";
+		const auto& options = getTrace(colonist)->options;
+		const auto	hygiene = std::ranges::find_if(options, [](const EvaluatedOption& option) {
+			 return option.taskType == TaskType::FulfillNeed && option.needType == NeedType::Hygiene;
+		 });
+		ASSERT_NE(hygiene, options.end());
+		EXPECT_EQ(hygiene->status, OptionStatus::NoSource) << "drinkable-only water is no place to wash";
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceOptionsSortedByPriority) {
@@ -1606,7 +1640,7 @@ namespace ecs::test {
 		// The key is that it's still valid
 		ASSERT_NE(trace->getSelected(), nullptr);
 		EXPECT_FALSE(describeOption(*world, *trace->getSelected()).empty());
-		EXPECT_EQ(trace->options.size(), 6u); // Still has all options (5 needs + wander, no Gather Food since has food)
+		EXPECT_EQ(trace->options.size(), 7u); // Still has all options (6 needs + wander, no Gather Food since has food)
 	}
 
 	// =============================================================================
@@ -5193,6 +5227,94 @@ namespace ecs::test {
 		}
 		EXPECT_GT(getNeeds(colonist)->get(NeedType::Thirst).value, 5.0F) << "the drink task ended undone";
 		EXPECT_LT(getNeeds(colonist)->energy().value, 25.0F) << "the interrupted sleep paid out";
+	}
+
+	TEST_F(NeedActionInPlaceTest, GrubbyColonistWalksToKnownWaterAndWashes) {
+		const glm::vec2 water{2.0F, 6.0F};
+		const auto		colonist = createActingColonist({-8.0F, 6.0F});
+		addKnownShore(colonist, water);
+		getNeeds(colonist)->get(NeedType::Hygiene).value = 30.0F;
+		world->update(kTick);
+		const Task*	  task = getTask(colonist);
+		const Action* action = world->getComponent<Action>(colonist);
+		ASSERT_EQ(task->type, TaskType::FulfillNeed);
+		ASSERT_EQ(task->needToFulfill, NeedType::Hygiene);
+		EXPECT_EQ(task->state, TaskState::Moving);
+
+		for (int i = 0; i < 400 && action->type != ActionType::Wash; ++i) {
+			world->update(kTick);
+		}
+		ASSERT_EQ(action->type, ActionType::Wash) << "never began washing on arrival";
+		for (int i = 0; i < 200 && action->isActive(); ++i) {
+			world->update(kTick);
+		}
+		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Hygiene).value, Action::kWashHygieneRestored);
+		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Thirst).value, 100.0F) << "washing is not drinking";
+		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Bladder).value, 100.0F) << "washing fills no bladder";
+	}
+
+	// Thirst and Hygiene low together at one shore point: two tasks, the drink first, then the wash.
+	TEST_F(NeedActionInPlaceTest, ThirstyAndGrubbyColonistDrinksThenWashes) {
+		const glm::vec2 water{2.0F, 6.0F};
+		const auto		colonist = createActingColonist({-8.0F, 6.0F});
+		addKnownShore(colonist, water);
+		getNeeds(colonist)->get(NeedType::Thirst).value = 30.0F;
+		getNeeds(colonist)->get(NeedType::Hygiene).value = 30.0F;
+		world->update(kTick);
+		const Task*	  task = getTask(colonist);
+		const Action* action = world->getComponent<Action>(colonist);
+		ASSERT_EQ(task->needToFulfill, NeedType::Thirst);
+
+		for (int i = 0; i < 400 && action->type != ActionType::Drink; ++i) {
+			world->update(kTick);
+			ASSERT_EQ(task->needToFulfill, NeedType::Thirst) << "switched to washing on the way to drink";
+		}
+		ASSERT_EQ(action->type, ActionType::Drink);
+		for (int i = 0; i < 400 && action->type != ActionType::Wash; ++i) {
+			world->update(kTick);
+		}
+		ASSERT_EQ(action->type, ActionType::Wash) << "never washed after drinking";
+		EXPECT_EQ(task->needToFulfill, NeedType::Hygiene);
+		for (int i = 0; i < 200 && action->isActive(); ++i) {
+			world->update(kTick);
+		}
+		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Thirst).value, 100.0F);
+		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Hygiene).value, 100.0F);
+	}
+
+	// A wash and a drink at one shore point are different tasks: Hygiene turning critical on the way to
+	// drink switches the task, and the action that starts there is the wash, then the drink.
+	TEST_F(NeedActionInPlaceTest, CriticalHygieneOnTheWayToDrinkWashesFirstAtTheSameShore) {
+		const glm::vec2 water{2.0F, 6.0F};
+		const auto		colonist = createActingColonist({-8.0F, 6.0F});
+		addKnownShore(colonist, water);
+		getNeeds(colonist)->get(NeedType::Thirst).value = 30.0F;
+		world->update(kTick);
+		const Task*	  task = getTask(colonist);
+		const Action* action = world->getComponent<Action>(colonist);
+		ASSERT_EQ(task->needToFulfill, NeedType::Thirst);
+		const glm::vec2 shore = task->targetPosition;
+		world->update(kTick);
+		ASSERT_EQ(task->state, TaskState::Moving);
+
+		getNeeds(colonist)->get(NeedType::Hygiene).value = 10.0F;
+		world->update(kTick);
+		ASSERT_EQ(task->needToFulfill, NeedType::Hygiene) << "the critical wash was read as the drink already under way";
+		EXPECT_LT(glm::distance(task->targetPosition, shore), 0.5F) << "the wash is at the same shore point";
+
+		for (int i = 0; i < 400 && !action->isActive(); ++i) {
+			world->update(kTick);
+		}
+		ASSERT_EQ(action->type, ActionType::Wash);
+		for (int i = 0; i < 400 && action->type != ActionType::Drink; ++i) {
+			world->update(kTick);
+		}
+		ASSERT_EQ(action->type, ActionType::Drink) << "never went back to drinking";
+		for (int i = 0; i < 200 && action->isActive(); ++i) {
+			world->update(kTick);
+		}
+		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Hygiene).value, 100.0F);
+		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Thirst).value, 100.0F);
 	}
 
 	// A critical sleeper that slides into water is snapped back ashore, which clears its task, so it

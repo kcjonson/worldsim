@@ -254,6 +254,7 @@ spec, and the `/perf-nightly` skill runs it.
 | 18 | Colonist thoughts | [scenarios/18-colonist-thoughts.md](./scenarios/18-colonist-thoughts.md) |
 | 19 | Load errors on screen | [scenarios/19-load-errors-on-screen.md](./scenarios/19-load-errors-on-screen.md) |
 | 20 | Drawing tools | [scenarios/20-drawing-tools.md](./scenarios/20-drawing-tools.md) |
+| 21 | Colonists wash | [scenarios/21-colonists-wash.md](./scenarios/21-colonists-wash.md) |
 
 **Scenarios that look away from the colonists turn reveal on** (`/api/dev/reveal?on=1`), since ground no colonist has seen is black (player visibility); a launch starts with it off. Scenario 14 is the one that tests the cover itself.
 
