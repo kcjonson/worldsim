@@ -461,11 +461,22 @@ namespace {
 	};
 
 	// The record's own counts for one tick: what it did and how long the tick took.
+	// A record tick's phases: the walkers' feeds (leg merges and the ease), then SeenArea::update's own.
+	enum class Phase : std::uint8_t { Feeds, Tests, Cuts, Registration, Patch, Widths, Sweeps, Count };
+	constexpr std::array<const char*, static_cast<std::size_t>(Phase::Count)> kPhaseNames{
+		"feeds", "tests", "cuts", "registering", "patch", "widths", "sweep"
+	};
+	using PhaseTimes = std::array<double, static_cast<std::size_t>(Phase::Count)>;
+
 	struct TickRecord {
 		double				 ms = 0.0;
 		int					 tick = -1;
 		SeenArea::TickWork	 work;
 		SeenArea::Pending	 pending;
+		PhaseTimes			 phaseMs{};
+		std::size_t			 ringsMet = 0;	   // registered rings whose boxes the tick's new rings' boxes met
+		std::size_t			 metVertices = 0;  // their vertices
+		std::size_t			 recordRings = 0;  // rings in the record after the tick
 	};
 
 	class Walk {
@@ -479,6 +490,21 @@ namespace {
 			reachMm = kSightMm + kStepMm + static_cast<std::int64_t>(std::ceil(walkMm / 100.0)) * 100 + 100;
 			seen.commitNow(geometry::sightPolygon({0, 0}, kLandingMm), {0, 0});
 			countNewRings();
+			// Each phase the record marks closes the one before it.
+			seen.setPhaseMarker([this](SeenArea::TickPhase marked) {
+				const auto now = std::chrono::steady_clock::now();
+				tickPhases[static_cast<std::size_t>(phaseNow)] += std::chrono::duration<double, std::milli>(now - phaseStart).count();
+				phaseStart = now;
+				switch (marked) {
+					case SeenArea::TickPhase::Tests: phaseNow = Phase::Tests; break;
+					case SeenArea::TickPhase::Cuts: phaseNow = Phase::Cuts; break;
+					case SeenArea::TickPhase::Registration: phaseNow = Phase::Registration; break;
+					case SeenArea::TickPhase::Patch: phaseNow = Phase::Patch; break;
+					case SeenArea::TickPhase::Widths: phaseNow = Phase::Widths; break;
+					case SeenArea::TickPhase::Sweeps: phaseNow = Phase::Sweeps; break;
+					case SeenArea::TickPhase::End: phaseNow = Phase::Sweeps; break;
+				}
+			});
 			seen.setSightBuilder([this](const Vec2i64& centre, std::int64_t /*sightRadiusMm*/, const SightRanges& ranges) {
 				return sweepShape(this->stand, centre, ranges, this->settings.rules, sweepScratch);
 			});
@@ -505,14 +531,27 @@ namespace {
 			for (std::size_t index = 0; index < observers.size(); ++index) {
 				follow(index, observers[index]);
 			}
+			tickPhases = {};
+			phaseNow   = Phase::Tests;
+			phaseStart = std::chrono::steady_clock::now();
+			tickPhases[static_cast<std::size_t>(Phase::Feeds)] = std::chrono::duration<double, std::milli>(phaseStart - recordStart).count();
 			seen.update();
 			const auto end = std::chrono::steady_clock::now();
-			countNewRings();
+			const auto [met, metVertices] = countNewRings();
 			visionMs.push_back(std::chrono::duration<double, std::milli>(recordStart - visionStart).count());
 			recordMs.push_back(std::chrono::duration<double, std::milli>(end - recordStart).count());
 			const SeenArea::Pending queue = seen.pending();
+			const TickRecord		record{recordMs.back(), tickIndex, seen.lastTickWork(), queue, tickPhases, met, metVertices, seen.ringsRegistered()};
+			for (std::size_t phase = 0; phase < phaseTotals.size(); ++phase) {
+				phaseTotals[phase] += tickPhases[phase];
+			}
+			slowest.push_back(record);
+			std::ranges::sort(slowest, [](const TickRecord& first, const TickRecord& second) { return first.ms > second.ms; });
+			if (slowest.size() > kSlowestKept) {
+				slowest.pop_back();
+			}
 			if (recordMs.back() > worstTick.ms) {
-				worstTick = {recordMs.back(), tickIndex, seen.lastTickWork(), queue};
+				worstTick = record;
 			}
 			for (const auto field : kWorkFields) {
 				mostWork.*field = std::max(mostWork.*field, seen.lastTickWork().*field);
@@ -538,7 +577,7 @@ namespace {
 		std::size_t drain() {
 			openAtEnd = seen.pending().openLegs;
 			for (std::size_t index = 0; index < observers.size(); ++index) {
-				observers[index].feed.stop(seen, index);
+				observers[index].feed.leave(seen, index);
 			}
 			std::size_t ticks = 0;
 			while ((seen.pending().total() > 0 || seen.sweepsWaiting() > 0) && ticks < kDrainLimitTicks) {
@@ -598,12 +637,23 @@ namespace {
 		// K (player-visibility.md 6.1): the registered rings whose boxes meet a new ring's box, counted
 		// as each registers, outside the timed tick.
 		std::vector<SeenArea::Box> registeredBoxes;
+		std::vector<std::size_t>   registeredVertices;
+		// Each phase's time, this tick's and summed over the walk, and the slowest ticks.
+		static constexpr std::size_t						kSlowestKept = 10;
+		PhaseTimes											tickPhases{};
+		PhaseTimes											phaseTotals{};
+		std::vector<TickRecord>								slowest;
+		Phase												phaseNow = Phase::Tests;
+		std::chrono::steady_clock::time_point				phaseStart;
 		std::size_t				   ringsMetTotal = 0;
 		std::size_t				   ringsMetMost = 0;
 		std::size_t				   ringsCounted = 0;
 
 	  private:
-		void countNewRings() {
+		// K for each ring registered since the last call, and the rings met and their vertices summed.
+		std::pair<std::size_t, std::size_t> countNewRings() {
+			std::size_t metThisCall		 = 0;
+			std::size_t verticesThisCall = 0;
 			for (std::size_t index = registeredBoxes.size(); index < seen.ringsRegistered(); ++index) {
 				const std::vector<Vec2i64>& ring = seen.registeredRing(index);
 				SeenArea::Box				box{ring.front(), ring.front()};
@@ -611,9 +661,15 @@ namespace {
 					box.low = {std::min(box.low.x, point.x), std::min(box.low.y, point.y)};
 					box.high = {std::max(box.high.x, point.x), std::max(box.high.y, point.y)};
 				}
-				const auto met = static_cast<std::size_t>(std::count_if(registeredBoxes.begin(), registeredBoxes.end(), [&box](const SeenArea::Box& other) {
-					return box.low.x <= other.high.x && other.low.x <= box.high.x && box.low.y <= other.high.y && other.low.y <= box.high.y;
-				}));
+				std::size_t met = 0;
+				for (std::size_t other = 0; other < registeredBoxes.size(); ++other) {
+					const SeenArea::Box& otherBox = registeredBoxes[other];
+					if (box.low.x <= otherBox.high.x && otherBox.low.x <= box.high.x && box.low.y <= otherBox.high.y && otherBox.low.y <= box.high.y) {
+						++met;
+						verticesThisCall += registeredVertices[other];
+					}
+				}
+				metThisCall += met;
 				// The landing's ring is not a registration of the walk's.
 				if (index > 0) {
 					ringsMetTotal += met;
@@ -621,7 +677,9 @@ namespace {
 					++ringsCounted;
 				}
 				registeredBoxes.push_back(box);
+				registeredVertices.push_back(ring.size());
 			}
+			return {metThisCall, verticesThisCall};
 		}
 
 		Vec2i64 free(Vec2i64 at) const {
@@ -910,6 +968,35 @@ namespace {
 			);
 			printWork("its work", walk.worstTick.work);
 			printWork("each count's most in any tick", walk.mostWork);
+			const double ticksWalked = static_cast<double>(walk.recordMs.size());
+			std::string	 phaseMeans;
+			for (std::size_t phase = 0; phase < walk.phaseTotals.size(); ++phase) {
+				phaseMeans += std::string(phase > 0 ? ", " : "") + kPhaseNames[phase] + " " + std::to_string(walk.phaseTotals[phase] / ticksWalked).substr(0, 6);
+			}
+			std::fprintf(stderr, "  phase means ms: %s\n", phaseMeans.c_str());
+			for (const TickRecord& slow : walk.slowest) {
+				std::string phases;
+				for (std::size_t phase = 0; phase < slow.phaseMs.size(); ++phase) {
+					phases += std::string(phase > 0 ? " " : "") + kPhaseNames[phase] + " " + std::to_string(slow.phaseMs[phase]).substr(0, 5);
+				}
+				std::fprintf(
+					stderr,
+					"  slow tick %d %.2f ms [%s]; joins %zu (%zu v), tests %zu, cuts %zu (%zu v), pieces %zu (%zu v) into %zu rings met (%zu v) of %zu\n",
+					slow.tick,
+					slow.ms,
+					phases.c_str(),
+					slow.work.legJoins,
+					slow.work.legVerticesJoined,
+					slow.work.shapesTested,
+					slow.work.shapesCut,
+					slow.work.verticesCut,
+					slow.work.piecesRegistered,
+					slow.work.verticesRegistered,
+					slow.ringsMet,
+					slow.metVertices,
+					slow.recordRings
+				);
+			}
 			state.counters["recordMeanMs"] = record.mean;
 			state.counters["pendingMost"] = static_cast<double>(walk.atPeak.total());
 			state.counters["kMean"] = ringsMetMean;

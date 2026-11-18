@@ -49,8 +49,9 @@ namespace vision {
 	constexpr std::size_t kSeenSweepPointsPerTick = 4;
 	// The most sweep points that wait: a second of building at kSeenSweepPointsPerTick at 60 ticks a
 	// second. A shape queues a point every kSeenSweepSpacingMm of the walk before it, so colonists
-	// walking beside walls at 10x queue more than the budget builds; past this the oldest goes, and
-	// the seen edge there steps as vision's builds left it (sight-softening.md 6.6).
+	// walking beside walls at 10x queue more than the budget builds; past this the queue thins evenly,
+	// every other waiting point going, so each walk is swept at twice its spacing, and ground seen only
+	// in passing between two kept points may stay unrecorded (sight-softening.md 6.6).
 	constexpr std::size_t kSeenSweepPointsMost = 240;
 	// The most vertices a leg's ring holds (sight-softening.md 6.2).
 	constexpr std::size_t kSoftLegMostVertices = 256;
@@ -139,6 +140,12 @@ namespace vision {
 			std::size_t sweepPointsBuilt   = 0;
 			std::size_t sweepPointsDropped = 0;
 		};
+
+		// The steps of update(), marked as each begins for a caller that times them (the forest bench):
+		// the covered tests, the cuts, the registrations, each piece's patch into the record and the
+		// mesh's widths after it, the sweep, and the tick's end.
+		enum class TickPhase : std::uint8_t { Tests, Cuts, Registration, Patch, Widths, Sweeps, End };
+		void setPhaseMarker(std::function<void(TickPhase)> marker) { phaseMarker = std::move(marker); }
 
 		SeenArea();
 		~SeenArea();
@@ -247,8 +254,10 @@ namespace vision {
 		// ground: it has no shape until its turn.
 		[[nodiscard]] std::size_t sweepsBuilt() const { return swept; }
 		[[nodiscard]] std::size_t sweepsWaiting() const { return sweeps.size(); }
-		// Sweep points dropped unbuilt past kSeenSweepPointsMost.
-		[[nodiscard]] std::size_t sweepPointsDropped() const { return sweepsDropped; }
+		// Sweep points dropped unbuilt by thinning past kSeenSweepPointsMost, and the widest spacing along
+		// its walk a built point had: the longest stretch of a walk the sweep left between two points.
+		[[nodiscard]] std::size_t  sweepPointsDropped() const { return sweepsDropped; }
+		[[nodiscard]] std::int64_t widestSweepSpacingMm() const { return widestSweepSpacing; }
 
 	  private:
 		struct PendingShape {
@@ -270,6 +279,7 @@ namespace vision {
 			SightRanges					   rimRanges{};
 			std::vector<geometry::Vec2i64> sweepPath;
 			SightRanges					   walkStartRanges{};
+			std::int64_t				   sweepSpacingMm = 0; // a sweep point's spacing along its walk, doubled at each thinning
 		};
 
 		static PendingShape pendingOf(std::vector<geometry::Vec2i64> outline, const geometry::Vec2i64& centre, Origin origin);
@@ -281,6 +291,7 @@ namespace vision {
 		// registered, and queues its sweep.
 		void enter(const PendingShape& shape);
 		void registerPiece(std::deque<PendingShape>& from);
+		void markPhase(TickPhase phase);
 		// Grows the committed boxes of the cells the box from `low` to `high` meets by its part in each.
 		void holdCommitted(const geometry::Vec2i64& low, const geometry::Vec2i64& high);
 		// Builds a sweep point's shape and enters it when it adds anything.
@@ -302,6 +313,8 @@ namespace vision {
 		std::size_t											 skipped = 0;
 		std::size_t											 swept	 = 0;
 		SightBuilder										 sightBuilder;
+		std::function<void(TickPhase)>						 phaseMarker;
+		TickPhase											 phaseNow = TickPhase::End;
 		std::map<LegId, PendingShape>						 openLegs;
 		std::deque<PendingShape>							 waiting;
 		std::deque<PendingShape>							 uncovered; // tested and adding ground, waiting to be cut
@@ -309,6 +322,7 @@ namespace vision {
 		std::deque<PendingShape>							 sweepEntering; // pieces of sweep shapes, registered with what is left
 		std::deque<PendingShape>							 sweeps;		// points with their sight radius and rim, shapes not yet built
 		std::size_t											 sweepsDropped = 0;
+		std::int64_t										 widestSweepSpacing = 0;
 		std::vector<std::int32_t>							 registered; // ring ids, in the order they went in
 		std::size_t											 dropped = 0;
 		std::array<std::size_t, static_cast<std::size_t>(Origin::Count)> registeredFrom{};

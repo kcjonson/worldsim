@@ -203,13 +203,15 @@ class VisionSystem : public ISystem {
 	/// Ensure synthetic terrain definitions are registered (called once on first update)
 	void ensureTerrainDefinitionsRegistered();
 
-	/// The walls and openings that bound or cross the part of `builtPolygon` within `radiusMm` of `centerMm`, into memory
+	/// The walls and openings that bound or cross the part of `builtPolygon` within its rim, the forest shape of `ranges`
+	/// round `centerMm` that the seen record cuts it to (`radiusMm` the sight the structures are culled to), into memory
 	/// (vision-architecture D4) and into `segments` and `openings` (cleared first). `backFacesHidden` is what the query
 	/// the polygon was built from returned. The opaque placed bodies among `bodies` it sees by the same
 	/// test, one of their outline edges, go into `placedSeen` as their outlines (cleared first).
 	void rememberStructures(
 		geometry::Vec2i64						 centerMm,
 		std::int64_t							 radiusMm,
+		const geometry::SightSideValues&		 ranges,
 		const geometry::Ring&					 builtPolygon,
 		bool									 backFacesHidden,
 		Memory&									 memory,

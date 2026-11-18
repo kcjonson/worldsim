@@ -6,6 +6,7 @@
 #include <visibility/Visibility.h>
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 
 namespace vision {
@@ -21,7 +22,7 @@ namespace vision {
 		// A walk that divides the rebuild step exactly takes that many intervals, not one more.
 		constexpr double kWholeIntervalSlack = 1e-9;
 
-		static_assert(2 * geometry::kSightSides <= kSoftLegMostVertices, "a leg's ring of two shapes always fits");
+		static_assert(3 * geometry::kSightSides <= kSoftLegMostVertices, "a new leg's ring of three shapes always fits");
 
 		double lengthOf(const Vec2i64& offset) {
 			const double x = static_cast<double>(offset.x);
@@ -130,6 +131,11 @@ namespace vision {
 		const bool newBuild = !builtOnce || lastBuild != build.buildRevision;
 		builtOnce			= true;
 		lastBuild			= build.buildRevision;
+		// A jump opens a leg with no inherited shape, so nothing in the record holds the ease's start where
+		// he lands: the ease starts again from the newest build's shape, which his new leg holds.
+		if (static_cast<double>(walkedMm) > kJumpMm) {
+			ease.valid = false;
+		}
 		if (build.forest) {
 			followEase(build, rimEaseMm, walkedMm);
 		}
@@ -217,14 +223,12 @@ namespace vision {
 		}
 	}
 
-	// A new leg's ring holds its start's shape, his position's, and the inherited one. Should the three
-	// pass kSoftLegMostVertices it opens without the inherited shape, two shapes always fitting; should
-	// even that be refused the leg stays shut and the next frame opens it.
+	// A new leg's ring is the hull of its start's shape, his position's, and the inherited one, three
+	// forest shapes of at most kSightSides vertices each, which always fit (the static_assert above).
 	void SightFeed::openLeg(SeenArea& seen, SeenArea::LegId id, const Vec2i64& at, const std::optional<SeenArea::InheritedShape>& inherited) {
 		++opened;
-		if (!seen.setOpenLeg(id, leg.start, at, leg.ranges, inherited) && !seen.setOpenLeg(id, leg.start, at, leg.ranges, std::nullopt)) {
-			leg.open = false;
-		}
+		[[maybe_unused]] const bool joined = seen.setOpenLeg(id, leg.start, at, leg.ranges, inherited);
+		assert(joined);
 	}
 
 	// LegEnd::Count closes a leg for no reason of its own: his sight shrank, or he is gone.

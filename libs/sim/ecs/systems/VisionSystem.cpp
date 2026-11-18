@@ -11,6 +11,8 @@
 #include "../components/Movement.h"
 #include "../components/Transform.h"
 
+#include <vision/SeenArea.h>
+
 #include "assets/AssetDefinition.h"
 #include "assets/AssetRegistry.h"
 #include "assets/RecipeRegistry.h"
@@ -344,6 +346,11 @@ namespace ecs {
 				// On the plain disc his sight is the circle round where he stands.
 				entry.builtPos = pos.value;
 			}
+			// `lead` is the farthest he walks a pass since the build: a pass whose walk the reach lead's
+			// margin absorbs keeps the build but lengthens the lead the drawing widens by.
+			if (!due) {
+				entry.leadMm = std::max(entry.leadMm, leadMm);
+			}
 
 			if (due) {
 				++builds;
@@ -452,7 +459,7 @@ namespace ecs {
 					// New structures appear only via a geometry change, which bumps the
 					// generation and forces a rebuild here.
 					rememberStructures(
-						observerMm, radiusMm, entry.polygon, backFacesHidden, memory, entry.segmentsSeen, entry.openingsSeen, entry.bodies, entry.placedSeen
+						observerMm, radiusMm, entry.ranges, entry.polygon, backFacesHidden, memory, entry.segmentsSeen, entry.openingsSeen, entry.bodies, entry.placedSeen
 					);
 				}
 				entry.builtMm		  = observerMm;
@@ -504,6 +511,7 @@ namespace ecs {
 	void VisionSystem::rememberStructures(
 		geometry::Vec2i64					  centerMm,
 		std::int64_t						  radiusMm,
+		const geometry::SightSideValues&	  ranges,
 		const geometry::Ring&				  builtPolygon,
 		bool								  backFacesHidden,
 		Memory&								  memory,
@@ -515,8 +523,9 @@ namespace ecs {
 		segments.clear();
 		openings.clear();
 		placedSeen.clear();
-		// The polygon may reach a rebuild step past sight; what is seen is the part within it.
-		const geometry::Ring polygon = geometry::starClippedToConvex(builtPolygon, centerMm, geometry::sightPolygon(centerMm, radiusMm));
+		// The polygon may reach a rebuild step past sight; what is seen is the part within its rim, the forest
+		// shape of his sight round the build that the seen record cuts it to (sight-softening.md 6.4).
+		const geometry::Ring polygon = geometry::starClippedToConvex(builtPolygon, centerMm, vision::rimOf(centerMm, ranges));
 		// Pass 0: structure-as-observable (vision-architecture D4). A wall or
 		// opening that bounds or intersects the visibility polygon is seen, and
 		// its stable construction id enters memory. Runs only for indoor

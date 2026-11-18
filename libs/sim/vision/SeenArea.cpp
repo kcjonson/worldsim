@@ -302,13 +302,17 @@ namespace vision {
 		geometry::nav::PatchEdits edits;
 		edits.adds.push_back(geometry::nav::NavInputPolygon{.ring = std::move(piece.outline)});
 		from.pop_front();
+		const TickPhase registering = phaseNow;
+		markPhase(TickPhase::Patch);
 		const geometry::nav::PatchReport report = mesh->applyPatch(edits);
 		for (const std::int32_t added : report.added) {
 			if (added != geometry::nav::kNoRing) {
 				registered.push_back(added);
 			}
 		}
+		markPhase(TickPhase::Widths);
 		mesh->refreshWidths();
+		markPhase(registering);
 	}
 
 	// Points no farther apart than kSeenSweepSpacingMm along the walk from the build before to this
@@ -326,8 +330,9 @@ namespace vision {
 		for (std::size_t corner = 0; corner < walk.size(); ++corner) {
 			walkLength += distanceBetween(walk[corner], corner + 1 < walk.size() ? walk[corner + 1] : to);
 		}
-		double walked	  = 0.0;
-		auto   queuePoint = [&](const Vec2i64& point, double along) {
+		double walked			= 0.0;
+		double stretchSpacingMm = 0.0; // the spacing of the points along the stretch being queued
+		auto   queuePoint		= [&](const Vec2i64& point, double along) {
 			  const double		 fraction  = walkLength > 0.0 ? std::clamp(along / walkLength, 0.0, 1.0) : 0.0;
 			  const bool		 nearStart = distanceBetween(point, walk.front()) <= distanceBetween(point, to);
 			  const SightRanges& nearer	   = nearStart ? shape.walkStartRanges : shape.rimRanges;
@@ -347,12 +352,20 @@ namespace vision {
 			  for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
 				  sweep.rimRanges[side] = std::max(geometry::kForestShapeLeastRangeMm, interpolated[side] - insetMm);
 			  }
-			  // The oldest point goes first: a later build near it has most likely seen its ground, and
-			  // without it the seen edge there steps as vision's builds left it.
+			  sweep.sweepSpacingMm = static_cast<std::int64_t>(std::ceil(stretchSpacingMm));
+			  // A full queue thins evenly: every other point waiting goes, so each walk waiting is swept at
+			  // twice its spacing and no stretch of it goes unswept.
 			  if (sweeps.size() == kSeenSweepPointsMost) {
-				  sweeps.pop_front();
-				  ++sweepsDropped;
-				  ++work.sweepPointsDropped;
+				  std::size_t kept = 0;
+				  for (std::size_t index = 0; index < sweeps.size(); index += 2) {
+					  sweeps[kept] = std::move(sweeps[index]);
+					  sweeps[kept].sweepSpacingMm *= 2;
+					  ++kept;
+				  }
+				  const std::size_t dropping = sweeps.size() - kept;
+				  sweeps.resize(kept);
+				  sweepsDropped += dropping;
+				  work.sweepPointsDropped += dropping;
 			  }
 			  sweeps.push_back(std::move(sweep));
 		};
@@ -362,6 +375,7 @@ namespace vision {
 			const Vec2i64	   along   = until - from;
 			const double	   stretch = distanceBetween(until, from);
 			const std::int64_t steps   = static_cast<std::int64_t>(std::ceil(stretch / static_cast<double>(kSeenSweepSpacingMm)));
+			stretchSpacingMm		   = steps > 0 ? stretch / static_cast<double>(steps) : 0.0;
 			if (corner > 0) {
 				queuePoint(from, walked);
 			}
@@ -380,6 +394,7 @@ namespace vision {
 	void SeenArea::commitSweep(const PendingShape& point) {
 		++swept;
 		++work.sweepPointsBuilt;
+		widestSweepSpacing = std::max(widestSweepSpacing, point.sweepSpacingMm);
 		BuiltSight built = sightBuilder(point.centre, point.sightRadius, point.rimRanges);
 		if (!geometry::simpleAround(built.shape, point.centre)) {
 			++skipped;
@@ -511,13 +526,22 @@ namespace vision {
 		openLegs.erase(found);
 	}
 
+	void SeenArea::markPhase(TickPhase phase) {
+		phaseNow = phase;
+		if (phaseMarker) {
+			phaseMarker(phase);
+		}
+	}
+
 	void SeenArea::update() {
+		markPhase(TickPhase::Tests);
 		for (std::size_t tested = 0; tested < kSeenRingsPerTick && !waiting.empty(); ++tested) {
 			if (!covered(waiting.front())) {
 				uncovered.push_back(std::move(waiting.front()));
 			}
 			waiting.pop_front();
 		}
+		markPhase(TickPhase::Cuts);
 		for (std::size_t cut = 0; entering.size() < kSeenPiecesRegisteredPerTick && cut < kSeenRingsPerTick && !uncovered.empty(); ++cut) {
 			mostCutWait = std::max(mostCutWait, ticks - uncovered.front().queuedTick);
 			const PendingShape shape = std::move(uncovered.front());
@@ -526,6 +550,7 @@ namespace vision {
 		}
 		// Shapes' pieces first, the sweep's with what is left: the sweep's pieces never hold the shapes'
 		// cut back, since it reads only the shapes' pieces waiting.
+		markPhase(TickPhase::Registration);
 		std::size_t count = 0;
 		for (; count < kSeenPiecesRegisteredPerTick && !entering.empty(); ++count) {
 			registerPiece(entering);
@@ -534,11 +559,13 @@ namespace vision {
 			registerPiece(sweepEntering);
 		}
 		// The sweep's own budget, whatever the shapes hold, while its own pieces drain.
+		markPhase(TickPhase::Sweeps);
 		for (std::size_t built = 0; sightBuilder && built < kSeenSweepPointsPerTick && sweepEntering.size() < kSeenPiecesRegisteredPerTick && !sweeps.empty(); ++built) {
 			const PendingShape point = std::move(sweeps.front());
 			sweeps.pop_front();
 			commitSweep(point);
 		}
+		markPhase(TickPhase::End);
 		++ticks;
 		lastWork = work;
 		work	 = TickWork{};
