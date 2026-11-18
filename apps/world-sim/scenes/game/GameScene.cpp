@@ -5,6 +5,7 @@
 #include "GameWorldState.h"
 #include "NewGameSetup.h"
 #include "SceneTypes.h"
+#include "scenes/settings/SettingsScene.h"
 #include "UserSettings.h"
 #include "scenes/game/dev/CameraCommand.h"
 #include "scenes/game/dev/DevCommandHandler.h"
@@ -296,6 +297,7 @@ namespace {
 							ecsWorld->getSystem<ecs::TimeSystem>().resume();
 						}
 					},
+				.onSettings = [this]() { world_sim::openSettings(owner->scenes()); },
 				.onMainMenu = [this]() { owner->scenes().switchTo(world_sim::scenes::MainMenu.name); },
 				.onQuitGame = [this]() { owner->requestExit(); },
 				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },

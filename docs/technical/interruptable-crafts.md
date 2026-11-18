@@ -192,7 +192,7 @@ A need has three thresholds, and each puts its option at a different tier:
 | Critical | `criticalThreshold` | 10 | 10 | interrupts nearly everything, as today |
 
 Classification reads the need's own thresholds; `kCriticalNeedThreshold` is deleted. Hygiene and
-recreation get urgent values too (25 and 20) though nothing fulfils them yet.
+recreation get urgent values too (25 and 20).
 
 ### The ladder
 

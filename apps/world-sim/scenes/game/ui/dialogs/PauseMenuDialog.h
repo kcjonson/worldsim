@@ -1,8 +1,9 @@
 #pragma once
 
 // PauseMenuDialog - the game's menu, a modal ui::Dialog opened from the top bar's Menu button or Escape:
-// Resume, Save, Load, Main Menu and Quit Game, one row each. Save and Load stay disabled until saving
-// exists. The scene holds the world still while it is open.
+// Resume, Save, Load, Settings, Main Menu and Quit Game, one row each. Save and Load stay disabled until
+// saving exists. The scene holds the world still while it is open, Settings included: it opens over the
+// game and returns to this menu.
 
 #include <ui/components/Dialog.h>
 
@@ -16,6 +17,7 @@ namespace world_sim {
 			// The player closed it: Resume, its close button, cancel or a press on the scrim. Not called by
 			// close().
 			std::function<void()> onClose;
+			std::function<void()> onSettings;
 			std::function<void()> onMainMenu;
 			std::function<void()> onQuitGame;
 		};
@@ -39,10 +41,12 @@ namespace world_sim {
 		void build(ui::Dialog& shown);
 
 		std::function<void()> onClose;
+		std::function<void()> onSettings;
 		std::function<void()> onMainMenu;
 		std::function<void()> onQuitGame;
 
 		ui::Ref<ui::Dialog> dialog;
+		int					player = 0;
 	};
 
 } // namespace world_sim

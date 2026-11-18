@@ -452,6 +452,7 @@ Foundations and walls are procedurally drawn from material definitions, not hand
 ### Drawing feedback
 
 - Rubber-band segment and validity colorization; on invalid, the reason beside the cursor and in the config strip.
+- A pointer that has not visibly moved since a click proposes nothing about what that click placed: no "points too close", "wall too short", or "openings overlap", nothing red, and the strip shows the tool's hint. A click there places nothing and says nothing. The first visible move, of the mouse or of the camera under it, brings back every refusal that applies.
 - Faint polygon fill after the third point; the rectangle tool's fill and outline while its second corner is pending.
 - Origin-point halo + snap when the shape can close.
 - Length readout (meters, two decimals) beside the segment being drawn, `=` when it matches a common length; the rectangle tool's size label at the cursor instead (`4 m x 3 m`). Area/cost/work in the config strip.

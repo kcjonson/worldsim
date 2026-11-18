@@ -73,6 +73,7 @@ namespace world_sim {
 			std::function<void(ecs::GameSpeed)>					   onSpeedChange;		 ///< Called when speed changed
 			std::function<void()>								   onMenuClick;			 ///< Called when menu button clicked
 			std::function<void()>								   onPauseMenuClosed;	 ///< Called when the player closes the pause menu
+			std::function<void()>								   onSettings; ///< Called when the pause menu's Settings is chosen
 			std::function<void()>								   onMainMenu; ///< Called when the pause menu's Main Menu is chosen
 			std::function<void()>								   onQuitGame; ///< Called when the pause menu's Quit Game is chosen
 			std::function<void()> onPlaceFurniture;							   ///< Called when Place button clicked for packaged furniture

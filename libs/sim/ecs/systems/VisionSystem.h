@@ -41,7 +41,7 @@ struct Memory;
 
 /// Updates colonist Memory by observing nearby world entities and terrain features.
 /// Queries PlacementExecutor for PlacedEntities within each colonist's sight radius.
-/// Also scans chunks for shore points (land beside water) with Drinkable capability.
+/// Also scans chunks for shore points (land beside water) with the Drinkable and Washable capabilities.
 /// Priority: 45 (runs early, before needs decay and AI decisions)
 ///
 /// Needs a TimeSystem in the same world: a mover's sighting is stamped with the game clock, and a world

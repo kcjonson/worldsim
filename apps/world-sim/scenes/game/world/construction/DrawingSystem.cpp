@@ -18,6 +18,8 @@
 #include <utils/Log.h>
 #include <vector/Tessellator.h>
 
+#include <glm/geometric.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -303,6 +305,7 @@ namespace world_sim {
 		activeTool_ = tool;
 		points_.clear();
 		wallHost_ = ec::kInvalidFoundation;
+		lastPlacement_.reset();
 		cancelPress();
 		pause();
 		if (callbacks_.onToolActive) {
@@ -382,6 +385,7 @@ namespace world_sim {
 		cancelPress();
 		wallHost_ = construction::kInvalidFoundation;
 		editTarget_ = construction::kInvalidFoundation;
+		lastPlacement_.reset();
 		pause();
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(false);
@@ -416,6 +420,10 @@ namespace world_sim {
 		followingPointer_ = true;
 		const auto world = camera_->screenToWorld(screenX, screenY, viewportW, viewportH, kPixelsPerMeter);
 		pointerWorld_ = {world.x, world.y};
+		// A rest, once the pointer leaves it, is over: coming back to the same spot is a move like any other.
+		if (pointerLeftLastPlacement()) {
+			lastPlacement_.reset();
+		}
 
 		if (activeTool_ == ToolKind::Wall) {
 			handleWallMove({world.x, world.y}, freeform);
@@ -554,7 +562,7 @@ namespace world_sim {
 		}
 
 		points_.push_back(cursor_);
-		lastPlacement_ = PointPlacement{.pointer = snapMemoKey_.cursorWorld, .pointCount = points_.size()};
+		recordPlacement();
 		return true;
 	}
 
@@ -625,6 +633,7 @@ namespace world_sim {
 			return false;
 		}
 		points_.pop_back();
+		lastPlacement_.reset();
 		lastValidation_ = {};
 		willClose_ = false;		// recomputed on the next move; don't leave a stale closing halo
 		cursorOffBuildableGround = false; // recomputed on the next move
@@ -871,14 +880,23 @@ namespace world_sim {
 		if (!followingPointer_) {
 			return {.proposed = false};
 		}
+		if (activeTool_ == ToolKind::Opening) {
+			if (!openingSnap_.valid) {
+				return {.valid = false, .reason = "no wall in range"};
+			}
+			if (openingUnexplored_) {
+				return {.valid = false, .reason = "the area is unexplored"};
+			}
+			if (openingValidation_.code == construction::ValidationCode::OpeningOverlap && restsOnLastPlacement()) {
+				return {.proposed = false};
+			}
+			if (!openingValidation_.ok()) {
+				return {.valid = false, .reason = construction::validationReason(openingValidation_.code)};
+			}
+			return {};
+		}
 		if (willClose_) {
 			return {.valid = pendingClose_.accepted, .reason = pendingClose_.reason};
-		}
-		// A pointer still where it placed the last point, whose snapped point is refused as too close
-		// to it, proposes nothing: no red the player did not cause by moving. A snapped point that is
-		// valid is placed, and any other refusal shows as it would anywhere.
-		if (restsOnLastPoint() && lastValidation_.code == construction::ValidationCode::VerticesTooClose) {
-			return {.proposed = false};
 		}
 		// Off-mesh cursor (on water) reads as invalid just like a geometry violation, so the
 		// band and fill turn red before the player commits. A point the next click would refuse
@@ -886,6 +904,15 @@ namespace world_sim {
 		// is invalid.
 		if (cursorOffBuildableGround) {
 			return {.valid = false, .reason = cursorGroundReason()};
+		}
+		// A pointer still where it placed the last point, whose snapped point is refused only for
+		// sitting on that point (too close to it; for a wall, a segment too short), proposes nothing:
+		// no red the player did not cause by moving. A snapped point that is valid is placed, and any
+		// other refusal shows as it would anywhere.
+		const construction::ValidationCode restRefusal =
+			activeTool_ == ToolKind::Wall ? construction::ValidationCode::SegmentTooShort : construction::ValidationCode::VerticesTooClose;
+		if (restsOnLastPlacement() && lastValidation_.code == restRefusal) {
+			return {.proposed = false};
 		}
 		if (!lastValidation_.ok()) {
 			return {.valid = false, .reason = construction::validationReason(lastValidation_.code)};
@@ -901,9 +928,26 @@ namespace world_sim {
 		return {};
 	}
 
-	bool DrawingSystem::restsOnLastPoint() const {
-		return activeTool_ == ToolKind::Foundation && lastPlacement_ && lastPlacement_->pointCount == points_.size() &&
-			   snapMemoKey_.cursorWorld == lastPlacement_->pointer;
+	bool DrawingSystem::restsOnLastPlacement() const {
+		if (!followingPointer_ || !lastPlacement_ || lastPlacement_->tool != activeTool_) {
+			return false;
+		}
+		if (lastPlacement_->opening != ec::kInvalidOpening && constructionWorld_.getOpening(lastPlacement_->opening) == nullptr) {
+			return false;
+		}
+		return lastPlacement_->pointCount == points_.size() && !pointerLeftLastPlacement();
+	}
+
+	bool DrawingSystem::pointerLeftLastPlacement() const {
+		if (!lastPlacement_) {
+			return true;
+		}
+		const float distanceMeters = glm::distance(pointerWorld_, lastPlacement_->pointer);
+		return distanceMeters * pixelsPerWorldMeter() > kRestTolerancePixels;
+	}
+
+	void DrawingSystem::recordPlacement(ec::OpeningId opening) {
+		lastPlacement_ = Placement{.tool = activeTool_, .pointer = pointerWorld_, .pointCount = points_.size(), .opening = opening};
 	}
 
 	DrawingSystem::PreviewVerdict DrawingSystem::previewVerdict() const {
@@ -923,7 +967,7 @@ namespace world_sim {
 			return verdict;
 		}
 		verdict.markerInvalid = cursorOffBuildableGround;
-		if (editing && !editPreview_.ok()) {
+		if (editing && click.proposed && !editPreview_.ok()) {
 			verdict.editReason = construction::validationReason(editPreview_.validation.code);
 		}
 		return verdict;
@@ -933,7 +977,7 @@ namespace world_sim {
 		return {
 			.snapFeedback = followingPointer_,
 			.trialOutline = activeTool_ == ToolKind::FoundationEdit && editPreviewActive_,
-			.openingGhost = activeTool_ == ToolKind::Opening && openingSnap_.valid,
+			.openingGhost = activeTool_ == ToolKind::Opening && openingSnap_.valid && clickVerdict().proposed,
 		};
 	}
 
@@ -1176,8 +1220,10 @@ namespace world_sim {
 	}
 
 	void DrawingSystem::refreshEditPreview(std::optional<construction::FoundationEditResult> closedEdit) {
+		// At rest on the point just placed the cursor proposes nothing, so the outline is the placed
+		// points' own rather than one with that point doubled.
 		std::vector<Foundation::Vec2> drawn = points_;
-		if (!willClose_) {
+		if (!willClose_ && clickVerdict().proposed) {
 			drawn.push_back(cursor_);
 		}
 		editPreviewActive_ = drawn.size() >= kMinClosingShapePoints;
@@ -1324,6 +1370,11 @@ namespace world_sim {
 			}
 			wallHost_ = host;
 			points_.push_back(cursor_);
+			recordPlacement();
+			return true;
+		}
+
+		if (!clickVerdict().proposed) {
 			return true;
 		}
 
@@ -1345,6 +1396,7 @@ namespace world_sim {
 
 		const bool closes = ec::closesWallChain(points_, cursor_);
 		points_.push_back(cursor_);
+		recordPlacement();
 		if (closes) {
 			commitWallChain();
 		}
@@ -1767,6 +1819,9 @@ namespace world_sim {
 			}
 			return true;
 		}
+		if (!clickVerdict().proposed) {
+			return true;
+		}
 		if (!openingValidation_.ok()) {
 			if (callbacks_.onToast) {
 				callbacks_.onToast("Invalid opening", ec::validationReason(openingValidation_.code));
@@ -1783,6 +1838,7 @@ namespace world_sim {
 		}
 
 		spawnOpeningBlueprintEntity(id, /*built=*/false);
+		recordPlacement(id);
 
 		if (callbacks_.onToast) {
 			callbacks_.onToast("Opening placed", type->name + " blueprint");
@@ -1903,32 +1959,23 @@ namespace world_sim {
 		s.pointCount = static_cast<int>(points_.size());
 		s.material = activeMaterial_;
 
+		// The strip reads the verdict the preview reads, so the two cannot disagree.
+		const ClickVerdict click = clickVerdict();
+		s.valid = click.valid;
+		s.message = click.reason;
+
 		if (activeTool_ == ToolKind::Opening) {
 			s.openingType = activeOpeningType_;
 			if (const auto* type = activeOpeningType()) {
 				s.openingWidthMeters = type->widthMeters;
 				s.material = type->material;
 			}
-			// Validity reflects the live snap + validateOpening. No built wall in range
-			// reads as "no wall to place on"; an in-range wall surfaces the validator's
-			// reason (margin / overlap / too short) when it rejects. Paused, it proposes
-			// nothing: the strip's hint, no reason.
+			// Paused, the strip asks for a built wall (statusHint's pending hint, no reason).
 			if (!followingPointer_) {
 				s.valid = false;
-			} else if (!openingSnap_.valid) {
-				s.valid = false;
-				s.message = "no wall in range";
-			} else {
-				s.valid = openingValidation_.ok() && !openingUnexplored_;
-				s.message = openingUnexplored_ ? "the area is unexplored" : ec::validationReason(openingValidation_.code);
 			}
 			return s;
 		}
-
-		// The strip reads the verdict the preview reads, so the two cannot disagree.
-		const ClickVerdict click = clickVerdict();
-		s.valid = click.valid;
-		s.message = click.reason;
 
 		if (activeTool_ == ToolKind::Wall) {
 			s.thicknessPreset = activeThicknessPreset_;
@@ -2016,19 +2063,14 @@ namespace world_sim {
 			case ToolKind::FoundationRectangle: break;
 		}
 
+		const ClickVerdict click = clickVerdict();
+		shot.verdict = {.valid = click.valid, .proposed = click.proposed, .reason = click.reason};
 		if (activeTool_ == ToolKind::Opening) {
-			// The strip's own verdict: clickVerdict() reads the foundation and wall tools' state.
 			if (followingPointer_) {
 				shot.openingSnap = openingSnap_;
-				shot.verdict = {.valid = shot.status.valid, .proposed = true, .reason = shot.status.message};
-			} else {
-				shot.verdict = {.valid = true, .proposed = false};
 			}
 			return shot;
 		}
-
-		const ClickVerdict click = clickVerdict();
-		shot.verdict = {.valid = click.valid, .proposed = click.proposed, .reason = click.reason};
 		if (followingPointer_) {
 			std::optional<float> segmentLength;
 			if (!points_.empty()) {
@@ -2598,10 +2640,7 @@ namespace world_sim {
 			return;
 		}
 
-		const bool				valid = openingValidation_.ok() && !openingUnexplored_;
-		const Foundation::Color okColor = validColor_;	  // green
-		const Foundation::Color badColor = invalidColor_; // red
-		const Foundation::Color tint = valid ? okColor : badColor;
+		const Foundation::Color tint = clickVerdict().valid ? validColor_ : invalidColor_;
 
 		std::vector<Foundation::Vec2> screen;
 		screen.reserve(footprint.size());

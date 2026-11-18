@@ -97,8 +97,10 @@ namespace ecs {
 
 		auto& registry = assets::AssetRegistry::Get();
 
-		// Create capability mask for shore (Drinkable - colonists drink AT the shore)
-		m_shoreCapabilityMask = static_cast<uint16_t>(1U << static_cast<size_t>(assets::CapabilityType::Drinkable));
+		// Colonists drink and wash AT the shore
+		m_shoreCapabilityMask = static_cast<uint16_t>(
+			(1U << static_cast<size_t>(assets::CapabilityType::Drinkable)) | (1U << static_cast<size_t>(assets::CapabilityType::Washable))
+		);
 
 		// Register synthetic shore definition
 		m_shoreDefNameId = registry.registerSyntheticDefinition(kShoreDefName, m_shoreCapabilityMask);
