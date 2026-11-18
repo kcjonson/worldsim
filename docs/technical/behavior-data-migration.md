@@ -2,343 +2,548 @@
 
 ## Goal
 
-Move everything a colonist does on purpose from hand-written C++ to needs, actions, queries, chains,
-and work entries in XML, run on the kept engine, as [Queries and chains](./queries-and-chains.md)
+Move everything a colonist does on purpose from hand-written C++ to behaviors, needs, actions, queries,
+chains, and work entries in XML, run on the kept engine, as [Queries and chains](./queries-and-chains.md)
 specifies. Move one path at a time, each path's existing tests kept as the contract, and delete the
 old code for a path in the same change that moves it.
 
 ## What exists now
 
-All of it is on `main` (the docs branch `docs/thoughts-spec-decisions` is 14 commits behind and lacks
-the Wash merge, PR 502).
+All of it is on `main` and on this branch.
 
 - Needs: `NeedType` (eight values), `kNeedLabels`, `NeedsComponent` with a fixed array and
-  `kActionableNeeds` (six since Wash), decay rates as literals in `libs/sim/ecs/components/Needs.cpp`,
-  thresholds in `assets/config/colonists/needs/needs.xml` read by `NeedLevels`, mood weights in
-  `assets/config/colonists/mood.xml` (`<NeedWeights>`, still an average).
-- Options: `AIDecisionSystem.cpp` (about 4,000 lines). The needs loop with its hunger special case,
-  `needToCapability`, `getFirstActionDefName`, `taskFirstActionNeedsHands`, `findToiletLocation`
-  (`components/ToiletLocationFinder.cpp`), `evaluateHaulOptions`, `evaluateCarryInOptions`,
-  `evaluateHarvestOptions`, `evaluateBuildOptions`, `evaluateDeconstructOptions`,
-  `evaluatePlacePackagedOptions`, the craft station options, wander and gather food, `classifyTier`,
-  `selectTaskFromTrace`, `handleChainInterruption`, `acceptClaims`, `putDownUnwantedArmful`,
-  `setDownUnplacedFurniture`.
-- Actions: `components/Action.h` (`ActionType`, the factories, the `ActionEffect` variant),
-  `systems/ActionSystem.cpp` and `systems/action/{NeedActions,HarvestActions,HaulActions,CraftActions,BuildActions}.cpp`
+  `kActionableNeeds` (six, Wash included), decay rates as literals in
+  `libs/sim/ecs/components/Needs.cpp`, thresholds in `assets/config/colonists/needs/needs.xml` read by
+  `NeedLevels`, mood weights in `assets/config/colonists/mood.xml` (`<NeedWeights>`, an average until
+  PR 506, WOR-1055, lands summed costs).
+- The human: the asset folder `assets/world/colonists/Colonist/` (`Colonist.xml` with the `Colonist`,
+  `Colonist_up` and the other facing definitions, `biped.motion.xml`, the SVGs), and its config in
+  `assets/config/colonists/` (`mood.xml`, `memory.xml`, `traits/`, `attributes/`, `needs/`). Code names
+  the definition `"Colonist"` in `GameScene.cpp` (the spawned `Appearance`), in `kinds.xml`
+  (`<Kind name="colonist" mover="Colonist"/>`), and in the facing variants.
+- Options: `AIDecisionSystem.cpp` (about 4,000 lines). The needs loop with its hunger special case
+  (about lines 2,560 to 2,956, with the gather-food option built inside it), `needToCapability`,
+  `getFirstActionDefName`, `taskFirstActionNeedsHands`, `findToiletLocation`
+  (`components/ToiletLocationFinder.cpp`, a 3 m grid out to 25 m, with no unit test),
+  `evaluateHaulOptions`, `evaluateCarryInOptions`, `evaluateHarvestOptions`, `evaluateBuildOptions`,
+  `evaluateDeconstructOptions`, `evaluatePlacePackagedOptions`, the craft station options, wander,
+  `classifyTier`, `isSameTask`, `selectTaskFromTrace`, `handleChainInterruption`, `acceptClaims`,
+  `putDownUnwantedArmful`, `setDownUnplacedFurniture`.
+- Actions: `components/Action.h` (`ActionType`, the factories with their durations, the `ActionEffect`
+  variant), `systems/ActionSystem.cpp` and `systems/action/{NeedActions,HarvestActions,HaulActions,CraftActions,BuildActions}.cpp`
   (the start routines, `headToDeposit`, `headTo`, `carryHarvestIn`, `makeRoomToEat`, the `apply*Effect`
-  functions).
+  functions). Every action but Sleep is non-interruptable; Sleep pays at its end.
 - Claims: `systems/ChainClaims.{h,cpp}` (`recordChainClaims` per chain shape), `ClaimIndex.{h,cpp}`,
   `Task.h` (claims, `SuspendedWork`, the per-type fields, `chainStep`, `deliveryChosen`).
 - Goals: `GoalTaskRegistry.{h,cpp}` (`GoalTask::type` is a `TaskType`), `StorageGoalSystem`,
   `CraftingGoalSystem`, `BuildGoalSystem`, `ConstructionSystem`, `ColonyGoalWork.cpp` for the panel.
+- Thought sources: `ThoughtTypes.cpp` resolves `actionStarts` and `actionFinishes` through
+  `actionTypeFromName`, and `ThoughtSourceSystem` holds an `ActionType`.
 - Config: `assets/config/actions/action-types.xml` (`ActionTypeRegistry`; only `needsHands` of a
-  task's first action is read, and Wash, Withdraw, PickupPackaged, and PlacePackaged have no entry),
+  task's first action is read; Withdraw, PickupPackaged, and PlacePackaged have no entry),
   `assets/config/work/task-chains.xml` (`TaskChainRegistry`, read by nothing but `ConfigValidator`),
   `assets/config/work/work-types.xml` (`WorkTypeRegistry`, same), `assets/config/work/priority-tuning.xml`
   (`<TaskTiers>` read; `<WorkCategoryOrder>` parsed and unused).
+- `TaskType` is used in 22 non-test files (`AIDecisionSystem.cpp` 117 references, `GlobalTaskAdapter`
+  40, `ColonyGoalWork` 26, `ChainClaims` 18, `ColonistDetailsModel` 15, the conditions 12,
+  `DecisionTrace` 11), and the condition vocabulary's `<TaskGroup name="work">` lists task type names.
+  `NeedType::` appears 484 times in 9 test files and 121 times in 21 other files.
 - Tests: `ChainClaims.test.cpp` (about 100 flow tests of claims, gathering, hunger, hands),
   `AIDecisionSystem.test.cpp`, `ActionSystem.test.cpp`, `BuildAction.test.cpp`, `ClaimIndex.test.cpp`,
   `GoalTaskRegistry.test.cpp`, `StoreOrDrop.test.cpp`, the goal-system suites, and the benches in
-  `AIDecision.bench.cpp`.
+  `AIDecision.bench.cpp`. The tests hold about 310 `== TaskType::X` asserts and 104 hand assignments of
+  `task.type`. `BM_WorkDecision` sets every need to 100, so no bench covers the needs path.
+- Scenarios: none covers sleep, relieving (and the bio pile), or the box-to-box pull. Scenario 19
+  names `colonists/needs/needs.xml` and its error text; scenario 21 expects Recreation and Temperature
+  dimmed under Comfort.
+
+## Rules for the move
+
+### Values carried over
+
+Every shipped entry reproduces the hand-written behavior and its values, as the spec's shipped tables
+give them: eating one unit a decision until hunger is above seek, carried food eaten at once, the
+strict free-before-held food rule, relief at 2, 4, and 5 s with the toilet finder's grid and weights
+and its ground fallback, Wash and Eat needing free hands, Sleep paying at its end with any bed taken
+before the ground, Craft fixed-duration and Craft, Build, and Deconstruct non-interruptable, no urgent
+rung and a decision at once only on critical, and wander pinned below gathering. Each behavior change
+in the spec's [Changes to behavior](./queries-and-chains.md#changes-to-behavior) is its own ticket after
+its path has moved, signed off by the owner, listing the test expectations it changes.
+
+### Seams
+
+During the move both paths run, on disjoint ground that phase 7 deletes:
+
+- Needs: a need is owned by the data path if and only if it has a `<satisfiedBy>`. `kActionableNeeds`
+  is the old loop's list. Each need's move adds the row and removes the need from the list in one
+  change, and the loader fails if a need is in both.
+- Idle: the human's `<idle>` rows against the old wander and gather-food builders.
+- Work: per goal type and source, by which `evaluate*Options` call remains against which `<work>`
+  entries exist.
+- Starts: `ActionSystem::startAction` sends `TaskType::Chain` to the one chain start path and every
+  other type to the old routines until they are deleted.
+- `TaskType::Chain` is the one task type every chain runs under until phase 7. Its consumers are
+  handled in the chains-in-the-decision ticket: `isOptionCurrentTask` (by the spec's identity rule),
+  `classifyTier`, `verdictKeyOf`, the trace names, the claim holder's task type, `current_task` and the
+  task groups (which list both task type names and chain ids while both exist, each path editing the
+  `work` group), the UI adapters, and the dev `what=colonists` JSON.
+- `NeedType` stays as the old loop's handle, resolved to a need id at load, until Eat deletes its last
+  case, so the tests change once.
+- No cargo handoff spans two runners: gather food moves with Eat, and the box-to-box pull moves after
+  the gathering.
+
+### Porting tests
+
+- Assertions on observable results stay textually unchanged: need values, inventory, claim lists,
+  positions, event counts, action names, durations.
+- `task.type == TaskType::X` becomes a helper per path (`isRunning(task, "human/wash_at_water")`), with
+  the mapping in the PR. Narrowing to the exact chain is allowed; weakening (to `isActive()`, say) is
+  not.
+- Setup goes through real selection, or through one `startChainAt(colonist, chain, step, target)`
+  helper. No test writes chain-state fields directly. A test that builds an `Action` by factory builds
+  it from the shipped entry instead and asserts the same values.
+- `scripts/test-assertions.mjs` compares the EXPECT and ASSERT count of every test between base and
+  head and fails on any drop. It runs on every path PR.
+- A port that needs an expectation changed stops the path and goes to the owner.
 
 ## Phases
 
 Ordered by risk, least first: the engine is proven on new, solo behavior before anything stable moves,
-needs move before work, and the claims-heavy work moves last.
+needs move before work, and the claims-heavy work moves last. Every phase's exit includes the full
+suite (all nine test executables) and the assertion-count script.
+
+### Phase 0: preparation
+
+On the old code, with no behavior change except the owner-approved mood rule: the spec fixes in the
+other documents, the scenarios and the relief-spot test that guard paths with none, the benches the
+needs path lacks, the assertion guard, summed mood costs, `GoalType`, and the human's asset folder and
+config moved to their homes.
+
+Scenarios: the three new ones (sleep, relieving, box-to-box pull), verified on `main`; 12, 18, 19, 21
+after the folder moves.
 
 ### Phase 1: the engine
 
-Built: the query system (candidates, facts, rows, `pick`, the evaluation rules, the definition cache
-and per-definition spatial index), the chain runner on `Task` (step index, resolved targets, count,
-start time; one start path for `do` steps through `ActionSystem`), action entries and the primitive
-effects (reshaping the `apply*Effect` functions to take values from an entry), the loaders for
-`assets/config/actions/`, `queries/`, `chains/`, and `creatures/`, with their load errors on the
-loading scene, and the named ladder (`<Tiers>` in `priority-tuning.xml`) replacing the bare tier
-numbers.
+The loaders for the behavior library, the shared folders, and the creature block, with their load
+errors on the loading scene; the named ladder; action entries as the one source of action values,
+with thought sources matched by entry id; facts and queries with the definition cache and the
+per-definition spatial index; the primitive effects; the chain runner on `Task`; chains in the
+decision.
 
-Proves: the 16 runner requirements, each on a synthetic chain in a new `Chains.test.cpp`, and query
-evaluation at 10,000 remembered items (the definition cache, the nearest-first walk, no allocation
-warm).
+Proves the 22 runner requirements on synthetic chains in `Chains.test.cpp`, and query evaluation at
+10,000 remembered items.
 
-Depends on: nothing.
+Scenarios: 18, and 19 with new steps for the new folders' errors.
 
-Exit criteria:
-- New tests for the runner requirements and the loaders' errors pass.
-- Every existing `sim-tests` and `assets-tests` test passes unchanged (nothing has moved yet).
-- Scenarios 18 (colonist thoughts) and 19 (load errors on screen) pass in game.
-- `BM_WorkDecision` and `BM_ClaimIndexRebuild` are within noise of `main` (they should not move).
+### Phase 2: needs as data
 
-Deleted at the end: `action-types.xml` and `ActionTypeRegistry`, with `taskFirstActionNeedsHands`
-reading the new action entries' `hands` (one hands source); `task-chains.xml`, `TaskChainRegistry`,
-and their `ConfigValidator` checks; the `<TaskTiers>` numbers and the bare tier constants
-(`kTierIdle` and the rest) in favour of the named rungs.
+The human's needs load from behaviors with their levels and drains (no change of shape); then enjoy
+nature (WOR-1054, paused until this phase), the engine's first need end to end and the first
+`<satisfiedBy>`; then `NeedsComponent` as the creature's own list, and every system that iterates
+needs over it.
 
-The game can now: load and validate actions, queries, and chains from data, and show their errors.
-
-### Phase 2: needs as data, and enjoy nature
-
-Built: need entries in `assets/config/needs/` (levels, `<drains>`, `<setBy>`, `moodCost`,
-`<satisfiedBy>`), the colonist creature kind, `NeedsComponent` as the creature's own list of need ids
-and values, need ids interned at load, the condition vocabulary's `need` set and the thought triggers
-filled from the loaded needs, mood reading each need's `moodCost` with the sum rule. Then the first
-user, Recreation through `enjoy_nature` (WOR-1054, enjoy nature, paused until this phase): the
-`pleasant_spot` query, a go step, and the interruptable `EnjoyNature` action that pays along.
-
-The old need code keeps running for the six acted-on needs in this phase, addressing them by the id the
-loader gave each name, not by `NeedType`; that is a mechanical swap of the index, not a second path.
-
-Proves: needs as data with no change in behavior for the existing needs, and the engine running a
-need end to end: decided at the need's tier, interrupted by a higher one, keeping what it earned.
-
-Depends on: phase 1.
-
-Exit criteria:
-- Every existing test passes unchanged, the need tests included (`FullNeedFulfillmentCycle`,
-  `NeedRestoredOnCompletion`, `DrinkFillsBladder`, the thought trigger tests in `ThoughtSourceSystem.test.cpp`,
-  `MoodSystem.test.cpp`). Mood's move from weights to summed costs (needs.md) is its own change with
-  its own tests, landed before this phase or as its first commit, so no test here changes what it
-  expects.
-- New tests: a colonist below Recreation's seek level goes to a spot and gains Recreation; a hungry
-  colonist pulls it away and it keeps what it gained; a mod file adding a need loads and costs mood.
-- Scenarios 12 (colonists eat), 18, 21 (colonists wash) pass; a new scenario for enjoying nature is
-  added to `docs/testing/scenarios/` and passes.
-
-Deleted at the end: `NeedType`, `kNeedLabels`, `needLabel`, the fixed array, the decay literals in
-`Needs.cpp`, `assets/config/colonists/needs/needs.xml` and `NeedLevels`' fixed-list check,
-`<NeedWeights>` in `mood.xml`.
-
-The game can now: show colonists enjoying nature when bored, and take a new need from a mod file.
+Scenarios: 12, 18, 19 updated, 21 updated (Recreation no longer dimmed), and a new enjoy-nature
+scenario.
 
 ### Phase 3: the existing needs, one at a time
 
-Each need moves in its own change: its chain and queries, its action entry, its option at the need's
-tier through `<satisfiedBy>`, and in the same change its case is deleted from the needs loop,
-`needToCapability`, `getFirstActionDefName`, `startNeedAction`, and the `Action` factories.
+Wash, Drink, relieving, Sleep, then Eat with gather food. Each moves its chain, queries, action, and
+`<satisfiedBy>`, and deletes its cases from the needs loop, `needToCapability`,
+`getFirstActionDefName`, `startNeedAction`, and the factories, in one change. The food services are
+first extracted from the old hunger code as a refactor, so the Eat change is smaller.
 
-1. Wash. The newest and simplest: a shore query, a 3 s action, no claims, no item. It is the template
-   the others copy. Tests, from PR 502: `GrubbyColonistWithNoKnownWaterDoesNothingAboutIt`,
-   `GrubbyColonistWalksToKnownWaterAndWashes`, `ThirstyAndGrubbyColonistDrinksThenWashes`,
-   `EquallyLowThirstAndHygieneAtOneShoreTieBreakToThirst`,
-   `CriticalHygieneOnTheWayToDrinkWashesFirstAtTheSameShore`. Scenario 21.
-2. Drink. The same water query, the Bladder side effect, many colonists at one point. Tests:
-   `ThreeThirstyColonistsAllDrinkAtOneShorePoint`, `StartsDrinkActionOnArrival`, `DrinkFillsBladder`,
-   `HungerClaimsTheBushItWalksToAndThirstClaimsNothing`.
-3. Toilet. The relief query with `on_shore`, `near_waste`, and `near_food` replacing
-   `findToiletLocation`; the latrine kind; the two `when` rows and `serves(need)`; the bio pile spawn.
-   Tests: the `ToiletActionCreation_*` tests (ported to the entry, same assertions),
-   `StartsToiletActionOnArrival`, `ToiletFullyRelievesBladder`, `PoopingSpawnsBioPile`,
-   `PeeingDoesNotSpawnBioPile`. Report the Toilet duration change (poop alone 4 s to 3 s) to the owner
-   before merging.
-4. Sleep. The bed-or-ground query, `sleep_quality`, interruptable, paying along its curve. Depends on
-   the sleep curve of WOR-822 (Interruptable crafts: saved progress, what interrupts, and the
-   crafter's hold on the station) if that has not landed; the curve is built here if it has not.
-   Tests: `StartsSleepActionOnArrival`, `SleepRestorationAffectedByQuality`,
-   `WokenSleeperCarriesOutTheNewTask`, and the sleep release of suspended records
-   (`AWokenSleeperWhoseGoodsWereFetchedByAnotherDropsHisRecord`, which still uses old work code).
-5. Eat. Last, because food choice and food claims are the most involved: one query over bushes,
-   piles, and boxes with the nearest-of route request across kinds, the `Take` action group, the
-   `meal` amount, `makeRoomToEat` before a take, the eater-urgency line between taken and held,
-   `SourceReachMemo::FoodWait`, and provisions. Tests: every hunger test in `ChainClaims.test.cpp`
-   (from `OnlyAnotherEaterHoldsAHungryColonistsFood` through `AHaulerArrivingAfterAHungryColonistAteEndsItsHaul`),
-   `FoodSkipsEveryUnreachableNearerSource`, `AGonePileIsForgottenAndOtherFoodFound`,
-   `EatWhoseFoodVanishedFinishesNothing`, `EatStartsOnArrivalAndFinishesOnceFed`,
-   `HungerHarvestsTheSourceTheDecisionNamed`, `FindsANeedSourceInALargeMemory`. Scenario 12.
+Scenarios: 21 (Wash, Drink), the sleep and relieving scenarios, 12 (Eat and gathering food).
 
-Proves: the engine carries every need the colonists have, food claims included.
+### Phase 4: idle and orders
 
-Depends on: phase 2; Sleep on the sleep curve.
+Wander and the idle put-down; orders with a dev verb. Direct control stays engine.
 
-Exit criteria: for each need, its listed tests pass with their assertions unchanged (a test that
-constructs an `Action` by factory is ported to build it from the shipped entry, asserting the same
-values); the full `sim-tests` suite passes; scenarios 12 and 21 pass; the AI update's cost against
-`main` is checked as below after Eat.
-
-Deleted at the end (Eat being the last): the needs loop, `needToCapability`, `getFirstActionDefName`
-for needs, `startNeedAction`, `kActionableNeeds`, `Task::needToFulfill` and the `need*` fields,
-`NeedEffect` and `ConsumptionEffect` in favour of the primitives, `findToiletLocation`.
-
-The game can now: run every need from data, so a mod changes how colonists eat, drink, sleep, wash, or
-relieve themselves without code.
-
-### Phase 4: idle behavior and player orders
-
-Built: `wander` and `gather_food` as idle chains on the colonist kind (`place="around"`, the
-`carried_food` term), the put-down of an unwanted armful as the idle rung's hands service, and
-`<order>` entries at the player-order rung with a dev verb that issues one, so orders are testable
-before the command-mode UI exists.
-
-Proves: chains with a `pick="weighted"` query and no claims run at the idle rung, and a chain can be
-given its target from outside.
-
-Depends on: phase 3 (gather food shares the food query's sources and the bush Use claim).
-
-Exit criteria: `StoppedWanderRepicksFreshTarget`, `WanderingColonistDoesNotRepickAFailedRoute`,
-`GatheringFoodNeedsRoomForTheYield`, `AColonistGatheringKeepsItsBushWithAStoredBoxNearer`,
-`AnArmfulNobodyWantsIsPutDownToGatherFood`, `TurningHungryOnTheWayToGatherEatsTheNearerFood` pass
-unchanged; new tests for an order's chain and its tier; scenario 13 (colonists walk round obstacles)
-passes.
-
-Deleted at the end: the wander and gather-food options, the gather-food sentinel in `classifyTier`,
-`TaskType::Wander`'s handling.
-
-The game can now: issue a player order through the dev tools, and run idle behavior from data.
+Scenarios: 13, with a wander step.
 
 ### Phase 5: colony work, one path at a time
 
-Each path moves in its own change, with its claims named on steps and its option from a work entry; the
-evaluator and start routine it replaces, its chain shape in `recordChainClaims`, and its per-type
-`Task` fields go in the same change. Order, simplest first:
+Place packaged, deconstruct, build, the site clear, the gathering (cut, pile haul, carry-in together),
+the box-to-box pull, then the craft. The work services are first extracted from the old builders as a
+refactor.
 
-1. Place packaged. One Use claim, two legs, a packaged item and its set-down rule, no amounts. Tests:
-   `PlacingAPackagedItemUsesItUntilPickedUp`, `FurnitureWhosePlacementIsCancelledIsSetDownPackaged`,
-   `FurnitureSetDownOnASiteGoesToGroundOffIt`, `ReselectingAPlacementWhileCarryingGoesStraightToTheSpot`,
-   `CarryingOnePackagedItemDoesNotMakeAnotherOneDelivering`, the `PlacePackaged*` and `PickupPackaged*`
-   tests in `ActionSystem.test.cpp`. Deletes `chainStep`'s PlacePackaged use and
-   `evaluatePlacePackagedOptions`.
-2. Deconstruct. No claim, an open-ended work action counting down. Tests: the deconstruct tests in
-   `BuildAction.test.cpp`. Deletes `evaluateDeconstructOptions`.
-3. Build. Numbered slot claims on builder spots, the stand point service, the demolish stop. Tests:
-   `EachBuilderOfAFoundationHoldsItsOwnSpot`, `ABuilderDecidingAgainKeepsItsSpot`,
-   `ANeedReplacingABuildFreesItsSpotForAnother`, `AWallsBuildTakesNoSpotAndNoClaim`,
-   `AStoredSpotTheGoalNoLongerHasIsAFreshPick`, `ABuilderIsNotOfferedASiteOrderedDemolished`,
-   `AnIdleColonistIsOfferedOnlyTheSiteNotOrderedDemolished`, every test in `BuildAction.test.cpp`,
-   `ASwitchToBuildFreesTheHands`. Scenarios 03, 04, 15. Deletes `evaluateBuildOptions`,
-   `startBuildAction`, `Task::builderSlot` and `buildBlueprintEntityId`.
-4. Box-to-box pull. Source quantity, inbound room, in-flight, the two-hand delivery guard, and the
-   suspended record, with no gathering. Its record is adopted by the carry-in, still old code until
-   step 5; the record is the kept `SuspendedWork`, so the two meet on the engine's structure, not on
-   either runner. Tests: the `Pull*` and `TwoHandPull*` tests in `AIDecisionSystem.test.cpp`,
-   `BoxToBoxPullClaimsTheSourceBox`, `WithdrawPullsFromSourceBoxThenDepositsIntoDestBox`,
-   `WithdrawTwoHandWoodRidesInHandsThenDepositsIntoDestBox`, `NoPullBetweenSamePriorityBoxes`,
-   `NoPullFromHigherPriorityBox`. Scenario 02.
-5. The gathering: the cut for a goal, the site clear, the pile haul, and the carry-in, together,
-   because a gathering hands its cargo from task to task under one instance id and that handoff must
-   not span two runners. Tests: every gathering, haul, carry-in, provisions, suspended-record, and
-   failed-route test in `ChainClaims.test.cpp`, the haul and harvest tests in `ActionSystem.test.cpp`
-   (`HarvestBecomesItsDepositLegAndDeliversTheYield`, `PickupFromAGoneSourceEndsTheHaul`,
-   `LooseFetchPicksUpWhenSourceOverlapsStation`, `CarryingAtSourceRedirectsToDepositInsteadOfDeadlock`
-   and the rest), `HaulWhoseDepositIsNotConnectedIsNotPicked`, `OverweightColonistOffersNoHarvest`,
-   `InterruptedTwoHandArmfulDropsOnceWithWholeQuantity`, `WorkGatesComeBeforeTheSources`,
-   `HaulGoalsOfferEachPileOnce`, `HarvestGoalSeesEveryDefThatYieldsItsItem`. Scenarios 02, 11, 03.
-   Deletes `evaluateHarvestOptions`, `evaluateHaulOptions`, `evaluateCarryInOptions`,
-   `headToDeposit`, `carryHarvestIn`, `startHarvestAction`, `startHaulAction`, `chainStep`, and the
-   haul and harvest fields on `Task`.
-6. Craft with its carry-ins. The station slot, the metered deposit, the own-unfinished-work rung, the
-   open-ended Craft action. The carry-ins already run as chains from step 5. Depends on WOR-822 having
-   moved craft progress onto the job, since the action entry is open-ended work on the job. Tests:
-   `AStationsSlotIsHeldByTheCrafterThatSelectedIt`, `MultiUnitCraftWithFetchedAndHarvestedInputsCompletes`,
-   `CraftFetchCountsTowardTheCraftRoot`, `TheLastUnitOfAnIngredientIsFetchedOnce`,
-   `CraftDepositMetersToRecipeNeedAndKeepsSurplus`, the `Craft*` tests in `ActionSystem.test.cpp`,
-   `CraftingGoalSystem.test.cpp`. Scenario 01. Deletes the craft station options, `startCraftAction`,
-   `CraftingEffect`, `Task::craftRecipeDefName` and `targetStationId`, and `recordChainClaims`.
-
-Proves: the claims, supply, hands, and legs services carry every work shape the colony has, with the
-validator watching every update.
-
-Depends on: phase 4 (the idle put-down runs before any idle chain), and WOR-822 for the craft.
-
-Exit criteria, per path: its listed tests pass with their assertions unchanged; `ClaimIndex.test.cpp`
-and the validator pass on every AI update in the suite; its scenarios pass in game; after steps 3, 5,
-and 6, the decision's cost is checked as below. At the end of the phase the colony work requirements
-in the spec (1 to 31) each have their tests passing.
-
-Deleted at the end: the work option builders, the start routines, `recordChainClaims`, `chainStep`,
-`deliveryChosen` as a `Task` field (it becomes chain state), the per-type `Task` fields, and the work
-rules in `classifyTier`; `work-types.xml` and `WorkTypeRegistry`, with the categories in
-`assets/config/work/`.
-
-The game can now: run all colony work from data, so a mod adds a kind of work with entries, and
-`GoalKind` care exists for needs others meet.
+Scenarios: 02 step 10 and 03 (place packaged), 03 step 10 (deconstruct), 03, 04, 15 (build), 02
+(gathering), the pull scenario, 01 (craft).
 
 ### Phase 6: low-mood behaviors
 
-Built: behaviors as entries with a target query and an effect chain, the behavior rung below critical
-needs, `pick="weighted"` targets with `mood_source`, `count_of(query)` and `per` on weight rows, and the
-log-only one-step chains for behaviors whose systems do not exist. This is WOR-951 (behavior definitions
-as data) under WOR-919 (Colonist mood: low-mood behaviors, refusal, and colony failure).
+WOR-951 (behavior definitions as data) under WOR-919 (Colonist mood: low-mood behaviors, refusal, and
+colony failure): behaviors with `<lowMood>` entries, the `low_mood` rung, weighted targets, `count_of`
+and `per`, `mood_source`, and the log-only chains.
 
-Proves: the engine runs behaviors that were designed for it, on top of a colony whose every other
-action already runs on it.
-
-Depends on: phase 5, so a behavior never interrupts a hand-written chain whose interruption rules
-differ from the runner's.
-
-Exit criteria: the behavior tests WOR-951 defines; every suite passes; scenario 18 passes.
-
-Deleted at the end: nothing old; the behavior code is new.
-
-The game can now: show low-mood episodes acted out in the world.
+Scenarios: 18.
 
 ### Phase 7: retire what is left
 
-Deleted: `TaskType` and `assets::kTaskTypeNames` (the condition vocabulary's `task` set filled from
-chain ids and task groups listing chain ids), `ActionType` and `kActionTypeNames`, the `ActionEffect`
-variant and the factories, `GoalTask::type` as a `TaskType` (replaced by `GoalKind`), `ClaimHolder`'s
-task type, `EvaluatedOption::taskType` and `needType` (the trace names entries), whatever of
-`classifyTier` is left, and `ConfigValidator`'s remaining work checks. Docs brought to the code:
-`config-loading.md`, `main-loop-timing.md`, `task-claims.md`'s function names, `colonist-task-arbitration.md`'s
-ladder, and the development log entry.
+Delete the closed lists and bring the docs to the code.
 
-Proves: one path; nothing names a behavior in C++.
+Scenarios: 01, 02, 03, 04, 12, 13, 15, 18, 19, 21, enjoy nature, sleep, relieving, and the pull.
 
-Depends on: phases 1 to 6.
+## Tickets
 
-Exit criteria: the full suite (all nine test executables) passes; scenarios 01, 02, 03, 04, 11, 12, 13,
-15, 18, 19, 21 and the enjoy-nature scenario pass; the perf check below.
+41 tickets. "Suite" means all nine test executables and the assertion-count script pass.
 
-The game can now: do nothing new; the code can no longer drift back to hand-written behaviors.
+### Phase 0
+
+1. Spec and plan fixes in the other documents.
+   - Built: `interruptable-crafts.md`'s ladder with the `low_mood` rung and the bumping rule by rung
+     name; `INDEX.md`'s ladder text; `ai-behavior.md`'s rung table and its "only critical needs
+     preempt" sentence; `mood.md` (needs from the creature's behaviors and tasks from chain ids,
+     low-mood behaviors as `<lowMood>` entries in behaviors, the do-step rule for modders, leaving the
+     colony as `<leave_colony/>`, the "Leaving the colony" list without bold lead-ins, colonists as
+     humans with membership); `thoughts.md` (the bubble peak at 3.5, the colony-wide amount decaying
+     by half-life); `needs.md` (Recreation drains steadily and only enjoying nature restores it; the
+     Temperature status line out); `player-control.md` (no direct control or orders during an
+     episode).
+   - Must pass: review.
+2. Scenarios for sleep, relieving self, and the box-to-box pull; a relief-spot rule test.
+   - Built: three scenarios verified on `main`; a `findToiletLocation` test pinning 1.5 m off water,
+     toward waste, away from food, and the ground fallback.
+   - Must pass: the scenarios, sim-tests.
+3. Need, idle, and vision benches.
+   - Built: `BM_NeedDecision` (hungry and thirsty colonists, 10,000 edible memories, 1 and 8
+     colonists), `BM_IdleDecision` (wandering colonists deciding every frame), a vision remember and
+     forget bench, a visit count in `FindsANeedSourceInALargeMemory`.
+   - Must pass: the benches; baselines recorded only with both machine checks `idle`.
+4. Test assertion guard.
+   - Built: `scripts/test-assertions.mjs`.
+5. Mood as summed need costs (WOR-1055, PR 506).
+   - Built: the sum rule per `needs.md`. Deleted: the averaging.
+   - Must pass: `MoodSystem` tests with their owner-approved expectation changes, scenario 18.
+6. `GoalType` on goals.
+   - Built: `GoalTask::type` becomes `GoalType`, mechanically, with `clear` its own type.
+   - Deleted: `TaskType` on goals.
+   - Must pass: suite. Not in parallel with ticket 8 (both touch `AIDecisionSystem.cpp`).
+7. The human's asset folder.
+   - Built: `assets/world/colonists/Colonist/` moved to `assets/world/creatures/Human/` with
+     `Human.xml` and the definitions renamed `Human`, `Human_up`, and the rest; `GameScene.cpp`'s
+     `Appearance`, `kinds.xml`'s mover, and every other use renamed.
+   - Deleted: the old folder; the staged copy beside the exe pruned.
+   - Must pass: suite, scenarios 12, 13, 18.
+8. The human's config into its folder.
+   - Built: `mood.xml`, `memory.xml`, `traits.xml`, and `attributes.xml` read from
+     `assets/world/creatures/Human/`, by root element; `WorkConfig.cpp`, `ColonistRules`, and the
+     loaders' comments pointed there.
+   - Deleted: `assets/config/colonists/` except `needs/`, which ticket 16 deletes.
+   - Must pass: suite, scenarios 18, 19.
+   - Depends on: 7.
+
+### Phase 1
+
+9. Entry loaders.
+   - Built: the `assets/config/behaviors/` loader (one behavior a file, ids from paths, short ids
+     inside a folder, duplicate full ids an error), the `actions`, `work`, `orders`, `facts`, and
+     `arbitration` loaders, and the creature loader (the `<creature>` block on the primary asset
+     definition, the folder's `<creature>` and `<behavior>` files, includes, overrides, settling rows,
+     `<moodCost>` rows); the reserved `script` attribute; errors naming file, entry, element, and
+     attribute on the loading scene. `priority-tuning.xml` moves to `arbitration/`.
+   - Deleted: `task-chains.xml`, `TaskChainRegistry`, their `ConfigValidator` checks.
+   - Must pass: assets-tests loader errors, scenario 19 with new steps.
+   - Depends on: 1, 8.
+10. Named ladder.
+    - Built: `<ladder>`; `classifyTier` maps to rungs by name (the existing five only).
+    - Deleted: `<TaskTiers>`, `kTier*`, `readBaseTiers`.
+    - Must pass: suite unchanged.
+    - Depends on: 6.
+11. Action entries are the one source of action values.
+    - Built: every shipped action as an entry with the factories' values; the factories read
+      duration, interruptability, hands, and amounts from the entries; thought sources matched by
+      action entry id.
+    - Deleted: `action-types.xml`, `ActionTypeRegistry`.
+    - Must pass: suite unchanged, scenarios 18 and 21.
+    - Depends on: 9. Parallel with 10.
+12. Facts and queries.
+    - Built: the fact registry with scopes, ranges, and tuning from `facts/`; the definition cache; the
+      per-definition spatial index in `Memory`; the nearest-first walk with horizons; rows including
+      `prefer`; `pick`; `place="around"` and `place="grid"`; the claims pass-over; Reserved rows; the
+      wait when everything is passed over.
+    - Must pass: new `Queries.test.cpp` (10,000 memories, no allocation warm, determinism), the vision
+      bench within noise.
+    - Depends on: 9. Parallel with 10 and 11.
+13. Primitive effects.
+    - Built: the `apply*Effect` functions take values from entry effect rows; `pays` and `curve`;
+      `upTo`; the `<craft>` completion service; the construction guards.
+    - Must pass: effect unit tests, suite unchanged.
+    - Depends on: 11.
+14. Chain runner.
+    - Built: `TaskType::Chain`; chain fields on `Task` with their `clear()` rules; the one `do` start
+      path; `go` through `headTo`; step end events; `have`; `run`, `think`, `need`, `drop`, and
+      `leave_colony` steps.
+    - Must pass: `Chains.test.cpp`, the 22 runner requirements on synthetic chains.
+    - Depends on: 12, 13.
+15. Chains in the decision.
+    - Built: chain options; identity in `isOptionCurrentTask`; claims on steps sized at selection; trace
+      rows naming entries; every `TaskType::Chain` consumer listed under Seams.
+    - Must pass: `Chains.test.cpp` decision cases, the validator on, `BM_WorkDecision` and
+      `BM_ClaimIndexRebuild` within noise.
+    - Depends on: 14, 10.
+
+### Phase 2
+
+16. Need entries load.
+    - Built: the human behaviors' `<need>` entries without `<satisfiedBy>`; the human's includes;
+      levels and drains read from entries; `<moodCost>` rows replacing PR 506's cost block; the fixed
+      array kept.
+    - Deleted: `needs.xml`, `NeedLevels`' fixed list, the decay literals, `<NeedWeights>` or its PR 506
+      successor.
+    - Must pass: suite unchanged, scenario 19 rewritten.
+    - Depends on: 5, 9.
+17. Enjoy nature (WOR-1054).
+    - Built: `human/enjoying_nature` with its `<satisfiedBy>`, query, and action; need options from
+      `<satisfiedBy>` for needs outside `kActionableNeeds`; the both-owners load check; the needs tab
+      grouping by `<satisfiedBy>`.
+    - Must pass: new tests (a bored colonist goes and gains; hunger pulls it away and it keeps the
+      gain), scenario 21 updated, the new enjoy-nature scenario.
+    - Depends on: 15, 16.
+18. Needs as the creature's list.
+    - Built: `NeedsComponent` as a list of capacity 16 with ids; mood, thoughts, conditions, the UI,
+      the dev handler, and the developer-client dropdown over the creature's needs; masks per slot;
+      `roundWidening` per query; `NeedType` kept as the old loop's handle.
+    - Deleted: `kNeedLabels`, `needLabel`, the fixed array.
+    - Must pass: a test of a mod file adding a need to humans, suite unchanged.
+    - Depends on: 16. After 17 (both touch the needs loop).
+
+### Phase 3
+
+19. Wash.
+    - Built: `human/washing`'s chain and action, its `<satisfiedBy>`.
+    - Deleted: the Hygiene cases, `Action::Wash`.
+    - Must pass: `GrubbyColonistWithNoKnownWaterDoesNothingAboutIt`,
+      `GrubbyColonistWalksToKnownWaterAndWashes`, `ThirstyAndGrubbyColonistDrinksThenWashes`,
+      `EquallyLowThirstAndHygieneAtOneShoreTieBreakToThirst`,
+      `CriticalHygieneOnTheWayToDrinkWashesFirstAtTheSameShore`; scenario 21.
+    - Depends on: 18.
+20. Drink.
+    - Built: `common/drinking_at_water`, with the Bladder effect.
+    - Deleted: the Thirst cases, `Action::Drink`.
+    - Must pass: `ThreeThirstyColonistsAllDrinkAtOneShorePoint`, `StartsDrinkActionOnArrival`,
+      `DrinkFillsBladder`, `HungerClaimsTheBushItWalksToAndThirstClaimsNothing`.
+    - Depends on: 19.
+21. Relieving.
+    - Built: `human/relieving` with the relief query's facts, `seeking(need)`, the three actions, and
+      `spawn`.
+    - Deleted: the Bladder and Digestion cases, `Action::Toilet`, `findToiletLocation`.
+    - Must pass: the `ToiletActionCreation_*` tests ported to the entries, `StartsToiletActionOnArrival`,
+      `ToiletFullyRelievesBladder`, `PoopingSpawnsBioPile`, `PeeingDoesNotSpawnBioPile`,
+      `BladderNeedUsesGroundFallback`, `UnreachableBedAndToiletFallBackToGround`, the relief-spot
+      test, the relieving scenario.
+    - Depends on: 20, 2.
+22. Sleep (pays at its end).
+    - Built: `human/sleeping`, `sleep_quality`, the `asleep` property, `ClaimIndex` reading it.
+    - Deleted: the Energy cases, `Action::Sleep`, `ClaimIndex`'s Energy check.
+    - Must pass: `StartsSleepActionOnArrival`, `SleepRestorationAffectedByQuality`,
+      `WokenSleeperCarriesOutTheNewTask`, `EnergyNeedUsesGroundFallback`,
+      `AWokenSleeperWhoseGoodsWereFetchedByAnotherDropsHisRecord`, the sleep scenario.
+    - Depends on: 21.
+23. Food services extracted (refactor).
+    - Built: the meal amount, the free-before-held line, the nearest-of request among survivors, and
+      `makeRoomToEat` as services the old hunger code calls.
+    - Must pass: suite unchanged, `BM_NeedDecision` within noise.
+    - Depends on: 18. Parallel with 19 to 22 while it stays out of their switch cases.
+24. Eat and gather food.
+    - Built: the `take` group, `human/eating` (`eat_from_pack`, `fetch_food`, `food_to_eat`,
+      `gather_food` as an idle row), the meal resized at each decision.
+    - Deleted: the needs loop, `needToCapability`, `getFirstActionDefName` for needs,
+      `startNeedAction`, `kActionableNeeds`, `NeedType`, `Task::need*`, `NeedEffect` and
+      `ConsumptionEffect`, the gather option and its sentinel in `classifyTier`.
+    - Must pass: every hunger test in `ChainClaims.test.cpp`, `FoodSkipsEveryUnreachableNearerSource`,
+      `AGonePileIsForgottenAndOtherFoodFound`, `EatWhoseFoodVanishedFinishesNothing`,
+      `EatStartsOnArrivalAndFinishesOnceFed`, `HungerHarvestsTheSourceTheDecisionNamed`,
+      `AMealGrowsWhenHungerTurnsCriticalOnTheWay`, the food-box and food-wait tests,
+      `FindsANeedSourceInALargeMemory`, `GatheringFoodNeedsRoomForTheYield`,
+      `AColonistGatheringKeepsItsBushWithAStoredBoxNearer`, `TurningHungryOnTheWayToGatherEatsTheNearerFood`,
+      `GatherFoodRanksAboveWanderInIdleTier`; scenario 12; the need bench.
+    - Depends on: 22, 23.
+25. Urgent-need rung (behavior change, owner sign-off).
+    - Built: the `urgent_need` rung and the decision at once on urgent.
+    - Must pass: the listed expectation changes.
+    - Depends on: 24.
+26. Sleep curve (behavior change, owner sign-off).
+    - Built: `pays="along" curve="2"` on `human/sleep`.
+    - Must pass: a new test, the listed expectation changes.
+    - Depends on: 22.
+
+### Phase 4
+
+27. Wander and the idle put-down.
+    - Built: `common/wandering` (the ring, the disc fit, every-frame decisions while walking, the hold
+      with no option, no wander without a mesh, idle rows ranked in order); `putDownUnwantedArmful` as
+      the idle hands rule.
+    - Deleted: the wander option, `generateWanderTarget`, `TaskType::Wander`.
+    - Must pass: `StoppedWanderRepicksFreshTarget`, `WanderingColonistDoesNotRepickAFailedRoute`,
+      `WanderSequenceFollowsSeed`, `WanderPointsFitHisDisc`, `WanderTargetWithinRadius`,
+      `WanderYieldsImmediatelyToActionableNeed`, `IdleHoldTakesLiveWanderOnceMeshLands`,
+      `AnArmfulNobodyWantsIsPutDown`, `AnArmfulNobodyWantsIsPutDownToGatherFood`; scenario 13;
+      `BM_IdleDecision`.
+    - Depends on: 24.
+28. Orders.
+    - Built: `<order>` entries and a dev verb that issues one. Direct control stays as it is.
+    - Must pass: new tests for an order's chain and rung.
+    - Depends on: 15. Parallel with phase 3.
+
+### Phase 5
+
+29. Place packaged.
+    - Built: the work entry, `install`, the set-down hands rule, `have` met by a packaged thing at its
+      target.
+    - Deleted: `evaluatePlacePackagedOptions`, `startPlacePackagedAction`, `setDownUnplacedFurniture`,
+      PlacePackaged's `chainStep`, the `place*` fields.
+    - Must pass: `PlacingAPackagedItemUsesItUntilPickedUp`,
+      `FurnitureWhosePlacementIsCancelledIsSetDownPackaged`, `FurnitureSetDownOnASiteGoesToGroundOffIt`,
+      `ReselectingAPlacementWhileCarryingGoesStraightToTheSpot`,
+      `CarryingOnePackagedItemDoesNotMakeAnotherOneDelivering`, `PlacePackagedWithoutPickupKeepsHeldTool`,
+      `PickupPackagedOfABoxAlreadyCarriedTakesNothing`, the `PlacePackaged*` and `PickupPackaged*` tests;
+      scenarios 02 step 10 and 03.
+    - Depends on: 27.
+30. Deconstruct.
+    - Built: `<work>` going down, with the guards.
+    - Deleted: `evaluateDeconstructOptions`, Deconstruct in `startBuildAction`.
+    - Must pass: the deconstruct tests in `BuildAction.test.cpp`, scenario 03 step 10.
+    - Depends on: 29.
+31. Build.
+    - Built: the builder-spot query, slot claims, stand points, the demolish stop.
+    - Deleted: `evaluateBuildOptions`, `startBuildAction`, `builderSlot`, `buildBlueprintEntityId`.
+    - Must pass: `EachBuilderOfAFoundationHoldsItsOwnSpot`, `ABuilderDecidingAgainKeepsItsSpot`,
+      `ANeedReplacingABuildFreesItsSpotForAnother`, `AWallsBuildTakesNoSpotAndNoClaim`,
+      `AStoredSpotTheGoalNoLongerHasIsAFreshPick`, `ABuilderIsNotOfferedASiteOrderedDemolished`,
+      `AnIdleColonistIsOfferedOnlyTheSiteNotOrderedDemolished`, every test in `BuildAction.test.cpp`,
+      `ASwitchToBuildFreesTheHands`; scenarios 03, 04, 15; the bench.
+    - Depends on: 30.
+32. Work services extracted (refactor).
+    - Built: the `for_goal` and `carried` amounts, the gathering rank, and the destination reach test,
+      as services the old builders call.
+    - Must pass: suite unchanged, the bench.
+    - Depends on: 27. Parallel with 29 to 31, in different regions of one file.
+33. Work categories.
+    - Built: `<category>` entries.
+    - Deleted: `work-types.xml`, `WorkTypeRegistry`, `<WorkCategoryOrder>`.
+    - Must pass: assets-tests.
+    - Depends on: 9. Parallel with anything after it.
+34. Site clear.
+    - Built: `clear_site`.
+    - Deleted: the clear branch in the harvest builder.
+    - Must pass: `ABuildSiteClearIsNeverTheNextLegOfAGathering`, the `ClearHarvestTest` and `FootprintClearingTest` tests,
+      scenario 03.
+    - Depends on: 31, 32.
+35. The gathering: cut, pile haul, and carry-in.
+    - Built: the entries with `gathers`, the cargo handoff between tasks, the decision at once after a
+      landed cut or a gathering pickup.
+    - Deleted: `evaluateHarvestOptions`, the pile part of `evaluateHaulOptions`,
+      `evaluateCarryInOptions`, `headToDeposit`, `carryHarvestIn`, `startHarvestAction`, the pile part
+      of `startHaulAction`, `chainStep`, the haul and harvest fields.
+    - Must pass: every gathering, haul, carry-in, provisions, suspended-record, and failed-route test
+      in `ChainClaims.test.cpp`, the haul and harvest tests in `ActionSystem.test.cpp`,
+      `HaulWhoseDepositIsNotConnectedIsNotPicked`, `OverweightColonistOffersNoHarvest`,
+      `InterruptedTwoHandArmfulDropsOnceWithWholeQuantity`, `WorkGatesComeBeforeTheSources`,
+      `HaulGoalsOfferEachPileOnce`, `HarvestGoalSeesEveryDefThatYieldsItsItem`; scenario 02; the bench.
+    - Depends on: 34.
+36. Box-to-box pull.
+    - Built: `pull_from_box`, `below_destination`.
+    - Deleted: the rest of the haul builder and start.
+    - Must pass: the `Pull*` and `TwoHandPull*` tests, `BoxToBoxPullClaimsTheSourceBox`,
+      `WithdrawPullsFromSourceBoxThenDepositsIntoDestBox`,
+      `WithdrawTwoHandWoodRidesInHandsThenDepositsIntoDestBox`, `NoPullBetweenSamePriorityBoxes`,
+      `NoPullFromHigherPriorityBox`; the pull scenario.
+    - Depends on: 35.
+37. Craft, then interruptable crafts.
+    - Built: the craft entry as a fixed-duration `craft` with the `<craft>` effect and the slot; then,
+      as a second change signed off by the owner, the AI and action half of WOR-822 (Interruptable
+      crafts: saved progress, what interrupts, and the crafter's hold on the station): progress on the
+      job as `<work>`, interruptable craft, build, and deconstruct, and the `own_unfinished_work` rung.
+    - Deleted: the craft options, `startCraftAction`, `CraftingEffect`, the craft fields,
+      `recordChainClaims`.
+    - Must pass: `AStationsSlotIsHeldByTheCrafterThatSelectedIt`,
+      `MultiUnitCraftWithFetchedAndHarvestedInputsCompletes`, `CraftFetchCountsTowardTheCraftRoot`,
+      `TheLastUnitOfAnIngredientIsFetchedOnce`, `CraftDepositMetersToRecipeNeedAndKeepsSurplus`, the
+      `Craft*` tests, `CraftingGoalSystem.test.cpp`; scenario 01.
+    - Depends on: 36. WOR-822 on the board is re-scoped to what is not AI: the job's storage, the
+      hold's UI, the bench's look.
+
+### Phase 6
+
+38. Low-mood behaviors.
+    - Built: `<lowMood>` entries, the `low_mood` rung, the target query's weighted draw, the effect
+      chain, the roll, the log-only chains, `count_of`, `per`, `mood_source`.
+    - Must pass: the WOR-951 tests, scenario 18.
+    - Depends on: 37.
+
+### Phase 7
+
+39. Delete the closed lists.
+    - Deleted: `TaskType`, `kTaskTypeNames`, `ActionType`, `kActionTypeNames`, the effect variant, the
+      factories, the claim holder's task type, `EvaluatedOption::taskType` and `needType`, the rest of
+      `classifyTier`, `ConfigValidator`'s work checks.
+    - Must pass: suite, the full scenario list, the perf check.
+    - Depends on: 38.
+40. Docs to the code, and the development log entry.
+    - Built: `config-loading.md`, `main-loop-timing.md`, `task-claims.md`'s function names,
+      `colonist-task-arbitration.md`'s ladder.
+    - Depends on: 39.
+41. The later behavior changes not tied to a ticket above, each its own ticket when the owner signs
+    it off: eating to full at a place to eat, food preference, relief retuned. Each depends on 24 (21
+    for relief).
+
+### Order
+
+- The main line: 9, 11, 13, 14, 15, 17, 18, 19 to 22, 24, 27, 29 to 31, 34 to 38, 39, 40.
+- In parallel with no shared files: 2, 3, 4, 5, 7; then 12 beside 10 and 11; 28 beside phase 3; 33
+  any time after 9; 23 and 32 as refactors beside their phases, in separate regions.
 
 ## How regressions are caught
 
-- The tests are the contract. `ChainClaims.test.cpp`, `AIDecisionSystem.test.cpp`,
-  `ActionSystem.test.cpp`, `BuildAction.test.cpp`, `ClaimIndex.test.cpp`, `GoalTaskRegistry.test.cpp`,
-  `StoreOrDrop.test.cpp`, and the goal-system suites keep their assertions. A test whose setup builds
-  an `Action` by factory, sets a `TaskType`, or reads a per-type `Task` field is ported to build the
-  same thing from the shipped entries and read the chain's state; its expectations do not change. A
-  port that would need an expectation changed stops the path and goes to the owner.
-- The happy-path scenarios in `docs/testing/scenarios/` run as a manual regression pass before each
-  path is committed, with the cheapest subagent fleet that can, each launch with `--background
-  --no-settings`. A path that adds behavior adds its steps.
+- The tests are the contract, ported by the rules above. A port that would need an expectation
+  changed stops the path and goes to the owner.
+- The happy-path scenarios in `docs/testing/scenarios/` named for each phase run as a manual regression
+  pass before each path is committed, with the cheapest subagent fleet that can, each launch with
+  `--background --no-settings`. A path that adds behavior adds its steps.
 - The development-build claim validator (`ClaimIndex::findViolation`) runs after every AI update in
   every test, so claims named on steps are checked against a fresh rebuild from the first path moved.
 - The decision hot path follows CLAUDE.md's timed-perf rules: `node scripts/machine-load.mjs` before and
   after, a capture scoped with `--zooms` and `--no-scroll` only when it reads `idle` or `mostly-idle`,
   the verdict from `node scripts/perf.mjs compare`, and a `Perf:` line in each PR. A worse number on a
   machine that was not idle is "worse under load, unconfirmed", and the nightly batch settles it.
-  `BM_WorkDecision` and `BM_ClaimIndexRebuild` run on every path that touches the decision, and the
-  counted tests (`FindsANeedSourceInALargeMemory`, `WorkGatesComeBeforeTheSources`,
-  `EachRemainingNeedIsWorkedOutOncePerUpdate`) keep their counts.
+  `BM_WorkDecision`, `BM_ClaimIndexRebuild`, `BM_NeedDecision`, and `BM_IdleDecision` run on every path
+  that touches the decision, and the counted tests (`FindsANeedSourceInALargeMemory`,
+  `WorkGatesComeBeforeTheSources`, `EachRemainingNeedIsWorkedOutOncePerUpdate`) keep their counts.
 
 ## Risks
 
 - A lesson the old code learned is lost in the move. Guard: each path lists its tests and moves only
   with them passing unchanged; the spec's two requirement lists name the test for each lesson; review
   of each path reads the deleted code against the new chain before merging.
-- Queries cost more than the hand-written loops on the decision hot path. Guard: the definition cache
-  and nearest-first walk are built and benched in phase 1, before any stable path depends on them; the
-  benches and counted tests run on every path; the perf rules above.
-- Two runners meet mid-migration (a record made by a new pull adopted by an old carry-in). Guard: the
-  suspended record and the claim index are kept engine structures both sides use; the gathering family
-  moves as one change so no cargo handoff spans two runners; the validator runs throughout.
+- Queries cost more than the hand-written loops on the decision hot path; an idle colonist walking a
+  wander decides every frame and pays the full query set. Guard: the definition cache and nearest-first
+  walk are built and benched in phase 1; the need and idle benches exist before anything moves; the
+  perf rules above.
+- The hunger, food-claims, and gather code share one block of about 400 lines. Guard: the food
+  services are extracted first, as a refactor with no behavior change.
+- Two runners meet mid-migration. Guard: the seams above; gather food moves with Eat; the gathering
+  moves as one change; the pull moves after it; the validator runs throughout.
 - Claims named on steps diverge from what `recordChainClaims` recorded for a shape. Guard: the
-  `ChainClaims.test.cpp` tests assert the claim lists themselves (`PileHaulClaimsTheSourceThenCarriesWhatItLifted`
-  and its siblings), and they run against each moved shape.
-- The tier ladder changes under the migration (WOR-822's nine rungs, the behavior rung). Guard: named
-  rungs from phase 1, so a rung added later moves no entry.
+  `ChainClaims.test.cpp` tests assert the claim lists themselves
+  (`PileHaulClaimsTheSourceThenCarriesWhatItLifted` and its siblings), and they run against each moved
+  shape.
+- Recreation becomes acted on, a 60 s activity on the ordinary-need rung above opportunistic work, so
+  colony throughput changes after about five game days. Guard: the enjoy-nature scenario and the owner's
+  sign-off of WOR-1054.
+- Dev and UI readers of `kNeedLabels` and `needToFulfill` (`DevCommandHandler.cpp`, `SelectionAdapter`,
+  `ColonistDetailsModel`, `EntityInfoView`, the developer client's `DevToolsPanel.tsx`) break when the
+  fixed list goes. Guard: ticket 18 moves them before any need moves.
+- The asset folder rename leaves a stale staged copy beside the exe. Guard: ticket 7 prunes the staged
+  assets and checks the old definitions no longer load.
 - Data errors in shipped entries reach players. Guard: every loader fails the whole file on any error
   and shows it on the loading scene (scenario 19); the tests load the shipped folders.
-- Save and load arrive mid-migration. Guard: chain progress is engine state on the task, the same shape
-  for every chain, so a save writes one structure whatever path has moved.
 
 ## Not in this plan
 
-- Interruptable crafts (WOR-822) itself, beyond the dependencies named above.
-- Bumping, ownership, beds as slots, and mobile-target claims beyond what the cow example needs.
+- Bumping, ownership, beds as slots, and mobile-target claims.
 - The command-mode UI and context menus for player orders; phase 4 builds the orders and a dev verb.
 - Lua: the `script` attribute stays reserved.
-- Animals and the cow: the care goal system is built in phase 5 only if an animal exists by then.
+- Animals, the cow, and the care goal system.
 - The facts that wait on systems not built (likes, diets, spoilage, relationships, ownership, fire,
   scarcity); they read 0 until their systems answer them.
-- Tuning: thresholds, costs, and query weights are carried over at their current values; retuning is
-  separate work.
-- Splitting the work into Specboard items; that follows the spec's review.
+- Save and load: there is no save system in `libs/sim`.
