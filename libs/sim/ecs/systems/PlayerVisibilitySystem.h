@@ -46,12 +46,15 @@ namespace ecs {
 
 		// In the seen record or a pending shape.
 		[[nodiscard]] bool isSeen(glm::vec2 meters) const;
-		// In a player colonist's sight now, by vision's own test: within his sight radius of where
-		// vision last looked from, or within it of where he stands and in his visibility polygon.
+		// In a player colonist's sight now, by vision's own test (VisionSystem::SightShape::holds):
+		// within his sight radius of where he stands, in his polygon on the polygon path, and in the
+		// forest shape of his sight placed where he stands (sight-softening.md 5.2).
 		[[nodiscard]] bool isVisible(glm::vec2 meters) const;
 		// The ground drawn bright for `colonist` this frame (player-visibility.md 3.4), in millimetres:
-		// the sight polygon of vision::drawnVisibleRadiusMm round where he stands, and with walls in
-		// sight vision's polygon cut to it. Outdoors it lies in his open leg; with walls in sight it can
+		// the sight polygon of vision::drawnVisibleRadiusMm round where he stands cut by the forest shape
+		// of his sight placed there, every range drawn in as far as that radius, and with walls or an
+		// opaque body in sight vision's polygon cut to both (sight-softening.md 6.3, without the ease).
+		// Outdoors it lies in his open leg; with walls in sight it can
 		// reach up to a rebuild step past seen ground ahead of him, where the cover's unseen fill hides
 		// it. None when his sight is too small to hold a leg, or walls are in sight and a jump dropped
 		// his polygon (until vision builds the next).
@@ -95,6 +98,8 @@ namespace ecs {
 
 		// Wall and opening footprints queued so far, each once.
 		[[nodiscard]] std::size_t footprintsEntered() const { return enteredFootprints.size(); }
+		// Test-only: how many drawn forest shapes drawnVisible has built, one a colonist a build.
+		[[nodiscard]] std::uint64_t drawnForestBuildCount() const { return drawnForestBuilds; }
 
 	  private:
 		// A leg's held positions, kept as what bounds the leg's end: the directions from its start
@@ -144,7 +149,20 @@ namespace ecs {
 		// Rebuilds the footprints by structure when the construction world has changed.
 		void refreshFootprints();
 
+		// One colonist's drawn forest shape round the origin for the build of `buildRevision`: the forest
+		// shape with every range drawn in to `drawnMm`, and on a leg the drawn disc cut by it. Both are
+		// moved to where he stands each frame, so a frame between builds builds neither.
+		struct DrawnForest {
+			std::uint64_t  buildRevision = 0;
+			std::int64_t   drawnMm		 = 0;
+			geometry::Ring forest;
+			geometry::Ring bright;
+		};
+		const DrawnForest& drawnForestFor(EntityID colonist, const VisionSystem::SightShape& shape, std::int64_t sightMm, std::int64_t drawnMm) const;
+
 		vision::SeenArea			 seen;
+		mutable std::map<EntityID, DrawnForest> drawnForests;
+		mutable std::uint64_t					drawnForestBuilds = 0;
 		const VisionSystem*			 sweepVision = nullptr; // the vision the record's sweeps build their polygons with
 		std::map<EntityID, Observer> observers;
 		bool						 revealedFlag = false;

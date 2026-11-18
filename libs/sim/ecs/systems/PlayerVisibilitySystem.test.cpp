@@ -476,8 +476,8 @@ TEST(PlayerVisibilitySystem, DrawnVisibleInSeenInSweptPastADoorway) {
 	assets::ConstructionRegistry::Get().clear();
 }
 
-// Outdoors the bright shape is the disc of the drawn radius round where he stands; a sight too small
-// to hold a leg draws none, since nothing records it.
+// On open ground, with nothing in sight, the bright shape is the disc of the drawn radius round where
+// he stands; a sight too small to hold a leg draws none, since nothing records it.
 TEST(PlayerVisibilitySystem, DrawnVisibleOutdoorsIsTheDiscRoundWhereHeStands) {
 	Colony		   colony;
 	const EntityID colonist = colony.addColonist({0.0F, 0.0F});
@@ -485,6 +485,7 @@ TEST(PlayerVisibilitySystem, DrawnVisibleOutdoorsIsTheDiscRoundWhereHeStands) {
 	const std::optional<std::vector<Vec2i64>> drawn = colony.visibility.drawnVisible(colonist);
 	ASSERT_TRUE(drawn.has_value());
 	EXPECT_EQ(*drawn, geometry::sightPolygon(nav::toMm({4.0F, -2.0F}), vision::drawnVisibleRadiusMm(std::llround(kSight * 1000.0F))));
+	EXPECT_EQ(colony.visibility.drawnForestBuildCount(), 0U) << "the open path draws no forest cut";
 
 	const EntityID shortSighted = colony.addColonist({100.0F, 0.0F});
 	colony.world.getComponent<Memory>(shortSighted)->sightRadius = 1.0F;

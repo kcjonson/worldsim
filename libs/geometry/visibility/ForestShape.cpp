@@ -71,13 +71,39 @@ namespace geometry {
 			return count - 1;
 		}
 
+		// The greatest squared length of a side normal.
+		constexpr std::int64_t kNormalMostSquared = [] {
+			std::int64_t most = 0;
+			for (const auto& [normalX, normalY] : kSightSideNormals) {
+				most = std::max(most, normalX * normalX + normalY * normalY);
+			}
+			return most;
+		}();
+
+		// How far below kSightDirectionScale the window's cosine bound is pulled, for the normals'
+		// length spread (under 2^-21 of their scale) with room to spare.
+		constexpr std::int64_t kWindowCosineMargin = 1024;
+
+		bool outsideSide(const ForestHalfPlanes& halfPlanes, const Vec2i64& offset, std::size_t side) {
+			const auto& [normalX, normalY] = kSightSideNormals[side];
+			return offset.x * normalX + offset.y * normalY > halfPlanes.offsets[side];
+		}
+
 		bool insideOffsets(const ForestHalfPlanes& halfPlanes, const Vec2i64& offset) {
 			if (std::abs(offset.x) >= kOffsetLimitMm || std::abs(offset.y) >= kOffsetLimitMm) {
 				return false;
 			}
-			for (std::size_t side = 0; side < kSightSides; ++side) {
-				const auto& [normalX, normalY] = kSightSideNormals[side];
-				if (offset.x * normalX + offset.y * normalY > halfPlanes.offsets[side]) {
+			const std::int64_t lengthSquared = offset.x * offset.x + offset.y * offset.y;
+			if (Int128::product(lengthSquared, kNormalMostSquared) <= Int128::product(halfPlanes.leastOffset, halfPlanes.leastOffset)) {
+				return true;
+			}
+			const std::size_t nearestSide = sightDirectionAtOrBefore(offset);
+			if (outsideSide(halfPlanes, offset, nearestSide)) {
+				return false;
+			}
+			for (std::size_t apart = 1; apart <= halfPlanes.window; ++apart) {
+				if (outsideSide(halfPlanes, offset, (nearestSide + apart) % kSightSides) ||
+					outsideSide(halfPlanes, offset, (nearestSide + kSightSides - apart) % kSightSides)) {
 					return false;
 				}
 			}
@@ -170,6 +196,16 @@ namespace geometry {
 			assert(ranges[side] >= kForestShapeLeastRangeMm && ranges[side] < kForestRadiusLimitMm);
 			halfPlanes.offsets[side] = ranges[side] * kSightCosHalfSide / kOffsetDivisor;
 		}
+		halfPlanes.leastOffset = *std::min_element(halfPlanes.offsets.begin(), halfPlanes.offsets.end());
+		halfPlanes.mostOffset  = *std::max_element(halfPlanes.offsets.begin(), halfPlanes.offsets.end());
+		// Sides (apart - 1) steps of the table off the near side's direction can cut while cos of that
+		// exceeds the bound; the last such gives the window.
+		const Int128 bound = Int128::product(halfPlanes.leastOffset, kSightCosHalfSide - kWindowCosineMargin);
+		std::size_t	 window = 1;
+		while (window < kSightSides / 2 && Int128::product(kSightDirections[window][0], halfPlanes.mostOffset) > bound) {
+			++window;
+		}
+		halfPlanes.window = window;
 		return halfPlanes;
 	}
 

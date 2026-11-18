@@ -1,5 +1,7 @@
 #include "SightBody.h"
 
+#include <visibility/SightClip.h>
+
 #include <glm/geometric.hpp>
 
 #include <algorithm>
@@ -133,6 +135,34 @@ namespace vision {
 			}
 		}
 		return tagged;
+	}
+
+	std::vector<ShadowEdge>
+	shadowEdgesKeptByClip(std::span<const ShadowEdge> tagged, const geometry::Ring& clipped, std::span<const SightBody> bodies) {
+		std::vector<geometry::Vec2i64> vertices(clipped.begin(), clipped.end());
+		std::ranges::sort(vertices);
+		std::vector<ShadowEdge> kept;
+		for (const ShadowEdge& edge : tagged) {
+			if (std::ranges::binary_search(vertices, bodies[edge.body].edges[edge.corner].a)) {
+				kept.push_back(edge);
+			}
+		}
+		return kept;
+	}
+
+	ForestCut cutByForest(
+		const geometry::Ring&	   hard,
+		const geometry::Vec2i64&   eye,
+		const geometry::Ring&	   forest,
+		std::vector<ShadowEdge>	   tagged,
+		std::span<const SightBody> bodies
+	) {
+		geometry::Ring clipped = geometry::starClippedToConvex(hard, eye, forest);
+		if (clipped.empty()) {
+			return ForestCut{.polygon = hard, .shadowEdges = std::move(tagged), .cut = false};
+		}
+		std::vector<ShadowEdge> kept = shadowEdgesKeptByClip(tagged, clipped, bodies);
+		return ForestCut{.polygon = std::move(clipped), .shadowEdges = std::move(kept), .cut = true};
 	}
 
 	std::optional<Silhouette> silhouetteFrom(const SightBody& body, glm::dvec2 eyeMm) {

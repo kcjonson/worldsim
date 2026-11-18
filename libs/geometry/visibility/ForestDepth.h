@@ -43,6 +43,10 @@ namespace geometry {
 		return offset.y > 0 || (offset.y == 0 && offset.x > 0);
 	}
 
+	// The index of the table direction (kSightDirections) at or clockwise before `offset`'s
+	// direction, by a binary search on cross products. `offset` is not zero and under 2^17 mm an axis.
+	std::size_t sightDirectionAtOrBefore(const Vec2i64& offset);
+
 	// A placed ring as forest depth reads it. `widthFactor` and `arrival` are fractions of
 	// kFractionOne (forestWidthFactor, forestArrivalFraction).
 	struct ForestBody {

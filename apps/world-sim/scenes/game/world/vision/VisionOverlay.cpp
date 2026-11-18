@@ -5,6 +5,7 @@
 #include <ecs/components/Transform.h>
 #include <nav/NavCoords.h>
 
+#include <visibility/ForestShape.h>
 #include <visibility/SightClip.h>
 #include <visibility/SightPolygon.h>
 
@@ -17,27 +18,47 @@
 namespace world_sim {
 
 	namespace {
-		// Polygon fill: very faint cyan fan (star-shaped, so a triangle fan from the
-		// observer works exactly -- the polygon is star-shaped by construction).
-		constexpr Foundation::Color kPolyFill{0.3F, 0.9F, 0.9F, 0.08F};
-		// Polygon outline: brighter cyan so it reads over the fill.
-		constexpr Foundation::Color kPolyOutline{0.4F, 1.0F, 1.0F, 0.65F};
-		// Occluder segments: red so they stand out against world geometry.
-		constexpr Foundation::Color kOccluder{1.0F, 0.2F, 0.2F, 0.85F};
+		// The sight shape's fill: a very faint cyan fan from the build, which it is star-shaped round.
+		constexpr Foundation::Color kShapeFill{0.3F, 0.9F, 0.9F, 0.08F};
+		// The forest shape of his sight where he stands.
+		constexpr Foundation::Color kForestOutline{0.45F, 1.0F, 0.35F, 0.8F};
+		// The hard polygon the opaque bodies leave, cut to his sight where he stands.
+		constexpr Foundation::Color kHardOutline{0.4F, 1.0F, 1.0F, 0.65F};
+		// Bodies by kind.
+		constexpr Foundation::Color kOpaqueBody{1.0F, 0.2F, 0.2F, 0.9F};
+		constexpr Foundation::Color kSoftBody{1.0F, 0.85F, 0.2F, 0.9F};
+		// The soft ray's width, a circle that wide round the build eye.
+		constexpr Foundation::Color kSoftRay{1.0F, 0.4F, 1.0F, 0.8F};
 
 		// Post-entity world flush domain: these z values only order this overlay
 		// against other post-entity world draws; committed construction flushes
 		// earlier, so the toggled overlay always paints over it.
-		constexpr int kZPolyFill = 62;
-		constexpr int kZPolyOutline = 64;
-		constexpr int kZOccluder = 65;
+		constexpr int kZShapeFill = 62;
+		constexpr int kZOutline	  = 64;
+		constexpr int kZBody	  = 65;
 
-		// All geometry is stored in integer millimeters; render space is meters.
-		constexpr float kMmToMeters = 0.001F;
+		constexpr int kSoftRaySegments = 32;
 
-		// Outdoor sight is drawn as a regular polygon this many edges around.
-		constexpr int kCircleSegments = 64;
-		constexpr float kTwoPi = 6.2831853F;
+		Foundation::Vec2 toScreen(const world::WorldCamera& camera, const geometry::Vec2i64& point, int viewportW, int viewportH, float pixelsPerMeter) {
+			const glm::vec2 meters = nav::toMeters(point);
+			const auto		screen = camera.worldToScreen(meters.x, meters.y, viewportW, viewportH, pixelsPerMeter);
+			return Foundation::Vec2{screen.x, screen.y};
+		}
+
+		void drawOutline(const std::vector<Foundation::Vec2>& ring, const Foundation::Color& color, int key, const std::string& idBase) {
+			for (std::size_t index = 0; index < ring.size(); ++index) {
+				const std::string edgeId = idBase + std::to_string(index);
+				Renderer::Primitives::drawLine(
+					Renderer::Primitives::LineArgs{
+						.start = ring[index],
+						.end   = ring[(index + 1) % ring.size()],
+						.style = Foundation::LineStyle{.color = color, .width = 1.0F},
+						.id	   = edgeId.c_str(),
+						.key   = key,
+					}
+				);
+			}
+		}
 	} // namespace
 
 	VisionOverlay::VisionOverlay(const Args& args)
@@ -49,115 +70,99 @@ namespace world_sim {
 		if (!active || ecsWorld == nullptr || camera == nullptr || vision == nullptr) {
 			return;
 		}
-
-		// --- Occluder segments (drawn once for the whole index, not per-entity) ---
-		{
-			const auto& occluders = vision->geometry().occluders();
-			for (std::size_t i = 0; i < occluders.size(); ++i) {
-				const auto& rec = occluders[i];
-				const float ax = static_cast<float>(rec.seg.a.x) * kMmToMeters;
-				const float ay = static_cast<float>(rec.seg.a.y) * kMmToMeters;
-				const float bx = static_cast<float>(rec.seg.b.x) * kMmToMeters;
-				const float by = static_cast<float>(rec.seg.b.y) * kMmToMeters;
-
-				const auto sa = camera->worldToScreen(ax, ay, viewportW, viewportH, kPixelsPerMeter);
-				const auto sb = camera->worldToScreen(bx, by, viewportW, viewportH, kPixelsPerMeter);
-
-				const std::string occId = "vis_occ_" + std::to_string(i);
-				Renderer::Primitives::drawLine(
-					Renderer::Primitives::LineArgs{
-						.start = Foundation::Vec2{sa.x, sa.y},
-						.end = Foundation::Vec2{sb.x, sb.y},
-						.style = Foundation::LineStyle{.color = kOccluder, .width = 1.5F},
-						.id = occId.c_str(),
-						.key = kZOccluder,
-					}
-				);
+		const auto screenRing = [&](const geometry::Ring& ring) {
+			std::vector<Foundation::Vec2> out;
+			out.reserve(ring.size());
+			for (const geometry::Vec2i64& vertex : ring) {
+				out.push_back(toScreen(*camera, vertex, viewportW, viewportH, kPixelsPerMeter));
 			}
-		}
+			return out;
+		};
+		const std::int64_t softRayWidthMm = vision->sightTunables().softShadowRayWidthMm;
 
-		// --- Per-observer visibility polygons ---
 		for (auto [entity, pos, memory] : ecsWorld->view<ecs::Position, ecs::Memory>()) {
 			(void)memory; // view filters by Memory; value not read here
 			const auto shape = vision->sightShape(entity);
 			if (!shape.has_value()) {
 				continue;
 			}
-
-			// Outdoors there is no polygon and sight is the plain circle at the radius vision used. Indoors
-			// it is the polygon, built a rebuild step past sight, cut to his sight where he stands.
-			std::vector<Foundation::Vec2> screenRing;
-			if (shape->polygon != nullptr) {
-				const std::int64_t radiusMm = std::llround(static_cast<double>(shape->radius) * 1000.0);
-				const geometry::Ring inSight = geometry::starClippedToConvex(*shape->polygon, nav::toMm(shape->center), geometry::sightPolygon(nav::toMm(pos.value), radiusMm));
-				for (const auto& vertex : inSight) {
-					const float worldX = static_cast<float>(vertex.x) * kMmToMeters;
-					const float worldY = static_cast<float>(vertex.y) * kMmToMeters;
-					const auto	screen = camera->worldToScreen(worldX, worldY, viewportW, viewportH, kPixelsPerMeter);
-					screenRing.push_back(Foundation::Vec2{screen.x, screen.y});
-				}
-			} else {
-				screenRing.reserve(kCircleSegments);
-				for (int segment = 0; segment < kCircleSegments; ++segment) {
-					const float angle = kTwoPi * static_cast<float>(segment) / static_cast<float>(kCircleSegments);
-					const float worldX = shape->center.x + shape->radius * std::cos(angle);
-					const float worldY = shape->center.y + shape->radius * std::sin(angle);
-					const auto	screen = camera->worldToScreen(worldX, worldY, viewportW, viewportH, kPixelsPerMeter);
-					screenRing.push_back(Foundation::Vec2{screen.x, screen.y});
-				}
-			}
-			const std::size_t n = screenRing.size();
-			if (n < 3) {
+			const std::string		idBase	 = "vis_" + std::to_string(static_cast<unsigned long long>(entity));
+			const geometry::Vec2i64 standing = nav::toMm(pos.value);
+			const geometry::Vec2i64 build	 = nav::toMm(shape->center);
+			const std::int64_t		radiusMm = std::llround(static_cast<double>(shape->radius) * 1000.0);
+			if (radiusMm <= 0) {
 				continue;
 			}
-			const std::string idBase = "vis_poly_" + std::to_string(static_cast<unsigned long long>(entity));
-			const auto	os = camera->worldToScreen(shape->center.x, shape->center.y, viewportW, viewportH, kPixelsPerMeter);
+			const geometry::Ring	inSight	 = geometry::sightPolygon(standing, radiusMm);
+			const geometry::Ring	forest	 = shape->forest != nullptr ? geometry::forestShape(standing, *shape->ranges) : inSight;
 
-			// Triangle fan fill: observer at center, each consecutive edge on the ring.
-			// n triangles, 3n indices, n+1 vertices (observer + ring verts).
-			{
-				std::vector<Foundation::Vec2> verts;
-				verts.reserve(n + 1);
-				verts.push_back(Foundation::Vec2{os.x, os.y}); // index 0 = observer
-				for (const auto& sv : screenRing) {
-					verts.push_back(sv);
+			// The shape he sees by: the forest shape where he stands, or on the polygon path the polygon
+			// round its build cut to it.
+			const geometry::Ring sight = shape->polygon != nullptr ? geometry::starClippedToConvex(*shape->polygon, build, forest) : forest;
+			const std::vector<Foundation::Vec2> sightScreen = screenRing(sight);
+			if (sightScreen.size() >= 3) {
+				std::vector<Foundation::Vec2> vertices;
+				vertices.reserve(sightScreen.size() + 1);
+				vertices.push_back(toScreen(*camera, shape->polygon != nullptr ? build : standing, viewportW, viewportH, kPixelsPerMeter));
+				vertices.insert(vertices.end(), sightScreen.begin(), sightScreen.end());
+				std::vector<uint16_t> indices;
+				indices.reserve(sightScreen.size() * 3);
+				for (std::size_t index = 0; index < sightScreen.size(); ++index) {
+					indices.push_back(0);
+					indices.push_back(static_cast<uint16_t>(index + 1));
+					indices.push_back(static_cast<uint16_t>((index + 1) % sightScreen.size() + 1));
 				}
-
-				std::vector<uint16_t> idx;
-				idx.reserve(n * 3);
-				for (std::size_t i = 0; i < n; ++i) {
-					idx.push_back(0);								  // observer
-					idx.push_back(static_cast<uint16_t>(i + 1));	  // ring[i]
-					idx.push_back(static_cast<uint16_t>((i + 1) % n + 1)); // ring[(i+1)%n]
-				}
-
 				const std::string fanId = idBase + "_fan";
 				Renderer::Primitives::drawTriangles(
 					Renderer::Primitives::TrianglesArgs{
-						.vertices = verts.data(),
-						.indices = idx.data(),
-						.vertexCount = verts.size(),
-						.indexCount = idx.size(),
-						.color = kPolyFill,
-						.id = fanId.c_str(),
-						.key = kZPolyFill,
+						.vertices	 = vertices.data(),
+						.indices	 = indices.data(),
+						.vertexCount = vertices.size(),
+						.indexCount	 = indices.size(),
+						.color		 = kShapeFill,
+						.id			 = fanId.c_str(),
+						.key		 = kZShapeFill,
 					}
 				);
 			}
 
-			// Outline: draw each edge of the closed ring.
-			for (std::size_t i = 0; i < n; ++i) {
-				const std::string edgeId = idBase + "_e" + std::to_string(i);
-				Renderer::Primitives::drawLine(
-					Renderer::Primitives::LineArgs{
-						.start = screenRing[i],
-						.end = screenRing[(i + 1) % n],
-						.style = Foundation::LineStyle{.color = kPolyOutline, .width = 1.0F},
-						.id = edgeId.c_str(),
-						.key = kZPolyOutline,
-					}
-				);
+			const std::optional<ecs::VisionSystem::SightBodies> bodies = vision->sightBodies(entity);
+			if (!bodies.has_value()) {
+				continue;
 			}
+			drawOutline(screenRing(forest), kForestOutline, kZOutline, idBase + "_forest_");
+			if (shape->polygon != nullptr) {
+				const geometry::Ring hard = geometry::starClippedToConvex(vision->hardPolygon(build, bodies->reachMm), build, inSight);
+				drawOutline(screenRing(hard), kHardOutline, kZOutline, idBase + "_hard_");
+			}
+			for (std::size_t body = 0; body < bodies->bodies->size(); ++body) {
+				const vision::SightBody& sightBody = (*bodies->bodies)[body];
+				const Foundation::Color& color	   = sightBody.kind == vision::BodyKind::Opaque ? kOpaqueBody : kSoftBody;
+				for (std::size_t edge = 0; edge < sightBody.edges.size(); ++edge) {
+					const std::string edgeId = idBase + "_body_" + std::to_string(body) + "_" + std::to_string(edge);
+					Renderer::Primitives::drawLine(
+						Renderer::Primitives::LineArgs{
+							.start = toScreen(*camera, sightBody.edges[edge].a, viewportW, viewportH, kPixelsPerMeter),
+							.end   = toScreen(*camera, sightBody.edges[edge].b, viewportW, viewportH, kPixelsPerMeter),
+							.style = Foundation::LineStyle{.color = color, .width = 1.5F},
+							.id	   = edgeId.c_str(),
+							.key   = kZBody,
+						}
+					);
+				}
+			}
+
+			std::vector<Foundation::Vec2> softRay;
+			softRay.reserve(kSoftRaySegments);
+			const double halfWidthMm = static_cast<double>(softRayWidthMm) / 2.0;
+			for (int segment = 0; segment < kSoftRaySegments; ++segment) {
+				const double angle = 2.0 * 3.14159265358979323846 * static_cast<double>(segment) / static_cast<double>(kSoftRaySegments);
+				const geometry::Vec2i64 point{
+					bodies->eyeCentre.x + std::llround(halfWidthMm * std::cos(angle)), bodies->eyeCentre.y + std::llround(halfWidthMm * std::sin(angle))
+				};
+				softRay.push_back(toScreen(*camera, point, viewportW, viewportH, kPixelsPerMeter));
+			}
+			drawOutline(softRay, kSoftRay, kZBody, idBase + "_ray_");
 		}
 	}
 

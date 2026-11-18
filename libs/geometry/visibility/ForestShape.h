@@ -21,14 +21,26 @@ namespace geometry {
 	// The half-planes of the forest shape of some ranges, built once for any number of point queries:
 	// side k's holds the offsets from the point whose dot product with kSightSideNormals[k] is at most
 	// offsets[k], that side's range x cos(pi / kSightSides) at the normals' scale.
+	//
+	// A point test reads `leastOffset` to accept anything inside the disc every half-plane holds, and
+	// `window` for how many sides either side of the side its direction falls in can exclude it: side
+	// j can only cut a point inside side k's half-plane whose direction lies within half a side of side
+	// k's normal when cos((|j - k| - 1) x 2 pi / kSightSides) exceeds leastOffset x cos(pi /
+	// kSightSides) / mostOffset, the normals' length spread allowed for.
 	struct ForestHalfPlanes {
 		std::array<std::int64_t, kSightSides> offsets{};
+		std::int64_t						  leastOffset = 0;
+		std::int64_t						  mostOffset  = 0;
+		std::size_t							  window	  = kSightSides / 2;
 	};
 
 	// Every range lies in [kForestShapeLeastRangeMm, kForestRadiusLimitMm).
 	ForestHalfPlanes forestHalfPlanes(const SightSideValues& ranges);
 
-	// Whether `query` lies in every half-plane of `halfPlanes` round `point`.
+	// Whether `query` lies in every half-plane of `halfPlanes` round `point`: one squared-length test
+	// accepts it inside the disc every half-plane holds; past that, a binary search by angle finds the
+	// side its direction falls in and it is tested against that side and the `window` sides either side
+	// of it, which give the same answer as all 64.
 	bool insideForestHalfPlanes(const Vec2i64& point, const ForestHalfPlanes& halfPlanes, const Vec2i64& query);
 
 	// The forest shape of `ranges` round `point`, counter-clockwise, starting from the vertex at or

@@ -26,14 +26,28 @@ TEST(SightJson, ListsEachColonistsBodiesAndShadowEdges) {
 		squareBody(vision::SightBody::Source::Wall, vision::BodyKind::Soft, 400, ""),
 	};
 	const std::vector<vision::ShadowEdge>		   shadows = {{.body = 0, .corner = 1, .litTurn = -1}};
+	geometry::SightSideValues					   ranges{};
+	ranges.fill(30000);
+	ranges[5] = 27400;
 	const std::vector<world_sim::ColonistSightBodies> colonists = {
-		{.id = 3, .name = "Bob", .eyeCentre = {1000, 2000}, .leadMm = 667, .reachMm = 30667, .bodies = &bodies, .shadowEdges = &shadows},
+		{.id			= 3,
+		 .name			= "Bob",
+		 .eyeCentre		= {1000, 2000},
+		 .leadMm		= 667,
+		 .reachMm		= 30667,
+		 .path			= "polygon",
+		 .ranges		= &ranges,
+		 .bodies		= &bodies,
+		 .shadowEdges	= &shadows},
 	};
 	const std::string json = world_sim::sightBodiesJson(colonists);
 	ASSERT_TRUE(nlohmann::json::accept(json)) << json;
 	const auto bob = nlohmann::json::parse(json).at("colonists").at(0);
 	EXPECT_EQ(bob.at("name"), "Bob");
 	EXPECT_EQ(bob.at("leadMm"), 667);
+	EXPECT_EQ(bob.at("path"), "polygon");
+	ASSERT_EQ(bob.at("rangesMm").size(), geometry::kSightSides);
+	EXPECT_EQ(bob.at("rangesMm").at(5), 27400);
 	EXPECT_DOUBLE_EQ(bob.at("eye").at("y").get<double>(), 2.0);
 	const auto rock = bob.at("bodies").at(0);
 	EXPECT_EQ(rock.at("source"), "placed");
