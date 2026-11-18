@@ -102,7 +102,7 @@ The starting set:
 | `fits_meal_time` | definition | 0 or 1 | the definition's `meal` tag names the meal of the hour (breakfast, lunch, supper) | waits on the `meal` tag; the hour exists (`TimeSystem`) |
 | `comfort` | definition | 0 to 1 | how comfortable a place to sit, sleep, or eat is | waits on furniture comfort |
 | `opinion` | item | -1 to 1 | for a colonist candidate, the creature's opinion of them | waits on relationships |
-| `blame` | item | 0 to 1 | for a colonist candidate, how much of the creature's present bad mood is about them: the share of its held negative mood effects whose thought has that colonist as its subject | yes, from the subjects of held thoughts; few thought types name a colonist until relationships exist |
+| `mood_source` | item | -1 to 1 | for a colonist candidate, how much of how the creature feels right now is about them, and which way: the held mood effects whose thought has that colonist as its subject, as a share of all it holds, below 0 when they have lowered its mood and above 0 when they have lifted it | yes, from the subjects of held thoughts; few thought types name a colonist until relationships exist |
 | `owner_opinion` | item | -1 to 1 | the creature's opinion of the thing's owner, 0 when unowned | waits on ownership and relationships |
 | `has_owner` | item | 0 or 1 | the thing has an owner | waits on ownership |
 | `owned_by_self` | item | 0 or 1 | the creature owns it | waits on ownership |
@@ -441,11 +441,13 @@ Who a colonist takes a mood out on and who put them in it are separate. One pers
   <exclude fact="distance" above="5"/>
   <weigh fact="distance" by="-0.2"/>
   <weigh fact="opinion" by="-5"/>
-  <weigh fact="blame" by="6"/>
+  <weigh fact="mood_source" by="-6"/>
 </query>
 ```
 
 The colonist who caused the mood is the likeliest target when they are near. When they are out of reach, or are someone the colonist likes too well to turn on, the weights pick whoever else is nearby and least liked.
+
+The fact is the source of a feeling, not blame for it, so it reads both ways. A colonist lifted by seeing someone they love is inclined to be kind to someone, and generally to that person: a kind act's target query weighs `mood_source` upward where a snipe's weighs it down.
 
 A behavior whose effect needs a system that does not exist is a chain whose only step gives a thought,
 the log-only rule in Mood: the episode is announced and logged, and nothing in the world changes.
@@ -498,6 +500,7 @@ A supplement, not part of the spec. Kevin, 2026-11-17:
   complexity there. we just finally got that stable".
 - The player cannot step in during an episode.
 - The target of a behavior and its cause need not be the same colonist: "one person pisses you off, but you take it out on another." The target is weighted toward the colonist who caused it.
+- That cause is the source of the feeling, not blame, and works for good moods too: "you saw someone you love, so you're going to be nice to someone, and it generally should be that person."
 
 Choices made in writing this document, not put to the owner: the folders and roots
 (`assets/config/queries`, `assets/config/chains`); `<scale trait fact by>` for trait scaling on the
