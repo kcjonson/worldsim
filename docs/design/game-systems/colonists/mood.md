@@ -380,6 +380,8 @@ Kevin, 2026-11-17: needs do not average into mood. "If you're freezing to death,
 
 Kevin, 2026-11-17: needs are data, and different kinds of creature have different needs (a cow needs to be milked). The list of needs is not fixed in code.
 
+Kevin, 2026-11-17: everything besides needs reaches mood as a thought, for now. There may later be lasting increases that are not thoughts: "wearing a nice shirt doesn't need to continually trigger 'I like this nice shirt'. Humans don't walk around constantly thinking about their shirt, but it passively increases their happiness." A passive contribution of that kind (what a colonist wears, a trait's baseline) would be its own part of mood beside needs and thoughts, and is not designed.
+
 Kevin, 2026-11-17: leaving defined. "They essentially become a non colony npc: no control, do not contribute to the colony sight or task system, basically become the same level of ai as a cow or deer, then walk/run off in a random direction until they're off the gameplay/visibility area (not exploring or making new mesh), then completely unload and disappear." It depends on several systems that do not exist, so it is recorded here and built later.
 
 Kevin, 2026-11-17: the player cannot step in during an episode. A colonist in one cannot be drafted or directed until it ends; a critical need still interrupts it, and each behavior's own end conditions bound it.
