@@ -35,7 +35,7 @@ namespace vision {
 		std::int64_t rimEaseMm					 = 400;
 		// Its start is the whole of `reach`; whoever reads it takes the least of it and the reach.
 		std::int64_t drawnShadowReachMm	  = kDrawnShadowWholeReachMm;
-		std::int64_t drawnShadowRebuildMm = 0;
+		std::int64_t drawnShadowRebuildMm = 500;
 
 		// A colonist's sight (kDefaultSightRadius, checked in SightTunables.cpp).
 		static constexpr std::int64_t kColonistSightMm = 30000;

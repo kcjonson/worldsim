@@ -15,15 +15,15 @@
 namespace {
 
 	using geometry::Vec2i64;
-	using worldview::ValuePolygon;
+	using worldview::ValueTriangle;
 
 	constexpr double kDegree = std::numbers::pi / 180.0;
 
 	// The greatest value any piece holds at the point, or nothing when none covers it: each polygon
 	// fanned from its first point, its value interpolated over each triangle.
-	std::optional<double> valueAt(const std::vector<ValuePolygon>& pieces, glm::dvec2 point) {
+	std::optional<double> valueAt(const std::vector<ValueTriangle>& pieces, glm::dvec2 point) {
 		std::optional<double> greatest;
-		for (const ValuePolygon& piece : pieces) {
+		for (const ValueTriangle& piece : pieces) {
 			for (std::size_t corner = 1; corner + 1 < piece.points.size(); ++corner) {
 				const glm::dvec2 a = piece.points[0];
 				const glm::dvec2 b = piece.points[corner];
@@ -45,7 +45,7 @@ namespace {
 		return greatest;
 	}
 
-	double valueOrZero(const std::vector<ValuePolygon>& pieces, glm::dvec2 point) { return valueAt(pieces, point).value_or(0.0); }
+	double valueOrZero(const std::vector<ValueTriangle>& pieces, glm::dvec2 point) { return valueAt(pieces, point).value_or(0.0); }
 
 	// A placed ring as vision hands it out: a counter-clockwise rectangle centred at (x, y) millimetres.
 	vision::SightBody rectangleBody(double x, double y, double width, double height, vision::BodyKind kind) {
@@ -72,7 +72,7 @@ namespace {
 // An edge's feather is 1 on the edge and falls linearly to 0 a feather into the area on its left.
 TEST(CoverPieces, AnEdgesFeatherFallsAcrossItsWidth) {
 	const std::vector<worldview::DirectedEdge> edges = {{Vec2i64{0, 0}, Vec2i64{10000, 0}}};
-	std::vector<ValuePolygon>				   pieces;
+	std::vector<ValueTriangle>				   pieces;
 	worldview::appendFeather(edges, 1500.0, pieces);
 	EXPECT_NEAR(valueOrZero(pieces, {5000.0, 0.0}), 1.0, 1e-6);
 	EXPECT_NEAR(valueOrZero(pieces, {5000.0, 750.0}), 0.5, 1e-6);
@@ -86,9 +86,9 @@ TEST(CoverPieces, AnEdgesFeatherFallsAcrossItsWidth) {
 TEST(CoverPieces, AReflexCornerTakesAFanAndAConvexOneNone) {
 	constexpr double						   kFeather = 1500.0;
 	const std::vector<worldview::DirectedEdge> reflex	= {{Vec2i64{0, 0}, Vec2i64{10000, 0}}, {Vec2i64{10000, 0}, Vec2i64{10000, -10000}}};
-	std::vector<ValuePolygon>				   pieces;
+	std::vector<ValueTriangle>				   pieces;
 	worldview::appendFeather(reflex, kFeather, pieces);
-	EXPECT_EQ(pieces.size(), 2U + 6U) << "two rectangles and a 90 degree fan in 15 degree steps";
+	EXPECT_EQ(pieces.size(), 4U + 6U) << "two rectangles of two triangles and a 90 degree fan in 15 degree steps";
 	for (const double angle : {10.0, 45.0, 80.0}) {
 		for (const double distance : {300.0, 750.0, 1400.0}) {
 			const double expected = 1.0 - distance / kFeather;
@@ -99,7 +99,7 @@ TEST(CoverPieces, AReflexCornerTakesAFanAndAConvexOneNone) {
 	const std::vector<worldview::DirectedEdge> convex = {{Vec2i64{0, 0}, Vec2i64{10000, 0}}, {Vec2i64{10000, 0}, Vec2i64{10000, 10000}}};
 	pieces.clear();
 	worldview::appendFeather(convex, kFeather, pieces);
-	EXPECT_EQ(pieces.size(), 2U);
+	EXPECT_EQ(pieces.size(), 4U);
 	EXPECT_NEAR(valueOrZero(pieces, {9500.0, 1000.0}), 1.0 - 500.0 / kFeather, 1e-6) << "the nearer side's fade, never darker";
 }
 
@@ -109,7 +109,7 @@ TEST(CoverPieces, AReflexCornerTakesAFanAndAConvexOneNone) {
 TEST(CoverPieces, ASoftBodysTriangleCollapsesBehindIt) {
 	const vision::SightTunables tunables;
 	const vision::SightBody		trunk = rectangleBody(5000.0, 0.0, 400.0, 400.0, vision::BodyKind::Soft);
-	std::vector<ValuePolygon>	pieces;
+	std::vector<ValueTriangle>	pieces;
 	const std::optional<worldview::SoftShadow> shadow = worldview::appendSoftShadow(trunk, {0.0, 0.0}, tunables, pieces);
 	ASSERT_TRUE(shadow.has_value());
 	const double foot	= 0.5 * 400.0 / 3000.0;
@@ -140,7 +140,7 @@ TEST(CoverPieces, ASoftBodysTriangleCollapsesBehindIt) {
 // seen face on and at its diagonal from 5 m, and no soft body darker than the strength allows.
 TEST(CoverPieces, ATrunksShadowScalesWithItsWidthAsSeen) {
 	const vision::SightTunables tunables;
-	std::vector<ValuePolygon>	pieces;
+	std::vector<ValueTriangle>	pieces;
 	const vision::SightBody		faceOn = rectangleBody(5410.0, 0.0, 820.0, 820.0, vision::BodyKind::Soft);
 	const std::optional<worldview::SoftShadow> square = worldview::appendSoftShadow(faceOn, {0.0, 0.0}, tunables, pieces);
 	ASSERT_TRUE(square.has_value());
@@ -182,7 +182,7 @@ TEST(CoverPieces, AShadowEdgesBandAndFin) {
 	EXPECT_NEAR(far.shadowAngle, spread, 1e-9);
 	EXPECT_NEAR(far.finAngle, std::atan(1200.0 / 10000.0), 1e-9);
 
-	std::vector<ValuePolygon> pieces;
+	std::vector<ValueTriangle> pieces;
 	worldview::appendShadowBand(far, 30000.0, pieces);
 	const glm::dvec2 apex{5000.0, 0.0};
 	EXPECT_NEAR(valueOrZero(pieces, along(0.9 * spread, 3000.0, apex)), 1.0, 1e-6) << "the band's lit side";
@@ -220,29 +220,28 @@ TEST(CoverPieces, TheFollowedCornerSwitchesAcrossAFacesLineAndTheApexEases) {
 	const ecs::VisionSystem::SightBodies  sight{.bodies = &bodies, .shadowEdges = &shadowEdges, .leadMm = 670, .reachMm = 30800, .eyeCentre = {-3000, 800}};
 	const vision::SightTunables			  tunables;
 	worldview::DrawnShadows				  shadows;
-	shadows.update(sight, 1, {-3000.0, 800.0}, 0.0, 30000.0, tunables);
+	shadows.update(sight, 1, {-3000.0, 800.0}, 0.0, 30000.0, tunables, true);
 	ASSERT_EQ(shadows.edges().size(), 1U);
 	EXPECT_EQ(shadows.edges()[0].band.apex, glm::dvec2(0.0, 1000.0));
-	shadows.update(sight, 1, {-3000.0, 1200.0}, 400.0, 30000.0, tunables);
+	shadows.update(sight, 1, {-3000.0, 1200.0}, 400.0, 30000.0, tunables, true);
 	EXPECT_EQ(shadows.edges()[0].followedCorner, 2U);
 	EXPECT_EQ(shadows.edges()[0].band.apex, glm::dvec2(0.0, 1000.0)) << "the switch moves nothing on its frame";
-	shadows.update(sight, 1, {-3000.0, 1200.0}, 750.0, 30000.0, tunables);
+	shadows.update(sight, 1, {-3000.0, 1200.0}, 750.0, 30000.0, tunables, true);
 	EXPECT_NEAR(shadows.edges()[0].band.apex.x, 500.0, 1e-6) << "half the ease, half the face";
 	EXPECT_NEAR(shadows.edges()[0].band.apex.y, 1000.0, 1e-6);
-	shadows.update(sight, 1, {-3000.0, 1200.0}, 1500.0, 30000.0, tunables);
+	shadows.update(sight, 1, {-3000.0, 1200.0}, 1500.0, 30000.0, tunables, true);
 	EXPECT_EQ(shadows.edges()[0].band.apex, glm::dvec2(1000.0, 1000.0));
 
 	// A new build whose edge is tagged at the corner the ease reached picks it up where it is.
 	const std::vector<vision::ShadowEdge> rebuilt = {{.body = 0, .corner = 2, .litTurn = 1}};
 	const ecs::VisionSystem::SightBodies  next{.bodies = &bodies, .shadowEdges = &rebuilt, .leadMm = 670, .reachMm = 30800, .eyeCentre = {-3000, 1200}};
-	shadows.update(next, 2, {-3000.0, 1200.0}, 0.0, 30000.0, tunables);
+	shadows.update(next, 2, {-3000.0, 1200.0}, 0.0, 30000.0, tunables, true);
 	EXPECT_EQ(shadows.edges()[0].band.apex, glm::dvec2(1000.0, 1000.0));
 	EXPECT_EQ(shadows.edges()[0].ease, 1.0);
 }
 
-// The drawn shadows reach no farther than the least of drawnShadowReachMm and his bright shape, and
-// with drawnShadowRebuildMm above 0 are kept until he has moved that far (12's fallbacks).
-TEST(CoverPieces, TheFallbackTunablesBoundTheDrawnShadows) {
+// The drawn shadows reach no farther than the least of drawnShadowReachMm and his bright shape.
+TEST(CoverPieces, TheDrawnShadowsReachNoFartherThanTheyCanShow) {
 	const std::vector<vision::SightBody> bodies = {
 		rectangleBody(5000.0, 0.0, 400.0, 400.0, vision::BodyKind::Soft), rectangleBody(15000.0, 0.0, 400.0, 400.0, vision::BodyKind::Soft)
 	};
@@ -250,20 +249,56 @@ TEST(CoverPieces, TheFallbackTunablesBoundTheDrawnShadows) {
 	const ecs::VisionSystem::SightBodies  sight{.bodies = &bodies, .shadowEdges = &none, .leadMm = 670, .reachMm = 30800, .eyeCentre = {0, 0}};
 	vision::SightTunables				  tunables;
 	worldview::DrawnShadows				  shadows;
-	shadows.update(sight, 1, {0.0, 0.0}, 0.0, 30000.0, tunables);
+	shadows.update(sight, 1, {0.0, 0.0}, 0.0, 30000.0, tunables, true);
 	EXPECT_EQ(shadows.softBodies().size(), 2U);
-	shadows.update(sight, 1, {0.0, 0.0}, 0.0, 10000.0, tunables);
+	shadows.update(sight, 1, {0.0, 0.0}, 0.0, 10000.0, tunables, true);
 	EXPECT_EQ(shadows.softBodies().size(), 1U) << "past his bright shape";
 	tunables.drawnShadowReachMm = 4000;
-	shadows.update(sight, 1, {0.0, 0.0}, 0.0, 30000.0, tunables);
+	shadows.update(sight, 1, {0.0, 0.0}, 0.0, 30000.0, tunables, true);
 	EXPECT_EQ(shadows.softBodies().size(), 0U);
+	EXPECT_TRUE(shadows.softPieces().empty());
+}
 
-	tunables					  = vision::SightTunables{};
-	tunables.drawnShadowRebuildMm = 100;
-	shadows.update(sight, 1, {0.0, 0.0}, 0.0, 30000.0, tunables);
-	EXPECT_TRUE(shadows.counts().rebuilt);
-	shadows.update(sight, 1, {60.0, 0.0}, 60.0, 30000.0, tunables);
-	EXPECT_FALSE(shadows.counts().rebuilt) << "60 mm moved";
-	shadows.update(sight, 1, {120.0, 0.0}, 60.0, 30000.0, tunables);
-	EXPECT_TRUE(shadows.counts().rebuilt) << "120 mm from where they were built";
+// The soft triangles fall due every drawnShadowRebuildMm of his walk and are drawn as built between;
+// the bands are rebuilt on every frame he moves and on none he stands still. A rebuild's pieces are a
+// fresh build's from the same point.
+TEST(CoverPieces, TheSoftTrianglesKeepTheirCadenceAndTheBandsFollowHim) {
+	const std::vector<vision::SightBody> bodies = {
+		rectangleBody(5000.0, 3000.0, 400.0, 400.0, vision::BodyKind::Soft), rectangleBody(9000.0, -2000.0, 600.0, 600.0, vision::BodyKind::Soft),
+		rectangleBody(7000.0, 0.0, 1000.0, 1400.0, vision::BodyKind::Opaque)
+	};
+	const std::vector<vision::ShadowEdge> edges = {{.body = 2, .corner = 3, .litTurn = 1}};
+	const ecs::VisionSystem::SightBodies  sight{.bodies = &bodies, .shadowEdges = &edges, .leadMm = 670, .reachMm = 30800, .eyeCentre = {0, 0}};
+	const vision::SightTunables			  tunables;
+	ASSERT_EQ(tunables.drawnShadowRebuildMm, 500);
+	worldview::DrawnShadows shadows;
+	std::size_t				softRebuilds = 0;
+	std::size_t				bandRebuilds = 0;
+	constexpr double		kFrameWalkMm = 25.0;
+	constexpr int			kFrames		 = 160; // 4 m
+	for (int frame = 0; frame <= kFrames; ++frame) {
+		const glm::dvec2 eye{0.0, -kFrameWalkMm * static_cast<double>(frame)};
+		const bool		 due = shadows.softDue(eye, tunables);
+		shadows.update(sight, 1, eye, frame == 0 ? 0.0 : kFrameWalkMm, 30000.0, tunables, due);
+		softRebuilds += shadows.counts().softRebuilt ? 1 : 0;
+		bandRebuilds += shadows.counts().bandsRebuilt ? 1 : 0;
+		if (shadows.counts().softRebuilt) {
+			worldview::DrawnShadows fresh;
+			fresh.update(sight, 1, eye, 0.0, 30000.0, tunables, true);
+			ASSERT_EQ(fresh.softPieces().size(), shadows.softPieces().size());
+			for (std::size_t piece = 0; piece < fresh.softPieces().size(); ++piece) {
+				EXPECT_EQ(fresh.softPieces()[piece].points, shadows.softPieces()[piece].points);
+				EXPECT_EQ(fresh.softPieces()[piece].values, shadows.softPieces()[piece].values);
+			}
+		}
+	}
+	EXPECT_EQ(softRebuilds, 1U + 4000U / 500U) << "the first frame, then every 500 mm of 4 m";
+	EXPECT_EQ(bandRebuilds, static_cast<std::size_t>(kFrames) + 1U) << "every frame he moves";
+
+	const glm::dvec2 still{0.0, -kFrameWalkMm * static_cast<double>(kFrames)};
+	for (int frame = 0; frame < 30; ++frame) {
+		shadows.update(sight, 1, still, 0.0, 30000.0, tunables, shadows.softDue(still, tunables));
+		EXPECT_FALSE(shadows.counts().softRebuilt);
+		EXPECT_FALSE(shadows.counts().bandsRebuilt) << "standing still nothing is built";
+	}
 }

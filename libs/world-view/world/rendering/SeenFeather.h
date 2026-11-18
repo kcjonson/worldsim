@@ -61,7 +61,7 @@ namespace worldview {
 		// One cell's uploaded feather, its pieces in world meters with each vertex's value its alpha.
 		struct Cell {
 			std::vector<Renderer::InstancedMeshHandle> meshes;
-			std::vector<ValuePolygon>				   pieces;
+			std::vector<ValueTriangle>				   pieces;
 			std::size_t								   edges = 0;
 			geometry::Vec2i64						   low{0, 0}; // the cell grown by the feather, which its pieces lie within a feather of
 			geometry::Vec2i64						   high{0, 0};
@@ -97,7 +97,7 @@ namespace worldview {
 		[[nodiscard]] const std::vector<const Cell*>& cellsInView() const { return drawnCells; }
 		// The meshes of the cut near the pending shapes in view, and their pieces in world millimetres.
 		[[nodiscard]] const std::vector<const Renderer::InstancedMeshHandle*>& pendingMeshes() const { return pendingDrawn; }
-		void appendPendingPieces(std::vector<ValuePolygon>& out) const;
+		void appendPendingPieces(std::vector<ValueTriangle>& out) const;
 		// The pending shapes in view grown by the feather: where the cells' pieces give way to the cut's.
 		[[nodiscard]] const std::vector<std::vector<glm::dvec2>>& pendingGrown() const { return grown; }
 		[[nodiscard]] const Counts&							   counts() const { return frameCounts; }
@@ -108,7 +108,7 @@ namespace worldview {
 		struct Cluster {
 			geometry::Vec2i64		  low;
 			geometry::Vec2i64		  high;
-			std::vector<ValuePolygon> pieces;
+			std::vector<ValueTriangle> pieces;
 			std::vector<Renderer::InstancedMeshHandle> meshes;
 			std::uint64_t			  frame = 0;
 		};

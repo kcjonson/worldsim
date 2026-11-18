@@ -478,7 +478,7 @@ namespace worldview {
 		}
 	}
 
-	void SeenFeather::appendPendingPieces(std::vector<ValuePolygon>& out) const {
+	void SeenFeather::appendPendingPieces(std::vector<ValueTriangle>& out) const {
 		for (const auto& [key, cluster] : clusters) {
 			out.insert(out.end(), cluster.pieces.begin(), cluster.pieces.end());
 		}

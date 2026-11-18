@@ -199,9 +199,9 @@ TEST_F(VisibilityCoverTest, NothingWhileRevealed) {
 
 namespace {
 
-	double greatestAt(const std::vector<worldview::ValuePolygon>& pieces, glm::dvec2 point) {
+	double greatestAt(const std::vector<worldview::ValueTriangle>& pieces, glm::dvec2 point) {
 		double greatest = 0.0;
-		for (const worldview::ValuePolygon& piece : pieces) {
+		for (const worldview::ValueTriangle& piece : pieces) {
 			for (std::size_t corner = 1; corner + 1 < piece.points.size(); ++corner) {
 				const glm::dvec2 a	  = piece.points[0];
 				const glm::dvec2 b	  = piece.points[corner];
@@ -230,9 +230,10 @@ namespace {
 			if (geometry::pointInPolygon(point, colonist.bright) == geometry::PointInPolygon::Outside) {
 				continue;
 			}
-			double darkness = greatestAt(colonist.feather, millimetres);
+			const glm::dvec2 anchor{static_cast<double>(colonist.featherAnchor.x), static_cast<double>(colonist.featherAnchor.y)};
+			double			 darkness = greatestAt(*colonist.feather, millimetres - anchor);
 			if (colonist.shadows != nullptr) {
-				darkness = std::max(darkness, greatestAt(colonist.shadows->pieces(), millimetres));
+				darkness = std::max({darkness, greatestAt(colonist.shadows->softPieces(), millimetres), greatestAt(colonist.shadows->bandPieces(), millimetres)});
 			}
 			least = std::min(least, darkness);
 		}
@@ -256,7 +257,7 @@ TEST_F(VisibilityCoverTest, SeveralColonistsComposeAsTheLeastDarkness) {
 	EXPECT_TRUE(cover->tintShape().everyPieceInsideItsBrightShape);
 	for (const VisibilityCoverRenderer::ColonistCover& colonist : cover->colonists()) {
 		EXPECT_EQ(colonist.rimSides, colonist.bright.size()) << "in the open every side is rim";
-		EXPECT_EQ(colonist.feather.size(), colonist.bright.size()) << "a convex shape: a rectangle a side and no fan";
+		EXPECT_EQ(colonist.feather->size(), 2 * colonist.bright.size()) << "a convex shape: a rectangle a side and no fan";
 	}
 
 	const double rimMm = static_cast<double>(vision::drawnVisibleRadiusMm(30000) - 400);
@@ -268,6 +269,45 @@ TEST_F(VisibilityCoverTest, SeveralColonistsComposeAsTheLeastDarkness) {
 
 // The bright shape lies inside seen ground, and the seen area's own fade lies inside it: the landing's
 // edge fades a feather into the landing and the cells draw nothing deep inside it.
+// A colonist who stands still, once his rim's ease has ended, builds and uploads nothing a frame.
+TEST_F(VisibilityCoverTest, AStillColonistBuildsNothingOnceSettled) {
+	const ecs::EntityID colonist = addColonist({0.0F, 0.0F});
+	walk(colonist, {3.0F, 0.0F}, 0.05F);
+	frame();
+	EXPECT_GT(cover->counts().piecesBuilt, 0U);
+	for (int settle = 0; settle < 10; ++settle) {
+		world.update(0.016F);
+		frame();
+	}
+	for (int still = 0; still < 20; ++still) {
+		world.update(0.016F);
+		frame();
+		EXPECT_EQ(cover->counts().piecesBuilt, 0U) << "frame " << still;
+		EXPECT_EQ(cover->counts().meshUploads, 0U) << "frame " << still;
+	}
+}
+
+// Fifty colonists walking: no frame rebuilds more than kDrawnShadowRebuildsPerFrame colonists' soft
+// triangles, the rest carried to later frames, and every one is rebuilt in turn.
+TEST_F(VisibilityCoverTest, FiftyWalkingNeverPassTheRebuildsAFrame) {
+	std::vector<ecs::EntityID> walkers;
+	for (int index = 0; index < 50; ++index) {
+		walkers.push_back(addColonist({static_cast<float>(index % 10) * 4.0F - 20.0F, static_cast<float>(index / 10) * 4.0F - 10.0F}));
+	}
+	std::size_t rebuilt = 0;
+	for (int step = 0; step < 120; ++step) {
+		for (const ecs::EntityID walker : walkers) {
+			world.getComponent<ecs::Position>(walker)->value.x += 2.0F / 60.0F;
+		}
+		world.update(0.016F);
+		frame();
+		EXPECT_LE(cover->counts().softRebuilds, worldview::kDrawnShadowRebuildsPerFrame) << "frame " << step;
+		rebuilt += cover->counts().softRebuilds;
+	}
+	EXPECT_GE(rebuilt, 50U * 4U / 2U) << "4 m each at 500 mm, every colonist in turn";
+	EXPECT_LE(rebuilt, 120U * worldview::kDrawnShadowRebuildsPerFrame);
+}
+
 TEST_F(VisibilityCoverTest, TheBrightShapeIsSeenAndTheSeenEdgeFadesInside) {
 	const ecs::EntityID colonist = addColonist({0.0F, 0.0F});
 	walk(colonist, {3.0F, 0.0F}, 0.05F);
@@ -282,7 +322,7 @@ TEST_F(VisibilityCoverTest, TheBrightShapeIsSeenAndTheSeenEdgeFadesInside) {
 
 	camera.setPosition({140.0F, 0.0F});
 	frame();
-	std::vector<worldview::ValuePolygon> cells;
+	std::vector<worldview::ValueTriangle> cells;
 	for (const worldview::SeenFeather::Cell* cell : cover->seenFeather().cellsInView()) {
 		cells.insert(cells.end(), cell->pieces.begin(), cell->pieces.end());
 	}

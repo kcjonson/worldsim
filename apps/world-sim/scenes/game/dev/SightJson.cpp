@@ -87,10 +87,11 @@ namespace world_sim {
 		std::string out = "{\"drawn\":" + std::string(cover.layers().drawn ? "true" : "false") + ",\"tintAlpha\":" + number(worldview::kSeenDimAlpha);
 		out += ",\"counts\":{\"colonists\":" + count(counts.colonists) + ",\"featherPieces\":" + count(counts.featherPieces) +
 			   ",\"softBodies\":" + count(counts.softBodies) + ",\"shadowEdges\":" + count(counts.shadowEdges) +
-			   ",\"shadowPieces\":" + count(counts.shadowPieces) + ",\"shadowRebuilds\":" + count(counts.shadowRebuilds) + ",\"meshUploads\":" + count(counts.meshUploads) +
+			   ",\"softPieces\":" + count(counts.softPieces) + ",\"bandPieces\":" + count(counts.bandPieces) + ",\"featherRebuilds\":" + count(counts.featherRebuilds) + ",\"softRebuilds\":" + count(counts.softRebuilds) + ",\"softDue\":" + count(counts.softDue) + ",\"bandRebuilds\":" + count(counts.bandRebuilds) + ",\"piecesBuilt\":" + count(counts.piecesBuilt) + ",\"meshUploads\":" + count(counts.meshUploads) +
 			   ",\"tintElements\":" + count(counts.tintElements) + ",\"unseenElements\":" + count(counts.unseenElements) +
 			   ",\"buildMicroseconds\":" + number(counts.buildMicroseconds) + ",\"seenMicroseconds\":" + number(counts.seenMicroseconds) +
-			   ",\"uploadMicroseconds\":" + number(counts.uploadMicroseconds) + ",\"composeMicroseconds\":" + number(counts.composeMicroseconds) + "}";
+			   ",\"uploadMicroseconds\":" + number(counts.uploadMicroseconds) + ",\"brightMicroseconds\":" + number(counts.brightMicroseconds) +
+			   ",\"composeMicroseconds\":" + number(counts.composeMicroseconds) + "}";
 		out += ",\"seen\":{\"cellsDrawn\":" + count(seen.cellsDrawn) + ",\"cellsRebuilt\":" + count(seen.cellsRebuilt) +
 			   ",\"cellEdgesRead\":" + count(seen.cellEdgesRead) + ",\"epochCellsLast\":" + count(seen.epochCellsLast) +
 			   ",\"epochEdgesLast\":" + count(seen.epochEdgesLast) + ",\"changedBoxes\":" + count(seen.changedBoxes) +
@@ -105,10 +106,10 @@ namespace world_sim {
 			firstColonist = false;
 			const double moved = static_cast<double>(colonist.rimMovedMm);
 			out += "{\"id\":" + std::to_string(static_cast<std::uint64_t>(colonist.colonist)) + ",\"brightSides\":" + count(colonist.bright.size()) +
-				   ",\"rimSides\":" + count(colonist.rimSides) + ",\"featherPieces\":" + count(colonist.feather.size()) +
+				   ",\"rimSides\":" + count(colonist.rimSides) + ",\"featherPieces\":" + count(colonist.feather != nullptr ? colonist.feather->size() : 0) +
 				   ",\"rimMovedMm\":" + std::to_string(colonist.rimMovedMm) +
 				   ",\"rimMovedOnScreen\":" + number(moved / static_cast<double>(featherMm) * worldview::kSeenDimAlpha);
-			out += ",\"shadowPieces\":" + count(colonist.shadows != nullptr ? colonist.shadows->pieces().size() : 0) + ",\"soft\":[";
+			out += ",\"softPieces\":" + count(colonist.shadows != nullptr ? colonist.shadows->softPieces().size() : 0) + ",\"bandPieces\":" + count(colonist.shadows != nullptr ? colonist.shadows->bandPieces().size() : 0) + ",\"soft\":[";
 			if (colonist.shadows != nullptr) {
 				bool first = true;
 				for (const worldview::DrawnShadows::SoftDrawn& soft : colonist.shadows->softBodies()) {

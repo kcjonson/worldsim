@@ -67,48 +67,53 @@ namespace worldview {
 		eases = std::move(next);
 	}
 
-	void DrawnShadows::update(
-		const ecs::VisionSystem::SightBodies& bodies,
-		std::uint64_t						  buildRevision,
-		glm::dvec2							  eyeMm,
-		double								  walkedMm,
-		double								  brightReachMm,
-		const vision::SightTunables&		  tunables
-	) {
-		for (CornerEase& ease : eases) {
-			ease.walkedMm += walkedMm;
-		}
-		const bool newBuild = !built || buildRevision != lastBuild;
-		if (newBuild) {
-			takeUpEases(bodies);
-			lastBuild = buildRevision;
-		}
-		const bool rebuild = newBuild || tunables.drawnShadowRebuildMm == 0 || !(tunables == builtWith) ||
-							 glm::length(eyeMm - builtAt) >= static_cast<double>(tunables.drawnShadowRebuildMm);
-		built			   = true;
-		frameCounts.rebuilt = rebuild;
-		if (!rebuild) {
-			return;
-		}
-		builtAt	  = eyeMm;
-		builtWith = tunables;
-		drawn.clear();
-		edgesDrawn.clear();
-		softDrawn.clear();
+	bool DrawnShadows::softDue(glm::dvec2 eyeMm, const vision::SightTunables& tunables) const {
+		return !softBuilt || !(tunables == softTunables) || glm::length(eyeMm - softEye) >= static_cast<double>(tunables.drawnShadowRebuildMm);
+	}
 
-		const double reachLimit = std::min(static_cast<double>(std::min(tunables.drawnShadowReachMm, bodies.reachMm)), brightReachMm);
-		for (std::uint32_t index = 0; index < bodies.bodies->size(); ++index) {
-			const vision::SightBody& body = (*bodies.bodies)[index];
-			if (body.kind != vision::BodyKind::Soft || vision::distanceTo(body, eyeMm) > reachLimit) {
+	void DrawnShadows::buildSoft(const ecs::VisionSystem::SightBodies& bodies, glm::dvec2 eyeMm, double reachLimit, const vision::SightTunables& tunables) {
+		softTriangles.clear();
+		softDrawn.clear();
+		for (const vision::SightBody& body : *bodies.bodies) {
+			if (body.kind != vision::BodyKind::Soft) {
 				continue;
 			}
-			if (const std::optional<SoftShadow> shadow = appendSoftShadow(body, eyeMm, tunables, drawn)) {
-				softDrawn.push_back({.body = index, .bodyId = body.id, .diameterMm = body.diameterMm, .shadow = *shadow});
+			// A cheap bound first: no corner nearer than the reach less the body's own diameter.
+			const glm::dvec2 offset = toDouble(body.centre) - eyeMm;
+			if (glm::length(offset) - static_cast<double>(body.diameterMm) > reachLimit) {
+				continue;
+			}
+			const std::size_t				 before = softTriangles.size();
+			const std::optional<SoftShadow> shadow = appendSoftShadow(body, eyeMm, tunables, softTriangles);
+			if (shadow.has_value() && shadow->distance <= reachLimit) {
+				softDrawn.push_back({.bodyId = body.id, .diameterMm = body.diameterMm, .shadow = *shadow});
+			} else {
+				softTriangles.resize(before);
 			}
 		}
+		softBuilt	 = true;
+		softEye		 = eyeMm;
+		softTunables = tunables;
+	}
 
-		const double widening = std::max(static_cast<double>(bodies.leadMm), glm::length(eyeMm - toDouble(bodies.eyeCentre)));
+	bool DrawnShadows::buildBands(
+		const ecs::VisionSystem::SightBodies& bodies,
+		glm::dvec2							  eyeMm,
+		double								  reachLimit,
+		double								  brightReachMm,
+		const vision::SightTunables&		  tunables,
+		bool								  force,
+		double								  walkedMm
+	) {
 		const double easeMm	  = static_cast<double>(tunables.shadowCornerEaseMm);
+		// Standing still nothing a band draws moves: his walk is what eases an apex.
+		const bool	 changing = force || walkedMm > 0.0 || !bandsBuilt || eyeMm != bandEye || !(tunables == bandTunables);
+		if (!changing || (bodies.shadowEdges->empty() && bandTriangles.empty())) {
+			return false;
+		}
+		bandTriangles.clear();
+		edgesDrawn.clear();
+		const double widening = std::max(static_cast<double>(bodies.leadMm), glm::length(eyeMm - toDouble(bodies.eyeCentre)));
 		for (std::size_t index = 0; index < bodies.shadowEdges->size(); ++index) {
 			const vision::ShadowEdge& edge	   = (*bodies.shadowEdges)[index];
 			const vision::SightBody&  body	   = (*bodies.bodies)[edge.body];
@@ -132,12 +137,41 @@ namespace worldview {
 				continue;
 			}
 			const ShadowBand band = shadowBandAt(eyeMm, ease.apex, edge.litTurn, widening, tunables);
-			appendShadowBand(band, band.cornerDistance + brightReachMm + kBandPastBrightMm, drawn);
-			edgesDrawn.push_back({.body = edge.body, .bodyId = body.id, .diameterMm = body.diameterMm, .buildCorner = edge.corner, .followedCorner = followed, .band = band, .ease = eased});
+			appendShadowBand(band, band.cornerDistance + brightReachMm + kBandPastBrightMm, bandTriangles);
+			edgesDrawn.push_back(
+				{.body = edge.body, .bodyId = body.id, .diameterMm = body.diameterMm, .buildCorner = edge.corner, .followedCorner = followed, .band = band, .ease = eased}
+			);
 		}
-		frameCounts.softBodies	= softDrawn.size();
-		frameCounts.shadowEdges = edgesDrawn.size();
-		frameCounts.pieces		= drawn.size();
+		bandsBuilt	 = true;
+		bandEye		 = eyeMm;
+		bandTunables = tunables;
+		return true;
+	}
+
+	void DrawnShadows::update(
+		const ecs::VisionSystem::SightBodies& bodies,
+		std::uint64_t						  buildRevision,
+		glm::dvec2							  eyeMm,
+		double								  walkedMm,
+		double								  brightReachMm,
+		const vision::SightTunables&		  tunables,
+		bool								  rebuildSoft
+	) {
+		for (CornerEase& ease : eases) {
+			ease.walkedMm += walkedMm;
+		}
+		const bool newBuild = !built || buildRevision != lastBuild;
+		if (newBuild) {
+			takeUpEases(bodies);
+			lastBuild = buildRevision;
+		}
+		built					 = true;
+		const double reachLimit	 = std::min(static_cast<double>(std::min(tunables.drawnShadowReachMm, bodies.reachMm)), brightReachMm);
+		frameCounts.softRebuilt	 = rebuildSoft;
+		if (rebuildSoft) {
+			buildSoft(bodies, eyeMm, reachLimit, tunables);
+		}
+		frameCounts.bandsRebuilt = buildBands(bodies, eyeMm, reachLimit, brightReachMm, tunables, newBuild, walkedMm);
 	}
 
 } // namespace worldview

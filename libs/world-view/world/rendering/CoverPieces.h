@@ -1,9 +1,9 @@
 #pragma once
 
 // The cover's partial pieces (sight-softening.md 3 and 7): the feather on an area's boundary, a soft
-// body's triangle and its fins, and an opaque shadow edge's band and fin. Each piece is a polygon in
-// world millimetres with a value at every vertex, linear over it, which the cover draws as an SVG
-// <polygon> filled by the two-stop gradient those values define (salal docs/masks.md). Float
+// body's triangle and its fins, and an opaque shadow edge's band and fin. Each piece is a triangle in
+// world millimetres with a value at each corner, linear over it, which the cover uploads as a mesh
+// whose vertices carry their values (salal docs/masks.md, a mask's mesh element). Float
 // arithmetic, drawn only: nothing here is read by the sim.
 
 #include <vision/SightBody.h>
@@ -15,6 +15,7 @@
 
 #include <glm/vec2.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -31,18 +32,18 @@ namespace worldview {
 	// The widest triangle of a reflex corner's fan.
 	constexpr double kFeatherFanStepDegrees = 15.0;
 
-	// A polygon whose value is linear over it: `values[k]` at `points[k]`, in world millimetres.
-	struct ValuePolygon {
-		std::vector<glm::dvec2> points;
-		std::vector<float>		values;
+	// A triangle whose value is linear over it: values[k] at points[k], in world millimetres.
+	struct ValueTriangle {
+		std::array<glm::dvec2, 3> points{};
+		std::array<float, 3>	  values{};
 	};
 
 	using DirectedEdge = std::pair<geometry::Vec2i64, geometry::Vec2i64>;
 
-	// The pieces as meshes in world meters, each vertex's value its colour's alpha (a mask's mesh element,
-	// salal docs/masks.md), each polygon fanned from its first point, every piece being convex or a fan
-	// round its first point; split so no mesh passes 65,535 vertices.
-	std::vector<renderer::TessellatedMesh> valueMeshes(std::span<const ValuePolygon> pieces);
+	// The pieces as meshes in world meters less `anchorMm`, each vertex's value its colour's alpha, split
+	// so no mesh passes 65,535 vertices. A mesh drawn under a camera moved by the anchor lies where its
+	// pieces do, so pieces that keep their shape about a moving point need no rebuild.
+	std::vector<renderer::TessellatedMesh> valueMeshes(std::span<const ValueTriangle> pieces, glm::dvec2 anchorMm = {0.0, 0.0});
 
 	// The feather of an area on one side of its boundary (7.2): for each edge, its area on the left, the
 	// rectangle `featherMm` into the area, 1 on the edge and 0 on its far side; and where an edge ending
@@ -51,11 +52,11 @@ namespace worldview {
 	// triangles of at most kFeatherFanStepDegrees. Every piece's value at a point is at most the fade of
 	// the point's distance to the edges, so an edge or a fan more than the boundary needs never draws
 	// darker than it.
-	void appendFeather(std::span<const DirectedEdge> edges, double featherMm, std::vector<ValuePolygon>& out);
+	void appendFeather(std::span<const DirectedEdge> edges, double featherMm, std::vector<ValueTriangle>& out);
 
 	// The fan at `corner` between an edge arriving along `incoming` and one leaving along `outgoing`
 	// (directions, any length), when the turn between them is to the right; nothing otherwise.
-	void appendFeatherFan(glm::dvec2 corner, glm::dvec2 incoming, glm::dvec2 outgoing, double featherMm, std::vector<ValuePolygon>& out);
+	void appendFeatherFan(glm::dvec2 corner, glm::dvec2 incoming, glm::dvec2 outgoing, double featherMm, std::vector<ValueTriangle>& out);
 
 	// A soft body's measures from an eye (3.2).
 	struct SoftShadow {
@@ -67,13 +68,13 @@ namespace worldview {
 
 	// The soft body's triangle and its two fins as seen from `eyeMm` (3.2): the silhouette shrunk toward
 	// its bisector by `progress` from the body's near face out to `shadowLength` behind it, valued
-	// footValue x (1 - progress), cut into slices along its length until its sides lie within
-	// kDrawnShadowSliceToleranceMm of the rule; and beside each side a fin from its silhouette corner's
+	// footValue x (1 - progress), cut into slices along its length equal in length, as many as keep its sides
+	// within kDrawnShadowSliceToleranceMm of the rule; and beside each side a fin from its silhouette corner's
 	// range, whose outer edge lies (shadowEdgeWidthMm / 2) x (range - cornerDistance) / cornerDistance
 	// across the ray from the side, falling from the triangle's value to 0. footValue carries the body's
 	// arrival fraction. None when the eye is inside the body's hull or the triangle would draw nothing.
 	std::optional<SoftShadow>
-	appendSoftShadow(const vision::SightBody& body, glm::dvec2 eyeMm, const vision::SightTunables& tunables, std::vector<ValuePolygon>& out);
+	appendSoftShadow(const vision::SightBody& body, glm::dvec2 eyeMm, const vision::SightTunables& tunables, std::vector<ValueTriangle>& out);
 
 	// An opaque shadow edge's band and fin as seen from `eyeMm` (3.1).
 	struct ShadowBand {
@@ -102,7 +103,7 @@ namespace worldview {
 
 	// The band at 1, the wedge at the apex from its lit line round through the eye's ray to its shadow
 	// line, and the fin beside its lit line falling across to 0, each out to `farMm` from the apex.
-	void appendShadowBand(const ShadowBand& band, double farMm, std::vector<ValuePolygon>& out);
+	void appendShadowBand(const ShadowBand& band, double farMm, std::vector<ValueTriangle>& out);
 
 	// The corner of the body's outline that his shadow side runs past from `eyeMm`, followed from the
 	// build's corner `buildCorner` along the outline toward whichever neighbour lies on the lit side of

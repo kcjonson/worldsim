@@ -54,12 +54,9 @@ namespace ecs {
 			return lengths > 0.0 && std::abs(along.x * outward.x + along.y * outward.y) >= kAlongRayCosine * lengths;
 		}
 
-		bool onOpaqueFace(const std::vector<vision::SightBody>& bodies, const Vec2i64& from, const Vec2i64& to) {
-			for (const vision::SightBody& body : bodies) {
-				if (body.kind != vision::BodyKind::Opaque) {
-					continue;
-				}
-				for (const geometry::OccluderSegment& edge : body.edges) {
+		bool onOpaqueFace(const std::vector<const vision::SightBody*>& opaque, const Vec2i64& from, const Vec2i64& to) {
+			for (const vision::SightBody* body : opaque) {
+				for (const geometry::OccluderSegment& edge : body->edges) {
 					if (geometry::withinDistanceOfSegment(from, edge.a, edge.b, kOnFaceMm) && geometry::withinDistanceOfSegment(to, edge.a, edge.b, kOnFaceMm)) {
 						return true;
 					}
@@ -330,12 +327,20 @@ namespace ecs {
 		// face, which lies on an opaque body's outline: whatever ring cut the rest (the disc, the eased
 		// shape, or vision's own forest rim where the ease reaches past it), it bounds his sight.
 		const std::optional<VisionSystem::SightBodies> bodies = vision->sightBodies(colonist);
+		std::vector<const vision::SightBody*>		   opaque;
+		if (bodies.has_value()) {
+			for (const vision::SightBody& body : *bodies->bodies) {
+				if (body.kind == vision::BodyKind::Opaque) {
+					opaque.push_back(&body);
+				}
+			}
+		}
 		DrawnShape									   drawn{.outline = std::move(cut)};
 		drawn.rim.resize(drawn.outline.size());
 		for (std::size_t side = 0; side < drawn.outline.size(); ++side) {
 			const Vec2i64& from = drawn.outline[side];
 			const Vec2i64& to	= drawn.outline[(side + 1) % drawn.outline.size()];
-			drawn.rim[side]		= !alongRayFrom(build, from, to) && !(bodies.has_value() && onOpaqueFace(*bodies->bodies, from, to));
+			drawn.rim[side]		= !alongRayFrom(build, from, to) && !onOpaqueFace(opaque, from, to);
 		}
 		return drawn;
 	}

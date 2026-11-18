@@ -31,6 +31,7 @@
 #include <cstdint>
 #include <deque>
 #include <map>
+#include <span>
 #include <optional>
 #include <vector>
 
@@ -86,34 +87,42 @@ namespace worldview {
 			std::vector<std::vector<Foundation::Vec2>> pendingOutlines;
 		};
 
-		// One colonist in view this frame: his bright shape and its rim sides, his feather and drawn
-		// shadows in world millimetres, and how far his eased rim moved since the last frame.
+		// One colonist in view this frame: his bright shape and its rim sides, his feather (in world
+		// millimetres less `featherAnchor`, where he stands) and drawn shadows, and how
+		// far his eased rim moved since the last frame.
 		struct ColonistCover {
 			ecs::EntityID					   colonist = ecs::kInvalidEntity;
 			std::vector<geometry::Vec2i64>	   bright;
 			std::vector<bool>				   rim;		 // per side of `bright`, whether it is rim
 			std::size_t						   rimSides = 0;
-			std::vector<ValuePolygon>		   feather;
+			geometry::Vec2i64				   featherAnchor{0, 0};
+			const std::vector<ValueTriangle>*  feather	   = nullptr;
 			const DrawnShadows*				   shadows	   = nullptr;
-			// The feather and the drawn shadows as uploaded.
-			const std::vector<Renderer::InstancedMeshHandle>* featherMeshes = nullptr;
-			const std::vector<Renderer::InstancedMeshHandle>* shadowMeshes	= nullptr;
+			// The feather and bands, about featherAnchor, and the soft triangles, as uploaded.
+			const std::vector<Renderer::InstancedMeshHandle>* followMeshes = nullptr;
+			const std::vector<Renderer::InstancedMeshHandle>* softMeshes	= nullptr;
 			std::int64_t					   rimMovedMm  = 0; // the most any side of the eased rim moved since the last frame
 		};
 
 		// What the frame did, for the cover's state view (sight-softening.md 12).
 		struct Counts {
 			std::size_t colonists		= 0;
-			std::size_t featherPieces	= 0;
+			std::size_t featherPieces	= 0; // pieces drawn this frame, by kind
 			std::size_t softBodies		= 0;
 			std::size_t shadowEdges		= 0;
-			std::size_t shadowPieces	= 0;
-			std::size_t shadowRebuilds	= 0; // colonists whose drawn shadows were rebuilt this frame
-			std::size_t meshUploads		= 0; // feathers and drawn shadows uploaded this frame
+			std::size_t softPieces		= 0;
+			std::size_t bandPieces		= 0;
+			std::size_t featherRebuilds = 0; // colonists whose pieces of each kind were built this frame
+			std::size_t softRebuilds	= 0;
+			std::size_t bandRebuilds	= 0;
+			std::size_t softDue			= 0; // colonists whose soft triangles were due, built or carried over
+			std::size_t meshUploads		= 0; // meshes uploaded this frame
+			std::size_t piecesBuilt		= 0; // pieces built this frame
 			std::size_t tintElements	= 0; // elements of the tint's mask
 			std::size_t unseenElements	= 0;
 			double		buildMicroseconds	= 0.0; // building every colonist's feather and drawn shadows, and uploading them
 			double		uploadMicroseconds	= 0.0; // of which uploading
+			double		brightMicroseconds	= 0.0; // of which asking for each bright shape (PlayerVisibilitySystem::drawnVisible)
 			double		seenMicroseconds	= 0.0; // the seen feather's cells and pending cuts
 			double		composeMicroseconds = 0.0; // the masks, from the pieces to the two draws
 		};
@@ -141,22 +150,29 @@ namespace worldview {
 		[[nodiscard]] std::uint64_t uploads() const { return uploadCount; }
 
 	  private:
-		// What the cover keeps of a colonist between frames.
+		// What the cover keeps of a colonist between frames: his drawn shadows, his feather as built
+		// about where he stood (on a leg, once the ease has ended, it moves with him unchanged), and their
+		// meshes, each uploaded again only when its pieces change.
 		struct ColonistState {
-			DrawnShadows	  shadows;
-			bool			  placed = false;
-			glm::dvec2		  lastPosition{0.0};
-			bool			  hasOffsets = false;
-			std::vector<std::int64_t> lastOffsets;
-			std::uint64_t	  frame = 0;
-			bool			  featherUploaded = false;
-			std::vector<geometry::Vec2i64> lastBright;
-			std::vector<Renderer::InstancedMeshHandle> featherMeshes;
-			std::vector<Renderer::InstancedMeshHandle> shadowMeshes;
+			DrawnShadows					   shadows;
+			bool							   placed = false;
+			glm::dvec2						   lastPosition{0.0};
+			bool							   hasOffsets = false;
+			std::vector<std::int64_t>		   lastOffsets;
+			std::uint64_t					   frame = 0;
+			std::uint64_t					   softDueSince = 0; // the frame his soft triangles fell due, 0 when not due
+			bool							   featherBuilt = false;
+			std::int64_t					   featherWidthMm = 0;
+			std::vector<geometry::Vec2i64>	   featherShape; // the bright outline less the anchor, and its rim sides
+			std::vector<bool>				   featherRim;
+			std::vector<ValueTriangle>		   featherPieces;
+			std::vector<Renderer::InstancedMeshHandle> followMeshes; // his feather and bands, about where he stands
+			std::vector<Renderer::InstancedMeshHandle> softMeshes;
 		};
 
 		void upload(const vision::SeenArea& seen);
 		void retire(std::vector<Renderer::InstancedMeshHandle>& uploaded);
+		void uploadPieces(std::span<const ValueTriangle> pieces, glm::dvec2 anchorMm, std::vector<Renderer::InstancedMeshHandle>& into);
 		void gather(
 			ecs::World&						   world,
 			ecs::PlayerVisibilitySystem&	   visibility,
@@ -181,5 +197,11 @@ namespace worldview {
 		// Replaced meshes, by the frame they were replaced, until the GPU is surely done with them.
 		std::deque<std::pair<std::uint64_t, std::vector<Renderer::InstancedMeshHandle>>> retired;
 	};
+
+	// The most colonists whose soft triangles are rebuilt in one frame; the rest wait, the longest due
+	// first. Fifty colonists walking 2 m/s at 60 frames a second with drawnShadowRebuildMm at 500 fall
+	// due 3.3 a frame.
+	constexpr std::size_t kDrawnShadowRebuildsPerFrame = 4;
+
 
 } // namespace worldview

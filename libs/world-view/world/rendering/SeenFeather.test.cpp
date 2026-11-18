@@ -19,13 +19,13 @@
 namespace {
 
 	using geometry::Vec2i64;
-	using worldview::ValuePolygon;
+	using worldview::ValueTriangle;
 
 	constexpr std::int64_t kFeatherMm = 1500;
 
-	double valueOrZero(const std::vector<ValuePolygon>& pieces, glm::dvec2 point) {
+	double valueOrZero(const std::vector<ValueTriangle>& pieces, glm::dvec2 point) {
 		double greatest = 0.0;
-		for (const ValuePolygon& piece : pieces) {
+		for (const ValueTriangle& piece : pieces) {
 			for (std::size_t corner = 1; corner + 1 < piece.points.size(); ++corner) {
 				const glm::dvec2 a	  = piece.points[0];
 				const glm::dvec2 b	  = piece.points[corner];
@@ -64,8 +64,8 @@ namespace {
 			feather->update(seen, changed, {-60000, -60000}, {60000, 60000}, kFeatherMm);
 		}
 
-		std::vector<ValuePolygon> cellPieces() const {
-			std::vector<ValuePolygon> pieces;
+		std::vector<ValueTriangle> cellPieces() const {
+			std::vector<ValueTriangle> pieces;
 			for (const worldview::SeenFeather::Cell* cell : feather->cellsInView()) {
 				pieces.insert(pieces.end(), cell->pieces.begin(), cell->pieces.end());
 			}
@@ -103,7 +103,7 @@ TEST_F(SeenFeatherTest, ThePendingCutDrawsTheUnionsBoundaryAlone) {
 	frame();
 	EXPECT_EQ(feather->counts().pendingShapes, 1U);
 	EXPECT_EQ(feather->counts().clustersCut, 1U);
-	std::vector<ValuePolygon> pending;
+	std::vector<ValueTriangle> pending;
 	feather->appendPendingPieces(pending);
 	EXPECT_EQ(valueOrZero(pending, {10000.0, 0.0}), 0.0) << "no seam on the record's edge inside the pending square";
 	EXPECT_EQ(valueOrZero(pending, {7500.0, 0.0}), 0.0) << "no seam on the pending side inside the record";
