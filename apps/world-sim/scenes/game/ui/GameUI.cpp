@@ -169,6 +169,7 @@ namespace world_sim {
 		});
 		pauseMenuDialog = std::make_unique<PauseMenuDialog>(PauseMenuDialog::Args{
 			.onClose = args.onPauseMenuClosed,
+			.onSettings = args.onSettings,
 			.onMainMenu = args.onMainMenu,
 			.onQuitGame = args.onQuitGame,
 		});
