@@ -112,7 +112,7 @@ assets/config/thoughts/*.xml
 ```
 
 `colonists/traits/`, `colonists/attributes/`, `colonists/needs/`, `conditions/`, and `thoughts/` load through `ecs::loadColonistRules(configRoot)` (libs/sim/ecs/ColonistRules.h),
-stopping at the first stage with errors. The traits load first, then the attribute ranges, then the need thresholds (`loadNeedLevels`: `assets::loadNeedsConfig` reads the folder, a later file's `<Need>` replacing an earlier one of the same name and logged at info level, and `ecs::NeedLevels` checks that every need is given and each name is a need). A needs file with any error adds nothing, and its errors name the file (relative to the needs folder) and the `<Need name="...">`. There is no C++ default for a threshold: every colonist's `NeedsComponent` is constructed from the loaded `NeedLevels`, so the AI and the thought sources read the same numbers. Then the condition vocabulary is declared, answered by the sim's terms, and frozen, then the thought
+stopping at the first stage with errors. The traits load first, then the attribute ranges, then the needs (`loadNeedLevels`: `assets::loadNeedsConfig` reads the folder, each `<Need>` giving its thresholds and its mood `cost`, a later file's `<Need>` replacing an earlier one of the same name, cost included, and logged at info level, and `ecs::NeedLevels` checks that every need is given and each name is a need). A missing or malformed threshold or cost, or a cost below 0, is an error; a needs file with any error adds nothing, and its errors name the file (relative to the needs folder) and the `<Need name="...">`. There is no C++ default for a threshold or a cost: every colonist's `NeedsComponent` is constructed from the loaded `NeedLevels`, each `Need` carrying its thresholds and its `moodCost`, so the AI, the thought sources, and `MoodSystem` read the same numbers. Then the condition vocabulary is declared, answered by the sim's terms, and frozen, then the thought
 types are read and their conditions parsed against it (`loadConditionVocabulary` and `loadThoughtTypes`,
 which the tests use too). Each folder's own files load before its subfolders' (`assets::configFilesIn`),
 so a mod adds or replaces by adding a file there. A clean load logs its counts at info level (traits; needs; terms;
@@ -122,14 +122,10 @@ or `[thoughts]`, to the config errors the loading screen shows, and hands the ru
 itself, once; when they are broken it hands the errors to the splash (`world_sim::failColonistRules`),
 which shows them after the ground bake and loads nothing.
 
-`mood.xml` loads into `assets::MoodConfig` (the mood rate, the need penalty curve, each need's mood
-cost by need name, and the band names) and is checked by `ConfigValidator::validateMood`. The loader
-refuses an element under `<Mood>` other than `Easing`, `NeedPenalty`, `NeedCosts`, and `Bands` (the
-error names the file and the element) and a `<Need>` with no name; and a need listed twice, a cost
-below 0, and any `<Need>` attribute other than `name` and `cost`, each error naming the file and the
-`<Need name="...">`. The need names belong to the sim, so
-`GameLoadingScene` adds `ecs::moodConfigErrors` (a name that is no need, a need with no cost) to
-`loadWorkConfig`'s errors before the game scene is entered.
+`mood.xml` loads into `assets::MoodConfig` (the mood rate, the need penalty curve, and the band names)
+and is checked by `ConfigValidator::validateMood`. It names no need: each need's mood cost is on its own
+`<Need>` in `colonists/needs/`, above. The loader refuses an element under `<Mood>` other than
+`Easing`, `NeedPenalty`, and `Bands` (the error names the file and the element).
 
 Every `.xml` file under `colonists/traits/` loads into an `assets::TraitRegistry` (the trait ids, names and
 descriptions, the 1 to 3 count, and the exclusive groups): the folder's own files first, then its subfolders' in
@@ -212,8 +208,7 @@ Every way a game load fails goes through the loading scene's one `fail(messages)
 error level, keeps them for the scene's state view, and moves to the `Failed` phase. The causes are the asset
 library's validation errors and the recipes' errors (prefixed `[recipes]`, read by `world_sim::stepGroundBake` from
 `RecipeRegistry::problems()`, which the asset system's load fills), a failed ground bake (when a `--scene` jump skipped the splash), a missing or
-unreadable quickstart planet, and the config errors above: `loadWorkConfig`'s, `ecs::moodConfigErrors`, and
-`ecs::loadColonistRules`'s, each prefixed with its stage.
+unreadable quickstart planet, and the config errors above: `loadWorkConfig`'s and `ecs::loadColonistRules`'s, each prefixed with its stage.
 
 `Failed` hides the status line and the bar and shows a `world_sim::LoadFailureView`
 (`apps/world-sim/scenes/shared/LoadFailureView.h`) in their place: an inset panel titled "Loading failed" with

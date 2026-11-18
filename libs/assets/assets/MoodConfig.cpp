@@ -8,7 +8,6 @@
 #include <pugixml.hpp>
 
 #include <algorithm>
-#include <set>
 #include <string_view>
 #include <utility>
 
@@ -37,7 +36,7 @@ namespace assets {
 				continue;
 			}
 			const std::string_view element = node.name();
-			if (element != "Easing" && element != "NeedPenalty" && element != "NeedCosts" && element != "Bands") {
+			if (element != "Easing" && element != "NeedPenalty" && element != "Bands") {
 				elementProblems.push_back(source + ": unknown element <" + std::string(element) + ">");
 			}
 		}
@@ -51,26 +50,6 @@ namespace assets {
 			.penaltyAtWarning = reader.attributeNumber(penaltyNode, "NeedPenalty", "penaltyAtWarning"),
 		};
 
-		std::vector<std::string> needProblems;
-		std::set<std::string>	 listed;
-		for (const pugi::xml_node needNode : root.child("NeedCosts").children("Need")) {
-			const std::string name = needNode.attribute("name").as_string();
-			if (name.empty()) {
-				needProblems.push_back(source + ": a <Need> in <NeedCosts> has no name");
-				continue;
-			}
-			const std::string what = ConfigReader::describe(needNode, "Need");
-			if (!listed.insert(name).second) {
-				needProblems.push_back(source + ": " + what + " is given twice");
-			}
-			onlyAttributes(needNode, {"name", "cost"}, what, source, needProblems);
-			const float cost = reader.attributeNumber(needNode, "Need", "cost");
-			if (cost < 0.0F) {
-				reader.refuseAttribute(what, needNode, "cost", "zero or more");
-			}
-			costs.push_back({.need = name, .cost = cost});
-		}
-
 		for (const pugi::xml_node bandNode : root.child("Bands").children("Band")) {
 			bandList.push_back({.name = bandNode.attribute("name").as_string(), .from = reader.attributeNumber(bandNode, "Band", "from")});
 		}
@@ -81,7 +60,6 @@ namespace assets {
 		std::vector<std::string> problems = std::move(elementProblems);
 		const std::vector<std::string> numberProblems = reader.takeProblems();
 		problems.insert(problems.end(), numberProblems.begin(), numberProblems.end());
-		problems.insert(problems.end(), needProblems.begin(), needProblems.end());
 		if (!problems.empty()) {
 			clear();
 			problemList = std::move(problems);
@@ -94,11 +72,9 @@ namespace assets {
 	}
 
 	void MoodConfig::clear() {
-		++loadGeneration;
 		isLoaded = false;
 		easingPointsPerGameHour = 0.0F;
 		penaltyCurve = {};
-		costs.clear();
 		bandList.clear();
 		problemList.clear();
 	}

@@ -372,24 +372,25 @@ struct Need {
 };
 ```
 
-**Need tuning as data.** The three thresholds are in the folder `assets/config/colonists/needs/`,
-and the per-need decay rate moves out of `Needs.cpp` to join them. The folder is loaded with the other colonist rules
+**Need tuning as data.** The three thresholds and the need's mood cost are in the folder
+`assets/config/colonists/needs/`, and the per-need decay rate moves out of `Needs.cpp` to join them. The folder is loaded with the other colonist rules
 ([Config Loading](./config-loading.md)): `assets::loadNeedsConfig` reads it, a later file replacing a
 `<Need>` by name, and `ecs::NeedLevels` checks that every need is given. There is no default in code.
 A colonist's `NeedsComponent` is constructed from the loaded levels and carries each need's thresholds,
-which the AI and the thought sources both read, so one edit moves both. The tests and benches build
+which the AI and the thought sources both read, so one edit moves both, and its mood cost, which
+`MoodSystem` reads ([Colonist Needs](../design/game-systems/colonists/needs.md), What a need costs mood). The tests and benches build
 theirs from the shipped folder through one helper (`libs/sim/ecs/ShippedConfig.test.h`).
 
 ```xml
 <Needs>
-  <Need name="Hunger"     decayPerGameMinute="0.08"  seek="50" urgent="25" critical="10"/>
-  <Need name="Thirst"     decayPerGameMinute="0.12"  seek="50" urgent="25" critical="10"/>
-  <Need name="Energy"     decayPerGameMinute="0.05"  seek="30" urgent="20" critical="10"/>
-  <Need name="Bladder"    decayPerGameMinute="0.03"  seek="30" urgent="20" critical="10"/>
-  <Need name="Digestion"  decayPerGameMinute="0.02"  seek="30" urgent="20" critical="10"/>
-  <Need name="Hygiene"    decayPerGameMinute="0.015" seek="40" urgent="25" critical="15"/>
-  <Need name="Recreation"  decayPerGameMinute="0.01"  seek="30" urgent="20" critical="10"/>
-  <Need name="Temperature" decayPerGameMinute="0"     seek="40" urgent="25" critical="15"/>
+  <Need name="Hunger"      decayPerGameMinute="0.08"  seek="50" urgent="25" critical="10" cost="25"/>
+  <Need name="Thirst"      decayPerGameMinute="0.12"  seek="50" urgent="25" critical="10" cost="25"/>
+  <Need name="Energy"      decayPerGameMinute="0.05"  seek="30" urgent="20" critical="10" cost="20"/>
+  <Need name="Bladder"     decayPerGameMinute="0.03"  seek="30" urgent="20" critical="10" cost="10"/>
+  <Need name="Digestion"   decayPerGameMinute="0.02"  seek="30" urgent="20" critical="10" cost="10"/>
+  <Need name="Hygiene"     decayPerGameMinute="0.015" seek="40" urgent="25" critical="15" cost="15"/>
+  <Need name="Recreation"  decayPerGameMinute="0.01"  seek="30" urgent="20" critical="10" cost="15"/>
+  <Need name="Temperature" decayPerGameMinute="0"     seek="40" urgent="25" critical="15" cost="40"/>
   <Sleep curveExponent="2.0"/>
 </Needs>
 ```

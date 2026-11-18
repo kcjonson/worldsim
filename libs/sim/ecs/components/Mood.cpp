@@ -1,47 +1,8 @@
 #include "Mood.h"
 
 #include <algorithm>
-#include <string_view>
 
 namespace ecs {
-
-	ResolvedNeedMoodCosts resolveNeedMoodCosts(const assets::MoodConfig& config) {
-		ResolvedNeedMoodCosts		 resolved;
-		std::array<bool, kNeedCount> costed{};
-		for (const assets::NeedMoodCost& needCost : config.needCosts()) {
-			const auto found = std::find_if(kNeedLabels.begin(), kNeedLabels.end(), [&needCost](const char* label) {
-				return std::string_view(label) == needCost.need;
-			});
-			if (found == kNeedLabels.end()) {
-				resolved.unknownNeeds.push_back(needCost.need);
-				continue;
-			}
-			const auto index = static_cast<size_t>(found - kNeedLabels.begin());
-			resolved.costs[index] = needCost.cost;
-			costed[index] = true;
-		}
-		for (size_t i = 0; i < kNeedCount; ++i) {
-			if (!costed[i]) {
-				resolved.uncostedNeeds.push_back(static_cast<NeedType>(i));
-			}
-		}
-		return resolved;
-	}
-
-	std::vector<std::string> moodConfigErrors(const assets::MoodConfig& config) {
-		const ResolvedNeedMoodCosts resolved = resolveNeedMoodCosts(config);
-		std::vector<std::string>	errors;
-		for (const std::string& name : resolved.unknownNeeds) {
-			errors.push_back("[Mood] Need '" + name + "' has a cost but no need has that name");
-		}
-		for (const NeedType need : resolved.uncostedNeeds) {
-			const std::string label = needLabel(need);
-			errors.push_back(
-				"[Mood] Need '" + label + "' has no cost (add <Need name=\"" + label + "\" cost=\"...\"/>; 0 leaves it out of mood)"
-			);
-		}
-		return errors;
-	}
 
 	float needPenalty(float value, const assets::NeedPenaltyCurve& curve) {
 		if (value >= curve.comfortable) {
@@ -55,10 +16,10 @@ namespace ecs {
 		return curve.penaltyAtWarning + intoSteep * (1.0F - curve.penaltyAtWarning);
 	}
 
-	std::array<float, kNeedCount> needMoodContributions(const NeedContributionsArgs& args) {
+	std::array<float, kNeedCount> needMoodContributions(const NeedsComponent& needs, const assets::NeedPenaltyCurve& curve) {
 		std::array<float, kNeedCount> contributions{};
 		for (size_t i = 0; i < kNeedCount; ++i) {
-			contributions[i] = -args.costs[i] * needPenalty(args.needs.needs[i].value, args.curve);
+			contributions[i] = -needs.needs[i].moodCost * needPenalty(needs.needs[i].value, curve);
 		}
 		return contributions;
 	}

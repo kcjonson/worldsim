@@ -1,10 +1,9 @@
 #pragma once
 
-// Mood tuning: how fast mood follows its target, how each need's level turns into a mood penalty, the
-// most mood each need takes off, and the band names. Loaded from assets/config/colonists/mood.xml.
-// See /docs/design/game-systems/colonists/mood.md.
+// Mood tuning: how fast mood follows its target, how each need's level turns into a mood penalty, and
+// the band names. Loaded from assets/config/colonists/mood.xml. Each need's cost is on its own entry in
+// assets/config/colonists/needs (NeedsConfig). See /docs/design/game-systems/colonists/mood.md.
 
-#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -19,13 +18,6 @@ namespace assets {
 		float penaltyAtWarning = 0.0F;
 	};
 
-	/// Need names are the sim's need labels ("Hunger", "Hygiene").
-	struct NeedMoodCost {
-		std::string need;
-		/// The mood points the need takes off at its worst, a penalty of 1.
-		float cost = 0.0F;
-	};
-
 	/// A band covers mood from `from` up to the next band's `from`.
 	struct MoodBand {
 		std::string name;
@@ -38,21 +30,16 @@ namespace assets {
 		static MoodConfig& Get();
 
 		/// Replaces everything with `configRoot / file`: false, with problems() saying why, when the file can't be
-		/// read, <Mood> has an element other than Easing, NeedPenalty, NeedCosts, and Bands, a value in it is
-		/// missing or malformed, a need is listed twice or costs less than 0, or a <Need> has an attribute
-		/// other than name and cost. Errors name the file as `file` is written.
+		/// read, <Mood> has an element other than Easing, NeedPenalty, and Bands, or a value in it is missing
+		/// or malformed. Errors name the file as `file` is written.
 		bool loadFromFile(const std::filesystem::path& configRoot, const std::filesystem::path& file);
 
 		void clear();
 
 		[[nodiscard]] bool loaded() const { return isLoaded; }
 
-		/// Moves on every load and clear, so a reader that resolves values can tell they may have changed.
-		[[nodiscard]] uint64_t generation() const { return loadGeneration; }
-
-		[[nodiscard]] float							   pointsPerGameHour() const { return easingPointsPerGameHour; }
-		[[nodiscard]] const NeedPenaltyCurve&		   needPenaltyCurve() const { return penaltyCurve; }
-		[[nodiscard]] const std::vector<NeedMoodCost>& needCosts() const { return costs; }
+		[[nodiscard]] float					  pointsPerGameHour() const { return easingPointsPerGameHour; }
+		[[nodiscard]] const NeedPenaltyCurve& needPenaltyCurve() const { return penaltyCurve; }
 		/// Highest `from` first.
 		[[nodiscard]] const std::vector<MoodBand>& bands() const { return bandList; }
 
@@ -64,13 +51,11 @@ namespace assets {
 		[[nodiscard]] const MoodBand& bandFor(float mood) const;
 
 	  private:
-		bool					  isLoaded = false;
-		uint64_t				  loadGeneration = 1;
-		float					  easingPointsPerGameHour = 0.0F;
-		NeedPenaltyCurve		  penaltyCurve{};
-		std::vector<NeedMoodCost> costs{};
-		std::vector<MoodBand>	  bandList{};
-		std::vector<std::string>  problemList{};
+		bool					 isLoaded = false;
+		float					 easingPointsPerGameHour = 0.0F;
+		NeedPenaltyCurve		 penaltyCurve{};
+		std::vector<MoodBand>	 bandList{};
+		std::vector<std::string> problemList{};
 	};
 
 } // namespace assets

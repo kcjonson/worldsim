@@ -562,7 +562,6 @@ namespace {
 	std::string moodWith(const std::string& easing) {
 		return "<Mood>" + easing +
 			   "<NeedPenalty comfortable=\"70\" warning=\"30\" penaltyAtWarning=\"0.3\"/>"
-			   "<NeedCosts><Need name=\"Hunger\" cost=\"25\"/></NeedCosts>"
 			   "<Bands><Band name=\"Content\" from=\"0\"/></Bands></Mood>";
 	}
 } // namespace
@@ -593,23 +592,6 @@ TEST_F(WorkConfigTest, MoodConfig_ShippedValuesArePinned) {
 	EXPECT_FLOAT_EQ(config.needPenaltyCurve().comfortable, 70.0F);
 	EXPECT_FLOAT_EQ(config.needPenaltyCurve().warning, 30.0F);
 	EXPECT_FLOAT_EQ(config.needPenaltyCurve().penaltyAtWarning, 0.3F);
-	std::vector<std::pair<std::string, float>> costs;
-	for (const NeedMoodCost& needCost : config.needCosts()) {
-		costs.emplace_back(needCost.need, needCost.cost);
-	}
-	EXPECT_EQ(
-		costs,
-		(std::vector<std::pair<std::string, float>>{
-			{"Temperature", 40.0F},
-			{"Hunger", 25.0F},
-			{"Thirst", 25.0F},
-			{"Energy", 20.0F},
-			{"Hygiene", 15.0F},
-			{"Recreation", 15.0F},
-			{"Bladder", 10.0F},
-			{"Digestion", 10.0F},
-		})
-	);
 	ASSERT_EQ(config.bands().size(), 4U);
 	EXPECT_FLOAT_EQ(config.bands().front().from, 55.0F);
 }
@@ -693,14 +675,6 @@ TEST_F(WorkConfigTest, MoodConfig_BadNumbersAreErrorsNamingFileElementAndAttribu
 	};
 
 	EXPECT_NE(errorsFor(moodWith("")).find("<Easing> pointsPerGameHour is missing"), std::string::npos);
-	EXPECT_NE(
-		errorsFor(
-			"<Mood><Easing pointsPerGameHour=\"5\"/><NeedPenalty comfortable=\"70\" warning=\"30\" penaltyAtWarning=\"0.3\"/>"
-			"<NeedCosts><Need name=\"Hunger\" cost=\"6abc\"/></NeedCosts><Bands><Band name=\"Content\" from=\"0\"/></Bands></Mood>"
-		)
-			.find("<Need name=\"Hunger\"> cost must be a number, got \"6abc\""),
-		std::string::npos
-	);
 	EXPECT_NE(errorsFor(moodWith("<Easing/>")).find("<Easing> pointsPerGameHour is missing"), std::string::npos);
 	for (const char* text : {"30abc", "abc", "", "nan"}) {
 		const std::string joined = errorsFor(moodWith(std::string("<Easing pointsPerGameHour=\"") + text + "\"/>"));

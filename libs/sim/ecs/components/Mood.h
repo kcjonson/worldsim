@@ -11,7 +11,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <string>
 #include <vector>
 
 namespace ecs {
@@ -55,35 +54,11 @@ namespace ecs {
 		double								 easedAt = 0.0;
 	};
 
-	/// The most mood each need takes off, per NeedType, resolved from the config's need names.
-	using NeedMoodCosts = std::array<float, kNeedCount>;
-
-	struct ResolvedNeedMoodCosts {
-		NeedMoodCosts costs{};
-		/// Costed names that are no need's label, in file order.
-		std::vector<std::string> unknownNeeds;
-		/// Needs the config gives no cost, in NeedType order.
-		std::vector<NeedType> uncostedNeeds;
-	};
-
-	/// The config's need costs by NeedType, and the names it could not place.
-	[[nodiscard]] ResolvedNeedMoodCosts resolveNeedMoodCosts(const assets::MoodConfig& config);
-
-	/// Config errors the assets library can't see: costed names that are no need, and needs with no
-	/// cost. Formatted like loadWorkConfig's errors; empty when every need is costed by name.
-	[[nodiscard]] std::vector<std::string> moodConfigErrors(const assets::MoodConfig& config);
-
 	/// A need's penalty, 0 to 1, from its value on the config's curve.
 	[[nodiscard]] float needPenalty(float value, const assets::NeedPenaltyCurve& curve);
 
-	struct NeedContributionsArgs {
-		const NeedsComponent&			needs;
-		const NeedMoodCosts&			costs;
-		const assets::NeedPenaltyCurve& curve;
-	};
-
-	/// Each need's signed mood contribution: -cost x penalty.
-	[[nodiscard]] std::array<float, kNeedCount> needMoodContributions(const NeedContributionsArgs& args);
+	/// Each need's signed mood contribution: -moodCost x penalty.
+	[[nodiscard]] std::array<float, kNeedCount> needMoodContributions(const NeedsComponent& needs, const assets::NeedPenaltyCurve& curve);
 
 	/// kFullMood plus every need's contribution, never below 0.
 	[[nodiscard]] float needsScore(const std::array<float, kNeedCount>& needContributions);

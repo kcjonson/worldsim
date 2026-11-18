@@ -53,8 +53,8 @@ class ConfigValidator {
     /// @return true if valid
     static bool validatePriorityConfig();
 
-    /// Validate a mood config: a positive easing rate, a well-ordered penalty curve, finite
-    /// non-negative weights named once each, and named bands that cover every mood from 0.
+    /// Validate a mood config: a positive easing rate, a well-ordered penalty curve, and named
+    /// bands that cover every mood from 0.
     /// @return true if valid
     static bool validateMood(const MoodConfig& config);
 

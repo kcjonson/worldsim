@@ -19,14 +19,12 @@
 
 #include <application/App.h>
 #include <assets/AssetRegistry.h>
-#include <assets/MoodConfig.h>
 #include <assets/WorkConfig.h>
 #include <assets/placement/AsyncChunkProcessor.h>
 #include <assets/placement/CanopyCover.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <ecs/ColonistRules.h>
 #include <ecs/GoalTaskRegistry.h>
-#include <ecs/components/Mood.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
 #include <theme/Keys.h>
@@ -333,10 +331,6 @@ namespace {
 			updateStatusText("Loading configuration...");
 			ecs::GoalTaskRegistry::Get().clear();
 			std::vector<std::string> configErrors = assets::loadWorkConfig("assets/config");
-			if (assets::MoodConfig::Get().loaded()) {
-				const std::vector<std::string> moodErrors = ecs::moodConfigErrors(assets::MoodConfig::Get());
-				configErrors.insert(configErrors.end(), moodErrors.begin(), moodErrors.end());
-			}
 			ecs::ColonistRulesLoad colonistRules = ecs::loadColonistRules("assets/config");
 			configErrors.insert(configErrors.end(), colonistRules.errors.begin(), colonistRules.errors.end());
 			worldState->colonistRules = std::move(colonistRules.rules);

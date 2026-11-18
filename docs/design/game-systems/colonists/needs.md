@@ -161,7 +161,7 @@ These are the costs:
 | Bladder | 10 |
 | Digestion | 10 |
 
-`assets/config/colonists/mood.xml` holds them, with the penalty curve.
+Each need's cost is on its own entry in `assets/config/colonists/needs/`, beside its thresholds, so a need added by a mod carries its own cost and a mod file that replaces a need replaces its cost with it. `assets/config/colonists/mood.xml` holds the penalty curve, which every need shares.
 
 ### What low mood does
 

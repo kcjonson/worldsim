@@ -12,7 +12,6 @@ namespace ecs {
 		: config(moodConfig) {}
 
 	void MoodSystem::update(float /*deltaTime*/) {
-		refreshNeedCosts();
 		const double currentTime = now();
 		for (auto [colonist, needs] : world->view<NeedsComponent>()) {
 			Mood* mood = world->getComponent<Mood>(colonist);
@@ -29,7 +28,6 @@ namespace ecs {
 	}
 
 	Mood& MoodSystem::startMood(EntityID colonist) {
-		refreshNeedCosts();
 		Mood& mood = world->addComponent<Mood>(colonist);
 		refreshTarget(colonist, *world->getComponent<NeedsComponent>(colonist), mood);
 		mood.value = mood.target;
@@ -37,15 +35,8 @@ namespace ecs {
 		return mood;
 	}
 
-	void MoodSystem::refreshNeedCosts() {
-		if (config.generation() != resolvedGeneration) {
-			needCosts = resolveNeedMoodCosts(config).costs;
-			resolvedGeneration = config.generation();
-		}
-	}
-
 	void MoodSystem::refreshTarget(EntityID colonist, const NeedsComponent& needs, Mood& mood) const {
-		mood.needContributions = needMoodContributions({.needs = needs, .costs = needCosts, .curve = config.needPenaltyCurve()});
+		mood.needContributions = needMoodContributions(needs, config.needPenaltyCurve());
 		float unclampedTarget = needsScore(mood.needContributions);
 
 		mood.thoughtContributions.clear();
