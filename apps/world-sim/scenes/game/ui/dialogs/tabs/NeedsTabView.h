@@ -2,7 +2,8 @@
 
 // NeedsTabView - the dossier's Needs tab: a full-width Mood meter and its caption, then two columns,
 // the vital and (dimmed) comfort needs as meters on the left, and on the right the mood breakdown (each
-// need's cost, each held thought's amount and time left, and the target they make) over a Body &
+// need's cost, a line when the needs reach their floor of 0, each held thought's amount and time left,
+// and the target they make) over a Body &
 // Ailments empty state.
 
 #include "scenes/game/ui/models/ThoughtLogModel.h"
@@ -47,6 +48,7 @@ namespace world_sim {
 		ui::Ref<ui::ProgressBar>				moodMeter;
 		std::array<ui::Ref<ui::ProgressBar>, 8> needMeters;
 		ui::Ref<ui::Component>					needRows;
+		ui::Ref<ui::Text>						needsFloor;
 		ui::Ref<ui::Component>					thoughtRows;
 		ui::Ref<ui::Text>						noThoughts;
 		ui::Ref<ui::Text>						moodTarget;

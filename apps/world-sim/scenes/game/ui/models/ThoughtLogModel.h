@@ -55,10 +55,12 @@ namespace world_sim {
 	/// The mood target's parts: each need's cost, each held thought's effect, and the target they clamp to.
 	struct MoodBreakdown {
 		/// The needs costing something, the largest cost first.
-		std::vector<MoodNeedRow>	needs;
+		std::vector<MoodNeedRow> needs;
+		/// The needs' costs reach 100 or more, so the needs score is 0, the floor, and not 100 less the rows.
+		bool						needsAtFloor = false;
 		std::vector<MoodThoughtRow> thoughts;
 		std::string					target; // "72%", "65.5%"
-		/// What the parts add to when the target is clamped to 0 or 100 ("112%"); empty when it isn't.
+		/// The needs score plus the thoughts when the target is clamped to 0 or 100 ("112%"); empty when it isn't.
 		std::string clampedFrom;
 
 		bool operator==(const MoodBreakdown& other) const = default;

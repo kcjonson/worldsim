@@ -124,8 +124,10 @@ which shows them after the ground bake and loads nothing.
 
 `mood.xml` loads into `assets::MoodConfig` (the mood rate, the need penalty curve, each need's mood
 cost by need name, and the band names) and is checked by `ConfigValidator::validateMood`. The loader
-refuses a need listed twice, a cost below 0, and any `<Need>` attribute other than `name` and `cost`,
-each error naming the file and the `<Need name="...">`. The need names belong to the sim, so
+refuses an element under `<Mood>` other than `Easing`, `NeedPenalty`, `NeedCosts`, and `Bands` (the
+error names the file and the element) and a `<Need>` with no name; and a need listed twice, a cost
+below 0, and any `<Need>` attribute other than `name` and `cost`, each error naming the file and the
+`<Need name="...">`. The need names belong to the sim, so
 `GameLoadingScene` adds `ecs::moodConfigErrors` (a name that is no need, a need with no cost) to
 `loadWorkConfig`'s errors before the game scene is entered.
 

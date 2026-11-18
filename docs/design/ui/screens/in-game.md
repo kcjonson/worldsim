@@ -288,13 +288,14 @@ The colonist's Needs + Mood system. A full-width `Meter` for Mood (tone `auto`) 
 
 Two groups: **Vital Needs** (Hunger, Thirst, Energy, Bladder, Digestion — the five the AI acts on today) and **Comfort** (Hygiene, Recreation, Temperature — tracked but not yet pursued, rendered slightly dimmed), with a note that colonists don't act on comfort needs yet.
 
-Beside the needs, a **Mood breakdown** divider over the parts of the mood target, the same contributions the target is summed from, so they add up to it:
+Beside the needs, a **Mood breakdown** divider over the parts of the mood target, the same contributions the target is summed from:
 
 - One row per need that is costing something, the largest cost first: the need's label and its cost at the right (mono, "-12.5"). A need that costs nothing is not listed.
+- When the need rows come to 100 or more, a muted line under them in the small print: "Needs take mood to 0 at most". The needs score has a floor of 0, so past it the need rows no longer subtract from 100; the needs part is 0.
 - One row per held thought with a mood effect, the largest amount first by absolute value and equal amounts by newest arrival: the event's label (" x3" after a stack), its time left under it in the small print, and its amount at the right ("-10", a stack's whole amount). Time left is in its largest unit, rounded to the nearest and never 0: minutes under an hour, hours under two days, then days ("12 min left", "22 hours left", "2 days left"); one held by a condition reads "while soaked". With none, the small print reads "No thought is moving this colonist's mood."
 - Target: the target as a percentage, to one decimal like the rows ("65.5%", "72%").
 
-Every amount is shown to one decimal, so 100 plus every row adds to the target within rounding, before the target is clamped to 0 to 100. When the sum is clamped, the Target row reads the clamped value and a muted note under it gives the sum: "Clamped: the parts add to 112%".
+Every amount is shown to one decimal. The needs part is 100 plus the need rows, or 0 when the floor line shows; the needs part plus the thought rows gives the target within rounding. When that sum is past 0 or 100 the target is clamped: the Target row reads the clamped value and a muted note under it gives the sum, "Clamped: the parts add to 112%". The note shows only when the target itself is clamped, never for the needs' floor.
 
 The value on the meter eases toward the target, so the two differ while mood moves.
 

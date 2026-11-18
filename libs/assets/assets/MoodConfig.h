@@ -38,8 +38,9 @@ namespace assets {
 		static MoodConfig& Get();
 
 		/// Replaces everything with `configRoot / file`: false, with problems() saying why, when the file can't be
-		/// read, a value in it is missing or malformed, a need is listed twice or costs less than 0, or a
-		/// <Need> has an attribute other than name and cost. Errors name the file as `file` is written.
+		/// read, <Mood> has an element other than Easing, NeedPenalty, NeedCosts, and Bands, a value in it is
+		/// missing or malformed, a need is listed twice or costs less than 0, or a <Need> has an attribute
+		/// other than name and cost. Errors name the file as `file` is written.
 		bool loadFromFile(const std::filesystem::path& configRoot, const std::filesystem::path& file);
 
 		void clear();

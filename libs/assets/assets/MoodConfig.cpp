@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <set>
+#include <string_view>
+#include <utility>
 
 namespace assets {
 
@@ -28,6 +30,17 @@ namespace assets {
 		}
 
 		ConfigReader reader(source);
+
+		std::vector<std::string> elementProblems;
+		for (const pugi::xml_node node : root.children()) {
+			if (node.type() != pugi::node_element) {
+				continue;
+			}
+			const std::string_view element = node.name();
+			if (element != "Easing" && element != "NeedPenalty" && element != "NeedCosts" && element != "Bands") {
+				elementProblems.push_back(source + ": unknown element <" + std::string(element) + ">");
+			}
+		}
 
 		easingPointsPerGameHour = reader.attributeNumber(root.child("Easing"), "Easing", "pointsPerGameHour");
 
@@ -65,7 +78,9 @@ namespace assets {
 			return left.from > right.from;
 		});
 
-		std::vector<std::string> problems = reader.takeProblems();
+		std::vector<std::string> problems = std::move(elementProblems);
+		const std::vector<std::string> numberProblems = reader.takeProblems();
+		problems.insert(problems.end(), numberProblems.begin(), numberProblems.end());
 		problems.insert(problems.end(), needProblems.begin(), needProblems.end());
 		if (!problems.empty()) {
 			clear();

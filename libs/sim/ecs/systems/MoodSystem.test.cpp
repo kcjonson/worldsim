@@ -12,6 +12,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <random>
 #include <string>
 
@@ -216,7 +217,12 @@ namespace ecs::test {
 		EXPECT_FLOAT_EQ(moodOf(colonist).target, 75.0F);
 	}
 
+	// Under a weighted average each need's share is its weight over the sum of every weight, so a need
+	// costed in or out moves every other need's contribution; here it moves nothing.
 	TEST_F(MoodSystemTest, AMetNeedGivesNoCreditAgainstAnUnmetOne) {
+		std::ifstream shippedFile(shippedMoodConfig());
+		const std::string shipped{std::istreambuf_iterator<char>(shippedFile), std::istreambuf_iterator<char>()};
+		ASSERT_TRUE(loadConfig(shipped));
 		const EntityID parched = spawnColonist();
 		setNeed(colonist, NeedType::Hunger, 20.0F);
 		setNeed(parched, NeedType::Hunger, 20.0F);
@@ -224,8 +230,21 @@ namespace ecs::test {
 		world.update(0.0F);
 		const auto hunger = static_cast<size_t>(NeedType::Hunger);
 		const auto thirst = static_cast<size_t>(NeedType::Thirst);
-		EXPECT_FLOAT_EQ(moodOf(colonist).needContributions[hunger], moodOf(parched).needContributions[hunger]);
+		// Hunger at 20: penalty 0.3 + 0.7 x 10/30, of a cost of 25.
+		const float hungerAt20 = -25.0F * (0.3F + (0.7F * 10.0F / 30.0F));
+		EXPECT_FLOAT_EQ(moodOf(colonist).needContributions[hunger], hungerAt20);
+		EXPECT_FLOAT_EQ(moodOf(parched).needContributions[hunger], hungerAt20) << "the same hunger costs the same, whatever thirst is";
 		EXPECT_FLOAT_EQ(moodOf(colonist).target - moodOf(parched).target, -moodOf(parched).needContributions[thirst]);
+
+		std::string		  withoutTemperature = shipped;
+		const std::string temperature = R"(<Need name="Temperature" cost="40"/>)";
+		const size_t	  at = withoutTemperature.find(temperature);
+		ASSERT_NE(at, std::string::npos);
+		withoutTemperature.erase(at, temperature.size());
+		ASSERT_TRUE(loadConfig(withoutTemperature));
+		world.update(0.0F);
+		EXPECT_FLOAT_EQ(moodOf(colonist).needContributions[hunger], hungerAt20) << "a need costed out moves no other need's cost";
+		EXPECT_FLOAT_EQ(moodOf(parched).needContributions[thirst], -25.0F * (0.3F + (0.7F * 20.0F / 30.0F)));
 	}
 
 	TEST_F(MoodSystemTest, MildNeedsAddUp) {
@@ -480,6 +499,15 @@ namespace ecs::test {
 		EXPECT_TRUE(message.starts_with(tempFiles.back().filename().generic_string() + ": ")) << message;
 		message = onlyMessage(R"(<Need name="Thirst" cost="50"/><Need name="Thirst" cost="10"/>)");
 		EXPECT_TRUE(message.ends_with("<Need name=\"Thirst\"> is given twice")) << message;
+		message = onlyMessage(R"(<Need cost="50"/>)");
+		EXPECT_EQ(message, tempFiles.back().filename().generic_string() + ": a <Need> in <NeedCosts> has no name");
+	}
+
+	TEST_F(MoodSystemTest, ValidationRejectsAnUnknownElement) {
+		const std::vector<std::string> messages =
+			validationMessagesWith("<Bands>", R"(<NeedWeights><Need name="Hunger" weight="1"/></NeedWeights><Bands>)");
+		const std::string file = tempFiles.back().filename().generic_string();
+		EXPECT_EQ(messages, std::vector<std::string>{file + ": unknown element <NeedWeights>"});
 	}
 
 	TEST_F(MoodSystemTest, ValidationRejectsBandsStartingAtTheSameMood) {

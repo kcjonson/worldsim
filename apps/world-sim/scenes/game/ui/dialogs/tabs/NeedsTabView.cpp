@@ -157,6 +157,13 @@ namespace world_sim {
 			.id = "mood_breakdown_needs",
 			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = theme.get(tokens::spacing::space2)},
 		});
+		needsFloor = right.addChild<ui::Text>({
+			.id = "mood_breakdown_needs_floor",
+			.visible = false,
+			.style = tabs::smallText(theme),
+			.text = "Needs take mood to 0 at most",
+			.wrap = true,
+		});
 		thoughtRows = right.addChild<ui::Component>({
 			.id = "mood_breakdown_thoughts",
 			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = theme.get(tokens::spacing::space2)},
@@ -210,10 +217,11 @@ namespace world_sim {
 		noThoughts.get()->setVisible(breakdown.thoughts.empty());
 		thoughtRows.get()->setVisible(!breakdown.thoughts.empty());
 		needRows.get()->setVisible(!breakdown.needs.empty());
+		needsFloor.get()->setVisible(breakdown.needsAtFloor);
 		ui::Component& needs = *needRows.get();
 		needs.reconcileChildren(
 			breakdown.needs,
-			[](const MoodNeedRow& row) { return row.label; },
+			[](const MoodNeedRow& row) { return std::to_string(static_cast<int>(row.need)); },
 			[&needs](const MoodNeedRow& row) -> ui::Ref<ui::Component> {
 				return needs.addChild<BreakdownRow>({.id = "mood_breakdown_need", .row = rowText(row)});
 			},

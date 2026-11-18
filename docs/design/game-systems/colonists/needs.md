@@ -144,9 +144,11 @@ Mood has two parts ([Mood](./mood.md)):
 | Need satisfaction | 100, less what each unmet need costs, the costs added |
 | Mood effects | Carried by [thoughts](./thoughts.md). Everything else that changes how a colonist feels (surroundings, comfort, company, work they like, things that happen to them) reaches mood as a thought |
 
-### Need-to-Mood Weights
+### What a need costs mood
 
 Each need takes its own points off mood, and a need that is met gives no credit against one that is not. Every need has a cost, the most mood it takes off at its worst, and the penalty curve says how much of that cost applies: none at or above the comfortable level, rising gently to the warning level, then steeply to the whole cost at an empty need. The needs score is 100 minus the sum of what the needs take off, never below 0. Freezing costs a colonist 40 points however well fed he is, and adding a need changes nothing about what the others cost.
+
+These are the costs:
 
 | Need | Cost |
 |---|---|
@@ -159,7 +161,7 @@ Each need takes its own points off mood, and a need that is met gives no credit 
 | Bladder | 10 |
 | Digestion | 10 |
 
-The costs and the penalty curve live in `assets/config/colonists/mood.xml`.
+`assets/config/colonists/mood.xml` holds them, with the penalty curve.
 
 ### What low mood does
 
