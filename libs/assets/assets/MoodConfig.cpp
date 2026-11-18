@@ -8,6 +8,7 @@
 #include <pugixml.hpp>
 
 #include <algorithm>
+#include <set>
 
 namespace assets {
 
@@ -37,10 +38,24 @@ namespace assets {
 			.penaltyAtWarning = reader.attributeNumber(penaltyNode, "NeedPenalty", "penaltyAtWarning"),
 		};
 
-		for (const pugi::xml_node needNode : root.child("NeedWeights").children("Need")) {
-			weights.push_back(
-				{.need = needNode.attribute("name").as_string(), .weight = reader.attributeNumber(needNode, "Need", "weight")}
-			);
+		std::vector<std::string> needProblems;
+		std::set<std::string>	 listed;
+		for (const pugi::xml_node needNode : root.child("NeedCosts").children("Need")) {
+			const std::string name = needNode.attribute("name").as_string();
+			if (name.empty()) {
+				needProblems.push_back(source + ": a <Need> in <NeedCosts> has no name");
+				continue;
+			}
+			const std::string what = ConfigReader::describe(needNode, "Need");
+			if (!listed.insert(name).second) {
+				needProblems.push_back(source + ": " + what + " is given twice");
+			}
+			onlyAttributes(needNode, {"name", "cost"}, what, source, needProblems);
+			const float cost = reader.attributeNumber(needNode, "Need", "cost");
+			if (cost < 0.0F) {
+				reader.refuseAttribute(what, needNode, "cost", "zero or more");
+			}
+			costs.push_back({.need = name, .cost = cost});
 		}
 
 		for (const pugi::xml_node bandNode : root.child("Bands").children("Band")) {
@@ -51,10 +66,11 @@ namespace assets {
 		});
 
 		std::vector<std::string> problems = reader.takeProblems();
+		problems.insert(problems.end(), needProblems.begin(), needProblems.end());
 		if (!problems.empty()) {
 			clear();
 			problemList = std::move(problems);
-			LOG_ERROR(Engine, "Mood config %s has %zu bad value(s)", source.c_str(), problemList.size());
+			LOG_ERROR(Engine, "Mood config %s has %zu problem(s)", source.c_str(), problemList.size());
 			return false;
 		}
 		isLoaded = true;
@@ -67,7 +83,7 @@ namespace assets {
 		isLoaded = false;
 		easingPointsPerGameHour = 0.0F;
 		penaltyCurve = {};
-		weights.clear();
+		costs.clear();
 		bandList.clear();
 		problemList.clear();
 	}

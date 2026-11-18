@@ -123,19 +123,32 @@ namespace world_sim {
 
 	MoodBreakdown
 	moodBreakdown(const ecs::ThoughtTypes& types, const ecs::Thoughts* thoughts, const ecs::Mood& mood, double simulationSeconds) {
-		float needs = 0.0F;
-		for (const float contribution : mood.needContributions) {
-			needs += contribution;
+		float					   sum = ecs::kFullMood;
+		std::vector<ecs::NeedType> costing;
+		for (size_t i = 0; i < ecs::kNeedCount; ++i) {
+			sum += mood.needContributions[i];
+			if (moodAmountText(mood.needContributions[i]) != "0") {
+				costing.push_back(static_cast<ecs::NeedType>(i));
+			}
 		}
-		float sum = ecs::kFullMood + needs;
 		for (const ecs::MoodThoughtContribution& contribution : mood.thoughtContributions) {
 			sum += contribution.amount;
 		}
+		std::ranges::stable_sort(costing, [&mood](ecs::NeedType left, ecs::NeedType right) {
+			return mood.needContributions[static_cast<size_t>(left)] < mood.needContributions[static_cast<size_t>(right)];
+		});
 		MoodBreakdown breakdown{
-			.needs = moodAmountText(needs),
 			.target = percentText(mood.target),
 			.clampedFrom = std::abs(sum - mood.target) > kClampTolerance ? percentText(sum) : std::string(),
 		};
+		breakdown.needs.reserve(costing.size());
+		for (const ecs::NeedType need : costing) {
+			breakdown.needs.push_back({
+				.need = need,
+				.label = ecs::needLabel(need),
+				.amount = moodAmountText(mood.needContributions[static_cast<size_t>(need)]),
+			});
+		}
 		if (thoughts == nullptr) {
 			return breakdown;
 		}

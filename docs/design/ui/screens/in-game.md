@@ -290,11 +290,11 @@ Two groups: **Vital Needs** (Hunger, Thirst, Energy, Bladder, Digestion — the 
 
 Beside the needs, a **Mood breakdown** divider over the parts of the mood target, the same contributions the target is summed from, so they add up to it:
 
-- Needs: the needs' share, signed (mono, "-5.6").
+- One row per need that is costing something, the largest cost first: the need's label and its cost at the right (mono, "-12.5"). A need that costs nothing is not listed.
 - One row per held thought with a mood effect, the largest amount first by absolute value and equal amounts by newest arrival: the event's label (" x3" after a stack), its time left under it in the small print, and its amount at the right ("-10", a stack's whole amount). Time left is in its largest unit, rounded to the nearest and never 0: minutes under an hour, hours under two days, then days ("12 min left", "22 hours left", "2 days left"); one held by a condition reads "while soaked". With none, the small print reads "No thought is moving this colonist's mood."
 - Target: the target as a percentage, to one decimal like the rows ("65.5%", "72%").
 
-Every amount is shown to one decimal, so 100 plus the needs' share plus every row adds to the target within rounding, before the target is clamped to 0 to 100. When the sum is clamped, the Target row reads the clamped value and a muted note under it gives the sum: "Clamped: the parts add to 112%".
+Every amount is shown to one decimal, so 100 plus every row adds to the target within rounding, before the target is clamped to 0 to 100. When the sum is clamped, the Target row reads the clamped value and a muted note under it gives the sum: "Clamped: the parts add to 112%".
 
 The value on the meter eases toward the target, so the two differ while mood moves.
 

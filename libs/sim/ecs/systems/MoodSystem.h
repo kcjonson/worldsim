@@ -29,13 +29,13 @@ namespace ecs {
 		[[nodiscard]] const char* name() const override { return "Mood"; }
 
 	  private:
-		void refreshNeedWeights();
+		void refreshNeedCosts();
 		/// Sets the contributions, target, and cause from the colonist's needs and held thoughts.
 		void refreshTarget(EntityID colonist, const NeedsComponent& needs, Mood& mood) const;
 		[[nodiscard]] double now() const;
 
 		const assets::MoodConfig& config;
-		NeedMoodWeights			  needWeights{};
+		NeedMoodCosts			  needCosts{};
 		uint64_t				  resolvedGeneration = 0;
 	};
 

@@ -122,10 +122,12 @@ or `[thoughts]`, to the config errors the loading screen shows, and hands the ru
 itself, once; when they are broken it hands the errors to the splash (`world_sim::failColonistRules`),
 which shows them after the ground bake and loads nothing.
 
-`mood.xml` loads into `assets::MoodConfig` (the mood rate, the need penalty curve, the per-need
-weights by need name, and the band names) and is checked by `ConfigValidator::validateMood`.
-The need names belong to the sim, so `GameLoadingScene` adds `ecs::moodConfigErrors` (a name that is
-no need, a need with no weight) to `loadWorkConfig`'s errors before the game scene is entered.
+`mood.xml` loads into `assets::MoodConfig` (the mood rate, the need penalty curve, each need's mood
+cost by need name, and the band names) and is checked by `ConfigValidator::validateMood`. The loader
+refuses a need listed twice, a cost below 0, and any `<Need>` attribute other than `name` and `cost`,
+each error naming the file and the `<Need name="...">`. The need names belong to the sim, so
+`GameLoadingScene` adds `ecs::moodConfigErrors` (a name that is no need, a need with no cost) to
+`loadWorkConfig`'s errors before the game scene is entered.
 
 Every `.xml` file under `colonists/traits/` loads into an `assets::TraitRegistry` (the trait ids, names and
 descriptions, the 1 to 3 count, and the exclusive groups): the folder's own files first, then its subfolders' in

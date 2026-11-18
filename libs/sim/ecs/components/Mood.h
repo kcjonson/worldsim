@@ -47,7 +47,7 @@ namespace ecs {
 		float	  value = 0.0F;
 		float	  target = 0.0F;
 		MoodCause cause{};
-		/// Each need's signed share of the target, in mood points: zero for a met need, negative below.
+		/// Each need's signed mood points, -cost x penalty: zero for a met need, negative below.
 		std::array<float, kNeedCount>		 needContributions{};
 		/// Each held thought's signed mood effect, in arrival order.
 		std::vector<MoodThoughtContribution> thoughtContributions{};
@@ -55,22 +55,22 @@ namespace ecs {
 		double								 easedAt = 0.0;
 	};
 
-	/// A need's mood weight per NeedType, resolved from the config's need names.
-	using NeedMoodWeights = std::array<float, kNeedCount>;
+	/// The most mood each need takes off, per NeedType, resolved from the config's need names.
+	using NeedMoodCosts = std::array<float, kNeedCount>;
 
-	struct ResolvedNeedMoodWeights {
-		NeedMoodWeights			 weights{};
-		/// Weighted names that are no need's label, in file order.
+	struct ResolvedNeedMoodCosts {
+		NeedMoodCosts costs{};
+		/// Costed names that are no need's label, in file order.
 		std::vector<std::string> unknownNeeds;
-		/// Needs the config gives no weight, in NeedType order.
-		std::vector<NeedType>	 unweightedNeeds;
+		/// Needs the config gives no cost, in NeedType order.
+		std::vector<NeedType> uncostedNeeds;
 	};
 
-	/// The config's need weights by NeedType, and the names it could not place.
-	[[nodiscard]] ResolvedNeedMoodWeights resolveNeedMoodWeights(const assets::MoodConfig& config);
+	/// The config's need costs by NeedType, and the names it could not place.
+	[[nodiscard]] ResolvedNeedMoodCosts resolveNeedMoodCosts(const assets::MoodConfig& config);
 
-	/// Config errors the assets library can't see: weighted names that are no need, and needs with no
-	/// weight. Formatted like loadWorkConfig's errors; empty when every need is weighted once by name.
+	/// Config errors the assets library can't see: costed names that are no need, and needs with no
+	/// cost. Formatted like loadWorkConfig's errors; empty when every need is costed by name.
 	[[nodiscard]] std::vector<std::string> moodConfigErrors(const assets::MoodConfig& config);
 
 	/// A need's penalty, 0 to 1, from its value on the config's curve.
@@ -78,13 +78,15 @@ namespace ecs {
 
 	struct NeedContributionsArgs {
 		const NeedsComponent&			needs;
-		const NeedMoodWeights&			weights;
+		const NeedMoodCosts&			costs;
 		const assets::NeedPenaltyCurve& curve;
 	};
 
-	/// Each need's signed mood contribution: -kFullMood x weight x penalty / total weight. Their sum
-	/// plus kFullMood is the needs score.
+	/// Each need's signed mood contribution: -cost x penalty.
 	[[nodiscard]] std::array<float, kNeedCount> needMoodContributions(const NeedContributionsArgs& args);
+
+	/// kFullMood plus every need's contribution, never below 0.
+	[[nodiscard]] float needsScore(const std::array<float, kNeedCount>& needContributions);
 
 	/// The largest negative contribution among the needs and the held thoughts; needs before thoughts,
 	/// then in order, on a tie. None when nothing is negative.

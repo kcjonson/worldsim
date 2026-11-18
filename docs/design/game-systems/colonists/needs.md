@@ -141,12 +141,25 @@ Mood has two parts ([Mood](./mood.md)):
 
 | Contributor | Source |
 |-------------|--------|
-| Need satisfaction | How well the needs are met, weighted per need |
+| Need satisfaction | 100, less what each unmet need costs, the costs added |
 | Mood effects | Carried by [thoughts](./thoughts.md). Everything else that changes how a colonist feels (surroundings, comfort, company, work they like, things that happen to them) reaches mood as a thought |
 
 ### Need-to-Mood Weights
 
-The per-need weights and the penalty curve live in `assets/config/colonists/mood.xml`. A need at or above the comfortable level costs nothing, the penalty rises gently to the warning level and then steeply to the full penalty at an empty need, and the needs score is 100 minus the weighted penalties averaged over the total weight.
+Each need takes its own points off mood, and a need that is met gives no credit against one that is not. Every need has a cost, the most mood it takes off at its worst, and the penalty curve says how much of that cost applies: none at or above the comfortable level, rising gently to the warning level, then steeply to the whole cost at an empty need. The needs score is 100 minus the sum of what the needs take off, never below 0. Freezing costs a colonist 40 points however well fed he is, and adding a need changes nothing about what the others cost.
+
+| Need | Cost |
+|---|---|
+| Temperature | 40 |
+| Hunger | 25 |
+| Thirst | 25 |
+| Energy | 20 |
+| Hygiene | 15 |
+| Recreation | 15 |
+| Bladder | 10 |
+| Digestion | 10 |
+
+The costs and the penalty curve live in `assets/config/colonists/mood.xml`.
 
 ### What low mood does
 

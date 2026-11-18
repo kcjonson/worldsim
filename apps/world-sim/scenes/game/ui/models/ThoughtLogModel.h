@@ -4,7 +4,7 @@
 // one block: the event, the feeling and the mood adjustment ("Slept on the ground. Miserable. -10 mood,
 // 1 day"), the quip when the thought has one, and when it arrived, newest first. The log shows the notable
 // thoughts (major ones and those with a mood effect) or all of them, a page at a time. The breakdown lists
-// the held thoughts MoodSystem summed into the mood target, from the same contributions.
+// the needs' costs and the held thoughts MoodSystem summed into the mood target, from the same contributions.
 // See /docs/design/game-systems/colonists/thoughts.md (Where it shows in the UI).
 
 #include <ecs/ClockTime.h>
@@ -44,9 +44,18 @@ namespace world_sim {
 		bool operator==(const MoodThoughtRow& other) const = default;
 	};
 
-	/// The mood target's parts: the needs' share, each held thought's, and the target they clamp to.
+	struct MoodNeedRow {
+		ecs::NeedType need = ecs::NeedType::Count;
+		std::string	  label;  // "Hunger"
+		std::string	  amount; // "-12.5"
+
+		bool operator==(const MoodNeedRow& other) const = default;
+	};
+
+	/// The mood target's parts: each need's cost, each held thought's effect, and the target they clamp to.
 	struct MoodBreakdown {
-		std::string					needs; // "-12"
+		/// The needs costing something, the largest cost first.
+		std::vector<MoodNeedRow>	needs;
 		std::vector<MoodThoughtRow> thoughts;
 		std::string					target; // "72%", "65.5%"
 		/// What the parts add to when the target is clamped to 0 or 100 ("112%"); empty when it isn't.

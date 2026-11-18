@@ -5,39 +5,39 @@
 
 namespace ecs {
 
-	ResolvedNeedMoodWeights resolveNeedMoodWeights(const assets::MoodConfig& config) {
-		ResolvedNeedMoodWeights resolved;
-		std::array<bool, kNeedCount> weighted{};
-		for (const assets::NeedMoodWeight& needWeight : config.needWeights()) {
-			const auto found = std::find_if(kNeedLabels.begin(), kNeedLabels.end(), [&needWeight](const char* label) {
-				return std::string_view(label) == needWeight.need;
+	ResolvedNeedMoodCosts resolveNeedMoodCosts(const assets::MoodConfig& config) {
+		ResolvedNeedMoodCosts		 resolved;
+		std::array<bool, kNeedCount> costed{};
+		for (const assets::NeedMoodCost& needCost : config.needCosts()) {
+			const auto found = std::find_if(kNeedLabels.begin(), kNeedLabels.end(), [&needCost](const char* label) {
+				return std::string_view(label) == needCost.need;
 			});
 			if (found == kNeedLabels.end()) {
-				resolved.unknownNeeds.push_back(needWeight.need);
+				resolved.unknownNeeds.push_back(needCost.need);
 				continue;
 			}
 			const auto index = static_cast<size_t>(found - kNeedLabels.begin());
-			resolved.weights[index] = needWeight.weight;
-			weighted[index] = true;
+			resolved.costs[index] = needCost.cost;
+			costed[index] = true;
 		}
 		for (size_t i = 0; i < kNeedCount; ++i) {
-			if (!weighted[i]) {
-				resolved.unweightedNeeds.push_back(static_cast<NeedType>(i));
+			if (!costed[i]) {
+				resolved.uncostedNeeds.push_back(static_cast<NeedType>(i));
 			}
 		}
 		return resolved;
 	}
 
 	std::vector<std::string> moodConfigErrors(const assets::MoodConfig& config) {
-		const ResolvedNeedMoodWeights resolved = resolveNeedMoodWeights(config);
-		std::vector<std::string>	  errors;
+		const ResolvedNeedMoodCosts resolved = resolveNeedMoodCosts(config);
+		std::vector<std::string>	errors;
 		for (const std::string& name : resolved.unknownNeeds) {
-			errors.push_back("[Mood] Need '" + name + "' is weighted but no need has that name");
+			errors.push_back("[Mood] Need '" + name + "' has a cost but no need has that name");
 		}
-		for (const NeedType need : resolved.unweightedNeeds) {
+		for (const NeedType need : resolved.uncostedNeeds) {
 			const std::string label = needLabel(need);
 			errors.push_back(
-				"[Mood] Need '" + label + "' has no weight (add <Need name=\"" + label + "\" weight=\"...\"/>; 0 leaves it out of mood)"
+				"[Mood] Need '" + label + "' has no cost (add <Need name=\"" + label + "\" cost=\"...\"/>; 0 leaves it out of mood)"
 			);
 		}
 		return errors;
@@ -57,18 +57,18 @@ namespace ecs {
 
 	std::array<float, kNeedCount> needMoodContributions(const NeedContributionsArgs& args) {
 		std::array<float, kNeedCount> contributions{};
-		float						  totalWeight = 0.0F;
-		for (const float weight : args.weights) {
-			totalWeight += weight;
-		}
-		if (totalWeight <= 0.0F) {
-			return contributions;
-		}
 		for (size_t i = 0; i < kNeedCount; ++i) {
-			const float penalty = needPenalty(args.needs.needs[i].value, args.curve);
-			contributions[i] = -kFullMood * args.weights[i] * penalty / totalWeight;
+			contributions[i] = -args.costs[i] * needPenalty(args.needs.needs[i].value, args.curve);
 		}
 		return contributions;
+	}
+
+	float needsScore(const std::array<float, kNeedCount>& needContributions) {
+		float score = kFullMood;
+		for (const float contribution : needContributions) {
+			score += contribution;
+		}
+		return std::max(score, 0.0F);
 	}
 
 	MoodCause largestNegativeContributor(const Mood& mood) {

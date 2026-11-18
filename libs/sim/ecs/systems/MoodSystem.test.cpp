@@ -32,22 +32,22 @@ namespace ecs::test {
   <thought id="reeks_30" label="Reeks 30" importance="normal"><feeling is="annoyed" mood="-30" while="wetness > 0" cause="the cause"/></thought>
 )";
 
-		// Hunger and thirst weigh 1 each and every other need 0, so an empty need is -50 and a need at
-		// 50 is -7.5 (penalty (70 - 50) / (70 - 30) x 0.3 = 0.15, half the weight).
+		// Hunger and thirst cost 50 each and every other need 0, so an empty need is -50 and a need at
+		// 50 is -7.5 (penalty (70 - 50) / (70 - 30) x 0.3 = 0.15 of its cost).
 		constexpr const char* kTestConfig = R"(<?xml version="1.0"?>
 <Mood>
   <Easing pointsPerGameHour="5"/>
   <NeedPenalty comfortable="70" warning="30" penaltyAtWarning="0.3"/>
-  <NeedWeights>
-    <Need name="Hunger" weight="1"/>
-    <Need name="Thirst" weight="1"/>
-    <Need name="Energy" weight="0"/>
-    <Need name="Bladder" weight="0"/>
-    <Need name="Digestion" weight="0"/>
-    <Need name="Hygiene" weight="0"/>
-    <Need name="Recreation" weight="0"/>
-    <Need name="Temperature" weight="0"/>
-  </NeedWeights>
+  <NeedCosts>
+    <Need name="Hunger" cost="50"/>
+    <Need name="Thirst" cost="50"/>
+    <Need name="Energy" cost="0"/>
+    <Need name="Bladder" cost="0"/>
+    <Need name="Digestion" cost="0"/>
+    <Need name="Hygiene" cost="0"/>
+    <Need name="Recreation" cost="0"/>
+    <Need name="Temperature" cost="0"/>
+  </NeedCosts>
   <Bands>
     <Band name="Content" from="55"/>
     <Band name="Low" from="30"/>
@@ -60,16 +60,16 @@ namespace ecs::test {
 <Mood>
   <Easing pointsPerGameHour="10"/>
   <NeedPenalty comfortable="80" warning="40" penaltyAtWarning="0.5"/>
-  <NeedWeights>
-    <Need name="Hunger" weight="1"/>
-    <Need name="Energy" weight="3"/>
-    <Need name="Bladder" weight="0"/>
-    <Need name="Digestion" weight="0"/>
-    <Need name="Hygiene" weight="0"/>
-    <Need name="Recreation" weight="0"/>
-    <Need name="Temperature" weight="0"/>
-    <Need name="Thirst" weight="0"/>
-  </NeedWeights>
+  <NeedCosts>
+    <Need name="Hunger" cost="25"/>
+    <Need name="Energy" cost="75"/>
+    <Need name="Bladder" cost="0"/>
+    <Need name="Digestion" cost="0"/>
+    <Need name="Hygiene" cost="0"/>
+    <Need name="Recreation" cost="0"/>
+    <Need name="Temperature" cost="0"/>
+    <Need name="Thirst" cost="0"/>
+  </NeedCosts>
   <Bands>
     <Band name="Bottom" from="0"/>
     <Band name="High" from="80"/>
@@ -174,19 +174,19 @@ namespace ecs::test {
 		EntityID						   colonist = kInvalidEntity;
 	};
 
-	TEST_F(MoodSystemTest, ShippedConfigIsValidAndWeightsEveryNeed) {
+	TEST_F(MoodSystemTest, ShippedConfigIsValidAndCostsEveryNeed) {
 		assets::MoodConfig shipped;
 		ASSERT_TRUE(shipped.loadFromFile(shippedMoodConfig().parent_path(), shippedMoodConfig().filename()));
 		assets::ConfigValidator::clearErrors();
 		EXPECT_TRUE(assets::ConfigValidator::validateMood(shipped));
 		EXPECT_TRUE(moodConfigErrors(shipped).empty());
-		const NeedMoodWeights weights = resolveNeedMoodWeights(shipped).weights;
+		const NeedMoodCosts costs = resolveNeedMoodCosts(shipped).costs;
 		for (size_t i = 0; i < kNeedCount; ++i) {
-			EXPECT_GT(weights[i], 0.0F) << needLabel(static_cast<NeedType>(i));
+			EXPECT_GT(costs[i], 0.0F) << needLabel(static_cast<NeedType>(i));
 		}
 	}
 
-	TEST_F(MoodSystemTest, ShippedTuningGivesTheOriginalNeedsScore) {
+	TEST_F(MoodSystemTest, ShippedTuningGivesTheNeedsScore) {
 		ASSERT_TRUE(config.loadFromFile(shippedMoodConfig().parent_path(), shippedMoodConfig().filename()));
 		setNeed(colonist, NeedType::Hunger, 50.0F);
 		setNeed(colonist, NeedType::Thirst, 20.0F);
@@ -197,30 +197,78 @@ namespace ecs::test {
 		setNeed(colonist, NeedType::Recreation, 90.0F);
 		setNeed(colonist, NeedType::Temperature, 10.0F);
 		world.update(0.0F);
-		// Weights 1.0 hygiene, 1.0 temperature, 0.9 recreation, 0.7 energy, 0.6 hunger, 0.6 thirst, 0.3
-		// bladder, 0.3 digestion (5.4 in all). Penalties: hunger 0.15, thirst 0.3 + 0.7 x 10/30, digestion 1,
-		// hygiene 0.3, temperature 0.3 + 0.7 x 20/30, the rest 0. Weighted sum 1.776667; 100 x (1 - 1.776667
-		// / 5.4) = 67.0988.
-		EXPECT_NEAR(moodOf(colonist).target, 67.0988F, 0.001F);
+		// Penalties: hunger 0.15, thirst 0.3 + 0.7 x 10/30, digestion 1, hygiene 0.3, temperature
+		// 0.3 + 0.7 x 20/30, the rest 0. Costs 25 hunger, 25 thirst, 10 digestion, 15 hygiene, 40
+		// temperature: 3.75 + 13.3333 + 10 + 4.5 + 30.6667 = 62.25 off.
+		EXPECT_NEAR(moodOf(colonist).target, 37.75F, 0.001F);
 	}
 
-	TEST_F(MoodSystemTest, UnknownAndUnweightedNeedsAreConfigErrors) {
+	TEST_F(MoodSystemTest, EachNeedAtItsWorstAloneTakesOffItsCost) {
+		ASSERT_TRUE(config.loadFromFile(shippedMoodConfig().parent_path(), shippedMoodConfig().filename()));
+		setNeed(colonist, NeedType::Temperature, 0.0F);
+		world.update(0.0F);
+		EXPECT_FLOAT_EQ(moodOf(colonist).needContributions[static_cast<size_t>(NeedType::Temperature)], -40.0F);
+		EXPECT_FLOAT_EQ(moodOf(colonist).target, 60.0F);
+
+		setNeed(colonist, NeedType::Temperature, 100.0F);
+		setNeed(colonist, NeedType::Hunger, 0.0F);
+		world.update(0.0F);
+		EXPECT_FLOAT_EQ(moodOf(colonist).target, 75.0F);
+	}
+
+	TEST_F(MoodSystemTest, AMetNeedGivesNoCreditAgainstAnUnmetOne) {
+		const EntityID parched = spawnColonist();
+		setNeed(colonist, NeedType::Hunger, 20.0F);
+		setNeed(parched, NeedType::Hunger, 20.0F);
+		setNeed(parched, NeedType::Thirst, 10.0F);
+		world.update(0.0F);
+		const auto hunger = static_cast<size_t>(NeedType::Hunger);
+		const auto thirst = static_cast<size_t>(NeedType::Thirst);
+		EXPECT_FLOAT_EQ(moodOf(colonist).needContributions[hunger], moodOf(parched).needContributions[hunger]);
+		EXPECT_FLOAT_EQ(moodOf(colonist).target - moodOf(parched).target, -moodOf(parched).needContributions[thirst]);
+	}
+
+	TEST_F(MoodSystemTest, MildNeedsAddUp) {
+		ASSERT_TRUE(config.loadFromFile(shippedMoodConfig().parent_path(), shippedMoodConfig().filename()));
+		setNeed(colonist, NeedType::Hunger, 50.0F);
+		setNeed(colonist, NeedType::Energy, 50.0F);
+		setNeed(colonist, NeedType::Hygiene, 50.0F);
+		world.update(0.0F);
+		// Each at penalty 0.15 of its cost: 25, 20 and 15 x 0.15 = 3.75 + 3 + 2.25.
+		EXPECT_FLOAT_EQ(moodOf(colonist).target, 91.0F);
+	}
+
+	TEST_F(MoodSystemTest, NeedsScoreNeverGoesBelowZero) {
+		ASSERT_TRUE(config.loadFromFile(shippedMoodConfig().parent_path(), shippedMoodConfig().filename()));
+		for (size_t i = 0; i < kNeedCount; ++i) {
+			setNeed(colonist, static_cast<NeedType>(i), 0.0F);
+		}
+		world.update(0.0F);
+		EXPECT_FLOAT_EQ(needsScore(moodOf(colonist).needContributions), 0.0F) << "the costs add to 160";
+		EXPECT_FLOAT_EQ(moodOf(colonist).target, 0.0F);
+
+		give("vented");
+		world.update(0.0F);
+		EXPECT_FLOAT_EQ(moodOf(colonist).target, 4.0F) << "a thought adds to a needs score of 0, not to -60";
+	}
+
+	TEST_F(MoodSystemTest, UnknownAndUncostedNeedsAreConfigErrors) {
 		std::string		  xml = kTestConfig;
-		const std::string hygiene = R"(<Need name="Hygiene" weight="0"/>)";
-		xml.replace(xml.find(hygiene), hygiene.size(), R"(<Need name="Hygeine" weight="1"/>)");
-		const std::string temperature = R"(<Need name="Temperature" weight="0"/>)";
+		const std::string hygiene = R"(<Need name="Hygiene" cost="0"/>)";
+		xml.replace(xml.find(hygiene), hygiene.size(), R"(<Need name="Hygeine" cost="1"/>)");
+		const std::string temperature = R"(<Need name="Temperature" cost="0"/>)";
 		xml.erase(xml.find(temperature), temperature.size());
 		ASSERT_TRUE(loadConfig(xml));
 
-		const ResolvedNeedMoodWeights resolved = resolveNeedMoodWeights(config);
+		const ResolvedNeedMoodCosts resolved = resolveNeedMoodCosts(config);
 		EXPECT_EQ(resolved.unknownNeeds, std::vector<std::string>{"Hygeine"});
-		EXPECT_EQ(resolved.unweightedNeeds, (std::vector<NeedType>{NeedType::Hygiene, NeedType::Temperature}));
+		EXPECT_EQ(resolved.uncostedNeeds, (std::vector<NeedType>{NeedType::Hygiene, NeedType::Temperature}));
 		EXPECT_EQ(
 			moodConfigErrors(config),
 			(std::vector<std::string>{
-				"[Mood] Need 'Hygeine' is weighted but no need has that name",
-				"[Mood] Need 'Hygiene' has no weight (add <Need name=\"Hygiene\" weight=\"...\"/>; 0 leaves it out of mood)",
-				"[Mood] Need 'Temperature' has no weight (add <Need name=\"Temperature\" weight=\"...\"/>; 0 leaves it out of mood)",
+				"[Mood] Need 'Hygeine' has a cost but no need has that name",
+				"[Mood] Need 'Hygiene' has no cost (add <Need name=\"Hygiene\" cost=\"...\"/>; 0 leaves it out of mood)",
+				"[Mood] Need 'Temperature' has no cost (add <Need name=\"Temperature\" cost=\"...\"/>; 0 leaves it out of mood)",
 			})
 		);
 	}
@@ -376,9 +424,9 @@ namespace ecs::test {
 		give("reeks_30");
 		advanceGameHours(1.0F);
 		const Mood& mood = moodOf(colonist);
-		// Energy at 60 is halfway down the mild part of an 80 / 40 curve: penalty 0.25, weight 3 of 4.
+		// Energy at 60 is halfway down the mild part of an 80 / 40 curve: penalty 0.25, cost 75.
 		EXPECT_FLOAT_EQ(mood.needContributions[static_cast<size_t>(NeedType::Energy)], -18.75F);
-		EXPECT_FLOAT_EQ(mood.needContributions[static_cast<size_t>(NeedType::Thirst)], 0.0F) << "thirst weighs nothing here";
+		EXPECT_FLOAT_EQ(mood.needContributions[static_cast<size_t>(NeedType::Thirst)], 0.0F) << "thirst costs nothing here";
 		EXPECT_FLOAT_EQ(mood.target, 100.0F - 18.75F - 30.0F);
 		EXPECT_FLOAT_EQ(mood.value, 90.0F) << "10 points per game hour";
 	}
@@ -388,18 +436,17 @@ namespace ecs::test {
 <Mood>
   <Easing pointsPerGameHour="5"/>
   <NeedPenalty comfortable="30" warning="70" penaltyAtWarning="0.3"/>
-  <NeedWeights><Need name="Hunger" weight="1"/><Need name="Hunger" weight="2"/></NeedWeights>
+  <NeedCosts><Need name="Hunger" cost="25"/></NeedCosts>
   <Bands><Band name="Content" from="55"/></Bands>
 </Mood>)"));
 		assets::ConfigValidator::clearErrors();
 		EXPECT_FALSE(assets::ConfigValidator::validateMood(config));
 		const std::vector<std::string> messages = validationMessages();
-		ASSERT_EQ(messages.size(), 3U);
+		ASSERT_EQ(messages.size(), 2U);
 		EXPECT_EQ(
 			messages,
 			(std::vector<std::string>{
 				"NeedPenalty needs 0 < warning < comfortable <= 100",
-				"Need 'Hunger' is weighted more than once",
 				"The lowest band must start at 0 or below so every mood has a band",
 			})
 		);
@@ -417,10 +464,22 @@ namespace ecs::test {
 		);
 	}
 
-	TEST_F(MoodSystemTest, ValidationRejectsAMissingWeight) {
-		const std::vector<std::string> messages = validationMessagesWith(R"(<Need name="Thirst" weight="1"/>)", R"(<Need name="Thirst"/>)");
-		ASSERT_EQ(messages.size(), 1U);
-		EXPECT_TRUE(messages.front().ends_with("<Need name=\"Thirst\"> weight is missing")) << messages.front();
+	TEST_F(MoodSystemTest, ValidationRejectsABadNeedCost) {
+		const std::string thirst = R"(<Need name="Thirst" cost="50"/>)";
+		const auto		  onlyMessage = [this, &thirst](const std::string& replacement) {
+			   const std::vector<std::string> messages = validationMessagesWith(thirst, replacement);
+			   EXPECT_EQ(messages.size(), 1U) << replacement;
+			   return messages.empty() ? std::string() : messages.front();
+		};
+		std::string message = onlyMessage(R"(<Need name="Thirst"/>)");
+		EXPECT_TRUE(message.ends_with("<Need name=\"Thirst\"> cost is missing")) << message;
+		message = onlyMessage(R"(<Need name="Thirst" cost="-5"/>)");
+		EXPECT_TRUE(message.ends_with("<Need name=\"Thirst\"> cost must be zero or more, got \"-5\"")) << message;
+		message = onlyMessage(R"(<Need name="Thirst" cost="50" weight="1"/>)");
+		EXPECT_TRUE(message.ends_with(": <Need name=\"Thirst\">: unknown attribute 'weight'")) << message;
+		EXPECT_TRUE(message.starts_with(tempFiles.back().filename().generic_string() + ": ")) << message;
+		message = onlyMessage(R"(<Need name="Thirst" cost="50"/><Need name="Thirst" cost="10"/>)");
+		EXPECT_TRUE(message.ends_with("<Need name=\"Thirst\"> is given twice")) << message;
 	}
 
 	TEST_F(MoodSystemTest, ValidationRejectsBandsStartingAtTheSameMood) {

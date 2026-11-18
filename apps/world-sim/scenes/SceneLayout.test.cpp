@@ -223,6 +223,13 @@ namespace world_sim::testing {
 				task.buildBlueprintEntityId = static_cast<uint64_t>(worked);
 				world.addComponent<ecs::Task>(spawned.colonist, task);
 
+				// A few low needs, each a row of the mood breakdown.
+				ecs::NeedsComponent& needs = *world.getComponent<ecs::NeedsComponent>(spawned.colonist);
+				needs.get(ecs::NeedType::Hunger).value = 20.0F;
+				needs.get(ecs::NeedType::Thirst).value = 45.0F;
+				needs.get(ecs::NeedType::Hygiene).value = 10.0F;
+				needs.get(ecs::NeedType::Recreation).value = 60.0F;
+
 				// A held thought, a stack of two, and one with no mood effect, summed into the mood as a tick does.
 				auto& thoughtSystem = world.getSystem<ecs::ThoughtSystem>();
 				for (const char* type : {"slept_on_ground", "bottled_up", "bottled_up", "very_hungry"}) {
@@ -647,6 +654,9 @@ namespace world_sim::testing {
 			}
 			if (const auto rows = kRowIds.find(tab); rows != kRowIds.end()) {
 				ASSERT_GT(shownCount(rows->second), 0U) << "no rows on the " << tab << " tab";
+			}
+			if (std::string_view(tab) == "dossier_needs") {
+				ASSERT_EQ(shownCount("mood_breakdown_need"), 4U) << "a row for each need costing something";
 			}
 			const std::string sizes = panelSizes();
 			EXPECT_EQ(sizes.find("past the cap"), std::string::npos) << sizes;

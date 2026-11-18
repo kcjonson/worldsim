@@ -30,8 +30,8 @@ Launch `world-sim --scene=game --background --no-settings` (RelWithDebInfo); the
 16. Pick All: 50 blocks, and a "Show older" button under them.
 17. Press "Show older": every thought shows, and the button is gone.
 18. Open the NEEDS tab: the dialog keeps the size it opened at.
-19. Read the Mood breakdown: Needs, a row per held thought with its amount and time left ("24 hours left", the game being paused), largest amount first, and Target.
-20. Read the Target row: it reads 100 plus Needs plus the rows' amounts (-10, -6 and +5 for the scripted thoughts, so 89 plus Needs), within 0.1, or the sum on the "Clamped" note under it.
+19. Read the Mood breakdown: a row per need that is costing something (its label and cost, such as "Hunger -12.5", largest first, and no row for a need that costs nothing), a row per held thought with its amount and time left ("24 hours left", the game being paused), largest amount first, and Target.
+20. Read the Target row: it reads 100 plus every row's amount, the needs' costs and the thoughts' (-10, -6 and +5 for the scripted thoughts, so 89 plus the needs' rows), within 0.1 for each row, or the sum on the "Clamped" note under it.
 21. Close the dossier and open it on Bob again: it opens at the width and height step 13 noted, long log and all.
 22. Open the developer client (`build/developer-client/index.html`, as a `file://` page) and its Dev Tools tab. The client talks to http://localhost:8081, so the tab steps apply to this game on its default port.
 23. Press Refresh: the colonist list and the thought types fill in.

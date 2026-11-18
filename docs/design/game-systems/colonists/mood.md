@@ -25,7 +25,7 @@ Managing mood is the player's job as the colony's overseer. Colonists can feed a
 
 A colonist's mood has two parts, added together and clamped to 0-100.
 
-- **Needs.** A base score from how well the eight needs are met, weighted per need. Defined in [Needs](./needs.md).
+- **Needs.** A base score of 100, less what each unmet need costs; the costs add, so a met need gives no credit against an unmet one. Defined in [Needs](./needs.md).
 - **Mood effects.** Signed amounts carried by the [thoughts](./thoughts.md) the colonist is holding, from things that happened to them or that they are living with.
 
 A mood effect always belongs to a thought. It is either timed ("slept on the ground", -10 for a day; "vented to Idris", +8 for 12 hours) or lasts while its cause does ("something reeks", "crowded", "soaked"). A repeat of a held thought about the same subject does not pile up unless the type says it stacks; a stacking thought shows its count ("bottled up x3"). Every other system that affects how a colonist feels does so by giving a thought. What a thought is, what creates one, and which ones the player sees as bubbles are defined in [Thoughts](./thoughts.md).
@@ -330,7 +330,7 @@ Conditions are data and need no scripting. A behavior's effect, what the colonis
 
 ## Related documents
 
-- [Needs System](./needs.md): the needs and their weights in mood
+- [Needs System](./needs.md): the needs and what each costs in mood
 - [Thoughts](./thoughts.md): what carries a mood effect, and the bubbles
 - [Attributes](./attributes.md): Sanity, Civility, Social Need, Work Ethic, and traits
 - [AI Behavior](./ai-behavior.md)

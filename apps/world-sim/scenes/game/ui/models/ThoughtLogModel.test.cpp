@@ -10,8 +10,10 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <initializer_list>
 #include <ostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace world_sim {
@@ -53,6 +55,10 @@ namespace world_sim {
 		*out << row.id << " '" << row.label << "' " << row.amount << " '" << row.left << "'";
 	}
 
+	void PrintTo(const MoodNeedRow& row, std::ostream* out) {
+		*out << "'" << row.label << "' " << row.amount;
+	}
+
 	class ThoughtLogModelTest : public ::testing::Test {
 	  protected:
 		void SetUp() override {
@@ -92,10 +98,13 @@ namespace world_sim {
 
 		[[nodiscard]] const ecs::Thoughts& record() const { return *world.getComponent<ecs::Thoughts>(colonist); }
 
-		[[nodiscard]] ecs::Mood moodAsSummed(float needs) const {
+		[[nodiscard]] ecs::Mood moodAsSummed(std::initializer_list<std::pair<ecs::NeedType, float>> needCosts) const {
 			ecs::Mood mood;
-			mood.needContributions[0] = needs;
-			float unclamped = ecs::kFullMood + needs;
+			float	  unclamped = ecs::kFullMood;
+			for (const auto& [need, contribution] : needCosts) {
+				mood.needContributions[static_cast<size_t>(need)] = contribution;
+				unclamped += contribution;
+			}
 			ecs::forEachHeldThought(record(), [&](const ecs::Thought& thought) {
 				mood.thoughtContributions.push_back({.thought = thought.id, .amount = ecs::heldMoodAmount(thought)});
 				unclamped += ecs::heldMoodAmount(thought);
@@ -264,10 +273,17 @@ namespace world_sim {
 
 	TEST_F(ThoughtLogModelTest, TheBreakdownIsTheContributionsTheTargetSums) {
 		giveTheMorning();
-		const ecs::Mood		mood = moodAsSummed(-12.0F);
+		const ecs::Mood mood =
+			moodAsSummed({{ecs::NeedType::Thirst, -4.5F}, {ecs::NeedType::Hunger, -7.5F}, {ecs::NeedType::Energy, -0.02F}});
 		const MoodBreakdown breakdown = moodBreakdown(rules.types, &record(), mood, time->simulationSeconds());
 
-		EXPECT_EQ(breakdown.needs, "-12");
+		EXPECT_EQ(
+			breakdown.needs,
+			(std::vector<MoodNeedRow>{
+				{.need = ecs::NeedType::Hunger, .label = "Hunger", .amount = "-7.5"},
+				{.need = ecs::NeedType::Thirst, .label = "Thirst", .amount = "-4.5"},
+			})
+		) << "the largest cost first, and a need whose cost rounds to nothing is not listed";
 		ASSERT_EQ(breakdown.thoughts.size(), 3U);
 		EXPECT_EQ(
 			breakdown.thoughts[0], (MoodThoughtRow{.id = 1, .label = "Slept on the ground", .amount = "-10", .left = "22 hours left"})
@@ -276,21 +292,36 @@ namespace world_sim {
 		EXPECT_EQ(breakdown.thoughts[1].amount, "-6");
 		EXPECT_EQ(breakdown.thoughts[1].left, "24 hours left");
 		EXPECT_EQ(breakdown.thoughts[2], (MoodThoughtRow{.id = 2, .label = "Soaked", .amount = "-6", .left = "while soaked"}));
-		// 100 - 12 - 10 - 6 - 6
+		// 100 - 7.5 - 4.5 - 10 - 6 - 6
 		EXPECT_EQ(breakdown.target, "66%");
 		EXPECT_EQ(breakdown.clampedFrom, "");
+		float rows = ecs::kFullMood;
+		for (const MoodNeedRow& row : breakdown.needs) {
+			rows += std::stof(row.amount);
+		}
+		for (const MoodThoughtRow& row : breakdown.thoughts) {
+			rows += std::stof(row.amount);
+		}
+		EXPECT_FLOAT_EQ(rows, 66.0F) << "the rows add to the target";
 	}
 
 	TEST_F(ThoughtLogModelTest, TheBreakdownSaysWhenTheTargetIsClamped) {
 		giveTheMorning();
-		const MoodBreakdown tenths = moodBreakdown(rules.types, &record(), moodAsSummed(-12.5F), time->simulationSeconds());
-		EXPECT_EQ(tenths.needs, "-12.5");
+		const MoodBreakdown tenths =
+			moodBreakdown(rules.types, &record(), moodAsSummed({{ecs::NeedType::Hunger, -12.5F}}), time->simulationSeconds());
+		ASSERT_EQ(tenths.needs.size(), 1U);
+		EXPECT_EQ(tenths.needs[0].amount, "-12.5");
 		EXPECT_EQ(tenths.target, "65.5%");
 		EXPECT_EQ(tenths.clampedFrom, "");
 
-		const MoodBreakdown clamped = moodBreakdown(rules.types, &record(), moodAsSummed(-90.0F), time->simulationSeconds());
+		const MoodBreakdown clamped = moodBreakdown(
+			rules.types,
+			&record(),
+			moodAsSummed({{ecs::NeedType::Temperature, -40.0F}, {ecs::NeedType::Hunger, -25.0F}, {ecs::NeedType::Thirst, -25.0F}}),
+			time->simulationSeconds()
+		);
 		EXPECT_EQ(clamped.target, "0%");
-		// 100 - 90 - 10 - 6 - 6
+		// 100 - 40 - 25 - 25 - 10 - 6 - 6
 		EXPECT_EQ(clamped.clampedFrom, "-12%");
 	}
 
