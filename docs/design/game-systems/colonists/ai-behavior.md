@@ -28,6 +28,8 @@ Colonists always evaluate what to do in this fixed order. Higher tiers (lower nu
 | 6    | Opportunistic work  | Needs satisfied; loose work available           | Haul items, stock storage, harvest    | Implemented              |
 | 7    | Idle                | Nothing else to do                              | Gather food for larder, wander        | Implemented              |
 
+What a colonist does at each tier (a need's chain, a piece of work, an idle chain, a player's order, a low-mood behavior) is defined in data as chains of steps whose targets are picked by queries ([Queries and chains](../../../technical/queries-and-chains.md)); the tiers say only what comes first. A low-mood behavior sits directly below critical needs and above the player's orders ([Mood](./mood.md#the-episode-cycle)), and [Interruptable crafts](../../../technical/interruptable-crafts.md#the-ladder) adds urgent needs and a crafter's own unfinished work to the ladder.
+
 "Lower number = higher priority." Tier 4 (active work orders) sits above tier 5 (actionable needs): a colonist finishes a committed craft or build before addressing a non-critical need. Only tier 2 (critical needs) preempts active work. See [Colonist Task Arbitration §3](../../../technical/colonist-task-arbitration.md) for the locked design basis (multi-colonist crafting §2b, "finishing is very high priority").
 
 ### Tier 1: Survival / danger (RESERVED)
@@ -217,6 +219,7 @@ Everything that persists runs on the interval: a critical need with nothing reac
 - [Task Registry](./task-registry.md): Global task list architecture for Tiers 4 and 6
 - [Priority Config](./priority-config.md): Within-tier score factors and thresholds
 - [Task Chains](./task-chains.md) — Multi-step task continuation
+- [Queries and chains](../../../technical/queries-and-chains.md): needs, actions, work, and behaviors as data
 - [Colonist Task Arbitration](../../../technical/colonist-task-arbitration.md): Implementation of the (tier, score) key, tier ladder, job lifecycle
 
 ---

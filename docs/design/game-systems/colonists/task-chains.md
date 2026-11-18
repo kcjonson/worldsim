@@ -4,7 +4,7 @@
 **Created:** 2025-01-02
 **MVP Status:** Phase 2+ (after basic hauling works)
 
-The generic mechanism for a creature carrying out a list of steps, and the chain format that replaces `task-chains.xml`, is specified in [Queries and chains](../../../technical/queries-and-chains.md). This document covers the hands rules and how the hand-written haul, carry-in, and placement chains keep together. The original chain structure is in the [Historical Addendum](#historical-addendum).
+Every multi-step thing a creature does (eating, hauling, a cut and its carry-in, a placement, a craft) is a chain of steps defined in data, and the mechanism and the chain format that replaces `task-chains.xml` are specified in [Queries and chains](../../../technical/queries-and-chains.md). This document covers the hands rules and how a chain keeps together across its legs. The original chain structure is in the [Historical Addendum](#historical-addendum).
 
 ---
 
@@ -77,77 +77,26 @@ Defined in each item's XML via the `Carryable` capability:
 
 ### Action Hands Required (Action Definition)
 
-Defined in a separate config file listing all action types:
+Each action is an entry in `assets/config/actions/`, and its `hands` says whether it needs free hands
+([Queries and chains](../../../technical/queries-and-chains.md#actions)):
 
-**File:** `assets/config/actions/action-types.xml`
 ```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<ActionTypes>
-  <!-- Need Fulfillment Actions -->
-  <Action defName="Eat" needsHands="true">
-    <description>Consuming food</description>
-  </Action>
+<actions>
+  <action id="Eat" seconds="2" hands="free" interruptable="false">
+    <consume count="1"/>
+    <restore need="Hunger" from="nutrition" scale="100"/>
+    <restore need="Digestion" from="nutrition" scale="-100"/>
+  </action>
 
-  <Action defName="Drink" needsHands="true">
-    <description>Drinking water</description>
-  </Action>
-
-  <Action defName="Sleep" needsHands="false">
-    <description>Resting on a sleepable surface</description>
-  </Action>
-
-  <Action defName="Toilet" needsHands="false">
-    <description>Relieving bladder</description>
-  </Action>
-
-  <!-- Work Actions -->
-  <Action defName="Harvest" needsHands="true">
-    <description>Gathering from harvestable entity</description>
-  </Action>
-
-  <Action defName="Craft" needsHands="true">
-    <description>Working at a crafting station</description>
-  </Action>
-
-  <Action defName="Build" needsHands="true">
-    <description>Constructing a structure</description>
-  </Action>
-
-  <Action defName="Pickup" needsHands="true">
-    <description>Picking up an item</description>
-  </Action>
-
-  <Action defName="Deposit" needsHands="true">
-    <description>Placing item in storage</description>
-  </Action>
-
-  <Action defName="Place" needsHands="true">
-    <description>Placing item at designated location</description>
-  </Action>
-
-  <!-- Social/Movement Actions -->
-  <Action defName="Talk" needsHands="false">
-    <description>Conversation with another colonist</description>
-  </Action>
-
-  <Action defName="Wander" needsHands="false">
-    <description>Idle exploration</description>
-  </Action>
-
-  <Action defName="Flee" needsHands="false">
-    <description>Running from danger</description>
-  </Action>
-
-  <!-- Combat Actions -->
-  <Action defName="MeleeAttack" needsHands="true">
-    <description>Melee combat</description>
-  </Action>
-
-  <Action defName="RangedAttack" needsHands="true">
-    <description>Ranged combat</description>
-  </Action>
-</ActionTypes>
+  <action id="Sleep" seconds="8" hands="any" interruptable="true" pays="along" curve="2">
+    <restore need="Energy" amount="60" scaleBy="sleep_quality"/>
+  </action>
+</actions>
 ```
+
+`hands="free"` means the hands must be free before the action starts; `hands="any"`, the default, means
+the creature keeps carrying. A delivery (Deposit) keeps its goods in hand, since they are what it
+delivers.
 
 ---
 
@@ -158,7 +107,7 @@ When a colonist is interrupted mid-chain:
 ```python
 def handle_interruption(colonist, interrupting_action, carried_item):
     # Both values come from config
-    action_needs_hands = ActionRegistry.get(interrupting_action).needsHands
+    action_needs_hands = Actions.get(interrupting_action).hands == "free"
     item_hands_required = AssetRegistry.get(carried_item).carryable.handsRequired
 
     if not action_needs_hands:
@@ -184,7 +133,7 @@ def handle_interruption(colonist, interrupting_action, carried_item):
         return DroppedItem
 ```
 
-**Key Point:** The code reads `needsHands` and `handsRequired` from config. Changing which actions need hands or how heavy items are is pure data.
+**Key Point:** The code reads an action's `hands` and an item's `handsRequired` from data. Changing which actions need hands or how heavy items are is pure data.
 
 ---
 
@@ -192,12 +141,12 @@ def handle_interruption(colonist, interrupting_action, carried_item):
 
 There is no chain bonus, and `priority-tuning.xml` holds no chain value. Two things keep a colonist on its chain:
 
-- The next step is the same task. A pickup turns the haul into its deposit leg, and a landed cut converts in place into a carry-in (`ActionSystem::carryHarvestIn`), so arbitration sees the task it is already doing, with its hysteresis margin.
-- Provisioning that serves an active work order (a craft, a build site) is tier 4. Ordinary work and a non-critical need (tier 5) never interrupt it; a critical need (tier 2) does.
+- The next step is the same task. When a pickup completes the chain moves on to its deposit leg, and when a cut lands to its carry-in, in place, so arbitration sees the task it is already doing, with its hysteresis margin.
+- Provisioning that serves an active work order (a craft, a build site) is at the work-order tier. Ordinary work and an ordinary need never interrupt it; a critical need does, and an urgent need does between actions ([Interruptable crafts](../../../technical/interruptable-crafts.md#what-interrupts-what)).
 
 ### Example: Bob hauling wood to a build site
 
-His deposit leg is tier 4. A hungry Bob (Hunger at 40%, tier 5) finishes the delivery first. A critically hungry Bob (below 10%, tier 2) switches: a two-hand armful can't be stowed, so it goes into a box within reach that takes it, else onto the ground as a pile, and he eats.
+His deposit leg is at the work-order tier. A hungry Bob (Hunger at 40%, an ordinary need) finishes the delivery first, and so does a very hungry one, since only a critical need drops an armful its root still wants. A critically hungry Bob (below 10%) switches: a two-hand armful can't be stowed, so it goes into a box within reach that takes it, else onto the ground as a pile, and he eats.
 
 ---
 
@@ -229,7 +178,7 @@ His deposit leg is tier 4. A hungry Bob (Hunger at 40%, tier 5) finishes the del
 | What | Where | Example |
 |------|-------|---------|
 | Item hands required | `assets/world/*/[item].xml` | `<carryable handsRequired="2"/>` |
-| Action needs hands | `assets/config/actions/action-types.xml` | `<Action defName="Eat" needsHands="true"/>` |
+| Action needs hands | `assets/config/actions/` | `<action id="Eat" hands="free">` |
 | Chain definitions | [Queries and chains](../../../technical/queries-and-chains.md) | `<chain id="eat_a_meal">` |
 
 **All behavior is data-driven.** To change whether Sleep needs hands, edit XML. To add a new 3-hand item for giants, add XML. No code changes.
@@ -276,7 +225,7 @@ within 0.4 m of its task's target (`ActionSystem`), so they deposit or drink sid
 
 ## Historical Addendum
 
-The chain structure below, from 2026-01-02, is superseded by [Queries and chains](../../../technical/queries-and-chains.md) (2026-11-17). `assets/config/work/task-chains.xml` holds these chains and is loaded and validated, and no simulation code reads it; the haul and placement chains that run are written by hand. Kept for reference.
+The chain structure below, from 2026-01-02, is superseded by [Queries and chains](../../../technical/queries-and-chains.md) (2026-11-17). `assets/config/work/task-chains.xml` held these chains and was loaded and validated, and no simulation code read it; the haul and placement chains that ran were written by hand in C++. On 2026-11-17 the owner retired that hand-written code in favour of chains defined in data, and `task-chains.xml` goes with it. Kept for reference.
 
 ### Data Model
 

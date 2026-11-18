@@ -316,7 +316,7 @@ The behavior list, the thoughts, the roll curve, relief sizes, the cooldown, the
   <relief amount="medium"/>
 </behavior>
 
-<query id="bed_to_soil">
+<query id="bed_to_soil" pick="weighted">
   <from kind="bed"/>
   <exclude fact="distance" above="15"/>
   <exclude fact="has_owner" below="1"/>

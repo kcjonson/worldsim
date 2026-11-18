@@ -12,6 +12,10 @@ Colonists have physical and emotional needs. Some needs drive behavior (actionab
 
 ---
 
+## Needs are data
+
+A need is a data entry: its name, how its level moves (draining with time, or set by the colonist's surroundings), its seek, urgent, and critical levels, its mood cost, and what meets it, a chain of steps the colonist carries out or work another colonist does for it. Each kind of creature lists the needs it has, so a cow can need milking and a colonist cannot, and a mod adds a need with a file. The entries and the chains behind them are specified in [Queries and chains](../../../technical/queries-and-chains.md#needs).
+
 ## Actionable Needs
 
 These create tasks. When they drop below threshold, colonist seeks fulfillment.
@@ -98,7 +102,7 @@ Drops to zero on bathroom accident. Low hygiene = others like you less.
 | Seek Threshold | ~30% |
 | Critical Threshold | ~10% |
 | Failure Effect | Work efficiency drops, mood penalty |
-| Fulfilled By | Recreation activities, socializing |
+| Fulfilled By | Recreation activities, socializing; at the baseline, enjoying nature, which takes a long time for a little gain and keeps what it gained when cut short |
 
 Decays while working, recovers while idle or recreating.
 
@@ -152,7 +156,7 @@ Every need has a cost, the most mood it takes off at its worst, and the penalty 
 
 Every need can interrupt work when it gets bad enough, the ones that cannot kill included: work can run for days, and a colonist who never stops to wash or rest ends up in a low-mood behavior over it. The levels are tuned so that meeting the need comes first. A colonist leaves a long job to go and play a game before they have a fit and wreck the room because they have worked too long.
 
-The costs and the curve are in `assets/config/colonists/mood.xml`. Shipped costs: Temperature 40, Hunger 25, Thirst 25, Energy 20, Hygiene 15, Recreation 15, Bladder 10, Digestion 10.
+Each need's cost is on its own entry, and the curve, which every need shares, is in `assets/config/colonists/mood.xml`. Shipped costs: Temperature 40, Hunger 25, Thirst 25, Energy 20, Hygiene 15, Recreation 15, Bladder 10, Digestion 10.
 
 ### What low mood does
 
