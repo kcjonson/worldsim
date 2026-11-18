@@ -96,7 +96,8 @@ int main(int argc, char* argv[]) {
 	}
 
 	world_sim::initializeResources(*app, commandLine.scene.has_value());
-	// After the resources: the drawing settings' defaults come from the construction config.
+	// The construction config isn't loaded yet, so the defaults under the file's values are the built-in ones
+	// until GameLoadingScene loads it and loads these again.
 	world_sim::UserSettings::Get().load(app->settings());
 
 	world_sim::addScenes(app->scenes());

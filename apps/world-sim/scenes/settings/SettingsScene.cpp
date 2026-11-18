@@ -36,6 +36,9 @@ namespace {
 	constexpr float		  kRowWidth = 480.0F;
 	constexpr float		  kScrollbarReserve = 16.0F; // so a row never sits under the list's scrollbar
 
+	// A push applies at the frame's scene step, so two presses in one frame would queue two Settings.
+	bool pushQueued = false;
+
 	namespace tokens = world_sim::tokens;
 	namespace family = ui::tokens::font::family;
 
@@ -63,6 +66,7 @@ namespace {
 			: overAnotherScene(args.overAnotherScene) {}
 
 		void onEnter(app::App& app) override {
+			pushQueued = false;
 			owner = &app;
 			LOG_INFO(Game, "SettingsScene - Entering");
 			theme::apply(ui());
@@ -301,7 +305,7 @@ namespace {
 				.layout = {.position = ui::Position::Absolute, .inset = {.bottom = 16.0F, .left = kColX}},
 				.style = kicker,
 				.pointerEvents = ui::PointerEvents::None,
-				.text = "Press ESC to return to menu",
+				.text = "Press ESC to go back",
 			});
 		}
 
@@ -316,7 +320,7 @@ namespace {
 			}
 		}
 
-		bool						  overAnotherScene = false;
+		bool						  overAnotherScene;
 		app::App*					  owner = nullptr;
 		ui::Ref<ui::SegmentedControl> sizeChoice;
 		ui::Ref<ui::Button>			  sizeReset;
@@ -326,6 +330,10 @@ namespace {
 
 namespace world_sim {
 	void openSettings(app::SceneStack& stack) {
+		if (pushQueued) {
+			return;
+		}
+		pushQueued = true;
 		stack.push<SettingsScene>({.overAnotherScene = true});
 	}
 } // namespace world_sim

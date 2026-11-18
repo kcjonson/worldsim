@@ -1,7 +1,7 @@
 # Scenario 07: In-game pause menu
 
 **Status:** ready  
-**Last verified:** 2026-10-31
+**Last verified:** 2026-11-17 (steps 1 to 4; 5 to 9 as of 2026-10-31, unchanged)
 
 Escape and the top bar's Menu button open the pause menu over the game, which pauses the sim until it closes.
 

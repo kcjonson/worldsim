@@ -1,7 +1,7 @@
 # Scenario 17: Interface size
 
 **Status:** draft  
-**Last verified:** 2026-11-16 (steps 1 to 6, 9 and 10 as written; 7 and 8 with Bob selected through `/api/dev/select`, before the pause was added to step 7)
+**Last verified:** 2026-11-16 (steps 1 to 4, 6 and 10 as written, 5 and 9 before the drawing switch and the pause-menu route were added; 7 and 8 with Bob selected through `/api/dev/select`, before the pause was added to step 7)
 
 Settings' Interface size scales menus, panels, and text from 60 to 120%, applies at once, and is saved with the window's size, as the drawing settings are. The world under the HUD keeps its size, and a click on it still lands where the pointer is.
 

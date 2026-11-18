@@ -33,6 +33,7 @@ namespace world_sim {
 	} // namespace
 
 	void UserSettings::load(const app::Settings& file) {
+		drawing = registryDefaults();
 		for (const auto& [key, field] : kSwitches) {
 			drawing.*field = file.get(key, drawing.*field);
 		}
