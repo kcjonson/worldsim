@@ -22,6 +22,10 @@
     <description>Drinking water</description>
   </Action>
 
+  <Action defName="Wash" needsHands="true">
+    <description>Washing at water</description>
+  </Action>
+
   <Action defName="Sleep" needsHands="false">
     <description>Resting on a sleepable surface</description>
   </Action>

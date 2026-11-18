@@ -219,7 +219,7 @@ Frame rate is at most 120 (the cap), and with vsync on (the default) 60 on a 60 
 
 What changes with frame rate: vision, the goal polls, construction, the Rerouting hold, collision pushes per second, and every per-frame AI state (decisions per second double from 60 to 120 fps). What changes with game speed: every R and F rate, measured in game time; G rates are fixed in game time.
 
-A colonist's needs are constructed from the need levels (`NeedsComponent(const NeedLevels&)`): the decay rates are in `Needs.cpp`, the thresholds in `assets/config/colonists/needs/`. Rates are % per game minute; a need is sought below its seek threshold and critical below its critical one. Only the first five are actionable (`kActionableNeeds`), and the AI's critical tier reads each need's own critical threshold (`Need::isCritical`).
+A colonist's needs are constructed from the need levels (`NeedsComponent(const NeedLevels&)`): the decay rates are in `Needs.cpp`, the thresholds in `assets/config/colonists/needs/`. Rates are % per game minute; a need is sought below its seek threshold and critical below its critical one. Only the first six are actionable (`kActionableNeeds`), and the AI's critical tier reads each need's own critical threshold (`Need::isCritical`).
 
 | Need | Decay | Seek | Critical |
 |---|---|---|---|

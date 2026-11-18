@@ -167,6 +167,11 @@ namespace ecs {
 				break;
 			}
 
+			case NeedType::Hygiene: {
+				action = Action::Wash();
+				break;
+			}
+
 			case NeedType::Energy: {
 				// Check if at current position (ground fallback) or at a bed
 				bool  isGroundFallback = (task.targetPosition == position.value);

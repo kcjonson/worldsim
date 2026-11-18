@@ -4,16 +4,15 @@
 #include <ecs/components/Needs.h>
 #include <ui/Context.h>
 
+#include <algorithm>
 #include <string>
 
 namespace world_sim {
 
 	namespace {
 
-		// By NeedType: 0 Hunger, 1 Thirst, 2 Energy, 3 Bladder, 4 Digestion are vital; 5 Hygiene,
-		// 6 Recreation, 7 Temperature are comfort.
-		constexpr std::size_t kVitalCount = 5;
-		constexpr std::size_t kNeedCount = 8;
+		// Meters are kept by NeedType; the needs colonists act on are listed first, the comfort needs after.
+		constexpr std::size_t kNeedCount = static_cast<std::size_t>(ecs::NeedType::Count);
 
 		constexpr float kColumnGap = 24.0F;
 		constexpr float kRowGap = 14.0F;
@@ -21,8 +20,8 @@ namespace world_sim {
 		constexpr float kComfortOpacity = 0.7F; // colonists don't act on comfort needs yet
 		constexpr float kAilmentsHeight = 58.0F;
 
-		const char* needLabel(std::size_t index) {
-			return index < ecs::kNeedLabels.size() ? ecs::kNeedLabels[index] : "Need";
+		bool actedOn(ecs::NeedType need) {
+			return std::ranges::find(ecs::NeedsComponent::kActionableNeeds, need) != ecs::NeedsComponent::kActionableNeeds.end();
 		}
 
 		ui::Style amountText(const ui::Theme& theme) {
@@ -107,16 +106,22 @@ namespace world_sim {
 		ui::Ref<ui::Component> columns =
 			addChild<ui::Component>({.layout = {.display = ui::Display::Flex, .gap = kColumnGap, .alignItems = ui::AlignItems::Start}});
 		ui::Ref<ui::Component> left = column(*columns.get(), kRowGap);
-		left.addChild<tabs::KickerDivider>({.label = "Vital needs"});
-		for (std::size_t i = 0; i < kNeedCount; ++i) {
-			if (i == kVitalCount) {
-				left.addChild<tabs::KickerDivider>({.margin = {kSectionGap, 0.0F, 0.0F, 0.0F}, .label = "Comfort"});
-			}
-			needMeters[i] = left.addChild<ui::ProgressBar>({
-				.style = {.opacity = i < kVitalCount ? 1.0F : kComfortOpacity},
-				.label = needLabel(i),
+		const auto addMeter = [&](ecs::NeedType need) {
+			needMeters[static_cast<std::size_t>(need)] = left.addChild<ui::ProgressBar>({
+				.style = {.opacity = actedOn(need) ? 1.0F : kComfortOpacity},
+				.label = ecs::needLabel(need),
 				.controlSize = ui::ControlSize::Sm,
 			});
+		};
+		left.addChild<tabs::KickerDivider>({.label = "Vital needs"});
+		for (const ecs::NeedType need : ecs::NeedsComponent::kActionableNeeds) {
+			addMeter(need);
+		}
+		left.addChild<tabs::KickerDivider>({.margin = {kSectionGap, 0.0F, 0.0F, 0.0F}, .label = "Comfort"});
+		for (std::size_t i = 0; i < kNeedCount; ++i) {
+			if (!actedOn(static_cast<ecs::NeedType>(i))) {
+				addMeter(static_cast<ecs::NeedType>(i));
+			}
 		}
 		left.addChild<ui::Text>({
 			.style = world_sim::text(theme, {.size = tokens::fontSize::fs2xs, .color = tokens::color::textFaint}),

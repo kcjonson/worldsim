@@ -46,14 +46,15 @@ namespace assets {
 		Carryable,	// Entity can be picked up directly (ground items like stones)
 		Harvestable, // Entity can be harvested for items (bushes, plants)
 		Craftable,	// Entity is a crafting station where items can be made
-		Storage		// Entity is a storage container that holds items
+		Storage,	// Entity is a storage container that holds items
+		Washable	// Entity can be washed at to restore hygiene
 	};
 
 	/// Each capability's element name under an asset definition's <capabilities>, by CapabilityType.
-	inline constexpr std::array<const char*, 9> kCapabilityNames = {
-		"edible", "drinkable", "sleepable", "toilet", "waste", "carryable", "harvestable", "craftable", "storage"
+	inline constexpr std::array<const char*, 10> kCapabilityNames = {
+		"edible", "drinkable", "sleepable", "toilet", "waste", "carryable", "harvestable", "craftable", "storage", "washable"
 	};
-	static_assert(kCapabilityNames.size() == static_cast<std::size_t>(CapabilityType::Storage) + 1, "a name for every CapabilityType");
+	static_assert(kCapabilityNames.size() == static_cast<std::size_t>(CapabilityType::Washable) + 1, "a name for every CapabilityType");
 
 	[[nodiscard]] constexpr const char* capabilityName(CapabilityType type) {
 		return kCapabilityNames[static_cast<std::size_t>(type)];
@@ -155,6 +156,9 @@ namespace assets {
 		uint32_t				  maxCapacity = 50;	  // Number of stack slots (each holds one stack)
 	};
 
+	/// Washable capability - a colonist washes at the entity to restore hygiene (a shore, a bath)
+	struct WashableCapability {};
+
 	// ─────────────────────────────────────────────────────────────────────────
 	// Item Properties (for entities that can exist in inventory)
 	// Unified model: entities can be "in world" or "in inventory"
@@ -194,11 +198,12 @@ namespace assets {
 		std::optional<HarvestableCapability> harvestable;
 		std::optional<CraftableCapability>	 craftable;
 		std::optional<StorageCapability>	 storage;
+		std::optional<WashableCapability>	 washable;
 
 		/// Check if entity has any capabilities
 		[[nodiscard]] bool hasAny() const {
 			return edible.has_value() || drinkable.has_value() || sleepable.has_value() || toilet.has_value() || waste.has_value() ||
-				   carryable.has_value() || harvestable.has_value() || craftable.has_value() || storage.has_value();
+				   carryable.has_value() || harvestable.has_value() || craftable.has_value() || storage.has_value() || washable.has_value();
 		}
 
 		/// Check if entity has a specific capability type
@@ -222,6 +227,8 @@ namespace assets {
 					return craftable.has_value();
 				case CapabilityType::Storage:
 					return storage.has_value();
+				case CapabilityType::Washable:
+					return washable.has_value();
 			}
 			return false;
 		}

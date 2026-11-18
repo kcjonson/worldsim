@@ -72,7 +72,7 @@ namespace ecs {
 		static constexpr size_t kMaxDynamicEntities = 512;
 
 		/// Number of capability types (must match AssetRegistry::kCapabilityTypeCount)
-		static constexpr size_t kCapabilityTypeCount = 9;
+		static constexpr size_t kCapabilityTypeCount = 10;
 
 		// --- Owner ---
 

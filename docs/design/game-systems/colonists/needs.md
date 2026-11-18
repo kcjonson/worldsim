@@ -87,9 +87,7 @@ Sleep quality affects recovery rate. Better sleeping spots = faster recovery + m
 
 Drops to zero on bathroom accident. Low hygiene = others like you less.
 
-**Implementation Note:** Tracked in code now; AI does not seek washing yet (no fulfillment sources).
-
-**MVP Status:** Deferred to Phase 2
+A colonist washes at water the way it drinks: below the seek threshold it walks to the nearest shore it remembers and washes there, which restores Hygiene fully. Every shore point is both Drinkable and Washable, so baths and showers are more Washable sources for the same search.
 
 ### Recreation
 
