@@ -390,7 +390,7 @@ theirs from the shipped folder through one helper (`libs/sim/ecs/ShippedConfig.t
   <Need name="Digestion"   decayPerGameMinute="0.02"  seek="30" urgent="20" critical="10" cost="10"/>
   <Need name="Hygiene"     decayPerGameMinute="0.015" seek="40" urgent="25" critical="15" cost="15"/>
   <Need name="Recreation"  decayPerGameMinute="0.01"  seek="30" urgent="20" critical="10" cost="15"/>
-  <Need name="Temperature" decayPerGameMinute="0"     seek="40" urgent="25" critical="15" cost="40"/>
+  <Need name="Temperature" decayPerGameMinute="0"     seek="40" urgent="25" critical="15" cost="60"/>
   <Sleep curveExponent="2.0"/>
 </Needs>
 ```

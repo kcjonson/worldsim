@@ -339,12 +339,11 @@ namespace world_sim {
 		expectTheRowsReconcile(tenths);
 
 		setNeed(ecs::NeedType::Thirst, 0.0F);
-		setNeed(ecs::NeedType::Hunger, 0.0F);
 		setNeed(ecs::NeedType::Temperature, 0.0F);
 		const MoodBreakdown clamped = breakdownNow();
-		EXPECT_FALSE(clamped.needsAtFloor) << "the needs take 90, leaving a needs score of 10";
+		EXPECT_FALSE(clamped.needsAtFloor) << "the needs take 85, leaving a needs score of 15";
 		EXPECT_EQ(clamped.target, "0%");
-		EXPECT_EQ(clamped.clampedFrom, "-12%") << "10 - 10 - 6 - 6";
+		EXPECT_EQ(clamped.clampedFrom, "-7%") << "15 - 10 - 6 - 6";
 		expectTheRowsReconcile(clamped);
 	}
 
@@ -367,7 +366,7 @@ namespace world_sim {
 		EXPECT_EQ(
 			breakdown.needs,
 			(std::vector<MoodNeedRow>{
-				{.need = ecs::NeedType::Temperature, .label = "Temperature", .amount = "-40"},
+				{.need = ecs::NeedType::Temperature, .label = "Temperature", .amount = "-60"},
 				{.need = ecs::NeedType::Hunger, .label = "Hunger", .amount = "-25"},
 				{.need = ecs::NeedType::Thirst, .label = "Thirst", .amount = "-25"},
 				{.need = ecs::NeedType::Energy, .label = "Energy", .amount = "-20"},
@@ -377,7 +376,7 @@ namespace world_sim {
 				{.need = ecs::NeedType::Digestion, .label = "Digestion", .amount = "-10"},
 			})
 		);
-		EXPECT_TRUE(breakdown.needsAtFloor) << "the costs come to 160, and the needs take mood to 0 at most";
+		EXPECT_TRUE(breakdown.needsAtFloor) << "the costs come to 180, and the needs take mood to 0 at most";
 		ASSERT_EQ(breakdown.thoughts.size(), 1U);
 		EXPECT_EQ(breakdown.thoughts[0].amount, "+4");
 		EXPECT_EQ(breakdown.target, "4%");
@@ -395,13 +394,13 @@ namespace world_sim {
 		EXPECT_EQ(
 			breakdown.needs,
 			(std::vector<MoodNeedRow>{
-				{.need = ecs::NeedType::Temperature, .label = "Temperature", .amount = "-40"},
+				{.need = ecs::NeedType::Temperature, .label = "Temperature", .amount = "-60"},
 				{.need = ecs::NeedType::Hunger, .label = "Hunger", .amount = "-25"},
 				{.need = ecs::NeedType::Thirst, .label = "Thirst", .amount = "-25"},
 				{.need = ecs::NeedType::Energy, .label = "Energy", .amount = "-20"},
 			})
 		);
-		EXPECT_TRUE(breakdown.needsAtFloor) << "the costs come to 110";
+		EXPECT_TRUE(breakdown.needsAtFloor) << "the costs come to 130";
 		ASSERT_EQ(breakdown.thoughts.size(), 1U);
 		EXPECT_EQ(breakdown.thoughts[0].amount, "+20");
 		EXPECT_EQ(breakdown.target, "20%");

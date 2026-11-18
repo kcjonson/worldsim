@@ -217,17 +217,17 @@ namespace ecs::test {
 		setNeed(colonist, NeedType::Temperature, 10.0F);
 		world.update(0.0F);
 		// Penalties: hunger 0.15, thirst 0.3 + 0.7 x 10/30, digestion 1, hygiene 0.3, temperature
-		// 0.3 + 0.7 x 20/30, the rest 0. Costs 25 hunger, 25 thirst, 10 digestion, 15 hygiene, 40
-		// temperature: 3.75 + 13.3333 + 10 + 4.5 + 30.6667 = 62.25 off.
-		EXPECT_NEAR(moodOf(colonist).target, 37.75F, 0.001F);
+		// 0.3 + 0.7 x 20/30, the rest 0. Costs 25 hunger, 25 thirst, 10 digestion, 15 hygiene, 60
+		// temperature: 3.75 + 13.3333 + 10 + 4.5 + 46 = 77.5833 off.
+		EXPECT_NEAR(moodOf(colonist).target, 22.4167F, 0.001F);
 	}
 
 	TEST_F(MoodSystemTest, EachNeedAtItsWorstAloneTakesOffItsCost) {
 		useShippedTuning();
 		setNeed(colonist, NeedType::Temperature, 0.0F);
 		world.update(0.0F);
-		EXPECT_FLOAT_EQ(moodOf(colonist).needContributions[static_cast<size_t>(NeedType::Temperature)], -40.0F);
-		EXPECT_FLOAT_EQ(moodOf(colonist).target, 60.0F);
+		EXPECT_FLOAT_EQ(moodOf(colonist).needContributions[static_cast<size_t>(NeedType::Temperature)], -60.0F);
+		EXPECT_FLOAT_EQ(moodOf(colonist).target, 40.0F);
 
 		setNeed(colonist, NeedType::Temperature, 100.0F);
 		setNeed(colonist, NeedType::Hunger, 0.0F);
@@ -235,8 +235,7 @@ namespace ecs::test {
 		EXPECT_FLOAT_EQ(moodOf(colonist).target, 75.0F);
 	}
 
-	// Under a weighted average each need's share is its weight over the sum of every weight, so a need
-	// costed in or out moves every other need's contribution; here it moves nothing.
+	// A met need gives no credit against an unmet one, and costing a need out moves no other need's cost.
 	TEST_F(MoodSystemTest, AMetNeedGivesNoCreditAgainstAnUnmetOne) {
 		useShippedTuning();
 		const EntityID parched = spawnColonist();
@@ -276,12 +275,12 @@ namespace ecs::test {
 			setNeed(colonist, static_cast<NeedType>(i), 0.0F);
 		}
 		world.update(0.0F);
-		EXPECT_FLOAT_EQ(needsScore(moodOf(colonist).needContributions), 0.0F) << "the costs add to 160";
+		EXPECT_FLOAT_EQ(needsScore(moodOf(colonist).needContributions), 0.0F) << "the costs add to 180";
 		EXPECT_FLOAT_EQ(moodOf(colonist).target, 0.0F);
 
 		give("vented");
 		world.update(0.0F);
-		EXPECT_FLOAT_EQ(moodOf(colonist).target, 4.0F) << "a thought adds to a needs score of 0, not to -60";
+		EXPECT_FLOAT_EQ(moodOf(colonist).target, 4.0F) << "a thought adds to a needs score of 0, not to -80";
 	}
 
 	TEST_F(MoodSystemTest, StartMoodGivesASpawnedColonistItsTargetAtOnce) {

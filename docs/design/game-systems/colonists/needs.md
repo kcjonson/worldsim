@@ -146,13 +146,13 @@ Mood has two parts ([Mood](./mood.md)):
 
 ### What a need costs mood
 
-Each need takes its own points off mood, and a need that is met gives no credit against one that is not. Every need has a cost, the most mood it takes off at its worst, and the penalty curve says how much of that cost applies: none at or above the comfortable level, rising gently to the warning level, then steeply to the whole cost at an empty need. The needs score is 100 minus the sum of what the needs take off, never below 0. Freezing costs a colonist 40 points however well fed he is, and adding a need changes nothing about what the others cost.
+Each need takes its own points off mood, and a need that is met gives no credit against one that is not. Every need has a cost, the most mood it takes off at its worst, and the penalty curve says how much of that cost applies: none at or above the comfortable level, rising gently to the warning level, then steeply to the whole cost at an empty need. The needs score is 100 minus the sum of what the needs take off, never below 0. Freezing costs a colonist 60 points however well fed he is, and adding a need changes nothing about what the others cost.
 
 These are the costs:
 
 | Need | Cost |
 |---|---|
-| Temperature | 40 |
+| Temperature | 60 |
 | Hunger | 25 |
 | Thirst | 25 |
 | Energy | 20 |

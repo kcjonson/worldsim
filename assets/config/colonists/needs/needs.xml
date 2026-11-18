@@ -24,5 +24,5 @@
   <Need name="Digestion"   seek="30" urgent="20" critical="10" cost="10"/>
   <Need name="Hygiene"     seek="40" urgent="25" critical="15" cost="15"/>
   <Need name="Recreation"  seek="30" urgent="20" critical="10" cost="15"/>
-  <Need name="Temperature" seek="40" urgent="25" critical="15" cost="40"/>
+  <Need name="Temperature" seek="40" urgent="25" critical="15" cost="60"/>
 </Needs>

@@ -83,7 +83,7 @@ TEST(NeedsConfig, TheShippedNeedsLoadClean) {
 			{"Digestion", 10.0F},
 			{"Hygiene", 15.0F},
 			{"Recreation", 15.0F},
-			{"Temperature", 40.0F},
+			{"Temperature", 60.0F},
 		})
 	);
 }
