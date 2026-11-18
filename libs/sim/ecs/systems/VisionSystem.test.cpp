@@ -644,7 +644,7 @@ TEST_F(VisionSystemTest, LeadHoldsUnderFrameTimeJitter) {
 		sys.update(pass % 2 == 0 ? 0.0163F : 0.0171F);
 	}
 	EXPECT_EQ(sys.polygonBuildCount(), 1U) << "jitter in the frame time moved the lead";
-	EXPECT_EQ(sys.sightBodies(observer)->leadMm, VisionSystem::kSightRebuildStepMm + VisionSystem::kLeadWalkStepMm);
+	EXPECT_EQ(sys.sightBodies(observer)->reachLeadMm, VisionSystem::kSightRebuildStepMm + VisionSystem::kLeadWalkStepMm);
 }
 
 // On the plain disc an observer walking toward a wall takes the polygon path on the pass the wall's
@@ -699,7 +699,7 @@ TEST_F(VisionSystemTest, LeadJitterAcrossAStepBoundaryRebuildsNone) {
 		sys.update(pass % 2 == 0 ? 0.049F : 0.051F);
 	}
 	EXPECT_EQ(sys.polygonBuildCount(), 4U);
-	EXPECT_EQ(sys.sightBodies(observer)->leadMm, VisionSystem::kSightRebuildStepMm + 2 * VisionSystem::kLeadWalkStepMm);
+	EXPECT_EQ(sys.sightBodies(observer)->reachLeadMm, VisionSystem::kSightRebuildStepMm + 2 * VisionSystem::kLeadWalkStepMm);
 }
 
 namespace {
@@ -728,7 +728,7 @@ TEST_F(VisionSystemTest, HitchFrameLeadIsGoneAtTheNextStepBuild) {
 	for (int pass = 0; pass < 24; ++pass) {
 		if (walkPass(world, sys, observer, 0.11F * static_cast<float>(pass), pass == 7 ? 0.29F : 0.0163F)) {
 			builtAt.push_back(pass);
-			leads.push_back(sys.sightBodies(observer)->leadMm);
+			leads.push_back(sys.sightBodies(observer)->reachLeadMm);
 		}
 	}
 	EXPECT_EQ(builtAt, (std::vector<int>{0, 5, 7, 12, 17, 22}));
@@ -752,12 +752,13 @@ TEST_F(VisionSystemTest, TenTimesLeadIsGoneAtTheNextStepBuildAtOneTimes) {
 		if (walkPass(world, sys, observer, 0.11F * static_cast<float>(pass), 0.0163F / oneTimes)) {
 			builtAt.push_back(pass);
 			if (pass == 6) {
-				EXPECT_EQ(sys.sightBodies(observer)->leadMm, 1000);
+				EXPECT_EQ(sys.sightBodies(observer)->reachLeadMm, 1000);
+				EXPECT_EQ(sys.sightBodies(observer)->leadMm, 826) << "the step and the pass's walk as it is, 2 m/s for 0.163 s at 10x";
 			}
 		}
 	}
 	EXPECT_EQ(builtAt, (std::vector<int>{0, 5, 6, 11}));
-	EXPECT_EQ(sys.sightBodies(observer)->leadMm, kWalkingLeadMm);
+	EXPECT_EQ(sys.sightBodies(observer)->reachLeadMm, kWalkingLeadMm);
 }
 
 // A walker who hitches, stops, stands, and walks on stores a fresh walker's lead at his next step
@@ -770,7 +771,7 @@ TEST_F(VisionSystemTest, WalkingAgainAfterStandingStoresAFreshWalkersLead) {
 	world.addComponent<MovementTarget>(walker, MovementTarget{.target = {50.0F, 0.0F}, .speed = 2.0F, .active = true});
 	walkPass(world, sys, walker, 0.0F, 0.0163F);
 	ASSERT_TRUE(walkPass(world, sys, walker, 0.1F, 0.29F)) << "the hitch";
-	ASSERT_EQ(sys.sightBodies(walker)->leadMm, 1200);
+	ASSERT_EQ(sys.sightBodies(walker)->reachLeadMm, 1200);
 	world.getComponent<MovementTarget>(walker)->active = false;
 	for (int pass = 0; pass < 10; ++pass) {
 		EXPECT_FALSE(walkPass(world, sys, walker, 0.1F, 0.0163F)) << "standing builds nothing";
@@ -784,8 +785,8 @@ TEST_F(VisionSystemTest, WalkingAgainAfterStandingStoresAFreshWalkersLead) {
 	const EntityID fresh = spawnObserver(world, {500.0F, 0.0F});
 	world.addComponent<MovementTarget>(fresh, MovementTarget{.target = {550.0F, 0.0F}, .speed = 2.0F, .active = true});
 	sys.update(0.0163F);
-	EXPECT_EQ(sys.sightBodies(walker)->leadMm, sys.sightBodies(fresh)->leadMm);
-	EXPECT_EQ(sys.sightBodies(walker)->leadMm, kWalkingLeadMm);
+	EXPECT_EQ(sys.sightBodies(walker)->reachLeadMm, sys.sightBodies(fresh)->reachLeadMm);
+	EXPECT_EQ(sys.sightBodies(walker)->reachLeadMm, kWalkingLeadMm);
 }
 
 // A tunable only the cover reads leaves every shape; one the shape is built from rebuilds it.

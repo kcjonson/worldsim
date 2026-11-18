@@ -1,5 +1,6 @@
 #include "PlayerVisibilitySystem.h"
 
+#include "TimeSystem.h"
 #include "VisionSystem.h"
 
 #include "../World.h"
@@ -12,6 +13,7 @@
 
 #include <assets/ConstructionRegistry.h>
 #include <predicates/Predicates.h>
+#include <visibility/ForestShape.h>
 #include <visibility/SightClip.h>
 #include <visibility/SightPolygon.h>
 #include <visibility/Visibility.h>
@@ -26,15 +28,14 @@ namespace ecs {
 
 	namespace {
 
-		double lengthOf(const Vec2i64& offset) {
-			const double x = static_cast<double>(offset.x);
-			const double y = static_cast<double>(offset.y);
-			return std::sqrt(x * x + y * y);
+		// Whether an opaque wall body was in reach of his last build: only then does the polygon path
+		// sweep (sight-softening.md 6.6).
+		bool opaqueWallInReach(const VisionSystem& vision, EntityID colonist) {
+			const std::optional<VisionSystem::SightBodies> bodies = vision.sightBodies(colonist);
+			return bodies.has_value() && std::ranges::any_of(*bodies->bodies, [](const vision::SightBody& body) {
+					   return body.source == vision::SightBody::Source::Wall && body.kind == vision::BodyKind::Opaque;
+				   });
 		}
-
-		double crossOf(const std::array<double, 2>& first, double secondX, double secondY) { return first[0] * secondY - first[1] * secondX; }
-
-		constexpr double kSeenJumpMm =vision::kSeenJumpMeters * static_cast<double>(geometry::kMillimetersPerMeter);
 
 		static_assert(
 			vision::kSeenBoxCellMm == static_cast<std::int64_t>(world::kChunkWorldSize) * geometry::kMillimetersPerMeter,
@@ -57,132 +58,6 @@ namespace ecs {
 	void PlayerVisibilitySystem::revealLanding(glm::vec2 drop, float radiusMeters) {
 		const Vec2i64 centre = nav::toMm(drop);
 		seen.commitNow(geometry::sightPolygon(centre, std::llround(static_cast<double>(radiusMeters) * 1000.0)), centre);
-	}
-
-	void PlayerVisibilitySystem::beginLeg(Leg& leg, const Vec2i64& at, std::int64_t radiusMm) {
-		leg			   = Leg{};
-		leg.open	   = true;
-		leg.start	   = at;
-		leg.end		   = at;
-		leg.radiusMm   = radiusMm;
-	}
-
-	// The leg may end at `at` when every position held since it began stays within kSeenSlackMm of
-	// the line from its start to `at` (its direction is in the wedge) and none lay more than
-	// kSeenSlackMm farther from the start than `at` does.
-	bool PlayerVisibilitySystem::holds(const Leg& leg, const Vec2i64& at) {
-		const Vec2i64 offset = at - leg.start;
-		const double  length = lengthOf(offset);
-		if (leg.farthestMm > length + static_cast<double>(vision::kSeenSlackMm)) {
-			return false;
-		}
-		if (!leg.hasWedge || length == 0.0) {
-			return true;
-		}
-		const double offsetX = static_cast<double>(offset.x);
-		const double offsetY = static_cast<double>(offset.y);
-		return crossOf(leg.wedgeLow, offsetX, offsetY) >= 0.0 && crossOf(leg.wedgeHigh, offsetX, offsetY) <= 0.0;
-	}
-
-	// Holds `at`: it is the leg's new end, and, once it lies farther from the start than the slack,
-	// the wedge narrows to the directions whose line passes within the slack of it.
-	void PlayerVisibilitySystem::hold(Leg& leg, const Vec2i64& at) {
-		leg.end				 = at;
-		const Vec2i64 offset = at - leg.start;
-		const double  length = lengthOf(offset);
-		leg.farthestMm		 = std::max(leg.farthestMm, length);
-		const double slack	 = static_cast<double>(vision::kSeenSlackMm);
-		if (length <= slack) {
-			return;
-		}
-		const double alongX = static_cast<double>(offset.x) / length;
-		const double alongY = static_cast<double>(offset.y) / length;
-		const double sine	= slack / length;
-		const double cosine = std::sqrt(length * length - slack * slack) / length;
-		const std::array<double, 2> low{alongX * cosine + alongY * sine, alongY * cosine - alongX * sine};
-		const std::array<double, 2> high{alongX * cosine - alongY * sine, alongY * cosine + alongX * sine};
-		if (!leg.hasWedge) {
-			leg.hasWedge  = true;
-			leg.wedgeLow  = low;
-			leg.wedgeHigh = high;
-			return;
-		}
-		if (crossOf(leg.wedgeLow, low[0], low[1]) > 0.0) {
-			leg.wedgeLow = low;
-		}
-		if (crossOf(leg.wedgeHigh, high[0], high[1]) < 0.0) {
-			leg.wedgeHigh = high;
-		}
-	}
-
-	void PlayerVisibilitySystem::followLeg(EntityID colonist, Leg& leg, const Vec2i64& at, std::int64_t radiusMm) {
-		if (!leg.open || leg.radiusMm != radiusMm || lengthOf(at - leg.end) > kSeenJumpMm) {
-			closeLeg(colonist, leg);
-			beginLeg(leg, at, radiusMm);
-		} else if (!holds(leg, at)) {
-			const Vec2i64 turnedAt = leg.end;
-			closeLeg(colonist, leg);
-			beginLeg(leg, turnedAt, radiusMm);
-			hold(leg, at);
-		} else {
-			hold(leg, at);
-		}
-		seen.setOpenLeg(colonist, leg.start, leg.end, leg.radiusMm);
-	}
-
-	void PlayerVisibilitySystem::closeLeg(EntityID colonist, Leg& leg) {
-		if (!leg.open) {
-			return;
-		}
-		seen.closeLeg(colonist);
-		leg.open = false;
-	}
-
-	// The sweep runs along the walk, so it stays within the slack of where he went: a turn is a corner
-	// of the walk. A polygon built before a jump says nothing about what the walls hide from here, and
-	// no sweep crosses the jump.
-	void PlayerVisibilitySystem::followStretch(Observer& observer, const Vec2i64& at) {
-		Leg& stretch = observer.stretch;
-		if (lengthOf(at - stretch.end) > kSeenJumpMm) {
-			dropWallSight(observer);
-			return;
-		}
-		if (!holds(stretch, at)) {
-			const Vec2i64 turnedAt = stretch.end;
-			observer.walk.push_back(turnedAt);
-			beginLeg(stretch, turnedAt, stretch.radiusMm);
-		}
-		hold(stretch, at);
-	}
-
-	void PlayerVisibilitySystem::dropWallSight(Observer& observer) {
-		observer.wallSight = false;
-		observer.walk.clear();
-	}
-
-	void PlayerVisibilitySystem::enterPolygonAt(Observer& observer, const Vec2i64& at) {
-		if (!observer.wallSight || observer.walk.empty() || observer.walk.front() == at) {
-			return;
-		}
-		seen.queueSightAt(at, observer.sightMm, std::move(observer.walk));
-		observer.walk.assign(1, at);
-		beginLeg(observer.stretch, at, 0);
-	}
-
-	// Vision's polygon cut to his sight round its build goes into the record, with his walk from the
-	// build before it for the sweep.
-	void PlayerVisibilitySystem::registerPolygon(Observer& observer, const VisionSystem::SightShape& shape) {
-		const Vec2i64	   build   = nav::toMm(shape.center);
-		const std::int64_t sightMm = std::llround(static_cast<double>(shape.radius) * 1000.0);
-		std::vector<Vec2i64> inSight = geometry::starClippedToConvex(*shape.polygon, build, geometry::sightPolygon(build, sightMm));
-		if (geometry::simpleAround(inSight, build)) {
-			seen.queueSightPolygon(std::move(inSight), build, sightMm, std::move(observer.walk));
-		}
-		observer.walk.assign(1, build);
-		beginLeg(observer.stretch, build, 0);
-		observer.sightMm		 = sightMm;
-		observer.wallSight		 = true;
-		observer.polygonRevision = shape.polygonRevision;
 	}
 
 	void PlayerVisibilitySystem::refreshFootprints() {
@@ -220,7 +95,8 @@ namespace ecs {
 	}
 
 	// A footprint goes in once, as it is now: a wall rebuilt the same is not queued again, a changed
-	// one is. Its centre is the mean of its corners, round which a band or junction winds once.
+	// one is. Its centre is the mean of its corners, round which a band, a junction, or a placed body's
+	// convex ring winds once.
 	void PlayerVisibilitySystem::enterFootprint(const std::vector<Vec2i64>& ring) {
 		if (ring.size() < 3 || !enteredFootprints.insert(ring).second) {
 			return;
@@ -237,6 +113,11 @@ namespace ecs {
 	}
 
 	void PlayerVisibilitySystem::enterStructures(const VisionSystem::SightShape& shape) {
+		if (shape.placedSeen != nullptr) {
+			for (const geometry::Ring& outline : *shape.placedSeen) {
+				enterFootprint(outline);
+			}
+		}
 		if (shape.segmentsSeen == nullptr || (shape.segmentsSeen->empty() && shape.openingsSeen->empty())) {
 			return;
 		}
@@ -263,9 +144,28 @@ namespace ecs {
 		const VisionSystem* vision = world->tryGetSystem<VisionSystem>();
 		if (vision != nullptr && sweepVision != vision) {
 			sweepVision = vision;
-			seen.setSightBuilder([vision](const Vec2i64& centre, std::int64_t reachMm) { return vision->hardPolygon(centre, reachMm); });
+			seen.setSightBuilder([vision](const Vec2i64& centre, std::int64_t sightRadiusMm, const vision::SightRanges& rimRanges) {
+				const vision::SightRanges	 own = vision->forestRangesAt(centre, sightRadiusMm);
+				vision::SeenArea::BuiltSight built;
+				for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
+					built.rimRanges[side] = std::max(geometry::kForestShapeLeastRangeMm, std::min(own[side], rimRanges[side]));
+				}
+				const std::int64_t most = *std::max_element(built.rimRanges.begin(), built.rimRanges.end());
+				// The visibility polygon is cut to its own sight polygon already, which is the rim when
+				// every range is equal.
+				built.shape			= vision->hardPolygon(centre, most);
+				const bool plainRim = std::ranges::all_of(built.rimRanges, [most](std::int64_t range) { return range == most; });
+				if (!plainRim) {
+					built.shape = geometry::starClippedToConvex(built.shape, centre, vision::rimOf(centre, built.rimRanges));
+				}
+				return built;
+			});
 		}
 		if (vision != nullptr) {
+			const TimeSystem*  time		 = world->tryGetSystem<TimeSystem>();
+			const double	   timeScale = time != nullptr ? static_cast<double>(time->effectiveTimeScale()) : 1.0;
+			const std::int64_t tolerance = vision::SightFeed::legToleranceMm(vision->sightTunables().softLegToleranceMm, timeScale);
+			const std::int64_t rimEaseMm = vision->sightTunables().rimEaseMm;
 			for (auto [entity, position, colonist, memory] : world->view<Position, Colonist, Memory>()) {
 				Observer& observer = observers[entity];
 				observer.present   = true;
@@ -273,33 +173,22 @@ namespace ecs {
 				if (!shape.has_value()) {
 					continue;
 				}
-				const std::int64_t radiusMm = std::llround(static_cast<double>(shape->radius) * 1000.0) - vision::kSeenSlackMm;
-				if (radiusMm < vision::kSeenLeastRadiusMm) {
-					closeLeg(entity, observer.leg);
-					dropWallSight(observer);
+				const std::int64_t sightMm = std::llround(static_cast<double>(shape->radius) * 1000.0);
+				if (sightMm - vision::kSeenSlackMm < vision::kSeenLeastRadiusMm) {
+					observer.feed.stop(seen, entity);
 					continue;
 				}
-				const Vec2i64 at = nav::toMm(position.value);
-				if (shape->polygon == nullptr) {
-					dropWallSight(observer);
-					followLeg(entity, observer.leg, at, radiusMm);
-					continue;
-				}
-				// Walls in sight end his open leg, run on to here first.
-				if (observer.leg.open) {
-					followLeg(entity, observer.leg, at, radiusMm);
-					closeLeg(entity, observer.leg);
-				}
-				const bool newPolygon = shape->polygonRevision != observer.polygonRevision;
-				if (observer.wallSight) {
-					const bool resting = at == observer.stretch.end;
-					followStretch(observer, at);
-					if (resting && !newPolygon) {
-						enterPolygonAt(observer, at);
-					}
-				}
-				if (newPolygon) {
-					registerPolygon(observer, *shape);
+				const vision::SightBuild build{
+					.buildRevision	   = shape->buildRevision,
+					.polygonRevision   = shape->polygonRevision,
+					.eye			   = nav::toMm(shape->center),
+					.sightMm		   = sightMm,
+					.ranges			   = shape->ranges,
+					.forest			   = shape->forest != nullptr,
+					.polygon		   = shape->polygon,
+					.opaqueWallInReach = shape->polygon != nullptr && opaqueWallInReach(*vision, entity),
+				};
+				if (observer.feed.follow(seen, entity, nav::toMm(position.value), build, tolerance, rimEaseMm)) {
 					enterStructures(*shape);
 				}
 			}
@@ -309,8 +198,7 @@ namespace ecs {
 				it->second.present = false;
 				++it;
 			} else {
-				enterPolygonAt(it->second, it->second.stretch.end);
-				closeLeg(it->first, it->second.leg);
+				it->second.feed.leave(seen, it->first);
 				drawnForests.erase(it->first);
 				it = observers.erase(it);
 			}
@@ -321,6 +209,11 @@ namespace ecs {
 	const PlayerVisibilitySystem* PlayerVisibilitySystem::gate(World& world) {
 		const PlayerVisibilitySystem* visibility = world.tryGetSystem<PlayerVisibilitySystem>();
 		return visibility != nullptr && !visibility->revealed() ? visibility : nullptr;
+	}
+
+	const vision::SightFeed* PlayerVisibilitySystem::feedOf(EntityID colonist) const {
+		const auto found = observers.find(colonist);
+		return found != observers.end() ? &found->second.feed : nullptr;
 	}
 
 	bool PlayerVisibilitySystem::isSeen(glm::vec2 meters) const { return seen.isSeen(nav::toMm(meters)); }
@@ -351,8 +244,8 @@ namespace ecs {
 		return false;
 	}
 
-	// The disc lies in his open leg's capsule (vision::drawnVisibleRadiusMm), so outdoors it lies in
-	// the leg; with walls in sight it is cut to vision's polygon, round the polygon's build.
+	// Off the polygon path the eased shape lies in his leg's ring (sight-softening.md 6.2); on it, it
+	// cuts vision's polygon, round the polygon's build.
 	std::optional<std::vector<Vec2i64>> PlayerVisibilitySystem::drawnVisible(EntityID colonist) const {
 		const VisionSystem* vision	 = world->tryGetSystem<VisionSystem>();
 		const Position*		position = world->getComponent<Position>(colonist);
@@ -367,30 +260,35 @@ namespace ecs {
 		if (sightMm - vision::kSeenSlackMm < vision::kSeenLeastRadiusMm) {
 			return std::nullopt;
 		}
+		const auto observer = observers.find(colonist);
+		if (observer == observers.end()) {
+			return std::nullopt;
+		}
 		const Vec2i64	   standing = nav::toMm(position->value);
 		const std::int64_t drawnMm	= vision::drawnVisibleRadiusMm(sightMm);
-		// On the open path every range is equal and the forest cut gives the disc back; a sight too long
-		// for forest depth has none.
-		const DrawnForest* forest = shape->path != VisionSystem::SightPath::Open && shape->forest != nullptr
-										? &drawnForestFor(colonist, *shape, sightMm, drawnMm)
-										: nullptr;
-		const auto placedAt = [&](const geometry::Ring& ring) {
-			geometry::Ring moved(ring.size());
-			std::ranges::transform(ring, moved.begin(), [&](const Vec2i64& vertex) { return vertex + standing; });
-			return moved;
-		};
+		// A sight too long for forest depth has no ranges to ease: its rim is the sight polygon drawn in
+		// by the ease's inset.
+		std::vector<Vec2i64> eased;
+		if (shape->forest == nullptr) {
+			eased = geometry::sightPolygon(standing, drawnMm - vision->sightTunables().rimEaseMm);
+		} else if (const std::optional<vision::SightFeed::SideOffsets> offsets = observer->second.feed.drawnOffsets()) {
+			const geometry::Ring& forest = drawnForestFor(colonist, *offsets);
+			eased.resize(forest.size());
+			std::ranges::transform(forest, eased.begin(), [&](const Vec2i64& vertex) { return vertex + standing; });
+		} else {
+			return std::nullopt;
+		}
 		std::vector<Vec2i64> cut;
 		if (shape->polygon == nullptr) {
-			cut = forest != nullptr ? placedAt(forest->bright) : geometry::sightPolygon(standing, drawnMm);
+			cut = std::move(eased);
 		} else {
-			const auto observer = observers.find(colonist);
-			if (observer == observers.end() || !observer->second.wallSight || observer->second.polygonRevision != shape->polygonRevision) {
+			if (!observer->second.feed.holdsPolygon(shape->polygonRevision)) {
 				return std::nullopt;
 			}
 			const Vec2i64 build = nav::toMm(shape->center);
 			cut					= geometry::starClippedToConvex(*shape->polygon, build, geometry::sightPolygon(standing, drawnMm));
-			if (forest != nullptr && !cut.empty()) {
-				cut = geometry::starClippedToConvex(cut, build, placedAt(forest->forest));
+			if (!cut.empty()) {
+				cut = geometry::starClippedToConvex(cut, build, eased);
 			}
 		}
 		if (cut.empty()) {
@@ -399,26 +297,17 @@ namespace ecs {
 		return cut;
 	}
 
-	// The forest shape of his sight with every range drawn in as far as the drawn disc is
-	// (sight-softening.md 6.3, without the ease), built round the origin once a build: the shape and
-	// the disc are built in offsets from their centre, so moving them by where he stands gives what
-	// building them there would.
-	const PlayerVisibilitySystem::DrawnForest&
-	PlayerVisibilitySystem::drawnForestFor(EntityID colonist, const VisionSystem::SightShape& shape, std::int64_t sightMm, std::int64_t drawnMm) const {
+	// The eased forest shape round the origin, built when the drawn offsets change: every frame of an
+	// ease, then not again until the next build. It is built in offsets from its centre, so moving it by
+	// where he stands gives what building it there would.
+	const geometry::Ring& PlayerVisibilitySystem::drawnForestFor(EntityID colonist, const vision::SightFeed::SideOffsets& offsets) const {
 		DrawnForest& drawn = drawnForests[colonist];
-		if (drawn.forest.empty() || drawn.buildRevision != shape.buildRevision || drawn.drawnMm != drawnMm) {
-			geometry::SightSideValues drawnRanges{};
-			for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
-				drawnRanges[side] = std::max(geometry::kForestShapeLeastRangeMm, (*shape.ranges)[side] - (sightMm - drawnMm));
-			}
-			const Vec2i64 origin{0, 0};
-			drawn.buildRevision = shape.buildRevision;
-			drawn.drawnMm		= drawnMm;
-			drawn.forest		= geometry::forestShape(origin, drawnRanges);
-			drawn.bright		= geometry::starClippedToConvex(geometry::sightPolygon(origin, drawnMm), origin, drawn.forest);
+		if (drawn.forest.empty() || drawn.offsets != offsets) {
+			drawn.offsets = offsets;
+			drawn.forest  = geometry::forestShape({0, 0}, vision::SightFeed::rangesOfOffsets(offsets));
 			++drawnForestBuilds;
 		}
-		return drawn;
+		return drawn.forest;
 	}
 
 	bool PlayerVisibilitySystem::covers(const std::vector<glm::vec2>& outlineMeters) const {

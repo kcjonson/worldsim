@@ -1,12 +1,12 @@
 #pragma once
 
-// Player visibility (player-visibility.md 3.3): feeds the seen record from every player colonist's
-// sight each frame and answers what the player may see. A colonist is an entity with the Colonist
-// tag and Memory; his sight is what VisionSystem used on its last pass. In the open he holds a leg,
-// the straight segment from where it began to where he stands, pending until it ends. With walls in
-// sight each new visibility polygon goes into the record, swept back along his walk to the one
-// before where it opens ground; nothing else of his is pending. Shapes go into the record
-// kSeenRingsPerTick a tick.
+// Player visibility (player-visibility.md 3.3, sight-softening.md 6): feeds the seen record from every
+// player colonist's sight each frame and answers what the player may see. A colonist is an entity
+// with the Colonist tag and Memory; his sight is what VisionSystem used on its last pass. Off the
+// polygon path he holds a leg, the hull of the forest shapes he walked with, pending until it ends.
+// On the polygon path each new shape goes into the record cut to its rim, swept back along his walk
+// to the one before where it opens ground near the rim and an opaque wall was in reach; nothing else
+// of his is pending.
 
 #include "../EntityID.h"
 #include "../ISystem.h"
@@ -14,6 +14,7 @@
 
 #include <construction/ConstructionWorld.h>
 #include <vision/SeenArea.h>
+#include <vision/SightFeed.h>
 
 #include <core/Vec2i64.h>
 
@@ -50,14 +51,15 @@ namespace ecs {
 		// within his sight radius of where he stands, in his polygon on the polygon path, and in the
 		// forest shape of his sight placed where he stands (sight-softening.md 5.2).
 		[[nodiscard]] bool isVisible(glm::vec2 meters) const;
-		// The ground drawn bright for `colonist` this frame (player-visibility.md 3.4), in millimetres:
-		// the sight polygon of vision::drawnVisibleRadiusMm round where he stands cut by the forest shape
-		// of his sight placed there, every range drawn in as far as that radius, and with walls or an
-		// opaque body in sight vision's polygon cut to both (sight-softening.md 6.3, without the ease).
-		// Outdoors it lies in his open leg; with walls in sight it can
-		// reach up to a rebuild step past seen ground ahead of him, where the cover's unseen fill hides
-		// it. None when his sight is too small to hold a leg, or walls are in sight and a jump dropped
-		// his polygon (until vision builds the next).
+		// The ground drawn bright for `colonist` this frame (player-visibility.md 3.4, sight-softening.md
+		// 6.3), in millimetres: off the polygon path the eased forest shape placed where he stands, whose
+		// side offsets ease over rimEaseMm of his walk from those drawn when his newest build arrived to
+		// that build's at vision::drawnVisibleRadiusMm less rimEaseMm; on the polygon path vision's
+		// polygon cut to the sight polygon of vision::drawnVisibleRadiusMm round where he stands and then
+		// to that eased shape. Off the polygon path it lies in his leg's ring; on it, it can reach up to
+		// `lead` past seen ground ahead of him, where the cover's unseen fill hides it. None when his
+		// sight is too small to hold a leg, or on the polygon path a jump dropped his polygon (until
+		// vision builds the next).
 		[[nodiscard]] std::optional<std::vector<geometry::Vec2i64>> drawnVisible(EntityID colonist) const;
 		// The whole outline is seen.
 		[[nodiscard]] bool covers(const std::vector<glm::vec2>& outlineMeters) const;
@@ -98,67 +100,31 @@ namespace ecs {
 
 		// Wall and opening footprints queued so far, each once.
 		[[nodiscard]] std::size_t footprintsEntered() const { return enteredFootprints.size(); }
-		// Test-only: how many drawn forest shapes drawnVisible has built, one a colonist a build.
+		// Test-only: how many eased forest shapes drawnVisible has built, one a colonist a frame of an ease.
 		[[nodiscard]] std::uint64_t drawnForestBuildCount() const { return drawnForestBuilds; }
+		// Test-only: the feed of a colonist the system follows, his legs and eased rim.
+		[[nodiscard]] const vision::SightFeed* feedOf(EntityID colonist) const;
 
 	  private:
-		// A leg's held positions, kept as what bounds the leg's end: the directions from its start
-		// within kSeenSlackMm of every held position's line (a wedge, once one lies farther out than
-		// that), and the farthest any lay from the start.
-		struct Leg {
-			bool					open = false;
-			geometry::Vec2i64		start;
-			geometry::Vec2i64		end;
-			std::int64_t			radiusMm = 0;
-			bool					hasWedge = false;
-			std::array<double, 2>	wedgeLow{};
-			std::array<double, 2>	wedgeHigh{};
-			double					farthestMm = 0.0;
-		};
-
-		// `leg` is his open leg in the open. With walls in sight `walk` is his path since the last
-		// polygon that went in, for the sweep: its build, then each turn, where `stretch` (a leg, not
-		// pending) ended. `wallSight` holds while vision's polygon of `polygonRevision` stands for
-		// him: a jump drops it until the next.
 		struct Observer {
-			Leg							   leg;
-			Leg							   stretch;
-			std::vector<geometry::Vec2i64> walk;
-			std::int64_t				   sightMm		   = 0; // his sight when the last polygon was built
-			bool						   wallSight	   = false;
-			std::uint64_t				   polygonRevision = 0; // the last visibility polygon's revision that was handled
-			bool						   present		   = false;
+			vision::SightFeed feed;
+			bool			  present = false;
 		};
 
-		static void beginLeg(Leg& leg, const geometry::Vec2i64& at, std::int64_t radiusMm);
-		void		followLeg(EntityID colonist, Leg& leg, const geometry::Vec2i64& at, std::int64_t radiusMm);
-		void		closeLeg(EntityID colonist, Leg& leg);
-		// With walls in sight: a turn adds to his walk; a jump drops his polygon and walk.
-		static void followStretch(Observer& observer, const geometry::Vec2i64& at);
-		static void dropWallSight(Observer& observer);
-		// With walls in sight, where he rests or his walk ends away from vision's last build, a polygon
-		// built there goes in, so the ground he sees from there is not left to the next build.
-		void		enterPolygonAt(Observer& observer, const geometry::Vec2i64& at);
-		// The one place vision's polygon enters the record (player-visibility.md 3.3).
-		void		registerPolygon(Observer& observer, const VisionSystem::SightShape& shape);
-		static bool holds(const Leg& leg, const geometry::Vec2i64& at);
-		static void hold(Leg& leg, const geometry::Vec2i64& at);
 		// Queues the footprint of every structure the polygon of `shape` touched that has not gone in.
 		void enterStructures(const VisionSystem::SightShape& shape);
 		void enterFootprint(const std::vector<geometry::Vec2i64>& ring);
 		// Rebuilds the footprints by structure when the construction world has changed.
 		void refreshFootprints();
 
-		// One colonist's drawn forest shape round the origin for the build of `buildRevision`: the forest
-		// shape with every range drawn in to `drawnMm`, and on a leg the drawn disc cut by it. Both are
-		// moved to where he stands each frame, so a frame between builds builds neither.
+		// One colonist's drawn forest shape round the origin for the side offsets it was built from. It
+		// is moved to where he stands each frame, so a frame whose offsets are those of the last builds
+		// nothing: every frame once the ease has ended.
 		struct DrawnForest {
-			std::uint64_t  buildRevision = 0;
-			std::int64_t   drawnMm		 = 0;
-			geometry::Ring forest;
-			geometry::Ring bright;
+			vision::SightFeed::SideOffsets offsets{};
+			geometry::Ring				   forest;
 		};
-		const DrawnForest& drawnForestFor(EntityID colonist, const VisionSystem::SightShape& shape, std::int64_t sightMm, std::int64_t drawnMm) const;
+		const geometry::Ring& drawnForestFor(EntityID colonist, const vision::SightFeed::SideOffsets& offsets) const;
 
 		vision::SeenArea			 seen;
 		mutable std::map<EntityID, DrawnForest> drawnForests;

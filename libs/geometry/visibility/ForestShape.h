@@ -54,7 +54,7 @@ namespace geometry {
 	// coordinate a step, rounded to nearest. Then the convex hull of those, so it is strictly convex
 	// and every vertex lies in every half-plane. A vertex placed at a neighbour is within sqrt(2) mm
 	// of its crossing, and every vertex within sqrt(2) x (2 + R / r) mm, R the largest range and r
-	// the least x cos(pi / kSightSides) less 1 mm: 5.1 mm with a 32.2 m reach over the defaults'
+	// the least x cos(pi / kSightSides) less 1 mm: 5.1 mm with a 32.3 m reach over the defaults'
 	// 20.1 m floor.
 	Ring forestShape(const Vec2i64& point, const SightSideValues& ranges);
 

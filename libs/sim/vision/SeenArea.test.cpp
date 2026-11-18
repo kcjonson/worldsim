@@ -1,14 +1,17 @@
 #include "SeenArea.h"
+#include "SightFeed.h"
 
 #include <nav/NavMesh.h>
 #include <nav/PatchableMesh.h>
 #include <predicates/Predicates.h>
+#include <visibility/ForestShape.h>
 #include <visibility/SightPolygon.h>
 #include <visibility/SightSkirt.h>
 #include <visibility/Visibility.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <numbers>
 #include <optional>
 #include <random>
@@ -24,6 +27,7 @@ using vision::SeenArea;
 namespace {
 
 	constexpr std::int64_t kSightMm = 30000;
+	const vision::SightRanges kPlainRim = vision::equalRanges(kSightMm);
 
 	using Edge = std::pair<Vec2i64, Vec2i64>;
 
@@ -144,7 +148,7 @@ TEST(SeenArea, CoveredShapeIsDropped) {
 	SeenArea	  seen;
 	const Vec2i64 centre = metres(10.0, 10.0);
 	seen.commitNow(geometry::sightPolygon(centre, 150000), centre);
-	seen.queue(vision::legCapsule(metres(0.0, 0.0), metres(60.0, 30.0), kSightMm - vision::kSeenSlackMm), metres(0.0, 0.0));
+	seen.queue(geometry::sightPolygon(metres(30.0, 15.0), kSightMm - vision::kSeenSlackMm), metres(30.0, 15.0));
 	const std::uint64_t before = seen.epoch();
 	drain(seen);
 	EXPECT_EQ(seen.ringsRegistered(), 1U);
@@ -158,7 +162,7 @@ TEST(SeenArea, CoversAcrossACommittedRingAndAPendingOne) {
 	const Vec2i64 west = metres(0.0, 0.0);
 	const Vec2i64 east = metres(40.0, 0.0);
 	seen.commitNow(geometry::sightPolygon(west, kSightMm), west);
-	seen.setOpenLeg(1, east, east, kSightMm);
+	ASSERT_TRUE(seen.setOpenLeg(1, east, east, vision::equalRanges(kSightMm), std::nullopt));
 	const std::vector<Vec2i64> across = square(20.0, 0.0, 10.0);
 	EXPECT_TRUE(seen.covers(across)) << "half in the record, half in the open leg";
 	EXPECT_FALSE(seen.covers(square(20.0, 25.0, 10.0))) << "reaches past both";
@@ -238,9 +242,10 @@ TEST(SeenArea, DoorwayPolygonsEqualAFreshBuildUpToTheSkirt) {
 
 	SeenArea						  seen;
 	std::vector<std::vector<Vec2i64>> polygons; // every polygon that could go in: the walks' and the sweep's
-	seen.setSightBuilder([&](const Vec2i64& centre, std::int64_t reachMm) {
+	seen.setSightBuilder([&](const Vec2i64& centre, std::int64_t /*sightRadiusMm*/, const vision::SightRanges& rimRanges) {
+		const std::int64_t reachMm = rimRanges.front();
 		polygons.push_back(geometry::computeVisibilityPolygon(centre, reachMm, walls));
-		return polygons.back();
+		return SeenArea::BuiltSight{polygons.back(), rimRanges};
 	});
 	int	 notSimple = 0;
 	auto walkAll   = [&](bool keep) {
@@ -256,7 +261,7 @@ TEST(SeenArea, DoorwayPolygonsEqualAFreshBuildUpToTheSkirt) {
 				  if (keep) {
 					  polygons.push_back(polygon);
 				  }
-				  seen.queueSightPolygon(polygon, viewpoint, kSightMm, previous);
+				  seen.queueSightPolygon(polygon, viewpoint, kSightMm, kPlainRim, previous, kPlainRim);
 				  seen.update();
 				  previous.assign(1, viewpoint);
 			  }
@@ -318,44 +323,50 @@ TEST(SeenArea, DoorwayPolygonsEqualAFreshBuildUpToTheSkirt) {
 }
 
 // A sight polygon that adds ground near its rim queues the sweep back along the walk from the build
-// before it, points kSeenSweepSpacingMm apart strictly between, built one a tick on ticks that
-// register nothing; one with no build before it, or a covered one, builds nothing.
+// before it, points kSeenSweepSpacingMm apart strictly between, built up to four a tick whatever shapes
+// wait while the sweep's own pieces drain, which register only with what the shapes' leave
+// (sight-softening.md 6.6); one with no build before it, or a covered one, builds nothing.
 TEST(SeenArea, APolygonThatAddsGroundIsSweptAndACoveredOneIsNot) {
 	const std::vector<geometry::OccluderSegment> walls = {{metres(3.0, -10.0), metres(3.0, 10.0)}};
 	SeenArea									 seen;
 	std::vector<Vec2i64>						 builtAt;
-	seen.setSightBuilder([&](const Vec2i64& centre, std::int64_t reachMm) {
+	seen.setSightBuilder([&](const Vec2i64& centre, std::int64_t /*sightRadiusMm*/, const vision::SightRanges& rimRanges) {
+		const std::int64_t reachMm = rimRanges.front();
 		builtAt.push_back(centre);
-		return geometry::computeVisibilityPolygon(centre, reachMm, walls);
+		return SeenArea::BuiltSight{geometry::computeVisibilityPolygon(centre, reachMm, walls), rimRanges};
 	});
 	const Vec2i64 first	 = metres(0.0, 0.0);
-	const Vec2i64 second = metres(0.5, 0.0);
-	seen.queueSightPolygon(geometry::computeVisibilityPolygon(first, kSightMm, walls), first, kSightMm, {});
+	const Vec2i64 second = metres(1.0, 0.0);
+	seen.queueSightPolygon(geometry::computeVisibilityPolygon(first, kSightMm, walls), first, kSightMm, kPlainRim, {}, kPlainRim);
 	drain(seen);
-	EXPECT_EQ(seen.sweepsWaiting(), 0U) << "no build before it";
-	seen.queueSightPolygon(geometry::computeVisibilityPolygon(second, kSightMm, walls), second, kSightMm, {first});
+	EXPECT_EQ(seen.sweepsBuilt(), 0U) << "no build before it";
+	seen.queueSightPolygon(geometry::computeVisibilityPolygon(second, kSightMm, walls), second, kSightMm, kPlainRim, {first}, kPlainRim);
+	// Seven shapes far off, one piece each, keep shapes and pieces waiting behind the polygon's.
+	for (int far = 0; far < 7; ++far) {
+		seen.queue(square(200.0 + 50.0 * far, 0.0, 5.0), metres(200.0 + 50.0 * far, 0.0));
+	}
 	seen.update();
-	EXPECT_EQ(seen.sweepsWaiting(), 4U) << "four points between the two builds";
-	for (int tick = 0; tick < 100 && seen.shapesPending() > 0; ++tick) {
+	EXPECT_EQ(seen.lastTickWork().piecesRegistered, vision::kSeenPiecesRegisteredPerTick);
+	EXPECT_GT(seen.lastTickWork().sweepPointsBuilt, 0U) << "points between the two builds";
+	EXPECT_GT(seen.pending().shapesWaiting, 0U) << "built while shapes wait";
+	// The shapes' pieces register first: no sweep piece goes in before the seven far squares have.
+	for (int tick = 0; tick < 100 && (seen.shapesPending() > 0 || seen.sweepsWaiting() > 0); ++tick) {
+		EXPECT_LE(seen.lastTickWork().sweepPointsBuilt, vision::kSeenSweepPointsPerTick);
+		EXPECT_TRUE(seen.registrations(SeenArea::Origin::Other) >= 7 || seen.registrations(SeenArea::Origin::Sweep) == 0) << "tick " << tick;
 		seen.update();
 	}
-	EXPECT_GE(seen.ringsRegistered(), 2U);
-	EXPECT_EQ(seen.shapesPending(), 0U);
-	EXPECT_EQ(seen.sweepsBuilt(), 0U) << "pieces waiting come first";
-	seen.update();
-	EXPECT_EQ(seen.sweepsBuilt(), 1U) << "one built a tick";
 	drain(seen);
-	EXPECT_EQ(seen.sweepsBuilt(), 4U);
-	ASSERT_EQ(builtAt.size(), 4U);
+	EXPECT_EQ(seen.sweepsBuilt(), 9U);
+	ASSERT_EQ(builtAt.size(), 9U);
 	for (std::size_t point = 0; point < builtAt.size(); ++point) {
 		EXPECT_EQ(builtAt[point], metres(0.1 * static_cast<double>(point + 1), 0.0));
 	}
 
 	const std::size_t ringsBefore = seen.ringsRegistered();
-	seen.queueSightPolygon(geometry::computeVisibilityPolygon(second, kSightMm, walls), second, kSightMm, {first});
+	seen.queueSightPolygon(geometry::computeVisibilityPolygon(second, kSightMm, walls), second, kSightMm, kPlainRim, {first}, kPlainRim);
 	drain(seen);
 	EXPECT_EQ(seen.ringsRegistered(), ringsBefore);
-	EXPECT_EQ(builtAt.size(), 4U) << "a covered polygon builds no sweep";
+	EXPECT_EQ(builtAt.size(), 9U) << "a covered polygon builds no sweep";
 }
 
 // The seen boxes hold every seen point: the landing's, cut at the cells it spans, a pending shape's
@@ -412,4 +423,298 @@ TEST(SeenArea, SeenBoxesHoldEverySeenPoint) {
 	EXPECT_TRUE(held(committed, far + metres(29.0, 0.0)));
 	EXPECT_TRUE(held(committed, far - metres(29.0, 0.0)));
 	EXPECT_TRUE(boxesIn(metres(0.0, 0.0), metres(100.0, 100.0)).empty());
+}
+
+namespace {
+
+	// The open leg's capsule as the record built it before forest legs: the sight polygon round the
+	// start, each side facing back along the leg kept there and the rest moved to the end, the two
+	// kinds bridged along the leg, and points in line dropped.
+	std::vector<Vec2i64> capsuleBeforeForestLegs(const Vec2i64& start, const Vec2i64& end, std::int64_t radiusMm) {
+		const std::vector<Vec2i64> atStart = geometry::sightPolygon(start, radiusMm);
+		const Vec2i64			   leg	   = end - start;
+		const std::size_t		   sides   = atStart.size();
+		std::vector<Vec2i64>	   out;
+		for (std::size_t k = 0; k < sides; ++k) {
+			const bool before = geometry::cross(leg, atStart[k] - atStart[(k + sides - 1) % sides]).sign() < 0;
+			const bool after  = geometry::cross(leg, atStart[(k + 1) % sides] - atStart[k]).sign() < 0;
+			if (before && after) {
+				out.push_back(atStart[k]);
+			} else if (!before && !after) {
+				out.push_back(atStart[k] + leg);
+			} else if (before) {
+				out.push_back(atStart[k]);
+				out.push_back(atStart[k] + leg);
+			} else {
+				out.push_back(atStart[k] + leg);
+				out.push_back(atStart[k]);
+			}
+		}
+		for (bool changed = true; changed;) {
+			changed = false;
+			for (std::size_t i = 0; i < out.size() && out.size() >= 3; ++i) {
+				const Vec2i64& previous = out[(i + out.size() - 1) % out.size()];
+				const Vec2i64& next		= out[(i + 1) % out.size()];
+				if (out[i] == previous || geometry::cross(out[i] - previous, next - previous).sign() == 0) {
+					out.erase(out.begin() + static_cast<std::ptrdiff_t>(i));
+					changed = true;
+					--i;
+				}
+			}
+		}
+		return out;
+	}
+
+	std::vector<Vec2i64> openLegRing(const SeenArea& seen) {
+		std::vector<const std::vector<Vec2i64>*> pending;
+		seen.appendPendingShapes(pending);
+		return pending.empty() ? std::vector<Vec2i64>{} : *pending.front();
+	}
+
+	std::set<Vec2i64> asSet(const std::vector<Vec2i64>& ring) { return {ring.begin(), ring.end()}; }
+
+	bool holdsRing(const std::vector<Vec2i64>& outer, const std::vector<Vec2i64>& inner) {
+		return std::all_of(inner.begin(), inner.end(), [&outer](const Vec2i64& point) {
+			return geometry::pointInPolygon(point, outer) != geometry::PointInPolygon::Outside;
+		});
+	}
+
+	// A forest shape's ranges: `radiusMm` less `deepMm` on the `count` sides from `first`, `radiusMm`
+	// elsewhere.
+	vision::SightRanges rangesWithDip(std::int64_t radiusMm, std::size_t first, std::size_t count, std::int64_t deepMm) {
+		vision::SightRanges ranges = vision::equalRanges(radiusMm);
+		for (std::size_t side = first; side < first + count; ++side) {
+			ranges[side % geometry::kSightSides] = radiusMm - deepMm;
+		}
+		return ranges;
+	}
+
+	// The landing disc of 5 m round the origin and six spokes out from it, 8 m wide, every 60 degrees: a
+	// sight polygon round the origin then adds the six sectors between them.
+	void commitSpokes(SeenArea& seen) {
+		seen.commitNow(geometry::sightPolygon({0, 0}, 5000), {0, 0});
+		for (int spoke = 0; spoke < 6; ++spoke) {
+			const double angle	= spoke * std::numbers::pi / 3.0;
+			const double alongX = std::cos(angle);
+			const double alongY = std::sin(angle);
+			const auto	 corner = [&](double along, double across) {
+				  return Vec2i64{std::llround((alongX * along - alongY * across) * 1000.0), std::llround((alongY * along + alongX * across) * 1000.0)};
+			};
+			const std::vector<Vec2i64> ring{corner(3.0, -4.0), corner(45.0, -4.0), corner(45.0, 4.0), corner(3.0, 4.0)};
+			seen.commitNow(ring, corner(20.0, 0.0));
+		}
+	}
+
+} // namespace
+
+// With every range equal a leg's ring is the open leg's capsule as it was before forest legs, vertex
+// for vertex, wherever it runs.
+TEST(SeenArea, AnEqualRangesLegIsTheOpenLegsCapsule) {
+	const std::int64_t							radiusMm = kSightMm - vision::kSeenSlackMm;
+	std::mt19937								random(11);
+	std::uniform_int_distribution<std::int64_t> coordinate(-80000, 80000);
+	for (int leg = 0; leg < 60; ++leg) {
+		SeenArea	  seen;
+		const Vec2i64 start{coordinate(random), coordinate(random)};
+		const Vec2i64 end = start + Vec2i64{coordinate(random) / 4, coordinate(random) / 4};
+		ASSERT_TRUE(seen.setOpenLeg(1, start, end, vision::equalRanges(radiusMm), std::nullopt));
+		EXPECT_EQ(asSet(openLegRing(seen)), asSet(capsuleBeforeForestLegs(start, end, radiusMm))) << "leg " << leg;
+	}
+}
+
+// A leg's ring holds every shape he walked with: while the ranges hold it is the hull of the ring as it
+// stood when they began and their shape where he stands; when they change, the ring so far is kept and
+// the new shape joins it where he is. The inherited shape, read only on the call that opens the leg, is
+// in the ring too.
+TEST(SeenArea, ALegKeepsItsRingWhenItsRangesChange) {
+	SeenArea				  seen;
+	const vision::SightRanges first		= rangesWithDip(29950, 4, 6, 3000);
+	const vision::SightRanges second	= rangesWithDip(29950, 36, 8, 4000);
+	const Vec2i64			  start		= metres(0.0, 0.0);
+	const Vec2i64			  inherited = metres(-0.3, 0.1);
+	const vision::SightRanges drawn		= vision::equalRanges(29000);
+	ASSERT_TRUE(seen.setOpenLeg(7, start, start, first, SeenArea::InheritedShape{inherited, drawn}));
+	EXPECT_TRUE(holdsRing(openLegRing(seen), geometry::forestShape(inherited, drawn)));
+	ASSERT_TRUE(seen.setOpenLeg(7, start, metres(2.0, 0.0), first, std::nullopt));
+	ASSERT_TRUE(seen.setOpenLeg(7, start, metres(3.0, 0.0), second, std::nullopt));
+	ASSERT_TRUE(seen.setOpenLeg(7, start, metres(6.0, 0.0), second, std::nullopt));
+	const std::vector<Vec2i64> ring = openLegRing(seen);
+	EXPECT_TRUE(holdsRing(ring, geometry::forestShape(inherited, drawn))) << "the inherited shape";
+	for (const double x : {0.0, 1.0, 2.0}) {
+		EXPECT_TRUE(holdsRing(ring, geometry::forestShape(metres(x, 0.0), first))) << "the first ranges at " << x << " m";
+	}
+	for (const double x : {3.0, 4.5, 6.0}) {
+		EXPECT_TRUE(holdsRing(ring, geometry::forestShape(metres(x, 0.0), second))) << "the second ranges at " << x << " m";
+	}
+	EXPECT_EQ(geometry::pointInPolygon(metres(36.1, 0.0), ring), geometry::PointInPolygon::Outside) << "no farther than the farthest shape reaches";
+	EXPECT_EQ(geometry::pointInPolygon(metres(-30.4, 0.0), ring), geometry::PointInPolygon::Outside);
+}
+
+// A leg whose ring would pass kSoftLegMostVertices is refused and left as it was.
+TEST(SeenArea, ALegRingPastItsMostVerticesIsRefused) {
+	SeenArea	  seen;
+	const Vec2i64 start = metres(40.0, 0.0);
+	ASSERT_TRUE(seen.setOpenLeg(3, start, start, rangesWithDip(29950, 0, 3, 2000), std::nullopt));
+	bool				 refused = false;
+	std::vector<Vec2i64> before;
+	for (int step = 1; step < 400 && !refused; ++step) {
+		before = openLegRing(seen);
+		// Each step round a circle with new ranges, so every shape joins the ring and adds corners.
+		const double  angle = 0.05 * step;
+		const Vec2i64 at	= metres(40.0 * std::cos(angle), 40.0 * std::sin(angle));
+		refused			 = !seen.setOpenLeg(3, start, at, rangesWithDip(29950, static_cast<std::size_t>(step) * 5, 3, 2000 + 37 * (step % 11)), std::nullopt);
+		EXPECT_LE(openLegRing(seen).size(), vision::kSoftLegMostVertices);
+	}
+	ASSERT_TRUE(refused) << "the ring never reached its most vertices";
+	EXPECT_EQ(openLegRing(seen), before) << "a refused join leaves the ring as it was";
+}
+
+// Four pieces register a tick (sight-softening.md 6.6): a shape that adds six pieces registers four,
+// then two, and while four wait no shape is cut. Covered tests go on while pieces wait: a queue of
+// covered shapes behind the waiting pieces is dropped within a tick, and the pieces still register.
+TEST(SeenArea, FourPiecesATickAndCoveredTestsWhilePiecesWait) {
+	SeenArea seen;
+	commitSpokes(seen);
+	seen.update();
+	const std::size_t landed = seen.ringsRegistered();
+	seen.queue(geometry::sightPolygon({0, 0}, kSightMm), {0, 0});
+	const Vec2i64 elsewhere = metres(100.0, 0.0);
+	seen.queue(geometry::sightPolygon(elsewhere, 5000), elsewhere);
+	seen.update();
+	EXPECT_EQ(seen.lastTickWork().shapesTested, 2U);
+	EXPECT_EQ(seen.lastTickWork().shapesCut, 1U) << "six pieces wait, four or more, so the second shape is not cut";
+	EXPECT_EQ(seen.lastTickWork().piecesRegistered, 4U);
+	EXPECT_EQ(seen.ringsRegistered(), landed + 4);
+	EXPECT_EQ(seen.pending().piecesWaiting, 2U);
+	EXPECT_EQ(seen.pending().shapesWaiting, 1U);
+
+	// Ten shapes the record holds, queued behind two waiting pieces and a waiting shape.
+	const std::size_t droppedBefore = seen.shapesDropped();
+	for (int covered = 0; covered < 10; ++covered) {
+		const Vec2i64 centre = metres(-2.0 + 0.4 * covered, 0.0);
+		seen.queue(geometry::sightPolygon(centre, 1500), centre);
+	}
+	seen.update();
+	EXPECT_EQ(seen.lastTickWork().shapesTested, 10U);
+	EXPECT_EQ(seen.shapesDropped(), droppedBefore + 10) << "dropped within the tick";
+	EXPECT_EQ(seen.lastTickWork().shapesCut, 1U) << "the waiting shape is cut once fewer than four pieces wait";
+	EXPECT_EQ(seen.ringsRegistered(), landed + 7) << "the two pieces, then the second shape's one";
+	EXPECT_EQ(seen.shapesPending(), 0U);
+	for (const double angle : {30.0, 90.0, 150.0, 210.0, 270.0, 330.0}) {
+		const double radians = angle * std::numbers::pi / 180.0;
+		EXPECT_TRUE(seen.isSeen(metres(25.0 * std::cos(radians), 25.0 * std::sin(radians)))) << angle << " degrees";
+	}
+}
+
+namespace {
+
+	struct WallWalk {
+		std::size_t	 pointsDropped = 0;
+		std::size_t	 runsDroppedWhole = 0;
+		std::size_t	 mostWaiting = 0;
+		std::int64_t widestGapMm = 0; // along any walk, between consecutive swept points or build eyes
+	};
+
+	// Walkers side by side along a wall at `speed` times 2 m/s and 60 frames a second, each fed through
+	// vision::SightFeed as PlayerVisibilitySystem feeds a colonist, vision building every 5th frame for a
+	// walker who moved past the rebuild step: the polygon path with an opaque wall in reach, so every
+	// build sweeps its walk. The gap is read from the walk itself: the build eyes and the points the
+	// sweep built, each walker's sorted along his line.
+	WallWalk walkBesideAWall(int walkers, double speed) {
+		const std::vector<geometry::OccluderSegment> wall = {
+			{metres(-200.0, 6.0), metres(600.0, 6.0)}, {metres(600.0, 6.2), metres(-200.0, 6.2)},
+			{metres(600.0, 6.0), metres(600.0, 6.2)},  {metres(-200.0, 6.2), metres(-200.0, 6.0)},
+		};
+		const vision::SightRanges			ranges = vision::equalRanges(kSightMm);
+		SeenArea							seen;
+		std::vector<std::vector<std::int64_t>> swept(static_cast<std::size_t>(walkers));
+		const auto walkerAt = [walkers](std::int64_t yMm) {
+			return static_cast<std::size_t>(std::clamp<std::int64_t>((-1000 - yMm + 25) / 50, 0, walkers - 1));
+		};
+		seen.setSightBuilder([&](const Vec2i64& centre, std::int64_t, const vision::SightRanges& rim) {
+			swept[walkerAt(centre.y)].push_back(centre.x);
+			return SeenArea::BuiltSight{geometry::computeVisibilityPolygon(centre, rim.front(), wall), rim};
+		});
+		struct Walker {
+			vision::SightFeed	 feed;
+			Vec2i64				 at;
+			Vec2i64				 eye;
+			std::uint64_t		 revision = 0;
+			std::vector<Vec2i64> polygon;
+		};
+		std::vector<Walker> walking(static_cast<std::size_t>(walkers));
+		for (int index = 0; index < walkers; ++index) {
+			walking[static_cast<std::size_t>(index)].at = {-4000 * index, -1000 - 50 * index};
+		}
+		WallWalk		   result;
+		const std::int64_t stepMm = std::llround(2000.0 * speed / 60.0);
+		for (int frame = 0; frame < 480; ++frame) {
+			for (std::size_t index = 0; index < walking.size(); ++index) {
+				Walker& walker = walking[index];
+				walker.at.x += stepMm;
+				const Vec2i64 moved = walker.at - walker.eye;
+				if (frame % 5 == 0 && (walker.revision == 0 || geometry::dot(moved, moved) > geometry::Int128::product(500, 500))) {
+					walker.eye	   = walker.at;
+					walker.polygon = geometry::computeVisibilityPolygon(walker.eye, kSightMm + 2300, wall);
+					++walker.revision;
+					swept[index].push_back(walker.eye.x);
+				}
+				if (walker.revision == 0) {
+					continue;
+				}
+				const vision::SightBuild build{
+					.buildRevision	   = walker.revision,
+					.polygonRevision   = walker.revision,
+					.eye			   = walker.eye,
+					.sightMm		   = kSightMm,
+					.ranges			   = &ranges,
+					.polygon		   = &walker.polygon,
+					.opaqueWallInReach = true,
+				};
+				walker.feed.follow(seen, index, walker.at, build, vision::SightFeed::legToleranceMm(500, speed), 400);
+			}
+			seen.update();
+			result.mostWaiting = std::max(result.mostWaiting, seen.sweepsWaiting());
+		}
+		for (std::size_t index = 0; index < walking.size(); ++index) {
+			walking[index].feed.leave(seen, index);
+		}
+		drain(seen);
+		result.pointsDropped	= seen.sweepPointsDropped();
+		result.runsDroppedWhole = seen.sweepRunsDroppedWhole();
+		for (std::vector<std::int64_t>& line : swept) {
+			std::sort(line.begin(), line.end());
+			for (std::size_t point = 1; point < line.size(); ++point) {
+				result.widestGapMm = std::max(result.widestGapMm, line[point] - line[point - 1]);
+			}
+		}
+		return result;
+	}
+
+} // namespace
+
+// A full sweep queue thins each run, a walk's points between two builds' shapes, on its own, keeping
+// its ends, and when no run has a point between its ends left the oldest run goes whole
+// (sight-softening.md 6.6). Twelve walkers beside a wall at 1x thin nothing; at 10x, with 12 and 50
+// walkers each building every pass, the points waiting never pass kSeenSweepPointsMost and runs go
+// whole, so the widest gap along any walk between swept points and build eyes is the 1,667 mm between
+// two builds, never wider.
+TEST(SeenArea, AFullSweepQueueThinsEachRunKeepingItsEnds) {
+	const WallWalk slow = walkBesideAWall(12, 1.0);
+	EXPECT_EQ(slow.pointsDropped, 0U);
+	EXPECT_LE(slow.widestGapMm, vision::kSeenSweepSpacingMm);
+	for (const int walkers : {12, 50}) {
+		const WallWalk fast = walkBesideAWall(walkers, 10.0);
+		std::printf(
+			"[ WallWalk ] %d walkers at 10x: %zu sweep points dropped, %zu runs whole, at most %zu waiting, the widest gap along a walk %lld mm\n",
+			walkers,
+			fast.pointsDropped,
+			fast.runsDroppedWhole,
+			fast.mostWaiting,
+			static_cast<long long>(fast.widestGapMm)
+		);
+		EXPECT_LE(fast.mostWaiting, vision::kSeenSweepPointsMost);
+		EXPECT_GT(fast.pointsDropped, 0U);
+		EXPECT_LE(fast.widestGapMm, 1667) << "no wider than two builds apart";
+	}
 }

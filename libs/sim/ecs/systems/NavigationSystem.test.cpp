@@ -1351,7 +1351,7 @@ TEST_F(NavigationSystemTest, ForestShapeIsBuiltOnceAStepWalkingAmongSoftTrees) {
 		}
 	}
 	EXPECT_EQ(built.size(), 5U);
-	EXPECT_EQ(vision.sightBodies(observer)->leadMm, VisionSystem::kSightRebuildStepMm + 2 * VisionSystem::kLeadWalkStepMm);
+	EXPECT_EQ(vision.sightBodies(observer)->reachLeadMm, VisionSystem::kSightRebuildStepMm + 2 * VisionSystem::kLeadWalkStepMm);
 	EXPECT_EQ(vision.polygonBuildCount(), 0U);
 	EXPECT_NE(built.front(), built.back()) << "each build takes the ranges where it stands";
 }
@@ -1385,10 +1385,10 @@ TEST_F(NavigationSystemTest, RingArrivingPastSightKeepsTheBuild) {
 	EXPECT_EQ(vision.sightShape(observer)->path, VisionSystem::SightPath::Open);
 }
 
-// The bright shape is the drawn disc cut by the forest shape where he stands on every path, so a
-// BigRock or a wall coming into reach moves no rim in a forested direction; it stays inside his sight
-// shape and inside seen ground. It is what cutting by the forest shape built where he stands gives,
-// and the forest shape is built once a build: frames between builds build none.
+// The bright shape is the eased forest shape where he stands on every path, the polygon path's cut by
+// it, so a BigRock or a wall coming into reach moves no rim in a forested direction; it stays inside
+// his sight shape and inside seen ground. Once the ease has ended the eased shape is built no more:
+// frames between builds build none.
 TEST_F(NavigationSystemTest, BrightRimInForestIsTheSameOnEveryPath) {
 	enum class Blocker : std::uint8_t { None, Rock, Wall };
 	registerSightBodies();
@@ -1432,20 +1432,31 @@ TEST_F(NavigationSystemTest, BrightRimInForestIsTheSameOnEveryPath) {
 		const std::optional<std::vector<geometry::Vec2i64>> bright = visibility.drawnVisible(observer);
 		ASSERT_TRUE(bright.has_value());
 
-		// The same cut made where he stands, from the ranges the build gives.
+		// The same cut made where he stands, from the ranges the build gives, each drawn in to the drawn
+		// radius less the rim ease's 400 mm inset (sight-softening.md 6.3); his first build's ease has
+		// ended, so the eased shape is the build's, to the few millimetres its side offsets round by.
 		const std::int64_t		  sightMm = 30000;
 		const std::int64_t		  drawnMm = vision::drawnVisibleRadiusMm(sightMm);
 		geometry::SightSideValues drawnRanges{};
 		for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
-			drawnRanges[side] = std::max(geometry::kForestShapeLeastRangeMm, (*shape->ranges)[side] - (sightMm - drawnMm));
+			drawnRanges[side] = std::max(geometry::kForestShapeLeastRangeMm, (*shape->ranges)[side] - (sightMm - drawnMm) - 400);
 		}
 		const geometry::Ring forest = geometry::forestShape(standingMm, drawnRanges);
 		const geometry::Ring disc	= geometry::sightPolygon(standingMm, drawnMm);
 		const geometry::Vec2i64 build = nav::toMm(shape->center);
 		const geometry::Ring expected = shape->polygon == nullptr
-											? geometry::starClippedToConvex(disc, standingMm, forest)
+											? forest
 											: geometry::starClippedToConvex(geometry::starClippedToConvex(*shape->polygon, build, disc), build, forest);
-		EXPECT_EQ(*bright, expected);
+		for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
+			const auto supportOf = [side, &standingMm](const geometry::Ring& ring) {
+				std::int64_t most = std::numeric_limits<std::int64_t>::min();
+				for (const geometry::Vec2i64& vertex : ring) {
+					most = std::max(most, geometry::kSightSideNormals[side][0] * (vertex.x - standingMm.x) + geometry::kSightSideNormals[side][1] * (vertex.y - standingMm.y));
+				}
+				return static_cast<double>(most) / static_cast<double>(geometry::kSightSideNormalScale);
+			};
+			EXPECT_NEAR(supportOf(*bright), supportOf(expected), 4.0) << "side " << side;
+		}
 
 		const std::uint64_t forestBuilds = visibility.drawnForestBuildCount();
 		world.update(0.016F);
@@ -6875,22 +6886,56 @@ TEST_F(NavigationSystemTest, NoMeshedGroundIsNeverValid) {
 	nothingValid(rig.nav);
 }
 
+namespace {
+	// The long walk's route, and trunks scattered beside it, none within 1.5 m of it, a forest the walk
+	// passes through without stepping round anything.
+	const std::vector<glm::vec2> kLongWalk = {{200.0F, 200.0F}, {330.0F, 210.0F}, {350.0F, 320.0F}, {240.0F, 360.0F}, {260.0F, 480.0F}, {420.0F, 470.0F}};
+
+	std::vector<std::pair<std::string, glm::vec2>> trunksBesideTheLongWalk() {
+		std::mt19937						  random(31);
+		std::uniform_real_distribution<float> coordinate(150.0F, 530.0F);
+		std::vector<std::pair<std::string, glm::vec2>> trunks;
+		while (trunks.size() < 1600) {
+			const glm::vec2 at{coordinate(random), coordinate(random)};
+			bool			clear = true;
+			for (std::size_t leg = 0; leg + 1 < kLongWalk.size() && clear; ++leg) {
+				const glm::vec2 along = kLongWalk[leg + 1] - kLongWalk[leg];
+				const float		t	  = std::clamp(glm::dot(at - kLongWalk[leg], along) / glm::dot(along, along), 0.0F, 1.0F);
+				clear				  = glm::distance(at, kLongWalk[leg] + t * along) > 1.5F;
+			}
+			if (clear) {
+				trunks.push_back({kSightTrunk, at});
+			}
+		}
+		return trunks;
+	}
+} // namespace
+
 // The seen record on a long walk with the real nav mesh under it (player-visibility.md 3.1): every
-// seen point sampled round the walker is on meshed ground, and no point once seen stops being seen.
-TEST_F(NavigationSystemTest, SeenRecordStaysOnTheMeshOverALongWalk) {
+// seen point sampled round the walker is on meshed ground, and no point once seen stops being seen;
+// on open ground, and through a forest whose forest depth puts him on legs (sight-softening.md 6.2).
+class SeenRecordOnALongWalk : public NavigationSystemTest, public ::testing::WithParamInterface<bool> {};
+
+TEST_P(SeenRecordOnALongWalk, StaysOnTheMesh) {
+	const bool forest = GetParam();
+	registerSightBodies();
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeMixed(executor, processed, forest ? trunksBesideTheLongWalk() : std::vector<std::pair<std::string, glm::vec2>>{});
 	ConstructionWorld cw;
 	World			  world;
+	world.registerSystem<TimeSystem>();
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(landChunks());
-	wireEmptyPlacement(sys);
+	sys.setPlacementData(&executor, &processed);
 	sys.setConstructionWorld(&cw);
 	world.registerSystem<VisionSystem>();
 	PlayerVisibilitySystem& visibility = world.registerSystem<PlayerVisibilitySystem>();
 	world.registerSystem<MovementSystem>();
 	world.registerSystem<PhysicsSystem>();
 
-	const std::vector<glm::vec2> waypoints = {{200.0F, 200.0F}, {330.0F, 210.0F}, {350.0F, 320.0F}, {240.0F, 360.0F}, {260.0F, 480.0F}, {420.0F, 470.0F}};
-	const EntityID				 walker	   = addColonist(world, waypoints.front(), "Walker");
+	const std::vector<glm::vec2>& waypoints = kLongWalk;
+	const EntityID				  walker	= addColonist(world, waypoints.front(), "Walker");
 	world.addComponent<Memory>(walker, Memory{});
 	world.addComponent<Velocity>(walker, Velocity{});
 	world.addComponent<MovementTarget>(walker, MovementTarget{waypoints.back(), 8.0F, true});
@@ -6903,9 +6948,13 @@ TEST_F(NavigationSystemTest, SeenRecordStaysOnTheMeshOverALongWalk) {
 	std::mt19937						  random(23);
 	std::uniform_real_distribution<float> unit(-1.0F, 1.0F);
 	std::vector<glm::vec2>				  seenPoints;
-	int									  frame = 0;
+	int									  frame		= 0;
+	int									  legFrames = 0;
+	const VisionSystem&					  vision	= *world.tryGetSystem<VisionSystem>();
 	for (; frame < 6000 && world.getComponent<MovementTarget>(walker)->active; ++frame) {
 		world.update(0.016F);
+		const std::optional<VisionSystem::SightShape> shape = vision.sightShape(walker);
+		legFrames += shape.has_value() && shape->path == VisionSystem::SightPath::Leg ? 1 : 0;
 		if (frame % 10 != 0) {
 			continue;
 		}
@@ -6925,7 +6974,9 @@ TEST_F(NavigationSystemTest, SeenRecordStaysOnTheMeshOverALongWalk) {
 	}
 	ASSERT_FALSE(world.getComponent<MovementTarget>(walker)->active) << "he did not finish the walk in " << frame << " frames";
 	EXPECT_LT(glm::distance(world.getComponent<Position>(walker)->value, waypoints.back()), 1.0F);
+	EXPECT_EQ(legFrames > 0, forest) << "forest depth, and only forest depth, puts him on legs";
 	world.destroyEntity(walker);
+	world.update(0.016F);
 	for (int tick = 0; tick < 100 && visibility.seenArea().shapesPending() > 0; ++tick) {
 		world.update(0.016F);
 	}
@@ -6944,3 +6995,7 @@ TEST_F(NavigationSystemTest, SeenRecordStaysOnTheMeshOverALongWalk) {
 	}
 	expectMeshValid(sys);
 }
+
+INSTANTIATE_TEST_SUITE_P(OpenAndForest, SeenRecordOnALongWalk, ::testing::Values(false, true), [](const ::testing::TestParamInfo<bool>& info) {
+	return std::string(info.param ? "Forest" : "Open");
+});
