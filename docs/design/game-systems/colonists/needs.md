@@ -146,7 +146,11 @@ Mood has two parts ([Mood](./mood.md)):
 
 ### Need-to-Mood Weights
 
-The per-need weights and the penalty curve live in `assets/config/colonists/mood.xml`. A need at or above the comfortable level costs nothing, the penalty rises gently to the warning level and then steeply to the full penalty at an empty need, and the needs score is 100 minus the weighted penalties averaged over the total weight.
+Each need takes its own points off mood, and a need that is met gives no credit against one that is not: a colonist who is freezing is in a bad mood however well fed they are.
+
+Every need has a cost, the most mood it takes off at its worst, and the penalty curve says how much of that cost applies: nothing at or above the comfortable level, rising gently to the warning level, then steeply to the full cost at an empty need. The needs score is 100 minus the sum of those costs, never below 0. Because the costs add and do not average, giving a creature another need changes nothing about what the others cost.
+
+The costs and the curve are in `assets/config/colonists/mood.xml`. Shipped costs: Temperature 40, Hunger 25, Thirst 25, Energy 20, Hygiene 15, Recreation 15, Bladder 10, Digestion 10.
 
 ### What low mood does
 

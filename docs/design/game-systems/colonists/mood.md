@@ -25,7 +25,7 @@ Managing mood is the player's job as the colony's overseer. Colonists can feed a
 
 A colonist's mood has two parts, added together and clamped to 0-100.
 
-- **Needs.** A base score from how well the eight needs are met, weighted per need. Defined in [Needs](./needs.md).
+- **Needs.** A base score of 100 less what each unmet need costs. The costs add; a met need gives no credit against an unmet one. Defined in [Needs](./needs.md).
 - **Mood effects.** Signed amounts carried by the [thoughts](./thoughts.md) the colonist is holding, from things that happened to them or that they are living with.
 
 A mood effect always belongs to a thought. It is either timed ("slept on the ground", -10 for a day; "vented to Idris", +8 for 12 hours) or lasts while its cause does ("something reeks", "crowded", "soaked"). A repeat of a held thought about the same subject does not pile up unless the type says it stacks; a stacking thought shows its count ("bottled up x3"). Every other system that affects how a colonist feels does so by giving a thought. What a thought is, what creates one, and which ones the player sees as bubbles are defined in [Thoughts](./thoughts.md).
@@ -355,6 +355,10 @@ Kevin, 2026-11-16:
 8. Holding it together is a behavior in itself, "a 'do nothing' outlet".
 9. There must be a mechanism to stop behaviors even when serious: a timeout, and catharsis, specific to the behavior and not generic.
 10. Nothing is out of bounds. Add funny ones like "shit in someone's bed" or "put their dirty hands in the food".
+
+Kevin, 2026-11-17: needs do not average into mood. "If you're freezing to death, it doesn't matter if you're full and don't need to poop, you're going to be in a bad mood." Each need takes its own cost off, and the costs add.
+
+Kevin, 2026-11-17: needs are data, and different kinds of creature have different needs (a cow needs to be milked). The list of needs is not fixed in code.
 
 Kevin, 2026-11-17: the player cannot step in during an episode. A colonist in one cannot be drafted or directed until it ends; a critical need still interrupts it, and each behavior's own end conditions bound it.
 
