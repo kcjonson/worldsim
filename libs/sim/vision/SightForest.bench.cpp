@@ -462,11 +462,37 @@ namespace {
 
 	// The record's own counts for one tick: what it did and how long the tick took.
 	// A record tick's phases: the walkers' feeds (leg merges and the ease), then SeenArea::update's own.
-	enum class Phase : std::uint8_t { Feeds, Tests, Cuts, Registration, Patch, Widths, Sweeps, Count };
+	enum class Phase : std::uint8_t { Feeds, Tests, Cuts, Patch, Widths, Sweeps, Count };
 	constexpr std::array<const char*, static_cast<std::size_t>(Phase::Count)> kPhaseNames{
-		"feeds", "tests", "cuts", "registering", "patch", "widths", "sweep"
+		"feeds", "tests", "cuts", "patch", "widths", "sweep"
 	};
 	using PhaseTimes = std::array<double, static_cast<std::size_t>(Phase::Count)>;
+
+	// The bench's clock on the record's steps: each step the record says begins closes the one before.
+	struct PhaseClock : SeenArea::TickPhaseListener {
+		PhaseTimes							  times{};
+		Phase								  now = Phase::Tests;
+		std::chrono::steady_clock::time_point since;
+
+		void start(Phase phase) {
+			now	  = phase;
+			since = std::chrono::steady_clock::now();
+		}
+
+		void phaseBegins(SeenArea::TickPhase phase) override {
+			const auto at = std::chrono::steady_clock::now();
+			times[static_cast<std::size_t>(now)] += std::chrono::duration<double, std::milli>(at - since).count();
+			since = at;
+			switch (phase) {
+				case SeenArea::TickPhase::Tests: now = Phase::Tests; break;
+				case SeenArea::TickPhase::Cuts: now = Phase::Cuts; break;
+				case SeenArea::TickPhase::Patch: now = Phase::Patch; break;
+				case SeenArea::TickPhase::Widths: now = Phase::Widths; break;
+				case SeenArea::TickPhase::Sweeps:
+				case SeenArea::TickPhase::End: now = Phase::Sweeps; break;
+			}
+		}
+	};
 
 	struct TickRecord {
 		double				 ms = 0.0;
@@ -490,21 +516,7 @@ namespace {
 			reachMm = kSightMm + kStepMm + static_cast<std::int64_t>(std::ceil(walkMm / 100.0)) * 100 + 100;
 			seen.commitNow(geometry::sightPolygon({0, 0}, kLandingMm), {0, 0});
 			countNewRings();
-			// Each phase the record marks closes the one before it.
-			seen.setPhaseMarker([this](SeenArea::TickPhase marked) {
-				const auto now = std::chrono::steady_clock::now();
-				tickPhases[static_cast<std::size_t>(phaseNow)] += std::chrono::duration<double, std::milli>(now - phaseStart).count();
-				phaseStart = now;
-				switch (marked) {
-					case SeenArea::TickPhase::Tests: phaseNow = Phase::Tests; break;
-					case SeenArea::TickPhase::Cuts: phaseNow = Phase::Cuts; break;
-					case SeenArea::TickPhase::Registration: phaseNow = Phase::Registration; break;
-					case SeenArea::TickPhase::Patch: phaseNow = Phase::Patch; break;
-					case SeenArea::TickPhase::Widths: phaseNow = Phase::Widths; break;
-					case SeenArea::TickPhase::Sweeps: phaseNow = Phase::Sweeps; break;
-					case SeenArea::TickPhase::End: phaseNow = Phase::Sweeps; break;
-				}
-			});
+			seen.setPhaseListener(&phaseClock);
 			seen.setSightBuilder([this](const Vec2i64& centre, std::int64_t /*sightRadiusMm*/, const SightRanges& ranges) {
 				return sweepShape(this->stand, centre, ranges, this->settings.rules, sweepScratch);
 			});
@@ -531,12 +543,12 @@ namespace {
 			for (std::size_t index = 0; index < observers.size(); ++index) {
 				follow(index, observers[index]);
 			}
-			tickPhases = {};
-			phaseNow   = Phase::Tests;
-			phaseStart = std::chrono::steady_clock::now();
-			tickPhases[static_cast<std::size_t>(Phase::Feeds)] = std::chrono::duration<double, std::milli>(phaseStart - recordStart).count();
+			phaseClock.times = {};
+			phaseClock.start(Phase::Tests);
+			phaseClock.times[static_cast<std::size_t>(Phase::Feeds)] = std::chrono::duration<double, std::milli>(phaseClock.since - recordStart).count();
 			seen.update();
-			const auto end = std::chrono::steady_clock::now();
+			const auto		 end		= std::chrono::steady_clock::now();
+			const PhaseTimes tickPhases = phaseClock.times;
 			const auto [met, metVertices] = countNewRings();
 			visionMs.push_back(std::chrono::duration<double, std::milli>(recordStart - visionStart).count());
 			recordMs.push_back(std::chrono::duration<double, std::milli>(end - recordStart).count());
@@ -640,11 +652,9 @@ namespace {
 		std::vector<std::size_t>   registeredVertices;
 		// Each phase's time, this tick's and summed over the walk, and the slowest ticks.
 		static constexpr std::size_t						kSlowestKept = 10;
-		PhaseTimes											tickPhases{};
+		PhaseClock											phaseClock;
 		PhaseTimes											phaseTotals{};
 		std::vector<TickRecord>								slowest;
-		Phase												phaseNow = Phase::Tests;
-		std::chrono::steady_clock::time_point				phaseStart;
 		std::size_t				   ringsMetTotal = 0;
 		std::size_t				   ringsMetMost = 0;
 		std::size_t				   ringsCounted = 0;

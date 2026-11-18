@@ -1,4 +1,5 @@
 #include "SeenArea.h"
+#include "SightFeed.h"
 
 #include <nav/NavMesh.h>
 #include <nav/PatchableMesh.h>
@@ -10,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <numbers>
 #include <optional>
 #include <random>
@@ -601,5 +603,118 @@ TEST(SeenArea, FourPiecesATickAndCoveredTestsWhilePiecesWait) {
 	for (const double angle : {30.0, 90.0, 150.0, 210.0, 270.0, 330.0}) {
 		const double radians = angle * std::numbers::pi / 180.0;
 		EXPECT_TRUE(seen.isSeen(metres(25.0 * std::cos(radians), 25.0 * std::sin(radians)))) << angle << " degrees";
+	}
+}
+
+namespace {
+
+	struct WallWalk {
+		std::size_t	 pointsDropped = 0;
+		std::size_t	 runsDroppedWhole = 0;
+		std::size_t	 mostWaiting = 0;
+		std::int64_t widestGapMm = 0; // along any walk, between consecutive swept points or build eyes
+	};
+
+	// Walkers side by side along a wall at `speed` times 2 m/s and 60 frames a second, each fed through
+	// vision::SightFeed as PlayerVisibilitySystem feeds a colonist, vision building every 5th frame for a
+	// walker who moved past the rebuild step: the polygon path with an opaque wall in reach, so every
+	// build sweeps its walk. The gap is read from the walk itself: the build eyes and the points the
+	// sweep built, each walker's sorted along his line.
+	WallWalk walkBesideAWall(int walkers, double speed) {
+		const std::vector<geometry::OccluderSegment> wall = {
+			{metres(-200.0, 6.0), metres(600.0, 6.0)}, {metres(600.0, 6.2), metres(-200.0, 6.2)},
+			{metres(600.0, 6.0), metres(600.0, 6.2)},  {metres(-200.0, 6.2), metres(-200.0, 6.0)},
+		};
+		const vision::SightRanges			ranges = vision::equalRanges(kSightMm);
+		SeenArea							seen;
+		std::vector<std::vector<std::int64_t>> swept(static_cast<std::size_t>(walkers));
+		const auto walkerAt = [walkers](std::int64_t yMm) {
+			return static_cast<std::size_t>(std::clamp<std::int64_t>((-1000 - yMm + 25) / 50, 0, walkers - 1));
+		};
+		seen.setSightBuilder([&](const Vec2i64& centre, std::int64_t, const vision::SightRanges& rim) {
+			swept[walkerAt(centre.y)].push_back(centre.x);
+			return SeenArea::BuiltSight{geometry::computeVisibilityPolygon(centre, rim.front(), wall), rim};
+		});
+		struct Walker {
+			vision::SightFeed	 feed;
+			Vec2i64				 at;
+			Vec2i64				 eye;
+			std::uint64_t		 revision = 0;
+			std::vector<Vec2i64> polygon;
+		};
+		std::vector<Walker> walking(static_cast<std::size_t>(walkers));
+		for (int index = 0; index < walkers; ++index) {
+			walking[static_cast<std::size_t>(index)].at = {-4000 * index, -1000 - 50 * index};
+		}
+		WallWalk		   result;
+		const std::int64_t stepMm = std::llround(2000.0 * speed / 60.0);
+		for (int frame = 0; frame < 480; ++frame) {
+			for (std::size_t index = 0; index < walking.size(); ++index) {
+				Walker& walker = walking[index];
+				walker.at.x += stepMm;
+				const Vec2i64 moved = walker.at - walker.eye;
+				if (frame % 5 == 0 && (walker.revision == 0 || geometry::dot(moved, moved) > geometry::Int128::product(500, 500))) {
+					walker.eye	   = walker.at;
+					walker.polygon = geometry::computeVisibilityPolygon(walker.eye, kSightMm + 2300, wall);
+					++walker.revision;
+					swept[index].push_back(walker.eye.x);
+				}
+				if (walker.revision == 0) {
+					continue;
+				}
+				const vision::SightBuild build{
+					.buildRevision	   = walker.revision,
+					.polygonRevision   = walker.revision,
+					.eye			   = walker.eye,
+					.sightMm		   = kSightMm,
+					.ranges			   = &ranges,
+					.polygon		   = &walker.polygon,
+					.opaqueWallInReach = true,
+				};
+				walker.feed.follow(seen, index, walker.at, build, vision::SightFeed::legToleranceMm(500, speed), 400);
+			}
+			seen.update();
+			result.mostWaiting = std::max(result.mostWaiting, seen.sweepsWaiting());
+		}
+		for (std::size_t index = 0; index < walking.size(); ++index) {
+			walking[index].feed.leave(seen, index);
+		}
+		drain(seen);
+		result.pointsDropped	= seen.sweepPointsDropped();
+		result.runsDroppedWhole = seen.sweepRunsDroppedWhole();
+		for (std::vector<std::int64_t>& line : swept) {
+			std::sort(line.begin(), line.end());
+			for (std::size_t point = 1; point < line.size(); ++point) {
+				result.widestGapMm = std::max(result.widestGapMm, line[point] - line[point - 1]);
+			}
+		}
+		return result;
+	}
+
+} // namespace
+
+// A full sweep queue thins each run, a walk's points between two builds' shapes, on its own, keeping
+// its ends, and when no run has a point between its ends left the oldest run goes whole
+// (sight-softening.md 6.6). Twelve walkers beside a wall at 1x thin nothing; at 10x, with 12 and 50
+// walkers each building every pass, the points waiting never pass kSeenSweepPointsMost and runs go
+// whole, so the widest gap along any walk between swept points and build eyes is the 1,667 mm between
+// two builds, never wider.
+TEST(SeenArea, AFullSweepQueueThinsEachRunKeepingItsEnds) {
+	const WallWalk slow = walkBesideAWall(12, 1.0);
+	EXPECT_EQ(slow.pointsDropped, 0U);
+	EXPECT_LE(slow.widestGapMm, vision::kSeenSweepSpacingMm);
+	for (const int walkers : {12, 50}) {
+		const WallWalk fast = walkBesideAWall(walkers, 10.0);
+		std::printf(
+			"[ WallWalk ] %d walkers at 10x: %zu sweep points dropped, %zu runs whole, at most %zu waiting, the widest gap along a walk %lld mm\n",
+			walkers,
+			fast.pointsDropped,
+			fast.runsDroppedWhole,
+			fast.mostWaiting,
+			static_cast<long long>(fast.widestGapMm)
+		);
+		EXPECT_LE(fast.mostWaiting, vision::kSeenSweepPointsMost);
+		EXPECT_GT(fast.pointsDropped, 0U);
+		EXPECT_LE(fast.widestGapMm, 1667) << "no wider than two builds apart";
 	}
 }

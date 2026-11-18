@@ -294,7 +294,8 @@ namespace ecs {
 			const auto*		   movement	  = world->getComponent<MovementTarget>(entity);
 			const double	   speed	  = movement != nullptr && movement->active ? static_cast<double>(movement->speed) : 0.0;
 			const double	   walkedMm	  = speed * intervalSeconds * 1000.0;
-			const std::int64_t leadMm	  = std::min(vision::kSightLeadMostMm, kSightRebuildStepMm + std::llround(walkedMm));
+			const std::int64_t walkedWholeMm = std::llround(walkedMm);
+			const std::int64_t leadMm		 = std::min(vision::kSightLeadMostMm, kSightRebuildStepMm + walkedWholeMm);
 			const auto		   walkMm	  = static_cast<std::int64_t>(std::ceil(walkedMm / kLeadWalkStepMm)) * kLeadWalkStepMm;
 			const std::int64_t passReachLeadMm = std::min(vision::kSightLeadMostMm, kSightRebuildStepMm + walkMm);
 			const std::int64_t reachLeadMm	   = std::min(vision::kSightLeadMostMm, passReachLeadMm + kLeadWalkStepMm);

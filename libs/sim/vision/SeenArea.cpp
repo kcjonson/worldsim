@@ -302,7 +302,6 @@ namespace vision {
 		geometry::nav::PatchEdits edits;
 		edits.adds.push_back(geometry::nav::NavInputPolygon{.ring = std::move(piece.outline)});
 		from.pop_front();
-		const TickPhase registering = phaseNow;
 		markPhase(TickPhase::Patch);
 		const geometry::nav::PatchReport report = mesh->applyPatch(edits);
 		for (const std::int32_t added : report.added) {
@@ -312,7 +311,37 @@ namespace vision {
 		}
 		markPhase(TickPhase::Widths);
 		mesh->refreshWidths();
-		markPhase(registering);
+	}
+
+	// A full queue thins each run, a walk's points between two builds' shapes, on its own: its first and
+	// last points stay and every other point between them goes, so a run keeps its ends whatever the
+	// load. When no run has a point between its ends to give, the oldest run goes whole, its stretch
+	// left to vision's builds.
+	void SeenArea::thinSweeps() {
+		std::deque<PendingShape> kept;
+		for (std::size_t first = 0; first < sweeps.size();) {
+			std::size_t end = first;
+			while (end < sweeps.size() && sweeps[end].sweepRun == sweeps[first].sweepRun) {
+				++end;
+			}
+			for (std::size_t index = first; index < end; ++index) {
+				if (index == first || index + 1 == end || (index - first) % 2 == 0) {
+					kept.push_back(std::move(sweeps[index]));
+				}
+			}
+			first = end;
+		}
+		if (kept.size() == sweeps.size()) {
+			const std::uint64_t oldest = kept.front().sweepRun;
+			while (!kept.empty() && kept.front().sweepRun == oldest) {
+				kept.pop_front();
+			}
+			++sweepRunsDropped;
+		}
+		const std::size_t dropping = sweeps.size() - kept.size();
+		sweepsDropped += dropping;
+		work.sweepPointsDropped += dropping;
+		sweeps = std::move(kept);
 	}
 
 	// Points no farther apart than kSeenSweepSpacingMm along the walk from the build before to this
@@ -330,9 +359,9 @@ namespace vision {
 		for (std::size_t corner = 0; corner < walk.size(); ++corner) {
 			walkLength += distanceBetween(walk[corner], corner + 1 < walk.size() ? walk[corner + 1] : to);
 		}
-		double walked			= 0.0;
-		double stretchSpacingMm = 0.0; // the spacing of the points along the stretch being queued
-		auto   queuePoint		= [&](const Vec2i64& point, double along) {
+		double			   walked = 0.0;
+		const std::uint64_t run	   = ++sweepRuns;
+		auto			   queuePoint = [&](const Vec2i64& point, double along) {
 			  const double		 fraction  = walkLength > 0.0 ? std::clamp(along / walkLength, 0.0, 1.0) : 0.0;
 			  const bool		 nearStart = distanceBetween(point, walk.front()) <= distanceBetween(point, to);
 			  const SightRanges& nearer	   = nearStart ? shape.walkStartRanges : shape.rimRanges;
@@ -352,20 +381,9 @@ namespace vision {
 			  for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
 				  sweep.rimRanges[side] = std::max(geometry::kForestShapeLeastRangeMm, interpolated[side] - insetMm);
 			  }
-			  sweep.sweepSpacingMm = static_cast<std::int64_t>(std::ceil(stretchSpacingMm));
-			  // A full queue thins evenly: every other point waiting goes, so each walk waiting is swept at
-			  // twice its spacing and no stretch of it goes unswept.
+			  sweep.sweepRun = run;
 			  if (sweeps.size() == kSeenSweepPointsMost) {
-				  std::size_t kept = 0;
-				  for (std::size_t index = 0; index < sweeps.size(); index += 2) {
-					  sweeps[kept] = std::move(sweeps[index]);
-					  sweeps[kept].sweepSpacingMm *= 2;
-					  ++kept;
-				  }
-				  const std::size_t dropping = sweeps.size() - kept;
-				  sweeps.resize(kept);
-				  sweepsDropped += dropping;
-				  work.sweepPointsDropped += dropping;
+				  thinSweeps();
 			  }
 			  sweeps.push_back(std::move(sweep));
 		};
@@ -375,7 +393,6 @@ namespace vision {
 			const Vec2i64	   along   = until - from;
 			const double	   stretch = distanceBetween(until, from);
 			const std::int64_t steps   = static_cast<std::int64_t>(std::ceil(stretch / static_cast<double>(kSeenSweepSpacingMm)));
-			stretchSpacingMm		   = steps > 0 ? stretch / static_cast<double>(steps) : 0.0;
 			if (corner > 0) {
 				queuePoint(from, walked);
 			}
@@ -394,7 +411,6 @@ namespace vision {
 	void SeenArea::commitSweep(const PendingShape& point) {
 		++swept;
 		++work.sweepPointsBuilt;
-		widestSweepSpacing = std::max(widestSweepSpacing, point.sweepSpacingMm);
 		BuiltSight built = sightBuilder(point.centre, point.sightRadius, point.rimRanges);
 		if (!geometry::simpleAround(built.shape, point.centre)) {
 			++skipped;
@@ -526,10 +542,9 @@ namespace vision {
 		openLegs.erase(found);
 	}
 
-	void SeenArea::markPhase(TickPhase phase) {
-		phaseNow = phase;
-		if (phaseMarker) {
-			phaseMarker(phase);
+	void SeenArea::markPhase(TickPhase phase) const {
+		if (phaseListener != nullptr) {
+			phaseListener->phaseBegins(phase);
 		}
 	}
 
@@ -550,7 +565,6 @@ namespace vision {
 		}
 		// Shapes' pieces first, the sweep's with what is left: the sweep's pieces never hold the shapes'
 		// cut back, since it reads only the shapes' pieces waiting.
-		markPhase(TickPhase::Registration);
 		std::size_t count = 0;
 		for (; count < kSeenPiecesRegisteredPerTick && !entering.empty(); ++count) {
 			registerPiece(entering);

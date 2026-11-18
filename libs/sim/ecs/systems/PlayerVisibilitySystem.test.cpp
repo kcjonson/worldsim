@@ -1104,10 +1104,10 @@ TEST(PlayerVisibilitySystem, OnlyAnOpaqueWallInReachSweepsThePolygonPath) {
 
 // Twelve colonists walking beside a long wall (sight-softening.md 6.6). At 10x they queue sweep points
 // faster than four a tick builds them: the points waiting never pass kSeenSweepPointsMost, the queue
-// thinning evenly so every walk is still swept, at a wider spacing; at 1x the budget keeps up and
+// thinning run by run (SeenArea's test reads the gaps it leaves); at 1x the budget keeps up and
 // nothing is thinned. Either way the sweep's pieces never hold the shapes back, no shape waiting more
 // than a few ticks to be cut, and everything drains once they stop.
-TEST(PlayerVisibilitySystem, SweepBesideAWallIsBoundedThinsEvenlyAndHoldsNothingBack) {
+TEST(PlayerVisibilitySystem, SweepBesideAWallIsBoundedAndHoldsNothingBack) {
 	assets::ConstructionRegistry::Get().clear();
 	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string()));
 	for (const GameSpeed speed : {GameSpeed::Normal, GameSpeed::VeryFast}) {
@@ -1147,13 +1147,13 @@ TEST(PlayerVisibilitySystem, SweepBesideAWallIsBoundedThinsEvenlyAndHoldsNothing
 		}
 		const bool tenTimes = speed == GameSpeed::VeryFast;
 		std::printf(
-			"[ SweepBesideAWall ] %s: sweep points waiting at most %zu, built %zu, dropped %zu, the widest spacing a built point had %lld mm; shapes and "
-			"pieces waiting at most %zu, the longest run %zu ticks\n",
+			"[ SweepBesideAWall ] %s: sweep points waiting at most %zu, built %zu, dropped %zu (runs whole %zu); shapes and pieces waiting at most "
+			"%zu, the longest run %zu ticks\n",
 			tenTimes ? "10x" : "1x",
 			mostSweeps,
 			seen.sweepsBuilt(),
 			seen.sweepPointsDropped(),
-			static_cast<long long>(seen.widestSweepSpacingMm()),
+			seen.sweepRunsDroppedWhole(),
 			mostWaiting,
 			longestRun
 		);
@@ -1163,10 +1163,8 @@ TEST(PlayerVisibilitySystem, SweepBesideAWallIsBoundedThinsEvenlyAndHoldsNothing
 		EXPECT_EQ(seen.sweepsWaiting(), 0U);
 		if (tenTimes) {
 			EXPECT_GT(seen.sweepPointsDropped(), 0U) << "the walls queue more than the budget builds";
-			EXPECT_LE(seen.widestSweepSpacingMm(), 1600) << "every walk swept, at no worse than a sixteenth of its points";
 		} else {
 			EXPECT_EQ(seen.sweepPointsDropped(), 0U) << "at 1x the budget keeps up";
-			EXPECT_LE(seen.widestSweepSpacingMm(), vision::kSeenSweepSpacingMm);
 		}
 	}
 	assets::ConstructionRegistry::Get().clear();
@@ -1174,29 +1172,50 @@ TEST(PlayerVisibilitySystem, SweepBesideAWallIsBoundedThinsEvenlyAndHoldsNothing
 
 // A jump (a teleport, or a long frame at 10x) opens a leg with no inherited shape; on a frame vision
 // also rebuilds, the ease starts again from the newest build's shape, which the new leg holds, so the
-// bright shape stays in the record or a pending shape on that frame and after.
+// bright shape stays in the record or a pending shape on that frame and after. On the polygon path a
+// jump drops his polygon: nothing is drawn until vision's next polygon at the new eye registers. Each
+// jump comes 71 frames after the last, so the five land on all five frames of vision's interval.
 TEST(PlayerVisibilitySystem, AJumpOnABuildFrameKeepsTheBrightShapeSeen) {
-	ForestColony colony;
-	colony.plant({-40.0F, -40.0F}, {160.0F, 40.0F}, 4.0F, 0.65F, 13);
-	const EntityID colonist = colony.addColonist({0.0F, 0.0F});
-	int			   frames	= 0;
-	// Jumps of 5 m at five frames in a row of the vision interval, so one lands on a pass.
-	for (int jump = 0; jump < 5; ++jump) {
-		for (int frame = 0; frame < 40 + jump; ++frame) {
-			colony.step(colonist, 0.0F);
-			++frames;
+	for (const bool polygonPath : {false, true}) {
+		ForestColony colony;
+		colony.plant({-40.0F, -40.0F}, {200.0F, 40.0F}, 4.0F, 0.65F, 13);
+		if (polygonPath) {
+			for (float x = -40.0F; x <= 200.0F; x += 20.0F) {
+				colony.place({x, 9.0F}, 1.6F);
+			}
 		}
-		colony.world.getComponent<Position>(colonist)->value.x += 5.0F;
-		colony.world.update(1.0F / 60.0F);
-		for (int after = 0; after < 30; ++after) {
-			++frames;
-			const std::optional<std::vector<Vec2i64>> drawn = colony.visibility.drawnVisible(colonist);
-			ASSERT_TRUE(drawn.has_value());
-			expectDrawnSeen(colony.visibility, *drawn, frames);
-			colony.step(colonist, 0.0F);
+		const EntityID colonist = colony.addColonist({0.0F, 0.0F});
+		int			   frames	= 0;
+		for (int jump = 0; jump < 5; ++jump) {
+			for (int frame = 0; frame < 40; ++frame) {
+				colony.step(colonist, 0.0F);
+				++frames;
+			}
+			const float landedAt = colony.world.getComponent<Position>(colonist)->value.x + 5.0F;
+			colony.world.getComponent<Position>(colonist)->value.x = landedAt;
+			colony.world.update(1.0F / 60.0F);
+			bool drawnSince = false;
+			for (int after = 0; after < 30; ++after) {
+				++frames;
+				const std::optional<VisionSystem::SightShape> shape = colony.vision.sightShape(colonist);
+				const std::optional<std::vector<Vec2i64>>	  drawn = colony.visibility.drawnVisible(colonist);
+				if (!polygonPath) {
+					ASSERT_TRUE(drawn.has_value());
+					expectDrawnSeen(colony.visibility, *drawn, frames);
+				} else {
+					ASSERT_NE(shape->polygon, nullptr);
+					// Drawn only once a polygon built at or past where he landed has registered.
+					EXPECT_TRUE(!drawn.has_value() || shape->center.x >= landedAt - 0.01F) << "frame " << frames << ": a polygon from before the jump";
+					drawnSince = drawnSince || drawn.has_value();
+				}
+				colony.step(colonist, 0.0F);
+			}
+			EXPECT_TRUE(!polygonPath || drawnSince) << "the next polygon draws";
+		}
+		if (!polygonPath) {
+			EXPECT_EQ(colony.visibility.feedOf(colonist)->legsEndedBy(vision::LegEnd::Jump), 5U);
 		}
 	}
-	EXPECT_EQ(colony.visibility.feedOf(colonist)->legsEndedBy(vision::LegEnd::Jump), 5U);
 }
 
 // The record takes a polygon-path shape cut to its forest rim, so a rock past the rim, where the
