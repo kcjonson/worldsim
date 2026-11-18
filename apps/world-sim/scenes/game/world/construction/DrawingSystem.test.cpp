@@ -1,4 +1,5 @@
 #include "scenes/game/world/construction/DrawingSystem.h"
+#include "scenes/game/world/construction/DrawingStatusHint.h"
 
 #include "scenes/game/world/CreekWorldFixture.test.h"
 #include "scenes/game/world/PlayerVisibilityFixture.test.h"
@@ -20,6 +21,7 @@
 #include <cmath>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -1683,6 +1685,7 @@ TEST_F(DrawingStripVerdictTest, AFreeformPointerOnThePointJustPlacedProposesNoth
 			const int placed = drawing->status().pointCount;
 			drawing->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, freeform);
 			expectTheStripReadsThePreview();
+			EXPECT_FALSE(drawing->snapshot().verdict.proposed);
 			drawing->handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight, freeform);
 			EXPECT_EQ(drawing->status().pointCount, placed);
 		}
@@ -1729,17 +1732,109 @@ TEST_F(DrawingStripVerdictTest, AfterBackspaceTheRestNoLongerHidesATooCloseRefus
 	EXPECT_FALSE(drawing->status().message.empty());
 }
 
-// The rest is the Freeform tool's rule only: an Add edit's pointer on the point it just placed
-// still reads the too-close refusal, so this fails if the rest leaks into the other tools.
-TEST_F(DrawingStripVerdictTest, AnEditPointerOnThePointJustPlacedReadsTheTooCloseRefusal) {
+// Add and Subtract rest as the Freeform tool does: after each click, the pointer still on the point
+// just placed proposes nothing, the strip and the reason beside the cursor refuse nothing, and a
+// click there places nothing and says nothing. From the third point the outline is the placed
+// points' own. A move of a few centimeters brings the too-close refusal back, with its toast.
+TEST_F(DrawingStripVerdictTest, AnEditPointerOnThePointJustPlacedProposesNothing) {
+	const construction::FoundationId target = blueprintFloor();
+	// A triangle across the floor's east edge, its 45 degree tip inside the floor.
+	const glm::vec2 corners[] = {{6.0F, 2.0F}, {12.0F, 2.0F}, {12.0F, 8.0F}};
+	for (const construction::FoundationEditMode mode :
+		 {construction::FoundationEditMode::Add, construction::FoundationEditMode::Subtract}) {
+		SCOPED_TRACE(mode == construction::FoundationEditMode::Add ? "Add" : "Subtract");
+		toasts.clear();
+		drawing->activateFoundationEditTool(target, mode);
+		for (const glm::vec2 corner : corners) {
+			const glm::vec2 screen = seen.screenOf(corner);
+			drawing->handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
+			const int placed = drawing->status().pointCount;
+			drawing->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
+			expectTheStripReadsThePreview();
+			EXPECT_TRUE(drawing->previewVerdict().editReason.empty()) << drawing->previewVerdict().editReason;
+			EXPECT_FALSE(drawing->snapshot().verdict.proposed);
+			drawing->handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
+			EXPECT_EQ(drawing->status().pointCount, placed);
+		}
+		ASSERT_EQ(drawing->status().pointCount, 3);
+		EXPECT_TRUE(toasts.empty()) << lastToast();
+		EXPECT_TRUE(drawing->pointerPreview().trialOutline);
+		EXPECT_NE(drawing->status().areaDeltaSquareMeters, 0.0F) << "the placed points' outline, valid";
+
+		const glm::vec2 nudged = corners[2] + glm::vec2{0.2F, 0.0F};
+		hoverFreeform(nudged);
+		EXPECT_FALSE(drawing->status().valid);
+		EXPECT_EQ(drawing->status().message, "points too close");
+		EXPECT_TRUE(drawing->snapshot().verdict.proposed);
+		const glm::vec2 screen = seen.screenOf(nudged);
+		drawing->handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
+		EXPECT_EQ(drawing->status().pointCount, 3);
+		EXPECT_EQ(lastToast(), "Invalid point: points too close");
+	}
+}
+
+// The rest silences only the refusal of being on what was just placed. Angle steps turn the pointer
+// at 83 degrees from (20, 0) onto 90, so the point lands at (20, 34), inside the seen disc; the still
+// pointer then snaps a 4.1 m step east from it, out of the disc, and that refusal shows.
+TEST_F(DrawingStripVerdictTest, AFreeformPointerRestingWhereItsSnapIsUnexploredReadsTheRefusal) {
+	world_sim::UserSettings::Get().drawing = world_sim::DrawingSettings{.angleSteps = true, .roundLengths = true};
+	drawing->activateFoundationTool();
+	const glm::vec2 pointer{24.14F, 33.75F};
+	ASSERT_TRUE(click({20.0F, 0.0F}));
+	ASSERT_TRUE(click(pointer));
+	ASSERT_EQ(drawing->status().pointCount, 2) << lastToast();
+	ASSERT_TRUE(toasts.empty()) << lastToast();
+	hover(pointer);
+	EXPECT_FALSE(drawing->status().valid);
+	EXPECT_EQ(drawing->status().message, "the area is unexplored");
+	EXPECT_TRUE(drawing->snapshot().verdict.proposed);
+	ASSERT_TRUE(click(pointer));
+	EXPECT_EQ(drawing->status().pointCount, 2);
+	EXPECT_TRUE(lastToastSaysUnexplored()) << lastToast();
+}
+
+// The rest silences only the refusal of being on what was just placed. The chain runs (22, 25),
+// (22, 0), (20, 0), and a pointer 1.7 m east of the line up from (20, 0) places its point on that
+// line; the still pointer then snaps east of the point, close beside the first edge, and that
+// refusal shows.
+TEST_F(DrawingStripVerdictTest, AFreeformPointerRestingWhereItsSnapCrowdsAnEarlierEdgeReadsTheRefusal) {
+	world_sim::UserSettings::Get().drawing = world_sim::DrawingSettings{.angleSteps = true, .roundLengths = true};
+	drawing->activateFoundationTool();
+	const glm::vec2 pointer{21.7F, 20.0F};
+	ASSERT_TRUE(click({22.0F, 25.0F}));
+	ASSERT_TRUE(click({22.0F, 0.0F}));
+	ASSERT_TRUE(click({20.0F, 0.0F}));
+	ASSERT_TRUE(click(pointer));
+	ASSERT_EQ(drawing->status().pointCount, 4) << lastToast();
+	ASSERT_TRUE(toasts.empty()) << lastToast();
+	hover(pointer);
+	EXPECT_FALSE(drawing->status().valid);
+	EXPECT_EQ(drawing->status().message, "edges too close");
+	EXPECT_TRUE(drawing->snapshot().verdict.proposed);
+	ASSERT_TRUE(click(pointer));
+	EXPECT_EQ(drawing->status().pointCount, 4);
+	EXPECT_EQ(lastToast(), "Invalid point: " + drawing->status().message);
+}
+
+// An edit's cursor joins the outline once it is proposed: two points and the pointer on a third.
+TEST_F(DrawingStripVerdictTest, AnEditPointerOffItsTwoPointsDrawsTheTrialOutline) {
 	const construction::FoundationId target = blueprintFloor();
 	drawing->activateFoundationEditTool(target, construction::FoundationEditMode::Add);
-	const glm::vec2 corner = kThreeCorners[0] + glm::vec2{6.0F, 2.0F};
-	ASSERT_TRUE(click(corner));
-	ASSERT_EQ(drawing->status().pointCount, 1) << lastToast();
-	hover(corner);
+	place({{6.0F, 2.0F}, {12.0F, 2.0F}});
+	ASSERT_EQ(drawing->status().pointCount, 2) << lastToast();
+	hoverFreeform({12.0F, 8.0F});
+	EXPECT_TRUE(drawing->pointerPreview().trialOutline);
+}
+
+// The rest ends for good when the pointer leaves the point: back on it, the refusal shows.
+TEST_F(DrawingStripVerdictTest, APointerThatLeavesThePointJustPlacedAndComesBackReadsTheRefusal) {
+	drawing->activateFoundationTool();
+	place({kThreeCorners[0], kThreeCorners[1]});
+	ASSERT_EQ(drawing->status().pointCount, 2) << lastToast();
+	hoverFreeform(kThreeCorners[2]);
+	hoverFreeform(kThreeCorners[1]);
 	EXPECT_FALSE(drawing->status().valid);
-	EXPECT_FALSE(drawing->status().message.empty());
+	EXPECT_EQ(drawing->status().message, "points too close");
 }
 
 TEST_F(DrawingStripVerdictTest, AWallStripReadsThePreview) {
@@ -1915,7 +2010,7 @@ TEST_F(DrawingPauseTest, AToolStartsPausedUntilItsFirstMove) {
 	buildAcrossTheEdge();
 	drawing->activateFoundationEditTool(target, construction::FoundationEditMode::Add);
 	place({{6.0F, 2.0F}, {12.0F, 2.0F}, {12.0F, 5.0F}});
-	hoverFreeform({12.0F, 5.0F});
+	hoverFreeform({12.2F, 5.0F});
 	ASSERT_FALSE(drawing->status().valid);
 	ASSERT_TRUE(drawing->pointerPreview().trialOutline);
 	{
@@ -2091,6 +2186,136 @@ TEST_F(DrawingPauseTest, ADoubleClickEndsTheChainAsEnterDoes) {
 	EXPECT_TRUE(drawing->isWallTool() && drawing->isActive()) << "the tool stays on for the next chain";
 }
 
+// After each chain point, the first included, the pointer still on it proposes nothing: the band
+// is not red, the strip shows the chain's hint, and a slow second click there places nothing and
+// says nothing. A move a few centimeters off (under the shortest wall) brings "wall too short"
+// back, with its toast.
+TEST_F(DrawingPauseTest, AWallPointerOnThePointJustPlacedProposesNothing) {
+	hostWalls();
+	drawing->activateWallTool();
+	for (const glm::vec2 corner : {glm::vec2{-8.0F, -8.0F}, glm::vec2{8.0F, -8.0F}, glm::vec2{8.0F, 8.0F}}) {
+		SCOPED_TRACE(::testing::Message() << "at " << corner.x << ", " << corner.y);
+		click(corner);
+		const int placed = drawing->status().pointCount;
+		hover(corner);
+		const world_sim::DrawingStatus status = drawing->status();
+		EXPECT_TRUE(status.valid) << status.message;
+		EXPECT_TRUE(status.message.empty()) << status.message;
+		EXPECT_EQ(world_sim::statusHint(status).text, "Right-click / Enter to finish");
+		EXPECT_TRUE(drawing->previewVerdict().valid);
+		EXPECT_FALSE(drawing->snapshot().verdict.proposed);
+		click(corner);
+		EXPECT_EQ(drawing->status().pointCount, placed);
+	}
+	ASSERT_EQ(drawing->status().pointCount, 3);
+	EXPECT_TRUE(toasts.empty()) << lastToast();
+
+	const glm::vec2 nudged{8.0F, 8.2F};
+	const glm::vec2 screen = seen.screenOf(nudged);
+	drawing->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
+	EXPECT_FALSE(drawing->status().valid);
+	EXPECT_EQ(drawing->status().message, "wall too short");
+	EXPECT_FALSE(drawing->previewVerdict().valid);
+	drawing->handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
+	EXPECT_EQ(drawing->status().pointCount, 3);
+	EXPECT_EQ(lastToast(), "Invalid point: wall too short");
+}
+
+// The camera panning under a still mouse moves the pointer in the world. Under half a screen pixel
+// in all, at any zoom, the pointer still rests and a click there says nothing; a pixel ends the rest.
+TEST_F(DrawingPauseTest, ACameraPanUnderAStillPointerEndsTheRest) {
+	hostWalls();
+	for (const float zoom : {1.0F, 3.0F}) {
+		SCOPED_TRACE(::testing::Message() << "zoom " << zoom);
+		toasts.clear();
+		seen.camera.setZoom(zoom);
+		seen.camera.setPosition({0.0F, 0.0F});
+		drawing->activateWallTool();
+		click({-8.0F, -8.0F});
+		click({8.0F, -8.0F});
+		const glm::vec2 screen = seen.screenOf({8.0F, -8.0F});
+		hover({8.0F, -8.0F});
+		ASSERT_TRUE(drawing->status().valid) << drawing->status().message;
+
+		const float pixelMeters = 1.0F / (world_sim::testing::kPixelsPerMeter * zoom);
+		for (int tenths = 1; tenths <= 4; ++tenths) {
+			seen.camera.setPosition({0.0F, static_cast<float>(tenths) * 0.1F * pixelMeters});
+			drawing->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
+			EXPECT_TRUE(drawing->status().valid) << tenths << " tenths: " << drawing->status().message;
+			EXPECT_FALSE(drawing->snapshot().verdict.proposed) << tenths << " tenths";
+		}
+		drawing->handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
+		EXPECT_EQ(drawing->status().pointCount, 2);
+		EXPECT_TRUE(toasts.empty()) << lastToast();
+
+		seen.camera.setPosition({0.0F, pixelMeters});
+		drawing->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
+		EXPECT_FALSE(drawing->status().valid);
+		EXPECT_EQ(drawing->status().message, "wall too short");
+		EXPECT_TRUE(drawing->snapshot().verdict.proposed);
+		drawing->deactivate();
+	}
+}
+
+// The rest is measured from where the pointer was at the click, not from the last frame: a camera
+// creeping 0.2 px a frame stays at rest for the first two frames (0.4 px in all) and has ended it by
+// the third (0.6 px), though no single step is half a pixel.
+TEST_F(DrawingPauseTest, ACameraCreepingInSmallStepsEndsTheRestOnceTheTotalPassesHalfAPixel) {
+	hostWalls();
+	drawing->activateWallTool();
+	click({-8.0F, -8.0F});
+	click({8.0F, -8.0F});
+	const glm::vec2 screen = seen.screenOf({8.0F, -8.0F});
+	hover({8.0F, -8.0F});
+	ASSERT_TRUE(drawing->status().valid) << drawing->status().message;
+
+	const float pixelMeters = 1.0F / (world_sim::testing::kPixelsPerMeter * seen.camera.zoom());
+	for (int nudge = 1; nudge <= 6; ++nudge) {
+		SCOPED_TRACE(::testing::Message() << nudge << " nudges, " << 0.2F * static_cast<float>(nudge) << " px in all");
+		seen.camera.setPosition({0.0F, static_cast<float>(nudge) * 0.2F * pixelMeters});
+		drawing->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
+		const bool resting = !drawing->snapshot().verdict.proposed;
+		EXPECT_EQ(resting, nudge <= 2);
+		EXPECT_EQ(drawing->status().valid, nudge <= 2) << drawing->status().message;
+	}
+	EXPECT_EQ(drawing->status().message, "wall too short");
+}
+
+// A keyboard pan eases in, so the camera is still creeping a fraction of a pixel a frame after it
+// looks still. A click in that tail rests, and goes on resting while the camera settles.
+TEST_F(DrawingPauseTest, AClickWhileTheCameraSettlesFromAPanRests) {
+	hostWalls();
+	drawing->activateWallTool();
+	click({-8.0F, -8.0F});
+
+	constexpr float kFrameSeconds = 1.0F / 60.0F;
+	const float		pixelMeters = 1.0F / (world_sim::testing::kPixelsPerMeter * seen.camera.zoom());
+	const float		targetX = seen.camera.position().x + seen.camera.panSpeed() / seen.camera.zoom() * kFrameSeconds;
+	seen.camera.move(1.0F, 0.0F, kFrameSeconds);
+	int frames = 0;
+	while ((targetX - seen.camera.position().x) / pixelMeters >= 0.5F) {
+		seen.camera.update(kFrameSeconds);
+		ASSERT_LT(++frames, 600);
+	}
+	ASSERT_GT(seen.camera.position().x, 1.0F) << "the pan moved the world";
+	ASSERT_GT(targetX - seen.camera.position().x, 0.0F) << "the camera is still settling";
+
+	click({8.0F, -8.0F});
+	ASSERT_EQ(drawing->status().pointCount, 2) << lastToast();
+	const glm::vec2 screen = seen.screenOf({8.0F, -8.0F});
+	float			settled = std::numeric_limits<float>::quiet_NaN();
+	for (int frame = 0; frame < 600 && seen.camera.position().x != settled; ++frame) {
+		settled = seen.camera.position().x;
+		seen.camera.update(kFrameSeconds);
+		drawing->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, false);
+		EXPECT_TRUE(drawing->status().valid) << "frame " << frame << ": " << drawing->status().message;
+		EXPECT_FALSE(drawing->snapshot().verdict.proposed) << "frame " << frame;
+	}
+	drawing->handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight, false);
+	EXPECT_EQ(drawing->status().pointCount, 2);
+	EXPECT_TRUE(toasts.empty()) << lastToast();
+}
+
 // A double-click as the first action places the point and drops it: no chain, no wall, no toast.
 TEST_F(DrawingPauseTest, ADoubleClickAsTheFirstActionLeavesNothing) {
 	hostWalls();
@@ -2206,9 +2431,11 @@ TEST_F(DrawingPauseTest, WhatEndsAChainForgetsTheFirstClick) {
 		doubleClick.forget();
 		drawing->pause();
 		const std::size_t walls = drawing->world().segments().size();
+		const std::size_t toastsBefore = toasts.size();
 		releaseWithTool({-4.0F, 2.0F}, 2.25);
-		EXPECT_EQ(drawing->status().pointCount, 2) << "refused as a wall too short, the chain still in progress";
+		EXPECT_EQ(drawing->status().pointCount, 2) << "the pointer rests on the point: nothing placed, the chain still in progress";
 		EXPECT_EQ(drawing->world().segments().size(), walls);
+		EXPECT_EQ(toasts.size(), toastsBefore) << lastToast();
 	}
 }
 
@@ -2454,16 +2681,58 @@ TEST_F(DrawingOpeningSnapshotTest, OffAnyWallThereIsNoSnapAndTheStripsReason) {
 	EXPECT_EQ(shot.verdict.reason, drawing->status().message);
 }
 
+// The pointer moved a little along the wall from the door it just placed, still over it.
 TEST_F(DrawingOpeningSnapshotTest, OnASpotAnOpeningOccupiesTheVerdictIsRefusedWithTheStripsReason) {
 	click({4.0F, -26.0F});
 	ASSERT_EQ(drawing->world().openings().size(), 1U) << lastToast();
-	hover({4.0F, -26.0F});
+	hover({4.3F, -26.0F});
 	const world_sim::DrawingSnapshot shot = drawing->snapshot();
 	ASSERT_TRUE(shot.openingSnap.has_value());
 	EXPECT_TRUE(shot.openingSnap->valid);
 	EXPECT_FALSE(shot.verdict.valid);
+	EXPECT_TRUE(shot.verdict.proposed);
 	EXPECT_EQ(shot.verdict.reason, "openings overlap");
 	EXPECT_EQ(shot.verdict.reason, drawing->status().message);
+	EXPECT_TRUE(drawing->pointerPreview().openingGhost);
+	click({4.3F, -26.0F});
+	EXPECT_EQ(drawing->world().openings().size(), 1U);
+	EXPECT_EQ(lastToast(), "Invalid opening: openings overlap");
+}
+
+// The pointer still where it placed a door proposes nothing: no ghost (the door placed shows there),
+// no reason, the strip's hint, and a second click places no second door and says nothing.
+TEST_F(DrawingOpeningSnapshotTest, ThePointerRestingOnTheOpeningJustPlacedProposesNothing) {
+	click({4.0F, -26.0F});
+	ASSERT_EQ(drawing->world().openings().size(), 1U) << lastToast();
+	const std::size_t toastsAfterPlacing = toasts.size();
+	hover({4.0F, -26.0F});
+	const world_sim::DrawingSnapshot shot = drawing->snapshot();
+	EXPECT_TRUE(shot.verdict.valid);
+	EXPECT_FALSE(shot.verdict.proposed);
+	EXPECT_TRUE(shot.verdict.reason.empty()) << shot.verdict.reason;
+	EXPECT_TRUE(shot.status.valid);
+	EXPECT_EQ(world_sim::statusHint(shot.status).text, "Click a wall to place");
+	EXPECT_FALSE(drawing->pointerPreview().openingGhost);
+	click({4.0F, -26.0F});
+	EXPECT_EQ(drawing->world().openings().size(), 1U);
+	EXPECT_EQ(toasts.size(), toastsAfterPlacing) << lastToast();
+}
+
+// The record belongs to the tool that placed: the opening tool started again, or switched away
+// from and back, judges the same still pointer afresh.
+TEST_F(DrawingOpeningSnapshotTest, ARestartedOpeningToolDoesNotRestOnTheLastOpening) {
+	click({4.0F, -26.0F});
+	ASSERT_EQ(drawing->world().openings().size(), 1U) << lastToast();
+	for (const bool switchAway : {false, true}) {
+		SCOPED_TRACE(switchAway ? "the wall tool and back" : "started again");
+		if (switchAway) {
+			drawing->activateWallTool();
+		}
+		drawing->activateOpeningTool("Door");
+		hover({4.0F, -26.0F});
+		EXPECT_TRUE(drawing->snapshot().verdict.proposed);
+		EXPECT_EQ(drawing->status().message, "openings overlap");
+	}
 }
 
 TEST_F(DrawingOpeningSnapshotTest, ThePointerIsReportedBeforeTheWallSnapsIt) {
