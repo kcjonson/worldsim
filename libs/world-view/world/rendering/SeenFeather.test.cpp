@@ -27,18 +27,19 @@ namespace {
 		double greatest = 0.0;
 		for (const ValueTriangle& piece : pieces) {
 			for (std::size_t corner = 1; corner + 1 < piece.points.size(); ++corner) {
-				const glm::dvec2 a	  = piece.points[0];
-				const glm::dvec2 b	  = piece.points[corner];
-				const glm::dvec2 c	  = piece.points[corner + 1];
-				const double	 area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+				const glm::dvec2 origin = piece.points[0];
+				const glm::dvec2 near = piece.points[corner];
+				const glm::dvec2 far = piece.points[corner + 1];
+				const double	 area = (near.x - origin.x) * (far.y - origin.y) - (near.y - origin.y) * (far.x - origin.x);
 				if (area == 0.0) {
 					continue;
 				}
-				const double first	= ((b.x - point.x) * (c.y - point.y) - (b.y - point.y) * (c.x - point.x)) / area;
-				const double second = ((c.x - point.x) * (a.y - point.y) - (c.y - point.y) * (a.x - point.x)) / area;
-				const double third	= 1.0 - first - second;
+				const double first = ((near.x - point.x) * (far.y - point.y) - (near.y - point.y) * (far.x - point.x)) / area;
+				const double second = ((far.x - point.x) * (origin.y - point.y) - (far.y - point.y) * (origin.x - point.x)) / area;
+				const double third = 1.0 - first - second;
 				if (first >= -1e-9 && second >= -1e-9 && third >= -1e-9) {
-					greatest = std::max(greatest, first * piece.values[0] + second * piece.values[corner] + third * piece.values[corner + 1]);
+					greatest =
+						std::max(greatest, first * piece.values[0] + second * piece.values[corner] + third * piece.values[corner + 1]);
 				}
 			}
 		}
@@ -46,7 +47,9 @@ namespace {
 	}
 
 	std::vector<Vec2i64> square(double x, double y, double half) {
-		const auto mm = [](double metres) { return std::llround(metres * 1000.0); };
+		const auto mm = [](double metres) {
+			return std::llround(metres * 1000.0);
+		};
 		return {{mm(x - half), mm(y - half)}, {mm(x + half), mm(y - half)}, {mm(x + half), mm(y + half)}, {mm(x - half), mm(y + half)}};
 	}
 
@@ -72,7 +75,7 @@ namespace {
 			return pieces;
 		}
 
-		vision::SeenArea						 seen;
+		vision::SeenArea						seen;
 		std::unique_ptr<worldview::SeenFeather> feather = std::make_unique<worldview::SeenFeather>();
 	};
 
@@ -92,7 +95,7 @@ TEST_F(SeenFeatherTest, TheRecordsCellsFeatherItsEdge) {
 	seen.commitNow(square(40.0, 40.0, 3.0), {40000, 40000});
 	frame();
 	EXPECT_GT(feather->counts().cellsRebuilt, 0U);
-	EXPECT_LT(feather->counts().cellsRebuilt, feather->counts().cellsDrawn) << "only the cells near the new ring";
+	EXPECT_EQ(feather->counts().cellEdgesRead, 4U) << "only the cells near the new ring, which read its four sides";
 }
 
 // A pending square overlapping the record: the record's edge inside it draws nothing, the pending
@@ -113,7 +116,8 @@ TEST_F(SeenFeatherTest, ThePendingCutDrawsTheUnionsBoundaryAlone) {
 	EXPECT_NEAR(valueOrZero(pending, {9700.0, 5300.0}), 0.8, 1e-6) << "beside the concave corner";
 
 	// The cells give way to the cut inside the pending square grown by the feather.
-	ASSERT_EQ(feather->pendingGrown().size(), 1U) << "a convex square grows as one polygon";
+	ASSERT_EQ(feather->clustersInView().size(), 1U);
+	ASSERT_EQ(feather->clustersInView()[0]->grown.size(), 1U) << "a convex square grows as one polygon";
 	frame();
 	EXPECT_EQ(feather->counts().clustersCut, 0U) << "kept while nothing changes";
 }

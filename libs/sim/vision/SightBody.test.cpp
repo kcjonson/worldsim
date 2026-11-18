@@ -41,12 +41,12 @@ TEST(SightTunables, ClampToTheirRangesWithTheRayWidthAboveBothThresholds) {
 	wild.forestWindowSteps	   = 40;
 	wild.rimEaseMm			   = 0;
 	wild.forestNearMm		   = 90000;
-	wild.drawnShadowRebuildMm  = -5;
+	wild.softShadowRebuildPercent = -5;
 	const vision::SightTunables clamped = vision::clampedToRanges(wild);
 	EXPECT_EQ(clamped.forestWindowSteps, 32);
 	EXPECT_EQ(clamped.rimEaseMm, 100);
 	EXPECT_EQ(clamped.forestNearMm, 30000);
-	EXPECT_EQ(clamped.drawnShadowRebuildMm, 0);
+	EXPECT_EQ(clamped.softShadowRebuildPercent, 1);
 
 	vision::SightTunables thresholds;
 	thresholds.placedOpaqueLeastDiameterMm = 5000;

@@ -314,9 +314,26 @@ namespace vision {
 		from.pop_front();
 		const geometry::nav::PatchReport report = mesh->applyPatch(edits);
 		for (const std::int32_t added : report.added) {
-			if (added != geometry::nav::kNoRing) {
-				registered.push_back(added);
+			if (added == geometry::nav::kNoRing) {
+				continue;
 			}
+			const std::vector<Vec2i64>& ring = mesh->ring(added).polygon.ring;
+			Box							box{ring.front(), ring.front()};
+			for (const Vec2i64& point : ring) {
+				box.low	 = {std::min(box.low.x, point.x), std::min(box.low.y, point.y)};
+				box.high = {std::max(box.high.x, point.x), std::max(box.high.y, point.y)};
+			}
+			// A scan of every box: registrations are a few a tick, and every ring near the colony shares
+			// one kSeenBoxCellMm cell, so a grid of those would prune nothing.
+			const auto met = static_cast<std::size_t>(
+				std::ranges::count_if(registeredBoxes, [&box](const Box& other) { return boxesMeet(box.low, box.high, other.low, other.high); })
+			);
+			if (!registeredBoxes.empty()) {
+				ringsMetTotal += met;
+				ringsMetGreatest = std::max(ringsMetGreatest, met);
+			}
+			registered.push_back(added);
+			registeredBoxes.push_back(box);
 		}
 		markPhase(TickPhase::Widths);
 		mesh->refreshWidths();
@@ -816,5 +833,9 @@ namespace vision {
 	}
 
 	const std::vector<Vec2i64>& SeenArea::registeredRing(std::size_t index) const { return mesh->ring(registered[index]).polygon.ring; }
+
+	double SeenArea::ringsMetMean() const {
+		return registeredBoxes.size() > 1 ? static_cast<double>(ringsMetTotal) / static_cast<double>(registeredBoxes.size() - 1) : 0.0;
+	}
 
 } // namespace vision

@@ -1643,7 +1643,8 @@ namespace world_sim {
 			<< ",\"openLegs\":" << seen.pending().openLegs << ",\"shapesWaiting\":" << seen.pending().shapesWaiting
 			<< ",\"piecesWaiting\":" << seen.pending().piecesWaiting << ",\"shapesDropped\":" << seen.shapesDropped() << ",\"shapesSkipped\":" << seen.shapesSkipped()
 			<< ",\"sweepsBuilt\":" << seen.sweepsBuilt() << ",\"sweepsWaiting\":" << seen.sweepsWaiting() << ",\"sweepsDropped\":" << seen.sweepPointsDropped()
-			<< ",\"epoch\":" << seen.epoch();
+			<< ",\"epoch\":" << seen.epoch() << ",\"ringsMetMean\":" << std::setprecision(1) << seen.ringsMetMean()
+			<< ",\"ringsMetMost\":" << seen.ringsMetMost();
 		std::int64_t greatestRangeChangeMm = 0;
 		for (auto [entity, colonist] : m_ctx.world->view<ecs::Colonist>()) {
 			if (const vision::SightFeed* feed = visibility.feedOf(entity)) {

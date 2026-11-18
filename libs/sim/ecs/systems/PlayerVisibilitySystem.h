@@ -67,7 +67,9 @@ namespace ecs {
 		// in his leg's ring; on it, it can reach up to `lead` past seen ground ahead of him, where the
 		// cover's unseen fill hides it. None when his sight is too small to hold a leg, or on the polygon
 		// path a jump dropped his polygon (until vision builds the next).
-		[[nodiscard]] std::optional<DrawnShape> drawnVisible(EntityID colonist) const;
+		// The shape is kept until his build, his place, his eased rim, or the tunables it reads change, and
+		// the pointer is good until the next call for him or the next update.
+		[[nodiscard]] const DrawnShape* drawnVisible(EntityID colonist) const;
 		// The whole outline is seen.
 		[[nodiscard]] bool covers(const std::vector<glm::vec2>& outlineMeters) const;
 		// The seen point on the segment from `from` to `to` nearest `to`; `to` when it is seen. None
@@ -136,7 +138,27 @@ namespace ecs {
 		};
 		const geometry::Ring& drawnForestFor(EntityID colonist, const vision::SightFeed::SideOffsets& offsets) const;
 
+		// What drawnVisible last gave a colonist, and from what.
+		struct DrawnKey {
+			std::uint64_t				   buildRevision	= 0;
+			std::uint64_t				   polygonRevision = 0;
+			bool						   holdsPolygon	= false;
+			geometry::Vec2i64			   standing{0, 0};
+			vision::SightFeed::SideOffsets offsets{};
+			bool						   hasOffsets = false;
+			std::int64_t				   sightMm	  = 0;
+			std::int64_t				   rimEaseMm  = 0;
+			bool						   operator==(const DrawnKey&) const = default;
+		};
+		struct DrawnCache {
+			bool	   valid = false;
+			bool	   drawn = false;
+			DrawnKey   key;
+			DrawnShape shape;
+		};
+
 		vision::SeenArea			 seen;
+		mutable std::map<EntityID, DrawnCache> drawnCaches;
 		mutable std::map<EntityID, DrawnForest> drawnForests;
 		mutable std::uint64_t					drawnForestBuilds = 0;
 		const VisionSystem*			 sweepVision = nullptr; // the vision the record's sweeps build their polygons with

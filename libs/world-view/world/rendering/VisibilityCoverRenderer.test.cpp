@@ -15,6 +15,7 @@
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Memory.h>
 #include <ecs/components/Transform.h>
+#include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/PlayerVisibilitySystem.h>
 #include <ecs/systems/VisionSystem.h>
 #include <nav/NavCoords.h>
@@ -27,6 +28,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <map>
 #include <memory>
 #include <numbers>
 #include <optional>
@@ -93,9 +95,23 @@ namespace {
 			Renderer::Primitives::endFrame();
 		}
 
+		// A square trunk `sideMeters` wide round `centre`, placed long ago.
+		void place(glm::vec2 centre, float sideMeters) {
+			const Vec2i64	   middle = nav::toMm(centre);
+			const std::int64_t half	  = std::llround(sideMeters * 500.0F);
+			navigation.placedOccluders().add(
+				nextRing++,
+				{middle + Vec2i64{-half, -half}, middle + Vec2i64{half, -half}, middle + Vec2i64{half, half}, middle + Vec2i64{-half, half}},
+				"Test_Trunk",
+				-1000000000
+			);
+		}
+
 		ecs::World								 world;
 		ecs::VisionSystem&						 vision = world.registerSystem<ecs::VisionSystem>();
+		ecs::NavigationSystem&					 navigation = world.registerSystem<ecs::NavigationSystem>();
 		ecs::PlayerVisibilitySystem&			 visibility = world.registerSystem<ecs::PlayerVisibilitySystem>();
+		geometry::nav::RingId					 nextRing = 1;
 		world::WorldCamera						 camera;
 		std::unique_ptr<VisibilityCoverRenderer> cover = std::make_unique<VisibilityCoverRenderer>();
 	};
@@ -155,29 +171,29 @@ TEST_F(VisibilityCoverTest, UploadsOnlyWhenTheEpochMoves) {
 TEST_F(VisibilityCoverTest, LayersFromSightAndPendingShapes) {
 	frame();
 	EXPECT_TRUE(cover->layers().drawn);
-	EXPECT_TRUE(cover->layers().visibleOutlines.empty()) << "nobody in sight yet";
-	EXPECT_TRUE(cover->layers().pendingOutlines.empty());
+	EXPECT_EQ(cover->layers().brightShapes, 0U) << "nobody in sight yet";
+	EXPECT_EQ(cover->layers().pendingShapes, 0U);
 
 	const ecs::EntityID colonist = addColonist({0.0F, 0.0F});
 	walk(colonist, {5.0F, 0.0F}, 0.1F);
 	frame();
-	ASSERT_EQ(cover->layers().visibleOutlines.size(), 1U);
-	EXPECT_EQ(cover->layers().visibleOutlines[0].size(), static_cast<std::size_t>(geometry::kSightSides));
-	ASSERT_EQ(cover->layers().pendingOutlines.size(), 1U) << "his open leg";
+	ASSERT_EQ(cover->layers().brightShapes, 1U);
+	ASSERT_EQ(cover->colonists().size(), 1U);
+	EXPECT_EQ(cover->colonists()[0].bright->size(), static_cast<std::size_t>(geometry::kSightSides));
+	EXPECT_EQ(cover->layers().pendingShapes, 1U) << "his open leg";
 
-	// The bright disc is drawn round where he stands, in screen pixels.
-	const glm::vec2 standing = camera.worldToScreen(5.0F, 0.0F, kViewportWidth, kViewportHeight, kPixelsPerMeter);
-	const float		drawnPixels = static_cast<float>(vision::drawnVisibleRadiusMm(30000)) / 1000.0F * kPixelsPerMeter * camera.zoom();
-	for (const glm::vec2 point : cover->layers().visibleOutlines[0]) {
-		EXPECT_LE(glm::length(point - standing), drawnPixels + 0.5F);
+	// The bright disc is drawn round where he stands.
+	const double drawnMm = static_cast<double>(vision::drawnVisibleRadiusMm(30000));
+	for (const Vec2i64& point : *cover->colonists()[0].bright) {
+		EXPECT_LE(std::hypot(static_cast<double>(point.x) - 5000.0, static_cast<double>(point.y)), drawnMm + 1.0);
 	}
 
 	// A colonist far off the view adds nothing to the frame's layers.
 	const ecs::EntityID faraway = addColonist({2000.0F, 0.0F});
 	walk(faraway, {2005.0F, 0.0F}, 0.1F);
 	frame();
-	EXPECT_EQ(cover->layers().visibleOutlines.size(), 1U);
-	EXPECT_EQ(cover->layers().pendingOutlines.size(), 1U);
+	EXPECT_EQ(cover->layers().brightShapes, 1U);
+	EXPECT_EQ(cover->layers().pendingShapes, 1U);
 }
 
 TEST_F(VisibilityCoverTest, NothingWhileRevealed) {
@@ -186,15 +202,15 @@ TEST_F(VisibilityCoverTest, NothingWhileRevealed) {
 	visibility.setRevealed(true);
 	frame();
 	EXPECT_FALSE(cover->layers().drawn);
-	EXPECT_TRUE(cover->layers().visibleOutlines.empty());
-	EXPECT_TRUE(cover->layers().pendingOutlines.empty());
+	EXPECT_EQ(cover->layers().brightShapes, 0U);
+	EXPECT_EQ(cover->layers().pendingShapes, 0U);
 	EXPECT_EQ(cover->uploads(), 0U);
 
 	visibility.setRevealed(false);
 	frame();
 	EXPECT_TRUE(cover->layers().drawn);
 	EXPECT_EQ(cover->uploads(), 1U);
-	EXPECT_EQ(cover->layers().visibleOutlines.size(), 1U);
+	EXPECT_EQ(cover->layers().brightShapes, 1U);
 }
 
 namespace {
@@ -203,15 +219,15 @@ namespace {
 		double greatest = 0.0;
 		for (const worldview::ValueTriangle& piece : pieces) {
 			for (std::size_t corner = 1; corner + 1 < piece.points.size(); ++corner) {
-				const glm::dvec2 a	  = piece.points[0];
-				const glm::dvec2 b	  = piece.points[corner];
-				const glm::dvec2 c	  = piece.points[corner + 1];
-				const double	 area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+				const glm::dvec2 origin = piece.points[0];
+				const glm::dvec2 near	= piece.points[corner];
+				const glm::dvec2 far	= piece.points[corner + 1];
+				const double	 area	= (near.x - origin.x) * (far.y - origin.y) - (near.y - origin.y) * (far.x - origin.x);
 				if (area == 0.0) {
 					continue;
 				}
-				const double first	= ((b.x - point.x) * (c.y - point.y) - (b.y - point.y) * (c.x - point.x)) / area;
-				const double second = ((c.x - point.x) * (a.y - point.y) - (c.y - point.y) * (a.x - point.x)) / area;
+				const double first	= ((near.x - point.x) * (far.y - point.y) - (near.y - point.y) * (far.x - point.x)) / area;
+				const double second = ((far.x - point.x) * (origin.y - point.y) - (far.y - point.y) * (origin.x - point.x)) / area;
 				const double third	= 1.0 - first - second;
 				if (first >= -1e-9 && second >= -1e-9 && third >= -1e-9) {
 					greatest = std::max(greatest, first * piece.values[0] + second * piece.values[corner] + third * piece.values[corner + 1]);
@@ -227,13 +243,17 @@ namespace {
 		double least = 1.0;
 		for (const VisibilityCoverRenderer::ColonistCover& colonist : cover.colonists()) {
 			const Vec2i64 point{std::llround(millimetres.x), std::llround(millimetres.y)};
-			if (geometry::pointInPolygon(point, colonist.bright) == geometry::PointInPolygon::Outside) {
+			if (geometry::pointInPolygon(point, *colonist.bright) == geometry::PointInPolygon::Outside) {
 				continue;
 			}
 			const glm::dvec2 anchor{static_cast<double>(colonist.featherAnchor.x), static_cast<double>(colonist.featherAnchor.y)};
 			double			 darkness = greatestAt(*colonist.feather, millimetres - anchor);
 			if (colonist.shadows != nullptr) {
-				darkness = std::max({darkness, greatestAt(colonist.shadows->softPieces(), millimetres), greatestAt(colonist.shadows->bandPieces(), millimetres)});
+				std::vector<worldview::ValueTriangle> soft;
+				for (std::size_t ring = 0; ring < worldview::DrawnShadows::kSoftRings; ++ring) {
+					colonist.shadows->appendSoftPieces(ring, soft);
+				}
+				darkness = std::max({darkness, greatestAt(soft, millimetres), greatestAt(colonist.shadows->bandPieces(), millimetres)});
 			}
 			least = std::min(least, darkness);
 		}
@@ -256,8 +276,8 @@ TEST_F(VisibilityCoverTest, SeveralColonistsComposeAsTheLeastDarkness) {
 	EXPECT_TRUE(cover->tintShape().everyGroupDarkens);
 	EXPECT_TRUE(cover->tintShape().everyPieceInsideItsBrightShape);
 	for (const VisibilityCoverRenderer::ColonistCover& colonist : cover->colonists()) {
-		EXPECT_EQ(colonist.rimSides, colonist.bright.size()) << "in the open every side is rim";
-		EXPECT_EQ(colonist.feather->size(), 2 * colonist.bright.size()) << "a convex shape: a rectangle a side and no fan";
+		EXPECT_EQ(colonist.rimSides, colonist.bright->size()) << "in the open every side is rim";
+		EXPECT_EQ(colonist.feather->size(), 2 * colonist.bright->size()) << "a convex shape: a rectangle a side and no fan";
 	}
 
 	const double rimMm = static_cast<double>(vision::drawnVisibleRadiusMm(30000) - 400);
@@ -287,25 +307,73 @@ TEST_F(VisibilityCoverTest, AStillColonistBuildsNothingOnceSettled) {
 	}
 }
 
-// Fifty colonists walking: no frame rebuilds more than kDrawnShadowRebuildsPerFrame colonists' soft
-// triangles, the rest carried to later frames, and every one is rebuilt in turn.
-TEST_F(VisibilityCoverTest, FiftyWalkingNeverPassTheRebuildsAFrame) {
+// A colonist who leaves the view and comes back builds nothing for it: his pieces and meshes are kept
+// while he lives.
+TEST_F(VisibilityCoverTest, LeavingTheViewKeepsHisPieces) {
+	place({6.0F, 2.0F}, 0.4F);
+	const ecs::EntityID colonist = addColonist({0.0F, 0.0F});
+	walk(colonist, {3.0F, 0.0F}, 0.05F);
+	for (int settle = 0; settle < 10; ++settle) {
+		world.update(0.016F);
+		frame();
+	}
+	ASSERT_EQ(cover->colonists().size(), 1U);
+	ASSERT_GT(cover->colonists()[0].shadows->softPieceCount(), 0U);
+	camera.setPosition({400.0F, 0.0F});
+	frame();
+	EXPECT_EQ(cover->colonists().size(), 0U);
+	camera.setPosition({0.0F, 0.0F});
+	frame();
+	ASSERT_EQ(cover->colonists().size(), 1U);
+	EXPECT_EQ(cover->counts().piecesBuilt, 0U);
+	EXPECT_EQ(cover->counts().meshUploads, 0U);
+}
+
+// Fifty colonists walking 2 m/s through trunks 4 m apart: no frame builds more soft pieces than
+// kDrawnShadowPiecesPerFrame and one body's, a frame that leaves bodies due spends the budget, the
+// longest due waits a bounded time, and every walker gets builds in turn.
+TEST_F(VisibilityCoverTest, FiftyWalkingKeepToTheBudgetAndEveryOneIsBuilt) {
+	for (float x = -38.0F; x <= 62.0F; x += 4.0F) {
+		for (float y = -32.0F; y <= 32.0F; y += 4.0F) {
+			place({x, y}, 0.5F);
+		}
+	}
 	std::vector<ecs::EntityID> walkers;
 	for (int index = 0; index < 50; ++index) {
 		walkers.push_back(addColonist({static_cast<float>(index % 10) * 4.0F - 20.0F, static_cast<float>(index / 10) * 4.0F - 10.0F}));
 	}
-	std::size_t rebuilt = 0;
-	for (int step = 0; step < 120; ++step) {
+	constexpr std::size_t kOneBodyMostPieces = 200;
+	constexpr int		  kFrames			 = 150;
+	constexpr int		  kWarmFrames		 = 60;
+	std::map<ecs::EntityID, int> builtLate;
+	std::size_t					 backlogFrames = 0;
+	for (int step = 0; step < kFrames; ++step) {
 		for (const ecs::EntityID walker : walkers) {
 			world.getComponent<ecs::Position>(walker)->value.x += 2.0F / 60.0F;
 		}
-		world.update(0.016F);
+		world.update(1.0F / 60.0F);
 		frame();
-		EXPECT_LE(cover->counts().softRebuilds, worldview::kDrawnShadowRebuildsPerFrame) << "frame " << step;
-		rebuilt += cover->counts().softRebuilds;
+		const VisibilityCoverRenderer::Counts& counts = cover->counts();
+		ASSERT_EQ(counts.colonists, 50U);
+		EXPECT_LE(counts.softPiecesBuilt, worldview::kDrawnShadowPiecesPerFrame + kOneBodyMostPieces) << "frame " << step;
+		// The next body is let in by its last count of pieces, so the budget left unspent is at most one
+		// body's.
+		if (counts.softBodiesDue > counts.softBodiesBuilt) {
+			++backlogFrames;
+			EXPECT_GE(counts.softPiecesBuilt + kOneBodyMostPieces, worldview::kDrawnShadowPiecesPerFrame) << "frame " << step << ": bodies wait, budget unspent";
+		}
+		if (step >= kWarmFrames) {
+			EXPECT_LE(counts.softOldestDueFrames, 60U) << "frame " << step;
+			for (const VisibilityCoverRenderer::ColonistCover& colonist : cover->colonists()) {
+				builtLate[colonist.colonist] += colonist.shadows->counts().softBuilt > 0 ? 1 : 0;
+			}
+		}
 	}
-	EXPECT_GE(rebuilt, 50U * 4U / 2U) << "4 m each at 500 mm, every colonist in turn";
-	EXPECT_LE(rebuilt, 120U * worldview::kDrawnShadowRebuildsPerFrame);
+	EXPECT_GT(backlogFrames, 0U) << "fifty in forest outrun one frame's budget";
+	ASSERT_EQ(builtLate.size(), 50U);
+	for (const auto& [walker, frames] : builtLate) {
+		EXPECT_GE(frames, 3) << "walker " << walker << ": 3 m of walk past trunks 4 m apart";
+	}
 }
 
 TEST_F(VisibilityCoverTest, TheBrightShapeIsSeenAndTheSeenEdgeFadesInside) {
@@ -316,7 +384,7 @@ TEST_F(VisibilityCoverTest, TheBrightShapeIsSeenAndTheSeenEdgeFadesInside) {
 	camera.setPosition({0.0F, 0.0F});
 	frame();
 	ASSERT_EQ(cover->colonists().size(), 1U);
-	for (const Vec2i64& vertex : cover->colonists()[0].bright) {
+	for (const Vec2i64& vertex : *cover->colonists()[0].bright) {
 		EXPECT_TRUE(visibility.isSeen(nav::toMeters(vertex)));
 	}
 

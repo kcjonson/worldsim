@@ -43,8 +43,8 @@ namespace {
 	constexpr float kSight = kDefaultSightRadius;
 
 	// The bright outline alone, for tests that read only where it lies.
-	std::optional<std::vector<Vec2i64>> outlineOf(const std::optional<PlayerVisibilitySystem::DrawnShape>& drawn) {
-		return drawn.has_value() ? std::optional(drawn->outline) : std::nullopt;
+	std::optional<std::vector<Vec2i64>> outlineOf(const PlayerVisibilitySystem::DrawnShape* drawn) {
+		return drawn != nullptr ? std::optional(drawn->outline) : std::nullopt;
 	}
 
 	// Vision every frame, so each frame's sight shape is the one this frame's position gives.
@@ -507,7 +507,7 @@ TEST(PlayerVisibilitySystem, DrawnVisibleOutdoorsIsTheDiscRoundWhereHeStands) {
 	const EntityID shortSighted = colony.addColonist({100.0F, 0.0F});
 	colony.world.getComponent<Memory>(shortSighted)->sightRadius = 1.0F;
 	colony.tick();
-	EXPECT_FALSE(colony.visibility.drawnVisible(shortSighted).has_value());
+	EXPECT_FALSE(colony.visibility.drawnVisible(shortSighted) != nullptr);
 }
 
 // With walls in sight the bright shape is vision's polygon cut to the disc round where he stands and
@@ -552,8 +552,8 @@ TEST(PlayerVisibilitySystem, DrawnRimSidesAreTheDiscsAndNotTheWallFace) {
 	Colony		   colony;
 	const EntityID outdoors = colony.addColonist({-500.0F, 0.0F});
 	colony.walk(outdoors, {-504.0F, 0.0F}, 0.05F);
-	const std::optional<PlayerVisibilitySystem::DrawnShape> open = colony.visibility.drawnVisible(outdoors);
-	ASSERT_TRUE(open.has_value());
+	const PlayerVisibilitySystem::DrawnShape* open = colony.visibility.drawnVisible(outdoors);
+	ASSERT_NE(open, nullptr);
 	ASSERT_EQ(open->rim.size(), open->outline.size());
 	EXPECT_TRUE(std::ranges::all_of(open->rim, [](bool rim) { return rim; }));
 
@@ -561,8 +561,8 @@ TEST(PlayerVisibilitySystem, DrawnRimSidesAreTheDiscsAndNotTheWallFace) {
 	colony.visibility.setConstructionWorld(&walls);
 	const EntityID colonist = colony.addColonist({0.0F, 0.0F});
 	colony.tick();
-	const std::optional<PlayerVisibilitySystem::DrawnShape> drawn = colony.visibility.drawnVisible(colonist);
-	ASSERT_TRUE(drawn.has_value());
+	const PlayerVisibilitySystem::DrawnShape* drawn = colony.visibility.drawnVisible(colonist);
+	ASSERT_NE(drawn, nullptr);
 	ASSERT_EQ(drawn->rim.size(), drawn->outline.size());
 	const std::int64_t drawnMm = vision::drawnVisibleRadiusMm(std::llround(kSight * 1000.0F)) - 400;
 	std::size_t		   faces   = 0;
@@ -1282,8 +1282,8 @@ TEST(PlayerVisibilitySystem, OnThePolygonPathInForestTheRimSidesAreRim) {
 	const std::optional<VisionSystem::SightShape> shape = colony.vision.sightShape(colonist);
 	ASSERT_TRUE(shape.has_value());
 	ASSERT_NE(shape->polygon, nullptr);
-	const std::optional<PlayerVisibilitySystem::DrawnShape> drawn = colony.visibility.drawnVisible(colonist);
-	ASSERT_TRUE(drawn.has_value());
+	const PlayerVisibilitySystem::DrawnShape* drawn = colony.visibility.drawnVisible(colonist);
+	ASSERT_NE(drawn, nullptr);
 	const std::size_t count = drawn->outline.size();
 	for (std::size_t side = 0; side < count; ++side) {
 		const Vec2i64& from = drawn->outline[side];

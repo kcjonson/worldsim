@@ -90,8 +90,8 @@ using geometry::Vec2i64;
 namespace {
 
 	// The bright outline alone, for tests that read only where it lies.
-	std::optional<std::vector<Vec2i64>> outlineOf(const std::optional<PlayerVisibilitySystem::DrawnShape>& drawn) {
-		return drawn.has_value() ? std::optional(drawn->outline) : std::nullopt;
+	std::optional<std::vector<Vec2i64>> outlineOf(const PlayerVisibilitySystem::DrawnShape* drawn) {
+		return drawn != nullptr ? std::optional(drawn->outline) : std::nullopt;
 	}
 
 	// Project root from __FILE__: this file lives at <root>/libs/sim/ecs/systems/.
@@ -1465,7 +1465,7 @@ TEST_F(NavigationSystemTest, BrightRimInForestIsTheSameOnEveryPath) {
 
 		const std::uint64_t forestBuilds = visibility.drawnForestBuildCount();
 		world.update(0.016F);
-		ASSERT_TRUE(visibility.drawnVisible(observer).has_value());
+		ASSERT_TRUE(visibility.drawnVisible(observer) != nullptr);
 		EXPECT_EQ(visibility.drawnForestBuildCount(), forestBuilds) << "a frame between builds builds no forest shape";
 
 		std::int64_t east = 0;

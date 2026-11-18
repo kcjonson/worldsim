@@ -99,6 +99,21 @@ namespace {
 
 } // namespace
 
+// K where registered: a diamond whose box meets the first ring's box, though the shapes are apart,
+// meets one; a square far off meets none. The first ring is counted against nothing.
+TEST(SeenArea, RingsMetCountsTheBoxesAlreadyRegistered) {
+	SeenArea seen;
+	const auto diamond = [](double x, double y, double radius) {
+		return std::vector<Vec2i64>{metres(x, y - radius), metres(x + radius, y), metres(x, y + radius), metres(x - radius, y)};
+	};
+	seen.commitNow(diamond(0.0, 0.0, 5.0), metres(0.0, 0.0));
+	seen.commitNow(diamond(9.0, 4.0, 4.0), metres(9.0, 4.0));
+	seen.commitNow(square(100.0, 0.0, 5.0), metres(100.0, 0.0));
+	ASSERT_EQ(seen.ringsRegistered(), 3U);
+	EXPECT_EQ(seen.ringsMetMost(), 1U);
+	EXPECT_DOUBLE_EQ(seen.ringsMetMean(), 0.5);
+}
+
 // The landing's polygon goes in at once, as one ring, and holds what it is inscribed in.
 TEST(SeenArea, LandingIsOneRingInscribedInItsCircle) {
 	SeenArea	  seen;

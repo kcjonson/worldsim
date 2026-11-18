@@ -15,15 +15,15 @@
 #include <primitives/Primitives.h>
 #include <primitives/WorldCamera.h>
 
+#include <GL/glew.h>
 #include <glm/geometric.hpp>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
-#include <iterator>
-#include <limits>
 #include <span>
+#include <utility>
 
 namespace worldview {
 
@@ -38,6 +38,10 @@ namespace worldview {
 
 		// How many frames a replaced mesh is kept before its buffers go.
 		constexpr std::uint64_t kRetiredMeshFrames = 3;
+
+		// What the partial masks need of the window (salal docs/masks.md).
+		constexpr GLint kAlphaBitsNeeded = 8;
+		constexpr GLint kDepthBitsNeeded = 24;
 
 		Foundation::Vec2 toWorldMeters(const geometry::Vec2i64& millimetres) {
 			return {
@@ -63,49 +67,45 @@ namespace worldview {
 			}
 		};
 
-		// Every polygon of the frame's masks in screen pixels, in one block reserved up front, so the
+		// The points appended to `screen`, which the caller reserved for every point of the frame, so the
 		// spans the mask elements hold stay put until the draws read them.
-		class ScreenPoints {
-		  public:
-			void reserve(std::size_t count) { points.reserve(count); }
-
-			std::span<const Foundation::Vec2> add(std::span<const glm::dvec2> millimetres, const ScreenMap& map) {
-				const std::size_t first = points.size();
-				for (const glm::dvec2 point : millimetres) {
-					points.push_back(map(point));
+		template <typename Point> std::span<const Foundation::Vec2> addOnScreen(std::vector<Foundation::Vec2>& screen, std::span<const Point> points, const ScreenMap& map) {
+			const std::size_t first = screen.size();
+			for (const Point& point : points) {
+				if constexpr (std::is_same_v<Point, geometry::Vec2i64>) {
+					screen.push_back(map(toDouble(point)));
+				} else {
+					screen.push_back(map(point));
 				}
-				return {points.data() + first, millimetres.size()};
 			}
+			return {screen.data() + first, points.size()};
+		}
 
-			std::span<const Foundation::Vec2> add(const std::vector<Foundation::Vec2>& screen) {
-				const std::size_t first = points.size();
-				points.insert(points.end(), screen.begin(), screen.end());
-				return {points.data() + first, screen.size()};
-			}
-
-		  private:
-			std::vector<Foundation::Vec2> points;
-		};
-
-		// A bright shape's rim sides as edges with its inside on the left.
-		std::vector<DirectedEdge> rimEdgesOf(const ecs::PlayerVisibilitySystem::DrawnShape& drawn) {
-			std::vector<DirectedEdge> edges;
-			const std::size_t		  count = drawn.outline.size();
-			double					  doubled = 0.0;
-			for (std::size_t k = 0; k < count; ++k) {
-				doubled += geometry::cross(drawn.outline[k], drawn.outline[(k + 1) % count]).toDouble();
+		// A shape's rim sides as edges with its inside on the left, into `out`.
+		void appendRimEdges(std::span<const geometry::Vec2i64> outline, const std::vector<bool>& rim, std::vector<DirectedEdge>& out) {
+			const std::size_t count	  = outline.size();
+			double			  doubled = 0.0;
+			for (std::size_t corner = 0; corner < count; ++corner) {
+				doubled += geometry::cross(outline[corner], outline[(corner + 1) % count]).toDouble();
 			}
 			for (std::size_t side = 0; side < count; ++side) {
-				if (drawn.rim[side]) {
-					const geometry::Vec2i64& from = drawn.outline[side];
-					const geometry::Vec2i64& to	  = drawn.outline[(side + 1) % count];
-					edges.emplace_back(doubled >= 0.0 ? from : to, doubled >= 0.0 ? to : from);
+				if (rim[side]) {
+					const geometry::Vec2i64& from = outline[side];
+					const geometry::Vec2i64& to	  = outline[(side + 1) % count];
+					out.emplace_back(doubled >= 0.0 ? from : to, doubled >= 0.0 ? to : from);
 				}
 			}
-			return edges;
 		}
 
 	} // namespace
+
+	bool coverTargetHoldsPartialMasks() {
+		GLint alpha = 0;
+		GLint depth = 0;
+		glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, GL_BACK_LEFT, GL_FRAMEBUFFER_ATTACHMENT_ALPHA_SIZE, &alpha);
+		glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, GL_DEPTH, GL_FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE, &depth);
+		return alpha >= kAlphaBitsNeeded && depth >= kDepthBitsNeeded;
+	}
 
 	std::vector<renderer::TessellatedMesh> seenMeshes(const std::vector<vision::SeenArea::Triangle>& triangles) {
 		constexpr std::size_t				   kTrianglesPerMesh = kSeenMeshVertexLimit / kTriangleVertices;
@@ -190,12 +190,11 @@ namespace worldview {
 			++frameCounts.meshUploads;
 		}
 		frameCounts.uploadMicroseconds += microsecondsSince(start);
-		frameCounts.piecesBuilt += pieces.size();
 	}
 
-	// Each colonist in view: his bright shape, the feather on its rim sides, and his drawn shadows, each
-	// built and uploaded only when it changes, and the soft triangles of at most
-	// kDrawnShadowRebuildsPerFrame colonists a frame, the longest due first.
+	// Each colonist in view: his bright shape and the feather on its rim sides, built about where he
+	// stands and uploaded with his bands when either changes; then his due soft bodies, over every
+	// colonist in view, the longest due first, up to kDrawnShadowPiecesPerFrame pieces.
 	void VisibilityCoverRenderer::gather(
 		ecs::World&					 world,
 		ecs::PlayerVisibilitySystem& visibility,
@@ -205,29 +204,16 @@ namespace worldview {
 		float						 pixelsPerMeter
 	) {
 		const Foundation::Rect view{0.0F, 0.0F, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)};
-		frameLayers.visibleOutlines.clear();
-		frameLayers.pendingOutlines.clear();
 		frameColonists.clear();
+		inView.clear();
 		const ecs::VisionSystem* vision = world.tryGetSystem<ecs::VisionSystem>();
 		if (vision == nullptr) {
 			return;
 		}
-		const vision::SightTunables& tunables  = vision->sightTunables();
-		const double				 featherMm = static_cast<double>(tunables.sightFeatherMm);
+		const vision::SightTunables& tunables	 = vision->sightTunables();
+		const double				 featherMm	 = static_cast<double>(tunables.sightFeatherMm);
+		const double				 pixelsPerMm = static_cast<double>(pixelsPerMeter) * static_cast<double>(camera.zoom()) / 1000.0;
 
-		struct InView {
-			ecs::EntityID								  entity = ecs::kInvalidEntity;
-			ColonistState*								  state	 = nullptr;
-			geometry::Vec2i64							  standing{0, 0};
-			glm::dvec2									  eyeMm{0.0};
-			double										  walkedMm		= 0.0;
-			double										  brightReachMm = 0.0;
-			std::optional<ecs::VisionSystem::SightBodies> bodies;
-			std::uint64_t								  buildRevision = 0;
-			bool										  featherChanged = false;
-			bool										  rebuildSoft	= false;
-		};
-		std::vector<InView> inView;
 		for (auto [entity, position, colonist, memory] : world.view<ecs::Position, ecs::Colonist, ecs::Memory>()) {
 			// A colonist whose sight misses the view draws nothing in it.
 			const Foundation::Vec2 corner =
@@ -239,42 +225,41 @@ namespace worldview {
 				continue;
 			}
 			const auto											   brightStart = std::chrono::steady_clock::now();
-			std::optional<ecs::PlayerVisibilitySystem::DrawnShape> drawn	   = visibility.drawnVisible(entity);
+			const ecs::PlayerVisibilitySystem::DrawnShape* const drawn		 = visibility.drawnVisible(entity);
 			frameCounts.brightMicroseconds += microsecondsSince(brightStart);
-			if (!drawn.has_value()) {
+			if (drawn == nullptr) {
 				continue;
 			}
-			ColonistState&	  state = states[entity];
-			state.frame				= frameNumber;
+			ColonistState&			state	 = states[entity];
 			const geometry::Vec2i64 standing = nav::toMm(position.value);
 			const glm::dvec2		eyeMm	 = toDouble(standing);
 			const double			walkedMm = state.placed ? glm::length(eyeMm - state.lastPosition) : 0.0;
 			state.placed					 = true;
 			state.lastPosition				 = eyeMm;
-
-			ColonistCover cover{.colonist = entity, .bright = std::move(drawn->outline), .rim = std::move(drawn->rim)};
-			cover.rimSides = static_cast<std::size_t>(std::ranges::count(cover.rim, true));
+			state.bright.assign(drawn->outline.begin(), drawn->outline.end());
+			state.rim.assign(drawn->rim.begin(), drawn->rim.end());
 
 			// The feather: the same shape about where he stands needs nothing new, and moves with him.
-			bool						   featherChanged = false;
-			std::vector<geometry::Vec2i64> shape(cover.bright.size());
-			std::ranges::transform(cover.bright, shape.begin(), [&standing](const geometry::Vec2i64& point) { return point - standing; });
-			if (!state.featherBuilt || shape != state.featherShape || cover.rim != state.featherRim || state.featherWidthMm != tunables.sightFeatherMm) {
-				const ecs::PlayerVisibilitySystem::DrawnShape relative{.outline = shape, .rim = cover.rim};
-				state.featherPieces.clear();
-				appendFeather(rimEdgesOf(relative), featherMm, state.featherPieces);
-				featherChanged = true;
-				state.featherShape	= std::move(shape);
-				state.featherRim	= cover.rim;
-				state.featherBuilt	= true;
-				state.featherWidthMm = tunables.sightFeatherMm;
-				++frameCounts.featherRebuilds;
+			shapeScratch.clear();
+			for (const geometry::Vec2i64& point : state.bright) {
+				shapeScratch.push_back(point - standing);
 			}
-			cover.featherAnchor	 = standing;
-			cover.feather		 = &state.featherPieces;
-			cover.followMeshes = &state.followMeshes;
-			cover.softMeshes	= &state.softMeshes;
+			InView colonistInView{.entity = entity, .state = &state, .standing = standing};
+			if (!state.featherBuilt || shapeScratch != state.featherShape || state.rim != state.featherRim || state.featherWidthMm != tunables.sightFeatherMm) {
+				edgeScratch.clear();
+				appendRimEdges(shapeScratch, state.rim, edgeScratch);
+				state.featherPieces.clear();
+				appendFeather(edgeScratch, featherMm, state.featherPieces);
+				std::swap(state.featherShape, shapeScratch);
+				state.featherRim				= state.rim;
+				state.featherBuilt				= true;
+				state.featherWidthMm			= tunables.sightFeatherMm;
+				colonistInView.featherChanged	= true;
+				frameCounts.piecesBuilt += state.featherPieces.size();
+			}
 
+			ColonistCover cover{.colonist = entity, .bright = &state.bright, .featherAnchor = standing, .feather = &state.featherPieces};
+			cover.rimSides = static_cast<std::size_t>(std::ranges::count(state.rim, true));
 			if (const vision::SightFeed* feed = visibility.feedOf(entity)) {
 				if (const std::optional<vision::SightFeed::SideOffsets> offsets = feed->drawnOffsets()) {
 					if (state.hasOffsets) {
@@ -287,89 +272,104 @@ namespace worldview {
 				}
 			}
 
-			InView colonistInView{.entity = entity, .state = &state, .standing = standing, .eyeMm = eyeMm, .walkedMm = walkedMm, .featherChanged = featherChanged};
-			const std::optional<ecs::VisionSystem::SightShape> sight = vision->sightShape(entity);
-			colonistInView.bodies									 = vision->sightBodies(entity);
-			if (sight.has_value() && colonistInView.bodies.has_value() && colonistInView.bodies->bodies != nullptr && colonistInView.bodies->shadowEdges != nullptr) {
-				colonistInView.buildRevision = sight->buildRevision;
-				for (const geometry::Vec2i64& point : cover.bright) {
-					colonistInView.brightReachMm = std::max(colonistInView.brightReachMm, glm::length(toDouble(point) - eyeMm));
+			const std::optional<ecs::VisionSystem::SightShape>	sight  = vision->sightShape(entity);
+			const std::optional<ecs::VisionSystem::SightBodies> bodies = vision->sightBodies(entity);
+			if (sight.has_value() && bodies.has_value() && bodies->bodies != nullptr && bodies->shadowEdges != nullptr) {
+				double brightReachMm = 0.0;
+				for (const geometry::Vec2i64& point : state.bright) {
+					brightReachMm = std::max(brightReachMm, glm::length(toDouble(point) - eyeMm));
 				}
-				if (state.shadows.softDue(eyeMm, tunables)) {
-					state.softDueSince = state.softDueSince == 0 ? frameNumber : state.softDueSince;
-				} else {
-					state.softDueSince = 0;
-				}
-			} else {
-				colonistInView.bodies.reset();
+				state.shadows.update(*bodies, sight->buildRevision, eyeMm, walkedMm, state.bright, brightReachMm, pixelsPerMm, tunables, frameNumber);
+				colonistInView.hasBodies = true;
+				cover.shadows			 = &state.shadows;
 			}
 			inView.push_back(colonistInView);
-			frameColonists.push_back(std::move(cover));
+			frameColonists.push_back(cover);
 		}
 
-		// The soft triangles due this frame, the longest due first, up to the budget.
-		std::vector<std::size_t> due;
+		// The due soft bodies, the longest due first, up to the budget.
+		due.clear();
 		for (std::size_t index = 0; index < inView.size(); ++index) {
-			if (inView[index].bodies.has_value() && inView[index].state->softDueSince != 0) {
-				due.push_back(index);
+			if (!inView[index].hasBodies) {
+				continue;
+			}
+			dueOfOne.clear();
+			inView[index].state->shadows.appendDue(dueOfOne);
+			for (const DrawnShadows::Due& body : dueOfOne) {
+				due.push_back({.due = body, .colonist = index});
 			}
 		}
-		frameCounts.softDue = due.size();
-		std::ranges::stable_sort(due, [&inView](std::size_t first, std::size_t second) { return inView[first].state->softDueSince < inView[second].state->softDueSince; });
-		for (std::size_t taken = 0; taken < due.size() && taken < kDrawnShadowRebuildsPerFrame; ++taken) {
-			inView[due[taken]].rebuildSoft = true;
+		std::ranges::sort(due, [](const DueBody& first, const DueBody& second) { return first.due.since < second.due.since; });
+		frameCounts.softBodiesDue		= due.size();
+		frameCounts.softOldestDueFrames = due.empty() ? 0 : frameNumber - due.front().due.since;
+		std::size_t budget				= kDrawnShadowPiecesPerFrame;
+		for (const DueBody& body : due) {
+			if (body.due.pieces > budget && frameCounts.softBodiesBuilt > 0) {
+				break;
+			}
+			const std::size_t built = inView[body.colonist].state->shadows.build(body.due.key);
+			frameCounts.softPiecesBuilt += built;
+			frameCounts.piecesBuilt += built;
+			budget -= std::min(budget, built);
+			++frameCounts.softBodiesBuilt;
 		}
 
 		for (std::size_t index = 0; index < inView.size(); ++index) {
-			InView&		   colonist = inView[index];
+			const InView&  colonist = inView[index];
 			ColonistState& state	= *colonist.state;
-			bool bandsRebuilt = false;
-			if (colonist.bodies.has_value()) {
-				state.shadows.update(*colonist.bodies, colonist.buildRevision, colonist.eyeMm, colonist.walkedMm, colonist.brightReachMm, tunables, colonist.rebuildSoft);
-				if (state.shadows.counts().softRebuilt) {
-					state.softDueSince = 0;
-					uploadPieces(state.shadows.softPieces(), {0.0, 0.0}, state.softMeshes);
-					++frameCounts.softRebuilds;
+			ColonistCover& cover	= frameColonists[index];
+			const bool	   bands	= colonist.hasBodies && state.shadows.counts().bandsRebuilt;
+			for (std::size_t ring = 0; ring < DrawnShadows::kSoftRings; ++ring) {
+				if (!colonist.hasBodies) {
+					retire(state.softMeshes[ring]);
+				} else if ((state.shadows.counts().softChangedRings & (1U << ring)) != 0U) {
+					pieceScratch.clear();
+					state.shadows.appendSoftPieces(ring, pieceScratch);
+					state.softAnchors[ring] = colonist.standing;
+					uploadPieces(pieceScratch, toDouble(colonist.standing), state.softMeshes[ring]);
 				}
-				bandsRebuilt = state.shadows.counts().bandsRebuilt;
-				frameCounts.bandRebuilds += bandsRebuilt ? 1 : 0;
-				frameColonists[index].shadows = &state.shadows;
-			} else {
-				retire(state.softMeshes);
 			}
 			// His feather and his bands, about where he stands, go up together: both change on the frames he
 			// walks, and a band he stands still beside changes on none.
-			if (colonist.featherChanged || bandsRebuilt) {
-				std::vector<ValueTriangle> following = state.featherPieces;
-				if (colonist.bodies.has_value()) {
+			if (colonist.featherChanged || bands) {
+				pieceScratch.assign(state.featherPieces.begin(), state.featherPieces.end());
+				if (colonist.hasBodies) {
 					const glm::dvec2 standing = toDouble(colonist.standing);
 					for (ValueTriangle piece : state.shadows.bandPieces()) {
 						for (glm::dvec2& point : piece.points) {
 							point -= standing;
 						}
-						following.push_back(piece);
+						pieceScratch.push_back(piece);
 					}
 				}
-				uploadPieces(following, {0.0, 0.0}, state.followMeshes);
+				uploadPieces(pieceScratch, {0.0, 0.0}, state.followMeshes);
+				++frameCounts.featherRebuilds;
+			}
+			frameCounts.bandRebuilds += bands ? 1 : 0;
+			frameCounts.piecesBuilt += bands ? state.shadows.bandPieces().size() : 0;
+			cover.followMeshes = &state.followMeshes;
+			cover.softMeshes   = &state.softMeshes;
+			cover.softAnchors  = &state.softAnchors;
+			frameCounts.featherPieces += state.featherPieces.size();
+			if (colonist.hasBodies) {
+				frameCounts.softBodies += state.shadows.softBodies().size();
+				frameCounts.shadowEdges += state.shadows.edges().size();
+				frameCounts.softPieces += state.shadows.softPieceCount();
+				frameCounts.bandPieces += state.shadows.bandPieces().size();
 			}
 		}
 
+		// A colonist's pieces are kept while he lives, in view or out of it, so coming back into view
+		// builds nothing and no ease starts again.
 		for (auto it = states.begin(); it != states.end();) {
-			if (it->second.frame != frameNumber) {
+			if (world.getComponent<ecs::Colonist>(it->first) == nullptr) {
 				retire(it->second.followMeshes);
-				retire(it->second.softMeshes);
+				for (std::vector<Renderer::InstancedMeshHandle>& ring : it->second.softMeshes) {
+					retire(ring);
+				}
 				it = states.erase(it);
 			} else {
 				++it;
-			}
-		}
-		for (const ColonistCover& cover : frameColonists) {
-			frameCounts.featherPieces += cover.feather->size();
-			if (cover.shadows != nullptr) {
-				frameCounts.softBodies += cover.shadows->softBodies().size();
-				frameCounts.shadowEdges += cover.shadows->edges().size();
-				frameCounts.softPieces += cover.shadows->softPieces().size();
-				frameCounts.bandPieces += cover.shadows->bandPieces().size();
 			}
 		}
 		frameCounts.colonists = frameColonists.size();
@@ -385,14 +385,13 @@ namespace worldview {
 		++frameNumber;
 		frameCounts = Counts{};
 		frameTint	= TintShape{};
+		frameLayers = Layers{};
 		while (!retired.empty() && frameNumber - retired.front().first >= kRetiredMeshFrames) {
 			retired.pop_front();
 		}
 		ecs::PlayerVisibilitySystem* visibility = world.tryGetSystem<ecs::PlayerVisibilitySystem>();
 		frameLayers.drawn						= visibility != nullptr && !visibility->revealed();
 		if (!frameLayers.drawn) {
-			frameLayers.visibleOutlines.clear();
-			frameLayers.pendingOutlines.clear();
 			frameColonists.clear();
 			return;
 		}
@@ -400,8 +399,7 @@ namespace worldview {
 			upload(visibility->seenArea());
 		}
 		const ecs::VisionSystem* vision = world.tryGetSystem<ecs::VisionSystem>();
-		const std::int64_t		 featherMm =
-			  vision != nullptr ? vision->sightTunables().sightFeatherMm : vision::SightTunables{}.sightFeatherMm;
+		const std::int64_t featherMm = vision != nullptr ? vision->sightTunables().sightFeatherMm : vision::SightTunables{}.sightFeatherMm;
 
 		const Foundation::Rect visibleRect = camera.getVisibleRect(viewportWidth, viewportHeight, pixelsPerMeter);
 		const ScreenMap		   map{
@@ -430,23 +428,32 @@ namespace worldview {
 			static_cast<float>(viewportWidth) + 2.0F * kCoverOverhangPixels,
 			static_cast<float>(viewportHeight) + 2.0F * kCoverOverhangPixels
 		};
-		const Primitives::WorldCamera meshCamera{
-			.position = {camera.position().x, camera.position().y}, .zoom = camera.zoom(), .pixelsPerMeter = pixelsPerMeter
+		// A camera moved by `anchor`, which draws a mesh built about it where it belongs.
+		const auto cameraAbout = [&](const geometry::Vec2i64& anchor) {
+			return Primitives::WorldCamera{
+				.position	   = {static_cast<float>(static_cast<double>(camera.position().x) - static_cast<double>(anchor.x) / 1000.0),
+							  static_cast<float>(static_cast<double>(camera.position().y) - static_cast<double>(anchor.y) / 1000.0)},
+				.zoom		   = camera.zoom(),
+				.pixelsPerMeter = pixelsPerMeter
+			};
 		};
+		const Primitives::WorldCamera meshCamera = cameraAbout({0, 0});
 
 		// Every point the masks name, reserved whole before any span into it is taken.
 		std::size_t pointCount = 4;
 		for (const ColonistCover& cover : frameColonists) {
-			pointCount += cover.bright.size();
+			pointCount += cover.bright->size();
 		}
-		for (const std::vector<glm::dvec2>& grown : feather.pendingGrown()) {
-			pointCount += grown.size();
+		for (const SeenFeather::Cluster* cluster : feather.clustersInView()) {
+			for (const std::vector<glm::dvec2>& grown : cluster->grown) {
+				pointCount += grown.size();
+			}
 		}
 		for (const std::vector<geometry::Vec2i64>* shape : feather.pendingInView()) {
 			pointCount += shape->size();
 		}
-		ScreenPoints screen;
-		screen.reserve(pointCount);
+		screenPoints.clear();
+		screenPoints.reserve(pointCount);
 
 		// The tint (7.5): the view at 1, then a group a colonist, darkened in, holding his bright shape at 0
 		// and over it his feather and drawn shadows, each clipped to his bright shape.
@@ -454,33 +461,27 @@ namespace worldview {
 			Foundation::Vec2{view.x, view.y}, Foundation::Vec2{view.x + view.width, view.y}, Foundation::Vec2{view.x + view.width, view.y + view.height},
 			Foundation::Vec2{view.x, view.y + view.height}
 		};
+		const std::size_t viewFirst = screenPoints.size();
+		screenPoints.insert(screenPoints.end(), viewCorners.begin(), viewCorners.end());
 		std::vector<Primitives::MaskElement> tint = {
-			{.points = screen.add(std::vector<Foundation::Vec2>(viewCorners.begin(), viewCorners.end())), .paint = Primitives::MaskPaint::solid(1.0F)}
+			{.points = std::span<const Foundation::Vec2>(screenPoints.data() + viewFirst, viewCorners.size()), .paint = Primitives::MaskPaint::solid(1.0F)}
 		};
 		std::vector<std::array<Primitives::MaskLayer, 1>> insideBrightShapes;
 		insideBrightShapes.reserve(frameColonists.size());
 		for (const ColonistCover& cover : frameColonists) {
-			std::vector<glm::dvec2> brightMm;
-			brightMm.reserve(cover.bright.size());
-			for (const geometry::Vec2i64& point : cover.bright) {
-				brightMm.push_back(toDouble(point));
-			}
-			const std::span<const Foundation::Vec2> bright = screen.add(brightMm, map);
-			frameLayers.visibleOutlines.emplace_back(bright.begin(), bright.end());
+			const std::span<const Foundation::Vec2> bright = addOnScreen<geometry::Vec2i64>(screenPoints, *cover.bright, map);
 			insideBrightShapes.push_back({{{.image = Primitives::MaskImage::polygon(bright)}}});
 			Primitives::MaskElement group{.blend = Primitives::MixBlendMode::Darken};
 			group.children.push_back({.points = bright, .paint = Primitives::MaskPaint::solid(0.0F)});
-			// His feather and bands are built about where he stands; a camera moved by that point draws them there.
-			const Primitives::WorldCamera featherCamera{
-				.position	   = {camera.position().x - static_cast<float>(static_cast<double>(cover.featherAnchor.x) / 1000.0), camera.position().y - static_cast<float>(static_cast<double>(cover.featherAnchor.y) / 1000.0)},
-				.zoom		   = camera.zoom(),
-				.pixelsPerMeter = pixelsPerMeter
-			};
+			const Primitives::WorldCamera followCamera = cameraAbout(cover.featherAnchor);
 			for (const Renderer::InstancedMeshHandle& mesh : *cover.followMeshes) {
-				group.children.push_back({.mesh = {mesh, featherCamera}, .mask = insideBrightShapes.back(), .blend = Primitives::MixBlendMode::Lighten});
+				group.children.push_back({.mesh = {mesh, followCamera}, .mask = insideBrightShapes.back(), .blend = Primitives::MixBlendMode::Lighten});
 			}
-			for (const Renderer::InstancedMeshHandle& mesh : *cover.softMeshes) {
-				group.children.push_back({.mesh = {mesh, meshCamera}, .mask = insideBrightShapes.back(), .blend = Primitives::MixBlendMode::Lighten});
+			for (std::size_t ring = 0; ring < DrawnShadows::kSoftRings; ++ring) {
+				const Primitives::WorldCamera softCamera = cameraAbout((*cover.softAnchors)[ring]);
+				for (const Renderer::InstancedMeshHandle& mesh : (*cover.softMeshes)[ring]) {
+					group.children.push_back({.mesh = {mesh, softCamera}, .mask = insideBrightShapes.back(), .blend = Primitives::MixBlendMode::Lighten});
+				}
 			}
 			frameCounts.tintElements += group.children.size();
 			frameTint.groups += 1;
@@ -492,46 +493,54 @@ namespace worldview {
 			}
 			tint.push_back(std::move(group));
 		}
+		frameLayers.brightShapes = frameColonists.size();
 
 		// The unseen fill (7.5): the record's cells and the pending pieces, combined by lighten, over the
 		// view less the record and the pending shapes. The cells give way to the pending pieces inside the
 		// pending shapes grown by the feather: each cell is masked to outside those its pieces can reach,
 		// and a cell that reaches none draws whole.
-		std::vector<std::span<const Foundation::Vec2>>	 grownOnScreen;
-		std::vector<std::pair<glm::dvec2, glm::dvec2>> grownBoxes;
-		for (const std::vector<glm::dvec2>& grown : feather.pendingGrown()) {
-			glm::dvec2 low	= grown.front();
-			glm::dvec2 high = grown.front();
-			for (const glm::dvec2 point : grown) {
-				low	 = glm::min(low, point);
-				high = glm::max(high, point);
+		struct GrownOnScreen {
+			std::span<const Foundation::Vec2> points;
+			glm::dvec2						  low{0.0};
+			glm::dvec2						  high{0.0};
+		};
+		std::vector<GrownOnScreen> grownShapes;
+		for (const SeenFeather::Cluster* cluster : feather.clustersInView()) {
+			for (const std::vector<glm::dvec2>& grown : cluster->grown) {
+				GrownOnScreen shape{.points = addOnScreen<glm::dvec2>(screenPoints, grown, map), .low = grown.front(), .high = grown.front()};
+				for (const glm::dvec2 point : grown) {
+					shape.low  = glm::min(shape.low, point);
+					shape.high = glm::max(shape.high, point);
+				}
+				grownShapes.push_back(shape);
 			}
-			grownBoxes.emplace_back(low, high);
-			grownOnScreen.push_back(screen.add(grown, map));
 		}
-		const double						reachMm = static_cast<double>(featherMm);
+		const double									reachMm = static_cast<double>(featherMm);
 		std::vector<std::vector<Primitives::MaskLayer>> outsidePendingFeather;
 		outsidePendingFeather.reserve(feather.cellsInView().size());
 		std::vector<Primitives::MaskElement> unseenFeather;
 		for (const SeenFeather::Cell* cell : feather.cellsInView()) {
-			const glm::dvec2 cellLow  = toDouble(cell->low) - glm::dvec2{reachMm};
-			const glm::dvec2 cellHigh = toDouble(cell->high) + glm::dvec2{reachMm};
-			std::vector<Primitives::MaskLayer>& mask = outsidePendingFeather.emplace_back();
-			for (std::size_t grown = 0; grown < grownBoxes.size(); ++grown) {
-				const auto& [low, high] = grownBoxes[grown];
-				if (low.x <= cellHigh.x && cellLow.x <= high.x && low.y <= cellHigh.y && cellLow.y <= high.y) {
+			const glm::dvec2					cellLow	 = toDouble(cell->low) - glm::dvec2{reachMm};
+			const glm::dvec2					cellHigh = toDouble(cell->high) + glm::dvec2{reachMm};
+			std::vector<Primitives::MaskLayer>& mask	 = outsidePendingFeather.emplace_back();
+			for (const GrownOnScreen& grown : grownShapes) {
+				if (grown.low.x <= cellHigh.x && cellLow.x <= grown.high.x && grown.low.y <= cellHigh.y && cellLow.y <= grown.high.y) {
 					if (mask.empty()) {
 						mask.push_back({.image = Primitives::MaskImage::rect(view), .composite = Primitives::MaskComposite::Subtract});
 					}
-					mask.push_back({.image = Primitives::MaskImage::polygon(grownOnScreen[grown])});
+					mask.push_back({.image = Primitives::MaskImage::polygon(grown.points)});
 				}
 			}
+			const Primitives::WorldCamera cellCamera = cameraAbout(cell->anchor);
 			for (const Renderer::InstancedMeshHandle& mesh : cell->meshes) {
-				unseenFeather.push_back({.mesh = {mesh, meshCamera}, .mask = mask, .blend = Primitives::MixBlendMode::Lighten});
+				unseenFeather.push_back({.mesh = {mesh, cellCamera}, .mask = mask, .blend = Primitives::MixBlendMode::Lighten});
 			}
 		}
-		for (const Renderer::InstancedMeshHandle* mesh : feather.pendingMeshes()) {
-			unseenFeather.push_back({.mesh = {*mesh, meshCamera}, .blend = Primitives::MixBlendMode::Lighten});
+		for (const SeenFeather::Cluster* cluster : feather.clustersInView()) {
+			const Primitives::WorldCamera clusterCamera = cameraAbout(cluster->anchor);
+			for (const Renderer::InstancedMeshHandle& mesh : cluster->meshes) {
+				unseenFeather.push_back({.mesh = {mesh, clusterCamera}, .blend = Primitives::MixBlendMode::Lighten});
+			}
 		}
 		frameCounts.unseenElements = unseenFeather.size();
 
@@ -544,15 +553,9 @@ namespace worldview {
 			unseenMask.push_back({.image = Primitives::MaskImage::mesh(mesh, meshCamera)});
 		}
 		for (const std::vector<geometry::Vec2i64>* shape : feather.pendingInView()) {
-			std::vector<glm::dvec2> outline;
-			outline.reserve(shape->size());
-			for (const geometry::Vec2i64& point : *shape) {
-				outline.push_back(toDouble(point));
-			}
-			const std::span<const Foundation::Vec2> pending = screen.add(outline, map);
-			frameLayers.pendingOutlines.emplace_back(pending.begin(), pending.end());
-			unseenMask.push_back({.image = Primitives::MaskImage::polygon(pending)});
+			unseenMask.push_back({.image = Primitives::MaskImage::polygon(addOnScreen<geometry::Vec2i64>(screenPoints, *shape, map))});
 		}
+		frameLayers.pendingShapes = feather.pendingInView().size();
 
 		// Batched draws still pending would sort with the cover by key; everything before it is under it.
 		Primitives::flush();

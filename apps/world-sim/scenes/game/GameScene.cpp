@@ -363,6 +363,14 @@ namespace {
 						}
 					},
 			});
+			// The cover's soft edges need a window with alpha and depth; without them every fill of the cover
+			// draws nothing and the whole map would show, so the player is told.
+			if (!worldview::coverTargetHoldsPartialMasks()) {
+				LOG_ERROR(Game, "The window has no 8-bit alpha or 24-bit depth: the player visibility cover cannot be drawn");
+				gameUI->pushNotification(
+					"Display", "This display can't draw the cover over unexplored areas, so the whole map shows.", ui::ToastSeverity::Critical
+				);
+			}
 
 			// Initialize ECS World
 			initializeECS();

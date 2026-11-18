@@ -29,6 +29,9 @@ namespace worldview {
 	constexpr double kDrawnShadowSliceToleranceMm = 5.0;
 	// How far a drawn piece's linear value may stray from the value it stands for, of the whole 0 to 1.
 	constexpr double kDrawnValueTolerancePercent = 2.0;
+	// The most a soft triangle carries where the bright rim cuts it: limit 3's 0.05 on screen under the
+	// tint's 0.5 (sight-softening.md 10).
+	constexpr double kSoftShadowRimMostValue = 0.1;
 	// The widest triangle of a reflex corner's fan.
 	constexpr double kFeatherFanStepDegrees = 15.0;
 
@@ -60,32 +63,39 @@ namespace worldview {
 
 	// A soft body's measures from an eye (3.2).
 	struct SoftShadow {
-		double widthAsSeen	= 0.0;
-		double distance		= 0.0;
-		double footValue	= 0.0;
+		double widthAsSeen = 0.0;
+		double distance = 0.0;
+		double footValue = 0.0;
 		double shadowLength = 0.0;
 	};
 
 	// The soft body's triangle and its two fins as seen from `eyeMm` (3.2): the silhouette shrunk toward
 	// its bisector by `progress` from the body's near face out to `shadowLength` behind it, valued
-	// footValue x (1 - progress), cut into slices along its length equal in length, as many as keep its sides
-	// within kDrawnShadowSliceToleranceMm of the rule; and beside each side a fin from its silhouette corner's
-	// range, whose outer edge lies (shadowEdgeWidthMm / 2) x (range - cornerDistance) / cornerDistance
-	// across the ray from the side, falling from the triangle's value to 0. footValue carries the body's
-	// arrival fraction. None when the eye is inside the body's hull or the triangle would draw nothing.
-	std::optional<SoftShadow>
-	appendSoftShadow(const vision::SightBody& body, glm::dvec2 eyeMm, const vision::SightTunables& tunables, std::vector<ValueTriangle>& out);
+	// footValue x (1 - progress), cut into slices along its length (7.3): a hard side held within
+	// kDrawnShadowSliceToleranceMm of its curve, a side with a fin beside it within what moves the value
+	// by kDrawnValueTolerancePercent; and beside each side a fin from its silhouette corner's range, whose
+	// outer edge lies (shadowEdgeWidthMm / 2) x (range - cornerDistance) / cornerDistance across the ray
+	// from the side, falling from the triangle's value to 0. footValue carries the body's arrival
+	// fraction, and fades so the triangle carries at most kSoftShadowRimMostValue where `bright`, the
+	// colonist's bright outline, cuts it short. None when the eye is inside the body's hull.
+	std::optional<SoftShadow> appendSoftShadow(
+		const vision::SightBody&		   body,
+		glm::dvec2						   eyeMm,
+		const vision::SightTunables&	   tunables,
+		std::span<const geometry::Vec2i64> bright,
+		std::vector<ValueTriangle>&		   out
+	);
 
 	// An opaque shadow edge's band and fin as seen from `eyeMm` (3.1).
 	struct ShadowBand {
 		glm::dvec2 apex{0.0};
 		glm::dvec2 ray{1.0, 0.0}; // the unit direction from the eye through the apex
 		double	   cornerDistance = 0.0;
-		double	   widening		  = 0.0;
-		double	   litAngle		  = 0.0; // radians, each turned from the ray from the eye through the apex
-		double	   shadowAngle	  = 0.0;
-		double	   finAngle		  = 0.0;
-		int		   litTurn		  = 1;
+		double	   widening = 0.0;
+		double	   litAngle = 0.0; // radians, each turned from the ray from the eye through the apex
+		double	   shadowAngle = 0.0;
+		double	   finAngle = 0.0;
+		int		   litTurn = 1;
 	};
 
 	// The band's angles for an apex seen from `eyeMm` with the shadow's lit side `litTurn` (+1

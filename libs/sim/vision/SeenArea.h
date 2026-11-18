@@ -258,6 +258,10 @@ namespace vision {
 
 		[[nodiscard]] double							   committedSquareMeters() const;
 		[[nodiscard]] std::size_t						   ringsRegistered() const { return registered.size(); }
+		// K where registered (player-visibility.md 6.1): for each ring after the first, how many rings
+		// registered before it have boxes meeting its own. The mean and the most.
+		[[nodiscard]] double	  ringsMetMean() const;
+		[[nodiscard]] std::size_t ringsMetMost() const { return ringsMetGreatest; }
 		[[nodiscard]] const std::vector<geometry::Vec2i64>& registeredRing(std::size_t index) const;
 		[[nodiscard]] Pending							   pending() const;
 		[[nodiscard]] std::size_t						   shapesPending() const { return pending().total(); }
@@ -346,6 +350,9 @@ namespace vision {
 		std::size_t											 sweepRunsDropped = 0;
 		std::uint64_t										 sweepRuns = 0; // runs queued, the last one's id
 		std::vector<std::int32_t>							 registered; // ring ids, in the order they went in
+		std::vector<Box>									 registeredBoxes; // their boxes, in the same order
+		std::size_t											 ringsMetTotal	  = 0;
+		std::size_t											 ringsMetGreatest = 0;
 		std::size_t											 dropped = 0;
 		std::array<std::size_t, static_cast<std::size_t>(Origin::Count)> registeredFrom{};
 		std::size_t											 ticks		  = 0;

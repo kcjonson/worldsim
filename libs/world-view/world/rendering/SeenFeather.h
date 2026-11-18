@@ -31,10 +31,10 @@ namespace worldview {
 
 	// What one cut did.
 	struct SeenCutCounts {
-		std::size_t shapes		= 0;
-		std::size_t shapeSides	= 0;
+		std::size_t shapes = 0;
+		std::size_t shapeSides = 0;
 		std::size_t recordEdges = 0;
-		std::size_t kept		= 0;
+		std::size_t kept = 0;
 	};
 
 	// The boundary of the union of the record and `shapes` near the shapes, as edges with seen ground on
@@ -56,74 +56,95 @@ namespace worldview {
 	// each convex corner.
 	void appendGrownByFeather(const std::vector<geometry::Vec2i64>& shape, double featherMm, std::vector<std::vector<glm::dvec2>>& out);
 
+	// The most record feather cells built in one frame; the rest keep drawing as they were, or wait.
+	constexpr std::size_t kSeenFeatherCellBuildsPerFrame = 16;
+
 	class SeenFeather {
 	  public:
-		// One cell's uploaded feather, its pieces in world meters with each vertex's value its alpha.
+		// One cell's uploaded feather: its pieces, and their meshes in world meters less `anchor`, the
+		// cell's corner, each vertex's value its alpha.
 		struct Cell {
 			std::vector<Renderer::InstancedMeshHandle> meshes;
 			std::vector<ValueTriangle>				   pieces;
 			std::size_t								   edges = 0;
+			geometry::Vec2i64						   anchor{0, 0};
 			geometry::Vec2i64						   low{0, 0}; // the cell grown by the feather, which its pieces lie within a feather of
 			geometry::Vec2i64						   high{0, 0};
+			bool									   built = false;
+			bool									   stale = false; // the record changed near it since it was built
+			std::uint64_t							   frame = 0;
+		};
+		// One cluster of pending shapes whose feathers can touch: its cut's pieces, their meshes about
+		// `anchor`, and the shapes grown by the feather, where the cells give way to it.
+		struct Cluster {
+			geometry::Vec2i64						   low{0, 0};
+			geometry::Vec2i64						   high{0, 0};
+			geometry::Vec2i64						   anchor{0, 0};
+			std::vector<ValueTriangle>				   pieces;
+			std::vector<Renderer::InstancedMeshHandle> meshes;
+			std::vector<std::vector<glm::dvec2>>	   grown;
 			std::uint64_t							   frame = 0;
 		};
 		struct Counts {
-			std::size_t cellsDrawn	   = 0;
-			std::size_t cellsRebuilt   = 0;
-			std::size_t cellEdgesRead  = 0; // record edges read for the cells this frame
-			std::size_t epochCellsLast = 0; // cells the last epoch rebuilt in view, and the edges they read
-			std::size_t epochEdgesLast = 0;
-			std::size_t changedBoxes   = 0;
-			std::size_t pendingShapes  = 0;
-			std::size_t clusters	   = 0;
-			std::size_t clustersCut	   = 0; // pending cuts made this frame, the rest kept from earlier frames
+			std::size_t	  cellsDrawn = 0;
+			std::size_t	  cellsVisited = 0; // cells the seen ground in view reaches, looked at this frame
+			std::size_t	  cellsRebuilt = 0;
+			std::size_t	  cellsWaiting = 0;	  // cells due a build past this frame's budget
+			std::size_t	  cellEdgesRead = 0;  // record edges read for the cells this frame
+			std::size_t	  epochCellsLast = 0; // cells the last epoch rebuilt in view, and the edges they read
+			std::size_t	  epochEdgesLast = 0;
+			std::size_t	  changedBoxes = 0;
+			std::size_t	  pendingShapes = 0;
+			std::size_t	  clusters = 0;
+			std::size_t	  clustersCut = 0; // pending cuts made this frame, the rest kept from earlier frames
 			SeenCutCounts cut;			   // what this frame's cuts read and kept
-			std::size_t pendingPieces  = 0;
+			std::size_t	  pendingPieces = 0;
 		};
 
 		// The frame over the view from `viewLow` to `viewHigh` in millimetres: drains the record's changed
-		// boxes (`changed`), drops the cells and cuts they reach, builds and uploads the cells in view that
-		// are missing, and cuts the pending shapes near the view. `seen` gives the record's edge and its
-		// pending shapes.
+		// boxes (`changed`), marks the cells they reach stale and drops the cuts they reach, builds up to
+		// kSeenFeatherCellBuildsPerFrame cells where the seen ground in view reaches (stale ones first,
+		// drawing as they were until then), and cuts the pending shapes near the view. `seen` gives the
+		// record's edge, its seen boxes, and its pending shapes.
 		void update(
-			const vision::SeenArea&				  seen,
+			const vision::SeenArea&				   seen,
 			std::span<const vision::SeenArea::Box> changed,
-			const geometry::Vec2i64&			  viewLow,
-			const geometry::Vec2i64&			  viewHigh,
-			std::int64_t						  featherMm
+			const geometry::Vec2i64&			   viewLow,
+			const geometry::Vec2i64&			   viewHigh,
+			std::int64_t						   featherMm
 		);
 
-		// The cells to draw this frame.
-		[[nodiscard]] const std::vector<const Cell*>& cellsInView() const { return drawnCells; }
-		// The meshes of the cut near the pending shapes in view, and their pieces in world millimetres.
-		[[nodiscard]] const std::vector<const Renderer::InstancedMeshHandle*>& pendingMeshes() const { return pendingDrawn; }
-		void appendPendingPieces(std::vector<ValueTriangle>& out) const;
-		// The pending shapes in view grown by the feather: where the cells' pieces give way to the cut's.
-		[[nodiscard]] const std::vector<std::vector<glm::dvec2>>& pendingGrown() const { return grown; }
-		[[nodiscard]] const Counts&							   counts() const { return frameCounts; }
+		// The cells and clusters to draw this frame.
+		[[nodiscard]] const std::vector<const Cell*>&	 cellsInView() const { return drawnCells; }
+		[[nodiscard]] const std::vector<const Cluster*>& clustersInView() const { return drawnClusters; }
+		void											 appendPendingPieces(std::vector<ValueTriangle>& out) const;
+		[[nodiscard]] const Counts&						 counts() const { return frameCounts; }
 		// The pending shapes in view, as the record handed them out this frame.
 		[[nodiscard]] const std::vector<const std::vector<geometry::Vec2i64>*>& pendingInView() const { return pendingNear; }
 
 	  private:
-		struct Cluster {
-			geometry::Vec2i64		  low;
-			geometry::Vec2i64		  high;
-			std::vector<ValueTriangle> pieces;
-			std::vector<Renderer::InstancedMeshHandle> meshes;
-			std::uint64_t			  frame = 0;
-		};
+		void buildCell(const vision::SeenArea& seen, std::int64_t cellX, std::int64_t cellY, Cell& cell);
 
-		void buildCell(const vision::SeenArea& seen, std::int64_t cellX, std::int64_t cellY, Cell& cell) const;
-
-		std::int64_t												 feather = 0;
-		std::uint64_t												 frameNumber = 0;
-		std::map<std::pair<std::int64_t, std::int64_t>, Cell>		 cells;
-		std::unordered_map<std::uint64_t, Cluster>					 clusters;
-		std::vector<const Cell*>									 drawnCells;
-		std::vector<const Renderer::InstancedMeshHandle*>			 pendingDrawn;
-		std::vector<std::vector<glm::dvec2>>						 grown;
-		std::vector<const std::vector<geometry::Vec2i64>*>			 pendingNear;
-		Counts														 frameCounts;
+		std::int64_t										  feather = 0;
+		std::uint64_t										  frameNumber = 0;
+		std::map<std::pair<std::int64_t, std::int64_t>, Cell> cells;
+		std::unordered_map<std::uint64_t, Cluster>			  clusters;
+		std::vector<const Cell*>							  drawnCells;
+		std::vector<const Cluster*>							  drawnClusters;
+		std::vector<const std::vector<geometry::Vec2i64>*>	  pendingNear;
+		Counts												  frameCounts;
+		// Reused each frame.
+		std::vector<vision::SeenArea::Box>				   seenBoxes;
+		std::vector<std::pair<std::int64_t, std::int64_t>> dueCells;
+		std::vector<const std::vector<geometry::Vec2i64>*> pendingAll;
+		std::vector<geometry::Vec2i64>					   lows;
+		std::vector<geometry::Vec2i64>					   highs;
+		std::vector<std::size_t>						   parents;
+		std::vector<std::vector<std::size_t>>			   members;
+		std::vector<std::uint64_t>						   hashes;
+		std::vector<DirectedEdge>						   edges;
+		std::vector<const std::vector<geometry::Vec2i64>*> shapes;
+		std::vector<DirectedEdge>						   boundary;
 	};
 
 } // namespace worldview

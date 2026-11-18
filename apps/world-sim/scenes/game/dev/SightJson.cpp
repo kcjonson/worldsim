@@ -87,12 +87,16 @@ namespace world_sim {
 		std::string out = "{\"drawn\":" + std::string(cover.layers().drawn ? "true" : "false") + ",\"tintAlpha\":" + number(worldview::kSeenDimAlpha);
 		out += ",\"counts\":{\"colonists\":" + count(counts.colonists) + ",\"featherPieces\":" + count(counts.featherPieces) +
 			   ",\"softBodies\":" + count(counts.softBodies) + ",\"shadowEdges\":" + count(counts.shadowEdges) +
-			   ",\"softPieces\":" + count(counts.softPieces) + ",\"bandPieces\":" + count(counts.bandPieces) + ",\"featherRebuilds\":" + count(counts.featherRebuilds) + ",\"softRebuilds\":" + count(counts.softRebuilds) + ",\"softDue\":" + count(counts.softDue) + ",\"bandRebuilds\":" + count(counts.bandRebuilds) + ",\"piecesBuilt\":" + count(counts.piecesBuilt) + ",\"meshUploads\":" + count(counts.meshUploads) +
+			   ",\"softPieces\":" + count(counts.softPieces) + ",\"bandPieces\":" + count(counts.bandPieces) +
+			   ",\"featherRebuilds\":" + count(counts.featherRebuilds) + ",\"softBodiesBuilt\":" + count(counts.softBodiesBuilt) +
+			   ",\"softBodiesDue\":" + count(counts.softBodiesDue) + ",\"softOldestDueFrames\":" + std::to_string(counts.softOldestDueFrames) +
+			   ",\"bandRebuilds\":" + count(counts.bandRebuilds) + ",\"softPiecesBuilt\":" + count(counts.softPiecesBuilt) +
+			   ",\"piecesBuilt\":" + count(counts.piecesBuilt) + ",\"meshUploads\":" + count(counts.meshUploads) +
 			   ",\"tintElements\":" + count(counts.tintElements) + ",\"unseenElements\":" + count(counts.unseenElements) +
 			   ",\"buildMicroseconds\":" + number(counts.buildMicroseconds) + ",\"seenMicroseconds\":" + number(counts.seenMicroseconds) +
 			   ",\"uploadMicroseconds\":" + number(counts.uploadMicroseconds) + ",\"brightMicroseconds\":" + number(counts.brightMicroseconds) +
 			   ",\"composeMicroseconds\":" + number(counts.composeMicroseconds) + "}";
-		out += ",\"seen\":{\"cellsDrawn\":" + count(seen.cellsDrawn) + ",\"cellsRebuilt\":" + count(seen.cellsRebuilt) +
+		out += ",\"seen\":{\"cellsDrawn\":" + count(seen.cellsDrawn) + ",\"cellsVisited\":" + count(seen.cellsVisited) + ",\"cellsRebuilt\":" + count(seen.cellsRebuilt) + ",\"cellsWaiting\":" + count(seen.cellsWaiting) +
 			   ",\"cellEdgesRead\":" + count(seen.cellEdgesRead) + ",\"epochCellsLast\":" + count(seen.epochCellsLast) +
 			   ",\"epochEdgesLast\":" + count(seen.epochEdgesLast) + ",\"changedBoxes\":" + count(seen.changedBoxes) +
 			   ",\"pendingShapes\":" + count(seen.pendingShapes) + ",\"clusters\":" + count(seen.clusters) + ",\"clustersCut\":" + count(seen.clustersCut) +
@@ -105,14 +109,17 @@ namespace world_sim {
 			out += firstColonist ? "" : ",";
 			firstColonist = false;
 			const double moved = static_cast<double>(colonist.rimMovedMm);
-			out += "{\"id\":" + std::to_string(static_cast<std::uint64_t>(colonist.colonist)) + ",\"brightSides\":" + count(colonist.bright.size()) +
+			out += "{\"id\":" + std::to_string(static_cast<std::uint64_t>(colonist.colonist)) + ",\"brightSides\":" + count(colonist.bright->size()) +
 				   ",\"rimSides\":" + count(colonist.rimSides) + ",\"featherPieces\":" + count(colonist.feather != nullptr ? colonist.feather->size() : 0) +
 				   ",\"rimMovedMm\":" + std::to_string(colonist.rimMovedMm) +
 				   ",\"rimMovedOnScreen\":" + number(moved / static_cast<double>(featherMm) * worldview::kSeenDimAlpha);
-			out += ",\"softPieces\":" + count(colonist.shadows != nullptr ? colonist.shadows->softPieces().size() : 0) + ",\"bandPieces\":" + count(colonist.shadows != nullptr ? colonist.shadows->bandPieces().size() : 0) + ",\"soft\":[";
+			out += ",\"softPieces\":" + count(colonist.shadows != nullptr ? colonist.shadows->softPieceCount() : 0) + ",\"bandPieces\":" + count(colonist.shadows != nullptr ? colonist.shadows->bandPieces().size() : 0) + ",\"soft\":[";
 			if (colonist.shadows != nullptr) {
 				bool first = true;
-				for (const worldview::DrawnShadows::SoftDrawn& soft : colonist.shadows->softBodies()) {
+				for (const auto& [key, soft] : colonist.shadows->softBodies()) {
+					if (!soft.drawn) {
+						continue;
+					}
 					out += first ? "" : ",";
 					first = false;
 					out += "{\"serial\":" + std::to_string(soft.bodyId) + ",\"diameterMm\":" + std::to_string(soft.diameterMm) +
