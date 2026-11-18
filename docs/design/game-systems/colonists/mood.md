@@ -147,6 +147,15 @@ Failure is a spiral, not an event. A shortage or a bad stretch lowers several co
 
 The spiral is slow at the top and fast at the bottom. Between Content and Very low the player has days; under 12 they have hours.
 
+### Leaving the colony
+
+A colonist who leaves stops being part of the colony, and then is gone.
+
+- **No longer a colonist.** From the moment they leave, the player cannot select them for orders or draft them, they are off the roster, and they are offered no work. Anything they had claimed is released. They add nothing to what the colony can see: ground they pass is not revealed and stays as it was.
+- **A wild thing.** They are driven with the same simple behavior as a cow or a deer, not a colonist's.
+- **Walking off.** They head in one direction, picked at random, walking or running, until they are outside the area the player can see and the game is simulating. They are not exploring: they cause no new ground to be made walkable and no new terrain to load.
+- **Gone.** Once outside that area they are unloaded and no longer exist. A colonist who left does not come back.
+
 ### What the player does about it
 
 The player never controls mood directly. They change the conditions that make it.
@@ -359,6 +368,8 @@ Kevin, 2026-11-16:
 Kevin, 2026-11-17: needs do not average into mood. "If you're freezing to death, it doesn't matter if you're full and don't need to poop, you're going to be in a bad mood." Each need takes its own cost off, and the costs add.
 
 Kevin, 2026-11-17: needs are data, and different kinds of creature have different needs (a cow needs to be milked). The list of needs is not fixed in code.
+
+Kevin, 2026-11-17: leaving defined. "They essentially become a non colony npc: no control, do not contribute to the colony sight or task system, basically become the same level of ai as a cow or deer, then walk/run off in a random direction until they're off the gameplay/visibility area (not exploring or making new mesh), then completely unload and disappear." It depends on several systems that do not exist, so it is recorded here and built later.
 
 Kevin, 2026-11-17: the player cannot step in during an episode. A colonist in one cannot be drafted or directed until it ends; a critical need still interrupts it, and each behavior's own end conditions bound it.
 
