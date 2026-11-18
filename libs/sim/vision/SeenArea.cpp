@@ -294,15 +294,24 @@ namespace vision {
 	}
 
 	void SeenArea::registerPiece(std::deque<PendingShape>& from) {
+		markPhase(TickPhase::Patch);
 		PendingShape& piece = from.front();
 		holdCommitted(piece.low, piece.high);
+		if (changedBoxes.size() == kSeenChangedBoxesMost) {
+			Box whole = changedBoxes.front();
+			for (const Box& box : changedBoxes) {
+				whole.low  = {std::min(whole.low.x, box.low.x), std::min(whole.low.y, box.low.y)};
+				whole.high = {std::max(whole.high.x, box.high.x), std::max(whole.high.y, box.high.y)};
+			}
+			changedBoxes.assign(1, whole);
+		}
+		changedBoxes.push_back({piece.low, piece.high});
 		++registeredFrom[static_cast<std::size_t>(piece.origin)];
 		++work.piecesRegistered;
 		work.verticesRegistered += piece.outline.size();
 		geometry::nav::PatchEdits edits;
 		edits.adds.push_back(geometry::nav::NavInputPolygon{.ring = std::move(piece.outline)});
 		from.pop_front();
-		markPhase(TickPhase::Patch);
 		const geometry::nav::PatchReport report = mesh->applyPatch(edits);
 		for (const std::int32_t added : report.added) {
 			if (added != geometry::nav::kNoRing) {
@@ -608,7 +617,7 @@ namespace vision {
 	}
 
 	bool SeenArea::isSeen(const Vec2i64& point) const {
-		if (mesh->locate(point) >= 0) {
+		if (inRecord(point)) {
 			return true;
 		}
 		bool seen = false;
@@ -676,9 +685,8 @@ namespace vision {
 		Vec2i64		  high{std::max(from.x, to.x), std::max(from.y, to.y)};
 
 		std::vector<double>						 along{0.0, 1.0};
-		std::vector<std::int32_t>				 edgeIds;
 		std::vector<std::pair<Vec2i64, Vec2i64>> edges;
-		mesh->meshEdgesNear(low, high, edgeIds, edges);
+		appendEdges(low, high, edges);
 		for (const auto& [edgeStart, edgeEnd] : edges) {
 			meetings(from, direction, edgeStart, edgeEnd, along);
 		}
@@ -716,6 +724,20 @@ namespace vision {
 	}
 
 	std::uint64_t SeenArea::epoch() const { return mesh->epoch(); }
+
+	bool SeenArea::inRecord(const Vec2i64& point) const { return mesh->locate(point) >= 0; }
+
+	void SeenArea::appendEdges(const Vec2i64& low, const Vec2i64& high, std::vector<std::pair<Vec2i64, Vec2i64>>& out) const {
+		std::vector<std::int32_t>				 edgeIds;
+		std::vector<std::pair<Vec2i64, Vec2i64>> edges;
+		mesh->meshEdgesNear(low, high, edgeIds, edges);
+		out.insert(out.end(), edges.begin(), edges.end());
+	}
+
+	void SeenArea::takeChangedBoxes(std::vector<Box>& out) {
+		out.insert(out.end(), changedBoxes.begin(), changedBoxes.end());
+		changedBoxes.clear();
+	}
 
 	void SeenArea::appendTriangles(std::vector<Triangle>& out) const {
 		const auto& triangles = mesh->triangles();

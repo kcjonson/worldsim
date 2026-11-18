@@ -3,6 +3,10 @@
 #include "scenes/game/dev/DevJson.h"
 
 #include <visibility/ForestDepth.h>
+#include <visibility/ForestShape.h>
+#include <visibility/SightPolygon.h>
+
+#include <algorithm>
 
 namespace world_sim {
 
@@ -38,7 +42,23 @@ namespace world_sim {
 					out += (side == 0 ? "" : ",") + std::to_string((*colonist.ranges)[side]);
 				}
 			}
-			out += "],\"bodies\":[";
+			// How far the forest shape's support along each side's normal falls short of its range times
+			// cos(pi / kSightSides): what convexity takes (sight-softening.md 10, limit 7).
+			out += "],\"convexityTakesMm\":[";
+			if (colonist.ranges != nullptr) {
+				const geometry::Ring forest = geometry::forestShape({0, 0}, *colonist.ranges);
+				for (std::size_t side = 0; side < colonist.ranges->size(); ++side) {
+					std::int64_t support = 0;
+					for (std::size_t vertex = 0; vertex < forest.size(); ++vertex) {
+						const std::int64_t along = geometry::kSightSideNormals[side][0] * forest[vertex].x + geometry::kSightSideNormals[side][1] * forest[vertex].y;
+						support					 = vertex == 0 ? along : std::max(support, along);
+					}
+					const std::int64_t rim = (*colonist.ranges)[side] * geometry::kSightCosHalfSide / geometry::kSightDirectionScale;
+					out += (side == 0 ? "" : ",") + std::to_string(rim - support / geometry::kSightSideNormalScale);
+				}
+			}
+			out += "],\"rangeChangeMm\":" + std::to_string(colonist.rangeChangeMm) +
+				   ",\"greatestRangeChangeMm\":" + std::to_string(colonist.greatestRangeChangeMm) + ",\"bodies\":[";
 			if (colonist.bodies != nullptr) {
 				for (std::size_t body = 0; body < colonist.bodies->size(); ++body) {
 					out += (body == 0 ? "" : ",") + bodyJson((*colonist.bodies)[body]);
@@ -51,6 +71,68 @@ namespace world_sim {
 					out += (edge == 0 ? "" : ",");
 					out += "{\"body\":" + std::to_string(shadow.body) + ",\"corner\":" + std::to_string(shadow.corner) +
 						   ",\"litTurn\":" + std::to_string(shadow.litTurn) + "}";
+				}
+			}
+			out += "]}";
+		}
+		return out + "]}";
+	}
+
+	std::string coverJson(const worldview::VisibilityCoverRenderer& cover, std::int64_t featherMm) {
+		constexpr double kDegrees = 180.0 / 3.14159265358979323846;
+		const auto		 number	  = [](double value) { return jsonNumber(value); };
+		const auto		 count	  = [](std::size_t value) { return std::to_string(value); };
+		const worldview::VisibilityCoverRenderer::Counts& counts = cover.counts();
+		const worldview::SeenFeather::Counts&			  seen	 = cover.seenFeather().counts();
+		std::string out = "{\"drawn\":" + std::string(cover.layers().drawn ? "true" : "false") + ",\"tintAlpha\":" + number(worldview::kSeenDimAlpha);
+		out += ",\"counts\":{\"colonists\":" + count(counts.colonists) + ",\"featherPieces\":" + count(counts.featherPieces) +
+			   ",\"softBodies\":" + count(counts.softBodies) + ",\"shadowEdges\":" + count(counts.shadowEdges) +
+			   ",\"shadowPieces\":" + count(counts.shadowPieces) + ",\"shadowRebuilds\":" + count(counts.shadowRebuilds) + ",\"meshUploads\":" + count(counts.meshUploads) +
+			   ",\"tintElements\":" + count(counts.tintElements) + ",\"unseenElements\":" + count(counts.unseenElements) +
+			   ",\"buildMicroseconds\":" + number(counts.buildMicroseconds) + ",\"seenMicroseconds\":" + number(counts.seenMicroseconds) +
+			   ",\"uploadMicroseconds\":" + number(counts.uploadMicroseconds) + ",\"composeMicroseconds\":" + number(counts.composeMicroseconds) + "}";
+		out += ",\"seen\":{\"cellsDrawn\":" + count(seen.cellsDrawn) + ",\"cellsRebuilt\":" + count(seen.cellsRebuilt) +
+			   ",\"cellEdgesRead\":" + count(seen.cellEdgesRead) + ",\"epochCellsLast\":" + count(seen.epochCellsLast) +
+			   ",\"epochEdgesLast\":" + count(seen.epochEdgesLast) + ",\"changedBoxes\":" + count(seen.changedBoxes) +
+			   ",\"pendingShapes\":" + count(seen.pendingShapes) + ",\"clusters\":" + count(seen.clusters) + ",\"clustersCut\":" + count(seen.clustersCut) +
+			   ",\"cutShapes\":" + count(seen.cut.shapes) + ",\"cutShapeSides\":" + count(seen.cut.shapeSides) +
+			   ",\"cutRecordEdges\":" + count(seen.cut.recordEdges) + ",\"cutKept\":" + count(seen.cut.kept) +
+			   ",\"pendingPieces\":" + count(seen.pendingPieces) + "}";
+		out += ",\"colonists\":[";
+		bool firstColonist = true;
+		for (const worldview::VisibilityCoverRenderer::ColonistCover& colonist : cover.colonists()) {
+			out += firstColonist ? "" : ",";
+			firstColonist = false;
+			const double moved = static_cast<double>(colonist.rimMovedMm);
+			out += "{\"id\":" + std::to_string(static_cast<std::uint64_t>(colonist.colonist)) + ",\"brightSides\":" + count(colonist.bright.size()) +
+				   ",\"rimSides\":" + count(colonist.rimSides) + ",\"featherPieces\":" + count(colonist.feather.size()) +
+				   ",\"rimMovedMm\":" + std::to_string(colonist.rimMovedMm) +
+				   ",\"rimMovedOnScreen\":" + number(moved / static_cast<double>(featherMm) * worldview::kSeenDimAlpha);
+			out += ",\"shadowPieces\":" + count(colonist.shadows != nullptr ? colonist.shadows->pieces().size() : 0) + ",\"soft\":[";
+			if (colonist.shadows != nullptr) {
+				bool first = true;
+				for (const worldview::DrawnShadows::SoftDrawn& soft : colonist.shadows->softBodies()) {
+					out += first ? "" : ",";
+					first = false;
+					out += "{\"serial\":" + std::to_string(soft.bodyId) + ",\"diameterMm\":" + std::to_string(soft.diameterMm) +
+						   ",\"widthAsSeenMm\":" + number(soft.shadow.widthAsSeen) + ",\"distanceMm\":" + number(soft.shadow.distance) +
+						   ",\"footValue\":" + number(soft.shadow.footValue) + ",\"footOnScreen\":" + number(soft.shadow.footValue * worldview::kSeenDimAlpha) +
+						   ",\"shadowLengthMm\":" + number(soft.shadow.shadowLength) + "}";
+				}
+			}
+			out += "],\"edges\":[";
+			if (colonist.shadows != nullptr) {
+				bool first = true;
+				for (const worldview::DrawnShadows::EdgeDrawn& edge : colonist.shadows->edges()) {
+					out += first ? "" : ",";
+					first = false;
+					out += "{\"body\":" + std::to_string(edge.bodyId) + ",\"diameterMm\":" + std::to_string(edge.diameterMm) +
+						   ",\"buildCorner\":" + std::to_string(edge.buildCorner) + ",\"followedCorner\":" + std::to_string(edge.followedCorner) +
+						   ",\"litTurn\":" + std::to_string(edge.band.litTurn) + ",\"apex\":{\"x\":" + number(edge.band.apex.x / 1000.0) +
+						   ",\"y\":" + number(edge.band.apex.y / 1000.0) + "},\"ease\":" + number(edge.ease) +
+						   ",\"cornerDistanceMm\":" + number(edge.band.cornerDistance) + ",\"wideningMm\":" + number(edge.band.widening) +
+						   ",\"litDegrees\":" + number(edge.band.litAngle * kDegrees) + ",\"shadowDegrees\":" + number(edge.band.shadowAngle * kDegrees) +
+						   ",\"finDegrees\":" + number(edge.band.finAngle * kDegrees) + "}";
 				}
 			}
 			out += "]}";

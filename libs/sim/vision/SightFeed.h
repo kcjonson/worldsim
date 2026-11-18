@@ -65,6 +65,11 @@ namespace vision {
 		// The polygon path's shape of `polygonRevision` stands for him: a jump drops it until the next.
 		[[nodiscard]] bool holdsPolygon(std::uint64_t polygonRevision) const { return wallSight && polygonRevision == polygonSeen; }
 
+		// The greatest change of one side's range between his last two builds, and over every pair of
+		// consecutive builds he has followed, in millimetres (sight-softening.md 10, limit 5).
+		[[nodiscard]] std::int64_t rangeChangeMm() const { return rangeChange; }
+		[[nodiscard]] std::int64_t greatestRangeChangeMm() const { return greatestRangeChange; }
+
 		[[nodiscard]] std::size_t legsOpened() const { return opened; }
 		[[nodiscard]] std::size_t legsEndedBy(LegEnd reason) const { return endedBy[static_cast<std::size_t>(reason)]; }
 
@@ -125,6 +130,9 @@ namespace vision {
 		geometry::Vec2i64			   lastPosition;
 		bool						   builtOnce = false; // `lastBuild` holds the build he followed last frame
 		std::uint64_t				   lastBuild = 0;
+		SightRanges					   lastBuildRanges{};
+		std::int64_t				   rangeChange		   = 0;
+		std::int64_t				   greatestRangeChange = 0;
 		std::size_t					   opened = 0;
 		std::array<std::size_t, static_cast<std::size_t>(LegEnd::Count)> endedBy{};
 	};

@@ -51,16 +51,23 @@ namespace ecs {
 		// within his sight radius of where he stands, in his polygon on the polygon path, and in the
 		// forest shape of his sight placed where he stands (sight-softening.md 5.2).
 		[[nodiscard]] bool isVisible(glm::vec2 meters) const;
+		// The ground drawn bright for one colonist, and which of its sides are rim: side k runs from
+		// outline[k] to the next vertex. A rim side draws the feather; a shadow side or a body face, on
+		// the polygon path, draws none (sight-softening.md 7.2).
+		struct DrawnShape {
+			std::vector<geometry::Vec2i64> outline;
+			std::vector<bool>			   rim;
+		};
 		// The ground drawn bright for `colonist` this frame (player-visibility.md 3.4, sight-softening.md
 		// 6.3), in millimetres: off the polygon path the eased forest shape placed where he stands, whose
 		// side offsets ease over rimEaseMm of his walk from those drawn when his newest build arrived to
-		// that build's at vision::drawnVisibleRadiusMm less rimEaseMm; on the polygon path vision's
-		// polygon cut to the sight polygon of vision::drawnVisibleRadiusMm round where he stands and then
-		// to that eased shape. Off the polygon path it lies in his leg's ring; on it, it can reach up to
-		// `lead` past seen ground ahead of him, where the cover's unseen fill hides it. None when his
-		// sight is too small to hold a leg, or on the polygon path a jump dropped his polygon (until
-		// vision builds the next).
-		[[nodiscard]] std::optional<std::vector<geometry::Vec2i64>> drawnVisible(EntityID colonist) const;
+		// that build's at vision::drawnVisibleRadiusMm less rimEaseMm, every side rim; on the polygon path
+		// vision's polygon cut to the sight polygon of vision::drawnVisibleRadiusMm round where he stands
+		// and then to that eased shape, a side rim where it lies along either. Off the polygon path it lies
+		// in his leg's ring; on it, it can reach up to `lead` past seen ground ahead of him, where the
+		// cover's unseen fill hides it. None when his sight is too small to hold a leg, or on the polygon
+		// path a jump dropped his polygon (until vision builds the next).
+		[[nodiscard]] std::optional<DrawnShape> drawnVisible(EntityID colonist) const;
 		// The whole outline is seen.
 		[[nodiscard]] bool covers(const std::vector<glm::vec2>& outlineMeters) const;
 		// The seen point on the segment from `from` to `to` nearest `to`; `to` when it is seen. None
@@ -84,6 +91,9 @@ namespace ecs {
 		[[nodiscard]] bool anySeenBox(glm::vec2 low, glm::vec2 high) const;
 
 		[[nodiscard]] const vision::SeenArea& seenArea() const { return seen; }
+		// The boxes where the committed record's edge changed since the last call (SeenArea::takeChangedBoxes),
+		// for the cover, its one reader.
+		void takeChangedBoxes(std::vector<vision::SeenArea::Box>& out) { seen.takeChangedBoxes(out); }
 
 		// The dev toggle that turns player visibility off (player-visibility.md rule 18): with it on
 		// the cover is not drawn. The record keeps growing either way.

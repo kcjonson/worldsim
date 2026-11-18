@@ -1,15 +1,22 @@
 #pragma once
 
-// The player visibility cover (player-visibility.md 3.4): two masked fills over the view after the
-// world is drawn. The tint darkens everything out of every player colonist's sight; the unseen fill,
-// opaque over it, hides everything outside the seen record and its pending shapes. Hard vector
-// edges, drawn through salal's CSS mask (docs/masks.md); nothing is rendered to a texture.
+// The player visibility cover (player-visibility.md 3.4, sight-softening.md 7): two masked fills over
+// the view after the world is drawn. The tint darkens everything out of every player colonist's sight;
+// the unseen fill, opaque over it, hides everything outside the seen record and its pending shapes.
+// Both edges fade inside the brighter area, and each colonist's soft bodies and opaque shadow edges
+// draw their triangles, bands, and fins: vector pieces carrying values, combined by salal's CSS mask
+// with partial coverage (docs/masks.md). Nothing is rendered to a texture, and nothing drawn is read
+// by the sim.
+
+#include "DrawnShadows.h"
+#include "SeenFeather.h"
 
 #include "world/camera/WorldCamera.h"
 #include "world/chunk/ChunkCoordinate.h"
 
 #include "assets/placement/DrawBound.h"
 
+#include <ecs/EntityID.h>
 #include <vision/SeenArea.h>
 
 #include <core/Vec2i64.h>
@@ -22,6 +29,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -70,29 +79,87 @@ namespace worldview {
 
 	class VisibilityCoverRenderer {
 	  public:
-		// One frame's mask layers, in screen pixels: what the tint leaves clear and what the unseen fill
-		// leaves clear besides the record's meshes.
+		// One frame's outlines, in screen pixels: each colonist's bright shape and each pending shape.
 		struct Layers {
 			bool									   drawn = false;
 			std::vector<std::vector<Foundation::Vec2>> visibleOutlines;
 			std::vector<std::vector<Foundation::Vec2>> pendingOutlines;
 		};
 
-		// Brings the uploaded record up to date when its epoch has moved, gathers the frame's layers and
+		// One colonist in view this frame: his bright shape and its rim sides, his feather and drawn
+		// shadows in world millimetres, and how far his eased rim moved since the last frame.
+		struct ColonistCover {
+			ecs::EntityID					   colonist = ecs::kInvalidEntity;
+			std::vector<geometry::Vec2i64>	   bright;
+			std::vector<bool>				   rim;		 // per side of `bright`, whether it is rim
+			std::size_t						   rimSides = 0;
+			std::vector<ValuePolygon>		   feather;
+			const DrawnShadows*				   shadows	   = nullptr;
+			// The feather and the drawn shadows as uploaded.
+			const std::vector<Renderer::InstancedMeshHandle>* featherMeshes = nullptr;
+			const std::vector<Renderer::InstancedMeshHandle>* shadowMeshes	= nullptr;
+			std::int64_t					   rimMovedMm  = 0; // the most any side of the eased rim moved since the last frame
+		};
+
+		// What the frame did, for the cover's state view (sight-softening.md 12).
+		struct Counts {
+			std::size_t colonists		= 0;
+			std::size_t featherPieces	= 0;
+			std::size_t softBodies		= 0;
+			std::size_t shadowEdges		= 0;
+			std::size_t shadowPieces	= 0;
+			std::size_t shadowRebuilds	= 0; // colonists whose drawn shadows were rebuilt this frame
+			std::size_t meshUploads		= 0; // feathers and drawn shadows uploaded this frame
+			std::size_t tintElements	= 0; // elements of the tint's mask
+			std::size_t unseenElements	= 0;
+			double		buildMicroseconds	= 0.0; // building every colonist's feather and drawn shadows, and uploading them
+			double		uploadMicroseconds	= 0.0; // of which uploading
+			double		seenMicroseconds	= 0.0; // the seen feather's cells and pending cuts
+			double		composeMicroseconds = 0.0; // the masks, from the pieces to the two draws
+		};
+
+		// How the last frame's tint was composed (7.5): one group a colonist in view, each darkened in, and
+		// every piece in it lightened in and clipped to its colonist's bright shape.
+		struct TintShape {
+			std::size_t groups							= 0;
+			bool		everyGroupDarkens				= true;
+			bool		everyPieceInsideItsBrightShape	= true;
+		};
+
+		// Brings the uploaded record up to date when its epoch has moved, builds the frame's pieces and
 		// draws the two fills. Nothing is drawn or uploaded while the player visibility system is revealed.
 		void render(ecs::World& world, const world::WorldCamera& camera, int viewportWidth, int viewportHeight, float pixelsPerMeter);
 
-		// The last frame's layers.
-		[[nodiscard]] const Layers& layers() const { return frameLayers; }
+		// The last frame's outlines, colonists, and counts.
+		[[nodiscard]] const Layers&						layers() const { return frameLayers; }
+		[[nodiscard]] const std::vector<ColonistCover>& colonists() const { return frameColonists; }
+		[[nodiscard]] const Counts&						counts() const { return frameCounts; }
+		[[nodiscard]] const TintShape&					tintShape() const { return frameTint; }
+		[[nodiscard]] const SeenFeather&				seenFeather() const { return feather; }
 		// The record's meshes as uploaded, and how many times the record has been uploaded.
 		[[nodiscard]] std::size_t	meshCount() const { return meshes.size(); }
 		[[nodiscard]] std::uint64_t uploads() const { return uploadCount; }
 
 	  private:
+		// What the cover keeps of a colonist between frames.
+		struct ColonistState {
+			DrawnShadows	  shadows;
+			bool			  placed = false;
+			glm::dvec2		  lastPosition{0.0};
+			bool			  hasOffsets = false;
+			std::vector<std::int64_t> lastOffsets;
+			std::uint64_t	  frame = 0;
+			bool			  featherUploaded = false;
+			std::vector<geometry::Vec2i64> lastBright;
+			std::vector<Renderer::InstancedMeshHandle> featherMeshes;
+			std::vector<Renderer::InstancedMeshHandle> shadowMeshes;
+		};
+
 		void upload(const vision::SeenArea& seen);
+		void retire(std::vector<Renderer::InstancedMeshHandle>& uploaded);
 		void gather(
 			ecs::World&						   world,
-			const ecs::PlayerVisibilitySystem& visibility,
+			ecs::PlayerVisibilitySystem&	   visibility,
 			const world::WorldCamera&		   camera,
 			int								   viewportWidth,
 			int								   viewportHeight,
@@ -102,9 +169,17 @@ namespace worldview {
 		std::vector<Renderer::InstancedMeshHandle>		   meshes;
 		std::optional<std::uint64_t>					   uploadedEpoch;
 		std::uint64_t									   uploadCount = 0;
+		std::uint64_t									   frameNumber = 0;
 		Layers											   frameLayers;
+		std::vector<ColonistCover>						   frameColonists;
+		Counts											   frameCounts;
+		TintShape										   frameTint;
+		std::map<ecs::EntityID, ColonistState>			   states;
+		SeenFeather										   feather;
 		std::vector<vision::SeenArea::Triangle>			   triangles;
-		std::vector<const std::vector<geometry::Vec2i64>*> pending;
+		std::vector<vision::SeenArea::Box>				   changed;
+		// Replaced meshes, by the frame they were replaced, until the GPU is surely done with them.
+		std::deque<std::pair<std::uint64_t, std::vector<Renderer::InstancedMeshHandle>>> retired;
 	};
 
 } // namespace worldview

@@ -19,6 +19,7 @@
 #include <ecs/systems/VisionSystem.h>
 #include <nav/NavCoords.h>
 
+#include <predicates/Predicates.h>
 #include <visibility/SightPolygon.h>
 
 #include <glm/geometric.hpp>
@@ -27,6 +28,7 @@
 #include <cmath>
 #include <cstddef>
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <vector>
 
@@ -193,6 +195,105 @@ TEST_F(VisibilityCoverTest, NothingWhileRevealed) {
 	EXPECT_TRUE(cover->layers().drawn);
 	EXPECT_EQ(cover->uploads(), 1U);
 	EXPECT_EQ(cover->layers().visibleOutlines.size(), 1U);
+}
+
+namespace {
+
+	double greatestAt(const std::vector<worldview::ValuePolygon>& pieces, glm::dvec2 point) {
+		double greatest = 0.0;
+		for (const worldview::ValuePolygon& piece : pieces) {
+			for (std::size_t corner = 1; corner + 1 < piece.points.size(); ++corner) {
+				const glm::dvec2 a	  = piece.points[0];
+				const glm::dvec2 b	  = piece.points[corner];
+				const glm::dvec2 c	  = piece.points[corner + 1];
+				const double	 area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+				if (area == 0.0) {
+					continue;
+				}
+				const double first	= ((b.x - point.x) * (c.y - point.y) - (b.y - point.y) * (c.x - point.x)) / area;
+				const double second = ((c.x - point.x) * (a.y - point.y) - (c.y - point.y) * (a.x - point.x)) / area;
+				const double third	= 1.0 - first - second;
+				if (first >= -1e-9 && second >= -1e-9 && third >= -1e-9) {
+					greatest = std::max(greatest, first * piece.values[0] + second * piece.values[corner] + third * piece.values[corner + 1]);
+				}
+			}
+		}
+		return greatest;
+	}
+
+	// The tint's value at a point by 7.4's rule over the frame's colonists: the least over them of 1
+	// outside his bright shape and inside it the greatest of his pieces over 0.
+	double tintAt(const VisibilityCoverRenderer& cover, glm::dvec2 millimetres) {
+		double least = 1.0;
+		for (const VisibilityCoverRenderer::ColonistCover& colonist : cover.colonists()) {
+			const Vec2i64 point{std::llround(millimetres.x), std::llround(millimetres.y)};
+			if (geometry::pointInPolygon(point, colonist.bright) == geometry::PointInPolygon::Outside) {
+				continue;
+			}
+			double darkness = greatestAt(colonist.feather, millimetres);
+			if (colonist.shadows != nullptr) {
+				darkness = std::max(darkness, greatestAt(colonist.shadows->pieces(), millimetres));
+			}
+			least = std::min(least, darkness);
+		}
+		return least;
+	}
+
+} // namespace
+
+// Several colonists (7.4): one group a colonist, darkened in, every piece clipped to its own bright
+// shape, so one colonist's fade never darkens ground another lights fully, the ground both leave
+// out is tinted whole, and each bright shape fades a feather in from its rim.
+TEST_F(VisibilityCoverTest, SeveralColonistsComposeAsTheLeastDarkness) {
+	const ecs::EntityID west = addColonist({0.0F, 0.0F});
+	const ecs::EntityID east = addColonist({20.0F, 0.0F});
+	walk(west, {1.0F, 0.0F}, 0.05F);
+	walk(east, {21.0F, 0.0F}, 0.05F);
+	frame();
+	ASSERT_EQ(cover->colonists().size(), 2U);
+	EXPECT_EQ(cover->tintShape().groups, 2U);
+	EXPECT_TRUE(cover->tintShape().everyGroupDarkens);
+	EXPECT_TRUE(cover->tintShape().everyPieceInsideItsBrightShape);
+	for (const VisibilityCoverRenderer::ColonistCover& colonist : cover->colonists()) {
+		EXPECT_EQ(colonist.rimSides, colonist.bright.size()) << "in the open every side is rim";
+		EXPECT_EQ(colonist.feather.size(), colonist.bright.size()) << "a convex shape: a rectangle a side and no fan";
+	}
+
+	const double rimMm = static_cast<double>(vision::drawnVisibleRadiusMm(30000) - 400);
+	EXPECT_NEAR(tintAt(*cover, {1000.0 - rimMm + 750.0, 0.0}), 0.5, 0.02) << "the west one's fade, half way in";
+	EXPECT_NEAR(tintAt(*cover, {1000.0 + rimMm - 750.0, 0.0}), 0.0, 1e-9) << "his fade is lit fully by the east one";
+	EXPECT_NEAR(tintAt(*cover, {11000.0, 0.0}), 0.0, 1e-9) << "both cores";
+	EXPECT_EQ(tintAt(*cover, {-40000.0, 0.0}), 1.0) << "out of both sights";
+}
+
+// The bright shape lies inside seen ground, and the seen area's own fade lies inside it: the landing's
+// edge fades a feather into the landing and the cells draw nothing deep inside it.
+TEST_F(VisibilityCoverTest, TheBrightShapeIsSeenAndTheSeenEdgeFadesInside) {
+	const ecs::EntityID colonist = addColonist({0.0F, 0.0F});
+	walk(colonist, {3.0F, 0.0F}, 0.05F);
+	camera.setPosition({140.0F, 0.0F});
+	frame();
+	camera.setPosition({0.0F, 0.0F});
+	frame();
+	ASSERT_EQ(cover->colonists().size(), 1U);
+	for (const Vec2i64& vertex : cover->colonists()[0].bright) {
+		EXPECT_TRUE(visibility.isSeen(nav::toMeters(vertex)));
+	}
+
+	camera.setPosition({140.0F, 0.0F});
+	frame();
+	std::vector<worldview::ValuePolygon> cells;
+	for (const worldview::SeenFeather::Cell* cell : cover->seenFeather().cellsInView()) {
+		cells.insert(cells.end(), cell->pieces.begin(), cell->pieces.end());
+	}
+	ASSERT_FALSE(cells.empty());
+	// The landing is the sight polygon of 150 m, its sides 14.7 m long: on a side's middle, along its normal.
+	const double inradius = 150000.0 * std::cos(std::numbers::pi / static_cast<double>(geometry::kSightSides));
+	const double normal	  = std::numbers::pi / static_cast<double>(geometry::kSightSides);
+	const auto	 inward	  = [&](double depth) { return glm::dvec2{std::cos(normal), std::sin(normal)} * (inradius - depth); };
+	EXPECT_NEAR(greatestAt(cells, inward(750.0)), 0.5, 0.02);
+	EXPECT_NEAR(greatestAt(cells, inward(10.0)), 1.0, 0.02);
+	EXPECT_EQ(greatestAt(cells, inward(5000.0)), 0.0);
 }
 
 // The draw bound holds the seen ground in view and nothing well past it: a view over the landing's

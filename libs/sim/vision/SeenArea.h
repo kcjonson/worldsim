@@ -70,6 +70,9 @@ namespace vision {
 	// The side of a cell of the seen boxes, the cache that says where the record holds ground
 	// (appendSeenBoxes): a chunk's, so a chunk asks its own cell and the neighbours its reach crosses into.
 	constexpr std::int64_t kSeenBoxCellMm = 512000;
+	// The most changed boxes the record keeps for its reader (takeChangedBoxes): a second of
+	// kSeenPiecesRegisteredPerTick at 60 ticks a second.
+	constexpr std::size_t kSeenChangedBoxesMost = 240;
 
 	// The radius of the disc drawn as visible round a colonist of sight `sightMm` in the open, before
 	// the eased rim's inset (sight-softening.md 6.3). Every held position lies within kSeenSlackMm of
@@ -144,7 +147,7 @@ namespace vision {
 
 		// The steps of update(), marked as each begins for a caller that times them (the forest bench):
 		// the covered tests, the cuts, each piece's patch into the record and the mesh's widths after it
-		// (a registration's own bookkeeping falls in its widths), the sweep, and the tick's end.
+		// (a registration's own bookkeeping falls in its patch), the sweep, and the tick's end.
 		enum class TickPhase : std::uint8_t { Tests, Cuts, Patch, Widths, Sweeps, End };
 		// What hears each step begin; the record holds no clock. Null by default: the game sets none.
 		struct TickPhaseListener {
@@ -228,6 +231,18 @@ namespace vision {
 		[[nodiscard]] std::optional<geometry::Vec2i64> lastSeenToward(const geometry::Vec2i64& from, const geometry::Vec2i64& to) const;
 		// Moves whenever the committed record does.
 		[[nodiscard]] std::uint64_t epoch() const;
+
+		// The committed record alone holds the point, edges included: the pending shapes are not read
+		// (sight-softening.md 6.3, the feather's cut).
+		[[nodiscard]] bool inRecord(const geometry::Vec2i64& point) const;
+		// The committed record's edge near the box from `low` to `high`, as (start, end) with seen ground
+		// on the left: every live triangle edge with nothing across it that meets the box, and some near
+		// it, each once (sight-softening.md 7.2).
+		void appendEdges(const geometry::Vec2i64& low, const geometry::Vec2i64& high, std::vector<std::pair<geometry::Vec2i64, geometry::Vec2i64>>& out) const;
+		// The boxes of the rings registered since the last call, appended to `out`: the committed record's
+		// edge changed nowhere else. Its one reader drains it every frame; past kSeenChangedBoxesMost
+		// undrained boxes they are merged into the one box round them all, so it stays bounded whoever reads.
+		void takeChangedBoxes(std::vector<Box>& out);
 
 		// The committed record as triangles, for drawing.
 		void appendTriangles(std::vector<Triangle>& out) const;
@@ -339,6 +354,7 @@ namespace vision {
 		TickWork											 work;
 		TickWork											 lastWork;
 		std::map<std::pair<std::int64_t, std::int64_t>, Box> committedBoxes; // by cell of kSeenBoxCellMm, each cut to its cell
+		std::vector<Box>									 changedBoxes;	 // registered since the reader last took them
 	};
 
 } // namespace vision
