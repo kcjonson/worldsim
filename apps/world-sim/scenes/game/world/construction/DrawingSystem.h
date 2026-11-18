@@ -547,11 +547,15 @@ namespace world_sim {
 		};
 		[[nodiscard]] ClickVerdict clickVerdict() const;
 
-		/// The pointer has not moved in the world since the click with which the active tool
-		/// last placed something, and the tool still holds what that click left. The snapped
+		/// The pointer has not left the click with which the active tool last placed something
+		/// (pointerLeftLastPlacement), and the tool still holds what that click left. The snapped
 		/// point need not be the placed one: a length that rounds to zero leaves the raw
 		/// pointer a few centimeters off it.
 		[[nodiscard]] bool restsOnLastPlacement() const;
+
+		/// The pointer's world position is more than kRestTolerancePixels from where it was at the
+		/// last placement, at the current zoom. True with no placement recorded.
+		[[nodiscard]] bool pointerLeftLastPlacement() const;
 
 		/// Record the click that just placed something with the active tool (restsOnLastPlacement).
 		void recordPlacement(construction::OpeningId opening = construction::kInvalidOpening);
@@ -840,6 +844,9 @@ namespace world_sim {
 		std::string activeThicknessPreset_ = "Standard";
 
 		static constexpr float kPixelsPerMeter = 8.0F; // match GameScene
+		// A real mouse move is at least a pixel; the camera's easing settles in sub-pixel steps
+		// after a pan stops, which must not end a rest.
+		static constexpr float kRestTolerancePixels = 0.5F;
 	};
 
 } // namespace world_sim

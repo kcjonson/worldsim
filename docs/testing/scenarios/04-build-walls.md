@@ -123,8 +123,8 @@ Run these after the pass / fail check above: they add blueprint wall segments, w
 
 The drawing steps below read `/api/state?what=drawing`. Their points are world points inside the built foundation (convert them to pixels with `what=camera`, [the camera view](../README.md#the-camera-view)); for the four-corner foundation of the precondition, take points a meter or more in from its edges on a foundation at least 6 m x 4 m (8 m x 6 m from (14, 0) to (22, 6) is buildable at the Quick Start landing). Centre the camera on it with `control?action=camera&x=18&y=3&zoom=3`, and again after each new game. A move out of the window is `ev=move,-5,-5`, which pauses a tool the way a real exit does.
 
-9. Pick Wall in the Build menu, click two points on a built foundation, and move the pointer out of the game's window: the band to the pointer, the marker, and its label go, and the two points and the band between them stay (`followingPointer` false, `pointer` and `snap` null, `points` still two, `status.hint` "Right-click / Enter to finish").
-10. Move the pointer back over the foundation: the band follows it from the second point (`followingPointer` true), and a click places a third point (`status.pointCount` 3).
+9. Pick Wall in the Build menu, click two points on a built foundation (say (16, 2) and (20, 2)), and move the pointer out of the game's window: the band to the pointer, the marker, and its label go, and the two points and the band between them stay (`followingPointer` false, `pointer` and `snap` null, `points` still two, `status.hint` "Right-click / Enter to finish").
+10. Move the pointer back over the foundation at a spot that is not the second point (say (20, 5)): the band follows it from the second point (`followingPointer` true), and a click places a third point (`status.pointCount` 3).
 11. Double-click a fourth point: the chain ends, `?what=construction` lists three more wall segments, the strip reads "Click a foundation to start" (`status.hint`, `status.pointCount` 0), and no toast says the wall is too short.
 12. Click two different points on the foundation a second apart: each places a point and the chain goes on (`status.pointCount` 2); Enter ends it (`status.pointCount` 0, one more wall segment).
 13. With no point placed, press Esc: the wall tool closes (`tool` `none`). With a chain of two or more points Esc ends the wall first and keeps the tool; press Esc again to close it.
@@ -134,6 +134,7 @@ The drawing steps below read `/api/state?what=drawing`. Their points are world p
 17. Make the built foundation again with the precondition's `built=1` command and centre the camera on it again: `?what=construction` lists it `Built`.
 18. Pick Wall in the Build menu and click (16, 3) and (19, 3) inside the built foundation, leaving the pointer on the second: the two points and the band between them show, nothing red, and no "wall too short" (`status.hint` "Right-click / Enter to finish", `verdict.proposed` false).
 19. Move the pointer off at an angle that is not square: an arc and the angle between the two walls show at the middle point.
+20. Make a built wall with `walls?pts=15,5;21,5&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=0`, pick Door in the Build menu, click the wall at (18, 5) and leave the pointer there: the door shows in the wall, with no red ghost and no "openings overlap" (`verdict.proposed` false, `status.hint` "Click a wall to place").
 
 ---
 

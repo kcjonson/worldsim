@@ -419,7 +419,7 @@ namespace world_sim {
 		const auto world = camera_->screenToWorld(screenX, screenY, viewportW, viewportH, kPixelsPerMeter);
 		pointerWorld_ = {world.x, world.y};
 		// A rest, once the pointer leaves it, is over: coming back to the same spot is a move like any other.
-		if (lastPlacement_ && lastPlacement_->pointer != pointerWorld_) {
+		if (pointerLeftLastPlacement()) {
 			lastPlacement_.reset();
 		}
 
@@ -885,7 +885,7 @@ namespace world_sim {
 			if (openingUnexplored_) {
 				return {.valid = false, .reason = "the area is unexplored"};
 			}
-			if (restsOnLastPlacement() && openingValidation_.code == construction::ValidationCode::OpeningOverlap) {
+			if (openingValidation_.code == construction::ValidationCode::OpeningOverlap && restsOnLastPlacement()) {
 				return {.proposed = false};
 			}
 			if (!openingValidation_.ok()) {
@@ -933,7 +933,15 @@ namespace world_sim {
 		if (lastPlacement_->opening != ec::kInvalidOpening && constructionWorld_.getOpening(lastPlacement_->opening) == nullptr) {
 			return false;
 		}
-		return lastPlacement_->pointCount == points_.size() && lastPlacement_->pointer == pointerWorld_;
+		return lastPlacement_->pointCount == points_.size() && !pointerLeftLastPlacement();
+	}
+
+	bool DrawingSystem::pointerLeftLastPlacement() const {
+		if (!lastPlacement_) {
+			return true;
+		}
+		const float distanceMeters = glm::distance(pointerWorld_, lastPlacement_->pointer);
+		return distanceMeters * pixelsPerWorldMeter() > kRestTolerancePixels;
 	}
 
 	void DrawingSystem::recordPlacement(ec::OpeningId opening) {
@@ -1364,6 +1372,10 @@ namespace world_sim {
 			return true;
 		}
 
+		if (!clickVerdict().proposed) {
+			return true;
+		}
+
 		// Subsequent point: it must stay on the host foundation, and the new segment
 		// must pass validation (length, junction angle, containment, clearance).
 		if (constructionWorld_.foundationAt(geometry::quantize(cursor_)) != wallHost_) {
@@ -1373,9 +1385,6 @@ namespace world_sim {
 			return true;
 		}
 
-		if (!clickVerdict().proposed) {
-			return true;
-		}
 		if (!lastValidation_.ok()) {
 			if (callbacks_.onToast) {
 				callbacks_.onToast("Invalid point", ec::validationReason(lastValidation_.code));
