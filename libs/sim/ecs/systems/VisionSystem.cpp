@@ -51,6 +51,16 @@ namespace ecs {
 			return rangeMm;
 		}
 
+		bool forestTakenFor(std::int64_t radiusMm) { return radiusMm > 0 && radiusMm <= kForestSightMostMm; }
+
+		// The slope-limited forest depth round `eyeMm` of a sight of `radiusMm` from `bodies`.
+		geometry::SightSideValues forestDepthOf(
+			const geometry::Vec2i64& eyeMm, std::int64_t radiusMm, std::span<const geometry::ForestBody> bodies, const geometry::ForestTunables& forest
+		) {
+			const geometry::ForestTunables sightForest = geometry::clampedToRanges(forest, radiusMm);
+			return geometry::forestLimitedDepth(geometry::forestRawDepth(eyeMm, radiusMm, bodies, sightForest), radiusMm, sightForest);
+		}
+
 		/// The recipe learning `newlyLearnedId` unlocks: one that is not innate, has it as an input, and whose
 		/// inputs the colonist now all knows. None when there is none.
 		const assets::RecipeDef* recipeUnlockedBy(
@@ -137,6 +147,31 @@ namespace ecs {
 		std::vector<geometry::OccluderSegment> occluders;
 		opaqueOccluders(centre, reachMm, placed, occluders);
 		return geometry::computeVisibilityPolygon(centre, reachMm, occluders);
+	}
+
+	geometry::SightSideValues VisionSystem::forestRangesAt(const geometry::Vec2i64& centre, std::int64_t sightMm) const {
+		if (!forestTakenFor(sightMm)) {
+			geometry::SightSideValues every{};
+			every.fill(sightMm);
+			return every;
+		}
+		const TimeSystem*			   time	   = world->tryGetSystem<TimeSystem>();
+		const std::int64_t			   clockMs = time != nullptr ? std::llround(time->simulationSeconds() * 1000.0) : 0;
+		const geometry::ForestTunables forest  = tunables.forest();
+		std::vector<const vision::PlacedOccluder*> placed;
+		if (const vision::PlacedOccluderIndex* index = placedIndex()) {
+			index->within(centre, sightMm, placed);
+		}
+		std::vector<geometry::ForestBody> bodies;
+		bodies.reserve(placed.size());
+		for (const vision::PlacedOccluder* ring : placed) {
+			bodies.push_back({
+				.centre		 = ring->centre,
+				.widthFactor = geometry::forestWidthFactor(ring->perimeterMm, forest),
+				.arrival	 = time != nullptr ? geometry::forestArrivalFraction(clockMs, ring->arrivedMs, forest) : geometry::kFractionOne,
+			});
+		}
+		return rangesFrom(sightMm, forestDepthOf(centre, sightMm, bodies, forest));
 	}
 
 	bool VisionSystem::SightShape::holds(glm::vec2 standing, glm::vec2 point) const {
@@ -356,12 +391,9 @@ namespace ecs {
 				}
 
 				// Forest depth (sight-softening.md 4) from every placed ring in sight, opaque or soft.
-				const bool				  forestTaken = radiusMm > 0 && radiusMm <= kForestSightMostMm;
-				geometry::SightSideValues depthMm{};
-				if (forestTaken) {
-					const geometry::ForestTunables sightForest = geometry::clampedToRanges(forest, radiusMm);
-					depthMm = geometry::forestLimitedDepth(geometry::forestRawDepth(observerMm, radiusMm, forestScratch, sightForest), radiusMm, sightForest);
-				}
+				const bool						forestTaken = forestTakenFor(radiusMm);
+				const geometry::SightSideValues depthMm		= forestTaken ? forestDepthOf(observerMm, radiusMm, forestScratch, forest)
+																		  : geometry::SightSideValues{};
 				entry.ranges	= rangesFrom(radiusMm, depthMm);
 				entry.path		= polygonPath ? SightPath::Polygon : (ringsInSight ? SightPath::Leg : SightPath::Open);
 				entry.hasForest = forestTaken;

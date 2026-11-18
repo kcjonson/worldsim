@@ -89,12 +89,18 @@ class VisionSystem : public ISystem {
 	/// the walls' facing occluders and the opaque placed rings in reach. What the sweep builds.
 	[[nodiscard]] geometry::Ring hardPolygon(const geometry::Vec2i64& centre, std::int64_t reachMm) const;
 
+	/// The 64 ranges of the forest shape of a sight of `sightMm` round `centre` from the placed rings
+	/// standing now, as a build there would take them (sight-softening.md 4); every one `sightMm` for a
+	/// sight too long for forest depth. What a sweep point's own forest depth is read from (6.4).
+	[[nodiscard]] geometry::SightSideValues forestRangesAt(const geometry::Vec2i64& centre, std::int64_t sightMm) const;
+
 	[[nodiscard]] int priority() const override { return 45; }
 	[[nodiscard]] const char* name() const override { return "Vision"; }
 
 	/// Set how often vision updates run (default: every 5 frames)
 	/// At 60fps, 5 frames = 12 vision updates/second, which is plenty
 	void setUpdateInterval(uint32_t frames) { m_updateInterval = frames; }
+	[[nodiscard]] uint32_t updateInterval() const { return m_updateInterval; }
 
 	/// Set the placement executor and processed chunks for entity queries
 	/// Must be called before update() can function
