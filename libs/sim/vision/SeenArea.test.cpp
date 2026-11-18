@@ -146,7 +146,7 @@ TEST(SeenArea, CoveredShapeIsDropped) {
 	SeenArea	  seen;
 	const Vec2i64 centre = metres(10.0, 10.0);
 	seen.commitNow(geometry::sightPolygon(centre, 150000), centre);
-	seen.queue(vision::legCapsule(geometry::sightPolygon(metres(0.0, 0.0), kSightMm - vision::kSeenSlackMm), geometry::sightPolygon(metres(60.0, 30.0), kSightMm - vision::kSeenSlackMm)), metres(0.0, 0.0));
+	seen.queue(geometry::sightPolygon(metres(30.0, 15.0), kSightMm - vision::kSeenSlackMm), metres(30.0, 15.0));
 	const std::uint64_t before = seen.epoch();
 	drain(seen);
 	EXPECT_EQ(seen.ringsRegistered(), 1U);
@@ -321,7 +321,8 @@ TEST(SeenArea, DoorwayPolygonsEqualAFreshBuildUpToTheSkirt) {
 }
 
 // A sight polygon that adds ground near its rim queues the sweep back along the walk from the build
-// before it, points kSeenSweepSpacingMm apart strictly between, four built a tick whatever else waits
+// before it, points kSeenSweepSpacingMm apart strictly between, built up to four a tick whatever shapes
+// wait while the sweep's own pieces drain, which register only with what the shapes' leave
 // (sight-softening.md 6.6); one with no build before it, or a covered one, builds nothing.
 TEST(SeenArea, APolygonThatAddsGroundIsSweptAndACoveredOneIsNot) {
 	const std::vector<geometry::OccluderSegment> walls = {{metres(3.0, -10.0), metres(3.0, 10.0)}};
@@ -344,15 +345,14 @@ TEST(SeenArea, APolygonThatAddsGroundIsSweptAndACoveredOneIsNot) {
 	}
 	seen.update();
 	EXPECT_EQ(seen.lastTickWork().piecesRegistered, vision::kSeenPiecesRegisteredPerTick);
-	EXPECT_EQ(seen.lastTickWork().sweepPointsBuilt, 4U) << "four of the nine points between the two builds";
-	EXPECT_GT(seen.pending().shapesWaiting + seen.pending().piecesWaiting, 0U) << "built while the rest waits";
-	EXPECT_EQ(seen.sweepsWaiting(), 5U);
-	seen.update();
-	EXPECT_EQ(seen.lastTickWork().sweepPointsBuilt, 4U);
-	EXPECT_GT(seen.pending().shapesWaiting + seen.pending().piecesWaiting, 0U);
-	seen.update();
-	EXPECT_EQ(seen.lastTickWork().sweepPointsBuilt, 1U);
-	EXPECT_EQ(seen.sweepsWaiting(), 0U);
+	EXPECT_GT(seen.lastTickWork().sweepPointsBuilt, 0U) << "points between the two builds";
+	EXPECT_GT(seen.pending().shapesWaiting, 0U) << "built while shapes wait";
+	// The shapes' pieces register first: no sweep piece goes in before the seven far squares have.
+	for (int tick = 0; tick < 100 && (seen.shapesPending() > 0 || seen.sweepsWaiting() > 0); ++tick) {
+		EXPECT_LE(seen.lastTickWork().sweepPointsBuilt, vision::kSeenSweepPointsPerTick);
+		EXPECT_TRUE(seen.registrations(SeenArea::Origin::Other) >= 7 || seen.registrations(SeenArea::Origin::Sweep) == 0) << "tick " << tick;
+		seen.update();
+	}
 	drain(seen);
 	EXPECT_EQ(seen.sweepsBuilt(), 9U);
 	ASSERT_EQ(builtAt.size(), 9U);
@@ -600,6 +600,6 @@ TEST(SeenArea, FourPiecesATickAndCoveredTestsWhilePiecesWait) {
 	EXPECT_EQ(seen.shapesPending(), 0U);
 	for (const double angle : {30.0, 90.0, 150.0, 210.0, 270.0, 330.0}) {
 		const double radians = angle * std::numbers::pi / 180.0;
-		EXPECT_TRUE(seen.inRecord(metres(25.0 * std::cos(radians), 25.0 * std::sin(radians)))) << angle << " degrees";
+		EXPECT_TRUE(seen.isSeen(metres(25.0 * std::cos(radians), 25.0 * std::sin(radians)))) << angle << " degrees";
 	}
 }

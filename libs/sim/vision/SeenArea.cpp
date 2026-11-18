@@ -233,13 +233,6 @@ namespace vision {
 		return geometry::forestShape(centre, ranges);
 	}
 
-	std::vector<Vec2i64> legCapsule(const std::vector<Vec2i64>& held, const std::vector<Vec2i64>& joined) {
-		ConvexHullScratch	 hull;
-		std::vector<Vec2i64> out;
-		hullOfConvexInto(held, joined, hull, out);
-		return out;
-	}
-
 	SeenArea::SeenArea()
 		: mesh(std::make_unique<geometry::nav::PatchableMesh>()),
 		  scratch(std::make_unique<geometry::nav::SightCoverScratch>()),
@@ -260,6 +253,7 @@ namespace vision {
 
 	void SeenArea::hullOfConvex(const std::vector<Vec2i64>& first, const std::vector<Vec2i64>& second, std::vector<Vec2i64>& out) {
 		hullOfConvexInto(first, second, *hullScratch, out);
+		++work.legJoins;
 		work.legVerticesJoined += first.size() + second.size();
 	}
 
@@ -293,26 +287,25 @@ namespace vision {
 		if (!shape.sweepPath.empty() && sightBuilder && addsNearRim(pieces, shape.centre, shape.rimRanges)) {
 			queueSweep(shape);
 		}
+		std::deque<PendingShape>& into = shape.origin == Origin::Sweep ? sweepEntering : entering;
 		for (std::vector<Vec2i64>& piece : pieces) {
-			entering.push_back(pendingOf(std::move(piece), shape.centre, shape.origin));
+			into.push_back(pendingOf(std::move(piece), shape.centre, shape.origin));
 		}
 	}
 
-	void SeenArea::registerPiece() {
-		PendingShape& piece = entering.front();
+	void SeenArea::registerPiece(std::deque<PendingShape>& from) {
+		PendingShape& piece = from.front();
 		holdCommitted(piece.low, piece.high);
 		++registeredFrom[static_cast<std::size_t>(piece.origin)];
 		++work.piecesRegistered;
 		work.verticesRegistered += piece.outline.size();
-		const Box box{piece.low, piece.high};
 		geometry::nav::PatchEdits edits;
 		edits.adds.push_back(geometry::nav::NavInputPolygon{.ring = std::move(piece.outline)});
-		entering.pop_front();
+		from.pop_front();
 		const geometry::nav::PatchReport report = mesh->applyPatch(edits);
 		for (const std::int32_t added : report.added) {
 			if (added != geometry::nav::kNoRing) {
 				registered.push_back(added);
-				changedBoxes.push_back(box);
 			}
 		}
 		mesh->refreshWidths();
@@ -354,6 +347,13 @@ namespace vision {
 			  for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
 				  sweep.rimRanges[side] = std::max(geometry::kForestShapeLeastRangeMm, interpolated[side] - insetMm);
 			  }
+			  // The oldest point goes first: a later build near it has most likely seen its ground, and
+			  // without it the seen edge there steps as vision's builds left it.
+			  if (sweeps.size() == kSeenSweepPointsMost) {
+				  sweeps.pop_front();
+				  ++sweepsDropped;
+				  ++work.sweepPointsDropped;
+			  }
 			  sweeps.push_back(std::move(sweep));
 		};
 		for (std::size_t corner = 0; corner < walk.size(); ++corner) {
@@ -372,9 +372,11 @@ namespace vision {
 		}
 	}
 
-	// A sweep shape was never pending, so the frontier alone decides whether it adds anything: the
-	// covered test's exact fallback reads every ring near a shadow edge, which is slow where the
-	// record is dense, and what it would settle lies within kSeenCoverToleranceMm of a ray.
+	// A sweep shape was never pending, so the frontier of the true shape is its test, in place of the
+	// covered test: that test's exact fallback reads every ring near a shadow edge, which is slow where
+	// the record is dense, and what it would settle lies within kSeenCoverToleranceMm of a ray. Test
+	// tight, register loose: a shape that adds nothing as it is would add the skirt's sliver once grown,
+	// so the test is not the cut enter() makes of the skirted shape.
 	void SeenArea::commitSweep(const PendingShape& point) {
 		++swept;
 		++work.sweepPointsBuilt;
@@ -383,6 +385,8 @@ namespace vision {
 			++skipped;
 			return;
 		}
+		++work.sweepFrontierTests;
+		work.verticesCut += built.shape.size();
 		if (geometry::nav::sightShapeFrontier(*mesh, built.shape, point.centre, *frontierScratch, pieces) == geometry::nav::SightFrontier::Covered) {
 			++dropped;
 			return;
@@ -399,7 +403,7 @@ namespace vision {
 			enter(pending);
 		}
 		while (!entering.empty()) {
-			registerPiece();
+			registerPiece(entering);
 		}
 	}
 
@@ -474,10 +478,15 @@ namespace vision {
 		if (shape.legPosition == position && shape.legRanges == ranges) {
 			return true;
 		}
-		const bool					changed	 = shape.legRanges != ranges;
-		const std::vector<Vec2i64>& held	 = changed ? shape.outline : shape.legHeld;
-		const std::vector<Vec2i64>	newShape = changed ? rimOf({0, 0}, ranges) : std::vector<Vec2i64>{};
-		hullOfConvex(held, movedBy(changed ? newShape : shape.legShape, position, moved), ring);
+		const bool changed = shape.legRanges != ranges;
+		// The present ranges run on to where he stands, then any new ranges' shape joins there: the
+		// bright shape still eases toward the old ranges' shape at his position on the frame they change.
+		hullOfConvex(changed ? shape.outline : shape.legHeld, movedBy(shape.legShape, position, moved), ring);
+		std::vector<Vec2i64> newShape;
+		if (changed) {
+			newShape = rimOf({0, 0}, ranges);
+			hullOfConvex(ring, movedBy(newShape, position, moved), ring);
+		}
 		if (ring.size() > kSoftLegMostVertices) {
 			return false;
 		}
@@ -515,22 +524,29 @@ namespace vision {
 			uncovered.pop_front();
 			enter(shape);
 		}
-		for (std::size_t count = 0; count < kSeenPiecesRegisteredPerTick && !entering.empty(); ++count) {
-			registerPiece();
+		// Shapes' pieces first, the sweep's with what is left: the sweep's pieces never hold the shapes'
+		// cut back, since it reads only the shapes' pieces waiting.
+		std::size_t count = 0;
+		for (; count < kSeenPiecesRegisteredPerTick && !entering.empty(); ++count) {
+			registerPiece(entering);
 		}
-		if (sightBuilder) {
-			for (std::size_t built = 0; built < kSeenSweepPointsPerTick && !sweeps.empty(); ++built) {
-				const PendingShape point = std::move(sweeps.front());
-				sweeps.pop_front();
-				commitSweep(point);
-			}
+		for (; count < kSeenPiecesRegisteredPerTick && !sweepEntering.empty(); ++count) {
+			registerPiece(sweepEntering);
+		}
+		// The sweep's own budget, whatever the shapes hold, while its own pieces drain.
+		for (std::size_t built = 0; sightBuilder && built < kSeenSweepPointsPerTick && sweepEntering.size() < kSeenPiecesRegisteredPerTick && !sweeps.empty(); ++built) {
+			const PendingShape point = std::move(sweeps.front());
+			sweeps.pop_front();
+			commitSweep(point);
 		}
 		++ticks;
 		lastWork = work;
 		work	 = TickWork{};
 	}
 
-	SeenArea::Pending SeenArea::pending() const { return {openLegs.size(), waiting.size() + uncovered.size(), entering.size()}; }
+	SeenArea::Pending SeenArea::pending() const {
+		return {openLegs.size(), waiting.size() + uncovered.size(), entering.size() + sweepEntering.size()};
+	}
 
 	template <typename Visit> void SeenArea::forEachPending(Visit visit) const {
 		for (const auto& [leg, shape] : openLegs) {
@@ -545,12 +561,13 @@ namespace vision {
 		for (const PendingShape& piece : entering) {
 			visit(piece);
 		}
+		for (const PendingShape& piece : sweepEntering) {
+			visit(piece);
+		}
 	}
 
-	bool SeenArea::inRecord(const Vec2i64& point) const { return mesh->locate(point) >= 0; }
-
 	bool SeenArea::isSeen(const Vec2i64& point) const {
-		if (inRecord(point)) {
+		if (mesh->locate(point) >= 0) {
 			return true;
 		}
 		bool seen = false;
@@ -618,8 +635,9 @@ namespace vision {
 		Vec2i64		  high{std::max(from.x, to.x), std::max(from.y, to.y)};
 
 		std::vector<double>						 along{0.0, 1.0};
+		std::vector<std::int32_t>				 edgeIds;
 		std::vector<std::pair<Vec2i64, Vec2i64>> edges;
-		appendEdges(low, high, edges);
+		mesh->meshEdgesNear(low, high, edgeIds, edges);
 		for (const auto& [edgeStart, edgeEnd] : edges) {
 			meetings(from, direction, edgeStart, edgeEnd, along);
 		}
@@ -668,16 +686,6 @@ namespace vision {
 			const geometry::nav::NavTriangle& triangle = triangles[static_cast<std::size_t>(t)];
 			out.push_back({{vertices[triangle.v[0]], vertices[triangle.v[1]], vertices[triangle.v[2]]}});
 		}
-	}
-
-	void SeenArea::appendEdges(const Vec2i64& low, const Vec2i64& high, std::vector<std::pair<Vec2i64, Vec2i64>>& out) const {
-		std::vector<std::int32_t> edgeIds;
-		mesh->meshEdgesNear(low, high, edgeIds, out);
-	}
-
-	void SeenArea::takeChangedBoxes(std::vector<Box>& out) {
-		out.insert(out.end(), changedBoxes.begin(), changedBoxes.end());
-		changedBoxes.clear();
 	}
 
 	void SeenArea::appendPendingShapes(std::vector<const std::vector<Vec2i64>*>& out) const {

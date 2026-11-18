@@ -14,6 +14,7 @@
 
 #include <construction/ConstructionWorld.h>
 #include <vision/SeenArea.h>
+#include <vision/SightFeed.h>
 
 #include <core/Vec2i64.h>
 
@@ -101,96 +102,15 @@ namespace ecs {
 		[[nodiscard]] std::size_t footprintsEntered() const { return enteredFootprints.size(); }
 		// Test-only: how many eased forest shapes drawnVisible has built, one a colonist a frame of an ease.
 		[[nodiscard]] std::uint64_t drawnForestBuildCount() const { return drawnForestBuilds; }
-		// Test-only: how many legs have been opened off the polygon path.
-		[[nodiscard]] std::uint64_t legsOpenedCount() const { return legsOpened; }
-
-		// How far a side's greatest range over a leg may exceed its least at the game's speed
-		// `timeScale` (sight-softening.md 6.6): `toleranceMm` scaled by the distance between builds,
-		// a vision interval's walk of `intervalWalkMm` at 1x times the intervals it takes to pass the
-		// rebuild step, against that at 1x. `toleranceMm` itself when he does not walk.
-		[[nodiscard]] static std::int64_t legToleranceMm(std::int64_t toleranceMm, double intervalWalkMm, double timeScale);
+		// Test-only: the feed of a colonist the system follows, his legs and eased rim.
+		[[nodiscard]] const vision::SightFeed* feedOf(EntityID colonist) const;
 
 	  private:
-		using SideOffsets = std::array<std::int64_t, geometry::kSightSides>;
-
-		// A leg's held positions, kept as what bounds the leg's end: the directions from its start
-		// within kSeenSlackMm of every held position's line (a wedge, once one lies farther out than
-		// that), and the farthest any lay from the start. A leg in the record also keeps each side's
-		// least and greatest range over its builds and the ranges it last took.
-		struct Leg {
-			bool					open = false;
-			geometry::Vec2i64		start;
-			geometry::Vec2i64		end;
-			bool					hasWedge = false;
-			std::array<double, 2>	wedgeLow{};
-			std::array<double, 2>	wedgeHigh{};
-			double					farthestMm = 0.0;
-			vision::SightRanges		least{};
-			vision::SightRanges		most{};
-			vision::SightRanges		ranges{};
-		};
-
-		// The eased rim (sight-softening.md 6.3): the 64 side offsets drawn when the ease started, in
-		// millimetres, rounded down and 1 mm less; his position then; his walk since, each frame's
-		// rounded up; and the newest build's offsets at the drawn radius, each the support of its
-		// forest shape along the side's normal.
-		struct Ease {
-			bool			  valid = false;
-			std::uint64_t	  buildRevision = 0;
-			SideOffsets		  start{};
-			geometry::Vec2i64 startPosition;
-			std::int64_t	  walkedMm	= 0;
-			std::int64_t	  rimEaseMm = 1; // the tunable when the ease started
-			SideOffsets		  newest{};
-		};
-
-		// `leg` is his open leg off the polygon path. On the polygon path `walk` is his path since the
-		// last shape that went in, for the sweep: its build, then each turn, where `stretch` (a leg, not
-		// pending) ended; `walkStartRanges` is that build's rim, and `sweepWanted` whether an opaque wall
-		// was in its reach. `wallSight` holds while vision's polygon of `polygonRevision` stands for him:
-		// a jump drops it until the next.
 		struct Observer {
-			Leg							   leg;
-			Leg							   stretch;
-			std::vector<geometry::Vec2i64> walk;
-			vision::SightRanges			   walkStartRanges{};
-			bool						   sweepWanted	   = false;
-			std::int64_t				   sightMm		   = 0; // his sight when the last polygon was built
-			bool						   wallSight	   = false;
-			std::uint64_t				   polygonRevision = 0; // the last visibility polygon's revision that was handled
-			bool						   present		   = false;
-			Ease						   ease;
-			bool						   placed = false; // `lastPosition` holds where he stood last frame
-			geometry::Vec2i64			   lastPosition;
+			vision::SightFeed feed;
+			bool			  present = false;
 		};
 
-		static void beginLeg(Leg& leg, const geometry::Vec2i64& at, const vision::SightRanges& ranges);
-		// His leg off the polygon path, ended by a turn, a jump, the spread past `toleranceMm` at a new
-		// build, or kSoftLegMostVertices, the next holding the shape drawn this frame but after a jump
-		// or the polygon path (sight-softening.md 6.2).
-		void followLeg(EntityID colonist, Observer& observer, const geometry::Vec2i64& at, const vision::SightRanges& ranges, bool newBuild, std::int64_t toleranceMm);
-		// Joins his position and the leg's ranges to its ring; a ring past kSoftLegMostVertices ends the
-		// leg there and opens the next.
-		void joinLeg(EntityID colonist, Observer& observer, const geometry::Vec2i64& at, const std::optional<vision::SeenArea::InheritedShape>& inherited);
-		void closeLeg(EntityID colonist, Leg& leg);
-		// On the polygon path: a turn adds to his walk; a jump drops his polygon and walk.
-		static void followStretch(Observer& observer, const geometry::Vec2i64& at);
-		static void dropWallSight(Observer& observer);
-		// On the polygon path, where he rests or his walk ends away from vision's last build, a shape
-		// built there goes in, so the ground he sees from there is not left to the next build.
-		void		enterPolygonAt(Observer& observer, const geometry::Vec2i64& at);
-		// The one place vision's polygon enters the record (player-visibility.md 3.3), cut to its rim,
-		// the forest shape of his sight round its build (sight-softening.md 6.4).
-		void		registerPolygon(EntityID colonist, Observer& observer, const VisionSystem& vision, const VisionSystem::SightShape& shape);
-		static bool holds(const Leg& leg, const geometry::Vec2i64& at);
-		static void hold(Leg& leg, const geometry::Vec2i64& at);
-		// The ease's walk this frame and, at a new build, its restart from the shape drawn now over
-		// `rimEaseMm` of walk.
-		static void followEase(Ease& ease, const VisionSystem::SightShape& shape, std::int64_t sightMm, std::int64_t rimEaseMm, std::int64_t walkedMm, const geometry::Vec2i64& at);
-		// The side offsets drawn now: the ease's blend of its start and the newest build's.
-		[[nodiscard]] static SideOffsets drawnOffsets(const Ease& ease);
-		// The ranges whose forest shape has the given side offsets, each rounded so the shape lies inside.
-		[[nodiscard]] static vision::SightRanges rangesOfOffsets(const SideOffsets& offsets);
 		// Queues the footprint of every structure the polygon of `shape` touched that has not gone in.
 		void enterStructures(const VisionSystem::SightShape& shape);
 		void enterFootprint(const std::vector<geometry::Vec2i64>& ring);
@@ -201,15 +121,14 @@ namespace ecs {
 		// is moved to where he stands each frame, so a frame whose offsets are those of the last builds
 		// nothing: every frame once the ease has ended.
 		struct DrawnForest {
-			SideOffsets	   offsets{};
-			geometry::Ring forest;
+			vision::SightFeed::SideOffsets offsets{};
+			geometry::Ring				   forest;
 		};
-		const geometry::Ring& drawnForestFor(EntityID colonist, const SideOffsets& offsets) const;
+		const geometry::Ring& drawnForestFor(EntityID colonist, const vision::SightFeed::SideOffsets& offsets) const;
 
 		vision::SeenArea			 seen;
 		mutable std::map<EntityID, DrawnForest> drawnForests;
 		mutable std::uint64_t					drawnForestBuilds = 0;
-		std::uint64_t							legsOpened		  = 0;
 		const VisionSystem*			 sweepVision = nullptr; // the vision the record's sweeps build their polygons with
 		std::map<EntityID, Observer> observers;
 		bool						 revealedFlag = false;

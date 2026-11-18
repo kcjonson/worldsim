@@ -199,6 +199,7 @@ namespace ecs {
 			.forest			 = entry.hasForest ? &entry.forest : nullptr,
 			.segmentsSeen	 = &entry.segmentsSeen,
 			.openingsSeen	 = &entry.openingsSeen,
+			.placedSeen		 = &entry.placedSeen,
 		};
 	}
 
@@ -220,6 +221,7 @@ namespace ecs {
 			.bodies		 = &entry.bodies,
 			.shadowEdges = &entry.shadowEdges,
 			.leadMm		 = entry.leadMm,
+			.reachLeadMm = entry.reachLeadMm,
 			.reachMm	 = entry.reachMm,
 			.eyeCentre	 = entry.builtMm,
 		};
@@ -282,16 +284,19 @@ namespace ecs {
 			// walks until then.
 			const std::int64_t		radiusMm   = std::llround(static_cast<double>(memory.sightRadius) * 1000.0);
 			const geometry::Vec2i64 observerMm = nav::toMm(pos.value);
-			// A still colonist walks nothing. A walk is taken up to whole kLeadWalkStepMm, and a build
-			// stores this pass's lead with one kLeadWalkStepMm more, so a frame time jittering across one
-			// such boundary at a steady walk never outgrows it, while a real speed-up does. Nothing older
-			// than the pass that builds goes into the lead it stores.
+			// A still colonist walks nothing. `lead` is the pass's walk as it is, what the drawing widens
+			// by. What the shape is built to takes the walk up to whole kLeadWalkStepMm, and a build stores
+			// that with one kLeadWalkStepMm more, its reach lead, so a frame time jittering across one such
+			// boundary at a steady walk never outgrows it, while a real speed-up does. Nothing older than
+			// the pass that builds goes into what it stores.
 			const auto*		   movement	  = world->getComponent<MovementTarget>(entity);
 			const double	   speed	  = movement != nullptr && movement->active ? static_cast<double>(movement->speed) : 0.0;
-			const auto		   walkMm	  = static_cast<std::int64_t>(std::ceil(speed * intervalSeconds * 1000.0 / kLeadWalkStepMm)) * kLeadWalkStepMm;
-			const std::int64_t passLeadMm = std::min(vision::kSightLeadMostMm, kSightRebuildStepMm + walkMm);
-			const std::int64_t leadMm	  = std::min(vision::kSightLeadMostMm, passLeadMm + kLeadWalkStepMm);
-			const std::int64_t reachMm	  = radiusMm + leadMm;
+			const double	   walkedMm	  = speed * intervalSeconds * 1000.0;
+			const std::int64_t leadMm	  = std::min(vision::kSightLeadMostMm, kSightRebuildStepMm + std::llround(walkedMm));
+			const auto		   walkMm	  = static_cast<std::int64_t>(std::ceil(walkedMm / kLeadWalkStepMm)) * kLeadWalkStepMm;
+			const std::int64_t passReachLeadMm = std::min(vision::kSightLeadMostMm, kSightRebuildStepMm + walkMm);
+			const std::int64_t reachLeadMm	   = std::min(vision::kSightLeadMostMm, passReachLeadMm + kLeadWalkStepMm);
+			const std::int64_t reachMm		   = radiusMm + reachLeadMm;
 			VisibilityCache&   entry	  = m_visibilityCache[entity];
 			entry.seenThisTick				= true;
 
@@ -307,7 +312,7 @@ namespace ecs {
 			const geometry::Vec2i64 moved = observerMm - entry.builtMm;
 			bool due = !entry.built || geometry::dot(moved, moved) > geometry::Int128::product(kSightRebuildStepMm, kSightRebuildStepMm) ||
 					   entry.builtVersion != m_geometry.generation() || entry.tunablesVersion != tunablesVersion ||
-					   entry.radius != memory.sightRadius || passLeadMm > entry.leadMm;
+					   entry.radius != memory.sightRadius || passReachLeadMm > entry.reachLeadMm;
 			if (!due && !entry.hasPolygon) {
 				due = m_geometry.anyBodyWithin(observerMm, reachMm);
 			}
@@ -408,6 +413,7 @@ namespace ecs {
 						entry.polygon.clear();
 						entry.segmentsSeen.clear();
 						entry.openingsSeen.clear();
+						entry.placedSeen.clear();
 						entry.hasPolygon = false;
 						++entry.polygonRevision;
 					}
@@ -446,7 +452,7 @@ namespace ecs {
 					// New structures appear only via a geometry change, which bumps the
 					// generation and forces a rebuild here.
 					rememberStructures(
-						observerMm, radiusMm, entry.polygon, backFacesHidden, memory, entry.segmentsSeen, entry.openingsSeen
+						observerMm, radiusMm, entry.polygon, backFacesHidden, memory, entry.segmentsSeen, entry.openingsSeen, entry.bodies, entry.placedSeen
 					);
 				}
 				entry.builtMm		  = observerMm;
@@ -454,6 +460,7 @@ namespace ecs {
 				entry.tunablesVersion = tunablesVersion;
 				entry.radius		  = memory.sightRadius;
 				entry.leadMm		  = leadMm;
+				entry.reachLeadMm	  = reachLeadMm;
 				entry.reachMm		  = reachMm;
 				entry.built			  = true;
 				++entry.buildRevision;
@@ -501,10 +508,13 @@ namespace ecs {
 		bool								  backFacesHidden,
 		Memory&								  memory,
 		std::vector<construction::SegmentId>& segments,
-		std::vector<construction::OpeningId>& openings
+		std::vector<construction::OpeningId>& openings,
+		std::span<const vision::SightBody>	  bodies,
+		std::vector<geometry::Ring>&		  placedSeen
 	) {
 		segments.clear();
 		openings.clear();
+		placedSeen.clear();
 		// The polygon may reach a rebuild step past sight; what is seen is the part within it.
 		const geometry::Ring polygon = geometry::starClippedToConvex(builtPolygon, centerMm, geometry::sightPolygon(centerMm, radiusMm));
 		// Pass 0: structure-as-observable (vision-architecture D4). A wall or
@@ -564,6 +574,20 @@ namespace ecs {
 			if (structureSeen(op.leftFace.start, op.leftFace.end) || structureSeen(op.rightFace.start, op.rightFace.end)) {
 				memory.rememberOpening(op.openingId);
 				openings.push_back(op.openingId);
+			}
+		}
+
+		// An opaque placed body is seen by a wall's test: one of its outline edges is. Its inside is
+		// never in sight, so its footprint joins the seen record as a seen wall's does.
+		for (const vision::SightBody& body : bodies) {
+			if (body.source != vision::SightBody::Source::Placed || body.kind != vision::BodyKind::Opaque) {
+				continue;
+			}
+			if (std::ranges::any_of(body.edges, [&](const geometry::OccluderSegment& edge) { return structureSeen(edge.a, edge.b); })) {
+				geometry::Ring& outline = placedSeen.emplace_back();
+				for (const geometry::OccluderSegment& edge : body.edges) {
+					outline.push_back(edge.a);
+				}
 			}
 		}
 	}

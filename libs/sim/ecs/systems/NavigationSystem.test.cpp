@@ -1351,7 +1351,7 @@ TEST_F(NavigationSystemTest, ForestShapeIsBuiltOnceAStepWalkingAmongSoftTrees) {
 		}
 	}
 	EXPECT_EQ(built.size(), 5U);
-	EXPECT_EQ(vision.sightBodies(observer)->leadMm, VisionSystem::kSightRebuildStepMm + 2 * VisionSystem::kLeadWalkStepMm);
+	EXPECT_EQ(vision.sightBodies(observer)->reachLeadMm, VisionSystem::kSightRebuildStepMm + 2 * VisionSystem::kLeadWalkStepMm);
 	EXPECT_EQ(vision.polygonBuildCount(), 0U);
 	EXPECT_NE(built.front(), built.back()) << "each build takes the ranges where it stands";
 }

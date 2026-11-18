@@ -28,6 +28,7 @@
 #include <filesystem>
 #include <limits>
 #include <numbers>
+#include <numeric>
 #include <random>
 #include <set>
 #include <vector>
@@ -653,7 +654,7 @@ TEST(PlayerVisibilitySystem, SeenNeverShrinksTowardAWideningShadow) {
 namespace {
 
 	// A colony among placed rings with vision every 5th frame, as the game runs it: each frame's time
-	// jitters up to 5% either way about 60 frames a second, and the colonist walks 2 m/s with an active
+	// jitters up to 5% either way about `framesPerSecond`, and a colonist walks 2 m/s with an active
 	// MovementTarget, each frame's walk that frame's time at the game's speed.
 	struct ForestColony {
 		World					world;
@@ -663,16 +664,18 @@ namespace {
 		PlayerVisibilitySystem& visibility = world.registerSystem<PlayerVisibilitySystem>();
 		geometry::nav::RingId	nextRing   = 1;
 		std::mt19937			jitter{3};
+		float					framesPerSecond = 60.0F;
 
-		// A square ring `sideMeters` wide round `centre`, arrived long ago.
-		void place(glm::vec2 centre, float sideMeters) {
+		// A square ring `sideMeters` wide round `centre`, arriving at `arrivedMs` on the clock, by default
+		// long ago.
+		void place(glm::vec2 centre, float sideMeters, std::int64_t arrivedMs = -1000000000) {
 			const Vec2i64	   middle = nav::toMm(centre);
 			const std::int64_t half	  = std::llround(sideMeters * 500.0F);
 			navigation.placedOccluders().add(
 				nextRing++,
 				{middle + Vec2i64{-half, -half}, middle + Vec2i64{half, -half}, middle + Vec2i64{half, half}, middle + Vec2i64{-half, half}},
 				"Test_Trunk",
-				-1000000000
+				arrivedMs
 			);
 		}
 
@@ -702,15 +705,14 @@ namespace {
 			return colonist;
 		}
 
-		// One frame: he walks toward `heading` that frame's walk, with `sideways` as his offset from the
-		// line y = 0. His walk in millimetres.
-		double step(EntityID colonist, float sideways) {
-			const float		frameSeconds = (1.0F / 60.0F) * std::uniform_real_distribution<float>(0.95F, 1.05F)(jitter);
-			glm::vec2&		at			 = world.getComponent<Position>(colonist)->value;
-			const glm::vec2 before		 = at;
-			at							 = {at.x + 2.0F * frameSeconds * time.effectiveTimeScale(), sideways};
-			world.update(frameSeconds);
-			return static_cast<double>(glm::distance(before, at)) * 1000.0;
+		float frameSeconds() { return std::uniform_real_distribution<float>(0.95F, 1.05F)(jitter) / framesPerSecond; }
+
+		// One frame: he walks east that frame's walk, `sideways` his offset from the line y = 0.
+		void step(EntityID colonist, float sideways) {
+			const float seconds = frameSeconds();
+			glm::vec2&	at		= world.getComponent<Position>(colonist)->value;
+			at					= {at.x + 2.0F * seconds * time.effectiveTimeScale(), sideways};
+			world.update(seconds);
 		}
 
 		void remove(EntityID colonist) {
@@ -752,90 +754,151 @@ namespace {
 		return nearest;
 	}
 
+	// How far past the convex `ring` round `centre` the point lies along the ray from the centre through
+	// it: 0 inside.
+	double radiallyOutside(const Vec2i64& point, const Vec2i64& centre, const std::vector<Vec2i64>& ring) {
+		const double directionX = static_cast<double>(point.x - centre.x);
+		const double directionY = static_cast<double>(point.y - centre.y);
+		const double length		= std::hypot(directionX, directionY);
+		double		 boundary	= 1e300;
+		for (std::size_t i = 0; i < ring.size(); ++i) {
+			const double fromX = static_cast<double>(ring[i].x - centre.x);
+			const double fromY = static_cast<double>(ring[i].y - centre.y);
+			const double edgeX = static_cast<double>(ring[(i + 1) % ring.size()].x - ring[i].x);
+			const double edgeY = static_cast<double>(ring[(i + 1) % ring.size()].y - ring[i].y);
+			const double turn  = directionX * edgeY - directionY * edgeX;
+			if (turn == 0.0) {
+				continue;
+			}
+			const double along = (fromX * edgeY - fromY * edgeX) / turn;
+			const double onEdge = (fromX * directionY - fromY * directionX) / turn;
+			if (along > 0.0 && onEdge >= 0.0 && onEdge <= 1.0) {
+				boundary = std::min(boundary, along * length);
+			}
+		}
+		return std::max(0.0, length - boundary);
+	}
+
+	// The eased rim from frame to frame (sight-softening.md 6.3): on the frame a build restarts the ease
+	// no side moves, and between, no side moves more than his walk over rimEaseMm of the ease's span,
+	// from the shape drawn at the restart to the newest build's at the drawn radius. `sides` limits it to
+	// the sides the polygon path's cut leaves to the ease.
+	struct EaseWatch {
+		std::int64_t							  sightMm = std::llround(kSight * 1000.0F);
+		std::int64_t							  drawnMm = vision::drawnVisibleRadiusMm(std::llround(kSight * 1000.0F)) - 400;
+		std::uint64_t							  lastBuild = 0;
+		bool									  before	= false;
+		Vec2i64									  lastAt{0, 0};
+		std::array<double, geometry::kSightSides> previous{};
+		std::array<double, geometry::kSightSides> start{};
+		std::array<double, geometry::kSightSides> newest{};
+
+		void frame(const VisionSystem::SightShape& shape, const std::vector<Vec2i64>& drawn, const Vec2i64& at, int frameIndex, const std::vector<std::size_t>& sides) {
+			const double walked = before ? std::ceil(std::sqrt(geometry::dot(at - lastAt, at - lastAt).toDouble())) : 0.0;
+			lastAt				= at;
+			const std::array<double, geometry::kSightSides> now = supportsOf(drawn, at);
+			// This frame's walk moves the old ease on before a restart takes it as its start, so a restart
+			// moves nothing past what the old ease gives this frame.
+			for (const std::size_t side : sides) {
+				EXPECT_TRUE(!before || std::abs(now[side] - previous[side]) <= walked / 400.0 * std::abs(newest[side] - start[side]) + 4.0)
+					<< "frame " << frameIndex << ", side " << side << (shape.buildRevision != lastBuild ? ", a restart" : "");
+			}
+			if (shape.buildRevision != lastBuild) {
+				vision::SightRanges drawnRanges{};
+				for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
+					drawnRanges[side] = (*shape.ranges)[side] - (sightMm - drawnMm);
+				}
+				newest	  = supportsOf(geometry::forestShape({0, 0}, drawnRanges), {0, 0});
+				start	  = now;
+				lastBuild = shape.buildRevision;
+			}
+			previous = now;
+			before	 = true;
+		}
+	};
+
+	std::vector<std::size_t> everySide() {
+		std::vector<std::size_t> sides(geometry::kSightSides);
+		std::iota(sides.begin(), sides.end(), std::size_t{0});
+		return sides;
+	}
+
+	void expectDrawnSeen(const PlayerVisibilitySystem& visibility, const std::vector<Vec2i64>& drawn, int frameIndex) {
+		for (std::size_t k = 0; k < drawn.size(); ++k) {
+			const Vec2i64& vertex = drawn[k];
+			const Vec2i64& next	  = drawn[(k + 1) % drawn.size()];
+			ASSERT_TRUE(visibility.seenArea().isSeen(vertex)) << "frame " << frameIndex << ": a drawn vertex not seen";
+			ASSERT_TRUE(visibility.seenArea().isSeen({(vertex.x + next.x) / 2, (vertex.y + next.y) / 2})) << "frame " << frameIndex;
+		}
+	}
+
+	struct ForestWalkCase {
+		GameSpeed speed;
+		float	  framesPerSecond;
+	};
+
 } // namespace
 
-// Walking a stand with a sideways wobble at 1x and at 10x (sight-softening.md 6.2, 6.3): legs end by
-// the spread and by turns; every frame the bright shape is in the record or a pending shape; the eased
-// rim moves no side more in a frame than his walk over rimEaseMm of the ease's span, and nothing on the
-// frame a build restarts the ease; and once he is gone no seen point lies farther from a shape a leg
-// held (its build's ranges at the slack radius, where he stood) than 6.2's bound in the landing's
-// forest, 1.16 m at 1x and 3.6 m at 10x as a distance.
-class ForestLegs : public ::testing::TestWithParam<GameSpeed> {};
+// Walking a stand with a sideways wobble at 1x and 10x, at 60 and at 20 frames a second with jittery
+// frames (sight-softening.md 6.2, 6.3): legs end by the spread and by turns; every frame the bright
+// shape is in the record or a pending shape; the eased rim moves no side more in a frame than his walk
+// over rimEaseMm of the ease's span, and nothing at a restart; and once he is gone no seen point lies
+// farther from a shape a leg held (its build's ranges at the slack radius, where he stood) than 6.2's
+// bounds in the landing's forest, 1.16 m at 1x and 3.6 m at 10x as a distance, 1.58 m and 4.9 m
+// radially from where he stood.
+class ForestLegs : public ::testing::TestWithParam<ForestWalkCase> {};
 
 TEST_P(ForestLegs, BrightShapeSeenEaseBoundedAndRecordNearTheShapesHeld) {
 	ForestColony colony;
-	colony.time.setSpeed(GetParam());
+	colony.time.setSpeed(GetParam().speed);
+	colony.framesPerSecond = GetParam().framesPerSecond;
 	colony.plant({-40.0F, -40.0F}, {80.0F, 40.0F}, 4.0F, 0.65F, 5);
-	const EntityID	   colonist = colony.addColonist({0.0F, 0.0F});
-	const std::int64_t sightMm	= std::llround(kSight * 1000.0F);
-	const std::int64_t drawnMm	= vision::drawnVisibleRadiusMm(sightMm) - 400;
+	const EntityID colonist = colony.addColonist({0.0F, 0.0F});
 
-	std::vector<std::vector<Vec2i64>>		  held;
-	Vec2i64									  lastHeld{-1000000, 0};
-	std::uint64_t							  lastBuild = 0;
-	std::array<double, geometry::kSightSides> previous{};
-	std::array<double, geometry::kSightSides> start{};
-	std::array<double, geometry::kSightSides> newest{};
-	bool									  drawnBefore = false;
-	int										  frames	  = 0;
-	Vec2i64									  before	  = nav::toMm(colony.world.getComponent<Position>(colonist)->value);
+	struct Held {
+		Vec2i64				 at;
+		std::vector<Vec2i64> shape;
+	};
+	std::vector<Held> held;
+	std::uint64_t	  lastBuild = 0;
+	Vec2i64			  lastHeld{-1000000, 0};
+	EaseWatch		  ease;
+	int				  frames = 0;
 	while (colony.world.getComponent<Position>(colonist)->value.x < 40.0F) {
 		const float x = colony.world.getComponent<Position>(colonist)->value.x;
 		colony.step(colonist, 0.3F * std::sin(0.8F * x));
 		++frames;
-		const Vec2i64 at	 = nav::toMm(colony.world.getComponent<Position>(colonist)->value);
-		const double  walked = std::ceil(std::sqrt(geometry::dot(at - before, at - before).toDouble()));
-		before				 = at;
+		const Vec2i64								  at	= nav::toMm(colony.world.getComponent<Position>(colonist)->value);
 		const std::optional<VisionSystem::SightShape> shape = colony.vision.sightShape(colonist);
 		ASSERT_TRUE(shape.has_value());
 		ASSERT_EQ(shape->polygon, nullptr) << "no opaque body: off the polygon path";
-		vision::SightRanges legRanges{};
-		for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
-			legRanges[side] = (*shape->ranges)[side] - vision::kSeenSlackMm;
-		}
 		if (shape->buildRevision != lastBuild || std::abs(at.x - lastHeld.x) >= 100) {
-			held.push_back(geometry::forestShape(at, legRanges));
-			lastHeld = at;
+			vision::SightRanges legRanges{};
+			for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
+				legRanges[side] = (*shape->ranges)[side] - vision::kSeenSlackMm;
+			}
+			held.push_back({at, geometry::forestShape(at, legRanges)});
+			lastHeld  = at;
+			lastBuild = shape->buildRevision;
 		}
-
 		const std::optional<std::vector<Vec2i64>> drawn = colony.visibility.drawnVisible(colonist);
 		ASSERT_TRUE(drawn.has_value());
-		for (std::size_t k = 0; k < drawn->size(); ++k) {
-			const Vec2i64& vertex = (*drawn)[k];
-			const Vec2i64& next	  = (*drawn)[(k + 1) % drawn->size()];
-			ASSERT_TRUE(colony.visibility.seenArea().isSeen(vertex)) << "frame " << frames << ": a drawn vertex not seen";
-			ASSERT_TRUE(colony.visibility.seenArea().isSeen({(vertex.x + next.x) / 2, (vertex.y + next.y) / 2})) << "frame " << frames;
-		}
-
-		const std::array<double, geometry::kSightSides> now = supportsOf(*drawn, at);
-		if (shape->buildRevision != lastBuild) {
-			// The newest build's offsets at the drawn radius, each the support of its forest shape (6.3).
-			vision::SightRanges drawnRanges{};
-			for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
-				drawnRanges[side] = (*shape->ranges)[side] - (sightMm - drawnMm);
-			}
-			newest = supportsOf(geometry::forestShape({0, 0}, drawnRanges), {0, 0});
-			for (std::size_t side = 0; drawnBefore && side < geometry::kSightSides; ++side) {
-				EXPECT_NEAR(now[side], previous[side], 4.0) << "frame " << frames << ": a restart moves nothing, side " << side;
-			}
-			start	  = now;
-			lastBuild = shape->buildRevision;
-		} else {
-			for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
-				const double span = std::abs(newest[side] - start[side]);
-				EXPECT_LE(std::abs(now[side] - previous[side]), walked / 400.0 * span + 4.0) << "frame " << frames << ", side " << side;
-			}
-		}
-		previous	= now;
-		drawnBefore = true;
+		expectDrawnSeen(colony.visibility, *drawn, frames);
+		ease.frame(*shape, *drawn, at, frames, everySide());
 	}
-	EXPECT_GT(colony.visibility.legsOpenedCount(), 2U) << "legs ended on the walk";
+	const vision::SightFeed& feed = *colony.visibility.feedOf(colonist);
+	EXPECT_GT(feed.legsOpened(), 2U) << "legs ended on the walk";
+	EXPECT_GT(feed.legsEndedBy(vision::LegEnd::Turn), 0U);
+	const std::size_t legs = feed.legsOpened();
 	colony.remove(colonist);
 
 	// Seen points away from the walk, where the record's edge is, against every shape a leg held.
-	const double boundMm  = GetParam() == GameSpeed::VeryFast ? 3600.0 : 1160.0;
-	double		 farthest = 0.0;
-	int			 tested	  = 0;
+	const bool	 tenTimes		= GetParam().speed == GameSpeed::VeryFast;
+	const double distanceBound	= tenTimes ? 3600.0 : 1160.0;
+	const double radialBound	= tenTimes ? 4900.0 : 1580.0;
+	double		 farthest		= 0.0;
+	double		 farthestRadial = 0.0;
+	int			 tested			= 0;
 	for (float x = -35.0F; x <= 75.0F; x += 1.0F) {
 		for (float y = -35.0F; y <= 35.0F; y += 1.0F) {
 			const float fromWalk = x < 0.0F ? std::hypot(x, y) : (x > 40.0F ? std::hypot(x - 40.0F, y) : std::abs(y));
@@ -845,37 +908,51 @@ TEST_P(ForestLegs, BrightShapeSeenEaseBoundedAndRecordNearTheShapesHeld) {
 			++tested;
 			const Vec2i64 point	  = nav::toMm({x, y});
 			double		  nearest = 1e300;
-			for (const std::vector<Vec2i64>& shape : held) {
-				nearest = std::min(nearest, distanceOutside(point, shape));
-				if (nearest == 0.0) {
+			double		  radial  = 1e300;
+			for (const Held& shape : held) {
+				nearest = std::min(nearest, distanceOutside(point, shape.shape));
+				radial	= std::min(radial, radiallyOutside(point, shape.at, shape.shape));
+				if (radial == 0.0) {
 					break;
 				}
 			}
-			farthest = std::max(farthest, nearest);
-			EXPECT_LE(nearest, boundMm) << "(" << x << ", " << y << ") seen " << nearest << " mm past every shape a leg held";
+			farthest	   = std::max(farthest, nearest);
+			farthestRadial = std::max(farthestRadial, radial);
+			EXPECT_LE(nearest, distanceBound) << "(" << x << ", " << y << ") seen " << nearest << " mm past every shape a leg held";
+			EXPECT_LE(radial, radialBound) << "(" << x << ", " << y << ") seen " << radial << " mm radially past every shape a leg held";
 		}
 	}
 	EXPECT_GT(tested, 1000);
-	std::printf("[ ForestLegs ] %d legs, the record at most %.0f mm past the shapes held\n", static_cast<int>(colony.visibility.legsOpenedCount()), farthest);
+	std::printf("[ ForestLegs ] %zu legs, the record at most %.0f mm past the shapes held, %.0f mm radially\n", legs, farthest, farthestRadial);
 }
 
-INSTANTIATE_TEST_SUITE_P(OneAndTenTimes, ForestLegs, ::testing::Values(GameSpeed::Normal, GameSpeed::VeryFast), [](const ::testing::TestParamInfo<GameSpeed>& info) {
-	return std::string(info.param == GameSpeed::VeryFast ? "TenTimes" : "OneTimes");
-});
+INSTANTIATE_TEST_SUITE_P(
+	SpeedsAndFrameRates,
+	ForestLegs,
+	::testing::Values(
+		ForestWalkCase{GameSpeed::Normal, 60.0F}, ForestWalkCase{GameSpeed::VeryFast, 60.0F}, ForestWalkCase{GameSpeed::Normal, 20.0F},
+		ForestWalkCase{GameSpeed::VeryFast, 20.0F}
+	),
+	[](const ::testing::TestParamInfo<ForestWalkCase>& info) {
+		return std::string(info.param.speed == GameSpeed::VeryFast ? "TenTimes" : "OneTimes") + "At" + std::to_string(static_cast<int>(info.param.framesPerSecond));
+	}
+);
 
 // The spread past softLegToleranceMm ends a leg, the tolerance scaled by the distance between builds
-// at the game's speed: 500 mm at 1x, 1,667 mm at 10x (sight-softening.md 6.6). Walking straight past a
-// clump, a leg whose ranges spread 600 to 1,600 mm ends at 1x and not at 10x; past a denser clump,
-// spreading more than 1,700 mm, it ends at 10x too.
+// at the game's speed alone: 500 mm at 1x, 1,667 mm at 10x, at any frame rate (sight-softening.md 6.6).
+// Walking straight past a clump, a leg whose ranges spread 600 to 1,600 mm ends by the spread at 1x
+// and not at 10x, at 60 and at 20 frames a second with jittery frames; past a denser clump, spreading
+// more than 1,700 mm, it ends by the spread at 10x too.
 TEST(PlayerVisibilitySystem, TheSpreadEndsALegByTheGameSpeedsTolerance) {
-	EXPECT_EQ(PlayerVisibilitySystem::legToleranceMm(500, 2000.0 * 5.0 / 60.0, 1.0), 500);
-	EXPECT_EQ(PlayerVisibilitySystem::legToleranceMm(500, 2000.0 * 5.0 / 60.0, 10.0), 1667);
-	EXPECT_EQ(PlayerVisibilitySystem::legToleranceMm(500, 0.0, 10.0), 500) << "standing still";
+	EXPECT_EQ(vision::SightFeed::legToleranceMm(500, 1.0), 500);
+	EXPECT_EQ(vision::SightFeed::legToleranceMm(500, 10.0), 1667);
+	EXPECT_EQ(vision::SightFeed::legToleranceMm(500, 0.0), 500) << "paused";
 
-	// The most any side's leg range spread over the walk, and the legs he opened.
-	const auto walkPast = [](GameSpeed speed, int trunks) {
+	// The most any side's range spread over the walk, and the legs the spread ended.
+	const auto walkPast = [](GameSpeed speed, int trunks, float framesPerSecond) {
 		ForestColony colony;
 		colony.time.setSpeed(speed);
+		colony.framesPerSecond = framesPerSecond;
 		for (int trunk = 0; trunk < trunks; ++trunk) {
 			colony.place({9.0F + 0.9F * static_cast<float>(trunk % 4), 6.0F + 0.9F * static_cast<float>(trunk / 4)}, 0.6F);
 		}
@@ -896,21 +973,108 @@ TEST(PlayerVisibilitySystem, TheSpreadEndsALegByTheGameSpeedsTolerance) {
 		for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
 			spread = std::max(spread, most[side] - least[side]);
 		}
-		return std::pair{spread, colony.visibility.legsOpenedCount()};
+		const vision::SightFeed& feed = *colony.visibility.feedOf(colonist);
+		EXPECT_EQ(feed.legsEndedBy(vision::LegEnd::Turn) + feed.legsEndedBy(vision::LegEnd::Jump), 0U) << "a straight walk";
+		return std::pair{spread, feed.legsEndedBy(vision::LegEnd::Spread)};
 	};
-	const auto [spreadAtOne, legsAtOne] = walkPast(GameSpeed::Normal, 2);
-	const auto [spreadAtTen, legsAtTen] = walkPast(GameSpeed::VeryFast, 2);
-	ASSERT_GT(spreadAtOne, 600);
-	ASSERT_LT(spreadAtTen, 1600);
-	EXPECT_GT(legsAtOne, 1U) << "a " << spreadAtOne << " mm spread ends the leg at 1x";
-	EXPECT_EQ(legsAtTen, 1U) << "a " << spreadAtTen << " mm spread does not at 10x";
-	const auto [spreadDense, legsDense] = walkPast(GameSpeed::VeryFast, 8);
+	for (const float framesPerSecond : {60.0F, 20.0F}) {
+		const auto [spreadAtOne, endedAtOne] = walkPast(GameSpeed::Normal, 2, framesPerSecond);
+		const auto [spreadAtTen, endedAtTen] = walkPast(GameSpeed::VeryFast, 2, framesPerSecond);
+		ASSERT_GT(spreadAtOne, 600) << framesPerSecond << " frames a second";
+		ASSERT_LT(spreadAtTen, 1600) << framesPerSecond << " frames a second";
+		EXPECT_GT(endedAtOne, 0U) << "a " << spreadAtOne << " mm spread ends the leg at 1x, " << framesPerSecond << " frames a second";
+		EXPECT_EQ(endedAtTen, 0U) << "a " << spreadAtTen << " mm spread does not at 10x, " << framesPerSecond << " frames a second";
+	}
+	const auto [spreadDense, endedDense] = walkPast(GameSpeed::VeryFast, 8, 60.0F);
 	ASSERT_GT(spreadDense, 1700);
-	EXPECT_GT(legsDense, 1U) << "a " << spreadDense << " mm spread ends it at 10x";
+	EXPECT_GT(endedDense, 0U) << "a " << spreadDense << " mm spread ends it at 10x";
+}
+
+// From open ground into a stand and up to a BigRock and past it (sight-softening.md 5.1, 6.1, 6.3): he
+// takes the open path, a leg, the polygon path, and a leg again; off the polygon path the bright shape
+// is in the record or a pending shape every frame; and the rim behind him, west, moves only as the ease
+// puts it across every change of path, wherever the rock's shadow does not fall there.
+TEST(PlayerVisibilitySystem, OpenGroundIntoForestToABigRockAndOn) {
+	ForestColony colony;
+	colony.plant({20.0F, -30.0F}, {110.0F, 30.0F}, 4.0F, 0.65F, 9);
+	colony.place({45.0F, 4.0F}, 1.6F);
+	const EntityID colonist = colony.addColonist({-40.0F, 0.0F});
+
+	std::vector<std::size_t> west;
+	for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
+		const double normalX = static_cast<double>(geometry::kSightSideNormals[side][0]);
+		if (normalX < -0.9 * static_cast<double>(geometry::kSightSideNormalScale)) {
+			west.push_back(side);
+		}
+	}
+	std::vector<VisionSystem::SightPath> paths;
+	EaseWatch							 ease;
+	int									 frames = 0;
+	while (colony.world.getComponent<Position>(colonist)->value.x < 150.0F) {
+		colony.step(colonist, 0.0F);
+		++frames;
+		const Vec2i64								  at	= nav::toMm(colony.world.getComponent<Position>(colonist)->value);
+		const std::optional<VisionSystem::SightShape> shape = colony.vision.sightShape(colonist);
+		ASSERT_TRUE(shape.has_value());
+		if (paths.empty() || paths.back() != shape->path) {
+			paths.push_back(shape->path);
+		}
+		const std::optional<std::vector<Vec2i64>> drawn = colony.visibility.drawnVisible(colonist);
+		if (!drawn.has_value()) {
+			continue;
+		}
+		if (shape->polygon == nullptr) {
+			expectDrawnSeen(colony.visibility, *drawn, frames);
+		}
+		// Past the rock its shadow falls behind him, west, so only the walk up to it is read there.
+		const bool westClear = shape->polygon == nullptr || at.x < 43000;
+		ease.frame(*shape, *drawn, at, frames, westClear ? west : std::vector<std::size_t>{});
+	}
+	using Path = VisionSystem::SightPath;
+	EXPECT_EQ(paths, (std::vector<Path>{Path::Open, Path::Leg, Path::Polygon, Path::Leg, Path::Open}));
+}
+
+// Standing still while a ring arriving in sight rebuilds his shape at each pass, the bright rim does
+// not move: a restart with no walk to blend takes the drawn shape as it is.
+TEST(PlayerVisibilitySystem, StandingStillTheRimHoldsWhileARingArrives) {
+	ForestColony colony;
+	const EntityID colonist = colony.addColonist({0.0F, 0.0F});
+	colony.world.getComponent<MovementTarget>(colonist)->active = false;
+	for (int frame = 0; frame < 10; ++frame) {
+		colony.world.update(1.0F / 60.0F);
+	}
+	colony.place({10.0F, 0.0F}, 0.8F, std::llround(colony.time.simulationSeconds() * 1000.0));
+	colony.world.update(1.0F / 60.0F);
+	const std::optional<std::vector<Vec2i64>> first = colony.visibility.drawnVisible(colonist);
+	ASSERT_TRUE(first.has_value());
+	const std::uint64_t builds = colony.vision.buildCount();
+	for (int frame = 0; frame < 120; ++frame) {
+		colony.world.update(1.0F / 60.0F);
+		EXPECT_EQ(colony.visibility.drawnVisible(colonist), first) << "frame " << frame;
+	}
+	EXPECT_GT(colony.vision.buildCount(), builds + 10) << "the arriving ring rebuilt his shape";
+}
+
+// A BigRock's inside is never in sight, so once a build's polygon sees its outline its footprint
+// joins the record whole, as a seen wall's does (sight-softening.md 6.4); a rock past his sight does
+// not.
+TEST(PlayerVisibilitySystem, ASeenBigRocksFootprintIsSeenGround) {
+	ForestColony colony;
+	colony.place({10.0F, 4.0F}, 1.6F);
+	colony.place({100.0F, 4.0F}, 1.6F);
+	const EntityID colonist = colony.addColonist({0.0F, 0.0F});
+	while (colony.world.getComponent<Position>(colonist)->value.x < 6.0F) {
+		colony.step(colonist, 0.0F);
+	}
+	colony.remove(colonist);
+	EXPECT_TRUE(colony.visibility.isSeen({10.0F, 4.0F})) << "the near rock's inside";
+	EXPECT_TRUE(colony.visibility.isSeen({10.7F, 4.7F})) << "its far corner";
+	EXPECT_FALSE(colony.visibility.isSeen({100.0F, 4.0F})) << "a rock never in sight";
+	EXPECT_FALSE(colony.visibility.isSeen({12.0F, 5.0F})) << "the ground in its shadow";
 }
 
 // No sweep where every opaque body in reach is placed (sight-softening.md 6.6): walking past a rock
-// on the polygon path queues no sweep point; with an opaque wall in reach as well, the walk is swept.
+// on the polygon path builds no sweep point; with an opaque wall in reach as well, the walk is swept.
 TEST(PlayerVisibilitySystem, OnlyAnOpaqueWallInReachSweepsThePolygonPath) {
 	assets::ConstructionRegistry::Get().clear();
 	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string()));
@@ -923,7 +1087,7 @@ TEST(PlayerVisibilitySystem, OnlyAnOpaqueWallInReachSweepsThePolygonPath) {
 		colony.vision.setConstructionWorld(&walls);
 		colony.visibility.setConstructionWorld(&walls);
 		colony.place({10.0F, 4.0F}, 1.6F);
-		const EntityID colonist = colony.addColonist({0.0F, 0.0F});
+		const EntityID colonist		 = colony.addColonist({0.0F, 0.0F});
 		int			   polygonFrames = 0;
 		while (colony.world.getComponent<Position>(colonist)->value.x < 8.0F) {
 			colony.step(colonist, 0.0F);
@@ -935,5 +1099,62 @@ TEST(PlayerVisibilitySystem, OnlyAnOpaqueWallInReachSweepsThePolygonPath) {
 	};
 	EXPECT_EQ(sweptWalkingPast(false), 0U) << "a placed rock alone";
 	EXPECT_GT(sweptWalkingPast(true), 0U) << "a wall in reach";
+	assets::ConstructionRegistry::Get().clear();
+}
+
+// Twelve colonists walking beside a long wall at 10x queue sweep points faster than four a tick builds
+// them (sight-softening.md 6.6): the points waiting never pass kSeenSweepPointsMost, the oldest going,
+// and the sweep's pieces never hold the shapes back: no shape waits more than a few ticks to be cut,
+// and everything drains once they stop.
+TEST(PlayerVisibilitySystem, SweepBesideAWallAtTenTimesIsBoundedAndHoldsNothingBack) {
+	assets::ConstructionRegistry::Get().clear();
+	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string()));
+	construction::ConstructionWorld walls;
+	buildWall(walls, {-20000, 6000}, {220000, 6000});
+	ForestColony colony;
+	colony.vision.setConstructionWorld(&walls);
+	colony.visibility.setConstructionWorld(&walls);
+	colony.time.setSpeed(GameSpeed::VeryFast);
+	std::vector<EntityID> colonists;
+	for (int walker = 0; walker < 12; ++walker) {
+		colonists.push_back(colony.addColonist({-4.0F * static_cast<float>(walker), -1.0F - 0.3F * static_cast<float>(walker % 5)}));
+	}
+	const vision::SeenArea& seen		= colony.visibility.seenArea();
+	std::size_t				mostSweeps	= 0;
+	std::size_t				mostWaiting = 0;
+	std::size_t				waitingRun	= 0;
+	std::size_t				longestRun	= 0;
+	for (int frame = 0; frame < 480; ++frame) {
+		const float seconds = colony.frameSeconds();
+		for (const EntityID colonist : colonists) {
+			glm::vec2& at = colony.world.getComponent<Position>(colonist)->value;
+			at.x += 2.0F * seconds * colony.time.effectiveTimeScale();
+		}
+		colony.world.update(seconds);
+		mostSweeps				= std::max(mostSweeps, seen.sweepsWaiting());
+		const std::size_t queued = seen.pending().shapesWaiting + seen.pending().piecesWaiting;
+		mostWaiting				= std::max(mostWaiting, queued);
+		waitingRun				= queued > 0 ? waitingRun + 1 : 0;
+		longestRun				= std::max(longestRun, waitingRun);
+	}
+	std::printf(
+		"[ SweepBesideAWall ] sweep points waiting at most %zu, dropped %zu, built %zu; shapes and pieces waiting at most %zu, the longest run %zu ticks\n",
+		mostSweeps,
+		seen.sweepPointsDropped(),
+		seen.sweepsBuilt(),
+		mostWaiting,
+		longestRun
+	);
+	EXPECT_LE(mostSweeps, vision::kSeenSweepPointsMost);
+	EXPECT_GT(seen.sweepPointsDropped(), 0U) << "the walls queue more than the budget builds";
+	EXPECT_LE(longestRun, 30U) << "the sweep holds no shape back";
+	for (const EntityID colonist : colonists) {
+		colony.world.destroyEntity(colonist);
+	}
+	for (int frame = 0; frame < 2000 && (seen.shapesPending() > 0 || seen.sweepsWaiting() > 0); ++frame) {
+		colony.world.update(1.0F / 60.0F);
+	}
+	EXPECT_EQ(seen.shapesPending(), 0U);
+	EXPECT_EQ(seen.sweepsWaiting(), 0U);
 	assets::ConstructionRegistry::Get().clear();
 }

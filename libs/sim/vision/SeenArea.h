@@ -47,6 +47,11 @@ namespace vision {
 	constexpr std::size_t kSeenPiecesRegisteredPerTick = 4;
 	// Sweep points whose shapes are built a tick, whatever else waits (sight-softening.md 6.6).
 	constexpr std::size_t kSeenSweepPointsPerTick = 4;
+	// The most sweep points that wait: a second of building at kSeenSweepPointsPerTick at 60 ticks a
+	// second. A shape queues a point every kSeenSweepSpacingMm of the walk before it, so colonists
+	// walking beside walls at 10x queue more than the budget builds; past this the oldest goes, and
+	// the seen edge there steps as vision's builds left it (sight-softening.md 6.6).
+	constexpr std::size_t kSeenSweepPointsMost = 240;
 	// The most vertices a leg's ring holds (sight-softening.md 6.2).
 	constexpr std::size_t kSoftLegMostVertices = 256;
 	// No leg is held below this sight radius: a sight polygon smaller than this can be non-convex
@@ -76,11 +81,6 @@ namespace vision {
 	// The convex ring of `ranges` round `centre`, counter-clockwise: the sight polygon when every range
 	// is equal, the forest shape otherwise (sight-softening.md 4.2).
 	std::vector<geometry::Vec2i64> rimOf(const geometry::Vec2i64& centre, const SightRanges& ranges);
-
-	// A leg's ring (sight-softening.md 6.3): the convex hull of two convex counter-clockwise rings,
-	// counter-clockwise, no three vertices in line. With the sight polygons of one radius round a leg's
-	// start and end it is the open leg's capsule.
-	std::vector<geometry::Vec2i64> legCapsule(const std::vector<geometry::Vec2i64>& held, const std::vector<geometry::Vec2i64>& joined);
 
 	class SeenArea {
 	  public:
@@ -128,13 +128,16 @@ namespace vision {
 		// The work done since the update before the last one ended, up to the last update's end: the
 		// legs' rings joined between them and what that update did.
 		struct TickWork {
-			std::size_t legVerticesJoined	= 0; // vertices fed to the legs' hull merges
-			std::size_t shapesTested		= 0;
-			std::size_t shapesCut			= 0;
-			std::size_t verticesCut			= 0; // vertices of the shapes cut, skirted where they are
-			std::size_t piecesRegistered	= 0;
-			std::size_t verticesRegistered	= 0;
-			std::size_t sweepPointsBuilt	= 0;
+			std::size_t legJoins		   = 0; // the legs' hull merges
+			std::size_t legVerticesJoined  = 0; // vertices fed to them
+			std::size_t shapesTested	   = 0; // covered tests
+			std::size_t shapesCut		   = 0; // frontier cuts of tested shapes and sweep shapes, skirted
+			std::size_t sweepFrontierTests = 0; // frontier cuts of sweep shapes as they are, their test
+			std::size_t verticesCut		   = 0; // vertices of every frontier cut
+			std::size_t piecesRegistered   = 0;
+			std::size_t verticesRegistered = 0;
+			std::size_t sweepPointsBuilt   = 0;
+			std::size_t sweepPointsDropped = 0;
 		};
 
 		SeenArea();
@@ -177,9 +180,9 @@ namespace vision {
 		// The open leg `leg`, begun at `start`, with him at `position` and his build's `ranges`
 		// (sight-softening.md 6.3): its ring is pending, with its start as the centre. While the ranges
 		// hold, the ring is the hull of the ring as it stood when they began and rimOf(position, ranges);
-		// when they change, the ring so far is kept and the new shape joins it at `position`. The call
-		// that opens the leg also joins `inherited`, read only then. False, leaving the leg as it was,
-		// when the ring would pass kSoftLegMostVertices.
+		// when they change, the ring so far is run on to `position` with the old ranges and kept, and the
+		// new shape joins it there. The call that opens the leg also joins `inherited`, read only then.
+		// False, leaving the leg as it was, when the ring would pass kSoftLegMostVertices.
 		[[nodiscard]] bool setOpenLeg(
 			LegId								 leg,
 			const geometry::Vec2i64&			 start,
@@ -194,16 +197,16 @@ namespace vision {
 
 		// Tests up to kSeenRingsPerTick queued shapes, first in, first out, whatever waits: a shape the
 		// record already covers (geometry::nav::sightShapeCovered) is dropped, and one it does not waits,
-		// tested, to be cut. While fewer than kSeenPiecesRegisteredPerTick pieces wait, tested shapes are
-		// cut to what they add (geometry::nav::sightShapeFrontier), up to kSeenRingsPerTick; then up to
-		// kSeenPiecesRegisteredPerTick pieces register, one ring each, and up to kSeenSweepPointsPerTick
-		// sweep points build their shapes, which the frontier then cuts as any sight shape.
+		// tested, to be cut. While fewer than kSeenPiecesRegisteredPerTick shapes' pieces wait, tested
+		// shapes are cut to what they add (geometry::nav::sightShapeFrontier), up to kSeenRingsPerTick;
+		// then up to kSeenPiecesRegisteredPerTick pieces register, one ring each, the shapes' first and the
+		// sweep's with what is left; and while fewer than kSeenPiecesRegisteredPerTick of the sweep's
+		// pieces wait, up to kSeenSweepPointsPerTick sweep points build their shapes, which the frontier
+		// then cuts as any sight shape.
 		void update();
 
 		// The point is in the record or a pending shape.
 		[[nodiscard]] bool isSeen(const geometry::Vec2i64& point) const;
-		// The point is in the committed record alone, by its mesh's locate.
-		[[nodiscard]] bool inRecord(const geometry::Vec2i64& point) const;
 		// The whole closed area of a simple outline is in the record or the pending shapes.
 		[[nodiscard]] bool covers(const std::vector<geometry::Vec2i64>& outline) const;
 		// The seen point on the segment from `from` to `to` nearest `to`: `to` itself when it is
@@ -215,11 +218,6 @@ namespace vision {
 
 		// The committed record as triangles, for drawing.
 		void appendTriangles(std::vector<Triangle>& out) const;
-		// The committed record's edge meeting the box from `low` to `high`, and some near it: every live
-		// triangle edge with nothing across it, each once, as (start, end) with seen ground on the left.
-		void appendEdges(const geometry::Vec2i64& low, const geometry::Vec2i64& high, std::vector<std::pair<geometry::Vec2i64, geometry::Vec2i64>>& out) const;
-		// The boxes of the rings registered since the last call, appended to `out`.
-		void takeChangedBoxes(std::vector<Box>& out);
 		// Every pending shape: the open legs by id, then the queue in order, then the pieces waiting.
 		void appendPendingShapes(std::vector<const std::vector<geometry::Vec2i64>*>& out) const;
 		// Boxes that together hold every seen point in the box from `low` to `high`: for each cell of
@@ -249,6 +247,8 @@ namespace vision {
 		// ground: it has no shape until its turn.
 		[[nodiscard]] std::size_t sweepsBuilt() const { return swept; }
 		[[nodiscard]] std::size_t sweepsWaiting() const { return sweeps.size(); }
+		// Sweep points dropped unbuilt past kSeenSweepPointsMost.
+		[[nodiscard]] std::size_t sweepPointsDropped() const { return sweepsDropped; }
 
 	  private:
 		struct PendingShape {
@@ -280,7 +280,7 @@ namespace vision {
 		// Cuts the shape, skirted when it is a sight shape, to the pieces it adds, which wait to be
 		// registered, and queues its sweep.
 		void enter(const PendingShape& shape);
-		void registerPiece();
+		void registerPiece(std::deque<PendingShape>& from);
 		// Grows the committed boxes of the cells the box from `low` to `high` meets by its part in each.
 		void holdCommitted(const geometry::Vec2i64& low, const geometry::Vec2i64& high);
 		// Builds a sweep point's shape and enters it when it adds anything.
@@ -305,10 +305,11 @@ namespace vision {
 		std::map<LegId, PendingShape>						 openLegs;
 		std::deque<PendingShape>							 waiting;
 		std::deque<PendingShape>							 uncovered; // tested and adding ground, waiting to be cut
-		std::deque<PendingShape>							 entering;	// pieces of shapes that add ground, waiting to be registered
-		std::deque<PendingShape>							 sweeps;	// points with their sight radius and rim, shapes not yet built
+		std::deque<PendingShape>							 entering;		// pieces of shapes that add ground, waiting to be registered
+		std::deque<PendingShape>							 sweepEntering; // pieces of sweep shapes, registered with what is left
+		std::deque<PendingShape>							 sweeps;		// points with their sight radius and rim, shapes not yet built
+		std::size_t											 sweepsDropped = 0;
 		std::vector<std::int32_t>							 registered; // ring ids, in the order they went in
-		std::vector<Box>									 changedBoxes;
 		std::size_t											 dropped = 0;
 		std::array<std::size_t, static_cast<std::size_t>(Origin::Count)> registeredFrom{};
 		std::size_t											 ticks		  = 0;

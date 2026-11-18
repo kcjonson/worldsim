@@ -67,6 +67,7 @@ add_library(sim
     vision/PlacedOccluderIndex.cpp
     vision/SeenArea.cpp
     vision/SightBody.cpp
+    vision/SightFeed.cpp
     vision/SightTunables.cpp
 )
 
