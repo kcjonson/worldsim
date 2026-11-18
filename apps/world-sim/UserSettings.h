@@ -1,15 +1,18 @@
 #pragma once
 
-// UserSettings - runtime, session-scoped user preferences.
+// UserSettings - the player's game preferences, set from the Settings scene.
 //
-// Minimal home for player-facing toggles set from the main-menu settings screen.
-// Values default from the base config XML (read once on first access) and are
-// mutated in place by the settings UI for the rest of the session. The drawing
-// settings here aren't saved across launches; the interface size and the window's
-// size are, in settings.json, through the App (see theme/InterfaceScale.h).
+// Values are the construction config's defaults with the settings file read over them, by load(): once at
+// launch, and again when a game loads the construction config, since only then are its defaults read. The
+// Settings scene changes them in place and writes them back as they change, so the second load keeps them.
+// The file is the App's (settings.json, under "drawing"), so --no-settings neither reads nor saves them.
 
 #include <assets/ConstructionRegistry.h>
 #include <construction/DrawingAids.h>
+
+namespace app {
+	class Settings;
+} // namespace app
 
 namespace world_sim {
 
@@ -39,9 +42,15 @@ namespace world_sim {
 			return instance;
 		}
 
-		/// Starts from snapping.xml's DrawingSettingsDefaults, read once when this
+		/// Starts from snapping.xml's DrawingSettingsDefaults as the registry holds them when this
 		/// singleton is first touched.
 		DrawingSettings drawing;
+
+		/// The registry's defaults, then what the file holds over them; a missing or malformed value keeps
+		/// its default.
+		void load(const app::Settings& file);
+		/// Writes every value into the file's in-memory settings; the caller saves the file.
+		void store(app::Settings& file) const;
 
 		/// The engine-facing part of `drawing`.
 		[[nodiscard]] construction::DrawingAids drawingAids() const {
@@ -58,9 +67,12 @@ namespace world_sim {
 		}
 
 	  private:
-		UserSettings() {
+		UserSettings()
+			: drawing(registryDefaults()) {}
+
+		static DrawingSettings registryDefaults() {
 			const assets::DrawingSettingsDefaults& defaults = assets::ConstructionRegistry::Get().snapping().drawingSettingsDefaults;
-			drawing = DrawingSettings{
+			return DrawingSettings{
 				.angleSteps = defaults.angleSteps,
 				.guidesFromShape = defaults.guidesFromShape,
 				.alignToExistingBuildings = defaults.alignToExistingBuildings,

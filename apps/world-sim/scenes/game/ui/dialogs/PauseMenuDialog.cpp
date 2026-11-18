@@ -17,6 +17,7 @@ namespace world_sim {
 
 	PauseMenuDialog::PauseMenuDialog(const Args& args)
 		: onClose(args.onClose),
+		  onSettings(args.onSettings),
 		  onMainMenu(args.onMainMenu),
 		  onQuitGame(args.onQuitGame) {}
 
@@ -24,6 +25,7 @@ namespace world_sim {
 		if (isOpen()) {
 			return;
 		}
+		this->player = player;
 		dialog = ui::Dialog::open(
 			opener,
 			{
@@ -62,7 +64,7 @@ namespace world_sim {
 		// A row with no action is disabled, and dimmed, since ListRow draws disabled the same as enabled.
 		const auto row = [&rows](const char* id, const char* label, const char* hint, const char* icon, std::function<void()> action) {
 			const bool available = action != nullptr;
-			rows.addChild<ui::ListRow>({
+			return rows.addChild<ui::ListRow>({
 				.id = id,
 				.enabled = available,
 				.size = {ui::percent(100.0F), kRowHeight},
@@ -75,13 +77,22 @@ namespace world_sim {
 		};
 		// First, so the focus the dialog moves in lands here: Space, the pause key, resumes rather than
 		// pressing Main Menu.
-		row("pause_menu_resume", "Resume", "Back to the colony", "play", [this] {
+		const ui::Ref<ui::ListRow> resume = row("pause_menu_resume", "Resume", "Back to the colony", "play", [this] {
 			if (ui::Dialog* shown = dialog.get()) {
 				shown->close();
 			}
 		});
 		row("pause_menu_save", "Save", "Not available yet", "save", nullptr);
 		row("pause_menu_load", "Load", "Not available yet", "list", nullptr);
+		// Focus goes back to Resume first, so the menu Settings returns to resumes on Space as it did when it opened.
+		row("pause_menu_settings", "Settings", "Interface and drawing", "gear", [this, resume] {
+			if (ui::Dialog* shown = dialog.get()) {
+				shown->getContext()->focus(resume, player);
+			}
+			if (onSettings) {
+				onSettings();
+			}
+		});
 		row("pause_menu_main_menu", "Main Menu", "Unsaved progress is lost", "home", onMainMenu);
 		row("pause_menu_quit", "Quit Game", "Quit to desktop", "close", onQuitGame);
 	}

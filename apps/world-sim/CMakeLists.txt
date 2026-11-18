@@ -5,6 +5,7 @@ add_library(world-sim-game STATIC
     GameStartConfig.cpp
     NewGameSetup.cpp
     GameBootstrap.cpp
+    UserSettings.cpp
     # Game scene UI - views
     scenes/game/ui/views/ColonistListView.cpp
     scenes/game/ui/views/EntityInfoView.cpp
@@ -159,6 +160,7 @@ add_dependencies(world-sim world-sim-shaders)
 if(BUILD_TESTING)
     find_package(GTest CONFIG REQUIRED)
     add_executable(world-sim-tests
+        UserSettings.test.cpp
         scenes/game/dev/CameraCommand.test.cpp
         scenes/game/dev/CameraStateJson.test.cpp
         scenes/game/dev/ConstructionStateJson.test.cpp

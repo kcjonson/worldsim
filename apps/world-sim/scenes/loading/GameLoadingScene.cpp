@@ -10,6 +10,7 @@
 #include "GameStartConfig.h"
 #include "GameWorldState.h"
 #include "SceneTypes.h"
+#include "UserSettings.h"
 #include "scenes/game/dev/DevJson.h"
 #include "scenes/shared/LoadFailureView.h"
 #include "scenes/shared/SalalUi.h"
@@ -344,6 +345,8 @@ namespace {
 				return;
 			}
 			LOG_INFO(Game, "Configuration loaded successfully");
+			// The drawing settings' defaults are the construction config's, loaded just now.
+			world_sim::UserSettings::Get().load(owner->settings());
 
 			// Create world sampler and chunk manager from the generated planet;
 			// the landing site maps to the 2D world origin
