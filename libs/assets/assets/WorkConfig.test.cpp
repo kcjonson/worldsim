@@ -778,6 +778,7 @@ TEST_F(WorkConfigTest, LoadWorkConfig_ShippedValuesArePinned) {
 	const std::map<std::string, bool> needsHands = {
 		{"Eat", true},
 		{"Drink", true},
+		{"Wash", true},
 		{"Sleep", false},
 		{"Toilet", false},
 		{"Harvest", true},

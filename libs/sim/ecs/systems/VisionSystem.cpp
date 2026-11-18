@@ -36,6 +36,21 @@ namespace ecs {
 		// colonists stand to drink
 		constexpr const char* kShoreDefName = "Terrain_Shore";
 
+		// The longest sight forest depth is taken for: its reach, sight plus the longest lead, stays
+		// under the bound its integers hold to (sight-softening.md 4.4). A colonist's is 30 m; a longer
+		// sight takes no forest depth and its polygon path no forest clip.
+		constexpr std::int64_t kForestSightMostMm = geometry::kForestRadiusLimitMm - vision::kSightLeadMostMm - 1;
+
+		// Each side's range from `radiusMm` less its forest depth, never under the least the forest
+		// shape takes (a floor that low comes only from a sight of a few metres at the lowest floor).
+		geometry::SightSideValues rangesFrom(std::int64_t radiusMm, const geometry::SightSideValues& depthMm) {
+			geometry::SightSideValues rangeMm{};
+			for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
+				rangeMm[side] = std::max(geometry::kForestShapeLeastRangeMm, radiusMm - depthMm[side]);
+			}
+			return rangeMm;
+		}
+
 		/// The recipe learning `newlyLearnedId` unlocks: one that is not innate, has it as an input, and whose
 		/// inputs the colonist now all knows. None when there is none.
 		const assets::RecipeDef* recipeUnlockedBy(
@@ -72,8 +87,10 @@ namespace ecs {
 
 		auto& registry = assets::AssetRegistry::Get();
 
-		// Create capability mask for shore (Drinkable - colonists drink AT the shore)
-		m_shoreCapabilityMask = static_cast<uint16_t>(1U << static_cast<size_t>(assets::CapabilityType::Drinkable));
+		// Colonists drink and wash AT the shore
+		m_shoreCapabilityMask = static_cast<uint16_t>(
+			(1U << static_cast<size_t>(assets::CapabilityType::Drinkable)) | (1U << static_cast<size_t>(assets::CapabilityType::Washable))
+		);
 
 		// Register synthetic shore definition
 		m_shoreDefNameId = registry.registerSyntheticDefinition(kShoreDefName, m_shoreCapabilityMask);
@@ -122,6 +139,40 @@ namespace ecs {
 		std::vector<geometry::OccluderSegment> occluders;
 		opaqueOccluders(centre, reachMm, placed, occluders);
 		return geometry::computeVisibilityPolygon(centre, reachMm, occluders);
+	}
+
+	bool VisionSystem::SightShape::holds(glm::vec2 standing, glm::vec2 point) const {
+		const glm::vec2 offset = point - standing;
+		if (offset.x * offset.x + offset.y * offset.y > radius * radius) {
+			return false;
+		}
+		if (polygon != nullptr && geometry::pointInPolygon(nav::toMm(point), *polygon) == geometry::PointInPolygon::Outside) {
+			return false;
+		}
+		return forest == nullptr || geometry::insideForestHalfPlanes(nav::toMm(standing), *forest, nav::toMm(point));
+	}
+
+	VisionSystem::SightShape VisionSystem::shapeOf(const VisibilityCache& entry) {
+		return SightShape{
+			.center			 = entry.builtPos,
+			.radius			 = entry.radius,
+			.path			 = entry.path,
+			.polygon		 = entry.hasPolygon ? &entry.polygon : nullptr,
+			.polygonRevision = entry.polygonRevision,
+			.buildRevision	 = entry.buildRevision,
+			.ranges			 = &entry.ranges,
+			.forest			 = entry.hasForest ? &entry.forest : nullptr,
+			.segmentsSeen	 = &entry.segmentsSeen,
+			.openingsSeen	 = &entry.openingsSeen,
+		};
+	}
+
+	std::optional<VisionSystem::SightShape> VisionSystem::sightShape(EntityID observer) const {
+		const auto found = m_visibilityCache.find(observer);
+		if (found == m_visibilityCache.end()) {
+			return std::nullopt;
+		}
+		return shapeOf(found->second);
 	}
 
 	std::optional<VisionSystem::SightBodies> VisionSystem::sightBodies(EntityID observer) const {
@@ -184,6 +235,7 @@ namespace ecs {
 		std::vector<const vision::PlacedOccluder*> placedScratch;
 		std::vector<std::uint64_t>				   serialScratch;
 		std::vector<std::size_t>				   wallScratch;
+		std::vector<geometry::ForestBody>		   forestScratch;
 
 		// Iterate all entities with Position and Memory components
 		for (auto [entity, pos, memory] : world->view<Position, Memory>()) {
@@ -195,14 +247,17 @@ namespace ecs {
 			// walks until then.
 			const std::int64_t		radiusMm   = std::llround(static_cast<double>(memory.sightRadius) * 1000.0);
 			const geometry::Vec2i64 observerMm = nav::toMm(pos.value);
-			// A still colonist walks nothing. A walk is taken up to whole kLeadWalkStepMm, so the frame
-			// time's jitter does not move the lead, and with it the rebuild a longer lead forces.
-			const auto*		   movement = world->getComponent<MovementTarget>(entity);
-			const double	   speed	= movement != nullptr && movement->active ? static_cast<double>(movement->speed) : 0.0;
-			const auto		   walkMm	= static_cast<std::int64_t>(std::ceil(speed * intervalSeconds * 1000.0 / kLeadWalkStepMm)) * kLeadWalkStepMm;
-			const std::int64_t leadMm	= std::min(vision::kSightLeadMostMm, kSightRebuildStepMm + walkMm);
-			const std::int64_t		reachMm = radiusMm + leadMm;
-			VisibilityCache&		entry	= m_visibilityCache[entity];
+			// A still colonist walks nothing. A walk is taken up to whole kLeadWalkStepMm, and a build
+			// stores this pass's lead with one kLeadWalkStepMm more, so a frame time jittering across one
+			// such boundary at a steady walk never outgrows it, while a real speed-up does. Nothing older
+			// than the pass that builds goes into the lead it stores.
+			const auto*		   movement	  = world->getComponent<MovementTarget>(entity);
+			const double	   speed	  = movement != nullptr && movement->active ? static_cast<double>(movement->speed) : 0.0;
+			const auto		   walkMm	  = static_cast<std::int64_t>(std::ceil(speed * intervalSeconds * 1000.0 / kLeadWalkStepMm)) * kLeadWalkStepMm;
+			const std::int64_t passLeadMm = std::min(vision::kSightLeadMostMm, kSightRebuildStepMm + walkMm);
+			const std::int64_t leadMm	  = std::min(vision::kSightLeadMostMm, passLeadMm + kLeadWalkStepMm);
+			const std::int64_t reachMm	  = radiusMm + leadMm;
+			VisibilityCache&   entry	  = m_visibilityCache[entity];
 			entry.seenThisTick				= true;
 
 			// Rebuild conditions (sight-softening.md 2.4), on the plain disc and the polygon path alike: no
@@ -217,14 +272,17 @@ namespace ecs {
 			const geometry::Vec2i64 moved = observerMm - entry.builtMm;
 			bool due = !entry.built || geometry::dot(moved, moved) > geometry::Int128::product(kSightRebuildStepMm, kSightRebuildStepMm) ||
 					   entry.builtVersion != m_geometry.generation() || entry.tunablesVersion != tunablesVersion ||
-					   entry.radius != memory.sightRadius || leadMm > entry.leadMm;
+					   entry.radius != memory.sightRadius || passLeadMm > entry.leadMm;
 			if (!due && !entry.hasPolygon) {
 				due = m_geometry.anyBodyWithin(observerMm, reachMm);
 			}
-			// A body recorded at the build while still arriving rebuilds each pass the clock runs, until
-			// the build that records it whole.
-			due = due || (clockRuns && std::ranges::any_of(entry.bodies, [](const vision::SightBody& body) {
-							  return body.arrival < geometry::kFractionOne;
+			// A ring in sight of the build, so one that adds forest depth, recorded while still arriving
+			// rebuilds each pass the clock runs, until the build that records it whole. One between sight
+			// and reach weighs nothing and waits for a step.
+			const geometry::Int128 sightSquared = geometry::Int128::product(radiusMm, radiusMm);
+			due = due || (clockRuns && std::ranges::any_of(entry.bodies, [&](const vision::SightBody& body) {
+							  const geometry::Vec2i64 offset = body.centre - entry.builtMm;
+							  return body.arrival < geometry::kFractionOne && geometry::dot(offset, offset) < sightSquared;
 						  }));
 			if (!due && placed != nullptr) {
 				// He is within the rebuild step of the build, so a step more holds every ring in his reach.
@@ -256,7 +314,11 @@ namespace ecs {
 				m_geometry.bodiesWithin(observerMm, reachMm, wallScratch);
 				entry.bodies.clear();
 				entry.placedSerials.clear();
-				bool anyOpaque = !wallScratch.empty();
+				forestScratch.clear();
+				// Any wall in reach takes the polygon path, a stub too, so what a colonist sees of it joins
+				// memory; so does an opaque placed ring.
+				bool polygonPath  = !wallScratch.empty();
+				bool ringsInSight = false;
 				for (const std::size_t index : wallScratch) {
 					const GeometryIndex::WallBody& wall = m_geometry.bodies()[index];
 					entry.bodies.push_back({
@@ -285,12 +347,31 @@ namespace ecs {
 						body.previousEdge.push_back((corner + corners - 1) % corners);
 					}
 					entry.placedSerials.push_back(ring->serial);
-					anyOpaque = anyOpaque || ring->kind == vision::BodyKind::Opaque;
+					polygonPath = polygonPath || ring->kind == vision::BodyKind::Opaque;
+					const geometry::Vec2i64 offset = ring->centre - observerMm;
+					ringsInSight = ringsInSight || geometry::dot(offset, offset) < geometry::Int128::product(radiusMm, radiusMm);
+					forestScratch.push_back({
+						.centre		 = ring->centre,
+						.widthFactor = geometry::forestWidthFactor(ring->perimeterMm, forest),
+						.arrival	 = body.arrival,
+					});
 				}
 
-				// The plain disc where no wall of any kind and no opaque body is in reach. Any wall in
-				// reach takes the polygon, a stub too, so what a colonist sees of it joins memory.
-				if (!anyOpaque) {
+				// Forest depth (sight-softening.md 4) from every placed ring in sight, opaque or soft.
+				const bool				  forestTaken = radiusMm > 0 && radiusMm <= kForestSightMostMm;
+				geometry::SightSideValues depthMm{};
+				if (forestTaken) {
+					const geometry::ForestTunables sightForest = geometry::clampedToRanges(forest, radiusMm);
+					depthMm = geometry::forestLimitedDepth(geometry::forestRawDepth(observerMm, radiusMm, forestScratch, sightForest), radiusMm, sightForest);
+				}
+				entry.ranges	= rangesFrom(radiusMm, depthMm);
+				entry.path		= polygonPath ? SightPath::Polygon : (ringsInSight ? SightPath::Leg : SightPath::Open);
+				entry.hasForest = forestTaken;
+				if (entry.hasForest) {
+					entry.forest = geometry::forestHalfPlanes(entry.ranges);
+				}
+
+				if (!polygonPath) {
 					if (entry.hasPolygon) {
 						entry.polygon.clear();
 						entry.segmentsSeen.clear();
@@ -300,10 +381,31 @@ namespace ecs {
 					}
 					entry.shadowEdges.clear();
 				} else {
+					// The hard polygon the opaque bodies leave, its shadow edges tagged before the forest
+					// shape of his reach cuts it (3.1, 5.1).
 					const bool backFacesHidden = opaqueOccluders(observerMm, reachMm, placedScratch, occluderScratch);
-					entry.polygon			   = geometry::computeVisibilityPolygon(observerMm, reachMm, occluderScratch);
-					entry.shadowEdges		   = vision::tagShadowEdges(entry.polygon, observerMm, entry.bodies);
-					entry.hasPolygon		   = true;
+					geometry::Ring hard = geometry::computeVisibilityPolygon(observerMm, reachMm, occluderScratch);
+					std::vector<vision::ShadowEdge> tagged = vision::tagShadowEdges(hard, observerMm, entry.bodies);
+					if (forestTaken) {
+						vision::ForestCut cut = vision::cutByForest(
+							hard, observerMm, geometry::forestShape(observerMm, rangesFrom(reachMm, depthMm)), std::move(tagged), entry.bodies
+						);
+						if (!cut.cut && !clipFailureLogged) {
+							clipFailureLogged = true;
+							LOG_WARNING(
+								Engine,
+								"Vision: the forest clip could not cut the hard polygon at (%lld, %lld) mm; it serves uncut",
+								static_cast<long long>(observerMm.x),
+								static_cast<long long>(observerMm.y)
+							);
+						}
+						entry.polygon	  = std::move(cut.polygon);
+						entry.shadowEdges = std::move(cut.shadowEdges);
+					} else {
+						entry.polygon	  = std::move(hard);
+						entry.shadowEdges = std::move(tagged);
+					}
+					entry.hasPolygon = true;
 					++entry.polygonRevision;
 					++m_polygonBuildCount;
 
@@ -322,10 +424,12 @@ namespace ecs {
 				entry.leadMm		  = leadMm;
 				entry.reachMm		  = reachMm;
 				entry.built			  = true;
+				++entry.buildRevision;
 				entry.builtPos		  = pos.value;
 			}
 
-			lookOver(entity, pos.value, memory.sightRadius, entry.hasPolygon ? &entry.polygon : nullptr, memory, knowledge);
+			const SightShape shape = shapeOf(entry);
+			lookOver(entity, pos.value, memory.sightRadius, &shape, memory, knowledge);
 		}
 
 		for (const Discovery& discovery : m_learnedScratch) {
@@ -352,22 +456,9 @@ namespace ecs {
 		if (memory == nullptr) {
 			return;
 		}
-		m_geometry.rebuildIfStale();
 		ensureTerrainDefinitionsRegistered();
 		m_sightingTime.reset();
-
-		const std::int64_t					   radiusMm = std::llround(static_cast<double>(radiusMeters) * 1000.0);
-		const geometry::Vec2i64				   centerMm = nav::toMm(center);
-		std::vector<geometry::OccluderSegment> occluders;
-		const bool backFacesHidden = m_geometry.queryFacingOccluders(centerMm, radiusMm, occluders);
-		geometry::Ring polygon;
-		if (!occluders.empty()) {
-			polygon = geometry::computeVisibilityPolygon(centerMm, radiusMm, occluders);
-			std::vector<construction::SegmentId> segments;
-			std::vector<construction::OpeningId> openings;
-			rememberStructures(centerMm, radiusMm, polygon, backFacesHidden, *memory, segments, openings);
-		}
-		lookOver(observer, center, radiusMeters, occluders.empty() ? nullptr : &polygon, *memory, world->getComponent<Knowledge>(observer));
+		lookOver(observer, center, radiusMeters, nullptr, *memory, world->getComponent<Knowledge>(observer));
 		m_learnedScratch.clear();
 	}
 
@@ -467,7 +558,7 @@ namespace ecs {
 		EntityID			  observer,
 		glm::vec2			  center,
 		float				  radiusMeters,
-		const geometry::Ring* polygon,
+		const SightShape*	  shape,
 		Memory&				  memory,
 		Knowledge*			  knowledge
 	) {
@@ -490,15 +581,9 @@ namespace ecs {
 
 		float sightRadiusSq = radiusMeters * radiusMeters;
 
-		// A candidate already inside the sight radius is visible iff it is not
-		// strictly outside the visibility polygon (Inside or OnBoundary count as
-		// seen). Outdoors there is no polygon, so everything in radius is visible.
-		auto visible = [&](const glm::vec2& candidatePos) -> bool {
-			if (polygon == nullptr) {
-				return true;
-			}
-			return geometry::pointInPolygon(nav::toMm(candidatePos), *polygon) != geometry::PointInPolygon::Outside;
-		};
+		// A candidate already inside the sight radius is visible iff his sight shape holds it from where he
+		// stands (on its boundary counts as seen). The plain disc holds everything in radius.
+		auto visible = [&](const glm::vec2& candidatePos) -> bool { return shape == nullptr || shape->holds(center, candidatePos); };
 
 		// Reconciliation (vision-architecture D4): a remembered entity whose position
 		// the observer can see RIGHT NOW, but which is neither in the placement index

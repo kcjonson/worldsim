@@ -5,6 +5,7 @@
 #include "GameBootstrap.h"
 #include "GameContext.h"
 #include "SceneTypes.h"
+#include "UserSettings.h"
 
 #include <application/App.h>
 #include <application/CommandLine.h>
@@ -95,6 +96,9 @@ int main(int argc, char* argv[]) {
 	}
 
 	world_sim::initializeResources(*app, commandLine.scene.has_value());
+	// The construction config isn't loaded yet, so the defaults under the file's values are the built-in ones
+	// until GameLoadingScene loads it and loads these again.
+	world_sim::UserSettings::Get().load(app->settings());
 
 	world_sim::addScenes(app->scenes());
 	const app::DevServer::Registration uiScaleView = theme::registerUiScaleView(*app);

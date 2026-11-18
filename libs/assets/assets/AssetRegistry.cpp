@@ -38,7 +38,7 @@ namespace assets {
 
 	namespace {
 		/// Pack a definition's present capabilities into the bitmask the interning index stores.
-		/// 16-bit: there are 9 capability types and Storage is bit 8, which overflows a uint8_t.
+		/// 16-bit: there are 10 capability types, and Storage (bit 8) and Washable (bit 9) overflow a uint8_t.
 		[[nodiscard]] uint16_t computeCapabilityMask(const AssetDefinition& def) {
 			uint16_t mask = 0;
 			if (def.capabilities.edible.has_value()) {
@@ -67,6 +67,9 @@ namespace assets {
 			}
 			if (def.capabilities.storage.has_value()) {
 				mask |= static_cast<uint16_t>(1U << static_cast<uint8_t>(CapabilityType::Storage));
+			}
+			if (def.capabilities.washable.has_value()) {
+				mask |= static_cast<uint16_t>(1U << static_cast<uint8_t>(CapabilityType::Washable));
 			}
 			return mask;
 		}
@@ -1147,6 +1150,10 @@ namespace assets {
 				pugi::xml_node craftableNode = capabilitiesNode.child(capabilityName(CapabilityType::Craftable));
 				if (craftableNode) {
 					def.capabilities.craftable = CraftableCapability{};
+				}
+
+				if (capabilitiesNode.child(capabilityName(CapabilityType::Washable))) {
+					def.capabilities.washable = WashableCapability{};
 				}
 
 				// Storage capability (containers)

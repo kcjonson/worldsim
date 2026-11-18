@@ -24,16 +24,7 @@ namespace geometry {
 		// step to the next direction, `index` the direction at or before the offset's. Increases
 		// counter-clockwise from +x through [0, kSightSides x kFractionOne).
 		std::int64_t tablePosition(const Vec2i64& offset) {
-			std::size_t low = inUpperHalfTurn(offset) ? 0 : kSightSides / 2;
-			std::size_t high = low + kSightSides / 2 - 1;
-			while (low < high) {
-				const std::size_t middle = (low + high + 1) / 2;
-				if (crossWithDirection(middle, offset) >= 0) {
-					low = middle;
-				} else {
-					high = middle - 1;
-				}
-			}
+			const std::size_t  low	  = sightDirectionAtOrBefore(offset);
 			const std::int64_t before = crossWithDirection(low, offset);
 			const std::int64_t after = -crossWithDirection(low + 1, offset);
 			assert(before >= 0 && after > 0);
@@ -79,6 +70,20 @@ namespace geometry {
 		}
 
 	} // namespace
+
+	std::size_t sightDirectionAtOrBefore(const Vec2i64& offset) {
+		std::size_t low	 = inUpperHalfTurn(offset) ? 0 : kSightSides / 2;
+		std::size_t high = low + kSightSides / 2 - 1;
+		while (low < high) {
+			const std::size_t middle = (low + high + 1) / 2;
+			if (crossWithDirection(middle, offset) >= 0) {
+				low = middle;
+			} else {
+				high = middle - 1;
+			}
+		}
+		return low;
+	}
 
 	ForestTunables clampedToRanges(const ForestTunables& tunables, std::int64_t sightMm) {
 		ForestTunables clamped = tunables;

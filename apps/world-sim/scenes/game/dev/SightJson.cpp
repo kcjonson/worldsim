@@ -32,7 +32,13 @@ namespace world_sim {
 			out += (index == 0 ? "" : ",");
 			out += "{\"id\":" + std::to_string(colonist.id) + ",\"name\":\"" + jsonEscape(colonist.name) + "\",\"eye\":" +
 				   metres(colonist.eyeCentre) + ",\"leadMm\":" + std::to_string(colonist.leadMm) +
-				   ",\"reachMm\":" + std::to_string(colonist.reachMm) + ",\"bodies\":[";
+				   ",\"reachMm\":" + std::to_string(colonist.reachMm) + ",\"path\":\"" + jsonEscape(colonist.path) + "\",\"rangesMm\":[";
+			if (colonist.ranges != nullptr) {
+				for (std::size_t side = 0; side < colonist.ranges->size(); ++side) {
+					out += (side == 0 ? "" : ",") + std::to_string((*colonist.ranges)[side]);
+				}
+			}
+			out += "],\"bodies\":[";
 			if (colonist.bodies != nullptr) {
 				for (std::size_t body = 0; body < colonist.bodies->size(); ++body) {
 					out += (body == 0 ? "" : ",") + bodyJson((*colonist.bodies)[body]);

@@ -77,12 +77,13 @@ namespace ecs {
 		std::array<Need, static_cast<size_t>(NeedType::Count)> needs{};
 
 		/// Actionable needs the AI can currently fulfill (others are tracked but not acted on yet)
-		static constexpr std::array<NeedType, 5> kActionableNeeds = {
+		static constexpr std::array<NeedType, 6> kActionableNeeds = {
 			NeedType::Hunger,
 			NeedType::Thirst,
 			NeedType::Energy,
 			NeedType::Bladder,
 			NeedType::Digestion,
+			NeedType::Hygiene,
 		};
 
 		/// Access need by type

@@ -74,6 +74,31 @@ namespace vision {
 	[[nodiscard]] std::vector<ShadowEdge>
 	tagShadowEdges(const geometry::Ring& polygon, const geometry::Vec2i64& eye, std::span<const SightBody> bodies);
 
+	// The tags among `tagged`, made on a polygon before starClippedToConvex cut it to a convex ring,
+	// whose corner is a vertex of `clipped` unchanged (3.1). The clip keeps every vertex inside the
+	// convex ring as it is, so the tagged side still runs from that corner along its ray, to its old far
+	// end or to where it crosses the ring; a tag whose corner lies past the ring is dropped.
+	[[nodiscard]] std::vector<ShadowEdge>
+	shadowEdgesKeptByClip(std::span<const ShadowEdge> tagged, const geometry::Ring& clipped, std::span<const SightBody> bodies);
+
+	// The polygon path's shape (5.1): `hard`, the visibility polygon round `eye`, cut by the convex
+	// `forest` with starClippedToConvex, and its tags kept by shadowEdgesKeptByClip. When the clip
+	// cannot cut it (a vertex of `hard` on the eye) `hard` serves as it is with every tag, and `cut`
+	// is false: a shape the clip cannot take still serves memory and isVisible (5.1), which hold it to
+	// the forest shape where he stands.
+	struct ForestCut {
+		geometry::Ring			polygon;
+		std::vector<ShadowEdge> shadowEdges;
+		bool					cut = true;
+	};
+	[[nodiscard]] ForestCut cutByForest(
+		const geometry::Ring&		hard,
+		const geometry::Vec2i64&	eye,
+		const geometry::Ring&		forest,
+		std::vector<ShadowEdge>		tagged,
+		std::span<const SightBody>	bodies
+	);
+
 	// The two corners at the ends of the body's silhouette from `eyeMm` (2.3): `clockwise` the corner at
 	// its clockwise end, every other corner counter-clockwise of it or on its ray, and `counterClockwise`
 	// the other way; on a ray holding several corners, the farthest. None when the arc is not less than a

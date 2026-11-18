@@ -127,6 +127,13 @@
     <line>I smell like a goat's armpit.</line>
   </thought>
 
+  <thought id="freshly_washed" label="Freshly washed" importance="trivial">
+    <source trigger="needRises" need="Hygiene" threshold="seek"/>
+    <feeling is="relieved"/>
+    <line>Cold, but worth it.</line>
+    <line>Human again.</line>
+  </thought>
+
   <thought id="bored_stiff" label="Bored stiff" importance="trivial">
     <source trigger="needFalls" need="Recreation" threshold="seek"/>
     <feeling is="bored"/>

@@ -311,6 +311,7 @@ namespace ecs {
 			} else {
 				enterPolygonAt(it->second, it->second.stretch.end);
 				closeLeg(it->first, it->second.leg);
+				drawnForests.erase(it->first);
 				it = observers.erase(it);
 			}
 		}
@@ -343,19 +344,7 @@ namespace ecs {
 		}
 		for (auto [entity, position, colonist, memory] : world->view<Position, Colonist, Memory>()) {
 			const std::optional<VisionSystem::SightShape> shape = vision->sightShape(entity);
-			if (!shape.has_value()) {
-				continue;
-			}
-			if (shape->polygon != nullptr) {
-				const glm::vec2 offset = meters - position.value;
-				if (offset.x * offset.x + offset.y * offset.y <= shape->radius * shape->radius &&
-					geometry::pointInPolygon(nav::toMm(meters), *shape->polygon) != geometry::PointInPolygon::Outside) {
-					return true;
-				}
-				continue;
-			}
-			const glm::vec2 offset = meters - shape->center;
-			if (offset.x * offset.x + offset.y * offset.y <= shape->radius * shape->radius) {
+			if (shape.has_value() && shape->holds(position.value, meters)) {
 				return true;
 			}
 		}
@@ -378,19 +367,58 @@ namespace ecs {
 		if (sightMm - vision::kSeenSlackMm < vision::kSeenLeastRadiusMm) {
 			return std::nullopt;
 		}
-		std::vector<Vec2i64> disc = geometry::sightPolygon(nav::toMm(position->value), vision::drawnVisibleRadiusMm(sightMm));
+		const Vec2i64	   standing = nav::toMm(position->value);
+		const std::int64_t drawnMm	= vision::drawnVisibleRadiusMm(sightMm);
+		// On the open path every range is equal and the forest cut gives the disc back; a sight too long
+		// for forest depth has none.
+		const DrawnForest* forest = shape->path != VisionSystem::SightPath::Open && shape->forest != nullptr
+										? &drawnForestFor(colonist, *shape, sightMm, drawnMm)
+										: nullptr;
+		const auto placedAt = [&](const geometry::Ring& ring) {
+			geometry::Ring moved(ring.size());
+			std::ranges::transform(ring, moved.begin(), [&](const Vec2i64& vertex) { return vertex + standing; });
+			return moved;
+		};
+		std::vector<Vec2i64> cut;
 		if (shape->polygon == nullptr) {
-			return disc;
+			cut = forest != nullptr ? placedAt(forest->bright) : geometry::sightPolygon(standing, drawnMm);
+		} else {
+			const auto observer = observers.find(colonist);
+			if (observer == observers.end() || !observer->second.wallSight || observer->second.polygonRevision != shape->polygonRevision) {
+				return std::nullopt;
+			}
+			const Vec2i64 build = nav::toMm(shape->center);
+			cut					= geometry::starClippedToConvex(*shape->polygon, build, geometry::sightPolygon(standing, drawnMm));
+			if (forest != nullptr && !cut.empty()) {
+				cut = geometry::starClippedToConvex(cut, build, placedAt(forest->forest));
+			}
 		}
-		const auto observer = observers.find(colonist);
-		if (observer == observers.end() || !observer->second.wallSight || observer->second.polygonRevision != shape->polygonRevision) {
-			return std::nullopt;
-		}
-		std::vector<Vec2i64> cut = geometry::starClippedToConvex(*shape->polygon, nav::toMm(shape->center), disc);
 		if (cut.empty()) {
 			return std::nullopt;
 		}
 		return cut;
+	}
+
+	// The forest shape of his sight with every range drawn in as far as the drawn disc is
+	// (sight-softening.md 6.3, without the ease), built round the origin once a build: the shape and
+	// the disc are built in offsets from their centre, so moving them by where he stands gives what
+	// building them there would.
+	const PlayerVisibilitySystem::DrawnForest&
+	PlayerVisibilitySystem::drawnForestFor(EntityID colonist, const VisionSystem::SightShape& shape, std::int64_t sightMm, std::int64_t drawnMm) const {
+		DrawnForest& drawn = drawnForests[colonist];
+		if (drawn.forest.empty() || drawn.buildRevision != shape.buildRevision || drawn.drawnMm != drawnMm) {
+			geometry::SightSideValues drawnRanges{};
+			for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
+				drawnRanges[side] = std::max(geometry::kForestShapeLeastRangeMm, (*shape.ranges)[side] - (sightMm - drawnMm));
+			}
+			const Vec2i64 origin{0, 0};
+			drawn.buildRevision = shape.buildRevision;
+			drawn.drawnMm		= drawnMm;
+			drawn.forest		= geometry::forestShape(origin, drawnRanges);
+			drawn.bright		= geometry::starClippedToConvex(geometry::sightPolygon(origin, drawnMm), origin, drawn.forest);
+			++drawnForestBuilds;
+		}
+		return drawn;
 	}
 
 	bool PlayerVisibilitySystem::covers(const std::vector<glm::vec2>& outlineMeters) const {

@@ -327,7 +327,7 @@ rim can touch, as a world sampler's gather would. A half-plane lake through biom
 which is realistic and useless for placing a colonist 4 m from the water.
 
 Drinking needs no new code. `VisionSystem` pass 3 remembers `Terrain_Shore` points sampled along each
-chunk's water rings (`terrainPolygons().shorePoints`, read in `VisionSystem::update`) as Drinkable. The
+chunk's water rings (`terrainPolygons().shorePoints`, read in `VisionSystem::update`) as Drinkable and Washable. The
 `shore` anchor (below) is the realized shore point nearest the origin, read from those same points, so
 a script and the colonist agree on where the water is.
 

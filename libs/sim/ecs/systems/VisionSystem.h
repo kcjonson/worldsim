@@ -12,6 +12,7 @@
 #include <vision/PlacedOccluderIndex.h>
 #include <vision/SightBody.h>
 #include <vision/SightTunables.h>
+#include <visibility/ForestShape.h>
 
 #include <world/chunk/ChunkCoordinate.h>
 
@@ -40,7 +41,7 @@ struct Memory;
 
 /// Updates colonist Memory by observing nearby world entities and terrain features.
 /// Queries PlacementExecutor for PlacedEntities within each colonist's sight radius.
-/// Also scans chunks for shore points (land beside water) with Drinkable capability.
+/// Also scans chunks for shore points (land beside water) with the Drinkable and Washable capabilities.
 /// Priority: 45 (runs early, before needs decay and AI decisions)
 ///
 /// Needs a TimeSystem in the same world: a mover's sighting is stamped with the game clock, and a world
@@ -51,7 +52,8 @@ struct Memory;
 ///
 /// Sight reads bodies (sight-softening.md 2): wall bodies from the GeometryIndex it owns, placed rings
 /// from NavigationSystem's placed occluder index, never the nav mesh. Opaque bodies occlude; soft
-/// ones (a tree, a wall stub) do not, and a mover, water, a ford, or the mesh's bounds never do.
+/// ones (a tree, a wall stub) do not, and a mover, water, a ford, or the mesh's bounds never do. Every
+/// placed ring in sight, opaque or soft, shortens his range as forest depth (sight-softening.md 4).
 class VisionSystem : public ISystem {
   public:
 	/// How far an observer may move from where his sight shape was built before it is rebuilt.
@@ -136,48 +138,53 @@ class VisionSystem : public ISystem {
 	/// Test-only: how many sight builds, plain disc or polygon, were made so far.
 	[[nodiscard]] uint64_t buildCount() const { return builds; }
 
-	/// An observer's sight as vision last built it. With no polygon the shape is the plain
-	/// circle; with one, his sight is the circle of `radius` round where he stands now inside the
-	/// star-shaped polygon the opaque bodies leave (mm, same frame as the occluders) built round
-	/// `center` out to his reach. polygonRevision changes whenever the observer's polygon
-	/// is rebuilt or dropped, so a consumer can tell a new polygon from the one it already used.
-	/// The polygon pointer is valid until the next update().
+	/// The three paths a build takes (sight-softening.md 5.1): the plain sight polygon with no placed
+	/// ring in sight and no body in reach; the forest shape of his sight with placed rings in sight, all
+	/// soft, and no wall in reach; and the polygon path with an opaque body or any wall in reach.
+	enum class SightPath : std::uint8_t { Open, Leg, Polygon };
+
+	/// An observer's sight as vision last built it (sight-softening.md 5.2). On the open path it is the
+	/// sight polygon of `radius` round where he stands, the forest shape of equal ranges. On a leg it is
+	/// the forest shape of `ranges` placed where he stands. On the polygon path it is `polygon`, the
+	/// star-shaped shape round `center` out to his reach that the opaque bodies leave cut by the forest
+	/// shape of his reach, within `radius` of where he stands and inside the forest shape of `ranges`
+	/// placed there. polygonRevision changes whenever
+	/// the observer's polygon is rebuilt or dropped, so a consumer can tell a new polygon from the one
+	/// it already used. The pointers are valid until the next update().
 	struct SightShape {
 		glm::vec2			   center{0.0F, 0.0F}; // world position (meters) the shape was built at
 		float				   radius = 0.0F;	   // meters
-		const geometry::Ring* polygon = nullptr;  // null when no wall or opaque body is in reach
+		SightPath			   path	  = SightPath::Open;
+		const geometry::Ring* polygon = nullptr;  // set on the polygon path
 		std::uint64_t		   polygonRevision = 0;
+		std::uint64_t		   buildRevision   = 0; // changes at every build, on every path
+		// The 64 ranges of the build's forest shape of `radius`, in mm from where it is placed; every one
+		// `radius` on the open path.
+		const geometry::SightSideValues* ranges = nullptr;
+		// Their half-planes; null only for a sight too long for forest depth (none a colonist has), whose
+		// shape is then the circle of `radius` cut by the polygon.
+		const geometry::ForestHalfPlanes* forest = nullptr;
 		// The built walls and openings the polygon bounds or crosses within `radius` of `center`, as the
 		// structure pass found them when it was built (vision-architecture D4). Empty without a polygon.
 		const std::vector<construction::SegmentId>* segmentsSeen = nullptr;
 		const std::vector<construction::OpeningId>* openingsSeen = nullptr;
+
+		/// Whether `point` is in his sight while he stands at `standing`: within `radius` of it, inside
+		/// the polygon on the polygon path, and inside the forest shape of `ranges` placed there.
+		[[nodiscard]] bool holds(glm::vec2 standing, glm::vec2 point) const;
 	};
 
-	/// The sight shape vision used for `observer` on its last pass, outdoors or indoors. Empty
-	/// for an entity vision has not observed.
-	[[nodiscard]] std::optional<SightShape> sightShape(EntityID observer) const {
-		auto it = m_visibilityCache.find(observer);
-		if (it == m_visibilityCache.end()) {
-			return std::nullopt;
-		}
-		const VisibilityCache& entry = it->second;
-		return SightShape{
-			.center = entry.builtPos,
-			.radius = entry.radius,
-			.polygon = entry.hasPolygon ? &entry.polygon : nullptr,
-			.polygonRevision = entry.polygonRevision,
-			.segmentsSeen = &entry.segmentsSeen,
-			.openingsSeen = &entry.openingsSeen,
-		};
-	}
+	/// The sight shape vision used for `observer` on its last pass. Empty for an entity vision has not
+	/// observed.
+	[[nodiscard]] std::optional<SightShape> sightShape(EntityID observer) const;
 
 	/// Read-only access to the occluder geometry (walls) for overlay drawing.
 	[[nodiscard]] const GeometryIndex& geometry() const { return m_geometry; }
 
-	/// Give `observer` what a look over the disc of `radiusMeters` round `center` would give him,
-	/// through the same passes as his sight each tick, but silently: what he learns there is told to no
-	/// discovery observer. The landing crew's memory of the landing area (player-visibility.md 3.8).
-	/// Leaves his sight shape alone.
+	/// Give `observer` the things in the plain disc of `radiusMeters` round `center`, silently: what he
+	/// learns there is told to no discovery observer. The landing crew's memory of the landing area
+	/// (player-visibility.md 3.8): no occluder is read and no shape built, so it agrees with the plain
+	/// disc the seen record commits (sight-softening.md 5.3). Leaves his sight shape alone.
 	void rememberArea(EntityID observer, glm::vec2 center, float radiusMeters);
 
   private:
@@ -197,11 +204,11 @@ class VisionSystem : public ISystem {
 		std::vector<construction::OpeningId>&	 openings
 	);
 
-	/// What the disc of `radiusMeters` round `center` shows, inside `polygon` when walls clip it
-	/// (null outdoors), into memory: reconciliation, then placed entities, ECS entities (movers among them,
-	/// stamped with the game time), and shore.
+	/// What the disc of `radiusMeters` round `center` shows, inside `shape` held from `center` (null for
+	/// the plain disc), into memory: reconciliation, then placed entities, ECS entities (movers among
+	/// them, stamped with the game time), and shore.
 	void lookOver(
-		EntityID observer, glm::vec2 center, float radiusMeters, const geometry::Ring* polygon, Memory& memory, Knowledge* knowledge
+		EntityID observer, glm::vec2 center, float radiusMeters, const SightShape* shape, Memory& memory, Knowledge* knowledge
 	);
 
 	assets::PlacementExecutor*							  m_placementExecutor = nullptr;
@@ -240,12 +247,16 @@ class VisionSystem : public ISystem {
 		geometry::Vec2i64 builtMm{0, 0};
 		float			  radius = 0.0F;		// meters, the sight radius of the last pass or build
 		std::int64_t	  leadMm = 0;			// the lead the shape was built with
+		std::uint64_t	  buildRevision = 0;	// bumps at every build
 		std::int64_t	  reachMm = 0;			// sight plus that lead
 		std::uint64_t	  polygonRevision = 0; // bumps when the polygon is rebuilt or dropped
 		std::uint64_t	  builtVersion = 0; // GeometryIndex generation the shape was built against
 		std::uint64_t	  tunablesVersion = 0;
 		// The sorted serials of the placed rings within reach of the build.
 		std::vector<std::uint64_t> placedSerials;
+		SightPath				   path = SightPath::Open;
+		geometry::SightSideValues  ranges{};	// the forest shape of his sight round the build
+		geometry::ForestHalfPlanes forest;		// its half-planes, off the open path
 		geometry::Ring	  polygon;			 // empty when hasPolygon == false (outdoors)
 		std::vector<construction::SegmentId> segmentsSeen; // what the structure pass found for the polygon
 		std::vector<construction::OpeningId> openingsSeen;
@@ -253,6 +264,7 @@ class VisionSystem : public ISystem {
 		std::vector<vision::ShadowEdge>		 shadowEdges; // of the polygon, into bodies
 		bool		   built = false;
 		bool		   hasPolygon = false;
+		bool		   hasForest = false; // `forest` holds the half-planes of `ranges`
 		bool		   seenThisTick = false; // mark-and-sweep prune flag
 	};
 
@@ -267,6 +279,7 @@ class VisionSystem : public ISystem {
 
 	// The placed occluder index of the world's NavigationSystem, or null without one.
 	[[nodiscard]] const vision::PlacedOccluderIndex* placedIndex() const;
+	[[nodiscard]] static SightShape shapeOf(const VisibilityCache& entry);
 	std::unordered_map<EntityID, VisibilityCache> m_visibilityCache;
 
 	// A remembered entity in view that the placement index doesn't hold: forgotten unless pass 2
@@ -281,6 +294,9 @@ class VisionSystem : public ISystem {
 
 	// The game time movers seen this pass are stamped with, read from the clock at the first such sighting.
 	std::optional<double> m_sightingTime;
+
+	// The forest clip's failure is logged once.
+	bool clipFailureLogged = false;
 
 	// Test-only diagnostic: incremented on each actual polygon (re)build.
 	uint64_t m_polygonBuildCount = 0;
