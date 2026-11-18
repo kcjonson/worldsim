@@ -106,7 +106,7 @@ Decays while working, recovers while idle or recreating.
 
 **MVP Status:** Deferred to Phase 2
 
-### Temperature / Thermal Comfort (Environmental)
+### Temperature
 
 | Property | Value |
 |----------|-------|
@@ -114,11 +114,9 @@ Decays while working, recovers while idle or recreating.
 | Effects | Outside band increases Energy decay, reduces sleep recovery, and can apply mood/health penalties when extreme |
 | Fulfilled By | Warmer/colder locations, shelter/indoors, fires, clothing (future) |
 
-Not a need bar; it is an environmental modifier. Good shelter improves temperature stability and therefore boosts sleep quality rather than being its own need.
+Temperature is a need: a colonist needs to be neither freezing nor too hot. It does not drain with time the way hunger does. Its level is set by where the colonist is and what the weather and the hour are doing, so it falls when they are outside their comfort band and recovers when they are back inside it. A colonist meets it by going somewhere warmer or cooler: shelter, a fire, shade, and later clothing.
 
-**Implementation Note:** Tracked in code as a Temperature need placeholder; AI does not act on it yet, and there is no fulfillment source until the temperature field exists.
-
-**MVP Status:** Deferred to Phase 2 (framework introduced when temperature field lands; no separate Shelter need)
+Until the temperature of a place exists in the sim, the need holds at full and the AI does not act on it.
 
 ### Flee
 
