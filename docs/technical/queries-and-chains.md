@@ -130,6 +130,10 @@ one entry whose conditions are exact negations of each other load with a warning
 Repetition is never a row. An action that goes on until something holds carries that as a numeric
 bound on its effect (`upTo`), and a step ends only on events the engine reports.
 
+`have` is the one step with a precondition. It is a skip, not a branch: when the creature already has
+what the step names, its fetch chain is skipped, and either way the chain continues with the same next
+step ([Chains](#chains)).
+
 Every entry may name a Lua script for rich expression, the way an asset definition names a generator,
 with the entry's own values passed to it. The format reserves an optional `script` attribute on every
 entry type for this: a path relative to the entry's file, whose script takes the entry's values as a
@@ -155,8 +159,8 @@ asset folder.
 A loader reads a file whose root it owns; a file in one of these folders with any other root is a load
 error, so no tuning file is ever silently skipped. Each folder loads its own files first, then its
 subfolders' in path order, as `assets/config/conditions/` does ([Config loading](./config-loading.md)).
-The same full id twice, in one file or in two, is a load error naming both; no entry silently replaces
-another.
+The same full id twice within one entry type, in one file or in two, is a load error naming both; no
+entry silently replaces another.
 
 The library loads first, then the creatures. Need ids are collected from every behavior and every
 creature folder before the condition vocabulary loads, because they fill its owned `need` set. The
@@ -172,8 +176,14 @@ errors.
 
 ### Ids
 
-Every entry has an `id` in snake_case and, where the player sees it, a `label`. An entry is defined
-with `id` and referred to by the same id; there is no second name.
+Every entry has an `id` and, where the player sees it, a `label`. An entry is defined with `id` and
+referred to by the same id; there is no second name. Ids are case-sensitive paths. The shipped library
+names its files and entries in snake_case; a creature's folder part is its definition name as written.
+
+Ids are unique per entry type: need, behavior, chain, query, action (actions and action groups
+together), work, order, and category. The attribute that refers to an entry names its type
+(`chain="human/sleep"`, `action="human/sleep"`, `query=`, `work=`), so a chain and an action may share
+an id, and a work entry and its chain often do.
 
 A behavior's id is its path under `assets/config/behaviors/` without the extension:
 `assets/config/behaviors/human/eating.xml` is `human/eating`, and
@@ -184,7 +194,9 @@ creature's own behaviors take the creature's definition name as their folder: th
 
 The chains, queries, and actions defined in a behavior's file are in its folder too: `human/fetch_food`,
 `herbivore/graze`. Inside a file, a short id names an entry of the same folder, else a top-level entry
-of the shared folders (`deposit`, `harvest`); from outside the folder an entry is written in full.
+of the shared folders (`deposit`, `harvest`); from outside the folder an entry is written in full. A
+folder entry whose short id is also a top-level id of the same type loads with a warning naming both,
+since inside the folder it hides the top-level one.
 
 A need's id is a plain name, the same for every creature that has the need: in a thought's `need`, in
 a `<restore>` effect, and in the condition term `need(hunger)`. Two creatures' needs with the same id
@@ -244,9 +256,10 @@ includes the low-mood behaviors it can have, the same way it includes the ones t
 
 ## Creatures
 
-A creature is a definition in its own asset folder, `assets/world/creatures/<Name>/`, found by the
-asset folder discovery that finds every asset. The folder's primary file, `<Name>/<Name>.xml`, holds
-its asset definitions (sprites, motion, size), and the base definition carries a `<creature>` block.
+A creature is a definition in its own asset folder, `assets/world/creatures/<Name>/`. The folder's
+primary file, `<Name>/<Name>.xml`, holds its asset definitions (sprites, motion, size), loaded by the
+asset registry like every asset. The base definition, the one whose `defName` is the folder's name,
+carries a `<creature>` block; a `<creature>` block on any other definition is a load error.
 
 ```xml
 <AssetDefinitions>
@@ -292,20 +305,37 @@ its asset definitions (sprites, motion, size), and the base definition carries a
   ([Needs](../design/game-systems/colonists/needs.md#need-to-mood-weights)); a need of such a creature
   with no cost is a load error naming it. The penalty curve, easing, and bands are the creature's
   `mood.xml`.
-- The order of the included behaviors, then the creature's own entries, is the creature's order: it
-  breaks a tie between two needs equally low, and it ranks idle rows.
+- The creature's order (below) breaks a tie between two needs equally low, and ranks idle rows.
 
-Every other XML file in the folder that the definition does not name as a helper (as it names its
-motion file) is part of the creature and is read by its root: a `<creature>` file adds rows to the
-`<creature>` block, a `<behavior>` file is one of the creature's own behaviors (included
-automatically, its id in the creature's folder), and the creature's own config files (`<Mood>`,
-`<Memory>`, `<Traits>`, `<Attributes>` for the human) are read by their loaders. These files are never
-named after the folder, which the asset scan keeps for the primary file, and the folder has no
-subfolders.
+### Loading a creature
 
-A mod adds a behavior to humans by shipping it under its own folder and adding a `<creature>` file to
-`assets/world/creatures/Human/` that includes it; it adds a trait with a `<Traits>` file there, and a
-creature by adding a folder. Nothing is replaced whole to add to it.
+The asset registry parses only the primary file and only the elements of an asset definition; it reads
+nothing of the `<creature>` block. The creature loader, run on the loading scene after the asset
+registry and beside the colonist rules, reads the rest:
+
+- It finds each creature folder under `assets/world/creatures/`, and in each mod's own creature
+  folders, and re-reads the base definition's `<creature>` block from the primary file.
+- It reads every other XML file at the top level of the folder, in file name order, except a file the
+  definition names as a helper (as it names its motion file). Each is read by its root: a `<creature>`
+  file adds rows to the block; a `<behavior>` file is one of the creature's own behaviors; `<Mood>`,
+  `<Memory>`, `<Traits>`, and `<Attributes>` go to their own loaders. Any other root is a load error.
+  These files are never named after the folder, which the asset scan keeps for the primary file, and
+  the folder has no subfolders.
+- The creature's order is the primary block's `<behavior>` includes in the order written, then each
+  `<creature>` file's includes in file name order, then the creature's own behavior files in file name
+  order, then mods' additions in mod load order.
+- The same behavior included twice is a load error naming both places. Two rows that set the same
+  value of the same need (an override, a settling row, a `<moodCost>`) are a load error naming both
+  files.
+- Traits and attributes keep their own loaders' rule: a later file replaces a trait or an attribute of
+  the same name and the replacement is logged. They are the human's config, not entries of this
+  design.
+
+A mod never writes into a shipped folder. Its files sit in the mod's own folder: its behaviors under
+its own behavior folder, its ids starting with that folder, and a `<creature for="Human">` file naming
+the creature it adds to, which includes the mod's behaviors and gives their `<moodCost>` rows. A mod
+adds a creature with a creature folder of its own, and traits with a `<Traits for="Human">` file.
+Nothing is replaced whole to add to it.
 
 ### The human and the colony
 
@@ -433,9 +463,10 @@ effect (drinking fills the bladder) or a chain's `<need>` step.
 
 Below `seek` the need's option is on the `ordinary_need` rung, and below `critical` on the
 `critical_need` rung, which interrupts work. A creature decides at once when a need crosses into
-critical, unless it already serves a critical need (requirement 5). A need interrupts work only at
-critical, so work is left only in extreme cases. The urgent level is read by thoughts and the UI; the
-`urgent_need` rung is [a later change](#an-urgent-need-rung).
+critical, unless it already serves a critical need (requirement 5). An ordinary need outranks
+opportunistic work; only a critical need interrupts committed work, so committed work is left only in
+extreme cases. The urgent level is read by thoughts and the UI; [An urgent-need rung](#an-urgent-need-rung)
+gives it a rung of its own.
 
 ### What satisfies a need
 
@@ -469,8 +500,10 @@ offers it to colony members. The care work's rung is its work entry's.
 
 ## The human behaviors
 
-The shipped behaviors reproduce what colonists do, value for value. Each change to that is its own
-entry under [Changes to behavior](#changes-to-behavior). Each block below is one file under
+The behaviors in this section reproduce the hand-written behavior value for value, with the one
+difference [Relief decided before setting off](#relief-decided-before-setting-off) states.
+[Changes to behavior](#changes-to-behavior) gives what some of them become, and the human behaviors
+with no hand-written predecessor, enjoying nature among them. Each block below is one file under
 `assets/config/behaviors/`.
 
 ```xml
@@ -499,7 +532,7 @@ entry under [Changes to behavior](#changes-to-behavior). Each block below is one
     <from yields="edible"/>
     <from pile="edible"/>
     <from box="edible"/>
-    <prefer fact="held" below="1"/>
+    <prefer fact="held"/>
     <weigh fact="distance" by="-1"/>
   </query>
   <query id="ripe_food_bush">
@@ -546,7 +579,7 @@ entry under [Changes to behavior](#changes-to-behavior). Each block below is one
   <query id="place_to_sleep">
     <from capability="sleepable"/>
     <from place="here"/>
-    <weigh fact="sleep_quality" by="1000"/>
+    <prefer fact="sleep_quality" below="1"/>
     <weigh fact="distance" by="-1"/>
   </query>
   <action id="sleep" seconds="8" hands="any" interruptable="true" asleep="true">
@@ -581,8 +614,9 @@ entry under [Changes to behavior](#changes-to-behavior). Each block below is one
   <query id="place_to_relieve">
     <from capability="toilet"/>
     <from place="grid" spacing="3" radius="25"/>
-    <from place="here"/>
-    <prefer fact="on_shore" below="1"/>
+    <from place="here" fallback="true"/>
+    <exclude fact="on_shore"/>
+    <prefer fact="is_place"/>
     <weigh fact="distance" by="-1"/>
     <weigh fact="waste_nearby" by="10"/>
     <weigh fact="food_nearby" by="-20"/>
@@ -598,26 +632,6 @@ entry under [Changes to behavior](#changes-to-behavior). Each block below is one
     <restore need="bladder" amount="100"/>
     <restore need="digestion" amount="100"/>
     <spawn def="BioPile"/>
-  </action>
-</behavior>
-
-<!-- human/enjoying_nature.xml: human/enjoying_nature -->
-<behavior id="enjoying_nature" label="Enjoying nature">
-  <need id="recreation" label="Recreation" seek="30" urgent="20" critical="10">
-    <drains perGameMinute="0.01"/>
-    <satisfiedBy chain="enjoy_nature"/>
-  </need>
-  <chain id="enjoy_nature">
-    <go query="pleasant_spot"/>
-    <do action="enjoy_nature"/>
-  </chain>
-  <query id="pleasant_spot" pick="weighted">
-    <from place="around" radius="30" count="8"/>
-    <exclude fact="distance" above="30"/>
-    <weigh fact="distance" by="-0.1"/>
-  </query>
-  <action id="enjoy_nature" hands="any" interruptable="true" pays="along">
-    <restore need="recreation" amount="2" seconds="60" upTo="90"/>
   </action>
 </behavior>
 
@@ -644,18 +658,26 @@ entry under [Changes to behavior](#changes-to-behavior). Each block below is one
 Eating ends at the seek level without a loop. `eat_from_pack` is offered while the creature holds
 edible food, since its one step consumes held food; each run eats one unit, and the next decision
 offers it again while hunger is still below seek. `fetch_food` is offered only while the creature
-carries no food, and its take puts one meal in the pack and ends the task. The `eat` action's
-Digestion effect is why `human/relieving` brings Digestion.
+carries no food, and its take puts one meal in the pack and ends the task. `carried_food` is a
+condition term: the number of edible units the creature carries in hands, belt, and pack, provisions
+included. The `eat` action's Digestion effect is why `human/relieving` brings Digestion.
 
-`seeking(need)` is true while that need of the creature is below its seek level. A colonist low on
-Bladder whose Digestion is also below seek is offered `relieve_both` as well as `relieve_bladder`, and
-takes the one that ranks higher.
+`seeking(need)` is true while that need of the creature is below its seek level. A chain that several
+needs' `<satisfiedBy>` rows name is one option, serving every one of those needs that is below seek,
+and among options on one rung the one serving more needs ranks first, ahead of score. So when Bladder
+and Digestion are both below seek, `relieve_both` is offered once and wins over `relieve_bladder` and
+`relieve_bowels` every time; when only one is below seek, `relieve_both` is not offered.
+
+Any known latrine is taken before a spot on the ground, at any distance. With none, the grid's spots
+off the shore are scored as the toilet finder scores them; with no such spot, or one with a route
+verdict, the colonist relieves itself where it stands.
+
+Sleep takes any known bed before the ground, at any distance, and the ground where the colonist stands
+when it knows none.
 
 Drinking and washing are separate chains, so a colonist low on both takes the critical one first, else
 the one whose behavior is included first
 ([AI behavior](../design/game-systems/colonists/ai-behavior.md#tier-5-actionable-needs)).
-
-Recreation drains at a constant rate and only `enjoy_nature` restores it.
 
 `common/sleeping_on_the_ground`, which a cow or a deer includes, has Energy with a chain whose only
 query candidate is `<from place="here"/>`.
@@ -799,6 +821,7 @@ A `<from>` row names one source of candidates, and a query may have several:
 | `<from pile="Wood"/>` or `pile="edible"` | remembered loose piles of the item, or of any item with the capability |
 | `<from box="Wood"/>` or `box="edible"` | storage boxes the colony knows that hold the item, or any item with the capability; each (box, item) pair is a candidate, so a box with two foods is two |
 | `<from place="here"/>` | where the creature stands, as a place with no thing in it |
+| any row with `fallback="true"` | its candidates are taken only when no candidate of the other rows survives, and no exclusion or prefer row removes them |
 | `<from place="around" radius="r" count="n" minRadius="m"/>` | up to `n` points, each at a seeded random angle and a distance between `m` (default 0) and `r`, kept only where the creature's disc fits on walkable ground joined to it |
 | `<from place="grid" spacing="s" radius="r"/>` | points on a grid of spacing `s` around the creature out to `r`, walkable and joined to it |
 | `<from goal="destination"/>` | the destination of the goal the work serves: a box, a station, a blueprint, a creature |
@@ -843,8 +866,9 @@ low-mood behavior's roll multiplier can read what its query weighed.
 | `distance` | item | 0 m and up | straight-line metres from the creature |
 | `held` | item | 0 or 1 | another task holds a claim on it that does not take it from this creature (food held by a less urgent eater or by work) |
 | `on_shore` | item | 0 or 1 | a place within the tuned distance of water |
-| `waste_nearby` | item | 0 and up | how many remembered waste things (bio piles) are within the tuned distance |
-| `food_nearby` | item | 0 and up | how many remembered edible things are within the tuned distance |
+| `waste_nearby` | item | 0 and up | the sum, over remembered waste things (bio piles) within the tuned distance `r`, of `1 - d/r` for each at distance `d` |
+| `food_nearby` | item | 0 and up | the same sum over remembered edible things within its tuned distance |
+| `is_place` | item | 0 or 1 | the candidate is a place (`here`, `around`, `grid`) rather than a thing |
 | `sleep_quality` | item | 0 to 1 | how well the creature sleeps there: the tuned ground value on the ground, 1 at a sleepable thing |
 | `below_destination` | item | 0 or 1 | for a box candidate, its priority for the goal's item is strictly below the destination's |
 | `quality` | definition | 0 to 1 | the edible capability's `quality`, Terrible 0 to Excellent 1 in steps of 0.25 |
@@ -886,7 +910,7 @@ one fact, `fits_meal_time`; no query asks what hour it is.
 A query weighs `distance` with a negative weight or excludes it above a bound; one that does neither is
 a load error, since nothing would end its search (see [Evaluation](#evaluation)).
 
-`<prefer fact="held" below="1"/>` is the food rule of [Task claims](./task-claims.md#need-tasks): free
+`<prefer fact="held"/>` is the food rule of [Task claims](./task-claims.md#need-tasks): free
 food first at any distance, held food only when no free food is known, and food that is taken never.
 
 ### Picking: the best, or a weighted draw
@@ -982,7 +1006,7 @@ kinds provided in C++. A leg is a `go` step and the `do` step after it.
 | `<do action="..."/>` | performs an action, or an action group's member for the target, where the creature stands; `on` names the thing it works on when that is not the step it walked to (`on="destination"`) |
 | `<have item="..." fetch="..."/>` or `<have capability="...">` | a goal: met when the creature carries the option's planned amount of the item beyond the cargo it was handed, or for a packaged target, carries that one thing, or the packaged thing is already at its placement target; otherwise it runs the named chain, which gets it |
 | `<think thought="..." to="self"/>` | gives a thought to `self`, `target`, or `witnesses` (every human who saw the step) |
-| `<need name="..." change="..."/>` | moves one of the creature's needs by a signed amount |
+| `<need id="..." change="..."/>` | moves one of the creature's needs by a signed amount |
 | `<drop/>` | sets down what the chain's steps took, by the drop path (a box within reach that takes it, else a pile) |
 | `<run chain="..."/>` | runs another chain as this step; chains nest |
 | `<leave_colony/>` | ends the creature's colony membership; the engine walks it to the edge of the simulated area and unloads it there |
@@ -1175,7 +1199,7 @@ as NoRoom when the creature's own load is what stands in the way.
 #### Hands
 
 An action entry's `hands="free"` is what `needsHands` was. The hands rules run when an option is
-selected, where the creature stands, keyed on the first `do` action of the selected chain: a one-hand
+selected, where the creature stands, keyed on the first `do` the selected chain will perform, counting the fetch chain of a `have` that is not met: a one-hand
 item to the belt, else the pack; a two-hand armful, or one-hand goods with no room, into a box within
 reach that takes them, else onto the ground; a packaged item set down still packaged. A carry-in
 delivers what the creature holds and needs no free hands. Any option on a strictly higher rung
@@ -1391,7 +1415,9 @@ is the authority for the (rung, score) key and the switch gate.
 | an idle chain | `idle` |
 
 `urgent_need` and `own_unfinished_work` are given options by [An urgent-need rung](#an-urgent-need-rung)
-and [Interruptable crafts](#interruptable-crafts) under Changes to behavior. Within a rung the score is
+and [Interruptable crafts](#interruptable-crafts) under Changes to behavior. `survival` is reserved for
+the threats of [Interruptable crafts](./interruptable-crafts.md#the-ladder), and no entry names it.
+Within a rung an option serving more of the creature's needs ranks first; then the score is
 arbitration's, in this order of terms: distance, the gathering rank, skill, task age, the hysteresis
 margin, a box's storage priority for stocking, and the colony member's priority for the work's
 category.
@@ -1682,9 +1708,8 @@ player cannot draft, direct, or order a colonist during an episode. A critical n
 low-mood behavior. For that, a low-mood behavior's do steps use interruptable actions, or short ones
 that complete before the gate is asked again, since a non-interruptable action blocks every switch.
 
-A low-mood behavior whose effect needs a world system the game lacks is a chain whose only step gives
-a thought, the log-only rule in Mood: the episode is announced and logged, and nothing in the world
-changes. Leaving the colony is a chain ending in `<leave_colony/>`.
+A low-mood behavior may have a chain whose only step gives a thought, the log-only rule in Mood: the
+episode is announced and logged, and nothing in the world changes. Leaving the colony is a chain ending in `<leave_colony/>`.
 
 ### The target need not be the source
 
@@ -1731,9 +1756,47 @@ counts the candidates that survive a query's exclusions, scoring none of them.
 
 ## Changes to behavior
 
-The shipped entries reproduce the hand-written behavior. Each change below alters what colonists do,
-lands as its own change after the path it touches runs on the engine, needs the owner's sign-off, and
-lists the test expectations it changes.
+What some human behaviors become, and the human behaviors with no hand-written predecessor. Each
+section is the end state of that behavior; the entries under [The human behaviors](#the-human-behaviors)
+are what it is before it.
+
+### Relief decided before setting off
+
+The hand-written code decides on arrival whether a relief covers both needs, from the levels it finds
+then, and always relieves the need it set out for. The data entries decide it when the option is
+selected: `relieve_both` is chosen while both needs are below seek, and a colonist on its way to
+relieve one need switches to `relieve_both` at a later decision if the other crosses seek on the way,
+since that option then ranks first. A need that crosses seek in the last moments before arrival waits
+for the next relief.
+
+### Enjoying nature
+
+Recreation is acted on (WOR-1054, enjoy nature). A bored colonist walks to a pleasant spot near it and
+restores a little Recreation over a long time, keeping what it gained when something pulls it away:
+
+```xml
+<!-- human/enjoying_nature.xml: human/enjoying_nature -->
+<behavior id="enjoying_nature" label="Enjoying nature">
+  <need id="recreation" label="Recreation" seek="30" urgent="20" critical="10">
+    <drains perGameMinute="0.01"/>
+    <satisfiedBy chain="enjoy_nature"/>
+  </need>
+  <chain id="enjoy_nature">
+    <go query="pleasant_spot"/>
+    <do action="enjoy_nature"/>
+  </chain>
+  <query id="pleasant_spot" pick="weighted">
+    <from place="around" radius="30" count="8"/>
+    <exclude fact="distance" above="30"/>
+    <weigh fact="distance" by="-0.1"/>
+  </query>
+  <action id="enjoy_nature" hands="any" interruptable="true" pays="along">
+    <restore need="recreation" amount="2" seconds="60" upTo="90"/>
+  </action>
+</behavior>
+```
+
+Recreation drains at a constant rate and only `enjoy_nature` restores it.
 
 ### An urgent-need rung
 
@@ -1742,28 +1805,26 @@ decides at once when a need crosses into urgent. Every need with a `<satisfiedBy
 levels, the ones that cannot kill included, so a colonist leaves a long job to wash or to rest before a
 low-mood behavior over it starts ([Needs](../design/game-systems/colonists/needs.md#need-to-mood-weights)).
 Tuning a need's `urgent` level against the mood its cost takes off is how meeting the need is kept
-ahead of the behavior. Changes the rung tests (`TierDominanceWorkOrderBeatsNearerNeed` and its
-family) and the decide-at-once tests.
+ahead of the behavior.
 
 ### Sleep along a curve
 
-`human/sleep` pays along with `curve="2"`, so a woken sleeper keeps what it slept
+The action `human/sleep` pays along with `curve="2"`, so a woken sleeper keeps what it slept
 ([Interruptable crafts](./interruptable-crafts.md#sleep-pays-out-along-a-curve)), and the factors of
-that section multiply into `sleep_quality`. Changes `WokenSleeperCarriesOutTheNewTask`'s need values.
+that section multiply into `sleep_quality`.
 
 ### Interruptable crafts
 
-The craft's progress is saved on the job, and `craft` becomes an open-ended `<work>` action on the
+The craft's progress is saved on the job, and `craft` is an open-ended `<work>` action on the
 station's current job, interruptable and paying along, with the crafter's hold bringing it back on the
 `own_unfinished_work` rung ([Interruptable crafts](./interruptable-crafts.md#the-crafters-hold)); the
 `<craft>` effect's completion rules run when the job's work reaches its bound. `build` and
-`deconstruct` become interruptable. A held part-done unit puts its craft on `own_unfinished_work` by an
-engine rule like the other promotions. This is the AI and action half of WOR-822 (Interruptable
-crafts: saved progress, what interrupts, and the crafter's hold on the station), built on the engine.
+`deconstruct` are interruptable. A held part-done unit puts its craft on `own_unfinished_work` by an
+engine rule like the other promotions.
 
 ### Eating to full, at a place to eat
 
-`human/eat` becomes open-ended, consuming held food until hunger reaches 95
+The action `human/eat` is open-ended, consuming held food until hunger reaches 95
 (`<consume capability="edible" count="1" seconds="2" upTo="95" need="hunger"/>`), and the meal chain
 walks to a place to eat first:
 
@@ -1782,21 +1843,20 @@ walks to a place to eat first:
 </query>
 ```
 
-Hunger's `<satisfiedBy>` rows become the one `eat_a_meal`. The kinds `dining_table` and `chair` are
-`<Kind>` declarations the furniture adds; with none known the
-query's only candidate is where the colonist stands, and it eats there. Changes
-`EatStartsOnArrivalAndFinishesOnceFed` and scenario 12.
+Hunger's `<satisfiedBy>` rows are the one `eat_a_meal`. The kinds `dining_table` and `chair` are
+`<Kind>` declarations the furniture adds; with none known the query's only candidate is where the
+colonist stands, and it eats there.
 
 ### Food preference
 
-`human/food_to_eat` weighs what the colonist likes as well as distance:
+The query `human/food_to_eat` weighs what the colonist likes as well as distance:
 
 ```xml
 <query id="food_to_eat">
   <from yields="edible"/>
   <from pile="edible"/>
   <from box="edible"/>
-  <prefer fact="held" below="1"/>
+  <prefer fact="held"/>
   <weigh fact="against_diet" by="-20"/>
   <weigh fact="distance" by="-0.1"/>
   <weigh fact="liking" by="8"/>
@@ -1822,14 +1882,13 @@ A colonist knows berries 5 m away and a stew their best friend made, their favou
 
 At 100 m the stew wins; at 300 m the berries do. Its other terms come to 20 against the berries' 5, so
 the stew wins out to 155 m, where `20 - 0.1 x 155 = 4.5`. A gourmand weighs quality by 8: the stew's
-other terms come to 23 against the berries' 7 less 0.5, and the walk stretches to 165 m. Changes
-`TheNearestReachableFoodWinsWhateverItsKind`.
+other terms come to 23 against the berries' 7 less 0.5, and the walk stretches to 165 m.
 
-### Relief retuned
+### Relief spots sampled
 
-`human/place_to_relieve` samples 16 points within 20 m by `place="around"` in place of the 3 m grid, and its
-waste and food facts read how close the nearest is (0 to 1) rather than how many are near. Changes the
-relief-spot rule test.
+The query `human/place_to_relieve` draws 16 points within 20 m by `place="around"` in place of the 3 m
+grid, and its waste and food facts read how close the nearest one is (0 to 1) in place of the
+proximity sum.
 
 ---
 
@@ -1901,6 +1960,10 @@ A supplement, not part of the spec. Kevin, 2026-11-17:
   herbivore::eating"), then settled it as the path: "human/eating and human::eating are semantically
   identical". This follows Minecraft's resource locations and Godot's `res://` paths.
 
+- 2026-11-17: `have` is his: he described eating as a chain of "1) get food if you dont have it 2) find
+  a place that you want to eat and go there ... 3) do the eating". `have` is the one step with a
+  precondition, a skip and not a branch.
+
 Choices made in writing this document, not put to the owner:
 
 - Behaviors included by name, flat, with no parent creature. Inheritance would look like RimWorld's: a
@@ -1916,14 +1979,27 @@ Choices made in writing this document, not put to the owner:
 - The human's config moving into that folder: `mood.xml`, `memory.xml`, `traits/traits.xml` as
   `traits.xml`, and `attributes/attributes.xml` as `attributes.xml`; `needs/needs.xml` replaced by the
   need entries. `assets/config/thoughts/` and `assets/config/conditions/` stay shared.
-- A creature folder's extra files read by their root element, never named after the folder, with no
-  subfolders, because the asset scan treats any `Name/Name.xml` as a primary asset file.
-- A creature's own behaviors taking the creature's definition name as their folder (`Cow/being_milked`).
+- Creature loading: the asset registry reads only the primary file's asset definitions; a creature
+  loader on the loading scene re-reads the base definition's `<creature>` block and the folder's other
+  top-level files by root, in file name order; the base definition is the one named after the folder;
+  an unknown root, a behavior included twice, and two rows setting one value are load errors; files are
+  never named after the folder and the folder has no subfolders.
+- The creature's order: the primary block's includes, then `<creature>` files' includes by file name,
+  then its own behavior files by file name, then mods' additions in load order.
+- Mods: a mod never writes into a shipped folder; it adds its own folder with its behaviors and a
+  `<creature for="Human">` file naming the creature it adds to, and `<Traits for="Human">` for traits.
+  Traits and attributes keep their replace-by-name rule.
+- Ids unique per entry type, the referring attribute naming the type, so a chain and an action may
+  share an id.
+- Ids as case-sensitive paths, with the shipped library in snake_case and a creature's folder part its
+  definition name as written (`Cow/being_milked`).
 - Short ids inside a folder: a short id names an entry of the same folder, else a top-level entry of
-  the shared folders; from outside, the full id. The file declares only the last part of its id.
+  the shared folders; from outside, the full id; a folder entry hiding a top-level id of its type loads
+  with a warning. The file declares only the last part of its id.
 - One behavior a file, with chains, queries, and actions in their behavior's folder; need ids plain
   names, shared by every creature; shared actions, work, and orders as top-level ids.
-- A duplicate full id being a load error everywhere, so a mod adds and never replaces.
+- A duplicate full id within an entry type being a load error everywhere, so a mod adds and never
+  replaces.
 - Mood cost as `<moodCost>` rows the creature gives, not a value of the shared need.
 - A low-mood behavior as a behavior with a `<lowMood>` entry, in the same library, and the rung named
   `low_mood`.
@@ -1932,24 +2008,26 @@ Choices made in writing this document, not put to the owner:
   a load error.
 - Load order: the library, then creatures, with need ids collected before the condition vocabulary
   and cross-references resolved after all are read.
-- Every entry id in snake_case, action ids included, with thought sources naming action entry ids.
+- Thought sources naming action entry ids and need ids.
 - `GoalType` as the name of the goal list, with `clear` its own type.
 - The work rung `committed_work`, renamed from the work order rung so "order" means only a player's
-  order, and the ladder in `<ladder>` with `<rung>` entries.
-- `<prefer fact>` as the row for food's free-before-held rule and relief's off-the-shore rule.
+  order, and the ladder in `<ladder>` with `<rung>` entries; `survival` reserved.
+- `<prefer fact>` as the row for food's free-before-held rule, sleep's bed-before-ground rule, and
+  relief's latrine-before-ground rule; `fallback="true"` on a `<from>` row for the stand-where-you-are
+  fallback; the fact `is_place`.
 - `<from place="grid">` and `place="around"` with `minRadius`, to reproduce the toilet finder's grid and
-  wander's ring.
+  wander's ring; `waste_nearby` and `food_nearby` as the toilet finder's proximity sums.
 - Idle rows ranking in the creature's order ahead of score.
 - Eating split into `eat_from_pack` and `fetch_food`, with the fetch offered only while no food is
-  carried, which is the hand-written rule.
-- Relief as three actions (`urinate` 2 s, `defecate` 4 s, `relieve_both` 5 s) and three chains, the
-  combined one offered by a `when` on the term `seeking(need)`, which decides at selection where the
-  hand-written code decided on arrival.
-- `place_to_sleep` weighing `sleep_quality` by 1000, so any known bed is taken before the ground, as
-  the hand-written nearest-bed rule does.
+  carried, which is the hand-written rule; the term `carried_food`.
+- Relief as three actions (`urinate` 2 s, `defecate` 4 s, `relieve_both` 5 s) and three chains; a chain
+  named by several needs being one option, and the option serving more needs ranking first on its rung;
+  the term `seeking(need)`; the decision taken at selection, not on arrival, which
+  [Relief decided before setting off](#relief-decided-before-setting-off) states.
+- The hands rules keyed on the first `do` the chain will perform, counting an unmet `have`'s fetch.
 - `enjoy_nature` as an open-ended action restoring 2 Recreation a minute of action up to 90.
 - Fact tuning values in `assets/config/facts/`; the meal hours in the condition vocabulary.
-- The craft completion rules as a `<craft>` effect, with craft kept fixed-duration until interruptable
+- The craft completion rules as a `<craft>` effect, with craft fixed-duration before interruptable
   crafts.
 - `asleep` as an action property.
 - The `<leave_colony/>` step.
@@ -1964,10 +2042,10 @@ Choices made in writing this document, not put to the owner:
 - Facts doubling as condition terms on a target; `per` on weight rows and `count_of(query)`.
 - The weighted pick's formula: score less the lowest, plus 1, over the best 16, with a distance bound
   required.
-- The values in the later changes: the food weights, `against_diet` weighed by -20, eating to 95, the
-  sleep curve of 2, and the relief sample of 16 points within 20 m.
+- The values under Changes to behavior: the food weights, `against_diet` weighed by -20, eating to 95,
+  the sleep curve of 2, and the relief sample of 16 points within 20 m.
 
-## Addendum: history
+## Historical addendum
 
 - 2 January 2026: the work config files (`action-types.xml`, `task-chains.xml`, `work-types.xml`,
   `priority-tuning.xml`) and their registries were added, and the same day the chain design doc,
@@ -1982,6 +2060,4 @@ Choices made in writing this document, not put to the owner:
   whether a task is past its pickup is `chainStep` alone.
 - 17 November 2026: this document was first written for low-mood behaviors only, built beside the
   hand-written task code. The same day the owner retired the hand-written code, and the document was
-  rewritten to describe the whole end state; three reviews then brought the shipped entries to the
-  hand-written values, moved the intended changes into their own section, and replaced the creature
-  kinds with behaviors that creatures include.
+  rewritten to describe the whole end state.
