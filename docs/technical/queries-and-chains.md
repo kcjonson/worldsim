@@ -138,7 +138,7 @@ a later hook adds meaning to the attribute without changing any entry that works
 | `assets/config/actions/` | `<actions>` | `<action>`, `<actionGroup>` |
 | `assets/config/queries/` | `<queries>` | `<query>` |
 | `assets/config/chains/` | `<chains>` | `<chain>` |
-| `assets/config/work/` | `<work>` | `<category>`, `<work>` |
+| `assets/config/work/` | `<colonyWork>` | `<category>`, `<work>` |
 | `assets/config/orders/` | `<orders>` | `<order>` |
 | `assets/config/creatures/` | `<creatures>` | `<creature>` |
 
@@ -366,11 +366,11 @@ the critical one first, else the one written first in its creature kind's need l
   </creature>
 </creatures>
 
-<work>
+<colonyWork>
   <work id="milk" goal="care" need="Milking" category="Farming">
     <chain id="milk_a_cow"/>
   </work>
-</work>
+</colonyWork>
 
 <chains>
   <chain id="milk_a_cow">
@@ -867,7 +867,7 @@ per goal, item, and work entry to every creature that takes colony work.
 ### A work entry
 
 ```xml
-<work>
+<colonyWork>
   <category id="Hauling" label="Hauling" order="6"/>
 
   <work id="haul_pile" goal="haul" category="Hauling">
@@ -876,7 +876,7 @@ per goal, item, and work entry to every creature that takes colony work.
     <tier rung="opportunistic_work"/>
     <tier rung="work_order" when="serves_work_order"/>
   </work>
-</work>
+</colonyWork>
 ```
 
 - `goal` names the goal kind the entry serves (`haul`, `harvest`, `clear`, `craft`, `build`,
@@ -979,7 +979,7 @@ target rule ([Evaluation](#evaluation), rule 4). The spots, their stand points, 
 ### The haul
 
 ```xml
-<work>
+<colonyWork>
   <work id="haul_pile" goal="haul" category="Hauling" gathers="true">
     <source query="pile_for_goal"/>
     <chain id="haul_from_pile"/>
@@ -996,7 +996,7 @@ target rule ([Evaluation](#evaluation), rule 4). The spots, their stand points, 
     <tier rung="opportunistic_work"/>
     <tier rung="work_order" when="serves_work_order"/>
   </work>
-</work>
+</colonyWork>
 
 <chains>
   <chain id="haul_from_pile">
@@ -1043,14 +1043,14 @@ priority, so pulls never form a cycle.
 ### The harvest for a goal
 
 ```xml
-<work>
+<colonyWork>
   <work id="cut_for_goal" goal="harvest" category="Farming" gathers="true">
     <source query="cut_for_goal"/>
     <chain id="cut_and_carry_in"/>
     <tier rung="opportunistic_work"/>
     <tier rung="work_order" when="serves_work_order"/>
   </work>
-</work>
+</colonyWork>
 
 <chains>
   <chain id="cut_and_carry_in">
@@ -1077,13 +1077,13 @@ the `Clear` action and no deposit: it brings nothing toward a need and is never 
 ### The craft and its carry-ins
 
 ```xml
-<work>
+<colonyWork>
   <work id="craft" goal="craft" category="Crafting">
     <chain id="craft_at_station"/>
     <tier rung="work_order"/>
     <tier rung="own_unfinished_work" when="holds_craft"/>
   </work>
-</work>
+</colonyWork>
 
 <chains>
   <chain id="craft_at_station">
@@ -1103,13 +1103,13 @@ the crafter's hands; furniture is spawned packaged and placed by `place_packaged
 ### The build
 
 ```xml
-<work>
+<colonyWork>
   <work id="build" goal="build" category="Construction">
     <source query="builder_spot"/>
     <chain id="build_at_spot"/>
     <tier rung="work_order"/>
   </work>
-</work>
+</colonyWork>
 
 <chains>
   <chain id="build_at_spot">
