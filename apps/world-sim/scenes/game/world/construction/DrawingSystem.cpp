@@ -18,6 +18,8 @@
 #include <utils/Log.h>
 #include <vector/Tessellator.h>
 
+#include <glm/geometric.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cmath>

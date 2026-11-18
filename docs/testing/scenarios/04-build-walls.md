@@ -134,7 +134,8 @@ The drawing steps below read `/api/state?what=drawing`. Their points are world p
 17. Make the built foundation again with the precondition's `built=1` command and centre the camera on it again: `?what=construction` lists it `Built`.
 18. Pick Wall in the Build menu and click (16, 3) and (19, 3) inside the built foundation, leaving the pointer on the second: the two points and the band between them show, nothing red, and no "wall too short" (`status.hint` "Right-click / Enter to finish", `verdict.proposed` false).
 19. Move the pointer off at an angle that is not square: an arc and the angle between the two walls show at the middle point.
-20. Make a built wall with `walls?pts=15,5;21,5&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=0`, pick Door in the Build menu, click the wall at (18, 5) and leave the pointer there: the door shows in the wall, with no red ghost and no "openings overlap" (`verdict.proposed` false, `status.hint` "Click a wall to place").
+20. Read the new foundation's id from `?what=construction` (`foundations[0].id`, FOUND_ID for this game) and make a built wall on it: `walls?pts=15,5;21,5&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=0` (inside the 8 m x 6 m foundation from (14, 0) to (22, 6)): `?what=construction` lists the wall `Built`.
+21. Pick Door in the Build menu, click the wall at (18, 5), and leave the pointer there: the door shows in the wall with no red ghost and no "openings overlap" (`verdict.proposed` false, `status.hint` "Click a wall to place").
 
 ---
 

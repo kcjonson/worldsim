@@ -1793,6 +1793,29 @@ TEST_F(DrawingStripVerdictTest, AFreeformPointerRestingWhereItsSnapIsUnexploredR
 	EXPECT_TRUE(lastToastSaysUnexplored()) << lastToast();
 }
 
+// The rest silences only the refusal of being on what was just placed. The chain runs (22, 25),
+// (22, 0), (20, 0), and a pointer 1.7 m east of the line up from (20, 0) places its point on that
+// line; the still pointer then snaps east of the point, close beside the first edge, and that
+// refusal shows.
+TEST_F(DrawingStripVerdictTest, AFreeformPointerRestingWhereItsSnapCrowdsAnEarlierEdgeReadsTheRefusal) {
+	world_sim::UserSettings::Get().drawing = world_sim::DrawingSettings{.angleSteps = true, .roundLengths = true};
+	drawing->activateFoundationTool();
+	const glm::vec2 pointer{21.7F, 20.0F};
+	ASSERT_TRUE(click({22.0F, 25.0F}));
+	ASSERT_TRUE(click({22.0F, 0.0F}));
+	ASSERT_TRUE(click({20.0F, 0.0F}));
+	ASSERT_TRUE(click(pointer));
+	ASSERT_EQ(drawing->status().pointCount, 4) << lastToast();
+	ASSERT_TRUE(toasts.empty()) << lastToast();
+	hover(pointer);
+	EXPECT_FALSE(drawing->status().valid);
+	EXPECT_EQ(drawing->status().message, "edges too close");
+	EXPECT_TRUE(drawing->snapshot().verdict.proposed);
+	ASSERT_TRUE(click(pointer));
+	EXPECT_EQ(drawing->status().pointCount, 4);
+	EXPECT_EQ(lastToast(), "Invalid point: " + drawing->status().message);
+}
+
 // An edit's cursor joins the outline once it is proposed: two points and the pointer on a third.
 TEST_F(DrawingStripVerdictTest, AnEditPointerOffItsTwoPointsDrawsTheTrialOutline) {
 	const construction::FoundationId target = blueprintFloor();
@@ -2232,6 +2255,30 @@ TEST_F(DrawingPauseTest, ACameraPanUnderAStillPointerEndsTheRest) {
 		EXPECT_TRUE(drawing->snapshot().verdict.proposed);
 		drawing->deactivate();
 	}
+}
+
+// The rest is measured from where the pointer was at the click, not from the last frame: a camera
+// creeping 0.2 px a frame stays at rest for the first two frames (0.4 px in all) and has ended it by
+// the third (0.6 px), though no single step is half a pixel.
+TEST_F(DrawingPauseTest, ACameraCreepingInSmallStepsEndsTheRestOnceTheTotalPassesHalfAPixel) {
+	hostWalls();
+	drawing->activateWallTool();
+	click({-8.0F, -8.0F});
+	click({8.0F, -8.0F});
+	const glm::vec2 screen = seen.screenOf({8.0F, -8.0F});
+	hover({8.0F, -8.0F});
+	ASSERT_TRUE(drawing->status().valid) << drawing->status().message;
+
+	const float pixelMeters = 1.0F / (world_sim::testing::kPixelsPerMeter * seen.camera.zoom());
+	for (int nudge = 1; nudge <= 6; ++nudge) {
+		SCOPED_TRACE(::testing::Message() << nudge << " nudges, " << 0.2F * static_cast<float>(nudge) << " px in all");
+		seen.camera.setPosition({0.0F, static_cast<float>(nudge) * 0.2F * pixelMeters});
+		drawing->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
+		const bool resting = !drawing->snapshot().verdict.proposed;
+		EXPECT_EQ(resting, nudge <= 2);
+		EXPECT_EQ(drawing->status().valid, nudge <= 2) << drawing->status().message;
+	}
+	EXPECT_EQ(drawing->status().message, "wall too short");
 }
 
 // A keyboard pan eases in, so the camera is still creeping a fraction of a pixel a frame after it
