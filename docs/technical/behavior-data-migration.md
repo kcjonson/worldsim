@@ -239,7 +239,8 @@ marked "behavior change" lands only with the owner's sign-off.
    - Must pass: the script reports no drop on a no-op change and catches a deleted assertion.
    - Depends on: none.
 5. Mood as summed need costs (WOR-1055, PR 506).
-   - Built: the sum rule per `needs.md`, each cost on the human's need entry in `needs.xml`.
+   - Built: the sum rule per `needs.md`, each cost on the human's need entry in `needs.xml`, with
+     Temperature's cost 60.
    - Deleted: the averaging, `<NeedWeights>`.
    - Must pass: `MoodSystem` tests with their owner-approved expectation changes, scenario 18.
    - Depends on: none.
@@ -267,7 +268,8 @@ marked "behavior change" lands only with the owner's sign-off.
 
 9. Entry loaders.
    - Built: the `assets/config/behaviors/` loader (one behavior a file, ids from paths unique per entry
-     type, short ids inside a folder, the shadowing warning, duplicate full ids an error); the
+     type, short ids inside a folder, the shadowing warning, duplicate full ids an error, so a mod
+     adds and never replaces); the
      `actions`, `work`, `orders`, `facts`, and `arbitration` loaders; the creature loader as the spec's
      Loading a creature states; the reserved `script` attribute; errors naming file, entry, element,
      and attribute on the loading scene. In the same change `priority-tuning.xml` moves to
@@ -367,8 +369,9 @@ marked "behavior change" lands only with the owner's sign-off.
     - Must pass: the `ToiletActionCreation_*` tests ported to the entries, `StartsToiletActionOnArrival`,
       `ToiletFullyRelievesBladder`, `PoopingSpawnsBioPile`, `PeeingDoesNotSpawnBioPile`,
       `BladderNeedUsesGroundFallback`, `UnreachableBedAndToiletFallBackToGround`, the relief-spot
-      test, the relieving scenario. A test that depends on the on-arrival choice of both needs goes to
-      the owner with the spec's Relief decided before setting off.
+      test, the relieving scenario. A test that depends on the on-arrival choice of both needs is
+      ported to the choice at setting off, as the spec's Relief decided before setting off states, and
+      its changed expectation is listed in the PR.
     - Depends on: 2, 20.
 22. Sleep (pays at its end).
     - Built: `human/sleeping` with the bed-before-ground prefer row, `sleep_quality`, the `asleep`
@@ -417,7 +420,8 @@ marked "behavior change" lands only with the owner's sign-off.
       updated.
     - Depends on: 24.
 28. Food preference (behavior change).
-    - Built: the food query's preference weights and `against_diet`.
+    - Built: the food query's preference weights and `against_diet`, weighed and never excluded on, so
+      a starving vegetarian who knows only meat eats it.
     - Deleted: none.
     - Must pass: a test of the stew example; `TheNearestReachableFoodWinsWhateverItsKind`'s changed
       expectations.
@@ -442,14 +446,16 @@ marked "behavior change" lands only with the owner's sign-off.
       `BM_IdleDecision`.
     - Depends on: 24.
 31. Orders.
-    - Built: `<order>` entries and a dev verb that issues one. Direct control stays as it is.
+    - Built: `<order>` entries and a dev verb that issues one. There is no "move here" order; moving
+      a colonist is direct control, which stays as it is.
     - Deleted: none.
     - Must pass: new tests for an order's chain and rung.
     - Depends on: 15, 21 (`relieve_here` performs `human/urinate`).
 32. Colony membership.
     - Built: membership as engine state, granted when the colony spawns a human and removed by
       `<leave_colony/>`; the condition kind `colonist` as a human who is a member; colony work, the
-      colonist UI, and sight counted for members.
+      colonist UI, and sight counted for members. A human who is not a member keeps its mood,
+      thoughts, and traits; only what the player sees follows membership.
     - Deleted: `kinds.xml`'s mover mapping for `colonist`.
     - Must pass: suite, scenario 18, a test that a human who is not a member is offered no colony work.
     - Depends on: 7, 15.

@@ -286,7 +286,7 @@ carries a `<creature>` block; a `<creature>` block on any other definition is a 
       <moodCost need="digestion" cost="10"/>
       <moodCost need="hygiene" cost="15"/>
       <moodCost need="recreation" cost="15"/>
-      <moodCost need="temperature" cost="40"/>
+      <moodCost need="temperature" cost="60"/>
     </creature>
   </AssetDef>
 </AssetDefinitions>
@@ -331,7 +331,8 @@ registry and beside the colonist rules, reads the rest:
   the same name and the replacement is logged. They are the human's config, not entries of this
   design.
 
-A mod never writes into a shipped folder. Its files sit in the mod's own folder: its behaviors under
+A mod only adds its own behaviors; it cannot replace a shipped one, and its entry with a shipped
+entry's full id is the duplicate load error above. A mod never writes into a shipped folder. Its files sit in the mod's own folder: its behaviors under
 its own behavior folder, its ids starting with that folder, and a `<creature for="Human">` file naming
 the creature it adds to, which includes the mod's behaviors and gives their `<moodCost>` rows. A mod
 adds a creature with a creature folder of its own, and traits with a `<Traits for="Human">` file.
@@ -339,8 +340,9 @@ Nothing is replaced whole to add to it.
 
 ### The human and the colony
 
-The colonists are humans. Colony membership is engine state the sim grants and removes: a human
-spawned by the colony is a member, and one who leaves the colony stops being one
+A colonist is a human with colony membership, a role a human gains and loses; there is no colonist
+definition. Membership is engine state the sim grants and removes: a human spawned by the colony is a
+member, and one who leaves the colony stops being one
 ([Mood](../design/game-systems/colonists/mood.md), leaving the colony). Colony work is offered to
 members; a member counts for the colony's sight and work, and appears in the colonist UI. Every human
 has a mood, thoughts, and traits, member or not; what the player sees of them, and what the player can
@@ -655,7 +657,7 @@ with no hand-written predecessor, enjoying nature among them. Each block below i
 </behavior>
 ```
 
-Eating ends at the seek level without a loop. `eat_from_pack` is offered while the creature holds
+Food already carried is eaten first. Eating ends at the seek level without a loop. `eat_from_pack` is offered while the creature holds
 edible food, since its one step consumes held food; each run eats one unit, and the next decision
 offers it again while hunger is still below seek. `fetch_food` is offered only while the creature
 carries no food, and its take puts one meal in the pack and ends the task. `carried_food` is a
@@ -873,7 +875,7 @@ low-mood behavior's roll multiplier can read what its query weighed.
 | `below_destination` | item | 0 or 1 | for a box candidate, its priority for the goal's item is strictly below the destination's |
 | `quality` | definition | 0 to 1 | the edible capability's `quality`, Terrible 0 to Excellent 1 in steps of 0.25 |
 | `liking` | definition | -1 to 1 | the creature's like or dislike of this kind of thing ([Thoughts](../design/game-systems/colonists/thoughts.md#recalling-old-thoughts)) |
-| `against_diet` | definition | 0 or 1 | the thing holds something the creature's diet rules out (a vegetarian and meat), by ingredient tags on definitions |
+| `against_diet` | definition | 0 or 1 | the thing holds something against the creature's diet (a vegetarian and meat), by ingredient tags on definitions; it is weighed, never excluded on |
 | `contains(tag)` | definition | 0 or 1 | the definition carries the ingredient tag |
 | `eaten_recently` | definition | 0 to 1 | the share of the creature's recent meals that were this kind of thing |
 | `freshness` | item | 0 to 1 | 1 fresh, 0 spoiled |
@@ -1401,7 +1403,9 @@ The ladder is a list of named rungs, in order, declared once in `assets/config/a
 </arbitration>
 ```
 
-No entry writes a tier number; it names a rung, and the rung's position is its tier. This document is
+No entry writes a tier number; it names a rung, and the rung's position is its tier. The rung for
+assigned colony work is `committed_work`, since "order" means only a player's order, and the mood rung
+is `low_mood`. This document is
 the authority for the ladder's rungs and their order; [Colonist task arbitration](./colonist-task-arbitration.md)
 is the authority for the (rung, score) key and the switch gate.
 
@@ -1455,8 +1459,8 @@ chain's target:
 
 `on` says what the context menu offers the order on. An order takes the claims its chain names by the
 same rules as anything else and takes nothing another task holds
-([Task claims, Bumping](./task-claims.md#bumping-planned)). Moving a colonist is direct control, not an
-order: direct control suspends the AI, snaps the click to walkable ground, and returns the creature's
+([Task claims, Bumping](./task-claims.md#bumping-planned)). There is no "move here" order. Moving a
+colonist is direct control: direct control suspends the AI, snaps the click to walkable ground, and returns the creature's
 work to the pool ([Player control](../design/features/player-control.md)). Direct control and player
 orders are unavailable to a colonist in a low-mood episode.
 
@@ -1762,6 +1766,7 @@ are what it is before it.
 
 ### Relief decided before setting off
 
+Which relief a colonist takes (bladder, bowels, or both) is decided when it sets off, not on arrival.
 The hand-written code decides on arrival whether a relief covers both needs, from the levels it finds
 then, and always relieves the need it set out for. The data entries decide it when the option is
 selected: `relieve_both` is chosen while both needs are below seek, and a colonist on its way to
@@ -1884,6 +1889,9 @@ At 100 m the stew wins; at 300 m the berries do. Its other terms come to 20 agai
 the stew wins out to 155 m, where `20 - 0.1 x 155 = 4.5`. A gourmand weighs quality by 8: the stew's
 other terms come to 23 against the berries' 7 less 0.5, and the walk stretches to 165 m.
 
+Diet weighs against food and never excludes it. Meat costs a vegetarian 20 points, so they walk a long
+way for food without it, but a starving vegetarian who knows only meat eats the meat, unhappily.
+
 ### Relief spots sampled
 
 The query `human/place_to_relieve` draws 16 points within 20 m by `place="around"` in place of the 3 m
@@ -1964,21 +1972,33 @@ A supplement, not part of the spec. Kevin, 2026-11-17:
   a place that you want to eat and go there ... 3) do the eating". `have` is the one step with a
   precondition, a skip and not a branch.
 
+The following he settled with "Yes to all" when they were put to him:
+
+- 2026-11-17: A creature lists its behaviors flat; there are no parent creatures and no inheritance.
+- 2026-11-17: A colonist is a human with colony membership, a role a human gains and loses.
+- 2026-11-17: Non-colony humans have mood, thoughts, and traits; only what the player sees depends on
+  membership.
+- 2026-11-17: The colonist's asset folder is renamed to `assets/world/creatures/Human/`, its
+  definitions to `Human`, `Human_up`, and the rest, and its mood, traits, attributes, and memory config
+  move into it (`mood.xml`, `memory.xml`, `traits.xml`, `attributes.xml`); `needs/needs.xml` is
+  replaced by the need entries, and `assets/config/thoughts/` and `assets/config/conditions/` stay
+  shared.
+- 2026-11-17: Diet weighs against food and does not exclude it: a starving vegetarian eats meat,
+  unhappily.
+- 2026-11-17: Food already carried is eaten first: `eat_from_pack` while food is carried, `fetch_food`
+  only while none is.
+- 2026-11-17: A mod only adds its own behaviors; it cannot replace a shipped one, so a duplicate full
+  id within an entry type is a load error everywhere.
+- 2026-11-17: The "move here" order is dropped; moving a colonist is direct control.
+- 2026-11-17: The rung for assigned colony work is `committed_work`; "order" means only a player's
+  order. The mood rung is `low_mood`.
+- 2026-11-17: Ids are unique per entry type, the referring attribute naming the type, so a chain and an
+  action may share an id.
+- 2026-11-17: Relief (bladder, bowels, or both) is decided when the colonist sets off, not on arrival.
+- 2026-11-17: Temperature's mood cost is 60, up from 40.
+
 Choices made in writing this document, not put to the owner:
 
-- Behaviors included by name, flat, with no parent creature. Inheritance would look like RimWorld's: a
-  `Cow` definition naming `parent="GrazingAnimal"`, taking every value of the parent and overriding
-  some, with abstract parents that are never spawned.
-- A colonist as a human with colony membership, granted and removed by the engine, rather than its own
-  definition layered on the human.
-- Every human having mood, thoughts, and traits, member or not, with what the player sees following
-  membership.
-- The human's folder: `assets/world/colonists/Colonist/` renamed to `assets/world/creatures/Human/`,
-  its definitions renamed `Human` and `Human_up` and so on, and creatures beside it under
-  `assets/world/creatures/`.
-- The human's config moving into that folder: `mood.xml`, `memory.xml`, `traits/traits.xml` as
-  `traits.xml`, and `attributes/attributes.xml` as `attributes.xml`; `needs/needs.xml` replaced by the
-  need entries. `assets/config/thoughts/` and `assets/config/conditions/` stay shared.
 - Creature loading: the asset registry reads only the primary file's asset definitions; a creature
   loader on the loading scene re-reads the base definition's `<creature>` block and the folder's other
   top-level files by root, in file name order; the base definition is the one named after the folder;
@@ -1989,8 +2009,6 @@ Choices made in writing this document, not put to the owner:
 - Mods: a mod never writes into a shipped folder; it adds its own folder with its behaviors and a
   `<creature for="Human">` file naming the creature it adds to, and `<Traits for="Human">` for traits.
   Traits and attributes keep their replace-by-name rule.
-- Ids unique per entry type, the referring attribute naming the type, so a chain and an action may
-  share an id.
 - Ids as case-sensitive paths, with the shipped library in snake_case and a creature's folder part its
   definition name as written (`Cow/being_milked`).
 - Short ids inside a folder: a short id names an entry of the same folder, else a top-level entry of
@@ -1998,11 +2016,8 @@ Choices made in writing this document, not put to the owner:
   with a warning. The file declares only the last part of its id.
 - One behavior a file, with chains, queries, and actions in their behavior's folder; need ids plain
   names, shared by every creature; shared actions, work, and orders as top-level ids.
-- A duplicate full id within an entry type being a load error everywhere, so a mod adds and never
-  replaces.
 - Mood cost as `<moodCost>` rows the creature gives, not a value of the shared need.
-- A low-mood behavior as a behavior with a `<lowMood>` entry, in the same library, and the rung named
-  `low_mood`.
+- A low-mood behavior as a behavior with a `<lowMood>` entry, in the same library.
 - The shared folders (`behaviors`, `actions`, `work`, `orders`, `facts`, `arbitration`), with
   `priority-tuning.xml` moving out of `work/` into `arbitration/`, and a file with an unowned root being
   a load error.
@@ -2010,20 +2025,17 @@ Choices made in writing this document, not put to the owner:
   and cross-references resolved after all are read.
 - Thought sources naming action entry ids and need ids.
 - `GoalType` as the name of the goal list, with `clear` its own type.
-- The work rung `committed_work`, renamed from the work order rung so "order" means only a player's
-  order, and the ladder in `<ladder>` with `<rung>` entries; `survival` reserved.
+- The ladder in `<ladder>` with `<rung>` entries; `survival` reserved.
 - `<prefer fact>` as the row for food's free-before-held rule, sleep's bed-before-ground rule, and
   relief's latrine-before-ground rule; `fallback="true"` on a `<from>` row for the stand-where-you-are
   fallback; the fact `is_place`.
 - `<from place="grid">` and `place="around"` with `minRadius`, to reproduce the toilet finder's grid and
   wander's ring; `waste_nearby` and `food_nearby` as the toilet finder's proximity sums.
 - Idle rows ranking in the creature's order ahead of score.
-- Eating split into `eat_from_pack` and `fetch_food`, with the fetch offered only while no food is
-  carried, which is the hand-written rule; the term `carried_food`.
+- The term `carried_food`.
 - Relief as three actions (`urinate` 2 s, `defecate` 4 s, `relieve_both` 5 s) and three chains; a chain
   named by several needs being one option, and the option serving more needs ranking first on its rung;
-  the term `seeking(need)`; the decision taken at selection, not on arrival, which
-  [Relief decided before setting off](#relief-decided-before-setting-off) states.
+  the term `seeking(need)`.
 - The hands rules keyed on the first `do` the chain will perform, counting an unmet `have`'s fetch.
 - `enjoy_nature` as an open-ended action restoring 2 Recreation a minute of action up to 90.
 - Fact tuning values in `assets/config/facts/`; the meal hours in the condition vocabulary.
