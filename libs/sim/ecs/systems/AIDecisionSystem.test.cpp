@@ -5282,6 +5282,35 @@ namespace ecs::test {
 		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Hygiene).value, 100.0F);
 	}
 
+	// Pins the need tie-break: Thirst and Hygiene equally below seek, one shore point known, decided once
+	// from idle. Their options tie on tier and score, so NeedType order alone picks Drink.
+	TEST_F(NeedActionInPlaceTest, EquallyLowThirstAndHygieneAtOneShoreTieBreakToThirst) {
+		const auto colonist = createActingColonist({-8.0F, 6.0F});
+		addKnownShore(colonist, {2.0F, 6.0F});
+		getNeeds(colonist)->get(NeedType::Thirst).value = 30.0F;
+		getNeeds(colonist)->get(NeedType::Hygiene).value = 30.0F;
+		world->update(kTick);
+		ASSERT_EQ(getTask(colonist)->needToFulfill, NeedType::Thirst);
+
+		const EvaluatedOption* thirst = nullptr;
+		const EvaluatedOption* hygiene = nullptr;
+		for (const EvaluatedOption& option : getTrace(colonist)->options) {
+			if (option.taskType != TaskType::FulfillNeed) {
+				continue;
+			}
+			if (option.needType == NeedType::Thirst) {
+				thirst = &option;
+			} else if (option.needType == NeedType::Hygiene) {
+				hygiene = &option;
+			}
+		}
+		ASSERT_NE(thirst, nullptr);
+		ASSERT_NE(hygiene, nullptr);
+		EXPECT_EQ(thirst->tier, hygiene->tier);
+		EXPECT_EQ(thirst->score, hygiene->score) << "the options no longer tie, so the tie-break is not what picks the drink";
+		EXPECT_LT(thirst->tiebreakId, hygiene->tiebreakId);
+	}
+
 	// A wash and a drink at one shore point are different tasks: Hygiene turning critical on the way to
 	// drink switches the task, and the action that starts there is the wash, then the drink.
 	TEST_F(NeedActionInPlaceTest, CriticalHygieneOnTheWayToDrinkWashesFirstAtTheSameShore) {

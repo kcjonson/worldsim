@@ -449,10 +449,10 @@ namespace ecs {
 			action.duration = kWashSeconds;
 			action.interruptable = false;
 
-			NeedEffect needEff;
-			needEff.need = NeedType::Hygiene;
-			needEff.restoreAmount = kWashHygieneRestored;
-			action.effect = needEff;
+			NeedEffect needEffect;
+			needEffect.need = NeedType::Hygiene;
+			needEffect.restoreAmount = kWashHygieneRestored;
+			action.effect = needEffect;
 
 			return action;
 		}
