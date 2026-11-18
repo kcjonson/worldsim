@@ -145,6 +145,17 @@ one fact, `fits_meal_time`; no query asks what hour it is.
 A query weighs `distance` with a negative weight or excludes it above a bound; one that does neither is
 a load error, since nothing would end its search (see [Evaluation](#evaluation)).
 
+### Picking: the best, or a weighted draw
+
+A query picks in one of two ways, stated on the entry.
+
+- `pick="best"`, the default: the highest score wins. A food search takes the best.
+- `pick="weighted"`: every surviving candidate has a chance, and a higher score makes it likelier, not certain. Each candidate's chance is in proportion to its score less the lowest surviving score, plus 1, so the worst candidate still has a small chance and the best has the largest. The draw uses the sim's seeded generator, so the same game gives the same pick.
+
+A behavior's target is a weighted pick: who a colonist lashes out at is a tendency, not a rule.
+
+A weighted query draws from a set, so it cannot stop at the first winner. It must exclude `distance` above a bound, which keeps the set small, and it draws from at most the 16 best candidates. One that does not bound distance is a load error.
+
 ### Creatures differ through facts and traits
 
 Per-creature differences come from the facts reading the creature (its likes, its opinions, its meals)
@@ -405,7 +416,7 @@ is a chain:
   <relief amount="medium"/>
 </behavior>
 
-<query id="bed_to_soil">
+<query id="bed_to_soil" pick="weighted">
   <from kind="bed"/>
   <exclude fact="distance" above="15"/>
   <exclude fact="has_owner" below="1"/>
@@ -436,7 +447,7 @@ complete before the gate is asked again, since a non-interruptable action blocks
 Who a colonist takes a mood out on and who put them in it are separate. One person angers them and another gets the sharp word. The target query weighs toward the cause without requiring it:
 
 ```xml
-<query id="who_to_snipe_at">
+<query id="who_to_snipe_at" pick="weighted">
   <from kind="colonist"/>
   <exclude fact="distance" above="5"/>
   <weigh fact="distance" by="-0.2"/>
@@ -445,7 +456,7 @@ Who a colonist takes a mood out on and who put them in it are separate. One pers
 </query>
 ```
 
-The colonist who caused the mood is the likeliest target when they are near. When they are out of reach, or are someone the colonist likes too well to turn on, the weights pick whoever else is nearby and least liked.
+The colonist who caused the mood is the likeliest target when they are near, and not the certain one: the pick is a weighted draw. When they are out of reach, or are someone the colonist likes too well to turn on, the weights pick whoever else is nearby and least liked.
 
 The fact is the source of a feeling, not blame for it, so it reads both ways. A colonist lifted by seeing someone they love is inclined to be kind to someone, and generally to that person: a kind act's target query weighs `mood_source` upward where a snipe's weighs it down.
 
@@ -500,6 +511,7 @@ A supplement, not part of the spec. Kevin, 2026-11-17:
   complexity there. we just finally got that stable".
 - The player cannot step in during an episode.
 - The target of a behavior and its cause need not be the same colonist: "one person pisses you off, but you take it out on another." The target is weighted toward the colonist who caused it.
+- The pick of a behavior's target is weighted, "not a guarantee".
 - That cause is the source of the feeling, not blame, and works for good moods too: "you saw someone you love, so you're going to be nice to someone, and it generally should be that person."
 
 Choices made in writing this document, not put to the owner: the folders and roots
