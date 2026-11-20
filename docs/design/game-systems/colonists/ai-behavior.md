@@ -2,7 +2,7 @@
 
 **Status:** Design  
 **Created:** 2024-12-04  
-**MVP Status:** See [MVP Scope](../mvp-scope.md) — `ordinary_need`, `opportunistic_work`, and `idle` in Phase 1, full hierarchy in Phase 3
+**MVP Status:** See [MVP Scope](../mvp-scope.md): `ordinary_need`, `opportunistic_work`, and `idle` in Phase 1, full hierarchy in Phase 3
 
 ---
 
@@ -218,7 +218,7 @@ Everything that persists runs on the interval: a critical need with nothing reac
 - [Needs System](./needs.md): What triggers `critical_need` and `ordinary_need`
 - [Memory System](./memory.md) — What colonists know about
 - [Decision Trace](./decision-trace.md) — Task queue display system
-- [Work Priorities](./work-priorities.md) — `opportunistic_work` behavior
+- [Work Priorities](./work-priorities.md): `opportunistic_work` behavior
 - [Player Control](../features/player-control.md): direct control and player orders
 - [Entity Capabilities](../world/entity-capabilities.md) — How needs are fulfilled
 - [Task Registry](./task-registry.md): Global task list architecture for `committed_work` and `opportunistic_work`
