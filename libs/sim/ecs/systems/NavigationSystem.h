@@ -22,7 +22,8 @@
 //  1. Walls and doors, diffed by content whenever ConstructionWorld::version moves, all at once.
 //  2. Water re-derived for each meshed chunk whose terrain changed while loaded.
 //  3. Removed placed obstacles, each looked up by its key, in one patch: the ECS entities with a
-//     collider that ColliderEntityIndex finds gone, moved, or changed, all of them, then the
+//     collider that ColliderEntityIndex finds gone, moved, or changed, all of them (unbudgeted since they
+//     are few, so a mass removal lands in one patch), then the
 //     executor's (PlacementExecutor::takeRemovals) up to kDetailRemovalsPerTick. One not in the mesh is no change: a limit still waiting
 //     never finds it, and ground no limit reached has nothing to take out. Then the ECS entities with
 //     a collider that came or changed, all at once in one patch, meshed ground or not: they are few,

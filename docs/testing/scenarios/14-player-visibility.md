@@ -60,7 +60,7 @@ Launch as [../README.md](../README.md) says and take Quick Start. It is seeded, 
 43. Turn reveal on: the top turns light tan. Turn reveal off.
 44. Spawn a `TestTallBox` 4 m east of Bob: the answer's `entities` holds one id; note it.
 45. Read `sightBodies`: the box is `opaque`, about 1555 mm across, and a full shadow runs from it to his rim.
-46. Read `ground` at the box: `valid` is false.
+46. Read `ground` at (spawn x, spawn y + 0.5), the footprint's middle: `valid` is false.
 47. `kill` the box's id: its shadow and its body are gone.
-48. Read `ground` at the box: `valid` is true.
+48. Read `ground` at (spawn x, spawn y + 0.5): `valid` is true.
 49. Click Release, then exit.

@@ -134,4 +134,3 @@ TEST_F(ColliderEntityIndexTest, DefScaleAndAgeChangesReplaceTheEntry) {
 	EXPECT_TRUE(changes.added.empty());
 	EXPECT_EQ(index.find(entity), nullptr);
 }
-

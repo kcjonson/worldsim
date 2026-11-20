@@ -59,7 +59,9 @@ namespace ecs {
 	  private:
 		// Whether the entity's def has a collider at any age class, looked up in the registry only when
 		// the entity is new or its def name changed, so the piles and props with none cost a compare a
-		// refresh.
+		// refresh. A registry hot reload does not refresh it: a def that gains a collider mid-game leaves its
+		// existing entities non-blocking until they are re-created (a stale true is harmless, since
+		// refresh() re-checks collisionFor).
 		[[nodiscard]] bool mayCollide(EntityID entity, const std::string& defName, const assets::AssetRegistry& registry);
 
 		struct DefSeen {
