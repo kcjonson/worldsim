@@ -517,43 +517,22 @@ TEST_F(ActionSystemTest, SleepRestorationAffectedByQuality) {
 	EXPECT_FLOAT_EQ(needs->energy().value, 80.0F); // 20 + 60
 }
 
-// Arrived for Bladder with Digestion low too: one 5 s relief restores both and leaves a pile.
-TEST_F(ActionSystemTest, ToiletWithBothNeedsLowRelievesBoth) {
-	auto colonist = createColonist({0.0F, 0.0F});
-	setupArrivedForNeed(colonist, NeedType::Bladder, {0.0F, 0.0F});
-	setNeedValue(colonist, NeedType::Bladder, 20.0F);
-	setNeedValue(colonist, NeedType::Digestion, 20.0F);
-
-	world->update(0.1F);
-	const auto* action = world->getComponent<Action>(colonist);
-	ASSERT_EQ(action->type, ActionType::Toilet);
-	EXPECT_FLOAT_EQ(action->duration, 5.0F);
-	world->update(5.0F);
-
-	const auto* needs = world->getComponent<NeedsComponent>(colonist);
-	EXPECT_FLOAT_EQ(needs->bladder().value, 100.0F);
-	EXPECT_FLOAT_EQ(needs->digestion().value, 100.0F);
-	bool bioPile = false;
-	for (auto [entity, appearance] : world->view<Appearance>()) {
-		bioPile = bioPile || appearance.defName == "Misc_BioPile";
-	}
-	EXPECT_TRUE(bioPile);
-}
-
-// Arrived for a need that has since risen past seek: the relief still does it, and the other need only
-// when it is low. Came for Bladder (now 60) with Digestion at 20: both, 5 s. Came for Digestion (now 60)
-// with Bladder at 80: the poop alone, 4 s, Bladder untouched.
+// On arrival the relief does what it came for, and the other need too when that is below seek (30).
+// Came for Bladder at 20 with Digestion at 25: both, 5 s, a pile where he stands. Came for Digestion,
+// risen since to 60, with Bladder at 35: the poop alone, 4 s, Bladder untouched.
 TEST_F(ActionSystemTest, ToiletAlwaysDoesWhatItCameFor) {
-	auto both = createColonist({0.0F, 0.0F});
-	setupArrivedForNeed(both, NeedType::Bladder, {0.0F, 0.0F});
-	setNeedValue(both, NeedType::Bladder, 60.0F);
-	setNeedValue(both, NeedType::Digestion, 20.0F);
+	const glm::vec2 bothAt{0.0F, 0.0F};
+	auto			both = createColonist(bothAt);
+	setupArrivedForNeed(both, NeedType::Bladder, bothAt);
+	setNeedValue(both, NeedType::Bladder, 20.0F);
+	setNeedValue(both, NeedType::Digestion, 25.0F);
 	auto poopOnly = createColonist({10.0F, 0.0F});
 	setupArrivedForNeed(poopOnly, NeedType::Digestion, {10.0F, 0.0F});
 	setNeedValue(poopOnly, NeedType::Digestion, 60.0F);
-	setNeedValue(poopOnly, NeedType::Bladder, 80.0F);
+	setNeedValue(poopOnly, NeedType::Bladder, 35.0F);
 
 	world->update(0.1F);
+	ASSERT_EQ(world->getComponent<Action>(both)->type, ActionType::Toilet);
 	EXPECT_FLOAT_EQ(world->getComponent<Action>(both)->duration, 5.0F);
 	EXPECT_FLOAT_EQ(world->getComponent<Action>(poopOnly)->duration, 4.0F);
 	world->update(5.0F);
@@ -561,10 +540,14 @@ TEST_F(ActionSystemTest, ToiletAlwaysDoesWhatItCameFor) {
 	const auto* bothNeeds = world->getComponent<NeedsComponent>(both);
 	EXPECT_FLOAT_EQ(bothNeeds->bladder().value, 100.0F);
 	EXPECT_FLOAT_EQ(bothNeeds->digestion().value, 100.0F);
+	bool pileWhereBothStood = false;
+	for (auto [entity, position, appearance] : world->view<Position, Appearance>()) {
+		pileWhereBothStood = pileWhereBothStood || (appearance.defName == "Misc_BioPile" && position.value == bothAt);
+	}
+	EXPECT_TRUE(pileWhereBothStood);
 	const auto* poopNeeds = world->getComponent<NeedsComponent>(poopOnly);
 	EXPECT_FLOAT_EQ(poopNeeds->digestion().value, 100.0F);
-	EXPECT_LE(poopNeeds->bladder().value, 80.0F) << "the bladder was relieved though it was not low";
-	EXPECT_GT(poopNeeds->bladder().value, 79.0F);
+	EXPECT_FLOAT_EQ(poopNeeds->bladder().value, 35.0F) << "the bladder was relieved though it was above seek";
 }
 
 TEST_F(ActionSystemTest, PoopingSpawnsBioPile) {

@@ -52,10 +52,14 @@
 
 #include <world/Biome.h>
 #include <world/BiomeWeights.h>
+#include <world/chunk/ChunkCoordinate.h>
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/ChunkSampleResult.h>
 #include <world/chunk/IWorldSampler.h>
 #include <world/chunk/SyntheticWorldSampler.h>
+#include <world/chunk/TerrainPolygonQuery.h>
+
+#include <core/Vec2i64.h>
 
 #include <worldgen/sampling/PondNetwork2D.h>
 
@@ -5420,6 +5424,19 @@ namespace ecs::test {
 			EXPECT_EQ(*gather->targetPosition, kReachable);
 		}
 
+		// With `need` at 20 (food in his pack keeps gather-food out of the way), the task he takes serves it at
+		// `expected`.
+		void expectNeedTarget(EntityID colonist, NeedType need, glm::vec2 expected) {
+			world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+			setNeedValue(colonist, need, 20.0F);
+			world->update(kTick);
+			const Task* task = getTask(colonist);
+			ASSERT_NE(task, nullptr);
+			EXPECT_EQ(task->type, TaskType::FulfillNeed) << static_cast<int>(need);
+			EXPECT_EQ(task->needToFulfill, need);
+			EXPECT_EQ(task->targetPosition, expected) << static_cast<int>(need);
+		}
+
 		static constexpr glm::vec2 kStart{0.0F, 0.0F};
 		static constexpr glm::vec2 kReachable{40.0F, 0.0F}; // between the rivers, farther than either bank
 	};
@@ -5545,61 +5562,86 @@ namespace ecs::test {
 			return findToiletLocation(from, *twoRiverChunks(), *nav, memory);
 		}
 
+		// Asks from `from` with a memory holding only these piles and foods, kept on an entity of its own.
 		[[nodiscard]] std::optional<glm::vec2> spotFrom(glm::vec2 from, const std::vector<glm::vec2>& wastes, const std::vector<glm::vec2>& foods = {}) {
-			Memory memory;
+			const EntityID knower = world->createEntity();
+			world->addComponent<Memory>(knower, Memory{});
 			for (const glm::vec2 waste : wastes) {
-				memory.rememberWorldEntity(waste, kBioPileDefId, capabilityBit(assets::CapabilityType::Waste));
+				addKnownWaste(knower, waste);
 			}
 			for (const glm::vec2 food : foods) {
-				memory.rememberWorldEntity(food, kFoodDefId, capabilityBit(assets::CapabilityType::Edible));
+				addKnownEntity(knower, food, kFoodDefId, assets::CapabilityType::Edible);
 			}
-			return spotFromMemory(from, memory);
-		}
-
-		[[nodiscard]] static uint16_t capabilityBit(assets::CapabilityType capability) {
-			return static_cast<uint16_t>(1U << static_cast<size_t>(capability));
+			return spotFromMemory(from, *world->getComponent<Memory>(knower));
 		}
 
 		void addKnownWaste(EntityID colonist, glm::vec2 at) { addKnownEntity(colonist, at, kBioPileDefId, assets::CapabilityType::Waste); }
 
-		// The target of the task `need` at 20 makes the colonist take (food in his pack keeps gather-food out
-		// of the way).
-		[[nodiscard]] glm::vec2 needTarget(EntityID colonist, NeedType need) {
-			world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
-			setNeedValue(colonist, need, 20.0F);
-			world->update(kTick);
-			const Task* task = getTask(colonist);
-			EXPECT_EQ(task->type, TaskType::FulfillNeed);
-			EXPECT_EQ(task->needToFulfill, need);
-			return task->targetPosition;
+		// Distance to water as the finder's shore rule reads it.
+		[[nodiscard]] static double waterDistanceMeters(glm::vec2 at) {
+			const world::Chunk* chunk = twoRiverChunks()->getChunk(world::worldToChunk(world::WorldPosition{at.x, at.y}));
+			EXPECT_NE(chunk, nullptr);
+			if (chunk == nullptr) {
+				return 0.0;
+			}
+			const world::TerrainPolygonQuery water(chunk->terrainPolygons());
+			return water.distanceToWaterMm(geometry::quantize(at)) / 1000.0;
+		}
+
+		// Six piles within a meter of `centre`.
+		[[nodiscard]] static std::vector<glm::vec2> pileCluster(glm::vec2 centre) {
+			std::vector<glm::vec2> piles;
+			for (const glm::vec2 offset : {glm::vec2(0.0F, 0.0F), glm::vec2(0.0F, 0.5F), glm::vec2(0.0F, -0.5F), glm::vec2(-0.5F, 0.0F),
+										   glm::vec2(0.5F, 0.0F), glm::vec2(0.0F, 1.0F)}) {
+				piles.push_back(centre + offset);
+			}
+			return piles;
 		}
 
 		static constexpr uint32_t kBioPileDefId = 1005;
 		static constexpr uint32_t kFoodDefId = 1006;
 	};
 
+	// Nothing known: his own point. Ready ground beyond every mover's mesh has no spot, though the band
+	// round the colonist is meshed.
 	TEST_F(RelievingSpotTest, NothingKnownTakesWhereTheColonistStands) {
 		makeColonistBetweenRivers();
 		EXPECT_EQ(spotFrom(kStart, {}), std::optional<glm::vec2>(kStart));
+		EXPECT_EQ(spotFrom({600.0F, 0.0F}, {}), std::nullopt);
 	}
 
-	// The river's south edge is at y 17. Standing 1.7 m off it the colonist's own point is valid; 1.3 m
-	// off it, it and its east and west neighbours are on the shore and the next row south (3 m) wins.
+	// The south bank of the north river is noisy, so the probes are placed by the measured distance to water
+	// at x 0: 0.25 m either side of the 1.5 m line. Off it, the colonist's own point wins outright. On it,
+	// a pile 1 m south makes his own point the best were it allowed (108.75); the point 3 m south (104.5)
+	// beats its east and west neighbours (103.05), so nothing ties.
 	TEST_F(RelievingSpotTest, KeepsMoreThanOneAndAHalfMetersOffWater) {
 		makeColonistBetweenRivers();
-		const float		riverEdge = kRiverY - kRiverHalfWidth;
-		const glm::vec2 offShore{0.0F, riverEdge - 1.7F};
-		const glm::vec2 onShore{0.0F, riverEdge - 1.3F};
+		float shoreLine = 12.0F;
+		while (shoreLine < kRiverY && waterDistanceMeters({0.0F, shoreLine}) >= 1.5) {
+			shoreLine += 0.01F;
+		}
+		const glm::vec2 offShore{0.0F, shoreLine - 0.25F};
+		const glm::vec2 onShore{0.0F, shoreLine + 0.25F};
+		const double	offShoreMeters = waterDistanceMeters(offShore);
+		const double	onShoreMeters = waterDistanceMeters(onShore);
+		RecordProperty("offShoreWaterMm", static_cast<int>(offShoreMeters * 1000.0));
+		RecordProperty("onShoreWaterMm", static_cast<int>(onShoreMeters * 1000.0));
+		ASSERT_GT(offShoreMeters, 1.6) << "the off-shore probe is too near the line";
+		ASSERT_LT(onShoreMeters, 1.4) << "the on-shore probe is too near the line";
+		ASSERT_GT(onShoreMeters, 0.0) << "the on-shore probe is in the water";
+		const glm::vec2 southOfShore = onShore + glm::vec2(0.0F, -3.0F);
+		ASSERT_GT(waterDistanceMeters(southOfShore), 1.6);
+
 		EXPECT_EQ(spotFrom(offShore, {}), std::optional<glm::vec2>(offShore));
-		EXPECT_EQ(spotFrom(onShore, {}), std::optional<glm::vec2>(onShore + glm::vec2(0.0F, -3.0F)));
+		EXPECT_EQ(spotFrom(onShore, {onShore + glm::vec2(0.0F, -1.0F)}), std::optional<glm::vec2>(southOfShore));
 	}
 
-	// Piles 3 m past the point 27 m east would make it the best by far, but it is outside the 25 m search;
-	// the point 24 m east, inside it, takes their pull instead.
+	// The search reaches the grid point 24.74 m off and stops short of the one 25.63 m off: a pile cluster
+	// on (24, 6) is taken there, one on (24, 9) only draws the spot to (21, 9).
 	TEST_F(RelievingSpotTest, SearchesTwentyFiveMeters) {
 		makeColonistBetweenRivers();
-		const std::vector<glm::vec2> piles{{27.0F, 0.0F}, {27.0F, 0.5F}, {27.0F, -0.5F}, {26.5F, 0.0F}, {27.5F, 0.0F}, {27.0F, 1.0F}};
-		EXPECT_EQ(spotFrom(kStart, piles), std::optional<glm::vec2>(glm::vec2(24.0F, 0.0F)));
+		EXPECT_EQ(spotFrom(kStart, pileCluster({24.0F, 6.0F})), std::optional<glm::vec2>(glm::vec2(24.0F, 6.0F)));
+		EXPECT_EQ(spotFrom(kStart, pileCluster({24.0F, 9.0F})), std::optional<glm::vec2>(glm::vec2(21.0F, 9.0F)));
 	}
 
 	// One pile at a time, each placed where its pull decides between neighbouring points by under a point.
@@ -5636,30 +5678,31 @@ namespace ecs::test {
 		const glm::vec2 latrine = kStart + glm::vec2(12.0F, 0.0F);
 		addKnownWaste(colonist, kStart + glm::vec2(-6.0F, 0.0F));
 		addKnownEntity(colonist, latrine, kToiletDefId, assets::CapabilityType::Toilet);
-		EXPECT_EQ(needTarget(colonist, NeedType::Bladder), latrine);
+		expectNeedTarget(colonist, NeedType::Bladder, latrine);
 	}
 
 	// With no latrine known, Bladder and Digestion each go to the finder's spot.
-	TEST_F(RelievingSpotTest, NoLatrineBladderGoesToTheFinderSpot) {
+	TEST_F(RelievingSpotTest, NoLatrineGoesToTheFinderSpot) {
 		const auto colonist = makeColonistBetweenRivers();
 		addKnownWaste(colonist, kStart + glm::vec2(-6.0F, 0.0F));
-		EXPECT_EQ(needTarget(colonist, NeedType::Bladder), kStart + glm::vec2(-6.0F, 0.0F));
+		for (const NeedType need : {NeedType::Bladder, NeedType::Digestion}) {
+			getTask(colonist)->clear();
+			satisfyAllNeeds(*getNeeds(colonist));
+			world->getComponent<Position>(colonist)->value = kStart; // the grid is laid from where he stands
+			expectNeedTarget(colonist, need, kStart + glm::vec2(-6.0F, 0.0F));
+		}
 	}
 
-	TEST_F(RelievingSpotTest, NoLatrineDigestionGoesToTheFinderSpot) {
-		const auto colonist = makeColonistBetweenRivers();
-		addKnownWaste(colonist, kStart + glm::vec2(-6.0F, 0.0F));
-		EXPECT_EQ(needTarget(colonist, NeedType::Digestion), kStart + glm::vec2(-6.0F, 0.0F));
-	}
-
-	// The finder's spot had a route that failed (a verdict on it): relieve where he stands.
+	// The finder's spot had a route that failed (a verdict on it): relieve where he stands. A real failed
+	// route can't be staged on open land, so the verdict is written by hand.
 	TEST_F(RelievingSpotTest, SpotWhoseRouteFailedFallsBackToWhereTheColonistStands) {
 		const auto		colonist = makeColonistBetweenRivers();
 		const glm::vec2 spot = kStart + glm::vec2(-6.0F, 0.0F);
 		addKnownWaste(colonist, spot);
 		const SourceReachMemo::Key now{.connectivityEpoch = nav->connectivityEpoch(), .beliefVersion = world->getComponent<Memory>(colonist)->beliefVersion};
+		// The key mirrors verdictKey(0, spot) in AIDecisionSystem.cpp.
 		world->getComponent<SourceReachMemo>(colonist)->recordVerdict(hashWorldEntity(spot, 0), now, 0);
-		EXPECT_EQ(needTarget(colonist, NeedType::Bladder), kStart);
+		expectNeedTarget(colonist, NeedType::Bladder, kStart);
 	}
 
 	// No latrine and no spot (no chunk is ready, so nothing is meshed): relieve where he stands.
@@ -5671,20 +5714,15 @@ namespace ecs::test {
 		satisfyAllNeeds(*getNeeds(colonist));
 		addKnownWaste(colonist, standing + glm::vec2(-6.0F, 0.0F));
 		ASSERT_EQ(spotFromMemory(standing, *world->getComponent<Memory>(colonist)), std::nullopt);
-		EXPECT_EQ(needTarget(colonist, NeedType::Bladder), standing);
+		expectNeedTarget(colonist, NeedType::Bladder, standing);
 	}
 
 	// A reachable bed is taken before the ground he stands on, though it is 12 m off and the ground 0.
 	TEST_F(AIDecisionRiverTest, ReachableBedIsTakenBeforeTheGround) {
 		const auto		colonist = makeColonistBetweenRivers();
 		const glm::vec2 bed = kStart + glm::vec2(12.0F, 0.0F);
-		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
 		addKnownEntity(colonist, bed, kBedDefId, assets::CapabilityType::Sleepable);
-		setNeedValue(colonist, NeedType::Energy, 20.0F);
-		world->update(kTick);
-		const Task* task = getTask(colonist);
-		EXPECT_EQ(task->needToFulfill, NeedType::Energy);
-		EXPECT_EQ(task->targetPosition, bed);
+		expectNeedTarget(colonist, NeedType::Energy, bed);
 	}
 
 	// Every known food source out of reach: the colonist has nothing it can eat, so Hunger is NoSource.

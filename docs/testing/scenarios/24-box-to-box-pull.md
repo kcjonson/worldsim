@@ -12,7 +12,7 @@ Spec: [storage-system.md](../../design/features/storage-system.md#priority-based
 ## Preconditions
 
 Fresh launch (Quick Start): `world-sim --scene=game --background --no-settings` (RelWithDebInfo), dev
-server on 127.0.0.1:<PORT>. Keep time at normal speed. Bob starts with no axe, so nothing here makes
+server on 127.0.0.1:8081, or the port given with `--http-port`; `<PORT>` below is that port. Keep time at normal speed. Bob starts with no axe, so nothing here makes
 him cut trees, and the item, Wood, lies nowhere loose on a fresh map.
 
 `/api/dev/storage` sets one rule on the box nearest `at`, replacing that box's rule for the same item.
@@ -22,8 +22,9 @@ him cut trees, and the item, Wood, lies nowhere loose on a fresh map.
 ## Setup
 
 Pause (`/api/control?action=pause`), read Bob's `x, y` from `/api/state?what=colonists` (note as
-`BX, BY`), and check `/api/dev/ground?pts=<BX+4>,<BY>;<BX+8>,<BY>` reads `buildableNow` true at both
-(`spawn` answers ok even when it refuses a spot); else pick another open spot near him. Then:
+`BX, BY`), and check `/api/dev/ground?pts=<BX+4>,<BY>;<BX+8>,<BY>` reads `buildableNow` true at both;
+else pick another open spot near him. A `spawn` that refuses its spot answers HTTP 400 with the reason:
+pick another spot. Then:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/dev/spawn?def=BasicBox&at=<BX+4>,<BY>&n=1&scatter=0"
@@ -46,6 +47,7 @@ Box A is the one at `BX+4`, box B the one at `BX+8`.
 5. Read `what=storage` 10 s later: still A 10, B 10 (B is at its max).
 6. Give A a minimum and B more room (`/api/dev/storage?at=<BX+4>,<BY>&item=Wood&priority=Low&min=8&max=0`, then `/api/dev/storage?at=<BX+8>,<BY>&item=Wood&priority=High&min=0&max=20`): Bob carries 2, A reads 8 and B 12, and they stay so.
 7. Raise A above B (`/api/dev/storage?at=<BX+4>,<BY>&item=Wood&priority=Critical&min=0&max=0`): Bob carries B's 12 into A in one or two trips, A reads 20 and B is empty, and nothing goes back to B over the next 10 s.
+8. Exit the game (`/api/control?action=exit`).
 
 ---
 
@@ -55,5 +57,5 @@ Box A is the one at `BX+4`, box B the one at `BX+8`.
 max, leaves the lower box its minimum, and reverses direction only when the priorities do.
 
 **Fail:** wood moves between same-priority boxes; the higher box goes past its max; the lower box
-drops below its minimum; wood goes from the higher box to the lower one; Bob stands idle with a pull
-open.
+drops below its minimum; wood goes from the higher box to the lower one; Bob stands idle for 10 s with
+a pull open.
