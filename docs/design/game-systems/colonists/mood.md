@@ -25,7 +25,7 @@ Managing mood is the player's job as the colony's overseer. Colonists can feed a
 
 A colonist's mood has two parts, added together and clamped to 0-100.
 
-- **Needs.** A base score from how well the eight needs are met, weighted per need. Defined in [Needs](./needs.md).
+- **Needs.** A base score of 100 less what each unmet need costs. The costs add; a met need gives no credit against an unmet one. Defined in [Needs](./needs.md).
 - **Mood effects.** Signed amounts carried by the [thoughts](./thoughts.md) the colonist is holding, from things that happened to them or that they are living with.
 
 A mood effect always belongs to a thought. It is either timed ("slept on the ground", -10 for a day; "vented to Idris", +8 for 12 hours) or lasts while its cause does ("something reeks", "crowded", "soaked"). A repeat of a held thought about the same subject does not pile up unless the type says it stacks; a stacking thought shows its count ("bottled up x3"). Every other system that affects how a colonist feels does so by giving a thought. What a thought is, what creates one, and which ones the player sees as bubbles are defined in [Thoughts](./thoughts.md).
@@ -49,7 +49,7 @@ Bands name a range for the player. They gate nothing; the curves below do the wo
 
 1. **Roll.** Each game hour a colonist under mood 45 may roll, with a chance that rises steeply as mood falls.
 2. **Pick.** Every behavior the situation allows takes part, weighted. One is picked. Often it is Hold it together and nothing visible happens.
-3. **Act.** The behavior becomes what the colonist is doing. It outranks work and ordinary needs. A critical need interrupts it.
+3. **Act.** The behavior becomes what the colonist is doing. It outranks work, ordinary needs, and the player's orders: a colonist in an episode cannot be drafted or directed until it ends. A critical need interrupts it.
 4. **End.** The behavior stops on the first of its own end conditions.
 5. **Relief.** If the behavior gives relief, the colonist gets a positive thought.
 6. **Develop.** The behavior's affinity rises for that colonist, and a cooldown of a few hours begins before the next roll.
@@ -146,6 +146,15 @@ A behavior aimed at someone, or seen or heard by someone, gives them a thought: 
 Failure is a spiral, not an event. A shortage or a bad stretch lowers several colonists at once. The first episodes cost work and supplies, which deepens the shortage. Social behaviors spread the damage to colonists who were coping. Colonists who refuse work leave more for the rest, who become overworked. A colony that reaches the point where most of its people refuse work cannot feed itself, and the ones who refuse food die.
 
 The spiral is slow at the top and fast at the bottom. Between Content and Very low the player has days; under 12 they have hours.
+
+### Leaving the colony
+
+A colonist who leaves stops being part of the colony, and then is gone.
+
+- **No longer a colonist.** From the moment they leave, the player cannot select them for orders or draft them, they are off the roster, and they are offered no work. Anything they had claimed is released. They add nothing to what the colony can see: ground they pass is not revealed and stays as it was.
+- **A wild thing.** They are driven with the same simple behavior as a cow or a deer, not a colonist's.
+- **Walking off.** They head in one direction, picked at random, walking or running, until they are outside the area the player can see and the game is simulating. They are not exploring: they cause no new ground to be made walkable and no new terrain to load.
+- **Gone.** Once outside that area they are unloaded and no longer exist. A colonist who left does not come back.
 
 ### What the player does about it
 
@@ -299,17 +308,28 @@ The behavior list, the thoughts, the roll curve, relief sizes, the cooldown, the
 
 ```xml
 <behavior id="soil_bed" rampStart="25" rampFull="15" base="4">
-  <target kind="bed" within="15" where="not owner_present(target) and owner(target) != self"/>
+  <target query="bed_to_soil"/>
   <weight when="dislikes(owner(target))" multiply="4"/>
   <weight when="not observed" multiply="2"/>
+  <effect chain="soil_bed"/>
   <ends after="task"/>
   <relief amount="medium"/>
 </behavior>
+
+<query id="bed_to_soil" pick="weighted">
+  <from kind="bed"/>
+  <exclude fact="distance" above="15"/>
+  <exclude fact="has_owner" below="1"/>
+  <exclude fact="owned_by_self"/>
+  <exclude fact="owner_present"/>
+  <weigh fact="distance" by="-0.2"/>
+  <weigh fact="owner_opinion" by="-5"/>
+</query>
 ```
 
-A behavior that acts on something names it with `<target>`. Each candidate of that kind in range that passes `where` takes part in the roll as its own entry, with the weights evaluated against it. A behavior with no target uses `<requires>`.
+A behavior that acts on something names it with `<target>`, a query that picks the target from what the colonist knows; the behavior takes part in the roll once, with the weights evaluated against that target. A behavior with no target uses `<requires>`.
 
-Conditions are data and need no scripting. A behavior's effect, what the colonist physically does, is a script, so a mod adds a behavior by adding an entry and its effect.
+Conditions are data and need no scripting. A behavior's effect, what the colonist physically does, is a chain of steps, and its target a query, both data ([Queries and chains](../../../technical/queries-and-chains.md)), so a mod adds a behavior by adding an entry, its query, and its chain.
 
 ## Signals from other systems
 
@@ -318,7 +338,7 @@ Conditions are data and need no scripting. A behavior's effect, what the colonis
 | Relationships | an opinion score per pair of colonists, moved by shared events |
 | Workload | hours worked against hours rested over the last day or two |
 | Scarcity | days of food and water left, as the colony knows it |
-| [Crowding](../world/crowding.md) | people nearby against the colonist's tolerance |
+| [Crowding](../world/crowding.md) | people nearby against the range the colonist's Social Need sets |
 | [Fire](../world/fire.md) | a lit fire in reach, what is flammable |
 | [Germs](../world/germs.md) | contamination on food and beds, sickness |
 | [Smell](../world/smell.md), [Noise](../world/noise.md), [Wetness](../world/wetness.md) | thoughts that lower or raise mood |
@@ -356,7 +376,21 @@ Kevin, 2026-11-16:
 9. There must be a mechanism to stop behaviors even when serious: a timeout, and catharsis, specific to the behavior and not generic.
 10. Nothing is out of bounds. Add funny ones like "shit in someone's bed" or "put their dirty hands in the food".
 
+Kevin, 2026-11-17: needs do not average into mood. "If you're freezing to death, it doesn't matter if you're full and don't need to poop, you're going to be in a bad mood." Each need takes its own cost off, and the costs add.
+
+Kevin, 2026-11-17: needs are data, and different kinds of creature have different needs (a cow needs to be milked). The list of needs is not fixed in code.
+
+Kevin, 2026-11-17: hygiene, recreation, and the other needs that cannot kill may still interrupt work in extreme cases, because left alone they lead to a low-mood behavior, and "some work tasks can go on for days". Tuning aim: "going to play a game happens before just having a fit and trashing the room because they've been working for too long."
+
+Kevin, 2026-11-17: everything besides needs reaches mood as a thought, for now. There may later be lasting increases that are not thoughts: "wearing a nice shirt doesn't need to continually trigger 'I like this nice shirt'. Humans don't walk around constantly thinking about their shirt, but it passively increases their happiness." He calls this a status effect: "wearing a nice shirt" is a state the colonist is in, and it adds to mood for as long as it is true without anything being thought. The moment it begins can still be a thought of its own, small and once: "put on a nice shirt" the first time. Status effects would be a third part of mood beside needs and thoughts, and are not designed. The mood effects that thoughts hold while a condition lasts (soaked, crowded) are the nearest thing built, and the more correct form for those is the pair: a thought once when the state begins, and a status effect while it lasts. A timed effect is different and stays with its thought: "had a good meal" is a moment whose lift fades.
+
+Kevin, 2026-11-17: leaving defined. "They essentially become a non colony npc: no control, do not contribute to the colony sight or task system, basically become the same level of ai as a cow or deer, then walk/run off in a random direction until they're off the gameplay/visibility area (not exploring or making new mesh), then completely unload and disappear." It depends on several systems that do not exist, so it is recorded here and built later.
+
+Kevin, 2026-11-17: the player cannot step in during an episode. A colonist in one cannot be drafted or directed until it ends; a critical need still interrupts it, and each behavior's own end conditions bound it.
+
 2026-11-17: the need, attribute, and task names close like the kind and trait names. A conditions file may no longer add to them or open them, so a misspelled name in a mod's condition fails the load instead of reading Unknown.
+
+Kevin, 2026-11-17: a behavior's target is a query and its effect a chain, XML always with optional Lua and no logic in the XML, specified in [Queries and chains](../../../technical/queries-and-chains.md).
 
 ## Addendum: superseded content
 

@@ -311,8 +311,9 @@ has. Going back to sleep starts a new sleep and the curve from the beginning, so
 more than it saves, which is the point of the shape.
 
 Quality is one number worked out when the sleep starts, a product of factors. Today it is the inline
-choice between 0.5 and 1.0; that becomes a function in `NeedActions.cpp`
-(`sleepQuality(colonist, spot)`) with the spot as its one factor.
+choice between 0.5 and 1.0; that becomes one function (`sleepQuality(colonist, spot)`) with the spot
+as its one factor, answered as the fact `sleep_quality` that the Sleep action scales its restore by
+([Queries and chains](./queries-and-chains.md#facts)).
 Bed type, indoors or out, and whatever else comes later multiply in at that one place; the curve and
 the payout do not change when they do.
 
@@ -372,27 +373,11 @@ struct Need {
 };
 ```
 
-**Need tuning as data.** The three thresholds are in the folder `assets/config/colonists/needs/`,
-and the per-need decay rate moves out of `Needs.cpp` to join them. The folder is loaded with the other colonist rules
-([Config Loading](./config-loading.md)): `assets::loadNeedsConfig` reads it, a later file replacing a
-`<Need>` by name, and `ecs::NeedLevels` checks that every need is given. There is no default in code.
-A colonist's `NeedsComponent` is constructed from the loaded levels and carries each need's thresholds,
-which the AI and the thought sources both read, so one edit moves both. The tests and benches build
-theirs from the shipped folder through one helper (`libs/sim/ecs/ShippedConfig.test.h`).
-
-```xml
-<Needs>
-  <Need name="Hunger"     decayPerGameMinute="0.08"  seek="50" urgent="25" critical="10"/>
-  <Need name="Thirst"     decayPerGameMinute="0.12"  seek="50" urgent="25" critical="10"/>
-  <Need name="Energy"     decayPerGameMinute="0.05"  seek="30" urgent="20" critical="10"/>
-  <Need name="Bladder"    decayPerGameMinute="0.03"  seek="30" urgent="20" critical="10"/>
-  <Need name="Digestion"  decayPerGameMinute="0.02"  seek="30" urgent="20" critical="10"/>
-  <Need name="Hygiene"    decayPerGameMinute="0.015" seek="40" urgent="25" critical="15"/>
-  <Need name="Recreation"  decayPerGameMinute="0.01"  seek="30" urgent="20" critical="10"/>
-  <Need name="Temperature" decayPerGameMinute="0"     seek="40" urgent="25" critical="15"/>
-  <Sleep curveExponent="2.0"/>
-</Needs>
-```
+**Need tuning as data.** A need's three thresholds and its decay are on its entry in
+`assets/config/needs/`, and the sleep curve's exponent is the Sleep action entry's `curve`, as
+[Queries and chains](./queries-and-chains.md#needs) specifies; there is no default in code. The AI and
+the thought sources both read a need's thresholds from its entry, so one edit moves both. The tests and
+benches build theirs from the shipped folders through one helper (`libs/sim/ecs/ShippedConfig.test.h`).
 
 **Tiers.** `priority-tuning.xml` base tiers are renumbered (FulfillNeed 7, Craft, Build and
 Deconstruct 6, Haul, Harvest and PlacePackaged 8, Wander 9). `classifyTier` promotes a need to 4 or
