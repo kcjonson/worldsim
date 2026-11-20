@@ -14,7 +14,7 @@
 
 #include <construction/BuilderSpots.h>
 #include <construction/ConstructionWorld.h>
-#include <construction/WallStand.h>
+#include <construction/WallSides.h>
 
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
@@ -569,11 +569,32 @@ namespace ecs {
 		return construction::wallStands(*m_constructionWorld, structure.graphId);
 	}
 
+	std::uint64_t ConstructionSystem::wallSidesInputs() const {
+		std::uint64_t hash = 14695981039346656037ULL;
+		const auto	  mix = [&hash](std::uint64_t value) {
+			   hash ^= value;
+			   hash *= 1099511628211ULL;
+		};
+		for (const construction::WallSegment& segment : m_constructionWorld->segments()) {
+			mix(segment.id * 2 + (construction::isBuilt(segment) ? 1 : 0));
+		}
+		mix(0);
+		for (const construction::Opening& opening : m_constructionWorld->openings()) {
+			mix(opening.id * 2 + (opening.state == construction::FoundationState::Built ? 1 : 0));
+		}
+		return hash;
+	}
+
 	void ConstructionSystem::refreshWallStands() {
-		if (m_constructionWorld == nullptr || m_constructionWorld->version() == m_wallStandsVersion) {
+		if (m_constructionWorld == nullptr || m_constructionWorld->version() == wallSidesVersion) {
 			return;
 		}
-		m_wallStandsVersion = m_constructionWorld->version();
+		wallSidesVersion = m_constructionWorld->version();
+		const std::uint64_t inputs = wallSidesInputs();
+		if (inputs == wallSidesHash) {
+			return;
+		}
+		wallSidesHash = inputs;
 		auto&																	registry = GoalTaskRegistry::Get();
 		std::vector<std::pair<uint64_t, std::vector<construction::WallStand>>> refreshed;
 		registry.forEachGoalOfType(GoalType::Build, [&](const GoalTask& goal) {

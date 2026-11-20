@@ -241,11 +241,12 @@ namespace ecs {
 		/// drops them when it stops being Available, like a foundation's spots.
 		[[nodiscard]] std::vector<construction::WallStand> wallStandsFor(const Structure& structure) const;
 
-		/// Work out every Available wall umbrella's sides again once the topology has changed since the last
-		/// time, every frame rather than every kUpdateFrameInterval: a wall completing beside one being built
-		/// can close its loop, and its builders must move to the outside before it completes.
+		/// Work out every Available wall umbrella's sides again when what they depend on has changed (a
+		/// segment or an opening built, added, or removed), checked every frame rather than every
+		/// kUpdateFrameInterval: a wall completing beside one being built can close its loop.
 		void refreshWallStands();
-		std::uint64_t m_wallStandsVersion = 0;
+		/// The segments and openings by id and built state, hashed: what a wall's sides depend on.
+		[[nodiscard]] std::uint64_t wallSidesInputs() const;
 
 		/// How far into the footprint a builder spot sits from the ring: a colonist's half-width
 		/// (pathingClearanceMeters 0.7 / 2) plus a margin, so a builder at a spot in the middle of an
@@ -333,6 +334,10 @@ namespace ecs {
 		std::unordered_set<EntityID> m_warnedNoDeconstructCallback;
 
 		size_t m_activeBlueprintCount = 0;
+
+		// The topology version and wallSidesInputs() the wall umbrellas' sides were last worked out at.
+		std::uint64_t wallSidesVersion = 0;
+		std::uint64_t wallSidesHash = 0;
 
 		// This pass's spawned harvestables, gathered by the first site still clearing (reused storage)
 		std::vector<SpawnedHarvestable> m_spawnedHarvestables;

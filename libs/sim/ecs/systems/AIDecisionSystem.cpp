@@ -1741,6 +1741,26 @@ namespace ecs {
 		return stand.point;
 	}
 
+	std::optional<glm::vec2> SharedWork::wallStandPoint(std::size_t site, std::size_t side, float agentRadius, const NavigationSystem& nav) {
+		Site&							   buildSite = buildList[site];
+		std::vector<Site::StandsAtRadius>& byRadius = buildSite.wallStandsByRadius;
+		auto atRadius = std::find_if(byRadius.begin(), byRadius.end(), [&](const Site::StandsAtRadius& memo) { return memo.agentRadius == agentRadius; });
+		if (atRadius == byRadius.end()) {
+			byRadius.push_back({.agentRadius = agentRadius, .stands = std::vector<Site::SpotStand>(buildSite.wallStands.size())});
+			atRadius = std::prev(byRadius.end());
+		}
+		Site::SpotStand& stand = atRadius->stands[side];
+		if (!stand.asked) {
+			stand.asked = true;
+			const construction::WallStand& wallSide = buildSite.wallStands[side];
+			const std::optional<glm::vec2> snapped = nav.nearestPathablePoint(wallSide.standPoint(agentRadius), agentRadius);
+			if (snapped.has_value() && wallSide.serves(*snapped, agentRadius)) {
+				stand.point = snapped;
+			}
+		}
+		return stand.point;
+	}
+
 	const std::vector<SharedWork::Site>& SharedWork::teardownSites(World& world) {
 		if (teardownSitesBuilt) {
 			return teardownList;
@@ -3228,21 +3248,24 @@ namespace ecs {
 			return OptionStatus::NoSource;
 		};
 		// A wall's Build stands beside it, on one of the sides its goal allows (construction::wallStands),
-		// the nearest he can get to; the mesh's stand point for a side is taken only while it stays on that
-		// side, so a builder never ends inside the loop his wall closes.
-		const auto chooseWallStand = [&](EvaluatedOption& option, std::span<const construction::WallStand> stands) {
+		// the nearest he can get to, at the mesh's stand point for that side when it serves the side
+		// (SharedWork::wallStandPoint). With no side that can be stood on at all, the wall says so.
+		const auto chooseWallStand = [&](EvaluatedOption& option, std::size_t siteIndex, std::span<const construction::WallStand> stands) {
 			std::optional<glm::vec2> chosen;
-			for (const construction::WallStand& stand : stands) {
-				std::optional<glm::vec2> point = stand.standPoint(agentRadius);
-				if (haveMesh) {
-					point = m_navSystem->nearestPathablePoint(*point, agentRadius);
-					if (!point.has_value() || !stand.onSide(*point) || (*point != position.value && !canTake(option.sourceKey, *point))) {
-						continue;
-					}
+			bool					 anyStandable = false;
+			for (std::size_t side = 0; side < stands.size(); ++side) {
+				const std::optional<glm::vec2> point =
+					haveMesh ? m_sharedWork.wallStandPoint(siteIndex, side, agentRadius, *m_navSystem) : stands[side].standPoint(agentRadius);
+				anyStandable = anyStandable || point.has_value();
+				if (!point.has_value() || (haveMesh && *point != position.value && !canTake(option.sourceKey, *point))) {
+					continue;
 				}
 				if (!chosen.has_value() || glm::distance(position.value, *point) < glm::distance(position.value, *chosen)) {
 					chosen = point;
 				}
+			}
+			if (auto* blueprint = world->getComponent<StructureBlueprint>(static_cast<EntityID>(option.buildBlueprintEntityId))) {
+				blueprint->noGroundToBuildFrom = !anyStandable;
 			}
 			if (!chosen.has_value()) {
 				return OptionStatus::NoSource;
@@ -3282,7 +3305,7 @@ namespace ecs {
 						return chooseBuilderSpot(option, static_cast<std::size_t>(site - sites.begin()), site->builderSpots);
 					}
 					if (site != sites.end() && !site->wallStands.empty()) {
-						return chooseWallStand(option, site->wallStands);
+						return chooseWallStand(option, static_cast<std::size_t>(site - sites.begin()), site->wallStands);
 					}
 				}
 				// Snap only the task types whose action looks its target up by entity/footprint and so
