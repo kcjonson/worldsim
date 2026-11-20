@@ -209,14 +209,17 @@ The game start experience follows this sequence:
 **What Happens**:
 - Generation completes → Player can now rotate/explore planet
 - Visualization modes available (Terrain, Temperature, Precipitation, Biomes)
-- Player clicks on planet surface to place landing marker
-- System shows preview of selected location (biome, climate, resources)
+- Player clicks on planet surface to place landing marker. The click picks a rough area, not a coordinate; the crew come down beside that area's river or lake when it has one, and the marker stays where the player clicked
+- With the Settings switch "Show suggested landing sites" on (off by default), up to ten good starting spots are marked on the globe, each showing whether it is a river or lake site; clicking one selects it
+- System shows preview of selected location (biome, climate, resources), describing where the crew will really land
+- A good starting spot has fresh water (river or lake, never coast), food and wood from the local plants, and a livable temperature through the year; the Recommended badge means exactly this
 - Player confirms landing site or selects different location
 
 **Interface**:
 - **3D Planet View** - Rotatable, zoomable
 - **Visualization Toggle** - Switch between terrain/temp/precip/biome views
 - **Landing Marker** - Visual indicator on planet surface
+- **Suggested Site Markers** - Small markers for the suggested sites, river or lake by shape, behind a Settings switch
 - **Location Preview** - Panel showing biome type, temperature range, resources
 - **Confirm Button** - "Land Here" button
 

@@ -365,13 +365,15 @@ Estimated Time Remaining: 14 seconds
 **View**: Same 3D planet, now in "landing mode"
 
 **Interaction**:
-- Click anywhere on land to select landing coordinates
+- Click anywhere on land to pick a rough area to land in, not a precise coordinate: the ship is crashing and the crew don't control exactly where it comes down
+- The game lands the crew beside that area's river or lake when it has one, so the water is in sight at landing. The marker stays where the player clicked; nothing on screen shows the adjustment
 - Shows local preview (zoom in to show biome at that location)
-- Info: "Temperate Deciduous Forest, 15°C average, moderate rainfall"
+- Info: "Temperate Deciduous Forest, 15°C average, moderate rainfall", describing where the crew will really land
 - Warnings if inhospitable: "Warning: Arctic tundra - extreme cold survival challenge"
 
 **Recommendations**:
-- Highlight "good starting areas" (temperate, near water, flat terrain)
+- A good starting spot has fresh water (a river or a lake; a coast is salt and doesn't count), some food and wood from the local plants, and a livable temperature through the year. The Recommended badge and the difficulty rating use this one definition
+- Up to ten suggested landing sites are marked on the globe, spread across it and varied by kind (river or lake) and biome. Each marker shows whether it is a river or lake site; clicking one selects it like clicking the globe there. They show only when the Settings switch "Show suggested landing sites" is on (off by default)
 - Show difficulty rating for each region
 
 **Confirm Landing**:
@@ -380,7 +382,7 @@ Estimated Time Remaining: 14 seconds
 - [Yes] → Transition to 2D gameplay
 
 **UX Notes**:
-- Default landing site suggestion (temperate coastal area)
+- Default landing site suggestion: the best suggested site, selected when the planet is ready
 - Player can ignore and land anywhere (even Antarctica-equivalent)
 - Builds anticipation for starting colony
 

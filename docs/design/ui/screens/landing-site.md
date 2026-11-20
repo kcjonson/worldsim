@@ -51,6 +51,10 @@ The [Planet](../../../ui-prototype/src/scene/Planet.tsx) component (460px, seed 
 
 **Landing marker** — a translucent crosshair widget on the globe at the picked location: a pulsing outer ring (`--accent`), a small filled dot, and four tick lines (SVG paths). The marker starts at `{ x: 0.43, y: 0.47 }` (the default landing position, which maps to the temperate zone). The player's click anywhere inside the planet disk updates the marker and the coordinate readout.
 
+The click names a rough area to land in, not a coordinate. The game lands the crew beside that area's river or lake when it has one; the marker stays where the player clicked, and nothing on screen shows the adjustment. See [landing-sites.md](../../../technical/landing-sites.md).
+
+**Suggested site markers**: shown only when the Settings switch "Show suggested landing sites" is on (off by default). Up to ten good starting spots, each a small static outline in `--data` with a `--data-bright` centre dot: a diamond for a river site, a circle for a lake site. No pulse; the pulsing crosshair is the selection, drawn on top. Markers on the far side of the globe are hidden. Clicking a marker selects that site exactly as a click on the globe there does. There is no list of them anywhere else.
+
 **Viz switcher** — `SegmentedControl` docked at the bottom of the stage, centered. Switching modes updates the planet overlay (biome coloring, temperature gradient, precipitation gradient).
 
 ## Info panel
@@ -64,7 +68,7 @@ Scrollable internally. Content in order:
 
 **Biome name** — Chakra Petch, `--fs-xl`, bold. Mock value: "Temperate Coastal Shelf."
 
-**Recommendation badge** — `Badge` tone `ok`, icon `check`, label "Recommended."
+**Recommendation badge** — `Badge` tone `ok`, icon `check`, label "Recommended." Shown when the landing has fresh water (a river or lake the crew land beside), food and wood, and a livable temperature through the year. The pane's biome, stats, and difficulty describe where the crew will really land; the coordinates are the player's pick.
 
 **Stat row** — Temp Range and Rainfall as `Stat` components (sm). Mock: "9°C – 22°C" and "Moderate" (data tone).
 
@@ -91,9 +95,12 @@ The scrim fades in (opacity 0 → 1, `--dur`). The panel scales and rises into p
 
 The screen itself has no phases (unlike WorldGen). The only state change is the marker position as the player clicks around. The confirmation modal is additive, not a phase.
 
+While the suggested sites are being found, just after the planet is ready, the footer reads "Surveying landing sites...", no site is selected, and Confirm Landing Site is disabled until one is; the globe can be turned and clicked meanwhile. Then the best suggested site is selected unless the player has already picked one. A planet with no suggested sites says so in the footer and selects nothing.
+
 ## Interactions & transitions
 
 - Click inside planet disk → update marker position and coordinate readout.
+- Click a suggested site marker → select that site, as a click there would.
 - `SegmentedControl` → update planet visualization mode.
 - "Back to Survey" → `go("worldgen")`
 - "Confirm Landing Site" → show confirmation modal.
