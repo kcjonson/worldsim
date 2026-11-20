@@ -145,7 +145,7 @@ In a new Quick Start game. The second room reuses the first room's east wall, so
 
 22. `foundation?pts=12,1;32,1;32,8;12,8&material=Wood&built=1`, then `walls?pts=25,2;28,2;28,7;25,7&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=1` and `walls?pts=28,2;31,2;31,7;28,7&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=1`: seven walls, all `Built`.
 23. `opening?seg=<the first room's wall from (25, 2) to (28, 2)>&type=Door&t=0.5&built=1` and the same on the shared wall from (28, 2) to (28, 7): two doors, both `Built`.
-24. `colonist?at=29.5,10&name=Eve`, `select?colonist=<EVE_ID>`, click Draft (`entity_info_draft` in `/api/ui/tree`), and right-click (29.5, 4.5): Eve walks round the rooms to the north door, through the first room, and through the shared wall's door, and stops inside the second room. She never stands pressed against the corner at (28, 7).
+24. `colonist?at=29.5,10&name=Eve`, `select?colonist=<EVE_ID>`, `control?action=pause`, click Draft (`entity_info_draft` in `/api/ui/tree`), right-click (29.5, 4.5), and `control?action=resume`, so she is drafted where she stands and has not wandered round the rooms first: Eve walks round the rooms to the north door, through the first room, and through the shared wall's door, and stops inside the second room. She never stands pressed against the corner at (28, 7).
 25. Right-click (29.5, 11): she leaves the second room the same way, through both doors.
 26. In a new game, the same rooms drawn as one loop and a divider (`walls?pts=25,2;31,2;31,7;25,7&...&close=1`, then `walls?pts=28,2;28,7&...&close=0`), with the same two doors: step 24's order takes her in the same way.
 
@@ -158,6 +158,8 @@ blueprint that the colonist builds. Omitting it silently skips the scenario.
 
 `close=1` adds a closing segment between the last and first point. For a 4-corner polygon this
 produces 4 segments. For a 3-corner (triangle) footprint it produces 3.
+
+Steps 24 and 26 depend on what Eve has seen. A wall counts as seen once its end shows at a corner, so a colonist who has wandered down both the west and the east side of the rooms knows both north walls without the door in them, and answers "no known way" to step 24's order: correct for what she knows, not a fail.
 
 On-water and off-navmesh wall placements are refused with the same error as foundations; see
 [../regressions.md](../regressions.md).
