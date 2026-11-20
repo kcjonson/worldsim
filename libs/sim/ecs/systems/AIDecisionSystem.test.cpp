@@ -6108,13 +6108,18 @@ namespace ecs::test {
 		const EntityID							   colonist = addBuilderWithWood({8.0F, -5.0F});
 		nav->finishPendingBuilds();
 
-		bool headedInside = false;
-		bool learned	  = false;
-		const bool failed = routeFailedBeforeWorked(colonist, site, [&] {
-			if (learned || getTask(colonist)->type != TaskType::Haul || !followingRoute(colonist)) {
-				return;
-			}
-			headedInside = getTask(colonist)->targetPosition.y < doorAt.y;
+		bool headedInside  = false;
+		bool headedOutside = false;
+		bool learned	   = false;
+		const bool failed  = routeFailedBeforeWorked(colonist, site, [&] {
+			 if (getTask(colonist)->type != TaskType::Haul || !followingRoute(colonist)) {
+				 return;
+			 }
+			 if (learned) {
+				 headedOutside = headedOutside || getTask(colonist)->targetPosition.y > doorAt.y;
+				 return;
+			 }
+			 headedInside = getTask(colonist)->targetPosition.y < doorAt.y;
 			for (const auto id : walls) {
 				world->getComponent<Memory>(colonist)->rememberSegment(static_cast<std::uint64_t>(id));
 			}
@@ -6122,6 +6127,7 @@ namespace ecs::test {
 		});
 		ASSERT_TRUE(headedInside) << "test setup: the room's side reads nearer through walls he does not know";
 		EXPECT_FALSE(failed) << "a route to the door failed";
+		EXPECT_TRUE(headedOutside) << "his task's target is the outside, the side his route reached";
 		EXPECT_GT(world->getComponent<StructureBlueprint>(site)->workDone, 0.0F) << "the door was never worked";
 		EXPECT_GT(world->getComponent<Position>(colonist)->value.y, doorAt.y) << "he works it from outside";
 	}
