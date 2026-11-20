@@ -3,8 +3,11 @@
 // nav system, so every remembered source counts as reachable and no route is asked for, and no
 // ActionSystem, so a remembered loose pile has no live count and skips the pile index's lookups. The
 // routed half of a need decision is BM_NeedDecisionRouted's (NavigationSystem.bench.cpp). Development
-// builds include the claim index validator the update runs. Each scenario builds its own World and clears
-// the goal registry, so scenarios are independent of each other and of --benchmark_filter.
+// builds include the claim index validator the update runs. Every timed update also includes the
+// suspended-work refresh, the claim index rebuild, and the whole decision trace. Logging is silenced for
+// each bench's run (QuietLogs): every category at Warning, so no Info line is printed in the timed
+// update, though a log call still formats its message. Each scenario builds its own World and clears the
+// goal registry, so scenarios are independent of each other and of --benchmark_filter.
 //
 // BM_NeedDecision: range(0) colonists, hungry and thirsty (40 and 35, under both seek thresholds and
 // neither urgent), each remembering the same full memory within 100 m of the colony: 8,500 berry bushes
@@ -12,19 +15,25 @@
 // entities (Memory::kMaxWorldEntities). No goal exists, so the decision is the needs path and the idle
 // options. After an untimed first decision, every timed update re-decides every colonist (as
 // BM_WorkDecision does). range(1) picks the path:
-// - 0, kept: he is heading for a source, so the need he serves asks only about that one, and the decision
-//   keeps his task. The run fails if a task's instance changed.
-// - 1, fresh: his task is cleared before each update (untimed), so every need walks its nearest sources
-//   from scratch and he takes a new task. The run fails if a task's instance did not change.
-// Either fails if a colonist did not decide or is not serving a need after it.
+// - 0, kept: he is heading for a bush for Hunger, so Hunger asks to admit only that one, and the decision
+//   keeps his task. Collecting the candidates still walks every remembered edible source and water; only
+//   the admits are short. The run fails if a task's instance changed, or (development builds) if the
+//   update's need-source admits are not one per colonist for Hunger and kNearestOfCount for Thirst.
+// - 1, fresh: his task is cleared before each update (untimed), the state ActionSystem leaves when an
+//   action completes, so every need walks its nearest sources from scratch and he takes a new task, which
+//   adds building its reason string and recording its claims. The run fails if a task's instance did not change,
+//   or (development builds) if the admits are fewer than kNearestOfCount for each need of each colonist.
+// Either fails if a colonist did not decide, is not serving the need he served at the first decision, or
+// has no source.
 //
 // BM_IdleDecision: range(0) colonists with every need met and nothing to do, each remembering range(1)
 // world entities: trees no goal wants and a tenth as many water points. The needs read their sources by
-// capability or by def and none is a tree, so only the waters, a tenth of memory, are scanned. After a first decision every colonist wanders,
-// and a wander that is walking decides every frame (shouldReEvaluate), so no decision is asked for: the
-// run fails if a timed update left one undecided or one stopped wandering. Nothing moves him, so each
-// decision keeps the wander's point and probes none. The wander is offered headless only because
-// buildDecisionTrace's canNavigate lets a world with no nav system wander; the bench depends on it.
+// capability or by def and none is a tree, so only the waters, a tenth of memory, are scanned, twice: the
+// water is drinkable and washable, so Thirst and Hygiene each scan it. After a first decision every
+// colonist wanders, and a wander that is walking decides every frame (shouldReEvaluate), so no decision
+// is asked for: the run fails if a timed update left one undecided or one stopped wandering. Nothing moves
+// him, so each decision keeps the wander's point and probes none. The wander is offered headless only
+// because buildDecisionTrace's canNavigate lets a world with no nav system wander; the bench depends on it.
 //
 // Both report the update's mean, p99, and worst time, its mean per colonist, and the options in the
 // first colonist's decision trace after the last decision.
@@ -40,6 +49,7 @@
 #include "../components/DecisionTrace.h"
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
+#include "../components/MemoryQueries.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
 #include "../components/SourceReachMemo.h"
@@ -48,10 +58,12 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
+#include <utils/Log.h>
 
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -62,15 +74,53 @@ namespace {
 
 	using Clock = std::chrono::steady_clock;
 
+	// Every log category at Warning for a bench's run, the levels before it put back after. Initialized
+	// first, so the levels don't depend on whether another bench initialized the logger.
+	class QuietLogs {
+	  public:
+		QuietLogs() {
+			foundation::Logger::initialize();
+			for (std::size_t category = 0; category < saved.size(); ++category) {
+				saved[category] = foundation::Logger::getLevel(static_cast<foundation::LogCategory>(category));
+				foundation::Logger::setLevel(static_cast<foundation::LogCategory>(category), foundation::LogLevel::Warning);
+			}
+		}
+		~QuietLogs() {
+			for (std::size_t category = 0; category < saved.size(); ++category) {
+				foundation::Logger::setLevel(static_cast<foundation::LogCategory>(category), saved[category]);
+			}
+		}
+		QuietLogs(const QuietLogs&) = delete;
+		QuietLogs& operator=(const QuietLogs&) = delete;
+
+	  private:
+		std::array<foundation::LogLevel, static_cast<std::size_t>(foundation::LogCategory::Count)> saved{};
+	};
+
+#ifdef DEVELOPMENT_BUILD
+	// Reads AIDecisionSystem's private needSourceVisits without editing its class: a member pointer named
+	// in an explicit instantiation's template arguments is exempt from access checking
+	// ([temp.spec.general]), as AIDecision.bench.cpp's Expose.
+	struct NeedVisits {
+		static inline std::uint64_t (*read)(const ecs::AIDecisionSystem&) = nullptr;
+	};
+	template <auto Member>
+	struct ExposeNeedVisits {
+		static std::uint64_t	 read(const ecs::AIDecisionSystem& decisions) { return decisions.*Member; }
+		static inline const bool registered = (NeedVisits::read = &read, true);
+	};
+	template struct ExposeNeedVisits<&ecs::AIDecisionSystem::needSourceVisits>;
+#endif
+
 	constexpr float kTickSeconds = 1.0F / 60.0F;
-	constexpr int	kWarmup		 = 3;
-	constexpr int	kDecisions	 = 200;
+	constexpr int	kWarmup = 3;
+	constexpr int	kDecisions = 200;
 
 	constexpr const char* kBerryDef = "BenchNeed_Berry";
-	constexpr const char* kBushDef	= "BenchNeed_BerryBush";
+	constexpr const char* kBushDef = "BenchNeed_BerryBush";
 	constexpr const char* kWaterDef = "BenchNeed_Water";
-	constexpr const char* kWoodDef	= "BenchIdle_Wood";
-	constexpr const char* kTreeDef	= "BenchIdle_Tree";
+	constexpr const char* kWoodDef = "BenchIdle_Wood";
+	constexpr const char* kTreeDef = "BenchIdle_Tree";
 
 	std::uint32_t hashU32(std::uint32_t value) {
 		value ^= value >> 16U;
@@ -103,47 +153,47 @@ namespace {
 			auto& registry = assets::AssetRegistry::Get();
 
 			assets::AssetDefinition berry;
-			berry.defName				  = kBerryDef;
-			berry.label					  = kBerryDef;
-			berry.category				  = assets::ItemCategory::Food;
-			berry.capabilities.carryable  = assets::CarryableCapability{1};
-			berry.itemProperties		  = assets::ItemProperties{};
+			berry.defName = kBerryDef;
+			berry.label = kBerryDef;
+			berry.category = assets::ItemCategory::Food;
+			berry.capabilities.carryable = assets::CarryableCapability{1};
+			berry.itemProperties = assets::ItemProperties{};
 			berry.itemProperties->stackSize = 20;
-			berry.itemProperties->massKg	= 0.05F;
-			berry.itemProperties->edible	= assets::EdibleCapability{0.3F, assets::CapabilityQuality::Normal, true};
+			berry.itemProperties->massKg = 0.05F;
+			berry.itemProperties->edible = assets::EdibleCapability{0.3F, assets::CapabilityQuality::Normal, true};
 			registry.registerTestDefinition(std::move(berry));
 
 			assets::AssetDefinition bush;
-			bush.defName								= kBushDef;
-			bush.label									= kBushDef;
-			bush.capabilities.harvestable				= assets::HarvestableCapability{};
+			bush.defName = kBushDef;
+			bush.label = kBushDef;
+			bush.capabilities.harvestable = assets::HarvestableCapability{};
 			bush.capabilities.harvestable->yieldDefName = kBerryDef;
-			bush.capabilities.harvestable->destructive	= false;
+			bush.capabilities.harvestable->destructive = false;
 			bush.capabilities.harvestable->regrowthTime = 600.0F;
 			registry.registerTestDefinition(std::move(bush));
 
 			assets::AssetDefinition water;
-			water.defName				 = kWaterDef;
-			water.label					 = kWaterDef;
+			water.defName = kWaterDef;
+			water.label = kWaterDef;
 			water.capabilities.drinkable = assets::DrinkableCapability{};
-			water.capabilities.washable	 = assets::WashableCapability{};
+			water.capabilities.washable = assets::WashableCapability{};
 			registry.registerTestDefinition(std::move(water));
 
 			assets::AssetDefinition wood;
-			wood.defName					= kWoodDef;
-			wood.label						= kWoodDef;
-			wood.handsRequired				= 2;
-			wood.category					= assets::ItemCategory::RawMaterial;
-			wood.capabilities.carryable		= assets::CarryableCapability{1};
-			wood.itemProperties				= assets::ItemProperties{};
-			wood.itemProperties->stackSize	= 40;
-			wood.itemProperties->massKg		= 2.5F;
+			wood.defName = kWoodDef;
+			wood.label = kWoodDef;
+			wood.handsRequired = 2;
+			wood.category = assets::ItemCategory::RawMaterial;
+			wood.capabilities.carryable = assets::CarryableCapability{1};
+			wood.itemProperties = assets::ItemProperties{};
+			wood.itemProperties->stackSize = 40;
+			wood.itemProperties->massKg = 2.5F;
 			registry.registerTestDefinition(std::move(wood));
 
 			assets::AssetDefinition tree;
-			tree.defName								= kTreeDef;
-			tree.label									= kTreeDef;
-			tree.capabilities.harvestable				= assets::HarvestableCapability{};
+			tree.defName = kTreeDef;
+			tree.label = kTreeDef;
+			tree.capabilities.harvestable = assets::HarvestableCapability{};
 			tree.capabilities.harvestable->yieldDefName = kWoodDef;
 			registry.registerTestDefinition(std::move(tree));
 			return true;
@@ -155,11 +205,11 @@ namespace {
 	// cell (Memory keys a world entity by its decimeter cell and def). False if one could not be placed.
 	bool rememberAround(ecs::Memory& memory, const char* defName, int count, std::uint32_t seed) {
 		const auto&	   registry = assets::AssetRegistry::Get();
-		const uint32_t defId	= registry.getDefNameId(defName);
-		const uint16_t mask		= registry.getCapabilityMask(defId);
-		const auto	   unit		= [&seed] {
-			   seed = hashU32(seed + 0x9e3779b9U);
-			   return static_cast<float>(seed & 0xFFFFFFU) / static_cast<float>(0xFFFFFFU);
+		const uint32_t defId = registry.getDefNameId(defName);
+		const uint16_t mask = registry.getCapabilityMask(defId);
+		const auto	   unit = [&seed] {
+			seed = hashU32(seed + 0x9e3779b9U);
+			return static_cast<float>(seed & 0xFFFFFFU) / static_cast<float>(0xFFFFFFU);
 		};
 		int placed = 0;
 		for (int draws = 0; placed < count && draws < 2 * count; ++draws) {
@@ -205,7 +255,7 @@ namespace {
 			const Clock::time_point start = Clock::now();
 			decisions.update(kTickSeconds);
 			const double elapsed = std::chrono::duration<double, std::micro>(Clock::now() - start).count();
-			times.allDecided	 = decided();
+			times.allDecided = decided();
 			if (index >= kWarmup) {
 				times.microseconds.push_back(elapsed);
 			}
@@ -214,20 +264,21 @@ namespace {
 	}
 
 	void report(benchmark::State& state, const UpdateTimes& times, int colonistCount, const ecs::DecisionTrace& firstTrace) {
-		state.counters["colonists"]			= colonistCount;
-		state.counters["updateMeanUs"]		= meanOf(times.microseconds);
-		state.counters["updateP99Us"]		= atPercentile(times.microseconds, 0.99);
-		state.counters["updateMaxUs"]		= atPercentile(times.microseconds, 1.0);
+		state.counters["colonists"] = colonistCount;
+		state.counters["updateMeanUs"] = meanOf(times.microseconds);
+		state.counters["updateP99Us"] = atPercentile(times.microseconds, 0.99);
+		state.counters["updateMaxUs"] = atPercentile(times.microseconds, 1.0);
 		state.counters["perColonistMeanUs"] = meanOf(times.microseconds) / static_cast<double>(colonistCount);
-		state.counters["options"]			= static_cast<double>(firstTrace.options.size());
+		state.counters["options"] = static_cast<double>(firstTrace.options.size());
 	}
 
 	void BM_NeedDecision(benchmark::State& state) {
-		constexpr int kBushes = 8500;
-		constexpr int kPiles  = 1000;
-		constexpr int kWaters = 500;
-		const int	  colonistCount = static_cast<int>(state.range(0));
-		const bool	  freshPick		= state.range(1) == 1;
+		constexpr int	kBushes = 8500;
+		constexpr int	kPiles = 1000;
+		constexpr int	kWaters = 500;
+		const int		colonistCount = static_cast<int>(state.range(0));
+		const bool		freshPick = state.range(1) == 1;
+		const QuietLogs quiet;
 		registerDefs();
 		if (!ecs::loadShippedPriorityConfig()) {
 			state.SkipWithError("priority-tuning.xml did not load");
@@ -251,7 +302,7 @@ namespace {
 			for (int index = 0; index < colonistCount; ++index) {
 				const glm::vec2		home{static_cast<float>(index) * 2.0F, 0.0F};
 				const ecs::EntityID colonist = addColonist(world, home, 100.0F, remembered);
-				auto&				needs	 = *world.getComponent<ecs::NeedsComponent>(colonist);
+				auto&				needs = *world.getComponent<ecs::NeedsComponent>(colonist);
 				needs.get(ecs::NeedType::Hunger).value = 40.0F;
 				needs.get(ecs::NeedType::Thirst).value = 35.0F;
 				colonists.push_back(colonist);
@@ -259,32 +310,54 @@ namespace {
 			}
 			decisions.update(kTickSeconds);
 
-			// Each colonist's task instance after the last update: kept is the same one, fresh a new one.
-			std::vector<uint64_t> instances;
+			// Each colonist's task instance and the need it serves after the last update: kept is the same
+			// instance, fresh a new one serving the same need.
+			std::vector<std::uint64_t> instances;
+			std::vector<ecs::NeedType> served;
 			for (const ecs::EntityID colonist : colonists) {
-				instances.push_back(world.getComponent<ecs::Task>(colonist)->instanceId);
+				const ecs::Task& task = *world.getComponent<ecs::Task>(colonist);
+				instances.push_back(task.instanceId);
+				served.push_back(task.needToFulfill);
 			}
-			const UpdateTimes times = timeUpdates(
-				decisions,
-				[&] {
-					for (std::size_t index = 0; index < colonists.size(); ++index) {
-						world.getComponent<ecs::Position>(colonists[index])->value = homes[index];
-						ecs::Task& task = *world.getComponent<ecs::Task>(colonists[index]);
-						if (freshPick) {
-							task.clear();
-						}
-						ecs::requestDecision(task);
-					}
+			std::vector<double> needVisits;
+			std::uint64_t		visitsBefore = 0;
+			const UpdateTimes	times = timeUpdates(
+				  decisions,
+				  [&] {
+					  for (std::size_t index = 0; index < colonists.size(); ++index) {
+						  world.getComponent<ecs::Position>(colonists[index])->value = homes[index];
+						  ecs::Task& task = *world.getComponent<ecs::Task>(colonists[index]);
+						  if (freshPick) {
+							  task.clear();
+						  }
+						  ecs::requestDecision(task);
+					  }
+#ifdef DEVELOPMENT_BUILD
+					visitsBefore = NeedVisits::read(decisions);
+#endif
 				},
 				[&] {
 					bool pathHeld = true;
 					for (std::size_t index = 0; index < colonists.size(); ++index) {
-						const ecs::Task& task	   = *world.getComponent<ecs::Task>(colonists[index]);
-						const bool		 newPick   = task.instanceId != 0 && task.instanceId != instances[index];
+						const ecs::Task& task = *world.getComponent<ecs::Task>(colonists[index]);
+						const bool		 newPick = task.instanceId != 0 && task.instanceId != instances[index];
 						const bool		 onThePath = freshPick ? newPick : task.instanceId == instances[index];
-						pathHeld = pathHeld && onThePath && task.timeSinceEvaluation <= 1.0F && task.type == ecs::TaskType::FulfillNeed;
+						pathHeld = pathHeld && onThePath && task.needToFulfill == served[index] && task.needSourceKey != 0 &&
+								   task.timeSinceEvaluation <= 1.0F && task.type == ecs::TaskType::FulfillNeed;
 						instances[index] = task.instanceId;
 					}
+#ifdef DEVELOPMENT_BUILD
+					// Kept: each colonist serves Hunger and asks only about the bush he heads for, and
+					// Thirst, not served, walks its nearest kNearestOfCount waters. Fresh: both needs walk
+					// at least their nearest kNearestOfCount (Hunger more, past bushes other colonists hold).
+					const std::uint64_t visits = NeedVisits::read(decisions) - visitsBefore;
+					const auto			walk = static_cast<std::uint64_t>(ecs::kNearestOfCount);
+					const auto			deciders = static_cast<std::uint64_t>(colonists.size());
+					const bool			allHunger =
+						std::all_of(served.begin(), served.end(), [](ecs::NeedType need) { return need == ecs::NeedType::Hunger; });
+					pathHeld = pathHeld && (freshPick ? visits >= deciders * 2 * walk : allHunger && visits == deciders * (1 + walk));
+					needVisits.push_back(static_cast<double>(visits));
+#endif
 					return pathHeld;
 				}
 			);
@@ -296,17 +369,25 @@ namespace {
 				break;
 			}
 			report(state, times, colonistCount, *world.getComponent<ecs::DecisionTrace>(colonists.front()));
-			state.counters["freshPick"]		= freshPick ? 1.0 : 0.0;
+			state.counters["freshPick"] = freshPick ? 1.0 : 0.0;
+			state.counters["needVisitsMin"] = needVisits.empty() ? 0.0 : *std::min_element(needVisits.begin(), needVisits.end());
+			state.counters["needVisitsMax"] = needVisits.empty() ? 0.0 : *std::max_element(needVisits.begin(), needVisits.end());
+			std::size_t hungerServed = 0;
+			for (const ecs::NeedType need : served) {
+				hungerServed += need == ecs::NeedType::Hunger ? 1 : 0;
+			}
+			state.counters["servingHunger"] = static_cast<double>(hungerServed);
 			state.counters["edibleSources"] = kBushes + kPiles;
-			state.counters["waterSources"]	= kWaters;
+			state.counters["waterSources"] = kWaters;
 		}
 		ecs::GoalTaskRegistry::Get().clear();
 	}
 
 	void BM_IdleDecision(benchmark::State& state) {
-		const int colonistCount = static_cast<int>(state.range(0));
-		const int remembered	= static_cast<int>(state.range(1));
-		const int waters		= remembered / 10;
+		const int		colonistCount = static_cast<int>(state.range(0));
+		const int		remembered = static_cast<int>(state.range(1));
+		const int		waters = remembered / 10;
+		const QuietLogs quiet;
 		registerDefs();
 		if (!ecs::loadShippedPriorityConfig()) {
 			state.SkipWithError("priority-tuning.xml did not load");
@@ -346,7 +427,7 @@ namespace {
 			}
 			report(state, times, colonistCount, *world.getComponent<ecs::DecisionTrace>(colonists.front()));
 			state.counters["remembered"] = remembered;
-			state.counters["waters"]	 = waters;
+			state.counters["waters"] = waters;
 		}
 		ecs::GoalTaskRegistry::Get().clear();
 	}

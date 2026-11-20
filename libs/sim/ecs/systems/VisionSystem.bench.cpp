@@ -15,8 +15,11 @@
 //
 // Reports the first pass (every colonist remembering a whole view), the walk's passes (mean, p99,
 // worst), what the first colonist sees at the start and remembers at the end, the trees taken, and his
-// forgets of them. The run fails if he remembers nothing, if a tree is taken that he did not know, or if
-// he still remembers one that was taken.
+// forgets of them. The run fails if he remembers nothing, if no tree is taken, if a tree is taken that he
+// did not know, or if a taken tree is still in his memory after the pass that follows its taking.
+//
+// Logging is silenced for the run (QuietLogs): every category at Warning, so no Info line is printed in
+// a timed pass, though a log call still formats its message.
 
 #include "VisionSystem.h"
 
@@ -29,6 +32,7 @@
 #include <assets/AssetRegistry.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <assets/placement/SpatialIndex.h>
+#include <utils/Log.h>
 #include <world/chunk/ChunkCoordinate.h>
 
 #include <benchmark/benchmark.h>
@@ -49,18 +53,41 @@ namespace {
 
 	using Clock = std::chrono::steady_clock;
 
-	constexpr float kPassSeconds	= 5.0F / 60.0F;
-	constexpr float kWalkMps		= 2.0F;
-	constexpr int	kPasses			= 600;
-	constexpr float kStandWestM		= -50.0F;
-	constexpr float kStandEastM		= 150.0F;
+	// Every log category at Warning for a bench's run, the levels before it put back after. Initialized
+	// first, so the levels don't depend on whether another bench initialized the logger.
+	class QuietLogs {
+	  public:
+		QuietLogs() {
+			foundation::Logger::initialize();
+			for (std::size_t category = 0; category < saved.size(); ++category) {
+				saved[category] = foundation::Logger::getLevel(static_cast<foundation::LogCategory>(category));
+				foundation::Logger::setLevel(static_cast<foundation::LogCategory>(category), foundation::LogLevel::Warning);
+			}
+		}
+		~QuietLogs() {
+			for (std::size_t category = 0; category < saved.size(); ++category) {
+				foundation::Logger::setLevel(static_cast<foundation::LogCategory>(category), saved[category]);
+			}
+		}
+		QuietLogs(const QuietLogs&) = delete;
+		QuietLogs& operator=(const QuietLogs&) = delete;
+
+	  private:
+		std::array<foundation::LogLevel, static_cast<std::size_t>(foundation::LogCategory::Count)> saved{};
+	};
+
+	constexpr float kPassSeconds = 5.0F / 60.0F;
+	constexpr float kWalkMps = 2.0F;
+	constexpr int	kPasses = 600;
+	constexpr float kStandWestM = -50.0F;
+	constexpr float kStandEastM = 150.0F;
 	constexpr float kStandHalfDepthM = 50.0F;
-	constexpr float kHarvestBandM	= 10.0F;
-	constexpr float kHarvestAheadM	= 20.0F;
+	constexpr float kHarvestBandM = 10.0F;
+	constexpr float kHarvestAheadM = 20.0F;
 
 	constexpr std::array<const char*, 3> kFloraDefs{"BenchVision_Tree", "BenchVision_Bush", "BenchVision_Flower"};
-	constexpr std::size_t				 kTreeKind	 = 0;
-	constexpr std::size_t				 kBushKind	 = 1;
+	constexpr std::size_t				 kTreeKind = 0;
+	constexpr std::size_t				 kBushKind = 1;
 	constexpr std::size_t				 kFlowerKind = 2;
 
 	std::uint32_t hashU32(std::uint32_t value) {
@@ -94,13 +121,13 @@ namespace {
 			for (std::size_t kind = 0; kind < kFloraDefs.size(); ++kind) {
 				assets::AssetDefinition flora;
 				flora.defName = kFloraDefs[kind];
-				flora.label	  = kFloraDefs[kind];
+				flora.label = kFloraDefs[kind];
 				if (kind != kFlowerKind) {
-					flora.capabilities.harvestable				 = assets::HarvestableCapability{};
+					flora.capabilities.harvestable = assets::HarvestableCapability{};
 					flora.capabilities.harvestable->yieldDefName = "BenchVision_Yield";
 				}
 				if (kind == kBushKind) {
-					flora.capabilities.harvestable->destructive	 = false;
+					flora.capabilities.harvestable->destructive = false;
 					flora.capabilities.harvestable->regrowthTime = 600.0F;
 				}
 				registry.registerTestDefinition(std::move(flora));
@@ -119,12 +146,11 @@ namespace {
 	// one thing in each cell of a square grid of that density, jittered up to a quarter cell, so no two
 	// stand nearer than half a cell, as placement spaces flora. Reconciliation takes a thing of the same
 	// kind within 0.2 m of a remembered one for it, so random points would hide some takes.
-	std::vector<Placed> placeStand(
-		double perThousandSquareMeters, assets::PlacementExecutor& executor, std::unordered_set<world::ChunkCoordinate>& processed
-	) {
+	std::vector<Placed>
+	placeStand(double perThousandSquareMeters, assets::PlacementExecutor& executor, std::unordered_set<world::ChunkCoordinate>& processed) {
 		const auto	  spacing = static_cast<float>(std::sqrt(1000.0 / perThousandSquareMeters));
-		std::uint32_t seed	  = 61;
-		const auto	  jitter  = [&seed, spacing] {
+		std::uint32_t seed = 61;
+		const auto	  jitter = [&seed, spacing] {
 			   seed = hashU32(seed + 0x9e3779b9U);
 			   return (static_cast<float>(seed & 0xFFFFFFU) / static_cast<float>(0xFFFFFFU) - 0.5F) * 0.5F * spacing;
 		};
@@ -138,11 +164,11 @@ namespace {
 
 		std::unordered_map<world::ChunkCoordinate, assets::AsyncChunkPlacementResult> byChunk;
 		for (const Placed& thing : placed) {
-			const world::ChunkCoordinate	   coord  = world::worldToChunk({thing.position.x, thing.position.y});
+			const world::ChunkCoordinate	   coord = world::worldToChunk({thing.position.x, thing.position.y});
 			assets::AsyncChunkPlacementResult& result = byChunk[coord];
-			result.coord							  = coord;
+			result.coord = coord;
 			assets::PlacedEntity entity;
-			entity.defName	= thing.defName;
+			entity.defName = thing.defName;
 			entity.position = thing.position;
 			result.spatialIndex.insert(entity);
 		}
@@ -154,8 +180,9 @@ namespace {
 	}
 
 	void BM_VisionRememberForget(benchmark::State& state) {
-		const int	 colonistCount = static_cast<int>(state.range(0));
-		const double density	   = static_cast<double>(state.range(1));
+		const int		colonistCount = static_cast<int>(state.range(0));
+		const double	density = static_cast<double>(state.range(1));
+		const QuietLogs quiet;
 		registerFlora();
 		auto& registry = assets::AssetRegistry::Get();
 
@@ -164,15 +191,15 @@ namespace {
 			std::unordered_set<world::ChunkCoordinate> processed;
 			const std::vector<Placed>				   placed = placeStand(density, executor, processed);
 
-			ecs::World			world;
+			ecs::World		   world;
 			ecs::VisionSystem& vision = world.registerSystem<ecs::VisionSystem>();
 			vision.setPlacementData(&executor, &processed);
 			vision.setUpdateInterval(1);
 
 			std::vector<ecs::EntityID> colonists;
 			for (int index = 0; index < colonistCount; ++index) {
-				const float			side	 = index % 2 == 0 ? 1.0F : -1.0F;
-				const float			y		 = side * static_cast<float>((index + 1) / 2) * 2.0F;
+				const float			side = index % 2 == 0 ? 1.0F : -1.0F;
+				const float			y = side * static_cast<float>((index + 1) / 2) * 2.0F;
 				const ecs::EntityID colonist = world.createEntity();
 				world.addComponent<ecs::Position>(colonist, ecs::Position{{0.0F, y}});
 				world.addComponent<ecs::MovementTarget>(colonist, ecs::MovementTarget{{kStandEastM, y}, kWalkMps, true});
@@ -197,27 +224,31 @@ namespace {
 					harvests.push_back(thing);
 				}
 			}
-			std::sort(harvests.begin(), harvests.end(), [](const Placed& first, const Placed& second) { return first.position.x < second.position.x; });
+			std::sort(harvests.begin(), harvests.end(), [](const Placed& first, const Placed& second) {
+				return first.position.x < second.position.x;
+			});
 
-			const ecs::Memory&	memory	   = *world.getComponent<ecs::Memory>(lead);
-			const auto			knownToLead = [&](const Placed& thing) { return memory.knowsWorldEntity(thing.position, registry.getDefNameId(thing.defName)); };
+			const ecs::Memory& memory = *world.getComponent<ecs::Memory>(lead);
+			const auto		   knownToLead = [&](const Placed& thing) {
+				return memory.knowsWorldEntity(thing.position, registry.getDefNameId(thing.defName));
+			};
 			std::vector<double> passUs;
 			passUs.reserve(kPasses);
-			double				firstPassUs	  = 0.0;
-			std::size_t			nextHarvest	  = 0;
-			std::size_t			forgets		  = 0;
-			bool				takenUnknown  = false;
-			std::vector<Placed> awaitingForget;
-			for (int pass = 0; pass <= kPasses && !takenUnknown; ++pass) {
+			double				firstPassUs = 0.0;
+			std::size_t			nextHarvest = 0;
+			std::size_t			forgets = 0;
+			bool				takenUnknown = false;
+			std::vector<Placed> takenThisPass;
+			for (int pass = 0; pass <= kPasses && !takenUnknown && takenThisPass.empty(); ++pass) {
 				const float walked = kWalkMps * kPassSeconds * static_cast<float>(pass);
 				for (const ecs::EntityID colonist : colonists) {
 					world.getComponent<ecs::Position>(colonist)->value.x = walked;
 				}
 				while (nextHarvest < harvests.size() && harvests[nextHarvest].position.x <= walked + kHarvestAheadM) {
 					const Placed& taken = harvests[nextHarvest++];
-					takenUnknown		= takenUnknown || !knownToLead(taken);
+					takenUnknown = takenUnknown || !knownToLead(taken);
 					executor.removeEntity(world::worldToChunk({taken.position.x, taken.position.y}), taken.position, taken.defName);
-					awaitingForget.push_back(taken);
+					takenThisPass.push_back(taken);
 				}
 				const Clock::time_point start = Clock::now();
 				vision.update(kPassSeconds);
@@ -227,31 +258,35 @@ namespace {
 				} else {
 					passUs.push_back(elapsed);
 				}
-				forgets += static_cast<std::size_t>(std::erase_if(awaitingForget, [&](const Placed& thing) { return !knownToLead(thing); }));
+				forgets += static_cast<std::size_t>(std::erase_if(takenThisPass, [&](const Placed& thing) { return !knownToLead(thing); }));
 			}
 
 			if (takenUnknown) {
 				state.SkipWithError("a tree was taken before the lead colonist knew it");
 				break;
 			}
+			if (!takenThisPass.empty()) {
+				state.SkipWithError("a taken tree was still in the lead colonist's memory after the next pass");
+				break;
+			}
+			if (nextHarvest == 0) {
+				state.SkipWithError("no tree was taken");
+				break;
+			}
 			if (memory.worldEntityCount() == 0) {
 				state.SkipWithError("the lead colonist remembers nothing");
 				break;
 			}
-			if (!awaitingForget.empty()) {
-				state.SkipWithError("the lead colonist still remembers a tree taken in his sight");
-				break;
-			}
-			state.counters["colonists"]	   = colonistCount;
+			state.counters["colonists"] = colonistCount;
 			state.counters["perThousandM2"] = density;
-			state.counters["inView"]	   = static_cast<double>(inView);
-			state.counters["firstPassUs"]  = firstPassUs;
-			state.counters["passMeanUs"]   = meanOf(passUs);
-			state.counters["passP99Us"]	   = atPercentile(passUs, 0.99);
-			state.counters["passMaxUs"]	   = atPercentile(passUs, 1.0);
-			state.counters["remembered"]   = static_cast<double>(memory.worldEntityCount());
-			state.counters["taken"]		   = static_cast<double>(nextHarvest);
-			state.counters["forgets"]	   = static_cast<double>(forgets);
+			state.counters["inView"] = static_cast<double>(inView);
+			state.counters["firstPassUs"] = firstPassUs;
+			state.counters["passMeanUs"] = meanOf(passUs);
+			state.counters["passP99Us"] = atPercentile(passUs, 0.99);
+			state.counters["passMaxUs"] = atPercentile(passUs, 1.0);
+			state.counters["remembered"] = static_cast<double>(memory.worldEntityCount());
+			state.counters["taken"] = static_cast<double>(nextHarvest);
+			state.counters["forgets"] = static_cast<double>(forgets);
 		}
 	}
 
