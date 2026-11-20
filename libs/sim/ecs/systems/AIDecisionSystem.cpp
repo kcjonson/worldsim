@@ -2505,7 +2505,7 @@ namespace ecs {
 				return label == hisLabel ? std::optional<glm::vec2>(target) : std::nullopt;
 			}
 			if (hisLabel != geometry::nav::kNoComponent && m_navSystem->isOnMesh(target)) {
-				const std::optional<glm::vec2> stand = m_navSystem->standPointBeside(target, position.value, agentRadius);
+				const std::optional<glm::vec2> stand = m_navSystem->standPointsBeside(target, position.value, agentRadius).nearest();
 				return stand.has_value() && connectedTo(*stand) ? stand : std::nullopt;
 			}
 			return std::nullopt;
@@ -3283,7 +3283,7 @@ namespace ecs {
 						 const bool sameHarvest = currentTask.type == TaskType::Harvest && currentTask.harvestTargetKey != 0 &&
 												  currentTask.harvestTargetKey == cut->key && currentTask.targetPosition != centre;
 						 return sameHarvest ? std::optional<glm::vec2>(currentTask.targetPosition)
-											: standPointFor(centre, position.value, agentRadius, true);
+											: standPointFor(centre, position.value, agentRadius, true).nearest();
 					 })
 															 : m_navSystem->nearestPathablePoint(centre);
 					if (!snapped.has_value()) {
@@ -3474,27 +3474,35 @@ namespace ecs {
 		if (const auto* agentRadius = world->getComponent<AgentRadius>(entity)) {
 			radius = agentRadius->radiusMeters;
 		}
-		// A target lying in a placed obstacle is reached from beside it; nowhere to stand there is no way.
-		// Several sources' goals were found when they were chosen.
-		if (task.sourceChoices.empty() && !task.obstructedTarget.has_value()) {
-			const glm::vec2				   target = task.targetPosition;
-			const std::optional<glm::vec2> stand  = standPointFor(target, position.value, radius, false);
-			if (!stand.has_value()) {
-				failRoute(entity, task, memory, movementTarget, RouteFailure::NoStandPoint);
-				return;
-			}
-			if (*stand != target) {
-				task.obstructedTarget  = target;
-				task.targetPosition	   = *stand;
-				movementTarget.target = *stand;
+		// A target lying in a placed obstacle is reached from the stand point beside it, chosen the first time;
+		// one inside a built wall from either side of it, both asked of the route every time, so the answer is
+		// the side he can get to as he now believes. Nowhere to stand there is no way. Several sources' goals
+		// were found when they were chosen.
+		std::array<glm::vec2, SourceChoices::kCapacity> goals{task.targetPosition};
+		std::size_t										   goalCount = 1;
+		if (task.sourceChoices.empty()) {
+			const glm::vec2						target = task.workTarget();
+			const StandPoints stands = standPointFor(target, position.value, radius, false);
+			if (stands.size() > 1 || !task.obstructedTarget.has_value()) {
+				if (stands.empty()) {
+					failRoute(entity, task, memory, movementTarget, RouteFailure::NoStandPoint);
+					return;
+				}
+				if (stands[0] != target) {
+					task.obstructedTarget = target;
+					task.targetPosition	  = stands[0];
+					movementTarget.target = stands[0];
+				}
+				goalCount = stands.size();
+				for (std::size_t index = 0; index < goalCount; ++index) {
+					goals[index] = stands[index];
+				}
 			}
 		}
 		// Planned over what he remembers: unseen walls are absent, seen walls block, known doors pass.
 		// requestRoute copies the sets.
 		// A need with several sources asks for all of them at once: the answer's goal is the choice.
-		const geometry::nav::BeliefFilter				   belief{&memory.knownSegments, &memory.knownOpenings};
-		std::array<glm::vec2, SourceChoices::kCapacity> goals{task.targetPosition};
-		std::size_t										   goalCount = 1;
+		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
 		if (!task.sourceChoices.empty()) {
 			goalCount = task.sourceChoices.size();
 			for (std::uint8_t index = 0; index < task.sourceChoices.size(); ++index) {
@@ -3563,6 +3571,10 @@ namespace ecs {
 						}
 					}
 					task.sourceChoices.clear();
+				} else if (answer->goalIndex > 0 && !answer->waypoints.empty()) {
+					// Of the stand points either side of a target in a wall, the one the route reached.
+					task.targetPosition	  = answer->waypoints.back();
+					movementTarget.target = task.targetPosition;
 				}
 				NavPath route;
 				route.waypoints			 = joinRoute(std::move(answer->waypoints), position.value);
@@ -3616,16 +3628,14 @@ namespace ecs {
 		return m_navSystem->awaitedGroundEpoch() != task.routeAskedGroundEpoch && m_elapsedTime - task.routeAskedAt >= kReEvalInterval;
 	}
 
-	std::optional<glm::vec2> AIDecisionSystem::standPointFor(glm::vec2 target, glm::vec2 from, float radius, bool placedTarget) const {
-		if (m_navSystem == nullptr) {
-			return target;
+	StandPoints AIDecisionSystem::standPointFor(glm::vec2 target, glm::vec2 from, float radius, bool placedTarget) const {
+		StandPoints stands;
+		// Water and unmeshed ground are left to the route: off every face a mover may stand on (isOnMesh).
+		if (m_navSystem == nullptr || (!placedTarget && !m_navSystem->isOnMesh(target))) {
+			stands.push(target);
+			return stands;
 		}
-		// Inside a placed obstacle in the mesh: on a face a mover may stand on (isOnMesh) that is not clear
-		// ground (isValidPosition). Water and unmeshed ground are left to the route.
-		if (!placedTarget && (m_navSystem->isValidPosition(target) || !m_navSystem->isOnMesh(target))) {
-			return target;
-		}
-		return m_navSystem->standPointBeside(target, from, radius);
+		return m_navSystem->standPointsBeside(target, from, radius);
 	}
 
 	bool AIDecisionSystem::sourceHeldAgainst(EntityID entity, const Task& task, const SourceChoice& choice) {

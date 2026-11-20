@@ -3072,6 +3072,59 @@ TEST_F(NavigationSystemTest, RecoverySnapClearsWallCollisionBand) {
 	EXPECT_LT(std::abs(nearWall.y), kClearance) << "test setup: the input point should start inside the band";
 }
 
+// A target inside a built wall (a door not yet built in a sealed room's wall, a thick wall's centreline)
+// is stood beside, one spot each side of the wall, nearest the asker first, each clear of the wall as
+// the recovery snap reads it. Open ground and a wall still a blueprint are their own stand point.
+TEST_F(NavigationSystemTest, StandPointsBesideATargetInABuiltWall) {
+	ConstructionWorld cw;
+	const SegmentId	  south = buildRoom(cw, /*withOpening=*/false, /*pathableOpening=*/false);
+	ASSERT_NE(cw.addOpening(south, 0.5F, "Door", "Wood"), kInvalidOpening);
+	const SegmentCommitResult heavy = cw.commitSegment({0, -6000}, {4000, -6000}, "Wood", "Heavy", kInvalidFoundation, cw.version());
+	ASSERT_TRUE(heavy.ok());
+	for (const SegmentId id : heavy.createdSegments) {
+		cw.setSegmentState(id, FoundationState::Built);
+	}
+	ASSERT_TRUE(cw.commitSegment({0, -12000}, {4000, -12000}, "Wood", "Standard", kInvalidFoundation, cw.version()).ok());
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(world, sys);
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
+
+	const glm::vec2 doorAt{2.0F, 0.0F};
+	const auto		expectBeside = [&](const StandPoints& stands, glm::vec2 target, float halfThickness, const char* what) {
+		 ASSERT_EQ(stands.size(), 2U) << what << ": a spot each side";
+		 for (std::size_t side = 0; side < stands.size(); ++side) {
+			 const glm::vec2 stand = stands[side];
+			 EXPECT_TRUE(sys.isValidPosition(stand)) << what << " side " << side;
+			 EXPECT_GE(std::abs(stand.y - target.y), halfThickness + kAgentRadius) << what << ": clear of the wall, side " << side;
+			 EXPECT_LT(glm::distance(stand, target), halfThickness + 2.0F * kAgentRadius) << what << ": beside it, side " << side;
+			 EXPECT_EQ(sys.nearestPathablePoint(stand, kAgentRadius), std::optional<glm::vec2>(stand)) << what << ": the snap keeps it, side " << side;
+		 }
+		 EXPECT_LT((stands[0].y - target.y) * (stands[1].y - target.y), 0.0F) << what << ": one each side";
+	};
+
+	const StandPoints fromOutside = sys.standPointsBeside(doorAt, {2.0F, -3.0F}, kAgentRadius);
+	expectBeside(fromOutside, doorAt, 0.10F, "the door");
+	ASSERT_EQ(fromOutside.size(), 2U);
+	EXPECT_LT(fromOutside[0].y, 0.0F) << "asked from outside, the outside first";
+	const StandPoints fromInside = sys.standPointsBeside(doorAt, {2.0F, 1.5F}, kAgentRadius);
+	ASSERT_EQ(fromInside.size(), 2U);
+	EXPECT_GT(fromInside[0].y, 0.0F) << "asked from inside, the inside first";
+
+	expectBeside(sys.standPointsBeside({2.0F, -6.0F}, {2.0F, -8.0F}, kAgentRadius), {2.0F, -6.0F}, 0.15F, "the heavy wall");
+
+	const glm::vec2 open{2.0F, -3.0F};
+	const glm::vec2 blueprint{2.0F, -12.0F};
+	for (const glm::vec2 target : {open, blueprint}) {
+		const StandPoints stands = sys.standPointsBeside(target, {2.0F, -9.0F}, kAgentRadius);
+		ASSERT_EQ(stands.size(), 1U);
+		EXPECT_EQ(stands[0], target) << "ground he can stand on is its own stand point";
+	}
+}
+
 // A colonist off meshed ground is left exactly where it stands.
 TEST_F(NavigationSystemTest, UnmeshedColonistNotRelocated) {
 	ConstructionWorld cw;
@@ -6815,7 +6868,7 @@ TEST_F(NavigationSystemTest, PositionChecksHoldAfterTheChunkUnloads) {
 
 	EXPECT_FALSE(sys.isValidPosition(obstacleAt)) << "the obstacle still blocks";
 	const glm::vec2				   from{480.0F, 256.0F};
-	const std::optional<glm::vec2> stand = sys.standPointBeside(obstacleAt, from, kAgentRadius);
+	const std::optional<glm::vec2> stand = sys.standPointsBeside(obstacleAt, from, kAgentRadius).nearest();
 	ASSERT_TRUE(stand.has_value());
 	EXPECT_TRUE(sys.isValidPosition(*stand));
 	EXPECT_GT(glm::distance(*stand, obstacleAt), 0.4F * 1.414F) << "outside the obstacle";
@@ -6852,7 +6905,7 @@ TEST_F(NavigationSystemTest, BuildingReadsTheGroundBeneathAPlacedObstacle) {
 	EXPECT_NE(rig.nav.nearestTerrainWalkablePoint(inWater), std::optional<glm::vec2>(inWater));
 }
 
-// A target ringed by placed obstacles has nowhere to stand beside it: standPointBeside says so rather
+// A target ringed by placed obstacles has nowhere to stand beside it: standPointsBeside says so rather
 // than offer a point inside a neighbour. A lone one has a stand point.
 TEST_F(NavigationSystemTest, StandPointBesideARingedTargetIsNone) {
 	registerObstacle("Test_NavRingedTarget", 0.3F);
@@ -6864,8 +6917,8 @@ TEST_F(NavigationSystemTest, StandPointBesideARingedTargetIsNone) {
 	placeObstacles(rig.executor, rig.processed, "Test_NavRingedTarget", obstacles);
 	settle(rig.nav);
 	ASSERT_FALSE(rig.nav.isValidPosition(target)) << "the target is in";
-	EXPECT_FALSE(rig.nav.standPointBeside(target, {10.0F, 20.0F}, kAgentRadius).has_value());
-	const std::optional<glm::vec2> beside = rig.nav.standPointBeside(lone, {10.0F, 20.0F}, kAgentRadius);
+	EXPECT_TRUE(rig.nav.standPointsBeside(target, {10.0F, 20.0F}, kAgentRadius).empty());
+	const std::optional<glm::vec2> beside = rig.nav.standPointsBeside(lone, {10.0F, 20.0F}, kAgentRadius).nearest();
 	ASSERT_TRUE(beside.has_value());
 	EXPECT_TRUE(rig.nav.isValidPosition(*beside));
 }
@@ -6878,7 +6931,7 @@ TEST_F(NavigationSystemTest, NoMeshedGroundIsNeverValid) {
 		  EXPECT_FALSE(nav.isValidPosition(kUnmeshed));
 		  EXPECT_FALSE(nav.isPointBuildableOnceCleared(kUnmeshed));
 		  EXPECT_FALSE(nav.isAreaBuildableOnceCleared(square));
-		  EXPECT_FALSE(nav.standPointBeside(kUnmeshed, kUnmeshed, kAgentRadius).has_value());
+		  EXPECT_TRUE(nav.standPointsBeside(kUnmeshed, kUnmeshed, kAgentRadius).empty());
 		  EXPECT_FALSE(nav.nearestPathablePoint(kUnmeshed).has_value());
 		  EXPECT_FALSE(nav.nearestPathablePoint(kUnmeshed, kAgentRadius).has_value());
 		  EXPECT_FALSE(nav.nearestTerrainWalkablePoint(kUnmeshed).has_value());

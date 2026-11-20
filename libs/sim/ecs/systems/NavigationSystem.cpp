@@ -465,6 +465,44 @@ namespace ecs {
 			return best;
 		}
 
+		// The built band whose solid part holds `p`; null when none does.
+		const WallBandM* bandHolding(glm::vec2 p, const std::vector<WallBandM>& bands) {
+			for (const WallBandM& band : bands) {
+				const float		t = closestParam(p, band.v0, band.v1);
+				const glm::vec2 c = band.v0 + (band.v1 - band.v0) * t;
+				if (std::sqrt(dist2(p, c)) <= band.halfThicknessMeters + kClearMarginMeters && !inDoorSpan(band, t)) {
+					return &band;
+				}
+			}
+			return nullptr;
+		}
+
+		// A stand point on each side of `band` for a target inside it: straight out from the target's
+		// place on the centreline to where a disc of `r` clears the band, then pushed clear of every band
+		// and blocked edge (pushedClear). A side whose push leaves it a disc's width from where it began
+		// (a pocket, a corner too tight for him) or off ground walkable in truth has none.
+		StandPoints besideBand(const gnav::PatchableMesh& mesh, const WallBandM& band, glm::vec2 target, float r,
+												 const std::vector<WallBandM>& bands) {
+			StandPoints stands;
+			const glm::vec2				  along	 = band.v1 - band.v0;
+			const float					  length = std::sqrt(along.x * along.x + along.y * along.y);
+			if (length <= 1e-6F) {
+				return stands;
+			}
+			const float		t	   = closestParam(target, band.v0, band.v1);
+			const glm::vec2 centre = band.v0 + along * t;
+			const glm::vec2 normal{-along.y / length, along.x / length};
+			const float		out = band.halfThicknessMeters + r + kClearMarginMeters;
+			for (const float side : {1.0F, -1.0F}) {
+				const glm::vec2				   spot	 = centre + normal * (side * out);
+				const std::optional<glm::vec2> clear = pushedClear(mesh, spot, r, bands);
+				if (clear.has_value() && dist2(*clear, spot) <= 4.0F * r * r && truthWalkable(mesh, *clear)) {
+					stands.push(*clear);
+				}
+			}
+			return stands;
+		}
+
 		// Whether segment (a, b) and the closed polygon share a point.
 		bool segmentMeetsPolygon(const geometry::Vec2i64& a, const geometry::Vec2i64& b, const std::vector<geometry::Vec2i64>& polygon) {
 			// With `a` outside, `b` inside means the segment crosses an edge, so the edges settle it.
@@ -2076,20 +2114,34 @@ namespace ecs {
 		return nearest;
 	}
 
-	std::optional<glm::vec2> NavigationSystem::standPointBeside(glm::vec2 target, glm::vec2 from, float agentRadiusMeters) const {
+	StandPoints NavigationSystem::standPointsBeside(glm::vec2 target, glm::vec2 from, float agentRadiusMeters) const {
 		join();
+		StandPoints stands;
 		if (detailMesh.locate(nav::toMm(target)) < 0) {
-			return std::nullopt;
+			return stands;
 		}
 		// Walkable in truth on the nav mesh, so in no placed obstacle it holds.
 		const auto standable = [&](glm::vec2 p) { return truthWalkable(detailMesh, p); };
 		const std::optional<PlacedObstacle> collider = placedObstacleAt(target);
 		if (!collider.has_value()) {
 			if (standable(target)) {
-				return target;
+				stands.push(target);
+				return stands;
 			}
-			return nearestFaceOnMesh(detailMesh, target,
-									 [this](std::int32_t t) { return gnav::truthTraversable(detailMesh.triangles()[static_cast<std::size_t>(t)]); });
+			const std::vector<WallBandM> bands = resolveBuiltBands(constructionWorld);
+			if (const WallBandM* band = bandHolding(target, bands)) {
+				stands = besideBand(detailMesh, *band, target, agentRadiusMeters, bands);
+				if (stands.size() == StandPoints::kCapacity && dist2(stands[1], from) < dist2(stands[0], from)) {
+					std::swap(stands.points[0], stands.points[1]);
+				}
+				return stands;
+			}
+			if (const std::optional<glm::vec2> nearest = nearestFaceOnMesh(
+					detailMesh, target, [this](std::int32_t t) { return gnav::truthTraversable(detailMesh.triangles()[static_cast<std::size_t>(t)]); }
+				)) {
+				stands.push(*nearest);
+			}
+			return stands;
 		}
 		// Round the collider at the disc's radius out from it, nearest the colonist first.
 		const float								 standOff = collider->extent + agentRadiusMeters + 0.05F;
@@ -2103,10 +2155,11 @@ namespace ecs {
 		std::sort(spots.begin(), spots.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
 		for (const auto& [d2, spot] : spots) {
 			if (standable(spot)) {
-				return spot;
+				stands.push(spot);
+				return stands;
 			}
 		}
-		return std::nullopt;
+		return stands;
 	}
 
 	bool NavigationSystem::isPointBuildableNow(glm::vec2 meters) const {
