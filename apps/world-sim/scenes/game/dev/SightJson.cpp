@@ -113,6 +113,25 @@ namespace world_sim {
 				   ",\"rimSides\":" + count(colonist.rimSides) + ",\"featherPieces\":" + count(colonist.feather != nullptr ? colonist.feather->size() : 0) +
 				   ",\"rimMovedMm\":" + std::to_string(colonist.rimMovedMm) +
 				   ",\"rimMovedOnScreen\":" + number(moved / static_cast<double>(featherMm) * worldview::kSeenDimAlpha);
+			// The sides that draw no feather, shadow sides and body faces, in metres.
+			out += ",\"notRim\":[";
+			if (colonist.rim != nullptr && colonist.rim->size() == colonist.bright->size()) {
+				bool first = true;
+				const std::vector<geometry::Vec2i64>& bright = *colonist.bright;
+				for (std::size_t side = 0; side < bright.size(); ++side) {
+					if ((*colonist.rim)[side]) {
+						continue;
+					}
+					const geometry::Vec2i64& from = bright[side];
+					const geometry::Vec2i64& to	  = bright[(side + 1) % bright.size()];
+					out += first ? "" : ",";
+					first = false;
+					out += "{\"side\":" + std::to_string(side) + ",\"from\":{\"x\":" + number(static_cast<double>(from.x) / 1000.0) + ",\"y\":" +
+						   number(static_cast<double>(from.y) / 1000.0) + "},\"to\":{\"x\":" + number(static_cast<double>(to.x) / 1000.0) + ",\"y\":" +
+						   number(static_cast<double>(to.y) / 1000.0) + "}}";
+				}
+			}
+			out += "]";
 			out += ",\"softPieces\":" + count(colonist.shadows != nullptr ? colonist.shadows->softPieceCount() : 0) + ",\"bandPieces\":" + count(colonist.shadows != nullptr ? colonist.shadows->bandPieces().size() : 0) + ",\"soft\":[";
 			if (colonist.shadows != nullptr) {
 				bool first = true;

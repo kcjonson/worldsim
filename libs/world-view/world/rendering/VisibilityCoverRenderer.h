@@ -103,6 +103,7 @@ namespace worldview {
 		struct ColonistCover {
 			ecs::EntityID						 colonist = ecs::kInvalidEntity;
 			const std::vector<geometry::Vec2i64>* bright  = nullptr;
+			const std::vector<bool>*			 rim	  = nullptr; // one a side of `bright`
 			std::size_t							 rimSides = 0;
 			geometry::Vec2i64					 featherAnchor{0, 0};
 			const std::vector<ValueTriangle>*	 feather = nullptr;

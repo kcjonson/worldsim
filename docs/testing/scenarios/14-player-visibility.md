@@ -35,25 +35,27 @@ Launch as [../README.md](../README.md) says and take Quick Start. It is seeded, 
 18. Add a door at (12, 43) and a window at (12, 39): a doorway in the south wall, a window in the north.
 19. Order Bob to (12, 41): light leaves through the door and the window only, each beam soft-sided.
 20. Order him to (12, 42.3): the beam through the door keeps a bright core.
-21. Spawn a colonist at (2, 41), 8 m west of the room: along its west wall no dark strip, only the shadows off its two west corners.
-22. Remove her.
-23. Order Bob to (8, 46), out the door and past the room's south-west corner: the room's shadow swings round the corner with no jump.
-24. Order him to (300, 44) and twice more into the black: the tint's edge sits just outside his bright rim, no dark band between.
-25. Set 10x, order him into the black twice more, set 1x: the tint's edge sits within a few metres of his rim.
-26. Teleport him to (24, 11), press B, click Crafting Spot, and hover tinted ground at zoom 6: the ghost reads valid.
-27. Click: a crafting spot is placed.
-28. Hover the black 250 m out: the ghost is faint dark red; a click places nothing. Press Escape.
-29. Right-click the black 100 m past the edge: a marker at the edge, and Bob walks there and stops.
-30. As he arrives: a bright disc opens past the old edge.
-31. Right-click the black again: he walks on to the new edge.
-32. Turn reveal on: no black, no tint.
-33. Right-click 15 m past his seen ground: he walks to the click.
-34. Turn reveal off: black and tint return, the ground he opened still tinted.
-35. Jump the camera east 300 m at a time to 2.4 km: the Chunks readout never rises, and falls.
-36. Teleport Bob to (479, 10) and wait a second: (494, 10) reads seen and visible, (511, 10) neither.
-37. Teleport him to (24, 11) and view (508, 10) at zoom 6: trees past 512 m drawn over the seen edge.
-38. Jump 4 km east and back: the same picture.
-39. Build a wall from (30, 8) to (30, 14), 6 m east of Bob, and zoom 20 on it: the tint starts at its west face.
-40. Look at its top: an even mid brown.
-41. Turn reveal on: the top turns light tan. Turn reveal off.
-42. Click Release, then exit.
+21. Set the game speed to 0 (`time?speed=0`): no one moves, Bob stays at (12, 42.3).
+22. Spawn a colonist at (2, 41), 8 m west of the room: along its west wall no dark strip, only the shadows off its two west corners.
+23. Remove her.
+24. Set the game speed back to 1 (`time?speed=1`): Bob's panel still says Controlled.
+25. Order Bob to (8, 46), out the door and past the room's south-west corner: the room's shadow swings round the corner with no jump.
+26. Order him to (300, 44) and twice more into the black: the tint's edge sits just outside his bright rim, no dark band between.
+27. Set 10x, order him into the black twice more, set 1x: the tint's edge sits within a few metres of his rim.
+28. Teleport him to (24, 11), press B, click Crafting Spot, and hover tinted ground at zoom 6: the ghost reads valid.
+29. Click: a crafting spot is placed.
+30. Hover the black 250 m out: the ghost is faint dark red; a click places nothing. Press Escape.
+31. Right-click the black 100 m past the edge: a marker at the edge, and Bob walks there and stops.
+32. As he arrives: a bright disc opens past the old edge.
+33. Right-click the black again: he walks on to the new edge.
+34. Turn reveal on: no black, no tint.
+35. Right-click 15 m past his seen ground: he walks to the click.
+36. Turn reveal off: black and tint return, the ground he opened still tinted.
+37. Jump the camera east 300 m at a time to 2.4 km: the Chunks readout never rises, and falls.
+38. Teleport Bob to (479, 10) and wait a second: (494, 10) reads seen and visible, (511, 10) neither.
+39. Teleport him to (24, 11) and view (508, 10) at zoom 6: trees past 512 m drawn over the seen edge.
+40. Jump 4 km east and back: the same picture.
+41. Build a wall from (30, 8) to (30, 14), 6 m east of Bob, and zoom 20 on it: the tint starts at its west face.
+42. Look at its top: an even mid brown.
+43. Turn reveal on: the top turns light tan. Turn reveal off.
+44. Click Release, then exit.

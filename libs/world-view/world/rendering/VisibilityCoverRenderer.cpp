@@ -265,7 +265,7 @@ namespace worldview {
 				frameCounts.piecesBuilt += state.featherPieces.size();
 			}
 
-			ColonistCover cover{.colonist = entity, .bright = &state.bright, .featherAnchor = standing, .feather = &state.featherPieces};
+			ColonistCover cover{.colonist = entity, .bright = &state.bright, .rim = &state.rim, .featherAnchor = standing, .feather = &state.featherPieces};
 			cover.rimSides = static_cast<std::size_t>(std::ranges::count(state.rim, true));
 			if (const vision::SightFeed* feed = visibility.feedOf(entity)) {
 				if (const std::optional<vision::SightFeed::SideOffsets> offsets = feed->drawnOffsets()) {
