@@ -350,7 +350,7 @@ Conditions are data and need no scripting. A behavior's effect, what the colonis
 
 ## Related documents
 
-- [Needs System](./needs.md): the needs and their weights in mood
+- [Needs System](./needs.md): the needs and what each costs in mood
 - [Thoughts](./thoughts.md): what carries a mood effect, and the bubbles
 - [Attributes](./attributes.md): Sanity, Civility, Social Need, Work Ethic, and traits
 - [AI Behavior](./ai-behavior.md)

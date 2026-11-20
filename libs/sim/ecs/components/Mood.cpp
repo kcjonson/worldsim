@@ -1,47 +1,8 @@
 #include "Mood.h"
 
 #include <algorithm>
-#include <string_view>
 
 namespace ecs {
-
-	ResolvedNeedMoodWeights resolveNeedMoodWeights(const assets::MoodConfig& config) {
-		ResolvedNeedMoodWeights resolved;
-		std::array<bool, kNeedCount> weighted{};
-		for (const assets::NeedMoodWeight& needWeight : config.needWeights()) {
-			const auto found = std::find_if(kNeedLabels.begin(), kNeedLabels.end(), [&needWeight](const char* label) {
-				return std::string_view(label) == needWeight.need;
-			});
-			if (found == kNeedLabels.end()) {
-				resolved.unknownNeeds.push_back(needWeight.need);
-				continue;
-			}
-			const auto index = static_cast<size_t>(found - kNeedLabels.begin());
-			resolved.weights[index] = needWeight.weight;
-			weighted[index] = true;
-		}
-		for (size_t i = 0; i < kNeedCount; ++i) {
-			if (!weighted[i]) {
-				resolved.unweightedNeeds.push_back(static_cast<NeedType>(i));
-			}
-		}
-		return resolved;
-	}
-
-	std::vector<std::string> moodConfigErrors(const assets::MoodConfig& config) {
-		const ResolvedNeedMoodWeights resolved = resolveNeedMoodWeights(config);
-		std::vector<std::string>	  errors;
-		for (const std::string& name : resolved.unknownNeeds) {
-			errors.push_back("[Mood] Need '" + name + "' is weighted but no need has that name");
-		}
-		for (const NeedType need : resolved.unweightedNeeds) {
-			const std::string label = needLabel(need);
-			errors.push_back(
-				"[Mood] Need '" + label + "' has no weight (add <Need name=\"" + label + "\" weight=\"...\"/>; 0 leaves it out of mood)"
-			);
-		}
-		return errors;
-	}
 
 	float needPenalty(float value, const assets::NeedPenaltyCurve& curve) {
 		if (value >= curve.comfortable) {
@@ -55,20 +16,20 @@ namespace ecs {
 		return curve.penaltyAtWarning + intoSteep * (1.0F - curve.penaltyAtWarning);
 	}
 
-	std::array<float, kNeedCount> needMoodContributions(const NeedContributionsArgs& args) {
+	std::array<float, kNeedCount> needMoodContributions(const NeedsComponent& needs, const assets::NeedPenaltyCurve& curve) {
 		std::array<float, kNeedCount> contributions{};
-		float						  totalWeight = 0.0F;
-		for (const float weight : args.weights) {
-			totalWeight += weight;
-		}
-		if (totalWeight <= 0.0F) {
-			return contributions;
-		}
 		for (size_t i = 0; i < kNeedCount; ++i) {
-			const float penalty = needPenalty(args.needs.needs[i].value, args.curve);
-			contributions[i] = -kFullMood * args.weights[i] * penalty / totalWeight;
+			contributions[i] = -needs.needs[i].moodCost * needPenalty(needs.needs[i].value, curve);
 		}
 		return contributions;
+	}
+
+	float needsScore(const std::array<float, kNeedCount>& needContributions) {
+		float score = kFullMood;
+		for (const float contribution : needContributions) {
+			score += contribution;
+		}
+		return std::max(score, 0.0F);
 	}
 
 	MoodCause largestNegativeContributor(const Mood& mood) {

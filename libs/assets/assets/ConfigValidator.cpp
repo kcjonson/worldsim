@@ -14,7 +14,6 @@
 
 #include <cmath>
 #include <string>
-#include <unordered_set>
 
 namespace assets {
 
@@ -175,33 +174,6 @@ bool ConfigValidator::validateMood(const MoodConfig& config) {
                      "got " + std::to_string(curve.penaltyAtWarning));
             valid = false;
         }
-    }
-
-    float totalWeight = 0.0F;
-    std::unordered_set<std::string> weightedNeeds;
-    for (const NeedMoodWeight& needWeight : config.needWeights()) {
-        if (needWeight.need.empty()) {
-            addError(source, "A <Need> in <NeedWeights> has no name");
-            valid = false;
-            continue;
-        }
-        if (!weightedNeeds.insert(needWeight.need).second) {
-            addError(source, "Need '" + needWeight.need + "' is weighted more than once");
-            valid = false;
-        }
-        if (!std::isfinite(needWeight.weight)) {
-            continue;
-        }
-        if (needWeight.weight < 0.0F) {
-            addError(source, "Need '" + needWeight.need + "' weight must be zero or more");
-            valid = false;
-            continue;
-        }
-        totalWeight += needWeight.weight;
-    }
-    if (totalWeight <= 0.0F) {
-        addError(source, "NeedWeights must give at least one need a positive weight");
-        valid = false;
     }
 
     const auto& bands = config.bands();

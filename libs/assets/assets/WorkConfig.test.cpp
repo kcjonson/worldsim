@@ -562,7 +562,6 @@ namespace {
 	std::string moodWith(const std::string& easing) {
 		return "<Mood>" + easing +
 			   "<NeedPenalty comfortable=\"70\" warning=\"30\" penaltyAtWarning=\"0.3\"/>"
-			   "<NeedWeights><Need name=\"Hunger\" weight=\"1\"/></NeedWeights>"
 			   "<Bands><Band name=\"Content\" from=\"0\"/></Bands></Mood>";
 	}
 } // namespace
@@ -676,14 +675,6 @@ TEST_F(WorkConfigTest, MoodConfig_BadNumbersAreErrorsNamingFileElementAndAttribu
 	};
 
 	EXPECT_NE(errorsFor(moodWith("")).find("<Easing> pointsPerGameHour is missing"), std::string::npos);
-	EXPECT_NE(
-		errorsFor(
-			"<Mood><Easing pointsPerGameHour=\"5\"/><NeedPenalty comfortable=\"70\" warning=\"30\" penaltyAtWarning=\"0.3\"/>"
-			"<NeedWeights><Need name=\"Hunger\" weight=\"6abc\"/></NeedWeights><Bands><Band name=\"Content\" from=\"0\"/></Bands></Mood>"
-		)
-			.find("<Need name=\"Hunger\"> weight must be a number, got \"6abc\""),
-		std::string::npos
-	);
 	EXPECT_NE(errorsFor(moodWith("<Easing/>")).find("<Easing> pointsPerGameHour is missing"), std::string::npos);
 	for (const char* text : {"30abc", "abc", "", "nan"}) {
 		const std::string joined = errorsFor(moodWith(std::string("<Easing pointsPerGameHour=\"") + text + "\"/>"));

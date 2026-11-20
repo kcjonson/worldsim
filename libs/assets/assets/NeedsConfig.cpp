@@ -18,8 +18,7 @@ namespace assets {
 	namespace {
 
 		/// The <Need> elements of one file; nothing when the file has any error, each reported in `errors`.
-		std::vector<NeedThresholdsDef>
-		needsInFile(const std::filesystem::path& file, const std::string& source, std::vector<std::string>& errors) {
+		std::vector<NeedDef> needsInFile(const std::filesystem::path& file, const std::string& source, std::vector<std::string>& errors) {
 			const std::size_t errorsBefore = errors.size();
 			const auto		  fail = [&](const std::string& message) {
 				   errors.push_back(source + ": " + message);
@@ -38,7 +37,7 @@ namespace assets {
 			}
 
 			ConfigReader				   reader(source);
-			std::vector<NeedThresholdsDef> needs;
+			std::vector<NeedDef>		   needs;
 			std::set<std::string>		   named;
 			for (const pugi::xml_node node : root.children()) {
 				if (node.type() != pugi::node_element) {
@@ -48,7 +47,7 @@ namespace assets {
 					fail("unknown element <" + std::string(node.name()) + ">");
 					continue;
 				}
-				NeedThresholdsDef need{.need = node.attribute("name").as_string(), .source = source};
+				NeedDef need{.need = node.attribute("name").as_string(), .source = source};
 				if (need.need.empty()) {
 					fail("a <Need> has no name");
 					continue;
@@ -57,7 +56,7 @@ namespace assets {
 				if (!named.insert(need.need).second) {
 					fail(what + " is given twice");
 				}
-				onlyAttributes(node, {"name", "seek", "urgent", "critical"}, what, source, errors);
+				onlyAttributes(node, {"name", "seek", "urgent", "critical", "cost"}, what, source, errors);
 				bool numbersRead = true;
 				for (std::size_t index = 0; index < kNeedThresholdNames.size(); ++index) {
 					const char* name = kNeedThresholdNames[index];
@@ -75,6 +74,10 @@ namespace assets {
 					if (need.thresholds[index] >= need.thresholds[index - 1]) {
 						fail(what + " " + kNeedThresholdNames[index] + " must be below " + kNeedThresholdNames[index - 1]);
 					}
+				}
+				need.moodCost = reader.attributeNumber(node, "Need", "cost");
+				if (need.moodCost < 0.0F) {
+					reader.refuseAttribute(what, node, "cost", "zero or more");
 				}
 				needs.push_back(std::move(need));
 			}
@@ -104,8 +107,8 @@ namespace assets {
 			return result;
 		}
 		for (const std::filesystem::path& file : found.files) {
-			for (NeedThresholdsDef& need : needsInFile(file, configFileName(file, folder), result.errors)) {
-				const auto existing = std::ranges::find(result.config.needs, need.need, &NeedThresholdsDef::need);
+			for (NeedDef& need : needsInFile(file, configFileName(file, folder), result.errors)) {
+				const auto existing = std::ranges::find(result.config.needs, need.need, &NeedDef::need);
 				if (existing == result.config.needs.end()) {
 					result.config.needs.push_back(std::move(need));
 					continue;

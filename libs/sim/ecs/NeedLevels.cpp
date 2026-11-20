@@ -8,8 +8,9 @@ namespace ecs {
 	std::vector<std::string> NeedLevels::load(const assets::NeedsConfig& config, const std::filesystem::path& folder) {
 		std::vector<std::string>										  errors;
 		std::array<Thresholds, static_cast<std::size_t>(NeedType::Count)> loaded{};
+		std::array<float, static_cast<std::size_t>(NeedType::Count)>	  loadedMoodCosts{};
 		std::array<bool, static_cast<std::size_t>(NeedType::Count)>		  given{};
-		for (const assets::NeedThresholdsDef& def : config.needs) {
+		for (const assets::NeedDef& def : config.needs) {
 			const auto found =
 				std::ranges::find(kNeedLabels, std::string_view(def.need), [](const char* label) { return std::string_view(label); });
 			if (found == kNeedLabels.end()) {
@@ -18,6 +19,7 @@ namespace ecs {
 			}
 			const auto index = static_cast<std::size_t>(found - kNeedLabels.begin());
 			loaded[index] = def.thresholds;
+			loadedMoodCosts[index] = def.moodCost;
 			given[index] = true;
 		}
 		for (std::size_t index = 0; index < given.size(); ++index) {
@@ -27,6 +29,7 @@ namespace ecs {
 		}
 		if (errors.empty()) {
 			thresholds = loaded;
+			moodCosts = loadedMoodCosts;
 		}
 		return errors;
 	}

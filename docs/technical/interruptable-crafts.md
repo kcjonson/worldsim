@@ -373,11 +373,31 @@ struct Need {
 };
 ```
 
-**Need tuning as data.** A need's three thresholds and its decay are on its entry in
-`assets/config/needs/`, and the sleep curve's exponent is the Sleep action entry's `curve`, as
-[Queries and chains](./queries-and-chains.md#needs) specifies; there is no default in code. The AI and
-the thought sources both read a need's thresholds from its entry, so one edit moves both. The tests and
-benches build theirs from the shipped folders through one helper (`libs/sim/ecs/ShippedConfig.test.h`).
+**Need tuning as data.** A need's three thresholds, its decay and its mood cost are on its own entry
+in the needs folder (`assets/config/colonists/needs/needs.xml`), and the sleep curve's exponent is the
+Sleep entry's `curveExponent`; [Queries and chains](./queries-and-chains.md#needs) specifies the
+layout this moves to, with the sleep exponent as the Sleep action entry's `curve`. There is no default
+in code. The folder is loaded with the other colonist rules ([Config Loading](./config-loading.md)):
+`assets::loadNeedsConfig` reads it, a later file replacing a `<Need>` by name, and `ecs::NeedLevels`
+checks that every need is given. A colonist's `NeedsComponent` is constructed from the loaded levels and
+carries each need's thresholds, which the AI and the thought sources both read, so one edit moves both,
+and its mood cost, which `MoodSystem` reads ([Colonist Needs](../design/game-systems/colonists/needs.md),
+What a need costs mood). The tests and benches build theirs from the shipped folders through one helper
+(`libs/sim/ecs/ShippedConfig.test.h`).
+
+```xml
+<Needs>
+  <Need name="Hunger"      decayPerGameMinute="0.08"  seek="50" urgent="25" critical="10" cost="25"/>
+  <Need name="Thirst"      decayPerGameMinute="0.12"  seek="50" urgent="25" critical="10" cost="25"/>
+  <Need name="Energy"      decayPerGameMinute="0.05"  seek="30" urgent="20" critical="10" cost="20"/>
+  <Need name="Bladder"     decayPerGameMinute="0.03"  seek="30" urgent="20" critical="10" cost="10"/>
+  <Need name="Digestion"   decayPerGameMinute="0.02"  seek="30" urgent="20" critical="10" cost="10"/>
+  <Need name="Hygiene"     decayPerGameMinute="0.015" seek="40" urgent="25" critical="15" cost="15"/>
+  <Need name="Recreation"  decayPerGameMinute="0.01"  seek="30" urgent="20" critical="10" cost="15"/>
+  <Need name="Temperature" decayPerGameMinute="0"     seek="40" urgent="25" critical="15" cost="60"/>
+  <Sleep curveExponent="2.0"/>
+</Needs>
+```
 
 **Tiers.** `priority-tuning.xml` base tiers are renumbered (FulfillNeed 7, Craft, Build and
 Deconstruct 6, Haul, Harvest and PlacePackaged 8, Wander 9). `classifyTier` promotes a need to 4 or

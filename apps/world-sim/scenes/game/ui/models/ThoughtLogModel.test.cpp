@@ -1,9 +1,13 @@
 #include "ThoughtLogModel.h"
 
+#include <assets/MoodConfig.h>
+#include <ecs/ShippedConfig.test.h>
 #include <ecs/ThoughtTesting.test.h>
 #include <ecs/World.h>
 #include <ecs/components/Attributes.h>
 #include <ecs/components/Colonist.h>
+#include <ecs/components/Needs.h>
+#include <ecs/systems/MoodSystem.h>
 #include <ecs/systems/ThoughtSystem.h>
 #include <ecs/systems/TimeSystem.h>
 
@@ -37,6 +41,12 @@ namespace world_sim {
   <thought id="saw_the_sea" label="Saw the sea" importance="major">
     <feeling is="delighted"/>
   </thought>
+  <thought id="vented" label="Vented" importance="normal">
+    <feeling is="delighted" mood="+4" hours="12"/>
+  </thought>
+  <thought id="cheered" label="Cheered" importance="normal">
+    <feeling is="delighted" mood="+20" hours="12"/>
+  </thought>
 )";
 
 		std::vector<std::string> summaries(const ThoughtLogModel& model) {
@@ -47,10 +57,33 @@ namespace world_sim {
 			return shown;
 		}
 
+		// What the rows on screen come to: 100 less the need rows, or 0 when the floor line shows, plus the
+		// thought rows. With no clamp that is the target; with one, the clamped note.
+		void expectTheRowsReconcile(const MoodBreakdown& breakdown) {
+			float shown = ecs::kFullMood;
+			for (const MoodNeedRow& row : breakdown.needs) {
+				shown += std::stof(row.amount);
+			}
+			if (breakdown.needsAtFloor) {
+				EXPECT_LE(shown, 0.0F) << "the floor line shows only when the need rows reach 100";
+				shown = 0.0F;
+			}
+			for (const MoodThoughtRow& row : breakdown.thoughts) {
+				shown += std::stof(row.amount);
+			}
+			const float		   rounding = 0.05F * static_cast<float>(breakdown.needs.size() + breakdown.thoughts.size() + 1);
+			const std::string& total = breakdown.clampedFrom.empty() ? breakdown.target : breakdown.clampedFrom;
+			EXPECT_NEAR(shown, std::stof(total), rounding) << "the rows come to " << total;
+		}
+
 	} // namespace
 
 	void PrintTo(const MoodThoughtRow& row, std::ostream* out) {
 		*out << row.id << " '" << row.label << "' " << row.amount << " '" << row.left << "'";
+	}
+
+	void PrintTo(const MoodNeedRow& row, std::ostream* out) {
+		*out << "'" << row.label << "' " << row.amount;
 	}
 
 	class ThoughtLogModelTest : public ::testing::Test {
@@ -62,6 +95,9 @@ namespace world_sim {
 			time = &world.registerSystem<ecs::TimeSystem>();
 			thoughts = &world.registerSystem<ecs::ThoughtSystem>(rules.types, 7U);
 			colonist = spawn("Ada");
+			ASSERT_TRUE(moodConfig.loadFromFile(ecs::testing::repoConfig(), "colonists/mood.xml"));
+			moods = &world.registerSystem<ecs::MoodSystem>(moodConfig);
+			world.addComponent<ecs::NeedsComponent>(colonist, ecs::testing::shippedNeeds());
 		}
 
 		ecs::EntityID spawn(const char* name) {
@@ -92,22 +128,22 @@ namespace world_sim {
 
 		[[nodiscard]] const ecs::Thoughts& record() const { return *world.getComponent<ecs::Thoughts>(colonist); }
 
-		[[nodiscard]] ecs::Mood moodAsSummed(float needs) const {
-			ecs::Mood mood;
-			mood.needContributions[0] = needs;
-			float unclamped = ecs::kFullMood + needs;
-			ecs::forEachHeldThought(record(), [&](const ecs::Thought& thought) {
-				mood.thoughtContributions.push_back({.thought = thought.id, .amount = ecs::heldMoodAmount(thought)});
-				unclamped += ecs::heldMoodAmount(thought);
-			});
-			mood.target = std::clamp(unclamped, 0.0F, ecs::kFullMood);
-			return mood;
+		void setNeed(ecs::NeedType need, float value) { world.getComponent<ecs::NeedsComponent>(colonist)->get(need).value = value; }
+
+		/// The colonist's mood as MoodSystem sums it now.
+		[[nodiscard]] const ecs::Mood& summedMood() {
+			moods->update(0.0F);
+			return *world.getComponent<ecs::Mood>(colonist);
 		}
 
+		[[nodiscard]] MoodBreakdown breakdownNow() { return moodBreakdown(rules.types, &record(), summedMood(), time->simulationSeconds()); }
+
 		ecs::testing::TestThoughtTypes rules{kTypes};
+		assets::MoodConfig			   moodConfig;
 		ecs::World					   world;
 		ecs::TimeSystem*			   time = nullptr;
 		ecs::ThoughtSystem*			   thoughts = nullptr;
+		ecs::MoodSystem*			   moods = nullptr;
 		ecs::EntityID				   colonist{0};
 	};
 
@@ -264,10 +300,21 @@ namespace world_sim {
 
 	TEST_F(ThoughtLogModelTest, TheBreakdownIsTheContributionsTheTargetSums) {
 		giveTheMorning();
-		const ecs::Mood		mood = moodAsSummed(-12.0F);
-		const MoodBreakdown breakdown = moodBreakdown(rules.types, &record(), mood, time->simulationSeconds());
+		// Shipped costs: hunger at 30 is penalty 0.3 of 25, thirst at 46 is 0.18 of 25, and energy at 69.9 is
+		// 0.00075 of 20, which rounds to nothing.
+		setNeed(ecs::NeedType::Hunger, 30.0F);
+		setNeed(ecs::NeedType::Thirst, 46.0F);
+		setNeed(ecs::NeedType::Energy, 69.9F);
+		const MoodBreakdown breakdown = breakdownNow();
 
-		EXPECT_EQ(breakdown.needs, "-12");
+		EXPECT_EQ(
+			breakdown.needs,
+			(std::vector<MoodNeedRow>{
+				{.need = ecs::NeedType::Hunger, .label = "Hunger", .amount = "-7.5"},
+				{.need = ecs::NeedType::Thirst, .label = "Thirst", .amount = "-4.5"},
+			})
+		) << "the largest cost first, and a need whose cost rounds to nothing is not listed";
+		EXPECT_FALSE(breakdown.needsAtFloor);
 		ASSERT_EQ(breakdown.thoughts.size(), 3U);
 		EXPECT_EQ(
 			breakdown.thoughts[0], (MoodThoughtRow{.id = 1, .label = "Slept on the ground", .amount = "-10", .left = "22 hours left"})
@@ -276,22 +323,89 @@ namespace world_sim {
 		EXPECT_EQ(breakdown.thoughts[1].amount, "-6");
 		EXPECT_EQ(breakdown.thoughts[1].left, "24 hours left");
 		EXPECT_EQ(breakdown.thoughts[2], (MoodThoughtRow{.id = 2, .label = "Soaked", .amount = "-6", .left = "while soaked"}));
-		// 100 - 12 - 10 - 6 - 6
 		EXPECT_EQ(breakdown.target, "66%");
 		EXPECT_EQ(breakdown.clampedFrom, "");
+		expectTheRowsReconcile(breakdown);
 	}
 
-	TEST_F(ThoughtLogModelTest, TheBreakdownSaysWhenTheTargetIsClamped) {
+	TEST_F(ThoughtLogModelTest, TheBreakdownShowsTenthsAndSaysWhenTheTargetIsClamped) {
 		giveTheMorning();
-		const MoodBreakdown tenths = moodBreakdown(rules.types, &record(), moodAsSummed(-12.5F), time->simulationSeconds());
-		EXPECT_EQ(tenths.needs, "-12.5");
-		EXPECT_EQ(tenths.target, "65.5%");
+		setNeed(ecs::NeedType::Thirst, 46.0F);
+		const MoodBreakdown tenths = breakdownNow();
+		ASSERT_EQ(tenths.needs.size(), 1U);
+		EXPECT_EQ(tenths.needs[0].amount, "-4.5");
+		EXPECT_EQ(tenths.target, "73.5%");
 		EXPECT_EQ(tenths.clampedFrom, "");
+		expectTheRowsReconcile(tenths);
 
-		const MoodBreakdown clamped = moodBreakdown(rules.types, &record(), moodAsSummed(-90.0F), time->simulationSeconds());
+		setNeed(ecs::NeedType::Thirst, 0.0F);
+		setNeed(ecs::NeedType::Temperature, 0.0F);
+		const MoodBreakdown clamped = breakdownNow();
+		EXPECT_FALSE(clamped.needsAtFloor) << "the needs take 85, leaving a needs score of 15";
 		EXPECT_EQ(clamped.target, "0%");
-		// 100 - 90 - 10 - 6 - 6
-		EXPECT_EQ(clamped.clampedFrom, "-12%");
+		EXPECT_EQ(clamped.clampedFrom, "-7%") << "15 - 10 - 6 - 6";
+		expectTheRowsReconcile(clamped);
+	}
+
+	TEST_F(ThoughtLogModelTest, TheBreakdownSaysWhenTheTargetIsClampedAtTheTop) {
+		give("cheered");
+		const MoodBreakdown breakdown = breakdownNow();
+		EXPECT_TRUE(breakdown.needs.empty());
+		EXPECT_FALSE(breakdown.needsAtFloor);
+		EXPECT_EQ(breakdown.target, "100%");
+		EXPECT_EQ(breakdown.clampedFrom, "120%");
+		expectTheRowsReconcile(breakdown);
+	}
+
+	TEST_F(ThoughtLogModelTest, EveryNeedEmptyShowsTheFloorAndTheThoughtGivesTheTarget) {
+		for (size_t i = 0; i < ecs::kNeedCount; ++i) {
+			setNeed(static_cast<ecs::NeedType>(i), 0.0F);
+		}
+		give("vented");
+		const MoodBreakdown breakdown = breakdownNow();
+		EXPECT_EQ(
+			breakdown.needs,
+			(std::vector<MoodNeedRow>{
+				{.need = ecs::NeedType::Temperature, .label = "Temperature", .amount = "-60"},
+				{.need = ecs::NeedType::Hunger, .label = "Hunger", .amount = "-25"},
+				{.need = ecs::NeedType::Thirst, .label = "Thirst", .amount = "-25"},
+				{.need = ecs::NeedType::Energy, .label = "Energy", .amount = "-20"},
+				{.need = ecs::NeedType::Hygiene, .label = "Hygiene", .amount = "-15"},
+				{.need = ecs::NeedType::Recreation, .label = "Recreation", .amount = "-15"},
+				{.need = ecs::NeedType::Bladder, .label = "Bladder", .amount = "-10"},
+				{.need = ecs::NeedType::Digestion, .label = "Digestion", .amount = "-10"},
+			})
+		);
+		EXPECT_TRUE(breakdown.needsAtFloor) << "the costs come to 180, and the needs take mood to 0 at most";
+		ASSERT_EQ(breakdown.thoughts.size(), 1U);
+		EXPECT_EQ(breakdown.thoughts[0].amount, "+4");
+		EXPECT_EQ(breakdown.target, "4%");
+		EXPECT_EQ(breakdown.clampedFrom, "") << "0 + 4 is inside 0 to 100, so nothing is clamped";
+		expectTheRowsReconcile(breakdown);
+	}
+
+	TEST_F(ThoughtLogModelTest, TheVitalNeedsEmptyPastTheFloorAreNotAClamp) {
+		setNeed(ecs::NeedType::Temperature, 0.0F);
+		setNeed(ecs::NeedType::Hunger, 0.0F);
+		setNeed(ecs::NeedType::Thirst, 0.0F);
+		setNeed(ecs::NeedType::Energy, 0.0F);
+		give("cheered");
+		const MoodBreakdown breakdown = breakdownNow();
+		EXPECT_EQ(
+			breakdown.needs,
+			(std::vector<MoodNeedRow>{
+				{.need = ecs::NeedType::Temperature, .label = "Temperature", .amount = "-60"},
+				{.need = ecs::NeedType::Hunger, .label = "Hunger", .amount = "-25"},
+				{.need = ecs::NeedType::Thirst, .label = "Thirst", .amount = "-25"},
+				{.need = ecs::NeedType::Energy, .label = "Energy", .amount = "-20"},
+			})
+		);
+		EXPECT_TRUE(breakdown.needsAtFloor) << "the costs come to 130";
+		ASSERT_EQ(breakdown.thoughts.size(), 1U);
+		EXPECT_EQ(breakdown.thoughts[0].amount, "+20");
+		EXPECT_EQ(breakdown.target, "20%");
+		EXPECT_EQ(breakdown.clampedFrom, "") << "0 + 20 is inside 0 to 100, so nothing is clamped";
+		expectTheRowsReconcile(breakdown);
 	}
 
 	TEST_F(ThoughtLogModelTest, AMergedEntryShowsItsCountAndDateRange) {

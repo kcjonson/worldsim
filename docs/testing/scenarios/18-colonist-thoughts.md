@@ -30,19 +30,21 @@ Launch `world-sim --scene=game --background --no-settings` (RelWithDebInfo); the
 16. Pick All: 50 blocks, and a "Show older" button under them.
 17. Press "Show older": every thought shows, and the button is gone.
 18. Open the NEEDS tab: the dialog keeps the size it opened at.
-19. Read the Mood breakdown: Needs, a row per held thought with its amount and time left ("24 hours left", the game being paused), largest amount first, and Target.
-20. Read the Target row: it reads 100 plus Needs plus the rows' amounts (-10, -6 and +5 for the scripted thoughts, so 89 plus Needs), within 0.1, or the sum on the "Clamped" note under it.
-21. Close the dossier and open it on Bob again: it opens at the width and height step 13 noted, long log and all.
-22. Open the developer client (`build/developer-client/index.html`, as a `file://` page) and its Dev Tools tab. The client talks to http://localhost:8081, so the tab steps apply to this game on its default port.
-23. Press Refresh: the colonist list and the thought types fill in.
-24. Pick Bob in the colonist list: Give thought and Set attribute turn on.
-25. Pick `Idle musing` in the thought list: it shows as picked.
-26. Press Give thought: the feedback line reads `thought -> ` with `"created":true`.
-27. In the panel's LOG tab pick All: an idle musing block is the newest.
-28. Pick `strength` in the attribute list and set the value to 20: both show as picked.
-29. Press Set attribute: the feedback line reads ok.
-30. Read `/api/state?what=colonists`: Bob's `attributes.strength` is 20.
-31. `/api/ui/lint` on each tab: `"count":0`.
+19. Set Bob's Hunger to 20 (`/api/dev/need?colonist=<id>&need=Hunger&value=20`): the breakdown shows a "Hunger" row of about -13.3.
+20. Read the breakdown's need rows: one per need that is costing something, its label and cost, largest first, and no row for a need that costs nothing.
+21. Read the breakdown's thought rows: one per held thought, its amount and time left ("24 hours left", the game being paused), largest amount first.
+22. Read the Target row: 100 plus the need rows (or 0, when "Needs take mood to 0 at most" shows under them) plus the thought rows (-10, -6 and +5 for the scripted thoughts), within 0.1 for each row, or that sum on the "Clamped" note under it.
+23. Close the dossier and open it on Bob again: it opens at the width and height step 13 noted, long log and all.
+24. Open the developer client (`build/developer-client/index.html`, as a `file://` page) and its Dev Tools tab. The client talks to http://localhost:8081, so the tab steps apply to this game on its default port.
+25. Press Refresh: the colonist list and the thought types fill in.
+26. Pick Bob in the colonist list: Give thought and Set attribute turn on.
+27. Pick `Idle musing` in the thought list: it shows as picked.
+28. Press Give thought: the feedback line reads `thought -> ` with `"created":true`.
+29. In the panel's LOG tab pick All: an idle musing block is the newest.
+30. Pick `strength` in the attribute list and set the value to 20: both show as picked.
+31. Press Set attribute: the feedback line reads ok.
+32. Read `/api/state?what=colonists`: Bob's `attributes.strength` is 20.
+33. `/api/ui/lint` on each tab: `"count":0`.
 
 ### Pruning
 

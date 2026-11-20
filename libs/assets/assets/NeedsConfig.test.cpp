@@ -1,5 +1,5 @@
-// Loading need thresholds from data: the shipped folder, a later file replacing a need, and the mistakes
-// the loader reports.
+// Loading needs from data, thresholds and mood cost: the shipped folder, a later file replacing a need,
+// and the mistakes the loader reports.
 
 #include "assets/NeedsConfig.h"
 
@@ -9,6 +9,8 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 using namespace assets;
 
@@ -63,27 +65,54 @@ TEST(NeedsConfig, TheShippedNeedsLoadClean) {
 	for (const std::string& error : load.errors) {
 		ADD_FAILURE() << error;
 	}
-	const auto hunger = std::ranges::find(load.config.needs, std::string("Hunger"), &NeedThresholdsDef::need);
+	const auto hunger = std::ranges::find(load.config.needs, std::string("Hunger"), &NeedDef::need);
 	ASSERT_NE(hunger, load.config.needs.end());
 	EXPECT_EQ(hunger->thresholds, (std::array{50.0F, 25.0F, 10.0F}));
+
+	std::vector<std::pair<std::string, float>> costs;
+	for (const NeedDef& need : load.config.needs) {
+		costs.emplace_back(need.need, need.moodCost);
+	}
+	EXPECT_EQ(
+		costs,
+		(std::vector<std::pair<std::string, float>>{
+			{"Hunger", 25.0F},
+			{"Thirst", 25.0F},
+			{"Energy", 20.0F},
+			{"Bladder", 10.0F},
+			{"Digestion", 10.0F},
+			{"Hygiene", 15.0F},
+			{"Recreation", 15.0F},
+			{"Temperature", 60.0F},
+		})
+	);
 }
 
-TEST(NeedsConfig, ALaterFileReplacesANeedByName) {
+TEST(NeedsConfig, ALaterFileReplacesANeedByNameCostIncluded) {
 	const NeedsFolder folder(
-		R"(<Needs><Need name="Hunger" seek="50" urgent="25" critical="10"/><Need name="Thirst" seek="50" urgent="25" critical="10"/></Needs>)",
-		R"(<Needs><Need name="Hunger" seek="60" urgent="25" critical="10"/></Needs>)"
+		R"(<Needs><Need name="Hunger" seek="50" urgent="25" critical="10" cost="25"/><Need name="Thirst" seek="50" urgent="25" critical="10" cost="25"/></Needs>)",
+		R"(<Needs><Need name="Hunger" seek="60" urgent="25" critical="10" cost="50"/></Needs>)"
 	);
 	const NeedsConfigLoad load = folder.load();
 	EXPECT_TRUE(load.errors.empty());
 	ASSERT_EQ(load.config.needs.size(), 2U);
 	EXPECT_EQ(load.config.needs[0].thresholds[0], 60.0F);
+	EXPECT_EQ(load.config.needs[0].moodCost, 50.0F);
 	EXPECT_EQ(load.config.needs[0].source, "mods/later.xml") << "a file is named relative to the needs folder, with forward slashes";
 	EXPECT_EQ(load.config.needs[1].thresholds[0], 50.0F);
+	EXPECT_EQ(load.config.needs[1].moodCost, 25.0F);
+}
+
+TEST(NeedsConfig, ACostOfZeroLeavesTheNeedOutOfMood) {
+	const NeedsConfigLoad load = NeedsFolder(R"(<Needs><Need name="Hunger" seek="50" urgent="25" critical="10" cost="0"/></Needs>)").load();
+	EXPECT_TRUE(load.errors.empty());
+	ASSERT_EQ(load.config.needs.size(), 1U);
+	EXPECT_EQ(load.config.needs[0].moodCost, 0.0F);
 }
 
 TEST(NeedsConfig, MistakesNameTheFileTheNeedAndTheAttributeAndLoadNothingFromTheFile) {
 	const NeedsFolder broken(
-		R"(<Needs><Need name="Thirst" seek="50" urgent="25" critical="10"/><Need name="Hunger" seek="50%" urgent="25" critical="10"/></Needs>)"
+		R"(<Needs><Need name="Thirst" seek="50" urgent="25" critical="10" cost="25"/><Need name="Hunger" seek="50%" urgent="25" critical="10" cost="25"/></Needs>)"
 	);
 	const NeedsConfigLoad load = broken.load();
 	EXPECT_TRUE(mentions(load.errors, "needs.xml: <Need name=\"Hunger\"> seek must be a number, got \"50%\""));
@@ -91,25 +120,46 @@ TEST(NeedsConfig, MistakesNameTheFileTheNeedAndTheAttributeAndLoadNothingFromThe
 
 	EXPECT_TRUE(mentions(errorsFor("<Mood/>"), "the root element is not <Needs>"));
 	EXPECT_TRUE(mentions(errorsFor(R"(<Needs><Want name="Hunger"/></Needs>)"), "unknown element <Want>"));
-	EXPECT_TRUE(mentions(errorsFor(R"(<Needs><Need seek="50" urgent="25" critical="10"/></Needs>)"), "a <Need> has no name"));
+	EXPECT_TRUE(mentions(errorsFor(R"(<Needs><Need seek="50" urgent="25" critical="10" cost="25"/></Needs>)"), "a <Need> has no name"));
 	EXPECT_TRUE(mentions(
-		errorsFor(R"(<Needs><Need name="Hunger" seek="50" urgent="25" critical="10" mild="60"/></Needs>)"),
+		errorsFor(R"(<Needs><Need name="Hunger" seek="50" urgent="25" critical="10" cost="25" mild="60"/></Needs>)"),
 		"<Need name=\"Hunger\">: unknown attribute 'mild'"
 	));
-	EXPECT_TRUE(
-		mentions(errorsFor(R"(<Needs><Need name="Hunger" seek="50" critical="10"/></Needs>)"), "<Need name=\"Hunger\"> urgent is missing")
-	);
 	EXPECT_TRUE(mentions(
-		errorsFor(R"(<Needs><Need name="Hunger" seek="150" urgent="25" critical="10"/></Needs>)"),
+		errorsFor(R"(<Needs><Need name="Hunger" seek="50" critical="10" cost="25"/></Needs>)"), "<Need name=\"Hunger\"> urgent is missing"
+	));
+	EXPECT_TRUE(mentions(
+		errorsFor(R"(<Needs><Need name="Hunger" seek="150" urgent="25" critical="10" cost="25"/></Needs>)"),
 		"<Need name=\"Hunger\"> seek must be a need percentage from 0 to 100, got \"150\""
 	));
-	EXPECT_TRUE(
-		mentions(errorsFor(R"(<Needs><Need name="Hunger" seek="50" urgent="60" critical="10"/></Needs>)"), "urgent must be below seek")
-	);
+	EXPECT_TRUE(mentions(
+		errorsFor(R"(<Needs><Need name="Hunger" seek="50" urgent="60" critical="10" cost="25"/></Needs>)"), "urgent must be below seek"
+	));
 	EXPECT_TRUE(mentions(
 		errorsFor(
-			R"(<Needs><Need name="Hunger" seek="50" urgent="25" critical="10"/><Need name="Hunger" seek="50" urgent="25" critical="10"/></Needs>)"
+			R"(<Needs><Need name="Hunger" seek="50" urgent="25" critical="10" cost="25"/><Need name="Hunger" seek="50" urgent="25" critical="10" cost="25"/></Needs>)"
 		),
 		"<Need name=\"Hunger\"> is given twice"
 	));
+}
+
+TEST(NeedsConfig, ACostIsRequiredANumberAndZeroOrMore) {
+	const auto onlyError = [](const std::string& cost) {
+		const std::vector<std::string> errors =
+			errorsFor(R"(<Needs><Need name="Hunger" seek="50" urgent="25" critical="10")" + cost + "/></Needs>");
+		EXPECT_EQ(errors.size(), 1U) << cost;
+		return errors.empty() ? std::string() : errors.front();
+	};
+	EXPECT_EQ(onlyError(""), "needs.xml: <Need name=\"Hunger\"> cost is missing");
+	EXPECT_EQ(onlyError(R"( cost="-5")"), "needs.xml: <Need name=\"Hunger\"> cost must be zero or more, got \"-5\"");
+	EXPECT_EQ(onlyError(R"( cost="6abc")"), "needs.xml: <Need name=\"Hunger\"> cost must be a number, got \"6abc\"");
+
+	const NeedsConfigLoad load = NeedsFolder(
+									 R"(<Needs><Need name="Hunger" seek="50" urgent="25" critical="10" cost="25"/></Needs>)",
+									 R"(<Needs><Need name="Hunger" seek="50" urgent="25" critical="10"/></Needs>)"
+	)
+									 .load();
+	EXPECT_TRUE(mentions(load.errors, "mods/later.xml: <Need name=\"Hunger\"> cost is missing"));
+	ASSERT_EQ(load.config.needs.size(), 1U);
+	EXPECT_EQ(load.config.needs[0].moodCost, 25.0F) << "a later file with an error replaces nothing";
 }

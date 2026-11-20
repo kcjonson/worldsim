@@ -22,13 +22,15 @@ namespace ecs {
 
 	NeedsComponent::NeedsComponent(const NeedLevels& levels) {
 		for (std::size_t index = 0; index < needs.size(); ++index) {
-			const NeedLevels::Thresholds& thresholds = levels.thresholdsOf(static_cast<NeedType>(index));
+			const auto					  need = static_cast<NeedType>(index);
+			const NeedLevels::Thresholds& thresholds = levels.thresholdsOf(need);
 			needs[index] = Need{
 				.value = 100.0F,
 				.decayRate = kDecayRates[index],
 				.seekThreshold = thresholds[0],
 				.urgentThreshold = thresholds[1],
 				.criticalThreshold = thresholds[2],
+				.moodCost = levels.moodCostOf(need),
 			};
 		}
 	}

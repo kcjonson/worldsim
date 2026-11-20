@@ -28,18 +28,32 @@ namespace world_sim {
 			return world_sim::text(theme, {.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fsSm, .color = tokens::color::text});
 		}
 
+		struct BreakdownRowText {
+			std::string label;
+			std::string left;
+			std::string amount;
+		};
+
+		BreakdownRowText rowText(const MoodNeedRow& row) {
+			return {.label = row.label, .amount = row.amount};
+		}
+
+		BreakdownRowText rowText(const MoodThoughtRow& row) {
+			return {.label = row.label, .left = row.left, .amount = row.amount};
+		}
+
 		// A label, or a label over its time left, with the amount at the right.
 		class BreakdownRow : public ui::Component {
 		  public:
 			struct Args {
 				UI_COMMON_ARGS
-				MoodThoughtRow row;
+				BreakdownRowText row;
 			};
 
 			explicit BreakdownRow(const Args& args)
 				: row(args.row) {}
 
-			void setRow(const MoodThoughtRow& newRow) {
+			void setRow(const BreakdownRowText& newRow) {
 				row = newRow;
 				show();
 			}
@@ -72,7 +86,7 @@ namespace world_sim {
 				amount.get()->setText(row.amount);
 			}
 
-			MoodThoughtRow	  row;
+			BreakdownRowText  row;
 			ui::Ref<ui::Text> label;
 			ui::Ref<ui::Text> left;
 			ui::Ref<ui::Text> amount;
@@ -139,7 +153,17 @@ namespace world_sim {
 			 row.addChild<ui::Text>({.layout = {.flexGrow = 1.0F}, .style = label, .text = name});
 			 return row.addChild<ui::Text>({.layout = {.flexShrink = 0.0F}, .style = amountText(theme)});
 		};
-		needsShare = sumRow("mood_breakdown_needs", "Needs");
+		needRows = right.addChild<ui::Component>({
+			.id = "mood_breakdown_needs",
+			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = theme.get(tokens::spacing::space2)},
+		});
+		needsFloor = right.addChild<ui::Text>({
+			.id = "mood_breakdown_needs_floor",
+			.visible = false,
+			.style = tabs::smallText(theme),
+			.text = "Needs take mood to 0 at most",
+			.wrap = true,
+		});
 		thoughtRows = right.addChild<ui::Component>({
 			.id = "mood_breakdown_thoughts",
 			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = theme.get(tokens::spacing::space2)},
@@ -187,18 +211,30 @@ namespace world_sim {
 	void NeedsTabView::showBreakdown(const MoodBreakdown& breakdown) {
 		breakdownShown = true;
 		shownBreakdown = breakdown;
-		needsShare.get()->setText(breakdown.needs);
 		moodTarget.get()->setText(breakdown.target);
 		clampedNote.get()->setVisible(!breakdown.clampedFrom.empty());
 		clampedNote.get()->setText("Clamped: the parts add to " + breakdown.clampedFrom);
 		noThoughts.get()->setVisible(breakdown.thoughts.empty());
 		thoughtRows.get()->setVisible(!breakdown.thoughts.empty());
+		needRows.get()->setVisible(!breakdown.needs.empty());
+		needsFloor.get()->setVisible(breakdown.needsAtFloor);
+		ui::Component& needs = *needRows.get();
+		needs.reconcileChildren(
+			breakdown.needs,
+			[](const MoodNeedRow& row) { return std::to_string(static_cast<int>(row.need)); },
+			[&needs](const MoodNeedRow& row) -> ui::Ref<ui::Component> {
+				return needs.addChild<BreakdownRow>({.id = "mood_breakdown_need", .row = rowText(row)});
+			},
+			[](ui::Component& shown, const MoodNeedRow& row) { static_cast<BreakdownRow&>(shown).setRow(rowText(row)); }
+		);
 		ui::Component& rows = *thoughtRows.get();
 		rows.reconcileChildren(
 			breakdown.thoughts,
 			[](const MoodThoughtRow& row) { return std::to_string(row.id); },
-			[&rows](const MoodThoughtRow& row) -> ui::Ref<ui::Component> { return rows.addChild<BreakdownRow>({.id = "mood_breakdown_row", .row = row}); },
-			[](ui::Component& shown, const MoodThoughtRow& row) { static_cast<BreakdownRow&>(shown).setRow(row); }
+			[&rows](const MoodThoughtRow& row) -> ui::Ref<ui::Component> {
+				return rows.addChild<BreakdownRow>({.id = "mood_breakdown_row", .row = rowText(row)});
+			},
+			[](ui::Component& shown, const MoodThoughtRow& row) { static_cast<BreakdownRow&>(shown).setRow(rowText(row)); }
 		);
 	}
 

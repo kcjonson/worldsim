@@ -31,7 +31,7 @@ namespace ecs {
 
 	class NeedLevels;
 
-	/// One need: its value and decay, and its thresholds from data (NeedLevels). See
+	/// One need: its value and decay, and its thresholds and mood cost from data (NeedLevels). See
 	/// /docs/technical/interruptable-crafts.md (Needs in three levels).
 	struct Need {
 		float value;			 // Current value 0-100%
@@ -39,6 +39,7 @@ namespace ecs {
 		float seekThreshold;	 // AI seeks fulfillment below this ("slightly hungry")
 		float urgentThreshold;	 // Interrupts work below this ("very hungry")
 		float criticalThreshold; // Emergency behavior below this
+		float moodCost;			 // Mood points taken off at its worst (MoodSystem)
 
 		/// Check if need is below seek threshold
 		[[nodiscard]] bool needsAttention() const { return value < seekThreshold; }
@@ -71,7 +72,7 @@ namespace ecs {
 
 	/// Component containing all needs for an entity
 	struct NeedsComponent {
-		/// Every need full, at its decay rate, with its thresholds from `levels`.
+		/// Every need full, at its decay rate, with its thresholds and mood cost from `levels`.
 		explicit NeedsComponent(const NeedLevels& levels);
 
 		std::array<Need, static_cast<size_t>(NeedType::Count)> needs{};

@@ -143,10 +143,10 @@ Mood has two parts ([Mood](./mood.md)):
 
 | Contributor | Source |
 |-------------|--------|
-| Need satisfaction | How well the needs are met, weighted per need |
+| Need satisfaction | 100, less what each unmet need costs, the costs added |
 | Mood effects | Carried by [thoughts](./thoughts.md). Everything else that changes how a colonist feels (surroundings, comfort, company, work they like, things that happen to them) reaches mood as a thought |
 
-### Need-to-Mood Weights
+### What a need costs mood
 
 Each need takes its own points off mood, and a need that is met gives no credit against one that is not: a colonist who is freezing is in a bad mood however well fed they are.
 
@@ -154,7 +154,20 @@ Every need has a cost, the most mood it takes off at its worst, and the penalty 
 
 Every need can interrupt work when it gets bad enough, the ones that cannot kill included: work can run for days, and a colonist who never stops to wash or rest ends up in a low-mood behavior over it. The levels are tuned so that meeting the need comes first. A colonist leaves a long job to go and play a game before they have a fit and wreck the room because they have worked too long.
 
-Each need's cost is on its own entry, and the curve, which every need shares, is in `assets/config/colonists/mood.xml`. Shipped costs: Temperature 60, Hunger 25, Thirst 25, Energy 20, Hygiene 15, Recreation 15, Bladder 10, Digestion 10.
+These are the costs:
+
+| Need | Cost |
+|---|---|
+| Temperature | 60 |
+| Hunger | 25 |
+| Thirst | 25 |
+| Energy | 20 |
+| Hygiene | 15 |
+| Recreation | 15 |
+| Bladder | 10 |
+| Digestion | 10 |
+
+Each need's cost is on its own entry in `assets/config/colonists/needs/needs.xml`, beside its thresholds, so a need added by a mod carries its own cost and a mod file that replaces a need replaces its cost with it. `assets/config/colonists/mood.xml` holds the penalty curve, which every need shares, along with the easing and the bands.
 
 ### What low mood does
 

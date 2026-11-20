@@ -10,8 +10,6 @@
 
 #include <assets/MoodConfig.h>
 
-#include <cstdint>
-
 namespace ecs {
 
 	/// Priority 12: after ThoughtSystem, so the target counts this frame's held thoughts.
@@ -29,14 +27,11 @@ namespace ecs {
 		[[nodiscard]] const char* name() const override { return "Mood"; }
 
 	  private:
-		void refreshNeedWeights();
 		/// Sets the contributions, target, and cause from the colonist's needs and held thoughts.
 		void refreshTarget(EntityID colonist, const NeedsComponent& needs, Mood& mood) const;
 		[[nodiscard]] double now() const;
 
 		const assets::MoodConfig& config;
-		NeedMoodWeights			  needWeights{};
-		uint64_t				  resolvedGeneration = 0;
 	};
 
 } // namespace ecs

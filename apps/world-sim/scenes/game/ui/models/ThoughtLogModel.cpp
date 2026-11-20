@@ -17,7 +17,7 @@ namespace world_sim {
 		constexpr long kHoursPerDay = 24;
 		constexpr long kMinutesPerDay = kHoursPerDay * kMinutesPerHour;
 		constexpr long kHoursShownBeforeDays = 2 * kHoursPerDay;
-		// A sum this close to its clamped target was not clamped, only rounded.
+		// Parts this close to the target were not clamped, only rounded.
 		constexpr float kClampTolerance = 0.05F;
 
 		std::string counted(long count, const char* one, const char* many) {
@@ -123,19 +123,33 @@ namespace world_sim {
 
 	MoodBreakdown
 	moodBreakdown(const ecs::ThoughtTypes& types, const ecs::Thoughts* thoughts, const ecs::Mood& mood, double simulationSeconds) {
-		float needs = 0.0F;
-		for (const float contribution : mood.needContributions) {
-			needs += contribution;
+		const float				   needs = ecs::needsScore(mood.needContributions);
+		float					   parts = needs;
+		std::vector<ecs::NeedType> costing;
+		for (size_t i = 0; i < ecs::kNeedCount; ++i) {
+			if (moodAmountText(mood.needContributions[i]) != "0") {
+				costing.push_back(static_cast<ecs::NeedType>(i));
+			}
 		}
-		float sum = ecs::kFullMood + needs;
 		for (const ecs::MoodThoughtContribution& contribution : mood.thoughtContributions) {
-			sum += contribution.amount;
+			parts += contribution.amount;
 		}
+		std::ranges::stable_sort(costing, [&mood](ecs::NeedType left, ecs::NeedType right) {
+			return mood.needContributions[static_cast<size_t>(left)] < mood.needContributions[static_cast<size_t>(right)];
+		});
 		MoodBreakdown breakdown{
-			.needs = moodAmountText(needs),
+			.needsAtFloor = needs == 0.0F,
 			.target = percentText(mood.target),
-			.clampedFrom = std::abs(sum - mood.target) > kClampTolerance ? percentText(sum) : std::string(),
+			.clampedFrom = std::abs(parts - mood.target) > kClampTolerance ? percentText(parts) : std::string(),
 		};
+		breakdown.needs.reserve(costing.size());
+		for (const ecs::NeedType need : costing) {
+			breakdown.needs.push_back({
+				.need = need,
+				.label = ecs::needLabel(need),
+				.amount = moodAmountText(mood.needContributions[static_cast<size_t>(need)]),
+			});
+		}
 		if (thoughts == nullptr) {
 			return breakdown;
 		}
