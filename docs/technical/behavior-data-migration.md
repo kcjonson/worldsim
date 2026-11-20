@@ -18,11 +18,11 @@ All of it is on `main` and on this branch.
   (WOR-1055) replaces the average with summed costs and ships each cost on the human's need entries in
   `needs.xml`, not in a `<NeedCosts>` block; the config-move ticket carries `needs.xml` into the human's
   folder, and the need-entries ticket turns each cost into a `<moodCost>` row of the human's definition.
-- The human: the asset folder `assets/world/colonists/Colonist/` (`Colonist.xml` with the `Colonist`,
-  `Colonist_up` and the other facing definitions, `biped.motion.xml`, the SVGs), and its config in
+- The human: the asset folder `assets/world/creatures/Human/` (`Human.xml` with the `Human`,
+  `Human_up` and the other facing definitions, `biped.motion.xml`, the SVGs), and its config in
   `assets/config/colonists/` (`mood.xml`, `memory.xml`, `traits/`, `attributes/`, `needs/`). Code names
-  the definition `"Colonist"` in `GameScene.cpp` (the spawned `Appearance`), in `kinds.xml`
-  (`<Kind name="colonist" mover="Colonist"/>`), and in the facing variants.
+  the definition `"Human"` in `GameScene.cpp` (the spawned `Appearance`), in `kinds.xml`
+  (`<Kind name="colonist" mover="Human"/>`), and in the facing variants.
 - Options: `AIDecisionSystem.cpp` (about 4,000 lines). The needs loop with its hunger special case
   (about lines 2,560 to 2,956, with the gather-food option built inside it), `needToCapability`,
   `getFirstActionDefName`, `taskFirstActionNeedsHands`, `findToiletLocation`
