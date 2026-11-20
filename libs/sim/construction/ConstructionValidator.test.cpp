@@ -675,6 +675,50 @@ TEST_F(OpeningValidation, DoorAtMidpointValid) {
 	EXPECT_TRUE(validator.validateOpening(seg, 0.5F, "Door", "Wood").ok());
 }
 
+// A wall ending on another wall splits it and re-hosts its openings by t. An end within the
+// opening's half width (0.45 m for the door) plus openingMargin (0.3 m) plus the stem's half
+// thickness (0.1 m) of its centre would leave the door on the junction, so every way a wall can
+// place that end is refused; one just past that clears. The door is at x=6 on a wall (2,6)-(10,6).
+TEST_F(OpeningValidation, AWallEndOnAnOpeningsSpanIsRefusedByBothWallValidators) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	SegmentId		  seg = buildWall(world, 8.0F);
+	ASSERT_NE(world.addOpening(seg, 0.5F, "Door", "Wood"), kInvalidOpening);
+	const ConstructionValidator validator(cfg, world);
+
+	for (const float x : {6.0F, 6.8F, 5.2F}) {
+		SCOPED_TRACE(x);
+		EXPECT_EQ(validator.validateWallSegment({x, 10.0F}, {x, 6.0F}, standardWood(), kInvalidFoundation).code, ValidationCode::WallEndsOnOpening);
+		EXPECT_EQ(validator.validateWallSegment({x, 6.0F}, {x, 10.0F}, standardWood(), kInvalidFoundation).code, ValidationCode::WallEndsOnOpening);
+		EXPECT_EQ(validator.validateWallPoint({{x, 10.0F}}, {x, 6.0F}, standardWood(), kInvalidFoundation).code, ValidationCode::WallEndsOnOpening);
+		EXPECT_EQ(validator.validateWallPoint({}, {x, 6.0F}, standardWood(), kInvalidFoundation).code, ValidationCode::WallEndsOnOpening);
+	}
+	for (const float x : {6.9F, 5.1F, 3.0F}) {
+		SCOPED_TRACE(x);
+		EXPECT_TRUE(validator.validateWallSegment({x, 10.0F}, {x, 6.0F}, standardWood(), kInvalidFoundation).ok());
+		EXPECT_TRUE(validator.validateWallPoint({{x, 10.0F}}, {x, 6.0F}, standardWood(), kInvalidFoundation).ok());
+	}
+	EXPECT_EQ(std::string(validationReason(ValidationCode::WallEndsOnOpening)), "an opening is in the way");
+}
+
+// The opening keeps its place in the world across the split the wall just past the margin makes.
+TEST_F(OpeningValidation, AWallEndingPastTheMarginKeepsTheOpeningWhereItIs) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	SegmentId		  seg = buildWall(world, 8.0F);
+	ASSERT_NE(world.addOpening(seg, 0.5F, "Door", "Wood"), kInvalidOpening);
+	ASSERT_TRUE(ConstructionValidator(cfg, world).validateWallSegment({6.9F, 10.0F}, {6.9F, 6.0F}, standardWood(), kInvalidFoundation).ok());
+	ASSERT_TRUE(world.commitSegment(mm(6.9F, 10.0F), mm(6.9F, 6.0F), "Wood", "Standard", kInvalidFoundation, world.version()).ok());
+
+	const Opening& door = world.openings().front();
+	const WallSegment* hosted = world.getSegment(door.segment);
+	ASSERT_NE(hosted, nullptr);
+	const double startX = world.getVertex(hosted->v0)->pos.x / 1000.0;
+	const double endX = world.getVertex(hosted->v1)->pos.x / 1000.0;
+	EXPECT_NEAR(startX + (endX - startX) * door.t, 6.0, 1e-3) << "the door is still at x = 6 m";
+	EXPECT_NEAR(endX, 6.9, 1e-3) << "on the half that ends at the new junction";
+}
+
 TEST_F(OpeningValidation, UnknownSegmentRejected) {
 	ConstraintConfig	  cfg = defaults();
 	ConstructionWorld	  world;
