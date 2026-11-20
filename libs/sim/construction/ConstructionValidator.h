@@ -74,7 +74,7 @@ namespace construction {
 		ParallelClearanceTooSmall,	  // faces run closer than minParallelClearance without joining
 		XCrossing,					  // centerline would properly cross an existing wall centerline
 		WallEndsOnOpening,			  // an end of the wall would land within an opening's span (plus margin) on an existing wall
-		// Opening codes (Epic F). An opening is placed on a BUILT wall segment at a
+		// Opening codes (Epic F). An opening is placed on a wall segment, blueprint or built, at a
 		// centerline parameter t; these are the opening-only reasons.
 		OpeningSegmentInvalid,	// target segment is missing, or its wall graph cannot be resolved (openingRange)
 		OpeningTypeInvalid,		// opening type name is not a known opening type
