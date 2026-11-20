@@ -739,7 +739,7 @@ The quadratic term is gone, but a beam patch's setup still grows with the rings 
 
 ### 6.11 Measured: the record in forest and the soft cover
 
-With sight softened ([Sight Softening](./sight-softening.md) 12), RelWithDebInfo, at the start values, one run each. The record's times were taken with both machine-load checks `idle`, the cover's with the check before `idle`; counts do not depend on load.
+With sight softened ([Sight Softening](./sight-softening.md) 12), RelWithDebInfo, at the start values, one run each. The record's times were taken with the machine idle before and after the run. The cover's were taken with the machine idle before the run and not checked after it, so they are not a baseline. Counts do not depend on load.
 
 The record in the landing's forest, `BM_SightForestScheduler` and `BM_SightForestWalk` (`libs/sim/vision/SightForest.bench.cpp`) on `SeenArea`, 50 colonists walking, against the plain sight disc with no forest on the same walk and the same scheduler:
 
@@ -747,8 +747,8 @@ The record in the landing's forest, `BM_SightForestScheduler` and `BM_SightFores
 |---|---|---|
 | Mean record tick, ms | 0.79 against 0.24 | 1.04 against 0.44 |
 | Worst record tick, ms | 9.45 against 2.40 | 8.33 against 3.55 |
-| Queue at its peak | 36 against 50 | 281 against 52 |
-| K where registered, mean / most | 51.5 / 250 against 11.7 / 60 | 19.8 / 100 against 10.4 / 60 |
+| Queue at its peak | 36 against 50 | 283 against 52 |
+| K where registered, mean / most | 51.5 / 248 against 11.7 / 60 | 19.8 / 100 against 10.4 / 60 |
 
 At 1x the patches carry 0.31 ms of the 0.55 ms forest adds to the mean tick: forest registers 6.2 times the pieces (21,563 against 3,466), each among more rings. At 10x the walkers' feeds and the covered tests carry 0.44 of the 0.60 ms. The slowest 1x ticks keep 3.5 to 4.5 ms of tests, cuts, feeds, and widths with no patch at all, so no budget inside the record's scheduler holds the worst tick under 5 ms. Sight-softening.md 12.1 has the walk, the counts at 10 colonists, and the phases.
 
@@ -761,7 +761,7 @@ The cover's CPU time a frame, building and uploading every colonist's feather an
 | 50 walking | 5.2 | 5.5 |
 | 50 standing | 0.2 | |
 
-At 50 walking, 1.7 ms of it is uploads (36 meshes a frame, most of them feathers and bands) and 1.8 ms `drawnVisible`; at 1 walking about 0.6 ms is his feather and bands going up. A soft body takes 15 triangles at the landing on average, a colonist 2,300 to 2,700. Due rings of soft bodies wait 0.6 frames on average at 1x (6 at most) and 6 at 10x (14 at most), and the most a ring left due has turned past its cadence is 0 at 1x and 3 degrees at 10x.
+At 50 walking, 1.7 ms of it is uploads (36 meshes a frame, most of them feathers and bands) and 1.8 ms `drawnVisible`; at 1 walking about 0.6 ms is his feather and bands going up. A soft body takes 15 triangles at the landing on average, a colonist 2,300 to 2,700. The longest wait of a due ring of soft bodies is 0.6 frames (6 at most) at 1x and 6 frames (14 at most) at 10x, and the most a ring left due has turned past its cadence is 0 at 1x and 3 degrees at 10x.
 
 The pending cut at the record's edge, by counts on the null backend, colonists 1.2 m apart walking 2 m/s out of the landing into unexplored ground: 1 walking 0.06 ms a frame, 10 walking 0.66 ms, 50 walking 6.2 ms, 50 at the edge with 1 walking 2.9 ms.
 
