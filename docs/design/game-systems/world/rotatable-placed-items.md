@@ -16,17 +16,21 @@ The look is a rough simulation of a 3D object made of boxes, drawn with flat vec
 - Height reads the same everywhere. An item's height in metres sets how far its top rises up the screen, by one ratio shared with everything else that has height, walls included, so a 0.8 m workbench never looks taller than a 2.4 m wall.
 - Colonists and other items sort in front of or behind an item by where they stand relative to its footprint, along its whole length: a colonist standing at the front of a diagonal bench's left end draws in front of that end, and one standing behind its right end draws behind that end.
 - Zoomed out, an item drops the fine detail its artist marked as fine (grain, stitching, small tools), as flora and the ground do, so a far view of a full workshop stays cheap.
-- An item no colonist can stand to use (walled in, or its working side blocked) shows a blocked marker, and its info panel says nowhere to stand.
+- An item no colonist can stand to use (walled in, or its working side blocked) shows a blocked marker, its info panel notes that there is nowhere to stand, and a toast says so when it happens.
+- An item's body is what has a top over it: the plan of its parts that have height. A rug or a crafting spot's mat is drawn but has no body. A body may have any outline, so an L-shaped counter keeps its inside corner, and a colonist can walk into it and stand there, drawn in front of the arm behind him and behind the arm in front.
+- Colonists see over an item lower than their eyes (1.6 m): a workbench, a bed, or a table hides nothing. A taller item (a wardrobe, a tall shelf) blocks sight as a rock of its size does.
 
 ## Using an item
 
 A colonist uses an item from a **use area**: a patch of ground in the item's frame that turns and moves with it. An item has one or many. A storage box is used from anywhere round it; a smelter only from a patch in front of its mouth; a long counter could be worked from either of two patches along its front.
 
-A colonist walks to the nearest point of a use area he can reach and stand on, and works from there. Ground inside the item itself is never a place to stand. An item that names no use area is used from anywhere within 0.7 m of its body, the construction pathing clearance.
+A colonist walks to the nearest point of a use area he can reach and stand on, and works from there. Ground inside the item's body is never a place to stand; the inside corner of an L-shaped counter is, and a use area may be drawn there. An item that names no use area is used from anywhere within 0.7 m of its body, the construction pathing clearance.
+
+A use area is usable when one colonist fits in it: somewhere in it there is room for the largest colonist's body (a disc 0.6 m across), on open walkable ground. One is enough; a use area serves one person at a time. An item whose drawn use area could never fit a colonist fails to load.
 
 An item also has a **clearance**: space round its body that other items' bodies and walls stay out of. A box has none and can sit against another box. A bed might keep a strip clear down one side so it can be got into; a forge might keep space round its hot sides. Clearance is walkable, it is not a wall, and two items' clearances may overlap: two benches facing each other can share one aisle.
 
-Use areas and clearance follow the item when it moves. Placement checks them; after placement, if walls or other items later take every spot in its use areas, the item shows it is blocked (above). Which items a colonist knows about, and which he can reach, follow the same rules as everything else he works with.
+Use areas and clearance follow the item when it moves. Placement checks them, and refuses an item that would leave another item no use area a colonist fits in. If walls later take the room in every use area, the item is blocked: it shows the blocked marker, its info panel says nowhere to stand, and a toast says so once, when it happens. While it is blocked, every order, command, and use of it is blocked in the task list: nothing is offered or queued for it, orders already queued wait rather than vanish, and a colonist on his way to it stops and goes to other work. When room returns, it clears and the waiting orders go on. A use area in ground nobody has explored yet doesn't make an item blocked; its panel says the use area is unexplored. Which items a colonist knows about, and which he can reach, follow the same rules as everything else he works with.
 
 ## Placing an item
 
@@ -42,7 +46,7 @@ Placing works the way the drawing tools do: it snaps by default, and holding **A
    Q and E step to the next stop in their direction: the next multiple of 15 degrees, or a quarter turn of a nearby wall's direction if that comes first.
 4. The position snaps flush. An item with a side parallel to a wall face, or to a side of another placed item, and within 0.3 m of it (the drawing tools' edge snap radius) slides until it touches: a workbench backs onto the wall, and a row of beds lines up side to side. A side with clearance stops that far off instead of touching. Otherwise the item sits where the pointer is.
 5. Hold **Alt** to turn freely: no square-to-a-wall, no angle step, and Q and E turn by 1 degree. The flush slide stays, as the wall tools keep their snaps to existing corners and edges under Alt, so a freely turned item that happens to be parallel to a wall still backs onto it. The ground rules still apply.
-6. A click (or a release) where the item can't go places nothing; the ghost reads red and says why, in a word or two beside it: the ground isn't buildable or hasn't been seen, it overlaps another item, it is too close to an item or a wall for one of their clearances, or no use area has room to stand.
+6. A click (or a release) where the item can't go places nothing; the ghost reads red and says why, in a word or two beside it: the ground isn't buildable or hasn't been seen, it overlaps another item or a spot a crate is waiting to be installed on, it is too close to an item or a wall for one of their clearances, no use area has room for a colonist (or its use areas are unexplored), or it would leave another item with no use area a colonist fits in.
 
 The turn snaps by default even though the drawing tools' angle-step helper starts off. A building drawn with the helpers off still lands square, because the rectangle tool's grid does that job; an item has no grid, and an item at a stray 3 degrees reads as a mistake, so the turn step does the grid's job here and applies whatever the helper setting.
 
@@ -61,6 +65,8 @@ An item is a few **parts**. A part is an upright block: a footprint (a rectangle
 A box is one part. That is the simplest item, and every placed item, however plain, is drawn this way.
 
 Parts stand side by side or stack. Two parts whose footprints overlap must be separated in height (a worktop on its carcass); the higher draws over the lower. Two parts whose footprints don't overlap draw nearer-in-front, whatever their heights. An item whose parts overlap both in plan and in height fails to load.
+
+The item's body, what colonists, walls, and other items can't pass through, is the plan of the parts that have height, seen from above: a slab on four legs is the slab's whole rectangle, so nothing stands under it, and an L of two blocks is an L. A flat part (a rug, a mat) has no body.
 
 ### Files
 
@@ -122,7 +128,7 @@ Most furniture lands between the stool and the workbench: a body part with a fro
 - How walls are drawn. This spec sets the one height rule and the shared ratio; wall height and wall style belong to WOR-740 (Finish buildings: rotated-shape snapping, wall styling, enclosed state), which tunes the ratio and the walls together with these items.
 - Turning a placed item in place. An item is turned while it is placed or relocated, not afterwards on its own.
 - Moving parts and animation. Drawers that open, a bellows that pumps: parts are static.
-- Sloped or curved tops, parts that are not upright blocks, and one item standing under another (a chair pushed under a desk). An item's body is the hull of its parts, so nothing stands in the space under a desk or in the notch of an L-shaped item.
+- Sloped or curved tops, parts that are not upright blocks, and one item standing under another (a chair pushed under a desk). An item's body is the plan of its parts with height, so nothing stands under a desktop.
 - Day and night light. The light is fixed, one config value, and nothing in an asset depends on where it is.
 
 ## Addendum: decisions
@@ -134,7 +140,7 @@ A supplement, not part of the spec. Where it and the spec disagree, the spec is 
 - Placed items only: "not rotating flora. this is for placed items, furnature, workstations, crafted things."
 - Parts reused within one item: "you have parts for the legs, but they're all essentially the same leg, so we wouldn't need unique assets for every leg. we should have some reusable part structure." Asked whether parts are shared across items or reused only within one: "Within one asset".
 - One SVG per drawing, chosen over one SVG holding all of an item's drawings with structure in its metadata: "one per file I think would be easier to import and modify in vector programs because it wouldn't smash our unique structure or metadata, right?"
-- The height ratio below 0.5, tuned with the walls: "I think it needs to be lower [than 0.5], because we'll need to get this visual style in line with wall height and size, it can't look like the station is taller than the walls. note: we have not worked on wall style yet, still need to do that, so its adjustable to tune the walls and assets together."
+- The height ratio below 0.5, tuned with the walls. Shown a ratio of 0.5, he said: "I think it needs to be lower, because we'll need to get this visual style in line with wall height and size, it can't look like the station is taller than the walls. note: we have not worked on wall style yet, still need to do that, so its adjustable to tune the walls and assets together."
 - Constant line widths: lines keep their width on skewed faces, rather than letting the skew thin them.
 - Snapping: "snap by default, free on request. just like walls."
 - A fixed light from the upper left, matching the flora art.
@@ -143,3 +149,7 @@ A supplement, not part of the spec. Where it and the spec disagree, the spec is 
 - Use areas, one or many an item: "usage location. this should be one or many painted/defined areas that the asset can be accessed from or used from. a storage box would essentially just have a circle around it, but the smelter could only be used right in front of it."
 - Clearance: "like usage location, but slightly different, clearance requirements. a box can be be placed right against another, but other items might need a little bit of space around them, either visually or functionally."
 - Use areas and clearance as shapes, written in the XML or drawn, and shown in the asset manager: "the view/clearance areas are essentially shapes, we can either define them in the def XML OR have them as complex shapes like a part in the svg. I think for authoring large complex things an artist may want to draw and scale the shapes in there vector editor. but for simple things like a place to stand a circle at a point would be fine. in our asset viewer app, we'll need to see them visually."
+- Sight by height. Asked whether placed items block sight, he chose "By height": an obstacle carries its height, a body lower than a colonist's eye height never casts a sight shadow or adds forest depth, a body at or above it follows the existing size rule, and no code names furniture.
+- Detail-level thresholds keep their existing units: "Keep them as they are".
+- The body is the tops, any shape. Told that an item's collision would be the convex outline round all its parts: "thats not entirely true. a rug for instance has zero height, only a top texture and no collision. the collision should largely just be the TOP. sides arn't that high, camera is mostly above. so allowing complex shapes and shouldn't be that bad. we want to allow non-convex collision."
+- Usable means one colonist fits, and a blocked item is loud. Asked how the player is told when every use area is blocked: "use areas should have a minimum volume, which is the size of the largest colonist collider. so long as anywhere in the use area can fit a single colonist collider, its useable by one person. after that, then it should have a marker, info panel not, and toast. (and all orders/commands/use blocked from the task list)". "info panel not" is read as "info panel note".

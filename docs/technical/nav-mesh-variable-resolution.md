@@ -515,7 +515,7 @@ off it. A chunk's water rings (`nav::appendChunkWater`) go in with the first lim
 in the same patch as its ground, and hang over unmeshed ground, where they add nothing. Walls and
 doors are global (4.2) and hang the same way.
 
-**Placed obstacles by entity.** Placed items (furniture, stations, storage) are ECS entities outside the executor's chunk index and reach the mesh through their own source, `PlacedItemIndex`, queried beside it and diffed like walls ([Rotatable placed items, section 11](./rendering/rotatable-placed-items.md#11-collision-nav-and-the-obstacle-source)). For a limit going in, each chunk its query box meets (the
+**Placed obstacles by entity.** Placed items (furniture, stations, storage) are ECS entities outside the executor's chunk index and reach the mesh through their own source, `PlacedItemIndex`, queried beside it and diffed like walls, each collider ring keyed by entity and ring index in `obstacleInMesh`, and pending install targets never enter ([Rotatable placed items, section 11](./rendering/rotatable-placed-items.md#11-collision-nav-and-the-obstacle-source)). For a limit going in, each chunk its query box meets (the
 polygon's box grown by `NavigationSystem::footprintReachMeters()`) is asked for its placed entities in that box
 (`SpatialIndex::queryRect`). An entity whose footprint box meets the disc the limit circumscribes,
 and that is not in the mesh already (`obstacleInMesh`, by `ObstacleKey`: chunk, position, def),

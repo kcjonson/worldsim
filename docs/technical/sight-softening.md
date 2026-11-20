@@ -40,7 +40,7 @@ The collision map is the nav mesh's blocked rings: wall bands and junctions, pla
 | Source | Sight |
 |---|---|
 | A built wall | Its body is the outline of its connected wall graph, as `GeometryIndex` builds it: `geometry::wallPiecesAndOutline(...).outline` (`libs/geometry/offset/WallOffset.h`), the boundary of the union of the trimmed bands and junctions, cut at every opening whose type is `transparentToSight` (`ConstructionRegistry.h`). The whole band is opaque, so an opaque wall's shadow starts at its near face |
-| A placed obstacle (`kProvenancePlaced`) | Its body is the ring nav holds for it |
+| A placed obstacle (`kProvenancePlaced`) | Its body is the ring nav holds for it, when the obstacle is at least `eyeHeightMm` tall (2.2) |
 | Water (`kProvenanceWater`) | Never: water has no height |
 | A ford (`kProvenanceFord`) | Never: a cover-only ring |
 | A mesh limit or the walkable bounds (`kProvenanceBorder`) | Never: bounds rings, `blocked = false` (`NavInputBuilder.h`) |
@@ -69,6 +69,8 @@ A body's kind is decided once, from its own outline, when it enters the index th
 - A placed body is opaque when its `diameter` is at least `placedOpaqueLeastDiameterMm` (1400 mm), and soft below it. That lies between the widest trunk (a veteran oak, up to 1.385 m across its diagonal at the landing) and a BigRock (1.76 m), so every tree is soft and a BigRock is opaque.
 
 Which threshold applies is the body's provenance in the collision map (a wall outline from construction or a `kProvenancePlaced` ring), never a list of asset kinds.
+
+Before either, height: a placed obstacle carries the height of its body's top, and one lower than a colonist's eye, `eyeHeightMm` (1600 mm), is no body at all. It never enters the placed occluder index, so it casts no shadow and spends no forest depth; colonists see over it. A placed rotatable item's height is its highest part's top ([Rotatable placed items, 11.2](./rendering/rotatable-placed-items.md#112-placed-items-as-obstacles)), so a workbench, a bed, a table, or a stool is never a body, and a tall wardrobe is one by its size. A collider of any other def carries no height and counts as tall, so every tree and rock above is a body as the table says.
 
 The `diameter` is exact: the greatest squared distance between two outline vertices (`Int128` products, `core/Int128.h`), against the threshold squared. A wall graph the band offsetter rejects is outlined as each wall's untrimmed band on its own (`GeometryIndex.cpp`); its body is still the whole connected graph, its outline the set of those band outlines and its `diameter` taken over all their vertices, so a graph's kind follows its walls, not whether the offsetter took them, but for the little an untrimmed end can add across a junction.
 
@@ -231,7 +233,7 @@ The last step is the **slope limit**: no side's depth exceeds a neighbour's by m
 - `distanceWeight` is `min(1, centreDistance^2 / forestNearMm^2) * (1 - centreDistance^2 / sightRadius^2)`, `centreDistance` from the eye to the ring's centre. It is 0 at the eye, rises to its greatest, 0.89, at `forestNearMm` (10 m), and falls to 0 at the sight radius, so a ring coming into sight adds nothing at first, and a ring beside the eye adds little.
 - `arrival` is 1 but for a ring still arriving (2.4).
 
-Every placed ring spends forest depth, opaque or soft: a BigRock is a hard shadow and a little forest depth round it, as any thing in the way is. Built walls spend none; they are opaque bodies with exact shadows or stubs a colonist sees past.
+Every placed ring in the occluder index spends forest depth, opaque or soft (one lower than `eyeHeightMm` is never in it, 2.2): a BigRock is a hard shadow and a little forest depth round it, as any thing in the way is. Built walls spend none; they are opaque bodies with exact shadows or stubs a colonist sees past.
 
 ### 4.2 The forest shape
 
@@ -601,13 +603,14 @@ The visibility state view (`/api/state?what=visibility`) reports: builds by path
 
 Every tunable in 9 is a field of one runtime struct, `SightTunables`, named as in the table, whose defaults are the start values and which vision and the cover read each pass and each frame. `VisionSystem` owns it; `PlayerVisibilitySystem`, `NavigationSystem`'s placed occluder index, and the cover read it from there, and its one setter clamps each field to its range in 9, in a fixed order: every field first to its own fixed bounds, then `softShadowRayWidthMm` up to at least 1 mm more than the larger kind threshold, so the thresholds win and a threshold slider pushes the ray width up rather than being held down by it (both thresholds are at most 2,000 mm and the ray width at most 10,000 mm, so the order always ends inside every range). The ranges are what 4.4's overflow bounds and the divisions by `forestNearMm`, `forestArrivalMs`, `forestFullPerimeterMm`, `sightFeatherMm`, `rimEaseMm`, and `shadowCornerEaseMm` rely on. The pinned cross-toolchain tests (13, step 3) run at the defaults. Each is a slider on the Dev Tools tab, so it can be tuned in the running game. A change of a sim tunable re-decides every body's kind where a threshold moved and rebuilds every observer's shape at once; the slider for `softShadowRayWidthMm` cannot go below the larger kind threshold.
 
-`/api/dev/spawn` makes an ECS entity (`PlacementSystem::spawnEntity`, rotation 0) that never enters the placement index nav gathers obstacles from, so a spawned BigRock or tree is no body; tests and scenarios use placed trees and rocks, and built walls.
+`/api/dev/spawn` makes an ECS entity (`PlacementSystem::spawnEntity`, rotation 0) that never enters the placement index nav gathers obstacles from, so a spawned BigRock or tree is no body (a spawned rotatable item does enter nav, through `PlacedItemIndex`); tests and scenarios use placed trees and rocks, and built walls.
 
 ## 9. Tunables
 
 | Name | Start | Range | What it sets |
 |---|---|---|---|
 | `wallOpaqueLeastDiameterMm` | 600 mm | 100 to 2,000 mm, below `softShadowRayWidthMm` | A wall body at least this across is opaque, below it soft. The shortest wall the tools allow is 0.52 to 0.58 m across |
+| `eyeHeightMm` | 1600 mm | 1,000 to 2,000 mm | A placed obstacle lower than this is no body: no shadow, no forest depth (2.2). A colonist's eye |
 | `placedOpaqueLeastDiameterMm` | 1400 mm | 100 to 2,000 mm, below `softShadowRayWidthMm` | A placed body at least this across is opaque, below it soft: between a veteran oak (up to 1.385 m at the landing) and a BigRock (1.76 m) |
 | `softShadowRayWidthMm` | 3000 mm | above both thresholds, to 10,000 mm | The ray a soft body's triangle is drawn with: wider shortens every triangle. Above both thresholds |
 | `softShadowStrengthPercent` | 42 | 0 to 100 | A soft body's triangle at its foot, as a percentage of its width over the ray: lower makes every trunk fainter |

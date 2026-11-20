@@ -76,7 +76,7 @@ entity's scale, rotation, and position into a world-space **oriented quad**
    `assets/world/misc/BigRock` (a tree-sized boulder you can't walk through), whose
    collider is a polygon on its rim path's eleven points, the outline seen from above.
 
-A `parts` def (a player-placed item) authors no collider; its collider is the convex hull of its parts' footprints, derived at load, and placed items reach nav and collision through their own obstacle source, `PlacedItemIndex`, not the placement executor's chunk index ([Rotatable placed items, section 11](../rendering/rotatable-placed-items.md#11-collision-nav-and-the-obstacle-source)).
+A `parts` def (a player-placed item) authors no collider; its collider is the union of the footprints of its parts with height (flat parts have none), derived at load, concave where the item is and one polygon ring per piece, and placed items reach nav and collision through their own obstacle source, `PlacedItemIndex`, not the placement executor's chunk index ([Rotatable placed items, section 11](../rendering/rotatable-placed-items.md#11-collision-nav-and-the-obstacle-source)).
 
 ## One pivot per def
 
