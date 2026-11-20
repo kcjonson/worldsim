@@ -49,7 +49,7 @@ Bands name a range for the player. They gate nothing; the curves below do the wo
 
 1. **Roll.** Each game hour a colonist under mood 45 may roll, with a chance that rises steeply as mood falls.
 2. **Pick.** Every behavior the situation allows takes part, weighted. One is picked. Often it is Hold it together and nothing visible happens.
-3. **Act.** The behavior becomes what the colonist is doing, on the `low_mood` rung of the ladder. It outranks work, ordinary and urgent needs, and the player's orders: a colonist in an episode cannot be drafted or directed until it ends. A critical need interrupts it. He takes what he needs even when another colonist has claimed it.
+3. **Act.** The behavior becomes what the colonist is doing, on the `low_mood` rung of the ladder. It outranks work, ordinary and urgent needs, and the player's orders: a colonist in an episode cannot be drafted or directed until it ends. A critical need interrupts it. It bumps another colonist's claim on its target when a lower rung holds it ([Task claims](../../../technical/task-claims.md#bumping-planned)).
 4. **End.** The behavior stops on the first of its own end conditions.
 5. **Relief.** If the behavior gives relief, the colonist gets a positive thought.
 6. **Develop.** The behavior's affinity rises for that colonist, and a cooldown of a few hours begins before the next roll.
@@ -398,9 +398,10 @@ Kevin, 2026-11-17: the player cannot step in during an episode. A colonist in on
 
 2026-11-17: the need, attribute, and task names close like the kind and trait names. A conditions file may no longer add to them or open them, so a misspelled name in a mod's condition fails the load instead of reading Unknown.
 
-Kevin, 2026-11-20: a colonist in an episode takes what he needs even when another colonist has claimed it (the `low_mood` rung is a bumping rung; [Task claims](../../../technical/task-claims.md#bumping-planned)).
 
 Kevin, 2026-11-17: a behavior's target is a query and its effect a chain, XML always with optional Lua and no logic in the XML, specified in [Queries and chains](../../../technical/queries-and-chains.md).
+
+Kevin, 2026-11-20: a colonist in an episode bumps another colonist's claim on its target when a lower rung holds it (the `low_mood` rung is a bumping rung; [Task claims](../../../technical/task-claims.md#bumping-planned)).
 
 ## Addendum: superseded content
 

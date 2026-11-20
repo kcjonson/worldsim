@@ -2,7 +2,7 @@
 
 **Status:** Design  
 **Created:** 2024-12-04  
-**MVP Status:** See [MVP Scope](../mvp-scope.md) — Basic memory in Phase 1, social sharing in Phase 2
+**MVP Status:** See [MVP Scope](../../mvp-scope.md) — Basic memory in Phase 1, social sharing in Phase 2
 
 ---
 
@@ -224,4 +224,4 @@ This document was moved from `docs/design/systems/colonist-memory.md` during the
 ...
 ```
 
-This is now consolidated in [MVP Scope](../mvp-scope.md).
+This is now consolidated in [MVP Scope](../../mvp-scope.md).

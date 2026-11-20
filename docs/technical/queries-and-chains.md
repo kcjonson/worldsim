@@ -679,7 +679,7 @@ when it knows none.
 
 Drinking and washing are separate chains, so a colonist low on both takes the critical one first, else
 the one whose behavior is included first
-([AI behavior](../design/game-systems/colonists/ai-behavior.md#tier-5-actionable-needs)).
+([AI behavior](../design/game-systems/colonists/ai-behavior.md#ordinary_need)).
 
 `common/sleeping_on_the_ground`, which a cow or a deer includes, has Energy with a chain whose only
 query candidate is `<from place="here"/>`.
@@ -1711,7 +1711,7 @@ The `low_mood` rung sits directly below critical needs and above the player's or
 player cannot draft, direct, or order a colonist during an episode. A critical need still interrupts a
 low-mood behavior. For that, a low-mood behavior's do steps use interruptable actions, or short ones
 that complete before the gate is asked again, since a non-interruptable action blocks every switch.
-A colonist in an episode bumps another colonist's claim as the `low_mood` rung does ([Task claims, Bumping](./task-claims.md#bumping-planned)).
+A colonist in an episode bumps another colonist's claim on its target when a lower rung holds it ([Task claims, Bumping](./task-claims.md#bumping-planned)).
 
 A low-mood behavior may have a chain whose only step gives a thought, the log-only rule in Mood: the
 episode is announced and logged, and nothing in the world changes. Leaving the colony is a chain ending in `<leave_colony/>`.
@@ -1991,13 +1991,13 @@ The following he settled with "Yes to all" when they were put to him:
 - 2026-11-17: A mod only adds its own behaviors; it cannot replace a shipped one, so a duplicate full
   id within an entry type is a load error everywhere.
 - 2026-11-17: The "move here" order is dropped; moving a colonist is direct control.
-- 2026-11-20: A mood episode bumps another colonist's claim (the `low_mood` rung is a bumping rung).
 - 2026-11-17: The rung for assigned colony work is `committed_work`; "order" means only a player's
   order. The mood rung is `low_mood`.
 - 2026-11-17: Ids are unique per entry type, the referring attribute naming the type, so a chain and an
   action may share an id.
 - 2026-11-17: Relief (bladder, bowels, or both) is decided when the colonist sets off, not on arrival.
 - 2026-11-17: Temperature's mood cost is 60, up from 40.
+- 2026-11-20: A mood episode bumps another colonist's claim on its target held on a lower rung (the `low_mood` rung is a bumping rung).
 
 Choices made in writing this document, not put to the owner:
 

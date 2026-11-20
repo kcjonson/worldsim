@@ -2,7 +2,7 @@
 
 **Status:** Design  
 **Created:** 2024-12-04  
-**MVP Status:** See [MVP Scope](../mvp-scope.md) — Hunger, Thirst, Energy, Bladder included in Phase 1
+**MVP Status:** See [MVP Scope](../../mvp-scope.md) — Hunger, Thirst, Energy, Bladder included in Phase 1
 
 ---
 
@@ -148,7 +148,7 @@ Each need takes its own points off mood, and a need that is met gives no credit 
 
 Every need has a cost, the most mood it takes off at its worst, and the penalty curve says how much of that cost applies: nothing at or above the comfortable level, rising gently to the warning level, then steeply to the full cost at an empty need. The needs score is 100 minus the sum of those costs, never below 0. Because the costs add and do not average, giving a creature another need changes nothing about what the others cost.
 
-Every need can interrupt work when it gets bad enough, the ones that cannot kill included: work can run for days, and a colonist who never stops to wash or rest ends up in a low-mood behavior over it. The levels are tuned so that meeting the need comes first. A colonist leaves a long job to go and play a game before they have a fit and wreck the room because they have worked too long.
+Every need can interrupt work when it gets bad enough, the ones that cannot kill included: work can run for days, and a colonist who never stops to wash or rest ends up in a low-mood behavior over it. The levels are tuned so that meeting the need comes first. A colonist leaves a long job to go and enjoy nature before they have a fit and wreck the room because they have worked too long.
 
 These are the costs:
 
@@ -180,7 +180,7 @@ See [Colonist Mood](./mood.md): the roll curve, the behavior list, refusing work
 | Energy | Sleepable | Ground, Bedroll, Bed |
 | Bladder | Toilet | Latrine, Toilet, Ground (fallback) |
 | Hygiene | Washable | Pond, Bath, Shower |
-| Recreation | Recreational | Horseshoe Pit, Chess Table |
+| Recreation | None | Enjoying nature, anywhere outdoors |
 
 See [Entity Capabilities](../world/entity-capabilities.md) for full capability definitions.
 
@@ -188,10 +188,10 @@ See [Entity Capabilities](../world/entity-capabilities.md) for full capability d
 
 ## Related Documents
 
-- [AI Behavior](./ai-behavior.md) — How needs trigger behavior tiers
+- [AI Behavior](./ai-behavior.md) — How needs trigger behavior rungs
 - [Colonist Attributes](./attributes.md) — Static personality traits
 - [Entity Capabilities](../world/entity-capabilities.md) — How entities fulfill needs
-- [MVP Scope](../mvp-scope.md) — What's included when
+- [MVP Scope](../../mvp-scope.md) — What's included when
 
 ---
 
@@ -231,7 +231,7 @@ The original needs-system.md had its own "MVP Scope" section:
 **Phase 3:** Full mood system with all contributors. Breakdown behaviors.
 ```
 
-This has been consolidated into the central [MVP Scope](../mvp-scope.md) document.
+This has been consolidated into the central [MVP Scope](../../mvp-scope.md) document.
 
 ### Consolidation Date
 - **2024-12-04:** Merged mechanics/colonists.md (needs sections) + systems/needs-system.md → game-systems/colonists/needs.md

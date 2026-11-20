@@ -211,7 +211,7 @@ The ladder is the named rungs of [Queries and chains](./queries-and-chains.md#ru
 | `opportunistic_work` | haul loose items, stock storage, undirected harvest |
 | `idle` | gather food for the larder, wander |
 
-The planned bumping rule ([Task Claims](./task-claims.md)) is by rung name: only `survival`,
+The planned bumping rule ([Task Claims](./task-claims.md#bumping-planned)) is by rung name: only `survival`,
 `critical_need`, `low_mood`, and `player_order` would bump, and no entry writes a number.
 
 `own_unfinished_work` is how "finishing outranks starting new work by a wide margin" is delivered. It
@@ -262,17 +262,17 @@ Craft action would run on under the need task.
 
 ### Coming back
 
-When the need is met, the crafter's held craft is its `own_unfinished_work` option. It walks back, the Craft task
-takes its Slot claim as usual, and the action adds work to the same job from where it stopped.
-`startCraftAction` still checks the store holds every input; if something emptied the store while
-the crafter was away, the Craft option reads as needing materials, provisioning reopens for the
-shortfall, and the saved work and the hold both stay.
+When the need is met, the crafter's held craft is its `own_unfinished_work` option. It walks back,
+the Craft task takes its Slot claim as usual, and the action adds work to the same job from where it
+stopped. `startCraftAction` still checks the store holds every input; if something emptied the store
+while the crafter was away, the Craft option reads as needing materials, provisioning reopens for
+the shortfall, and the saved work and the hold both stay.
 
 Every Craft option, held or not, gets the reach test work sources already get: a label compare
 (`NavigationSystem::connected`) and the failed-route verdicts in `SourceReachMemo`. A station that
-cannot be reached is not offered. Without this a held craft behind a new wall would be an `own_unfinished_work`
-option picked again on every decision. With it the crafter takes other work, and the hold stays
-until one of the release conditions is met; the player can cancel the job.
+cannot be reached is not offered. Without this a held craft behind a new wall would be an
+`own_unfinished_work` option picked again on every decision. With it the crafter takes other work,
+and the hold stays until one of the release conditions is met; the player can cancel the job.
 
 ### Cancelling a part-done job
 
@@ -587,7 +587,7 @@ Sized for one agent each; the Specboard items under WOR-822 carry the detail.
 - Long cuts. Harvest is the remaining long action that nothing can interrupt, and its progress is
   on the action. Felling a large tree has the flaw this spec removes from crafts; it wants the same
   treatment and its own item.
-- Bumping. Another colonist's needs or orders never take a station from its crafter.
+- Bumping. Another colonist's needs, mood episodes, or orders never take a station from its crafter.
 - An ordinary sleeper being woken for a work order. It happens today (tier order), and with the
   curve it now wastes most of the sleep. Whether sleep should resist that is a tuning question for
   the needs work.

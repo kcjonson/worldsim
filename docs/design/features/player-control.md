@@ -48,7 +48,7 @@ Player takes full control using keyboard to move colonist around.
 
 ### During a mood episode
 
-A colonist in a mood episode takes no direct control and no orders until the episode ends. The Control button is disabled for that colonist, its context menus offer no orders, and an order already given waits behind the episode, because the low-mood behavior ranks above the player's orders ([Mood](../game-systems/colonists/mood.md#the-episode-cycle)). A critical need still interrupts the episode, and the behavior's own end conditions bound it.
+A colonist in a mood episode takes no direct control and no orders until the episode ends. The Control button is disabled for that colonist, its context menus offer no orders, because the low-mood behavior ranks above the player's orders ([Mood](../game-systems/colonists/mood.md#the-episode-cycle)). A critical need still interrupts the episode, and the behavior's own end conditions bound it.
 
 ## Context Menus
 
