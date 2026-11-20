@@ -508,6 +508,46 @@ TEST_F(ActionSystemTest, SleepRestorationAffectedByQuality) {
 	auto* needs = world->getComponent<NeedsComponent>(colonist);
 	// Ground sleep restores 30% (60 * 0.5 quality)
 	EXPECT_FLOAT_EQ(needs->energy().value, 70.0F); // 40 + 30
+
+	// At a bed (a target other than where he stands, as on arrival at one) the same sleep restores 60.
+	setupArrivedForNeed(colonist, NeedType::Energy, {5.0F, 0.0F});
+	setNeedValue(colonist, NeedType::Energy, 20.0F);
+	world->update(0.1F);
+	world->update(8.0F);
+	EXPECT_FLOAT_EQ(needs->energy().value, 80.0F); // 20 + 60
+}
+
+// On arrival the relief does what it came for, and the other need too when that is below seek (30).
+// Came for Bladder at 20 with Digestion at 25: both, 5 s, a pile where he stands. Came for Digestion,
+// risen since to 60, with Bladder at 35: the poop alone, 4 s, Bladder untouched.
+TEST_F(ActionSystemTest, ToiletAlwaysDoesWhatItCameFor) {
+	const glm::vec2 bothAt{0.0F, 0.0F};
+	auto			both = createColonist(bothAt);
+	setupArrivedForNeed(both, NeedType::Bladder, bothAt);
+	setNeedValue(both, NeedType::Bladder, 20.0F);
+	setNeedValue(both, NeedType::Digestion, 25.0F);
+	auto poopOnly = createColonist({10.0F, 0.0F});
+	setupArrivedForNeed(poopOnly, NeedType::Digestion, {10.0F, 0.0F});
+	setNeedValue(poopOnly, NeedType::Digestion, 60.0F);
+	setNeedValue(poopOnly, NeedType::Bladder, 35.0F);
+
+	world->update(0.1F);
+	ASSERT_EQ(world->getComponent<Action>(both)->type, ActionType::Toilet);
+	EXPECT_FLOAT_EQ(world->getComponent<Action>(both)->duration, 5.0F);
+	EXPECT_FLOAT_EQ(world->getComponent<Action>(poopOnly)->duration, 4.0F);
+	world->update(5.0F);
+
+	const auto* bothNeeds = world->getComponent<NeedsComponent>(both);
+	EXPECT_FLOAT_EQ(bothNeeds->bladder().value, 100.0F);
+	EXPECT_FLOAT_EQ(bothNeeds->digestion().value, 100.0F);
+	bool pileWhereBothStood = false;
+	for (auto [entity, position, appearance] : world->view<Position, Appearance>()) {
+		pileWhereBothStood = pileWhereBothStood || (appearance.defName == "Misc_BioPile" && position.value == bothAt);
+	}
+	EXPECT_TRUE(pileWhereBothStood);
+	const auto* poopNeeds = world->getComponent<NeedsComponent>(poopOnly);
+	EXPECT_FLOAT_EQ(poopNeeds->digestion().value, 100.0F);
+	EXPECT_FLOAT_EQ(poopNeeds->bladder().value, 35.0F) << "the bladder was relieved though it was above seek";
 }
 
 TEST_F(ActionSystemTest, PoopingSpawnsBioPile) {

@@ -269,6 +269,9 @@ spec, and the `/perf-nightly` skill runs it.
 | 19 | Load errors on screen | [scenarios/19-load-errors-on-screen.md](./scenarios/19-load-errors-on-screen.md) |
 | 20 | Drawing tools | [scenarios/20-drawing-tools.md](./scenarios/20-drawing-tools.md) |
 | 21 | Colonists wash | [scenarios/21-colonists-wash.md](./scenarios/21-colonists-wash.md) |
+| 22 | Colonists sleep | [scenarios/22-colonists-sleep.md](./scenarios/22-colonists-sleep.md) |
+| 23 | Colonists relieve themselves | [scenarios/23-colonists-relieve-themselves.md](./scenarios/23-colonists-relieve-themselves.md) |
+| 24 | Box-to-box pull | [scenarios/24-box-to-box-pull.md](./scenarios/24-box-to-box-pull.md) |
 
 **Scenarios that look away from the colonists turn reveal on** (`/api/dev/reveal?on=1`), since ground no colonist has seen is black (player visibility); a launch starts with it off. Scenario 14 is the one that tests the cover itself.
 
