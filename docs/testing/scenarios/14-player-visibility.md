@@ -27,29 +27,30 @@ Launch as [../README.md](../README.md) says and take Quick Start. It is seeded, 
 10. Order him to (0.4, 40.3), 8 m north of the BigRock: a shadow runs from the rock to his rim, soft-sided.
 11. Order him to (-10, 43.5), then to (10, 43.5): the rock's shadow turns, its soft side sliding with no jump.
 12. Watch behind him on that walk: the tinted area never shrinks.
-13. Build a 0.5 m wall from (14.9, 43.25) to (14.9, 43.75): a barely visible triangle behind it, about a metre long.
-14. Build a 2 m wall from (14.9, 45.5) to (14.9, 47.5): a full shadow with soft sides.
-15. Build a closed wall loop (10, 39), (14, 39), (14, 43), (10, 43): a 4 m room.
-16. Add a door at (12, 43) and a window at (12, 39).
-17. Order Bob to (12, 41): light leaves through the door and the window only, each beam soft-sided.
-18. Order him to (12, 42.3): the beam through the door keeps a bright core.
-19. Spawn a colonist at (8, 41), west of the room: the ground west of the room, hidden from Bob, is bright, not dark.
-20. Remove her: that ground turns tinted.
-21. Order Bob to (300, 44) and twice more into the black: the tint's edge sits just outside his bright rim, no dark band between.
-22. Set 10x, order him into the black twice more, set 1x: the same.
-23. Teleport him to (24, 11).
-24. Press B, click Crafting Spot, and hover tinted ground at zoom 6: the ghost reads valid.
-25. Click: a crafting spot is placed.
-26. Hover the black 250 m out: the ghost is faint dark red; a click places nothing. Press Escape.
-27. Right-click the black 100 m past the edge: a marker at the edge, and Bob walks there and stops.
-28. As he arrives: a bright disc opens past the old edge.
-29. Right-click the black again: he walks on to the new edge.
-30. Turn reveal on: no black, no tint.
-31. Right-click 15 m past his seen ground: he walks to the click.
-32. Turn reveal off: black and tint return, the ground he opened still tinted.
-33. Jump the camera east 300 m at a time to 2.4 km: the Chunks readout never rises, and falls.
-34. Teleport Bob to (479, 10): (494, 10) reads seen and visible, (511, 10) neither.
-35. Teleport him to (24, 11), view (508, 10) at zoom 6, jump 4 km east and back: the same picture.
+13. Spawn a colonist at (9.5, 45), among the trees beside Bob: no trunk's triangle darkens ground the other colonist sees.
+14. Remove her: her bright area goes, and his stays.
+15. Build a 0.5 m wall from (14.9, 43.25) to (14.9, 43.75): a barely visible triangle behind it, about a metre long.
+16. Build a 2 m wall from (14.9, 45.5) to (14.9, 47.5): a full shadow with soft sides.
+17. Build a closed wall loop (10, 39), (14, 39), (14, 43), (10, 43): a 4 m room.
+18. Add a door at (12, 43) and a window at (12, 39): a doorway in the south wall, a window in the north.
+19. Order Bob to (12, 41): light leaves through the door and the window only, each beam soft-sided.
+20. Order him to (12, 42.3): the beam through the door keeps a bright core.
+21. Order him to (300, 44) and twice more into the black: the tint's edge sits just outside his bright rim, no dark band between.
+22. Set 10x, order him into the black twice more, set 1x: the tint's edge sits within a few metres of his rim.
+23. Teleport him to (24, 11), press B, click Crafting Spot, and hover tinted ground at zoom 6: the ghost reads valid.
+24. Click: a crafting spot is placed.
+25. Hover the black 250 m out: the ghost is faint dark red; a click places nothing. Press Escape.
+26. Right-click the black 100 m past the edge: a marker at the edge, and Bob walks there and stops.
+27. As he arrives: a bright disc opens past the old edge.
+28. Right-click the black again: he walks on to the new edge.
+29. Turn reveal on: no black, no tint.
+30. Right-click 15 m past his seen ground: he walks to the click.
+31. Turn reveal off: black and tint return, the ground he opened still tinted.
+32. Jump the camera east 300 m at a time to 2.4 km: the Chunks readout never rises, and falls.
+33. Teleport Bob to (479, 10) and wait a second: (494, 10) reads seen and visible, (511, 10) neither.
+34. Teleport him to (24, 11) and view (508, 10) at zoom 6: trees past 512 m drawn over the seen edge.
+35. Jump 4 km east and back: the same picture.
 36. Build a wall from (30, 8) to (30, 14), 6 m east of Bob, and zoom 20 on it: the tint starts at its west face.
-37. Its top is an even mid brown; with reveal on, light tan. Turn reveal off.
-38. Click Release, then exit.
+37. Look at its top: an even mid brown.
+38. Turn reveal on: the top turns light tan. Turn reveal off.
+39. Click Release, then exit.

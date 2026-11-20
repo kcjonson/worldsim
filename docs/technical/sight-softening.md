@@ -831,7 +831,7 @@ At 10 colonists at 10x the go reads 12 at the peak against the control's 11, a b
 
 The conclusions rest on counts: the queue and its parts, the waits, the backlog, registrations, K, and legs.
 
-### 12.2 Measured: the limits check (step 1b)
+### 12.2 Measured: the limits check
 
 Each limit of 10 at the start values, read in the game at the quickstart landing over `/api/state?what=cover`, `what=sightBodies`, and `what=visibility`, or, where the landing has no such body, asserted by a unit test with synthetic bodies. The landing has no pine, and no body stands alone in sight there, so limits 1, 4, and 5's lone-body figures are the tests'.
 
@@ -846,7 +846,7 @@ Each limit of 10 at the start values, read in the game at the quickstart landing
 | 7. Convexity's loss | 0.5 m mean, 2 m in a clear direction, 2.5 m in any | 0.012 m mean, 0.24 m most | |
 | 8. The eased rim | 0.03 on screen a frame | 0.013 | |
 | 8. Leg to polygon path | nothing beyond the eased rim's own | 0.006 to 0.012 a frame | |
-| 8. A corner switch | 0.12 on screen a frame, 2 m behind the corner | a BigRock passed at 2 m: the apex moved 0.037 m at most between reads | |
+| 8. A corner switch | 0.12 a frame in what the player sees, 2 m behind the corner | a BigRock passed at 2 m: the band's apex moved 0.037 m at most between reads, a distance on the ground, not a value on screen | |
 | 9. The feather | about 1.5 m on both edges, no hard line | soft on both edges | |
 
 Not measured: any time on an idle machine, the 10x column but limit 5's, and the rebuild steps of limit 8 near a corner and across a face's line. The cover's CPU time a frame is decision 52's.
@@ -868,7 +868,7 @@ Each step is its own PR with its own done line and a `Perf:` line. Steps 1b and 
 
 Unit and sim tests are named in each step's done line. Before they are added, check the existing vision and record suites for the same paths and extend those.
 
-Scenario 14 (`docs/testing/scenarios/14-player-visibility.md`) takes these steps after its step 2, all at the quickstart landing, written in at step 6. Spawned things are not bodies (8), so the steps use the landing's placed trees and rocks, and built walls:
+Scenario 14 (`docs/testing/scenarios/14-player-visibility.md`) takes these steps after Bob is drafted, all at the quickstart landing, written in at step 6. Spawned things are not bodies (8), so the steps use the landing's placed trees and rocks, and built walls:
 
 1. Zoom 3 on Bob among trees: the bright area's edge is a fade about 1.5 m wide with no hard line, and the tinted area's edge against the black fades on the tinted side; past it the black is solid.
 2. Press V: Bob's rim is drawn in toward denser trees, never closer than about 20 m, and is whole where the trees thin out.

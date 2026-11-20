@@ -34,6 +34,8 @@ Measured figures:
 
 Files: `libs/geometry/visibility/` (ForestDepth, the forest shape, SightClip), `libs/sim/vision/` (GeometryIndex, PlacedOccluderIndex, SightBody, SightFeed, SightTunables, SeenArea), `libs/sim/ecs/systems/VisionSystem.*` and `PlayerVisibilitySystem.*`, `libs/sim/nav/NavigationSystem.*`, `libs/world-view/world/rendering/` (VisibilityCoverRenderer, DrawnShadows, CoverPieces, SeenFeather), and salal's renderer and mask API.
 
+Scenario 14's teleport step, WOR-995 ("Player visibility scenario step 13: ground a teleported colonist is looking at reads visible but not seen"), is closed as a stale step: the point it read lies past the forest rim, and inside the rim seen and visible agree.
+
 ## Related Documentation
 
 - [Sight Softening](../../technical/sight-softening.md)
@@ -46,5 +48,4 @@ Files: `libs/geometry/visibility/` (ForestDepth, the forest shape, SightClip), `
 - WOR-1076 ("Seen record: registering a piece costs too much where the record is dense").
 - WOR-1102 ("Soft cover: bring the per-frame CPU cost down").
 - WOR-1059 ("A move order into unexplored ground stops in front of a big rock on the line and never gets past it").
-- WOR-995 ("Player visibility scenario step 13: ground a teleported colonist is looking at reads visible but not seen"): the step's figures assumed 30 m sight; rewritten as scenario 14's step 34 to read ground inside the forest rim, where seen and visible agree.
 - The author's proposals in the spec's decisions log, each awaiting Kevin's word: the 0.6 m wall threshold, the drawn shadows' strengths and caps, the slope limit, the leg tolerance at game speed, and the rest of its "Author's proposals".

@@ -761,7 +761,7 @@ The cover's CPU time a frame, building and uploading every colonist's feather an
 | 50 walking | 5.2 | 5.5 |
 | 50 standing | 0.2 | |
 
-At 50 walking, 1.7 ms of it is uploads (36 meshes a frame, most of them feathers and bands) and 1.8 ms `drawnVisible`; at 1 walking about 0.6 ms is his feather and bands going up. A soft body takes 15 triangles at the landing on average, a colonist 2,300 to 2,700. The longest wait of a due ring of soft bodies is 0.6 frames (6 at most) at 1x and 6 frames (14 at most) at 10x, and the most a ring left due has turned past its cadence is 0 at 1x and 3 degrees at 10x.
+At 50 walking, 1.7 ms of it is uploads (36 meshes a frame, most of them feathers and bands) and 1.8 ms `drawnVisible`; at 1 walking about 0.6 ms is his feather and bands going up. A soft body takes 15 triangles at the landing on average, a colonist 2,300 to 2,700. The longest wait of a due ring of soft bodies averages 0.6 frames (6 at most) at 1x and 6 frames (14 at most) at 10x, and the most a ring left due has turned past its cadence is 0 at 1x and 3 degrees at 10x.
 
 The pending cut at the record's edge, by counts on the null backend, colonists 1.2 m apart walking 2 m/s out of the landing into unexplored ground: 1 walking 0.06 ms a frame, 10 walking 0.66 ms, 50 walking 6.2 ms, 50 at the edge with 1 walking 2.9 ms.
 
