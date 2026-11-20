@@ -24,7 +24,6 @@ namespace world_sim {
 
 	GameplayBar::GameplayBar(const Args& args)
 		: onProductionSelected(args.onProductionSelected),
-		  onFurnitureSelected(args.onFurnitureSelected),
 		  onStructureSelected(args.onStructureSelected),
 		  onRoomsToggle(args.onRoomsToggle) {}
 
@@ -66,13 +65,6 @@ namespace world_sim {
 			 item("Window", onStructureSelected, "window")}
 		);
 		production = dropdown("production_dropdown", "Production", {});
-		dropdown(
-			"furniture_dropdown",
-			"Furniture",
-			{item("Beds", onFurnitureSelected, "beds"),
-			 item("Tables", onFurnitureSelected, "tables"),
-			 item("Storage", onFurnitureSelected, "storage")}
-		);
 		// Placeholders: no zone system exists yet, this holds the slot the zones work will fill.
 		dropdown(
 			"zones_dropdown",

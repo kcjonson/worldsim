@@ -1,7 +1,7 @@
 #pragma once
 
-// GameplayBar - the action bar along the bottom of the screen: the Build, Production, Furniture
-// and Zones dropdowns, each opening its menu upward, then the Rooms overlay toggle. A
+// GameplayBar - the action bar along the bottom of the screen: the Build, Production and
+// Zones dropdowns, each opening its menu upward, then the Rooms overlay toggle. A
 // panel-surface row hugging its buttons, kHeight tall.
 
 #include <ui/components/Button.h>
@@ -22,7 +22,6 @@ namespace world_sim {
 		struct Args {
 			UI_COMMON_ARGS
 			std::function<void(const std::string&)> onProductionSelected;
-			std::function<void(const std::string&)> onFurnitureSelected;
 			std::function<void(const std::string&)> onStructureSelected; // a structure tool, such as "foundation"
 			std::function<void()>					onRoomsToggle;		 // the rooms overlay, as the R hotkey flips it
 		};
@@ -44,7 +43,6 @@ namespace world_sim {
 		void tintRooms();
 
 		std::function<void(const std::string&)>	 onProductionSelected;
-		std::function<void(const std::string&)>	 onFurnitureSelected;
 		std::function<void(const std::string&)>	 onStructureSelected;
 		std::function<void()>					 onRoomsToggle;
 		bool									 roomsActive = false;

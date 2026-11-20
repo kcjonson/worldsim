@@ -133,8 +133,9 @@ Med:
 - Right stack width: ResourcesPanel 160 → 232, GlobalTaskListView 300 → 232, right
   margin 20 → 12, top 120 → 60 (below the minimap).
 - Roster card: add the task-progress Meter second row (label + accent progress).
-- Command bar: add a **Zones** dropdown (Stockpile/Growing/Dumping); reconcile
-  Furniture/Rooms; button height 28 → 36, bar 40 → 48.
+- Command bar: the live bar holds Build, Production, Zones and a Rooms toggle; the
+  prototype's commands are Orders, Zones, Build and Production, so reconcile the
+  Rooms toggle (and Orders, which the game has no tools for yet).
 - Zoom control: horizontal 4-button strip → vertical 3-button column, bottom-right.
 - Top bar: add the alert button (amber bell + crit count badge) before Menu; flat
   bg_panel → bg_base gradient + the `◈` colony mark on the left.

@@ -483,6 +483,20 @@ namespace world_sim::testing {
 		EXPECT_EQ(unexpectedScrollbars({}), "");
 	}
 
+	// A dropdown added to the bar has to come through here, so one cannot arrive without something behind it.
+	TEST_F(SceneLayout, TheGameplayBarOffersOnlyBuildProductionZonesAndRooms) {
+		openHud();
+		const ui::Component* bar = shown("gameplay_bar");
+		ASSERT_NE(bar, nullptr);
+		std::vector<std::string> ids;
+		for (const auto& child : bar->getChildren()) {
+			const ui::Component* made = app->scenes().top()->ui().find(child);
+			ASSERT_NE(made, nullptr);
+			ids.emplace_back(made->getId());
+		}
+		EXPECT_EQ(ids, (std::vector<std::string>{"build_dropdown", "production_dropdown", "zones_dropdown", "rooms_toggle"}));
+	}
+
 	// The build menu, both task lists and a stack of toasts, everything that grows over the play area at once.
 	TEST_F(SceneLayout, TheHudHoldsTogetherWithItsPopupsOpen) {
 		HudScene& scene = openHud([](HudScene& opened) {
