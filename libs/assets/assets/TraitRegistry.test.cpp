@@ -1,6 +1,7 @@
 // Loading the colonist traits from data: the shipped files, merging files, and load errors.
 
 #include "assets/TraitRegistry.h"
+#include "assets/ConfigFiles.h"
 #include "assets/CreatureConfigFiles.h"
 
 #include <utils/Log.h>
@@ -40,7 +41,6 @@ namespace {
 		void TearDown() override { std::filesystem::remove_all(folder); }
 
 		void write(const std::string& name, const std::string& body) {
-			std::filesystem::create_directories((folder / name).parent_path());
 			std::ofstream file(folder / name);
 			file << "<Traits>" << body << "</Traits>";
 		}
@@ -49,7 +49,7 @@ namespace {
 			return "<Trait id=\"" + id + "\" name=\"" + name + "\" description=\"" + description + "\"/>";
 		}
 
-		[[nodiscard]] std::vector<std::string> loadFolder() { return registry.loadFromFiles(configFilesIn(folder), folder); }
+		[[nodiscard]] std::vector<std::string> loadFolder() { return registry.loadFromFiles(configFilesIn(folder).files, folder); }
 
 		static bool mentions(const std::vector<std::string>& errors, const std::string& text) {
 			return std::ranges::any_of(errors, [&](const std::string& error) { return error.find(text) != std::string::npos; });
@@ -104,7 +104,7 @@ TEST_F(TraitRegistryTest, ValidDefinitionsLoadWithTheirTextCountAndExclusions) {
 
 TEST_F(TraitRegistryTest, ALaterFileReplacesATraitAndTheCountAndLogsIt) {
 	write("a_base.xml", R"(<Count min="1" max="3"/>)" + trait("brave", "Brave") + trait("calm"));
-	write("mods/more.xml", R"(<Count min="2" max="2"/>)" + trait("brave", "Fearless") + trait("quick"));
+	write("b_more.xml", R"(<Count min="2" max="2"/>)" + trait("brave", "Fearless") + trait("quick"));
 	InfoLog log;
 	foundation::Logger::setSink(&InfoLog::sink, &log);
 	const std::vector<std::string> errors = loadFolder();
@@ -117,22 +117,15 @@ TEST_F(TraitRegistryTest, ALaterFileReplacesATraitAndTheCountAndLogsIt) {
 	EXPECT_EQ(registry.count().max, 2);
 #ifdef DEVELOPMENT_BUILD
 	EXPECT_TRUE(std::ranges::any_of(log.messages, [](const std::string& message) {
-		return message.find("brave") != std::string::npos && message.find("mods/more.xml") != std::string::npos &&
+		return message.find("brave") != std::string::npos && message.find("b_more.xml") != std::string::npos &&
 			   message.find("a_base.xml") != std::string::npos;
 	}));
 #endif
 }
 
-TEST_F(TraitRegistryTest, TheFolderLoadsBeforeItsSubfolders) {
-	write("z_base.xml", std::string(kCount) + trait("brave", "Base"));
-	write("a_mod/more.xml", trait("brave", "Mod"));
-	ASSERT_TRUE(loadFolder().empty());
-	EXPECT_EQ(registry.find("brave")->name, "Mod");
-}
-
 TEST_F(TraitRegistryTest, ExclusionsFromSeveralFilesAccumulate) {
 	write("a.xml", std::string(kCount) + trait("one") + trait("two") + trait("three") + "<Exclusive>one two</Exclusive>");
-	write("mods/b.xml", "<Exclusive>two three</Exclusive>");
+	write("b.xml", "<Exclusive>two three</Exclusive>");
 	ASSERT_TRUE(loadFolder().empty());
 	EXPECT_TRUE(registry.exclusive("one", "two"));
 	EXPECT_TRUE(registry.exclusive("two", "three"));
@@ -261,7 +254,7 @@ TEST_F(TraitRegistryTest, ATraitIdCannotBeAWordOfTheConditionLanguage) {
 
 TEST_F(TraitRegistryTest, AnyProblemLoadsNothing) {
 	write("a.xml", std::string(kCount) + trait("brave") + trait("calm"));
-	write("mods/b.xml", trait("Loud"));
+	write("b.xml", trait("Loud"));
 	ASSERT_FALSE(loadFolder().empty());
 	EXPECT_TRUE(registry.traits().empty());
 	EXPECT_EQ(registry.find("brave"), nullptr);
@@ -294,7 +287,7 @@ TEST_F(TraitRegistryTest, ExclusionsNeedTwoKnownDistinctTraits) {
 	EXPECT_EQ(errors.size(), 3U) << ::testing::PrintToString(errors);
 }
 
-TEST_F(TraitRegistryTest, BrokenFilesAndMissingFoldersAreErrors) {
+TEST_F(TraitRegistryTest, BrokenFilesAreErrors) {
 	write("a.xml", std::string(kCount) + trait("brave") + "<Mystery/>");
 	EXPECT_TRUE(mentions(loadFolder(), "a.xml: unknown element <Mystery>"));
 
@@ -309,6 +302,4 @@ TEST_F(TraitRegistryTest, BrokenFilesAndMissingFoldersAreErrors) {
 		wrongRoot << "<Mood/>";
 	}
 	EXPECT_TRUE(mentions(loadFolder(), "a.xml: the root element is not <Traits>"));
-
-	EXPECT_TRUE(mentions(registry.loadFromFiles(configFilesIn(folder / "missing"), folder), "not a folder"));
 }

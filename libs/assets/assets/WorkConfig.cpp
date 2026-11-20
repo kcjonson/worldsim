@@ -9,32 +9,11 @@
 #include "assets/TaskChainRegistry.h"
 #include "assets/WorkTypeRegistry.h"
 
-#include <optional>
-#include <string_view>
+#include "assets/ConfigFiles.h"
 
 namespace assets {
 
-	namespace {
-
-		/// Why `found` is not the one file of the human's folder with a <root> root; nothing when it is.
-		std::optional<std::string> oneFileProblem(const CreatureConfigFiles& human, const ConfigFiles& found, std::string_view root) {
-			if (found.files.size() == 1) {
-				return std::nullopt;
-			}
-			const std::string folder = human.folder.generic_string();
-			if (found.files.empty()) {
-				return folder + ": no file has a <" + std::string(root) + "> root";
-			}
-			std::string names;
-			for (const std::filesystem::path& file : found.files) {
-				names += (names.empty() ? "" : ", ") + configFileName(file, human.folder);
-			}
-			return folder + ": more than one file has a <" + std::string(root) + "> root: " + names;
-		}
-
-	} // namespace
-
-	std::vector<std::string> loadWorkConfig(const std::filesystem::path& configRoot, const CreatureConfigFiles& human) {
+	std::vector<std::string> loadWorkConfig(const std::filesystem::path& configRoot, CreatureConfigFiles& human) {
 		ActionTypeRegistry::Get().clear();
 		TaskChainRegistry::Get().clear();
 		WorkTypeRegistry::Get().clear();
@@ -88,18 +67,15 @@ namespace assets {
 			return loadFailure(construction);
 		}
 
-		if (const std::optional<std::string> problem = oneFileProblem(human, human.mood, "Mood")) {
-			return {*problem};
+		if (std::vector<std::string> humanErrors; takeErrors(human, humanErrors)) {
+			return humanErrors;
 		}
-		const std::filesystem::path mood = configFileName(human.mood.files.front(), human.folder);
+		const std::filesystem::path mood = configFileName(human.mood.front(), human.folder);
 		if (!MoodConfig::Get().loadFromFile(human.folder, mood)) {
 			return loadFailure(mood, MoodConfig::Get().problems());
 		}
 
-		if (const std::optional<std::string> problem = oneFileProblem(human, human.memory, "Memory")) {
-			return {*problem};
-		}
-		const std::filesystem::path memory = configFileName(human.memory.files.front(), human.folder);
+		const std::filesystem::path memory = configFileName(human.memory.front(), human.folder);
 		if (!MemoryConfig::Get().loadFromFile(human.folder, memory)) {
 			return loadFailure(memory, MemoryConfig::Get().problems());
 		}

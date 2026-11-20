@@ -187,14 +187,11 @@ namespace assets {
 
 	} // namespace
 
-	std::vector<std::string> TraitRegistry::loadFromFiles(const ConfigFiles& found, const std::filesystem::path& folder) {
+	std::vector<std::string>
+	TraitRegistry::loadFromFiles(const std::vector<std::filesystem::path>& files, const std::filesystem::path& folder) {
 		clear();
-		if (found.error.has_value()) {
-			return {*found.error};
-		}
-
 		Loader loader;
-		for (const std::filesystem::path& file : found.files) {
+		for (const std::filesystem::path& file : files) {
 			loader.loadFile(file, configFileName(file, folder));
 		}
 		loader.check();

@@ -22,8 +22,9 @@ namespace assets {
 	/// Clears the work-config registries and loads them from configRoot (the folder holding actions/, work/,
 	/// and construction/) and the mood and memory config from `human`'s one <Mood> and one <Memory> file, in
 	/// dependency order, then cross-validates them. Returns every error found; an empty list means the
-	/// configuration is loaded and valid. `human`'s own errors are not among them: loadColonistRules reports
-	/// them.
-	[[nodiscard]] std::vector<std::string> loadWorkConfig(const std::filesystem::path& configRoot, const CreatureConfigFiles& human);
+	/// configuration is loaded and valid, unless `human` has errors. Those stop the load before mood; they are
+	/// returned when no other loader has reported them yet (takeErrors), so whichever of this and
+	/// ecs::loadColonistRules runs first reports them and the other adds nothing.
+	[[nodiscard]] std::vector<std::string> loadWorkConfig(const std::filesystem::path& configRoot, CreatureConfigFiles& human);
 
 } // namespace assets

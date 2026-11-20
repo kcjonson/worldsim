@@ -234,7 +234,10 @@ action types, task chains, work types, priority tuning with the required-tier ch
 human's mood and memory (from `assets/world/creatures/Human/`), and cross-validation, returning the errors rather than logging them. The loading scene calls it
 (`GameLoadingScene::initializeWorldSystems`) and clears `GoalTaskRegistry` itself; that one sim-side line moves to
 session construction. sim-cli takes `--config-root <dir>` (default: the staged
-`assets/config`) so a sweep can point it at a patched copy.
+`assets/config`) so a sweep can point it at a patched copy. The human's folder is a second input:
+`--config-root` does not reach mood, memory, traits, attributes, or needs, which `assets::creatureConfigFiles`
+finds in `assets/world/creatures/Human/`, so a sweep that patches them points sim-cli at a patched copy of that
+folder too.
 
 ### Process statics
 

@@ -315,7 +315,8 @@ namespace assets {
 			const std::string stem = entry.path().stem().string();
 			const std::string parentFolder = entry.path().parent_path().filename().string();
 			if (stem != parentFolder) {
-				if (isReferencedMotionFile(entry.path()) || isCreatureConfigFile(entry.path())) {
+				// A creature's config loading owns every other file in its folder and reports any it cannot read.
+				if (isReferencedMotionFile(entry.path()) || isInCreatureFolder(entry.path())) {
 					continue;
 				}
 				report.add(Severity::Warning, "", "", "XML filename does not match its folder; the loader skips it", entry.path().string());

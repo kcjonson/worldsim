@@ -1,6 +1,7 @@
 // Loading the colonist attribute ranges from data: files that merge, and each kind of load error.
 
 #include "assets/AttributeConfig.h"
+#include "assets/ConfigFiles.h"
 
 #include <gtest/gtest.h>
 
@@ -28,12 +29,11 @@ namespace {
 		void TearDown() override { std::filesystem::remove_all(folder); }
 
 		void write(const std::string& name, const std::string& body) {
-			std::filesystem::create_directories((folder / name).parent_path());
 			std::ofstream file(folder / name);
 			file << "<Attributes>" << body << "</Attributes>";
 		}
 
-		[[nodiscard]] AttributeConfigLoad load() const { return loadAttributeConfig(configFilesIn(folder), folder, kNames); }
+		[[nodiscard]] AttributeConfigLoad load() const { return loadAttributeConfig(configFilesIn(folder).files, folder, kNames); }
 
 		static bool mentions(const AttributeConfigLoad& load, const std::string& text) {
 			return std::ranges::any_of(load.errors, [&](const std::string& error) { return error.find(text) != std::string::npos; });
@@ -48,7 +48,7 @@ namespace {
 
 TEST_F(AttributeConfigTest, LoadsEveryNameInTheOrderGivenAndALaterFileReplaces) {
 	write("a.xml", kBoth);
-	write("mods/b.xml", R"(<Attribute name="work_ethic" min="5" max="7"/>)");
+	write("b.xml", R"(<Attribute name="work_ethic" min="5" max="7"/>)");
 	const AttributeConfigLoad result = load();
 	ASSERT_TRUE(result.errors.empty()) << result.errors.front();
 	ASSERT_EQ(result.ranges.size(), 2U);
@@ -88,12 +88,9 @@ TEST_F(AttributeConfigTest, ABadFileIsTheOnlyErrorForTheAttributesItHeld) {
 	EXPECT_NE(result.errors.front().find("bad.xml"), std::string::npos);
 }
 
-TEST_F(AttributeConfigTest, AnAttributeNoFileGivesIsAnErrorAndSoIsAMissingFolder) {
+TEST_F(AttributeConfigTest, AnAttributeNoFileGivesIsAnError) {
 	write("a.xml", R"(<Attribute name="strength" min="6" max="14"/>)");
 	const AttributeConfigLoad missing = load();
 	EXPECT_TRUE(mentions(missing, "no file gives <Attribute name=\"work_ethic\">"));
 	EXPECT_TRUE(missing.ranges.empty());
-
-	std::filesystem::remove_all(folder);
-	EXPECT_FALSE(load().errors.empty());
 }

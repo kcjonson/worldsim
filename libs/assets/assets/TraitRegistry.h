@@ -6,8 +6,6 @@
 // the human's folder (assets/world/creatures/Human) adds to the set, so a later file adds or replaces
 // traits. See /docs/design/game-systems/colonists/attributes.md (Traits).
 
-#include "assets/ConfigFiles.h"
-
 #include <cstddef>
 #include <filesystem>
 #include <span>
@@ -32,12 +30,13 @@ namespace assets {
 
 	class TraitRegistry {
 	  public:
-		/// Replace everything with `found`'s files, in their order, each named relative to `folder`. A later
-		/// file replaces a trait of the same id (logged at info level, naming both files) and may replace
-		/// <Count>; exclusions accumulate, so a trait in several groups is excluded from all of their members.
-		/// Returns `found`'s error, or every problem found, each naming its file; any problem leaves the
-		/// registry empty, and an empty list means the set loaded clean.
-		[[nodiscard]] std::vector<std::string> loadFromFiles(const ConfigFiles& found, const std::filesystem::path& folder);
+		/// Replace everything with `files`, in their order, each named relative to `folder`. A later file
+		/// replaces a trait of the same id (logged at info level, naming both files) and may replace <Count>;
+		/// exclusions accumulate, so a trait in several groups is excluded from all of their members. Returns
+		/// every problem found, each naming its file; any problem leaves the registry empty, and an empty list
+		/// means the set loaded clean.
+		[[nodiscard]] std::vector<std::string>
+		loadFromFiles(const std::vector<std::filesystem::path>& files, const std::filesystem::path& folder);
 
 		/// In the order first declared; an index into this is what reachable() takes.
 		[[nodiscard]] const std::vector<TraitDef>& traits() const { return traitList; }

@@ -14,7 +14,7 @@
   seek, and thought sources name a threshold a need falls below or rises back to (assets/config/thoughts).
 
   Every file in this folder with a <Needs> root loads, in file name order; a later file's <Need>
-  replaces the earlier one of the same name, cost included, so a mod changes a need by adding a file.
+  replaces the earlier one of the same name, cost included.
 -->
 <Needs>
   <Need name="Hunger"      seek="50" urgent="25" critical="10" cost="25"/>

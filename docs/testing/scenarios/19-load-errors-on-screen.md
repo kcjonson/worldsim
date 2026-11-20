@@ -9,9 +9,9 @@ A broken config file stops the game load with the error that names it on screen,
 
 ## Steps
 
-Edit only the staged copy beside the exe, `build/apps/world-sim/RelWithDebInfo/assets/world/creatures/Human/`, never the source under `assets/world/creatures/Human/`. Launch `world-sim --background --no-settings --http-port <PORT>` (RelWithDebInfo) from `build/apps/world-sim/RelWithDebInfo/`: the game load reads `assets/config` and the human's folder from the working directory, so a launch from anywhere else reads another copy and loads cleanly. `/api/state?what=scene` reads the top scene's `failed` and `errors`.
+Edit only the staged copy of the human's folder beside the exe, `build/apps/world-sim/RelWithDebInfo/assets/world/creatures/Human/`, never the source folder `assets/world/creatures/Human/`. "The staged `needs.xml`" is that file in the staged folder, "the source `needs.xml`" the one in the source folder. Launch `world-sim --background --no-settings --http-port <PORT>` (RelWithDebInfo) from `build/apps/world-sim/RelWithDebInfo/`: the game load reads `assets/config` and the human's folder from the working directory, so a launch from anywhere else reads another copy and loads cleanly. `/api/state?what=scene` reads the top scene's `failed` and `errors`.
 
-1. In the staged `world/creatures/Human/needs.xml`, set Hunger's `seek` to `"abc"`.
+1. In the staged `needs.xml`, set Hunger's `seek` to `"abc"`.
 2. Launch the game.
 3. Wait for the splash to finish: Enter Expedition is enabled.
 4. Click Enter Expedition, then Quick Start: the loading scene shows a "Loading failed" panel in place of the bar.
@@ -27,9 +27,16 @@ Edit only the staged copy beside the exe, `build/apps/world-sim/RelWithDebInfo/a
 14. `/api/control?action=scene&scene=game`: the loading scene shows the same "Loading failed" panel.
 15. `/api/state?what=scene`: it names `gameloading`, with `failed` true.
 16. `/api/control?action=exit`.
-17. Write the staged `world/creatures/Human/herd.xml` holding `<Herd/>`, and copy the source `needs.xml` back over the staged one.
-18. Launch the game with `--scene=game` too: the loading scene shows the "Loading failed" panel with `[creatures] herd.xml: the root element <Herd> is not one a creature folder holds (<Mood>, <Memory>, <Traits>, <Attributes>, <Needs>)`.
-19. `/api/state?what=scene`: `failed` is true and `errors` holds that one message.
-20. `/api/control?action=exit`, then delete the staged `herd.xml`.
-21. `diff -r assets/world/creatures/Human build/apps/world-sim/RelWithDebInfo/assets/world/creatures/Human` prints nothing.
-22. Launch `world-sim --background --no-settings --scene=game`: the game scene loads.
+17. Copy the source `needs.xml` over the staged `needs.xml`.
+18. Write a staged `herd.xml` holding `<Herd/>`.
+19. Launch as in step 2, with `--scene=game` added: the loading scene shows the "Loading failed" panel with `[creatures] herd.xml: the root element <Herd> is not one a creature folder holds (<Mood>, <Memory>, <Traits>, <Attributes>, <Needs>)`.
+20. `/api/state?what=scene`: `failed` is true and `errors` holds exactly that one message.
+21. `/api/control?action=exit`, then delete the staged `herd.xml`.
+22. Delete the staged `needs.xml`.
+23. Launch as in step 19: `errors` holds exactly one message, `[creatures] assets/world/creatures/Human: no file has a <Needs> root`, and the panel shows it.
+24. `/api/control?action=exit`, then copy the source `needs.xml` back to the staged folder.
+25. In the staged `mood.xml`, delete the `</Mood>` closing tag.
+26. Launch as in step 19: `errors` holds exactly one message, starting `[creatures] mood.xml: not readable XML:`, and the panel shows it.
+27. `/api/control?action=exit`, then copy the source `mood.xml` over the staged `mood.xml`.
+28. `diff -r assets/world/creatures/Human build/apps/world-sim/RelWithDebInfo/assets/world/creatures/Human` prints nothing.
+29. Launch `world-sim --background --no-settings --scene=game`: the game scene loads.

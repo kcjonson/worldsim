@@ -5,8 +5,6 @@
 // set, so a later file replaces an attribute's range. The names an attribute can have belong to the sim,
 // which passes them in. See /docs/design/game-systems/colonists/attributes.md (Rolling).
 
-#include "assets/ConfigFiles.h"
-
 #include <filesystem>
 #include <span>
 #include <string>
@@ -30,12 +28,14 @@ namespace assets {
 		std::vector<std::string>	errors;
 	};
 
-	/// Load `found`'s files, in their order, each named relative to `folder`. A later file replaces an
-	/// attribute of the same name (logged at info level, naming both files). Every name in `names` has to be
-	/// given a range exactly once after replacements, and a name not in `names` is an error. `found`'s error,
-	/// or every problem found, is returned naming its file and the <Attribute name="...">; any problem leaves
-	/// `ranges` empty.
-	[[nodiscard]] AttributeConfigLoad
-	loadAttributeConfig(const ConfigFiles& found, const std::filesystem::path& folder, std::span<const std::string_view> names);
+	/// Load `files`, in their order, each named relative to `folder`. A later file replaces an attribute of the
+	/// same name (logged at info level, naming both files). Every name in `names` has to be given a range
+	/// exactly once after replacements, and a name not in `names` is an error. Every problem found is returned
+	/// naming its file and the <Attribute name="...">; any problem leaves `ranges` empty.
+	[[nodiscard]] AttributeConfigLoad loadAttributeConfig(
+		const std::vector<std::filesystem::path>& files,
+		const std::filesystem::path&			  folder,
+		std::span<const std::string_view>		  names
+	);
 
 } // namespace assets

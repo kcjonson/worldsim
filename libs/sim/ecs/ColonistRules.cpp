@@ -20,12 +20,12 @@ namespace ecs {
 	} // namespace
 
 	std::vector<std::string>
-	loadAttributeRolls(AttributeRolls& rolls, const assets::ConfigFiles& found, const std::filesystem::path& folder) {
+	loadAttributeRolls(AttributeRolls& rolls, const std::vector<std::filesystem::path>& files, const std::filesystem::path& folder) {
 		std::vector<std::string_view> names;
 		for (const AttributeField& field : kAttributeFields) {
 			names.push_back(field.id);
 		}
-		assets::AttributeConfigLoad config = assets::loadAttributeConfig(found, folder, names);
+		assets::AttributeConfigLoad config = assets::loadAttributeConfig(files, folder, names);
 		if (!config.errors.empty()) {
 			return config.errors;
 		}
@@ -68,8 +68,9 @@ namespace ecs {
 		return errors;
 	}
 
-	std::vector<std::string> loadNeedLevels(NeedLevels& levels, const assets::ConfigFiles& found, const std::filesystem::path& folder) {
-		const assets::NeedsConfigLoad config = assets::loadNeedsConfig(found, folder);
+	std::vector<std::string>
+	loadNeedLevels(NeedLevels& levels, const std::vector<std::filesystem::path>& files, const std::filesystem::path& folder) {
+		const assets::NeedsConfigLoad config = assets::loadNeedsConfig(files, folder);
 		if (!config.errors.empty()) {
 			return config.errors;
 		}
@@ -80,7 +81,7 @@ namespace ecs {
 		return errors;
 	}
 
-	ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot, const assets::CreatureConfigFiles& human) {
+	ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot, assets::CreatureConfigFiles& human) {
 		ColonistRulesLoad load;
 		load.rules.traits = std::make_unique<assets::TraitRegistry>();
 		load.rules.attributes = std::make_unique<AttributeRolls>();
@@ -88,8 +89,7 @@ namespace ecs {
 		load.rules.thoughtTypes = std::make_unique<ThoughtTypes>(*load.rules.vocabulary);
 		load.rules.needLevels = std::make_unique<NeedLevels>();
 
-		addErrors(load.errors, "creatures", human.errors);
-		if (!load.errors.empty()) {
+		if (assets::takeErrors(human, load.errors)) {
 			return load;
 		}
 		addErrors(load.errors, "traits", load.rules.traits->loadFromFiles(human.traits, human.folder));

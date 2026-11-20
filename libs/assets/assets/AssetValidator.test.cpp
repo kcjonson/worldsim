@@ -150,6 +150,7 @@ TEST(AssetValidatorTest, ACreatureFoldersConfigFilesAreNotOrphans) {
 	t.writeFile("creatures/Cow/mood.xml", "<Mood/>");
 	t.writeFile("creatures/Cow/needs.xml", "<Needs/>");
 	t.writeFile("creatures/Cow/stray.xml", "<Herd/>");
+	t.writeFile("creatures/Cow/broken.xml", "<Mood>");
 	t.writeFile("Stone/mood.xml", "<Mood/>");
 
 	const ValidationReport	 r = AssetValidator::validate(t.root, "");
@@ -160,7 +161,7 @@ TEST(AssetValidatorTest, ACreatureFoldersConfigFilesAreNotOrphans) {
 		}
 	}
 	std::ranges::sort(flagged);
-	EXPECT_EQ(flagged, (std::vector<std::string>{"mood.xml", "stray.xml"})) << "only the creature's own config roots are exempt";
+	EXPECT_EQ(flagged, (std::vector<std::string>{"mood.xml"})) << "a creature folder's files are its config loading's to report";
 	EXPECT_EQ(r.errorCount(), 0);
 }
 

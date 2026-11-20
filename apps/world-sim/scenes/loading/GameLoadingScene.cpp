@@ -336,9 +336,9 @@ namespace {
 			// Load work configuration first. Goals are process-wide too; a new game starts with none.
 			updateStatusText("Loading configuration...");
 			ecs::GoalTaskRegistry::Get().clear();
-			const assets::CreatureConfigFiles human = assets::creatureConfigFiles("assets/world/creatures/Human");
-			std::vector<std::string>		  configErrors = assets::loadWorkConfig("assets/config", human);
-			ecs::ColonistRulesLoad			  colonistRules = ecs::loadColonistRules("assets/config", human);
+			assets::CreatureConfigFiles human = assets::creatureConfigFiles("assets/world/creatures/Human");
+			std::vector<std::string>	configErrors = assets::loadWorkConfig("assets/config", human);
+			ecs::ColonistRulesLoad		colonistRules = ecs::loadColonistRules("assets/config", human);
 			configErrors.insert(configErrors.end(), colonistRules.errors.begin(), colonistRules.errors.end());
 			worldState->colonistRules = std::move(colonistRules.rules);
 			if (!configErrors.empty()) {

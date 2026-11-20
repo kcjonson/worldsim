@@ -115,10 +115,25 @@ assets/world/creatures/Human/needs.xml
 The human's config sits in its asset folder beside `Human.xml` and is found by root element
 (`assets::creatureConfigFiles`, libs/assets/assets/CreatureConfigFiles.h): every `.xml` file at the top
 level of the folder, in file name order, except the primary `Human.xml` and the motion files it names, is
-a `<Mood>`, `<Memory>`, `<Traits>`, `<Attributes>`, or `<Needs>` file; any other root, or a file that is
-not readable XML, is an error prefixed `[creatures]`. The asset validator passes over these files, as it
-passes over a referenced motion file. `GameLoadingScene` finds them once and hands them to both
-`assets::loadWorkConfig` (the one `<Mood>` and the one `<Memory>` file) and `ecs::loadColonistRules`.
+a `<Mood>`, `<Memory>`, `<Traits>`, `<Attributes>`, or `<Needs>` file. Each fault in the folder is one
+error, prefixed `[creatures]` and naming the file or the folder:
+
+- a file that is not readable XML, or whose root is none of the five, names the file
+  (`[creatures] mood.xml: not readable XML: ...`);
+- a subfolder names the subfolder, since a creature folder has none;
+- a primary `Human.xml` that cannot be read is the one error, since the motion files it names cannot be
+  told from the rest without it;
+- once every file is placed, a root no file has (`[creatures] assets/world/creatures/Human: no file has a
+  <Needs> root`), or a second `<Mood>` or `<Memory>` file, names the folder. A file that could not be read
+  or placed is the error to fix, so it never also reads as a missing root.
+
+Any of these stops the load before the human's config: no loader reads a kind with no file. `GameLoadingScene`
+finds the files once and hands them to both `assets::loadWorkConfig` (the one `<Mood>` and the one `<Memory>`
+file) and `ecs::loadColonistRules`; whichever of the two meets the errors first reports them
+(`assets::takeErrors`) and the other stops without repeating them, so each appears once on the loading scene.
+
+The asset validator says nothing about a file directly in a creature folder other than its definition: the
+creature's config loading owns those files and its load errors report any it cannot read.
 
 The human's traits, attributes, and needs, then `conditions/` and `thoughts/`, load through `ecs::loadColonistRules(configRoot, human)` (libs/sim/ecs/ColonistRules.h),
 stopping at the first stage with errors. The traits load first, then the attribute ranges, then the needs (`loadNeedLevels`: `assets::loadNeedsConfig` reads the `<Needs>` files, each `<Need>` giving its thresholds and its mood `cost`, a later file's `<Need>` replacing an earlier one of the same name, cost included, and logged at info level, and `ecs::NeedLevels` checks that every need is given and each name is a need). A missing or malformed threshold or cost, or a cost below 0, is an error; a needs file with any error adds nothing, and its errors name the file (relative to the human's folder) and the `<Need name="...">`. There is no C++ default for a threshold or a cost: every colonist's `NeedsComponent` is constructed from the loaded `NeedLevels`, each `Need` carrying its thresholds and its `moodCost`, so the AI, the thought sources, and `MoodSystem` read the same numbers. Then the condition vocabulary is declared, answered by the sim's terms, and frozen, then the thought
