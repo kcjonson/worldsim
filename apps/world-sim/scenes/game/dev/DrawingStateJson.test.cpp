@@ -255,6 +255,7 @@ TEST(DrawingStateJson, TheStatusHintAndTheJsonAgreeForEachStateItDistinguishes) 
 		{"opening, no wall near", opening(false, ""), "Hover a wall", StatusHintTone::Warn},
 		{"opening, no wall in range", opening(false, "no wall in range"), "no wall in range", StatusHintTone::Warn},
 		{"opening, blocked", opening(false, "too close to a corner"), "too close to a corner", StatusHintTone::Crit},
+		{"opening, wall being demolished", opening(false, "the wall is being demolished"), "the wall is being demolished", StatusHintTone::Crit},
 	};
 	for (const Case& entry : cases) {
 		const world_sim::StatusHint hint = world_sim::statusHint(entry.status);

@@ -122,7 +122,7 @@ namespace ecs {
 			// Host gate: a wall waits on its host foundation being Built; an opening waits
 			// on its host wall segment being Built. While gated the blueprint holds nothing
 			// but a Blocked umbrella, and no haul/build goals emit (design: Walls /
-			// Prerequisites; openings sit on a built wall). This is the front of the pipeline.
+			// Prerequisites; an opening sits on a wall and is built only once the wall is Built). This is the front of the pipeline.
 			const bool hostGated = (isWall && !isWallHostBuilt(graphId)) || (isOpening && !isOpeningHostSegmentBuilt(graphId));
 			if (hostGated) {
 				ensureUmbrellaGoal(entity, structure, blueprint, GoalStatus::Blocked);

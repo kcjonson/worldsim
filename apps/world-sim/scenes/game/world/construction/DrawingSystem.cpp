@@ -1823,19 +1823,19 @@ namespace world_sim {
 
 		if (!openingSnap_.valid) {
 			if (callbacks_.onToast) {
-				callbacks_.onToast("No wall", "no wall in range");
-			}
-			return true;
-		}
-		if (openingHostDemolishing_) {
-			if (callbacks_.onToast) {
-				callbacks_.onToast("Can't place here", "the wall is being demolished");
+				callbacks_.onToast("No wall", "an opening must sit on a wall");
 			}
 			return true;
 		}
 		if (openingUnexplored_) {
 			if (callbacks_.onToast) {
 				callbacks_.onToast("Can't build here", "opening: the area is unexplored");
+			}
+			return true;
+		}
+		if (openingHostDemolishing_) {
+			if (callbacks_.onToast) {
+				callbacks_.onToast("Can't build here", "opening: the wall is being demolished");
 			}
 			return true;
 		}

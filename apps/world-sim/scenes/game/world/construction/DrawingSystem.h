@@ -712,9 +712,9 @@ namespace world_sim {
 
 		// --- Opening tool ---
 
-		/// Mouse-move handling for the opening tool: snapOpening onto the nearest
-		/// wall (blueprint or built), store the snap, and (when the snap is valid) run validateOpening for the
-		/// live validity readout.
+		/// Mouse-move handling for the opening tool: snapOpening onto the nearest wall
+		/// (blueprint or built), store the snap, and (when the snap is valid) run
+		/// validateOpening for the live validity readout.
 		void handleOpeningMove(Foundation::Vec2 world);
 
 		/// Whether the wall segment's blueprint is marked for demolition (it takes no new opening).

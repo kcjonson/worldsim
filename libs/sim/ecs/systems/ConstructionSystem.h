@@ -12,8 +12,8 @@
 //     umbrella stays Blocked, and no material/build goals emit, until the host
 //     foundation is Built (design: walls draw on a foundation blueprint but only
 //     build once the foundation finishes). isWallHostBuilt owns that gate.
-//   Openings (doors/windows) also have no clear phase (they sit on a built wall on a
-//     cleared foundation), so they start at AwaitingMaterials too. Same gate shape as
+//   Openings (doors/windows) also have no clear phase (they sit on a wall, blueprint or
+//     built, on a cleared foundation), so they start at AwaitingMaterials too. Same gate shape as
 //     walls but one level up: an opening's umbrella stays Blocked, and no material/
 //     build goals emit, until its host wall SEGMENT is Built. isOpeningHostSegmentBuilt
 //     owns that gate.
@@ -216,8 +216,8 @@ namespace ecs {
 		/// True (ungated) when there is no ConstructionWorld wired (headless contexts).
 		[[nodiscard]] bool isWallHostBuilt(uint64_t segmentId) const;
 
-		/// True once the opening's host wall segment is Built. Openings sit on a built
-		/// wall, so this gates an opening blueprint's haul + build goals exactly as
+		/// True once the opening's host wall segment is Built. An opening sits on a wall,
+		/// blueprint or built, and is built only once the wall is Built, so this gates an opening blueprint's haul + build goals exactly as
 		/// isWallHostBuilt gates a wall's (one level up the topology: opening -> segment).
 		/// True (ungated) when there is no ConstructionWorld wired (headless contexts);
 		/// an unknown opening or unknown host segment stays gated (false).
@@ -258,8 +258,8 @@ namespace ecs {
 
 		/// Dump ALL of a demolished blueprint's staged delivered[] materials to the ground as loose,
 		/// haulable piles at its position (via the drop-resource callback, which splits each quantity
-		/// into stacks and scatters them), then clear delivered[]. Only the no-work cancel branch calls
-		/// it: there's no structure to tear down, so the site is removed promptly and its in-flight
+		/// into stacks and scatters them), then clear delivered[]. The no-work cancel branch calls it for the
+		/// blueprint itself and, through cancelOpeningsOnWall, for each opening on a cancelled wall: there's no structure to tear down, so the site is removed promptly and its in-flight
 		/// materials go loose at once. A worked/built teardown does NOT call this; its salvage drop
 		/// happens at deconstruct-COMPLETION (the structure is removed) via GameScene's deconstructed
 		/// callback, which reads the still-intact delivered[] and returns only the refundPercent% cut.
