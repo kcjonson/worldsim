@@ -3,7 +3,7 @@
 **Status:** ready  
 **Last verified:** 2026-11-20
 
-A broken config file stops the game load with the error that names it on screen, in the loading scene and on the splash alike, so a modder sees what is wrong without the log. Spec: [config-loading.md](../../technical/config-loading.md#where-load-errors-surface).
+A broken config file stops the game load with the error that names it on screen, so a modder sees what is wrong without the log. A structural fault in a creature folder (a file of the wrong kind, an unreadable file) stops it at the asset check, on the splash or, after a `--scene` jump, on the loading scene; a missing kind or a bad value stops it at the config load, on the loading scene. Spec: [config-loading.md](../../technical/config-loading.md#where-load-errors-surface).
 
 ---
 
@@ -35,10 +35,11 @@ Edit only the staged copy of the human's folder beside the exe, `build/apps/worl
 22. Launch as in step 2: the splash shows the same "Loading failed" panel with the same one message, and `/api/state?what=scene` names `splash` with `failed` true.
 23. `/api/control?action=exit`, then delete the staged `herd.xml`.
 24. Delete the staged `needs.xml`.
-25. Launch as in step 19: `errors` holds exactly one message, `Human: [creatures] creatures/Human: no file has a <Needs> root`, and the panel shows it.
+25. Launch as in step 19: the asset check passes and the config load fails; the loading scene's panel shows, and `errors` holds, exactly one message, `[creatures] creatures/Human: no file has a <Needs> root`.
 26. `/api/control?action=exit`, then copy the source `needs.xml` back to the staged folder.
 27. In the staged `mood.xml`, delete the `</Mood>` closing tag.
-28. Launch as in step 19: `errors` holds exactly one message, `Human: [creatures] mood.xml: not readable XML: Start-end tags mismatch`, and the panel shows it.
+28. Launch as in step 19: the asset check stops the load; the loading scene's panel shows, and `errors` holds, exactly one message, `Human: [creatures] mood.xml: not readable XML: Start-end tags mismatch`.
 29. `/api/control?action=exit`, then copy the source `mood.xml` over the staged `mood.xml`.
 30. `diff -r assets/world/creatures/Human build/apps/world-sim/RelWithDebInfo/assets/world/creatures/Human` prints nothing.
-31. Launch `world-sim --background --no-settings --scene=game`: the game scene loads.
+31. Launch as in step 19: the game scene loads, and `/api/state?what=scene` names `game`.
+32. `/api/control?action=exit`.

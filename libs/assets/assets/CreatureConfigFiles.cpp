@@ -49,29 +49,71 @@ namespace assets {
 			return file.lexically_relative(base).generic_string();
 		}
 
+		/// A folder as errors name it: by its last two parts (creatures/Human), the same wherever it was found
+		/// from, the game's working directory or the asset validator's absolute root.
+		std::string shortNameOf(const std::filesystem::path& folder) {
+			const std::filesystem::path base = withoutTrailingSeparator(folder);
+			return (base.parent_path().filename() / base.filename()).generic_string();
+		}
+
+		enum class PrimaryState { Absent, Unreadable, File };
+
 	} // namespace
 
 	CreatureConfigFiles creatureConfigFiles(const std::filesystem::path& folder) {
 		CreatureConfigFiles			found{.folder = folder};
-		const std::string			folderName = folder.generic_string();
 		const std::filesystem::path base = withoutTrailingSeparator(folder);
-		// Errors about the folder as a whole name it by its last two parts (creatures/Human), the same wherever
-		// it was found from: the game's working directory or the asset validator's absolute root.
-		const std::string shortName = (base.parent_path().filename() / base.filename()).generic_string();
-		const auto		  fail = [&found](const std::string& message) {
+		const std::string			shortName = shortNameOf(folder);
+		const auto					fail = [&found](const std::string& message) {
 			 found.errors.push_back(kPrefix + message);
 		};
 
 		std::error_code error;
 		if (!std::filesystem::is_directory(base, error)) {
-			fail(folderName + ": not a folder");
+			fail(shortName + (error && error != std::errc::no_such_file_or_directory ? ": " + error.message() : ": not a folder"));
+			return found;
+		}
+
+		// The primary is matched to the folder's name exactly, as the asset registry matches it, on every platform:
+		// the walk below finds it by name rather than asking the filesystem, which ignores case on Windows.
+		const std::filesystem::path			primary = (base / (base.filename().string() + ".xml")).lexically_normal();
+		PrimaryState						primaryState = PrimaryState::Absent;
+		std::vector<std::filesystem::path>	files;
+		std::vector<std::filesystem::path>	subfolders;
+		std::filesystem::directory_iterator entries(base, error);
+		for (const std::filesystem::directory_iterator end; !error && entries != end; entries.increment(error)) {
+			const std::filesystem::directory_entry& entry = *entries;
+			const std::filesystem::path				file = entry.path().lexically_normal();
+			std::error_code							entryError;
+			const bool								isFolder = entry.is_directory(entryError);
+			const bool								isFile = !entryError && !isFolder && entry.is_regular_file(entryError);
+			if (entryError) {
+				fail(nameIn(file, base) + ": " + entryError.message());
+				if (file == primary) {
+					primaryState = PrimaryState::Unreadable;
+				}
+			} else if (isFolder) {
+				subfolders.push_back(file);
+			} else if (file == primary) {
+				primaryState = isFile ? PrimaryState::File : PrimaryState::Unreadable;
+			} else if (isFile && file.extension() == ".xml") {
+				files.push_back(file);
+			}
+		}
+		if (error) {
+			fail(shortName + ": " + error.message());
 			return found;
 		}
 
 		// The primary names its helper files; when it cannot be read, nothing about the rest can be told.
-		const std::filesystem::path primary = (base / (base.filename().string() + ".xml")).lexically_normal();
-		if (!std::filesystem::is_regular_file(primary, error)) {
+		if (primaryState == PrimaryState::Absent) {
 			fail(nameIn(primary, base) + ": missing; it is the creature's definition");
+			return found;
+		}
+		if (primaryState == PrimaryState::Unreadable) {
+			if (found.errors.empty()) {
+				fail(nameIn(primary, base) + ": not a file; it is the creature's definition");
+			}
 			return found;
 		}
 		pugi::xml_document			 definition;
@@ -87,28 +129,7 @@ namespace assets {
 				helpers.insert((base / motion).lexically_normal());
 			}
 		}
-
-		std::vector<std::filesystem::path>	files;
-		std::vector<std::filesystem::path>	subfolders;
-		std::filesystem::directory_iterator entries(base, error);
-		for (const std::filesystem::directory_iterator end; !error && entries != end; entries.increment(error)) {
-			const std::filesystem::directory_entry& entry = *entries;
-			const std::filesystem::path				file = entry.path().lexically_normal();
-			std::error_code							entryError;
-			if (entry.is_directory(entryError)) {
-				subfolders.push_back(file);
-			} else if (!entryError && entry.is_regular_file(entryError) && file.extension() == ".xml" && file != primary &&
-					   !helpers.contains(file)) {
-				files.push_back(file);
-			}
-			if (entryError) {
-				fail(nameIn(file, base) + ": " + entryError.message());
-			}
-		}
-		if (error) {
-			fail(folderName + ": " + error.message());
-			return found;
-		}
+		std::erase_if(files, [&helpers](const std::filesystem::path& file) { return helpers.contains(file); });
 		std::ranges::sort(subfolders);
 		std::ranges::sort(files);
 
@@ -133,6 +154,13 @@ namespace assets {
 				fail(source + ": a motion file the definition does not name in a <motion> element");
 				continue;
 			}
+			if (list == nullptr && root == "AssetDefinitions") {
+				fail(
+					source + ": asset definitions outside the definition file, which is named for its folder exactly (" +
+					nameIn(primary, base) + ")"
+				);
+				continue;
+			}
 			if (list == nullptr) {
 				fail(source + ": the root element <" + std::string(root) + "> is not one a creature folder holds (" + roots + ")");
 				continue;
@@ -140,24 +168,29 @@ namespace assets {
 			(found.*(list->files)).push_back(file);
 		}
 
-		// A file that could not be read or placed may be the one a kind is missing; it is the error to fix.
-		if (!found.errors.empty()) {
-			return found;
-		}
 		for (const RootList& list : kRootLists) {
 			const std::vector<std::filesystem::path>& listed = found.*(list.files);
-			const std::string						  root = "<" + std::string(list.root) + ">";
-			if (listed.empty()) {
-				fail(shortName + ": no file has a " + root + " root");
-			} else if (list.oneFile && listed.size() > 1) {
+			if (list.oneFile && listed.size() > 1) {
 				std::string names;
 				for (const std::filesystem::path& file : listed) {
 					names += (names.empty() ? "" : ", ") + nameIn(file, base);
 				}
-				fail(shortName + ": more than one file has a " + root + " root: " + names);
+				fail(shortName + ": more than one file has a <" + std::string(list.root) + "> root: " + names);
 			}
 		}
 		return found;
+	}
+
+	std::vector<std::string> missingKinds(const CreatureConfigFiles& found) {
+		std::vector<std::string> errors;
+		for (const RootList& list : kRootLists) {
+			if ((found.*(list.files)).empty()) {
+				errors.push_back(
+					std::string(kPrefix) + shortNameOf(found.folder) + ": no file has a <" + std::string(list.root) + "> root"
+				);
+			}
+		}
+		return errors;
 	}
 
 } // namespace assets

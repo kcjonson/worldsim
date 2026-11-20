@@ -85,6 +85,7 @@ namespace ecs {
 
 	ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot, const assets::CreatureConfigFiles& human) {
 		assert(human.errors.empty() && "loadColonistRules takes a human folder with no errors; its errors are the load's");
+		assert(!human.traits.empty() && !human.attributes.empty() && !human.needs.empty() && "loadColonistRules reads every kind it loads");
 		ColonistRulesLoad load;
 		load.rules.traits = std::make_unique<assets::TraitRegistry>();
 		load.rules.attributes = std::make_unique<AttributeRolls>();

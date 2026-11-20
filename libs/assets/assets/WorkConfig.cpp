@@ -16,6 +16,7 @@ namespace assets {
 
 	std::vector<std::string> loadWorkConfig(const std::filesystem::path& configRoot, const CreatureConfigFiles& human) {
 		assert(human.errors.empty() && "loadWorkConfig takes a human folder with no errors; its errors are the load's");
+		assert(human.mood.size() == 1 && human.memory.size() == 1 && "loadWorkConfig reads the human's one <Mood> and one <Memory> file");
 		ActionTypeRegistry::Get().clear();
 		TaskChainRegistry::Get().clear();
 		WorkTypeRegistry::Get().clear();

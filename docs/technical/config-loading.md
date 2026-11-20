@@ -113,45 +113,71 @@ assets/world/creatures/Human/needs.xml
 ```
 
 The human's config sits in its asset folder beside `Human.xml` and is found by root element
-(`assets::creatureConfigFiles`, libs/assets/assets/CreatureConfigFiles.h): every `.xml` file at the top
-level of the folder, in file name order, except the primary `Human.xml` and the motion files it names, is
-a `<Mood>`, `<Memory>`, `<Traits>`, `<Attributes>`, or `<Needs>` file. Each fault in the folder is one
-error, prefixed `[creatures]` and naming the file or the folder:
+(`assets::creatureConfigFiles`, libs/assets/assets/CreatureConfigFiles.h). In a creature folder:
+
+- a file not ending in lower-case `.xml` is ignored (the SVGs, notes);
+- the definition, named for the folder exactly (`Human.xml`, compared case-sensitively on every
+  platform), and the motion files it names in `<motion>` elements belong to the asset registry;
+- every other `.xml` file is a `<Mood>`, `<Memory>`, `<Traits>`, `<Attributes>`, or `<Needs>` file, read
+  in file name order;
+- any subfolder, and any other `.xml` file, is an error.
+
+The finder reports structural faults, one error each, prefixed `[creatures]` by the finder itself:
 
 - a file that is not readable XML, or whose root is none of the five, names the file
-  (`[creatures] mood.xml: not readable XML: ...`); a `<Motion>` file the definition does not name in a
-  `<motion>` element says so;
-- a subfolder names the subfolder, since a creature folder has none;
-- a primary `Human.xml` that is missing or cannot be read is the one error, since the motion files it
-  names cannot be told from the rest without it;
-- a filesystem fault while reading the folder names the folder or the entry;
-- once every file is placed, a root no file has (`[creatures] creatures/Human: no file has a
-  <Needs> root`), or a second `<Mood>` or `<Memory>` file, names the folder by its last two parts. A file that could not be read
-  or placed is the error to fix, so it never also reads as a missing root.
+  (`[creatures] mood.xml: not readable XML: ...`); a `<Motion>` file the definition does not name, or
+  an `<AssetDefinitions>` file not named for its folder, says so;
+- a subfolder names the subfolder;
+- a second `<Mood>` or `<Memory>` file names the folder by its last two parts
+  (`[creatures] creatures/Human: more than one file has a <Mood> root: ...`);
+- a missing or unreadable definition is the one error, since the motion files it names cannot be told
+  from the rest without it;
+- a filesystem fault names the entry, or the folder by its last two parts.
 
-The asset validator runs the same finder on every folder directly under the asset root's `creatures/`
-folder and reports its errors as errors, the definition's name in the issue's name column
-(`Human: [creatures] herd.xml: ...` on the splash and in the asset manager). Files in a creature folder
-other than its definition get no "does not match its folder" warning, since the finder has already judged
-them. Because the game stops on validation errors before its config load, a broken creature folder fails
-the game on the splash (or, after a `--scene` jump, on the loading scene's ground bake step) with that one
-message, and the config load never runs on it.
+A kind with no file is not a fault of the folder: a deer has no mood. The human needs all five, so the
+human's load adds one error per missing kind (`assets::missingKinds`,
+`[creatures] creatures/Human: no file has a <Needs> root`).
 
-`world_sim::loadGameConfig` (apps/world-sim/scenes/loading/GameConfig.h), which `GameLoadingScene` calls,
-finds the human's files; when they have errors those are the load's errors and neither loader runs.
-Otherwise it calls `assets::loadWorkConfig` (the one `<Mood>` and the one `<Memory>` file) and
-`ecs::loadColonistRules`, both of which take only an error-free folder (asserted). A fault in
-`assets/config` and a fault in the human's folder at once show only the human's errors until those are
-fixed; the `assets/config` fault shows on the next load.
+Where each appears:
 
-The human's traits, attributes, and needs, then `conditions/` and `thoughts/`, load through `ecs::loadColonistRules(configRoot, human)` (libs/sim/ecs/ColonistRules.h),
-stopping at the first stage with errors. The traits load first, then the attribute ranges, then the needs (`loadNeedLevels`: `assets::loadNeedsConfig` reads the `<Needs>` files, each `<Need>` giving its thresholds and its mood `cost`, a later file's `<Need>` replacing an earlier one of the same name, cost included, and logged at info level, and `ecs::NeedLevels` checks that every need is given and each name is a need). A missing or malformed threshold or cost, or a cost below 0, is an error; a needs file with any error adds nothing, and its errors name the file (relative to the human's folder) and the `<Need name="...">`. There is no C++ default for a threshold or a cost: every colonist's `NeedsComponent` is constructed from the loaded `NeedLevels`, each `Need` carrying its thresholds and its `moodCost`, so the AI, the thought sources, and `MoodSystem` read the same numbers. Then the condition vocabulary is declared, answered by the sim's terms, and frozen, then the thought
-types are read and their conditions parsed against it (`loadConditionVocabulary` and `loadThoughtTypes`,
-which the tests use too). Each of `conditions/` and `thoughts/` loads its own files before its subfolders'
-(`assets::configFilesIn`), so a mod adds or replaces by adding a file there; the human's files load in file
-name order, so a later file replaces in the same way. A clean load logs its counts at info level (traits; needs; terms;
-feelings, thought types, and sources). `GameLoadingScene` adds its errors, prefixed `[creatures]`, `[traits]`, `[attributes]`, `[needs]`, `[conditions]`,
-or `[thoughts]`, to the config errors the loading screen shows, and hands the rules to `GameScene` through
+- Structural faults in any creature folder with a readable definition: the asset check. The asset
+  validator runs the finder on every folder directly under the asset root's `creatures/` folder and
+  reports its errors as errors under the definition's name, so the splash shows `Human: [creatures]
+  herd.xml: ...` on a normal launch (the loading scene's ground bake step shows it after a `--scene`
+  jump), and the asset manager lists it under the asset. The game stops on validation errors before its
+  config load, so that one message is the only one. The validator gives the finder's files no "does not
+  match its folder" warning. A creature folder with no definition is walked like any folder, as before
+  creature folders were checked (an empty one gives nothing, an `.xml` file in it the usual warning). One
+  whose definition the walk itself flags (unreadable, no `<AssetDefinitions>`) gets only the walk's
+  message.
+- Missing kinds and bad values (a threshold that is not a number): the config load, on the loading scene,
+  through `world_sim::loadGameConfig` (apps/world-sim/scenes/loading/GameConfig.h).
+
+`loadGameConfig` finds the human's files. When they have structural errors, or lack a kind, those are the
+load's errors and neither loader runs. Otherwise it calls `assets::loadWorkConfig` (the one `<Mood>` and
+the one `<Memory>` file) and `ecs::loadColonistRules`, both of which take only an error-free folder with
+every kind they read (asserted). A fault in `assets/config` and a fault in the human's folder at once show
+only the human's errors until those are fixed; the `assets/config` fault shows on the next load.
+
+The human's traits, attributes, and needs, then `conditions/` and `thoughts/`, load through
+`ecs::loadColonistRules(configRoot, human)` (libs/sim/ecs/ColonistRules.h), stopping at the first stage
+with errors. The traits load first, then the attribute ranges, then the needs (`loadNeedLevels`:
+`assets::loadNeedsConfig` reads the `<Needs>` files, each `<Need>` giving its thresholds and its mood
+`cost`, a later file's `<Need>` replacing an earlier one of the same name, cost included, and logged at
+info level, and `ecs::NeedLevels` checks that every need is given and each name is a need). A missing or
+malformed threshold or cost, or a cost below 0, is an error; a needs file with any error adds nothing, and
+its errors name the file (relative to the human's folder) and the `<Need name="...">`. There is no C++
+default for a threshold or a cost: every colonist's `NeedsComponent` is constructed from the loaded
+`NeedLevels`, each `Need` carrying its thresholds and its `moodCost`, so the AI, the thought sources, and
+`MoodSystem` read the same numbers. Then the condition vocabulary is declared, answered by the sim's terms,
+and frozen, then the thought types are read and their conditions parsed against it
+(`loadConditionVocabulary` and `loadThoughtTypes`, which the tests use too). Each of `conditions/` and
+`thoughts/` loads its own files before its subfolders' (`assets::configFilesIn`), so a mod adds or
+replaces by adding a file there; the human's files load in file name order, so a later file replaces in
+the same way. A clean load logs its counts at info level (traits; needs; terms; feelings, thought types,
+and sources). Its errors carry their stage's prefix (`[traits]`, `[attributes]`,
+`[needs]`, `[conditions]`, or `[thoughts]`), added by `loadColonistRules`; `loadGameConfig` returns them
+with the work config's, and `GameLoadingScene` shows them and hands the rules to `GameScene` through
 `GameWorldState`. A switch to the game scene with no loaded world waiting (the dev server's `scene`
 action, `reload`, `--scene=game`) builds the loading scene instead, so the game scene never runs without
 this config.
@@ -216,9 +242,9 @@ Mods load alphabetically after base game, allowing later mods to override earlie
 registries (ActionTypeRegistry, TaskChainRegistry, WorkTypeRegistry, PriorityConfig,
 ConstructionRegistry, MoodConfig, MemoryConfig, and ConfigValidator's errors), loads them from `configRoot` in the
 order above, checks that priority-tuning.xml gives every task type an arbitration tier, loads
-construction, then mood and memory from the human's one `<Mood>` and one `<Memory>` file (the finder has
-already made none, or more than one, an error), and cross-validates. It returns every error as a string; an empty list means the config is loaded. It needs
-no GL and no scene, so the headless sim calls it too.
+construction, then mood and memory from the human's one `<Mood>` and one `<Memory>` file (its caller has
+already refused none, or more than one), and cross-validates. It returns every error as a string; an empty
+list means the config is loaded. It needs no GL and no scene.
 
 The loading scene clears `ecs::GoalTaskRegistry` itself (a sim singleton libs/assets can't reach),
 then calls it through `world_sim::loadGameConfig` in the `Initializing` phase:
@@ -237,11 +263,19 @@ if (!config.errors.empty()) {
 
 ### Where load errors surface
 
-Every way a game load fails goes through the loading scene's one `fail(messages)`, which logs each message at
-error level, keeps them for the scene's state view, and moves to the `Failed` phase. The causes are the asset
-library's validation errors and the recipes' errors (prefixed `[recipes]`, read by `world_sim::stepGroundBake` from
-`RecipeRegistry::problems()`, which the asset system's load fills), a failed ground bake (when a `--scene` jump or a dev switch skipped the splash), a missing or
-unreadable quickstart planet, and the config errors above: `loadWorkConfig`'s and `ecs::loadColonistRules`'s, each prefixed with its stage.
+Every way a game load fails goes through the loading scene's one `fail(messages)`, which logs each message
+at error level, keeps them for the scene's state view, and moves to the `Failed` phase. The causes are:
+
+- the asset library's validation errors, the creature folders' structural faults among them
+  (`Human: [creatures] ...`), and the recipes' errors (prefixed `[recipes]`), read by
+  `world_sim::stepGroundBake` from the validation report and `RecipeRegistry::problems()`;
+- a failed ground bake (when a `--scene` jump or a dev switch skipped the splash);
+- a missing or unreadable quickstart planet;
+- the config errors from `world_sim::loadGameConfig`: the human's missing kinds (`[creatures] ...`), then
+  `loadWorkConfig`'s and `ecs::loadColonistRules`'s, the latter prefixed with its stage.
+
+The splash runs the same `stepGroundBake` and shows its errors the same way, so the asset and recipe
+errors stop a normal launch on the splash before the loading scene.
 
 `Failed` hides the status line and the bar and shows a `world_sim::LoadFailureView`
 (`apps/world-sim/scenes/shared/LoadFailureView.h`) in their place: an inset panel titled "Loading failed" with

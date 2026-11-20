@@ -45,6 +45,7 @@ namespace ecs::testing {
 	inline assets::CreatureConfigFiles shippedHumanConfig() {
 		assets::CreatureConfigFiles human = assets::creatureConfigFiles(repoHuman());
 		stopOnErrors("human config", human.errors);
+		stopOnErrors("human config", assets::missingKinds(human));
 		return human;
 	}
 

@@ -97,13 +97,28 @@ TEST_F(CreatureConfigFilesTest, ABrokenOrMisRootedMoodFileIsOneErrorNamingIt) {
 	EXPECT_EQ(onlyError().rfind("[creatures] memory.xml: not readable XML: ", 0), 0U);
 }
 
-TEST_F(CreatureConfigFilesTest, AKindWithNoFileIsOneErrorNamingTheFolder) {
+TEST_F(CreatureConfigFilesTest, AKindWithNoFileIsNoFaultOfTheFoldersButMissingKindsNamesIt) {
 	std::filesystem::remove(folder / "needs.xml");
-	EXPECT_EQ(onlyError(), "[creatures] creatures/Cow: no file has a <Needs> root");
-
-	write("needs.xml", "<Needs/>");
 	std::filesystem::remove(folder / "traits.xml");
-	EXPECT_EQ(onlyError(), "[creatures] creatures/Cow: no file has a <Traits> root");
+	const CreatureConfigFiles found = creatureConfigFiles(folder);
+	EXPECT_TRUE(found.errors.empty()) << ::testing::PrintToString(found.errors);
+	EXPECT_EQ(
+		missingKinds(found),
+		(std::vector<std::string>{
+			"[creatures] creatures/Cow: no file has a <Traits> root",
+			"[creatures] creatures/Cow: no file has a <Needs> root",
+		})
+	);
+}
+
+TEST_F(CreatureConfigFilesTest, AFolderWithOnlyItsDefinitionIsClean) {
+	for (const char* name : {"mood.xml", "memory.xml", "traits.xml", "attributes.xml", "needs.xml"}) {
+		std::filesystem::remove(folder / name);
+	}
+	write("cow.svg", "<svg/>");
+	const CreatureConfigFiles found = creatureConfigFiles(folder);
+	EXPECT_TRUE(found.errors.empty()) << ::testing::PrintToString(found.errors);
+	EXPECT_EQ(missingKinds(found).size(), 5U);
 }
 
 TEST_F(CreatureConfigFilesTest, ASecondMoodFileIsOneError) {
@@ -127,12 +142,14 @@ TEST_F(CreatureConfigFilesTest, AnUnreadableDefinitionIsTheOneError) {
 TEST_F(CreatureConfigFilesTest, AMissingFolderIsAnError) {
 	const CreatureConfigFiles found = creatureConfigFiles(folder / "missing");
 	ASSERT_EQ(found.errors.size(), 1U);
-	EXPECT_EQ(found.errors.front(), "[creatures] " + (folder / "missing").generic_string() + ": not a folder");
+	EXPECT_EQ(found.errors.front(), "[creatures] Cow/missing: not a folder");
 }
 
 TEST_F(CreatureConfigFilesTest, AMissingOrSecondMemoryFileIsOneError) {
 	std::filesystem::remove(folder / "memory.xml");
-	EXPECT_EQ(onlyError(), "[creatures] creatures/Cow: no file has a <Memory> root");
+	const CreatureConfigFiles found = creatureConfigFiles(folder);
+	EXPECT_TRUE(found.errors.empty()) << ::testing::PrintToString(found.errors);
+	EXPECT_EQ(missingKinds(found), (std::vector<std::string>{"[creatures] creatures/Cow: no file has a <Memory> root"}));
 
 	write("memory.xml", "<Memory/>");
 	write("more-memory.xml", "<Memory/>");
@@ -142,6 +159,17 @@ TEST_F(CreatureConfigFilesTest, AMissingOrSecondMemoryFileIsOneError) {
 TEST_F(CreatureConfigFilesTest, AMissingDefinitionIsTheOneError) {
 	std::filesystem::remove(folder / "Cow.xml");
 	EXPECT_EQ(onlyError(), "[creatures] Cow.xml: missing; it is the creature's definition");
+
+	write("cow.xml", "<AssetDefinitions/>");
+	EXPECT_EQ(onlyError(), "[creatures] Cow.xml: missing; it is the creature's definition") << "matched by exact name on every platform";
+}
+
+TEST_F(CreatureConfigFilesTest, DefinitionsInAnotherFileSayTheFileIsNamedForItsFolder) {
+	write("Cow-old.xml", "<AssetDefinitions/>");
+	EXPECT_EQ(
+		onlyError(),
+		"[creatures] Cow-old.xml: asset definitions outside the definition file, which is named for its folder exactly (Cow.xml)"
+	);
 }
 
 TEST_F(CreatureConfigFilesTest, AMotionFileTheDefinitionNoLongerNamesSaysSo) {

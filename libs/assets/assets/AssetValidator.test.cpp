@@ -178,6 +178,33 @@ TEST(AssetValidatorTest, ACreatureFoldersConfigIsCheckedByItsOwnFinder) {
 	EXPECT_EQ(mismatches(broken), (std::vector<std::string>{"mood.xml"})) << "and never also as a stray file";
 }
 
+TEST(AssetValidatorTest, ACreatureFolderWithOnlyItsDefinitionAndArtIsClean) {
+	TempAssets t;
+	t.writeXml("creatures/Deer", oneDef("<defName>Deer</defName><assetType>simple</assetType><svgPath>deer.svg</svgPath>"), "Deer");
+	t.writeFile("creatures/Deer/deer.svg", "<svg/>");
+
+	const ValidationReport r = AssetValidator::validate(t.root, "");
+	EXPECT_EQ(r.errorCount(), 0);
+	EXPECT_FALSE(hasMessageContaining(r, Severity::Warning, "does not match its folder"));
+}
+
+TEST(AssetValidatorTest, ACreatureFolderWithoutAReadableDefinitionGetsOnlyTheWalksMessages) {
+	TempAssets t;
+	t.writeFile("creatures/Ghost/mood.xml", "<Mood/>");
+	const ValidationReport noDefinition = AssetValidator::validate(t.root, "");
+	EXPECT_EQ(noDefinition.errorCount(), 0) << "no finder ran on a folder with no definition";
+	EXPECT_TRUE(hasMessageContaining(noDefinition, Severity::Warning, "does not match its folder")) << "walked as any folder";
+
+	TempAssets broken;
+	broken.writeXml("creatures/Cow", "<AssetDefinitions><AssetDef>", "Cow");
+	broken.writeFile("creatures/Cow/herd.xml", "<Herd/>");
+	const ValidationReport r = AssetValidator::validate(broken.root, "");
+	ASSERT_EQ(r.issues.size(), 1U) << "one fault, one message";
+	EXPECT_EQ(r.issues.front().severity, Severity::Error);
+	EXPECT_NE(r.issues.front().message.find("XML parse error"), std::string::npos) << r.issues.front().message;
+	EXPECT_EQ(r.issues.front().message.find("[creatures]"), std::string::npos) << "the walk's own message, not the finder's";
+}
+
 TEST(AssetValidatorTest, OnlyAFolderDirectlyUnderTheRootsCreaturesIsACreature) {
 	TempAssets t;
 	t.writeXml("flora/creatures/Bush", oneDef("<defName>Bush</defName><assetType>simple</assetType><svgPath>bush.svg</svgPath>"), "Bush");

@@ -21,9 +21,9 @@ namespace assets {
 
 	/// Clears the work-config registries and loads them from configRoot (the folder holding actions/, work/,
 	/// and construction/) and the mood and memory config from `human`'s one <Mood> and one <Memory> file, in
-	/// dependency order, then cross-validates them. `human` must have no errors (asserted): a caller with a
-	/// broken human folder reports its errors and loads nothing. Returns every error found; an empty list means
-	/// the configuration is loaded and valid.
+	/// dependency order, then cross-validates them. `human` must have no errors and its one <Mood> and one
+	/// <Memory> file (asserted): a caller with a broken human folder reports its errors and loads nothing.
+	/// Returns every error found; an empty list means the configuration is loaded and valid.
 	[[nodiscard]] std::vector<std::string> loadWorkConfig(const std::filesystem::path& configRoot, const CreatureConfigFiles& human);
 
 } // namespace assets

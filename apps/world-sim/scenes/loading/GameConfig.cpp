@@ -14,6 +14,11 @@ namespace world_sim {
 			load.errors = std::move(human.errors);
 			return load;
 		}
+		// The human reads all five kinds; a creature folder in general need not have them.
+		load.errors = assets::missingKinds(human);
+		if (!load.errors.empty()) {
+			return load;
+		}
 		load.errors = assets::loadWorkConfig(configRoot, human);
 		ecs::ColonistRulesLoad colonistRules = ecs::loadColonistRules(configRoot, human);
 		load.errors.insert(load.errors.end(), colonistRules.errors.begin(), colonistRules.errors.end());

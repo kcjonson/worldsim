@@ -18,17 +18,22 @@ namespace assets {
 		std::vector<std::filesystem::path> traits;
 		std::vector<std::filesystem::path> attributes;
 		std::vector<std::filesystem::path> needs;
-		/// What is wrong with the folder, each prefixed [creatures]. The loaders take only a folder with none.
+		/// The folder's structural faults, each prefixed [creatures]. The loaders take only a folder with none.
 		std::vector<std::string> errors;
 	};
 
-	/// Every .xml file at the top level of `folder` but the primary definition (`<Name>/<Name>.xml`, the asset
-	/// registry's) and the files the primary names in a <motion> element. Each is an error naming it relative
-	/// to `folder` when it is not readable XML or its root is none of the five (a <Motion> root the primary does
-	/// not name says so); so is a subfolder, and so is a filesystem fault while reading the folder. A primary
-	/// that is missing or cannot be read is the one error, since the helper files cannot be told from the rest
-	/// without it, and so is a missing folder. Only when every file is placed is a root with no file (or a
-	/// second <Mood> or <Memory> file) an error naming the folder, so each fault gives one error.
+	/// Every file ending in `.xml` at the top level of `folder` but the primary definition (`<Name>/<Name>.xml`,
+	/// matched to the folder's name exactly, as the asset registry matches it) and the files the primary names in
+	/// a <motion> element; any other file is ignored. Structural faults are errors naming the file relative to
+	/// `folder`: a file that is not readable XML or whose root is none of the five (a <Motion> or
+	/// <AssetDefinitions> root says why it is out of place), a subfolder, a second <Mood> or <Memory> file, and a
+	/// filesystem fault. A missing or unreadable primary is the one error, since the helper files cannot be told
+	/// from the rest without it; so is a missing folder. A root with no file is not a fault here: which kinds a
+	/// creature needs is its loader's business (missingKinds).
 	[[nodiscard]] CreatureConfigFiles creatureConfigFiles(const std::filesystem::path& folder);
+
+	/// One error per root of the five with no file, naming the folder (`[creatures] creatures/Human: no file
+	/// has a <Needs> root`), for a creature that needs all five, as the human does.
+	[[nodiscard]] std::vector<std::string> missingKinds(const CreatureConfigFiles& found);
 
 } // namespace assets

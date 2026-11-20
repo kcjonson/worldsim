@@ -58,8 +58,9 @@ namespace ecs {
 
 	/// Load the traits, the attribute ranges, and the need levels from `human`'s <Traits>, <Attributes>, and
 	/// <Needs> files, build the vocabulary from `configRoot`/conditions, then the thought types from
-	/// `configRoot`/thoughts, stopping at the first stage with errors. `human` must have no errors (asserted):
-	/// a caller with a broken human folder reports its errors and loads nothing. Errors name their stage; an
+	/// `configRoot`/thoughts, stopping at the first stage with errors. `human` must have no errors and a file
+	/// of each kind this reads (asserted): a caller with a broken human folder reports its errors and loads
+	/// nothing. Errors name their stage; an
 	/// empty list means all are ready. Every part of the rules exists either way; a stage that failed or never
 	/// ran is empty.
 	[[nodiscard]] ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot, const assets::CreatureConfigFiles& human);

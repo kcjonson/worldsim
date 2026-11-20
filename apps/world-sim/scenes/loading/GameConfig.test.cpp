@@ -1,4 +1,4 @@
-// The loading scene's config load: a broken human folder stops it before either loader.
+// The loading scene's config load: a broken or incomplete human folder stops it before either loader.
 
 #include "GameConfig.h"
 
@@ -21,31 +21,64 @@ namespace {
 
 } // namespace
 
-TEST(GameConfig, ABrokenHumanFolderIsTheLoadsOnlyErrorsAndNeitherLoaderRuns) {
-	const std::filesystem::path configRoot = repoRoot() / "assets" / "config";
-	const std::filesystem::path shippedHuman = repoRoot() / "assets" / "world" / "creatures" / "Human";
+namespace {
 
-	// Loaded alone as a marker: loadWorkConfig clears it first, so it still being loaded after means that never ran. The
-	// whole load is not run here, since its registries are process-wide and the scene tests load their own.
-	ASSERT_TRUE(assets::MoodConfig::Get().loadFromFile(shippedHuman, "mood.xml"));
+	/// A copy of the shipped human's folder under a fresh temp root, removed with the fixture.
+	class GameConfigTest : public ::testing::Test {
+	  protected:
+		void SetUp() override {
+			root = std::filesystem::temp_directory_path() / ("worldsim-game-config-" + std::to_string(std::random_device{}()));
+			human = root / "creatures" / "Human";
+			std::filesystem::create_directories(human);
+			std::filesystem::copy(shippedHuman(), human, std::filesystem::copy_options::recursive);
+			// A marker: loadWorkConfig clears the mood config first and, given a config root that does not exist,
+			// fails without loading it again, so it still being loaded after means loadWorkConfig never ran.
+			ASSERT_TRUE(assets::MoodConfig::Get().loadFromFile(shippedHuman(), "mood.xml"));
+		}
 
-	const std::filesystem::path root =
-		std::filesystem::temp_directory_path() / ("worldsim-game-config-" + std::to_string(std::random_device{}()));
-	const std::filesystem::path broken = root / "creatures" / "Human";
-	std::filesystem::create_directories(broken);
-	std::filesystem::copy(shippedHuman, broken, std::filesystem::copy_options::recursive);
-	std::ofstream(broken / "herd.xml") << "<Herd/>";
+		void TearDown() override {
+			std::filesystem::remove_all(root);
+			assets::MoodConfig::Get().clear();
+		}
 
-	const world_sim::GameConfigLoad load = world_sim::loadGameConfig(configRoot, broken);
+		static std::filesystem::path shippedHuman() { return repoRoot() / "assets" / "world" / "creatures" / "Human"; }
+
+		/// The load with a config root that does not exist: any loader that runs adds an error of its own.
+		[[nodiscard]] world_sim::GameConfigLoad load() const { return world_sim::loadGameConfig(root / "no-such-config", human); }
+
+		std::filesystem::path root;
+		std::filesystem::path human;
+	};
+
+} // namespace
+
+TEST_F(GameConfigTest, ABrokenHumanFolderIsTheLoadsOnlyErrorsAndNeitherLoaderRuns) {
+	std::ofstream(human / "herd.xml") << "<Herd/>";
+
+	const world_sim::GameConfigLoad result = load();
 	EXPECT_EQ(
-		load.errors,
+		result.errors,
 		std::vector<std::string>{
 			"[creatures] herd.xml: the root element <Herd> is not one a creature folder holds (<Mood>, <Memory>, <Traits>, <Attributes>, "
 			"<Needs>)"
 		}
 	);
-	EXPECT_TRUE(assets::MoodConfig::Get().loaded()) << "loadWorkConfig, which clears the mood config first, never ran";
-	EXPECT_EQ(load.rules.traits, nullptr) << "nor did the colonist rules";
-	std::filesystem::remove_all(root);
-	assets::MoodConfig::Get().clear();
+	EXPECT_TRUE(assets::MoodConfig::Get().loaded()) << "loadWorkConfig never ran";
+	EXPECT_EQ(result.rules.traits, nullptr) << "nor did the colonist rules";
+}
+
+TEST_F(GameConfigTest, EachKindTheHumanLacksIsOneErrorAndNeitherLoaderRuns) {
+	std::filesystem::remove(human / "needs.xml");
+	std::filesystem::remove(human / "memory.xml");
+
+	const world_sim::GameConfigLoad result = load();
+	EXPECT_EQ(
+		result.errors,
+		(std::vector<std::string>{
+			"[creatures] creatures/Human: no file has a <Memory> root",
+			"[creatures] creatures/Human: no file has a <Needs> root",
+		})
+	);
+	EXPECT_TRUE(assets::MoodConfig::Get().loaded()) << "loadWorkConfig never ran";
+	EXPECT_EQ(result.rules.traits, nullptr) << "nor did the colonist rules";
 }

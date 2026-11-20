@@ -16,9 +16,10 @@ namespace world_sim {
 		std::vector<std::string> errors;
 	};
 
-	/// Find the human's config files in `humanFolder`. When the folder has errors they are the load's errors
-	/// and neither loader runs; otherwise load the work config and the colonist rules from `configRoot` and
-	/// the human's files. An empty error list means everything is loaded and valid.
+	/// Find the human's config files in `humanFolder`. When the folder has structural errors, or lacks a file
+	/// of any of the five kinds the human reads (one error per kind), those are the load's errors and neither
+	/// loader runs; otherwise load the work config and the colonist rules from `configRoot` and the human's
+	/// files. An empty error list means everything is loaded and valid.
 	[[nodiscard]] GameConfigLoad loadGameConfig(const std::filesystem::path& configRoot, const std::filesystem::path& humanFolder);
 
 } // namespace world_sim

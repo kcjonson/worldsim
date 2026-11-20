@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -544,8 +545,19 @@ namespace {
 		return shippedConfigRoot().parent_path() / "world" / "creatures" / "Human";
 	}
 
+	/// The shipped human's files; a broken shipped folder stops the run, as the sim tests' shippedHumanConfig does.
 	CreatureConfigFiles shippedHuman() {
-		return creatureConfigFiles(shippedHumanFolder());
+		CreatureConfigFiles			   human = creatureConfigFiles(shippedHumanFolder());
+		std::vector<std::string>	   errors = human.errors;
+		const std::vector<std::string> missing = missingKinds(human);
+		errors.insert(errors.end(), missing.begin(), missing.end());
+		for (const std::string& error : errors) {
+			std::fprintf(stderr, "shipped human config: %s\n", error.c_str());
+		}
+		if (!errors.empty()) {
+			std::abort();
+		}
+		return human;
 	}
 } // namespace
 
