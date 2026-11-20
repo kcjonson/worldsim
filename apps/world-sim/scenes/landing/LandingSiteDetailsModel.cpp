@@ -79,6 +79,12 @@ int difficultySkulls(worldgen::Habitability h) {
 
 } // namespace
 
+std::string landingCoordinates(double pickLatDeg, double pickLonDeg) {
+	return std::format("{:.1f} {}  {:.1f} {}",
+		std::abs(pickLatDeg), pickLatDeg >= 0.0 ? "N" : "S",
+		std::abs(pickLonDeg), pickLonDeg >= 0.0 ? "E" : "W");
+}
+
 LandingSiteDetails buildLandingSiteDetails(
 		const worldgen::GeneratedWorld& world, const worldgen::LandingSite& site, double pickLatDeg, double pickLonDeg) {
 	LandingSiteDetails out;
@@ -86,9 +92,7 @@ LandingSiteDetails buildLandingSiteDetails(
 	out.location = std::format("{:.2f} {}, {:.2f} {}",
 		std::abs(pickLatDeg), pickLatDeg >= 0.0 ? "N" : "S",
 		std::abs(pickLonDeg), pickLonDeg >= 0.0 ? "E" : "W");
-	out.coords = std::format("{:.1f} {}  {:.1f} {}",
-		std::abs(pickLatDeg), pickLatDeg >= 0.0 ? "N" : "S",
-		std::abs(pickLonDeg), pickLonDeg >= 0.0 ? "E" : "W");
+	out.coords = landingCoordinates(pickLatDeg, pickLonDeg);
 
 	if (!world.grid || site.tile == worldgen::kInvalidTile) {
 		out.verdict = "No world data";

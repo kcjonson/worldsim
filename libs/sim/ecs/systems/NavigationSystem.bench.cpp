@@ -49,6 +49,7 @@
 #include <assets/ConstructionRegistry.h>
 #include <assets/RecipeRegistry.h>
 #include <assets/placement/AsyncChunkProcessor.h>
+#include <assets/placement/BiomeProvisions.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <assets/placement/SpatialIndex.h>
 #include <construction/ConstructionWorld.h>
@@ -70,7 +71,6 @@
 #include <world/chunk/TerrainPolygonQuery.h>
 #include <worldgen/io/PlanetIO.h>
 #include <worldgen/sampling/LandingSite.h>
-#include <worldgen/sampling/SpawnSite.h>
 
 #include <benchmark/benchmark.h>
 
@@ -1079,9 +1079,19 @@ namespace {
 			if (!out.planet) {
 				return std::nullopt;
 			}
-			out.site						= worldgen::findDefaultLandingSite(*out.planet, worldgen::Biome::TemperateDeciduousForest);
-			const worldgen::SpawnSite spawn = worldgen::findRiverbankSpawn(out.planet, out.site.latDeg, out.site.lonDeg);
-			out.at							= {static_cast<float>(spawn.xMeters), static_cast<float>(spawn.yMeters)};
+			assets::AssetRegistry& registry = assets::AssetRegistry::Get();
+			registry.setSharedScriptsPath(projectRoot() / "assets" / "shared" / "scripts");
+			registry.loadDefinitionsFromFolder((projectRoot() / "assets" / "world").string());
+			worldgen::SuggestedSiteQuery query;
+			query.preferredBiome = worldgen::Biome::TemperateDeciduousForest;
+			query.maximumSites	 = 1;
+			const std::vector<worldgen::LandingSite> sites =
+				worldgen::findSuggestedLandingSites(out.planet, assets::biomeProvisionsFromDefinitions(registry), query);
+			if (sites.empty()) {
+				return std::nullopt;
+			}
+			out.site = sites.front().origin;
+			out.at	 = {static_cast<float>(sites.front().spawn.xMeters), static_cast<float>(sites.front().spawn.yMeters)};
 			return out;
 		}();
 		return landing ? &*landing : nullptr;

@@ -10,8 +10,11 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <stop_token>
+#include <vector>
 
 namespace worldgen {
 
@@ -45,6 +48,12 @@ inline constexpr float kMinimumFoodSourcesPerSquareKilometer = 100.0f;
 inline constexpr float kMinimumWoodSourcesPerSquareKilometer = 100.0f;
 inline constexpr double kLakeShoreInsetMeters = 20.0;
 inline constexpr double kLakeEdgeToleranceMeters = 0.5;
+inline constexpr std::size_t kSuggestedSiteCount = 10;
+inline constexpr double kMinimumSiteSeparationDegrees = 15.0;
+inline constexpr std::size_t kMaximumSitesOfOneKind = 7;
+inline constexpr uint32_t kSiteBinSubdivision = 8;
+inline constexpr std::size_t kCandidatesPerSlot = 2;
+inline constexpr double kMaximumSuggestedLatitudeDegrees = 45.0;
 
 // A tile's water situation. River and Lake are fresh, Coastal is salt, RainFed has no surface water.
 enum class WaterClass : uint8_t {
@@ -109,11 +118,23 @@ struct LandingSite {
 [[nodiscard]] LandingSite resolveLandingSite(const std::shared_ptr<const GeneratedWorld>& world,
                                              const BiomeProvisionTable& provisions, LatLon pick);
 
-// The default landing site until the suggested-site finder replaces it: among temperate (|lat| <= 45)
-// green land tiles, the best by water proximity plus the old habitability rating, ties to the lowest
-// TileId. preferredBiome adds a decisive bonus (Quick Start passes TemperateDeciduousForest). Falls
-// back to any temperate land, then any land, then (0, 0).
-LatLon findDefaultLandingSite(const GeneratedWorld& world,
-                              std::optional<Biome> preferredBiome = std::nullopt);
+struct SuggestedSiteQuery {
+    std::optional<Biome> preferredBiome;
+    std::size_t          maximumSites{kSuggestedSiteCount};
+    std::stop_token      stopToken;
+    // Called on the finder's thread wherever it checks stopToken, so the caller can serve other work
+    // (a player's pick) there between the finder's steps.
+    std::function<void()> checkpoint;
+};
+
+// Up to maximumSites good places to start a colony, best first, each one a resolved landing that is
+// recommended() and lies on the tile it was found on: river tiles and tiles beside a lake that meet the
+// bar on their own data within kMaximumSuggestedLatitudeDegrees of the equator, ranked (preferred biome,
+// river before lake, Easy before Moderate, lowest TileId), kept per (coarse bin, kind, biome) slot, and
+// taken in rounds that keep sites kMinimumSiteSeparationDegrees apart and vary their biomes and kinds.
+// The same world always gives the same list. Returns what it has when stopToken is set.
+[[nodiscard]] std::vector<LandingSite> findSuggestedLandingSites(const std::shared_ptr<const GeneratedWorld>& world,
+                                                                 const BiomeProvisionTable& provisions,
+                                                                 const SuggestedSiteQuery& query);
 
 } // namespace worldgen

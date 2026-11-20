@@ -14,6 +14,7 @@
 #include "scenes/landing/LandingSiteDetailsModel.h"
 #include "scenes/landing/LandingSiteDetailsPanel.h"
 #include "scenes/shared/GlobeView.h"
+#include "scenes/shared/LandingSiteSurvey.h"
 #include "scenes/shared/SalalUi.h"
 #include "scenes/shared/Starfield.h"
 #include "ui/ParameterPanel.h"
@@ -44,6 +45,7 @@
 #include <cmath>
 #include <format>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -97,7 +99,7 @@ namespace {
 				R"({{"scene":"world_creator","state":{},"globe":{},"site":{},"confirming":{}}})",
 				static_cast<int>(model.getState()),
 				globe.isReady() ? "true" : "false",
-				siteValid ? "true" : "false",
+				selectedLanding ? "true" : "false",
 				confirmDialog.get() != nullptr ? "true" : "false"
 			);
 		}
@@ -117,7 +119,10 @@ namespace {
 			refreshFooter();
 		}
 
-		void onExit() override { LOG_INFO(Game, "WorldCreatorScene - Exiting"); }
+		void onExit() override {
+			LOG_INFO(Game, "WorldCreatorScene - Exiting");
+			survey.cancel();
+		}
 
 		void update(const app::FrameContext& frame) override {
 			const auto dt = static_cast<float>(frame.dt);
@@ -161,12 +166,15 @@ namespace {
 					}
 					onStateChanged(newState);
 				}
-			} else if (state == world_sim::WorldCreatorState::Reviewing && confirmDialog.get() == nullptr) {
-				handleCameraKeys(frame.input, dt);
+			} else if (state == world_sim::WorldCreatorState::Reviewing) {
+				takeSurveyResults();
+				if (confirmDialog.get() == nullptr) {
+					handleCameraKeys(frame.input, dt);
+				}
 			}
 
 			enable(generateButton.get(), panel.seedIsValid());
-			enable(acceptButton.get(), siteValid); // stays in sync as the player re-picks a site
+			enable(acceptButton.get(), selectedLanding.has_value()); // off while a pick resolves
 
 			const bool ready = model.getState() == world_sim::WorldCreatorState::Reviewing && globe.isReady();
 			show(stageHint.get(), ready);
@@ -239,13 +247,17 @@ namespace {
 		world_sim::GlobeView globe;
 		float				 markerPulse{0.0F};
 
-		// Landing selection (Reviewing only). The site auto-suggests on completion and updates on each
-		// land-tile click. The crosshair stays at the pick; the landing is where the crew really comes down.
-		worldgen::BiomeProvisionTable provisions{};
-		planetview::LatLon			  selectedPick{};
-		worldgen::LandingSite		  selectedLanding;
-		bool						  siteValid{false};
-		world_sim::LandingSiteDetails details;
+		// Landing selection (Reviewing only). The survey's first site is selected when it finishes unless the
+		// player has picked; each land-tile click resolves on the survey's worker. The crosshair stays at the
+		// pick; the landing is where the crew really comes down, empty while its resolution is pending.
+		worldgen::BiomeProvisionTable		 provisions{};
+		world_sim::LandingSiteSurvey		 survey;
+		std::vector<worldgen::LandingSite>	 suggestedSites;
+		bool								 pickMade{false};
+		planetview::LatLon					 selectedPick{};
+		std::optional<worldgen::LandingSite> selectedLanding;
+		std::optional<std::size_t>			 selectedSuggestion;
+		world_sim::LandingSiteDetails		 details;
 
 		// Stage (globe area) between the parameter sidebar and the right column, as the last layout put it.
 		Foundation::Rect stageRect() const {
@@ -658,7 +670,7 @@ namespace {
 			show(cancelButton.get(), generating);
 			show(reviewActions.get(), review);
 			show(progressStrip.get(), generating);
-			show(landingHost.get(), review && siteValid);
+			show(landingHost.get(), review && pickMade);
 			if (ui::Text* error = errorText.get()) {
 				show(error, configuring && !error->getText().empty());
 			}
@@ -669,7 +681,12 @@ namespace {
 			if (ui::Text* status = statusText.get()) {
 				const ui::Theme& theme = ui().getTheme();
 				ui::Style		 style = status->getDeclaredStyle();
-				style.color = theme.get(review ? tokens::color::statusOk : tokens::color::textDim);
+				const bool surveyed = review && !survey.surveying();
+				style.color = theme.get(
+					!surveyed				 ? tokens::color::textDim
+					: suggestedSites.empty() ? tokens::color::statusWarn
+											 : tokens::color::statusOk
+				);
 				status->setStyle(style);
 				switch (state) {
 					case world_sim::WorldCreatorState::Configuring:
@@ -679,7 +696,11 @@ namespace {
 						status->setText("Generating world...");
 						break;
 					case world_sim::WorldCreatorState::Reviewing:
-						status->setText("World ready - suitable for colonization");
+						status->setText(
+							!surveyed				 ? "Surveying landing sites..."
+							: suggestedSites.empty() ? "World ready - no recommended landing sites"
+													 : "World ready - suitable for colonization"
+						);
 						break;
 				}
 			}
@@ -714,7 +735,9 @@ namespace {
 			}
 
 			setError("");
-			siteValid = false;
+			survey.cancel();
+			suggestedSites.clear();
+			clearSelection();
 			setPickHint(false);
 			showProgress(0.0F, "Starting...");
 
@@ -731,24 +754,23 @@ namespace {
 				if (auto result = model.getResult()) {
 					globe.setWorld(result);
 					surveyPanel.setWorld(result);
-					// Suggest a habitable starting point so the pane has content the
-					// moment review begins; the player can click to choose another.
-					const worldgen::LatLon suggested = worldgen::findDefaultLandingSite(*result);
-					trySelectSite({static_cast<float>(suggested.latDeg), static_cast<float>(suggested.lonDeg)});
+					clearSelection();
+					suggestedSites.clear();
+					survey.start(result, provisions, std::nullopt, worldgen::kSuggestedSiteCount);
 				}
 				refreshFooter();
 				return;
 			}
 			if (newState == world_sim::WorldCreatorState::Configuring) {
 				panel.setGenerating(false);
-				siteValid = false;
+				clearSelection();
 			}
 			refreshFooter();
 		}
 
 		void openConfirmDialog() {
 			ui::Component* opener = acceptButton.get();
-			if (!siteValid || opener == nullptr || confirmDialog.get() != nullptr)
+			if (!selectedLanding || opener == nullptr || confirmDialog.get() != nullptr)
 				return;
 			confirmDialog = ui::Dialog::open(
 				*opener,
@@ -831,6 +853,61 @@ namespace {
 			return false;
 		}
 
+		void clearSelection() {
+			pickMade = false;
+			selectedLanding.reset();
+			selectedSuggestion.reset();
+		}
+
+		// The survey's results as they arrive: the suggested sites once, and each pick's landing.
+		void takeSurveyResults() {
+			if (std::optional<std::vector<worldgen::LandingSite>> sites = survey.takeSites()) {
+				suggestedSites = std::move(*sites);
+				LOG_INFO(Game, "WorldCreatorScene: %zu suggested landing sites", suggestedSites.size());
+				if (!pickMade && !suggestedSites.empty()) {
+					selectSuggestion(0);
+				}
+				refreshFooter();
+			}
+			if (std::optional<world_sim::LandingSiteSurvey::ResolvedPick> resolved = survey.takeResolved()) {
+				const bool current = pickMade && !selectedLanding && resolved->pick.latDeg == selectedPick.latDeg &&
+									 resolved->pick.lonDeg == selectedPick.lonDeg;
+				if (current) {
+					showLanding(std::move(resolved->landing));
+				}
+			}
+		}
+
+		void selectSuggestion(std::size_t index) {
+			const worldgen::LandingSite& site = suggestedSites[index];
+			selectedPick = {static_cast<float>(site.origin.latDeg), static_cast<float>(site.origin.lonDeg)};
+			pickMade = true;
+			showLanding(site);
+		}
+
+		void showLanding(worldgen::LandingSite landing) {
+			selectedLanding = std::move(landing);
+			selectedSuggestion.reset();
+			for (std::size_t index = 0; index < suggestedSites.size(); ++index) {
+				if (suggestedSites[index].origin.latDeg == selectedLanding->origin.latDeg &&
+					suggestedSites[index].origin.lonDeg == selectedLanding->origin.lonDeg) {
+					selectedSuggestion = index;
+					break;
+				}
+			}
+			refreshDetails();
+			refreshFooter();
+			LOG_INFO(
+				Game,
+				"WorldCreatorScene: pick lat=%.2f lon=%.2f lands on tile=%u feature=%d",
+				static_cast<double>(selectedPick.latDeg),
+				static_cast<double>(selectedPick.lonDeg),
+				selectedLanding->tile,
+				static_cast<int>(selectedLanding->feature)
+			);
+		}
+
+		// A land-tile click moves the crosshair at once; its landing resolves on the survey's worker.
 		void trySelectSite(planetview::LatLon picked) {
 			auto result = model.getResult();
 			if (!result || !result->grid)
@@ -847,40 +924,38 @@ namespace {
 			}
 
 			selectedPick = picked;
-			selectedLanding = worldgen::resolveLandingSite(result, provisions, pick);
-			siteValid = true;
+			pickMade = true;
+			selectedLanding.reset();
+			selectedSuggestion.reset();
+			survey.resolve(pick);
 			setPickHint(false);
 			refreshDetails();
 			refreshFooter();
-			LOG_INFO(
-				Game,
-				"WorldCreatorScene: picked lat=%.2f lon=%.2f tile=%u, landing tile=%u feature=%d",
-				pick.latDeg,
-				pick.lonDeg,
-				tile,
-				selectedLanding.tile,
-				static_cast<int>(selectedLanding.feature)
-			);
 		}
 
 		void refreshDetails() {
 			auto result = model.getResult();
-			if (siteValid && result) {
-				details = world_sim::buildLandingSiteDetails(*result, selectedLanding, selectedPick.latDeg, selectedPick.lonDeg);
+			if (!pickMade || !result) {
+				return;
+			}
+			if (selectedLanding) {
+				details = world_sim::buildLandingSiteDetails(*result, *selectedLanding, selectedPick.latDeg, selectedPick.lonDeg);
 				detailsPanel.show(details);
+			} else {
+				detailsPanel.showSurveying(world_sim::landingCoordinates(selectedPick.latDeg, selectedPick.lonDeg));
 			}
 		}
 
 		void land() {
 			auto result = model.getResult();
-			if (!siteValid || !result)
+			if (!selectedLanding || !result)
 				return;
 
 			LOG_INFO(
 				Game,
 				"WorldCreatorScene: landing lat=%.5f lon=%.5f",
-				selectedLanding.origin.latDeg,
-				selectedLanding.origin.lonDeg
+				selectedLanding->origin.latDeg,
+				selectedLanding->origin.lonDeg
 			);
 
 			// Persist the accepted world: reloadable without regeneration, stable
@@ -896,7 +971,7 @@ namespace {
 			auto config = std::make_unique<world_sim::GameStartConfig>();
 			config->source = world_sim::GameStartConfig::Source::NewGame;
 			config->world = result;
-			config->landing = selectedLanding;
+			config->landing = *selectedLanding;
 			config->party = world_sim::NewGameSetup::Get().party;
 			world_sim::GameStartConfig::SetPending(std::move(config));
 			owner->scenes().switchTo(world_sim::scenes::GameLoading.name);
@@ -913,7 +988,7 @@ namespace {
 		void renderMarker(const Foundation::Rect& rect, float scale, const ui::Theme& theme) const {
 			float sx = 0.0F;
 			float sy = 0.0F;
-			if (!siteValid || !globe.projectLatLon(selectedPick, rect, sx, sy)) {
+			if (!pickMade || !globe.projectLatLon(selectedPick, rect, sx, sy)) {
 				return;
 			}
 			const Foundation::Color accent = theme.get(tokens::color::accent);

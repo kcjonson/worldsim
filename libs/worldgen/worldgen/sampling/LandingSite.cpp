@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <limits>
 #include <optional>
 #include <vector>
 
@@ -128,84 +127,71 @@ std::vector<TileId> neighboursNearestFirst(const SphereGrid& grid, TileId tile, 
     return out;
 }
 
-// Green, livable biomes the default site lands in: forests, grasslands, savanna,
-// and wetlands. Excludes deserts, beach (coastal sand), tundra, and ice/snow --
-// arid or barren starts a colony can't live off of. The default scan considers
-// only these; everything else is a fallback when no green tile exists.
-bool isPreferredLandingBiome(Biome b) {
-    switch (b) {
-        case Biome::TropicalRainforest:
-        case Biome::TropicalSeasonalForest:
-        case Biome::TemperateDeciduousForest:
-        case Biome::TemperateRainforest:
-        case Biome::BorealForest:
-        case Biome::MontaneForest:
-        case Biome::TropicalSavanna:
-        case Biome::TemperateGrassland:
-        case Biome::AlpineGrassland:
-        case Biome::TemperateWetland:
-        case Biome::TropicalWetland:
-            return true;
-        default:
-            return false;
-    }
+constexpr uint32_t kStopCheckTileInterval = 65536;
+
+enum class CandidateKind : uint8_t { River, Lake };
+
+// A tile whose own resolution anchors on itself and that meets the rest of the bar on its own data.
+struct Candidate {
+    TileId        tile{kInvalidTile};
+    CandidateKind kind{CandidateKind::River};
+    uint8_t       biome{};
+    bool          preferred{};
+    Habitability  habitability{Habitability::Harsh};
+};
+
+bool ranksBefore(const Candidate& a, const Candidate& b) {
+    if (a.preferred != b.preferred) return a.preferred;
+    if (a.kind != b.kind) return a.kind < b.kind;
+    if (a.habitability != b.habitability) return a.habitability < b.habitability;
+    return a.tile < b.tile;
 }
 
-// How close clean water is, for ranking landing tiles. A river running THROUGH
-// the tile scores highest: that tile's center is the 2D origin, so the channel
-// passes through spawn and the colonist drops on the bank (see findRiverbankSpawn).
-int waterScore(const GeneratedWorld& world, TileId t, WaterClass wc) {
-    if ((world.data.flags[t] & kFlagRiver) != 0) return 6; // channel through the origin
-    switch (wc) {
-        case WaterClass::River: return 4; // river on a neighbor
-        case WaterClass::Lake:  return 4; // lake on/near the tile
-        case WaterClass::Coastal: return 2; // saltwater (needs work to drink)
-        case WaterClass::RainFed: return 0;
+bool bordersLake(const GeneratedWorld& world, TileId tile) {
+    std::array<TileId, 6> neighbours{};
+    const uint32_t count = world.grid->neighbors(tile, neighbours);
+    for (uint32_t i = 0; i < count; ++i) {
+        if ((world.data.flags[neighbours[i]] & kFlagLake) != 0) return true;
     }
-    return 0;
+    return false;
 }
 
-int habitabilityScore(Habitability h) {
-    switch (h) {
-        case Habitability::Easy:     return 4;
-        case Habitability::Moderate: return 2;
-        case Habitability::Hard:     return 0;
-        case Habitability::Harsh:    return -4;
-    }
-    return 0;
-}
+// The best kCandidatesPerSlot of each (bin, kind, biome) slot. A total order with no ties, so what is
+// kept does not depend on the order candidates arrive in.
+class CandidateSlots {
+  public:
+    explicit CandidateSlots(uint32_t binCount)
+        : slots(static_cast<std::size_t>(binCount) * 2 * static_cast<std::size_t>(Biome::Count)) {}
 
-// The old rating findDefaultLandingSite ranks by: water class, rainfall, and the mean temperature.
-Habitability defaultSiteHabitability(const GeneratedWorld& world, TileId tile, WaterClass water) {
-    int score = 0;
-
-    switch (water) {
-        case WaterClass::River:
-        case WaterClass::Lake:    score += 3; break;
-        case WaterClass::Coastal: score += 1; break;
-        case WaterClass::RainFed: score += 0; break;
-    }
-
-    uint16_t rainMm = 0;
-    if (hasField(world, WorldField::Precipitation) && tile < world.data.precipitation.size()) {
-        rainMm = world.data.precipitation[tile];
-    }
-    if (rainMm >= 600)      score += 2;
-    else if (rainMm >= 250) score += 1;
-    else if (rainMm < 100 && water == WaterClass::RainFed) score -= 1;
-
-    if (hasField(world, WorldField::TemperatureMean) && tile < world.data.temperatureMean.size()) {
-        float tempC = world.data.temperatureMean[tile] / 10.0f;
-        if (tempC < -10.0f || tempC > 35.0f)     score -= 2;
-        else if (tempC < 0.0f || tempC > 28.0f)  score -= 1;
+    void offer(uint32_t bin, const Candidate& candidate) {
+        Slot& slot = slots[(static_cast<std::size_t>(bin) * 2 + static_cast<std::size_t>(candidate.kind)) *
+                               static_cast<std::size_t>(Biome::Count) +
+                           candidate.biome];
+        if (slot.count < kCandidatesPerSlot) {
+            slot.kept[slot.count++] = candidate;
+            return;
+        }
+        Candidate* worst = &slot.kept[0];
+        for (Candidate& kept : slot.kept) {
+            if (ranksBefore(*worst, kept)) worst = &kept;
+        }
+        if (ranksBefore(candidate, *worst)) *worst = candidate;
     }
 
-    if (score >= 4) return Habitability::Easy;
-    if (score >= 2) return Habitability::Moderate;
-    if (score >= 0) return Habitability::Hard;
-    return Habitability::Harsh;
-}
+    [[nodiscard]] std::vector<Candidate> ranked() const {
+        std::vector<Candidate> out;
+        for (const Slot& slot : slots) out.insert(out.end(), slot.kept.begin(), slot.kept.begin() + slot.count);
+        std::sort(out.begin(), out.end(), ranksBefore);
+        return out;
+    }
 
+  private:
+    struct Slot {
+        std::array<Candidate, kCandidatesPerSlot> kept{};
+        std::size_t                               count{};
+    };
+    std::vector<Slot> slots;
+};
 } // namespace
 
 WaterClass classifyWater(const GeneratedWorld& world, TileId tile) {
@@ -341,79 +327,103 @@ LandingSite resolveLandingSite(const std::shared_ptr<const GeneratedWorld>& worl
                        assessLandingTile(planet, provisions, picked, water)};
 }
 
-LatLon findDefaultLandingSite(const GeneratedWorld& world,
-                              std::optional<Biome> preferredBiome) {
-    constexpr uint32_t kRequiredFields =
-        static_cast<uint32_t>(WorldField::Elevation) |
-        static_cast<uint32_t>(WorldField::Flags);
-    if (!world.grid || (world.validFields & kRequiredFields) != kRequiredFields) {
-        LOG_ERROR(World, "findDefaultLandingSite: missing grid or required fields "
-                         "(validFields=0x%x); returning origin",
-                  world.validFields);
-        return LatLon{0.0, 0.0};
+std::vector<LandingSite> findSuggestedLandingSites(const std::shared_ptr<const GeneratedWorld>& world,
+                                                   const BiomeProvisionTable& provisions,
+                                                   const SuggestedSiteQuery& query) {
+    const GeneratedWorld& planet = *world;
+    constexpr uint32_t kRequiredFields = static_cast<uint32_t>(WorldField::Elevation) |
+                                         static_cast<uint32_t>(WorldField::Biome) |
+                                         static_cast<uint32_t>(WorldField::Flags);
+    if (!planet.grid || (planet.validFields & kRequiredFields) != kRequiredFields || query.maximumSites == 0) {
+        return {};
     }
+    const auto checkpoint = [&query] {
+        if (query.checkpoint) query.checkpoint();
+        return !query.stopToken.stop_requested();
+    };
 
-    constexpr double kMaxPreferredLatDeg = 45.0;
-    // Bonus added to the score of any tile whose biome matches preferredBiome.
-    // Value 5 is decisive: it exceeds the full habitability spread (+4 to -4 = 8)
-    // with enough margin that even a Harsh preferred-biome tile beats an Easy
-    // non-preferred tile on the same water tier. A same-tier preferred tile wins
-    // by 5 points vs. any non-preferred tile, and degrades gracefully (best
-    // preferred tile, else best green tile) when no preferred tile exists.
-    constexpr int kBiomeBias = 5;
-
-    const SphereGrid& grid = *world.grid;
-    const uint32_t tileCount = grid.tileCount();
-
-    // Score temperate, GREEN land tiles by clean-water proximity plus a
-    // habitability rating (water class + climate + rainfall). A river running
-    // THROUGH the tile scores highest: the tile center is the 2D origin, so the
-    // channel passes through spawn and the colonist drops on the bank (see
-    // findRiverbankSpawn). Only vegetated biomes are considered -- deserts, beach,
-    // and tundra all read as barren and starve a colony. Highest score wins; ties
-    // break to the lowest TileId (strict >) for determinism. Fallbacks keep a
-    // result for barren or all-water worlds.
-    const bool haveBiome = hasField(world, WorldField::Biome);
-    TileId firstLand = kInvalidTile;
-    TileId firstTemperate = kInvalidTile;
-    TileId best = kInvalidTile;
-    int bestScore = std::numeric_limits<int>::min();
-    for (TileId t = 0; t < tileCount; ++t) {
-        if (isWaterTile(world, t)) continue;
-        if (firstLand == kInvalidTile) firstLand = t;
-
-        double latDeg = 0.0;
-        double lonDeg = 0.0;
-        grid.latLonOf(t, latDeg, lonDeg);
-        if (std::abs(latDeg) > kMaxPreferredLatDeg) continue;
-        if (firstTemperate == kInvalidTile) firstTemperate = t;
-
-        if (haveBiome && !isPreferredLandingBiome(static_cast<Biome>(world.data.biome[t]))) continue;
-
-        const WaterClass wc = classifyWater(world, t);
-        int score = waterScore(world, t, wc) +
-                    habitabilityScore(defaultSiteHabitability(world, t, wc));
-        if (preferredBiome.has_value() && haveBiome &&
-                static_cast<Biome>(world.data.biome[t]) == *preferredBiome) {
-            score += kBiomeBias;
+    const SphereGrid& grid = *planet.grid;
+    const SphereGrid  bins(kSiteBinSubdivision);
+    CandidateSlots    slots(bins.tileCount());
+    const uint32_t    tileCount = grid.tileCount();
+    for (TileId tile = 0; tile < tileCount; ++tile) {
+        if (tile % kStopCheckTileInterval == 0 && !checkpoint()) return {};
+        if (isWaterTile(planet, tile)) continue;
+        const uint8_t biome = planet.data.biome[tile];
+        if (biome >= provisions.size() ||
+            provisions[biome].foodSourcesPerSquareKilometer < kMinimumFoodSourcesPerSquareKilometer ||
+            provisions[biome].woodSourcesPerSquareKilometer < kMinimumWoodSourcesPerSquareKilometer) {
+            continue;
         }
-        if (score > bestScore) {
-            bestScore = score;
-            best = t;
+        const LatLon centre = centreOf(grid, tile);
+        if (std::abs(centre.latDeg) > kMaximumSuggestedLatitudeDegrees) continue;
+        const TileAssessment assessment = assessLandingTile(planet, provisions, tile, WaterClass::River);
+        if (!assessment.livableTemperature) continue;
+
+        CandidateKind kind = CandidateKind::River;
+        if ((planet.data.flags[tile] & kFlagRiver) == 0) {
+            if (!bordersLake(planet, tile)) continue;
+            kind = CandidateKind::Lake;
+        }
+        const bool preferred = query.preferredBiome && static_cast<uint8_t>(*query.preferredBiome) == biome;
+        slots.offer(bins.fromUnitVector(grid.tileCenter(tile)), {tile, kind, biome, preferred, assessment.habitability});
+    }
+
+    const std::vector<Candidate> candidates = slots.ranked();
+
+    enum class Verification : uint8_t { Unchecked, Passed, Failed };
+    std::vector<Verification> verification(candidates.size(), Verification::Unchecked);
+    std::vector<LandingSite>  resolved(candidates.size());
+    std::vector<bool>         taken(candidates.size(), false);
+
+    std::vector<LandingSite> sites;
+    std::vector<Vec3d>       siteCentres;
+    std::vector<uint8_t>     siteBiomes;
+    const double             separationCosine =
+        foundation::det_math::cos(kMinimumSiteSeparationDegrees * kRadiansPerDegree);
+    const auto countOf = [&sites](FreshWaterFeature feature) {
+        return static_cast<std::size_t>(
+            std::count_if(sites.begin(), sites.end(), [feature](const LandingSite& site) { return site.feature == feature; }));
+    };
+    const auto kindOf = [](CandidateKind kind) {
+        return kind == CandidateKind::River ? FreshWaterFeature::River : FreshWaterFeature::Lake;
+    };
+
+    for (std::size_t round = 1; round <= kSuggestedSiteCount + 1; ++round) {
+        const bool finalPass = round > kSuggestedSiteCount;
+        for (std::size_t index = 0; index < candidates.size(); ++index) {
+            if (sites.size() >= query.maximumSites) return sites;
+            if (taken[index] || verification[index] == Verification::Failed) continue;
+            const Candidate& candidate = candidates[index];
+
+            const Vec3d centre = grid.tileCenter(candidate.tile);
+            const bool  tooClose = std::any_of(siteCentres.begin(), siteCentres.end(),
+                                               [&](const Vec3d& site) { return dot(centre, site) > separationCosine; });
+            if (tooClose) continue;
+            if (!finalPass) {
+                const auto sameBiome = static_cast<std::size_t>(std::count(siteBiomes.begin(), siteBiomes.end(), candidate.biome));
+                if (sameBiome >= round) continue;
+                const FreshWaterFeature expected =
+                    verification[index] == Verification::Passed ? resolved[index].feature : kindOf(candidate.kind);
+                if (countOf(expected) >= kMaximumSitesOfOneKind) continue;
+            }
+
+            if (verification[index] == Verification::Unchecked) {
+                if (!checkpoint()) return sites;
+                resolved[index] = resolveLandingSite(world, provisions, centreOf(grid, candidate.tile));
+                const bool passes = resolved[index].recommended() && resolved[index].tile == candidate.tile;
+                verification[index] = passes ? Verification::Passed : Verification::Failed;
+                if (!passes) continue;
+                if (!finalPass && countOf(resolved[index].feature) >= kMaximumSitesOfOneKind) continue;
+            }
+
+            taken[index] = true;
+            sites.push_back(resolved[index]);
+            siteCentres.push_back(centre);
+            siteBiomes.push_back(candidate.biome);
         }
     }
-
-    TileId chosen = best != kInvalidTile           ? best
-                  : firstTemperate != kInvalidTile ? firstTemperate
-                                                   : firstLand;
-    if (chosen != kInvalidTile) {
-        double latDeg = 0.0;
-        double lonDeg = 0.0;
-        grid.latLonOf(chosen, latDeg, lonDeg);
-        return {latDeg, lonDeg};
-    }
-
-    return {0.0, 0.0};
+    return sites;
 }
 
 } // namespace worldgen

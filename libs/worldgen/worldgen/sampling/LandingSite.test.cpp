@@ -1,16 +1,23 @@
-// The bar (assessLandingTile) and the pick resolution (resolveLandingSite), on synthetic worlds.
+// The bar (assessLandingTile), the pick resolution (resolveLandingSite), and the suggested-site finder
+// (findSuggestedLandingSites), on synthetic worlds and one small generated planet.
 
 #include "worldgen/sampling/LandingSite.h"
 
 #include "worldgen/data/PlanetParams.h"
 #include "worldgen/data/WorldData.h"
+#include "worldgen/pipeline/PlanetGenerator.test.h"
+#include "worldgen/sampling/PlanetSampler.h"
+#include "worldgen/sampling/RiverNetwork2D.h"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <memory>
+#include <stop_token>
 #include <unordered_set>
+#include <vector>
 
 namespace worldgen {
 
@@ -115,6 +122,42 @@ RiverFixture riverAtLatitude(double latDeg) {
     return fixture;
 }
 
+void addLake(GeneratedWorld& world, double latDeg, double lonDeg) {
+    const TileId lake = world.grid->fromLatLon(latDeg, lonDeg);
+    world.data.flags[lake] |= kFlagLake;
+    world.data.biome[lake] = static_cast<uint8_t>(Biome::Lake);
+}
+
+// Grassland south of the equator and deciduous forest north of it, each with a river and a lake far
+// enough from the others to be a site of its own.
+std::shared_ptr<GeneratedWorld> twoBiomeWorld() {
+    auto world = makeWorld(kSubdivision);
+    for (TileId t = 0; t < world->grid->tileCount(); ++t) {
+        double lat = 0.0;
+        double lon = 0.0;
+        world->grid->latLonOf(t, lat, lon);
+        if (lat > 0.0 && world->data.biome[t] == static_cast<uint8_t>(Biome::TemperateGrassland)) {
+            world->data.biome[t] = static_cast<uint8_t>(Biome::TemperateDeciduousForest);
+        }
+    }
+    carveRiver(*world, world->grid->fromLatLon(-30.0, -10.0), world->grid->fromLatLon(-30.0, 20.0));
+    carveRiver(*world, world->grid->fromLatLon(28.0, -10.0), world->grid->fromLatLon(28.0, 20.0));
+    addLake(*world, -6.0, -16.0);
+    addLake(*world, 6.0, 16.0);
+    return world;
+}
+
+BiomeProvisionTable twoBiomeProvisions() {
+    BiomeProvisionTable provisions = grasslandProvisions();
+    provisions[static_cast<std::size_t>(Biome::TemperateDeciduousForest)] = {300.0f, 300.0f};
+    return provisions;
+}
+
+double arcDegrees(const GeneratedWorld& world, TileId a, TileId b) {
+    const double cosine = std::clamp(dot(world.grid->tileCenter(a), world.grid->tileCenter(b)), -1.0, 1.0);
+    return std::acos(cosine) * 180.0 / 3.14159265358979323846;
+}
+
 } // namespace
 
 TEST(LandingSiteBar, RiverTileWithFoodWoodAndLivableSeasonsMeetsIt) {
@@ -200,12 +243,15 @@ TEST(LandingSiteResolution, PickOneTileFromRiverResolvesToTheRiverTile) {
     expectSameLanding(resolveLandingSite(fixture.world, grasslandProvisions(), site.origin), site);
 }
 
-TEST(LandingSiteResolution, RiverTilePastFortyFiveDegreesThatMeetsTheBarIsRecommended) {
+TEST(LandingSiteResolution, RiverTilePastFortyFiveDegreesIsRecommendedButNeverSuggested) {
     const RiverFixture fixture = riverAtLatitude(52.0);
     const LandingSite site =
         resolveLandingSite(fixture.world, grasslandProvisions(), centreOf(*fixture.world, fixture.source));
     EXPECT_GT(std::abs(site.origin.latDeg), 45.0);
     EXPECT_TRUE(site.recommended());
+
+    EXPECT_TRUE(findSuggestedLandingSites(fixture.world, grasslandProvisions(), {}).empty())
+        << "the river past the latitude cut is the only fresh water";
 }
 
 TEST(LandingSiteResolution, DryPickStaysAtThePick) {
@@ -242,6 +288,127 @@ TEST(LandingSiteResolution, PickBesideLakeResolvesToItsShore) {
     EXPECT_TRUE(site.recommended());
 
     expectSameLanding(resolveLandingSite(world, grasslandProvisions(), site.origin), site);
+}
+
+TEST(LandingSiteFinder, SitesMeetTheBarStandApartAndVaryByKindAndBiome) {
+    const auto world = twoBiomeWorld();
+    const std::vector<LandingSite> sites = findSuggestedLandingSites(world, twoBiomeProvisions(), {});
+    ASSERT_FALSE(sites.empty());
+    EXPECT_LE(sites.size(), kSuggestedSiteCount);
+
+    bool river = false;
+    bool lake = false;
+    bool grassland = false;
+    bool forest = false;
+    for (std::size_t i = 0; i < sites.size(); ++i) {
+        const LandingSite& site = sites[i];
+        EXPECT_TRUE(site.recommended()) << "site " << i;
+        EXPECT_LE(std::abs(centreOf(*world, site.tile).latDeg), kMaximumSuggestedLatitudeDegrees) << "site " << i;
+        for (std::size_t j = 0; j < i; ++j) {
+            EXPECT_GE(arcDegrees(*world, site.tile, sites[j].tile), kMinimumSiteSeparationDegrees) << i << " and " << j;
+        }
+        river = river || site.feature == FreshWaterFeature::River;
+        lake = lake || site.feature == FreshWaterFeature::Lake;
+        const auto biome = static_cast<Biome>(world->data.biome[site.tile]);
+        grassland = grassland || biome == Biome::TemperateGrassland;
+        forest = forest || biome == Biome::TemperateDeciduousForest;
+    }
+    EXPECT_TRUE(river);
+    EXPECT_TRUE(lake);
+    EXPECT_TRUE(grassland);
+    EXPECT_TRUE(forest);
+}
+
+TEST(LandingSiteFinder, SameWorldGivesTheSameSites) {
+    const auto world = twoBiomeWorld();
+    const std::vector<LandingSite> first = findSuggestedLandingSites(world, twoBiomeProvisions(), {});
+    const std::vector<LandingSite> second = findSuggestedLandingSites(world, twoBiomeProvisions(), {});
+    ASSERT_EQ(first.size(), second.size());
+    for (std::size_t i = 0; i < first.size(); ++i) expectSameLanding(first[i], second[i]);
+}
+
+TEST(LandingSiteFinder, DesertAndOceanWorldsGiveNoSites) {
+    auto desert = twoBiomeWorld();
+    for (TileId t = 0; t < desert->grid->tileCount(); ++t) {
+        if ((desert->data.flags[t] & (kFlagOcean | kFlagLake)) == 0) {
+            desert->data.biome[t] = static_cast<uint8_t>(Biome::HotDesert);
+        }
+    }
+    BiomeProvisionTable desertProvisions = twoBiomeProvisions();
+    desertProvisions[static_cast<std::size_t>(Biome::HotDesert)] = {300.0f, 0.0f};
+    EXPECT_TRUE(findSuggestedLandingSites(desert, desertProvisions, {}).empty());
+
+    auto ocean = makeWorld(kSubdivision);
+    for (TileId t = 0; t < ocean->grid->tileCount(); ++t) {
+        ocean->data.elevation[t] = -3000.0f;
+        ocean->data.biome[t] = static_cast<uint8_t>(Biome::Ocean);
+        ocean->data.flags[t] = kFlagOcean;
+    }
+    EXPECT_TRUE(findSuggestedLandingSites(ocean, twoBiomeProvisions(), {}).empty());
+}
+
+TEST(LandingSiteFinder, StopRequestEndsTheScanEarly) {
+    const auto       world = twoBiomeWorld();
+    std::stop_source stop;
+    int              checkpoints = 0;
+    SuggestedSiteQuery query;
+    query.stopToken = stop.get_token();
+    query.checkpoint = [&] {
+        ++checkpoints;
+        stop.request_stop();
+    };
+    EXPECT_TRUE(findSuggestedLandingSites(world, twoBiomeProvisions(), query).empty());
+    EXPECT_EQ(checkpoints, 1);
+}
+
+TEST(LandingSiteFinder, GeneratedPlanetSitesHaveFreshWaterInSight) {
+    // NavigationSystem::kLandingSightMeters, the radius revealed at landing; worldgen can't see sim.
+    constexpr double kLandingSightMeters = 150.0;
+    PlanetParams params = PlanetParams::preset(Preset::EarthLike);
+    params.gridSubdivision = 64;
+    params.seed = 42;
+    const std::shared_ptr<const GeneratedWorld> world = runToCompletion(params);
+    ASSERT_NE(world, nullptr);
+
+    // The shipped wood biomes, every one with food.
+    BiomeProvisionTable provisions{};
+    for (const Biome biome : {Biome::TropicalRainforest, Biome::TropicalSeasonalForest, Biome::TemperateDeciduousForest,
+                              Biome::TemperateRainforest, Biome::BorealForest, Biome::MontaneForest,
+                              Biome::TemperateGrassland, Biome::Beach}) {
+        provisions[static_cast<std::size_t>(biome)] = {300.0f, 300.0f};
+    }
+
+    const std::vector<LandingSite> sites = findSuggestedLandingSites(world, provisions, {});
+    ASSERT_FALSE(sites.empty());
+    for (std::size_t i = 0; i < sites.size(); ++i) {
+        const LandingSite& site = sites[i];
+        const double       dropX = site.spawn.xMeters;
+        const double       dropY = site.spawn.yMeters;
+        bool               freshWater = false;
+        if (site.feature == FreshWaterFeature::River) {
+            const RiverNetwork2D rivers(world, site.origin.latDeg, site.origin.lonDeg);
+            std::vector<RiverNetwork2D::Segment> segments;
+            rivers.gatherSegments(dropX - kLandingSightMeters, dropY - kLandingSightMeters, dropX + kLandingSightMeters,
+                                  dropY + kLandingSightMeters, segments);
+            for (const RiverNetwork2D::Segment& segment : segments) {
+                for (double t = 0.0; t <= 1.0 && !freshWater; t += 0.05) {
+                    const double x = segment.x0 + (segment.x1 - segment.x0) * t;
+                    const double y = segment.y0 + (segment.y1 - segment.y0) * t;
+                    freshWater = std::hypot(x - dropX, y - dropY) <= kLandingSightMeters;
+                }
+            }
+        } else if (site.feature == FreshWaterFeature::Lake) {
+            const PlanetSampler sampler(world, site.origin.latDeg, site.origin.lonDeg);
+            for (double y = -kLandingSightMeters; y <= kLandingSightMeters && !freshWater; y += 3.0) {
+                for (double x = -kLandingSightMeters; x <= kLandingSightMeters && !freshWater; x += 3.0) {
+                    if (std::hypot(x, y) > kLandingSightMeters) continue;
+                    const auto sample = sampler.sampleAt(dropX + x, dropY + y);
+                    freshWater = sample.water && sample.weights[0].biome == Biome::Lake;
+                }
+            }
+        }
+        EXPECT_TRUE(freshWater) << "site " << i << " at " << site.origin.latDeg << ", " << site.origin.lonDeg;
+    }
 }
 
 } // namespace worldgen

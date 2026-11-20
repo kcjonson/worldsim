@@ -81,6 +81,7 @@ add_library(world-sim-game STATIC
     # Scenes
     scenes/shared/GlobeView.cpp
     scenes/shared/DecorativePlanet.cpp
+    scenes/shared/LandingSiteSurvey.cpp
     scenes/shared/LoadFailureView.cpp
     scenes/shared/SalalUi.cpp
     scenes/splash/SplashScene.cpp
@@ -184,6 +185,7 @@ if(BUILD_TESTING)
         scenes/game/ui/models/ThoughtLogModel.test.cpp
         scenes/game/ui/views/DrawingKeyGuide.test.cpp
         scenes/SceneLayout.test.cpp
+        scenes/shared/LandingSiteSurvey.test.cpp
     )
     # Not beside world-sim: the tests must not find the files staged for the game (the quickstart
     # planet the menu's backdrop loads, the assets, the fonts), only what they ask for by path.

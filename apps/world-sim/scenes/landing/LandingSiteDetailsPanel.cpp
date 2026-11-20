@@ -30,7 +30,7 @@ namespace world_sim {
 		}
 	}
 
-	void LandingSiteDetailsPanel::show(const LandingSiteDetails& details) {
+	void LandingSiteDetailsPanel::resetContent() {
 		ui::Component* shownBody = body.get();
 		if (shownBody == nullptr) {
 			return;
@@ -38,13 +38,48 @@ namespace world_sim {
 		if (content.get() != nullptr) {
 			shownBody->removeChild(content);
 		}
-		const float space2 = theme->get(tokens::spacing::space2);
 		content = body.addChild<ui::Component>({
 			.id = "landing_details",
 			.size = {ui::percent(100.0F), 0.0F},
-			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = space2, .flexGrow = 1.0F},
+			.layout =
+				{.display = ui::Display::Flex,
+				 .flexDirection = ui::FlexDirection::Column,
+				 .gap = theme->get(tokens::spacing::space2),
+				 .flexGrow = 1.0F},
 			.overflow = ui::Overflow::Scroll,
 		});
+	}
+
+	// Coordinates: crosshair + teal mono readout.
+	void LandingSiteDetailsPanel::addCoordinates(const std::string& coords) {
+		ui::Ref<ui::Component> row =
+			content.addChild<ui::Component>({.layout = {.display = ui::Display::Flex, .gap = 6.0F, .alignItems = ui::AlignItems::Center}});
+		row.addChild<ui::Icon>({.size = {14.0F, 14.0F}, .style = {.color = theme->get(tokens::color::dataBright)}, .name = "crosshair"});
+		row.addChild<ui::Text>({
+			.style = world_sim::text(*theme, {.family = family::mono, .size = tokens::fontSize::fsSm, .color = tokens::color::dataBright}),
+			.text = coords,
+		});
+	}
+
+	void LandingSiteDetailsPanel::showSurveying(const std::string& coords) {
+		resetContent();
+		if (content.get() == nullptr) {
+			return;
+		}
+		addCoordinates(coords);
+		content.addChild<ui::Text>({
+			.id = "landing_surveying",
+			.style = world_sim::text(*theme, {.family = family::mono, .size = tokens::fontSize::fsSm, .color = tokens::color::textDim}),
+			.text = "Surveying...",
+		});
+	}
+
+	void LandingSiteDetailsPanel::show(const LandingSiteDetails& details) {
+		resetContent();
+		if (content.get() == nullptr) {
+			return;
+		}
+		const float		space2 = theme->get(tokens::spacing::space2);
 		const ui::Style label = world_sim::text(
 			*theme,
 			{.family = family::mono,
@@ -54,14 +89,7 @@ namespace world_sim {
 			 .transform = Foundation::TextTransform::Uppercase}
 		);
 
-		// Coordinates: crosshair + teal mono readout.
-		ui::Ref<ui::Component> coords =
-			content.addChild<ui::Component>({.layout = {.display = ui::Display::Flex, .gap = 6.0F, .alignItems = ui::AlignItems::Center}});
-		coords.addChild<ui::Icon>({.size = {14.0F, 14.0F}, .style = {.color = theme->get(tokens::color::dataBright)}, .name = "crosshair"});
-		coords.addChild<ui::Text>({
-			.style = world_sim::text(*theme, {.family = family::mono, .size = tokens::fontSize::fsSm, .color = tokens::color::dataBright}),
-			.text = details.coords,
-		});
+		addCoordinates(details.coords);
 
 		// Biome-name header.
 		if (!details.biomeName.empty()) {

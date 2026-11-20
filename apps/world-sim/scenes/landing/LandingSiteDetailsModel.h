@@ -50,6 +50,9 @@ struct LandingSiteDetails {
 	std::vector<DetailSection>	sections;
 };
 
+// The pane's coordinate readout for a pick: "14.7 N  79.2 W".
+std::string landingCoordinates(double pickLatDeg, double pickLonDeg);
+
 // Build the pane content for a resolved landing. The coordinates are the pick's (the player never
 // sees the resolution); everything else describes the landing tile, which can be a neighbour of the
 // picked one. Fields are read defensively so a partially-generated world still produces a sensible

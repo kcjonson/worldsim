@@ -18,12 +18,13 @@
 #include <nav/PatchableMesh.h>
 #include <nav/PathQuery.h>
 
+#include <assets/AssetRegistry.h>
+#include <assets/placement/BiomeProvisions.h>
 #include <world/chunk/Chunk.h>
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/GeneratedWorldSampler.h>
 #include <worldgen/io/PlanetIO.h>
 #include <worldgen/sampling/LandingSite.h>
-#include <worldgen/sampling/SpawnSite.h>
 
 #include <benchmark/benchmark.h>
 
@@ -113,10 +114,20 @@ namespace {
 			if (!planet) {
 				return std::nullopt;
 			}
-			const worldgen::LatLon	  site	= worldgen::findDefaultLandingSite(*planet, worldgen::Biome::TemperateDeciduousForest);
-			const worldgen::SpawnSite spawn = worldgen::findRiverbankSpawn(planet, site.latDeg, site.lonDeg);
-			Region					  out;
-			out.start = {static_cast<float>(spawn.xMeters), static_cast<float>(spawn.yMeters)};
+			assets::AssetRegistry& registry = assets::AssetRegistry::Get();
+			registry.setSharedScriptsPath("assets/shared/scripts");
+			registry.loadDefinitionsFromFolder("assets/world");
+			worldgen::SuggestedSiteQuery query;
+			query.preferredBiome = worldgen::Biome::TemperateDeciduousForest;
+			query.maximumSites	 = 1;
+			const std::vector<worldgen::LandingSite> sites =
+				worldgen::findSuggestedLandingSites(planet, assets::biomeProvisionsFromDefinitions(registry), query);
+			if (sites.empty()) {
+				return std::nullopt;
+			}
+			const worldgen::LatLon site = sites.front().origin;
+			Region				   out;
+			out.start = {static_cast<float>(sites.front().spawn.xMeters), static_cast<float>(sites.front().spawn.yMeters)};
 			world::ChunkManager chunks(std::make_unique<world::GeneratedWorldSampler>(planet, site.latDeg, site.lonDeg));
 			chunks.setLoadRadius(0);
 			chunks.setUnloadRadius(0);
