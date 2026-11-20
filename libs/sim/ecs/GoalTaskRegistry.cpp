@@ -17,6 +17,7 @@
 #include <glm/geometric.hpp>
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 
 namespace ecs {
@@ -184,6 +185,9 @@ namespace ecs {
 	}
 
 	uint64_t GoalTaskRegistry::createGoal(GoalTask goal) {
+		// Readers of a Clear goal take its footprint without checking for one.
+		assert((goal.type == GoalType::Clear) == goal.clearFootprint.has_value() && "a Clear goal has a footprint, and only a Clear goal does");
+
 		// Assign ID
 		goal.id = nextGoalId++;
 

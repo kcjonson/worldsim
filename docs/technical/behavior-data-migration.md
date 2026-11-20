@@ -37,7 +37,7 @@ All of it is on `main` and on this branch.
   functions). Every action but Sleep is non-interruptable; Sleep pays at its end.
 - Claims: `systems/ChainClaims.{h,cpp}` (`recordChainClaims` per chain shape), `ClaimIndex.{h,cpp}`,
   `Task.h` (claims, `SuspendedWork`, the per-type fields, `chainStep`, `deliveryChosen`).
-- Goals: `GoalTaskRegistry.{h,cpp}` (`GoalTask::type` is a `TaskType`), `StorageGoalSystem`,
+- Goals: `GoalTaskRegistry.{h,cpp}` (`GoalTask::type` is a `GoalType`), `StorageGoalSystem`,
   `CraftingGoalSystem`, `BuildGoalSystem`, `ConstructionSystem`, `ColonyGoalWork.cpp` for the panel.
 - Thought sources: `ThoughtTypes.cpp` resolves `actionStarts` and `actionFinishes` through
   `actionTypeFromName`, and `ThoughtSourceSystem` holds an `ActionType`. The thought data names

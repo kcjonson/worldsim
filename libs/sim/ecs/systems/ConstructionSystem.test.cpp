@@ -734,6 +734,7 @@ TEST_F(ConstructionGoalEmissionTest, OpeningNeverEmitsClearGoals) {
 	ASSERT_NE(umbrella, nullptr);
 	for (const auto* child : registry.getChildGoals(umbrella->id)) {
 		EXPECT_NE(child->type, GoalType::Clear) << "an opening's only Harvest is a material one, never a clear goal";
+		EXPECT_FALSE(child->clearFootprint.has_value()) << "no child of an opening carries a clear footprint";
 	}
 }
 
