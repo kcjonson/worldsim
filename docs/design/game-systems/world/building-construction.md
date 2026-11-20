@@ -366,17 +366,17 @@ Rooms are an abstract concept, not clickable world objects. They are inspected t
 - Clicking a room while the overlay is active opens its **room info panel**: area (m²), bounding wall materials, opening count, average insulation, floor material, name.
 - With the overlay off, rooms have no click presence; clicks fall through to whatever structure or entity is under the cursor.
 
-V1 rooms don't do anything beyond this. Future: room types from contents, ownership, adjacency bonuses, material effects. See [Rooms](./rooms.md).
+Beyond the overlay, a room darkens its area ([Enclosed Look](#enclosed-look)) and has no other effect. Future: room types from contents, ownership, adjacency bonuses, material effects. See [Rooms](./rooms.md).
 
 ### Enclosed Look
 
-A room reads as indoors at a glance, overlay on or off. One flat, hard-edged darkening lies over the room's whole area, and everything in the room darkens with it: the floor and whatever is on it, colonists, creatures, furniture, crafting stations, storage, and loose items alike. It is one layer over the room, not a tint on each thing, so whatever is drawn over the room's area is darker and whatever is drawn outside it is not. The step is small, a black fill at about 5%, and the same for every room whatever its size, material, or openings; it is a named value in the construction config, so tuning it is a data change. Mechanism, draw order, and tests: [architecture D6, Enclosed shade](../../../technical/building-construction-architecture.md#enclosed-shade-wor-743).
+A room reads as indoors at a glance, overlay on or off. One flat, hard-edged darkening lies over the room's whole area, and everything in the room darkens with it, the floor and all that stands on it. It is one layer over the room, not a tint on each thing, so whatever is drawn over the room's area is darker and whatever is drawn outside it is not. The step is small, a black fill at about 5%, and the same for every room whatever its size, material, or openings; it is a named value in the construction config, so tuning it is a data change. Mechanism, draw order, and tests: [architecture D6, Enclosed shade](../../../technical/building-construction-architecture.md#enclosed-shade-wor-743).
 
-Every closed room is shaded, doors and windows included, which is exactly what room detection calls a room. Telling an open-air enclosure (a walled courtyard, an animal pen, a courtyard in the middle of a building) from an indoor room is the roof's job, and the enclosed look follows the roof: [Roofs](./roofs.md).
+Every closed room is indoors and shaded, doors and windows included; a closed room is exactly what room detection calls a room. Roofs add the open-air distinction: the roof tool lets the player say a walled space has no roof, and that space is open-air ([Roofs](./roofs.md)).
 
 The shade is the same whether the room is in a colonist's sight or not; it knows nothing of player visibility. The out-of-sight darkening draws over it as over any other ground, so a room out of sight reads darker than the out-of-sight open ground beside it by the same small step, and unexplored ground stays hidden, room or not.
 
-The shade appears the moment the closing wall segment completes, with the "Room formed" notification, and goes the moment the loop breaks. The highlight pulse on formation is a notification, not the room's light: it plays over the shade, and the shade does not wait for it.
+The shade appears the moment the closing wall segment completes, with the "Room formed" notification, and goes the moment the loop breaks. It does not wait for the formation pulse: the pulse is a notification, the shade is the room's light.
 
 Cases:
 
@@ -386,7 +386,7 @@ Cases:
 - **The rooms overlay.** Its tint, outline, and name draw over the shade. Turning the overlay off leaves the shade.
 - **The walls.** The room's edge is the wall centrelines, so the inner half of each wall, door, and window darkens with the room and the outer half does not.
 - **Across the edge.** Something straddling the edge, a colonist in a doorway, is darker on the part drawn over the room and as bright as outside on the rest. A tree or other tall thing outside whose drawing reaches over the room is darker where it does; a thing inside drawn out past the wall line is bright beyond it.
-- **Building inside a room.** A blueprint, a foundation edit, or anything else placed inside a room darkens with it. The drawing preview, the placement ghost, and the selection markers draw over the shade and stay bright.
+- **Building inside a room.** A blueprint, a foundation edit, or anything else placed inside a room darkens with it, and so does a selected thing's outline, which draws with the things themselves. The drawing preview, the placement ghost, the outline of a selected foundation, wall, or opening, and the rooms overlay's selected-room highlight draw over the shade and stay bright.
 
 ---
 
@@ -631,8 +631,8 @@ Every key, its default, and its meaning: [architecture D12 config](../../../tech
 - Curved walls and foundation edges
 - Freestanding walls / fences / defensive perimeters (separate tool)
 - Flooring overlays distinct from foundation material
-- [Roofs](./roofs.md), and with them temperature/insulation actually mattering per room; the roof, not the walls, decides which rooms are indoors and shaded
-- Lighting, and with it dark rooms: an enclosed room with no lights or windows becomes quite dark. Lighting sets each room's shade strength in place of the one config value (Rooms > Enclosed Look)
+- [Roofs](./roofs.md), and with them open-air enclosures and temperature/insulation actually mattering per room
+- Lighting, which acts through the strength of the [enclosed look](#enclosed-look)
 - Wall south-face rendering (2.5D hint)
 - Door open/close simulation, locks, ownership
 - Build quality tiers from skill
@@ -689,9 +689,9 @@ A supplement, not part of the spec. Where it and the spec disagree, the spec is 
 
 A supplement, not part of the spec. Where it and the spec disagree, the spec is right. What the enclosed look settles, over what, and why, where the sources give a reason.
 
-- **Everything in the room darkens**, over the floor alone with colonists and furniture left bright: "everything. we'll do lighting later." The room's light falls on what is in it.
+- **Everything in the room darkens**, over the floor alone with colonists and furniture left bright: "everything. we'll do lighting later."
 - **Every closed room, doors and windows included**, over only rooms with no windows.
-- **About 5%, one layer independent of sight**, over a stronger floor shade (15% in an earlier draft) and over a look that differs from the out-of-sight darkening: a small tunable darkening that adds with player visibility as its own layer.
+- **About 5%, one layer independent of sight**, over a stronger floor shade and over a look that differs from the out-of-sight darkening: a small tunable darkening that adds with player visibility as its own layer.
 - **At once when the room forms, the pulse separate**, over appearing with the formation pulse: the shade is the lighting changing, the pulse a notification, and they have different reasons.
 - **Open-air enclosures wait for roofs**, over leaving courtyards and pens out by some other rule: walled courtyards, animal pens, a courtyard inside a building, and roofs over spaces walls do not enclose all come with the roof tool, WOR-1112 (Roofs: the roof tool and open-air enclosures).
 - **A flat fill over the room**, over a dark band along the inside of the walls (needs a general polygon inset the geometry library does not have) and over a shadow cast outside the walls (reads as wall height more than enclosure).
