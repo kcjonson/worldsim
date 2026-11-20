@@ -161,7 +161,7 @@ Applications:
 | [OpenGL to Vulkan](./rendering/vulkan-migration.md) | Deferred indefinitely, research only: GL usage audit (2026-09 snapshot), options, renderer contract (Vulkan 1.4 via ash), spike plan |
 | [World Depth Sorting](./rendering/world-depth-sorting.md) | 2.5D layering: world-Y painter sort of upright occluders + actors |
 | [Entity Selection Silhouette](./rendering/entity-selection-silhouette.md) | Per-asset silhouette driving thick selection outline + precise hole-free hit-testing |
-| [Rotatable Placed Items](./rendering/rotatable-placed-items.md) | Spec: the planometric projection and its shared height ratio, the `parts` asset type, item views built per turn with affine-mapped side art at constant stroke width, side shading, depth strips in the Y-sorted stream, derived colliders and stand points, turn snapping, the salal transform call |
+| [Rotatable Placed Items](./rendering/rotatable-placed-items.md) | Spec: the planometric projection and its shared height ratio, the `parts` asset type, item views built per turn with affine-mapped side art at constant stroke width, side shading, depth strips in the Y-sorted stream drawn as index ranges of GPU-resident views, detail levels, placed items as nav obstacles, use areas and clearance, turn snapping, the salal transform and range-draw calls |
 
 ---
 
