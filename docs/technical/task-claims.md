@@ -502,6 +502,14 @@ no longer offered as build work, though its Build goal stays Available until `Co
 pass removes it (`SharedWork::buildSites`), so no colonist selects it again and no builder spot on it is
 taken. A builder carries nothing for a Build, so nothing is stowed or dropped.
 
+An opening's place, and a built wall's own, is on the wall's centreline, inside the built wall's band
+where no route ends. Its delivery, its Build, and a Deconstruct of it or of the wall are routed to a
+stand point beside the wall (`NavigationSystem::standPointsBeside`): one on each side, straight out from
+the target to where the colonist's disc clears every built band, both asked of one route each time he
+asks, so the answer is the side he can get to as he now believes, and a wall he learns on the way sends
+him round to the other. The target stays the opening or wall (`Task::obstructedTarget`); he is judged
+there standing at the stand point. With neither side clear, the route fails with no stand point.
+
 ### Need tasks
 
 Eat records Use on a bush or SourceQuantity of one meal on a pile or box; food already in the pack is

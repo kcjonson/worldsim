@@ -622,7 +622,7 @@ not joined by meshed ground, a point off it, or a point inside a placed obstacle
 is never a statement about the world, since ground no mover has meshed may join them. True is
 necessary, not sufficient: only a route request answers for a mover's width and belief. To ask
 about a target that is a placed obstacle, ask from where a mover would stand to work it
-(`standPointBeside`).
+(`standPointsBeside`).
 
 **Routes by ticket.** `requestRoute(start, goals, radius, belief)` returns a ticket,
 `takeRouteAnswer(ticket)` returns the answer once it is takeable, and `cancelRoute(ticket)`
@@ -654,7 +654,7 @@ nothing is valid.
 - `isPointBuildableNow`, `isLineBuildableNow` and `isAreaBuildableNow`, for what is built or set up where it stands, with nothing cleared first: `isValidPosition`'s ground out of any fordable channel, nothing being built in a stream. The line form gates a wall chain (the wall tool and the dev walls verb, hosted or freestanding) and the area form furniture's footprint (the placement tool and the dev spawn verb). Both read the mesh exactly, as the footprint check below does, segment by segment for a line (entry 118).
 - `isAreaBuildableOnceCleared` and `isPointBuildableOnceCleared`: placed obstacles do not block building (construction turns them into clear tasks); water under them does, a fordable channel included (4.2), and so does ground that is not meshed. The footprint check is exact: it walks out from the triangle under one corner to every triangle the closed footprint meets and asks each, and a footprint that reaches the mesh's edge is off it, so nothing narrower than a sampling pitch passes between probes (entry 117).
 - `nearestPathablePoint` (both forms), `findValidPositionNear`, and the landing search: searched outward over the mesh. `findValidPositionNear` given an `accept` predicate also asks it of every candidate (a crafted crate's install target, entry 118). The form with a radius stands the mover's whole disc clear of water, placed obstacles, the mesh edge and built-wall collision bands, else nullopt; a stranded colonist with no such point goes to the colony-origin recovery.
-- `standPointBeside(target, from, radius)`: where a mover stands to work a placed entity: the spot nearest `from`, on a circle the disc's radius out from the placed obstacle at the target, that is walkable in truth and in no placed obstacle; nullopt when there is none, and off meshed ground. Never a point inside a placed obstacle.
+- `standPointsBeside(target, from, radius)`: where a mover may stand to work a target, nearest `from` first. For a placed obstacle at the target, the spot nearest `from`, on a circle the disc's radius out from it, that is walkable in truth and in no placed obstacle. For a target inside a built wall's band (an opening not yet built in it, the wall's own centreline), a spot on each side, straight out from the target to where the disc clears the band, then pushed clear of every built band and blocked edge as the radius form of `nearestPathablePoint` reads them, each kept only while that push moves it less than a disc's width. Ground walkable in truth is its own stand point. Empty when there is none, and off meshed ground. Never a point inside a placed obstacle or a built wall.
 
 **Staleness.** `generation()` goes up by one at the join of any patch job in which ground arrived,
 water was re-derived, walls changed, a door was added or removed, or a placed obstacle landed over
@@ -680,7 +680,8 @@ corners, of two limits or of two blocked rings, is its corner gap.
 **The AI's side** (in `AIDecisionSystem`, 1.1). A colonist asks for a route by
 ticket and stands in the awaiting-route state until it comes, or, replanning a route he is
 walking, keeps walking it and joins the new one where he stands. A target inside a placed
-obstacle is routed to its stand point. A "no known way" answer is a verdict on that target for
+obstacle is routed to its stand point; one inside a built wall to both of its stand points in one
+request, every time he asks, so the answer is the side he can get to. A "no known way" answer is a verdict on that target for
 that colonist, remembered until the label epoch or his belief moves, and a target with a live
 verdict is not asked about again. A need's source is chosen by one nearest-of route request over
 the nearest few remembered sources (by straight line) that are connected and have no verdict;
