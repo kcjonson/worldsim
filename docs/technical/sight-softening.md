@@ -486,26 +486,32 @@ A colonist's darkness is 1 outside his bright shape and inside it the greatest o
 Each fill's mask is hard layers with one layer of partial coverage on top. The unseen fill:
 
 ```cpp
+// The record's feather cells, each masked to outside the pending shapes grown by the feather, then the
+// pending cut's pieces, combined by lighten.
 std::vector<MaskElement> unseenFeather;
-for (const RecordFeatherCell& cell : recordFeatherCellsInView) {
-    for (const InstancedMeshHandle& mesh : cell.meshes) {
-        unseenFeather.push_back({.mesh = {mesh, camera}, .mask = outsidePendingFeather, .blend = MixBlendMode::Lighten});
+for (const SeenFeather::Cell* cell : feather.cellsInView()) {
+    std::vector<MaskLayer>& mask = outsidePendingFeather.emplace_back(); // view less the grown pending shapes it meets
+    for (const InstancedMeshHandle& mesh : cell->meshes) {
+        unseenFeather.push_back({.mesh = {mesh, cameraAbout(cell->anchor)}, .mask = mask, .blend = MixBlendMode::Lighten});
     }
 }
-for (const FeatherPiece& piece : pendingEdgePieces) {
-    unseenFeather.push_back({.points = piece.screenPoints, .paint = MaskPaint::linearGradient(piece.from, piece.to, 1.0F, 0.0F), .blend = MixBlendMode::Lighten});
+for (const SeenFeather::Cluster* cluster : feather.clustersInView()) {
+    for (const InstancedMeshHandle& mesh : cluster->meshes) {
+        unseenFeather.push_back({.mesh = {mesh, cameraAbout(cluster->anchor)}, .blend = MixBlendMode::Lighten});
+    }
 }
-std::vector<MaskLayer> unseenMask = {
-    {.image = MaskImage::svgMask(unseenFeather)},
-    {.image = MaskImage::rect(view), .composite = MaskComposite::Subtract},
-};
-for (const InstancedMeshHandle& mesh : seenMeshes) {
-    unseenMask.push_back({.image = MaskImage::mesh(mesh, camera)});
+std::vector<MaskLayer> unseenMask;
+if (!unseenFeather.empty()) {
+    unseenMask.push_back({.image = MaskImage::svgMask(unseenFeather)});
 }
-for (const PendingShape& pending : pendingShapes) {
-    unseenMask.push_back({.image = MaskImage::polygon(pending.screenPoints)});
+unseenMask.push_back({.image = MaskImage::rect(view), .composite = MaskComposite::Subtract});
+for (const InstancedMeshHandle& mesh : meshes) { // the record's meshes
+    unseenMask.push_back({.image = MaskImage::mesh(mesh, meshCamera)});
 }
-Primitives::drawRect({.bounds = view, .style = {.fill = kUnseenColor}, .mask = unseenMask, .key = coverKey + 1});
+for (const std::vector<geometry::Vec2i64>* shape : feather.pendingInView()) {
+    unseenMask.push_back({.image = MaskImage::polygon(addOnScreen<geometry::Vec2i64>(screenPoints, *shape, map))});
+}
+Primitives::drawRect({.bounds = view, .style = {.fill = kUnseenColor}, .mask = unseenMask, .key = kCoverUnseenKey});
 ```
 
 Layers are listed top first and composited bottom up, as CSS does. Below the top, the hard layers are the view less the union of the record's meshes and the pending shapes, 0 or 1 at each pixel. The top layer is the partial coverage, its children combined by `lighten`, the greatest at each pixel, so the record's pieces and the pending pieces overlapping draw no darker than either. It is added by `MaskComposite::Add`, which is source over: where the layers under it are 1 the result is 1, and where they are 0 it is the partial coverage, so between a binary layer and any other source over is the greater of the two, and nothing is darkened twice.
@@ -513,21 +519,27 @@ Layers are listed top first and composited bottom up, as CSS does. Below the top
 The tint's mask is one partial layer: the view at 1, then one group a colonist, combined with what is under it by `darken`, which isolates it. A colonist's group holds his bright shape at 0 and over it his feather pieces and drawn shadows, combined among themselves by `lighten`, each piece carrying a hard mask of his bright shape:
 
 ```cpp
-std::vector<MaskElement> tint = {{.points = viewPoints, .paint = MaskPaint::solid(1.0F)}};
+std::vector<MaskElement> tint = {{.points = viewCorners, .paint = MaskPaint::solid(1.0F)}};
 // The pieces' masks, which the spans in `tint` point into: reserved, so no push_back moves them.
 std::vector<std::array<MaskLayer, 1>> insideBrightShapes;
-insideBrightShapes.reserve(colonistsInView.size());
-for (const ColonistCover& colonist : colonistsInView) {
-    insideBrightShapes.push_back({{{.image = MaskImage::polygon(colonist.brightShape)}}});
+insideBrightShapes.reserve(frameColonists.size());
+for (const ColonistCover& cover : frameColonists) {
+    const std::span<const Foundation::Vec2> bright = addOnScreen<geometry::Vec2i64>(screenPoints, *cover.bright, map);
+    insideBrightShapes.push_back({{{.image = MaskImage::polygon(bright)}}});
     MaskElement group{.blend = MixBlendMode::Darken};
-    group.children.push_back({.points = colonist.brightShape, .paint = MaskPaint::solid(0.0F)});
-    for (const DarknessPiece& piece : colonist.pieces) {
-        group.children.push_back({.points = piece.screenPoints, .paint = piece.paint, .mask = insideBrightShapes.back(), .blend = MixBlendMode::Lighten});
+    group.children.push_back({.points = bright, .paint = MaskPaint::solid(0.0F)});
+    for (const InstancedMeshHandle& mesh : *cover.followMeshes) { // his feather and bands
+        group.children.push_back({.mesh = {mesh, cameraAbout(cover.featherAnchor)}, .mask = insideBrightShapes.back(), .blend = MixBlendMode::Lighten});
+    }
+    for (std::size_t ring = 0; ring < DrawnShadows::kSoftRings; ++ring) { // his soft bodies, ring by ring
+        for (const InstancedMeshHandle& mesh : (*cover.softMeshes)[ring]) {
+            group.children.push_back({.mesh = {mesh, cameraAbout((*cover.softAnchors)[ring])}, .mask = insideBrightShapes.back(), .blend = MixBlendMode::Lighten});
+        }
     }
     tint.push_back(std::move(group));
 }
 const std::array<MaskLayer, 1> tintMask = {{{.image = MaskImage::svgMask(tint)}}};
-Primitives::drawRect({.bounds = view, .style = {.fill = kTintColor}, .mask = tintMask, .key = coverKey});
+Primitives::drawRect({.bounds = view, .style = {.fill = {0.0F, 0.0F, 0.0F, kSeenDimAlpha}}, .mask = tintMask, .key = kCoverTintKey});
 ```
 
 A shape's `mask`, a draw's `mask`, and a polygon's points are spans, read during the `drawRect` call, so `tint`, `insideBrightShapes`, `tintMask`, and the points they name live until it returns.
@@ -819,17 +831,37 @@ At 10 colonists at 10x the go reads 12 at the peak against the control's 11, a b
 
 The conclusions rest on counts: the queue and its parts, the waits, the backlog, registrations, K, and legs.
 
+### 12.2 Measured: the limits check (step 1b)
+
+Each limit of 10 at the start values, read in the game at the quickstart landing over `/api/state?what=cover`, `what=sightBodies`, and `what=visibility`, or, where the landing has no such body, asserted by a unit test with synthetic bodies. The landing has no pine, and no body stands alone in sight there, so limits 1, 4, and 5's lone-body figures are the tests'.
+
+| Limit | Bound at the start values | Measured at 1x | At 10x |
+|---|---|---|---|
+| 1. A pine 5 m off | 0.04 on screen at its foot, gone within 1 m | `CoverPieces.LimitOneAPineFiveMetresOff` | |
+| 2. The shortest wall | 0.06 on screen at its foot, gone within a quarter of its distance | foot 0.045 in the mask (0.023 on screen), shadow 0.22 of its distance | |
+| 3. A veteran oak | 0.1 on screen at its foot, 0.05 at the rim | a 1.385 m oak 0.097 on screen at a strength of 42; `CoverPieces.LimitThreeTheWidestTrunkAndItsStreakToTheRim` | |
+| 4. A lone trunk's rim | 0.6 m, 0.8 m for a veteran oak or a BigRock | `ForestDepth.LimitFourALoneBodyShortensTheRimByAtMost` | |
+| 5. Range change a build | 0.2 m past a lone veteran oak or BigRock (0.3 m at 10x); 0.7 m in the landing's forest | lone bodies `ForestDepth.LimitFiveWalkingPastAVeteranOrABigRock`; forest 0.39 to 0.45 m | forest 0.96 to 1.09 m, reported |
+| 6. Forest depth shows | at the floor or above in the densest stand | rim 21.7 m mean, 20.10 m least, against the 20.1 m floor | |
+| 7. Convexity's loss | 0.5 m mean, 2 m in a clear direction, 2.5 m in any | 0.012 m mean, 0.24 m most | |
+| 8. The eased rim | 0.03 on screen a frame | 0.013 | |
+| 8. Leg to polygon path | nothing beyond the eased rim's own | 0.006 to 0.012 a frame | |
+| 8. A corner switch | 0.12 on screen a frame, 2 m behind the corner | a BigRock passed at 2 m: the apex moved 0.037 m at most between reads | |
+| 9. The feather | about 1.5 m on both edges, no hard line | soft on both edges | |
+
+Not measured: any time on an idle machine, the 10x column but limit 5's, and the rebuild steps of limit 8 near a corner and across a face's line. The cover's CPU time a frame is decision 52's.
+
 ## 13. Build steps
 
 Each step is its own PR with its own done line and a `Perf:` line. Steps 1b and 2 build on the "wall sight occluders" work ("Wall sight occluders are the wall's center line, so the visibility tint starts mid-wall" on Specboard) once it is on `main`. No done line waits on a sign-off: the tunables are sliders (8), set afterwards in the running game. Steps 0, 1a, and step 3's geometry can start at once; the rest wait as each step's line says.
 
 0. Partial coverage in salal. The backend states 7.6 lists (min and max blend equations, alpha-only and no-colour writes, the two depth states, a depth clear, the targets' alpha and depth checked at start), the sandbox scene and test of 7.7, and the API of 7.6. Done: a tagged salal whose `mask` scene shows every case of 7.7 with no seam, nothing darkened twice, no piece lightening outside its colonist's shape, and no colonist's shadow over another's light at 50 colonists, the value test passing on the GL backend, `docs/masks.md` brought up to date (content read by its luminance, `mix-blend-mode`, a group isolated by a blend other than `Normal`, per-child masks, and the partial layer), and worldsim's pin on that tag; or the fallback of 7.7 that holds, with the test of its values. Depends on: nothing.
 1a. Sim bench. As 12, on a branch that builds 5's shape from nav's placed rings only, no wall bodies, and runs legs and the polygon path through a copy of the record beside the shipped shape on the same walk, with no rendering. Done: 12.1's counts in this document beside the shipped shape's, read against 6.6's count bars. 6.6's time bars are read before step 4 lands, on `sim-benchmarks --benchmark_filter=BM_SightForest` with `node scripts/machine-load.mjs` reading `idle` before and after (the nightly batch runs the world, assets, and worldgen benchmarks, not the sim's). Vision's tick has no bar here. Depends on: nothing; it reads nav's placed rings as they are.
-1b. Limits check. As 12, after step 0 and step 2, run against step 5's draft PR, which draws 3's shadows and the eased rim with step 0's masks and reports each limit and the drawn pieces' counts and CPU time over `/api/state?what=cover`, `what=sightBodies`, and `what=visibility` (docs/testing/README.md). Done: every limit of 10 measured and reported in this document at the start values, at 1x and 10x, and the cover's CPU time; a go, or 12's fallback taken, for the drawn pieces; 6.6's thresholds checked again in the game at 50 colonists at 1x and 10x, in the landing's forest and in a walled base among trees, where the sweep runs for walls and K with walls is measured. Depends on: step 0, step 1a's go by counts (12.1), and step 2 (the wall bodies it measures, on the "wall sight occluders" work).
+1b. Limits check. As 12, after step 0 and step 2, run against step 5's draft PR, which draws 3's shadows and the eased rim with step 0's masks and reports each limit and the drawn pieces' counts and CPU time over `/api/state?what=cover`, `what=sightBodies`, and `what=visibility` (docs/testing/README.md). Done: every limit of 10 measured, or asserted by a unit test where the landing has no such body, and reported in this document at the start values (12.2), and the cover's CPU time; a go, or 12's fallback taken, for the drawn pieces; 6.6's thresholds checked again in the game at 50 colonists at 1x and 10x, in the landing's forest and in a walled base among trees, where the sweep runs for walls and K with walls is measured. Depends on: step 0, step 1a's go by counts (12.1), and step 2 (the wall bodies it measures, on the "wall sight occluders" work).
 2. Bodies. Wall bodies in `GeometryIndex`: each record's body, one record a body with its edges, box, `diameter`, and kind, made in `rebuild()`, with the rejected graph's bands as one body; `queryFacingOccluders`, `backFacesHiddenFrom`, and `insideSolid` reading opaque bodies only. The placed occluder index in `NavigationSystem` with serials, perimeters, diameters, kinds, arrival times on `TimeSystem::simulationSeconds()`, and buckets, updated in `collect()` in patch order, the removal callback carrying its ids. Silhouettes, widths, distances; shadow edges tagged with their corners; the cache keyed on serials; `lead` from the measured frame interval and `sightBodies` to `reach`; `SightTunables`, its ranges, and its sliders; the `sightBodies` state view. Done: a placed obstacle occludes by its kind and a mover, water, a ford, and a bounds ring do not; a refused add never enters the index; a wall stub is left out of the visibility polygon and still joins memory and `StoreOrDrop`'s walls; a rejected graph takes the kind the same walls take when accepted, away from the threshold; felling a tree rebuilds an observer's shape and walking over new ground with no obstacle does not; a tree placed on a ring id freed in the same job rebuilds it and leaves the index with one entry; vision never joins the patch job (a test with the job held running); the state view lists a BigRock with kind opaque. Depends on: the "wall sight occluders" work on `main`; step 1a's go by counts (12.1) is in.
 3. The sight shape. Forest depth and the forest shape in `libs/geometry/visibility` (the side normals' table among them), the polygon path's clip, `SightShape`'s fields, the overlay, the landing of 5.3, and the bright shape (6.3) cut by the forest shape where he stands on every path without the ease, each range drawn in by `sightRadius` less `drawnVisibleRadiusMm`, so the bright rim in forest does not move when the path changes. Done: a test that the bright rim in a forested direction is the same with a BigRock in reach and out of it, inside the sight shape and inside seen ground; unit tests for a wall stub (no change to the shape), a lone tree (depth at most the cap times its weights), a stand of known density (depth within 10% of 4.3's), a veteran oak walked round at 10 m in 1 cm steps with no side changing by more than 4.3's bound for the step plus 1 mm, a ring coming into sight, a ring arriving inside sight over `forestArrivalMs`, equal ranges giving the sight polygon to 2 mm, the forest shape convex and holding the floor's sight polygon over random stands, the slope limit holding every pair of neighbouring sides within `forestSlopeMm` and a clump of 40 trunks taking at most 2 m from any clear direction, a BigRock's shape equal to `computeVisibilityPolygon`'s for its ring clipped to the forest shape, a wall run cutting its exact shadow, and a clear direction untouched; forest depth and the forest shape pinned at the defaults and identical on MSVC, Clang, and GCC. Depends on: nothing for the geometry in `libs/geometry/visibility` (forest depth, the forest shape, the side normals, and their tests), which can start at once; step 2 for the polygon path's clip, `SightShape`'s fields, the overlay, and the tests that read bodies.
 4. The record. Legs as `SeenArea`'s capsule while a leg's ranges hold, the ring so far kept and the new shape joined where he stands when a build changes them, ended by the spread (some side's greatest range over the leg past its least by more than `softLegToleranceMm`) or `kSoftLegMostVertices`; a new leg holding the shape drawn on the frame it opens; `setOpenLeg` with a position, ranges, and the inherited shape; the rim passed to `queueSightPolygon`, the skirt and the sweep's band on that rim, the sweep point's interpolated rim and its builder; the eased rim, its start and `walked` per observer, and the bright shape's `rimEaseMm` inset on both paths. Then 6.6's five changes, in this order, each with its test: covered tests while pieces wait (a queue of covered legs behind a waiting piece is dropped within a tick and the piece still registers first); `kSeenPiecesRegisteredPerTick` 4, shapes tested and cut while fewer than four wait (a shape of six pieces registers four, then two, and no shape is cut while four wait); the sweep's own budget, `kSeenSweepPointsPerTick` 4 (sweep points drain four a tick while pieces wait); `softLegToleranceMm` scaled by the distance between builds (a leg ends at a 600 mm spread at 1x and not at 10x, where 1,700 mm ends it); and no sweep where every opaque body in reach is placed (a polygon-path build with only placed opaque bodies in reach queues no sweep; one with a wall in reach does). `BM_SightForestWalk` then runs on `SeenArea` through `vision::SightFeed`, the driver `PlayerVisibilitySystem` uses, `SightForestRecord.bench.{h,cpp}` is deleted, and player-visibility.md's budget paragraph (3.3, "Budget") and its `kSeenPiecesRegisteredPerTick` row say four pieces a tick and the covered tests while pieces wait. Done: tests for a straight walk through a stand (one leg while the spread holds), the spread ending a leg, a walk from open ground into forest and to a BigRock, the bright shape inside the record or pending on every frame of a walk through a stand with sideways wobble and leg ends, the eased rim moving no side more than `distance walked / rimEaseMm` of the ease's span in a frame and nothing at a restart, a change between a leg and the polygon path leaving the rim where the ease puts it, the record never more than 1.1 times the tolerance past the shapes a leg held as a distance and 1.5 times radially, plus one build's change where an inherited shape meets the leg (6.2), and the record oracle (no point on the record outside a true shape grown by the leg tolerance and the skirt); the five changes' tests above; the sim test that every seen point is on the mesh and the record never lost ground, run in forest; `BM_SightForestWalk` on the real record giving 12.1's counts for the go's rows; 6.6's time bars read on an idle machine, bar 5 not met at 50 colonists and the step merged by decision (decision 49), the registration cost brought down after. Depends on: step 3, and 6.6's time bars read on an idle machine (step 1a), read and bar 5 not met, by decision.
-5. The cover. `SeenArea::appendEdges`, `inRecord`, and `takeChangedBoxes` (6.3), the feather cells, the pending cuts, each colonist's feather and drawn shadows each frame, and the masks of 7.5. Done: soft edges on both edges in the game, faint triangles collapsing behind trunks and wall stubs, bands and fins beside hard shadows, outdoors and inside a room, scenario 14's new steps passing, the capture of 12. Depends on: steps 0, 2, 3, and 4; step 1b runs on its draft, and its go for the drawn pieces, or 12's fallback, comes before it is marked ready.
+5. The cover. `SeenArea::appendEdges`, `inRecord`, and `takeChangedBoxes` (6.3), the feather cells, the pending cuts, each colonist's feather and drawn shadows each frame, and the masks of 7.5. Done: soft edges on both edges in the game, faint triangles collapsing behind trunks and wall stubs, bands and fins beside hard shadows, outdoors and inside a room, each as 14 describes it, seen in the game, and the capture of 12. Depends on: steps 0, 2, 3, and 4; step 1b runs on its draft, and its go for the drawn pieces, or 12's fallback, comes before it is marked ready.
 6. Tests and docs. Scenario 14's steps (14) written in, player-visibility.md's tunables and measured sections brought up to date. Done: scenario 14 run. Depends on: step 5.
 
 ## 14. Tests and scenario steps

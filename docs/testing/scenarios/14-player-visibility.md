@@ -1,7 +1,7 @@
 # Scenario 14: player visibility
 
 **Status:** draft  
-**Last verified:** 2026-11-19, all steps (step 22 is a known mismatch)  
+**Last verified:** 2026-11-19, all steps  
 
 The player sees only what colonists have seen: bright ground round the crew, tinted ground out to the 150 m landing, black beyond. Edges fade, trees and wall stubs cast faint triangles, walls and big rocks cast shadows with soft sides, and forest draws the bright rim in. Things on seen ground select and place; on black ground they do not; a move order into the black walks the colonist to the edge of seen ground. Specs: [player-visibility.md](../../technical/player-visibility.md), [sight-softening.md](../../technical/sight-softening.md).
 
@@ -32,7 +32,7 @@ Build `world-sim` (RelWithDebInfo), launch it with `--background --no-settings` 
 19. `curl.exe "http://127.0.0.1:8081/api/dev/reveal?on=1"`, zoom 0.5 on the landing: every tile is drawn bright, no black, no tint; a right-click up to about 15 m past Bob's seen ground now walks to where you click (farther than the nav mesh reaches it does nothing, as it did before player visibility).
 20. `...reveal?on=0`: the black and the tint come back, with the ground Bob opened in step 18 still seen.
 21. Zoom 1 at the landing, then jump the camera east 300 m at a time to 2.4 km out, reading `...api/state?what=scene` (`chunks`, the `Chunks:` readout) at each: it never rises, and falls as the chunks the camera alone held unload.
-22. `...teleport?colonist=<BID>&to=479,10` (`/api/dev/teleport`), wait a second: `...visibility?x=509&y=10` is `seen`, `x=511` is not, a seen edge a few metres short of the chunk border at 512 m. Teleport him back to the landing, screenshot at `x=508&y=10&zoom=6`, jump to `x=4000` (chunks fall), and back: the same picture, the trees from past the border still drawn over the seen edge, and `...flora?age=mature&near=520,10` still lists trees east of 512 m.
+22. `...teleport?colonist=<BID>&to=479,10` (`/api/dev/teleport`), wait a second: `...visibility?x=494&y=10`, 15 m east and well inside his forest rim (`what=sightBodies`, `rangesMm[0]` east, 20 m or more), is `seen` and `visible`, and `x=511` is neither, his seen edge short of the chunk border at 512 m. Teleport him back to the landing, screenshot at `x=508&y=10&zoom=6`, jump to `x=4000` (chunks fall), and back: the same picture, the trees from past the border still drawn over the seen edge, and `...flora?age=mature&near=520,10` still lists trees east of 512 m.
 23. Read Bob again, build a wall 5 m east of him (`...api/dev/walls?pts=<BX+5>,<BY-3>;<BX+5>,<BY+3>&material=Wood&thickness=Standard&built=1&host=0`; a tree in the way refuses it, so move it a metre) and zoom 20 on it: the tint starts at the wall's west face, on Bob's side, and the ground east of it is dimmed.
 24. Look at the top of the wall: it is an even mid brown, with no lighter strip down its west half, and turns a light tan with `...reveal?on=1` (set it back to 0).
 25. Click Release in Bob's panel, then `curl.exe "http://127.0.0.1:8081/api/control?action=exit"`.
