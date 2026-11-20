@@ -621,9 +621,10 @@ TEST(PlayerVisibilitySystem, DrawnRimSidesSkipARoomsOuterFace) {
 
 namespace {
 
-	// The sides of `drawn` at least 0.3 m long lying on the line through `point` along the unit
-	// `direction`, both ends within the clips' drift of it, each checked not rim; their length, and the
-	// most an end lies off the line.
+	// The sides of `drawn` at least 0.3 m long with both ends within 60 mm of the line through `point`
+	// along the unit `direction`, each checked not rim; their length, and the most an end lies off the
+	// line. A stretch of rim crossing the line at the 18 degrees or more these tests make strays past
+	// 60 mm within 0.3 m, so only the face's own sides are caught.
 	struct FaceSides {
 		double lengthMm	 = 0.0;
 		double mostOffMm = 0.0;
@@ -632,13 +633,13 @@ namespace {
 		const auto offOf = [&](const Vec2i64& vertex) {
 			return std::abs(direction.x * (static_cast<double>(vertex.y) - point.y) - direction.y * (static_cast<double>(vertex.x) - point.x));
 		};
-		const double drift = static_cast<double>(vision::kFaceDriftMm);
-		FaceSides	 sides;
+		constexpr double kCatchMm = 60.0;
+		FaceSides		 sides;
 		for (std::size_t side = 0; side < drawn.outline.size(); ++side) {
 			const Vec2i64& from	  = drawn.outline[side];
 			const Vec2i64& to	  = drawn.outline[(side + 1) % drawn.outline.size()];
 			const double   length = std::hypot(static_cast<double>(to.x - from.x), static_cast<double>(to.y - from.y));
-			if (length >= 300.0 && offOf(from) <= drift && offOf(to) <= drift) {
+			if (length >= 300.0 && offOf(from) <= kCatchMm && offOf(to) <= kCatchMm) {
 				sides.lengthMm += length;
 				sides.mostOffMm = std::max({sides.mostOffMm, offOf(from), offOf(to)});
 				EXPECT_FALSE(drawn.rim[side]) << "the wall's face, side " << side << " from " << from.x << "," << from.y << " to " << to.x << "," << to.y;
@@ -683,7 +684,7 @@ TEST(PlayerVisibilitySystem, AFaceCutShortByTheRimInTheOpenIsNotRim) {
 			mostOffMm = std::max(mostOffMm, face.mostOffMm);
 		}
 	}
-	std::printf("[ open face ] ends at most %.1f mm off the face\n", mostOffMm);
+	EXPECT_LT(mostOffMm, static_cast<double>(vision::kFaceDriftMm)) << "every face side's ends within the clips' drift";
 	assets::ConstructionRegistry::Get().clear();
 }
 
@@ -1459,7 +1460,7 @@ TEST(PlayerVisibilitySystem, AFaceCutShortByTheForestRimIsNotRim) {
 		seenMm				 = std::max(seenMm, face.lengthMm);
 	}
 	EXPECT_GT(seenMm, 1000.0) << "he sees some of the face";
-	std::printf("[ forest face ] up to %.0f mm of face, ends at most %.1f mm off it\n", seenMm, mostOffMm);
+	EXPECT_LT(mostOffMm, static_cast<double>(vision::kFaceDriftMm)) << "every face side's ends within the clips' drift";
 	assets::ConstructionRegistry::Get().clear();
 }
 

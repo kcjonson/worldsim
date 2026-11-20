@@ -37,34 +37,6 @@ namespace ecs {
 				   });
 		}
 
-		// A side within this angle of the ray from the build eye through its middle runs along that ray: a
-		// shadow side. The clip steps a shadow side's far end up to 8 mm off its ray (starClippedToConvex),
-		// which turns a side metres long by a fraction of a degree; a rim side lies across its ray.
-		constexpr double kAlongRayCosine = 0.995;
-		bool alongRayFrom(const Vec2i64& eye, const Vec2i64& from, const Vec2i64& to) {
-			const glm::dvec2 along{static_cast<double>(to.x - from.x), static_cast<double>(to.y - from.y)};
-			const glm::dvec2 outward{
-				(static_cast<double>(from.x) + static_cast<double>(to.x)) / 2.0 - static_cast<double>(eye.x),
-				(static_cast<double>(from.y) + static_cast<double>(to.y)) / 2.0 - static_cast<double>(eye.y)
-			};
-			const double lengths = std::sqrt((along.x * along.x + along.y * along.y) * (outward.x * outward.x + outward.y * outward.y));
-			return lengths > 0.0 && std::abs(along.x * outward.x + along.y * outward.y) >= kAlongRayCosine * lengths;
-		}
-
-		// Whether the side runs along a side of `ring`, both ends within the clips' drift of it: a stretch
-		// of a cutting ring is rim even where it passes within that drift of a body face, as it does
-		// beside the crossing where the ring meets the face at a shallow angle.
-		bool alongRing(const std::vector<Vec2i64>& ring, const Vec2i64& from, const Vec2i64& to) {
-			for (std::size_t side = 0; side < ring.size(); ++side) {
-				const Vec2i64& start = ring[side];
-				const Vec2i64& end	 = ring[(side + 1) % ring.size()];
-				if (geometry::withinDistanceOfSegment(from, start, end, vision::kFaceDriftMm) && geometry::withinDistanceOfSegment(to, start, end, vision::kFaceDriftMm)) {
-					return true;
-				}
-			}
-			return false;
-		}
-
 		static_assert(
 			vision::kSeenBoxCellMm == static_cast<std::int64_t>(world::kChunkWorldSize) * geometry::kMillimetersPerMeter,
 			"a seen-box cell is a chunk"
@@ -345,27 +317,18 @@ namespace ecs {
 		if (cut.empty()) {
 			return nullptr;
 		}
-		// Every side is rim but a shadow side, which runs out along a ray from the build eye, and a body
-		// face, which lies on an opaque body's outline: whatever ring cut the rest (the disc, the eased
-		// shape, or vision's own forest rim where the ease reaches past it), it bounds his sight.
+		// Every side is rim but a shadow side and a body face: whatever ring cut the rest (the disc, the
+		// eased shape, or vision's own forest rim where the ease reaches past it), it bounds his sight.
 		const std::optional<VisionSystem::SightBodies> bodies = vision->sightBodies(colonist);
-		std::vector<vision::Face>					   faces;
-		if (bodies.has_value()) {
-			for (const vision::SightBody& body : *bodies->bodies) {
-				if (body.kind == vision::BodyKind::Opaque) {
-					vision::appendFaces(body, faces);
-				}
-			}
+		std::vector<std::span<const Vec2i64>>		   rings  = {disc, eased};
+		if (shape->polygonRim != nullptr) {
+			rings.emplace_back(*shape->polygonRim);
 		}
 		DrawnShape& drawn = cache.shape;
 		drawn.outline	  = std::move(cut);
-		drawn.rim.resize(drawn.outline.size());
-		for (std::size_t side = 0; side < drawn.outline.size(); ++side) {
-			const Vec2i64& from = drawn.outline[side];
-			const Vec2i64& to	= drawn.outline[(side + 1) % drawn.outline.size()];
-			drawn.rim[side]		= !alongRayFrom(build, from, to) &&
-							  (alongRing(disc, from, to) || alongRing(eased, from, to) || !vision::liesOnAFace(faces, from, to));
-		}
+		vision::tagRimSides(
+			drawn.outline, build, bodies.has_value() ? std::span<const vision::SightBody>(*bodies->bodies) : std::span<const vision::SightBody>{}, rings, drawn.rim
+		);
 		cache.drawn = true;
 		return &drawn;
 	}

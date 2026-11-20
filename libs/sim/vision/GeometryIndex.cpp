@@ -64,6 +64,7 @@ namespace ecs {
 				assert(previous != edgeEndingAt.end());
 				body.previousEdge[index] = previous != edgeEndingAt.end() ? previous->second : index;
 			}
+			body.faces			 = vision::facesOf(body.edges, body.previousEdge);
 			body.diameterSquared = vision::diameterSquared(corners);
 			body.diameterMm		 = vision::wholeSquareRoot(body.diameterSquared);
 			body.kind			 = vision::kindOf(body.diameterSquared, opaqueLeastDiameterMm);

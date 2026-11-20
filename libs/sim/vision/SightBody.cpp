@@ -52,13 +52,31 @@ namespace vision {
 			return glm::length(point - (from + t * along));
 		}
 
-		// Whether a face from `from` to `to` goes on straight to `beyond`: onward, and `beyond` within
-		// kFaceStraightMm of its line.
-		bool goesOnTo(const geometry::Vec2i64& from, const geometry::Vec2i64& to, const geometry::Vec2i64& beyond) {
-			const glm::dvec2 along	= toDouble(to) - toDouble(from);
-			const glm::dvec2 onward = toDouble(beyond) - toDouble(to);
-			const double	 length = glm::length(along);
-			return length > 0.0 && glm::dot(along, onward) > 0.0 && std::abs(crossOf(along, onward)) <= kFaceStraightMm * length;
+		// Whether the corner where `before` ends and `after` starts is straight: `after` goes on from
+		// `before`, and each edge's far end lies within kFaceStraightMm of the other edge's line (their
+		// cross product over each one's length).
+		bool straightAt(const geometry::OccluderSegment& before, const geometry::OccluderSegment& after) {
+			const glm::dvec2 first		  = toDouble(before.b) - toDouble(before.a);
+			const glm::dvec2 second		  = toDouble(after.b) - toDouble(after.a);
+			const double	 shorter	  = std::min(glm::length(first), glm::length(second));
+			return shorter > 0.0 && glm::dot(first, second) > 0.0 && std::abs(crossOf(first, second)) <= kFaceStraightMm * shorter;
+		}
+
+		// A side within this angle of the ray from the build eye through its middle runs along that ray: a
+		// shadow side. The clip steps a shadow side's far end up to 8 mm off its ray (starClippedToConvex),
+		// which turns a side metres long by a fraction of a degree; a rim side lies across its ray.
+		constexpr double kAlongRayCosine = 0.995;
+
+		bool alongRayFrom(const geometry::Vec2i64& eye, const geometry::Vec2i64& from, const geometry::Vec2i64& to) {
+			const glm::dvec2 along	 = toDouble(to) - toDouble(from);
+			const glm::dvec2 outward = (toDouble(from) + toDouble(to)) / 2.0 - toDouble(eye);
+			const double	 lengths = glm::length(along) * glm::length(outward);
+			return lengths > 0.0 && std::abs(glm::dot(along, outward)) >= kAlongRayCosine * lengths;
+		}
+
+		// Whether both `from` and `to` lie within kFaceDriftMm of the segment from `start` to `end`.
+		bool bothWithinDrift(const geometry::Vec2i64& from, const geometry::Vec2i64& to, const geometry::Vec2i64& start, const geometry::Vec2i64& end) {
+			return geometry::withinDistanceOfSegment(from, start, end, kFaceDriftMm) && geometry::withinDistanceOfSegment(to, start, end, kFaceDriftMm);
 		}
 	} // namespace
 
@@ -76,43 +94,60 @@ namespace vision {
 		return edge;
 	}
 
-	Face faceOf(const SightBody& body, std::uint32_t edge) {
-		Face		  face{body.edges[edge].a, body.edges[edge].b};
-		std::uint32_t last	= edge;
-		std::uint32_t first = edge;
-		for (std::size_t step = 1; step < body.edges.size(); ++step) {
-			const std::uint32_t next = nextEdgeOf(body, last);
-			if (next == first || !goesOnTo(face.from, face.to, body.edges[next].b)) {
-				break;
-			}
-			face.to = body.edges[next].b;
-			last	= next;
+	std::vector<Face> facesOf(std::span<const geometry::OccluderSegment> edges, std::span<const std::uint32_t> previousEdge) {
+		const auto				   count = static_cast<std::uint32_t>(edges.size());
+		std::vector<std::uint32_t> next(count, count);
+		for (std::uint32_t edge = 0; edge < count; ++edge) {
+			next[previousEdge[edge]] = edge;
 		}
-		for (std::size_t step = 1; step < body.edges.size(); ++step) {
-			const std::uint32_t previous = body.previousEdge[first];
-			if (previous == last || !goesOnTo(face.to, face.from, body.edges[previous].a)) {
-				break;
+		std::vector<Face> faces;
+		for (std::uint32_t start = 0; start < count; ++start) {
+			if (straightAt(edges[previousEdge[start]], edges[start])) {
+				continue;
 			}
-			face.from = body.edges[previous].a;
-			first	  = previous;
+			Face		  face{edges[start].a, edges[start].b};
+			std::uint32_t last = start;
+			for (std::uint32_t step = 1; step < count; ++step) {
+				const std::uint32_t onward = next[last];
+				if (onward == count || onward == start || !straightAt(edges[last], edges[onward])) {
+					break;
+				}
+				face.to = edges[onward].b;
+				last	= onward;
+			}
+			faces.push_back(face);
 		}
-		return face;
+		return faces;
 	}
 
-	void appendFaces(const SightBody& body, std::vector<Face>& out) {
-		for (std::uint32_t edge = 0; edge < body.edges.size(); ++edge) {
-			const Face face = faceOf(body, edge);
-			if (face.from == body.edges[edge].a) {
-				out.push_back(face);
+	void tagRimSides(
+		std::span<const geometry::Vec2i64>				   outline,
+		const geometry::Vec2i64&						   buildEye,
+		std::span<const SightBody>						   bodies,
+		std::span<const std::span<const geometry::Vec2i64>> rings,
+		std::vector<bool>&								   rim
+	) {
+		rim.assign(outline.size(), true);
+		for (std::size_t side = 0; side < outline.size(); ++side) {
+			const geometry::Vec2i64& from = outline[side];
+			const geometry::Vec2i64& to	  = outline[(side + 1) % outline.size()];
+			if (alongRayFrom(buildEye, from, to)) {
+				rim[side] = false;
+				continue;
 			}
+			const bool onAFace = std::ranges::any_of(bodies, [&](const SightBody& body) {
+				return std::ranges::any_of(body.faces, [&](const Face& face) { return bothWithinDrift(from, to, face.from, face.to); });
+			});
+			const bool alongARing = onAFace && std::ranges::any_of(rings, [&](std::span<const geometry::Vec2i64> ring) {
+										for (std::size_t corner = 0; corner < ring.size(); ++corner) {
+											if (bothWithinDrift(from, to, ring[corner], ring[(corner + 1) % ring.size()])) {
+												return true;
+											}
+										}
+										return false;
+									});
+			rim[side] = !onAFace || alongARing;
 		}
-	}
-
-	bool liesOnAFace(std::span<const Face> faces, const geometry::Vec2i64& from, const geometry::Vec2i64& to) {
-		return std::ranges::any_of(faces, [&](const Face& face) {
-			return geometry::withinDistanceOfSegment(from, face.from, face.to, kFaceDriftMm) &&
-				   geometry::withinDistanceOfSegment(to, face.from, face.to, kFaceDriftMm);
-		});
 	}
 
 	geometry::Int128 diameterSquared(std::span<const geometry::Vec2i64> vertices) {

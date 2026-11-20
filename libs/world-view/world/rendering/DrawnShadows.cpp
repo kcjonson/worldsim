@@ -15,8 +15,7 @@ namespace worldview {
 		constexpr double kBandPastBrightMm = 1000.0;
 		// What a ring never built is taken to cost, in pieces a body, against the budget a frame.
 		constexpr std::size_t kDueBodyLeastPieces = 8;
-		// How far a running ease's apex may lie from a new build's shadow edge to be taken up: on a face
-		// within two of its corner.
+		// How far a running ease's apex may lie off a face near a new build's corner to be taken up.
 		constexpr double kEaseFaceSlackMm = 2.0;
 
 		glm::dvec2 toDouble(const geometry::Vec2i64& point) {
@@ -30,30 +29,14 @@ namespace worldview {
 			return glm::length(point - (from + share * along));
 		}
 
-		// Whether `apex` lies on one of the faces within two of `corner`: the two before it and the two
-		// after, each a whole straight side of the outline (vision::faceOf), so a room's face of three
-		// collinear edges counts as one.
+		// Whether `apex` lies on one of the two faces (vision::Face, a whole straight side of the outline)
+		// that meet at `corner`: an ease along one face, never across a notch's open ground.
 		bool onFaceNear(const vision::SightBody& body, std::uint32_t corner, glm::dvec2 apex) {
-			const std::uint32_t firstBefore = body.previousEdge[corner];
-			const vision::Face	before = vision::faceOf(body, firstBefore);
-			const vision::Face	after = vision::faceOf(body, corner);
-			// The face before `before` starts where `before` does; the one after `after` from where it ends.
-			std::uint32_t twoBeforeEdge = firstBefore;
-			while (body.edges[twoBeforeEdge].a != before.from) {
-				twoBeforeEdge = body.previousEdge[twoBeforeEdge];
-			}
-			std::uint32_t twoAfterEdge = corner;
-			while (body.edges[twoAfterEdge].b != after.to) {
-				twoAfterEdge = vision::nextEdgeOf(body, twoAfterEdge);
-			}
-			const vision::Face twoBefore = vision::faceOf(body, body.previousEdge[twoBeforeEdge]);
-			const vision::Face twoAfter = vision::faceOf(body, vision::nextEdgeOf(body, twoAfterEdge));
-			for (const vision::Face& face : {twoBefore, before, after, twoAfter}) {
-				if (distanceToSegment(apex, toDouble(face.from), toDouble(face.to)) <= kEaseFaceSlackMm) {
-					return true;
-				}
-			}
-			return false;
+			const geometry::Vec2i64 point = body.edges[corner].a;
+			return std::ranges::any_of(body.faces, [&](const vision::Face& face) {
+				return (face.from == point || face.to == point) &&
+					   distanceToSegment(apex, toDouble(face.from), toDouble(face.to)) <= kEaseFaceSlackMm;
+			});
 		}
 
 	} // namespace

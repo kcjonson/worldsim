@@ -165,6 +165,8 @@ class VisionSystem : public ISystem {
 		float				   radius = 0.0F;	   // meters
 		SightPath			   path	  = SightPath::Open;
 		const geometry::Ring* polygon = nullptr;  // set on the polygon path
+		// The forest shape of his reach the polygon was cut to; null when nothing cut it.
+		const geometry::Ring* polygonRim = nullptr;
 		std::uint64_t		   polygonRevision = 0;
 		std::uint64_t		   buildRevision   = 0; // changes at every build, on every path
 		// The 64 ranges of the build's forest shape of `radius`, in mm from where it is placed; every one
@@ -276,6 +278,7 @@ class VisionSystem : public ISystem {
 		geometry::SightSideValues  ranges{};	// the forest shape of his sight round the build
 		geometry::ForestHalfPlanes forest;		// its half-planes, off the open path
 		geometry::Ring	  polygon;			 // empty when hasPolygon == false (outdoors)
+		geometry::Ring	  polygonRim;		 // the forest shape of his reach that cut it; empty when none did
 		std::vector<construction::SegmentId> segmentsSeen; // what the structure pass found for the polygon
 		std::vector<construction::OpeningId> openingsSeen;
 		std::vector<geometry::Ring>			 placedSeen;  // opaque placed bodies the polygon sees, as outlines

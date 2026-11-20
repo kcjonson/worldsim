@@ -69,6 +69,9 @@ namespace {
 			low = {std::min(low.x, corners[corner].x), std::min(low.y, corners[corner].y)};
 			high = {std::max(high.x, corners[corner].x), std::max(high.y, corners[corner].y)};
 		}
+		if (kind == vision::BodyKind::Opaque) {
+			body.faces = vision::facesOf(body.edges, body.previousEdge);
+		}
 		body.centre = {std::llround(sumX / static_cast<double>(corners.size())), std::llround(sumY / static_cast<double>(corners.size()))};
 		body.diameterMm = std::llround(std::hypot(static_cast<double>(high.x - low.x), static_cast<double>(high.y - low.y)));
 		return body;
@@ -965,4 +968,84 @@ TEST(CoverPieces, ACornerSwitchAlongARoomsFaceNeverSnaps) {
 		lastApex = apex;
 	}
 	EXPECT_EQ(*lastApex, glm::dvec2(20900.0, 10100.0)) << "the ease reached the south-west corner";
+}
+
+namespace {
+
+	// Whether `point` lies in the ring `corners` or within 2 mm of its boundary.
+	bool inOrOnRing(const std::vector<Vec2i64>& corners, glm::dvec2 point) {
+		bool inside = false;
+		for (std::size_t corner = 0; corner < corners.size(); ++corner) {
+			const glm::dvec2 from{static_cast<double>(corners[corner].x), static_cast<double>(corners[corner].y)};
+			const glm::dvec2 to{
+				static_cast<double>(corners[(corner + 1) % corners.size()].x), static_cast<double>(corners[(corner + 1) % corners.size()].y)
+			};
+			const glm::dvec2 along = to - from;
+			const double	 share = std::clamp(glm::dot(point - from, along) / glm::dot(along, along), 0.0, 1.0);
+			if (glm::length(point - (from + share * along)) <= 2.0) {
+				return true;
+			}
+			if ((from.y > point.y) != (to.y > point.y) && point.x < from.x + (point.y - from.y) / (to.y - from.y) * (to.x - from.x)) {
+				inside = !inside;
+			}
+		}
+		return inside;
+	}
+
+	// A build tags the shadow edge at `first` from `firstEye`; the next, after he walks to `secondEye`,
+	// tags it at `second` across a notch. Every apex drawn over the walk after lies on the body or in it,
+	// never across the notch's open ground.
+	void expectNoEaseAcrossTheNotch(
+		const std::vector<Vec2i64>& corners,
+		std::uint32_t				first,
+		std::uint32_t				second,
+		glm::dvec2					firstEye,
+		glm::dvec2					secondEye
+	) {
+		const std::vector<vision::SightBody> bodies = {bodyOf(corners, vision::BodyKind::Opaque, 5)};
+		const vision::SightTunables			 tunables;
+		// The end of the silhouette that is `first` from the first eye is `second` from the second.
+		const std::optional<vision::Silhouette> before = vision::silhouetteFrom(bodies[0], firstEye);
+		const std::optional<vision::Silhouette> after = vision::silhouetteFrom(bodies[0], secondEye);
+		ASSERT_TRUE(before.has_value() && after.has_value());
+		const bool clockwise = before->clockwise == first;
+		ASSERT_EQ(clockwise ? before->clockwise : before->counterClockwise, first);
+		ASSERT_EQ(clockwise ? after->clockwise : after->counterClockwise, second);
+		const int litTurn = clockwise ? -1 : 1;
+
+		std::vector<vision::ShadowEdge>		 edges = {{.body = 0, .corner = first, .litTurn = litTurn}};
+		const auto							 sight = [&](glm::dvec2 eye) {
+			  return ecs::VisionSystem::SightBodies{
+				  .bodies = &bodies, .shadowEdges = &edges, .leadMm = 670, .reachMm = 30800, .eyeCentre = {std::llround(eye.x), std::llround(eye.y)}
+			  };
+		};
+		Drawn drawn;
+		drawn.step(sight(firstEye), 1, firstEye, 0.0, tunables);
+		edges = {{.body = 0, .corner = second, .litTurn = litTurn}};
+		for (int frame = 1; frame <= 60; ++frame) {
+			const glm::dvec2 eye = secondEye;
+			drawn.step(sight(eye), 2, eye, 33.0, tunables);
+			ASSERT_EQ(drawn.shadows.edges().size(), 1U);
+			const glm::dvec2 apex = drawn.shadows.edges()[0].band.apex;
+			EXPECT_TRUE(inOrOnRing(corners, apex)) << "frame " << frame << ", apex " << apex.x << "," << apex.y;
+		}
+	}
+
+} // namespace
+
+// An L whose notch is its +x +y quarter: a build tags its tip (6, 2) m, the next, past the line
+// through the two tips, tags the other tip (2, 6) m, two faces on round the notch's inside corner. The
+// ease is not taken up across the notch, which would carry the apex over its open ground; the band
+// starts at the new tip.
+TEST(CoverPieces, AnEaseNeverCrossesAnLsNotch) {
+	const std::vector<Vec2i64> corners = {{0, 0}, {6000, 0}, {6000, 2000}, {2000, 2000}, {2000, 6000}, {0, 6000}};
+	expectNoEaseAcrossTheNotch(corners, 2, 4, {10000.0, -2500.0}, {10000.0, -1500.0});
+}
+
+// A U whose notch opens on its +y side: walking across the line of its two outer tips, the silhouette's
+// end switches from (0, 6) m to (6, 6) m, five faces apart round the notch, and the ease is not taken
+// across its mouth.
+TEST(CoverPieces, AnEaseNeverCrossesAUsNotch) {
+	const std::vector<Vec2i64> corners = {{0, 0}, {6000, 0}, {6000, 6000}, {4000, 6000}, {4000, 2000}, {2000, 2000}, {2000, 6000}, {0, 6000}};
+	expectNoEaseAcrossTheNotch(corners, 7, 2, {12000.0, 6300.0}, {12000.0, 5700.0});
 }
