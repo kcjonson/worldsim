@@ -8,6 +8,7 @@
 
 #include "components/Attributes.h"
 
+#include <assets/CreatureConfigFiles.h>
 #include <assets/TraitRegistry.h>
 
 #include <cstdio>
@@ -27,6 +28,10 @@ namespace ecs::testing {
 			   "config";
 	}
 
+	inline std::filesystem::path repoHuman() {
+		return repoConfig().parent_path() / "world" / "creatures" / "Human";
+	}
+
 	inline void stopOnErrors(const char* what, const std::vector<std::string>& errors) {
 		for (const std::string& error : errors) {
 			std::fprintf(stderr, "shipped %s: %s\n", what, error.c_str());
@@ -36,10 +41,18 @@ namespace ecs::testing {
 		}
 	}
 
+	/// The shipped human's config files, found as the game finds them.
+	inline assets::CreatureConfigFiles shippedHumanConfig() {
+		assets::CreatureConfigFiles human = assets::creatureConfigFiles(repoHuman());
+		stopOnErrors("human config", human.errors);
+		return human;
+	}
+
 	/// The shipped traits, loaded fresh for the caller.
 	inline assets::TraitRegistry shippedTraits() {
 		assets::TraitRegistry traits;
-		stopOnErrors("traits", traits.loadFromFolder(repoConfig() / "colonists" / "traits"));
+		const assets::CreatureConfigFiles human = shippedHumanConfig();
+		stopOnErrors("traits", traits.loadFromFiles(human.traits, human.folder));
 		return traits;
 	}
 
@@ -60,7 +73,8 @@ namespace ecs::testing {
 	inline const NeedLevels& shippedNeedLevels() {
 		static const NeedLevels levels = [] {
 			NeedLevels loaded;
-			stopOnErrors("need levels", loadNeedLevels(loaded, repoConfig() / "colonists" / "needs"));
+			const assets::CreatureConfigFiles human = shippedHumanConfig();
+			stopOnErrors("need levels", loadNeedLevels(loaded, human.needs, human.folder));
 			return loaded;
 		}();
 		return levels;

@@ -229,9 +229,9 @@ moves, so nothing unloads; in the game a dev-spawned tree is lost when its chunk
 
 Asset definitions and recipes already load without GL through `assets::initializeAssetSystem`
 (AssetBootstrap.cpp); `asset-cli` opens GL only for its `render` command. The work configs load
-through `assets::loadWorkConfig(configRoot)` (libs/assets/assets/WorkConfig.cpp, done in build step 2):
-action types, task chains, work types, priority tuning with the required-tier check, construction, and
-cross-validation, returning the errors rather than logging them. The loading scene calls it
+through `assets::loadWorkConfig(configRoot, human)` (libs/assets/assets/WorkConfig.cpp, done in build step 2):
+action types, task chains, work types, priority tuning with the required-tier check, construction, the
+human's mood and memory (from `assets/world/creatures/Human/`), and cross-validation, returning the errors rather than logging them. The loading scene calls it
 (`GameLoadingScene::initializeWorldSystems`) and clears `GoalTaskRegistry` itself; that one sim-side line moves to
 session construction. sim-cli takes `--config-root <dir>` (default: the staged
 `assets/config`) so a sweep can point it at a patched copy.

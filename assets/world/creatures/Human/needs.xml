@@ -13,7 +13,7 @@
   Names are the needs' labels; every need is given. The colonists' AI seeks a need's fulfilment below
   seek, and thought sources name a threshold a need falls below or rises back to (assets/config/thoughts).
 
-  This folder's own files load first, in path order, then its subfolders' files; a later file's <Need>
+  Every file in this folder with a <Needs> root loads, in file name order; a later file's <Need>
   replaces the earlier one of the same name, cost included, so a mod changes a need by adding a file.
 -->
 <Needs>

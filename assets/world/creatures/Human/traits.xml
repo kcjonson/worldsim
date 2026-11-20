@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  The traits a colonist can have. Every .xml file in this folder (and its subfolders) adds to the set, so
-  a mod adds traits with a file of its own. This folder's files load first, then subfolders' files in
-  path order; a later file replaces a trait of the same id, and the replacement is logged.
+  The traits a colonist can have. Every file in this folder with a <Traits> root adds to the set, in file
+  name order, so a mod adds traits with a file of its own; a later file replaces a trait of the same id,
+  and the replacement is logged.
 
   <Count min max/>              how many traits a colonist gets, from min to max. min may be 0, and must be
                                 reachable with the <Exclusive> groups.

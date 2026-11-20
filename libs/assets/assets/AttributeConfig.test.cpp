@@ -33,7 +33,7 @@ namespace {
 			file << "<Attributes>" << body << "</Attributes>";
 		}
 
-		[[nodiscard]] AttributeConfigLoad load() const { return loadAttributeConfig(folder, kNames); }
+		[[nodiscard]] AttributeConfigLoad load() const { return loadAttributeConfig(configFilesIn(folder), folder, kNames); }
 
 		static bool mentions(const AttributeConfigLoad& load, const std::string& text) {
 			return std::ranges::any_of(load.errors, [&](const std::string& error) { return error.find(text) != std::string::npos; });

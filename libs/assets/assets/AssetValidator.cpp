@@ -1,6 +1,7 @@
 #include "assets/AssetValidator.h"
 
 #include "assets/AssetDefinition.h"
+#include "assets/CreatureConfigFiles.h"
 #include "assets/GroundLayer.h"
 #include "assets/GroundSvg.h"
 #include "assets/GroundTint.h"
@@ -314,7 +315,7 @@ namespace assets {
 			const std::string stem = entry.path().stem().string();
 			const std::string parentFolder = entry.path().parent_path().filename().string();
 			if (stem != parentFolder) {
-				if (isReferencedMotionFile(entry.path())) {
+				if (isReferencedMotionFile(entry.path()) || isCreatureConfigFile(entry.path())) {
 					continue;
 				}
 				report.add(Severity::Warning, "", "", "XML filename does not match its folder; the loader skips it", entry.path().string());

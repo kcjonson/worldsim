@@ -917,7 +917,7 @@ namespace ecs::test {
 	}
 
 	TEST(ThoughtTypeDefinitions, TheShippedRulesLoadClean) {
-		const ColonistRulesLoad load = loadColonistRules(testing::repoConfig());
+		const ColonistRulesLoad load = loadColonistRules(testing::repoConfig(), assets::creatureConfigFiles(testing::repoHuman()));
 		for (const std::string& error : load.errors) {
 			ADD_FAILURE() << error;
 		}

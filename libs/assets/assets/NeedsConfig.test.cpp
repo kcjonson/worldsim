@@ -2,6 +2,7 @@
 // and the mistakes the loader reports.
 
 #include "assets/NeedsConfig.h"
+#include "assets/CreatureConfigFiles.h"
 
 #include <gtest/gtest.h>
 
@@ -16,10 +17,12 @@ using namespace assets;
 
 namespace {
 
-	std::filesystem::path shippedNeeds() {
-		// <root>/libs/assets/assets/NeedsConfig.test.cpp -> <root>/assets/config/colonists/needs
-		return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "assets" / "config" / "colonists" /
-			   "needs";
+	CreatureConfigFiles shippedHuman() {
+		// <root>/libs/assets/assets/NeedsConfig.test.cpp -> <root>/assets/world/creatures/Human
+		return creatureConfigFiles(
+			std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "assets" / "world" / "creatures" /
+			"Human"
+		);
 	}
 
 	/// A fresh folder holding `body` as needs.xml and, when given, `laterBody` as mods/later.xml.
@@ -42,7 +45,7 @@ namespace {
 		NeedsFolder(const NeedsFolder&) = delete;
 		NeedsFolder& operator=(const NeedsFolder&) = delete;
 
-		[[nodiscard]] NeedsConfigLoad load() const { return loadNeedsConfig(folder); }
+		[[nodiscard]] NeedsConfigLoad load() const { return loadNeedsConfig(configFilesIn(folder), folder); }
 
 		std::filesystem::path folder;
 
@@ -61,7 +64,9 @@ namespace {
 } // namespace
 
 TEST(NeedsConfig, TheShippedNeedsLoadClean) {
-	const NeedsConfigLoad load = loadNeedsConfig(shippedNeeds());
+	const CreatureConfigFiles human = shippedHuman();
+	ASSERT_TRUE(human.errors.empty()) << human.errors.front();
+	const NeedsConfigLoad load = loadNeedsConfig(human.needs, human.folder);
 	for (const std::string& error : load.errors) {
 		ADD_FAILURE() << error;
 	}

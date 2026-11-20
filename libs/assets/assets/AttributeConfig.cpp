@@ -133,9 +133,9 @@ namespace assets {
 
 	} // namespace
 
-	AttributeConfigLoad loadAttributeConfig(const std::filesystem::path& folder, std::span<const std::string_view> names) {
+	AttributeConfigLoad
+	loadAttributeConfig(const ConfigFiles& found, const std::filesystem::path& folder, std::span<const std::string_view> names) {
 		AttributeConfigLoad load;
-		const ConfigFiles	found = configFilesIn(folder);
 		if (found.error.has_value()) {
 			load.errors.push_back(*found.error);
 			return load;

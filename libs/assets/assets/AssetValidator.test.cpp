@@ -143,6 +143,27 @@ TEST(AssetValidatorTest, ReferencedMotionFileIsNotAnOrphan) {
 	EXPECT_EQ(mismatches, 1);
 }
 
+TEST(AssetValidatorTest, ACreatureFoldersConfigFilesAreNotOrphans) {
+	TempAssets t;
+	t.writeXml("creatures/Cow", oneDef("<defName>Cow</defName><assetType>simple</assetType><svgPath>cow.svg</svgPath>"), "Cow");
+	t.writeFile("creatures/Cow/cow.svg", "<svg/>");
+	t.writeFile("creatures/Cow/mood.xml", "<Mood/>");
+	t.writeFile("creatures/Cow/needs.xml", "<Needs/>");
+	t.writeFile("creatures/Cow/stray.xml", "<Herd/>");
+	t.writeFile("Stone/mood.xml", "<Mood/>");
+
+	const ValidationReport	 r = AssetValidator::validate(t.root, "");
+	std::vector<std::string> flagged;
+	for (const auto& issue : r.issues) {
+		if (issue.message.find("does not match its folder") != std::string::npos) {
+			flagged.push_back(fs::path(issue.context).filename().string());
+		}
+	}
+	std::ranges::sort(flagged);
+	EXPECT_EQ(flagged, (std::vector<std::string>{"mood.xml", "stray.xml"})) << "only the creature's own config roots are exempt";
+	EXPECT_EQ(r.errorCount(), 0);
+}
+
 TEST(AssetValidatorTest, IgnoredVariationIsWarning) {
 	TempAssets t;
 	t.writeXml("Stone", oneDef("<defName>Stone</defName><assetType>simple</assetType><svgPath>stone.svg</svgPath><variation><color/></variation>"));

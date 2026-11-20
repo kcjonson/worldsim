@@ -99,9 +99,8 @@ namespace assets {
 		return static_cast<std::size_t>(found - kNeedThresholdNames.begin());
 	}
 
-	NeedsConfigLoad loadNeedsConfig(const std::filesystem::path& folder) {
-		NeedsConfigLoad	  result;
-		const ConfigFiles found = configFilesIn(folder);
+	NeedsConfigLoad loadNeedsConfig(const ConfigFiles& found, const std::filesystem::path& folder) {
+		NeedsConfigLoad result;
 		if (found.error.has_value()) {
 			result.errors.push_back(*found.error);
 			return result;

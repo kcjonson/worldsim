@@ -29,7 +29,7 @@ namespace {
 			file << "<Traits>" << body << "</Traits>";
 		}
 		assets::TraitRegistry		   registry;
-		const std::vector<std::string> errors = registry.loadFromFolder(folder);
+		const std::vector<std::string> errors = registry.loadFromFiles(assets::configFilesIn(folder), folder);
 		std::filesystem::remove_all(folder);
 		EXPECT_TRUE(errors.empty()) << (errors.empty() ? "" : errors.front());
 		return registry;

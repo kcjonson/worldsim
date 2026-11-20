@@ -19,6 +19,7 @@
 
 #include <application/App.h>
 #include <assets/AssetRegistry.h>
+#include <assets/CreatureConfigFiles.h>
 #include <assets/WorkConfig.h>
 #include <assets/placement/AsyncChunkProcessor.h>
 #include <assets/placement/CanopyCover.h>
@@ -335,8 +336,9 @@ namespace {
 			// Load work configuration first. Goals are process-wide too; a new game starts with none.
 			updateStatusText("Loading configuration...");
 			ecs::GoalTaskRegistry::Get().clear();
-			std::vector<std::string> configErrors = assets::loadWorkConfig("assets/config");
-			ecs::ColonistRulesLoad colonistRules = ecs::loadColonistRules("assets/config");
+			const assets::CreatureConfigFiles human = assets::creatureConfigFiles("assets/world/creatures/Human");
+			std::vector<std::string>		  configErrors = assets::loadWorkConfig("assets/config", human);
+			ecs::ColonistRulesLoad			  colonistRules = ecs::loadColonistRules("assets/config", human);
 			configErrors.insert(configErrors.end(), colonistRules.errors.begin(), colonistRules.errors.end());
 			worldState->colonistRules = std::move(colonistRules.rules);
 			if (!configErrors.empty()) {

@@ -1,9 +1,11 @@
 #pragma once
 
 // Need tuning as data: each need's thresholds, the levels a need moves between, and the most mood it
-// costs. Loaded from the folder assets/config/colonists/needs. Need names are the sim's need labels, which
-// the sim checks. See /docs/technical/interruptable-crafts.md (Needs in three levels) and
+// costs. Loaded from the files with a <Needs> root in the human's folder (assets/world/creatures/Human).
+// Need names are the sim's need labels, which the sim checks. See /docs/technical/interruptable-crafts.md (Needs in three levels) and
 // /docs/design/game-systems/colonists/needs.md (What a need costs mood).
+
+#include "assets/ConfigFiles.h"
 
 #include <array>
 #include <cstddef>
@@ -36,14 +38,14 @@ namespace assets {
 		std::vector<std::string> errors;
 	};
 
-	/// Read every .xml file under `folder` (configFilesIn's order), each a <Needs> root holding
-	/// <Need name seek urgent critical cost/> elements. Each threshold is a number from 0 to 100, below the
-	/// one before it, and the cost is a number, zero or more. A later file's <Need> replaces an earlier one
-	/// of the same name, cost included, which is logged. Unknown elements and attributes, a missing or
-	/// malformed threshold or cost, and a need named twice in one file are errors naming the file and the
-	/// <Need>; a file with any error adds nothing. An empty error list means
-	/// it loaded clean.
-	[[nodiscard]] NeedsConfigLoad loadNeedsConfig(const std::filesystem::path& folder);
+	/// Read `found`'s files, in their order, each named relative to `folder` and each a <Needs> root holding
+	/// <Need name seek urgent critical cost/> elements; `found`'s error is the only error when it has one.
+	/// Each threshold is a number from 0 to 100, below the one before it, and the cost is a number, zero or
+	/// more. A later file's <Need> replaces an earlier one of the same name, cost included, which is logged.
+	/// Unknown elements and attributes, a missing or malformed threshold or cost, and a need named twice in
+	/// one file are errors naming the file and the <Need>; a file with any error adds nothing. An empty error
+	/// list means it loaded clean.
+	[[nodiscard]] NeedsConfigLoad loadNeedsConfig(const ConfigFiles& found, const std::filesystem::path& folder);
 
 	/// The index of a threshold name in kNeedThresholdNames; size() when it names none.
 	[[nodiscard]] std::size_t needThresholdIndex(const std::string& name);

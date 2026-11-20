@@ -397,7 +397,7 @@ Every error is fatal: the load fails and the message reaches the loading scene.
 
 ### Implementation
 
-`assets::loadWorkConfig(configRoot)` (libs/assets/assets/WorkConfig.h) is the one entry point. It clears the registries, loads each file in the order above (`ActionTypeRegistry`, then `TaskChainRegistry::loadFromFile(configRoot, "work/task-chains.xml")`, `WorkTypeRegistry::loadFromFile(configRoot, "work/work-types.xml")`, and `PriorityConfig::loadFromFile(configRoot, "work/priority-tuning.xml")`), stops at the first file with problems and returns that registry's `problems()`, and ends with `ConfigValidator::validateAll()` for the cross-references. An empty list means the config is loaded. [Config Loading](./config-loading.md) lists the values a file may leave out and the shape of each message.
+`assets::loadWorkConfig(configRoot, human)` (libs/assets/assets/WorkConfig.h) is the one entry point. It clears the registries, loads each file in the order above (`ActionTypeRegistry`, then `TaskChainRegistry::loadFromFile(configRoot, "work/task-chains.xml")`, `WorkTypeRegistry::loadFromFile(configRoot, "work/work-types.xml")`, and `PriorityConfig::loadFromFile(configRoot, "work/priority-tuning.xml")`), stops at the first file with problems and returns that registry's `problems()`, and ends with `ConfigValidator::validateAll()` for the cross-references. An empty list means the config is loaded. [Config Loading](./config-loading.md) lists the values a file may leave out and the shape of each message.
 
 ### Error Message Format
 
