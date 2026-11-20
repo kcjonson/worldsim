@@ -299,6 +299,7 @@ TEST(LandingSiteResolution, RiverTilePastFortyFiveDegreesIsRecommendedButNeverSu
         resolveLandingSite(fixture.world, grasslandProvisions(), centreOf(*fixture.world, fixture.source));
     EXPECT_GT(std::abs(site.origin.latDeg), 45.0);
     EXPECT_TRUE(site.recommended());
+    expectSameLanding(resolveLandingSite(fixture.world, grasslandProvisions(), site.origin), site);
 
     EXPECT_TRUE(findSuggestedLandingSites(fixture.world, grasslandProvisions(), {}).empty())
         << "the river past the latitude cut is the only fresh water";
@@ -337,6 +338,8 @@ TEST(LandingSiteResolution, NarrowLandIsNotALandingAndTheNextAnchorIsTried) {
     EXPECT_NE(site.feature, FreshWaterFeature::None);
     EXPECT_TRUE(site.spawn.clear);
     EXPECT_NEAR(site.spawn.waterDistanceMeters, kLandingWaterDistanceMeters, kLandingWaterDistanceToleranceMeters);
+
+    expectSameLanding(resolveLandingSite(fixture.world, grasslandProvisions(), site.origin), site);
 }
 
 TEST(LandingSiteResolution, PickBesideLakeResolvesToItsShore) {

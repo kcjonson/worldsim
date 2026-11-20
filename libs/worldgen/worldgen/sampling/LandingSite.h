@@ -117,9 +117,10 @@ struct LandingSite {
 };
 
 // Every pick, a marker or a free click, becomes a landing here. The picked tile and its neighbours
-// are the area a pick names; the origin moves to the first anchor in it whose spawn search lands
-// beside a river or a lake (the picked land river tile's centre, then a lake anchor toward each lake
-// neighbour, then each land river neighbour's centre), else stays at the pick. Idempotent: resolving
+// are the area a pick names; the origin moves to the first anchor in it whose spawn search finds a
+// river or a lake and a clear drop, dry land kLandingWaterDistanceMeters from the nearest water of any
+// kind (the picked land river tile's centre, then a lake anchor toward each lake neighbour, then each
+// land river neighbour's centre), else stays at the pick. Idempotent: resolving
 // a landing's origin returns the same landing.
 [[nodiscard]] LandingSite resolveLandingSite(const std::shared_ptr<const GeneratedWorld>& world,
                                              const BiomeProvisionTable& provisions, LatLon pick);

@@ -37,6 +37,11 @@ bool hasField(const GeneratedWorld& world, WorldField f) {
     return (world.validFields & static_cast<uint32_t>(f)) != 0;
 }
 
+// A tile below sea level is water whatever its flags say.
+bool belowSeaLevel(const GeneratedWorld& world, TileId tile) {
+    return hasField(world, WorldField::Elevation) && world.data.elevation[tile] < world.seaLevelMeters;
+}
+
 // Coast = land tile with at least one OCEAN neighbor. Computed from the grid
 // rather than kFlagCoast so it works on worlds saved before BiomeStage set the
 // flag. Ocean-only (not lake) so it maps to "saltwater" in the signal.
@@ -44,12 +49,9 @@ bool hasOceanNeighbor(const GeneratedWorld& world, TileId t) {
     std::array<TileId, 6> nbrs{};
     uint32_t count = world.grid->neighbors(t, nbrs);
     for (uint32_t i = 0; i < count; ++i) {
-        if ((world.data.flags[nbrs[i]] & kFlagOcean) != 0) return true;
-        // Unflagged ocean fallback for worlds without flags written.
-        if ((world.data.flags[nbrs[i]] & (kFlagOcean | kFlagLake)) == 0 &&
-            world.data.elevation[nbrs[i]] < world.seaLevelMeters) {
-            return true;
-        }
+        const uint8_t flags = world.data.flags[nbrs[i]];
+        if ((flags & kFlagOcean) != 0) return true;
+        if ((flags & kFlagLake) == 0 && belowSeaLevel(world, nbrs[i])) return true;
     }
     return false;
 }
@@ -131,10 +133,37 @@ std::vector<TileId> neighboursNearestFirst(const SphereGrid& grid, TileId tile, 
     return out;
 }
 
+// The landing at an anchor, when its spawn search finds fresh water and a clear drop.
+std::optional<LandingSite> landAt(const std::shared_ptr<const GeneratedWorld>& world, const BiomeProvisionTable& provisions,
+                                  LatLon anchor) {
+    const SpawnSite spawn = findWatersideSpawn(world, anchor.latDeg, anchor.lonDeg);
+    if (!spawn.clear || (spawn.water != SpawnWater::River && spawn.water != SpawnWater::Lake)) return std::nullopt;
+    const bool river = spawn.water == SpawnWater::River;
+    const TileId tile = world->grid->fromLatLon(anchor.latDeg, anchor.lonDeg);
+    return LandingSite{anchor, tile, river ? FreshWaterFeature::River : FreshWaterFeature::Lake, spawn,
+                       assessLandingTile(*world, provisions, tile, river ? WaterClass::River : WaterClass::Lake)};
+}
+
+// The anchors inside a land tile: its centre when it is a river tile, then a lake anchor toward each lake
+// neighbour, nearest to the pick first. Every landing found here lies on `tile`.
+std::optional<LandingSite> landOnTile(const std::shared_ptr<const GeneratedWorld>& world,
+                                      const BiomeProvisionTable& provisions, TileId tile, const Vec3d& pickDirection) {
+    const GeneratedWorld& planet = *world;
+    const SphereGrid& grid = *planet.grid;
+    if ((planet.data.flags[tile] & kFlagRiver) != 0) {
+        if (auto site = landAt(world, provisions, centreOf(grid, tile))) return site;
+    }
+    const auto isLake = [&](TileId neighbour) { return (planet.data.flags[neighbour] & kFlagLake) != 0; };
+    for (const TileId lake : neighboursNearestFirst(grid, tile, pickDirection, isLake)) {
+        if (auto site = landAt(world, provisions, lakeAnchor(planet, tile, lake))) return site;
+    }
+    return std::nullopt;
+}
+
 constexpr uint32_t kStopCheckTileInterval = 65536;
 
-enum class CandidateKind : uint8_t { River, Lake };
-constexpr std::size_t kCandidateKindCount = 2;
+enum class CandidateKind : uint8_t { River, Lake, Count };
+constexpr std::size_t kCandidateKindCount = static_cast<std::size_t>(CandidateKind::Count);
 
 // A tile whose own resolution anchors on itself and that meets the rest of the bar on its own data.
 struct Candidate {
@@ -201,7 +230,7 @@ class CandidateSlots {
 
 bool isWaterTile(const GeneratedWorld& world, TileId tile) {
     if (hasField(world, WorldField::Flags) && (world.data.flags[tile] & (kFlagOcean | kFlagLake)) != 0) return true;
-    return hasField(world, WorldField::Elevation) && world.data.elevation[tile] < world.seaLevelMeters;
+    return belowSeaLevel(world, tile);
 }
 
 WaterClass classifyWater(const GeneratedWorld& world, TileId tile) {
@@ -311,30 +340,14 @@ LandingSite resolveLandingSite(const std::shared_ptr<const GeneratedWorld>& worl
     const SphereGrid& grid = *planet.grid;
     const TileId picked = grid.fromLatLon(pick.latDeg, pick.lonDeg);
 
-    auto landAt = [&](LatLon anchor) -> std::optional<LandingSite> {
-        const SpawnSite spawn = findWatersideSpawn(world, anchor.latDeg, anchor.lonDeg);
-        if (!spawn.clear || (spawn.water != SpawnWater::River && spawn.water != SpawnWater::Lake)) return std::nullopt;
-        const bool river = spawn.water == SpawnWater::River;
-        const TileId tile = grid.fromLatLon(anchor.latDeg, anchor.lonDeg);
-        return LandingSite{anchor, tile, river ? FreshWaterFeature::River : FreshWaterFeature::Lake, spawn,
-                           assessLandingTile(planet, provisions, tile, river ? WaterClass::River : WaterClass::Lake)};
-    };
-
     if (hasField(planet, WorldField::Flags) && !isWaterTile(planet, picked)) {
         const Vec3d pickDirection = SphereGrid::unitVectorFromLatLon(pick.latDeg, pick.lonDeg);
-
-        if ((planet.data.flags[picked] & kFlagRiver) != 0) {
-            if (auto site = landAt(centreOf(grid, picked))) return *site;
-        }
-        const auto isLake = [&](TileId neighbour) { return (planet.data.flags[neighbour] & kFlagLake) != 0; };
-        for (const TileId lake : neighboursNearestFirst(grid, picked, pickDirection, isLake)) {
-            if (auto site = landAt(lakeAnchor(planet, picked, lake))) return *site;
-        }
+        if (auto site = landOnTile(world, provisions, picked, pickDirection)) return *site;
         const auto isLandRiver = [&](TileId neighbour) {
             return (planet.data.flags[neighbour] & kFlagRiver) != 0 && !isWaterTile(planet, neighbour);
         };
         for (const TileId river : neighboursNearestFirst(grid, picked, pickDirection, isLandRiver)) {
-            if (auto site = landAt(centreOf(grid, river))) return *site;
+            if (auto site = landAt(world, provisions, centreOf(grid, river))) return *site;
         }
     }
 
@@ -433,8 +446,13 @@ std::vector<LandingSite> findSuggestedLandingSites(const std::shared_ptr<const G
 
             if (verification[index] == Verification::Unchecked) {
                 if (!checkpoint()) return sites;
-                resolved[index] = resolveLandingSite(world, provisions, centreOf(grid, candidate.tile));
-                const bool passes = resolved[index].recommended() && resolved[index].tile == candidate.tile;
+                // The candidate's own anchors only: resolving its centre would go on to its neighbours, whose
+                // landings lie on another tile and are never this candidate's site.
+                const LatLon                     pick = centreOf(grid, candidate.tile);
+                const std::optional<LandingSite> landing = landOnTile(
+                    world, provisions, candidate.tile, SphereGrid::unitVectorFromLatLon(pick.latDeg, pick.lonDeg));
+                const bool passes = landing && landing->recommended() && landing->tile == candidate.tile;
+                if (landing) resolved[index] = *landing;
                 verification[index] = passes ? Verification::Passed : Verification::Failed;
                 if (!passes) continue;
                 if (!finalPass && countOf(resolved[index].feature) >= kMaximumSitesOfOneKind) continue;
