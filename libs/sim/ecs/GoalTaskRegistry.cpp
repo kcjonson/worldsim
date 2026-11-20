@@ -17,6 +17,7 @@
 #include <glm/geometric.hpp>
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 
 namespace ecs {
@@ -184,6 +185,9 @@ namespace ecs {
 	}
 
 	uint64_t GoalTaskRegistry::createGoal(GoalTask goal) {
+		// Readers of a Clear goal take its footprint without checking for one.
+		assert((goal.type == GoalType::Clear) == goal.clearFootprint.has_value() && "a Clear goal has a footprint, and only a Clear goal does");
+
 		// Assign ID
 		goal.id = nextGoalId++;
 
@@ -278,11 +282,11 @@ namespace ecs {
 		const std::string& item = assets::AssetRegistry::Get().getDefName(itemDefNameId);
 		switch (root.owner) {
 			case GoalOwner::CraftingGoalSystem:
-				return root.type == TaskType::Craft ? craftStationNeed(world, root.destinationEntity, itemDefNameId) : 0U;
+				return root.type == GoalType::Craft ? craftStationNeed(world, root.destinationEntity, itemDefNameId) : 0U;
 			case GoalOwner::ConstructionGoalSystem: {
 				const auto& accepted = root.acceptedDefNameIds;
 				const auto* blueprint = world.getComponent<StructureBlueprint>(root.destinationEntity);
-				if (root.type != TaskType::Build || blueprint == nullptr ||
+				if (root.type != GoalType::Build || blueprint == nullptr ||
 					std::find(accepted.begin(), accepted.end(), itemDefNameId) == accepted.end()) {
 					return 0;
 				}
@@ -376,7 +380,7 @@ namespace ecs {
 		return nullptr;
 	}
 
-	std::vector<const GoalTask*> GoalTaskRegistry::getGoalsOfType(TaskType type) const {
+	std::vector<const GoalTask*> GoalTaskRegistry::getGoalsOfType(GoalType type) const {
 		std::vector<const GoalTask*> result;
 
 		auto it = typeToGoals.find(type);
@@ -394,7 +398,7 @@ namespace ecs {
 	}
 
 
-	size_t GoalTaskRegistry::goalCount(TaskType type) const {
+	size_t GoalTaskRegistry::goalCount(GoalType type) const {
 		auto it = typeToGoals.find(type);
 		if (it != typeToGoals.end()) {
 			return it->second.size();

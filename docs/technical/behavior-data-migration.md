@@ -37,7 +37,7 @@ All of it is on `main` and on this branch.
   functions). Every action but Sleep is non-interruptable; Sleep pays at its end.
 - Claims: `systems/ChainClaims.{h,cpp}` (`recordChainClaims` per chain shape), `ClaimIndex.{h,cpp}`,
   `Task.h` (claims, `SuspendedWork`, the per-type fields, `chainStep`, `deliveryChosen`).
-- Goals: `GoalTaskRegistry.{h,cpp}` (`GoalTask::type` is a `TaskType`), `StorageGoalSystem`,
+- Goals: `GoalTaskRegistry.{h,cpp}` (`GoalTask::type` is a `GoalType`), `StorageGoalSystem`,
   `CraftingGoalSystem`, `BuildGoalSystem`, `ConstructionSystem`, `ColonyGoalWork.cpp` for the panel.
 - Thought sources: `ThoughtTypes.cpp` resolves `actionStarts` and `actionFinishes` through
   `actionTypeFromName`, and `ThoughtSourceSystem` holds an `ActionType`. The thought data names
@@ -116,7 +116,9 @@ During the move both paths run, on disjoint ground that phase 7 deletes:
   helper. No test writes chain-state fields directly. A test that builds an `Action` by factory builds
   it from the shipped entry instead and asserts the same values.
 - `scripts/test-assertions.mjs` compares the EXPECT and ASSERT count of every test between base and
-  head and fails on any drop. It runs on every path PR.
+  head and fails on any drop. It runs on every path PR. A renamed, split, folded or merged test still
+  fails it; the PR lists each old key against its new keys with the counts from the script's `NEW`
+  and `RISE` lines.
 - A port that needs an expectation changed stops the path and goes to the owner.
 
 ## Phases

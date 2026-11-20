@@ -224,12 +224,12 @@ TEST_F(SimTermsTest, MidCraftIsACraftUnderWayIncludingFetchingItsInputs) {
 
 	ecs::GoalTaskRegistry& goals = ecs::GoalTaskRegistry::Get();
 	const uint64_t		   craftGoal =
-		goals.createGoal({.type = ecs::TaskType::Craft, .destinationEntity = 101, .owner = ecs::GoalOwner::CraftingGoalSystem});
-	ecs::GoalTask haulForCraft{.type = ecs::TaskType::Haul, .owner = ecs::GoalOwner::CraftingGoalSystem};
+		goals.createGoal({.type = ecs::GoalType::Craft, .destinationEntity = 101, .owner = ecs::GoalOwner::CraftingGoalSystem});
+	ecs::GoalTask haulForCraft{.type = ecs::GoalType::Haul, .owner = ecs::GoalOwner::CraftingGoalSystem};
 	haulForCraft.parentGoalId = craftGoal;
 	const uint64_t inputGoal = goals.createGoal(haulForCraft);
 	const uint64_t storageGoal =
-		goals.createGoal({.type = ecs::TaskType::Haul, .destinationEntity = 102, .owner = ecs::GoalOwner::StorageGoalSystem});
+		goals.createGoal({.type = ecs::GoalType::Haul, .destinationEntity = 102, .owner = ecs::GoalOwner::StorageGoalSystem});
 
 	task().clear();
 	task().type = ecs::TaskType::Haul;
