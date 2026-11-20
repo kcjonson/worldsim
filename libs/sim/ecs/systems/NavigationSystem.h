@@ -21,9 +21,12 @@
 // counts (never a time budget, so which tick a ring enters doesn't depend on frame time):
 //  1. Walls and doors, diffed by content whenever ConstructionWorld::version moves, all at once.
 //  2. Water re-derived for each meshed chunk whose terrain changed while loaded.
-//  3. Removed placed obstacles (PlacementExecutor::takeRemovals), each looked up by its key, up to
+//  3. Removed placed obstacles (PlacementExecutor::takeRemovals, and the ECS entities with a collider
+//     that ColliderEntityIndex finds gone, moved, or changed), each looked up by its key, up to
 //     kDetailRemovalsPerTick, in one patch. One not in the mesh is no change: a limit still waiting
-//     never finds it, and ground no limit reached has nothing to take out.
+//     never finds it, and ground no limit reached has nothing to take out. Then the ECS entities with
+//     a collider that came or changed, all at once in one patch, meshed ground or not: they are few,
+//     and one over meshed ground closes it as a wall does.
 //  4. Urgent limits, with their placed obstacles and water, outside every budget: a mover's first
 //     limit, and his newest once he stands kSightBufferMeters minus kLimitRetakeStepMm short of the
 //     edge of what he sees staying meshed (see MoverDisc). Then the rest, first in, first out: kLimitsPerTick a tick,
@@ -62,11 +65,13 @@
 // Staleness (spec 4.6): generation() moves once for each joined patch job that brought ground in,
 // re-derived water, changed walls or doors, or added a placed obstacle over ground already meshed,
 // which can change any route; of the routes current before it, those a closing box crosses (a wall,
-// new water, a door taken out, such a placed obstacle) go stale. A placed obstacle lands with or
-// ahead of its ground, so over meshed ground only when it is back in the world after leaving the
-// mesh (felled, then regenerated where its chunk reloaded); leaving, it only opens ground and marks
+// new water, a door taken out, such a placed obstacle) go stale. The executor's placed obstacles land
+// with or ahead of their ground, so over meshed ground only when one is back in the world after
+// leaving the mesh (felled, then regenerated where its chunk reloaded); an ECS entity with a collider
+// lands wherever it is spawned or moved. Leaving, a placed obstacle only opens ground and marks
 // nobody.
 
+#include "../ColliderEntityIndex.h"
 #include "../EntityID.h"
 #include "../ISystem.h"
 
@@ -397,6 +402,11 @@ class NavigationSystem : public ISystem {
 	// pushes out of a placed obstacle only then, so the forward snap has had its turn first and the
 	// push and the mesh never disagree about it. Read between update() and endTick().
 	[[nodiscard]] bool placedObstacleInNavMesh(world::ChunkCoordinate chunk, const assets::PlacedEntity& entity) const;
+	// The same for an ECS entity with a collider, as the collider entity index holds it now.
+	[[nodiscard]] bool placedObstacleInNavMesh(EntityID entity) const;
+	// The ECS entities with a collider, as of this tick's update: the obstacles that are not the
+	// placement executor's.
+	[[nodiscard]] const ColliderEntityIndex& colliderEntities() const { return colliderEntityIndex; }
 	// The forward snap found `mover` standing in a placed obstacle in the mesh this tick and left it
 	// there (nothing clear ahead): it is the snap's, and collision does not push it. Read between
 	// update() and endTick().
@@ -496,15 +506,18 @@ class NavigationSystem : public ISystem {
 		DoorId					  door = -1;
 	};
 
-	// A placed entity by the identity PlacementExecutor removes it by. Ordered chunk first, then
+	// A placed entity by the identity PlacementExecutor removes it by, or an ECS entity with a collider
+	// by its id, with the chunk and position it had when it went in. Ordered chunk first, then
 	// position, so the entries of one position are a contiguous range.
 	struct ObstacleKey {
 		world::ChunkCoordinate chunk;
 		std::uint32_t		   xBits = 0;
 		std::uint32_t		   yBits = 0;
 		std::string			   defName;
+		EntityID			   entity = kInvalidEntity; // kInvalidEntity for the executor's
 		bool				   operator<(const ObstacleKey& o) const;
 	};
+	[[nodiscard]] static ObstacleKey colliderEntityKey(const ColliderEntityIndex::Entry& entry);
 	// A mesh limit waiting to go in: who took it (kInvalidEntity for the landing), its centre
 	// and range, its outline, and the box its placed obstacles are looked for in (the outline's box
 	// grown by footprintReachMeters()).
@@ -656,6 +669,15 @@ class NavigationSystem : public ISystem {
 	// it, and walking on (collision does not push it back) takes it out ahead.
 	void snapMovers();
 	void			   queueRemovedDetail();
+	// Refreshes the collider entity index: the entries it dropped queue their rings for removal, and
+	// those it took are returned for gatherColliderEntities.
+	[[nodiscard]] std::vector<ColliderEntityIndex::Entry> queueChangedColliderEntities();
+	// One patch adding the rings of `added`, outside every budget.
+	void gatherColliderEntities(std::vector<ColliderEntityIndex::Entry> added);
+	// A patch's collect for the placed obstacles it added, the first keys.size() of `added`: each
+	// takes its ring id in obstacleInMesh and enters the placed occluder index, or, refused, leaves
+	// obstacleInMesh so sight and nav agree it is not there.
+	void notePlacedObstaclesAdded(const std::vector<ObstacleKey>& keys, const std::vector<RingId>& added, std::int64_t arrived);
 	// The chunk's placement is in and finished, so its placed obstacles can be read.
 	[[nodiscard]] bool placementReady(world::ChunkCoordinate coord) const;
 	void			   gatherWalls();
@@ -689,6 +711,7 @@ class NavigationSystem : public ISystem {
 	// Every placed obstacle gathered, by key: its ring, kGatheredRing until its patch is joined.
 	std::map<ObstacleKey, RingId> obstacleInMesh;
 	std::vector<RingId>			  detailRemovals;
+	ColliderEntityIndex			  colliderEntityIndex;
 	vision::PlacedOccluderIndex	  placedOccluderIndex;
 	// The sim clock in ms (TimeSystem::simulationSeconds), 0 in a world without a TimeSystem: what the
 	// placed occluder index stamps a ring's arrival with.

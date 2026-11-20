@@ -14,6 +14,7 @@
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/AgentRadius.h"
+#include "../components/Appearance.h"
 #include "../components/Colonist.h"
 #include "../components/DecisionTrace.h"
 #include "../components/Inventory.h"
@@ -1139,6 +1140,156 @@ TEST_F(NavigationSystemTest, ATreeOnARingIdFreedInTheSameJobIsOneEntry) {
 	world.update(0.016F);
 	world.update(0.016F);
 	EXPECT_GT(vision.polygonBuildCount(), built) << "a new serial on the same id rebuilds his shape";
+}
+
+// --- ECS entities with a collider (ColliderEntityIndex) ------------------------------------------------
+
+namespace {
+	// A 1 m square collider like TestTallBox's: padded, 1.1 m square, 1.556 m across, opaque.
+	constexpr const char* kSpawnedBox = "Test_SpawnedBox";
+	// No collider: changes nothing.
+	constexpr const char* kSpawnedRug = "Test_SpawnedRug";
+
+	void registerSpawnables() {
+		registerObstacle(kSpawnedBox, 0.5F);
+		registerSightBodies();
+		AssetDefinition rug;
+		rug.defName = kSpawnedRug;
+		AssetRegistry::Get().registerTestDefinition(rug);
+	}
+
+	// What PlacementSystem::spawnEntity makes: an entity with a position, a turn, and an appearance.
+	EntityID spawnThing(World& world, const char* defName, glm::vec2 at) {
+		const EntityID entity = world.createEntity();
+		world.addComponent<Position>(entity, Position{at});
+		world.addComponent<Rotation>(entity, Rotation{0.0F});
+		world.addComponent<Appearance>(entity, Appearance{defName});
+		return entity;
+	}
+
+	std::vector<const vision::PlacedOccluder*> occludersOf(const NavigationSystem& sys) {
+		std::vector<const vision::PlacedOccluder*> rings;
+		sys.placedOccluders().within({0, 0}, 1000000, rings);
+		return rings;
+	}
+} // namespace
+
+// An entity with a collider spawned inside ground already meshed is carved at once, closes the ground
+// under routes, and a route goes round it; it enters the placed occluder index as opaque by its size
+// and collision sees it in the mesh. One with no collider changes nothing.
+TEST_F(NavigationSystemTest, SpawnedColliderEntityInMeshedGroundIsCarvedGoneRoundAndOpaque) {
+	registerSpawnables();
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(world, sys);
+	settle(sys);
+	const glm::vec2 boxAt{20.0F, 20.0F};
+	ASSERT_TRUE(meshClear(sys, boxAt));
+
+	spawnThing(world, kSpawnedRug, {30.0F, 30.0F});
+	const std::uint64_t quiet = sys.generation();
+	step(world, sys);
+	step(world, sys);
+	EXPECT_TRUE(meshClear(sys, {30.0F, 30.0F})) << "a thing with no collider was carved";
+	EXPECT_EQ(sys.generation(), quiet);
+	EXPECT_EQ(sys.placedOccluders().size(), 0U);
+	EXPECT_EQ(sys.colliderEntities().size(), 0U);
+
+	const EntityID box = spawnThing(world, kSpawnedBox, boxAt);
+	step(world, sys); // gathered, handed to the worker at endTick
+	EXPECT_FALSE(sys.placedObstacleInNavMesh(box)) << "not before its patch is joined";
+	step(world, sys);
+	EXPECT_TRUE(sys.placedObstacleInNavMesh(box));
+	EXPECT_FALSE(meshClear(sys, boxAt));
+	EXPECT_FALSE(meshClear(sys, boxAt + glm::vec2{0.54F, 0.54F})) << "the pad";
+	EXPECT_TRUE(meshClear(sys, boxAt + glm::vec2{0.6F, 0.0F}));
+	EXPECT_GT(sys.generation(), quiet) << "an obstacle over meshed ground can cross a route";
+
+	const std::vector<const vision::PlacedOccluder*> rings = occludersOf(sys);
+	ASSERT_EQ(rings.size(), 1U);
+	EXPECT_EQ(rings.front()->defName, kSpawnedBox);
+	EXPECT_EQ(rings.front()->centre, nav::toMm(boxAt));
+	EXPECT_EQ(rings.front()->diameterMm, 1555) << "1.1 m square";
+	EXPECT_EQ(rings.front()->kind, vision::BodyKind::Opaque);
+
+	const std::optional<std::vector<glm::vec2>> route = routeBetween(sys, {15.0F, 20.0F}, {25.0F, 20.0F});
+	ASSERT_TRUE(route.has_value());
+	float length = 0.0F;
+	for (std::size_t i = 1; i < route->size(); ++i) {
+		length += glm::length((*route)[i] - (*route)[i - 1]);
+		for (int k = 0; k <= 100; ++k) {
+			const glm::vec2 p	  = glm::mix((*route)[i - 1], (*route)[i], static_cast<float>(k) / 100.0F);
+			const glm::vec2 apart = glm::max(glm::abs(p - boxAt) - glm::vec2{0.55F}, glm::vec2{0.0F});
+			EXPECT_GE(glm::length(apart), kAgentRadius * 0.7F) << "the disc enters the box at (" << p.x << ", " << p.y << ")";
+		}
+	}
+	EXPECT_GT(length, 10.05F) << "bent round the box";
+}
+
+// Moving an entity with a collider moves its carving and its occluder; destroying it opens the ground
+// and drops the occluder. A small collider is a soft body by the same size rule.
+TEST_F(NavigationSystemTest, MovedOrRemovedColliderEntityMovesOrLeavesNavAndSight) {
+	registerSpawnables();
+	World			  world;
+	world.registerSystem<TimeSystem>();
+	VisionSystem&	  vision = world.registerSystem<VisionSystem>();
+	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
+	vision.setUpdateInterval(1);
+	wireArea(world, sys);
+	const glm::vec2 from{20.0F, 20.0F};
+	const glm::vec2 to{20.0F, 26.0F};
+	const EntityID	box	  = spawnThing(world, kSpawnedBox, from);
+	const EntityID	trunk = spawnThing(world, kSightTrunk, {14.0F, 20.0F});
+	const EntityID	observer = sightObserver(world, {16.0F, 20.0F});
+	settle(sys);
+	world.update(0.016F);
+	ASSERT_FALSE(meshClear(sys, from));
+	ASSERT_EQ(sys.placedOccluders().size(), 2U);
+	for (const vision::PlacedOccluder* ring : occludersOf(sys)) {
+		EXPECT_EQ(ring->kind, ring->defName == kSpawnedBox ? vision::BodyKind::Opaque : vision::BodyKind::Soft) << ring->defName;
+	}
+	EXPECT_FALSE(inShape(vision, observer, {24.0F, 20.0F})) << "behind the box";
+	EXPECT_TRUE(inShape(vision, observer, {12.0F, 20.0F})) << "behind the trunk";
+	static_cast<void>(trunk);
+
+	world.getComponent<Position>(box)->value = to;
+	step(world, sys);
+	step(world, sys);
+	EXPECT_TRUE(meshClear(sys, from)) << "the old spot opened";
+	EXPECT_FALSE(meshClear(sys, to)) << "the new spot is carved";
+	EXPECT_TRUE(sys.placedObstacleInNavMesh(box));
+	ASSERT_EQ(sys.placedOccluders().size(), 2U) << "the box once, not the old and the new";
+	for (const vision::PlacedOccluder* ring : occludersOf(sys)) {
+		if (ring->defName == kSpawnedBox) {
+			EXPECT_EQ(ring->centre, nav::toMm(to));
+		}
+	}
+	world.update(0.016F);
+	EXPECT_TRUE(inShape(vision, observer, {24.0F, 20.0F})) << "the box no longer stands there";
+
+	world.destroyEntity(box);
+	step(world, sys);
+	step(world, sys);
+	EXPECT_TRUE(meshClear(sys, to)) << "the destroyed box's ground opened";
+	EXPECT_FALSE(sys.placedObstacleInNavMesh(box));
+	ASSERT_EQ(sys.placedOccluders().size(), 1U);
+	EXPECT_EQ(occludersOf(sys).front()->defName, kSightTrunk);
+}
+
+// Entities with a collider the world already holds when nav starts, as a loaded world would, go in with
+// the first build: carved and in the occluder index.
+TEST_F(NavigationSystemTest, ColliderEntitiesAlreadyInTheWorldGoInWithTheFirstBuild) {
+	registerSpawnables();
+	World			  world;
+	const glm::vec2	  boxAt{40.0F, -12.0F};
+	const EntityID	  box = spawnThing(world, kSpawnedBox, boxAt);
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(world, sys);
+	settle(sys);
+	EXPECT_TRUE(sys.placedObstacleInNavMesh(box));
+	EXPECT_FALSE(meshClear(sys, boxAt));
+	ASSERT_EQ(sys.placedOccluders().size(), 1U);
+	EXPECT_EQ(occludersOf(sys).front()->kind, vision::BodyKind::Opaque);
 }
 
 // Vision reads the placed occluder index alone and never waits for the patch job: a pass with a job
