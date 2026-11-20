@@ -172,7 +172,7 @@ TEST_F(ConditionConfigTest, TheShippedVocabularyListsNoEngineNames) {
 	const auto colonist = std::ranges::find(load.config.kinds, "colonist", &ConditionKindDef::name);
 	ASSERT_NE(colonist, load.config.kinds.end());
 	EXPECT_FALSE(colonist->capability.has_value());
-	EXPECT_EQ(colonist->mover, "Colonist");
+	EXPECT_EQ(colonist->mover, "Human");
 }
 
 TEST_F(ConditionConfigTest, AKindMapsToACapabilityOrAMoverDefinition) {

@@ -1,44 +1,44 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Colonist Asset Definition - Directional sprites for 4-way movement -->
+<!-- Human Asset Definition - Directional sprites for 4-way movement -->
 <AssetDefinitions>
-  <!-- Base colonist (legacy) -->
+  <!-- Base human -->
   <AssetDef>
-    <defName>Colonist</defName>
+    <defName>Human</defName>
     <assetType>simple</assetType>
-    <svgPath>colonist.svg</svgPath>
+    <svgPath>human.svg</svgPath>
     <motion>biped.motion.xml</motion>
     <worldHeight>1.0</worldHeight>
   </AssetDef>
 
   <!-- Directional variants -->
   <AssetDef>
-    <defName>Colonist_up</defName>
+    <defName>Human_up</defName>
     <assetType>simple</assetType>
-    <svgPath>colonist_up.svg</svgPath>
+    <svgPath>human_up.svg</svgPath>
     <motion>biped.motion.xml</motion>
     <worldHeight>1.0</worldHeight>
   </AssetDef>
 
   <AssetDef>
-    <defName>Colonist_down</defName>
+    <defName>Human_down</defName>
     <assetType>simple</assetType>
-    <svgPath>colonist_down.svg</svgPath>
+    <svgPath>human_down.svg</svgPath>
     <motion>biped.motion.xml</motion>
     <worldHeight>1.0</worldHeight>
   </AssetDef>
 
   <AssetDef>
-    <defName>Colonist_left</defName>
+    <defName>Human_left</defName>
     <assetType>simple</assetType>
-    <svgPath>colonist_left.svg</svgPath>
+    <svgPath>human_left.svg</svgPath>
     <motion>biped.motion.xml</motion>
     <worldHeight>1.0</worldHeight>
   </AssetDef>
 
   <AssetDef>
-    <defName>Colonist_right</defName>
+    <defName>Human_right</defName>
     <assetType>simple</assetType>
-    <svgPath>colonist_right.svg</svgPath>
+    <svgPath>human_right.svg</svgPath>
     <motion>biped.motion.xml</motion>
     <worldHeight>1.0</worldHeight>
   </AssetDef>

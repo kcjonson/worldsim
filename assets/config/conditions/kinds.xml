@@ -9,7 +9,7 @@
   is logged. A mod adds a kind, or replaces one's mapping, with a <Kind> in a file of its own.
 -->
 <ConditionVocabulary>
-  <Kind name="colonist" mover="Colonist"/>
+  <Kind name="colonist" mover="Human"/>
   <Kind name="food" capability="edible"/>
   <Kind name="storage" capability="storage"/>
   <Kind name="station" capability="craftable"/>

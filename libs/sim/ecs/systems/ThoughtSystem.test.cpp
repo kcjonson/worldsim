@@ -730,7 +730,7 @@ namespace ecs::test {
 		world.addComponent<Colonist>(idris, Colonist{.name = "Idris"});
 		const EntityID nameless = world.createEntity();
 		world.addComponent<Colonist>(nameless, Colonist{});
-		world.addComponent<Appearance>(nameless, Appearance{.defName = "Colonist"});
+		world.addComponent<Appearance>(nameless, Appearance{.defName = "Human"});
 
 		const ThoughtHandle aboutIdris = thoughts.create({.colonist = ada, .eventType = rules.type("talked"), .subject = ThoughtSubject::aboutColonist(idris)});
 		world.destroyEntity(idris);
