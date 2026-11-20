@@ -41,7 +41,7 @@ namespace ecs::test {
 			GoalTaskRegistry::Get().clear();
 		}
 
-		static uint64_t make(TaskType type, GoalOwner owner, EntityID destination, std::optional<uint64_t> parent = std::nullopt) {
+		static uint64_t make(GoalType type, GoalOwner owner, EntityID destination, std::optional<uint64_t> parent = std::nullopt) {
 			GoalTask goal;
 			goal.type = type;
 			goal.owner = owner;
@@ -57,7 +57,7 @@ namespace ecs::test {
 			StorageConfiguration config;
 			config.addRule(rule);
 			world.addComponent<StorageConfiguration>(box, std::move(config));
-			const uint64_t root = make(TaskType::Haul, GoalOwner::StorageGoalSystem, box);
+			const uint64_t root = make(GoalType::Haul, GoalOwner::StorageGoalSystem, box);
 			GoalTaskRegistry::Get().updateGoal(root, [&](GoalTask& goal) { goal.acceptedDefNameIds = {stone}; });
 			return root;
 		}
@@ -164,7 +164,7 @@ namespace ecs::test {
 		const uint64_t root =
 			stoneBox(StorageRule{.defName = "Stone", .category = assets::ItemCategory::RawMaterial, .minAmount = 6, .maxAmount = 20});
 		const GoalTask& umbrella = *registry.getGoal(root);
-		const uint64_t	cut = make(TaskType::Harvest, GoalOwner::StorageGoalSystem, umbrella.destinationEntity, root);
+		const uint64_t	cut = make(GoalType::Harvest, GoalOwner::StorageGoalSystem, umbrella.destinationEntity, root);
 		registry.updateGoal(cut, [&](GoalTask& goal) { goal.acceptedDefNameIds = {stone}; });
 		colonist(cutting(cut, root, stone, 2), {});
 
@@ -181,7 +181,7 @@ namespace ecs::test {
 		auto&		   registry = GoalTaskRegistry::Get();
 		const uint64_t root =
 			stoneBox(StorageRule{.defName = "Stone", .category = assets::ItemCategory::RawMaterial, .minAmount = 30, .maxAmount = 40});
-		const uint64_t cut = make(TaskType::Harvest, GoalOwner::StorageGoalSystem, registry.getGoal(root)->destinationEntity, root);
+		const uint64_t cut = make(GoalType::Harvest, GoalOwner::StorageGoalSystem, registry.getGoal(root)->destinationEntity, root);
 		registry.updateGoal(cut, [&](GoalTask& goal) { goal.acceptedDefNameIds = {stone}; });
 
 		colonist(seeingTo(NeedType::Thirst, root, stone, 4), {});
@@ -200,10 +200,10 @@ namespace ecs::test {
 	// All claimed is the reason only when nothing else is: a free source someone's load keeps him from,
 	// or one regrowing, is a different wait.
 	TEST_F(ColonyGoalWorkTest, AllClaimedOnlyWhenNoOptionFoundASourceFree) {
-		const uint64_t goal = make(TaskType::Haul, GoalOwner::StorageGoalSystem, 1);
-		const uint64_t other = make(TaskType::Haul, GoalOwner::StorageGoalSystem, 2);
-		const uint64_t loaded = make(TaskType::Haul, GoalOwner::StorageGoalSystem, 3);
-		const uint64_t regrowing = make(TaskType::Haul, GoalOwner::StorageGoalSystem, 4);
+		const uint64_t goal = make(GoalType::Haul, GoalOwner::StorageGoalSystem, 1);
+		const uint64_t other = make(GoalType::Haul, GoalOwner::StorageGoalSystem, 2);
+		const uint64_t loaded = make(GoalType::Haul, GoalOwner::StorageGoalSystem, 3);
+		const uint64_t regrowing = make(GoalType::Haul, GoalOwner::StorageGoalSystem, 4);
 		colonist(Task{}, {haulOption(goal, OptionStatus::Reserved), haulOption(loaded, OptionStatus::Reserved)});
 		colonist(Task{}, {haulOption(other, OptionStatus::Available), haulOption(loaded, OptionStatus::NoRoom)});
 		const EntityID waiting = colonist(Task{}, {haulOption(regrowing, OptionStatus::Reserved)});
@@ -226,9 +226,9 @@ namespace ecs::test {
 	TEST_F(ColonyGoalWorkTest, ACraftOrBuildOptionIsAnOfferTowardItsEntitysGoal) {
 		const EntityID station = world.createEntity();
 		const EntityID site = world.createEntity();
-		const uint64_t craft = make(TaskType::Craft, GoalOwner::CraftingGoalSystem, station);
-		const uint64_t fetch = make(TaskType::Haul, GoalOwner::CraftingGoalSystem, station, craft);
-		const uint64_t build = make(TaskType::Build, GoalOwner::ConstructionGoalSystem, site);
+		const uint64_t craft = make(GoalType::Craft, GoalOwner::CraftingGoalSystem, station);
+		const uint64_t fetch = make(GoalType::Haul, GoalOwner::CraftingGoalSystem, station, craft);
+		const uint64_t build = make(GoalType::Build, GoalOwner::ConstructionGoalSystem, site);
 		const auto	   entityOption = [](TaskType type, EntityID entity, OptionStatus status) {
 			EvaluatedOption option;
 			option.taskType = type;
@@ -253,7 +253,7 @@ namespace ecs::test {
 	TEST_F(ColonyGoalWorkTest, ATeardownServesTheDeconstructGoalOnItsStructure) {
 		auto&		   registry = GoalTaskRegistry::Get();
 		const EntityID structure = world.createEntity();
-		const uint64_t teardown = make(TaskType::Deconstruct, GoalOwner::ConstructionGoalSystem, structure);
+		const uint64_t teardown = make(GoalType::Deconstruct, GoalOwner::ConstructionGoalSystem, structure);
 		EvaluatedOption option;
 		option.taskType = TaskType::Deconstruct;
 		option.buildBlueprintEntityId = static_cast<uint64_t>(structure);
@@ -279,7 +279,7 @@ namespace ecs::test {
 	TEST_F(ColonyGoalWorkTest, AWorkerServesOnlyTheGoalOfItsOwnTaskType) {
 		auto&		   registry = GoalTaskRegistry::Get();
 		const EntityID structure = world.createEntity();
-		const uint64_t teardown = make(TaskType::Deconstruct, GoalOwner::ConstructionGoalSystem, structure);
+		const uint64_t teardown = make(GoalType::Deconstruct, GoalOwner::ConstructionGoalSystem, structure);
 
 		Task building;
 		building.type = TaskType::Build;

@@ -23,7 +23,7 @@ namespace ecs::test {
 		void SetUp() override { GoalTaskRegistry::Get().clear(); }
 		void TearDown() override { GoalTaskRegistry::Get().clear(); }
 
-		static uint64_t make(TaskType type, GoalOwner owner, EntityID destination, std::optional<uint64_t> parent = std::nullopt) {
+		static uint64_t make(GoalType type, GoalOwner owner, EntityID destination, std::optional<uint64_t> parent = std::nullopt) {
 			GoalTask goal;
 			goal.type = type;
 			goal.owner = owner;
@@ -44,14 +44,14 @@ namespace ecs::test {
 		static void expectIndexesAgreeWithGoalSet() {
 			auto&						 registry = GoalTaskRegistry::Get();
 			std::vector<const GoalTask*> all;
-			for (size_t type = 0; type <= static_cast<size_t>(TaskType::Wander); ++type) {
-				const auto ofType = registry.getGoalsOfType(static_cast<TaskType>(type));
+			for (size_t type = 0; type <= static_cast<size_t>(GoalType::PlacePackaged); ++type) {
+				const auto ofType = registry.getGoalsOfType(static_cast<GoalType>(type));
 				all.insert(all.end(), ofType.begin(), ofType.end());
 			}
 			EXPECT_EQ(all.size(), registry.goalCount());
 
 			std::map<GoalOwner, std::set<uint64_t>> byOwner;
-			std::map<TaskType, std::set<uint64_t>>	byType;
+			std::map<GoalType, std::set<uint64_t>>	byType;
 			std::map<uint64_t, std::set<uint64_t>>	byParent;
 			for (const GoalTask* goal : all) {
 				EXPECT_EQ(registry.getGoal(goal->id), goal);
@@ -110,11 +110,11 @@ namespace ecs::test {
 	TEST_F(GoalTaskRegistryTest, RemoveGoalWithChildrenRemovesDescendantsOnly) {
 		auto& registry = GoalTaskRegistry::Get();
 
-		const uint64_t craft = make(TaskType::Craft, GoalOwner::CraftingGoalSystem, 10);
-		const uint64_t haul = make(TaskType::Haul, GoalOwner::CraftingGoalSystem, 10, craft);
-		const uint64_t grandchild = make(TaskType::Harvest, GoalOwner::CraftingGoalSystem, 10, haul);
-		const uint64_t otherCraft = make(TaskType::Craft, GoalOwner::CraftingGoalSystem, 20);
-		const uint64_t otherChild = make(TaskType::Haul, GoalOwner::CraftingGoalSystem, 20, otherCraft);
+		const uint64_t craft = make(GoalType::Craft, GoalOwner::CraftingGoalSystem, 10);
+		const uint64_t haul = make(GoalType::Haul, GoalOwner::CraftingGoalSystem, 10, craft);
+		const uint64_t grandchild = make(GoalType::Harvest, GoalOwner::CraftingGoalSystem, 10, haul);
+		const uint64_t otherCraft = make(GoalType::Craft, GoalOwner::CraftingGoalSystem, 20);
+		const uint64_t otherChild = make(GoalType::Haul, GoalOwner::CraftingGoalSystem, 20, otherCraft);
 
 		registry.removeGoalWithChildren(craft);
 
@@ -131,11 +131,11 @@ namespace ecs::test {
 	TEST_F(GoalTaskRegistryTest, IndexesAgreeWithGoalSetThroughCreateStatusChangeAndRemoval) {
 		auto& registry = GoalTaskRegistry::Get();
 
-		const uint64_t storage = make(TaskType::Haul, GoalOwner::StorageGoalSystem, 1);
-		const uint64_t craft = make(TaskType::Craft, GoalOwner::CraftingGoalSystem, 2);
-		const uint64_t harvest = make(TaskType::Harvest, GoalOwner::CraftingGoalSystem, 2, craft);
-		make(TaskType::Haul, GoalOwner::CraftingGoalSystem, 2, craft);
-		make(TaskType::Build, GoalOwner::ConstructionGoalSystem, 3);
+		const uint64_t storage = make(GoalType::Haul, GoalOwner::StorageGoalSystem, 1);
+		const uint64_t craft = make(GoalType::Craft, GoalOwner::CraftingGoalSystem, 2);
+		const uint64_t harvest = make(GoalType::Harvest, GoalOwner::CraftingGoalSystem, 2, craft);
+		make(GoalType::Haul, GoalOwner::CraftingGoalSystem, 2, craft);
+		make(GoalType::Build, GoalOwner::ConstructionGoalSystem, 3);
 		expectIndexesAgreeWithGoalSet();
 
 		registry.updateGoal(craft, [](GoalTask& goal) { goal.status = GoalStatus::Blocked; });
@@ -157,12 +157,12 @@ namespace ecs::test {
 	TEST_F(GoalTaskRegistryTest, CreatingASecondTopLevelGoalForADestinationReplacesItKeepingTheId) {
 		auto& registry = GoalTaskRegistry::Get();
 
-		const uint64_t first = make(TaskType::Haul, GoalOwner::StorageGoalSystem, 5);
-		const uint64_t second = make(TaskType::Craft, GoalOwner::CraftingGoalSystem, 5);
+		const uint64_t first = make(GoalType::Haul, GoalOwner::StorageGoalSystem, 5);
+		const uint64_t second = make(GoalType::Craft, GoalOwner::CraftingGoalSystem, 5);
 
 		EXPECT_EQ(second, first);
 		EXPECT_EQ(registry.goalCount(), 1U);
-		EXPECT_EQ(registry.getGoal(first)->type, TaskType::Craft);
+		EXPECT_EQ(registry.getGoal(first)->type, GoalType::Craft);
 		EXPECT_EQ(registry.goalCount(GoalOwner::StorageGoalSystem), 0U);
 		EXPECT_EQ(registry.goalCount(GoalOwner::CraftingGoalSystem), 1U);
 		expectIndexesAgreeWithGoalSet();
@@ -217,7 +217,7 @@ namespace ecs::test {
 		config.addRule(StorageRule{.defName = "Stone", .category = assets::ItemCategory::RawMaterial, .minAmount = 15, .maxAmount = 20});
 		config.addRule(StorageRule{.defName = "Stick", .category = assets::ItemCategory::RawMaterial});
 		world.addComponent<StorageConfiguration>(box, std::move(config));
-		const uint64_t root = make(TaskType::Haul, GoalOwner::StorageGoalSystem, box);
+		const uint64_t root = make(GoalType::Haul, GoalOwner::StorageGoalSystem, box);
 
 		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 8U) << "max 20 less the 12 held";
 		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Harvest), 3U) << "minimum 15 less the 12 held";
@@ -238,7 +238,7 @@ namespace ecs::test {
 		config.addRule(StorageRule{.defName = "*", .category = assets::ItemCategory::RawMaterial, .minAmount = 50});
 		config.addRule(StorageRule{.defName = "Stick", .category = assets::ItemCategory::RawMaterial, .minAmount = 4});
 		world.addComponent<StorageConfiguration>(box, std::move(config));
-		const uint64_t root = make(TaskType::Haul, GoalOwner::StorageGoalSystem, box);
+		const uint64_t root = make(GoalType::Haul, GoalOwner::StorageGoalSystem, box);
 
 		EXPECT_EQ(registry.remainingNeed(world, root, stick, NeedBasis::Harvest), 4U) << "the named rule's minimum only";
 		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Harvest), 0U) << "no rule names Stone";
@@ -268,7 +268,7 @@ namespace ecs::test {
 			}
 		);
 		world.addComponent<StorageConfiguration>(box, config);
-		const uint64_t root = make(TaskType::Haul, GoalOwner::StorageGoalSystem, box);
+		const uint64_t root = make(GoalType::Haul, GoalOwner::StorageGoalSystem, box);
 
 		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 10U) << "max 40 less the 30 held";
 		EXPECT_EQ(config.getMinAmountFor("Stone", assets::ItemCategory::RawMaterial), 5U);
@@ -288,7 +288,7 @@ namespace ecs::test {
 		StorageConfiguration config;
 		config.addRule(StorageRule{.defName = "Stone", .category = assets::ItemCategory::RawMaterial, .minAmount = 5});
 		world.addComponent<StorageConfiguration>(box, std::move(config));
-		const uint64_t root = make(TaskType::Haul, GoalOwner::StorageGoalSystem, box);
+		const uint64_t root = make(GoalType::Haul, GoalOwner::StorageGoalSystem, box);
 		ASSERT_GT(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 0U);
 
 		world.addComponent<Packaged>(box, Packaged{std::nullopt, false});
@@ -304,8 +304,8 @@ namespace ecs::test {
 		world.addComponent<WorkQueue>(station).addJob("Recipe_Need", 2);
 		auto& store = world.addComponent<Inventory>(station, Inventory::createForStorage());
 		store.addItem("Stone", 1);
-		const uint64_t root = make(TaskType::Craft, GoalOwner::CraftingGoalSystem, station);
-		const uint64_t child = make(TaskType::Haul, GoalOwner::CraftingGoalSystem, station, root);
+		const uint64_t root = make(GoalType::Craft, GoalOwner::CraftingGoalSystem, station);
+		const uint64_t child = make(GoalType::Haul, GoalOwner::CraftingGoalSystem, station, root);
 
 		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 2U);
 		EXPECT_EQ(registry.remainingNeed(world, root, stick, NeedBasis::Stock), 1U);
@@ -324,7 +324,7 @@ namespace ecs::test {
 		blueprint.required = {{"Stone", 6}};
 		blueprint.recordDelivery("Stone", 2);
 		world.addComponent<StructureBlueprint>(site, std::move(blueprint));
-		const uint64_t root = make(TaskType::Build, GoalOwner::ConstructionGoalSystem, site);
+		const uint64_t root = make(GoalType::Build, GoalOwner::ConstructionGoalSystem, site);
 
 		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 0U) << "materials are not due yet";
 		registry.updateGoal(root, [&](GoalTask& goal) { goal.acceptedDefNameIds = {stone}; });

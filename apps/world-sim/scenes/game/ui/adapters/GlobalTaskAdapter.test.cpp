@@ -31,7 +31,7 @@ namespace world_sim::adapters {
 			blueprint.workDone = workDone;
 			world.addComponent<ecs::StructureBlueprint>(entity, blueprint);
 			ecs::GoalTask goal;
-			goal.type = ecs::TaskType::Deconstruct;
+			goal.type = ecs::GoalType::Deconstruct;
 			goal.owner = ecs::GoalOwner::ConstructionGoalSystem;
 			goal.destinationEntity = entity;
 			ecs::GoalTaskRegistry::Get().createGoal(std::move(goal));
