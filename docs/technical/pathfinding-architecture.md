@@ -243,7 +243,7 @@ One shared truth (the tiers above), per-agent sparse deltas:
 
 ### Mechanism
 
-Truth navmesh constraint edges carry structure IDs. A path query takes the agent's memory as a **filter predicate**: an edge is crossable iff believed-absent or believed-passable. One mesh, one component graph; belief costs a sparse-set lookup per constrained edge touched by the search, not a second navmesh.
+Truth navmesh constraint edges carry structure IDs. A path query takes the agent's memory as a **filter predicate**: an edge is crossable iff believed-absent or believed-passable. One mesh, one component graph; belief costs a sparse-set lookup per constrained edge touched by the search, not a second navmesh. Where walls meet, the junction polygon belongs to all of them: its faces carry a tag of their own (the meeting vertex) whose blocker group lists every wall there, and a belief that knows any of those walls finds the junction solid. It is crossable in belief only when none of them is known, so an unseen interior wall meeting a seen outer wall never opens a way through the outer wall's corner.
 
 The plan-walk-see-replan loop is the classic **freespace assumption** from the D* family of planners: plan optimistically through unknown space, walk, let VisionSystem update memory, replan when newly-seen geometry cuts the current corridor. At colony scale a full replan on contradiction is fine; D* Lite-style incremental repair is the documented optimization if replan volume ever bites. The "colonist walks toward the new wall, sees it, re-routes" behavior is this loop working, with no special case.
 

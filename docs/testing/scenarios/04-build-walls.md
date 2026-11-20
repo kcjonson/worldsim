@@ -1,7 +1,7 @@
 # Scenario 04: Build walls on foundation
 
 **Status:** ready  
-**Last verified:** 2026-11-17
+**Last verified:** 2026-11-20
 
 Verifies that a colonist builds all four wall segments on an existing foundation to completion,
 unaided.
@@ -136,6 +136,18 @@ The drawing steps below read `/api/state?what=drawing`. Their points are world p
 19. Move the pointer off at an angle that is not square: an arc and the angle between the two walls show at the middle point.
 20. Read the new foundation's id from `?what=construction` (`foundations[0].id`, FOUND_ID for this game) and make a built wall on it: `walls?pts=15,5;21,5&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=0` (inside the 8 m x 6 m foundation from (14, 0) to (22, 6)): `?what=construction` lists the wall `Built`.
 21. Pick Door in the Build menu, click the wall at (18, 5), and leave the pointer there: the door shows in the wall with no red ghost and no "openings overlap" (`verdict.proposed` false, `status.hint` "Click a wall to place").
+
+---
+
+## Two rooms sharing a wall
+
+In a new Quick Start game. The second room reuses the first room's east wall, so that shared wall has the lower id where it meets the outer walls. Segment ids are in `?what=construction`.
+
+22. `foundation?pts=12,1;32,1;32,8;12,8&material=Wood&built=1`, then `walls?pts=25,2;28,2;28,7;25,7&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=1` and `walls?pts=28,2;31,2;31,7;28,7&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=1`: seven walls, all `Built`.
+23. `opening?seg=<the first room's wall from (25, 2) to (28, 2)>&type=Door&t=0.5&built=1` and the same on the shared wall from (28, 2) to (28, 7): two doors, both `Built`.
+24. `colonist?at=29.5,10&name=Eve`, `select?colonist=<EVE_ID>`, click Draft (`entity_info_draft` in `/api/ui/tree`), and right-click (29.5, 4.5): Eve walks round the rooms to the north door, through the first room, and through the shared wall's door, and stops inside the second room. She never stands pressed against the corner at (28, 7).
+25. Right-click (29.5, 11): she leaves the second room the same way, through both doors.
+26. In a new game, the same rooms drawn as one loop and a divider (`walls?pts=25,2;31,2;31,7;25,7&...&close=1`, then `walls?pts=28,2;28,7&...&close=0`), with the same two doors: step 24's order takes her in the same way.
 
 ---
 
