@@ -1,7 +1,7 @@
 # Scenario 20: Drawing tools
 
 **Status:** ready  
-**Last verified:** 2026-11-17
+**Last verified:** 2026-11-20 (steps 33 to 35 are person-only and were not run)
 
 Verifies what scenarios 03 and 04 leave out of the drawing tools: the Rectangle tool's quieter edge cases, Freeform with every helper off, each Drawing Setting no other scenario turns on, and the key guide's rows for the opening and Add tools and for the helper legend.
 

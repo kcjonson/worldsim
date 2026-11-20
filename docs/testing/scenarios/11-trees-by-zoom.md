@@ -18,6 +18,6 @@ Build `world-sim` (RelWithDebInfo), launch it with `--background --no-settings` 
 5. Back on Bob at zoom 3 (`...camera&x=<BX>&y=<BY>&zoom=3`), with the game running, not paused, plant a known tree beside Bob (`curl.exe "http://127.0.0.1:8081/api/dev/spawn?def=Flora_TreeOak&at=<BX+4>,<BY>&n=1"`, call its spot TX,TY), then put Bob 1 m north of the trunk (`curl.exe "http://127.0.0.1:8081/api/dev/teleport?colonist=<BID>&to=<TX>,<TY-1>"`) and look at once, before he walks on: the crown hides the part of him it covers.
 6. Teleport Bob 1 m south of the trunk (`...teleport?colonist=<BID>&to=<TX>,<TY+1>`): he draws over the trunk and crown.
 7. Click a crown (not the trunk; `/api/input` takes the window's logical pixels, which on Windows are screenshot pixels): that tree alone is selected, with one outline around it and none on its neighbours.
-8. Look at the landing at zoom 1.5: the ground around the colonists is a clearing, no trunk within a few meters of them.
+8. Teleport Bob to the drop (`...teleport?colonist=<BID>&to=-29.8,-17.8`) and look at it at zoom 1.5 (`...camera&x=-29.8&y=-17.8&zoom=1.5`): the ground around him is a clearing, no trunk within a few meters (`/api/dev/flora?rect=-33,-21,-26,-14` answers `trees` 0).
 9. Give Bob an axe (`curl.exe "http://127.0.0.1:8081/api/dev/give?material=AxePrimitive&n=1&where=colonist&slot=hands"`) and let him work: when a tree falls it is gone, a wood heap lies where it stood, and `what=colonists` shows Wood in his `hands`.
 10. `curl.exe "http://127.0.0.1:8081/api/control?action=exit"`.
