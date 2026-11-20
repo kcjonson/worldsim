@@ -1458,8 +1458,8 @@ chain's target:
 ```
 
 `on` says what the context menu offers the order on. An order takes the claims its chain names by the
-same rules as anything else and takes nothing another task holds
-([Task claims, Bumping](./task-claims.md#bumping-planned)). There is no "move here" order. Moving a
+same rules as anything else, and as the `player_order` rung it bumps a claim on its target held on a
+lower rung ([Task claims, Bumping](./task-claims.md#bumping-planned)). There is no "move here" order. Moving a
 colonist is direct control: direct control suspends the AI, snaps the click to walkable ground, and returns the creature's
 work to the pool ([Player control](../design/features/player-control.md)). Direct control and player
 orders are unavailable to a colonist in a low-mood episode.
@@ -1998,6 +1998,7 @@ The following he settled with "Yes to all" when they were put to him:
 - 2026-11-17: Relief (bladder, bowels, or both) is decided when the colonist sets off, not on arrival.
 - 2026-11-17: Temperature's mood cost is 60, up from 40.
 - 2026-11-20: A mood episode bumps another colonist's claim on its target held on a lower rung (the `low_mood` rung is a bumping rung).
+- 2026-11-20: A player's order bumps another colonist's claim on its target held on a lower rung (the `player_order` rung is a bumping rung).
 
 Choices made in writing this document, not put to the owner:
 
