@@ -7,16 +7,25 @@
 #include "../ShippedConfig.test.h"
 #include "../World.h"
 #include "../components/Action.h"
+#include "../components/AgentRadius.h"
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
+#include "../components/PlayerControlled.h"
 #include "../components/Skills.h"
+#include "../components/Structure.h"
 #include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
 
+#include <assets/ConstructionRegistry.h>
+#include <construction/ConstructionWorld.h>
+#include <construction/WallStand.h>
+
 #include <gtest/gtest.h>
+
+#include <filesystem>
 
 namespace ecs::test {
 
@@ -447,6 +456,101 @@ namespace ecs::test {
 		ASSERT_EQ(salvaged.size(), 1U) << "one salvaged material";
 		EXPECT_EQ(salvaged.front().first, "Wood");
 		EXPECT_EQ(salvaged.front().second, 15U) << "refundPercent 50 of 30 Wood = 15";
+	}
+
+	// A wall does not complete while someone stands in its band (building-construction: Walls / Lifecycle).
+	class WallBandHoldTest : public BuildActionSystemTest {
+	  protected:
+		void SetUp() override {
+			BuildActionSystemTest::SetUp();
+			assets::ConstructionRegistry::Get().clear();
+			std::filesystem::path folder = __FILE__; // libs/sim/ecs/systems/BuildAction.test.cpp
+			folder = folder.parent_path().parent_path().parent_path().parent_path().parent_path() / "assets" / "config" / "construction";
+			ASSERT_TRUE(assets::ConstructionRegistry::Get().load(folder.string()));
+			actionSystem->setConstructionWorld(&construction);
+		}
+		void TearDown() override {
+			BuildActionSystemTest::TearDown();
+			assets::ConstructionRegistry::Get().clear();
+		}
+
+		// A Standard Wood wall (0.2 m) from `a` to `b` in meters, built or a blueprint.
+		construction::SegmentId wall(glm::vec2 a, glm::vec2 b, bool built) {
+			const auto result = construction.commitSegment(
+				{static_cast<int64_t>(a.x * 1000.0F), static_cast<int64_t>(a.y * 1000.0F)},
+				{static_cast<int64_t>(b.x * 1000.0F), static_cast<int64_t>(b.y * 1000.0F)}, "Wood", "Standard",
+				construction::kInvalidFoundation, construction.version()
+			);
+			EXPECT_TRUE(result.ok());
+			if (built) {
+				construction.setSegmentState(result.id, construction::FoundationState::Built);
+			}
+			return result.id;
+		}
+
+		// The wall blueprint entity of `segment`, its work almost done, worked by a builder beside it.
+		EntityID wallSite(construction::SegmentId segment) {
+			const EntityID blueprint = createBlueprint(10.0F);
+			world->getComponent<StructureBlueprint>(blueprint)->workDone = 9.0F;
+			world->addComponent<Structure>(blueprint, Structure{.kind = StructureKind::Wall, .graphId = segment});
+			assignBuildTask(createBuilder(0.0F, {2.0F, -0.6F}), blueprint);
+			return blueprint;
+		}
+
+		EntityID colonistAt(glm::vec2 position, bool drafted) {
+			const EntityID colonist = world->createEntity();
+			world->addComponent<Position>(colonist, Position{position});
+			world->addComponent<AgentRadius>(colonist, AgentRadius{});
+			if (drafted) {
+				world->addComponent<PlayerControlled>(colonist, PlayerControlled{});
+			}
+			return colonist;
+		}
+
+		construction::ConstructionWorld construction;
+	};
+
+	// A drafted colonist on the wall's line: the work reaches its end and the wall waits, for as long as he
+	// stands there, and completes once he steps off.
+	TEST_F(WallBandHoldTest, AWallWaitsForADraftedColonistInItsBandAndCompletesWhenHeLeaves) {
+		int completions = 0;
+		actionSystem->setStructureCompletedCallback([&](EntityID) { ++completions; });
+		const EntityID blueprint = wallSite(wall({0.0F, 0.0F}, {4.0F, 0.0F}, false));
+		const EntityID standing = colonistAt({2.0F, 0.35F}, true); // 0.35 m off: his disc reaches the 0.1 m half-thickness
+
+		for (int tick = 0; tick < 20; ++tick) {
+			world->update(0.5F);
+		}
+		const auto* site = world->getComponent<StructureBlueprint>(blueprint);
+		EXPECT_FLOAT_EQ(site->workDone, site->workTotal) << "the work is done";
+		EXPECT_EQ(site->phase, StructureBlueprint::BuildPhase::UnderConstruction) << "the wall is not";
+		EXPECT_EQ(completions, 0);
+		EXPECT_EQ(world->getComponent<Position>(standing)->value, glm::vec2(2.0F, 0.35F)) << "a drafted colonist is the player's to move";
+
+		world->getComponent<Position>(standing)->value = {2.0F, 0.45F};
+		world->update(0.5F);
+		EXPECT_EQ(site->phase, StructureBlueprint::BuildPhase::Complete);
+		EXPECT_EQ(completions, 1);
+	}
+
+	// Anyone else in the band steps out as the wall completes, to the outside of the room it closes.
+	TEST_F(WallBandHoldTest, AColonistInTheBandOfAClosingWallStepsOutOfTheRoom) {
+		wall({4.0F, 0.0F}, {4.0F, 4.0F}, true);
+		wall({4.0F, 4.0F}, {0.0F, 4.0F}, true);
+		wall({0.0F, 4.0F}, {0.0F, 0.0F}, true);
+		const EntityID blueprint = wallSite(wall({0.0F, 0.0F}, {4.0F, 0.0F}, false));
+		const EntityID inside = colonistAt({1.0F, 0.05F}, false); // on the room's side of the line
+		const EntityID onLine = colonistAt({3.0F, 0.0F}, false);
+
+		world->update(0.5F);
+		EXPECT_EQ(world->getComponent<StructureBlueprint>(blueprint)->phase, StructureBlueprint::BuildPhase::Complete);
+		const auto band = construction::wallBand(construction, *construction.getSegment(world->getComponent<Structure>(blueprint)->graphId));
+		for (const EntityID colonist : {inside, onLine}) {
+			const glm::vec2 at = world->getComponent<Position>(colonist)->value;
+			EXPECT_LT(at.y, 0.0F) << "outside the room, which lies at y > 0";
+			EXPECT_FALSE(band->overlaps(at, AgentRadius{}.radiusMeters));
+		}
+		EXPECT_NEAR(world->getComponent<Position>(inside)->value.x, 1.0F, 1e-4F) << "level with where he stood";
 	}
 
 } // namespace ecs::test

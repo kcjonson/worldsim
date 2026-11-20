@@ -2,11 +2,22 @@
 
 #include "../../World.h"
 #include "../../components/Action.h"
+#include "../../components/AgentRadius.h"
+#include "../../components/PlayerControlled.h"
 #include "../../components/Skills.h"
+#include "../../components/Structure.h"
 #include "../../components/StructureBlueprint.h"
 #include "../../components/Task.h"
+#include "../../components/Transform.h"
+
+#include <construction/ConstructionWorld.h>
+#include <construction/WallStand.h>
 
 #include <utils/Log.h>
+
+#include <algorithm>
+#include <optional>
+#include <vector>
 
 namespace ecs {
 
@@ -155,9 +166,9 @@ namespace ecs {
 				return true;
 			}
 		} else {
-			blueprint->workDone += delta;
-			if (blueprint->workDone >= blueprint->workTotal) {
-				blueprint->workDone = blueprint->workTotal;
+			// The work can be done while the wall is not: it waits there for its band to be clear.
+			blueprint->workDone = std::min(blueprint->workDone + delta, blueprint->workTotal);
+			if (blueprint->workDone >= blueprint->workTotal && wallBandClear(blueprintEntity)) {
 				blueprint->phase = StructureBlueprint::BuildPhase::Complete;
 				action.state = ActionState::Complete;
 				return true;
@@ -165,6 +176,40 @@ namespace ecs {
 		}
 
 		return false;
+	}
+
+	bool ActionSystem::wallBandClear(EntityID blueprintEntity) {
+		const auto*						   structure = world->getComponent<Structure>(blueprintEntity);
+		const construction::WallSegment* segment = m_constructionWorld != nullptr && structure != nullptr && structure->kind == StructureKind::Wall
+													   ? m_constructionWorld->getSegment(structure->graphId)
+													   : nullptr;
+		const std::optional<construction::WallBand> band =
+			segment != nullptr ? construction::wallBand(*m_constructionWorld, *segment) : std::nullopt;
+		if (!band.has_value()) {
+			return true;
+		}
+		bool								 clear = true;
+		std::vector<construction::WallStand> sides;
+		for (auto [agent, position, radius] : world->view<Position, AgentRadius>()) {
+			if (!band->overlaps(position.value, radius.radiusMeters)) {
+				continue;
+			}
+			if (world->getComponent<PlayerControlled>(agent) != nullptr) {
+				clear = false;
+				continue;
+			}
+			if (sides.empty()) {
+				sides = construction::wallStands(*m_constructionWorld, segment->id);
+			}
+			const auto side = std::find_if(sides.begin(), sides.end(), [&](const construction::WallStand& stand) { return stand.onSide(position.value); });
+			const glm::vec2 outward = side != sides.end() ? side->outward : sides.front().outward;
+			position.value = band->stepOut(position.value, radius.radiusMeters, outward);
+			LOG_DEBUG(
+				Engine, "[Action] Entity %llu stepped out of wall %llu as it completes, to (%.2f, %.2f)", static_cast<unsigned long long>(agent),
+				static_cast<unsigned long long>(segment->id), position.value.x, position.value.y
+			);
+		}
+		return clear;
 	}
 
 } // namespace ecs

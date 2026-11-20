@@ -437,6 +437,9 @@ namespace {
 
 				auto& actionSys = ecsWorld->getSystem<ecs::ActionSystem>();
 
+				// A wall does not complete while a colonist stands in it; ActionSystem reads its band here.
+				actionSys.setConstructionWorld(&m_drawingSystem->world());
+
 				// Build complete: flip the structure to Built (bumps ConstructionWorld version,
 				// so the render picks up the new style next frame) and toast the player. Walls
 				// and foundations share this callback; the Structure kind selects which topology

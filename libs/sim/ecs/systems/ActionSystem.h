@@ -21,6 +21,10 @@
 #include <string>
 #include <vector>
 
+namespace construction {
+	class ConstructionWorld;
+}
+
 namespace ecs {
 
 enum class ActionMoment : uint8_t { Started, Finished };
@@ -138,6 +142,10 @@ public:
 	void setStructureDeconstructedCallback(StructureDeconstructedCallback callback) {
 		m_onStructureDeconstructed = std::move(callback);
 	}
+
+	/// The topology store a wall's band is read from, so a wall does not complete while a colonist stands in
+	/// it. Null (headless contexts): walls complete as their work does.
+	void setConstructionWorld(const construction::ConstructionWorld* constructionWorld) { m_constructionWorld = constructionWorld; }
 
 private:
 	/// Random number generator for yield calculations
@@ -259,6 +267,11 @@ private:
 	/// not elapsed time. @return true if the action reached completion this tick.
 	bool advanceConstructionWork(float deltaTime, struct Action& action);
 
+	/// Whether the wall `blueprintEntity` is may complete: nobody under the player's control stands in its
+	/// band (construction::wallBand). Anyone else in it steps out to a side its builders may stand on
+	/// (construction::wallStands), the side he is on when it is one. True for anything but a wall.
+	bool wallBandClear(EntityID blueprintEntity);
+
 	/// Start a harvest action for goal-driven harvesting (crafting materials)
 	/// Finds harvestable at target position that yields the required item type.
 	/// Memory is mutable so a vanished target can be forgotten (prevents re-selection).
@@ -366,6 +379,8 @@ private:
 
 	/// Callback fired when a Deconstruct action finishes tearing down a structure
 	StructureDeconstructedCallback m_onStructureDeconstructed = nullptr;
+
+	const construction::ConstructionWorld* m_constructionWorld = nullptr;
 };
 
 } // namespace ecs

@@ -520,7 +520,12 @@ namespace world_sim {
 			(segment != nullptr) ? world.getComponent<ecs::StructureBlueprint>(segment->entity) : nullptr;
 
 		if (!built && blueprint != nullptr) {
-			content.slots.push_back(TextSlot{"State", buildPhaseLabel(blueprint->phase, blueprint->demolishing)});
+			// Its work done and not built: it waits for its band to be clear (ActionSystem::wallBandClear).
+			const bool workDone = blueprint->phase == ecs::StructureBlueprint::BuildPhase::UnderConstruction && !blueprint->demolishing &&
+								  blueprint->workTotal > 0.0F && blueprint->workDone >= blueprint->workTotal;
+			content.slots.push_back(
+				TextSlot{"State", workDone ? std::string{"Waiting for the wall to be clear"} : buildPhaseLabel(blueprint->phase, blueprint->demolishing)}
+			);
 			content.slots.push_back(TextSlot{"Materials", materialsSummary(*blueprint)});
 			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->displayProgress(blueprint->demolishing) * 100.0F});
 		}
