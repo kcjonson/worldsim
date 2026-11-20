@@ -536,6 +536,11 @@ private:
 	/// Reused candidate storage for need-source queries, so a decision allocates nothing once it has grown
 	std::vector<SourceCandidate> sourceScratch;
 	std::vector<SourceCandidate> m_chosenScratch;
+#ifdef DEVELOPMENT_BUILD
+	/// Need-source candidates the nearest-first walks have asked to admit since construction. Tests read
+	/// it to show a need looks at the nearest few, not the size of the memory.
+	uint64_t needSourceVisits = 0;
+#endif
 
 	/// The deciding colonist's source choices per need option (needChoiceSlot), read by selectTaskFromTrace
 	std::array<SourceChoices, static_cast<std::size_t>(NeedType::Count) + 1> m_needChoices{};

@@ -103,12 +103,7 @@ int main(int argc, char* argv[]) {
 	world_sim::addScenes(app->scenes());
 	const app::DevServer::Registration uiScaleView = theme::registerUiScaleView(*app);
 
-	// "game" starts at "gameloading", so loading always runs first
-	std::string firstScene = commandLine.scene.value_or(world_sim::scenes::Splash.name);
-	if (firstScene == world_sim::scenes::Game.name) {
-		LOG_INFO(Engine, "Remapping scene '%s' -> '%s'", firstScene.c_str(), world_sim::scenes::GameLoading.name);
-		firstScene = world_sim::scenes::GameLoading.name;
-	}
+	const std::string firstScene = commandLine.scene.value_or(world_sim::scenes::Splash.name);
 	if (!app->scenes().switchTo(firstScene)) {
 		app->scenes().switchTo(world_sim::scenes::Splash.name);
 	}

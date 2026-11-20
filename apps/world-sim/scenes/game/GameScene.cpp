@@ -1,6 +1,5 @@
 // Game Scene - Main gameplay with chunk-based world rendering
 
-#include "GameBootstrap.h"
 #include "GameContext.h"
 #include "GameWorldState.h"
 #include "NewGameSetup.h"
@@ -46,10 +45,8 @@
 #include <world/chunk/Chunk.h>
 #include <world/chunk/ChunkCoordinate.h>
 #include <world/chunk/ChunkManager.h>
-#include <world/chunk/MockWorldSampler.h>
 #include <world/rendering/ChunkRenderer.h>
 #include <world/rendering/EntityRenderer.h>
-#include <world/rendering/GroundTileBank.h>
 #include <world/rendering/PackagedLayout.h> // crate footprint (drop spacing)
 #include <world/rendering/PileLayout.h>	   // pile footprint (drop spacing)
 #include <world/rendering/TemplateBounds.h>
@@ -60,7 +57,6 @@
 #include <assets/MoodConfig.h>
 #include <assets/RecipeRegistry.h>
 #include <assets/placement/AsyncChunkProcessor.h>
-#include <assets/placement/CanopyCover.h>
 #include <assets/placement/PlacementExecutor.h>
 
 // ECS
@@ -140,7 +136,6 @@ namespace {
 	}
 
 	constexpr const char* kSceneName = "game";
-	constexpr uint64_t	  kDefaultWorldSeed = 12345;
 	constexpr float		  kPixelsPerMeter = 8.0F;
 	// The registry prewarms, and reads non-drawing template data at, the default view's density.
 	static_assert(kPixelsPerMeter * world::kZoomLevels[world::kDefaultZoomIndex] == assets::kReferencePixelsPerMeter);
@@ -155,66 +150,22 @@ namespace {
 			LOG_INFO(Game, "GameScene - Entering");
 			theme::apply(ui());
 
-			// Check for pre-loaded state from GameLoadingScene
-			auto preloadedState = world_sim::GameWorldState::Take();
-			if (preloadedState) {
-				// Use pre-loaded state (no pop-in!)
-				LOG_INFO(Game, "GameScene - Using pre-loaded world state");
-				m_chunkManager = std::move(preloadedState->chunkManager);
-				m_camera = std::move(preloadedState->camera);
-				m_renderer = std::move(preloadedState->renderer);
-				m_entityRenderer = std::move(preloadedState->entityRenderer);
-				m_placementExecutor = std::move(preloadedState->placementExecutor);
-				m_processedChunks = std::move(preloadedState->processedChunks);
-				m_spawnPosition = preloadedState->spawnPosition;
-				m_colony = preloadedState->colony;
-				m_planet = std::move(preloadedState->planet);
-				m_landingLatDeg = preloadedState->landingLatDeg;
-				m_landingLonDeg = preloadedState->landingLonDeg;
-				m_party = std::move(preloadedState->party);
-				colonistRules = std::move(preloadedState->colonistRules);
-
-				LOG_INFO(Game, "Pre-loaded state: %zu chunks, %zu processed", m_chunkManager->loadedChunkCount(), m_processedChunks.size());
-			} else {
-				// Initialize fresh (for debugging or direct GameScene access)
-				LOG_INFO(Game, "GameScene - No pre-loaded state, initializing fresh");
-
-				// Create world systems
-				auto sampler = std::make_unique<world::MockWorldSampler>(kDefaultWorldSeed);
-				m_chunkManager = std::make_unique<world::ChunkManager>(std::move(sampler), assets::canopyCoverFromDefinitions(assets::AssetRegistry::Get()));
-
-				m_camera = std::make_unique<world::WorldCamera>();
-				m_camera->setPanSpeed(200.0F);
-
-				// A direct switch here (the dev server's scene or reload) skips the scenes that bake the ground tiles,
-				// so the bake runs to the end here, behind the same gate; a failure goes to the splash, which shows it.
-				world_sim::GroundBakeStep bake;
-				while (!(bake = world_sim::stepGroundBake()).done) {}
-				if (!bake.errors.empty()) {
-					owner->scenes().switchTo(world_sim::scenes::Splash.name);
-				}
-				// Broken colonist rules go to the splash too, handed over for it to show; this is their only load on this path.
-				ecs::ColonistRulesLoad rulesLoad = ecs::loadColonistRules("assets/config");
-				if (!rulesLoad.errors.empty()) {
-					world_sim::failColonistRules(std::move(rulesLoad.errors));
-					owner->scenes().switchTo(world_sim::scenes::Splash.name);
-				}
-				colonistRules = std::move(rulesLoad.rules);
-				m_renderer = std::make_unique<worldview::ChunkRenderer>(kPixelsPerMeter, world_sim::groundTiles());
-
-				m_entityRenderer = std::make_unique<worldview::EntityRenderer>(kPixelsPerMeter);
-
-				// Initialize entity placement system
-				auto& assetRegistry = assets::AssetRegistry::Get();
-				m_placementExecutor = std::make_unique<assets::PlacementExecutor>(assetRegistry);
-				m_placementExecutor->initialize();
-				LOG_INFO(Game, "PlacementExecutor initialized with %zu entity types", m_placementExecutor->getSpawnOrder().size());
-
-				// Initial chunk load (entity placement happens async in update()); no movers exist yet
-				m_chunkManager->update(m_camera->position(), {});
-
-				LOG_INFO(Game, "World initialized with seed %llu", kDefaultWorldSeed);
-			}
+			// The scene's factory builds it only over the loading scene's world (see the registration at the bottom)
+			std::unique_ptr<world_sim::GameWorldState> loadedState = world_sim::GameWorldState::Take();
+			m_chunkManager = std::move(loadedState->chunkManager);
+			m_camera = std::move(loadedState->camera);
+			m_renderer = std::move(loadedState->renderer);
+			m_entityRenderer = std::move(loadedState->entityRenderer);
+			m_placementExecutor = std::move(loadedState->placementExecutor);
+			m_processedChunks = std::move(loadedState->processedChunks);
+			m_spawnPosition = loadedState->spawnPosition;
+			m_colony = loadedState->colony;
+			m_planet = std::move(loadedState->planet);
+			m_landingLatDeg = loadedState->landingLatDeg;
+			m_landingLonDeg = loadedState->landingLonDeg;
+			m_party = std::move(loadedState->party);
+			colonistRules = std::move(loadedState->colonistRules);
+			LOG_INFO(Game, "Loaded world: %zu chunks, %zu processed", m_chunkManager->loadedChunkCount(), m_processedChunks.size());
 			m_visibilityCover = std::make_unique<worldview::VisibilityCoverRenderer>();
 			// The camera loads only chunks that can show; the rest would be drawn under the cover's opaque fill.
 			// Every mover's anchor still loads what it needs (player-visibility.md 3.9).
@@ -2259,7 +2210,6 @@ namespace {
 		glm::vec2	  m_moveMarkerWorld{0.0F, 0.0F};
 		float		  m_moveMarkerTtl = 0.0F;
 		// Planet forwarded from GameWorldState for the /api/state?what=landing readback.
-		// Null when running in mock-world mode (no preloaded planet).
 		std::shared_ptr<const worldgen::GeneratedWorld> m_planet;
 		double											m_landingLatDeg = 0.0;
 		double											m_landingLonDeg = 0.0;
@@ -2375,5 +2325,13 @@ namespace {
 } // namespace
 
 namespace world_sim::scenes {
-	extern const world_sim::SceneInfo Game = {kSceneName, []() { return std::make_unique<GameScene>(); }};
+	// The game scene runs only over the world, config, and colonist rules the loading scene loaded, so any switch
+	// here without one waiting (the dev server's scene action, reload, --scene=game) builds the loading scene,
+	// which switches back here when it's done.
+	extern const world_sim::SceneInfo Game = {kSceneName, []() -> std::unique_ptr<app::Scene> {
+		if (!world_sim::GameWorldState::HasPending()) {
+			return world_sim::scenes::GameLoading.factory();
+		}
+		return std::make_unique<GameScene>();
+	}};
 } // namespace world_sim::scenes
