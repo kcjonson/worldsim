@@ -251,8 +251,8 @@ The regression scenarios run on Quick Start, and several depend on where the cre
 **`landing`** (game scene, `/api/state?what=landing`):
 
 ```json
-{"landingLatDeg":0.0,"landingLonDeg":0.0,"biome":"TemperateDeciduousForest","waterClass":"River","riverInTile":true,
- "feature":"river","spawnXMeters":0.0,"spawnYMeters":0.0,"featureDistanceMeters":0.0}
+{"landingLatDeg":0.0,"landingLonDeg":0.0,"feature":"river","spawnXMeters":0.0,"spawnYMeters":0.0,
+ "featureDistanceMeters":0.0,"biome":"TemperateDeciduousForest","waterClass":"River","riverInTile":true}
 ```
 
 `landingLatDeg`/`landingLonDeg` are the origin, `biome` and `waterClass` the landing tile's (the verified class), `feature` is `river`, `lake`, or `none`, `spawnXMeters`/`spawnYMeters` the raw drop, and `featureDistanceMeters` the drop's `waterDistanceMeters`, its distance to the nearest water's edge: 30 within 3 when `feature` is `river` or `lake`, null when it is `none`.
