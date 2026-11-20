@@ -27,6 +27,13 @@ protected pixel for pixel: no golden images, no screenshot diffs, in CI or local
   human tester would, and reporting pass or fail with a screenshot of what failed. A feature that
   lands adds steps or a scenario. New scenarios are as short as they can be: a numbered list,
   one line a step, the action and what you should see.
+- **Assertion counts never drop.** `node scripts/test-assertions.mjs [--base <ref>] [--json]`
+  counts the `EXPECT_*` and `ASSERT_*` macros of every test (keyed `Suite.Name`, so a test moved
+  between files still matches; assertions outside a test body count per file as
+  `<file>::helpers`) in every `*.test.cpp`, at the base ref (default: the merge-base with
+  `origin/main`) and in the working tree. It prints one line per test with fewer assertions, or
+  one that vanished, and exits non-zero on any. It runs on every path PR of the behavior-data
+  migration ([behavior-data-migration.md](../technical/behavior-data-migration.md#porting-tests)).
 - **Performance is strict, and a worse number needs an idle machine.** Rendering performance
   dropping in gameplay is the regression this project has hit most. Even or faster is a result on
   any machine; worse is only a finding on an idle one. See [Performance](#performance).
