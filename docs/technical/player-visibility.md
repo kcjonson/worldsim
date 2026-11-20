@@ -170,7 +170,7 @@ The bright shape is drawn at the colonist's position that frame, outdoors and wi
 
 **Home.** `worldview::VisibilityCoverRenderer` (`libs/world-view/world/rendering/`), with `kSeenDimAlpha` and `kUnseenColor` beside it, which reads the record and the sight shapes from `sim`. salal's instanced meshes have 16-bit indices, so the record is uploaded as as many meshes as it needs, each at most 65,535 vertices, one mesh layer apiece, again whenever `epoch()` moves; replaced meshes are let go three frames later, so the GPU is done with them. A colonist's bright shape is `PlayerVisibilitySystem::drawnVisible`, with each side marked rim or not; the cover asks for it only for colonists whose sight's box meets the view. A colonist whose sight is too small to hold a leg (`kSeenLeastRadiusMm`) draws none, since nothing records it, and so does one with walls in sight whose polygon a jump dropped, for the few frames before vision builds his next. The cover flushes what is pending, then draws its fills at keys 30 and 31: the lowest key drawn after it in the same flush is the terrain polygon overlay's 40, then the rooms (56), vision (62), and nav (66) overlays, the selection indicator and move marker (100), the drawing preview (898 and up), and the placement ghost (1000). Both fills run 4 pixels past the view.
 
-**The pieces.** Each colonist's feather (a rectangle off each rim side and a fan at each reflex corner between two) and drawn shadows (`worldview::DrawnShadows`: a triangle and two fins per soft body, a band and a fin per shadow edge of his last build, the band's apex eased along a face at a corner switch) are triangles in world millimetres with a value at each corner (`worldview::ValueTriangle`, `CoverPieces.h`), uploaded as meshes whose vertices carry their values; each mesh is one element of his group. His soft bodies are kept in four rings by distance, each built whole and uploaded as one mesh set once he has walked `softShadowRebuildPercent` of its nearest distance since it was last built, and when he stops, under one budget of pieces a frame over every colonist in view, the longest due first, and drawn as built between (sight-softening.md 3.3, 7.3); his feather, built about where he stands, and his bands are uploaded together on the frames either changes, so a colonist standing still builds and uploads nothing. The seen area's feather is `worldview::SeenFeather`: the record's edge (`SeenArea::appendEdges`) feathered in cells of `kSeenFeatherCellMm` (32 m), a cell rebuilt when a box from `SeenArea::takeChangedBoxes`, grown by the feather, meets it; and near the pending shapes in view, clustered where their feathers can touch, the record's edge and their sides cut against each other in integers (`worldview::cutSeenBoundary`, the record read through `SeenArea::inRecord`), each cluster's cut kept until its shapes or the record round it change. A cell that a pending shape grown by the feather reaches is masked to outside those shapes, where the cut's pieces draw instead. `/api/state?what=cover` reports what a frame did (docs/testing/README.md).
+**The pieces.** Each colonist's feather (a rectangle off each rim side and a fan at each reflex corner between two) and drawn shadows (`worldview::DrawnShadows`: a triangle and two fins per soft body, a band and a fin per shadow edge of his last build, the band's apex eased along a face at a corner switch) are triangles in world millimetres with a value at each corner (`worldview::ValueTriangle`, `CoverPieces.h`), uploaded as meshes whose vertices carry their values; each mesh is one element of his group. His soft bodies are kept in four rings by distance, each built whole and uploaded as one mesh set once he has walked `softShadowRebuildPercent` of its nearest distance since it was last built, and when he stops, under one budget of pieces a frame over every colonist in view, the most turned first with each frame of waiting counted as `kDueTurnAFrame` (0.01) of turn, and drawn as built between (sight-softening.md 3.3, 7.3); his feather, built about where he stands, and his bands are uploaded together on the frames either changes, so a colonist standing still builds and uploads nothing. The seen area's feather is `worldview::SeenFeather`: the record's edge (`SeenArea::appendEdges`) feathered in cells of `kSeenFeatherCellMm` (32 m), a cell rebuilt when a box from `SeenArea::takeChangedBoxes`, grown by the feather, meets it; and near the pending shapes in view, clustered where their feathers can touch, the record's edge and their sides cut against each other in integers (`worldview::cutSeenBoundary`, the record read through `SeenArea::inRecord`), each cluster's cut kept until its shapes or the record round it change. A cell that a pending shape grown by the feather reaches is masked to outside those shapes, where the cut's pieces draw instead. `/api/state?what=cover` reports what a frame did (docs/testing/README.md).
 
 **Consequences taken on purpose.** A tall thing that stands on seen ground and reaches over unseen ground is cut at the edge.
 
@@ -248,10 +248,15 @@ There is no game save to put the record in. When one exists the record saves as 
 | `kSeenRingsPerTick` | 16 | Shapes tested a tick, whatever else waits. 50 colonists indoors at 10x make about 10 polygons a tick (6.6); at 4 the queue grew without end. 16 covered tests at about 15 us are about 0.25 ms |
 | `kSeenPiecesRegisteredPerTick` | 4 | Pieces registered a tick, shapes cut while fewer than this wait: each is one patch, up to about 6 ms where the bench base's record is densest (6.7), and four a tick drain a forest's legs and polygon-path shapes (sight-softening.md 6.6) |
 | `kSeenSweepPointsPerTick` | 4 | Sweep points built a tick, whatever shapes wait, while fewer than four of the sweep's pieces wait (sight-softening.md 6.6) |
-| `kSeenSweepPointsMost` | 240 | The most sweep points that wait; past it the oldest goes (sight-softening.md 6.6) |
-| `kSeenDimAlpha` | 0.5 | How dark seen ground is |
+| `kSeenSweepPointsMost` | 240 | The most sweep points that wait, a second of the budget; past it each walk's run of points is thinned to its ends and every other point between, and when no run has a point left to thin the oldest run goes (sight-softening.md 6.6) |
+| `kSoftLegMostVertices` | 256 | The most vertices a leg's ring holds before the leg ends (sight-softening.md 6.2) |
+| `kSeenBoxCellMm` | 512 m | The cells of the record's seen boxes, a chunk each (3.4) |
+| `kSeenFeatherCellMm` | 32 m | The cells the record's feather is kept and rebuilt in (3.4) |
+| `kSeenDimAlpha` | 0.5 | How dark seen ground is (`CoverPieces.h`) |
 | `kUnseenColor` | black | The colour of unseen ground |
 | `kLandingSightMeters` | 150 m | Shared with nav; one constant for both |
+
+The sight tunables, which set what is opaque and what is soft, forest depth, the feather, the drawn shadows, and how often they are built, are [Sight Softening](./sight-softening.md) 9's: `vision::SightTunables` (`libs/sim/vision/SightTunables.h`), each clamped to its range and a slider on the Dev Tools tab, read at `/api/state?what=sightTunables` and set with `/api/dev/sight`. Its fixed constants (the drawing's tolerances, the budget of drawn pieces a frame, the rings of soft bodies, when a colonist counts as stopped) are listed beside them.
 
 ## 5. Prior art
 
@@ -731,6 +736,34 @@ The sim bench, `PlayerVisibilitySystem::update` alone, 36,000 ticks, same rings 
 | 1,024 | 375 | 257 / 581 | 7.2 / 36.1 | 276 / 55 s |
 
 The quadratic term is gone, but a beam patch's setup still grows with the rings over the spot, since every beam passes every edge near the gap and each classified edge reads each of them (about 50 to 100 ns a ring now); 16-sided limits round a walk grow far less (0.44 against 0.34 ms at K 1,024, 73 over the patch). Bounding it further needs fewer rings over a spot: registry compaction, dropping or merging rings the union no longer needs, which would change edge sources and so the mesh's provenance, and is not built.
+
+### 6.11 Measured: the record in forest and the soft cover
+
+With sight softened ([Sight Softening](./sight-softening.md) 12), RelWithDebInfo, at the start values, one run each. The record's times were taken with both machine-load checks `idle`, the cover's with the check before `idle`; counts do not depend on load.
+
+The record in the landing's forest, `BM_SightForestScheduler` and `BM_SightForestWalk` (`libs/sim/vision/SightForest.bench.cpp`) on `SeenArea`, 50 colonists walking, against the plain sight disc with no forest on the same walk and the same scheduler:
+
+| | 1x | 10x |
+|---|---|---|
+| Mean record tick, ms | 0.79 against 0.24 | 1.04 against 0.44 |
+| Worst record tick, ms | 9.45 against 2.40 | 8.33 against 3.55 |
+| Queue at its peak | 36 against 50 | 281 against 52 |
+| K where registered, mean / most | 51.5 / 250 against 11.7 / 60 | 19.8 / 100 against 10.4 / 60 |
+
+At 1x the patches carry 0.31 ms of the 0.55 ms forest adds to the mean tick: forest registers 6.2 times the pieces (21,563 against 3,466), each among more rings. At 10x the walkers' feeds and the covered tests carry 0.44 of the 0.60 ms. The slowest 1x ticks keep 3.5 to 4.5 ms of tests, cuts, feeds, and widths with no patch at all, so no budget inside the record's scheduler holds the worst tick under 5 ms. Sight-softening.md 12.1 has the walk, the counts at 10 colonists, and the phases.
+
+The cover's CPU time a frame, building and uploading every colonist's feather and drawn shadows, at the landing in the game with vsync off, read from `/api/state?what=cover`:
+
+| Colonists in view | 1x, ms | 10x, ms |
+|---|---|---|
+| 1 walking | 0.65 | 1.0 |
+| 10 walking | 1.7 | 2.0 |
+| 50 walking | 5.2 | 5.5 |
+| 50 standing | 0.2 | |
+
+At 50 walking, 1.7 ms of it is uploads (36 meshes a frame, most of them feathers and bands) and 1.8 ms `drawnVisible`; at 1 walking about 0.6 ms is his feather and bands going up. A soft body takes 15 triangles at the landing on average, a colonist 2,300 to 2,700. Due rings of soft bodies wait 0.6 frames on average at 1x (6 at most) and 6 at 10x (14 at most), and the most a ring left due has turned past its cadence is 0 at 1x and 3 degrees at 10x.
+
+The pending cut at the record's edge, by counts on the null backend, colonists 1.2 m apart walking 2 m/s out of the landing into unexplored ground: 1 walking 0.06 ms a frame, 10 walking 0.66 ms, 50 walking 6.2 ms, 50 at the edge with 1 walking 2.9 ms.
 
 ## 7. Build steps
 

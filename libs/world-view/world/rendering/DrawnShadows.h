@@ -12,7 +12,7 @@
 // or changes one's arrival while he stands; when the zoom or the reach changes; and once he has stood
 // still a few frames, so standing every triangle is exact. Neighbouring rings overlap, so a body
 // crossing between them is in one or both and never in neither. The cover builds the due rings under
-// a budget a frame, the longest due first. The bands are few and are rebuilt on every frame he walks
+// a budget a frame, the most turned first, waiting counted as turn. The bands are few and are rebuilt on every frame he walks
 // or a new build arrives. Drawn only, never read by the sim.
 
 #include "CoverPieces.h"
