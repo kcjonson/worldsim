@@ -196,6 +196,9 @@ namespace ecs::test {
 		/// Memory entries the work evaluators have looked at so far.
 		uint64_t workSourceVisits() { return world->getSystem<AIDecisionSystem>().m_workSources.visits; }
 
+		/// Need-source candidates the need searches have asked to admit so far.
+		uint64_t needSourceVisits() { return world->getSystem<AIDecisionSystem>().needSourceVisits; }
+
 		/// Boxes the colony's box knowledge has worked out so far.
 		uint64_t colonyStorageWorkedOut() { return world->getSystem<AIDecisionSystem>().m_colonyStorage.workedOut; }
 		uint64_t boxRoomsReadOut() { return world->getSystem<AIDecisionSystem>().m_boxRooms.readOut; }
@@ -1220,6 +1223,7 @@ namespace ecs::test {
 
 #ifdef DEVELOPMENT_BUILD
 		const uint64_t visitsBefore = workSourceVisits();
+		const uint64_t needVisitsBefore = needSourceVisits();
 #endif
 		world->update(0.016F);
 
@@ -1248,6 +1252,10 @@ namespace ecs::test {
 		// Per colonist: each goal visits only the sources of its item. The 9,990 waters add nothing.
 		constexpr uint64_t kPerColonist = kPiles + kTrees;
 		EXPECT_EQ(workSourceVisits() - visitsBefore, 2 * kPerColonist);
+		// The thirsty colonist's search asks about the nearest 8 of the 9,990 waters (kNearestOfCount) and
+		// stops; the lean one knows no water, and neither knows food. A literal, so a change to the constant
+		// is caught too.
+		EXPECT_EQ(needSourceVisits() - needVisitsBefore, 8U);
 #endif
 	}
 

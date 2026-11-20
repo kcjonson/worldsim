@@ -2528,6 +2528,9 @@ namespace ecs {
 		// A remembered source he may be sent to: no verdict, and connected to where a route to it ends,
 		// which becomes its goal.
 		const auto admitSource = [&](SourceCandidate& candidate) {
+#ifdef DEVELOPMENT_BUILD
+			++needSourceVisits;
+#endif
 			if (hasVerdict(candidate.key, candidate.position)) {
 				return false;
 			}
