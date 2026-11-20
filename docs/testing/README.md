@@ -28,7 +28,8 @@ protected pixel for pixel: no golden images, no screenshot diffs, in CI or local
   lands adds steps or a scenario. New scenarios are as short as they can be: a numbered list,
   one line a step, the action and what you should see.
 - **Assertion counts never drop.** `node scripts/test-assertions.mjs [--base <ref>] [--json]`
-  counts the `EXPECT_*` and `ASSERT_*` macros of every test (keyed `Suite.Name`, so a test moved
+  holds a per-test floor on the count (only the count is compared, never what a macro checks) of
+  the `EXPECT_*`, `ASSERT_*` and `FAIL`-family macros of every test (keyed `Suite.Name`, so a test moved
   between files still matches; assertions outside a test body count per file as
   `<file>::helpers`) in every `*.test.cpp`, at the base ref (default: the merge-base with
   `origin/main`) and in the working tree. It prints one line per test with fewer assertions, or
