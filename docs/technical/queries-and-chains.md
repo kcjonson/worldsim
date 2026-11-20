@@ -302,7 +302,7 @@ carries a `<creature>` block; a `<creature>` block on any other definition is a 
   behavior whose entry it takes.
 - `mood` says whether the creature has a mood. A creature with mood gives each of its needs a mood
   cost with a `<moodCost>` row, the most mood the need takes off at its worst
-  ([Needs](../design/game-systems/colonists/needs.md#need-to-mood-weights)); a need of such a creature
+  ([Needs](../design/game-systems/colonists/needs.md#what-a-need-costs-mood)); a need of such a creature
   with no cost is a load error naming it. The penalty curve, easing, and bands are the creature's
   `mood.xml`.
 - The creature's order (below) breaks a tie between two needs equally low, and ranks idle rows.
@@ -1808,7 +1808,7 @@ Recreation drains at a constant rate and only `enjoy_nature` restores it.
 Below `urgent`, a need's option is on the `urgent_need` rung, which ranks above work, and a creature
 decides at once when a need crosses into urgent. Every need with a `<satisfiedBy>` acts at all three
 levels, the ones that cannot kill included, so a colonist leaves a long job to wash or to rest before a
-low-mood behavior over it starts ([Needs](../design/game-systems/colonists/needs.md#need-to-mood-weights)).
+low-mood behavior over it starts ([Needs](../design/game-systems/colonists/needs.md#what-a-need-costs-mood)).
 Tuning a need's `urgent` level against the mood its cost takes off is how meeting the need is kept
 ahead of the behavior.
 

@@ -2,7 +2,7 @@
 
 **Status:** Design  
 **Created:** 2024-12-04  
-**MVP Status:** See [MVP Scope](../mvp-scope.md) — Tiers 5-7 in Phase 1, full hierarchy in Phase 3
+**MVP Status:** See [MVP Scope](../mvp-scope.md) — `ordinary_need`, `opportunistic_work`, and `idle` in Phase 1, full hierarchy in Phase 3
 
 ---
 
@@ -23,19 +23,19 @@ Colonists always evaluate what to do in this fixed order. A higher rung interrup
 | `survival`            | Active threat, flee (reserved)                   | Being chased by a predator         |
 | `critical_need`       | Need below its critical threshold                | Bladder emergency                  |
 | `low_mood`            | A low-mood behavior during a mood episode        | Snapping at a colonist             |
-| `player_order`        | An order the player gave                         | Go to this spot                    |
+| `player_order`        | An order the player gave                         | Harvest that bush                  |
 | `urgent_need`         | Need below its urgent threshold                  | Very hungry, leaves its work       |
 | `own_unfinished_work` | A craft whose part-done unit the colonist holds  | Back to the half-made axe          |
-| `committed_work`      | A queued craft or build and its provisioning     | Finish the house foundation        |
+| `committed_work`      | A queued craft, build, teardown, site clear, or placement carry, and its provisioning | Finish the house foundation        |
 | `ordinary_need`       | Need below its seek threshold                    | Slightly hungry, seeks food        |
 | `opportunistic_work`  | Needs satisfied; loose work available            | Haul items, stock storage, harvest |
 | `idle`                | Nothing else to do                               | Gather food for larder, wander     |
 
 What a colonist does at each rung (a need's chain, a piece of work, an idle chain, a player's order, a low-mood behavior) is defined in data as chains of steps whose targets are picked by queries ([Queries and chains](../../../technical/queries-and-chains.md#rungs), which holds the ladder); the rungs say only what comes first. A low-mood behavior sits directly below critical needs and above the player's orders ([Mood](./mood.md#the-episode-cycle)), and [Interruptable crafts](../../../technical/interruptable-crafts.md#the-ladder) gives urgent needs and a crafter's own unfinished work their rungs.
 
-`committed_work` sits above `ordinary_need`: a colonist finishes a committed craft or build before addressing a slightly hungry or tired state. A need below its urgent or critical level, a mood episode, or a player's order takes a colonist off committed work; an ordinary need does not. See [Colonist Task Arbitration §3](../../../technical/colonist-task-arbitration.md) for the locked design basis (multi-colonist crafting §2b, "finishing is very high priority").
+`committed_work` sits above `ordinary_need`: a colonist finishes a committed craft or build before addressing a slightly hungry or tired state. Only a critical need, a mood episode, or a player's order takes a colonist off committed work; an ordinary need does not. Letting a need below its urgent level do the same is a described change ([An urgent-need rung](../../../technical/queries-and-chains.md#an-urgent-need-rung)). See [Colonist Task Arbitration §3](../../../technical/colonist-task-arbitration.md) for the locked design basis (multi-colonist crafting §2b, "finishing is very high priority").
 
-### Tier 1: Survival / danger (RESERVED)
+### `survival` (reserved)
 
 Colonist is actively threatened — chased by predator, caught in fire, etc.
 
@@ -45,27 +45,27 @@ Colonist is actively threatened — chased by predator, caught in fire, etc.
 
 **MVP Status:** Deferred (no threats in Phase 1)
 
-### Tier 2: Critical Needs
+### `critical_need`
 
 Any physical need falls below its critical threshold (set per need in the needs config, ~10% for most). Colonist immediately addresses it, bypassing all other priorities including active work orders.
 
 **MVP Status:** Included in Phase 1
 
-### Tier 3: Forced player orders (RESERVED)
+### `player_order`
 
-Player has taken direct control. See [Player Control](../features/player-control.md).
+An order the player gave a colonist, such as harvesting a bush they clicked, runs as a chain on this rung and outranks work and needs below a critical one. Direct control is not a rung: it suspends the colonist's AI altogether. See [Player Control](../features/player-control.md).
 
-**MVP Status:** Mechanism is a separate epic; tier slot is reserved.
+**MVP Status:** Mechanism is a separate epic.
 
-### Tier 4: Active Work Orders (STICKY)
+### `committed_work` (sticky)
 
-A queued craft or build order and its entire provisioning chain (haul, harvest). The colonist commits to this work and will not switch to a same- or lower-tier task without a large score advantage. A non-critical need (tier 5) never interrupts it; only a need that drops below the critical threshold (~10%, tier 2) does, and the colonist returns to finish afterwards.
+A queued craft or build order and its entire provisioning chain (haul, harvest). The colonist commits to this work and will not switch to a same- or lower-rung task without a large score advantage. A non-critical need (`ordinary_need`) never interrupts it; only a need that drops below the critical threshold (~10%, `critical_need`) does, besides a mood episode or a player's order, and the colonist returns to finish afterwards. Letting a need below its urgent level interrupt too is a described change ([An urgent-need rung](../../../technical/queries-and-chains.md#an-urgent-need-rung)).
 
-This tier is the mechanism that implements the "finishing is very high priority" invariant from [Multi-colonist Crafting](../multi-colonist-crafting.md). Chain steps (provisioning hauls and harvests that serve an active work order) are classified at tier 4, not tier 6, so they stay bound to the parent order.
+This rung is the mechanism that implements the "finishing is very high priority" invariant from [Multi-colonist Crafting](../multi-colonist-crafting.md). Chain steps (provisioning hauls and harvests that serve an active work order) are on `committed_work`, not `opportunistic_work`, so they stay bound to the parent order.
 
 **MVP Status:** Implemented in Phase 1 (as part of colonist task arbitration).
 
-### Tier 5: Actionable Needs
+### `ordinary_need`
 
 Physical needs have dropped below comfortable thresholds. Colonist seeks entities that fulfill the most urgent need.
 
@@ -77,13 +77,13 @@ Physical needs have dropped below comfortable thresholds. Colonist seeks entitie
 
 **MVP Status:** Included in Phase 1
 
-### Tier 6: Opportunistic work
+### `opportunistic_work`
 
-Needs comfortable; no active work order. Colonist does available work: haul loose items to storage, stock containers, undirected harvest. Work-type preference (1-9, see [Work Priorities](./work-priorities.md)) affects within-tier ordering.
+Needs comfortable; no active work order. Colonist does available work: haul loose items to storage, stock containers, undirected harvest. Work-type preference (1-9, see [Work Priorities](./work-priorities.md)) affects within-rung ordering.
 
-**MVP Status:** Implemented in Phase 1. The original "Gather Food" sentinel that kept colonists fed while idle is now tier 7 (idle); what was informally called "work" here is tier 6.
+**MVP Status:** Implemented in Phase 1. The "Gather Food" sentinel that keeps colonists fed while idle is on `idle`.
 
-### Tier 7: Idle
+### `idle`
 
 Nothing else to do. Colonist gathers food into its own pack (only while the pack holds none) or wanders known areas, which:
 - Looks natural (no frozen standing)
@@ -119,19 +119,19 @@ When a colonist accepts work, its task claims what it will use: the berry bush, 
 
 ```python
 def select_task(colonist, task_registry, priority_config):
-    # Build a list of (tier, score) candidates; return the lexicographic winner.
-    # Lower tier = higher priority. Score orders within the same tier only.
+    # Build a list of (rung, score) candidates; return the lexicographic winner.
+    # A higher rung wins. Score orders within the same rung only.
 
     if is_threatened(colonist):
-        return flee_to_safety()  # Tier 1: RESERVED (no threats yet)
+        return flee_to_safety()  # survival: reserved (no threats yet)
 
     for need in colonist.needs:
         if need.value < need.critical_threshold:
-            return fulfill_need_urgently(need)  # Tier 2: preempts everything below
+            return fulfill_need_urgently(need)  # critical_need: preempts everything below
 
-    # Tier 3: RESERVED for forced player orders (separate epic)
+    # player_order: handled by the order mechanism (separate epic)
 
-    # Tier 4: active work orders (sticky, stays committed across tier-5 interruptions)
+    # committed_work: sticky, stays committed across ordinary-need interruptions
     active_order = get_active_work_order(colonist, task_registry)
     if active_order:
         return active_order  # Craft, build, or provisioning chain step for the order
@@ -140,14 +140,14 @@ def select_task(colonist, task_registry, priority_config):
         if need.value < need.seek_threshold:
             task = find_fulfillment(need, colonist.memory)
             if task:
-                return task  # Tier 5: actionable need
+                return task  # ordinary_need: actionable need
 
-    # Tier 6: opportunistic work: haul, stock, undirected harvest
+    # opportunistic_work: haul, stock, undirected harvest
     work_task = select_work_from_registry(colonist, task_registry, priority_config)
     if work_task:
         return work_task
 
-    return idle()  # Tier 7: gather food for larder, wander
+    return idle()  # idle: gather food for larder, wander
 ```
 
 See [Task Registry](./task-registry.md) for GlobalTaskRegistry architecture and [Work Priorities](./work-priorities.md) for detailed work selection algorithm.
@@ -200,7 +200,7 @@ A colonist runs the selection above on an event, and otherwise every 0.5 s (`AID
 He decides at once when:
 
 - he has no task (he just spawned, or finished or dropped one);
-- he has arrived where his task leads. While an action runs there he decides every frame, which keeps the panel's trace current; the action is only interrupted by a higher tier;
+- he has arrived where his task leads. While an action runs there he decides every frame, which keeps the panel's trace current; the action is only interrupted by a higher rung;
 - the action system asks for a decision now: after a landed cut, or a pickup by a colonist already carrying goods from earlier legs of the same gathering;
 - a need crosses into critical, unless he already serves a critical need. The crossing is measured against the needs that were critical at his last decision (`Task::criticalNeedsAtDecision`, one bit per need), so a need set critical directly by a dev verb or a test counts as a crossing, and one already critical when he spawns or finishes another task is caught by the no-task event;
 - his route fails (`NavState::CantFindWayTo`, a route answer of "no known way"), once, at the failure. If the decision that follows picks a target whose route fails too, later decisions wait for the interval until a route is found (`Task::routeFailureDecided`).
@@ -215,17 +215,17 @@ Everything that persists runs on the interval: a critical need with nothing reac
 
 ## Related Documents
 
-- [Needs System](./needs.md): What triggers Tiers 2 and 5
+- [Needs System](./needs.md): What triggers `critical_need` and `ordinary_need`
 - [Memory System](./memory.md) — What colonists know about
 - [Decision Trace](./decision-trace.md) — Task queue display system
-- [Work Priorities](./work-priorities.md) — Tier 6 behavior
-- [Player Control](../features/player-control.md): Tier 3 behavior (reserved)
+- [Work Priorities](./work-priorities.md) — `opportunistic_work` behavior
+- [Player Control](../features/player-control.md): direct control and player orders
 - [Entity Capabilities](../world/entity-capabilities.md) — How needs are fulfilled
-- [Task Registry](./task-registry.md): Global task list architecture for Tiers 4 and 6
-- [Priority Config](./priority-config.md): Within-tier score factors and thresholds
+- [Task Registry](./task-registry.md): Global task list architecture for `committed_work` and `opportunistic_work`
+- [Priority Config](./priority-config.md): Within-rung score factors and thresholds
 - [Task Chains](./task-chains.md) — Multi-step task continuation
 - [Queries and chains](../../../technical/queries-and-chains.md): needs, actions, work, and behaviors as data
-- [Colonist Task Arbitration](../../../technical/colonist-task-arbitration.md): Implementation of the (tier, score) key, tier ladder, job lifecycle
+- [Colonist Task Arbitration](../../../technical/colonist-task-arbitration.md): Implementation of the (rung, score) key, the ladder, job lifecycle
 
 ---
 

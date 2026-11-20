@@ -211,8 +211,8 @@ The ladder is the named rungs of [Queries and chains](./queries-and-chains.md#ru
 | `opportunistic_work` | haul loose items, stock storage, undirected harvest |
 | `idle` | gather food for the larder, wander |
 
-The bumping rule is by rung name: only `survival`, `critical_need`, `low_mood`, and `player_order`
-bump, and no entry writes a number.
+The planned bumping rule ([Task Claims](./task-claims.md)) is by rung name: only `survival`,
+`critical_need`, and `player_order` would bump, and no entry writes a number.
 
 `own_unfinished_work` is how "finishing outranks starting new work by a wide margin" is delivered. It
 is a rung and not a score bonus for the reason the arbitration spec gives: an ordering that must
@@ -382,7 +382,7 @@ struct Need {
 behavior under `assets/config/behaviors/`, and the sleep curve's exponent is the `curve` of the sleep
 action entry ([Queries and chains](./queries-and-chains.md#needs)). A need's mood cost is a
 `<moodCost>` row on the creature that has mood, the human here
-([Colonist Needs](../design/game-systems/colonists/needs.md#need-to-mood-weights)). There is no default
+([Colonist Needs](../design/game-systems/colonists/needs.md#what-a-need-costs-mood)). There is no default
 in code. The behaviors are loaded with the other colonist rules ([Config Loading](./config-loading.md)),
 and a colonist's `NeedsComponent` is constructed from the loaded levels and carries each need's
 thresholds, which the AI and the thought sources both read, so one edit moves both. The tests and
@@ -393,7 +393,7 @@ benches build theirs from the shipped data through one helper (`libs/sim/ecs/Shi
   <drains perGameMinute="0.08"/>
   <satisfiedBy chain="eat_from_pack"/>
 </need>
-<action id="sleep" curve="2" interruptable="true"/>
+<action id="sleep" interruptable="true" pays="along" curve="2"/>
 ```
 
 Seek, urgent, and critical are 50, 25, 10 for hunger and thirst; 30, 20, 10 for energy, bladder, and
@@ -402,9 +402,10 @@ digestion; 40, 25, 15 for hygiene and temperature; and 30, 20, 10 for recreation
 **Rungs.** The rung of each option is data, named in the ladder under `assets/config/arbitration/` and
 in the work entries' `rung`. The engine promotes a need to `urgent_need` or `critical_need` by its
 thresholds, a held Craft to `own_unfinished_work`, and work serving a work order to `committed_work`;
-the gather-food sentinel and satisfied needs are `idle`. Code names a rung by its ladder name and never
-by a number, so none of `Task::priorityTier`, `EvaluatedOption::tier`, `ClaimHolder::tier`, or the
-task list's label can come to mean the wrong rung.
+an idle chain is on `idle`, and a satisfied need offers no option. Code names a rung by its ladder name
+and never by a number, so none of `installDefaultTaskTiers`, `Task::priorityTier`,
+`EvaluatedOption::tier`, `ClaimHolder::tier`, or `tierLabel` in `TaskListView.cpp` can come to mean the
+wrong rung.
 
 **Claim index.** After the per-task pass, `ClaimIndex::rebuild` walks the stations' queues and
 records each live crafter against its station in a table of its own, not as a claim: a hold has no
@@ -475,7 +476,9 @@ Deleted, each in the change that replaces it:
 - The decay literals in `Needs.cpp`.
 - Direct calls to `WorkQueue::removeJob` from the game, in favour of `cancelCraftingJob`.
 - The inline sleep quality choice in `NeedActions.cpp`, in favour of `sleepQuality`.
-- Bare tier numbers in C++ defaults (listed under Data), in favour of the named rungs.
+- Bare tier numbers in C++ defaults (`installDefaultTaskTiers`, `Task::priorityTier`,
+  `EvaluatedOption::tier`, `ClaimHolder::tier`, and `tierLabel`, listed under Data), in favour of the
+  named rungs.
 - Sleep's restore at completion (`applyNeedEffect` for a Sleep), replaced by the per-tick payout.
 - The `GlobalTaskAdapter` lookup of a Craft row's worker through colonists' current tasks, replaced
   by the job's crafter.

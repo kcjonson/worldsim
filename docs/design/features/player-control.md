@@ -27,7 +27,6 @@ Player has selected a colonist and can issue orders by clicking things in the wo
 
 **Examples:**
 - Click berry bush → "Harvest"
-- Click ground → "Move here"
 - Click storage → "Haul items here"
 
 **Queue Behavior:** Player commands go to FRONT of queue (high priority). Colonist continues autonomous behavior between commands.
@@ -47,6 +46,10 @@ Player takes full control using keyboard to move colonist around.
 
 **Primary Use Case:** Exploration. Player walks colonist into unknown territory to discover resources.
 
+### During a mood episode
+
+A colonist in a mood episode takes no direct control and no orders until the episode ends. The Control button is disabled for that colonist, its context menus offer no orders, and an order already given waits behind the episode, because the low-mood behavior ranks above the player's orders ([Mood](../game-systems/colonists/mood.md#the-episode-cycle)). A critical need still interrupts the episode, and the behavior's own end conditions bound it.
+
 ## Context Menus
 
 When clicking entities (or pressing E near them in direct control), a menu shows available interactions.
@@ -65,7 +68,6 @@ When clicking entities (or pressing E near them in direct control), a menu shows
 - View info
 
 **Ground (outdoor):**
-- Move here
 - Relieve self (if needed)
 
 ## Critical Interrupts
@@ -77,10 +79,6 @@ Even under player control, some things interrupt:
 **Critical Bladder:** Warning shown. If ignored, accident occurs.
 
 **Mood episode:** Control is released, and the low-mood behavior plays out.
-
-### During a mood episode
-
-A colonist in a mood episode takes no direct control and no orders until the episode ends. The Control button and the context menus do nothing for that colonist, a click-to-order is refused, and an order already given waits behind the episode, because the low-mood behavior ranks above the player's orders ([Mood](../game-systems/colonists/mood.md#the-episode-cycle)). A critical need still interrupts the episode, and the behavior's own end conditions bound it.
 
 ## The "Now What?" Question
 

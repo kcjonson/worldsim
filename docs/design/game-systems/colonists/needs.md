@@ -14,7 +14,7 @@ Colonists have physical and emotional needs. Some needs drive behavior (actionab
 
 ## Needs are data
 
-A need is a data entry: its name, how its level moves (draining with time, or set by the colonist's surroundings), its seek, urgent, and critical levels, its mood cost, and what meets it, a chain of steps the colonist carries out or work another colonist does for it. Each kind of creature lists the needs it has, so a cow can need milking and a colonist cannot, and a mod adds a need with a file. The entries and the chains behind them are specified in [Queries and chains](../../../technical/queries-and-chains.md#needs).
+A need is a data entry: its name, how its level moves (draining with time, or set by the colonist's surroundings), its seek, urgent, and critical levels, and what meets it, a chain of steps the colonist carries out or work another colonist does for it. Each kind of creature lists the needs it has, so a cow can need milking and a colonist cannot, and a mod adds a need with a file. The entries and the chains behind them are specified in [Queries and chains](../../../technical/queries-and-chains.md#needs).
 
 ## Actionable Needs
 
