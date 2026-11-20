@@ -7,6 +7,8 @@
 // `/api/state?what=sightTunables` and `/api/dev/sight` give the sight tunables with each one's range,
 // for the Dev Tools tab's sliders. Measures print to three decimals.
 
+#include <world/rendering/VisibilityCoverRenderer.h>
+
 #include <vision/SightBody.h>
 #include <vision/SightTunables.h>
 
@@ -29,11 +31,20 @@ namespace world_sim {
 		std::int64_t						   reachMm = 0;
 		std::string							   path;
 		const geometry::SightSideValues*	   ranges = nullptr;
+		// The greatest change of one side's range between his last two builds and over all he has made.
+		std::int64_t						   rangeChangeMm		 = 0;
+		std::int64_t						   greatestRangeChangeMm = 0;
 		const std::vector<vision::SightBody>*  bodies	   = nullptr;
 		const std::vector<vision::ShadowEdge>* shadowEdges = nullptr;
 	};
 
 	std::string sightBodiesJson(std::span<const ColonistSightBodies> colonists);
+
+	/// `/api/state?what=cover`: what the cover drew last frame (sight-softening.md 10 and 12): its counts
+	/// and CPU times, the seen feather's cells and pending cuts, and each colonist in view with his rim's
+	/// move since the last frame, every soft body's triangle measures, and every shadow edge's band, each
+	/// value also as it darkens the screen (the tint's alpha times it). `featherMm` is the feather tunable.
+	std::string coverJson(const worldview::VisibilityCoverRenderer& cover, std::int64_t featherMm);
 
 	/// Every tunable's value, its fixed bounds, and its start value.
 	std::string sightTunablesJson(const vision::SightTunables& tunables);

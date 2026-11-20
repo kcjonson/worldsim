@@ -18,7 +18,7 @@ namespace vision {
 		std::int64_t wallOpaqueLeastDiameterMm	 = 600;
 		std::int64_t placedOpaqueLeastDiameterMm = 1400;
 		std::int64_t softShadowRayWidthMm		 = 3000;
-		std::int64_t softShadowStrengthPercent	 = 50;
+		std::int64_t softShadowStrengthPercent	 = 42;
 		std::int64_t shadowEdgeWidthMm			 = 1200;
 		std::int64_t shadowWideningMostDegrees	 = 10;
 		std::int64_t shadowFinMostDegrees		 = 15;
@@ -35,7 +35,9 @@ namespace vision {
 		std::int64_t rimEaseMm					 = 400;
 		// Its start is the whole of `reach`; whoever reads it takes the least of it and the reach.
 		std::int64_t drawnShadowReachMm	  = kDrawnShadowWholeReachMm;
-		std::int64_t drawnShadowRebuildMm = 0;
+		std::int64_t softShadowRebuildPercent = 10;
+		// How far a soft triangle's pieces may stray from its rule in what the player sees, in thousandths.
+		std::int64_t softShadowToleranceThousandths = 12;
 
 		// A colonist's sight (kDefaultSightRadius, checked in SightTunables.cpp).
 		static constexpr std::int64_t kColonistSightMm = 30000;

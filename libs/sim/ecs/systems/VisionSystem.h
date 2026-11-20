@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -74,12 +75,14 @@ class VisionSystem : public ISystem {
 
 	/// The bodies within `reach` of an observer's last build (sight-softening.md 2.4), each with its
 	/// outline, kind, serial or wall body, and arrival fraction; the build's shadow edges, indexing
-	/// into `bodies`; and the `lead` that pass computed. Valid until vision's next pass. Empty for an
-	/// entity vision has not observed.
+	/// into `bodies`; the `lead` that pass computed, the step and the pass's walk, which the drawing
+	/// widens by; and the reach lead the shape was built to, that walk up to whole kLeadWalkStepMm and
+	/// one more, with `reach`. Valid until vision's next pass. Empty for an entity vision has not observed.
 	struct SightBodies {
 		const std::vector<vision::SightBody>*  bodies	   = nullptr;
 		const std::vector<vision::ShadowEdge>* shadowEdges = nullptr;
 		std::int64_t						   leadMm	   = 0;
+		std::int64_t						   reachLeadMm = 0;
 		std::int64_t						   reachMm	   = 0;
 		geometry::Vec2i64					   eyeCentre{0, 0};
 	};
@@ -89,12 +92,18 @@ class VisionSystem : public ISystem {
 	/// the walls' facing occluders and the opaque placed rings in reach. What the sweep builds.
 	[[nodiscard]] geometry::Ring hardPolygon(const geometry::Vec2i64& centre, std::int64_t reachMm) const;
 
+	/// The 64 ranges of the forest shape of a sight of `sightMm` round `centre` from the placed rings
+	/// standing now, as a build there would take them (sight-softening.md 4); every one `sightMm` for a
+	/// sight too long for forest depth. What a sweep point's own forest depth is read from (6.4).
+	[[nodiscard]] geometry::SightSideValues forestRangesAt(const geometry::Vec2i64& centre, std::int64_t sightMm) const;
+
 	[[nodiscard]] int priority() const override { return 45; }
 	[[nodiscard]] const char* name() const override { return "Vision"; }
 
 	/// Set how often vision updates run (default: every 5 frames)
 	/// At 60fps, 5 frames = 12 vision updates/second, which is plenty
 	void setUpdateInterval(uint32_t frames) { m_updateInterval = frames; }
+	[[nodiscard]] uint32_t updateInterval() const { return m_updateInterval; }
 
 	/// Set the placement executor and processed chunks for entity queries
 	/// Must be called before update() can function
@@ -168,6 +177,9 @@ class VisionSystem : public ISystem {
 		// structure pass found them when it was built (vision-architecture D4). Empty without a polygon.
 		const std::vector<construction::SegmentId>* segmentsSeen = nullptr;
 		const std::vector<construction::OpeningId>* openingsSeen = nullptr;
+		// The outlines of the opaque placed bodies the polygon sees by the same test, whose insides are
+		// never in sight. Empty without a polygon.
+		const std::vector<geometry::Ring>* placedSeen = nullptr;
 
 		/// Whether `point` is in his sight while he stands at `standing`: within `radius` of it, inside
 		/// the polygon on the polygon path, and inside the forest shape of `ranges` placed there.
@@ -191,17 +203,22 @@ class VisionSystem : public ISystem {
 	/// Ensure synthetic terrain definitions are registered (called once on first update)
 	void ensureTerrainDefinitionsRegistered();
 
-	/// The walls and openings that bound or cross the part of `builtPolygon` within `radiusMm` of `centerMm`, into memory
+	/// The walls and openings that bound or cross the part of `builtPolygon` within its rim, the forest shape of `ranges`
+	/// round `centerMm` that the seen record cuts it to (`radiusMm` the sight the structures are culled to), into memory
 	/// (vision-architecture D4) and into `segments` and `openings` (cleared first). `backFacesHidden` is what the query
-	/// the polygon was built from returned.
+	/// the polygon was built from returned. The opaque placed bodies among `bodies` it sees by the same
+	/// test, one of their outline edges, go into `placedSeen` as their outlines (cleared first).
 	void rememberStructures(
 		geometry::Vec2i64						 centerMm,
 		std::int64_t							 radiusMm,
+		const geometry::SightSideValues&		 ranges,
 		const geometry::Ring&					 builtPolygon,
 		bool									 backFacesHidden,
 		Memory&									 memory,
 		std::vector<construction::SegmentId>&	 segments,
-		std::vector<construction::OpeningId>&	 openings
+		std::vector<construction::OpeningId>&	 openings,
+		std::span<const vision::SightBody>		 bodies,
+		std::vector<geometry::Ring>&			 placedSeen
 	);
 
 	/// What the disc of `radiusMeters` round `center` shows, inside `shape` held from `center` (null for
@@ -246,7 +263,8 @@ class VisionSystem : public ISystem {
 		glm::vec2		  builtPos{0.0F, 0.0F};
 		geometry::Vec2i64 builtMm{0, 0};
 		float			  radius = 0.0F;		// meters, the sight radius of the last pass or build
-		std::int64_t	  leadMm = 0;			// the lead the shape was built with
+		std::int64_t	  leadMm = 0;			// how far he can be from the eye before the next pass: the step and the pass's walk
+		std::int64_t	  reachLeadMm = 0;	// the lead the shape was built to: that walk up to whole kLeadWalkStepMm, and one more
 		std::uint64_t	  buildRevision = 0;	// bumps at every build
 		std::int64_t	  reachMm = 0;			// sight plus that lead
 		std::uint64_t	  polygonRevision = 0; // bumps when the polygon is rebuilt or dropped
@@ -260,6 +278,7 @@ class VisionSystem : public ISystem {
 		geometry::Ring	  polygon;			 // empty when hasPolygon == false (outdoors)
 		std::vector<construction::SegmentId> segmentsSeen; // what the structure pass found for the polygon
 		std::vector<construction::OpeningId> openingsSeen;
+		std::vector<geometry::Ring>			 placedSeen;  // opaque placed bodies the polygon sees, as outlines
 		std::vector<vision::SightBody>		 bodies;	  // within reach of the build
 		std::vector<vision::ShadowEdge>		 shadowEdges; // of the polygon, into bodies
 		bool		   built = false;

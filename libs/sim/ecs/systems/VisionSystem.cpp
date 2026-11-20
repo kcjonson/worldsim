@@ -11,6 +11,8 @@
 #include "../components/Movement.h"
 #include "../components/Transform.h"
 
+#include <vision/SeenArea.h>
+
 #include "assets/AssetDefinition.h"
 #include "assets/AssetRegistry.h"
 #include "assets/RecipeRegistry.h"
@@ -49,6 +51,16 @@ namespace ecs {
 				rangeMm[side] = std::max(geometry::kForestShapeLeastRangeMm, radiusMm - depthMm[side]);
 			}
 			return rangeMm;
+		}
+
+		bool forestTakenFor(std::int64_t radiusMm) { return radiusMm > 0 && radiusMm <= kForestSightMostMm; }
+
+		// The slope-limited forest depth round `eyeMm` of a sight of `radiusMm` from `bodies`.
+		geometry::SightSideValues forestDepthOf(
+			const geometry::Vec2i64& eyeMm, std::int64_t radiusMm, std::span<const geometry::ForestBody> bodies, const geometry::ForestTunables& forest
+		) {
+			const geometry::ForestTunables sightForest = geometry::clampedToRanges(forest, radiusMm);
+			return geometry::forestLimitedDepth(geometry::forestRawDepth(eyeMm, radiusMm, bodies, sightForest), radiusMm, sightForest);
 		}
 
 		/// The recipe learning `newlyLearnedId` unlocks: one that is not innate, has it as an input, and whose
@@ -141,6 +153,31 @@ namespace ecs {
 		return geometry::computeVisibilityPolygon(centre, reachMm, occluders);
 	}
 
+	geometry::SightSideValues VisionSystem::forestRangesAt(const geometry::Vec2i64& centre, std::int64_t sightMm) const {
+		if (!forestTakenFor(sightMm)) {
+			geometry::SightSideValues every{};
+			every.fill(sightMm);
+			return every;
+		}
+		const TimeSystem*			   time	   = world->tryGetSystem<TimeSystem>();
+		const std::int64_t			   clockMs = time != nullptr ? std::llround(time->simulationSeconds() * 1000.0) : 0;
+		const geometry::ForestTunables forest  = tunables.forest();
+		std::vector<const vision::PlacedOccluder*> placed;
+		if (const vision::PlacedOccluderIndex* index = placedIndex()) {
+			index->within(centre, sightMm, placed);
+		}
+		std::vector<geometry::ForestBody> bodies;
+		bodies.reserve(placed.size());
+		for (const vision::PlacedOccluder* ring : placed) {
+			bodies.push_back({
+				.centre		 = ring->centre,
+				.widthFactor = geometry::forestWidthFactor(ring->perimeterMm, forest),
+				.arrival	 = time != nullptr ? geometry::forestArrivalFraction(clockMs, ring->arrivedMs, forest) : geometry::kFractionOne,
+			});
+		}
+		return rangesFrom(sightMm, forestDepthOf(centre, sightMm, bodies, forest));
+	}
+
 	bool VisionSystem::SightShape::holds(glm::vec2 standing, glm::vec2 point) const {
 		const glm::vec2 offset = point - standing;
 		if (offset.x * offset.x + offset.y * offset.y > radius * radius) {
@@ -164,6 +201,7 @@ namespace ecs {
 			.forest			 = entry.hasForest ? &entry.forest : nullptr,
 			.segmentsSeen	 = &entry.segmentsSeen,
 			.openingsSeen	 = &entry.openingsSeen,
+			.placedSeen		 = &entry.placedSeen,
 		};
 	}
 
@@ -185,6 +223,7 @@ namespace ecs {
 			.bodies		 = &entry.bodies,
 			.shadowEdges = &entry.shadowEdges,
 			.leadMm		 = entry.leadMm,
+			.reachLeadMm = entry.reachLeadMm,
 			.reachMm	 = entry.reachMm,
 			.eyeCentre	 = entry.builtMm,
 		};
@@ -247,16 +286,20 @@ namespace ecs {
 			// walks until then.
 			const std::int64_t		radiusMm   = std::llround(static_cast<double>(memory.sightRadius) * 1000.0);
 			const geometry::Vec2i64 observerMm = nav::toMm(pos.value);
-			// A still colonist walks nothing. A walk is taken up to whole kLeadWalkStepMm, and a build
-			// stores this pass's lead with one kLeadWalkStepMm more, so a frame time jittering across one
-			// such boundary at a steady walk never outgrows it, while a real speed-up does. Nothing older
-			// than the pass that builds goes into the lead it stores.
+			// A still colonist walks nothing. `lead` is the pass's walk as it is, what the drawing widens
+			// by. What the shape is built to takes the walk up to whole kLeadWalkStepMm, and a build stores
+			// that with one kLeadWalkStepMm more, its reach lead, so a frame time jittering across one such
+			// boundary at a steady walk never outgrows it, while a real speed-up does. Nothing older than
+			// the pass that builds goes into what it stores.
 			const auto*		   movement	  = world->getComponent<MovementTarget>(entity);
 			const double	   speed	  = movement != nullptr && movement->active ? static_cast<double>(movement->speed) : 0.0;
-			const auto		   walkMm	  = static_cast<std::int64_t>(std::ceil(speed * intervalSeconds * 1000.0 / kLeadWalkStepMm)) * kLeadWalkStepMm;
-			const std::int64_t passLeadMm = std::min(vision::kSightLeadMostMm, kSightRebuildStepMm + walkMm);
-			const std::int64_t leadMm	  = std::min(vision::kSightLeadMostMm, passLeadMm + kLeadWalkStepMm);
-			const std::int64_t reachMm	  = radiusMm + leadMm;
+			const double	   walkedMm	  = speed * intervalSeconds * 1000.0;
+			const std::int64_t walkedWholeMm = std::llround(walkedMm);
+			const std::int64_t leadMm		 = std::min(vision::kSightLeadMostMm, kSightRebuildStepMm + walkedWholeMm);
+			const auto		   walkMm	  = static_cast<std::int64_t>(std::ceil(walkedMm / kLeadWalkStepMm)) * kLeadWalkStepMm;
+			const std::int64_t passReachLeadMm = std::min(vision::kSightLeadMostMm, kSightRebuildStepMm + walkMm);
+			const std::int64_t reachLeadMm	   = std::min(vision::kSightLeadMostMm, passReachLeadMm + kLeadWalkStepMm);
+			const std::int64_t reachMm		   = radiusMm + reachLeadMm;
 			VisibilityCache&   entry	  = m_visibilityCache[entity];
 			entry.seenThisTick				= true;
 
@@ -272,7 +315,7 @@ namespace ecs {
 			const geometry::Vec2i64 moved = observerMm - entry.builtMm;
 			bool due = !entry.built || geometry::dot(moved, moved) > geometry::Int128::product(kSightRebuildStepMm, kSightRebuildStepMm) ||
 					   entry.builtVersion != m_geometry.generation() || entry.tunablesVersion != tunablesVersion ||
-					   entry.radius != memory.sightRadius || passLeadMm > entry.leadMm;
+					   entry.radius != memory.sightRadius || passReachLeadMm > entry.reachLeadMm;
 			if (!due && !entry.hasPolygon) {
 				due = m_geometry.anyBodyWithin(observerMm, reachMm);
 			}
@@ -303,6 +346,11 @@ namespace ecs {
 			if (!due && !entry.hasPolygon) {
 				// On the plain disc his sight is the circle round where he stands.
 				entry.builtPos = pos.value;
+			}
+			// `lead` is the farthest he walks a pass since the build: a pass whose walk the reach lead's
+			// margin absorbs keeps the build but lengthens the lead the drawing widens by.
+			if (!due) {
+				entry.leadMm = std::max(entry.leadMm, leadMm);
 			}
 
 			if (due) {
@@ -358,12 +406,9 @@ namespace ecs {
 				}
 
 				// Forest depth (sight-softening.md 4) from every placed ring in sight, opaque or soft.
-				const bool				  forestTaken = radiusMm > 0 && radiusMm <= kForestSightMostMm;
-				geometry::SightSideValues depthMm{};
-				if (forestTaken) {
-					const geometry::ForestTunables sightForest = geometry::clampedToRanges(forest, radiusMm);
-					depthMm = geometry::forestLimitedDepth(geometry::forestRawDepth(observerMm, radiusMm, forestScratch, sightForest), radiusMm, sightForest);
-				}
+				const bool						forestTaken = forestTakenFor(radiusMm);
+				const geometry::SightSideValues depthMm		= forestTaken ? forestDepthOf(observerMm, radiusMm, forestScratch, forest)
+																		  : geometry::SightSideValues{};
 				entry.ranges	= rangesFrom(radiusMm, depthMm);
 				entry.path		= polygonPath ? SightPath::Polygon : (ringsInSight ? SightPath::Leg : SightPath::Open);
 				entry.hasForest = forestTaken;
@@ -376,6 +421,7 @@ namespace ecs {
 						entry.polygon.clear();
 						entry.segmentsSeen.clear();
 						entry.openingsSeen.clear();
+						entry.placedSeen.clear();
 						entry.hasPolygon = false;
 						++entry.polygonRevision;
 					}
@@ -414,7 +460,7 @@ namespace ecs {
 					// New structures appear only via a geometry change, which bumps the
 					// generation and forces a rebuild here.
 					rememberStructures(
-						observerMm, radiusMm, entry.polygon, backFacesHidden, memory, entry.segmentsSeen, entry.openingsSeen
+						observerMm, radiusMm, entry.ranges, entry.polygon, backFacesHidden, memory, entry.segmentsSeen, entry.openingsSeen, entry.bodies, entry.placedSeen
 					);
 				}
 				entry.builtMm		  = observerMm;
@@ -422,6 +468,7 @@ namespace ecs {
 				entry.tunablesVersion = tunablesVersion;
 				entry.radius		  = memory.sightRadius;
 				entry.leadMm		  = leadMm;
+				entry.reachLeadMm	  = reachLeadMm;
 				entry.reachMm		  = reachMm;
 				entry.built			  = true;
 				++entry.buildRevision;
@@ -465,16 +512,21 @@ namespace ecs {
 	void VisionSystem::rememberStructures(
 		geometry::Vec2i64					  centerMm,
 		std::int64_t						  radiusMm,
+		const geometry::SightSideValues&	  ranges,
 		const geometry::Ring&				  builtPolygon,
 		bool								  backFacesHidden,
 		Memory&								  memory,
 		std::vector<construction::SegmentId>& segments,
-		std::vector<construction::OpeningId>& openings
+		std::vector<construction::OpeningId>& openings,
+		std::span<const vision::SightBody>	  bodies,
+		std::vector<geometry::Ring>&		  placedSeen
 	) {
 		segments.clear();
 		openings.clear();
-		// The polygon may reach a rebuild step past sight; what is seen is the part within it.
-		const geometry::Ring polygon = geometry::starClippedToConvex(builtPolygon, centerMm, geometry::sightPolygon(centerMm, radiusMm));
+		placedSeen.clear();
+		// The polygon may reach a rebuild step past sight; what is seen is the part within its rim, the forest
+		// shape of his sight round the build that the seen record cuts it to (sight-softening.md 6.4).
+		const geometry::Ring polygon = geometry::starClippedToConvex(builtPolygon, centerMm, vision::rimOf(centerMm, ranges));
 		// Pass 0: structure-as-observable (vision-architecture D4). A wall or
 		// opening that bounds or intersects the visibility polygon is seen, and
 		// its stable construction id enters memory. Runs only for indoor
@@ -532,6 +584,20 @@ namespace ecs {
 			if (structureSeen(op.leftFace.start, op.leftFace.end) || structureSeen(op.rightFace.start, op.rightFace.end)) {
 				memory.rememberOpening(op.openingId);
 				openings.push_back(op.openingId);
+			}
+		}
+
+		// An opaque placed body is seen by a wall's test: one of its outline edges is. Its inside is
+		// never in sight, so its footprint joins the seen record as a seen wall's does.
+		for (const vision::SightBody& body : bodies) {
+			if (body.source != vision::SightBody::Source::Placed || body.kind != vision::BodyKind::Opaque) {
+				continue;
+			}
+			if (std::ranges::any_of(body.edges, [&](const geometry::OccluderSegment& edge) { return structureSeen(edge.a, edge.b); })) {
+				geometry::Ring& outline = placedSeen.emplace_back();
+				for (const geometry::OccluderSegment& edge : body.edges) {
+					outline.push_back(edge.a);
+				}
 			}
 		}
 	}

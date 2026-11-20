@@ -311,8 +311,9 @@ has. Going back to sleep starts a new sleep and the curve from the beginning, so
 more than it saves, which is the point of the shape.
 
 Quality is one number worked out when the sleep starts, a product of factors. Today it is the inline
-choice between 0.5 and 1.0; that becomes a function in `NeedActions.cpp`
-(`sleepQuality(colonist, spot)`) with the spot as its one factor.
+choice between 0.5 and 1.0; that becomes one function (`sleepQuality(colonist, spot)`) with the spot
+as its one factor, answered as the fact `sleep_quality` that the Sleep action scales its restore by
+([Queries and chains](./queries-and-chains.md#facts)).
 Bed type, indoors or out, and whatever else comes later multiply in at that one place; the curve and
 the payout do not change when they do.
 
@@ -372,14 +373,17 @@ struct Need {
 };
 ```
 
-**Need tuning as data.** The three thresholds and the need's mood cost are in the folder
-`assets/config/colonists/needs/`, and the per-need decay rate moves out of `Needs.cpp` to join them. The folder is loaded with the other colonist rules
-([Config Loading](./config-loading.md)): `assets::loadNeedsConfig` reads it, a later file replacing a
-`<Need>` by name, and `ecs::NeedLevels` checks that every need is given. There is no default in code.
-A colonist's `NeedsComponent` is constructed from the loaded levels and carries each need's thresholds,
-which the AI and the thought sources both read, so one edit moves both, and its mood cost, which
-`MoodSystem` reads ([Colonist Needs](../design/game-systems/colonists/needs.md), What a need costs mood). The tests and benches build
-theirs from the shipped folder through one helper (`libs/sim/ecs/ShippedConfig.test.h`).
+**Need tuning as data.** A need's three thresholds, its decay and its mood cost are on its own entry
+in the needs folder (`assets/config/colonists/needs/needs.xml`), and the sleep curve's exponent is the
+Sleep entry's `curveExponent`; [Queries and chains](./queries-and-chains.md#needs) specifies the
+layout this moves to, with the sleep exponent as the Sleep action entry's `curve`. There is no default
+in code. The folder is loaded with the other colonist rules ([Config Loading](./config-loading.md)):
+`assets::loadNeedsConfig` reads it, a later file replacing a `<Need>` by name, and `ecs::NeedLevels`
+checks that every need is given. A colonist's `NeedsComponent` is constructed from the loaded levels and
+carries each need's thresholds, which the AI and the thought sources both read, so one edit moves both,
+and its mood cost, which `MoodSystem` reads ([Colonist Needs](../design/game-systems/colonists/needs.md),
+What a need costs mood). The tests and benches build theirs from the shipped folders through one helper
+(`libs/sim/ecs/ShippedConfig.test.h`).
 
 ```xml
 <Needs>

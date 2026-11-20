@@ -78,23 +78,26 @@ Many thoughts have no line. Their bubble is the feeling's icon or the event's an
 
 ### Which thoughts become bubbles
 
-Every thought is scored when it is created.
+Every thought is scored when it is created. The score is the sum of four parts.
 
-- **Importance.** Major thoughts always pass. Trivial ones start low.
-- **Novelty.** The first time this colonist has a thought of this event type scores highest. Each repeat scores lower, and the score recovers slowly over days without it.
-- **Mood effect.** A larger effect scores higher.
-- **Attention.** A colonist off screen never bubbles. A selected colonist scores higher.
+- **Importance.** Trivial adds 0.2, normal adds 0.5. A major thought always bubbles and is not scored.
+- **Novelty.** 1.0 the first time this colonist has a thought of this event type. It halves with each repeat and recovers to 1.0 over 5 game days without one.
+- **Mood effect.** The size of the effect divided by 20, to at most 1.0.
+- **Attention.** A selected colonist adds 0.5. A colonist off screen never bubbles.
 
-A thought that scores above the threshold then has to fit the budget:
+A thought bubbles when its score clears the colonist's bar. The bar moves:
 
-- a minimum gap between bubbles on the same colonist
-- a minimum gap between bubbles of the same event type anywhere
-- a cap on bubbles on screen at once
-- a colony-wide rate, so a large colony is not noisier per minute than a small one
+- When a colonist bubbles, their bar jumps to its peak, 3.0, above anything an ordinary thought scores. Only a major thought shows straight after another bubble.
+- With no bubble, the bar falls in a straight line to its floor, 0.2, over 12 game hours. At the floor even a repeated trivial thought clears it, so a colonist whose thoughts are all minor still bubbles a couple of times a game day.
+- Every bubble anywhere also raises every colonist's bar a little: it adds 0.25 to a colony-wide amount that drains at 0.25 a game hour, and that amount sits on top of each colonist's own bar. A colony where many are bubbling makes the next one slightly less likely for everyone, so a large colony is not much noisier than a small one.
 
-Major thoughts skip the budget. When two thoughts compete for one slot, the higher score wins and the loser is only recorded. A thought that does not bubble when it is created never bubbles later.
+The bar is a fixed line, not a roll: the same thought at the same moment always gives the same answer. What is kept is the time of each colonist's last bubble, the colony-wide amount, and the novelty counts.
 
-The result the tuning aims for: a first discovery always shows, the fortieth "I'm hungry" never does, and an ordinary colonist shows roughly one small bubble a game day.
+At most 3 bubbles are on screen at once. A major thought ignores the bar and the cap. When two thoughts compete for one slot, the higher score wins and the loser is only recorded. A thought that does not bubble when it is created never bubbles later.
+
+The numbers here are the shipped values in the thought tuning config; the bubble frequency setting scales the fall time (fewer doubles it, more halves it).
+
+The result the tuning aims for: a first discovery always shows, the fortieth "I'm hungry" never does, and an ordinary colonist shows a couple of small bubbles a game day.
 
 ### Bubbles
 
@@ -123,10 +126,10 @@ A colonist who meets something tied to an old thought can have a new thought abo
 
 A recalled thought is a new thought. Its event is the recall, its subject is the old thought's subject, and it links to the old thought in the log.
 
-- **Strength.** Its mood effect is a fraction of the original's, a third by default, and shorter.
+- **Strength.** Its mood effect is a third of the original's and lasts half as long.
 - **Feeling.** It starts as the original feeling. An event type can say how its feeling changes with time: grief becomes fondness, mortification becomes amusement. A recall can therefore be a comfort where the original was a blow.
-- **Floor.** Only thoughts that were major, were a first, or had a mood effect above a threshold can be recalled. Being rained on once is not something a colonist carries.
-- **Cooldown.** Each old thought can be recalled at most once in a long interval, 5 game days by default.
+- **Floor.** Only thoughts that were major, were a first, or had a mood effect of 8 or more can be recalled. Being rained on once is not something a colonist carries.
+- **Rare.** A recall is an occasion. A colonist has at most one in 10 game days, and each old thought can be recalled at most once in 30 game days. A cue met inside either interval creates nothing.
 - **No chains.** A recalled thought cannot itself be recalled, and cannot cue another recall.
 
 Recall is what makes things matter to particular colonists.
@@ -181,7 +184,7 @@ Pruning changes only what the log can show. The bubble selector's novelty does n
 - **Info panel and colonist details, Log tab.** Each thought is one block holding the event, the feeling, and the mood adjustment ("Slept on the ground. Miserable. -10 mood, 1 day"). A Notable / All control above the blocks picks what shows: Notable, the default, is every thought that bubbled, every major thought, and every thought with a mood effect; All is every thought recorded. The newest 50 blocks show first, and "Show older" under them adds the next 50; another colonist starts again at 50. Merged entries show their count, their date range ("Day 3, 08:10 to Day 9, 17:42"), and the mood effect of one of their thoughts ("Slept on the ground x12. Miserable. -10 mood each, 1 day"), and a repeated or stacked thought shows its count and its latest arrival. It is a reference for "why", not something to read through.
 - **Colonist details, Needs tab.** The mood breakdown lists every held thought that has a mood effect, with its amount and time left. See [Mood](./mood.md).
 - **Colony overview.** Held thoughts counted by event type across the colony ("slept on the ground: 5 colonists"), largest total mood effect first.
-- **Settings.** Bubble frequency (fewer, normal, more), and a switch per source to stop its trivial and normal thoughts from bubbling. Major thoughts always show.
+- **Settings.** Bubble frequency (fewer, normal, more), which scales how fast the bar falls. Major thoughts always show. There is no switch per source: how often each kind of thought bubbles is the selector's job.
 
 ## Data
 
@@ -237,7 +240,7 @@ Event types, their feelings, lines, importance, mood effects, and animations are
 - A line is at most `maxLineLength` characters, counting `{subject}` as `maxSubjectNameLength`. `{subject}` in a line is the subject's name as it was when the thought arrived, cut to `maxSubjectNameLength` characters when it is longer. A line that names the subject fits only a subject that has a name: a colonist's own name, or an entity's asset label (its definition name when it has no label). A colonist with no name has none.
 - `<ends thought>` names the type created when a held thought of this type ends, however it ends. Endings may not loop.
 - A `<source>` names a change in the sim that creates a thought of its type, and a type may have any number. Its `trigger` is one of:
-  - `needFalls` or `needRises`, with `need` (the need's label) and `threshold` (`seek`, `urgent`, or `critical`, the need's thresholds in `assets/config/colonists/needs/`, the same ones the colonists' AI seeks by): the need falls below the threshold, or rises back to it. A change across several thresholds at once is told once, by the level it lands in.
+  - `needFalls` or `needRises`, with `need` (the need's name) and `threshold` (`seek`, `urgent`, or `critical`, the need's levels on its entry in `assets/config/needs/`, the same ones the colonists' AI seeks by): the need falls below the threshold, or rises back to it. A change across several thresholds at once is told once, by the level it lands in.
   - `actionStarts` or `actionFinishes`, with `action` (`Eat`, `Sleep`, `Craft`, `Build`, and the other actions), an optional `on`, either `ground` for an action about no thing or a capability the kind of thing it is about has (`sleepable`), and `first="true"` for only the first time for each kind of thing. An action finishes only when its effect takes: a meal whose food is gone, a pickup or harvest of something already taken, a craft whose station lost an input, or a delivery the target refused does not finish, and neither does an action cut short. Taking up work already begun (a build site with build work on it, a teardown already under way, a craft batch past its first unit) does not start; the first colonist to tear down a half-built site does start.
   - `firstSight`, the first time the colonist sees a kind of thing that has a display label, with an optional `of` naming a capability the kind has. What the landing crew learns of the landing area on arrival is no first sight.
   - `recipeLearned`.
@@ -268,6 +271,9 @@ A supplement, not part of the spec. Kevin, 2026-11-16.
 - Thoughts are kept up to a high bound per colonist, with an algorithm that prunes as the limit approaches.
 - Recalling old thoughts on a cue, with attachment, developing likes, and softened feelings, is wanted ("kinda fun").
 - The game should carry some of The Sims' joy; balance of harsh against gentle is tuned at playtest.
+- 2026-11-17: no per-source bubble switches. Bubble frequency is the one setting; making bubbles meaningful and not overwhelming is the selector's job, not the player's. A thought type carries no source group.
+- 2026-11-17: bubbles are gated by a moving bar per colonist, not by fixed gaps. The bar is set high when the colonist bubbles and falls as time passes, so bubbles are very unlikely back to back unless serious, and a colonist with only minor thoughts still shows a couple a day. It is a fixed line, not a roll. Other colonists' bubbles raise everyone's bar slightly, through a summed amount that drains away; there is no separate colony bar.
+- 2026-11-17: recall is a very rare occurrence. Starting values: a recallable thought has a mood effect of 8 or more (or is major, or a first); a recall has a third of the strength and half the duration; one recall per colonist in 10 game days, and one per old thought in 30.
 - 2026-11-17: need thoughts carry no mood effect, because the needs score already prices a low need into mood.
 - 2026-11-17: pruning's importance weights are trivial 1 and normal 3; major thoughts are never pruned, so they carry no weight.
 - 2026-11-17: recency and age count from a thought's last moment, the later of its latest arrival and its end, in game days. A thought held until recently stays, so nothing that read it while it was held loses it.

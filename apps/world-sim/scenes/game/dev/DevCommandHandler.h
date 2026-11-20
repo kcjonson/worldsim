@@ -42,6 +42,9 @@ namespace construction {
 namespace worldgen {
 	struct GeneratedWorld;
 }
+namespace worldview {
+	class VisibilityCoverRenderer;
+}
 
 namespace world_sim {
 
@@ -65,6 +68,7 @@ namespace world_sim {
 		const world::WorldCamera*		 camera = nullptr;		   // the flora view's default rect
 		float							 pixelsPerMeter = 0.0F;	   // world-to-screen at zoom 1
 		std::function<bool()>			 dialogOpen;			   // a dialog is open over the game (the drawing view's dialogOpen)
+		const worldview::VisibilityCoverRenderer* cover = nullptr; // the player visibility cover, for its state view
 
 		// Planet used for the current session; populated from GameStartConfig. Used by
 		// serializeLanding (/api/state?what=landing) for biome + water readback. May be

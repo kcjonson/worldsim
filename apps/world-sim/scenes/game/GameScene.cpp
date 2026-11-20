@@ -363,6 +363,14 @@ namespace {
 						}
 					},
 			});
+			// The cover's soft edges need a window with alpha and depth; without them every fill of the cover
+			// draws nothing and the whole map would show, so the player is told.
+			if (!worldview::coverTargetHoldsPartialMasks()) {
+				LOG_ERROR(Game, "The window has no 8-bit alpha or 24-bit depth: the player visibility cover cannot be drawn");
+				gameUI->pushNotification(
+					"Display", "This display can't draw the cover over unexplored areas, so the whole map shows.", ui::ToastSeverity::Critical
+				);
+			}
 
 			// Initialize ECS World
 			initializeECS();
@@ -619,6 +627,7 @@ namespace {
 				.camera = m_camera.get(),
 				.pixelsPerMeter = kPixelsPerMeter,
 				.dialogOpen = [this] { return modalDialogOpen(); },
+				.cover = m_visibilityCover.get(),
 				.planet = m_planet,
 				.landingLatDeg = m_landingLatDeg,
 				.landingLonDeg = m_landingLonDeg,
@@ -864,6 +873,7 @@ namespace {
 			// The frame's snapshot is the window system's word at frame end; events moved the flag within the frame, and none are dispatched while paused.
 			windowPresence.syncPointer(frame.input.pointerInWindow);
 			const auto dt = static_cast<float>(frame.dt);
+			frameSeconds = dt;
 			// The camera's held keys are polled whatever the ui took, so a modal dialog holds them off the world.
 			const bool worldKeys = !modalDialogOpen();
 			const auto down = [&frame, worldKeys](foundation::Key key) {
@@ -1086,7 +1096,7 @@ namespace {
 
 			// Player visibility: unseen ground black, seen ground out of sight tinted. Over everything the
 			// world draws, under every overlay, preview, marker and ghost drawn after it.
-			m_visibilityCover->render(*ecsWorld, *m_camera, w, h, kPixelsPerMeter);
+			m_visibilityCover->render(*ecsWorld, *m_camera, w, h, kPixelsPerMeter, frameSeconds);
 
 			// In-progress drawing preview (rubber-band, snap guides, opening ghost)
 			// rides above the entities like the placement ghost; committed
@@ -2266,6 +2276,7 @@ namespace {
 		std::unique_ptr<worldview::ChunkRenderer>		   m_renderer;
 		std::unique_ptr<worldview::EntityRenderer>		   m_entityRenderer;
 		std::unique_ptr<worldview::VisibilityCoverRenderer> m_visibilityCover;
+		float												frameSeconds = 0.0F; // the last update's, for the cover's stop
 		std::unique_ptr<assets::PlacementExecutor>		   m_placementExecutor;
 		std::unique_ptr<world_sim::GameUI>				   gameUI;
 
