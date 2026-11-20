@@ -229,9 +229,9 @@ marked "behavior change" lands only with the owner's sign-off.
    - Must pass: the scenarios, sim-tests.
    - Depends on: none.
 3. Need, idle, and vision benches.
-   - Built: `BM_NeedDecision` (hungry and thirsty colonists, 10,000 edible memories, 1 and 8
-     colonists), `BM_IdleDecision` (wandering colonists deciding every frame), a vision remember and
-     forget bench, a visit count in `FindsANeedSourceInALargeMemory`.
+   - Built: `BM_NeedDecision` (hungry and thirsty colonists, 9,500 edible and 500 water memories, the
+     memory's 10,000 cap, 1 and 8 colonists), `BM_IdleDecision` (wandering colonists deciding every
+     frame), a vision remember and forget bench, a visit count in `FindsANeedSourceInALargeMemory`.
    - Deleted: none.
    - Must pass: the benches; baselines recorded only with both machine checks `idle`.
    - Depends on: none.
@@ -439,7 +439,9 @@ marked "behavior change" lands only with the owner's sign-off.
 30. Wander and the idle put-down.
     - Built: `common/wandering` (the ring, the disc fit, every-frame decisions while walking, the hold
       with no option, no wander without a mesh, idle rows ranked in order); `putDownUnwantedArmful` as
-      the idle hands rule.
+      the idle hands rule. `BM_IdleDecision` runs headless on the no-nav-system exception in
+      `canNavigate`; if the wandering chain drops that exception, this ticket first moves the bench onto
+      a meshed world on the old code and re-records its baseline, then compares.
     - Deleted: the wander option, `generateWanderTarget`, `TaskType::Wander`.
     - Must pass: `StoppedWanderRepicksFreshTarget`, `WanderingColonistDoesNotRepickAFailedRoute`,
       `WanderSequenceFollowsSeed`, `WanderPointsFitHisDisc`, `WanderTargetWithinRadius`,

@@ -21,8 +21,10 @@
 namespace ecs::testing {
 
 	inline std::filesystem::path repoConfig() {
-		// <root>/libs/sim/ecs/ShippedConfig.test.h -> <root>/assets/config
-		return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "assets" / "config";
+		// <root>/libs/sim/ecs/ShippedConfig.test.h -> <root>/assets/config. Normalized first: included as
+		// "../ShippedConfig.test.h", __FILE__ can keep the "..".
+		return std::filesystem::path(__FILE__).lexically_normal().parent_path().parent_path().parent_path().parent_path() / "assets" /
+			   "config";
 	}
 
 	inline void stopOnErrors(const char* what, const std::vector<std::string>& errors) {

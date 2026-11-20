@@ -13,7 +13,7 @@
 // BM_WorkDecision: range(0) colonists, each remembering the same range(1) trees that yield wood,
 // with three goals that want wood: a box stocking it by cutting, a craft whose recipe needs it, and
 // a build site that needs it. Every timed AIDecisionSystem::update re-decides every colonist (as
-// BM_NeedDecision does), and fails the run if one did not. Development builds include the claim
+// BM_NeedDecisionRouted does), and fails the run if one did not. Development builds include the claim
 // index validator the update runs. Reports the options in the first colonist's decision trace
 // after the last decision, all of them and the harvests among them: one option per cut goal, which
 // stands for every tree it could cut, plus a Reserved row for a goal whose best-ranked tree another
