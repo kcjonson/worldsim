@@ -103,6 +103,47 @@ The editor invariants (no X-crossings, T-junctions pre-split, min angle/spacing 
 - **Room identity:** matched against the previous records in passes, each record inherited by at most one new room. First, a room whose outer ring is a record's stored ring (the same vertex cycle) keeps that record, so building or removing a room inside another never renames the outer room. Then a room inherits a record whose stored representative point is strictly inside it; then, for a point a new wall now runs through, one whose point is on its boundary (the first room in canonical order that still has none takes it, so one side of a divider keeps the name). When a room holds several stored points (a merge), the largest stored area wins, then the lowest id. Anything left unmatched is a new room with a new id and name. When several walls change in one update so that a room closes round another room's stored point while that room's outline also changes, the inner room takes the name (WOR-875).
 - **Failure feedback:** when a wall completes and almost-closes a loop, nothing happens silently (the Prison Architect confusion). Cheap heuristic for later UX polish: surface near-misses in the rooms overlay.
 
+#### Enclosed shade (WOR-743)
+
+Player-facing behaviour: design spec, [Rooms > Enclosed Look](../design/game-systems/world/building-construction.md#enclosed-look). Every room gets one flat, hard-edged, translucent black fill over its area, drawn after the entities and before the player visibility cover, so it darkens everything drawn over the room and the cover composes over it.
+
+**Input.** `RoomDetectionSystem::rooms()`: per record, `roomId`, `ring` (CCW), and `holes` (each CW). Every bounded face of the built-wall centrelines is a room and openings live on segments, so every closed room, doors and windows included, is shaded; there is no enclosure flag. A room's shade polygon is its ring with its holes cut out, so in a nest every floor is covered exactly once and shades never overlap. The ring is the wall centrelines, used as it is, with no inset.
+
+**Fill cache.** `worldview::RoomFillCache` (`libs/world-view/world/rendering/RoomFillCache.{h,cpp}`) holds one fill per room, keyed by `roomId`: the `roomId`, an `origin` (the ring's first vertex), the mesh in metres relative to it, and the ring's world bounding box for culling, with a lookup by `roomId`. The mesh is the salal tessellator's multi-contour `Tessellate` over the ring and holes with the default nonzero rule, which cuts the CW holes out of the CCW ring. A room that fails to tessellate gets an empty mesh and a `LOG_DEBUG`, and draws neither tint nor shade.
+
+`sync(const ecs::RoomDetectionSystem&)` walks the records, compares each record's ring and holes with the copy its fill was built from, re-tessellates the fill on a difference, and drops fills whose room is gone. `GameScene::render` calls it once per frame, before anything reads the cache. The rooms overlay (`world_sim::RoomOverlay`, which takes a `const worldview::RoomFillCache*` in its `Args`) and the shade renderer read it const and never sync it; the overlay holds no tessellation of its own. A compare can find a difference that changes nothing visible, a ring that comes back starting at another vertex, or one with an extra collinear vertex where a blueprint wall ends on a built wall and splits it, and the re-tessellation that follows is harmless. The cache counts the tessellations it has run (`tessellationCount()`), which is what a test reads to see that an unchanged room is not rebuilt.
+
+**Renderer.** `worldview::RoomShadeRenderer` (`libs/world-view/world/rendering/RoomShadeRenderer.{h,cpp}`), so world rendering stays in `world-view` and nothing in `sim` touches the renderer. It is constructed with a `const RoomFillCache*` and a `const ecs::RoomDetectionSystem*`, reads the shade style from `assets::ConstructionRegistry::Get().rendering()` each frame, and `render(const world::WorldCamera&, int viewportWidth, int viewportHeight, float pixelsPerMeter)` iterates `rooms()`, looks up each room's fill, culls its box against the camera's visible rect, projects the mesh's vertices to the screen as the overlay does, and submits one `Renderer::Primitives::drawTriangles` per room in view, in the configured colour at the config's `fillAlpha`, key 0. Every room draws at that one strength. `lastFrame()` returns what the last `render` drew: the count, and per room drawn its `roomId` and alpha, as `VisibilityCoverRenderer::layers()` does for the cover.
+
+**Draw order.** `GameScene::render` (`apps/world-sim/scenes/game/GameScene.cpp`):
+
+1. Terrain.
+2. Committed construction, `DrawingSystem::renderCommitted`, then `Primitives::flush()`.
+3. Entities, `EntityRenderer::render`: baked short flora (`renderBakedChunks`), groundcover, and every Y-sorted upright, each drawn at once. `InstancedEntityRenderer::emitSorted` flushes each animated batch and the selection outline where it falls in the depth sort and closes every run before it returns, so when the pass ends nothing is pending.
+4. **The shade**: `RoomShadeRenderer::render`, then its own `Primitives::flush()`. It is drawn after every entity, so it lies over them.
+5. Player visibility cover, `VisibilityCoverRenderer::render`. When it draws, it flushes whatever is pending before its fills, which darken whatever lies under them, the shade included. With reveal on it returns without drawing or flushing, which is why the shade flushes itself.
+6. The rest, in the frame's last flush: drawing preview, terrain polygon overlay, rooms overlay, nav and vision overlays, selection indicator, move marker, placement ghost. All of it draws over the shade.
+
+The shade needs nothing from player visibility, and player visibility nothing from the shade: the two compose because the cover draws later.
+
+**State view.** `/api/state?what=rooms` is registered in `DevCommandHandler::registerWith` with the other views, and `DevCommandContext` carries a `const worldview::RoomFillCache*` and a `const worldview::RoomShadeRenderer*` for it, as it carries `cover` for the cover view. Shape: `{drawnCount, rooms:[{id, name, area, holeCount, tessellated, fillArea, shadeAlpha, drawn}]}`. `drawnCount` is the rooms the shade drew last frame; per room, `id` is the `roomId`, `area` the record's area in m2 net of holes, `holeCount` its number of holes, `tessellated` whether its fill has a mesh, `fillArea` the mesh's summed triangle area in m2, `drawn` whether it was drawn last frame, and `shadeAlpha` the alpha it was drawn at, null when `drawn` is false. Areas print to three decimals. A 5% layer is too faint to judge by eye, so a check reads this.
+
+**Config.** `assets/config/construction/rendering.xml` has a `<RoomShade>` element with child elements like the other styles: `<color>#000000FF</color>` (rgb only; the alpha comes from `fillAlpha`) and `<fillAlpha>0.05</fillAlpha>`. It loads into `assets::RoomShadeStyle { StyleColor color{0.0F, 0.0F, 0.0F, 1.0F}; float fillAlpha = 0.05F; }`, `RenderingConfig::roomShade` (`libs/assets/assets/ConstructionRegistry.h`), in `ConstructionRegistry::loadRendering` beside the other styles. `ConfigValidator::validateConstruction` rejects a `fillAlpha` outside 0 to 1 with `requireOpacity`, as it does `guideOpacity`.
+
+**Excluded.**
+
+- Soft edges, gradients, or any pixel effect; the edges are hard vector edges.
+- An inset from the centrelines, a band along the inside of the walls, or a shadow cast outside them.
+- A per-entity tint, or clipping the shade to entities or away from them.
+- Any raster, grid, or texture for the shade, render-only or not.
+- Any input from player visibility.
+- Roofs and open-air enclosures (WOR-1112, Roofs: the roof tool and open-air enclosures).
+- The formation pulse, which is the design's notification and draws apart from the shade.
+
+**Cost.** Per frame: the ring compare in `sync` (linear in the total ring and hole vertices), a box test per room, and for each room in view one projection of its mesh vertices and one batched triangle draw, then one flush. Per topology change: one multi-contour tessellation for each room whose ring or holes compare different, which can include an unchanged room whose ring comes back starting at another vertex; on the main thread at the next frame's sync, shared by the overlay and the shade.
+
+Tests cover the cache, the config, and the renderer; a manual scenario reads `what=rooms` in the running game.
+
 ### D7: Construction lifecycle — goal source into the task system
 
 Construction is a **goal source** in the sense of the planned Goal-Driven Task Generation refactor (`/docs/technical/task-generation-architecture.md`): blueprints create goal-level tasks; reservations stay item-level.

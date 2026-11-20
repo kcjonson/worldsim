@@ -72,7 +72,7 @@ namespace ecs {
 
 		// Track which blueprint entities currently own goals so we can clean up goals for
 		// blueprints that vanished or completed (BuildGoalSystem's cleanup shape). A blueprint
-		// can own several goals (clear Harvest, a Harvest per material, a Build), so
+		// can own several goals (a Clear, a Harvest per material, a Build), so
 		// this is the set of destination entities, not goal ids.
 		std::unordered_set<EntityID> entitiesWithGoals;
 		for (const auto* goal : registry.getGoalsByOwner(GoalOwner::ConstructionGoalSystem)) {
@@ -452,7 +452,7 @@ namespace ecs {
 
 		auto& registry = GoalTaskRegistry::Get();
 
-		// One clear Harvest CHILD per blueprint, served by any harvestable a colonist knows inside the
+		// One Clear CHILD per blueprint, served by any harvestable a colonist knows inside the
 		// footprint; each such harvest removes its blocker. The goal keeps one identity until the
 		// footprint is empty (update() then retires it via retireChildGoals), so several colonists
 		// clearing different blockers never see it vanish under them. The yield stays with the
@@ -460,7 +460,7 @@ namespace ecs {
 		// The child hangs under the umbrella (parentGoalId set) so it is owned/cleaned alongside the
 		// blueprint without fighting the umbrella for the single-top-level-per-destination slot.
 		for (const auto* child : registry.getChildGoals(umbrellaGoalId)) {
-			if (child->clearFootprint.has_value()) {
+			if (child->type == GoalType::Clear) {
 				return;
 			}
 		}
@@ -468,7 +468,7 @@ namespace ecs {
 		const FootprintBounds bounds = footprintBounds(foundationId);
 
 		GoalTask clearGoal;
-		clearGoal.type = TaskType::Harvest;
+		clearGoal.type = GoalType::Clear;
 		clearGoal.owner = GoalOwner::ConstructionGoalSystem;
 		clearGoal.destinationEntity = blueprintEntity;
 		clearGoal.destinationPosition = bounds.interiorPoint();
@@ -476,7 +476,7 @@ namespace ecs {
 		clearGoal.parentGoalId = umbrellaGoalId; // child of the umbrella: skips the destination guard
 		clearGoal.status = GoalStatus::Available;
 		registry.createGoal(std::move(clearGoal));
-		LOG_DEBUG(Engine, "[Construction] Emitted clear Harvest goal for blueprint %u", static_cast<uint32_t>(blueprintEntity));
+		LOG_DEBUG(Engine, "[Construction] Emitted Clear goal for blueprint %u", static_cast<uint32_t>(blueprintEntity));
 	}
 
 	void ConstructionSystem::emitMaterialGoals(EntityID blueprintEntity, const StructureBlueprint& blueprint, uint64_t umbrellaGoalId) {
@@ -502,7 +502,7 @@ namespace ecs {
 		std::vector<uint32_t> harvested;
 		std::vector<uint64_t> retired;
 		for (const auto* child : registry.getChildGoals(umbrellaGoalId)) {
-			if (child->clearFootprint.has_value()) {
+			if (child->type == GoalType::Clear) {
 				continue;
 			}
 			const bool wanted = std::find(due.begin(), due.end(), child->yieldDefNameId) != due.end() &&
@@ -522,7 +522,7 @@ namespace ecs {
 				continue;
 			}
 			GoalTask harvestGoal;
-			harvestGoal.type = TaskType::Harvest;
+			harvestGoal.type = GoalType::Harvest;
 			harvestGoal.owner = GoalOwner::ConstructionGoalSystem;
 			harvestGoal.destinationEntity = blueprintEntity;
 			harvestGoal.destinationPosition = sitePos;
@@ -570,7 +570,7 @@ namespace ecs {
 		// The umbrella owns the destination slot. Because every child carries parentGoalId it is
 		// always the (only) goal getGoalByDestination returns for this blueprint.
 		const auto* existing = registry.getGoalByDestination(blueprintEntity);
-		if (existing != nullptr && existing->type == TaskType::Build) {
+		if (existing != nullptr && existing->type == GoalType::Build) {
 			// Spots are placed only as the goal turns Available, never while it stays Available: claims hold
 			// them by index.
 			const bool			   becomingAvailable = status == GoalStatus::Available && existing->status != GoalStatus::Available;
@@ -592,7 +592,7 @@ namespace ecs {
 		// would be a bug from an earlier owner; createGoal updates the destination slot in place,
 		// so this both creates the umbrella and reclaims the slot if needed.
 		GoalTask buildGoal;
-		buildGoal.type = TaskType::Build;
+		buildGoal.type = GoalType::Build;
 		buildGoal.owner = GoalOwner::ConstructionGoalSystem;
 		buildGoal.destinationEntity = blueprintEntity;
 		buildGoal.destinationPosition = sitePos;
@@ -710,7 +710,7 @@ namespace ecs {
 		// its children) is still parked there from before the demolish order, drop the whole tree
 		// so the slot is free for the Deconstruct goal.
 		const auto* existing = registry.getGoalByDestination(blueprintEntity);
-		if (existing != nullptr && existing->type != TaskType::Deconstruct) {
+		if (existing != nullptr && existing->type != GoalType::Deconstruct) {
 			registry.removeGoalWithChildren(existing->id);
 			existing = nullptr;
 		}
@@ -723,7 +723,7 @@ namespace ecs {
 		}
 
 		GoalTask deconstructGoal;
-		deconstructGoal.type = TaskType::Deconstruct;
+		deconstructGoal.type = GoalType::Deconstruct;
 		deconstructGoal.owner = GoalOwner::ConstructionGoalSystem;
 		deconstructGoal.destinationEntity = blueprintEntity;
 		deconstructGoal.destinationPosition = sitePos;
@@ -828,7 +828,7 @@ namespace ecs {
 				continue;
 			}
 			// When keeping material children, retire only the clear goal.
-			if (keepMaterialChildren && !child->clearFootprint.has_value()) {
+			if (keepMaterialChildren && child->type != GoalType::Clear) {
 				continue;
 			}
 			toRemove.push_back(child->id);

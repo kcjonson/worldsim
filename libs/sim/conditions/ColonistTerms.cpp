@@ -178,7 +178,7 @@ namespace conditions {
 			const auto servesCraft = [](uint64_t goalId) {
 				const ecs::GoalTaskRegistry& goals = ecs::GoalTaskRegistry::Get();
 				const ecs::GoalTask*		 root = goalId == 0 ? nullptr : goals.getGoal(goals.rootOf(goalId));
-				return root != nullptr && root->type == ecs::TaskType::Craft;
+				return root != nullptr && root->type == ecs::GoalType::Craft;
 			};
 			switch (task.type) {
 				case ecs::TaskType::Craft:

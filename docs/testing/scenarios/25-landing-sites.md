@@ -1,4 +1,4 @@
-# Scenario 22: Landing sites
+# Scenario 25: Landing sites
 
 **Status:** ready  
 **Last verified:** 2026-11-20

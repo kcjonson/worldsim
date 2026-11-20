@@ -354,7 +354,7 @@ namespace ecs {
 			if (selected.taskType == TaskType::Harvest) {
 				// A clear brings nothing toward a need, so it is never a leg of a gathering.
 				const GoalTask* goal = goals.getGoal(selected.harvestGoalId);
-				if (goal == nullptr || goal->clearFootprint.has_value()) {
+				if (goal == nullptr || goal->type == GoalType::Clear) {
 					return std::nullopt;
 				}
 				return handOverCargo(task, goals.rootOf(selected.harvestGoalId), selected.harvestYieldDefNameId);
@@ -868,7 +868,7 @@ namespace ecs {
 				haul.servesStorageStocking = goal.owner == GoalOwner::StorageGoalSystem;
 				haul.gatheringRank = gathering ? kRankLoosePile : int8_t{0};
 				haul.status = OptionStatus::Available;
-				haul.reason = goal.type == TaskType::Build ? "Fetching {} for a build site"
+				haul.reason = goal.type == GoalType::Build ? "Fetching {} for a build site"
 							  : craftFetch				   ? "Fetching {} for crafting"
 														   : "Hauling {} to storage";
 				priority(haul);
@@ -1002,11 +1002,11 @@ namespace ecs {
 				candidates.groups.push_back(group);
 			};
 
-			goalRegistry.forEachGoalOfType(TaskType::Haul, [&](const GoalTask& goal) {
+			goalRegistry.forEachGoalOfType(GoalType::Haul, [&](const GoalTask& goal) {
 				// A craft's fetch child: bring remembered loose stock to the station.
 				if (goal.parentGoalId.has_value()) {
 					const auto* craft = goalRegistry.getGoal(goal.parentGoalId.value());
-					if (craft == nullptr || craft->type != TaskType::Craft || goal.status != GoalStatus::Available) {
+					if (craft == nullptr || craft->type != GoalType::Craft || goal.status != GoalStatus::Available) {
 						return;
 					}
 					for (auto acceptedIt = goal.acceptedDefNameIds.begin(); acceptedIt != goal.acceptedDefNameIds.end(); ++acceptedIt) {
@@ -1104,7 +1104,7 @@ namespace ecs {
 
 			// A construction site takes the known loose piles of a material it is due, the overflow of a
 			// fell among them, so a pile is carried in before another plant is cut for the site.
-			goalRegistry.forEachGoalOfType(TaskType::Build, [&](const GoalTask& site) {
+			goalRegistry.forEachGoalOfType(GoalType::Build, [&](const GoalTask& site) {
 				if (site.owner != GoalOwner::ConstructionGoalSystem) {
 					return;
 				}
@@ -1204,28 +1204,28 @@ namespace ecs {
 					option.servesStorageStocking = storage;
 					option.tiebreakId = root.id ^ (static_cast<uint64_t>(kind.item) << 1);
 					option.status = OptionStatus::Available;
-					option.reason = root.type == TaskType::Build ? "Delivering {} to build site"
+					option.reason = root.type == GoalType::Build ? "Delivering {} to build site"
 									: storage					   ? "Stocking {} into storage"
 																   : "Delivering {} to crafting station";
 					trace.options.push_back(std::move(option));
 				}
 			};
 			const auto& goalRegistry = GoalTaskRegistry::Get();
-			goalRegistry.forEachGoalOfType(TaskType::Craft, offer);
-			goalRegistry.forEachGoalOfType(TaskType::Build, [&](const GoalTask& root) {
+			goalRegistry.forEachGoalOfType(GoalType::Craft, offer);
+			goalRegistry.forEachGoalOfType(GoalType::Build, [&](const GoalTask& root) {
 				if (root.owner == GoalOwner::ConstructionGoalSystem) {
 					offer(root);
 				}
 			});
-			goalRegistry.forEachGoalOfType(TaskType::Haul, [&](const GoalTask& root) {
+			goalRegistry.forEachGoalOfType(GoalType::Haul, [&](const GoalTask& root) {
 				if (root.owner == GoalOwner::StorageGoalSystem && !root.parentGoalId.has_value()) {
 					offer(root);
 				}
 			});
 		}
 
-		/// Evaluate harvest options by querying Harvest goals from GoalTaskRegistry.
-		/// Goal-driven: a goal names the item it needs (yieldDefNameId), or for a construction clear the
+		/// Evaluate harvest options by querying Harvest and Clear goals from GoalTaskRegistry.
+		/// Goal-driven: a Harvest goal names the item it needs (yieldDefNameId), a Clear goal the
 		/// footprint whose harvestables it removes (clearFootprint); Memory provides the sources. A goal
 		/// that names an item is offered while its root still wants that item (RootSupply::toAcquire).
 		/// @param supply What each root still wants, for this colonist
@@ -1246,17 +1246,17 @@ namespace ecs {
 			auto&		 goalRegistry = GoalTaskRegistry::Get();
 			WorkSources& sources = candidates.sources;
 
-			goalRegistry.forEachGoalOfType(TaskType::Harvest, [&](const GoalTask& harvestGoal) {
-				const GoalTask* goal = &harvestGoal;
+			const auto offerCut = [&](const GoalTask& cutGoal) {
+				const GoalTask* goal = &cutGoal;
 				// Skip goals that aren't workable yet.
 				if (goal->status == GoalStatus::Blocked) {
 					return;
 				}
 
-				// A clear goal is served by any harvestable inside its footprint, whatever it yields.
-				// Every other Harvest goal names the item it needs (yieldDefNameId) and is served by a
-				// harvestable that yields it, while its root wants more than is already on its way.
-				const bool clearing = goal->clearFootprint.has_value();
+				// A Clear goal is served by any harvestable inside its footprint, whatever it yields. A
+				// Harvest goal names the item it needs (yieldDefNameId) and is served by a harvestable that
+				// yields it, while its root wants more than is already on its way.
+				const bool clearing = goal->type == GoalType::Clear;
 				if (!clearing && goal->yieldDefNameId == 0) {
 					return; // No yield specified
 				}
@@ -1317,7 +1317,7 @@ namespace ecs {
 				// A Harvest that feeds a Craft or Build goal provisions an active work order: tier 4, so a
 				// far harvestable can't strand a started craft or construction. One owned by
 				// StorageGoalSystem is stocking: above Wander but strictly below work orders.
-				const bool servesWorkOrder = root->type == TaskType::Craft || root->type == TaskType::Build;
+				const bool servesWorkOrder = root->type == GoalType::Craft || root->type == GoalType::Build;
 				const bool servesStocking = goal->owner == GoalOwner::StorageGoalSystem;
 				// A cut toward a root the colonist gathers for tops its trip up; one toward a root and item a
 				// known pile also serves waits for the pile to be taken up first.
@@ -1401,7 +1401,9 @@ namespace ecs {
 					trace.options.push_back(std::move(cut));
 				}
 				candidates.groups.push_back(group);
-			});
+			};
+			goalRegistry.forEachGoalOfType(GoalType::Harvest, offerCut);
+			goalRegistry.forEachGoalOfType(GoalType::Clear, offerCut);
 		}
 
 		/// How far a builder spot's stand point may sit from the spot: half the way to the nearest other spot,
@@ -1692,7 +1694,7 @@ namespace ecs {
 		buildList.clear();
 		// Surfaced only while the blueprint is UnderConstruction and not ordered demolished, what the Build
 		// action requires. The order leaves the goal Available until ConstructionSystem's next pass removes it.
-		GoalTaskRegistry::Get().forEachGoalOfType(TaskType::Build, [&](const GoalTask& goal) {
+		GoalTaskRegistry::Get().forEachGoalOfType(GoalType::Build, [&](const GoalTask& goal) {
 			if (goal.status != GoalStatus::Available) {
 				return;
 			}
@@ -1744,7 +1746,7 @@ namespace ecs {
 		}
 		teardownSitesBuilt = true;
 		teardownList.clear();
-		GoalTaskRegistry::Get().forEachGoalOfType(TaskType::Deconstruct, [&](const GoalTask& goal) {
+		GoalTaskRegistry::Get().forEachGoalOfType(GoalType::Deconstruct, [&](const GoalTask& goal) {
 			if (goal.status != GoalStatus::Available) {
 				return;
 			}
@@ -2526,6 +2528,9 @@ namespace ecs {
 		// A remembered source he may be sent to: no verdict, and connected to where a route to it ends,
 		// which becomes its goal.
 		const auto admitSource = [&](SourceCandidate& candidate) {
+#ifdef DEVELOPMENT_BUILD
+			++needSourceVisits;
+#endif
 			if (hasVerdict(candidate.key, candidate.position)) {
 				return false;
 			}

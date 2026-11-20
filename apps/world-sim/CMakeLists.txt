@@ -172,6 +172,7 @@ if(BUILD_TESTING)
         scenes/game/dev/GroundRefusal.test.cpp
         scenes/game/dev/PointList.test.cpp
         scenes/game/dev/SightJson.test.cpp
+        scenes/game/GameSceneEntry.test.cpp
         scenes/game/world/MoveOrderGoal.test.cpp
         scenes/game/world/WorldPointer.test.cpp
         scenes/game/world/construction/CommittedGeometryCache.test.cpp

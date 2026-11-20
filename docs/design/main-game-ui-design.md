@@ -579,7 +579,7 @@ Building construction. See [Construction System Spec] for details on how placeme
 - **Walls & Doors** — Walls, doors, fences
 - **Floors** — Flooring types
 
-**Note:** We do not have roofs (outdoor game). Bridges, power systems, and security structures are future features.
+**Note:** Roofs are their own tool ([Roofs](./game-systems/world/roofs.md)). Bridges, power systems, and security structures are future features.
 
 #### Production
 Workstations and production facilities:

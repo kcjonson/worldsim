@@ -87,7 +87,7 @@ TEST_F(CraftingGoalSystemTest, GoalCountStaysStable_BugRepro) {
 	auto& registry = GoalTaskRegistry::Get();
 
 	// Capture goal count after initial creation
-	size_t craftGoals = registry.goalCount(TaskType::Craft);
+	size_t craftGoals = registry.goalCount(GoalType::Craft);
 	size_t totalGoals = registry.goalCount();
 
 	// Log for debugging
@@ -97,7 +97,7 @@ TEST_F(CraftingGoalSystemTest, GoalCountStaysStable_BugRepro) {
 	// Run more updates
 	runUpdates(600);
 
-	size_t craftGoalsAfter = registry.goalCount(TaskType::Craft);
+	size_t craftGoalsAfter = registry.goalCount(GoalType::Craft);
 	size_t totalGoalsAfter = registry.goalCount();
 
 	printf("[BugRepro] After 1200 updates: Craft goals=%zu, Total goals=%zu\n",
@@ -144,7 +144,7 @@ TEST_F(CraftingGoalSystemTest, NoGoalWhenNoJob) {
 	const auto* goal = registry.getGoalByDestination(station);
 
 	EXPECT_EQ(goal, nullptr) << "Should not create goal for station with no job";
-	EXPECT_EQ(registry.goalCount(TaskType::Craft), 0U);
+	EXPECT_EQ(registry.goalCount(GoalType::Craft), 0U);
 }
 
 TEST_F(CraftingGoalSystemTest, GoalRemovedWhenJobCompleted) {
@@ -274,9 +274,9 @@ TEST_F(MultiSystemGoalTest, RecipeWithInputsCreatesChildGoals) {
 
 	auto& registry = GoalTaskRegistry::Get();
 
-	size_t craftGoals = registry.goalCount(TaskType::Craft);
-	size_t harvestGoals = registry.goalCount(TaskType::Harvest);
-	size_t haulGoals = registry.goalCount(TaskType::Haul);
+	size_t craftGoals = registry.goalCount(GoalType::Craft);
+	size_t harvestGoals = registry.goalCount(GoalType::Harvest);
+	size_t haulGoals = registry.goalCount(GoalType::Haul);
 
 	printf("[InputsTest] After 60 updates: Craft=%zu, Harvest=%zu, Haul=%zu\n",
 	       craftGoals, harvestGoals, haulGoals);
@@ -290,8 +290,8 @@ TEST_F(MultiSystemGoalTest, RecipeWithInputsCreatesChildGoals) {
 	// Run more updates - goal counts should be stable
 	runUpdates(600);
 
-	size_t craftGoalsAfter = registry.goalCount(TaskType::Craft);
-	size_t haulGoalsAfter = registry.goalCount(TaskType::Haul);
+	size_t craftGoalsAfter = registry.goalCount(GoalType::Craft);
+	size_t haulGoalsAfter = registry.goalCount(GoalType::Haul);
 
 	printf("[InputsTest] After 660 updates: Craft=%zu, Haul=%zu\n",
 	       craftGoalsAfter, haulGoalsAfter);
@@ -320,9 +320,9 @@ TEST_F(MultiSystemGoalTest, PrestagedStoreMaterialsCreateNoChildGoalsAndUnblockC
 	runUpdates(60);
 
 	auto& registry = GoalTaskRegistry::Get();
-	EXPECT_EQ(registry.goalCount(TaskType::Craft), 1U) << "one craft goal for the station";
-	EXPECT_EQ(registry.goalCount(TaskType::Haul), 0U) << "no haul: the store already holds the input";
-	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U) << "no harvest either";
+	EXPECT_EQ(registry.goalCount(GoalType::Craft), 1U) << "one craft goal for the station";
+	EXPECT_EQ(registry.goalCount(GoalType::Haul), 0U) << "no haul: the store already holds the input";
+	EXPECT_EQ(registry.goalCount(GoalType::Harvest), 0U) << "no harvest either";
 
 	const auto* craft = registry.getGoalByDestination(station);
 	ASSERT_NE(craft, nullptr);
@@ -394,14 +394,14 @@ TEST_F(MultiSystemGoalTest, MultiUnitCraftReprovisionsBetweenUnitsAndCompletesAl
 			    << "store drained by the finished unit -> the next unit needs both again";
 			EXPECT_EQ(next->status, GoalStatus::Blocked)
 			    << "craft re-blocked, waiting on the next unit's materials";
-			EXPECT_GE(registry.goalCount(TaskType::Haul), 1U)
+			EXPECT_GE(registry.goalCount(GoalType::Haul), 1U)
 			    << "provisioning rebuilt: a Haul exists to gather the next unit's materials";
 		}
 	}
 
 	EXPECT_EQ(unitsCrafted, 3U) << "all three units crafted, no stall at 1/3";
 	EXPECT_EQ(queue.getNextJob(), nullptr) << "the 3-unit job is fully complete";
-	EXPECT_EQ(registry.goalCount(TaskType::Craft), 0U) << "no pending work -> craft hierarchy reaped";
+	EXPECT_EQ(registry.goalCount(GoalType::Craft), 0U) << "no pending work -> craft hierarchy reaped";
 }
 
 // A harvestable input (something a tree yields) creates only a Harvest goal. The cut itself carries
@@ -445,9 +445,9 @@ TEST_F(MultiSystemGoalTest, HarvestableInputCreatesHarvestNotHaul) {
 
 	runUpdates(60);
 
-	EXPECT_EQ(registry.goalCount(TaskType::Craft), 1U) << "one craft goal for the station";
-	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 1U) << "harvestable input gets a Harvest goal";
-	EXPECT_EQ(registry.goalCount(TaskType::Haul), 0U)
+	EXPECT_EQ(registry.goalCount(GoalType::Craft), 1U) << "one craft goal for the station";
+	EXPECT_EQ(registry.goalCount(GoalType::Harvest), 1U) << "harvestable input gets a Harvest goal";
+	EXPECT_EQ(registry.goalCount(GoalType::Haul), 0U)
 	    << "no fetch Haul: the cut carries itself in";
 }
 
@@ -500,10 +500,10 @@ TEST_F(MultiSystemGoalTest, LeftoverInOtherStationStoreDoesNotBlockHarvest) {
 
 	runUpdates(60);
 
-	EXPECT_EQ(registry.goalCount(TaskType::Craft), 1U) << "one craft goal for the working station";
-	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 1U)
+	EXPECT_EQ(registry.goalCount(GoalType::Craft), 1U) << "one craft goal for the working station";
+	EXPECT_EQ(registry.goalCount(GoalType::Harvest), 1U)
 	    << "input resolves to Harvest despite leftover Wood in another station's store";
-	EXPECT_EQ(registry.goalCount(TaskType::Haul), 0U)
+	EXPECT_EQ(registry.goalCount(GoalType::Haul), 0U)
 	    << "no fetch Haul: the other station's store is not carried/deliverable stock";
 }
 
@@ -541,13 +541,13 @@ TEST_F(MultiSystemGoalTest, UnknownSourceInputBecomesNoSource) {
 	runUpdates(60);
 
 	// Nobody knows a tree or stock, so the input waits as one NoSource Haul.
-	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U) << "no harvestable known -> no Harvest goal";
-	ASSERT_EQ(registry.goalCount(TaskType::Haul), 1U) << "the input is one Haul need";
+	EXPECT_EQ(registry.goalCount(GoalType::Harvest), 0U) << "no harvestable known -> no Harvest goal";
+	ASSERT_EQ(registry.goalCount(GoalType::Haul), 1U) << "the input is one Haul need";
 	const auto* craft = registry.getGoalByDestination(station);
 	ASSERT_NE(craft, nullptr);
 	const GoalTask* need = nullptr;
 	for (const auto* child : registry.getChildGoals(craft->id)) {
-		if (child->type == TaskType::Haul) {
+		if (child->type == GoalType::Haul) {
 			need = child;
 			break;
 		}
@@ -587,8 +587,8 @@ TEST_F(MultiSystemGoalTest, NoSourceReresolvesToHarvestWhenSourceDiscovered) {
 	auto& registry = GoalTaskRegistry::Get();
 
 	runUpdates(60);
-	ASSERT_EQ(registry.goalCount(TaskType::Haul), 1U) << "starts as a NoSource Haul need";
-	ASSERT_EQ(registry.goalCount(TaskType::Harvest), 0U);
+	ASSERT_EQ(registry.goalCount(GoalType::Haul), 1U) << "starts as a NoSource Haul need";
+	ASSERT_EQ(registry.goalCount(GoalType::Harvest), 0U);
 
 	// A colonist discovers a tree.
 	auto  colonist = world->createEntity();
@@ -598,8 +598,8 @@ TEST_F(MultiSystemGoalTest, NoSourceReresolvesToHarvestWhenSourceDiscovered) {
 
 	runUpdates(60); // re-resolution pass
 
-	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 1U) << "NoSource need re-resolved to a Harvest";
-	EXPECT_EQ(registry.goalCount(TaskType::Haul), 0U) << "the NoSource Haul was swapped out";
+	EXPECT_EQ(registry.goalCount(GoalType::Harvest), 1U) << "NoSource need re-resolved to a Harvest";
+	EXPECT_EQ(registry.goalCount(GoalType::Haul), 0U) << "the NoSource Haul was swapped out";
 }
 
 TEST_F(MultiSystemGoalTest, BothSystemsRunWithoutInterference) {
@@ -613,10 +613,10 @@ TEST_F(MultiSystemGoalTest, BothSystemsRunWithoutInterference) {
 	auto& registry = GoalTaskRegistry::Get();
 
 	// Check Craft goals (from CraftingGoalSystem)
-	size_t craftGoals = registry.goalCount(TaskType::Craft);
+	size_t craftGoals = registry.goalCount(GoalType::Craft);
 
 	// Check Haul goals (from StorageGoalSystem)
-	size_t haulGoals = registry.goalCount(TaskType::Haul);
+	size_t haulGoals = registry.goalCount(GoalType::Haul);
 
 	printf("[MultiSystem] After 600 updates: Craft=%zu, Haul=%zu, Total=%zu\n",
 	       craftGoals, haulGoals, registry.goalCount());
@@ -624,8 +624,8 @@ TEST_F(MultiSystemGoalTest, BothSystemsRunWithoutInterference) {
 	// Run more updates
 	runUpdates(600);
 
-	size_t craftGoalsAfter = registry.goalCount(TaskType::Craft);
-	size_t haulGoalsAfter = registry.goalCount(TaskType::Haul);
+	size_t craftGoalsAfter = registry.goalCount(GoalType::Craft);
+	size_t haulGoalsAfter = registry.goalCount(GoalType::Haul);
 
 	printf("[MultiSystem] After 1200 updates: Craft=%zu, Haul=%zu, Total=%zu\n",
 	       craftGoalsAfter, haulGoalsAfter, registry.goalCount());
@@ -823,14 +823,14 @@ TEST_F(MultiSystemGoalTest, SpecificItemMinAmountDrivesHarvestWhenSourceKnown) {
 	auto&		registry = GoalTaskRegistry::Get();
 	const auto* umbrella = registry.getGoalByDestination(storage);
 	ASSERT_NE(umbrella, nullptr);
-	EXPECT_EQ(umbrella->type, TaskType::Haul) << "storage umbrella is its Haul goal";
+	EXPECT_EQ(umbrella->type, GoalType::Haul) << "storage umbrella is its Haul goal";
 
 	// Exactly one stocking Harvest child for Wood, owned by StorageGoalSystem. It only marks that
 	// cutting is open; the umbrella's remaining need toward the minimum says how much.
 	auto children = registry.getChildGoals(umbrella->id);
 	int	 harvestChildren = 0;
 	for (const auto* c : children) {
-		if (c->type == TaskType::Harvest) {
+		if (c->type == GoalType::Harvest) {
 			harvestChildren++;
 			EXPECT_EQ(c->owner, GoalOwner::StorageGoalSystem);
 			EXPECT_EQ(c->yieldDefNameId, assets::AssetRegistry::Get().getDefNameId("Wood"));
@@ -850,7 +850,7 @@ TEST_F(MultiSystemGoalTest, MinAmountDoesNotDriveHarvestWithoutKnownSource) {
 	runUpdates(60);
 
 	auto& registry = GoalTaskRegistry::Get();
-	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U)
+	EXPECT_EQ(registry.goalCount(GoalType::Harvest), 0U)
 	    << "no known Wood source -> no stocking harvest";
 	EXPECT_GE(registry.goalCount(GoalOwner::StorageGoalSystem), 1U) << "umbrella Haul still exists";
 }
@@ -875,7 +875,7 @@ TEST_F(MultiSystemGoalTest, WildcardRuleDoesNotDriveHarvest) {
 	runUpdates(60);
 
 	auto& registry = GoalTaskRegistry::Get();
-	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U)
+	EXPECT_EQ(registry.goalCount(GoalType::Harvest), 0U)
 	    << "a category wildcard never drives harvest, even with minAmount";
 }
 
@@ -890,7 +890,7 @@ TEST_F(MultiSystemGoalTest, MetMinimumEmitsNoHarvest) {
 	runUpdates(60);
 
 	auto& registry = GoalTaskRegistry::Get();
-	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U) << "minimum already met -> no chopping";
+	EXPECT_EQ(registry.goalCount(GoalType::Harvest), 0U) << "minimum already met -> no chopping";
 }
 
 // Retire (a): an existing stocking Harvest is REMOVED once the box reaches minAmount by other means
@@ -904,19 +904,19 @@ TEST_F(MultiSystemGoalTest, StockingHarvestRetiresWhenBoxReachesMinimum) {
 	runUpdates(60);
 
 	auto& registry = GoalTaskRegistry::Get();
-	ASSERT_EQ(registry.goalCount(TaskType::Harvest), 1U) << "shortfall drives a stocking Harvest";
+	ASSERT_EQ(registry.goalCount(GoalType::Harvest), 1U) << "shortfall drives a stocking Harvest";
 
 	// The box fills to its minimum by other means (a hauled-in delivery, simulated directly).
 	world->getComponent<Inventory>(storage)->addItem("Wood", 10);
 
 	runUpdates(60); // reconcile pass sees the met minimum
 
-	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U)
+	EXPECT_EQ(registry.goalCount(GoalType::Harvest), 0U)
 	    << "stocking Harvest retired once the box holds >= minAmount";
 
 	// Stays retired across further ticks (no re-emit).
 	runUpdates(120);
-	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U) << "retired Harvest is not re-emitted";
+	EXPECT_EQ(registry.goalCount(GoalType::Harvest), 0U) << "retired Harvest is not re-emitted";
 }
 
 // Retire (b): an existing stocking Harvest is REMOVED when no colony-known harvestable source for
@@ -969,7 +969,7 @@ TEST_F(MultiSystemGoalTest, StockingHarvestRetiresWhenSourceVanishes) {
 	runUpdates(60);
 
 	auto& registry = GoalTaskRegistry::Get();
-	ASSERT_EQ(registry.goalCount(TaskType::Harvest), 1U) << "a known source drives a stocking Harvest";
+	ASSERT_EQ(registry.goalCount(GoalType::Harvest), 1U) << "a known source drives a stocking Harvest";
 
 	// The only colony source for Wood disappears (tree felled / forgotten).
 	world->getComponent<Memory>(colonist)->clear();
@@ -978,11 +978,11 @@ TEST_F(MultiSystemGoalTest, StockingHarvestRetiresWhenSourceVanishes) {
 
 	runUpdates(60); // reconcile pass sees the vanished source
 
-	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U)
+	EXPECT_EQ(registry.goalCount(GoalType::Harvest), 0U)
 	    << "stocking Harvest retired when its source is no longer known";
 
 	runUpdates(120);
-	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 0U) << "retired Harvest is not re-emitted";
+	EXPECT_EQ(registry.goalCount(GoalType::Harvest), 0U) << "retired Harvest is not re-emitted";
 }
 
 // =============================================================================
@@ -1006,14 +1006,14 @@ class GoalHierarchyTest : public ::testing::Test {
 		auto& registry = GoalTaskRegistry::Get();
 
 		GoalTask craft;
-		craft.type = TaskType::Craft;
+		craft.type = GoalType::Craft;
 		craft.owner = GoalOwner::CraftingGoalSystem;
 		craft.destinationEntity = station;
 		craft.status = GoalStatus::Blocked;
 		uint64_t craftId = registry.createGoal(std::move(craft));
 
 		GoalTask harvest;
-		harvest.type = TaskType::Harvest;
+		harvest.type = GoalType::Harvest;
 		harvest.owner = GoalOwner::CraftingGoalSystem;
 		harvest.destinationEntity = station;
 		harvest.parentGoalId = craftId;
@@ -1021,7 +1021,7 @@ class GoalHierarchyTest : public ::testing::Test {
 		uint64_t harvestId = registry.createGoal(std::move(harvest));
 
 		GoalTask haul;
-		haul.type = TaskType::Haul;
+		haul.type = GoalType::Haul;
 		haul.owner = GoalOwner::CraftingGoalSystem;
 		haul.destinationEntity = station;
 		haul.parentGoalId = craftId;

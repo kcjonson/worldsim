@@ -87,15 +87,15 @@ Every thought is scored when it is created. The score is the sum of four parts.
 
 A thought bubbles when its score clears the colonist's bar. The bar moves:
 
-- When a colonist bubbles, their bar jumps to its peak, 3.0, above anything an ordinary thought scores. Only a major thought shows straight after another bubble.
+- When a colonist bubbles, their bar jumps to its peak, 3.5, above anything an ordinary thought scores. Only a major thought shows straight after another bubble.
 - With no bubble, the bar falls in a straight line to its floor, 0.2, over 12 game hours. At the floor even a repeated trivial thought clears it, so a colonist whose thoughts are all minor still bubbles a couple of times a game day.
-- Every bubble anywhere also raises every colonist's bar a little: it adds 0.25 to a colony-wide amount that drains at 0.25 a game hour, and that amount sits on top of each colonist's own bar. A colony where many are bubbling makes the next one slightly less likely for everyone, so a large colony is not much noisier than a small one.
+- Every bubble anywhere also raises every colonist's bar a little: it adds 0.25 to a colony-wide amount that decays by half-life, 30 game minutes (it fades fast at first, then lingers small), and that amount sits on top of each colonist's own bar. A colony where many are bubbling makes the next one slightly less likely for everyone, so a large colony is not much noisier than a small one.
 
 The bar is a fixed line, not a roll: the same thought at the same moment always gives the same answer. What is kept is the time of each colonist's last bubble, the colony-wide amount, and the novelty counts.
 
 At most 3 bubbles are on screen at once. A major thought ignores the bar and the cap. When two thoughts compete for one slot, the higher score wins and the loser is only recorded. A thought that does not bubble when it is created never bubbles later.
 
-The numbers here are the shipped values in the thought tuning config; the bubble frequency setting scales the fall time (fewer doubles it, more halves it).
+The numbers here are the starting values for the thought tuning config; the bubble frequency setting scales the fall time (fewer doubles it, more halves it).
 
 The result the tuning aims for: a first discovery always shows, the fortieth "I'm hungry" never does, and an ordinary colonist shows a couple of small bubbles a game day.
 
@@ -282,6 +282,7 @@ A supplement, not part of the spec. Kevin, 2026-11-16.
 - 2026-11-17: merging takes in one thought at a time, so pruning stops exactly at the stop size; the two fractions round to whole thoughts, and a limit too small for them to differ is a config error.
 - 2026-11-17: a thought about nothing has no subject, so no "first about" protects it.
 - 2026-11-17: when the protected thoughts alone keep the record at the start size, pruning removes what it can and runs again at the next arrival; the record may pass the limit until thoughts age out of protection.
+- 2026-11-20: the colony-wide amount decays by half-life, 30 game minutes.
 
 ## Addendum: prior work
 

@@ -302,7 +302,7 @@ carries a `<creature>` block; a `<creature>` block on any other definition is a 
   behavior whose entry it takes.
 - `mood` says whether the creature has a mood. A creature with mood gives each of its needs a mood
   cost with a `<moodCost>` row, the most mood the need takes off at its worst
-  ([Needs](../design/game-systems/colonists/needs.md#need-to-mood-weights)); a need of such a creature
+  ([Needs](../design/game-systems/colonists/needs.md#what-a-need-costs-mood)); a need of such a creature
   with no cost is a load error naming it. The penalty curve, easing, and bands are the creature's
   `mood.xml`.
 - The creature's order (below) breaks a tie between two needs equally low, and ranks idle rows.
@@ -679,7 +679,7 @@ when it knows none.
 
 Drinking and washing are separate chains, so a colonist low on both takes the critical one first, else
 the one whose behavior is included first
-([AI behavior](../design/game-systems/colonists/ai-behavior.md#tier-5-actionable-needs)).
+([AI behavior](../design/game-systems/colonists/ai-behavior.md#ordinary_need)).
 
 `common/sleeping_on_the_ground`, which a cow or a deer includes, has Energy with a chain whose only
 query candidate is `<from place="here"/>`.
@@ -1458,8 +1458,9 @@ chain's target:
 ```
 
 `on` says what the context menu offers the order on. An order takes the claims its chain names by the
-same rules as anything else and takes nothing another task holds
-([Task claims, Bumping](./task-claims.md#bumping-planned)). There is no "move here" order. Moving a
+same rules as anything else, and as the `player_order` rung it bumps a claim on its target held on a
+lower rung ([Task claims, Bumping](./task-claims.md#bumping-planned)). There is no "move here"
+order. Moving a
 colonist is direct control: direct control suspends the AI, snaps the click to walkable ground, and returns the creature's
 work to the pool ([Player control](../design/features/player-control.md)). Direct control and player
 orders are unavailable to a colonist in a low-mood episode.
@@ -1711,6 +1712,7 @@ The `low_mood` rung sits directly below critical needs and above the player's or
 player cannot draft, direct, or order a colonist during an episode. A critical need still interrupts a
 low-mood behavior. For that, a low-mood behavior's do steps use interruptable actions, or short ones
 that complete before the gate is asked again, since a non-interruptable action blocks every switch.
+A colonist in an episode bumps another colonist's claim on its target when a lower rung holds it ([Task claims, Bumping](./task-claims.md#bumping-planned)).
 
 A low-mood behavior may have a chain whose only step gives a thought, the log-only rule in Mood: the
 episode is announced and logged, and nothing in the world changes. Leaving the colony is a chain ending in `<leave_colony/>`.
@@ -1808,7 +1810,7 @@ Recreation drains at a constant rate and only `enjoy_nature` restores it.
 Below `urgent`, a need's option is on the `urgent_need` rung, which ranks above work, and a creature
 decides at once when a need crosses into urgent. Every need with a `<satisfiedBy>` acts at all three
 levels, the ones that cannot kill included, so a colonist leaves a long job to wash or to rest before a
-low-mood behavior over it starts ([Needs](../design/game-systems/colonists/needs.md#need-to-mood-weights)).
+low-mood behavior over it starts ([Needs](../design/game-systems/colonists/needs.md#what-a-need-costs-mood)).
 Tuning a need's `urgent` level against the mood its cost takes off is how meeting the need is kept
 ahead of the behavior.
 
@@ -1996,6 +1998,8 @@ The following he settled with "Yes to all" when they were put to him:
   action may share an id.
 - 2026-11-17: Relief (bladder, bowels, or both) is decided when the colonist sets off, not on arrival.
 - 2026-11-17: Temperature's mood cost is 60, up from 40.
+- 2026-11-20: A mood episode bumps another colonist's claim on its target held on a lower rung (the `low_mood` rung is a bumping rung).
+- 2026-11-20: A player's order bumps another colonist's claim on its target held on a lower rung (the `player_order` rung is a bumping rung).
 
 Choices made in writing this document, not put to the owner:
 

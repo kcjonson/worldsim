@@ -37,7 +37,6 @@ namespace world_sim {
 
 		/// The generated planet for this session. Forwarded from GameStartConfig so
 		/// GameScene can pass it to DevCommandHandler for /api/state?what=landing.
-		/// Null when GameScene falls back to mock-world mode (no planet available).
 		std::shared_ptr<const worldgen::GeneratedWorld> planet;
 
 		/// Where the crew lands: the 2D world origin, its tile, and the raw drop beside its water. GameScene

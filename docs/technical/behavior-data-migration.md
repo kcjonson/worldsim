@@ -18,11 +18,11 @@ All of it is on `main` and on this branch.
   (WOR-1055) replaces the average with summed costs and ships each cost on the human's need entries in
   `needs.xml`, not in a `<NeedCosts>` block; the config-move ticket carries `needs.xml` into the human's
   folder, and the need-entries ticket turns each cost into a `<moodCost>` row of the human's definition.
-- The human: the asset folder `assets/world/colonists/Colonist/` (`Colonist.xml` with the `Colonist`,
-  `Colonist_up` and the other facing definitions, `biped.motion.xml`, the SVGs), and its config in
+- The human: the asset folder `assets/world/creatures/Human/` (`Human.xml` with the `Human`,
+  `Human_up` and the other facing definitions, `biped.motion.xml`, the SVGs), and its config in
   `assets/config/colonists/` (`mood.xml`, `memory.xml`, `traits/`, `attributes/`, `needs/`). Code names
-  the definition `"Colonist"` in `GameScene.cpp` (the spawned `Appearance`), in `kinds.xml`
-  (`<Kind name="colonist" mover="Colonist"/>`), and in the facing variants.
+  the definition `"Human"` in `GameScene.cpp` (the spawned `Appearance`), in `kinds.xml`
+  (`<Kind name="colonist" mover="Human"/>`), and in the facing variants.
 - Options: `AIDecisionSystem.cpp` (about 4,000 lines). The needs loop with its hunger special case
   (about lines 2,560 to 2,956, with the gather-food option built inside it), `needToCapability`,
   `getFirstActionDefName`, `taskFirstActionNeedsHands`, `findToiletLocation`
@@ -37,7 +37,7 @@ All of it is on `main` and on this branch.
   functions). Every action but Sleep is non-interruptable; Sleep pays at its end.
 - Claims: `systems/ChainClaims.{h,cpp}` (`recordChainClaims` per chain shape), `ClaimIndex.{h,cpp}`,
   `Task.h` (claims, `SuspendedWork`, the per-type fields, `chainStep`, `deliveryChosen`).
-- Goals: `GoalTaskRegistry.{h,cpp}` (`GoalTask::type` is a `TaskType`), `StorageGoalSystem`,
+- Goals: `GoalTaskRegistry.{h,cpp}` (`GoalTask::type` is a `GoalType`), `StorageGoalSystem`,
   `CraftingGoalSystem`, `BuildGoalSystem`, `ConstructionSystem`, `ColonyGoalWork.cpp` for the panel.
 - Thought sources: `ThoughtTypes.cpp` resolves `actionStarts` and `actionFinishes` through
   `actionTypeFromName`, and `ThoughtSourceSystem` holds an `ActionType`. The thought data names
@@ -116,7 +116,9 @@ During the move both paths run, on disjoint ground that phase 7 deletes:
   helper. No test writes chain-state fields directly. A test that builds an `Action` by factory builds
   it from the shipped entry instead and asserts the same values.
 - `scripts/test-assertions.mjs` compares the EXPECT and ASSERT count of every test between base and
-  head and fails on any drop. It runs on every path PR.
+  head and fails on any drop. It runs on every path PR. A renamed, split, folded or merged test still
+  fails it; the PR lists each old key against its new keys with the counts from the script's `NEW`
+  and `RISE` lines.
 - A port that needs an expectation changed stops the path and goes to the owner.
 
 ## Phases
@@ -227,9 +229,9 @@ marked "behavior change" lands only with the owner's sign-off.
    - Must pass: the scenarios, sim-tests.
    - Depends on: none.
 3. Need, idle, and vision benches.
-   - Built: `BM_NeedDecision` (hungry and thirsty colonists, 10,000 edible memories, 1 and 8
-     colonists), `BM_IdleDecision` (wandering colonists deciding every frame), a vision remember and
-     forget bench, a visit count in `FindsANeedSourceInALargeMemory`.
+   - Built: `BM_NeedDecision` (hungry and thirsty colonists, 9,500 edible and 500 water memories, the
+     memory's 10,000 cap, 1 and 8 colonists), `BM_IdleDecision` (wandering colonists deciding every
+     frame), a vision remember and forget bench, a visit count in `FindsANeedSourceInALargeMemory`.
    - Deleted: none.
    - Must pass: the benches; baselines recorded only with both machine checks `idle`.
    - Depends on: none.
@@ -437,7 +439,9 @@ marked "behavior change" lands only with the owner's sign-off.
 30. Wander and the idle put-down.
     - Built: `common/wandering` (the ring, the disc fit, every-frame decisions while walking, the hold
       with no option, no wander without a mesh, idle rows ranked in order); `putDownUnwantedArmful` as
-      the idle hands rule.
+      the idle hands rule. `BM_IdleDecision` runs headless on the no-nav-system exception in
+      `canNavigate`; if the wandering chain drops that exception, this ticket first moves the bench onto
+      a meshed world on the old code and re-records its baseline, then compares.
     - Deleted: the wander option, `generateWanderTarget`, `TaskType::Wander`.
     - Must pass: `StoppedWanderRepicksFreshTarget`, `WanderingColonistDoesNotRepickAFailedRoute`,
       `WanderSequenceFollowsSeed`, `WanderPointsFitHisDisc`, `WanderTargetWithinRadius`,

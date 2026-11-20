@@ -910,7 +910,7 @@ namespace {
 	// different component), deciding every tick. Times the AI system's update, which is that one decision
 	// (the whole trace: the source filter, the option filter, the wander probe), and counts the route
 	// requests it makes; nav runs between decisions so routes are answered.
-	void BM_NeedDecision(benchmark::State& state) {
+	void BM_NeedDecisionRouted(benchmark::State& state) {
 		const int sources = static_cast<int>(state.range(0));
 		if (!ecs::loadShippedPriorityConfig()) {
 			state.SkipWithError("priority-tuning.xml did not load");
@@ -1664,7 +1664,7 @@ BENCHMARK(BM_ColonistsWalk)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMil
 BENCHMARK(BM_Crowd20)->Args({0, 0})->Args({0, 2})->Args({1, 0})->Args({1, 2})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ReplanWalk)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_RouteSlice)->Arg(1)->Arg(20)->Arg(200)->Iterations(1)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_NeedDecision)->Arg(1)->Arg(5)->Arg(40)->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_NeedDecisionRouted)->Arg(1)->Arg(5)->Arg(40)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_CursorCheck)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TwoGroupsApart)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_WallEditMeshedChunks)->Args({2, 0})->Args({5, 0})->Iterations(1)->Unit(benchmark::kMillisecond);

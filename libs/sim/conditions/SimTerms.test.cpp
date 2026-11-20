@@ -50,7 +50,7 @@ namespace {
 		assets::AssetRegistry& registry = assets::AssetRegistry::Get();
 		registry.clearDefinitions();
 		registry.registerSyntheticDefinition("Test_SimTerms_IdZeroReservation", 0);
-		registry.registerSyntheticDefinition("Colonist", 0);
+		registry.registerSyntheticDefinition("Human", 0);
 		registry.registerSyntheticDefinition("Deer", 0);
 	}
 
@@ -224,12 +224,12 @@ TEST_F(SimTermsTest, MidCraftIsACraftUnderWayIncludingFetchingItsInputs) {
 
 	ecs::GoalTaskRegistry& goals = ecs::GoalTaskRegistry::Get();
 	const uint64_t		   craftGoal =
-		goals.createGoal({.type = ecs::TaskType::Craft, .destinationEntity = 101, .owner = ecs::GoalOwner::CraftingGoalSystem});
-	ecs::GoalTask haulForCraft{.type = ecs::TaskType::Haul, .owner = ecs::GoalOwner::CraftingGoalSystem};
+		goals.createGoal({.type = ecs::GoalType::Craft, .destinationEntity = 101, .owner = ecs::GoalOwner::CraftingGoalSystem});
+	ecs::GoalTask haulForCraft{.type = ecs::GoalType::Haul, .owner = ecs::GoalOwner::CraftingGoalSystem};
 	haulForCraft.parentGoalId = craftGoal;
 	const uint64_t inputGoal = goals.createGoal(haulForCraft);
 	const uint64_t storageGoal =
-		goals.createGoal({.type = ecs::TaskType::Haul, .destinationEntity = 102, .owner = ecs::GoalOwner::StorageGoalSystem});
+		goals.createGoal({.type = ecs::GoalType::Haul, .destinationEntity = 102, .owner = ecs::GoalOwner::StorageGoalSystem});
 
 	task().clear();
 	task().type = ecs::TaskType::Haul;
@@ -302,7 +302,7 @@ TEST_F(SimTermsTest, NearAColonistIsARecentSightingWithinTheRadius) {
 	time.skipTime(600.0F);
 	const double		now = time.simulationSeconds();
 	const double		window = assets::MemoryConfig::Get().recentSightingGameMinutes();
-	const uint32_t		colonistDef = defId("Colonist");
+	const uint32_t		colonistDef = defId("Human");
 	const ecs::EntityID other = spawnColonist({50.0F, 0.0F});
 	const ecs::EntityID another = spawnColonist({50.0F, 0.0F});
 
@@ -326,7 +326,7 @@ TEST_F(SimTermsTest, NearAColonistIsARecentSightingWithinTheRadius) {
 }
 
 TEST_F(SimTermsTest, NearAMoverIsUnknownWithoutAClock) {
-	memory().rememberDynamicEntity(spawnColonist({1.0F, 0.0F}), defId("Colonist"), {1.0F, 0.0F}, 0.0);
+	memory().rememberDynamicEntity(spawnColonist({1.0F, 0.0F}), defId("Human"), {1.0F, 0.0F}, 0.0);
 	EXPECT_EQ(evaluate("near(colonist, 5)"), Truth::Unknown);
 	EXPECT_EQ(evaluate("near(food, 5)"), Truth::False);
 }

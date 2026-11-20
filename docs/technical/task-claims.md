@@ -428,7 +428,7 @@ Use(patient), Slot(medical bed). Pickup drops the Use; the bed slot stays until 
 
 ### Build-site clear
 
-A construction clear Harvest records Use(source) only: it removes what stands in the footprint and
+A Harvest serving a construction Clear goal records Use(source) only: it removes what stands in the footprint and
 brings nothing toward a need, so it has no in-flight. What the clearer can't carry drops just outside
 the footprint (`FootprintBounds::nearestOutside`), and the game's drop planner never lays a pile on the
 footprint of a foundation not yet built. A loose pile already on a footprint does not hold the site in
@@ -743,7 +743,7 @@ Direct player control returns half-done work to the pool at once: `enterControl`
 Action, retires both instance ids from the index, and discards the suspended record. Carried goods stay
 with the colonist. Death will do the same through entity destruction (no claims survive the task);
 spawning the dead colonist's carried goods as piles is planned. Player orders that target a claimed
-thing (tier 3, a separate epic) take nothing from anyone today; see bumping, planned.
+thing (the `player_order` rung, a separate epic) take nothing from anyone today; see bumping, planned.
 
 ### Bumping (planned)
 
@@ -751,9 +751,9 @@ Nothing in this section is built. A task's claims are never taken by another col
 related behaviour is the food rule under [Need tasks](#need-tasks), where a more urgent eater treats a
 less urgent eater's claim as held rather than taken.
 
-**Rank.** A claim's rank is its task's current `priorityTier`, read at each index rebuild, so rank
-follows tier changes. Lower tier number is higher rank; within a tier the earlier `claimSeq` ranks
-higher (`outranks`, which the index already uses to name the top holder). A suspended record ranks
+**Rank.** A claim's rank is the rung of its task (`priorityTier` in the code), read at each index
+rebuild, so rank follows rung changes. A higher rung ranks higher; within a rung the earlier
+`claimSeq` ranks higher (`outranks`, which the index already uses to name the top holder). A suspended record ranks
 with the task that holds it (its goods are possessed, so it would never be bumped either way).
 
 **Rules.**
@@ -761,10 +761,11 @@ with the task that holds it (its goods are possessed, so it would never be bumpe
 - Needs would beat work claims. A colonist acting on a critical need could take from any work claim:
   the last berries claimed for a storage haul would go to the starving colonist. (For food this already
   holds without bumping: work claims never hold food against a hungry colonist.)
-- Only a selection at tier 1 to 3 (survival, critical needs, player orders) could bump, and only a
-  holder whose tier number is strictly higher. Equal tiers would never bump. Ordinary work (tiers 4
-  to 7) would never bump anything, so there would be no better-placed-worker preemption.
-- A critical need (tier 2) could bump a player order (tier 3), following the arbitration ladder.
+- Only a selection at one of four rungs (`survival`, `critical_need`, `low_mood`, `player_order`)
+  could bump, and only a claim held on a lower rung. Equal rungs would never bump. Every other rung
+  would never bump anything, so there would be no better-placed-worker preemption.
+- A critical need could bump a mood episode's or a player order's claim, and a mood episode a player
+  order's, following the arbitration ladder.
   Decided by the owner.
 - A claim would stop being bumpable once its holder's action on that target has started. Those
   actions are not interruptable, and a bumper would treat the target as unavailable.
@@ -1095,8 +1096,8 @@ the goal-system suites. Check for an existing test of the same path before addin
 - Storage remaining need is item-counted and matches the box's per-item room.
 
 Planned with bumping: critical hunger bumping a storage hauler (its Action cleared, it re-plans and
-keeps its cargo), two critically hungry colonists never bumping each other, and ordinary work never
-bumping ordinary work. The tests for the crafter's hold are listed in
+keeps its cargo), a mood episode bumping a hauler, a critical need bumping a mood episode, two
+critically hungry colonists never bumping each other, and ordinary work never bumping ordinary work. The tests for the crafter's hold are listed in
 [Interruptable Crafts](./interruptable-crafts.md#testing).
 
 The validator (`ClaimIndex::findViolation`) runs at the end of every AI update that built the index, in

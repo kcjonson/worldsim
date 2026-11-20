@@ -37,7 +37,7 @@ namespace {
 		return bp;
 	}
 
-	size_t countOfType(const std::vector<const GoalTask*>& goals, TaskType type) {
+	size_t countOfType(const std::vector<const GoalTask*>& goals, GoalType type) {
 		return static_cast<size_t>(std::count_if(goals.begin(), goals.end(), [type](const GoalTask* g) { return g->type == type; }));
 	}
 } // namespace
@@ -368,7 +368,7 @@ namespace {
 			return entity;
 		}
 
-		static const GoalTask* findChild(uint64_t umbrellaId, TaskType type) {
+		static const GoalTask* findChild(uint64_t umbrellaId, GoalType type) {
 			for (const auto* g : GoalTaskRegistry::Get().getChildGoals(umbrellaId)) {
 				if (g->type == type) {
 					return g;
@@ -403,15 +403,15 @@ TEST_F(ConstructionGoalEmissionTest, TwoMaterialsEmitUmbrellaPlusAllChildrenAndS
 	// One umbrella (the top-level Build goal owning the destination slot), Blocked while awaiting.
 	const auto* umbrella = registry.getGoalByDestination(foundation);
 	ASSERT_NE(umbrella, nullptr);
-	EXPECT_EQ(umbrella->type, TaskType::Build);
+	EXPECT_EQ(umbrella->type, GoalType::Build);
 	EXPECT_FALSE(umbrella->parentGoalId.has_value());
 	EXPECT_EQ(umbrella->status, GoalStatus::Blocked);
 
 	// Two Harvest children, both parented to the umbrella, coexisting; the umbrella accepts both
 	// materials (carry-in from possession delivers them, so there are no Haul children).
 	auto children = registry.getChildGoals(umbrella->id);
-	EXPECT_EQ(countOfType(children, TaskType::Harvest), 2U);
-	EXPECT_EQ(countOfType(children, TaskType::Haul), 0U);
+	EXPECT_EQ(countOfType(children, GoalType::Harvest), 2U);
+	EXPECT_EQ(countOfType(children, GoalType::Haul), 0U);
 	EXPECT_EQ(umbrella->acceptedDefNameIds.size(), 2U);
 	for (const auto* child : children) {
 		ASSERT_TRUE(child->parentGoalId.has_value());
@@ -433,7 +433,7 @@ TEST_F(ConstructionGoalEmissionTest, TwoMaterialsEmitUmbrellaPlusAllChildrenAndS
 	EXPECT_EQ(umbrella2->id, umbrellaId) << "umbrella id must stay stable across refreshes";
 
 	auto children2 = registry.getChildGoals(umbrellaId);
-	EXPECT_EQ(countOfType(children2, TaskType::Harvest), 2U) << "both Harvest children must survive";
+	EXPECT_EQ(countOfType(children2, GoalType::Harvest), 2U) << "both Harvest children must survive";
 	EXPECT_EQ(registry.goalCount(GoalOwner::ConstructionGoalSystem), 3U);
 }
 
@@ -460,7 +460,7 @@ TEST_F(ConstructionGoalEmissionTest, ResetBlueprintGoalsRebuildsTheTreeFromTheNe
 	ASSERT_NE(umbrella, nullptr);
 	EXPECT_EQ(umbrella->destinationPosition, glm::vec2(12.0F, 3.0F));
 	auto children = registry.getChildGoals(umbrella->id);
-	EXPECT_EQ(countOfType(children, TaskType::Harvest), 1U);
+	EXPECT_EQ(countOfType(children, GoalType::Harvest), 1U);
 	for (const auto* child : children) {
 		EXPECT_EQ(child->destinationPosition, glm::vec2(12.0F, 3.0F));
 	}
@@ -481,7 +481,7 @@ TEST_F(ConstructionGoalEmissionTest, DemolishingBuiltStructureEmitsAvailableDeco
 
 	const auto* goal = registry.getGoalByDestination(foundation);
 	ASSERT_NE(goal, nullptr);
-	EXPECT_EQ(goal->type, TaskType::Deconstruct);
+	EXPECT_EQ(goal->type, GoalType::Deconstruct);
 	EXPECT_EQ(goal->status, GoalStatus::Available) << "no dependents (ungated) -> Deconstruct goal Available";
 	EXPECT_FALSE(goal->parentGoalId.has_value()) << "the Deconstruct goal is top-level, not a child";
 	EXPECT_EQ(registry.goalCount(GoalOwner::ConstructionGoalSystem), 1U) << "one Deconstruct goal, no children";
@@ -517,7 +517,7 @@ TEST_F(ConstructionGoalEmissionTest, DemolishOrderReplacesAnExistingBuildUmbrell
 	auto  foundation = createTwoMaterialFoundation();
 	auto& registry = GoalTaskRegistry::Get();
 	refresh();
-	ASSERT_EQ(registry.getGoalByDestination(foundation)->type, TaskType::Build);
+	ASSERT_EQ(registry.getGoalByDestination(foundation)->type, GoalType::Build);
 	ASSERT_GT(registry.goalCount(GoalOwner::ConstructionGoalSystem), 1U);
 
 	// Mark it demolishing with work invested so it takes the worked path (not the no-work edge).
@@ -528,7 +528,7 @@ TEST_F(ConstructionGoalEmissionTest, DemolishOrderReplacesAnExistingBuildUmbrell
 
 	const auto* goal = registry.getGoalByDestination(foundation);
 	ASSERT_NE(goal, nullptr);
-	EXPECT_EQ(goal->type, TaskType::Deconstruct) << "Build umbrella replaced by a Deconstruct goal";
+	EXPECT_EQ(goal->type, GoalType::Deconstruct) << "Build umbrella replaced by a Deconstruct goal";
 	EXPECT_EQ(registry.goalCount(GoalOwner::ConstructionGoalSystem), 1U) << "Build children gone, only the Deconstruct goal";
 }
 
@@ -561,8 +561,8 @@ TEST_F(ConstructionGoalEmissionTest, LargeManifestAcceptsTheWholeShortfallWhatev
 
 	const auto* umbrella = registry.getGoalByDestination(foundation);
 	ASSERT_NE(umbrella, nullptr);
-	ASSERT_NE(findChild(umbrella->id, TaskType::Harvest), nullptr);
-	EXPECT_EQ(findChild(umbrella->id, TaskType::Haul), nullptr);
+	ASSERT_NE(findChild(umbrella->id, GoalType::Harvest), nullptr);
+	EXPECT_EQ(findChild(umbrella->id, GoalType::Haul), nullptr);
 	EXPECT_EQ(registry.remainingNeed(*world, umbrella->id, assets::AssetRegistry::Get().getDefNameId("Wood"), NeedBasis::Stock), 313U);
 }
 
@@ -694,7 +694,7 @@ TEST_F(ConstructionGoalEmissionTest, BuiltStructureDemolishDoesNotDropSalvageAtO
 	// A worked/built teardown still emits a Deconstruct goal for a colonist to work down.
 	const auto* goal = GoalTaskRegistry::Get().getGoalByDestination(foundation);
 	ASSERT_NE(goal, nullptr);
-	EXPECT_EQ(goal->type, TaskType::Deconstruct) << "the built structure is torn down by work, salvage aside";
+	EXPECT_EQ(goal->type, GoalType::Deconstruct) << "the built structure is torn down by work, salvage aside";
 }
 
 // ============================================================================
@@ -715,16 +715,16 @@ TEST_F(ConstructionGoalEmissionTest, OpeningWithNoWorldIsUngatedAndHaulsImmediat
 
 	const auto* umbrella = registry.getGoalByDestination(opening);
 	ASSERT_NE(umbrella, nullptr);
-	EXPECT_EQ(umbrella->type, TaskType::Build);
+	EXPECT_EQ(umbrella->type, GoalType::Build);
 	EXPECT_EQ(umbrella->status, GoalStatus::Blocked) << "umbrella Blocked while materials outstanding";
 
 	auto children = registry.getChildGoals(umbrella->id);
-	EXPECT_EQ(countOfType(children, TaskType::Harvest), 1U);
+	EXPECT_EQ(countOfType(children, GoalType::Harvest), 1U);
 }
 
 TEST_F(ConstructionGoalEmissionTest, OpeningNeverEmitsClearGoals) {
 	// An opening sits on a built wall: it has no clear phase, so even on first sight it
-	// emits no Harvest CLEAR goal. (Its only Harvest is the per-material one.)
+	// emits no Clear goal. (Its only Harvest is the per-material one.)
 	auto  opening = createOpeningBlueprint(/*openingId=*/1);
 	auto& registry = GoalTaskRegistry::Get();
 
@@ -733,9 +733,8 @@ TEST_F(ConstructionGoalEmissionTest, OpeningNeverEmitsClearGoals) {
 	const auto* umbrella = registry.getGoalByDestination(opening);
 	ASSERT_NE(umbrella, nullptr);
 	for (const auto* child : registry.getChildGoals(umbrella->id)) {
-		if (child->type == TaskType::Harvest) {
-			EXPECT_FALSE(child->clearFootprint.has_value()) << "an opening's only Harvest is a material one, never a clear goal";
-		}
+		EXPECT_NE(child->type, GoalType::Clear) << "an opening's only Harvest is a material one, never a clear goal";
+		EXPECT_FALSE(child->clearFootprint.has_value()) << "no child of an opening carries a clear footprint";
 	}
 }
 
@@ -843,7 +842,7 @@ TEST_F(OpeningHostGateTest, BlueprintSegmentGatesOpeningAtBlockedUmbrellaWithNoG
 
 	const auto* umbrella = registry.getGoalByDestination(blueprint);
 	ASSERT_NE(umbrella, nullptr);
-	EXPECT_EQ(umbrella->type, TaskType::Build);
+	EXPECT_EQ(umbrella->type, GoalType::Build);
 	EXPECT_EQ(umbrella->status, GoalStatus::Blocked);
 	EXPECT_TRUE(registry.getChildGoals(umbrella->id).empty()) << "gated opening must emit no haul/build child goals";
 }
@@ -863,7 +862,7 @@ TEST_F(OpeningHostGateTest, BuiltSegmentReleasesOpeningToHaulThenBuild) {
 	const auto* umbrella = registry.getGoalByDestination(blueprint);
 	ASSERT_NE(umbrella, nullptr);
 	auto children = registry.getChildGoals(umbrella->id);
-	EXPECT_EQ(countOfType(children, TaskType::Harvest), 1U);
+	EXPECT_EQ(countOfType(children, GoalType::Harvest), 1U);
 	EXPECT_FALSE(umbrella->acceptedDefNameIds.empty());
 
 	// Record the materials onto the blueprint's manifest, then refresh: the opening advances
@@ -911,7 +910,7 @@ TEST_F(OpeningHostGateTest, DemolishingFoundationGatedWhileWallStands) {
 	// A wall is still hosted on the foundation: its Deconstruct goal is Blocked.
 	const auto* goal = registry.getGoalByDestination(foundationBp);
 	ASSERT_NE(goal, nullptr);
-	EXPECT_EQ(goal->type, TaskType::Deconstruct);
+	EXPECT_EQ(goal->type, GoalType::Deconstruct);
 	EXPECT_EQ(goal->status, GoalStatus::Blocked) << "foundation must wait for its walls";
 
 	// Remove the wall (and its opening): the gate opens and the goal goes Available.
@@ -934,7 +933,7 @@ TEST_F(OpeningHostGateTest, DemolishingWallGatedWhileOpeningStands) {
 	// An opening still sits on the wall: its Deconstruct goal is Blocked.
 	const auto* goal = registry.getGoalByDestination(wallBp);
 	ASSERT_NE(goal, nullptr);
-	EXPECT_EQ(goal->type, TaskType::Deconstruct);
+	EXPECT_EQ(goal->type, GoalType::Deconstruct);
 	EXPECT_EQ(goal->status, GoalStatus::Blocked) << "wall must wait for its openings";
 
 	// Remove the opening: the gate opens and the wall's goal goes Available.
@@ -961,7 +960,7 @@ TEST_F(OpeningHostGateTest, DemolishingFoundationGatedWhileExtensionPending) {
 
 	const auto* goal = registry.getGoalByDestination(targetBp);
 	ASSERT_NE(goal, nullptr);
-	EXPECT_EQ(goal->type, TaskType::Deconstruct);
+	EXPECT_EQ(goal->type, GoalType::Deconstruct);
 	EXPECT_EQ(goal->status, GoalStatus::Blocked) << "target must wait for its pending extension";
 
 	topology.removeFoundation(extension.id);
