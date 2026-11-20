@@ -21,9 +21,9 @@
 // counts (never a time budget, so which tick a ring enters doesn't depend on frame time):
 //  1. Walls and doors, diffed by content whenever ConstructionWorld::version moves, all at once.
 //  2. Water re-derived for each meshed chunk whose terrain changed while loaded.
-//  3. Removed placed obstacles (PlacementExecutor::takeRemovals, and the ECS entities with a collider
-//     that ColliderEntityIndex finds gone, moved, or changed), each looked up by its key, up to
-//     kDetailRemovalsPerTick, in one patch. One not in the mesh is no change: a limit still waiting
+//  3. Removed placed obstacles, each looked up by its key, in one patch: the ECS entities with a
+//     collider that ColliderEntityIndex finds gone, moved, or changed, all of them, then the
+//     executor's (PlacementExecutor::takeRemovals) up to kDetailRemovalsPerTick. One not in the mesh is no change: a limit still waiting
 //     never finds it, and ground no limit reached has nothing to take out. Then the ECS entities with
 //     a collider that came or changed, all at once in one patch, meshed ground or not: they are few,
 //     and one over meshed ground closes it as a wall does.
@@ -712,6 +712,8 @@ class NavigationSystem : public ISystem {
 	std::map<ObstacleKey, RingId> obstacleInMesh;
 	std::vector<RingId>			  detailRemovals;
 	ColliderEntityIndex			  colliderEntityIndex;
+	// The rings of collider entities that left or changed, taken whole by the next removal patch.
+	std::vector<RingId>			  colliderEntityRemovals;
 	vision::PlacedOccluderIndex	  placedOccluderIndex;
 	// The sim clock in ms (TimeSystem::simulationSeconds), 0 in a world without a TimeSystem: what the
 	// placed occluder index stamps a ring's arrival with.

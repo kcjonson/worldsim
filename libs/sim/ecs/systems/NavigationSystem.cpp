@@ -1375,9 +1375,10 @@ namespace ecs {
 	namespace {
 		// A placed obstacle over ground already meshed can land across a route: its box closes ground,
 		// as a wall's does. `lo` and `hi` are the ring's box.
-		bool ringOnMeshedGround(const gnav::PatchableMesh& mesh, const gnav::NavInputPolygon& ring, geometry::Vec2i64 lo, geometry::Vec2i64 hi) {
-			const auto meshed = [&mesh](geometry::Vec2i64 p) { return mesh.locate(p) >= 0; };
-			return meshed(lo) || meshed(hi) || meshed({lo.x, hi.y}) || meshed({hi.x, lo.y}) || std::any_of(ring.ring.begin(), ring.ring.end(), meshed);
+		bool ringOnMeshedGround(const gnav::PatchableMesh& mesh, const gnav::NavInputPolygon& ring, geometry::Vec2i64 lower, geometry::Vec2i64 upper) {
+			const auto meshed = [&mesh](geometry::Vec2i64 point) { return mesh.locate(point) >= 0; };
+			return meshed(lower) || meshed(upper) || meshed({lower.x, upper.y}) || meshed({upper.x, lower.y}) ||
+				   std::any_of(ring.ring.begin(), ring.ring.end(), meshed);
 		}
 	} // namespace
 
@@ -1390,7 +1391,7 @@ namespace ecs {
 			if (const auto it = obstacleInMesh.find(colliderEntityKey(entry)); it != obstacleInMesh.end()) {
 				// As queueRemovedDetail: taken after the joined jobs are collected.
 				assert(it->second >= 0);
-				detailRemovals.push_back(it->second);
+				colliderEntityRemovals.push_back(it->second);
 				obstacleInMesh.erase(it);
 			}
 		}
@@ -1407,14 +1408,14 @@ namespace ecs {
 			if (!ring.has_value()) {
 				continue;
 			}
-			geometry::Vec2i64 lo = ring->ring.front();
-			geometry::Vec2i64 hi = lo;
-			for (const geometry::Vec2i64& p : ring->ring) {
-				lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
-				hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
+			geometry::Vec2i64 lower = ring->ring.front();
+			geometry::Vec2i64 upper = lower;
+			for (const geometry::Vec2i64& point : ring->ring) {
+				lower = {std::min(lower.x, point.x), std::min(lower.y, point.y)};
+				upper = {std::max(upper.x, point.x), std::max(upper.y, point.y)};
 			}
-			if (ringOnMeshedGround(detailMesh, *ring, lo, hi)) {
-				gatheredJob.blockingBoxes.emplace_back(nav::toMeters(lo), nav::toMeters(hi));
+			if (ringOnMeshedGround(detailMesh, *ring, lower, upper)) {
+				gatheredJob.blockingBoxes.emplace_back(nav::toMeters(lower), nav::toMeters(upper));
 				closesGround = true;
 			}
 			ObstacleKey key = colliderEntityKey(entry);
@@ -1457,11 +1458,15 @@ namespace ecs {
 
 	void NavigationSystem::gatherRemovals(std::size_t removeBudget) {
 		const std::size_t count = std::min(removeBudget, detailRemovals.size());
-		if (count == 0) {
+		if (count == 0 && colliderEntityRemovals.empty()) {
 			return;
 		}
+		// The collider entities' first and outside the budget: they are few, and a moved one's new ring
+		// goes in after this patch in the same job, so its old ring must leave in it.
 		gnav::PatchEdits edits;
-		edits.removes.assign(detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(count));
+		edits.removes = std::move(colliderEntityRemovals);
+		colliderEntityRemovals.clear();
+		edits.removes.insert(edits.removes.end(), detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(count));
 		// The ids it removes, for the placed occluder index: a count would not say which entries leave.
 		std::vector<RingId> removed = edits.removes;
 		gatheredJob.patches.push_back(std::move(edits));

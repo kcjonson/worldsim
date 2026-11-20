@@ -21,6 +21,7 @@
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/NavPath.h"
+#include "../components/Packaged.h"
 #include "../ShippedConfig.test.h"
 #include "../components/Needs.h"
 #include "../components/SourceReachMemo.h"
@@ -1239,8 +1240,8 @@ TEST_F(NavigationSystemTest, MovedOrRemovedColliderEntityMovesOrLeavesNavAndSigh
 	const glm::vec2 from{20.0F, 20.0F};
 	const glm::vec2 to{20.0F, 26.0F};
 	const EntityID	box	  = spawnThing(world, kSpawnedBox, from);
-	const EntityID	trunk = spawnThing(world, kSightTrunk, {14.0F, 20.0F});
-	const EntityID	observer = sightObserver(world, {16.0F, 20.0F});
+	spawnThing(world, kSightTrunk, {14.0F, 20.0F});
+	const EntityID observer = sightObserver(world, {16.0F, 20.0F});
 	settle(sys);
 	world.update(0.016F);
 	ASSERT_FALSE(meshClear(sys, from));
@@ -1250,7 +1251,6 @@ TEST_F(NavigationSystemTest, MovedOrRemovedColliderEntityMovesOrLeavesNavAndSigh
 	}
 	EXPECT_FALSE(inShape(vision, observer, {24.0F, 20.0F})) << "behind the box";
 	EXPECT_TRUE(inShape(vision, observer, {12.0F, 20.0F})) << "behind the trunk";
-	static_cast<void>(trunk);
 
 	world.getComponent<Position>(box)->value = to;
 	step(world, sys);
@@ -1266,6 +1266,18 @@ TEST_F(NavigationSystemTest, MovedOrRemovedColliderEntityMovesOrLeavesNavAndSigh
 	}
 	world.update(0.016F);
 	EXPECT_TRUE(inShape(vision, observer, {24.0F, 20.0F})) << "the box no longer stands there";
+
+	// Scaled where it stands: its old ring leaves and the larger one goes in.
+	world.getComponent<Appearance>(box)->scale = 2.0F;
+	step(world, sys);
+	step(world, sys);
+	EXPECT_FALSE(meshClear(sys, to + glm::vec2{1.0F, 0.0F})) << "the larger ring";
+	ASSERT_EQ(sys.placedOccluders().size(), 2U) << "the box once, not the old and the new";
+	for (const vision::PlacedOccluder* ring : occludersOf(sys)) {
+		if (ring->defName == kSpawnedBox) {
+			EXPECT_EQ(ring->diameterMm, 3111) << "2.2 m square";
+		}
+	}
 
 	world.destroyEntity(box);
 	step(world, sys);
@@ -1290,6 +1302,78 @@ TEST_F(NavigationSystemTest, ColliderEntitiesAlreadyInTheWorldGoInWithTheFirstBu
 	EXPECT_FALSE(meshClear(sys, boxAt));
 	ASSERT_EQ(sys.placedOccluders().size(), 1U);
 	EXPECT_EQ(occludersOf(sys).front()->kind, vision::BodyKind::Opaque);
+}
+
+// A packaged entity is not installed: packaging one takes its ring, its body, and its occluder out, and
+// unpackaging puts them back.
+TEST_F(NavigationSystemTest, PackagingAColliderEntityTakesItOutAndUnpackagingPutsItBack) {
+	registerSpawnables();
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(world, sys);
+	const glm::vec2 boxAt{20.0F, 20.0F};
+	const EntityID	box = spawnThing(world, kSpawnedBox, boxAt);
+	settle(sys);
+	ASSERT_TRUE(sys.placedObstacleInNavMesh(box));
+
+	world.addComponent<Packaged>(box, Packaged{});
+	step(world, sys);
+	step(world, sys);
+	EXPECT_TRUE(meshClear(sys, boxAt));
+	EXPECT_FALSE(sys.placedObstacleInNavMesh(box));
+	EXPECT_EQ(sys.placedOccluders().size(), 0U);
+
+	world.removeComponent<Packaged>(box);
+	step(world, sys);
+	step(world, sys);
+	EXPECT_FALSE(meshClear(sys, boxAt));
+	EXPECT_TRUE(sys.placedObstacleInNavMesh(box));
+	EXPECT_EQ(sys.placedOccluders().size(), 1U);
+}
+
+// A moved collider entity's old ring leaves in the job its new one goes in, however long the backlog
+// of the executor's removals: never both spots blocked at once.
+TEST_F(NavigationSystemTest, MovedColliderEntityLeavesItsOldSpotPastARemovalBacklog) {
+	registerSpawnables();
+	registerObstacle("Test_NavBacklogPost", 0.1F);
+	std::vector<glm::vec2> posts;
+	for (int row = 0; row < 10; ++row) {
+		for (int column = 0; column < 20; ++column) {
+			posts.push_back({100.0F + 2.0F * static_cast<float>(column), 100.0F + 2.0F * static_cast<float>(row)});
+		}
+	}
+	ASSERT_GT(posts.size(), NavigationSystem::kDetailRemovalsPerTick);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeObstacles(executor, processed, "Test_NavBacklogPost", posts);
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(world, sys);
+	sys.setPlacementData(&executor, &processed);
+	const glm::vec2 from{20.0F, 20.0F};
+	const glm::vec2 to{20.0F, 26.0F};
+	const EntityID	box = spawnThing(world, kSpawnedBox, from);
+	settle(sys);
+	ASSERT_FALSE(meshClear(sys, posts.back()));
+
+	for (const glm::vec2 post : posts) {
+		ASSERT_TRUE(executor.removeEntity(world::worldToChunk({post.x, post.y}), post, "Test_NavBacklogPost"));
+	}
+	world.getComponent<Position>(box)->value = to;
+	step(world, sys); // the removals and the add gathered in one job, joined by the read below
+	EXPECT_TRUE(meshClear(sys, from)) << "the old spot is still blocked";
+	EXPECT_FALSE(meshClear(sys, to));
+	EXPECT_FALSE(meshClear(sys, posts.back())) << "the backlog went in one tick; the test proves nothing";
+	step(world, sys);
+	EXPECT_TRUE(sys.placedObstacleInNavMesh(box));
+	std::size_t boxes = 0;
+	for (const vision::PlacedOccluder* ring : occludersOf(sys)) {
+		boxes += ring->defName == kSpawnedBox ? 1U : 0U;
+		if (ring->defName == kSpawnedBox) {
+			EXPECT_EQ(ring->centre, nav::toMm(to));
+		}
+	}
+	EXPECT_EQ(boxes, 1U) << "the old and the new";
 }
 
 // Vision reads the placed occluder index alone and never waits for the patch job: a pass with a job

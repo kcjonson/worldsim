@@ -860,7 +860,7 @@ TEST_F(PlacedObstacleCollisionSystemTest, ColliderFarFromItsPositionIsFound) {
 
 // An ECS entity with a collider, as spawning makes it, is a body like a placed one once nav has it in
 // the mesh: an agent inside it is pushed out. Moved, it is pushed against where it now stands and no
-// longer where it stood.
+// longer where it stood; removed, nowhere.
 TEST_F(PlacedObstacleCollisionSystemTest, AgentInsideAColliderEntityIsPushedOut) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition box;
@@ -891,4 +891,10 @@ TEST_F(PlacedObstacleCollisionSystemTest, AgentInsideAColliderEntityIsPushedOut)
 	sys.update(0.0F);
 	EXPECT_EQ(world.getComponent<Position>(atOld)->value, boxAt + offset) << "pushed against where it stood";
 	EXPECT_NEAR(world.getComponent<Position>(atNew)->value.x, movedTo.x + 0.5F + kPadMeters, kLandingMeters) << "not pushed out where it stands";
+
+	world.destroyEntity(entity);
+	const EntityID afterRemoval = spawnAgent(world, movedTo + offset);
+	nav.finishPendingBuilds();
+	sys.update(0.0F);
+	EXPECT_EQ(world.getComponent<Position>(afterRemoval)->value, movedTo + offset) << "pushed against a removed entity";
 }
