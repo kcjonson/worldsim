@@ -218,7 +218,7 @@ namespace world_sim::testing {
 					blueprint.workDone = 25.0F;
 					world.addComponent<ecs::StructureBlueprint>(structure, blueprint);
 					ecs::GoalTask goal;
-					goal.type = ecs::TaskType::Deconstruct;
+					goal.type = ecs::GoalType::Deconstruct;
 					goal.owner = ecs::GoalOwner::ConstructionGoalSystem;
 					goal.destinationEntity = structure;
 					goal.destinationPosition = {static_cast<float>(index) * 5.0F, -8.0F};

@@ -18,7 +18,7 @@
 //     build goals emit, until its host wall SEGMENT is Built. isOpeningHostSegmentBuilt
 //     owns that gate.
 //
-//   Clearing           -> emit Harvest goals for choppable entities sitting on
+//   Clearing           -> emit a Clear goal for the choppable entities sitting on
 //                         the footprint; advance to AwaitingMaterials once the
 //                         footprint is known clear (every chunk under it placed).
 //                         (Foundations only.)
@@ -42,7 +42,7 @@
 // Goal-graph shape (mirrors CraftingGoalSystem): ONE top-level umbrella goal per
 // blueprint, keyed by destinationEntity, persists across every phase. The umbrella
 // is the Build goal and the root material deliveries count toward. Every phase goal
-// (clear-Harvest, per-material Harvest) is a CHILD of it (parentGoalId = umbrella id), which exempts the
+// (the Clear, a Harvest per material) is a CHILD of it (parentGoalId = umbrella id), which exempts the
 // children from the registry's single-top-level-goal-per-destination guard so a
 // multi-material site can carry several Harvest goals at once. The umbrella
 // is Blocked while clearing or awaiting materials and flips Available only at
@@ -97,7 +97,7 @@ namespace ecs {
 	/// which goal kinds to emit this tick.
 	struct ConstructionDecision {
 		StructureBlueprint::BuildPhase nextPhase = StructureBlueprint::BuildPhase::Clearing;
-		bool						   emitClearGoals = false;	  // footprint not yet clear: emit Harvest for blockers
+		bool						   emitClearGoals = false;	  // footprint not yet clear: emit the Clear goal for blockers
 		bool						   emitMaterialGoals = false; // clear, materials outstanding: accept materials, emit their Harvests
 		bool						   emitBuildGoal = false;	  // materials staged: emit a Build goal
 	};
@@ -274,7 +274,7 @@ namespace ecs {
 		/// True (ungated) when there is no ConstructionWorld wired (headless contexts).
 		[[nodiscard]] bool deconstructDependentsCleared(const Structure& structure) const;
 
-		/// Emit the blueprint's one clear-Harvest CHILD under the umbrella, unless it already has one.
+		/// Emit the blueprint's one Clear CHILD under the umbrella, unless it already has one.
 		/// Any Harvestable a colonist knows inside the footprint serves it; each served harvest
 		/// removes its blocker but records nothing, so the goal stands until the footprint is clear
 		/// and update() retires it then.
@@ -287,7 +287,7 @@ namespace ecs {
 		void emitMaterialGoals(EntityID blueprintEntity, const StructureBlueprint& blueprint, uint64_t umbrellaGoalId);
 
 		/// Retire any leftover child goals of a kind no longer relevant to the current phase
-		/// (e.g. the clear-Harvest child once the footprint is clear, or all material children
+		/// (e.g. the Clear child once the footprint is clear, or all material children
 		/// once materials are staged). The umbrella itself is left in place.
 		void retireChildGoals(EntityID blueprintEntity, uint64_t umbrellaGoalId, bool keepMaterialChildren);
 		/// Shared by the free-build flag path and forceCompleteBlueprint: stage materials,

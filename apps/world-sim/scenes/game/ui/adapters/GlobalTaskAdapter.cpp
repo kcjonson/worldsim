@@ -7,7 +7,6 @@
 #include <ecs/World.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/StructureBlueprint.h>
-#include <ecs/components/Task.h>
 #include <ecs/components/WorkQueue.h>
 #include <ecs/systems/ColonyGoalWork.h>
 
@@ -23,54 +22,44 @@ namespace world_sim::adapters {
 
 	namespace {
 
-		/// Get priority for task type (lower = higher priority in display)
-		uint8_t getTaskTypePriority(ecs::TaskType type) {
+		/// A goal type's place in the list (lower = higher in display)
+		uint8_t goalTypePriority(ecs::GoalType type) {
 			switch (type) {
-				case ecs::TaskType::FulfillNeed:
-					return 0; // Highest priority - active survival
-				case ecs::TaskType::Harvest:
-					return 1; // Harvesting for crafting
-				case ecs::TaskType::Craft:
+				case ecs::GoalType::Harvest:
+				case ecs::GoalType::Clear:
+					return 1;
+				case ecs::GoalType::Craft:
 					return 2;
-				case ecs::TaskType::Haul:
+				case ecs::GoalType::Haul:
 					return 3;
-				case ecs::TaskType::Build:
+				case ecs::GoalType::Build:
 					return 4; // reads Cut -> Haul -> Build for a site
-				case ecs::TaskType::PlacePackaged:
+				case ecs::GoalType::PlacePackaged:
 					return 5;
-				case ecs::TaskType::Deconstruct:
+				case ecs::GoalType::Deconstruct:
 					return 6;
-				case ecs::TaskType::Wander:
-					return 7;
-				case ecs::TaskType::None:
-				default:
-					return 255;
 			}
+			return 255;
 		}
 
-		/// Get task type display prefix (e.g., "Cut", "Haul")
-		std::string getTaskTypePrefix(ecs::TaskType type) {
+		/// A goal type's display prefix (e.g., "Cut", "Haul")
+		std::string goalTypePrefix(ecs::GoalType type) {
 			switch (type) {
-				case ecs::TaskType::Harvest:
-					return "Cut"; // "Cut Tree", "Harvest Bush"
-				case ecs::TaskType::Haul:
+				case ecs::GoalType::Harvest:
+				case ecs::GoalType::Clear:
+					return "Cut";
+				case ecs::GoalType::Haul:
 					return "Haul";
-				case ecs::TaskType::Build:
+				case ecs::GoalType::Build:
 					return "Build";
-				case ecs::TaskType::Craft:
+				case ecs::GoalType::Craft:
 					return "Craft";
-				case ecs::TaskType::PlacePackaged:
+				case ecs::GoalType::PlacePackaged:
 					return "Place";
-				case ecs::TaskType::Deconstruct:
+				case ecs::GoalType::Deconstruct:
 					return "Deconstruct";
-				case ecs::TaskType::FulfillNeed:
-					return "Use";
-				case ecs::TaskType::Wander:
-					return "Explore";
-				case ecs::TaskType::None:
-				default:
-					return "";
 			}
+			return "";
 		}
 
 		/// Get parent context string (e.g., "(for Axe)")
@@ -80,7 +69,7 @@ namespace world_sim::adapters {
 			}
 
 			const auto* parentGoal = registry.getGoal(goal.parentGoalId.value());
-			if (parentGoal == nullptr || parentGoal->type != ecs::TaskType::Craft) {
+			if (parentGoal == nullptr || parentGoal->type != ecs::GoalType::Craft) {
 				return "";
 			}
 
@@ -110,11 +99,11 @@ namespace world_sim::adapters {
 
 		/// Build description for a goal based on type and accepted items
 		std::string buildGoalDescription(const ecs::GoalTask& goal, const ecs::GoalTaskRegistry& goalRegistry) {
-			std::string prefix = getTaskTypePrefix(goal.type);
+			std::string prefix = goalTypePrefix(goal.type);
 			std::string context = getParentContext(goalRegistry, goal);
 
-			// For Harvest goals, describe what's being harvested
-			if (goal.type == ecs::TaskType::Harvest) {
+			// For Harvest and Clear goals, describe what's being harvested
+			if (goal.type == ecs::GoalType::Harvest || goal.type == ecs::GoalType::Clear) {
 				if (goal.yieldDefNameId != 0) {
 					// Show what item this harvest yields (e.g., "Cut Tree" for Wood)
 					return prefix + " for " + getAssetLabel(goal.yieldDefNameId) + context;
@@ -123,7 +112,7 @@ namespace world_sim::adapters {
 			}
 
 			// For Haul goals, describe what's being hauled
-			if (goal.type == ecs::TaskType::Haul) {
+			if (goal.type == ecs::GoalType::Haul) {
 				if (!goal.acceptedDefNameIds.empty()) {
 					// Specific item types (e.g., "Haul Wood")
 					return prefix + " " + getAssetLabel(goal.acceptedDefNameIds[0]) + context;
@@ -153,21 +142,21 @@ namespace world_sim::adapters {
 			}
 
 			// Build umbrella: the whole structure (its children are the Cut/Haul rows).
-			if (goal.type == ecs::TaskType::Build) {
+			if (goal.type == ecs::GoalType::Build) {
 				return "Build structure";
 			}
 
-			if (goal.type == ecs::TaskType::Deconstruct) {
+			if (goal.type == ecs::GoalType::Deconstruct) {
 				return "Deconstruct structure";
 			}
 
 			// For Craft goals, show crafting
-			if (goal.type == ecs::TaskType::Craft) {
+			if (goal.type == ecs::GoalType::Craft) {
 				return "Craft";
 			}
 
 			// For PlacePackaged, show generic placement
-			if (goal.type == ecs::TaskType::PlacePackaged) {
+			if (goal.type == ecs::GoalType::PlacePackaged) {
 				return "Place Item";
 			}
 
@@ -238,8 +227,8 @@ namespace world_sim::adapters {
 			data.distance = std::format("{}m", static_cast<int>(data.distanceValue));
 
 			TaskRowFacts facts{
-				.buildSite = goal.type == ecs::TaskType::Build,
-				.teardownSite = goal.type == ecs::TaskType::Deconstruct,
+				.buildSite = goal.type == ecs::GoalType::Build,
+				.teardownSite = goal.type == ecs::GoalType::Deconstruct,
 				.blocked = goal.status == ecs::GoalStatus::Blocked,
 				.noSource = goal.status == ecs::GoalStatus::NoSource,
 				.allSourcesClaimed = work.allSourcesClaimed(goal.id),
@@ -259,7 +248,7 @@ namespace world_sim::adapters {
 					facts.teardownPercent = static_cast<int>(bp->displayProgress(true) * 100.0F);
 				}
 			}
-			if (facts.blocked && goal.type == ecs::TaskType::Craft) {
+			if (facts.blocked && goal.type == ecs::GoalType::Craft) {
 				facts.materials = craftMaterials(world, goal);
 			}
 			if (const auto count = work.itemCount(world, goal)) {
@@ -272,7 +261,7 @@ namespace world_sim::adapters {
 			data.isBlocked = row.blocked;
 			data.isUnassigned = row.unassigned;
 
-			data.taskTypePriority = getTaskTypePriority(goal.type);
+			data.taskTypePriority = goalTypePriority(goal.type);
 
 			return data;
 		}
@@ -288,15 +277,16 @@ namespace world_sim::adapters {
 			auto&							   registry = ecs::GoalTaskRegistry::Get();
 			std::vector<GlobalTaskDisplayData> result;
 			const ecs::ColonyGoalWork		   work(world, claims);
-			for (ecs::TaskType type :
-				 {ecs::TaskType::Harvest,
-				  ecs::TaskType::Haul,
-				  ecs::TaskType::Build,
-				  ecs::TaskType::Craft,
-				  ecs::TaskType::PlacePackaged,
-				  ecs::TaskType::Deconstruct}) {
+			for (ecs::GoalType type :
+				 {ecs::GoalType::Harvest,
+				  ecs::GoalType::Clear,
+				  ecs::GoalType::Haul,
+				  ecs::GoalType::Build,
+				  ecs::GoalType::Craft,
+				  ecs::GoalType::PlacePackaged,
+				  ecs::GoalType::Deconstruct}) {
 				for (const auto* goal : registry.getGoalsOfType(type)) {
-					if (type == ecs::TaskType::Deconstruct) {
+					if (type == ecs::GoalType::Deconstruct) {
 						// The goal outlives the last teardown tick until the next construction pass.
 						const auto* blueprint = world.getComponent<ecs::StructureBlueprint>(goal->destinationEntity);
 						if (blueprint == nullptr || blueprint->workDone <= 0.0F) {

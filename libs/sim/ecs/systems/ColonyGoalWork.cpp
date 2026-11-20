@@ -19,7 +19,7 @@ namespace ecs {
 		};
 		// A task or an option that works an entity (a station, a site, a package, a structure being torn
 		// down) serves the goal of its own type whose destination that is: its worker, or an offer toward it.
-		const auto goalWorking = [](uint64_t entity, TaskType type) -> uint64_t {
+		const auto goalWorking = [](uint64_t entity, GoalType type) -> uint64_t {
 			const GoalTask* goal = GoalTaskRegistry::Get().getGoalByDestination(static_cast<EntityID>(entity));
 			return goal != nullptr && goal->type == type ? goal->id : 0U;
 		};
@@ -32,14 +32,16 @@ namespace ecs {
 					addWorker(workersByGoal, task.haulGoalId, colonist);
 					break;
 				case TaskType::Build:
+					addWorker(workersByGoal, goalWorking(task.buildBlueprintEntityId, GoalType::Build), colonist);
+					break;
 				case TaskType::Deconstruct:
-					addWorker(workersByGoal, goalWorking(task.buildBlueprintEntityId, task.type), colonist);
+					addWorker(workersByGoal, goalWorking(task.buildBlueprintEntityId, GoalType::Deconstruct), colonist);
 					break;
 				case TaskType::Craft:
-					addWorker(workersByGoal, goalWorking(task.targetStationId, TaskType::Craft), colonist);
+					addWorker(workersByGoal, goalWorking(task.targetStationId, GoalType::Craft), colonist);
 					break;
 				case TaskType::PlacePackaged:
-					addWorker(workersByGoal, goalWorking(task.placePackagedEntityId, TaskType::PlacePackaged), colonist);
+					addWorker(workersByGoal, goalWorking(task.placePackagedEntityId, GoalType::PlacePackaged), colonist);
 					break;
 				case TaskType::FulfillNeed:
 				case TaskType::Wander:
@@ -67,14 +69,16 @@ namespace ecs {
 						goal = option.harvestGoalId;
 						break;
 					case TaskType::Build:
+						goal = goalWorking(option.buildBlueprintEntityId, GoalType::Build);
+						break;
 					case TaskType::Deconstruct:
-						goal = goalWorking(option.buildBlueprintEntityId, option.taskType);
+						goal = goalWorking(option.buildBlueprintEntityId, GoalType::Deconstruct);
 						break;
 					case TaskType::Craft:
-						goal = goalWorking(option.stationEntityId, TaskType::Craft);
+						goal = goalWorking(option.stationEntityId, GoalType::Craft);
 						break;
 					case TaskType::PlacePackaged:
-						goal = goalWorking(option.placePackagedEntityId, TaskType::PlacePackaged);
+						goal = goalWorking(option.placePackagedEntityId, GoalType::PlacePackaged);
 						break;
 					case TaskType::FulfillNeed:
 					case TaskType::Wander:
@@ -118,7 +122,7 @@ namespace ecs {
 
 	std::optional<GoalItemCount> ColonyGoalWork::itemCount(World& world, const GoalTask& goal) const {
 		const bool oneItem = goal.acceptedDefNameIds.size() == 1 && goal.acceptedCategory == assets::ItemCategory::None;
-		if ((goal.type != TaskType::Harvest && goal.type != TaskType::Haul) || goal.clearFootprint.has_value() || !oneItem) {
+		if ((goal.type != GoalType::Harvest && goal.type != GoalType::Haul) || !oneItem) {
 			return std::nullopt;
 		}
 		const auto&		registry = GoalTaskRegistry::Get();
@@ -128,10 +132,10 @@ namespace ecs {
 		}
 		const uint32_t item = goal.acceptedDefNameIds.front();
 		const uint32_t onTheWay = claims.inFlight(root->id, item, ClaimExclusion{});
-		if (goal.type == TaskType::Haul && goal.owner == GoalOwner::StorageGoalSystem) {
+		if (goal.type == GoalType::Haul && goal.owner == GoalOwner::StorageGoalSystem) {
 			return GoalItemCount{.onTheWay = onTheWay};
 		}
-		const NeedBasis basis = goal.type == TaskType::Harvest ? harvestBasis(*root) : NeedBasis::Stock;
+		const NeedBasis basis = goal.type == GoalType::Harvest ? harvestBasis(*root) : NeedBasis::Stock;
 		const uint32_t	need = registry.remainingNeed(world, root->id, item, basis);
 		return GoalItemCount{.needed = need - std::min(need, onTheWay), .onTheWay = onTheWay};
 	}

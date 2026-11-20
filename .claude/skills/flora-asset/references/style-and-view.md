@@ -74,7 +74,7 @@ The engine's canonical view is 3/4 top-down (see `deciduous.lua`: ground depth f
   - **Conifers** may keep a slightly PEAKED crown (mild verticality is allowed for evergreens) while broadleaves stay domed.
 - **Shrubs / bushes** — rounded mound seen slightly from above. Little or no trunk. Flatten with `stretchY < 1`.
 - **Ground plants / crops / ferns / flowers** — top-down. Leaves/fronds radiate from a center point. A flower adds a small bright corolla cluster at the center on top.
-- **Grasses** — a few tapered blades from a base point (see `assets/world/flora/GrassBlade/blade.svg`); thin, curved, pointed.
+- **Grasses** — a few tapered blades from a base point (see `assets/world/flora/CottonGrass/cotton_grass.svg`); thin, curved, pointed.
 
 ## Species cheat-sheet (distinct species WITHIN the 3/4 top-down view)
 

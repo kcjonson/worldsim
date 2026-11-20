@@ -119,7 +119,7 @@ namespace ecs {
 				push(task, Claim::use(TargetKind::WorldKey, task.harvestTargetKey));
 				// A footprint clear removes what stands there and brings nothing toward a need.
 				const GoalTask* goal = goals.getGoal(task.harvestGoalId);
-				if (goal == nullptr || goal->clearFootprint.has_value() || item == 0) {
+				if (goal == nullptr || goal->type == GoalType::Clear || item == 0) {
 					break;
 				}
 				const GoalTask* root = goals.getGoal(goals.rootOf(goal->id));
@@ -270,7 +270,7 @@ namespace ecs {
 		const GoalTask* root = goals.getGoal(goals.rootOf(goalId));
 		// A build-site clear brings nothing toward a need, so it never carries a gathering's goods on.
 		const bool carries = (task.type == TaskType::Haul && task.haulFromInventory) ||
-							 (task.type == TaskType::Harvest && goal != nullptr && !goal->clearFootprint.has_value());
+							 (task.type == TaskType::Harvest && goal != nullptr && goal->type != GoalType::Clear);
 		if (!carries || root == nullptr || root->id != task.suspended->rootGoalId || chainItem(task) != task.suspended->itemDefNameId) {
 			return false;
 		}

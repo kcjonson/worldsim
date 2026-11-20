@@ -10,7 +10,6 @@
 // Architecture: docs/technical/task-generation-architecture.md
 
 #include "EntityID.h"
-#include "components/Task.h"
 
 #include <glm/vec2.hpp>
 
@@ -38,6 +37,11 @@ namespace ecs {
 	/// configured minimum). Craft and construction roots have one target and ignore it.
 	enum class NeedBasis : uint8_t { Stock, Harvest };
 
+	/// What colony work a goal stands for, separate from the task a colonist runs to serve it. A Clear removes
+	/// every harvestable inside a site's footprint (clearFootprint) and a Harvest cuts toward the one item it
+	/// names; a colonist serves both with a Harvest task.
+	enum class GoalType : uint8_t { Haul, Harvest, Clear, Craft, Build, Deconstruct, PlacePackaged };
+
 	/// Goal status for task hierarchy and dependency tracking
 	enum class GoalStatus : uint8_t {
 		Available,		 // Can be worked on now
@@ -51,7 +55,7 @@ namespace ecs {
 		StorageGoalSystem,	// Haul goals for storage containers
 		CraftingGoalSystem, // Craft + child Harvest/Haul goals
 		BuildGoalSystem,	// PlacePackaged goals
-		ConstructionGoalSystem, // Foundation lifecycle: clear Harvest, deliver Harvest/Haul, Build goals
+		ConstructionGoalSystem, // Foundation lifecycle: Clear, deliver Harvest/Haul, Build goals
 	};
 
 	/// A blueprint's footprint: the foundation's ring (CCW, integer mm, no holes) and its bounding box in
@@ -93,7 +97,7 @@ namespace ecs {
 	struct GoalTask {
 		// Identity
 		uint64_t id = 0;	// Unique goal ID
-		TaskType type = TaskType::None;
+		GoalType type{};
 
 		// Destination (where items go / work happens)
 		EntityID  destinationEntity; // Storage, crafting station, build site
@@ -115,8 +119,8 @@ namespace ecs {
 		// For Harvest goals: what item type is yielded when harvesting completes
 		uint32_t yieldDefNameId = 0; // e.g., Tree yields Wood
 
-		// Construction clear Harvest: any harvestable inside this footprint serves it, whatever it
-		// yields, and the harvest removes it (clearing removes what stands there, regrowing or not).
+		// A Clear goal's footprint, set on Clear goals only: any harvestable inside it serves the goal,
+		// whatever it yields, and the harvest removes it (clearing removes what stands there, regrowing or not).
 		std::optional<FootprintBounds> clearFootprint;
 
 		// A foundation's construction Build umbrella: the candidate points its builders work from, in world
@@ -187,12 +191,12 @@ namespace ecs {
 		[[nodiscard]] const GoalTask* getGoalByDestination(EntityID destinationEntity) const;
 
 		/// Get all goals of a specific type
-		[[nodiscard]] std::vector<const GoalTask*> getGoalsOfType(TaskType type) const;
+		[[nodiscard]] std::vector<const GoalTask*> getGoalsOfType(GoalType type) const;
 
 		/// Call fn(const GoalTask&) for every goal of a type, in the order getGoalsOfType lists them,
 		/// without building a list.
 		template <typename Fn>
-		void forEachGoalOfType(TaskType type, Fn&& fn) const {
+		void forEachGoalOfType(GoalType type, Fn&& fn) const {
 			const auto it = typeToGoals.find(type);
 			if (it == typeToGoals.end()) {
 				return;
@@ -208,7 +212,7 @@ namespace ecs {
 		[[nodiscard]] size_t goalCount() const { return goals.size(); }
 
 		/// Get count of goals by type
-		[[nodiscard]] size_t goalCount(TaskType type) const;
+		[[nodiscard]] size_t goalCount(GoalType type) const;
 
 		/// Get all goals owned by a specific system
 		[[nodiscard]] std::vector<const GoalTask*> getGoalsByOwner(GoalOwner owner) const;
@@ -246,8 +250,8 @@ namespace ecs {
 		// Index: destination entity → goalId
 		std::unordered_map<EntityID, uint64_t> destinationToGoal;
 
-		// Index: TaskType → set of goalIds
-		std::unordered_map<TaskType, std::unordered_set<uint64_t>> typeToGoals;
+		// Index: GoalType → set of goalIds
+		std::unordered_map<GoalType, std::unordered_set<uint64_t>> typeToGoals;
 
 		// Index: GoalOwner → set of goalIds
 		std::unordered_map<GoalOwner, std::unordered_set<uint64_t>> ownerToGoals;

@@ -427,7 +427,7 @@ namespace ecs {
 		action.collectionEffect().dropAt = task.targetPosition;
 		// A footprint clear removes its source whatever kind it is: regrowing, pooled, or single-shot.
 		const auto* goal = GoalTaskRegistry::Get().getGoal(task.harvestGoalId);
-		if (goal != nullptr && goal->clearFootprint.has_value()) {
+		if (goal != nullptr && goal->type == GoalType::Clear) {
 			action.collectionEffect().clearsSource = true;
 			action.collectionEffect().dropAt = goal->clearFootprint->nearestOutside(entity.position, kClearDropMargin);
 		}

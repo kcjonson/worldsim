@@ -55,7 +55,7 @@ void BuildGoalSystem::update(float /*deltaTime*/) {
 		}
 
 		GoalTask goal;
-		goal.type = TaskType::PlacePackaged;
+		goal.type = GoalType::PlacePackaged;
 		goal.owner = GoalOwner::BuildGoalSystem;
 		goal.destinationEntity = entity; // The packaged item entity
 		goal.destinationPosition = *packaged.targetPosition;

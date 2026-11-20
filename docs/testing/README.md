@@ -27,6 +27,20 @@ protected pixel for pixel: no golden images, no screenshot diffs, in CI or local
   human tester would, and reporting pass or fail with a screenshot of what failed. A feature that
   lands adds steps or a scenario. New scenarios are as short as they can be: a numbered list,
   one line a step, the action and what you should see.
+- **Assertion counts never drop.** `node scripts/test-assertions.mjs [--base <ref>] [--json]`
+  holds a per-test floor on the count (only the count is compared, never what a macro checks) of
+  the `EXPECT_*`, `ASSERT_*` and `FAIL`-family macros of every test (keyed `Suite.Name`, so a test moved
+  between files still matches; assertions outside a test body count per file as
+  `<file>::helpers`) in every `*.test.cpp`, at the base ref (default: the merge-base with
+  `origin/main`) and in the working tree. It prints one line per test with fewer assertions, or
+  one that vanished, and exits 1 on any (2 when it cannot trust its parse). After the drops it
+  prints `NEW` lines for keys only at head and `RISE` lines for keys whose count rose. Run it on
+  every PR that ports tests; nothing in CI runs it
+  ([behavior-data-migration.md](../technical/behavior-data-migration.md#porting-tests)). Pass
+  `--base` only to compare against a specific earlier commit: `origin/main` on a branch behind main
+  reports main's own edits as drops. A legitimate rename, split, fold into a helper, or
+  parameterized merge still exits 1; the PR lists each old key against its new keys with the counts
+  from the `NEW` and `RISE` lines, for the reviewer to accept.
 - **Performance is strict, and a worse number needs an idle machine.** Rendering performance
   dropping in gameplay is the regression this project has hit most. Even or faster is a result on
   any machine; worse is only a finding on an idle one. See [Performance](#performance).

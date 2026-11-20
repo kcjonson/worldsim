@@ -15,7 +15,7 @@ The parser wins over docs (docs have drifted). Before relying on any convention,
 - Lua API: `libs/assets/assets/lua/LuaEngine.cpp` (`registerBindings`)
 - Canonical generators: `assets/shared/scripts/deciduous.lua`, `conifer.lua`, `palm.lua`
 - Asset def parsing: `libs/assets/assets/AssetRegistry.cpp`
-- Real examples: `assets/world/flora/OakTree/` (procedural), `assets/world/flora/GrassBlade/` (simple SVG)
+- Real examples: `assets/world/flora/OakTree/` (procedural), `assets/world/flora/Bilberry/` (simple SVG)
 
 Read the relevant `references/*.md` in this skill for the distilled, verified spec.
 
@@ -42,7 +42,7 @@ Design each flora asset to read across its life and the year:
 - **Growth stages** — seedling -> sapling -> mature (and dead/stump). Drive by a `growthStage` param that scales overall size, canopy fullness, and trunk thickness, and gates how many canopy layers and how much fruit appear.
 - **Seasons** — spring (blossom), summer (full green), autumn (gold), winter (bare/leafless). Drive by a `season` param selecting the foliage palette and fruit/blossom presence (palettes in `references/style-and-view.md`).
 
-Preview the whole matrix in the asset-manager (a stage x season grid) to judge the set at a glance. Engine status: generators don't yet read `growthStage`/`season` and the grid view isn't built; treat this as the authoring target and wire the params as they land.
+Preview the whole matrix in the asset-manager (a stage x season grid) to judge the set at a glance. Engine status: `conifer.lua` and `palm.lua` read `growthStage`; `deciduous.lua` grows by its own `age` param instead, no generator reads `season`, and the grid view isn't built. Treat the rest as the authoring target and wire the params as they land.
 
 ## Step 1 — reuse before you author
 

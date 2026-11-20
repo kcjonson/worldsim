@@ -89,7 +89,7 @@ namespace ecs {
 				});
 			} else {
 				GoalTask goal;
-				goal.type = TaskType::Haul;
+				goal.type = GoalType::Haul;
 				goal.owner = GoalOwner::StorageGoalSystem;
 				goal.destinationEntity = entity;
 				goal.destinationPosition = position.value;
@@ -130,7 +130,7 @@ namespace ecs {
 		std::vector<uint32_t> stocked;
 		std::vector<uint64_t> retired;
 		for (const auto* child : registry.getChildGoals(umbrellaId)) {
-			if (child->type == TaskType::Harvest && stocksItem(child->yieldDefNameId) &&
+			if (child->type == GoalType::Harvest && stocksItem(child->yieldDefNameId) &&
 				std::find(stocked.begin(), stocked.end(), child->yieldDefNameId) == stocked.end()) {
 				stocked.push_back(child->yieldDefNameId);
 			} else {
@@ -149,7 +149,7 @@ namespace ecs {
 			}
 			stocked.push_back(itemDefNameId);
 			GoalTask harvest;
-			harvest.type = TaskType::Harvest;
+			harvest.type = GoalType::Harvest;
 			harvest.owner = GoalOwner::StorageGoalSystem;
 			harvest.destinationEntity = umbrella->destinationEntity;
 			harvest.destinationPosition = umbrella->destinationPosition;

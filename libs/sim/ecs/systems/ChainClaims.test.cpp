@@ -186,7 +186,7 @@ namespace ecs::test {
 
 		uint64_t storageGoal(EntityID box, glm::vec2 position) {
 			GoalTask goal;
-			goal.type = TaskType::Haul;
+			goal.type = GoalType::Haul;
 			goal.owner = GoalOwner::StorageGoalSystem;
 			goal.destinationEntity = box;
 			goal.destinationPosition = position;
@@ -209,7 +209,7 @@ namespace ecs::test {
 
 			auto&	 goals = GoalTaskRegistry::Get();
 			GoalTask umbrella;
-			umbrella.type = TaskType::Build;
+			umbrella.type = GoalType::Build;
 			umbrella.owner = GoalOwner::ConstructionGoalSystem;
 			umbrella.destinationEntity = blueprint;
 			umbrella.destinationPosition = position;
@@ -229,7 +229,7 @@ namespace ecs::test {
 			world->addComponent<StructureBlueprint>(blueprint, std::move(structure));
 
 			GoalTask umbrella;
-			umbrella.type = TaskType::Build;
+			umbrella.type = GoalType::Build;
 			umbrella.owner = GoalOwner::ConstructionGoalSystem;
 			umbrella.destinationEntity = blueprint;
 			umbrella.destinationPosition = centre;
@@ -257,7 +257,7 @@ namespace ecs::test {
 			world->addComponent<Inventory>(station, Inventory::createForStorage());
 
 			GoalTask craft;
-			craft.type = TaskType::Craft;
+			craft.type = GoalType::Craft;
 			craft.owner = GoalOwner::CraftingGoalSystem;
 			craft.destinationEntity = station;
 			craft.destinationPosition = position;
@@ -265,14 +265,14 @@ namespace ecs::test {
 			return GoalTaskRegistry::Get().createGoal(std::move(craft));
 		}
 
-		uint64_t childGoal(TaskType type, uint64_t root, EntityID destination, glm::vec2 position, uint32_t item) {
+		uint64_t childGoal(GoalType type, uint64_t root, EntityID destination, glm::vec2 position, uint32_t item) {
 			GoalTask child;
 			child.type = type;
 			child.owner = GoalOwner::CraftingGoalSystem;
 			child.destinationEntity = destination;
 			child.destinationPosition = position;
 			child.acceptedDefNameIds = {item};
-			child.yieldDefNameId = type == TaskType::Harvest ? item : 0;
+			child.yieldDefNameId = type == GoalType::Harvest ? item : 0;
 			child.parentGoalId = root;
 			return GoalTaskRegistry::Get().createGoal(std::move(child));
 		}
@@ -415,7 +415,7 @@ namespace ecs::test {
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
 		const uint64_t root = craftRoot(station, stationPos, "Stone", 2);
-		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		childGoal(GoalType::Haul, root, station, stationPos, stoneId);
 		const EntityID pile = world->createEntity();
 		world->addComponent<Position>(pile, Position{pilePos});
 		makeLoosePile(*world, pile, stoneId, pilePos, 8);
@@ -440,7 +440,7 @@ namespace ecs::test {
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
 		const uint64_t root = craftRoot(station, stationPos, "Stick", 5);
-		childGoal(TaskType::Harvest, root, station, stationPos, stickId);
+		childGoal(GoalType::Harvest, root, station, stationPos, stickId);
 		const EntityID colonist = createColonist({0.0F, 0.0F});
 		remember(colonist, bushPos, "StickBush", assets::CapabilityType::Harvestable);
 
@@ -476,7 +476,7 @@ namespace ecs::test {
 		const glm::vec2 bushPos{4.5F, 4.5F};
 		const Site		site = constructionSite(sitePos, "Wood", 4);
 		GoalTask		clear;
-		clear.type = TaskType::Harvest;
+		clear.type = GoalType::Clear;
 		clear.owner = GoalOwner::ConstructionGoalSystem;
 		clear.destinationEntity = site.blueprint;
 		clear.destinationPosition = sitePos;
@@ -868,7 +868,7 @@ namespace ecs::test {
 		config.addRule(StorageRule{.defName = "Wood", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Medium, .maxAmount = 10});
 		world->addComponent<StorageConfiguration>(box, std::move(config));
 		GoalTask umbrella;
-		umbrella.type = TaskType::Haul;
+		umbrella.type = GoalType::Haul;
 		umbrella.owner = GoalOwner::StorageGoalSystem;
 		umbrella.destinationEntity = box;
 		umbrella.destinationPosition = boxPos;
@@ -1052,7 +1052,7 @@ namespace ecs::test {
 		const EntityID	furnitureBox = makeBox({10.0F, 10.0F}, StoragePriority::Medium);
 		world->getComponent<StorageConfiguration>(furnitureBox)->rules = StorageConfiguration::createAcceptEverything().rules;
 		GoalTask anyFurniture;
-		anyFurniture.type = TaskType::Haul;
+		anyFurniture.type = GoalType::Haul;
 		anyFurniture.owner = GoalOwner::StorageGoalSystem;
 		anyFurniture.destinationEntity = furnitureBox;
 		anyFurniture.destinationPosition = {10.0F, 10.0F};
@@ -1142,7 +1142,7 @@ namespace ecs::test {
 		config.addRule(StorageRule{.defName = "Berry", .category = assets::ItemCategory::RawMaterial});
 		world->addComponent<StorageConfiguration>(box, std::move(config));
 		GoalTask umbrella;
-		umbrella.type = TaskType::Haul;
+		umbrella.type = GoalType::Haul;
 		umbrella.owner = GoalOwner::StorageGoalSystem;
 		umbrella.destinationEntity = box;
 		umbrella.destinationPosition = boxPos;
@@ -1182,14 +1182,14 @@ namespace ecs::test {
 			world->addComponent<StorageConfiguration>(box, std::move(config));
 			auto&	 goals = GoalTaskRegistry::Get();
 			GoalTask umbrella;
-			umbrella.type = TaskType::Haul;
+			umbrella.type = GoalType::Haul;
 			umbrella.owner = GoalOwner::StorageGoalSystem;
 			umbrella.destinationEntity = box;
 			umbrella.destinationPosition = position;
 			umbrella.acceptedDefNameIds = {berryId};
 			const uint64_t umbrellaId = goals.createGoal(std::move(umbrella));
 			GoalTask harvest;
-			harvest.type = TaskType::Harvest;
+			harvest.type = GoalType::Harvest;
 			harvest.owner = GoalOwner::StorageGoalSystem;
 			harvest.destinationEntity = box;
 			harvest.destinationPosition = position;
@@ -1266,7 +1266,7 @@ namespace ecs::test {
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
 		const uint64_t root = craftRoot(station, stationPos, "Berry", 3);
-		childGoal(TaskType::Haul, root, station, stationPos, berryId);
+		childGoal(GoalType::Haul, root, station, stationPos, berryId);
 		const EntityID pile = world->createEntity();
 		world->addComponent<Position>(pile, Position{pilePos});
 		makeLoosePile(*world, pile, berryId, pilePos, 5);
@@ -1296,7 +1296,7 @@ namespace ecs::test {
 		const glm::vec2 treePos{0.5F, 0.0F};
 		const Site		site = constructionSite(sitePos, "Wood", 60);
 		GoalTask		cut;
-		cut.type = TaskType::Harvest;
+		cut.type = GoalType::Harvest;
 		cut.owner = GoalOwner::ConstructionGoalSystem;
 		cut.destinationEntity = site.blueprint;
 		cut.destinationPosition = sitePos;
@@ -1333,7 +1333,7 @@ namespace ecs::test {
 		const glm::vec2 sitePos{0.0F, 10.0F};
 		const Site		site = constructionSite(sitePos, "Wood", 10);
 		GoalTask		cut;
-		cut.type = TaskType::Harvest;
+		cut.type = GoalType::Harvest;
 		cut.owner = GoalOwner::ConstructionGoalSystem;
 		cut.destinationEntity = site.blueprint;
 		cut.destinationPosition = sitePos;
@@ -1438,16 +1438,16 @@ namespace ecs::test {
 		remember(colonist, {-3.0F, 0.0F}, "StickBush", assets::CapabilityType::Harvestable);
 
 		auto& goals = GoalTaskRegistry::Get();
-		ASSERT_TRUE(runUntil([&] { return goals.goalCount(TaskType::Harvest) == 1; }, 200)) << "the bush opens a Harvest";
+		ASSERT_TRUE(runUntil([&] { return goals.goalCount(GoalType::Harvest) == 1; }, 200)) << "the bush opens a Harvest";
 		runUntil([] { return false; }, 60);
 		EXPECT_NE(getTask(colonist)->type, TaskType::Harvest) << "the bush is regrowing";
-		EXPECT_EQ(goals.goalCount(TaskType::Haul), 0U);
+		EXPECT_EQ(goals.goalCount(GoalType::Haul), 0U);
 
 		const glm::vec2 pilePos{3.0F, 0.0F};
 		const EntityID	pile = makePile(pilePos, stickId, 5);
 		remember(colonist, pilePos, "Stick", assets::CapabilityType::Carryable);
-		ASSERT_TRUE(runUntil([&] { return goals.goalCount(TaskType::Haul) == 1; }, 200)) << "the pile opens a fetch beside the Harvest";
-		EXPECT_EQ(goals.goalCount(TaskType::Harvest), 1U) << "both ways stay open";
+		ASSERT_TRUE(runUntil([&] { return goals.goalCount(GoalType::Haul) == 1; }, 200)) << "the pile opens a fetch beside the Harvest";
+		EXPECT_EQ(goals.goalCount(GoalType::Harvest), 1U) << "both ways stay open";
 
 		ASSERT_TRUE(runUntil([&] { return world->getComponent<WorkQueue>(station)->getNextJob() == nullptr; })) << "the craft is provisioned from the pile";
 		EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 3U);
@@ -1474,7 +1474,7 @@ namespace ecs::test {
 		})) << "cutting stocks the box to its minimum";
 		ASSERT_TRUE(runUntil([&] {
 			most = std::max(most, stored());
-			return GoalTaskRegistry::Get().goalCount(TaskType::Harvest) == 0 && !getTask(colonist)->isActive();
+			return GoalTaskRegistry::Get().goalCount(GoalType::Harvest) == 0 && !getTask(colonist)->isActive();
 		})) << "the stocking harvest retires once the minimum is met";
 
 		const glm::vec2 pilePos{3.0F, 0.0F};
@@ -1598,7 +1598,7 @@ namespace ecs::test {
 		registerHarvestable("Oak", "Wood", 2, 2);
 		const Site other = constructionSite({3.0F, 0.0F}, "Wood", 10);
 		GoalTask cut;
-		cut.type = TaskType::Harvest;
+		cut.type = GoalType::Harvest;
 		cut.owner = GoalOwner::ConstructionGoalSystem;
 		cut.destinationEntity = other.blueprint;
 		cut.destinationPosition = {3.0F, 0.0F};
@@ -1730,7 +1730,7 @@ namespace ecs::test {
 
 		void childOf(const Site& site, glm::vec2 position, uint32_t item = 0) {
 			GoalTask harvest;
-			harvest.type = TaskType::Harvest;
+			harvest.type = GoalType::Harvest;
 			harvest.owner = GoalOwner::ConstructionGoalSystem;
 			harvest.destinationEntity = site.blueprint;
 			harvest.destinationPosition = position;
@@ -2152,14 +2152,14 @@ namespace ecs::test {
 		config.addRule(StorageRule{.defName = "Fibre", .category = assets::ItemCategory::RawMaterial, .minAmount = 50});
 		world->addComponent<StorageConfiguration>(box, std::move(config));
 		GoalTask umbrella;
-		umbrella.type = TaskType::Haul;
+		umbrella.type = GoalType::Haul;
 		umbrella.owner = GoalOwner::StorageGoalSystem;
 		umbrella.destinationEntity = box;
 		umbrella.destinationPosition = boxPos;
 		umbrella.acceptedDefNameIds = {fibreId};
 		const uint64_t umbrellaId = GoalTaskRegistry::Get().createGoal(std::move(umbrella));
 		GoalTask cut;
-		cut.type = TaskType::Harvest;
+		cut.type = GoalType::Harvest;
 		cut.owner = GoalOwner::StorageGoalSystem;
 		cut.destinationEntity = box;
 		cut.destinationPosition = boxPos;
@@ -2271,7 +2271,7 @@ namespace ecs::test {
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(thistle));
 		const glm::vec2 weed = world->getComponent<Position>(colonist)->value + glm::vec2{0.4F, 0.4F};
 		GoalTask		clear;
-		clear.type = TaskType::Harvest;
+		clear.type = GoalType::Clear;
 		clear.owner = GoalOwner::ConstructionGoalSystem;
 		clear.destinationEntity = site.blueprint;
 		clear.destinationPosition = {0.0F, 30.0F};
@@ -2346,7 +2346,7 @@ namespace ecs::test {
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
 		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
-		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		childGoal(GoalType::Haul, root, station, stationPos, stoneId);
 		const EntityID pile = world->createEntity();
 		world->addComponent<Position>(pile, Position{pilePos});
 		makeLoosePile(*world, pile, stoneId, pilePos, 5);
@@ -2394,7 +2394,7 @@ namespace ecs::test {
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
 		const uint64_t root = craftRoot(station, stationPos, "Stick", 20);
-		childGoal(TaskType::Harvest, root, station, stationPos, stickId);
+		childGoal(GoalType::Harvest, root, station, stationPos, stickId);
 		const EntityID cutter = createColonist({0.0F, 0.0F});
 		remember(cutter, bushPos, "StickBush", assets::CapabilityType::Harvestable);
 
@@ -2440,7 +2440,7 @@ namespace ecs::test {
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
 		const uint64_t root = craftRoot(station, stationPos, "Stick", 20);
-		childGoal(TaskType::Harvest, root, station, stationPos, stickId);
+		childGoal(GoalType::Harvest, root, station, stationPos, stickId);
 
 		const glm::vec2 boxPos{0.0F, -8.0F};
 		const glm::vec2 pilePos{-3.0F, 0.0F};
@@ -2477,7 +2477,7 @@ namespace ecs::test {
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
 		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
-		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		childGoal(GoalType::Haul, root, station, stationPos, stoneId);
 		const EntityID pile = world->createEntity();
 		world->addComponent<Position>(pile, Position{pilePos});
 		makeLoosePile(*world, pile, stoneId, pilePos, 1);
@@ -2521,7 +2521,7 @@ namespace ecs::test {
 		}
 		world->addComponent<StorageConfiguration>(box, std::move(config));
 		GoalTask goal;
-		goal.type = TaskType::Haul;
+		goal.type = GoalType::Haul;
 		goal.owner = GoalOwner::StorageGoalSystem;
 		goal.destinationEntity = box;
 		goal.destinationPosition = boxPos;
@@ -2589,7 +2589,7 @@ namespace ecs::test {
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
 		const uint64_t root = craftRoot(station, stationPos, "Stick", 3);
-		childGoal(TaskType::Harvest, root, station, stationPos, stickId);
+		childGoal(GoalType::Harvest, root, station, stationPos, stickId);
 		const EntityID cutter = createColonist({0.0F, 0.0F});
 		const EntityID other = createColonist({0.0F, 1.0F});
 		for (EntityID colonist : {cutter, other}) {
@@ -2619,7 +2619,7 @@ namespace ecs::test {
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
 		const uint64_t root = craftRoot(station, stationPos, "Stick", 20);
-		childGoal(TaskType::Harvest, root, station, stationPos, stickId);
+		childGoal(GoalType::Harvest, root, station, stationPos, stickId);
 		const EntityID first = createColonist({0.0F, 0.0F});
 		const EntityID second = createColonist({0.5F, 0.0F});
 		for (EntityID colonist : {first, second}) {
@@ -2652,7 +2652,7 @@ namespace ecs::test {
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
 		const uint64_t root = craftRoot(station, stationPos, "Stick", 20);
-		childGoal(TaskType::Harvest, root, station, stationPos, stickId);
+		childGoal(GoalType::Harvest, root, station, stationPos, stickId);
 		const EntityID stuck = createColonist({0.0F, 0.0F});
 		const EntityID other = createColonist({0.5F, 0.0F});
 		for (EntityID colonist : {stuck, other}) {
@@ -2686,7 +2686,7 @@ namespace ecs::test {
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
 		const uint64_t root = craftRoot(station, stationPos, "Stick", 20);
-		childGoal(TaskType::Harvest, root, station, stationPos, stickId);
+		childGoal(GoalType::Harvest, root, station, stationPos, stickId);
 		const EntityID stuck = createColonist({0.0F, 0.0F});
 		remember(stuck, bushPos, "StickBush", assets::CapabilityType::Harvestable);
 		decide(stuck);
@@ -2717,7 +2717,7 @@ namespace ecs::test {
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
 		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
-		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		childGoal(GoalType::Haul, root, station, stationPos, stoneId);
 		for (const glm::vec2 at : {pilePos, otherPilePos}) {
 			const EntityID pile = world->createEntity();
 			world->addComponent<Position>(pile, Position{at});
@@ -2954,7 +2954,7 @@ namespace ecs::test {
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
 		const uint64_t root = craftRoot(station, stationPos, "Berry", 20);
-		childGoal(TaskType::Harvest, root, station, stationPos, berryId);
+		childGoal(GoalType::Harvest, root, station, stationPos, berryId);
 
 		const EntityID worker = createColonist({0.0F, 0.0F});
 		const EntityID hungry = createColonist({0.0F, 1.0F});
@@ -2997,7 +2997,7 @@ namespace ecs::test {
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
 		const uint64_t root = craftRoot(station, stationPos, "Berry", 20);
-		childGoal(TaskType::Harvest, root, station, stationPos, berryId);
+		childGoal(GoalType::Harvest, root, station, stationPos, berryId);
 
 		const EntityID worker = createColonist({0.0F, 0.0F});
 		remember(worker, heldBush, "BerryBush", assets::CapabilityType::Harvestable);
@@ -3344,7 +3344,7 @@ namespace ecs::test {
 		config.addRule(StorageRule{.defName = "Berry", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Medium});
 		world->addComponent<StorageConfiguration>(store, std::move(config));
 		GoalTask goal;
-		goal.type = TaskType::Haul;
+		goal.type = GoalType::Haul;
 		goal.owner = GoalOwner::StorageGoalSystem;
 		goal.destinationEntity = store;
 		goal.destinationPosition = storePos;
@@ -3478,7 +3478,7 @@ namespace ecs::test {
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
 		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
-		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		childGoal(GoalType::Haul, root, station, stationPos, stoneId);
 		const EntityID colonist = createColonist({0.0F, 0.0F});
 		pack(colonist).maxCapacity = 2;
 		pack(colonist).addItem("Stick", 1);
@@ -3527,7 +3527,7 @@ namespace ecs::test {
 		const glm::vec2 stationPos{0.0F, 6.0F};
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
-		childGoal(TaskType::Harvest, craftRoot(station, stationPos, "Stick", 20), station, stationPos, stickId);
+		childGoal(GoalType::Harvest, craftRoot(station, stationPos, "Stick", 20), station, stationPos, stickId);
 		remember(colonist, {40.0F, 0.0F}, "StickBush", assets::CapabilityType::Harvestable); // far: he is still walking at the end
 
 		constexpr float kFrame = 0.02F;
@@ -3689,7 +3689,7 @@ namespace ecs::test {
 		config.addRule(StorageRule{.defName = "Berry", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Medium});
 		world->addComponent<StorageConfiguration>(store, std::move(config));
 		GoalTask goal;
-		goal.type = TaskType::Haul;
+		goal.type = GoalType::Haul;
 		goal.owner = GoalOwner::StorageGoalSystem;
 		goal.destinationEntity = store;
 		goal.destinationPosition = storePos;
@@ -3726,7 +3726,7 @@ namespace ecs::test {
 			station = world->createEntity();
 			world->addComponent<Position>(station, Position{stationPos});
 			root = craftRoot(station, stationPos, "Stone", 3);
-			childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+			childGoal(GoalType::Haul, root, station, stationPos, stoneId);
 			sleeper = createColonist({0.0F, 0.0F});
 			world->getComponent<Inventory>(sleeper)->addItem("Stone", 3);
 		}
@@ -3931,7 +3931,7 @@ namespace ecs::test {
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
 		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
-		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		childGoal(GoalType::Haul, root, station, stationPos, stoneId);
 		const EntityID hauler = haulerWalking(station, stoneId, 3);
 		ASSERT_FALSE(HasFailure());
 
@@ -3966,7 +3966,7 @@ namespace ecs::test {
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
 		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
-		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		childGoal(GoalType::Haul, root, station, stationPos, stoneId);
 		const EntityID hauler = haulerWalking(station, stoneId, 3);
 		ASSERT_FALSE(HasFailure());
 
@@ -4080,7 +4080,7 @@ namespace ecs::test {
 			world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);
 			world->addComponent<Inventory>(station, Inventory::createForStorage());
 			GoalTask craft;
-			craft.type = TaskType::Craft;
+			craft.type = GoalType::Craft;
 			craft.owner = GoalOwner::CraftingGoalSystem;
 			craft.destinationEntity = station;
 			craft.destinationPosition = stationPos;

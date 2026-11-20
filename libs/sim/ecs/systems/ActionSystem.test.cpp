@@ -708,7 +708,7 @@ TEST_F(ActionSystemGoalTest, HarvestBecomesItsDepositLegAndDeliversTheYield) {
 	world->addComponent<Inventory>(station, Inventory::createForStorage());
 
 	GoalTask craft;
-	craft.type = TaskType::Craft;
+	craft.type = GoalType::Craft;
 	craft.owner = GoalOwner::CraftingGoalSystem;
 	craft.destinationEntity = station;
 	craft.destinationPosition = {5.0F, 0.0F};
@@ -716,7 +716,7 @@ TEST_F(ActionSystemGoalTest, HarvestBecomesItsDepositLegAndDeliversTheYield) {
 	const uint64_t craftId = registry.createGoal(std::move(craft));
 
 	GoalTask harvest;
-	harvest.type = TaskType::Harvest;
+	harvest.type = GoalType::Harvest;
 	harvest.owner = GoalOwner::CraftingGoalSystem;
 	harvest.destinationEntity = station;
 	harvest.parentGoalId = craftId;
@@ -806,7 +806,7 @@ TEST_F(ActionSystemGoalTest, WithdrawPullsFromSourceBoxThenDepositsIntoDestBox) 
 
 	// The umbrella Haul goal (StorageGoalSystem) wanting PlantFiber in the dest box.
 	GoalTask haul;
-	haul.type = TaskType::Haul;
+	haul.type = GoalType::Haul;
 	haul.owner = GoalOwner::StorageGoalSystem;
 	haul.destinationEntity = destBox;
 	haul.destinationPosition = destPos;
@@ -905,7 +905,7 @@ TEST_F(ActionSystemGoalTest, WithdrawTwoHandWoodRidesInHandsThenDepositsIntoDest
 
 	// The umbrella Haul goal (StorageGoalSystem) wanting Wood in the dest box.
 	GoalTask haul;
-	haul.type = TaskType::Haul;
+	haul.type = GoalType::Haul;
 	haul.owner = GoalOwner::StorageGoalSystem;
 	haul.destinationEntity = destBox;
 	haul.destinationPosition = destPos;
@@ -1001,7 +1001,7 @@ TEST_F(ActionSystemGoalTest, CraftDepositMetersToRecipeNeedAndKeepsSurplus) {
 	world->addComponent<Inventory>(station, Inventory::createForStorage());
 
 	GoalTask craft;
-	craft.type = TaskType::Craft;
+	craft.type = GoalType::Craft;
 	craft.owner = GoalOwner::CraftingGoalSystem;
 	craft.destinationEntity = station;
 	craft.destinationPosition = stationPos;
@@ -1009,7 +1009,7 @@ TEST_F(ActionSystemGoalTest, CraftDepositMetersToRecipeNeedAndKeepsSurplus) {
 	const uint64_t craftId = registry.createGoal(std::move(craft));
 
 	GoalTask haul;
-	haul.type = TaskType::Haul;
+	haul.type = GoalType::Haul;
 	haul.owner = GoalOwner::CraftingGoalSystem;
 	haul.destinationEntity = station;
 	haul.destinationPosition = stationPos;
@@ -1063,13 +1063,13 @@ TEST_F(ActionSystemGoalTest, CraftFetchFromPileTakesOnlyRemainingNeedLeavesRest)
 
 	// Craft goal needs 2 SmallStone; the child craft-haul fetches them.
 	GoalTask craft;
-	craft.type = TaskType::Craft;
+	craft.type = GoalType::Craft;
 	craft.owner = GoalOwner::CraftingGoalSystem;
 	craft.status = GoalStatus::Blocked;
 	const uint64_t craftId = registry.createGoal(std::move(craft));
 
 	GoalTask haul;
-	haul.type = TaskType::Haul;
+	haul.type = GoalType::Haul;
 	haul.owner = GoalOwner::CraftingGoalSystem;
 	haul.acceptedDefNameIds = {assets::AssetRegistry::Get().getDefNameId("SmallStone")};
 	haul.parentGoalId = craftId;
@@ -1128,13 +1128,13 @@ TEST_F(ActionSystemGoalTest, HarvestTakesFullYieldEvenAboveRecipeNeed) {
 
 	// Craft goal needs only 2 PlantFiber; the child Harvest cuts a Reed that yields 5.
 	GoalTask craft;
-	craft.type = TaskType::Craft;
+	craft.type = GoalType::Craft;
 	craft.owner = GoalOwner::CraftingGoalSystem;
 	craft.status = GoalStatus::Blocked;
 	const uint64_t craftId = registry.createGoal(std::move(craft));
 
 	GoalTask harvest;
-	harvest.type = TaskType::Harvest;
+	harvest.type = GoalType::Harvest;
 	harvest.owner = GoalOwner::CraftingGoalSystem;
 	harvest.parentGoalId = craftId;
 	harvest.status = GoalStatus::Available;
@@ -1207,7 +1207,7 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 
 	// Craft goal needs 2 SmallStone; child craft-haul goal is available to fetch.
 	GoalTask craft;
-	craft.type = TaskType::Craft;
+	craft.type = GoalType::Craft;
 	craft.owner = GoalOwner::CraftingGoalSystem;
 	craft.destinationEntity = station;
 	craft.destinationPosition = stationPos;
@@ -1215,7 +1215,7 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 	const uint64_t craftId = registry.createGoal(std::move(craft));
 
 	GoalTask haul;
-	haul.type = TaskType::Haul;
+	haul.type = GoalType::Haul;
 	haul.owner = GoalOwner::CraftingGoalSystem;
 	haul.destinationEntity = station;
 	haul.destinationPosition = stationPos;
@@ -1374,7 +1374,7 @@ TEST_F(ActionSystemGoalTest, LooseFetchPicksUpWhenSourceOverlapsStation) {
 	world->addComponent<Inventory>(station, Inventory::createForStorage());
 
 	GoalTask craft;
-	craft.type = TaskType::Craft;
+	craft.type = GoalType::Craft;
 	craft.owner = GoalOwner::CraftingGoalSystem;
 	craft.destinationEntity = station;
 	craft.destinationPosition = stationPos;
@@ -1382,7 +1382,7 @@ TEST_F(ActionSystemGoalTest, LooseFetchPicksUpWhenSourceOverlapsStation) {
 	const uint64_t craftId = registry.createGoal(std::move(craft));
 
 	GoalTask haul;
-	haul.type = TaskType::Haul;
+	haul.type = GoalType::Haul;
 	haul.owner = GoalOwner::CraftingGoalSystem;
 	haul.destinationEntity = station;
 	haul.destinationPosition = stationPos;
@@ -1461,7 +1461,7 @@ TEST_F(ActionSystemGoalTest, CarryingAtSourceRedirectsToDepositInsteadOfDeadlock
 
 	// An ordinary storage Haul goal (StorageGoalSystem) wanting Wood in the box.
 	GoalTask haul;
-	haul.type = TaskType::Haul;
+	haul.type = GoalType::Haul;
 	haul.owner = GoalOwner::StorageGoalSystem;
 	haul.destinationEntity = box;
 	haul.destinationPosition = boxPos;
@@ -1565,7 +1565,7 @@ TEST_F(ActionSystemGoalTest, PlacePackagedFromCraftInstallsAtTargetAndUnpackages
 	}
 	const auto* placeGoal = registry.getGoalByDestination(box);
 	ASSERT_NE(placeGoal, nullptr) << "BuildGoalSystem must raise a PlacePackaged goal from the Packaged entity";
-	EXPECT_EQ(placeGoal->type, TaskType::PlacePackaged);
+	EXPECT_EQ(placeGoal->type, GoalType::PlacePackaged);
 
 	// Drive the existing two-phase pipeline. A colonist standing at the box runs PickupPackaged,
 	// then (teleported to the target, as the movement layer would deliver it) runs PlacePackaged.
@@ -2505,7 +2505,7 @@ TEST_F(HandMaterialActionTest, DepositFromHandsBouncesStorageFullRemainderToBoth
 
 	// Haul goal wants 14 (stays open after a partial 8 so we can read the credit).
 	GoalTask haul;
-	haul.type = TaskType::Haul;
+	haul.type = GoalType::Haul;
 	haul.owner = GoalOwner::CraftingGoalSystem;
 	haul.destinationEntity = storage;
 	haul.status = GoalStatus::Available;
@@ -2585,7 +2585,7 @@ TEST_F(HandMaterialActionTest, DepositFromHandsToMissingStorageReturnsAllToBothH
 	ASSERT_FALSE(world->isAlive(static_cast<EntityID>(kMissingStorage)));
 
 	GoalTask haul;
-	haul.type = TaskType::Haul;
+	haul.type = GoalType::Haul;
 	haul.owner = GoalOwner::CraftingGoalSystem;
 	haul.status = GoalStatus::Available;
 	uint64_t haulId = registry.createGoal(std::move(haul));
@@ -2633,7 +2633,7 @@ TEST_F(HandMaterialActionTest, DepositToBuildSiteRecordsOnManifestAndBouncesOver
 	ASSERT_FALSE(world->hasComponent<Inventory>(buildSite)) << "a build site carries no Inventory";
 
 	GoalTask haul;
-	haul.type = TaskType::Haul;
+	haul.type = GoalType::Haul;
 	haul.owner = GoalOwner::ConstructionGoalSystem;
 	haul.destinationEntity = buildSite;
 	haul.status = GoalStatus::Available;
@@ -2687,7 +2687,7 @@ TEST_F(HandMaterialActionTest, StorageHaulFillsAcrossStacksAndGoalSurvivesWhileS
 
 	// A storage-owned haul goal.
 	GoalTask haul;
-	haul.type = TaskType::Haul;
+	haul.type = GoalType::Haul;
 	haul.owner = GoalOwner::StorageGoalSystem;
 	haul.destinationEntity = storage;
 	haul.status = GoalStatus::Available;
@@ -2730,7 +2730,7 @@ TEST_F(HandMaterialActionTest, FullStorageAcceptsNothing) {
 	world->addComponent<Inventory>(storage, storageInv);
 
 	GoalTask haul;
-	haul.type = TaskType::Haul;
+	haul.type = GoalType::Haul;
 	haul.owner = GoalOwner::StorageGoalSystem;
 	haul.destinationEntity = storage;
 	haul.status = GoalStatus::Available;
@@ -3428,7 +3428,7 @@ TEST_F(ActionSystemHarvestLocateTest, VanishedTargetIdClearsActionWithoutGrabbin
 // =============================================================================
 // Construction clear harvest
 // =============================================================================
-// A construction clear Harvest of a regrowing bush (a berry bush inside a foundation footprint).
+// A Harvest for a construction Clear goal, of a regrowing bush (a berry bush inside a foundation footprint).
 class ClearHarvestTest : public ::testing::Test {
   protected:
 	void SetUp() override {
@@ -3512,7 +3512,7 @@ class ClearHarvestTest : public ::testing::Test {
 
 		site = world->createEntity();
 		GoalTask umbrella;
-		umbrella.type = TaskType::Build;
+		umbrella.type = GoalType::Build;
 		umbrella.owner = GoalOwner::ConstructionGoalSystem;
 		umbrella.destinationEntity = site;
 		umbrella.status = GoalStatus::Blocked;
@@ -3521,7 +3521,7 @@ class ClearHarvestTest : public ::testing::Test {
 		// Shaped as ConstructionSystem::emitClearGoals emits it: a footprint, no item.
 		const uint32_t berryId = assetRegistry.getDefNameId("TestBerry");
 		GoalTask	   clear;
-		clear.type = TaskType::Harvest;
+		clear.type = GoalType::Clear;
 		clear.owner = GoalOwner::ConstructionGoalSystem;
 		clear.destinationEntity = site;
 		clear.clearFootprint = rectangleFootprint(bushPos - glm::vec2{2.0F, 2.0F}, bushPos + glm::vec2{2.0F, 2.0F});
@@ -3597,7 +3597,7 @@ TEST_F(ClearHarvestTest, TwoFinishersOnOneBushShareASingleYield) {
 // alone, and clearing it removes it, still with no yield.
 TEST_F(ClearHarvestTest, RegrowingBushPaysNoYield) {
 	GoalTask cut;
-	cut.type = TaskType::Harvest;
+	cut.type = GoalType::Harvest;
 	cut.destinationEntity = world->createEntity();
 	cut.yieldDefNameId = assets::AssetRegistry::Get().getDefNameId("TestBerry");
 	cut.status = GoalStatus::Available;
@@ -3629,7 +3629,7 @@ TEST_F(ClearHarvestTest, ClearHarvestOfRegrowingBushRemovesItOnce) {
 	const uint32_t bushId = assets::AssetRegistry::Get().getDefNameId("Flora_TestBerryBush");
 	EXPECT_FALSE(world->getComponent<Memory>(colonist)->knowsWorldEntity(bushPos, bushId)) << "the harvester forgets it";
 	EXPECT_NE(GoalTaskRegistry::Get().getGoal(clearGoalId), nullptr) << "the clear goal stands until the footprint is clear";
-	EXPECT_TRUE(GoalTaskRegistry::Get().getGoalsOfType(TaskType::Haul).empty()) << "a clear spawns no Haul";
+	EXPECT_TRUE(GoalTaskRegistry::Get().getGoalsOfType(GoalType::Haul).empty()) << "a clear spawns no Haul";
 }
 
 // A clear doesn't depend on carry room: with the pack full, the bush is still removed, the whole
@@ -3663,7 +3663,7 @@ TEST_F(ClearHarvestTest, PoolSourceClearRemovesShrubInOnePass) {
 // gives a cut finishing on it nothing, and its pool is not drawn.
 TEST_F(ClearHarvestTest, PoolOfAGoneShrubPaysNothing) {
 	GoalTask cut;
-	cut.type = TaskType::Harvest;
+	cut.type = GoalType::Harvest;
 	cut.destinationEntity = world->createEntity();
 	cut.yieldDefNameId = assets::AssetRegistry::Get().getDefNameId("TestBerry");
 	cut.status = GoalStatus::Available;

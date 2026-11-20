@@ -45,7 +45,7 @@ namespace ecs {
 			return false;
 		}
 
-		GoalTask provisioningChild(TaskType type, const GoalTask& craft, uint32_t inputDefNameId, GoalStatus status) {
+		GoalTask provisioningChild(GoalType type, const GoalTask& craft, uint32_t inputDefNameId, GoalStatus status) {
 			GoalTask child;
 			child.type = type;
 			child.owner = GoalOwner::CraftingGoalSystem;
@@ -54,7 +54,7 @@ namespace ecs {
 			child.acceptedDefNameIds = {inputDefNameId};
 			child.parentGoalId = craft.id;
 			child.status = status;
-			child.yieldDefNameId = type == TaskType::Harvest ? inputDefNameId : 0U;
+			child.yieldDefNameId = type == GoalType::Harvest ? inputDefNameId : 0U;
 			return child;
 		}
 	} // namespace
@@ -78,7 +78,7 @@ namespace ecs {
 		// Track existing Craft goals to detect removed stations
 		std::unordered_set<EntityID> stationsWithGoals;
 		for (const auto* goal : goalRegistry.getGoalsByOwner(GoalOwner::CraftingGoalSystem)) {
-			if (goal->type == TaskType::Craft) {
+			if (goal->type == GoalType::Craft) {
 				stationsWithGoals.insert(goal->destinationEntity);
 			}
 		}
@@ -114,7 +114,7 @@ namespace ecs {
 				}
 			} else {
 				GoalTask craftGoal;
-				craftGoal.type = TaskType::Craft;
+				craftGoal.type = GoalType::Craft;
 				craftGoal.owner = GoalOwner::CraftingGoalSystem;
 				craftGoal.destinationEntity = entity;
 				craftGoal.destinationPosition = position.value;
@@ -139,7 +139,7 @@ namespace ecs {
 				allStaged = allStaged && !needed;
 				const bool stockKnown = needed && colonyKnowsStock(world, inputId);
 				const bool harvestKnown = needed && colonyKnowsHarvestableSource(world, assetRegistry, inputId);
-				const auto keep = [&](TaskType type, bool wanted, GoalStatus status) {
+				const auto keep = [&](GoalType type, bool wanted, GoalStatus status) {
 					const GoalTask* child = nullptr;
 					for (const auto* candidate : goalRegistry.getChildGoals(craftId)) {
 						if (candidate->type == type && !candidate->acceptedDefNameIds.empty() && candidate->acceptedDefNameIds.front() == inputId) {
@@ -156,8 +156,8 @@ namespace ecs {
 						goalRegistry.createGoal(provisioningChild(type, *goalRegistry.getGoal(craftId), inputId, status));
 					}
 				};
-				keep(TaskType::Haul, needed && (stockKnown || !harvestKnown), stockKnown ? GoalStatus::Available : GoalStatus::NoSource);
-				keep(TaskType::Harvest, harvestKnown, GoalStatus::Available);
+				keep(GoalType::Haul, needed && (stockKnown || !harvestKnown), stockKnown ? GoalStatus::Available : GoalStatus::NoSource);
+				keep(GoalType::Harvest, harvestKnown, GoalStatus::Available);
 			}
 
 			const GoalStatus craftStatus = allStaged ? GoalStatus::Available : GoalStatus::Blocked;
