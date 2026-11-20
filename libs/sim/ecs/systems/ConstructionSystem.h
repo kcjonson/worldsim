@@ -83,7 +83,8 @@ namespace assets {
 
 namespace construction {
 	class ConstructionWorld;
-}
+	struct WallStand;
+} // namespace construction
 
 namespace ecs {
 
@@ -234,6 +235,17 @@ namespace ecs {
 		/// The builder spots of a foundation's footprint (construction/BuilderSpots.h) under the
 		/// constraints.xml caps; empty for a wall or an opening, or with no topology wired.
 		[[nodiscard]] std::vector<glm::vec2> foundationBuilderSpots(const Structure& structure) const;
+
+		/// The sides of a wall its builders may stand on (construction::wallStands); empty for a foundation
+		/// or an opening, or with no topology wired. A wall's umbrella takes them as it turns Available and
+		/// drops them when it stops being Available, like a foundation's spots.
+		[[nodiscard]] std::vector<construction::WallStand> wallStandsFor(const Structure& structure) const;
+
+		/// Work out every Available wall umbrella's sides again once the topology has changed since the last
+		/// time, every frame rather than every kUpdateFrameInterval: a wall completing beside one being built
+		/// can close its loop, and its builders must move to the outside before it completes.
+		void refreshWallStands();
+		std::uint64_t m_wallStandsVersion = 0;
 
 		/// How far into the footprint a builder spot sits from the ring: a colonist's half-width
 		/// (pathingClearanceMeters 0.7 / 2) plus a margin, so a builder at a spot in the middle of an

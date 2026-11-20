@@ -1083,7 +1083,9 @@ TEST_F(BuilderSpotEmissionTest, AReshapeBeforeDeliveryGivesTheNewUmbrellaSpotsFo
 	EXPECT_TRUE(anyOnTheAddedHalf) << "the spots are placed round the new ring";
 }
 
-TEST_F(BuilderSpotEmissionTest, AWallsUmbrellaHasNoSpots) {
+// A wall's umbrella has no spots; it has the sides its builders may stand on, worked out again on the
+// next frame once a wall completing beside it closes its loop (WOR-1122).
+TEST_F(BuilderSpotEmissionTest, AWallsUmbrellaHasNoSpotsAndItsSidesFollowTheWallsRoundIt) {
 	const cw::FoundationId foundationId = commitTwentySquareMeterFoundation();
 	ASSERT_TRUE(topology.setState(foundationId, cw::FoundationState::Built));
 	cw::SegmentCommitResult segment = topology.commitSegment({0, 0}, {4000, 0}, "wood", "thin", foundationId, topology.version());
@@ -1097,6 +1099,20 @@ TEST_F(BuilderSpotEmissionTest, AWallsUmbrellaHasNoSpots) {
 	ASSERT_NE(goal, nullptr);
 	ASSERT_EQ(goal->status, GoalStatus::Available);
 	EXPECT_TRUE(goal->builderSpots.empty());
+	EXPECT_EQ(goal->wallStands.size(), 2U) << "a lone wall closes nothing: either side";
+
+	for (const auto& [from, to] : {std::pair<geometry::Vec2i64, geometry::Vec2i64>{{4000, 0}, {4000, 5000}},
+								   {{4000, 5000}, {0, 5000}},
+								   {{0, 5000}, {0, 0}}}) {
+		const cw::SegmentCommitResult other = topology.commitSegment(from, to, "wood", "thin", foundationId, topology.version());
+		ASSERT_TRUE(other.ok());
+		topology.setSegmentState(other.id, cw::FoundationState::Built);
+	}
+	world->update(0.016F);
+
+	const auto* closing = GoalTaskRegistry::Get().getGoalByDestination(blueprint);
+	ASSERT_EQ(closing->wallStands.size(), 1U) << "it now closes a doorless room";
+	EXPECT_LT(closing->wallStands.front().outward.y, 0.0F) << "its builders stand outside the room, which lies at y > 0";
 }
 
 // ============================================================================

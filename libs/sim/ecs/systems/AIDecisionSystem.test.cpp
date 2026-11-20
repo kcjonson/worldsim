@@ -6072,6 +6072,94 @@ namespace ecs::test {
 		EXPECT_EQ(hungerTarget(colonist), std::optional<glm::vec2>(kBehind));
 	}
 
+	// A wall's builder stands beside it, never on its line, and outside the room it would close
+	// (WOR-1122). The wall's Build goal carries the sides as ConstructionSystem sets them.
+	class AIDecisionWallBuildTest : public AIDecisionWallTest {
+	  protected:
+		construction::SegmentId wall(glm::vec2 from, glm::vec2 to, bool built) {
+			const auto commit = construction.commitSegment(
+				{static_cast<std::int64_t>(from.x * 1000.0F), static_cast<std::int64_t>(from.y * 1000.0F)},
+				{static_cast<std::int64_t>(to.x * 1000.0F), static_cast<std::int64_t>(to.y * 1000.0F)}, "Wood", "Standard",
+				construction::kInvalidFoundation, construction.version()
+			);
+			EXPECT_TRUE(commit.ok());
+			if (built) {
+				construction.setSegmentState(commit.id, construction::FoundationState::Built);
+			}
+			return commit.id;
+		}
+
+		// The wall blueprint of `segment` under construction, and its Available Build goal with its sides.
+		void wallSite(construction::SegmentId segment, glm::vec2 midpoint) {
+			const EntityID blueprint = world->createEntity();
+			world->addComponent<Position>(blueprint, Position{midpoint});
+			world->addComponent<Structure>(blueprint, Structure{.kind = StructureKind::Wall, .graphId = segment});
+			StructureBlueprint site;
+			site.phase = StructureBlueprint::BuildPhase::UnderConstruction;
+			site.workTotal = 1000.0F;
+			world->addComponent<StructureBlueprint>(blueprint, std::move(site));
+			GoalTask umbrella;
+			umbrella.type = GoalType::Build;
+			umbrella.owner = GoalOwner::ConstructionGoalSystem;
+			umbrella.destinationEntity = blueprint;
+			umbrella.destinationPosition = midpoint;
+			umbrella.status = GoalStatus::Available;
+			umbrella.wallStands = construction::wallStands(construction, segment);
+			GoalTaskRegistry::Get().createGoal(std::move(umbrella));
+		}
+
+		EntityID idleColonist(glm::vec2 at) {
+			const EntityID colonist = createColonist(at);
+			satisfyAllNeeds(*getNeeds(colonist));
+			return colonist;
+		}
+
+		// Where each colonist's first decision sends him, with the mesh built round them.
+		std::vector<glm::vec2> buildTargets(std::initializer_list<EntityID> colonists) {
+			nav->finishPendingBuilds();
+			EXPECT_TRUE(nav->hasMesh());
+			world->update(kTick);
+			std::vector<glm::vec2> targets;
+			for (const EntityID colonist : colonists) {
+				EXPECT_EQ(getTask(colonist)->type, TaskType::Build);
+				targets.push_back(getTask(colonist)->targetPosition);
+			}
+			return targets;
+		}
+
+		// The wall from (2, 2) to (6, 2): half its 0.2 m and a colonist's 0.3 m off its line, and more.
+		static constexpr float kWallY = 2.0F;
+		static constexpr float kClear = 0.1F + 0.3F;
+	};
+
+	// The last wall of a doorless square: one builder starting inside it and one outside both work it from
+	// outside.
+	TEST_F(AIDecisionWallBuildTest, TheLastWallOfADoorlessRoomIsBuiltFromOutside) {
+		wall({6.0F, kWallY}, {6.0F, 6.0F}, true);
+		wall({6.0F, 6.0F}, {2.0F, 6.0F}, true);
+		wall({2.0F, 6.0F}, {2.0F, kWallY}, true);
+		wallSite(wall({2.0F, kWallY}, {6.0F, kWallY}, false), {4.0F, kWallY});
+		const EntityID inside = idleColonist({4.0F, 4.0F});
+		const EntityID outside = idleColonist({4.5F, -1.0F});
+
+		for (const glm::vec2 target : buildTargets({inside, outside})) {
+			EXPECT_LT(target.y, kWallY - kClear) << "(" << target.x << ", " << target.y << ") is not outside the room, beside the wall";
+			EXPECT_GT(target.x, 2.0F + kClear);
+			EXPECT_LT(target.x, 6.0F - kClear);
+		}
+	}
+
+	// A wall that closes nothing is built from the side the builder is on.
+	TEST_F(AIDecisionWallBuildTest, AWallThatClosesNothingIsBuiltFromTheBuildersSide) {
+		wallSite(wall({2.0F, kWallY}, {6.0F, kWallY}, false), {4.0F, kWallY});
+		const EntityID above = idleColonist({4.0F, 4.0F});
+		const EntityID below = idleColonist({4.5F, -1.0F});
+
+		const std::vector<glm::vec2> targets = buildTargets({above, below});
+		EXPECT_GT(targets[0].y, kWallY + kClear) << "beside the wall on his side, off its line";
+		EXPECT_LT(targets[1].y, kWallY - kClear) << "beside the wall on his side, off its line";
+	}
+
 	namespace {
 		// A river 2 m wide along y = 4 m, ending 600 m east: a point on its far bank is a few metres off in
 		// a straight line and 1.2 km round.

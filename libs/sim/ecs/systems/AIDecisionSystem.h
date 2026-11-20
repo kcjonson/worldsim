@@ -214,6 +214,7 @@ class SharedWork {
 		EntityID			   blueprint = kInvalidEntity;
 		glm::vec2			   position{0.0F, 0.0F};
 		std::vector<glm::vec2> builderSpots; // the Build goal's (GoalTask::builderSpots); none on a teardown site
+		std::vector<construction::WallStand> wallStands; // the Build goal's (GoalTask::wallStands); none on a teardown site
 
 		// Worked out by builderSpotStand, a spot at a time as colonists ask.
 		struct SpotStand {

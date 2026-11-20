@@ -1706,6 +1706,7 @@ namespace ecs {
 								 .blueprint = goal.destinationEntity,
 								 .position = goal.destinationPosition,
 								 .builderSpots = goal.builderSpots,
+								 .wallStands = goal.wallStands,
 								 .spotSlack = std::vector<float>(goal.builderSpots.size(), -1.0F)});
 		});
 		return buildList;
@@ -3226,6 +3227,30 @@ namespace ecs {
 			}
 			return OptionStatus::NoSource;
 		};
+		// A wall's Build stands beside it, on one of the sides its goal allows (construction::wallStands),
+		// the nearest he can get to; the mesh's stand point for a side is taken only while it stays on that
+		// side, so a builder never ends inside the loop his wall closes.
+		const auto chooseWallStand = [&](EvaluatedOption& option, std::span<const construction::WallStand> stands) {
+			std::optional<glm::vec2> chosen;
+			for (const construction::WallStand& stand : stands) {
+				std::optional<glm::vec2> point = stand.standPoint(agentRadius);
+				if (haveMesh) {
+					point = m_navSystem->nearestPathablePoint(*point, agentRadius);
+					if (!point.has_value() || !stand.onSide(*point) || (*point != position.value && !canTake(option.sourceKey, *point))) {
+						continue;
+					}
+				}
+				if (!chosen.has_value() || glm::distance(position.value, *point) < glm::distance(position.value, *chosen)) {
+					chosen = point;
+				}
+			}
+			if (!chosen.has_value()) {
+				return OptionStatus::NoSource;
+			}
+			option.targetPosition = chosen;
+			option.targetReachable = true;
+			return OptionStatus::Selected;
+		};
 		std::size_t at = 0;
 		while (at < trace.options.size()) {
 			EvaluatedOption& option = trace.options[at];
@@ -3256,13 +3281,16 @@ namespace ecs {
 					if (site != sites.end() && !site->builderSpots.empty()) {
 						return chooseBuilderSpot(option, static_cast<std::size_t>(site - sites.begin()), site->builderSpots);
 					}
+					if (site != sites.end() && !site->wallStands.empty()) {
+						return chooseWallStand(option, site->wallStands);
+					}
 				}
 				// Snap only the task types whose action looks its target up by entity/footprint and so
 				// is satisfied by arriving ADJACENT: Harvest (incl. footprint clearing), Build, and
 				// Deconstruct. Their stored target is a CENTER that can sit inside a tree's collider or a
 				// wall, which no route ends in. A harvest stands just outside the target's collider on
 				// the colonist's side, read from the placement data so it is the same spot on camera and
-				// off; Build (on a structure with no builder spots) and Deconstruct take the nearest walkable
+				// off; Build (on a structure with no builder spots or wall sides) and Deconstruct take the nearest walkable
 				// point. Any other target (a pile, a need source, a box, a station) keeps its own position on the
 				// option and the task, and is moved to a stand point beside the placed obstacle it lies in when
 				// its route is asked (requestRoute); with no stand point there, it is no source.

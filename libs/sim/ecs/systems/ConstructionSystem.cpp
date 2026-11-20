@@ -14,6 +14,7 @@
 
 #include <construction/BuilderSpots.h>
 #include <construction/ConstructionWorld.h>
+#include <construction/WallStand.h>
 
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
@@ -61,6 +62,8 @@ namespace ecs {
 		if (world == nullptr) {
 			return;
 		}
+
+		refreshWallStands();
 
 		m_frameCounter++;
 		if (m_frameCounter < kUpdateFrameInterval) {
@@ -559,6 +562,32 @@ namespace ecs {
 		return construction::builderSpots(foundation->ring, count, kBuilderSpotInsetMeters);
 	}
 
+	std::vector<construction::WallStand> ConstructionSystem::wallStandsFor(const Structure& structure) const {
+		if (structure.kind != StructureKind::Wall || m_constructionWorld == nullptr) {
+			return {};
+		}
+		return construction::wallStands(*m_constructionWorld, structure.graphId);
+	}
+
+	void ConstructionSystem::refreshWallStands() {
+		if (m_constructionWorld == nullptr || m_constructionWorld->version() == m_wallStandsVersion) {
+			return;
+		}
+		m_wallStandsVersion = m_constructionWorld->version();
+		auto&																	registry = GoalTaskRegistry::Get();
+		std::vector<std::pair<uint64_t, std::vector<construction::WallStand>>> refreshed;
+		registry.forEachGoalOfType(GoalType::Build, [&](const GoalTask& goal) {
+			const auto* structure = world->getComponent<Structure>(goal.destinationEntity);
+			if (goal.owner == GoalOwner::ConstructionGoalSystem && goal.status == GoalStatus::Available && structure != nullptr &&
+				structure->kind == StructureKind::Wall) {
+				refreshed.emplace_back(goal.id, wallStandsFor(*structure));
+			}
+		});
+		for (auto& [goalId, stands] : refreshed) {
+			registry.updateGoal(goalId, [&stands](GoalTask& goal) { goal.wallStands = std::move(stands); });
+		}
+	}
+
 	uint64_t ConstructionSystem::ensureUmbrellaGoal(
 		EntityID blueprintEntity, const Structure& structure, const StructureBlueprint& blueprint, GoalStatus status
 	) {
@@ -575,14 +604,17 @@ namespace ecs {
 			// them by index.
 			const bool			   becomingAvailable = status == GoalStatus::Available && existing->status != GoalStatus::Available;
 			std::vector<glm::vec2> spots = becomingAvailable ? foundationBuilderSpots(structure) : std::vector<glm::vec2>{};
+			std::vector<construction::WallStand> stands = becomingAvailable ? wallStandsFor(structure) : std::vector<construction::WallStand>{};
 			// Materials are accepted only while due; emitMaterialGoals names them again each pass.
-			registry.updateGoal(existing->id, [status, becomingAvailable, &spots](GoalTask& g) {
+			registry.updateGoal(existing->id, [status, becomingAvailable, &spots, &stands](GoalTask& g) {
 				g.status = status;
 				g.acceptedDefNameIds.clear();
 				if (status != GoalStatus::Available) {
 					g.builderSpots.clear();
+					g.wallStands.clear();
 				} else if (becomingAvailable) {
 					g.builderSpots = std::move(spots);
+					g.wallStands = std::move(stands);
 				}
 			});
 			return existing->id;
@@ -599,6 +631,7 @@ namespace ecs {
 		buildGoal.status = status;
 		if (status == GoalStatus::Available) {
 			buildGoal.builderSpots = foundationBuilderSpots(structure);
+			buildGoal.wallStands = wallStandsFor(structure);
 		}
 		const uint64_t umbrellaId = registry.createGoal(std::move(buildGoal));
 

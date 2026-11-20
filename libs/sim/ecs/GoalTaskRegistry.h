@@ -14,6 +14,7 @@
 #include <glm/vec2.hpp>
 
 #include <assets/AssetDefinition.h>
+#include <construction/WallStand.h>
 #include <polygon/Polygon.h>
 
 #include <cstdint>
@@ -128,6 +129,10 @@ namespace ecs {
 		// and left unchanged until it stops being Available, so a spot's index names it for that whole time.
 		// Empty on every other goal, a wall's or an opening's Build umbrella included.
 		std::vector<glm::vec2> builderSpots;
+
+		// A wall's Build umbrella: the sides of the wall its builders may stand on (construction/WallStand.h),
+		// kept current with the built walls round it while the goal is Available. Empty on every other goal.
+		std::vector<construction::WallStand> wallStands;
 
 		// For Craft goals: identity of the recipe this goal's child hierarchy was built for.
 		// Hash of the recipe defName. When a station's next job switches to a different
