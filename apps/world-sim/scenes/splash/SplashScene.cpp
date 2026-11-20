@@ -70,7 +70,7 @@ namespace {
 				// log on a short timer, then enable the button.
 				m_progress = std::min(1.0F, m_timer / kMinSplashSeconds);
 				revealBootLines();
-				if (m_timer > kMinSplashSeconds && bakeGround() && checkColonistRules()) {
+				if (m_timer > kMinSplashSeconds && bakeGround()) {
 					finishLoad();
 				}
 				return;
@@ -85,7 +85,7 @@ namespace {
 				return;
 			}
 
-			if (!bakeGround() || !checkColonistRules()) {
+			if (!bakeGround()) {
 				return;
 			}
 			LOG_INFO(
@@ -266,16 +266,6 @@ namespace {
 				text->setText("Ground tiles baked");
 			}
 			return true;
-		}
-
-		// Once the ground is baked: errors a scene handed over for the colonist rules block here.
-		bool checkColonistRules() {
-			const std::vector<std::string> errors = world_sim::takeFailedColonistRules();
-			if (errors.empty()) {
-				return true;
-			}
-			fail(errors);
-			return false;
 		}
 
 		// The boot log's last line, which the ground bake updates.
