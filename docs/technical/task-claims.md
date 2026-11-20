@@ -761,9 +761,11 @@ with the task that holds it (its goods are possessed, so it would never be bumpe
 - Needs would beat work claims. A colonist acting on a critical need could take from any work claim:
   the last berries claimed for a storage haul would go to the starving colonist. (For food this already
   holds without bumping: work claims never hold food against a hungry colonist.)
-- Only a selection at tier 1 to 3 (survival, critical needs, player orders) could bump, and only a
-  holder whose tier number is strictly higher. Equal tiers would never bump. Ordinary work (tiers 4
-  to 7) would never bump anything, so there would be no better-placed-worker preemption.
+- Only a selection at one of four rungs (`survival`, `critical_need`, `low_mood`, `player_order`)
+  could bump, and only a holder on a lower rung. Equal rungs would never bump. Work and the rungs
+  below it would never bump anything, so there would be no better-placed-worker preemption. A
+  colonist in a mood episode takes what it needs even when another colonist has claimed it, as the
+  `low_mood` rung does.
 - A critical need (tier 2) could bump a player order (tier 3), following the arbitration ladder.
   Decided by the owner.
 - A claim would stop being bumpable once its holder's action on that target has started. Those

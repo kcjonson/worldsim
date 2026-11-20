@@ -212,7 +212,7 @@ The ladder is the named rungs of [Queries and chains](./queries-and-chains.md#ru
 | `idle` | gather food for the larder, wander |
 
 The planned bumping rule ([Task Claims](./task-claims.md)) is by rung name: only `survival`,
-`critical_need`, and `player_order` would bump, and no entry writes a number.
+`critical_need`, `low_mood`, and `player_order` would bump, and no entry writes a number.
 
 `own_unfinished_work` is how "finishing outranks starting new work by a wide margin" is delivered. It
 is a rung and not a score bonus for the reason the arbitration spec gives: an ordering that must

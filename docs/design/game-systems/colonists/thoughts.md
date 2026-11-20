@@ -282,6 +282,7 @@ A supplement, not part of the spec. Kevin, 2026-11-16.
 - 2026-11-17: merging takes in one thought at a time, so pruning stops exactly at the stop size; the two fractions round to whole thoughts, and a limit too small for them to differ is a config error.
 - 2026-11-17: a thought about nothing has no subject, so no "first about" protects it.
 - 2026-11-17: when the protected thoughts alone keep the record at the start size, pruning removes what it can and runs again at the next arrival; the record may pass the limit until thoughts age out of protection.
+- 2026-11-20: the colony-wide amount decays by half-life, 30 game minutes, a starting value to tune once bubbles can be watched.
 
 ## Addendum: prior work
 

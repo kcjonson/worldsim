@@ -1711,6 +1711,7 @@ The `low_mood` rung sits directly below critical needs and above the player's or
 player cannot draft, direct, or order a colonist during an episode. A critical need still interrupts a
 low-mood behavior. For that, a low-mood behavior's do steps use interruptable actions, or short ones
 that complete before the gate is asked again, since a non-interruptable action blocks every switch.
+A colonist in an episode bumps another colonist's claim as the `low_mood` rung does ([Task claims, Bumping](./task-claims.md#bumping-planned)).
 
 A low-mood behavior may have a chain whose only step gives a thought, the log-only rule in Mood: the
 episode is announced and logged, and nothing in the world changes. Leaving the colony is a chain ending in `<leave_colony/>`.
@@ -1990,6 +1991,7 @@ The following he settled with "Yes to all" when they were put to him:
 - 2026-11-17: A mod only adds its own behaviors; it cannot replace a shipped one, so a duplicate full
   id within an entry type is a load error everywhere.
 - 2026-11-17: The "move here" order is dropped; moving a colonist is direct control.
+- 2026-11-20: A mood episode bumps another colonist's claim (the `low_mood` rung is a bumping rung).
 - 2026-11-17: The rung for assigned colony work is `committed_work`; "order" means only a player's
   order. The mood rung is `low_mood`.
 - 2026-11-17: Ids are unique per entry type, the referring attribute naming the type, so a chain and an
