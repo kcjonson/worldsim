@@ -36,6 +36,7 @@
 #include "../components/Structure.h"
 #include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
+#include "../components/ToiletLocationFinder.h"
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
 
@@ -5527,6 +5528,139 @@ namespace ecs::test {
 			EXPECT_LT(std::abs(option->targetPosition->y), kRiverY - kRiverHalfWidth)
 				<< static_cast<int>(need) << " targets ground the colonist can reach, not the source across the river";
 		}
+	}
+
+	// The relief spot (findToiletLocation) over the two-river land: a 3 m grid out to 25 m round the
+	// colonist, each point on walkable mesh and more than 1.5 m from water, scored 100 less its distance,
+	// plus 10 x (1 - d / 8) for each known waste pile within 8 m and less 20 x (1 - d / 15) for each known
+	// food within 15 m, the best score taken. A known latrine is taken before any of it, and with no spot
+	// the colonist goes where he stands.
+	class RelievingSpotTest : public AIDecisionRiverTest {
+	  protected:
+		void SetUp() override {
+			AIDecisionRiverTest::SetUp();
+			world->getSystem<AIDecisionSystem>().setChunkManager(twoRiverChunks());
+		}
+
+		// A colonist at `at` with every need met and food in his pack (no gather-food option in the way),
+		// whose own range meshes the ground the finder samples.
+		EntityID makeMeshedColonist(glm::vec2 at) {
+			const auto colonist = createColonist(at);
+			satisfyAllNeeds(*getNeeds(colonist));
+			world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+			nav->finishPendingBuilds();
+			EXPECT_TRUE(nav->hasMesh()) << "navmesh never built";
+			return colonist;
+		}
+
+		[[nodiscard]] std::optional<glm::vec2> spotFor(EntityID colonist, glm::vec2 from) {
+			return findToiletLocation(from, *twoRiverChunks(), *nav, *world->getComponent<Memory>(colonist));
+		}
+
+		[[nodiscard]] std::optional<glm::vec2> spotFor(EntityID colonist) {
+			return spotFor(colonist, world->getComponent<Position>(colonist)->value);
+		}
+
+		void addKnownWaste(EntityID colonist, glm::vec2 at) {
+			addKnownEntity(colonist, at, kBioPileDefId, assets::CapabilityType::Waste);
+		}
+
+		void addKnownFood(EntityID colonist, glm::vec2 at) {
+			addKnownEntity(colonist, at, kFoodDefId, assets::CapabilityType::Edible);
+		}
+
+		[[nodiscard]] glm::vec2 bladderTarget(EntityID colonist) {
+			setNeedValue(colonist, NeedType::Bladder, 20.0F);
+			world->update(kTick);
+			const Task* task = getTask(colonist);
+			EXPECT_EQ(task->type, TaskType::FulfillNeed);
+			EXPECT_EQ(task->needToFulfill, NeedType::Bladder);
+			return task->targetPosition;
+		}
+
+		static constexpr uint32_t kBioPileDefId = 1005;
+		static constexpr uint32_t kFoodDefId = 1006;
+	};
+
+	// Nothing known: the nearest valid point is the colonist's own.
+	TEST_F(RelievingSpotTest, NothingKnownTakesWhereTheColonistStands) {
+		const auto colonist = makeMeshedColonist(kStart);
+		EXPECT_EQ(spotFor(colonist), std::optional<glm::vec2>(kStart));
+	}
+
+	// The river's south edge is at y 17. Standing 1.7 m off it the colonist's own point is valid; 1.3 m
+	// off it, it and its east and west neighbours are on the shore and the next row south (3 m) wins.
+	TEST_F(RelievingSpotTest, KeepsMoreThanOneAndAHalfMetersOffWater) {
+		const auto		colonist = makeMeshedColonist(kStart);
+		const float		riverEdge = kRiverY - kRiverHalfWidth;
+		const glm::vec2 offShore{0.0F, riverEdge - 1.7F};
+		const glm::vec2 onShore{0.0F, riverEdge - 1.3F};
+		EXPECT_EQ(spotFor(colonist, offShore), std::optional<glm::vec2>(offShore));
+		EXPECT_EQ(spotFor(colonist, onShore), std::optional<glm::vec2>(onShore + glm::vec2(0.0F, -3.0F)));
+	}
+
+	// A pile 6 m east is worth 10 there against the 6 m walk, so the spot moves onto it.
+	TEST_F(RelievingSpotTest, KnownWastePullsTheSpotOntoIt) {
+		const auto colonist = makeMeshedColonist(kStart);
+		addKnownWaste(colonist, kStart + glm::vec2(6.0F, 0.0F));
+		EXPECT_EQ(spotFor(colonist), std::optional<glm::vec2>(kStart + glm::vec2(6.0F, 0.0F)));
+	}
+
+	// One pile 6 m west against two 1 m either side of the point 6 m east: the west point scores 104, the
+	// east 94 + 8.75 + 8.75. The pulls sum; were it the nearest pile alone, west would win.
+	TEST_F(RelievingSpotTest, WastePullsSum) {
+		const auto colonist = makeMeshedColonist(kStart);
+		addKnownWaste(colonist, kStart + glm::vec2(-6.0F, 0.0F));
+		EXPECT_EQ(spotFor(colonist), std::optional<glm::vec2>(kStart + glm::vec2(-6.0F, 0.0F)));
+		addKnownWaste(colonist, kStart + glm::vec2(6.0F, 1.0F));
+		addKnownWaste(colonist, kStart + glm::vec2(6.0F, -1.0F));
+		EXPECT_EQ(spotFor(colonist), std::optional<glm::vec2>(kStart + glm::vec2(6.0F, 0.0F)));
+	}
+
+	// Food 5 m west pushes the spot east until the push is spent: 9 m east scores 91 less 1.33, beating
+	// every nearer point. A pile beside the food doesn't hold it there: the push sums against the pull.
+	TEST_F(RelievingSpotTest, KnownFoodPushesTheSpotAway) {
+		const auto colonist = makeMeshedColonist(kStart);
+		addKnownFood(colonist, kStart + glm::vec2(-5.0F, 0.0F));
+		EXPECT_EQ(spotFor(colonist), std::optional<glm::vec2>(kStart + glm::vec2(9.0F, 0.0F)));
+		addKnownWaste(colonist, kStart + glm::vec2(-6.0F, 0.0F));
+		EXPECT_EQ(spotFor(colonist), std::optional<glm::vec2>(kStart + glm::vec2(9.0F, 0.0F)));
+	}
+
+	// Ground nothing has meshed has no spot: the finder answers none and the caller falls back.
+	TEST_F(RelievingSpotTest, UnmeshedGroundHasNoSpot) {
+		const auto colonist = makeMeshedColonist(kStart);
+		EXPECT_EQ(spotFor(colonist, {600.0F, 0.0F}), std::nullopt);
+	}
+
+	// The decision: a known latrine is taken before the ground, though the finder would pick a pile.
+	TEST_F(RelievingSpotTest, KnownLatrineIsTakenBeforeTheGround) {
+		const auto		colonist = makeMeshedColonist(kStart);
+		const glm::vec2 latrine = kStart + glm::vec2(5.0F, 0.0F);
+		addKnownWaste(colonist, kStart + glm::vec2(-6.0F, 0.0F));
+		addKnownEntity(colonist, latrine, kToiletDefId, assets::CapabilityType::Toilet);
+		EXPECT_EQ(bladderTarget(colonist), latrine);
+	}
+
+	// The decision with no latrine known goes to the finder's spot.
+	TEST_F(RelievingSpotTest, NoLatrineGoesToTheFinderSpot) {
+		const auto colonist = makeMeshedColonist(kStart);
+		addKnownWaste(colonist, kStart + glm::vec2(-6.0F, 0.0F));
+		EXPECT_EQ(bladderTarget(colonist), kStart + glm::vec2(-6.0F, 0.0F));
+	}
+
+	// The decision with no latrine and no spot (no chunk is ready, so nothing is meshed) relieves where
+	// the colonist stands.
+	TEST_F(RelievingSpotTest, NoSpotFallsBackToWhereTheColonistStands) {
+		withholdChunks();
+		world->getSystem<AIDecisionSystem>().setChunkManager(pendingChunks.get());
+		const glm::vec2 standing{4.0F, -2.0F};
+		const auto		colonist = createColonist(standing);
+		satisfyAllNeeds(*getNeeds(colonist));
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		addKnownWaste(colonist, standing + glm::vec2(-6.0F, 0.0F));
+		ASSERT_EQ(spotFor(colonist), std::nullopt);
+		EXPECT_EQ(bladderTarget(colonist), standing);
 	}
 
 	// Every known food source out of reach: the colonist has nothing it can eat, so Hunger is NoSource.
