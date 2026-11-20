@@ -15,8 +15,7 @@ namespace worldview {
 		constexpr double kBandPastBrightMm = 1000.0;
 		// What a ring never built is taken to cost, in pieces a body, against the budget a frame.
 		constexpr std::size_t kDueBodyLeastPieces = 8;
-		// How far a running ease's apex may lie from a new build's shadow edge to be taken up: on a face
-		// within two of its corner.
+		// How far a running ease's apex may lie off a face near a new build's corner to be taken up.
 		constexpr double kEaseFaceSlackMm = 2.0;
 
 		glm::dvec2 toDouble(const geometry::Vec2i64& point) {
@@ -30,29 +29,37 @@ namespace worldview {
 			return glm::length(point - (from + share * along));
 		}
 
-		// The edge of the body's outline that starts where `corner`'s ends.
-		std::uint32_t nextEdgeOf(const vision::SightBody& body, std::uint32_t corner) {
-			const auto	  count = static_cast<std::uint32_t>(body.edges.size());
-			std::uint32_t guess = (corner + 1) % count;
-			if (body.previousEdge[guess] == corner) {
-				return guess;
-			}
-			for (std::uint32_t edge = 0; edge < count; ++edge) {
-				if (body.previousEdge[edge] == corner) {
-					return edge;
-				}
-			}
-			return corner;
+		bool onFace(glm::dvec2 apex, const vision::Face& face) {
+			return distanceToSegment(apex, toDouble(face.from), toDouble(face.to)) <= kEaseFaceSlackMm;
 		}
 
-		// Whether `apex` lies on one of the faces within two of `corner`: the two before it and the two after.
+		// Whether `first` turns left into `second` at their shared corner: with the solid on the left of
+		// the outline, a convex corner, so a straight line from one face to the other runs through the body.
+		bool convexBetween(const vision::Face& first, const vision::Face& second) {
+			const glm::dvec2 into = toDouble(first.to) - toDouble(first.from);
+			const glm::dvec2 onward = toDouble(second.to) - toDouble(second.from);
+			return into.x * onward.y - into.y * onward.x > 0.0;
+		}
+
+		// Whether `apex` lies on one of the two faces (vision::Face, a whole straight side of the outline)
+		// that meet at `corner`, or on the face beyond one of those across a convex corner, as a wall's end
+		// cap is: the ease runs along a face or through the body, never across a notch's open ground,
+		// whose inner corner is reflex.
 		bool onFaceNear(const vision::SightBody& body, std::uint32_t corner, glm::dvec2 apex) {
-			const std::uint32_t before = body.previousEdge[corner];
-			const std::uint32_t twoBefore = body.previousEdge[before];
-			const std::uint32_t after = nextEdgeOf(body, corner);
-			for (const std::uint32_t edge : {twoBefore, before, corner, after}) {
-				if (distanceToSegment(apex, toDouble(body.edges[edge].a), toDouble(body.edges[edge].b)) <= kEaseFaceSlackMm) {
+			const geometry::Vec2i64 point = body.edges[corner].a;
+			for (const vision::Face& meeting : body.faces) {
+				if (meeting.from != point && meeting.to != point) {
+					continue;
+				}
+				if (onFace(apex, meeting)) {
 					return true;
+				}
+				const bool ending = meeting.to == point;
+				for (const vision::Face& beyond : body.faces) {
+					const bool joined = ending ? beyond.to == meeting.from : beyond.from == meeting.to;
+					if (joined && (ending ? convexBetween(beyond, meeting) : convexBetween(meeting, beyond)) && onFace(apex, beyond)) {
+						return true;
+					}
 				}
 			}
 			return false;

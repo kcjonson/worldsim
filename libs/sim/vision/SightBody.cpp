@@ -1,5 +1,6 @@
 #include "SightBody.h"
 
+#include <predicates/Predicates.h>
 #include <visibility/SightClip.h>
 
 #include <glm/geometric.hpp>
@@ -50,7 +51,104 @@ namespace vision {
 			const double	 t		= length > 0.0 ? std::clamp(glm::dot(point - from, along) / length, 0.0, 1.0) : 0.0;
 			return glm::length(point - (from + t * along));
 		}
+
+		// Whether the corner where `before` ends and `after` starts is straight: `after` goes on from
+		// `before`, and each edge's far end lies within kFaceStraightMm of the other edge's line (their
+		// cross product over each one's length).
+		bool straightAt(const geometry::OccluderSegment& before, const geometry::OccluderSegment& after) {
+			const glm::dvec2 first		  = toDouble(before.b) - toDouble(before.a);
+			const glm::dvec2 second		  = toDouble(after.b) - toDouble(after.a);
+			const double	 shorter	  = std::min(glm::length(first), glm::length(second));
+			return shorter > 0.0 && glm::dot(first, second) > 0.0 && std::abs(crossOf(first, second)) <= kFaceStraightMm * shorter;
+		}
+
+		// A side within this angle of the ray from the build eye through its middle runs along that ray: a
+		// shadow side. The clip steps a shadow side's far end up to 8 mm off its ray (starClippedToConvex),
+		// which turns a side metres long by a fraction of a degree; a rim side lies across its ray.
+		constexpr double kAlongRayCosine = 0.995;
+
+		bool alongRayFrom(const geometry::Vec2i64& eye, const geometry::Vec2i64& from, const geometry::Vec2i64& to) {
+			const glm::dvec2 along	 = toDouble(to) - toDouble(from);
+			const glm::dvec2 outward = (toDouble(from) + toDouble(to)) / 2.0 - toDouble(eye);
+			const double	 lengths = glm::length(along) * glm::length(outward);
+			return lengths > 0.0 && std::abs(glm::dot(along, outward)) >= kAlongRayCosine * lengths;
+		}
+
+		// Whether both `from` and `to` lie within kFaceDriftMm of the segment from `start` to `end`.
+		bool bothWithinDrift(const geometry::Vec2i64& from, const geometry::Vec2i64& to, const geometry::Vec2i64& start, const geometry::Vec2i64& end) {
+			return geometry::withinDistanceOfSegment(from, start, end, kFaceDriftMm) && geometry::withinDistanceOfSegment(to, start, end, kFaceDriftMm);
+		}
 	} // namespace
+
+	std::uint32_t nextEdgeOf(const SightBody& body, std::uint32_t edge) {
+		const auto	  count = static_cast<std::uint32_t>(body.edges.size());
+		std::uint32_t guess = (edge + 1) % count;
+		if (body.previousEdge[guess] == edge) {
+			return guess;
+		}
+		for (std::uint32_t other = 0; other < count; ++other) {
+			if (body.previousEdge[other] == edge) {
+				return other;
+			}
+		}
+		return edge;
+	}
+
+	std::vector<Face> facesOf(std::span<const geometry::OccluderSegment> edges, std::span<const std::uint32_t> previousEdge) {
+		const auto				   count = static_cast<std::uint32_t>(edges.size());
+		std::vector<std::uint32_t> next(count, count);
+		for (std::uint32_t edge = 0; edge < count; ++edge) {
+			next[previousEdge[edge]] = edge;
+		}
+		std::vector<Face> faces;
+		for (std::uint32_t start = 0; start < count; ++start) {
+			if (straightAt(edges[previousEdge[start]], edges[start])) {
+				continue;
+			}
+			Face		  face{edges[start].a, edges[start].b};
+			std::uint32_t last = start;
+			for (std::uint32_t step = 1; step < count; ++step) {
+				const std::uint32_t onward = next[last];
+				if (onward == count || onward == start || !straightAt(edges[last], edges[onward])) {
+					break;
+				}
+				face.to = edges[onward].b;
+				last	= onward;
+			}
+			faces.push_back(face);
+		}
+		return faces;
+	}
+
+	void tagRimSides(
+		std::span<const geometry::Vec2i64>				   outline,
+		const geometry::Vec2i64&						   buildEye,
+		std::span<const SightBody>						   bodies,
+		std::span<const std::span<const geometry::Vec2i64>> rings,
+		std::vector<bool>&								   rim
+	) {
+		rim.assign(outline.size(), true);
+		for (std::size_t side = 0; side < outline.size(); ++side) {
+			const geometry::Vec2i64& from = outline[side];
+			const geometry::Vec2i64& to	  = outline[(side + 1) % outline.size()];
+			if (alongRayFrom(buildEye, from, to)) {
+				rim[side] = false;
+				continue;
+			}
+			const bool onAFace = std::ranges::any_of(bodies, [&](const SightBody& body) {
+				return std::ranges::any_of(body.faces, [&](const Face& face) { return bothWithinDrift(from, to, face.from, face.to); });
+			});
+			const bool alongARing = onAFace && std::ranges::any_of(rings, [&](std::span<const geometry::Vec2i64> ring) {
+										for (std::size_t corner = 0; corner < ring.size(); ++corner) {
+											if (bothWithinDrift(from, to, ring[corner], ring[(corner + 1) % ring.size()])) {
+												return true;
+											}
+										}
+										return false;
+									});
+			rim[side] = !onAFace || alongARing;
+		}
+	}
 
 	geometry::Int128 diameterSquared(std::span<const geometry::Vec2i64> vertices) {
 		geometry::Int128 greatest(0);

@@ -9,6 +9,7 @@
 #include <core/Int128.h>
 #include <core/Vec2i64.h>
 #include <visibility/ForestDepth.h>
+#include <visibility/SightClip.h>
 #include <visibility/Visibility.h>
 
 #include <glm/vec2.hpp>
@@ -32,6 +33,17 @@ namespace vision {
 	// The largest whole number whose square is at most `value` (non-negative, under 2^64).
 	[[nodiscard]] std::int64_t wholeSquareRoot(const geometry::Int128& value);
 
+	// One straight side of a body's outline (sight-softening.md 3.1, 7.2), from its first edge's start
+	// to its last edge's end: a run of edges round a loop, joined at corners where each of the two edges
+	// meeting there has its far end within kFaceStraightMm of the other edge's line. A wall's straight side
+	// is often several edges, the short ends of a junction at each corner and the wall between, or one
+	// wall drawn in two strokes.
+	struct Face {
+		geometry::Vec2i64 from{0, 0};
+		geometry::Vec2i64 to{0, 0};
+	};
+	constexpr double kFaceStraightMm = 1.0;
+
 	// One body as vision hands it out (VisionSystem::sightBodies): its outline as edges with the solid
 	// on the left of each, a placed ring's counter-clockwise, and a corner for each edge, its start.
 	struct SightBody {
@@ -44,7 +56,9 @@ namespace vision {
 		std::vector<geometry::OccluderSegment> edges;
 		// Per edge, the edge that ends at its corner.
 		std::vector<std::uint32_t> previousEdge;
-		std::int64_t			   diameterMm = 0;
+		// An opaque body's faces, made with its outline (facesOf); empty for a soft one.
+		std::vector<Face> faces;
+		std::int64_t	  diameterMm = 0;
 		// The mean of its corners.
 		geometry::Vec2i64 centre{0, 0};
 		// A placed body's def name; empty for a wall.
@@ -52,6 +66,33 @@ namespace vision {
 		// How far a placed ring has come in since it arrived (2.4), of geometry::kFractionOne.
 		std::int64_t arrival = geometry::kFractionOne;
 	};
+
+	// The edge that starts where `edge` ends: the next one round its loop.
+	[[nodiscard]] std::uint32_t nextEdgeOf(const SightBody& body, std::uint32_t edge);
+
+	// The faces of an outline of `edges`, `previousEdge` naming per edge the edge that ends at its
+	// corner. Each corner is straight or not by its two edges alone, so the faces do not depend on the
+	// edge a walk starts from. Each face once, in the order of the edges that start them.
+	[[nodiscard]] std::vector<Face> facesOf(std::span<const geometry::OccluderSegment> edges, std::span<const std::uint32_t> previousEdge);
+
+	// How far a side of a colonist's bright shape that lies on a face can have its ends off it (7.2): a
+	// visibility polygon's hit is snapped to the millimetre, half its diagonal, and then three clips each
+	// may cut the side and move its end by kClipCrossingDriftMm (vision's forest clip, then the drawn disc
+	// and the eased rim), each cutting a side whose ends the one before may have moved. Rounded up.
+	constexpr std::int64_t kFaceDriftMm = static_cast<std::int64_t>(0.7072 + 3.0 * geometry::kClipCrossingDriftMm) + 1;
+
+	// Which sides of a colonist's bright `outline` are rim (7.2), in `rim`, one a side. A side is not rim
+	// when it runs out along a ray from `buildEye` (a shadow side), or when both its ends lie within
+	// kFaceDriftMm of one of `bodies`' faces (a body face) and not both within that of one side of any of
+	// `rings`, the convex rings that cut the shape: a stretch of a cutting ring is rim even where it passes
+	// that close to a face, as it does beside a shallow crossing of one.
+	void tagRimSides(
+		std::span<const geometry::Vec2i64>				   outline,
+		const geometry::Vec2i64&						   buildEye,
+		std::span<const SightBody>						   bodies,
+		std::span<const std::span<const geometry::Vec2i64>> rings,
+		std::vector<bool>&								   rim
+	);
 
 	// A side of a build's polygon that runs out along a ray from the build eye past an opaque body's
 	// corner (3.1): the body's index in the list it was tagged against, the corner's index in that

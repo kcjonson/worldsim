@@ -119,6 +119,7 @@ namespace ecs {
 		struct WallBody {
 			std::vector<geometry::OccluderSegment> edges;
 			std::vector<std::uint32_t>			   previousEdge;
+			std::vector<vision::Face>			   faces; // vision::facesOf, made with the outline
 			geometry::Vec2i64					   low;
 			geometry::Vec2i64					   high;
 			geometry::Vec2i64					   centre;

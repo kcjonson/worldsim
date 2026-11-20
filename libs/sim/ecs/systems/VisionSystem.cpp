@@ -195,6 +195,7 @@ namespace ecs {
 			.radius			 = entry.radius,
 			.path			 = entry.path,
 			.polygon		 = entry.hasPolygon ? &entry.polygon : nullptr,
+			.polygonRim		 = entry.hasPolygon && !entry.polygonRim.empty() ? &entry.polygonRim : nullptr,
 			.polygonRevision = entry.polygonRevision,
 			.buildRevision	 = entry.buildRevision,
 			.ranges			 = &entry.ranges,
@@ -375,6 +376,7 @@ namespace ecs {
 						.id			  = index,
 						.edges		  = wall.edges,
 						.previousEdge = wall.previousEdge,
+						.faces		  = wall.kind == vision::BodyKind::Opaque ? wall.faces : std::vector<vision::Face>{},
 						.diameterMm	  = wall.diameterMm,
 						.centre		  = wall.centre,
 					});
@@ -393,6 +395,9 @@ namespace ecs {
 					for (std::uint32_t corner = 0; corner < corners; ++corner) {
 						body.edges.push_back({ring->outline[corner], ring->outline[(corner + 1) % corners]});
 						body.previousEdge.push_back((corner + corners - 1) % corners);
+					}
+					if (body.kind == vision::BodyKind::Opaque) {
+						body.faces = vision::facesOf(body.edges, body.previousEdge);
 					}
 					entry.placedSerials.push_back(ring->serial);
 					polygonPath = polygonPath || ring->kind == vision::BodyKind::Opaque;
@@ -432,10 +437,13 @@ namespace ecs {
 					const bool backFacesHidden = opaqueOccluders(observerMm, reachMm, placedScratch, occluderScratch);
 					geometry::Ring hard = geometry::computeVisibilityPolygon(observerMm, reachMm, occluderScratch);
 					std::vector<vision::ShadowEdge> tagged = vision::tagShadowEdges(hard, observerMm, entry.bodies);
+					entry.polygonRim.clear();
 					if (forestTaken) {
-						vision::ForestCut cut = vision::cutByForest(
-							hard, observerMm, geometry::forestShape(observerMm, rangesFrom(reachMm, depthMm)), std::move(tagged), entry.bodies
-						);
+						geometry::Ring	  rim = geometry::forestShape(observerMm, rangesFrom(reachMm, depthMm));
+						vision::ForestCut cut = vision::cutByForest(hard, observerMm, rim, std::move(tagged), entry.bodies);
+						if (cut.cut) {
+							entry.polygonRim = std::move(rim);
+						}
 						if (!cut.cut && !clipFailureLogged) {
 							clipFailureLogged = true;
 							LOG_WARNING(

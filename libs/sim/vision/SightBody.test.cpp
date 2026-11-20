@@ -6,8 +6,12 @@
 #include <visibility/SightClip.h>
 #include <visibility/Visibility.h>
 
+#include <glm/vec2.hpp>
+
 #include <algorithm>
 #include <cmath>
+#include <numbers>
+#include <span>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -190,4 +194,119 @@ TEST(PlacedOccluderIndex, AddsMeasuresFindsAndRemovesBySerial) {
 	EXPECT_TRUE(found.empty()) << "the replaced ring left its buckets";
 	index.within({15000, 500}, 600, found);
 	EXPECT_EQ(found.size(), 1U);
+}
+
+namespace {
+
+	// A 4 x 3 m room of 0.2 m walls, its doorway 1 m wide in the south wall from x 1.5 to 2.5 m, as one
+	// outline: the outer side, in through the doorway, round the inner side, and out. The west outer face
+	// is three edges, a junction's short end at each corner and the wall between.
+	SightBody roomWithADoorway() {
+		SightBody room = placedBody(
+			{{-100, -100},
+			 {4100, -100},
+			 {4100, 3100},
+			 {2500, 3100},
+			 {2500, 2900},
+			 {3900, 2900},
+			 {3900, 100},
+			 {100, 100},
+			 {100, 2900},
+			 {1500, 2900},
+			 {1500, 3100},
+			 {-100, 3100},
+			 {-100, 2900},
+			 {-100, 100}},
+			BodyKind::Opaque
+		);
+		room.faces = vision::facesOf(room.edges, room.previousEdge);
+		return room;
+	}
+
+} // namespace
+
+// A face is the whole straight run of an outline's edges, so the west face of three edges is one face,
+// and the south face either side of the doorway is two. The faces do not depend on which edge the
+// outline lists first.
+TEST(SightBody, AFaceIsTheWholeStraightRunOfEdges) {
+	const SightBody room = roomWithADoorway();
+	ASSERT_EQ(room.faces.size(), 12U) << "fourteen edges, the west face's three as one";
+	const auto has = [&](const std::vector<vision::Face>& faces, Vec2i64 from, Vec2i64 to) {
+		return std::ranges::any_of(faces, [&](const vision::Face& face) { return face.from == from && face.to == to; });
+	};
+	EXPECT_TRUE(has(room.faces, {-100, 3100}, {-100, -100})) << "the west face";
+	EXPECT_TRUE(has(room.faces, {4100, 3100}, {2500, 3100})) << "the south face stops at the doorway";
+	EXPECT_TRUE(has(room.faces, {1500, 3100}, {-100, 3100}));
+	for (std::uint32_t shift = 1; shift < room.edges.size(); ++shift) {
+		std::vector<geometry::OccluderSegment> edges;
+		std::vector<std::uint32_t>			   previous;
+		const auto							   count = static_cast<std::uint32_t>(room.edges.size());
+		for (std::uint32_t edge = 0; edge < count; ++edge) {
+			edges.push_back(room.edges[(edge + shift) % count]);
+			previous.push_back((edge + count - 1) % count);
+		}
+		const std::vector<vision::Face> shifted = vision::facesOf(edges, previous);
+		EXPECT_EQ(shifted.size(), room.faces.size()) << "starting at edge " << shift;
+		for (const vision::Face& face : room.faces) {
+			EXPECT_TRUE(has(shifted, face.from, face.to)) << "starting at edge " << shift;
+		}
+	}
+}
+
+namespace {
+
+	// Whether the side from `from` to `to` is rim, as the first side of a triangle seen from 10 m off
+	// its middle, square on, so it is no shadow side.
+	bool sideIsRim(std::span<const SightBody> bodies, std::span<const std::span<const Vec2i64>> rings, Vec2i64 from, Vec2i64 to) {
+		const Vec2i64		 middle{(from.x + to.x) / 2, (from.y + to.y) / 2};
+		const double		 length = std::hypot(static_cast<double>(to.x - from.x), static_cast<double>(to.y - from.y));
+		const Vec2i64		 eye{middle.x + std::llround(-10000.0 * static_cast<double>(to.y - from.y) / length), middle.y + std::llround(10000.0 * static_cast<double>(to.x - from.x) / length)};
+		const std::vector<Vec2i64> outline = {from, to, eye};
+		std::vector<bool>	 rim;
+		vision::tagRimSides(outline, eye, bodies, rings, rim);
+		return rim[0];
+	}
+
+} // namespace
+
+// A side is a body face when both its ends are within the clips' drift of one face (sight-softening.md
+// 7.2): the whole west face, and the face with its ends moved 20 mm off; not a side running on past the
+// corner into open air, one 40 mm off, one across the doorway between the south face's two runs, nor
+// one that leaves the face across open ground.
+TEST(SightBody, ASideIsAFaceWithinTheClipsDriftAndNoFurther) {
+	const std::vector<SightBody> bodies = {roomWithADoorway()};
+	// Half a millimetre's diagonal for the snap, then three clips each of that and 8 steps of 1 mm.
+	EXPECT_EQ(vision::kFaceDriftMm, 27);
+	EXPECT_FALSE(sideIsRim(bodies, {}, {-100, 3100}, {-100, -100}));
+	EXPECT_FALSE(sideIsRim(bodies, {}, {-120, 3000}, {-80, 0}));
+	EXPECT_TRUE(sideIsRim(bodies, {}, {-100, 3100}, {-100, -1000})) << "on past the corner";
+	EXPECT_TRUE(sideIsRim(bodies, {}, {-140, 3000}, {-140, 0})) << "40 mm off";
+	EXPECT_TRUE(sideIsRim(bodies, {}, {3000, 3100}, {1000, 3100})) << "across the doorway";
+	EXPECT_TRUE(sideIsRim(bodies, {}, {-100, 2000}, {-2000, 0})) << "off across the ground";
+}
+
+// A cutting ring that crosses the west face at 18 degrees leaves a sliver of rim beside the crossing,
+// from the crossing to the ring's next corner, which lies within the drift of the face end to end: it
+// is rim, whichever of the rings that cut the shape it runs along (the drawn disc, the eased rim, or
+// vision's forest rim), and taken for the face only with that ring left out.
+TEST(SightBody, ARimSliverBesideAShallowCrossingIsRim) {
+	const std::vector<SightBody> bodies = {roomWithADoorway()};
+	const double				 turn = 18.0 * std::numbers::pi / 180.0;
+	// Down the west face from (-100, 1000) mm, turned 18 degrees off it, away from the room.
+	const glm::dvec2 along{-std::sin(turn), -std::cos(turn)};
+	const auto		 at = [&](double distance) { return Vec2i64{std::llround(-100.0 + distance * along.x), std::llround(1000.0 + distance * along.y)}; };
+	// The ring: its side through the crossing, its corner 80 mm on (24.7 mm off the face), then round.
+	const std::vector<Vec2i64> cutting = {at(-3000.0), at(80.0), {-6000, -6000}, {-9000, 0}};
+	const std::vector<Vec2i64> other   = {{-50000, -50000}, {50000, -50000}, {50000, 50000}, {-50000, 50000}};
+	const Vec2i64			   crossing = at(0.0);
+	const Vec2i64			   corner	= at(80.0);
+	EXPECT_FALSE(sideIsRim(bodies, {}, crossing, corner)) << "no ring: within the drift of the face";
+	for (std::size_t place = 0; place < 3; ++place) {
+		std::vector<std::span<const Vec2i64>> rings = {other, other, other};
+		rings[place]								= cutting;
+		EXPECT_TRUE(sideIsRim(bodies, rings, crossing, corner)) << "the cutting ring in place " << place;
+	}
+	// A true face side between two crossings is no ring's side.
+	const std::vector<std::span<const Vec2i64>> rings = {cutting, other, other};
+	EXPECT_FALSE(sideIsRim(bodies, rings, crossing, {-100, 3000}));
 }

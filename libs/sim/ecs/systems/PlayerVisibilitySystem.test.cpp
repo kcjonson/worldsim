@@ -582,6 +582,112 @@ TEST(PlayerVisibilitySystem, DrawnRimSidesAreTheDiscsAndNotTheWallFace) {
 	assets::ConstructionRegistry::Get().clear();
 }
 
+// A closed room seen from outside: its outer face is several collinear outline edges (the corner
+// junctions' short ends and the wall between), and the bright shape runs one side along them all. That
+// side is a body face and draws no feather; tagged rim, it drew a 1.5 m fade on the lit ground in front
+// of the wall, square-ended at the corners.
+TEST(PlayerVisibilitySystem, DrawnRimSidesSkipARoomsOuterFace) {
+	assets::ConstructionRegistry::Get().clear();
+	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string()));
+	construction::ConstructionWorld walls;
+	buildWall(walls, {21000, 5000}, {28000, 5000});
+	buildWall(walls, {28000, 5000}, {28000, 10000});
+	buildWall(walls, {28000, 10000}, {21000, 10000});
+	buildWall(walls, {21000, 10000}, {21000, 5000});
+
+	Colony colony;
+	colony.vision.setConstructionWorld(&walls);
+	colony.visibility.setConstructionWorld(&walls);
+	const EntityID colonist = colony.addColonist({10.5F, 8.4F});
+	colony.tick();
+	const PlayerVisibilitySystem::DrawnShape* drawn = colony.visibility.drawnVisible(colonist);
+	ASSERT_NE(drawn, nullptr);
+	ASSERT_EQ(drawn->rim.size(), drawn->outline.size());
+	// A Standard wall is 0.2 m thick, so the west wall's outer face runs along x = 20.9 m, from the
+	// north-west outer corner at y = 4.9 m to the south-west one at 10.1 m.
+	constexpr std::int64_t kWestFaceMm	= 20900;
+	std::int64_t		   faceLengthMm = 0;
+	for (std::size_t side = 0; side < drawn->outline.size(); ++side) {
+		const Vec2i64& from = drawn->outline[side];
+		const Vec2i64& to	= drawn->outline[(side + 1) % drawn->outline.size()];
+		if (std::abs(from.x - kWestFaceMm) <= 2 && std::abs(to.x - kWestFaceMm) <= 2) {
+			faceLengthMm += std::abs(to.y - from.y);
+			EXPECT_FALSE(drawn->rim[side]) << "the room's west face, side " << side << " from y " << from.y << " to " << to.y;
+		}
+	}
+	EXPECT_EQ(faceLengthMm, 5200) << "he sees the whole west face, corner to corner";
+	assets::ConstructionRegistry::Get().clear();
+}
+
+namespace {
+
+	// The sides of `drawn` at least 0.3 m long with both ends within 60 mm of the line through `point`
+	// along the unit `direction`, each checked not rim; their length, and the most an end lies off the
+	// line. A stretch of rim crossing the line at the 18 degrees or more these tests make strays past
+	// 60 mm within 0.3 m, so only the face's own sides are caught.
+	struct FaceSides {
+		double lengthMm	 = 0.0;
+		double mostOffMm = 0.0;
+	};
+	FaceSides expectFaceNotRim(const PlayerVisibilitySystem::DrawnShape& drawn, glm::dvec2 point, glm::dvec2 direction) {
+		const auto offOf = [&](const Vec2i64& vertex) {
+			return std::abs(direction.x * (static_cast<double>(vertex.y) - point.y) - direction.y * (static_cast<double>(vertex.x) - point.x));
+		};
+		constexpr double kCatchMm = 60.0;
+		FaceSides		 sides;
+		for (std::size_t side = 0; side < drawn.outline.size(); ++side) {
+			const Vec2i64& from	  = drawn.outline[side];
+			const Vec2i64& to	  = drawn.outline[(side + 1) % drawn.outline.size()];
+			const double   length = std::hypot(static_cast<double>(to.x - from.x), static_cast<double>(to.y - from.y));
+			if (length >= 300.0 && offOf(from) <= kCatchMm && offOf(to) <= kCatchMm) {
+				sides.lengthMm += length;
+				sides.mostOffMm = std::max({sides.mostOffMm, offOf(from), offOf(to)});
+				EXPECT_FALSE(drawn.rim[side]) << "the wall's face, side " << side << " from " << from.x << "," << from.y << " to " << to.x << "," << to.y;
+			}
+		}
+		return sides;
+	}
+
+} // namespace
+
+// A long wall about 28 m off, which the drawn disc and the eased rim (29.44 m) cross at about 18
+// degrees, turned to 12 headings and seen from 40 places: the face between the crossings is a body face
+// though the clips step its ends off the face's line, here by up to 3 mm, past the 2 mm one edge allowed.
+TEST(PlayerVisibilitySystem, AFaceCutShortByTheRimInTheOpenIsNotRim) {
+	assets::ConstructionRegistry::Get().clear();
+	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string()));
+	double mostOffMm = 0.0;
+	for (int heading = 0; heading < 12; ++heading) {
+		const double	 angle = 0.13 * static_cast<double>(heading);
+		const glm::dvec2 centre{27000.0, 3000.0};
+		const glm::dvec2 along{std::sin(angle), std::cos(angle)};
+		const glm::dvec2 normal{along.y, -along.x};
+		construction::ConstructionWorld walls;
+		buildWall(
+			walls,
+			{std::llround(centre.x - 40000.0 * along.x), std::llround(centre.y - 40000.0 * along.y)},
+			{std::llround(centre.x + 40000.0 * along.x), std::llround(centre.y + 40000.0 * along.y)}
+		);
+		Colony colony;
+		colony.vision.setConstructionWorld(&walls);
+		colony.visibility.setConstructionWorld(&walls);
+		const EntityID colonist = colony.addColonist({0.0F, 0.0F});
+		for (int place = 0; place < 40; ++place) {
+			const glm::dvec2 at{37.0 * static_cast<double>(place), 51.0 * static_cast<double>(place)};
+			colony.standAt(colonist, {static_cast<float>(at.x / 1000.0), static_cast<float>(at.y / 1000.0)});
+			const PlayerVisibilitySystem::DrawnShape* drawn = colony.visibility.drawnVisible(colonist);
+			ASSERT_NE(drawn, nullptr);
+			// A Standard wall is 0.2 m thick: its face toward him is 0.1 m off its line, on his side.
+			const glm::dvec2 toward = glm::dot(at - centre, normal) > 0.0 ? normal : -normal;
+			const FaceSides	 face	= expectFaceNotRim(*drawn, centre + 100.0 * toward, along);
+			EXPECT_GT(face.lengthMm, 10000.0) << "heading " << heading << ", place " << place;
+			mostOffMm = std::max(mostOffMm, face.mostOffMm);
+		}
+	}
+	EXPECT_LT(mostOffMm, static_cast<double>(vision::kFaceDriftMm)) << "every face side's ends within the clips' drift";
+	assets::ConstructionRegistry::Get().clear();
+}
+
 // Walking toward the end of a wall, the shadow behind it turns as he goes, so ground near the far
 // rim past its edge is in sight from some positions only. The record holds every point that was in
 // sight, with some margin, from every position over 0.12 m of his path: the sweep leaves no step
@@ -1318,3 +1424,47 @@ TEST(PlayerVisibilitySystem, ARockPastTheForestRimIsNotSeenGround) {
 	EXPECT_FALSE(colony.visibility.isSeen({26.0F, 0.0F})) << "the rock past the rim";
 	EXPECT_FALSE(colony.visibility.isSeen({25.3F, 0.0F})) << "its near face";
 }
+
+// A face cut short by the forest rim, which crosses a long slanting wall 6 to 12 m east at a shallow
+// angle, seen from 30 places along the clear line through the trees: the face between the crossings is
+// a body face though the clips step its ends off the face's line.
+TEST(PlayerVisibilitySystem, AFaceCutShortByTheForestRimIsNotRim) {
+	assets::ConstructionRegistry::Get().clear();
+	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string()));
+	const glm::dvec2				start{6000.0, -40000.0};
+	const glm::dvec2				end{12000.0, 40000.0};
+	const glm::dvec2				along = glm::normalize(end - start);
+	construction::ConstructionWorld walls;
+	buildWall(walls, {6000, -40000}, {12000, 40000});
+	ForestColony colony;
+	colony.vision.setConstructionWorld(&walls);
+	colony.visibility.setConstructionWorld(&walls);
+	colony.plant({-40.0F, -40.0F}, {5.0F, 40.0F}, 1.6F, 0.65F, 29);
+	const EntityID colonist = colony.addColonist({-2.0F, 0.0F});
+	colony.world.getComponent<MovementTarget>(colonist)->active = false;
+	double mostOffMm = 0.0;
+	double seenMm	 = 0.0;
+	for (int place = 0; place < 30; ++place) {
+		colony.world.getComponent<Position>(colonist)->value = {-2.0F + 0.1F * static_cast<float>(place), 0.0F};
+		for (int frame = 0; frame < 6; ++frame) {
+			colony.world.update(1.0F / 60.0F);
+		}
+		const std::optional<VisionSystem::SightShape> shape = colony.vision.sightShape(colonist);
+		ASSERT_TRUE(shape.has_value());
+		ASSERT_NE(shape->forest, nullptr) << "his sight is in forest";
+		ASSERT_NE(shape->polygonRim, nullptr) << "the forest shape of his reach cut the polygon, and the drawn shape reads it as a cutting ring";
+		// One side a forest shape side kept, at most 64 (an edge the others enclose is dropped).
+		EXPECT_GE(shape->polygonRim->size(), 3U);
+		EXPECT_LE(shape->polygonRim->size(), geometry::kSightSides);
+		const PlayerVisibilitySystem::DrawnShape* drawn = colony.visibility.drawnVisible(colonist);
+		ASSERT_NE(drawn, nullptr);
+		// A Standard wall is 0.2 m thick: its west face is 0.1 m off its line.
+		const FaceSides face = expectFaceNotRim(*drawn, start + 100.0 * glm::dvec2{-along.y, along.x}, along);
+		mostOffMm			 = std::max(mostOffMm, face.mostOffMm);
+		seenMm				 = std::max(seenMm, face.lengthMm);
+	}
+	EXPECT_GT(seenMm, 1000.0) << "he sees some of the face";
+	EXPECT_LT(mostOffMm, static_cast<double>(vision::kFaceDriftMm)) << "every face side's ends within the clips' drift";
+	assets::ConstructionRegistry::Get().clear();
+}
+

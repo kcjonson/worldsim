@@ -69,6 +69,9 @@ namespace {
 			low = {std::min(low.x, corners[corner].x), std::min(low.y, corners[corner].y)};
 			high = {std::max(high.x, corners[corner].x), std::max(high.y, corners[corner].y)};
 		}
+		if (kind == vision::BodyKind::Opaque) {
+			body.faces = vision::facesOf(body.edges, body.previousEdge);
+		}
 		body.centre = {std::llround(sumX / static_cast<double>(corners.size())), std::llround(sumY / static_cast<double>(corners.size()))};
 		body.diameterMm = std::llround(std::hypot(static_cast<double>(high.x - low.x), static_cast<double>(high.y - low.y)));
 		return body;
@@ -899,4 +902,185 @@ TEST(CoverPieces, ARenumberingKeepsAnotherBuildingsEase) {
 	ASSERT_EQ(drawn.shadows.edges().size(), 1U);
 	EXPECT_NEAR(drawn.shadows.edges()[0].ease, 0.5, 1e-9) << "the ease taken up, not started again";
 	EXPECT_EQ(drawn.shadows.edges()[0].band.apex, apex);
+}
+
+// Walking west past a room's north-west corner, the silhouette's west end switches from that corner to
+// the south-west one along the west face, which is three edges (a junction's short end at each corner
+// and the wall between). A build lands one frame after the switch, its edge tagged at the south-west
+// corner while the apex has eased only 114 mm, still on the north-west junction's short end: the face is
+// the whole straight run, so the build takes the ease up and the apex never jumps. Each frame it moves
+// at most the face's 5.2 m times that frame's walk over shadowCornerEaseMm.
+TEST(CoverPieces, ACornerSwitchAlongARoomsFaceNeverSnaps) {
+	// The room's outer outline, 7 x 5 m inside walls 0.2 m thick, counter-clockwise.
+	const std::vector<Vec2i64> outline = {
+		{20900, 4900},
+		{21100, 4900},
+		{27900, 4900},
+		{28100, 4900},
+		{28100, 5100},
+		{28100, 9900},
+		{28100, 10100},
+		{27900, 10100},
+		{21100, 10100},
+		{20900, 10100},
+		{20900, 9900},
+		{20900, 5100}
+	};
+	std::vector<vision::SightBody> bodies = {bodyOf(outline, vision::BodyKind::Opaque, 3)};
+	bodies[0].source = vision::SightBody::Source::Wall;
+	const vision::SightTunables tunables;
+	constexpr double			kStepMm = 33.0;
+	constexpr int				kFramesABuild = 15;
+	// Frame 104 is the first west of the face's line at x = 20.9 m, and a build lands at frame 105.
+	constexpr double kStartMm = 20900.0 + kStepMm * 104.0 - 10.0;
+	const auto		 eyeAt = [&](int frame) { return glm::dvec2{kStartMm - kStepMm * static_cast<double>(frame), 0.0}; };
+	// The silhouette's end on the west side, from the first eye, and that end's corner from each build's.
+	const std::optional<vision::Silhouette> first = vision::silhouetteFrom(bodies[0], eyeAt(0));
+	ASSERT_TRUE(first.has_value());
+	const bool westIsClockwise = outline[first->clockwise].x < outline[first->counterClockwise].x;
+	const int  litTurn = westIsClockwise ? -1 : 1;
+	ASSERT_EQ(outline[westIsClockwise ? first->clockwise : first->counterClockwise], (Vec2i64{20900, 4900}));
+
+	const double					maxStep = 5200.0 * kStepMm / static_cast<double>(tunables.shadowCornerEaseMm) + 1e-6;
+	Drawn							drawn;
+	std::vector<vision::ShadowEdge> edges;
+	std::uint64_t					revision = 0;
+	Vec2i64							buildEye{0, 0};
+	std::optional<glm::dvec2>		lastApex;
+	for (int frame = 0; frame < 170; ++frame) {
+		const glm::dvec2 eye = eyeAt(frame);
+		if (frame % kFramesABuild == 0) {
+			const std::optional<vision::Silhouette> silhouette = vision::silhouetteFrom(bodies[0], eye);
+			ASSERT_TRUE(silhouette.has_value());
+			edges = {{.body = 0, .corner = westIsClockwise ? silhouette->clockwise : silhouette->counterClockwise, .litTurn = litTurn}};
+			buildEye = {std::llround(eye.x), std::llround(eye.y)};
+			++revision;
+		}
+		const ecs::VisionSystem::SightBodies sight{
+			.bodies = &bodies, .shadowEdges = &edges, .leadMm = 670, .reachMm = 30800, .eyeCentre = buildEye
+		};
+		drawn.step(sight, revision, eye, frame == 0 ? 0.0 : kStepMm, tunables);
+		ASSERT_EQ(drawn.shadows.edges().size(), 1U) << "frame " << frame;
+		const glm::dvec2 apex = drawn.shadows.edges()[0].band.apex;
+		if (lastApex.has_value()) {
+			EXPECT_LE(glm::length(apex - *lastApex), maxStep) << "frame " << frame;
+		}
+		lastApex = apex;
+	}
+	EXPECT_EQ(*lastApex, glm::dvec2(20900.0, 10100.0)) << "the ease reached the south-west corner";
+}
+
+namespace {
+
+	// Whether `point` lies in the ring `corners` or within 2 mm of its boundary.
+	bool inOrOnRing(const std::vector<Vec2i64>& corners, glm::dvec2 point) {
+		bool inside = false;
+		for (std::size_t corner = 0; corner < corners.size(); ++corner) {
+			const glm::dvec2 from{static_cast<double>(corners[corner].x), static_cast<double>(corners[corner].y)};
+			const glm::dvec2 to{
+				static_cast<double>(corners[(corner + 1) % corners.size()].x), static_cast<double>(corners[(corner + 1) % corners.size()].y)
+			};
+			const glm::dvec2 along = to - from;
+			const double	 share = std::clamp(glm::dot(point - from, along) / glm::dot(along, along), 0.0, 1.0);
+			if (glm::length(point - (from + share * along)) <= 2.0) {
+				return true;
+			}
+			if ((from.y > point.y) != (to.y > point.y) && point.x < from.x + (point.y - from.y) / (to.y - from.y) * (to.x - from.x)) {
+				inside = !inside;
+			}
+		}
+		return inside;
+	}
+
+	// A build tags the shadow edge at `first` from `firstEye`; the next, after he walks to `secondEye`,
+	// tags it at `second` across a notch. Every apex drawn over the walk after lies on the body or in it,
+	// never across the notch's open ground.
+	void expectNoEaseAcrossTheNotch(
+		const std::vector<Vec2i64>& corners,
+		std::uint32_t				first,
+		std::uint32_t				second,
+		glm::dvec2					firstEye,
+		glm::dvec2					secondEye
+	) {
+		const std::vector<vision::SightBody> bodies = {bodyOf(corners, vision::BodyKind::Opaque, 5)};
+		const vision::SightTunables			 tunables;
+		// The end of the silhouette that is `first` from the first eye is `second` from the second.
+		const std::optional<vision::Silhouette> before = vision::silhouetteFrom(bodies[0], firstEye);
+		const std::optional<vision::Silhouette> after = vision::silhouetteFrom(bodies[0], secondEye);
+		ASSERT_TRUE(before.has_value() && after.has_value());
+		const bool clockwise = before->clockwise == first;
+		ASSERT_EQ(clockwise ? before->clockwise : before->counterClockwise, first);
+		ASSERT_EQ(clockwise ? after->clockwise : after->counterClockwise, second);
+		const int litTurn = clockwise ? -1 : 1;
+
+		std::vector<vision::ShadowEdge>		 edges = {{.body = 0, .corner = first, .litTurn = litTurn}};
+		const auto							 sight = [&](glm::dvec2 eye) {
+			  return ecs::VisionSystem::SightBodies{
+				  .bodies = &bodies, .shadowEdges = &edges, .leadMm = 670, .reachMm = 30800, .eyeCentre = {std::llround(eye.x), std::llround(eye.y)}
+			  };
+		};
+		Drawn drawn;
+		drawn.step(sight(firstEye), 1, firstEye, 0.0, tunables);
+		edges = {{.body = 0, .corner = second, .litTurn = litTurn}};
+		for (int frame = 1; frame <= 60; ++frame) {
+			const glm::dvec2 eye = secondEye;
+			drawn.step(sight(eye), 2, eye, 33.0, tunables);
+			ASSERT_EQ(drawn.shadows.edges().size(), 1U);
+			const glm::dvec2 apex = drawn.shadows.edges()[0].band.apex;
+			EXPECT_TRUE(inOrOnRing(corners, apex)) << "frame " << frame << ", apex " << apex.x << "," << apex.y;
+		}
+	}
+
+} // namespace
+
+// An L whose notch is its +x +y quarter: a build tags its tip (6, 2) m, the next, past the line
+// through the two tips, tags the other tip (2, 6) m, two faces on round the notch's inside corner. The
+// ease is not taken up across the notch, which would carry the apex over its open ground; the band
+// starts at the new tip.
+TEST(CoverPieces, AnEaseNeverCrossesAnLsNotch) {
+	const std::vector<Vec2i64> corners = {{0, 0}, {6000, 0}, {6000, 2000}, {2000, 2000}, {2000, 6000}, {0, 6000}};
+	expectNoEaseAcrossTheNotch(corners, 2, 4, {10000.0, -2500.0}, {10000.0, -1500.0});
+}
+
+// Close round a thin wall's end (4 m long, 0.15 m thick), a build tags the silhouette's end at the far
+// corner of the face he has been looking along, (0, -0.075) m, and the next, after he has crossed the
+// lines of both faces at the near end, tags the end's other corner (4, 0.075) m: the switch skips the
+// end cap. The cap's corner is convex, so the running ease is taken up, and the apex never moves more in
+// a frame than the ease allows across the wall's diagonal; it never snaps the wall's length.
+TEST(CoverPieces, AnEaseRoundAThinWallsEndNeverSnaps) {
+	const std::vector<vision::SightBody> bodies = {rectangleBody(2000.0, 0.0, 4000.0, 150.0, vision::BodyKind::Opaque)};
+	const vision::SightTunables			 tunables;
+	const glm::dvec2					 firstEye{4400.0, -100.0};
+	const glm::dvec2					 secondEye{3900.0, 400.0};
+	ASSERT_EQ(vision::silhouetteFrom(bodies[0], firstEye)->counterClockwise, 0U);
+	ASSERT_EQ(vision::silhouetteFrom(bodies[0], secondEye)->counterClockwise, 2U);
+	std::vector<vision::ShadowEdge> edges = {{.body = 0, .corner = 0, .litTurn = 1}};
+	const auto						sight = [&](glm::dvec2 eye) {
+		 return ecs::VisionSystem::SightBodies{
+			 .bodies = &bodies, .shadowEdges = &edges, .leadMm = 670, .reachMm = 30800, .eyeCentre = {std::llround(eye.x), std::llround(eye.y)}
+		 };
+	};
+	constexpr double kStepMm = 33.0;
+	const double	 maxStep = std::hypot(4000.0, 150.0) * kStepMm / static_cast<double>(tunables.shadowCornerEaseMm) + 1e-6;
+	Drawn			 drawn;
+	drawn.step(sight(firstEye), 1, firstEye, 0.0, tunables);
+	glm::dvec2 last = drawn.shadows.edges()[0].band.apex;
+	ASSERT_EQ(last, glm::dvec2(0.0, -75.0));
+	edges = {{.body = 0, .corner = 2, .litTurn = 1}};
+	for (int frame = 1; frame <= 60; ++frame) {
+		drawn.step(sight(secondEye), 2, secondEye, kStepMm, tunables);
+		ASSERT_EQ(drawn.shadows.edges().size(), 1U);
+		const glm::dvec2 apex = drawn.shadows.edges()[0].band.apex;
+		EXPECT_LE(glm::length(apex - last), maxStep) << "frame " << frame;
+		last = apex;
+	}
+	EXPECT_EQ(last, glm::dvec2(4000.0, 75.0)) << "the ease reached the new corner";
+}
+
+// A U whose notch opens on its +y side: walking across the line of its two outer tips, the silhouette's
+// end switches from (0, 6) m to (6, 6) m, five faces apart round the notch, and the ease is not taken
+// across its mouth.
+TEST(CoverPieces, AnEaseNeverCrossesAUsNotch) {
+	const std::vector<Vec2i64> corners = {{0, 0}, {6000, 0}, {6000, 6000}, {4000, 6000}, {4000, 2000}, {2000, 2000}, {2000, 6000}, {0, 6000}};
+	expectNoEaseAcrossTheNotch(corners, 7, 2, {12000.0, 6300.0}, {12000.0, 5700.0});
 }
