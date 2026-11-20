@@ -582,6 +582,43 @@ TEST(PlayerVisibilitySystem, DrawnRimSidesAreTheDiscsAndNotTheWallFace) {
 	assets::ConstructionRegistry::Get().clear();
 }
 
+// A closed room seen from outside: its outer face is several collinear outline edges (the corner
+// junctions' short ends and the wall between), and the bright shape runs one side along them all. That
+// side is a body face and draws no feather; tagged rim, it drew a 1.5 m fade on the lit ground in front
+// of the wall, square-ended at the corners.
+TEST(PlayerVisibilitySystem, DrawnRimSidesSkipARoomsOuterFace) {
+	assets::ConstructionRegistry::Get().clear();
+	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string()));
+	construction::ConstructionWorld walls;
+	buildWall(walls, {21000, 5000}, {28000, 5000});
+	buildWall(walls, {28000, 5000}, {28000, 10000});
+	buildWall(walls, {28000, 10000}, {21000, 10000});
+	buildWall(walls, {21000, 10000}, {21000, 5000});
+
+	Colony colony;
+	colony.vision.setConstructionWorld(&walls);
+	colony.visibility.setConstructionWorld(&walls);
+	const EntityID colonist = colony.addColonist({10.5F, 8.4F});
+	colony.tick();
+	const PlayerVisibilitySystem::DrawnShape* drawn = colony.visibility.drawnVisible(colonist);
+	ASSERT_NE(drawn, nullptr);
+	ASSERT_EQ(drawn->rim.size(), drawn->outline.size());
+	// A Standard wall is 0.2 m thick, so the west wall's outer face runs along x = 20.9 m, from the
+	// north-west outer corner at y = 4.9 m to the south-west one at 10.1 m.
+	constexpr std::int64_t kWestFaceMm	= 20900;
+	std::int64_t		   faceLengthMm = 0;
+	for (std::size_t side = 0; side < drawn->outline.size(); ++side) {
+		const Vec2i64& from = drawn->outline[side];
+		const Vec2i64& to	= drawn->outline[(side + 1) % drawn->outline.size()];
+		if (std::abs(from.x - kWestFaceMm) <= 2 && std::abs(to.x - kWestFaceMm) <= 2) {
+			faceLengthMm += std::abs(to.y - from.y);
+			EXPECT_FALSE(drawn->rim[side]) << "the room's west face, side " << side << " from y " << from.y << " to " << to.y;
+		}
+	}
+	EXPECT_EQ(faceLengthMm, 5200) << "he sees the whole west face, corner to corner";
+	assets::ConstructionRegistry::Get().clear();
+}
+
 // Walking toward the end of a wall, the shadow behind it turns as he goes, so ground near the far
 // rim past its edge is in sight from some positions only. The record holds every point that was in
 // sight, with some margin, from every position over 0.12 m of his path: the sweep leaves no step

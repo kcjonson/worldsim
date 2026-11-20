@@ -19,8 +19,12 @@
 #include <visibility/Visibility.h>
 #include <world/chunk/ChunkCoordinate.h>
 
+#include <glm/geometric.hpp>
+
 #include <algorithm>
 #include <cmath>
+#include <utility>
+#include <vector>
 
 namespace ecs {
 
@@ -54,15 +58,60 @@ namespace ecs {
 			return lengths > 0.0 && std::abs(along.x * outward.x + along.y * outward.y) >= kAlongRayCosine * lengths;
 		}
 
-		bool onOpaqueFace(const std::vector<const vision::SightBody*>& opaque, const Vec2i64& from, const Vec2i64& to) {
+		// Whether the side lies on opaque bodies' outlines end to end. A wall body's face is often several
+		// collinear outline edges (a junction's short edges at each corner, a cut beside an opening), and
+		// the visibility polygon runs one side along all of them, so the side is matched by the stretches
+		// of it the edges lying on it cover, not by a single edge. `spans` is scratch.
+		bool onOpaqueFace(
+			const std::vector<const vision::SightBody*>& opaque,
+			const Vec2i64&								 from,
+			const Vec2i64&								 to,
+			std::vector<std::pair<double, double>>&		 spans
+		) {
+			const glm::dvec2 start{static_cast<double>(from.x), static_cast<double>(from.y)};
+			const glm::dvec2 along{static_cast<double>(to.x - from.x), static_cast<double>(to.y - from.y)};
+			const double	 length	   = std::sqrt(along.x * along.x + along.y * along.y);
+			constexpr double kSlackMm = static_cast<double>(kOnFaceMm);
+			if (length <= kSlackMm) {
+				return std::ranges::any_of(opaque, [&](const vision::SightBody* body) {
+					return std::ranges::any_of(body->edges, [&](const geometry::OccluderSegment& edge) {
+						return geometry::withinDistanceOfSegment(from, edge.a, edge.b, kOnFaceMm) && geometry::withinDistanceOfSegment(to, edge.a, edge.b, kOnFaceMm);
+					});
+				});
+			}
+			const glm::dvec2 direction = along / length;
+			const auto		 acrossOf  = [&](glm::dvec2 point) {
+				   const glm::dvec2 offset = point - start;
+				   return std::abs(direction.x * offset.y - direction.y * offset.x);
+			};
+			spans.clear();
 			for (const vision::SightBody* body : opaque) {
 				for (const geometry::OccluderSegment& edge : body->edges) {
-					if (geometry::withinDistanceOfSegment(from, edge.a, edge.b, kOnFaceMm) && geometry::withinDistanceOfSegment(to, edge.a, edge.b, kOnFaceMm)) {
-						return true;
+					const glm::dvec2 first{static_cast<double>(edge.a.x), static_cast<double>(edge.a.y)};
+					const glm::dvec2 second{static_cast<double>(edge.b.x), static_cast<double>(edge.b.y)};
+					const double	 firstAlong	 = glm::dot(first - start, direction);
+					const double	 secondAlong = glm::dot(second - start, direction);
+					const double	 low		 = std::max(0.0, std::min(firstAlong, secondAlong));
+					const double	 high		 = std::min(length, std::max(firstAlong, secondAlong));
+					if (high <= low) {
+						continue;
+					}
+					// The edge where it overlaps the side, at both ends of the overlap, lies on the side.
+					const auto at = [&](double distance) { return first + (distance - firstAlong) / (secondAlong - firstAlong) * (second - first); };
+					if (acrossOf(at(low)) <= kSlackMm && acrossOf(at(high)) <= kSlackMm) {
+						spans.emplace_back(low, high);
 					}
 				}
 			}
-			return false;
+			std::ranges::sort(spans);
+			double covered = 0.0;
+			for (const auto& [low, high] : spans) {
+				if (low > covered + kSlackMm) {
+					return false;
+				}
+				covered = std::max(covered, high);
+			}
+			return covered >= length - kSlackMm;
 		}
 
 		static_assert(
@@ -360,10 +409,11 @@ namespace ecs {
 		DrawnShape& drawn = cache.shape;
 		drawn.outline	  = std::move(cut);
 		drawn.rim.resize(drawn.outline.size());
+		std::vector<std::pair<double, double>> spans;
 		for (std::size_t side = 0; side < drawn.outline.size(); ++side) {
 			const Vec2i64& from = drawn.outline[side];
 			const Vec2i64& to	= drawn.outline[(side + 1) % drawn.outline.size()];
-			drawn.rim[side]		= !alongRayFrom(build, from, to) && !onOpaqueFace(opaque, from, to);
+			drawn.rim[side]		= !alongRayFrom(build, from, to) && !onOpaqueFace(opaque, from, to, spans);
 		}
 		cache.drawn = true;
 		return &drawn;
