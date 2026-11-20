@@ -87,6 +87,7 @@ World mechanics, rooms, resources, and entity interactions.
 | [Noise](./game-systems/world/noise.md) | Noise emitters, walls, sleep |
 | [Crowding](./game-systems/world/crowding.md) | People nearby against personal tolerance |
 | [Wetness](./game-systems/world/wetness.md) | Rain, wet clothes, drying |
+| [Roofs](./game-systems/world/roofs.md) | Which spaces are indoors, open-air enclosures |
 
 ### Features
 
