@@ -14,7 +14,17 @@
 
 using namespace assets;
 
-TEST(HumanDirectionalAssets, AllDirectionTemplatesAndMotionsResolve) {
+namespace {
+
+	class HumanDirectionalAssets : public ::testing::Test {
+	  protected:
+		// Don't leak the populated global registry into other tests in this binary, an early ASSERT included.
+		void TearDown() override { AssetRegistry::Get().clear(); }
+	};
+
+} // namespace
+
+TEST_F(HumanDirectionalAssets, AllDirectionTemplatesAndMotionsResolve) {
 	auto& reg = AssetRegistry::Get();
 	reg.clear();
 	if (!loadShippedLibrary(reg)) {
@@ -42,13 +52,13 @@ TEST(HumanDirectionalAssets, AllDirectionTemplatesAndMotionsResolve) {
 	const std::filesystem::path conditions =
 		std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "assets" / "config" / "conditions";
 	const ConditionConfigLoad load = loadConditionConfig(conditions);
-	ASSERT_TRUE(load.errors.empty());
+	ASSERT_TRUE(load.errors.empty()) << (load.errors.empty() ? "" : load.errors.front());
+	int moversChecked = 0;
 	for (const ConditionKindDef& kind : load.config.kinds) {
 		if (!kind.mover.empty()) {
+			++moversChecked;
 			EXPECT_NE(reg.getDefinition(kind.mover), nullptr) << "kind " << kind.name << " names mover " << kind.mover;
 		}
 	}
-
-	// Don't leak the populated global registry into other tests in this binary.
-	reg.clear();
+	EXPECT_GE(moversChecked, 1) << "the shipped kinds name no mover, so nothing was checked";
 }
