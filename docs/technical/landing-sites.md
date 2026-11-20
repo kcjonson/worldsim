@@ -205,7 +205,7 @@ class LandingSiteSurvey {
 - **Picking.** `stagePress` first hit-tests the shown suggested markers (`kSuggestedMarkerHitRadius` ui px from the press, nearest wins); a hit makes that site's origin the pick. Otherwise `globe.pick` gives it. A marker hit sets `selectedPick` to the site's origin, `selectedLanding` to the site, and `selectedSuggestion` to its index. A globe pick goes to `trySelectSite(pick)`, which rejects water tiles as now, sets `selectedPick`, clears `selectedLanding` and `selectedSuggestion`, and calls `survey.resolve(pick)`; when the result for that pick arrives it becomes `selectedLanding`, and `selectedSuggestion` is the index of the site whose `origin` equals its origin, if any.
 - **Pane.** `buildLandingSiteDetails(const worldgen::GeneratedWorld&, const worldgen::LandingSite&, double pickLatDeg, double pickLonDeg)`. Coordinates are the pick's; biome, temperatures, rainfall, terrain, ice, and water come from `site.tile` and `site.assessment`; `recommended` is `site.recommended()`. A Provisions section shows Food and Wood, each Yes or None. The Commit to Descent dialog reads the same `details`.
 - **Landing.** `land()` puts `selectedLanding` in `GameStartConfig::landing`.
-- **Markers.** `renderSuggestedSites(rect, scale, theme)` draws before `renderMarker`, so the selection crosshair sits on top. For each site with `projectLatLon` true: a ring of radius `kSuggestedMarkerRadius` ui px, 1.5 px stroke, in the `data` token, with a 2 px dot at its centre in `dataBright`. A river site's ring is a diamond (a square turned 45 degrees), a lake site's a circle. No pulse; the pulse belongs to the selection. Drawn only while `UserSettings::Get().landing.showSuggestedSites` is on, read each frame.
+- **Markers.** `renderSuggestedSites(rect, scale, theme)` draws before `renderMarker`, so the selection crosshair sits on top. For each site with `projectLatLon` true (it is false on the far side: the camera must lie above the point's tangent plane): a ring of radius `kSuggestedMarkerRadius` ui px, 1.5 px stroke, in the `data` token, with a dot of radius 2 px at its centre in `dataBright`, every size scaled by the interface scale as the crosshair's are. A river site's ring is a diamond (a square turned 45 degrees), a lake site's a circle. No pulse; the pulse belongs to the selection. Drawn only while `UserSettings::Get().landing.showSuggestedSites` is on, read each frame.
 
 ## 6. The setting
 
@@ -259,13 +259,13 @@ Held by check, not by trust: any change to the bar, the rank, the resolution, or
 **`landingSites`** (world creator, registered with `devServer().stateProvider` in `onEnter`, released in `onExit`):
 
 ```json
-{"surveying":false,"markersShown":true,
+{"surveying":false,"resolving":false,"markersShown":true,
  "sites":[{"index":0,"latDeg":0.0,"lonDeg":0.0,"kind":"river","biome":"TemperateDeciduousForest","onScreen":true,"x":0.0,"y":0.0}],
  "selection":{"pickLatDeg":0.0,"pickLonDeg":0.0,"suggestedIndex":0,"landingLatDeg":0.0,"landingLonDeg":0.0,
               "biome":"TemperateDeciduousForest","feature":"river","recommended":true}}
 ```
 
-`sites` lists every suggested site whether or not markers are shown. `x`/`y` are the marker's position in the window's logical px (the input space, as `renderMarker` draws), and `onScreen` is true when the site is on the near side and inside the stage. `selection` is null until a site is selected; `suggestedIndex` is null for a free pick.
+`sites` lists every suggested site whether or not markers are shown. `x`/`y` are the marker's position in the window's logical px (the input space, as `renderMarker` draws), null on the far side, and `onScreen` is true when the site is on the near side and inside the stage. `resolving` is true while a free pick waits for its landing. `selection` is null until a site is selected; `suggestedIndex` is null for a free pick, and the landing's fields (`landingLatDeg` to `recommended`) are null while it resolves.
 
 ## 10. Constants
 
