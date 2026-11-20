@@ -44,6 +44,7 @@ inline constexpr uint16_t kDesertRainfallMillimeters = 100;
 inline constexpr float kMinimumFoodSourcesPerSquareKilometer = 100.0f;
 inline constexpr float kMinimumWoodSourcesPerSquareKilometer = 100.0f;
 inline constexpr double kLakeShoreInsetMeters = 20.0;
+inline constexpr double kLakeEdgeToleranceMeters = 0.5;
 
 // A tile's water situation. River and Lake are fresh, Coastal is salt, RainFed has no surface water.
 enum class WaterClass : uint8_t {

@@ -76,19 +76,38 @@ LatLon centreOf(const SphereGrid& grid, TileId tile) {
 }
 
 // On the great circle from the land tile's centre toward the lake tile's centre, kLakeShoreInsetMeters
-// short of their midpoint (the 2D lake shore) on the land side.
+// short of where the grid stops calling the point the land tile (the 2D lake shore). The grid decides
+// containment in its lattice chart, so that edge is found by bisection on its own lookup, not taken
+// as the centres' midpoint.
 LatLon lakeAnchor(const GeneratedWorld& world, TileId land, TileId lake) {
-    const Vec3d from = world.grid->tileCenter(land);
-    const Vec3d to = world.grid->tileCenter(lake);
+    const SphereGrid& grid = *world.grid;
+    const Vec3d from = grid.tileCenter(land);
+    const Vec3d to = grid.tileCenter(lake);
     const double cosArc = std::clamp(dot(from, to), -1.0, 1.0);
     const Vec3d across{to.x - cosArc * from.x, to.y - cosArc * from.y, to.z - cosArc * from.z};
     const double acrossLength = foundation::det_math::sqrt(dot(across, across));
     const double arc = foundation::det_math::atan2(acrossLength, cosArc);
-    const double angle = 0.5 * arc - kLakeShoreInsetMeters / world.derived.planetRadiusMeters;
-    const double along = foundation::det_math::cos(angle);
-    const double side = foundation::det_math::sin(angle) / acrossLength;
-    const Vec3d point{along * from.x + side * across.x, along * from.y + side * across.y,
-                      along * from.z + side * across.z};
+    const double radius = world.derived.planetRadiusMeters;
+
+    const auto pointAt = [&](double angle) {
+        const double along = foundation::det_math::cos(angle);
+        const double side = foundation::det_math::sin(angle) / acrossLength;
+        return Vec3d{along * from.x + side * across.x, along * from.y + side * across.y,
+                     along * from.z + side * across.z};
+    };
+
+    double inside = 0.0;
+    double outside = arc;
+    while ((outside - inside) * radius > kLakeEdgeToleranceMeters) {
+        const double middle = 0.5 * (inside + outside);
+        if (grid.fromUnitVector(pointAt(middle)) == land) {
+            inside = middle;
+        } else {
+            outside = middle;
+        }
+    }
+
+    const Vec3d point = pointAt(std::max(0.0, inside - kLakeShoreInsetMeters / radius));
     return {foundation::det_math::asin(std::clamp(point.z, -1.0, 1.0)) * kDegreesPerRadian,
             foundation::det_math::atan2(point.y, point.x) * kDegreesPerRadian};
 }

@@ -16,10 +16,7 @@ namespace worldgen {
 
 namespace {
 
-constexpr uint32_t kRiverSubdivision = 24;
-// The lake anchor stands on the great-circle midpoint of two tile centres, which the grid's Voronoi edge
-// (the 2D shore) leaves by under 15 m at n=256 but by kilometres at n=24.
-constexpr uint32_t kLakeSubdivision = 256;
+constexpr uint32_t kSubdivision = 24;
 
 double dot(const Vec3d& a, const Vec3d& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 
@@ -112,7 +109,7 @@ struct RiverFixture {
 };
 
 RiverFixture riverAtLatitude(double latDeg) {
-    RiverFixture fixture{makeWorld(kRiverSubdivision)};
+    RiverFixture fixture{makeWorld(kSubdivision)};
     fixture.source = fixture.world->grid->fromLatLon(latDeg, -10.0);
     carveRiver(*fixture.world, fixture.source, fixture.world->grid->fromLatLon(latDeg, 20.0));
     return fixture;
@@ -121,7 +118,7 @@ RiverFixture riverAtLatitude(double latDeg) {
 } // namespace
 
 TEST(LandingSiteBar, RiverTileWithFoodWoodAndLivableSeasonsMeetsIt) {
-    auto world = makeWorld(kRiverSubdivision);
+    auto world = makeWorld(kSubdivision);
     const BiomeProvisionTable provisions = grasslandProvisions();
     const TileId tile = world->grid->fromLatLon(0.0, 0.0);
 
@@ -153,7 +150,7 @@ TEST(LandingSiteBar, RiverTileWithFoodWoodAndLivableSeasonsMeetsIt) {
 }
 
 TEST(LandingSiteBar, DryColdRainFedTileRatesHarsh) {
-    auto world = makeWorld(kRiverSubdivision);
+    auto world = makeWorld(kSubdivision);
     const TileId tile = world->grid->fromLatLon(0.0, 0.0);
     world->data.temperatureMean[tile] = -200;
     world->data.precipitation[tile] = 40;
@@ -212,7 +209,7 @@ TEST(LandingSiteResolution, RiverTilePastFortyFiveDegreesThatMeetsTheBarIsRecomm
 }
 
 TEST(LandingSiteResolution, DryPickStaysAtThePick) {
-    auto world = makeWorld(kRiverSubdivision);
+    auto world = makeWorld(kSubdivision);
     const LatLon pick{1.3, 2.1};
 
     const LandingSite site = resolveLandingSite(world, grasslandProvisions(), pick);
@@ -227,7 +224,7 @@ TEST(LandingSiteResolution, DryPickStaysAtThePick) {
 }
 
 TEST(LandingSiteResolution, PickBesideLakeResolvesToItsShore) {
-    auto world = makeWorld(kLakeSubdivision);
+    auto world = makeWorld(kSubdivision);
     const TileId land = world->grid->fromLatLon(0.0, 0.0);
     std::array<TileId, 6> neighbours{};
     world->grid->neighbors(land, neighbours);
