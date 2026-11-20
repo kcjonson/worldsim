@@ -9,8 +9,12 @@
 namespace assets {
 
 	namespace {
-		constexpr const char* kWoodItemDefName = "Wood";
-		constexpr float		  kSquareMetersPerSquareKilometer = 1e6F;
+		constexpr float kSquareMetersPerSquareKilometer = 1e6F;
+
+		bool declaresGroup(const AssetDefinition& definition, const char* group) {
+			const std::vector<std::string>& groups = definition.placement.groups;
+			return std::find(groups.begin(), groups.end(), group) != groups.end();
+		}
 	} // namespace
 
 	worldgen::BiomeProvisionTable biomeProvisionsFromDefinitions(const AssetRegistry& registry) {
@@ -27,7 +31,7 @@ namespace assets {
 			const std::string&	   yieldName = def->capabilities.harvestable->yieldDefName;
 			const AssetDefinition* yield = registry.getDefinition(yieldName);
 			const bool			   food = yield != nullptr && yield->isEdible();
-			const bool			   wood = yieldName == kWoodItemDefName;
+			const bool			   wood = yield != nullptr && declaresGroup(*yield, kWoodItemGroup);
 			if (!food && !wood) {
 				continue;
 			}
