@@ -159,6 +159,8 @@ bool GlobeView::projectLatLon(planetview::LatLon site, const Foundation::Rect& r
 	if (!isReady() || rect.height <= 0.0F) return false;
 	float aspect = rect.width / rect.height;
 	glm::vec3 unitPos = planetview::latLonToUnitSphere(site.latDeg, site.lonDeg);
+	// A point on the unit sphere faces the camera only when the camera lies above its tangent plane.
+	if (glm::dot(unitPos, camera.position()) <= 1.0F) return false;
 	float localX = 0.0F;
 	float localY = 0.0F;
 	if (!planetview::projectToScreen(unitPos, camera, aspect,
