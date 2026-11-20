@@ -49,7 +49,7 @@ Bands name a range for the player. They gate nothing; the curves below do the wo
 
 1. **Roll.** Each game hour a colonist under mood 45 may roll, with a chance that rises steeply as mood falls.
 2. **Pick.** Every behavior the situation allows takes part, weighted. One is picked. Often it is Hold it together and nothing visible happens.
-3. **Act.** The behavior becomes what the colonist is doing. It outranks work, ordinary needs, and the player's orders: a colonist in an episode cannot be drafted or directed until it ends. A critical need interrupts it.
+3. **Act.** The behavior becomes what the colonist is doing, on the `low_mood` rung of the ladder. It outranks work, ordinary and urgent needs, and the player's orders: a colonist in an episode cannot be drafted or directed until it ends. A critical need interrupts it. It bumps another colonist's claim on its target when a lower rung holds it ([Task claims](../../../technical/task-claims.md#bumping-planned)).
 4. **End.** The behavior stops on the first of its own end conditions.
 5. **Relief.** If the behavior gives relief, the colonist gets a positive thought.
 6. **Develop.** The behavior's affinity rises for that colonist, and a cooldown of a few hours begins before the next roll.
@@ -149,12 +149,12 @@ The spiral is slow at the top and fast at the bottom. Between Content and Very l
 
 ### Leaving the colony
 
-A colonist who leaves stops being part of the colony, and then is gone.
+A colonist is a human with colony membership. A colonist who leaves loses that membership, so they are still a human but no longer part of the colony, and then they are gone. Leaving is a low-mood behavior whose chain ends in the `<leave_colony/>` step.
 
-- **No longer a colonist.** From the moment they leave, the player cannot select them for orders or draft them, they are off the roster, and they are offered no work. Anything they had claimed is released. They add nothing to what the colony can see: ground they pass is not revealed and stays as it was.
-- **A wild thing.** They are driven with the same simple behavior as a cow or a deer, not a colonist's.
-- **Walking off.** They head in one direction, picked at random, walking or running, until they are outside the area the player can see and the game is simulating. They are not exploring: they cause no new ground to be made walkable and no new terrain to load.
-- **Gone.** Once outside that area they are unloaded and no longer exist. A colonist who left does not come back.
+- From the moment they leave, the player cannot select them for orders or draft them, they are off the roster, and they are offered no work. Anything they had claimed is released. They add nothing to what the colony can see: ground they pass is not revealed and stays as it was.
+- They are driven with the same simple behavior as a cow or a deer, not a colonist's.
+- They head in one direction, picked at random, walking or running, until they are outside the area the player can see and the game is simulating. They are not exploring: they cause no new ground to be made walkable and no new terrain to load.
+- Once outside that area they are unloaded and no longer exist. A colonist who left does not come back.
 
 ### What the player does about it
 
@@ -300,36 +300,44 @@ Every argument is typed: a kind or a need is a name from its declared list, and 
 
 The vocabulary is declared in data (`assets/config/conditions`): the conditions and their types, the names each takes, and the kinds `near` looks for and what memory holds them under: a capability for things, or the asset definition of a mover, such as `Human`. A mover is near when the colonist saw it within the recent-sighting window of [memory](./memory.md) and its last-seen position is within the radius. A mod adds conditions and kinds with a file of its own there.
 
-Five sets of names are owned and closed, and no conditions file declares, extends, or opens them: kinds come from the `<Kind>` declarations, traits from the trait data in `assets/config/colonists/traits`, needs and attributes from the sim, and tasks from the sim's task types and the declared task groups. A condition naming a need, attribute, trait, task, or kind its owner lacks is a load error naming the file and the thought, feeling, or line that holds it, with the names that set takes; a mod adds one by adding it to its owner. The other sets belong to the conditions files, and any file may add names to them: resources and scarcity levels are closed, and events, behaviors, and mood causes are open until their own definitions fill them. An open set takes any name, and one nothing answers reads Unknown and is logged once per condition. A kind declared with no capability or mover, like a condition nothing provides, reads Unknown and is logged. The folder's own files load first and then its subfolders' files in path order; a later file may add names, conditions, and kinds, and replace a kind's mapping or the night hours, each replacement logged with both files. Redeclaring a condition with the same types is accepted, and with different ones is an error naming both files.
+Five sets of names are owned and closed, and no conditions file declares, extends, or opens them: kinds come from the `<Kind>` declarations, traits from the trait data in `assets/config/colonists/traits`, needs from the behaviors the creature includes, attributes from the sim, and tasks from chain ids and the declared task groups, which list chain ids. A condition naming a need, attribute, trait, task, or kind its owner lacks is a load error naming the file and the thought, feeling, or line that holds it, with the names that set takes; a mod adds one by adding it to its owner. The other sets belong to the conditions files, and any file may add names to them: resources and scarcity levels are closed, and events, behaviors, and mood causes are open until their own definitions fill them. An open set takes any name, and one nothing answers reads Unknown and is logged once per condition. A kind declared with no capability or mover, like a condition nothing provides, reads Unknown and is logged. The folder's own files load first and then its subfolders' files in path order; a later file may add names, conditions, and kinds, and replace a kind's mapping or the night hours, each replacement logged with both files. Redeclaring a condition with the same types is accepted, and with different ones is an error naming both files.
 
 ## Data
 
-The behavior list, the thoughts, the roll curve, relief sizes, the cooldown, the mood rate, and the affinity rates are config. A behavior is one entry:
+The thoughts, the roll curve, relief sizes, the cooldown, the mood rate, and the affinity rates are config. A low-mood behavior is a behavior under `assets/config/behaviors/` that holds a `<lowMood>` entry, with its query and chain beside it:
 
 ```xml
-<behavior id="soil_bed" rampStart="25" rampFull="15" base="4">
-  <target query="bed_to_soil"/>
-  <weight when="dislikes(owner(target))" multiply="4"/>
-  <weight when="not observed" multiply="2"/>
-  <effect chain="soil_bed"/>
-  <ends after="task"/>
-  <relief amount="medium"/>
-</behavior>
+<behavior id="soil_bed" label="Soiling a bed">
+  <lowMood rampStart="25" rampFull="15" base="4">
+    <target query="bed_to_soil"/>
+    <weight when="dislikes(owner(target))" multiply="4"/>
+    <weight when="not observed" multiply="2"/>
+    <effect chain="soil_bed"/>
+    <ends after="task"/>
+    <relief amount="medium"/>
+  </lowMood>
 
-<query id="bed_to_soil" pick="weighted">
-  <from kind="bed"/>
-  <exclude fact="distance" above="15"/>
-  <exclude fact="has_owner" below="1"/>
-  <exclude fact="owned_by_self"/>
-  <exclude fact="owner_present"/>
-  <weigh fact="distance" by="-0.2"/>
-  <weigh fact="owner_opinion" by="-5"/>
-</query>
+  <query id="bed_to_soil" pick="weighted">
+    <from kind="bed"/>
+    <exclude fact="distance" above="15"/>
+    <exclude fact="has_owner" below="1"/>
+    <exclude fact="owned_by_self"/>
+    <exclude fact="owner_present"/>
+    <weigh fact="distance" by="-0.2"/>
+    <weigh fact="owner_opinion" by="-5"/>
+  </query>
+
+  <chain id="soil_bed">
+    <go to="target"/>
+    <do action="urinate"/>
+    <think thought="soiled_a_bed" to="self"/>
+  </chain>
+</behavior>
 ```
 
 A behavior that acts on something names it with `<target>`, a query that picks the target from what the colonist knows; the behavior takes part in the roll once, with the weights evaluated against that target. A behavior with no target uses `<requires>`.
 
-Conditions are data and need no scripting. A behavior's effect, what the colonist physically does, is a chain of steps, and its target a query, both data ([Queries and chains](../../../technical/queries-and-chains.md)), so a mod adds a behavior by adding an entry, its query, and its chain.
+Conditions are data and need no scripting. A behavior's effect, what the colonist physically does, is a chain of steps, and its target a query, both data ([Queries and chains](../../../technical/queries-and-chains.md#low-mood-behaviors)), so a mod adds a behavior by adding a file. A critical need interrupts an episode, so a mod's `do` steps use interruptable actions, or short ones that finish before the next decision, since an action that cannot be interrupted blocks every switch. A behavior that leaves the colony ends its chain with `<leave_colony/>`, and one that only announces itself gives a thought and does nothing else.
 
 ## Signals from other systems
 
@@ -390,7 +398,10 @@ Kevin, 2026-11-17: the player cannot step in during an episode. A colonist in on
 
 2026-11-17: the need, attribute, and task names close like the kind and trait names. A conditions file may no longer add to them or open them, so a misspelled name in a mod's condition fails the load instead of reading Unknown.
 
+
 Kevin, 2026-11-17: a behavior's target is a query and its effect a chain, XML always with optional Lua and no logic in the XML, specified in [Queries and chains](../../../technical/queries-and-chains.md).
+
+Kevin, 2026-11-20: a colonist in an episode bumps another colonist's claim on its target when a lower rung holds it (the `low_mood` rung is a bumping rung; [Task claims](../../../technical/task-claims.md#bumping-planned)).
 
 ## Addendum: superseded content
 

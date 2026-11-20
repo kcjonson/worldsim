@@ -183,7 +183,7 @@ as a field of the job it needs none. A part-done unit pins its job as the statio
 
 ### Needs in three levels
 
-A need has three thresholds, and each puts its option at a different tier:
+A need has three thresholds, and each puts its option on a different rung:
 
 | Level | Below | Hunger, thirst | Energy, bladder, digestion | Effect |
 |---|---|---|---|---|
@@ -196,51 +196,54 @@ recreation get urgent values too (25 and 20).
 
 ### The ladder
 
-| Tier | Name | Trigger | Was |
-|---|---|---|---|
-| 1 | Survival / danger | reserved | 1 |
-| 2 | Critical needs | a need below its critical threshold | 2 |
-| 3 | Forced player orders | reserved | 3 |
-| 4 | Urgent needs | a need below its urgent threshold | new |
-| 5 | Own unfinished work | a Craft whose part-done unit this colonist holds | new |
-| 6 | Active work orders | a queued craft or build and its provisioning | 4 |
-| 7 | Ordinary needs | a need below its seek threshold | 5 |
-| 8 | Opportunistic work | haul loose items, stock storage, undirected harvest | 6 |
-| 9 | Idle | gather food for the larder, wander | 7 |
+The ladder is the named rungs of [Queries and chains](./queries-and-chains.md#rungs), top to bottom.
 
-Tiers 1 to 3 keep their numbers, so the planned bumping rule ("only tiers 1 to 3 bump") reads as
-written. Everything from the old tier 4 down moves by two.
+| Rung | Trigger |
+|---|---|
+| `survival` | reserved for threats |
+| `critical_need` | a need below its critical threshold |
+| `low_mood` | a low-mood behavior during a mood episode |
+| `player_order` | an order the player gave |
+| `urgent_need` | a need below its urgent threshold |
+| `own_unfinished_work` | a Craft whose part-done unit this colonist holds |
+| `committed_work` | a queued craft or build and its provisioning |
+| `ordinary_need` | a need below its seek threshold |
+| `opportunistic_work` | haul loose items, stock storage, undirected harvest |
+| `idle` | gather food for the larder, wander |
 
-Tier 5 is how "finishing outranks starting new work by a wide margin" is delivered. It is a tier and
-not a score bonus for the reason the arbitration spec gives: an ordering that must always hold is a
-category. A crafter back from a meal sees its held craft above every other work order, whatever the
-distance. Tier 5 sits under urgent needs, so the crafter still leaves when very hungry, and above
-ordinary needs, so it does not leave when slightly hungry.
+The planned bumping rule ([Task Claims](./task-claims.md#bumping-planned)) is by rung name: only `survival`,
+`critical_need`, `low_mood`, and `player_order` would bump, and no entry writes a number.
 
-Builds have no tier 5. A blueprint has no single owner, any builder continues it, and a builder
-back from a meal picks among work orders as usual.
+`own_unfinished_work` is how "finishing outranks starting new work by a wide margin" is delivered. It
+is a rung and not a score bonus for the reason the arbitration spec gives: an ordering that must
+always hold is a category. A crafter back from a meal sees its held craft above every other work
+order, whatever the distance. The rung sits under `urgent_need`, so the crafter still leaves when very
+hungry, and above `ordinary_need`, so it does not leave when slightly hungry.
+
+Builds have no `own_unfinished_work` option. A blueprint has no single owner, any builder continues
+it, and a builder back from a meal picks among work orders as usual.
 
 ### What interrupts what
 
 Craft, Build, and Deconstruct work become interruptable. The gate is unchanged: a running
-interruptable action yields to a same or higher tier, and a non-interruptable one yields to nothing
+interruptable action yields to a same or higher rung, and a non-interruptable one yields to nothing
 until it ends. The short actions (Eat, Drink, Toilet, Harvest, Pickup, Withdraw, Deposit) stay
-non-interruptable; they last seconds, and every tier waits for them as critical needs do today.
+non-interruptable; they last seconds, and every rung waits for them as critical needs do today.
 
-| Colonist is | Ordinary need (7) | Urgent need (4) | Critical need (2) | Other work order (6) |
+| Colonist is | Ordinary need | Urgent need | Critical need | Other work order |
 |---|---|---|---|---|
-| crafting its held unit (5) | waits | interrupts, hold kept | interrupts, hold kept | never |
-| building or deconstructing (6) | waits | interrupts | interrupts | past the hysteresis margin (new) |
-| hauling or cutting for a work order (6) | waits | interrupts between actions | interrupts between actions | as today |
-| carrying a two-hand armful its root still wants | waits | waits for the delivery | interrupts, armful dropped | a higher tier interrupts, as today |
-| walking to a craft it has not started (6) | waits | interrupts, Slot claim lost | interrupts, Slot claim lost | as today |
+| crafting its held unit (`own_unfinished_work`) | waits | interrupts, hold kept | interrupts, hold kept | never |
+| building or deconstructing (`committed_work`) | waits | interrupts | interrupts | past the hysteresis margin (new) |
+| hauling or cutting for a work order (`committed_work`) | waits | interrupts between actions | interrupts between actions | as today |
+| carrying a two-hand armful its root still wants | waits | waits for the delivery | interrupts, armful dropped | a higher rung interrupts, as today |
+| walking to a craft it has not started (`committed_work`) | waits | interrupts, Slot claim lost | interrupts, Slot claim lost | as today |
 
 Two cells are new behaviour beyond the needs columns. A builder can be taken by another work order
 that beats its build by more than the hysteresis margin, where today the Build action blocks every
 switch; the blueprint keeps its work, and a builder standing at its blueprint already has the full
 distance score, so the case is rare. And the armful row adds to one rule in
 [Task Claims](./task-claims.md#interruption-by-the-colonists-own-needs): "only a strictly higher
-tier interrupts a task carrying a two-hand armful its root still wants" stays for work, and gains
+rung interrupts a task carrying a two-hand armful its root still wants" stays for work, and gains
 "and of the needs, only a critical one". An urgent need waits for an armful bound for a work order;
 an ordinary need, which today outranks an armful bound for storage and drops it, waits too. The
 rule's own exits stand: once the root wants none of the armful, or the route to it has failed,
@@ -259,17 +262,17 @@ Craft action would run on under the need task.
 
 ### Coming back
 
-When the need is met, the crafter's held craft is its tier 5 option. It walks back, the Craft task
-takes its Slot claim as usual, and the action adds work to the same job from where it stopped.
-`startCraftAction` still checks the store holds every input; if something emptied the store while
-the crafter was away, the Craft option reads as needing materials, provisioning reopens for the
-shortfall, and the saved work and the hold both stay.
+When the need is met, the crafter's held craft is its `own_unfinished_work` option. It walks back,
+the Craft task takes its Slot claim as usual, and the action adds work to the same job from where it
+stopped. `startCraftAction` still checks the store holds every input; if something emptied the store
+while the crafter was away, the Craft option reads as needing materials, provisioning reopens for
+the shortfall, and the saved work and the hold both stay.
 
 Every Craft option, held or not, gets the reach test work sources already get: a label compare
 (`NavigationSystem::connected`) and the failed-route verdicts in `SourceReachMemo`. A station that
-cannot be reached is not offered. Without this a held craft behind a new wall would be a tier 5
-option picked again on every decision. With it the crafter takes other work, and the hold stays
-until one of the release conditions is met; the player can cancel the job.
+cannot be reached is not offered. Without this a held craft behind a new wall would be an
+`own_unfinished_work` option picked again on every decision. With it the crafter takes other work,
+and the hold stays until one of the release conditions is met; the player can cancel the job.
 
 ### Cancelling a part-done job
 
@@ -340,10 +343,12 @@ Numbered so tasks and tests can cite them.
 7. Needs never release a hold. Player control, work started at another station, the crafter ceasing
    to exist, and the job leaving the queue do.
 8. A released hold leaves `workDone` as it was.
-9. A need below its urgent threshold is tier 4; below critical, tier 2; below seek, tier 7.
-10. A Craft option for the unit the colonist holds is tier 5. Every other Craft option is tier 6.
+9. A need below its urgent threshold is on `urgent_need`; below critical, `critical_need`; below seek,
+   `ordinary_need`.
+10. A Craft option for the unit the colonist holds is on `own_unfinished_work`. Every other Craft
+    option is on `committed_work`.
 11. Craft, Build, and Deconstruct actions are interruptable. The gate's rules are unchanged.
-12. A task carrying a two-hand armful its root still wants yields to a strictly higher tier of work,
+12. A task carrying a two-hand armful its root still wants yields to a strictly higher rung of work,
     as today, and to a need only when the need is critical.
 13. When a station's current job leaves the queue, everything in the store drops beside the station
     as loose piles. A station's store never holds materials for a job that is not its current one.
@@ -373,40 +378,34 @@ struct Need {
 };
 ```
 
-**Need tuning as data.** A need's three thresholds, its decay and its mood cost are on its own entry
-in the needs folder (`assets/config/colonists/needs/needs.xml`), and the sleep curve's exponent is the
-Sleep entry's `curveExponent`; [Queries and chains](./queries-and-chains.md#needs) specifies the
-layout this moves to, with the sleep exponent as the Sleep action entry's `curve`. There is no default
-in code. The folder is loaded with the other colonist rules ([Config Loading](./config-loading.md)):
-`assets::loadNeedsConfig` reads it, a later file replacing a `<Need>` by name, and `ecs::NeedLevels`
-checks that every need is given. A colonist's `NeedsComponent` is constructed from the loaded levels and
-carries each need's thresholds, which the AI and the thought sources both read, so one edit moves both,
-and its mood cost, which `MoodSystem` reads ([Colonist Needs](../design/game-systems/colonists/needs.md),
-What a need costs mood). The tests and benches build theirs from the shipped folders through one helper
-(`libs/sim/ecs/ShippedConfig.test.h`).
+**Need tuning as data.** A need's three thresholds and its decay are on its own `<need>` entry in a
+behavior under `assets/config/behaviors/`, and the sleep curve's exponent is the `curve` of the sleep
+action entry ([Queries and chains](./queries-and-chains.md#needs)). A need's mood cost is a
+`<moodCost>` row on the creature that has mood, the human here
+([Colonist Needs](../design/game-systems/colonists/needs.md#what-a-need-costs-mood)). There is no default
+in code. The behaviors are loaded with the other colonist rules ([Config Loading](./config-loading.md)),
+and a colonist's `NeedsComponent` is constructed from the loaded levels and carries each need's
+thresholds, which the AI and the thought sources both read, so one edit moves both. The tests and
+benches build theirs from the shipped data through one helper (`libs/sim/ecs/ShippedConfig.test.h`).
 
 ```xml
-<Needs>
-  <Need name="Hunger"      decayPerGameMinute="0.08"  seek="50" urgent="25" critical="10" cost="25"/>
-  <Need name="Thirst"      decayPerGameMinute="0.12"  seek="50" urgent="25" critical="10" cost="25"/>
-  <Need name="Energy"      decayPerGameMinute="0.05"  seek="30" urgent="20" critical="10" cost="20"/>
-  <Need name="Bladder"     decayPerGameMinute="0.03"  seek="30" urgent="20" critical="10" cost="10"/>
-  <Need name="Digestion"   decayPerGameMinute="0.02"  seek="30" urgent="20" critical="10" cost="10"/>
-  <Need name="Hygiene"     decayPerGameMinute="0.015" seek="40" urgent="25" critical="15" cost="15"/>
-  <Need name="Recreation"  decayPerGameMinute="0.01"  seek="30" urgent="20" critical="10" cost="15"/>
-  <Need name="Temperature" decayPerGameMinute="0"     seek="40" urgent="25" critical="15" cost="60"/>
-  <Sleep curveExponent="2.0"/>
-</Needs>
+<need id="hunger" label="Hunger" seek="50" urgent="25" critical="10">
+  <drains perGameMinute="0.08"/>
+  <satisfiedBy chain="eat_from_pack"/>
+</need>
+<action id="sleep" interruptable="true" pays="along" curve="2"/>
 ```
 
-**Tiers.** `priority-tuning.xml` base tiers are renumbered (FulfillNeed 7, Craft, Build and
-Deconstruct 6, Haul, Harvest and PlacePackaged 8, Wander 9). `classifyTier` promotes a need to 4 or
-2 by its thresholds, a held Craft to 5, and work serving a work order to 6; the gather-food sentinel
-and satisfied needs go to 9. The ladder gets names in one header (an enum or constants: critical,
-urgent, own work, work order, ordinary need, opportunistic, idle), and the places that write the
-idle tier as a bare 7 use the name: `installDefaultTaskTiers`, `Task::priorityTier`,
-`EvaluatedOption::tier`, `ClaimHolder::tier`, and `tierLabel` in `TaskListView.cpp`. Left as
-numbers they would all come to mean "ordinary need".
+Seek, urgent, and critical are 50, 25, 10 for hunger and thirst; 30, 20, 10 for energy, bladder, and
+digestion; 40, 25, 15 for hygiene and temperature; and 30, 20, 10 for recreation.
+
+**Rungs.** The rung of each option is data, named in the ladder under `assets/config/arbitration/` and
+in the work entries' `rung`. The engine promotes a need to `urgent_need` or `critical_need` by its
+thresholds, a held Craft to `own_unfinished_work`, and work serving a work order to `committed_work`;
+an idle chain is on `idle`, and a satisfied need offers no option. Code names a rung by its ladder name
+and never by a number, so none of `installDefaultTaskTiers`, `Task::priorityTier`,
+`EvaluatedOption::tier`, `ClaimHolder::tier`, or `tierLabel` in `TaskListView.cpp` can come to mean the
+wrong rung.
 
 **Claim index.** After the per-task pass, `ClaimIndex::rebuild` walks the stations' queues and
 records each live crafter against its station in a table of its own, not as a claim: a hold has no
@@ -477,7 +476,9 @@ Deleted, each in the change that replaces it:
 - The decay literals in `Needs.cpp`.
 - Direct calls to `WorkQueue::removeJob` from the game, in favour of `cancelCraftingJob`.
 - The inline sleep quality choice in `NeedActions.cpp`, in favour of `sleepQuality`.
-- Bare tier numbers in C++ defaults (listed under Data), in favour of the named tiers.
+- Bare tier numbers in C++ defaults (`installDefaultTaskTiers`, `Task::priorityTier`,
+  `EvaluatedOption::tier`, `ClaimHolder::tier`, and `tierLabel`, listed under Data), in favour of the
+  named rungs.
 - Sleep's restore at completion (`applyNeedEffect` for a Sleep), replaced by the per-tick payout.
 - The `GlobalTaskAdapter` lookup of a Craft row's worker through colonists' current tasks, replaced
   by the job's crafter.
@@ -566,7 +567,7 @@ adds one sprite per station with work in progress.
 Sized for one agent each; the Specboard items under WOR-822 carry the detail.
 
 1. Craft work saved on the job (rules 1 to 3). No behaviour change for today's recipes.
-2. Need tuning as data, the urgent threshold, and the nine-tier ladder (rules 9, 12).
+2. Need tuning as data, the urgent threshold, and the ladder (rules 9, 12).
 3. Craft, Build, and Deconstruct interruptable (rule 11). Needs 1 and 2, and WOR-820.
 4. The crafter's hold (rules 4 to 8, 10): WOR-633. Needs 1 and 2.
 5. Cancelling returns the materials (rule 13). Needs 1.
@@ -586,7 +587,7 @@ Sized for one agent each; the Specboard items under WOR-822 carry the detail.
 - Long cuts. Harvest is the remaining long action that nothing can interrupt, and its progress is
   on the action. Felling a large tree has the flaw this spec removes from crafts; it wants the same
   treatment and its own item.
-- Bumping. Another colonist's needs or orders never take a station from its crafter.
+- Bumping. Another colonist's needs, mood episodes, or orders never take a station from its crafter.
 - An ordinary sleeper being woken for a work order. It happens today (tier order), and with the
   curve it now wastes most of the sleep. Whether sleep should resist that is a tuning question for
   the needs work.
@@ -613,7 +614,7 @@ Player-report and wiki level; no source code was read, and several claims could 
 
 What this spec takes: progress on the job, where it survives the worker (RimWorld's frames, not its
 unfinished items); a hold that is released when the crafter is gone, so nothing is orphaned; and a
-tier for the crafter's own unfinished work, since ordinary priority demonstrably does not bring a
+rung for the crafter's own unfinished work, since ordinary priority demonstrably does not bring a
 worker back.
 
 ---
@@ -624,12 +625,12 @@ worker back.
   craft, the decisions this implements.
 - [Task Claims](./task-claims.md): the Slot claim, the claim index, interruption by needs, the
   suspended record.
-- [Colonist Task Arbitration](./colonist-task-arbitration.md): the (tier, score) key and the ladder
-  this renumbers.
+- [Colonist Task Arbitration](./colonist-task-arbitration.md): the (rung, score) key and the switch
+  gate.
 - [Crafting & Material Provisioning](./crafting-provisioning-architecture.md): the station store
   and the exact-bill rule.
 - [Building & Construction Architecture](./building-construction-architecture.md): blueprint work,
   the model craft work now follows.
 - [Colonist Needs](../design/game-systems/colonists/needs.md): thresholds and decay.
 - [Priority Configuration](../design/game-systems/colonists/priority-config.md) and
-  `assets/config/work/priority-tuning.xml`: tiers as data.
+  `assets/config/work/priority-tuning.xml`: priorities as data.

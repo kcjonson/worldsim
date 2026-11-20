@@ -2,7 +2,7 @@
 
 **Status:** Design  
 **Created:** 2024-12-04  
-**MVP Status:** See [MVP Scope](../mvp-scope.md) — Hunger, Thirst, Energy, Bladder included in Phase 1
+**MVP Status:** See [MVP Scope](../../mvp-scope.md) — Hunger, Thirst, Energy, Bladder included in Phase 1
 
 ---
 
@@ -14,7 +14,7 @@ Colonists have physical and emotional needs. Some needs drive behavior (actionab
 
 ## Needs are data
 
-A need is a data entry: its name, how its level moves (draining with time, or set by the colonist's surroundings), its seek, urgent, and critical levels, its mood cost, and what meets it, a chain of steps the colonist carries out or work another colonist does for it. Each kind of creature lists the needs it has, so a cow can need milking and a colonist cannot, and a mod adds a need with a file. The entries and the chains behind them are specified in [Queries and chains](../../../technical/queries-and-chains.md#needs).
+A need is a data entry: its name, how its level moves (draining with time, or set by the colonist's surroundings), its seek, urgent, and critical levels, and what meets it, a chain of steps the colonist carries out or work another colonist does for it. Each kind of creature lists the needs it has, so a cow can need milking and a colonist cannot, and a mod adds a need with a file. The entries and the chains behind them are specified in [Queries and chains](../../../technical/queries-and-chains.md#needs).
 
 ## Actionable Needs
 
@@ -100,11 +100,9 @@ A colonist washes at water the way it drinks: below the seek threshold it walks 
 | Seek Threshold | ~30% |
 | Critical Threshold | ~10% |
 | Failure Effect | Work efficiency drops, mood penalty |
-| Fulfilled By | Recreation activities, socializing; at the baseline, enjoying nature, which takes a long time for a little gain and keeps what it gained when cut short |
+| Fulfilled By | Enjoying nature, which takes a long time for a little gain and keeps what it gained when cut short |
 
-Decays while working, recovers while idle or recreating.
-
-**Implementation Note:** Tracked in code now; AI does not seek recreation yet (no fulfillment sources).
+Drains at a steady rate, whatever the colonist is doing, and only enjoying nature restores it.
 
 **MVP Status:** Deferred to Phase 2
 
@@ -117,8 +115,6 @@ Decays while working, recovers while idle or recreating.
 | Fulfilled By | Warmer/colder locations, shelter/indoors, fires, clothing (future) |
 
 Temperature is a need: a colonist needs to be neither freezing nor too hot. It does not drain with time the way hunger does. Its level is set by where the colonist is and what the weather and the hour are doing, so it falls when they are outside their comfort band and recovers when they are back inside it. A colonist meets it by going somewhere warmer or cooler: shelter, a fire, shade, and later clothing.
-
-Until the temperature of a place exists in the sim, the need holds at full and the AI does not act on it.
 
 ### Flee
 
@@ -152,7 +148,7 @@ Each need takes its own points off mood, and a need that is met gives no credit 
 
 Every need has a cost, the most mood it takes off at its worst, and the penalty curve says how much of that cost applies: nothing at or above the comfortable level, rising gently to the warning level, then steeply to the full cost at an empty need. The needs score is 100 minus the sum of those costs, never below 0. Because the costs add and do not average, giving a creature another need changes nothing about what the others cost.
 
-Every need can interrupt work when it gets bad enough, the ones that cannot kill included: work can run for days, and a colonist who never stops to wash or rest ends up in a low-mood behavior over it. The levels are tuned so that meeting the need comes first. A colonist leaves a long job to go and play a game before they have a fit and wreck the room because they have worked too long.
+Every need can interrupt work when it gets bad enough, the ones that cannot kill included: work can run for days, and a colonist who never stops to wash or rest ends up in a low-mood behavior over it. The levels are tuned so that meeting the need comes first. A colonist leaves a long job to go and enjoy nature before they have a fit and wreck the room because they have worked too long.
 
 These are the costs:
 
@@ -167,7 +163,7 @@ These are the costs:
 | Bladder | 10 |
 | Digestion | 10 |
 
-Each need's cost is on its own entry in `assets/config/colonists/needs/needs.xml`, beside its thresholds, so a need added by a mod carries its own cost and a mod file that replaces a need replaces its cost with it. `assets/config/colonists/mood.xml` holds the penalty curve, which every need shares, along with the easing and the bands.
+The creature that has mood gives each cost, as a `<moodCost>` row in its own definition (for colonists, the human's), so a need is not tied to one mood cost across kinds of creature, and a need of such a creature with no cost is a load error. A mod that adds a need to the human adds its `<moodCost>` row with it. The penalty curve, which every need shares, along with the easing and the bands, is the creature's `mood.xml`.
 
 ### What low mood does
 
@@ -184,7 +180,7 @@ See [Colonist Mood](./mood.md): the roll curve, the behavior list, refusing work
 | Energy | Sleepable | Ground, Bedroll, Bed |
 | Bladder | Toilet | Latrine, Toilet, Ground (fallback) |
 | Hygiene | Washable | Pond, Bath, Shower |
-| Recreation | Recreational | Horseshoe Pit, Chess Table |
+| Recreation | None | Enjoying nature, anywhere outdoors |
 
 See [Entity Capabilities](../world/entity-capabilities.md) for full capability definitions.
 
@@ -192,10 +188,10 @@ See [Entity Capabilities](../world/entity-capabilities.md) for full capability d
 
 ## Related Documents
 
-- [AI Behavior](./ai-behavior.md) — How needs trigger behavior tiers
+- [AI Behavior](./ai-behavior.md) — How needs trigger behavior rungs
 - [Colonist Attributes](./attributes.md) — Static personality traits
 - [Entity Capabilities](../world/entity-capabilities.md) — How entities fulfill needs
-- [MVP Scope](../mvp-scope.md) — What's included when
+- [MVP Scope](../../mvp-scope.md) — What's included when
 
 ---
 
@@ -235,7 +231,7 @@ The original needs-system.md had its own "MVP Scope" section:
 **Phase 3:** Full mood system with all contributors. Breakdown behaviors.
 ```
 
-This has been consolidated into the central [MVP Scope](../mvp-scope.md) document.
+This has been consolidated into the central [MVP Scope](../../mvp-scope.md) document.
 
 ### Consolidation Date
 - **2024-12-04:** Merged mechanics/colonists.md (needs sections) + systems/needs-system.md → game-systems/colonists/needs.md
