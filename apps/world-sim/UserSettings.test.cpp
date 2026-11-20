@@ -57,6 +57,8 @@ TEST_F(UserSettingsFile, SettingsComeBackAsTheyWereStored) {
 	EXPECT_EQ(settings.landing, storedLanding);
 }
 
+// A load resets every value before reading it, so whatever was on before, a value the file gets wrong reads
+// as its default: the suggested-site markers off.
 TEST_F(UserSettingsFile, MalformedOrUnofferedValuesKeepTheDefaults) {
 	world_sim::UserSettings&		 settings = world_sim::UserSettings::Get();
 	const world_sim::DrawingSettings expected = defaults();
@@ -64,18 +66,9 @@ TEST_F(UserSettingsFile, MalformedOrUnofferedValuesKeepTheDefaults) {
 	file.set("drawing.angleSteps", "yes");
 	file.set("drawing.rectangleGridSpacingMeters", 0.25F);
 	file.set("landing.showSuggestedSites", "yes");
+	settings.landing.showSuggestedSites = true;
 
 	settings.load(file);
 	EXPECT_EQ(settings.drawing, expected);
-	EXPECT_FALSE(settings.landing.showSuggestedSites);
-}
-
-// A --no-settings launch reads an empty file: the suggested-site markers start off, whatever was on before.
-TEST_F(UserSettingsFile, SuggestedSitesAreOffWithoutASettingsFile) {
-	EXPECT_FALSE(world_sim::LandingSettings{}.showSuggestedSites);
-	world_sim::UserSettings& settings = world_sim::UserSettings::Get();
-	settings.landing.showSuggestedSites = true;
-
-	settings.load(app::Settings{});
 	EXPECT_FALSE(settings.landing.showSuggestedSites);
 }

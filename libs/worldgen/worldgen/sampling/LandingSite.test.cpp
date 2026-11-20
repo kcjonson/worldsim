@@ -3,11 +3,10 @@
 
 #include "worldgen/sampling/LandingSite.h"
 
-#include "worldgen/data/PlanetParams.h"
-#include "worldgen/data/WorldData.h"
 #include "worldgen/pipeline/PlanetGenerator.test.h"
 #include "worldgen/sampling/PlanetSampler.h"
 #include "worldgen/sampling/RiverNetwork2D.h"
+#include "worldgen/sampling/RiverWorld.test.h"
 
 #include <gtest/gtest.h>
 
@@ -17,80 +16,24 @@
 #include <memory>
 #include <numbers>
 #include <stop_token>
-#include <unordered_set>
 #include <vector>
 
 namespace worldgen {
 
 namespace {
 
-constexpr uint32_t kSubdivision = 24;
+using test_support::addLake;
+using test_support::carveRiver;
+using test_support::dotProduct;
+using test_support::GrasslandBlock;
+using test_support::grasslandWorld;
 
-double dot(const Vec3d& a, const Vec3d& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-
-// Grassland with |lon| < 25 and |lat| < 60, ocean elsewhere; a mild, wet climate everywhere.
-std::shared_ptr<GeneratedWorld> makeWorld(uint32_t subdivision) {
-    auto world = std::make_shared<GeneratedWorld>();
-    world->params.gridSubdivision = subdivision;
-    world->params.seed = 0x1A4D1ULL;
-    world->derived = derive(world->params);
-    world->grid = std::make_shared<SphereGrid>(subdivision);
-    world->data.allocate(world->grid->tileCount());
-    world->seaLevelMeters = 0.0f;
-    world->validFields = static_cast<uint32_t>(WorldField::Elevation) | static_cast<uint32_t>(WorldField::Biome) |
-                         static_cast<uint32_t>(WorldField::Flags) | static_cast<uint32_t>(WorldField::FlowAccum) |
-                         static_cast<uint32_t>(WorldField::Downhill) |
-                         static_cast<uint32_t>(WorldField::TemperatureMean) |
-                         static_cast<uint32_t>(WorldField::TemperatureRange) |
-                         static_cast<uint32_t>(WorldField::Precipitation);
-    for (TileId t = 0; t < world->grid->tileCount(); ++t) {
-        double lat = 0.0;
-        double lon = 0.0;
-        world->grid->latLonOf(t, lat, lon);
-        const bool land = std::abs(lat) < 60.0 && std::abs(lon) < 25.0;
-        world->data.elevation[t] = land ? 500.0f : -3000.0f;
-        world->data.biome[t] = static_cast<uint8_t>(land ? Biome::TemperateGrassland : Biome::Ocean);
-        world->data.flags[t] = land ? 0 : kFlagOcean;
-        world->data.temperatureMean[t] = 150;
-        world->data.temperatureRange[t] = 100;
-        world->data.precipitation[t] = 900;
-    }
-    return world;
-}
+std::shared_ptr<GeneratedWorld> makeWorld() { return grasslandWorld(GrasslandBlock{}); }
 
 BiomeProvisionTable grasslandProvisions() {
     BiomeProvisionTable provisions{};
     provisions[static_cast<std::size_t>(Biome::TemperateGrassland)] = {300.0f, 300.0f};
     return provisions;
-}
-
-// A river from source toward mouth, one tile a step, its flow growing downstream.
-void carveRiver(GeneratedWorld& world, TileId source, TileId mouth) {
-    const SphereGrid& grid = *world.grid;
-    const Vec3d target = grid.tileCenter(mouth);
-    std::unordered_set<TileId> visited;
-    TileId current = source;
-    float flow = 90.0f;
-    for (int guard = 0; guard < 1000; ++guard) {
-        if (current == mouth || !visited.insert(current).second) break;
-        std::array<TileId, 6> neighbours{};
-        const uint32_t count = grid.neighbors(current, neighbours);
-        int best = -1;
-        double bestDot = -2.0;
-        for (uint32_t i = 0; i < count; ++i) {
-            const double d = dot(grid.tileCenter(neighbours[i]), target);
-            if (d > bestDot) {
-                bestDot = d;
-                best = static_cast<int>(i);
-            }
-        }
-        if (best < 0) break;
-        world.data.flags[current] |= kFlagRiver;
-        world.data.flowAccum[current] = flow;
-        world.data.downhill[current] = static_cast<uint8_t>(best);
-        flow += 15.0f;
-        current = neighbours[static_cast<uint32_t>(best)];
-    }
 }
 
 LatLon centreOf(const GeneratedWorld& world, TileId tile) {
@@ -99,15 +42,15 @@ LatLon centreOf(const GeneratedWorld& world, TileId tile) {
     return centre;
 }
 
-void expectSameLanding(const LandingSite& a, const LandingSite& b) {
-    EXPECT_EQ(a.origin.latDeg, b.origin.latDeg);
-    EXPECT_EQ(a.origin.lonDeg, b.origin.lonDeg);
-    EXPECT_EQ(a.tile, b.tile);
-    EXPECT_EQ(a.feature, b.feature);
-    EXPECT_EQ(a.spawn.xMeters, b.spawn.xMeters);
-    EXPECT_EQ(a.spawn.yMeters, b.spawn.yMeters);
-    EXPECT_EQ(a.spawn.water, b.spawn.water);
-    EXPECT_EQ(a.assessment.water, b.assessment.water);
+void expectSameLanding(const LandingSite& actual, const LandingSite& expected) {
+    EXPECT_EQ(actual.origin.latDeg, expected.origin.latDeg);
+    EXPECT_EQ(actual.origin.lonDeg, expected.origin.lonDeg);
+    EXPECT_EQ(actual.tile, expected.tile);
+    EXPECT_EQ(actual.feature, expected.feature);
+    EXPECT_EQ(actual.spawn.xMeters, expected.spawn.xMeters);
+    EXPECT_EQ(actual.spawn.yMeters, expected.spawn.yMeters);
+    EXPECT_EQ(actual.spawn.water, expected.spawn.water);
+    EXPECT_EQ(actual.assessment.water, expected.assessment.water);
 }
 
 // A river carved from (lat, -10) eastward, and the resolution of a pick off its source tile's centre.
@@ -117,34 +60,25 @@ struct RiverFixture {
 };
 
 RiverFixture riverAtLatitude(double latDeg) {
-    RiverFixture fixture{makeWorld(kSubdivision)};
+    RiverFixture fixture{makeWorld()};
     fixture.source = fixture.world->grid->fromLatLon(latDeg, -10.0);
     carveRiver(*fixture.world, fixture.source, fixture.world->grid->fromLatLon(latDeg, 20.0));
     return fixture;
 }
 
-void addLake(GeneratedWorld& world, double latDeg, double lonDeg) {
-    const TileId lake = world.grid->fromLatLon(latDeg, lonDeg);
-    world.data.flags[lake] |= kFlagLake;
-    world.data.biome[lake] = static_cast<uint8_t>(Biome::Lake);
-}
-
 // Grassland south of the equator and deciduous forest north of it, each with a river and a lake far
 // enough from the others to be a site of its own.
 std::shared_ptr<GeneratedWorld> twoBiomeWorld() {
-    auto world = makeWorld(kSubdivision);
-    for (TileId t = 0; t < world->grid->tileCount(); ++t) {
-        double lat = 0.0;
-        double lon = 0.0;
-        world->grid->latLonOf(t, lat, lon);
-        if (lat > 0.0 && world->data.biome[t] == static_cast<uint8_t>(Biome::TemperateGrassland)) {
-            world->data.biome[t] = static_cast<uint8_t>(Biome::TemperateDeciduousForest);
+    auto world = makeWorld();
+    for (TileId tile = 0; tile < world->grid->tileCount(); ++tile) {
+        if (centreOf(*world, tile).latDeg > 0.0 && world->data.biome[tile] == static_cast<uint8_t>(Biome::TemperateGrassland)) {
+            world->data.biome[tile] = static_cast<uint8_t>(Biome::TemperateDeciduousForest);
         }
     }
     carveRiver(*world, world->grid->fromLatLon(-30.0, -10.0), world->grid->fromLatLon(-30.0, 20.0));
     carveRiver(*world, world->grid->fromLatLon(28.0, -10.0), world->grid->fromLatLon(28.0, 20.0));
-    addLake(*world, -6.0, -16.0);
-    addLake(*world, 6.0, 16.0);
+    addLake(*world, world->grid->fromLatLon(-6.0, -16.0));
+    addLake(*world, world->grid->fromLatLon(6.0, 16.0));
     return world;
 }
 
@@ -152,6 +86,11 @@ BiomeProvisionTable twoBiomeProvisions() {
     BiomeProvisionTable provisions = grasslandProvisions();
     provisions[static_cast<std::size_t>(Biome::TemperateDeciduousForest)] = {300.0f, 300.0f};
     return provisions;
+}
+
+double arcDegrees(const GeneratedWorld& world, TileId from, TileId to) {
+    const double cosine = std::clamp(dotProduct(world.grid->tileCenter(from), world.grid->tileCenter(to)), -1.0, 1.0);
+    return std::acos(cosine) * 180.0 / std::numbers::pi;
 }
 
 // The neighbour of `tile` whose centre lies most nearly in `direction` (a tangent at the tile's centre).
@@ -164,14 +103,18 @@ TileId neighbourToward(const SphereGrid& grid, TileId tile, const Vec3d& directi
     for (uint32_t i = 0; i < count; ++i) {
         const Vec3d other = grid.tileCenter(neighbours[i]);
         const Vec3d offset{other.x - centre.x, other.y - centre.y, other.z - centre.z};
-        const double length = std::sqrt(dot(offset, offset));
-        const double along = dot(offset, direction) / length;
+        const double along = dotProduct(offset, direction) / std::sqrt(dotProduct(offset, offset));
         if (along > alignment) {
             alignment = along;
             best = neighbours[i];
         }
     }
     return best;
+}
+
+Vec3d eastAt(const GeneratedWorld& world, TileId tile) {
+    const double lonRadians = centreOf(world, tile).lonDeg * std::numbers::pi / 180.0;
+    return {-std::sin(lonRadians), std::cos(lonRadians), 0.0};
 }
 
 // A land river tile on a planet shrunk so tiles are 140 m apart, in a lake but for its river neighbour to
@@ -187,7 +130,7 @@ struct NarrowLandFixture {
 NarrowLandFixture narrowLand() {
     constexpr double kTileSpacingMeters = 140.0;
     constexpr float  kWideRiverFlow = 20000.0f; // the widest channel, 110 m
-    NarrowLandFixture fixture{makeWorld(kSubdivision)};
+    NarrowLandFixture fixture{makeWorld()};
     GeneratedWorld&   world = *fixture.world;
     const SphereGrid& grid = *world.grid;
 
@@ -198,12 +141,10 @@ NarrowLandFixture narrowLand() {
     for (TileId tile = 0; tile < grid.tileCount(); ++tile) {
         const LatLon centre = centreOf(world, tile);
         if (std::abs(centre.latDeg) > 10.0 || std::abs(centre.lonDeg) > 10.0) continue;
-        const double lonRadians = centre.lonDeg * std::numbers::pi / 180.0;
-        const Vec3d  east{-std::sin(lonRadians), std::cos(lonRadians), 0.0};
         double       firstAlignment = 0.0;
         double       secondAlignment = 0.0;
-        const TileId next = neighbourToward(grid, tile, east, firstAlignment);
-        const TileId after = neighbourToward(grid, next, east, secondAlignment);
+        const TileId next = neighbourToward(grid, tile, eastAt(world, tile), firstAlignment);
+        const TileId after = neighbourToward(grid, next, eastAt(world, tile), secondAlignment);
         if (std::min(firstAlignment, secondAlignment) > bestAlignment) {
             bestAlignment = std::min(firstAlignment, secondAlignment);
             fixture.narrow = tile;
@@ -212,28 +153,25 @@ NarrowLandFixture narrowLand() {
         }
     }
 
-    const Vec3d narrowCentre = grid.tileCenter(fixture.narrow);
-    const double spacingRadians = std::acos(std::clamp(dot(narrowCentre, grid.tileCenter(fixture.riverNeighbour)), -1.0, 1.0));
+    const Vec3d  narrowCentre = grid.tileCenter(fixture.narrow);
+    const double spacingRadians =
+        std::acos(std::clamp(dotProduct(narrowCentre, grid.tileCenter(fixture.riverNeighbour)), -1.0, 1.0));
     world.derived.planetRadiusMeters = kTileSpacingMeters / spacingRadians;
 
     // Lake round the narrow tile out of every search's reach, except its river neighbour and the land from
     // two tiles east on.
-    const double lonRadians = centreOf(world, fixture.narrow).lonDeg * std::numbers::pi / 180.0;
-    const Vec3d  east{-std::sin(lonRadians), std::cos(lonRadians), 0.0};
+    const Vec3d east = eastAt(world, fixture.narrow);
     for (TileId tile = 0; tile < grid.tileCount(); ++tile) {
         if (tile == fixture.narrow || tile == fixture.riverNeighbour) continue;
         const Vec3d  centre = grid.tileCenter(tile);
         const Vec3d  offset{centre.x - narrowCentre.x, centre.y - narrowCentre.y, centre.z - narrowCentre.z};
-        const double eastTiles = dot(offset, east) / spacingRadians;
-        const double arc = std::acos(std::clamp(dot(narrowCentre, centre), -1.0, 1.0));
-        if (arc < 4.0 * spacingRadians && eastTiles < 1.9) {
-            world.data.flags[tile] |= kFlagLake;
-            world.data.biome[tile] = static_cast<uint8_t>(Biome::Lake);
-        }
+        const double eastTiles = dotProduct(offset, east) / spacingRadians;
+        const double arc = std::acos(std::clamp(dotProduct(narrowCentre, centre), -1.0, 1.0));
+        if (arc < 4.0 * spacingRadians && eastTiles < 1.9) addLake(world, tile);
     }
 
-    const LatLon beyondLatLon = centreOf(world, beyond);
-    carveRiver(world, beyond, grid.fromLatLon(beyondLatLon.latDeg, beyondLatLon.lonDeg + 20.0));
+    const LatLon beyondCentre = centreOf(world, beyond);
+    carveRiver(world, beyond, grid.fromLatLon(beyondCentre.latDeg, beyondCentre.lonDeg + 20.0));
     const auto flowInto = [&](TileId from, TileId to) {
         std::array<TileId, 6> neighbours{};
         const uint32_t count = grid.neighbors(from, neighbours);
@@ -250,15 +188,30 @@ NarrowLandFixture narrowLand() {
     return fixture;
 }
 
-double arcDegrees(const GeneratedWorld& world, TileId a, TileId b) {
-    const double cosine = std::clamp(dot(world.grid->tileCenter(a), world.grid->tileCenter(b)), -1.0, 1.0);
-    return std::acos(cosine) * 180.0 / 3.14159265358979323846;
+// Grassland from lon -70 to 70 with five rivers in its west half, every one long enough for several sites,
+// and, when asked, five lakes in its east half far from all of them.
+std::shared_ptr<GeneratedWorld> riversWestLakesEast(bool withLakes) {
+    auto world = grasslandWorld(GrasslandBlock{.landLonDeg = 70.0});
+    for (const double latDeg : {-40.0, -20.0, 0.0, 20.0, 40.0}) {
+        carveRiver(*world, world->grid->fromLatLon(latDeg, -65.0), world->grid->fromLatLon(latDeg, -10.0));
+    }
+    if (withLakes) {
+        for (const auto& [latDeg, lonDeg] : std::array<std::pair<double, double>, 5>{{{-30.0, 30.0}, {0.0, 30.0}, {30.0, 30.0}, {-15.0, 55.0}, {15.0, 55.0}}}) {
+            addLake(*world, world->grid->fromLatLon(latDeg, lonDeg));
+        }
+    }
+    return world;
+}
+
+std::size_t countOf(const std::vector<LandingSite>& sites, FreshWaterFeature feature) {
+    return static_cast<std::size_t>(
+        std::count_if(sites.begin(), sites.end(), [feature](const LandingSite& site) { return site.feature == feature; }));
 }
 
 } // namespace
 
 TEST(LandingSiteBar, RiverTileWithFoodWoodAndLivableSeasonsMeetsIt) {
-    auto world = makeWorld(kSubdivision);
+    auto world = makeWorld();
     const BiomeProvisionTable provisions = grasslandProvisions();
     const TileId tile = world->grid->fromLatLon(0.0, 0.0);
 
@@ -290,7 +243,7 @@ TEST(LandingSiteBar, RiverTileWithFoodWoodAndLivableSeasonsMeetsIt) {
 }
 
 TEST(LandingSiteBar, DryColdRainFedTileRatesHarsh) {
-    auto world = makeWorld(kSubdivision);
+    auto world = makeWorld();
     const TileId tile = world->grid->fromLatLon(0.0, 0.0);
     world->data.temperatureMean[tile] = -200;
     world->data.precipitation[tile] = 40;
@@ -352,7 +305,7 @@ TEST(LandingSiteResolution, RiverTilePastFortyFiveDegreesIsRecommendedButNeverSu
 }
 
 TEST(LandingSiteResolution, DryPickStaysAtThePick) {
-    auto world = makeWorld(kSubdivision);
+    auto world = makeWorld();
     const LatLon pick{1.3, 2.1};
 
     const LandingSite site = resolveLandingSite(world, grasslandProvisions(), pick);
@@ -387,13 +340,11 @@ TEST(LandingSiteResolution, NarrowLandIsNotALandingAndTheNextAnchorIsTried) {
 }
 
 TEST(LandingSiteResolution, PickBesideLakeResolvesToItsShore) {
-    auto world = makeWorld(kSubdivision);
+    auto world = makeWorld();
     const TileId land = world->grid->fromLatLon(0.0, 0.0);
     std::array<TileId, 6> neighbours{};
     world->grid->neighbors(land, neighbours);
-    const TileId lake = neighbours[0];
-    world->data.flags[lake] |= kFlagLake;
-    world->data.biome[lake] = static_cast<uint8_t>(Biome::Lake);
+    addLake(*world, neighbours[0]);
 
     const LandingSite site = resolveLandingSite(world, grasslandProvisions(), centreOf(*world, land));
     ASSERT_EQ(site.feature, FreshWaterFeature::Lake);
@@ -406,9 +357,9 @@ TEST(LandingSiteResolution, PickBesideLakeResolvesToItsShore) {
     const PlanetSampler sampler(world, site.origin.latDeg, site.origin.lonDeg);
     double              nearestLake = -1.0;
     for (double radius = 0.0; nearestLake < 0.0 && radius <= 40.0; radius += 0.5) {
-        const int points = std::max(1, static_cast<int>(std::ceil(2.0 * 3.14159265358979323846 * radius / 0.5)));
+        const int points = std::max(1, static_cast<int>(std::ceil(2.0 * std::numbers::pi * radius / 0.5)));
         for (int i = 0; i < points && nearestLake < 0.0; ++i) {
-            const double angle = 2.0 * 3.14159265358979323846 * i / points;
+            const double angle = 2.0 * std::numbers::pi * i / points;
             const auto   sample = sampler.sampleAt(site.spawn.xMeters + radius * std::cos(angle),
                                                    site.spawn.yMeters + radius * std::sin(angle));
             if (!sample.water) continue;
@@ -429,8 +380,6 @@ TEST(LandingSiteFinder, SitesMeetTheBarStandApartAndVaryByKindAndBiome) {
     ASSERT_FALSE(sites.empty());
     EXPECT_LE(sites.size(), kSuggestedSiteCount);
 
-    bool river = false;
-    bool lake = false;
     bool grassland = false;
     bool forest = false;
     for (std::size_t i = 0; i < sites.size(); ++i) {
@@ -441,14 +390,12 @@ TEST(LandingSiteFinder, SitesMeetTheBarStandApartAndVaryByKindAndBiome) {
         for (std::size_t j = 0; j < i; ++j) {
             EXPECT_GE(arcDegrees(*world, site.tile, sites[j].tile), kMinimumSiteSeparationDegrees) << i << " and " << j;
         }
-        river = river || site.feature == FreshWaterFeature::River;
-        lake = lake || site.feature == FreshWaterFeature::Lake;
         const auto biome = static_cast<Biome>(world->data.biome[site.tile]);
         grassland = grassland || biome == Biome::TemperateGrassland;
         forest = forest || biome == Biome::TemperateDeciduousForest;
     }
-    EXPECT_TRUE(river);
-    EXPECT_TRUE(lake);
+    EXPECT_GT(countOf(sites, FreshWaterFeature::River), 0u);
+    EXPECT_GT(countOf(sites, FreshWaterFeature::Lake), 0u);
     EXPECT_TRUE(grassland);
     EXPECT_TRUE(forest);
 
@@ -478,6 +425,17 @@ TEST(LandingSiteFinder, SitesMeetTheBarStandApartAndVaryByKindAndBiome) {
     EXPECT_EQ(ranked[0].assessment.habitabilityScore, sites[0].assessment.habitabilityScore + 1);
 }
 
+// Rivers outrank lakes, so without the cap every site would be a river; with lake sites to be had, the rivers
+// stop at kMaximumSitesOfOneKind and the rest are lakes.
+TEST(LandingSiteFinder, OneKindStopsAtItsCapWhileTheOtherHasSites) {
+    const std::vector<LandingSite> riversOnly = findSuggestedLandingSites(riversWestLakesEast(false), grasslandProvisions(), {});
+    ASSERT_GT(countOf(riversOnly, FreshWaterFeature::River), kMaximumSitesOfOneKind) << "more river sites than the cap exist";
+
+    const std::vector<LandingSite> sites = findSuggestedLandingSites(riversWestLakesEast(true), grasslandProvisions(), {});
+    EXPECT_EQ(countOf(sites, FreshWaterFeature::River), kMaximumSitesOfOneKind);
+    EXPECT_EQ(countOf(sites, FreshWaterFeature::Lake), kSuggestedSiteCount - kMaximumSitesOfOneKind);
+}
+
 TEST(LandingSiteFinder, SameWorldGivesTheSameSites) {
     const auto world = twoBiomeWorld();
     const std::vector<LandingSite> first = findSuggestedLandingSites(world, twoBiomeProvisions(), {});
@@ -488,25 +446,25 @@ TEST(LandingSiteFinder, SameWorldGivesTheSameSites) {
 
 TEST(LandingSiteFinder, DesertAndOceanWorldsGiveNoSites) {
     auto desert = twoBiomeWorld();
-    for (TileId t = 0; t < desert->grid->tileCount(); ++t) {
-        if ((desert->data.flags[t] & (kFlagOcean | kFlagLake)) == 0) {
-            desert->data.biome[t] = static_cast<uint8_t>(Biome::HotDesert);
+    for (TileId tile = 0; tile < desert->grid->tileCount(); ++tile) {
+        if ((desert->data.flags[tile] & (kFlagOcean | kFlagLake)) == 0) {
+            desert->data.biome[tile] = static_cast<uint8_t>(Biome::HotDesert);
         }
     }
     BiomeProvisionTable desertProvisions = twoBiomeProvisions();
     desertProvisions[static_cast<std::size_t>(Biome::HotDesert)] = {300.0f, 0.0f};
     EXPECT_TRUE(findSuggestedLandingSites(desert, desertProvisions, {}).empty());
 
-    auto ocean = makeWorld(kSubdivision);
-    for (TileId t = 0; t < ocean->grid->tileCount(); ++t) {
-        ocean->data.elevation[t] = -3000.0f;
-        ocean->data.biome[t] = static_cast<uint8_t>(Biome::Ocean);
-        ocean->data.flags[t] = kFlagOcean;
+    auto ocean = makeWorld();
+    for (TileId tile = 0; tile < ocean->grid->tileCount(); ++tile) {
+        ocean->data.elevation[tile] = -3000.0f;
+        ocean->data.biome[tile] = static_cast<uint8_t>(Biome::Ocean);
+        ocean->data.flags[tile] = kFlagOcean;
     }
     EXPECT_TRUE(findSuggestedLandingSites(ocean, twoBiomeProvisions(), {}).empty());
 }
 
-TEST(LandingSiteFinder, StopRequestEndsTheScanEarly) {
+TEST(LandingSiteFinder, StopDuringTheTileScanReturnsNothing) {
     const auto       world = twoBiomeWorld();
     std::stop_source stop;
     int              checkpoints = 0;
@@ -520,9 +478,29 @@ TEST(LandingSiteFinder, StopRequestEndsTheScanEarly) {
     EXPECT_EQ(checkpoints, 1);
 }
 
-TEST(LandingSiteFinder, GeneratedPlanetSitesHaveFreshWaterInSight) {
-    // NavigationSystem::kLandingSightMeters, the radius revealed at landing; worldgen can't see sim.
-    constexpr double kLandingSightMeters = 150.0;
+// This world's 5,762 tiles take one checkpoint in the scan; the next ones come before each resolution of the
+// selection. Stopped before the second resolution, the finder returns the first site.
+TEST(LandingSiteFinder, StopDuringSelectionReturnsTheSitesTakenSoFar) {
+    const auto                     world = twoBiomeWorld();
+    const std::vector<LandingSite> everySite = findSuggestedLandingSites(world, twoBiomeProvisions(), {});
+    ASSERT_GE(everySite.size(), 2u);
+
+    constexpr int    kCheckpointBeforeSecondResolution = 3;
+    std::stop_source stop;
+    int              checkpoints = 0;
+    SuggestedSiteQuery query;
+    query.stopToken = stop.get_token();
+    query.checkpoint = [&] {
+        if (++checkpoints == kCheckpointBeforeSecondResolution) stop.request_stop();
+    };
+    const std::vector<LandingSite> taken = findSuggestedLandingSites(world, twoBiomeProvisions(), query);
+    ASSERT_EQ(taken.size(), 1u);
+    expectSameLanding(taken[0], everySite[0]);
+}
+
+// Every suggested site's drop is clear: 30 m from water within the tolerance, the distance read independently
+// round it (the channels its RiverNetwork2D gathers for a river site, the lake's samples for a lake site).
+TEST(LandingSiteFinderHeavy, GeneratedPlanetSitesStandClearOfTheirWater) {
     PlanetParams params = PlanetParams::preset(Preset::EarthLike);
     params.gridSubdivision = 64;
     params.seed = 42;
@@ -539,34 +517,45 @@ TEST(LandingSiteFinder, GeneratedPlanetSitesHaveFreshWaterInSight) {
 
     const std::vector<LandingSite> sites = findSuggestedLandingSites(world, provisions, {});
     ASSERT_FALSE(sites.empty());
+    constexpr double kReachMeters = kLandingWaterDistanceMeters + kLandingWaterDistanceToleranceMeters + 3.0;
     for (std::size_t i = 0; i < sites.size(); ++i) {
         const LandingSite& site = sites[i];
         const double       dropX = site.spawn.xMeters;
         const double       dropY = site.spawn.yMeters;
-        bool               freshWater = false;
+        EXPECT_TRUE(site.spawn.clear) << "site " << i;
+        EXPECT_GE(site.spawn.waterDistanceMeters, kLandingWaterDistanceMeters - kLandingWaterDistanceToleranceMeters) << "site " << i;
+        EXPECT_LE(site.spawn.waterDistanceMeters, kLandingWaterDistanceMeters + kLandingWaterDistanceToleranceMeters) << "site " << i;
+
+        double nearest = -1.0;
         if (site.feature == FreshWaterFeature::River) {
             const RiverNetwork2D rivers(world, site.origin.latDeg, site.origin.lonDeg);
             std::vector<RiverNetwork2D::Segment> segments;
-            rivers.gatherSegments(dropX - kLandingSightMeters, dropY - kLandingSightMeters, dropX + kLandingSightMeters,
-                                  dropY + kLandingSightMeters, segments);
+            rivers.gatherSegments(dropX - kReachMeters, dropY - kReachMeters, dropX + kReachMeters, dropY + kReachMeters, segments);
             for (const RiverNetwork2D::Segment& segment : segments) {
-                for (double t = 0.0; t <= 1.0 && !freshWater; t += 0.05) {
-                    const double x = segment.x0 + (segment.x1 - segment.x0) * t;
-                    const double y = segment.y0 + (segment.y1 - segment.y0) * t;
-                    freshWater = std::hypot(x - dropX, y - dropY) <= kLandingSightMeters;
-                }
+                const double spanX = segment.x1 - segment.x0;
+                const double spanY = segment.y1 - segment.y0;
+                const double lengthSquared = spanX * spanX + spanY * spanY;
+                const double along = lengthSquared > 0.0
+                    ? std::clamp(((dropX - segment.x0) * spanX + (dropY - segment.y0) * spanY) / lengthSquared, 0.0, 1.0)
+                    : 0.0;
+                const double halfWidth = segment.halfWidth0 + (segment.halfWidth1 - segment.halfWidth0) * along;
+                const double edge = std::hypot(dropX - (segment.x0 + spanX * along), dropY - (segment.y0 + spanY * along)) - halfWidth;
+                if (nearest < 0.0 || edge < nearest) nearest = edge;
             }
-        } else if (site.feature == FreshWaterFeature::Lake) {
+            EXPECT_NEAR(nearest, site.spawn.waterDistanceMeters, 0.5) << "site " << i;
+        } else {
+            ASSERT_EQ(site.feature, FreshWaterFeature::Lake) << "site " << i;
             const PlanetSampler sampler(world, site.origin.latDeg, site.origin.lonDeg);
-            for (double y = -kLandingSightMeters; y <= kLandingSightMeters && !freshWater; y += 3.0) {
-                for (double x = -kLandingSightMeters; x <= kLandingSightMeters && !freshWater; x += 3.0) {
-                    if (std::hypot(x, y) > kLandingSightMeters) continue;
-                    const auto sample = sampler.sampleAt(dropX + x, dropY + y);
-                    freshWater = sample.water && sample.weights[0].biome == Biome::Lake;
+            for (double radius = 0.0; nearest < 0.0 && radius <= kReachMeters; radius += 0.5) {
+                const int points = std::max(1, static_cast<int>(std::ceil(2.0 * std::numbers::pi * radius / 0.5)));
+                for (int j = 0; j < points && nearest < 0.0; ++j) {
+                    const double angle = 2.0 * std::numbers::pi * j / points;
+                    const auto   sample = sampler.sampleAt(dropX + radius * std::cos(angle), dropY + radius * std::sin(angle));
+                    if (sample.water && sample.weights[0].biome == Biome::Lake) nearest = radius;
                 }
             }
+            EXPECT_NEAR(nearest, site.spawn.waterDistanceMeters, 3.0) << "site " << i;
         }
-        EXPECT_TRUE(freshWater) << "site " << i << " at " << site.origin.latDeg << ", " << site.origin.lonDeg;
     }
 }
 

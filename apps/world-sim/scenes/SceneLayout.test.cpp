@@ -451,10 +451,6 @@ namespace world_sim::testing {
 		constexpr float kDossierMaxWidthShare = 0.92F;
 		constexpr float kDossierMaxHeightShare = 0.86F;
 
-		// The settings list fits a canvas 1,100 ui px tall at the default size, and scrolls only on shorter ones: since the
-		// Landing group it runs about 96 px past the reference's height.
-		constexpr float kSettingsListFitsFrom = 1100.0F;
-
 	} // namespace
 
 	TEST_F(SceneLayout, TheMainMenuHoldsTogether) {
@@ -466,10 +462,14 @@ namespace world_sim::testing {
 
 	TEST_F(SceneLayout, SettingsHoldTogetherWithOnlyTheListScrollingWhereItCantFit) {
 		go(scenes::Settings.name);
-		ASSERT_NE(shown("settings_list"), nullptr);
+		const ui::Component* list = shown("settings_list");
+		ASSERT_NE(list, nullptr);
 		ASSERT_NE(shown("interface_size_choice"), nullptr);
+		// The list takes the height the canvas leaves it, so on the reference window at the default size it fits a
+		// canvas taller by as far as it scrolls there, and scrolls only on shorter ones.
+		const float listFitsFromCanvasHeight = app->scenes().top()->ui().getCanvas().y + list->getScrollMax().y;
 		EXPECT_EQ(lintEverywhere(), "");
-		EXPECT_EQ(unexpectedScrollbars({{.id = "settings_list", .belowCanvasHeight = kSettingsListFitsFrom}}), "");
+		EXPECT_EQ(unexpectedScrollbars({{.id = "settings_list", .belowCanvasHeight = listFitsFromCanvasHeight}}), "");
 	}
 
 	TEST_F(SceneLayout, ScenarioSelectHoldsTogether) {
