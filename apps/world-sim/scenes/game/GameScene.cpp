@@ -388,8 +388,14 @@ namespace {
 
 				auto& actionSys = ecsWorld->getSystem<ecs::ActionSystem>();
 
-				// A wall does not complete while a colonist stands in it; ActionSystem reads its band here.
+				// A wall does not complete over a colonist the player controls or with its builder shut in;
+				// ActionSystem reads its band and sides here, and says when a controlled colonist holds one.
 				actionSys.setConstructionWorld(&m_drawingSystem->world());
+				actionSys.setWallHeldCallback([this](ecs::EntityID /*blueprintEntity*/, ecs::EntityID colonist) {
+					const auto* person = ecsWorld->getComponent<ecs::Colonist>(colonist);
+					const std::string who = person != nullptr && !person->name.empty() ? person->name : "A colonist";
+					gameUI->pushNotification("Wall waiting", who + " is standing in it", ui::ToastSeverity::Info);
+				});
 
 				// Build complete: flip the structure to Built (bumps ConstructionWorld version,
 				// so the render picks up the new style next frame) and toast the player. Walls

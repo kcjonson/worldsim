@@ -19,6 +19,7 @@
 #include <optional>
 #include <random>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace construction {
@@ -143,9 +144,15 @@ public:
 		m_onStructureDeconstructed = std::move(callback);
 	}
 
-	/// The topology store a wall's band is read from, so a wall does not complete while a colonist stands in
-	/// it. Null (headless contexts): walls complete as their work does.
-	void setConstructionWorld(const construction::ConstructionWorld* constructionWorld) { m_constructionWorld = constructionWorld; }
+	/// The topology store a wall's band and sides are read from, so a wall does not complete over a colonist
+	/// the player controls or with its builder shut in. Null (headless contexts): walls complete as their
+	/// work does.
+	void setConstructionWorld(const construction::ConstructionWorld* topology) { constructionWorld = topology; }
+
+	/// Set callback fired once when a colonist the player controls starts holding a wall whose work is done,
+	/// by standing in its band. Fires again only after the wall has been free of such a colonist.
+	using WallHeldCallback = std::function<void(EntityID blueprintEntity, EntityID colonist)>;
+	void setWallHeldCallback(WallHeldCallback callback) { onWallHeld = std::move(callback); }
 
 private:
 	/// Random number generator for yield calculations
@@ -267,10 +274,12 @@ private:
 	/// not elapsed time. @return true if the action reached completion this tick.
 	bool advanceConstructionWork(float deltaTime, struct Action& action);
 
-	/// Whether the wall `blueprintEntity` is may complete: nobody under the player's control stands in its
-	/// band (construction::wallBand). Anyone else in it steps out to a side its builders may stand on
-	/// (construction::wallStands), the side he is on when it is one. True for anything but a wall.
-	bool wallBandClear(EntityID blueprintEntity);
+	/// Readies the wall `blueprintEntity` to complete, true when it may. It is held, moving nobody, while it
+	/// would shut in one of its builders (construction::WallClosure::shutsIn; his action ends, so he decides
+	/// again and goes to a side it allows) or while a colonist the player controls stands in its band
+	/// (construction::wallBand). Otherwise anyone else in the band steps out to a side its builders may stand
+	/// on, the side he is on when it is one, and it may complete. True for anything but a wall.
+	bool clearWallToComplete(EntityID blueprintEntity);
 
 	/// Start a harvest action for goal-driven harvesting (crafting materials)
 	/// Finds harvestable at target position that yields the required item type.
@@ -380,7 +389,9 @@ private:
 	/// Callback fired when a Deconstruct action finishes tearing down a structure
 	StructureDeconstructedCallback m_onStructureDeconstructed = nullptr;
 
-	const construction::ConstructionWorld* m_constructionWorld = nullptr;
+	const construction::ConstructionWorld* constructionWorld = nullptr;
+	WallHeldCallback					   onWallHeld = nullptr;
+	std::unordered_set<EntityID>		   wallsHeldByControlled;
 };
 
 } // namespace ecs

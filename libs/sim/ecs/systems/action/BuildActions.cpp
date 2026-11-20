@@ -11,7 +11,7 @@
 #include "../../components/Transform.h"
 
 #include <construction/ConstructionWorld.h>
-#include <construction/WallStand.h>
+#include <construction/WallSides.h>
 
 #include <utils/Log.h>
 
@@ -166,40 +166,70 @@ namespace ecs {
 				return true;
 			}
 		} else {
-			// The work can be done while the wall is not: it waits there for its band to be clear.
+			// The work can be done while the wall is not: it waits there until nothing holds it. Nothing
+			// completes and nobody is moved on a tick in which no time passes (a paused game).
 			blueprint->workDone = std::min(blueprint->workDone + delta, blueprint->workTotal);
-			if (blueprint->workDone >= blueprint->workTotal && wallBandClear(blueprintEntity)) {
-				blueprint->phase = StructureBlueprint::BuildPhase::Complete;
-				action.state = ActionState::Complete;
-				return true;
+			if (blueprint->workDone >= blueprint->workTotal) {
+				if (deltaTime > 0.0F && clearWallToComplete(blueprintEntity)) {
+					blueprint->phase = StructureBlueprint::BuildPhase::Complete;
+					action.state = ActionState::Complete;
+					return true;
+				}
+				// Waiting is no work to commit to: anything that outranks it may take the builder away.
+				action.interruptable = true;
 			}
 		}
 
 		return false;
 	}
 
-	bool ActionSystem::wallBandClear(EntityID blueprintEntity) {
-		const auto*						   structure = world->getComponent<Structure>(blueprintEntity);
-		const construction::WallSegment* segment = m_constructionWorld != nullptr && structure != nullptr && structure->kind == StructureKind::Wall
-													   ? m_constructionWorld->getSegment(structure->graphId)
+	bool ActionSystem::clearWallToComplete(EntityID blueprintEntity) {
+		const auto*						 structure = world->getComponent<Structure>(blueprintEntity);
+		const construction::WallSegment* segment = constructionWorld != nullptr && structure != nullptr && structure->kind == StructureKind::Wall
+													   ? constructionWorld->getSegment(structure->graphId)
 													   : nullptr;
 		const std::optional<construction::WallBand> band =
-			segment != nullptr ? construction::wallBand(*m_constructionWorld, *segment) : std::nullopt;
+			segment != nullptr ? construction::wallBand(*constructionWorld, *segment) : std::nullopt;
 		if (!band.has_value()) {
 			return true;
 		}
-		bool								 clear = true;
-		std::vector<construction::WallStand> sides;
+
+		// What holds the wall: a builder of it it would shut in, whose work ends so he decides again and goes
+		// to a side it allows, or a colonist the player controls in its band. Nobody is moved while it holds.
+		const construction::WallClosure closure(*constructionWorld, segment->id);
+		bool							shutsInBuilder = false;
+		for (auto [builder, position, task] : world->view<Position, Task>()) {
+			if (task.type != TaskType::Build || task.buildBlueprintEntityId != static_cast<uint64_t>(blueprintEntity) ||
+				!closure.shutsIn(position.value)) {
+				continue;
+			}
+			shutsInBuilder = true;
+			if (auto* work = world->getComponent<Action>(builder)) {
+				work->clear();
+			}
+		}
+		EntityID controlledInBand = kInvalidEntity;
+		for (auto [agent, position, radius] : world->view<Position, AgentRadius>()) {
+			if (controlledInBand == kInvalidEntity && world->getComponent<PlayerControlled>(agent) != nullptr &&
+				band->overlaps(position.value, radius.radiusMeters)) {
+				controlledInBand = agent;
+			}
+		}
+		if (controlledInBand != kInvalidEntity) {
+			if (wallsHeldByControlled.insert(blueprintEntity).second && onWallHeld) {
+				onWallHeld(blueprintEntity, controlledInBand);
+			}
+		} else {
+			wallsHeldByControlled.erase(blueprintEntity);
+		}
+		if (shutsInBuilder || controlledInBand != kInvalidEntity) {
+			return false;
+		}
+
+		const std::vector<construction::WallStand>& sides = closure.stands();
 		for (auto [agent, position, radius] : world->view<Position, AgentRadius>()) {
 			if (!band->overlaps(position.value, radius.radiusMeters)) {
 				continue;
-			}
-			if (world->getComponent<PlayerControlled>(agent) != nullptr) {
-				clear = false;
-				continue;
-			}
-			if (sides.empty()) {
-				sides = construction::wallStands(*m_constructionWorld, segment->id);
 			}
 			const auto side = std::find_if(sides.begin(), sides.end(), [&](const construction::WallStand& stand) { return stand.onSide(position.value); });
 			const glm::vec2 outward = side != sides.end() ? side->outward : sides.front().outward;
@@ -209,7 +239,7 @@ namespace ecs {
 				static_cast<unsigned long long>(segment->id), position.value.x, position.value.y
 			);
 		}
-		return clear;
+		return true;
 	}
 
 } // namespace ecs
