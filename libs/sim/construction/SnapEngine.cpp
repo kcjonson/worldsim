@@ -571,10 +571,6 @@ namespace construction {
 		float		best = radius;
 		OpeningSnap result;
 		for (const WallSegment& s : world_->segments()) {
-			// Only finished walls can host an opening; a blueprint has no surface yet.
-			if (!isBuilt(s)) {
-				continue;
-			}
 			const Vertex* v0 = world_->getVertex(s.v0);
 			const Vertex* v1 = world_->getVertex(s.v1);
 			if (v0 == nullptr || v1 == nullptr) {

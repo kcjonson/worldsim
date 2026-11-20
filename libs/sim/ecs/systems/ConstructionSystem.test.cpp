@@ -945,6 +945,56 @@ TEST_F(OpeningHostGateTest, DemolishingWallGatedWhileOpeningStands) {
 	EXPECT_EQ(goal2->status, GoalStatus::Available) << "no openings left -> wall Deconstruct Available";
 }
 
+// Cancelling a wall blueprint takes the opening blueprints on it with it: the wall is removed this
+// tick, each opening is marked and removed too, and the materials already delivered to an opening
+// return to the ground instead of vanishing with its topology record.
+TEST_F(OpeningHostGateTest, CancellingABlueprintWallCancelsItsOpeningBlueprintAndReturnsItsMaterials) {
+	const cw::OpeningId opening = makeOpeningOnSegment();
+	ASSERT_NE(opening, cw::kInvalidOpening);
+	auto openingEntity = createOpeningBlueprint(opening);
+	ASSERT_EQ(world->getComponent<StructureBlueprint>(openingEntity)->recordDelivery("Wood", 4), 4U);
+	topology.setOpeningEntity(opening, openingEntity);
+
+	auto wallEntity = world->createEntity();
+	world->addComponent<Position>(wallEntity, Position{{1.0F, 1.0F}});
+	world->addComponent<Structure>(wallEntity, Structure{StructureKind::Wall, hostSegment});
+	StructureBlueprint wallBlueprint;
+	wallBlueprint.phase = StructureBlueprint::BuildPhase::AwaitingMaterials;
+	wallBlueprint.required = {{"Wood", 10}};
+	wallBlueprint.workTotal = 20.0F;
+	wallBlueprint.demolishing = true;
+	world->addComponent<StructureBlueprint>(wallEntity, wallBlueprint);
+
+	std::vector<std::pair<std::string, uint32_t>> drops;
+	construction->setDropResourceCallback([&](const std::string& defName, float, float, uint32_t qty, glm::vec2) { drops.emplace_back(defName, qty); });
+	std::vector<EntityID> removed;
+	construction->setStructureDeconstructedCallback([&](EntityID entity) { removed.push_back(entity); });
+
+	refresh();
+	refresh();
+
+	EXPECT_NE(std::find(removed.begin(), removed.end(), wallEntity), removed.end()) << "the wall blueprint is removed";
+	EXPECT_NE(std::find(removed.begin(), removed.end(), openingEntity), removed.end()) << "its opening blueprint goes with it";
+	ASSERT_EQ(drops.size(), 1U) << "the opening's delivered Wood is dropped once";
+	EXPECT_EQ(drops.front().first, "Wood");
+	EXPECT_EQ(drops.front().second, 4U);
+	EXPECT_TRUE(world->getComponent<StructureBlueprint>(openingEntity)->demolishing);
+}
+
+// A built wall's demolition marks an opening blueprint on it too, so the wall's Deconstruct goal is
+// never left Blocked on an opening nobody marked.
+TEST_F(OpeningHostGateTest, DemolishingABuiltWallMarksTheOpeningBlueprintsOnIt) {
+	const cw::OpeningId opening = makeOpeningOnSegment();
+	ASSERT_NE(opening, cw::kInvalidOpening);
+	auto openingEntity = createOpeningBlueprint(opening);
+	topology.setOpeningEntity(opening, openingEntity);
+	createBuiltDemolishing(StructureKind::Wall, hostSegment);
+
+	refresh();
+
+	EXPECT_TRUE(world->getComponent<StructureBlueprint>(openingEntity)->demolishing);
+}
+
 TEST_F(OpeningHostGateTest, DemolishingFoundationGatedWhileExtensionPending) {
 	geometry::Ring	 ring{{0, 0}, {4000, 0}, {4000, 4000}, {0, 4000}};
 	cw::CommitResult target = topology.commitFoundation(std::move(ring), "wood");

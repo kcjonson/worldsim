@@ -252,7 +252,7 @@ TEST(DrawingStateJson, TheStatusHintAndTheJsonAgreeForEachStateItDistinguishes) 
 		{"wall, chain started", wall(2, true, ""), "Right-click / Enter to finish", StatusHintTone::Ok},
 		{"wall, refused", wall(2, false, "off the foundation"), "off the foundation", StatusHintTone::Crit},
 		{"opening, fits", opening(true, ""), "Click a wall to place", StatusHintTone::Ok},
-		{"opening, no wall near", opening(false, ""), "Hover a built wall", StatusHintTone::Warn},
+		{"opening, no wall near", opening(false, ""), "Hover a wall", StatusHintTone::Warn},
 		{"opening, no wall in range", opening(false, "no wall in range"), "no wall in range", StatusHintTone::Warn},
 		{"opening, blocked", opening(false, "too close to a corner"), "too close to a corner", StatusHintTone::Crit},
 	};

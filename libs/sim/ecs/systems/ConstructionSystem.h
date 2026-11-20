@@ -267,6 +267,12 @@ namespace ecs {
 		/// cleared regardless so the manifest never re-dumps.
 		void dumpDeliveredToGround(EntityID blueprintEntity, StructureBlueprint& blueprint);
 
+		/// A wall's demolition takes the openings on it down too: each opening's blueprint is marked
+		/// demolishing (so the cascade gate on the wall opens), and when `returnMaterials` (the wall
+		/// is a no-work cancel, removed this tick along with its openings) the materials delivered
+		/// to an opening return to the ground and its goals are dropped.
+		void cancelOpeningsOnWall(uint64_t segmentId, bool returnMaterials);
+
 		/// Cascade gate: true once a demolishing structure's dependents are gone, so its
 		/// Deconstruct goal may go Available. A foundation waits until no wall is hosted on it and
 		/// no extension waits to merge into it; a wall waits until no opening sits on it; an

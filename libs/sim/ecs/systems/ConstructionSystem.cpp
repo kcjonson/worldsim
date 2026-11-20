@@ -666,8 +666,32 @@ namespace ecs {
 		blueprint.delivered.clear();
 	}
 
+	void ConstructionSystem::cancelOpeningsOnWall(uint64_t segmentId, bool returnMaterials) {
+		if (m_constructionWorld == nullptr) {
+			return;
+		}
+		for (const auto& opening : m_constructionWorld->openings()) {
+			if (opening.segment != segmentId || opening.entity == kInvalidEntity) {
+				continue;
+			}
+			auto* openingBlueprint = world->getComponent<StructureBlueprint>(opening.entity);
+			if (openingBlueprint == nullptr) {
+				continue;
+			}
+			openingBlueprint->demolishing = true;
+			if (returnMaterials) {
+				dumpDeliveredToGround(opening.entity, *openingBlueprint);
+				resetBlueprintGoals(opening.entity);
+			}
+		}
+	}
+
 	void ConstructionSystem::decideDeconstruct(EntityID blueprintEntity, const Structure& structure, StructureBlueprint& blueprint) {
 		auto& registry = GoalTaskRegistry::Get();
+
+		if (structure.kind == StructureKind::Wall) {
+			cancelOpeningsOnWall(structure.graphId, /*returnMaterials=*/blueprint.workDone <= 0.0F);
+		}
 
 		// A demolishing structure with no work to undo can't be work-deconstructed (startBuildAction
 		// rejects workDone <= 0). Remove it immediately through the SAME removal callback a worked

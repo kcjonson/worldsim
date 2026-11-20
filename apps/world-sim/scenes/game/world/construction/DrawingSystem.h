@@ -712,10 +712,13 @@ namespace world_sim {
 
 		// --- Opening tool ---
 
-		/// Mouse-move handling for the opening tool: snapOpening onto the nearest built
-		/// wall, store the snap, and (when the snap is valid) run validateOpening for the
+		/// Mouse-move handling for the opening tool: snapOpening onto the nearest
+		/// wall (blueprint or built), store the snap, and (when the snap is valid) run validateOpening for the
 		/// live validity readout.
 		void handleOpeningMove(Foundation::Vec2 world);
+
+		/// Whether the wall segment's blueprint is marked for demolition (it takes no new opening).
+		[[nodiscard]] bool openingHostIsDemolishing(construction::SegmentId segment) const;
 
 		/// Click handling for the opening tool: commit the opening at the current snap if
 		/// valid, spawn its blueprint entity, and stay in the tool. Returns whether the
@@ -821,6 +824,9 @@ namespace world_sim {
 
 		// True when the opening tool's snapped opening is not all on seen ground.
 		bool openingUnexplored_ = false;
+
+		// True when the opening tool's snapped wall is marked for demolition.
+		bool openingHostDemolishing_ = false;
 
 		// Wall chain host: the foundation the first chain point landed on. Every
 		// segment of the chain hosts here; a later point leaving it is rejected.

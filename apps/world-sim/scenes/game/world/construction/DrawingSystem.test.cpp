@@ -2735,6 +2735,35 @@ TEST_F(DrawingOpeningSnapshotTest, ARestartedOpeningToolDoesNotRestOnTheLastOpen
 	}
 }
 
+TEST_F(DrawingOpeningSnapshotTest, ADoorClickOnABlueprintWallPlacesAnOpeningBlueprint) {
+	ASSERT_TRUE(drawing->world().setSegmentState(wall, construction::FoundationState::Blueprint));
+	hover({4.0F, -26.0F});
+	EXPECT_TRUE(drawing->snapshot().verdict.valid) << drawing->snapshot().verdict.reason;
+	EXPECT_EQ(drawing->status().message, "");
+	EXPECT_EQ(world_sim::statusHint(drawing->status()).text, "Click a wall to place");
+	click({4.0F, -26.0F});
+	ASSERT_EQ(drawing->world().openings().size(), 1U) << lastToast();
+	const construction::Opening& placed = drawing->world().openings().front();
+	EXPECT_EQ(placed.segment, wall);
+	EXPECT_EQ(placed.state, construction::FoundationState::Blueprint);
+	EXPECT_EQ(lastToast(), "Opening placed: Door blueprint");
+}
+
+TEST_F(DrawingOpeningSnapshotTest, AWallMarkedForDemolitionTakesNoNewOpening) {
+	ecs::World&		 ecsWorld = seen.world;
+	const ecs::EntityID wallEntity = ecsWorld.createEntity();
+	ecs::StructureBlueprint demolishing;
+	demolishing.demolishing = true;
+	ecsWorld.addComponent<ecs::StructureBlueprint>(wallEntity, std::move(demolishing));
+	ASSERT_TRUE(drawing->world().setSegmentEntity(wall, wallEntity));
+	hover({4.0F, -26.0F});
+	EXPECT_FALSE(drawing->snapshot().verdict.valid);
+	EXPECT_EQ(drawing->status().message, "the wall is being demolished");
+	click({4.0F, -26.0F});
+	EXPECT_TRUE(drawing->world().openings().empty());
+	EXPECT_EQ(lastToast(), "Can't place here: the wall is being demolished");
+}
+
 TEST_F(DrawingOpeningSnapshotTest, ThePointerIsReportedBeforeTheWallSnapsIt) {
 	hover({4.2F, -25.8F});
 	const world_sim::DrawingSnapshot shot = drawing->snapshot();
