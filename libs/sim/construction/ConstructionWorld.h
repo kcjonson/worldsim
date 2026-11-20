@@ -152,7 +152,7 @@ namespace construction {
 		std::uint64_t placementOrder = 0;
 	};
 
-	// A finished wall, the only kind nav cuts doors in and an opening goes on.
+	// A finished wall, the only kind nav cuts doors in and an opening is built on.
 	[[nodiscard]] inline bool isBuilt(const WallSegment& wall) {
 		return wall.state == FoundationState::Built;
 	}
