@@ -8,8 +8,8 @@
 // crossed only via NavCoords.h.
 //
 // Provenance ids tag each obstacle's origin so a triangle edge can be attributed to its
-// source: negative sentinels for the engine-synthesized obstacles (water/placed obstacle/border/junction),
-// positive +segmentId for wall bands.
+// source: negative sentinels for the engine-synthesized obstacles (water/placed obstacle/border),
+// positive +segmentId for wall bands and junctionTag for wall junctions.
 
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/chunk/TerrainPolygons.h"
@@ -36,10 +36,16 @@ namespace nav {
 	constexpr std::int64_t kProvenanceWater	   = -1;
 	constexpr std::int64_t kProvenancePlaced	   = -2;
 	constexpr std::int64_t kProvenanceBorder   = -3;
-	constexpr std::int64_t kProvenanceJunction = -4;
 	// A fordable channel: water a mover wades through. Its ring is cover-only, so it blocks no
 	// movement, and a face's cover says the ground there is a stream bed, which building refuses.
 	constexpr std::int64_t kProvenanceFord	   = -5;
+
+	// A wall junction's provenance: the construction vertex its walls meet at, offset above every
+	// segment id. Its ring's blocker group lists those walls, so belief sees it with any of them.
+	constexpr std::int64_t kJunctionTagBase = std::int64_t{1} << 62;
+	[[nodiscard]] constexpr std::int64_t junctionTag(construction::VertexId vertex) {
+		return kJunctionTagBase + static_cast<std::int64_t>(vertex);
+	}
 
 	// --- Ground ------------------------------------------------------------------
 	//
@@ -90,8 +96,9 @@ namespace nav {
 
 	// Over the BUILT wall segments: resolve band offsetting + junction trimming per
 	// connected wall graph (so corners tile), then append each band in segment order and
-	// then each junction ring to outPolys (band provenance = +segmentId, junction
-	// provenance = its smallest incident +segmentId). A graph the offsetter rejects gives
+	// then each junction ring to outPolys (band provenance = +segmentId; a junction's is
+	// junctionTag of the vertex its walls meet at, with those walls as its blocker group, so a
+	// belief knowing any of them sees it). A graph the offsetter rejects gives
 	// its segments' raw bands and no junctions, and leaves every other graph alone.
 	// For each BUILT pathable opening (a door) on an accepted graph, the hosting segment's
 	// trimmed band comes as geometry::wallSpans cuts it at its doors' gaps
@@ -101,8 +108,8 @@ namespace nav {
 	// DoorPortal with clearWidthMm == 0 so a later vision pass can still find it.
 	// Blueprints (state != Built) contribute nothing.
 	//
-	// A junction ring carries one of the walls meeting at it as its provenance; `outJunctions`, when
-	// given, gets each junction as its ring's index in outPolys and every wall that meets there.
+	// `outJunctions`, when given, gets each junction as its ring's index in outPolys and every wall
+	// that meets there.
 	struct WallJunction {
 		std::size_t							 polygon = 0;
 		std::vector<construction::SegmentId> walls;

@@ -8,6 +8,7 @@
 #include <array>
 #include <compare>
 #include <cstdint>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -85,6 +86,10 @@ namespace geometry::nav {
 		// whatever else covers it and every query crosses it. Readers of
 		// PatchableMesh::cover use it to tell that ground from the ground around it.
 		bool				 coverOnly	  = false;
+		// Set on a blocked ring standing where several blockers meet (positive provenance ids):
+		// a belief knows its faces when it knows any blocker listed. Its provenanceId is then a
+		// tag no other ring carries, which the mesh keys the list by. Empty on every other ring.
+		std::vector<std::int64_t> blockerGroup;
 	};
 
 	// A door portal: an open gap in a blocked band that agents may cross. (a, b)
@@ -121,8 +126,9 @@ namespace geometry::nav {
 		// Per-face blocker tag, the belief filter's hook. The whole region (wall
 		// interiors included) is triangulated; this says what each triangle sits on:
 		//   kNoBlocker (== INT64_MIN) -> real floor, always walkable.
-		//   > 0  -> a wall segment id; belief-gated (truth: walkable iff faceOpening
-		//           is set, i.e. a door passes and solid wall blocks).
+		//   > 0  -> a wall segment id, or a blocker group's tag (NavInputPolygon::blockerGroup);
+		//           belief-gated (truth: walkable iff faceOpening is set, i.e. a door
+		//           passes and solid wall blocks).
 		//   < 0  -> a terrain/common-knowledge sentinel (water/placed obstacle); always blocks.
 		std::int64_t faceBlocker = kNoBlocker;
 		// Pathable door's openingId when this triangle is inside that door's footprint
@@ -140,8 +146,8 @@ namespace geometry::nav {
 	inline bool isFloorFace(const NavTriangle& t) {
 		return t.faceBlocker == kNoBlocker;
 	}
-	// Common-knowledge terrain sentinel (water/placed obstacle, or a junction with no incident
-	// wall id): always blocks, belief or not. (faceBlocker < 0 and != kNoBlocker.)
+	// Common-knowledge terrain sentinel (water/placed obstacle): always blocks, belief or not.
+	// (faceBlocker < 0 and != kNoBlocker.)
 	inline bool isCommonKnowledgeTerrainFace(const NavTriangle& t) {
 		return t.faceBlocker < 0 && t.faceBlocker != kNoBlocker;
 	}
@@ -239,6 +245,8 @@ namespace geometry::nav {
 		std::vector<Vec2i64>	 vertices;
 		std::vector<NavTriangle> triangles;
 		NavGrid					 grid;
+		// Each input ring's NavInputPolygon::blockerGroup, keyed by its provenanceId.
+		std::unordered_map<std::int64_t, std::vector<std::int64_t>> blockerGroups;
 		// Taken when the mesh is made; a copy carries its source's along with its content.
 		// A caller that edits a built mesh in place takes a fresh one.
 		std::uint64_t generation = nextMeshGeneration();
@@ -411,6 +419,7 @@ namespace geometry::nav {
 		bool (*widthsCurrentIn)(const void* owner)											= nullptr;
 		std::uint64_t (*epochIn)(const void* owner)											= nullptr;
 		void (*resolveIn)(const void* owner, NavView& view)									= nullptr;
+		const std::vector<std::int64_t>* (*blockerGroupIn)(const void* owner, std::int64_t tag) = nullptr;
 
 		std::int32_t	   triangleSlots() const { return static_cast<std::int32_t>(triangles.size()); }
 		bool			   isLive(std::int32_t t) const { return !live.set() || live[static_cast<std::size_t>(t)] != 0; }
@@ -431,6 +440,9 @@ namespace geometry::nav {
 		// Changes whenever the triangles or their tags do, to a value no mesh state in the
 		// process has had before (nextMeshGeneration).
 		std::uint64_t epoch() const { return epochIn(owner); }
+		// The blockers a face tagged `tag` stands for (NavInputPolygon::blockerGroup); null when
+		// the tag is no group's.
+		const std::vector<std::int64_t>* blockerGroup(std::int64_t tag) const { return blockerGroupIn(owner, tag); }
 	};
 
 	NavView navView(const NavMesh& mesh);

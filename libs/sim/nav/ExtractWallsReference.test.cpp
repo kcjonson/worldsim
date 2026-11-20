@@ -53,6 +53,8 @@ namespace {
 						  std::vector<nav::WallJunction>* outJunctions) {
 			std::vector<geometry::WallSegment>	 geoSegments;
 			std::vector<construction::SegmentId> segmentIds;
+			std::vector<construction::VertexId>	 segmentStarts;
+			std::vector<construction::VertexId>	 segmentEnds;
 			for (const construction::WallSegment& seg : world.segments()) {
 				if (seg.state != FoundationState::Built) {
 					continue;
@@ -69,13 +71,15 @@ namespace {
 				}
 				geoSegments.push_back({v0->pos, v1->pos, half});
 				segmentIds.push_back(seg.id);
+				segmentStarts.push_back(seg.v0);
+				segmentEnds.push_back(seg.v1);
 			}
 
 			if (geoSegments.empty()) {
 				return;
 			}
 
-			const geometry::WallBands bands	  = geometry::resolveWallBands(geoSegments, geometry::kDefaultMiterLimit);
+			const geometry::WallBands bands	  =geometry::resolveWallBands(geoSegments, geometry::kDefaultMiterLimit);
 			const bool				  bandsOk = bands.status == geometry::OffsetStatus::Ok && bands.bands.size() == geoSegments.size();
 
 			std::unordered_map<construction::SegmentId, std::size_t> segIndexById;
@@ -191,23 +195,28 @@ namespace {
 					if (j.size() < 3) {
 						continue;
 					}
-					std::int64_t						 prov = nav::kProvenanceJunction;
-					std::vector<construction::SegmentId> incident;
+					std::map<construction::VertexId, std::size_t> endsAt;
+					gnav::NavInputPolygon						  polygon{.ring = j, .blocked = true};
+					std::vector<construction::SegmentId>		  incident;
 					if (ji < bands.junctionSegments.size()) {
 						for (std::size_t segIdx : bands.junctionSegments[ji]) {
 							if (segIdx < segmentIds.size()) {
 								incident.push_back(segmentIds[segIdx]);
-								const std::int64_t id = static_cast<std::int64_t>(segmentIds[segIdx]);
-								if (prov == nav::kProvenanceJunction || id < prov) {
-									prov = id;
-								}
+								polygon.blockerGroup.push_back(static_cast<std::int64_t>(segmentIds[segIdx]));
+								++endsAt[segmentStarts[segIdx]];
+								++endsAt[segmentEnds[segIdx]];
 							}
+						}
+					}
+					for (const auto& [vertex, count] : endsAt) {
+						if (count == incident.size()) {
+							polygon.provenanceId = nav::junctionTag(vertex);
 						}
 					}
 					if (outJunctions != nullptr) {
 						outJunctions->push_back({outPolys.size(), std::move(incident)});
 					}
-					outPolys.push_back({j, true, prov, gnav::kNoOpening});
+					outPolys.push_back(std::move(polygon));
 				}
 			}
 		}

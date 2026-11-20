@@ -129,31 +129,32 @@ namespace geometry::nav {
 		// pathfinding-architecture section 5; the door-span trick (a pathable door's
 		// footprint is a blocked face carrying faceOpening) is what makes a truth query
 		// reproduce v1: solid wall blocks, door passes.
-		template <typename Belief> inline bool traversableFace(const NavTriangle& t, const Belief& belief) {
+		template <typename Belief> inline bool traversable(const NavView& mesh, std::int32_t tri, const Belief& belief) {
+			const NavTriangle& t = mesh.triangle(tri);
 			if (isFloorFace(t)) {
 				return true; // real floor
 			}
 			if (isCommonKnowledgeTerrainFace(t)) {
-				return false; // negative sentinel: common-knowledge terrain (or a junction
-							   // with no incident-wall id) -- always blocks, filter or not
+				return false; // common-knowledge terrain: always blocks, filter or not
 			}
-			// faceBlocker > 0: a wall segment id (a junction tagged with an incident wall
-			// lands here too, so it is belief-gated like that wall).
-			const std::uint64_t segment = static_cast<std::uint64_t>(t.faceBlocker);
+			// faceBlocker > 0: a wall segment id, or a blocker group's tag.
 			if (knowsAll(belief)) {
 				// TRUTH: the wall is known solid unless this face is a door span.
 				return t.faceOpening != kNoOpening;
 			}
 			// BELIEF: an unseen wall is absent (walkable); a seen wall blocks unless the
-			// agent also knows a door through it on this very face.
-			if (!knowsSegment(belief, segment)) {
+			// agent also knows a door through it on this very face. A group's face is seen
+			// when any blocker in the group is.
+			const std::vector<std::int64_t>* group = mesh.blockerGroup(t.faceBlocker);
+			const bool						 known = group != nullptr ? std::any_of(group->begin(), group->end(),
+																						  [&belief](std::int64_t blocker) {
+																							  return knowsSegment(belief, static_cast<std::uint64_t>(blocker));
+																						  })
+																	   : knowsSegment(belief, static_cast<std::uint64_t>(t.faceBlocker));
+			if (!known) {
 				return true;
 			}
 			return t.faceOpening != kNoOpening && knowsOpening(belief, static_cast<std::uint64_t>(t.faceOpening));
-		}
-
-		template <typename Belief> inline bool traversable(const NavView& mesh, std::int32_t t, const Belief& belief) {
-			return traversableFace(mesh.triangle(t), belief);
 		}
 
 		// The triangle a walker stands in at p, located as `tri`: tri itself when this

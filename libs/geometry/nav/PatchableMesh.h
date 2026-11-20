@@ -13,6 +13,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -353,6 +354,8 @@ namespace geometry::nav {
 		std::int64_t				maxClearanceMm	= kDefaultMaxClearanceMm;
 		PagedVector<RegisteredRing> rings;
 		std::vector<RingId>			freeRings;
+		// The live ring carrying each blocker group, by its provenanceId (NavInputPolygon::blockerGroup).
+		std::unordered_map<std::int64_t, RingId> blockerGroupRings;
 
 		PagedVector<Vec2i64>							verts;
 		PagedVector<std::int32_t>						vertexUses; // live triangle corners on the vertex

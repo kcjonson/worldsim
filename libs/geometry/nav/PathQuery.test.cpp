@@ -447,6 +447,91 @@ TEST(PathQuery, BeliefKnowsWallAndDoorRoutesThroughDoor) {
 	EXPECT_TRUE(pathThrough(m, kOutside, kInside, 0).reachable);
 }
 
+namespace {
+
+	// A T: a through wall along y in [1900, 2100] from x = 0 to 4000, in two pieces either side of
+	// the junction square [1900, 2100]^2, and a stub north from it with the lowest id and a door.
+	// The junction is its own tag, standing for all three walls.
+	constexpr std::int64_t kStub		= 10;
+	constexpr std::int64_t kThroughWest = 20;
+	constexpr std::int64_t kThroughEast = 21;
+	constexpr std::int64_t kTJunction	= 1000;
+	constexpr std::int64_t kStubDoor	= 8;
+
+	const std::vector<Vec2i64> kTJunctionRing = {{1900, 1900}, {2100, 1900}, {2100, 2100}, {1900, 2100}};
+	// The straight line between them crosses the through wall at the junction's centre.
+	const Vec2i64 kSouthOfT{1500, 1000};
+	const Vec2i64 kNorthOfT{2500, 3000};
+
+	std::vector<NavInputPolygon> tWalls(bool junctionIsGroup) {
+		std::vector<NavInputPolygon> walls;
+		walls.push_back(blocked({{0, 1900}, {1900, 1900}, {1900, 2100}, {0, 2100}}, kThroughWest));
+		walls.push_back(blocked({{2100, 1900}, {4000, 1900}, {4000, 2100}, {2100, 2100}}, kThroughEast));
+		walls.push_back(blocked({{1900, 2100}, {2100, 2100}, {2100, 2900}, {1900, 2900}}, kStub));
+		walls.push_back(doorSpan({{1900, 2900}, {2100, 2900}, {2100, 3300}, {1900, 3300}}, kStub, kStubDoor));
+		walls.push_back(blocked({{1900, 3300}, {2100, 3300}, {2100, 4000}, {1900, 4000}}, kStub));
+		if (junctionIsGroup) {
+			NavInputPolygon junction = blocked(kTJunctionRing, kTJunction);
+			junction.blockerGroup	 = {kStub, kThroughWest, kThroughEast};
+			walls.push_back(std::move(junction));
+		} else {
+			walls.push_back(blocked(kTJunctionRing, kStub));
+		}
+		return walls;
+	}
+
+	NavMeshInput tJunction(bool junctionIsGroup) {
+		NavMeshInput in;
+		in.polygons.push_back(border({{-2000, -2000}, {6000, -2000}, {6000, 6000}, {-2000, 6000}}));
+		for (NavInputPolygon& wall : tWalls(junctionIsGroup)) {
+			in.polygons.push_back(std::move(wall));
+		}
+		return in;
+	}
+
+} // namespace
+
+TEST(PathQuery, BeliefKnowingAnyWallOfAJunctionBlocksIt) {
+	const NavMesh m = buildNavMesh(tJunction(/*junctionIsGroup=*/true));
+
+	// The through wall seen from the south, the stub (the junction's lowest id) not: the junction is
+	// known, so the route goes round an end of the through wall.
+	std::unordered_set<std::uint64_t> through{static_cast<std::uint64_t>(kThroughWest), static_cast<std::uint64_t>(kThroughEast)};
+	std::unordered_set<std::uint64_t> noOps;
+	const PathResult				  around = pathThrough(m, kSouthOfT, kNorthOfT, 0, BeliefFilter{&through, &noOps});
+	ASSERT_TRUE(around.reachable);
+	EXPECT_FALSE(pathHitsRing(around, kTJunctionRing)) << "a junction one of whose walls is known blocks";
+
+	// The stub alone known blocks it the same.
+	std::unordered_set<std::uint64_t> stub{static_cast<std::uint64_t>(kStub)};
+	EXPECT_FALSE(pathHitsRing(pathThrough(m, kSouthOfT, kNorthOfT, 0, BeliefFilter{&stub, &noOps}), kTJunctionRing));
+
+	// No wall of the junction known: it is absent, and the route runs straight through it.
+	std::unordered_set<std::uint64_t> noSegs;
+	const PathResult				  straight = pathThrough(m, kSouthOfT, kNorthOfT, 0, BeliefFilter{&noSegs, &noOps});
+	ASSERT_TRUE(straight.reachable);
+	EXPECT_EQ(straight.points.size(), 2u);
+	EXPECT_TRUE(pathHitsRing(straight, kTJunctionRing));
+
+	// The same through a patched mesh.
+	PatchableMesh patched;
+	PatchEdits	  edits;
+	edits.adds = tJunction(/*junctionIsGroup=*/true).polygons;
+	patched.applyPatch(edits);
+	patched.refreshWidths();
+	EXPECT_EQ(patched.validate(), "");
+	const PathResult patchedAround = pathThrough(patched.view(), kSouthOfT, kNorthOfT, 0, BeliefFilter{&through, &noOps});
+	EXPECT_EQ(patchedAround.points, around.points);
+	EXPECT_TRUE(pathHitsRing(pathThrough(patched.view(), kSouthOfT, kNorthOfT, 0, BeliefFilter{&noSegs, &noOps}), kTJunctionRing));
+
+	// Truth is what it was with the junction tagged as one plain wall.
+	const NavMesh plain = buildNavMesh(tJunction(/*junctionIsGroup=*/false));
+	const PathResult truth = pathThrough(m, kSouthOfT, kNorthOfT, 0);
+	ASSERT_TRUE(truth.reachable);
+	EXPECT_EQ(truth.points, pathThrough(plain, kSouthOfT, kNorthOfT, 0).points);
+	EXPECT_FALSE(pathHitsRing(truth, kTJunctionRing));
+}
+
 // ---------------------------------------------------------------------------
 // Corridor-width filtering: a too-narrow gap yields no path (not a clipping
 // path). Gaps are bounded by common-knowledge terrain; doors by their clear

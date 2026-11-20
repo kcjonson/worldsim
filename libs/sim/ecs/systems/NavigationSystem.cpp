@@ -597,8 +597,8 @@ namespace ecs {
 			return shapeOnFaces(mesh, footprint.front(), meetsSegment, meetsTriangle, face);
 		}
 
-		using PolygonKey = std::tuple<std::int64_t, std::int64_t, bool, std::vector<geometry::Vec2i64>>;
-		PolygonKey polygonKey(const gnav::NavInputPolygon& p) { return {p.provenanceId, p.openingId, p.holeCapable, p.ring}; }
+		using PolygonKey = std::tuple<std::int64_t, std::int64_t, bool, std::vector<geometry::Vec2i64>, std::vector<std::int64_t>>;
+		PolygonKey polygonKey(const gnav::NavInputPolygon& p) { return {p.provenanceId, p.openingId, p.holeCapable, p.ring, p.blockerGroup}; }
 
 		bool samePortal(const gnav::DoorPortal& a, const gnav::DoorPortal& b) {
 			return a.openingId == b.openingId && a.a == b.a && a.b == b.b && a.clearWidthMm == b.clearWidthMm;
