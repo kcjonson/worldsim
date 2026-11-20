@@ -451,8 +451,9 @@ namespace world_sim::testing {
 		constexpr float kDossierMaxWidthShare = 0.92F;
 		constexpr float kDossierMaxHeightShare = 0.86F;
 
-		// The settings list fits a canvas the reference's height at the default size, and scrolls only on shorter ones.
-		constexpr auto kSettingsListFitsFrom = static_cast<float>(theme::uiScaleConfig().referenceHeight);
+		// The settings list fits a canvas 1,100 ui px tall at the default size, and scrolls only on shorter ones: since the
+		// Landing group it runs about 96 px past the reference's height.
+		constexpr float kSettingsListFitsFrom = 1100.0F;
 
 	} // namespace
 
