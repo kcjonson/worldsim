@@ -130,7 +130,7 @@ namespace ecs {
 		// Empty on every other goal, a wall's or an opening's Build umbrella included.
 		std::vector<glm::vec2> builderSpots;
 
-		// A wall's Build umbrella: the sides of the wall its builders may stand on (construction/WallStand.h),
+		// A wall's Build umbrella: the sides of the wall its builders may stand on (construction/WallSides.h),
 		// kept current with the built walls round it while the goal is Available. Empty on every other goal.
 		std::vector<construction::WallStand> wallStands;
 

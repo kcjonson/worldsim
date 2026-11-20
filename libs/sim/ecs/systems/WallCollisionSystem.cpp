@@ -6,7 +6,7 @@
 
 #include <assets/ConstructionRegistry.h>
 #include <construction/ConstructionWorld.h>
-#include <construction/WallStand.h>
+#include <construction/WallSides.h>
 
 #include <glm/geometric.hpp>
 #include <glm/vec2.hpp>
@@ -102,18 +102,14 @@ void WallCollisionSystem::update(float /*deltaTime*/) {
 					continue; // degenerate segment (should not happen: ZeroLength is rejected)
 				}
 
-				// Closest point on segment [v0,v1] to p, clamped to the segment.
-				float tProj = glm::dot(p - band.band.start, d) / len2;
-				tProj		= std::clamp(tProj, 0.0F, 1.0F);
-				const glm::vec2 closest = band.band.start + d * tProj;
-
-				const glm::vec2 toAgent = p - closest;
-				const float		dist	= glm::length(toAgent);
-
-				const float clearance = band.band.halfThicknessMeters + r;
-				if (dist >= clearance) {
-					continue; // disc doesn't overlap this wall's band
+				if (!band.band.overlaps(p, r)) {
+					continue;
 				}
+				const glm::vec2 closest	  = band.band.closestPoint(p);
+				const float		tProj	  = glm::dot(closest - band.band.start, d) / len2;
+				const glm::vec2 toAgent	  = p - closest;
+				const float		dist	  = glm::length(toAgent);
+				const float		clearance = band.band.halfThicknessMeters + r;
 
 				// Door-gap exemption: if the projection lands in one of this band's
 				// precomputed pathable-opening spans, the wall has a real gap there

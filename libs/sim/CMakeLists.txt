@@ -61,6 +61,7 @@ add_library(sim
     construction/SnapEngine.cpp
     construction/SnapGuidesDetail.cpp
     construction/SnapLengthsDetail.cpp
+    construction/WallSides.cpp
     construction/WallStand.cpp
     nav/NavInputBuilder.cpp
     nav/RouteQueue.cpp
