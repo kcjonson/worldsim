@@ -1,5 +1,5 @@
 // Repro + regression test for the second-colonist spawn crash: the game loads
-// Colonist_down at init, but the other directional templates (up/left/right)
+// Human_down at init, but the other directional templates (up/left/right)
 // tessellate lazily the first time a colonist faces that way at runtime, and
 // that first load crashed the process. Exercise the full lazy path (template +
 // motion resolution) headlessly for every direction.
@@ -11,14 +11,14 @@
 
 using namespace assets;
 
-TEST(ColonistDirectionalAssets, AllDirectionTemplatesAndMotionsResolve) {
+TEST(HumanDirectionalAssets, AllDirectionTemplatesAndMotionsResolve) {
 	auto& reg = AssetRegistry::Get();
 	reg.clear();
 	if (!loadShippedLibrary(reg)) {
 		GTEST_SKIP() << "assets/world not found";
 	}
 
-	for (const char* name : {"Colonist_down", "Colonist_up", "Colonist_left", "Colonist_right"}) {
+	for (const char* name : {"Human_down", "Human_up", "Human_left", "Human_right"}) {
 		SCOPED_TRACE(name);
 		const renderer::TessellatedMesh* mesh = reg.getTemplate(name, TreeTraits{});
 		if (mesh == nullptr) {

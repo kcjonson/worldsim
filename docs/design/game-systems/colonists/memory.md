@@ -42,7 +42,7 @@ For animals and other moving things, colonists remember the **last known locatio
 
 **Behavior:** Bob arrives, deer isn't there. He either gives up and re-evaluates, or enters search behavior (see Search & Discovery Behaviors below).
 
-Each sighting records the mover, its kind (the asset it appears as: a colonist is `Colonist`, a deer would be `Deer`), where it stood, and the game time. Seeing it again moves that one entry. "Who is near me" is the movers of a kind seen within a recent window, `RecentSighting` in `assets/config/colonists/memory.xml`; an older sighting is where someone was, not company. A mover that dies or leaves stays remembered as last seen, and a new one is always a new entry, never mistaken for the old. A colonist remembers a bounded number of movers; past that, the one seen longest ago is forgotten.
+Each sighting records the mover, its kind (the asset it appears as: a colonist is `Human`, a deer would be `Deer`), where it stood, and the game time. Seeing it again moves that one entry. "Who is near me" is the movers of a kind seen within a recent window, `RecentSighting` in `assets/config/colonists/memory.xml`; an older sighting is where someone was, not company. A mover that dies or leaves stays remembered as last seen, and a new one is always a new entry, never mistaken for the old. A colonist remembers a bounded number of movers; past that, the one seen longest ago is forgotten.
 
 ### Structures Are Remembered Too
 

@@ -1639,7 +1639,7 @@ namespace {
 			ecsWorld->addComponent<ecs::MovementTarget>(entity, ecs::MovementTarget{{0.0F, 0.0F}, 2.0F, false});
 			ecsWorld->addComponent<ecs::FacingDirection>(entity, ecs::FacingDirection{}); // Default: Down
 			ecsWorld->addComponent<ecs::AnimationState>(entity, ecs::AnimationState{});	  // Walk-cycle phase
-			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{"Colonist", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{"Human", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 			ecsWorld->addComponent<ecs::Colonist>(entity, ecs::Colonist{newName});
 			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent(*colonistRules.needLevels));
 			ecsWorld->getSystem<ecs::MoodSystem>().startMood(entity);
