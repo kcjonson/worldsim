@@ -6,12 +6,14 @@
 
 #include <assets/ConstructionRegistry.h>
 #include <construction/ConstructionWorld.h>
+#include <construction/WallStand.h>
 
 #include <glm/geometric.hpp>
 #include <glm/vec2.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -21,27 +23,16 @@ namespace {
 
 	namespace cons = construction;
 
-	// One built wall resolved to float meters: centerline endpoints, the band's
-	// half-thickness, and its precomputed door-gap spans (the [t0,t1] centerline
-	// ranges of built pathable openings). All resolved once per update() so the
-	// per-agent inner loop stays cheap -- no registry lookups, no mm<->m
-	// conversion, and no rescan of every opening per agent.
-	struct WallBand {
-		glm::vec2							 v0;
-		glm::vec2							 v1;
-		float								 halfThicknessMeters;
+	// One built wall's band (construction::wallBand, the footprint a wall also waits on to be clear
+	// before it completes) and its precomputed door-gap spans (the [t0,t1] centerline ranges of built
+	// pathable openings). All resolved once per update() so the per-agent inner loop stays cheap -- no
+	// registry lookups, no mm<->m conversion, and no rescan of every opening per agent.
+	struct SolidWall {
+		cons::WallBand						 band;
 		std::vector<std::pair<float, float>> doorSpans;
 	};
 
 	constexpr float kMillimetersPerMeter = 1000.0F;
-
-	// Convert an integer-mm vertex position to float meters (same rule as
-	// nav::toMeters; duplicated here to avoid pulling the nav coords header,
-	// which drags in chunk types this system doesn't need).
-	glm::vec2 toMeters(const geometry::Vec2i64& mm) {
-		return {static_cast<float>(static_cast<double>(mm.x) / kMillimetersPerMeter),
-				static_cast<float>(static_cast<double>(mm.y) / kMillimetersPerMeter)};
-	}
 
 } // namespace
 
@@ -55,33 +46,25 @@ void WallCollisionSystem::update(float /*deltaTime*/) {
 	// Gather the BUILT wall bands once. A blueprint wall is not physical, so it
 	// never collides (mirrors extractWalls' Built-only gate). A zero/unknown
 	// thickness preset contributes no band.
-	std::vector<WallBand> bands;
+	std::vector<SolidWall> bands;
 	bands.reserve(m_construction->segments().size());
 	for (const cons::WallSegment& seg : m_construction->segments()) {
 		if (seg.state != cons::FoundationState::Built) {
 			continue;
 		}
-		const cons::Vertex* v0 = m_construction->getVertex(seg.v0);
-		const cons::Vertex* v1 = m_construction->getVertex(seg.v1);
-		if (v0 == nullptr || v1 == nullptr) {
-			continue;
-		}
-		const auto* preset = registry.getThicknessPreset(seg.material, seg.thicknessPreset);
-		if (preset == nullptr || preset->halfThicknessMm <= 0) {
+		const std::optional<cons::WallBand> wallBand = cons::wallBand(*m_construction, seg);
+		if (!wallBand.has_value()) {
 			continue;
 		}
 
-		WallBand band;
-		band.v0					 = toMeters(v0->pos);
-		band.v1					 = toMeters(v1->pos);
-		band.halfThicknessMeters = static_cast<float>(preset->halfThicknessMm) / kMillimetersPerMeter;
+		SolidWall band{.band = *wallBand, .doorSpans = {}};
 
 		// Precompute this segment's door gaps ONCE here, not per agent: the
 		// centerline span [t0,t1] of every BUILT, PATHABLE opening. Windows
 		// (non-pathable) and blueprint openings leave the band solid. The span uses
 		// the same clear-width formula NavInputBuilder cuts the band at, so the
 		// collision gap matches the navmesh gap the path was solved against.
-		const float segLengthMm = glm::length(band.v1 - band.v0) * kMillimetersPerMeter;
+		const float segLengthMm = glm::length(band.band.end - band.band.start) * kMillimetersPerMeter;
 		if (segLengthMm > 0.0F) {
 			for (const cons::Opening& op : m_construction->openings()) {
 				if (op.segment != seg.id || op.state != cons::FoundationState::Built) {
@@ -112,22 +95,22 @@ void WallCollisionSystem::update(float /*deltaTime*/) {
 			glm::vec2 p = pos.value;
 			const float r = radius.radiusMeters;
 
-			for (const WallBand& band : bands) {
-				const glm::vec2 d  = band.v1 - band.v0;
+			for (const SolidWall& band : bands) {
+				const glm::vec2 d  = band.band.end - band.band.start;
 				const float		len2 = glm::dot(d, d);
 				if (len2 <= 1e-12F) {
 					continue; // degenerate segment (should not happen: ZeroLength is rejected)
 				}
 
 				// Closest point on segment [v0,v1] to p, clamped to the segment.
-				float tProj = glm::dot(p - band.v0, d) / len2;
+				float tProj = glm::dot(p - band.band.start, d) / len2;
 				tProj		= std::clamp(tProj, 0.0F, 1.0F);
-				const glm::vec2 closest = band.v0 + d * tProj;
+				const glm::vec2 closest = band.band.start + d * tProj;
 
 				const glm::vec2 toAgent = p - closest;
 				const float		dist	= glm::length(toAgent);
 
-				const float clearance = band.halfThicknessMeters + r;
+				const float clearance = band.band.halfThicknessMeters + r;
 				if (dist >= clearance) {
 					continue; // disc doesn't overlap this wall's band
 				}
