@@ -1,21 +1,30 @@
 // The colonist AI's need and idle decisions, the paths behavior-data-migration.md moves to data, timed on
 // the hand-written code so the replacement can be held to it. Headless, as AIDecision.bench.cpp's are: no
-// nav system, so every remembered source counts as reachable. Each scenario builds its own World and
-// clears the goal registry, so scenarios are independent of each other and of --benchmark_filter.
+// nav system, so every remembered source counts as reachable and no route is asked for, and no
+// ActionSystem, so a remembered loose pile has no live count and skips the pile index's lookups. The
+// routed half of a need decision is BM_NeedDecisionRouted's (NavigationSystem.bench.cpp). Development
+// builds include the claim index validator the update runs. Each scenario builds its own World and clears
+// the goal registry, so scenarios are independent of each other and of --benchmark_filter.
 //
 // BM_NeedDecision: range(0) colonists, hungry and thirsty (40 and 35, under both seek thresholds and
 // neither urgent), each remembering the same full memory within 100 m of the colony: 8,500 berry bushes
 // and 1,000 loose piles of berries (9,500 edible sources), and 500 water points. Memory holds 10,000 world
-// entities (Memory::kMaxWorldEntities), so the water comes out of the 10,000 edible sources the plan
-// names. No goal exists, so the decision is the needs path and the idle options. Every timed update
-// re-decides every colonist (as BM_WorkDecision does) and fails the run if one did not, or if one is not
-// serving a need after it.
+// entities (Memory::kMaxWorldEntities). No goal exists, so the decision is the needs path and the idle
+// options. After an untimed first decision, every timed update re-decides every colonist (as
+// BM_WorkDecision does). range(1) picks the path:
+// - 0, kept: he is heading for a source, so the need he serves asks only about that one, and the decision
+//   keeps his task. The run fails if a task's instance changed.
+// - 1, fresh: his task is cleared before each update (untimed), so every need walks its nearest sources
+//   from scratch and he takes a new task. The run fails if a task's instance did not change.
+// Either fails if a colonist did not decide or is not serving a need after it.
 //
 // BM_IdleDecision: range(0) colonists with every need met and nothing to do, each remembering range(1)
-// world entities: trees no goal wants and a tenth as many water points. After a first decision every
-// colonist wanders, and a wander that is walking decides every frame (shouldReEvaluate), so no decision
-// is asked for: the run fails if a timed update left one undecided or one stopped wandering. Nothing
-// moves him, so each decision keeps the wander's point and probes none.
+// world entities: trees no goal wants and a tenth as many water points. The needs read their sources by
+// capability or by def and none is a tree, so only the waters, a tenth of memory, are scanned. After a first decision every colonist wanders,
+// and a wander that is walking decides every frame (shouldReEvaluate), so no decision is asked for: the
+// run fails if a timed update left one undecided or one stopped wandering. Nothing moves him, so each
+// decision keeps the wander's point and probes none. The wander is offered headless only because
+// buildDecisionTrace's canNavigate lets a world with no nav system wander; the bench depends on it.
 //
 // Both report the update's mean, p99, and worst time, its mean per colonist, and the options in the
 // first colonist's decision trace after the last decision.
@@ -218,6 +227,7 @@ namespace {
 		constexpr int kPiles  = 1000;
 		constexpr int kWaters = 500;
 		const int	  colonistCount = static_cast<int>(state.range(0));
+		const bool	  freshPick		= state.range(1) == 1;
 		registerDefs();
 		if (!ecs::loadShippedPriorityConfig()) {
 			state.SkipWithError("priority-tuning.xml did not load");
@@ -231,7 +241,7 @@ namespace {
 			return;
 		}
 
-		for (auto iteration : state) {
+		for (auto _ : state) {
 			ecs::GoalTaskRegistry::Get().clear();
 			ecs::World			   world;
 			ecs::AIDecisionSystem& decisions =
@@ -247,30 +257,48 @@ namespace {
 				colonists.push_back(colonist);
 				homes.push_back(home);
 			}
+			decisions.update(kTickSeconds);
 
+			// Each colonist's task instance after the last update: kept is the same one, fresh a new one.
+			std::vector<uint64_t> instances;
+			for (const ecs::EntityID colonist : colonists) {
+				instances.push_back(world.getComponent<ecs::Task>(colonist)->instanceId);
+			}
 			const UpdateTimes times = timeUpdates(
 				decisions,
 				[&] {
 					for (std::size_t index = 0; index < colonists.size(); ++index) {
 						world.getComponent<ecs::Position>(colonists[index])->value = homes[index];
-						ecs::requestDecision(*world.getComponent<ecs::Task>(colonists[index]));
+						ecs::Task& task = *world.getComponent<ecs::Task>(colonists[index]);
+						if (freshPick) {
+							task.clear();
+						}
+						ecs::requestDecision(task);
 					}
 				},
 				[&] {
-					return std::all_of(colonists.begin(), colonists.end(), [&](ecs::EntityID colonist) {
-						const ecs::Task& task = *world.getComponent<ecs::Task>(colonist);
-						return task.timeSinceEvaluation <= 1.0F && task.type == ecs::TaskType::FulfillNeed;
-					});
+					bool pathHeld = true;
+					for (std::size_t index = 0; index < colonists.size(); ++index) {
+						const ecs::Task& task	   = *world.getComponent<ecs::Task>(colonists[index]);
+						const bool		 newPick   = task.instanceId != 0 && task.instanceId != instances[index];
+						const bool		 onThePath = freshPick ? newPick : task.instanceId == instances[index];
+						pathHeld = pathHeld && onThePath && task.timeSinceEvaluation <= 1.0F && task.type == ecs::TaskType::FulfillNeed;
+						instances[index] = task.instanceId;
+					}
+					return pathHeld;
 				}
 			);
 			if (!times.allDecided) {
-				state.SkipWithError("an update did not re-decide every colonist onto a need");
+				state.SkipWithError(
+					freshPick ? "an update did not make every colonist a new pick serving a need"
+							  : "an update did not keep every colonist's task serving a need"
+				);
 				break;
 			}
 			report(state, times, colonistCount, *world.getComponent<ecs::DecisionTrace>(colonists.front()));
+			state.counters["freshPick"]		= freshPick ? 1.0 : 0.0;
 			state.counters["edibleSources"] = kBushes + kPiles;
 			state.counters["waterSources"]	= kWaters;
-			benchmark::DoNotOptimize(iteration);
 		}
 		ecs::GoalTaskRegistry::Get().clear();
 	}
@@ -291,7 +319,7 @@ namespace {
 			return;
 		}
 
-		for (auto iteration : state) {
+		for (auto _ : state) {
 			ecs::GoalTaskRegistry::Get().clear();
 			ecs::World			   world;
 			ecs::AIDecisionSystem& decisions =
@@ -318,12 +346,12 @@ namespace {
 			}
 			report(state, times, colonistCount, *world.getComponent<ecs::DecisionTrace>(colonists.front()));
 			state.counters["remembered"] = remembered;
-			benchmark::DoNotOptimize(iteration);
+			state.counters["waters"]	 = waters;
 		}
 		ecs::GoalTaskRegistry::Get().clear();
 	}
 
 } // namespace
 
-BENCHMARK(BM_NeedDecision)->Arg(1)->Arg(8)->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_NeedDecision)->ArgsProduct({{1, 8}, {0, 1}})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_IdleDecision)->ArgsProduct({{1, 8}, {1000, 10000}})->Iterations(1)->Unit(benchmark::kMillisecond);

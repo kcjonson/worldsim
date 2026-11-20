@@ -9,12 +9,14 @@
 // 400 adds the understory of a dense forest, about 1,100 placed things in a 30 m sight. range(0)
 // colonists, 2 m apart across the stand's middle, walk east at 2 m/s with vision passing every 5 frames
 // at 60 fps (interval 1 here, 1/12 s a pass), for 600 passes (100 m). Ahead of the first colonist, every
-// fourth placed thing within 10 m of his line is taken from the placement index once it is 20 m ahead
-// of him, as a harvest would, so the next pass sees it gone and forgets it.
+// second tree within 10 m of his line is taken from the placement index once it is 20 m ahead of him, as
+// felling one does, so the next pass sees it gone and forgets it. Bushes regrow in place (their harvest
+// leaves them in the index) and ground flora is never remembered, so neither is taken.
 //
 // Reports the first pass (every colonist remembering a whole view), the walk's passes (mean, p99,
-// worst), what the first colonist sees at the start and remembers at the end, and how many things were
-// taken. The run fails if he still remembers one that was taken.
+// worst), what the first colonist sees at the start and remembers at the end, the trees taken, and his
+// forgets of them. The run fails if he remembers nothing, if a tree is taken that he did not know, or if
+// he still remembers one that was taken.
 
 #include "VisionSystem.h"
 
@@ -57,6 +59,8 @@ namespace {
 	constexpr float kHarvestAheadM	= 20.0F;
 
 	constexpr std::array<const char*, 3> kFloraDefs{"BenchVision_Tree", "BenchVision_Bush", "BenchVision_Flower"};
+	constexpr std::size_t				 kTreeKind	 = 0;
+	constexpr std::size_t				 kBushKind	 = 1;
 	constexpr std::size_t				 kFlowerKind = 2;
 
 	std::uint32_t hashU32(std::uint32_t value) {
@@ -94,6 +98,10 @@ namespace {
 				if (kind != kFlowerKind) {
 					flora.capabilities.harvestable				 = assets::HarvestableCapability{};
 					flora.capabilities.harvestable->yieldDefName = "BenchVision_Yield";
+				}
+				if (kind == kBushKind) {
+					flora.capabilities.harvestable->destructive	 = false;
+					flora.capabilities.harvestable->regrowthTime = 600.0F;
 				}
 				registry.registerTestDefinition(std::move(flora));
 			}
@@ -151,7 +159,7 @@ namespace {
 		registerFlora();
 		auto& registry = assets::AssetRegistry::Get();
 
-		for (auto iteration : state) {
+		for (auto _ : state) {
 			assets::PlacementExecutor				   executor(registry);
 			std::unordered_set<world::ChunkCoordinate> processed;
 			const std::vector<Placed>				   placed = placeStand(density, executor, processed);
@@ -180,26 +188,36 @@ namespace {
 				inView += glm::dot(thing.position, thing.position) <= ecs::kDefaultSightRadius * ecs::kDefaultSightRadius ? 1 : 0;
 			}
 			std::vector<Placed> harvests;
-			for (std::size_t index = 0; index < placed.size(); ++index) {
-				const Placed& thing = placed[index];
-				if (index % 4 == 0 && thing.position.x > kHarvestAheadM && std::abs(thing.position.y) <= kHarvestBandM) {
+			std::size_t			trees = 0;
+			for (const Placed& thing : placed) {
+				if (thing.defName != kFloraDefs[kTreeKind]) {
+					continue;
+				}
+				if (trees++ % 2 == 0 && thing.position.x > kHarvestAheadM && std::abs(thing.position.y) <= kHarvestBandM) {
 					harvests.push_back(thing);
 				}
 			}
 			std::sort(harvests.begin(), harvests.end(), [](const Placed& first, const Placed& second) { return first.position.x < second.position.x; });
 
+			const ecs::Memory&	memory	   = *world.getComponent<ecs::Memory>(lead);
+			const auto			knownToLead = [&](const Placed& thing) { return memory.knowsWorldEntity(thing.position, registry.getDefNameId(thing.defName)); };
 			std::vector<double> passUs;
 			passUs.reserve(kPasses);
-			double		firstPassUs = 0.0;
-			std::size_t nextHarvest = 0;
-			for (int pass = 0; pass <= kPasses; ++pass) {
+			double				firstPassUs	  = 0.0;
+			std::size_t			nextHarvest	  = 0;
+			std::size_t			forgets		  = 0;
+			bool				takenUnknown  = false;
+			std::vector<Placed> awaitingForget;
+			for (int pass = 0; pass <= kPasses && !takenUnknown; ++pass) {
 				const float walked = kWalkMps * kPassSeconds * static_cast<float>(pass);
 				for (const ecs::EntityID colonist : colonists) {
 					world.getComponent<ecs::Position>(colonist)->value.x = walked;
 				}
 				while (nextHarvest < harvests.size() && harvests[nextHarvest].position.x <= walked + kHarvestAheadM) {
 					const Placed& taken = harvests[nextHarvest++];
+					takenUnknown		= takenUnknown || !knownToLead(taken);
 					executor.removeEntity(world::worldToChunk({taken.position.x, taken.position.y}), taken.position, taken.defName);
+					awaitingForget.push_back(taken);
 				}
 				const Clock::time_point start = Clock::now();
 				vision.update(kPassSeconds);
@@ -209,15 +227,19 @@ namespace {
 				} else {
 					passUs.push_back(elapsed);
 				}
+				forgets += static_cast<std::size_t>(std::erase_if(awaitingForget, [&](const Placed& thing) { return !knownToLead(thing); }));
 			}
 
-			const ecs::Memory& memory			= *world.getComponent<ecs::Memory>(lead);
-			std::size_t		   stillRemembered = 0;
-			for (std::size_t index = 0; index < nextHarvest; ++index) {
-				stillRemembered += memory.knowsWorldEntity(harvests[index].position, registry.getDefNameId(harvests[index].defName)) ? 1 : 0;
+			if (takenUnknown) {
+				state.SkipWithError("a tree was taken before the lead colonist knew it");
+				break;
 			}
-			if (stillRemembered > 0) {
-				state.SkipWithError("the lead colonist still remembers something taken in his sight");
+			if (memory.worldEntityCount() == 0) {
+				state.SkipWithError("the lead colonist remembers nothing");
+				break;
+			}
+			if (!awaitingForget.empty()) {
+				state.SkipWithError("the lead colonist still remembers a tree taken in his sight");
 				break;
 			}
 			state.counters["colonists"]	   = colonistCount;
@@ -229,7 +251,7 @@ namespace {
 			state.counters["passMaxUs"]	   = atPercentile(passUs, 1.0);
 			state.counters["remembered"]   = static_cast<double>(memory.worldEntityCount());
 			state.counters["taken"]		   = static_cast<double>(nextHarvest);
-			benchmark::DoNotOptimize(iteration);
+			state.counters["forgets"]	   = static_cast<double>(forgets);
 		}
 	}
 

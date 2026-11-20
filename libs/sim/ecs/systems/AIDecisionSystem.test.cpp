@@ -1248,7 +1248,8 @@ namespace ecs::test {
 		constexpr uint64_t kPerColonist = kPiles + kTrees;
 		EXPECT_EQ(workSourceVisits() - visitsBefore, 2 * kPerColonist);
 		// The thirsty colonist's search asks about the nearest 8 of the 9,990 waters (kNearestOfCount) and
-		// stops; the lean one knows no water, and neither knows food.
+		// stops; the lean one knows no water, and neither knows food. A literal, so a change to the constant
+		// is caught too.
 		EXPECT_EQ(needSourceVisits() - needVisitsBefore, 8U);
 #endif
 	}
