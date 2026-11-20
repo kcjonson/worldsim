@@ -557,20 +557,6 @@ namespace worldview {
 
 	std::uint32_t followedCorner(const vision::SightBody& body, std::uint32_t buildCorner, int litTurn, glm::dvec2 eyeMm) {
 		const std::size_t count = body.edges.size();
-		// The edge that starts where `corner`'s edge ends: outlines list each loop's edges in order, so it
-		// is the next one round its loop, found by the previous-edge links.
-		const auto nextOf = [&](std::uint32_t corner) {
-			const std::uint32_t guess = static_cast<std::uint32_t>((corner + 1) % count);
-			if (body.previousEdge[guess] == corner) {
-				return guess;
-			}
-			for (std::uint32_t edge = 0; edge < count; ++edge) {
-				if (body.previousEdge[edge] == corner) {
-					return edge;
-				}
-			}
-			return corner;
-		};
 		std::uint32_t corner = buildCorner;
 		std::uint32_t came = buildCorner;
 		for (std::size_t step = 0; step < count; ++step) {
@@ -586,7 +572,7 @@ namespace worldview {
 			if (!nextLit && !previousLit) {
 				return corner;
 			}
-			const std::uint32_t after = nextOf(corner);
+			const std::uint32_t after = vision::nextEdgeOf(body, corner);
 			std::uint32_t		onward = corner;
 			if (nextLit && after != came) {
 				onward = after;

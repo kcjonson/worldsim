@@ -1,5 +1,6 @@
 #include "SightBody.h"
 
+#include <predicates/Predicates.h>
 #include <visibility/SightClip.h>
 
 #include <glm/geometric.hpp>
@@ -50,7 +51,69 @@ namespace vision {
 			const double	 t		= length > 0.0 ? std::clamp(glm::dot(point - from, along) / length, 0.0, 1.0) : 0.0;
 			return glm::length(point - (from + t * along));
 		}
+
+		// Whether a face from `from` to `to` goes on straight to `beyond`: onward, and `beyond` within
+		// kFaceStraightMm of its line.
+		bool goesOnTo(const geometry::Vec2i64& from, const geometry::Vec2i64& to, const geometry::Vec2i64& beyond) {
+			const glm::dvec2 along	= toDouble(to) - toDouble(from);
+			const glm::dvec2 onward = toDouble(beyond) - toDouble(to);
+			const double	 length = glm::length(along);
+			return length > 0.0 && glm::dot(along, onward) > 0.0 && std::abs(crossOf(along, onward)) <= kFaceStraightMm * length;
+		}
 	} // namespace
+
+	std::uint32_t nextEdgeOf(const SightBody& body, std::uint32_t edge) {
+		const auto	  count = static_cast<std::uint32_t>(body.edges.size());
+		std::uint32_t guess = (edge + 1) % count;
+		if (body.previousEdge[guess] == edge) {
+			return guess;
+		}
+		for (std::uint32_t other = 0; other < count; ++other) {
+			if (body.previousEdge[other] == edge) {
+				return other;
+			}
+		}
+		return edge;
+	}
+
+	Face faceOf(const SightBody& body, std::uint32_t edge) {
+		Face		  face{body.edges[edge].a, body.edges[edge].b};
+		std::uint32_t last	= edge;
+		std::uint32_t first = edge;
+		for (std::size_t step = 1; step < body.edges.size(); ++step) {
+			const std::uint32_t next = nextEdgeOf(body, last);
+			if (next == first || !goesOnTo(face.from, face.to, body.edges[next].b)) {
+				break;
+			}
+			face.to = body.edges[next].b;
+			last	= next;
+		}
+		for (std::size_t step = 1; step < body.edges.size(); ++step) {
+			const std::uint32_t previous = body.previousEdge[first];
+			if (previous == last || !goesOnTo(face.to, face.from, body.edges[previous].a)) {
+				break;
+			}
+			face.from = body.edges[previous].a;
+			first	  = previous;
+		}
+		return face;
+	}
+
+	void appendFaces(const SightBody& body, std::vector<Face>& out) {
+		for (std::uint32_t edge = 0; edge < body.edges.size(); ++edge) {
+			const Face face = faceOf(body, edge);
+			if (face.from == body.edges[edge].a) {
+				out.push_back(face);
+			}
+		}
+	}
+
+	bool liesOnAFace(std::span<const Face> faces, const geometry::Vec2i64& from, const geometry::Vec2i64& to) {
+		return std::ranges::any_of(faces, [&](const Face& face) {
+			return geometry::withinDistanceOfSegment(from, face.from, face.to, kFaceDriftMm) &&
+				   geometry::withinDistanceOfSegment(to, face.from, face.to, kFaceDriftMm);
+		});
+	}
 
 	geometry::Int128 diameterSquared(std::span<const geometry::Vec2i64> vertices) {
 		geometry::Int128 greatest(0);

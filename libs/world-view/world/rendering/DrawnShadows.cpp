@@ -30,28 +30,26 @@ namespace worldview {
 			return glm::length(point - (from + share * along));
 		}
 
-		// The edge of the body's outline that starts where `corner`'s ends.
-		std::uint32_t nextEdgeOf(const vision::SightBody& body, std::uint32_t corner) {
-			const auto	  count = static_cast<std::uint32_t>(body.edges.size());
-			std::uint32_t guess = (corner + 1) % count;
-			if (body.previousEdge[guess] == corner) {
-				return guess;
-			}
-			for (std::uint32_t edge = 0; edge < count; ++edge) {
-				if (body.previousEdge[edge] == corner) {
-					return edge;
-				}
-			}
-			return corner;
-		}
-
-		// Whether `apex` lies on one of the faces within two of `corner`: the two before it and the two after.
+		// Whether `apex` lies on one of the faces within two of `corner`: the two before it and the two
+		// after, each a whole straight side of the outline (vision::faceOf), so a room's face of three
+		// collinear edges counts as one.
 		bool onFaceNear(const vision::SightBody& body, std::uint32_t corner, glm::dvec2 apex) {
-			const std::uint32_t before = body.previousEdge[corner];
-			const std::uint32_t twoBefore = body.previousEdge[before];
-			const std::uint32_t after = nextEdgeOf(body, corner);
-			for (const std::uint32_t edge : {twoBefore, before, corner, after}) {
-				if (distanceToSegment(apex, toDouble(body.edges[edge].a), toDouble(body.edges[edge].b)) <= kEaseFaceSlackMm) {
+			const std::uint32_t firstBefore = body.previousEdge[corner];
+			const vision::Face	before = vision::faceOf(body, firstBefore);
+			const vision::Face	after = vision::faceOf(body, corner);
+			// The face before `before` starts where `before` does; the one after `after` from where it ends.
+			std::uint32_t twoBeforeEdge = firstBefore;
+			while (body.edges[twoBeforeEdge].a != before.from) {
+				twoBeforeEdge = body.previousEdge[twoBeforeEdge];
+			}
+			std::uint32_t twoAfterEdge = corner;
+			while (body.edges[twoAfterEdge].b != after.to) {
+				twoAfterEdge = vision::nextEdgeOf(body, twoAfterEdge);
+			}
+			const vision::Face twoBefore = vision::faceOf(body, body.previousEdge[twoBeforeEdge]);
+			const vision::Face twoAfter = vision::faceOf(body, vision::nextEdgeOf(body, twoAfterEdge));
+			for (const vision::Face& face : {twoBefore, before, after, twoAfter}) {
+				if (distanceToSegment(apex, toDouble(face.from), toDouble(face.to)) <= kEaseFaceSlackMm) {
 					return true;
 				}
 			}

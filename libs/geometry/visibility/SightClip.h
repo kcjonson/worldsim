@@ -9,6 +9,12 @@
 
 namespace geometry {
 
+	// The most millimetre steps a crossing takes onto the inner side of both lines.
+	constexpr int kClipInwardSteps = 8;
+	// How far a crossing can lie from the star edge it was cut from: its rounding, half a millimetre's
+	// diagonal, and then its steps, a millimetre each.
+	constexpr double kClipCrossingDriftMm = 0.7072 + static_cast<double>(kClipInwardSteps);
+
 	// The part of `star` inside `convex`, counter-clockwise. `star` winds counter-clockwise round
 	// `centre` and is star-shaped round it up to the millimetre snapping of a visibility polygon's
 	// hits; `convex` is a convex ring, counter-clockwise, with `centre` strictly inside. Both are

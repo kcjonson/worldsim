@@ -900,3 +900,69 @@ TEST(CoverPieces, ARenumberingKeepsAnotherBuildingsEase) {
 	EXPECT_NEAR(drawn.shadows.edges()[0].ease, 0.5, 1e-9) << "the ease taken up, not started again";
 	EXPECT_EQ(drawn.shadows.edges()[0].band.apex, apex);
 }
+
+// Walking west past a room's north-west corner, the silhouette's west end switches from that corner to
+// the south-west one along the west face, which is three edges (a junction's short end at each corner
+// and the wall between). A build lands one frame after the switch, its edge tagged at the south-west
+// corner while the apex has eased only 114 mm, still on the north-west junction's short end: the face is
+// the whole straight run, so the build takes the ease up and the apex never jumps. Each frame it moves
+// at most the face's 5.2 m times that frame's walk over shadowCornerEaseMm.
+TEST(CoverPieces, ACornerSwitchAlongARoomsFaceNeverSnaps) {
+	// The room's outer outline, 7 x 5 m inside walls 0.2 m thick, counter-clockwise.
+	const std::vector<Vec2i64> outline = {
+		{20900, 4900},
+		{21100, 4900},
+		{27900, 4900},
+		{28100, 4900},
+		{28100, 5100},
+		{28100, 9900},
+		{28100, 10100},
+		{27900, 10100},
+		{21100, 10100},
+		{20900, 10100},
+		{20900, 9900},
+		{20900, 5100}
+	};
+	std::vector<vision::SightBody> bodies = {bodyOf(outline, vision::BodyKind::Opaque, 3)};
+	bodies[0].source = vision::SightBody::Source::Wall;
+	const vision::SightTunables tunables;
+	constexpr double			kStepMm = 33.0;
+	constexpr int				kFramesABuild = 15;
+	// Frame 104 is the first west of the face's line at x = 20.9 m, and a build lands at frame 105.
+	constexpr double kStartMm = 20900.0 + kStepMm * 104.0 - 10.0;
+	const auto		 eyeAt = [&](int frame) { return glm::dvec2{kStartMm - kStepMm * static_cast<double>(frame), 0.0}; };
+	// The silhouette's end on the west side, from the first eye, and that end's corner from each build's.
+	const std::optional<vision::Silhouette> first = vision::silhouetteFrom(bodies[0], eyeAt(0));
+	ASSERT_TRUE(first.has_value());
+	const bool westIsClockwise = outline[first->clockwise].x < outline[first->counterClockwise].x;
+	const int  litTurn = westIsClockwise ? -1 : 1;
+	ASSERT_EQ(outline[westIsClockwise ? first->clockwise : first->counterClockwise], (Vec2i64{20900, 4900}));
+
+	const double					maxStep = 5200.0 * kStepMm / static_cast<double>(tunables.shadowCornerEaseMm) + 1e-6;
+	Drawn							drawn;
+	std::vector<vision::ShadowEdge> edges;
+	std::uint64_t					revision = 0;
+	Vec2i64							buildEye{0, 0};
+	std::optional<glm::dvec2>		lastApex;
+	for (int frame = 0; frame < 170; ++frame) {
+		const glm::dvec2 eye = eyeAt(frame);
+		if (frame % kFramesABuild == 0) {
+			const std::optional<vision::Silhouette> silhouette = vision::silhouetteFrom(bodies[0], eye);
+			ASSERT_TRUE(silhouette.has_value());
+			edges = {{.body = 0, .corner = westIsClockwise ? silhouette->clockwise : silhouette->counterClockwise, .litTurn = litTurn}};
+			buildEye = {std::llround(eye.x), std::llround(eye.y)};
+			++revision;
+		}
+		const ecs::VisionSystem::SightBodies sight{
+			.bodies = &bodies, .shadowEdges = &edges, .leadMm = 670, .reachMm = 30800, .eyeCentre = buildEye
+		};
+		drawn.step(sight, revision, eye, frame == 0 ? 0.0 : kStepMm, tunables);
+		ASSERT_EQ(drawn.shadows.edges().size(), 1U) << "frame " << frame;
+		const glm::dvec2 apex = drawn.shadows.edges()[0].band.apex;
+		if (lastApex.has_value()) {
+			EXPECT_LE(glm::length(apex - *lastApex), maxStep) << "frame " << frame;
+		}
+		lastApex = apex;
+	}
+	EXPECT_EQ(*lastApex, glm::dvec2(20900.0, 10100.0)) << "the ease reached the south-west corner";
+}

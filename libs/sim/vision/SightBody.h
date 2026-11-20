@@ -9,6 +9,7 @@
 #include <core/Int128.h>
 #include <core/Vec2i64.h>
 #include <visibility/ForestDepth.h>
+#include <visibility/SightClip.h>
 #include <visibility/Visibility.h>
 
 #include <glm/vec2.hpp>
@@ -52,6 +53,32 @@ namespace vision {
 		// How far a placed ring has come in since it arrived (2.4), of geometry::kFractionOne.
 		std::int64_t arrival = geometry::kFractionOne;
 	};
+
+	// The edge that starts where `edge` ends: the next one round its loop.
+	[[nodiscard]] std::uint32_t nextEdgeOf(const SightBody& body, std::uint32_t edge);
+
+	// One straight side of a body's outline (sight-softening.md 3.1, 7.2): the run of edges `edge` lies
+	// in that go on in a straight line, each corner along it turning by under kFaceStraightMm, from the
+	// first edge's start to the last's end. A wall's straight side is often several edges, the short ends
+	// of a junction at each corner and the wall between, or one wall drawn in two strokes.
+	struct Face {
+		geometry::Vec2i64 from{0, 0};
+		geometry::Vec2i64 to{0, 0};
+	};
+	constexpr double   kFaceStraightMm = 1.0;
+	[[nodiscard]] Face faceOf(const SightBody& body, std::uint32_t edge);
+
+	// Each of the body's faces once.
+	void appendFaces(const SightBody& body, std::vector<Face>& out);
+
+	// How far a side of a colonist's bright shape that lies on a face can have its ends off it (7.2): a
+	// visibility polygon's hit is snapped to the millimetre, half its diagonal, and then three clips each
+	// may cut the side and move its end by kClipCrossingDriftMm (vision's forest clip, then the drawn disc
+	// and the eased rim), each cutting a side whose ends the one before may have moved. Rounded up.
+	constexpr std::int64_t kFaceDriftMm = static_cast<std::int64_t>(0.7072 + 3.0 * geometry::kClipCrossingDriftMm) + 1;
+
+	// Whether the side from `from` to `to` lies along one of `faces`, both ends within kFaceDriftMm of it.
+	[[nodiscard]] bool liesOnAFace(std::span<const Face> faces, const geometry::Vec2i64& from, const geometry::Vec2i64& to);
 
 	// A side of a build's polygon that runs out along a ray from the build eye past an opaque body's
 	// corner (3.1): the body's index in the list it was tagged against, the corner's index in that

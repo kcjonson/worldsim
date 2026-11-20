@@ -144,7 +144,7 @@ namespace geometry {
 		// A rounded crossing of the star's edge and a side of the convex ring, moved a millimetre at a
 		// time onto the inner side of both, so it lies in both rings' closed areas near the crossing.
 		Vec2i64 insideBoth(Vec2i64 point, const Vec2i64& edgeFrom, const Vec2i64& edgeTo, const Vec2i64& sideFrom, const Vec2i64& sideTo) {
-			for (int step = 0; step < 8; ++step) {
+			for (int step = 0; step < kClipInwardSteps; ++step) {
 				if (orientation(edgeFrom, edgeTo, point) == Orientation::Clockwise) {
 					stepInward(point, edgeFrom, edgeTo);
 				} else if (orientation(sideFrom, sideTo, point) == Orientation::Clockwise) {

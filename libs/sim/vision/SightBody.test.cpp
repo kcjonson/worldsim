@@ -191,3 +191,63 @@ TEST(PlacedOccluderIndex, AddsMeasuresFindsAndRemovesBySerial) {
 	index.within({15000, 500}, 600, found);
 	EXPECT_EQ(found.size(), 1U);
 }
+
+namespace {
+
+	// A 4 x 3 m room of 0.2 m walls, its doorway 1 m wide in the south wall from x 1.5 to 2.5 m, as one
+	// outline: the outer side, in through the doorway, round the inner side, and out. The west outer face
+	// is three edges, a junction's short end at each corner and the wall between.
+	SightBody roomWithADoorway() {
+		return placedBody(
+			{{-100, -100},
+			 {4100, -100},
+			 {4100, 3100},
+			 {2500, 3100},
+			 {2500, 2900},
+			 {3900, 2900},
+			 {3900, 100},
+			 {100, 100},
+			 {100, 2900},
+			 {1500, 2900},
+			 {1500, 3100},
+			 {-100, 3100},
+			 {-100, 2900},
+			 {-100, 100}},
+			BodyKind::Opaque
+		);
+	}
+
+} // namespace
+
+// A face is the whole straight run of an outline's edges, so the west face of three edges is one face,
+// and the south face either side of the doorway is two.
+TEST(SightBody, AFaceIsTheWholeStraightRunOfEdges) {
+	const SightBody room = roomWithADoorway();
+	for (const std::uint32_t edge : {11U, 12U, 13U}) {
+		const vision::Face face = vision::faceOf(room, edge);
+		EXPECT_EQ(face.from, (Vec2i64{-100, 3100})) << "edge " << edge;
+		EXPECT_EQ(face.to, (Vec2i64{-100, -100})) << "edge " << edge;
+	}
+	EXPECT_EQ(vision::faceOf(room, 2).from, (Vec2i64{4100, 3100}));
+	EXPECT_EQ(vision::faceOf(room, 2).to, (Vec2i64{2500, 3100})) << "the south face stops at the doorway";
+	std::vector<vision::Face> faces;
+	vision::appendFaces(room, faces);
+	EXPECT_EQ(faces.size(), 12U) << "fourteen edges, the west face's three as one";
+}
+
+// A side lies on a face when both its ends are within the clips' drift of one face (sight-softening.md
+// 7.2): the whole west face, and the face with its ends moved 20 mm off; not a side running on past the
+// corner into open air, one 40 mm off, one across the doorway between the south face's two runs, nor
+// one that leaves the face across open ground.
+TEST(SightBody, ASideLiesOnAFaceWithinTheClipsDriftAndNoFurther) {
+	std::vector<vision::Face> faces;
+	vision::appendFaces(roomWithADoorway(), faces);
+	// Half a millimetre's diagonal for the snap, then three clips each of that and 8 steps of 1 mm.
+	EXPECT_EQ(vision::kFaceDriftMm, 27);
+	EXPECT_TRUE(vision::liesOnAFace(faces, {-100, 3100}, {-100, -100}));
+	EXPECT_TRUE(vision::liesOnAFace(faces, {-120, 3000}, {-80, 0}));
+	EXPECT_FALSE(vision::liesOnAFace(faces, {-100, 3100}, {-100, -1000})) << "on past the corner";
+	EXPECT_FALSE(vision::liesOnAFace(faces, {-140, 3000}, {-140, 0})) << "40 mm off";
+	EXPECT_FALSE(vision::liesOnAFace(faces, {3000, 3100}, {1000, 3100})) << "across the doorway";
+	EXPECT_FALSE(vision::liesOnAFace(faces, {-100, 2000}, {-2000, 0})) << "off across the ground";
+}
