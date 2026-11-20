@@ -8,6 +8,7 @@
 #include <pugixml.hpp>
 
 #include <algorithm>
+#include <cassert>
 #include <string_view>
 #include <utility>
 
@@ -80,6 +81,8 @@ namespace assets {
 	}
 
 	const MoodBand& MoodConfig::bandFor(float mood) const {
+		// ConfigValidator::validateMood rejects a config with no bands, so back() below always has one.
+		assert(!bandList.empty() && "bandFor on a mood config that isn't loaded");
 		for (const MoodBand& band : bandList) {
 			if (mood >= band.from) {
 				return band;

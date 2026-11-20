@@ -207,7 +207,7 @@ if (!configErrors.empty()) {
 Every way a game load fails goes through the loading scene's one `fail(messages)`, which logs each message at
 error level, keeps them for the scene's state view, and moves to the `Failed` phase. The causes are the asset
 library's validation errors and the recipes' errors (prefixed `[recipes]`, read by `world_sim::stepGroundBake` from
-`RecipeRegistry::problems()`, which the asset system's load fills), a failed ground bake (when a `--scene` jump skipped the splash), a missing or
+`RecipeRegistry::problems()`, which the asset system's load fills), a failed ground bake (when a `--scene` jump or a dev switch skipped the splash), a missing or
 unreadable quickstart planet, and the config errors above: `loadWorkConfig`'s and `ecs::loadColonistRules`'s, each prefixed with its stage.
 
 `Failed` hides the status line and the bar and shows a `world_sim::LoadFailureView`

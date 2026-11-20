@@ -26,6 +26,7 @@ namespace world_sim {
 	/// Where the ground bake stands after a step.
 	struct GroundBakeStep {
 		bool					 done = false; // nothing left to run
+		bool					 waitingForAssets = false; // the asset library is still loading, so nothing ran
 		std::vector<std::string> errors;	   // once done: the asset library's validation and recipe errors, else the bake's
 	};
 

@@ -47,7 +47,7 @@ namespace world_sim {
 		const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
 		// A dev switch from the splash can reach the loading scene while the library still loads on its worker.
 		if (registry.loadProgress().started.load() && !registry.isLoadComplete()) {
-			return {};
+			return {.waitingForAssets = true};
 		}
 		const assets::ValidationReport& report = registry.getValidationReport();
 		const std::vector<std::string>& recipeProblems = assets::RecipeRegistry::Get().problems();

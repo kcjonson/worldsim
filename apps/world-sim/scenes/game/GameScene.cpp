@@ -47,7 +47,6 @@
 #include <world/chunk/ChunkManager.h>
 #include <world/rendering/ChunkRenderer.h>
 #include <world/rendering/EntityRenderer.h>
-#include <world/rendering/GroundTileBank.h>
 #include <world/rendering/PackagedLayout.h> // crate footprint (drop spacing)
 #include <world/rendering/PileLayout.h>	   // pile footprint (drop spacing)
 #include <world/rendering/TemplateBounds.h>
@@ -58,7 +57,6 @@
 #include <assets/MoodConfig.h>
 #include <assets/RecipeRegistry.h>
 #include <assets/placement/AsyncChunkProcessor.h>
-#include <assets/placement/CanopyCover.h>
 #include <assets/placement/PlacementExecutor.h>
 
 // ECS

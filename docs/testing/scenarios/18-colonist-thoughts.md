@@ -50,9 +50,12 @@ Launch `world-sim --scene=game --background --no-settings` (RelWithDebInfo); the
 
 A fresh launch at the splash, `world-sim --background --no-settings`, port 8081.
 
-1. `/api/control?action=scene&scene=game` while the splash shows: ok, and `/api/state?what=scene` names `gameloading`.
-2. `/api/state?what=colonists` while it loads: a 404 naming no state provider, and the game still answers.
-3. Once `/api/state?what=scene` names `game`: `/api/state?what=colonists` lists Bob with a `mood.band` name.
+1. `/api/control?action=scene&scene=game` while the splash shows: ok.
+2. `/api/state?what=scene`: it names `gameloading`.
+3. `/api/state?what=colonists` while it loads: a 404 naming no state provider.
+4. `/api/state?what=scene`: the game still answers.
+5. Once `/api/state?what=scene` names `game`: `/api/state?what=colonists` lists Bob with a `mood.band` name.
+6. `/api/control?action=reload`: the loading scene shows, and a Quick Start world loads after it.
 
 ### Pruning
 
