@@ -12,7 +12,6 @@
 #include "nav/NavInputBuilder.h"
 
 #include <assets/ConstructionRegistry.h>
-#include <predicates/Predicates.h>
 #include <visibility/ForestShape.h>
 #include <visibility/SightClip.h>
 #include <visibility/SightPolygon.h>

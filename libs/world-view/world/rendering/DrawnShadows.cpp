@@ -29,14 +29,40 @@ namespace worldview {
 			return glm::length(point - (from + share * along));
 		}
 
+		bool onFace(glm::dvec2 apex, const vision::Face& face) {
+			return distanceToSegment(apex, toDouble(face.from), toDouble(face.to)) <= kEaseFaceSlackMm;
+		}
+
+		// Whether `first` turns left into `second` at their shared corner: with the solid on the left of
+		// the outline, a convex corner, so a straight line from one face to the other runs through the body.
+		bool convexBetween(const vision::Face& first, const vision::Face& second) {
+			const glm::dvec2 into = toDouble(first.to) - toDouble(first.from);
+			const glm::dvec2 onward = toDouble(second.to) - toDouble(second.from);
+			return into.x * onward.y - into.y * onward.x > 0.0;
+		}
+
 		// Whether `apex` lies on one of the two faces (vision::Face, a whole straight side of the outline)
-		// that meet at `corner`: an ease along one face, never across a notch's open ground.
+		// that meet at `corner`, or on the face beyond one of those across a convex corner, as a wall's end
+		// cap is: the ease runs along a face or through the body, never across a notch's open ground,
+		// whose inner corner is reflex.
 		bool onFaceNear(const vision::SightBody& body, std::uint32_t corner, glm::dvec2 apex) {
 			const geometry::Vec2i64 point = body.edges[corner].a;
-			return std::ranges::any_of(body.faces, [&](const vision::Face& face) {
-				return (face.from == point || face.to == point) &&
-					   distanceToSegment(apex, toDouble(face.from), toDouble(face.to)) <= kEaseFaceSlackMm;
-			});
+			for (const vision::Face& meeting : body.faces) {
+				if (meeting.from != point && meeting.to != point) {
+					continue;
+				}
+				if (onFace(apex, meeting)) {
+					return true;
+				}
+				const bool ending = meeting.to == point;
+				for (const vision::Face& beyond : body.faces) {
+					const bool joined = ending ? beyond.to == meeting.from : beyond.from == meeting.to;
+					if (joined && (ending ? convexBetween(beyond, meeting) : convexBetween(meeting, beyond)) && onFace(apex, beyond)) {
+						return true;
+					}
+				}
+			}
+			return false;
 		}
 
 	} // namespace

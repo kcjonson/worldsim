@@ -1042,6 +1042,41 @@ TEST(CoverPieces, AnEaseNeverCrossesAnLsNotch) {
 	expectNoEaseAcrossTheNotch(corners, 2, 4, {10000.0, -2500.0}, {10000.0, -1500.0});
 }
 
+// Close round a thin wall's end (4 m long, 0.15 m thick), a build tags the silhouette's end at the far
+// corner of the face he has been looking along, (0, -0.075) m, and the next, after he has crossed the
+// lines of both faces at the near end, tags the end's other corner (4, 0.075) m: the switch skips the
+// end cap. The cap's corner is convex, so the running ease is taken up, and the apex never moves more in
+// a frame than the ease allows across the wall's diagonal; it never snaps the wall's length.
+TEST(CoverPieces, AnEaseRoundAThinWallsEndNeverSnaps) {
+	const std::vector<vision::SightBody> bodies = {rectangleBody(2000.0, 0.0, 4000.0, 150.0, vision::BodyKind::Opaque)};
+	const vision::SightTunables			 tunables;
+	const glm::dvec2					 firstEye{4400.0, -100.0};
+	const glm::dvec2					 secondEye{3900.0, 400.0};
+	ASSERT_EQ(vision::silhouetteFrom(bodies[0], firstEye)->counterClockwise, 0U);
+	ASSERT_EQ(vision::silhouetteFrom(bodies[0], secondEye)->counterClockwise, 2U);
+	std::vector<vision::ShadowEdge> edges = {{.body = 0, .corner = 0, .litTurn = 1}};
+	const auto						sight = [&](glm::dvec2 eye) {
+		 return ecs::VisionSystem::SightBodies{
+			 .bodies = &bodies, .shadowEdges = &edges, .leadMm = 670, .reachMm = 30800, .eyeCentre = {std::llround(eye.x), std::llround(eye.y)}
+		 };
+	};
+	constexpr double kStepMm = 33.0;
+	const double	 maxStep = std::hypot(4000.0, 150.0) * kStepMm / static_cast<double>(tunables.shadowCornerEaseMm) + 1e-6;
+	Drawn			 drawn;
+	drawn.step(sight(firstEye), 1, firstEye, 0.0, tunables);
+	glm::dvec2 last = drawn.shadows.edges()[0].band.apex;
+	ASSERT_EQ(last, glm::dvec2(0.0, -75.0));
+	edges = {{.body = 0, .corner = 2, .litTurn = 1}};
+	for (int frame = 1; frame <= 60; ++frame) {
+		drawn.step(sight(secondEye), 2, secondEye, kStepMm, tunables);
+		ASSERT_EQ(drawn.shadows.edges().size(), 1U);
+		const glm::dvec2 apex = drawn.shadows.edges()[0].band.apex;
+		EXPECT_LE(glm::length(apex - last), maxStep) << "frame " << frame;
+		last = apex;
+	}
+	EXPECT_EQ(last, glm::dvec2(4000.0, 75.0)) << "the ease reached the new corner";
+}
+
 // A U whose notch opens on its +y side: walking across the line of its two outer tips, the silhouette's
 // end switches from (0, 6) m to (6, 6) m, five faces apart round the notch, and the ease is not taken
 // across its mouth.

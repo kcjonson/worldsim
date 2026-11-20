@@ -1452,6 +1452,10 @@ TEST(PlayerVisibilitySystem, AFaceCutShortByTheForestRimIsNotRim) {
 		const std::optional<VisionSystem::SightShape> shape = colony.vision.sightShape(colonist);
 		ASSERT_TRUE(shape.has_value());
 		ASSERT_NE(shape->forest, nullptr) << "his sight is in forest";
+		ASSERT_NE(shape->polygonRim, nullptr) << "the forest shape of his reach cut the polygon, and the drawn shape reads it as a cutting ring";
+		// One side a forest shape side kept, at most 64 (an edge the others enclose is dropped).
+		EXPECT_GE(shape->polygonRim->size(), 3U);
+		EXPECT_LE(shape->polygonRim->size(), geometry::kSightSides);
 		const PlayerVisibilitySystem::DrawnShape* drawn = colony.visibility.drawnVisible(colonist);
 		ASSERT_NE(drawn, nullptr);
 		// A Standard wall is 0.2 m thick: its west face is 0.1 m off its line.
