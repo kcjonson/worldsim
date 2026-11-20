@@ -42,11 +42,13 @@ namespace worldview {
 	// each cut where it meets the others, a piece kept when the point just off its middle on its outer
 	// side lies in no shape (for the record's pieces) or in neither the record (`inRecord`) nor another
 	// shape (for a shape's). A point on a shape's side counts as in it. Each shape must be simple; either
-	// winding is taken.
+	// winding is taken. With `region` boxes given, only the pieces meeting one are tested and kept: a cut
+	// redone where its shapes changed, the pieces elsewhere being the last cut's.
 	void cutSeenBoundary(
 		std::span<const std::vector<geometry::Vec2i64>* const> shapes,
 		std::span<const DirectedEdge>						   recordEdges,
 		const std::function<bool(const geometry::Vec2i64&)>&   inRecord,
+		std::span<const vision::SeenArea::Box>				   region,
 		std::vector<DirectedEdge>&							   out,
 		SeenCutCounts&										   counts
 	);
@@ -77,13 +79,16 @@ namespace worldview {
 		// One cluster of pending shapes whose feathers can touch: its cut's pieces, their meshes about
 		// `anchor`, and the shapes grown by the feather, where the cells give way to it.
 		struct Cluster {
-			geometry::Vec2i64						   low{0, 0};
-			geometry::Vec2i64						   high{0, 0};
-			geometry::Vec2i64						   anchor{0, 0};
-			std::vector<ValueTriangle>				   pieces;
-			std::vector<Renderer::InstancedMeshHandle> meshes;
-			std::vector<std::vector<glm::dvec2>>	   grown;
-			std::uint64_t							   frame = 0;
+			geometry::Vec2i64							low{0, 0};
+			geometry::Vec2i64							high{0, 0};
+			geometry::Vec2i64							anchor{0, 0};
+			std::vector<ValueTriangle>					pieces;
+			std::vector<Renderer::InstancedMeshHandle>	meshes;
+			std::vector<std::vector<glm::dvec2>>		grown;
+			std::vector<std::vector<geometry::Vec2i64>> cut;	  // its shapes as last cut
+			std::vector<DirectedEdge>					boundary; // the cut's pieces of the union's boundary
+			bool										built = false;
+			std::uint64_t								frame = 0;
 		};
 		struct Counts {
 			std::size_t	  cellsDrawn = 0;
@@ -117,7 +122,6 @@ namespace worldview {
 		// The cells and clusters to draw this frame.
 		[[nodiscard]] const std::vector<const Cell*>&	 cellsInView() const { return drawnCells; }
 		[[nodiscard]] const std::vector<const Cluster*>& clustersInView() const { return drawnClusters; }
-		void											 appendPendingPieces(std::vector<ValueTriangle>& out) const;
 		[[nodiscard]] const Counts&						 counts() const { return frameCounts; }
 		// The pending shapes in view, as the record handed them out this frame.
 		[[nodiscard]] const std::vector<const std::vector<geometry::Vec2i64>*>& pendingInView() const { return pendingNear; }
@@ -144,7 +148,7 @@ namespace worldview {
 		std::vector<std::uint64_t>						   hashes;
 		std::vector<DirectedEdge>						   edges;
 		std::vector<const std::vector<geometry::Vec2i64>*> shapes;
-		std::vector<DirectedEdge>						   boundary;
+		std::vector<vision::SeenArea::Box>				   region;
 	};
 
 } // namespace worldview

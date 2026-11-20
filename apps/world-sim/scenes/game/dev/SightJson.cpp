@@ -88,8 +88,8 @@ namespace world_sim {
 		out += ",\"counts\":{\"colonists\":" + count(counts.colonists) + ",\"featherPieces\":" + count(counts.featherPieces) +
 			   ",\"softBodies\":" + count(counts.softBodies) + ",\"shadowEdges\":" + count(counts.shadowEdges) +
 			   ",\"softPieces\":" + count(counts.softPieces) + ",\"bandPieces\":" + count(counts.bandPieces) +
-			   ",\"featherRebuilds\":" + count(counts.featherRebuilds) + ",\"softBodiesBuilt\":" + count(counts.softBodiesBuilt) +
-			   ",\"softBodiesDue\":" + count(counts.softBodiesDue) + ",\"softOldestDueFrames\":" + std::to_string(counts.softOldestDueFrames) +
+			   ",\"featherRebuilds\":" + count(counts.featherRebuilds) + ",\"softRingsBuilt\":" + count(counts.softRingsBuilt) +
+			   ",\"softRingsDue\":" + count(counts.softRingsDue) + ",\"softBodiesBuilt\":" + count(counts.softBodiesBuilt) + ",\"softOldestDueFrames\":" + std::to_string(counts.softOldestDueFrames) +
 			   ",\"bandRebuilds\":" + count(counts.bandRebuilds) + ",\"softPiecesBuilt\":" + count(counts.softPiecesBuilt) +
 			   ",\"piecesBuilt\":" + count(counts.piecesBuilt) + ",\"meshUploads\":" + count(counts.meshUploads) +
 			   ",\"tintElements\":" + count(counts.tintElements) + ",\"unseenElements\":" + count(counts.unseenElements) +
@@ -116,16 +116,15 @@ namespace world_sim {
 			out += ",\"softPieces\":" + count(colonist.shadows != nullptr ? colonist.shadows->softPieceCount() : 0) + ",\"bandPieces\":" + count(colonist.shadows != nullptr ? colonist.shadows->bandPieces().size() : 0) + ",\"soft\":[";
 			if (colonist.shadows != nullptr) {
 				bool first = true;
-				for (const auto& [key, soft] : colonist.shadows->softBodies()) {
-					if (!soft.drawn) {
-						continue;
-					}
+				for (std::size_t ring = 0; ring < worldview::DrawnShadows::kSoftRings; ++ring) {
+					for (const worldview::DrawnShadows::SoftDrawn& soft : colonist.shadows->rings()[ring].drawn) {
 					out += first ? "" : ",";
 					first = false;
 					out += "{\"serial\":" + std::to_string(soft.bodyId) + ",\"diameterMm\":" + std::to_string(soft.diameterMm) +
 						   ",\"widthAsSeenMm\":" + number(soft.shadow.widthAsSeen) + ",\"distanceMm\":" + number(soft.shadow.distance) +
-						   ",\"footValue\":" + number(soft.shadow.footValue) + ",\"footOnScreen\":" + number(soft.shadow.footValue * worldview::kSeenDimAlpha) +
-						   ",\"shadowLengthMm\":" + number(soft.shadow.shadowLength) + "}";
+						   ",\"footMask\":" + number(soft.shadow.footValue) + ",\"footOnScreen\":" + number(soft.shadow.footValue * worldview::kSeenDimAlpha) +
+						   ",\"shadowLengthMm\":" + number(soft.shadow.shadowLength) + ",\"pieces\":" + std::to_string(soft.pieces) + ",\"ring\":" + std::to_string(ring) + ",\"home\":" + (soft.home ? "true" : "false") + "}";
+					}
 				}
 			}
 			out += "],\"edges\":[";

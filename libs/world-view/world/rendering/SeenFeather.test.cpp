@@ -107,7 +107,9 @@ TEST_F(SeenFeatherTest, ThePendingCutDrawsTheUnionsBoundaryAlone) {
 	EXPECT_EQ(feather->counts().pendingShapes, 1U);
 	EXPECT_EQ(feather->counts().clustersCut, 1U);
 	std::vector<ValueTriangle> pending;
-	feather->appendPendingPieces(pending);
+	for (const worldview::SeenFeather::Cluster* cluster : feather->clustersInView()) {
+		pending.insert(pending.end(), cluster->pieces.begin(), cluster->pieces.end());
+	}
 	EXPECT_EQ(valueOrZero(pending, {10000.0, 0.0}), 0.0) << "no seam on the record's edge inside the pending square";
 	EXPECT_EQ(valueOrZero(pending, {7500.0, 0.0}), 0.0) << "no seam on the pending side inside the record";
 	EXPECT_NEAR(valueOrZero(pending, {10000.0, 4250.0}), 0.5, 1e-6) << "the pending square's top side";

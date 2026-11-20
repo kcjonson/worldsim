@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <tuple>
 
 namespace worldview {
@@ -12,13 +13,49 @@ namespace worldview {
 
 		// A band and a fin reach this far past the bright shape's farthest point from the apex.
 		constexpr double kBandPastBrightMm = 1000.0;
-		// What a soft body never built is taken to cost, in pieces, against the budget a frame.
+		// What a ring never built is taken to cost, in pieces a body, against the budget a frame.
 		constexpr std::size_t kDueBodyLeastPieces = 8;
-		// The width of each ring of soft bodies by distance; the last ring holds the rest.
-		constexpr double kSoftRingWidthMm = 6000.0;
+		// How far a running ease's apex may lie from a new build's shadow edge to be taken up: on a face
+		// within two of its corner.
+		constexpr double kEaseFaceSlackMm = 2.0;
 
 		glm::dvec2 toDouble(const geometry::Vec2i64& point) {
 			return {static_cast<double>(point.x), static_cast<double>(point.y)};
+		}
+
+		double distanceToSegment(glm::dvec2 point, glm::dvec2 from, glm::dvec2 to) {
+			const glm::dvec2 along = to - from;
+			const double	 length = glm::dot(along, along);
+			const double	 share = length > 0.0 ? std::clamp(glm::dot(point - from, along) / length, 0.0, 1.0) : 0.0;
+			return glm::length(point - (from + share * along));
+		}
+
+		// The edge of the body's outline that starts where `corner`'s ends.
+		std::uint32_t nextEdgeOf(const vision::SightBody& body, std::uint32_t corner) {
+			const auto	  count = static_cast<std::uint32_t>(body.edges.size());
+			std::uint32_t guess = (corner + 1) % count;
+			if (body.previousEdge[guess] == corner) {
+				return guess;
+			}
+			for (std::uint32_t edge = 0; edge < count; ++edge) {
+				if (body.previousEdge[edge] == corner) {
+					return edge;
+				}
+			}
+			return corner;
+		}
+
+		// Whether `apex` lies on one of the faces within two of `corner`: the two before it and the two after.
+		bool onFaceNear(const vision::SightBody& body, std::uint32_t corner, glm::dvec2 apex) {
+			const std::uint32_t before = body.previousEdge[corner];
+			const std::uint32_t twoBefore = body.previousEdge[before];
+			const std::uint32_t after = nextEdgeOf(body, corner);
+			for (const std::uint32_t edge : {twoBefore, before, corner, after}) {
+				if (distanceToSegment(apex, toDouble(body.edges[edge].a), toDouble(body.edges[edge].b)) <= kEaseFaceSlackMm) {
+					return true;
+				}
+			}
+			return false;
 		}
 
 	} // namespace
@@ -27,9 +64,10 @@ namespace worldview {
 		const std::vector<CornerEase>& running = eases;
 		std::vector<CornerEase>		   next;
 		next.reserve(bodies.shadowEdges->size());
-		// Every new edge and running ease that may pair: same body and lit side, nearest first. The apex can
-		// lie on any face of the body: on a ring of many short faces a walk between two builds can carry the
-		// followed corner several corners on, and an ease dropped there would snap the band to its corner.
+		// Every new edge and running ease that may pair: same body and lit side, the apex or the corner it
+		// eases to on a face within two of the new corner, nearest first. A body's id names it only within one build of the walls'
+		// geometry, so the apex's place on this outline is what says the ease is this edge's: one from
+		// another building, or from a far corner of the same one, lies on none of these faces.
 		std::vector<std::tuple<double, std::size_t, std::size_t>> pairs;
 		for (std::size_t index = 0; index < bodies.shadowEdges->size(); ++index) {
 			const vision::ShadowEdge& edge = (*bodies.shadowEdges)[index];
@@ -38,7 +76,8 @@ namespace worldview {
 			next.push_back({.source = body.source, .bodyId = body.id, .litTurn = edge.litTurn, .buildCorner = body.edges[edge.corner].a});
 			for (std::size_t old = 0; old < running.size(); ++old) {
 				const CornerEase& ease = running[old];
-				if (!ease.started || ease.source != body.source || ease.bodyId != body.id || ease.litTurn != edge.litTurn) {
+				if (!ease.started || ease.source != body.source || ease.bodyId != body.id || ease.litTurn != edge.litTurn ||
+					!(onFaceNear(body, edge.corner, ease.apex) || onFaceNear(body, edge.corner, ease.target))) {
 					continue;
 				}
 				pairs.emplace_back(glm::length(ease.apex - corner), index, old);
@@ -62,6 +101,36 @@ namespace worldview {
 
 	std::uint64_t DrawnShadows::keyOf(const vision::SightBody& body) {
 		return (body.source == vision::SightBody::Source::Wall ? std::uint64_t{1} << 63U : 0U) | body.id;
+	}
+
+	std::uint64_t DrawnShadows::outlineOf(const vision::SightBody& body) {
+		std::uint64_t hash = 1469598103934665603ULL;
+		const auto	  mix = [&hash](std::uint64_t value) {
+			   hash ^= value;
+			   hash *= 1099511628211ULL;
+		};
+		for (const geometry::OccluderSegment& edge : body.edges) {
+			mix(static_cast<std::uint64_t>(edge.a.x));
+			mix(static_cast<std::uint64_t>(edge.a.y));
+		}
+		return hash;
+	}
+
+	double DrawnShadows::distanceOf(const vision::SightBody& body, glm::dvec2 eyeMm) {
+		return std::max(0.0, glm::length(toDouble(body.centre) - eyeMm) - static_cast<double>(body.diameterMm) / 2.0);
+	}
+
+	std::uint32_t DrawnShadows::ringsAt(double distanceMm) {
+		std::uint32_t rings = 0;
+		for (std::size_t ring = 0; ring < kSoftRings; ++ring) {
+			const double low = kSoftRingStartMm[ring] * (1.0 - kSoftRingOverlap);
+			const double high =
+				ring + 1 < kSoftRings ? kSoftRingStartMm[ring + 1] * (1.0 + kSoftRingOverlap) : std::numeric_limits<double>::infinity();
+			if (distanceMm >= low && distanceMm < high) {
+				rings |= 1U << ring;
+			}
+		}
+		return rings;
 	}
 
 	bool DrawnShadows::buildBands(const ecs::VisionSystem::SightBodies& bodies, double reachLimit, bool force) {
@@ -120,27 +189,67 @@ namespace worldview {
 
 	namespace {
 
-		// Whether a soft body can draw anything from `eyeMm`: some of it within `reachLimit`, and its
-		// triangle, at most its diameter wide and diameter x distance / (ray - diameter) long, a pixel
-		// or more on screen.
+		// Whether a soft body `distanceMm` off can draw anything: within `reachLimit`, and its triangle, at
+		// most its diameter wide and diameter x distance / (ray - diameter) long, a pixel or more on screen.
 		bool softBodyShows(
 			const vision::SightBody&	 body,
-			glm::dvec2					 eyeMm,
+			double						 distanceMm,
 			double						 reachLimit,
 			double						 pixelsPerMm,
 			const vision::SightTunables& tunables
 		) {
-			const double diameter = static_cast<double>(body.diameterMm);
-			const double distance = std::max(0.0, glm::length(toDouble(body.centre) - eyeMm) - diameter);
-			if (distance > reachLimit) {
+			if (distanceMm > reachLimit) {
 				return false;
 			}
+			const double diameter = static_cast<double>(body.diameterMm);
 			const double ray = static_cast<double>(tunables.softShadowRayWidthMm);
-			const double length = diameter < ray ? (distance + diameter) * diameter / (ray - diameter) : 0.0;
+			const double length = diameter < ray ? (distanceMm + diameter) * diameter / (ray - diameter) : 0.0;
 			return (diameter + length) * pixelsPerMm >= 1.0;
 		}
 
 	} // namespace
+
+	std::uint32_t DrawnShadows::ringsChangedBy(const ecs::VisionSystem::SightBodies& bodies) {
+		buildOutlines.clear();
+		std::uint32_t changed = 0;
+		// A body new to his build, or reshaped under the same key, that already lies inside his bright
+		// shape less the feather: one walking brings into reach is past the rim and waits for its ring.
+		const double showsWithin = frameReachLimit - static_cast<double>(frameTunables.sightFeatherMm);
+		for (const vision::SightBody& body : *bodies.bodies) {
+			if (body.kind != vision::BodyKind::Soft) {
+				continue;
+			}
+			const std::uint64_t key = keyOf(body);
+			const std::uint64_t outline = outlineOf(body);
+			buildOutlines.emplace(key, outline);
+			const auto known = knownOutlines.find(key);
+			if (known == knownOutlines.end() || known->second != outline) {
+				const double distance = distanceOf(body, frameEye);
+				if (distance <= showsWithin) {
+					changed |= ringsAt(distance);
+				}
+			}
+		}
+		// A member dropped or reshaped; its arrival changed while he stands.
+		std::unordered_map<std::uint64_t, std::int64_t> arrivals;
+		for (const vision::SightBody& body : *bodies.bodies) {
+			if (body.kind == vision::BodyKind::Soft) {
+				arrivals.emplace(keyOf(body), body.arrival);
+			}
+		}
+		for (std::size_t ring = 0; ring < kSoftRings; ++ring) {
+			for (const Member& member : softRings[ring].members) {
+				const auto now = buildOutlines.find(member.key);
+				if (now == buildOutlines.end() || now->second != member.outline ||
+					(stillFrames > 0 && arrivals.at(member.key) != member.arrival)) {
+					changed |= 1U << ring;
+					break;
+				}
+			}
+		}
+		std::swap(knownOutlines, buildOutlines);
+		return changed;
+	}
 
 	void DrawnShadows::update(
 		const ecs::VisionSystem::SightBodies& bodies,
@@ -164,116 +273,109 @@ namespace worldview {
 		for (CornerEase& ease : eases) {
 			ease.walkedMm += walkedMm;
 		}
-		const bool newBuild = !built || buildRevision != lastBuild;
+		stillFrames = walkedMm > 0.0 ? 0 : stillFrames + 1;
+		// He has stopped once a few frames pass with no walk: one frame without a step is not a stop.
+		const bool	  stopped = stillFrames == kStillFramesToStop;
+		const bool	  newBuild = !built || buildRevision != lastBuild;
+		std::uint32_t due = 0;
 		if (newBuild) {
 			takeUpEases(bodies);
 			lastBuild = buildRevision;
+			due |= ringsChangedBy(bodies);
 		}
 		built = true;
-
-		// The soft bodies: dropped when the build no longer holds them, due when new, moved past, changed,
-		// crossing a pixel or the reach, or when he stops. A frame that changes none of what decides that
-		// looks at no body.
-		const bool retuned = !(tunables == softTunables);
-		const bool stopped = walking && walkedMm == 0.0;
-		const bool looked =
-			newBuild || retuned || stopped || walkedMm > 0.0 || pixelsPerMm != lookedPixelsPerMm || frameReachLimit != lookedReachLimit;
-		walking = walkedMm > 0.0;
 		frameCounts.bandsRebuilt = buildBands(bodies, frameReachLimit, newBuild);
-		if (!looked) {
-			return;
+
+		const bool retuned = !(tunables == softTunables);
+		if (retuned || pixelsPerMm != lookedPixelsPerMm || frameReachLimit != lookedReachLimit) {
+			due = (1U << kSoftRings) - 1U;
 		}
+		softTunables = tunables;
 		lookedPixelsPerMm = pixelsPerMm;
 		lookedReachLimit = frameReachLimit;
-		if (newBuild) {
-			bodyIndex.clear();
-			for (std::size_t index = 0; index < bodies.bodies->size(); ++index) {
-				if ((*bodies.bodies)[index].kind == vision::BodyKind::Soft) {
-					bodyIndex.emplace(keyOf((*bodies.bodies)[index]), index);
-				}
-			}
-		}
-		for (auto it = soft.begin(); it != soft.end();) {
-			if (!bodyIndex.contains(it->first)) {
-				frameCounts.softChangedRings |= 1U << it->second.ring;
-				it = soft.erase(it);
-			} else {
-				++it;
-			}
-		}
 		const double fraction = static_cast<double>(tunables.softShadowRebuildPercent) / 100.0;
-		softTunables = tunables;
-		for (const auto& [key, index] : bodyIndex) {
-			const vision::SightBody& body = (*bodies.bodies)[index];
-			auto [entry, fresh] = soft.try_emplace(key);
-			SoftDrawn& drawn = entry->second;
-			bool	   due = fresh || retuned || drawn.builtArrival != body.arrival || (stopped && drawn.builtFrom != eyeMm);
-			if (!due) {
-				const bool shows = softBodyShows(body, eyeMm, frameReachLimit, pixelsPerMm, tunables);
-				due = shows != drawn.shows ||
-					  (drawn.drawn && glm::length(eyeMm - drawn.builtFrom) > fraction * std::max(drawn.shadow.distance, 1.0));
-			}
-			if (due && drawn.dueSince == 0) {
-				drawn.dueSince = frame;
+		for (std::size_t index = 0; index < kSoftRings; ++index) {
+			Ring&		 ring = softRings[index];
+			const double cadence = fraction * std::max(kSoftRingStartMm[index] * (1.0 - kSoftRingOverlap), kSoftRingLeastDistanceMm);
+			const bool	 isDue = (due & (1U << index)) != 0U || !ring.built || (stopped && ring.builtFrom != eyeMm) ||
+							   (walkedMm > 0.0 && glm::length(eyeMm - ring.builtFrom) > cadence);
+			if (isDue && ring.dueSince == 0) {
+				ring.dueSince = frame;
 			}
 		}
 	}
 
 	void DrawnShadows::appendDue(std::vector<Due>& out) const {
-		for (const auto& [key, drawn] : soft) {
-			if (drawn.dueSince != 0) {
-				out.push_back(
-					{.since = drawn.dueSince, .key = key, .pieces = std::max<std::size_t>(drawn.pieces.size(), kDueBodyLeastPieces)}
-				);
-			}
-		}
-	}
-
-	std::size_t DrawnShadows::build(std::uint64_t key) {
-		const auto found = soft.find(key);
-		const auto index = bodyIndex.find(key);
-		if (found == soft.end() || index == bodyIndex.end()) {
-			return 0;
-		}
-		const vision::SightBody& body = (*frameBodies.bodies)[index->second];
-		SoftDrawn&				 drawn = found->second;
-		drawn.pieces.clear();
-		drawn.drawn = false;
-		frameCounts.softChangedRings |= 1U << drawn.ring;
-		drawn.shows = softBodyShows(body, frameEye, frameReachLimit, framePixelsPerMm, frameTunables);
-		if (drawn.shows) {
-			const std::optional<SoftShadow> shadow = appendSoftShadow(body, frameEye, frameTunables, frameBright, drawn.pieces);
-			if (shadow.has_value() && shadow->distance <= frameReachLimit) {
-				drawn.shadow = *shadow;
-				drawn.drawn = true;
-				drawn.ring = std::min<std::size_t>(kSoftRings - 1, static_cast<std::size_t>(shadow->distance / kSoftRingWidthMm));
-				frameCounts.softChangedRings |= 1U << drawn.ring;
-			} else {
-				drawn.pieces.clear();
-			}
-		}
-		drawn.bodyId = body.id;
-		drawn.diameterMm = body.diameterMm;
-		drawn.builtFrom = frameEye;
-		drawn.builtArrival = body.arrival;
-		drawn.dueSince = 0;
-		++frameCounts.softBuilt;
-		return drawn.pieces.size();
-	}
-
-	void DrawnShadows::appendSoftPieces(std::size_t ring, std::vector<ValueTriangle>& out) const {
-		for (const auto& [key, drawn] : soft) {
-			if (drawn.ring != ring) {
+		for (std::size_t index = 0; index < kSoftRings; ++index) {
+			const Ring& ring = softRings[index];
+			if (ring.dueSince == 0) {
 				continue;
 			}
-			out.insert(out.end(), drawn.pieces.begin(), drawn.pieces.end());
+			// A ring never built is taken at its bodies now, kDueBodyLeastPieces a body.
+			std::size_t bodies = ring.members.size();
+			if (!ring.built) {
+				bodies = static_cast<std::size_t>(std::ranges::count_if(*frameBodies.bodies, [&](const vision::SightBody& body) {
+					return body.kind == vision::BodyKind::Soft && (ringsAt(distanceOf(body, frameEye)) & (1U << index)) != 0U;
+				}));
+			}
+			out.push_back({.since = ring.dueSince, .ring = index, .pieces = std::max(ring.pieces.size(), bodies * kDueBodyLeastPieces)});
 		}
+	}
+
+	std::size_t DrawnShadows::build(std::size_t index) {
+		Ring& ring = softRings[index];
+		ring.pieces.clear();
+		ring.drawn.clear();
+		ring.members.clear();
+		for (const vision::SightBody& body : *frameBodies.bodies) {
+			if (body.kind != vision::BodyKind::Soft) {
+				continue;
+			}
+			// One distance decides the ring, the reach, and the pixel: a body that shows is built, and one
+			// that does not is a member all the same, so its ring's cadence brings it in when it does.
+			const double distance = distanceOf(body, frameEye);
+			if ((ringsAt(distance) & (1U << index)) == 0U) {
+				continue;
+			}
+			ring.members.push_back({.key = keyOf(body), .outline = outlineOf(body), .arrival = body.arrival});
+			if (!softBodyShows(body, distance, frameReachLimit, framePixelsPerMm, frameTunables)) {
+				continue;
+			}
+			const std::size_t				before = ring.pieces.size();
+			const std::optional<SoftShadow> shadow = appendSoftShadow(body, frameEye, frameTunables, frameBright, ring.pieces);
+			if (shadow.has_value()) {
+				const bool home =
+					distance >= kSoftRingStartMm[index] && (index + 1 == kSoftRings || distance < kSoftRingStartMm[index + 1]);
+				ring.drawn.push_back(
+					{.bodyId = body.id,
+					 .diameterMm = body.diameterMm,
+					 .shadow = *shadow,
+					 .pieces = ring.pieces.size() - before,
+					 .home = home}
+				);
+			}
+			++frameCounts.bodiesBuilt;
+		}
+		ring.builtFrom = frameEye;
+		ring.built = true;
+		ring.dueSince = 0;
+		frameCounts.softChangedRings |= 1U << index;
+		++frameCounts.ringsBuilt;
+		return ring.pieces.size();
 	}
 
 	std::size_t DrawnShadows::softPieceCount() const {
 		std::size_t count = 0;
-		for (const auto& [key, drawn] : soft) {
-			count += drawn.pieces.size();
+		for (const Ring& ring : softRings) {
+			count += ring.pieces.size();
+		}
+		return count;
+	}
+
+	std::size_t DrawnShadows::softBodyCount() const {
+		std::size_t count = 0;
+		for (const Ring& ring : softRings) {
+			count += static_cast<std::size_t>(std::ranges::count_if(ring.drawn, [](const SoftDrawn& drawn) { return drawn.home; }));
 		}
 		return count;
 	}

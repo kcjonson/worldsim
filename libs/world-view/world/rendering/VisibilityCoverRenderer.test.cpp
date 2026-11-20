@@ -28,6 +28,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <iostream>
 #include <map>
 #include <memory>
 #include <numbers>
@@ -250,8 +251,8 @@ namespace {
 			double			 darkness = greatestAt(*colonist.feather, millimetres - anchor);
 			if (colonist.shadows != nullptr) {
 				std::vector<worldview::ValueTriangle> soft;
-				for (std::size_t ring = 0; ring < worldview::DrawnShadows::kSoftRings; ++ring) {
-					colonist.shadows->appendSoftPieces(ring, soft);
+				for (const worldview::DrawnShadows::Ring& ring : colonist.shadows->rings()) {
+					soft.insert(soft.end(), ring.pieces.begin(), ring.pieces.end());
 				}
 				darkness = std::max({darkness, greatestAt(soft, millimetres), greatestAt(colonist.shadows->bandPieces(), millimetres)});
 			}
@@ -309,6 +310,77 @@ TEST_F(VisibilityCoverTest, AStillColonistBuildsNothingOnceSettled) {
 
 // A colonist who leaves the view and comes back builds nothing for it: his pieces and meshes are kept
 // while he lives.
+// Uploads go by what changed: a settled colonist who steps 150 mm, past the nearest ring's cadence
+// (100 mm) and short of the next (360 mm), rebuilds and uploads that ring alone, not his far trunks.
+TEST_F(VisibilityCoverTest, AStepUploadsTheNearRingAlone) {
+	place({2.5F, 1.0F}, 0.4F);
+	for (float x = 10.0F; x <= 26.0F; x += 4.0F) {
+		place({x, 5.0F}, 0.4F);
+		place({x, -5.0F}, 0.4F);
+	}
+	const ecs::EntityID colonist = addColonist({0.0F, 0.0F});
+	for (int settle = 0; settle < 20; ++settle) {
+		world.update(0.016F);
+		frame();
+	}
+	ASSERT_EQ(cover->colonists().size(), 1U);
+	ASSERT_GT(cover->colonists()[0].shadows->rings()[0].pieces.size(), 0U);
+	world.getComponent<ecs::Position>(colonist)->value.x += 0.15F;
+	world.update(0.016F);
+	frame();
+	EXPECT_EQ(cover->counts().softRingsBuilt, 1U);
+	EXPECT_EQ(cover->colonists()[0].shadows->counts().softChangedRings, 1U) << "the nearest ring";
+	EXPECT_LE(cover->counts().meshUploads, 2U) << "that ring, and at most his feather and bands";
+}
+
+// The pending cut at the record's edge, by counts (sight-softening.md 7.2, proposal 54): 1, 10, and
+// 50 colonists walking out of the landing into unexplored ground, the view on them. Every walker's open
+// leg is a pending shape at the record's edge, so their cut reads the record's edge there each frame
+// one of them moves.
+TEST_F(VisibilityCoverTest, ThePendingCutAtTheRecordsEdgeByCounts) {
+	for (const auto& [walkers, moving] : {std::pair{1, 1}, std::pair{10, 10}, std::pair{50, 50}, std::pair{50, 1}}) {
+		std::vector<ecs::EntityID> colonists;
+		for (int index = 0; index < walkers; ++index) {
+			colonists.push_back(addColonist({140.0F, static_cast<float>(index) * 1.2F - static_cast<float>(walkers) * 0.6F}));
+		}
+		camera.setPosition({150.0F, 0.0F});
+		for (int settle = 0; settle < 5; ++settle) {
+			world.update(1.0F / 60.0F);
+			frame();
+		}
+		std::size_t frames = 0;
+		std::size_t clustersCut = 0;
+		std::size_t sides = 0;
+		std::size_t sidesMost = 0;
+		std::size_t edges = 0;
+		std::size_t edgesMost = 0;
+		double		microseconds = 0.0;
+		for (int step = 0; step < 180; ++step) {
+			for (int index = 0; index < moving; ++index) {
+				world.getComponent<ecs::Position>(colonists[static_cast<std::size_t>(index)])->value.x += 2.0F / 60.0F;
+			}
+			world.update(1.0F / 60.0F);
+			frame();
+			const worldview::SeenFeather::Counts& counts = cover->seenFeather().counts();
+			++frames;
+			clustersCut += counts.clustersCut;
+			sides += counts.cut.shapeSides;
+			sidesMost = std::max(sidesMost, counts.cut.shapeSides);
+			edges += counts.cut.recordEdges;
+			edgesMost = std::max(edgesMost, counts.cut.recordEdges);
+			microseconds += cover->counts().seenMicroseconds;
+		}
+		std::cout << "pending cut, " << walkers << " at the edge, " << moving << " walking out: clusters cut " << static_cast<double>(clustersCut) / static_cast<double>(frames)
+				  << " a frame, shape sides " << sides / frames << " (most " << sidesMost << "), record edges " << edges / frames << " (most "
+				  << edgesMost << "), " << microseconds / static_cast<double>(frames) << " us a frame\n";
+		EXPECT_GT(edges, 0U) << "at the record's edge the cut reads it";
+		for (const ecs::EntityID colonist : colonists) {
+			world.destroyEntity(colonist);
+		}
+		world.update(1.0F / 60.0F);
+	}
+}
+
 TEST_F(VisibilityCoverTest, LeavingTheViewKeepsHisPieces) {
 	place({6.0F, 2.0F}, 0.4F);
 	const ecs::EntityID colonist = addColonist({0.0F, 0.0F});
@@ -342,7 +414,7 @@ TEST_F(VisibilityCoverTest, FiftyWalkingKeepToTheBudgetAndEveryOneIsBuilt) {
 	for (int index = 0; index < 50; ++index) {
 		walkers.push_back(addColonist({static_cast<float>(index % 10) * 4.0F - 20.0F, static_cast<float>(index / 10) * 4.0F - 10.0F}));
 	}
-	constexpr std::size_t kOneBodyMostPieces = 200;
+	constexpr std::size_t kOneRingMostPieces = 2500;
 	constexpr int		  kFrames			 = 150;
 	constexpr int		  kWarmFrames		 = 60;
 	std::map<ecs::EntityID, int> builtLate;
@@ -355,17 +427,20 @@ TEST_F(VisibilityCoverTest, FiftyWalkingKeepToTheBudgetAndEveryOneIsBuilt) {
 		frame();
 		const VisibilityCoverRenderer::Counts& counts = cover->counts();
 		ASSERT_EQ(counts.colonists, 50U);
-		EXPECT_LE(counts.softPiecesBuilt, worldview::kDrawnShadowPiecesPerFrame + kOneBodyMostPieces) << "frame " << step;
+		// The budget lets in the longest due ring whatever its size, and others while they fit.
+		if (counts.softRingsBuilt > 1) {
+			EXPECT_LE(counts.softPiecesBuilt, worldview::kDrawnShadowPiecesPerFrame + kOneRingMostPieces) << "frame " << step;
+		}
 		// The next body is let in by its last count of pieces, so the budget left unspent is at most one
 		// body's.
-		if (counts.softBodiesDue > counts.softBodiesBuilt) {
+		if (counts.softRingsDue > counts.softRingsBuilt) {
 			++backlogFrames;
-			EXPECT_GE(counts.softPiecesBuilt + kOneBodyMostPieces, worldview::kDrawnShadowPiecesPerFrame) << "frame " << step << ": bodies wait, budget unspent";
+			EXPECT_GE(counts.softPiecesBuilt + kOneRingMostPieces, worldview::kDrawnShadowPiecesPerFrame) << "frame " << step << ": bodies wait, budget unspent";
 		}
 		if (step >= kWarmFrames) {
 			EXPECT_LE(counts.softOldestDueFrames, 60U) << "frame " << step;
 			for (const VisibilityCoverRenderer::ColonistCover& colonist : cover->colonists()) {
-				builtLate[colonist.colonist] += colonist.shadows->counts().softBuilt > 0 ? 1 : 0;
+				builtLate[colonist.colonist] += colonist.shadows->counts().ringsBuilt > 0 ? 1 : 0;
 			}
 		}
 	}

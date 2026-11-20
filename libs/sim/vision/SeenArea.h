@@ -351,6 +351,9 @@ namespace vision {
 		std::uint64_t										 sweepRuns = 0; // runs queued, the last one's id
 		std::vector<std::int32_t>							 registered; // ring ids, in the order they went in
 		std::vector<Box>									 registeredBoxes; // their boxes, in the same order
+		// The registered boxes by cell of K's grid, and the last registration that counted each.
+		std::map<std::pair<std::int64_t, std::int64_t>, std::vector<std::uint32_t>> ringBoxCells;
+		std::vector<std::uint32_t>													ringBoxCounted;
 		std::size_t											 ringsMetTotal	  = 0;
 		std::size_t											 ringsMetGreatest = 0;
 		std::size_t											 dropped = 0;

@@ -43,8 +43,6 @@ namespace ecs {
 
 namespace worldview {
 
-	// How dark seen ground out of sight is: the tint's alpha.
-	constexpr float kSeenDimAlpha = 0.5F;
 	// The colour of unseen ground.
 	constexpr Foundation::Color kUnseenColor{0.0F, 0.0F, 0.0F, 1.0F};
 
@@ -84,9 +82,9 @@ namespace worldview {
 	// nothing, so the game says so at start rather than showing everything revealed. Needs a GL context.
 	[[nodiscard]] bool coverTargetHoldsPartialMasks();
 
-	// The most soft-body pieces built in one frame, over every colonist in view, the longest due first;
-	// the rest wait. About 1.5 ms of building at about 0.4 us a piece.
-	constexpr std::size_t kDrawnShadowPiecesPerFrame = 4000;
+	// The most soft-body pieces built in one frame over every colonist in view, in whole rings, the
+	// longest due first: a ring is let in while its last count fits what is left, and the first always is.
+	constexpr std::size_t kDrawnShadowPiecesPerFrame = 8000;
 
 	class VisibilityCoverRenderer {
 	  public:
@@ -124,9 +122,10 @@ namespace worldview {
 			std::size_t bandPieces		= 0;
 			std::size_t featherRebuilds = 0; // colonists whose feather or bands were built this frame
 			std::size_t bandRebuilds	= 0;
-			std::size_t softBodiesBuilt = 0; // soft bodies built this frame
-			std::size_t softBodiesDue	= 0; // soft bodies due, built or carried over
-			std::uint64_t softOldestDueFrames = 0; // how many frames the longest due of them has waited
+			std::size_t softRingsBuilt	= 0; // colonists' rings of soft bodies built this frame
+			std::size_t softRingsDue	= 0; // rings due, built or carried over
+			std::size_t softBodiesBuilt = 0; // soft bodies those rings built
+			std::uint64_t softOldestDueFrames = 0; // how many frames the longest due ring has waited
 			std::size_t softPiecesBuilt = 0; // of which soft bodies' pieces, against kDrawnShadowPiecesPerFrame
 			std::size_t piecesBuilt		= 0; // pieces built this frame
 			std::size_t meshUploads		= 0; // meshes uploaded this frame

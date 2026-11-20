@@ -71,17 +71,6 @@ namespace worldview {
 			return true;
 		}
 
-		std::uint64_t hashOf(const std::vector<Vec2i64>& ring) {
-			std::uint64_t hash = 1469598103934665603ULL;
-			for (const Vec2i64& point : ring) {
-				for (const std::int64_t value : {point.x, point.y}) {
-					hash ^= static_cast<std::uint64_t>(value);
-					hash *= 1099511628211ULL;
-				}
-			}
-			return hash;
-		}
-
 		// A segment of the cut: its ends, whose it is (-1 the record's), and where along it it is split.
 		struct Segment {
 			Vec2i64				 start;
@@ -149,15 +138,51 @@ namespace worldview {
 			return rounded(from + along / 2.0 + glm::dvec2{along.y, -along.x} / length * kProbeMm);
 		}
 
+		// The box round what changed between a shape's last cut and now, the corners either has that the
+		// other lacks and the sides at them, grown a little past the cut's probe.
+		void
+		appendChangedBox(const std::vector<Vec2i64>& before, const std::vector<Vec2i64>& after, std::vector<vision::SeenArea::Box>& out) {
+			constexpr std::int64_t kChangedMarginMm = 10;
+			bool				   any = false;
+			Vec2i64				   low{0, 0};
+			Vec2i64				   high{0, 0};
+			const auto			   take = [&](const Vec2i64& point) {
+				low = any ? Vec2i64{std::min(low.x, point.x), std::min(low.y, point.y)} : point;
+				high = any ? Vec2i64{std::max(high.x, point.x), std::max(high.y, point.y)} : point;
+				any = true;
+			};
+			for (const auto& [ring, other] : {std::pair{&before, &after}, std::pair{&after, &before}}) {
+				for (std::size_t corner = 0; corner < ring->size(); ++corner) {
+					if (std::ranges::find(*other, (*ring)[corner]) == other->end()) {
+						take((*ring)[corner]);
+						take((*ring)[(corner + 1) % ring->size()]);
+						take((*ring)[(corner + ring->size() - 1) % ring->size()]);
+					}
+				}
+			}
+			if (any) {
+				out.push_back({low - Vec2i64{kChangedMarginMm, kChangedMarginMm}, high + Vec2i64{kChangedMarginMm, kChangedMarginMm}});
+			}
+		}
+
 	} // namespace
 
 	void cutSeenBoundary(
 		std::span<const std::vector<Vec2i64>* const> shapes,
 		std::span<const DirectedEdge>				 recordEdges,
 		const std::function<bool(const Vec2i64&)>&	 inRecord,
+		std::span<const vision::SeenArea::Box>		 region,
 		std::vector<DirectedEdge>&					 out,
 		SeenCutCounts&								 counts
 	) {
+		const auto inRegion = [&region](const Vec2i64& from, const Vec2i64& to) {
+			if (region.empty()) {
+				return true;
+			}
+			const Vec2i64 low{std::min(from.x, to.x), std::min(from.y, to.y)};
+			const Vec2i64 high{std::max(from.x, to.x), std::max(from.y, to.y)};
+			return std::ranges::any_of(region, [&](const vision::SeenArea::Box& box) { return boxesMeet(low, high, box.low, box.high); });
+		};
 		std::vector<std::vector<Vec2i64>> rings;
 		std::vector<Vec2i64>			  lows;
 		std::vector<Vec2i64>			  highs;
@@ -197,12 +222,39 @@ namespace worldview {
 			return;
 		}
 
+		// With a region, only the segments that can split a piece meeting it are cut: those meeting it, and
+		// those meeting the box round them, where their crossings lie.
+		std::vector<bool> wanted(segments.size(), region.empty());
+		if (!region.empty()) {
+			bool	any = false;
+			Vec2i64 around{0, 0};
+			Vec2i64 aroundHigh{0, 0};
+			for (const Segment& segment : segments) {
+				if (inRegion(segment.start, segment.end)) {
+					const Vec2i64 low{std::min(segment.start.x, segment.end.x), std::min(segment.start.y, segment.end.y)};
+					const Vec2i64 high{std::max(segment.start.x, segment.end.x), std::max(segment.start.y, segment.end.y)};
+					around = any ? Vec2i64{std::min(around.x, low.x), std::min(around.y, low.y)} : low;
+					aroundHigh = any ? Vec2i64{std::max(aroundHigh.x, high.x), std::max(aroundHigh.y, high.y)} : high;
+					any = true;
+				}
+			}
+			for (std::size_t index = 0; any && index < segments.size(); ++index) {
+				const Segment& segment = segments[index];
+				const Vec2i64  low{std::min(segment.start.x, segment.end.x), std::min(segment.start.y, segment.end.y)};
+				const Vec2i64  high{std::max(segment.start.x, segment.end.x), std::max(segment.start.y, segment.end.y)};
+				wanted[index] = boxesMeet(low, high, around, aroundHigh);
+			}
+		}
+
 		// Every pair of segments of different owners that can meet, found through a grid of their boxes.
 		std::unordered_map<std::uint64_t, std::vector<std::size_t>> grid;
 		const auto													keyOf = [](std::int64_t x, std::int64_t y) {
 			 return (static_cast<std::uint64_t>(x) << 32U) ^ (static_cast<std::uint64_t>(y) & 0xFFFFFFFFULL);
 		};
 		for (std::size_t index = 0; index < segments.size(); ++index) {
+			if (!wanted[index]) {
+				continue;
+			}
 			const Segment& segment = segments[index];
 			for (std::int64_t y = cellOf(std::min(segment.start.y, segment.end.y), kCutGridMm);
 				 y <= cellOf(std::max(segment.start.y, segment.end.y), kCutGridMm);
@@ -232,17 +284,50 @@ namespace worldview {
 			meet(segments[one], segments[two]);
 		}
 
-		const auto insideShape = [&](const Vec2i64& point, int except) {
-			for (std::size_t shape = 0; shape < rings.size(); ++shape) {
-				if (static_cast<int>(shape) != except && point.x >= lows[shape].x && point.x <= highs[shape].x &&
-					point.y >= lows[shape].y && point.y <= highs[shape].y &&
-					geometry::pointInPolygon(point, rings[shape]) != geometry::PointInPolygon::Outside) {
-					return true;
-				}
+		// Whether a point lies in a shape other than `except`, a side counting as in: by the sides a ray
+		// from it toward +x crosses, read from rows of kCutGridMm, so a probe reads the sides of its row
+		// and not every side of every shape in the cluster.
+		std::unordered_map<std::int64_t, std::vector<std::size_t>> rows;
+		for (std::size_t index = 0; index < segments.size(); ++index) {
+			const Segment& segment = segments[index];
+			if (segment.owner < 0) {
+				continue;
 			}
-			return false;
+			for (std::int64_t row = cellOf(std::min(segment.start.y, segment.end.y), kCutGridMm);
+				 row <= cellOf(std::max(segment.start.y, segment.end.y), kCutGridMm);
+				 ++row) {
+				rows[row].push_back(index);
+			}
+		}
+		std::vector<std::uint8_t> parity(rings.size(), 0);
+		const auto				  insideShape = [&](const Vec2i64& point, int except) {
+			   const auto found = rows.find(cellOf(point.y, kCutGridMm));
+			   if (found == rows.end()) {
+				   return false;
+			   }
+			   std::ranges::fill(parity, std::uint8_t{0});
+			   for (const std::size_t index : found->second) {
+				   const Segment& segment = segments[index];
+				   if (segment.owner == except) {
+					   continue;
+				   }
+				   const int side = geometry::cross(segment.end - segment.start, point - segment.start).sign();
+				   if (side == 0 && (point == segment.start || point == segment.end || strictlyWithin(point, segment.start, segment.end))) {
+					   return true;
+				   }
+				   const bool upward = segment.start.y <= point.y && segment.end.y > point.y;
+				   const bool downward = segment.end.y <= point.y && segment.start.y > point.y;
+				   if ((upward && side > 0) || (downward && side < 0)) {
+					   parity[static_cast<std::size_t>(segment.owner)] ^= 1U;
+				   }
+			   }
+			   return std::ranges::any_of(parity, [](std::uint8_t odd) { return odd != 0U; });
 		};
-		for (Segment& segment : segments) {
+		for (std::size_t index = 0; index < segments.size(); ++index) {
+			if (!wanted[index]) {
+				continue;
+			}
+			Segment&				 segment = segments[index];
 			std::vector<std::size_t> order(segment.splits.size());
 			std::iota(order.begin(), order.end(), std::size_t{0});
 			std::ranges::sort(order, [&segment](std::size_t first, std::size_t second) {
@@ -251,7 +336,8 @@ namespace worldview {
 			Vec2i64 from = segment.start;
 			for (std::size_t piece = 0; piece <= order.size(); ++piece) {
 				const Vec2i64 to = piece < order.size() ? segment.splitPoints[order[piece]] : segment.end;
-				if (to == from) {
+				if (to == from || !inRegion(from, to)) {
+					from = to;
 					continue;
 				}
 				const Vec2i64 probe = outerProbe(from, to);
@@ -396,8 +482,21 @@ namespace worldview {
 				}
 			}
 		}
-		// Stale cells, which draw as they were, wait behind cells with nothing yet.
-		std::ranges::stable_partition(dueCells, [this](const std::pair<std::int64_t, std::int64_t>& cell) { return !cells[cell].built; });
+		// Cells with nothing yet first, nearest the view's centre first; stale cells, which draw as they
+		// were, wait behind them.
+		const Vec2i64 middle{(viewLow.x + viewHigh.x) / 2, (viewLow.y + viewHigh.y) / 2};
+		const auto	  fromMiddle = [&middle](const std::pair<std::int64_t, std::int64_t>& cell) {
+			   const double x = static_cast<double>(cell.first * kSeenFeatherCellMm + kSeenFeatherCellMm / 2 - middle.x);
+			   const double y = static_cast<double>(cell.second * kSeenFeatherCellMm + kSeenFeatherCellMm / 2 - middle.y);
+			   return x * x + y * y;
+		};
+		std::ranges::sort(
+			dueCells, [&](const std::pair<std::int64_t, std::int64_t>& first, const std::pair<std::int64_t, std::int64_t>& second) {
+				const bool firstBuilt = cells[first].built;
+				const bool secondBuilt = cells[second].built;
+				return firstBuilt != secondBuilt ? !firstBuilt : fromMiddle(first) < fromMiddle(second);
+			}
+		);
 		bool		rebuiltAny = false;
 		std::size_t rebuiltEdges = 0;
 		for (std::size_t index = 0; index < dueCells.size(); ++index) {
@@ -478,14 +577,21 @@ namespace worldview {
 			if (indices.empty()) {
 				continue;
 			}
+			// A cluster is known by which shapes it holds, so a leg that moves keeps its cluster and its
+			// cut is redone only where its shapes changed (7.2).
 			hashes.clear();
 			Vec2i64 low = lows[indices.front()];
 			Vec2i64 high = highs[indices.front()];
 			for (const std::size_t index : indices) {
-				hashes.push_back(hashOf(*pendingNear[index]));
+				hashes.push_back(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pendingNear[index])));
 				low = {std::min(low.x, lows[index].x), std::min(low.y, lows[index].y)};
 				high = {std::max(high.x, highs[index].x), std::max(high.y, highs[index].y)};
 			}
+			shapes.clear();
+			for (const std::size_t index : indices) {
+				shapes.push_back(pendingNear[index]);
+			}
+			std::ranges::sort(shapes);
 			std::ranges::sort(hashes);
 			std::uint64_t key = 1469598103934665603ULL;
 			for (const std::uint64_t hash : hashes) {
@@ -493,29 +599,56 @@ namespace worldview {
 				key *= 1099511628211ULL;
 			}
 			++frameCounts.clusters;
-			auto [found, fresh] = clusters.try_emplace(key);
-			Cluster& cluster = found->second;
-			if (fresh) {
+			Cluster& cluster = clusters[key];
+			region.clear();
+			bool whole = !cluster.built || cluster.cut.size() != shapes.size();
+			for (std::size_t shape = 0; !whole && shape < shapes.size(); ++shape) {
+				if (*shapes[shape] != cluster.cut[shape]) {
+					appendChangedBox(cluster.cut[shape], *shapes[shape], region);
+				}
+			}
+			if (whole || !region.empty()) {
 				edges.clear();
 				seen.appendEdges(low, high, edges);
 				std::erase_if(edges, [&](const DirectedEdge& edge) {
 					const Vec2i64 edgeLow{std::min(edge.first.x, edge.second.x), std::min(edge.first.y, edge.second.y)};
 					const Vec2i64 edgeHigh{std::max(edge.first.x, edge.second.x), std::max(edge.first.y, edge.second.y)};
+					if (!whole) {
+						return std::ranges::none_of(region, [&](const vision::SeenArea::Box& box) {
+							return boxesMeet(edgeLow, edgeHigh, box.low, box.high);
+						});
+					}
 					return std::ranges::none_of(indices, [&](std::size_t index) {
 						return boxesMeet(edgeLow, edgeHigh, lows[index], highs[index]);
 					});
 				});
-				shapes.clear();
-				for (const std::size_t index : indices) {
-					shapes.push_back(pendingNear[index]);
-					appendGrownByFeather(*pendingNear[index], static_cast<double>(feather), cluster.grown);
+				if (whole) {
+					cluster.boundary.clear();
+				} else {
+					std::erase_if(cluster.boundary, [&](const DirectedEdge& edge) {
+						const Vec2i64 edgeLow{std::min(edge.first.x, edge.second.x), std::min(edge.first.y, edge.second.y)};
+						const Vec2i64 edgeHigh{std::max(edge.first.x, edge.second.x), std::max(edge.first.y, edge.second.y)};
+						return std::ranges::any_of(region, [&](const vision::SeenArea::Box& box) {
+							return boxesMeet(edgeLow, edgeHigh, box.low, box.high);
+						});
+					});
 				}
-				boundary.clear();
-				cutSeenBoundary(shapes, edges, [&seen](const Vec2i64& point) { return seen.inRecord(point); }, boundary, frameCounts.cut);
+				cutSeenBoundary(
+					shapes, edges, [&seen](const Vec2i64& point) { return seen.inRecord(point); }, region, cluster.boundary, frameCounts.cut
+				);
+				cluster.grown.clear();
+				cluster.cut.resize(shapes.size());
+				for (std::size_t shape = 0; shape < shapes.size(); ++shape) {
+					appendGrownByFeather(*shapes[shape], static_cast<double>(feather), cluster.grown);
+					cluster.cut[shape] = *shapes[shape];
+				}
+				cluster.built = true;
 				cluster.low = low;
 				cluster.high = high;
 				cluster.anchor = low;
-				appendFeather(boundary, static_cast<double>(feather), cluster.pieces);
+				cluster.pieces.clear();
+				appendFeather(cluster.boundary, static_cast<double>(feather), cluster.pieces);
+				cluster.meshes.clear();
 				const glm::dvec2 anchor{static_cast<double>(low.x), static_cast<double>(low.y)};
 				for (const renderer::TessellatedMesh& mesh : valueMeshes(cluster.pieces, anchor)) {
 					cluster.meshes.push_back(Renderer::Primitives::uploadInstancedMesh(mesh, 1));
@@ -528,12 +661,6 @@ namespace worldview {
 		}
 		for (auto it = clusters.begin(); it != clusters.end();) {
 			it = it->second.frame != frameNumber ? clusters.erase(it) : std::next(it);
-		}
-	}
-
-	void SeenFeather::appendPendingPieces(std::vector<ValueTriangle>& out) const {
-		for (const auto& [key, cluster] : clusters) {
-			out.insert(out.end(), cluster.pieces.begin(), cluster.pieces.end());
 		}
 	}
 

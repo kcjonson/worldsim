@@ -25,15 +25,22 @@
 
 namespace worldview {
 
-	// How far a soft body's triangle may stray from its curved sides (sight-softening.md 9).
+	// How dark seen ground out of sight is: the tint's alpha. A mask value v darkens what the player sees
+	// by v x kSeenDimAlpha.
+	constexpr float kSeenDimAlpha = 0.5F;
+	// How far a soft body's hard side, where no fin lies beside it yet, may stray from its curve.
 	constexpr double kDrawnShadowSliceToleranceMm = 5.0;
-	// How far a drawn piece's linear value may stray from the value it stands for, of the whole 0 to 1.
-	constexpr double kDrawnValueTolerancePercent = 2.0;
-	// The most a soft triangle carries where the bright rim cuts it: limit 3's 0.05 on screen under the
-	// tint's 0.5 (sight-softening.md 10).
+	// How far what the player sees may differ from the rule a piece stands for: about one 8-bit step of
+	// the screen (sight-softening.md 7.3, 9).
+	constexpr double kDrawnValueToleranceOnScreen = 0.004;
+	// The same tolerance in the mask, before the tint's alpha.
+	constexpr double kDrawnValueTolerance = kDrawnValueToleranceOnScreen / static_cast<double>(kSeenDimAlpha);
+	// The most a soft triangle carries in the mask where the bright rim cuts it: limit 3's 0.05 on screen
+	// under the tint's 0.5 (sight-softening.md 10).
 	constexpr double kSoftShadowRimMostValue = 0.1;
-	// The widest triangle of a reflex corner's fan.
-	constexpr double kFeatherFanStepDegrees = 15.0;
+	// The widest triangle of a reflex corner's fan: its chord falls short of the arc by 1 - cos(7 degrees),
+	// 0.75% of the feather, within kDrawnValueTolerance.
+	constexpr double kFeatherFanStepDegrees = 14.0;
 
 	// A triangle whose value is linear over it: values[k] at points[k], in world millimetres.
 	struct ValueTriangle {
@@ -71,13 +78,17 @@ namespace worldview {
 
 	// The soft body's triangle and its two fins as seen from `eyeMm` (3.2): the silhouette shrunk toward
 	// its bisector by `progress` from the body's near face out to `shadowLength` behind it, valued
-	// footValue x (1 - progress), cut into slices along its length (7.3): a hard side held within
-	// kDrawnShadowSliceToleranceMm of its curve, a side with a fin beside it within what moves the value
-	// by kDrawnValueTolerancePercent; and beside each side a fin from its silhouette corner's range, whose
+	// footValue x (1 - progress), and beside each side a fin from its silhouette corner's range, whose
 	// outer edge lies (shadowEdgeWidthMm / 2) x (range - cornerDistance) / cornerDistance across the ray
-	// from the side, falling from the triangle's value to 0. footValue carries the body's arrival
-	// fraction, and fades so the triangle carries at most kSoftShadowRimMostValue where `bright`, the
-	// colonist's bright outline, cuts it short. None when the eye is inside the body's hull.
+	// from the side, falling from the triangle's value to 0. It is cut into as few slices along its length
+	// as keep every point within kDrawnValueTolerance of the rule (7.3): the fin's fade, a product of the
+	// fall along and the fall across, strays footValue x slice / 4 from linear, and a curved side strays
+	// value x sag / finWidth beside its fin and is held within kDrawnShadowSliceToleranceMm where it is
+	// hard. Its near end is clipped to the body's near faces only where they lie more than that past it.
+	// footValue carries the body's arrival fraction, and fades so the triangle carries at most
+	// kSoftShadowRimMostValue where `bright`, the colonist's bright outline, first cuts its bisector or
+	// either side. A triangle whose foot is within kDrawnValueTolerance of nothing draws no piece. None
+	// when the eye is inside the body's hull.
 	std::optional<SoftShadow> appendSoftShadow(
 		const vision::SightBody&		   body,
 		glm::dvec2						   eyeMm,
@@ -107,9 +118,10 @@ namespace worldview {
 	ShadowBand shadowBandAt(glm::dvec2 eyeMm, glm::dvec2 apexMm, int litTurn, double wideningMm, const vision::SightTunables& tunables);
 
 	// How many triangles a fin is cut into across: its value steps from 1 to 0 in that many, each exact
-	// on its far side, so no point strays from the rule by more than half a step,
-	// kDrawnValueTolerancePercent.
-	constexpr std::size_t kShadowFinSlices = 25;
+	// on its far side and at the mean of its two values at the apex, so no point strays from the rule by
+	// more than half a step, kDrawnValueTolerance.
+	constexpr std::size_t kShadowFinSlices = 63;
+	static_assert(0.5 / static_cast<double>(kShadowFinSlices) <= kDrawnValueTolerance);
 
 	// The band at 1, the wedge at the apex from its lit line round through the eye's ray to its shadow
 	// line, and the fin beside its lit line falling across to 0, each out to `farMm` from the apex.

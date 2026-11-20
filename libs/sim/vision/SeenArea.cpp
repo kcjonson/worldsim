@@ -51,6 +51,14 @@ namespace vision {
 			return firstLow.x <= secondHigh.x && secondLow.x <= firstHigh.x && firstLow.y <= secondHigh.y && secondLow.y <= firstHigh.y;
 		}
 
+		std::int64_t floorDivide(std::int64_t value, std::int64_t divisor) {
+			const std::int64_t quotient = value / divisor;
+			return value % divisor < 0 ? quotient - 1 : quotient;
+		}
+
+		// The cell of K's grid of registered boxes.
+		constexpr std::int64_t kRingBoxCellMm = 32000;
+
 		// The seen-box cell holding `millimetres` along one axis, rounding toward negative infinity.
 		std::int64_t cellOf(std::int64_t millimetres) {
 			const std::int64_t cell = millimetres / kSeenBoxCellMm;
@@ -323,17 +331,33 @@ namespace vision {
 				box.low	 = {std::min(box.low.x, point.x), std::min(box.low.y, point.y)};
 				box.high = {std::max(box.high.x, point.x), std::max(box.high.y, point.y)};
 			}
-			// A scan of every box: registrations are a few a tick, and every ring near the colony shares
-			// one kSeenBoxCellMm cell, so a grid of those would prune nothing.
-			const auto met = static_cast<std::size_t>(
-				std::ranges::count_if(registeredBoxes, [&box](const Box& other) { return boxesMeet(box.low, box.high, other.low, other.high); })
-			);
-			if (!registeredBoxes.empty()) {
+			// The boxes met are read from a grid of kRingBoxCellMm cells, so the work is the boxes near this
+			// one, not every box registered this session; a box in several of its cells is counted once.
+			const auto		   index = static_cast<std::uint32_t>(registeredBoxes.size());
+			const std::int64_t lowX	 = floorDivide(box.low.x, kRingBoxCellMm);
+			const std::int64_t lowY	 = floorDivide(box.low.y, kRingBoxCellMm);
+			const std::int64_t highX = floorDivide(box.high.x, kRingBoxCellMm);
+			const std::int64_t highY = floorDivide(box.high.y, kRingBoxCellMm);
+			std::size_t		   met	 = 0;
+			for (std::int64_t cellY = lowY; cellY <= highY; ++cellY) {
+				for (std::int64_t cellX = lowX; cellX <= highX; ++cellX) {
+					std::vector<std::uint32_t>& inCell = ringBoxCells[{cellX, cellY}];
+					for (const std::uint32_t other : inCell) {
+						if (ringBoxCounted[other] != index && boxesMeet(box.low, box.high, registeredBoxes[other].low, registeredBoxes[other].high)) {
+							ringBoxCounted[other] = index;
+							++met;
+						}
+					}
+					inCell.push_back(index);
+				}
+			}
+			if (index > 0) {
 				ringsMetTotal += met;
 				ringsMetGreatest = std::max(ringsMetGreatest, met);
 			}
 			registered.push_back(added);
 			registeredBoxes.push_back(box);
+			ringBoxCounted.push_back(index);
 		}
 		markPhase(TickPhase::Widths);
 		mesh->refreshWidths();

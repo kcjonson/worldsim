@@ -100,10 +100,15 @@ namespace worldview {
 	} // namespace
 
 	bool coverTargetHoldsPartialMasks() {
+		// The window's own framebuffer, whatever target is bound when this is asked: the cover draws there.
+		GLint bound = 0;
+		glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &bound);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 		GLint alpha = 0;
 		GLint depth = 0;
 		glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, GL_BACK_LEFT, GL_FRAMEBUFFER_ATTACHMENT_ALPHA_SIZE, &alpha);
 		glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, GL_DEPTH, GL_FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE, &depth);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(bound));
 		return alpha >= kAlphaBitsNeeded && depth >= kDepthBitsNeeded;
 	}
 
@@ -287,7 +292,7 @@ namespace worldview {
 			frameColonists.push_back(cover);
 		}
 
-		// The due soft bodies, the longest due first, up to the budget.
+		// The due rings of soft bodies, the longest due first, up to the budget.
 		due.clear();
 		for (std::size_t index = 0; index < inView.size(); ++index) {
 			if (!inView[index].hasBodies) {
@@ -300,18 +305,18 @@ namespace worldview {
 			}
 		}
 		std::ranges::sort(due, [](const DueBody& first, const DueBody& second) { return first.due.since < second.due.since; });
-		frameCounts.softBodiesDue		= due.size();
+		frameCounts.softRingsDue		= due.size();
 		frameCounts.softOldestDueFrames = due.empty() ? 0 : frameNumber - due.front().due.since;
 		std::size_t budget				= kDrawnShadowPiecesPerFrame;
 		for (const DueBody& body : due) {
-			if (body.due.pieces > budget && frameCounts.softBodiesBuilt > 0) {
+			if (body.due.pieces > budget && frameCounts.softRingsBuilt > 0) {
 				break;
 			}
-			const std::size_t built = inView[body.colonist].state->shadows.build(body.due.key);
+			const std::size_t built = inView[body.colonist].state->shadows.build(body.due.ring);
 			frameCounts.softPiecesBuilt += built;
 			frameCounts.piecesBuilt += built;
 			budget -= std::min(budget, built);
-			++frameCounts.softBodiesBuilt;
+			++frameCounts.softRingsBuilt;
 		}
 
 		for (std::size_t index = 0; index < inView.size(); ++index) {
@@ -323,10 +328,8 @@ namespace worldview {
 				if (!colonist.hasBodies) {
 					retire(state.softMeshes[ring]);
 				} else if ((state.shadows.counts().softChangedRings & (1U << ring)) != 0U) {
-					pieceScratch.clear();
-					state.shadows.appendSoftPieces(ring, pieceScratch);
 					state.softAnchors[ring] = colonist.standing;
-					uploadPieces(pieceScratch, toDouble(colonist.standing), state.softMeshes[ring]);
+					uploadPieces(state.shadows.rings()[ring].pieces, toDouble(colonist.standing), state.softMeshes[ring]);
 				}
 			}
 			// His feather and his bands, about where he stands, go up together: both change on the frames he
@@ -352,7 +355,8 @@ namespace worldview {
 			cover.softAnchors  = &state.softAnchors;
 			frameCounts.featherPieces += state.featherPieces.size();
 			if (colonist.hasBodies) {
-				frameCounts.softBodies += state.shadows.softBodies().size();
+				frameCounts.softBodies += state.shadows.softBodyCount();
+				frameCounts.softBodiesBuilt += state.shadows.counts().bodiesBuilt;
 				frameCounts.shadowEdges += state.shadows.edges().size();
 				frameCounts.softPieces += state.shadows.softPieceCount();
 				frameCounts.bandPieces += state.shadows.bandPieces().size();

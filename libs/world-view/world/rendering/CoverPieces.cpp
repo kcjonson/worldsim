@@ -266,24 +266,33 @@ namespace worldview {
 		shadow.footValue = static_cast<double>(tunables.softShadowStrengthPercent) / 100.0 * width / rayWidth *
 						   static_cast<double>(body.arrival) / static_cast<double>(geometry::kFractionOne);
 		shadow.shadowLength = shadow.distance * width / (rayWidth - width);
-		const double nearRange = shadow.distance;
-		const double tipRange = shadow.distance + shadow.shadowLength;
-		// Where the bright rim cuts a triangle short, it may carry at most kSoftShadowRimMostValue there
-		// (limit 3): a triangle that would carry more fades by the share that brings it down.
-		if (const std::optional<double> rim = rangeToOutline(bright, eyeMm, bisector); rim.has_value() && *rim < tipRange) {
-			const double atRim = shadow.footValue * (1.0 - std::max(0.0, *rim - nearRange) / shadow.shadowLength);
-			if (atRim > kSoftShadowRimMostValue) {
-				shadow.footValue *= kSoftShadowRimMostValue / atRim;
-			}
-		}
-		if (shadow.footValue <= 0.0 || shadow.shadowLength <= 0.0) {
-			return shadow;
-		}
-
+		const double				nearRange = shadow.distance;
+		const double				tipRange = shadow.distance + shadow.shadowLength;
 		const std::array<double, 2> endAngle = {
 			std::atan2(crossOf(bisector, clockwiseCorner - eyeMm), glm::dot(bisector, clockwiseCorner - eyeMm)),
 			std::atan2(crossOf(bisector, counterClockwiseCorner - eyeMm), glm::dot(bisector, counterClockwiseCorner - eyeMm)),
 		};
+		// Where the bright rim cuts a triangle short, it may carry at most kSoftShadowRimMostValue there
+		// (limit 3): a triangle that would carry more fades by the share that brings it down. The rim is
+		// read where it first crosses the bisector or either side's ray, so an eased rim pulled in across
+		// one side is held too.
+		double rimRange = std::numeric_limits<double>::infinity();
+		for (const glm::dvec2 direction : {bisector, turned(bisector, endAngle[0]), turned(bisector, endAngle[1])}) {
+			if (const std::optional<double> rim = rangeToOutline(bright, eyeMm, direction); rim.has_value()) {
+				rimRange = std::min(rimRange, *rim);
+			}
+		}
+		if (rimRange < tipRange) {
+			const double atRim = shadow.footValue * (1.0 - std::max(0.0, rimRange - nearRange) / shadow.shadowLength);
+			if (atRim > kSoftShadowRimMostValue) {
+				shadow.footValue *= kSoftShadowRimMostValue / atRim;
+			}
+		}
+		// A triangle whose darkest point is within the tolerance of nothing shows nothing.
+		if (shadow.footValue <= kDrawnValueTolerance || shadow.shadowLength <= 0.0) {
+			return shadow;
+		}
+
 		const std::array<double, 2> cornerRange = {glm::length(clockwiseCorner - eyeMm), glm::length(counterClockwiseCorner - eyeMm)};
 		const auto					progressAt = [&](double range) {
 			 return std::clamp((range - nearRange) / shadow.shadowLength, 0.0, 1.0);
@@ -292,14 +301,14 @@ namespace worldview {
 			return shadow.footValue * (1.0 - progressAt(range));
 		};
 		const double halfRay = static_cast<double>(tunables.shadowEdgeWidthMm) / 2.0;
-		const double tolerance = kDrawnValueTolerancePercent / 100.0;
+		const double tolerance = kDrawnValueTolerance;
 
-		// Slices along the length (7.3). A side at range r lies r x angle x (1 - progress) across the
+		// Slices along the length (7.3). The triangle's own value falls linearly along it, so it needs no
+		// slice for its value, only for its curved sides. A side at range r lies r x angle x (1 - progress) across the
 		// bisector, a parabola whose chord over h strays angle x h^2 / (4 x shadowLength) from it. Where the
 		// side is hard (before its fin starts) the stray is held to kDrawnShadowSliceToleranceMm; past it
 		// the fin carries the value from the side to 0 across its width, so a stray s moves the value at a
-		// point by at most value x s / finWidth, and the slice may run until that reaches
-		// kDrawnValueTolerancePercent. A triangle fainter than the tolerance needs no slice for either.
+		// point by at most value x s / finWidth, held to the tolerance.
 		const double widest = std::max(std::abs(endAngle[0]), std::abs(endAngle[1]));
 		const auto	 allowedStray = [&](double range) {
 			  const double value = valueAt(range);
@@ -313,6 +322,7 @@ namespace worldview {
 			  }
 			  return allowed;
 		};
+		// Scratch reused across calls, which the render thread alone makes.
 		thread_local std::vector<double> ranges;
 		ranges.clear();
 		ranges.push_back(nearRange);
@@ -320,12 +330,7 @@ namespace worldview {
 			const double stray = allowedStray(range);
 			double		 length =
 				  widest > 0.0 && std::isfinite(stray) ? 2.0 * std::sqrt(stray * shadow.shadowLength / widest) : shadow.shadowLength;
-			double next = std::min(tipRange, range + std::max(length, 1.0));
-			for (const double corner : cornerRange) {
-				if (corner > range && corner < next) {
-					next = corner;
-				}
-			}
+			const double next = std::min(tipRange, range + std::max(length, 1.0));
 			ranges.push_back(next);
 			range = next;
 		}
@@ -359,6 +364,24 @@ namespace worldview {
 					std::max({nearFacesReach, glm::length(from - eyeMm), glm::length(hull[(corner + 1) % hull.size()] - eyeMm)});
 			}
 		}
+		// The near end is clipped to the near faces only where they lie more than the hard side's tolerance
+		// past the triangle's first chord, inside its angle: seen face on they lie within a few millimetres.
+		const glm::dvec2 chord = sides[0][1] - sides[0][0];
+		const double	 chordLength = glm::length(chord);
+		bool			 clipNearEnd = false;
+		if (chordLength > 0.0) {
+			const glm::dvec2 away = -leftOf(chord / chordLength) * (crossOf(chord, eyeMm - sides[0][0]) > 0.0 ? 1.0 : -1.0);
+			for (const auto& [faceFrom, faceAlong] : nearFaces) {
+				for (const glm::dvec2 vertex : {faceFrom, faceFrom + faceAlong}) {
+					const double angle = std::atan2(crossOf(bisector, vertex - eyeMm), glm::dot(bisector, vertex - eyeMm));
+					const bool	 inside =
+						angle >= std::min(endAngle[0], endAngle[1]) - 1e-9 && angle <= std::max(endAngle[0], endAngle[1]) + 1e-9;
+					if (inside && glm::dot(vertex - sides[0][0], away) > kDrawnShadowSliceToleranceMm) {
+						clipNearEnd = true;
+					}
+				}
+			}
+		}
 
 		thread_local ClipPolygon half;
 		thread_local ClipPolygon clipped;
@@ -374,7 +397,7 @@ namespace worldview {
 			const glm::dvec2 nearLeft = sides[slice][1];
 			const float		 nearValue = values[slice];
 			const float		 farValue = values[slice + 1];
-			if (from < nearFacesReach) {
+			if (clipNearEnd && from < nearFacesReach) {
 				for (const bool first : {true, false}) {
 					half.points.assign({nearRight, first ? farRight : farLeft, first ? farLeft : nearLeft});
 					half.values.assign({nearValue, farValue, first ? farValue : nearValue});
@@ -388,26 +411,84 @@ namespace worldview {
 					appendFan(half, out);
 				}
 			} else {
-				appendTriangle(nearRight, nearValue, farRight, farValue, farLeft, farValue, out);
+				// At the tip both far points are one: the slice is one triangle.
+				if (farRight != farLeft) {
+					appendTriangle(nearRight, nearValue, farRight, farValue, farLeft, farValue, out);
+				}
 				appendTriangle(nearRight, nearValue, farLeft, farValue, nearLeft, nearValue, out);
 			}
+		}
 
-			// The fins, past their corner's range: a side's fin lies outside it, away from the bisector.
+		// The fins. A side's fin lies outside it, away from the bisector, from its corner's range to the
+		// tip, (shadowEdgeWidthMm / 2) x (range - corner) / corner wide, its value the side's falling across
+		// to 0: a product, which no linear piece holds. Its lines of one share across all run from the
+		// corner, and along each the value is linear, so its first stretch is a fan from the corner of as
+		// many triangles as hold the share's step within the tolerance, each taking the value at the middle
+		// of its share at the corner (the fade there is under a pixel wide). Past a slice boundary each
+		// stretch is cut across into columns, as many as hold both the taper's stray, value x (ratio - 1) /
+		// (ratio + 1) / 2 a column for a stretch whose width grows by that ratio, and the fall along's,
+		// |step| / 4 a column, within it.
+		if (halfRay > 0.0) {
+			const auto innerAt = [&](double range, std::size_t side) {
+				for (std::size_t slice = 0; slice + 1 < ranges.size(); ++slice) {
+					if (range <= ranges[slice + 1] || slice + 2 == ranges.size()) {
+						const double share = std::clamp((range - ranges[slice]) / (ranges[slice + 1] - ranges[slice]), 0.0, 1.0);
+						return sides[slice][side] + share * (sides[slice + 1][side] - sides[slice][side]);
+					}
+				}
+				return sides.back()[side];
+			};
 			for (std::size_t side = 0; side < 2; ++side) {
-				const double corner = cornerRange[side];
-				if (from < corner) {
+				const double corner = std::max(cornerRange[side], nearRange);
+				const double outward = side == 0 ? -1.0 : 1.0;
+				const auto	 pointAt = [&](double range, double across) {
+					  const glm::dvec2 inner = innerAt(range, side);
+					  return inner + leftOf(glm::normalize(inner - eyeMm)) * (outward * across * halfRay * (range - corner) / corner);
+				};
+				std::size_t boundary = 0;
+				while (boundary < ranges.size() && ranges[boundary] <= corner + 1e-6) {
+					++boundary;
+				}
+				if (boundary == ranges.size()) {
 					continue;
 				}
-				const double outward = side == 0 ? -1.0 : 1.0;
-				const auto	 outerAt = [&](glm::dvec2 point, double range) {
-					  return point + leftOf(glm::normalize(point - eyeMm)) * (outward * halfRay * (range - corner) / corner);
-				};
-				const glm::dvec2 innerFrom = sides[slice][side];
-				const glm::dvec2 innerTo = sides[slice + 1][side];
-				const glm::dvec2 outerFrom = outerAt(innerFrom, from);
-				const glm::dvec2 outerTo = outerAt(innerTo, to);
-				appendTriangle(innerFrom, nearValue, innerTo, farValue, outerTo, 0.0F, out);
-				appendTriangle(innerFrom, nearValue, outerTo, 0.0F, outerFrom, 0.0F, out);
+				const glm::dvec2 apex = innerAt(corner, side);
+				const double	 apexValue = valueAt(corner);
+				const double	 firstRange = ranges[boundary];
+				const double	 firstValue = valueAt(firstRange);
+				const auto fanSteps = std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(apexValue / (2.0 * tolerance) - 1e-9)));
+				for (std::size_t step = 0; step < fanSteps; ++step) {
+					const double inside = static_cast<double>(step) / static_cast<double>(fanSteps);
+					const double outside = static_cast<double>(step + 1) / static_cast<double>(fanSteps);
+					appendTriangle(
+						apex,
+						static_cast<float>(apexValue * (1.0 - (inside + outside) / 2.0)),
+						pointAt(firstRange, inside),
+						static_cast<float>(firstValue * (1.0 - inside)),
+						pointAt(firstRange, outside),
+						static_cast<float>(firstValue * (1.0 - outside)),
+						out
+					);
+				}
+				for (std::size_t slice = boundary; slice + 1 < ranges.size(); ++slice) {
+					const double from = ranges[slice];
+					const double to = ranges[slice + 1];
+					const double fromValue = valueAt(from);
+					const double toValue = valueAt(to);
+					const double ratio = (to - corner) / (from - corner);
+					const double stray = fromValue * (ratio - 1.0) / (ratio + 1.0) / 2.0 + std::abs(fromValue - toValue) / 4.0;
+					const auto	 columns = std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(stray / tolerance - 1e-9)));
+					for (std::size_t column = 0; column < columns; ++column) {
+						const double inside = static_cast<double>(column) / static_cast<double>(columns);
+						const double outside = static_cast<double>(column + 1) / static_cast<double>(columns);
+						const auto	 fromIn = static_cast<float>(fromValue * (1.0 - inside));
+						const auto	 fromOut = static_cast<float>(fromValue * (1.0 - outside));
+						const auto	 toIn = static_cast<float>(toValue * (1.0 - inside));
+						const auto	 toOut = static_cast<float>(toValue * (1.0 - outside));
+						appendTriangle(pointAt(from, inside), fromIn, pointAt(to, inside), toIn, pointAt(to, outside), toOut, out);
+						appendTriangle(pointAt(from, inside), fromIn, pointAt(to, outside), toOut, pointAt(from, outside), fromOut, out);
+					}
+				}
 			}
 		}
 		return shadow;
