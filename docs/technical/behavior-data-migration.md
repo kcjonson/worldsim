@@ -116,7 +116,9 @@ During the move both paths run, on disjoint ground that phase 7 deletes:
   helper. No test writes chain-state fields directly. A test that builds an `Action` by factory builds
   it from the shipped entry instead and asserts the same values.
 - `scripts/test-assertions.mjs` compares the EXPECT and ASSERT count of every test between base and
-  head and fails on any drop. It runs on every path PR.
+  head and fails on any drop. It runs on every path PR. A renamed, split, folded or merged test still
+  fails it; the PR lists each old key against its new keys with the counts from the script's `NEW`
+  and `RISE` lines.
 - A port that needs an expectation changed stops the path and goes to the owner.
 
 ## Phases
