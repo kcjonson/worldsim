@@ -27,6 +27,20 @@ protected pixel for pixel: no golden images, no screenshot diffs, in CI or local
   human tester would, and reporting pass or fail with a screenshot of what failed. A feature that
   lands adds steps or a scenario. New scenarios are as short as they can be: a numbered list,
   one line a step, the action and what you should see.
+- **Assertion counts never drop.** `node scripts/test-assertions.mjs [--base <ref>] [--json]`
+  holds a per-test floor on the count (only the count is compared, never what a macro checks) of
+  the `EXPECT_*`, `ASSERT_*` and `FAIL`-family macros of every test (keyed `Suite.Name`, so a test moved
+  between files still matches; assertions outside a test body count per file as
+  `<file>::helpers`) in every `*.test.cpp`, at the base ref (default: the merge-base with
+  `origin/main`) and in the working tree. It prints one line per test with fewer assertions, or
+  one that vanished, and exits 1 on any (2 when it cannot trust its parse). After the drops it
+  prints `NEW` lines for keys only at head and `RISE` lines for keys whose count rose. Run it on
+  every PR that ports tests; nothing in CI runs it
+  ([behavior-data-migration.md](../technical/behavior-data-migration.md#porting-tests)). Pass
+  `--base` only to compare against a specific earlier commit: `origin/main` on a branch behind main
+  reports main's own edits as drops. A legitimate rename, split, fold into a helper, or
+  parameterized merge still exits 1; the PR lists each old key against its new keys with the counts
+  from the `NEW` and `RISE` lines, for the reviewer to accept.
 - **Performance is strict, and a worse number needs an idle machine.** Rendering performance
   dropping in gameplay is the regression this project has hit most. Even or faster is a result on
   any machine; worse is only a finding on an idle one. See [Performance](#performance).
@@ -255,6 +269,9 @@ spec, and the `/perf-nightly` skill runs it.
 | 19 | Load errors on screen | [scenarios/19-load-errors-on-screen.md](./scenarios/19-load-errors-on-screen.md) |
 | 20 | Drawing tools | [scenarios/20-drawing-tools.md](./scenarios/20-drawing-tools.md) |
 | 21 | Colonists wash | [scenarios/21-colonists-wash.md](./scenarios/21-colonists-wash.md) |
+| 22 | Colonists sleep | [scenarios/22-colonists-sleep.md](./scenarios/22-colonists-sleep.md) |
+| 23 | Colonists relieve themselves | [scenarios/23-colonists-relieve-themselves.md](./scenarios/23-colonists-relieve-themselves.md) |
+| 24 | Box-to-box pull | [scenarios/24-box-to-box-pull.md](./scenarios/24-box-to-box-pull.md) |
 
 **Scenarios that look away from the colonists turn reveal on** (`/api/dev/reveal?on=1`), since ground no colonist has seen is black (player visibility); a launch starts with it off. Scenario 14 is the one that tests the cover itself.
 
@@ -532,6 +549,8 @@ The `?` key is a typed character: inject `char,63` (a `keydown` of `?` answers 4
 |----------|---------|
 | `GET /api/ui/screenshot` | Returns a PNG screenshot. |
 | `GET /api/control?action=exit` | Shuts down the instance (blocking). |
+| `GET /api/control?action=scene&scene=game` | Switches to the game. With no loaded world waiting it goes through the loading scene, which loads a Quick Start world. |
+| `GET /api/control?action=reload` | Rebuilds the top scene. In the game it goes back through the loading scene and loads a Quick Start world, whatever the game started as (a New Game from the creator included). |
 | `GET /api/control?action=camera&x=&y=&zoom=&panx=&pany=` | Moves the camera (the game scene's control; applied at its next update, so not while paused). `x` and `y` together; `panx`/`pany` -1..1 hold until set to 0. A bad or missing parameter is a 400. |
 | `GET /api/control?action=gpuhold&value=0\|1&target=0.8` | The game scene's GPU hold for perf captures: extra GPU work after the scene's timers, into its own offscreen target, sized each frame so scene plus hold GPU time sits near `target` (0.05 to 0.95) of the frame time, which keeps the card at P0. Off by default. Either parameter may be left out; it answers the hold's state, and a bad value is a 400. |
 | `GET /api/input?ev=click,x,y` | Synthetic input (logical pixels). Event types: `move`/`down`/`up`/`click`/`scroll,x,y,delta`, `keydown,<key>`/`keyup,<key>`, `char,<codepoint>`. It goes the way real input does: keys reach the focused ui component, a scroll the ui doesn't take zooms the camera, and while paused it waits for resume. A malformed event is a 400. The injected pointer position holds (hover persists) until the real cursor moves over the window or a real mouse button or scroll event lands. Since salal v0.41.1 an injected move also sets the window's pointer-in-window flag, so hover-driven things (the placement ghost, the drawing tools' preview) follow it. A screenshot is in framebuffer pixels, which on a HiDPI display are twice the logical size (on Windows they're the same). `/api/ui/tree` and `/api/ui/lint` are in ui px, which the interface scale makes larger than a logical pixel: a tree position times `layoutScale` from `/api/state?what=uiscale` (`{factor, layoutScale, pixelScale}`, every scene, all three apps) is the logical position. A click that lands on nothing still answers 200. |

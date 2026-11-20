@@ -50,7 +50,7 @@ namespace {
 		assets::AssetRegistry& registry = assets::AssetRegistry::Get();
 		registry.clearDefinitions();
 		registry.registerSyntheticDefinition("Test_SimTerms_IdZeroReservation", 0);
-		registry.registerSyntheticDefinition("Colonist", 0);
+		registry.registerSyntheticDefinition("Human", 0);
 		registry.registerSyntheticDefinition("Deer", 0);
 	}
 
@@ -302,7 +302,7 @@ TEST_F(SimTermsTest, NearAColonistIsARecentSightingWithinTheRadius) {
 	time.skipTime(600.0F);
 	const double		now = time.simulationSeconds();
 	const double		window = assets::MemoryConfig::Get().recentSightingGameMinutes();
-	const uint32_t		colonistDef = defId("Colonist");
+	const uint32_t		colonistDef = defId("Human");
 	const ecs::EntityID other = spawnColonist({50.0F, 0.0F});
 	const ecs::EntityID another = spawnColonist({50.0F, 0.0F});
 
@@ -326,7 +326,7 @@ TEST_F(SimTermsTest, NearAColonistIsARecentSightingWithinTheRadius) {
 }
 
 TEST_F(SimTermsTest, NearAMoverIsUnknownWithoutAClock) {
-	memory().rememberDynamicEntity(spawnColonist({1.0F, 0.0F}), defId("Colonist"), {1.0F, 0.0F}, 0.0);
+	memory().rememberDynamicEntity(spawnColonist({1.0F, 0.0F}), defId("Human"), {1.0F, 0.0F}, 0.0);
 	EXPECT_EQ(evaluate("near(colonist, 5)"), Truth::Unknown);
 	EXPECT_EQ(evaluate("near(food, 5)"), Truth::False);
 }

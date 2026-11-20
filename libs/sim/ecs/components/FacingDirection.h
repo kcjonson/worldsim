@@ -18,7 +18,7 @@ struct FacingDirection {
 };
 
 /// Suffix appended to a base defName to pick the directional sprite/template variant
-/// (e.g. "Colonist" -> "Colonist_down"). The single source shared by the render path
+/// (e.g. "Human" -> "Human_down"). The single source shared by the render path
 /// (DynamicEntityRenderSystem) and selection (silhouette lookup) so they can't drift.
 inline const char* directionSuffix(CardinalDirection dir) {
     switch (dir) {

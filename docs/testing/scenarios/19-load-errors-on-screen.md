@@ -9,7 +9,7 @@ A broken config file stops the game load with the error that names it on screen,
 
 ## Steps
 
-Edit only the staged copy beside the exe, `build/apps/world-sim/RelWithDebInfo/assets/config/`, never the source under `assets/config/`. Launch `world-sim --background --no-settings --http-port <PORT>` (RelWithDebInfo). `/api/state?what=scene` reads the top scene's `failed` and `errors`.
+Edit only the staged copy beside the exe, `build/apps/world-sim/RelWithDebInfo/assets/config/`, never the source under `assets/config/`. Launch `world-sim --background --no-settings --http-port <PORT>` (RelWithDebInfo) from `build/apps/world-sim/RelWithDebInfo/`: the game load reads `assets/config` from the working directory, so a launch from anywhere else reads another copy and loads cleanly. `/api/state?what=scene` reads the top scene's `failed` and `errors`.
 
 1. In the staged `colonists/needs/needs.xml`, set Hunger's `seek` to `"abc"`.
 2. Launch the game.
@@ -24,8 +24,9 @@ Edit only the staged copy beside the exe, `build/apps/world-sim/RelWithDebInfo/a
 11. Set the `urgent` of Thirst, Energy, Bladder, Digestion, Hygiene, Recreation, and Temperature to `"xyz"`.
 12. Click Quick Start again: five messages, then "and 5 more", the messages scrolling inside the panel if they don't all fit.
 13. `/api/ui/lint`: `"count":0`.
-14. `/api/control?action=scene&scene=game`: the splash shows the "Loading failed" panel with only the colonist rules errors, Enter Expedition disabled and clear of the panel.
-15. `/api/control?action=exit`.
-16. Copy the source `assets/config` files back over the staged ones.
-17. `diff -r assets/config build/apps/world-sim/RelWithDebInfo/assets/config` prints nothing.
-18. Launch `world-sim --background --no-settings --scene=game`: the game scene loads.
+14. `/api/control?action=scene&scene=game`: the loading scene shows the same "Loading failed" panel.
+15. `/api/state?what=scene`: it names `gameloading`, with `failed` true.
+16. `/api/control?action=exit`.
+17. Copy the source `assets/config` files back over the staged ones.
+18. `diff -r assets/config build/apps/world-sim/RelWithDebInfo/assets/config` prints nothing.
+19. Launch `world-sim --background --no-settings --scene=game`: the game scene loads.

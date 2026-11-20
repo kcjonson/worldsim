@@ -38,7 +38,6 @@ namespace world_sim {
 
 		/// The generated planet for this session. Forwarded from GameStartConfig so
 		/// GameScene can pass it to DevCommandHandler for /api/state?what=landing.
-		/// Null when GameScene falls back to mock-world mode (no planet available).
 		std::shared_ptr<const worldgen::GeneratedWorld> planet;
 		double landingLatDeg = 0.0;
 		double landingLonDeg = 0.0;
