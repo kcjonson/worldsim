@@ -200,7 +200,7 @@ namespace worldview {
 
 	// Each colonist in view: his bright shape and the feather on its rim sides, built about where he
 	// stands and uploaded with his bands when either changes; then his due soft bodies, over every
-	// colonist in view, the longest due first, up to kDrawnShadowPiecesPerFrame pieces.
+	// colonist in view, the most turned first (waiting counted as turn), up to kDrawnShadowPiecesPerFrame pieces.
 	void VisibilityCoverRenderer::gather(
 		ecs::World&					 world,
 		ecs::PlayerVisibilitySystem& visibility,
@@ -294,7 +294,7 @@ namespace worldview {
 			frameColonists.push_back(cover);
 		}
 
-		// The due rings of soft bodies, the longest due first, up to the budget.
+		// The due rings of soft bodies, the most turned first (waiting counted as turn), up to the budget.
 		due.clear();
 		for (std::size_t index = 0; index < inView.size(); ++index) {
 			if (!inView[index].hasBodies) {
