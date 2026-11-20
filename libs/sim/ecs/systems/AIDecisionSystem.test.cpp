@@ -6111,7 +6111,7 @@ namespace ecs::test {
 		bool headedInside = false;
 		bool learned	  = false;
 		const bool failed = routeFailedBeforeWorked(colonist, site, [&] {
-			if (learned || !followingRoute(colonist)) {
+			if (learned || getTask(colonist)->type != TaskType::Haul || !followingRoute(colonist)) {
 				return;
 			}
 			headedInside = getTask(colonist)->targetPosition.y < doorAt.y;
