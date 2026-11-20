@@ -1,7 +1,7 @@
 # Scenario 16: Rooms inside rooms
 
 **Status:** draft  
-**Last verified:** 2026-11-16
+**Last verified:** 2026-11-20
 
 A closed wall loop standing free inside another is its own room. Each keeps its own name, floor
 tint, outline, label, and click target, whichever loop was built first.
@@ -39,6 +39,16 @@ rooms; everything is read off the toasts, the overlay, and the room panel.
 5. Click the outer room's floor, away from the inner loop: its panel shows 24.0 m2.
 
 6. Move the camera to the second spot, build the inner loop first and the outer loop second, same parameters: the toasts, names, and clicks come out as in steps 1 to 5, and the inner room keeps the name it got first.
+
+A doorless room whose last wall the colonist builds from inside. Bob's id and position come from `?what=colonists`, the foundation's id (FOUND_ID) and the walls from `?what=construction`.
+
+7. Stamp a second built foundation, `foundation?pts=12,2;32,2;32,9;12,9&material=Wood&built=1`: it lists `Built`.
+8. Set `time?speed=0`, then stamp three built walls of a square on it, `walls?pts=14,8;14,3;19,3;19,8&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=0`: three walls list `Built`.
+9. Blueprint the fourth, `walls?pts=19,8;14,8&material=Wood&thickness=Standard&host=<FOUND_ID>&built=0&close=0`: it lists `Blueprint`.
+10. Teleport Bob inside the square, `teleport?colonist=<BOB_ID>&to=16.5,5.5`: he reads (16.5, 5.5).
+11. `give?material=Wood&n=2&where=site`, then `time?speed=1`: Bob walks out of the square through the gap and builds the wall from its far side (y about 8.5).
+12. Poll until the fourth wall lists `Built`: Bob stands outside the square (y above 8.4, or x below 13.6 or above 19.4), and a "Room formed" toast shows.
+13. Repeat steps 8 to 12 ten metres east (add 10 to every x) with a built door, `opening?type=Door&pt=26.5,3&built=1` after step 8: Bob may build from either side, and he can walk out through the door after.
 
 ---
 

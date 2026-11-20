@@ -491,8 +491,26 @@ released only by the task going away (finished, replaced by a need or other work
 which leaves only carried goods indexed); no construction code releases it.
 
 A Build goal with no spots (a wall's, an opening's, or a foundation's when no construction world is
-wired, as in headless tests) caps no builders: any number work it, from the nearest walkable point to its
-centre, and it takes no claim. Deconstruct takes no claim either.
+wired, as in headless tests) caps no builders: any number work it, and it takes no claim. A wall's goal
+carries instead the sides of the wall a builder may stand on (`GoalTask::wallStands`,
+`construction::wallStands`): both, unless completing the wall closes a loop of built walls, and then the
+sides that open onto open ground or onto a room joined to it through built doors (a room whose only
+openings are windows or door blueprints has no way out), or both again when neither does.
+`ConstructionSystem` sets them as the goal turns Available and works them out again on the frame after
+any change to the walls, so a wall completing beside one being built moves its builders at once. A
+builder takes the side whose stand point, beside the wall's midpoint and off its line by half its
+thickness, his radius, and 0.1 m, snapped with `nearestPathablePoint(point, agentRadius)`, is nearest
+him, among those whose snapped point stays on that side and that he can get to; with none, the option
+is NoSource. With no mesh yet the stand point itself is the target. An opening's goal, and a wall's
+with no construction world wired, has the nearest walkable point to its centre as its one target.
+Deconstruct takes no claim either.
+
+A wall whose work reaches its total completes only once no colonist under the player's control stands
+in its band (the band `WallCollisionSystem` pushes out of once it is built); until then its work stays
+at the total, its builders keep working, and its panel reads "Waiting for the wall to be clear". Any
+other colonist in the band steps out of it as the wall completes, to the allowed side he is on, or to
+the allowed side when he is on the other (`ActionSystem::wallBandClear`). The dev tools' free build and
+forced completion do not wait.
 
 A site ordered demolished takes no more build work: a Build action on it ends on the next tick it
 would add work, before it could complete, and a builder still walking there starts nothing on arrival.
