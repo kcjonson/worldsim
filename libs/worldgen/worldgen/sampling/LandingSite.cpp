@@ -303,7 +303,7 @@ LandingSite resolveLandingSite(const std::shared_ptr<const GeneratedWorld>& worl
 
     auto landAt = [&](LatLon anchor) -> std::optional<LandingSite> {
         const SpawnSite spawn = findWatersideSpawn(world, anchor.latDeg, anchor.lonDeg);
-        if (spawn.water != SpawnWater::River && spawn.water != SpawnWater::Lake) return std::nullopt;
+        if (!spawn.clear || (spawn.water != SpawnWater::River && spawn.water != SpawnWater::Lake)) return std::nullopt;
         const bool river = spawn.water == SpawnWater::River;
         const TileId tile = grid.fromLatLon(anchor.latDeg, anchor.lonDeg);
         return LandingSite{anchor, tile, river ? FreshWaterFeature::River : FreshWaterFeature::Lake, spawn,

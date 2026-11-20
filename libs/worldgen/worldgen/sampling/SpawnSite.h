@@ -21,13 +21,16 @@ struct SpawnSite {
     double     yMeters{};
     SpawnWater water{SpawnWater::None}; // the nearest water's kind; None: no water in reach, the drop is the origin
     float      waterDistanceMeters{};   // to the nearest water's edge; zero for None
+    // The drop is kLandingWaterDistanceMeters from its water within the tolerance. False for the narrow-land
+    // fallback (no dry point that far from water) and for None.
+    bool clear{};
 };
 
 // The dry point, nearest the origin, whose nearest water of any kind is kLandingWaterDistanceMeters off
-// within kLandingWaterDistanceToleranceMeters; river before lake before ocean. When no dry point is that
-// far from water, the dry point farthest from it, in the same order. The origin with SpawnWater::None
-// when no water is in reach. Requires Elevation, Biome, Flags valid; uses FlowAccum/Downhill (rivers)
-// when present.
+// within kLandingWaterDistanceToleranceMeters (clear); river before lake before ocean. When no dry point is
+// that far from water, the dry point farthest from it, in the same order (not clear). The origin with
+// SpawnWater::None when no water is in reach. Requires Elevation, Biome, Flags valid; uses
+// FlowAccum/Downhill (rivers) when present.
 SpawnSite findWatersideSpawn(const std::shared_ptr<const GeneratedWorld>& world, double landingLatDeg,
                              double landingLonDeg, double searchRadiusMeters = 200.0);
 

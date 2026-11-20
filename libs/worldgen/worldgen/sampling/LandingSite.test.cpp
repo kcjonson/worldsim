@@ -15,6 +15,7 @@
 #include <array>
 #include <cmath>
 #include <memory>
+#include <numbers>
 #include <stop_token>
 #include <unordered_set>
 #include <vector>
@@ -153,6 +154,102 @@ BiomeProvisionTable twoBiomeProvisions() {
     return provisions;
 }
 
+// The neighbour of `tile` whose centre lies most nearly in `direction` (a tangent at the tile's centre).
+TileId neighbourToward(const SphereGrid& grid, TileId tile, const Vec3d& direction, double& alignment) {
+    const Vec3d centre = grid.tileCenter(tile);
+    std::array<TileId, 6> neighbours{};
+    const uint32_t count = grid.neighbors(tile, neighbours);
+    TileId best = kInvalidTile;
+    alignment = -2.0;
+    for (uint32_t i = 0; i < count; ++i) {
+        const Vec3d other = grid.tileCenter(neighbours[i]);
+        const Vec3d offset{other.x - centre.x, other.y - centre.y, other.z - centre.z};
+        const double length = std::sqrt(dot(offset, offset));
+        const double along = dot(offset, direction) / length;
+        if (along > alignment) {
+            alignment = along;
+            best = neighbours[i];
+        }
+    }
+    return best;
+}
+
+// A land river tile on a planet shrunk so tiles are 140 m apart, in a lake but for its river neighbour to
+// the east and the land from two tiles east on. Its own channel, 110 m wide, leaves no dry point 30 m from
+// water within its search; the land opens out past the neighbour, which its river neighbour's search
+// reaches and its own does not.
+struct NarrowLandFixture {
+    std::shared_ptr<GeneratedWorld> world;
+    TileId                          narrow{kInvalidTile};
+    TileId                          riverNeighbour{kInvalidTile};
+};
+
+NarrowLandFixture narrowLand() {
+    constexpr double kTileSpacingMeters = 140.0;
+    constexpr float  kWideRiverFlow = 20000.0f; // the widest channel, 110 m
+    NarrowLandFixture fixture{makeWorld(kSubdivision)};
+    GeneratedWorld&   world = *fixture.world;
+    const SphereGrid& grid = *world.grid;
+
+    // The tile whose river runs most nearly due east over two tiles, so the open land stays outside its
+    // search square.
+    double bestAlignment = -2.0;
+    TileId beyond = kInvalidTile;
+    for (TileId tile = 0; tile < grid.tileCount(); ++tile) {
+        const LatLon centre = centreOf(world, tile);
+        if (std::abs(centre.latDeg) > 10.0 || std::abs(centre.lonDeg) > 10.0) continue;
+        const double lonRadians = centre.lonDeg * std::numbers::pi / 180.0;
+        const Vec3d  east{-std::sin(lonRadians), std::cos(lonRadians), 0.0};
+        double       firstAlignment = 0.0;
+        double       secondAlignment = 0.0;
+        const TileId next = neighbourToward(grid, tile, east, firstAlignment);
+        const TileId after = neighbourToward(grid, next, east, secondAlignment);
+        if (std::min(firstAlignment, secondAlignment) > bestAlignment) {
+            bestAlignment = std::min(firstAlignment, secondAlignment);
+            fixture.narrow = tile;
+            fixture.riverNeighbour = next;
+            beyond = after;
+        }
+    }
+
+    const Vec3d narrowCentre = grid.tileCenter(fixture.narrow);
+    const double spacingRadians = std::acos(std::clamp(dot(narrowCentre, grid.tileCenter(fixture.riverNeighbour)), -1.0, 1.0));
+    world.derived.planetRadiusMeters = kTileSpacingMeters / spacingRadians;
+
+    // Lake round the narrow tile out of every search's reach, except its river neighbour and the land from
+    // two tiles east on.
+    const double lonRadians = centreOf(world, fixture.narrow).lonDeg * std::numbers::pi / 180.0;
+    const Vec3d  east{-std::sin(lonRadians), std::cos(lonRadians), 0.0};
+    for (TileId tile = 0; tile < grid.tileCount(); ++tile) {
+        if (tile == fixture.narrow || tile == fixture.riverNeighbour) continue;
+        const Vec3d  centre = grid.tileCenter(tile);
+        const Vec3d  offset{centre.x - narrowCentre.x, centre.y - narrowCentre.y, centre.z - narrowCentre.z};
+        const double eastTiles = dot(offset, east) / spacingRadians;
+        const double arc = std::acos(std::clamp(dot(narrowCentre, centre), -1.0, 1.0));
+        if (arc < 4.0 * spacingRadians && eastTiles < 1.9) {
+            world.data.flags[tile] |= kFlagLake;
+            world.data.biome[tile] = static_cast<uint8_t>(Biome::Lake);
+        }
+    }
+
+    const LatLon beyondLatLon = centreOf(world, beyond);
+    carveRiver(world, beyond, grid.fromLatLon(beyondLatLon.latDeg, beyondLatLon.lonDeg + 20.0));
+    const auto flowInto = [&](TileId from, TileId to) {
+        std::array<TileId, 6> neighbours{};
+        const uint32_t count = grid.neighbors(from, neighbours);
+        for (uint32_t i = 0; i < count; ++i) {
+            if (neighbours[i] == to) world.data.downhill[from] = static_cast<uint8_t>(i);
+        }
+        world.data.flags[from] |= kFlagRiver;
+    };
+    flowInto(fixture.narrow, fixture.riverNeighbour);
+    flowInto(fixture.riverNeighbour, beyond);
+    for (TileId tile = 0; tile < grid.tileCount(); ++tile) {
+        if ((world.data.flags[tile] & kFlagRiver) != 0) world.data.flowAccum[tile] = kWideRiverFlow;
+    }
+    return fixture;
+}
+
 double arcDegrees(const GeneratedWorld& world, TileId a, TileId b) {
     const double cosine = std::clamp(dot(world.grid->tileCenter(a), world.grid->tileCenter(b)), -1.0, 1.0);
     return std::acos(cosine) * 180.0 / 3.14159265358979323846;
@@ -269,6 +366,26 @@ TEST(LandingSiteResolution, DryPickStaysAtThePick) {
     expectSameLanding(resolveLandingSite(world, grasslandProvisions(), site.origin), site);
 }
 
+// The search on a narrow strip finds fresh water but no dry point 30 m from it; that drop is not a
+// landing, and the resolution goes on to the river neighbour, whose search reaches open land.
+TEST(LandingSiteResolution, NarrowLandIsNotALandingAndTheNextAnchorIsTried) {
+    const NarrowLandFixture fixture = narrowLand();
+    const LatLon            narrowCentre = centreOf(*fixture.world, fixture.narrow);
+
+    const SpawnSite narrowDrop = findWatersideSpawn(fixture.world, narrowCentre.latDeg, narrowCentre.lonDeg);
+    ASSERT_TRUE(narrowDrop.water == SpawnWater::River || narrowDrop.water == SpawnWater::Lake);
+    ASSERT_FALSE(narrowDrop.clear) << "the narrow tile's best point is " << narrowDrop.waterDistanceMeters << " m from water";
+
+    const LandingSite site = resolveLandingSite(fixture.world, grasslandProvisions(), narrowCentre);
+    EXPECT_EQ(site.tile, fixture.riverNeighbour);
+    const LatLon neighbourCentre = centreOf(*fixture.world, fixture.riverNeighbour);
+    EXPECT_EQ(site.origin.latDeg, neighbourCentre.latDeg);
+    EXPECT_EQ(site.origin.lonDeg, neighbourCentre.lonDeg);
+    EXPECT_NE(site.feature, FreshWaterFeature::None);
+    EXPECT_TRUE(site.spawn.clear);
+    EXPECT_NEAR(site.spawn.waterDistanceMeters, kLandingWaterDistanceMeters, kLandingWaterDistanceToleranceMeters);
+}
+
 TEST(LandingSiteResolution, PickBesideLakeResolvesToItsShore) {
     auto world = makeWorld(kSubdivision);
     const TileId land = world->grid->fromLatLon(0.0, 0.0);
@@ -319,6 +436,7 @@ TEST(LandingSiteFinder, SitesMeetTheBarStandApartAndVaryByKindAndBiome) {
     for (std::size_t i = 0; i < sites.size(); ++i) {
         const LandingSite& site = sites[i];
         EXPECT_TRUE(site.recommended()) << "site " << i;
+        EXPECT_TRUE(site.spawn.clear) << "site " << i;
         EXPECT_LE(std::abs(centreOf(*world, site.tile).latDeg), kMaximumSuggestedLatitudeDegrees) << "site " << i;
         for (std::size_t j = 0; j < i; ++j) {
             EXPECT_GE(arcDegrees(*world, site.tile, sites[j].tile), kMinimumSiteSeparationDegrees) << i << " and " << j;

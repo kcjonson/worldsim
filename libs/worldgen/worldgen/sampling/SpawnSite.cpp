@@ -181,9 +181,10 @@ SpawnSite findWatersideSpawn(const std::shared_ptr<const GeneratedWorld>& world,
             if (distance > reach) continue;
 
             const double originDistance = foundation::det_math::sqrt(x * x + y * y);
-            const Choice candidate{{x, y, nearest, static_cast<float>(distance)}, distance, originDistance, true};
+            const bool   clear = distance >= kLandingWaterDistanceMeters - kLandingWaterDistanceToleranceMeters;
+            const Choice candidate{{x, y, nearest, static_cast<float>(distance), clear}, distance, originDistance, true};
             const auto   kind = static_cast<std::size_t>(nearest) - 1;
-            if (distance >= kLandingWaterDistanceMeters - kLandingWaterDistanceToleranceMeters) {
+            if (clear) {
                 Choice& best = atDistance[kind];
                 if (!best.found || originDistance < best.originDistance) best = candidate;
             } else {
