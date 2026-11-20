@@ -86,8 +86,9 @@ TEST(SpawnSite, RiverThroughOriginSpawnsOnDryBank) {
     world->grid->latLonOf(source, lat, lon);
 
     SpawnSite site = findRiverbankSpawn(world, lat, lon);
-    EXPECT_TRUE(site.nearWater);
-    EXPECT_TRUE(site.freshWater);
+    EXPECT_EQ(site.water, SpawnWater::River);
+    EXPECT_GT(site.waterDistanceMeters, 0.0f) << "the bank is dry, so off the channel edge";
+    EXPECT_LE(site.waterDistanceMeters, 6.0f) << "within the bank distance of the channel";
 
     // The spawn must be dry land (not in the channel, not biome water)...
     RiverNetwork2D rn(world, lat, lon);
@@ -111,7 +112,8 @@ TEST(SpawnSite, DryWorldFallsBackToOrigin) {
     world->grid->latLonOf(world->grid->fromLatLon(0.0, 0.0), lat, lon);
 
     SpawnSite site = findRiverbankSpawn(world, lat, lon);
-    EXPECT_FALSE(site.nearWater);
+    EXPECT_EQ(site.water, SpawnWater::None);
+    EXPECT_FLOAT_EQ(site.waterDistanceMeters, 0.0f);
     EXPECT_DOUBLE_EQ(site.xMeters, 0.0);
     EXPECT_DOUBLE_EQ(site.yMeters, 0.0);
 }

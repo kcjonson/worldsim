@@ -359,22 +359,22 @@ namespace {
 
 			// Drop the colony beside clean water (riverbank > lake shore > coast);
 			// a colony dies without it. Falls back to the origin when none is near.
-			worldgen::SpawnSite spawn =
+			worldState->spawn =
 				worldgen::findRiverbankSpawn(startConfig->world, startConfig->landingLatDeg, startConfig->landingLonDeg);
-			worldState->spawnPosition = {static_cast<float>(spawn.xMeters), static_cast<float>(spawn.yMeters)};
+			const worldgen::SpawnSite& spawn = worldState->spawn;
 			LOG_DEBUG(
 				Game,
-				"GameLoadingScene - Spawn (%.1f, %.1f) nearWater=%d fresh=%d",
-				worldState->spawnPosition.x,
-				worldState->spawnPosition.y,
-				spawn.nearWater ? 1 : 0,
-				spawn.freshWater ? 1 : 0
+				"GameLoadingScene - Spawn (%.1f, %.1f) water=%d at %.1f m",
+				spawn.xMeters,
+				spawn.yMeters,
+				static_cast<int>(spawn.water),
+				static_cast<double>(spawn.waterDistanceMeters)
 			);
 
 			// Create camera centered on the spawn point
 			worldState->camera = std::make_unique<world::WorldCamera>();
 			worldState->camera->setPanSpeed(200.0F);
-			worldState->camera->setPosition({worldState->spawnPosition.x, worldState->spawnPosition.y});
+			worldState->camera->setPosition({static_cast<float>(spawn.xMeters), static_cast<float>(spawn.yMeters)});
 
 			// Create renderers
 			worldState->renderer = std::make_unique<worldview::ChunkRenderer>(kPixelsPerMeter, world_sim::groundTiles());

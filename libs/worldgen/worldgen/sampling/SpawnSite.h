@@ -9,15 +9,20 @@
 
 #include "worldgen/data/GeneratedWorld.h"
 
+#include <cstdint>
 #include <memory>
 
 namespace worldgen {
 
+enum class SpawnWater : uint8_t { None, River, Lake, Ocean };
+
 struct SpawnSite {
-    double xMeters{};   // offset from the landing origin (+x east, +y north)
-    double yMeters{};
-    bool   nearWater{}; // false = no water found within the search radius (dry fallback at origin)
-    bool   freshWater{};// true = adjacent water is fresh (river or lake), not ocean
+    double     xMeters{}; // offset from the landing origin (+x east, +y north)
+    double     yMeters{};
+    SpawnWater water{SpawnWater::None}; // None: no water within the search radius, the drop is the origin
+    // River: distance to the channel edge. Lake, Ocean: the shortest 1 m axis probe, out to the
+    // bank distance, that lands in water. None: zero.
+    float waterDistanceMeters{};
 };
 
 // Closest dry-land cell beside water near the landing origin. Fresh water

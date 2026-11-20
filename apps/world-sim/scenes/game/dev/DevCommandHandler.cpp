@@ -72,6 +72,7 @@
 #include <worldgen/data/Biome.h>
 #include <worldgen/data/GeneratedWorld.h>
 #include <worldgen/sampling/LandingSite.h>
+#include <worldgen/sampling/SpawnSite.h>
 
 #include <algorithm>
 #include <cctype>
@@ -1596,8 +1597,21 @@ namespace world_sim {
 	}
 
 	void DevCommandHandler::serializeLanding(std::ostringstream& out) {
-		out << "{\"landingLatDeg\":" << m_ctx.landingLatDeg
-		    << ",\"landingLonDeg\":" << m_ctx.landingLonDeg;
+		// Full double precision: the view is the check that a landing has not moved.
+		out << std::setprecision(std::numeric_limits<double>::max_digits10) << "{\"landingLatDeg\":" << m_ctx.landingLatDeg
+			<< ",\"landingLonDeg\":" << m_ctx.landingLonDeg;
+
+		const worldgen::SpawnSite spawn = m_ctx.spawn != nullptr ? *m_ctx.spawn : worldgen::SpawnSite{};
+		const bool				  river = spawn.water == worldgen::SpawnWater::River;
+		const bool				  lake = spawn.water == worldgen::SpawnWater::Lake;
+		const char*				  feature = river ? "river" : (lake ? "lake" : "none");
+		out << ",\"feature\":\"" << feature << "\",\"spawnXMeters\":" << spawn.xMeters << ",\"spawnYMeters\":" << spawn.yMeters
+			<< ",\"featureDistanceMeters\":";
+		if (river || lake) {
+			out << spawn.waterDistanceMeters;
+		} else {
+			out << "null";
+		}
 
 		if (!m_ctx.planet || !m_ctx.planet->grid) {
 			// No planet available (test/fallback session): return coords only.

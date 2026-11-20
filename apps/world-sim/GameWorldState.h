@@ -16,8 +16,7 @@
 #include <world/rendering/EntityRenderer.h>
 
 #include <worldgen/data/GeneratedWorld.h>
-
-#include <glm/vec2.hpp>
+#include <worldgen/sampling/SpawnSite.h>
 
 #include <memory>
 #include <unordered_set>
@@ -47,10 +46,10 @@ namespace world_sim {
 		/// GameScene spawns the single default colonist.
 		std::vector<PartyMember> party;
 
-		/// Colonist drop point (2D world meters): dry land beside clean water,
-		/// chosen by findRiverbankSpawn. Defaults to the landing origin. GameScene
-		/// snaps this to a cleared, on-mesh walkable tile center before spawning.
-		glm::vec2 spawnPosition{0.0F, 0.0F};
+		/// Colonist drop point (2D world meters from the landing origin) and the water beside it,
+		/// chosen by findRiverbankSpawn. GameScene snaps the drop to a cleared, on-mesh walkable
+		/// tile center before spawning.
+		worldgen::SpawnSite spawn;
 
 		/// The colony: home anchor for the session. GameScene sets colony.originPosition
 		/// to the cleared, on-mesh clearing center once at landing. Single source of truth

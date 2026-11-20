@@ -166,7 +166,8 @@ namespace {
 				m_entityRenderer = std::move(preloadedState->entityRenderer);
 				m_placementExecutor = std::move(preloadedState->placementExecutor);
 				m_processedChunks = std::move(preloadedState->processedChunks);
-				m_spawnPosition = preloadedState->spawnPosition;
+				landingSpawn = preloadedState->spawn;
+				m_spawnPosition = {static_cast<float>(landingSpawn.xMeters), static_cast<float>(landingSpawn.yMeters)};
 				m_colony = preloadedState->colony;
 				m_planet = std::move(preloadedState->planet);
 				m_landingLatDeg = preloadedState->landingLatDeg;
@@ -631,6 +632,7 @@ namespace {
 				.planet = m_planet,
 				.landingLatDeg = m_landingLatDeg,
 				.landingLonDeg = m_landingLonDeg,
+				.spawn = &landingSpawn,
 				.spawnColonist = [this](glm::vec2 pos, const std::string& name) { return spawnColonist(pos, name); },
 				.dropLoose = [this](const std::string& defName, float x, float y, uint32_t quantity) {
 					dropResourcePiles(defName, {x, y}, {x, y}, quantity);
@@ -2263,6 +2265,7 @@ namespace {
 		std::shared_ptr<const worldgen::GeneratedWorld> m_planet;
 		double											m_landingLatDeg = 0.0;
 		double											m_landingLonDeg = 0.0;
+		worldgen::SpawnSite								landingSpawn;
 		// The colony: home anchor for the session. Single source of truth for the colony
 		// origin (the cleared, on-mesh clearing center), set once at landing. Read by the
 		// camera-home sync and pushed to AIDecisionSystem for the off-mesh recovery snap.

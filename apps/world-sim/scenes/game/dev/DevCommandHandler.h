@@ -41,6 +41,7 @@ namespace construction {
 }
 namespace worldgen {
 	struct GeneratedWorld;
+	struct SpawnSite;
 }
 namespace worldview {
 	class VisibilityCoverRenderer;
@@ -76,6 +77,7 @@ namespace world_sim {
 		std::shared_ptr<const worldgen::GeneratedWorld> planet;
 		double landingLatDeg = 0.0;
 		double landingLonDeg = 0.0;
+		const worldgen::SpawnSite* spawn = nullptr; // the raw drop and its water, for the landing view
 
 		std::function<ecs::EntityID(glm::vec2, const std::string&)> spawnColonist;
 		// GameScene::dropResourcePiles: the one loose-ground drop path (merge, then stack-capped piles).

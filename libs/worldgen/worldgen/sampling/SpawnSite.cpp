@@ -90,7 +90,10 @@ SpawnSite findRiverbankSpawn(const std::shared_ptr<const GeneratedWorld>& world,
             const double d0 = foundation::det_math::sqrt(x * x + y * y);
 
             if (ch <= bankDistanceMeters) { // dry land on a riverbank
-                if (d0 < bestBank) { bestBank = d0; bank = {x, y, true, true}; }
+                if (d0 < bestBank) {
+                    bestBank = d0;
+                    bank = {x, y, SpawnWater::River, static_cast<float>(ch)};
+                }
                 continue;
             }
 
@@ -104,17 +107,35 @@ SpawnSite findRiverbankSpawn(const std::shared_ptr<const GeneratedWorld>& world,
                 else oceanNear = true;
             }
             if (lakeNear) {
-                if (d0 < bestLake) { bestLake = d0; lake = {x, y, true, true}; }
+                if (d0 < bestLake) { bestLake = d0; lake = {x, y, SpawnWater::Lake}; }
             } else if (oceanNear) {
-                if (d0 < bestCoast) { bestCoast = d0; coast = {x, y, true, false}; }
+                if (d0 < bestCoast) { bestCoast = d0; coast = {x, y, SpawnWater::Ocean}; }
             }
         }
     }
 
+    auto shoreDistance = [&](const SpawnSite& site) -> float {
+        for (double reach = 1.0; reach <= bankDistanceMeters; reach += 1.0) {
+            const double probes[4][2] = {{reach, 0.0}, {-reach, 0.0}, {0.0, reach}, {0.0, -reach}};
+            for (const auto& probe : probes) {
+                if (ps.sampleAt(site.xMeters + probe[0], site.yMeters + probe[1]).water) {
+                    return static_cast<float>(reach);
+                }
+            }
+        }
+        return static_cast<float>(bankDistanceMeters);
+    };
+
     if (bestBank < std::numeric_limits<double>::max()) return bank;
-    if (bestLake < std::numeric_limits<double>::max()) return lake;
-    if (bestCoast < std::numeric_limits<double>::max()) return coast;
-    return SpawnSite{0.0, 0.0, false, false};
+    if (bestLake < std::numeric_limits<double>::max()) {
+        lake.waterDistanceMeters = shoreDistance(lake);
+        return lake;
+    }
+    if (bestCoast < std::numeric_limits<double>::max()) {
+        coast.waterDistanceMeters = shoreDistance(coast);
+        return coast;
+    }
+    return SpawnSite{};
 }
 
 } // namespace worldgen
