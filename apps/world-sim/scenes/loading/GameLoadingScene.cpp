@@ -260,10 +260,15 @@ namespace {
 			);
 		}
 
-		/// Before phase 0: the ground tiles, which the splash bakes; a --scene jump skips it, so they're baked here,
-		/// behind the same validation gate, a variant a frame so the bar moves.
+		/// Before phase 0: the ground tiles, which the splash bakes; a --scene jump or a dev switch skips it, so
+		/// they're baked here, after the asset library's load and behind the same validation gate, a variant a frame
+		/// so the bar moves.
 		void bakeGround() {
 			const world_sim::GroundBakeStep step = world_sim::stepGroundBake();
+			if (step.waitingForAssets) {
+				updateStatusText("Loading assets...");
+				return;
+			}
 			if (!step.done) {
 				const worldview::GroundTileBank& bank = world_sim::groundTiles();
 				progress = 0.25F * static_cast<float>(bank.bakedVariants()) / static_cast<float>(std::max(1, bank.totalVariants()));
