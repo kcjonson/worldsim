@@ -100,11 +100,9 @@ A colonist washes at water the way it drinks: below the seek threshold it walks 
 | Seek Threshold | ~30% |
 | Critical Threshold | ~10% |
 | Failure Effect | Work efficiency drops, mood penalty |
-| Fulfilled By | Recreation activities, socializing; at the baseline, enjoying nature, which takes a long time for a little gain and keeps what it gained when cut short |
+| Fulfilled By | Enjoying nature, which takes a long time for a little gain and keeps what it gained when cut short |
 
-Decays while working, recovers while idle or recreating.
-
-**Implementation Note:** Tracked in code now; AI does not seek recreation yet (no fulfillment sources).
+Drains at a steady rate, whatever the colonist is doing, and only enjoying nature restores it.
 
 **MVP Status:** Deferred to Phase 2
 
@@ -117,8 +115,6 @@ Decays while working, recovers while idle or recreating.
 | Fulfilled By | Warmer/colder locations, shelter/indoors, fires, clothing (future) |
 
 Temperature is a need: a colonist needs to be neither freezing nor too hot. It does not drain with time the way hunger does. Its level is set by where the colonist is and what the weather and the hour are doing, so it falls when they are outside their comfort band and recovers when they are back inside it. A colonist meets it by going somewhere warmer or cooler: shelter, a fire, shade, and later clothing.
-
-Until the temperature of a place exists in the sim, the need holds at full and the AI does not act on it.
 
 ### Flee
 
@@ -167,7 +163,7 @@ These are the costs:
 | Bladder | 10 |
 | Digestion | 10 |
 
-Each need's cost is on its own entry in `assets/config/colonists/needs/needs.xml`, beside its thresholds, so a need added by a mod carries its own cost and a mod file that replaces a need replaces its cost with it. `assets/config/colonists/mood.xml` holds the penalty curve, which every need shares, along with the easing and the bands.
+The creature that has mood gives each cost, as a `<moodCost>` row in its own definition (for colonists, the human's), so a need is not tied to one mood cost across kinds of creature, and a need of such a creature with no cost is a load error. A mod that adds a need to the human adds its `<moodCost>` row with it. The penalty curve, which every need shares, along with the easing and the bands, is the creature's `mood.xml`.
 
 ### What low mood does
 

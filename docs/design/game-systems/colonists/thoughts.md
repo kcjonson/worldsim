@@ -87,9 +87,9 @@ Every thought is scored when it is created. The score is the sum of four parts.
 
 A thought bubbles when its score clears the colonist's bar. The bar moves:
 
-- When a colonist bubbles, their bar jumps to its peak, 3.0, above anything an ordinary thought scores. Only a major thought shows straight after another bubble.
+- When a colonist bubbles, their bar jumps to its peak, 3.5, above anything an ordinary thought scores. Only a major thought shows straight after another bubble.
 - With no bubble, the bar falls in a straight line to its floor, 0.2, over 12 game hours. At the floor even a repeated trivial thought clears it, so a colonist whose thoughts are all minor still bubbles a couple of times a game day.
-- Every bubble anywhere also raises every colonist's bar a little: it adds 0.25 to a colony-wide amount that drains at 0.25 a game hour, and that amount sits on top of each colonist's own bar. A colony where many are bubbling makes the next one slightly less likely for everyone, so a large colony is not much noisier than a small one.
+- Every bubble anywhere also raises every colonist's bar a little: it adds 0.25 to a colony-wide amount that decays by half-life (the time it takes to halve is a tuning value, so the amount fades fast at first and a long tail is never left), and that amount sits on top of each colonist's own bar. A colony where many are bubbling makes the next one slightly less likely for everyone, so a large colony is not much noisier than a small one.
 
 The bar is a fixed line, not a roll: the same thought at the same moment always gives the same answer. What is kept is the time of each colonist's last bubble, the colony-wide amount, and the novelty counts.
 

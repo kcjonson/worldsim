@@ -16,21 +16,24 @@ Colonists are autonomous agents who make their own decisions. The player influen
 
 ## Decision Hierarchy
 
-Colonists always evaluate what to do in this fixed order. Higher tiers (lower number) interrupt lower tiers. The key is lexicographic: a `(tier, score)` pair is compared tier-first, so any tier-2 option beats any tier-5 option regardless of distance or skill. See [Colonist Task Arbitration](../../../technical/colonist-task-arbitration.md) for the implementation.
+Colonists always evaluate what to do in this fixed order. A higher rung interrupts a lower one. The key is lexicographic: a `(rung, score)` pair is compared rung-first, so any `critical_need` option beats any `ordinary_need` option regardless of distance or skill. See [Colonist Task Arbitration](../../../technical/colonist-task-arbitration.md) for the implementation.
 
-| Tier | Name                | Trigger                                         | Example                               | Status                   |
-| ---- | ------------------- | ----------------------------------------------- | ------------------------------------- | ------------------------ |
-| 1    | Survival / danger   | Active threat, flee                             | Being chased by predator              | RESERVED (no threats yet) |
-| 2    | Critical Needs      | Need below its critical threshold               | Bladder emergency                     | Implemented              |
-| 3    | Forced player orders | Player queues a direct command                 | Direct movement mode                  | RESERVED (separate epic) |
-| 4    | Active Work Orders  | Colonist has a queued craft/build in progress   | Finish the house foundation           | Implemented, STICKY      |
-| 5    | Actionable Needs    | Need below comfort threshold                    | Hungry, seeks food                    | Implemented              |
-| 6    | Opportunistic work  | Needs satisfied; loose work available           | Haul items, stock storage, harvest    | Implemented              |
-| 7    | Idle                | Nothing else to do                              | Gather food for larder, wander        | Implemented              |
+| Rung                  | Trigger                                          | Example                            |
+| --------------------- | ------------------------------------------------ | ---------------------------------- |
+| `survival`            | Active threat, flee (reserved)                   | Being chased by a predator         |
+| `critical_need`       | Need below its critical threshold                | Bladder emergency                  |
+| `low_mood`            | A low-mood behavior during a mood episode        | Snapping at a colonist             |
+| `player_order`        | An order the player gave                         | Go to this spot                    |
+| `urgent_need`         | Need below its urgent threshold                  | Very hungry, leaves its work       |
+| `own_unfinished_work` | A craft whose part-done unit the colonist holds  | Back to the half-made axe          |
+| `committed_work`      | A queued craft or build and its provisioning     | Finish the house foundation        |
+| `ordinary_need`       | Need below its seek threshold                    | Slightly hungry, seeks food        |
+| `opportunistic_work`  | Needs satisfied; loose work available            | Haul items, stock storage, harvest |
+| `idle`                | Nothing else to do                               | Gather food for larder, wander     |
 
-What a colonist does at each tier (a need's chain, a piece of work, an idle chain, a player's order, a low-mood behavior) is defined in data as chains of steps whose targets are picked by queries ([Queries and chains](../../../technical/queries-and-chains.md)); the tiers say only what comes first. A low-mood behavior sits directly below critical needs and above the player's orders ([Mood](./mood.md#the-episode-cycle)), and [Interruptable crafts](../../../technical/interruptable-crafts.md#the-ladder) adds urgent needs and a crafter's own unfinished work to the ladder.
+What a colonist does at each rung (a need's chain, a piece of work, an idle chain, a player's order, a low-mood behavior) is defined in data as chains of steps whose targets are picked by queries ([Queries and chains](../../../technical/queries-and-chains.md#rungs), which holds the ladder); the rungs say only what comes first. A low-mood behavior sits directly below critical needs and above the player's orders ([Mood](./mood.md#the-episode-cycle)), and [Interruptable crafts](../../../technical/interruptable-crafts.md#the-ladder) gives urgent needs and a crafter's own unfinished work their rungs.
 
-"Lower number = higher priority." Tier 4 (active work orders) sits above tier 5 (actionable needs): a colonist finishes a committed craft or build before addressing a non-critical need. Only tier 2 (critical needs) preempts active work. See [Colonist Task Arbitration §3](../../../technical/colonist-task-arbitration.md) for the locked design basis (multi-colonist crafting §2b, "finishing is very high priority").
+`committed_work` sits above `ordinary_need`: a colonist finishes a committed craft or build before addressing a slightly hungry or tired state. A need below its urgent or critical level, a mood episode, or a player's order takes a colonist off committed work; an ordinary need does not. See [Colonist Task Arbitration §3](../../../technical/colonist-task-arbitration.md) for the locked design basis (multi-colonist crafting §2b, "finishing is very high priority").
 
 ### Tier 1: Survival / danger (RESERVED)
 

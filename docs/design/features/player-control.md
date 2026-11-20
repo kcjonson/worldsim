@@ -76,7 +76,11 @@ Even under player control, some things interrupt:
 
 **Critical Bladder:** Warning shown. If ignored, accident occurs.
 
-**Breakdown:** Control released, break behavior plays out.
+**Mood episode:** Control is released, and the low-mood behavior plays out.
+
+### During a mood episode
+
+A colonist in a mood episode takes no direct control and no orders until the episode ends. The Control button and the context menus do nothing for that colonist, a click-to-order is refused, and an order already given waits behind the episode, because the low-mood behavior ranks above the player's orders ([Mood](../game-systems/colonists/mood.md#the-episode-cycle)). A critical need still interrupts the episode, and the behavior's own end conditions bound it.
 
 ## The "Now What?" Question
 
