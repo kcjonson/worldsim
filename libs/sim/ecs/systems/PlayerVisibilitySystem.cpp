@@ -37,6 +37,34 @@ namespace ecs {
 				   });
 		}
 
+		// A side within this angle of the ray from the build eye through its middle runs along that ray: a
+		// shadow side. The clip steps a shadow side's far end up to 8 mm off its ray (starClippedToConvex),
+		// which turns a side metres long by a fraction of a degree; a rim side lies across its ray.
+		constexpr double kAlongRayCosine = 0.995;
+		// How far a body face's ends may lie from the outline edge it is on.
+		constexpr std::int64_t kOnFaceMm = 2;
+
+		bool alongRayFrom(const Vec2i64& eye, const Vec2i64& from, const Vec2i64& to) {
+			const glm::dvec2 along{static_cast<double>(to.x - from.x), static_cast<double>(to.y - from.y)};
+			const glm::dvec2 outward{
+				(static_cast<double>(from.x) + static_cast<double>(to.x)) / 2.0 - static_cast<double>(eye.x),
+				(static_cast<double>(from.y) + static_cast<double>(to.y)) / 2.0 - static_cast<double>(eye.y)
+			};
+			const double lengths = std::sqrt((along.x * along.x + along.y * along.y) * (outward.x * outward.x + outward.y * outward.y));
+			return lengths > 0.0 && std::abs(along.x * outward.x + along.y * outward.y) >= kAlongRayCosine * lengths;
+		}
+
+		bool onOpaqueFace(const std::vector<const vision::SightBody*>& opaque, const Vec2i64& from, const Vec2i64& to) {
+			for (const vision::SightBody* body : opaque) {
+				for (const geometry::OccluderSegment& edge : body->edges) {
+					if (geometry::withinDistanceOfSegment(from, edge.a, edge.b, kOnFaceMm) && geometry::withinDistanceOfSegment(to, edge.a, edge.b, kOnFaceMm)) {
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
 		static_assert(
 			vision::kSeenBoxCellMm == static_cast<std::int64_t>(world::kChunkWorldSize) * geometry::kMillimetersPerMeter,
 			"a seen-box cell is a chunk"
@@ -200,6 +228,7 @@ namespace ecs {
 			} else {
 				it->second.feed.leave(seen, it->first);
 				drawnForests.erase(it->first);
+				drawnCaches.erase(it->first);
 				it = observers.erase(it);
 			}
 		}
@@ -246,55 +275,98 @@ namespace ecs {
 
 	// Off the polygon path the eased shape lies in his leg's ring (sight-softening.md 6.2); on it, it
 	// cuts vision's polygon, round the polygon's build.
-	std::optional<std::vector<Vec2i64>> PlayerVisibilitySystem::drawnVisible(EntityID colonist) const {
+	const PlayerVisibilitySystem::DrawnShape* PlayerVisibilitySystem::drawnVisible(EntityID colonist) const {
 		const VisionSystem* vision	 = world->tryGetSystem<VisionSystem>();
 		const Position*		position = world->getComponent<Position>(colonist);
 		if (vision == nullptr || position == nullptr) {
-			return std::nullopt;
+			return nullptr;
 		}
 		const std::optional<VisionSystem::SightShape> shape = vision->sightShape(colonist);
 		if (!shape.has_value()) {
-			return std::nullopt;
+			return nullptr;
 		}
 		const std::int64_t sightMm = std::llround(static_cast<double>(shape->radius) * 1000.0);
 		if (sightMm - vision::kSeenSlackMm < vision::kSeenLeastRadiusMm) {
-			return std::nullopt;
+			return nullptr;
 		}
 		const auto observer = observers.find(colonist);
 		if (observer == observers.end()) {
-			return std::nullopt;
+			return nullptr;
 		}
 		const Vec2i64	   standing = nav::toMm(position->value);
 		const std::int64_t drawnMm	= vision::drawnVisibleRadiusMm(sightMm);
+		// The same build, place, eased rim, and tunables draw the same shape: a colonist standing still, or
+		// asked twice in a frame, costs nothing here.
+		const std::optional<vision::SightFeed::SideOffsets> drawnOffsets = observer->second.feed.drawnOffsets();
+		DrawnCache&											cache		 = drawnCaches[colonist];
+		const DrawnKey											key{
+				   .buildRevision	= shape->buildRevision,
+				   .polygonRevision = shape->polygonRevision,
+				   .holdsPolygon	= observer->second.feed.holdsPolygon(shape->polygonRevision),
+				   .standing		= standing,
+				   .offsets			= drawnOffsets.value_or(vision::SightFeed::SideOffsets{}),
+				   .hasOffsets		= drawnOffsets.has_value(),
+				   .sightMm			= sightMm,
+				   .rimEaseMm		= vision->sightTunables().rimEaseMm
+		};
+		if (cache.valid && cache.key == key) {
+			return cache.drawn ? &cache.shape : nullptr;
+		}
+		cache.valid = true;
+		cache.key	= key;
+		cache.drawn = false;
 		// A sight too long for forest depth has no ranges to ease: its rim is the sight polygon drawn in
 		// by the ease's inset.
 		std::vector<Vec2i64> eased;
 		if (shape->forest == nullptr) {
 			eased = geometry::sightPolygon(standing, drawnMm - vision->sightTunables().rimEaseMm);
-		} else if (const std::optional<vision::SightFeed::SideOffsets> offsets = observer->second.feed.drawnOffsets()) {
-			const geometry::Ring& forest = drawnForestFor(colonist, *offsets);
+		} else if (drawnOffsets.has_value()) {
+			const geometry::Ring& forest = drawnForestFor(colonist, *drawnOffsets);
 			eased.resize(forest.size());
 			std::ranges::transform(forest, eased.begin(), [&](const Vec2i64& vertex) { return vertex + standing; });
 		} else {
-			return std::nullopt;
+			return nullptr;
 		}
-		std::vector<Vec2i64> cut;
 		if (shape->polygon == nullptr) {
-			cut = std::move(eased);
-		} else {
-			if (!observer->second.feed.holdsPolygon(shape->polygonRevision)) {
-				return std::nullopt;
-			}
-			const Vec2i64 build = nav::toMm(shape->center);
-			cut					= geometry::starClippedToConvex(*shape->polygon, build, geometry::sightPolygon(standing, drawnMm));
-			if (!cut.empty()) {
-				cut = geometry::starClippedToConvex(cut, build, eased);
-			}
+			cache.shape.outline = std::move(eased);
+			cache.shape.rim.assign(cache.shape.outline.size(), true);
+			cache.drawn = true;
+			return &cache.shape;
+		}
+		if (!observer->second.feed.holdsPolygon(shape->polygonRevision)) {
+			return nullptr;
+		}
+		const Vec2i64		 build = nav::toMm(shape->center);
+		const std::vector<Vec2i64> disc	 = geometry::sightPolygon(standing, drawnMm);
+		std::vector<Vec2i64> cut   = geometry::starClippedToConvex(*shape->polygon, build, disc);
+		if (!cut.empty()) {
+			cut = geometry::starClippedToConvex(cut, build, eased);
 		}
 		if (cut.empty()) {
-			return std::nullopt;
+			return nullptr;
 		}
-		return cut;
+		// Every side is rim but a shadow side, which runs out along a ray from the build eye, and a body
+		// face, which lies on an opaque body's outline: whatever ring cut the rest (the disc, the eased
+		// shape, or vision's own forest rim where the ease reaches past it), it bounds his sight.
+		const std::optional<VisionSystem::SightBodies> bodies = vision->sightBodies(colonist);
+		std::vector<const vision::SightBody*>		   opaque;
+		if (bodies.has_value()) {
+			for (const vision::SightBody& body : *bodies->bodies) {
+				if (body.kind == vision::BodyKind::Opaque) {
+					opaque.push_back(&body);
+				}
+			}
+		}
+		DrawnShape& drawn = cache.shape;
+		drawn.outline	  = std::move(cut);
+		drawn.rim.resize(drawn.outline.size());
+		for (std::size_t side = 0; side < drawn.outline.size(); ++side) {
+			const Vec2i64& from = drawn.outline[side];
+			const Vec2i64& to	= drawn.outline[(side + 1) % drawn.outline.size()];
+			drawn.rim[side]		= !alongRayFrom(build, from, to) && !onOpaqueFace(opaque, from, to);
+		}
+		cache.drawn = true;
+		return &drawn;
 	}
 
 	// The eased forest shape round the origin, built when the drawn offsets change: every frame of an

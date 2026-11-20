@@ -42,6 +42,11 @@ namespace {
 
 	constexpr float kSight = kDefaultSightRadius;
 
+	// The bright outline alone, for tests that read only where it lies.
+	std::optional<std::vector<Vec2i64>> outlineOf(const PlayerVisibilitySystem::DrawnShape* drawn) {
+		return drawn != nullptr ? std::optional(drawn->outline) : std::nullopt;
+	}
+
 	// Vision every frame, so each frame's sight shape is the one this frame's position gives.
 	struct Colony {
 		World					world;
@@ -437,7 +442,7 @@ TEST(PlayerVisibilitySystem, DrawnVisibleInSeenInSweptPastADoorway) {
 		}
 		const std::optional<VisionSystem::SightShape> shape = colony.vision.sightShape(colonist);
 		ASSERT_TRUE(shape.has_value());
-		const std::optional<std::vector<Vec2i64>> drawn = colony.visibility.drawnVisible(colonist);
+		const std::optional<std::vector<Vec2i64>> drawn = outlineOf(colony.visibility.drawnVisible(colonist));
 		ASSERT_TRUE(drawn.has_value()) << "frame " << frame;
 		drawnChecked += shape->polygon != nullptr ? 1 : 0;
 		for (int sample = 0; sample < 24; ++sample) {
@@ -489,7 +494,7 @@ TEST(PlayerVisibilitySystem, DrawnVisibleOutdoorsIsTheDiscRoundWhereHeStands) {
 	Colony		   colony;
 	const EntityID colonist = colony.addColonist({0.0F, 0.0F});
 	colony.walk(colonist, {4.0F, -2.0F}, 0.05F);
-	const std::optional<std::vector<Vec2i64>> drawn = colony.visibility.drawnVisible(colonist);
+	const std::optional<std::vector<Vec2i64>> drawn = outlineOf(colony.visibility.drawnVisible(colonist));
 	ASSERT_TRUE(drawn.has_value());
 	const Vec2i64	   standing = nav::toMm({4.0F, -2.0F});
 	const std::int64_t radiusMm = vision::drawnVisibleRadiusMm(std::llround(kSight * 1000.0F)) - 400;
@@ -502,7 +507,7 @@ TEST(PlayerVisibilitySystem, DrawnVisibleOutdoorsIsTheDiscRoundWhereHeStands) {
 	const EntityID shortSighted = colony.addColonist({100.0F, 0.0F});
 	colony.world.getComponent<Memory>(shortSighted)->sightRadius = 1.0F;
 	colony.tick();
-	EXPECT_FALSE(colony.visibility.drawnVisible(shortSighted).has_value());
+	EXPECT_FALSE(colony.visibility.drawnVisible(shortSighted) != nullptr);
 }
 
 // With walls in sight the bright shape is vision's polygon cut to the disc round where he stands and
@@ -525,7 +530,7 @@ TEST(PlayerVisibilitySystem, DrawnVisibleWithWallsInSightMovesWithHim) {
 	for (int step = 0; step <= 4; ++step) {
 		const float west = 0.1F * static_cast<float>(step);
 		colony.standAt(colonist, {-west, 0.0F});
-		const std::optional<std::vector<Vec2i64>> drawn = colony.visibility.drawnVisible(colonist);
+		const std::optional<std::vector<Vec2i64>> drawn = outlineOf(colony.visibility.drawnVisible(colonist));
 		ASSERT_TRUE(drawn.has_value());
 		EXPECT_NEAR(static_cast<double>(std::min_element(drawn->begin(), drawn->end(), byX)->x), -1000.0 * west - static_cast<double>(drawnMm), 8.0)
 			<< "the rim is the disc round where he stands, " << west << " m west";
@@ -533,6 +538,47 @@ TEST(PlayerVisibilitySystem, DrawnVisibleWithWallsInSightMovesWithHim) {
 		EXPECT_GT(std::max_element(drawn->begin(), drawn->end(), byX)->x, 2800);
 	}
 	EXPECT_EQ(colony.vision.polygonBuildCount(), built) << "all within one polygon";
+	assets::ConstructionRegistry::Get().clear();
+}
+
+// Which sides of the bright shape are rim, the sides the feather is drawn on (sight-softening.md 7.2):
+// in the open every side; beside a wall every side on the disc and none along the wall's face.
+TEST(PlayerVisibilitySystem, DrawnRimSidesAreTheDiscsAndNotTheWallFace) {
+	assets::ConstructionRegistry::Get().clear();
+	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string()));
+	construction::ConstructionWorld walls;
+	buildWall(walls, {3000, -40000}, {3000, 40000});
+
+	Colony		   colony;
+	const EntityID outdoors = colony.addColonist({-500.0F, 0.0F});
+	colony.walk(outdoors, {-504.0F, 0.0F}, 0.05F);
+	const PlayerVisibilitySystem::DrawnShape* open = colony.visibility.drawnVisible(outdoors);
+	ASSERT_NE(open, nullptr);
+	ASSERT_EQ(open->rim.size(), open->outline.size());
+	EXPECT_TRUE(std::ranges::all_of(open->rim, [](bool rim) { return rim; }));
+
+	colony.vision.setConstructionWorld(&walls);
+	colony.visibility.setConstructionWorld(&walls);
+	const EntityID colonist = colony.addColonist({0.0F, 0.0F});
+	colony.tick();
+	const PlayerVisibilitySystem::DrawnShape* drawn = colony.visibility.drawnVisible(colonist);
+	ASSERT_NE(drawn, nullptr);
+	ASSERT_EQ(drawn->rim.size(), drawn->outline.size());
+	const std::int64_t drawnMm = vision::drawnVisibleRadiusMm(std::llround(kSight * 1000.0F)) - 400;
+	std::size_t		   faces   = 0;
+	for (std::size_t side = 0; side < drawn->outline.size(); ++side) {
+		const Vec2i64& from = drawn->outline[side];
+		const Vec2i64& to	= drawn->outline[(side + 1) % drawn->outline.size()];
+		const bool	   face = from.x > 2500 && to.x > 2500 && std::abs(from.x - to.x) < 50 && std::abs(from.y - to.y) > 1000;
+		faces += face ? 1 : 0;
+		if (face) {
+			EXPECT_FALSE(drawn->rim[side]) << "the wall's face, side " << side;
+		} else {
+			EXPECT_TRUE(geometry::withinDistanceOfSegment(from, {0, 0}, {0, 0}, drawnMm + 8)) << "side " << side;
+			EXPECT_TRUE(drawn->rim[side]) << "on the disc, side " << side;
+		}
+	}
+	EXPECT_GE(faces, 1U) << "the wall cuts the disc";
 	assets::ConstructionRegistry::Get().clear();
 }
 
@@ -881,7 +927,7 @@ TEST_P(ForestLegs, BrightShapeSeenEaseBoundedAndRecordNearTheShapesHeld) {
 			lastHeld  = at;
 			lastBuild = shape->buildRevision;
 		}
-		const std::optional<std::vector<Vec2i64>> drawn = colony.visibility.drawnVisible(colonist);
+		const std::optional<std::vector<Vec2i64>> drawn = outlineOf(colony.visibility.drawnVisible(colonist));
 		ASSERT_TRUE(drawn.has_value());
 		expectDrawnSeen(colony.visibility, *drawn, frames);
 		ease.frame(*shape, *drawn, at, frames, everySide());
@@ -1019,7 +1065,7 @@ TEST(PlayerVisibilitySystem, OpenGroundIntoForestToABigRockAndOn) {
 		if (paths.empty() || paths.back() != shape->path) {
 			paths.push_back(shape->path);
 		}
-		const std::optional<std::vector<Vec2i64>> drawn = colony.visibility.drawnVisible(colonist);
+		const std::optional<std::vector<Vec2i64>> drawn = outlineOf(colony.visibility.drawnVisible(colonist));
 		if (!drawn.has_value()) {
 			continue;
 		}
@@ -1045,12 +1091,12 @@ TEST(PlayerVisibilitySystem, StandingStillTheRimHoldsWhileARingArrives) {
 	}
 	colony.place({10.0F, 0.0F}, 0.8F, std::llround(colony.time.simulationSeconds() * 1000.0));
 	colony.world.update(1.0F / 60.0F);
-	const std::optional<std::vector<Vec2i64>> first = colony.visibility.drawnVisible(colonist);
+	const std::optional<std::vector<Vec2i64>> first = outlineOf(colony.visibility.drawnVisible(colonist));
 	ASSERT_TRUE(first.has_value());
 	const std::uint64_t builds = colony.vision.buildCount();
 	for (int frame = 0; frame < 120; ++frame) {
 		colony.world.update(1.0F / 60.0F);
-		EXPECT_EQ(colony.visibility.drawnVisible(colonist), first) << "frame " << frame;
+		EXPECT_EQ(outlineOf(colony.visibility.drawnVisible(colonist)), first) << "frame " << frame;
 	}
 	EXPECT_GT(colony.vision.buildCount(), builds + 10) << "the arriving ring rebuilt his shape";
 }
@@ -1198,11 +1244,12 @@ TEST(PlayerVisibilitySystem, AJumpOnABuildFrameKeepsTheBrightShapeSeen) {
 			for (int after = 0; after < 30; ++after) {
 				++frames;
 				const std::optional<VisionSystem::SightShape> shape = colony.vision.sightShape(colonist);
-				const std::optional<std::vector<Vec2i64>>	  drawn = colony.visibility.drawnVisible(colonist);
+				const std::optional<std::vector<Vec2i64>>	  drawn = outlineOf(colony.visibility.drawnVisible(colonist));
 				if (!polygonPath) {
 					ASSERT_TRUE(drawn.has_value());
 					expectDrawnSeen(colony.visibility, *drawn, frames);
 				} else {
+					ASSERT_TRUE(shape.has_value());
 					ASSERT_NE(shape->polygon, nullptr);
 					// Drawn only once a polygon built at or past where he landed has registered.
 					EXPECT_TRUE(!drawn.has_value() || shape->center.x >= landedAt - 0.01F) << "frame " << frames << ": a polygon from before the jump";
@@ -1221,6 +1268,39 @@ TEST(PlayerVisibilitySystem, AJumpOnABuildFrameKeepsTheBrightShapeSeen) {
 // The record takes a polygon-path shape cut to its forest rim, so a rock past the rim, where the
 // trees pull his sight in, is not seen and its footprint does not join the record as an island in
 // unseen ground, though it lies inside the sight disc (sight-softening.md 6.4).
+// On the polygon path in forest, every side of the bright shape that lies on its rim is tagged rim, and
+// the rock's shadow sides and faces are not (sight-softening.md 7.2).
+TEST(PlayerVisibilitySystem, OnThePolygonPathInForestTheRimSidesAreRim) {
+	ForestColony colony;
+	colony.plant({-40.0F, -40.0F}, {40.0F, 40.0F}, 4.0F, 0.65F, 21);
+	colony.place({6.0F, 0.0F}, 1.6F);
+	const EntityID colonist = colony.addColonist({0.0F, 0.0F});
+	colony.world.getComponent<MovementTarget>(colonist)->active = false;
+	for (int frame = 0; frame < 10; ++frame) {
+		colony.world.update(1.0F / 60.0F);
+	}
+	const std::optional<VisionSystem::SightShape> shape = colony.vision.sightShape(colonist);
+	ASSERT_TRUE(shape.has_value());
+	ASSERT_NE(shape->polygon, nullptr);
+	const PlayerVisibilitySystem::DrawnShape* drawn = colony.visibility.drawnVisible(colonist);
+	ASSERT_NE(drawn, nullptr);
+	const std::size_t count = drawn->outline.size();
+	for (std::size_t side = 0; side < count; ++side) {
+		const Vec2i64& from = drawn->outline[side];
+		const Vec2i64& to	= drawn->outline[(side + 1) % count];
+		// The rock is a 1.6 m square 6 m east: its faces and shadow sides lie within its shadow's wedge.
+		const bool byTheRock = from.x > 4500 && to.x > 4500 && std::abs(from.y) < 4000 && std::abs(to.y) < 4000;
+		const bool farOut	 = geometry::withinDistanceOfSegment(from, {0, 0}, {0, 0}, 15000) == false &&
+							geometry::withinDistanceOfSegment(to, {0, 0}, {0, 0}, 15000) == false;
+		if (farOut && !byTheRock) {
+			EXPECT_TRUE(drawn->rim[side]) << "side " << side << " from " << from.x << "," << from.y << " to " << to.x << "," << to.y;
+		}
+		if (byTheRock && !farOut) {
+			EXPECT_FALSE(drawn->rim[side]) << "side " << side;
+		}
+	}
+}
+
 TEST(PlayerVisibilitySystem, ARockPastTheForestRimIsNotSeenGround) {
 	ForestColony colony;
 	colony.plant({4.0F, -12.0F}, {22.0F, 12.0F}, 1.2F, 0.65F, 17);

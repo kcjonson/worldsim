@@ -51,6 +51,14 @@ namespace vision {
 			return firstLow.x <= secondHigh.x && secondLow.x <= firstHigh.x && firstLow.y <= secondHigh.y && secondLow.y <= firstHigh.y;
 		}
 
+		std::int64_t floorDivide(std::int64_t value, std::int64_t divisor) {
+			const std::int64_t quotient = value / divisor;
+			return value % divisor < 0 ? quotient - 1 : quotient;
+		}
+
+		// The cell of K's grid of registered boxes.
+		constexpr std::int64_t kRingBoxCellMm = 32000;
+
 		// The seen-box cell holding `millimetres` along one axis, rounding toward negative infinity.
 		std::int64_t cellOf(std::int64_t millimetres) {
 			const std::int64_t cell = millimetres / kSeenBoxCellMm;
@@ -294,20 +302,65 @@ namespace vision {
 	}
 
 	void SeenArea::registerPiece(std::deque<PendingShape>& from) {
+		markPhase(TickPhase::Patch);
 		PendingShape& piece = from.front();
 		holdCommitted(piece.low, piece.high);
+		if (changedBoxes.size() == kSeenChangedBoxesMost) {
+			Box whole = changedBoxes.front();
+			for (const Box& box : changedBoxes) {
+				whole.low  = {std::min(whole.low.x, box.low.x), std::min(whole.low.y, box.low.y)};
+				whole.high = {std::max(whole.high.x, box.high.x), std::max(whole.high.y, box.high.y)};
+			}
+			changedBoxes.assign(1, whole);
+		}
+		changedBoxes.push_back({piece.low, piece.high});
 		++registeredFrom[static_cast<std::size_t>(piece.origin)];
 		++work.piecesRegistered;
 		work.verticesRegistered += piece.outline.size();
 		geometry::nav::PatchEdits edits;
 		edits.adds.push_back(geometry::nav::NavInputPolygon{.ring = std::move(piece.outline)});
 		from.pop_front();
-		markPhase(TickPhase::Patch);
 		const geometry::nav::PatchReport report = mesh->applyPatch(edits);
 		for (const std::int32_t added : report.added) {
-			if (added != geometry::nav::kNoRing) {
-				registered.push_back(added);
+			if (added == geometry::nav::kNoRing) {
+				continue;
 			}
+			registered.push_back(added);
+			if (!ringsMetCounted) {
+				continue;
+			}
+			const std::vector<Vec2i64>& ring = mesh->ring(added).polygon.ring;
+			Box							box{ring.front(), ring.front()};
+			for (const Vec2i64& point : ring) {
+				box.low	 = {std::min(box.low.x, point.x), std::min(box.low.y, point.y)};
+				box.high = {std::max(box.high.x, point.x), std::max(box.high.y, point.y)};
+			}
+			// The boxes met are read from a grid of kRingBoxCellMm cells, so the work is the boxes near this
+			// one, not every box registered this session; a box in several of its cells is counted once.
+			const auto		   index = static_cast<std::uint32_t>(registeredBoxes.size());
+			const std::int64_t lowX	 = floorDivide(box.low.x, kRingBoxCellMm);
+			const std::int64_t lowY	 = floorDivide(box.low.y, kRingBoxCellMm);
+			const std::int64_t highX = floorDivide(box.high.x, kRingBoxCellMm);
+			const std::int64_t highY = floorDivide(box.high.y, kRingBoxCellMm);
+			std::size_t		   met	 = 0;
+			for (std::int64_t cellY = lowY; cellY <= highY; ++cellY) {
+				for (std::int64_t cellX = lowX; cellX <= highX; ++cellX) {
+					std::vector<std::uint32_t>& inCell = ringBoxCells[{cellX, cellY}];
+					for (const std::uint32_t other : inCell) {
+						if (ringBoxCounted[other] != index && boxesMeet(box.low, box.high, registeredBoxes[other].low, registeredBoxes[other].high)) {
+							ringBoxCounted[other] = index;
+							++met;
+						}
+					}
+					inCell.push_back(index);
+				}
+			}
+			if (index > 0) {
+				ringsMetTotal += met;
+				ringsMetGreatest = std::max(ringsMetGreatest, met);
+			}
+			registeredBoxes.push_back(box);
+			ringBoxCounted.push_back(index);
 		}
 		markPhase(TickPhase::Widths);
 		mesh->refreshWidths();
@@ -608,7 +661,7 @@ namespace vision {
 	}
 
 	bool SeenArea::isSeen(const Vec2i64& point) const {
-		if (mesh->locate(point) >= 0) {
+		if (inRecord(point)) {
 			return true;
 		}
 		bool seen = false;
@@ -676,9 +729,8 @@ namespace vision {
 		Vec2i64		  high{std::max(from.x, to.x), std::max(from.y, to.y)};
 
 		std::vector<double>						 along{0.0, 1.0};
-		std::vector<std::int32_t>				 edgeIds;
 		std::vector<std::pair<Vec2i64, Vec2i64>> edges;
-		mesh->meshEdgesNear(low, high, edgeIds, edges);
+		appendEdges(low, high, edges);
 		for (const auto& [edgeStart, edgeEnd] : edges) {
 			meetings(from, direction, edgeStart, edgeEnd, along);
 		}
@@ -716,6 +768,20 @@ namespace vision {
 	}
 
 	std::uint64_t SeenArea::epoch() const { return mesh->epoch(); }
+
+	bool SeenArea::inRecord(const Vec2i64& point) const { return mesh->locate(point) >= 0; }
+
+	void SeenArea::appendEdges(const Vec2i64& low, const Vec2i64& high, std::vector<std::pair<Vec2i64, Vec2i64>>& out) const {
+		std::vector<std::int32_t>				 edgeIds;
+		std::vector<std::pair<Vec2i64, Vec2i64>> edges;
+		mesh->meshEdgesNear(low, high, edgeIds, edges);
+		out.insert(out.end(), edges.begin(), edges.end());
+	}
+
+	void SeenArea::takeChangedBoxes(std::vector<Box>& out) {
+		out.insert(out.end(), changedBoxes.begin(), changedBoxes.end());
+		changedBoxes.clear();
+	}
 
 	void SeenArea::appendTriangles(std::vector<Triangle>& out) const {
 		const auto& triangles = mesh->triangles();
@@ -794,5 +860,9 @@ namespace vision {
 	}
 
 	const std::vector<Vec2i64>& SeenArea::registeredRing(std::size_t index) const { return mesh->ring(registered[index]).polygon.ring; }
+
+	double SeenArea::ringsMetMean() const {
+		return registeredBoxes.size() > 1 ? static_cast<double>(ringsMetTotal) / static_cast<double>(registeredBoxes.size() - 1) : 0.0;
+	}
 
 } // namespace vision

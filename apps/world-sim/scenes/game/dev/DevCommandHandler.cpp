@@ -168,6 +168,12 @@ namespace world_sim {
 		view("thoughttypes", &DevCommandHandler::serializeThoughtTypes);
 		registrations.push_back(server.stateProvider("visibility", [this] { return visibilityJson({}); }));
 		registrations.push_back(server.stateProvider("sightBodies", [this] { return sightBodiesView(); }));
+		registrations.push_back(server.stateProvider("cover", [this] {
+			if (m_ctx.cover == nullptr) {
+				return std::string("{\"error\":\"no cover\"}");
+			}
+			return coverJson(*m_ctx.cover, m_ctx.world->getSystem<ecs::VisionSystem>().sightTunables().sightFeatherMm);
+		}));
 		registrations.push_back(server.stateProvider("sightTunables", [this] {
 			return sightTunablesJson(m_ctx.world->getSystem<ecs::VisionSystem>().sightTunables());
 		}));
@@ -244,6 +250,7 @@ namespace world_sim {
 			const char* path = shape->path == ecs::VisionSystem::SightPath::Polygon ? "polygon"
 							   : shape->path == ecs::VisionSystem::SightPath::Leg	? "leg"
 																					: "open";
+			const vision::SightFeed* feed = m_ctx.world->getSystem<ecs::PlayerVisibilitySystem>().feedOf(entity);
 			colonists.push_back({
 				.id			 = static_cast<std::uint64_t>(entity),
 				.name		 = colonist.name,
@@ -252,6 +259,8 @@ namespace world_sim {
 				.reachMm	 = bodies->reachMm,
 				.path		 = path,
 				.ranges		 = shape->ranges,
+				.rangeChangeMm		   = feed != nullptr ? feed->rangeChangeMm() : 0,
+				.greatestRangeChangeMm = feed != nullptr ? feed->greatestRangeChangeMm() : 0,
 				.bodies		 = bodies->bodies,
 				.shadowEdges = bodies->shadowEdges,
 			});
@@ -1626,6 +1635,8 @@ namespace world_sim {
 	}
 
 	std::string DevCommandHandler::visibilityJson(const app::DevRequest& cmd) {
+		// K is counted from the first time this view is read; the record keeps nothing for it before.
+		m_ctx.world->getSystem<ecs::PlayerVisibilitySystem>().countRingsMet();
 		const ecs::PlayerVisibilitySystem& visibility = m_ctx.world->getSystem<ecs::PlayerVisibilitySystem>();
 		const vision::SeenArea&			   seen		  = visibility.seenArea();
 		std::ostringstream				   out;
@@ -1634,7 +1645,15 @@ namespace world_sim {
 			<< ",\"openLegs\":" << seen.pending().openLegs << ",\"shapesWaiting\":" << seen.pending().shapesWaiting
 			<< ",\"piecesWaiting\":" << seen.pending().piecesWaiting << ",\"shapesDropped\":" << seen.shapesDropped() << ",\"shapesSkipped\":" << seen.shapesSkipped()
 			<< ",\"sweepsBuilt\":" << seen.sweepsBuilt() << ",\"sweepsWaiting\":" << seen.sweepsWaiting() << ",\"sweepsDropped\":" << seen.sweepPointsDropped()
-			<< ",\"epoch\":" << seen.epoch();
+			<< ",\"epoch\":" << seen.epoch() << ",\"ringsMetMean\":" << std::setprecision(1) << seen.ringsMetMean()
+			<< ",\"ringsMetMost\":" << seen.ringsMetMost();
+		std::int64_t greatestRangeChangeMm = 0;
+		for (auto [entity, colonist] : m_ctx.world->view<ecs::Colonist>()) {
+			if (const vision::SightFeed* feed = visibility.feedOf(entity)) {
+				greatestRangeChangeMm = std::max(greatestRangeChangeMm, feed->greatestRangeChangeMm());
+			}
+		}
+		out << ",\"greatestRangeChangeMm\":" << greatestRangeChangeMm;
 		if (hasParam(cmd, "x") && hasParam(cmd, "y")) {
 			const glm::vec2 point{std::strtof(param(cmd, "x").c_str(), nullptr), std::strtof(param(cmd, "y").c_str(), nullptr)};
 			out << ",\"x\":" << point.x << ",\"y\":" << point.y << ",\"seen\":" << (visibility.isSeen(point) ? "true" : "false")

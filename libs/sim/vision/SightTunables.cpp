@@ -31,7 +31,8 @@ namespace vision {
 			SightTunableRange{"softLegToleranceMm", &SightTunables::softLegToleranceMm, 50, 5000},
 			SightTunableRange{"rimEaseMm", &SightTunables::rimEaseMm, 100, 450},
 			SightTunableRange{"drawnShadowReachMm", &SightTunables::drawnShadowReachMm, 0, SightTunables::kDrawnShadowWholeReachMm},
-			SightTunableRange{"drawnShadowRebuildMm", &SightTunables::drawnShadowRebuildMm, 0, 1000},
+			SightTunableRange{"softShadowRebuildPercent", &SightTunables::softShadowRebuildPercent, 1, 50},
+			SightTunableRange{"softShadowToleranceThousandths", &SightTunables::softShadowToleranceThousandths, 4, 30},
 		};
 	} // namespace
 

@@ -15,19 +15,25 @@
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Memory.h>
 #include <ecs/components/Transform.h>
+#include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/PlayerVisibilitySystem.h>
 #include <ecs/systems/VisionSystem.h>
 #include <nav/NavCoords.h>
 
+#include <predicates/Predicates.h>
 #include <visibility/SightPolygon.h>
 
 #include <glm/geometric.hpp>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <map>
 #include <memory>
+#include <numbers>
 #include <optional>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -87,13 +93,27 @@ namespace {
 
 		void frame() {
 			Renderer::Primitives::beginFrame();
-			cover->render(world, camera, kViewportWidth, kViewportHeight, kPixelsPerMeter);
+			cover->render(world, camera, kViewportWidth, kViewportHeight, kPixelsPerMeter, 1.0F / 60.0F);
 			Renderer::Primitives::endFrame();
+		}
+
+		// A square trunk `sideMeters` wide round `centre`, placed long ago.
+		void place(glm::vec2 centre, float sideMeters) {
+			const Vec2i64	   middle = nav::toMm(centre);
+			const std::int64_t half	  = std::llround(sideMeters * 500.0F);
+			navigation.placedOccluders().add(
+				nextRing++,
+				{middle + Vec2i64{-half, -half}, middle + Vec2i64{half, -half}, middle + Vec2i64{half, half}, middle + Vec2i64{-half, half}},
+				"Test_Trunk",
+				-1000000000
+			);
 		}
 
 		ecs::World								 world;
 		ecs::VisionSystem&						 vision = world.registerSystem<ecs::VisionSystem>();
+		ecs::NavigationSystem&					 navigation = world.registerSystem<ecs::NavigationSystem>();
 		ecs::PlayerVisibilitySystem&			 visibility = world.registerSystem<ecs::PlayerVisibilitySystem>();
+		geometry::nav::RingId					 nextRing = 1;
 		world::WorldCamera						 camera;
 		std::unique_ptr<VisibilityCoverRenderer> cover = std::make_unique<VisibilityCoverRenderer>();
 	};
@@ -153,29 +173,29 @@ TEST_F(VisibilityCoverTest, UploadsOnlyWhenTheEpochMoves) {
 TEST_F(VisibilityCoverTest, LayersFromSightAndPendingShapes) {
 	frame();
 	EXPECT_TRUE(cover->layers().drawn);
-	EXPECT_TRUE(cover->layers().visibleOutlines.empty()) << "nobody in sight yet";
-	EXPECT_TRUE(cover->layers().pendingOutlines.empty());
+	EXPECT_EQ(cover->layers().brightShapes, 0U) << "nobody in sight yet";
+	EXPECT_EQ(cover->layers().pendingShapes, 0U);
 
 	const ecs::EntityID colonist = addColonist({0.0F, 0.0F});
 	walk(colonist, {5.0F, 0.0F}, 0.1F);
 	frame();
-	ASSERT_EQ(cover->layers().visibleOutlines.size(), 1U);
-	EXPECT_EQ(cover->layers().visibleOutlines[0].size(), static_cast<std::size_t>(geometry::kSightSides));
-	ASSERT_EQ(cover->layers().pendingOutlines.size(), 1U) << "his open leg";
+	ASSERT_EQ(cover->layers().brightShapes, 1U);
+	ASSERT_EQ(cover->colonists().size(), 1U);
+	EXPECT_EQ(cover->colonists()[0].bright->size(), static_cast<std::size_t>(geometry::kSightSides));
+	EXPECT_EQ(cover->layers().pendingShapes, 1U) << "his open leg";
 
-	// The bright disc is drawn round where he stands, in screen pixels.
-	const glm::vec2 standing = camera.worldToScreen(5.0F, 0.0F, kViewportWidth, kViewportHeight, kPixelsPerMeter);
-	const float		drawnPixels = static_cast<float>(vision::drawnVisibleRadiusMm(30000)) / 1000.0F * kPixelsPerMeter * camera.zoom();
-	for (const glm::vec2 point : cover->layers().visibleOutlines[0]) {
-		EXPECT_LE(glm::length(point - standing), drawnPixels + 0.5F);
+	// The bright disc is drawn round where he stands.
+	const double drawnMm = static_cast<double>(vision::drawnVisibleRadiusMm(30000));
+	for (const Vec2i64& point : *cover->colonists()[0].bright) {
+		EXPECT_LE(std::hypot(static_cast<double>(point.x) - 5000.0, static_cast<double>(point.y)), drawnMm + 1.0);
 	}
 
 	// A colonist far off the view adds nothing to the frame's layers.
 	const ecs::EntityID faraway = addColonist({2000.0F, 0.0F});
 	walk(faraway, {2005.0F, 0.0F}, 0.1F);
 	frame();
-	EXPECT_EQ(cover->layers().visibleOutlines.size(), 1U);
-	EXPECT_EQ(cover->layers().pendingOutlines.size(), 1U);
+	EXPECT_EQ(cover->layers().brightShapes, 1U);
+	EXPECT_EQ(cover->layers().pendingShapes, 1U);
 }
 
 TEST_F(VisibilityCoverTest, NothingWhileRevealed) {
@@ -184,15 +204,334 @@ TEST_F(VisibilityCoverTest, NothingWhileRevealed) {
 	visibility.setRevealed(true);
 	frame();
 	EXPECT_FALSE(cover->layers().drawn);
-	EXPECT_TRUE(cover->layers().visibleOutlines.empty());
-	EXPECT_TRUE(cover->layers().pendingOutlines.empty());
+	EXPECT_EQ(cover->layers().brightShapes, 0U);
+	EXPECT_EQ(cover->layers().pendingShapes, 0U);
 	EXPECT_EQ(cover->uploads(), 0U);
 
 	visibility.setRevealed(false);
 	frame();
 	EXPECT_TRUE(cover->layers().drawn);
 	EXPECT_EQ(cover->uploads(), 1U);
-	EXPECT_EQ(cover->layers().visibleOutlines.size(), 1U);
+	EXPECT_EQ(cover->layers().brightShapes, 1U);
+}
+
+namespace {
+
+	double greatestAt(const std::vector<worldview::ValueTriangle>& pieces, glm::dvec2 point) {
+		double greatest = 0.0;
+		for (const worldview::ValueTriangle& piece : pieces) {
+			for (std::size_t corner = 1; corner + 1 < piece.points.size(); ++corner) {
+				const glm::dvec2 origin = piece.points[0];
+				const glm::dvec2 near	= piece.points[corner];
+				const glm::dvec2 far	= piece.points[corner + 1];
+				const double	 area	= (near.x - origin.x) * (far.y - origin.y) - (near.y - origin.y) * (far.x - origin.x);
+				if (area == 0.0) {
+					continue;
+				}
+				const double first	= ((near.x - point.x) * (far.y - point.y) - (near.y - point.y) * (far.x - point.x)) / area;
+				const double second = ((far.x - point.x) * (origin.y - point.y) - (far.y - point.y) * (origin.x - point.x)) / area;
+				const double third	= 1.0 - first - second;
+				if (first >= -1e-9 && second >= -1e-9 && third >= -1e-9) {
+					greatest = std::max(greatest, first * piece.values[0] + second * piece.values[corner] + third * piece.values[corner + 1]);
+				}
+			}
+		}
+		return greatest;
+	}
+
+	// The tint's value at a point by 7.4's rule over the frame's colonists: the least over them of 1
+	// outside his bright shape and inside it the greatest of his pieces over 0.
+	double tintAt(const VisibilityCoverRenderer& cover, glm::dvec2 millimetres) {
+		double least = 1.0;
+		for (const VisibilityCoverRenderer::ColonistCover& colonist : cover.colonists()) {
+			const Vec2i64 point{std::llround(millimetres.x), std::llround(millimetres.y)};
+			if (geometry::pointInPolygon(point, *colonist.bright) == geometry::PointInPolygon::Outside) {
+				continue;
+			}
+			const glm::dvec2 anchor{static_cast<double>(colonist.featherAnchor.x), static_cast<double>(colonist.featherAnchor.y)};
+			double			 darkness = greatestAt(*colonist.feather, millimetres - anchor);
+			if (colonist.shadows != nullptr) {
+				std::vector<worldview::ValueTriangle> soft;
+				for (const worldview::DrawnShadows::Ring& ring : colonist.shadows->rings()) {
+					soft.insert(soft.end(), ring.pieces.begin(), ring.pieces.end());
+				}
+				darkness = std::max({darkness, greatestAt(soft, millimetres), greatestAt(colonist.shadows->bandPieces(), millimetres)});
+			}
+			least = std::min(least, darkness);
+		}
+		return least;
+	}
+
+} // namespace
+
+// Several colonists (7.4): one group a colonist, darkened in, every piece clipped to its own bright
+// shape, so one colonist's fade never darkens ground another lights fully, the ground both leave
+// out is tinted whole, and each bright shape fades a feather in from its rim.
+TEST_F(VisibilityCoverTest, SeveralColonistsComposeAsTheLeastDarkness) {
+	const ecs::EntityID west = addColonist({0.0F, 0.0F});
+	const ecs::EntityID east = addColonist({20.0F, 0.0F});
+	walk(west, {1.0F, 0.0F}, 0.05F);
+	walk(east, {21.0F, 0.0F}, 0.05F);
+	frame();
+	ASSERT_EQ(cover->colonists().size(), 2U);
+	EXPECT_EQ(cover->tintShape().groups, 2U);
+	EXPECT_TRUE(cover->tintShape().everyGroupDarkens);
+	EXPECT_TRUE(cover->tintShape().everyPieceInsideItsBrightShape);
+	for (const VisibilityCoverRenderer::ColonistCover& colonist : cover->colonists()) {
+		EXPECT_EQ(colonist.rimSides, colonist.bright->size()) << "in the open every side is rim";
+		EXPECT_EQ(colonist.feather->size(), 2 * colonist.bright->size()) << "a convex shape: a rectangle a side and no fan";
+	}
+
+	const double rimMm = static_cast<double>(vision::drawnVisibleRadiusMm(30000) - 400);
+	EXPECT_NEAR(tintAt(*cover, {1000.0 - rimMm + 750.0, 0.0}), 0.5, 0.02) << "the west one's fade, half way in";
+	EXPECT_NEAR(tintAt(*cover, {1000.0 + rimMm - 750.0, 0.0}), 0.0, 1e-9) << "his fade is lit fully by the east one";
+	EXPECT_NEAR(tintAt(*cover, {11000.0, 0.0}), 0.0, 1e-9) << "both cores";
+	EXPECT_EQ(tintAt(*cover, {-40000.0, 0.0}), 1.0) << "out of both sights";
+}
+
+// A colonist who stands still, once his rim's ease has ended, builds and uploads nothing a frame.
+TEST_F(VisibilityCoverTest, AStillColonistBuildsNothingOnceSettled) {
+	const ecs::EntityID colonist = addColonist({0.0F, 0.0F});
+	walk(colonist, {3.0F, 0.0F}, 0.05F);
+	frame();
+	EXPECT_GT(cover->counts().piecesBuilt, 0U);
+	for (int settle = 0; settle < 10; ++settle) {
+		world.update(0.016F);
+		frame();
+	}
+	for (int still = 0; still < 20; ++still) {
+		world.update(0.016F);
+		frame();
+		EXPECT_EQ(cover->counts().piecesBuilt, 0U) << "frame " << still;
+		EXPECT_EQ(cover->counts().meshUploads, 0U) << "frame " << still;
+	}
+}
+
+// Uploads go by what changed: a settled colonist who steps 150 mm, past the nearest ring's cadence
+// (100 mm) and short of the next (360 mm), rebuilds and uploads that ring alone, not his far trunks.
+TEST_F(VisibilityCoverTest, AStepUploadsTheNearRingAlone) {
+	place({2.5F, 1.0F}, 0.4F);
+	for (float x = 10.0F; x <= 26.0F; x += 4.0F) {
+		place({x, 5.0F}, 0.4F);
+		place({x, -5.0F}, 0.4F);
+	}
+	const ecs::EntityID colonist = addColonist({0.0F, 0.0F});
+	for (int settle = 0; settle < 20; ++settle) {
+		world.update(0.016F);
+		frame();
+	}
+	ASSERT_EQ(cover->colonists().size(), 1U);
+	ASSERT_GT(cover->colonists()[0].shadows->rings()[0].pieces.size(), 0U);
+	world.getComponent<ecs::Position>(colonist)->value.x += 0.15F;
+	world.update(0.016F);
+	frame();
+	EXPECT_EQ(cover->counts().softRingsBuilt, 1U);
+	EXPECT_EQ(cover->colonists()[0].shadows->counts().softChangedRings, 1U) << "the nearest ring";
+	EXPECT_LE(cover->counts().meshUploads, 2U) << "that ring, and at most his feather and bands";
+}
+
+namespace {
+
+	// The pieces of the union's boundary every cluster in view holds, sorted.
+	std::vector<worldview::DirectedEdge> boundaryOf(const worldview::SeenFeather& feather) {
+		std::vector<worldview::DirectedEdge> edges;
+		for (const worldview::SeenFeather::Cluster* cluster : feather.clustersInView()) {
+			edges.insert(edges.end(), cluster->boundary.begin(), cluster->boundary.end());
+		}
+		std::ranges::sort(edges, [](const worldview::DirectedEdge& first, const worldview::DirectedEdge& second) {
+			return std::tie(first.first.x, first.first.y, first.second.x, first.second.y) <
+				   std::tie(second.first.x, second.first.y, second.second.x, second.second.y);
+		});
+		return edges;
+	}
+
+} // namespace
+
+// The pending cut redone only round what changed is the cut made whole (7.2): three colonists walk out
+// of the landing into unexplored ground, turn, and walk back along its edge, and every frame the cover's
+// cut pieces are those of a cut made from nothing over the same record and shapes, so no record edge
+// ahead of a moving leg is lost from it.
+TEST_F(VisibilityCoverTest, ThePendingCutRedoneWhereItChangedIsTheWholeCut) {
+	std::vector<ecs::EntityID> colonists;
+	for (int index = 0; index < 3; ++index) {
+		colonists.push_back(addColonist({140.0F, static_cast<float>(index) * 1.5F}));
+	}
+	camera.setPosition({150.0F, 0.0F});
+	const auto stepAll = [&](glm::vec2 step) {
+		for (const ecs::EntityID colonist : colonists) {
+			world.getComponent<ecs::Position>(colonist)->value += step;
+		}
+		world.update(1.0F / 60.0F);
+		frame();
+		worldview::SeenFeather whole;
+		std::vector<vision::SeenArea::Box> none;
+		whole.update(visibility.seenArea(), none, {-400000, -400000}, {400000, 400000}, 1500);
+		ASSERT_EQ(boundaryOf(cover->seenFeather()), boundaryOf(whole));
+	};
+	for (int step = 0; step < 300; ++step) {
+		stepAll({2.0F / 60.0F, 0.0F});
+	}
+	for (int step = 0; step < 240; ++step) {
+		stepAll({0.0F, 2.0F / 60.0F});
+	}
+	for (int step = 0; step < 300; ++step) {
+		stepAll({-2.0F / 60.0F, 0.0F});
+	}
+	EXPECT_GT(cover->seenFeather().counts().cut.recordEdges + boundaryOf(cover->seenFeather()).size(), 0U);
+}
+
+// In a forest stand his reach follows his eased bright rim, which moves on most frames he walks; it re-dues
+// only the rings holding a trunk it takes in or leaves out, so over 4 m of walk the ring from 16 m on is
+// built a few times for its cadence (1,440 mm) and the trunks his rim crosses, not every frame.
+TEST_F(VisibilityCoverTest, AnEasedRimInForestReDuesOnlyWhatItCrosses) {
+	for (float x = -30.0F; x <= 40.0F; x += 3.5F) {
+		for (float y = -30.0F; y <= 30.0F; y += 3.5F) {
+			if (std::abs(y) > 1.5F) {
+				place({x, y}, 0.5F);
+			}
+		}
+	}
+	const ecs::EntityID colonist = addColonist({0.0F, 0.0F});
+	for (int settle = 0; settle < 30; ++settle) {
+		world.update(1.0F / 60.0F);
+		frame();
+	}
+	int farBuilds = 0;
+	int rimMoves  = 0;
+	for (int step = 0; step < 120; ++step) {
+		world.getComponent<ecs::Position>(colonist)->value.x += 2.0F / 60.0F;
+		world.update(1.0F / 60.0F);
+		frame();
+		ASSERT_EQ(cover->colonists().size(), 1U);
+		farBuilds += (cover->colonists()[0].shadows->counts().softChangedRings & (1U << 3U)) != 0U ? 1 : 0;
+		rimMoves += cover->colonists()[0].rimMovedMm > 0 ? 1 : 0;
+	}
+	EXPECT_GT(rimMoves, 60) << "the rim eases on most frames";
+	EXPECT_LE(farBuilds, 30);
+}
+
+// A colonist who leaves the view and comes back builds nothing for it: his pieces and meshes are kept
+// while he lives.
+TEST_F(VisibilityCoverTest, LeavingTheViewKeepsHisPieces) {
+	place({6.0F, 2.0F}, 0.4F);
+	const ecs::EntityID colonist = addColonist({0.0F, 0.0F});
+	walk(colonist, {3.0F, 0.0F}, 0.05F);
+	for (int settle = 0; settle < 10; ++settle) {
+		world.update(0.016F);
+		frame();
+	}
+	ASSERT_EQ(cover->colonists().size(), 1U);
+	ASSERT_GT(cover->colonists()[0].shadows->softPieceCount(), 0U);
+	camera.setPosition({400.0F, 0.0F});
+	frame();
+	EXPECT_EQ(cover->colonists().size(), 0U);
+	camera.setPosition({0.0F, 0.0F});
+	frame();
+	ASSERT_EQ(cover->colonists().size(), 1U);
+	EXPECT_EQ(cover->counts().piecesBuilt, 0U);
+	EXPECT_EQ(cover->counts().meshUploads, 0U);
+}
+
+// Fifty colonists walking 2 m/s through trunks 4 m apart: no frame builds more soft pieces than
+// kDrawnShadowPiecesPerFrame and one body's, a frame that leaves bodies due spends the budget, the
+// longest due waits a bounded time, and every walker gets builds in turn.
+TEST_F(VisibilityCoverTest, FiftyWalkingKeepToTheBudgetAndEveryOneIsBuilt) {
+	for (float x = -38.0F; x <= 62.0F; x += 4.0F) {
+		for (float y = -32.0F; y <= 32.0F; y += 4.0F) {
+			place({x, y}, 0.5F);
+		}
+	}
+	std::vector<ecs::EntityID> walkers;
+	for (int index = 0; index < 50; ++index) {
+		walkers.push_back(addColonist({static_cast<float>(index % 10) * 4.0F - 20.0F, static_cast<float>(index / 10) * 4.0F - 10.0F}));
+	}
+	// One more, who walks with them and stops at kStopFrame: his rings, due with no turn, are built where
+	// he stands within kStoppedMostFrames however long the walkers' queue.
+	const ecs::EntityID		stopper				= addColonist({-22.0F, -12.0F});
+	constexpr int			kStopFrame			= 70;
+	constexpr int			kStoppedMostFrames	= 30;
+	int						stoppedBuiltFrame	= -1;
+	constexpr std::size_t kOneRingMostPieces = 2500;
+	constexpr int		  kFrames			 = 150;
+	constexpr int		  kWarmFrames		 = 60;
+	std::map<ecs::EntityID, int> builtLate;
+	std::size_t					 backlogFrames = 0;
+	for (int step = 0; step < kFrames; ++step) {
+		for (const ecs::EntityID walker : walkers) {
+			world.getComponent<ecs::Position>(walker)->value.x += 2.0F / 60.0F;
+		}
+		if (step < kStopFrame) {
+			world.getComponent<ecs::Position>(stopper)->value.x += 2.0F / 60.0F;
+		}
+		world.update(1.0F / 60.0F);
+		frame();
+		const VisibilityCoverRenderer::Counts& counts = cover->counts();
+		ASSERT_EQ(counts.colonists, 51U);
+		if (step > kStopFrame && stoppedBuiltFrame < 0) {
+			const glm::dvec2 standing{static_cast<double>(nav::toMm(world.getComponent<ecs::Position>(stopper)->value).x),
+									  static_cast<double>(nav::toMm(world.getComponent<ecs::Position>(stopper)->value).y)};
+			for (const VisibilityCoverRenderer::ColonistCover& colonist : cover->colonists()) {
+				if (colonist.colonist == stopper &&
+					std::ranges::all_of(colonist.shadows->rings(), [&](const worldview::DrawnShadows::Ring& ring) { return ring.builtFrom == standing; })) {
+					stoppedBuiltFrame = step;
+				}
+			}
+		}
+		// The budget lets in the longest due ring whatever its size, and others while they fit.
+		if (counts.softRingsBuilt > 1) {
+			EXPECT_LE(counts.softPiecesBuilt, worldview::kDrawnShadowPiecesPerFrame + kOneRingMostPieces) << "frame " << step;
+		}
+		// The next body is let in by its last count of pieces, so the budget left unspent is at most one
+		// body's.
+		if (counts.softRingsDue > counts.softRingsBuilt) {
+			++backlogFrames;
+			EXPECT_GE(counts.softPiecesBuilt + kOneRingMostPieces, worldview::kDrawnShadowPiecesPerFrame) << "frame " << step << ": bodies wait, budget unspent";
+		}
+		if (step >= kWarmFrames) {
+			EXPECT_LE(counts.softOldestDueFrames, 60U) << "frame " << step;
+			for (const VisibilityCoverRenderer::ColonistCover& colonist : cover->colonists()) {
+				builtLate[colonist.colonist] += colonist.shadows->counts().ringsBuilt > 0 ? 1 : 0;
+			}
+		}
+	}
+	EXPECT_GT(backlogFrames, 0U) << "fifty in forest outrun one frame's budget";
+	ASSERT_GE(stoppedBuiltFrame, 0) << "the stopped colonist's rings were never built where he stands";
+	EXPECT_LE(stoppedBuiltFrame - kStopFrame, kStoppedMostFrames);
+	builtLate.erase(stopper);
+	ASSERT_EQ(builtLate.size(), 50U);
+	for (const auto& [walker, frames] : builtLate) {
+		EXPECT_GE(frames, 3) << "walker " << walker << ": 3 m of walk past trunks 4 m apart";
+	}
+}
+
+// The bright shape lies inside seen ground, and the seen area's own fade lies inside it: the landing's
+// edge fades a feather into the landing and the cells draw nothing deep inside it.
+TEST_F(VisibilityCoverTest, TheBrightShapeIsSeenAndTheSeenEdgeFadesInside) {
+	const ecs::EntityID colonist = addColonist({0.0F, 0.0F});
+	walk(colonist, {3.0F, 0.0F}, 0.05F);
+	camera.setPosition({140.0F, 0.0F});
+	frame();
+	camera.setPosition({0.0F, 0.0F});
+	frame();
+	ASSERT_EQ(cover->colonists().size(), 1U);
+	for (const Vec2i64& vertex : *cover->colonists()[0].bright) {
+		EXPECT_TRUE(visibility.isSeen(nav::toMeters(vertex)));
+	}
+
+	camera.setPosition({140.0F, 0.0F});
+	frame();
+	std::vector<worldview::ValueTriangle> cells;
+	for (const worldview::SeenFeather::Cell* cell : cover->seenFeather().cellsInView()) {
+		cells.insert(cells.end(), cell->pieces.begin(), cell->pieces.end());
+	}
+	ASSERT_FALSE(cells.empty());
+	// The landing is the sight polygon of 150 m, its sides 14.7 m long: on a side's middle, along its normal.
+	const double inradius = 150000.0 * std::cos(std::numbers::pi / static_cast<double>(geometry::kSightSides));
+	const double normal	  = std::numbers::pi / static_cast<double>(geometry::kSightSides);
+	const auto	 inward	  = [&](double depth) { return glm::dvec2{std::cos(normal), std::sin(normal)} * (inradius - depth); };
+	EXPECT_NEAR(greatestAt(cells, inward(750.0)), 0.5, 0.02);
+	EXPECT_NEAR(greatestAt(cells, inward(10.0)), 1.0, 0.02);
+	EXPECT_EQ(greatestAt(cells, inward(5000.0)), 0.0);
 }
 
 // The draw bound holds the seen ground in view and nothing well past it: a view over the landing's

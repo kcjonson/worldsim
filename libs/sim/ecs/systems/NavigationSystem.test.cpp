@@ -89,6 +89,11 @@ using geometry::Vec2i64;
 
 namespace {
 
+	// The bright outline alone, for tests that read only where it lies.
+	std::optional<std::vector<Vec2i64>> outlineOf(const PlayerVisibilitySystem::DrawnShape* drawn) {
+		return drawn != nullptr ? std::optional(drawn->outline) : std::nullopt;
+	}
+
 	// Project root from __FILE__: this file lives at <root>/libs/sim/ecs/systems/.
 	std::filesystem::path projectRoot() {
 		std::filesystem::path p = __FILE__;
@@ -1429,7 +1434,7 @@ TEST_F(NavigationSystemTest, BrightRimInForestIsTheSameOnEveryPath) {
 		const std::optional<VisionSystem::SightShape> shape = vision.sightShape(observer);
 		ASSERT_TRUE(shape.has_value());
 		ASSERT_EQ(shape->path, blocker == Blocker::None ? VisionSystem::SightPath::Leg : VisionSystem::SightPath::Polygon);
-		const std::optional<std::vector<geometry::Vec2i64>> bright = visibility.drawnVisible(observer);
+		const std::optional<std::vector<geometry::Vec2i64>> bright = outlineOf(visibility.drawnVisible(observer));
 		ASSERT_TRUE(bright.has_value());
 
 		// The same cut made where he stands, from the ranges the build gives, each drawn in to the drawn
@@ -1460,7 +1465,7 @@ TEST_F(NavigationSystemTest, BrightRimInForestIsTheSameOnEveryPath) {
 
 		const std::uint64_t forestBuilds = visibility.drawnForestBuildCount();
 		world.update(0.016F);
-		ASSERT_TRUE(visibility.drawnVisible(observer).has_value());
+		ASSERT_TRUE(visibility.drawnVisible(observer) != nullptr);
 		EXPECT_EQ(visibility.drawnForestBuildCount(), forestBuilds) << "a frame between builds builds no forest shape";
 
 		std::int64_t east = 0;

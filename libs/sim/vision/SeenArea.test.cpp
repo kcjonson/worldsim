@@ -99,6 +99,22 @@ namespace {
 
 } // namespace
 
+// K where registered: a diamond whose box meets the first ring's box, though the shapes are apart,
+// meets one; a square far off meets none. The first ring is counted against nothing.
+TEST(SeenArea, RingsMetCountsTheBoxesAlreadyRegistered) {
+	SeenArea seen;
+	seen.countRingsMet();
+	const auto diamond = [](double x, double y, double radius) {
+		return std::vector<Vec2i64>{metres(x, y - radius), metres(x + radius, y), metres(x, y + radius), metres(x - radius, y)};
+	};
+	seen.commitNow(diamond(0.0, 0.0, 5.0), metres(0.0, 0.0));
+	seen.commitNow(diamond(9.0, 4.0, 4.0), metres(9.0, 4.0));
+	seen.commitNow(square(100.0, 0.0, 5.0), metres(100.0, 0.0));
+	ASSERT_EQ(seen.ringsRegistered(), 3U);
+	EXPECT_EQ(seen.ringsMetMost(), 1U);
+	EXPECT_DOUBLE_EQ(seen.ringsMetMean(), 0.5);
+}
+
 // The landing's polygon goes in at once, as one ring, and holds what it is inscribed in.
 TEST(SeenArea, LandingIsOneRingInscribedInItsCircle) {
 	SeenArea	  seen;
@@ -716,5 +732,77 @@ TEST(SeenArea, AFullSweepQueueThinsEachRunKeepingItsEnds) {
 		EXPECT_LE(fast.mostWaiting, vision::kSeenSweepPointsMost);
 		EXPECT_GT(fast.pointsDropped, 0U);
 		EXPECT_LE(fast.widestGapMm, 1667) << "no wider than two builds apart";
+	}
+}
+
+// The record's edge as the cover's feather reads it (sight-softening.md 6.3): every side of the
+// committed union's boundary once, seen ground on its left, and nothing of a pending shape; the
+// committed record alone holds a point that only a pending shape holds besides.
+TEST(SeenArea, TheRecordsEdgeAndInRecordReadTheCommittedUnionAlone) {
+	SeenArea seen;
+	seen.commitNow(square(0.0, 0.0, 10.0), metres(0.0, 0.0));
+	seen.commitNow(square(12.0, 4.0, 6.0), metres(12.0, 4.0));
+	seen.queue(square(40.0, 0.0, 5.0), metres(40.0, 0.0));
+
+	std::vector<Edge> edges;
+	seen.appendEdges(metres(-100.0, -100.0), metres(100.0, 100.0), edges);
+	const std::set<Edge> unique(edges.begin(), edges.end());
+	EXPECT_EQ(unique.size(), edges.size()) << "each edge once";
+	EXPECT_EQ(unique, boundaryOf(trianglesOf(seen)));
+	for (const auto& [start, end] : edges) {
+		const Vec2i64 middle{(start.x + end.x) / 2, (start.y + end.y) / 2};
+		const Vec2i64 along	 = end - start;
+		const double  length = std::hypot(static_cast<double>(along.x), static_cast<double>(along.y));
+		const Vec2i64 left{middle.x - std::llround(static_cast<double>(along.y) * 5.0 / length), middle.y + std::llround(static_cast<double>(along.x) * 5.0 / length)};
+		const Vec2i64 right{middle.x + std::llround(static_cast<double>(along.y) * 5.0 / length), middle.y - std::llround(static_cast<double>(along.x) * 5.0 / length)};
+		EXPECT_TRUE(seen.inRecord(left)) << "seen ground on the left";
+		EXPECT_FALSE(seen.inRecord(right));
+		EXPECT_LT(std::max(start.x, end.x), metres(30.0, 0.0).x) << "no side of the pending square";
+	}
+
+	std::vector<Edge> near;
+	seen.appendEdges(metres(-11.0, -1.0), metres(-9.0, 1.0), near);
+	EXPECT_TRUE(std::ranges::any_of(near, [](const Edge& edge) { return edge.first.x == -10000 && edge.second.x == -10000; }))
+		<< "a box meeting the west side gives it";
+
+	EXPECT_TRUE(seen.inRecord(metres(0.0, 0.0)));
+	EXPECT_TRUE(seen.inRecord(metres(10.0, 0.0))) << "on the edge";
+	EXPECT_TRUE(seen.isSeen(metres(40.0, 0.0)));
+	EXPECT_FALSE(seen.inRecord(metres(40.0, 0.0))) << "pending, not committed";
+}
+
+// Each registered ring's box comes out once, to the one reader that takes them, and a reader that
+// never takes them leaves the record holding a bounded number of boxes that still hold every ring.
+TEST(SeenArea, ChangedBoxesAreTheRegisteredRingsAndStayBounded) {
+	SeenArea				   seen;
+	std::vector<SeenArea::Box> boxes;
+	seen.takeChangedBoxes(boxes);
+	EXPECT_TRUE(boxes.empty());
+
+	seen.commitNow(square(0.0, 0.0, 10.0), metres(0.0, 0.0));
+	seen.queue(square(30.0, 0.0, 5.0), metres(30.0, 0.0));
+	drain(seen);
+	seen.takeChangedBoxes(boxes);
+	ASSERT_EQ(boxes.size(), 2U);
+	EXPECT_EQ(boxes[0].low, metres(-10.0, -10.0));
+	EXPECT_EQ(boxes[0].high, metres(10.0, 10.0));
+	EXPECT_EQ(boxes[1].low, metres(25.0, -5.0));
+	EXPECT_EQ(boxes[1].high, metres(35.0, 5.0));
+	boxes.clear();
+	seen.takeChangedBoxes(boxes);
+	EXPECT_TRUE(boxes.empty()) << "taken once";
+
+	const std::size_t rings = vision::kSeenChangedBoxesMost + 20;
+	for (std::size_t ring = 0; ring < rings; ++ring) {
+		const double x = 100.0 + 3.0 * static_cast<double>(ring);
+		seen.commitNow(square(x, 0.0, 1.0), metres(x, 0.0));
+	}
+	seen.takeChangedBoxes(boxes);
+	EXPECT_LE(boxes.size(), vision::kSeenChangedBoxesMost);
+	for (std::size_t ring = 0; ring < rings; ++ring) {
+		const Vec2i64 centre = metres(100.0 + 3.0 * static_cast<double>(ring), 0.0);
+		EXPECT_TRUE(std::ranges::any_of(boxes, [&centre](const SeenArea::Box& box) {
+			return box.low.x <= centre.x - 1000 && box.high.x >= centre.x + 1000 && box.low.y <= -1000 && box.high.y >= 1000;
+		})) << "ring " << ring;
 	}
 }

@@ -129,8 +129,16 @@ namespace vision {
 		placed				= true;
 		lastPosition		= at;
 		const bool newBuild = !builtOnce || lastBuild != build.buildRevision;
-		builtOnce			= true;
-		lastBuild			= build.buildRevision;
+		if (newBuild && builtOnce) {
+			rangeChange = 0;
+			for (std::size_t side = 0; side < geometry::kSightSides; ++side) {
+				rangeChange = std::max(rangeChange, std::abs((*build.ranges)[side] - lastBuildRanges[side]));
+			}
+			greatestRangeChange = std::max(greatestRangeChange, rangeChange);
+		}
+		lastBuildRanges = *build.ranges;
+		builtOnce		= true;
+		lastBuild		= build.buildRevision;
 		// A jump opens a leg with no inherited shape, so nothing in the record holds the ease's start where
 		// he lands: the ease starts again from the newest build's shape, which his new leg holds.
 		if (static_cast<double>(walkedMm) > kJumpMm) {

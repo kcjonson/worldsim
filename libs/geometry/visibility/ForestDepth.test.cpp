@@ -195,6 +195,60 @@ TEST(ForestDepth, WalkingChangesEachSideByAtMostTheStepBound) {
 	}
 }
 
+// Limit 4 (sight-softening.md 10): a lone trunk up to a mature oak (0.55 m square) shortens the rim by
+// at most 0.6 m on any side, and a veteran oak (0.82 m square) or a BigRock (1.4 by 1.07 m) by at most
+// 0.8 m, wherever it stands in sight.
+TEST(ForestDepth, LimitFourALoneBodyShortensTheRimByAtMost) {
+	struct Lone {
+		std::int64_t perimeterMm;
+		std::int64_t mostMm;
+	};
+	for (const Lone lone : {Lone{4 * 280, 600}, Lone{4 * 550, 600}, Lone{4 * 820, 800}, Lone{2 * (1400 + 1070), 800}}) {
+		const std::int64_t widthFactor = geometry::forestWidthFactor(lone.perimeterMm, ForestTunables{});
+		std::int64_t	   most		   = 0;
+		for (std::int64_t distanceMm = 1000; distanceMm < kSightMm; distanceMm += 500) {
+			for (int angleStep = 0; angleStep < 16; ++angleStep) {
+				const double  angle = 2.0 * kPi * (angleStep + 0.37) / 16.0;
+				const Vec2i64 eye{-4000, 9000};
+				const Vec2i64 centre = eye + Vec2i64{std::llround(distanceMm * std::cos(angle)), std::llround(distanceMm * std::sin(angle))};
+				const SightSideValues ranges = geometry::forestRanges(eye, kSightMm, kSightMm, std::vector<ForestBody>{{centre, widthFactor, kFractionOne}}, ForestTunables{});
+				most = std::max(most, kSightMm - *std::min_element(ranges.begin(), ranges.end()));
+			}
+		}
+		EXPECT_LE(most, lone.mostMm) << "perimeter " << lone.perimeterMm;
+		EXPECT_GT(most, 0) << "perimeter " << lone.perimeterMm << ": it does shorten the rim";
+	}
+}
+
+// Limit 5: walking past a veteran oak or a BigRock at 2 m and at 10 m, no side's range changes by more
+// than 0.2 m between consecutive builds at 1x, builds 0.5 m apart, and 0.3 m at 10x, builds 1.667 m
+// apart (6.6).
+TEST(ForestDepth, LimitFiveWalkingPastAVeteranOrABigRock) {
+	struct Speed {
+		std::int64_t betweenBuildsMm;
+		std::int64_t mostChangeMm;
+	};
+	for (const std::int64_t perimeterMm : {std::int64_t{4 * 820}, std::int64_t{2 * (1400 + 1070)}}) {
+		const std::vector<ForestBody> bodies{{{-31000, 47000}, geometry::forestWidthFactor(perimeterMm, ForestTunables{}), kFractionOne}};
+		for (const std::int64_t offsetMm : {2000, 10000}) {
+			for (const Speed speed : {Speed{500, 200}, Speed{1667, 300}}) {
+				std::int64_t	most = 0;
+				SightSideValues before =
+					geometry::forestRanges(bodies[0].centre + Vec2i64{-30000, offsetMm}, kSightMm, kSightMm, bodies, ForestTunables{});
+				for (std::int64_t along = -30000 + speed.betweenBuildsMm; along <= 30000; along += speed.betweenBuildsMm) {
+					const SightSideValues after =
+						geometry::forestRanges(bodies[0].centre + Vec2i64{along, offsetMm}, kSightMm, kSightMm, bodies, ForestTunables{});
+					for (std::size_t side = 0; side < kSightSides; ++side) {
+						most = std::max(most, std::abs(after[side] - before[side]));
+					}
+					before = after;
+				}
+				EXPECT_LE(most, speed.mostChangeMm) << "perimeter " << perimeterMm << " at " << offsetMm << " mm, builds " << speed.betweenBuildsMm << " mm apart";
+			}
+		}
+	}
+}
+
 // A ring coming into sight adds nothing at the rim and rises from there.
 TEST(ForestDepth, RingComingIntoSightAddsNothingAtTheRim) {
 	const Vec2i64 eye{5000, 5000};
