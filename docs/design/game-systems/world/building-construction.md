@@ -344,7 +344,7 @@ Same pathfinding rationale as foundations: a gap between walls is either zero (j
 
 ### Lifecycle
 
-Same as foundations: blueprint → haul → build → built. Work is length × thickness × material work factor. Wall blueprints do not block colonist pathing; built walls do. A wall segment will not complete construction while a colonist stands in its footprint (builders stand adjacent; a colonist the player controls in the way makes the builder wait, and anyone else steps out as it completes). Builders stand beside the wall, never on its line, and when the segment would close a room with no way out (no built door to open ground, room to room), on the outside, so finishing it never shuts them in. Nothing rescues a colonist shut in another way: the player demolishes a wall to let him out.
+Same as foundations: blueprint → haul → build → built. Work is length × thickness × material work factor. Wall blueprints do not block colonist pathing; built walls do. A wall segment completes only once no colonist the player controls stands in its footprint; any other colonist in it is stepped out, to a side its builders use, as it completes. Builders stand beside the wall, never on its line, and when the segment would close a room with no way out (no built door to open ground, room to room), on the outside; it does not complete while one of its builders is still inside such a room, so finishing it never shuts a builder in.
 
 ### Segments and Demolition
 
@@ -700,7 +700,7 @@ A supplement, not part of the spec. Where it and the spec disagree, the spec is 
 
 A supplement, not part of the spec. Where it and the spec disagree, the spec is right. What keeps a builder from shutting himself in, over what, and why, where the sources give a reason.
 
-- **Both protections, no rescue**, over the stand side alone and over a rescue for a colonist found shut in: the builder of a closing wall stands outside the room it closes, and a wall does not complete over a colonist; "same intent, different mechanisms. good to have both as protection. no rescue though, worst case is the player destroys the wall."
-- **"The final 'work' location that the colonist stands is outside the shape"**, read as: outside whenever the room it closes has no way out, either side when it has one.
+- **Both protections, no rescue**, over the stand side alone and over a rescue for a colonist found shut in: the builder of a closing wall stands outside the room it closes, and a wall does not complete while a colonist the player controls stands in it; "same intent, different mechanisms. good to have both as protection. no rescue though, worst case is the player destroys the wall."
+- **The builder ends outside the room**, from the owner: "we want to make sure the final "work" location that the colonist stands is outside the shape, so that when it finishes they're not trapped." Read as: outside whenever the room it closes has no way out, either side when it has one.
 - **A way out is a built door to open ground, room to room**, over any opening: a window does not let a colonist through, and a door blueprint is no door until it is built.
-- **A colonist the player controls holds the wall; anyone else steps out of it**, over every colonist holding it: a colonist left to himself in the band could otherwise hold the wall without end, and one the player placed there is the player's to move.
+- **Only a colonist the player controls holds the wall; anyone else steps out of it**, chosen in the build, not by the owner, and narrowing the spec's earlier "no colonist in its footprint": a colonist left to themselves in the band could otherwise hold the wall without end, and one the player placed there is the player's to move.

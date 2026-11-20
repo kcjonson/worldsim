@@ -497,19 +497,28 @@ carries instead the sides of the wall a builder may stand on (`GoalTask::wallSta
 sides that open onto open ground or onto a room joined to it through built doors (a room whose only
 openings are windows or door blueprints has no way out), or both again when neither does.
 `ConstructionSystem` sets them as the goal turns Available and works them out again on the frame after
-any change to the walls, so a wall completing beside one being built moves its builders at once. A
-builder takes the side whose stand point, beside the wall's midpoint and off its line by half its
-thickness, his radius, and 0.1 m, snapped with `nearestPathablePoint(point, agentRadius)`, is nearest
-him, among those whose snapped point stays on that side and that he can get to; with none, the option
-is NoSource. With no mesh yet the stand point itself is the target. An opening's goal, and a wall's
-with no construction world wired, has the nearest walkable point to its centre as its one target.
-Deconstruct takes no claim either.
+a segment or an opening is built, added, or removed. A builder walking to the wall takes the new sides at
+his next decision; one already at work there keeps working until the completion check below sends him
+round. A builder takes the side whose stand point, beside the wall's midpoint and off its line by half
+its thickness, the builder's radius, and 0.1 m, is nearest, among those he can get to, at the point
+`nearestPathablePoint(point, agentRadius)` gives for it when that point serves the side: on that side,
+no farther from the stand point than that offset, and level with the segment, never across its line or
+past its end (`construction::WallStand::serves`; worked out once per site, side, and radius in an update,
+`SharedWork::wallStandPoint`). With none, the option is NoSource, and when no allowed side can be stood
+on at all the wall's panel reads "No ground to build from" (`StructureBlueprint::noGroundToBuildFrom`).
+With no mesh yet the stand point itself is the target. An opening's goal, and a wall's with no
+construction world wired, has the nearest walkable point to its centre as its one target. Deconstruct
+takes no claim either.
 
-A wall whose work reaches its total completes only once no colonist under the player's control stands
-in its band (the band `WallCollisionSystem` pushes out of once it is built); until then its work stays
-at the total, its builders keep working, and its panel reads "Waiting for the wall to be clear". Any
-other colonist in the band steps out of it as the wall completes, to the allowed side he is on, or to
-the allowed side when he is on the other (`ActionSystem::wallBandClear`). The dev tools' free build and
+A wall whose work reaches its total completes only on a tick in which time passes and nothing holds it
+(`ActionSystem::clearWallToComplete`). Two things hold it, and while either does nobody is moved: a
+builder of it (a colonist whose Build task is on it, at work or walking there) whom completing it would
+shut in (`construction::WallClosure::shutsIn`), whose action ends so that he decides again and goes to
+a side it allows; and a colonist under the player's control in its band (the band `WallCollisionSystem`
+pushes out of once it is built), which raises one "Wall waiting" toast naming them as the hold begins.
+While it waits, the Build action is interruptable, so anything that outranks building takes the builder
+away. Once nothing holds it, any other colonist in the band steps out of it as it completes, to the
+allowed side he is on, or to the allowed side when he is on the other. The dev tools' free build and
 forced completion do not wait.
 
 A site ordered demolished takes no more build work: a Build action on it ends on the next tick it
