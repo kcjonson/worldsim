@@ -86,7 +86,7 @@ namespace ecs {
 			for (int frame = 0; frame < kFramesUntilBothPolled; ++frame) {
 				world->update(0.016F);
 				const auto goals = goalsOn(box);
-				if (goals.size() == 1 && goals.front()->type == TaskType::PlacePackaged) {
+				if (goals.size() == 1 && goals.front()->type == GoalType::PlacePackaged) {
 					return goals.front()->id;
 				}
 			}
@@ -101,7 +101,7 @@ namespace ecs {
 				ASSERT_EQ(goals.size(), 1U) << "frame " << frame;
 				const GoalTask& goal = *goals.front();
 				ASSERT_EQ(goal.id, goalId) << "frame " << frame;
-				ASSERT_EQ(goal.type, TaskType::PlacePackaged);
+				ASSERT_EQ(goal.type, GoalType::PlacePackaged);
 				ASSERT_EQ(goal.owner, GoalOwner::BuildGoalSystem);
 				ASSERT_TRUE(goal.acceptedDefNameIds.empty()) << "frame " << frame;
 				ASSERT_EQ(goal.acceptedCategory, assets::ItemCategory::None) << "frame " << frame;
@@ -153,7 +153,7 @@ namespace ecs {
 
 		const auto goals = goalsOn(box);
 		ASSERT_EQ(goals.size(), 1U);
-		EXPECT_EQ(goals.front()->type, TaskType::Haul);
+		EXPECT_EQ(goals.front()->type, GoalType::Haul);
 		EXPECT_EQ(goals.front()->owner, GoalOwner::StorageGoalSystem);
 		EXPECT_FALSE(goals.front()->parentGoalId.has_value());
 	}
