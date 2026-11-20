@@ -13,11 +13,11 @@ namespace world_sim {
 		constexpr float kHorizontalPadding = 12.0F;
 
 		ui::MenuItem item(std::string label, const std::function<void(const std::string&)>& callback, std::string value) {
-			return {.label = std::move(label), .onSelect = [callback, value = std::move(value)]() {
-						if (callback) {
-							callback(value);
-						}
-					}};
+			return {
+				.label = std::move(label),
+				.onSelect = [callback, value = std::move(value)]() { callback(value); },
+				.enabled = static_cast<bool>(callback),
+			};
 		}
 
 	} // namespace
@@ -74,14 +74,11 @@ namespace world_sim {
 
 		rooms = addChild<ui::Button>({
 			.id = "rooms_toggle",
+			.enabled = static_cast<bool>(onRoomsToggle),
 			.size = {ui::kAuto, kButtonHeight},
 			.label = "Rooms",
 			.variant = ui::ButtonVariant::Secondary,
-			.onPress = [this]() {
-				if (onRoomsToggle) {
-					onRoomsToggle();
-				}
-			},
+			.onPress = onRoomsToggle,
 		});
 		tintRooms();
 	}
