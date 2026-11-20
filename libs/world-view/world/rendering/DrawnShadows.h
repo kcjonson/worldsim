@@ -43,9 +43,10 @@ namespace worldview {
 		// A ring's cadence never reads a distance under this, so the nearest ring is not rebuilt every
 		// frame for a trunk he brushes past.
 		static constexpr double kSoftRingLeastDistanceMm = 1000.0;
-		// He has stopped once he has stayed within kStillMm of one point for kStillSeconds: a frame or two
-		// without a step, or a crawl under a millimetre a frame, is not a stop, at any frame rate.
-		static constexpr double kStillMm = 5.0;
+		// He has stopped once he has stayed within kStillMm of where a window began for kStillSeconds; moving
+		// past it starts the window again. So a frame or two without a step is not a stop, and nor is any
+		// walk faster than kStillMm / kStillSeconds (10 mm/s), at any frame rate.
+		static constexpr double kStillMm = 1.0;
 		static constexpr double kStillSeconds = 0.1;
 
 		// One shadow edge as drawn this frame.

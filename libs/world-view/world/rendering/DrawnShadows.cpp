@@ -280,7 +280,8 @@ namespace worldview {
 		for (CornerEase& ease : eases) {
 			ease.walkedMm += walkedMm;
 		}
-		// He has stopped once he has stayed near one point for kStillSeconds, once each stop.
+		// He has stopped once he has stayed within kStillMm of where the window began for kStillSeconds,
+		// once each stop; moving past it starts the window again.
 		if (glm::length(eyeMm - stillAt) > kStillMm) {
 			stillAt = eyeMm;
 			stillSeconds = 0.0;

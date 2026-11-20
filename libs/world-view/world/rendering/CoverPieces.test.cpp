@@ -123,10 +123,11 @@ namespace {
 			glm::dvec2							  eye,
 			double								  walkedMm,
 			const vision::SightTunables&		  tunables,
-			double								  brightReachMm = 30000.0
+			double								  brightReachMm = 30000.0,
+			double								  seconds = 1.0 / 60.0
 		) {
 			++frame;
-			shadows.update(sight, revision, eye, walkedMm, 1.0 / 60.0, kOpenBright, brightReachMm, kPixelsPerMm, tunables, frame);
+			shadows.update(sight, revision, eye, walkedMm, seconds, kOpenBright, brightReachMm, kPixelsPerMm, tunables, frame);
 			due.clear();
 			shadows.appendDue(due);
 			for (const worldview::DrawnShadows::Due& ring : due) {
@@ -290,14 +291,14 @@ TEST(CoverPieces, TrianglesABodyByCount) {
 		std::size_t most;
 	};
 	for (const Case shape :
-		 {Case{340.0, 5000.0, 13},
-		  Case{340.0, 10000.0, 13},
-		  Case{340.0, 20000.0, 13},
-		  Case{540.0, 5000.0, 22},
-		  Case{540.0, 10000.0, 22},
-		  Case{540.0, 20000.0, 22},
-		  Case{1385.0, 5000.0, 85},
-		  Case{1385.0, 10000.0, 85},
+		 {Case{340.0, 5000.0, 9},
+		  Case{340.0, 10000.0, 9},
+		  Case{340.0, 20000.0, 9},
+		  Case{540.0, 5000.0, 12},
+		  Case{540.0, 10000.0, 12},
+		  Case{540.0, 20000.0, 12},
+		  Case{1385.0, 5000.0, 37},
+		  Case{1385.0, 10000.0, 37},
 		  Case{1385.0, 20000.0, 37}}) {
 		std::vector<ValueTriangle> pieces;
 		worldview::appendSoftShadow(
@@ -844,4 +845,58 @@ TEST(CoverPieces, ABodyLeavingARingStaysUntilItsNewRingHoldsIt) {
 	update(-3100.0, 100.0);
 	shadows.build(1);
 	EXPECT_FALSE(holds(1)) << "now that ring two holds it";
+}
+
+// A crawl is not a stop: a colonist creeping at 0.03 m/s, at 60 and at 144 frames a second, never stays
+// within kStillMm of one point for kStillSeconds, so no frame rebuilds his rings as a stop does, and his
+// 60 mm in two seconds is short of the nearest ring's 100 mm cadence.
+TEST(CoverPieces, ACrawlIsNotAStop) {
+	const Stand					stand;
+	const vision::SightTunables tunables;
+	for (const double framesPerSecond : {60.0, 144.0}) {
+		Drawn drawn;
+		for (int frame = 0; frame < 30; ++frame) {
+			drawn.step(stand.sight(), 1, {0.0, 0.0}, 0.0, tunables, 30000.0, 1.0 / framesPerSecond);
+		}
+		const double stepMm = 30.0 / framesPerSecond;
+		std::size_t	 built = 0;
+		for (int frame = 1; frame <= static_cast<int>(2.0 * framesPerSecond); ++frame) {
+			drawn.step(stand.sight(), 1, {0.0, -stepMm * frame}, stepMm, tunables, 30000.0, 1.0 / framesPerSecond);
+			built += drawn.shadows.counts().ringsBuilt;
+		}
+		EXPECT_EQ(built, 0U) << framesPerSecond << " frames a second";
+	}
+}
+
+// A wall renumbering leaves an unrelated building's running ease alone: the block's ease is half way
+// along its face when a new build gives its id to another building, and the ease runs on from there.
+TEST(CoverPieces, ARenumberingKeepsAnotherBuildingsEase) {
+	vision::SightBody block = rectangleBody(500.0, 500.0, 1000.0, 1000.0, vision::BodyKind::Opaque, 1);
+	block.source = vision::SightBody::Source::Wall;
+	vision::SightBody other = rectangleBody(-6000.0, -9000.0, 3000.0, 300.0, vision::BodyKind::Opaque, 0);
+	other.source = vision::SightBody::Source::Wall;
+	std::vector<vision::SightBody>	bodies = {other, block};
+	std::vector<vision::ShadowEdge> edges = {{.body = 1, .corner = 3, .litTurn = 1}};
+	const auto						sight = [&](Vec2i64 eyeCentre) {
+		 return ecs::VisionSystem::SightBodies{
+								 .bodies = &bodies, .shadowEdges = &edges, .leadMm = 670, .reachMm = 30800, .eyeCentre = eyeCentre
+		 };
+	};
+	const vision::SightTunables tunables;
+	Drawn						drawn;
+	drawn.step(sight({-3000, 800}), 1, {-3000.0, 800.0}, 0.0, tunables);
+	drawn.step(sight({-3000, 800}), 1, {-3000.0, 1200.0}, 400.0, tunables);
+	drawn.step(sight({-3000, 800}), 1, {-3000.0, 1200.0}, 750.0, tunables);
+	ASSERT_EQ(drawn.shadows.edges().size(), 1U);
+	const glm::dvec2 apex = drawn.shadows.edges()[0].band.apex;
+	ASSERT_NEAR(drawn.shadows.edges()[0].ease, 0.5, 1e-9);
+
+	block.id = 0;
+	other.id = 1;
+	bodies = {block, other};
+	edges = {{.body = 0, .corner = 2, .litTurn = 1}};
+	drawn.step(sight({-3000, 1200}), 2, {-3000.0, 1200.0}, 0.0, tunables);
+	ASSERT_EQ(drawn.shadows.edges().size(), 1U);
+	EXPECT_NEAR(drawn.shadows.edges()[0].ease, 0.5, 1e-9) << "the ease taken up, not started again";
+	EXPECT_EQ(drawn.shadows.edges()[0].band.apex, apex);
 }

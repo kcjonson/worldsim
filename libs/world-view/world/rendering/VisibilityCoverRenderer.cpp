@@ -307,8 +307,17 @@ namespace worldview {
 			}
 		}
 		// The ring turned most first: his walk since it was built over its nearest distance, so a near ring
-		// goes before a far one that has waited as long.
-		std::ranges::sort(due, [](const DueBody& first, const DueBody& second) { return first.due.turn > second.due.turn; });
+		// goes before a far one that has waited as long. Waiting counts as turning, kDueTurnAFrame a frame,
+		// so a ring due with no turn (a stop, a change while he stands) is built within a bounded wait, and
+		// the longer waiting goes first at an equal rank.
+		const auto rank = [this](const DueBody& body) {
+			return body.due.turn + static_cast<double>(frameNumber - body.due.since) * kDueTurnAFrame;
+		};
+		std::ranges::sort(due, [&rank](const DueBody& first, const DueBody& second) {
+			const double firstRank	= rank(first);
+			const double secondRank = rank(second);
+			return firstRank != secondRank ? firstRank > secondRank : first.due.since < second.due.since;
+		});
 		frameCounts.softRingsDue		= due.size();
 		for (const DueBody& body : due) {
 			frameCounts.softOldestDueFrames = std::max(frameCounts.softOldestDueFrames, frameNumber - body.due.since);
@@ -326,8 +335,11 @@ namespace worldview {
 			budget -= std::min(budget, built);
 			++frameCounts.softRingsBuilt;
 		}
-		if (next < due.size()) {
-			frameCounts.softMostTurnDegrees = std::asin(std::min(1.0, due[next].due.turn)) * 180.0 / std::numbers::pi;
+		// How far past its cadence the most turned ring left waiting has turned.
+		const double cadence = std::asin(static_cast<double>(tunables.softShadowRebuildPercent) / 100.0);
+		for (; next < due.size(); ++next) {
+			const double past = std::asin(std::min(1.0, due[next].due.turn)) - cadence;
+			frameCounts.softMostTurnDegrees = std::max(frameCounts.softMostTurnDegrees, past * 180.0 / std::numbers::pi);
 		}
 
 		for (std::size_t index = 0; index < inView.size(); ++index) {

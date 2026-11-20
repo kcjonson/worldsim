@@ -873,7 +873,7 @@ namespace {
 			// The frame's snapshot is the window system's word at frame end; events moved the flag within the frame, and none are dispatched while paused.
 			windowPresence.syncPointer(frame.input.pointerInWindow);
 			const auto dt = static_cast<float>(frame.dt);
-			m_frameSeconds = dt;
+			frameSeconds = dt;
 			// The camera's held keys are polled whatever the ui took, so a modal dialog holds them off the world.
 			const bool worldKeys = !modalDialogOpen();
 			const auto down = [&frame, worldKeys](foundation::Key key) {
@@ -1096,7 +1096,7 @@ namespace {
 
 			// Player visibility: unseen ground black, seen ground out of sight tinted. Over everything the
 			// world draws, under every overlay, preview, marker and ghost drawn after it.
-			m_visibilityCover->render(*ecsWorld, *m_camera, w, h, kPixelsPerMeter, m_frameSeconds);
+			m_visibilityCover->render(*ecsWorld, *m_camera, w, h, kPixelsPerMeter, frameSeconds);
 
 			// In-progress drawing preview (rubber-band, snap guides, opening ghost)
 			// rides above the entities like the placement ghost; committed
@@ -2276,7 +2276,7 @@ namespace {
 		std::unique_ptr<worldview::ChunkRenderer>		   m_renderer;
 		std::unique_ptr<worldview::EntityRenderer>		   m_entityRenderer;
 		std::unique_ptr<worldview::VisibilityCoverRenderer> m_visibilityCover;
-		float												m_frameSeconds = 0.0F; // the last update's, for the cover's stop
+		float												frameSeconds = 0.0F; // the last update's, for the cover's stop
 		std::unique_ptr<assets::PlacementExecutor>		   m_placementExecutor;
 		std::unique_ptr<world_sim::GameUI>				   gameUI;
 

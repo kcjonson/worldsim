@@ -83,8 +83,10 @@ namespace worldview {
 	[[nodiscard]] bool coverTargetHoldsPartialMasks();
 
 	// The most soft-body pieces built in one frame over every colonist in view, in whole rings, the
-	// longest due first: a ring is let in while its last count fits what is left, and the first always is.
+	// most turned first (7.3): a ring is let in while its last count fits what is left, and the first always is.
 	constexpr std::size_t kDrawnShadowPiecesPerFrame = 8000;
+	// What a frame of waiting counts for against a due ring's turn: ten frames rank as a whole cadence.
+	constexpr double kDueTurnAFrame = 0.01;
 
 	class VisibilityCoverRenderer {
 	  public:
@@ -126,7 +128,7 @@ namespace worldview {
 			std::size_t softRingsDue	= 0; // rings due, built or carried over
 			std::size_t softBodiesBuilt = 0; // soft bodies those rings built
 			std::uint64_t softOldestDueFrames = 0; // how many frames the longest due ring has waited
-			double		  softMostTurnDegrees = 0.0; // how far the most turned ring left due has turned, in degrees
+			double		  softMostTurnDegrees = 0.0; // how far past its cadence the most turned ring left due has turned, in degrees
 			std::size_t softPiecesBuilt = 0; // of which soft bodies' pieces, against kDrawnShadowPiecesPerFrame
 			std::size_t piecesBuilt		= 0; // pieces built this frame
 			std::size_t meshUploads		= 0; // meshes uploaded this frame

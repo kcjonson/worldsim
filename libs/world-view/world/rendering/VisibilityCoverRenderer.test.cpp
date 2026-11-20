@@ -26,6 +26,7 @@
 #include <glm/geometric.hpp>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <map>
@@ -379,6 +380,36 @@ TEST_F(VisibilityCoverTest, ThePendingCutRedoneWhereItChangedIsTheWholeCut) {
 	EXPECT_GT(cover->seenFeather().counts().cut.recordEdges + boundaryOf(cover->seenFeather()).size(), 0U);
 }
 
+// In a forest stand his reach follows his eased bright rim, which moves on most frames he walks; it re-dues
+// only the rings holding a trunk it takes in or leaves out, so over 4 m of walk the ring from 16 m on is
+// built a few times for its cadence (1,440 mm) and the trunks his rim crosses, not every frame.
+TEST_F(VisibilityCoverTest, AnEasedRimInForestReDuesOnlyWhatItCrosses) {
+	for (float x = -30.0F; x <= 40.0F; x += 3.5F) {
+		for (float y = -30.0F; y <= 30.0F; y += 3.5F) {
+			if (std::abs(y) > 1.5F) {
+				place({x, y}, 0.5F);
+			}
+		}
+	}
+	const ecs::EntityID colonist = addColonist({0.0F, 0.0F});
+	for (int settle = 0; settle < 30; ++settle) {
+		world.update(1.0F / 60.0F);
+		frame();
+	}
+	int farBuilds = 0;
+	int rimMoves  = 0;
+	for (int step = 0; step < 120; ++step) {
+		world.getComponent<ecs::Position>(colonist)->value.x += 2.0F / 60.0F;
+		world.update(1.0F / 60.0F);
+		frame();
+		ASSERT_EQ(cover->colonists().size(), 1U);
+		farBuilds += (cover->colonists()[0].shadows->counts().softChangedRings & (1U << 3U)) != 0U ? 1 : 0;
+		rimMoves += cover->colonists()[0].rimMovedMm > 0 ? 1 : 0;
+	}
+	EXPECT_GT(rimMoves, 60) << "the rim eases on most frames";
+	EXPECT_LE(farBuilds, 30);
+}
+
 // A colonist who leaves the view and comes back builds nothing for it: his pieces and meshes are kept
 // while he lives.
 TEST_F(VisibilityCoverTest, LeavingTheViewKeepsHisPieces) {
@@ -414,6 +445,12 @@ TEST_F(VisibilityCoverTest, FiftyWalkingKeepToTheBudgetAndEveryOneIsBuilt) {
 	for (int index = 0; index < 50; ++index) {
 		walkers.push_back(addColonist({static_cast<float>(index % 10) * 4.0F - 20.0F, static_cast<float>(index / 10) * 4.0F - 10.0F}));
 	}
+	// One more, who walks with them and stops at kStopFrame: his rings, due with no turn, are built where
+	// he stands within kStoppedMostFrames however long the walkers' queue.
+	const ecs::EntityID		stopper				= addColonist({-22.0F, -12.0F});
+	constexpr int			kStopFrame			= 70;
+	constexpr int			kStoppedMostFrames	= 30;
+	int						stoppedBuiltFrame	= -1;
 	constexpr std::size_t kOneRingMostPieces = 2500;
 	constexpr int		  kFrames			 = 150;
 	constexpr int		  kWarmFrames		 = 60;
@@ -423,10 +460,23 @@ TEST_F(VisibilityCoverTest, FiftyWalkingKeepToTheBudgetAndEveryOneIsBuilt) {
 		for (const ecs::EntityID walker : walkers) {
 			world.getComponent<ecs::Position>(walker)->value.x += 2.0F / 60.0F;
 		}
+		if (step < kStopFrame) {
+			world.getComponent<ecs::Position>(stopper)->value.x += 2.0F / 60.0F;
+		}
 		world.update(1.0F / 60.0F);
 		frame();
 		const VisibilityCoverRenderer::Counts& counts = cover->counts();
-		ASSERT_EQ(counts.colonists, 50U);
+		ASSERT_EQ(counts.colonists, 51U);
+		if (step > kStopFrame && stoppedBuiltFrame < 0) {
+			const glm::dvec2 standing{static_cast<double>(nav::toMm(world.getComponent<ecs::Position>(stopper)->value).x),
+									  static_cast<double>(nav::toMm(world.getComponent<ecs::Position>(stopper)->value).y)};
+			for (const VisibilityCoverRenderer::ColonistCover& colonist : cover->colonists()) {
+				if (colonist.colonist == stopper &&
+					std::ranges::all_of(colonist.shadows->rings(), [&](const worldview::DrawnShadows::Ring& ring) { return ring.builtFrom == standing; })) {
+					stoppedBuiltFrame = step;
+				}
+			}
+		}
 		// The budget lets in the longest due ring whatever its size, and others while they fit.
 		if (counts.softRingsBuilt > 1) {
 			EXPECT_LE(counts.softPiecesBuilt, worldview::kDrawnShadowPiecesPerFrame + kOneRingMostPieces) << "frame " << step;
@@ -445,6 +495,9 @@ TEST_F(VisibilityCoverTest, FiftyWalkingKeepToTheBudgetAndEveryOneIsBuilt) {
 		}
 	}
 	EXPECT_GT(backlogFrames, 0U) << "fifty in forest outrun one frame's budget";
+	ASSERT_GE(stoppedBuiltFrame, 0) << "the stopped colonist's rings were never built where he stands";
+	EXPECT_LE(stoppedBuiltFrame - kStopFrame, kStoppedMostFrames);
+	builtLate.erase(stopper);
 	ASSERT_EQ(builtLate.size(), 50U);
 	for (const auto& [walker, frames] : builtLate) {
 		EXPECT_GE(frames, 3) << "walker " << walker << ": 3 m of walk past trunks 4 m apart";
