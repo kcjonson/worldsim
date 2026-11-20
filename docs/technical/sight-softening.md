@@ -40,14 +40,14 @@ The collision map is the nav mesh's blocked rings: wall bands and junctions, pla
 | Source | Sight |
 |---|---|
 | A built wall | Its body is the outline of its connected wall graph, as `GeometryIndex` builds it: `geometry::wallPiecesAndOutline(...).outline` (`libs/geometry/offset/WallOffset.h`), the boundary of the union of the trimmed bands and junctions, cut at every opening whose type is `transparentToSight` (`ConstructionRegistry.h`). The whole band is opaque, so an opaque wall's shadow starts at its near face |
-| A placed obstacle (`kProvenancePlaced`) | Its body is the ring nav holds for it, when the obstacle is at least `eyeHeightMm` tall (2.2) |
+| A placed obstacle (`kProvenancePlaced`) | Its body is the ring nav holds for it, when the obstacle is at least `kEyeHeightMm` tall (2.2) |
 | Water (`kProvenanceWater`) | Never: water has no height |
 | A ford (`kProvenanceFord`) | Never: a cover-only ring |
 | A mesh limit or the walkable bounds (`kProvenanceBorder`) | Never: bounds rings, `blocked = false` (`NavInputBuilder.h`) |
 
 Movers are never rings, so a colonist never hides another. A door and a window pass sight (vision-architecture.md D7); a closed solid door, when there is one, flips the same flag. The wall outline is the same geometry as nav's wall rings, with windows cut as well as doors.
 
-What counts follows the collision data alone, and no code in vision or nav names a kind of thing. A tree's trunk is a Rect collider, so it is in; a bush, groundcover, and most rocks have no collision and do nothing to sight; a BigRock is in. Nav pads a Rect collider by `kPlacedObstaclePadMm` (50 mm, `PlacedObstacle.h`) on every side before scaling by the entity's scale (`placedObstacleOutline`, `NavInputBuilder.cpp`), and sight reads that ring as it is. Trees take no `randomRotation`, so their rings are axis-aligned squares; a BigRock (`randomRotation` 180) is a rectangle at any angle, whose diameter the angle does not change. Wall bands are 0.15 to 0.30 m thick (`materials.xml`) and a wall is at least 0.5 m long (`minSegmentLengthMeters`, `constraints.xml`), so the least wall body is 0.5 by 0.15 m.
+What counts follows the collision data alone, and no code in vision or nav names a kind of thing. A tree's trunk is a Rect collider, so it is in; a bush, groundcover, and most rocks have no collision and do nothing to sight; a BigRock is in the collision map, and at 1.5 m tall is too low to be a sight body (2.2). Nav pads a Rect collider by `kPlacedObstaclePadMm` (50 mm, `PlacedObstacle.h`) on every side before scaling by the entity's scale (`placedObstacleOutline`, `NavInputBuilder.cpp`), and sight reads that ring as it is. Trees take no `randomRotation`, so their rings are axis-aligned squares; a BigRock (`randomRotation` 180) is a rectangle at any angle, whose diameter the angle does not change. Wall bands are 0.15 to 0.30 m thick (`materials.xml`) and a wall is at least 0.5 m long (`minSegmentLengthMeters`, `constraints.xml`), so the least wall body is 0.5 by 0.15 m.
 
 | Body | Face on | `diameter` | Kind |
 |---|---|---|---|
@@ -59,18 +59,22 @@ What counts follows the collision data alone, and no code in vision or nav names
 | A veteran maple | 0.60 m | 0.85 m | Soft |
 | A veteran oak | 0.82 to 0.98 m | 1.16 to 1.385 m, the landing's widest measured 1.37 to 1.385 m | Soft |
 | Every longer wall: 0.52 to 0.58 m long or more, by its thickness | its band end on | 0.60 m and up | Opaque |
-| A BigRock, 1.40 by 1.07 m | 1.07 m | 1.76 m | Opaque |
+| A BigRock, 1.40 by 1.07 m | 1.07 m | 1.76 m | None: 1.5 m tall, under eye height (2.2) |
 
 ### 2.2 Kinds
 
 A body's kind is decided once, from its own outline, when it enters the index that holds it, and never from where it is seen:
 
 - A wall body is opaque when its `diameter` is at least `wallOpaqueLeastDiameterMm` (600 mm), and soft below it.
-- A placed body is opaque when its `diameter` is at least `placedOpaqueLeastDiameterMm` (1400 mm), and soft below it. That lies between the widest trunk (a veteran oak, up to 1.385 m across its diagonal at the landing) and a BigRock (1.76 m), so every tree is soft and a BigRock is opaque.
+- A placed body is opaque when its `diameter` is at least `placedOpaqueLeastDiameterMm` (1400 mm), and soft below it. That lies above the widest trunk (a veteran oak, up to 1.385 m across its diagonal at the landing), so every tree is soft. A placed ring that is concave is opaque whatever its `diameter`, so every soft body is convex (2.3).
 
 Which threshold applies is the body's provenance in the collision map (a wall outline from construction or a `kProvenancePlaced` ring), never a list of asset kinds.
 
-Before either, height: a placed obstacle carries the height of its body's top, and one lower than a colonist's eye, `eyeHeightMm` (1600 mm), is no body at all. It never enters the placed occluder index, so it casts no shadow and spends no forest depth; colonists see over it. A placed rotatable item's height is its highest part's top ([Rotatable placed items, 11.2](./rendering/rotatable-placed-items.md#112-placed-items-as-obstacles)), so a workbench, a bed, a table, or a stool is never a body, and a tall wardrobe is one by its size. A collider of any other def carries no height and counts as tall, so every tree and rock above is a body as the table says.
+Before either, height. Every placed obstacle carries the height of its body's top, from its def: a rotatable item's is its tallest part's top ([Rotatable placed items, 11.2](./rendering/rotatable-placed-items.md#112-placed-items-as-obstacles)); a simple def's is its `worldHeight`, the height its drawing is normalised to (1.0 m when the def writes none, the parser's default); a procedural def's generator draws to its own size and states no height, so it counts as tall. One lower than a colonist's eye, `kEyeHeightMm` (1600 mm, a constant in `libs/sim/vision`, not a tunable), is no body at all. It never enters the placed occluder index, so it casts no shadow and spends no forest depth; colonists see over it. The test decides whether a ring is in the index at all, at the patch callback that adds it, so it is fixed like the collider; a slider could not re-decide it. So a workbench, a bed, a table, or a stool is never a body, a tall wardrobe is one by its size, every tree (procedural) is a soft body as the table says, and a BigRock (`worldHeight` 1.5 m) is a low body and takes no part in sight. Walls have no height test.
+
+The worked examples in this document that name a BigRock as the opaque placed body (its shadow, spill, forest depth, and limits) stand as the geometry of an opaque placed body of those dimensions, 1.40 by 1.07 m and at least eye height.
+
+An item of several rings is one body for its kind: each of its rings carries the item's `diameter`, the greatest distance between two vertices of any of its rings, and whether any of them is concave, and the index decides every ring's kind from those, so a slider re-decides them together and an item is never half opaque. Its rings still cast their shadows and spend forest depth one by one.
 
 The `diameter` is exact: the greatest squared distance between two outline vertices (`Int128` products, `core/Int128.h`), against the threshold squared. A wall graph the band offsetter rejects is outlined as each wall's untrimmed band on its own (`GeometryIndex.cpp`); its body is still the whole connected graph, its outline the set of those band outlines and its `diameter` taken over all their vertices, so a graph's kind follows its walls, not whether the offsetter took them, but for the little an untrimmed end can add across a junction.
 
@@ -80,7 +84,7 @@ A kind changes only when the world does. Felling, placing, or building replaces 
 
 Every quantity is taken from the eye: the build's `eyeCentre` in the sim, the colonist's position that frame in the drawing. A mover's centre is held outside blocked rings (routes keep its clearance and static collision pushes it out), so the eye is never inside a placed ring.
 
-- The `silhouette` runs from the direction of the body's extreme vertex on one side to the other's. A body seen from outside its convex hull meets one arc less than 180 degrees wide, whose ends move continuously as the eye moves. A soft body is at most 1.4 m across and the eye is held outside it, so its silhouette is always such an arc.
+- The `silhouette` runs from the direction of the body's extreme vertex on one side to the other's. A body seen from outside its convex hull meets one arc less than 180 degrees wide, whose ends move continuously as the eye moves. An eye outside a concave body can stand inside its hull (in an L-shaped item's notch), where the extreme vertices span more than 180 degrees or jump as it moves. So a concave placed ring is opaque (2.2), its shadow exact through the visibility polygon, which takes concave outlines, and a soft wall body is one short straight band. A soft body is so convex and at most 1.4 m across, and the eye is held outside it, so outside its hull, and its silhouette is always such an arc.
 - `widthAsSeen` is the greatest less the least of `dot(vertex - eye, across)` over the body's vertices, `across` the unit direction perpendicular to the bisector. A square face on gives its side, at its diagonal its diagonal; it is never more than the body's `diameter`. It is continuous in the eye's position.
 - `distance` is from the eye to the body's nearest point, `cornerDistance` to the vertex at that end of the silhouette.
 
@@ -233,7 +237,7 @@ The last step is the **slope limit**: no side's depth exceeds a neighbour's by m
 - `distanceWeight` is `min(1, centreDistance^2 / forestNearMm^2) * (1 - centreDistance^2 / sightRadius^2)`, `centreDistance` from the eye to the ring's centre. It is 0 at the eye, rises to its greatest, 0.89, at `forestNearMm` (10 m), and falls to 0 at the sight radius, so a ring coming into sight adds nothing at first, and a ring beside the eye adds little.
 - `arrival` is 1 but for a ring still arriving (2.4).
 
-Every placed ring in the occluder index spends forest depth, opaque or soft (one lower than `eyeHeightMm` is never in it, 2.2): a BigRock is a hard shadow and a little forest depth round it, as any thing in the way is. Built walls spend none; they are opaque bodies with exact shadows or stubs a colonist sees past.
+Every placed ring in the occluder index spends forest depth, opaque or soft (one lower than `kEyeHeightMm` is never in it, 2.2): a BigRock is a hard shadow and a little forest depth round it, as any thing in the way is. Built walls spend none; they are opaque bodies with exact shadows or stubs a colonist sees past.
 
 ### 4.2 The forest shape
 
@@ -610,7 +614,6 @@ Every tunable in 9 is a field of one runtime struct, `SightTunables`, named as i
 | Name | Start | Range | What it sets |
 |---|---|---|---|
 | `wallOpaqueLeastDiameterMm` | 600 mm | 100 to 2,000 mm, below `softShadowRayWidthMm` | A wall body at least this across is opaque, below it soft. The shortest wall the tools allow is 0.52 to 0.58 m across |
-| `eyeHeightMm` | 1600 mm | 1,000 to 2,000 mm | A placed obstacle lower than this is no body: no shadow, no forest depth (2.2). A colonist's eye |
 | `placedOpaqueLeastDiameterMm` | 1400 mm | 100 to 2,000 mm, below `softShadowRayWidthMm` | A placed body at least this across is opaque, below it soft: between a veteran oak (up to 1.385 m at the landing) and a BigRock (1.76 m) |
 | `softShadowRayWidthMm` | 3000 mm | above both thresholds, to 10,000 mm | The ray a soft body's triangle is drawn with: wider shortens every triangle. Above both thresholds |
 | `softShadowStrengthPercent` | 42 | 0 to 100 | A soft body's triangle at its foot, as a percentage of its width over the ray: lower makes every trunk fainter |
