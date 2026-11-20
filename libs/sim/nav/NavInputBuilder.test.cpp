@@ -1076,6 +1076,7 @@ TEST_F(NavEndToEndTest, BeliefRoutesIntoRoomBehindSharedWallByItsDoor) {
 	const geometry::nav::PathResult	  believed = geometry::nav::pathThrough(mesh, outside, inside, 300, {&walls, &openings});
 	ASSERT_TRUE(believed.reachable);
 	EXPECT_TRUE(pathCrosses(believed, outerDoor.a, outerDoor.b)) << "in through the first room's outer door";
+	EXPECT_FALSE(pathCrosses(believed, meters(25, 7), meters(31, 7))) << "through the south walls, at the T";
 	for (const WallJunction& junction : junctions) {
 		EXPECT_FALSE(pathEntersRing(believed, input.polygons[junction.polygon].ring)) << "through a junction one of whose walls is known";
 	}
