@@ -26,7 +26,7 @@ Terms: a **pick** is the lat/lon the player clicked or the marker they chose. Th
 13. Sites are computed after generation or load and never stored. The planet file format does not change.
 14. Quick Start's landing does not move: the same origin and the same drop as before this system, on the shipped planet (seed 424242, n=2048, Temperate Deciduous Forest by a river). The regression scenarios are written on those coordinates.
 15. `revealLanding` stays centred on the raw drop, the spawn point before the landing clearing is made.
-16. The scan never blocks the main thread. The world creator stays interactive while it runs.
+16. Neither the scan nor a resolution runs on the main thread. A spawn search costs 50 to 160 ms, so the world creator hands both to a worker and stays interactive.
 
 ## 2. The bar
 
@@ -48,7 +48,7 @@ using BiomeProvisionTable = std::array<BiomeProvisions, static_cast<std::size_t>
 
 - `const BiomePlacement* placement = definition.placement.findBiome(worldgen::biomeToString(b))`. Skip it when null, and when `placement->nearTileType` is set (a `near="Mud"` entry): the planet can't see mud, so a conditional placement is not counted.
 - Its density is `spawnChance / (samplePitch * samplePitch) * 1e6` sources per square kilometer, the measure `canopyCoverFromDefinitions` uses.
-- The density adds to food when the yield item (`registry.getDefinition(harvestable.yieldDefName)`) `isEdible()`, and to wood when `yieldDefName == kWoodItemDefName` (`"Wood"`).
+- The density adds to food when the yield item (`registry.getDefinition(harvestable.yieldDefName)`) `isEdible()`, and to wood when the yield item's definition declares the group `kWoodItemGroup` (`"wood"`) in its XML. Both answers come from the item's own definition, never from its name, so a new edible item or a second kind of timber counts by declaring itself. (The flora group `wood_sources` is not the test: it also holds bushes that yield sticks, which can't be built with.)
 
 Asset definitions are loaded before either caller runs: the splash scene gates the main menu on `AssetRegistry::isLoadComplete()`, and a `--scene` launch loads them synchronously before the first scene. The world creator builds the table in `onEnter`; `GameLoadingScene` builds it when it chooses Quick Start's site. Building it is a loop over the definitions, so neither caches it.
 
@@ -117,7 +117,7 @@ Ties break to the lowest `TileId`. For each anchor, `findRiverbankSpawn(world, a
 Why the anchors land on water:
 
 - **River.** `RiverNetwork2D` joins its channel segments at tile centres and tapers the meander and the width variation to zero there, so a river tile's centre lies exactly on its channel's centreline. A landing origin there puts the channel through the 2D origin, and the bank is within half the channel width (at most `RiverNetwork2D::kMaxHalfWidthMeters`, 103.5 m) plus 6 m, inside the 200 m search. A river tile with no segment of its own and none arriving (an isolated flag) fails the search and the next anchor is tried.
-- **Lake.** `PlanetSampler` decides water by the containing tile alone (no blend), and the chunk layer draws a tile's surface from its primary biome, the containing tile's (weight at least 0.5). So the 2D lake shore is the Voronoi edge between a lake tile and a land tile, moved at most `TerrainPolygonBuilder::kMaxWarpMm` (1.45 m) by the shore warp, plus the 1 m tile grid. Adjacent centres' great-circle midpoint lies on that edge. The lake anchor is on the arc from `T`'s centre to the lake tile's centre, `kLakeShoreInsetMeters` short of the midpoint, on `T`'s side: `slerp(centreT, centreLake, 0.5 - inset / (radius * arc))`. It is on land, inside `T`, and the shore search finds the water about 20 m off.
+- **Lake.** `PlanetSampler` decides water by the containing tile alone (no blend), and the chunk layer draws a tile's surface from its primary biome, the containing tile's (weight at least 0.5). So the 2D lake shore is the Voronoi edge between a lake tile and a land tile, moved at most `TerrainPolygonBuilder::kMaxWarpMm` (1.45 m) by the shore warp, plus the 1 m tile grid. The grid decides the containing tile in its lattice chart, so that edge is not the centres' great-circle midpoint: the two are 0.2 m apart at n=2048 and more than a kilometer apart at n=24. The lake anchor therefore finds the edge itself. On the arc from `T`'s centre to the lake tile's centre, a bisection on `grid.fromUnitVector` finds the point where the containing tile stops being `T`, to within `kLakeEdgeToleranceMeters`; the anchor is `kLakeShoreInsetMeters` back from it toward `T`'s centre. It is on land, inside `T`, at any grid resolution, and the shore search finds the water about 20 m off.
 
 The origin moves to the anchor, so every `RiverNetwork2D`, `PlanetSampler`, and `GeneratedWorldSampler` downstream is built at the anchor, and the anchor's tile is the landing tile.
 
@@ -158,27 +158,36 @@ Check 4 runs last and at most once per candidate (a failure is remembered). A si
 
 ### 4.3 Where it runs
 
-`LandingSiteSurvey` (`apps/world-sim/scenes/shared/LandingSiteSurvey.h`) owns a `std::jthread` that runs `findSuggestedLandingSites` and hands the result back once:
+`LandingSiteSurvey` (`apps/world-sim/scenes/shared/LandingSiteSurvey.h`) owns one `std::jthread` for a planet. It runs `findSuggestedLandingSites` and hands that result back once, and it resolves picks: the newest pick waiting is resolved next (ahead of the rest of the scan's verification step when both wait), and a pick replaced before it was resolved is dropped.
 
 ```cpp
 class LandingSiteSurvey {
   public:
     void start(std::shared_ptr<const worldgen::GeneratedWorld> world, worldgen::BiomeProvisionTable provisions,
                std::optional<worldgen::Biome> preferredBiome, std::size_t maximumSites);
-    [[nodiscard]] bool running() const;
-    [[nodiscard]] std::optional<std::vector<worldgen::LandingSite>> takeResult();
+    [[nodiscard]] bool surveying() const;
+    [[nodiscard]] std::optional<std::vector<worldgen::LandingSite>> takeSites();
+
+    void resolve(worldgen::LatLon pick); // replaces any pick not yet resolved
+    [[nodiscard]] bool resolving() const;
+    struct ResolvedPick {
+        worldgen::LatLon      pick;
+        worldgen::LandingSite landing;
+    };
+    [[nodiscard]] std::optional<ResolvedPick> takeResolved();
+
     void cancel(); // requests stop and joins
 };
 ```
 
 - **World creator.** Started when Reviewing begins. While it runs the globe is shown and usable, the footer status reads "Surveying landing sites...", no site is selected, and Confirm Landing Site is disabled until one is. The player may click the globe meanwhile; a click resolves and selects as usual. When the survey finishes, if the player has picked nothing, `sites[0]`'s origin becomes the pick. The status then reads "World ready - suitable for colonization", or "World ready - no recommended landing sites" when the list is empty (no site is then selected until the player clicks). Regenerate, Escape, and `onExit` cancel it.
 - **Quick Start.** `GameLoadingScene` gains a `ChoosingSite` phase after `PreparingPlanet`, status "Choosing a landing site...", which runs the survey with `preferredBiome = TemperateDeciduousForest` and `maximumSites = 1` and takes `sites[0]`. An empty list fails the load with that message, as a missing planet does (the shipped planet is a packaging fact, not a player state).
-- **A click** in the world creator resolves on the main thread inside the click: one spawn search per anchor tried, and the first usually passes.
+- **A click** in the world creator moves the crosshair and the coordinates at once and calls `resolve(pick)`. Until `takeResolved` returns that pick, the pane keeps the coordinates and shows "Surveying..." in place of the rest, and Confirm Landing Site is disabled. A click on a suggested marker needs no resolution: its `LandingSite` is already in `suggestedSites`.
 
 ## 5. The world creator
 
-- **State.** `selectedSite` gives way to `planetview::LatLon selectedPick` (where the crosshair is), `worldgen::LandingSite selectedLanding`, and `std::optional<std::size_t> selectedSuggestion`. `suggestedSites` holds the survey's result.
-- **Picking.** `stagePress` first hit-tests the shown suggested markers (`kSuggestedMarkerHitRadius` ui px from the press, nearest wins); a hit makes that site's origin the pick. Otherwise `globe.pick` gives it. `trySelectSite(pick)` rejects water tiles as now, then sets `selectedPick`, `selectedLanding = resolveLandingSite(world, provisions, pick)`, and `selectedSuggestion` to the index of the site whose `origin` equals `selectedLanding.origin`, if any.
+- **State.** `selectedSite` gives way to `planetview::LatLon selectedPick` (where the crosshair is), `std::optional<worldgen::LandingSite> selectedLanding` (empty while its resolution is pending), and `std::optional<std::size_t> selectedSuggestion`. `suggestedSites` holds the survey's result.
+- **Picking.** `stagePress` first hit-tests the shown suggested markers (`kSuggestedMarkerHitRadius` ui px from the press, nearest wins); a hit makes that site's origin the pick. Otherwise `globe.pick` gives it. A marker hit sets `selectedPick` to the site's origin, `selectedLanding` to the site, and `selectedSuggestion` to its index. A globe pick goes to `trySelectSite(pick)`, which rejects water tiles as now, sets `selectedPick`, clears `selectedLanding` and `selectedSuggestion`, and calls `survey.resolve(pick)`; when the result for that pick arrives it becomes `selectedLanding`, and `selectedSuggestion` is the index of the site whose `origin` equals its origin, if any.
 - **Pane.** `buildLandingSiteDetails(const worldgen::GeneratedWorld&, const worldgen::LandingSite&, double pickLatDeg, double pickLonDeg)`. Coordinates are the pick's; biome, temperatures, rainfall, terrain, ice, and water come from `site.tile` and `site.assessment`; `recommended` is `site.recommended()`. A Provisions section shows Food and Wood, each Yes or None. The Commit to Descent dialog reads the same `details`.
 - **Landing.** `land()` puts `selectedLanding` in `GameStartConfig::landing`.
 - **Markers.** `renderSuggestedSites(rect, scale, theme)` draws before `renderMarker`, so the selection crosshair sits on top. For each site with `projectLatLon` true: a ring of radius `kSuggestedMarkerRadius` ui px, 1.5 px stroke, in the `data` token, with a 2 px dot at its centre in `dataBright`. A river site's ring is a diamond (a square turned 45 degrees), a lake site's a circle. No pulse; the pulse belongs to the selection. Drawn only while `UserSettings::Get().landing.showSuggestedSites` is on, read each frame.
@@ -252,7 +261,8 @@ In `LandingSite.h` unless named otherwise.
 | `kMinimumFoodSourcesPerSquareKilometer` | 100.0 | food: about 7 sources in the 150 m landing area |
 | `kMinimumWoodSourcesPerSquareKilometer` | 100.0 | wood: the same |
 | `kLakeShoreInsetMeters` | 20.0 | lake anchor's distance inside the land tile from the lake edge |
-| `kWoodItemDefName` (`BiomeProvisions.cpp`) | `"Wood"` | the item a wood source yields |
+| `kLakeEdgeToleranceMeters` | 0.5 | how closely the bisection finds the edge between a land tile and a lake tile |
+| `kWoodItemGroup` (`BiomeProvisions.h`) | `"wood"` | the group an item declares to count as wood |
 | `kSuggestedMarkerRadius` (`WorldCreatorScene.cpp`) | 6 ui px | marker size |
 | `kSuggestedMarkerHitRadius` (`WorldCreatorScene.cpp`) | 10 ui px | how near a press must be to take a marker |
 
@@ -275,15 +285,17 @@ Happy path: [scenario 22](../testing/scenarios/22-landing-sites.md).
 ## Decisions
 
 1. The bar is fresh water, food, wood, and livable temperature, one definition for everything that judges a site; it replaced a scorer that ignored biome and a hand list of green biomes. (Kevin.)
-2. Food and wood are derived from flora placement and yields so a new plant changes the answer without code. Conditional (`near`) placements don't count because the planet can't see mud.
+2. Food and wood are derived from flora placement and yields so a new plant changes the answer without code. Conditional (`near`) placements don't count because the planet can't see mud. Nothing is a fixed list: far more assets and biome configuration are coming (Kevin), so an item says it is food or wood in its own XML and no item name appears in code.
 3. Ponds are not rated water: the planet-level code can't see them. Coast is salt and never counts.
 4. Suggested sites keep a 45 degree latitude cut on top of the bar. It holds Quick Start's landing (section 8). It is the finder's filter, not part of the bar, so the pane's Recommended badge means the four things in rule 1 and nothing about latitude.
 5. A globe pick names a rough area: "the ship is crashing, you don't have control. so the exact coordinates can get moved." The game resolves the landing for every pick and never shows it. (Kevin.)
 6. The landing origin moves to the anchor rather than the drop moving kilometres from the origin. The projection is exact at its origin, and every 2D consumer keys off the origin already.
 7. A site is fresh-water only when the spawn search found the water. Tile flags promise a river on the tile or a neighbour, which can be kilometres off.
-8. Candidates are kept per (bin, kind, biome) slot instead of in one sorted list, so memory is bounded and spacing and variety have candidates everywhere.
-9. The default site is the first suggested site: one finder, no second scorer.
-10. Markers sit behind a Settings switch, off by default. (Kevin.)
-11. Sites are computed, never stored: a format change forces a re-bake of the 1.3 GiB shared planet.
-12. RimWorld's world map gives a tile's terrain, temperature, and growing period in a side panel and has a "select random site" button; it has no suggested sites. Dwarf Fortress's embark screen has a site finder that searches by criteria (temperature, water, trees, and so on) and highlights matches on the map.
-13. Out of scope here: the 2D local preview and difficulty rating of a site (Specboard WOR-369, "Landing site local preview + difficulty rating"), the loading screen backdrop (WOR-378, "Improve Landing Screen"), ponds as rated water, the sim treating ocean shore as drinkable (its own bug), a wider area cursor (only if playtests ask for one), and macOS and Linux specifics.
+8. A pick resolves on the worker, not inside the click: a spawn search measured 52 to 159 ms, a visible hitch on every click. The search itself is left alone because Quick Start's drop depends on it point for point.
+9. The lake anchor finds the tile edge by bisection on the grid's own lookup. The centres' midpoint is on the edge only at fine resolutions (13 m off at n=256, 209 m at n=64).
+10. Candidates are kept per (bin, kind, biome) slot instead of in one sorted list, so memory is bounded and spacing and variety have candidates everywhere.
+11. The default site is the first suggested site: one finder, no second scorer.
+12. Markers sit behind a Settings switch, off by default. (Kevin.)
+13. Sites are computed, never stored: a format change forces a re-bake of the 1.3 GiB shared planet.
+14. RimWorld's world map gives a tile's terrain, temperature, and growing period in a side panel and has a "select random site" button; it has no suggested sites. Dwarf Fortress's embark screen has a site finder that searches by criteria (temperature, water, trees, and so on) and highlights matches on the map.
+15. Out of scope here: the 2D local preview and difficulty rating of a site (Specboard WOR-369, "Landing site local preview + difficulty rating"), the loading screen backdrop (WOR-378, "Improve Landing Screen"), ponds as rated water, the sim treating ocean shore as drinkable (its own bug), a wider area cursor (only if playtests ask for one), and macOS and Linux specifics.
