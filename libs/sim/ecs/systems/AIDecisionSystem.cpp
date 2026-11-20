@@ -3481,7 +3481,7 @@ namespace ecs {
 		std::array<glm::vec2, SourceChoices::kCapacity> goals{task.targetPosition};
 		std::size_t										   goalCount = 1;
 		if (task.sourceChoices.empty()) {
-			const glm::vec2						target = task.workTarget();
+			const glm::vec2	  target = task.workTarget();
 			const StandPoints stands = standPointFor(target, position.value, radius, false);
 			if (stands.size() > 1 || !task.obstructedTarget.has_value()) {
 				if (stands.empty()) {
