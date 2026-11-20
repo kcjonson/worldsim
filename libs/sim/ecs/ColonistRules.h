@@ -56,13 +56,12 @@ namespace ecs {
 	[[nodiscard]] std::vector<std::string>
 	loadNeedLevels(NeedLevels& levels, const std::vector<std::filesystem::path>& files, const std::filesystem::path& folder);
 
-	/// Stop at `human`'s errors when it has any, adding them only when no other loader has reported them yet
-	/// (assets::takeErrors, so assets::loadWorkConfig and this report them once between them). Otherwise load
-	/// the traits, the attribute ranges, and the need levels from `human`'s <Traits>, <Attributes>, and <Needs>
-	/// files, build the vocabulary from `configRoot`/conditions, then the thought types from
-	/// `configRoot`/thoughts, stopping at the first stage with errors. Errors name their stage; an empty list
-	/// with no errors in `human` means all are ready. Every part of the rules exists either way; a stage that
-	/// failed or never ran is empty.
-	[[nodiscard]] ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot, assets::CreatureConfigFiles& human);
+	/// Load the traits, the attribute ranges, and the need levels from `human`'s <Traits>, <Attributes>, and
+	/// <Needs> files, build the vocabulary from `configRoot`/conditions, then the thought types from
+	/// `configRoot`/thoughts, stopping at the first stage with errors. `human` must have no errors (asserted):
+	/// a caller with a broken human folder reports its errors and loads nothing. Errors name their stage; an
+	/// empty list means all are ready. Every part of the rules exists either way; a stage that failed or never
+	/// ran is empty.
+	[[nodiscard]] ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot, const assets::CreatureConfigFiles& human);
 
 } // namespace ecs

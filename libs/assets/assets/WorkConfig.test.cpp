@@ -547,16 +547,10 @@ namespace {
 	CreatureConfigFiles shippedHuman() {
 		return creatureConfigFiles(shippedHumanFolder());
 	}
-
-	/// loadWorkConfig on `configRoot` with the shipped human's files.
-	std::vector<std::string> loadWithShippedHuman(const std::filesystem::path& configRoot) {
-		CreatureConfigFiles human = shippedHuman();
-		return loadWorkConfig(configRoot, human);
-	}
 } // namespace
 
 TEST_F(WorkConfigTest, LoadWorkConfig_ShippedConfigLoadsClean) {
-	for (const auto& error : loadWithShippedHuman(shippedConfigRoot())) {
+	for (const auto& error : loadWorkConfig(shippedConfigRoot(), shippedHuman())) {
 		ADD_FAILURE() << error;
 	}
 	EXPECT_GT(ActionTypeRegistry::Get().size(), 0);
@@ -698,26 +692,7 @@ TEST_F(WorkConfigTest, MoodConfig_BadNumbersAreErrorsNamingFileElementAndAttribu
 }
 
 TEST_F(WorkConfigTest, LoadWorkConfig_MissingFolderReportsError) {
-	EXPECT_FALSE(loadWithShippedHuman(std::filesystem::temp_directory_path() / "no-such-work-config").empty());
-}
-
-TEST_F(WorkConfigTest, LoadWorkConfig_TheHumanFoldersErrorsStopItAndAreReportedOnce) {
-	const std::filesystem::path root = writeTempFile("", "_human");
-	std::filesystem::remove(root);
-	const std::filesystem::path human = root / "creatures" / "Human";
-	std::filesystem::create_directories(human);
-	std::filesystem::copy(shippedHumanFolder(), human, std::filesystem::copy_options::recursive);
-	std::ofstream(human / "mood.xml") << "<Mood><Easing pointsPerGameHour=\"5\"></Mood>";
-
-	CreatureConfigFiles			   found = creatureConfigFiles(human);
-	const std::vector<std::string> errors = loadWorkConfig(shippedConfigRoot(), found);
-	ASSERT_EQ(errors.size(), 1U) << ::testing::PrintToString(errors);
-	EXPECT_EQ(errors.front().rfind("[creatures] mood.xml: not readable XML: ", 0), 0U) << errors.front();
-	EXPECT_FALSE(MoodConfig::Get().loaded());
-
-	EXPECT_TRUE(loadWorkConfig(shippedConfigRoot(), found).empty()) << "reported once, by the first loader";
-	EXPECT_FALSE(MoodConfig::Get().loaded()) << "and still stopped";
-	std::filesystem::remove_all(root);
+	EXPECT_FALSE(loadWorkConfig(std::filesystem::temp_directory_path() / "no-such-work-config", shippedHuman()).empty());
 }
 
 TEST_F(WorkConfigTest, ConfigValidator_MemoryWindowMustBeAPositiveNumber) {
@@ -758,7 +733,7 @@ TEST_F(WorkConfigTest, ConfigValidator_MemoryWindowMustBeAPositiveNumber) {
 }
 
 TEST_F(WorkConfigTest, LoadWorkConfig_ShippedValuesArePinned) {
-	ASSERT_TRUE(loadWithShippedHuman(shippedConfigRoot()).empty());
+	ASSERT_TRUE(loadWorkConfig(shippedConfigRoot(), shippedHuman()).empty());
 
 	const TaskChainDef* haul = TaskChainRegistry::Get().getChain("Chain_PickupDeposit");
 	ASSERT_NE(haul, nullptr);
@@ -1013,7 +988,7 @@ TEST_F(WorkConfigTest, LoadWorkConfig_ErrorsNameFilesRelativeToTheConfigRoot) {
 		"<Step order=\"one\" action=\"Deposit\" target=\"destination\""
 	);
 	EXPECT_EQ(
-		loadWithShippedHuman(root),
+		loadWorkConfig(root, shippedHuman()),
 		std::vector<std::string>{
 			"work/task-chains.xml: <Chain defName=\"Chain_PickupDeposit\"> step 2 order must be a whole number from 0 to 255, got \"one\""
 		}
@@ -1022,7 +997,7 @@ TEST_F(WorkConfigTest, LoadWorkConfig_ErrorsNameFilesRelativeToTheConfigRoot) {
 
 	replaceIn("actions/action-types.xml", "<Action defName=\"Eat\" needsHands=\"true\">", "<Action defName=\"Eat\" needsHands=\"ture\">");
 	EXPECT_EQ(
-		loadWithShippedHuman(root),
+		loadWorkConfig(root, shippedHuman()),
 		std::vector<std::string>{"actions/action-types.xml: <Action defName=\"Eat\"> needsHands must be true or false, got \"ture\""}
 	);
 	EXPECT_EQ(ActionTypeRegistry::Get().size(), 0U);

@@ -119,21 +119,30 @@ a `<Mood>`, `<Memory>`, `<Traits>`, `<Attributes>`, or `<Needs>` file. Each faul
 error, prefixed `[creatures]` and naming the file or the folder:
 
 - a file that is not readable XML, or whose root is none of the five, names the file
-  (`[creatures] mood.xml: not readable XML: ...`);
+  (`[creatures] mood.xml: not readable XML: ...`); a `<Motion>` file the definition does not name in a
+  `<motion>` element says so;
 - a subfolder names the subfolder, since a creature folder has none;
-- a primary `Human.xml` that cannot be read is the one error, since the motion files it names cannot be
-  told from the rest without it;
-- once every file is placed, a root no file has (`[creatures] assets/world/creatures/Human: no file has a
-  <Needs> root`), or a second `<Mood>` or `<Memory>` file, names the folder. A file that could not be read
+- a primary `Human.xml` that is missing or cannot be read is the one error, since the motion files it
+  names cannot be told from the rest without it;
+- a filesystem fault while reading the folder names the folder or the entry;
+- once every file is placed, a root no file has (`[creatures] creatures/Human: no file has a
+  <Needs> root`), or a second `<Mood>` or `<Memory>` file, names the folder by its last two parts. A file that could not be read
   or placed is the error to fix, so it never also reads as a missing root.
 
-Any of these stops the load before the human's config: no loader reads a kind with no file. `GameLoadingScene`
-finds the files once and hands them to both `assets::loadWorkConfig` (the one `<Mood>` and the one `<Memory>`
-file) and `ecs::loadColonistRules`; whichever of the two meets the errors first reports them
-(`assets::takeErrors`) and the other stops without repeating them, so each appears once on the loading scene.
+The asset validator runs the same finder on every folder directly under the asset root's `creatures/`
+folder and reports its errors as errors, the definition's name in the issue's name column
+(`Human: [creatures] herd.xml: ...` on the splash and in the asset manager). Files in a creature folder
+other than its definition get no "does not match its folder" warning, since the finder has already judged
+them. Because the game stops on validation errors before its config load, a broken creature folder fails
+the game on the splash (or, after a `--scene` jump, on the loading scene's ground bake step) with that one
+message, and the config load never runs on it.
 
-The asset validator says nothing about a file directly in a creature folder other than its definition: the
-creature's config loading owns those files and its load errors report any it cannot read.
+`world_sim::loadGameConfig` (apps/world-sim/scenes/loading/GameConfig.h), which `GameLoadingScene` calls,
+finds the human's files; when they have errors those are the load's errors and neither loader runs.
+Otherwise it calls `assets::loadWorkConfig` (the one `<Mood>` and the one `<Memory>` file) and
+`ecs::loadColonistRules`, both of which take only an error-free folder (asserted). A fault in
+`assets/config` and a fault in the human's folder at once show only the human's errors until those are
+fixed; the `assets/config` fault shows on the next load.
 
 The human's traits, attributes, and needs, then `conditions/` and `thoughts/`, load through `ecs::loadColonistRules(configRoot, human)` (libs/sim/ecs/ColonistRules.h),
 stopping at the first stage with errors. The traits load first, then the attribute ranges, then the needs (`loadNeedLevels`: `assets::loadNeedsConfig` reads the `<Needs>` files, each `<Need>` giving its thresholds and its mood `cost`, a later file's `<Need>` replacing an earlier one of the same name, cost included, and logged at info level, and `ecs::NeedLevels` checks that every need is given and each name is a need). A missing or malformed threshold or cost, or a cost below 0, is an error; a needs file with any error adds nothing, and its errors name the file (relative to the human's folder) and the `<Need name="...">`. There is no C++ default for a threshold or a cost: every colonist's `NeedsComponent` is constructed from the loaded `NeedLevels`, each `Need` carrying its thresholds and its `moodCost`, so the AI, the thought sources, and `MoodSystem` read the same numbers. Then the condition vocabulary is declared, answered by the sim's terms, and frozen, then the thought
@@ -207,22 +216,21 @@ Mods load alphabetically after base game, allowing later mods to override earlie
 registries (ActionTypeRegistry, TaskChainRegistry, WorkTypeRegistry, PriorityConfig,
 ConstructionRegistry, MoodConfig, MemoryConfig, and ConfigValidator's errors), loads them from `configRoot` in the
 order above, checks that priority-tuning.xml gives every task type an arbitration tier, loads
-construction, then mood and memory from the human's one `<Mood>` and one `<Memory>` file (none, or more
-than one, is an error naming the folder), and cross-validates. It returns every error as a string; an empty list means the config is loaded. It needs
+construction, then mood and memory from the human's one `<Mood>` and one `<Memory>` file (the finder has
+already made none, or more than one, an error), and cross-validates. It returns every error as a string; an empty list means the config is loaded. It needs
 no GL and no scene, so the headless sim calls it too.
 
 The loading scene clears `ecs::GoalTaskRegistry` itself (a sim singleton libs/assets can't reach),
-then calls it in the `Initializing` phase:
+then calls it through `world_sim::loadGameConfig` in the `Initializing` phase:
 
 ```cpp
 // GameLoadingScene.cpp, initializeWorldSystems()
 updateStatusText("Loading configuration...");
 ecs::GoalTaskRegistry::Get().clear();
-const assets::CreatureConfigFiles human = assets::creatureConfigFiles("assets/world/creatures/Human");
-std::vector<std::string> configErrors = assets::loadWorkConfig("assets/config", human);
-// ... the colonist rules' errors are added ...
-if (!configErrors.empty()) {
-    fail(std::move(configErrors));
+world_sim::GameConfigLoad config = world_sim::loadGameConfig("assets/config", "assets/world/creatures/Human");
+worldState->colonistRules = std::move(config.rules);
+if (!config.errors.empty()) {
+    fail(std::move(config.errors));
     return;
 }
 ```

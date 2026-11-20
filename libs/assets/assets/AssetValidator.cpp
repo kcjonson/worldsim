@@ -297,6 +297,38 @@ namespace assets {
 		// Ground layer size -> the first def baking layers of it.
 		std::map<int, std::string> groundLayerSizes;
 
+		// Each creature folder (<root>/creatures/<Name>) holds its config beside its definition, found by the same
+		// finder the game's config loading uses, so a broken creature folder is an error here as it is in the game.
+		std::vector<fs::path> creatureFolders;
+		std::error_code		  creaturesEc;
+		const fs::path		  creaturesRoot = assetsRoot / "creatures";
+		if (fs::is_directory(creaturesRoot, creaturesEc)) {
+			fs::directory_iterator creatures(creaturesRoot, creaturesEc);
+			for (const fs::directory_iterator creaturesEnd; !creaturesEc && creatures != creaturesEnd; creatures.increment(creaturesEc)) {
+				std::error_code folderEc;
+				if (!creatures->is_directory(folderEc)) {
+					continue;
+				}
+				const fs::path folder = creatures->path().lexically_normal();
+				creatureFolders.push_back(folder);
+				for (const std::string& error : creatureConfigFiles(folder).errors) {
+					report.add(Severity::Error, folder.filename().string(), "", error, folder.string());
+				}
+			}
+			if (creaturesEc) {
+				report.add(
+					Severity::Warning, "", "", "Stopped scanning the creature folders after a filesystem error", creaturesEc.message()
+				);
+			}
+		}
+		const auto isUnderCreatureFolder = [&creatureFolders](const fs::path& file) {
+			const fs::path normal = file.lexically_normal();
+			return std::ranges::any_of(creatureFolders, [&normal](const fs::path& folder) {
+				const fs::path relative = normal.lexically_relative(folder);
+				return !relative.empty() && *relative.begin() != "..";
+			});
+		};
+
 		std::error_code						   iterEc;
 		fs::recursive_directory_iterator	   it(assetsRoot, iterEc);
 		const fs::recursive_directory_iterator end;
@@ -315,8 +347,8 @@ namespace assets {
 			const std::string stem = entry.path().stem().string();
 			const std::string parentFolder = entry.path().parent_path().filename().string();
 			if (stem != parentFolder) {
-				// A creature's config loading owns every other file in its folder and reports any it cannot read.
-				if (isReferencedMotionFile(entry.path()) || isInCreatureFolder(entry.path())) {
+				// A creature folder's other files were checked above, by the config loading's own finder.
+				if (isReferencedMotionFile(entry.path()) || isUnderCreatureFolder(entry.path())) {
 					continue;
 				}
 				report.add(Severity::Warning, "", "", "XML filename does not match its folder; the loader skips it", entry.path().string());

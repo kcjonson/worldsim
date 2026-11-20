@@ -29,14 +29,16 @@ Edit only the staged copy of the human's folder beside the exe, `build/apps/worl
 16. `/api/control?action=exit`.
 17. Copy the source `needs.xml` over the staged `needs.xml`.
 18. Write a staged `herd.xml` holding `<Herd/>`.
-19. Launch as in step 2, with `--scene=game` added: the loading scene shows the "Loading failed" panel with `[creatures] herd.xml: the root element <Herd> is not one a creature folder holds (<Mood>, <Memory>, <Traits>, <Attributes>, <Needs>)`.
-20. `/api/state?what=scene`: `failed` is true and `errors` holds exactly that one message.
-21. `/api/control?action=exit`, then delete the staged `herd.xml`.
-22. Delete the staged `needs.xml`.
-23. Launch as in step 19: `errors` holds exactly one message, `[creatures] assets/world/creatures/Human: no file has a <Needs> root`, and the panel shows it.
-24. `/api/control?action=exit`, then copy the source `needs.xml` back to the staged folder.
-25. In the staged `mood.xml`, delete the `</Mood>` closing tag.
-26. Launch as in step 19: `errors` holds exactly one message, starting `[creatures] mood.xml: not readable XML:`, and the panel shows it.
-27. `/api/control?action=exit`, then copy the source `mood.xml` over the staged `mood.xml`.
-28. `diff -r assets/world/creatures/Human build/apps/world-sim/RelWithDebInfo/assets/world/creatures/Human` prints nothing.
-29. Launch `world-sim --background --no-settings --scene=game`: the game scene loads.
+19. Launch as in step 2, with `--scene=game` added: the asset check stops the load, and the loading scene shows the "Loading failed" panel with `Human: [creatures] herd.xml: the root element <Herd> is not one a creature folder holds (<Mood>, <Memory>, <Traits>, <Attributes>, <Needs>)`.
+20. `/api/state?what=scene`: it names `gameloading`, `failed` is true, and `errors` holds exactly that one message.
+21. `/api/control?action=exit`.
+22. Launch as in step 2: the splash shows the same "Loading failed" panel with the same one message, and `/api/state?what=scene` names `splash` with `failed` true.
+23. `/api/control?action=exit`, then delete the staged `herd.xml`.
+24. Delete the staged `needs.xml`.
+25. Launch as in step 19: `errors` holds exactly one message, `Human: [creatures] creatures/Human: no file has a <Needs> root`, and the panel shows it.
+26. `/api/control?action=exit`, then copy the source `needs.xml` back to the staged folder.
+27. In the staged `mood.xml`, delete the `</Mood>` closing tag.
+28. Launch as in step 19: `errors` holds exactly one message, `Human: [creatures] mood.xml: not readable XML: Start-end tags mismatch`, and the panel shows it.
+29. `/api/control?action=exit`, then copy the source `mood.xml` over the staged `mood.xml`.
+30. `diff -r assets/world/creatures/Human build/apps/world-sim/RelWithDebInfo/assets/world/creatures/Human` prints nothing.
+31. Launch `world-sim --background --no-settings --scene=game`: the game scene loads.

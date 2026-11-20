@@ -1,6 +1,7 @@
 #include "assets/WorkConfig.h"
 
 #include "assets/ActionTypeRegistry.h"
+#include "assets/ConfigFiles.h"
 #include "assets/ConfigValidator.h"
 #include "assets/ConstructionRegistry.h"
 #include "assets/MemoryConfig.h"
@@ -9,11 +10,12 @@
 #include "assets/TaskChainRegistry.h"
 #include "assets/WorkTypeRegistry.h"
 
-#include "assets/ConfigFiles.h"
+#include <cassert>
 
 namespace assets {
 
-	std::vector<std::string> loadWorkConfig(const std::filesystem::path& configRoot, CreatureConfigFiles& human) {
+	std::vector<std::string> loadWorkConfig(const std::filesystem::path& configRoot, const CreatureConfigFiles& human) {
+		assert(human.errors.empty() && "loadWorkConfig takes a human folder with no errors; its errors are the load's");
 		ActionTypeRegistry::Get().clear();
 		TaskChainRegistry::Get().clear();
 		WorkTypeRegistry::Get().clear();
@@ -67,9 +69,6 @@ namespace assets {
 			return loadFailure(construction);
 		}
 
-		if (std::vector<std::string> humanErrors; takeErrors(human, humanErrors)) {
-			return humanErrors;
-		}
 		const std::filesystem::path mood = configFileName(human.mood.front(), human.folder);
 		if (!MoodConfig::Get().loadFromFile(human.folder, mood)) {
 			return loadFailure(mood, MoodConfig::Get().problems());

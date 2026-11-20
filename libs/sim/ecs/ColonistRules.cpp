@@ -9,6 +9,8 @@
 
 #include <utils/Log.h>
 
+#include <cassert>
+
 namespace ecs {
 
 	namespace {
@@ -81,7 +83,8 @@ namespace ecs {
 		return errors;
 	}
 
-	ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot, assets::CreatureConfigFiles& human) {
+	ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot, const assets::CreatureConfigFiles& human) {
+		assert(human.errors.empty() && "loadColonistRules takes a human folder with no errors; its errors are the load's");
 		ColonistRulesLoad load;
 		load.rules.traits = std::make_unique<assets::TraitRegistry>();
 		load.rules.attributes = std::make_unique<AttributeRolls>();
@@ -89,9 +92,6 @@ namespace ecs {
 		load.rules.thoughtTypes = std::make_unique<ThoughtTypes>(*load.rules.vocabulary);
 		load.rules.needLevels = std::make_unique<NeedLevels>();
 
-		if (assets::takeErrors(human, load.errors)) {
-			return load;
-		}
 		addErrors(load.errors, "traits", load.rules.traits->loadFromFiles(human.traits, human.folder));
 		if (!load.errors.empty()) {
 			return load;

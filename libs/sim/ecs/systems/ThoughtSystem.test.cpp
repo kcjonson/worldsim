@@ -11,9 +11,6 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <filesystem>
-#include <fstream>
-#include <random>
 #include <set>
 #include <string>
 #include <tuple>
@@ -919,30 +916,8 @@ namespace ecs::test {
 		}
 	}
 
-	TEST(ThoughtTypeDefinitions, ACreatureFolderErrorStopsTheRulesAndIsReportedOnce) {
-		const std::filesystem::path root =
-			std::filesystem::temp_directory_path() / ("worldsim-rules-creatures-" + std::to_string(std::random_device{}()));
-		const std::filesystem::path folder = root / "creatures" / "Human";
-		std::filesystem::create_directories(folder);
-		std::filesystem::copy(testing::repoHuman(), folder, std::filesystem::copy_options::recursive);
-		std::ofstream(folder / "herd.xml") << "<Herd/>";
-
-		assets::CreatureConfigFiles human = assets::creatureConfigFiles(folder);
-		const ColonistRulesLoad		load = loadColonistRules(testing::repoConfig(), human);
-		ASSERT_EQ(load.errors.size(), 1U) << ::testing::PrintToString(load.errors);
-		EXPECT_EQ(
-			load.errors.front(),
-			"[creatures] herd.xml: the root element <Herd> is not one a creature folder holds (<Mood>, <Memory>, <Traits>, <Attributes>, "
-			"<Needs>)"
-		);
-		EXPECT_TRUE(load.rules.traits->traits().empty()) << "the traits never load";
-		EXPECT_TRUE(loadColonistRules(testing::repoConfig(), human).errors.empty()) << "reported once, by the first loader";
-		std::filesystem::remove_all(root);
-	}
-
 	TEST(ThoughtTypeDefinitions, TheShippedRulesLoadClean) {
-		assets::CreatureConfigFiles human = assets::creatureConfigFiles(testing::repoHuman());
-		const ColonistRulesLoad		load = loadColonistRules(testing::repoConfig(), human);
+		const ColonistRulesLoad load = loadColonistRules(testing::repoConfig(), testing::shippedHumanConfig());
 		for (const std::string& error : load.errors) {
 			ADD_FAILURE() << error;
 		}

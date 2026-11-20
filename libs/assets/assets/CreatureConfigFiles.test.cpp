@@ -99,16 +99,16 @@ TEST_F(CreatureConfigFilesTest, ABrokenOrMisRootedMoodFileIsOneErrorNamingIt) {
 
 TEST_F(CreatureConfigFilesTest, AKindWithNoFileIsOneErrorNamingTheFolder) {
 	std::filesystem::remove(folder / "needs.xml");
-	EXPECT_EQ(onlyError(), "[creatures] " + folder.generic_string() + ": no file has a <Needs> root");
+	EXPECT_EQ(onlyError(), "[creatures] creatures/Cow: no file has a <Needs> root");
 
 	write("needs.xml", "<Needs/>");
 	std::filesystem::remove(folder / "traits.xml");
-	EXPECT_EQ(onlyError(), "[creatures] " + folder.generic_string() + ": no file has a <Traits> root");
+	EXPECT_EQ(onlyError(), "[creatures] creatures/Cow: no file has a <Traits> root");
 }
 
 TEST_F(CreatureConfigFilesTest, ASecondMoodFileIsOneError) {
 	write("z-mood.xml", "<Mood/>");
-	EXPECT_EQ(onlyError(), "[creatures] " + folder.generic_string() + ": more than one file has a <Mood> root: mood.xml, z-mood.xml");
+	EXPECT_EQ(onlyError(), "[creatures] creatures/Cow: more than one file has a <Mood> root: mood.xml, z-mood.xml");
 }
 
 TEST_F(CreatureConfigFilesTest, ASubfolderIsAnErrorNamingIt) {
@@ -130,24 +130,34 @@ TEST_F(CreatureConfigFilesTest, AMissingFolderIsAnError) {
 	EXPECT_EQ(found.errors.front(), "[creatures] " + (folder / "missing").generic_string() + ": not a folder");
 }
 
-TEST_F(CreatureConfigFilesTest, ErrorsAreTakenOnceAndStopEveryLoader) {
-	write("herd.xml", "<Herd/>");
-	CreatureConfigFiles		 found = creatureConfigFiles(folder);
-	std::vector<std::string> first;
-	std::vector<std::string> second;
-	EXPECT_TRUE(takeErrors(found, first));
-	EXPECT_TRUE(takeErrors(found, second));
-	EXPECT_EQ(first.size(), 1U);
-	EXPECT_TRUE(second.empty());
+TEST_F(CreatureConfigFilesTest, AMissingOrSecondMemoryFileIsOneError) {
+	std::filesystem::remove(folder / "memory.xml");
+	EXPECT_EQ(onlyError(), "[creatures] creatures/Cow: no file has a <Memory> root");
 
-	std::filesystem::remove(folder / "herd.xml");
-	CreatureConfigFiles clean = creatureConfigFiles(folder);
-	EXPECT_FALSE(takeErrors(clean, first));
+	write("memory.xml", "<Memory/>");
+	write("more-memory.xml", "<Memory/>");
+	EXPECT_EQ(onlyError(), "[creatures] creatures/Cow: more than one file has a <Memory> root: memory.xml, more-memory.xml");
 }
 
-TEST_F(CreatureConfigFilesTest, OnlyFilesDirectlyInACreatureFolderAreTheCreatures) {
-	EXPECT_TRUE(isInCreatureFolder(folder / "mood.xml"));
-	EXPECT_TRUE(isInCreatureFolder(folder / "herd.xml"));
-	EXPECT_FALSE(isInCreatureFolder(root / "flora" / "Bush" / "mood.xml")) << "only under creatures/";
-	EXPECT_FALSE(isInCreatureFolder(folder / "mods" / "traits.xml"));
+TEST_F(CreatureConfigFilesTest, AMissingDefinitionIsTheOneError) {
+	std::filesystem::remove(folder / "Cow.xml");
+	EXPECT_EQ(onlyError(), "[creatures] Cow.xml: missing; it is the creature's definition");
+}
+
+TEST_F(CreatureConfigFilesTest, AMotionFileTheDefinitionNoLongerNamesSaysSo) {
+	write("Cow.xml", "<AssetDefinitions><AssetDef><defName>Cow</defName></AssetDef></AssetDefinitions>");
+	EXPECT_EQ(onlyError(), "[creatures] walk.motion.xml: a motion file the definition does not name in a <motion> element");
+}
+
+TEST_F(CreatureConfigFilesTest, TwoFaultsAreTwoErrors) {
+	write("herd.xml", "<Herd/>");
+	std::filesystem::create_directories(folder / "mods");
+	const CreatureConfigFiles found = creatureConfigFiles(folder);
+	EXPECT_EQ(
+		found.errors,
+		(std::vector<std::string>{
+			"[creatures] mods: a subfolder, which a creature folder may not have",
+			std::string("[creatures] herd.xml: the root element <Herd> is not one a creature folder holds ") + kRoots,
+		})
+	);
 }

@@ -143,26 +143,50 @@ TEST(AssetValidatorTest, ReferencedMotionFileIsNotAnOrphan) {
 	EXPECT_EQ(mismatches, 1);
 }
 
-TEST(AssetValidatorTest, ACreatureFoldersConfigFilesAreNotOrphans) {
+TEST(AssetValidatorTest, ACreatureFoldersConfigIsCheckedByItsOwnFinder) {
 	TempAssets t;
 	t.writeXml("creatures/Cow", oneDef("<defName>Cow</defName><assetType>simple</assetType><svgPath>cow.svg</svgPath>"), "Cow");
 	t.writeFile("creatures/Cow/cow.svg", "<svg/>");
-	t.writeFile("creatures/Cow/mood.xml", "<Mood/>");
-	t.writeFile("creatures/Cow/needs.xml", "<Needs/>");
-	t.writeFile("creatures/Cow/stray.xml", "<Herd/>");
-	t.writeFile("creatures/Cow/broken.xml", "<Mood>");
+	for (const char* root : {"Mood", "Memory", "Traits", "Attributes", "Needs"}) {
+		t.writeFile(std::string("creatures/Cow/") + root + ".config.xml", std::string("<") + root + "/>");
+	}
 	t.writeFile("Stone/mood.xml", "<Mood/>");
 
-	const ValidationReport	 r = AssetValidator::validate(t.root, "");
-	std::vector<std::string> flagged;
-	for (const auto& issue : r.issues) {
-		if (issue.message.find("does not match its folder") != std::string::npos) {
-			flagged.push_back(fs::path(issue.context).filename().string());
+	const auto mismatches = [](const ValidationReport& report) {
+		std::vector<std::string> flagged;
+		for (const auto& issue : report.issues) {
+			if (issue.message.find("does not match its folder") != std::string::npos) {
+				flagged.push_back(fs::path(issue.context).filename().string());
+			}
+		}
+		return flagged;
+	};
+	const ValidationReport clean = AssetValidator::validate(t.root, "");
+	EXPECT_EQ(clean.errorCount(), 0);
+	EXPECT_EQ(mismatches(clean), (std::vector<std::string>{"mood.xml"})) << "only the file outside a creature folder";
+
+	t.writeFile("creatures/Cow/broken.xml", "<Mood>");
+	const ValidationReport	 broken = AssetValidator::validate(t.root, "");
+	std::vector<std::string> errors;
+	for (const auto& issue : broken.issues) {
+		if (issue.severity == Severity::Error) {
+			errors.push_back(issue.defName + " | " + issue.message);
 		}
 	}
-	std::ranges::sort(flagged);
-	EXPECT_EQ(flagged, (std::vector<std::string>{"mood.xml"})) << "a creature folder's files are its config loading's to report";
-	EXPECT_EQ(r.errorCount(), 0);
+	ASSERT_EQ(errors.size(), 1U) << ::testing::PrintToString(errors);
+	EXPECT_EQ(errors.front().rfind("Cow | [creatures] broken.xml: not readable XML: ", 0), 0U) << errors.front();
+	EXPECT_EQ(mismatches(broken), (std::vector<std::string>{"mood.xml"})) << "and never also as a stray file";
+}
+
+TEST(AssetValidatorTest, OnlyAFolderDirectlyUnderTheRootsCreaturesIsACreature) {
+	TempAssets t;
+	t.writeXml("flora/creatures/Bush", oneDef("<defName>Bush</defName><assetType>simple</assetType><svgPath>bush.svg</svgPath>"), "Bush");
+	t.writeFile("flora/creatures/Bush/bush.svg", "<svg/>");
+	t.writeFile("flora/creatures/Bush/mood.xml", "<Mood/>");
+
+	const ValidationReport r = AssetValidator::validate(t.root, "");
+	EXPECT_EQ(r.errorCount(), 0) << "no creature check ran on it";
+	EXPECT_TRUE(hasMessageContaining(r, Severity::Warning, "does not match its folder"));
 }
 
 TEST(AssetValidatorTest, IgnoredVariationIsWarning) {
