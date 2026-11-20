@@ -137,13 +137,13 @@ struct Candidate {
     CandidateKind kind{CandidateKind::River};
     uint8_t       biome{};
     bool          preferred{};
-    Habitability  habitability{Habitability::Harsh};
+    int           habitabilityScore{};
 };
 
 bool ranksBefore(const Candidate& a, const Candidate& b) {
     if (a.preferred != b.preferred) return a.preferred;
     if (a.kind != b.kind) return a.kind < b.kind;
-    if (a.habitability != b.habitability) return a.habitability < b.habitability;
+    if (a.habitabilityScore != b.habitabilityScore) return a.habitabilityScore > b.habitabilityScore;
     return a.tile < b.tile;
 }
 
@@ -235,11 +235,15 @@ TileAssessment assessLandingTile(const GeneratedWorld& world, const BiomeProvisi
     TileAssessment assessment;
     assessment.water = verifiedWater;
 
+    bool ampleProvisions = false;
     if (hasField(world, WorldField::Biome) && tile < world.data.biome.size()) {
         const std::size_t biome = world.data.biome[tile];
         if (biome < provisions.size()) {
-            assessment.hasFood = provisions[biome].foodSourcesPerSquareKilometer >= kMinimumFoodSourcesPerSquareKilometer;
-            assessment.hasWood = provisions[biome].woodSourcesPerSquareKilometer >= kMinimumWoodSourcesPerSquareKilometer;
+            const BiomeProvisions& offered = provisions[biome];
+            assessment.hasFood = offered.foodSourcesPerSquareKilometer >= kMinimumFoodSourcesPerSquareKilometer;
+            assessment.hasWood = offered.woodSourcesPerSquareKilometer >= kMinimumWoodSourcesPerSquareKilometer;
+            ampleProvisions = offered.foodSourcesPerSquareKilometer >= kAmpleFoodSourcesPerSquareKilometer &&
+                              offered.woodSourcesPerSquareKilometer >= kAmpleWoodSourcesPerSquareKilometer;
         }
     }
 
@@ -281,7 +285,9 @@ TileAssessment assessLandingTile(const GeneratedWorld& world, const BiomeProvisi
     if (!assessment.livableTemperature) score -= brutal ? 2 : 1;
     if (!assessment.hasFood) score -= 1;
     if (!assessment.hasWood) score -= 1;
+    if (ampleProvisions) score += 1;
 
+    assessment.habitabilityScore = score;
     assessment.habitability = score >= 4   ? Habitability::Easy
                             : score >= 2   ? Habitability::Moderate
                             : score >= 0   ? Habitability::Hard
@@ -366,7 +372,7 @@ std::vector<LandingSite> findSuggestedLandingSites(const std::shared_ptr<const G
             kind = CandidateKind::Lake;
         }
         const bool preferred = query.preferredBiome && static_cast<uint8_t>(*query.preferredBiome) == biome;
-        slots.offer(bins.fromUnitVector(grid.tileCenter(tile)), {tile, kind, biome, preferred, assessment.habitability});
+        slots.offer(bins.fromUnitVector(grid.tileCenter(tile)), {tile, kind, biome, preferred, assessment.habitabilityScore});
     }
 
     const std::vector<Candidate> candidates = slots.ranked();

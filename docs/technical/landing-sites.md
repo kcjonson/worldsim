@@ -60,6 +60,7 @@ struct TileAssessment {
     bool         hasFood{};
     bool         hasWood{};
     bool         livableTemperature{};
+    int          habitabilityScore{}; // the sum habitability is bucketed from
     Habitability habitability{Habitability::Harsh};
 
     [[nodiscard]] bool meetsBar() const { return isFreshwater(water) && hasFood && hasWood && livableTemperature; }
@@ -71,13 +72,14 @@ struct TileAssessment {
 
 - **Food, wood:** the tile biome's densities against `kMinimumFoodSourcesPerSquareKilometer` and `kMinimumWoodSourcesPerSquareKilometer`.
 - **Temperature:** with mean `m` and half-amplitude `r` in degrees Celsius (the stored tenths divided by 10), livable is `kLivableMeanMinimumCelsius <= m <= kLivableMeanMaximumCelsius`, `m - r >= kLivableColdestSeasonCelsius`, and `m + r <= kLivableHottestSeasonCelsius`. A missing field fails the test.
-- **Habitability** is a sum, bucketed as before (4 or more Easy, 2 or more Moderate, 0 or more Hard, below 0 Harsh):
+- **Habitability** is a sum, `habitabilityScore`, and `habitability` is its bucket (4 or more Easy, 2 or more Moderate, 0 or more Hard, below 0 Harsh):
   - water: fresh +3, coastal +1, rain-fed 0;
   - rainfall: at least `kAmpleRainfallMillimeters` +2, at least `kModerateRainfallMillimeters` +1, below `kDesertRainfallMillimeters` on a rain-fed tile -1;
   - temperature: livable 0; mean outside the brutal band, or coldest season below `kBrutalColdestSeasonCelsius`, or hottest above `kBrutalHottestSeasonCelsius`, -2; otherwise -1;
-  - no food -1, no wood -1.
+  - no food -1, no wood -1;
+  - ample provisions +1: the biome's food at least `kAmpleFoodSourcesPerSquareKilometer` and its wood at least `kAmpleWoodSourcesPerSquareKilometer`.
 
-A tile that meets the bar is Easy (rainfall at least 250 mm a year) or Moderate. The pane's skulls come from `habitability`, and its Recommended badge from `LandingSite::recommended()` (2.3).
+A tile that meets the bar is Easy (rainfall at least 250 mm a year) or Moderate, and scores 4 to 6. With the shipped flora the six forest biomes (Tropical Rainforest, Tropical Seasonal Forest, Temperate Deciduous Forest, Temperate Rainforest, Boreal Forest, Montane Forest) have ample provisions; Temperate Grassland (wood 625 a square kilometer) and Beach (food 625, wood 937.5) do not. The pane's skulls come from `habitability`, and its Recommended badge from `LandingSite::recommended()` (2.3).
 
 `classifyWater(world, tile)` stays as the tile-level screen: it says where to look for fresh water (the tile or a neighbour carries `kFlagRiver` or `kFlagLake`). Only the resolution turns that into a verified `WaterClass`.
 
@@ -142,6 +144,7 @@ struct SuggestedSiteQuery {
     std::optional<Biome> preferredBiome;
     std::size_t          maximumSites{kSuggestedSiteCount};
     std::stop_token      stopToken;
+    std::function<void()> checkpoint; // called on the finder's thread wherever it checks stopToken
 };
 
 [[nodiscard]] std::vector<LandingSite> findSuggestedLandingSites(const std::shared_ptr<const GeneratedWorld>& world,
@@ -155,7 +158,7 @@ A candidate is a tile whose own resolution anchors on itself, so the scanned til
 
 Candidates are kept per slot, a slot being (bin, kind, biome). The bin is a tile of a coarse `SphereGrid(kSiteBinSubdivision)` (642 bins, about 8 degrees across), found from the candidate's centre. Each slot keeps its best `kCandidatesPerSlot` by rank. That bounds memory on a lush planet and keeps candidates everywhere for the spacing and variety rules; the keep is order-independent, so the scan may split across workers without changing the result. The global best candidate is always kept.
 
-**Rank**, best first: preferred biome (when the query has one), then kind (River before Lake), then habitability (Easy before Moderate), then the lowest `TileId`.
+**Rank**, best first: preferred biome (when the query has one), then kind (River before Lake), then `habitabilityScore` (higher first), then the lowest `TileId`.
 
 ### 4.2 Selection
 
@@ -166,11 +169,11 @@ Candidates are sorted by rank. Selection runs in rounds `r = 1, 2, ...` up to `k
 3. fewer than `kMaximumSitesOfOneKind` taken sites share its kind (no limit in the final pass);
 4. `resolveLandingSite` at its centre returns a site that is `recommended()` and whose `tile` is the candidate.
 
-Check 4 runs last and at most once per candidate (a failure is remembered). A site's kind is its resolved `feature`: a lake candidate with a river inside the spawn search resolves as a river site (the search prefers a river), is counted and marked as one, and is skipped when the river count is already at its limit. Selection stops at `query.maximumSites`. The first site taken is the best-ranked candidate whose resolution passes, so `sites[0]` is the default site. The scan checks `stopToken` every 65,536 tiles and before each resolution, and returns what it has when stopped.
+Check 4 runs last and at most once per candidate (a failure is remembered). A site's kind is its resolved `feature`: a lake candidate with a river inside the spawn search resolves as a river site (the search prefers a river), is counted and marked as one, and is skipped when the river count is already at its limit. Selection stops at `query.maximumSites`. The first site taken is the best-ranked candidate whose resolution passes, so `sites[0]` is the default site. The scan checks `stopToken` every 65,536 tiles and before each resolution, calling `query.checkpoint` (when set) each time, and returns what it has when stopped.
 
 ### 4.3 Where it runs
 
-`LandingSiteSurvey` (`apps/world-sim/scenes/shared/LandingSiteSurvey.h`) owns one `std::jthread` for a planet. It runs `findSuggestedLandingSites` and hands that result back once, and it resolves picks: the newest pick waiting is resolved next (ahead of the rest of the scan's verification step when both wait), and a pick replaced before it was resolved is dropped.
+`LandingSiteSurvey` (`apps/world-sim/scenes/shared/LandingSiteSurvey.h`) owns one `std::jthread` for a planet. It runs `findSuggestedLandingSites` and hands that result back once, and it resolves picks, including at the finder's `checkpoint`, so a pick waits at most one step of the scan: the newest pick waiting is resolved next (ahead of the rest of the scan's verification step when both wait), and a pick replaced before it was resolved is dropped.
 
 ```cpp
 class LandingSiteSurvey {
@@ -285,6 +288,8 @@ In `LandingSite.h` unless named otherwise.
 | `kAmpleRainfallMillimeters`, `kModerateRainfallMillimeters`, `kDesertRainfallMillimeters` | 600, 250, 100 | yearly rainfall steps of the rating |
 | `kMinimumFoodSourcesPerSquareKilometer` | 100.0 | food: about 7 sources in the 150 m landing area |
 | `kMinimumWoodSourcesPerSquareKilometer` | 100.0 | wood: the same |
+| `kAmpleFoodSourcesPerSquareKilometer` | 700.0 | food for the ample provisions term of the score |
+| `kAmpleWoodSourcesPerSquareKilometer` | 1000.0 | wood for the same |
 | `kLakeShoreInsetMeters` | 20.0 | lake anchor's distance inside the land tile from the lake edge |
 | `kLandingWaterDistanceMeters` (`SpawnSite.h`) | 30.0 | the drop's distance from the nearest water's edge |
 | `kLandingWaterDistanceToleranceMeters` (`SpawnSite.h`) | 3.0 | how far off that distance a drop may be: one step of the search grid |
@@ -301,7 +306,7 @@ Unit tests, in `libs/worldgen/worldgen/sampling/LandingSite.test.cpp` (the landi
 
 - **Bar.** A river tile passes with food, wood, and livable temperatures, and fails with each one taken away in turn (no wood; no food; a mild mean with a coldest season below -15 degrees Celsius). A tile past 45 degrees of latitude that meets the bar is recommended when picked and is never a suggested site.
 - **Provisions.** `biomeProvisionsFromDefinitions` on registered test definitions: an edible-yield bush counts as food in its biome, a `Wood` tree as wood, a `near="Mud"` entry not at all (in `assets-tests`).
-- **Finder.** Every site meets the bar; sites are at least the separation apart; on a fixture with river and lake candidates in two biomes, both kinds and both biomes appear; two runs give identical lists; an all-desert world and an all-ocean world give an empty list.
+- **Finder.** Every site meets the bar; sites are at least the separation apart; on a fixture with river and lake candidates in two biomes, both kinds and both biomes appear, and a forest river with ample provisions outranks a grassland river with a lower `TileId`; two runs give identical lists; an all-desert world and an all-ocean world give an empty list.
 - **Spawn search** (`SpawnSite.test.cpp`). At a river's source, where the trunk and two springs meet at the origin, the drop is dry and its reported distance is 30 m within the tolerance and matches the nearest channel read independently (so it is clear of every channel, not just one); with a search too narrow for any point to reach 30 m, the drop is the farthest dry point, on the square's edge; a world with no water gives the origin and `None`.
 - **Resolution.** A pick on a river tile resolves to that tile's centre with its drop 30 m from the river; a pick beside a lake to a drop 30 m from the lake, the lake read independently round it; a pick one tile from a river to the river tile, with `tile` the river tile; resolving a landing's origin returns the same landing; a dry pick resolves to itself with `feature` `None`.
 - **Generated planet.** On a small generated planet (n=64, as `WorldStats.test.cpp` generates), every suggested site's drop has fresh water within `kLandingSightMeters`, checked with `RiverNetwork2D` and `PlanetSampler` at the site's origin.
@@ -327,4 +332,5 @@ Happy path: [scenario 22](../testing/scenarios/22-landing-sites.md).
 13. Sites are computed, never stored: a format change forces a re-bake of the 1.3 GiB shared planet.
 14. RimWorld's world map gives a tile's terrain, temperature, and growing period in a side panel and has a "select random site" button; it has no suggested sites. Dwarf Fortress's embark screen has a site finder that searches by criteria (temperature, water, trees, and so on) and highlights matches on the map.
 15. The drop is 30 m from the nearest water: on seeing a landing 0.15 m from the river, "not so close, lets go 30m from the water". (Kevin.) The distance is to the nearest water of any kind, not to the water the site is rated for, so the crew never lands on an island or between two channels with less than 30 m on either side. Lakes and ocean are measured by a distance transform over one classification of the grid rather than probes per point, which is exact on the grid and cheaper.
-16. Out of scope here: the 2D local preview and difficulty rating of a site (Specboard WOR-369, "Landing site local preview + difficulty rating"), the loading screen backdrop (WOR-378, "Improve Landing Screen"), ponds as rated water, the sim treating ocean shore as drinkable (its own bug), a wider area cursor (only if playtests ask for one), and macOS and Linux specifics.
+16. Suggested sites rank by `habitabilityScore`, not its bucket, and the score counts ample provisions. Every good site lands in Easy, so the bucket left the rank to tile order, and with no biome preference the default site was often a beach river site: a beach passes the bar by its data (palms, sea grape) but is a poor place to start. Food and wood well past the bar are what set a forest apart from grassland and beach, so they earn the point.
+17. Out of scope here: the 2D local preview and difficulty rating of a site (Specboard WOR-369, "Landing site local preview + difficulty rating"), the loading screen backdrop (WOR-378, "Improve Landing Screen"), ponds as rated water, the sim treating ocean shore as drinkable (its own bug), a wider area cursor (only if playtests ask for one), and macOS and Linux specifics.

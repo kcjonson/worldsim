@@ -46,6 +46,8 @@ inline constexpr uint16_t kModerateRainfallMillimeters = 250;
 inline constexpr uint16_t kDesertRainfallMillimeters = 100;
 inline constexpr float kMinimumFoodSourcesPerSquareKilometer = 100.0f;
 inline constexpr float kMinimumWoodSourcesPerSquareKilometer = 100.0f;
+inline constexpr float kAmpleFoodSourcesPerSquareKilometer = 700.0f;
+inline constexpr float kAmpleWoodSourcesPerSquareKilometer = 1000.0f;
 inline constexpr double kLakeShoreInsetMeters = 20.0;
 inline constexpr double kLakeEdgeToleranceMeters = 0.5;
 inline constexpr std::size_t kSuggestedSiteCount = 10;
@@ -88,6 +90,7 @@ struct TileAssessment {
     bool         hasFood{};
     bool         hasWood{};
     bool         livableTemperature{};
+    int          habitabilityScore{}; // the sum habitability is bucketed from
     Habitability habitability{Habitability::Harsh};
 
     [[nodiscard]] bool meetsBar() const { return isFreshwater(water) && hasFood && hasWood && livableTemperature; }
@@ -130,7 +133,7 @@ struct SuggestedSiteQuery {
 // Up to maximumSites good places to start a colony, best first, each one a resolved landing that is
 // recommended() and lies on the tile it was found on: river tiles and tiles beside a lake that meet the
 // bar on their own data within kMaximumSuggestedLatitudeDegrees of the equator, ranked (preferred biome,
-// river before lake, Easy before Moderate, lowest TileId), kept per (coarse bin, kind, biome) slot, and
+// river before lake, higher habitabilityScore, lowest TileId), kept per (coarse bin, kind, biome) slot, and
 // taken in rounds that keep sites kMinimumSiteSeparationDegrees apart and vary their biomes and kinds.
 // The same world always gives the same list. Returns what it has when stopToken is set.
 [[nodiscard]] std::vector<LandingSite> findSuggestedLandingSites(const std::shared_ptr<const GeneratedWorld>& world,

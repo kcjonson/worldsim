@@ -333,6 +333,31 @@ TEST(LandingSiteFinder, SitesMeetTheBarStandApartAndVaryByKindAndBiome) {
     EXPECT_TRUE(lake);
     EXPECT_TRUE(grassland);
     EXPECT_TRUE(forest);
+
+    // Every river candidate here rates the same, so the first site is the lowest TileId, the river in the
+    // north. With the biomes swapped it is a grassland river, and ample provisions in the forest lift the
+    // southern forest river above it.
+    ASSERT_EQ(sites[0].feature, FreshWaterFeature::River);
+    ASSERT_EQ(static_cast<Biome>(world->data.biome[sites[0].tile]), Biome::TemperateDeciduousForest);
+    auto swapped = std::make_shared<GeneratedWorld>(*world);
+    for (uint8_t& biome : swapped->data.biome) {
+        if (biome == static_cast<uint8_t>(Biome::TemperateGrassland)) {
+            biome = static_cast<uint8_t>(Biome::TemperateDeciduousForest);
+        } else if (biome == static_cast<uint8_t>(Biome::TemperateDeciduousForest)) {
+            biome = static_cast<uint8_t>(Biome::TemperateGrassland);
+        }
+    }
+    BiomeProvisionTable ampleForest = twoBiomeProvisions();
+    ampleForest[static_cast<std::size_t>(Biome::TemperateDeciduousForest)] = {kAmpleFoodSourcesPerSquareKilometer,
+                                                                             kAmpleWoodSourcesPerSquareKilometer};
+    SuggestedSiteQuery first;
+    first.maximumSites = 1;
+    const std::vector<LandingSite> ranked = findSuggestedLandingSites(swapped, ampleForest, first);
+    ASSERT_EQ(ranked.size(), 1u);
+    EXPECT_EQ(ranked[0].feature, FreshWaterFeature::River);
+    EXPECT_EQ(static_cast<Biome>(swapped->data.biome[ranked[0].tile]), Biome::TemperateDeciduousForest);
+    EXPECT_GT(ranked[0].tile, sites[0].tile) << "the grassland river has the lower TileId";
+    EXPECT_EQ(ranked[0].assessment.habitabilityScore, sites[0].assessment.habitabilityScore + 1);
 }
 
 TEST(LandingSiteFinder, SameWorldGivesTheSameSites) {
