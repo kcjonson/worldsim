@@ -9,7 +9,7 @@ Colonists reveal the ground: bright in sight, tinted once seen, black never seen
 
 ## Setup
 
-Launch as [../README.md](../README.md) says and take Quick Start. It is seeded, so the landing is the same each run: forest by a river, and a BigRock at (0.4, 48.3), 48 m south of the drop. The verbs used are `/api/dev/` `select`, `walls`, `opening`, `colonist`, `kill`, `teleport`, `reveal`, `time`, and `visibility?x=&y=` (seen, visible). To order drafted Bob to a point, jump the camera there and right-click the window's centre. +y is south.
+Launch as [../README.md](../README.md) says and take Quick Start. It is seeded, so the landing is the same each run: forest by a river, and a BigRock at (0.4, 48.3), 48 m south of the drop. The verbs used are `/api/dev/` `spawn`, `ground`, `select`, `walls`, `opening`, `colonist`, `kill`, `teleport`, `reveal`, `time`, and `visibility?x=&y=` (seen, visible). To order drafted Bob to a point, jump the camera there and right-click the window's centre. +y is south.
 
 ---
 
@@ -58,4 +58,6 @@ Launch as [../README.md](../README.md) says and take Quick Start. It is seeded, 
 41. Build a wall from (30, 8) to (30, 14), 6 m east of Bob, and zoom 20 on it: the tint starts at its west face.
 42. Look at its top: an even mid brown.
 43. Turn reveal on: the top turns light tan. Turn reveal off.
-44. Click Release, then exit.
+44. Spawn a `TestTallBox` 4 m east of Bob: `sightBodies` lists it `opaque`, about 1555 mm across, and a full shadow runs from it to his rim; the ground beside it reads `valid` false.
+45. Remove it (`kill` with its entity id; no view lists it, but `teleport` of an id to the box's own spot answers "water or a placed obstacle" for the box and "no entity" for an id that names nothing): the shadow and the body go, and the ground reads `valid` again.
+46. Click Release, then exit.
