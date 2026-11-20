@@ -26,17 +26,20 @@ the step that causes the line. The `[ToiletLocation]` lines are debug lines and 
 
 ## Steps
 
+`thoughts.recent` shows only the 5 newest thoughts and other thoughts arrive on their own, so each
+step that checks a `sweet_relief` reads it straight after that relief, by `id` above the highest seen
+before it.
+
 1. Wait 5 s after the game scene is up, then note the highest `id` in Bob's `thoughts.recent` (none when the list is missing).
-2. Set Bob's Bladder to 25 (`/api/dev/need?colonist=<id>&need=Bladder&value=25`): the log has an `[AI]` line for Bob, "Bladder at 24%", ending with the spot he chose; note it.
+2. Set Bob's Bladder to 25 (`/api/dev/need?colonist=<id>&need=Bladder&value=25`): the log has an `[AI]` line for Bob, "Bladder at 24%" or "Bladder at 25%", ending with the spot he chose; note it.
 3. Read `/api/dev/ground?pts=<spot x>,<spot y>`: `valid` is true and `toWaterM` is above 1.5 (or null, water far off).
 4. Read the log: "Started Toilet action (2.0s duration)", then "Completed Toilet action (restored 100.0%)", and no "Spawned Bio Pile" line.
-5. Read Bob: `needs.Bladder` is 100 (or a hair under).
-6. Set Bob's Digestion to 25: the log reads "Started Toilet action (4.0s duration)", then "Spawned Bio Pile at (x, y)"; note that point as `PX, PY`. Bob's `needs.Digestion` is 100.
-7. Pause, teleport Bob 4 m east of the pile (`/api/dev/teleport?colonist=<id>&to=<PX+4>,<PY>`), set both his Bladder and Digestion to 25, and resume: the `[AI]` line's spot is about 1 m from `PX, PY` (the grid point 3 m from him toward the pile), not where he stands.
-8. Read the log: "Started Toilet action (5.0s duration)", one "Spawned Bio Pile" within about 1.5 m of the first, and Bob's `needs.Bladder` and `needs.Digestion` both 100.
-9. Read Bob's `thoughts.recent` entries newer than step 1's id: one `sweet_relief` for each need that rose back past 30, so four (one each for steps 2 and 6, two for step 7).
-10. Set Bob's Thirst to 40 and read the log: the `[AI]` line "Thirst at" ends with a shore point; note it once he has drunk.
-11. Pause, teleport Bob to that shore point, check `/api/dev/ground` there reads `toWaterM` below 1.5, set his Bladder to 25, and resume: the `[AI]` line's spot is a different point, and `/api/dev/ground` at it reads `toWaterM` above 1.5.
+5. Read Bob: `needs.Bladder` is 100 (or a hair under), and `thoughts.recent` has exactly one new `sweet_relief`. Note the highest `id`.
+6. Set Bob's Digestion to 25: the log reads "Started Toilet action (4.0s duration)", then "Spawned Bio Pile at (x, y)"; note that point as `PX, PY`. Bob's `needs.Digestion` is 100 and `thoughts.recent` has exactly one new `sweet_relief`. Note the highest `id`.
+7. Pause and read `/api/dev/ground?pts=<PX+4>,<PY>;<PX+1>,<PY>`: both `valid` (a tree or bush there carves a hole in the ground) with `toWaterM` above 1.5; if not, use the west side (`PX-4`, `PX-1`) throughout this step. No loose berries lie within 15 m on a fresh map; don't drop any. Teleport Bob 4 m east of the pile (`/api/dev/teleport?colonist=<id>&to=<PX+4>,<PY>`), set both his Bladder and Digestion to 25, and resume: the `[AI]` line's spot is `PX+1, PY` (the grid point 3 m from him toward the pile, about 1 m from it), not where he stands.
+8. Read the log: "Started Toilet action (5.0s duration)", one "Spawned Bio Pile" within about 1.5 m of the first, and Bob's `needs.Bladder` and `needs.Digestion` both 100; `thoughts.recent` has exactly two new `sweet_relief`.
+9. Set Bob's Thirst to 40 and read Bob until his `action` is `Drink`, then pause at once: he stands at the shore. Note his `x, y`; `/api/dev/ground` there reads `toWaterM` below 1.5.
+10. Set his Bladder to 25 and resume: after the drink the `[AI]` "Bladder at" line's spot is not his `x, y`, and `/api/dev/ground` at it reads `toWaterM` above 1.5.
 
 ---
 
@@ -55,5 +58,5 @@ Digestion below 30; a pee leaves a bio pile; a combined relief leaves two piles 
 ## Notes
 
 Bob arrives within about half a meter of the spot, short of it on the side he came from, and squats
-where he stops, so in step 11 the squat point (his `x, y` during `Toilet`) can be nearer the water
+where he stops, so in step 10 the squat point (his `x, y` during `Toilet`) can be nearer the water
 than 1.5 m even though the spot he chose is not.

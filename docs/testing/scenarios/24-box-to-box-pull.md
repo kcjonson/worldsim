@@ -22,8 +22,8 @@ him cut trees, and the item, Wood, lies nowhere loose on a fresh map.
 ## Setup
 
 Pause (`/api/control?action=pause`), read Bob's `x, y` from `/api/state?what=colonists` (note as
-`BX, BY`), and check `/api/dev/ground?pts=<BX+4>,<BY>;<BX+8>,<BY>` reads `valid` at both; else pick
-another open spot near him. Then:
+`BX, BY`), and check `/api/dev/ground?pts=<BX+4>,<BY>;<BX+8>,<BY>` reads `buildableNow` true at both
+(`spawn` answers ok even when it refuses a spot); else pick another open spot near him. Then:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/dev/spawn?def=BasicBox&at=<BX+4>,<BY>&n=1&scatter=0"
@@ -41,11 +41,11 @@ Box A is the one at `BX+4`, box B the one at `BX+8`.
 
 1. Read `/api/state?what=storage`: A holds `Wood` 20 with a `Wood` rule at `Low`, B holds nothing with a `Wood` rule at `Low`, max 10.
 2. Resume (`/api/control?action=resume`) and read `what=storage` after 10 s: A still 20, B still empty (same priority, no pull).
-3. Raise B (`/api/dev/storage?at=<BX+8>,<BY>&item=Wood&priority=High&min=0&max=10`): within about 10 s Bob walks to A, his `inventory` shows `Wood` 10, and then `what=storage` reads A 10 and B 10.
-4. Read the log (`curl.exe -m 3 http://127.0.0.1:<PORT>/stream/logs`): an `[AI]` line for Bob reads "Pulling Wood from lower-priority storage", then "Started Withdraw action" and "Deposited 10 x Wood into storage <B's id>".
+3. Raise B (`/api/dev/storage?at=<BX+8>,<BY>&item=Wood&priority=High&min=0&max=10`): within about 10 s `what=storage` reads A 10 and B 10.
+4. Read the log (`curl.exe -m 3 http://127.0.0.1:<PORT>/stream/logs`): an `[AI]` line for Bob reads "Pulling Wood from lower-priority storage", then "Started Withdraw action" and "Deposited 10 x Wood into storage <B's id>" (B's `id` is in `what=storage`).
 5. Read `what=storage` 10 s later: still A 10, B 10 (B is at its max).
 6. Give A a minimum and B more room (`/api/dev/storage?at=<BX+4>,<BY>&item=Wood&priority=Low&min=8&max=0`, then `/api/dev/storage?at=<BX+8>,<BY>&item=Wood&priority=High&min=0&max=20`): Bob carries 2, A reads 8 and B 12, and they stay so.
-7. Raise A above B (`/api/dev/storage?at=<BX+4>,<BY>&item=Wood&priority=Critical&min=0&max=0`): Bob carries B's 12 into A, A reads 20 and B is empty, and nothing goes back to B over the next 10 s.
+7. Raise A above B (`/api/dev/storage?at=<BX+4>,<BY>&item=Wood&priority=Critical&min=0&max=0`): Bob carries B's 12 into A in one or two trips, A reads 20 and B is empty, and nothing goes back to B over the next 10 s.
 
 ---
 
