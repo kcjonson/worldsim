@@ -36,6 +36,8 @@ namespace vision {
 		// Its start is the whole of `reach`; whoever reads it takes the least of it and the reach.
 		std::int64_t drawnShadowReachMm	  = kDrawnShadowWholeReachMm;
 		std::int64_t softShadowRebuildPercent = 10;
+		// How far a soft triangle's pieces may stray from its rule in what the player sees, in thousandths.
+		std::int64_t softShadowToleranceThousandths = 12;
 
 		// A colonist's sight (kDefaultSightRadius, checked in SightTunables.cpp).
 		static constexpr std::int64_t kColonistSightMm = 30000;

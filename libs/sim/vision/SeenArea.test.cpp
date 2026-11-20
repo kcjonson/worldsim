@@ -103,6 +103,7 @@ namespace {
 // meets one; a square far off meets none. The first ring is counted against nothing.
 TEST(SeenArea, RingsMetCountsTheBoxesAlreadyRegistered) {
 	SeenArea seen;
+	seen.countRingsMet();
 	const auto diamond = [](double x, double y, double radius) {
 		return std::vector<Vec2i64>{metres(x, y - radius), metres(x + radius, y), metres(x, y + radius), metres(x - radius, y)};
 	};

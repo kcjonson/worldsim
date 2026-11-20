@@ -1635,6 +1635,8 @@ namespace world_sim {
 	}
 
 	std::string DevCommandHandler::visibilityJson(const app::DevRequest& cmd) {
+		// K is counted from the first time this view is read; the record keeps nothing for it before.
+		m_ctx.world->getSystem<ecs::PlayerVisibilitySystem>().countRingsMet();
 		const ecs::PlayerVisibilitySystem& visibility = m_ctx.world->getSystem<ecs::PlayerVisibilitySystem>();
 		const vision::SeenArea&			   seen		  = visibility.seenArea();
 		std::ostringstream				   out;

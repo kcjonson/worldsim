@@ -28,11 +28,11 @@
 
 #include <cmath>
 #include <cstddef>
-#include <iostream>
 #include <map>
 #include <memory>
 #include <numbers>
 #include <optional>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -92,7 +92,7 @@ namespace {
 
 		void frame() {
 			Renderer::Primitives::beginFrame();
-			cover->render(world, camera, kViewportWidth, kViewportHeight, kPixelsPerMeter);
+			cover->render(world, camera, kViewportWidth, kViewportHeight, kPixelsPerMeter, 1.0F / 60.0F);
 			Renderer::Primitives::endFrame();
 		}
 
@@ -288,8 +288,6 @@ TEST_F(VisibilityCoverTest, SeveralColonistsComposeAsTheLeastDarkness) {
 	EXPECT_EQ(tintAt(*cover, {-40000.0, 0.0}), 1.0) << "out of both sights";
 }
 
-// The bright shape lies inside seen ground, and the seen area's own fade lies inside it: the landing's
-// edge fades a feather into the landing and the cells draw nothing deep inside it.
 // A colonist who stands still, once his rim's ease has ended, builds and uploads nothing a frame.
 TEST_F(VisibilityCoverTest, AStillColonistBuildsNothingOnceSettled) {
 	const ecs::EntityID colonist = addColonist({0.0F, 0.0F});
@@ -308,8 +306,6 @@ TEST_F(VisibilityCoverTest, AStillColonistBuildsNothingOnceSettled) {
 	}
 }
 
-// A colonist who leaves the view and comes back builds nothing for it: his pieces and meshes are kept
-// while he lives.
 // Uploads go by what changed: a settled colonist who steps 150 mm, past the nearest ring's cadence
 // (100 mm) and short of the next (360 mm), rebuilds and uploads that ring alone, not his far trunks.
 TEST_F(VisibilityCoverTest, AStepUploadsTheNearRingAlone) {
@@ -333,54 +329,58 @@ TEST_F(VisibilityCoverTest, AStepUploadsTheNearRingAlone) {
 	EXPECT_LE(cover->counts().meshUploads, 2U) << "that ring, and at most his feather and bands";
 }
 
-// The pending cut at the record's edge, by counts (sight-softening.md 7.2, proposal 54): 1, 10, and
-// 50 colonists walking out of the landing into unexplored ground, the view on them. Every walker's open
-// leg is a pending shape at the record's edge, so their cut reads the record's edge there each frame
-// one of them moves.
-TEST_F(VisibilityCoverTest, ThePendingCutAtTheRecordsEdgeByCounts) {
-	for (const auto& [walkers, moving] : {std::pair{1, 1}, std::pair{10, 10}, std::pair{50, 50}, std::pair{50, 1}}) {
-		std::vector<ecs::EntityID> colonists;
-		for (int index = 0; index < walkers; ++index) {
-			colonists.push_back(addColonist({140.0F, static_cast<float>(index) * 1.2F - static_cast<float>(walkers) * 0.6F}));
+namespace {
+
+	// The pieces of the union's boundary every cluster in view holds, sorted.
+	std::vector<worldview::DirectedEdge> boundaryOf(const worldview::SeenFeather& feather) {
+		std::vector<worldview::DirectedEdge> edges;
+		for (const worldview::SeenFeather::Cluster* cluster : feather.clustersInView()) {
+			edges.insert(edges.end(), cluster->boundary.begin(), cluster->boundary.end());
 		}
-		camera.setPosition({150.0F, 0.0F});
-		for (int settle = 0; settle < 5; ++settle) {
-			world.update(1.0F / 60.0F);
-			frame();
-		}
-		std::size_t frames = 0;
-		std::size_t clustersCut = 0;
-		std::size_t sides = 0;
-		std::size_t sidesMost = 0;
-		std::size_t edges = 0;
-		std::size_t edgesMost = 0;
-		double		microseconds = 0.0;
-		for (int step = 0; step < 180; ++step) {
-			for (int index = 0; index < moving; ++index) {
-				world.getComponent<ecs::Position>(colonists[static_cast<std::size_t>(index)])->value.x += 2.0F / 60.0F;
-			}
-			world.update(1.0F / 60.0F);
-			frame();
-			const worldview::SeenFeather::Counts& counts = cover->seenFeather().counts();
-			++frames;
-			clustersCut += counts.clustersCut;
-			sides += counts.cut.shapeSides;
-			sidesMost = std::max(sidesMost, counts.cut.shapeSides);
-			edges += counts.cut.recordEdges;
-			edgesMost = std::max(edgesMost, counts.cut.recordEdges);
-			microseconds += cover->counts().seenMicroseconds;
-		}
-		std::cout << "pending cut, " << walkers << " at the edge, " << moving << " walking out: clusters cut " << static_cast<double>(clustersCut) / static_cast<double>(frames)
-				  << " a frame, shape sides " << sides / frames << " (most " << sidesMost << "), record edges " << edges / frames << " (most "
-				  << edgesMost << "), " << microseconds / static_cast<double>(frames) << " us a frame\n";
-		EXPECT_GT(edges, 0U) << "at the record's edge the cut reads it";
+		std::ranges::sort(edges, [](const worldview::DirectedEdge& first, const worldview::DirectedEdge& second) {
+			return std::tie(first.first.x, first.first.y, first.second.x, first.second.y) <
+				   std::tie(second.first.x, second.first.y, second.second.x, second.second.y);
+		});
+		return edges;
+	}
+
+} // namespace
+
+// The pending cut redone only round what changed is the cut made whole (7.2): three colonists walk out
+// of the landing into unexplored ground, turn, and walk back along its edge, and every frame the cover's
+// cut pieces are those of a cut made from nothing over the same record and shapes, so no record edge
+// ahead of a moving leg is lost from it.
+TEST_F(VisibilityCoverTest, ThePendingCutRedoneWhereItChangedIsTheWholeCut) {
+	std::vector<ecs::EntityID> colonists;
+	for (int index = 0; index < 3; ++index) {
+		colonists.push_back(addColonist({140.0F, static_cast<float>(index) * 1.5F}));
+	}
+	camera.setPosition({150.0F, 0.0F});
+	const auto stepAll = [&](glm::vec2 step) {
 		for (const ecs::EntityID colonist : colonists) {
-			world.destroyEntity(colonist);
+			world.getComponent<ecs::Position>(colonist)->value += step;
 		}
 		world.update(1.0F / 60.0F);
+		frame();
+		worldview::SeenFeather whole;
+		std::vector<vision::SeenArea::Box> none;
+		whole.update(visibility.seenArea(), none, {-400000, -400000}, {400000, 400000}, 1500);
+		ASSERT_EQ(boundaryOf(cover->seenFeather()), boundaryOf(whole));
+	};
+	for (int step = 0; step < 300; ++step) {
+		stepAll({2.0F / 60.0F, 0.0F});
 	}
+	for (int step = 0; step < 240; ++step) {
+		stepAll({0.0F, 2.0F / 60.0F});
+	}
+	for (int step = 0; step < 300; ++step) {
+		stepAll({-2.0F / 60.0F, 0.0F});
+	}
+	EXPECT_GT(cover->seenFeather().counts().cut.recordEdges + boundaryOf(cover->seenFeather()).size(), 0U);
 }
 
+// A colonist who leaves the view and comes back builds nothing for it: his pieces and meshes are kept
+// while he lives.
 TEST_F(VisibilityCoverTest, LeavingTheViewKeepsHisPieces) {
 	place({6.0F, 2.0F}, 0.4F);
 	const ecs::EntityID colonist = addColonist({0.0F, 0.0F});
@@ -451,6 +451,8 @@ TEST_F(VisibilityCoverTest, FiftyWalkingKeepToTheBudgetAndEveryOneIsBuilt) {
 	}
 }
 
+// The bright shape lies inside seen ground, and the seen area's own fade lies inside it: the landing's
+// edge fades a feather into the landing and the cells draw nothing deep inside it.
 TEST_F(VisibilityCoverTest, TheBrightShapeIsSeenAndTheSeenEdgeFadesInside) {
 	const ecs::EntityID colonist = addColonist({0.0F, 0.0F});
 	walk(colonist, {3.0F, 0.0F}, 0.05F);

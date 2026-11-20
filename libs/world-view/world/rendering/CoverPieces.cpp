@@ -289,7 +289,10 @@ namespace worldview {
 			}
 		}
 		// A triangle whose darkest point is within the tolerance of nothing shows nothing.
-		if (shadow.footValue <= kDrawnValueTolerance || shadow.shadowLength <= 0.0) {
+		// The tolerance in the mask: softShadowToleranceThousandths is what the player sees, the mask times
+		// the tint's alpha.
+		const double tolerance = static_cast<double>(tunables.softShadowToleranceThousandths) / 1000.0 / static_cast<double>(kSeenDimAlpha);
+		if (shadow.footValue <= tolerance || shadow.shadowLength <= 0.0) {
 			return shadow;
 		}
 
@@ -301,7 +304,6 @@ namespace worldview {
 			return shadow.footValue * (1.0 - progressAt(range));
 		};
 		const double halfRay = static_cast<double>(tunables.shadowEdgeWidthMm) / 2.0;
-		const double tolerance = kDrawnValueTolerance;
 
 		// Slices along the length (7.3). The triangle's own value falls linearly along it, so it needs no
 		// slice for its value, only for its curved sides. A side at range r lies r x angle x (1 - progress) across the

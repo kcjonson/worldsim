@@ -22,6 +22,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <numbers>
 #include <span>
 #include <utility>
 
@@ -206,7 +207,8 @@ namespace worldview {
 		const world::WorldCamera&	 camera,
 		int							 viewportWidth,
 		int							 viewportHeight,
-		float						 pixelsPerMeter
+		float						 pixelsPerMeter,
+		float						 frameSeconds
 	) {
 		const Foundation::Rect view{0.0F, 0.0F, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)};
 		frameColonists.clear();
@@ -284,7 +286,7 @@ namespace worldview {
 				for (const geometry::Vec2i64& point : state.bright) {
 					brightReachMm = std::max(brightReachMm, glm::length(toDouble(point) - eyeMm));
 				}
-				state.shadows.update(*bodies, sight->buildRevision, eyeMm, walkedMm, state.bright, brightReachMm, pixelsPerMm, tunables, frameNumber);
+				state.shadows.update(*bodies, sight->buildRevision, eyeMm, walkedMm, static_cast<double>(frameSeconds), state.bright, brightReachMm, pixelsPerMm, tunables, frameNumber);
 				colonistInView.hasBodies = true;
 				cover.shadows			 = &state.shadows;
 			}
@@ -304,11 +306,17 @@ namespace worldview {
 				due.push_back({.due = body, .colonist = index});
 			}
 		}
-		std::ranges::sort(due, [](const DueBody& first, const DueBody& second) { return first.due.since < second.due.since; });
+		// The ring turned most first: his walk since it was built over its nearest distance, so a near ring
+		// goes before a far one that has waited as long.
+		std::ranges::sort(due, [](const DueBody& first, const DueBody& second) { return first.due.turn > second.due.turn; });
 		frameCounts.softRingsDue		= due.size();
-		frameCounts.softOldestDueFrames = due.empty() ? 0 : frameNumber - due.front().due.since;
-		std::size_t budget				= kDrawnShadowPiecesPerFrame;
 		for (const DueBody& body : due) {
+			frameCounts.softOldestDueFrames = std::max(frameCounts.softOldestDueFrames, frameNumber - body.due.since);
+		}
+		std::size_t budget				= kDrawnShadowPiecesPerFrame;
+		std::size_t next				= 0;
+		for (; next < due.size(); ++next) {
+			const DueBody& body = due[next];
 			if (body.due.pieces > budget && frameCounts.softRingsBuilt > 0) {
 				break;
 			}
@@ -317,6 +325,9 @@ namespace worldview {
 			frameCounts.piecesBuilt += built;
 			budget -= std::min(budget, built);
 			++frameCounts.softRingsBuilt;
+		}
+		if (next < due.size()) {
+			frameCounts.softMostTurnDegrees = std::asin(std::min(1.0, due[next].due.turn)) * 180.0 / std::numbers::pi;
 		}
 
 		for (std::size_t index = 0; index < inView.size(); ++index) {
@@ -384,7 +395,8 @@ namespace worldview {
 		const world::WorldCamera& camera,
 		int						  viewportWidth,
 		int						  viewportHeight,
-		float					  pixelsPerMeter
+		float					  pixelsPerMeter,
+		float					  frameSeconds
 	) {
 		++frameNumber;
 		frameCounts = Counts{};
@@ -422,7 +434,7 @@ namespace worldview {
 		frameCounts.seenMicroseconds = microsecondsSince(seenStart);
 
 		const auto buildStart = std::chrono::steady_clock::now();
-		gather(world, *visibility, camera, viewportWidth, viewportHeight, pixelsPerMeter);
+		gather(world, *visibility, camera, viewportWidth, viewportHeight, pixelsPerMeter, frameSeconds);
 		frameCounts.buildMicroseconds = microsecondsSince(buildStart);
 
 		const auto			   composeStart = std::chrono::steady_clock::now();

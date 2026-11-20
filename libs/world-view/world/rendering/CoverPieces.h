@@ -81,13 +81,13 @@ namespace worldview {
 	// footValue x (1 - progress), and beside each side a fin from its silhouette corner's range, whose
 	// outer edge lies (shadowEdgeWidthMm / 2) x (range - cornerDistance) / cornerDistance across the ray
 	// from the side, falling from the triangle's value to 0. It is cut into as few slices along its length
-	// as keep every point within kDrawnValueTolerance of the rule (7.3): the fin's fade, a product of the
+	// as keep every point within softShadowToleranceThousandths of the rule on screen (7.3): the fin's fade, a product of the
 	// fall along and the fall across, strays footValue x slice / 4 from linear, and a curved side strays
 	// value x sag / finWidth beside its fin and is held within kDrawnShadowSliceToleranceMm where it is
 	// hard. Its near end is clipped to the body's near faces only where they lie more than that past it.
 	// footValue carries the body's arrival fraction, and fades so the triangle carries at most
 	// kSoftShadowRimMostValue where `bright`, the colonist's bright outline, first cuts its bisector or
-	// either side. A triangle whose foot is within kDrawnValueTolerance of nothing draws no piece. None
+	// either side. A triangle whose foot is within that tolerance of nothing draws no piece. None
 	// when the eye is inside the body's hull.
 	std::optional<SoftShadow> appendSoftShadow(
 		const vision::SightBody&		   body,

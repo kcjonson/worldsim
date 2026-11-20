@@ -325,6 +325,10 @@ namespace vision {
 			if (added == geometry::nav::kNoRing) {
 				continue;
 			}
+			registered.push_back(added);
+			if (!ringsMetCounted) {
+				continue;
+			}
 			const std::vector<Vec2i64>& ring = mesh->ring(added).polygon.ring;
 			Box							box{ring.front(), ring.front()};
 			for (const Vec2i64& point : ring) {
@@ -355,7 +359,6 @@ namespace vision {
 				ringsMetTotal += met;
 				ringsMetGreatest = std::max(ringsMetGreatest, met);
 			}
-			registered.push_back(added);
 			registeredBoxes.push_back(box);
 			ringBoxCounted.push_back(index);
 		}

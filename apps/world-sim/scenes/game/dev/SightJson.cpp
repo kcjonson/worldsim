@@ -89,7 +89,7 @@ namespace world_sim {
 			   ",\"softBodies\":" + count(counts.softBodies) + ",\"shadowEdges\":" + count(counts.shadowEdges) +
 			   ",\"softPieces\":" + count(counts.softPieces) + ",\"bandPieces\":" + count(counts.bandPieces) +
 			   ",\"featherRebuilds\":" + count(counts.featherRebuilds) + ",\"softRingsBuilt\":" + count(counts.softRingsBuilt) +
-			   ",\"softRingsDue\":" + count(counts.softRingsDue) + ",\"softBodiesBuilt\":" + count(counts.softBodiesBuilt) + ",\"softOldestDueFrames\":" + std::to_string(counts.softOldestDueFrames) +
+			   ",\"softRingsDue\":" + count(counts.softRingsDue) + ",\"softBodiesBuilt\":" + count(counts.softBodiesBuilt) + ",\"softOldestDueFrames\":" + std::to_string(counts.softOldestDueFrames) + ",\"softMostTurnDegrees\":" + number(counts.softMostTurnDegrees) +
 			   ",\"bandRebuilds\":" + count(counts.bandRebuilds) + ",\"softPiecesBuilt\":" + count(counts.softPiecesBuilt) +
 			   ",\"piecesBuilt\":" + count(counts.piecesBuilt) + ",\"meshUploads\":" + count(counts.meshUploads) +
 			   ",\"tintElements\":" + count(counts.tintElements) + ",\"unseenElements\":" + count(counts.unseenElements) +

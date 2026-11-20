@@ -93,6 +93,8 @@ namespace ecs {
 		[[nodiscard]] bool anySeenBox(glm::vec2 low, glm::vec2 high) const;
 
 		[[nodiscard]] const vision::SeenArea& seenArea() const { return seen; }
+		// Starts counting K on the record (vision::SeenArea::countRingsMet), for the dev view.
+		void countRingsMet() { seen.countRingsMet(); }
 		// The boxes where the committed record's edge changed since the last call (SeenArea::takeChangedBoxes),
 		// for the cover, its one reader.
 		void takeChangedBoxes(std::vector<vision::SeenArea::Box>& out) { seen.takeChangedBoxes(out); }

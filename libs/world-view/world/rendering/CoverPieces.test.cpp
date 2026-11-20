@@ -12,7 +12,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <iostream>
 #include <numbers>
 #include <optional>
 #include <vector>
@@ -127,7 +126,7 @@ namespace {
 			double								  brightReachMm = 30000.0
 		) {
 			++frame;
-			shadows.update(sight, revision, eye, walkedMm, kOpenBright, brightReachMm, kPixelsPerMm, tunables, frame);
+			shadows.update(sight, revision, eye, walkedMm, 1.0 / 60.0, kOpenBright, brightReachMm, kPixelsPerMm, tunables, frame);
 			due.clear();
 			shadows.appendDue(due);
 			for (const worldview::DrawnShadows::Due& ring : due) {
@@ -223,17 +222,17 @@ TEST(CoverPieces, ASoftBodysTriangleCollapsesBehindIt) {
 	const double corner = std::hypot(4800.0, 200.0);
 	const double fin = 600.0 * (range - corner) / corner;
 	EXPECT_GT(valueOrZero(pieces, {range, halfWidth + fin / 2.0}), 0.0) << "inside the fin";
-	EXPECT_LT(valueOrZero(pieces, {range, halfWidth + fin / 2.0}), foot * 0.1 + worldview::kDrawnValueTolerance);
+	EXPECT_LT(valueOrZero(pieces, {range, halfWidth + fin / 2.0}), foot * 0.1 + 0.012 / worldview::kSeenDimAlpha);
 	EXPECT_EQ(valueOrZero(pieces, {range, halfWidth + fin + 20.0}), 0.0) << "past the fin";
 }
 
-// Every point of a sliced triangle and its fins holds the rule to within kDrawnValueTolerance (one 8-bit
-// step on screen): footValue x (1 - progress) inside the silhouette shrunk by progress, and the side's
+// Every point of a sliced triangle and its fins holds the rule to within softShadowToleranceThousandths on
+// screen: footValue x (1 - progress) inside the silhouette shrunk by progress, and the side's
 // value falling linearly across the fin, sampled along the whole length wherever the slices fall. A
 // trunk whose foot is within the tolerance of nothing draws no piece.
 TEST(CoverPieces, ASlicedTriangleHoldsTheRuleToTheTolerance) {
 	const vision::SightTunables tunables;
-	const double				tolerance = worldview::kDrawnValueTolerance + 1e-6;
+	const double tolerance = static_cast<double>(tunables.softShadowToleranceThousandths) / 1000.0 / worldview::kSeenDimAlpha + 1e-6;
 	for (const double width : {340.0, 820.0, 1385.0}) {
 		for (const double distance : {5000.0, 12000.0}) {
 			const vision::SightBody	   trunk = rectangleBody(distance + width / 2.0, 0.0, width, width, vision::BodyKind::Soft);
@@ -276,7 +275,7 @@ TEST(CoverPieces, ASlicedTriangleHoldsTheRuleToTheTolerance) {
 		rectangleBody(25000.0, 0.0, 50.0, 50.0, vision::BodyKind::Soft), {0.0, 0.0}, tunables, kOpenBright, faint
 	);
 	ASSERT_TRUE(far.has_value());
-	ASSERT_LT(far->footValue, worldview::kDrawnValueTolerance);
+	ASSERT_LT(far->footValue, static_cast<double>(tunables.softShadowToleranceThousandths) / 1000.0 / worldview::kSeenDimAlpha);
 	EXPECT_TRUE(faint.empty());
 }
 
@@ -299,7 +298,7 @@ TEST(CoverPieces, TrianglesABodyByCount) {
 		  Case{540.0, 20000.0, 22},
 		  Case{1385.0, 5000.0, 85},
 		  Case{1385.0, 10000.0, 85},
-		  Case{1385.0, 20000.0, 85}}) {
+		  Case{1385.0, 20000.0, 37}}) {
 		std::vector<ValueTriangle> pieces;
 		worldview::appendSoftShadow(
 			rectangleBody(shape.distance + shape.width / 2.0, 0.0, shape.width, shape.width, vision::BodyKind::Soft),
@@ -308,7 +307,6 @@ TEST(CoverPieces, TrianglesABodyByCount) {
 			kOpenBright,
 			pieces
 		);
-		std::cout << "pieces " << shape.width << " at " << shape.distance << ": " << pieces.size() << "\n";
 		EXPECT_LE(pieces.size(), shape.most) << shape.width << " at " << shape.distance;
 		EXPECT_GE(pieces.size(), 3U);
 	}
@@ -706,7 +704,7 @@ TEST(CoverPieces, StandingStillTheDrawnShadowsAreExactAndFollowTheBuild) {
 	}
 	ASSERT_GT(builtElsewhere, 0U);
 	std::size_t stopBuilt = 0;
-	for (int frame = 0; frame < worldview::DrawnShadows::kStillFramesToStop; ++frame) {
+	for (int frame = 0; frame < static_cast<int>(std::ceil(worldview::DrawnShadows::kStillSeconds * 60.0)) + 1; ++frame) {
 		stopBuilt += drawn.step(stand.sight(), 1, still, 0.0, tunables);
 	}
 	EXPECT_EQ(stopBuilt, builtElsewhere) << "he stops";
@@ -788,4 +786,62 @@ TEST(CoverPieces, AWallBuiltOrRemovedWhileHeStandsTakesUpNothingOfTheOld) {
 	drawn.step(sight({0, 0}), 3, still, 0.0, tunables);
 	EXPECT_EQ(drawn.body(1), nullptr);
 	EXPECT_TRUE(drawn.softPieces().empty());
+}
+
+// His reach follows his bright rim, which moves on most frames he walks in forest: a step that moves it
+// without taking a body in or out, past the nearest ring's cadence and short of the next, re-dues the
+// nearest ring alone.
+TEST(CoverPieces, AMovingRimReDuesOnlyTheRingsItCrosses) {
+	const std::vector<vision::SightBody> bodies = {
+		rectangleBody(2000.0, 500.0, 300.0, 300.0, vision::BodyKind::Soft, 1),
+		rectangleBody(10000.0, 2000.0, 400.0, 400.0, vision::BodyKind::Soft, 2),
+		rectangleBody(20000.0, -3000.0, 500.0, 500.0, vision::BodyKind::Soft, 3)
+	};
+	const std::vector<vision::ShadowEdge> none;
+	const ecs::VisionSystem::SightBodies  sight{
+		 .bodies = &bodies, .shadowEdges = &none, .leadMm = 670, .reachMm = 30800, .eyeCentre = {0, 0}
+	 };
+	const vision::SightTunables tunables;
+	Drawn						drawn;
+	drawn.step(sight, 1, {0.0, 0.0}, 0.0, tunables, 28000.0);
+	drawn.step(sight, 1, {0.0, -150.0}, 150.0, tunables, 27900.0);
+	EXPECT_EQ(drawn.shadows.counts().ringsBuilt, 1U);
+	EXPECT_EQ(drawn.shadows.counts().softChangedRings, 1U) << "the nearest ring";
+	drawn.step(sight, 1, {0.0, -150.0}, 0.0, tunables, 19000.0);
+	EXPECT_EQ(drawn.shadows.counts().softChangedRings, 1U << 3U) << "the rim crossing the far trunk";
+}
+
+// Under a starved queue a body leaving a ring stays in it until the ring that now holds it has been
+// built with it: walking away from a trunk until it passes the 4 to 8 m ring, building that ring alone.
+TEST(CoverPieces, ABodyLeavingARingStaysUntilItsNewRingHoldsIt) {
+	const std::vector<vision::SightBody>  bodies = {rectangleBody(7000.0, 0.0, 300.0, 300.0, vision::BodyKind::Soft, 1)};
+	const std::vector<vision::ShadowEdge> none;
+	const ecs::VisionSystem::SightBodies  sight{
+		 .bodies = &bodies, .shadowEdges = &none, .leadMm = 670, .reachMm = 30800, .eyeCentre = {0, 0}
+	 };
+	const vision::SightTunables tunables;
+	worldview::DrawnShadows		shadows;
+	std::uint64_t				frame = 1;
+	const auto					update = [&](double eyeX, double walked) {
+		 shadows.update(sight, 1, {eyeX, 0.0}, walked, 1.0 / 60.0, kOpenBright, 30000.0, kPixelsPerMm, tunables, frame++);
+	};
+	update(0.0, 0.0);
+	for (std::size_t ring = 0; ring < worldview::DrawnShadows::kSoftRings; ++ring) {
+		shadows.build(ring);
+	}
+	const auto holds = [&](std::size_t ring) {
+		return std::ranges::any_of(shadows.rings()[ring].drawn, [](const auto& drawn) { return drawn.bodyId == 1U; });
+	};
+	ASSERT_TRUE(holds(1));
+	ASSERT_FALSE(holds(2));
+	for (double eyeX = -100.0; eyeX >= -3000.0; eyeX -= 100.0) {
+		update(eyeX, 100.0);
+		shadows.build(1);
+		EXPECT_TRUE(holds(1)) << "at " << eyeX << ": its new ring has not been built with it";
+	}
+	shadows.build(2);
+	ASSERT_TRUE(holds(2));
+	update(-3100.0, 100.0);
+	shadows.build(1);
+	EXPECT_FALSE(holds(1)) << "now that ring two holds it";
 }

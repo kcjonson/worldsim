@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <span>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace worldview {
@@ -42,8 +43,10 @@ namespace worldview {
 		// A ring's cadence never reads a distance under this, so the nearest ring is not rebuilt every
 		// frame for a trunk he brushes past.
 		static constexpr double kSoftRingLeastDistanceMm = 1000.0;
-		// Frames with no walk before he counts as stopped.
-		static constexpr int kStillFramesToStop = 4;
+		// He has stopped once he has stayed within kStillMm of one point for kStillSeconds: a frame or two
+		// without a step, or a crawl under a millimetre a frame, is not a stop, at any frame rate.
+		static constexpr double kStillMm = 5.0;
+		static constexpr double kStillSeconds = 0.1;
 
 		// One shadow edge as drawn this frame.
 		struct EdgeDrawn {
@@ -70,12 +73,13 @@ namespace worldview {
 			std::int64_t  arrival = 0;
 		};
 		struct Ring {
-			std::vector<ValueTriangle> pieces;
-			std::vector<SoftDrawn>	   drawn;
-			std::vector<Member>		   members;
-			glm::dvec2				   builtFrom{0.0};
-			bool					   built = false;
-			std::uint64_t			   dueSince = 0; // the frame it fell due, 0 while not due
+			std::vector<ValueTriangle>		  pieces;
+			std::vector<SoftDrawn>			  drawn;
+			std::vector<Member>				  members;
+			std::unordered_set<std::uint64_t> memberKeys;
+			glm::dvec2						  builtFrom{0.0};
+			bool							  built = false;
+			std::uint64_t					  dueSince = 0; // the frame it fell due, 0 while not due
 		};
 		// What the last frame did.
 		struct Counts {
@@ -85,7 +89,7 @@ namespace worldview {
 			bool		  bandsRebuilt = false;
 		};
 
-		// The frame's first half, with him at `eyeMm` having walked `walkedMm` since the last, over `bodies`
+		// The frame's first half, `seconds` after the last, with him at `eyeMm` having walked `walkedMm` since, over `bodies`
 		// of the build `buildRevision`: marks the due rings with `frame` and moves the bands on. `bright`
 		// is his bright outline; bodies farther than the least of drawnShadowReachMm, the build's reach,
 		// and `brightReachMm` draw nothing, every piece being clipped to that outline, and nor do bodies
@@ -95,6 +99,7 @@ namespace worldview {
 			std::uint64_t						  buildRevision,
 			glm::dvec2							  eyeMm,
 			double								  walkedMm,
+			double								  seconds,
 			std::span<const geometry::Vec2i64>	  bright,
 			double								  brightReachMm,
 			double								  pixelsPerMm,
@@ -102,9 +107,11 @@ namespace worldview {
 			std::uint64_t						  frame
 		);
 
-		// A due ring: since when, which, and the pieces it took when last built (an estimate of its cost).
+		// A due ring: since when, how far it has turned (his walk since it was built over its nearest
+		// distance, the sine of the turn), which, and the pieces it took when last built (its cost).
 		struct Due {
 			std::uint64_t since = 0;
+			double		  turn = 0.0;
 			std::size_t	  ring = 0;
 			std::size_t	  pieces = 0;
 		};
@@ -128,7 +135,7 @@ namespace worldview {
 		// his walk since that corner was taken.
 		struct CornerEase {
 			vision::SightBody::Source source = vision::SightBody::Source::Placed;
-			std::uint64_t			  bodyId = 0;
+			std::uint64_t			  outline = 0; // a hash of its body's outline
 			int						  litTurn = 1;
 			geometry::Vec2i64		  buildCorner{0, 0};
 			glm::dvec2				  apex{0.0};
@@ -142,6 +149,8 @@ namespace worldview {
 		static std::uint64_t outlineOf(const vision::SightBody& body);
 		// The ring bands a body at `distanceMm` lies in, one bit a ring.
 		static std::uint32_t ringsAt(double distanceMm);
+		// The nearest distance a ring's cadence and turn read.
+		static double nearestOf(std::size_t ring);
 		// The build's shadow edges take up the running eases of the last build's (3.1).
 		void takeUpEases(const ecs::VisionSystem::SightBodies& bodies);
 		// Moves each apex on and rebuilds the bands; false when nothing they draw has changed.
@@ -161,7 +170,9 @@ namespace worldview {
 
 		std::uint64_t									 lastBuild = 0;
 		bool											 built = false;
-		int												 stillFrames = 0;
+		glm::dvec2										 stillAt{0.0};
+		double											 stillSeconds = 0.0;
+		bool											 stopBuilt = false;
 		double											 lookedPixelsPerMm = 0.0;
 		double											 lookedReachLimit = 0.0;
 		vision::SightTunables							 softTunables;
@@ -169,6 +180,7 @@ namespace worldview {
 		std::array<Ring, kSoftRings>					 softRings;
 		std::unordered_map<std::uint64_t, std::uint64_t> knownOutlines; // the last build's soft bodies, key to outline
 		std::unordered_map<std::uint64_t, std::uint64_t> buildOutlines; // this build's, reused
+		std::unordered_set<std::uint64_t>				 heldKeys;		// a ring's members before its build, reused
 		bool											 bandsBuilt = false;
 		glm::dvec2										 bandEye{0.0};
 		vision::SightTunables							 bandTunables;

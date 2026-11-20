@@ -258,8 +258,11 @@ namespace vision {
 
 		[[nodiscard]] double							   committedSquareMeters() const;
 		[[nodiscard]] std::size_t						   ringsRegistered() const { return registered.size(); }
-		// K where registered (player-visibility.md 6.1): for each ring after the first, how many rings
-		// registered before it have boxes meeting its own. The mean and the most.
+		// K where registered (player-visibility.md 6.1), a diagnostic counted only from when countRingsMet
+		// is first called, so the record keeps nothing for it otherwise: for each ring registered since
+		// after the first, how many registered since before it have boxes meeting its own. The mean and
+		// the most.
+		void					  countRingsMet() { ringsMetCounted = true; }
 		[[nodiscard]] double	  ringsMetMean() const;
 		[[nodiscard]] std::size_t ringsMetMost() const { return ringsMetGreatest; }
 		[[nodiscard]] const std::vector<geometry::Vec2i64>& registeredRing(std::size_t index) const;
@@ -350,7 +353,8 @@ namespace vision {
 		std::size_t											 sweepRunsDropped = 0;
 		std::uint64_t										 sweepRuns = 0; // runs queued, the last one's id
 		std::vector<std::int32_t>							 registered; // ring ids, in the order they went in
-		std::vector<Box>									 registeredBoxes; // their boxes, in the same order
+		bool												 ringsMetCounted = false;
+		std::vector<Box>									 registeredBoxes; // the boxes of the rings registered since K was asked for
 		// The registered boxes by cell of K's grid, and the last registration that counted each.
 		std::map<std::pair<std::int64_t, std::int64_t>, std::vector<std::uint32_t>> ringBoxCells;
 		std::vector<std::uint32_t>													ringBoxCounted;

@@ -64,19 +64,21 @@ namespace worldview {
 		const std::vector<CornerEase>& running = eases;
 		std::vector<CornerEase>		   next;
 		next.reserve(bodies.shadowEdges->size());
-		// Every new edge and running ease that may pair: same body and lit side, the apex or the corner it
-		// eases to on a face within two of the new corner, nearest first. A body's id names it only within one build of the walls'
-		// geometry, so the apex's place on this outline is what says the ease is this edge's: one from
-		// another building, or from a far corner of the same one, lies on none of these faces.
+		// Every new edge and running ease that may pair: the same outline and lit side, the apex or the
+		// corner it eases to on a face within two of the new corner, nearest first. A wall body's id names
+		// it only within one build of the walls' geometry, so the outline is what says the body is the same,
+		// and the faces say the ease is this edge's and not a far corner's.
 		std::vector<std::tuple<double, std::size_t, std::size_t>> pairs;
 		for (std::size_t index = 0; index < bodies.shadowEdges->size(); ++index) {
 			const vision::ShadowEdge& edge = (*bodies.shadowEdges)[index];
 			const vision::SightBody&  body = (*bodies.bodies)[edge.body];
 			const glm::dvec2		  corner = toDouble(body.edges[edge.corner].a);
-			next.push_back({.source = body.source, .bodyId = body.id, .litTurn = edge.litTurn, .buildCorner = body.edges[edge.corner].a});
+			next.push_back(
+				{.source = body.source, .outline = outlineOf(body), .litTurn = edge.litTurn, .buildCorner = body.edges[edge.corner].a}
+			);
 			for (std::size_t old = 0; old < running.size(); ++old) {
 				const CornerEase& ease = running[old];
-				if (!ease.started || ease.source != body.source || ease.bodyId != body.id || ease.litTurn != edge.litTurn ||
+				if (!ease.started || ease.source != body.source || ease.outline != next.back().outline || ease.litTurn != edge.litTurn ||
 					!(onFaceNear(body, edge.corner, ease.apex) || onFaceNear(body, edge.corner, ease.target))) {
 					continue;
 				}
@@ -118,6 +120,10 @@ namespace worldview {
 
 	double DrawnShadows::distanceOf(const vision::SightBody& body, glm::dvec2 eyeMm) {
 		return std::max(0.0, glm::length(toDouble(body.centre) - eyeMm) - static_cast<double>(body.diameterMm) / 2.0);
+	}
+
+	double DrawnShadows::nearestOf(std::size_t ring) {
+		return std::max(kSoftRingStartMm[ring] * (1.0 - kSoftRingOverlap), kSoftRingLeastDistanceMm);
 	}
 
 	std::uint32_t DrawnShadows::ringsAt(double distanceMm) {
@@ -241,7 +247,7 @@ namespace worldview {
 			for (const Member& member : softRings[ring].members) {
 				const auto now = buildOutlines.find(member.key);
 				if (now == buildOutlines.end() || now->second != member.outline ||
-					(stillFrames > 0 && arrivals.at(member.key) != member.arrival)) {
+					(stillSeconds > 0.0 && arrivals.at(member.key) != member.arrival)) {
 					changed |= 1U << ring;
 					break;
 				}
@@ -256,6 +262,7 @@ namespace worldview {
 		std::uint64_t						  buildRevision,
 		glm::dvec2							  eyeMm,
 		double								  walkedMm,
+		double								  seconds,
 		std::span<const geometry::Vec2i64>	  bright,
 		double								  brightReachMm,
 		double								  pixelsPerMm,
@@ -273,9 +280,16 @@ namespace worldview {
 		for (CornerEase& ease : eases) {
 			ease.walkedMm += walkedMm;
 		}
-		stillFrames = walkedMm > 0.0 ? 0 : stillFrames + 1;
-		// He has stopped once a few frames pass with no walk: one frame without a step is not a stop.
-		const bool	  stopped = stillFrames == kStillFramesToStop;
+		// He has stopped once he has stayed near one point for kStillSeconds, once each stop.
+		if (glm::length(eyeMm - stillAt) > kStillMm) {
+			stillAt = eyeMm;
+			stillSeconds = 0.0;
+			stopBuilt = false;
+		} else {
+			stillSeconds += seconds;
+		}
+		const bool stopped = !stopBuilt && stillSeconds >= kStillSeconds;
+		stopBuilt = stopBuilt || stopped;
 		const bool	  newBuild = !built || buildRevision != lastBuild;
 		std::uint32_t due = 0;
 		if (newBuild) {
@@ -287,8 +301,21 @@ namespace worldview {
 		frameCounts.bandsRebuilt = buildBands(bodies, frameReachLimit, newBuild);
 
 		const bool retuned = !(tunables == softTunables);
-		if (retuned || pixelsPerMm != lookedPixelsPerMm || frameReachLimit != lookedReachLimit) {
+		if (retuned || pixelsPerMm != lookedPixelsPerMm) {
 			due = (1U << kSoftRings) - 1U;
+		} else if (frameReachLimit != lookedReachLimit) {
+			// His reach follows his bright rim, which moves on most frames he walks in forest: only the rings
+			// holding a body it takes in or leaves out fall due.
+			const double nearer = std::min(frameReachLimit, lookedReachLimit);
+			const double farther = std::max(frameReachLimit, lookedReachLimit);
+			for (const vision::SightBody& body : *bodies.bodies) {
+				if (body.kind == vision::BodyKind::Soft) {
+					const double distance = distanceOf(body, eyeMm);
+					if (distance > nearer && distance <= farther) {
+						due |= ringsAt(distance);
+					}
+				}
+			}
 		}
 		softTunables = tunables;
 		lookedPixelsPerMm = pixelsPerMm;
@@ -296,7 +323,7 @@ namespace worldview {
 		const double fraction = static_cast<double>(tunables.softShadowRebuildPercent) / 100.0;
 		for (std::size_t index = 0; index < kSoftRings; ++index) {
 			Ring&		 ring = softRings[index];
-			const double cadence = fraction * std::max(kSoftRingStartMm[index] * (1.0 - kSoftRingOverlap), kSoftRingLeastDistanceMm);
+			const double cadence = fraction * nearestOf(index);
 			const bool	 isDue = (due & (1U << index)) != 0U || !ring.built || (stopped && ring.builtFrom != eyeMm) ||
 							   (walkedMm > 0.0 && glm::length(eyeMm - ring.builtFrom) > cadence);
 			if (isDue && ring.dueSince == 0) {
@@ -318,7 +345,10 @@ namespace worldview {
 					return body.kind == vision::BodyKind::Soft && (ringsAt(distanceOf(body, frameEye)) & (1U << index)) != 0U;
 				}));
 			}
-			out.push_back({.since = ring.dueSince, .ring = index, .pieces = std::max(ring.pieces.size(), bodies * kDueBodyLeastPieces)});
+			const double turn = ring.built ? glm::length(frameEye - ring.builtFrom) / nearestOf(index) : 1.0;
+			out.push_back(
+				{.since = ring.dueSince, .turn = turn, .ring = index, .pieces = std::max(ring.pieces.size(), bodies * kDueBodyLeastPieces)}
+			);
 		}
 	}
 
@@ -327,16 +357,29 @@ namespace worldview {
 		ring.pieces.clear();
 		ring.drawn.clear();
 		ring.members.clear();
+		std::swap(ring.memberKeys, heldKeys);
+		ring.memberKeys.clear();
 		for (const vision::SightBody& body : *frameBodies.bodies) {
 			if (body.kind != vision::BodyKind::Soft) {
 				continue;
 			}
 			// One distance decides the ring, the reach, and the pixel: a body that shows is built, and one
 			// that does not is a member all the same, so its ring's cadence brings it in when it does.
-			const double distance = distanceOf(body, frameEye);
-			if ((ringsAt(distance) & (1U << index)) == 0U) {
-				continue;
+			// A body that has left this ring's band stays in it until a ring whose band now holds it has
+			// been built with it, so a starved queue never leaves a body in no ring.
+			const double		distance = distanceOf(body, frameEye);
+			const std::uint32_t owners = ringsAt(distance);
+			const std::uint64_t key = keyOf(body);
+			if ((owners & (1U << index)) == 0U) {
+				bool held = heldKeys.contains(key);
+				for (std::size_t other = 0; held && other < kSoftRings; ++other) {
+					held = (owners & (1U << other)) == 0U || !softRings[other].memberKeys.contains(key);
+				}
+				if (!held) {
+					continue;
+				}
 			}
+			ring.memberKeys.insert(key);
 			ring.members.push_back({.key = keyOf(body), .outline = outlineOf(body), .arrival = body.arrival});
 			if (!softBodyShows(body, distance, frameReachLimit, framePixelsPerMm, frameTunables)) {
 				continue;

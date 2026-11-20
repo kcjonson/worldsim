@@ -126,6 +126,7 @@ namespace worldview {
 			std::size_t softRingsDue	= 0; // rings due, built or carried over
 			std::size_t softBodiesBuilt = 0; // soft bodies those rings built
 			std::uint64_t softOldestDueFrames = 0; // how many frames the longest due ring has waited
+			double		  softMostTurnDegrees = 0.0; // how far the most turned ring left due has turned, in degrees
 			std::size_t softPiecesBuilt = 0; // of which soft bodies' pieces, against kDrawnShadowPiecesPerFrame
 			std::size_t piecesBuilt		= 0; // pieces built this frame
 			std::size_t meshUploads		= 0; // meshes uploaded this frame
@@ -148,7 +149,8 @@ namespace worldview {
 
 		// Brings the uploaded record up to date when its epoch has moved, builds the frame's pieces and
 		// draws the two fills. Nothing is drawn or uploaded while the player visibility system is revealed.
-		void render(ecs::World& world, const world::WorldCamera& camera, int viewportWidth, int viewportHeight, float pixelsPerMeter);
+		// `frameSeconds` is the time since the last frame.
+		void render(ecs::World& world, const world::WorldCamera& camera, int viewportWidth, int viewportHeight, float pixelsPerMeter, float frameSeconds);
 
 		// The last frame's layers, colonists, and counts.
 		[[nodiscard]] const Layers&						layers() const { return frameLayers; }
@@ -203,7 +205,8 @@ namespace worldview {
 			const world::WorldCamera&		   camera,
 			int								   viewportWidth,
 			int								   viewportHeight,
-			float							   pixelsPerMeter
+			float							   pixelsPerMeter,
+			float							   frameSeconds
 		);
 
 		std::vector<Renderer::InstancedMeshHandle>		   meshes;

@@ -139,14 +139,19 @@ namespace worldview {
 		}
 
 		// The box round what changed between a shape's last cut and now, the corners either has that the
-		// other lacks and the sides at them, grown a little past the cut's probe.
-		void
-		appendChangedBox(const std::vector<Vec2i64>& before, const std::vector<Vec2i64>& after, std::vector<vision::SeenArea::Box>& out) {
-			constexpr std::int64_t kChangedMarginMm = 10;
-			bool				   any = false;
-			Vec2i64				   low{0, 0};
-			Vec2i64				   high{0, 0};
-			const auto			   take = [&](const Vec2i64& point) {
+		// other lacks and the sides at them, grown by twice the feather: the pending mask covers each shape grown by the feather, so a
+		// record edge that far ahead of a moving side now lies inside it and must be cut with it.
+		void appendChangedBox(
+			const std::vector<Vec2i64>&			before,
+			const std::vector<Vec2i64>&			after,
+			std::int64_t						featherMm,
+			std::vector<vision::SeenArea::Box>& out
+		) {
+			const std::int64_t margin = 2 * featherMm;
+			bool			   any = false;
+			Vec2i64			   low{0, 0};
+			Vec2i64			   high{0, 0};
+			const auto		   take = [&](const Vec2i64& point) {
 				low = any ? Vec2i64{std::min(low.x, point.x), std::min(low.y, point.y)} : point;
 				high = any ? Vec2i64{std::max(high.x, point.x), std::max(high.y, point.y)} : point;
 				any = true;
@@ -161,7 +166,7 @@ namespace worldview {
 				}
 			}
 			if (any) {
-				out.push_back({low - Vec2i64{kChangedMarginMm, kChangedMarginMm}, high + Vec2i64{kChangedMarginMm, kChangedMarginMm}});
+				out.push_back({low - Vec2i64{margin, margin}, high + Vec2i64{margin, margin}});
 			}
 		}
 
@@ -604,7 +609,7 @@ namespace worldview {
 			bool whole = !cluster.built || cluster.cut.size() != shapes.size();
 			for (std::size_t shape = 0; !whole && shape < shapes.size(); ++shape) {
 				if (*shapes[shape] != cluster.cut[shape]) {
-					appendChangedBox(cluster.cut[shape], *shapes[shape], region);
+					appendChangedBox(cluster.cut[shape], *shapes[shape], feather, region);
 				}
 			}
 			if (whole || !region.empty()) {
