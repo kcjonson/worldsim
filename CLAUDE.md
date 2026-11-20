@@ -25,35 +25,10 @@ File bugs and chores directly as you hit them. Full workflow: the `specboard:wha
 
 ### Workflow: Before Writing Code
 
-**ALWAYS follow this process:**
-
-0. **Determine git status**
-   - Are you on the correct branch? You most likely need to be on main
-
-1. **Read documentation first**
-   - The Specboard item you are working on (`/whats-next`), and its linked spec
-   - Keep explicit todos and work items in Specboard: child items for tracked work, the item's checklist for scratch todos
-   - Update the item before and after doing any work
-   - Relevant technical design documents
-   - Product specifications if implementing features
-
-2. **Gather context**
-   - Understand the system you're modifying
-   - Read existing code in the area
-   - Identify dependencies and interfaces
-
-3. **Ask questions when needed**
-   - If you lack information for a professional decision, **ASK THE USER**
-   - Don't make uninformed assumptions
-   - Better to ask than to implement incorrectly
-
-4. **Plan thoughtfully**
-   - Consider architecture implications
-   - Think about performance impact
-   - Plan for maintainability
-
-5. **Prepare for Coding**
-   - Create a new branch to do work in
+- Work on a branch off `main`. A worktree session already has its own; in the main checkout, create one.
+- Read the Specboard item you are working on (`/whats-next`) and its linked spec, plus the technical design docs and product specs it touches.
+- Keep explicit todos and work items in Specboard: child items for tracked work, the item's checklist for scratch todos. Update the item before and after doing any work.
+- If you lack information for a professional decision, ask the user rather than assume.
 
 ### Complex Bug Investigation
 
@@ -70,38 +45,21 @@ This activates the protocol from `/docs/technical/debugging-strategy.md` which u
 
 ### Code Quality
 
-- **Industry best practices**: Follow game dev conventions
-- **Performance-conscious**: Efficient code, profile before optimizing
-- **Maintainable**: Clear structure, logical organization
-- **Production-quality**: No hacks, no "good enough for now"
+- Profile before optimizing.
+- Follow the dependency hierarchy strictly.
+- Document non-obvious decisions.
+- No hacks, temporary code, or "good enough for now".
+- Don't give time or cost estimates for tasks: you can't estimate them accurately. Describe the work and its deliverables instead.
 
-**DO:**
-- Write production-quality code every time
-- Follow the dependency hierarchy strictly
-- Document non-obvious decisions
-- Consider edge cases and error handling
+### Documentation Over Existing Code
 
-**DON'T:**
-- Make uninformed decisions without context
-- Skip reading documentation
-- Write quick hacks or temporary code
-- Ignore established patterns
-- Create technical debt
-- **⚠️ NEVER provide time estimates or cost estimates for tasks** - You cannot accurately estimate how long work will take. Focus on clear task descriptions and deliverables instead.
-- **⚠️ NEVER change LOG_DEBUG to LOG_INFO** - LOG_DEBUG works fine. Debug logs are visible via the HTTP log server in dev tools. Do not change log levels to "see" logs.
-
-### ⚠️ IMPORTANT: Documentation Over Existing Code
-
-**When evaluating code style, conventions, or PR feedback:**
-- **ALWAYS check `/docs/technical/cpp-coding-standards.md` FIRST** - This is the source of truth
-- **NEVER assume existing code patterns are correct** - Legacy code may contain violations that haven't been cleaned up
-- **Documented standards override observed patterns** - If code in the codebase contradicts the docs, the docs are correct
+When evaluating code style, conventions, or PR feedback, `/docs/technical/cpp-coding-standards.md` is the source of truth. Existing code may be legacy that violates it; where the two disagree, the doc is right.
 
 Example: If you see `m_` prefixes on member variables in older code, but the coding standards say "camelCase with no prefix" - the standards are correct, the existing code is legacy that needs cleanup.
 
-### ⚠️ Clean Code: No Legacy, No Fallbacks
+### Clean Code: No Legacy, No Fallbacks
 
-**This is critical. Aggressively delete old code. Never leave legacy fallbacks.**
+Delete old code when you replace it, and never leave a legacy fallback.
 
 #### Core Principles
 
@@ -130,7 +88,7 @@ Example: If you see `m_` prefixes on member variables in older code, but the cod
    - Delete: unused imports, unused functions, commented-out code, unreachable branches
    - Leave every file cleaner than you found it
 
-#### Explicit Anti-Patterns (NEVER DO THESE)
+#### Anti-Patterns
 
 ```cpp
 // ❌ NEVER: Conditional new/old paths
@@ -162,38 +120,6 @@ using OldTypeName [[deprecated]] = NewTypeName;  // DELETE THIS
 // ❌ NEVER: Version suffixes on functions
 void renderV2() { }  // Just name it render() and delete the old one
 ```
-
-#### The Right Way
-
-```cpp
-// ✅ CORRECT: One implementation, no alternatives
-void render() {
-    // The only render implementation
-}
-
-// ✅ CORRECT: Delete parameters you don't need
-void process() {  // Removed unused parameter entirely
-    // ...
-}
-
-// ✅ CORRECT: Replace types directly
-using TypeName = NewImplementation;  // Old type is gone
-
-// ✅ CORRECT: Clean, single code path
-Result doOperation() {
-    return modernApproach();  // No fallback, this is THE way
-}
-```
-
-#### When Refactoring
-
-1. **Understand** the old code completely
-2. **Write** the new implementation
-3. **Update** all call sites to use the new code
-4. **Delete** the old implementation in the same commit
-5. **Test** to ensure nothing breaks
-
-If tests fail, fix the new code—don't revert to keeping both versions.
 
 ## Documentation System
 
@@ -245,7 +171,7 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 - Use structured logging with categories
 - `LOG_DEBUG`, `LOG_INFO`, `LOG_WARNING`, `LOG_ERROR`
 - Debug logs compile out in release builds
-- **CRITICAL: LOG_DEBUG WORKS FINE. NEVER switch LOG_DEBUG to LOG_INFO "to see logs". Debug logs are visible in dev tools via the HTTP log server. Do not change log levels.**
+- Don't change `LOG_DEBUG` to `LOG_INFO` to see a log: debug logs already show in dev tools through the HTTP log server.
 
 **Testing:** `/docs/testing/README.md` is the strategy. Look for actual regressions, never pixel
 changes: no golden images or screenshot diffs. Before committing, run the relevant happy-path
@@ -288,16 +214,16 @@ captures taken under load, then on re-runs chasing regressions that were never t
 
 **Sandbox Control:**
 - The dev server is salal's (`app::DevServer`), in Debug and RelWithDebInfo builds only; a Release build has none unless configured with `-DSALAL_DEV_SERVER_IN_RELEASE=ON` (for profiling). The ui tree and lint come from the top scene's salal ui context; world-sim's game scene adds the `/api/dev/<verb>` routes, the `/api/state` views and the `camera` control.
-- Start: `cd build/apps/ui-sandbox && ./ui-sandbox --background`
+- Start: `cd build/apps/ui-sandbox && ./ui-sandbox --background` (on Windows the Multi-Config build puts it in `build/apps/ui-sandbox/<config>/`)
 - **IMPORTANT: Every launch an agent makes passes `--background`**, and every world-sim launch passes `--no-settings` too (`world-sim --background --no-settings`; ui-sandbox and asset-manager have no settings file). World-sim saves the interface size, the window's size and vsync to `%APPDATA%\kcjonson\world-sim\settings.json` at every exit, shared by every worktree's build and Kevin's own play; `--no-settings` neither reads nor writes it (default window, 100% interface), so a run that stops midway or resizes leaves nothing behind. Scenario 17 tests that the settings are saved and is the one run on the real file. The `--background` flag applies to whichever app (world-sim, ui-sandbox, asset-manager) and whatever it is for: a regression pass, a visual check, a screenshot, a subagent's verification. The window opens behind every other window and unfocused, so it never lands on top of Kevin's work or takes his keyboard; it is still an ordinary window, on the taskbar, drawn every frame, and the dev server (screenshots, injected input, state) works the same. Two launches go without either flag, and only these: one made for Kevin to test something by hand, and one Kevin asked for. When in doubt it is a background launch. A subagent's brief says so too. The scripted exception is a perf capture, which `scripts/perf.mjs` launches in the foreground itself (a covered window isn't presented the same way, so its timings wouldn't compare); never add or remove the flag there by hand.
 - Control: `curl "http://127.0.0.1:8090/api/control?action={action}"`
 - Actions: `exit`, `scene&scene=name`, `pause`, `resume`, `reload`, `vsync&value=0|1`, `step&ticks=n` (while paused; it advances nothing in worldsim, where no scene has a fixed tick, so a step is one more rendered frame); world-sim's game scene adds `camera` (the control sets the camera, `what=camera` reads it). A control answers once it has run, at the next frame; `scene` and `reload` answer before their switch applies later that frame. An unknown action, or a scene nothing was added as, is a 404
 - Input injection: `curl "http://127.0.0.1:8090/api/input?ev=click,x,y"`: synthetic input in the window's logical pixels (a screenshot is in framebuffer pixels, twice the logical size on a HiDPI display, so halve its coordinates there; on Windows they're the same). Event types `move`/`down`/`up`/`click`/`scroll,x,y,delta` with optional button `left|right|middle`, `keydown,<key>`/`keyup,<key>`, and `char,<codepoint>`; repeat `ev=` to batch a sequence in one request, a whole gesture included: the events reach the ui in order, each press and release at its own position (`ev=down,100,100&ev=move,300,300&ev=up,300,300` is a drag, `ev=click,x,y&ev=char,104` clicks then types). Injected events go the way real input does: keys and characters reach the focused ui component (`keydown,tab` moves focus), a scroll is resent until something takes it (in the game, one the ui doesn't take zooms the camera), and while the app is paused it all waits for resume. A malformed event is a 400 and queues nothing. A pointer event moves the app's pointer to `x,y` until the real cursor moves over the window or a real mouse button or scroll event lands, so hover state holds for a later request (`ev=move,x,y` then a separate screenshot works). Since salal v0.41.1 an injected move also sets the window's pointer-in-window flag, so hover-driven things (the placement ghost, the drawing tools' preview) follow it. Input is in the window's logical px while `/api/ui/tree` and `/api/ui/lint` are in ui px: multiply a tree position by `layoutScale` from `/api/state?what=uiscale` to get where to point.
 - Scene state: `curl "http://127.0.0.1:8090/api/state?what=scene"` is `{"scenes":[{"name":...,"state":...}]}`, top first; read `scenes[0].state`. Any other `what` is a view the running scene registered (404 otherwise)
 - Screenshot: `curl http://127.0.0.1:8090/api/ui/screenshot > screenshot.png`
-- **IMPORTANT: Each app has its own DEFAULT port: ui-sandbox 8090, world-sim 8081, asset-manager 8070 - do NOT specify --http-port unless using a non-standard port**
-- **IMPORTANT: Only ONE instance can run at a time** - a second one opens its window, finds its port busy, and closes and exits at once (logged). Do not assume multiple instances exist.
-- **IMPORTANT: Close the game as soon as your task is done** - this is a native game rendering every frame, not a web app; an idle instance burns GPU/CPU continuously. When you finish verifying, immediately shut it down: `curl "http://127.0.0.1:8090/api/control?action=exit"` (8081 for world-sim). Only leave it running if the user asked to test it themselves.
+- Default ports: ui-sandbox 8090, world-sim 8081, asset-manager 8070. Several worktrees run games at the same time, so in a worktree pass `--http-port <port>` with a port of your own, picked from the worktree name so it stays the same across relaunches, and use it in place of the default in every curl here.
+- One instance per port: a second launch on a busy port opens its window, finds the port busy, and exits at once (logged). Sessions in other worktrees may be running their own instance on another port; close only yours, by its port.
+- **Close the game as soon as your task is done** - this is a native game rendering every frame, not a web app; an idle instance burns GPU/CPU continuously. When you finish verifying, immediately shut it down: `curl "http://127.0.0.1:8090/api/control?action=exit"` (8081 for world-sim). Only leave it running if the user asked to test it themselves.
 
 **Asset Manager (use this to test/preview world assets):**
 - A designer GUI (`apps/asset-manager`) that renders every asset through the game's real pipeline. Use it to verify new/edited flora, rocks, and other assets instead of dev-spawning them in world-sim.
@@ -305,7 +231,7 @@ captures taken under load, then on re-runs chasing regressions that were never t
 - Shows a searchable category tree of asset thumbnails, a header with total count + validation error/warning counts, a per-asset detail pane (large preview + full XML + that asset's validation issues), and a **Reload** button to hot-reload after editing assets (no restart). Building the app target after an asset-only edit restages `assets/` beside the exe (pruning deleted files) with no relink, for every app that stages assets (`cmake/stage-assets.cmake`).
 - Surfaces SVG tessellation/validation problems and lets you eyeball art far faster than spawning + cropping screenshots. Close it when done (`curl "http://127.0.0.1:8070/api/control?action=exit"`).
 
-**CRITICAL: Testing Visual Changes**
+**Testing Visual Changes**
 When you make code changes and need to verify visually:
 1. **Kill old instance** (if running): `curl "http://127.0.0.1:8090/api/control?action=exit"`
    - This is a **blocking call** - it returns only after the scenes have exited, GL is torn down and the port is free
@@ -314,17 +240,12 @@ When you make code changes and need to verify visually:
    - If no instance is running, curl will fail with connection refused - that's fine, proceed
 2. **Rebuild**: `cmake --build build --target ui-sandbox -j8`
 3. **Launch new instance**: Use Bash tool with `run_in_background: true`:
-   - Command: `cd /Volumes/Code/worldsim/build/apps/ui-sandbox && ./ui-sandbox --scene=<scene> --background`
+   - Command: `cd build/apps/ui-sandbox && ./ui-sandbox --scene=<scene> --background`
    - Do NOT use shell `&` - it blocks waiting for output
 4. **Verify layout (after UI changes)**: `curl http://127.0.0.1:8090/api/ui/tree` for element bounds, `curl http://127.0.0.1:8090/api/ui/lint` for invariant violations - expect `"count":0` before screenshotting. Don't verify coordinates by eye. Both walk the scene's `getUiRoots()`: a scene that draws without components (most ui-sandbox demos) answers an empty tree, and its `"count":0` checks nothing.
 5. **Take screenshot**: `curl -s http://127.0.0.1:8090/api/ui/screenshot > /tmp/screenshot.png`
    - The screenshot endpoint implicitly waits for the app to be ready
    - No sleep needed - curl will block until screenshot is captured
-
-**Key Points:**
-- **avoid sleeps** - the exit is blocking and screenshot waits for startup
-- **NEVER skip the rebuild step!** An old instance will not reflect your changes
-- **Always use `run_in_background: true`** for launching - shell `&` doesn't work properly
 
 ## Quick Reference
 
@@ -357,19 +278,18 @@ Create a new file in `/docs/development-log/entries/` with format `YYYY-MM-DD-to
 
 See `/docs/development-log/README.md` for the full template.
 
-**IMPORTANT**: Detailed implementation decisions, technical rationale, and design choices go in development log entries, not Specboard items. The development log is the detailed historical record; Specboard is the current state of the work.
+Detailed implementation decisions, technical rationale, and design choices go in development log entries, not Specboard items. The development log is the detailed historical record; Specboard is the current state of the work.
 
 
 ### Workflow: After Writing Code
 
-1. **Open a PR**
-
-2. **Switch back to the main branch**
+Open a PR. In the main checkout, switch back to `main` afterwards; a worktree keeps its branch.
 
 ## Worktree Management
 
 Worktrees are disposable scratch space, not permanent fixtures. Remove a worktree when the session that created it ends; its branch and commits stay in the repo after removal, so nothing is lost. This goes double for sub-agent worktrees (`isolation: "worktree"`): they are per-agent and should be removed as soon as the agent finishes, never left to accumulate under `.claude/worktrees/`.
 
+- Every worktree lives under the main checkout's `.claude/worktrees/`, never beside it or in the home directory. ccache's `base_dir` is the main checkout, so only worktrees under it share compile-cache hits. Each keeps its own `build/` (and `node_modules` where an app has one); the planet below is the one shared file.
 - The one permanent worktree is `.claude/worktrees/perf-nightly`, where the nightly perf batch builds and runs. Never remove it, and don't work in it.
 - Clean up with `git worktree remove <path>`, then `git worktree prune`. It refuses a worktree with uncommitted changes unless you pass `--force`; leave those in place and surface them rather than discarding unsaved work.
 - Removing a worktree keeps its branch. If there's uncommitted work worth saving, commit it to the branch before removing.
