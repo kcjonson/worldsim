@@ -3,12 +3,22 @@
 #include "worldgen/data/Biome.h"
 #include "worldgen/grid/SphereGrid.h" // TileId
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
 namespace worldgen {
 
 struct GeneratedWorld;
+
+// What a biome's flora offers a colony, read off the flora definitions by the caller (worldgen
+// can't see them): food and wood sources a square kilometer.
+struct BiomeProvisions {
+    float foodSourcesPerSquareKilometer{};
+    float woodSourcesPerSquareKilometer{};
+};
+using BiomeProvisionTable = std::array<BiomeProvisions, static_cast<std::size_t>(Biome::Count)>;
 
 struct LatLon {
     double latDeg{};
