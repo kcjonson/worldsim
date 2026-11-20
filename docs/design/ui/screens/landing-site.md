@@ -100,7 +100,7 @@ While the suggested sites are being found, just after the planet is ready, the f
 ## Interactions & transitions
 
 - Click inside planet disk → update marker position and coordinate readout.
-- Click a suggested site marker → select that site, as a click there would.
+- Clicking a suggested site marker selects that site, as a click there would.
 - `SegmentedControl` → update planet visualization mode.
 - "Back to Survey" → `go("worldgen")`
 - "Confirm Landing Site" → show confirmation modal.
