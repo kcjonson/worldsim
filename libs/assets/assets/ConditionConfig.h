@@ -68,7 +68,7 @@ namespace assets {
 	};
 
 	/// A kind near() and count_near() look for: a capability memory holds things under, or the asset
-	/// definition of a mover (`mover`, "Colonist") whose recent sightings memory keeps. A kind with
+	/// definition of a mover (`mover`, "Human") whose recent sightings memory keeps. A kind with
 	/// neither is declared but unanswered, and reads Unknown.
 	struct ConditionKindDef {
 		std::string					  name;

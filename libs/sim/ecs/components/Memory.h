@@ -41,7 +41,7 @@ namespace ecs {
 	/// into the world. entityId carries its generation, so a mover born into a reused index is another entry.
 	struct KnownDynamicEntity {
 		EntityID  entityId = kInvalidEntity;
-		uint32_t  defNameId = 0;				 // what kind of mover: the asset def it appears as ("Colonist")
+		uint32_t  defNameId = 0;				 // what kind of mover: the asset def it appears as ("Human")
 		glm::vec2 lastKnownPosition{0.0F, 0.0F}; // world position in meters at the last sighting
 		double	  lastSeenAt = 0.0;				 // TimeSystem::simulationSeconds (game minutes) of the last sighting
 	};
