@@ -46,6 +46,14 @@ Launch `world-sim --scene=game --background --no-settings` (RelWithDebInfo); the
 32. Read `/api/state?what=colonists`: Bob's `attributes.strength` is 20.
 33. `/api/ui/lint` on each tab: `"count":0`.
 
+### Entering by a dev switch
+
+A fresh launch at the splash, `world-sim --background --no-settings`, port 8081.
+
+1. `/api/control?action=scene&scene=game` while the splash shows: ok, and `/api/state?what=scene` names `gameloading`.
+2. `/api/state?what=colonists` while it loads: a 404 naming no state provider, and the game still answers.
+3. Once `/api/state?what=scene` names `game`: `/api/state?what=colonists` lists Bob with a `mood.band` name.
+
 ### Pruning
 
 A separate run on a fresh launch with a small record: a limit of 60 prunes at 54 thoughts (0.9) and stops at 48 (0.8), and a thought is recent for 12 game hours (`recentDays="0.5"`). `ID` is Bob's id from `/api/state?what=colonists`, and giving a thought means `curl "http://127.0.0.1:8081/api/dev/thought?colonist=ID&type=<type>"`.

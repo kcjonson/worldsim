@@ -197,8 +197,8 @@ session with the construction commit paths.
 
 GameLoadingScene constructs the session (after config load, with the planet's
 `GeneratedWorldSampler`) and drives loading through `pumpStreaming()`. `GameWorldState` carries the
-session instead of the chunk manager, placement executor, and processed set. GameScene's
-no-preloaded-state fallback (in `GameScene::onEnter`) constructs a session over `MockWorldSampler`.
+session instead of the chunk manager, placement executor, and processed set. GameScene has no other
+way in: a switch to it with no loaded world waiting builds GameLoadingScene instead.
 
 ### EntityFactory
 

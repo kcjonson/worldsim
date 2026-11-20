@@ -14,14 +14,12 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace world_sim {
 
 	namespace {
 		std::optional<worldview::GroundTileCache>  g_groundCache;
-		std::vector<std::string>				   g_colonistRulesErrors;
 		std::unique_ptr<worldview::GroundTileBank> g_groundTiles;
 	} // namespace
 
@@ -46,7 +44,12 @@ namespace world_sim {
 	}
 
 	GroundBakeStep stepGroundBake() {
-		const assets::ValidationReport& report = assets::AssetRegistry::Get().getValidationReport();
+		const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
+		// A dev switch from the splash can reach the loading scene while the library still loads on its worker.
+		if (registry.loadProgress().started.load() && !registry.isLoadComplete()) {
+			return {};
+		}
+		const assets::ValidationReport& report = registry.getValidationReport();
 		const std::vector<std::string>& recipeProblems = assets::RecipeRegistry::Get().problems();
 		if (report.hasErrors() || !recipeProblems.empty()) {
 			GroundBakeStep failed{.done = true};
@@ -65,14 +68,6 @@ namespace world_sim {
 			return {};
 		}
 		return {.done = true, .errors = bank.errors()};
-	}
-
-	void failColonistRules(std::vector<std::string> errors) {
-		g_colonistRulesErrors = std::move(errors);
-	}
-
-	std::vector<std::string> takeFailedColonistRules() {
-		return std::exchange(g_colonistRulesErrors, {});
 	}
 
 } // namespace world_sim

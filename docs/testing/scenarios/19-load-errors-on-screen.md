@@ -24,7 +24,7 @@ Edit only the staged copy beside the exe, `build/apps/world-sim/RelWithDebInfo/a
 11. Set the `urgent` of Thirst, Energy, Bladder, Digestion, Hygiene, Recreation, and Temperature to `"xyz"`.
 12. Click Quick Start again: five messages, then "and 5 more", the messages scrolling inside the panel if they don't all fit.
 13. `/api/ui/lint`: `"count":0`.
-14. `/api/control?action=scene&scene=game`: the splash shows the "Loading failed" panel with only the colonist rules errors, Enter Expedition disabled and clear of the panel.
+14. `/api/control?action=scene&scene=game`: the loading scene shows the same "Loading failed" panel, and `/api/state?what=scene` names `gameloading` with `failed` true.
 15. `/api/control?action=exit`.
 16. Copy the source `assets/config` files back over the staged ones.
 17. `diff -r assets/config build/apps/world-sim/RelWithDebInfo/assets/config` prints nothing.

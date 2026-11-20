@@ -118,9 +118,9 @@ which the tests use too). Each folder's own files load before its subfolders' (`
 so a mod adds or replaces by adding a file there. A clean load logs its counts at info level (traits; needs; terms;
 feelings, thought types, and sources). `GameLoadingScene` adds its errors, prefixed `[traits]`, `[attributes]`, `[needs]`, `[conditions]`,
 or `[thoughts]`, to the config errors the loading screen shows, and hands the rules to `GameScene` through
-`GameWorldState`. A direct switch to the game scene skips the loading scene, so `GameScene` loads them
-itself, once; when they are broken it hands the errors to the splash (`world_sim::failColonistRules`),
-which shows them after the ground bake and loads nothing.
+`GameWorldState`. A switch to the game scene with no loaded world waiting (the dev server's `scene`
+action, `reload`, `--scene=game`) builds the loading scene instead, so the game scene never runs without
+this config.
 
 `mood.xml` loads into `assets::MoodConfig` (the mood rate, the need penalty curve, and the band names)
 and is checked by `ConfigValidator::validateMood`. It names no need: each need's mood cost is on its own
@@ -217,9 +217,8 @@ the run's log file (`foundation::logFilePath()`, under `%TEMP%\world-sim\logs\` 
 message, and "Press Esc to return to the menu". Esc returns to the main menu, where the next game's load reads
 a corrected file again.
 
-The splash shows the same view for what blocks it: the asset library's validation and recipe errors and the ground bake's
-at startup, and the colonist rules' errors a direct switch to the game scene hands it
-(`world_sim::failColonistRules`). The view takes the boot log's place under the identity block, Enter
+The splash shows the same view for what blocks it: the asset library's validation and recipe errors and the ground
+bake's at startup. The view takes the boot log's place under the identity block, Enter
 Expedition stays disabled, and its line under the messages says to fix the files and restart.
 
 Both scenes put the messages in their `/api/state?what=scene` view, as `failed` and an `errors` array of the
