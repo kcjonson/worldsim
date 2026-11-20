@@ -45,7 +45,7 @@ namespace assets {
 
 	} // namespace
 
-	TEST(BiomeProvisions, EdibleYieldsAreFoodWoodGroupYieldsAreWoodAndNearPlacementsDoNotCount) {
+	TEST(BiomeProvisions, EdibleYieldsAreFoodWoodGroupYieldsAreWoodClumpsCountTheirPlantsAndNearPlacementsDoNotCount) {
 		auto& registry = AssetRegistry::Get();
 		registry.clearDefinitions();
 		registry.registerTestDefinition(item("Test_Berry", true));
@@ -54,7 +54,11 @@ namespace assets {
 		registry.registerTestDefinition(item("Test_Stick", false));
 
 		AssetDefinition bush = harvestable("Test_BerryBush", "Test_Berry", 4);
-		bush.placement.biomes.push_back(placedIn(worldgen::Biome::TemperateGrassland, 0.02F));
+		BiomePlacement	clumped = placedIn(worldgen::Biome::TemperateGrassland, 0.02F);
+		clumped.distribution = Distribution::Clumped;
+		clumped.clumping.clumpSizeMin = 3;
+		clumped.clumping.clumpSizeMax = 6;
+		bush.placement.biomes.push_back(clumped);
 		bush.placement.biomes.push_back(placedIn(worldgen::Biome::BorealForest, 0.1F, "Mud"));
 		registry.registerTestDefinition(std::move(bush));
 
@@ -73,7 +77,7 @@ namespace assets {
 		const worldgen::BiomeProvisionTable table = biomeProvisionsFromDefinitions(registry);
 
 		const worldgen::BiomeProvisions& grassland = provisionsOf(table, worldgen::Biome::TemperateGrassland);
-		EXPECT_FLOAT_EQ(grassland.foodSourcesPerSquareKilometer, 0.02F / 16.0F * 1e6F);
+		EXPECT_FLOAT_EQ(grassland.foodSourcesPerSquareKilometer, 0.02F * 4.5F / 16.0F * 1e6F) << "a clump of 3 to 6 bushes a roll";
 		EXPECT_FLOAT_EQ(grassland.woodSourcesPerSquareKilometer, 0.01F / 4.0F * 1e6F) << "neither the stick yield nor an item merely named Wood without the group is wood";
 
 		const worldgen::BiomeProvisions& boreal = provisionsOf(table, worldgen::Biome::BorealForest);

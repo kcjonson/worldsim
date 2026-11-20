@@ -15,6 +15,15 @@ namespace assets {
 			const std::vector<std::string>& groups = definition.placement.groups;
 			return std::find(groups.begin(), groups.end(), group) != groups.end();
 		}
+
+		// Plants a successful roll places: a clump of clumpSizeMin to clumpSizeMax, uniformly, as
+		// PlacementExecutor draws it; one otherwise.
+		float instancesPerRoll(const BiomePlacement& placement) {
+			if (placement.distribution != Distribution::Clumped) {
+				return 1.0F;
+			}
+			return 0.5F * static_cast<float>(placement.clumping.clumpSizeMin + placement.clumping.clumpSizeMax);
+		}
 	} // namespace
 
 	worldgen::BiomeProvisionTable biomeProvisionsFromDefinitions(const AssetRegistry& registry) {
@@ -24,30 +33,32 @@ namespace assets {
 
 		worldgen::BiomeProvisionTable table{};
 		for (const std::string& name : names) {
-			const AssetDefinition* def = registry.getDefinition(name);
-			if (def == nullptr || !def->capabilities.harvestable.has_value()) {
+			const AssetDefinition* definition = registry.getDefinition(name);
+			if (definition == nullptr || !definition->capabilities.harvestable.has_value()) {
 				continue;
 			}
-			const std::string&	   yieldName = def->capabilities.harvestable->yieldDefName;
+			const std::string&	   yieldName = definition->capabilities.harvestable->yieldDefName;
 			const AssetDefinition* yield = registry.getDefinition(yieldName);
 			const bool			   food = yield != nullptr && yield->isEdible();
 			const bool			   wood = yield != nullptr && declaresGroup(*yield, kWoodItemGroup);
 			if (!food && !wood) {
 				continue;
 			}
-			const auto pitch = static_cast<float>(def->placement.samplePitch);
-			for (size_t b = 0; b < table.size(); ++b) {
-				const BiomePlacement* placement = def->placement.findBiome(worldgen::biomeToString(static_cast<worldgen::Biome>(b)));
+			const auto pitch = static_cast<float>(definition->placement.samplePitch);
+			for (size_t biome = 0; biome < table.size(); ++biome) {
+				const BiomePlacement* placement =
+					definition->placement.findBiome(worldgen::biomeToString(static_cast<worldgen::Biome>(biome)));
 				// A conditional placement (near="Mud") is left out: the planet can't see the surface it keys on.
 				if (placement == nullptr || !placement->nearTileType.empty()) {
 					continue;
 				}
-				const float density = placement->spawnChance / (pitch * pitch) * kSquareMetersPerSquareKilometer;
+				const float density =
+					placement->spawnChance * instancesPerRoll(*placement) / (pitch * pitch) * kSquareMetersPerSquareKilometer;
 				if (food) {
-					table[b].foodSourcesPerSquareKilometer += density;
+					table[biome].foodSourcesPerSquareKilometer += density;
 				}
 				if (wood) {
-					table[b].woodSourcesPerSquareKilometer += density;
+					table[biome].woodSourcesPerSquareKilometer += density;
 				}
 			}
 		}
