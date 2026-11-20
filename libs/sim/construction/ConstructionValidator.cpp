@@ -260,6 +260,8 @@ namespace construction {
 				return "too close to the end";
 			case ValidationCode::OpeningWallTooShort:
 				return "wall too short for opening";
+			case ValidationCode::WallEndsOnOpening:
+				return "an opening is in the way";
 			case ValidationCode::OpeningOverlap:
 				return "openings overlap";
 			case ValidationCode::TooCloseToFoundation:
@@ -648,6 +650,12 @@ namespace construction {
 		const assets::ThicknessPreset& thickness,
 		FoundationId						   host
 	) const {
+		// An end landing on an opening's span on an existing wall is refused for every point, the
+		// first included.
+		if (const ValidationResult junction = checkJunctionClearOfOpenings(candidate, thickness.halfThicknessMm); !junction.ok()) {
+			return {junction.code, points.size(), 0, junction.measuredValue};
+		}
+
 		// First point is always placeable (matches foundation validatePoint).
 		if (points.empty()) {
 			return {};
@@ -738,6 +746,13 @@ namespace construction {
 			return {ValidationCode::NotContainedInHostFoundation, 0, 0, 0.0};
 		}
 
+		// Each end that joins a wall carrying an opening must clear that opening.
+		for (const ::Foundation::Vec2 end : {a, b}) {
+			if (const ValidationResult junction = checkJunctionClearOfOpenings(end, thickness.halfThicknessMm); !junction.ok()) {
+				return junction;
+			}
+		}
+
 		// The candidate footprint, built once.
 		const std::int64_t	 half = thickness.halfThicknessMm;
 		const geometry::Ring candBand = half > 0 ? geometry::band(qa, qb, half) : geometry::Ring{qa, qb};
@@ -802,6 +817,37 @@ namespace construction {
 	}
 
 	// --- Openings -----------------------------------------------------------
+
+	ValidationResult ConstructionValidator::checkJunctionClearOfOpenings(::Foundation::Vec2 point, std::int64_t stemHalfThicknessMm) const {
+		const geometry::Vec2i64 p = geometry::quantize(point);
+		const auto&				reg = assets::ConstructionRegistry::Get();
+		const double			marginM = static_cast<double>(constraints_->openingMarginMeters);
+		const double			stemHalfM = static_cast<double>(stemHalfThicknessMm) / static_cast<double>(geometry::kMillimetersPerMeter);
+		for (const Opening& opening : world_->openings()) {
+			const WallSegment* wall = world_->getSegment(opening.segment);
+			if (wall == nullptr) {
+				continue;
+			}
+			const Vertex* v0 = world_->getVertex(wall->v0);
+			const Vertex* v1 = world_->getVertex(wall->v1);
+			if (v0 == nullptr || v1 == nullptr || p == v0->pos || p == v1->pos) {
+				continue;
+			}
+			if (geometry::orientation(v0->pos, v1->pos, p) != geometry::Orientation::Collinear || p.x < std::min(v0->pos.x, v1->pos.x) ||
+				p.x > std::max(v0->pos.x, v1->pos.x) || p.y < std::min(v0->pos.y, v1->pos.y) || p.y > std::max(v0->pos.y, v1->pos.y)) {
+				continue;
+			}
+			const double lengthM = std::sqrt(geometry::dot(v1->pos - v0->pos, v1->pos - v0->pos).toDouble()) / static_cast<double>(geometry::kMillimetersPerMeter);
+			const double joinParam = geometry::dot(p - v0->pos, v1->pos - v0->pos).toDouble() / geometry::dot(v1->pos - v0->pos, v1->pos - v0->pos).toDouble();
+			const assets::OpeningTypeDef* type = reg.getOpeningType(opening.type);
+			const double				  halfWidthM = type != nullptr ? static_cast<double>(type->widthMeters) / 2.0 : 0.0;
+			const double				  clearance = std::abs(joinParam - static_cast<double>(opening.t)) * lengthM - halfWidthM;
+			if (clearance < marginM + stemHalfM) {
+				return {ValidationCode::WallEndsOnOpening, 0, 0, clearance};
+			}
+		}
+		return {};
+	}
 
 	ValidationResult
 	ConstructionValidator::validateOpening(SegmentId segment, float t, const std::string& type, const std::string& material) const {

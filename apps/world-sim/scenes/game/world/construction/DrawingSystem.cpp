@@ -1499,12 +1499,20 @@ namespace world_sim {
 		// Dev/test bypass (mirrors the /api/dev/foundation path): commit each
 		// consecutive pair straight to the topology with no soft-validator pass, so a
 		// caller can stamp a wall loop in one shot. commitSegment still enforces the
-		// hard topology invariants (zero-length, X-crossing, duplicate, T-split).
+		// hard topology invariants (zero-length, X-crossing, duplicate, T-split). The one soft
+		// check it keeps is the opening clearance: a wall ending on an opening's span is skipped.
 		const std::uint64_t placementOrder = constructionWorld_.version();
 		int					committed = 0;
+		const assets::ThicknessPreset* devPreset = ConstructionRegistry::Get().getThicknessPreset(material, thicknessPreset);
+		const std::int64_t			   devHalfThicknessMm = devPreset != nullptr ? devPreset->halfThicknessMm : 0;
 		for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
 			const geometry::Vec2i64 qa = geometry::quantize(pts[i]);
 			const geometry::Vec2i64 qb = geometry::quantize(pts[i + 1]);
+			const construction::ConstructionValidator devValidator(ConstructionRegistry::Get().constraints(), constructionWorld_);
+			if (!devValidator.checkJunctionClearOfOpenings(pts[i], devHalfThicknessMm).ok() ||
+				!devValidator.checkJunctionClearOfOpenings(pts[i + 1], devHalfThicknessMm).ok()) {
+				continue;
+			}
 			const auto				result = constructionWorld_.commitSegment(qa, qb, material, thicknessPreset, host, placementOrder);
 			if (!result.ok()) {
 				continue;

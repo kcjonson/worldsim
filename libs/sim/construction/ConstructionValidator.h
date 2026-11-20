@@ -73,6 +73,7 @@ namespace construction {
 		WallsOverlap,				  // footprint overlaps another wall's footprint (not a junction)
 		ParallelClearanceTooSmall,	  // faces run closer than minParallelClearance without joining
 		XCrossing,					  // centerline would properly cross an existing wall centerline
+		WallEndsOnOpening,			  // an end of the wall would land within an opening's span (plus margin) on an existing wall
 		// Opening codes (Epic F). An opening is placed on a BUILT wall segment at a
 		// centerline parameter t; these are the opening-only reasons.
 		OpeningSegmentInvalid,	// target segment is missing, or its wall graph cannot be resolved (openingRange)
@@ -241,6 +242,15 @@ namespace construction {
 		// commit gate and the colorizing feedback source.
 		[[nodiscard]] ValidationResult
 		validateWallSegment(::Foundation::Vec2 a, ::Foundation::Vec2 b, const assets::ThicknessPreset& thickness, FoundationId host) const;
+
+		// A wall end at `point` (world meters) joins an existing wall there. When it lands on the
+		// interior of a wall that carries an opening, the join splits that wall and re-hosts the
+		// opening on one half; a join within the opening's half width plus openingMargin plus the
+		// new wall's half thickness (`stemHalfThicknessMm`, the band trim at the junction) of the
+		// opening's centre is refused, since the opening would end up on the junction. A point that
+		// is not on a wall's interior, or clear of every opening there, passes. Called by both wall
+		// validators for each end they place.
+		[[nodiscard]] ValidationResult checkJunctionClearOfOpenings(::Foundation::Vec2 point, std::int64_t stemHalfThicknessMm) const;
 
 		// --- Openings -------------------------------------------------------
 
