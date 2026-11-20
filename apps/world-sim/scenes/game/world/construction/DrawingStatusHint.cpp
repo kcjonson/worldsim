@@ -8,11 +8,11 @@ namespace world_sim {
 			if (status.valid) {
 				hint.text = "Click a wall to place";
 			} else {
-				// No wall in range is pending (move onto a built wall); a wall in range that fails the
+				// No wall in range is pending (move onto a wall); a wall in range that fails the
 				// placement gate is blocked.
 				const bool blocked = !status.message.empty() && status.message != "no wall in range";
 				hint.tone = blocked ? StatusHintTone::Crit : StatusHintTone::Warn;
-				hint.text = status.message.empty() ? "Hover a built wall" : status.message;
+				hint.text = status.message.empty() ? "Hover a wall" : status.message;
 			}
 		} else if (status.wall) {
 			if (status.pointCount == 0) {

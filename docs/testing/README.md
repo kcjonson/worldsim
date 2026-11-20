@@ -432,7 +432,7 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
 - `wall`: `hostFoundation`, the foundation the chain is on, 0 until the first point is placed; a pointer over a foundation does not set it.
   - Before the first point, `verdict.proposed` is true with the pointer on a foundation and false off every one (a click there places nothing), and `status.valid` is true with the hint `Click a foundation to start` either way.
   - A refusal for the ground outranks both: over ground that cannot be built on, `verdict.valid` is false, `proposed` is true and `reason` says why.
-- `opening`: `type`, and `snap` or null when no built wall is in range. The snap is `wall` (the segment id), `fractionAlongWall` (how far along that wall the opening sits: 0 at the wall's first vertex, 1 at its second) and `point`, which is on the wall's line.
+- `opening`: `type`, and `snap` or null when no wall is in range. The snap is `wall` (the segment id), `fractionAlongWall` (how far along that wall the opening sits: 0 at the wall's first vertex, 1 at its second) and `point`, which is on the wall's line.
 - `snap`: the snapped point, `kind`, `guides`, the length step, and `closesShape` (the next click closes the shape; in the Rectangle tool, commits it). Null while paused, and for the opening tool, whose snap is under `opening`.
   - `kind` is a `SnapKind`: `None`, `Angle`, `Vertex`, `Edge`, `Origin`, `WallEndpoint`, `WallSegment`, `GuideLine` or `GuideCrossing`. In the Rectangle tool it is a `RectangleSnapKind`: `None`, `Vertex`, `Edge` or `Grid`. A close the rescue makes, with the pointer near the first point but not on it, has `kind` `None` and `closesShape` true.
   - Each guide has `source` (`DrawnShape`, `NearbyStructure` or `WorldAxes`), `relation` (`Parallel`, `Perpendicular` or `AngleStep`), `from` (the node it runs from) and `distanceFromNodeMeters`.
@@ -449,12 +449,12 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
     - Add / Subtract with no point: `Draw a region across the foundation edge`.
     - Freeform with no point, and no tool: `Ready`.
     - Wall: `Click a foundation to start` (no point placed), `Right-click / Enter to finish` (one or more).
-    - Opening: `Click a wall to place` (valid), `no wall in range` (the pointer is not near a built wall), `Hover a built wall` (paused, nothing proposed), or the validator's refusal.
+    - Opening: `Click a wall to place` (valid), `no wall in range` (the pointer is not near a wall), `Hover a wall` (paused, nothing proposed), or the validator's refusal.
   - How the keys relate:
     - `message` carries the refusal, and is empty when `valid` is true.
     - `hint` is the strip's line: the refusal or an instruction.
     - `hint` equals `message` when `valid` is false and `message` is not empty, whatever the tool and however many points are placed (a refusal beats `Keep placing points`).
-    - `valid` is false with an empty `message` only for the opening tool while paused, where `hint` is `Hover a built wall`; everywhere else a false `valid` carries a `message`, and `hint` is that message.
+    - `valid` is false with an empty `message` only for the opening tool while paused, where `hint` is `Hover a wall`; everywhere else a false `valid` carries a `message`, and `hint` is that message.
     - `verdict.reason` is the same text as `status.message` for every tool.
     - The view reports text only; the strip's colour for the line is not in it.
   - A scenario that checks a refusal asserts `status.valid` false and `status.message`.
