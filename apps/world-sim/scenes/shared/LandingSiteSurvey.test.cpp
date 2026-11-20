@@ -89,7 +89,7 @@ namespace world_sim {
 	TEST(LandingSiteSurvey, FindsSitesOnceThenResolvesTheNewestPick) {
 		const std::shared_ptr<const worldgen::GeneratedWorld> world = riverWorld();
 		LandingSiteSurvey									  survey;
-		survey.start(world, grasslandProvisions(), std::nullopt, worldgen::kSuggestedSiteCount);
+		survey.start(world, grasslandProvisions(), worldgen::SuggestedSiteQuery{});
 
 		std::optional<std::vector<worldgen::LandingSite>> sites;
 		ASSERT_TRUE(waitFor([&] { return (sites = survey.takeSites()).has_value(); }));
@@ -110,7 +110,7 @@ namespace world_sim {
 
 	TEST(LandingSiteSurvey, CancelStopsAScanInProgress) {
 		LandingSiteSurvey survey;
-		survey.start(riverWorld(), grasslandProvisions(), std::nullopt, worldgen::kSuggestedSiteCount);
+		survey.start(riverWorld(), grasslandProvisions(), worldgen::SuggestedSiteQuery{});
 		survey.resolve({0.0, 0.0});
 		survey.cancel();
 		EXPECT_FALSE(survey.surveying());

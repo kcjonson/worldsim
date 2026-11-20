@@ -151,11 +151,11 @@ LandingSiteDetails buildLandingSiteDetails(
 
 	// Provisions section: whether the biome's flora feeds a colony and gives it wood.
 	{
-		DetailSection s;
-		s.header = "Provisions";
-		s.rows.push_back({"Food", site.assessment.hasFood ? "Yes" : "None", site.assessment.hasFood ? kNeutral : kDry});
-		s.rows.push_back({"Wood", site.assessment.hasWood ? "Yes" : "None", site.assessment.hasWood ? kNeutral : kDry});
-		out.sections.push_back(std::move(s));
+		DetailSection provisions;
+		provisions.header = "Provisions";
+		provisions.rows.push_back({"Food", site.assessment.hasFood ? "Yes" : "None", site.assessment.hasFood ? kNeutral : kDry});
+		provisions.rows.push_back({"Wood", site.assessment.hasWood ? "Yes" : "None", site.assessment.hasWood ? kNeutral : kDry});
+		out.sections.push_back(std::move(provisions));
 	}
 
 	// Terrain section: biome + elevation relative to sea level.

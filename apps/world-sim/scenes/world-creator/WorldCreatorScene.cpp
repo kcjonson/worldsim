@@ -304,7 +304,7 @@ namespace {
 			return {bounds.x * scale, bounds.y * scale, bounds.width * scale, bounds.height * scale};
 		}
 
-		// Read each frame, so the Settings switch applies on return without a rebuild.
+		// Read each frame, so the markers follow the Settings switch.
 		bool markersShown() const { return reviewing() && world_sim::UserSettings::Get().landing.showSuggestedSites; }
 
 		world_sim::ParameterPanelCallbacks callbacks() {
@@ -693,18 +693,33 @@ namespace {
 			std::optional<std::size_t> nearest;
 			float					   nearestSquared = kSuggestedMarkerHitRadius * kSuggestedMarkerHitRadius;
 			for (std::size_t index = 0; index < suggestedSites.size(); ++index) {
-				float x = 0.0F;
-				float y = 0.0F;
-				if (!globe.projectLatLon(siteLatLon(suggestedSites[index]), rect, x, y)) {
+				const MarkerPlacement marker = placeMarker(suggestedSites[index], rect);
+				if (!marker.onScreen) {
 					continue;
 				}
-				const float squared = (x - position.x) * (x - position.x) + (y - position.y) * (y - position.y);
+				const float squared = (marker.x - position.x) * (marker.x - position.x) + (marker.y - position.y) * (marker.y - position.y);
 				if (squared <= nearestSquared) {
 					nearestSquared = squared;
 					nearest = index;
 				}
 			}
 			return nearest;
+		}
+
+		// A suggested site's marker in `rect`'s space: projected when the site is on the near side, on screen when it
+		// is also inside the stage, the only markers drawn or hit.
+		struct MarkerPlacement {
+			bool  nearSide{};
+			bool  onScreen{};
+			float x{};
+			float y{};
+		};
+		MarkerPlacement placeMarker(const worldgen::LandingSite& site, const Foundation::Rect& rect) const {
+			MarkerPlacement placement;
+			placement.nearSide = globe.projectLatLon(siteLatLon(site), rect, placement.x, placement.y);
+			placement.onScreen = placement.nearSide && placement.x >= rect.x && placement.x <= rect.x + rect.width &&
+								 placement.y >= rect.y && placement.y <= rect.y + rect.height;
+			return placement;
 		}
 
 		static planetview::LatLon siteLatLon(const worldgen::LandingSite& site) {
@@ -827,7 +842,7 @@ namespace {
 					surveyPanel.setWorld(result);
 					clearSelection();
 					suggestedSites.clear();
-					survey.start(result, provisions, std::nullopt, worldgen::kSuggestedSiteCount);
+					survey.start(result, provisions, worldgen::SuggestedSiteQuery{});
 				}
 				refreshFooter();
 				return;
@@ -910,20 +925,6 @@ namespace {
 				globe.panCamera(dYaw, dPitch);
 		}
 
-		static bool hasField(const worldgen::GeneratedWorld& world, worldgen::WorldField f) {
-			return (world.validFields & static_cast<uint32_t>(f)) != 0;
-		}
-
-		static bool isWaterTile(const worldgen::GeneratedWorld& world, worldgen::TileId tile) {
-			if (hasField(world, worldgen::WorldField::Flags) && tile < world.data.flags.size()) {
-				return (world.data.flags[tile] & (worldgen::kFlagOcean | worldgen::kFlagLake)) != 0;
-			}
-			if (hasField(world, worldgen::WorldField::Elevation) && tile < world.data.elevation.size()) {
-				return world.data.elevation[tile] < world.seaLevelMeters;
-			}
-			return false;
-		}
-
 		void clearSelection() {
 			pickMade = false;
 			selectedLanding.reset();
@@ -955,7 +956,6 @@ namespace {
 			selectedPick = siteLatLon(site);
 			pickMade = true;
 			showLanding(site);
-			selectedSuggestion = index;
 		}
 
 		void showLanding(worldgen::LandingSite landing) {
@@ -991,7 +991,7 @@ namespace {
 
 			// Pick errors (clicking water) surface as a short hint at the bottom;
 			// selecting a valid tile clears it.
-			if (isWaterTile(*result, tile)) {
+			if (worldgen::isWaterTile(*result, tile)) {
 				setPickHint(true);
 				return;
 			}
@@ -1057,7 +1057,7 @@ namespace {
 			owner->scenes().switchTo(world_sim::scenes::PartySelect.name);
 		}
 
-		// Suggested site markers on the near side, in logical px, sized in ui px by `scale`: a diamond for a
+		// Suggested site markers on screen, in logical px, sized in ui px by `scale`: a diamond for a
 		// river site, a circle for a lake site. Static; the pulse is the selection's.
 		void renderSuggestedSites(const Foundation::Rect& rect, float scale, const ui::Theme& theme) const {
 			if (!markersShown()) {
@@ -1068,11 +1068,12 @@ namespace {
 			const float				radius = kSuggestedMarkerRadius * scale;
 			const float				stroke = kSuggestedMarkerStroke * scale;
 			for (const worldgen::LandingSite& site : suggestedSites) {
-				float x = 0.0F;
-				float y = 0.0F;
-				if (!globe.projectLatLon(siteLatLon(site), rect, x, y)) {
+				const MarkerPlacement marker = placeMarker(site, rect);
+				if (!marker.onScreen) {
 					continue;
 				}
+				const float x = marker.x;
+				const float y = marker.y;
 				if (site.feature == worldgen::FreshWaterFeature::River) {
 					const std::array<Foundation::Vec2, 4> corners{{{x, y - radius}, {x + radius, y}, {x, y + radius}, {x - radius, y}}};
 					Renderer::Primitives::drawPolyline({
@@ -1105,10 +1106,7 @@ namespace {
 			std::string sites;
 			for (std::size_t index = 0; index < suggestedSites.size(); ++index) {
 				const worldgen::LandingSite& site = suggestedSites[index];
-				float						 x = 0.0F;
-				float						 y = 0.0F;
-				const bool					 nearSide = globeShown && globe.projectLatLon(siteLatLon(site), rect, x, y);
-				const bool onScreen = nearSide && x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
+				const MarkerPlacement		 marker = globeShown ? placeMarker(site, rect) : MarkerPlacement{};
 				sites += std::format(
 					R"({}{{"index":{},"latDeg":{},"lonDeg":{},"kind":"{}","biome":{},"onScreen":{},"x":{},"y":{}}})",
 					index == 0 ? "" : ",",
@@ -1117,9 +1115,9 @@ namespace {
 					site.origin.lonDeg,
 					featureName(site.feature),
 					world ? biomeJson(*world, site.tile) : "null",
-					onScreen,
-					nearSide ? std::format("{}", x) : "null",
-					nearSide ? std::format("{}", y) : "null"
+					marker.onScreen,
+					marker.nearSide ? std::format("{}", marker.x) : "null",
+					marker.nearSide ? std::format("{}", marker.y) : "null"
 				);
 			}
 

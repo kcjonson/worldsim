@@ -69,6 +69,9 @@ inline constexpr bool isFreshwater(WaterClass w) {
     return w == WaterClass::River || w == WaterClass::Lake;
 }
 
+// A lake or ocean tile by its flags, or a tile below sea level: no landing comes down on one.
+[[nodiscard]] bool isWaterTile(const GeneratedWorld& world, TileId tile);
+
 // The tile-level screen: where to look for fresh water (kFlagRiver or kFlagLake on the tile or a
 // neighbour), else Coastal on an ocean neighbour, else RainFed. Tile flags promise water somewhere
 // in a 3.5 km tile; only resolveLandingSite turns that into a verified class.
@@ -130,12 +133,16 @@ struct SuggestedSiteQuery {
     std::function<void()> checkpoint;
 };
 
+// Quick Start's landing: the first site, Temperate Deciduous Forest preferred.
+[[nodiscard]] SuggestedSiteQuery quickStartSiteQuery();
+
 // Up to maximumSites good places to start a colony, best first, each one a resolved landing that is
 // recommended() and lies on the tile it was found on: river tiles and tiles beside a lake that meet the
 // bar on their own data within kMaximumSuggestedLatitudeDegrees of the equator, ranked (preferred biome,
 // river before lake, higher habitabilityScore, lowest TileId), kept per (coarse bin, kind, biome) slot, and
 // taken in rounds that keep sites kMinimumSiteSeparationDegrees apart and vary their biomes and kinds.
-// The same world always gives the same list. Returns what it has when stopToken is set.
+// The same world always gives the same list. A stop requested during the tile scan returns nothing; one
+// requested during selection returns the sites taken so far.
 [[nodiscard]] std::vector<LandingSite> findSuggestedLandingSites(const std::shared_ptr<const GeneratedWorld>& world,
                                                                  const BiomeProvisionTable& provisions,
                                                                  const SuggestedSiteQuery& query);

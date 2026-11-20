@@ -12,19 +12,16 @@
 // BM_SearchCases: how many steps real routes take (see "Choosing the search cap" below).
 
 #include "NavigationSystem.h"
+#include "QuickStartLanding.bench.h"
 
 #include <nav/NavCoords.h>
 #include <nav/NavInputBuilder.h>
 #include <nav/PatchableMesh.h>
 #include <nav/PathQuery.h>
 
-#include <assets/AssetRegistry.h>
-#include <assets/placement/BiomeProvisions.h>
 #include <world/chunk/Chunk.h>
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/GeneratedWorldSampler.h>
-#include <worldgen/io/PlanetIO.h>
-#include <worldgen/sampling/LandingSite.h>
 
 #include <benchmark/benchmark.h>
 
@@ -33,8 +30,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
-#include <filesystem>
 #include <fstream>
 #include <utility>
 #include <memory>
@@ -103,32 +98,17 @@ namespace {
 		return out;
 	}
 
-	const Region* realRegion() {
-		static const std::optional<Region> region = []() -> std::optional<Region> {
-			const char*					planetEnv  = std::getenv("WORLDSIM_PLANET");
-			const std::filesystem::path planetPath = planetEnv != nullptr ? std::filesystem::path(planetEnv) : std::filesystem::path("planets/quickstart.wsplanet");
-			if (!std::filesystem::exists(planetPath)) {
-				return std::nullopt;
-			}
-			const std::shared_ptr<const worldgen::GeneratedWorld> planet = worldgen::loadPlanet(planetPath);
-			if (!planet) {
-				return std::nullopt;
-			}
-			assets::AssetRegistry& registry = assets::AssetRegistry::Get();
-			registry.setSharedScriptsPath("assets/shared/scripts");
-			registry.loadDefinitionsFromFolder("assets/world");
-			worldgen::SuggestedSiteQuery query;
-			query.preferredBiome = worldgen::Biome::TemperateDeciduousForest;
-			query.maximumSites	 = 1;
-			const std::vector<worldgen::LandingSite> sites =
-				worldgen::findSuggestedLandingSites(planet, assets::biomeProvisionsFromDefinitions(registry), query);
-			if (sites.empty()) {
-				return std::nullopt;
-			}
-			const worldgen::LatLon site = sites.front().origin;
+	// The real chunks round the Quick Start landing; null when the landing helper skipped or failed the bench.
+	const Region* realRegion(benchmark::State& state) {
+		const bench::QuickStartLanding* landing = bench::quickStartLanding(state);
+		if (landing == nullptr) {
+			return nullptr;
+		}
+		static const Region region = [landing] {
+			const worldgen::LatLon site = landing->landing.origin;
 			Region				   out;
-			out.start = {static_cast<float>(sites.front().spawn.xMeters), static_cast<float>(sites.front().spawn.yMeters)};
-			world::ChunkManager chunks(std::make_unique<world::GeneratedWorldSampler>(planet, site.latDeg, site.lonDeg));
+			out.start = landing->drop;
+			world::ChunkManager chunks(std::make_unique<world::GeneratedWorldSampler>(landing->planet, site.latDeg, site.lonDeg));
 			chunks.setLoadRadius(0);
 			chunks.setUnloadRadius(0);
 			for (const world::ChunkCoordinate coord : spiral(world::worldToChunk({out.start.x, out.start.y}), 32)) {
@@ -148,7 +128,7 @@ namespace {
 			}
 			return out;
 		}();
-		return region ? &*region : nullptr;
+		return &region;
 	}
 
 	const Region* openRegion() {
@@ -186,9 +166,8 @@ namespace {
 	// range(0): chunks (25, 121, 500, 1000); range(1): 0 the real mix, 1 open ground.
 	void BM_NavScaleGround(benchmark::State& state) {
 		const std::size_t n		 = static_cast<std::size_t>(state.range(0));
-		const Region*	  region = state.range(1) == 0 ? realRegion() : openRegion();
+		const Region*	  region = state.range(1) == 0 ? realRegion(state) : openRegion();
 		if (region == nullptr) {
-			state.SkipWithMessage("no planet (WORLDSIM_PLANET)");
 			return;
 		}
 		if (region->chunks.size() < n + 1) {
@@ -290,13 +269,13 @@ namespace {
 		return obstacles;
 	}
 
-	const SearchGround* searchGround(Ground g) {
+	const SearchGround* searchGround(Ground g, benchmark::State& state) {
 		static std::map<Ground, std::unique_ptr<SearchGround>> grounds;
 		auto&												   slot = grounds[g];
 		if (slot) {
 			return slot.get();
 		}
-		const Region* region = g == Ground::Real ? realRegion() : openRegion();
+		const Region* region = g == Ground::Real ? realRegion(state) : openRegion();
 		if (region == nullptr) {
 			return nullptr;
 		}
@@ -355,9 +334,8 @@ namespace {
 	void BM_SearchCases(benchmark::State& state) {
 		const auto				  g		 = static_cast<Ground>(state.range(0));
 		const auto				  d		 = static_cast<float>(state.range(1));
-		const SearchGround* const ground = searchGround(g);
+		const SearchGround* const ground = searchGround(g, state);
 		if (ground == nullptr) {
-			state.SkipWithMessage("no planet (WORLDSIM_PLANET)");
 			return;
 		}
 		for (auto _ : state) {

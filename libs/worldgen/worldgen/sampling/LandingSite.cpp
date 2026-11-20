@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <numbers>
 #include <optional>
 #include <vector>
 
@@ -15,17 +16,25 @@ namespace worldgen {
 
 namespace {
 
-constexpr double kPi = 3.14159265358979323846;
-constexpr double kRadiansPerDegree = kPi / 180.0;
-constexpr double kDegreesPerRadian = 180.0 / kPi;
+constexpr double kRadiansPerDegree = std::numbers::pi / 180.0;
+
+// The habitability score's terms (assessLandingTile) and the least score of each bucket.
+constexpr int kFreshWaterScore = 3;
+constexpr int kCoastalScore = 1;
+constexpr int kAmpleRainfallScore = 2;
+constexpr int kModerateRainfallScore = 1;
+constexpr int kDesertRainfallScore = -1;
+constexpr int kUnlivableTemperatureScore = -1;
+constexpr int kBrutalTemperatureScore = -2;
+constexpr int kNoFoodScore = -1;
+constexpr int kNoWoodScore = -1;
+constexpr int kAmpleProvisionsScore = 1;
+constexpr int kEasyScoreMinimum = 4;
+constexpr int kModerateScoreMinimum = 2;
+constexpr int kHardScoreMinimum = 0;
 
 bool hasField(const GeneratedWorld& world, WorldField f) {
     return (world.validFields & static_cast<uint32_t>(f)) != 0;
-}
-
-bool isWaterTile(const GeneratedWorld& world, TileId t) {
-    if ((world.data.flags[t] & (kFlagOcean | kFlagLake)) != 0) return true;
-    return world.data.elevation[t] < world.seaLevelMeters;
 }
 
 // Coast = land tile with at least one OCEAN neighbor. Computed from the grid
@@ -56,15 +65,9 @@ bool tileOrNeighborHasFlag(const GeneratedWorld& world, TileId t, uint8_t flag) 
     return false;
 }
 
-Vec3d unitVectorOf(LatLon point) {
-    const double lat = point.latDeg * kRadiansPerDegree;
-    const double lon = point.lonDeg * kRadiansPerDegree;
-    const double cosLat = foundation::det_math::cos(lat);
-    return {cosLat * foundation::det_math::cos(lon), cosLat * foundation::det_math::sin(lon),
-            foundation::det_math::sin(lat)};
+double dotProduct(const Vec3d& first, const Vec3d& second) {
+    return first.x * second.x + first.y * second.y + first.z * second.z;
 }
-
-double dot(const Vec3d& a, const Vec3d& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 
 // Through SphereGrid::latLonOf for a tile centre, so an anchor on a tile's centre is bit-identical
 // to the lat/lon every other caller has for that tile.
@@ -82,9 +85,9 @@ LatLon lakeAnchor(const GeneratedWorld& world, TileId land, TileId lake) {
     const SphereGrid& grid = *world.grid;
     const Vec3d from = grid.tileCenter(land);
     const Vec3d to = grid.tileCenter(lake);
-    const double cosArc = std::clamp(dot(from, to), -1.0, 1.0);
+    const double cosArc = std::clamp(dotProduct(from, to), -1.0, 1.0);
     const Vec3d across{to.x - cosArc * from.x, to.y - cosArc * from.y, to.z - cosArc * from.z};
-    const double acrossLength = foundation::det_math::sqrt(dot(across, across));
+    const double acrossLength = foundation::det_math::sqrt(dotProduct(across, across));
     const double arc = foundation::det_math::atan2(acrossLength, cosArc);
     const double radius = world.derived.planetRadiusMeters;
 
@@ -106,9 +109,10 @@ LatLon lakeAnchor(const GeneratedWorld& world, TileId land, TileId lake) {
         }
     }
 
-    const Vec3d point = pointAt(std::max(0.0, inside - kLakeShoreInsetMeters / radius));
-    return {foundation::det_math::asin(std::clamp(point.z, -1.0, 1.0)) * kDegreesPerRadian,
-            foundation::det_math::atan2(point.y, point.x) * kDegreesPerRadian};
+    LatLon anchor;
+    SphereGrid::latLonFromUnitVector(pointAt(std::max(0.0, inside - kLakeShoreInsetMeters / radius)), anchor.latDeg,
+                                     anchor.lonDeg);
+    return anchor;
 }
 
 // Neighbours of `tile` that pass `keep`, nearest centre to the pick first, ties to the lowest TileId.
@@ -118,7 +122,7 @@ std::vector<TileId> neighboursNearestFirst(const SphereGrid& grid, TileId tile, 
     const uint32_t count = grid.neighbors(tile, neighbours);
     std::vector<std::pair<double, TileId>> ranked;
     for (uint32_t i = 0; i < count; ++i) {
-        if (keep(neighbours[i])) ranked.emplace_back(-dot(grid.tileCenter(neighbours[i]), pick), neighbours[i]);
+        if (keep(neighbours[i])) ranked.emplace_back(-dotProduct(grid.tileCenter(neighbours[i]), pick), neighbours[i]);
     }
     std::sort(ranked.begin(), ranked.end());
     std::vector<TileId> out;
@@ -130,6 +134,7 @@ std::vector<TileId> neighboursNearestFirst(const SphereGrid& grid, TileId tile, 
 constexpr uint32_t kStopCheckTileInterval = 65536;
 
 enum class CandidateKind : uint8_t { River, Lake };
+constexpr std::size_t kCandidateKindCount = 2;
 
 // A tile whose own resolution anchors on itself and that meets the rest of the bar on its own data.
 struct Candidate {
@@ -140,11 +145,11 @@ struct Candidate {
     int           habitabilityScore{};
 };
 
-bool ranksBefore(const Candidate& a, const Candidate& b) {
-    if (a.preferred != b.preferred) return a.preferred;
-    if (a.kind != b.kind) return a.kind < b.kind;
-    if (a.habitabilityScore != b.habitabilityScore) return a.habitabilityScore > b.habitabilityScore;
-    return a.tile < b.tile;
+bool ranksBefore(const Candidate& first, const Candidate& second) {
+    if (first.preferred != second.preferred) return first.preferred;
+    if (first.kind != second.kind) return first.kind < second.kind;
+    if (first.habitabilityScore != second.habitabilityScore) return first.habitabilityScore > second.habitabilityScore;
+    return first.tile < second.tile;
 }
 
 bool bordersLake(const GeneratedWorld& world, TileId tile) {
@@ -161,10 +166,10 @@ bool bordersLake(const GeneratedWorld& world, TileId tile) {
 class CandidateSlots {
   public:
     explicit CandidateSlots(uint32_t binCount)
-        : slots(static_cast<std::size_t>(binCount) * 2 * static_cast<std::size_t>(Biome::Count)) {}
+        : slots(static_cast<std::size_t>(binCount) * kCandidateKindCount * static_cast<std::size_t>(Biome::Count)) {}
 
     void offer(uint32_t bin, const Candidate& candidate) {
-        Slot& slot = slots[(static_cast<std::size_t>(bin) * 2 + static_cast<std::size_t>(candidate.kind)) *
+        Slot& slot = slots[(static_cast<std::size_t>(bin) * kCandidateKindCount + static_cast<std::size_t>(candidate.kind)) *
                                static_cast<std::size_t>(Biome::Count) +
                            candidate.biome];
         if (slot.count < kCandidatesPerSlot) {
@@ -193,6 +198,11 @@ class CandidateSlots {
     std::vector<Slot> slots;
 };
 } // namespace
+
+bool isWaterTile(const GeneratedWorld& world, TileId tile) {
+    if (hasField(world, WorldField::Flags) && (world.data.flags[tile] & (kFlagOcean | kFlagLake)) != 0) return true;
+    return hasField(world, WorldField::Elevation) && world.data.elevation[tile] < world.seaLevelMeters;
+}
 
 WaterClass classifyWater(const GeneratedWorld& world, TileId tile) {
     if (!world.grid) {
@@ -265,8 +275,8 @@ TileAssessment assessLandingTile(const GeneratedWorld& world, const BiomeProvisi
     int score = 0;
     switch (verifiedWater) {
         case WaterClass::River:
-        case WaterClass::Lake:    score += 3; break;
-        case WaterClass::Coastal: score += 1; break;
+        case WaterClass::Lake:    score += kFreshWaterScore; break;
+        case WaterClass::Coastal: score += kCoastalScore; break;
         case WaterClass::RainFed: break;
     }
 
@@ -275,23 +285,23 @@ TileAssessment assessLandingTile(const GeneratedWorld& world, const BiomeProvisi
         rainMillimeters = world.data.precipitation[tile];
     }
     if (rainMillimeters >= kAmpleRainfallMillimeters) {
-        score += 2;
+        score += kAmpleRainfallScore;
     } else if (rainMillimeters >= kModerateRainfallMillimeters) {
-        score += 1;
+        score += kModerateRainfallScore;
     } else if (rainMillimeters < kDesertRainfallMillimeters && verifiedWater == WaterClass::RainFed) {
-        score -= 1;
+        score += kDesertRainfallScore;
     }
 
-    if (!assessment.livableTemperature) score -= brutal ? 2 : 1;
-    if (!assessment.hasFood) score -= 1;
-    if (!assessment.hasWood) score -= 1;
-    if (ampleProvisions) score += 1;
+    if (!assessment.livableTemperature) score += brutal ? kBrutalTemperatureScore : kUnlivableTemperatureScore;
+    if (!assessment.hasFood) score += kNoFoodScore;
+    if (!assessment.hasWood) score += kNoWoodScore;
+    if (ampleProvisions) score += kAmpleProvisionsScore;
 
     assessment.habitabilityScore = score;
-    assessment.habitability = score >= 4   ? Habitability::Easy
-                            : score >= 2   ? Habitability::Moderate
-                            : score >= 0   ? Habitability::Hard
-                                           : Habitability::Harsh;
+    assessment.habitability = score >= kEasyScoreMinimum     ? Habitability::Easy
+                            : score >= kModerateScoreMinimum ? Habitability::Moderate
+                            : score >= kHardScoreMinimum     ? Habitability::Hard
+                                                             : Habitability::Harsh;
     return assessment;
 }
 
@@ -311,17 +321,17 @@ LandingSite resolveLandingSite(const std::shared_ptr<const GeneratedWorld>& worl
     };
 
     if (hasField(planet, WorldField::Flags) && !isWaterTile(planet, picked)) {
-        const Vec3d pickDirection = unitVectorOf(pick);
+        const Vec3d pickDirection = SphereGrid::unitVectorFromLatLon(pick.latDeg, pick.lonDeg);
 
         if ((planet.data.flags[picked] & kFlagRiver) != 0) {
             if (auto site = landAt(centreOf(grid, picked))) return *site;
         }
-        const auto isLake = [&](TileId t) { return (planet.data.flags[t] & kFlagLake) != 0; };
+        const auto isLake = [&](TileId neighbour) { return (planet.data.flags[neighbour] & kFlagLake) != 0; };
         for (const TileId lake : neighboursNearestFirst(grid, picked, pickDirection, isLake)) {
             if (auto site = landAt(lakeAnchor(planet, picked, lake))) return *site;
         }
-        const auto isLandRiver = [&](TileId t) {
-            return (planet.data.flags[t] & kFlagRiver) != 0 && !isWaterTile(planet, t);
+        const auto isLandRiver = [&](TileId neighbour) {
+            return (planet.data.flags[neighbour] & kFlagRiver) != 0 && !isWaterTile(planet, neighbour);
         };
         for (const TileId river : neighboursNearestFirst(grid, picked, pickDirection, isLandRiver)) {
             if (auto site = landAt(centreOf(grid, river))) return *site;
@@ -331,6 +341,13 @@ LandingSite resolveLandingSite(const std::shared_ptr<const GeneratedWorld>& worl
     const WaterClass water = hasOceanNeighbor(planet, picked) ? WaterClass::Coastal : WaterClass::RainFed;
     return LandingSite{pick, picked, FreshWaterFeature::None, findWatersideSpawn(world, pick.latDeg, pick.lonDeg),
                        assessLandingTile(planet, provisions, picked, water)};
+}
+
+SuggestedSiteQuery quickStartSiteQuery() {
+    SuggestedSiteQuery query;
+    query.preferredBiome = Biome::TemperateDeciduousForest;
+    query.maximumSites = 1;
+    return query;
 }
 
 std::vector<LandingSite> findSuggestedLandingSites(const std::shared_ptr<const GeneratedWorld>& world,
@@ -404,7 +421,7 @@ std::vector<LandingSite> findSuggestedLandingSites(const std::shared_ptr<const G
 
             const Vec3d centre = grid.tileCenter(candidate.tile);
             const bool  tooClose = std::any_of(siteCentres.begin(), siteCentres.end(),
-                                               [&](const Vec3d& site) { return dot(centre, site) > separationCosine; });
+                                               [&](const Vec3d& site) { return dotProduct(centre, site) > separationCosine; });
             if (tooClose) continue;
             if (!finalPass) {
                 const auto sameBiome = static_cast<std::size_t>(std::count(siteBiomes.begin(), siteBiomes.end(), candidate.biome));

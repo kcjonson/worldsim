@@ -11,8 +11,7 @@ namespace world_sim {
 	void LandingSiteSurvey::start(
 		std::shared_ptr<const worldgen::GeneratedWorld> world,
 		worldgen::BiomeProvisionTable					 provisions,
-		std::optional<worldgen::Biome>					 preferredBiome,
-		std::size_t										 maximumSites
+		worldgen::SuggestedSiteQuery					 query
 	) {
 		cancel();
 		{
@@ -20,9 +19,9 @@ namespace world_sim {
 			scanning = true;
 		}
 		worker = std::jthread(
-			[this, world = std::move(world), provisions, preferredBiome, maximumSites](const std::stop_token& stop) {
-				run(stop, world, provisions, preferredBiome, maximumSites);
-			}
+			[this, world = std::move(world), provisions = std::move(provisions), query = std::move(query)](
+				const std::stop_token& stop
+			) mutable { run(stop, world, provisions, std::move(query)); }
 		);
 	}
 
@@ -75,12 +74,8 @@ namespace world_sim {
 		const std::stop_token&								   stop,
 		const std::shared_ptr<const worldgen::GeneratedWorld>& world,
 		const worldgen::BiomeProvisionTable&				   provisions,
-		std::optional<worldgen::Biome>						   preferredBiome,
-		std::size_t											   maximumSites
+		worldgen::SuggestedSiteQuery						   query
 	) {
-		worldgen::SuggestedSiteQuery query;
-		query.preferredBiome = preferredBiome;
-		query.maximumSites = maximumSites;
 		query.stopToken = stop;
 		query.checkpoint = [&] { resolveWaitingPick(world, provisions); };
 		std::vector<worldgen::LandingSite> found = worldgen::findSuggestedLandingSites(world, provisions, query);

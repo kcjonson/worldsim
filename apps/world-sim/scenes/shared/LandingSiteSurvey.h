@@ -1,15 +1,15 @@
 #pragma once
 
 // One worker per planet that finds its suggested landing sites and resolves the player's picks, so
-// neither a scan nor a 50 to 160 ms spawn search runs on the main thread. The newest pick waiting is
-// resolved next, ahead of the rest of the scan's verification; a pick replaced before its result is
-// handed back is dropped. Results cross to the main thread only through take*; the worker reads the
-// planet and its own copy of the provisions table, nothing else. docs/technical/landing-sites.md 4.3.
+// neither the scan nor a resolution's spawn searches, each one a visible hitch, runs on the main thread.
+// The newest pick waiting is resolved next, ahead of the rest of the scan's verification; a pick replaced
+// before its result is handed back is dropped. Results cross to the main thread only through take*; the
+// worker reads the planet and its own copy of the provisions table, nothing else.
+// docs/technical/landing-sites.md 4.3.
 
 #include <worldgen/sampling/LandingSite.h>
 
 #include <condition_variable>
-#include <cstddef>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -26,12 +26,12 @@ namespace world_sim {
 		LandingSiteSurvey& operator=(const LandingSiteSurvey&) = delete;
 		~LandingSiteSurvey();
 
-		// Cancels any survey already running, then starts this planet's.
+		// Cancels any survey already running, then starts this planet's. The survey sets the query's stop
+		// token and checkpoint.
 		void start(
 			std::shared_ptr<const worldgen::GeneratedWorld> world,
 			worldgen::BiomeProvisionTable					 provisions,
-			std::optional<worldgen::Biome>					 preferredBiome,
-			std::size_t										 maximumSites
+			worldgen::SuggestedSiteQuery					 query
 		);
 		// True from start until the sites are ready (taken or not), and false once cancelled.
 		[[nodiscard]] bool surveying() const;
@@ -54,11 +54,10 @@ namespace world_sim {
 
 	  private:
 		void run(
-			const std::stop_token&							 stop,
+			const std::stop_token&								   stop,
 			const std::shared_ptr<const worldgen::GeneratedWorld>& world,
-			const worldgen::BiomeProvisionTable&			 provisions,
-			std::optional<worldgen::Biome>					 preferredBiome,
-			std::size_t										 maximumSites
+			const worldgen::BiomeProvisionTable&				   provisions,
+			worldgen::SuggestedSiteQuery						   query
 		);
 		void resolveWaitingPick(const std::shared_ptr<const worldgen::GeneratedWorld>& world, const worldgen::BiomeProvisionTable& provisions);
 

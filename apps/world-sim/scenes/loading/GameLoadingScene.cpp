@@ -324,10 +324,7 @@ namespace {
 		void adoptQuickstartPlanet(std::shared_ptr<const worldgen::GeneratedWorld> planet) {
 			startConfig->world = std::move(planet);
 			siteSurvey.start(
-				startConfig->world,
-				assets::biomeProvisionsFromDefinitions(assets::AssetRegistry::Get()),
-				worldgen::Biome::TemperateDeciduousForest,
-				1
+				startConfig->world, assets::biomeProvisionsFromDefinitions(assets::AssetRegistry::Get()), worldgen::quickStartSiteQuery()
 			);
 			phase = LoadingPhase::ChoosingSite;
 			updateStatusText("Choosing a landing site...");
