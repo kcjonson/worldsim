@@ -407,6 +407,7 @@ namespace world_sim {
 		openingSnap_ = {};
 		openingValidation_ = {};
 		openingUnexplored_ = false;
+		openingHostDemolishing_ = false;
 	}
 
 	void DrawingSystem::setActiveMaterial(const std::string& material) {
@@ -886,6 +887,9 @@ namespace world_sim {
 			}
 			if (openingUnexplored_) {
 				return {.valid = false, .reason = "the area is unexplored"};
+			}
+			if (openingHostDemolishing_) {
+				return {.valid = false, .reason = "the wall is being demolished"};
 			}
 			if (openingValidation_.code == construction::ValidationCode::OpeningOverlap && restsOnLastPlacement()) {
 				return {.proposed = false};
@@ -1762,7 +1766,7 @@ namespace world_sim {
 
 	// =========================================================================
 	// Opening tool. Unlike foundation/wall there is no multi-click chain: each
-	// click is a one-shot placement of a door/window onto the nearest BUILT wall.
+	// click is a one-shot placement of a door/window onto the nearest wall, blueprint or built.
 	// snapOpening picks the segment + centerline t; validateOpening gates the
 	// commit (margins, overlap, segment length); spawnOpeningBlueprintEntity
 	// mirrors spawnWallSegmentEntity with the type's CONSTANT manifest/work.
@@ -1770,6 +1774,15 @@ namespace world_sim {
 
 	const assets::OpeningTypeDef* DrawingSystem::activeOpeningType() const {
 		return ConstructionRegistry::Get().getOpeningType(activeOpeningType_);
+	}
+
+	bool DrawingSystem::openingHostIsDemolishing(ec::SegmentId segment) const {
+		const ec::WallSegment* host = constructionWorld_.getSegment(segment);
+		if (ecsWorld_ == nullptr || host == nullptr || host->entity == ecs::kInvalidEntity) {
+			return false;
+		}
+		const auto* blueprint = ecsWorld_->getComponent<ecs::StructureBlueprint>(host->entity);
+		return blueprint != nullptr && blueprint->demolishing;
 	}
 
 	void DrawingSystem::handleOpeningMove(Foundation::Vec2 world) {
@@ -1785,6 +1798,7 @@ namespace world_sim {
 		openingSnap_ = snap.snapOpening(world, type->widthMeters);
 		cursor_ = openingSnap_.point;
 		openingUnexplored_ = openingSnap_.valid && !openingSeen(type->widthMeters);
+		openingHostDemolishing_ = openingSnap_.valid && openingHostIsDemolishing(openingSnap_.segment);
 
 		if (openingSnap_.valid) {
 			ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
@@ -1809,13 +1823,19 @@ namespace world_sim {
 
 		if (!openingSnap_.valid) {
 			if (callbacks_.onToast) {
-				callbacks_.onToast("No wall", "openings must sit on a built wall");
+				callbacks_.onToast("No wall", "an opening must sit on a wall");
 			}
 			return true;
 		}
 		if (openingUnexplored_) {
 			if (callbacks_.onToast) {
 				callbacks_.onToast("Can't build here", "opening: the area is unexplored");
+			}
+			return true;
+		}
+		if (openingHostDemolishing_) {
+			if (callbacks_.onToast) {
+				callbacks_.onToast("Can't build here", "opening: the wall is being demolished");
 			}
 			return true;
 		}
@@ -1917,9 +1937,8 @@ namespace world_sim {
 				blueprint.delivered.emplace_back(type->material, requiredQty);
 			}
 		} else {
-			// Openings sit on a built wall: no clearing phase (like walls). Start
-			// AwaitingMaterials; ConstructionSystem gates them until the host wall is
-			// Built, then haul + build proceed.
+			// Openings have no clearing phase (like walls). Start AwaitingMaterials;
+			// ConstructionSystem gates them until the host wall is Built, then haul + build proceed.
 			blueprint.phase = ecs::StructureBlueprint::BuildPhase::AwaitingMaterials;
 			if (requiredQty > 0) {
 				blueprint.required.emplace_back(type->material, requiredQty);
@@ -1970,7 +1989,7 @@ namespace world_sim {
 				s.openingWidthMeters = type->widthMeters;
 				s.material = type->material;
 			}
-			// Paused, the strip asks for a built wall (statusHint's pending hint, no reason).
+			// Paused, the strip asks for a wall (statusHint's pending hint, no reason).
 			if (!followingPointer_) {
 				s.valid = false;
 			}

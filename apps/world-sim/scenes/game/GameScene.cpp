@@ -491,9 +491,9 @@ namespace {
 								);
 								break;
 							case ecs::StructureKind::Wall: {
-								// removeSegment hands back any openings still on the wall; queue
-								// their mirror entities too (the cascade should have torn them down
-								// first, but this keeps removal leak-free if one survives).
+								// removeSegment hands back the openings still on the wall (a
+								// cancelled blueprint wall is removed with its opening records);
+								// queue their mirror entities too.
 								std::vector<ecs::EntityID> removedOpeningEntities;
 								constructionWorld.removeSegment(structure->graphId, &removedOpeningEntities);
 								for (const ecs::EntityID openingEntity : removedOpeningEntities) {
