@@ -1459,7 +1459,8 @@ chain's target:
 
 `on` says what the context menu offers the order on. An order takes the claims its chain names by the
 same rules as anything else, and as the `player_order` rung it bumps a claim on its target held on a
-lower rung ([Task claims, Bumping](./task-claims.md#bumping-planned)). There is no "move here" order. Moving a
+lower rung ([Task claims, Bumping](./task-claims.md#bumping-planned)). There is no "move here"
+order. Moving a
 colonist is direct control: direct control suspends the AI, snaps the click to walkable ground, and returns the creature's
 work to the pool ([Player control](../design/features/player-control.md)). Direct control and player
 orders are unavailable to a colonist in a low-mood episode.
