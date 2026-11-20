@@ -419,30 +419,6 @@ TEST(LandingSiteWater, FreshwaterOutranksCoast) {
     EXPECT_EQ(classifyWater(*world, coast), WaterClass::River);
 }
 
-// --- Habitability rating (W-3) ---
-
-TEST(LandingSiteWater, FreshwaterMildClimateRatesEasy) {
-    auto world = makeWorld(0.0f);
-    world->validFields |= static_cast<uint32_t>(WorldField::TemperatureMean) |
-                          static_cast<uint32_t>(WorldField::Precipitation);
-    TileId tile = world->grid->fromLatLon(0.0, 0.0);
-    world->data.temperatureMean[tile] = 150;   // 15.0 C
-    world->data.precipitation[tile] = 900;     // ample rain
-
-    EXPECT_EQ(rateHabitability(*world, tile, WaterClass::River), Habitability::Easy);
-}
-
-TEST(LandingSiteWater, DryColdRainFedRatesHarsh) {
-    auto world = makeWorld(0.0f);
-    world->validFields |= static_cast<uint32_t>(WorldField::TemperatureMean) |
-                          static_cast<uint32_t>(WorldField::Precipitation);
-    TileId tile = world->grid->fromLatLon(0.0, 0.0);
-    world->data.temperatureMean[tile] = -200;  // -20 C, brutal
-    world->data.precipitation[tile] = 40;      // near-zero rain
-
-    EXPECT_EQ(rateHabitability(*world, tile, WaterClass::RainFed), Habitability::Harsh);
-}
-
 // --- findDefaultLandingSite freshwater bias (W-3) ---
 //
 // With a river available in the temperate band, the suggested site must land on

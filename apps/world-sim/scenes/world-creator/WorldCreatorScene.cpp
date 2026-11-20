@@ -25,6 +25,8 @@
 #include <worldgen/sampling/LandingSite.h>
 
 #include <application/App.h>
+#include <assets/AssetRegistry.h>
+#include <assets/placement/BiomeProvisions.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
 #include <theme/Keys.h>
@@ -104,6 +106,7 @@ namespace {
 			owner = &app;
 			LOG_INFO(Game, "WorldCreatorScene - Entering");
 			theme::apply(ui());
+			provisions = assets::biomeProvisionsFromDefinitions(assets::AssetRegistry::Get());
 
 			build();
 
@@ -236,9 +239,11 @@ namespace {
 		world_sim::GlobeView globe;
 		float				 markerPulse{0.0F};
 
-		// Landing selection (Reviewing only). The site auto-suggests on completion
-		// and updates on each land-tile click.
-		planetview::LatLon			  selectedSite{};
+		// Landing selection (Reviewing only). The site auto-suggests on completion and updates on each
+		// land-tile click. The crosshair stays at the pick; the landing is where the crew really comes down.
+		worldgen::BiomeProvisionTable provisions{};
+		planetview::LatLon			  selectedPick{};
+		worldgen::LandingSite		  selectedLanding;
 		bool						  siteValid{false};
 		world_sim::LandingSiteDetails details;
 
@@ -728,11 +733,8 @@ namespace {
 					surveyPanel.setWorld(result);
 					// Suggest a habitable starting point so the pane has content the
 					// moment review begins; the player can click to choose another.
-					auto suggested = worldgen::findDefaultLandingSite(*result);
-					selectedSite = {static_cast<float>(suggested.latDeg), static_cast<float>(suggested.lonDeg)};
-					siteValid = true;
-					setPickHint(false);
-					refreshDetails();
+					const worldgen::LatLon suggested = worldgen::findDefaultLandingSite(*result);
+					trySelectSite({static_cast<float>(suggested.latDeg), static_cast<float>(suggested.lonDeg)});
 				}
 				refreshFooter();
 				return;
@@ -834,8 +836,8 @@ namespace {
 			if (!result || !result->grid)
 				return;
 
-			glm::vec3		 unit = planetview::latLonToUnitSphere(picked.latDeg, picked.lonDeg);
-			worldgen::TileId tile = result->grid->fromUnitVector(worldgen::Vec3d{unit.x, unit.y, unit.z});
+			const worldgen::LatLon pick{picked.latDeg, picked.lonDeg};
+			const worldgen::TileId tile = result->grid->fromLatLon(pick.latDeg, pick.lonDeg);
 
 			// Pick errors (clicking water) surface as a short hint at the bottom;
 			// selecting a valid tile clears it.
@@ -844,24 +846,27 @@ namespace {
 				return;
 			}
 
-			selectedSite = picked;
+			selectedPick = picked;
+			selectedLanding = worldgen::resolveLandingSite(result, provisions, pick);
 			siteValid = true;
 			setPickHint(false);
 			refreshDetails();
 			refreshFooter();
 			LOG_INFO(
 				Game,
-				"WorldCreatorScene: selected lat=%.2f lon=%.2f tile=%u",
-				static_cast<double>(picked.latDeg),
-				static_cast<double>(picked.lonDeg),
-				tile
+				"WorldCreatorScene: picked lat=%.2f lon=%.2f tile=%u, landing tile=%u feature=%d",
+				pick.latDeg,
+				pick.lonDeg,
+				tile,
+				selectedLanding.tile,
+				static_cast<int>(selectedLanding.feature)
 			);
 		}
 
 		void refreshDetails() {
 			auto result = model.getResult();
 			if (siteValid && result) {
-				details = world_sim::buildLandingSiteDetails(*result, selectedSite.latDeg, selectedSite.lonDeg);
+				details = world_sim::buildLandingSiteDetails(*result, selectedLanding, selectedPick.latDeg, selectedPick.lonDeg);
 				detailsPanel.show(details);
 			}
 		}
@@ -873,9 +878,9 @@ namespace {
 
 			LOG_INFO(
 				Game,
-				"WorldCreatorScene: landing lat=%.2f lon=%.2f",
-				static_cast<double>(selectedSite.latDeg),
-				static_cast<double>(selectedSite.lonDeg)
+				"WorldCreatorScene: landing lat=%.5f lon=%.5f",
+				selectedLanding.origin.latDeg,
+				selectedLanding.origin.lonDeg
 			);
 
 			// Persist the accepted world: reloadable without regeneration, stable
@@ -891,8 +896,7 @@ namespace {
 			auto config = std::make_unique<world_sim::GameStartConfig>();
 			config->source = world_sim::GameStartConfig::Source::NewGame;
 			config->world = result;
-			config->landingLatDeg = selectedSite.latDeg;
-			config->landingLonDeg = selectedSite.lonDeg;
+			config->landing = selectedLanding;
 			config->party = world_sim::NewGameSetup::Get().party;
 			world_sim::GameStartConfig::SetPending(std::move(config));
 			owner->scenes().switchTo(world_sim::scenes::GameLoading.name);
@@ -909,7 +913,7 @@ namespace {
 		void renderMarker(const Foundation::Rect& rect, float scale, const ui::Theme& theme) const {
 			float sx = 0.0F;
 			float sy = 0.0F;
-			if (!siteValid || !globe.projectLatLon(selectedSite, rect, sx, sy)) {
+			if (!siteValid || !globe.projectLatLon(selectedPick, rect, sx, sy)) {
 				return;
 			}
 			const Foundation::Color accent = theme.get(tokens::color::accent);

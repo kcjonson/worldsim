@@ -41,7 +41,7 @@ namespace construction {
 }
 namespace worldgen {
 	struct GeneratedWorld;
-	struct SpawnSite;
+	struct LandingSite;
 }
 namespace worldview {
 	class VisibilityCoverRenderer;
@@ -75,9 +75,7 @@ namespace world_sim {
 		// serializeLanding (/api/state?what=landing) for biome + water readback. May be
 		// null for test/fallback sessions that have no planet (readback degrades gracefully).
 		std::shared_ptr<const worldgen::GeneratedWorld> planet;
-		double landingLatDeg = 0.0;
-		double landingLonDeg = 0.0;
-		const worldgen::SpawnSite* spawn = nullptr; // the raw drop and its water, for the landing view
+		const worldgen::LandingSite* landing = nullptr; // the origin, its tile, and the raw drop, for the landing view
 
 		std::function<ecs::EntityID(glm::vec2, const std::string&)> spawnColonist;
 		// GameScene::dropResourcePiles: the one loose-ground drop path (merge, then stack-capped piles).

@@ -21,6 +21,7 @@
 #include <assets/AssetRegistry.h>
 #include <assets/WorkConfig.h>
 #include <assets/placement/AsyncChunkProcessor.h>
+#include <assets/placement/BiomeProvisions.h>
 #include <assets/placement/CanopyCover.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <ecs/ColonistRules.h>
@@ -42,7 +43,6 @@
 #include <worldgen/data/Biome.h>
 #include <worldgen/io/PlanetIO.h>
 #include <worldgen/sampling/LandingSite.h>
-#include <worldgen/sampling/SpawnSite.h>
 
 #include <ui/components/ProgressBar.h>
 #include <ui/shapes/Text.h>
@@ -314,11 +314,17 @@ namespace {
 		}
 
 		void adoptQuickstartPlanet(std::shared_ptr<const worldgen::GeneratedWorld> planet) {
-			auto site = worldgen::findDefaultLandingSite(*planet, worldgen::Biome::TemperateDeciduousForest);
+			const worldgen::LatLon pick = worldgen::findDefaultLandingSite(*planet, worldgen::Biome::TemperateDeciduousForest);
 			startConfig->world = std::move(planet);
-			startConfig->landingLatDeg = site.latDeg;
-			startConfig->landingLonDeg = site.lonDeg;
-			LOG_DEBUG(Game, "GameLoadingScene - Quickstart landing site lat=%.2f lon=%.2f", site.latDeg, site.lonDeg);
+			startConfig->landing = worldgen::resolveLandingSite(
+				startConfig->world, assets::biomeProvisionsFromDefinitions(assets::AssetRegistry::Get()), pick
+			);
+			LOG_DEBUG(
+				Game,
+				"GameLoadingScene - Quickstart landing site lat=%.2f lon=%.2f",
+				startConfig->landing.origin.latDeg,
+				startConfig->landing.origin.lonDeg
+			);
 			phase = LoadingPhase::Initializing;
 			progress = 0.3F;
 		}
@@ -343,12 +349,11 @@ namespace {
 			world_sim::UserSettings::Get().load(owner->settings());
 
 			// Create world sampler and chunk manager from the generated planet;
-			// the landing site maps to the 2D world origin
-			auto sampler =
-				std::make_unique<world::GeneratedWorldSampler>(startConfig->world, startConfig->landingLatDeg, startConfig->landingLonDeg);
+			// the landing origin maps to the 2D world origin
+			const worldgen::LatLon origin = startConfig->landing.origin;
+			auto sampler = std::make_unique<world::GeneratedWorldSampler>(startConfig->world, origin.latDeg, origin.lonDeg);
 			worldState->planet = startConfig->world;
-			worldState->landingLatDeg = startConfig->landingLatDeg;
-			worldState->landingLonDeg = startConfig->landingLonDeg;
+			worldState->landing = startConfig->landing;
 			worldState->party = std::move(startConfig->party);
 			worldState->chunkManager =
 				std::make_unique<world::ChunkManager>(std::move(sampler), assets::canopyCoverFromDefinitions(assets::AssetRegistry::Get()));
@@ -357,11 +362,8 @@ namespace {
 			worldState->chunkManager->setLoadRadius(1);
 			worldState->chunkManager->setUnloadRadius(2);
 
-			// Drop the colony beside clean water (riverbank > lake shore > coast);
-			// a colony dies without it. Falls back to the origin when none is near.
-			worldState->spawn =
-				worldgen::findRiverbankSpawn(startConfig->world, startConfig->landingLatDeg, startConfig->landingLonDeg);
-			const worldgen::SpawnSite& spawn = worldState->spawn;
+			// The drop the landing resolution chose, beside its water when it found one.
+			const worldgen::SpawnSite& spawn = worldState->landing.spawn;
 			LOG_DEBUG(
 				Game,
 				"GameLoadingScene - Spawn (%.1f, %.1f) water=%d at %.1f m",

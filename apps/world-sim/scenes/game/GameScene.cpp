@@ -166,12 +166,10 @@ namespace {
 				m_entityRenderer = std::move(preloadedState->entityRenderer);
 				m_placementExecutor = std::move(preloadedState->placementExecutor);
 				m_processedChunks = std::move(preloadedState->processedChunks);
-				landingSpawn = preloadedState->spawn;
-				m_spawnPosition = {static_cast<float>(landingSpawn.xMeters), static_cast<float>(landingSpawn.yMeters)};
+				landingSite = preloadedState->landing;
+				m_spawnPosition = {static_cast<float>(landingSite.spawn.xMeters), static_cast<float>(landingSite.spawn.yMeters)};
 				m_colony = preloadedState->colony;
 				m_planet = std::move(preloadedState->planet);
-				m_landingLatDeg = preloadedState->landingLatDeg;
-				m_landingLonDeg = preloadedState->landingLonDeg;
 				m_party = std::move(preloadedState->party);
 				colonistRules = std::move(preloadedState->colonistRules);
 
@@ -630,9 +628,7 @@ namespace {
 				.dialogOpen = [this] { return modalDialogOpen(); },
 				.cover = m_visibilityCover.get(),
 				.planet = m_planet,
-				.landingLatDeg = m_landingLatDeg,
-				.landingLonDeg = m_landingLonDeg,
-				.spawn = &landingSpawn,
+				.landing = &landingSite,
 				.spawnColonist = [this](glm::vec2 pos, const std::string& name) { return spawnColonist(pos, name); },
 				.dropLoose = [this](const std::string& defName, float x, float y, uint32_t quantity) {
 					dropResourcePiles(defName, {x, y}, {x, y}, quantity);
@@ -1489,7 +1485,9 @@ namespace {
 
 			// The clearing center is also the region minimap's fixed window center;
 			// hand it over with the landing coordinates once, here, where it is final.
-			gameUI->setMinimapContext({m_spawnPosition.x, m_spawnPosition.y}, m_landingLatDeg, m_landingLonDeg, kPixelsPerMeter);
+			gameUI->setMinimapContext(
+				{m_spawnPosition.x, m_spawnPosition.y}, landingSite.origin.latDeg, landingSite.origin.lonDeg, kPixelsPerMeter
+			);
 
 			// Hand the colony origin to the AI: if a stranded colonist ever finds no walkable
 			// navmesh face in range, the off-mesh recovery snaps it back to home. The engine
@@ -2263,9 +2261,7 @@ namespace {
 		// Planet forwarded from GameWorldState for the /api/state?what=landing readback.
 		// Null when running in mock-world mode (no preloaded planet).
 		std::shared_ptr<const worldgen::GeneratedWorld> m_planet;
-		double											m_landingLatDeg = 0.0;
-		double											m_landingLonDeg = 0.0;
-		worldgen::SpawnSite								landingSpawn;
+		worldgen::LandingSite							landingSite;
 		// The colony: home anchor for the session. Single source of truth for the colony
 		// origin (the cleared, on-mesh clearing center), set once at landing. Read by the
 		// camera-home sync and pushed to AIDecisionSystem for the off-mesh recovery snap.

@@ -8,6 +8,7 @@
 #include "NewGameSetup.h"
 
 #include <worldgen/data/GeneratedWorld.h>
+#include <worldgen/sampling/LandingSite.h>
 
 #include <memory>
 #include <vector>
@@ -30,8 +31,7 @@ struct GameStartConfig {
 
 	Source source{Source::QuickStart};
 	std::shared_ptr<const worldgen::GeneratedWorld> world;
-	double landingLatDeg{0.0};
-	double landingLonDeg{0.0};
+	worldgen::LandingSite landing;
 
 	// Crew to spawn at landing, assembled in PartySelect. Empty (Quick Start,
 	// direct scene jumps) spawns the single default colonist.

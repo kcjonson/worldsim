@@ -2,16 +2,23 @@
 
 #include "worldgen/data/GeneratedWorld.h"
 
+#include <math/DeterministicMath.h>
 #include <utils/Log.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <limits>
 #include <optional>
+#include <vector>
 
 namespace worldgen {
 
 namespace {
+
+constexpr double kPi = 3.14159265358979323846;
+constexpr double kRadiansPerDegree = kPi / 180.0;
+constexpr double kDegreesPerRadian = 180.0 / kPi;
 
 bool hasField(const GeneratedWorld& world, WorldField f) {
     return (world.validFields & static_cast<uint32_t>(f)) != 0;
@@ -37,6 +44,69 @@ bool hasOceanNeighbor(const GeneratedWorld& world, TileId t) {
         }
     }
     return false;
+}
+
+// True if the tile itself or any neighbor carries the given flag.
+bool tileOrNeighborHasFlag(const GeneratedWorld& world, TileId t, uint8_t flag) {
+    if ((world.data.flags[t] & flag) != 0) return true;
+    std::array<TileId, 6> nbrs{};
+    uint32_t count = world.grid->neighbors(t, nbrs);
+    for (uint32_t i = 0; i < count; ++i) {
+        if ((world.data.flags[nbrs[i]] & flag) != 0) return true;
+    }
+    return false;
+}
+
+Vec3d unitVectorOf(LatLon point) {
+    const double lat = point.latDeg * kRadiansPerDegree;
+    const double lon = point.lonDeg * kRadiansPerDegree;
+    const double cosLat = foundation::det_math::cos(lat);
+    return {cosLat * foundation::det_math::cos(lon), cosLat * foundation::det_math::sin(lon),
+            foundation::det_math::sin(lat)};
+}
+
+double dot(const Vec3d& a, const Vec3d& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+
+// Through SphereGrid::latLonOf for a tile centre, so an anchor on a tile's centre is bit-identical
+// to the lat/lon every other caller has for that tile.
+LatLon centreOf(const SphereGrid& grid, TileId tile) {
+    LatLon centre;
+    grid.latLonOf(tile, centre.latDeg, centre.lonDeg);
+    return centre;
+}
+
+// On the great circle from the land tile's centre toward the lake tile's centre, kLakeShoreInsetMeters
+// short of their midpoint (the 2D lake shore) on the land side.
+LatLon lakeAnchor(const GeneratedWorld& world, TileId land, TileId lake) {
+    const Vec3d from = world.grid->tileCenter(land);
+    const Vec3d to = world.grid->tileCenter(lake);
+    const double cosArc = std::clamp(dot(from, to), -1.0, 1.0);
+    const Vec3d across{to.x - cosArc * from.x, to.y - cosArc * from.y, to.z - cosArc * from.z};
+    const double acrossLength = foundation::det_math::sqrt(dot(across, across));
+    const double arc = foundation::det_math::atan2(acrossLength, cosArc);
+    const double angle = 0.5 * arc - kLakeShoreInsetMeters / world.derived.planetRadiusMeters;
+    const double along = foundation::det_math::cos(angle);
+    const double side = foundation::det_math::sin(angle) / acrossLength;
+    const Vec3d point{along * from.x + side * across.x, along * from.y + side * across.y,
+                      along * from.z + side * across.z};
+    return {foundation::det_math::asin(std::clamp(point.z, -1.0, 1.0)) * kDegreesPerRadian,
+            foundation::det_math::atan2(point.y, point.x) * kDegreesPerRadian};
+}
+
+// Neighbours of `tile` that pass `keep`, nearest centre to the pick first, ties to the lowest TileId.
+template <typename Keep>
+std::vector<TileId> neighboursNearestFirst(const SphereGrid& grid, TileId tile, const Vec3d& pick, Keep keep) {
+    std::array<TileId, 6> neighbours{};
+    const uint32_t count = grid.neighbors(tile, neighbours);
+    std::vector<std::pair<double, TileId>> ranked;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (keep(neighbours[i])) ranked.emplace_back(-dot(grid.tileCenter(neighbours[i]), pick), neighbours[i]);
+    }
+    std::sort(ranked.begin(), ranked.end());
+    std::vector<TileId> out;
+    out.reserve(ranked.size());
+    for (const auto& [distance, neighbour] : ranked) out.push_back(neighbour);
+    return out;
 }
 
 // Green, livable biomes the default site lands in: forests, grasslands, savanna,
@@ -86,15 +156,35 @@ int habitabilityScore(Habitability h) {
     return 0;
 }
 
-// True if the tile itself or any neighbor carries the given flag.
-bool tileOrNeighborHasFlag(const GeneratedWorld& world, TileId t, uint8_t flag) {
-    if ((world.data.flags[t] & flag) != 0) return true;
-    std::array<TileId, 6> nbrs{};
-    uint32_t count = world.grid->neighbors(t, nbrs);
-    for (uint32_t i = 0; i < count; ++i) {
-        if ((world.data.flags[nbrs[i]] & flag) != 0) return true;
+// The old rating findDefaultLandingSite ranks by: water class, rainfall, and the mean temperature.
+Habitability defaultSiteHabitability(const GeneratedWorld& world, TileId tile, WaterClass water) {
+    int score = 0;
+
+    switch (water) {
+        case WaterClass::River:
+        case WaterClass::Lake:    score += 3; break;
+        case WaterClass::Coastal: score += 1; break;
+        case WaterClass::RainFed: score += 0; break;
     }
-    return false;
+
+    uint16_t rainMm = 0;
+    if (hasField(world, WorldField::Precipitation) && tile < world.data.precipitation.size()) {
+        rainMm = world.data.precipitation[tile];
+    }
+    if (rainMm >= 600)      score += 2;
+    else if (rainMm >= 250) score += 1;
+    else if (rainMm < 100 && water == WaterClass::RainFed) score -= 1;
+
+    if (hasField(world, WorldField::TemperatureMean) && tile < world.data.temperatureMean.size()) {
+        float tempC = world.data.temperatureMean[tile] / 10.0f;
+        if (tempC < -10.0f || tempC > 35.0f)     score -= 2;
+        else if (tempC < 0.0f || tempC > 28.0f)  score -= 1;
+    }
+
+    if (score >= 4) return Habitability::Easy;
+    if (score >= 2) return Habitability::Moderate;
+    if (score >= 0) return Habitability::Hard;
+    return Habitability::Harsh;
 }
 
 } // namespace
@@ -135,43 +225,101 @@ const char* habitabilityToString(Habitability h) {
     return "Unknown";
 }
 
-Habitability rateHabitability(const GeneratedWorld& world, TileId tile, WaterClass water) {
-    // Score model (higher = easier). Three readable contributions:
-    //   water    : freshwater best, coast workable, rain-fed scaled by rainfall.
-    //   rainfall : independent bump — even with a river, a wet site is greener.
-    //   climate  : penalty for extreme cold/heat (frostbite or no-water-survives).
-    // The thresholds are colony-survival rough cuts, not a simulation; they map
-    // to four buckets so the player gets a guide, not false precision.
+TileAssessment assessLandingTile(const GeneratedWorld& world, const BiomeProvisionTable& provisions,
+                                 TileId tile, WaterClass verifiedWater) {
+    TileAssessment assessment;
+    assessment.water = verifiedWater;
+
+    if (hasField(world, WorldField::Biome) && tile < world.data.biome.size()) {
+        const std::size_t biome = world.data.biome[tile];
+        if (biome < provisions.size()) {
+            assessment.hasFood = provisions[biome].foodSourcesPerSquareKilometer >= kMinimumFoodSourcesPerSquareKilometer;
+            assessment.hasWood = provisions[biome].woodSourcesPerSquareKilometer >= kMinimumWoodSourcesPerSquareKilometer;
+        }
+    }
+
+    const bool haveMean = hasField(world, WorldField::TemperatureMean) && tile < world.data.temperatureMean.size();
+    const bool haveRange = hasField(world, WorldField::TemperatureRange) && tile < world.data.temperatureRange.size();
+    bool brutal = false;
+    if (haveMean) {
+        const double mean = world.data.temperatureMean[tile] / 10.0;
+        const double halfAmplitude = haveRange ? world.data.temperatureRange[tile] / 10.0 : 0.0;
+        assessment.livableTemperature = haveRange && mean >= kLivableMeanMinimumCelsius &&
+                                        mean <= kLivableMeanMaximumCelsius &&
+                                        mean - halfAmplitude >= kLivableColdestSeasonCelsius &&
+                                        mean + halfAmplitude <= kLivableHottestSeasonCelsius;
+        brutal = mean < kBrutalMeanMinimumCelsius || mean > kBrutalMeanMaximumCelsius ||
+                 mean - halfAmplitude < kBrutalColdestSeasonCelsius ||
+                 mean + halfAmplitude > kBrutalHottestSeasonCelsius;
+    }
+
     int score = 0;
-
-    switch (water) {
+    switch (verifiedWater) {
         case WaterClass::River:
-        case WaterClass::Lake:    score += 3; break; // drinkable on the doorstep
-        case WaterClass::Coastal: score += 1; break; // needs desalination/wells
-        case WaterClass::RainFed: score += 0; break; // depends entirely on rain
+        case WaterClass::Lake:    score += 3; break;
+        case WaterClass::Coastal: score += 1; break;
+        case WaterClass::RainFed: break;
     }
 
-    // Rainfall (mm/yr). Earth-ish: <250 desert, 250-600 semi-arid, >600 ample.
-    uint16_t rainMm = 0;
+    uint16_t rainMillimeters = 0;
     if (hasField(world, WorldField::Precipitation) && tile < world.data.precipitation.size()) {
-        rainMm = world.data.precipitation[tile];
+        rainMillimeters = world.data.precipitation[tile];
     }
-    if (rainMm >= 600)      score += 2;
-    else if (rainMm >= 250) score += 1;
-    else if (rainMm < 100 && water == WaterClass::RainFed) score -= 1; // true desert, no backup
-
-    // Temperature (mean, Celsius). The habitable band is roughly 0-25 C; outside
-    // that, cold or heat starts to dominate survival.
-    if (hasField(world, WorldField::TemperatureMean) && tile < world.data.temperatureMean.size()) {
-        float tempC = world.data.temperatureMean[tile] / 10.0f;
-        if (tempC < -10.0f || tempC > 35.0f)     score -= 2; // brutal
-        else if (tempC < 0.0f || tempC > 28.0f)  score -= 1; // hard
+    if (rainMillimeters >= kAmpleRainfallMillimeters) {
+        score += 2;
+    } else if (rainMillimeters >= kModerateRainfallMillimeters) {
+        score += 1;
+    } else if (rainMillimeters < kDesertRainfallMillimeters && verifiedWater == WaterClass::RainFed) {
+        score -= 1;
     }
 
-    if (score >= 4) return Habitability::Easy;
-    if (score >= 2) return Habitability::Moderate;
-    if (score >= 0) return Habitability::Hard;
-    return Habitability::Harsh;
+    if (!assessment.livableTemperature) score -= brutal ? 2 : 1;
+    if (!assessment.hasFood) score -= 1;
+    if (!assessment.hasWood) score -= 1;
+
+    assessment.habitability = score >= 4   ? Habitability::Easy
+                            : score >= 2   ? Habitability::Moderate
+                            : score >= 0   ? Habitability::Hard
+                                           : Habitability::Harsh;
+    return assessment;
+}
+
+LandingSite resolveLandingSite(const std::shared_ptr<const GeneratedWorld>& world,
+                               const BiomeProvisionTable& provisions, LatLon pick) {
+    const GeneratedWorld& planet = *world;
+    const SphereGrid& grid = *planet.grid;
+    const TileId picked = grid.fromLatLon(pick.latDeg, pick.lonDeg);
+
+    auto landAt = [&](LatLon anchor) -> std::optional<LandingSite> {
+        const SpawnSite spawn = findRiverbankSpawn(world, anchor.latDeg, anchor.lonDeg);
+        if (spawn.water != SpawnWater::River && spawn.water != SpawnWater::Lake) return std::nullopt;
+        const bool river = spawn.water == SpawnWater::River;
+        const TileId tile = grid.fromLatLon(anchor.latDeg, anchor.lonDeg);
+        return LandingSite{anchor, tile, river ? FreshWaterFeature::River : FreshWaterFeature::Lake, spawn,
+                           assessLandingTile(planet, provisions, tile, river ? WaterClass::River : WaterClass::Lake)};
+    };
+
+    if (hasField(planet, WorldField::Flags) && !isWaterTile(planet, picked)) {
+        const Vec3d pickDirection = unitVectorOf(pick);
+
+        if ((planet.data.flags[picked] & kFlagRiver) != 0) {
+            if (auto site = landAt(centreOf(grid, picked))) return *site;
+        }
+        const auto isLake = [&](TileId t) { return (planet.data.flags[t] & kFlagLake) != 0; };
+        for (const TileId lake : neighboursNearestFirst(grid, picked, pickDirection, isLake)) {
+            if (auto site = landAt(lakeAnchor(planet, picked, lake))) return *site;
+        }
+        const auto isLandRiver = [&](TileId t) {
+            return (planet.data.flags[t] & kFlagRiver) != 0 && !isWaterTile(planet, t);
+        };
+        for (const TileId river : neighboursNearestFirst(grid, picked, pickDirection, isLandRiver)) {
+            if (auto site = landAt(centreOf(grid, river))) return *site;
+        }
+    }
+
+    const WaterClass water = hasOceanNeighbor(planet, picked) ? WaterClass::Coastal : WaterClass::RainFed;
+    return LandingSite{pick, picked, FreshWaterFeature::None, findRiverbankSpawn(world, pick.latDeg, pick.lonDeg),
+                       assessLandingTile(planet, provisions, picked, water)};
 }
 
 LatLon findDefaultLandingSite(const GeneratedWorld& world,
@@ -225,7 +373,7 @@ LatLon findDefaultLandingSite(const GeneratedWorld& world,
 
         const WaterClass wc = classifyWater(world, t);
         int score = waterScore(world, t, wc) +
-                    habitabilityScore(rateHabitability(world, t, wc));
+                    habitabilityScore(defaultSiteHabitability(world, t, wc));
         if (preferredBiome.has_value() && haveBiome &&
                 static_cast<Biome>(world.data.biome[t]) == *preferredBiome) {
             score += kBiomeBias;
