@@ -56,6 +56,10 @@ class GlobeView {
 
 	void update(float dt) { camera.update(dt); }
 
+	// True while the camera turns or zooms, or its reveal spin can still start (OrbitCamera::isMoving), so
+	// a position projected now may not hold.
+	bool isCameraMoving() const { return camera.isMoving(); }
+
 	// Keyboard pan: spin yaw / tilt pitch by radians (pitch obeys the camera's
 	// zoom gate). For scenes that drive the camera from held keys.
 	void panCamera(float dYaw, float dPitch) { camera.nudge(dYaw, dPitch); }

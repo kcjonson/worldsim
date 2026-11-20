@@ -52,6 +52,10 @@ class OrbitCamera {
     // Advance inertia + auto-rotate; dt in seconds.
     void update(float dt);
 
+    // True while the view can still change: a drag, a zoom easing to its target, a drag's inertia, or the
+    // reveal spin, which can start on its own until the globe is first touched.
+    bool isMoving() const;
+
   private:
     // Re-clamp pitch to the currently allowed band. Up/down is locked to the
     // home orientation until the globe overfills the viewport, then opens up
@@ -85,6 +89,8 @@ class OrbitCamera {
     static constexpr float kNearMax = 0.05F;
     static constexpr float kFar     = 20.0F;
     static constexpr float kInertia = 0.88F;
+    // Inertia below this (radians a 60 Hz frame) no longer moves the globe by a visible amount.
+    static constexpr float kStillVelocity = 1e-5F;
     static constexpr float kDragSens = 0.008F;
     static constexpr float kScrollSens = 0.10F;  // apparent-zoom ratio per wheel notch
     static constexpr float kZoomSmooth = 12.0F;  // distance -> targetDistance ease rate (1/s)

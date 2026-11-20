@@ -260,13 +260,13 @@ The regression scenarios run on Quick Start, and several depend on where the cre
 **`landingSites`** (world creator, registered with `devServer().stateProvider` in `onEnter`, released in `onExit`):
 
 ```json
-{"surveying":false,"resolving":false,"markersShown":true,
+{"surveying":false,"resolving":false,"markersShown":true,"cameraMoving":false,
  "sites":[{"index":0,"latDeg":0.0,"lonDeg":0.0,"kind":"river","biome":"TemperateDeciduousForest","onScreen":true,"x":0.0,"y":0.0}],
  "selection":{"pickLatDeg":0.0,"pickLonDeg":0.0,"suggestedIndex":0,"landingLatDeg":0.0,"landingLonDeg":0.0,
               "biome":"TemperateDeciduousForest","feature":"river","recommended":true}}
 ```
 
-`sites` lists every suggested site whether or not markers are shown. `x`/`y` are the marker's position in the window's logical px (the input space, as `renderMarker` draws), null on the far side, and `onScreen` is true when the site is on the near side and inside the stage, the markers that are drawn and can be clicked. `resolving` is true while a free pick waits for its landing. `selection` is null until a site is selected; `suggestedIndex` is null for a free pick, and the landing's fields (`landingLatDeg` to `recommended`) are null while it resolves.
+`sites` lists every suggested site whether or not markers are shown. `x`/`y` are the marker's position in the window's logical px (the input space, as `renderMarker` draws), null on the far side, and `onScreen` is true when the site is on the near side and inside the stage, the markers that are drawn and can be clicked. `resolving` is true while a free pick waits for its landing. `cameraMoving` is `GlobeView::isCameraMoving`: true during a drag, while a zoom eases to its target, while a drag's inertia lasts, and until the globe is first touched (its reveal spin can start on its own); marker positions read while it is true may be stale by the time a click lands. `selection` is null until a site is selected; `suggestedIndex` is null for a free pick, and the landing's fields (`landingLatDeg` to `recommended`) are null while it resolves.
 
 ## 10. Constants
 

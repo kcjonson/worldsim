@@ -1150,10 +1150,11 @@ namespace {
 			}
 
 			return std::format(
-				R"({{"surveying":{},"resolving":{},"markersShown":{},"sites":[{}],"selection":{}}})",
+				R"({{"surveying":{},"resolving":{},"markersShown":{},"cameraMoving":{},"sites":[{}],"selection":{}}})",
 				survey.surveying(),
 				pickMade && !selectedLanding,
 				markersShown(),
+				globe.isCameraMoving(),
 				sites,
 				selection
 			);

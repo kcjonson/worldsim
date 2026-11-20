@@ -143,4 +143,9 @@ void OrbitCamera::update(float dt) {
     }
 }
 
+bool OrbitCamera::isMoving() const {
+    return dragging || distance != targetDistance || std::abs(yawVel) > kStillVelocity ||
+           std::abs(pitchVel) > kStillVelocity || !userInteracted;
+}
+
 } // namespace planetview
