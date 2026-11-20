@@ -1,7 +1,8 @@
 #pragma once
 
 // The ECS entities that are placed obstacles: every entity with a Position and an Appearance whose
-// def has a blocking collider at its age class, movers (AgentRadius) aside. Each is held as the
+// def has a blocking collider at its age class, movers (AgentRadius) and packaged things (Packaged)
+// aside. Each is held as the
 // assets::PlacedEntity the placement executor would hold for it (def, position, rotation, scale, age
 // class), so nav, collision, and sight put it in the world through nav::placedObstacleOutline like
 // any placed obstacle (rotatable-placed-items.md 11.2).
@@ -17,7 +18,10 @@
 #include <glm/vec2.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <map>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace assets {
@@ -49,11 +53,24 @@ namespace ecs {
 		[[nodiscard]] const Entry* find(EntityID entity) const;
 		// The entries whose position lies in the box, in entity order, appended to `out`. A linear walk:
 		// the index holds what spawning creates, a handful against the placement executor's thousands.
-		void					  queryRect(glm::vec2 lo, glm::vec2 hi, std::vector<const Entry*>& out) const;
+		void					  queryRect(glm::vec2 lower, glm::vec2 upper, std::vector<const Entry*>& out) const;
 		[[nodiscard]] std::size_t size() const { return entries.size(); }
 
 	  private:
-		std::map<EntityID, Entry> entries;
+		// Whether the entity's def has a collider at any age class, looked up in the registry only when
+		// the entity is new or its def name changed, so the piles and props with none cost a compare a
+		// refresh.
+		[[nodiscard]] bool mayCollide(EntityID entity, const std::string& defName, const assets::AssetRegistry& registry);
+
+		struct DefSeen {
+			std::string	  defName;
+			bool		  collides = false;
+			std::uint64_t pass	   = 0; // the refresh that last saw the entity
+		};
+
+		std::map<EntityID, Entry>			  entries;
+		std::unordered_map<EntityID, DefSeen> defsSeen;
+		std::uint64_t						  pass = 0;
 	};
 
 } // namespace ecs

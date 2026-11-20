@@ -19,6 +19,7 @@ namespace {
 
 	constexpr const char* kSolid = "Test_ColliderEntitySolid";
 	constexpr const char* kOpen = "Test_ColliderEntityOpen";
+	constexpr const char* kAged = "Test_ColliderEntityAged";
 
 	class ColliderEntityIndexTest : public ::testing::Test {
 	  protected:
@@ -30,6 +31,12 @@ namespace {
 			AssetDefinition open;
 			open.defName = kOpen;
 			AssetRegistry::Get().registerTestDefinition(open);
+			AssetDefinition aged;
+			aged.defName	= kAged;
+			aged.ageClasses = {{.name = "young"}, {.name = "old"}};
+			aged.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.1F, 0.1F}});
+			aged.setCollision(1, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
+			AssetRegistry::Get().registerTestDefinition(aged);
 		}
 		void TearDown() override { AssetRegistry::Get().clearDefinitions(); }
 
@@ -96,3 +103,35 @@ TEST_F(ColliderEntityIndexTest, DiffsMovesAndRemovals) {
 	EXPECT_EQ(changes.added[0].placed.position, glm::vec2(2.0F, 1.0F));
 	EXPECT_EQ(index.size(), 1U);
 }
+
+// A change of def, scale, or age class where the entity stands is its old entry out and its new one
+// in; a def that loses its collider is its entry out alone.
+TEST_F(ColliderEntityIndexTest, DefScaleAndAgeChangesReplaceTheEntry) {
+	World		   world;
+	const EntityID entity = place(world, kSolid, {1.0F, 1.0F});
+	ColliderEntityIndex index;
+	static_cast<void>(index.refresh(world, AssetRegistry::Get()));
+
+	const auto expectReplaced = [&](const char* what) {
+		const ColliderEntityIndex::Changes changes = index.refresh(world, AssetRegistry::Get());
+		ASSERT_EQ(changes.removed.size(), 1U) << what;
+		ASSERT_EQ(changes.added.size(), 1U) << what;
+		EXPECT_EQ(changes.removed.front().entity, entity) << what;
+		EXPECT_EQ(changes.added.front().entity, entity) << what;
+	};
+	world.getComponent<Appearance>(entity)->scale = 2.0F;
+	expectReplaced("scale");
+	EXPECT_EQ(index.find(entity)->placed.scale, 2.0F);
+	world.getComponent<Appearance>(entity)->defName = kAged;
+	expectReplaced("def");
+	world.getComponent<Appearance>(entity)->traits.ageClass = 1;
+	expectReplaced("age class");
+	EXPECT_EQ(index.find(entity)->placed.traits.ageClass, 1U);
+
+	world.getComponent<Appearance>(entity)->defName = kOpen;
+	const ColliderEntityIndex::Changes changes = index.refresh(world, AssetRegistry::Get());
+	EXPECT_EQ(changes.removed.size(), 1U);
+	EXPECT_TRUE(changes.added.empty());
+	EXPECT_EQ(index.find(entity), nullptr);
+}
+

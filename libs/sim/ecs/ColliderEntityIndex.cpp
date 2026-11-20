@@ -3,6 +3,7 @@
 #include "World.h"
 #include "components/AgentRadius.h"
 #include "components/Appearance.h"
+#include "components/Packaged.h"
 #include "components/Transform.h"
 
 #include <assets/AssetDefinition.h>
@@ -18,12 +19,40 @@ namespace ecs {
 			return left.defName == right.defName && left.position == right.position && left.rotation == right.rotation &&
 				   left.scale == right.scale && left.traits.ageClass == right.traits.ageClass;
 		}
+
+		bool collidesAtAnyAge(const assets::AssetDefinition* def) {
+			if (def == nullptr) {
+				return false;
+			}
+			for (std::size_t ageClass = 0; ageClass < def->collisions.size(); ++ageClass) {
+				if (def->collisions[ageClass].blocks()) {
+					return true;
+				}
+			}
+			return false;
+		}
 	} // namespace
 
+	bool ColliderEntityIndex::mayCollide(EntityID entity, const std::string& defName, const assets::AssetRegistry& registry) {
+		auto [known, inserted] = defsSeen.try_emplace(entity);
+		if (inserted || known->second.defName != defName) {
+			known->second.defName  = defName;
+			known->second.collides = collidesAtAnyAge(registry.getDefinition(defName));
+		}
+		known->second.pass = pass;
+		return known->second.collides;
+	}
+
 	ColliderEntityIndex::Changes ColliderEntityIndex::refresh(World& world, const assets::AssetRegistry& registry) {
+		++pass;
 		std::map<EntityID, Entry> current;
 		for (auto [entity, position, appearance] : world.view<Position, Appearance>()) {
-			if (world.getComponent<AgentRadius>(entity) != nullptr) {
+			// A mover is never an obstacle, and a packaged thing is not installed: it is carried or waits
+			// to be placed, and leaves the mesh until it is.
+			if (world.getComponent<AgentRadius>(entity) != nullptr || world.getComponent<Packaged>(entity) != nullptr) {
+				continue;
+			}
+			if (!mayCollide(entity, appearance.defName, registry)) {
 				continue;
 			}
 			const assets::AssetDefinition* def = registry.getDefinition(appearance.defName);
@@ -61,6 +90,7 @@ namespace ecs {
 			}
 		}
 		entries = std::move(current);
+		std::erase_if(defsSeen, [this](const auto& known) { return known.second.pass != pass; });
 		return changes;
 	}
 
@@ -69,11 +99,11 @@ namespace ecs {
 		return it != entries.end() ? &it->second : nullptr;
 	}
 
-	void ColliderEntityIndex::queryRect(glm::vec2 lo, glm::vec2 hi, std::vector<const Entry*>& out) const {
-		for (const auto& [entity, entry] : entries) {
-			const glm::vec2 at = entry.placed.position;
-			if (at.x >= lo.x && at.x <= hi.x && at.y >= lo.y && at.y <= hi.y) {
-				out.push_back(&entry);
+	void ColliderEntityIndex::queryRect(glm::vec2 lower, glm::vec2 upper, std::vector<const Entry*>& out) const {
+		for (const auto& held : entries) {
+			const glm::vec2 at = held.second.placed.position;
+			if (at.x >= lower.x && at.x <= upper.x && at.y >= lower.y && at.y <= upper.y) {
+				out.push_back(&held.second);
 			}
 		}
 	}
