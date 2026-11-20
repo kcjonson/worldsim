@@ -76,6 +76,8 @@ entity's scale, rotation, and position into a world-space **oriented quad**
    `assets/world/misc/BigRock` (a tree-sized boulder you can't walk through), whose
    collider is a polygon on its rim path's eleven points, the outline seen from above.
 
+A `parts` def (a player-placed item) authors no collider; its collider is the convex hull of its parts' footprints, derived at load ([Rotatable placed items, section 10](../rendering/rotatable-placed-items.md#10-collision-nav-and-stand-points)).
+
 ## One pivot per def
 
 Every def has one pivot: the point an entity's position stands for, as a Unity or Godot
