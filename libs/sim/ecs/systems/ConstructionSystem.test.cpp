@@ -1085,7 +1085,7 @@ TEST_F(BuilderSpotEmissionTest, AReshapeBeforeDeliveryGivesTheNewUmbrellaSpotsFo
 
 // A wall's umbrella has no spots; it has the sides its builders may stand on, worked out again on the
 // next frame once a wall completing beside it closes its loop (WOR-1122).
-TEST_F(BuilderSpotEmissionTest, AWallsUmbrellaHasNoSpotsAndItsSidesFollowTheWallsRoundIt) {
+TEST_F(BuilderSpotEmissionTest, AWallsUmbrellaHasNoSpots) {
 	const cw::FoundationId foundationId = commitTwentySquareMeterFoundation();
 	ASSERT_TRUE(topology.setState(foundationId, cw::FoundationState::Built));
 	cw::SegmentCommitResult segment = topology.commitSegment({0, 0}, {4000, 0}, "wood", "thin", foundationId, topology.version());
