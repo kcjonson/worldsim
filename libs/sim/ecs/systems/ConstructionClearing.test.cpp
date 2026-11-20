@@ -314,7 +314,7 @@ namespace ecs::test {
 		plantTrees(trees);
 		auto colonist = createColonist({1.0F, 1.0F}, {});
 
-		ASSERT_TRUE(runUntil([] { return !GoalTaskRegistry::Get().getGoalsOfType(TaskType::Harvest).empty(); }))
+		ASSERT_TRUE(runUntil([] { return !GoalTaskRegistry::Get().getGoalsOfType(GoalType::Clear).empty(); }))
 			<< "precondition: the blocked site emits its clear goal";
 
 		// The first tree goes some other way; the colonist only ever learns about the second.
@@ -351,7 +351,7 @@ namespace ecs::test {
 		remember(*world->getComponent<Memory>(colonist), at, kBush);
 		world->getComponent<Inventory>(colonist)->addItem("Berry", 5); // fed: he takes the bush only to clear it
 
-		ASSERT_TRUE(runUntil([] { return !GoalTaskRegistry::Get().getGoalsOfType(TaskType::Harvest).empty(); }))
+		ASSERT_TRUE(runUntil([] { return !GoalTaskRegistry::Get().getGoalsOfType(GoalType::Clear).empty(); }))
 			<< "the spawned bush blocks the footprint and the site offers its clear goal";
 		EXPECT_EQ(phase(), StructureBlueprint::BuildPhase::Clearing);
 
@@ -369,7 +369,7 @@ namespace ecs::test {
 
 		size_t mostHauls = 0;
 		const bool built = runUntil([&] {
-			mostHauls = std::max(mostHauls, GoalTaskRegistry::Get().getGoalsOfType(TaskType::Haul).size());
+			mostHauls = std::max(mostHauls, GoalTaskRegistry::Get().getGoalsOfType(GoalType::Haul).size());
 			return world->getComponent<StructureBlueprint>(site)->materialsComplete();
 		});
 		EXPECT_TRUE(built) << "the felled Wood reaches the site";

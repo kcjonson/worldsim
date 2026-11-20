@@ -5,13 +5,13 @@ argument-hint: <issue-name>
 
 # Formal Debug Session: $ARGUMENTS
 
-You are entering a **formal debugging session**. You MUST follow the debugging protocol strictly.
+You are entering a **formal debugging session**. Follow the protocol below.
 
 ## Read the Strategy First
 
 @/docs/technical/debugging-strategy.md
 
-## The 5 Rules (MANDATORY)
+## The 5 Rules
 
 1. **NEVER claim "ROOT CAUSE FOUND"** - Only user confirms fixes
 2. **NEVER remove debug code** until user confirms the fix works
@@ -33,7 +33,7 @@ You are entering a **formal debugging session**. You MUST follow the debugging p
 
 **Before deep investigation, spawn parallel scout agents to generate diverse hypotheses.**
 
-Use the Task tool to launch **3 parallel agents** (subagent_type: "Explore") with the following prompt template for each:
+Use the Agent tool to launch **3 parallel agents** (subagent_type: "Explore") with the following prompt template for each:
 
 ```
 You are a debugging scout for issue: $ARGUMENTS
@@ -60,7 +60,7 @@ Return your hypotheses in this format:
 **Quick test:** [how to validate]
 ```
 
-**IMPORTANT:** Launch all 3 agents in a SINGLE message with multiple Task tool calls. Give each agent a slightly different exploration focus:
+Launch all 3 agents in one message. Give each agent a slightly different exploration focus:
 - Agent 1: Focus on data flow and state management
 - Agent 2: Focus on coordinate systems, transforms, and math
 - Agent 3: Focus on timing, initialization order, and edge cases
@@ -98,17 +98,9 @@ Which hypothesis should we investigate first?
 
 ---
 
-## Phase 3: Deep Investigation (Existing Protocol)
+## Phase 3: Deep Investigation
 
 Once user selects a hypothesis, proceed with the disciplined single-hypothesis protocol:
-
-### Before EVERY Action
-
-Ask yourself:
-- [ ] Am I repeating something already tried? (Check session log)
-- [ ] Am I about to claim "root cause"? (Stop - only user confirms)
-- [ ] Am I about to delete debug code? (Stop - user must confirm fix first)
-- [ ] Can I use logs instead of a screenshot? (Use logs)
 
 ### How to Conclude
 

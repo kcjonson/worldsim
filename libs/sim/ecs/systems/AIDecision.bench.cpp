@@ -240,7 +240,7 @@ namespace {
 
 		const auto cut = [&](uint64_t root, ecs::GoalOwner owner, ecs::EntityID destination, glm::vec2 at) {
 			ecs::GoalTask harvest;
-			harvest.type				= ecs::TaskType::Harvest;
+			harvest.type				= ecs::GoalType::Harvest;
 			harvest.owner				= owner;
 			harvest.destinationEntity	= destination;
 			harvest.destinationPosition = at;
@@ -261,7 +261,7 @@ namespace {
 		config.addRule(ecs::StorageRule{.defName = kWoodDef, .category = assets::ItemCategory::RawMaterial, .priority = ecs::StoragePriority::Medium, .minAmount = 400});
 		world.addComponent<ecs::StorageConfiguration>(box, std::move(config));
 		ecs::GoalTask umbrella;
-		umbrella.type				 = ecs::TaskType::Haul;
+		umbrella.type				 = ecs::GoalType::Haul;
 		umbrella.owner				 = ecs::GoalOwner::StorageGoalSystem;
 		umbrella.destinationEntity	 = box;
 		umbrella.destinationPosition = boxAt;
@@ -276,7 +276,7 @@ namespace {
 		world.addComponent<ecs::WorkQueue>(station).addJob(kRecipe, 1);
 		world.addComponent<ecs::Inventory>(station, ecs::Inventory::createForStorage());
 		ecs::GoalTask craft;
-		craft.type				  = ecs::TaskType::Craft;
+		craft.type				  = ecs::GoalType::Craft;
 		craft.owner				  = ecs::GoalOwner::CraftingGoalSystem;
 		craft.destinationEntity	  = station;
 		craft.destinationPosition = stationAt;
@@ -292,7 +292,7 @@ namespace {
 		blueprint.required = {{kWoodDef, 400}};
 		world.addComponent<ecs::StructureBlueprint>(site, std::move(blueprint));
 		ecs::GoalTask build;
-		build.type				  = ecs::TaskType::Build;
+		build.type				  = ecs::GoalType::Build;
 		build.owner				  = ecs::GoalOwner::ConstructionGoalSystem;
 		build.destinationEntity	  = site;
 		build.destinationPosition = siteAt;
