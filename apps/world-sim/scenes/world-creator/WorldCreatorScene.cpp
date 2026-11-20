@@ -472,6 +472,7 @@ namespace {
 				.size = {0.0F, ui::percent(100.0F)},
 				.layout = {.flexGrow = 1.0F},
 				.pointerEvents = ui::PointerEvents::Auto,
+				.onClick = [this](ui::PointerEvent& event) { stageClick(event); },
 				.onPointerDown = [this](ui::PointerEvent& event) { stagePress(event); },
 				.onPointerUp = [this](ui::PointerEvent& event) { globe.handleInput(event, stageRect(), true); },
 				.onPointerMove =
@@ -663,25 +664,30 @@ namespace {
 			return -1;
 		}
 
-		// Pick before orbit-drag so a left click selects the shown marker or the tile under the cursor; the
-		// same press then begins an orbit drag, the stage holding the pointer until the release.
+		// A left press begins an orbit drag, the stage holding the pointer until the release; it picks nothing.
 		void stagePress(ui::PointerEvent& event) {
 			if (!reviewing()) {
 				return;
 			}
-			const Foundation::Rect rect = stageRect();
-			if (event.button == foundation::MouseButton::Left) {
-				if (const std::optional<std::size_t> marker = markerAt(event.screen, rect)) {
-					selectSuggestion(*marker);
-					setPickHint(false);
-				} else if (auto picked = globe.pick(event.screen, rect)) {
-					trySelectSite(*picked);
-				}
-			}
-			if (globe.handleInput(event, rect, true) && globe.isDragging()) {
+			if (globe.handleInput(event, stageRect(), true) && globe.isDragging()) {
 				if (ui::Component* shown = stage.get()) {
 					shown->capturePointer();
 				}
+			}
+		}
+
+		// The ui's click: a left press released within ui::kDragThreshold of where it went down, so a drag that
+		// turned the globe picks nothing. Selects the shown marker under the release, else the tile.
+		void stageClick(ui::PointerEvent& event) {
+			if (!reviewing()) {
+				return;
+			}
+			const Foundation::Rect rect = stageRect();
+			if (const std::optional<std::size_t> marker = markerAt(event.screen, rect)) {
+				selectSuggestion(*marker);
+				setPickHint(false);
+			} else if (auto picked = globe.pick(event.screen, rect)) {
+				trySelectSite(*picked);
 			}
 		}
 
