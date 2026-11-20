@@ -28,15 +28,34 @@ namespace world_sim {
 			return where() + "has no nav mesh to stand on";
 		}
 		if (PlacementSystem::isFurniture(def)) {
+			if (placement.insideUnbuiltSite(at)) {
+				return where() + "is inside a foundation that is not built yet";
+			}
 			if (placement.footprintBuildableNow(def, at)) {
 				return {};
 			}
 			return where() + "is not on clear buildable ground (water, a fordable stream, a placed obstacle, or ground no mover has meshed)";
 		}
+		const std::string refusal = putDownRefusal(navigation, at);
+		return refusal.empty() ? refusal : "spawn: " + def + " at " + refusal;
+	}
+
+	std::string putDownRefusal(const ecs::NavigationSystem* navigation, Foundation::Vec2 at) {
+		const std::string where = "(" + std::to_string(at.x) + ", " + std::to_string(at.y) + ") ";
+		if (navigation == nullptr) {
+			return where + "has no nav mesh to stand on";
+		}
 		if (navigation->isValidPosition({at.x, at.y})) {
 			return {};
 		}
-		return where() + (navigation->inSimArea({at.x, at.y}) ? "is water or a placed obstacle" : "is ground no mover has meshed (off the nav mesh)");
+		return where + (navigation->inSimArea({at.x, at.y}) ? "is water or a placed obstacle" : "is ground no mover has meshed (off the nav mesh)");
+	}
+
+	std::string moverGroundRefusal(const ecs::NavigationSystem* navigation, Foundation::Vec2 at) {
+		if (navigation != nullptr && !navigation->inSimArea({at.x, at.y})) {
+			return {};
+		}
+		return putDownRefusal(navigation, at);
 	}
 
 } // namespace world_sim

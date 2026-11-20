@@ -3,54 +3,81 @@
 
 #include "BaseShader.h"
 #include "GameBootstrap.h"
+#include "GameContext.h"
 #include "SceneTypes.h"
+#include "UserSettings.h"
 
 #include <application/App.h>
 #include <application/CommandLine.h>
 #include <platform/Platform.h>
 #include <theme/Fonts.h>
+#include <theme/InterfaceScale.h>
 #include <utils/Log.h>
 #include <world/AppIdentity.h>
 #include <world/rendering/GlVersion.h>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdio>
+#include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace {
 
 	constexpr const char* kTitle = "World-Sim";
 	constexpr int		  kDevServerPort = 8081;
+	constexpr const char* kSettingsFile = "settings.json";
+	// A run that neither reads nor saves the player's settings, so the window opens at its default size and the
+	// interface at 100%: what the perf captures run in.
+	constexpr std::string_view kNoSettingsFlag = "--no-settings";
 
 } // namespace
 
 int main(int argc, char* argv[]) {
 	const app::CommandLine commandLine = app::parseCommandLine(argc, argv);
+	const std::span<char*> arguments(argv, static_cast<std::size_t>(std::max(argc, 0)));
+	const bool			   noSettings =
+		!arguments.empty() && std::ranges::any_of(arguments.subspan(1), [](const char* argument) { return argument == kNoSettingsFlag; });
 	if (commandLine.help) {
 		std::printf("Usage: %s [options]\n", kTitle);
 		std::printf("Options:\n");
 		std::printf("  --scene=<name>       Load specific scene\n");
 		std::printf("  --http-port <port>   Enable HTTP debug server on port\n");
+		std::printf("  --background         Open the window behind the others, unfocused\n");
+		std::printf("  --no-settings        Neither read nor save the settings file: default window, 100%% interface\n");
 		std::printf("  --help               Show this help message\n");
 	}
 	if (commandLine.help || !commandLine.valid) {
 		return 1;
 	}
 
-	std::unique_ptr<app::Platform> platform =
-		app::createGlfwPlatform({.title = kTitle, .glVersion = {.major = worldview::kGlMajor, .minor = worldview::kGlMinor}});
+	std::unique_ptr<app::Platform> platform = app::createGlfwPlatform(
+		{.title = kTitle,
+		 .background = commandLine.background,
+		 .glVersion = {.major = worldview::kGlMajor, .minor = worldview::kGlMinor},
+		 .minWidth = theme::kMinWindowWidth,
+		 .minHeight = theme::kMinWindowHeight}
+	);
 	if (platform == nullptr) {
 		return 1;
 	}
+	// Outlives the App, which holds a reference to it.
+	world_sim::GameContext	  gameContext{.backgroundLaunch = commandLine.background};
 	std::unique_ptr<app::App> app = app::App::create(
 		{.organization = worldview::kOrganization,
 		 .applicationName = worldview::kGameName,
-		 .frame = {.frameCapHz = 120},
+		 // A background window never has the keyboard, so its ticks can't wait for it
+		 .frame = {.frameCapHz = 120, .freezeTicksOnFocusLoss = !commandLine.background},
+		 .uiScale = theme::uiScaleConfig(),
 		 .baseShader = base_shader::source(),
 		 .fontAtlases = theme::kFontAtlases,
 		 .defaultFont = theme::fontDefault,
 		 .clearColor = {0.1F, 0.1F, 0.15F, 1.0F},
+		 .settingsFile = noSettings ? std::filesystem::path() : std::filesystem::path(kSettingsFile),
 		 // On wherever the server is compiled in, so a Release build, which has none, logs nothing
 		 .devServer =
 			 {.enabled = app::kDevServerCompiledIn || commandLine.httpPort.has_value(),
@@ -61,10 +88,20 @@ int main(int argc, char* argv[]) {
 	if (app == nullptr) {
 		return 1;
 	}
+	app->setContext(gameContext);
+	// A hand-edited ui.scale between stops snaps to one, so Settings shows the scale the interface is at.
+	const float interfaceSize = theme::kInterfaceSizes.at(theme::nearestInterfaceSize(app->uiScale()));
+	if (interfaceSize != app->uiScale()) {
+		app->setUiScale(interfaceSize);
+	}
 
 	world_sim::initializeResources(*app, commandLine.scene.has_value());
+	// The construction config isn't loaded yet, so the defaults under the file's values are the built-in ones
+	// until GameLoadingScene loads it and loads these again.
+	world_sim::UserSettings::Get().load(app->settings());
 
 	world_sim::addScenes(app->scenes());
+	const app::DevServer::Registration uiScaleView = theme::registerUiScaleView(*app);
 
 	// "game" starts at "gameloading", so loading always runs first
 	std::string firstScene = commandLine.scene.value_or(world_sim::scenes::Splash.name);
@@ -78,6 +115,9 @@ int main(int argc, char* argv[]) {
 
 	app->run();
 	app->shutdown();
+	if (!app->settings().save()) {
+		LOG_ERROR(Game, "The settings file couldn't be saved at exit");
+	}
 	world_sim::shutdownResources();
 	return 0;
 }

@@ -48,7 +48,21 @@ TEST(AssetRegistryAsyncTest, AsyncBootstrapLoadsDefinitionsThenRecipes) {
 	EXPECT_GT(reg.loadProgress().defsLoaded.load(), 0);
 	EXPECT_EQ(reg.getValidationReport().errorCount(), 0); // shipped library is clean
 
-	ASSERT_GT(recipes.size(), 0U);
+	EXPECT_TRUE(recipes.problems().empty());
+	const std::map<std::string, float> workAmounts = {
+		{"Recipe_CraftingSpot", 0.0F}, {"Recipe_BasicBox", 90.0F}, {"Recipe_BasicShelf", 120.0F}, {"Recipe_AxePrimitive", 500.0F}
+	};
+	ASSERT_EQ(recipes.size(), workAmounts.size());
+	for (const auto& [name, workAmount] : workAmounts) {
+		const RecipeDef* recipe = recipes.getRecipe(name);
+		ASSERT_NE(recipe, nullptr) << name;
+		EXPECT_EQ(recipe->workAmount, workAmount) << name;
+	}
+	EXPECT_EQ(recipes.getRecipe("Recipe_AxePrimitive")->inputs.size(), 3U);
+	EXPECT_EQ(recipes.getRecipe("Recipe_AxePrimitive")->inputs[0].count, 2U);
+	EXPECT_EQ(recipes.getRecipe("Recipe_AxePrimitive")->skillDefName, "Woodworking");
+	EXPECT_TRUE(recipes.getRecipe("Recipe_BasicBox")->innate);
+	EXPECT_FALSE(recipes.getRecipe("Recipe_AxePrimitive")->innate);
 	for (const auto& [name, recipe] : recipes.allRecipes()) {
 		ASSERT_FALSE(recipe.inputs.empty() && recipe.outputs.empty()) << name;
 		for (const RecipeInput& input : recipe.inputs) {
@@ -70,6 +84,182 @@ TEST(AssetRegistryAsyncTest, AsyncBootstrapLoadsDefinitionsThenRecipes) {
 	// clear() joins the worker and resets progress.
 	reg.clear();
 	EXPECT_FALSE(reg.loadProgress().started.load());
+}
+
+namespace {
+
+	void writeItem(const TempAssetFolder& folder, const std::string& name) {
+		folder.write(
+			name + "/" + name + ".xml",
+			"<?xml version=\"1.0\"?><AssetDefinitions><AssetDef><defName>" + name +
+				"</defName><assetType>simple</assetType></AssetDef></AssetDefinitions>"
+		);
+	}
+
+	// One recipe: two Test_Stone and a Test_Stick at Test_Bench make a Test_Axe.
+	void writeAxeRecipe(const TempAssetFolder& folder) {
+		folder.write("Axe.xml", R"(<?xml version="1.0"?><RecipeDef>
+  <defName>Recipe_TestAxe</defName>
+  <inputs><input thing="Test_Stone" count="2"/><input thing="Test_Stick" count="1"/></inputs>
+  <station>Test_Bench</station>
+  <outputs><output thing="Test_Axe" count="1"/></outputs>
+  <workAmount>500</workAmount>
+</RecipeDef>)");
+	}
+
+	AssetSources sourcesOf(const TempAssetFolder& definitions, const TempAssetFolder& recipes) {
+		return {.definitions = definitions.root.string(), .sharedScripts = "", .recipes = recipes.root.string()};
+	}
+
+} // namespace
+
+// A reload rebuilds the id index, where a name can land on another id, so the recipes are resolved
+// again with it; a recipe naming a definition that is gone fails the recipe load.
+TEST(AssetBootstrapTest, ReloadResolvesRecipesAgainstTheNewIndex) {
+	auto& reg = AssetRegistry::Get();
+	auto& recipes = RecipeRegistry::Get();
+
+	const TempAssetFolder definitionFolder;
+	const TempAssetFolder recipeFolder;
+	for (const char* name : {"Test_Stone", "Test_Stick", "Test_Bench", "Test_Axe"}) {
+		writeItem(definitionFolder, name);
+	}
+	writeAxeRecipe(recipeFolder);
+
+	loadAssetSystem(sourcesOf(definitionFolder, recipeFolder), false);
+	const RecipeDef* axe = recipes.getRecipe("Recipe_TestAxe");
+	ASSERT_NE(axe, nullptr);
+	ASSERT_EQ(axe->inputs.size(), 2U);
+	EXPECT_NE(axe->inputs[0].defNameId, 0U);
+	EXPECT_NE(axe->inputs[1].defNameId, 0U);
+
+	// The library changes on disk: enough new definitions to reorder the index.
+	for (int i = 0; i < 40; ++i) {
+		writeItem(definitionFolder, "Test_Extra" + std::to_string(i));
+	}
+	loadAssetSystem(sourcesOf(definitionFolder, recipeFolder), false);
+
+	EXPECT_TRUE(recipes.problems().empty());
+	EXPECT_EQ(recipes.size(), 1U);
+	EXPECT_EQ(recipes.getRecipesForStation("Test_Bench").size(), 1U);
+	axe = recipes.getRecipe("Recipe_TestAxe");
+	ASSERT_NE(axe, nullptr);
+	ASSERT_EQ(axe->inputs.size(), 2U);
+	EXPECT_EQ(axe->inputs[0].defNameId, reg.getDefNameId("Test_Stone"));
+	EXPECT_EQ(reg.getDefName(axe->inputs[0].defNameId), "Test_Stone");
+	EXPECT_EQ(reg.getDefName(axe->inputs[1].defNameId), "Test_Stick");
+	EXPECT_EQ(axe->inputDefNameIds, (std::vector<uint32_t>{reg.getDefNameId("Test_Stone"), reg.getDefNameId("Test_Stick")}));
+	ASSERT_EQ(axe->outputs.size(), 1U);
+	EXPECT_EQ(reg.getDefName(axe->outputs[0].defNameId), "Test_Axe");
+	EXPECT_EQ(reg.getDefName(axe->stationDefNameId), "Test_Bench");
+
+	std::filesystem::remove_all(definitionFolder.root / "Test_Stick");
+	loadAssetSystem(sourcesOf(definitionFolder, recipeFolder), false);
+	EXPECT_EQ(recipes.size(), 0U);
+	EXPECT_EQ(
+		recipes.problems(),
+		std::vector<std::string>{"Axe.xml: <RecipeDef defName=\"Recipe_TestAxe\"> input thing \"Test_Stick\" names no definition"}
+	);
+
+	recipes.clear();
+	reg.clear();
+}
+
+// A recipe file with a mistake names it by its path under the recipes folder and the <RecipeDef>, and the
+// recipes load nothing, the good files included.
+TEST(AssetBootstrapTest, RecipeMistakesNameTheFileAndTheRecipeAndLoadNoRecipes) {
+	auto& definitions = AssetRegistry::Get();
+	auto& recipes = RecipeRegistry::Get();
+	definitions.clearDefinitions();
+	for (const char* name : {"Test_Stone", "Test_Stick", "Test_Bench", "Test_Axe"}) {
+		AssetDefinition definition;
+		definition.defName = name;
+		definitions.registerTestDefinition(std::move(definition));
+	}
+	const auto problemsWith = [&recipes](const std::string& outputs, const std::string& body) {
+		const TempAssetFolder folder;
+		writeAxeRecipe(folder);
+		folder.write("tools/Bad.xml", "<RecipeDef><defName>Recipe_Bad</defName><outputs>" + outputs + "</outputs>" + body + "</RecipeDef>");
+		EXPECT_FALSE(recipes.loadRecipesFromFolder(folder.root));
+		EXPECT_EQ(recipes.size(), 0U);
+		return recipes.problems();
+	};
+	const auto problemsFor = [&problemsWith](const std::string& body) {
+		return problemsWith("<output thing=\"Test_Axe\"/>", body);
+	};
+	const auto onlyProblem = [](const std::string& problem) {
+		return std::vector<std::string>{"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> " + problem};
+	};
+
+	EXPECT_EQ(problemsFor(""), std::vector<std::string>{"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> workAmount is missing"});
+	EXPECT_EQ(
+		problemsFor("<workAmount>lots</workAmount>"),
+		std::vector<std::string>{"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> workAmount must be a number, got \"lots\""}
+	);
+	EXPECT_EQ(
+		problemsFor("<workAmount>-5</workAmount>"),
+		std::vector<std::string>{
+			"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> workAmount must be a number of work ticks, 0 or more, got \"-5\""
+		}
+	);
+	EXPECT_EQ(
+		problemsFor("<workAmount> 90 </workAmount><time>3</time>"),
+		std::vector<std::string>{"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\">: unknown element <time>"}
+	) << "element text is trimmed, so only the unknown element is a mistake";
+
+	const std::string work = "<workAmount>90</workAmount>";
+	EXPECT_EQ(
+		problemsWith("<output thing=\"Test_Axe\" count=\"eight\"/>", work),
+		onlyProblem("<output> 1 count must be a whole number, got \"eight\"")
+	);
+	EXPECT_EQ(
+		problemsWith("<output thing=\"Test_Axe\" count=\"8x\"/>", work), onlyProblem("<output> 1 count must be a whole number, got \"8x\"")
+	);
+	EXPECT_EQ(
+		problemsWith("<output thing=\"Test_Axe\" count=\"0\"/>", work),
+		onlyProblem("<output> 1 count must be a whole number, 1 or more, got \"0\"")
+	);
+	EXPECT_EQ(problemsFor(work + "<innate>ture</innate>"), onlyProblem("innate must be true or false, got \"ture\""));
+	EXPECT_EQ(problemsWith("<output thing=\"Test_Wod\"/>", work), onlyProblem("output thing \"Test_Wod\" names no definition"));
+
+	AssetDefinition bush;
+	bush.defName = "Test_Bush";
+	bush.capabilities.harvestable = HarvestableCapability{};
+	bush.capabilities.harvestable->yieldDefName = "Test_Twig";
+	definitions.registerTestDefinition(std::move(bush));
+	definitions.registerSyntheticDefinition("Test_Shore", 0);
+	ASSERT_NE(definitions.getDefNameId("Test_Twig"), 0U) << "an undefined yield is interned";
+	EXPECT_EQ(
+		problemsWith("<output thing=\"Test_Twig\"/>", work + "<station>Test_Shore</station>"),
+		(std::vector<std::string>{
+			"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> output thing \"Test_Twig\" names no definition",
+			"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> station \"Test_Shore\" names no definition"
+		})
+	) << "an interned yield and a synthetic name have no definition";
+	EXPECT_EQ(
+		problemsFor(work + "<inputs><input thing=\"Wod\"/></inputs><station>Test_Bnch</station>"),
+		(std::vector<std::string>{
+			"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> input thing \"Wod\" names no definition",
+			"tools/Bad.xml: <RecipeDef defName=\"Recipe_Bad\"> station \"Test_Bnch\" names no definition"
+		})
+	);
+
+	const TempAssetFolder folder;
+	writeAxeRecipe(folder);
+	folder.write(
+		"Spot.xml",
+		"<RecipeDef><defName>Recipe_Spot</defName><station>none</station><outputs><output thing=\"Test_Bench\"/></outputs>" + work +
+			"<innate>true</innate></RecipeDef>"
+	);
+	ASSERT_TRUE(recipes.loadRecipesFromFolder(folder.root)) << recipes.problems().front();
+	const RecipeDef* spot = recipes.getRecipe("Recipe_Spot");
+	ASSERT_NE(spot, nullptr);
+	EXPECT_TRUE(spot->innate);
+	EXPECT_EQ(spot->outputs[0].count, 1U) << "a count left out is one";
+	EXPECT_FALSE(recipes.getRecipe("Recipe_TestAxe")->innate) << "innate left out is false";
+	EXPECT_EQ(recipes.getInnateRecipes(), std::vector<const RecipeDef*>{spot});
+	recipes.clear();
+	definitions.clearDefinitions();
 }
 
 // A load that fails early must leave the validation report reflecting the failure
@@ -98,7 +288,7 @@ TEST(AssetRegistryCapabilityTest, MaskCoversStorageAndCraftableHighBits) {
 	def.defName = "Test_StorageCraftable";
 	def.label = "Test Storage Craftable";
 	def.category = ItemCategory::Furniture;
-	def.capabilities.storage = StorageCapability{};   // bit 8 -- overflows uint8_t
+	def.capabilities.storage = StorageCapability{};		// bit 8 -- overflows uint8_t
 	def.capabilities.craftable = CraftableCapability{}; // bit 7 -- also fixed by the count bump
 	reg.registerTestDefinition(std::move(def));
 
@@ -149,8 +339,8 @@ namespace {
 
 } // namespace
 
-// The yield index after a folder load, after clear(), and after the asset manager's Reload (clear,
-// then load the folder again): each time it names exactly the harvestables yielding each item.
+// The yield index after a folder load, after clear(), and after a clear and a second load of the
+// folder (what a reload through loadAssetSystem does to the definitions): each time it names exactly the harvestables yielding each item.
 TEST(AssetRegistryYieldIndexTest, MatchesDefinitionsAcrossReload) {
 	auto& reg = AssetRegistry::Get();
 	reg.clear();

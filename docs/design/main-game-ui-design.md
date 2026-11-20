@@ -1161,7 +1161,7 @@ are off. The world's hotkeys read only the keys the ui didn't use.
 
 - Color-blind friendly palette options
 - Icon shapes distinct beyond color alone
-- Adjustable UI scale (75%-150%)
+- Adjustable UI scale: built as Settings' Interface size, 60% to 120% (see [Interface scaling](./ui/ui-scale-setting.md))
 - High contrast mode option
 
 ### Input Accessibility

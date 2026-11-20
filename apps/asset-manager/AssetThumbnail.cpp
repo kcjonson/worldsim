@@ -194,8 +194,9 @@ namespace asset_manager {
 	}
 
 	bool AssetThumbnail::ensureMesh() {
-		// Refetch when dirty, resized, moved to a screen of another pixel ratio, or after a reload cleared
-		// the cache, which means the art may have changed.
+		// Refetch when dirty, resized, rescaled, or after a reload cleared the cache, which means the art may
+		// have changed. A rescale redraws the picture at the new density from the same mesh, unless the mesh is a
+		// ground tile's, which is built at the density it lands at.
 		const Foundation::Vec2 size = getSize();
 		const float			   scale = pixelScale();
 		MeshCache&			   cache = meshCache();
@@ -216,7 +217,8 @@ namespace asset_manager {
 		}
 		// A tiled ground tile fits its centre tile; render() repeats it around that one.
 		const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(defName);
-		repeat = def != nullptr && def->role == assets::AssetRole::Ground ? tiles : 1;
+		const bool					   ground = def != nullptr && def->role == assets::AssetRole::Ground;
+		repeat = ground ? tiles : 1;
 		if (repeat > 1) {
 			const float cell = std::min(size.x, size.y) / static_cast<float>(repeat);
 			const float mid = static_cast<float>(repeat / 2);
@@ -228,7 +230,7 @@ namespace asset_manager {
 			};
 		}
 		const std::string key = defName + "@" + std::to_string(static_cast<int>(size.x)) + "x" + std::to_string(static_cast<int>(size.y)) +
-								"#" + std::to_string(seed) + "*" + std::to_string(repeat) + "/" + std::to_string(scale);
+								"#" + std::to_string(seed) + "*" + std::to_string(repeat) + (ground ? "/" + std::to_string(scale) : "");
 		auto it = cache.entries.find(key);
 		if (it == cache.entries.end()) {
 			assets::PreparedAsset prepared = assets::prepareAsset(defName, targetRect, seed, scale);
@@ -276,18 +278,6 @@ namespace asset_manager {
 		return {
 			dst.x + (dst.width * 0.5F) + ((point.x - srcCenterX) * scale), dst.y + (dst.height * 0.5F) + ((point.y - srcCenterY) * scale)
 		};
-	}
-
-	// A point relative to the asset's bbox centre (the entity origin): fitToRect maps that centre to the
-	// box's centre, so this just scales from there.
-	Foundation::Vec2 AssetThumbnail::centeredToLocal(const glm::vec2& point) const {
-		const Foundation::Rect& src = sourceBounds;
-		const Foundation::Rect& dst = targetRect;
-		if (src.width <= 0.0F || src.height <= 0.0F) {
-			return {point.x, point.y};
-		}
-		const float scale = std::min(dst.width / src.width, dst.height / src.height);
-		return {dst.x + (dst.width * 0.5F) + (point.x * scale), dst.y + (dst.height * 0.5F) + (point.y * scale)};
 	}
 
 	void AssetThumbnail::render() {
@@ -423,9 +413,7 @@ namespace asset_manager {
 		if (mesh == nullptr || mesh->meshes.empty()) {
 			return;
 		}
-		// Collision points are in the asset's local meter space. Simple (SVG) assets author the collider
-		// in SVG <metadata>, converted to the bbox-centred frame (relative to the entity origin);
-		// procedural colliders are in the generator's mesh-coord frame.
+		// The collider is in the def's pivot frame, the frame the mesh is in.
 		std::vector<glm::vec2> points;
 		if (collision.type == assets::CollisionShapeType::Rect) {
 			const std::array<glm::vec2, 4> corners = collision.rectCornersLocal();
@@ -436,14 +424,13 @@ namespace asset_manager {
 		if (points.size() < 2) {
 			return;
 		}
-		const bool				centered = def->assetType == assets::AssetType::Simple;
 		const Foundation::Color outline{0.0F, 1.0F, 1.0F, opacity()}; // bright cyan, high contrast on art
 		for (std::size_t i = 0; i < points.size(); ++i) {
 			const glm::vec2& a = points[i];
 			const glm::vec2& b = points[(i + 1) % points.size()];
 			Renderer::Primitives::drawLine({
-				.start = centered ? centeredToLocal(a) : meshToLocal(a),
-				.end = centered ? centeredToLocal(b) : meshToLocal(b),
+				.start = meshToLocal(a),
+				.end = meshToLocal(b),
 				.style = {.color = outline, .width = 2.0F},
 				.id = "am_collision_edge",
 				.key = drawKey(),

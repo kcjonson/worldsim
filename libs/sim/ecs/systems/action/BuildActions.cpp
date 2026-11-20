@@ -55,9 +55,9 @@ namespace ecs {
 
 		const bool deconstruct = (task.type == TaskType::Deconstruct);
 
-		// Build requires the blueprint to be under construction (materials staged); Deconstruct
-		// requires there to be work to undo. A no-op start clears the action so the colonist
-		// re-evaluates rather than spinning on a finished or not-yet-ready blueprint.
+		// Build requires the blueprint to be under construction (materials staged) and not ordered
+		// demolished; Deconstruct requires there to be work to undo. A no-op start clears the action
+		// so the colonist re-evaluates rather than spinning on a finished or not-yet-ready blueprint.
 		if (deconstruct) {
 			if (blueprint->workDone <= 0.0F) {
 				LOG_DEBUG(
@@ -69,12 +69,13 @@ namespace ecs {
 				return;
 			}
 		} else {
-			if (blueprint->phase != StructureBlueprint::BuildPhase::UnderConstruction) {
+			if (blueprint->phase != StructureBlueprint::BuildPhase::UnderConstruction || blueprint->demolishing) {
 				LOG_DEBUG(
 					Engine,
-					"[Action] Build skipped: blueprint %llu not UnderConstruction (phase %d)",
+					"[Action] Build skipped: blueprint %llu not buildable (phase %d, demolishing %d)",
 					static_cast<unsigned long long>(task.buildBlueprintEntityId),
-					static_cast<int>(blueprint->phase)
+					static_cast<int>(blueprint->phase),
+					blueprint->demolishing ? 1 : 0
 				);
 				action.clear();
 				return;
@@ -129,14 +130,15 @@ namespace ecs {
 		// builder still arriving after the structure already flipped Complete (or a deconstruct
 		// already at 0) would otherwise re-set its action to Complete every tick and re-fire the
 		// completion callback (duplicate toast + redundant world version bump). Treat such a
-		// builder as redundant: clear its action and return without firing.
+		// builder as redundant: clear its action and return without firing. A site ordered
+		// demolished takes no more build work from that tick on, and never completes.
 		if (progressEff.deconstruct) {
 			if (blueprint->workDone <= 0.0F) {
 				action.clear();
 				return false;
 			}
 		} else {
-			if (blueprint->phase == StructureBlueprint::BuildPhase::Complete) {
+			if (blueprint->phase == StructureBlueprint::BuildPhase::Complete || blueprint->demolishing) {
 				action.clear();
 				return false;
 			}
@@ -146,6 +148,7 @@ namespace ecs {
 
 		if (progressEff.deconstruct) {
 			blueprint->workDone -= delta;
+			blueprint->teardownBegun = true;
 			if (blueprint->workDone <= 0.0F) {
 				blueprint->workDone = 0.0F;
 				action.state = ActionState::Complete;

@@ -129,6 +129,23 @@ Organize includes in this order (with blank lines between groups):
 
 ## Naming Conventions
 
+### Readable names
+
+Every name is whole words a reader can say: variables, parameters, members, functions, types, and namespace aliases alike. No one- or two-letter names and no cryptic abbreviations.
+
+```cpp
+// ❌ NEVER
+namespace P = Renderer::Primitives;
+P::drawRect(args);
+float d = distance(a, b);
+
+// ✅ CORRECT
+Renderer::Primitives::drawRect(args);
+float gap = distance(start, goal);
+```
+
+The exceptions are loop indices (`i`, `j`) and coordinates (`x`, `y`, `z`). Older code that breaks this rule is legacy to clean up when touched, not a pattern to copy.
+
 ### Classes and Structs
 
 **PascalCase** - capitalize first letter of each word:
@@ -508,6 +525,8 @@ We implement our own ECS system in `libs/sim/ecs/`. Key concepts:
 using EntityID = uint64_t;
 ```
 
+An id is an index (low 32 bits) and a generation (high 32 bits). Destroying an entity removes its components and bumps its index's generation, and a later entity may reuse the index. Component lookups take the whole id: a stale id (one whose entity was destroyed, or `kInvalidEntity`) has no components, so `getComponent` returns null, `hasComponent` is false, `removeComponent` does nothing and no view yields it. Holding an id across frames is therefore safe without an `isAlive` check before a lookup; `isAlive` is for asking whether the entity exists at all. `addComponent` takes only a live id: a destroyed one asserts, and in a release build logs an error and attaches nothing. Always carry the full id an entity was created with; never rebuild one from an index.
+
 **Components** are pure data (POD structs):
 ```cpp
 struct Position {
@@ -554,7 +573,7 @@ public:
 
 ### System Update Order
 
-`World::update` runs systems in ascending `priority()` order, whatever order they were registered in. Input is not an ECS system: the scene handles it before the ECS update. The game's order is time, vision, needs, nav, the goal systems, construction, rooms, AI, movement, physics, three collision passes, actions, and render-data collection last; actions run after physics and collision. [Main Loop Timing](./main-loop-timing.md) lists every system with its priority and what reads what it writes. Pick a new system's priority from that table, after the systems whose output it reads and before the ones that read it.
+`World::update` runs systems in ascending `priority()` order, whatever order they were registered in. Input is not an ECS system: the scene handles it before the ECS update. The game's order is time, thoughts, vision, needs, nav, the goal systems, construction, rooms, AI, movement, physics, three collision passes, actions, and render-data collection last; actions run after physics and collision. [Main Loop Timing](./main-loop-timing.md) lists every system with its priority and what reads what it writes. Pick a new system's priority from that table, after the systems whose output it reads and before the ones that read it.
 
 ## Modern C++20 Features
 

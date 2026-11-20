@@ -10,6 +10,7 @@
 #include "assets/lua/LuaGenerator.h"
 #include "assets/placement/FloraRouting.h"
 
+#include <polygon/Polygon.h>
 #include <silhouette/Silhouette.h>
 #include <threading/TaskPool.h>
 #include <utils/Log.h>
@@ -37,7 +38,7 @@ namespace assets {
 
 	namespace {
 		/// Pack a definition's present capabilities into the bitmask the interning index stores.
-		/// 16-bit: there are 9 capability types and Storage is bit 8, which overflows a uint8_t.
+		/// 16-bit: there are 10 capability types, and Storage (bit 8) and Washable (bit 9) overflow a uint8_t.
 		[[nodiscard]] uint16_t computeCapabilityMask(const AssetDefinition& def) {
 			uint16_t mask = 0;
 			if (def.capabilities.edible.has_value()) {
@@ -66,6 +67,9 @@ namespace assets {
 			}
 			if (def.capabilities.storage.has_value()) {
 				mask |= static_cast<uint16_t>(1U << static_cast<uint8_t>(CapabilityType::Storage));
+			}
+			if (def.capabilities.washable.has_value()) {
+				mask |= static_cast<uint16_t>(1U << static_cast<uint8_t>(CapabilityType::Washable));
 			}
 			return mask;
 		}
@@ -525,19 +529,16 @@ namespace assets {
 		/// path and the collision path flatten identically.
 		constexpr float kSvgCurveTolerance = 0.5F;
 
-		/// The SVG-unit -> world-meter frame shared by the render path (getTemplate
-		/// scales the mesh by scaleFactor) and the collision path
-		/// (loadCollisionFromSvgMetadata maps metadata points into the local-meter
-		/// frame). They MUST agree or the collider drifts off the sprite, so the vertex
-		/// bbox, scaleFactor (height-normalized), and center live here once. `center` is
-		/// the full vertex-bbox center -- DynamicEntityRenderSystem centers the sprite on
-		/// the entity using it, so the collision frame's origin matches. NB: the bbox is
-		/// over path vertices; an asymmetric stroked outline could shift the render center
-		/// by up to half the stroke width, so keep colliders fill-only.
+		/// A simple (SVG) def's pivot frame: SVG user units to meters about the def's pivot, the
+		/// centre of the drawing's path-vertex bbox, scaled so the bbox is worldHeight tall.
+		/// The template mesh, the metadata collider and the motion pivots all go through
+		/// toPivotMeters, so they share the one origin an entity's position stands for.
 		struct SvgMeterFrame {
 			bool	  valid		  = false;
 			float	  scaleFactor = 1.0F;
 			glm::vec2 center{0.0F, 0.0F};
+
+			[[nodiscard]] glm::vec2 toPivotMeters(glm::vec2 svgPoint) const { return (svgPoint - center) * scaleFactor; }
 		};
 
 		SvgMeterFrame computeSvgMeterFrame(const std::vector<renderer::LoadedSVGShape>& shapes, float worldHeight) {
@@ -692,9 +693,7 @@ namespace assets {
 			return std::nullopt;
 		}
 
-		// Convert an authored SVG point into the collision local-meter frame, the same
-		// frame the procedural collider uses (entity.position == scaled-mesh bbox center).
-		auto toLocalMeters = [&](const glm::vec2& p) -> glm::vec2 { return (p - frame.center) * frame.scaleFactor; };
+		auto toLocalMeters = [&](const glm::vec2& p) -> glm::vec2 { return frame.toPivotMeters(p); };
 
 		const std::string type = shapeNode.attribute("type").as_string();
 
@@ -1031,7 +1030,7 @@ namespace assets {
 			pugi::xml_node capabilitiesNode = defNode.child("capabilities");
 			if (capabilitiesNode) {
 				// Edible capability
-				pugi::xml_node edibleNode = capabilitiesNode.child("edible");
+				pugi::xml_node edibleNode = capabilitiesNode.child(capabilityName(CapabilityType::Edible));
 				if (edibleNode) {
 					EdibleCapability edible;
 					edible.nutrition = edibleNode.attribute("nutrition").as_float(0.3F);
@@ -1041,7 +1040,7 @@ namespace assets {
 				}
 
 				// Drinkable capability
-				pugi::xml_node drinkableNode = capabilitiesNode.child("drinkable");
+				pugi::xml_node drinkableNode = capabilitiesNode.child(capabilityName(CapabilityType::Drinkable));
 				if (drinkableNode) {
 					DrinkableCapability drinkable;
 					drinkable.quality = parseCapabilityQuality(drinkableNode.attribute("quality").as_string());
@@ -1049,7 +1048,7 @@ namespace assets {
 				}
 
 				// Sleepable capability
-				pugi::xml_node sleepableNode = capabilitiesNode.child("sleepable");
+				pugi::xml_node sleepableNode = capabilitiesNode.child(capabilityName(CapabilityType::Sleepable));
 				if (sleepableNode) {
 					SleepableCapability sleepable;
 					sleepable.quality = parseCapabilityQuality(sleepableNode.attribute("quality").as_string());
@@ -1058,7 +1057,7 @@ namespace assets {
 				}
 
 				// Toilet capability
-				pugi::xml_node toiletNode = capabilitiesNode.child("toilet");
+				pugi::xml_node toiletNode = capabilitiesNode.child(capabilityName(CapabilityType::Toilet));
 				if (toiletNode) {
 					ToiletCapability toilet;
 					toilet.hygieneBonus = toiletNode.attribute("hygieneBonus").as_bool(false);
@@ -1066,14 +1065,14 @@ namespace assets {
 				}
 
 				// Waste capability (marker for bio piles)
-				pugi::xml_node wasteNode = capabilitiesNode.child("waste");
+				pugi::xml_node wasteNode = capabilitiesNode.child(capabilityName(CapabilityType::Waste));
 				if (wasteNode) {
 					def.capabilities.waste = WasteCapability{};
 				}
 
 				// Carryable capability (ground items like stones)
 				// In unified model, the entity's defName IS the item - no separate itemDefName needed
-				pugi::xml_node carryableNode = capabilitiesNode.child("carryable");
+				pugi::xml_node carryableNode = capabilitiesNode.child(capabilityName(CapabilityType::Carryable));
 				if (carryableNode) {
 					CarryableCapability carryable;
 					carryable.quantity = carryableNode.attribute("quantity").as_uint(1);
@@ -1081,7 +1080,7 @@ namespace assets {
 				}
 
 				// Harvestable capability (bushes, plants that yield resources)
-				pugi::xml_node harvestableNode = capabilitiesNode.child("harvestable");
+				pugi::xml_node harvestableNode = capabilitiesNode.child(capabilityName(CapabilityType::Harvestable));
 				if (harvestableNode) {
 					std::string yieldName = harvestableNode.attribute("yield").as_string("");
 					if (yieldName.empty()) {
@@ -1148,13 +1147,17 @@ namespace assets {
 				}
 
 				// Craftable capability (crafting stations)
-				pugi::xml_node craftableNode = capabilitiesNode.child("craftable");
+				pugi::xml_node craftableNode = capabilitiesNode.child(capabilityName(CapabilityType::Craftable));
 				if (craftableNode) {
 					def.capabilities.craftable = CraftableCapability{};
 				}
 
+				if (capabilitiesNode.child(capabilityName(CapabilityType::Washable))) {
+					def.capabilities.washable = WashableCapability{};
+				}
+
 				// Storage capability (containers)
-				pugi::xml_node storageNode = capabilitiesNode.child("storage");
+				pugi::xml_node storageNode = capabilitiesNode.child(capabilityName(CapabilityType::Storage));
 				if (storageNode) {
 					StorageCapability storage;
 					storage.maxCapacity = storageNode.child("capacity").text().as_uint(50);
@@ -1294,6 +1297,10 @@ namespace assets {
 			}
 		}
 
+		// Every shape set so far counts now, so no later early return in a load leaves the reach short;
+		// prewarmTreeVariants records the aged defs' shapes it sets.
+		admitCollisionShapes({loadedNames.begin() + static_cast<std::ptrdiff_t>(firstNew), loadedNames.end()});
+
 		LOG_DEBUG(Engine, "Loaded %d asset definitions from %s", loadedCount, xmlPath.c_str());
 		return loadedCount > 0;
 	}
@@ -1318,6 +1325,7 @@ namespace assets {
 			return 0;
 		}
 
+		m_validationReport.issues.clear();
 		size_t totalLoaded = 0;
 		size_t filesProcessed = 0;
 		std::vector<std::string> loadedNames;
@@ -1380,8 +1388,10 @@ namespace assets {
 		buildDefNameIndex();
 
 		// Validate on load so the game (at launch) and the Asset Manager share one
-		// report. No GL; safe on the load worker thread.
-		m_validationReport = AssetValidator::validate(folderPath, m_sharedScriptsPath);
+		// report, after what loading itself found (a collision polygon the nav mesh can't take).
+		// No GL; safe on the load worker thread.
+		const ValidationReport validated = AssetValidator::validate(folderPath, m_sharedScriptsPath);
+		m_validationReport.issues.insert(m_validationReport.issues.end(), validated.issues.begin(), validated.issues.end());
 		prewarmTreeVariants(loadedNames);
 		LOG_INFO(
 			Engine, "Asset validation: %d error(s), %d warning(s)", m_validationReport.errorCount(), m_validationReport.warningCount()
@@ -1470,6 +1480,77 @@ namespace assets {
 			return maxY - minY;
 		}
 
+		// The smallest scale an instance of a def stands at: the low end of its placement range, or 1
+		// (what the player places and dev spawn makes) when that is smaller.
+		float smallestPlacedScale(const PlacementScale& range) {
+			float smallest = 1.0F;
+			for (const float bound : {std::abs(range.min), std::abs(range.max)}) {
+				if (bound > 0.0F) {
+					smallest = std::min(smallest, bound);
+				}
+			}
+			return smallest;
+		}
+
+		// The floor, in mm, on a collision polygon's point spacing and on the gap between its edges,
+		// checked on its points rounded to the mm. Rounding moves a point at most 0.71 mm (half a mm on
+		// each axis), so 3 mm rounded is over 1.58 mm as authored, and an instance's own rounding (another
+		// 0.71 mm a point) still leaves two points distinct and two edges uncrossed in the nav mesh.
+		constexpr std::int64_t kMinCollisionPolygonGapMm = 3;
+
+		geometry::Ring collisionPolygonMm(const CollisionShape& shape, float scale) {
+			geometry::Ring ring;
+			ring.reserve(shape.pointsMeters.size());
+			const double toMm = static_cast<double>(scale) * static_cast<double>(geometry::kMillimetersPerMeter);
+			for (const glm::vec2& point : shape.pointsMeters) {
+				ring.push_back({std::llround(static_cast<double>(point.x) * toMm), std::llround(static_cast<double>(point.y) * toMm)});
+			}
+			return ring;
+		}
+
+		std::string formatted(const char* format, auto... values) {
+			std::array<char, 256> buffer{};
+			std::snprintf(buffer.data(), buffer.size(), format, values...);
+			return buffer.data();
+		}
+
+		// Why a collision polygon can't be a nav mesh obstacle at `scale` (the smallest it is placed at),
+		// empty when it can. The mesh takes a simple closed ring (no repeated closing point) with area
+		// and no zero-length edge; its winding it normalises itself.
+		std::string collisionPolygonProblem(const CollisionShape& shape, float scale) {
+			const geometry::Ring ring = collisionPolygonMm(shape, scale);
+			if (ring.size() < 3) {
+				return formatted("has %zu points; it needs at least 3", ring.size());
+			}
+			if (const geometry::ConstraintResult spacing = geometry::minVertexSpacing(ring, kMinCollisionPolygonGapMm); !spacing.pass) {
+				return formatted(
+					"has points %zu and %zu %.1f mm apart at scale %.2f, under the %lld mm the nav mesh needs (a repeated closing point is one)",
+					spacing.vertexIndex,
+					spacing.otherIndex,
+					spacing.measuredValue * 1000.0,
+					static_cast<double>(scale),
+					static_cast<long long>(kMinCollisionPolygonGapMm)
+				);
+			}
+			if (const geometry::ConstraintResult simple = geometry::isSimple(ring); !simple.pass) {
+				return formatted("crosses itself (edges %zu and %zu): it must be one simple outline", simple.vertexIndex, simple.otherIndex);
+			}
+			if (geometry::windingOrder(ring) == geometry::Winding::Degenerate) {
+				return "has no area";
+			}
+			if (const geometry::ConstraintResult clearance = geometry::minEdgeClearance(ring, kMinCollisionPolygonGapMm); !clearance.pass) {
+				return formatted(
+					"has edges %zu and %zu %.1f mm apart at scale %.2f, under the %lld mm the nav mesh needs",
+					clearance.vertexIndex,
+					clearance.otherIndex,
+					clearance.measuredValue * 1000.0,
+					static_cast<double>(scale),
+					static_cast<long long>(kMinCollisionPolygonGapMm)
+				);
+			}
+			return {};
+		}
+
 		void raiseTo(std::atomic<float>& target, float value) {
 			float current = target.load(std::memory_order_relaxed);
 			while (value > current && !target.compare_exchange_weak(current, value, std::memory_order_relaxed)) {
@@ -1540,18 +1621,18 @@ namespace assets {
 				return out;
 			}
 
-			const SvgMeterFrame frame		= computeSvgMeterFrame(shapes, def.worldHeight);
-			const float			scaleFactor = frame.valid ? frame.scaleFactor : 1.0F;
-			LOG_INFO(Engine, "SVG '%s': worldHeight=%.2f, scaleFactor=%.4f", def.defName.c_str(), def.worldHeight, scaleFactor);
+			const SvgMeterFrame frame = computeSvgMeterFrame(shapes, def.worldHeight);
+			LOG_INFO(Engine, "SVG '%s': worldHeight=%.2f, scaleFactor=%.4f", def.defName.c_str(), def.worldHeight, frame.scaleFactor);
 
 			// Tessellate each shape (baking solid/gradient per-vertex colors) in SVG space, then
-			// normalize the whole mesh to worldHeight.
+			// move the whole mesh into the def's pivot frame.
 			for (const auto& shape : shapes) {
 				renderer::appendShapeMesh(shape, mesh);
 			}
 			for (auto& v : mesh.vertices) {
-				v.x *= scaleFactor;
-				v.y *= scaleFactor;
+				const glm::vec2 local = frame.toPivotMeters({v.x, v.y});
+				v.x					  = local.x;
+				v.y					  = local.y;
 			}
 
 			if (mesh.vertices.empty()) {
@@ -1730,6 +1811,7 @@ namespace assets {
 			}
 		}
 		if (jobs.empty()) {
+			admitCollisionShapes(names);
 			return;
 		}
 		// The def's mature variant 0 first, so filing the rest finds its routing decided. Ordered by
@@ -1760,12 +1842,74 @@ namespace assets {
 			}
 			insertTemplate(*job.def, job.traits, std::move(job.built));
 		}
+		admitCollisionShapes(names);
 		LOG_INFO(
 			Engine,
 			"Prewarmed %zu tree variants in %.1f ms",
 			jobs.size(),
 			std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()
 		);
+	}
+
+	void AssetRegistry::admitCollisionShapes(const std::vector<std::string>& defNames) {
+		for (const std::string& name : defNames) {
+			const auto found = definitions.find(name);
+			if (found == definitions.end()) {
+				continue;
+			}
+			AssetDefinition& def = found->second;
+			// At least 1: what the player places and what dev spawn makes stand at scale 1, whatever the
+			// def's placement range.
+			const float scale	 = std::max({1.0F, std::abs(def.placement.scale.min), std::abs(def.placement.scale.max)});
+			const float smallest = smallestPlacedScale(def.placement.scale);
+			// One error per def naming every failing age class, those with the same problem (an XML or
+			// SVG collider is every class's polygon) listed together.
+			std::vector<std::pair<std::string, std::vector<size_t>>> problems;
+			for (size_t ageClass = 0; ageClass < def.collisions.size(); ++ageClass) {
+				CollisionShape& shape = def.collisions[ageClass];
+				if (shape.type != CollisionShapeType::Polygon) {
+					continue;
+				}
+				const std::string problem = collisionPolygonProblem(shape, smallest);
+				if (problem.empty()) {
+					if (geometry::windingOrder(collisionPolygonMm(shape, 1.0F)) == geometry::Winding::Clockwise) {
+						std::reverse(shape.pointsMeters.begin(), shape.pointsMeters.end());
+					}
+					continue;
+				}
+				const auto same = std::find_if(problems.begin(), problems.end(), [&](const auto& entry) { return entry.first == problem; });
+				if (same != problems.end()) {
+					same->second.push_back(ageClass);
+				} else {
+					problems.push_back({problem, {ageClass}});
+				}
+				shape = CollisionShape{};
+			}
+			if (!problems.empty()) {
+				std::string described;
+				for (const auto& [problem, ageClasses] : problems) {
+					described += described.empty() ? "" : "; ";
+					if (def.collisions.size() > 1) {
+						described += ageClasses.size() > 1 ? "(age classes " : "(age class ";
+						for (size_t i = 0; i < ageClasses.size(); ++i) {
+							described += (i == 0 ? "" : ", ") + std::to_string(ageClasses[i]);
+						}
+						described += ") ";
+					}
+					described += problem;
+				}
+				const std::string message =
+					"collision polygon " + described + "; the nav mesh can't take it, so it is dropped and the asset blocks nothing";
+				LOG_ERROR(Engine, "AssetDef '%s' %s", name.c_str(), message.c_str());
+				m_validationReport.add(Severity::Error, name, "collision", message);
+			}
+			for (const CollisionShape& shape : def.collisions) {
+				if (shape.blocks()) {
+					raiseTo(largestCollisionReach, shape.reachMeters() * scale);
+					raiseTo(largestCollidingScale, scale);
+				}
+			}
+		}
 	}
 
 	void AssetRegistry::checkCollisionVariantIndependence(ValidationReport& report) {
@@ -1935,11 +2079,6 @@ namespace assets {
 
 		const renderer::TessellatedMesh* tmpl = getTemplate(templateId);
 		if (tmpl != nullptr && !tmpl->vertices.empty() && !tmpl->indices.empty()) {
-			// Bounds centre of the whole drawn mesh in the template frame == the dynamic render
-			// path's -centerOffset, so the shared instance transform, outline, and hit-test never drift.
-			const Foundation::Rect b = renderer::computeBounds(*tmpl);
-			sil.boundsCenterMeters	 = {b.x + b.width * 0.5F, b.y + b.height * 0.5F};
-
 			// Rasterize the ACTUAL rendered geometry: expand the tessellated triangles into
 			// the template-local mm frame. This captures fills AND stroke bands (e.g. a reed's
 			// stroke stem, which a fill-contour silhouette would miss), so the outline hugs
@@ -2029,7 +2168,7 @@ namespace assets {
 						for (auto& drv : clip.drivers) {
 							const auto& nodes = nodesFor(drv.part);
 							if (drv.node >= 0 && static_cast<size_t>(drv.node) < nodes.size()) {
-								drv.pivot	 = nodes[static_cast<size_t>(drv.node)] * sf; // scaled, uncentered (= template space)
+								drv.pivot	 = frame.toPivotMeters(nodes[static_cast<size_t>(drv.node)]);
 								drv.hasPivot = true;
 							} else {
 								LOG_WARNING(
@@ -2233,6 +2372,8 @@ namespace assets {
 		}
 		definitions.clear();
 		clearCaches();
+		largestCollisionReach.store(0.0F, std::memory_order_relaxed);
+		largestCollidingScale.store(0.0F, std::memory_order_relaxed);
 		groupIndex.clear();
 		// Reset the string-interning index too (mirrors clearDefinitions); otherwise name<->id
 		// and capability lookups return stale mappings for now-destroyed defs until a reload.
@@ -2529,6 +2670,7 @@ namespace assets {
 			m_edibleItemIds.erase(edibleIdAt);
 		}
 
+		admitCollisionShapes({defName});
 		LOG_DEBUG(Engine, "Registered test definition: %s", defName.c_str());
 	}
 
@@ -2552,6 +2694,8 @@ namespace assets {
 	void AssetRegistry::clearDefinitions() {
 		definitions.clear();
 		clearCaches();
+		largestCollisionReach.store(0.0F, std::memory_order_relaxed);
+		largestCollidingScale.store(0.0F, std::memory_order_relaxed);
 		groupIndex.clear();
 		m_defNameToId.clear();
 		m_idToDefName.clear();

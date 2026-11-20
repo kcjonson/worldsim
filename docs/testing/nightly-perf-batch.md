@@ -36,11 +36,11 @@ The batch starts at 02:00 local and waits for the machine to be idle. Idle is me
 
 - No build, test, or game process: `cl`, `link`, `ninja`, `cmake`, `ctest`, `clang*`, `ccache`, `world-sim`, `ui-sandbox`, `asset-manager`, `worldgen-cli`, any `*-tests`.
 - CPU under 10%.
-- GPU utilization under 10% (`nvidia-smi --query-gpu=utilization.gpu`, read-only).
+- GPU load under 10% (`nvidia-smi --query-gpu=utilization.gpu,clocks.current.graphics,clocks.max.graphics`, read-only): raw utilization, except while the graphics clock is at most a quarter of its maximum, where it is scaled by clock over maximum so a card idling at its lowest clock doesn't read busy. Without both clock fields it is raw.
 
 The process list catches a session that is between commands; the CPU and GPU readings catch everything the list doesn't name. Thresholds are constants in the script, tuned from the first week's logs.
 
-The gate holds for the whole batch, not only the start. `measure` rechecks the machine before every capture and waits again if it isn't idle. Every sample also records CPU and GPU use by processes other than the game (one `typeperf` for the capture: total CPU less the game's, and the 3D engine use of every other process). The process list is polled about once a second through the capture, so a build that starts and ends inside one scenario is still seen. A capture is void when more than a fifth of its samples saw over 10% of either, when another session's build, test or game process ran during it, when a sample was off P0, or when a scenario has no load readings or no process list (load nobody read is unknown, not low). The batch waits for idle again and redoes that one capture, once. Void twice and that view is inconclusive for the night.
+The gate holds for the whole batch, not only the start. `measure` rechecks the machine before every capture and waits again if it isn't idle. Every sample also records CPU and GPU use by processes other than the game (from `typeperf`: total CPU less the game's, and the 3D engine use of every other process, both told from the game by PID). `typeperf` now and then writes a header that leaves out a column its rows still carry, which slides every value onto its neighbour's name (the game's GPU use reads as another process's, and the total CPU as nothing), so a header that doesn't name the total and the game, or a row of another width, restarts it; after five starts the capture goes unread. The process list is polled about once a second through the capture, so a build that starts and ends inside one scenario is still seen. A capture is void when more than a fifth of its samples saw over 10% of either, when another session's build, test or game process ran during it, when a sample was off P0, or when a scenario has no load readings or no process list (load nobody read is unknown, not low). The batch waits for idle again and redoes that one capture, once. Void twice and that view is inconclusive for the night.
 
 If the machine never goes idle by 06:00, or the batch is still running at 07:00, it stops. A build still running at 07:00 is killed with its whole process tree, and no build starts after it. The report says what was busy (the processes that failed the gate) and the untested range carries to the next night.
 
@@ -57,7 +57,7 @@ Everything relevant is already together on the tip, so the first run covers the 
 
 ## R4. The run
 
-A dedicated worktree, `perf-nightly`, with its own build directory. RelWithDebInfo, at the game's own window size on this machine (3072x1728; there is no flag for it).
+A dedicated worktree, `perf-nightly`, with its own build directory. RelWithDebInfo, in the capture conditions of [README.md](./README.md#capture-conditions): `--no-settings`, so the window is the game's default size on this machine (3072x1728) and the interface 100%, whatever the player last saved.
 
 The batch never bakes a planet. Each build copy gets a hard link to the main checkout's `planets/quickstart.wsplanet`, the planet the game is played on. A planet baked today from `main` is a different world, with the landing river drawn dry (WOR-701), and timings from it compare with nothing. A SHA that can't load the shared planet, after a worldgen format change, fails its captures and the report says so.
 

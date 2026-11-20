@@ -1,7 +1,7 @@
 // node --test scripts/perf/compare.test.mjs
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compareBenchRuns, compareRuns, coverUnjudged, worstVerdict } from './compare.mjs';
+import { compareBenchRuns, compareRuns, coverUnjudged, isNightFile, nightFileName, worstVerdict } from './compare.mjs';
 
 function run(gpuMs, { isVoid = false, spikes33 = 0 } = {}) {
 	const sample = { frameTimeMs: 8.33, p99Ms: 8.4, gpuMs, tileGpuMs: 0.5, spikes33, drawCalls: 60, triangles: 1000 };
@@ -95,4 +95,12 @@ test('benchmarks are judged by share of base, whatever their scale', () => {
 	assert.equal(compareBenchRuns([bench(10.0), bench(10.1)], [bench(11.0), bench(11.1)]).verdict, 'regressed');
 	assert.equal(compareBenchRuns([bench(10.0), bench(10.1)], [bench(13.0), bench(13.1)]).verdict, 'major');
 	assert.equal(compareBenchRuns([bench(10.0), bench(10.1)], [bench(13.0, true), bench(13.1)]).verdict, 'inconclusive');
+});
+
+test("a night's files for a view are picked by the whole view name, not a prefix of another's", () => {
+	const sha = '30320bc1b3fd0123456789';
+	const names = ['river', 'river-cover'].flatMap((view) => [1, 2].map((run) => nightFileName(sha, view, run)));
+	names.push('cff0919cc83e-river-1.json', '30320bc1b3fd-river-2.json.tmp');
+	assert.deepEqual(names.filter((name) => isNightFile(name, sha, 'river')), ['30320bc1b3fd-river-1.json', '30320bc1b3fd-river-2.json']);
+	assert.deepEqual(names.filter((name) => isNightFile(name, sha, 'river-cover')), ['30320bc1b3fd-river-cover-1.json', '30320bc1b3fd-river-cover-2.json']);
 });

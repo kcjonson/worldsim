@@ -351,6 +351,7 @@ namespace world_sim {
 		}
 		const std::vector<QueuedJobItem>& queue = model.queue();
 		emptyQueue.get()->setVisible(queue.empty());
+		list->setVisible(!queue.empty());
 
 		std::vector<QueueLine> lines;
 		for (std::size_t i = 0; i < queue.size(); ++i) {

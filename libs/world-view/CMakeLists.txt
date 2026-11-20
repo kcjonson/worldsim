@@ -15,6 +15,9 @@ add_library(world-view
     world/rendering/ScreenStateGuard.cpp
     world/rendering/TemplateLevelBuilder.cpp
     world/rendering/TemplateMeshCache.cpp
+    world/rendering/CoverPieces.cpp
+    world/rendering/DrawnShadows.cpp
+    world/rendering/SeenFeather.cpp
     world/rendering/VisibilityCoverRenderer.cpp
     world/rendering/DynamicEntityRenderSystem.cpp
 )
@@ -114,7 +117,8 @@ if(BUILD_TESTING)
         # Where SurfaceFieldGolden reads land.glsl from, whatever the working directory
         # (MSVC's __FILE__ is relative to the build dir, and ctest runs from another).
         target_compile_definitions(world-view-tests PRIVATE
-            WORLD_VIEW_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/world/rendering/shaders")
+            WORLD_VIEW_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/world/rendering/shaders"
+            WORLD_VIEW_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets/world")
         if(MSVC)
             target_compile_options(world-view-tests PRIVATE /Od)
         else()

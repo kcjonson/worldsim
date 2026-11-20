@@ -9,7 +9,7 @@ New Game generates a random planet, and its coasts read right from orbit. Quick 
 
 ## Steps
 
-Launch `world-sim` (RelWithDebInfo); the dev server is on 127.0.0.1:8081. `/api/state?what=scene` reads `state` (1 generating, 2 ready) and `globe`.
+Launch `world-sim --background --no-settings` (RelWithDebInfo); the dev server is on 127.0.0.1:8081. `/api/state?what=scene` reads `state` (1 generating, 2 ready) and `globe`.
 
 1. Click Enter Expedition (`btn_enter_expedition`): the main menu.
 2. Click New Game (`menu_new_game`), then Confirm Scenario (`btn_scenario_confirm`), then the crew step's Generate (`btn_party_generate`): Generate Planet, step 03 / 03, Earth-Like selected, a random seed filled in.

@@ -2,8 +2,8 @@
 // docs/testing/README.md ("Performance") is the rule; docs/testing/nightly-perf-batch.md the batch.
 //
 //   capture   --port 8081 (--view river|river-cover|coast|desert | --x 0 --y 20) [--zooms 3,1.5] [--no-scroll]
-//             [--no-gpu-hold] [--no-reveal] [--out file]      against a world-sim you started, in the game
-//             scene, with player visibility revealed unless --no-reveal (which times the cover);
+//             [--no-gpu-hold] [--no-reveal] [--out file]      against a world-sim you started with --no-settings,
+//             in the game scene, with player visibility revealed unless --no-reveal (which times the cover);
 //             river-cover is the river with the cover drawn, at zooms 3, 1.5 and 0.75, no scroll
 //   compare   --base a.json[,b.json] --tip c.json[,d.json] [--md file]
 //             --night <dir> --base <sha> --tip <sha> [--views river,coast|none] [--bench world,assets]
@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { readMachineLoad } from './machine-load.mjs';
 import { capture, kDefaultZooms } from './perf/capture.mjs';
 import { runBenchmarks } from './perf/bench.mjs';
-import { benchToMarkdown, compareBenchRuns, compareRuns, coverUnjudged, normalizeCapture, toMarkdown, unjudgedToMarkdown, worstVerdict } from './perf/compare.mjs';
+import { benchToMarkdown, compareBenchRuns, compareRuns, coverUnjudged, isNightFile, nightFileName, normalizeCapture, toMarkdown, unjudgedToMarkdown, worstVerdict } from './perf/compare.mjs';
 
 // A view is a place plus capture options. `river-cover` is the river with the player visibility cover
 // drawn (reveal off), so the cover's cost reads in its own cell and the river's stays comparable with
@@ -312,7 +312,7 @@ async function answers(url, timeoutMs = 2000) {
 async function withGame(dir, port, body) {
 	const base = `http://127.0.0.1:${port}`;
 	if (await answers(`${base}/api/state?what=scene`)) throw new Error(`something already answers on port ${port}`);
-	const child = spawn(path.join(dir, kWindows ? 'world-sim.exe' : 'world-sim'), ['--scene=game', '--http-port', String(port)], { cwd: dir, stdio: 'ignore' });
+	const child = spawn(path.join(dir, kWindows ? 'world-sim.exe' : 'world-sim'), ['--scene=game', '--no-settings', '--http-port', String(port)], { cwd: dir, stdio: 'ignore' });
 	let exited = false;
 	child.on('exit', () => { exited = true; });
 	child.on('error', () => { exited = true; });
@@ -385,7 +385,7 @@ async function takeInterleaved({ runs, stopAt, gate, force, night }, result, { b
 	for (let run = 1; run <= runs; run++) {
 		for (const [sha, from] of Object.entries(built)) {
 			items: for (const item of items) {
-				const file = path.join(night, folder, `${sha.slice(0, 12)}-${item}-${run}.json`);
+				const file = path.join(night, folder, nightFileName(sha, item, run));
 				if (fs.existsSync(file) && !force) {
 					result.taken.push({ sha, [key]: item, run, file, reused: true, void: JSON.parse(fs.readFileSync(file, 'utf8')).void });
 					continue;
@@ -504,7 +504,7 @@ function compare(options) {
 		const filesOf = (folder, sha, item) => {
 			const dir = path.join(night, folder);
 			if (!fs.existsSync(dir)) return [];
-			return fs.readdirSync(dir).filter((name) => name.startsWith(`${sha.slice(0, 12)}-${item}-`)).map((name) => path.join(dir, name));
+			return fs.readdirSync(dir).filter((name) => isNightFile(name, sha, item)).map((name) => path.join(dir, name));
 		};
 		const views = typeof options.views === 'string' ? options.views : Object.keys(kViews).join(',');
 		for (const view of views === 'none' ? [] : views.split(',')) {

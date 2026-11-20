@@ -28,7 +28,7 @@ foreach(src_sub IN LISTS source_subdirs)
             # robocopy exit codes: 0-7 are all success variants.
             # 8+ mean real errors (access denied, out of space, etc.).
             execute_process(
-                COMMAND robocopy "${src_sub}" "${dst_sub}" /MIR /NJH /NJS /NFL /NDL
+                COMMAND robocopy "${src_sub}" "${dst_sub}" /MIR /R:2 /W:1 /NJH /NJS /NFL /NDL
                 RESULT_VARIABLE rc
             )
             if(rc GREATER_EQUAL 8)

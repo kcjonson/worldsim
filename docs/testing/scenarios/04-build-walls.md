@@ -1,7 +1,7 @@
 # Scenario 04: Build walls on foundation
 
 **Status:** ready  
-**Last verified:** 2026-11-13
+**Last verified:** 2026-11-17
 
 Verifies that a colonist builds all four wall segments on an existing foundation to completion,
 unaided.
@@ -70,7 +70,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
-# -> walls[N].state == "UnderConstruction", walls[N].progress > 0
+# -> at least one wall shows progress above 0 while its state is still "Blueprint" (at speed 3 one wall can finish between two polls), and all end "Built"
 ```
 
 3. Keep Bob's needs up every ~2 real minutes:
@@ -89,8 +89,8 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 ```
 
 5. At the Quick Start creek, `walls?pts=6.5,8;9.5,8&host=0&close=0&built=0` and `spawn?def=BasicBox&at=7.9,8` both answer 400 and create nothing.
-6. With the wall tool held over the creek at (7.9, 8), the status reads "not on buildable ground" and a click adds no point.
-7. On the east bank, `walls?pts=9.9,5;9.9,11&host=0&close=0&built=0` and `spawn?def=BasicBox&at=9.9,8` both answer 200.
+6. With the wall tool held over the creek at (7.9, 8), the status reads "not on buildable ground" and a click adds no point (`status.valid` false, `status.message` and `verdict.reason` "not on buildable ground", `status.pointCount` 0 after the click).
+7. On the east bank, `walls?pts=9.9,5;9.9,8&host=0&close=0&built=0` and `spawn?def=BasicBox&at=9.9,8` both answer 200. The chain adds a fifth wall.
 8. `ground?pts=7.9,8` reads `valid` true and `buildableNow` false, and Bob still walks through the creek.
 
 ---
@@ -99,9 +99,9 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 ```
 GET /api/state?what=construction
-  -> walls.length == 4
-  -> walls.every(w => w.state == "Built" && w.progress == 1.0)
-  -> walls.every(w => w.material == "Wood")
+  -> walls.length == 4 before step 7 and 5 after it; walls[0..3] are the Setup walls, walls[4] is step 7's
+  -> each of walls[0..3]: state == "Built" && progress == 1.0
+  -> each of walls[0..3]: material == "Wood"
 ```
 
 ---
@@ -114,6 +114,28 @@ intervention beyond need top-ups.
 **Fail:** Bob freezes or repeats "Waiting for the area to settle" — check the wall-trap recovery
 regression in [../regressions.md](../regressions.md). Note `colonists[0].action` and which wall
 segment has stalled (`state`, `progress`).
+
+---
+
+## Drawing a chain with the wall tool
+
+Run these after the pass / fail check above: they add blueprint wall segments, which would break its every-wall-built check.
+
+The drawing steps below read `/api/state?what=drawing`. Their points are world points inside the built foundation (convert them to pixels with `what=camera`, [the camera view](../README.md#the-camera-view)); for the four-corner foundation of the precondition, take points a meter or more in from its edges on a foundation at least 6 m x 4 m (8 m x 6 m from (14, 0) to (22, 6) is buildable at the Quick Start landing). Centre the camera on it with `control?action=camera&x=18&y=3&zoom=3`, and again after each new game. A move out of the window is `ev=move,-5,-5`, which pauses a tool the way a real exit does.
+
+9. Pick Wall in the Build menu, click two points on a built foundation (say (16, 2) and (20, 2)), and move the pointer out of the game's window: the band to the pointer, the marker, and its label go, and the two points and the band between them stay (`followingPointer` false, `pointer` and `snap` null, `points` still two, `status.hint` "Right-click / Enter to finish").
+10. Move the pointer back over the foundation at a spot that is not the second point (say (20, 5)): the band follows it from the second point (`followingPointer` true), and a click places a third point (`status.pointCount` 3).
+11. Double-click a fourth point: the chain ends, `?what=construction` lists three more wall segments, the strip reads "Click a foundation to start" (`status.hint`, `status.pointCount` 0), and no toast says the wall is too short.
+12. Click two different points on the foundation a second apart: each places a point and the chain goes on (`status.pointCount` 2); Enter ends it (`status.pointCount` 0, one more wall segment).
+13. With no point placed, press Esc: the wall tool closes (`tool` `none`). With a chain of two or more points Esc ends the wall first and keeps the tool; press Esc again to close it.
+14. Open the top bar's Menu and pick Main Menu: the main menu shows.
+15. Pick Settings and, under Drawing Settings, switch Angle readout on if it is off: it reads on.
+16. Pick Back, then Quick Start: a new game shows, and `settings.angleReadout` is true.
+17. Make the built foundation again with the precondition's `built=1` command and centre the camera on it again: `?what=construction` lists it `Built`.
+18. Pick Wall in the Build menu and click (16, 3) and (19, 3) inside the built foundation, leaving the pointer on the second: the two points and the band between them show, nothing red, and no "wall too short" (`status.hint` "Right-click / Enter to finish", `verdict.proposed` false).
+19. Move the pointer off at an angle that is not square: an arc and the angle between the two walls show at the middle point.
+20. Read the new foundation's id from `?what=construction` (`foundations[0].id`, FOUND_ID for this game) and make a built wall on it: `walls?pts=15,5;21,5&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=0` (inside the 8 m x 6 m foundation from (14, 0) to (22, 6)): `?what=construction` lists the wall `Built`.
+21. Pick Door in the Build menu, click the wall at (18, 5), and leave the pointer there: the door shows in the wall with no red ghost and no "openings overlap" (`verdict.proposed` false, `status.hint` "Click a wall to place").
 
 ---
 

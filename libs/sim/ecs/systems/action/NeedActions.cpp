@@ -79,7 +79,7 @@ namespace ecs {
 					const std::string& food = registry.getDefName(task.needItemDefNameId);
 					if (task.needSourceStorageId != 0) {
 						const auto box = static_cast<EntityID>(task.needSourceStorageId);
-						if (!world->isAlive(box) || world->getComponent<Inventory>(box) == nullptr || world->hasComponent<Packaged>(box)) {
+						if (world->getComponent<Inventory>(box) == nullptr || world->hasComponent<Packaged>(box)) {
 							LOG_DEBUG(Engine, "[Action] Food box %llu is gone or being moved", static_cast<unsigned long long>(task.needSourceStorageId));
 							action.clear();
 							break;
@@ -164,6 +164,11 @@ namespace ecs {
 			case NeedType::Thirst: {
 				// Water tiles are inexhaustible - drinking fully restores thirst
 				action = Action::Drink();
+				break;
+			}
+
+			case NeedType::Hygiene: {
+				action = Action::Wash();
 				break;
 			}
 
@@ -361,42 +366,41 @@ namespace ecs {
 		}
 	}
 
-	void ActionSystem::applyConsumptionEffect(const Action& action, NeedsComponent& needs, Inventory& inventory) {
+	bool ActionSystem::applyConsumptionEffect(const Action& action, NeedsComponent& needs, Inventory& inventory) {
 		const auto& consumeEff = action.consumptionEffect();
 
-		// Remove item from inventory
-		uint32_t removed = inventory.removeItem(consumeEff.itemDefName, consumeEff.quantity);
-		if (removed > 0) {
-			// Restore the need
-			if (consumeEff.need < NeedType::Count) {
-				needs.get(consumeEff.need).restore(consumeEff.restoreAmount);
-			}
+		const uint32_t removed = inventory.removeItem(consumeEff.itemDefName, consumeEff.quantity);
+		if (removed == 0) {
+			LOG_WARNING(Engine, "[Action] Failed to consume %s from inventory (not found)", consumeEff.itemDefName.c_str());
+			return false;
+		}
+		if (consumeEff.need < NeedType::Count) {
+			needs.get(consumeEff.need).restore(consumeEff.restoreAmount);
+		}
 
-			// Apply side effect (e.g., eating fills digestion)
-			if (consumeEff.sideEffectNeed < NeedType::Count) {
-				if (consumeEff.sideEffectAmount > 0.0F) {
-					needs.get(consumeEff.sideEffectNeed).restore(consumeEff.sideEffectAmount);
-				} else {
-					// Negative amount means drain (e.g., eating fills gut)
-					auto& need = needs.get(consumeEff.sideEffectNeed);
-					need.value += consumeEff.sideEffectAmount; // sideEffectAmount is already negative
-					if (need.value < 0.0F) {
-						need.value = 0.0F;
-					}
+		// Apply side effect (e.g., eating fills digestion)
+		if (consumeEff.sideEffectNeed < NeedType::Count) {
+			if (consumeEff.sideEffectAmount > 0.0F) {
+				needs.get(consumeEff.sideEffectNeed).restore(consumeEff.sideEffectAmount);
+			} else {
+				// Negative amount means drain (e.g., eating fills gut)
+				auto& need = needs.get(consumeEff.sideEffectNeed);
+				need.value += consumeEff.sideEffectAmount; // sideEffectAmount is already negative
+				if (need.value < 0.0F) {
+					need.value = 0.0F;
 				}
 			}
-
-			LOG_INFO(
-				Engine,
-				"[Action] Consumed %u x %s from inventory, restored %.1f%% %s",
-				removed,
-				consumeEff.itemDefName.c_str(),
-				consumeEff.restoreAmount,
-				consumeEff.need == NeedType::Hunger ? "hunger" : "need"
-			);
-		} else {
-			LOG_WARNING(Engine, "[Action] Failed to consume %s from inventory (not found)", consumeEff.itemDefName.c_str());
 		}
+
+		LOG_INFO(
+			Engine,
+			"[Action] Consumed %u x %s from inventory, restored %.1f%% %s",
+			removed,
+			consumeEff.itemDefName.c_str(),
+			consumeEff.restoreAmount,
+			consumeEff.need == NeedType::Hunger ? "hunger" : "need"
+		);
+		return true;
 	}
 
 	void ActionSystem::applySpawnEffect(const Action& action) {

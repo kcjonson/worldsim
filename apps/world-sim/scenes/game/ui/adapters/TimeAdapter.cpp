@@ -1,6 +1,5 @@
 #include "TimeAdapter.h"
 
-#include <cmath>
 #include <iomanip>
 #include <sstream>
 
@@ -16,19 +15,14 @@ std::string TimeData::formatDisplay() const {
 
 TimeData getTimeData(const ecs::World& world) {
 	const auto& timeSystem = world.getSystem<ecs::TimeSystem>();
-	auto snapshot = timeSystem.snapshot();
-
-	// Convert float timeOfDay (in hours) to hour:minute using integer arithmetic
-	// to avoid floating-point precision issues with fmod
-	int totalMinutes = static_cast<int>(snapshot.timeOfDay * 60.0F);
-	int hour = totalMinutes / 60;
-	int minute = totalMinutes % 60;
+	const auto			 snapshot = timeSystem.snapshot();
+	const ecs::ClockTime clock = timeSystem.clockTime();
 
 	return TimeData{
-		.day = snapshot.day,
+		.day = clock.day,
 		.season = ecs::seasonName(snapshot.season),
-		.hour = hour,
-		.minute = minute,
+		.hour = clock.minuteOfDay / 60,
+		.minute = clock.minuteOfDay % 60,
 		.speed = snapshot.speed,
 		.isPaused = snapshot.isPaused
 	};

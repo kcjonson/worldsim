@@ -4,6 +4,7 @@
 // update here also runs the development-build validator, which aborts on a violation.
 
 #include "AIDecisionSystem.h"
+#include "ShippedPriorityConfig.test.h"
 #include "ActionSystem.h"
 #include "ChainClaims.h"
 #include "CollisionSystem.h"
@@ -18,6 +19,7 @@
 #include "TimeSystem.h"
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
+#include "../ShippedConfig.test.h"
 #include "../World.h"
 #include "../WorldSource.h"
 #include "../components/Action.h"
@@ -42,6 +44,7 @@
 #include "assets/AssetRegistry.h"
 #include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
+#include "assets/RecipeDef.test.h"
 #include "assets/RecipeRegistry.h"
 
 #include <construction/ConstructionWorld.h>
@@ -77,7 +80,7 @@ namespace ecs::test {
 		void SetUp() override {
 			world = std::make_unique<World>();
 			GoalTaskRegistry::Get().clear();
-			assets::PriorityConfig::Get().clear();
+			ASSERT_TRUE(loadShippedPriorityConfig());
 
 			auto& registry = assets::AssetRegistry::Get();
 			registerItem("Berry", 1, 0.1F, 1, /*edible=*/true);
@@ -147,7 +150,7 @@ namespace ecs::test {
 			world->addComponent<AgentRadius>(entity, AgentRadius{});
 			world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 			world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-			auto needs = NeedsComponent::createDefault();
+			auto needs = ecs::testing::shippedNeeds();
 			for (auto need : NeedsComponent::kActionableNeeds) {
 				needs.get(need).value = 100.0F;
 			}
@@ -248,6 +251,7 @@ namespace ecs::test {
 			recipe.defName = "Recipe_" + item;
 			recipe.label = recipe.defName;
 			recipe.inputs.push_back({item, 0, count});
+			recipe.workAmount = assets::kTestRecipeWorkAmount;
 			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 			world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);
 			world->addComponent<Inventory>(station, Inventory::createForStorage());
@@ -305,6 +309,14 @@ namespace ecs::test {
 				}
 			}
 			return nullptr;
+		}
+
+		/// Whether the colonist's trace holds a Build option of any status on `blueprint`.
+		bool offersBuildOf(EntityID colonist, EntityID blueprint) const {
+			const auto& options = world->getComponent<DecisionTrace>(colonist)->options;
+			return std::any_of(options.begin(), options.end(), [&](const EvaluatedOption& option) {
+				return option.taskType == TaskType::Build && option.buildBlueprintEntityId == blueprint;
+			});
 		}
 
 		size_t indexedClaimsOf(EntityID colonist) const {
@@ -2872,6 +2884,66 @@ namespace ecs::test {
 		EXPECT_EQ(spotHolder(site.blueprint, 2), kInvalidEntity);
 	}
 
+	// A foundation ordered demolished while its builder works it, before ConstructionSystem's pass removes
+	// its Build goal (no ConstructionSystem runs here, so the goal stays Available throughout): no decision
+	// after the order offers the builder that Build, his task ends with its action and lets go of his spot,
+	// and in the 30 updates after he takes neither back, and the site gains no work.
+	TEST_F(ChainClaimsTest, ABuilderIsNotOfferedASiteOrderedDemolished) {
+		const glm::vec2 spot{0.0F, 6.0F};
+		const Site		site = buildSite({0.0F, 7.0F}, {spot});
+		const EntityID	builder = createColonist({0.0F, 0.0F});
+		decide(builder);
+		ASSERT_EQ(getTask(builder)->type, TaskType::Build);
+		ASSERT_EQ(spotHolder(site.blueprint, 0), builder);
+		world->getComponent<Position>(builder)->value = spot;
+		getTask(builder)->state = TaskState::Arrived;
+		actions->update(0.25F);
+		actions->update(0.25F);
+		auto* blueprint = world->getComponent<StructureBlueprint>(site.blueprint);
+		ASSERT_EQ(world->getComponent<Action>(builder)->type, ActionType::Build);
+		ASSERT_GT(blueprint->workDone, 0.0F);
+
+		blueprint->demolishing = true;
+		const float workAtOrder = blueprint->workDone;
+		ASSERT_EQ(GoalTaskRegistry::Get().getGoal(site.umbrella)->status, GoalStatus::Available);
+
+		// The Build he holds runs on only until its action ends; it is never selected again.
+		const uint64_t buildInstance = getTask(builder)->instanceId;
+		int			   buildEndedAt = -1;
+		for (int update = 0; update < 30; ++update) {
+			world->update(0.016F);
+			EXPECT_FALSE(offersBuildOf(builder, site.blueprint)) << "update " << update;
+			const Task& task = *getTask(builder);
+			if (task.type == TaskType::Build) {
+				EXPECT_EQ(buildEndedAt, -1) << "Build selected again at update " << update;
+				EXPECT_EQ(task.instanceId, buildInstance) << "update " << update;
+			} else {
+				buildEndedAt = buildEndedAt < 0 ? update : buildEndedAt;
+				EXPECT_EQ(spotHolder(site.blueprint, 0), kInvalidEntity) << "update " << update;
+			}
+		}
+		EXPECT_GE(buildEndedAt, 0);
+		EXPECT_LE(buildEndedAt, 2) << "the Build ends within the ticks its action takes to stop";
+		EXPECT_FLOAT_EQ(blueprint->workDone, workAtOrder);
+		ASSERT_EQ(GoalTaskRegistry::Get().getGoal(site.umbrella)->status, GoalStatus::Available) << "still in the gap";
+	}
+
+	// An idle colonist deciding in that gap is not offered the site ordered demolished, and is still offered
+	// another that is not.
+	TEST_F(ChainClaimsTest, AnIdleColonistIsOfferedOnlyTheSiteNotOrderedDemolished) {
+		const Site	   demolished = buildSite({0.0F, 4.0F}, {{0.0F, 3.0F}});
+		const Site	   standing = buildSite({0.0F, 12.0F}, {{0.0F, 11.0F}});
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		world->getComponent<StructureBlueprint>(demolished.blueprint)->demolishing = true;
+
+		decide(colonist);
+		EXPECT_FALSE(offersBuildOf(colonist, demolished.blueprint));
+		EXPECT_TRUE(offersBuildOf(colonist, standing.blueprint));
+		ASSERT_EQ(getTask(colonist)->type, TaskType::Build);
+		EXPECT_EQ(getTask(colonist)->buildBlueprintEntityId, standing.blueprint);
+		EXPECT_EQ(spotHolder(demolished.blueprint, 0), kInvalidEntity);
+	}
+
 	// A hungry colonist's food is held only by someone who will eat it. A bush a worker is cutting for a
 	// craft is still its food (no worse off than before claims); a bush another hungry colonist is
 	// walking to is Reserved, and it looks for other food.
@@ -3173,6 +3245,65 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(colonist)->needSourceStorageId, 0U);
 		EXPECT_EQ(getTask(colonist)->needItemDefNameId, berryId);
 		EXPECT_EQ(getTask(colonist)->needSourceKey, hashWorldEntity(pilePos, berryId));
+	}
+
+	// A colonist walking to a bush to gather idly turns hungry beside a box and a pile: the bush it was
+	// gathering from is not its meal, so the meal is the nearest food, not that bush.
+	TEST_F(HungerWalkTest, TurningHungryOnTheWayToGatherEatsTheNearerFood) {
+		const glm::vec2 pilePos{0.0F, 21.0F};
+		const EntityID	boxEater = hungryColonist({0.0F, 0.0F}, 90.0F);
+		const EntityID	pileEater = hungryColonist({0.0F, 20.0F}, 90.0F);
+		rememberBush(boxEater, {10.0F, 0.0F});
+		rememberBush(pileEater, {10.0F, 20.0F});
+		const EntityID box = foodBox({-1.0F, 0.0F}, 10, {boxEater});
+		berryPile(pilePos, 10, {pileEater});
+
+		for (const EntityID colonist : {boxEater, pileEater}) {
+			decide(colonist);
+			ASSERT_EQ(getTask(colonist)->type, TaskType::FulfillNeed);
+			ASSERT_EQ(getTask(colonist)->needQuantity, 0U) << "it is gathering, not eating";
+		}
+
+		world->getComponent<NeedsComponent>(boxEater)->get(NeedType::Hunger).value = 40.0F;
+		decide(boxEater);
+		EXPECT_EQ(getTask(boxEater)->needSourceStorageId, static_cast<uint64_t>(box)) << getTask(boxEater)->reason;
+
+		world->getComponent<NeedsComponent>(pileEater)->get(NeedType::Hunger).value = 5.0F;
+		decide(pileEater);
+		EXPECT_EQ(getTask(pileEater)->needSourceKey, hashWorldEntity(pilePos, berryId)) << getTask(pileEater)->reason;
+
+		for (const EntityID colonist : {boxEater, pileEater}) {
+			const uint64_t instanceId = getTask(colonist)->instanceId;
+			const uint64_t storageId = getTask(colonist)->needSourceStorageId;
+			const uint64_t sourceKey = getTask(colonist)->needSourceKey;
+			for (int pass = 0; pass < 2; ++pass) {
+				decide(colonist);
+				EXPECT_EQ(getTask(colonist)->instanceId, instanceId) << "the meal task is kept, not rebuilt";
+				EXPECT_EQ(getTask(colonist)->needSourceStorageId, storageId) << "no flip-flop between targets";
+				EXPECT_EQ(getTask(colonist)->needSourceKey, sourceKey) << "no flip-flop between targets";
+			}
+		}
+	}
+
+	// Not hungry, gathering toward a bush with a box nearer: stored food does not disturb the gather leg.
+	TEST_F(HungerWalkTest, AColonistGatheringKeepsItsBushWithAStoredBoxNearer) {
+		const glm::vec2 bushPos{10.0F, 0.0F};
+		const EntityID	colonist = hungryColonist({0.0F, 0.0F}, 90.0F);
+		rememberBush(colonist, bushPos);
+		foodBox({-1.0F, 0.0F}, 10, {colonist});
+
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->type, TaskType::FulfillNeed);
+		ASSERT_EQ(getTask(colonist)->needQuantity, 0U) << "it is gathering, not eating";
+		ASSERT_EQ(getTask(colonist)->needSourceKey, hashWorldEntity(bushPos, bushId));
+		const uint64_t instanceId = getTask(colonist)->instanceId;
+
+		for (int pass = 0; pass < 2; ++pass) {
+			decide(colonist);
+			EXPECT_EQ(getTask(colonist)->instanceId, instanceId);
+			EXPECT_EQ(getTask(colonist)->needSourceStorageId, 0U) << getTask(colonist)->reason;
+			EXPECT_EQ(getTask(colonist)->needSourceKey, hashWorldEntity(bushPos, bushId));
+		}
 	}
 
 	// One berry left in a box and two routinely hungry colonists: the first to claim it keeps it from the
@@ -3714,7 +3845,8 @@ namespace ecs::test {
 			std::vector<construction::SegmentId>	 west;
 			geometry::Vec2i64						 from = min;
 			for (const geometry::Vec2i64 to : corners) {
-				const auto commit = construction.commitSegment(from, to, "Wood", "Standard", construction::kInvalidFoundation);
+				const auto commit =
+					construction.commitSegment(from, to, "Wood", "Standard", construction::kInvalidFoundation, construction.version());
 				EXPECT_TRUE(commit.ok());
 				for (const auto id : commit.createdSegments) {
 					construction.setSegmentState(id, construction::FoundationState::Built);
@@ -3943,6 +4075,7 @@ namespace ecs::test {
 			recipe.label = recipe.defName;
 			recipe.inputs.push_back({"Stone", 0, 2});
 			recipe.inputs.push_back({"Stick", 0, 1});
+			recipe.workAmount = assets::kTestRecipeWorkAmount;
 			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 			world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);
 			world->addComponent<Inventory>(station, Inventory::createForStorage());
@@ -4009,7 +4142,8 @@ namespace ecs::test {
 	// sits on a built wall, whose stand point is pushed off it further than half the way to the next
 	// spot, so it is passed over for that next spot in the same decision.
 	TEST_F(ClaimsOnRealRoutesTest, ABuilderStandsAtItsSpotsStandPointAndPassesOverOneTheMeshCannotServe) {
-		const auto wall = construction.commitSegment({1000, 0}, {3000, 0}, "Wood", "Standard", construction::kInvalidFoundation);
+		const auto wall =
+			construction.commitSegment({1000, 0}, {3000, 0}, "Wood", "Standard", construction::kInvalidFoundation, construction.version());
 		ASSERT_TRUE(wall.ok());
 		for (const auto id : wall.createdSegments) {
 			construction.setSegmentState(id, construction::FoundationState::Built);
@@ -4042,7 +4176,8 @@ namespace ecs::test {
 	// second taking the far spot once the first holds the next; the third, narrow enough to stand off the
 	// wall within the limit, works the spot on it.
 	TEST_F(ClaimsOnRealRoutesTest, BuildersDecidingInOneUpdateGetTheStandPointsOfTheirOwnRadius) {
-		const auto wall = construction.commitSegment({1000, 0}, {3000, 0}, "Wood", "Standard", construction::kInvalidFoundation);
+		const auto wall =
+			construction.commitSegment({1000, 0}, {3000, 0}, "Wood", "Standard", construction::kInvalidFoundation, construction.version());
 		ASSERT_TRUE(wall.ok());
 		for (const auto id : wall.createdSegments) {
 			construction.setSegmentState(id, construction::FoundationState::Built);

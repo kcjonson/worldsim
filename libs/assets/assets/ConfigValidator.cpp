@@ -4,6 +4,8 @@
 #include "assets/ConfigValidator.h"
 #include "assets/ActionTypeRegistry.h"
 #include "assets/ConstructionRegistry.h"
+#include "assets/MemoryConfig.h"
+#include "assets/MoodConfig.h"
 #include "assets/PriorityConfig.h"
 #include "assets/TaskChainRegistry.h"
 #include "assets/WorkTypeRegistry.h"
@@ -11,6 +13,7 @@
 #include <utils/Log.h>
 
 #include <cmath>
+#include <string>
 
 namespace assets {
 
@@ -93,6 +96,17 @@ bool ConfigValidator::validatePriorityConfig() {
 
     bool valid = true;
 
+    for (const std::string& problem : priorityConfig.problems()) {
+        addError("PriorityConfig", problem);
+        valid = false;
+    }
+
+    const float maxDistance = priorityConfig.getDistanceFactorConfig().maxDistance;
+    if (std::isfinite(maxDistance) && maxDistance <= 0.0F) {
+        addError("PriorityConfig", "DistanceFactor maxDistance must be a positive number", "got " + std::to_string(maxDistance));
+        valid = false;
+    }
+
     // Check that category order references valid categories
     for (const auto& categoryName : priorityConfig.getCategoryOrder()) {
         if (!workTypeRegistry.hasCategory(categoryName)) {
@@ -107,6 +121,80 @@ bool ConfigValidator::validatePriorityConfig() {
                     "Available categories: " + availableCategories);
             valid = false;
         }
+    }
+
+    return valid;
+}
+
+bool ConfigValidator::validateMemory(const MemoryConfig& config) {
+    const std::string source = "Memory";
+
+    if (!config.loaded()) {
+        addError(source, "No memory config loaded", "Ensure assets/config/colonists/memory.xml exists and is valid");
+        return false;
+    }
+
+    if (!std::isfinite(config.recentSightingGameMinutes()) || config.recentSightingGameMinutes() <= 0.0F) {
+        addError(source, "RecentSighting gameMinutes must be a positive number", "Set <RecentSighting gameMinutes=\"...\"/>");
+        return false;
+    }
+    return true;
+}
+
+bool ConfigValidator::validateMood(const MoodConfig& config) {
+    const std::string source = "Mood";
+    bool valid = true;
+
+    for (const std::string& problem : config.problems()) {
+        addError(source, problem);
+        valid = false;
+    }
+
+    if (!config.loaded()) {
+        if (config.problems().empty()) {
+            addError(source, "No mood config loaded", "Ensure assets/config/colonists/mood.xml exists and is valid");
+        }
+        return false;
+    }
+
+    if (std::isfinite(config.pointsPerGameHour()) && config.pointsPerGameHour() <= 0.0F) {
+        addError(source, "Easing pointsPerGameHour must be a positive number", "Set <Easing pointsPerGameHour=\"...\"/>");
+        valid = false;
+    }
+
+    const NeedPenaltyCurve& curve = config.needPenaltyCurve();
+    if (std::isfinite(curve.comfortable) && std::isfinite(curve.warning) && std::isfinite(curve.penaltyAtWarning)) {
+        if (curve.warning <= 0.0F || curve.comfortable <= curve.warning || curve.comfortable > 100.0F) {
+            addError(source, "NeedPenalty needs 0 < warning < comfortable <= 100",
+                     "comfortable " + std::to_string(curve.comfortable) + ", warning " + std::to_string(curve.warning));
+            valid = false;
+        }
+        if (curve.penaltyAtWarning < 0.0F || curve.penaltyAtWarning > 1.0F) {
+            addError(source, "NeedPenalty penaltyAtWarning must be 0 to 1",
+                     "got " + std::to_string(curve.penaltyAtWarning));
+            valid = false;
+        }
+    }
+
+    const auto& bands = config.bands();
+    if (bands.empty()) {
+        addError(source, "No mood bands", "Add <Band name=\"...\" from=\"...\"/> entries inside <Bands>");
+        return false;
+    }
+    for (size_t i = 0; i < bands.size(); ++i) {
+        if (bands[i].name.empty()) {
+            addError(source, "A <Band> has no name");
+            valid = false;
+        }
+        if (std::isfinite(bands[i].from) && i > 0 && bands[i].from == bands[i - 1].from) {
+            addError(source, "Bands '" + bands[i - 1].name + "' and '" + bands[i].name + "' start at the same mood");
+            valid = false;
+        }
+    }
+    if (std::isfinite(bands.back().from) && bands.back().from > 0.0F) {
+        addError(source, "The lowest band must start at 0 or below so every mood has a band",
+                 "Band '" + bands.back().name + "' starts at " + std::to_string(bands.back().from));
+        valid = false;
     }
 
     return valid;
@@ -413,6 +501,86 @@ bool ConfigValidator::validateConstruction() {
         valid = false;
     }
 
+    const char* const snappingSource = "ConstructionSnapping";
+    const char* const renderingSource = "ConstructionRendering";
+
+    const auto require = [&](const char* source, bool ok, const char* name, float value, const char* bound) {
+        if (!ok) {
+            addError(source, std::string(name) + " must be " + bound + ", got " + std::to_string(value), "");
+            valid = false;
+        }
+    };
+    const auto rejectParseErrors = [&](const char* source, const std::vector<ConfigParseError>& parseErrors) {
+        for (const auto& parseError : parseErrors) {
+            addError(source, parseError.message, parseError.context);
+            valid = false;
+        }
+    };
+    rejectParseErrors(snappingSource, reg.snappingParseErrors());
+    rejectParseErrors(renderingSource, reg.renderingParseErrors());
+
+    const float angleWindow = s.effectiveGuideAngleWindowDegrees();
+    const float crossingMinimum = s.effectiveGuideCrossingMinAngleDegrees();
+
+    require(snappingSource, s.angleIncrementDegrees > 0.0F && s.angleIncrementDegrees <= 90.0F, "angleIncrementDegrees",
+            s.angleIncrementDegrees, "in (0, 90]");
+    require(snappingSource, s.guideRangeMeters > 0.0F, "guideRangeMeters", s.guideRangeMeters, "positive");
+    require(snappingSource, s.guideToleranceMeters > 0.0F, "guideToleranceMeters", s.guideToleranceMeters, "positive");
+    require(snappingSource, angleWindow >= 0.0F && angleWindow < 90.0F, "the angle catch window", angleWindow, "in [0, 90)");
+    require(snappingSource, crossingMinimum > s.guideDirectionToleranceDegrees && crossingMinimum <= 90.0F,
+            "the crossing minimum angle", crossingMinimum, "above the direction tolerance and at most 90");
+    require(snappingSource, s.effectiveGuideMergeDistanceMeters() >= 0.0F, "the guide merge distance",
+            s.effectiveGuideMergeDistanceMeters(), "non-negative");
+    require(snappingSource, s.guideCrossingRadiusMeters >= s.guideToleranceMeters, "guideCrossingRadiusMeters",
+            s.guideCrossingRadiusMeters, "at least guideToleranceMeters");
+    require(snappingSource, s.guideDirectionToleranceDegrees > 0.0F && s.guideDirectionToleranceDegrees < angleWindow,
+            "guideDirectionToleranceDegrees", s.guideDirectionToleranceDegrees,
+            "positive and below the angle catch window");
+    require(snappingSource, s.nearbyGuideDirectionLimit >= 0, "nearbyGuideDirectionLimit",
+            static_cast<float>(s.nearbyGuideDirectionLimit), "non-negative");
+    require(snappingSource, s.guideCornerLimit >= 0, "guideCornerLimit", static_cast<float>(s.guideCornerLimit), "non-negative");
+
+    require(snappingSource, s.commonLengthRangeMeters >= 0.0F, "commonLengthRangeMeters", s.commonLengthRangeMeters, "non-negative");
+    require(snappingSource, s.commonLengthCatchMeters >= 0.0F, "commonLengthCatchMeters", s.commonLengthCatchMeters, "non-negative");
+    require(snappingSource, s.commonLengthMergeMeters >= 0.0F && s.commonLengthMergeMeters < s.commonLengthMinimumMeters,
+            "commonLengthMergeMeters", s.commonLengthMergeMeters, "non-negative and below commonLengthMinimumMeters");
+    const std::string maxCountBound =
+        "in [0, " + std::to_string(kMaxCommonLengthCount) + "] (the most common lengths the snap engine reports)";
+    require(snappingSource, s.commonLengthMaxCount >= 0 && s.commonLengthMaxCount <= kMaxCommonLengthCount, "commonLengthMaxCount",
+            static_cast<float>(s.commonLengthMaxCount), maxCountBound.c_str());
+    require(snappingSource, s.commonLengthMinimumMeters >= 0.0F, "commonLengthMinimumMeters", s.commonLengthMinimumMeters,
+            "non-negative");
+    require(snappingSource, s.lengthIncrementMeters >= 0.0F, "lengthIncrementMeters", s.lengthIncrementMeters, "non-negative");
+    require(snappingSource, s.doubleClickSeconds > 0.0F, "doubleClickSeconds", s.doubleClickSeconds, "positive");
+    require(snappingSource, s.doubleClickDistancePx >= 0.0F, "doubleClickDistancePx", s.doubleClickDistancePx, "non-negative");
+
+    const float grid = s.drawingSettingsDefaults.rectangleGridSpacingMeters;
+    require(snappingSource, grid == 1.0F || grid == 0.5F, "rectangleGridSpacingMeters", grid, "1.0 or 0.5");
+
+    const auto& p = reg.rendering().preview;
+
+    const auto requirePositivePixels = [&](const char* name, float value) {
+        require(renderingSource, value > 0.0F, name, value, "positive");
+    };
+    const auto requireOpacity = [&](const char* name, float value) {
+        require(renderingSource, value >= 0.0F && value <= 1.0F, name, value, "in [0, 1]");
+    };
+    const auto requireDecimals = [&](const char* name, int value) {
+        require(renderingSource, value >= 0 && value <= 6, name, static_cast<float>(value), "in [0, 6]");
+    };
+
+    requirePositivePixels("guideWidth", p.guideWidth);
+    require(renderingSource, p.guideDashPx >= 0.0F, "guideDashPx", p.guideDashPx, "non-negative");
+    requirePositivePixels("guideGapPx", p.guideGapPx);
+    requireOpacity("guideOpacity", p.guideOpacity);
+    requireOpacity("markerOpacity", p.markerOpacity);
+    requireDecimals("guideDistanceDecimals", p.guideDistanceDecimals);
+    requireDecimals("angleReadoutDecimals", p.angleReadoutDecimals);
+    requirePositivePixels("guideLabelPx", p.guideLabelPx);
+    requirePositivePixels("rightAngleMarkerPx", p.rightAngleMarkerPx);
+    requirePositivePixels("guideCrossingDotPx", p.guideCrossingDotPx);
+    requirePositivePixels("cursorRadiusPx", p.cursorRadiusPx);
+
     return valid;
 }
 
@@ -450,6 +618,16 @@ bool ConfigValidator::validateAll() {
             LOG_ERROR(Engine, "Construction config validation failed");
             valid = false;
         }
+    }
+
+    if (MoodConfig::Get().loaded() && !validateMood(MoodConfig::Get())) {
+        LOG_ERROR(Engine, "Mood config validation failed");
+        valid = false;
+    }
+
+    if (MemoryConfig::Get().loaded() && !validateMemory(MemoryConfig::Get())) {
+        LOG_ERROR(Engine, "Memory config validation failed");
+        valid = false;
     }
 
     // Log all errors

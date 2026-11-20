@@ -21,12 +21,14 @@ Colonists always evaluate what to do in this fixed order. Higher tiers (lower nu
 | Tier | Name                | Trigger                                         | Example                               | Status                   |
 | ---- | ------------------- | ----------------------------------------------- | ------------------------------------- | ------------------------ |
 | 1    | Survival / danger   | Active threat, flee                             | Being chased by predator              | RESERVED (no threats yet) |
-| 2    | Critical Needs      | Need below ~10%                                 | Bladder emergency                     | Implemented              |
+| 2    | Critical Needs      | Need below its critical threshold               | Bladder emergency                     | Implemented              |
 | 3    | Forced player orders | Player queues a direct command                 | Direct movement mode                  | RESERVED (separate epic) |
 | 4    | Active Work Orders  | Colonist has a queued craft/build in progress   | Finish the house foundation           | Implemented, STICKY      |
 | 5    | Actionable Needs    | Need below comfort threshold                    | Hungry, seeks food                    | Implemented              |
 | 6    | Opportunistic work  | Needs satisfied; loose work available           | Haul items, stock storage, harvest    | Implemented              |
 | 7    | Idle                | Nothing else to do                              | Gather food for larder, wander        | Implemented              |
+
+What a colonist does at each tier (a need's chain, a piece of work, an idle chain, a player's order, a low-mood behavior) is defined in data as chains of steps whose targets are picked by queries ([Queries and chains](../../../technical/queries-and-chains.md)); the tiers say only what comes first. A low-mood behavior sits directly below critical needs and above the player's orders ([Mood](./mood.md#the-episode-cycle)), and [Interruptable crafts](../../../technical/interruptable-crafts.md#the-ladder) adds urgent needs and a crafter's own unfinished work to the ladder.
 
 "Lower number = higher priority." Tier 4 (active work orders) sits above tier 5 (actionable needs): a colonist finishes a committed craft or build before addressing a non-critical need. Only tier 2 (critical needs) preempts active work. See [Colonist Task Arbitration §3](../../../technical/colonist-task-arbitration.md) for the locked design basis (multi-colonist crafting §2b, "finishing is very high priority").
 
@@ -42,7 +44,7 @@ Colonist is actively threatened — chased by predator, caught in fire, etc.
 
 ### Tier 2: Critical Needs
 
-Any physical need hits critical threshold (~10%). Colonist immediately addresses it, bypassing all other priorities including active work orders.
+Any physical need falls below its critical threshold (set per need in the needs config, ~10% for most). Colonist immediately addresses it, bypassing all other priorities including active work orders.
 
 **MVP Status:** Included in Phase 1
 
@@ -67,6 +69,8 @@ Physical needs have dropped below comfortable thresholds. Colonist seeks entitie
 **Key Constraint:** Colonist must KNOW where to find fulfillment. No omniscient pathfinding to unseen resources. See [Memory System](./memory.md).
 
 **Hunger sources.** A hungry colonist eats from the nearest food it can reach, whatever kind: its own pack first (no walking), then a ripe berry bush, a loose pile of food it remembers, or a storage box the colony knows that holds food. From a pile or box it takes one meal, enough to stop being hungry, and leaves the rest for everyone else; from a bush it keeps what the cut gives. A full pack never stops it eating: at the food it puts away just enough of what it carries to make room for the meal, never a tool, and cargo it is carrying for someone's work last. The one limit: a colonist whose every pack slot, belt slot, and hand holds a tool can't make room, and its take lifts nothing. Stored food is the buffer between harvests, so a colonist whose bushes are all regrowing eats from the larder instead of waiting. Colonists can starve, but only if they never find food: another colonist's work (hauling the berries to a box, cutting the bush for a goal) never keeps food from a hungry one, though a hungry colonist prefers food nobody is heading for. Between two hungry colonists of different urgency, the critically hungry one takes food the routinely hungry one was walking to; at equal urgency the first to claim it keeps it, and the other looks elsewhere. See [Task Claims](../../../technical/task-claims.md#need-tasks).
+
+**Water.** A thirsty colonist drinks, and a grubby one washes, at the nearest shore it remembers. Water never runs out, so any number of colonists drink and wash at one shore point together. Drinking and washing are separate tasks at the same water: a colonist low on both takes a critical need first, else drinks first, then does the other.
 
 **MVP Status:** Included in Phase 1
 
@@ -217,6 +221,7 @@ Everything that persists runs on the interval: a critical need with nothing reac
 - [Task Registry](./task-registry.md): Global task list architecture for Tiers 4 and 6
 - [Priority Config](./priority-config.md): Within-tier score factors and thresholds
 - [Task Chains](./task-chains.md) — Multi-step task continuation
+- [Queries and chains](../../../technical/queries-and-chains.md): needs, actions, work, and behaviors as data
 - [Colonist Task Arbitration](../../../technical/colonist-task-arbitration.md): Implementation of the (tier, score) key, tier ladder, job lifecycle
 
 ---

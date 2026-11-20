@@ -3,50 +3,107 @@
 
 #include "assets/ActionTypeRegistry.h"
 
+#include "assets/ConfigNumber.h"
+#include "assets/ConfigXml.h"
+
 #include <utils/Log.h>
 
 #include <pugixml.hpp>
 
+#include <optional>
 #include <sstream>
+#include <string_view>
+#include <utility>
 
 namespace assets {
+
+	namespace {
+
+		std::optional<ActionTypeDef>
+		actionFrom(pugi::xml_node node, const std::string& source, ConfigReader& reader, std::vector<std::string>& errors) {
+			ActionTypeDef action;
+			action.defName = node.attribute("defName").as_string();
+			if (action.defName.empty()) {
+				errors.push_back(source + ": an <Action> has no defName");
+				return std::nullopt;
+			}
+			const std::size_t errorsBefore = errors.size();
+			const std::size_t problemsBefore = reader.problemCount();
+			const std::string what = ConfigReader::describe(node, "Action");
+			onlyAttributes(node, {"defName", "needsHands"}, what, source, errors);
+
+			for (const pugi::xml_node child : node.children()) {
+				if (child.type() != pugi::node_element) {
+					continue;
+				}
+				const std::string_view element = child.name();
+				if (element == "description") {
+					action.description = child.text().as_string();
+				} else {
+					errors.push_back(source + ": " + what + ": unknown element <" + std::string(element) + ">");
+				}
+			}
+			action.needsHands = reader.attributeBoolean(node, "Action", "needsHands").value_or(false);
+			if (errors.size() != errorsBefore || reader.problemCount() != problemsBefore) {
+				return std::nullopt;
+			}
+			return action;
+		}
+
+	} // namespace
 
 	ActionTypeRegistry& ActionTypeRegistry::Get() {
 		static ActionTypeRegistry instance;
 		return instance;
 	}
 
-	bool ActionTypeRegistry::loadFromFile(const std::string& xmlPath) {
-		pugi::xml_document	   doc;
-		pugi::xml_parse_result result = doc.load_file(xmlPath.c_str());
+	bool ActionTypeRegistry::loadFromFile(const std::filesystem::path& configRoot, const std::filesystem::path& file) {
+		clear();
 
-		if (!result) {
-			LOG_ERROR(Engine, "Failed to load action types XML: %s - %s", xmlPath.c_str(), result.description());
-			return false;
-		}
-
-		pugi::xml_node root = doc.child("ActionTypes");
+		const std::string	 source = file.generic_string();
+		pugi::xml_document	 document;
+		const pugi::xml_node root = readRootElement(document, configRoot / file, "ActionTypes", source, problemList);
 		if (!root) {
-			LOG_ERROR(Engine, "No ActionTypes root element in: %s", xmlPath.c_str());
 			return false;
 		}
 
-		bool anyLoaded = false;
-		for (pugi::xml_node actionNode : root.children("Action")) {
-			if (parseActionFromNode(&actionNode)) {
-				anyLoaded = true;
+		ConfigReader reader(source);
+		for (const pugi::xml_node node : root.children()) {
+			if (node.type() != pugi::node_element) {
+				continue;
+			}
+			if (std::string_view(node.name()) != "Action") {
+				problemList.push_back(source + ": unknown element <" + node.name() + ">");
+				continue;
+			}
+			std::optional<ActionTypeDef> action = actionFrom(node, source, reader, problemList);
+			if (!action.has_value()) {
+				continue;
+			}
+			const std::string defName = action->defName;
+			if (!actions.emplace(defName, std::move(*action)).second) {
+				problemList.push_back(source + ": <Action defName=\"" + defName + "\"> is declared twice");
 			}
 		}
 
-		if (anyLoaded) {
-			LOG_INFO(Engine, "Loaded %zu action types from %s", actions.size(), xmlPath.c_str());
+		std::vector<std::string> values = reader.takeProblems();
+		problemList.insert(problemList.end(), values.begin(), values.end());
+		if (actions.empty() && problemList.empty()) {
+			problemList.push_back(source + ": no <Action>");
+		}
+		if (!problemList.empty()) {
+			actions.clear();
+			LOG_ERROR(Engine, "Action types %s have %zu problem(s)", source.c_str(), problemList.size());
+			return false;
 		}
 
-		return anyLoaded;
+		LOG_INFO(Engine, "Loaded %zu action types from %s", actions.size(), source.c_str());
+		return true;
 	}
 
 	void ActionTypeRegistry::clear() {
 		actions.clear();
+		problemList.clear();
 	}
 
 	const ActionTypeDef* ActionTypeRegistry::getAction(const std::string& defName) const {
@@ -98,46 +155,6 @@ namespace assets {
 	void ActionTypeRegistry::registerTestAction(ActionTypeDef action) {
 		const std::string defName = action.defName;
 		actions.insert_or_assign(defName, std::move(action));
-	}
-
-	bool ActionTypeRegistry::parseActionFromNode(const void* nodePtr) {
-		const pugi::xml_node& node = *static_cast<const pugi::xml_node*>(nodePtr);
-
-		ActionTypeDef action;
-
-		// Required: defName (as attribute)
-		pugi::xml_attribute defNameAttr = node.attribute("defName");
-		if (!defNameAttr) {
-			LOG_WARNING(Engine, "Action missing defName attribute");
-			return false;
-		}
-		action.defName = defNameAttr.as_string();
-
-		if (action.defName.empty()) {
-			LOG_WARNING(Engine, "Action has empty defName");
-			return false;
-		}
-
-		// Optional: needsHands (as attribute, default false)
-		pugi::xml_attribute needsHandsAttr = node.attribute("needsHands");
-		if (needsHandsAttr) {
-			action.needsHands = needsHandsAttr.as_bool(false);
-		}
-
-		// Optional: description (as child element)
-		if (auto descNode = node.child("description")) {
-			action.description = descNode.text().as_string();
-		}
-
-		// Store action
-		auto [it, inserted] = actions.emplace(action.defName, std::move(action));
-		if (!inserted) {
-			LOG_WARNING(Engine, "Duplicate action defName: %s (ignoring)", it->first.c_str());
-			return false;
-		}
-
-		LOG_DEBUG(Engine, "Loaded action type: %s (needsHands=%s)", it->first.c_str(), it->second.needsHands ? "true" : "false");
-		return true;
 	}
 
 } // namespace assets

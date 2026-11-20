@@ -41,6 +41,7 @@
 #include "assets/PriorityConfig.h"
 #include "assets/RecipeDef.h"
 #include "assets/RecipeRegistry.h"
+#include "assets/WorkConfig.h"
 #include "world/chunk/ChunkManager.h"
 
 #include <utils/Log.h>
@@ -82,6 +83,7 @@ namespace ecs {
 					// Both bladder and digestion use Toilet capability
 					return assets::CapabilityType::Toilet;
 				case NeedType::Hygiene:
+					return assets::CapabilityType::Washable;
 				case NeedType::Recreation:
 				case NeedType::Temperature:
 					break; // Non-actionable for now
@@ -121,6 +123,7 @@ namespace ecs {
 						case NeedType::Digestion:
 							return "Toilet";
 						case NeedType::Hygiene:
+							return "Wash";
 						case NeedType::Recreation:
 						case NeedType::Temperature:
 						case NeedType::Count:
@@ -229,27 +232,8 @@ namespace ecs {
 		/// Config name for a TaskType, used to look up its BASE tier in PriorityConfig's TaskTiers
 		/// table. Must match the names in priority-tuning.xml's <TaskTiers> block.
 		[[nodiscard]] const char* taskTypeConfigName(TaskType type) {
-			switch (type) {
-				case TaskType::FulfillNeed:
-					return "FulfillNeed";
-				case TaskType::Harvest:
-					return "Harvest";
-				case TaskType::Craft:
-					return "Craft";
-				case TaskType::Haul:
-					return "Haul";
-				case TaskType::PlacePackaged:
-					return "PlacePackaged";
-				case TaskType::Build:
-					return "Build";
-				case TaskType::Deconstruct:
-					return "Deconstruct";
-				case TaskType::Wander:
-					return "Wander";
-				case TaskType::None:
-					return "None";
-			}
-			return "None";
+			static_assert(assets::kTaskTypeNames.size() == static_cast<size_t>(TaskType::Wander), "a config name for every TaskType");
+			return type == TaskType::None ? "None" : assets::kTaskTypeNames[static_cast<size_t>(type) - 1];
 		}
 
 		/// PriorityConfig's base tier of every TaskType, by its config name.
@@ -265,13 +249,12 @@ namespace ecs {
 		constexpr int	kTierCriticalNeed = 2; // a need past its critical threshold
 		constexpr int	kTierActiveWorkOrder = 4; // committed/queued work + its provisioning chain
 		constexpr int	kTierIdle = 7;			  // gathering food and Wander
-		constexpr float kCriticalNeedThreshold = 10.0F; // needValue below this is critical
 
 		/// Classify an option's arbitration tier: the config BASE tier for its task type, with a
 		/// small set of named runtime promotions layered on (mirrors the spec's classification
 		/// table exactly). Lower tier = higher priority.
 		///
-		///   FulfillNeed: needValue < 10%        -> tier 2 (critical need)
+		///   FulfillNeed: past critical threshold -> tier 2 (critical need)
 		///                gather food             -> tier 7 (idle)
 		///                else (actionable)       -> config base (5)
 		///   Haul/Harvest: servesActiveWorkOrder  -> tier 4 (work order, incl. mid-chain provisioning)
@@ -294,7 +277,7 @@ namespace ecs {
 					if (option.status == OptionStatus::Satisfied) {
 						return kTierIdle;
 					}
-					return option.needValue < kCriticalNeedThreshold ? kTierCriticalNeed : baseTier;
+					return option.critical ? kTierCriticalNeed : baseTier;
 				}
 				case TaskType::Haul:
 				case TaskType::Harvest:
@@ -319,7 +302,7 @@ namespace ecs {
 			if (!need.needsAttention()) {
 				return kTierIdle;
 			}
-			return need.value < kCriticalNeedThreshold ? kTierCriticalNeed : baseTiers[static_cast<size_t>(TaskType::FulfillNeed)];
+			return need.isCritical() ? kTierCriticalNeed : baseTiers[static_cast<size_t>(TaskType::FulfillNeed)];
 		}
 
 		/// Check if an option matches the current task (for the hysteresis margin)
@@ -1707,14 +1690,15 @@ namespace ecs {
 		}
 		buildSitesBuilt = true;
 		buildList.clear();
-		// Surfaced only while the blueprint is UnderConstruction, the phase the Build action requires.
+		// Surfaced only while the blueprint is UnderConstruction and not ordered demolished, what the Build
+		// action requires. The order leaves the goal Available until ConstructionSystem's next pass removes it.
 		GoalTaskRegistry::Get().forEachGoalOfType(TaskType::Build, [&](const GoalTask& goal) {
 			if (goal.status != GoalStatus::Available) {
 				return;
 			}
 			const auto* blueprint = world.getComponent<StructureBlueprint>(goal.destinationEntity);
-			if (blueprint == nullptr || blueprint->phase != StructureBlueprint::BuildPhase::UnderConstruction) {
-				return; // not ready to build (cleared/awaiting materials/complete)
+			if (blueprint == nullptr || blueprint->phase != StructureBlueprint::BuildPhase::UnderConstruction || blueprint->demolishing) {
+				return; // not ready to build (cleared/awaiting materials/complete) or ordered demolished
 			}
 			buildList.push_back({.goalId = goal.id,
 								 .blueprint = goal.destinationEntity,
@@ -2300,6 +2284,13 @@ namespace ecs {
 						task.targetPosition.y
 					);
 				}
+			} else if (warnedMissingDecisionComponents.insert(entity).second) {
+				LOG_WARNING(
+					Engine,
+					"[AI] Entity %llu has no %s, so it never decides anything",
+					static_cast<unsigned long long>(entity),
+					trace == nullptr ? (sourceReach == nullptr ? "DecisionTrace and SourceReachMemo" : "DecisionTrace") : "SourceReachMemo"
+				);
 			}
 			task.routeFailureDecided = task.routeFailureDecided || decidingOnFailedRoute;
 		}
@@ -2671,14 +2662,19 @@ namespace ecs {
 			}
 			// The sources each option's route request names, nearest first: a meal for the Hunger option, a
 			// bush for the gather option. Either is complete at kNearestOfCount, or at the one he is heading
-			// for when it comes first (it comes off first when it is a candidate).
+			// for when it comes first (it comes off first when it is a candidate). That one is kept only when
+			// he heads for it for the option this search answers: a bush he walks to for idle gathering is
+			// not his meal, so turning hungry on the way looks for the nearest food.
 			SourceChoices&	  foodChoices	= m_needChoices[needChoiceSlot(NeedType::Hunger, false)];
 			SourceChoices&	  gatherChoices = m_needChoices[needChoiceSlot(NeedType::Hunger, true)];
 			const std::size_t foodRound		= roundSize(needChoiceSlot(NeedType::Hunger, false));
 			const std::size_t gatherRound	= roundSize(needChoiceSlot(NeedType::Hunger, true));
-			const auto		  complete		= [&](const SourceChoices& choices) {
+			const bool		  keepsHeading	= currentTask.type == TaskType::FulfillNeed &&
+										  needSlotOf(currentTask) == needChoiceSlot(NeedType::Hunger, !seeksFood);
+			const std::optional<std::uint64_t> keptFood = keepsHeading ? headingFor : std::nullopt;
+			const auto						   complete = [&](const SourceChoices& choices) {
 				 const std::size_t round = &choices == &foodChoices ? foodRound : gatherRound;
-				 return choices.size() >= round || (choices.size() == 1 && headingFor == choices[0].sourceKey);
+				 return choices.size() >= round || (choices.size() == 1 && keptFood == choices[0].sourceKey);
 			};
 			const auto mealChoice = [&](const SourceCandidate& source, uint32_t left) {
 				SourceChoice choice = choiceOf(source);
@@ -2698,7 +2694,7 @@ namespace ecs {
 				foodChoices.push(mealChoice(source, left));
 			};
 			const auto answered = [&] { return seeksFood ? complete(foodChoices) : complete(gatherChoices); };
-			putKeptFirst(sourceScratch, headingFor);
+			putKeptFirst(sourceScratch, keptFood);
 			searchExhausted = visitNearestFirst(sourceScratch, [&](SourceCandidate& source) {
 				if (isBush(source)) {
 					if (const auto readyAt = sourceRegrowingUntil(source.entity->defNameId, source.position)) {
@@ -2799,6 +2795,9 @@ namespace ecs {
 			option.needType = needType;
 			option.needValue = need.value;
 			option.threshold = need.seekThreshold;
+			option.critical = need.isCritical();
+			// Needs tied at one source (thirst and hygiene at one shore point) are taken in NeedType order.
+			option.tiebreakId = static_cast<uint64_t>(needType);
 
 			// Special handling for hunger: check inventory first
 			if (needType == NeedType::Hunger) {
@@ -3795,28 +3794,36 @@ namespace ecs {
 			uint8_t		handsRequired = (assetDef != nullptr) ? assetDef->handsRequired : 1;
 
 			if (handsRequired == 1) {
-				// 1-handed item: try the belt (quick-draw slot) first, then the backpack. The item is
-				// in hand, so a belt stow seats a copy on the belt and clears the hand.
-				if (inventory.stowToBelt(item)) {
-					inventory.putDown(item);
-					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to belt", entityId, item.c_str());
+				// 1-handed item, one unit per hand: for each unit try the belt (quick-draw slot) first,
+				// then the backpack. A belt stow seats a copy on the belt and clears the hand.
+				while (inventory.isHolding(item)) {
+					if (inventory.stowToBelt(item)) {
+						inventory.putDown(item);
+						LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to belt", entityId, item.c_str());
+					} else if (inventory.stowToBackpack(item)) {
+						LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to backpack", entityId, item.c_str());
+					} else {
+						break;
+					}
+				}
+				if (!inventory.isHolding(item)) {
 					keepGoods();
 					return;
 				}
-				if (inventory.stowToBackpack(item)) {
-					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to backpack", entityId, item.c_str());
-					keepGoods();
-					return;
-				}
-				// Belt and backpack full - fall through to drop
+				// Belt and backpack full - fall through to drop what is left in hand
 				LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, dropping %s (belt and backpack full)", entityId, item.c_str());
 			} else {
 				LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, dropping %s (2-handed)", entityId, item.c_str());
 			}
 
-			auto dropped = inventory.putDown(item);
-			if (dropped.has_value() && dropped->quantity > 0) {
-				ecs::storeOrDrop(*world, dropped->defName, dropped->quantity, position.value, onDropResource, [this](EntityID box) { boxChanged(box); });
+			while (inventory.isHolding(item)) {
+				auto dropped = inventory.putDown(item);
+				if (!dropped.has_value()) {
+					break;
+				}
+				if (dropped->quantity > 0) {
+					ecs::storeOrDrop(*world, dropped->defName, dropped->quantity, position.value, onDropResource, [this](EntityID box) { boxChanged(box); });
+				}
 			}
 		}
 	}

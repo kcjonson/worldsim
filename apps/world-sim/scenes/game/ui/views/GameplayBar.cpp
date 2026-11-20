@@ -13,19 +13,17 @@ namespace world_sim {
 		constexpr float kHorizontalPadding = 12.0F;
 
 		ui::MenuItem item(std::string label, const std::function<void(const std::string&)>& callback, std::string value) {
-			return {.label = std::move(label), .onSelect = [callback, value = std::move(value)]() {
-						if (callback) {
-							callback(value);
-						}
-					}};
+			return {
+				.label = std::move(label),
+				.onSelect = [callback, value = std::move(value)]() { callback(value); },
+				.enabled = static_cast<bool>(callback),
+			};
 		}
 
 	} // namespace
 
 	GameplayBar::GameplayBar(const Args& args)
-		: onActionSelected(args.onActionSelected),
-		  onProductionSelected(args.onProductionSelected),
-		  onFurnitureSelected(args.onFurnitureSelected),
+		: onProductionSelected(args.onProductionSelected),
 		  onStructureSelected(args.onStructureSelected),
 		  onRoomsToggle(args.onRoomsToggle) {}
 
@@ -59,11 +57,6 @@ namespace world_sim {
 			return made;
 		};
 		dropdown(
-			"actions_dropdown",
-			"Actions",
-			{item("Hunt", onActionSelected, "hunt"), item("Harvest", onActionSelected, "harvest"), item("Haul", onActionSelected, "haul")}
-		);
-		dropdown(
 			"build_dropdown",
 			"Build",
 			{item("Foundation", onStructureSelected, "foundation"),
@@ -72,13 +65,6 @@ namespace world_sim {
 			 item("Window", onStructureSelected, "window")}
 		);
 		production = dropdown("production_dropdown", "Production", {});
-		dropdown(
-			"furniture_dropdown",
-			"Furniture",
-			{item("Beds", onFurnitureSelected, "beds"),
-			 item("Tables", onFurnitureSelected, "tables"),
-			 item("Storage", onFurnitureSelected, "storage")}
-		);
 		// Placeholders: no zone system exists yet, this holds the slot the zones work will fill.
 		dropdown(
 			"zones_dropdown",
@@ -88,14 +74,11 @@ namespace world_sim {
 
 		rooms = addChild<ui::Button>({
 			.id = "rooms_toggle",
+			.enabled = static_cast<bool>(onRoomsToggle),
 			.size = {ui::kAuto, kButtonHeight},
 			.label = "Rooms",
 			.variant = ui::ButtonVariant::Secondary,
-			.onPress = [this]() {
-				if (onRoomsToggle) {
-					onRoomsToggle();
-				}
-			},
+			.onPress = onRoomsToggle,
 		});
 		tintRooms();
 	}

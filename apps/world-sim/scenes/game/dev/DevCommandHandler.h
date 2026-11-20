@@ -26,6 +26,7 @@ namespace ecs {
 	class World;
 	class NavigationSystem;
 	struct Inventory;
+	struct Thoughts;
 	enum class NeedType : std::uint8_t;
 }
 namespace world {
@@ -40,6 +41,9 @@ namespace construction {
 }
 namespace worldgen {
 	struct GeneratedWorld;
+}
+namespace worldview {
+	class VisibilityCoverRenderer;
 }
 
 namespace world_sim {
@@ -63,6 +67,8 @@ namespace world_sim {
 		const assets::PlacementExecutor* placementIndex = nullptr; // placed statics, for the flora view
 		const world::WorldCamera*		 camera = nullptr;		   // the flora view's default rect
 		float							 pixelsPerMeter = 0.0F;	   // world-to-screen at zoom 1
+		std::function<bool()>			 dialogOpen;			   // a dialog is open over the game (the drawing view's dialogOpen)
+		const worldview::VisibilityCoverRenderer* cover = nullptr; // the player visibility cover, for its state view
 
 		// Planet used for the current session; populated from GameStartConfig. Used by
 		// serializeLanding (/api/state?what=landing) for biome + water readback. May be
@@ -89,10 +95,10 @@ namespace world_sim {
 		explicit DevCommandHandler(DevCommandContext context) : m_ctx(std::move(context)) {}
 
 		/// Registers every verb as a route and every view as a state provider, for as long as the
-		/// returned registrations live. Most verbs answer {"status":"ok","verb":...}; spawn, foundation
-		/// and walls answer a 400 with {"error":...} when they create nothing, ground they refuse
-		/// included; verbs with an outcome to report (foundation-edit) answer with it, and flora answers
-		/// with its measurement. The views are colonists, construction, stations, storage, time,
+		/// returned registrations live. Most verbs answer {"status":"ok","verb":...}; spawn, colonist,
+		/// teleport, give, foundation, walls and opening answer a 400 with {"error":...} when they create
+		/// or move nothing, ground they refuse included; verbs with an outcome to report (foundation-edit) answer with it, and flora answers
+		/// with its measurement. The views are camera, colonists, construction, drawing, stations, storage, time,
 		/// landing, tunables and summary.
 		std::vector<app::DevServer::Registration> registerWith(app::DevServer& server);
 
@@ -101,14 +107,22 @@ namespace world_sim {
 		void devFreeBuild(const app::DevRequest& cmd);
 		// reveal?on=1|0: player visibility off or on (player-visibility.md 3.10)
 		void devReveal(const app::DevRequest& cmd);
-		void devGive(const app::DevRequest& cmd);
+		// give?material=&n=&where=site|loose|colonist|storage&at=x,y&slot=pack|hands|belt: answers ok with
+		// added and asked, and with shortfall (what was in the way) when it added fewer than asked. A give
+		// that added nothing is a 400 naming why, as is one with nowhere or nothing to give.
+		app::DevResponse devGive(const app::DevRequest& cmd);
 		// spawn?def=&at=x,y&n=&scatter=: spawnGroundRefusal at the centre and at each scattered spot, which is
 		// snapped off water and skipped when refused; a refusal when nothing is spawned.
 		DevRefusal devSpawn(const app::DevRequest& cmd);
-		void devColonist(const app::DevRequest& cmd);
+		// colonist?at=x,y&n=&name=: refused on water or a placed obstacle (moverGroundRefusal).
+		DevRefusal devColonist(const app::DevRequest& cmd);
 		void devNeed(const app::DevRequest& cmd);
+		/// Sets one attribute (its condition name, e.g. kindness or social_need) on one colonist, 0 to 20.
+		DevRefusal devAttribute(const app::DevRequest& cmd);
 		void devTime(const app::DevRequest& cmd);
-		void devTeleport(const app::DevRequest& cmd);
+		// teleport?colonist=<id>&to=x,y: refused for an entity that does not exist, and on water or a placed
+		// obstacle (moverGroundRefusal); ground no mover has meshed takes him.
+		DevRefusal devTeleport(const app::DevRequest& cmd);
 		void devSelect(const app::DevRequest& cmd);
 		void devKill(const app::DevRequest& cmd);
 		void devComplete(const app::DevRequest& cmd);
@@ -134,23 +148,25 @@ namespace world_sim {
 		// Read-only. No pts, or a point that is not finite, is a 400.
 		app::DevResponse devGround(const app::DevRequest& cmd);
 		DevRefusal devWalls(const app::DevRequest& cmd);
-		void		devOpening(const app::DevRequest& cmd);
+		// opening?seg=<id>&t= | pt=x,y&type=&built=: refused unless validateOpening accepts the placement.
+		DevRefusal	devOpening(const app::DevRequest& cmd);
 		void		devCraft(const app::DevRequest& cmd);
 		// storage?at=x,y&item=<def>|*&category=&priority=&min=&max=: adds a rule to the nearest box. A
 		// named item's category comes from its definition (category= may only repeat it); an unknown
 		// item is a 400. category= picks the wildcard's category, RawMaterial by default.
 		app::DevResponse devStorage(const app::DevRequest& cmd);
+		// thought?colonist=<id>&type=<thought type>&subject=<entity id>: creates the thought the way a source
+		// would, the colonist's feeling and line picked from the type. Answers created (false when none of
+		// the type's feelings applies) with the thought's id, feeling and line. An unknown colonist, type or
+		// subject is a 400.
+		app::DevResponse devThought(const app::DevRequest& cmd);
 		void		devTunable(const app::DevRequest& cmd);
-
-		// --- world-position validity (the gates for every placing/moving verb) ---
-		// True when `at` is on an active walkable nav face. On false, logs+toasts the
-		// refusal, saying whether `at` is off the meshed ground or on water or a placed
-		// obstacle, and the caller creates/moves NOTHING.
-		bool requireValidPosition(Foundation::Vec2 at, const char* verb);
-
-		// Where a mover may be put: ground no mover has meshed yet (his own limit lands
-		// there at once, outside every budget), else requireValidPosition.
-		bool requireMoverPosition(Foundation::Vec2 at, const char* verb);
+		// sight?name=<tunable>&value=<whole number>, or sight?reset=1: sets one sight tunable (or all to
+		// their start values) through VisionSystem's clamping setter and answers every tunable with its
+		// range. An unknown name or a value that is not a whole number is a 400.
+		app::DevResponse devSight(const app::DevRequest& cmd);
+		// /api/state?what=sightBodies: each colonist's sight bodies from vision's last pass.
+		std::string sightBodiesView();
 
 		// Logs and toasts a verb's refusal message, when it is not empty, and returns it as the refusal.
 		DevRefusal refuse(const std::string& message);
@@ -163,12 +179,16 @@ namespace world_sim {
 
 		// --- state serialization ---
 		void serializeColonists(std::ostringstream& out);
+		// A colonist's "thoughts": held (type, feeling, mood, left in game hours or "while", count) and the
+		// most recent few, newest first, with the rendered line.
+		void serializeThoughts(std::ostringstream& out, const ecs::Thoughts& thoughts);
 		void serializeConstruction(std::ostringstream& out);
 		void serializeStations(std::ostringstream& out);
 		void serializeStorage(std::ostringstream& out);
 		void serializeTime(std::ostringstream& out);
 		void serializeLanding(std::ostringstream& out);
 		void serializeSummary(std::ostringstream& out);
+		void serializeThoughtTypes(std::ostringstream& out);
 		// The seen record's totals, and with x and y given, whether that point is seen and visible
 		// (/api/state?what=visibility takes no parameters; /api/dev/visibility?x=&y= answers the point).
 		std::string visibilityJson(const app::DevRequest& cmd);
@@ -183,7 +203,6 @@ namespace world_sim {
 		static float						 parseDuration(const std::string& spec);
 		static Foundation::Vec2				 parsePoint(const std::string& spec);
 		static Foundation::Vec2				 spreadOffset(long i, long n, float radius);
-		static std::string					 jsonEscape(const std::string& s);
 
 		DevCommandContext m_ctx;
 	};

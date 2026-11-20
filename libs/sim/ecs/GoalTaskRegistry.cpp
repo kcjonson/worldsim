@@ -88,6 +88,10 @@ namespace ecs {
 		return geometry::pointInPolygon(geometry::quantize({position.x, position.y}), ring) != geometry::PointInPolygon::Outside;
 	}
 
+	bool anyFootprintContains(std::span<const FootprintBounds> sites, glm::vec2 position) {
+		return std::any_of(sites.begin(), sites.end(), [position](const FootprintBounds& site) { return site.contains(position); });
+	}
+
 	glm::vec2 FootprintBounds::interiorPoint() const {
 		if (ring.size() < 3) {
 			return min;

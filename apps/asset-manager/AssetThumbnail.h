@@ -80,10 +80,9 @@ namespace asset_manager {
 		void			   drawMeshes(const std::unordered_map<std::string, assets::PartTransform>& xforms, float fade, int32_t key);
 		void			   drawPicture();
 		void			   drawCollider();
-		// A point in raw asset-mesh space, or relative to the asset's bbox centre, in this box, by the
-		// fitToRect math the preview applied to the mesh.
+		// A point in the asset's pivot frame (its mesh's) in this box, by the fitToRect math the
+		// preview applied to the mesh.
 		[[nodiscard]] Foundation::Vec2 meshToLocal(const glm::vec2& point) const;
-		[[nodiscard]] Foundation::Vec2 centeredToLocal(const glm::vec2& point) const;
 
 		std::string							 defName;
 		uint32_t							 seed;

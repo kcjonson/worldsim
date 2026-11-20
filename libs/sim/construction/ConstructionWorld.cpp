@@ -3,6 +3,7 @@
 #include <predicates/Predicates.h>
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <utility>
 
@@ -105,6 +106,7 @@ namespace construction {
 		foundation.material = std::move(material);
 		foundation.state = FoundationState::Blueprint;
 		foundation.entity = ecs::kInvalidEntity;
+		foundation.placementOrder = version_;
 
 		const FoundationId id = foundation.id;
 		foundations_.push_back(std::move(foundation));
@@ -193,6 +195,7 @@ namespace construction {
 		extension.material = host->material;
 		extension.state = FoundationState::Blueprint;
 		extension.mergeTarget = target;
+		extension.placementOrder = version_;
 
 		const FoundationId id = extension.id;
 		foundations_.push_back(std::move(extension));
@@ -283,6 +286,7 @@ namespace construction {
 		vertex.id = nextVertexId_++;
 		vertex.pos = pos;
 		const VertexId id = vertex.id;
+		assert((vertices_.empty() || vertices_.back().id < id) && "ConstructionWorld: vertices_ must stay in ascending id order");
 		vertices_.push_back(std::move(vertex));
 		return id;
 	}
@@ -325,6 +329,7 @@ namespace construction {
 		const std::string	  preset = s->thicknessPreset;
 		const FoundationId	  hostFnd = s->hostFoundation;
 		const FoundationState state = s->state;
+		const std::uint64_t	  placementOrder = s->placementOrder;
 
 		const Vertex* v0 = findVertex(oldV0);
 		const Vertex* v1 = findVertex(oldV1);
@@ -351,6 +356,7 @@ namespace construction {
 		first.hostFoundation = hostFnd;
 		first.state = state;
 		first.entity = ecs::kInvalidEntity;
+		first.placementOrder = placementOrder;
 
 		WallSegment second;
 		second.id = nextSegmentId_++;
@@ -361,6 +367,7 @@ namespace construction {
 		second.hostFoundation = hostFnd;
 		second.state = state;
 		second.entity = ecs::kInvalidEntity;
+		second.placementOrder = placementOrder;
 
 		const SegmentId firstId = first.id;
 		const SegmentId secondId = second.id;
@@ -395,6 +402,7 @@ namespace construction {
 
 		// Insert the replacements and wire adjacency (mid now has degree 2 from
 		// the split alone; the incoming new segment will raise it to 3+).
+		assert((segments_.empty() || segments_.back().id < firstId) && "ConstructionWorld: segments_ must stay in ascending id order");
 		segments_.push_back(std::move(first));
 		segments_.push_back(std::move(second));
 		addAdjacency(oldV0, firstId);
@@ -415,7 +423,8 @@ namespace construction {
 		const geometry::Vec2i64& b,
 		std::string				 material,
 		std::string				 thicknessPreset,
-		FoundationId			 host
+		FoundationId			 host,
+		std::uint64_t			 placementOrder
 	) {
 		if (a == b) {
 			return {SegmentStatus::ZeroLength, kInvalidSegment};
@@ -610,8 +619,10 @@ namespace construction {
 			segment.hostFoundation = host;
 			segment.state = FoundationState::Blueprint;
 			segment.entity = ecs::kInvalidEntity;
+			segment.placementOrder = placementOrder;
 
 			const SegmentId id = segment.id;
+			assert((segments_.empty() || segments_.back().id < id) && "ConstructionWorld: segments_ must stay in ascending id order");
 			segments_.push_back(std::move(segment));
 			addAdjacency(u, id);
 			addAdjacency(w, id);
@@ -686,13 +697,17 @@ namespace construction {
 	}
 
 	const WallSegment* ConstructionWorld::getSegment(SegmentId id) const {
-		const auto it = std::find_if(segments_.begin(), segments_.end(), [id](const WallSegment& w) { return w.id == id; });
-		return it == segments_.end() ? nullptr : &*it;
+		const auto it = std::lower_bound(segments_.begin(), segments_.end(), id, [](const WallSegment& w, SegmentId wanted) {
+			return w.id < wanted;
+		});
+		return it != segments_.end() && it->id == id ? &*it : nullptr;
 	}
 
 	const Vertex* ConstructionWorld::getVertex(VertexId id) const {
-		const auto it = std::find_if(vertices_.begin(), vertices_.end(), [id](const Vertex& v) { return v.id == id; });
-		return it == vertices_.end() ? nullptr : &*it;
+		const auto it = std::lower_bound(vertices_.begin(), vertices_.end(), id, [](const Vertex& v, VertexId wanted) {
+			return v.id < wanted;
+		});
+		return it != vertices_.end() && it->id == id ? &*it : nullptr;
 	}
 
 	const Opening* ConstructionWorld::getOpening(OpeningId id) const {

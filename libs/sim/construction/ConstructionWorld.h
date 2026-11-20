@@ -66,6 +66,9 @@ namespace construction {
 		FoundationState state = FoundationState::Blueprint;
 		ecs::EntityID	entity = ecs::kInvalidEntity;
 		FoundationId	mergeTarget = kInvalidFoundation;
+		// version() when it was committed, so newer placements rank first for common
+		// lengths (D12). Edits in place and a merge keep it; an extension gets its own.
+		std::uint64_t placementOrder = 0;
 	};
 
 	// Outcome of a commit or edit. Mirrors geometry's reject-don't-repair model:
@@ -143,7 +146,16 @@ namespace construction {
 		FoundationId	hostFoundation = kInvalidFoundation;
 		FoundationState state = FoundationState::Blueprint;
 		ecs::EntityID	entity = ecs::kInvalidEntity;
+		// The placement order its commitSegment caller passed: version() read once before
+		// a drawn chain's first segment, so segments sharing a value are one chain for
+		// common lengths (D12). The halves of a T-junction split keep the split segment's.
+		std::uint64_t placementOrder = 0;
 	};
+
+	// A finished wall, the only kind nav cuts doors in and an opening goes on.
+	[[nodiscard]] inline bool isBuilt(const WallSegment& wall) {
+		return wall.state == FoundationState::Built;
+	}
 
 	// A door or window attached to a segment at parameter `t` in [0,1] measured
 	// from the segment's v0 toward v1. Attachment is by id + parameter, not
@@ -281,12 +293,19 @@ namespace construction {
 		//     so the committed graph never has a vertex sitting on a segment's
 		//     interior. See commitSegment in the .cpp for the split mechanics and
 		//     opening re-attach.
+		//
+		// `placementOrder` (D12) is taken by the new segments of the chain; an existing segment split
+		// by the commit keeps its own order on both halves. A chain drawn as several calls passes one
+		// value, the world's version() read once at the start of the commit before the chain's first
+		// segment, so the chain is one owner for common lengths. It is never above the world's current
+		// version, and is the same for all the new segments of one drawn chain.
 		SegmentCommitResult commitSegment(
 			const geometry::Vec2i64& a,
 			const geometry::Vec2i64& b,
 			std::string				 material,
 			std::string				 thicknessPreset,
-			FoundationId			 host
+			FoundationId			 host,
+			std::uint64_t			 placementOrder
 		);
 
 		// Remove a segment, drop it from its endpoints' adjacency, and delete any
@@ -315,6 +334,9 @@ namespace construction {
 		// Vertex at exactly `point` (exact integer match), or kInvalidVertex.
 		VertexId vertexAt(const geometry::Vec2i64& point) const;
 
+		// Binary searches: segments_ and vertices_ are in ascending id order. Ids only grow,
+		// every insert appends (findOrCreateVertex, splitSegmentAt and commitSegment, each
+		// asserting the order), and removal erases in place.
 		const WallSegment* getSegment(SegmentId id) const;
 		const Vertex*	   getVertex(VertexId id) const;
 		const Opening*	   getOpening(OpeningId id) const;
@@ -417,8 +439,8 @@ namespace construction {
 		FoundationId			nextFoundationId_ = 1;
 		std::uint64_t			version_ = 0;
 
-		std::vector<Vertex>		 vertices_; // stable insertion order
-		std::vector<WallSegment> segments_;
+		std::vector<Vertex>		 vertices_; // ascending id order (see getVertex)
+		std::vector<WallSegment> segments_; // ascending id order (see getSegment)
 		std::vector<Opening>	 openings_;
 		VertexId				 nextVertexId_ = 1; // 0 reserved as invalid
 		SegmentId				 nextSegmentId_ = 1;

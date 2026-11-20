@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Mood tuning. See /docs/design/game-systems/colonists/mood.md and needs.md "Mood System".
+
+  Target mood = the needs score + every held thought's mood effect, clamped 0 to 100.
+  Needs score = 100 - sum(cost x penalty), never below 0. Each need takes its own cost off, given on its
+  own <Need> in assets/config/colonists/needs; a met need gives no credit against one that is not.
+  Mood moves toward its target at up to pointsPerGameHour.
+-->
+<Mood>
+  <Easing pointsPerGameHour="5"/>
+
+  <!-- A need's penalty, 0 to 1: none at or above comfortable, rising to penaltyAtWarning at warning,
+       then steeply to 1 at an empty need. Values are need percentages. -->
+  <NeedPenalty comfortable="70" warning="30" penaltyAtWarning="0.3"/>
+
+  <!-- Names for the player; they gate nothing. A band runs from its from up to the next band's. -->
+  <Bands>
+    <Band name="Content" from="55"/>
+    <Band name="Low" from="30"/>
+    <Band name="Very low" from="12"/>
+    <Band name="Collapsing" from="0"/>
+  </Bands>
+</Mood>

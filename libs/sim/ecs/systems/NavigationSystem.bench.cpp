@@ -16,7 +16,7 @@
 // Per scenario: the main thread's time in World::update per tick without the wait for the workers
 // (main), that wait (wait), each patch job's duration, the ticks from the change until isBuilding()
 // is false, and the work the [NavBuild] debug lines report: the jobs' time, of it the width
-// refreshes, the slowest visibility limit's patch, and the mesh's triangle slots.
+// refreshes, the slowest mesh limit's patch, and the mesh's triangle slots.
 //
 // BM_RealChunksGround loads the Quick Start planet (planets/quickstart.wsplanet, read only) and
 // meshes the 25 real chunks around its landing spawn, ground only (WORLDSIM_PLANET names another
@@ -26,6 +26,7 @@
 #include "NavigationSystem.h"
 
 #include "AIDecisionSystem.h"
+#include "ShippedPriorityConfig.test.h"
 #include "MovementSystem.h"
 #include "PhysicsSystem.h"
 #include "PlacedNothing.test.h"
@@ -38,6 +39,7 @@
 #include "../components/Memory.h"
 #include "../components/MemoryQueries.h"
 #include "../components/Movement.h"
+#include "../ShippedConfig.test.h"
 #include "../components/Needs.h"
 #include "../components/SourceReachMemo.h"
 #include "../components/Task.h"
@@ -107,7 +109,7 @@ namespace {
 
 	constexpr float	 kTickSeconds  = 1.0F / 60.0F;
 
-	// The range R of a mover with the default sight: the radius his visibility limit holds.
+	// The range R of a mover with the default sight: the radius his mesh limit holds.
 	std::int64_t defaultRangeMm() {
 		return static_cast<std::int64_t>(
 			std::llround(static_cast<double>(ecs::kDefaultSightRadius + ecs::NavigationSystem::kSightBufferMeters) * static_cast<double>(geometry::kMillimetersPerMeter)));
@@ -192,7 +194,7 @@ namespace {
 	struct BuildLog {
 		std::mutex			mutex;
 		std::vector<double> jobMs;	 // per job
-		std::vector<double> limitMs; // per visibility limit whose ground went in
+		std::vector<double> limitMs; // per mesh limit whose ground went in
 		double				widthsMs	   = 0.0;
 		double				waitMs		   = 0.0; // since the last takeWait
 		long long			maxSlots	   = 0;
@@ -466,9 +468,14 @@ namespace {
 		}
 
 		void wall(glm::vec2 a, glm::vec2 b, bool door) {
-			const auto commit = construction.commitSegment({std::llround(a.x * 1000.0F), std::llround(a.y * 1000.0F)},
-														   {std::llround(b.x * 1000.0F), std::llround(b.y * 1000.0F)}, "Wood", "Standard",
-														   construction::kInvalidFoundation);
+			const auto commit = construction.commitSegment(
+				{std::llround(a.x * 1000.0F), std::llround(a.y * 1000.0F)},
+				{std::llround(b.x * 1000.0F), std::llround(b.y * 1000.0F)},
+				"Wood",
+				"Standard",
+				construction::kInvalidFoundation,
+				construction.version()
+			);
 			for (const auto id : commit.createdSegments) {
 				construction.setSegmentState(id, construction::FoundationState::Built);
 			}
@@ -498,7 +505,7 @@ namespace {
 
 	void end() { foundation::Logger::setSink(nullptr, nullptr); }
 
-	// The colony's visibility limits, ground and placed obstacles, from nothing.
+	// The colony's mesh limits, ground and placed obstacles, from nothing.
 	void BM_ColdSettle(benchmark::State& state) {
 		for (auto _ : state) {
 			Rig rig(state.range(0));
@@ -703,13 +710,13 @@ namespace {
 			if (wet) {
 				first.adds = water;
 			}
-			first.adds.push_back(nav::visibilityLimit({0, 0}, rangeMm));
+			first.adds.push_back(nav::meshLimit({0, 0}, rangeMm));
 			mesh.applyPatch(first);
 			mesh.refreshWidths();
 			Walk out;
 			for (std::int64_t x = step; x <= walkMm; x += step) {
 				const Clock::time_point start = Clock::now();
-				mesh.applyPatch({.adds = {nav::visibilityLimit({x, 0}, rangeMm)}});
+				mesh.applyPatch({.adds = {nav::meshLimit({x, 0}, rangeMm)}});
 				mesh.refreshWidths();
 				const double ms = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 				(geometry::pointInPolygon({x, 0}, lake) == geometry::PointInPolygon::Inside ? out.inside : out.beside).push_back(ms);
@@ -792,6 +799,10 @@ namespace {
 	// 20 colonists, the real AI and movement, each walking a move order 80 m east with placed obstacles
 	// streaming in ahead of them. Counts the path requests each tick: the replans. range(0): gap.
 	void BM_ReplanWalk(benchmark::State& state) {
+		if (!ecs::loadShippedPriorityConfig()) {
+			state.SkipWithError("priority-tuning.xml did not load");
+			return;
+		}
 		for (auto _ : state) {
 			Rig					   rig(state.range(0));
 			ecs::AIDecisionSystem& ai = rig.world.registerSystem<ecs::AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234U);
@@ -805,7 +816,7 @@ namespace {
 				rig.world.addComponent<ecs::Position>(e, ecs::Position{at});
 				rig.world.addComponent<ecs::Velocity>(e, ecs::Velocity{{0.0F, 0.0F}});
 				rig.world.addComponent<ecs::MovementTarget>(e, ecs::MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-				ecs::NeedsComponent needs = ecs::NeedsComponent::createDefault();
+				ecs::NeedsComponent needs = ecs::testing::shippedNeeds();
 				for (const ecs::NeedType need : {ecs::NeedType::Hunger, ecs::NeedType::Thirst, ecs::NeedType::Energy, ecs::NeedType::Bladder,
 												 ecs::NeedType::Digestion}) {
 					needs.get(need).value = 100.0F;
@@ -909,6 +920,10 @@ namespace {
 	// requests it makes; nav runs between decisions so routes are answered.
 	void BM_NeedDecision(benchmark::State& state) {
 		const int sources = static_cast<int>(state.range(0));
+		if (!ecs::loadShippedPriorityConfig()) {
+			state.SkipWithError("priority-tuning.xml did not load");
+			return;
+		}
 		for (auto _ : state) {
 			Rig					   rig(0);
 			ecs::AIDecisionSystem& ai = rig.world.registerSystem<ecs::AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234U);
@@ -918,7 +933,7 @@ namespace {
 			rig.world.addComponent<ecs::Position>(e, ecs::Position{kColony});
 			rig.world.addComponent<ecs::Velocity>(e, ecs::Velocity{{0.0F, 0.0F}});
 			rig.world.addComponent<ecs::MovementTarget>(e, ecs::MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-			ecs::NeedsComponent needs = ecs::NeedsComponent::createDefault();
+			ecs::NeedsComponent needs = ecs::testing::shippedNeeds();
 			for (const ecs::NeedType need : {ecs::NeedType::Hunger, ecs::NeedType::Energy, ecs::NeedType::Bladder, ecs::NeedType::Digestion}) {
 				needs.get(need).value = 100.0F;
 			}
@@ -1465,7 +1480,7 @@ namespace {
 		return obstacles;
 	}
 
-	// What the mesh holds per km one mover walks: a visibility limit (kWalkRangeMm from him, his
+	// What the mesh holds per km one mover walks: a mesh limit (kWalkRangeMm from him, his
 	// default sight plus the buffer) every state.range(0) mm along a 1 km straight walk, over open
 	// ground (Arg 1 0) or with placed obstacles at 0.064 per m2, the density the Quick Start chunks
 	// hold (BM_PlacedObstacleDensity) (Arg 1 1), those meeting each new

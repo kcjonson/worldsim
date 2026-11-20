@@ -16,6 +16,7 @@
 #include "../components/Needs.h"
 #include "../components/Packaged.h"
 #include "../components/Skills.h"
+#include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
@@ -115,6 +116,9 @@ namespace ecs {
 						actionTypeName(action.type),
 						action.duration
 					);
+					if (!continuesWork(action)) {
+						reportAction(entity, action, ActionMoment::Started, task, memory);
+					}
 				}
 
 				// A start routine that starts nothing has either handed the task to its next leg (a haul
@@ -171,6 +175,13 @@ namespace ecs {
 				completeAction(entity, position, action, needs, task, inventory, memory);
 			}
 		}
+
+		for (const ActionEvent& event : m_reportedActions) {
+			for (const ActionObserver& observer : m_actionObservers) {
+				observer(event);
+			}
+		}
+		m_reportedActions.clear();
 	}
 
 	void ActionSystem::startAction(
@@ -245,41 +256,42 @@ namespace ecs {
 		// Goods a pile pickup took over from earlier legs of a gathering ride along with what it lifts.
 		const uint32_t carriedBefore = haulLifts ? std::min(taskCargo(task), heldBefore) : 0U;
 
-		// Apply effects based on variant type
+		// Whether the action's effect took: only then has the colonist finished it. A need, a toilet, and a
+		// construction bound reached always take; the rest can find their thing gone at completion.
+		bool took = true;
 		if (action.hasNeedEffect()) {
 			applyNeedEffect(action, needs);
 		}
-
-		// Handle collection effects (Pickup, Harvest)
 		if (action.hasCollectionEffect()) {
-			applyCollectionEffect(action, position.value, inventory, memory);
+			took = applyCollectionEffect(action, position.value, inventory, memory);
 		}
-
-		// Handle consumption effects (Eat action)
 		if (action.hasConsumptionEffect()) {
-			applyConsumptionEffect(action, needs, inventory);
+			took = applyConsumptionEffect(action, needs, inventory);
 		}
-
-		// Handle spawn effects (pooping creates Bio Pile, peeing does not)
+		// Pooping creates a Bio Pile, peeing does not.
 		if (action.spawnBioPile) {
 			applySpawnEffect(action);
 		}
-
-		// Handle crafting effects
 		if (action.hasCraftingEffect()) {
-			applyCraftingEffect(action, inventory);
+			took = applyCraftingEffect(action, inventory);
 		}
-
-		// Handle deposit effects (put items into storage)
 		if (action.hasDepositEffect()) {
-			applyDepositEffect(action, inventory);
+			took = applyDepositEffect(action, inventory);
 		}
-
-		// Handle construction progress effects (Build, Deconstruct).
 		// advanceConstructionWork already moved workDone to the bound and set the phase; here we
 		// signal the layer above ActionSystem (which doesn't know ConstructionWorld) via callback.
 		if (action.hasProgressEffect()) {
 			applyProgressEffect(action);
+		}
+		if (action.type == ActionType::PickupPackaged) {
+			const auto* packaged = world->getComponent<Packaged>(static_cast<EntityID>(action.placePackagedEffect().packagedEntityId));
+			took = packaged != nullptr && !packaged->beingCarried;
+		}
+		if (action.type == ActionType::PlacePackaged) {
+			took = applyPlacePackagedEffect(action, inventory);
+		}
+		if (took) {
+			reportAction(entity, action, ActionMoment::Finished, task, memory);
 		}
 
 		// Special handling for Haul tasks - may need to continue to deposit phase
@@ -335,6 +347,20 @@ namespace ecs {
 
 		// Special handling for PlacePackaged tasks - two-phase (PickupPackaged→PlacePackaged)
 		if (task.type == TaskType::PlacePackaged && action.type == ActionType::PickupPackaged) {
+			const auto& placeEffect = action.placePackagedEffect();
+			const auto	packagedEntity = static_cast<EntityID>(placeEffect.packagedEntityId);
+			// A package gone, placed, or in another colonist's hands is not there to lift: the task ends
+			// with the colonist's hands as they were.
+			if (!took) {
+				LOG_DEBUG(
+					Engine, "[Action] Packaged entity %llu is not there to pick up - ending the task", static_cast<unsigned long long>(packagedEntity)
+				);
+				action.clear();
+				task.clear();
+				task.timeSinceEvaluation = 0.0F;
+				return;
+			}
+
 			// Phase 1 complete (PickupPackaged) - clear hands, pick up entity, then move to phase 2
 			// Hand clearing: stow items to backpack, drop if can't fit
 			clearHandsForTwoHandedPickup(inventory, action.targetPosition);
@@ -342,39 +368,28 @@ namespace ecs {
 			// The packaged item is possessed now; nobody else can take it.
 			claimsToDeliveryLeg(task, 0);
 
-			// Get the packaged entity from the effect
-			if (action.hasPlacePackagedEffect()) {
-				const auto& placeEff = action.placePackagedEffect();
-				auto		packagedEntity = static_cast<EntityID>(placeEff.packagedEntityId);
+			// Mark the entity as being carried (hides from world rendering)
+			world->getComponent<Packaged>(packagedEntity)->beingCarried = true;
+			inventory.carryingPackagedEntity = placeEffect.packagedEntityId;
 
-				// Mark the entity as being carried (hides from world rendering)
-				auto* packaged = world->getComponent<Packaged>(packagedEntity);
-				if (packaged != nullptr) {
-					packaged->beingCarried = true;
-				}
-
-				// Track the carried entity in inventory
-				inventory.carryingPackagedEntity = placeEff.packagedEntityId;
-
-				// Put the entity's defName in both hands (for UI display)
-				auto* appearance = world->getComponent<Appearance>(packagedEntity);
-				if (appearance != nullptr && !appearance->defName.empty()) {
-					inventory.leftHand = ItemStack{appearance->defName, 1};
-					inventory.rightHand = ItemStack{appearance->defName, 1};
-					LOG_INFO(
-						Engine,
-						"[Action] Picked up %s (entity %llu) - now carrying in both hands",
-						appearance->defName.c_str(),
-						static_cast<unsigned long long>(placeEff.packagedEntityId)
-					);
-				} else {
-					LOG_WARNING(
-						Engine,
-						"[Action] Could not set hands: appearance=%p, defName=%s",
-						static_cast<void*>(appearance),
-						appearance ? appearance->defName.c_str() : "(null)"
-					);
-				}
+			// Put the entity's defName in both hands (for UI display)
+			auto* appearance = world->getComponent<Appearance>(packagedEntity);
+			if (appearance != nullptr && !appearance->defName.empty()) {
+				inventory.leftHand = ItemStack{appearance->defName, 1};
+				inventory.rightHand = ItemStack{appearance->defName, 1};
+				LOG_INFO(
+					Engine,
+					"[Action] Picked up %s (entity %llu) - now carrying in both hands",
+					appearance->defName.c_str(),
+					static_cast<unsigned long long>(placeEffect.packagedEntityId)
+				);
+			} else {
+				LOG_WARNING(
+					Engine,
+					"[Action] Could not set hands: appearance=%p, defName=%s",
+					static_cast<void*>(appearance),
+					appearance ? appearance->defName.c_str() : "(null)"
+				);
 			}
 
 			// Transition to phase 2 - walk to placement target.
@@ -400,15 +415,48 @@ namespace ecs {
 			}
 		}
 
-		// Handle PlacePackaged completion (phase 2) - move entity to target and remove Packaged component
-		if (action.type == ActionType::PlacePackaged && action.hasPlacePackagedEffect()) {
-			applyPlacePackagedEffect(action, inventory);
-		}
-
 		// Clear the action and task
 		action.clear();
 		task.clear();
 		task.timeSinceEvaluation = 0.0F;
+	}
+
+	void ActionSystem::reportAction(EntityID entity, const Action& action, ActionMoment moment, const Task& task, const Memory& memory) {
+		if (m_actionObservers.empty()) {
+			return;
+		}
+		const auto& registry = assets::AssetRegistry::Get();
+		uint32_t	about = 0;
+		if (action.hasConsumptionEffect()) {
+			about = registry.getDefNameId(action.consumptionEffect().itemDefName);
+		} else if (action.hasCraftingEffect() && !action.craftingEffect().outputs.empty()) {
+			about = registry.getDefNameId(action.craftingEffect().outputs.front().first);
+		} else if (action.hasCollectionEffect()) {
+			about = registry.getDefNameId(action.collectionEffect().sourceDefName);
+		} else if (action.hasDepositEffect()) {
+			about = registry.getDefNameId(action.depositEffect().itemDefName);
+		} else if (const KnownWorldEntity* source = memory.getWorldEntity(task.needSourceKey); source != nullptr) {
+			about = source->defNameId;
+		}
+		m_reportedActions.push_back({.colonist = entity, .type = action.type, .moment = moment, .aboutDefinition = about});
+	}
+
+	bool ActionSystem::continuesWork(const Action& action) const {
+		if (action.hasProgressEffect()) {
+			const ProgressEffect&	  effect = action.progressEffect();
+			const StructureBlueprint* blueprint = world->getComponent<StructureBlueprint>(static_cast<EntityID>(effect.targetEntityId));
+			if (blueprint == nullptr) {
+				return false;
+			}
+			return effect.deconstruct ? blueprint->teardownBegun : blueprint->workDone > 0.0F;
+		}
+		if (action.hasCraftingEffect()) {
+			const CraftingEffect& effect = action.craftingEffect();
+			const WorkQueue*	  queue = world->getComponent<WorkQueue>(static_cast<EntityID>(effect.stationEntityId));
+			const CraftingJob*	  job = queue != nullptr ? queue->getNextJob() : nullptr;
+			return job != nullptr && job->recipeDefName == effect.recipeDefName && job->completed > 0;
+		}
+		return false;
 	}
 
 	void ActionSystem::headToDeposit(EntityID entity, Task& task) {

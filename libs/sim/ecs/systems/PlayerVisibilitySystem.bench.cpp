@@ -147,8 +147,14 @@ namespace {
 	// A wall from `from` to `to` (metres from the base's origin), with a gap in its middle when `gap`.
 	void buildWall(construction::ConstructionWorld& walls, glm::vec2 from, glm::vec2 to, bool gap) {
 		auto commit = [&walls](glm::vec2 start, glm::vec2 end) {
-			const construction::SegmentCommitResult result =
-				walls.commitSegment(millimetres(kBaseOrigin + start), millimetres(kBaseOrigin + end), "Wood", "Standard", construction::kInvalidFoundation);
+			const construction::SegmentCommitResult result = walls.commitSegment(
+				millimetres(kBaseOrigin + start),
+				millimetres(kBaseOrigin + end),
+				"Wood",
+				"Standard",
+				construction::kInvalidFoundation,
+				walls.version()
+			);
 			for (const construction::SegmentId segment : result.createdSegments) {
 				walls.setSegmentState(segment, construction::FoundationState::Built);
 			}
@@ -327,8 +333,8 @@ namespace {
 			state.counters["rings"]	  = static_cast<double>(visibility.seenArea().ringsRegistered());
 			state.counters["pending"] = static_cast<double>(mostPending);
 			const double visionTickMs = visionMs / static_cast<double>(kTicks);
-			std::fprintf(stderr, "  vision: %llu polygons built, %.3f ms a tick, %.1f ms a second at 60 ticks\n", static_cast<unsigned long long>(vision.polygonBuildCount()), visionTickMs,
-						 visionTickMs * 60.0);
+			std::fprintf(stderr, "  vision: %zu occluders, %llu polygons built, %.3f ms a tick, %.1f ms a second at 60 ticks\n", vision.geometry().occluderCount(),
+						 static_cast<unsigned long long>(vision.polygonBuildCount()), visionTickMs, visionTickMs * 60.0);
 			state.counters["visionTickMs"] = visionTickMs;
 			benchmark::DoNotOptimize(iteration);
 		}

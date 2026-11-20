@@ -1,27 +1,61 @@
 # Scenario 14: player visibility
 
 **Status:** draft  
-**Last verified:** 2026-11-14, steps 1, 10, 11 (the drawing, not the walk), 12 and 13; 2026-11-13, all steps (placement through injected input since salal v0.41.1)  
+**Last verified:** 2026-11-19
 
-The player sees only what colonists have seen: bright ground round the crew, tinted ground out to the 150 m landing, black beyond. Things on seen ground select and place; on black ground they do not; a move order into the black walks the colonist to the edge of seen ground. Spec: [player-visibility.md](../../technical/player-visibility.md).
+Colonists reveal the ground: bright in sight, tinted once seen, black never seen, with soft edges, faint triangles behind trunks, and soft-sided shadows behind walls and big rocks. Specs: [player-visibility.md](../../technical/player-visibility.md), [sight-softening.md](../../technical/sight-softening.md).
+
+---
+
+## Setup
+
+Launch as [../README.md](../README.md) says and take Quick Start. It is seeded, so the landing is the same each run: forest by a river, and a BigRock at (0.4, 48.3), 48 m south of the drop. The verbs used are `/api/dev/` `select`, `walls`, `opening`, `colonist`, `kill`, `teleport`, `reveal`, `time`, and `visibility?x=&y=` (seen, visible). To order drafted Bob to a point, jump the camera there and right-click the window's centre. +y is south.
 
 ---
 
 ## Steps
 
-Build `world-sim` (RelWithDebInfo), launch it with no flags, click Enter Expedition, then Quick Start. The dev server is on 127.0.0.1:8081. A camera jump is `curl.exe "http://127.0.0.1:8081/api/control?action=camera&x=<x>&y=<y>&zoom=<z>"`. `curl.exe "http://127.0.0.1:8081/api/dev/visibility?x=<x>&y=<y>"` says whether a point is `seen` and `visible`. Bob wanders, so read him first (`...api/state?what=colonists`: `id`, `x`, `y` as BID, BX, BY). Input coordinates are framebuffer pixels (read them off a screenshot) when the display scale is 1.
-
-1. `...camera&x=<BX>&y=<BY>&zoom=0.5`: a bright disc round Bob, a dimmer tinted disc about 150 m across the landing (river and trees visible in it), black everywhere else.
-2. Zoom 3 on Bob: bright ground in his sight, tinted ground past it; the black is far off. `...visibility?x=<BX+100>&y=<BY>` answers `seen` true, `visible` false; the same at 300 m out answers both false.
-3. Find a tree 80 m out (`curl.exe "http://127.0.0.1:8081/api/dev/flora?age=mature&near=<BX+80>,<BY>"`), jump to it at zoom 6 and click its crown: it is selected, one outline, `Flora_TreeOak` or `Flora_TreeMaple` in the panel.
-4. Jump 250 m out at zoom 6 (all black) and click where a tree would be: nothing is selected and the panel closes.
-5. Select Bob (`curl.exe "http://127.0.0.1:8081/api/dev/select?colonist=<BID>"`), click Draft in his panel, jump to zoom 1 on a point 100 m south of him: the black edge is in view.
-6. Press B (separate `keydown,b` and `keyup,b` requests), click Crafting Spot in the Build menu, then `/api/input?ev=move,x,y` over tinted ground (`...visibility` says `seen` true, `visible` false) and take a separate screenshot: the ghost sits under the pointer and reads valid. `ev=click,x,y`: a crafting spot is placed (`what=stations` lists it).
-7. Jump the camera 250 m out (all black), start Build > Crafting Spot again and `ev=move,x,y`: the ghost follows and reads invalid (a faint dark red). `ev=click,x,y`: nothing is placed (`what=stations` unchanged).
-8. Right-click on the black, well past the edge (zoom 1, about 100 m beyond it): a marker shows at the edge of seen ground, not at the click, and Bob walks there and stops.
-9. As he arrives, a new bright disc opens round him past the old edge, and `...api/state?what=visibility` shows `seenSquareMeters` larger than before. Right-click into the black again: he walks on to the new edge.
-10. `curl.exe "http://127.0.0.1:8081/api/dev/reveal?on=1"`, zoom 0.5 on the landing: every tile is drawn bright, no black, no tint; a right-click up to about 40 m past Bob's seen ground now walks to where you click (farther than the nav mesh reaches it does nothing, as it did before player visibility).
-11. `...reveal?on=0`: the black and the tint come back, with the ground Bob opened in step 9 still seen.
-12. Zoom 1 at the landing, then jump the camera east 300 m at a time to 2.4 km out, reading `...api/state?what=scene` (`chunks`, the `Chunks:` readout) at each: it never rises, and falls as the chunks the camera alone held unload.
-13. `...teleport?colonist=<BID>&to=479,10` (`/api/dev/teleport`), wait a second: `...visibility?x=509&y=10` is `seen`, `x=511` is not, a seen edge a few metres short of the chunk border at 512 m. Teleport him back to the landing, screenshot at `x=508&y=10&zoom=6`, jump to `x=4000` (chunks fall), and back: the same picture, the trees from past the border still drawn over the seen edge, and `...flora?age=mature&near=520,10` still lists trees east of 512 m.
-14. Click Release in Bob's panel, then `curl.exe "http://127.0.0.1:8081/api/control?action=exit"`.
+1. Zoom 0.5 on Bob: a bright disc round him, a tinted disc about 300 m across, black beyond.
+2. Zoom 3 on Bob: 100 m east reads seen, not visible; 300 m east reads neither.
+3. Click the crown of a mature tree 80 m east at zoom 6: it is selected, one outline, oak or maple.
+4. Jump 250 m out (all black) and click where a tree stands: nothing is selected.
+5. Select Bob and click Draft once: his panel says Controlled.
+6. Zoom 3 on him: his bright area's edge is a soft fade, no hard line.
+7. Jump to (0, 150) at zoom 1: the tint fades into the black, and the black is solid.
+8. Press V on Bob: the green rim sits closer to him where trees are dense than where they thin. Press V again.
+9. Zoom 12 behind a trunk near him: a faint short triangle behind it, longer behind a thick oak, none reaching the rim.
+10. Order him to (0.4, 40.3), 8 m north of the BigRock: a shadow runs from the rock to his rim, soft-sided.
+11. Order him to (-10, 43.5), then to (10, 43.5): the rock's shadow turns, its soft side sliding with no jump.
+12. Watch behind him on that walk: the tinted area never shrinks.
+13. Spawn a colonist at (9.5, 45), among the trees beside Bob: no trunk's triangle darkens ground the other colonist sees.
+14. Remove her: her bright area goes, and his stays.
+15. Build a 0.5 m wall from (14.9, 43.25) to (14.9, 43.75): a barely visible triangle behind it, about a metre long.
+16. Build a 2 m wall from (14.9, 45.5) to (14.9, 47.5): a full shadow with soft sides.
+17. Build a closed wall loop (10, 39), (14, 39), (14, 43), (10, 43): a 4 m room.
+18. Add a door at (12, 43) and a window at (12, 39): a doorway in the south wall, a window in the north.
+19. Order Bob to (12, 41): light leaves through the door and the window only, each beam soft-sided.
+20. Order him to (12, 42.3): the beam through the door keeps a bright core.
+21. Set the game speed to 0 (`time?speed=0`): no one moves, Bob stays at (12, 42.3).
+22. Spawn a colonist at (2, 41), 8 m west of the room: along its west wall no dark strip, only the shadows off its two west corners.
+23. Remove her.
+24. Set the game speed back to 1 (`time?speed=1`): Bob's panel still says Controlled.
+25. Order Bob to (8, 46), out the door and past the room's south-west corner: the room's shadow swings round the corner with no jump.
+26. Order him to (300, 44) and twice more into the black: the tint's edge sits just outside his bright rim, no dark band between.
+27. Set 10x, order him into the black twice more, set 1x: the tint's edge sits within a few metres of his rim.
+28. Teleport him to (24, 11), press B, click Crafting Spot, and hover tinted ground at zoom 6: the ghost reads valid.
+29. Click: a crafting spot is placed.
+30. Hover the black 250 m out: the ghost is faint dark red; a click places nothing. Press Escape.
+31. Right-click the black 100 m past the edge: a marker at the edge, and Bob walks there and stops.
+32. As he arrives: a bright disc opens past the old edge.
+33. Right-click the black again: he walks on to the new edge.
+34. Turn reveal on: no black, no tint.
+35. Right-click 15 m past his seen ground: he walks to the click.
+36. Turn reveal off: black and tint return, the ground he opened still tinted.
+37. Jump the camera east 300 m at a time to 2.4 km: the Chunks readout never rises, and falls.
+38. Teleport Bob to (479, 10) and wait a second: (494, 10) reads seen and visible, (511, 10) neither.
+39. Teleport him to (24, 11) and view (508, 10) at zoom 6: trees past 512 m drawn over the seen edge.
+40. Jump 4 km east and back: the same picture.
+41. Build a wall from (30, 8) to (30, 14), 6 m east of Bob, and zoom 20 on it: the tint starts at its west face.
+42. Look at its top: an even mid brown.
+43. Turn reveal on: the top turns light tan. Turn reveal off.
+44. Click Release, then exit.

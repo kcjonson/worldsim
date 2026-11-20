@@ -327,7 +327,7 @@ rim can touch, as a world sampler's gather would. A half-plane lake through biom
 which is realistic and useless for placing a colonist 4 m from the water.
 
 Drinking needs no new code. `VisionSystem` pass 3 remembers `Terrain_Shore` points sampled along each
-chunk's water rings (`terrainPolygons().shorePoints`, read in `VisionSystem::update`) as Drinkable. The
+chunk's water rings (`terrainPolygons().shorePoints`, read in `VisionSystem::update`) as Drinkable and Washable. The
 `shore` anchor (below) is the realized shore point nearest the origin, read from those same points, so
 a script and the colonist agree on where the water is.
 
@@ -337,7 +337,7 @@ Two stores hold world things, and which one a thing lives in decides what sees i
 
 - The placement index (`PlacementExecutor`'s per-chunk `SpatialIndex`) holds static world entities.
   Nav builds obstacles only from the index (`nav::placedObstacleRing` in NavInputBuilder.h, one ring
-  per placed obstacle), and `StaticRectCollisionSystem` reads only the index. Vision pass 1 reads it,
+  per placed obstacle), and `PlacedObstacleCollisionSystem` reads only the index. Vision pass 1 reads it,
   harvest decrements and removes through it.
 - ECS entities with `Appearance` hold runtime things: stations, storage, piles, packaged items,
   colonists. Vision pass 2 reads them.

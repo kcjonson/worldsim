@@ -4,6 +4,7 @@
 
 #include <utils/Log.h>
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdlib>
@@ -121,6 +122,14 @@ GameTimeSnapshot TimeSystem::snapshot() const {
 		.speed = currentSpeed,
 		.isPaused = isPaused()
 	};
+}
+
+ClockTime TimeSystem::clockTime() const {
+	constexpr int kLastMinuteOfDay = (24 * 60) - 1;
+	// The float clock lands a hair short of a whole minute it was advanced to (08:00 as 7.99999).
+	constexpr float kMinuteRoundingSlack = 0.001F;
+	const int		minute = static_cast<int>((currentTimeOfDay * 60.0F) + kMinuteRoundingSlack);
+	return {.day = dayCount, .minuteOfDay = std::clamp(minute, 0, kLastMinuteOfDay)};
 }
 
 double simulationSeconds(World& world) {

@@ -2,8 +2,11 @@
 
 // ColonistDetailsDialog - a colonist's dossier, a non-modal ui::Dialog: a header band (the Avatar and a
 // 2x2 Stat grid) over eight tabs, Bio, Needs, Skills, Social, Gear, Memory, Tasks and Log, and a footer
-// of Close, Work Priorities and Draft. Only the selected tab's view is mounted. The game runs on while
-// it is open, and update() feeds it from the world every frame.
+// of Close, Work Priorities and Draft. Only the selected tab's view is mounted. It is 760 wide and as tall
+// as its tallest tab needs, measured when it opens and held until it closes, whatever tab or colonist it then
+// shows. Tasks and Log, lists that grow with what the colonist knows and has thought, aren't measured: they
+// fill the tab area the others set, and scroll. The game runs on while it is open, and update() feeds it from
+// the world every frame.
 
 #include "ColonistDetailsModel.h"
 #include "tabs/BioTabView.h"
@@ -30,6 +33,8 @@ namespace world_sim {
 	class ColonistDetailsDialog {
 	  public:
 		struct Args {
+			// What the Bio tab names a colonist's trait ids by: the traits the world's colonists were rolled from.
+			const assets::TraitRegistry& traits;
 			// The player closed it: its close button, cancel or the footer's Close. Not called by close().
 			std::function<void()> onClose;
 		};
@@ -43,7 +48,7 @@ namespace world_sim {
 		ColonistDetailsDialog& operator=(ColonistDetailsDialog&&) = delete;
 		~ColonistDetailsDialog() = default;
 
-		// Opens it from `opener` on a colonist's Bio tab; already open, it moves to that colonist.
+		// Opens it from `opener` on a colonist's Bio tab; already open, it moves to that colonist at the size it has.
 		void open(ui::Component& opener, ecs::EntityID colonistId, int player = 0);
 		void close();
 
@@ -56,6 +61,8 @@ namespace world_sim {
 	  private:
 		void build(ui::Dialog& shown);
 		void showTab(const std::string& tabId);
+		void mountTab(const std::string& tabId);
+		void sizeToContent();
 		void showHeader();
 		void feedTab();
 		void closed();
@@ -65,7 +72,10 @@ namespace world_sim {
 		std::string			  currentTab;
 		std::string			  avatarSeed;
 		bool				  fresh = false; // opened or moved since the last feed
+		bool				  sized = false; // this opening's size is worked out
 		ColonistDetailsModel  model;
+		// Built only while the Log tab is shown.
+		ThoughtLogModel thoughtLog;
 
 		ui::Ref<ui::Dialog>	   dialog;
 		ui::Ref<ui::Component> avatarSlot;

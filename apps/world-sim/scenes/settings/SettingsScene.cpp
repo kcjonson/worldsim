@@ -1,9 +1,12 @@
 // Settings Scene - game options.
 //
-// Minimal options screen: a title, a kicker and a toggle for each option, read
-// from and written to world_sim::UserSettings; changes apply at once for the
-// session (no cross-launch persistence yet). ESC, or Back, returns to the main
-// menu.
+// Options screen: a title, then the interface size and the drawing settings, each under its kicker, one
+// switch (or choice) each. Every change applies at once and is saved to the settings file as it changes:
+// the interface size is the App's ui.scale, the drawing settings world_sim::UserSettings. Opened over the
+// main menu or the paused game, ESC or Back pops it; reached by name (--scene, the dev server's control),
+// with nothing under it, they go to the main menu.
+
+#include "SettingsScene.h"
 
 #include "SceneTypes.h"
 #include "UserSettings.h"
@@ -12,26 +15,58 @@
 
 #include <application/App.h>
 #include <primitives/Primitives.h>
+#include <theme/InterfaceScale.h>
 #include <theme/Keys.h>
 #include <ui/components/Button.h>
+#include <ui/components/SegmentedControl.h>
 #include <ui/components/Toggle.h>
 #include <ui/shapes/Text.h>
 #include <utils/Log.h>
 
+#include <cmath>
+#include <cstddef>
+#include <cstdio>
 #include <string>
+#include <vector>
 
 namespace {
 
 	constexpr const char* kSceneName = "settings";
 	constexpr float		  kColX = 80.0F;
 	constexpr float		  kRowWidth = 480.0F;
+	constexpr float		  kScrollbarReserve = 16.0F; // so a row never sits under the list's scrollbar
+
+	// A push applies at the frame's scene step, so two presses in one frame would queue two Settings.
+	bool pushQueued = false;
 
 	namespace tokens = world_sim::tokens;
 	namespace family = ui::tokens::font::family;
 
-	class SettingsScene : public app::Scene {
+	std::string formatNumber(float value) {
+		char text[32];
+		std::snprintf(text, sizeof(text), "%g", static_cast<double>(value));
+		return text;
+	}
+
+	std::vector<std::string> interfaceSizeLabels() {
+		std::vector<std::string> labels;
+		for (const float size : theme::kInterfaceSizes) {
+			labels.push_back(std::to_string(std::lround(size * 100.0F)) + "%");
+		}
+		return labels;
+	}
+
+	struct SettingsArgs {
+		bool overAnotherScene = false;
+	};
+
+	class SettingsScene : public app::TypedScene<SettingsArgs> {
 	  public:
+		explicit SettingsScene(SettingsArgs args)
+			: overAnotherScene(args.overAnotherScene) {}
+
 		void onEnter(app::App& app) override {
+			pushQueued = false;
 			owner = &app;
 			LOG_INFO(Game, "SettingsScene - Entering");
 			theme::apply(ui());
@@ -52,10 +87,24 @@ namespace {
 		const char* name() const override { return kSceneName; }
 
 	  private:
-		void back() { owner->scenes().switchTo(world_sim::scenes::MainMenu.name); }
+		void back() {
+			if (overAnotherScene) {
+				owner->scenes().pop();
+			} else {
+				owner->scenes().switchTo(world_sim::scenes::MainMenu.name);
+			}
+		}
+
+		void saveDrawingSettings() {
+			world_sim::UserSettings::Get().store(owner->settings());
+			if (!owner->settings().save()) {
+				LOG_ERROR(Game, "SettingsScene: the settings file couldn't be saved");
+			}
+		}
 
 		void build() {
 			const ui::Theme& theme = ui().getTheme();
+			const ui::Style	 description = world_sim::text(theme, {.size = tokens::fontSize::fsSm, .color = tokens::color::textDim});
 			const ui::Style	 kicker = world_sim::text(
 				 theme,
 				 {.family = family::mono,
@@ -64,20 +113,27 @@ namespace {
 				  .tracking = tokens::letterSpacing::lsWider}
 			 );
 
+			const float space2 = theme.get(tokens::spacing::space2);
+			const float space4 = theme.get(tokens::spacing::space4);
+			const float space6 = theme.get(tokens::spacing::space6);
+			const float space8 = theme.get(tokens::spacing::space8);
+
+			// The title and Back stay put; the settings between them scroll on a canvas shorter than the
+			// reference. The bottom padding keeps Back clear of the ESC hint.
 			ui::Ref<ui::Component> column = root().addChild<ui::Component>({
 				.id = "settings",
 				.size = {ui::percent(100.0F), ui::percent(100.0F)},
 				.layout = {
 					.display = ui::Display::Flex,
 					.flexDirection = ui::FlexDirection::Column,
-					.gap = theme.get(tokens::spacing::space4),
-					.padding = {0.0F, 0.0F, 0.0F, kColX},
+					.gap = space4,
+					.padding = {space6, 0.0F, space8, kColX},
 					.alignItems = ui::AlignItems::Start,
-					.justifyContent = ui::JustifyContent::Center
 				},
 			});
 			column.addChild<ui::Text>({
 				.id = "settings_title",
+				.layout = {.flexShrink = 0.0F},
 				.style = world_sim::text(
 					theme,
 					{.family = family::display,
@@ -87,21 +143,158 @@ namespace {
 				),
 				.text = "Settings",
 			});
-			column.addChild<ui::Text>({.id = "settings_kicker", .style = kicker, .text = "// CONSTRUCTION"});
 
-			column.addChild<ui::Toggle>({
-				.id = "settings_align_existing",
-				.size = {kRowWidth, ui::kAuto},
-				.label = "Align to existing foundations",
-				.on = world_sim::UserSettings::Get().alignSnapToExistingFoundations,
-				.onChange = [](bool on) {
-					world_sim::UserSettings::Get().alignSnapToExistingFoundations = on;
-					LOG_INFO(Game, "Setting: align snap to existing foundations -> %s", on ? "on" : "off");
+			ui::Ref<ui::Component> list = column.addChild<ui::Component>({
+				.id = "settings_list",
+				.size = {kRowWidth + kScrollbarReserve, ui::kAuto},
+				.layout =
+					{.display = ui::Display::Flex,
+					 .flexDirection = ui::FlexDirection::Column,
+					 .gap = space4,
+					 .padding = {0.0F, kScrollbarReserve, 0.0F, 0.0F},
+					 .flexGrow = 1.0F},
+				.overflow = ui::Overflow::Scroll,
+			});
+
+			list.addChild<ui::Text>({.id = "settings_interface_kicker", .style = kicker, .text = "// INTERFACE"});
+			ui::Ref<ui::Component> size = list.addChild<ui::Component>({
+				.id = "interface_size",
+				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = space2},
+			});
+			size.addChild<ui::Text>({
+				.id = "interface_size_label",
+				.style = world_sim::text(theme, {.size = tokens::fontSize::fsBase, .color = tokens::color::text}),
+				.text = "Interface size",
+			});
+			ui::Ref<ui::Component> sizeControls = size.addChild<ui::Component>({
+				.layout = {.display = ui::Display::Flex, .gap = space4, .alignItems = ui::AlignItems::Center},
+			});
+			sizeChoice = sizeControls.addChild<ui::SegmentedControl>({
+				.id = "interface_size_choice",
+				.options = interfaceSizeLabels(),
+				.selected = static_cast<int>(theme::nearestInterfaceSize(owner->uiScale())),
+				.onChange = [this](int index) { setInterfaceSize(theme::kInterfaceSizes.at(static_cast<std::size_t>(index))); },
+			});
+			sizeReset = sizeControls.addChild<ui::Button>({
+				.id = "interface_size_reset",
+				.enabled = owner->uiScale() != theme::kDefaultInterfaceSize,
+				.label = "Reset",
+				.variant = ui::ButtonVariant::Ghost,
+				.controlSize = ui::ControlSize::Sm,
+				.onPress = [this] {
+					if (ui::SegmentedControl* choice = sizeChoice.get()) {
+						choice->setSelected(static_cast<int>(theme::nearestInterfaceSize(theme::kDefaultInterfaceSize)));
+					}
+					setInterfaceSize(theme::kDefaultInterfaceSize);
 				},
 			});
+			size.addChild<ui::Text>({
+				.id = "interface_size_line",
+				.style = description,
+				.text = "Scales menus, panels, and text. The smaller sizes stop where text would get too small to read on this screen.",
+				.wrap = true,
+			});
+
+			list.addChild<ui::Text>({.id = "settings_drawing_kicker", .style = kicker, .text = "// DRAWING SETTINGS"});
+
+			const assets::SnappingConfig& snapping = assets::ConstructionRegistry::Get().snapping();
+			world_sim::DrawingSettings&	  drawing = world_sim::UserSettings::Get().drawing;
+
+			const auto addSwitch = [&](const char* id, const std::string& label, const std::string& line, bool& field) {
+				ui::Ref<ui::Component> row = list.addChild<ui::Component>({
+					.id = id,
+					.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = space2},
+				});
+				row.addChild<ui::Toggle>({
+					.id = std::string(id) + "_toggle",
+					.size = {kRowWidth, ui::kAuto},
+					.label = label,
+					.on = field,
+					.onChange = [this, &field, label](bool on) {
+						field = on;
+						LOG_INFO(Game, "Setting: %s -> %s", label.c_str(), on ? "on" : "off");
+						saveDrawingSettings();
+					},
+				});
+				row.addChild<ui::Text>({
+					.id = std::string(id) + "_line",
+					.style = description,
+					.text = line,
+					.wrap = true,
+				});
+			};
+
+			addSwitch(
+				"drawing_angle_steps",
+				"Angle steps",
+				"Turn segments in " + formatNumber(snapping.angleIncrementDegrees) +
+					(snapping.angleIncrementDegrees == 1.0F ? " degree step." : " degree steps."),
+				drawing.angleSteps
+			);
+			addSwitch(
+				"drawing_guides_from_shape",
+				"Guides from the shape",
+				"Line up with the shape's own edges, parallel or square.",
+				drawing.guidesFromShape
+			);
+			addSwitch(
+				"drawing_align_existing",
+				"Align to existing buildings",
+				"Line up with nearby buildings' edges and corners.",
+				drawing.alignToExistingBuildings
+			);
+			addSwitch(
+				"drawing_guides_from_world_axes",
+				"Guides from the world axes",
+				"Line up north-south and east-west with points and corners.",
+				drawing.guidesFromWorldAxes
+			);
+			addSwitch("drawing_crossings", "Crossings", "Snap to where two guides meet.", drawing.guideCrossings);
+			addSwitch("drawing_common_lengths", "Common lengths", "Match the lengths of edges already built.", drawing.commonLengths);
+			addSwitch("drawing_guide_distances", "Guide distances", "Show how far the cursor is along each guide.", drawing.guideDistances);
+			addSwitch("drawing_angle_readout", "Angle readout", "Show the angle of a corner that is not square.", drawing.angleReadout);
+			addSwitch(
+				"drawing_round_lengths",
+				"Round lengths to " + formatNumber(snapping.lengthIncrementMeters) + " m",
+				"Segment lengths come out round.",
+				drawing.roundLengths
+			);
+			addSwitch(
+				"drawing_key_guide",
+				"Show key guide while drawing",
+				"A small panel with the keys and what the lines mean.",
+				drawing.showKeyGuide
+			);
+
+			ui::Ref<ui::Component> grid = list.addChild<ui::Component>({
+				.id = "drawing_grid",
+				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = space2},
+			});
+			grid.addChild<ui::Text>({
+				.id = "drawing_grid_label",
+				.style = world_sim::text(theme, {.size = tokens::fontSize::fsBase, .color = tokens::color::text}),
+				.text = "Grid spacing (rectangle tool)",
+			});
+			grid.addChild<ui::SegmentedControl>({
+				.id = "drawing_grid_spacing",
+				.options = {"1 meter", "0.5 meters"},
+				.selected = drawing.rectangleGridSpacingMeters < 1.0F ? 1 : 0,
+				.onChange = [this, &drawing](int index) {
+					drawing.rectangleGridSpacingMeters = index == 1 ? 0.5F : 1.0F;
+					LOG_INFO(Game, "Setting: rectangle grid spacing -> %g m", drawing.rectangleGridSpacingMeters);
+					saveDrawingSettings();
+				},
+			});
+			grid.addChild<ui::Text>({
+				.id = "drawing_grid_line",
+				.style = description,
+				.text = "Rectangle corners snap to this grid.",
+				.wrap = true,
+			});
+
 			column.addChild<ui::Button>({
 				.id = "settings_back",
-				.margin = {theme.get(tokens::spacing::space4), 0.0F, 0.0F, 0.0F},
+				.layout = {.flexShrink = 0.0F},
 				.label = "Back",
 				.icon = "chevronLeft",
 				.variant = ui::ButtonVariant::Ghost,
@@ -112,16 +305,40 @@ namespace {
 				.layout = {.position = ui::Position::Absolute, .inset = {.bottom = 16.0F, .left = kColX}},
 				.style = kicker,
 				.pointerEvents = ui::PointerEvents::None,
-				.text = "Press ESC to return to menu",
+				.text = "Press ESC to go back",
 			});
 		}
 
-		app::App* owner = nullptr;
+		void setInterfaceSize(float size) {
+			owner->setUiScale(size);
+			LOG_INFO(Game, "Setting: interface size -> %g", static_cast<double>(owner->uiScale()));
+			if (ui::Button* reset = sizeReset.get()) {
+				reset->setEnabled(owner->uiScale() != theme::kDefaultInterfaceSize);
+			}
+			if (!owner->settings().save()) {
+				LOG_ERROR(Game, "SettingsScene: the settings file couldn't be saved");
+			}
+		}
+
+		bool						  overAnotherScene;
+		app::App*					  owner = nullptr;
+		ui::Ref<ui::SegmentedControl> sizeChoice;
+		ui::Ref<ui::Button>			  sizeReset;
 	};
 
 } // namespace
 
+namespace world_sim {
+	void openSettings(app::SceneStack& stack) {
+		if (pushQueued) {
+			return;
+		}
+		pushQueued = true;
+		stack.push<SettingsScene>({.overAnotherScene = true});
+	}
+} // namespace world_sim
+
 // Export scene info for registry
 namespace world_sim::scenes {
-	extern const world_sim::SceneInfo Settings = {kSceneName, []() { return std::make_unique<SettingsScene>(); }};
+	extern const world_sim::SceneInfo Settings = {kSceneName, []() { return std::make_unique<SettingsScene>(SettingsArgs{}); }};
 } // namespace world_sim::scenes

@@ -384,105 +384,30 @@ Configs must load in dependency order. Each stage validates references to previo
 
 ### Validation Errors
 
-| Error Type | Severity | Example |
-|------------|----------|---------|
-| XML syntax error | Fatal | Missing closing tag |
-| Missing required field | Fatal | WorkType without defName |
-| Invalid reference | Fatal | `taskChain="Chain_Typo"` |
-| Duplicate defName | Warning | Two WorkTypes with same name (second ignored) |
-| Unknown attribute | Warning | `<WorkType foo="bar">` (ignored) |
+Every error is fatal: the load fails and the message reaches the loading scene.
+
+| Error Type | Example |
+|------------|---------|
+| XML syntax error | Missing closing tag |
+| Missing required field | WorkType without defName |
+| Malformed value | `<Category tier="1x">`, `optional="ture"` |
+| Invalid reference | `taskChain="Chain_Typo"` |
+| Duplicate defName | Two WorkTypes with the same name |
+| Unknown element or attribute | `<WorkType foo="bar">` |
 
 ### Implementation
 
-```cpp
-class ConfigValidator {
-public:
-    // Call after each registry loads
-    static bool validateActionTypes();        // No deps - just syntax check
-    static bool validateTaskChains();         // Refs ActionTypeRegistry
-    static bool validateWorkTypes();          // Refs TaskChainRegistry, CapabilityType
-    static bool validatePriorityConfig();     // Refs WorkTypeRegistry
-
-    // Call at end of config loading
-    static bool validateAll();                // Cross-registry checks
-};
-
-// In game initialization
-bool loadAllConfigs() {
-    // 1. Action types (no dependencies)
-    if (!ActionTypeRegistry::Get().loadFromFile("assets/config/actions/action-types.xml")) {
-        LOG_ERROR(Config, "Failed to load action-types.xml");
-        return false;
-    }
-
-    // 2. Task chains (depends on action types)
-    if (!TaskChainRegistry::Get().loadFromFile("assets/config/work/task-chains.xml")) {
-        LOG_ERROR(Config, "Failed to load task-chains.xml");
-        return false;
-    }
-    if (!ConfigValidator::validateTaskChains()) {
-        return false;  // Errors already logged
-    }
-
-    // 3. Work types (depends on chains, capabilities)
-    if (!WorkTypeRegistry::Get().loadFromFolder("assets/config/work/")) {
-        LOG_ERROR(Config, "Failed to load work types");
-        return false;
-    }
-    if (!ConfigValidator::validateWorkTypes()) {
-        return false;
-    }
-
-    // 4. Priority tuning (depends on work types)
-    if (!PriorityConfig::Get().loadFromFile("assets/config/work/priority-tuning.xml")) {
-        LOG_ERROR(Config, "Failed to load priority-tuning.xml");
-        return false;
-    }
-    if (!ConfigValidator::validatePriorityConfig()) {
-        return false;
-    }
-
-    // Final cross-validation
-    return ConfigValidator::validateAll();
-}
-```
-
-### Reference Validation Example
-
-```cpp
-bool ConfigValidator::validateTaskChains() {
-    bool valid = true;
-
-    for (const auto& chain : TaskChainRegistry::Get().getAllChains()) {
-        for (const auto& step : chain.steps) {
-            // Check action reference
-            if (!ActionTypeRegistry::Get().hasAction(step.actionDefName)) {
-                LOG_ERROR(Config,
-                    "Chain '%s' step %d references unknown action '%s'\n"
-                    "  Available actions: %s",
-                    chain.defName.c_str(),
-                    step.order,
-                    step.actionDefName.c_str(),
-                    ActionTypeRegistry::Get().getAvailableActionsString().c_str()
-                );
-                valid = false;
-            }
-        }
-    }
-
-    return valid;
-}
-```
+`assets::loadWorkConfig(configRoot)` (libs/assets/assets/WorkConfig.h) is the one entry point. It clears the registries, loads each file in the order above (`ActionTypeRegistry`, then `TaskChainRegistry::loadFromFile(configRoot, "work/task-chains.xml")`, `WorkTypeRegistry::loadFromFile(configRoot, "work/work-types.xml")`, and `PriorityConfig::loadFromFile(configRoot, "work/priority-tuning.xml")`), stops at the first file with problems and returns that registry's `problems()`, and ends with `ConfigValidator::validateAll()` for the cross-references. An empty list means the config is loaded. [Config Loading](./config-loading.md) lists the values a file may leave out and the shape of each message.
 
 ### Error Message Format
 
-Error messages should be actionable:
+A cross-reference error names the config it came from and the reference, with what would be valid:
 
 ```
-[ERROR] Config: Chain 'Chain_PickupDeposit' step 1 references unknown action 'Depositt'
-  Available actions: Pickup, Deposit, Place, Eat, Drink, Sleep, Harvest, Craft, Build
-  Location: assets/config/work/task-chains.xml:15
+[TaskChains] Chain 'Chain_PickupDeposit' step 1 references unknown action 'Depositt' (Available actions: Pickup, Deposit, Place, Eat, Drink, Sleep, Harvest, Craft, Build)
 ```
+
+A file's own problems name the file, the element by its instance, and the attribute, as in `work/task-chains.xml: <Chain defName="Chain_Haul"> step 2 optional must be true or false, got "ture"`.
 
 ### Mod Loading
 

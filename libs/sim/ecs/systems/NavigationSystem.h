@@ -7,7 +7,7 @@
 // on it): ground and water, built walls and doors, and placed obstacles. Routes,
 // connectivity (connected), and every position check (validity, buildability, stand points, the
 // landing) read it.
-// Ground is the union of visibility limits, and the mesh ends at its edge. A mover (Position +
+// Ground is the union of mesh limits, and the mesh ends at its edge. A mover (Position +
 // AgentRadius) takes a limit, a polygon round where it stands holding the disc of its range R (its
 // sight distance plus kSightBufferMeters), when it first appears, when it has moved
 // kLimitRetakeStepMm from where it last took one, or when its R changes; a limit the meshed ground
@@ -76,6 +76,8 @@
 #include <nav/PatchableMesh.h>
 #include <nav/PathQuery.h>
 #include <nav/RouteQueue.h>
+
+#include <vision/PlacedOccluderIndex.h>
 
 #include <world/chunk/ChunkCoordinate.h>
 #include <world/chunk/ChunkManager.h>
@@ -146,13 +148,13 @@ class NavigationSystem : public ISystem {
 				  "a mover's next limit must be taken before it is urgent");
 	// The radius of ground the landing meshes round the drop: the crew saw it as they came down.
 	static constexpr float kLandingSightMeters = 150.0F;
-	// How far a placed obstacle's footprint may reach from its entity's position. A limit's obstacles
-	// are found by position in its box grown by this; a footprint reaching farther is logged, since
-	// it may be missed where it pokes into a limit from outside that box.
-	static constexpr float kFootprintReachMeters = 8.0F;
+	// How far a placed obstacle's padded footprint can reach from its entity's position, over the
+	// loaded defs (nav::placedObstacleReachMeters). A limit's obstacles are found by position in its
+	// box grown by this, so none is missed.
+	[[nodiscard]] static float footprintReachMeters();
 	// Append the anchors: every mover (Position + AgentRadius) with the reach of its limit's
 	// obstacle query (the limit's circumradius for its range R, its sight distance -- Memory::sightRadius,
-	// kDefaultSightRadius without Memory -- plus kSightBufferMeters, and kFootprintReachMeters), and
+	// kDefaultSightRadius without Memory -- plus kSightBufferMeters, and footprintReachMeters()), and
 	// kLimitRetakeStepMm, since his newest limit was taken up to that far from where he stands. The
 	// scene hands them to ChunkManager::update, which keeps their chunks loaded, so every chunk a
 	// mover's newest limit needs is held: past anchorLoadRange's floor once R passes about 114 m.
@@ -436,6 +438,13 @@ class NavigationSystem : public ISystem {
 	void							   resetNavQueryStats() { navStats = {}; }
 
 
+	// The placed occluder index (sight-softening.md 2.4): every placed ring in the mesh as sight reads
+	// it, updated as each patch job is collected, in patch order, and never by a query, so reading it
+	// never waits for a patch job. A ring shows here from the tick after nav collects it. Vision owns
+	// the kind threshold and sets it through the mutable overload.
+	[[nodiscard]] const vision::PlacedOccluderIndex& placedOccluders() const { return placedOccluderIndex; }
+	[[nodiscard]] vision::PlacedOccluderIndex&		 placedOccluders() { return placedOccluderIndex; }
+
 	// The mesh, for the debug overlay and tests. Dead triangle slots must be skipped
 	// (PatchableMesh::triangleLive). A reference is good until the next update() or endTick().
 	[[nodiscard]] const geometry::nav::PatchableMesh& navMesh() const;
@@ -496,9 +505,9 @@ class NavigationSystem : public ISystem {
 		std::string			   defName;
 		bool				   operator<(const ObstacleKey& o) const;
 	};
-	// A visibility limit waiting to go in: who took it (kInvalidEntity for the landing), its centre
+	// A mesh limit waiting to go in: who took it (kInvalidEntity for the landing), its centre
 	// and range, its outline, and the box its placed obstacles are looked for in (the outline's box
-	// grown by kFootprintReachMeters).
+	// grown by footprintReachMeters()).
 	struct MeshLimit {
 		EntityID						mover = kInvalidEntity;
 		geometry::Vec2i64				centre{0, 0};
@@ -680,6 +689,10 @@ class NavigationSystem : public ISystem {
 	// Every placed obstacle gathered, by key: its ring, kGatheredRing until its patch is joined.
 	std::map<ObstacleKey, RingId> obstacleInMesh;
 	std::vector<RingId>			  detailRemovals;
+	vision::PlacedOccluderIndex	  placedOccluderIndex;
+	// The sim clock in ms (TimeSystem::simulationSeconds), 0 in a world without a TimeSystem: what the
+	// placed occluder index stamps a ring's arrival with.
+	[[nodiscard]] std::int64_t clockMs() const;
 	// Limits waiting to go in, in the order they were taken, and the landing's until it goes in.
 	std::deque<MeshLimit>	 limitQueue;
 	std::optional<MeshLimit> landingLimit;
@@ -687,8 +700,6 @@ class NavigationSystem : public ISystem {
 	std::size_t								limitsPending = 0;
 	// Queued limits dropped as stranded: they never go in (awaitedGroundEpoch).
 	std::uint64_t							limitsDropped = 0;
-	// Defs whose footprint was found reaching past kFootprintReachMeters, each logged once.
-	std::set<std::string> overreachingDefs;
 	std::unordered_map<EntityID, MoverDisc> moverDiscs;
 	std::uint64_t							moverPass = 0;
 	// The movers snapMovers left standing in a placed obstacle this tick, sorted.

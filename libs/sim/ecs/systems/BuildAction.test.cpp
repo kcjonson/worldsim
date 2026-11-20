@@ -4,6 +4,7 @@
 
 #include "ActionSystem.h"
 
+#include "../ShippedConfig.test.h"
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/Inventory.h"
@@ -96,7 +97,7 @@ namespace ecs::test {
 		EntityID createBuilder(float constructionSkill, glm::vec2 position = {0.0F, 0.0F}) {
 			auto entity = world->createEntity();
 			world->addComponent<Position>(entity, Position{position});
-			world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+			world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 			world->addComponent<Memory>(entity, Memory{});
 			world->addComponent<Inventory>(entity, Inventory::createForColonist());
 			world->addComponent<Task>(entity, Task{});
@@ -197,10 +198,16 @@ namespace ecs::test {
 	}
 
 	TEST_F(BuildActionSystemTest, MultipleSessionsAccumulate) {
+		std::vector<ActionEvent> heard;
+		actionSystem->addActionObserver([&heard](const ActionEvent& event) { heard.push_back(event); });
 		auto builder = createBuilder(0.0F);
 		auto blueprint = createBlueprint(1000.0F);
 		assignBuildTask(builder, blueprint);
 		world->update(1.0F);
+		ASSERT_EQ(heard.size(), 1U);
+		EXPECT_EQ(heard[0].moment, ActionMoment::Started);
+		EXPECT_EQ(heard[0].type, ActionType::Build);
+		EXPECT_EQ(heard[0].aboutDefinition, 0U) << "a build is about no kind of thing";
 
 		float afterFirst = world->getComponent<StructureBlueprint>(blueprint)->workDone;
 
@@ -213,6 +220,7 @@ namespace ecs::test {
 		auto* bp = world->getComponent<StructureBlueprint>(blueprint);
 		EXPECT_GT(bp->workDone, afterFirst);
 		EXPECT_FLOAT_EQ(bp->workDone, afterFirst * 2.0F);
+		EXPECT_EQ(heard.size(), 1U) << "taking up a blueprint with work on it is no new start";
 	}
 
 	TEST_F(BuildActionSystemTest, FiresStructureCompletedCallbackOnce) {
@@ -280,6 +288,66 @@ namespace ecs::test {
 		EXPECT_FLOAT_EQ(bp->workDone, 0.0F); // no progress on a not-ready blueprint
 	}
 
+	TEST_F(BuildActionSystemTest, BuilderMidActionStopsWhenSiteOrderedDemolished) {
+		auto builder = createBuilder(0.0F);
+		auto blueprint = createBlueprint(1000.0F);
+		assignBuildTask(builder, blueprint);
+		const Inventory inventoryBefore = *world->getComponent<Inventory>(builder);
+
+		world->update(1.0F);
+		auto* bp = world->getComponent<StructureBlueprint>(blueprint);
+		const float workAtOrder = bp->workDone;
+		ASSERT_GT(workAtOrder, 0.0F);
+		ASSERT_EQ(world->getComponent<Action>(builder)->type, ActionType::Build);
+
+		bp->demolishing = true;
+		world->update(1.0F);
+
+		EXPECT_FLOAT_EQ(bp->workDone, workAtOrder) << "no build work once the site is ordered demolished";
+		EXPECT_FALSE(world->getComponent<Action>(builder)->isActive());
+
+		world->update(1.0F);
+		EXPECT_FLOAT_EQ(bp->workDone, workAtOrder);
+		EXPECT_FALSE(world->getComponent<Task>(builder)->isActive()) << "the build task ends so the colonist decides again";
+		EXPECT_EQ(world->getComponent<Inventory>(builder)->items.size(), inventoryBefore.items.size());
+	}
+
+	TEST_F(BuildActionSystemTest, DemolishOrderInCompletingTickPreventsCompletion) {
+		int callbackCount = 0;
+		actionSystem->setStructureCompletedCallback([&](EntityID) { ++callbackCount; });
+
+		auto builder = createBuilder(0.0F);
+		auto blueprint = createBlueprint(15.0F);
+		assignBuildTask(builder, blueprint);
+		world->update(1.0F); // 10 of 15
+
+		// The order lands before the tick whose work would reach the bound.
+		auto* bp = world->getComponent<StructureBlueprint>(blueprint);
+		bp->demolishing = true;
+		world->update(1.0F);
+
+		EXPECT_FLOAT_EQ(bp->workDone, 10.0F);
+		EXPECT_EQ(bp->phase, StructureBlueprint::BuildPhase::UnderConstruction);
+		EXPECT_EQ(callbackCount, 0) << "a site ordered demolished never completes";
+	}
+
+	TEST_F(BuildActionSystemTest, WalkingBuilderDoesNotStartOnDemolishedSite) {
+		auto builder = createBuilder(0.0F, {5.0F, 0.0F});
+		auto blueprint = createBlueprint(1000.0F);
+		assignBuildTask(builder, blueprint);
+		world->getComponent<Task>(builder)->state = TaskState::Moving;
+		world->update(0.1F);
+		ASSERT_FALSE(world->getComponent<Action>(builder)->isActive()) << "still walking";
+
+		world->getComponent<StructureBlueprint>(blueprint)->demolishing = true;
+		world->getComponent<Position>(builder)->value = {0.0F, 0.0F};
+		world->update(1.0F);
+
+		EXPECT_FALSE(world->getComponent<Action>(builder)->isActive());
+		EXPECT_FALSE(world->getComponent<Task>(builder)->isActive()) << "arriving ends the build task";
+		EXPECT_FLOAT_EQ(world->getComponent<StructureBlueprint>(blueprint)->workDone, 0.0F);
+	}
+
 	TEST_F(BuildActionSystemTest, DeconstructCountsWorkDownAndCompletes) {
 		int		 callbackCount = 0;
 		EntityID notified = 0;
@@ -302,6 +370,33 @@ namespace ecs::test {
 		EXPECT_FLOAT_EQ(world->getComponent<StructureBlueprint>(blueprint)->workDone, 0.0F);
 		EXPECT_EQ(callbackCount, 1);
 		EXPECT_EQ(notified, blueprint);
+	}
+
+	// The first colonist to tear down a half-built site starts the teardown, though the build was never
+	// finished; one taking the teardown up again does not, and the last of it finishes once.
+	TEST_F(BuildActionSystemTest, FreshDeconstructOfHalfBuiltSiteStartsOnce) {
+		std::vector<ActionEvent> heard;
+		actionSystem->addActionObserver([&heard](const ActionEvent& event) { heard.push_back(event); });
+		auto  builder = createBuilder(0.0F);
+		auto  blueprint = createBlueprint(100.0F);
+		auto* halfBuilt = world->getComponent<StructureBlueprint>(blueprint);
+		halfBuilt->workDone = 50.0F;
+		halfBuilt->demolishing = true;
+		assignDeconstructTask(builder, blueprint);
+
+		world->update(1.0F);
+		ASSERT_EQ(heard.size(), 1U);
+		EXPECT_EQ(heard[0].type, ActionType::Deconstruct);
+		EXPECT_EQ(heard[0].moment, ActionMoment::Started);
+
+		world->getComponent<Action>(builder)->clear();
+		assignDeconstructTask(builder, blueprint);
+		world->update(1.0F);
+		EXPECT_EQ(heard.size(), 1U) << "resuming the teardown is no new start";
+
+		world->update(10.0F);
+		ASSERT_EQ(heard.size(), 2U);
+		EXPECT_EQ(heard[1].moment, ActionMoment::Finished);
 	}
 
 	// A BUILT structure's salvage is dropped at tear-down COMPLETION, not at the demolish-order

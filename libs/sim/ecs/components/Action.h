@@ -19,10 +19,15 @@
 
 #include <glm/vec2.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <variant>
+#include <vector>
 
 namespace ecs {
 
@@ -37,6 +42,7 @@ namespace ecs {
 		// Need Fulfillment Actions
 		Eat,	// Consuming food item from inventory
 		Drink,	// Drinking from water tile (Pond)
+		Wash,	// Washing at water (shore)
 		Sleep,	// Sleeping on ground or bed
 		Toilet, // Using toilet or ground relief
 
@@ -112,7 +118,7 @@ namespace ecs {
 	// Effect Types (what happens when the action completes)
 	// ============================================================================
 
-	/// Effect for need fulfillment actions (Eat, Drink, Sleep, Toilet)
+	/// Effect for need fulfillment actions (Drink, Wash, Sleep, Toilet)
 	/// Restores one need, optionally affects another as a side effect.
 	struct NeedEffect {
 		/// The primary need being restored
@@ -425,6 +431,28 @@ namespace ecs {
 			needEff.sideEffectNeed = NeedType::Bladder;
 			needEff.sideEffectAmount = -15.0F; // Drinking DECREASES bladder (fills it up)
 			action.effect = needEff;
+
+			return action;
+		}
+
+		/// Seconds a wash at water takes.
+		static constexpr float kWashSeconds = 3.0F;
+
+		/// Hygiene a wash at water restores: water is inexhaustible, so a wash restores it fully.
+		static constexpr float kWashHygieneRestored = 100.0F;
+
+		/// Factory: Wash action - restores hygiene at water
+		static Action Wash() {
+			Action action;
+			action.type = ActionType::Wash;
+			action.state = ActionState::Starting;
+			action.duration = kWashSeconds;
+			action.interruptable = false;
+
+			NeedEffect needEffect;
+			needEffect.need = NeedType::Hygiene;
+			needEffect.restoreAmount = kWashHygieneRestored;
+			action.effect = needEffect;
 
 			return action;
 		}
@@ -749,39 +777,35 @@ namespace ecs {
 		}
 	};
 
-	/// Get human-readable name for action type (for debug logging)
+	/// Every action type with its name, the one list both directions read.
+	inline constexpr std::array<std::pair<ActionType, std::string_view>, 15> kActionTypeNames = {{
+		{ActionType::None, "None"},
+		{ActionType::Eat, "Eat"},
+		{ActionType::Drink, "Drink"},
+		{ActionType::Wash, "Wash"},
+		{ActionType::Sleep, "Sleep"},
+		{ActionType::Toilet, "Toilet"},
+		{ActionType::Pickup, "Pickup"},
+		{ActionType::Harvest, "Harvest"},
+		{ActionType::Withdraw, "Withdraw"},
+		{ActionType::Craft, "Craft"},
+		{ActionType::Deposit, "Deposit"},
+		{ActionType::Build, "Build"},
+		{ActionType::Deconstruct, "Deconstruct"},
+		{ActionType::PickupPackaged, "PickupPackaged"},
+		{ActionType::PlacePackaged, "PlacePackaged"},
+	}};
+
+	/// The action type's name, for logs, the dev tools, and the thought config.
 	[[nodiscard]] inline const char* actionTypeName(ActionType type) {
-		switch (type) {
-			case ActionType::None:
-				return "None";
-			case ActionType::Eat:
-				return "Eat";
-			case ActionType::Drink:
-				return "Drink";
-			case ActionType::Sleep:
-				return "Sleep";
-			case ActionType::Toilet:
-				return "Toilet";
-			case ActionType::Pickup:
-				return "Pickup";
-			case ActionType::Harvest:
-				return "Harvest";
-			case ActionType::Withdraw:
-				return "Withdraw";
-			case ActionType::Craft:
-				return "Craft";
-			case ActionType::Deposit:
-				return "Deposit";
-			case ActionType::Build:
-				return "Build";
-			case ActionType::Deconstruct:
-				return "Deconstruct";
-			case ActionType::PickupPackaged:
-				return "PickupPackaged";
-			case ActionType::PlacePackaged:
-				return "PlacePackaged";
-		}
-		return "Unknown";
+		const auto found = std::ranges::find(kActionTypeNames, type, &std::pair<ActionType, std::string_view>::first);
+		return found == kActionTypeNames.end() ? "Unknown" : found->second.data();
+	}
+
+	/// The action type a name names; none when it names none.
+	[[nodiscard]] inline std::optional<ActionType> actionTypeFromName(std::string_view name) {
+		const auto found = std::ranges::find(kActionTypeNames, name, &std::pair<ActionType, std::string_view>::second);
+		return found == kActionTypeNames.end() ? std::nullopt : std::optional(found->first);
 	}
 
 } // namespace ecs

@@ -7,10 +7,15 @@
 
 #include <assets/ConstructionRegistry.h>
 #include <core/Vec2i64.h>
+#include <offset/WallOffset.h>
 
 #include <cmath>
 #include <filesystem>
 #include <gtest/gtest.h>
+#include <limits>
+#include <numbers>
+#include <string>
+#include <utility>
 #include <vector>
 
 using namespace construction;
@@ -339,6 +344,62 @@ TEST(ConstructionValidator, WallChainSelfIntersectionFails) {
 	EXPECT_EQ(r.code, ValidationCode::SelfIntersects);
 }
 
+TEST(ConstructionValidator, WallChainClosesOnItsFirstPoint) {
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
+	FoundationId		  host = hostFoundation(world);
+	ConstructionValidator validator(cfg, world);
+	const std::vector<Vec2> room = {{2.0F, 2.0F}, {8.0F, 2.0F}, {8.0F, 8.0F}, {2.0F, 8.0F}};
+	EXPECT_TRUE(closesWallChain(room, {2.0F, 2.0F}));
+	EXPECT_TRUE(validator.validateWallPoint(room, {2.0F, 2.0F}, standardWood(), host).ok());
+	const std::vector<Vec2> triangle = {{2.0F, 2.0F}, {10.0F, 2.0F}, {6.0F, 9.0F}};
+	EXPECT_TRUE(validator.validateWallPoint(triangle, {2.0F, 2.0F}, standardWood(), host).ok());
+}
+
+TEST(ConstructionValidator, WallChainClosingAcrossTheChainFails) {
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
+	FoundationId		  host = hostFoundation(world);
+	ConstructionValidator validator(cfg, world);
+	// The closing segment runs along y = 4 and crosses the third segment at (6, 4).
+	const std::vector<Vec2> chain = {{2.0F, 4.0F}, {2.0F, 10.0F}, {6.0F, 10.0F}, {6.0F, 2.0F}, {10.0F, 2.0F}, {10.0F, 4.0F}};
+	const auto				r = validator.validateWallPoint(chain, {2.0F, 4.0F}, standardWood(), host);
+	EXPECT_EQ(r.code, ValidationCode::SelfIntersects);
+	EXPECT_EQ(r.otherIndex, 2U);
+}
+
+TEST(ConstructionValidator, WallChainClosingCornerTooSharpFails) {
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
+	FoundationId		  host = hostFoundation(world);
+	ConstructionValidator validator(cfg, world);
+	// The closing corner at (2, 2) is about 14 degrees.
+	const std::vector<Vec2> sliver = {{2.0F, 2.0F}, {10.0F, 2.0F}, {10.0F, 4.0F}};
+	const auto				r = validator.validateWallPoint(sliver, {2.0F, 2.0F}, standardWood(), host);
+	EXPECT_EQ(r.code, ValidationCode::AngleTooSharp);
+	EXPECT_EQ(r.vertexIndex, 0U);
+}
+
+TEST(ConstructionValidator, WallTwoPointChainBackOnItsStartFails) {
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
+	FoundationId		  host = hostFoundation(world);
+	ConstructionValidator validator(cfg, world);
+	const std::vector<Vec2> chain = {{2.0F, 2.0F}, {8.0F, 2.0F}};
+	EXPECT_FALSE(closesWallChain(chain, {2.0F, 2.0F}));
+	EXPECT_EQ(validator.validateWallPoint(chain, {2.0F, 2.0F}, standardWood(), host).code, ValidationCode::AngleTooSharp);
+}
+
+TEST(ConstructionValidator, WallChainOnAMiddleVertexFails) {
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
+	FoundationId		  host = hostFoundation(world);
+	ConstructionValidator validator(cfg, world);
+	const std::vector<Vec2> room = {{2.0F, 2.0F}, {8.0F, 2.0F}, {8.0F, 8.0F}, {2.0F, 8.0F}};
+	EXPECT_FALSE(closesWallChain(room, {8.0F, 2.0F}));
+	EXPECT_EQ(validator.validateWallPoint(room, {8.0F, 2.0F}, standardWood(), host).code, ValidationCode::SelfIntersects);
+}
+
 TEST(ConstructionValidator, WallBandInsideHostPasses) {
 	ConstraintConfig	  cfg = defaults();
 	ConstructionWorld	  world;
@@ -452,7 +513,7 @@ TEST_F(WallVsExisting, ParallelWallsAtClearancePass) {
 	ConstructionWorld world;
 	FoundationId	  host = hostFoundation(world);
 	// Existing wall at y=2, Wood/Standard (0.2 m thick, faces at 1.9 and 2.1).
-	ASSERT_TRUE(world.commitSegment(mm(2.0F, 2.0F), mm(10.0F, 2.0F), "Wood", "Standard", host).ok());
+	ASSERT_TRUE(world.commitSegment(mm(2.0F, 2.0F), mm(10.0F, 2.0F), "Wood", "Standard", host, world.version()).ok());
 
 	ConstructionValidator validator(cfg, world);
 	// New parallel wall whose near face is exactly 0.8 m from the existing near
@@ -466,7 +527,7 @@ TEST_F(WallVsExisting, ParallelWallsBelowClearanceFail) {
 	ConstraintConfig  cfg = defaults();
 	ConstructionWorld world;
 	FoundationId	  host = hostFoundation(world);
-	ASSERT_TRUE(world.commitSegment(mm(2.0F, 2.0F), mm(10.0F, 2.0F), "Wood", "Standard", host).ok());
+	ASSERT_TRUE(world.commitSegment(mm(2.0F, 2.0F), mm(10.0F, 2.0F), "Wood", "Standard", host, world.version()).ok());
 
 	ConstructionValidator validator(cfg, world);
 	// New centerline at y=2.95: bottom face at 2.85, gap to existing top (2.1) is
@@ -480,7 +541,7 @@ TEST_F(WallVsExisting, NonParallelNearbyWallPasses) {
 	ConstructionWorld world;
 	FoundationId	  host = hostFoundation(world);
 	// Existing horizontal wall at y=2 (top face at 2.1).
-	ASSERT_TRUE(world.commitSegment(mm(2.0F, 2.0F), mm(10.0F, 2.0F), "Wood", "Standard", host).ok());
+	ASSERT_TRUE(world.commitSegment(mm(2.0F, 2.0F), mm(10.0F, 2.0F), "Wood", "Standard", host, world.version()).ok());
 
 	ConstructionValidator validator(cfg, world);
 	// A candidate at an ANGLE that starts within the parallel-clearance distance of
@@ -495,7 +556,7 @@ TEST_F(WallVsExisting, OverlappingWallsFail) {
 	ConstraintConfig  cfg = defaults();
 	ConstructionWorld world;
 	FoundationId	  host = hostFoundation(world);
-	ASSERT_TRUE(world.commitSegment(mm(2.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", host).ok());
+	ASSERT_TRUE(world.commitSegment(mm(2.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", host, world.version()).ok());
 
 	ConstructionValidator validator(cfg, world);
 	// A wall running right on top of the existing one (same centerline, parallel):
@@ -510,7 +571,7 @@ TEST_F(WallVsExisting, CrossingWallsReportXCrossing) {
 	ConstructionWorld world;
 	FoundationId	  host = hostFoundation(world);
 	// Existing horizontal wall.
-	ASSERT_TRUE(world.commitSegment(mm(2.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", host).ok());
+	ASSERT_TRUE(world.commitSegment(mm(2.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", host, world.version()).ok());
 
 	ConstructionValidator validator(cfg, world);
 	// A vertical wall whose centerline properly crosses the existing one's interior.
@@ -523,7 +584,7 @@ TEST_F(WallVsExisting, JoinedWallsAtJunctionPass) {
 	ConstructionWorld world;
 	FoundationId	  host = hostFoundation(world);
 	// Existing wall ends at the shared vertex (6,6).
-	ASSERT_TRUE(world.commitSegment(mm(2.0F, 6.0F), mm(6.0F, 6.0F), "Wood", "Standard", host).ok());
+	ASSERT_TRUE(world.commitSegment(mm(2.0F, 6.0F), mm(6.0F, 6.0F), "Wood", "Standard", host, world.version()).ok());
 
 	ConstructionValidator validator(cfg, world);
 	// New wall starts at the same vertex and turns 90 deg up. Their bands meet at
@@ -538,7 +599,7 @@ TEST_F(WallVsExisting, TJunctionOnExistingInteriorPasses) {
 	FoundationId	  host = hostFoundation(world);
 	// Existing horizontal wall (2,6)->(10,6), Wood/Standard. Its vertices are the
 	// two endpoints; (6,6) is interior, NOT a stored vertex.
-	ASSERT_TRUE(world.commitSegment(mm(2.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", host).ok());
+	ASSERT_TRUE(world.commitSegment(mm(2.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", host, world.version()).ok());
 
 	ConstructionValidator validator(cfg, world);
 	// A perpendicular wall whose lower endpoint lands ON the existing wall's
@@ -555,7 +616,7 @@ TEST_F(WallVsExisting, ParallelOverlapStillFailsDespiteTouchingJunction) {
 	ConstructionWorld world;
 	FoundationId	  host = hostFoundation(world);
 	// Existing horizontal wall (2,6)->(10,6).
-	ASSERT_TRUE(world.commitSegment(mm(2.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", host).ok());
+	ASSERT_TRUE(world.commitSegment(mm(2.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", host, world.version()).ok());
 
 	ConstructionValidator validator(cfg, world);
 	// A wall collinear with the existing one and overlapping it along its length
@@ -570,7 +631,7 @@ TEST_F(WallVsExisting, DistantParallelWallOk) {
 	ConstraintConfig  cfg = defaults();
 	ConstructionWorld world;
 	FoundationId	  host = hostFoundation(world);
-	ASSERT_TRUE(world.commitSegment(mm(2.0F, 2.0F), mm(10.0F, 2.0F), "Wood", "Standard", host).ok());
+	ASSERT_TRUE(world.commitSegment(mm(2.0F, 2.0F), mm(10.0F, 2.0F), "Wood", "Standard", host, world.version()).ok());
 
 	ConstructionValidator validator(cfg, world);
 	// A parallel wall 5 m away: ample clearance, no overlap.
@@ -599,7 +660,7 @@ class OpeningValidation : public ::testing::Test {
 		std::vector<Vec2> sq = {{0.0F, 0.0F}, {20.0F, 0.0F}, {20.0F, 20.0F}, {0.0F, 20.0F}};
 		auto			  f = world.commitFoundation(sq, "Wood");
 		EXPECT_TRUE(f.ok());
-		auto seg = world.commitSegment(mm(2.0F, 6.0F), mm(2.0F + lengthMeters, 6.0F), "Wood", "Standard", f.id);
+		auto seg = world.commitSegment(mm(2.0F, 6.0F), mm(2.0F + lengthMeters, 6.0F), "Wood", "Standard", f.id, world.version());
 		EXPECT_TRUE(seg.ok());
 		return seg.id;
 	}
@@ -650,6 +711,40 @@ TEST_F(OpeningValidation, ParamOutOfRangeRejected) {
 	EXPECT_EQ(validator.validateOpening(seg, -0.1F, "Door", "Wood").code, ValidationCode::OpeningParamOutOfRange);
 }
 
+TEST_F(OpeningValidation, NonFiniteParamRejected) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	SegmentId		  seg = buildWall(world, 6.0F);
+
+	ConstructionValidator validator(cfg, world);
+	for (const float t : {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
+						  -std::numeric_limits<float>::infinity()}) {
+		EXPECT_EQ(validator.validateOpening(seg, t, "Door", "Wood").code, ValidationCode::OpeningParamOutOfRange) << t;
+	}
+}
+
+TEST_F(OpeningValidation, FreeEndAndStraightJoinMeasureFromTheVertex) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	std::vector<Vec2> sq = {{0.0F, 0.0F}, {20.0F, 0.0F}, {20.0F, 20.0F}, {0.0F, 20.0F}};
+	auto			  f = world.commitFoundation(sq, "Wood");
+	ASSERT_TRUE(f.ok());
+	// Two collinear Standard walls, (2,6)->(6,6) and (6,6)->(10,6): the first has a free end at v0 and a
+	// straight join at v1. The nearest door centre is margin + half the door, 0.75 m, from the vertex.
+	auto first = world.commitSegment(mm(2.0F, 6.0F), mm(6.0F, 6.0F), "Wood", "Standard", f.id, world.version());
+	auto second = world.commitSegment(mm(6.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", f.id, world.version());
+	ASSERT_TRUE(first.ok());
+	ASSERT_TRUE(second.ok());
+
+	ConstructionValidator validator(cfg, world);
+	for (const SegmentId segment : {first.id, second.id}) {
+		EXPECT_EQ(validator.validateOpening(segment, 0.745F / 4.0F, "Door", "Wood").code, ValidationCode::OpeningMarginTooSmall);
+		EXPECT_TRUE(validator.validateOpening(segment, 0.755F / 4.0F, "Door", "Wood").ok());
+		EXPECT_EQ(validator.validateOpening(segment, 1.0F - 0.745F / 4.0F, "Door", "Wood").code, ValidationCode::OpeningMarginTooSmall);
+		EXPECT_TRUE(validator.validateOpening(segment, 1.0F - 0.755F / 4.0F, "Door", "Wood").ok());
+	}
+}
+
 TEST_F(OpeningValidation, TooCloseToEndRejected) {
 	ConstraintConfig  cfg = defaults(); // openingMargin 0.3 m
 	ConstructionWorld world;
@@ -698,13 +793,112 @@ TEST_F(OpeningValidation, SecondOpeningClearOfFirstValid) {
 	EXPECT_TRUE(validator.validateOpening(seg, 0.8F, "Door", "Wood").ok());
 }
 
+// --- Openings at corners (WOR-864) ------------------------------------------
+//
+// The end margin is measured from where the wall's band ends, which a corner
+// trims back from the vertex: about 0.48 m for Heavy walls at 35 degrees. The
+// expected trims come from resolveWallBands, the same offsetter the renderer
+// draws with, not from the code under test.
+
+namespace {
+
+	// Every wall in `world` as the renderer resolves it; the trims (meters) of
+	// `segment`'s band at its v0 and v1 ends.
+	std::pair<double, double> drawnTrimsMeters(const ConstructionWorld& world, SegmentId segment) {
+		std::vector<geometry::WallSegment> walls;
+		std::size_t						   target = 0;
+		for (const WallSegment& s : world.segments()) {
+			const auto* preset = ConstructionRegistry::Get().getThicknessPreset(s.material, s.thicknessPreset);
+			if (s.id == segment) {
+				target = walls.size();
+			}
+			walls.push_back({world.getVertex(s.v0)->pos, world.getVertex(s.v1)->pos, preset->halfThicknessMm});
+		}
+		const geometry::WallBands bands = geometry::resolveWallBands(walls, geometry::kDefaultMiterLimit);
+		EXPECT_EQ(bands.status, geometry::OffsetStatus::Ok);
+		return {static_cast<double>(bands.trimAtA[target]) / 1000.0, static_cast<double>(bands.trimAtB[target]) / 1000.0};
+	}
+
+	// Two walls from (4,4): one 4 m along +x (returned), one 4 m at `degrees` from it.
+	SegmentId buildCorner(ConstructionWorld& world, float degrees, const std::string& thickness, const std::string& otherThickness) {
+		std::vector<Vec2> sq = {{0.0F, 0.0F}, {20.0F, 0.0F}, {20.0F, 20.0F}, {0.0F, 20.0F}};
+		auto			  f = world.commitFoundation(sq, "Wood");
+		EXPECT_TRUE(f.ok());
+		const float radians = degrees * std::numbers::pi_v<float> / 180.0F;
+		auto		seg = world.commitSegment(mm(4.0F, 4.0F), mm(8.0F, 4.0F), "Wood", thickness, f.id, world.version());
+		auto		other = world.commitSegment(
+			   mm(4.0F, 4.0F),
+			   mm(4.0F + 4.0F * std::cos(radians), 4.0F + 4.0F * std::sin(radians)),
+			   "Wood",
+			   otherThickness,
+			   f.id,
+			   world.version()
+		   );
+		EXPECT_TRUE(seg.ok());
+		EXPECT_TRUE(other.ok());
+		return seg.id;
+	}
+
+} // namespace
+
+TEST_F(OpeningValidation, DoorAtTheOldNearestSpotInAnAcuteHeavyCornerRefused) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	const SegmentId	  seg = buildCorner(world, 35.0F, "Heavy", "Heavy");
+	const double	  trim = drawnTrimsMeters(world, seg).first;
+	ASSERT_NEAR(trim, 0.476, 0.01);
+
+	ConstructionValidator validator(cfg, world);
+	// 0.75 m from the vertex was the nearest the margin allowed from the vertex; the
+	// door's end would sit 0.18 m inside the corner piece.
+	EXPECT_EQ(validator.validateOpening(seg, 0.75F / 4.0F, "Door", "Wood").code, ValidationCode::OpeningMarginTooSmall);
+	// The nearest now: trim + margin + half the door, about 1.226 m.
+	EXPECT_EQ(validator.validateOpening(seg, 1.22F / 4.0F, "Door", "Wood").code, ValidationCode::OpeningMarginTooSmall);
+	EXPECT_TRUE(validator.validateOpening(seg, 1.23F / 4.0F, "Door", "Wood").ok());
+}
+
+TEST_F(OpeningValidation, RightAngleCornerMeasuresFromTheCornerPiece) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	const SegmentId	  seg = buildCorner(world, 90.0F, "Heavy", "Heavy");
+	ASSERT_NEAR(drawnTrimsMeters(world, seg).first, 0.15, 0.002);
+
+	ConstructionValidator validator(cfg, world);
+	// The piece reaches the Heavy half-thickness along the wall: nearest centre
+	// 0.15 + 0.3 + 0.45 = 0.9 m, where from the vertex it was 0.75 m.
+	EXPECT_EQ(validator.validateOpening(seg, 0.895F / 4.0F, "Door", "Wood").code, ValidationCode::OpeningMarginTooSmall);
+	EXPECT_TRUE(validator.validateOpening(seg, 0.905F / 4.0F, "Door", "Wood").ok());
+}
+
+TEST_F(OpeningValidation, SegmentBetweenTwoAcuteCornersTooShortForAnOpening) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	std::vector<Vec2> sq = {{0.0F, 0.0F}, {20.0F, 0.0F}, {20.0F, 20.0F}, {0.0F, 20.0F}};
+	auto			  f = world.commitFoundation(sq, "Wood");
+	ASSERT_TRUE(f.ok());
+	// A 2 m Heavy wall with a 30 degree corner at each end. From the vertices it
+	// held a door (2 >= 0.9 + 2 * 0.3); its band is trimmed about 0.56 m at each end.
+	auto seg = world.commitSegment(mm(6.0F, 4.0F), mm(8.0F, 4.0F), "Wood", "Heavy", f.id, world.version());
+	ASSERT_TRUE(seg.ok());
+	const float cos30 = std::cos(std::numbers::pi_v<float> / 6.0F);
+	ASSERT_TRUE(world.commitSegment(mm(6.0F, 4.0F), mm(6.0F + 3.0F * cos30, 5.5F), "Wood", "Heavy", f.id, world.version()).ok());
+	ASSERT_TRUE(world.commitSegment(mm(8.0F, 4.0F), mm(8.0F - 3.0F * cos30, 2.5F), "Wood", "Heavy", f.id, world.version()).ok());
+	const auto [trimV0, trimV1] = drawnTrimsMeters(world, seg.id);
+	ASSERT_GT(trimV0, 0.55);
+	ASSERT_GT(trimV1, 0.55);
+
+	ConstructionValidator validator(cfg, world);
+	EXPECT_EQ(validator.validateOpening(seg.id, 0.5F, "Door", "Wood").code, ValidationCode::OpeningWallTooShort);
+	EXPECT_EQ(validator.validateOpening(seg.id, 0.5F, "Window", "Wood").code, ValidationCode::OpeningWallTooShort);
+}
+
 TEST(ConstructionValidator, FoundationValidationUnchangedWithWalls) {
 	// Committing a wall must not perturb foundation validatePoint/validateRing.
 	ConstraintConfig  cfg = defaults();
 	ConstructionWorld world;
 	auto			  f = world.commitFoundation(squareRing(), "Wood");
 	ASSERT_TRUE(f.ok());
-	ASSERT_TRUE(world.commitSegment(mm(1.0F, 1.0F), mm(4.0F, 1.0F), "Wood", "Standard", f.id).ok());
+	ASSERT_TRUE(world.commitSegment(mm(1.0F, 1.0F), mm(4.0F, 1.0F), "Wood", "Standard", f.id, world.version()).ok());
 
 	ConstructionValidator validator(cfg, world);
 	// A disjoint square still validates clean.
@@ -903,7 +1097,7 @@ TEST_F(FoundationEditValidation, OutlineMustKeepShapeConstraints) {
 TEST_F(FoundationEditValidation, SubtractMayNotCutUnderAWall) {
 	// Standard Wood is 0.2 m thick: the centerline sits 5 cm above the notch, but
 	// the lower face of the band dips into it.
-	const auto wall = world.commitSegment(mm(7.5F, 6.05F), mm(9.5F, 6.05F), "Wood", "Standard", target);
+	const auto wall = world.commitSegment(mm(7.5F, 6.05F), mm(9.5F, 6.05F), "Wood", "Standard", target, world.version());
 	ASSERT_TRUE(wall.ok());
 	EXPECT_EQ(edit(rect(7.0F, -2.0F, 12.0F, 6.0F), FoundationEditMode::Subtract).validation.code, ValidationCode::EditUnderWall);
 	EXPECT_TRUE(edit(rect(7.0F, -2.0F, 12.0F, 5.0F), FoundationEditMode::Subtract).ok());

@@ -20,7 +20,10 @@
 //    chunks via IAdjacentChunkProvider for relationship checks.
 //
 // 4. ENTITY REMOVAL: Supports removing entities when harvested/destroyed.
-//    Called by ActionSystem when collection actions complete.
+//    Called by ActionSystem when collection actions complete. A removal is
+//    kept for the session: a chunk that unloads and is placed again comes
+//    back without what was removed from it, and with its resource pools as
+//    harvesting left them.
 //
 // 5. REGROWTH: A non-destructive harvest (a berry bush) stamps the time the
 //    entity is ready again. Times are the caller's simulation clock; assets
@@ -59,6 +62,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <random>
 #include <string>
@@ -143,6 +147,8 @@ namespace assets {
 
 		/// Compute entity placements without storing to internal state (thread-safe).
 		/// Use this for async/background processing, then call storeChunkResult() on main thread.
+		/// The chunk is rolled whole, the same every time, and the entities removeEntity has taken
+		/// out of it this session are then left out of the result.
 		/// @param context Chunk data (coord, seed, biome/ground lookups)
 		/// @param adjacentProvider Optional provider for cross-chunk queries (can be null)
 		/// @return Result including computed SpatialIndex for later storage
@@ -151,7 +157,8 @@ namespace assets {
 		computeChunkEntities(const ChunkPlacementContext& context, const IAdjacentChunkProvider* adjacentProvider = nullptr) const;
 
 		/// Store a pre-computed chunk result (main thread only).
-		/// Call this after computeChunkEntities() completes on a background thread.
+		/// Call this after computeChunkEntities() completes on a background thread. An entity's
+		/// resource pool is rolled once in a session: one that has a pool already keeps it.
 		/// @param result The async result from computeChunkEntities()
 		/// @note NOT thread-safe - call only from main thread
 		void storeChunkResult(AsyncChunkPlacementResult&& result);
@@ -160,10 +167,12 @@ namespace assets {
 		/// Returns nullptr if chunk hasn't been processed.
 		[[nodiscard]] const SpatialIndex* getChunkIndex(world::ChunkCoordinate coord) const;
 
-		/// Remove chunk data (call when chunk is unloaded)
+		/// Drop the chunk's index (call when chunk is unloaded). What was removed from the chunk,
+		/// and its entities' cooldowns and resource pools, are kept for when it is placed again.
 		void unloadChunk(world::ChunkCoordinate coord);
 
-		/// Remove an entity at the specified position, with its cooldown and resource pool
+		/// Remove an entity at the specified position, with its cooldown and resource pool, for
+		/// the rest of the session: placing its chunk again leaves it out.
 		/// @param coord Chunk coordinate containing the entity
 		/// @param position World position of the entity
 		/// @param defName DefName of the entity to remove
@@ -196,13 +205,13 @@ namespace assets {
 		void initResourceCount(glm::vec2 position, const std::string& defName, uint32_t count);
 
 		/// Get the current resource count for an entity
-		/// @return Resource count, or nullopt if entity has no resource tracking
+		/// @return Resource count, or nullopt if entity has no resource tracking or its pool is empty
 		[[nodiscard]] std::optional<uint32_t> getResourceCount(glm::vec2 position, const std::string& defName) const;
 
 		/// Withdraw up to `requested` units from an entity's resource pool after a harvest.
 		/// @return The number of units actually removed (clamped to what the pool held; 0 if
-		///         the entity has no resource tracking). When this empties the pool the entry
-		///         is erased, so a following getResourceCount() returns nullopt (= depleted).
+		///         the entity has no resource tracking). Once this empties the pool, a following
+		///         getResourceCount() returns nullopt (= depleted), on later loads of its chunk too.
 		uint32_t decrementResourceCount(glm::vec2 position, const std::string& defName, uint32_t requested);
 
 		/// One entity removeEntity took out of a chunk index, by the identity removeEntity takes.
@@ -285,11 +294,44 @@ namespace assets {
 		static constexpr size_t kMinRegrowthSweepSize = 1024;
 		size_t					m_regrowthSweepSize = kMinRegrowthSweepSize;
 
-		/// Remaining resource pool (units left to harvest), per entity
+		/// Remaining resource pool (units left to harvest), per entity. An emptied pool stays here at
+		/// zero, which tells it from one never rolled, so placing its chunk again does not refill it.
 		std::unordered_map<EntityStateKey, uint32_t, EntityStateKeyHash> m_resourceCounts;
+
+		/// A removed entity by what the chunk's roll gave it: its position, exactly, and its def. A
+		/// chunk rolls the same every time, so the entity comes back at the same position to the bit,
+		/// and a neighbour of the same def a few centimetres away is never taken for it. That holds
+		/// while no roll is decided by what a neighbouring chunk holds: a relationship that can veto a
+		/// placement across a chunk seam (a `requires`, a zero strength) would shift the rolls after it.
+		struct RemovedEntityKey {
+			glm::vec2 position{};
+			uint32_t  defNameId = 0;
+
+			bool operator==(const RemovedEntityKey& other) const { return position == other.position && defNameId == other.defNameId; }
+		};
+
+		struct RemovedEntityKeyHash {
+			std::size_t operator()(const RemovedEntityKey& key) const {
+				std::size_t seed = std::hash<float>{}(key.position.x);
+				seed = seed * 31 + std::hash<float>{}(key.position.y);
+				seed = seed * 31 + std::hash<uint32_t>{}(key.defNameId);
+				return seed;
+			}
+		};
+
+		using RemovedEntityKeys = std::unordered_set<RemovedEntityKey, RemovedEntityKeyHash>;
+
+		/// The entities removeEntity has taken out of each chunk this session, one key for each.
+		/// Unloading the chunk keeps them; only clear() drops them. Placement workers read it
+		/// while the main thread adds to it, so every access holds the mutex.
+		std::unordered_map<world::ChunkCoordinate, RemovedEntityKeys> removedEntities;
+		mutable std::mutex											  removedEntitiesMutex;
 
 		[[nodiscard]] EntityStateKey makeEntityStateKey(glm::vec2 position, const std::string& defName) const;
 		[[nodiscard]] static EntityStateKey makeEntityStateKey(glm::vec2 position, uint32_t defNameId);
+
+		/// Take the chunk's removed entities out of a freshly rolled result, entity list and index both
+		void dropRemovedEntities(AsyncChunkPlacementResult& result) const;
 
 		/// Build dependency graph from asset definitions
 		void buildDependencyGraph();

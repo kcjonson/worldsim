@@ -21,20 +21,95 @@
   <!-- Snap radius for cursor-to-edge snapping (T-junction on an existing segment). -->
   <edgeSnapRadiusMeters>0.3</edgeSnapRadiusMeters>
 
-  <!-- Range within which committed-foundation corners are considered as alignment-
-       guide targets (the in-progress shape's own nodes are always considered). -->
-  <smartGuideRangeMeters>8.0</smartGuideRangeMeters>
-
-  <!-- Perpendicular tolerance for an axis-alignment lock: the cursor snaps to a
-       reference node's X (or Y) when within this distance, drawing a guide line. -->
-  <axisGuideToleranceMeters>0.3</axisGuideToleranceMeters>
-
-  <!-- Default for the user-facing "align to existing foundations" setting (settings
-       screen toggles it at runtime; in-progress-shape alignment is always on). -->
-  <alignToExistingDefault>true</alignToExistingDefault>
-
   <!-- Cursor distance from the origin point at which the "click here to close"
        halo appears and snapping locks to the origin. Generous to make closing easy. -->
   <originCloseRadiusMeters>0.5</originCloseRadiusMeters>
+
+  <!-- Guides. A guide is a line the cursor snaps onto when within the tolerance of it. -->
+
+  <!-- The reach of every guide from committed structures: a corner (a foundation
+       corner, or in the wall tool a wall vertex) within this distance of the cursor
+       gives guides, and an edge within it gives a nearby direction. The shape's own
+       points always give guides, whatever their distance. -->
+  <guideRangeMeters>8.0</guideRangeMeters>
+
+  <!-- Perpendicular distance within which the cursor snaps onto a guide, drawing it. -->
+  <guideToleranceMeters>0.3</guideToleranceMeters>
+
+  <!-- A crossing of two guides is considered when it is within this distance of the cursor. -->
+  <guideCrossingRadiusMeters>1.0</guideCrossingRadiusMeters>
+
+  <!-- Two guide directions closer than this count as the same direction. -->
+  <guideDirectionToleranceDegrees>1.0</guideDirectionToleranceDegrees>
+
+  <!-- How many distinct directions nearby buildings may contribute, and how many
+       corners are read in all. -->
+  <nearbyGuideDirectionLimit>4</nearbyGuideDirectionLimit>
+  <guideCornerLimit>16</guideCornerLimit>
+
+  <!-- Three values follow another key while their tie flag is true: the angle
+       catch window is half the angle increment, the crossing minimum angle is the
+       angle increment, and the merge distance is the guide tolerance. With the flag
+       false, the explicit value is read instead. -->
+  <tieAngleWindowToStep>true</tieAngleWindowToStep>
+  <guideAngleWindowDegrees>7.5</guideAngleWindowDegrees>
+  <tieCrossingAngleToStep>true</tieCrossingAngleToStep>
+  <guideCrossingMinAngleDegrees>15.0</guideCrossingMinAngleDegrees>
+  <tieMergeDistanceToTolerance>true</tieMergeDistanceToTolerance>
+  <guideMergeDistanceMeters>0.3</guideMergeDistanceMeters>
+
+  <!-- Which guide wins when several catch the cursor: sourceFirst (the shape's own,
+       then nearby buildings, then the world axes) or closest. -->
+  <priorityRule>sourceFirst</priorityRule>
+
+  <!-- Common lengths: snap a segment's length to a length already built. -->
+  <commonLengthSourceBuildings>true</commonLengthSourceBuildings>
+  <commonLengthSourceShape>true</commonLengthSourceShape>
+  <commonLengthRangeMeters>30.0</commonLengthRangeMeters>
+  <commonLengthAllBuildings>false</commonLengthAllBuildings>
+  <commonLengthCatchMeters>0.3</commonLengthCatchMeters>
+  <commonLengthMergeMeters>0.05</commonLengthMergeMeters>
+  <!-- Lengths kept after ranking; at most 16, the most the snap engine reports. -->
+  <commonLengthMaxCount>6</commonLengthMaxCount>
+  <commonLengthMinimumMeters>0.5</commonLengthMinimumMeters>
+  <commonLengthAfterRawCursor>true</commonLengthAfterRawCursor>
+  <commonLengthBeatsCrossing>false</commonLengthBeatsCrossing>
+  <commonLengthWallsReadInsetFoundation>true</commonLengthWallsReadInsetFoundation>
+
+  <!-- Length rounding: where no common length catches, a segment's length rounds to
+       this increment. On a guide through some other point than the previous one,
+       lengthRoundingOnGuides picks what rounds: guideDistance or segmentLength. -->
+  <lengthIncrementMeters>0.1</lengthIncrementMeters>
+  <lengthRoundingOnGuides>guideDistance</lengthRoundingOnGuides>
+
+  <!-- Rectangle tool: land on existing corners and edges before the grid. -->
+  <rectangleAdjacencySnaps>true</rectangleAdjacencySnaps>
+
+  <!-- Two left releases on the world this close in time are a double-click: with the wall
+       tool, the second ends the chain. -->
+  <doubleClickSeconds>0.4</doubleClickSeconds>
+
+  <!-- A left release within this many logical pixels of its press is a click, not a drag:
+       in the rectangle tool it leaves the first corner waiting. A double-click's second
+       release must also be this close to the first. -->
+  <doubleClickDistancePx>4.0</doubleClickDistancePx>
+
+  <!-- The player's Drawing Settings at first launch, what a new player meets: every
+       helper off (the Rectangle tool covers the square building; a rectangle's fourth
+       corner lands on the crossing of two guides once world-axis guides and crossings are
+       switched on), Round lengths and Show key guide on, a 1 m grid. -->
+  <DrawingSettingsDefaults>
+    <angleSteps>false</angleSteps>
+    <guidesFromShape>false</guidesFromShape>
+    <alignToExistingBuildings>false</alignToExistingBuildings>
+    <guidesFromWorldAxes>false</guidesFromWorldAxes>
+    <guideCrossings>false</guideCrossings>
+    <commonLengths>false</commonLengths>
+    <guideDistances>false</guideDistances>
+    <angleReadout>false</angleReadout>
+    <roundLengths>true</roundLengths>
+    <showKeyGuide>true</showKeyGuide>
+    <rectangleGridSpacingMeters>1.0</rectangleGridSpacingMeters>
+  </DrawingSettingsDefaults>
 
 </ConstructionSnapping>

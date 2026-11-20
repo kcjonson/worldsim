@@ -53,12 +53,12 @@ namespace {
 	namespace gnav = geometry::nav;
 	using Clock	   = std::chrono::steady_clock;
 
-	// A visibility limit holding the whole chunk: ground as the game adds it, sized so the chunk's
+	// A mesh limit holding the whole chunk: ground as the game adds it, sized so the chunk's
 	// water and obstacles all stand on it.
 	gnav::NavInputPolygon chunkGround(world::ChunkCoordinate coord) {
 		const std::int64_t		side = static_cast<std::int64_t>(world::kChunkSize) * geometry::kMillimetersPerMeter;
 		const geometry::Vec2i64 lo	 = nav::chunkOriginMm(coord);
-		return nav::visibilityLimit({lo.x + side / 2, lo.y + side / 2}, side * 3 / 4);
+		return nav::meshLimit({lo.x + side / 2, lo.y + side / 2}, side * 3 / 4);
 	}
 
 	double msSince(Clock::time_point start) { return std::chrono::duration<double, std::milli>(Clock::now() - start).count(); }

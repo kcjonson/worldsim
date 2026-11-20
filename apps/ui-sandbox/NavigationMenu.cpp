@@ -25,7 +25,7 @@ namespace ui_sandbox {
 		: owner(owningApp),
 		  scenes(std::move(args.scenes)),
 		  context(logicalSize(owningApp.viewport())) {
-		context.setScale(owningApp.uiScale());
+		context.setScale(owningApp.uiLayoutScale());
 		theme::apply(context);
 		ui::Ref<ui::Component> root = context.root();
 		root.get()->setLayout({
@@ -102,7 +102,7 @@ namespace ui_sandbox {
 	}
 
 	void NavigationMenu::onResize(const Renderer::Viewport& viewport) {
-		context.setViewport(logicalSize(viewport));
+		context.setViewport(logicalSize(viewport), owner.uiLayoutScale());
 	}
 
 	void NavigationMenu::setOpen(bool value) {

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The numbers the thought system runs on.
+
+  maxLineLength         the longest a line may be, in characters; a line is a quip, a few words.
+                        {subject} counts as maxSubjectNameLength.
+  maxSubjectNameLength  the most characters of a subject's name a line shows; a longer name is
+                        cut to fit.
+  whileCheckMinutes     how often, in game minutes, a held thought whose mood effect lasts while a
+                        condition holds checks it; it ends when the condition is false or its
+                        subject is gone.
+
+  <kept> is how many thoughts a colonist keeps (thoughts.md, What is kept).
+  limit                 the size the two fractions are taken of; the record is pruned back toward
+                        it and can pass it while protected thoughts fill it.
+  pruneStartsAt         the fraction of the limit at which pruning starts.
+  pruneStopsAt          the fraction of the limit pruning brings the record back to.
+  recentDays            thoughts from this many recent game days are never pruned.
+  trivialWeight,
+  normalWeight          the importance a trivial or normal thought's score is multiplied by; major
+                        thoughts are never pruned.
+-->
+<thoughts>
+  <tuning maxLineLength="48" maxSubjectNameLength="16" whileCheckMinutes="15">
+    <kept limit="2000" pruneStartsAt="0.9" pruneStopsAt="0.8" recentDays="10" trivialWeight="1" normalWeight="3"/>
+  </tuning>
+</thoughts>

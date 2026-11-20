@@ -2,7 +2,7 @@
 
 // GameUI - the game scene's ui, mounted under the scene's root: the top bar, the roster down the left,
 // the selected entity's panel and its task list at the bottom left, the minimap, resources and global
-// task list down the right, the gameplay bar and construction strip at the bottom middle, the zoom
+// task list down the right, the gameplay bar, construction strip and key guide at the bottom middle, the zoom
 // column at the bottom right, the build menu, toasts, the three dialogs and the pause menu. It feeds
 // them from the world each frame; salal's ui lays them out, draws them and takes their input, so a
 // press on any of them never reaches the world.
@@ -19,6 +19,7 @@
 #include "scenes/game/ui/views/ColonistListView.h"
 #include "scenes/game/ui/views/ConstructionConfigStrip.h"
 #include "scenes/game/ui/views/DebugOverlay.h"
+#include "scenes/game/ui/views/DrawingKeyGuide.h"
 #include "scenes/game/ui/views/EntityInfoView.h"
 #include "scenes/game/ui/views/GameplayBar.h"
 #include "scenes/game/ui/views/GlobalTaskListView.h"
@@ -30,7 +31,9 @@
 #include "scenes/game/world/selection/SelectionTypes.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/ConstructionRegistry.h>
 #include <assets/RecipeRegistry.h>
+#include <assets/TraitRegistry.h>
 #include <ecs/World.h>
 #include <ecs/systems/RoomDetectionSystem.h>
 #include <ecs/systems/TimeSystem.h>
@@ -52,6 +55,7 @@ namespace world_sim {
 	  public:
 		struct Args {
 			ui::Ref<ui::Component>					root; // the scene's root, which the views mount under
+			const assets::TraitRegistry&			traits; // the world's, for the colonist dossier's Bio tab
 			std::function<void()>					onZoomIn;
 			std::function<void()>					onZoomOut;
 			std::function<void()>					onZoomReset;
@@ -69,6 +73,7 @@ namespace world_sim {
 			std::function<void(ecs::GameSpeed)>					   onSpeedChange;		 ///< Called when speed changed
 			std::function<void()>								   onMenuClick;			 ///< Called when menu button clicked
 			std::function<void()>								   onPauseMenuClosed;	 ///< Called when the player closes the pause menu
+			std::function<void()>								   onSettings; ///< Called when the pause menu's Settings is chosen
 			std::function<void()>								   onMainMenu; ///< Called when the pause menu's Main Menu is chosen
 			std::function<void()>								   onQuitGame; ///< Called when the pause menu's Quit Game is chosen
 			std::function<void()> onPlaceFurniture;							   ///< Called when Place button clicked for packaged furniture
@@ -81,9 +86,11 @@ namespace world_sim {
 			std::function<void()> onDemolishOpening;		///< Called when Demolish button clicked for an opening
 			ResourceQueryCallback queryResources;			///< Query remaining resource count for harvestable entities
 			std::function<void(const std::string&)> onStructureSelected; ///< Called when a structure tool (e.g. "foundation") is chosen
+			std::function<void(FoundationTool)>		onFoundationToolSelected; ///< Called when the config strip's tool picker picks a foundation tool
 			std::function<void(const std::string&)> onConstructionMaterialSelected; ///< Called when a config-strip material card is clicked
 			std::function<void(const std::string&)> onConstructionThicknessSelected; ///< Called when a wall thickness preset is clicked
 			std::function<void()>					onRoomsToggle; ///< Called when the GameplayBar Rooms toggle is clicked
+			std::function<void()>					onKeyGuideOpened; ///< Called when the collapsed key guide's chip is clicked
 		};
 
 		explicit GameUI(const Args& args);
@@ -120,10 +127,18 @@ namespace world_sim {
 		void			   showBuildMenu(const std::vector<BuildMenuItem>& items);
 		void			   hideBuildMenu();
 		[[nodiscard]] bool isBuildMenuVisible() const;
-		void			   setProductionItems(const std::vector<std::pair<std::string, std::string>>& items);
-		void			   setConstructionMaterials(const std::vector<std::pair<std::string, float>>& materials);
-		void			   setConstructionThicknessPresets(const std::vector<ConstructionConfigStrip::ThicknessPresetInfo>& presets);
+		// What the bottom dock offers: the stations the player places directly, the construction materials, and
+		// the wall thicknesses of `wallMaterial`.
+		void showCatalogue(
+			const assets::RecipeRegistry&		recipes,
+			const assets::ConstructionRegistry& construction,
+			const std::string&					wallMaterial
+		);
+		// The wall thickness cards for `material`, when the player picks another.
+		void			   showWallThicknesses(const assets::ConstructionRegistry& construction, const std::string& material);
 		void			   setConstructionStatus(const DrawingStatus& status);
+		// The key guide over the strip, for the drawing tool on (none while none is).
+		void			   setKeyGuide(std::optional<ToolKind> tool, const DrawingSettings& settings, bool collapsed);
 		void			   setRoomsOverlayActive(bool active);
 
 		void			   showColonistDetails(ecs::EntityID colonistId);
@@ -151,9 +166,11 @@ namespace world_sim {
 		ui::Ref<DebugOverlay>				   debugOverlay;
 		ui::Ref<ZoomControlPanel>			   zoomControlPanel;
 		ui::Ref<GameplayBar>				   gameplayBar;
+		ui::Ref<DrawingKeyGuide>			   keyGuide;
 		ui::Ref<ConstructionConfigStrip>	   configStrip;
 		ui::Ref<BuildMenu>					   buildMenu;
 		ui::Ref<ColonistListView>			   colonistList;
+		ui::Ref<ui::Component>				   bottomLeft;
 		ui::Ref<EntityInfoView>				   infoPanel;
 		ui::Ref<TaskListView>				   taskListPanel;
 		ui::Ref<RegionMinimapPanel>			   minimapPanel;

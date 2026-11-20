@@ -3,6 +3,8 @@
 #include "scenes/game/ui/adapters/ColonistAdapter.h"
 
 #include <assets/ConstructionRegistry.h>
+#include <assets/MoodConfig.h>
+#include <cassert>
 #include <core/Vec2i64.h>
 #include <ecs/InventoryMass.h>
 #include <ecs/components/Colonist.h>
@@ -25,23 +27,6 @@ namespace world_sim {
 	namespace {
 		// Use ecs::kNeedLabels from Needs.h - single source of truth
 		constexpr size_t kNeedCount = ecs::kNeedLabels.size();
-
-		// Convert mood value (0-100) to descriptive label
-		std::string moodToLabel(float moodValue) {
-			if (moodValue >= 80.0F) {
-				return "Happy";
-			}
-			if (moodValue >= 60.0F) {
-				return "Content";
-			}
-			if (moodValue >= 40.0F) {
-				return "Neutral";
-			}
-			if (moodValue >= 20.0F) {
-				return "Stressed";
-			}
-			return "Miserable";
-		}
 
 		// Format task description
 		std::string formatTask(const ecs::Task& task) {
@@ -129,7 +114,7 @@ namespace world_sim {
 					}
 					return adaptFurniture(registry, sel);
 				} else if constexpr (std::is_same_v<T, ResourcePileSelection>) {
-					if (!world.isAlive(sel.entityId) || world.getComponent<ecs::ResourceStack>(sel.entityId) == nullptr) {
+					if (world.getComponent<ecs::ResourceStack>(sel.entityId) == nullptr) {
 						return std::nullopt;
 					}
 					return adaptResourcePile(world, registry, sel);
@@ -154,12 +139,10 @@ namespace world_sim {
 		data.name = colonist ? colonist->name : "Colonist";
 		content.title = data.name;
 
-		if (auto* needs = world.getComponent<ecs::NeedsComponent>(entityId)) {
-			data.moodValue = ecs::computeMood(*needs);
-		} else {
-			data.moodValue = 50.0F;
-		}
-		data.moodLabel = moodToLabel(data.moodValue);
+		const auto* mood = world.getComponent<ecs::Mood>(entityId);
+		assert(mood != nullptr && "Every colonist is given a Mood at spawn");
+		data.moodValue = mood->value;
+		data.moodLabel = assets::MoodConfig::Get().bandFor(data.moodValue).name;
 
 		data.controlled = world.getComponent<ecs::PlayerControlled>(entityId) != nullptr;
 
@@ -195,7 +178,8 @@ namespace world_sim {
 		if (inventory != nullptr) {
 			const bool hasLeft = inventory->leftHand.has_value();
 			const bool hasRight = inventory->rightHand.has_value();
-			if (hasLeft && hasRight && inventory->leftHand->defName == inventory->rightHand->defName) {
+			if (hasLeft && hasRight && inventory->leftHand->defName == inventory->rightHand->defName &&
+				ecs::itemIsTwoHand(assets::AssetRegistry::Get(), inventory->leftHand->defName)) {
 				// Same item in both hands: a two-hand armful (counted once)
 				data.hands = inventory->leftHand->defName;
 				if (inventory->leftHand->quantity > 1) {
@@ -581,11 +565,9 @@ namespace world_sim {
 
 		// Build state + progress come from the ECS mirror's blueprint, exactly like a
 		// wall: a built opening has no blueprint progress; a blueprint shows phase, a
-		// 0-100 work bar, and the delivered/required materials summary. Guard the entity
-		// handle: getComponent indexes by entity index without a generation check, so a
-		// kInvalidEntity (0) or stale handle would alias entity 0's components.
-		const bool hasMirror = opening != nullptr && opening->entity != ecs::kInvalidEntity && world.isAlive(opening->entity);
-		const ecs::StructureBlueprint* blueprint = hasMirror ? world.getComponent<ecs::StructureBlueprint>(opening->entity) : nullptr;
+		// 0-100 work bar, and the delivered/required materials summary.
+		const ecs::StructureBlueprint* blueprint =
+			opening != nullptr ? world.getComponent<ecs::StructureBlueprint>(opening->entity) : nullptr;
 
 		// Progress (state, materials, work bar) only while building; a finished opening
 		// shows none of it (type, material, pathable already describe it). Same rule as
@@ -623,10 +605,8 @@ namespace world_sim {
 		// Enclosing-wall count from the Room ECS component on the record's mirror
 		// entity. The component carries the bounding segment ids (the record does
 		// not), so this is the one fact sourced from the component rather than the
-		// detection record. Guard the entity handle: a record whose entity has been
-		// destroyed shows no count rather than aliasing entity 0's components.
-		const ecs::Room* room =
-			(record.entity != ecs::kInvalidEntity && world.isAlive(record.entity)) ? world.getComponent<ecs::Room>(record.entity) : nullptr;
+		// detection record. A record whose entity has been destroyed shows no count.
+		const ecs::Room* room = world.getComponent<ecs::Room>(record.entity);
 		if (room != nullptr) {
 			content.slots.push_back(TextSlot{"Enclosing walls", std::to_string(room->boundingSegmentIds.size())});
 		}

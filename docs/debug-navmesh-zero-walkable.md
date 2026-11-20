@@ -42,7 +42,7 @@ tree/wall colliders block.
 - `libs/geometry/nav/NavMeshRealRings.test.h` (755 lines) — the REAL water/border rings dumped from
   the live quickstart build by an earlier investigation. Use THIS for a faithful reproduction, not
   hand-built rings (hand-built is what produced false confidence in the prior fix).
-- In-game verify loop: rebuild `world-sim`, launch `world-sim.exe --scene=game`, grep stdout for
+- In-game verify loop: rebuild `world-sim`, launch `world-sim.exe --scene=game --background --no-settings`, grep stdout for
   `[NavBuild]`. `walkable>0` + Bob moving = fixed.
 
 ## Scout Agent Findings

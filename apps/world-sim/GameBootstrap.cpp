@@ -4,6 +4,7 @@
 #include <assets/AssetBootstrap.h>
 #include <assets/AssetRegistry.h>
 #include <assets/AssetValidator.h>
+#include <assets/RecipeRegistry.h>
 #include <storage/UserDirectories.h>
 #include <world/AppIdentity.h>
 #include <world/rendering/GroundTileBank.h>
@@ -12,11 +13,15 @@
 #include <cassert>
 #include <memory>
 #include <optional>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace world_sim {
 
 	namespace {
 		std::optional<worldview::GroundTileCache>  g_groundCache;
+		std::vector<std::string>				   g_colonistRulesErrors;
 		std::unique_ptr<worldview::GroundTileBank> g_groundTiles;
 	} // namespace
 
@@ -42,12 +47,16 @@ namespace world_sim {
 
 	GroundBakeStep stepGroundBake() {
 		const assets::ValidationReport& report = assets::AssetRegistry::Get().getValidationReport();
-		if (report.hasErrors()) {
+		const std::vector<std::string>& recipeProblems = assets::RecipeRegistry::Get().problems();
+		if (report.hasErrors() || !recipeProblems.empty()) {
 			GroundBakeStep failed{.done = true};
 			for (const assets::ValidationIssue& issue : report.issues) {
 				if (issue.severity == assets::Severity::Error) {
 					failed.errors.push_back((issue.defName.empty() ? std::string("-") : issue.defName) + ": " + issue.message);
 				}
+			}
+			for (const std::string& problem : recipeProblems) {
+				failed.errors.push_back("[recipes] " + problem);
 			}
 			return failed;
 		}
@@ -56,6 +65,14 @@ namespace world_sim {
 			return {};
 		}
 		return {.done = true, .errors = bank.errors()};
+	}
+
+	void failColonistRules(std::vector<std::string> errors) {
+		g_colonistRulesErrors = std::move(errors);
+	}
+
+	std::vector<std::string> takeFailedColonistRules() {
+		return std::exchange(g_colonistRulesErrors, {});
 	}
 
 } // namespace world_sim

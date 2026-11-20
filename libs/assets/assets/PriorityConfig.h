@@ -10,19 +10,22 @@
 // See /docs/design/game-systems/colonists/priority-config.md for design details.
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace assets {
 
+	class ConfigReader;
+
 	/// In-progress task config.
 	/// Repurposed for the (tier, score) arbitration as the within-tier hysteresis margin: the
 	/// stickiness added to the currently in-progress option's score so a same-tier challenger must
 	/// beat it by more than this margin to win. It can never lift an option across a tier boundary
-	/// (score only compares within a tier). Defaults to taskSwitchThreshold (50) below.
+	/// (score only compares within a tier).
 	struct InProgressBonusConfig {
-		int16_t bonus = 50; // Within-tier hysteresis margin for the in-progress option
+		int16_t bonus = 0; // Within-tier hysteresis margin for the in-progress option
 	};
 
 	/// Within-tier distance factor config.
@@ -32,14 +35,14 @@ namespace assets {
 	/// reachable source wins within a tier (fixes "chops a tree 70 m away over an adjacent one").
 	/// Linear curve: factor(d) = maxFactor * max(0, 1 - d / maxDistance), clamped to [0, maxFactor].
 	struct DistanceFactorConfig {
-		float maxDistance = 60.0F; // Distance (m) at which the factor reaches 0
-		float maxFactor = 300.0F;  // Factor at distance 0 (dominates skill+age, exceeds hysteresis)
+		float maxDistance = 0.0F; // Distance (m) at which the factor reaches 0
+		float maxFactor = 0.0F;	  // Factor at distance 0 (dominates skill+age, exceeds hysteresis)
 	};
 
 	/// Task age bonus config
 	struct TaskAgeBonusConfig {
-		int16_t bonusPerMinute = 1; // Bonus per minute unclaimed
-		int16_t maxBonus = 100;		// Cap for age bonus
+		int16_t bonusPerMinute = 0; // Bonus per minute unclaimed
+		int16_t maxBonus = 0;		// Cap for age bonus
 	};
 
 	/// Storage-priority weight config (AI arbitration, within tier 6 only).
@@ -49,24 +52,7 @@ namespace assets {
 	/// storage priority DOMINATES distance within tier 6 (a Critical box farther away beats a Low box
 	/// nearer). It can never cross a tier boundary: tier is compared first, lexicographically.
 	struct StoragePriorityConfig {
-		int16_t weight = 300; // Per-priority-rank score weight (rank 0..3 * weight)
-	};
-
-	/// Hauling-specific tuning
-	struct HaulingTuningConfig {
-		float	storageCriticalThreshold = 0.2F;  // Below this, storage is critical
-		int16_t storageCriticalBonus = 500;		  // Bonus when storage critical
-		int16_t blockingConstructionBonus = 1000; // Bonus for items blocking builds
-		float	perishableSpoilThreshold = 60.0F; // Seconds until spoil = perishable
-		int16_t perishableBonus = 800;			  // Bonus for perishable items
-		float	batchRadius = 8.0F;				  // Group items within this radius
-		int16_t maxBatchSize = 5;				  // Max items per batch
-	};
-
-	/// Timing thresholds
-	struct TimingConfig {
-		int16_t taskSwitchThreshold = 50;	// Min priority gap to switch tasks
-		float	reEvalInterval = 0.5F;		// Seconds between task re-evaluation
+		int16_t weight = 0; // Per-priority-rank score weight (rank 0..3 * weight)
 	};
 
 	/// Priority tuning configuration
@@ -78,12 +64,14 @@ namespace assets {
 
 		// --- Loading ---
 
-		/// Load priority config from an XML file
-		/// @param xmlPath Path to the XML file (e.g., priority-tuning.xml)
-		/// @return true if loading succeeded
-		bool loadFromFile(const std::string& xmlPath);
+		/// Replaces everything with `configRoot / file`: false, with problems() saying why, when the file can't be
+		/// read or a value in it is missing or malformed. Errors name the file as `file` is written.
+		bool loadFromFile(const std::filesystem::path& configRoot, const std::filesystem::path& file);
 
-		/// Clear all loaded config (reset to defaults)
+		/// What the file got wrong: each names the file, the element and the attribute.
+		[[nodiscard]] const std::vector<std::string>& problems() const { return problemList; }
+
+		/// Clear all loaded config
 		void clear();
 
 		/// Moves on every load and clear, so a reader that caches values can tell they may have changed.
@@ -135,13 +123,6 @@ namespace assets {
 		[[nodiscard]] const InProgressBonusConfig& getInProgressConfig() const { return inProgressConfig; }
 		[[nodiscard]] const StoragePriorityConfig& getStoragePriorityConfig() const { return storagePriorityConfig; }
 		[[nodiscard]] const TaskAgeBonusConfig&	   getTaskAgeConfig() const { return taskAgeConfig; }
-		[[nodiscard]] const HaulingTuningConfig&   getHaulingConfig() const { return haulingConfig; }
-		[[nodiscard]] const TimingConfig&		   getTimingConfig() const { return timingConfig; }
-
-		// --- Thresholds ---
-
-		[[nodiscard]] int16_t getTaskSwitchThreshold() const { return timingConfig.taskSwitchThreshold; }
-		[[nodiscard]] float	  getReEvalInterval() const { return timingConfig.reEvalInterval; }
 
 		// --- Work Category Order ---
 
@@ -149,22 +130,16 @@ namespace assets {
 		[[nodiscard]] const std::vector<std::string>& getCategoryOrder() const { return categoryOrder; }
 
 	  private:
-		PriorityConfig();
+		PriorityConfig() = default;
 
 		/// Parse per-task-type tier table from XML node
-		void parseTaskTiers(const void* node);
+		void parseTaskTiers(const void* node, ConfigReader& reader);
 
 		/// Parse bonuses from XML node
-		void parseBonuses(const void* node);
-
-		/// Parse timing thresholds from XML node
-		void parseThresholds(const void* node);
-
-		/// Parse hauling tuning from XML node
-		void parseHaulingTuning(const void* node);
+		void parseBonuses(const void* node, ConfigReader& reader);
 
 		/// Parse work category order from XML node
-		void parseCategoryOrder(const void* node);
+		void parseCategoryOrder(const void* node, ConfigReader& reader);
 
 		// --- Storage ---
 
@@ -176,10 +151,10 @@ namespace assets {
 		InProgressBonusConfig inProgressConfig;
 		StoragePriorityConfig storagePriorityConfig;
 		TaskAgeBonusConfig	  taskAgeConfig;
-		HaulingTuningConfig	  haulingConfig;
-		TimingConfig		  timingConfig;
 
 		uint64_t m_generation = 1;
+
+		std::vector<std::string> problemList;
 
 		/// Work category order (sorted by tier)
 		std::vector<std::string> categoryOrder;

@@ -26,8 +26,10 @@ The developer client is an external TypeScript/Vite web application that connect
   N jobs at the nearest crafting station (entity with a WorkQueue) to `at` — the on-demand way to
   exercise the craft/provisioning chain without setting up a colony by hand. `what=stations` reads
   back each crafting station's id, position, queued jobs (recipe/completed/quantity), and material
-  store, so a stalled craft can be inspected without screenshots. give, colonist, and teleport
-  refuse an `at` that is off the active walkable navmesh. spawn, foundation, and walls refuse ground
+  store, so a stalled craft can be inspected without screenshots. colonist and teleport
+  refuse water and placed obstacles and take ground no mover has meshed; a loose give refuses all
+  three. Each answers a 400 with `{"error":...}` when refused, and give answers the count it added
+  (a 400 when that is none, or when the material is not an item). spawn, foundation, and walls refuse ground
   the game would not build on and answer a 400 with `{"error":...}` when they create nothing: spawn
   sets furniture (a crafting station or storage container) only where its footprint is clear ground
   out of any fordable stream and anything else on clear ground, a ford included, and refuses when no
@@ -36,6 +38,17 @@ The developer client is an external TypeScript/Vite web application that connect
   placed obstacle, or unmeshed ground. `ground?pts=x,y;...` reads each point's verdicts: `valid`
   (clear to stand on), `buildable` (a foundation may go there once it is cleared), and `buildableNow`
   (a wall or furniture may go there as the ground stands), beside the chunk's terrain at the point.
+  The Sight tunables section loads `what=sightTunables` (each sight tunable of sight-softening.md 9
+  with its value, range, and start value) and gives each a slider; releasing one sends
+  `sight?name=<tunable>&value=<whole number>` (`sight?reset=1` puts back the start values), which
+  answers every tunable as vision's setter clamped it. Its Bodies button shows `what=sightBodies`,
+  each colonist's sight bodies from vision's last pass: kind, diameter in millimetres, centre, a
+  placed body's def name, and the build's shadow edges.
+  The Colonist section's thought entry gives the picked colonist a thought: its list is every loaded
+  thought type from `GET /api/state?what=thoughttypes` (`{types:[{name, label}]}`, read with Refresh),
+  and Give thought calls `thought?colonist=<id>&type=<name>`, the same verb the HTTP API documents. Its
+  attribute entry lists the picked colonist's attributes from `what=colonists` and calls
+  `attribute?colonist=<id>&attribute=<name>&value=<0 to 20>`. Both stay disabled until a colonist is picked.
   `DevToolsService.ts` wraps these;
   `DevToolsPanel.tsx` is the form. Still no web server of its own — the static `file://` page reaches
   the debug server because it sets CORS `*`. Dev builds only. See the

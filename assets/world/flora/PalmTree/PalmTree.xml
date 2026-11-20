@@ -23,7 +23,6 @@
 
     <rendering>
       <complexity>complex</complexity>
-      <tier>batched</tier>
     </rendering>
 
     <!-- Trunk-base collision comes from the generator (asset:setCollisionRect,

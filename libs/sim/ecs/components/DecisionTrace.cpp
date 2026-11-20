@@ -13,27 +13,6 @@ namespace ecs {
 
 	namespace {
 
-		const char* needName(NeedType need) {
-			switch (need) {
-				case NeedType::Hunger:
-					return "Hunger";
-				case NeedType::Thirst:
-					return "Thirst";
-				case NeedType::Energy:
-					return "Energy";
-				case NeedType::Bladder:
-					return "Bladder";
-				case NeedType::Digestion:
-					return "Digestion";
-				case NeedType::Hygiene:
-				case NeedType::Recreation:
-				case NeedType::Temperature:
-				case NeedType::Count:
-					break;
-			}
-			return "Unknown";
-		}
-
 		/// A definition's label, or its name when it has none.
 		const std::string& labelOf(const assets::AssetRegistry& registry, uint32_t defNameId) {
 			const auto* def = registry.getDefinitionById(defNameId);
@@ -47,14 +26,14 @@ namespace ecs {
 		}
 
 		std::string describeNeed(const World& world, const EvaluatedOption& option) {
-			std::string text = std::format("{} at {}%", needName(option.needType), static_cast<int>(option.needValue));
+			std::string text = std::format("{} at {}%", needLabel(option.needType), static_cast<int>(option.needValue));
 			if (option.status == OptionStatus::NoSource && !option.targetPosition.has_value()) {
 				text += " (no known source)";
 			} else if (option.status == OptionStatus::Regrowing) {
 				text += " (source regrowing)";
 			} else if (option.status == OptionStatus::Reserved) {
-				text += std::format("{} (reserved by {})", option.needValue < 10.0F ? " (critical)" : "", holderName(world, option));
-			} else if (option.needValue < 10.0F) {
+				text += std::format("{} (reserved by {})", option.critical ? " (critical)" : "", holderName(world, option));
+			} else if (option.critical) {
 				text += " (critical)";
 			} else if (option.status == OptionStatus::Satisfied) {
 				text += " (satisfied)";

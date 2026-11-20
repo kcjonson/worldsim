@@ -1,10 +1,13 @@
 #include "VisionSystem.h"
 
 #include "NavigationSystem.h"
+#include "TimeSystem.h"
 
 #include "../World.h"
+#include "../components/AgentRadius.h"
 #include "../components/Appearance.h"
 #include "../components/Memory.h"
+#include "../components/Movement.h"
 #include "../components/Transform.h"
 
 #include "nav/NavCoords.h"
@@ -15,13 +18,19 @@
 #include <assets/placement/PlacementExecutor.h>
 #include <assets/placement/SpatialIndex.h>
 #include <construction/ConstructionWorld.h>
+#include <construction/OpeningGeometry.h>
 #include <predicates/Predicates.h>
+#include <visibility/SightClip.h>
+#include <visibility/SightPolygon.h>
 #include <world/chunk/ChunkCoordinate.h>
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/SyntheticWorldSampler.h>
 #include <world/chunk/TerrainPolygonQuery.h>
 
 #include <glm/geometric.hpp>
+
+#include <algorithm>
+#include <array>
 
 #include <memory>
 #include <unordered_map>
@@ -32,6 +41,9 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <random>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -66,13 +78,42 @@ namespace {
 	}
 
 	// Build a built wall segment (every created sub-segment marked Built).
-	SegmentId buildWall(ConstructionWorld& cw, Vec2i64 a, Vec2i64 b) {
-		SegmentCommitResult r = cw.commitSegment(a, b, "Wood", "Standard", kInvalidFoundation);
+	SegmentId buildWall(ConstructionWorld& cw, Vec2i64 a, Vec2i64 b, const std::string& thickness = "Standard") {
+		SegmentCommitResult r = cw.commitSegment(a, b, "Wood", thickness, kInvalidFoundation, cw.version());
 		EXPECT_TRUE(r.ok());
 		for (SegmentId id : r.createdSegments) {
 			cw.setSegmentState(id, FoundationState::Built);
 		}
 		return r.id;
+	}
+
+	// The shipped construction config with one more opening type, "Shutter", that passes
+	// neither movement nor sight: the config folder copied with the type added to its materials.
+	bool loadWithAShutter() {
+		const std::filesystem::path shipped = constructionConfigFolder();
+		const std::filesystem::path folder =
+			std::filesystem::temp_directory_path() / ("vision-system-shutter-" + std::to_string(std::random_device{}()));
+		std::filesystem::copy(shipped, folder);
+		std::ifstream real(shipped / "materials.xml");
+		std::string	  materials((std::istreambuf_iterator<char>(real)), std::istreambuf_iterator<char>());
+		const std::size_t end = materials.find("</Opening>");
+		if (end == std::string::npos) {
+			return false;
+		}
+		materials.insert(end, R"(<Type name="Shutter">
+      <material>Wood</material>
+      <widthMeters>0.9</widthMeters>
+      <pathable>false</pathable>
+      <transparentToSight>false</transparentToSight>
+      <costItems>2.0</costItems>
+      <workUnits>40.0</workUnits>
+    </Type>
+  )");
+		std::ofstream(folder / "materials.xml", std::ios::trunc) << materials;
+		ConstructionRegistry::Get().clear();
+		const bool loaded = ConstructionRegistry::Get().load(folder.string());
+		std::filesystem::remove_all(folder);
+		return loaded && ConstructionRegistry::Get().getOpeningType("Shutter") != nullptr;
 	}
 
 	// Add a BUILT opening at parameter t.
@@ -105,6 +146,25 @@ namespace {
 		ap.defName = kTargetDefName;
 		world.addComponent<Appearance>(e, ap);
 		return e;
+	}
+
+	// A colonist-like mover: Position + AgentRadius (navigation's mover), an Appearance of the mover def,
+	// and its own Memory, so it looks back.
+	constexpr const char* kMoverDefName = "Test_VisionMover";
+
+	EntityID spawnMover(World& world, glm::vec2 where) {
+		const EntityID mover = spawnObserver(world, where);
+		Appearance	   appearance;
+		appearance.defName = kMoverDefName;
+		world.addComponent<Appearance>(mover, appearance);
+		world.addComponent<AgentRadius>(mover, AgentRadius{});
+		return mover;
+	}
+
+	const KnownDynamicEntity* sightingOf(World& world, EntityID observer, EntityID mover) {
+		const Memory* memory = world.getComponent<Memory>(observer);
+		const auto	  found = memory->knownDynamicEntities.find(mover);
+		return found == memory->knownDynamicEntities.end() ? nullptr : &found->second;
 	}
 
 	// Did the observer's Memory record the target's def at `at`?
@@ -143,19 +203,25 @@ namespace {
 		void SetUp() override {
 			ConstructionRegistry::Get().clear();
 			ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder()));
-			// ID 0 is the AssetRegistry's "invalid" sentinel. A fresh registry (these
-			// tests don't load assets) has an empty index, so prime a throwaway def to
-			// claim ID 0 before the target def, guaranteeing the target gets non-zero.
+			// ID 0 is the AssetRegistry's "invalid" sentinel. These tests don't load assets,
+			// so start from an empty index (an earlier suite can leave the shore def, which
+			// the system registers on its first tick, holding ID 0) and prime a throwaway def
+			// to claim ID 0 before the target and shore defs, guaranteeing both get non-zero.
 			auto& reg = AssetRegistry::Get();
-			if (reg.getDefNameId("Test_Vision_IdZeroReservation") == 0) {
-				reg.registerSyntheticDefinition("Test_Vision_IdZeroReservation", 0);
-			}
+			reg.clearDefinitions();
+			reg.registerSyntheticDefinition("Test_Vision_IdZeroReservation", 0);
 			// A synthetic discoverable def with one capability so memory keeps it.
 			reg.registerSyntheticDefinition(
 				kTargetDefName, static_cast<uint16_t>(1u << static_cast<size_t>(CapabilityType::Edible)));
 			ASSERT_NE(reg.getDefNameId(kTargetDefName), 0u) << "target def must get a non-zero id";
+			// Movers have no capabilities, like the colonist def.
+			reg.registerSyntheticDefinition(kMoverDefName, 0);
+			ASSERT_NE(reg.getDefNameId(kMoverDefName), 0u) << "mover def must get a non-zero id";
 		}
-		void TearDown() override { ConstructionRegistry::Get().clear(); }
+		void TearDown() override {
+			ConstructionRegistry::Get().clear();
+			AssetRegistry::Get().clearDefinitions();
+		}
 	};
 
 	// Drive a single immediate vision tick (interval 1 so update() never throttles).
@@ -255,10 +321,11 @@ TEST_F(VisionSystemTest, TargetOnSameSideIsVisible) {
 }
 
 // Indoors the polygon is built a rebuild step past sight, and what vision decides with it is held to
-// the sight circle round where the observer stands, as outdoors: a target just inside 30 m in a
-// direction between two of the polygon's rim vertices is seen, one 0.3 m past it is not though the
-// polygon covers it, and after a move short of the rebuild step the circle moves with him.
-TEST_F(VisionSystemTest, IndoorSightEndsAtTheSightCircle) {
+// the sight polygon round where the observer stands, the forest shape of equal ranges, as outdoors: a
+// target just inside the 64-gon's flat (29.963 m out) in a direction between two of its rim vertices
+// is seen, one 0.3 m past sight is not though the polygon covers it, and after a move short of the
+// rebuild step the sight polygon moves with him.
+TEST_F(VisionSystemTest, IndoorSightEndsAtTheSightPolygon) {
 	// West, half a side past rim vertex 32 (which lies along -x).
 	const float		angle = 3.14159265F * (1.0F + 1.0F / 64.0F);
 	const glm::vec2 heading{std::cos(angle), std::sin(angle)};
@@ -281,7 +348,8 @@ TEST_F(VisionSystemTest, IndoorSightEndsAtTheSightCircle) {
 		EXPECT_EQ(vision.polygonBuildCount(), 1u) << "no rebuild";
 		return remembers(world, observer, targetPos);
 	};
-	EXPECT_TRUE(seenAt(29.985F, observerPos)) << "inside the circle, past the 64-gon's flat";
+	EXPECT_TRUE(seenAt(29.95F, observerPos)) << "inside the 64-gon's flat";
+	EXPECT_FALSE(seenAt(29.985F, observerPos)) << "inside the circle, past the 64-gon's flat";
 	EXPECT_FALSE(seenAt(30.3F, observerPos)) << "sight plus 0.3 m: in the polygon, out of sight";
 	EXPECT_TRUE(seenAt(30.3F, observerPos + heading * 0.4F)) << "0.4 m on, within sight of where he stands";
 	EXPECT_FALSE(seenAt(29.9F, observerPos - heading * 0.4F)) << "0.4 m back, out of sight of where he stands";
@@ -306,6 +374,28 @@ TEST_F(VisionSystemTest, WallPastSightIsNotSeenThoughThePolygonReachesIt) {
 	const auto shape = sys.sightShape(observer);
 	ASSERT_TRUE(shape.has_value());
 	EXPECT_EQ(*shape->segmentsSeen, std::vector<SegmentId>{nearWall});
+}
+
+// The polygon is built from the walls a rebuild step past sight, so a move short of the step
+// that brings a target behind such a wall into sight leaves it hidden.
+TEST_F(VisionSystemTest, WallPastSightHidesWhatAMoveBringsIntoSight) {
+	ConstructionWorld cw;
+	buildWall(cw, {1500, 0}, {1500, 3000});
+	buildWall(cw, {-30200, -2000}, {-30200, 2000});
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	const EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	tick(sys);
+	ASSERT_EQ(sys.polygonBuildCount(), 1u);
+
+	world.getComponent<Position>(observer)->value = {-0.4F, 0.0F};
+	const glm::vec2 targetPos{-30.38F, 0.0F};
+	spawnTarget(world, targetPos);
+	tick(sys);
+	EXPECT_EQ(sys.polygonBuildCount(), 1u) << "no rebuild";
+	EXPECT_FALSE(remembers(world, observer, targetPos)) << "29.98 m off, behind the wall";
 }
 
 // Demolishing the wall (demote to Blueprint) bumps the version: the next tick
@@ -496,6 +586,232 @@ TEST_F(VisionSystemTest, SeenWallRememberedHiddenWallNot) {
 	EXPECT_FALSE(mem->knowsSegment(behind)) << "a wall behind the first is occluded and must not be seen";
 }
 
+// The shortest wall the tools allow is a soft body: it is left out of the visibility polygon, so a
+// target behind it is seen and the polygon is the plain sight polygon to his reach, yet a colonist who
+// sees it remembers it, and it is among his sight bodies.
+TEST_F(VisionSystemTest, WallStubIsLeftOutOfThePolygonAndStillRemembered) {
+	ConstructionWorld cw;
+	const SegmentId	  stub = buildWall(cw, {3000, -250}, {3000, 250});
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	const EntityID	observer = spawnObserver(world, {0.0F, 0.0F});
+	const glm::vec2 behind{5.0F, 0.0F};
+	spawnTarget(world, behind);
+	tick(sys);
+
+	EXPECT_TRUE(remembers(world, observer, behind)) << "the stub hides nothing";
+	const Memory* mem = world.getComponent<Memory>(observer);
+	EXPECT_TRUE(mem->knowsSegment(stub)) << "a stub he sees joins memory";
+	const std::optional<VisionSystem::SightShape> shape = sys.sightShape(observer);
+	ASSERT_TRUE(shape.has_value());
+	ASSERT_NE(shape->polygon, nullptr) << "any wall in reach takes the polygon, so the structure pass runs";
+	const std::optional<VisionSystem::SightBodies> bodies = sys.sightBodies(observer);
+	ASSERT_TRUE(bodies.has_value());
+	geometry::SightSideValues reachRanges{};
+	reachRanges.fill(bodies->reachMm);
+	EXPECT_EQ(*shape->polygon, geometry::starClippedToConvex(geometry::computeVisibilityPolygon({0, 0}, bodies->reachMm, {}), {0, 0}, geometry::forestShape({0, 0}, reachRanges)))
+		<< "nothing occludes: the unoccluded disc of his reach cut by the forest shape of it";
+	EXPECT_EQ(shape->path, VisionSystem::SightPath::Polygon);
+	ASSERT_EQ(bodies->bodies->size(), 1U);
+	EXPECT_EQ(bodies->bodies->front().source, vision::SightBody::Source::Wall);
+	EXPECT_EQ(bodies->bodies->front().kind, vision::BodyKind::Soft);
+	EXPECT_TRUE(bodies->shadowEdges->empty());
+}
+
+// A colonist standing still with a movement target he is not following walks nothing, so his lead
+// holds whatever the frame time and he builds once. A build stores its pass's lead with one walk step
+// more, so following the target at 2 m/s, a pass's walk taken up to 100 mm, fits the still build's
+// lead and rebuilds nothing.
+TEST_F(VisionSystemTest, LeadHoldsUnderFrameTimeJitter) {
+	ConstructionWorld cw;
+	buildWall(cw, {3000, -2000}, {3000, 2000});
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	sys.setUpdateInterval(1);
+	const EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	world.addComponent<MovementTarget>(observer, MovementTarget{.target = {5.0F, 0.0F}, .speed = 2.0F, .active = false});
+	constexpr std::array kFrames = {0.0121F, 0.0166F, 0.0213F, 0.0333F, 0.0158F};
+	for (int pass = 0; pass < 20; ++pass) {
+		sys.update(kFrames[static_cast<std::size_t>(pass) % kFrames.size()]);
+	}
+	EXPECT_EQ(sys.polygonBuildCount(), 1U) << "a still colonist rebuilt on frame time";
+
+	world.getComponent<MovementTarget>(observer)->active = true;
+	for (int pass = 0; pass < 20; ++pass) {
+		sys.update(pass % 2 == 0 ? 0.0163F : 0.0171F);
+	}
+	EXPECT_EQ(sys.polygonBuildCount(), 1U) << "jitter in the frame time moved the lead";
+	EXPECT_EQ(sys.sightBodies(observer)->reachLeadMm, VisionSystem::kSightRebuildStepMm + VisionSystem::kLeadWalkStepMm);
+}
+
+// On the plain disc an observer walking toward a wall takes the polygon path on the pass the wall's
+// near face comes within his reach, not at his next step-triggered build; until then he builds only
+// once a step.
+// A soft stub puts a build on the polygon path as an opaque wall does (spec 5.1), and is found the same.
+TEST_F(VisionSystemTest, PlainObserverTakesThePolygonOnThePassAWallComesIntoReach) {
+	for (const std::int64_t halfLengthMm : {std::int64_t{2000}, std::int64_t{250}}) {
+		ConstructionWorld cw;
+		buildWall(cw, {40000, -halfLengthMm}, {40000, halfLengthMm});
+		World		  world;
+		VisionSystem& sys = world.registerSystem<VisionSystem>();
+		sys.setConstructionWorld(&cw);
+		const EntityID	   observer = spawnObserver(world, {0.0F, 0.0F});
+		const std::int64_t reachMm	= 30000 + VisionSystem::kSightRebuildStepMm + VisionSystem::kLeadWalkStepMm;
+		const std::int64_t faceMm	= 40000 - construction::halfThicknessMm(cw.segments().front());
+		int				   firstPolygon = -1;
+		for (int pass = 0; pass <= 150 && firstPolygon < 0; ++pass) {
+			world.getComponent<Position>(observer)->value = {0.1F * static_cast<float>(pass), 0.0F};
+			tick(sys);
+			if (sys.polygonBuildCount() > 0) {
+				firstPolygon = pass;
+			}
+		}
+		int expected = 0;
+		while (nav::toMm({0.1F * static_cast<float>(expected), 0.0F}).x + reachMm < faceMm) {
+			++expected;
+		}
+		EXPECT_EQ(firstPolygon, expected) << (halfLengthMm == 250 ? "the stub" : "the wall");
+		// One plain build a step walked (more than 0.5 m, so every sixth pass), then the polygon.
+		EXPECT_EQ(sys.buildCount(), static_cast<std::uint64_t>((expected - 1) / 6 + 1 + 1));
+		EXPECT_EQ(sys.polygonBuildCount(), 1U);
+		EXPECT_EQ(sys.sightBodies(observer)->bodies->front().kind,
+				  halfLengthMm == 250 ? vision::BodyKind::Soft : vision::BodyKind::Opaque);
+	}
+}
+
+// A walker whose walk to the next pass jitters across a 100 mm boundary (98 and 102 mm a pass) builds
+// once a step and no more: a build's stored lead holds one walk step past its pass's. Walking 0.1 m a
+// pass for 20 passes: builds at 0, 0.6, 1.2, and 1.8 m, four.
+TEST_F(VisionSystemTest, LeadJitterAcrossAStepBoundaryRebuildsNone) {
+	ConstructionWorld cw;
+	buildWall(cw, {4000, -2000}, {4000, 2000});
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	sys.setUpdateInterval(1);
+	const EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	world.addComponent<MovementTarget>(observer, MovementTarget{.target = {5.0F, 0.0F}, .speed = 2.0F, .active = true});
+	for (int pass = 0; pass < 20; ++pass) {
+		world.getComponent<Position>(observer)->value = {0.1F * static_cast<float>(pass), 0.0F};
+		sys.update(pass % 2 == 0 ? 0.049F : 0.051F);
+	}
+	EXPECT_EQ(sys.polygonBuildCount(), 4U);
+	EXPECT_EQ(sys.sightBodies(observer)->reachLeadMm, VisionSystem::kSightRebuildStepMm + 2 * VisionSystem::kLeadWalkStepMm);
+}
+
+namespace {
+	// Walks `observer` to `x` metres along +x and runs one pass of `dt`; true when it built.
+	bool walkPass(World& world, VisionSystem& sys, EntityID observer, float x, float dt) {
+		const std::uint64_t before = sys.buildCount();
+		world.getComponent<Position>(observer)->value = {x, 0.0F};
+		sys.update(dt);
+		return sys.buildCount() != before;
+	}
+
+	constexpr std::int64_t kWalkingLeadMm = VisionSystem::kSightRebuildStepMm + 2 * VisionSystem::kLeadWalkStepMm;
+} // namespace
+
+// One hitch frame (0.29 s, a 580 mm walk taken up to 600) mid-walk rebuilds once with its longer lead, and the next
+// step build stores the walking lead again. Walking 0.11 m a pass at 2 m/s for 24 passes, the hitch
+// on pass 7: builds at passes 0, 5, 7 (the hitch), 12, 17, and 22.
+TEST_F(VisionSystemTest, HitchFrameLeadIsGoneAtTheNextStepBuild) {
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setUpdateInterval(1);
+	const EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	world.addComponent<MovementTarget>(observer, MovementTarget{.target = {50.0F, 0.0F}, .speed = 2.0F, .active = true});
+	std::vector<int>		  builtAt;
+	std::vector<std::int64_t> leads;
+	for (int pass = 0; pass < 24; ++pass) {
+		if (walkPass(world, sys, observer, 0.11F * static_cast<float>(pass), pass == 7 ? 0.29F : 0.0163F)) {
+			builtAt.push_back(pass);
+			leads.push_back(sys.sightBodies(observer)->reachLeadMm);
+		}
+	}
+	EXPECT_EQ(builtAt, (std::vector<int>{0, 5, 7, 12, 17, 22}));
+	EXPECT_EQ(leads, (std::vector<std::int64_t>{kWalkingLeadMm, kWalkingLeadMm, 1200, kWalkingLeadMm, kWalkingLeadMm, kWalkingLeadMm}));
+}
+
+// At 10x a pass walks 326 mm, a lead of 900 that rebuilds once; back at 1x the 10x lead stays only
+// until the next step build, which stores the 1x lead. Walking 0.11 m a pass at 2 m/s, 10x from pass
+// 6 to 9: builds at passes 0, 5, 6 (10x), and 11.
+TEST_F(VisionSystemTest, TenTimesLeadIsGoneAtTheNextStepBuildAtOneTimes) {
+	World		  world;
+	TimeSystem&	  time = world.registerSystem<TimeSystem>();
+	VisionSystem& sys  = world.registerSystem<VisionSystem>();
+	sys.setUpdateInterval(1);
+	const EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	world.addComponent<MovementTarget>(observer, MovementTarget{.target = {50.0F, 0.0F}, .speed = 2.0F, .active = true});
+	const float		 oneTimes = time.effectiveTimeScale();
+	std::vector<int> builtAt;
+	for (int pass = 0; pass < 14; ++pass) {
+		time.setSpeed(pass >= 6 && pass <= 9 ? GameSpeed::VeryFast : GameSpeed::Normal);
+		if (walkPass(world, sys, observer, 0.11F * static_cast<float>(pass), 0.0163F / oneTimes)) {
+			builtAt.push_back(pass);
+			if (pass == 6) {
+				EXPECT_EQ(sys.sightBodies(observer)->reachLeadMm, 1000);
+				EXPECT_EQ(sys.sightBodies(observer)->leadMm, 826) << "the step and the pass's walk as it is, 2 m/s for 0.163 s at 10x";
+			}
+		}
+	}
+	EXPECT_EQ(builtAt, (std::vector<int>{0, 5, 6, 11}));
+	EXPECT_EQ(sys.sightBodies(observer)->reachLeadMm, kWalkingLeadMm);
+}
+
+// A walker who hitches, stops, stands, and walks on stores a fresh walker's lead at his next step
+// build: nothing from before that build's pass is kept.
+TEST_F(VisionSystemTest, WalkingAgainAfterStandingStoresAFreshWalkersLead) {
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setUpdateInterval(1);
+	const EntityID walker = spawnObserver(world, {0.0F, 0.0F});
+	world.addComponent<MovementTarget>(walker, MovementTarget{.target = {50.0F, 0.0F}, .speed = 2.0F, .active = true});
+	walkPass(world, sys, walker, 0.0F, 0.0163F);
+	ASSERT_TRUE(walkPass(world, sys, walker, 0.1F, 0.29F)) << "the hitch";
+	ASSERT_EQ(sys.sightBodies(walker)->reachLeadMm, 1200);
+	world.getComponent<MovementTarget>(walker)->active = false;
+	for (int pass = 0; pass < 10; ++pass) {
+		EXPECT_FALSE(walkPass(world, sys, walker, 0.1F, 0.0163F)) << "standing builds nothing";
+	}
+	world.getComponent<MovementTarget>(walker)->active = true;
+	float x = 0.1F;
+	while (!walkPass(world, sys, walker, x += 0.11F, 0.0163F)) {
+		ASSERT_LT(x, 2.0F);
+	}
+
+	const EntityID fresh = spawnObserver(world, {500.0F, 0.0F});
+	world.addComponent<MovementTarget>(fresh, MovementTarget{.target = {550.0F, 0.0F}, .speed = 2.0F, .active = true});
+	sys.update(0.0163F);
+	EXPECT_EQ(sys.sightBodies(walker)->reachLeadMm, sys.sightBodies(fresh)->reachLeadMm);
+	EXPECT_EQ(sys.sightBodies(walker)->reachLeadMm, kWalkingLeadMm);
+}
+
+// A tunable only the cover reads leaves every shape; one the shape is built from rebuilds it.
+TEST_F(VisionSystemTest, OnlyShapeTunablesRebuildShapes) {
+	ConstructionWorld cw;
+	buildWall(cw, {3000, -2000}, {3000, 2000});
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	spawnObserver(world, {0.0F, 0.0F});
+	tick(sys);
+	ASSERT_EQ(sys.polygonBuildCount(), 1U);
+	vision::SightTunables tunables = sys.sightTunables();
+	tunables.shadowEdgeWidthMm	   = 2000;
+	tunables.sightFeatherMm		   = 900;
+	sys.setSightTunables(tunables);
+	tick(sys);
+	EXPECT_EQ(sys.polygonBuildCount(), 1U) << "a cover tunable rebuilt the shape";
+	EXPECT_EQ(sys.sightTunables().shadowEdgeWidthMm, 2000);
+	tunables.wallOpaqueLeastDiameterMm = 900;
+	sys.setSightTunables(tunables);
+	tick(sys);
+	EXPECT_EQ(sys.polygonBuildCount(), 2U);
+}
+
 // An opening on a seen wall is recorded too.
 TEST_F(VisionSystemTest, OpeningOnSeenWallRemembered) {
 	ConstructionWorld cw;
@@ -514,6 +830,86 @@ TEST_F(VisionSystemTest, OpeningOnSeenWallRemembered) {
 	ASSERT_NE(mem, nullptr);
 	EXPECT_TRUE(mem->knowsSegment(wall));
 	EXPECT_TRUE(mem->knowsOpening(door)) << "an opening on a seen wall must be recorded";
+}
+
+// A door seen through its own gap at a steep angle, from 0.2 m off the wall's face and 2.25 m
+// short of the gap, is recorded: every ray through the gap ends on the far jamb before the
+// centerline, but crosses the gap's mouth on the near face.
+TEST_F(VisionSystemTest, DoorSeenSteeplyThroughItsGapRemembered) {
+	ConstructionWorld cw;
+	const SegmentId wall = buildWall(cw, {1500, 0}, {1500, 6000});
+	const OpeningId door = addBuiltOpening(cw, wall, 0.5F, "Door");
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	const EntityID observer = spawnObserver(world, {1.2F, 0.3F});
+	tick(sys);
+
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_TRUE(mem->knowsSegment(wall));
+	EXPECT_TRUE(mem->knowsOpening(door));
+}
+
+// An opening that does not pass sight leaves its wall solid, and is seen on the face toward the
+// observer: from either side, head on.
+TEST_F(VisionSystemTest, OpaqueOpeningSeenHeadOnFromEitherSideRemembered) {
+	ASSERT_TRUE(loadWithAShutter());
+	ConstructionWorld cw;
+	const SegmentId wall	= buildWall(cw, {1500, 0}, {1500, 3000});
+	const OpeningId shutter = addBuiltOpening(cw, wall, 0.5F, "Shutter");
+	for (const glm::vec2 where : {glm::vec2{0.5F, 1.5F}, glm::vec2{2.5F, 1.5F}}) {
+		World		  world;
+		VisionSystem& sys = world.registerSystem<VisionSystem>();
+		sys.setConstructionWorld(&cw);
+		const EntityID observer = spawnObserver(world, where);
+		tick(sys);
+		const Memory* mem = world.getComponent<Memory>(observer);
+		ASSERT_NE(mem, nullptr);
+		EXPECT_TRUE(mem->knowsOpening(shutter)) << "from x = " << where.x;
+	}
+}
+
+// An opaque opening at the middle of a heavy wall that runs at a slant, seen head on: its face
+// span stays outside the wall's outlined face though both are rounded to the millimetre.
+TEST_F(VisionSystemTest, OpaqueOpeningOnASlantedWallSeenHeadOnRemembered) {
+	ASSERT_TRUE(loadWithAShutter());
+	ConstructionWorld cw;
+	const SegmentId wall	= buildWall(cw, {0, 0}, {1037, 1779}, "Heavy");
+	const OpeningId shutter = addBuiltOpening(cw, wall, 0.5F, "Shutter");
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	const EntityID observer = spawnObserver(world, {6.566F, -2.636F}); // 7 m off the right face's middle
+	tick(sys);
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_TRUE(mem->knowsSegment(wall));
+	EXPECT_TRUE(mem->knowsOpening(shutter));
+}
+
+// Openings on a wall hidden behind another are not seen through it, by either face: a door
+// and a shutter on the hidden wall, a solid wall between them and the observer.
+TEST_F(VisionSystemTest, OpeningsBehindAWallNotRemembered) {
+	ASSERT_TRUE(loadWithAShutter());
+	ConstructionWorld cw;
+	buildWall(cw, {1500, -3000}, {1500, 6000});
+	const SegmentId hidden	= buildWall(cw, {3000, 0}, {3000, 3000});
+	const OpeningId door	= addBuiltOpening(cw, hidden, 0.3F, "Door");
+	const OpeningId shutter = addBuiltOpening(cw, hidden, 0.75F, "Shutter");
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	const EntityID observer = spawnObserver(world, {0.5F, 1.5F});
+	tick(sys);
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_FALSE(mem->knowsSegment(hidden));
+	EXPECT_FALSE(mem->knowsOpening(door));
+	EXPECT_FALSE(mem->knowsOpening(shutter));
 }
 
 // A long wall whose endpoints are beyond the sight radius but whose span the
@@ -538,6 +934,69 @@ TEST_F(VisionSystemTest, LongWallSeenViaEdgeCrossing) {
 	const Memory* mem = world.getComponent<Memory>(observer);
 	ASSERT_NE(mem, nullptr);
 	EXPECT_TRUE(mem->knowsSegment(wall)) << "long wall span must be seen via the edge-crossing fallback";
+}
+
+// The structure pass skips the walls' back faces and finds the same walls as testing every
+// edge would: from each eye of a grid round a room with a door and a window, an L corner and a
+// T junction, the walls seen are those with an edge on or across the sight polygon.
+TEST_F(VisionSystemTest, StructurePassSkippingBackFacesSeesTheSameWalls) {
+	ConstructionWorld cw;
+	const SegmentId south = buildWall(cw, {0, 0}, {4000, 0});
+	const SegmentId east  = buildWall(cw, {4000, 0}, {4000, 4000});
+	buildWall(cw, {4000, 4000}, {0, 4000});
+	buildWall(cw, {0, 4000}, {0, 0});
+	addBuiltOpening(cw, south, 0.5F, "Door");
+	addBuiltOpening(cw, east, 0.5F, "Window");
+	buildWall(cw, {7000, 0}, {11000, 0});
+	buildWall(cw, {11000, 0}, {11000, 3000});
+	buildWall(cw, {7000, 6000}, {11000, 6000});
+	buildWall(cw, {9000, 6000}, {9000, 9000});
+
+	constexpr float kSightMeters = 6.0F;
+	constexpr float kGridMeters	 = 0.7F;
+	int				differ		 = 0;
+	for (float x = -2.0F; x <= 13.0F; x += kGridMeters) {
+		for (float y = -2.0F; y <= 10.0F; y += kGridMeters) {
+			World		  world;
+			VisionSystem& sys = world.registerSystem<VisionSystem>();
+			sys.setConstructionWorld(&cw);
+			const EntityID observer							 = spawnObserver(world, {x, y});
+			world.getComponent<Memory>(observer)->sightRadius = kSightMeters;
+			tick(sys);
+			const auto shape = sys.sightShape(observer);
+			ASSERT_TRUE(shape.has_value());
+			std::vector<SegmentId> expected;
+			if (shape->polygon != nullptr) {
+				const Vec2i64		 centre	  = nav::toMm(shape->center);
+				const std::int64_t	 radiusMm = std::llround(static_cast<double>(shape->radius) * 1000.0);
+				const geometry::Ring sight =
+					geometry::starClippedToConvex(*shape->polygon, centre, geometry::sightPolygon(centre, radiusMm));
+				for (const GeometryIndex::OccluderRecord& occluder : sys.geometry().occluders()) {
+					if (!geometry::withinDistanceOfSegment(centre, occluder.seg.a, occluder.seg.b, radiusMm)) {
+						continue;
+					}
+					bool seen = geometry::pointInPolygon(occluder.seg.a, sight) != geometry::PointInPolygon::Outside ||
+								geometry::pointInPolygon(occluder.seg.b, sight) != geometry::PointInPolygon::Outside;
+					for (std::size_t edge = 0; edge < sight.size() && !seen; ++edge) {
+						seen = geometry::intersectSegments(occluder.seg.a, occluder.seg.b, sight[edge], sight[(edge + 1) % sight.size()])
+								   .relation != geometry::SegmentRelation::Disjoint;
+					}
+					if (seen) {
+						expected.push_back(occluder.source);
+					}
+				}
+			}
+			std::ranges::sort(expected);
+			expected.erase(std::unique(expected.begin(), expected.end()), expected.end());
+			std::vector<SegmentId> found = *shape->segmentsSeen;
+			std::ranges::sort(found);
+			if (found != expected && ++differ <= 5) {
+				ADD_FAILURE() << "from (" << x << ", " << y << ") the pass sees " << found.size() << " walls, every edge "
+							  << expected.size();
+			}
+		}
+	}
+	EXPECT_EQ(differ, 0);
 }
 
 // An outdoor observer (no walls in range) records no structures.
@@ -817,8 +1276,12 @@ TEST_F(VisionSystemTest, ShorePointsInSightAreRemembered) {
 
 // The landing crew knows the landing area at tick 0: placed and ECS things 100 m from the drop,
 // far past his own sight, and nothing past kLandingSightMeters. A thing the landing cleared from
-// round the crew before the call is not remembered.
+// round the crew before the call is not remembered. It is the plain disc the seen record commits
+// (sight-softening.md 5.3): a wall between the drop and a thing hides nothing, and no structure is
+// remembered.
 TEST_F(VisionSystemTest, LandingCrewKnowsTheLandingArea) {
+	ConstructionWorld cw;
+	const SegmentId	  wall = buildWall(cw, {250000, 195000}, {250000, 205000});
 	const glm::vec2						drop{200.0F, 200.0F};
 	const glm::vec2						nearPlaced = drop + glm::vec2{100.0F, 0.0F};
 	const glm::vec2						farPlaced = drop + glm::vec2{160.0F, 0.0F};
@@ -831,6 +1294,7 @@ TEST_F(VisionSystemTest, LandingCrewKnowsTheLandingArea) {
 	World		  world;
 	VisionSystem& sys = world.registerSystem<VisionSystem>();
 	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
 	const glm::vec2 nearEcs = drop + glm::vec2{0.0F, 100.0F};
 	const glm::vec2 farEcs = drop + glm::vec2{0.0F, -160.0F};
 	spawnTarget(world, nearEcs);
@@ -840,7 +1304,8 @@ TEST_F(VisionSystemTest, LandingCrewKnowsTheLandingArea) {
 	const EntityID member = spawnObserver(world, drop + glm::vec2{0.5F, 0.0F});
 	sys.rememberArea(member, drop, NavigationSystem::kLandingSightMeters);
 
-	EXPECT_TRUE(remembers(world, member, nearPlaced)) << "a placed thing 100 m from the drop";
+	EXPECT_TRUE(remembers(world, member, nearPlaced)) << "a placed thing 100 m from the drop, behind a wall";
+	EXPECT_FALSE(world.getComponent<Memory>(member)->knowsSegment(wall)) << "no structure pass";
 	EXPECT_TRUE(remembers(world, member, nearEcs)) << "an ECS thing 100 m from the drop";
 	EXPECT_FALSE(remembers(world, member, farPlaced)) << "160 m is past the landing area";
 	EXPECT_FALSE(remembers(world, member, farEcs)) << "160 m is past the landing area";
@@ -869,4 +1334,113 @@ TEST_F(VisionSystemTest, LaterColonistDoesNotKnowTheLandingArea) {
 	EXPECT_TRUE(remembers(world, arrival, inSight));
 	EXPECT_FALSE(remembers(world, arrival, nearPlaced)) << "a later arrival was not in the crash";
 	EXPECT_TRUE(remembers(world, member, nearPlaced)) << "the crew keeps the landing area past its first look";
+}
+
+// --- Movers -------------------------------------------------------------------
+
+// Two colonists in sight of each other each remember the other: its kind, where it stood, and the game
+// time of the sighting. Neither remembers itself, and neither becomes a world entity.
+TEST_F(VisionSystemTest, MoverInSightIsRememberedWithKindPositionAndTime) {
+	World		  world;
+	TimeSystem&	  clock = world.registerSystem<TimeSystem>();
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	clock.skipTime(42.0F);
+
+	const EntityID first = spawnMover(world, {0.0F, 0.0F});
+	const EntityID second = spawnMover(world, {5.0F, 0.0F});
+	tick(sys);
+
+	const KnownDynamicEntity* sighting = sightingOf(world, first, second);
+	ASSERT_NE(sighting, nullptr);
+	EXPECT_EQ(sighting->entityId, second);
+	EXPECT_EQ(sighting->defNameId, AssetRegistry::Get().getDefNameId(kMoverDefName));
+	EXPECT_EQ(sighting->lastKnownPosition, glm::vec2(5.0F, 0.0F));
+	EXPECT_DOUBLE_EQ(sighting->lastSeenAt, clock.simulationSeconds());
+	EXPECT_NE(sightingOf(world, second, first), nullptr) << "the other looks back";
+	EXPECT_EQ(sightingOf(world, first, first), nullptr) << "a colonist does not record itself";
+	EXPECT_EQ(world.getComponent<Memory>(first)->knownDynamicEntities.size(), 1u);
+	EXPECT_EQ(world.getComponent<Memory>(first)->worldEntityCount(), 0u);
+}
+
+// The rule static things go by holds for movers: out of sight radius, or behind a wall, is unseen.
+TEST_F(VisionSystemTest, MoverOutOfRangeOrBehindAWallIsNotRemembered) {
+	ConstructionWorld cw;
+	buildWall(cw, {1500, 0}, {1500, 3000});
+
+	World		  world;
+	world.registerSystem<TimeSystem>();
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	const EntityID observer = spawnMover(world, {0.5F, 1.5F});
+	const EntityID behindWall = spawnMover(world, {2.5F, 1.5F});
+	const EntityID farAway = spawnMover(world, {0.5F, 1.5F + kDefaultSightRadius + 5.0F});
+	const EntityID sameSide = spawnMover(world, {0.5F, -3.0F});
+	tick(sys);
+
+	EXPECT_EQ(sightingOf(world, observer, behindWall), nullptr) << "a wall hides him";
+	EXPECT_EQ(sightingOf(world, observer, farAway), nullptr) << "past sight radius";
+	EXPECT_NE(sightingOf(world, observer, sameSide), nullptr);
+}
+
+// Seeing a mover again moves its one entry to the new place and time.
+TEST_F(VisionSystemTest, SecondSightingUpdatesTheSameEntry) {
+	World		  world;
+	TimeSystem&	  clock = world.registerSystem<TimeSystem>();
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+
+	const EntityID observer = spawnMover(world, {0.0F, 0.0F});
+	const EntityID walker = spawnMover(world, {5.0F, 0.0F});
+	tick(sys);
+	const double firstSeen = sightingOf(world, observer, walker)->lastSeenAt;
+
+	world.getComponent<Position>(walker)->value = {8.0F, 3.0F};
+	clock.skipTime(15.0F);
+	tick(sys);
+
+	const KnownDynamicEntity* sighting = sightingOf(world, observer, walker);
+	ASSERT_NE(sighting, nullptr);
+	EXPECT_EQ(world.getComponent<Memory>(observer)->knownDynamicEntities.size(), 1u);
+	EXPECT_EQ(sighting->lastKnownPosition, glm::vec2(8.0F, 3.0F));
+	EXPECT_DOUBLE_EQ(sighting->lastSeenAt, firstSeen + 15.0);
+}
+
+// A mover that no longer exists stays in memory as last seen (memory is a snapshot), ages out of the
+// recency query, and is never read back through the world. One born into its reused index is another
+// mover with its own entry, not an update of the old one.
+TEST_F(VisionSystemTest, DestroyedMoverStaysAsSeenAndAReusedIndexIsAnotherMover) {
+	World		  world;
+	TimeSystem&	  clock = world.registerSystem<TimeSystem>();
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+
+	const EntityID observer = spawnMover(world, {0.0F, 0.0F});
+	const EntityID gone = spawnMover(world, {5.0F, 0.0F});
+	tick(sys);
+	const double seenAt = sightingOf(world, observer, gone)->lastSeenAt;
+
+	world.destroyEntity(gone);
+	clock.skipTime(10.0F);
+	tick(sys);
+	const KnownDynamicEntity* kept = sightingOf(world, observer, gone);
+	ASSERT_NE(kept, nullptr);
+	EXPECT_EQ(kept->lastKnownPosition, glm::vec2(5.0F, 0.0F));
+	EXPECT_DOUBLE_EQ(kept->lastSeenAt, seenAt);
+
+	const EntityID newcomer = spawnMover(world, {-4.0F, 2.0F});
+	ASSERT_EQ(getIndex(newcomer), getIndex(gone)) << "precondition: the index is reused";
+	ASSERT_NE(newcomer, gone);
+	tick(sys);
+
+	const Memory& memory = *world.getComponent<Memory>(observer);
+	EXPECT_EQ(memory.knownDynamicEntities.size(), 2u);
+	EXPECT_EQ(sightingOf(world, observer, gone)->lastKnownPosition, glm::vec2(5.0F, 0.0F)) << "the old entry is untouched";
+	EXPECT_EQ(sightingOf(world, observer, newcomer)->lastKnownPosition, glm::vec2(-4.0F, 2.0F));
+
+	const uint32_t			   kind = AssetRegistry::Get().getDefNameId(kMoverDefName);
+	std::vector<EntityID>	   company;
+	memory.forEachDynamicEntitySeenWithin(kind, clock.simulationSeconds(), 5.0, [&](const KnownDynamicEntity& known) {
+		company.push_back(known.entityId);
+		return true;
+	});
+	EXPECT_EQ(company, std::vector<EntityID>{newcomer}) << "the gone mover was seen 10 minutes ago";
 }

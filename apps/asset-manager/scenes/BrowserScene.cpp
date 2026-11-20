@@ -4,9 +4,11 @@
 #include "GroundBakeView.h"
 #include "SceneTypes.h"
 
-#include <assets/AssetDefinition.h>
 #include <application/App.h>
+#include <assets/AssetBootstrap.h>
+#include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
+#include <assets/RecipeRegistry.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <theme/Theme.h>
@@ -90,10 +92,13 @@ namespace {
 			if (const std::filesystem::path src = findSourceAssetsRoot(); !src.empty()) {
 				assetsRoot = (src / "world").string();
 				sharedScripts = (src / "shared" / "scripts").string();
+				recipes = std::filesystem::exists(src / "recipes") ? (src / "recipes").string()
+																   : Foundation::findResourceString("assets/recipes");
 				LOG_INFO(Engine, "AssetManager: live source assets at %s", assetsRoot.c_str());
 			} else {
 				assetsRoot = Foundation::findResourceString("assets/world");
 				sharedScripts = Foundation::findResourceString("assets/shared/scripts");
+				recipes = Foundation::findResourceString("assets/recipes");
 			}
 			refreshNames();
 
@@ -175,9 +180,9 @@ namespace {
 		}
 
 		void updateSummary() {
-			const assets::ValidationReport&			report = assets::AssetRegistry::Get().getValidationReport();
-			const int								errors = report.errorCount();
-			ui::Text*								shown = summary.get();
+			const assets::ValidationReport& report = assets::AssetRegistry::Get().getValidationReport();
+			const int errors = report.errorCount() + static_cast<int>(assets::RecipeRegistry::Get().problems().size());
+			ui::Text* shown = summary.get();
 			shown->setText(
 				std::to_string(allNames.size()) + " assets    -    " + std::to_string(errors) + " errors, " +
 				std::to_string(report.warningCount()) + " warnings"
@@ -216,12 +221,7 @@ namespace {
 		void reload() {
 			asset_manager::AssetThumbnail::clearCache();
 			asset_manager::GroundBakeView::clearCache();
-			auto& registry = assets::AssetRegistry::Get();
-			registry.clear();
-			if (!sharedScripts.empty()) {
-				registry.setSharedScriptsPath(sharedScripts);
-			}
-			registry.loadDefinitionsFromFolder(assetsRoot);
+			assets::loadAssetSystem({.definitions = assetsRoot, .sharedScripts = sharedScripts, .recipes = recipes}, false);
 			refreshNames();
 			updateSummary();
 
@@ -240,6 +240,8 @@ namespace {
 			list = tree.addChild<ui::Component>(
 				{.id = "am_tree_layout", .layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column}}
 			);
+
+			addRecipeProblems();
 
 			const std::string								needle = toLower(searchText);
 			std::map<std::string, std::vector<std::string>> groups;
@@ -269,18 +271,39 @@ namespace {
 			}
 		}
 
+		// A recipe has no asset to select, so the recipes' problems head the tree, shown whatever the search.
+		void addRecipeProblems() {
+			const std::vector<std::string>& problems = assets::RecipeRegistry::Get().problems();
+			if (problems.empty()) {
+				return;
+			}
+			std::string text;
+			for (const std::string& problem : problems) {
+				text += (text.empty() ? "[error] " : "\n[error] ") + problem;
+			}
+			list.addChild<ui::Text>({.layout = {.flexShrink = 0.0F}, .style = ui::styles::label, .text = "RECIPES"});
+			list.addChild<ui::Text>({
+				.id = "am_recipe_problems",
+				.layout = {.flexShrink = 0.0F},
+				.style = ui::styles::text::body.extend({.color = ui().getTheme().get(t::color::statusCrit)}),
+				.text = text,
+				.wrap = true,
+			});
+		}
+
 		ui::Ref<ui::Text>						summary;
 		ui::Ref<ui::Component>					tree;
 		ui::Ref<ui::Component>					list;
 		ui::Ref<asset_manager::AssetDetailView> detail;
 
-		std::string				 assetsRoot;
-		std::string				 sharedScripts;
-		std::vector<std::string> allNames;
-		std::string				 searchText;
-		std::string				 selected;
-		std::set<std::string>	 collapsed;
-		bool					 pendingRebuild = false;
+		std::string					assetsRoot;
+		std::string					sharedScripts;
+		std::string					recipes;
+		std::vector<std::string>	allNames;
+		std::string					searchText;
+		std::string					selected;
+		std::set<std::string>		collapsed;
+		bool						pendingRebuild = false;
 		Renderer::CoordinateSystem* coordinateSystem = nullptr; // the app's
 	};
 

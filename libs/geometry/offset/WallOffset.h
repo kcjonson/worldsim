@@ -23,7 +23,7 @@
 namespace geometry {
 
 	// A span of a wall's centerline left open (a door or window), in mm from the
-	// segment's `a` end. Only wallPiecesAndOutline reads gaps. The same span on the segment listed b to a, length L, is
+	// segment's `a` end. Only wallSpans and wallPiecesAndOutline read gaps. The same span on the segment listed b to a, length L, is
 	// {round(L - toMm), round(L - fromMm)}, and resolves identically.
 	struct WallGap {
 		std::int64_t fromMm = 0;
@@ -146,13 +146,69 @@ namespace geometry {
 	// endpoint (exact Vec2i64 ==, the whole point of integer quantization).
 	// Every band and junction ring is validated: simple, CCW, non-zero area; any
 	// degenerate result sets a failing status and returns (reject-don't-repair,
-	// D4). After validation each ring is simplified (collinear-vertex collapse,
-	// sub-mm sliver drop) per the Clipper2 post-op concept (D2). This is all nav
+	// D4), with one exception: where a band fails, the miters beside it that are
+	// within 20 degrees of straight (near resolveJunction's step cut, whose
+	// trims can outrun a short wall) are joined as steps once more, and
+	// only what still fails is rejected; corners further off keep their miters.
+	// A graph whose bands all succeed never takes that path, so
+	// resolveJunction alone agrees with it there and only there. After
+	// validation each ring is simplified (collinear-vertex collapse, sub-mm
+	// sliver drop) per the Clipper2 post-op concept (D2). This is all nav
 	// needs; the drawn shape, cut at openings and outlined, is
 	// wallPiecesAndOutline's. Apart from segment indices and where a ring's vertex
 	// list starts, nothing in the result depends on segment order or on which end
 	// of a segment is `a`.
 	WallBands resolveWallBands(const std::vector<WallSegment>& segments, double miterLimit);
+
+	// Whether resolveWallBands accepted the graph; a rejected one has no usable bands.
+	[[nodiscard]] inline bool bandsAccepted(const WallBands& bands) {
+		return bands.status == OffsetStatus::Ok;
+	}
+
+	// The connected wall graphs among `segments`: indices into it, grouped where
+	// segments share an endpoint position exactly (resolveWallBands' rule for the
+	// walls meeting at a vertex), chained through every shared endpoint. Each
+	// group lists its members in ascending order and the groups are ordered by
+	// their smallest member, so the result does not depend on which end of a
+	// segment is `a`. Every index appears in exactly one group; no segments, no
+	// groups.
+	std::vector<std::vector<std::size_t>> connectedWallGraphs(const std::vector<WallSegment>& segments);
+
+	// The `gap` of a WallSpan that covers no gap.
+	constexpr std::size_t kSolidSpan = static_cast<std::size_t>(-1);
+
+	// One stretch of a segment's trimmed band: solid wall, or open over the gap
+	// at index `gap` in that segment's list of gaps (in the order given).
+	struct WallSpan {
+		Ring		ring; // CCW
+		std::size_t gap = kSolidSpan;
+	};
+
+	// Per segment of `segments` as `bands` (their resolveWallBands result, status
+	// Ok) resolved them, the spans that tile its trimmed band given `gaps` (one
+	// list per segment, or none at all), in order from the segment's
+	// lexicographically smaller endpoint, so the same whichever end is `a`. The
+	// solid spans are wallPiecesAndOutline's pieces, ring for ring and in the
+	// same order. A gap span takes its corners from the caps of the solid spans
+	// beside it (or of the trimmed band at an end), so neighbouring spans share
+	// their two corners exactly. Gaps are clamped to the trimmed band, an opening
+	// of less than 6 mm of the band is ignored, and a run of wall under 6 mm
+	// beside a gap (or one that makes no valid ring) belongs to the gap span
+	// beside it, so the spans still cover the band. Where a run between two gaps
+	// folds away, one open stretch covers both; it is split where the later gap
+	// starts. A segment without gaps is one solid span, its band. Reads only the
+	// trims of `bands`; a `bands` that is not Ok, or whose trims do not match
+	// `segments`, gives every segment no spans.
+	//
+	// The gaps of one segment must not overlap one another. If they do, the spans
+	// still tile the band, but the tags follow start positions, not extents: an
+	// open stretch is split where each later-starting gap begins (when that is at
+	// least 1 mm past the last split and 1 mm short of the stretch's end, else it
+	// gets no span), and from there it is tagged with that gap up to the next split
+	// or the stretch's end, past the gap's own end. So the overlap goes to the
+	// later gap, and a gap nested inside another takes the outer gap's tail.
+	std::vector<std::vector<WallSpan>> wallSpans(const std::vector<WallSegment>& segments,
+												 const std::vector<std::vector<WallGap>>& gaps, const WallBands& bands);
 
 	// The drawn shape of a resolved wall graph, cut at its openings.
 	struct WallPiecesAndOutline {

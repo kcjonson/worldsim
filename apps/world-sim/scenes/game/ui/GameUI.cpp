@@ -2,6 +2,7 @@
 
 #include "scenes/shared/SalalUi.h"
 
+#include <primitives/Primitives.h>
 #include <ui/Context.h>
 
 #include <algorithm>
@@ -13,6 +14,8 @@ namespace world_sim {
 		constexpr float kEdge = 12.0F;			  // the HUD's distance from the viewport's edges
 		constexpr float kRightStackTop = 60.0F;	  // just below the top bar
 		constexpr float kDockBottom = 12.0F;	  // the gameplay bar's distance from the bottom
+		// The dock's box spans the bottom edge under the corner panels on purpose; only its children take the pointer.
+		constexpr int kDockLayer = -1;
 		constexpr float kBuildMenuBottom = 70.0F; // above the gameplay bar
 		constexpr float kTaskListRoom = 100.0F;	  // the viewport height the task list leaves free
 		// Toasts stack up from the bottom right, above the zoom column, which owns the corner.
@@ -59,14 +62,18 @@ namespace world_sim {
 			.onZoomReset = args.onZoomReset,
 		});
 
-		// The bottom middle: the construction strip, while a structure tool is active, over the gameplay bar.
+		// The bottom middle, top down: the key guide and the construction strip while a drawing tool is
+		// active, then the gameplay bar.
 		ui::Ref<ui::Component> dock = root.addChild<ui::Component>({
 			.id = "bottom_dock",
 			.layout =
 				stack({.right = 0.0F, .bottom = kDockBottom, .left = 0.0F}, ui::AlignItems::Center, theme.get(tokens::spacing::space1)),
+			.zIndex = kDockLayer,
 		});
+		keyGuide = dock.addChild<DrawingKeyGuide>({.id = "key_guide", .onOpen = args.onKeyGuideOpened});
 		configStrip = dock.addChild<ConstructionConfigStrip>({
 			.id = "construction_config_strip",
+			.onFoundationToolSelected = args.onFoundationToolSelected,
 			.onMaterialSelected = args.onConstructionMaterialSelected,
 			.onThicknessSelected = args.onConstructionThicknessSelected,
 		});
@@ -91,9 +98,10 @@ namespace world_sim {
 			.onColonistFollowed = args.onColonistFollowed,
 		});
 
-		// The bottom left: the task list, while it's open, on the selected entity's panel.
-		ui::Ref<ui::Component> bottomLeft = root.addChild<ui::Component>(
-			{.id = "bottom_left", .layout = stack({.bottom = 0.0F, .left = kEdge}, ui::AlignItems::Start, 0.0F)}
+		// The bottom left: the task list, while it's open, on the selected entity's panel. Hidden while both
+		// are, so an empty box isn't laid out.
+		bottomLeft = root.addChild<ui::Component>(
+			{.id = "bottom_left", .visible = false, .layout = stack({.bottom = 0.0F, .left = kEdge}, ui::AlignItems::Start, 0.0F)}
 		);
 		taskListPanel = bottomLeft.addChild<TaskListView>({.id = "task_list", .visible = false, .onClose = [this] { toggleTaskList(); }});
 		infoPanel = bottomLeft.addChild<EntityInfoView>({
@@ -149,7 +157,7 @@ namespace world_sim {
 		);
 
 		colonistDetailsDialog =
-			std::make_unique<ColonistDetailsDialog>(ColonistDetailsDialog::Args{.onClose = [this] { hideColonistDetails(); }});
+			std::make_unique<ColonistDetailsDialog>(ColonistDetailsDialog::Args{.traits = args.traits, .onClose = [this] { hideColonistDetails(); }});
 		craftingDialog = std::make_unique<CraftingDialog>(CraftingDialog::Args{
 			.onClose = [this] { hideCraftingDialog(); }, .onQueueRecipe = args.onQueueRecipe, .onCancelJob = args.onCancelJob
 		});
@@ -161,6 +169,7 @@ namespace world_sim {
 		});
 		pauseMenuDialog = std::make_unique<PauseMenuDialog>(PauseMenuDialog::Args{
 			.onClose = args.onPauseMenuClosed,
+			.onSettings = args.onSettings,
 			.onMainMenu = args.onMainMenu,
 			.onQuitGame = args.onQuitGame,
 		});
@@ -202,8 +211,7 @@ namespace world_sim {
 		const construction::ConstructionWorld* constructionWorld,
 		const ecs::RoomDetectionSystem*		   roomDetection
 	) {
-		const Foundation::Vec2 viewport = root.get()->getContext()->getViewport();
-		fitViewport(viewport);
+		fitViewport(root.get()->getContext()->getViewport());
 
 		timeModel.refresh(ecsWorld);
 		topBar.get()->updateData(timeModel, static_cast<int>(colonistListModel.colonists().size()));
@@ -219,8 +227,12 @@ namespace world_sim {
 		colonistList.get()->update(colonistListModel, ecsWorld);
 
 		if (worldPixelsPerMeter > 0.0F) {
+			// The world is drawn over the window's logical px, not the ui's.
+			int windowWidth = 0;
+			int windowHeight = 0;
+			Renderer::Primitives::getLogicalViewport(windowWidth, windowHeight);
 			minimapPanel.get()->updateData(
-				camera.getVisibleRect(static_cast<int>(viewport.x), static_cast<int>(viewport.y), worldPixelsPerMeter),
+				camera.getVisibleRect(windowWidth, windowHeight, worldPixelsPerMeter),
 				colonistListModel.colonists()
 			);
 		}
@@ -246,6 +258,7 @@ namespace world_sim {
 		if (taskListExpanded && selectedColonistId != 0) {
 			taskListPanel.get()->update(ecsWorld, selectedColonistId);
 		}
+		bottomLeft.get()->setVisible(taskListPanel.get()->isVisible() || infoPanel.get()->isVisible());
 
 		if (colonistDetailsDialog->isOpen()) {
 			colonistDetailsDialog->update(ecsWorld, deltaTime);
@@ -303,20 +316,45 @@ namespace world_sim {
 		return buildMenu.get()->isVisible();
 	}
 
-	void GameUI::setProductionItems(const std::vector<std::pair<std::string, std::string>>& items) {
-		gameplayBar.get()->setProductionItems(items);
-	}
+	void GameUI::showCatalogue(
+		const assets::RecipeRegistry&		recipes,
+		const assets::ConstructionRegistry& construction,
+		const std::string&					wallMaterial
+	) {
+		std::vector<std::pair<std::string, std::string>> productionItems;
+		for (const assets::RecipeDef* recipe : recipes.getInnateRecipes()) {
+			if (recipe->isStationless() && !recipe->outputs.empty()) {
+				productionItems.emplace_back(recipe->outputs[0].defName, recipe->label);
+			}
+		}
+		gameplayBar.get()->setProductionItems(productionItems);
 
-	void GameUI::setConstructionMaterials(const std::vector<std::pair<std::string, float>>& materials) {
+		std::vector<std::pair<std::string, float>> materials;
+		for (const auto& [name, material] : construction.getAllMaterials()) {
+			materials.emplace_back(name, material.costRatePerSquareMeter);
+		}
 		configStrip.get()->setMaterials(materials);
+
+		showWallThicknesses(construction, wallMaterial);
 	}
 
-	void GameUI::setConstructionThicknessPresets(const std::vector<ConstructionConfigStrip::ThicknessPresetInfo>& presets) {
+	// A material with no wall presets clears the cards, and the wall tool refuses a commit with a toast.
+	void GameUI::showWallThicknesses(const assets::ConstructionRegistry& construction, const std::string& material) {
+		std::vector<ConstructionConfigStrip::ThicknessPresetInfo> presets;
+		if (const auto* wall = construction.getWallMaterial(material)) {
+			for (const auto& preset : wall->wallThicknesses) {
+				presets.push_back({preset.name, preset.thicknessMeters});
+			}
+		}
 		configStrip.get()->setThicknessPresets(presets);
 	}
 
 	void GameUI::setConstructionStatus(const DrawingStatus& status) {
 		configStrip.get()->setStatus(status);
+	}
+
+	void GameUI::setKeyGuide(std::optional<ToolKind> tool, const DrawingSettings& settings, bool collapsed) {
+		keyGuide.get()->show(tool, settings, collapsed);
 	}
 
 	void GameUI::setRoomsOverlayActive(bool active) {

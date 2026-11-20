@@ -64,6 +64,10 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### November 2026
 
+- [2026-11-19 - Sight softening: soft edges, faint trunk shadows, forest depth](./entries/2026-11-19-sight-softening.md)
+- [2026-11-17 - Colonist thoughts and mood: the foundation, and strict config loading](./entries/2026-11-17-colonist-thoughts-and-mood-foundation.md)
+- [2026-11-17 - Drawing tools redesign: Rectangle, Freeform, helpers, and the key guide (WOR-741)](./entries/2026-11-17-drawing-tools-redesign.md)
+- [2026-11-16 - Interface scaling: the ui scales from the window, with an Interface size setting](./entries/2026-11-16-interface-scaling.md)
 - [2026-11-13 - Player visibility: unseen ground black, seen ground tinted](./entries/2026-11-13-player-visibility.md)
 - [2026-11-13 - Task claims close-out (WOR-820, WOR-811, WOR-634)](./entries/2026-11-13-task-claims-close-out.md)
 - [2026-11-13 - UI spec alignment: closed against salal, with the last GL state reads removed](./entries/2026-11-13-ui-spec-alignment-closeout.md)
@@ -85,6 +89,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 - [2026-09-28 - Foundation Add / Subtract (construction G3)](./entries/2026-09-28-foundation-add-subtract.md)
 - [2026-09-27 - Frozen colonist and unplaceable stations after the organic terrain merges](./entries/2026-09-27-frozen-colonist-unplaceable-stations.md)
 - [2026-09-26 - Organic terrain geometry: water as terrain rings, every land boundary a warped field isoline](./entries/2026-09-26-organic-terrain-geometry.md)
+- [2026-09-25 - OpenGL to Vulkan migration scoping (deferred indefinitely)](./entries/2026-09-25-vulkan-migration-scope.md)
 
 #### July 2026
 
@@ -150,8 +155,8 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 113 (entry files; the Major Milestones list below highlights notable ones)
-- **Latest Entry:** 2026-11-12
+- **Total Entries:** 122 (entry files; the Major Milestones list below highlights notable ones)
+- **Latest Entry:** 2026-11-17
 - **Major Milestones:**
   - Cryosphere: physical sea ice, snow, and glaciers (PDD + perfect-plastic) with a two-pass ice-climate feedback (2026-06-20)
   - Navigation P4: belief-filtered navigation, colonists path against what they've personally seen, not the live truth (2026-06-19)

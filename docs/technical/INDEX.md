@@ -61,6 +61,8 @@ Applications:
 | [Build & Test Performance](./build-performance.md) | Ninja + ccache/sccache, path-gated heavy tests, CI caching |
 | [C++ Coding Standards](./cpp-coding-standards.md) | Style guide and best practices |
 | [Main Loop Timing](./main-loop-timing.md) | One frame top to bottom, ECS order and priorities, periodic work and its clocks, decision triggers, cross-frame hand-offs, threads, hazards |
+| [C++ to Rust Migration Scope](./rust-migration-scope.md) | Deferred indefinitely. Research: port difficulty by library, geometry spike results, tools, Rust code style |
+| [Rust Rewrite Plan](./rust-rewrite-plan.md) | Deferred indefinitely; no work scheduled without an explicit go-ahead. Plan: layered FFI-free rewrite, oracles, phases, agent loop |
 | [Technical Notes](./technical-notes.md) | Research notes, open questions |
 | [Include Graph](./include-graph.md) | Per-library #include matrix, layering violations, and the `tools/resolve-includes.mjs` resolver |
 
@@ -144,17 +146,19 @@ Applications:
 | [Crafting & Material Provisioning](./crafting-provisioning-architecture.md) | Craft-as-construction: station store, metered/no-leftover deposit, pickup-by-source, giveItemToColonist cascade |
 | [Task Claims](./task-claims.md) | Partly built: claims as data on colonist tasks with a derived index, chain claims, availability, need tasks; bumping planned; the craft binding moved to Interruptable Crafts |
 | [Interruptable Crafts](./interruptable-crafts.md) | Spec, not built: craft progress saved on the station's job, craft and build work interruptable, needs in three levels (ordinary, urgent, critical) on a nine-tier ladder, the crafter's hold on a part-done unit, cancel returns materials, sleep restoring along a curve, paused-craft status and the bench's work-in-progress look |
+| [Queries and Chains](./queries-and-chains.md) | Everything a creature does on purpose as data: needs per creature kind, actions as named uses of engine effects, colony work, idle chains, player orders, and low-mood behaviors, all as step chains whose targets are queries (weighted facts over what the creature remembers), run on the kept engine (arbitration, claims, supply read from the world, routing, hands); what is retired and what is kept; the runner and colony work requirements, each with its test |
+| [Behavior Data Migration](./behavior-data-migration.md) | The plan for moving colonist behavior from hand-written C++ onto queries and chains: the phases in order of risk, what each proves, the tests and scenarios that must keep passing, and the old code deleted at the end of each |
 | [Nav Mesh: One Mesh, Variable Resolution](./nav-mesh-variable-resolution.md) | In progress: one persistent nav mesh patched in place (add, remove, move), structural layer for reachability, detail as a query filter, mover footprints, forward snap, chunk anchors; measured builder baseline and per-step perf gates |
 | [Pathfinding Architecture](./pathfinding-architecture.md) | Four-tier navigation: planet hex graph, chunk components, CDT navmesh, physical agents; multi-region sim area, runtime-validity predicate, findValidPositionNear |
-| [Vision Architecture](./vision-architecture.md) | Wall-occluded sight: visibility polygons, discovery and reconciliation (built), witnessing, player visibility (planned) |
-| [Player Visibility](./player-visibility.md) | Spec, not built: the player sees only what colonists have seen; unseen, seen, and visible areas; the seen record as an exact polygon union apart from the nav mesh; hard-edged stencil cover; input rules; build steps |
+| [Vision Architecture](./vision-architecture.md) | Wall-occluded sight: visibility polygons, discovery and reconciliation (built), witnessing (planned), player visibility (built, in its own doc) |
+| [Player Visibility](./player-visibility.md) | Built: the player sees only what colonists have seen; unseen, seen, and visible areas; the seen record as an exact polygon union apart from the nav mesh; a hard-edged cover of two masked fills; nothing under the black drawn or loaded; input rules; measured costs |
+| [Sight Softening](./sight-softening.md) | Soft sight: bodies from the collision map less movers, each with a kind fixed by its size; walls and big rocks opaque with exact shadows and soft edges, trees and wall stubs casting a faint triangle drawn on the cover; forest depth shortening range as a smooth density down to a floor, in a convex sight shape; legs as hulls in the seen record; both cover edges feathered through alpha mask layers in salal, light the greatest any colonist gives |
 
 ### Graphics & Rendering
 
 | Document | Description |
 |----------|-------------|
-| [Renderer Architecture](./renderer-architecture.md) | OpenGL abstraction |
-| [Resource Management](./resource-management.md) | Textures, shaders, fonts |
+| [OpenGL to Vulkan](./rendering/vulkan-migration.md) | Deferred indefinitely, research only: GL usage audit (2026-09 snapshot), options, renderer contract (Vulkan 1.4 via ash), spike plan |
 | [World Depth Sorting](./rendering/world-depth-sorting.md) | 2.5D layering: world-Y painter sort of upright occluders + actors |
 | [Entity Selection Silhouette](./rendering/entity-selection-silhouette.md) | Per-asset silhouette driving thick selection outline + precise hole-free hit-testing |
 

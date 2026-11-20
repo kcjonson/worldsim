@@ -7,6 +7,7 @@
 #include "Appearance.h"
 #include "Colonist.h"
 #include "assets/AssetRegistry.h"
+#include "assets/RecipeDef.test.h"
 #include "assets/RecipeRegistry.h"
 
 #include <gtest/gtest.h>
@@ -16,7 +17,7 @@ namespace ecs::test {
 	class DecisionTraceTextTest : public ::testing::Test {
 	  protected:
 		void SetUp() override {
-			auto& registry = assets::AssetRegistry::Get();
+			auto&					registry = assets::AssetRegistry::Get();
 			assets::AssetDefinition wood;
 			wood.defName = "Wood";
 			wood.label = "Wood log";
@@ -31,6 +32,7 @@ namespace ecs::test {
 			assets::RecipeDef recipe;
 			recipe.defName = "Recipe_Axe";
 			recipe.label = "Stone Axe";
+			recipe.workAmount = assets::kTestRecipeWorkAmount;
 			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 			woodId = registry.getDefNameId("Wood");
 			treeId = registry.getDefNameId("Flora_TreeOak");
@@ -122,6 +124,7 @@ namespace ecs::test {
 		hunger.distanceToTarget = 4.0F;
 		EXPECT_EQ(describeOption(world, hunger), "Hunger at 40% (reserved by Alice)");
 		hunger.needValue = 5.0F;
+		hunger.critical = true;
 		EXPECT_EQ(describeOption(world, hunger), "Hunger at 5% (critical) (reserved by Alice)") << "how urgent, and who holds it";
 
 		EvaluatedOption gather = hunger;
@@ -148,6 +151,7 @@ namespace ecs::test {
 		hunger.targetPosition.reset();
 		EXPECT_EQ(describeOption(world, hunger), "Hunger at 40% (no known source)");
 		hunger.needValue = 5.0F;
+		hunger.critical = true;
 		hunger.status = OptionStatus::Selected;
 		hunger.reason = "from inventory";
 		EXPECT_EQ(describeOption(world, hunger), "Hunger at 5% (critical) (from inventory)");

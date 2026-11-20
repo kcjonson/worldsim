@@ -8,8 +8,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <map>
 #include <set>
+#include <vector>
 
 namespace world_sim {
 
@@ -74,38 +74,6 @@ namespace world_sim {
 				out.push_back(toWorld(v));
 			}
 			return out;
-		}
-
-		// Half the segment's thickness preset in mm, or 0 when the preset is unknown.
-		std::int64_t halfThicknessMm(const ec::WallSegment& seg) {
-			const auto* preset = ConstructionRegistry::Get().getThicknessPreset(seg.material, seg.thicknessPreset);
-			return preset != nullptr ? preset->halfThicknessMm : 0;
-		}
-
-		// The centerline spans a segment's openings leave open, in mm from its v0
-		// end: an opening at param t with clear width w on a segment of length L
-		// spans t*L -/+ w/2. The offsetter clamps and merges them.
-		std::vector<geometry::WallGap> openingGaps(const ec::ConstructionWorld& world, const ec::WallSegment& seg) {
-			std::vector<geometry::WallGap> gaps;
-			const ec::Vertex*			   v0 = world.getVertex(seg.v0);
-			const ec::Vertex*			   v1 = world.getVertex(seg.v1);
-			if (v0 == nullptr || v1 == nullptr) {
-				return gaps;
-			}
-			const double lengthMm = std::hypot(static_cast<double>(v1->pos.x - v0->pos.x), static_cast<double>(v1->pos.y - v0->pos.y));
-			for (const auto& op : world.openings()) {
-				if (op.segment != seg.id) {
-					continue;
-				}
-				const auto* type = ConstructionRegistry::Get().getOpeningType(op.type);
-				if (type == nullptr || type->widthMm <= 0) {
-					continue;
-				}
-				const double center = static_cast<double>(op.t) * lengthMm;
-				const double half = static_cast<double>(type->widthMm) * 0.5;
-				gaps.push_back({std::llround(center - half), std::llround(center + half)});
-			}
-			return gaps;
 		}
 
 	} // namespace
@@ -197,53 +165,37 @@ namespace world_sim {
 		// every other wall in the world with it. A malformed segment (missing
 		// vertex or unresolved thickness preset) is SKIPPED rather than fed as a
 		// zero-length placeholder, which resolveWallBands would reject.
-		const auto&				 segs = world.segments();
-		std::vector<std::size_t> usable;
-		std::vector<std::size_t> graphOf(segs.size(), 0);
+		const auto&						   segs = world.segments();
+		std::vector<std::size_t>		   usable;
+		std::vector<geometry::WallSegment> usableSegs;
 		usable.reserve(segs.size());
+		usableSegs.reserve(segs.size());
 		for (std::size_t i = 0; i < segs.size(); ++i) {
 			const ec::WallSegment& wseg = segs[i];
-			if (world.getVertex(wseg.v0) != nullptr && world.getVertex(wseg.v1) != nullptr &&
-				halfThicknessMm(wseg) > 0) {
-				graphOf[i] = i;
+			const ec::Vertex*	   v0	= world.getVertex(wseg.v0);
+			const ec::Vertex*	   v1	= world.getVertex(wseg.v1);
+			if (v0 != nullptr && v1 != nullptr && ec::halfThicknessMm(wseg) > 0) {
 				usable.push_back(i);
+				usableSegs.push_back({v0->pos, v1->pos, ec::halfThicknessMm(wseg)});
 			}
-		}
-		auto graphRoot = [&](std::size_t i) {
-			while (graphOf[i] != i) {
-				graphOf[i] = graphOf[graphOf[i]];
-				i		   = graphOf[i];
-			}
-			return i;
-		};
-		std::map<geometry::Vec2i64, std::size_t> segmentAtPosition;
-		for (const std::size_t i : usable) {
-			for (const ec::VertexId vertexId : {segs[i].v0, segs[i].v1}) {
-				const auto [it, inserted] = segmentAtPosition.emplace(world.getVertex(vertexId)->pos, i);
-				if (!inserted) {
-					graphOf[graphRoot(i)] = graphRoot(it->second);
-				}
-			}
-		}
-		std::map<std::size_t, std::vector<std::size_t>> graphs;
-		for (const std::size_t i : usable) {
-			graphs[graphRoot(i)].push_back(i);
 		}
 
 		std::set<std::vector<std::int64_t>> rejectedGraphs;
-		for (const auto& [root, members] : graphs) {
+		for (const std::vector<std::size_t>& graph : geometry::connectedWallGraphs(usableSegs)) {
+			std::vector<std::size_t>					members;
 			std::vector<geometry::WallSegment>			offsetSegs;
 			std::vector<std::vector<geometry::WallGap>> offsetGaps;
-			offsetSegs.reserve(members.size());
-			offsetGaps.reserve(members.size());
-			for (const std::size_t i : members) {
-				const ec::WallSegment& wseg = segs[i];
-				offsetSegs.push_back({world.getVertex(wseg.v0)->pos, world.getVertex(wseg.v1)->pos, halfThicknessMm(wseg)});
-				offsetGaps.push_back(openingGaps(world, wseg));
+			members.reserve(graph.size());
+			offsetSegs.reserve(graph.size());
+			offsetGaps.reserve(graph.size());
+			for (const std::size_t usableIndex : graph) {
+				members.push_back(usable[usableIndex]);
+				offsetSegs.push_back(usableSegs[usableIndex]);
+				offsetGaps.push_back(ec::openingGaps(world, segs[usable[usableIndex]], {}).gaps);
 			}
 
 			const geometry::WallBands bands = geometry::resolveWallBands(offsetSegs, geometry::kDefaultMiterLimit);
-			if (bands.status != geometry::OffsetStatus::Ok) {
+			if (!geometry::bandsAccepted(bands)) {
 				// Reject-don't-repair: a degenerate offset means the topology fed it
 				// bad input; show this graph as bare centerlines, never garbage bands.
 				// Logged once, not on every rebuild the graph survives unchanged.

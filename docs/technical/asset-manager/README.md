@@ -96,7 +96,7 @@ The pieces all exist and this is assembly:
 
 The CLI creates a hidden window (`glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE)`) and hands `Primitives::init` a `GLBackend::create()` on its context (the backend initializes GLEW), then initializes only what the render path needs: the renderer's primitive setup, with the base shader `engine` compiles in (`base_shader::source()`), and the asset registry (including `setSharedScriptsPath`, or every `@shared/` Lua def fails to resolve). It does not create scenes, a debug server, or fonts.
 
-The GUI apps get their rendering-primitive init from salal's `App::create`; the asset half is `assets::initializeAssetSystem`, which the CLI calls without an App. The CLI does the primitive init itself, on its hidden window. This is a refactor of existing code, not new behavior.
+The GUI apps get their rendering-primitive init from salal's `App::create`; the asset half is `assets::initializeAssetSystem`, which loads definitions and then recipes. The CLI loads only the definitions (`setSharedScriptsPath`, then `loadDefinitionsFromFolder`) and does the primitive init itself, on its hidden window. This is a refactor of existing code, not new behavior.
 
 Because the CLI is a short-lived, server-less process with its own context, N invocations run in parallel up to GPU and CPU limits. The one cross-process constraint to respect: do not bind the fixed debug port from the CLI.
 
@@ -201,7 +201,7 @@ One primary browser scene composed from existing widgets plus one new layout com
 - A gallery: a new `GridContainer` of thumbnails inside a `ScrollContainer`. Each cell is a faithful thumbnail, the def name, and the type. A procedural asset's gallery thumbnail is one stable representative form (a fixed seed) so the wall does not reshuffle on every visit.
 - A detail pane: the faithful preview and the inspector. For a procedural asset the preview shows around ten sampled forms with a refresh that re-samples; for a simple asset, one drawing. The inspector shows the parsed def beside the raw file, the resolved resource paths, groups and placement, and this def's validation warnings.
 - A validation view: the whole-library report, filterable, sharing the exact report the CLI prints.
-- Reload: a refresh action that re-runs the load from disk (clear the registry, reload, invalidate the template cache) so a designer who just edited a def in their own editor sees the change without restarting. This is distinct from the preview's re-sample refresh.
+- Reload: a refresh action that re-runs the load from disk through `assets::loadAssetSystem` (clear the asset and recipe registries, which drops the template cache, load the definitions, then the recipes against the new id index) so a designer who just edited a def in their own editor sees the change without restarting. This is distinct from the preview's re-sample refresh.
 
 ### The new grid component
 
@@ -231,7 +231,7 @@ The `render` and `validate --render-smoke` commands need the hidden GL context a
 
 ## Build integration
 
-- `apps/asset-manager/CMakeLists.txt` modeled on `ui-sandbox`: `add_executable`, link `engine ui renderer foundation assets planet-view world`, the POST_BUILD copies for `fonts/` and `assets/` (the base shader is compiled into `engine`), and `add_dependencies(asset-manager font-atlas)`.
+- `apps/asset-manager/CMakeLists.txt` modeled on `ui-sandbox`: `add_executable`, link `engine ui renderer foundation assets planet-view world`, the staging of `assets/` beside the exe (the base shader is compiled into `engine`), and `stage_fonts(asset-manager)` in the root CMakeLists.txt for `fonts/`.
 - `apps/asset-cli/CMakeLists.txt` minimal: link `assets renderer foundation` plus GLFW/GLEW/OpenGL and `nlohmann_json::nlohmann_json`, copy `assets/` (it needs the asset tree, the base shader is compiled in, and it needs no fonts).
 - Register both with `add_subdirectory` in the top-level `CMakeLists.txt` after the libs.
 

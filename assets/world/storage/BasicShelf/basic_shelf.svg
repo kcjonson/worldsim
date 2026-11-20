@@ -14,8 +14,8 @@
   <rect x="42" y="8" width="4" height="52" fill="#5c4a3a"/>
 
   <!-- Wood grain details on shelves -->
-  <line x1="8" y1="14" x2="24" y2="14" stroke="#6b4423" stroke-width="0.5"/>
-  <line x1="28" y1="14" x2="40" y2="14" stroke="#6b4423" stroke-width="0.5"/>
-  <line x1="10" y1="34" x2="20" y2="34" stroke="#6b4423" stroke-width="0.5"/>
-  <line x1="26" y1="34" x2="38" y2="34" stroke="#6b4423" stroke-width="0.5"/>
+  <line x1="8" y1="14" x2="24" y2="14" fill="none" stroke="#6b4423" stroke-width="0.5"/>
+  <line x1="28" y1="14" x2="40" y2="14" fill="none" stroke="#6b4423" stroke-width="0.5"/>
+  <line x1="10" y1="34" x2="20" y2="34" fill="none" stroke="#6b4423" stroke-width="0.5"/>
+  <line x1="26" y1="34" x2="38" y2="34" fill="none" stroke="#6b4423" stroke-width="0.5"/>
 </svg>

@@ -111,37 +111,11 @@ namespace assets {
 			return result;
 		}
 
-		// Create or get spatial index for this chunk
-		auto& chunkIndex = m_chunkIndices[context.coord];
-		chunkIndex.clear();
-		m_staticRemovals.erase(context.coord);
+		AsyncChunkPlacementResult placed = computeChunkEntities(context, adjacentProvider);
+		result.entities = placed.entities;
+		result.entitiesPlaced = placed.entitiesPlaced;
+		storeChunkResult(std::move(placed));
 
-		// Create deterministic RNG from chunk coordinate and world seed
-		uint64_t chunkSeed = context.worldSeed;
-		chunkSeed ^= static_cast<uint64_t>(context.coord.x) * 0x9E3779B97F4A7C15ULL;
-		chunkSeed ^= static_cast<uint64_t>(context.coord.y) * 0x6C62272E07BB0143ULL;
-		std::mt19937 rng(static_cast<uint32_t>(chunkSeed));
-
-		// Process entity types in dependency order
-		CrownRadii crowns;
-		for (const auto& defName : m_spawnOrder) {
-			placeEntityType(defName, context, chunkIndex, adjacentProvider, rng, crowns, result.entities);
-		}
-
-		// Initialize resource counts for harvestable entities with resource pools
-		for (const auto& entity : result.entities) {
-			const auto* def = m_registry.getDefinition(entity.defName);
-			if (def != nullptr && def->capabilities.harvestable.has_value()) {
-				const auto& harv = def->capabilities.harvestable.value();
-				if (harv.totalResourceMin > 0 && harv.totalResourceMax > 0) {
-					std::uniform_int_distribution<uint32_t> resourceDist(harv.totalResourceMin, harv.totalResourceMax);
-					uint32_t initialCount = resourceDist(rng);
-					initResourceCount(entity.position, entity.defName, initialCount);
-				}
-			}
-		}
-
-		result.entitiesPlaced = result.entities.size();
 		LOG_DEBUG(
 			Engine,
 			"PlacementExecutor: chunk (%d, %d) - %zu entities",
@@ -237,7 +211,7 @@ namespace assets {
 		// the frozen index copies for the gather to read directly. Traits draw nothing from rng.
 		auto record = [&](PlacedEntity& entity, const ResolvedTemplate& tmpl) {
 			entity.anchorY = assets::computeAnchorY(
-				entity.position.y, assets::anchorLocalY(def, entity.traits.ageClass, tmpl.extent), entity.scale
+				entity.position.y, assets::anchorLocalY(def, entity.traits.ageClass, tmpl.extent, entity.rotation), entity.scale
 			);
 			entity.isTallOccluder = isTall;
 			chunkIndex.insert(entity);
@@ -682,14 +656,42 @@ namespace assets {
 			placeEntityType(defName, context, result.spatialIndex, adjacentProvider, rng, crowns, result.entities);
 		}
 
+		// After every roll, so what stands in the rest of the chunk does not depend on what was removed
+		dropRemovedEntities(result);
+
 		result.entitiesPlaced = result.entities.size();
 		return result;
 	}
 
+	void PlacementExecutor::dropRemovedEntities(AsyncChunkPlacementResult& result) const {
+		// Copied out so the main thread never waits on a worker going through a chunk's entities
+		RemovedEntityKeys removed;
+		{
+			const std::lock_guard lock(removedEntitiesMutex);
+			const auto			  found = removedEntities.find(result.coord);
+			if (found == removedEntities.end()) {
+				return;
+			}
+			removed = found->second;
+		}
+		// Entities arrive def by def, so the id is looked up once a def, not once an entity
+		std::string defName;
+		uint32_t	defNameId = 0;
+		std::erase_if(result.entities, [&](const PlacedEntity& entity) {
+			if (entity.defName != defName) {
+				defName = entity.defName;
+				defNameId = m_registry.getDefNameId(defName);
+			}
+			if (!removed.contains({entity.position, defNameId})) {
+				return false;
+			}
+			result.spatialIndex.remove(entity.position, entity.defName);
+			return true;
+		});
+	}
+
 	void PlacementExecutor::storeChunkResult(AsyncChunkPlacementResult&& result) {
-		// Initialize resource counts for harvestable entities with resource pools
-		// Create RNG from world seed and chunk coordinates for deterministic results
-		// (must match the seeding in processChunk for consistency)
+		// Pools are rolled from the world seed and chunk coordinates, so a chunk's first load gives each the same count
 		uint64_t chunkSeed = result.worldSeed;
 		chunkSeed ^= static_cast<uint64_t>(result.coord.x) * 0x9E3779B97F4A7C15ULL;
 		chunkSeed ^= static_cast<uint64_t>(result.coord.y) * 0x6C62272E07BB0143ULL;
@@ -700,9 +702,11 @@ namespace assets {
 			if (def != nullptr && def->capabilities.harvestable.has_value()) {
 				const auto& harv = def->capabilities.harvestable.value();
 				if (harv.totalResourceMin > 0 && harv.totalResourceMax > 0) {
+					// Drawn for every entity, as a first load always has, and kept only by one with no pool
+					// yet: an entity whose chunk is placed again keeps what harvesting left it
 					std::uniform_int_distribution<uint32_t> resourceDist(harv.totalResourceMin, harv.totalResourceMax);
-					uint32_t initialCount = resourceDist(rng);
-					initResourceCount(entity.position, entity.defName, initialCount);
+					const uint32_t							rolled = resourceDist(rng);
+					m_resourceCounts.try_emplace(makeEntityStateKey(entity.position, entity.defName), rolled);
 				}
 			}
 		}
@@ -720,6 +724,10 @@ namespace assets {
 		m_regrowthReadyAt.clear();
 		m_regrowthSweepSize = kMinRegrowthSweepSize;
 		m_resourceCounts.clear();
+		{
+			const std::lock_guard lock(removedEntitiesMutex);
+			removedEntities.clear();
+		}
 		m_initialized = false;
 	}
 
@@ -753,6 +761,10 @@ namespace assets {
 		}
 		it->second.remove(stored, defName);
 		forgetEntityState(stored, defName);
+		{
+			const std::lock_guard lock(removedEntitiesMutex);
+			removedEntities[coord].insert({stored, m_registry.getDefNameId(defName)});
+		}
 		m_removals.push_back({coord, stored, defName});
 		LOG_DEBUG(
 			Engine,
@@ -814,7 +826,7 @@ namespace assets {
 
 	std::optional<uint32_t> PlacementExecutor::getResourceCount(glm::vec2 position, const std::string& defName) const {
 		auto it = m_resourceCounts.find(makeEntityStateKey(position, defName));
-		if (it != m_resourceCounts.end()) {
+		if (it != m_resourceCounts.end() && it->second > 0) {
 			return it->second;
 		}
 		return std::nullopt;
@@ -831,7 +843,6 @@ namespace assets {
 		it->second -= removed;
 
 		if (it->second == 0) {
-			m_resourceCounts.erase(it);
 			LOG_DEBUG(
 				Engine, "PlacementExecutor: Resource depleted for %s at (%.1f, %.1f)", defName.c_str(), position.x, position.y
 			);

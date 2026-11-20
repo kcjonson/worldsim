@@ -1,7 +1,14 @@
 #include "DevCommandHandler.h"
 
+#include "UserSettings.h"
+#include "scenes/game/dev/CameraStateJson.h"
+#include "scenes/game/dev/ConstructionStateJson.h"
+#include "scenes/game/dev/DevJson.h"
+#include "scenes/game/dev/DrawingStateJson.h"
+#include "scenes/game/dev/GiveShortfall.h"
 #include "scenes/game/dev/GroundRefusal.h"
 #include "scenes/game/dev/PointList.h"
+#include "scenes/game/dev/SightJson.h"
 #include "scenes/game/ui/GameUI.h"
 #include "scenes/game/world/construction/DrawingSystem.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
@@ -10,11 +17,13 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
+#include <assets/MoodConfig.h>
 #include <assets/placement/FloraMeasure.h>
 #include <assets/placement/PlacementExecutor.h>
 
 #include <ui/components/Toast.h>
 
+#include <construction/ConstructionValidator.h>
 #include <construction/ConstructionWorld.h>
 #include <construction/SnapEngine.h>
 
@@ -25,19 +34,26 @@
 #include <ecs/WorldSource.h>
 #include <ecs/components/Action.h>
 #include <ecs/components/Appearance.h>
+#include <ecs/components/Attributes.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Inventory.h>
+#include <ecs/components/Mood.h>
 #include <ecs/components/Movement.h>
 #include <ecs/components/Needs.h>
+#include <ecs/components/PlayerControlled.h>
 #include <ecs/components/StorageConfiguration.h>
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/StructureHealth.h>
+#include <ecs/components/Traits.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
+#include <ecs/systems/AIDecisionSystem.h>
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/PlayerVisibilitySystem.h>
+#include <ecs/systems/ThoughtSystem.h>
+#include <ecs/systems/VisionSystem.h>
 #include <ecs/systems/TimeSystem.h>
 
 #include <assets/RecipeRegistry.h>
@@ -60,7 +76,6 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <iomanip>
 #include <limits>
@@ -96,10 +111,10 @@ namespace world_sim {
 		verb("freebuild", &DevCommandHandler::devFreeBuild);
 		verb("construction", &DevCommandHandler::devFreeBuild);
 		verb("reveal", &DevCommandHandler::devReveal);
-		verb("give", &DevCommandHandler::devGive);
 		verb("spawn", &DevCommandHandler::devSpawn);
 		verb("colonist", &DevCommandHandler::devColonist);
 		verb("need", &DevCommandHandler::devNeed);
+		verb("attribute", &DevCommandHandler::devAttribute);
 		verb("time", &DevCommandHandler::devTime);
 		verb("teleport", &DevCommandHandler::devTeleport);
 		verb("select", &DevCommandHandler::devSelect);
@@ -113,9 +128,11 @@ namespace world_sim {
 		registrations.push_back(server.route("foundation-edit", [this](const app::DevRequest& cmd) {
 			return app::DevResponse{.body = devFoundationEdit(cmd)};
 		}));
+		registrations.push_back(server.route("give", [this](const app::DevRequest& cmd) { return devGive(cmd); }));
 		registrations.push_back(server.route("flora", [this](const app::DevRequest& cmd) { return devFlora(cmd); }));
 		registrations.push_back(server.route("ground", [this](const app::DevRequest& cmd) { return devGround(cmd); }));
 		registrations.push_back(server.route("storage", [this](const app::DevRequest& cmd) { return devStorage(cmd); }));
+		registrations.push_back(server.route("thought", [this](const app::DevRequest& cmd) { return devThought(cmd); }));
 		registrations.push_back(server.route("visibility", [this](const app::DevRequest& cmd) {
 			return app::DevResponse{.body = visibilityJson(cmd)};
 		}));
@@ -129,12 +146,38 @@ namespace world_sim {
 		};
 		view("colonists", &DevCommandHandler::serializeColonists);
 		view("construction", &DevCommandHandler::serializeConstruction);
+		registrations.push_back(server.stateProvider("drawing", [this] {
+			return drawingStateJson(
+				m_ctx.drawing->snapshot(),
+				{.settings = UserSettings::Get().drawing,
+				 .keyGuideCollapsed = m_ctx.drawing->keyGuideCollapsed(),
+				 .dialogOpen = m_ctx.dialogOpen && m_ctx.dialogOpen()}
+			);
+		}));
+		registrations.push_back(server.stateProvider("camera", [this] {
+			int width = 0;
+			int height = 0;
+			Renderer::Primitives::getLogicalViewport(width, height);
+			return cameraStateJson(*m_ctx.camera, m_ctx.pixelsPerMeter, width, height);
+		}));
 		view("stations", &DevCommandHandler::serializeStations);
 		view("storage", &DevCommandHandler::serializeStorage);
 		view("time", &DevCommandHandler::serializeTime);
 		view("landing", &DevCommandHandler::serializeLanding);
 		view("summary", &DevCommandHandler::serializeSummary);
+		view("thoughttypes", &DevCommandHandler::serializeThoughtTypes);
 		registrations.push_back(server.stateProvider("visibility", [this] { return visibilityJson({}); }));
+		registrations.push_back(server.stateProvider("sightBodies", [this] { return sightBodiesView(); }));
+		registrations.push_back(server.stateProvider("cover", [this] {
+			if (m_ctx.cover == nullptr) {
+				return std::string("{\"error\":\"no cover\"}");
+			}
+			return coverJson(*m_ctx.cover, m_ctx.world->getSystem<ecs::VisionSystem>().sightTunables().sightFeatherMm);
+		}));
+		registrations.push_back(server.stateProvider("sightTunables", [this] {
+			return sightTunablesJson(m_ctx.world->getSystem<ecs::VisionSystem>().sightTunables());
+		}));
+		registrations.push_back(server.route("sight", [this](const app::DevRequest& cmd) { return devSight(cmd); }));
 		registrations.push_back(server.stateProvider("tunables", [] { return Foundation::Tunables::instance().toJson(); }));
 		return registrations;
 	}
@@ -173,6 +216,58 @@ namespace world_sim {
 		LOG_INFO(Game, "[DevAPI] tunable '%s' = %s", name.c_str(), spec.c_str());
 	}
 
+	app::DevResponse DevCommandHandler::devSight(const app::DevRequest& cmd) {
+		// sight?name=wallOpaqueLeastDiameterMm&value=600, or sight?reset=1 for the start values. The
+		// answer is every tunable as the setter clamped it.
+		ecs::VisionSystem&	  vision   = m_ctx.world->getSystem<ecs::VisionSystem>();
+		vision::SightTunables tunables = vision.sightTunables();
+		if (hasParam(cmd, "reset")) {
+			tunables = {};
+		} else {
+			const std::string name	= param(cmd, "name");
+			const std::string value = param(cmd, "value");
+			char*			  end	= nullptr;
+			const long long	  number = std::strtoll(value.c_str(), &end, 10);
+			if (value.empty() || end == nullptr || *end != '\0' || !setSightTunable(tunables, name, number)) {
+				const std::string refusal = refuse("sight: no tunable '" + name + "' or no whole number '" + value + "'").message;
+				return app::DevResponse{.status = 400, .body = "{\"error\":\"" + jsonEscape(refusal) + "\"}"};
+			}
+		}
+		vision.setSightTunables(tunables);
+		LOG_INFO(Game, "[DevAPI] sight tunables set");
+		return app::DevResponse{.body = sightTunablesJson(vision.sightTunables())};
+	}
+
+	std::string DevCommandHandler::sightBodiesView() {
+		const ecs::VisionSystem&		 vision = m_ctx.world->getSystem<ecs::VisionSystem>();
+		std::vector<ColonistSightBodies> colonists;
+		for (auto [entity, colonist, position] : m_ctx.world->view<ecs::Colonist, ecs::Position>()) {
+			const std::optional<ecs::VisionSystem::SightBodies> bodies = vision.sightBodies(entity);
+			const std::optional<ecs::VisionSystem::SightShape>	shape  = vision.sightShape(entity);
+			if (!bodies.has_value() || !shape.has_value()) {
+				continue;
+			}
+			const char* path = shape->path == ecs::VisionSystem::SightPath::Polygon ? "polygon"
+							   : shape->path == ecs::VisionSystem::SightPath::Leg	? "leg"
+																					: "open";
+			const vision::SightFeed* feed = m_ctx.world->getSystem<ecs::PlayerVisibilitySystem>().feedOf(entity);
+			colonists.push_back({
+				.id			 = static_cast<std::uint64_t>(entity),
+				.name		 = colonist.name,
+				.eyeCentre	 = bodies->eyeCentre,
+				.leadMm		 = bodies->leadMm,
+				.reachMm	 = bodies->reachMm,
+				.path		 = path,
+				.ranges		 = shape->ranges,
+				.rangeChangeMm		   = feed != nullptr ? feed->rangeChangeMm() : 0,
+				.greatestRangeChangeMm = feed != nullptr ? feed->greatestRangeChangeMm() : 0,
+				.bodies		 = bodies->bodies,
+				.shadowEdges = bodies->shadowEdges,
+			});
+		}
+		return sightBodiesJson(colonists);
+	}
+
 	void DevCommandHandler::devFreeBuild(const app::DevRequest& cmd) {
 		// Accept on= (freebuild verb) or freebuild= (construction verb); truthy on 1/on/true/yes.
 		std::string value = hasParam(cmd, "on") ? param(cmd, "on") : param(cmd, "freebuild", "1");
@@ -190,70 +285,76 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", on ? "Reveal ON" : "Reveal OFF", ui::ToastSeverity::Info);
 	}
 
-	void DevCommandHandler::devGive(const app::DevRequest& cmd) {
+	app::DevResponse DevCommandHandler::devGive(const app::DevRequest& cmd) {
+		const auto reject = [this](const std::string& message) {
+			return app::DevResponse{.status = 400, .body = "{\"error\":\"" + jsonEscape(refuse("give: " + message).message) + "\"}"};
+		};
 		const std::string material = param(cmd, "material", "Wood");
+		// An inventory takes any string, so a misspelt name would be added as an item that does not exist.
+		const auto* def = assets::AssetRegistry::Get().getDefinition(material);
+		if (const std::string refusal = giveMaterialRefusal(def, material); !refusal.empty()) {
+			return reject(refusal);
+		}
 		const long		  nRaw = std::strtol(param(cmd, "n", "100").c_str(), nullptr, 10);
 		if (nRaw <= 0) {
-			LOG_WARNING(Game, "[DevAPI] give: n must be > 0");
-			return;
+			return reject("n must be > 0");
 		}
 		const auto		  n = static_cast<uint32_t>(nRaw);
 		const std::string where = param(cmd, "where", "site");
 
+		// A give that added nothing is a refusal naming what was in the way; one that added fewer than
+		// asked answers ok with the count it added and the same reason.
+		const auto answer = [&](uint32_t added, const std::string& target, const std::string& shortfall) {
+			const std::string count = std::to_string(added) + " of " + std::to_string(n) + " " + material;
+			if (added == 0) {
+				return reject("added " + count + " to " + target + ": " + shortfall);
+			}
+			LOG_INFO(Game, "[DevAPI] give: added %s to %s", count.c_str(), target.c_str());
+			m_ctx.ui->pushNotification("Dev", "Gave " + count + " to " + target, ui::ToastSeverity::Info);
+			std::string body = "{\"status\":\"ok\",\"verb\":\"give\",\"added\":" + std::to_string(added) + ",\"asked\":" + std::to_string(n);
+			if (added < n) {
+				body += ",\"shortfall\":\"" + jsonEscape(shortfall) + "\"";
+			}
+			return app::DevResponse{.body = body + "}"};
+		};
+
 		if (where == "site") {
 			const uint32_t credited = m_ctx.world->getSystem<ecs::ConstructionSystem>().creditMaterialToSites(material, n);
-			LOG_INFO(Game, "[DevAPI] give: credited %u %s across build sites", credited, material.c_str());
-			m_ctx.ui->pushNotification("Dev", "Credited " + std::to_string(credited) + " " + material + " to sites", ui::ToastSeverity::Info);
-			return;
+			return answer(credited, "build sites", "no build site needs more " + material);
 		}
 
 		if (where == "loose") {
-			const auto* def = assets::AssetRegistry::Get().getDefinition(material);
-			if (def == nullptr) {
-				LOG_WARNING(Game, "[DevAPI] give loose: unknown asset '%s'", material.c_str());
-				m_ctx.ui->pushNotification("Dev", "Unknown asset: " + material, ui::ToastSeverity::Warning);
-				return;
-			}
-			// Spawning a furniture or station def would make a live box/station that is also a pile.
-			if (!def->itemProperties.has_value()) {
-				LOG_WARNING(Game, "[DevAPI] give loose: '%s' is not an item", material.c_str());
-				m_ctx.ui->pushNotification("Dev", "Not an item: " + material, ui::ToastSeverity::Warning);
-				return;
-			}
 			// Each new pile is cleared against every pile already placed, so the pile count (not
 			// the unit count) is what a big n costs.
 			constexpr uint32_t kMaxLoosePiles = 50;
 			const uint32_t	   stackSize = def->itemProperties->stackSize;
 			const uint32_t	   piles = stackSize == 0 ? 1U : (n - 1U) / stackSize + 1U;
 			if (piles > kMaxLoosePiles) {
-				LOG_WARNING(Game, "[DevAPI] give loose: %u '%s' is %u piles, over the %u limit", n, material.c_str(), piles, kMaxLoosePiles);
-				m_ctx.ui->pushNotification("Dev", "Too many: " + std::to_string(piles) + " piles of " + material, ui::ToastSeverity::Warning);
-				return;
+				return reject(
+					std::to_string(n) + " '" + material + "' is " + std::to_string(piles) + " piles, over the " + std::to_string(kMaxLoosePiles) +
+					" limit"
+				);
 			}
 			const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
-			if (!requireValidPosition(at, "give loose")) {
-				return;
+			if (const std::string refusal = putDownRefusal(m_ctx.navigation, at); !refusal.empty()) {
+				return reject(refusal);
 			}
 			m_ctx.dropLoose(material, at.x, at.y, n);
-			LOG_INFO(Game, "[DevAPI] give: dropped %u loose '%s' at (%.1f, %.1f)", n, material.c_str(), at.x, at.y);
-			m_ctx.ui->pushNotification("Dev", "Dropped " + std::to_string(n) + " " + material, ui::ToastSeverity::Info);
-			return;
+			return answer(n, "the ground", {});
 		}
 
 		if (where == "colonist" || where == "storage") {
 			const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
 			ecs::Inventory*		   inventory = (where == "colonist") ? nearestColonistInventory(at) : nearestStorageInventory(at);
 			if (inventory == nullptr) {
-				LOG_WARNING(Game, "[DevAPI] give %s: no target found", where.c_str());
-				m_ctx.ui->pushNotification("Dev", "No " + where + " to give to", ui::ToastSeverity::Warning);
-				return;
+				return reject("no " + where + " to give to");
 			}
 
 			// where=colonist takes slot=pack|hands|belt (default pack) so every gear
 			// surface can be filled for testing. hands respects the two-hand mirror.
-			const std::string slot = param(cmd, "slot", "pack");
+			const std::string slot = where == "colonist" ? param(cmd, "slot", "pack") : "pack";
 			uint32_t		  added = 0;
-			if (where == "colonist" && slot == "hands") {
+			if (slot == "hands") {
 				const auto& registry = assets::AssetRegistry::Get();
 				if (ecs::itemIsTwoHand(registry, material)) {
 					added = ecs::addArmful(*inventory, registry, material, n);
@@ -262,20 +363,18 @@ namespace world_sim {
 						++added;
 					}
 				}
-			} else if (where == "colonist" && slot == "belt") {
+			} else if (slot == "belt") {
 				while (added < n && inventory->stowToBelt(material)) {
 					++added;
 				}
 			} else {
 				added = inventory->addItem(material, n);
 			}
-			LOG_INFO(Game, "[DevAPI] give: added %u/%u %s to nearest %s (%s)", added, n, material.c_str(), where.c_str(), slot.c_str());
-			m_ctx.ui->pushNotification("Dev", "Gave " + std::to_string(added) + " " + material + " to " + where, ui::ToastSeverity::Info);
-			return;
+			const std::string target = where == "storage" ? "the nearest storage" : "the nearest colonist's " + slot;
+			return answer(added, target, added < n ? giveShortfallReason(*inventory, material, slot) : std::string{});
 		}
 
-		LOG_WARNING(Game, "[DevAPI] give: unknown where=%s (site|loose|colonist|storage)", where.c_str());
-		m_ctx.ui->pushNotification("Dev", "Unknown where: " + where, ui::ToastSeverity::Warning);
+		return reject("unknown where=" + where + " (site|loose|colonist|storage)");
 	}
 
 	DevRefusal DevCommandHandler::devSpawn(const app::DevRequest& cmd) {
@@ -318,10 +417,10 @@ namespace world_sim {
 		return {};
 	}
 
-	void DevCommandHandler::devColonist(const app::DevRequest& cmd) {
+	DevRefusal DevCommandHandler::devColonist(const app::DevRequest& cmd) {
 		const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
-		if (!requireMoverPosition(at, "colonist")) {
-			return;
+		if (const std::string refusal = moverGroundRefusal(m_ctx.navigation, at); !refusal.empty()) {
+			return refuse("colonist: " + refusal);
 		}
 		const long			   nRaw = std::strtol(param(cmd, "n", "1").c_str(), nullptr, 10);
 		const long			   n = nRaw < 1 ? 1 : nRaw;
@@ -334,29 +433,7 @@ namespace world_sim {
 		}
 		LOG_INFO(Game, "[DevAPI] colonist: spawned %ld at (%.1f, %.1f)", n, at.x, at.y);
 		m_ctx.ui->pushNotification("Dev", "Spawned " + std::to_string(n) + " colonist(s)", ui::ToastSeverity::Info);
-	}
-
-	bool DevCommandHandler::requireValidPosition(Foundation::Vec2 at, const char* verb) {
-		// Single validity gate: a world position is placeable IFF it is on an active
-		// walkable nav face (NavigationSystem::isValidPosition). No terrain/world-source
-		// reads here -- runtime walkability is owned by the nav mesh.
-		if (m_ctx.navigation != nullptr && m_ctx.navigation->isValidPosition({at.x, at.y})) {
-			return true;
-		}
-		const bool		  meshed = m_ctx.navigation != nullptr && m_ctx.navigation->inSimArea({at.x, at.y});
-		const char* const why	 = meshed ? "is water or a placed obstacle" : "is ground no mover has meshed (off the nav mesh)";
-		LOG_WARNING(Game, "[DevAPI] %s: error: %.1f,%.1f %s, refused", verb, at.x, at.y, why);
-		m_ctx.ui->pushNotification(
-			"Dev", "Refused: (" + std::to_string(at.x) + ", " + std::to_string(at.y) + ") " + why, ui::ToastSeverity::Warning
-		);
-		return false;
-	}
-
-	bool DevCommandHandler::requireMoverPosition(Foundation::Vec2 at, const char* verb) {
-		if (m_ctx.navigation != nullptr && !m_ctx.navigation->inSimArea({at.x, at.y})) {
-			return true;
-		}
-		return requireValidPosition(at, verb);
+		return {};
 	}
 
 	DevRefusal DevCommandHandler::refuse(const std::string& message) {
@@ -471,6 +548,31 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", std::string(ecs::needLabel(type)) + " set", ui::ToastSeverity::Info);
 	}
 
+	DevRefusal DevCommandHandler::devAttribute(const app::DevRequest& cmd) {
+		const ecs::EntityID id = parseEntity(param(cmd, "colonist"));
+		auto*				attributes = m_ctx.world->getComponent<ecs::Attributes>(id);
+		if (attributes == nullptr) {
+			return refuse("attribute: no colonist #" + param(cmd, "colonist"));
+		}
+		const std::string name = param(cmd, "attribute");
+		const auto field = std::ranges::find_if(ecs::kAttributeFields, [&name](const ecs::AttributeField& candidate) {
+			return candidate.id == name;
+		});
+		if (field == ecs::kAttributeFields.end()) {
+			return refuse("attribute: no attribute '" + name + "'");
+		}
+		char*			  end = nullptr;
+		const std::string text = param(cmd, "value");
+		const float		  value = std::strtof(text.c_str(), &end);
+		if (text.empty() || end != text.c_str() + text.size() || !std::isfinite(value) || value < 0.0F || value > 20.0F) {
+			return refuse("attribute: value '" + text + "' is not a number from 0 to 20");
+		}
+		attributes->*(field->value) = value;
+		LOG_INFO(Game, "[DevAPI] attribute: %s=%.1f on #%llu", name.c_str(), static_cast<double>(value), static_cast<unsigned long long>(id));
+		m_ctx.ui->pushNotification("Dev", std::string(field->id) + " set", ui::ToastSeverity::Info);
+		return {};
+	}
+
 	void DevCommandHandler::devTime(const app::DevRequest& cmd) {
 		auto& timeSystem = m_ctx.world->getSystem<ecs::TimeSystem>();
 		bool  acted = false;
@@ -498,24 +600,34 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", acted ? "Time updated" : "time: speed|set|skip", acted ? ui::ToastSeverity::Info : ui::ToastSeverity::Warning);
 	}
 
-	void DevCommandHandler::devTeleport(const app::DevRequest& cmd) {
+	DevRefusal DevCommandHandler::devTeleport(const app::DevRequest& cmd) {
 		const ecs::EntityID id = parseEntity(param(cmd, "colonist"));
 		auto*				pos = m_ctx.world->getComponent<ecs::Position>(id);
 		if (pos == nullptr) {
-			LOG_WARNING(Game, "[DevAPI] teleport: no entity #%llu", static_cast<unsigned long long>(id));
-			m_ctx.ui->pushNotification("Dev", "No such entity", ui::ToastSeverity::Warning);
-			return;
+			return refuse("teleport: no entity #" + std::to_string(id));
 		}
 		const Foundation::Vec2 to = parsePoint(param(cmd, "to"));
-		if (!requireMoverPosition(to, "teleport")) {
-			return;
+		if (const std::string refusal = moverGroundRefusal(m_ctx.navigation, to); !refusal.empty()) {
+			return refuse("teleport: " + refusal);
 		}
 		pos->value = {to.x, to.y};
 		if (auto* target = m_ctx.world->getComponent<ecs::MovementTarget>(id)) {
 			target->active = false;
 		}
+		// A colonist drops his task, its route and claims, and his action, the way he does when the
+		// player takes him over: a task left Moving with no target holds him where he lands. One the
+		// player controls stays controlled; any other is released, and decides afresh.
+		if (m_ctx.world->getComponent<ecs::Task>(id) != nullptr) {
+			auto&	   decisions = m_ctx.world->getSystem<ecs::AIDecisionSystem>();
+			const bool controlled = m_ctx.world->getComponent<ecs::PlayerControlled>(id) != nullptr;
+			decisions.enterControl(id);
+			if (!controlled) {
+				decisions.releaseControl(id);
+			}
+		}
 		LOG_INFO(Game, "[DevAPI] teleport: #%llu -> (%.1f, %.1f)", static_cast<unsigned long long>(id), to.x, to.y);
 		m_ctx.ui->pushNotification("Dev", "Teleported", ui::ToastSeverity::Info);
+		return {};
 	}
 
 	void DevCommandHandler::devSelect(const app::DevRequest& cmd) {
@@ -907,13 +1019,12 @@ namespace world_sim {
 		return {};
 	}
 
-	void DevCommandHandler::devOpening(const app::DevRequest& cmd) {
+	DevRefusal DevCommandHandler::devOpening(const app::DevRequest& cmd) {
 		const std::string type = param(cmd, "type", "Door");
-		const auto*		  typeDef = assets::ConstructionRegistry::Get().getOpeningType(type);
+		const auto&		  registry = assets::ConstructionRegistry::Get();
+		const auto*		  typeDef = registry.getOpeningType(type);
 		if (typeDef == nullptr) {
-			LOG_WARNING(Game, "[DevAPI] opening: unknown type '%s'", type.c_str());
-			m_ctx.ui->pushNotification("Dev", "Unknown opening type", ui::ToastSeverity::Warning);
-			return;
+			return refuse("opening: unknown type '" + type + "'");
 		}
 
 		auto& constructionWorld = m_ctx.drawing->world();
@@ -927,27 +1038,33 @@ namespace world_sim {
 		} else if (hasParam(cmd, "pt")) {
 			const std::vector<Foundation::Vec2> pts = parsePointList(param(cmd, "pt"));
 			if (pts.empty()) {
-				LOG_WARNING(Game, "[DevAPI] opening: pt must be 'x,y' world meters");
-				return;
+				return refuse("opening: pt must be 'x,y' world meters");
 			}
-			const auto&							   registry = assets::ConstructionRegistry::Get();
 			const construction::SnapEngine snap(registry.snapping(), constructionWorld);
-			const auto							   os = snap.snapOpening(pts.front(), typeDef->widthMeters);
+			const auto					   os = snap.snapOpening(pts.front(), typeDef->widthMeters);
 			if (!os.valid) {
-				LOG_WARNING(Game, "[DevAPI] opening: no built wall near pt");
-				m_ctx.ui->pushNotification("Dev", "No built wall near point", ui::ToastSeverity::Warning);
-				return;
+				return refuse("opening: no built wall near pt that can hold a " + type);
 			}
 			segment = os.segment;
 			t = os.t;
 		} else {
-			LOG_WARNING(Game, "[DevAPI] opening: needs seg=<id> or pt=x,y");
-			return;
+			return refuse("opening: needs seg=<id> or pt=x,y");
 		}
 
-		// Explicit t= overrides the resolved parameter (addOpening clamps to [0,1]).
+		// Explicit t= overrides the resolved parameter.
 		if (hasParam(cmd, "t")) {
 			t = std::strtof(param(cmd, "t").c_str(), nullptr);
+		}
+
+		// The opening tool's own gate: end margins from the trimmed band ends, segment
+		// length, overlap with the segment's other openings.
+		const construction::ConstructionValidator validator(registry.constraints(), constructionWorld);
+		const construction::ValidationResult	  validation = validator.validateOpening(segment, t, typeDef->name, typeDef->material);
+		if (!validation.ok()) {
+			return refuse(
+				"opening: " + construction::validationReason(validation.code) + " (segment #" + std::to_string(segment) + ", t=" +
+				std::to_string(t) + ")"
+			);
 		}
 
 		const std::string builtStr = param(cmd, "built", "1");
@@ -955,14 +1072,7 @@ namespace world_sim {
 
 		const construction::OpeningId id = m_ctx.drawing->devCommitOpening(segment, t, type, built);
 		if (id == construction::kInvalidOpening) {
-			LOG_WARNING(
-				Game,
-				"[DevAPI] opening: commit rejected (segment #%llu, type %s)",
-				static_cast<unsigned long long>(segment),
-				type.c_str()
-			);
-			m_ctx.ui->pushNotification("Dev", "Opening commit rejected", ui::ToastSeverity::Warning);
-			return;
+			return refuse("opening: commit rejected (segment #" + std::to_string(segment) + ", type " + type + ")");
 		}
 
 		LOG_INFO(
@@ -975,6 +1085,7 @@ namespace world_sim {
 			built ? 1 : 0
 		);
 		m_ctx.ui->pushNotification("Dev", built ? "Built opening placed" : "Opening blueprint placed", ui::ToastSeverity::Info);
+		return {};
 	}
 
 	void DevCommandHandler::devCraft(const app::DevRequest& cmd) {
@@ -1080,20 +1191,66 @@ namespace world_sim {
 		rule.priority = priority;
 		rule.minAmount = minAmount;
 		rule.maxAmount = maxAmount;
-		storageConfig->addRule(std::move(rule));
+		const size_t replaced = storageConfig->setRule(std::move(rule));
 
 		LOG_INFO(
 			Game,
-			"[DevAPI] storage: added rule to #%llu (item=%s, category=%u, priority=%s, min=%u, max=%u)",
+			"[DevAPI] storage: set rule on #%llu (item=%s, category=%u, priority=%s, min=%u, max=%u, replaced=%zu)",
 			static_cast<unsigned long long>(id),
 			defName.c_str(),
 			static_cast<unsigned>(category),
 			priorityStr.c_str(),
 			minAmount,
-			maxAmount
+			maxAmount,
+			replaced
 		);
-		m_ctx.ui->pushNotification("Dev", "Added storage rule: " + defName, ui::ToastSeverity::Info);
-		return app::DevResponse{.body = R"({"status":"ok","verb":"storage"})"};
+		m_ctx.ui->pushNotification("Dev", "Set storage rule: " + defName, ui::ToastSeverity::Info);
+		return app::DevResponse{.body = "{\"status\":\"ok\",\"verb\":\"storage\",\"replaced\":" + std::to_string(replaced) + "}"};
+	}
+
+	app::DevResponse DevCommandHandler::devThought(const app::DevRequest& cmd) {
+		const auto reject = [](const std::string& message) {
+			LOG_WARNING(Game, "[DevAPI] thought: %s", message.c_str());
+			return app::DevResponse{.status = 400, .body = "{\"error\":\"thought: " + jsonEscape(message) + "\"}"};
+		};
+		ecs::ThoughtSystem&		 thoughtSystem = m_ctx.world->getSystem<ecs::ThoughtSystem>();
+		const ecs::ThoughtTypes& types = thoughtSystem.types();
+
+		const ecs::EntityID colonist = parseEntity(param(cmd, "colonist"));
+		if (m_ctx.world->getComponent<ecs::Colonist>(colonist) == nullptr) {
+			return reject("no colonist #" + param(cmd, "colonist"));
+		}
+		const std::optional<ecs::ThoughtEventTypeId> type = types.findType(param(cmd, "type"));
+		if (!type.has_value()) {
+			return reject("no thought type '" + param(cmd, "type") + "'");
+		}
+		ecs::ThoughtSubject subject = ecs::ThoughtSubject::aboutNothing();
+		if (hasParam(cmd, "subject")) {
+			const ecs::EntityID entity = parseEntity(param(cmd, "subject"));
+			if (!m_ctx.world->isAlive(entity)) {
+				return reject("no entity #" + param(cmd, "subject"));
+			}
+			subject = m_ctx.world->getComponent<ecs::Colonist>(entity) != nullptr ? ecs::ThoughtSubject::aboutColonist(entity)
+																				  : ecs::ThoughtSubject::aboutEntity(entity);
+		}
+
+		const ecs::ThoughtHandle handle = thoughtSystem.create({.colonist = colonist, .eventType = *type, .subject = subject});
+		std::ostringstream		 out;
+		out << "{\"status\":\"ok\",\"verb\":\"thought\",\"created\":" << (handle.colonist != ecs::kInvalidEntity ? "true" : "false");
+		if (handle.colonist != ecs::kInvalidEntity) {
+			const ecs::Thoughts& thoughts = *m_ctx.world->getComponent<ecs::Thoughts>(colonist);
+			const ecs::Thought&	 thought = *ecs::findThought(thoughts, handle.thought);
+			const std::string	 line = ecs::renderThoughtLine(types, thoughts, thought);
+			out << ",\"thought\":" << thought.id << ",\"feeling\":\"" << jsonEscape(types.feeling(thought.feeling).name) << "\",\"line\":";
+			if (line.empty()) {
+				out << "null";
+			} else {
+				out << "\"" << jsonEscape(line) << "\"";
+			}
+		}
+		out << "}";
+		LOG_INFO(Game, "[DevAPI] thought: '%s' on #%llu", param(cmd, "type").c_str(), static_cast<unsigned long long>(colonist));
+		return app::DevResponse{.body = out.str()};
 	}
 
 	Foundation::Vec2 DevCommandHandler::parsePoint(const std::string& spec) {
@@ -1113,18 +1270,90 @@ namespace world_sim {
 
 	// ===================================================================== STATE READBACK
 
+	void DevCommandHandler::serializeThoughts(std::ostringstream& out, const ecs::Thoughts& thoughts) {
+		constexpr std::size_t	 kRecentThoughts = 5;
+		const ecs::ThoughtTypes& types = m_ctx.world->getSystem<ecs::ThoughtSystem>().types();
+		const double			 now = m_ctx.world->getSystem<ecs::TimeSystem>().simulationSeconds();
+		const auto				 header = [&](const ecs::Thought& thought) {
+			  out << "{\"id\":" << thought.id << ",\"type\":\"" << jsonEscape(types.type(thought.eventType).name) << "\",\"feeling\":\""
+				  << jsonEscape(types.feeling(thought.feeling).name) << "\"";
+		};
+
+		const auto merged = std::ranges::count_if(thoughts.record, [](const ecs::Thought& thought) { return thought.merged; });
+		out << ",\"thoughts\":{\"recorded\":" << thoughts.record.size() << ",\"merged\":" << merged << ",\"held\":[";
+		bool first = true;
+		ecs::forEachHeldThought(thoughts, [&](const ecs::Thought& thought) {
+			out << (first ? "" : ",");
+			first = false;
+			header(thought);
+			out << ",\"mood\":" << ecs::heldMoodAmount(thought) << ",\"left\":";
+			if (thought.moodEffect->lasts == ecs::MoodEffectLasts::WhileCauseHolds) {
+				out << "\"while\"";
+			} else {
+				out << (thought.expiresAt - now) / ecs::kSimulationSecondsPerGameHour;
+			}
+			out << ",\"count\":" << thought.count << "}";
+		});
+		out << "],\"recent\":[";
+		const std::size_t shown = std::min(kRecentThoughts, thoughts.record.size());
+		for (std::size_t index = 0; index < shown; ++index) {
+			const ecs::Thought& thought = thoughts.record[thoughts.record.size() - 1 - index];
+			out << (index > 0 ? "," : "");
+			header(thought);
+			const std::string line = ecs::renderThoughtLine(types, thoughts, thought);
+			out << ",\"line\":";
+			if (line.empty()) {
+				out << "null";
+			} else {
+				out << "\"" << jsonEscape(line) << "\"";
+			}
+			out << ",\"arrivedAt\":" << thought.arrivedAt << "}";
+		}
+		out << "]}";
+	}
+
 	void DevCommandHandler::serializeColonists(std::ostringstream& out) {
 		out << "{\"colonists\":[";
 		bool first = true;
-		for (auto [entity, colonist, pos, needs] : m_ctx.world->view<ecs::Colonist, ecs::Position, ecs::NeedsComponent>()) {
+		for (auto [entity, colonist, pos, needs, mood] : m_ctx.world->view<ecs::Colonist, ecs::Position, ecs::NeedsComponent, ecs::Mood>()) {
 			out << (first ? "" : ",");
 			first = false;
 			out << "{\"id\":" << static_cast<unsigned long long>(entity) << ",\"name\":\"" << jsonEscape(colonist.name) << "\""
-				<< ",\"x\":" << pos.value.x << ",\"y\":" << pos.value.y << ",\"needs\":{";
+				<< ",\"x\":" << pos.value.x << ",\"y\":" << pos.value.y << ",\"traits\":[";
+			if (const auto* traits = m_ctx.world->getComponent<ecs::Traits>(entity)) {
+				for (size_t i = 0; i < traits->ids.size(); ++i) {
+					out << (i > 0 ? "," : "") << "\"" << jsonEscape(traits->ids[i]) << "\"";
+				}
+			}
+			out << "],\"needs\":{";
 			for (size_t i = 0; i < ecs::kNeedLabels.size(); ++i) {
 				out << (i > 0 ? "," : "") << "\"" << ecs::kNeedLabels[i] << "\":" << needs.get(static_cast<ecs::NeedType>(i)).value;
 			}
+			out << "},\"mood\":{\"value\":" << mood.value << ",\"target\":" << mood.target << ",\"band\":\""
+				<< jsonEscape(assets::MoodConfig::Get().bandFor(mood.value).name) << "\",\"cause\":";
+			switch (mood.cause.kind) {
+				case ecs::MoodCauseKind::None:
+					out << "null";
+					break;
+				case ecs::MoodCauseKind::Need:
+					out << "{\"need\":\"" << ecs::needLabel(mood.cause.need) << "\"}";
+					break;
+				case ecs::MoodCauseKind::Thought:
+					out << "{\"thought\":" << mood.cause.thought << "}";
+					break;
+			}
 			out << "}";
+			if (const auto* attributes = m_ctx.world->getComponent<ecs::Attributes>(entity)) {
+				out << ",\"attributes\":{";
+				for (size_t i = 0; i < ecs::kAttributeFields.size(); ++i) {
+					const ecs::AttributeField& field = ecs::kAttributeFields[i];
+					out << (i > 0 ? "," : "") << "\"" << field.id << "\":" << attributes->*(field.value);
+				}
+				out << "}";
+			}
+			if (const auto* thoughts = m_ctx.world->getComponent<ecs::Thoughts>(entity)) {
+				serializeThoughts(out, *thoughts);
+			}
 			if (const auto* action = m_ctx.world->getComponent<ecs::Action>(entity)) {
 				out << ",\"action\":\"" << ecs::actionTypeName(action->type) << "\"";
 			}
@@ -1138,7 +1367,8 @@ namespace world_sim {
 				};
 				add(inv->leftHand);
 				// Two-handed items mirror in both hands; don't double-count.
-				if (!(inv->leftHand.has_value() && inv->rightHand.has_value() && inv->leftHand->defName == inv->rightHand->defName)) {
+				if (!(inv->leftHand.has_value() && inv->rightHand.has_value() && inv->leftHand->defName == inv->rightHand->defName &&
+					  ecs::itemIsTwoHand(assets::AssetRegistry::Get(), inv->leftHand->defName))) {
 					add(inv->rightHand);
 				}
 				for (const auto& stack : inv->items) {
@@ -1204,6 +1434,27 @@ namespace world_sim {
 			os << "},\"progress\":" << bp.progress();
 		};
 
+		// The phase a blueprint is in, as the foundation and opening entries name it.
+		const auto phaseName = [](ecs::StructureBlueprint::BuildPhase phase) {
+			switch (phase) {
+				case ecs::StructureBlueprint::BuildPhase::Clearing: return "Clearing";
+				case ecs::StructureBlueprint::BuildPhase::AwaitingMaterials: return "AwaitingMaterials";
+				case ecs::StructureBlueprint::BuildPhase::UnderConstruction: return "UnderConstruction";
+				case ecs::StructureBlueprint::BuildPhase::Complete: return "Complete";
+			}
+			return "Clearing";
+		};
+
+		// What an entity's blueprint adds to a foundation's or opening's entry: its phase and material progress.
+		const BlueprintFragment blueprintFragment = [&](ecs::EntityID entity) {
+			std::ostringstream fragment;
+			if (const auto* bp = m_ctx.world->getComponent<ecs::StructureBlueprint>(entity)) {
+				fragment << ",\"phase\":\"" << phaseName(bp->phase) << "\"";
+				emitMaterialProgress(fragment, *bp);
+			}
+			return fragment.str();
+		};
+
 		const auto& cworld = m_ctx.drawing->world();
 		out << "{\"foundations\":[";
 		bool first = true;
@@ -1214,19 +1465,11 @@ namespace world_sim {
 				<< "\",\"state\":\"" << (foundation.state == construction::FoundationState::Built ? "Built" : "Blueprint")
 				<< "\",\"entity\":" << static_cast<unsigned long long>(foundation.entity) << ",\"area\":" << cworld.areaSquareMeters(foundation.id);
 
+			out << ",\"corners\":" << foundationCornersJson(foundation);
+
 			// Include material progress from the ECS mirror entity's StructureBlueprint
 			if (foundation.entity != ecs::kInvalidEntity) {
-				if (const auto* bp = m_ctx.world->getComponent<ecs::StructureBlueprint>(foundation.entity)) {
-					const char* phaseStr = "Clearing";
-					switch (bp->phase) {
-						case ecs::StructureBlueprint::BuildPhase::Clearing: phaseStr = "Clearing"; break;
-						case ecs::StructureBlueprint::BuildPhase::AwaitingMaterials: phaseStr = "AwaitingMaterials"; break;
-						case ecs::StructureBlueprint::BuildPhase::UnderConstruction: phaseStr = "UnderConstruction"; break;
-						case ecs::StructureBlueprint::BuildPhase::Complete: phaseStr = "Complete"; break;
-					}
-					out << ",\"phase\":\"" << phaseStr << "\"";
-					emitMaterialProgress(out, *bp);
-				}
+				out << blueprintFragment(foundation.entity);
 			}
 
 			out << "}";
@@ -1260,7 +1503,9 @@ namespace world_sim {
 
 			out << "}";
 		}
-		out << "]}";
+
+		// Openings: the wall each is on, where along it, that point in world meters, its build state and, with an entity, its phase and progress.
+		out << "],\"openings\":" << openingsJson(cworld, blueprintFragment) << "}";
 	}
 
 	void DevCommandHandler::serializeStations(std::ostringstream& out) {
@@ -1390,14 +1635,25 @@ namespace world_sim {
 	}
 
 	std::string DevCommandHandler::visibilityJson(const app::DevRequest& cmd) {
+		// K is counted from the first time this view is read; the record keeps nothing for it before.
+		m_ctx.world->getSystem<ecs::PlayerVisibilitySystem>().countRingsMet();
 		const ecs::PlayerVisibilitySystem& visibility = m_ctx.world->getSystem<ecs::PlayerVisibilitySystem>();
 		const vision::SeenArea&			   seen		  = visibility.seenArea();
 		std::ostringstream				   out;
 		out << "{\"revealed\":" << (visibility.revealed() ? "true" : "false") << ",\"seenSquareMeters\":" << std::fixed
 			<< std::setprecision(1) << seen.committedSquareMeters() << ",\"ringsRegistered\":" << seen.ringsRegistered()
-			<< ",\"shapesPending\":" << seen.shapesPending() << ",\"shapesDropped\":" << seen.shapesDropped() << ",\"shapesSkipped\":" << seen.shapesSkipped()
-			<< ",\"sweepsBuilt\":" << seen.sweepsBuilt() << ",\"sweepsWaiting\":" << seen.sweepsWaiting()
-			<< ",\"epoch\":" << seen.epoch();
+			<< ",\"openLegs\":" << seen.pending().openLegs << ",\"shapesWaiting\":" << seen.pending().shapesWaiting
+			<< ",\"piecesWaiting\":" << seen.pending().piecesWaiting << ",\"shapesDropped\":" << seen.shapesDropped() << ",\"shapesSkipped\":" << seen.shapesSkipped()
+			<< ",\"sweepsBuilt\":" << seen.sweepsBuilt() << ",\"sweepsWaiting\":" << seen.sweepsWaiting() << ",\"sweepsDropped\":" << seen.sweepPointsDropped()
+			<< ",\"epoch\":" << seen.epoch() << ",\"ringsMetMean\":" << std::setprecision(1) << seen.ringsMetMean()
+			<< ",\"ringsMetMost\":" << seen.ringsMetMost();
+		std::int64_t greatestRangeChangeMm = 0;
+		for (auto [entity, colonist] : m_ctx.world->view<ecs::Colonist>()) {
+			if (const vision::SightFeed* feed = visibility.feedOf(entity)) {
+				greatestRangeChangeMm = std::max(greatestRangeChangeMm, feed->greatestRangeChangeMm());
+			}
+		}
+		out << ",\"greatestRangeChangeMm\":" << greatestRangeChangeMm;
 		if (hasParam(cmd, "x") && hasParam(cmd, "y")) {
 			const glm::vec2 point{std::strtof(param(cmd, "x").c_str(), nullptr), std::strtof(param(cmd, "y").c_str(), nullptr)};
 			out << ",\"x\":" << point.x << ",\"y\":" << point.y << ",\"seen\":" << (visibility.isSeen(point) ? "true" : "false")
@@ -1405,6 +1661,16 @@ namespace world_sim {
 		}
 		out << "}";
 		return out.str();
+	}
+
+	void DevCommandHandler::serializeThoughtTypes(std::ostringstream& out) {
+		const ecs::ThoughtTypes& types = m_ctx.world->getSystem<ecs::ThoughtSystem>().types();
+		out << "{\"types\":[";
+		for (std::size_t index = 0; index < types.typeCount(); ++index) {
+			const ecs::ThoughtType& type = types.type(static_cast<ecs::ThoughtEventTypeId>(index));
+			out << (index > 0 ? "," : "") << "{\"name\":\"" << jsonEscape(type.name) << "\",\"label\":\"" << jsonEscape(type.label) << "\"}";
+		}
+		out << "]}";
 	}
 
 	void DevCommandHandler::serializeSummary(std::ostringstream& out) {
@@ -1415,32 +1681,6 @@ namespace world_sim {
 		}
 		out << "{\"colonists\":" << colonists << ",\"foundations\":" << m_ctx.drawing->world().foundations().size()
 			<< ",\"chunks\":" << m_ctx.chunks->loadedChunkCount() << "}";
-	}
-
-	std::string DevCommandHandler::jsonEscape(const std::string& s) {
-		std::string out;
-		out.reserve(s.size() + 8);
-		for (char c : s) {
-			switch (c) {
-				case '"': out += "\\\""; break;
-				case '\\': out += "\\\\"; break;
-				case '\b': out += "\\b"; break;
-				case '\f': out += "\\f"; break;
-				case '\n': out += "\\n"; break;
-				case '\r': out += "\\r"; break;
-				case '\t': out += "\\t"; break;
-				default:
-					if (static_cast<unsigned char>(c) < 0x20) {
-						// Other control chars: emit a \u00XX escape rather than dropping them.
-						char buf[7];
-						std::snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
-						out += buf;
-					} else {
-						out += c;
-					}
-			}
-		}
-		return out;
 	}
 
 } // namespace world_sim

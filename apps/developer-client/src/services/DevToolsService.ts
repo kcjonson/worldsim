@@ -49,5 +49,21 @@ export interface ColonistState {
   x: number;
   y: number;
   needs: Record<string, number>;
+  attributes?: Record<string, number>;
   action?: string;
+}
+
+/** A sight tunable as serialized by /api/state?what=sightTunables and answered by /api/dev/sight. */
+export interface SightTunable {
+  name: string;
+  value: number;
+  least: number;
+  most: number;
+  start: number;
+}
+
+/** A thought type as listed by /api/state?what=thoughttypes. */
+export interface ThoughtTypeState {
+  name: string;
+  label: string;
 }

@@ -20,9 +20,11 @@
 // colonist holds, so the counts don't grow with the trees.
 
 #include "AIDecisionSystem.h"
+#include "ShippedPriorityConfig.test.h"
 
 #include "../ClaimIndex.h"
 #include "../GoalTaskRegistry.h"
+#include "../ShippedConfig.test.h"
 #include "../World.h"
 #include "../components/AgentRadius.h"
 #include "../components/Appearance.h"
@@ -40,6 +42,7 @@
 #include "../components/WorkQueue.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/RecipeDef.test.h>
 #include <assets/RecipeRegistry.h>
 
 #include <benchmark/benchmark.h>
@@ -223,6 +226,7 @@ namespace {
 			recipe.defName = kRecipe;
 			recipe.label   = kRecipe;
 			recipe.inputs.push_back({kWoodDef, 0, 400});
+			recipe.workAmount = assets::kTestRecipeWorkAmount;
 			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 			return true;
 		}();
@@ -301,6 +305,10 @@ namespace {
 		const int colonistCount = static_cast<int>(state.range(0));
 		const int treeCount		= static_cast<int>(state.range(1));
 		registerWorkDefs();
+		if (!ecs::loadShippedPriorityConfig()) {
+			state.SkipWithError("priority-tuning.xml did not load");
+			return;
+		}
 		const uint32_t treeId = assets::AssetRegistry::Get().getDefNameId(kTreeDef);
 		const auto	   harvestableMask = static_cast<std::uint16_t>(1U << static_cast<std::size_t>(assets::CapabilityType::Harvestable));
 
@@ -336,7 +344,7 @@ namespace {
 				world.addComponent<ecs::Position>(e, ecs::Position{home});
 				world.addComponent<ecs::Velocity>(e, ecs::Velocity{{0.0F, 0.0F}});
 				world.addComponent<ecs::MovementTarget>(e, ecs::MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-				ecs::NeedsComponent needs = ecs::NeedsComponent::createDefault();
+				ecs::NeedsComponent needs = ecs::testing::shippedNeeds();
 				for (const ecs::NeedType need : ecs::NeedsComponent::kActionableNeeds) {
 					needs.get(need).value = 100.0F;
 				}

@@ -3,6 +3,7 @@
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
 #include <assets/TreeTraits.h>
+#include <assets/placement/InstanceTransform.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Inventory.h>
@@ -26,7 +27,8 @@ namespace world_sim {
 		  placementExecutor(args.placementExecutor),
 		  navigation(args.navigation),
 		  worldSeed(args.worldSeed),
-		  callbacks(args.callbacks) {
+		  callbacks(args.callbacks),
+		  unbuiltSite(args.insideUnbuiltSite) {
 		// Initialize placement mode with callback to handle placement
 		placementMode = PlacementMode{PlacementMode::Args{.onPlace = [this](const std::string& defName, Foundation::Vec2 worldPos) {
 			if (relocatingEntityId != ecs::EntityID{0}) {
@@ -125,17 +127,19 @@ namespace world_sim {
 
 	namespace {
 		// `defName`'s collision outline at `worldPos`, or just `worldPos` when it has no rect or polygon outline.
+		// What the player places is spawned upright at scale 1 (spawnEntity), so its footprint is too.
 		std::vector<glm::vec2> footprintAt(const std::string& defName, Foundation::Vec2 worldPos) {
-			std::vector<glm::vec2> outline;
+			std::vector<glm::vec2>			outline;
+			const assets::InstanceTransform placed = assets::uprightInstance({worldPos.x, worldPos.y});
 			if (const auto* def = assets::AssetRegistry::Get().getDefinition(defName); def != nullptr) {
 				const assets::CollisionShape& footprint = def->collisionFor(0);
 				if (footprint.type == assets::CollisionShapeType::Rect) {
 					for (const glm::vec2 corner : footprint.rectCornersLocal()) {
-						outline.push_back(corner + glm::vec2{worldPos.x, worldPos.y});
+						outline.push_back(placed.toWorld(corner));
 					}
 				} else if (footprint.type == assets::CollisionShapeType::Polygon) {
 					for (const glm::vec2 point : footprint.pointsMeters) {
-						outline.push_back(point + glm::vec2{worldPos.x, worldPos.y});
+						outline.push_back(placed.toWorld(point));
 					}
 				}
 			}
@@ -146,8 +150,12 @@ namespace world_sim {
 		}
 	} // namespace
 
+	bool PlacementSystem::insideUnbuiltSite(Foundation::Vec2 worldPos) const {
+		return unbuiltSite && unbuiltSite({worldPos.x, worldPos.y});
+	}
+
 	bool PlacementSystem::footprintBuildableNow(const std::string& defName, Foundation::Vec2 worldPos) const {
-		return navigation != nullptr && navigation->isAreaBuildableNow(footprintAt(defName, worldPos));
+		return navigation != nullptr && !insideUnbuiltSite(worldPos) && navigation->isAreaBuildableNow(footprintAt(defName, worldPos));
 	}
 
 	std::optional<glm::vec2> PlacementSystem::installTargetNear(const std::string& defName, glm::vec2 stationPos, glm::vec2 aim) const {
@@ -165,12 +173,12 @@ namespace world_sim {
 	}
 
 	bool PlacementSystem::placeable(Foundation::Vec2 worldPos) const {
-		const std::vector<glm::vec2> outline = footprintAt(placementMode.selectedDefName(), worldPos);
-		if (navigation == nullptr || !navigation->isAreaBuildableNow(outline)) {
+		const std::string& defName = placementMode.selectedDefName();
+		if (!footprintBuildableNow(defName, worldPos)) {
 			return false;
 		}
 		const ecs::PlayerVisibilitySystem* visibility = ecsWorld != nullptr ? ecs::PlayerVisibilitySystem::gate(*ecsWorld) : nullptr;
-		return visibility == nullptr || visibility->covers(outline);
+		return visibility == nullptr || visibility->covers(footprintAt(defName, worldPos));
 	}
 
 	bool PlacementSystem::handleClick() {

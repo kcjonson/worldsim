@@ -33,9 +33,11 @@ protected pixel for pixel: no golden images, no screenshot diffs, in CI or local
 - **GL tests run on the Linux CI job.** It installs Xvfb and Mesa llvmpipe and sets `WORLDSIM_REQUIRE_GL=1`, so `SurfaceFieldGolden`, `GroundTileBaker` and `AssetRenderer` fail there if no context comes up instead of skipping. Unset, they skip without one, as on the Windows job (GDI's GL 1.1) or a box with no GL.
 - **Unit tests are bounded.** Before adding one, look for a test covering the same path, and
   merge duplicates when touching a suite.
-- **Lint and tree are helpers, not tests.** While building or checking UI, call `/api/ui/lint`
-  (expect `"count":0` before screenshotting) and read element bounds from `/api/ui/tree` rather
-  than judging coordinates by eye. On demand only; never in CI.
+- **The dev server's lint and tree are helpers, not tests.** While building or checking UI, call
+  `/api/ui/lint` (expect `"count":0` before screenshotting) and read element bounds from
+  `/api/ui/tree` rather than judging coordinates by eye. On demand only. The headless scene lint at a
+  list of window and interface sizes (`SceneLayout.test.cpp`, through salal's `app::lintAt`) is a unit
+  test and runs under ctest in CI, where it gates.
 
 ---
 
@@ -139,6 +141,14 @@ sessions as much as the change. Decided 2026-11-10, after sessions lost days to 
 under load and to re-runs chasing regressions that were never there. The GPU hold keeps the card
 at P0; it does nothing about another process taking the card or the cores.
 
+### Capture conditions
+
+Every capture, a session's and the nightly batch's, runs world-sim with `--no-settings`: the player's
+`settings.json` is neither read nor saved, so the window opens at its default size, 80% of the primary
+monitor's work area (3072x1728 on this machine), with the interface at 100% and vsync on until the capture
+turns it off. Nothing the capture changes, the vsync it sets included, reaches the player's settings.
+`scripts/perf.mjs` passes the flag where it launches the game; a session launching its own passes it too.
+
 ### Timing your own work in a session
 
 Allowed when the change calls for it, with three conditions.
@@ -146,12 +156,15 @@ Allowed when the change calls for it, with three conditions.
 1. **Scoped.** Time what the change could move: the view and the zooms it touches, against `main`.
    The full three-view suite is the nightly batch's job.
 2. **Checked.** `node scripts/machine-load.mjs` before the capture and again after, with the game
-   closed. It reads CPU, GPU utilization, and other sessions' build, test, and game processes, and
-   answers `idle`, `mostly-idle`, or `busy`. On `busy` don't time anything.
+   closed. It reads CPU, GPU load, and other sessions' build, test, and game processes, and
+   answers `idle`, `mostly-idle`, or `busy`. GPU load is nvidia-smi's utilization, except while the
+   graphics clock is at most a quarter of its maximum (the card at its idle clock), where it is
+   scaled by clock over maximum: a card there reports 25 to 45% utilization of almost no capacity.
+   At any higher clock the raw utilization stands. On `busy` don't time anything.
 3. **Budgeted.** Every capture launches the game on Kevin's desktop and holds the machine while it
    runs. Decide the launches before the first one and stop when the question is answered.
 
-With world-sim in the game scene on your port, once on `main` and once on the branch:
+With world-sim in the game scene on your port, started with `--no-settings`, once on `main` and once on the branch:
 
 ```
 node scripts/perf.mjs capture --port <PORT> --view river --zooms 3,1.5 --no-scroll --out <file>.json
@@ -236,6 +249,12 @@ spec, and the `/perf-nightly` skill runs it.
 | 13 | Colonists walk round obstacles | [scenarios/13-colonists-walk-round-obstacles.md](./scenarios/13-colonists-walk-round-obstacles.md) |
 | 14 | Player visibility | [scenarios/14-player-visibility.md](./scenarios/14-player-visibility.md) |
 | 15 | Builder work spots | [scenarios/15-builder-work-spots.md](./scenarios/15-builder-work-spots.md) |
+| 16 | Rooms inside rooms | [scenarios/16-rooms-inside-rooms.md](./scenarios/16-rooms-inside-rooms.md) |
+| 17 | Interface size | [scenarios/17-interface-size.md](./scenarios/17-interface-size.md) |
+| 18 | Colonist thoughts | [scenarios/18-colonist-thoughts.md](./scenarios/18-colonist-thoughts.md) |
+| 19 | Load errors on screen | [scenarios/19-load-errors-on-screen.md](./scenarios/19-load-errors-on-screen.md) |
+| 20 | Drawing tools | [scenarios/20-drawing-tools.md](./scenarios/20-drawing-tools.md) |
+| 21 | Colonists wash | [scenarios/21-colonists-wash.md](./scenarios/21-colonists-wash.md) |
 
 **Scenarios that look away from the colonists turn reveal on** (`/api/dev/reveal?on=1`), since ground no colonist has seen is black (player visibility); a launch starts with it off. Scenario 14 is the one that tests the cover itself.
 
@@ -266,17 +285,32 @@ build\libs\sim\Debug\sim-tests.exe
 # every library's tests: ctest --test-dir build -C Debug -LE heavy -E benchmarks
 ```
 
+world-sim's own test executable (the scene layout lint) builds to `apps/world-sim/tests/<config>/world-sim-tests.exe`.
+
 ### Pre-generated world
 
 A worktree needs `planets/quickstart.wsplanet` (~1.3 GiB, gitignored). Junction it from the main
 checkout; see the "Sharing the pre-generated world across worktrees" note in [../CLAUDE.md](../../CLAUDE.md).
-Missing file causes an immediate `ConfigError` on launch.
+A missing file fails the load at once, naming the path it expected on the loading scene.
 
 ### Launch
 
 ```
-build\apps\world-sim\RelWithDebInfo\world-sim.exe --scene=game --http-port <PORT>
+build\apps\world-sim\RelWithDebInfo\world-sim.exe --scene=game --http-port <PORT> --background --no-settings
 ```
+
+**Every launch an agent makes passes `--background`**, whichever app the scenario names
+(`world-sim`, `ui-sandbox`, `asset-manager`) and whatever other flags its launch line gives. Every
+world-sim launch passes `--no-settings` too: the settings file (`%APPDATA%\kcjonson\world-sim\settings.json`)
+is shared by every worktree's build and Kevin's own play, and a run that stops midway, a resize, or the
+dev server's `vsync` control would otherwise leave its interface size, window size or vsync saved for
+every later launch. ui-sandbox and asset-manager have no settings file. Scenario 17 tests that the
+settings are saved, so it runs on the real file and restores it. The
+window opens behind every other window and unfocused, so a pass never lands on top of Kevin's work
+or takes his keyboard. Nothing else changes: the window is on the taskbar and drawn every frame,
+and screenshots, injected input and state read the same. Both flags come off only for a launch made
+for Kevin to test something by hand, or one he asked for. Perf captures are the scripted exception;
+`scripts/perf.mjs` launches in the foreground, since a covered window isn't presented the same way.
 
 Use a **unique non-default port** (default 8081) to avoid collision with other worktrees or a
 running game instance. Reaches the game scene in ~5 s; colonist "Bob" spawns in
@@ -315,26 +349,32 @@ colonist can wade (a ford): `foundation`, `walls`, and `spawn` of a station or s
 refuse it as they refuse water, and those three answer a refusal as 400 `{"error":"..."}`, creating
 nothing. Trees, reeds, and loose items still spawn in a ford: putting one there builds nothing.
 
+A plain `curl` prints a 400's body without failing, so read every reply. `teleport`, `colonist`, and `give`
+answer a 400 the same way when they move, spawn, or add nothing. `kill` answers `ok` even when it did
+nothing, so check the state view after it.
+
 | Verb | Key params | Notes |
 |------|-----------|-------|
 | `spawn` | `def=<asset>&at=x,y&n=1&scatter=0` | Spawns a world entity (tree, station, container, loose item). A station or storage container goes where the placement tool would take it: its footprint (its collision outline, else its centre) on clear ground (no water, ford, placed obstacle, or unmeshed ground). Anything else goes on clear ground, a ford included. Refused ground is a 400. A scattered spot is snapped off water and skipped if refused; when every spot is skipped the answer is a 400. A missing or unknown `def` is a 400 too. |
-| `colonist` | `at=x,y&n=1&name=` | Spawns a colonist at the given position. |
-| `give` | `material=<defName>&n=<qty>&where=site\|loose\|colonist\|storage[&at=x,y]` | Gives material to the colonist, a site, or storage; `loose` drops it on the ground at `at` as stack-capped piles, refused over 50 piles or for a def that isn't an item (furniture, stations). |
+| `colonist` | `at=x,y&n=1&name=` | Spawns a colonist at the given position. Water or a placed obstacle is a 400; ground no mover has meshed takes him, and he meshes it. |
+| `give` | `material=<defName>&n=<qty>&where=site\|loose\|colonist\|storage[&at=x,y][&slot=pack\|hands\|belt]` | Gives material to the colonist, a site, or storage; `loose` drops it on the ground at `at` as stack-capped piles, refused over 50 piles. A `material` that is not an item (an unknown name, furniture, a station) is a 400 for every `where`. `slot` is for `where=colonist` (pack by default). Answers `{"status":"ok","verb":"give","added":<count>,"asked":<n>}`, with `"shortfall":"<what was in the way>"` when it added fewer than asked (hands hold two one-hand items, or one armful of a two-hand material up to its weight). For `loose`, `added` is the count asked for, not one read back from the piles. A give that added nothing is a 400 naming why, e.g. `{"error":"give: added 0 of 10 Wood to the nearest colonist's hands: hands occupied by AxePrimitive"}`; so is one with no target, an unknown `where`, or a refused `at`. |
 | `need` | `colonist=<id>&need=Hunger\|Thirst\|Energy\|...&value=0..100` | Sets a colonist's need to the given value. |
+| `attribute` | `colonist=<id>&attribute=<name>&value=0..20` | Sets one of a colonist's attributes, named as conditions write it (`strength`, `kindness`, `social_need`, `work_ethic`, ...; the `attributes` of `/api/state?what=colonists` lists them). Every colonist spawns with each attribute at 10, so this is how a personality-keyed feeling or line (`attribute(kindness) >= 14`) is reached. An unknown colonist or attribute, or a value that is not a number from 0 to 20, is a 400. |
+| `thought` | `colonist=<id>&type=<thought type id>[&subject=<entity id>]` | Gives a colonist a thought the way a source would: the type (`assets/config/thoughts`, e.g. `slept_on_ground`, `talked_with_friend`) picks the feeling from his attributes, the mood effect, and the line. A colonist subject is named in the line (`{subject}`). Answers `{"status":"ok","verb":"thought","created":true,"thought":<id>,"feeling":"<name>","line":"<text>"\|null}`, or `"created":false` when none of the type's feelings applies to him. An unknown colonist, type, or subject is a 400. |
 | `time` | `speed=0..3` or `set=HH:MM` or `skip=Nh\|Nm` | Controls game time. `speed=3` accelerates. |
-| `teleport` | `colonist=<id>&to=x,y` | Teleports a colonist. |
+| `teleport` | `colonist=<id>&to=x,y` | Teleports a colonist and drops his task, route, and action, so he decides afresh at the next update (one the player controls stays controlled, without his move order). Water or a placed obstacle is a 400 `{"error":"teleport: (x, y) is water or a placed obstacle"}` and he stays put, as is an id that names nothing. Ground no mover has meshed takes him, and he meshes it. |
 | `select` | `colonist=<id>` or `at=x,y` | Selects a colonist for the UI. |
 | `kill` | `colonist=<id>` | Removes a colonist. |
 | `complete` | `id=<entity>` | Instantly completes a task/entity. |
 | `craft` | `recipe=<Recipe_*>&n=1&at=x,y` | Queues a recipe at the nearest crafting station. |
-| `storage` | `at=x,y&item=<defName\|*>&category=RawMaterial\|Food\|Tool\|Furniture&priority=Low\|Medium\|High\|Critical&min=0&max=0` | Adds a StorageRule to the nearest container. A named item's category comes from its definition (`category` is only for `item=*`, RawMaterial by default); an unknown item, or a `category` that isn't the item's, answers 400. |
+| `storage` | `at=x,y&item=<defName\|*>&category=RawMaterial\|Food\|Tool\|Furniture&priority=Low\|Medium\|High\|Critical&min=0&max=0` | Sets a StorageRule on the nearest container: a rule already there for the same item (same `item` and category) is replaced by the one given, so repeating the call with new `min`/`max`/`priority` leaves one rule, and a rule for another item is added beside it. Answers `{"status":"ok","verb":"storage","replaced":<n>}`, where `n` counts the same-item rules it replaced; the category wildcard a named item removes (as the storage dialog does) is separate and not counted. A named item's category comes from its definition (`category` is only for `item=*`, RawMaterial by default); an unknown item, or a `category` that isn't the item's, answers 400. |
 | `foundation` | `pts=x0,y0;x1,y1;...&material=Wood&built=0\|1` | `built=0` = blueprint the colonist builds. Needs at least 3 points; fewer answers 400 `{"error":"foundation: pts needs at least 3 'x,y' pairs (got 2)"}`. Any part of the footprint off the nav mesh, over water or in a ford, or a commit the validator rejects, answers 400 and creates nothing. |
 | `foundation-edit` | `id=<foundationId>&mode=add\|subtract&pts=x0,y0;x1,y1;...` | Foundation Add / Subtract through the tool's own validate + apply path. Answers `{status:"ok"\|"rejected", reason, target, extension, entity, area}`: an editable blueprint is reshaped in place (`extension` 0), an Add onto a built foundation returns the extension blueprint's id (it merges once built, e.g. with `freebuild?on=1`). |
 | `flora` | `rect=x0,y0,x1,y1` (world metres; default the camera's view) | Reads, changes nothing. The trees in the rect (tall occluders whose def is in the `trees` placement group), as `{rect, rectAreaM2, measuredAreaM2, cellSizeM, trees, treesPer1000m2, canopyCover, woodPer1000m2, defs:[{def, count, per1000m2, woodPerTree, woodPer1000m2, ageClasses:[{name, count, per1000m2}]}], otherTallOccluders:[{def, count, per1000m2}]}`. `ageClasses` lists every age class of a def that has `<ageClasses>`, in its order, and is empty otherwise. The other tall occluders (reeds, big rocks) are listed apart and are in neither the totals nor the cover. `measuredAreaM2` is the part of the rect in loaded chunks, and densities and cover are over it. Cover is the union of each tree's own silhouette (its variant's, shadows left out) at 0.1 m cells; wood is each def's yield midpoint. A route, not a state view, because a view takes no parameters. A rect with a side over 500 m, a side of zero or less, or more than 25 million 0.1 m cells is a 400, as is any coordinate beyond 16777216 m (2^24) from the origin. |
 | `flora` | `age=<name>&near=x,y&def=<defName>` (`def` optional) | Reads, changes nothing. The nearest trees of that age class within 200 m of `near` (a 400 m square), nearest first, at most 20: `{age, near, def, searchHalfSizeM, trees:[{def, x, y, ageClass, variant, distance}]}`. `x` and `y` print at full float precision, so a listed position names the same tree when read back. `age` without `near`, or the reverse, is a 400, as is a `near` coordinate beyond 16777216 m (2^24) from the origin. |
 | `walls` | `pts=...&material=Wood&thickness=Standard&host=<foundationId>&built=0\|1&close=1` | `built` **defaults to 1** — pass `built=0` for a blueprint. Needs at least 2 points (400 otherwise). A chain any point of which is off the nav mesh, over water, in a ford, or in a placed obstacle answers 400, hosted or freestanding (`host=0`). |
 | `ground` | `pts=x0,y0;x1,y1;...` | Reads, changes nothing. Per point: `onMesh`; `valid` (clear to stand on); `buildable`, where a foundation may go once a tree or rock on it is cleared (water, a ford, and unmeshed ground are false); `buildableNow`, where a wall or a station or storage container may go as the ground stands (a placed obstacle is false too, so over a tree `buildable` is true and `buildableNow` false); and the chunk terrain there (`chunk`, `inWater`, `toWaterM`, `rings`). No `pts`, or a point that is not finite, is a 400. |
-| `opening` | `seg=<id>\|pt=x,y&type=Door\|Window&t=0.5&built=1` | Adds a door or window to a wall segment. |
+| `opening` | `seg=<id>\|pt=x,y&type=Door\|Window&t=0.5&built=1` | Adds a door or window to a wall segment. `pt` snaps the way the opening tool does. A placement the tool's validator refuses (too near a corner or end, a wall too short, an overlap with another opening), an unknown type or segment, or no wall near `pt` answers 400 `{"error":...}` with the reason and creates nothing. |
 | `reveal` | `on=1\|0` | Player visibility off (`1`) or back on (`0`): with it on the cover is not drawn, and `scripts/perf` captures run with it on. The seen record keeps growing either way; `/api/state?what=visibility` reads the flag as `revealed`. |
 
 ### Readback — `GET /api/state?what=<x>`
@@ -344,15 +384,147 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
 | `what=` | Returns |
 |---------|---------|
 | `summary` | `{colonists, foundations, chunks}` |
-| `colonists` | `[{id, name, x, y, needs{}, action, inventory{}, hands{}, belt{}, cargoKg, carryCapacityKg}]` |
+| `colonists` | `[{id, name, x, y, traits[], needs{}, mood{value, target, band, cause: {need} or {thought} or null}, attributes{strength, agility, ...}, thoughts{recorded, merged, held:[{id, type, feeling, mood, left, count}], recent:[{id, type, feeling, line, arrivedAt}]}, action, inventory{}, hands{}, belt{}, cargoKg, carryCapacityKg}]`. `attributes` is every attribute, 0 to 20, by the name conditions use (`social_need`). `thoughts` is there once the colonist has had one: `recorded` is the record's size and `merged` how many of its entries pruning merged; `held` is every thought whose mood effect is running, `mood` its amount (times `count` for a stack), `left` the game hours to go or `"while"` for one that lasts while its condition holds; `recent` is the last five recorded, newest first, `line` the rendered quip or null. |
+| `thoughttypes` | `{types:[{name, label}]}`, every loaded thought type in load order; `name` is what the `thought` verb takes as `type`. The Dev Tools tab's thought list reads it. |
 | `stations` | `[{id, x, y, jobs:[{recipe, completed, quantity}], store{}}]` |
 | `storage` | `[{id, defName, x, y, inventory{}, slots, maxSlots, rules:[{item, category, priority, min, max}]}]` |
-| `construction` | `{foundations:[{id, material, state, entity, area, required{}, delivered{}, progress, phase}], walls:[{id, material, state, entity, x0, y0, x1, y1, required{}, delivered{}, progress}]}` |
+| `construction` | `{foundations:[{id, material, state, entity, area, corners:[{x, y}], required{}, delivered{}, progress, phase}], walls:[{id, material, state, entity, x0, y0, x1, y1, required{}, delivered{}, progress}], openings:[{id, type, material, wall, fractionAlongWall, state, entity, x, y, phase, required{}, delivered{}, progress}]}`. `state` is `Blueprint` or `Built`. `corners` is the foundation's ring in world meters, to three decimals, in ring order without repeating the first corner, so two foundations that share an edge share two corner coordinates exactly. An opening's `wall` is the wall segment id it sits on, `fractionAlongWall` how far along that wall it is (0 at the wall's `x0,y0` end, 1 at `x1,y1`), and `x,y` that point in world meters; they are left out when the wall or one of its ends is missing. `phase` and the material keys come with an `entity` that carries a blueprint, as on a foundation, and `phase` is `Clearing`, `AwaitingMaterials`, `UnderConstruction` or `Complete` |
+| `drawing` | what the drawing tools hold; see [the drawing view](#the-drawing-view) |
+| `camera` | `{center{x, y}, zoom, pixelsPerMeter, window{width, height}, visible{minX, minY, maxX, maxY}}`; see [the camera view](#the-camera-view) |
 | `landing` | `{landingLatDeg, landingLonDeg, biome, waterClass, riverInTile}` |
 | `time` | `{...}` |
 | `tunables` | every registered tunable and its value |
+| `sightBodies` | `{colonists:[{id, name, eye{x, y}, leadMm, reachMm, path, rangesMm:[64], bodies:[{source, kind, serial, defName, diameterMm, centre{x, y}, corners, arrival}], shadowEdges:[{body, corner, litTurn}]}]}`: each colonist's sight bodies within his reach of his last build (sight-softening.md 2.4). `source` is `placed` or `wall` (a wall body has `wallBody`, its index, in place of `serial` and `defName`), `kind` is `opaque` or `soft`, and a shadow edge's `body` indexes `bodies`. `path` is the last build's path, `open`, `leg`, or `polygon`, and `rangesMm` its forest shape's 64 side ranges in millimetres, side 0 first and counter-clockwise from +x; `convexityTakesMm` is, per side, how far the forest shape's support along that side's normal falls short of its range times cos(pi / 64) (sight-softening.md 10, limit 7), and `rangeChangeMm` and `greatestRangeChangeMm` the most one side's range moved between his last two builds and between any two consecutive builds he has made (limit 5) |
+| `cover` | What the cover drew last frame (sight-softening.md 7, 10, and 12): `{drawn, tintAlpha, counts{colonists, featherPieces, softBodies, shadowEdges, softPieces, bandPieces, featherRebuilds, softRingsBuilt, softRingsDue, softBodiesBuilt, softOldestDueFrames, bandRebuilds, softPiecesBuilt, piecesBuilt, meshUploads, tintElements, unseenElements, buildMicroseconds, seenMicroseconds, uploadMicroseconds, brightMicroseconds, composeMicroseconds}, seen{cellsDrawn, cellsVisited, cellsRebuilt, cellsWaiting, cellEdgesRead, epochCellsLast, epochEdgesLast, changedBoxes, pendingShapes, clusters, clustersCut, cutShapes, cutShapeSides, cutRecordEdges, cutKept, pendingPieces}, colonists:[{id, brightSides, rimSides, notRim:[{side, from{x, y}, to{x, y}}], featherPieces, rimMovedMm, rimMovedOnScreen, softPieces, bandPieces, soft:[{serial, diameterMm, widthAsSeenMm, distanceMm, footMask, footOnScreen, shadowLengthMm, pieces, ring, home}], edges:[{body, diameterMm, buildCorner, followedCorner, litTurn, apex{x, y}, ease, cornerDistanceMm, wideningMm, litDegrees, shadowDegrees, finDegrees}]}]}`. `counts` is the frame's pieces drawn over the colonists in view (`*Pieces`), how many colonists' feathers and bands were built this frame (`*Rebuilds`), the colonists' rings of soft bodies built this frame and due, built or waiting (`softRingsBuilt`, `softRingsDue`), the soft bodies those rings built (`softBodiesBuilt`), how many frames the longest due ring has waited (`softOldestDueFrames`), the soft pieces built against the frame's budget of 8,000 (`softPiecesBuilt`), and all the pieces built and meshes uploaded; a frame with every colonist standing still builds and uploads nothing. `buildMicroseconds` is the CPU time building every colonist's feather and drawn shadows and uploading them (`uploadMicroseconds` of it, and `brightMicroseconds` asking for the bright shapes); with vsync on a GL upload absorbs the wait for the frame, so read the times with `/api/control?action=vsync&value=0`. `seen` is the seen area's feather: its cells drawn, visited (those the seen ground near the view reaches), rebuilt, and left waiting past the budget of 16 this frame, the cells and record edges the last epoch rebuilt (`epochCellsLast`, `epochEdgesLast`), and the pending cuts made this frame (`clustersCut`, with the shapes, sides, and record edges they read and the pieces they kept). `footMask` is a soft body's value at its foot in the mask, and `footOnScreen` and `rimMovedOnScreen` are mask values times the tint's alpha, how much they darken what the player sees, which limits 1 to 3 bound; `pieces` is the triangles a soft body took, `ring` the ring that built it, and `home` false where a body in a neighbouring ring's overlap is listed twice; `rimMovedMm` is the most a side of his eased rim moved since the last frame (limit 8). `notRim` lists the sides of his bright shape that draw no feather, shadow sides and body faces, in metres (sight-softening.md 7.2). Each colonist's soft bodies and shadow edges are as drawn from where he stands that frame (limits 1 to 3 and 8) |
+| `sightTunables` | `{tunables:[{name, value, least, most, start}]}`, the sight tunables (sight-softening.md 9); `/api/dev/sight?name=<tunable>&value=<whole number>` sets one through vision's clamping setter, `sight?reset=1` all, and answers the same |
+| `visibility` | `{revealed, seenSquareMeters, ringsRegistered, openLegs, shapesWaiting, piecesWaiting, shapesDropped, shapesSkipped, sweepsBuilt, sweepsWaiting, sweepsDropped, epoch, ringsMetMean, ringsMetMost, greatestRangeChangeMm}`, the seen record (player-visibility.md 3.3), K where registered (`ringsMetMean`, `ringsMetMost`: for each ring registered, the rings before it whose boxes meet its own, sight-softening.md 6.6), and the most one side's range moved between two consecutive builds of any colonist, and with `x=&y=` also `{x, y, seen, visible}` for that point. `openLegs` is one a colonist off the polygon path, standing or walking, and stays while he lives; the record is drained when `shapesWaiting`, `piecesWaiting`, and `sweepsWaiting` read 0 |
 | `gpuhold` | `{enabled, target, passes, holdGpuMs, sceneGpuMs, frameMs}`, the GPU hold's state; the GPU times are a few frames old |
 | `uprights` | `{uprightDrawCalls, uprightTriangles, uprightOverlapSplits, ...}`, last frame's draws in the depth-sorted upright stream (tall statics and actors). `/api/metrics` already counts them in `drawCalls` and `triangleCount`; this splits them out |
+
+### The drawing view
+
+`what=drawing` answers what the drawing tools hold, so a check reads it instead of the screen. It is built when asked for and costs nothing between requests. The game scene answers it; any other scene answers 404. Every number is printed to three decimals, lengths and areas are in meters and square meters, points are `{x, y}` in world meters, and the enum names are the engine's own. Under the dev server's `control?action=pause` the view still answers, but injected input waits, so it shows the state before the pause.
+
+- `tool`: `none`, `foundationRectangle`, `foundationFreeform`, `foundationEdit`, `wall` or `opening`. `lastFoundationTool` (`rectangle` or `freeform`) is the foundation tool picked last this session, which the Build menu's Foundation entry opens. With `none` the view holds nothing of the last tool: `snap`, `pointer` and the per-tool keys are null or absent, and `status` is `active` false and the material.
+- `followingPointer`: false while the tool is paused (the pointer is outside the window, or the window is unfocused) and before its first move. Then `snap` and `pointer` are null and `verdict.proposed` is false, and the placed `points` stay.
+- `pointer`: the pointer's world position as the tool last saw it, before any snap, or null when the tool is not following the pointer. A move over a HUD panel (the top bar, the zoom buttons, the strip, the key guide) leaves `pointer` and `snap` at their last values, and a click there is taken by the ui.
+- `points`: the placed points. In the Rectangle tool, its first corner.
+- `rectangle` (Rectangle tool only): `pressPending` (a press awaits its release), `firstCorner` or null, `corners` (the pending rectangle's four, empty when the two corners make none) and `sizeLabel`.
+- `edit` (Add / Subtract only): `target` foundation id and `mode`, `Add` or `Subtract`.
+- `wall`: `hostFoundation`, the foundation the chain is on, 0 until the first point is placed; a pointer over a foundation does not set it.
+  - Before the first point, `verdict.proposed` is true with the pointer on a foundation and false off every one (a click there places nothing), and `status.valid` is true with the hint `Click a foundation to start` either way.
+  - A refusal for the ground outranks both: over ground that cannot be built on, `verdict.valid` is false, `proposed` is true and `reason` says why.
+- `opening`: `type`, and `snap` or null when no built wall is in range. The snap is `wall` (the segment id), `fractionAlongWall` (how far along that wall the opening sits: 0 at the wall's first vertex, 1 at its second) and `point`, which is on the wall's line.
+- `snap`: the snapped point, `kind`, `guides`, the length step, and `closesShape` (the next click closes the shape; in the Rectangle tool, commits it). Null while paused, and for the opening tool, whose snap is under `opening`.
+  - `kind` is a `SnapKind`: `None`, `Angle`, `Vertex`, `Edge`, `Origin`, `WallEndpoint`, `WallSegment`, `GuideLine` or `GuideCrossing`. In the Rectangle tool it is a `RectangleSnapKind`: `None`, `Vertex`, `Edge` or `Grid`. A close the rescue makes, with the pointer near the first point but not on it, has `kind` `None` and `closesShape` true.
+  - Each guide has `source` (`DrawnShape`, `NearbyStructure` or `WorldAxes`), `relation` (`Parallel`, `Perpendicular` or `AngleStep`), `from` (the node it runs from) and `distanceFromNodeMeters`.
+  - `lengthSnap` is `None`, `Rounded`, `RoundedAlongGuide` or `CommonLength`; `lengthMeters` is the length the step set, and 0 when it set nothing. `segmentLengthMeters` is the distance from the last placed point to the snapped point whatever set it, or null with no placed point, so at a guide crossing `lengthMeters` can be 0 while the segment is 4.000. `matchedEdgeCount` and `commonLengthsMeters` are the common-length matches.
+- `verdict`: what the next click would get, read from the same check the strip and the preview read, for every tool the opening tool included: `valid`, `proposed` (false when the click would place nothing), and `reason` when refused. While paused, `verdict.valid` is true and, for the opening tool only, `status.valid` false.
+  - With the pointer still where the last click placed a point or an opening (it has moved less than half a screen pixel, the camera's motion included), `proposed` is false, `valid` true, `reason` empty, and `status` shows the ordinary hint (`Right-click / Enter to finish` on a wall chain, `Click a wall to place` on an opening), so a read straight after a click shows no "points too close", "wall too short" or "openings overlap", and a second click there places nothing and toasts nothing. Move the pointer off the point to read those refusals.
+- `settings`: the Drawing Settings as they are now, there with or without a tool; see [the settings keys](#the-settings-keys). The views exist only while a game is running (`what=drawing` and `what=camera` answer 404 in the Settings scene and the menus), and `settings` shows the values the Settings scene set once one is.
+- `keyGuide`: `{shown, collapsed}`, there with or without a tool. `shown` is true while a tool is active and `settings.showKeyGuide` is on, which is the panel's own rule; `collapsed` is true while it is folded to its chip (the `?` or H key, or the chip, toggles it), and stays what it was while the panel is hidden. A folded guide is still `shown`.
+- `dialogOpen`: true while a dialog is open over the game (the pause menu, Settings), false otherwise, tool or not. While it is true the world's hotkeys and the key guide's toggle do not act.
+- `status`: the strip's readouts: `active`, `material`, `pointCount`, `areaSquareMeters`, `valid`, `message`, `hint`, plus `thicknessPreset`, `segmentLengthMeters`, `totalLengthMeters`, `wallCost`, `wallWork` for a wall, `editLabel` and `areaDeltaSquareMeters` for Add / Subtract, `openingType` and `openingWidthMeters` for an opening. Each group is there only while its tool is active.
+  - `hint` is the line the strip shows under its readouts, from the same function the strip calls. It is the refusal or an instruction, by tool:
+    - Rectangle: `Click or drag from a corner` (no corner yet), `Click the opposite corner` (one corner placed).
+    - Freeform, and Add / Subtract once a point is placed: `Keep placing points` (one or two points), `Click origin to close` (three or more, valid).
+    - Add / Subtract with no point: `Draw a region across the foundation edge`.
+    - Freeform with no point, and no tool: `Ready`.
+    - Wall: `Click a foundation to start` (no point placed), `Right-click / Enter to finish` (one or more).
+    - Opening: `Click a wall to place` (valid), `no wall in range` (the pointer is not near a built wall), `Hover a built wall` (paused, nothing proposed), or the validator's refusal.
+  - How the keys relate:
+    - `message` carries the refusal, and is empty when `valid` is true.
+    - `hint` is the strip's line: the refusal or an instruction.
+    - `hint` equals `message` when `valid` is false and `message` is not empty, whatever the tool and however many points are placed (a refusal beats `Keep placing points`).
+    - `valid` is false with an empty `message` only for the opening tool while paused, where `hint` is `Hover a built wall`; everywhere else a false `valid` carries a `message`, and `hint` is that message.
+    - `verdict.reason` is the same text as `status.message` for every tool.
+    - The view reports text only; the strip's colour for the line is not in it.
+  - A scenario that checks a refusal asserts `status.valid` false and `status.message`.
+
+A Freeform shape with two points placed and the pointer on a third:
+
+```json
+{"tool":"foundationFreeform","lastFoundationTool":"freeform","followingPointer":true,
+ "pointer":{"x":26.248,"y":-2.304},
+ "points":[{"x":16.875,"y":-8.625},{"x":26.275,"y":-8.625}],
+ "snap":{"point":{"x":26.250,"y":-2.325},"kind":"None","guides":[],"lengthSnap":"Rounded",
+         "lengthMeters":6.300,"segmentLengthMeters":6.300,"matchedEdgeCount":0,"commonLengthsMeters":[],"closesShape":false},
+ "verdict":{"valid":true,"proposed":true,"reason":""},
+ "status":{"active":true,"material":"Wood","pointCount":2,"areaSquareMeters":0.000,"valid":true,"message":"","hint":"Keep placing points"},
+ "settings":{"angleSteps":false,"guidesFromShape":false,"alignToExistingBuildings":false,"guidesFromWorldAxes":false,"guideCrossings":false,
+             "commonLengths":false,"guideDistances":false,"angleReadout":false,"roundLengths":true,"showKeyGuide":true,"rectangleGridSpacingMeters":1.000},
+ "keyGuide":{"shown":true,"collapsed":false},"dialogOpen":false}
+```
+
+With the pointer over the creek the same shape answers `"verdict":{"valid":false,"proposed":true,"reason":"not on buildable ground"}`.
+
+#### The settings keys
+
+The defaults are `<DrawingSettingsDefaults>` in `assets/config/construction/snapping.xml`; the label is the row in the Settings scene.
+
+| Key | Default | Settings label |
+|-----|---------|----------------|
+| `angleSteps` | false | Angle steps |
+| `guidesFromShape` | false | Guides from the shape |
+| `alignToExistingBuildings` | false | Align to existing buildings |
+| `guidesFromWorldAxes` | false | Guides from the world axes |
+| `guideCrossings` | false | Crossings |
+| `commonLengths` | false | Common lengths |
+| `guideDistances` | false | Guide distances |
+| `angleReadout` | false | Angle readout |
+| `roundLengths` | true | Round lengths to 0.1 m |
+| `showKeyGuide` | true | Show key guide while drawing |
+| `rectangleGridSpacingMeters` | 1.000 | Grid spacing (rectangle tool): 1 meter or 0.5 meters |
+
+Every key but the last is true or false. `rectangleGridSpacingMeters` is 1.000 or 0.500.
+
+### The camera view
+
+`what=camera` answers where the world camera looks, so a check can turn a world point into the pixel `/api/input` takes, and a pixel back into a world point. The game scene answers it. Numbers are printed to three decimals.
+
+- `center`: the camera's current position, `{x, y}` in world meters.
+  - `/api/control?action=camera&x=&y=` sets it outright at the next update.
+  - While a pan is in progress (a pan key held, or `panx` / `pany` set), `center` eases toward its target, so read the view again until `center` stops changing before converting. A `panx` / `pany` pan keeps going until it is set back to 0, so `center` never settles until then.
+  - The view answers while the app is paused, but a pending control has not applied.
+- `zoom`: the zoom factor (3.000 is the 100 percent view). `pixelsPerMeter`: the screen scale at that zoom, in logical pixels per world meter.
+- `window`: `{width, height}`, the window's logical pixels, the ones `/api/input` takes, in whole numbers. It does not change with the Interface size.
+- `visible`: `{minX, minY, maxX, maxY}`, the world rectangle the window shows.
+
+A screenshot is in framebuffer pixels (twice the logical size on a HiDPI display), and `/api/ui/tree` is in ui px (times `layoutScale` from `what=uiscale` for logical pixels); neither is `window`'s unit without that conversion.
+
+Y runs down the screen and down the world alike: a larger world y is lower in the window, so pixel y grows with world y and there is no flip. The two formulas, with `c` the `center`, `s` the `pixelsPerMeter` and `w`, `h` the `window`:
+
+```
+pixelX = w / 2 + (worldX - c.x) * s        worldX = c.x + (pixelX - w / 2) / s
+pixelY = h / 2 + (worldY - c.y) * s        worldY = c.y + (pixelY - h / 2) / s
+```
+
+A pixel is in the window when it is within `0..w` and `0..h`, but a tool's click is taken by the ui first where a panel covers it (the dock, the strip, the key guide), so aim at open ground. A point a tool places lands on its snap: with the Freeform tool and `roundLengths` on, a click at the pixel for (14.5, 22.0) read back as (14.499, 22.000), so allow the 0.1 m rounding.
+
+### Driving a drawing tool
+
+For a scenario author. Everything goes through `/api/input`, the way a player's hands do.
+
+1. Open the Build menu (`build_dropdown`) and pick Foundation, Wall, Door or Window. The menu's entries have no ids; they are the `MenuItem` nodes of the open `Menu` in `/api/ui/tree`, in the order Foundation, Wall, Door, Window, with their `screenBounds` in ui px.
+2. For Foundation, the strip's cards pick the tool: `config_strip_tool_Rectangle` or `config_strip_tool_Freeform`.
+3. The action buttons on a selected structure's panel have no ids. In `/api/ui/tree` each is a `Button` node whose label is a child `Text` node, so a tester finds the `Text` node by its content ("Add", "Subtract", "Demolish", or "Demolish building" once the foundation hosts walls) and takes the bounds from the `Button` that holds it (ui px; times `layoutScale` for `/api/input`).
+   - Add is offered for an editable blueprint, or for a built foundation that is not being demolished and has no pending extension. It starts the Add tool.
+   - Subtract is offered only for an editable blueprint. It starts the Subtract tool.
+   - Demolish starts the demolition; the wall and opening panels' only button is "Demolish".
+   - A foundation that hosts walls offers "Demolish building" instead of "Demolish".
+4. The menus' and Settings' controls have ids in `/api/ui/tree`: `btn_enter_expedition` on the splash; `menu_quick_start` and `menu_settings` on the main menu; `top_bar_menu` and, in the pause menu, `pause_menu_main_menu`; in Settings `settings_back`, one `drawing_<name>_toggle` per switch (`drawing_align_existing_toggle`, `drawing_key_guide_toggle`) and `drawing_grid_spacing` (its segments are found by their text). A click on a Settings switch at the row's left switches it. A click or a menu pick can take a frame to show in a state view, so a read sent right after it can still show the state from before; read again after a moment.
+5. Place points with `ev=click,x,y`, the pixel from the camera formulas above. A point that is buildable at the Quick Start landing is (30, 10); the Rectangle from (30, 10) to (34, 13) places there, while (10, 10) is water.
+6. Read `what=construction` to see what was committed. The drawing view does not say that a shape was committed; it shows the tool's state, not the shapes it built.
+
+Keys, from `ev=keydown,<key>`, as the key guide lists them. `escape` closes an open menu, dialog or panel first (any overlay but a toast or a tooltip), reaches the tool only when none is open, and with no tool either opens the pause menu, so a stray extra `escape` leaves a dialog over the game that takes the next click:
+
+| Key | Rectangle | Freeform and Add / Subtract | Wall | Door and Window |
+|-----|-----------|-----------------------------|------|-----------------|
+| `backspace` | drops the first corner | undoes the last point | undoes the last point | not listed |
+| `escape` | drops the first corner; with none, leaves the tool | cancels the shape; with none, leaves the tool | with two or more points, ends the wall and keeps the tool; with one, clears the chain and keeps the tool; with none, leaves the tool | leaves the tool |
+| `enter` | not listed | not listed | ends the wall | not listed |
+
+The `?` key is a typed character: inject `char,63` (a `keydown` of `?` answers 400, since the key parser takes letters, digits, named keys and F1 to F12); `h` is `keydown,h`. A right-click is `click,x,y,right`, and a double-click is two `click` events in one request. Injected input holds no modifier keys (no Alt for the raw cursor, no Ctrl for walling a whole edge), cannot send a key's auto-repeat (a second `keydown` is a second press), and cannot send a loss of focus. A move and a click sent in one request (`ev=move,x,y&ev=click,x,y`) place at the click's own position, so no wait between them is needed. A move to a pixel outside the window (`ev=move,-5,-5`) pauses the tool as a real exit does: `followingPointer` reads false, `pointer` and `snap` are null and the placed `points` stay, until a move back over the world resumes it.
 
 ### Other endpoints
 
@@ -362,7 +534,7 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
 | `GET /api/control?action=exit` | Shuts down the instance (blocking). |
 | `GET /api/control?action=camera&x=&y=&zoom=&panx=&pany=` | Moves the camera (the game scene's control; applied at its next update, so not while paused). `x` and `y` together; `panx`/`pany` -1..1 hold until set to 0. A bad or missing parameter is a 400. |
 | `GET /api/control?action=gpuhold&value=0\|1&target=0.8` | The game scene's GPU hold for perf captures: extra GPU work after the scene's timers, into its own offscreen target, sized each frame so scene plus hold GPU time sits near `target` (0.05 to 0.95) of the frame time, which keeps the card at P0. Off by default. Either parameter may be left out; it answers the hold's state, and a bad value is a 400. |
-| `GET /api/input?ev=click,x,y` | Synthetic input (logical pixels). Event types: `move`/`down`/`up`/`click`/`scroll,x,y,delta`, `keydown,<key>`/`keyup,<key>`, `char,<codepoint>`. It goes the way real input does: keys reach the focused ui component, a scroll the ui doesn't take zooms the camera, and while paused it waits for resume. A malformed event is a 400. The injected pointer position holds (hover persists) until the real cursor moves over the window or a real mouse button or scroll event lands. Since salal v0.41.1 an injected move also sets the window's pointer-in-window flag, so hover-driven things (the placement ghost, the drawing tools' preview) follow it. |
+| `GET /api/input?ev=click,x,y` | Synthetic input (logical pixels). Event types: `move`/`down`/`up`/`click`/`scroll,x,y,delta`, `keydown,<key>`/`keyup,<key>`, `char,<codepoint>`. It goes the way real input does: keys reach the focused ui component, a scroll the ui doesn't take zooms the camera, and while paused it waits for resume. A malformed event is a 400. The injected pointer position holds (hover persists) until the real cursor moves over the window or a real mouse button or scroll event lands. Since salal v0.41.1 an injected move also sets the window's pointer-in-window flag, so hover-driven things (the placement ghost, the drawing tools' preview) follow it. A screenshot is in framebuffer pixels, which on a HiDPI display are twice the logical size (on Windows they're the same). `/api/ui/tree` and `/api/ui/lint` are in ui px, which the interface scale makes larger than a logical pixel: a tree position times `layoutScale` from `/api/state?what=uiscale` (`{factor, layoutScale, pixelScale}`, every scene, all three apps) is the logical position. A click that lands on nothing still answers 200. |
 
 ---
 
@@ -391,7 +563,8 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
 
 - Place everything on **valid land**, a few meters from the river bank (on-water is refused).
 - Use `time?speed=3` to accelerate. At speed 3 a harvest-to-craft cycle takes ~1-2 real minutes.
-- Keep needs topped every ~2 minutes of sped-up time or hunger/thirst will interrupt work:
+- Keep needs topped every ~2 minutes of sped-up time or hunger/thirst will interrupt work (once his
+  pack has no room for more berries the give answers a 400, which is fine here):
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/dev/give?material=Berry&n=10&where=colonist"

@@ -3,6 +3,9 @@ add_library(sim
     ecs/systems/MovementSystem.cpp
     ecs/systems/PhysicsSystem.cpp
     ecs/systems/NeedsDecaySystem.cpp
+    ecs/systems/ThoughtSystem.cpp
+    ecs/systems/ThoughtSourceSystem.cpp
+    ecs/systems/MoodSystem.cpp
     ecs/systems/VisionSystem.cpp
     ecs/systems/AIDecisionSystem.cpp
     ecs/systems/ActionSystem.cpp
@@ -21,28 +24,51 @@ add_library(sim
     ecs/systems/RoomDetectionSystem.cpp
     ecs/systems/CollisionSystem.cpp
     ecs/systems/WallCollisionSystem.cpp
-    ecs/systems/StaticRectCollisionSystem.cpp
+    ecs/systems/PlacedObstacleCollisionSystem.cpp
     ecs/systems/NavigationSystem.cpp
     ecs/systems/PlayerVisibilitySystem.cpp
     ecs/spatial/AgentSpatialHash.cpp
     ecs/ClaimIndex.cpp
+    ecs/ColonistRules.cpp
     ecs/GoalTaskRegistry.cpp
+    ecs/NeedLevels.cpp
     ecs/StoreOrDrop.cpp
+    ecs/ThoughtPruning.cpp
+    ecs/ThoughtTypes.cpp
     ecs/WorldSource.cpp
     ecs/components/DecisionTrace.cpp
     ecs/components/MemoryQueries.cpp
+    ecs/components/Mood.cpp
+    ecs/components/Needs.cpp
+    ecs/components/Thoughts.cpp
+    ecs/components/Attributes.cpp
+    ecs/components/Traits.cpp
     ecs/components/ToiletLocationFinder.cpp
+    conditions/ColonistTerms.cpp
+    conditions/ConditionParser.cpp
+    conditions/ConditionVocabulary.cpp
+    conditions/NearbyTerms.cpp
+    conditions/SimTerms.cpp
+    conditions/TimeTerms.cpp
     construction/BuilderSpots.cpp
     construction/ConstructionWorld.cpp
+    construction/CornerAngles.cpp
     construction/ConstructionValidator.cpp
     construction/OpeningGeometry.cpp
+    construction/RectangleSnap.cpp
     construction/RoomDetection.cpp
     construction/RoomHitTest.cpp
     construction/SnapEngine.cpp
+    construction/SnapGuidesDetail.cpp
+    construction/SnapLengthsDetail.cpp
     nav/NavInputBuilder.cpp
     nav/RouteQueue.cpp
     vision/GeometryIndex.cpp
+    vision/PlacedOccluderIndex.cpp
     vision/SeenArea.cpp
+    vision/SightBody.cpp
+    vision/SightFeed.cpp
+    vision/SightTunables.cpp
 )
 
 target_include_directories(sim
@@ -53,7 +79,8 @@ target_include_directories(sim
 
 target_compile_features(sim PUBLIC cxx_std_20)
 
-# The simulation: the ECS and its systems, navigation, vision and construction. It links
+# The simulation: the ECS and its systems, navigation, vision, construction, and the conditions
+# behaviors and thoughts are written in. It links
 # neither renderer nor ui itself; assets still brings salal::renderer (its vector module).
 target_link_libraries(sim
     PUBLIC
@@ -98,6 +125,8 @@ if(BUILD_TESTING)
                 GTest::gtest
                 GTest::gtest_main
         )
+        # Where the shipped asset defs are, whatever the working directory.
+        target_compile_definitions(sim-tests PRIVATE SIM_TEST_REPO_DIR="${CMAKE_SOURCE_DIR}")
         if(MSVC)
             target_compile_options(sim-tests PRIVATE /Od)
         else()

@@ -85,9 +85,8 @@ namespace world_sim {
 	  protected:
 		void onMount() override {
 			const ui::Theme& theme = getContext()->getTheme();
-			if (getSizeSpec().height.isAuto()) {
-				setSize({getSizeSpec().width, kSlotBoxHeight});
-			}
+			// At least the stub's height, and taller where a filled slot's name needs it.
+			setMinSize({ui::kAuto, kSlotBoxHeight});
 			ui::Layout column = getLayout();
 			column.display = ui::Display::Flex;
 			column.flexDirection = ui::FlexDirection::Column;
@@ -168,7 +167,10 @@ namespace world_sim {
 		[[nodiscard]] const char* typeName() const override { return "GearTextRow"; }
 
 		void setLeft(const std::string& text) { leftText.get()->setText(text); }
-		void setRight(const std::string& text) { rightText.get()->setText(text); }
+		void setRight(const std::string& text) {
+			rightText.get()->setText(text);
+			rightText.get()->setVisible(!text.empty());
+		}
 
 	  protected:
 		void onMount() override {
@@ -183,7 +185,7 @@ namespace world_sim {
 				theme, {.family = ui::tokens::font::family::mono, .size = tokens::fontSize::fsSm, .color = tokens::color::accent}
 			);
 			value.fontSize = leftStyle.fontSize;
-			rightText = addChild<ui::Text>({.style = value, .text = right});
+			rightText = addChild<ui::Text>({.visible = !right.empty(), .style = value, .text = right});
 		}
 
 	  private:
@@ -434,7 +436,7 @@ namespace world_sim {
 		pack.addChild<GearTextRow>({.left = "Weight-based - cargo in hands & pack - tools ride free", .leftStyle = captionStyle});
 		ui::Ref<ui::Component> stacks = column(*pack.get(), theme.get(tokens::spacing::space05));
 		for (ui::Ref<GearStackRow>& row : packRows) {
-			row = stacks.addChild<GearStackRow>({.visible = false});
+			row = stacks.addChild<GearStackRow>({.id = "gear_pack_row", .visible = false});
 		}
 		packMoreRow = stacks.addChild<GearTextRow>({.visible = false, .leftStyle = captionStyle});
 		packEmptyRow = stacks.addChild<GearTextRow>(

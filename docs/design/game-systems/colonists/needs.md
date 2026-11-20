@@ -12,6 +12,10 @@ Colonists have physical and emotional needs. Some needs drive behavior (actionab
 
 ---
 
+## Needs are data
+
+A need is a data entry: its name, how its level moves (draining with time, or set by the colonist's surroundings), its seek, urgent, and critical levels, its mood cost, and what meets it, a chain of steps the colonist carries out or work another colonist does for it. Each kind of creature lists the needs it has, so a cow can need milking and a colonist cannot, and a mod adds a need with a file. The entries and the chains behind them are specified in [Queries and chains](../../../technical/queries-and-chains.md#needs).
+
 ## Actionable Needs
 
 These create tasks. When they drop below threshold, colonist seeks fulfillment.
@@ -87,9 +91,7 @@ Sleep quality affects recovery rate. Better sleeping spots = faster recovery + m
 
 Drops to zero on bathroom accident. Low hygiene = others like you less.
 
-**Implementation Note:** Tracked in code now; AI does not seek washing yet (no fulfillment sources).
-
-**MVP Status:** Deferred to Phase 2
+A colonist washes at water the way it drinks: below the seek threshold it walks to the nearest shore it remembers and washes there, which restores Hygiene fully. Every shore point is both Drinkable and Washable, so baths and showers are more Washable sources for the same search.
 
 ### Recreation
 
@@ -98,7 +100,7 @@ Drops to zero on bathroom accident. Low hygiene = others like you less.
 | Seek Threshold | ~30% |
 | Critical Threshold | ~10% |
 | Failure Effect | Work efficiency drops, mood penalty |
-| Fulfilled By | Recreation activities, socializing |
+| Fulfilled By | Recreation activities, socializing; at the baseline, enjoying nature, which takes a long time for a little gain and keeps what it gained when cut short |
 
 Decays while working, recovers while idle or recreating.
 
@@ -106,7 +108,7 @@ Decays while working, recovers while idle or recreating.
 
 **MVP Status:** Deferred to Phase 2
 
-### Temperature / Thermal Comfort (Environmental)
+### Temperature
 
 | Property | Value |
 |----------|-------|
@@ -114,11 +116,9 @@ Decays while working, recovers while idle or recreating.
 | Effects | Outside band increases Energy decay, reduces sleep recovery, and can apply mood/health penalties when extreme |
 | Fulfilled By | Warmer/colder locations, shelter/indoors, fires, clothing (future) |
 
-Not a need bar; it is an environmental modifier. Good shelter improves temperature stability and therefore boosts sleep quality rather than being its own need.
+Temperature is a need: a colonist needs to be neither freezing nor too hot. It does not drain with time the way hunger does. Its level is set by where the colonist is and what the weather and the hour are doing, so it falls when they are outside their comfort band and recovers when they are back inside it. A colonist meets it by going somewhere warmer or cooler: shelter, a fire, shade, and later clothing.
 
-**Implementation Note:** Tracked in code as a Temperature need placeholder; AI does not act on it yet, and there is no fulfillment source until the temperature field exists.
-
-**MVP Status:** Deferred to Phase 2 (framework introduced when temperature field lands; no separate Shelter need)
+Until the temperature of a place exists in the sim, the need holds at full and the AI does not act on it.
 
 ### Flee
 
@@ -137,55 +137,41 @@ Highest priority. See Panic in [AI Behavior](./ai-behavior.md).
 
 Mood is a composite score from all contributors. Range 0-100%.
 
-**Implementation Status:** Mood is computed in code from needs using weighted penalties (see table below) and shown near the colonist portrait/sidebar. Needs above ~70% contribute no penalty; below ~30% the penalty ramps quickly.
-
 ### Mood Contributors
 
-| Contributor | Source | Type |
-|-------------|--------|------|
-| Need Satisfaction | All needs above comfortable | Continuous |
-| Beauty | Aesthetic quality of surroundings | Environmental |
-| Comfort | Quality of furniture being used | Environmental |
-| Temperature | Comfort relative to tolerance | Environmental |
-| Social | Running tally of interaction quality | Social |
-| Fulfillment | Using preferred skills | Work |
-| Purpose | Completing meaningful tasks | Work |
-| Thoughts | Temporary event modifiers | Events |
+Mood has two parts ([Mood](./mood.md)):
 
-### Need-to-Mood Weights (current tuning)
+| Contributor | Source |
+|-------------|--------|
+| Need satisfaction | 100, less what each unmet need costs, the costs added |
+| Mood effects | Carried by [thoughts](./thoughts.md). Everything else that changes how a colonist feels (surroundings, comfort, company, work they like, things that happen to them) reaches mood as a thought |
 
-| Need | Weight | Notes |
-|------|--------|-------|
-| Hygiene | 1.0 | Biggest comfort/social driver |
-| Temperature | 1.0 | Thermal comfort is critical to morale |
-| Recreation | 0.9 | Fun/leisure strongly affects mood |
-| Energy | 0.7 | Tiredness hurts mood meaningfully |
-| Hunger | 0.6 | Survival need, medium mood impact |
-| Thirst | 0.6 | Survival need, medium mood impact |
-| Bladder | 0.3 | Minor mood hit unless accidents |
-| Digestion | 0.3 | Minor mood hit unless accidents |
+### What a need costs mood
 
-Penalty curve per need: 0 when value ≥ ~70%; mild up to ~0.3 penalty down to 30%; steep to 1.0 below 30%. Mood = 100 × (1 − weightedPenalty/totalWeight), clamped 0-100.
+Each need takes its own points off mood, and a need that is met gives no credit against one that is not: a colonist who is freezing is in a bad mood however well fed they are.
 
-### Thoughts (Temporary Modifiers)
+Every need has a cost, the most mood it takes off at its worst, and the penalty curve says how much of that cost applies: nothing at or above the comfortable level, rising gently to the warning level, then steeply to the full cost at an empty need. The needs score is 100 minus the sum of those costs, never below 0. Because the costs add and do not average, giving a creature another need changes nothing about what the others cost.
 
-Examples:
-- "Ate a good meal" (+5, 6 hours)
-- "Slept on ground" (-10, 1 day)
-- "Had accident in public" (-20, 1 day)
-- "Talked with friend" (+5, 6 hours)
+Every need can interrupt work when it gets bad enough, the ones that cannot kill included: work can run for days, and a colonist who never stops to wash or rest ends up in a low-mood behavior over it. The levels are tuned so that meeting the need comes first. A colonist leaves a long job to go and play a game before they have a fit and wreck the room because they have worked too long.
 
-### Breakdown Thresholds
+These are the costs:
 
-| Mood Level | Risk |
-|------------|------|
-| Below 35% | Minor break (wandering, sadness) |
-| Below 20% | Major break (binging, withdrawal) |
-| Below 5% | Extreme break (destructive behavior) |
+| Need | Cost |
+|---|---|
+| Temperature | 60 |
+| Hunger | 25 |
+| Thirst | 25 |
+| Energy | 20 |
+| Hygiene | 15 |
+| Recreation | 15 |
+| Bladder | 10 |
+| Digestion | 10 |
 
-After a breakdown ends, colonist receives temporary mood boost (catharsis).
+Each need's cost is on its own entry in `assets/config/colonists/needs/needs.xml`, beside its thresholds, so a need added by a mod carries its own cost and a mod file that replaces a need replaces its cost with it. `assets/config/colonists/mood.xml` holds the penalty curve, which every need shares, along with the easing and the bands.
 
-**MVP Status:** Basic mood (need satisfaction only) in Phase 1. Full mood system deferred to Phase 3.
+### What low mood does
+
+See [Colonist Mood](./mood.md): the roll curve, the behavior list, refusing work and food, and relief.
 
 ---
 

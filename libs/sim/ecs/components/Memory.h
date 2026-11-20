@@ -36,10 +36,14 @@ namespace ecs {
 		uint16_t  capabilityMask = 0; // The capabilities it was remembered with (its capability-index sets)
 	};
 
-	/// A known dynamic entity (ECS entity like other colonists, animals)
+	/// A mover the colonist has seen (another colonist; animals later), as it was at the last sighting.
+	/// The entry is a snapshot: the mover may have walked on or no longer exist, and nothing here reaches
+	/// into the world. entityId carries its generation, so a mover born into a reused index is another entry.
 	struct KnownDynamicEntity {
-		EntityID  entityId;			 // ECS entity ID
-		glm::vec2 lastKnownPosition; // Last observed position (for mobile entities)
+		EntityID  entityId = kInvalidEntity;
+		uint32_t  defNameId = 0;				 // what kind of mover: the asset def it appears as ("Colonist")
+		glm::vec2 lastKnownPosition{0.0F, 0.0F}; // world position in meters at the last sighting
+		double	  lastSeenAt = 0.0;				 // TimeSystem::simulationSeconds (game minutes) of the last sighting
 	};
 
 	/// Hash for world entity key (position + defNameId)
@@ -64,8 +68,11 @@ namespace ecs {
 		/// Maximum number of world entities a colonist can remember
 		static constexpr size_t kMaxWorldEntities = 10000;
 
+		/// Maximum number of movers a colonist can remember; past it the one seen longest ago is forgotten
+		static constexpr size_t kMaxDynamicEntities = 512;
+
 		/// Number of capability types (must match AssetRegistry::kCapabilityTypeCount)
-		static constexpr size_t kCapabilityTypeCount = 9;
+		static constexpr size_t kCapabilityTypeCount = 10;
 
 		// --- Owner ---
 
@@ -82,8 +89,7 @@ namespace ecs {
 		/// tell by one compare that the set of remembered sources hasn't changed since it last looked.
 		std::uint64_t worldEntityVersion = 0;
 
-		/// Known dynamic ECS entities (colonists, animals, etc.)
-		/// Key: EntityID
+		/// Movers seen (colonists; animals later), keyed by EntityID
 		std::unordered_map<EntityID, KnownDynamicEntity> knownDynamicEntities;
 
 		// --- Capability Index (for O(1) capability queries) ---
@@ -229,9 +235,40 @@ namespace ecs {
 			return true; // New discovery
 		}
 
-		/// Add or update a dynamic entity in memory
-		void rememberDynamicEntity(EntityID entityId, const glm::vec2& position) {
-			knownDynamicEntities[entityId] = KnownDynamicEntity{entityId, position};
+		/// Record a sighting of a mover: a new entry, or its entry moved to where and when it was seen. A new
+		/// mover past kMaxDynamicEntities forgets the one seen longest ago (ties: the lowest id).
+		void rememberDynamicEntity(EntityID entityId, uint32_t defNameId, const glm::vec2& position, double seenAt) {
+			const KnownDynamicEntity sighting{.entityId = entityId, .defNameId = defNameId, .lastKnownPosition = position, .lastSeenAt = seenAt};
+			if (auto found = knownDynamicEntities.find(entityId); found != knownDynamicEntities.end()) {
+				found->second = sighting;
+				return;
+			}
+			if (knownDynamicEntities.size() >= kMaxDynamicEntities) {
+				auto oldest = knownDynamicEntities.begin();
+				for (auto it = knownDynamicEntities.begin(); it != knownDynamicEntities.end(); ++it) {
+					const KnownDynamicEntity& known = it->second;
+					const KnownDynamicEntity& current = oldest->second;
+					if (known.lastSeenAt < current.lastSeenAt || (known.lastSeenAt == current.lastSeenAt && known.entityId < current.entityId)) {
+						oldest = it;
+					}
+				}
+				knownDynamicEntities.erase(oldest);
+			}
+			knownDynamicEntities.emplace(entityId, sighting);
+		}
+
+		/// Hand `visit` each remembered mover of kind `defNameId` last seen within `windowGameMinutes` before
+		/// `now` (both on TimeSystem::simulationSeconds), in no order, until it returns false. An older
+		/// sighting is where someone was, not company. The usual window is
+		/// assets::MemoryConfig::recentSightingGameMinutes().
+		template <typename Visit>
+		void forEachDynamicEntitySeenWithin(uint32_t defNameId, double now, double windowGameMinutes, Visit&& visit) const {
+			const double since = now - windowGameMinutes;
+			for (const auto& [entityId, known] : knownDynamicEntities) {
+				if (known.defNameId == defNameId && known.lastSeenAt >= since && !visit(known)) {
+					return;
+				}
+			}
 		}
 
 		/// Forget a world entity (e.g., when it's destroyed or proven stale)

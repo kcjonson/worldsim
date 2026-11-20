@@ -1,6 +1,7 @@
 #include "ConstructionSystem.h"
 
 #include "../GoalTaskRegistry.h"
+#include "../ShippedConfig.test.h"
 #include "../World.h"
 #include "../components/Inventory.h"
 #include "../components/Needs.h"
@@ -360,7 +361,7 @@ namespace {
 		/// NeedsComponent marks it a colonist like a real one.
 		EntityID createColonistCarryingWood(uint32_t woodCarried) {
 			auto entity = world->createEntity();
-			world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+			world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 			auto inv = Inventory::createForColonist();
 			inv.addItem("Wood", woodCarried); // 10 slots x 40 stack holds well over one trip's worth
 			world->addComponent<Inventory>(entity, std::move(inv));
@@ -776,7 +777,7 @@ namespace {
 			geometry::Ring	 ring{{-10000, -10000}, {100000, -10000}, {100000, 100000}, {-10000, 100000}};
 			cw::CommitResult host = topology.commitFoundation(std::move(ring), "wood");
 			EXPECT_TRUE(host.ok());
-			cw::SegmentCommitResult seg = topology.commitSegment({0, 0}, {4000, 0}, "wood", "thin", host.id);
+			cw::SegmentCommitResult seg = topology.commitSegment({0, 0}, {4000, 0}, "wood", "thin", host.id, topology.version());
 			EXPECT_TRUE(seg.ok());
 			hostFoundation = host.id;
 			hostSegment = seg.id;
@@ -1086,7 +1087,7 @@ TEST_F(BuilderSpotEmissionTest, AReshapeBeforeDeliveryGivesTheNewUmbrellaSpotsFo
 TEST_F(BuilderSpotEmissionTest, AWallsUmbrellaHasNoSpots) {
 	const cw::FoundationId foundationId = commitTwentySquareMeterFoundation();
 	ASSERT_TRUE(topology.setState(foundationId, cw::FoundationState::Built));
-	cw::SegmentCommitResult segment = topology.commitSegment({0, 0}, {4000, 0}, "wood", "thin", foundationId);
+	cw::SegmentCommitResult segment = topology.commitSegment({0, 0}, {4000, 0}, "wood", "thin", foundationId, topology.version());
 	ASSERT_TRUE(segment.ok());
 	auto blueprint = createBlueprint(StructureKind::Wall, segment.id);
 	world->getComponent<StructureBlueprint>(blueprint)->recordDelivery("Wood", 10);
@@ -1097,4 +1098,22 @@ TEST_F(BuilderSpotEmissionTest, AWallsUmbrellaHasNoSpots) {
 	ASSERT_NE(goal, nullptr);
 	ASSERT_EQ(goal->status, GoalStatus::Available);
 	EXPECT_TRUE(goal->builderSpots.empty());
+}
+
+// ============================================================================
+// unbuiltFootprints: a blueprint's footprint is a site to keep off, a built foundation's is not.
+// ============================================================================
+
+TEST(ConstructionSystemTests, UnbuiltFootprintsListsOnlyTheFoundationsNotBuilt) {
+	construction::ConstructionWorld topology;
+	const auto						blueprint = topology.commitFoundation(geometry::Ring{{0, 0}, {4000, 0}, {4000, 4000}, {0, 4000}}, "wood");
+	const auto						built = topology.commitFoundation(geometry::Ring{{10000, 0}, {14000, 0}, {14000, 4000}, {10000, 4000}}, "wood");
+	ASSERT_TRUE(blueprint.ok());
+	ASSERT_TRUE(built.ok());
+	ASSERT_TRUE(topology.setState(built.id, construction::FoundationState::Built));
+
+	const std::vector<FootprintBounds> sites = unbuiltFootprints(topology);
+	ASSERT_EQ(sites.size(), 1U);
+	EXPECT_TRUE(anyFootprintContains(sites, {2.0F, 2.0F})) << "inside the blueprint";
+	EXPECT_FALSE(anyFootprintContains(sites, {12.0F, 2.0F})) << "inside the built foundation";
 }

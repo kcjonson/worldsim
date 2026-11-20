@@ -125,6 +125,24 @@ TEST(AssetValidatorTest, NameFolderMismatchIsWarning) {
 	EXPECT_TRUE(hasMessageContaining(r, Severity::Warning, "does not match its folder"));
 }
 
+TEST(AssetValidatorTest, ReferencedMotionFileIsNotAnOrphan) {
+	TempAssets t;
+	t.writeXml("Stone", oneDef("<defName>Stone</defName><assetType>simple</assetType><svgPath>stone.svg</svgPath><motion>clips.motion.xml</motion>"));
+	t.writeFile("Stone/stone.svg", "<svg/>");
+	t.writeFile("Stone/clips.motion.xml", "<Motion/>");
+	t.writeFile("Stone/stray.xml", "<Motion/>");
+
+	const ValidationReport r = AssetValidator::validate(t.root, "");
+	int					   mismatches = 0;
+	for (const auto& issue : r.issues) {
+		if (issue.message.find("does not match its folder") != std::string::npos) {
+			++mismatches;
+			EXPECT_NE(issue.context.find("stray.xml"), std::string::npos);
+		}
+	}
+	EXPECT_EQ(mismatches, 1);
+}
+
 TEST(AssetValidatorTest, IgnoredVariationIsWarning) {
 	TempAssets t;
 	t.writeXml("Stone", oneDef("<defName>Stone</defName><assetType>simple</assetType><svgPath>stone.svg</svgPath><variation><color/></variation>"));

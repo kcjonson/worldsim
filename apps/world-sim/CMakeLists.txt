@@ -1,10 +1,11 @@
-add_executable(world-sim
-    Main.cpp
+# Everything but main, so world-sim-tests runs the scenes and the HUD the game runs
+add_library(world-sim-game STATIC
     SceneTypes.cpp
     GameWorldState.cpp
     GameStartConfig.cpp
     NewGameSetup.cpp
     GameBootstrap.cpp
+    UserSettings.cpp
     # Game scene UI - views
     scenes/game/ui/views/ColonistListView.cpp
     scenes/game/ui/views/EntityInfoView.cpp
@@ -25,6 +26,7 @@ add_executable(world-sim
     scenes/game/ui/components/NeedBar.cpp
     scenes/game/ui/components/ZoomControl.cpp
     scenes/game/ui/components/SpeedButton.cpp
+    scenes/game/ui/components/ThoughtLogList.cpp
     # Game scene UI - adapters
     scenes/game/ui/adapters/ColonistAdapter.cpp
     scenes/game/ui/adapters/CraftingAdapter.cpp
@@ -38,6 +40,7 @@ add_executable(world-sim
     scenes/game/ui/models/GlobalTaskListModel.cpp
     scenes/game/ui/models/EntityInfoModel.cpp
     scenes/game/ui/models/ResourcesModel.cpp
+    scenes/game/ui/models/ThoughtLogModel.cpp
     scenes/game/ui/models/TimeModel.cpp
     # Game scene UI - dialogs
     scenes/game/ui/dialogs/ColonistDetailsDialog.cpp
@@ -59,20 +62,26 @@ add_executable(world-sim
     scenes/game/ui/GameUI.cpp
     # Game scene - world subsystems
     scenes/game/world/MoveOrderGoal.cpp
+    scenes/game/world/WorldPointer.cpp
     scenes/game/world/placement/GhostRenderer.cpp
     scenes/game/world/placement/PlacementMode.cpp
     scenes/game/world/placement/PlacementSystem.cpp
     scenes/game/world/selection/SelectionSystem.cpp
     scenes/game/world/construction/CommittedGeometryCache.cpp
+    scenes/game/world/construction/DrawingFeedback.cpp
+    scenes/game/world/construction/DrawingStatusHint.cpp
     scenes/game/world/construction/DrawingSystem.cpp
+    scenes/game/world/construction/KeyGuideVisibility.cpp
     scenes/game/world/rooms/RoomOverlay.cpp
     scenes/game/world/nav/NavOverlay.cpp
     scenes/game/world/vision/VisionOverlay.cpp
     scenes/game/world/terrain/TerrainPolygonOverlay.cpp
     scenes/game/ui/views/ConstructionConfigStrip.cpp
+    scenes/game/ui/views/DrawingKeyGuide.cpp
     # Scenes
     scenes/shared/GlobeView.cpp
     scenes/shared/DecorativePlanet.cpp
+    scenes/shared/LoadFailureView.cpp
     scenes/shared/SalalUi.cpp
     scenes/splash/SplashScene.cpp
     scenes/menu/MainMenuScene.cpp
@@ -86,7 +95,13 @@ add_executable(world-sim
     scenes/landing/LandingSiteDetailsPanel.cpp
     scenes/loading/GameLoadingScene.cpp
     scenes/game/dev/CameraCommand.cpp
+    scenes/game/dev/CameraStateJson.cpp
+    scenes/game/dev/ConstructionStateJson.cpp
     scenes/game/dev/DevCommandHandler.cpp
+    scenes/game/dev/DevJson.cpp
+    scenes/game/dev/SightJson.cpp
+    scenes/game/dev/DrawingStateJson.cpp
+    scenes/game/dev/GiveShortfall.cpp
     scenes/game/dev/GpuHold.cpp
     scenes/game/dev/GpuHoldCommand.cpp
     scenes/game/dev/GroundRefusal.cpp
@@ -95,16 +110,15 @@ add_executable(world-sim
     scenes/settings/SettingsScene.cpp
 )
 
-target_include_directories(world-sim
-    PRIVATE
+target_include_directories(world-sim-game
+    PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_compile_features(world-sim PRIVATE cxx_std_20)
+target_compile_features(world-sim-game PUBLIC cxx_std_20)
 
-# Link all required libraries
-target_link_libraries(world-sim
-    PRIVATE
+target_link_libraries(world-sim-game
+    PUBLIC
         world-view
         sim
         world
@@ -118,6 +132,10 @@ target_link_libraries(world-sim
         OpenGL::GL
         GLEW::GLEW
 )
+
+add_executable(world-sim Main.cpp)
+target_link_libraries(world-sim PRIVATE world-sim-game)
+salal_windows_manifest(world-sim)
 
 # The game's own passes' shaders (salal's base shader is compiled in) are staged into
 # ${CMAKE_BINARY_DIR}/shaders by world-view-shaders and planet-view-shaders. findResource
@@ -134,77 +152,58 @@ add_custom_target(world-sim-shaders ALL
 )
 add_dependencies(world-sim-shaders world-view-shaders planet-view-shaders)
 
-# Copy fonts to executable directory
-add_custom_command(TARGET world-sim POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_SOURCE_DIR}/fonts
-    $<TARGET_FILE_DIR:world-sim>/fonts
-    COMMENT "Copying fonts to world-sim directory"
-)
+# Make world-sim depend on the shader mirror so it is in place before running. Assets and fonts
+# are staged by the root CMakeLists (stage_assets, stage_fonts).
+add_dependencies(world-sim world-sim-shaders)
 
-# Mirror assets to the executable directory every build.
-# Uses cmake/mirror-assets.cmake which mirrors each source subdir independently
-# via robocopy /MIR (Win) / rsync --delete (non-Win). Per-subdir mirroring means
-# extra dest dirs not in source (e.g. assets/planets/ staged separately) are left
-# untouched, while deletions within source-managed subdirs are propagated.
-add_custom_target(world-sim-assets ALL
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/assets
-        -DDEST_DIR=$<TARGET_FILE_DIR:world-sim>/assets
-        -P ${CMAKE_SOURCE_DIR}/cmake/mirror-assets.cmake
-    COMMENT "Mirroring assets to world-sim directory"
-)
-
-# Make world-sim depend on the shader and asset mirrors so they are in place before running
-add_dependencies(world-sim world-sim-assets world-sim-shaders)
-
-# world-sim's own pure code, which no library's test target reaches
+# world-sim's own code, which no library's test target reaches, and its scenes laid out headless
 if(BUILD_TESTING)
     find_package(GTest CONFIG REQUIRED)
     add_executable(world-sim-tests
-        scenes/game/dev/CameraCommand.cpp
+        UserSettings.test.cpp
         scenes/game/dev/CameraCommand.test.cpp
-        scenes/game/dev/GpuHoldCommand.cpp
+        scenes/game/dev/CameraStateJson.test.cpp
+        scenes/game/dev/ConstructionStateJson.test.cpp
+        scenes/game/dev/DevJson.test.cpp
+        scenes/game/dev/DrawingStateJson.test.cpp
+        scenes/game/dev/GiveShortfall.test.cpp
         scenes/game/dev/GpuHoldCommand.test.cpp
-        scenes/game/dev/GroundRefusal.cpp
         scenes/game/dev/GroundRefusal.test.cpp
-        scenes/game/dev/PointList.cpp
         scenes/game/dev/PointList.test.cpp
-        scenes/game/world/MoveOrderGoal.cpp
+        scenes/game/dev/SightJson.test.cpp
         scenes/game/world/MoveOrderGoal.test.cpp
-        scenes/game/world/construction/CommittedGeometryCache.cpp
+        scenes/game/world/WorldPointer.test.cpp
         scenes/game/world/construction/CommittedGeometryCache.test.cpp
-        scenes/game/world/construction/DrawingSystem.cpp
+        scenes/game/world/construction/DrawingFeedback.test.cpp
         scenes/game/world/construction/DrawingSystem.test.cpp
-        scenes/game/world/placement/GhostRenderer.cpp
-        scenes/game/world/placement/PlacementMode.cpp
-        scenes/game/world/placement/PlacementSystem.cpp
         scenes/game/world/placement/PlacementSystem.test.cpp
-        scenes/game/world/selection/SelectionSystem.cpp
         scenes/game/world/selection/SelectionSystem.test.cpp
-        scenes/game/ui/adapters/GlobalTaskAdapter.cpp
         scenes/game/ui/adapters/GlobalTaskAdapter.test.cpp
-        scenes/game/ui/adapters/TaskRowText.cpp
+        scenes/game/ui/adapters/SelectionAdapter.test.cpp
         scenes/game/ui/adapters/TaskRowText.test.cpp
+        scenes/game/ui/models/ThoughtLogModel.test.cpp
+        scenes/game/ui/views/DrawingKeyGuide.test.cpp
+        scenes/SceneLayout.test.cpp
     )
-    target_include_directories(world-sim-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_features(world-sim-tests PRIVATE cxx_std_20)
+    # Not beside world-sim: the tests must not find the files staged for the game (the quickstart
+    # planet the menu's backdrop loads, the assets, the fonts), only what they ask for by path.
+    set_target_properties(world-sim-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
     target_link_libraries(world-sim-tests
         PRIVATE
-            world-view
-            sim
-            world
-            assets
-            salal::renderer
-            salal::foundation
+            world-sim-game
+            nlohmann_json::nlohmann_json
             GTest::gtest
             GTest::gtest_main
     )
+    add_dependencies(world-sim-tests font-atlas)
     if(MSVC)
         target_compile_options(world-sim-tests PRIVATE /Od)
     else()
         target_compile_options(world-sim-tests PRIVATE -O0 -g)
     endif()
-    add_test(NAME world-sim-tests COMMAND world-sim-tests)
-    worldsim_test_data(world-sim-tests assets/config)
+    # Run from the build root, which __FILE__-relative paths resolve from when ccache makes them relative, and
+    # where nothing is staged (a single-config generator would otherwise run it beside the game, planet and all).
+    # The asset library the layout tests load reads all of assets, not just its config.
+    add_test(NAME world-sim-tests COMMAND world-sim-tests WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    worldsim_test_data(world-sim-tests assets fonts)
 endif()

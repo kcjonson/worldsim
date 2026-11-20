@@ -3,6 +3,7 @@
 // and DecisionTrace generation for task queue display.
 
 #include "AIDecisionSystem.h"
+#include "ShippedPriorityConfig.test.h"
 #include "ActionSystem.h"
 #include "MovementSystem.h"
 #include "NavigationSystem.h"
@@ -15,6 +16,7 @@
 
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
+#include "../ShippedConfig.test.h"
 #include "../World.h"
 #include "../WorldSource.h"
 #include "../components/Action.h"
@@ -41,6 +43,7 @@
 #include "assets/AssetRegistry.h"
 #include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
+#include "assets/RecipeDef.test.h"
 #include "assets/RecipeRegistry.h"
 #include "assets/placement/PlacementExecutor.h"
 
@@ -55,6 +58,8 @@
 
 #include <worldgen/sampling/PondNetwork2D.h>
 
+#include <utils/Log.h>
+
 #include <gtest/gtest.h>
 
 #include <glm/geometric.hpp>
@@ -64,6 +69,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -102,12 +108,9 @@ namespace ecs::test {
 			// can't leak into another.
 			GoalTaskRegistry::Get().clear();
 
-			// PriorityConfig is a singleton too. These tests rely on its DEFAULT arbitration tiers
-			// (installed in the constructor) because they never load priority-tuning.xml. An earlier
-			// suite that loads a partial XML now (post the loadFromFile-clears-taskTiers fix) leaves
-			// the singleton's tier table empty, so getTaskTier would return the unassigned sentinel
-			// here. Reset to defaults so classifyTier sees the real per-task tiers regardless of order.
-			assets::PriorityConfig::Get().clear();
+			// PriorityConfig is a singleton too: load the shipped tuning so classifyTier sees the real
+			// per-task tiers regardless of what an earlier suite left in it.
+			ASSERT_TRUE(loadShippedPriorityConfig());
 
 			// Initialize AssetRegistry (singleton) - needed for capability lookups
 			auto& registry = assets::AssetRegistry::Get();
@@ -142,7 +145,7 @@ namespace ecs::test {
 			world->addComponent<AgentRadius>(entity, AgentRadius{});
 			world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 			world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-			world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+			world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 			world->addComponent<Memory>(entity, Memory{});
 			world->addComponent<Inventory>(entity, Inventory::createForColonist());
 			world->addComponent<Task>(entity, Task{});
@@ -169,6 +172,16 @@ namespace ecs::test {
 			// Create capability mask from single capability
 			uint16_t capabilityMask = static_cast<uint16_t>(1U << static_cast<size_t>(capability));
 			memory->rememberWorldEntity(position, defNameId, capabilityMask);
+		}
+
+		/// Remember a shore point as VisionSystem does: water a colonist both drinks and washes at.
+		void addKnownShore(EntityID entity, glm::vec2 position) {
+			auto* memory = world->getComponent<Memory>(entity);
+			ASSERT_NE(memory, nullptr);
+			const auto shoreMask = static_cast<uint16_t>(
+				(1U << static_cast<size_t>(assets::CapabilityType::Drinkable)) | (1U << static_cast<size_t>(assets::CapabilityType::Washable))
+			);
+			memory->rememberWorldEntity(position, kWaterDefId, shoreMask);
 		}
 
 		/// Get the current task for an entity
@@ -300,6 +313,7 @@ namespace ecs::test {
 			recipe.defName = "Recipe_Need_" + item;
 			recipe.label = recipe.defName;
 			recipe.inputs.push_back({item, 0, count});
+			recipe.workAmount = assets::kTestRecipeWorkAmount;
 			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 			world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);
 			world->addComponent<Inventory>(station, Inventory::createForStorage());
@@ -353,6 +367,45 @@ namespace ecs::test {
 
 		// Update should not crash and should not affect partial entity
 		EXPECT_NO_THROW(world->update(0.016F));
+	}
+
+	namespace {
+		struct MissingComponentWarnings {
+			int count = 0;
+			static void sink(void* context, const foundation::LogRecord& record) {
+				if (record.level == foundation::LogLevel::Warning && std::strstr(record.message, "never decides anything") != nullptr) {
+					++static_cast<MissingComponentWarnings*>(context)->count;
+				}
+			}
+		};
+		struct SinkGuard {
+			explicit SinkGuard(MissingComponentWarnings& warnings) { foundation::Logger::setSink(&MissingComponentWarnings::sink, &warnings); }
+			~SinkGuard() { foundation::Logger::setSink(nullptr, nullptr); }
+		};
+	} // namespace
+
+	TEST_F(AIDecisionSystemTest, ColonistMissingDecisionComponentsWarnsOnceAndCompleteOneStillDecides) {
+		auto noMemo = createColonist({0.0F, 0.0F});
+		world->removeComponent<SourceReachMemo>(noMemo);
+		auto noTrace = createColonist({1.0F, 0.0F});
+		world->removeComponent<DecisionTrace>(noTrace);
+		auto complete = createColonist({2.0F, 0.0F});
+
+		MissingComponentWarnings warnings;
+		{
+			const SinkGuard guard(warnings);
+			for (int i = 0; i < 3; ++i) {
+				EXPECT_NO_THROW(world->update(0.016F));
+			}
+		}
+
+		EXPECT_FALSE(getTask(noMemo)->isActive());
+		EXPECT_FALSE(getTask(noTrace)->isActive());
+		EXPECT_TRUE(getTask(complete)->isActive());
+#ifdef DEVELOPMENT_BUILD
+		// One per broken colonist, none repeated over the three ticks.
+		EXPECT_EQ(warnings.count, 2);
+#endif
 	}
 
 	// =============================================================================
@@ -1279,7 +1332,7 @@ namespace ecs::test {
 		setNeedValue(colonist, NeedType::Digestion, 100.0F);
 
 		// Give colonist food in inventory to suppress Gather Food option
-		// (otherwise we'd get 7 options: 5 needs + gather food + wander)
+		// (otherwise we'd get 8 options: 6 needs + gather food + wander)
 		auto* inventory = world->getComponent<Inventory>(colonist);
 		ASSERT_NE(inventory, nullptr);
 		inventory->addItem("Berry", 1);
@@ -1289,11 +1342,12 @@ namespace ecs::test {
 		auto* trace = getTrace(colonist);
 		ASSERT_NE(trace, nullptr);
 
-		// Should have 6 options: 5 needs + wander (no Gather Food since inventory has food)
-		EXPECT_EQ(trace->options.size(), 6u);
+		// Should have 7 options: 6 needs + wander (no Gather Food since inventory has food)
+		EXPECT_EQ(trace->options.size(), 7u);
 
 		// Verify all need types are present
-		bool hasHunger = false, hasThirst = false, hasEnergy = false, hasBladder = false, hasDigestion = false, hasWander = false;
+		bool hasHunger = false, hasThirst = false, hasEnergy = false, hasBladder = false, hasDigestion = false, hasHygiene = false,
+			 hasWander = false;
 		for (const auto& option : trace->options) {
 			if (option.taskType == TaskType::Wander) {
 				hasWander = true;
@@ -1314,6 +1368,9 @@ namespace ecs::test {
 					case NeedType::Digestion:
 						hasDigestion = true;
 						break;
+					case NeedType::Hygiene:
+						hasHygiene = true;
+						break;
 					default:
 						break;
 				}
@@ -1325,7 +1382,27 @@ namespace ecs::test {
 		EXPECT_TRUE(hasEnergy);
 		EXPECT_TRUE(hasBladder);
 		EXPECT_TRUE(hasDigestion);
+		EXPECT_TRUE(hasHygiene);
 		EXPECT_TRUE(hasWander);
+	}
+
+	// Washing looks for Washable water only, and a colonist that knows none goes on with its day.
+	TEST_F(AIDecisionSystemTest, GrubbyColonistWithNoKnownWaterDoesNothingAboutIt) {
+		auto colonist = createColonist({0.0F, 0.0F});
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		addKnownEntity(colonist, {4.0F, 0.0F}, kWaterDefId, assets::CapabilityType::Drinkable);
+		setNeedValue(colonist, NeedType::Hygiene, 20.0F);
+
+		world->update(0.016F);
+
+		const Task* task = getTask(colonist);
+		EXPECT_EQ(task->type, TaskType::Wander) << "a colonist with nowhere to wash is not stuck";
+		const auto& options = getTrace(colonist)->options;
+		const auto	hygiene = std::ranges::find_if(options, [](const EvaluatedOption& option) {
+			 return option.taskType == TaskType::FulfillNeed && option.needType == NeedType::Hygiene;
+		 });
+		ASSERT_NE(hygiene, options.end());
+		EXPECT_EQ(hygiene->status, OptionStatus::NoSource) << "drinkable-only water is no place to wash";
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceOptionsSortedByPriority) {
@@ -1563,7 +1640,7 @@ namespace ecs::test {
 		// The key is that it's still valid
 		ASSERT_NE(trace->getSelected(), nullptr);
 		EXPECT_FALSE(describeOption(*world, *trace->getSelected()).empty());
-		EXPECT_EQ(trace->options.size(), 6u); // Still has all options (5 needs + wander, no Gather Food since has food)
+		EXPECT_EQ(trace->options.size(), 7u); // Still has all options (6 needs + wander, no Gather Food since has food)
 	}
 
 	// =============================================================================
@@ -1673,9 +1750,9 @@ namespace ecs::test {
 
 	// Hysteresis: the in-progress option is NOT dropped for a same-tier challenger with a tiny score
 	// advantage, but a clearly-closer same-tier target DOES overcome the hysteresis margin. The
-	// in-progress option carries +hysteresisBonus (= taskSwitchThreshold, 50).
+	// in-progress option carries +hysteresisBonus (the InProgress bonus, 50).
 	TEST_F(AIDecisionSystemTest, HysteresisResistsThrashButYieldsToClearlyCloser) {
-		constexpr int16_t kHysteresis = 50; // = priority-tuning InProgress bonus / taskSwitchThreshold
+		constexpr int16_t kHysteresis = 50; // = priority-tuning InProgress bonus
 
 		// In-progress harvest at 30 m, with the stickiness margin applied. The distance curve is
 		// 5 score/m (300 over 60 m), so the 50 margin equals ~10 m of distance: a challenger must be
@@ -1792,7 +1869,7 @@ namespace ecs::test {
 		EXPECT_EQ(first.taskType, TaskType::FulfillNeed);
 		EXPECT_EQ(first.needType, NeedType::Hunger);
 		EXPECT_EQ(first.status, OptionStatus::Selected);
-		EXPECT_EQ(first.tier, 2) << "a critical need (<10%) is tier 2";
+		EXPECT_EQ(first.tier, 2) << "a critical need is tier 2";
 	}
 
 	// =============================================================================
@@ -2544,7 +2621,37 @@ namespace ecs::test {
 			<< "gather-food wins the (tier, score) key over wander";
 	}
 
-	// A critical need (needValue < 10%) classifies at tier 2 (above everything in Phase 1/2).
+	// A need is critical below its own threshold from config, not a fixed line.
+	TEST_F(AIDecisionSystemTest, NeedIsCriticalBelowItsOwnThreshold) {
+		auto colonist = createColonist({0.0F, 0.0F});
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 3);
+
+		setNeedValue(colonist, NeedType::Hunger, 12.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		const auto hungerOption = [this, colonist] {
+			world->update(0.016F);
+			const auto* trace = getTrace(colonist);
+			return trace == nullptr ? nullptr : findOption(*trace, [](const EvaluatedOption& o) {
+				return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger;
+			});
+		};
+
+		const auto* atShippedLevels = hungerOption();
+		ASSERT_NE(atShippedLevels, nullptr);
+		EXPECT_FALSE(atShippedLevels->critical);
+		EXPECT_EQ(atShippedLevels->tier, 5) << "12% is above Hunger's shipped critical threshold of 10";
+
+		world->getComponent<NeedsComponent>(colonist)->hunger().criticalThreshold = 15.0F;
+		const auto* raised = hungerOption();
+		ASSERT_NE(raised, nullptr);
+		EXPECT_TRUE(raised->critical);
+		EXPECT_EQ(raised->tier, 2) << "12% is below a critical threshold of 15";
+	}
+
+	// A critical need (below its critical threshold) classifies at tier 2 (above everything in Phase 1/2).
 	TEST_F(AIDecisionSystemTest, CriticalNeedClassifiesTier2) {
 		auto colonist = createColonist({0.0F, 0.0F});
 		auto* inventory = world->getComponent<Inventory>(colonist);
@@ -2563,7 +2670,7 @@ namespace ecs::test {
 			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger;
 		});
 		ASSERT_NE(hunger, nullptr);
-		EXPECT_EQ(hunger->tier, 2) << "a need below the 10% critical threshold classifies at tier 2";
+		EXPECT_EQ(hunger->tier, 2) << "a need below its critical threshold classifies at tier 2";
 	}
 
 	// An actionable need (below its seek threshold but not critical) classifies at tier 5.
@@ -2573,7 +2680,7 @@ namespace ecs::test {
 		addKnownEntity(colonist, {3.0F, 4.0F}, kWaterDefId, assets::CapabilityType::Drinkable);
 
 		setNeedValue(colonist, NeedType::Hunger, 100.0F);
-		setNeedValue(colonist, NeedType::Thirst, 40.0F); // actionable, above the 10% critical line
+		setNeedValue(colonist, NeedType::Thirst, 40.0F); // actionable, above Thirst's critical threshold
 		setNeedValue(colonist, NeedType::Energy, 100.0F);
 		setNeedValue(colonist, NeedType::Bladder, 100.0F);
 
@@ -2903,10 +3010,9 @@ namespace ecs::test {
 		void SetUp() override {
 			world = std::make_unique<World>();
 
-			// Reset the PriorityConfig singleton to its default arbitration tiers: task selection here
-			// depends on the per-task tier table, and an earlier suite that loads a partial
-			// priority-tuning.xml now leaves it empty (loadFromFile is authoritative post-fix).
-			assets::PriorityConfig::Get().clear();
+			// Task selection here depends on the per-task tier table, so load the shipped tuning rather
+			// than what an earlier suite left in the PriorityConfig singleton.
+			ASSERT_TRUE(loadShippedPriorityConfig());
 
 			auto& registry = assets::AssetRegistry::Get();
 
@@ -2939,7 +3045,7 @@ namespace ecs::test {
 			world->addComponent<AgentRadius>(entity, AgentRadius{});
 			world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 			world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
-			world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+			world->addComponent<NeedsComponent>(entity, ecs::testing::shippedNeeds());
 			world->addComponent<Memory>(entity, Memory{});
 			world->addComponent<Inventory>(entity, Inventory::createForColonist());
 			world->addComponent<Task>(entity, Task{});
@@ -3241,6 +3347,16 @@ namespace ecs::test {
 			axeDef.itemProperties->massKg = 1.0F;
 			registry.registerTestDefinition(std::move(axeDef));
 
+			assets::AssetDefinition stickDef;
+			stickDef.defName = "Stick";
+			stickDef.label = "Stick";
+			stickDef.handsRequired = 1;
+			stickDef.category = assets::ItemCategory::RawMaterial;
+			stickDef.itemProperties = assets::ItemProperties{};
+			stickDef.itemProperties->stackSize = 10;
+			stickDef.itemProperties->massKg = 0.5F;
+			registry.registerTestDefinition(std::move(stickDef));
+
 			assets::ActionTypeDef harvestAction;
 			harvestAction.defName = "Harvest";
 			harvestAction.needsHands = true;
@@ -3252,12 +3368,14 @@ namespace ecs::test {
 					++dropCalls;
 					droppedDef = defName;
 					droppedQty = quantity;
+					droppedTotal += quantity;
 				}
 			);
 		}
 
 		std::string droppedDef;
 		uint32_t	droppedQty = 0;
+		uint32_t	droppedTotal = 0;
 		int			dropCalls = 0;
 
 		void TearDown() override {
@@ -3273,6 +3391,31 @@ namespace ecs::test {
 			task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Axe");
 			task->state = TaskState::Moving;
 			return task;
+		}
+
+		// Put the colonist mid-Haul with one Stick in each hand.
+		Task* armMidHaulCarryingStickPair(EntityID colonist) {
+			auto* inventory = world->getComponent<Inventory>(colonist);
+			inventory->pickUp("Stick", 1);
+			inventory->pickUp("Stick", 1);
+			auto* task = armMidHaulCarryingAxe(colonist);
+			task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Stick");
+			return task;
+		}
+
+		static uint32_t beltUnits(const Inventory& inventory, const std::string& defName) {
+			uint32_t units = 0;
+			for (const auto& slot : inventory.belt) {
+				if (slot.has_value() && slot->defName == defName) {
+					units += slot->quantity;
+				}
+			}
+			return units;
+		}
+
+		// Units of `defName` held, belted, packed, or dropped: conserved across the interruption.
+		uint32_t stickUnits(const Inventory& inventory) const {
+			return handHeldQuantity(inventory, "Stick") + beltUnits(inventory, "Stick") + inventory.getQuantity("Stick") + droppedTotal;
 		}
 
 		// Drive the real handler for a switch to a hands-needing Harvest task.
@@ -3360,6 +3503,63 @@ namespace ecs::test {
 		EXPECT_EQ(dropCalls, 1) << "Axe dropped via the drop callback";
 		EXPECT_EQ(droppedDef, "Axe");
 		EXPECT_EQ(droppedQty, 1U);
+	}
+
+	// One Stick in each hand: both units leave the hands, by belt, then pack, then ground.
+	TEST_F(ChainInterruptionFixture, StickPairBothStowToBeltWhenBeltFree) {
+		auto  colonist = createColonist({5.0F, 5.0F});
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		auto* task = armMidHaulCarryingStickPair(colonist);
+		ASSERT_EQ(stickUnits(*inventory), 2U);
+		interruptForHarvest(colonist, *task);
+
+		EXPECT_FALSE(inventory->isHolding("Stick")) << "Both hands freed";
+		EXPECT_EQ(beltUnits(*inventory, "Stick"), 2U);
+		EXPECT_EQ(dropCalls, 0);
+		EXPECT_EQ(stickUnits(*inventory), 2U);
+	}
+
+	TEST_F(ChainInterruptionFixture, StickPairSplitsBeltThenBackpackWhenOneBeltSlotFree) {
+		auto  colonist = createColonist({5.0F, 5.0F});
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->belt[0] = ItemStack{"Knife", 1};
+		auto* task = armMidHaulCarryingStickPair(colonist);
+		interruptForHarvest(colonist, *task);
+
+		EXPECT_FALSE(inventory->isHolding("Stick"));
+		EXPECT_EQ(beltUnits(*inventory, "Stick"), 1U);
+		EXPECT_EQ(inventory->getQuantity("Stick"), 1U);
+		EXPECT_EQ(stickUnits(*inventory), 2U);
+	}
+
+	TEST_F(ChainInterruptionFixture, StickPairBothStowToBackpackWhenBeltFull) {
+		auto  colonist = createColonist({5.0F, 5.0F});
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->belt[0] = ItemStack{"Knife", 1};
+		inventory->belt[1] = ItemStack{"Hammer", 1};
+		auto* task = armMidHaulCarryingStickPair(colonist);
+		interruptForHarvest(colonist, *task);
+
+		EXPECT_FALSE(inventory->isHolding("Stick")) << "Both hands freed";
+		EXPECT_EQ(inventory->getQuantity("Stick"), 2U);
+		EXPECT_EQ(dropCalls, 0);
+		EXPECT_EQ(stickUnits(*inventory), 2U);
+	}
+
+	TEST_F(ChainInterruptionFixture, StickPairBothDroppedWhenBeltAndBackpackFull) {
+		auto  colonist = createColonist({5.0F, 5.0F});
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->belt[0] = ItemStack{"Knife", 1};
+		inventory->belt[1] = ItemStack{"Hammer", 1};
+		inventory->maxCapacity = 1;
+		inventory->addItem("Berry", 1);
+		auto* task = armMidHaulCarryingStickPair(colonist);
+		interruptForHarvest(colonist, *task);
+
+		EXPECT_FALSE(inventory->isHolding("Stick")) << "Both hands freed";
+		EXPECT_FALSE(inventory->hasItem("Stick"));
+		EXPECT_EQ(droppedTotal, 2U) << "Both units dropped, none lost";
+		EXPECT_EQ(stickUnits(*inventory), 2U);
 	}
 
 	// A two-hand armful is one stack mirrored across both hands: an interrupted haul drops it once,
@@ -5029,6 +5229,123 @@ namespace ecs::test {
 		EXPECT_LT(getNeeds(colonist)->energy().value, 25.0F) << "the interrupted sleep paid out";
 	}
 
+	TEST_F(NeedActionInPlaceTest, GrubbyColonistWalksToKnownWaterAndWashes) {
+		const glm::vec2 water{2.0F, 6.0F};
+		const auto		colonist = createActingColonist({-8.0F, 6.0F});
+		addKnownShore(colonist, water);
+		getNeeds(colonist)->get(NeedType::Hygiene).value = 30.0F;
+		world->update(kTick);
+		const Task*	  task = getTask(colonist);
+		const Action* action = world->getComponent<Action>(colonist);
+		ASSERT_EQ(task->type, TaskType::FulfillNeed);
+		ASSERT_EQ(task->needToFulfill, NeedType::Hygiene);
+		EXPECT_EQ(task->state, TaskState::Moving);
+
+		for (int i = 0; i < 400 && action->type != ActionType::Wash; ++i) {
+			world->update(kTick);
+		}
+		ASSERT_EQ(action->type, ActionType::Wash) << "never began washing on arrival";
+		for (int i = 0; i < 200 && action->isActive(); ++i) {
+			world->update(kTick);
+		}
+		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Hygiene).value, Action::kWashHygieneRestored);
+		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Thirst).value, 100.0F) << "washing is not drinking";
+		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Bladder).value, 100.0F) << "washing fills no bladder";
+	}
+
+	// Thirst and Hygiene low together at one shore point: two tasks, the drink first, then the wash.
+	TEST_F(NeedActionInPlaceTest, ThirstyAndGrubbyColonistDrinksThenWashes) {
+		const glm::vec2 water{2.0F, 6.0F};
+		const auto		colonist = createActingColonist({-8.0F, 6.0F});
+		addKnownShore(colonist, water);
+		getNeeds(colonist)->get(NeedType::Thirst).value = 30.0F;
+		getNeeds(colonist)->get(NeedType::Hygiene).value = 30.0F;
+		world->update(kTick);
+		const Task*	  task = getTask(colonist);
+		const Action* action = world->getComponent<Action>(colonist);
+		ASSERT_EQ(task->needToFulfill, NeedType::Thirst);
+
+		for (int i = 0; i < 400 && action->type != ActionType::Drink; ++i) {
+			world->update(kTick);
+			ASSERT_EQ(task->needToFulfill, NeedType::Thirst) << "switched to washing on the way to drink";
+		}
+		ASSERT_EQ(action->type, ActionType::Drink);
+		for (int i = 0; i < 400 && action->type != ActionType::Wash; ++i) {
+			world->update(kTick);
+		}
+		ASSERT_EQ(action->type, ActionType::Wash) << "never washed after drinking";
+		EXPECT_EQ(task->needToFulfill, NeedType::Hygiene);
+		for (int i = 0; i < 200 && action->isActive(); ++i) {
+			world->update(kTick);
+		}
+		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Thirst).value, 100.0F);
+		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Hygiene).value, 100.0F);
+	}
+
+	// Pins the need tie-break: Thirst and Hygiene equally below seek, one shore point known, decided once
+	// from idle. Their options tie on tier and score, so NeedType order alone picks Drink.
+	TEST_F(NeedActionInPlaceTest, EquallyLowThirstAndHygieneAtOneShoreTieBreakToThirst) {
+		const auto colonist = createActingColonist({-8.0F, 6.0F});
+		addKnownShore(colonist, {2.0F, 6.0F});
+		getNeeds(colonist)->get(NeedType::Thirst).value = 30.0F;
+		getNeeds(colonist)->get(NeedType::Hygiene).value = 30.0F;
+		world->update(kTick);
+		ASSERT_EQ(getTask(colonist)->needToFulfill, NeedType::Thirst);
+
+		const EvaluatedOption* thirst = nullptr;
+		const EvaluatedOption* hygiene = nullptr;
+		for (const EvaluatedOption& option : getTrace(colonist)->options) {
+			if (option.taskType != TaskType::FulfillNeed) {
+				continue;
+			}
+			if (option.needType == NeedType::Thirst) {
+				thirst = &option;
+			} else if (option.needType == NeedType::Hygiene) {
+				hygiene = &option;
+			}
+		}
+		ASSERT_NE(thirst, nullptr);
+		ASSERT_NE(hygiene, nullptr);
+		EXPECT_EQ(thirst->tier, hygiene->tier);
+		EXPECT_EQ(thirst->score, hygiene->score) << "the options no longer tie, so the tie-break is not what picks the drink";
+		EXPECT_LT(thirst->tiebreakId, hygiene->tiebreakId);
+	}
+
+	// A wash and a drink at one shore point are different tasks: Hygiene turning critical on the way to
+	// drink switches the task, and the action that starts there is the wash, then the drink.
+	TEST_F(NeedActionInPlaceTest, CriticalHygieneOnTheWayToDrinkWashesFirstAtTheSameShore) {
+		const glm::vec2 water{2.0F, 6.0F};
+		const auto		colonist = createActingColonist({-8.0F, 6.0F});
+		addKnownShore(colonist, water);
+		getNeeds(colonist)->get(NeedType::Thirst).value = 30.0F;
+		world->update(kTick);
+		const Task*	  task = getTask(colonist);
+		const Action* action = world->getComponent<Action>(colonist);
+		ASSERT_EQ(task->needToFulfill, NeedType::Thirst);
+		const glm::vec2 shore = task->targetPosition;
+		world->update(kTick);
+		ASSERT_EQ(task->state, TaskState::Moving);
+
+		getNeeds(colonist)->get(NeedType::Hygiene).value = 10.0F;
+		world->update(kTick);
+		ASSERT_EQ(task->needToFulfill, NeedType::Hygiene) << "the critical wash was read as the drink already under way";
+		EXPECT_LT(glm::distance(task->targetPosition, shore), 0.5F) << "the wash is at the same shore point";
+
+		for (int i = 0; i < 400 && !action->isActive(); ++i) {
+			world->update(kTick);
+		}
+		ASSERT_EQ(action->type, ActionType::Wash);
+		for (int i = 0; i < 400 && action->type != ActionType::Drink; ++i) {
+			world->update(kTick);
+		}
+		ASSERT_EQ(action->type, ActionType::Drink) << "never went back to drinking";
+		for (int i = 0; i < 200 && action->isActive(); ++i) {
+			world->update(kTick);
+		}
+		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Hygiene).value, 100.0F);
+		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Thirst).value, 100.0F);
+	}
+
 	// A critical sleeper that slides into water is snapped back ashore, which clears its task, so it
 	// re-decides; still sliding, it goes straight back in. The sleep must hold one decision throughout.
 	TEST_F(NeedActionInPlaceTest, CriticalSleeperDoesNotReDecideEveryTick) {
@@ -5390,8 +5707,9 @@ namespace ecs::test {
 		// A built wall across x = 8 m with the bush at its middle, the colonist knowing every segment of
 		// it and the bush, hungry with an empty pack, and the mesh built with the wall in it.
 		EntityID makeHungryColonistBesideWall(bool withDoor) {
-			const auto commit = construction.commitSegment({8000, -2000}, {8000, 2000}, "Wood", "Standard",
-														   construction::kInvalidFoundation);
+			const auto commit = construction.commitSegment(
+				{8000, -2000}, {8000, 2000}, "Wood", "Standard", construction::kInvalidFoundation, construction.version()
+			);
 			EXPECT_TRUE(commit.ok());
 			wallSegment = commit.id;
 			for (const auto id : commit.createdSegments) {
@@ -5571,7 +5889,9 @@ namespace ecs::test {
 		site({0.0F, 4.0F}, "Wood");
 		site({0.0F, -4.0F}, "Stick");
 
-		const auto commit = construction.commitSegment({8000, -2000}, {8000, 2000}, "Wood", "Standard", construction::kInvalidFoundation);
+		const auto commit = construction.commitSegment(
+			{8000, -2000}, {8000, 2000}, "Wood", "Standard", construction::kInvalidFoundation, construction.version()
+		);
 		ASSERT_TRUE(commit.ok());
 		for (const auto id : commit.createdSegments) {
 			construction.setSegmentState(id, construction::FoundationState::Built);
@@ -5935,6 +6255,7 @@ namespace ecs::test {
 			recipe.defName = "Recipe_BerryNeed";
 			recipe.label   = recipe.defName;
 			recipe.inputs.push_back({"Berry", 0, 3});
+			recipe.workAmount = assets::kTestRecipeWorkAmount;
 			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 		}
 
@@ -6716,6 +7037,7 @@ namespace ecs::test {
 		recipe.defName = "Recipe_StoneThree";
 		recipe.label   = recipe.defName;
 		recipe.inputs.push_back({"Stone", 0, 3});
+		recipe.workAmount = assets::kTestRecipeWorkAmount;
 		assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 		world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);
 		world->addComponent<Inventory>(station, Inventory::createForStorage());
@@ -6817,7 +7139,9 @@ namespace ecs::test {
 		const auto			 wallUp = [&](float x) {
 			const auto xMm	  = static_cast<std::int64_t>(x * 1000.0F);
 			const auto yMm	  = static_cast<std::int64_t>(kStart.y * 1000.0F);
-			const auto commit = construction.commitSegment({xMm, yMm - 3000}, {xMm, yMm + 3000}, "Wood", "Standard", construction::kInvalidFoundation);
+			const auto commit = construction.commitSegment(
+				{xMm, yMm - 3000}, {xMm, yMm + 3000}, "Wood", "Standard", construction::kInvalidFoundation, construction.version()
+			);
 			ASSERT_TRUE(commit.ok());
 			for (const auto id : commit.createdSegments) {
 				construction.setSegmentState(id, construction::FoundationState::Built);
@@ -7049,7 +7373,9 @@ namespace ecs::test {
 		water.defName = "Water";
 		water.label	  = "Water";
 		assets::AssetRegistry::Get().registerTestDefinition(water);
-		const auto commit = construction.commitSegment({-200000, 10000}, {60000, 10000}, "Wood", "Standard", construction::kInvalidFoundation);
+		const auto commit = construction.commitSegment(
+			{-200000, 10000}, {60000, 10000}, "Wood", "Standard", construction::kInvalidFoundation, construction.version()
+		);
 		ASSERT_TRUE(commit.ok());
 		const glm::vec2 waterAt{0.0F, 20.0F};
 		const auto		colonist = createColonist({0.0F, 0.0F});
@@ -7378,6 +7704,7 @@ namespace ecs::test {
 			recipe.defName = recipeName;
 			recipe.label   = recipeName;
 			recipe.inputs.push_back({"Stone", 0, count});
+			recipe.workAmount = assets::kTestRecipeWorkAmount;
 			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 			world->addComponent<WorkQueue>(e).addJob(recipeName, 1);
 			world->addComponent<Inventory>(e, Inventory::createForStorage());
@@ -7600,7 +7927,9 @@ namespace ecs::test {
 	// has none there), is chosen, routed, and reached: he meets the wall on the way and goes round it.
 	TEST_F(AIDecisionWallTest, WaterPastAWallHeDoesNotKnowIsChosenRoutedAndReached) {
 		constexpr glm::vec2 kWater{60.0F, 0.0F};
-		const auto			commit = construction.commitSegment({30000, -10000}, {30000, 10000}, "Wood", "Standard", construction::kInvalidFoundation);
+		const auto			commit = construction.commitSegment(
+			 {30000, -10000}, {30000, 10000}, "Wood", "Standard", construction::kInvalidFoundation, construction.version()
+		 );
 		ASSERT_TRUE(commit.ok());
 		for (const auto id : commit.createdSegments) {
 			construction.setSegmentState(id, construction::FoundationState::Built);
@@ -7638,12 +7967,13 @@ namespace ecs::test {
 		constexpr glm::vec2 kSpot{0.0F, 0.0F};
 		constexpr glm::vec2 kWater{60.0F, 0.0F};
 		const auto			buildWallAt = [&](geometry::Vec2i64 a, geometry::Vec2i64 b) {
-			   const auto commit = construction.commitSegment(a, b, "Wood", "Standard", construction::kInvalidFoundation);
-			   EXPECT_TRUE(commit.ok());
-			   for (const auto id : commit.createdSegments) {
-				   construction.setSegmentState(id, construction::FoundationState::Built);
-			   }
-			   return commit.createdSegments;
+			 const auto commit =
+				 construction.commitSegment(a, b, "Wood", "Standard", construction::kInvalidFoundation, construction.version());
+			 EXPECT_TRUE(commit.ok());
+			 for (const auto id : commit.createdSegments) {
+				 construction.setSegmentState(id, construction::FoundationState::Built);
+			 }
+			 return commit.createdSegments;
 		};
 		const auto besideWater = buildWallAt({64000, -3000}, {64000, 3000});
 		addLookout(kWater + glm::vec2{-4.0F, 0.0F});
@@ -7717,8 +8047,14 @@ namespace ecs::test {
 			const std::array<geometry::Vec2i64, 4> corners{{{6000, -2000}, {10000, -2000}, {10000, 2000}, {6000, 2000}}};
 			std::vector<construction::SegmentId>	 walls;
 			for (size_t i = 0; i < corners.size(); ++i) {
-				const auto commit = construction.commitSegment(corners[i], corners[(i + 1) % corners.size()], "Wood",
-															   "Standard", construction::kInvalidFoundation);
+				const auto commit = construction.commitSegment(
+					corners[i],
+					corners[(i + 1) % corners.size()],
+					"Wood",
+					"Standard",
+					construction::kInvalidFoundation,
+					construction.version()
+				);
 				EXPECT_TRUE(commit.ok());
 				for (const auto id : commit.createdSegments) {
 					construction.setSegmentState(id, construction::FoundationState::Built);
@@ -7751,8 +8087,9 @@ namespace ecs::test {
 		// A wall far from everything, so the region's mesh rebuilds without anything else changing.
 		void rebuildRegionMesh() {
 			const std::uint64_t before = nav->generation();
-			const auto commit = construction.commitSegment({30000, 30000}, {32000, 30000}, "Wood", "Standard",
-														   construction::kInvalidFoundation);
+			const auto			commit = construction.commitSegment(
+				 {30000, 30000}, {32000, 30000}, "Wood", "Standard", construction::kInvalidFoundation, construction.version()
+			 );
 			ASSERT_TRUE(commit.ok());
 			for (const auto id : commit.createdSegments) {
 				construction.setSegmentState(id, construction::FoundationState::Built);
@@ -7887,6 +8224,7 @@ namespace ecs::test {
 		recipe.defName = "Recipe_BerryNeed";
 		recipe.label = recipe.defName;
 		recipe.inputs.push_back({"Berry", 0, 3});
+		recipe.workAmount = assets::kTestRecipeWorkAmount;
 		assets::RecipeRegistry::Get().registerTestRecipe(recipe);
 		const EntityID station = world->createEntity();
 		world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);

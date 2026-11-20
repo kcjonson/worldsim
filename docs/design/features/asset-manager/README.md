@@ -21,7 +21,7 @@ Designers need to find an asset, see it faithfully, tweak its definition, and co
 
 These are the non-negotiables. Everything else is a feature decision.
 
-**One renderer, the game's.** Every pixel the tool shows or writes comes from the game's actual render path (NanoSVG parse, custom tessellation, the instanced/batched tiers, via the registry's tessellated templates). Nothing re-rasterizes assets in a second engine. A browser's SVG renderer, an image library, any reimplementation, all banned, because they would diverge from the game on exactly the procedural assets we most need to trust. If the tool and the game ever disagree about how an asset looks, the tool has failed at its one job. This is why the tool links the engine rather than reimplementing it, and it is why the tool is not a web page.
+**One renderer, the game's.** Every pixel the tool shows or writes comes from the game's actual render path (NanoSVG parse, custom tessellation, the same primitive draw calls, via the registry's tessellated templates). Nothing re-rasterizes assets in a second engine. A browser's SVG renderer, an image library, any reimplementation, all banned, because they would diverge from the game on exactly the procedural assets we most need to trust. If the tool and the game ever disagree about how an asset looks, the tool has failed at its one job. This is why the tool links the engine rather than reimplementing it, and it is why the tool is not a web page.
 
 **Appearance is intrinsic. A tree is a tree.** An asset renders the same way no matter where it would sit in the world. The tool shows assets in pure isolation: no world seed, no biome, no placement context, no level-of-detail-by-distance. None of that touches how an asset is drawn. The only variability is internal to a procedural asset: its Lua generator produces a family of forms, and the tool can sample that family. That is the generator's own range, not the world acting on the asset. A simple SVG asset has no variability at all, it is one drawing.
 
@@ -77,6 +77,7 @@ A whole-library check, runnable in the GUI and headless in CI, sharing one rule 
 - No duplicate `defName`s.
 - Documented-but-ignored fields flagged as warnings (so a def that sets `<variation>` knows it does nothing today).
 - Render smoke test: every asset renders without error, and every procedural generator produces a form without error. This is the payoff of having a render API, it turns "does the whole library still draw" into one command.
+- Recipes load against the library: a recipe file with a mistake, or a thing or station that names no definition, is an error. The GUI counts these in its header's errors and lists them in full at the top of the asset tree, since a recipe has no asset to select; Reload reads them again. The recipes are not browsed. This rule runs in the GUI and when the game loads; the headless check does not load recipes.
 
 Validation output is human-readable in the GUI and machine-readable from the CLI, with a non-zero exit on failure so CI can gate on it.
 
@@ -116,7 +117,7 @@ Built or firmed up by this effort:
 
 **Out, v1:** tile surface patterns and UI icons (they live on different render and registration paths, so they come later, and when they do the orphan check must also scan code references); creating assets; editing SVG art; editing definitions from inside the tool (read-only plus refresh instead); non-visual data defs (recipes, config, work types); data-driven `<variation>`; pixel-diff regression against golden images.
 
-**Candidates for later:** tile patterns and UI icons as first-class catalogued assets; in-tool editing of the genuinely data-driven fields (placement, groups, generator params, rendering tiers) with write-back and re-validate; golden-image regression; deeper validation (perf budgets on `variantCount`/`maxInstances`, group sanity).
+**Candidates for later:** tile patterns and UI icons as first-class catalogued assets; in-tool editing of the genuinely data-driven fields (placement, groups, generator params) with write-back and re-validate; golden-image regression; deeper validation (perf budgets on `variantCount`, group sanity).
 
 ## Risks and open questions
 

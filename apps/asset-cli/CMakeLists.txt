@@ -25,10 +25,4 @@ target_link_libraries(asset-cli
         nlohmann_json::nlohmann_json
 )
 
-# Asset definitions, SVGs, and Lua scripts next to the exe.
-add_custom_command(TARGET asset-cli POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_SOURCE_DIR}/assets
-    $<TARGET_FILE_DIR:asset-cli>/assets
-    COMMENT "Copying assets to asset-cli directory"
-)
+# assets/ is staged beside the exe by stage_assets(asset-cli) in the root CMakeLists.txt.

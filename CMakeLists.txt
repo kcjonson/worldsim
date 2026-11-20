@@ -73,7 +73,7 @@ include(cmake/test-data.cmake)
 include(FetchContent)
 FetchContent_Declare(salal
     GIT_REPOSITORY https://github.com/kcjonson/salal.git
-    GIT_TAG        v0.41.2
+    GIT_TAG        v0.43.0
     GIT_SHALLOW    TRUE
 )
 set(SALAL_BUILD_APP ON)
@@ -113,8 +113,8 @@ add_subdirectory(tools/generate_sdf_atlas)
 #
 # Each entry is "AtlasBaseName:SourceTTF". The atlas base names must match
 # kFontAtlases in libs/theme/theme/Fonts.h, which each app hands to salal's FontRenderer
-# through AppConfig; salal ships no fonts, so this repo makes them here and each app's
-# CMakeLists.txt copies fonts/ beside its exe.
+# through AppConfig; salal ships no fonts, so this repo makes them here and stage_fonts
+# (cmake/stage-fonts.cmake) copies fonts/ beside each app's exe.
 set(SDF_FONT_ATLASES
     "Roboto-SDF:Roboto-Regular.ttf"
     "ChakraPetch-SDF:ChakraPetch-SemiBold.ttf"
@@ -146,9 +146,15 @@ foreach(atlas_entry ${SDF_FONT_ATLASES})
 endforeach()
 
 add_custom_target(font-atlas DEPENDS ${SDF_ATLAS_OUTPUTS})
-add_dependencies(world-sim font-atlas)
-add_dependencies(ui-sandbox font-atlas)
-add_dependencies(asset-manager font-atlas)
+include(cmake/stage-fonts.cmake)
+stage_fonts(world-sim)
+stage_fonts(ui-sandbox)
+stage_fonts(asset-manager)
+include(cmake/stage-assets.cmake)
+stage_assets(world-sim)
+stage_assets(ui-sandbox)
+stage_assets(asset-manager)
+stage_assets(asset-cli)
 # FontAtlases.test.cpp loads the atlases from fonts/: the PNGs aren't tracked, and the JSON is the current tool's
 if(TARGET theme-tests)
     add_dependencies(theme-tests font-atlas)

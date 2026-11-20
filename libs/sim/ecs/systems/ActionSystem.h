@@ -10,6 +10,7 @@
 #include "../EntityID.h"
 #include "../ISystem.h"
 #include "../LoosePileIndex.h"
+#include "../components/Action.h"
 
 #include <glm/vec2.hpp>
 
@@ -18,8 +19,26 @@
 #include <optional>
 #include <random>
 #include <string>
+#include <vector>
 
 namespace ecs {
+
+enum class ActionMoment : uint8_t { Started, Finished };
+
+/// A colonist started or finished an action. An action finishes only when its effect takes (an Eat whose
+/// food is gone, a pickup from a source already taken, or a deposit the target refuses does not), an action
+/// cut short never finishes, and one taking up work already begun (a build on a site with build work on it,
+/// a teardown already under way, a craft batch with a unit made) does not start.
+struct ActionEvent {
+	EntityID	 colonist = kInvalidEntity;
+	ActionType	 type = ActionType::None;
+	ActionMoment moment = ActionMoment::Started;
+	/// The AssetRegistry id of the kind of thing the action is about (the food eaten, the bed slept in,
+	/// the item crafted, the plant harvested); 0 when it is about no thing, as a sleep on the ground is.
+	uint32_t aboutDefinition = 0;
+};
+
+using ActionObserver = std::function<void(const ActionEvent& event)>;
 
 class ActionSystem : public ISystem {
 public:
@@ -83,6 +102,9 @@ public:
 	/// same-material piles in one cell would otherwise alias each other.
 	using RemoveEntityByIdCallback = std::function<void(EntityID entity)>;
 	void setRemoveEntityByIdCallback(RemoveEntityByIdCallback callback) { m_onRemoveEntityById = std::move(callback); }
+
+	/// Hears every action a colonist starts and finishes, once the update's pass over the colonists is over.
+	void addActionObserver(ActionObserver observer) { m_actionObservers.push_back(std::move(observer)); }
 
 	/// The loose ground piles a pickup draws from, filed by makeLoosePile and unfiled by
 	/// destroyWorldEntity.
@@ -184,33 +206,38 @@ private:
 	/// Apply a completed action's need-restoration effect (primary + side effect).
 	void applyNeedEffect(const struct Action& action, struct NeedsComponent& needs);
 
-	/// Apply a completed collection effect (Pickup/Harvest): pool-withdraw vs single-shot,
+	/// Apply a completed collection effect (Pickup/Harvest/Withdraw): pool-withdraw vs single-shot,
 	/// source removal/cooldown. `colonistPosition` is where
 	/// a tool stowed to free the hands is put away or dropped from (reach starts at the colonist).
-	void applyCollectionEffect(
+	/// False when nothing came off the source and no clear removed it.
+	bool applyCollectionEffect(
 		const struct Action& action,
 		glm::vec2 colonistPosition,
 		struct Inventory& inventory,
 		struct Memory& memory
 	);
 
-	/// Apply a completed consumption effect (Eat): remove item, restore need + side effect.
-	void applyConsumptionEffect(const struct Action& action, struct NeedsComponent& needs, struct Inventory& inventory);
+	/// Apply a completed consumption effect (Eat): remove item, restore need + side effect. False, with
+	/// nothing restored, when the item is no longer there.
+	bool applyConsumptionEffect(const struct Action& action, struct NeedsComponent& needs, struct Inventory& inventory);
 
 	/// Apply a completed spawn effect (pooping spawns a Bio Pile).
 	void applySpawnEffect(const struct Action& action);
 
 	/// Apply a completed crafting effect: consume inputs, add/drop outputs, notify, update WorkQueue.
-	void applyCraftingEffect(const struct Action& action, struct Inventory& inventory);
+	/// False, making and spending nothing, when the station no longer holds every input.
+	bool applyCraftingEffect(const struct Action& action, struct Inventory& inventory);
 
-	/// Apply a completed deposit effect (storage deposit or deliver-to-craft-station).
-	void applyDepositEffect(const struct Action& action, struct Inventory& inventory);
+	/// Apply a completed deposit effect (storage deposit or deliver-to-craft-station). False when the
+	/// target took nothing.
+	bool applyDepositEffect(const struct Action& action, struct Inventory& inventory);
 
 	/// Apply a completed construction progress effect (Build/Deconstruct completion signal).
 	void applyProgressEffect(const struct Action& action);
 
 	/// Apply a completed PlacePackaged effect (phase 2): move the carried entity to target and unpackage.
-	void applyPlacePackagedEffect(const struct Action& action, struct Inventory& inventory);
+	/// False when the package is gone or already placed.
+	bool applyPlacePackagedEffect(const struct Action& action, struct Inventory& inventory);
 
 	/// Start a crafting action based on the task's recipe. Validates the recipe inputs against the
 	/// crafting station's own Inventory store (materials were hauled into it during provisioning).
@@ -295,6 +322,23 @@ private:
 		glm::vec2 dropPosition,
 		const char* handName
 	);
+
+	/// Hold for the action observers that the colonist started or finished the action.
+	void reportAction(
+		EntityID entity,
+		const struct Action& action,
+		ActionMoment moment,
+		const struct Task& task,
+		const struct Memory& memory
+	);
+
+	/// True when starting the action takes up work already begun: a Build on a blueprint with build work
+	/// done, a Deconstruct of a structure whose teardown has begun, or a Craft of a batch with a unit
+	/// already made.
+	[[nodiscard]] bool continuesWork(const struct Action& action) const;
+
+	std::vector<ActionObserver> m_actionObservers;
+	std::vector<ActionEvent>	m_reportedActions;
 
 	/// Callback for item crafted notifications
 	ItemCraftedCallback m_onItemCrafted = nullptr;

@@ -6,6 +6,7 @@
 #include "../components/Movement.h"
 #include "../components/NavPath.h"
 #include "../components/Transform.h"
+#include "TimeSystem.h"
 
 #include "nav/NavCoords.h"
 #include "nav/NavInputBuilder.h"
@@ -743,6 +744,10 @@ namespace ecs {
 		wallsVersion	  = UINT64_MAX;
 	}
 
+	float NavigationSystem::footprintReachMeters() {
+		return nav::placedObstacleReachMeters(assets::AssetRegistry::Get());
+	}
+
 	void NavigationSystem::appendAnchors(std::vector<world::ChunkAnchor>& out) const {
 		// Null only in headless tests with no colonists.
 		if (world == nullptr) {
@@ -753,7 +758,7 @@ namespace ecs {
 			const float circumradius = static_cast<float>(gnav::limitCircumradius(radiusMm(meshingRange(entity)))) /
 									   static_cast<float>(geometry::kMillimetersPerMeter);
 			out.push_back({{position.value.x, position.value.y},
-						   circumradius + kFootprintReachMeters + static_cast<float>(kLimitRetakeStepMm) / static_cast<float>(geometry::kMillimetersPerMeter)});
+						   circumradius + footprintReachMeters() + static_cast<float>(kLimitRetakeStepMm) / static_cast<float>(geometry::kMillimetersPerMeter)});
 		}
 	}
 
@@ -861,8 +866,8 @@ namespace ecs {
 						.centre			= centre,
 						.rangeMm		= radiusMm(rangeMeters),
 						.circumradiusMm = gnav::limitCircumradius(radiusMm(rangeMeters))};
-		limit.outline			= nav::visibilityLimit(centre, radiusMm(rangeMeters)).ring;
-		const std::int64_t reach = limit.circumradiusMm + radiusMm(kFootprintReachMeters);
+		limit.outline			= nav::meshLimit(centre, radiusMm(rangeMeters)).ring;
+		const std::int64_t reach = limit.circumradiusMm + radiusMm(footprintReachMeters());
 		limit.query				= {{centre.x - reach, centre.y - reach}, {centre.x + reach, centre.y + reach}};
 		return limit;
 	}
@@ -1338,6 +1343,11 @@ namespace ecs {
 		return placement->getChunkIndex(coord) != nullptr && (processedChunks == nullptr || processedChunks->contains(coord));
 	}
 
+	std::int64_t NavigationSystem::clockMs() const {
+		const TimeSystem* time = world != nullptr ? world->tryGetSystem<TimeSystem>() : nullptr;
+		return time != nullptr ? std::llround(time->simulationSeconds() * 1000.0) : 0;
+	}
+
 	void NavigationSystem::queueRemovedDetail() {
 		if (placement == nullptr) {
 			return;
@@ -1361,9 +1371,14 @@ namespace ecs {
 		}
 		gnav::PatchEdits edits;
 		edits.removes.assign(detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(count));
+		// The ids it removes, for the placed occluder index: a count would not say which entries leave.
+		std::vector<RingId> removed = edits.removes;
 		gatheredJob.patches.push_back(std::move(edits));
-		gatheredJob.onPatched.emplace_back([count](const gnav::PatchReport& report, double) {
-			const auto what = [count] { return std::to_string(count) + " placed obstacles removed"; };
+		gatheredJob.onPatched.emplace_back([this, removed = std::move(removed)](const gnav::PatchReport& report, double) {
+			for (const RingId ring : removed) {
+				placedOccluderIndex.remove(ring);
+			}
+			const auto what = [count = removed.size()] { return std::to_string(count) + " placed obstacles removed"; };
 			logUnsupported(report, what, [&what](std::size_t) { return what(); });
 		});
 		detailRemovals.erase(detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(count));
@@ -1426,7 +1441,6 @@ namespace ecs {
 		const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
 		const glm::vec2				 lo		  = nav::toMeters(limit.query.lo);
 		const glm::vec2				 hi		  = nav::toMeters(limit.query.hi);
-		const std::int64_t			 reachMm  = radiusMm(kFootprintReachMeters);
 		everyChunkIn(limit.query.lo, limit.query.hi, [&](world::ChunkCoordinate coord) {
 			for (const assets::PlacedEntity* e : placement->getChunkIndex(coord)->queryRect(lo.x, lo.y, hi.x, hi.y)) {
 				ObstacleKey key{coord, std::bit_cast<std::uint32_t>(e->position.x), std::bit_cast<std::uint32_t>(e->position.y), e->defName};
@@ -1438,19 +1452,11 @@ namespace ecs {
 					continue;
 				}
 				// The footprint's box against the disc the limit circumscribes.
-				const geometry::Vec2i64 at = nav::toMm(e->position);
-				geometry::Vec2i64		boxLo = ring->ring.front();
-				geometry::Vec2i64		boxHi = boxLo;
-				std::int64_t			reach = 0;
+				geometry::Vec2i64 boxLo = ring->ring.front();
+				geometry::Vec2i64 boxHi = boxLo;
 				for (const geometry::Vec2i64& p : ring->ring) {
 					boxLo = {std::min(boxLo.x, p.x), std::min(boxLo.y, p.y)};
 					boxHi = {std::max(boxHi.x, p.x), std::max(boxHi.y, p.y)};
-					reach = std::max({reach, std::abs(p.x - at.x), std::abs(p.y - at.y)});
-				}
-				if (reach > reachMm && overreachingDefs.insert(e->defName).second) {
-					LOG_ERROR(Engine, "[Nav] %s's footprint reaches %lld mm from its position, past kFootprintReachMeters: where it pokes into a limit "
-									  "from outside the limit's query box, meshed ground goes in without it",
-							  e->defName.c_str(), static_cast<long long>(reach));
 				}
 				const std::int64_t gx = std::max<std::int64_t>({0, boxLo.x - limit.centre.x, limit.centre.x - boxHi.x});
 				const std::int64_t gy = std::max<std::int64_t>({0, boxLo.y - limit.centre.y, limit.centre.y - boxHi.y});
@@ -1525,12 +1531,18 @@ namespace ecs {
 			if (ground.has_value()) {
 				noteServed(*ground);
 			}
-			std::size_t k = 0;
+			std::size_t		   k	   = 0;
+			const std::int64_t arrived = clockMs();
 			for (; k < keys.size(); ++k) {
 				if (added[k] == gnav::kNoRing) {
+					// Refused: it never enters the index, so sight and nav agree it is not there.
 					obstacleInMesh.erase(keys[k]);
 				} else {
 					obstacleInMesh.at(keys[k]) = added[k];
+					const gnav::NavInputPolygon& ring = detailMesh.ring(added[k]).polygon;
+					if (ring.provenanceId == nav::kProvenancePlaced && ring.blocked) {
+						placedOccluderIndex.add(added[k], ring.ring, keys[k].defName, arrived);
+					}
 				}
 			}
 			for (std::size_t c = 0; c < waterChunks.size(); ++c) {
@@ -1540,7 +1552,7 @@ namespace ecs {
 				}
 			}
 			const auto what = [&] {
-				return std::string(withGround ? "the visibility limit" : "placed obstacles of the visibility limit") + " of mover " +
+				return std::string(withGround ? "the mesh limit" : "placed obstacles of the mesh limit") + " of mover " +
 					   std::to_string(static_cast<unsigned long long>(mover)) + " round " + pointName(nav::toMeters(centre)) + " R " + std::to_string(rangeMm) +
 					   " mm";
 			};
