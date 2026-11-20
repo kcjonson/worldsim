@@ -35,6 +35,7 @@
 #include <ecs/systems/TimeSystem.h>
 #include <theme/Theme.h>
 #include <ui/components/Dialog.h>
+#include <ui/components/DropdownButton.h>
 #include <ui/components/TabBar.h>
 #include <ui/components/Toast.h>
 #include <ui/shapes/Text.h>
@@ -97,8 +98,10 @@ namespace world_sim::testing {
 			};
 			using Open = std::function<void(HudScene&)>;
 
-			explicit HudScene(Open open)
-				: open(std::move(open)) {}
+			// `wireBarCallbacks` gives the gameplay bar's tools something to call; left off, nothing is behind them.
+			explicit HudScene(Open open, bool wireBarCallbacks = false)
+				: open(std::move(open)),
+				  wireBarCallbacks(wireBarCallbacks) {}
 
 			[[nodiscard]] const char* name() const override { return kHudScene; }
 
@@ -112,7 +115,7 @@ namespace world_sim::testing {
 
 			void onEnter(app::App& /*app*/) override {
 				theme::apply(ui());
-				gameUI = std::make_unique<GameUI>(GameUI::Args{
+				GameUI::Args args{
 					.root = root(),
 					.traits = traits,
 					.onFoundationToolSelected =
@@ -121,7 +124,13 @@ namespace world_sim::testing {
 							drawingSystem->pickFoundationTool(tool);
 						},
 					.onKeyGuideOpened = [this] { drawingSystem->toggleKeyGuide(); },
-				});
+				};
+				if (wireBarCallbacks) {
+					args.onStructureSelected = [](const std::string& /*structure*/) {};
+					args.onProductionSelected = [](const std::string& /*defName*/) {};
+					args.onRoomsToggle = [] {};
+				}
+				gameUI = std::make_unique<GameUI>(args);
 				drawingSystem =
 					std::make_unique<DrawingSystem>(DrawingSystem::Args{.world = &world, .camera = &camera, .navigation = nullptr});
 				gameUI->showCatalogue(assets::RecipeRegistry::Get(), assets::ConstructionRegistry::Get(), drawingSystem->activeMaterial());
@@ -239,6 +248,7 @@ namespace world_sim::testing {
 			}
 
 			Open							 open;
+			bool							 wireBarCallbacks;
 			assets::TraitRegistry			 traits; // none: these colonists have no Traits
 			ecs::testing::TestThoughtTypes	 thoughtTypes{kHudThoughts};
 			ecs::World						 world;
@@ -304,8 +314,8 @@ namespace world_sim::testing {
 			}
 
 			// The HUD over its world, the station and the box spawned, run long enough for its 5 Hz models to fill.
-			HudScene& openHud(HudScene::Open open = {}) {
-				app->scenes().add(kHudScene, [open] { return std::make_unique<HudScene>(open); });
+			HudScene& openHud(HudScene::Open open = {}, bool wireBarCallbacks = false) {
+				app->scenes().add(kHudScene, [open, wireBarCallbacks] { return std::make_unique<HudScene>(open, wireBarCallbacks); });
 				go(kHudScene);
 				for (int tick = 0; tick < kModelFillFrames; ++tick) {
 					frame();
@@ -481,6 +491,50 @@ namespace world_sim::testing {
 		ASSERT_NE(shown("gameplay_bar"), nullptr);
 		EXPECT_EQ(lintEverywhere(), "");
 		EXPECT_EQ(unexpectedScrollbars({}), "");
+	}
+
+	// A dropdown added to the bar has to come through here, so one cannot arrive without something behind it.
+	TEST_F(SceneLayout, TheGameplayBarOffersOnlyBuildProductionZonesAndRooms) {
+		openHud();
+		const ui::Component* bar = shown("gameplay_bar");
+		ASSERT_NE(bar, nullptr);
+		std::vector<std::string> ids;
+		for (const auto& child : bar->getChildren()) {
+			const ui::Component* made = app->scenes().top()->ui().find(child);
+			ASSERT_NE(made, nullptr);
+			ids.emplace_back(made->getId());
+		}
+		EXPECT_EQ(ids, (std::vector<std::string>{"build_dropdown", "production_dropdown", "zones_dropdown", "rooms_toggle"}));
+	}
+
+	// A tool nothing is wired to must not look like one that works: it is drawn disabled, and cannot be chosen.
+	TEST_F(SceneLayout, AGameplayBarToolWithNothingBehindItIsDisabled) {
+		const auto itemsOf = [this](const char* id) {
+			const auto* dropdown = static_cast<const ui::DropdownButton*>(shown(id));
+			EXPECT_NE(dropdown, nullptr) << id;
+			return dropdown != nullptr ? dropdown->getItems() : std::vector<ui::MenuItem>{};
+		};
+		const auto allEnabled = [](const std::vector<ui::MenuItem>& items) {
+			return std::ranges::all_of(items, [](const ui::MenuItem& item) { return item.enabled; });
+		};
+		const auto noneEnabled = [](const std::vector<ui::MenuItem>& items) {
+			return std::ranges::none_of(items, [](const ui::MenuItem& item) { return item.enabled; });
+		};
+
+		openHud();
+		EXPECT_EQ(itemsOf("build_dropdown").size(), 4U);
+		EXPECT_TRUE(noneEnabled(itemsOf("build_dropdown")));
+		EXPECT_FALSE(itemsOf("production_dropdown").empty());
+		EXPECT_TRUE(noneEnabled(itemsOf("production_dropdown")));
+		EXPECT_TRUE(noneEnabled(itemsOf("zones_dropdown")));
+		EXPECT_FALSE(shown("rooms_toggle")->isEnabledInTree());
+
+		openHud({}, true);
+		EXPECT_TRUE(allEnabled(itemsOf("build_dropdown")));
+		EXPECT_FALSE(itemsOf("production_dropdown").empty());
+		EXPECT_TRUE(allEnabled(itemsOf("production_dropdown")));
+		EXPECT_TRUE(noneEnabled(itemsOf("zones_dropdown")));
+		EXPECT_TRUE(shown("rooms_toggle")->isEnabledInTree());
 	}
 
 	// The build menu, both task lists and a stack of toasts, everything that grows over the play area at once.
