@@ -16,7 +16,7 @@ Terms: a **pick** is the lat/lon the player clicked or the marker they chose. Th
 3. Temperature reads both the mean and the seasonal half-amplitude: the mean, the coldest season, and the hottest season must each be livable.
 4. A site is called fresh-water, rated as such, recommended, or suggested only when the resolution found a fresh bank or shore for it. Tile flags alone never promise water.
 5. Every pick is resolved, suggested marker or free click, by the same function (`resolveLandingSite`). The interface never shows the adjustment: the player's crosshair stays where they clicked, the coordinates shown are the pick's, and nothing snaps or moves the pointer.
-6. When the resolution finds fresh water, the feature lies inside the area revealed at landing (150 m round the drop). The drop is a bank or shore point, at most 6 m from the water's edge.
+6. When the resolution finds fresh water, the feature lies inside the area revealed at landing (150 m round the drop). The drop is dry land 30 m from the edge of the nearest water of any kind, within 3 m, so the crew lands in sight of the water and back from its bank, never on an island or between two channels with less than that on either side.
 7. The Landing Zone pane describes the landing tile, which can be a neighbour of the picked tile, so its biome, climate, and water are where the crew really lands.
 8. Up to ten suggested sites per planet, all meeting rule 1, at least 15 degrees of arc apart, varied by kind (river or lake) and by biome. Fewer is fine; none is fine and breaks nothing.
 9. The same planet always gives the same sites in the same order. Ties break to the lowest `TileId`; nothing is random.
@@ -24,9 +24,9 @@ Terms: a **pick** is the lat/lon the player clicked or the marker they chose. Th
 11. Suggested sites are markers on the globe in the Reviewing state, nothing else: no list, no panel entries. A marker shows its kind at a glance. Clicking one selects it exactly as a click there would. A marker on the far side of the globe is hidden.
 12. Markers show only when the Settings switch "Show suggested landing sites" is on. It is off by default, and a `--no-settings` launch has it off.
 13. Sites are computed after generation or load and never stored. The planet file format does not change.
-14. Quick Start's landing does not move: the same origin and the same drop as before this system, on the shipped planet (seed 424242, n=2048, Temperate Deciduous Forest by a river). The regression scenarios are written on those coordinates.
+14. Quick Start's landing is fixed for the shipped planet (seed 424242, n=2048): the first suggested site with the Temperate Deciduous Forest preference, a river site. Its origin and drop are recorded in section 8, and the regression scenarios are written on those coordinates.
 15. `revealLanding` stays centred on the raw drop, the spawn point before the landing clearing is made.
-16. Neither the scan nor a resolution runs on the main thread. A spawn search costs 50 to 160 ms, so the world creator hands both to a worker and stays interactive.
+16. Neither the scan nor a resolution runs on the main thread. A spawn search costs 20 to 50 ms and a resolution runs one for each anchor it tries, so the world creator hands both to a worker and stays interactive.
 
 ## 2. The bar
 
@@ -97,7 +97,19 @@ struct LandingSite {
 };
 ```
 
-`SpawnSite` (`SpawnSite.h`) carries `SpawnWater water` (`None`, `River`, `Lake`, `Ocean`) and `float waterDistanceMeters` in place of its two booleans. `findRiverbankSpawn` keeps its search unchanged (200 m radius, 3 m step, 6 m bank distance, riverbank before lake shore before coast, nearest to the origin); only what it reports grows. `waterDistanceMeters` is the chosen point's distance to the channel edge for a river, and for a lake or the ocean the shortest of 1 m probes out to the bank distance along the four axes that lands in water.
+`SpawnSite` (`SpawnSite.h`) carries `SpawnWater water` (`None`, `River`, `Lake`, `Ocean`) and `float waterDistanceMeters`.
+
+```cpp
+SpawnSite findWatersideSpawn(const std::shared_ptr<const GeneratedWorld>& world, double landingLatDeg,
+                             double landingLonDeg, double searchRadiusMeters = 200.0);
+```
+
+The drop is found on a 3 m grid over the square of half-side `searchRadiusMeters` round the origin. A point qualifies when it is dry (not lake or ocean, not inside a river channel) and its distance to the edge of the nearest water, of any kind, is `kLandingWaterDistanceMeters` within `kLandingWaterDistanceToleranceMeters`. The nearest water's kind is the point's kind. A river point comes before a lake point before an ocean point, and within a kind the point nearest the origin wins, ties to the first in scan order (rows of increasing y, each row by increasing x). When no dry point qualifies, the drop is the dry point farthest from water among those within the distance plus the tolerance of it, in the same order, ties to the nearer to the origin. When no dry point is that near any water, the drop is the origin and `water` is `None`.
+
+- **River distance** is exact: the distance to a channel segment's centreline less its half-width there, the least over the segments `RiverNetwork2D::gatherSegments` returns for the square widened by the distance plus the tolerance.
+- **Lake and ocean distance**: `PlanetSampler` classifies every grid sample once (land, lake, or ocean) over the square widened by the distance, the tolerance, and one step, and an exact Euclidean distance transform (Felzenszwalb and Huttenlocher, rows then columns) gives every sample its distance to the nearest lake sample and to the nearest ocean sample. The shore lies between that water sample and the dry one before it, so its edge is taken half a step short of the sample.
+
+Because the samples and segments reach past the search square, a point at the square's edge is never judged far from water it could not see. `waterDistanceMeters` is the drop's distance to its nearest water's edge, and zero for `None`.
 
 ## 3. Resolving a pick
 
@@ -112,12 +124,12 @@ A planet tile is about 3.5 km across at n=2048, and `classifyWater` looks at a t
 2. `T` borders lake tiles: a lake anchor toward each lake neighbour, nearest neighbour centre to the pick first.
 3. `T`'s land river neighbours: each one's centre, nearest to the pick first.
 
-Ties break to the lowest `TileId`. For each anchor, `findRiverbankSpawn(world, anchor)` runs with the anchor as origin; the anchor is accepted when `spawn.water` is `River` or `Lake`, and the site is `{anchor, fromLatLon(anchor), feature, spawn, assessLandingTile(..., River or Lake)}`. When no anchor passes, the landing stays at the pick: origin is the pick, the spawn search runs there, `feature` is `None`, and the water class is `Coastal` when `T` has an ocean neighbour, otherwise `RainFed`. A water pick resolves the same way with no anchors; the world creator rejects water picks before resolving.
+Ties break to the lowest `TileId`. For each anchor, `findWatersideSpawn(world, anchor)` runs with the anchor as origin; the anchor is accepted when `spawn.water` is `River` or `Lake`, and the site is `{anchor, fromLatLon(anchor), feature, spawn, assessLandingTile(..., River or Lake)}`. When no anchor passes, the landing stays at the pick: origin is the pick, the spawn search runs there, `feature` is `None`, and the water class is `Coastal` when `T` has an ocean neighbour, otherwise `RainFed`. A water pick resolves the same way with no anchors; the world creator rejects water picks before resolving.
 
 Why the anchors land on water:
 
-- **River.** `RiverNetwork2D` joins its channel segments at tile centres and tapers the meander and the width variation to zero there, so a river tile's centre lies exactly on its channel's centreline. A landing origin there puts the channel through the 2D origin, and the bank is within half the channel width (at most `RiverNetwork2D::kMaxHalfWidthMeters`, 103.5 m) plus 6 m, inside the 200 m search. A river tile with no segment of its own and none arriving (an isolated flag) fails the search and the next anchor is tried.
-- **Lake.** `PlanetSampler` decides water by the containing tile alone (no blend), and the chunk layer draws a tile's surface from its primary biome, the containing tile's (weight at least 0.5). So the 2D lake shore is the Voronoi edge between a lake tile and a land tile, moved at most `TerrainPolygonBuilder::kMaxWarpMm` (1.45 m) by the shore warp, plus the 1 m tile grid. The grid decides the containing tile in its lattice chart, so that edge is not the centres' great-circle midpoint: the two are 0.2 m apart at n=2048 and more than a kilometer apart at n=24. The lake anchor therefore finds the edge itself. On the arc from `T`'s centre to the lake tile's centre, a bisection on `grid.fromUnitVector` finds the point where the containing tile stops being `T`, to within `kLakeEdgeToleranceMeters`; the anchor is `kLakeShoreInsetMeters` back from it toward `T`'s centre. It is on land, inside `T`, at any grid resolution, and the shore search finds the water about 20 m off.
+- **River.** `RiverNetwork2D` joins its channel segments at tile centres and tapers the meander and the width variation to zero there, so a river tile's centre lies exactly on its channel's centreline. A landing origin there puts the channel through the 2D origin, and the bank is within half the channel width (at most `RiverNetwork2D::kMaxHalfWidthMeters`, 103.5 m) of it. The drop is 30 m (at most 33 m) back from the bank, so within 136.5 m of the origin, inside the 200 m search. A river tile with no segment of its own and none arriving (an isolated flag) fails the search and the next anchor is tried.
+- **Lake.** `PlanetSampler` decides water by the containing tile alone (no blend), and the chunk layer draws a tile's surface from its primary biome, the containing tile's (weight at least 0.5). So the 2D lake shore is the Voronoi edge between a lake tile and a land tile, moved at most `TerrainPolygonBuilder::kMaxWarpMm` (1.45 m) by the shore warp, plus the 1 m tile grid. The grid decides the containing tile in its lattice chart, so that edge is not the centres' great-circle midpoint: the two are 0.2 m apart at n=2048 and more than a kilometer apart at n=24. The lake anchor therefore finds the edge itself. On the arc from `T`'s centre to the lake tile's centre, a bisection on `grid.fromUnitVector` finds the point where the containing tile stops being `T`, to within `kLakeEdgeToleranceMeters`; the anchor is `kLakeShoreInsetMeters` back from it toward `T`'s centre. It is on land, inside `T`, at any grid resolution, the shore is about 20 m off, and the drop is about 10 m behind the anchor, 30 m from the shore and well inside the search.
 
 The origin moves to the anchor, so every `RiverNetwork2D`, `PlanetSampler`, and `GeneratedWorldSampler` downstream is built at the anchor, and the anchor's tile is the landing tile.
 
@@ -154,7 +166,7 @@ Candidates are sorted by rank. Selection runs in rounds `r = 1, 2, ...` up to `k
 3. fewer than `kMaximumSitesOfOneKind` taken sites share its kind (no limit in the final pass);
 4. `resolveLandingSite` at its centre returns a site that is `recommended()` and whose `tile` is the candidate.
 
-Check 4 runs last and at most once per candidate (a failure is remembered). A site's kind is its resolved `feature`: a lake candidate with a riverbank inside the spawn search resolves as a river site (the search prefers a riverbank), is counted and marked as one, and is skipped when the river count is already at its limit. Selection stops at `query.maximumSites`. The first site taken is the best-ranked candidate whose resolution passes, so `sites[0]` is the default site. The scan checks `stopToken` every 65,536 tiles and before each resolution, and returns what it has when stopped.
+Check 4 runs last and at most once per candidate (a failure is remembered). A site's kind is its resolved `feature`: a lake candidate with a river inside the spawn search resolves as a river site (the search prefers a river), is counted and marked as one, and is skipped when the river count is already at its limit. Selection stops at `query.maximumSites`. The first site taken is the best-ranked candidate whose resolution passes, so `sites[0]` is the default site. The scan checks `stopToken` every 65,536 tiles and before each resolution, and returns what it has when stopped.
 
 ### 4.3 Where it runs
 
@@ -201,21 +213,34 @@ class LandingSiteSurvey {
 ## 7. Handing the landing on
 
 - `GameStartConfig::landing` (`worldgen::LandingSite`) replaces `landingLatDeg` and `landingLonDeg`.
-- `GameLoadingScene::initializeWorldSystems` builds the sampler and chunk manager at `landing.origin` and takes the drop from `landing.spawn`; it no longer calls `findRiverbankSpawn`.
+- `GameLoadingScene::initializeWorldSystems` builds the sampler and chunk manager at `landing.origin` and takes the drop from `landing.spawn`; it does not run the spawn search itself.
 - `GameWorldState::landing` replaces `landingLatDeg`, `landingLonDeg`, and `spawnPosition`. `GameScene` reads its origin (minimap context) and its drop (`prepareLandingClearing`, `revealLanding`) from it; `revealLanding` stays centred on that raw drop.
 - `DevCommandHandler`'s context carries `const worldgen::LandingSite* landing` in place of the two lat/lon fields.
 
 ### 7.1 Deleted
 
-`findDefaultLandingSite`, `isPreferredLandingBiome`, `waterScore`, `habitabilityScore`, and the public `rateHabitability` (folded into `assessLandingTile`) in `LandingSite.cpp`; `SpawnSite::nearWater` and `SpawnSite::freshWater`; the pane's own recommended rule (`isFreshwater && (Easy || Moderate)`); the `findRiverbankSpawn` calls in `GameLoadingScene` and the two benches (`NavScale.bench.cpp`, `NavigationSystem.bench.cpp`), which take `findSuggestedLandingSites(...)[0]` and its `spawn`, loading asset definitions first; the `LandingSite.*` tests of `findDefaultLandingSite` in `PlanetSampler.test.cpp`. `habitabilityWeight` in `PlanetGenerator.cpp` and the saved `WorldSummary::habitability` are a planet-wide summary, not a site rating, and are untouched.
+`findDefaultLandingSite`, `isPreferredLandingBiome`, `waterScore`, `habitabilityScore`, and the public `rateHabitability` (folded into `assessLandingTile`) in `LandingSite.cpp`; `SpawnSite::nearWater` and `SpawnSite::freshWater`; the pane's own recommended rule (`isFreshwater && (Easy || Moderate)`); the spawn search calls in `GameLoadingScene` and the two benches (`NavScale.bench.cpp`, `NavigationSystem.bench.cpp`), which take `findSuggestedLandingSites(...)[0]` and its `spawn`, loading asset definitions first; the `LandingSite.*` tests of `findDefaultLandingSite` in `PlanetSampler.test.cpp`. `habitabilityWeight` in `PlanetGenerator.cpp` and the saved `WorldSummary::habitability` are a planet-wide summary, not a site rating, and are untouched.
 
-## 8. Quick Start holds still
+## 8. Quick Start's landing
 
-The old default was the lowest `TileId` among land tiles within 45 degrees of the equator, in Temperate Deciduous Forest, with `kFlagRiver` on the tile, rated Easy. The new first site with that preference is the lowest `TileId` among such river tiles that meet the bar and rate Easy. Every term of the new set implies the old one (the latitude cut is the same, a livable mean of 0 to 28 degrees Celsius with at least 250 mm of rain is what the old rule rated Easy for a river tile, and Temperate Deciduous Forest has food and wood), so the new set is a subset of the old and the old winner stays first if it is in it. It is in it when its seasons are livable and its spawn search finds the river, which it does today. Its resolution anchors on its own centre, the old site exactly, and the spawn search is unchanged, so the drop is the same.
+On the shipped planet (seed 424242, n=2048), Quick Start lands on the first suggested site with the Temperate Deciduous Forest preference: a river tile in Temperate Deciduous Forest, its resolution anchored on the tile's own centre. The `landing` view reads:
+
+| Field | Value |
+|---|---|
+| `landingLatDeg` | 28.80951735938833 |
+| `landingLonDeg` | 24.502251073059021 |
+| `feature` | `river` |
+| `spawnXMeters`, `spawnYMeters` | -29, -17 |
+| `featureDistanceMeters` | 27.950307846069336 |
+| `biome` | `TemperateDeciduousForest` |
+| `waterClass` | `River` |
+| `riverInTile` | true |
+
+The regression scenarios are written on these coordinates. A change that moves the origin or the drop is a deliberate one: it records the new numbers here and re-derives the scenarios that depend on where the crew starts.
 
 The livable limits give way to the site, never the reverse: the Quick Start site is known good from play, so limits that would exclude it are wrong and are the thing to change.
 
-Held by check, not by trust: the `landing` view's `landingLatDeg`, `landingLonDeg`, `spawnXMeters`, and `spawnYMeters` on Quick Start are recorded before the scorer changes and compared after; any difference stops the change. Scenario 14's setup (a BigRock at (0.4, 48.3), 48 m south of the drop) is the human check of the same thing.
+Held by check, not by trust: any change to the bar, the rank, the resolution, or the spawn search compares the `landing` view on Quick Start against this table, and an unplanned difference stops the change.
 
 ## 9. Dev views
 
@@ -226,7 +251,7 @@ Held by check, not by trust: the `landing` view's `landingLatDeg`, `landingLonDe
  "feature":"river","spawnXMeters":0.0,"spawnYMeters":0.0,"featureDistanceMeters":0.0}
 ```
 
-`landingLatDeg`/`landingLonDeg` are the origin, `biome` and `waterClass` the landing tile's (the verified class), `feature` is `river`, `lake`, or `none`, `spawnXMeters`/`spawnYMeters` the raw drop, and `featureDistanceMeters` the drop's `waterDistanceMeters` (null when `feature` is `none`).
+`landingLatDeg`/`landingLonDeg` are the origin, `biome` and `waterClass` the landing tile's (the verified class), `feature` is `river`, `lake`, or `none`, `spawnXMeters`/`spawnYMeters` the raw drop, and `featureDistanceMeters` the drop's `waterDistanceMeters`, its distance to the nearest water's edge: 30 within 3 whenever a dry point that far from water was in the search (null when `feature` is `none`).
 
 **`landingSites`** (world creator, registered with `devServer().stateProvider` in `onEnter`, released in `onExit`):
 
@@ -261,12 +286,14 @@ In `LandingSite.h` unless named otherwise.
 | `kMinimumFoodSourcesPerSquareKilometer` | 100.0 | food: about 7 sources in the 150 m landing area |
 | `kMinimumWoodSourcesPerSquareKilometer` | 100.0 | wood: the same |
 | `kLakeShoreInsetMeters` | 20.0 | lake anchor's distance inside the land tile from the lake edge |
+| `kLandingWaterDistanceMeters` (`SpawnSite.h`) | 30.0 | the drop's distance from the nearest water's edge |
+| `kLandingWaterDistanceToleranceMeters` (`SpawnSite.h`) | 3.0 | how far off that distance a drop may be: one step of the search grid |
 | `kLakeEdgeToleranceMeters` | 0.5 | how closely the bisection finds the edge between a land tile and a lake tile |
 | `kWoodItemGroup` (`BiomeProvisions.h`) | `"wood"` | the group an item declares to count as wood |
 | `kSuggestedMarkerRadius` (`WorldCreatorScene.cpp`) | 6 ui px | marker size |
 | `kSuggestedMarkerHitRadius` (`WorldCreatorScene.cpp`) | 10 ui px | how near a press must be to take a marker |
 
-The landing reveal radius is `NavigationSystem::kLandingSightMeters` (150 m); `findRiverbankSpawn`'s 6 m bank distance keeps every fresh feature well inside it.
+The landing reveal radius is `NavigationSystem::kLandingSightMeters` (150 m); a drop 30 m from its water keeps every fresh feature well inside it.
 
 ## 11. Tests
 
@@ -275,7 +302,8 @@ Unit tests, in `libs/worldgen/worldgen/sampling/LandingSite.test.cpp` (the landi
 - **Bar.** A river tile passes with food, wood, and livable temperatures, and fails with each one taken away in turn (no wood; no food; a mild mean with a coldest season below -15 degrees Celsius). A tile past 45 degrees of latitude that meets the bar is recommended when picked and is never a suggested site.
 - **Provisions.** `biomeProvisionsFromDefinitions` on registered test definitions: an edible-yield bush counts as food in its biome, a `Wood` tree as wood, a `near="Mud"` entry not at all (in `assets-tests`).
 - **Finder.** Every site meets the bar; sites are at least the separation apart; on a fixture with river and lake candidates in two biomes, both kinds and both biomes appear; two runs give identical lists; an all-desert world and an all-ocean world give an empty list.
-- **Resolution.** A pick on a river tile resolves to that tile's centre; a pick beside a lake to a shore within the bank distance; a pick one tile from a river to the river tile, with `tile` the river tile; resolving a landing's origin returns the same landing; a dry pick resolves to itself with `feature` `None`.
+- **Spawn search** (`SpawnSite.test.cpp`). At a river's source, where the trunk and two springs meet at the origin, the drop is dry and its reported distance is 30 m within the tolerance and matches the nearest channel read independently (so it is clear of every channel, not just one); with a search too narrow for any point to reach 30 m, the drop is the farthest dry point, on the square's edge; a world with no water gives the origin and `None`.
+- **Resolution.** A pick on a river tile resolves to that tile's centre with its drop 30 m from the river; a pick beside a lake to a drop 30 m from the lake, the lake read independently round it; a pick one tile from a river to the river tile, with `tile` the river tile; resolving a landing's origin returns the same landing; a dry pick resolves to itself with `feature` `None`.
 - **Generated planet.** On a small generated planet (n=64, as `WorldStats.test.cpp` generates), every suggested site's drop has fresh water within `kLandingSightMeters`, checked with `RiverNetwork2D` and `PlanetSampler` at the site's origin.
 
 Happy path: [scenario 22](../testing/scenarios/22-landing-sites.md).
@@ -291,11 +319,12 @@ Happy path: [scenario 22](../testing/scenarios/22-landing-sites.md).
 5. A globe pick names a rough area: "the ship is crashing, you don't have control. so the exact coordinates can get moved." The game resolves the landing for every pick and never shows it. (Kevin.)
 6. The landing origin moves to the anchor rather than the drop moving kilometres from the origin. The projection is exact at its origin, and every 2D consumer keys off the origin already.
 7. A site is fresh-water only when the spawn search found the water. Tile flags promise a river on the tile or a neighbour, which can be kilometres off.
-8. A pick resolves on the worker, not inside the click: a spawn search measured 52 to 159 ms, a visible hitch on every click. The search itself is left alone because Quick Start's drop depends on it point for point.
+8. A pick resolves on the worker, not inside the click: a spawn search measured 21 to 48 ms, and a resolution runs one for each anchor it tries, a visible hitch on every click.
 9. The lake anchor finds the tile edge by bisection on the grid's own lookup. The centres' midpoint is on the edge only at fine resolutions (13 m off at n=256, 209 m at n=64).
 10. Candidates are kept per (bin, kind, biome) slot instead of in one sorted list, so memory is bounded and spacing and variety have candidates everywhere.
 11. The default site is the first suggested site: one finder, no second scorer.
 12. Markers sit behind a Settings switch, off by default. (Kevin.)
 13. Sites are computed, never stored: a format change forces a re-bake of the 1.3 GiB shared planet.
 14. RimWorld's world map gives a tile's terrain, temperature, and growing period in a side panel and has a "select random site" button; it has no suggested sites. Dwarf Fortress's embark screen has a site finder that searches by criteria (temperature, water, trees, and so on) and highlights matches on the map.
-15. Out of scope here: the 2D local preview and difficulty rating of a site (Specboard WOR-369, "Landing site local preview + difficulty rating"), the loading screen backdrop (WOR-378, "Improve Landing Screen"), ponds as rated water, the sim treating ocean shore as drinkable (its own bug), a wider area cursor (only if playtests ask for one), and macOS and Linux specifics.
+15. The drop is 30 m from the nearest water: on seeing a landing 0.15 m from the river, "not so close, lets go 30m from the water". (Kevin.) The distance is to the nearest water of any kind, not to the water the site is rated for, so the crew never lands on an island or between two channels with less than 30 m on either side. Lakes and ocean are measured by a distance transform over one classification of the grid rather than probes per point, which is exact on the grid and cheaper.
+16. Out of scope here: the 2D local preview and difficulty rating of a site (Specboard WOR-369, "Landing site local preview + difficulty rating"), the loading screen backdrop (WOR-378, "Improve Landing Screen"), ponds as rated water, the sim treating ocean shore as drinkable (its own bug), a wider area cursor (only if playtests ask for one), and macOS and Linux specifics.

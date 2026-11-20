@@ -111,8 +111,8 @@ struct LandingSite {
 };
 
 // Every pick, a marker or a free click, becomes a landing here. The picked tile and its neighbours
-// are the area a pick names; the origin moves to the first anchor in it whose spawn search finds a
-// riverbank or lake shore (the picked land river tile's centre, then a lake anchor toward each lake
+// are the area a pick names; the origin moves to the first anchor in it whose spawn search lands
+// beside a river or a lake (the picked land river tile's centre, then a lake anchor toward each lake
 // neighbour, then each land river neighbour's centre), else stays at the pick. Idempotent: resolving
 // a landing's origin returns the same landing.
 [[nodiscard]] LandingSite resolveLandingSite(const std::shared_ptr<const GeneratedWorld>& world,

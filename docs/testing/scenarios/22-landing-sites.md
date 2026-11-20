@@ -20,6 +20,6 @@ Launch `world-sim --background --no-settings` (RelWithDebInfo); the dev server i
 7. Click open land well away from every marker: the crosshair moves to the click, `suggestedIndex` is null, and `pickLatDeg`/`pickLonDeg` are where you clicked.
 8. Drag the globe until a site's `onScreen` reads false: its marker is gone.
 9. Click a shown marker again, then Confirm Landing Site (`btn_wc_accept`) and Begin Descent (`btn_begin_descent`): the game loads.
-10. Read `landing`: `feature` is `river` or `lake`, `featureDistanceMeters` is 6 or less, and the water is in sight of the crew.
-11. Exit, relaunch with `--no-settings`, and start Quick Start: the world creator is not involved, `landing` reads `biome` TemperateDeciduousForest, `feature` `river`, and scenario 14's setup holds (a BigRock at (0.4, 48.3), 48 m south of the drop).
+10. Read `landing`: `feature` is `river` or `lake`, `featureDistanceMeters` is between 27 and 33, and the water is in sight of the crew, who stand back from its bank on dry ground.
+11. Exit, relaunch with `--no-settings`, and start Quick Start: the world creator is not involved, `landing` reads `biome` TemperateDeciduousForest, `feature` `river`, and `landingLatDeg`, `landingLonDeg`, `spawnXMeters`, `spawnYMeters`, and `featureDistanceMeters` match the table in the spec's [section 8](../../technical/landing-sites.md#8-quick-starts-landing).
 12. Relaunch with `--no-settings` and generate a planet as in step 3: no markers on the globe (`markersShown` false), and site 0 is still selected.

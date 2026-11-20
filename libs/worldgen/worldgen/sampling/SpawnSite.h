@@ -1,11 +1,8 @@
 #pragma once
 
-// Picks the colonist's drop point within the 2D landing area: dry land right
-// beside clean water. A colony dies without water, so the spawn is biased to a
-// riverbank, then a lake shore, then (saltwater) coast. Because a river tile's
-// center projects to the 2D origin, a river-through landing tile puts the channel
-// at the origin and the bank a few meters off — so this reliably lands the
-// colonist by the river at any resolution.
+// Picks the crew's drop within the 2D landing area: dry land kLandingWaterDistanceMeters from the
+// nearest water, preferring a river, then a lake, then the (salt) coast. docs/technical/landing-sites.md
+// is the contract.
 
 #include "worldgen/data/GeneratedWorld.h"
 
@@ -14,24 +11,24 @@
 
 namespace worldgen {
 
+inline constexpr double kLandingWaterDistanceMeters = 30.0;
+inline constexpr double kLandingWaterDistanceToleranceMeters = 3.0;
+
 enum class SpawnWater : uint8_t { None, River, Lake, Ocean };
 
 struct SpawnSite {
     double     xMeters{}; // offset from the landing origin (+x east, +y north)
     double     yMeters{};
-    SpawnWater water{SpawnWater::None}; // None: no water within the search radius, the drop is the origin
-    // River: distance to the channel edge. Lake, Ocean: the shortest 1 m axis probe, out to the
-    // bank distance, that lands in water. None: zero.
-    float waterDistanceMeters{};
+    SpawnWater water{SpawnWater::None}; // the nearest water's kind; None: no water in reach, the drop is the origin
+    float      waterDistanceMeters{};   // to the nearest water's edge; zero for None
 };
 
-// Closest dry-land cell beside water near the landing origin. Fresh water
-// (riverbank, then lake shore) outranks salt coast; falls back to the origin
-// when no water is within searchRadiusMeters. Requires Elevation, Biome, Flags
-// valid; uses FlowAccum/Downhill (rivers) when present.
-SpawnSite findRiverbankSpawn(const std::shared_ptr<const GeneratedWorld>& world,
-                             double landingLatDeg, double landingLonDeg,
-                             double searchRadiusMeters = 200.0,
-                             double bankDistanceMeters = 6.0);
+// The dry point, nearest the origin, whose nearest water of any kind is kLandingWaterDistanceMeters off
+// within kLandingWaterDistanceToleranceMeters; river before lake before ocean. When no dry point is that
+// far from water, the dry point farthest from it, in the same order. The origin with SpawnWater::None
+// when no water is in reach. Requires Elevation, Biome, Flags valid; uses FlowAccum/Downhill (rivers)
+// when present.
+SpawnSite findWatersideSpawn(const std::shared_ptr<const GeneratedWorld>& world, double landingLatDeg,
+                             double landingLonDeg, double searchRadiusMeters = 200.0);
 
 } // namespace worldgen

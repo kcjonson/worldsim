@@ -1,5 +1,4 @@
-// findRiverbankSpawn tests — the colonist drop point lands on dry ground beside
-// clean water when a river runs through the landing tile.
+// findWatersideSpawn: the drop is dry land kLandingWaterDistanceMeters from the nearest water of any kind.
 
 #include "worldgen/sampling/SpawnSite.h"
 
@@ -74,36 +73,66 @@ void carveRiver(GeneratedWorld& world, TileId source, TileId mouth) {
     }
 }
 
+// A river whose source tile's centre is the landing origin: the trunk and the source's two springs meet
+// there, three channels a few meters apart.
+struct SourceFixture {
+    std::shared_ptr<GeneratedWorld> world;
+    double                          latDeg{};
+    double                          lonDeg{};
+};
+
+SourceFixture riverSource() {
+    SourceFixture fixture{makeWorld()};
+    const TileId source = fixture.world->grid->fromLatLon(0.0, 0.0);
+    carveRiver(*fixture.world, source, fixture.world->grid->fromLatLon(0.0, 20.0));
+    fixture.world->grid->latLonOf(source, fixture.latDeg, fixture.lonDeg);
+    return fixture;
+}
+
+// Radius of the first ring round (x, y), 0.5 m apart and sampled every 0.5 m of arc, that touches a river
+// channel or biome water: an independent reading of the distance to the nearest water of any kind.
+double nearestWaterMeters(const SourceFixture& fixture, double x, double y, double limitMeters) {
+    const RiverNetwork2D rivers(fixture.world, fixture.latDeg, fixture.lonDeg);
+    const PlanetSampler  sampler(fixture.world, fixture.latDeg, fixture.lonDeg);
+    for (double radius = 0.0; radius <= limitMeters; radius += 0.5) {
+        const int points = std::max(1, static_cast<int>(std::ceil(2.0 * 3.14159265358979323846 * radius / 0.5)));
+        for (int i = 0; i < points; ++i) {
+            const double angle = 2.0 * 3.14159265358979323846 * i / points;
+            const double px = x + radius * std::cos(angle);
+            const double py = y + radius * std::sin(angle);
+            if (rivers.sampleAt(px, py).isRiver || sampler.sampleAt(px, py).water) return radius;
+        }
+    }
+    return limitMeters;
+}
+
 } // namespace
 
-TEST(SpawnSite, RiverThroughOriginSpawnsOnDryBank) {
-    auto world = makeWorld();
-    const TileId source = world->grid->fromLatLon(0.0, 0.0);
-    const TileId mouth = world->grid->fromLatLon(0.0, 20.0);
-    carveRiver(*world, source, mouth);
-
-    double lat = 0.0, lon = 0.0;
-    world->grid->latLonOf(source, lat, lon);
-
-    SpawnSite site = findRiverbankSpawn(world, lat, lon);
+// Three channels meet at the origin, so the dry ground nearest it is close to two of them at once; the drop
+// is the nearest point 30 m clear of every one.
+TEST(SpawnSite, DropIsThirtyMetersFromTheNearestChannel) {
+    const SourceFixture fixture = riverSource();
+    const SpawnSite     site = findWatersideSpawn(fixture.world, fixture.latDeg, fixture.lonDeg);
     EXPECT_EQ(site.water, SpawnWater::River);
-    EXPECT_GT(site.waterDistanceMeters, 0.0f) << "the bank is dry, so off the channel edge";
-    EXPECT_LE(site.waterDistanceMeters, 6.0f) << "within the bank distance of the channel";
+    EXPECT_NEAR(site.waterDistanceMeters, kLandingWaterDistanceMeters, kLandingWaterDistanceToleranceMeters);
 
-    // The spawn must be dry land (not in the channel, not biome water)...
-    RiverNetwork2D rn(world, lat, lon);
-    PlanetSampler ps(world, lat, lon);
-    EXPECT_FALSE(rn.sampleAt(site.xMeters, site.yMeters).isRiver) << "spawn must not be in the river";
-    EXPECT_FALSE(ps.sampleAt(site.xMeters, site.yMeters).water) << "spawn must be on land";
+    const PlanetSampler sampler(fixture.world, fixture.latDeg, fixture.lonDeg);
+    EXPECT_FALSE(sampler.sampleAt(site.xMeters, site.yMeters).water) << "the drop is on land";
+    const double nearest = nearestWaterMeters(fixture, site.xMeters, site.yMeters, 40.0);
+    EXPECT_NEAR(nearest, site.waterDistanceMeters, 1.0) << "the reported distance is to the nearest channel";
+}
 
-    // ...and close to the channel (a riverbank), within a few meters of the bank.
-    bool channelWithin = false;
-    for (double r = 1.0; r <= 12.0 && !channelWithin; r += 1.0) {
-        const double offs[4][2] = {{r, 0}, {-r, 0}, {0, r}, {0, -r}};
-        for (auto& o : offs)
-            if (rn.sampleAt(site.xMeters + o[0], site.yMeters + o[1]).isRiver) channelWithin = true;
-    }
-    EXPECT_TRUE(channelWithin) << "spawn should sit on the riverbank";
+TEST(SpawnSite, NoPointThirtyMetersFromWaterTakesTheFarthest) {
+    const SourceFixture fixture = riverSource();
+    constexpr double    kNarrowSearchMeters = 15.0; // every dry point in it is under 27 m from a channel
+    const SpawnSite     site = findWatersideSpawn(fixture.world, fixture.latDeg, fixture.lonDeg, kNarrowSearchMeters);
+    ASSERT_EQ(site.water, SpawnWater::River);
+    EXPECT_GT(site.waterDistanceMeters, 0.0f);
+    EXPECT_LT(site.waterDistanceMeters, kLandingWaterDistanceMeters - kLandingWaterDistanceToleranceMeters);
+
+    // The point farthest from channels that meet at the centre is on the search square's edge.
+    EXPECT_DOUBLE_EQ(std::max(std::abs(site.xMeters), std::abs(site.yMeters)), kNarrowSearchMeters);
+    EXPECT_NEAR(nearestWaterMeters(fixture, site.xMeters, site.yMeters, 40.0), site.waterDistanceMeters, 1.0);
 }
 
 TEST(SpawnSite, DryWorldFallsBackToOrigin) {
@@ -111,7 +140,7 @@ TEST(SpawnSite, DryWorldFallsBackToOrigin) {
     double lat = 0.0, lon = 0.0;
     world->grid->latLonOf(world->grid->fromLatLon(0.0, 0.0), lat, lon);
 
-    SpawnSite site = findRiverbankSpawn(world, lat, lon);
+    SpawnSite site = findWatersideSpawn(world, lat, lon);
     EXPECT_EQ(site.water, SpawnWater::None);
     EXPECT_FLOAT_EQ(site.waterDistanceMeters, 0.0f);
     EXPECT_DOUBLE_EQ(site.xMeters, 0.0);

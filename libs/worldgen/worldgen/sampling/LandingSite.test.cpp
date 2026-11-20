@@ -214,7 +214,7 @@ TEST(LandingSiteResolution, PickOnRiverTileResolvesToItsCentre) {
     EXPECT_EQ(site.tile, fixture.source);
     EXPECT_EQ(site.feature, FreshWaterFeature::River);
     EXPECT_EQ(site.spawn.water, SpawnWater::River);
-    EXPECT_LE(site.spawn.waterDistanceMeters, 6.0f);
+    EXPECT_NEAR(site.spawn.waterDistanceMeters, kLandingWaterDistanceMeters, kLandingWaterDistanceToleranceMeters);
     EXPECT_TRUE(site.recommended());
 
     expectSameLanding(resolveLandingSite(fixture.world, grasslandProvisions(), site.origin), site);
@@ -282,8 +282,24 @@ TEST(LandingSiteResolution, PickBesideLakeResolvesToItsShore) {
     ASSERT_EQ(site.feature, FreshWaterFeature::Lake);
     EXPECT_EQ(site.tile, land);
     EXPECT_EQ(site.spawn.water, SpawnWater::Lake);
-    EXPECT_GT(site.spawn.waterDistanceMeters, 0.0f);
-    EXPECT_LE(site.spawn.waterDistanceMeters, 6.0f);
+    EXPECT_NEAR(site.spawn.waterDistanceMeters, kLandingWaterDistanceMeters, kLandingWaterDistanceToleranceMeters);
+
+    // The shore read independently, rings 0.5 m apart round the drop: the first water is the lake, a
+    // sample step either side of the reported distance.
+    const PlanetSampler sampler(world, site.origin.latDeg, site.origin.lonDeg);
+    double              nearestLake = -1.0;
+    for (double radius = 0.0; nearestLake < 0.0 && radius <= 40.0; radius += 0.5) {
+        const int points = std::max(1, static_cast<int>(std::ceil(2.0 * 3.14159265358979323846 * radius / 0.5)));
+        for (int i = 0; i < points && nearestLake < 0.0; ++i) {
+            const double angle = 2.0 * 3.14159265358979323846 * i / points;
+            const auto   sample = sampler.sampleAt(site.spawn.xMeters + radius * std::cos(angle),
+                                                   site.spawn.yMeters + radius * std::sin(angle));
+            if (!sample.water) continue;
+            EXPECT_EQ(sample.weights[0].biome, Biome::Lake);
+            nearestLake = radius;
+        }
+    }
+    EXPECT_NEAR(nearestLake, site.spawn.waterDistanceMeters, 3.0);
     EXPECT_EQ(site.assessment.water, WaterClass::Lake);
     EXPECT_TRUE(site.recommended());
 

@@ -296,7 +296,7 @@ LandingSite resolveLandingSite(const std::shared_ptr<const GeneratedWorld>& worl
     const TileId picked = grid.fromLatLon(pick.latDeg, pick.lonDeg);
 
     auto landAt = [&](LatLon anchor) -> std::optional<LandingSite> {
-        const SpawnSite spawn = findRiverbankSpawn(world, anchor.latDeg, anchor.lonDeg);
+        const SpawnSite spawn = findWatersideSpawn(world, anchor.latDeg, anchor.lonDeg);
         if (spawn.water != SpawnWater::River && spawn.water != SpawnWater::Lake) return std::nullopt;
         const bool river = spawn.water == SpawnWater::River;
         const TileId tile = grid.fromLatLon(anchor.latDeg, anchor.lonDeg);
@@ -323,7 +323,7 @@ LandingSite resolveLandingSite(const std::shared_ptr<const GeneratedWorld>& worl
     }
 
     const WaterClass water = hasOceanNeighbor(planet, picked) ? WaterClass::Coastal : WaterClass::RainFed;
-    return LandingSite{pick, picked, FreshWaterFeature::None, findRiverbankSpawn(world, pick.latDeg, pick.lonDeg),
+    return LandingSite{pick, picked, FreshWaterFeature::None, findWatersideSpawn(world, pick.latDeg, pick.lonDeg),
                        assessLandingTile(planet, provisions, picked, water)};
 }
 
