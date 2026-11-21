@@ -6535,13 +6535,50 @@ namespace ecs::test {
 		ASSERT_TRUE(insideSquare(world->getComponent<Position>(eater)->value)) << "he finished the west wall from inside";
 		addKnownEntity(eater, {4.0F, -3.0F}, registerBerryBush(assets::AssetRegistry::Get()), assets::CapabilityType::Harvestable);
 		setNeedValue(eater, NeedType::Hunger, 5.0F);
+		bool heldForHim = false;
 		for (; tick < 600 && !built(south); ++tick) {
 			world->update(kTick);
+			const auto* southSite = world->getComponent<StructureBlueprint>(south);
+			heldForHim = heldForHim || (southSite->workDone >= southSite->workTotal && !built(south) &&
+										insideSquare(world->getComponent<Position>(eater)->value) &&
+										!insideSquare(world->getComponent<Position>(southBuilder)->value));
 		}
 		ASSERT_TRUE(built(south)) << "the south wall never completed";
+		EXPECT_TRUE(heldForHim) << "the south wall never sat at full work with only him inside";
 		for (const EntityID colonist : {eater, southBuilder}) {
 			const glm::vec2 at = world->getComponent<Position>(colonist)->value;
 			EXPECT_FALSE(insideSquare(at)) << "shut in at (" << at.x << ", " << at.y << ")";
+		}
+	}
+
+	// A doorless building of two rooms, (2, 2) to (6, 6) and (6, 2) to (10, 6), whose last gaps are its west
+	// wall and the partition between them, a builder on each, both starting in the west room. The partition's
+	// builder works it from the west room, which is open while the west wall is; the west wall, which would
+	// shut in both rooms, waits at full work for him until the partition is done, and both end outside.
+	TEST_F(AIDecisionWallBuildTest, TheOuterWallWaitsForTheBuilderOfAPartitionInside) {
+		runConstruction();
+		wall({2.0F, 2.0F}, {6.0F, 2.0F}, true);
+		wall({6.0F, 2.0F}, {10.0F, 2.0F}, true);
+		wall({10.0F, 2.0F}, {10.0F, 6.0F}, true);
+		wall({10.0F, 6.0F}, {6.0F, 6.0F}, true);
+		wall({6.0F, 6.0F}, {2.0F, 6.0F}, true);
+		const EntityID partition = wallSite(wall({6.0F, 2.0F}, {6.0F, 6.0F}, false), {6.0F, 4.0F}, 40.0F);
+		const EntityID west = wallSite(wall({2.0F, 6.0F}, {2.0F, 2.0F}, false), {2.0F, 4.0F}, 10.0F);
+		const EntityID westBuilder = idleColonist({2.8F, 4.0F});
+		const EntityID partitionBuilder = idleColonist({5.2F, 4.0F});
+		nav->finishPendingBuilds();
+
+		bool westHeldForThePartition = false;
+		for (int tick = 0; tick < 600 && !(built(west) && built(partition)); ++tick) {
+			world->update(kTick);
+			const auto* westSite = world->getComponent<StructureBlueprint>(west);
+			westHeldForThePartition = westHeldForThePartition || (westSite->workDone >= westSite->workTotal && !built(west) && !built(partition));
+		}
+		ASSERT_TRUE(built(west) && built(partition)) << "the walls never both completed";
+		EXPECT_TRUE(westHeldForThePartition) << "the west wall never sat at full work while the partition was unfinished";
+		for (const EntityID builder : {westBuilder, partitionBuilder}) {
+			const glm::vec2 at = world->getComponent<Position>(builder)->value;
+			EXPECT_FALSE(at.x > 2.0F && at.x < 10.0F && at.y > 2.0F && at.y < 6.0F) << "shut in at (" << at.x << ", " << at.y << ")";
 		}
 	}
 

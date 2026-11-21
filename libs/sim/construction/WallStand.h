@@ -1,8 +1,11 @@
 #pragma once
 
+#include <polygon/Polygon.h>
+
 #include <glm/vec2.hpp>
 
 #include <array>
+#include <vector>
 
 // A wall segment's band and the sides a builder stands on to work it, in meters (building-construction:
 // Walls / Lifecycle). Plain values; WallSides.h works them out from the topology store.
@@ -26,6 +29,12 @@ namespace construction {
 		[[nodiscard]] glm::vec2 stepOut(glm::vec2 position, float radiusMeters, glm::vec2 outward) const;
 	};
 
+	// One room of the region a closing wall would shut in (construction::RoomFace's ring and holes).
+	struct ShutRoom {
+		geometry::Ring				ring;
+		std::vector<geometry::Ring> holes;
+	};
+
 	// One side of a wall segment a builder may stand on, beside its midpoint; `outward` is the unit normal
 	// pointing to that side.
 	struct WallStand {
@@ -33,6 +42,9 @@ namespace construction {
 		glm::vec2 outward{0.0F, 0.0F};
 		float	  halfThicknessMeters = 0.0F;
 		float	  halfLengthMeters = 0.0F;
+		// The rooms completing the wall would shut in, when it closes one with no way out; no stand point lies
+		// in them. Empty otherwise.
+		std::vector<ShutRoom> shutRegion;
 
 		// How far off the centreline a builder of `agentRadiusMeters` stands: half the wall's thickness, his
 		// radius, and kStandMarginMeters.
@@ -40,14 +52,16 @@ namespace construction {
 		// Where a builder of `agentRadiusMeters` stands, standOffset off the centreline at `alongMeters` from
 		// the midpoint toward one end.
 		[[nodiscard]] glm::vec2 standPoint(float agentRadiusMeters, float alongMeters = 0.0F) const;
-		// The stand points a builder tries, in order: the middle, then toward each end
-		// (kProbeFractions of halfLengthMeters).
+		// The stand points a builder tries, in order: the middle, then toward each end (kProbeFractions of
+		// halfLengthMeters, held to standOffset short of either end, so a short segment's are all its middle).
 		[[nodiscard]] std::array<glm::vec2, 5> standPoints(float agentRadiusMeters) const;
 		// Whether `position` lies on this side of the centreline's line.
 		[[nodiscard]] bool onSide(glm::vec2 position) const;
+		// Whether `point` lies in shutRegion.
+		[[nodiscard]] bool shutIn(glm::vec2 point) const;
 		// Whether `point`, where the mesh puts a builder of `agentRadiusMeters` for the stand point `stand`,
-		// serves this side: on it, no farther from `stand` than standOffset, and level with the segment (not
-		// past either end), so it is never across the wall's line or round a corner into the room it closes.
+		// serves this side: on it, no farther from `stand` than standOffset, level with the segment (not past
+		// either end), and not in the region the wall would shut in.
 		[[nodiscard]] bool serves(glm::vec2 point, glm::vec2 stand, float agentRadiusMeters) const;
 
 		static constexpr float				  kStandMarginMeters = 0.1F;

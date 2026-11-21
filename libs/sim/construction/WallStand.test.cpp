@@ -200,10 +200,56 @@ namespace {
 		EXPECT_FALSE(outside.serves({3.0F, 2.0F + offset}, middle, kAgentRadius)) << "across the wall's line, in the room";
 		const auto		probes = outside.standPoints(kAgentRadius);
 		const glm::vec2 nearEnd = *std::max_element(probes.begin(), probes.end(), [](glm::vec2 one, glm::vec2 other) { return one.x < other.x; });
-		ASSERT_GT(nearEnd.x, 3.5F) << "the last stand point lies toward the east end";
+		ASSERT_GE(nearEnd.x, 3.5F - 1e-4F) << "the last stand point lies toward the east end, a stand offset short of it";
 		EXPECT_TRUE(outside.serves(nearEnd, nearEnd, kAgentRadius));
 		EXPECT_FALSE(outside.serves({4.05F, nearEnd.y + 0.1F}, nearEnd, kAgentRadius)) << "past the wall's end, round the corner into the room";
 		EXPECT_FALSE(outside.serves({3.0F, 2.0F - 2.5F * offset}, middle, kAgentRadius)) << "farther than the stand offset";
+	}
+
+	// A room closed by the wall from (0, 0) to (4, 0), its outside below (y < 0), with a reflex corner at
+	// (4, 0): the next wall runs back under the closing wall at 45 degrees to (2, -2), so the room wraps
+	// round below the wall's east end. The stand points stop a stand offset short of either end, and a point
+	// in the room the wall closes never serves, so no stand point sends a builder into it.
+	TEST_F(WallStandTest, NoStandPointServesInsideTheRoomRoundAReflexCorner) {
+		wall({4000, 0}, {2000, -2000});
+		wall({2000, -2000}, {6000, -2000});
+		wall({6000, -2000}, {6000, 4000});
+		wall({6000, 4000}, {0, 4000});
+		wall({0, 4000}, {0, 0});
+		const auto stands = wallStands(world, wall({0, 0}, {4000, 0}, false));
+		expectOneStandToward(stands, {0.0F, -1.0F});
+		const WallStand& outside = stands.front();
+		const float		 offset = outside.standOffset(kAgentRadius);
+
+		for (const glm::vec2 probe : outside.standPoints(kAgentRadius)) {
+			EXPECT_LE(std::abs(probe.x - 2.0F), 2.0F - offset + 1e-4F) << "a stand offset short of the end";
+		}
+		const glm::vec2 eitherWay = outside.standPoint(kAgentRadius, 0.85F * 2.0F);
+		const glm::vec2 unclamped = eitherWay.x > 2.0F ? eitherWay : outside.standPoint(kAgentRadius, -0.85F * 2.0F);
+		ASSERT_GT(unclamped.x, 3.5F) << "a probe this far along would lie past the corner wall";
+		EXPECT_TRUE(outside.shutIn(unclamped)) << "in the room, round the reflex corner";
+		EXPECT_FALSE(outside.serves(unclamped, unclamped, kAgentRadius));
+		EXPECT_TRUE(outside.serves(outside.standPoint(kAgentRadius), outside.standPoint(kAgentRadius), kAgentRadius));
+	}
+
+	// A short split segment, shorter than two stand offsets: every stand point is its middle.
+	TEST_F(WallStandTest, AShortSegmentsStandPointsAreAllItsMiddle) {
+		const auto stands = wallStands(world, wall({0, 0}, {800, 0}, false));
+		ASSERT_EQ(stands.size(), 2U);
+		for (const glm::vec2 probe : stands.front().standPoints(kAgentRadius)) {
+			EXPECT_EQ(probe, stands.front().standPoint(kAgentRadius));
+		}
+	}
+
+	// What a closing wall shuts in is its own room: someone in another sealed room is not in it.
+	TEST_F(WallStandTest, AnotherSealedRoomIsNotWhatAWallShutsIn) {
+		wall({10000, 0}, {14000, 0});
+		wall({14000, 0}, {14000, 4000});
+		wall({14000, 4000}, {10000, 4000});
+		wall({10000, 4000}, {10000, 0});
+		const WallClosure closure(world, squareClosedBy(0, 0, 4000, 4000));
+		EXPECT_TRUE(closure.shutsIn({2.0F, 2.0F}));
+		EXPECT_FALSE(closure.shutsIn({12.0F, 2.0F}));
 	}
 
 	TEST_F(WallStandTest, AnUnknownSegmentHasNoStand) {

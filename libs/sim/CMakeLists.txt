@@ -132,7 +132,8 @@ if(BUILD_TESTING)
         # Where the shipped asset defs are, whatever the working directory.
         target_compile_definitions(sim-tests PRIVATE SIM_TEST_REPO_DIR="${CMAKE_SOURCE_DIR}")
         if(MSVC)
-            target_compile_options(sim-tests PRIVATE /Od)
+            # /bigobj: AIDecisionSystem.test.cpp's fixtures and tests outgrow the default section count.
+            target_compile_options(sim-tests PRIVATE /Od /bigobj)
         else()
             target_compile_options(sim-tests PRIVATE -O0 -g)
         endif()
