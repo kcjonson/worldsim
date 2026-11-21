@@ -105,4 +105,36 @@
     <cursorRadiusPx>6.0</cursorRadiusPx>          <!-- the snapped-point dot's radius -->
   </Preview>
 
+  <!-- Overlays over a parts item, on the placement ghost and in the asset manager (rotatable-placed-items.md,
+       sections 14.4 and 16). Use areas filled with a solid edge, the clearance hatched with a dashed edge, each
+       part's footprint, the collider, and the depth strips with their anchors (the asset manager's). refusedTint
+       multiplies the ghost's colours and replaces the overlays' where placement is refused. Hatch lines are
+       hatchSpacingMeters apart on the ground, thinned on screen so none are closer than hatchMinGapPx. Widths, the
+       dash, and the label size are logical pixels. -->
+  <ItemOverlays>
+    <useAreaColor>#3A87FFFF</useAreaColor>
+    <useAreaFillAlpha>0.28</useAreaFillAlpha>
+    <clearanceColor>#DBD6C7FF</clearanceColor>
+    <hatchAlpha>0.6</hatchAlpha>
+    <hatchSpacingMeters>0.1</hatchSpacingMeters>
+    <hatchMinGapPx>4.0</hatchMinGapPx>
+    <footprintColor>#D98CF2FF</footprintColor>
+    <footprintAlpha>0.85</footprintAlpha>
+    <colliderColor>#00E5FFFF</colliderColor>
+    <stripColor>#F5E663FF</stripColor>
+    <anchorColor>#F259BFFF</anchorColor>
+    <refusedTint>#FF4D4DFF</refusedTint>
+    <labelBacking>#0F1214BF</labelBacking>
+    <edgeWidth>1.5</edgeWidth>
+    <hatchWidth>1.0</hatchWidth>
+    <footprintWidth>1.0</footprintWidth>
+    <colliderWidth>2.0</colliderWidth>
+    <dashPx>6.0</dashPx>
+    <gapPx>4.0</gapPx>
+    <labelPx>12.0</labelPx>
+    <refusalTextScale>0.8</refusalTextScale>        <!-- the reason beside a refused ghost, in refusedTint; 1 is 16 px -->
+    <refusalOffsetXPx>14.0</refusalOffsetXPx>       <!-- from the ghost's pivot -->
+    <refusalOffsetYPx>-22.0</refusalOffsetYPx>
+  </ItemOverlays>
+
 </ConstructionRendering>

@@ -132,6 +132,7 @@ class PlacementSystem {
 	/// Render ghost preview (call during render phase)
 	/// Renders both the active placement ghost AND ghosts for all packaged
 	/// items awaiting colonist delivery (those with targetPosition set), and beside a refused ghost the reason.
+	/// @param uiScale The interface size, which the overlays' lines and labels follow
 	void render(int viewportW, int viewportH, float uiScale);
 
 	// --- State Queries ---

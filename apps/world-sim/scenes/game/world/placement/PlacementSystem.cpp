@@ -451,8 +451,9 @@ namespace world_sim {
 		// Render active placement ghost (during placement mode)
 		if (placementMode.state() == PlacementState::Placing) {
 			ghostRenderer.render(
-				placementMode.selectedDefName(), placementMode.ghostPosition(), placementMode.ghostTurnQuanta(), *camera, viewportW, viewportH,
-				placementMode.isValidPlacement()
+				placementMode.selectedDefName(), placementMode.ghostPosition(), placementMode.ghostTurnQuanta(), *camera, viewportW, viewportH, true,
+				placementMode.isValidPlacement(),
+				uiScale
 			);
 			if (refusal.has_value()) {
 				ghostRenderer.renderRefusal(construction::placementRefusalLabel(*refusal), placementMode.ghostPosition(), *camera, viewportW, viewportH, uiScale);
@@ -474,7 +475,9 @@ namespace world_sim {
 						*camera,
 						viewportW,
 						viewportH,
-						true // Valid placement (already confirmed)
+						false, // a pending install
+						true,  // Valid placement (already confirmed)
+						uiScale
 					);
 				}
 			}

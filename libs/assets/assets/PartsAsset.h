@@ -73,7 +73,8 @@ namespace assets {
 	};
 
 	struct AuthoredAreaShape {
-		enum class Kind : uint8_t { Around, Circle, Rect, Drawing };
+		/// Margin is <clearance marginMeters>, an Around written as an attribute.
+		enum class Kind : uint8_t { Around, Margin, Circle, Rect, Drawing };
 		Kind		kind = Kind::Rect;
 		float		distanceMeters = 0.0F; ///< Around
 		float		x = 0.0F;			   ///< Circle
@@ -148,6 +149,27 @@ namespace assets {
 		Foundation::Color averageColor;
 	};
 
+	/// One use of a drawing file as loading checked it: what it maps onto and whether its viewBox has the
+	/// proportions of that (rule 7). A file named by two faces is two uses.
+	struct DrawingUseCheck {
+		enum class Kind : uint8_t { Top, Face, Area };
+		enum class Verdict : uint8_t {
+			Unread,	  ///< refused before its proportions could be read: outside the folder, missing, or no viewBox
+			Matches,  ///< within aspectTolerance
+			Mismatch, ///< outside it: the face, top, or area draws without the drawing
+			NoFill,	  ///< an area's drawing in proportion but with no filled shape, so no area (rule 11)
+		};
+		std::string				file;
+		Kind					kind = Kind::Face;
+		std::string				covers;		 ///< what it maps onto, as validation names it: "face front of part 'carcass'"
+		std::optional<uint32_t> part;		 ///< the part whose top or face it is; unset for an area's drawing
+		glm::vec2				coversMeters{0.0F};
+		glm::vec2				viewBoxSize{0.0F}; ///< in the drawing's own units; zero when Unread
+		/// |viewBox width / height over covered width / height - 1|, the number rule 7 holds within aspectTolerance.
+		float	aspectDifference = 0.0F;
+		Verdict verdict = Verdict::Unread;
+	};
+
 	struct AreaPolygon {
 		std::vector<glm::vec2>				outer; ///< vertex angle increasing from +X toward +Y
 		std::vector<std::vector<glm::vec2>> holes; ///< wound the other way
@@ -157,12 +179,18 @@ namespace assets {
 	struct ItemArea {
 		std::string				 name; ///< empty for an unnamed one
 		std::vector<AreaPolygon> polygons;
+		/// The shapes it was made of, as written (or as the script added them), in order: where each came from.
+		std::vector<AuthoredAreaShape> shapes;
+		/// The use area the item has when it writes no <useAreas> (section 4.2).
+		bool defaulted = false;
 	};
 
 	struct PartsAsset {
 		std::vector<PartDefinition> parts;
 		std::vector<PartPlacement>	placements;
 		std::vector<ItemDrawing>	drawings;
+		/// Every drawing use, ordered by file, as loading checked it; for the asset manager's drawings list.
+		std::vector<DrawingUseCheck> drawingChecks;
 		std::vector<ItemArea>		useAreas;
 		ItemArea					clearance;
 		/// The tallest top among the parts with height, the height sight and sorting read; 0 for a flat-only item.

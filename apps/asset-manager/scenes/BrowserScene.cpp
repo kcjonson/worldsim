@@ -8,12 +8,14 @@
 #include <assets/AssetBootstrap.h>
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
+#include <assets/ConstructionRegistry.h>
 #include <assets/RecipeRegistry.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <theme/Theme.h>
 #include <theme/Tokens.h>
 #include <ui/components/Button.h>
+#include <ui/components/SegmentedControl.h>
 #include <ui/components/TextInput.h>
 #include <ui/shapes/Rectangle.h>
 #include <ui/shapes/Text.h>
@@ -90,16 +92,22 @@ namespace {
 			// Prefer the SOURCE assets/ -- this is a live authoring tool, so Reload should
 			// re-read the files being edited, not the build-time copy beside the exe.
 			if (const std::filesystem::path src = findSourceAssetsRoot(); !src.empty()) {
-				assetsRoot = (src / "world").string();
+				worldRoot = (src / "world").string();
+				sandboxRoot = (src / "sandbox" / "items").string();
 				sharedScripts = (src / "shared" / "scripts").string();
-				recipes = std::filesystem::exists(src / "recipes") ? (src / "recipes").string()
-																   : Foundation::findResourceString("assets/recipes");
-				LOG_INFO(Engine, "AssetManager: live source assets at %s", assetsRoot.c_str());
+				renderingFile = (src / "config" / "construction" / "rendering.xml").string();
+				worldRecipes = std::filesystem::exists(src / "recipes") ? (src / "recipes").string()
+																		: Foundation::findResourceString("assets/recipes");
+				LOG_INFO(Engine, "AssetManager: live source assets at %s", worldRoot.c_str());
 			} else {
-				assetsRoot = Foundation::findResourceString("assets/world");
+				worldRoot = Foundation::findResourceString("assets/world");
+				sandboxRoot = Foundation::findResourceString("assets/sandbox/items");
 				sharedScripts = Foundation::findResourceString("assets/shared/scripts");
-				recipes = Foundation::findResourceString("assets/recipes");
+				renderingFile = Foundation::findResourceString("assets/config/construction/rendering.xml");
+				worldRecipes = Foundation::findResourceString("assets/recipes");
 			}
+			// The parts overlays' look; a missing file keeps the built-in one.
+			assets::ConstructionRegistry::Get().loadRendering(renderingFile);
 			refreshNames();
 
 			theme::apply(ui());
@@ -133,6 +141,18 @@ namespace {
 				},
 			});
 			topBar.addChild<ui::Button>({.id = "am_reload", .label = "Reload", .onPress = [this] { reload(); }});
+			// The game's assets, or the ui-sandbox's demo items (the parts workbench), one set at a time.
+			topBar.addChild<ui::SegmentedControl>({
+				.id = "am_source",
+				.options = {"World", "Sandbox"},
+				.selected = sandbox ? 1 : 0,
+				.controlSize = ui::ControlSize::Sm,
+				.onChange =
+					[this](int index) {
+						sandbox = index == 1;
+						reload();
+					},
+			});
 			summary = topBar.addChild<ui::Text>({.id = "am_summary", .style = ui::styles::text::secondary});
 
 			// Free to be shorter than its content, so a long definition scrolls in its well instead of
@@ -169,7 +189,10 @@ namespace {
 
 		void render(float /*alpha*/) override { Renderer::Primitives::clear(ui().getTheme().get(t::color::bgVoid)); }
 
-		std::string exportState() const override { return R"({"scene": "browser", "selected": ")" + selected + "\"}"; }
+		std::string exportState() const override {
+			return R"({"scene": "browser", "source": ")" + std::string(sandbox ? "sandbox" : "world") + R"(", "selected": ")" + selected +
+				   R"(", "partsTurnQuanta": )" + std::to_string(detail.get() != nullptr ? detail.get()->partsTurn() : 0) + "}";
+		}
 		const char* name() const override { return kSceneName; }
 
 	  private:
@@ -183,9 +206,10 @@ namespace {
 			const assets::ValidationReport& report = assets::AssetRegistry::Get().getValidationReport();
 			const int errors = report.errorCount() + static_cast<int>(assets::RecipeRegistry::Get().problems().size());
 			ui::Text* shown = summary.get();
+			const auto counted = [](size_t count, const char* noun) { return std::to_string(count) + " " + noun + (count == 1 ? "" : "s"); };
 			shown->setText(
-				std::to_string(allNames.size()) + " assets    -    " + std::to_string(errors) + " errors, " +
-				std::to_string(report.warningCount()) + " warnings"
+				counted(allNames.size(), "asset") + "    -    " + counted(static_cast<size_t>(errors), "error") + ", " +
+				counted(static_cast<size_t>(report.warningCount()), "warning")
 			);
 			shown->setStyle(
 				ui::styles::text::secondary.extend({.color = ui().getTheme().get(errors > 0 ? t::color::statusCrit : t::color::textDim)})
@@ -221,7 +245,11 @@ namespace {
 		void reload() {
 			asset_manager::AssetThumbnail::clearCache();
 			asset_manager::GroundBakeView::clearCache();
-			assets::loadAssetSystem({.definitions = assetsRoot, .sharedScripts = sharedScripts, .recipes = recipes}, false);
+			assets::ConstructionRegistry::Get().loadRendering(renderingFile);
+			assets::loadAssetSystem(
+				{.definitions = sandbox ? sandboxRoot : worldRoot, .sharedScripts = sharedScripts, .recipes = sandbox ? std::string() : worldRecipes},
+				false
+			);
 			refreshNames();
 			updateSummary();
 
@@ -296,9 +324,12 @@ namespace {
 		ui::Ref<ui::Component>					list;
 		ui::Ref<asset_manager::AssetDetailView> detail;
 
-		std::string					assetsRoot;
+		std::string					worldRoot;
+		std::string					sandboxRoot;
 		std::string					sharedScripts;
-		std::string					recipes;
+		std::string					renderingFile;
+		std::string					worldRecipes;
+		bool						sandbox = false; // browsing the sandbox's items instead of the world's
 		std::vector<std::string>	allNames;
 		std::string					searchText;
 		std::string					selected;

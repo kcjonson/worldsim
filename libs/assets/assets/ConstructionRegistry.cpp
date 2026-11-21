@@ -548,6 +548,42 @@ namespace assets {
 			cfg.preview.guideCrossingDotPx = number(p, "guideCrossingDotPx", cfg.preview.guideCrossingDotPx);
 			cfg.preview.cursorRadiusPx = number(p, "cursorRadiusPx", cfg.preview.cursorRadiusPx);
 		}
+		if (pugi::xml_node overlay = root.child("ItemOverlays")) {
+			ItemOverlayStyle& style = cfg.itemOverlays;
+			style.useAreaColor = color(overlay, "useAreaColor", style.useAreaColor);
+			style.clearanceColor = color(overlay, "clearanceColor", style.clearanceColor);
+			style.footprintColor = color(overlay, "footprintColor", style.footprintColor);
+			style.colliderColor = color(overlay, "colliderColor", style.colliderColor);
+			style.stripColor = color(overlay, "stripColor", style.stripColor);
+			style.anchorColor = color(overlay, "anchorColor", style.anchorColor);
+			style.refusedTint = color(overlay, "refusedTint", style.refusedTint);
+			style.labelBacking = color(overlay, "labelBacking", style.labelBacking);
+			style.useAreaFillAlpha = number(overlay, "useAreaFillAlpha", style.useAreaFillAlpha);
+			style.hatchAlpha = number(overlay, "hatchAlpha", style.hatchAlpha);
+			style.footprintAlpha = number(overlay, "footprintAlpha", style.footprintAlpha);
+			// The hatch's spacing divides and its gap is cast to a line count, so a value that isn't a positive finite
+			// number keeps the default.
+			const auto positive = [&](const char* tag, float fallback) {
+				const float value = number(overlay, tag, fallback);
+				if (!(std::isfinite(value) && value > 0.0F)) {
+					LOG_WARNING(Engine, "Construction rendering: <%s> must be a positive number, keeping %g", tag, static_cast<double>(fallback));
+					return fallback;
+				}
+				return value;
+			};
+			style.hatchSpacingMeters = positive("hatchSpacingMeters", style.hatchSpacingMeters);
+			style.hatchMinGapPx = positive("hatchMinGapPx", style.hatchMinGapPx);
+			style.edgeWidth = number(overlay, "edgeWidth", style.edgeWidth);
+			style.hatchWidth = number(overlay, "hatchWidth", style.hatchWidth);
+			style.footprintWidth = number(overlay, "footprintWidth", style.footprintWidth);
+			style.colliderWidth = number(overlay, "colliderWidth", style.colliderWidth);
+			style.dashPx = number(overlay, "dashPx", style.dashPx);
+			style.gapPx = number(overlay, "gapPx", style.gapPx);
+			style.labelPx = number(overlay, "labelPx", style.labelPx);
+			style.refusalTextScale = number(overlay, "refusalTextScale", style.refusalTextScale);
+			style.refusalOffsetXPx = number(overlay, "refusalOffsetXPx", style.refusalOffsetXPx);
+			style.refusalOffsetYPx = number(overlay, "refusalOffsetYPx", style.refusalOffsetYPx);
+		}
 
 		renderingConfig = cfg;
 		hasRendering = true;

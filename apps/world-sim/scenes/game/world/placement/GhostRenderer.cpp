@@ -1,41 +1,61 @@
 #include "GhostRenderer.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/ConstructionRegistry.h>
 #include <assets/DetailLevels.h>
 #include <assets/ItemView.h>
 #include <assets/ViewConfig.h>
-#include <assets/placement/InstanceTransform.h>
+#include <font/FontRenderer.h>
 #include <primitives/Primitives.h>
 #include <utils/Log.h>
+#include <world/rendering/ItemViewDrawing.h>
 
 namespace world_sim {
 
 namespace {
-constexpr float kGhostAlpha = 0.5F;	   // Semi-transparent
-constexpr float kInvalidAlpha = 0.3F;  // More transparent when invalid
-constexpr float kInvalidTintR = 1.0F;  // Red tint for invalid placement
-constexpr float kInvalidTintG = 0.3F;
-constexpr float kInvalidTintB = 0.3F;
-constexpr float kPixelsPerMeter = 8.0F; // Match GameScene constant
-// The refusal label, as the drawing tools' reason beside the cursor: text scale and offset from the pivot in
-// logical px, both times the interface scale.
-constexpr float			   kRefusalTextScale = 0.8F;
-constexpr Foundation::Vec2 kRefusalOffset{14.0F, -22.0F};
-constexpr float			   kRefusalShadowPx = 1.0F;
+constexpr float	  kGhostAlpha = 0.5F;	  // Semi-transparent
+constexpr float	  kInvalidAlpha = 0.3F;	  // More transparent when invalid
+constexpr float	  kPixelsPerMeter = 8.0F; // Match GameScene constant
+// Above entities, in layers: every pending install's overlays, then their bodies, then the placing ghost's overlays,
+// its body, and its refusal label, so nothing drawn for a pending install covers the ghost being placed.
+constexpr int32_t kPendingOverlayKey = 1000;
+constexpr int32_t kPendingBodyKey = 1001;
+constexpr int32_t kPlacingOverlayKey = 1002;
+constexpr int32_t kPlacingBodyKey = 1003;
+constexpr int32_t kRefusalKey = 1004;
+constexpr float	  kRefusalPaddingPx = 3.0F;
+constexpr float	  kFontBaseSize = 16.0F;
 } // namespace
 
 void GhostRenderer::renderRefusal(
 	std::string_view label, Foundation::Vec2 worldPos, const world::WorldCamera& camera, int viewportWidth, int viewportHeight, float uiScale
 ) {
-	const Foundation::Vec2 pivot = camera.worldToScreen(worldPos.x, worldPos.y, viewportWidth, viewportHeight, kPixelsPerMeter);
+	// As the drawing tools' reason beside the cursor; its look is the overlays' (rendering.xml, <ItemOverlays>).
+	const assets::ItemOverlayStyle& look = assets::ConstructionRegistry::Get().rendering().itemOverlays;
+	const Foundation::Vec2			pivot = camera.worldToScreen(worldPos.x, worldPos.y, viewportWidth, viewportHeight, kPixelsPerMeter);
+	const Foundation::Vec2			at{pivot.x + look.refusalOffsetXPx * uiScale, pivot.y + look.refusalOffsetYPx * uiScale};
+	const float						scale = look.refusalTextScale * uiScale;
+	const std::string				text(label);
+	Foundation::Color				color = worldview::colorOf(look.refusedTint);
+	color.a = 1.0F;
+	// The plate the area names have, so the red reads over the red-tinted ghost and anything under it.
+	if (const Renderer::FontRenderer* fonts = Renderer::Primitives::getFontRenderer()) {
+		const glm::vec2 size = fonts->MeasureText(text, scale);
+		const float		pad = kRefusalPaddingPx * uiScale;
+		Renderer::Primitives::drawRect({
+			.bounds = {at.x - pad, at.y - pad, size.x + 2.0F * pad, std::max(size.y, scale * kFontBaseSize) + 2.0F * pad},
+			.style = {.fill = worldview::colorOf(look.labelBacking)},
+			.id = "placement_refusal",
+			.key = kRefusalKey,
+		});
+	}
 	Renderer::Primitives::drawText({
-		.text = std::string(label),
-		.position = {pivot.x + kRefusalOffset.x * uiScale, pivot.y + kRefusalOffset.y * uiScale},
-		.scale = kRefusalTextScale * uiScale,
-		.color = {kInvalidTintR, kInvalidTintG, kInvalidTintB, 1.0F},
-		.shadow = Foundation::BoxShadow{.color = {0.0F, 0.0F, 0.0F, 0.8F}, .blur = 0.0F, .offset = {kRefusalShadowPx, kRefusalShadowPx}},
+		.text = text,
+		.position = at,
+		.scale = scale,
+		.color = color,
 		.id = "placement_refusal",
-		.key = 1001,
+		.key = kRefusalKey,
 	});
 }
 
@@ -60,10 +80,22 @@ void GhostRenderer::render(const std::string& defName,
 						   const world::WorldCamera& camera,
 						   int viewportWidth,
 						   int viewportHeight,
-						   bool isValid) {
+						   bool placing,
+						   bool isValid,
+						   float uiScale) {
 	if (defName.empty()) {
 		return;
 	}
+
+	// Meshes are about the pivot: a template upright at scale 1 (PlacementSystem::spawnEntity), a view turned already.
+	const worldview::ItemScreenFrame frame{
+		.pivot = camera.worldToScreen(worldPos.x, worldPos.y, viewportWidth, viewportHeight, kPixelsPerMeter),
+		.pixelsPerMeter = camera.worldDistanceToScreen(1.0F, kPixelsPerMeter),
+	};
+	const assets::ItemOverlayStyle& look = assets::ConstructionRegistry::Get().rendering().itemOverlays;
+	const worldview::ItemDrawStyle	ghost{
+		.opacity = isValid ? kGhostAlpha : kInvalidAlpha, .refused = !isValid, .key = placing ? kPlacingBodyKey : kPendingBodyKey
+	};
 
 	auto&		registry = assets::AssetRegistry::Get();
 	const auto* def = registry.getDefinition(defName);
@@ -79,10 +111,24 @@ void GhostRenderer::render(const std::string& defName,
 				LOG_ERROR(Game, "No ghost view of %s at %u quanta: %s", defName.c_str(), turnQuanta, view.error.c_str());
 				return;
 			}
-			held = views.emplace(key, HeldView{.mesh = std::move(view.mesh)}).first;
+			held = views
+					   .emplace(key, HeldView{.mesh = std::move(view.mesh), .overlays = assets::itemOverlays(*def, turnQuanta, look.hatchSpacingMeters)})
+					   .first;
 		}
 		held->second.drawn = true;
-		draw(held->second.mesh, worldPos, camera, viewportWidth, viewportHeight, isValid);
+		// Under the ghost, on the ground; the collider is 14.4's footprint line, the parts' own footprints the asset
+		// manager's.
+		worldview::drawItemOverlays(
+			held->second.overlays,
+			frame,
+			{.useAreas = true, .clearance = true, .footprints = false, .collider = true},
+			look,
+			{.pixel = uiScale,
+			 .opacity = isValid ? 1.0F : kInvalidAlpha / kGhostAlpha,
+			 .refused = !isValid,
+			 .key = placing ? kPlacingOverlayKey : kPendingOverlayKey}
+		);
+		worldview::drawItemView(held->second.mesh, frame, look, ghost);
 		return;
 	}
 
@@ -91,64 +137,7 @@ void GhostRenderer::render(const std::string& defName,
 	if (mesh == nullptr) {
 		return;
 	}
-	draw(*mesh, worldPos, camera, viewportWidth, viewportHeight, isValid);
-}
-
-void GhostRenderer::draw(
-	const renderer::TessellatedMesh& mesh, Foundation::Vec2 offset, const world::WorldCamera& camera, int viewportWidth, int viewportHeight, bool isValid
-) {
-	if (mesh.vertices.empty()) {
-		return;
-	}
-	// The mesh is about the pivot: a template upright at scale 1 (PlacementSystem::spawnEntity), a view turned already.
-	const assets::InstanceTransform placed = assets::uprightInstance({offset.x, offset.y});
-	m_transformedVertices.resize(mesh.vertices.size());
-	for (size_t i = 0; i < mesh.vertices.size(); ++i) {
-		const glm::vec2 world	 = placed.toWorld({mesh.vertices[i].x, mesh.vertices[i].y});
-		m_transformedVertices[i] = camera.worldToScreen(world.x, world.y, viewportWidth, viewportHeight, kPixelsPerMeter);
-	}
-
-	// Create ghost colors with transparency
-	float alpha = isValid ? kGhostAlpha : kInvalidAlpha;
-	m_ghostColors.resize(mesh.vertices.size());
-
-	if (mesh.hasColors()) {
-		// Apply alpha to existing colors, with optional red tint for invalid
-		for (size_t i = 0; i < mesh.colors.size(); ++i) {
-			const auto& c = mesh.colors[i];
-			if (isValid) {
-				m_ghostColors[i] = {c.r, c.g, c.b, c.a * alpha};
-			} else {
-				// Red-tinted for invalid placement
-				m_ghostColors[i] = {
-					c.r * kInvalidTintR,
-					c.g * kInvalidTintG,
-					c.b * kInvalidTintB,
-					c.a * alpha
-				};
-			}
-		}
-	} else {
-		// Use white with alpha if no colors
-		Foundation::Color ghostColor = isValid
-			? Foundation::Color{1.0F, 1.0F, 1.0F, alpha}
-			: Foundation::Color{kInvalidTintR, kInvalidTintG, kInvalidTintB, alpha};
-
-		for (auto& c : m_ghostColors) {
-			c = ghostColor;
-		}
-	}
-
-	// Draw the ghost using primitives API
-	Renderer::Primitives::drawTriangles({
-		.vertices = m_transformedVertices.data(),
-		.indices = mesh.indices.data(),
-		.vertexCount = m_transformedVertices.size(),
-		.indexCount = mesh.indices.size(),
-		.colors = m_ghostColors.data(),
-		.id = "placement_ghost",
-		.key = 1000  // Draw above entities
-	});
+	worldview::drawItemView(*mesh, frame, look, ghost);
 }
 
 } // namespace world_sim

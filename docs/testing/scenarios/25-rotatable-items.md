@@ -97,4 +97,10 @@ Steps 19 on start with game time running again (`...dev/time?speed=1`).
 54. Press Esc until the wall tool closes (`tool` `none`).
 55. `spawn?def=TestPartsBox&at=30.2,27&n=1&scatter=0`, into the box: a 400 naming "Overlaps an item".
 56. `spawn?def=TestPartsBox&at=30,31.6&n=1&scatter=0`, into the bench's clearance: a 400 naming "Too close".
-57. Exit the game.
+57. Start placing `TestPartsAreas` (`curl.exe "http://127.0.0.1:<PORT>/api/dev/place?def=TestPartsAreas"`) and hold the pointer over open ground: under the see-through box lie its blue `front`, `side` and `back` use areas, each named on a dark plate, its clearance hatched with a dashed edge, and its collider in cyan.
+58. Press E: the box and its overlays turn together.
+59. Move the pointer onto a tree trunk: the box and every overlay turn red, with the reason beside it.
+60. Press Esc: placement ends.
+61. `package?def=TestPartsAreas&at=<RX>,<RY>&target=<RX+4>,<RY>&turn=30`: the target shows a see-through box with the same overlays, turned 30.
+62. `package?def=TestPartsAreas&at=<RX>,<RY>&target=<RX+8>,<RY>&turn=120`: a second target shows its box and overlays turned 120, the first unchanged.
+63. Exit the game.
