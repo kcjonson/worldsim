@@ -1,6 +1,6 @@
 // Tests for AssetRegistry::getSilhouette (Story B): the per-template selection
 // silhouette, plus the tessellator coverage-oracle cross-check that geometry
-// can't run (it can't link the renderer). The silhouette is rasterized from the
+// can't run (it can't link the renderer). The silhouette is the union of the
 // tessellated mesh triangles, so it must ENCLOSE the region the tessellator fills
 // (it fills holes, so silhouette >= fill), and stroke-only assets get a real
 // silhouette from their stroke bands (no bounds-rect fallback).
@@ -66,7 +66,7 @@ TEST(AssetRegistrySilhouette, EnclosesTessellatedFill) {
 	ASSERT_NE(sil, nullptr);
 
 	// Every non-degenerate opaque triangle centroid should be inside the silhouette. Allow
-	// a small slack for raster staircasing clipping sliver triangles at the boundary.
+	// a small slack for the simplification clipping sliver triangles at the boundary.
 	const auto faint = [&](uint16_t i) { return mesh->hasColors() && mesh->colors[i].a < kSilhouetteMinAlpha; };
 	int		   inside = 0;
 	int		   total  = 0;
@@ -83,7 +83,7 @@ TEST(AssetRegistrySilhouette, EnclosesTessellatedFill) {
 		const float area2 =
 			std::abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y));
 		if (area2 < 1e-4F) {
-			continue; // sliver/degenerate; centroid ill-defined vs the raster grid
+			continue; // sliver/degenerate; centroid ill-defined at millimetre precision
 		}
 		const Foundation::Vec2 centroid{(a.x + b.x + c.x) / 3.0F, (a.y + b.y + c.y) / 3.0F};
 		++total;
@@ -107,7 +107,7 @@ TEST(AssetRegistrySilhouette, EnclosesTessellatedFill) {
 }
 
 // A stroke-only asset (SVG entirely fill="none", e.g. PlantFiber) still gets a real
-// silhouette: rasterizing the tessellated STROKE BANDS captures the drawn strands, so
+// silhouette: unioning the tessellated STROKE BANDS captures the drawn strands, so
 // no bounds-rect fallback is needed. Guards that stroke geometry reaches the silhouette.
 TEST(AssetRegistrySilhouette, StrokeOnlyGetsRealSilhouette) {
 	auto& reg = AssetRegistry::Get();
@@ -159,5 +159,66 @@ square(0, 1.0)
 	EXPECT_TRUE(insideAny(sil->rings, geometry::quantize({0.0F, 0.0F})));
 	EXPECT_FALSE(insideAny(sil->rings, geometry::quantize({5.0F, 0.0F})));
 	EXPECT_FALSE(insideAny(sil->hitRegion, geometry::quantize({5.0F, 0.0F})));
+	reg.clear();
+}
+
+// Every opaque vertex of a mature tree, both stroke-only plant fibre, and each colonist facing lies inside the
+// outline or within the bound the silhouette promises, and the hit region holds the outline. Probed from the mesh:
+// 5 mm inside the tree's rightmost drawn point hits, 20 mm past its hit region's rightmost point misses.
+TEST(AssetRegistrySilhouette, OutlineHoldsWhatIsDrawnAndTheHitRegionHoldsTheOutline) {
+	auto& reg = AssetRegistry::Get();
+	reg.clear();
+	if (!loadShippedLibrary(reg)) {
+		GTEST_SKIP() << "assets/world not found";
+	}
+	const AssetDefinition* oak = reg.getDefinition("Flora_TreeOak");
+	ASSERT_NE(oak, nullptr);
+	const std::vector<std::pair<std::string, TreeTraits>> templates{
+		{"Flora_TreeOak", AssetRegistry::matureTraits(*oak)},
+		{"PlantFiber", {}},
+		{"Human_down", {}},
+		{"Human_up", {}},
+		{"Human_left", {}},
+		{"Human_right", {}},
+	};
+	for (const auto& [name, traits] : templates) {
+		const renderer::TessellatedMesh* mesh = reg.getTemplate(name, traits);
+		const AssetSilhouette*			 sil = reg.getSilhouette(name, traits);
+		ASSERT_NE(mesh, nullptr) << name;
+		ASSERT_NE(sil, nullptr) << name;
+		ASSERT_TRUE(sil->valid) << name;
+		const OutlineReach reach = outlineReach(*mesh, *sil);
+		EXPECT_LE(reach.worstMm, static_cast<double>(reach.boundMm)) << name << " draws " << reach.worstMm << " mm outside its outline";
+		// The formula's bound is loose for small objects (about 10 mm for a colonist facing). Measured: 1.0 mm for every
+		// colonist facing, 0.7 mm for plant fibre; the mask this replaced reached 2 to 4 mm. A fixed 2 mm holds them there.
+		if (name != "Flora_TreeOak") {
+			EXPECT_LE(reach.worstMm, 2.0) << name << " draws " << reach.worstMm << " mm outside its outline";
+		}
+		for (const auto& ring : sil->rings) {
+			for (const auto& vertex : ring) {
+				EXPECT_TRUE(withinMillimetreOf(sil->hitRegion, vertex)) << name << ": the outline at (" << vertex.x << ", " << vertex.y << ") is outside the hit region";
+			}
+		}
+	}
+
+	const renderer::TessellatedMesh* mesh = reg.getTemplate("Flora_TreeOak", AssetRegistry::matureTraits(*oak));
+	const AssetSilhouette*			 sil = reg.getSilhouette("Flora_TreeOak", AssetRegistry::matureTraits(*oak));
+	size_t							 triangleCount = 0;
+	geometry::Vec2i64				 drawnRightmost = opaqueVertices(*mesh, triangleCount).front();
+	for (const auto& vertex : opaqueVertices(*mesh, triangleCount)) {
+		if (vertex.x > drawnRightmost.x) {
+			drawnRightmost = vertex;
+		}
+	}
+	geometry::Vec2i64 hitRightmost = sil->hitRegion.front().front();
+	for (const auto& ring : sil->hitRegion) {
+		for (const auto& vertex : ring) {
+			if (vertex.x > hitRightmost.x) {
+				hitRightmost = vertex;
+			}
+		}
+	}
+	EXPECT_TRUE(insideAny(sil->hitRegion, {drawnRightmost.x - 5, drawnRightmost.y}));
+	EXPECT_FALSE(insideAny(sil->hitRegion, {hitRightmost.x + 20, hitRightmost.y}));
 	reg.clear();
 }

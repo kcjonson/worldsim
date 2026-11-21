@@ -875,7 +875,7 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 	float		maxY = kNoY;
 	// Prefer the entity's canonical depth key (PlacedEntity::anchorY) when available so the
 	// outline injects at the exact depth the entity draws; the silhouette-vertex maxY is only
-	// a fallback (raster maxY can differ slightly from the template's).
+	// a fallback (the silhouette's maxY can differ slightly from the template's).
 	float canonicalAnchorY = kNoY;
 	// Composite selections (packaged furniture, piles) collect world-mm rings here to union.
 	std::vector<geometry::Ring> compositeMm;
@@ -890,7 +890,7 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 		if (pe == nullptr) {
 			return outline;
 		}
-		canonicalAnchorY = pe->anchorY; // exact placement depth key, not the raster maxY
+		canonicalAnchorY = pe->anchorY; // exact placement depth key, not the silhouette's maxY
 		const auto* sil = assetRegistry.getSilhouette(pe->templateId);
 		if (sil == nullptr || !sil->valid) {
 			return outline;

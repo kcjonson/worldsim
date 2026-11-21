@@ -334,4 +334,35 @@ namespace geometry {
 		return result;
 	}
 
+
+	std::size_t convexHullInto(Vec2i64* points, std::size_t count, Vec2i64* hull) {
+		std::sort(points, points + count);
+		count = static_cast<std::size_t>(std::unique(points, points + count) - points);
+		if (count < 3) {
+			std::copy(points, points + count, hull);
+			return count;
+		}
+		std::size_t hullCount = 0;
+		for (std::size_t index = 0; index < count; ++index) {
+			while (hullCount >= 2 && orientation(hull[hullCount - 2], hull[hullCount - 1], points[index]) != Orientation::CounterClockwise) {
+				--hullCount;
+			}
+			hull[hullCount++] = points[index];
+		}
+		const std::size_t lowerCount = hullCount + 1;
+		for (std::size_t index = count - 1; index-- > 0;) {
+			while (hullCount >= lowerCount && orientation(hull[hullCount - 2], hull[hullCount - 1], points[index]) != Orientation::CounterClockwise) {
+				--hullCount;
+			}
+			hull[hullCount++] = points[index];
+		}
+		return hullCount - 1;
+	}
+
+	Ring convexHull(std::vector<Vec2i64> points) {
+		Ring			  hull(points.size() * 2);
+		const std::size_t count = convexHullInto(points.data(), points.size(), hull.data());
+		hull.resize(count);
+		return hull;
+	}
 } // namespace geometry

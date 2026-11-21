@@ -13,7 +13,13 @@
 #include "assets/AssetRegistry.h"
 #include "assets/ViewConfig.h"
 
+#include <polygon/Polygon.h>
+#include <predicates/Predicates.h>
+#include <silhouette/Silhouette.h>
+
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -23,6 +29,76 @@
 #include <thread>
 
 namespace assets {
+
+	/// How far a point lies outside every ring, in millimetres; 0 in or on one.
+	inline double millimetresOutside(const std::vector<geometry::Ring>& rings, const geometry::Vec2i64& point) {
+		double nearest = 1.0e18;
+		for (const geometry::Ring& ring : rings) {
+			if (geometry::pointInPolygon(point, ring) != geometry::PointInPolygon::Outside) {
+				return 0.0;
+			}
+			for (size_t i = 0; i < ring.size(); ++i) {
+				const geometry::Vec2i64 from = ring[i];
+				const geometry::Vec2i64 to = ring[(i + 1) % ring.size()];
+				const double alongX = static_cast<double>(to.x - from.x);
+				const double alongY = static_cast<double>(to.y - from.y);
+				const double lengthSquared = alongX * alongX + alongY * alongY;
+				const double fraction =
+					lengthSquared > 0.0 ? std::clamp((static_cast<double>(point.x - from.x) * alongX + static_cast<double>(point.y - from.y) * alongY) / lengthSquared, 0.0, 1.0)
+										: 0.0;
+				nearest = std::min(nearest, std::hypot(static_cast<double>(point.x - from.x) - fraction * alongX, static_cast<double>(point.y - from.y) - fraction * alongY));
+			}
+		}
+		return nearest;
+	}
+
+	/// Whether a point lies in or on some ring, or within a millimetre of one (the booleans simplify by 1 mm).
+	inline bool withinMillimetreOf(const std::vector<geometry::Ring>& rings, const geometry::Vec2i64& point) {
+		return millimetresOutside(rings, point) <= 1.0;
+	}
+
+	/// The opaque vertices of a mesh in millimetres (those of triangles not wholly under kSilhouetteMinAlpha), and the
+	/// count of those triangles.
+	inline std::vector<geometry::Vec2i64> opaqueVertices(const renderer::TessellatedMesh& mesh, size_t& triangleCount) {
+		std::vector<geometry::Vec2i64> vertices;
+		triangleCount = 0;
+		const auto faint = [&](uint16_t index) { return mesh.hasColors() && mesh.colors[index].a < kSilhouetteMinAlpha; };
+		for (size_t triangle = 0; triangle + 2 < mesh.indices.size(); triangle += 3) {
+			const uint16_t first = mesh.indices[triangle];
+			const uint16_t second = mesh.indices[triangle + 1];
+			const uint16_t third = mesh.indices[triangle + 2];
+			if (faint(first) && faint(second) && faint(third)) {
+				continue;
+			}
+			++triangleCount;
+			for (const uint16_t index : {first, second, third}) {
+				vertices.push_back(geometry::quantize(mesh.vertices[index]));
+			}
+		}
+		return vertices;
+	}
+
+	/// The longest distance of a mesh's opaque vertices outside its silhouette's rings, and the bound it is held to
+	/// (geometry::silhouetteBoundMm at the silhouette's tolerance).
+	struct OutlineReach {
+		double		 worstMm = 0.0;
+		std::int64_t boundMm = 0;
+	};
+	inline OutlineReach outlineReach(const renderer::TessellatedMesh& mesh, const AssetSilhouette& silhouette) {
+		size_t									 triangleCount = 0;
+		const std::vector<geometry::Vec2i64> vertices = opaqueVertices(mesh, triangleCount);
+		geometry::Vec2i64						 low = vertices.front();
+		geometry::Vec2i64						 high = low;
+		OutlineReach							 reach;
+		for (const geometry::Vec2i64& vertex : vertices) {
+			low = {std::min(low.x, vertex.x), std::min(low.y, vertex.y)};
+			high = {std::max(high.x, vertex.x), std::max(high.y, vertex.y)};
+			reach.worstMm = std::max(reach.worstMm, millimetresOutside(silhouette.rings, vertex));
+		}
+		const std::int64_t tolerance = std::max<std::int64_t>(1, std::max(high.x - low.x, high.y - low.y) / kSilhouetteToleranceDivisor);
+		reach.boundMm = geometry::silhouetteBoundMm(triangleCount, tolerance);
+		return reach;
+	}
 
 	inline void waitForAsyncLoad(const AssetRegistry& reg) {
 		using Clock = std::chrono::steady_clock;

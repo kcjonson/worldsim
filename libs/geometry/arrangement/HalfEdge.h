@@ -69,8 +69,14 @@ namespace geometry {
 		std::vector<std::size_t> facesAtVertex(std::size_t vertexIndex) const;
 	};
 
+	// What extractFaces fills in besides the cycles, their areas and which side is outer.
+	enum class FaceDetail {
+		Full,		// each face's provenance and representative point too
+		CyclesOnly, // neither (left empty): for callers that only walk the cycles
+	};
+
 	// Build the half-edge mesh and extract all face cycles from an arrangement.
-	HalfEdgeMesh extractFaces(const Arrangement& arrangement);
+	HalfEdgeMesh extractFaces(const Arrangement& arrangement, FaceDetail detail = FaceDetail::Full);
 
 	// Exact containment of `point` in a face's cycle, via crossing-number over
 	// the cycle's vertex ring with on-boundary detection (reuses the polygon

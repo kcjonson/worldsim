@@ -124,10 +124,10 @@ namespace assets {
 		bool	 flat = false;
 	};
 
-	/// A view's selection silhouette (section 15): its rings and hit region, in pivot millimetres with the turn in
-	/// them, and the rings cut at the strips' band edges into open lines, each strip's in its own entry, so the outline
-	/// draws at the strips' depths. Within a band of several strips (the two sides of a notch) a line goes to the strip
-	/// whose lifted part footprints it lies on.
+	/// An item's selection silhouette at a turn (section 15): its rings and hit region, in pivot millimetres with the
+	/// turn in them, and the rings cut at the strips' band edges into open lines, each strip's in its own entry, so the
+	/// outline draws at the strips' depths. Within a band of several strips (the two sides of a notch) a line goes to
+	/// the strip whose lifted part footprints it lies on.
 	struct ItemSilhouette {
 		AssetSilhouette silhouette;
 		/// By strip, in the layout's order: open lines in metres relative to the pivot.
@@ -141,8 +141,6 @@ namespace assets {
 		renderer::TessellatedMesh mesh;
 		/// In the layout's order, each a contiguous index range; together they cover every index once.
 		std::vector<ViewStrip> strips;
-		/// Built from the view's triangles at the reference level (section 15); invalid at any other level.
-		ItemSilhouette silhouette;
 		/// How far from the pivot anything drawn at any turn reaches (section 6.9).
 		float reachMeters = 0.0F;
 		/// Why there is no view (past kMaxViewVertices, an unknown level, not a parts def); empty when built.
@@ -152,11 +150,12 @@ namespace assets {
 	};
 
 	/// Builds a parts def's view at a turn and one of its detail levels (0 for a def without levels).
-	[[nodiscard]] ItemView buildItemView(const AssetDefinition& def, uint32_t turnQuanta, uint8_t level, const ViewConfig& config);
-
-	/// buildItemView without the silhouette, the costly part: for the registry's template (whose silhouette it keeps
-	/// itself, from the same triangles) and validation's vertex count.
 	[[nodiscard]] ItemView buildItemMesh(const AssetDefinition& def, uint32_t turnQuanta, uint8_t level, const ViewConfig& config);
+
+	/// A parts def's selection silhouette at a turn (section 15), from its footprints alone, no drawing read and
+	/// nothing tessellated: each placement's footprint lifted from its bottom to its top, as one convex polygon, grown
+	/// by the outline's half width, and all of them unioned. That holds everything the view draws.
+	[[nodiscard]] ItemSilhouette buildItemSilhouette(const AssetDefinition& def, uint32_t turnQuanta, const ViewConfig& config);
 
 	/// The farthest any drawn point of a parts item reaches from its pivot at any turn: the largest |p| +
 	/// top * heightRatio over every placed footprint vertex p, plus the outline's half width.

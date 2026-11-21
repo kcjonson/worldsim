@@ -73,6 +73,15 @@ namespace geometry {
 	// returned.
 	Vec2d interiorPoint(const Ring& ring);
 
+	// Convex hull by the monotone chain: counter-clockwise from the least point, no collinear vertices. Sorts
+	// and dedups points[0, count) in place and writes the hull into `hull`, which has room for 2 * count;
+	// returns its vertex count. Fewer than three distinct points are copied as they are. No allocation, for
+	// callers on hot paths with fixed storage.
+	std::size_t convexHullInto(Vec2i64* points, std::size_t count, Vec2i64* hull);
+
+	// The same, returning the hull.
+	Ring convexHull(std::vector<Vec2i64> points);
+
 	// Point-in-polygon is provided by Predicates.h (pointInPolygon), which takes
 	// the same std::vector<Vec2i64> a Ring aliases; included above.
 

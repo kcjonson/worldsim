@@ -34,51 +34,50 @@ From the product owner, not the literature:
 ## 3. Design overview
 
 ```
-AssetRegistry::getSilhouette(defName) ──► AssetSilhouette { outerRings (local mm),
-   (lazy, on bake worker)                    hitRegion (closed, for whole-clump),
-        │                                     valid }
-        │  built from contour rings (NOT triangle boundary)
+AssetRegistry::getSilhouette(templateId) ──► AssetSilhouette { rings (local mm),
+   (prewarmed, or built on first ask)          hitRegion (closed, for whole-clump),
+        │                                       valid }
+        │  the union of the template mesh's triangles
         ▼
-geometry::silhouetteOfRings(rings) ──► outer CCW loops, holes filled, disjoint preserved
+geometry::silhouetteOfTriangles ──► outer CCW rings, holes filled, separate bodies kept apart
         │
         ├──► outline:   InstanceTransform(local→world→screen), stroke thick, entity-layer z
         └──► hit-test:  InstanceTransform⁻¹(click→local mm), pointInPolygon
 ```
 
-The silhouette is computed **once per resolved `defName`**, in the template's pivot frame in integer millimetres, cached beside the tessellated template. One shared transform maps local↔world for every instance, static or dynamic, so the outline, the hit-test, and the renderer never disagree.
+The silhouette is computed **once per template**, in the template's pivot frame in integer millimetres, cached beside the tessellated template. One shared transform maps local↔world for every instance, static or dynamic, so the outline, the hit-test, and the renderer never disagree.
 
 ## 4. The silhouette primitive
 
-`libs/geometry/silhouette/Silhouette.h` (implemented, PR #250): `silhouetteOfRings(rings, res)` and `silhouetteOfTriangles(triangleVerts, res, closeRadiusPx)` — both raster; `getSilhouette` uses the **triangle** entry point (see below).
+`libs/geometry/silhouette/Silhouette.h`: `silhouetteOfTriangles(triangleVertices, closeRadius, tolerance)`, with `outlineOfUnion`, `outlineOfUnionInOnePass`, `dilateConvex`, `closeOutline`, `simplifyOutline`, and `silhouetteBoundMm` beside it. Every step is a vector operation on rings: no shape is ever sampled into cells. (The arrangement under the booleans indexes segment boxes in a spatial index only to choose which pairs it tests exactly.)
 
-**Raster, not the exact planar arrangement.** The first cut proposed unioning the asset's contour rings via `buildArrangement` + `HalfEdge` + a keep-CCW/drop-CW/prune-nested post-pass. Reading `extractFaces` killed that: for **disconnected** input (a donut, nested island, scattered blobs — exactly what this feature is for) the enumerated face cycles geometrically *overlap*, and a cycle's representative point can land inside a nested hole, dropping the silhouette entirely (`RingBoolean`'s documented disconnected-input unsoundness, `RingBoolean.cpp:122-128`). Fixing it exactly needs true-unbounded-face identification or a containment forest — research-grade for a selection highlight. Raster is robust for every hard case by construction and is the same morphological substrate the whole-clump hit area needs (§7).
+**Source: the tessellated mesh triangles, not the fill contours.** The silhouette is the union of the asset's **tessellated template mesh** (`TessellatedMesh`) triangles, so it is the *actual rendered footprint*: fills AND stroke bands. A reed's stem is a `stroke` (`fill="none"`), so a fill-contour silhouette misses it and fragments the reed into separate blobs (seed head vs leaf fan); the mesh union keeps the whole reed, and stroke-only assets (e.g. `PlantFiber`) get a real strand silhouette instead of an AABB fallback.
 
-**Source: the tessellated mesh triangles, not the fill contours.** `getSilhouette` rasterizes the asset's **tessellated template mesh** (`TessellatedMesh`) triangles, so the silhouette is the *actual rendered footprint* — fills AND stroke bands. This matters: a reed's stem is a `stroke` (`fill="none"`), so a fill-contour silhouette misses it and fragments the reed into disjoint blobs (seed head vs leaf fan); rasterizing the mesh reconnects the whole reed, and stroke-only assets (e.g. `PlantFiber`) get a real strand silhouette instead of an AABB fallback. The pipeline:
-1. Integer bbox over the triangle vertices; ceil-div pixel size (≥1 mm) from `targetResolution`; a padded, guaranteed-empty border (`closeRadiusPx + 1` cells).
-2. **Coverage:** each pixel is covered iff its centre is inside **any** triangle (three exact `orientation` tests, boundary-inclusive so adjacent triangles tile gaplessly). Degenerate triangles skipped; iterate each triangle over its own bbox. (`silhouetteOfRings` instead computes coverage by nonzero winding over rings — used only by the geometry fixtures.)
-3. **Optional morphological close** (`closeRadiusPx > 0`, box dilate-then-erode) bridges gaps ≤ `2·closeRadiusPx` between disjoint blobs without growing the outer boundary — this is the whole-clump `hitRegion` (§7).
-4. **Fill holes:** 4-connected exterior flood-fill from the border; everything unreachable (covered *or* an enclosed void) is filled.
-5. **Trace + simplify:** directed unit boundary edges (filled pixel on the left → CCW loops), chained, saddles split by turn rank, one loop per component (disjoint blobs → separate rings), `simplifyRing`, `ensureCounterClockwise`.
+The pipeline, with L the longer side of the box round the opaque triangles:
 
-Blockiness is bounded by `targetResolution` and invisible under a thick stroke. Compute-once per `defName`, cached, off-thread — no runtime cost. The rings double as the later shadow-caster geometry. The shared grid/mask/trace tail (`makeGrid` + `maskToRings`) backs both entry points.
+1. **Union in halves.** The triangles, each wound CCW, are unioned by `geometry::unionOfFills` (nonzero rule) in halves of the draw order: eight triangles a leaf, then each half's outline with the other's. A path's triangles tile without crossing, so a triangle's inner edges are gone before they meet the rest of the shape, and only outlines are ever cut against outlines. A single union of every triangle would cut every leaf edge against every edge it crosses: on a mature tree that is about twenty times slower. The halves are not simplified between levels; each level's union simplifies by its own 1 mm (`kBooleanSimplifyEpsMm`). Holes are filled where the halves meet and at the end; a piece standing in another's hole goes with the fill.
+2. **Simplify** each ring to within L / 512 (Douglas-Peucker, `simplifyRing`), then union again so every ring stays simple. A ring the simplification would flatten to nothing (a body or stroke thinner than the tolerance) is kept as it was, so no body is lost.
+3. **Close** by L / 512: dilate by an octagon whose edges touch the circle of that radius (each edge swept by the octagon, unioned with the outline), then erode by the same octagon (the dilation of the complement inside a box clear of the outline, whose holes are the eroded outline). Gaps and notches under about L / 256 fill; the boundary elsewhere stays where it was. The result is simplified to L / 512 again. The closed outline is then unioned with the outline it was given, so the close only ever adds: every opaque triangle lies inside the outline or within `geometry::silhouetteBoundMm` of it, the tolerance plus a millimetre for each union level (about 23 mm on a 6 m tree, about 10 mm on a colonist; measured, 1 mm on a colonist and under 8 mm on any shipped tree). A body under about 2 mm across is the exception: each union's own 1 mm simplification can collapse it.
 
-**Fixtures (all green):** 8 `silhouetteOfRings` cases (square; donut → hole filled; disjoint → 2 rings; concave L; nested solid → no spurious inner; overlap → merged; figure-eight; empty → `{}`) + 4 `silhouetteOfTriangles` cases (single triangle; two-triangle square; triangulated annulus → hole filled; disjoint blobs → 2 rings at close 0, bridged to 1 with a close radius). Story B adds a tessellator **coverage-oracle** test on real assets (silhouette encloses the tessellated fill; `libs/geometry` can't link the renderer, so it lives there).
+On a 6 m tree L / 512 is about 12 mm: wiggles below that smooth out and the outline has a few hundred vertices.
 
-**Degenerate assets.** Only a truly empty mesh (0 triangles, doesn't render) yields no silhouette (`valid=false`); stroke-only assets now produce real geometry, so no AABB fallback is needed.
+**Degenerate assets.** Only a mesh with no opaque triangle yields no silhouette (`valid=false`); stroke-only assets produce real geometry, so no AABB fallback is needed.
 
-## 5. Per-`defName` cache
+**Cost and when it is paid.** The union costs a few times the tessellation: 47 to 157 ms for a tree, 20 to 60 ms for a palm, pine, or the most detailed bushes, under 20 ms for the rest (rocks, colonist facings, simple items), 1 to 3 ms for a box. So `AssetRegistry::prewarmProceduralTemplates` builds the silhouette of every variant it prewarms (every age class and variant of a tree, and every variant of each selectable procedural def without age classes) on its task pool at load, beside the mesh, and files it in the cache. A click never builds one of those. Simple (SVG) assets, colonist facings and boxes build theirs on the first click or outline that asks, each under 20 ms.
+
+## 5. Per-template cache
 
 ```cpp
 struct AssetSilhouette {
-    std::vector<geometry::Ring> rings;        // local mm — crisp; used for the outline + shadows
-    std::vector<geometry::Ring> hitRegion;    // local mm — closed (whole-clump); used for hit-testing
+    std::vector<geometry::Ring> rings;        // local mm, used for the outline + shadows
+    std::vector<geometry::Ring> hitRegion;    // local mm, closed (whole-clump), used for hit-testing
     bool valid;
 };
 ```
 
-Stored in `AssetRegistry` in a `unordered_map<string, AssetSilhouette>` guarded by its own mutex, mirroring the `getMotion` cache (own mutex, heavy raster off-lock, short lock to check/insert). `getSilhouette(defName)` ensures `getTemplate` (so the mesh is materialized), rasterizes its triangles for `rings` (close 0) and `hitRegion` (small close), caches. Key = resolved `defName`, so directional colonist variants (`_down/_up/_left/_right`) each get their own rest-pose silhouette. Safe to call from the chunk-bake worker (like `getTemplate`). Invalidated with `templateCache` on `clear()` / `clearDefinitions()`. One template per `defName`, so one silhouette serves every instance regardless of position/rotation/scale/tint.
+Stored in `AssetRegistry` in an `unordered_map<uint32_t, AssetSilhouette>` keyed by template id, guarded by its own mutex, mirroring the `getMotion` cache (own mutex, heavy work off-lock, short lock to check/insert). `getSilhouette(templateId)` returns the prewarmed one, or ensures `getTemplate` (so the mesh is materialized), builds `rings` and `hitRegion` from its triangles, and caches. Directional colonist variants (`_down/_up/_left/_right`) are separate defs, so each gets its own rest-pose silhouette. Safe to call from the chunk-bake worker (like `getTemplate`). Cleared with the templates on `clear()` / `clearDefinitions()`, which advance `generation()`; the load that follows prewarms again. One template serves every instance regardless of position/rotation/scale/tint.
 
-For a single connected asset, `hitRegion ≈ rings`. They diverge for multi-blob assets, where the close bridges the gaps (§7).
+For a single connected asset, `hitRegion` is `rings` closed a little wider. They diverge for multi-blob assets, where the close bridges the gaps (§7).
 
 ## 6. Shared instance transform (mandatory, one-path)
 
@@ -88,9 +87,9 @@ The #1 shared risk is the hit-test inverse or the outline forward-map drifting f
 
 ## 7. Whole-clump hit area (PO decision)
 
-A click in the bare gap between disjoint blobs of one asset **selects** it. The exact `outerRings` preserve disjoint blobs (so a click *outside* every blob would miss), so the hit area is a **closed** region: rasterize the outer rings, morphological-close by a bounded radius (bridges inter-blob gaps up to the threshold), flood-fill, marching-squares → `hitRegion`. Gated to multi-blob assets — for a single connected blob the close is a no-op and `hitRegion == outerRings`.
+A click in the bare gap between disjoint blobs of one asset **selects** it. The outline's `rings` keep separate blobs apart (so a click *outside* every blob would miss), so the hit area is a **closed** region: the rings closed by L / 64 (`closeOutline`, the same octagon close as §4), which bridges gaps up to about L / 32, simplified to L / 256, and unioned with the rings again, so the hit region holds the whole outline and a click on anything outlined hits.
 
-The **outline still strokes the exact `outerRings`** (each visible bloom gets a precise outline, so the highlight reads as "around the 2D visual"), while the **hit-test uses `hitRegion`** (forgiving clicks). Precise-looking selection, generous clicking. This is the one place `outerRings` and `hitRegion` intentionally differ.
+The **outline still strokes the exact `rings`** (each visible bloom gets a precise outline, so the highlight reads as "around the 2D visual"), while the **hit-test uses `hitRegion`** (forgiving clicks). Precise-looking selection, generous clicking. This is the one place `rings` and `hitRegion` intentionally differ.
 
 ## 8. Precise hit-testing
 
@@ -118,11 +117,11 @@ Deferred (Tier-2, documented not built): a per-frame posed outline for the singl
 ## 11. Stories & tasks
 
 **Story A — silhouette geometry primitive** (`libs/geometry`) — DONE, PR #250
-- A1 `silhouetteOfRings` (winding coverage) + `silhouetteOfTriangles` (triangle coverage, + `closeRadiusPx` morphological close): shared `makeGrid` + `maskToRings` (exterior flood-fill → directed boundary trace, filled-on-left → CCW → saddle-split by turn rank → `simplifyRing`). Robust for disconnected/nested/self-intersecting input.
-- A2 Unit tests: 8 ring fixtures + 4 triangle fixtures (§4). Tessellator coverage-oracle cross-check in Story B (renderer not linkable from `libs/geometry`).
+- A1 `silhouetteOfTriangles`: the triangles' union in halves, simplified, closed by an octagon (§4). Robust for disconnected/nested/self-intersecting input.
+- A2 Unit tests: square, L, separate bodies and a closing gap, hole filled, island in a hole, degenerate and duplicate input, convex dilation reach, thin strands and a thin separate body within the bound; the union's determinism is `UnionOfFills.SameInputSameRingsInTheSameOrder`. Tessellator coverage-oracle cross-check in Story B (renderer not linkable from `libs/geometry`).
 
 **Story B — per-`defName` silhouette cache** (`AssetRegistry`) — DONE
-- B1 `AssetSilhouette{rings, hitRegion, valid}` + `silhouetteCache` + mutex + `getSilhouette(defName)`; `getMotion`-style (compute off-lock). Rasterize the **template mesh triangles** (quantized to mm) via `silhouetteOfTriangles` — `rings` at close 0, `hitRegion` at a small close (D3). Captures stroke bands; no fill-contour path.
+- B1 `AssetSilhouette{rings, hitRegion, valid}` + `silhouetteCache` + mutex + `getSilhouette(templateId)`; `getMotion`-style (compute off-lock). The union of the **template mesh triangles** (quantized to mm) via `silhouetteOfTriangles` for `rings`, closed wider for `hitRegion` (D3). Captures stroke bands; no fill-contour path.
 - B2 Only a truly empty mesh yields no silhouette (`valid=false`); stroke-only assets (`plant_fiber.svg`) now produce a real strand silhouette, so the AABB fallback was removed. `clear()`/`clearDefinitions()` wiring.
 
 **Story C — shared instance transform** (extract, one-path)
@@ -133,13 +132,13 @@ Deferred (Tier-2, documented not built): a per-frame posed outline for the singl
 **Story D — precise hit-testing** (`SelectionSystem`)
 - D1 Widen broad phase: query radius from registry max silhouette half-extent (per-`defName`), query click chunk + 8 neighbors.
 - D2 Replace centroid accept with `pointInPolygon(click→local, hitRegion)` for colonist/station/furniture/world-entity; packaged = crate OR item.
-- D3 Whole-clump `hitRegion` (raster close, §7) for multi-blob assets.
+- D3 Whole-clump `hitRegion` (octagon close, §7) for multi-blob assets.
 - D4 Overlapping-entity cycling: push all containing entities, topmost-first ordering, extend `candidateKey`.
 - D5 Delete centroid accept comparisons + `kIndicatorRadius`; demote `kSelectionRadius` to broad-phase only; grep stragglers.
 
 **Story E — thick silhouette outline** (`SelectionSystem::renderIndicator`)
 - E1 New `WorldEntitySelection` branch (re-resolve live `PlacedEntity`; draw nothing if stale).
-- E2 Switch colonist/station/furniture to stroke `outerRings`: local→world→screen, `drawLine` at clamped `kOutlineWidthPx` + width-gated round-join dots; delete the `kIndicatorRadius` circle.
+- E2 Switch colonist/station/furniture to stroke `rings`: local→world→screen, `drawLine` at clamped `kOutlineWidthPx` + width-gated round-join dots; delete the `kIndicatorRadius` circle.
 - E3 Draw in the entity layer at the selected entity's depth-sort key (couples to Story A / PR #248).
 - E4 Packaged outline: union crate+item (`RingBoolean`) or stroke both on reject.
 
@@ -159,9 +158,9 @@ Deferred (Tier-2, documented not built): a per-frame posed outline for the singl
 
 Each tree draws its own (def, age class, variant) mesh, so the silhouette is cached per template id (`getSilhouette(templateId)`, or `getSilhouette(defName, traits)`). A placed entity uses its stored `templateId`; a dynamic entity resolves its `Appearance` defName (with the facing suffix) and traits. A simple (SVG) asset is one drawing, so all its traits share one template.
 
-Triangles whose three vertices are all below `AssetRegistry::kSilhouetteMinAlpha` (0.5) are left out of the raster, so a drop shadow is not part of the outline, the hit area, or the flora view's canopy cover.
+Triangles whose three vertices are all below `AssetRegistry::kSilhouetteMinAlpha` (0.5) are left out of the union, so a drop shadow is not part of the outline, the hit area, or the flora view's canopy cover.
 
-A placed item (`parts` def) takes its silhouette from its view at its turn, already turned, so it is translated and never rotated, and its outline is injected into the stream in pieces, one at each depth strip ([Rotatable placed items, section 15](./rotatable-placed-items.md#15-selection)).
+A placed item (`parts` def) takes its silhouette from its footprints at its turn, already turned, so it is translated and never rotated, and its outline is injected into the stream in pieces, one at each depth strip ([Rotatable placed items, section 15](./rotatable-placed-items.md#15-selection)).
 
 The world-entity broad phase queries out to `AssetRegistry::maxReachMeters` (the farthest any non-groundcover template reaches from its origin, times its def's largest placement scale, never under `kSelectionRadius`) instead of a fixed 8 m.
 
@@ -169,8 +168,9 @@ The world-entity broad phase queries out to `AssetRegistry::maxReachMeters` (the
 
 | Fork | Decision | Rationale |
 |------|----------|-----------|
-| Silhouette computation | **Raster of the tessellated mesh triangles** → flood-fill → boundary trace | The exact planar-arrangement path is unsound on nested/disjoint input (overlapping face cycles; rep point lands in a hole and drops the silhouette — confirmed in `extractFaces`). Raster is robust by construction. Sourcing the *mesh triangles* (not fill contours) captures the actual rendered footprint incl. stroke bands, so strokes (a reed's stem) are in the silhouette and stroke-only assets need no AABB fallback |
-| Multi-blob gaps | Select whole clump (PO) | Closed `hitRegion` via raster close; outline still strokes exact per-blob rings |
+| Silhouette computation | **Vector union of the tessellated mesh triangles** (`unionOfFills`, in halves), simplified and closed by vector operations | All game data is vector, never a grid or mask, even a transient one. `unionOfFills` classifies faces by winding, which is sound on nested and disjoint input. Sourcing the *mesh triangles* (not fill contours) captures the actual rendered footprint incl. stroke bands, so strokes (a reed's stem) are in the silhouette and stroke-only assets need no AABB fallback |
+| When it is built | With the template, at load, for prewarmed procedural templates; on demand for the rest | A tree's union costs 47 to 157 ms, too long for a click on the main thread; a box or colonist facing costs a few ms |
+| Multi-blob gaps | Select whole clump (PO) | Closed `hitRegion` via an octagon close; outline still strokes exact per-blob rings |
 | Overlapping entities | Cycle through all under the cursor (PO) | Whole-canopy hit areas make overlap common; single-best would hide occluded entities |
 | Walk pose | Rest-pose v1 (PO) | Thick stroke hides sway; live-pose per-part is Tier-2 (rebuild-from-posed, not deform-union) |
 | Outline z-order | Respect depth-sort (PO) | Draw in entity layer at the selected entity's anchorY; couples to Story A |

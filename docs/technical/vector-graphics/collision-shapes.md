@@ -51,7 +51,7 @@ entity's scale, rotation, and position into a world-space **oriented quad**
    executes each procedural generator once at load (cheap; no tessellation) to
    capture the emitted rect, so nav sees the collider before the first render
    instead of racing it. A def with `<ageClasses>` is skipped there:
-   `prewarmTreeVariants` takes each class's rect from the variant 0 it
+   `prewarmProceduralTemplates` takes each class's rect from the variant 0 it
    generates anyway, and both `loadDefinitions` and `loadDefinitionsFromFolder`
    end in it, so a def loaded from a single file gets its rects too. The rect
    is per age class and must not depend on the variant; `asset-cli validate

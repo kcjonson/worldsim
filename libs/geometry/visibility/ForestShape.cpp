@@ -1,5 +1,6 @@
 #include "ForestShape.h"
 
+#include "../polygon/Polygon.h"
 #include "../predicates/Predicates.h"
 
 #include <algorithm>
@@ -162,32 +163,6 @@ namespace geometry {
 			return candidate;
 		}
 
-		// The convex hull of the first `count` of `points`, counter-clockwise with no collinear
-		// vertices, into `hull`; returns its vertex count. Sorts those points.
-		std::size_t convexHull(VertexList& points, std::size_t count, HullList& hull) {
-			const auto end = points.begin() + static_cast<std::ptrdiff_t>(count);
-			std::sort(points.begin(), end);
-			count = static_cast<std::size_t>(std::unique(points.begin(), end) - points.begin());
-			assert(count >= 3);
-			std::size_t hullCount = 0;
-			for (std::size_t index = 0; index < count; ++index) {
-				while (hullCount >= 2 &&
-					   orientation(hull[hullCount - 2], hull[hullCount - 1], points[index]) != Orientation::CounterClockwise) {
-					--hullCount;
-				}
-				hull[hullCount++] = points[index];
-			}
-			const std::size_t lowerCount = hullCount + 1;
-			for (std::size_t index = count - 1; index-- > 0;) {
-				while (hullCount >= lowerCount &&
-					   orientation(hull[hullCount - 2], hull[hullCount - 1], points[index]) != Orientation::CounterClockwise) {
-					--hullCount;
-				}
-				hull[hullCount++] = points[index];
-			}
-			return hullCount - 1;
-		}
-
 	} // namespace
 
 	ForestHalfPlanes forestHalfPlanes(const SightSideValues& ranges) {
@@ -222,7 +197,11 @@ namespace geometry {
 			vertices[index] = placedVertex(halfPlanes, kept[(index + keptCount - 1) % keptCount], kept[index]);
 		}
 		HullList		  hull;
-		const std::size_t hullCount = convexHull(vertices, keptCount, hull);
+		std::sort(vertices.begin(), vertices.begin() + static_cast<std::ptrdiff_t>(keptCount));
+		const auto distinctCount =
+			static_cast<std::size_t>(std::unique(vertices.begin(), vertices.begin() + static_cast<std::ptrdiff_t>(keptCount)) - vertices.begin());
+		assert(distinctCount >= 3);
+		const std::size_t hullCount = convexHullInto(vertices.data(), distinctCount, hull.data());
 		std::size_t		  first = 0;
 		for (std::size_t index = 0; index < hullCount; ++index) {
 			if (inUpperHalfTurn(hull[index]) && !inUpperHalfTurn(hull[(index + hullCount - 1) % hullCount])) {

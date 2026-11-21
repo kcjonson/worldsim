@@ -4,7 +4,7 @@
 
 namespace geometry {
 
-	HalfEdgeMesh extractFaces(const Arrangement& arrangement) {
+	HalfEdgeMesh extractFaces(const Arrangement& arrangement, FaceDetail detail) {
 		HalfEdgeMesh mesh;
 		mesh.vertices = arrangement.vertices;
 
@@ -80,8 +80,10 @@ namespace geometry {
 				visited[h] = true;
 				mesh.halfEdges[h].face = mesh.faces.size();
 				face.halfEdges.push_back(h);
-				const std::vector<std::int64_t>& ep = arrangement.edges[mesh.halfEdges[h].edge].provenance;
-				prov.insert(prov.end(), ep.begin(), ep.end());
+				if (detail == FaceDetail::Full) {
+					const std::vector<std::int64_t>& ep = arrangement.edges[mesh.halfEdges[h].edge].provenance;
+					prov.insert(prov.end(), ep.begin(), ep.end());
+				}
 				h = mesh.halfEdges[h].next;
 			} while (h != start);
 
@@ -110,7 +112,7 @@ namespace geometry {
 		// this arrangement produces (no zero-length edges, real positive area) at
 		// least one ear centroid lands strictly inside.
 		for (Face& face : mesh.faces) {
-			if (face.outer) {
+			if (face.outer || detail == FaceDetail::CyclesOnly) {
 				continue;
 			}
 			std::vector<Vec2i64> ring;
