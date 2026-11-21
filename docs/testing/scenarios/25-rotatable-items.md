@@ -1,9 +1,9 @@
 # Scenario 25: rotatable items
 
 **Status:** draft  
-**Last verified:** 2026-11-20, steps 1 to 8
+**Last verified:** 2026-11-20, steps 1 to 15 and 17 (11 and 16 need a held Alt, which injected input can't send)
 
-A parts item draws at any turn with the faces the turn shows, sorts against a colonist and another item along its whole length, and doesn't pop at the edge of the screen. Spec: [rotatable-placed-items.md](../../technical/rendering/rotatable-placed-items.md), sections 3, 8, 9, and 10.
+A parts item draws at any turn with the faces the turn shows, sorts against a colonist and another item along its whole length, doesn't pop at the edge of the screen, and is turned while placing it with Q/E or a drag, snapped square to a wall and flush against it. Spec: [rotatable-placed-items.md](../../technical/rendering/rotatable-placed-items.md), sections 3, 8, 9, 10, and 14.
 
 ---
 
@@ -27,4 +27,13 @@ Read Bob's `id`, `x` and `y` from `/api/state?what=colonists` (BID, BX, BY) and 
 6. Move Bob away. Spawn a box at turn 0 with its centre at `<BX2-0.5>,<BY2+1.05>`: it draws over the 45 degree box's front. Kill it and spawn one at `<BX2-0.7>,<BY2-0.95>`: the 45 degree box draws over its front.
 7. With Bob walking among the six boxes of step 1, read `what=uprights` a few times: `itemDrawCalls` rises by at most the number of boxes he sorts among, never more.
 8. Move the camera so a turned box stands half across the left, right, and bottom edges of the screen in turn: the part on screen draws every time; nothing pops in as the camera moves.
-9. `curl.exe "http://127.0.0.1:<PORT>/api/control?action=exit"`.
+9. Kill every box, camera on open ground at zoom 14, then `curl.exe "http://127.0.0.1:<PORT>/api/dev/place?def=TestPartsBox"` and move the pointer over the ground (`/api/input?ev=move,<x>,<y>`): a see-through box follows the pointer, red front and arrow down; `/api/state?what=placement` reads `placing`, `turnDegrees` 0.
+10. Press E twice (`ev=keydown,e`, one request each): the ghost turns clockwise to 30 degrees, front and orange right end showing. Press Q: 15.
+11. Hold Alt (on the keyboard) and press E: 16, a degree. Let go of Alt and press E: 30.
+12. Press on the ground and drag about 100 px to the right (`ev=down,<x>,<y>&ev=move,<x+100>,<y>`): the ghost stays where the press was and turns its red front to the pointer, `turnDegrees` 270. Release (`ev=up,<x+100>,<y>`): the box is placed there showing its red front to the right, and `items` in `what=placement` lists it at 270.
+13. Place again (`place?def=TestPartsBox`): the ghost starts at 270, the turn last used.
+14. Build a wall at 20 degrees: `/api/dev/walls?pts=<WX>,<WY>;<WX+5.64>,<WY+2.05>&host=0&built=1`. Move the ghost to about 1 m south of the wall's middle: `turnDegrees` snaps to 20, 110, 200 or 290 as Q, E or a drag brings it within 7.5 degrees of one, and Q and E stop at those four on their way round.
+15. Turned square to the wall, bring the ghost's long side within 0.3 m of the wall face: it jumps flush against the face and stays there while the pointer moves along the wall.
+16. Hold Alt by the wall and drag: the turn follows the pointer freely with no snap to the wall or the step; turned parallel to the wall again (`turnDegrees` 20 or 200 under Alt) it still slides flush.
+17. Right-click: placement ends, `what=placement` reads `none`.
+18. `curl.exe "http://127.0.0.1:<PORT>/api/control?action=exit"`.

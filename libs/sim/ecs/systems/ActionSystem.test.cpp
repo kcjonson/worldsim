@@ -1547,8 +1547,12 @@ TEST_F(ActionSystemGoalTest, PlacePackagedFromCraftInstallsAtTargetAndUnpackages
 	EntityID		box = world->createEntity();
 	world->addComponent<Position>(box, Position{sourcePos});
 	world->addComponent<Appearance>(box, Appearance{"BasicBox", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
-	ecs::Packaged packaged;
+	world->addComponent<Rotation>(box, Rotation{0.0F});
+	// The turn the player gave it at its target (rotatable-placed-items 14.1) is the turn it is installed at.
+	constexpr float kTargetTurn = 1.25F;
+	ecs::Packaged	packaged;
 	packaged.targetPosition = targetPos;
+	packaged.targetRotation = kTargetTurn;
 	world->addComponent<ecs::Packaged>(box, packaged);
 
 	// BuildGoalSystem throttles to every 30 frames; pump past that so it raises the place goal
@@ -1594,6 +1598,7 @@ TEST_F(ActionSystemGoalTest, PlacePackagedFromCraftInstallsAtTargetAndUnpackages
 	ASSERT_NE(boxPos, nullptr);
 	EXPECT_FLOAT_EQ(boxPos->value.x, targetPos.x) << "the box must end at its install target";
 	EXPECT_FLOAT_EQ(boxPos->value.y, targetPos.y);
+	EXPECT_EQ(world->getComponent<Rotation>(box)->radians, kTargetTurn) << "installed at its target's turn";
 	EXPECT_FALSE(inventory->carryingPackagedEntity.has_value()) << "the carried box leaves the hands on install";
 	EXPECT_FALSE(inventory->leftHand.has_value());
 	EXPECT_FALSE(inventory->rightHand.has_value());

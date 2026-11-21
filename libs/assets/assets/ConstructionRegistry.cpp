@@ -352,6 +352,7 @@ namespace assets {
 		const auto count = [&root](const char* tag, int fallback) { return root.child(tag).text().as_int(fallback); };
 		const auto flag = [&root](const char* tag, bool fallback) { return root.child(tag).text().as_bool(fallback); };
 
+		cfg.itemAlignRangeMeters = number("itemAlignRangeMeters", cfg.itemAlignRangeMeters);
 		cfg.guideRangeMeters = number("guideRangeMeters", cfg.guideRangeMeters);
 		cfg.guideToleranceMeters = number("guideToleranceMeters", cfg.guideToleranceMeters);
 		cfg.guideCrossingRadiusMeters = number("guideCrossingRadiusMeters", cfg.guideCrossingRadiusMeters);

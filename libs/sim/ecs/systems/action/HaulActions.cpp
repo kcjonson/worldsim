@@ -198,6 +198,9 @@ namespace ecs {
 			);
 			return false;
 		}
+		if (auto* rotation = world->getComponent<Rotation>(packagedEntity); rotation != nullptr) {
+			rotation->radians = world->getComponent<Packaged>(packagedEntity)->targetRotation;
+		}
 		if (auto* entityPos = world->getComponent<Position>(packagedEntity); entityPos != nullptr) {
 			entityPos->value = placeEff.targetPosition;
 			LOG_INFO(

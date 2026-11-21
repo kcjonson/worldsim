@@ -4,8 +4,11 @@
 #include "scenes/game/world/PlayerVisibilityFixture.test.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/AssetRegistry.test.h>
+#include <assets/ItemView.h>
 #include <ecs/GoalTaskRegistry.h>
 #include <ecs/components/AgentRadius.h>
+#include <ecs/components/Appearance.h>
 #include <ecs/components/Memory.h>
 #include <ecs/components/Packaged.h>
 #include <ecs/components/Transform.h>
@@ -72,7 +75,7 @@ namespace {
 
 		void hover(glm::vec2 meters) {
 			const glm::vec2 screen = seen.screenOf(meters);
-			placement->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight);
+			placement->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, false);
 		}
 
 		world_sim::testing::SeenWorld seen;
@@ -101,17 +104,17 @@ TEST_F(PlacementVisibilityTest, FootprintHalfOnUnseenGroundIsInvalid) {
 
 TEST_F(PlacementVisibilityTest, ClickRefusesOnUnseenGroundAndPlacesOnSeenGround) {
 	hover(kUnseenPoint);
-	EXPECT_FALSE(placement->handleClick());
+	EXPECT_FALSE(placement->handleRelease());
 	EXPECT_EQ(placement->state(), world_sim::PlacementState::Placing);
 	hover(kSeenPoint);
-	EXPECT_TRUE(placement->handleClick());
+	EXPECT_TRUE(placement->handleRelease());
 }
 
 TEST_F(PlacementVisibilityTest, RevealTurnsTheRuleOff) {
 	seen.visibility.setRevealed(true);
 	hover(kUnseenPoint);
 	EXPECT_TRUE(placement->ghostValid());
-	EXPECT_TRUE(placement->handleClick());
+	EXPECT_TRUE(placement->handleRelease());
 }
 
 namespace {
@@ -144,7 +147,7 @@ namespace {
 
 		void hover(glm::vec2 meters) {
 			const glm::vec2 screen = seen.screenOf(meters);
-			placement->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight);
+			placement->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, false);
 		}
 
 		world_sim::testing::SeenWorld seen;
@@ -162,7 +165,7 @@ TEST_F(PlacementFordTest, TargetInTheCreekIsRefusedAndBesideItIsPlaced) {
 
 	hover(inCreek);
 	EXPECT_FALSE(placement->ghostValid());
-	EXPECT_FALSE(placement->handleClick());
+	EXPECT_FALSE(placement->handleRelease());
 	EXPECT_EQ(placement->state(), world_sim::PlacementState::Placing);
 
 	// The centre is on the bank, the footprint reaches into the creek.
@@ -174,7 +177,7 @@ TEST_F(PlacementFordTest, TargetInTheCreekIsRefusedAndBesideItIsPlaced) {
 	const glm::vec2 onTheBank{10.0F, kCreekY + 2.0F};
 	hover(onTheBank);
 	EXPECT_TRUE(placement->ghostValid());
-	EXPECT_TRUE(placement->handleClick());
+	EXPECT_TRUE(placement->handleRelease());
 }
 
 // Moving an installed item re-packages it and picks its new spot with the same tool: a spot in the
@@ -188,12 +191,12 @@ TEST_F(PlacementFordTest, MovingAnInstalledItemIntoTheCreekIsRefused) {
 
 	hover({10.0F, kCreekY});
 	EXPECT_FALSE(placement->ghostValid());
-	EXPECT_FALSE(placement->handleClick());
+	EXPECT_FALSE(placement->handleRelease());
 	EXPECT_FALSE(seen.world.getComponent<ecs::Packaged>(item)->targetPosition.has_value());
 
 	const glm::vec2 onTheBank{10.0F, kCreekY + 2.0F};
 	hover(onTheBank);
-	ASSERT_TRUE(placement->handleClick());
+	ASSERT_TRUE(placement->handleRelease());
 	const std::optional<glm::vec2> target = seen.world.getComponent<ecs::Packaged>(item)->targetPosition;
 	ASSERT_TRUE(target.has_value());
 	EXPECT_LT(glm::distance(*target, onTheBank), 0.01F);
@@ -204,8 +207,8 @@ TEST_F(PlacementFordTest, DefWithNoOutlineIsTestedAtItsCentre) {
 	assets::AssetDefinition bare;
 	bare.defName = kBareBox;
 	assets::AssetRegistry::Get().registerTestDefinition(bare);
-	EXPECT_FALSE(placement->footprintBuildableNow(kBareBox, {10.0F, kCreekY}));
-	EXPECT_TRUE(placement->footprintBuildableNow(kBareBox, {10.0F, kCreekY + kCreekHalfWidthMeters + 0.1F}));
+	EXPECT_FALSE(placement->footprintBuildableNow(kBareBox, {10.0F, kCreekY}, 0));
+	EXPECT_TRUE(placement->footprintBuildableNow(kBareBox, {10.0F, kCreekY + kCreekHalfWidthMeters + 0.1F}, 0));
 }
 
 // A shipped box declares no outline, so it is tested at its centre: refused in the ford, accepted on the bank.
@@ -221,8 +224,104 @@ TEST_F(PlacementFordTest, ShippedBoxCentredInTheFordIsRefusedAndOnTheBankIsAccep
 	ASSERT_TRUE(registry.loadDefinitions(boxXml.string()));
 	ASSERT_FALSE(registry.getDefinition("BasicBox")->collisionFor(0).blocks()) << "the box declares an outline now; this test is moot";
 
-	EXPECT_FALSE(placement->footprintBuildableNow("BasicBox", {10.0F, kCreekY}));
-	EXPECT_TRUE(placement->footprintBuildableNow("BasicBox", {10.0F, kCreekY + kCreekHalfWidthMeters + 0.5F}));
+	EXPECT_FALSE(placement->footprintBuildableNow("BasicBox", {10.0F, kCreekY}, 0));
+	EXPECT_TRUE(placement->footprintBuildableNow("BasicBox", {10.0F, kCreekY + kCreekHalfWidthMeters + 0.5F}, 0));
+}
+
+namespace {
+
+	// The shipped TestPartsBox, a parts item 1.2 m by 0.6 m (rotatable-placed-items 14).
+	void loadTestPartsBox() {
+		// <root>/apps/world-sim/scenes/game/world/placement/PlacementSystem.test.cpp -> <root>.
+		std::filesystem::path root = std::filesystem::path(__FILE__);
+		for (int up = 0; up < 7; ++up) {
+			root = root.parent_path();
+		}
+		const std::filesystem::path xml = root / "assets" / "world" / "misc" / "TestPartsBox" / "TestPartsBox.xml";
+		ASSERT_TRUE(assets::loadTestViewConfig()) << "a parts def is read under the view config";
+		ASSERT_TRUE(assets::AssetRegistry::Get().loadDefinitions(xml.string()));
+		ASSERT_TRUE(world_sim::PlacementSystem::turns("TestPartsBox"));
+	}
+
+	const ecs::Rotation* placedRotation(ecs::World& world, const char* defName) {
+		for (auto [entity, appearance, rotation] : world.view<ecs::Appearance, ecs::Rotation>()) {
+			if (appearance.defName == defName) {
+				return &rotation;
+			}
+		}
+		return nullptr;
+	}
+
+} // namespace
+
+// Q and E step the turn by the angle step, Alt by a degree; the item is placed at the turn shown, and the next
+// placement of it starts there (rotatable-placed-items 14.1, 14.3).
+TEST_F(PlacementFordTest, TurnKeysTurnTheItemAndItIsPlacedAtThatTurn) {
+	loadTestPartsBox();
+	placement->cancel();
+	placement->selectBuildItem("TestPartsBox");
+	EXPECT_EQ(placement->ghostTurnQuanta(), 0U) << "front down the first time";
+	hover({10.0F, kCreekY + 3.0F});
+	EXPECT_TRUE(placement->handleTurnKey(1, false));
+	EXPECT_EQ(placement->ghostTurnQuanta(), assets::turnQuantaFromDegrees(15.0));
+	EXPECT_TRUE(placement->handleTurnKey(1, false));
+	EXPECT_TRUE(placement->handleTurnKey(-1, true));
+	EXPECT_EQ(placement->ghostTurnQuanta(), assets::turnQuantaFromDegrees(29.0));
+	ASSERT_TRUE(placement->ghostValid());
+	ASSERT_TRUE(placement->handleRelease());
+
+	const ecs::Rotation* rotation = placedRotation(seen.world, "TestPartsBox");
+	ASSERT_NE(rotation, nullptr);
+	EXPECT_EQ(assets::turnQuantaFromRadians(rotation->radians), assets::turnQuantaFromDegrees(29.0));
+
+	placement->selectBuildItem("TestPartsBox");
+	EXPECT_EQ(placement->ghostTurnQuanta(), assets::turnQuantaFromDegrees(29.0)) << "the last turn used for it";
+	placement->cancel();
+	placement->selectBuildItem(kBox);
+	EXPECT_FALSE(placement->handleTurnKey(1, false)) << "a def that isn't parts doesn't turn";
+}
+
+// Press fixes the position; past the click distance the front follows the pointer, snapped to the step; release places.
+TEST_F(PlacementFordTest, PressAndDragTurnsTheFrontToThePointer) {
+	loadTestPartsBox();
+	placement->cancel();
+	placement->selectBuildItem("TestPartsBox");
+	const glm::vec2 pivot{10.0F, kCreekY + 3.0F};
+	const glm::vec2 pressAt = seen.screenOf(pivot);
+	ASSERT_TRUE(placement->handlePress(pressAt.x, pressAt.y, kViewportWidth, kViewportHeight));
+	placement->handleMouseMove(pressAt.x + 2.0F, pressAt.y, kViewportWidth, kViewportHeight, false);
+	EXPECT_EQ(placement->ghostTurnQuanta(), 0U) << "within the click distance";
+
+	const glm::vec2 rightAndALittleDown = seen.screenOf(pivot + glm::vec2{2.0F, 0.2F});
+	placement->handleMouseMove(rightAndALittleDown.x, rightAndALittleDown.y, kViewportWidth, kViewportHeight, false);
+	EXPECT_EQ(placement->ghostTurnQuanta(), assets::turnQuantaFromDegrees(270.0)) << "front to the right, snapped";
+	EXPECT_LT(glm::distance(glm::vec2{placement->ghostPosition().x, placement->ghostPosition().y}, pivot), 0.01F) << "stays at the press";
+	placement->handleMouseMove(rightAndALittleDown.x, rightAndALittleDown.y, kViewportWidth, kViewportHeight, true);
+	EXPECT_NE(placement->ghostTurnQuanta(), assets::turnQuantaFromDegrees(270.0)) << "Alt: the raw direction";
+
+	ASSERT_TRUE(placement->handleRelease());
+	const ecs::Rotation* rotation = placedRotation(seen.world, "TestPartsBox");
+	ASSERT_NE(rotation, nullptr);
+	EXPECT_NEAR(static_cast<double>(assets::turnQuantaFromRadians(rotation->radians)) / 100.0, 275.7, 0.1);
+}
+
+// Relocation starts from the item's own turn, and the turn given goes onto the crate's target.
+TEST_F(PlacementFordTest, MovingATurnedItemStartsAtItsTurnAndCarriesTheNewOne) {
+	loadTestPartsBox();
+	placement->cancel();
+	const ecs::EntityID item = seen.world.createEntity();
+	seen.world.addComponent<ecs::Position>(item, ecs::Position{{10.0F, kCreekY + 6.0F}});
+	seen.world.addComponent<ecs::Rotation>(item, ecs::Rotation{assets::turnRadiansFromQuanta(assets::turnQuantaFromDegrees(45.0))});
+	seen.world.addComponent<ecs::Packaged>(item, ecs::Packaged{std::nullopt, false});
+	placement->beginRelocation(item, "TestPartsBox");
+	EXPECT_EQ(placement->ghostTurnQuanta(), assets::turnQuantaFromDegrees(45.0));
+
+	hover({10.0F, kCreekY + 3.0F});
+	EXPECT_TRUE(placement->handleTurnKey(1, false));
+	ASSERT_TRUE(placement->handleRelease());
+	const ecs::Packaged* packaged = seen.world.getComponent<ecs::Packaged>(item);
+	ASSERT_TRUE(packaged->targetPosition.has_value());
+	EXPECT_EQ(assets::turnQuantaFromRadians(packaged->targetRotation), assets::turnQuantaFromDegrees(60.0));
 }
 
 // A crafted crate is installed off the creek: beside a station on the bank, aimed into the creek, the
@@ -236,7 +335,7 @@ TEST_F(PlacementFordTest, InstallTargetBesideAStationOnTheBankIsOffTheCreek) {
 
 	const std::optional<glm::vec2> target = placement->installTargetNear(kBox, station, intoTheCreek);
 	ASSERT_TRUE(target.has_value());
-	EXPECT_TRUE(placement->footprintBuildableNow(kBox, {target->x, target->y}));
+	EXPECT_TRUE(placement->footprintBuildableNow(kBox, {target->x, target->y}, 0));
 	EXPECT_GE(glm::distance(*target, station), 0.99F);
 }
 
@@ -277,7 +376,7 @@ namespace {
 
 		void hover(glm::vec2 meters) {
 			const glm::vec2 screen = seen.screenOf(meters);
-			placement->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight);
+			placement->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, false);
 		}
 
 		world_sim::testing::SeenWorld				seen;
@@ -296,12 +395,12 @@ TEST_F(PlacementUnbuiltSiteTest, TargetInsideTheSiteIsRefusedAndOutsideItIsPlace
 	ASSERT_TRUE(navigation->isPointBuildableNow(inside)) << "bare ground: only the site rules it out";
 	hover(inside);
 	EXPECT_FALSE(placement->ghostValid());
-	EXPECT_FALSE(placement->handleClick());
+	EXPECT_FALSE(placement->handleRelease());
 	EXPECT_EQ(placement->state(), world_sim::PlacementState::Placing);
 
 	hover({4.0F, 17.0F});
 	EXPECT_TRUE(placement->ghostValid());
-	EXPECT_TRUE(placement->handleClick());
+	EXPECT_TRUE(placement->handleRelease());
 }
 
 // The site is its polygon: the notch of the L is inside its bounding box and takes furniture.
@@ -321,5 +420,5 @@ TEST_F(PlacementUnbuiltSiteTest, InstallTargetSearchKeepsOffTheSite) {
 	ASSERT_TRUE(target.has_value());
 	EXPECT_FALSE(unbuiltSites.front().contains(*target));
 	EXPECT_GE(glm::distance(*target, station), 0.99F);
-	EXPECT_FALSE(placement->footprintBuildableNow(kBox, {4.0F, 8.0F}));
+	EXPECT_FALSE(placement->footprintBuildableNow(kBox, {4.0F, 8.0F}, 0));
 }

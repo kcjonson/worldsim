@@ -370,6 +370,7 @@ namespace {
 			{
 				auto& constructionSystem = ecsWorld->getSystem<ecs::ConstructionSystem>();
 				constructionSystem.setConstructionWorld(&m_drawingSystem->world());
+				m_placementSystem->setConstructionWorld(&m_drawingSystem->world());
 
 				// NavigationSystem reads the same ConstructionWorld (walls/doors) to build
 				// its navmesh input; wired here for the same reason ConstructionSystem is.
@@ -750,7 +751,7 @@ namespace {
 					return true;
 				}
 				// Typing in a dialog's field sends its keys here too, so a modal dialog holds them off the world.
-				return !modalDialogOpen() && handleHotkey(event.key);
+				return !modalDialogOpen() && handleHotkey(event.key, (event.mods & foundation::ModAlt) != 0);
 			}
 			if (event.type == Type::Scroll) {
 				if (!modalDialogOpen()) {
@@ -768,6 +769,11 @@ namespace {
 			// The drawing tool takes presses and releases before placement and selection while it's active.
 			const bool						freeform = (event.mods & foundation::ModAlt) != 0;
 			const world_sim::PointerTarget target = pointerTargetOf(event.position);
+			// A press on the world while placing a turnable item holds it there for a drag that turns it.
+			if (event.type == Type::PointerDown && event.mouseButton == foundation::MouseButton::Left && target == world_sim::PointerTarget::World &&
+				m_placementSystem->handlePress(event.position.x, event.position.y, logicalW, logicalH)) {
+				return true;
+			}
 			switch (world_sim::drawingPointerAction(
 				event.type == Type::PointerDown ? world_sim::PointerInput::Press : world_sim::PointerInput::Release,
 				event.mouseButton,
@@ -796,7 +802,12 @@ namespace {
 			}
 
 			if (m_placementSystem->isActive()) {
-				return m_placementSystem->handleClick(); // a successful placement takes the click
+				// A right release leaves placement; a left one places, a click or the end of a turning drag.
+				if (event.mouseButton == foundation::MouseButton::Right) {
+					m_placementSystem->cancel();
+					return true;
+				}
+				return event.mouseButton == foundation::MouseButton::Left && m_placementSystem->handleRelease();
 			}
 
 			// Entity selection on a release.
@@ -881,7 +892,7 @@ namespace {
 						m_drawingSystem->handleMouseMove(at.x, at.y, logicalW, logicalH, (frame.input.mods & foundation::ModAlt) != 0);
 					}
 				} else if (m_placementSystem->isActive()) {
-					m_placementSystem->handleMouseMove(at.x, at.y, logicalW, logicalH);
+					m_placementSystem->handleMouseMove(at.x, at.y, logicalW, logicalH, (frame.input.mods & foundation::ModAlt) != 0);
 				}
 			}
 
@@ -1180,9 +1191,14 @@ namespace {
 
 	  private:
 		// The world's one-press keys; false for a key that isn't one, or does nothing now.
-		bool handleHotkey(foundation::Key key) {
+		// `freeform` is Alt held, which turns a placed item by a degree instead of to the next stop.
+		bool handleHotkey(foundation::Key key, bool freeform) {
 			auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
 			switch (key) {
+				case foundation::Key::Q: // turns the item being placed counter-clockwise
+					return m_placementSystem->handleTurnKey(-1, freeform);
+				case foundation::Key::E: // and clockwise
+					return m_placementSystem->handleTurnKey(1, freeform);
 				case foundation::Key::Backspace: // the last placed point, while drawing
 					if (!m_drawingSystem->isActive()) {
 						return false;
@@ -1873,7 +1889,8 @@ namespace {
 						// would, await the player's [Place] click.
 						const glm::vec2 spawnAt =
 							spawn.targetPosition.has_value() ? *spawn.targetPosition : packageSetDownSpot({spawn.x, spawn.y});
-						auto			entity = m_placementSystem->spawnEntity(spawn.defName, spawnAt);
+						// installTargetNear tested the target at turn 0, the Packaged default.
+						auto			entity = m_placementSystem->spawnEntity(spawn.defName, spawnAt, 0);
 						ecs::Packaged	packaged;
 						packaged.targetPosition = spawn.targetPosition;
 						ecsWorld->addComponent<ecs::Packaged>(entity, packaged);
@@ -1914,7 +1931,7 @@ namespace {
 			}
 			const uint32_t defNameId = registry.getDefNameId(defName);
 			for (const auto& [pos, qty] : plan.spawns) {
-				ecs::makeLoosePile(*ecsWorld, m_placementSystem->spawnEntity(defName, {pos.x, pos.y}), defNameId, pos, qty);
+				ecs::makeLoosePile(*ecsWorld, m_placementSystem->spawnEntity(defName, {pos.x, pos.y}, 0), defNameId, pos, qty);
 			}
 			LOG_INFO(
 				Game,
