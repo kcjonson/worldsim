@@ -70,9 +70,9 @@ namespace queries {
 	};
 
 	/// How the claims of the step a query runs for are read. A holder of a candidate either takes it from this
-	/// creature (the candidate is passed over) or only holds it (`held` reads 1). Until a claim holder carries
-	/// the need its option serves, an eater is a need task (ecs::TaskType::FulfillNeed) not on the idle rung
-	/// and on a rung no lower than this creature's option, as the decision's food search reads it.
+	/// creature (the candidate is passed over) or only holds it (`held` reads 1). A claim holder carries no need,
+	/// so an eater is a need task (ecs::TaskType::FulfillNeed) not on the idle rung and on a rung no lower than
+	/// this creature's option, as the decision's food search reads it.
 	struct ClaimReading {
 		/// The claim kinds the step names, as bits of assets::ClaimKind; none passes nothing over for claims.
 		uint8_t kinds = 0;
@@ -109,6 +109,10 @@ namespace queries {
 			return gate;
 		}
 
+		/// A temporary would be gone by the time the gate is asked, so a gate cannot be made from one.
+		template <typename Callable>
+		static DefinitionGate of(const Callable&&) = delete;
+
 		[[nodiscard]] bool admits(uint32_t defNameId) const { return ask == nullptr || ask(context, defNameId); }
 
 	  private:
@@ -133,7 +137,8 @@ namespace queries {
 		std::size_t		 alternates = 0;
 		const QueryGoal* goal = nullptr;
 		/// The memory key (or box key) of the target the creature is heading for: asked first, among the rows that
-		/// are not fallback rows, and taken alone when it still survives in the upper prefer class.
+		/// are not fallback rows, and taken alone when it still survives in the upper prefer class, or in the
+		/// lower class when nothing of the upper class survives.
 		std::optional<uint64_t> keepKey;
 		DefinitionGate			gate{};
 	};

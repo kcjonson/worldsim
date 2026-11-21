@@ -979,7 +979,9 @@ The case to design for is a creature that knows 10,000 edible items (`Memory::kM
 4. Keep a chosen target. A creature heading for a target a query chose keeps it while it is valid; a
    query is not run again at every decision. It is run again when the target fails (gone, a route
    verdict, claimed against it) or when the step that uses it starts again. A `meal` amount is sized
-   again at every decision that keeps the task, and its source claim follows.
+   again at every decision that keeps the task, and its source claim follows. When a query is run with
+   the target the creature heads for, that target is asked first and taken alone when it survives in the
+   upper prefer class, or in the lower class when nothing of the upper class survives.
 5. Straight-line distance for scoring. Reach is the component-label compare; a route is asked only for
    the winner, or, for a need, for the nearest few survivors at once through the nearest-of route
    request. The request names only candidates in the winner's prefer class. The claims move to the
@@ -2069,8 +2071,9 @@ Rules from the first build of queries (WOR-1070, Facts and queries):
   on distance, else its connectivity component. A mover row, a passed-over live-counted pile, an exclusion
   on `held` that removed a candidate, or a work gate that turned a definition away records no wait.
 - 2026-11-21: The kept target is asked first among the rows that are not fallback rows, as a remembered thing
-  when such a row takes it, else as a box the colony knows under that key, and is taken alone only when it
-  survives in the upper prefer class.
+  when such a row takes it, else as a box the colony knows under that key, and is taken alone when it
+  survives in the upper prefer class, or when it survives in the lower class and nothing of the upper class
+  does, so a creature heading for held food keeps it over other held food.
 - 2026-11-21: A fact nothing answers gives a `weigh` or `scale` row the same 0 for every candidate; an
   `exclude` or `prefer` row on it makes the query, and a count of it, answer that the fact is not answered,
   naming the row.

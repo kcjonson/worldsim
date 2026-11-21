@@ -249,7 +249,8 @@ namespace ecs {
 		/// @param position World position of the entity
 		/// @param defNameId Asset definition ID from AssetRegistry::getDefNameId()
 		/// @param capabilityMask Bitmask of capabilities from AssetRegistry::getCapabilityMask()
-		/// @return true if this was a NEW discovery, false if already known (just touched LRU)
+		/// @return true if this was a NEW discovery; false if already known (just touched LRU), or refused for no
+		/// capabilities or a position that is not finite or past kMaxRememberedMeters
 		bool rememberWorldEntity(const glm::vec2& position, uint32_t defNameId, uint16_t capabilityMask) {
 			// Skip entities with no capabilities - they're purely decorative (grass, etc.)
 			// and have no gameplay relevance for colonist decision-making

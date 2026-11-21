@@ -322,8 +322,8 @@ shipped entry's full id is the duplicate-id error ([Queries and chains](./querie
 `assets::loadWorkConfig(configRoot, human)` (libs/assets/assets/WorkConfig.h) clears the work-config
 registries (WorkTypeRegistry, PriorityConfig, ConstructionRegistry, MoodConfig,
 MemoryConfig, and ConfigValidator's errors), loads them from `configRoot` in the order above, checks that
-the arbitration file's ladder has the five rungs the decision ranks on (`critical_need`, `committed_work`,
-`ordinary_need`, `opportunistic_work`, `idle`) and has them in that order, loads construction, then mood and memory
+the arbitration file's ladder has `survival` and the five rungs the decision ranks on (`critical_need`,
+`committed_work`, `ordinary_need`, `opportunistic_work`, `idle`), the five in that order, loads construction, then mood and memory
 from the human's one `<Mood>` and one `<Memory>` file (its caller has already refused none, or more than
 one), and cross-validates. It returns every error as a string; an empty list means the config is loaded. It
 needs no GL and no scene.

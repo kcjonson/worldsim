@@ -5853,7 +5853,7 @@ namespace ecs::test {
 		Task&	   eater = claimWorld.addComponent<Task>(claimWorld.createEntity());
 		eater.type = TaskType::FulfillNeed;
 		eater.instanceId = 1;
-		eater.priorityTier = rungNamed("urgent_need");
+		eater.priorityTier = rungNamed("critical_need");
 		ASSERT_TRUE(eater.claims.push(Claim::use(TargetKind::WorldKey, hashWorldEntity(kReachable, kWaterDefId))));
 		claims.rebuild(claimWorld);
 

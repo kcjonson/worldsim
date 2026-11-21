@@ -387,12 +387,21 @@ namespace queries {
 				return result;
 			}
 
-			const bool keptAlone = considerKept();
+			bool keptAlone = considerKept();
+			// A kept target in the lower class waits on the walk: anything of the upper class wins over it.
+			const std::optional<QueryCandidate> keptBelow = !keptAlone && keptConsidered.has_value() && !evaluator.lowerClass.empty()
+																? std::optional(evaluator.lowerClass.front())
+																: std::nullopt;
 			if (!keptAlone) {
 				walkPhase(false);
 				if (evaluator.upperClass.empty() && evaluator.lowerClass.empty()) {
 					walkPhase(true);
 				}
+			}
+			// Nothing of the upper class survived: the kept target, met first, stays the pick among the lower.
+			if (keptBelow.has_value() && evaluator.upperClass.empty()) {
+				evaluator.lowerClass.assign(1, *keptBelow);
+				keptAlone = true;
 			}
 
 			const std::vector<QueryCandidate>& chosen = !evaluator.upperClass.empty()	? evaluator.upperClass
@@ -982,7 +991,8 @@ namespace queries {
 		/// The target the creature is heading for is asked first, among the rows that are not fallback rows: a
 		/// remembered thing when one of those rows takes it, else a box the colony knows under that key. It is
 		/// taken alone when it survives in the upper prefer class, the best a candidate can reach; otherwise the
-		/// walk goes on and passes it by, so it is asked once.
+		/// walk goes on and passes it by, so it is asked once, and a kept target in the lower class is still the
+		/// pick when nothing of the upper class survives (run()).
 		bool considerKept() {
 			if (!request.keepKey.has_value()) {
 				return false;
