@@ -3,11 +3,9 @@
 #include "assets/DetailLevels.h"
 
 #include <core/Vec2i64.h>
-#include <silhouette/Silhouette.h>
 #include <utils/Log.h>
 #include <vector/SVGLoader.h>
 
-#include <glm/common.hpp>
 
 #include <algorithm>
 #include <array>
@@ -674,59 +672,117 @@ namespace assets {
 			return strips;
 		}
 
-		/// The rings of the silhouette of a strip's triangles alone, at a raster cell of `cellMm`.
-		std::vector<geometry::Ring> stripSilhouette(const ItemView& view, const ViewStrip& strip, double cellMm) {
-			const renderer::TessellatedMesh& mesh = view.mesh;
-			std::vector<geometry::Vec2i64>	 vertices;
-			geometry::Vec2i64				 low{std::numeric_limits<int64_t>::max(), std::numeric_limits<int64_t>::max()};
-			geometry::Vec2i64				 high{std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::min()};
-			const auto faint = [&](uint16_t index) { return mesh.hasColors() && mesh.colors[index].a < kSilhouetteMinAlpha; };
-			for (uint32_t i = strip.firstIndex; i + 2 < strip.firstIndex + strip.indexCount; i += 3) {
-				const std::array<uint16_t, 3> corners{mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2]};
-				if (faint(corners[0]) && faint(corners[1]) && faint(corners[2])) {
+		/// A polygon clipped to minX <= x <= maxX (Sutherland-Hodgman against the two lines).
+		std::vector<glm::vec2> clippedToColumn(const std::vector<glm::vec2>& polygon, float minX, float maxX) {
+			std::vector<glm::vec2> clipped = polygon;
+			for (const float sign : {1.0F, -1.0F}) {
+				const float			   bound = sign > 0.0F ? minX : maxX;
+				const std::vector<glm::vec2> input = std::move(clipped);
+				clipped.clear();
+				if (!std::isfinite(bound)) {
+					clipped = input;
 					continue;
 				}
-				for (const uint16_t index : corners) {
-					const geometry::Vec2i64 point = geometry::quantize({mesh.vertices[index].x, mesh.vertices[index].y});
-					low = {std::min(low.x, point.x), std::min(low.y, point.y)};
-					high = {std::max(high.x, point.x), std::max(high.y, point.y)};
-					vertices.push_back(point);
+				for (size_t i = 0; i < input.size(); ++i) {
+					const glm::vec2 from = input[i];
+					const glm::vec2 to = input[(i + 1) % input.size()];
+					const bool		fromInside = sign * (from.x - bound) >= 0.0F;
+					const bool		toInside = sign * (to.x - bound) >= 0.0F;
+					if (fromInside) {
+						clipped.push_back(from);
+					}
+					if (fromInside != toInside) {
+						const float fraction = (bound - from.x) / (to.x - from.x);
+						clipped.push_back(from + ((to - from) * fraction));
+					}
 				}
 			}
-			if (vertices.empty()) {
-				return {};
-			}
-			const double longest = static_cast<double>(std::max(high.x - low.x, high.y - low.y));
-			return geometry::silhouetteOfTriangles(vertices, std::max<int64_t>(1, static_cast<int64_t>(std::ceil(longest / cellMm))), 0);
+			return clipped;
 		}
 
-		double distanceToRings(const std::vector<geometry::Ring>& rings, glm::vec2 pointMm) {
-			double nearest = std::numeric_limits<double>::infinity();
-			for (const geometry::Ring& ring : rings) {
-				for (size_t i = 0; i < ring.size(); ++i) {
-					const glm::dvec2 from{static_cast<double>(ring[i].x), static_cast<double>(ring[i].y)};
-					const glm::dvec2 to{static_cast<double>(ring[(i + 1) % ring.size()].x), static_cast<double>(ring[(i + 1) % ring.size()].y)};
-					const glm::dvec2 along = to - from;
-					const double	 lengthSquared = (along.x * along.x) + (along.y * along.y);
-					const glm::dvec2 point{pointMm.x, pointMm.y};
-					const double	 t = lengthSquared > 0.0 ? std::clamp(((point.x - from.x) * along.x + (point.y - from.y) * along.y) / lengthSquared, 0.0, 1.0) : 0.0;
-					const glm::dvec2 closest = from + (along * t);
-					nearest = std::min(nearest, std::hypot(point.x - closest.x, point.y - closest.y));
+		/// The convex hull of points (monotone chain), in no particular winding.
+		std::vector<glm::vec2> convexHull(std::vector<glm::vec2> points) {
+			std::sort(points.begin(), points.end(), [](glm::vec2 left, glm::vec2 right) { return left.x != right.x ? left.x < right.x : left.y < right.y; });
+			if (points.size() < 3) {
+				return points;
+			}
+			const auto cross = [](glm::vec2 origin, glm::vec2 first, glm::vec2 second) {
+				return ((first.x - origin.x) * (second.y - origin.y)) - ((first.y - origin.y) * (second.x - origin.x));
+			};
+			std::vector<glm::vec2> hull(points.size() * 2);
+			size_t				   count = 0;
+			for (const glm::vec2& point : points) {
+				while (count >= 2 && cross(hull[count - 2], hull[count - 1], point) <= 0.0F) {
+					--count;
+				}
+				hull[count++] = point;
+			}
+			const size_t lower = count + 1;
+			for (size_t i = points.size() - 1; i-- > 0;) {
+				while (count >= lower && cross(hull[count - 2], hull[count - 1], points[i]) <= 0.0F) {
+					--count;
+				}
+				hull[count++] = points[i];
+			}
+			hull.resize(count - 1);
+			return hull;
+		}
+
+		/// How far a point lies outside a convex polygon; 0 inside or on it.
+		float distanceOutside(const std::vector<glm::vec2>& convex, glm::vec2 point) {
+			if (convex.empty()) {
+				return kInfinity;
+			}
+			float nearest = kInfinity;
+			bool  left = false;
+			bool  right = false;
+			for (size_t i = 0; i < convex.size(); ++i) {
+				const glm::vec2 from = convex[i];
+				const glm::vec2 to = convex[(i + 1) % convex.size()];
+				const glm::vec2 along = to - from;
+				const float		side = (along.x * (point.y - from.y)) - (along.y * (point.x - from.x));
+				left = left || side > 0.0F;
+				right = right || side < 0.0F;
+				const float lengthSquared = (along.x * along.x) + (along.y * along.y);
+				const float fraction = lengthSquared > 0.0F ? std::clamp(((point.x - from.x) * along.x + (point.y - from.y) * along.y) / lengthSquared, 0.0F, 1.0F) : 0.0F;
+				const glm::vec2 closest = from + (along * fraction);
+				nearest = std::min(nearest, std::hypot(point.x - closest.x, point.y - closest.y));
+			}
+			return left && right ? nearest : 0.0F;
+		}
+
+		/// Where each strip draws, as vector polygons: each of its pieces is a placement's footprint between the piece's
+		/// x values, lifted as the view lifts it (its sides from its bottom to its top, and its top), whose convex hull
+		/// holds the piece's triangles but for the outline's half width.
+		std::vector<std::vector<std::vector<glm::vec2>>> stripRegions(const PartsAsset& parts, const StripLayout& layout, float turnRadians, const ViewConfig& config) {
+			std::vector<std::vector<std::vector<glm::vec2>>> regions(layout.strips.size());
+			for (size_t strip = 0; strip < layout.strips.size(); ++strip) {
+				for (const StripPiece& piece : layout.strips[strip].pieces) {
+					const PartDefinition&		 part = parts.parts[parts.placements[piece.placement].part];
+					const std::vector<glm::vec2> slice = clippedToColumn(turnedFootprint(parts, piece.placement, turnRadians), piece.minX, piece.maxX);
+					std::vector<glm::vec2>		 lifted;
+					for (const glm::vec2& point : slice) {
+						lifted.emplace_back(point.x, point.y - part.bottomMeters * config.heightRatio);
+						lifted.emplace_back(point.x, point.y - part.topMeters * config.heightRatio);
+					}
+					regions[strip].push_back(convexHull(std::move(lifted)));
 				}
 			}
-			return nearest;
+			return regions;
 		}
 
 		/// The silhouette's rings cut at every strip's band edges into open lines, each given to the strip whose band
-		/// holds it; in a band of several strips, to the one whose own silhouette, rasterised at the whole's cell, it
-		/// lies nearest. Consecutive cuts given to one strip stay one line.
-		std::vector<std::vector<std::vector<glm::vec2>>> stripLinesOf(const ItemView& view, const std::vector<geometry::Ring>& rings) {
-			std::vector<std::vector<std::vector<glm::vec2>>> lines(view.strips.size());
-			if (view.strips.empty() || view.mesh.vertices.empty()) {
+		/// holds it; in a band of several strips (a notch's two sides, or the flat strip), to the strip whose region
+		/// (stripRegions) it lies on, the nearest on a tie. Consecutive cuts given to one strip stay one line.
+		std::vector<std::vector<std::vector<glm::vec2>>> stripLinesOf(
+			const PartsAsset& parts, const StripLayout& layout, float turnRadians, const ViewConfig& config, const std::vector<geometry::Ring>& rings
+		) {
+			std::vector<std::vector<std::vector<glm::vec2>>> lines(layout.strips.size());
+			if (layout.strips.empty()) {
 				return lines;
 			}
 			std::vector<float> cuts;
-			for (const ViewStrip& strip : view.strips) {
+			for (const ItemStrip& strip : layout.strips) {
 				for (const float x : {strip.bandMinX, strip.bandMaxX}) {
 					if (std::isfinite(x)) {
 						cuts.push_back(x);
@@ -735,23 +791,13 @@ namespace assets {
 			}
 			std::sort(cuts.begin(), cuts.end());
 			cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
-
-			glm::vec2 low = view.mesh.vertices.front();
-			glm::vec2 high = low;
-			for (const Foundation::Vec2& vertex : view.mesh.vertices) {
-				low = glm::min(low, glm::vec2{vertex.x, vertex.y});
-				high = glm::max(high, glm::vec2{vertex.x, vertex.y});
-			}
-			constexpr double kMillimetresAMetre = 1000.0;
-			constexpr double kSilhouetteCells = 256.0; // silhouetteOfMesh's resolution
-			const double	 cellMm = std::max(1.0, static_cast<double>(std::max(high.x - low.x, high.y - low.y)) * kMillimetresAMetre / kSilhouetteCells);
-			std::vector<std::optional<std::vector<geometry::Ring>>> ownRings(view.strips.size());
+			const std::vector<std::vector<std::vector<glm::vec2>>> regions = stripRegions(parts, layout, turnRadians, config);
 
 			std::vector<uint32_t> candidates;
 			const auto			  ownerAt = [&](glm::vec2 point) {
 				   candidates.clear();
-				   for (uint32_t strip = 0; strip < view.strips.size(); ++strip) {
-					   if (point.x >= view.strips[strip].bandMinX && point.x <= view.strips[strip].bandMaxX && view.strips[strip].indexCount > 0) {
+				   for (uint32_t strip = 0; strip < layout.strips.size(); ++strip) {
+					   if (point.x >= layout.strips[strip].bandMinX && point.x <= layout.strips[strip].bandMaxX && !layout.strips[strip].pieces.empty()) {
 						   candidates.push_back(strip);
 					   }
 				   }
@@ -759,15 +805,14 @@ namespace assets {
 					   return candidates.front();
 				   }
 				   uint32_t best = candidates.empty() ? 0 : candidates.front();
-				   double	bestDistance = std::numeric_limits<double>::infinity();
+				   float	bestDistance = kInfinity;
 				   for (const uint32_t strip : candidates) {
-					   if (!ownRings[strip].has_value()) {
-						   ownRings[strip] = stripSilhouette(view, view.strips[strip], cellMm);
-					   }
-					   const double distance = distanceToRings(*ownRings[strip], point * static_cast<float>(kMillimetresAMetre));
-					   if (distance < bestDistance) {
-						   bestDistance = distance;
-						   best = strip;
+					   for (const std::vector<glm::vec2>& region : regions[strip]) {
+						   const float distance = distanceOutside(region, point);
+						   if (distance < bestDistance) {
+							   bestDistance = distance;
+							   best = strip;
+						   }
 					   }
 				   }
 				   return best;
@@ -794,8 +839,8 @@ namespace assets {
 					std::vector<glm::vec2> stops{from};
 					std::vector<glm::vec2> inner;
 					for (; cut != cuts.end() && *cut < highX; ++cut) {
-						const float t = (*cut - from.x) / (to.x - from.x);
-						inner.push_back(from + ((to - from) * t));
+						const float fraction = (*cut - from.x) / (to.x - from.x);
+						inner.push_back(from + ((to - from) * fraction));
 					}
 					if (from.x > to.x) {
 						std::reverse(inner.begin(), inner.end());
@@ -999,8 +1044,6 @@ namespace assets {
 			out.maxX = strip.maxX;
 			out.minY = strip.minY;
 			out.maxY = strip.maxY;
-			out.bandMinX = strip.bandMinX;
-			out.bandMaxX = strip.bandMaxX;
 			out.flat = strip.flat;
 		}
 
@@ -1028,7 +1071,9 @@ namespace assets {
 		ItemView view = buildItemMesh(def, turnQuanta, level, config);
 		if (view.error.empty() && level == referenceDetailLevel(def.detailLevels)) {
 			view.silhouette.silhouette = silhouetteOfMesh(view.mesh);
-			view.silhouette.stripLines = stripLinesOf(view, view.silhouette.silhouette.rings);
+			view.silhouette.stripLines = stripLinesOf(
+				*def.parts, stripLayout(def, turnQuanta, config), turnRadiansFromQuanta(turnQuanta), config, view.silhouette.silhouette.rings
+			);
 		}
 		return view;
 	}

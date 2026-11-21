@@ -9,9 +9,17 @@
 #include <ecs/components/AgentRadius.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Inventory.h>
+#include <ecs/components/Packaged.h>
 #include <ecs/components/ResourceStack.h>
+#include <ecs/components/Transform.h>
+
+#include <assets/PartsAsset.test.h>
+#include <core/Vec2i64.h>
+#include <predicates/Predicates.h>
 
 #include <gtest/gtest.h>
+
+#include <algorithm>
 
 #include <unordered_map>
 #include <memory>
@@ -143,4 +151,104 @@ TEST_F(SelectionVisibilityTest, RevealTurnsTheRulesOff) {
 	EXPECT_TRUE(selected<world_sim::ResourcePileSelection>());
 	clickAt({50.0F, 20.0F});
 	EXPECT_TRUE(selected<world_sim::WorldEntitySelection>());
+}
+
+// ─── Placed parts items (rotatable-placed-items 15) ─────────────────────────────────────────────────────────
+
+namespace {
+
+	using namespace assets::parts_fixtures;
+
+	// TestPartsBox-sized boxes on seen ground.
+	class SelectionPartsTest : public PartsTest {
+	  protected:
+		void SetUp() override {
+			PartsTest::SetUp();
+			writeDef("Box", "<parts>" + block("box", -0.6F, -0.3F, 0.6F, 0.3F, 0.0F, 0.8F) + "</parts><placements>" + place("box") + "</placements>");
+			ASSERT_NE(load("Box"), nullptr);
+			placement = std::make_unique<assets::PlacementExecutor>(assets::AssetRegistry::Get());
+			selection = std::make_unique<world_sim::SelectionSystem>(world_sim::SelectionSystem::Args{
+				.world = &seen.world, .camera = &seen.camera, .placementExecutor = placement.get(), .constructionWorld = &construction, .callbacks = {}
+			});
+		}
+
+		ecs::EntityID addBox(glm::vec2 at, double degrees) {
+			const ecs::EntityID box = seen.world.createEntity();
+			seen.world.addComponent<ecs::Position>(box, ecs::Position{at});
+			seen.world.addComponent<ecs::Rotation>(box, ecs::Rotation{assets::turnRadiansFromQuanta(assets::turnQuantaFromDegrees(degrees))});
+			seen.world.addComponent<ecs::Appearance>(box, ecs::Appearance{"Box", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+			return box;
+		}
+
+		// The furniture a click at `meters` selects, or 0.
+		ecs::EntityID clickAt(glm::vec2 meters) {
+			selection->clearSelection();
+			const glm::vec2 screen = seen.screenOf(meters);
+			selection->handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight);
+			const auto* furniture = std::get_if<world_sim::FurnitureSelection>(&selection->current());
+			return furniture != nullptr ? furniture->entityId : 0;
+		}
+
+		// Whether a point lies in a box's hit region at its turn.
+		static bool inHitRegion(glm::vec2 boxAt, double degrees, glm::vec2 point) {
+			assets::AssetRegistry&		  registry = assets::AssetRegistry::Get();
+			const assets::ItemSilhouette* item = registry.itemSilhouette(registry.templateId("Box", {}), assets::turnQuantaFromDegrees(degrees));
+			const geometry::Vec2i64		  local = geometry::quantize(Foundation::Vec2{point.x - boxAt.x, point.y - boxAt.y});
+			return std::any_of(item->silhouette.hitRegion.begin(), item->silhouette.hitRegion.end(), [&](const geometry::Ring& ring) {
+				return geometry::pointInPolygon(local, ring) == geometry::PointInPolygon::Inside;
+			});
+		}
+
+		world_sim::testing::SeenWorld				seen;
+		construction::ConstructionWorld				construction;
+		std::unique_ptr<assets::PlacementExecutor>	placement;
+		std::unique_ptr<world_sim::SelectionSystem> selection;
+	};
+
+} // namespace
+
+// A turned box is clicked on its turned shape, and a click beside it selects nothing.
+TEST_F(SelectionPartsTest, ATurnedItemIsClickedOnItsTurnedShape) {
+	const glm::vec2		at{5.0F, 5.0F};
+	const ecs::EntityID box = addBox(at, 35.0);
+	EXPECT_EQ(clickAt(at), box);
+	EXPECT_EQ(clickAt(at + glm::vec2{1.5F, 0.0F}), 0U);
+	const glm::vec2 squareCorner = at + glm::vec2{0.58F, 0.28F}; // inside the box at turn 0
+	ASSERT_FALSE(inHitRegion(at, 35.0, squareCorner));
+	EXPECT_EQ(clickAt(squareCorner), 0U);
+}
+
+// Where two placed boxes overlap on the screen, a click picks the one drawn in front there, not the nearer centre.
+TEST_F(SelectionPartsTest, OfTwoOverlappingItemsTheOneDrawnInFrontIsPicked) {
+	const glm::vec2		behindAt{5.0F, 5.0F};
+	const glm::vec2		frontAt = behindAt + glm::vec2{0.6F, 0.7F};
+	(void)addBox(behindAt, 35.0);
+	const ecs::EntityID front = addBox(frontAt, 0.0);
+	size_t				overlapping = 0;
+	size_t				nearerTheBack = 0;
+	for (float x = -0.5F; x <= 1.5F; x += 0.05F) {
+		for (float y = -0.8F; y <= 1.2F; y += 0.05F) {
+			const glm::vec2 point = behindAt + glm::vec2{x, y};
+			if (!inHitRegion(behindAt, 35.0, point) || !inHitRegion(frontAt, 0.0, point)) {
+				continue;
+			}
+			++overlapping;
+			const glm::vec2 toBehind = point - behindAt;
+			const glm::vec2 toFront = point - frontAt;
+			nearerTheBack += (toBehind.x * toBehind.x) + (toBehind.y * toBehind.y) < (toFront.x * toFront.x) + (toFront.y * toFront.y) ? 1 : 0;
+			EXPECT_EQ(clickAt(point), front) << "at (" << point.x << ", " << point.y << ")";
+		}
+	}
+	EXPECT_GT(overlapping, 0U);
+	EXPECT_GT(nearerTheBack, 0U) << "some of those clicks are nearer the box behind";
+}
+
+// A packaged item a colonist is carrying is not drawn where it was, so it isn't picked there.
+TEST_F(SelectionPartsTest, ACarriedPackagedItemIsNotPicked) {
+	const glm::vec2		at{5.0F, 5.0F};
+	const ecs::EntityID box = addBox(at, 0.0);
+	seen.world.addComponent<ecs::Packaged>(box, ecs::Packaged{});
+	EXPECT_EQ(clickAt(at), box) << "packaged and on the ground";
+	seen.world.getComponent<ecs::Packaged>(box)->beingCarried = true;
+	EXPECT_EQ(clickAt(at), 0U);
 }

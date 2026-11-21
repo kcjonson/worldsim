@@ -848,6 +848,7 @@ TEST_F(ItemViewTest, TheOutlineIsCutAtTheBandEdgesAndEachSideOfANotchKeepsItsOwn
 		ASSERT_TRUE(view.error.empty()) << view.error;
 		ASSERT_TRUE(view.silhouette.silhouette.valid);
 		ASSERT_EQ(view.silhouette.stripLines.size(), view.strips.size());
+		const StripLayout layout = stripLayout(def, quantaOf(degrees), viewConfig());
 		float ringLength = 0.0F;
 		for (const geometry::Ring& ring : view.silhouette.silhouette.rings) {
 			std::vector<glm::vec2> points;
@@ -863,8 +864,8 @@ TEST_F(ItemViewTest, TheOutlineIsCutAtTheBandEdgesAndEachSideOfANotchKeepsItsOwn
 			for (const std::vector<glm::vec2>& line : view.silhouette.stripLines[strip]) {
 				lineLength += length(line, false);
 				for (const glm::vec2& point : line) {
-					EXPECT_GE(point.x, view.strips[strip].bandMinX - 1.0e-4F) << def.defName << " at " << degrees << ": strip " << strip;
-					EXPECT_LE(point.x, view.strips[strip].bandMaxX + 1.0e-4F) << def.defName << " at " << degrees << ": strip " << strip;
+					EXPECT_GE(point.x, layout.strips[strip].bandMinX - 1.0e-4F) << def.defName << " at " << degrees << ": strip " << strip;
+					EXPECT_LE(point.x, layout.strips[strip].bandMaxX + 1.0e-4F) << def.defName << " at " << degrees << ": strip " << strip;
 				}
 			}
 		}

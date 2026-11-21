@@ -1,7 +1,7 @@
 # Scenario 25: rotatable items
 
 **Status:** draft  
-**Last verified:** 2026-11-20, steps 1 to 8, and 9 to 14 with detail levels and selection
+**Last verified:** 2026-11-21, steps 9 to 22; steps 1 to 8 on 2026-11-20
 
 A parts item draws at any turn with the faces the turn shows, sorts against a colonist and another item along its whole length, doesn't pop at the edge of the screen, draws its detail levels as the camera zooms, and selects by its turned shape. Spec: [rotatable-placed-items.md](../../technical/rendering/rotatable-placed-items.md), sections 3, 6.8, 8, 9, 10, and 15.
 
@@ -27,10 +27,18 @@ Read Bob's `id`, `x` and `y` from `/api/state?what=colonists` (BID, BX, BY) and 
 6. Move Bob away. Spawn a box at turn 0 with its centre at `<BX2-0.5>,<BY2+1.05>`: it draws over the 45 degree box's front. Kill it and spawn one at `<BX2-0.7>,<BY2-0.95>`: the 45 degree box draws over its front.
 7. With Bob walking among the six boxes of step 1, read `what=uprights` a few times: `itemDrawCalls` rises by at most the number of boxes he sorts among, never more.
 8. Move the camera so a turned box stands half across the left, right, and bottom edges of the screen in turn: the part on screen draws every time; nothing pops in as the camera moves.
-9. Centre the camera on the 35 degree box at zoom 30: a small white dot shows in each corner of every side it shows, and `what=uprights` lists the boxes under `viewLevels` at `pxPerMeter` 80.
-10. Zoom to 3: the dots are gone, the letters stay, and `viewLevels` reads 24. Zoom to 1: the letters are gone too, and it reads 8. No box goes missing at any step.
-11. At zoom 14, click the middle of the 35 degree box's top: the selection panel reads TestPartsBox, Placed, and a yellow outline follows the turned box's edges, its top and both sides it shows.
-12. Click about 1.5 m to the right of that box, on bare ground: the selection clears.
-13. Select the 45 degree box of step 3 and teleport Bob in front of its high end as in step 3, then pause: Bob draws over the outline where he stands in front of the box, and the outline of the rest of the box draws over the ground and the box.
-14. `curl.exe -i "http://127.0.0.1:<PORT>/api/dev/spawn?def=TestPartsBox&at=<RX>,<RY>&turn="`: HTTP 400 saying `turn=` is empty.
-15. `curl.exe "http://127.0.0.1:<PORT>/api/control?action=exit"`.
+9. Spawn a box at turn 35 on bare ground, its centre SX,SY, and centre the camera on it at zoom 25: a small white dot shows in each corner of every side it shows.
+10. Read `what=uprights`: `viewLevels` lists the boxes at `pxPerMeter` 80.
+11. Zoom to 3: the dots are gone, the letters stay, and `viewLevels` reads 24.
+12. Zoom to 1: the letters are gone too, `viewLevels` reads 8, and no box is missing.
+13. Centre the camera on SX,SY at zoom 14 and click the middle of the window (half the `window` size from `what=camera`): the selection panel reads TestPartsBox, Placed, and a yellow outline follows the turned box's top and the sides it shows.
+14. Click 160 pixels right of the middle of the window, on bare ground: the selection clears.
+15. Spawn a box at turn 0 at `<SX+0.6>,<SY+0.7>`, south of the 35 degree box and overlapping it on the screen.
+16. Centre the camera on `<SX+0.3>,<SY+0.35>` at zoom 25 and click the middle of the window: the box at turn 0, drawn in front there, is selected, not the 35 degree box behind it.
+17. Select the 45 degree box of step 3 by clicking its top.
+18. Teleport Bob in front of its high end as in step 3 and pause: Bob draws over the outline where he stands in front of the box, and the rest of the outline draws over the ground and the box.
+19. Resume, then stop game time (`curl.exe "http://127.0.0.1:<PORT>/api/dev/time?speed=0"`; `action=pause` would hold the click too).
+20. Read Bob's `x` and `y` from `what=colonists` and centre the camera on them at zoom 14.
+21. Click 60 pixels below the middle of the window, on Bob's legs: Bob is selected and outlined as before.
+22. `curl.exe -i "http://127.0.0.1:<PORT>/api/dev/spawn?def=TestPartsBox&at=<RX>,<RY>&turn="`: HTTP 400 saying `turn=` is empty.
+23. `curl.exe "http://127.0.0.1:<PORT>/api/control?action=exit"`.

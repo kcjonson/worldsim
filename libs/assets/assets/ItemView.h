@@ -127,15 +127,13 @@ namespace assets {
 		float	 maxX = 0.0F;
 		float	 minY = 0.0F;
 		float	 maxY = 0.0F;
-		float	 bandMinX = 0.0F;
-		float	 bandMaxX = 0.0F;
 		bool	 flat = false;
 	};
 
 	/// A view's selection silhouette (section 15): its rings and hit region, in pivot millimetres with the turn in
 	/// them, and the rings cut at the strips' band edges into open lines, each strip's in its own entry, so the outline
 	/// draws at the strips' depths. Within a band of several strips (the two sides of a notch) a line goes to the strip
-	/// whose own silhouette it lies on.
+	/// whose lifted part footprints it lies on.
 	struct ItemSilhouette {
 		AssetSilhouette silhouette;
 		/// By strip, in the layout's order: open lines in metres relative to the pivot.

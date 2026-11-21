@@ -36,6 +36,7 @@ namespace worldview {
 			  assets::AssetRegistry::BuiltTemplate built = assets::AssetRegistry::Get().buildTemplateLevel(key.templateId, key.level);
 			  return std::move(built.mesh);
 		  }),
+		  // Both builds read a def off the lock on the pool; AssetRegistry::generation says why that holds.
 		  viewBuilder([](const ItemViewKey& key) -> std::optional<assets::ItemView> {
 			  const assets::AssetDefinition* def = assets::AssetRegistry::Get().templateRecord(key.templateId).def;
 			  if (def == nullptr) {
@@ -298,7 +299,7 @@ namespace worldview {
 		std::unordered_set<uint32_t> seenLayouts;
 		for (const assets::DepthSortItem& item : items) {
 			const assets::ItemLayout* layout = item.upright->itemLayout;
-			if (layout == nullptr || !seenLayouts.insert(layout->id).second) {
+			if (layout == nullptr || !itemViews.readable(item.upright->layoutGeneration) || !seenLayouts.insert(layout->id).second) {
 				continue;
 			}
 			const TemplateLevels&		   levels = levelsOf(layout->templateId);
@@ -613,6 +614,9 @@ namespace worldview {
 			// A parts item's depth strip: drawn as an index range of its view, placed like any instanced entity
 			// with the strip as its mesh (rotatable-placed-items 9.2).
 			if (upright.itemLayout != nullptr) {
+				if (!itemViews.readable(upright.layoutGeneration)) {
+					continue; // made before a registry clear, which freed its layout
+				}
 				const assets::ItemLayout& layout = *upright.itemLayout;
 				LayoutFrame*			  settled = nullptr;
 				if (itemViews.settle(layout, frameIndex, nextStripMesh, settled)) {
@@ -629,7 +633,7 @@ namespace worldview {
 				// an item's strips together by its position: once an item.
 				if (upright.strip == 0) {
 					ItemViewIndex::noteItem(*settled, upright.position);
-					if (settled->levelUse != UINT32_MAX) {
+					if (settled->levelUse != kNoLevelUse) {
 						++levelStats.viewUses[settled->levelUse].instances;
 					}
 				}
@@ -739,7 +743,7 @@ namespace worldview {
 
 		levelBuilder.endFrame();
 		viewBuilder.endFrame();
-		const auto byDensity = [](const LevelStats::Use& a, const LevelStats::Use& b) { return a.pixelsPerMeter < b.pixelsPerMeter; };
+		const auto byDensity = [](const LevelStats::Use& left, const LevelStats::Use& right) { return left.pixelsPerMeter < right.pixelsPerMeter; };
 		std::sort(levelStats.uses.begin(), levelStats.uses.end(), byDensity);
 		std::sort(levelStats.viewUses.begin(), levelStats.viewUses.end(), byDensity);
 		levelStats.pendingRequests = static_cast<uint32_t>(levelBuilder.pending() + viewBuilder.pending() + uploadQueue.size());

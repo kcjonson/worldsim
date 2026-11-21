@@ -15,6 +15,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <unordered_map>
 #include <utility>
@@ -22,13 +23,16 @@
 
 namespace worldview {
 
+	/// A layout frame whose view draws at no level the renderer counts.
+	inline constexpr uint32_t kNoLevelUse = std::numeric_limits<uint32_t>::max();
+
 	/// A kept layout's frame: the view its strips draw from, the planner mesh id of its first strip, and the
 	/// positions of its items seen so far, to tell whether any two of them meet on the screen.
 	struct LayoutFrame {
 		uint64_t			   frame = 0;
 		uint32_t			   view = kNotAView;
 		uint32_t			   firstMesh = 0;
-		uint32_t			   levelUse = UINT32_MAX; // the renderer's level statistics entry for its view this frame
+		uint32_t			   levelUse = kNoLevelUse; // the renderer's level statistics entry for its view this frame
 		glm::vec2			   boxMin{0.0F, 0.0F}; // the whole layout's box about the pivot
 		glm::vec2			   boxMax{0.0F, 0.0F};
 		bool				   itemsMeet = false;
@@ -59,6 +63,10 @@ namespace worldview {
 		/// Forgets every view slot and layout frame when the registry's generation isn't the one they were made
 		/// under (template ids and layouts started over); true when it did, and the caller drops its views.
 		bool follow(uint64_t generation);
+
+		/// Whether a stream record's layout, asked for under `layoutGeneration`, may be read: only when that is the
+		/// generation followed, since a clear frees the layouts made before it.
+		[[nodiscard]] bool readable(uint64_t layoutGeneration) const { return followed && layoutGeneration == seenGeneration; }
 
 		/// The view slot of (template, turn, level), and whether it is new (in state Absent, wanted and drawn at
 		/// `frame`). A released slot's number is handed out again.

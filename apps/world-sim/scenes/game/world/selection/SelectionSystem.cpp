@@ -32,6 +32,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -149,6 +150,43 @@ namespace {
 		return silhouetteRingsContain(
 			*sil, assets::InstanceTransform(entityPos, 0.0F, appearance.scale), worldPos
 		);
+	}
+
+	// One entity under the click, as a stations or furniture loop weighs it. Two placed parts items both under it are
+	// ranked by which draws in front there: the larger anchor among each one's strips whose box holds the click, as
+	// the depth sort orders them. Anything else is ranked by distance to the click, as before.
+	struct Pick {
+		ecs::EntityID		 entity = 0;
+		float				 distance = 0.0F;
+		std::optional<float> frontAnchor;
+
+		[[nodiscard]] bool beats(const Pick& other) const {
+			if (other.entity == 0) {
+				return true;
+			}
+			if (frontAnchor.has_value() && other.frontAnchor.has_value() && *frontAnchor != *other.frontAnchor) {
+				return *frontAnchor > *other.frontAnchor;
+			}
+			return distance < other.distance;
+		}
+	};
+
+	// The depth a placed parts item draws at a world point: the largest anchor among its strips whose screen box
+	// holds the point (rotatable-placed-items 8).
+	std::optional<float> frontAnchorAt(uint32_t templateId, uint32_t turnQuanta, glm::vec2 position, glm::vec2 worldPos) {
+		const assets::ItemLayout* layout = assets::AssetRegistry::Get().stripLayout(templateId, turnQuanta);
+		if (layout == nullptr) {
+			return std::nullopt;
+		}
+		const glm::vec2		 local = worldPos - position;
+		std::optional<float> front;
+		for (const assets::ItemStrip& strip : layout->layout.strips) {
+			if (local.x >= strip.minX && local.x <= strip.maxX && local.y >= strip.minY && local.y <= strip.maxY) {
+				const float anchor = assets::computeAnchorY(position.y, strip.anchorLocalY, 1.0F);
+				front = front.has_value() ? std::max(*front, anchor) : anchor;
+			}
+		}
+		return front;
 	}
 
 	// The sprites packaged furniture draws (back crate, item, front crate), laid out exactly as
@@ -356,9 +394,16 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 
 	// Priority 1.5: Check ECS stations (entities with WorkQueue). Same centroid pre-cull
 	// then silhouette test as colonists.
-	float		  closestStationDist = kSelectionRadius;
-	ecs::EntityID closestStation = 0;
+	// A placed parts item's Pick: its front anchor at the click when it is one.
+	const auto pickOf = [&](ecs::EntityID entity, const ecs::Appearance& appearance, glm::vec2 position, float distance, bool packaged) {
+		Pick pick{.entity = entity, .distance = distance};
+		if (const uint32_t templateId = dynamicRenderTemplate(ecsWorld, entity, appearance); !packaged && isPartsTemplate(templateId)) {
+			pick.frontAnchor = frontAnchorAt(templateId, turnOf(ecsWorld, entity), position, worldPos);
+		}
+		return pick;
+	};
 
+	Pick station;
 	for (auto [entity, pos, appearance, workQueue] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::WorkQueue>()) {
 		if (!selectableAt(entity, pos.value)) {
 			continue;
@@ -367,17 +412,18 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		float dy = pos.value.y - worldPos.y;
 		float dist = std::sqrt(dx * dx + dy * dy);
 
-		if (dist >= closestStationDist) {
+		if (dist >= kSelectionRadius) {
 			continue;
 		}
 		if (!dynamicUnderClick(ecsWorld, entity, appearance, pos.value, worldPos)) {
 			continue;
 		}
-		closestStationDist = dist;
-		closestStation = entity;
+		if (const Pick pick = pickOf(entity, appearance, pos.value, dist, false); pick.beats(station)) {
+			station = pick;
+		}
 	}
 
-	if (closestStation != 0) {
+	if (const ecs::EntityID closestStation = station.entity; closestStation != 0) {
 		auto* pos = ecsWorld->getComponent<ecs::Position>(closestStation);
 		auto* appearance = ecsWorld->getComponent<ecs::Appearance>(closestStation);
 		if (pos != nullptr && appearance != nullptr) {
@@ -391,13 +437,17 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 	// but no WorkQueue) and any other placed parts item (a table, a test box). Packaged ones
 	// test the crate layers + item; placed ones test their own silhouette. Centroid pre-cull
 	// first, same as the other dynamic types.
-	float		  closestStorageDist = kSelectionRadius;
-	ecs::EntityID closestStorage = 0;
-
+	Pick furniture;
 	for (auto [entity, pos, appearance] : ecsWorld->view<ecs::Position, ecs::Appearance>()) {
 		// Skip crafting stations (WorkQueue), colonists (they have Inventory for carrying items), and piles
 		if (ecsWorld->getComponent<ecs::WorkQueue>(entity) != nullptr || ecsWorld->getComponent<ecs::Colonist>(entity) != nullptr ||
 			ecsWorld->getComponent<ecs::ResourceStack>(entity) != nullptr) {
+			continue;
+		}
+		// A packaged item in a colonist's hands is not drawn here (DynamicEntityRenderSystem skips it), so it isn't
+		// picked here either.
+		const auto* packaging = ecsWorld->getComponent<ecs::Packaged>(entity);
+		if (packaging != nullptr && packaging->beingCarried) {
 			continue;
 		}
 		if (!selectableAt(entity, pos.value)) {
@@ -408,24 +458,25 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		float dy = pos.value.y - worldPos.y;
 		float dist = std::sqrt(dx * dx + dy * dy);
 
-		if (dist >= closestStorageDist) {
+		if (dist >= kSelectionRadius) {
 			continue;
 		}
 		if (ecsWorld->getComponent<ecs::Inventory>(entity) == nullptr && !isPartsTemplate(dynamicRenderTemplate(ecsWorld, entity, appearance))) {
 			continue;
 		}
-		const bool packaged = ecsWorld->getComponent<ecs::Packaged>(entity) != nullptr;
+		const bool packaged = packaging != nullptr;
 		const bool under = packaged
 							 ? packagedUnderClick(appearance, pos.value, worldPos, kSelectionRadius)
 							 : dynamicUnderClick(ecsWorld, entity, appearance, pos.value, worldPos);
 		if (!under) {
 			continue;
 		}
-		closestStorageDist = dist;
-		closestStorage = entity;
+		if (const Pick pick = pickOf(entity, appearance, pos.value, dist, packaged); pick.beats(furniture)) {
+			furniture = pick;
+		}
 	}
 
-	if (closestStorage != 0) {
+	if (const ecs::EntityID closestStorage = furniture.entity; closestStorage != 0) {
 		auto* pos = ecsWorld->getComponent<ecs::Position>(closestStorage);
 		auto* appearance = ecsWorld->getComponent<ecs::Appearance>(closestStorage);
 		if (pos != nullptr && appearance != nullptr) {

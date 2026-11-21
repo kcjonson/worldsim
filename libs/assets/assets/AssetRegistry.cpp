@@ -1904,14 +1904,20 @@ namespace assets {
 	}
 
 	const ItemSilhouette* AssetRegistry::itemSilhouette(uint32_t templateId, uint32_t turnQuanta) {
-		KeptLayout* kept = keptLayout(templateId, turnQuanta);
-		if (kept == nullptr) {
+		if (keptLayout(templateId, turnQuanta) == nullptr) {
 			return nullptr;
 		}
+		// The layout is only ever read by key under the lock: a release on another thread may drop it at any point the
+		// lock is not held.
+		const uint64_t key = layoutKey(templateId, turnQuanta);
 		{
 			std::lock_guard<std::mutex> lock(layoutMutex);
-			if (kept->silhouette != nullptr) {
-				return kept->silhouette.get();
+			const auto					found = layoutIds.find(key);
+			if (found == layoutIds.end()) {
+				return nullptr;
+			}
+			if (layouts[found->second]->silhouette != nullptr) {
+				return layouts[found->second]->silhouette.get();
 			}
 		}
 		// Rasterised off the lock; another thread that got there first keeps its own.
@@ -1920,10 +1926,15 @@ namespace assets {
 			buildItemView(def, turnQuanta, referenceDetailLevel(def.detailLevels), GameViewConfig::Get().config()).silhouette
 		);
 		std::lock_guard<std::mutex> lock(layoutMutex);
-		if (kept->silhouette == nullptr) {
-			kept->silhouette = std::move(silhouette);
+		const auto					found = layoutIds.find(key);
+		if (found == layoutIds.end()) {
+			return nullptr;
 		}
-		return kept->silhouette.get();
+		KeptLayout& current = *layouts[found->second];
+		if (current.silhouette == nullptr) {
+			current.silhouette = std::move(silhouette);
+		}
+		return current.silhouette.get();
 	}
 
 	void AssetRegistry::releaseUnaskedLayouts() {

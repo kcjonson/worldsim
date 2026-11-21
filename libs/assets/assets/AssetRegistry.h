@@ -138,6 +138,13 @@ namespace assets {
 
 		/// Changes at every clear, when template ids start over and kept layouts are dropped: what a renderer
 		/// keeps by template id or layout is stale once this moves.
+		///
+		/// Definitions do not change while a game runs. They are loaded before the game scene starts, and only clear,
+		/// clearDefinitions, a load, and overrideGeneratorParams (asset-cli's, the asset manager's reload, and tests)
+		/// replace or free them; world-sim calls none of these once its scene is up. The off-thread builds
+		/// (LevelBuilder's template levels and item views, buildTemplateLevel) read a def through a pointer taken
+		/// without holding any lock across the build, and rely on this: a clear while one runs would free the def it
+		/// reads. An app that reloads while drawing must first stop or drain those builds.
 		[[nodiscard]] uint64_t generation() const { return cacheGeneration.load(std::memory_order_acquire); }
 
 		/// The seed a template is generated with: 0 for a def with a single variant, else the

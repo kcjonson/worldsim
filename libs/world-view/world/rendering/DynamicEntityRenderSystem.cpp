@@ -160,15 +160,17 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
 }
 
 void DynamicEntityRenderSystem::pushItemStrips(uint32_t templateId, const ecs::Appearance& appearance, glm::vec2 position, uint32_t turnQuanta) {
-    const assets::ItemLayout* layout = assets::AssetRegistry::Get().stripLayout(templateId, turnQuanta);
+    // The generation is read first, so a record is never stamped newer than its layout. Layouts go at the next
+    // update's releaseUnaskedLayouts or at a registry clear; the renderer reads a record's layout only while the
+    // registry's generation is still the record's, so a clear between this update and the render can't leave it
+    // reading a freed layout.
+    auto&                     registry = assets::AssetRegistry::Get();
+    const uint64_t            generation = registry.generation();
+    const assets::ItemLayout* layout = registry.stripLayout(templateId, turnQuanta);
     if (layout == nullptr) {
         return;
     }
-    // Carried by template id and layout: no name on the records. The layout pointer lives from here to this frame's
-    // emitSorted: layouts go only at the next update's releaseUnaskedLayouts or at a registry clear, and a clear runs
-    // on the main thread at the top of a frame (an asset reload, or a dev route, which the dev server runs before the
-    // update), never between this update and the render that reads the records; the renderer follows the registry's
-    // generation before it reads one.
+    // Carried by template id and layout: no name on the records.
     for (uint32_t strip = 0; strip < layout->layout.strips.size(); ++strip) {
         assets::PlacedEntity placed;
         placed.traits = appearance.traits;
@@ -178,6 +180,7 @@ void DynamicEntityRenderSystem::pushItemStrips(uint32_t templateId, const ecs::A
         placed.anchorY = assets::computeAnchorY(position.y, layout->layout.strips[strip].anchorLocalY, 1.0F);
         placed.itemLayout = layout;
         placed.strip = strip;
+        placed.layoutGeneration = generation;
         renderData.push_back(std::move(placed));
     }
 }

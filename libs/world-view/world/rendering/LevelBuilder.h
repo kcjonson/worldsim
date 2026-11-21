@@ -58,8 +58,8 @@ namespace worldview {
 			if (building.contains(key) || finishedKeys.contains(key)) {
 				return;
 			}
-			auto [it, inserted] = queued.try_emplace(key);
-			it->second.wantedFrame = frame;
+			auto [entry, inserted] = queued.try_emplace(key);
+			entry->second.wantedFrame = frame;
 			if (inserted) {
 				queue.push_back(key);
 			}
@@ -126,8 +126,8 @@ namespace worldview {
 						Finished& done = batch[i];
 						try {
 							done.result = build(done.key);
-						} catch (const std::exception& e) {
-							LOG_ERROR(Engine, "A level build threw: %s", e.what());
+						} catch (const std::exception& failure) {
+							LOG_ERROR(Engine, "A level build threw: %s", failure.what());
 						}
 						std::lock_guard<std::mutex> lock(mutex);
 						building.erase(done.key);

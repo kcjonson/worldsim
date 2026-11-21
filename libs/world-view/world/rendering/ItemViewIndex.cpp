@@ -99,7 +99,7 @@ namespace worldview {
 		}
 		settled.frame = frame;
 		settled.view = kNotAView;
-		settled.levelUse = UINT32_MAX;
+		settled.levelUse = kNoLevelUse;
 		settled.firstMesh = nextMesh;
 		nextMesh += static_cast<uint32_t>(layout.layout.strips.size());
 		settled.itemsMeet = false;
