@@ -693,8 +693,10 @@ class WallEndOnOpening : public OpeningValidation {
 	// The stem is refused as WallEndsOnOpening, from both validators.
 	static bool refused(const ConstructionValidator& validator, const ThicknessPreset& stem, float x, float angleDegrees) {
 		const Vec2 start = stemStart(x, angleDegrees);
-		const bool segmentRefused = validator.validateWallSegment(start, {x, 6.0F}, stem, kInvalidFoundation).code == ValidationCode::WallEndsOnOpening;
-		const bool pointRefused = validator.validateWallPoint({start}, {x, 6.0F}, stem, kInvalidFoundation).code == ValidationCode::WallEndsOnOpening;
+		const ValidationCode segmentCode = validator.validateWallSegment(start, {x, 6.0F}, stem, kInvalidFoundation).code;
+		const ValidationCode pointCode = validator.validateWallPoint({start}, {x, 6.0F}, stem, kInvalidFoundation).code;
+		const bool			 segmentRefused = segmentCode == ValidationCode::WallEndsOnOpening;
+		const bool			 pointRefused = pointCode == ValidationCode::WallEndsOnOpening;
 		EXPECT_EQ(segmentRefused, pointRefused) << "the two validators agree at x = " << x;
 		return segmentRefused;
 	}
@@ -710,7 +712,9 @@ TEST_F(WallEndOnOpening, ASquareStemIsRefusedNearTheDoorAndAcceptedPastIt) {
 	for (const float x : {6.0F, 6.8F, 5.2F}) {
 		SCOPED_TRACE(x);
 		EXPECT_TRUE(refused(validator, standardWood(), x, 90.0F));
-		EXPECT_EQ(validator.validateWallSegment({x, 6.0F}, {x, 11.0F}, standardWood(), kInvalidFoundation).code, ValidationCode::WallEndsOnOpening);
+		EXPECT_EQ(
+			validator.validateWallSegment({x, 6.0F}, {x, 11.0F}, standardWood(), kInvalidFoundation).code, ValidationCode::WallEndsOnOpening
+		);
 	}
 	for (const float x : {6.9F, 5.1F, 3.0F}) {
 		SCOPED_TRACE(x);

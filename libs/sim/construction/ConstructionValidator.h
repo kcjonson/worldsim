@@ -257,8 +257,9 @@ namespace construction {
 		// result carries validateOpening's `measuredValue`. Spans touching no opening cost only a scan of
 		// the openings; the copy is made only for the rest. Called by both wall validators with the
 		// span's ends known, so a split's real band trim at the junction is the one the opening tool uses.
-		[[nodiscard]] ValidationResult
-		checkSpanClearOfOpenings(::Foundation::Vec2 a, ::Foundation::Vec2 b, const assets::ThicknessPreset& thickness, FoundationId host) const;
+		[[nodiscard]] ValidationResult checkSpanClearOfOpenings(
+			::Foundation::Vec2 a, ::Foundation::Vec2 b, const assets::ThicknessPreset& thickness, FoundationId host
+		) const;
 
 		// --- Openings -------------------------------------------------------
 

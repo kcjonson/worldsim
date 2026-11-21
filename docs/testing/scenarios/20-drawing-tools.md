@@ -1,7 +1,7 @@
 # Scenario 20: Drawing tools
 
 **Status:** ready  
-**Last verified:** 2026-11-20, steps 36 to 41 (the wall, door and window by hand, from a game started through Quick Start after a game with a step 22 triangle in it, as step 28 does); steps 1 to 35 not re-run for the 2026-11-20 change
+**Last verified:** 2026-11-20, steps 36 to 38 and 42 to 44 by hand in a game from `--scene=game` with reveal on (steps 39 to 41 ran on the earlier change on 2026-11-20 and were not repeated; steps 1 to 35 were not re-run)
 
 Verifies what scenarios 03 and 04 leave out of the drawing tools: the Rectangle tool's quieter edge cases, Freeform with every helper off, each Drawing Setting no other scenario turns on, and the key guide's rows for the opening and Add tools and for the helper legend.
 

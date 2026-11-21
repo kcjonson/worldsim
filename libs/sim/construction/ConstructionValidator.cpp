@@ -835,7 +835,8 @@ namespace construction {
 				continue;
 			}
 			const geometry::Vec2i64 along = end->pos - start->pos;
-			const double lengthMeters = std::sqrt(geometry::dot(along, along).toDouble()) / static_cast<double>(geometry::kMillimetersPerMeter);
+			const double lengthMeters =
+				std::sqrt(geometry::dot(along, along).toDouble()) / static_cast<double>(geometry::kMillimetersPerMeter);
 			const double jointParam = geometry::dot(joint - start->pos, along).toDouble() / geometry::dot(along, along).toDouble();
 			const assets::OpeningTypeDef* type = registry.getOpeningType(opening.type);
 			const double				  halfWidthMeters = type != nullptr ? static_cast<double>(type->widthMeters) / 2.0 : 0.0;
