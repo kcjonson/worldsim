@@ -751,6 +751,17 @@ namespace assets {
 
 		constexpr std::array<const char*, 4> kRectFaceNames = {"back", "right", "front", "left"};
 
+		/// Whether a valid footprint is too thin for rule 9 to see: shrunk inward by half the overlap tolerance it
+		/// would have no area, so nothing could ever overlap it.
+		bool thinnerThanOverlapTolerance(const AuthoredFootprint& footprint) {
+			if (footprint.shape == AuthoredFootprint::Shape::Rect) {
+				return static_cast<double>(footprint.maxX - footprint.minX) < kOverlapToleranceMeters ||
+					   static_cast<double>(footprint.maxY - footprint.minY) < kOverlapToleranceMeters;
+			}
+			const double inradius = static_cast<double>(footprint.radius) * std::cos(std::numbers::pi / static_cast<double>(footprint.sides));
+			return inradius < kOverlapToleranceMeters * 0.5;
+		}
+
 		/// A footprint's polygon in the part's frame, or empty when rule 3 refuses it.
 		Ring2 footprintPolygon(const AuthoredFootprint& footprint) {
 			if (footprint.shapeCount != 1) {
@@ -942,6 +953,17 @@ namespace assets {
 																			   : where + "'s footprint round needs a radius over 0 and a whole number of sides, 3 to 32",
 					where
 				);
+			} else if (!part.footprint.empty() && thinnerThanOverlapTolerance(written.footprint)) {
+				error(
+					"parts",
+					where + formatted(
+								"'s footprint is thinner than the overlap tolerance; a rect needs both sides at least %g m, a round an inradius of at least %g m",
+								kOverlapToleranceMeters,
+								kOverlapToleranceMeters * 0.5
+							),
+					where
+				);
+				part.footprint.clear();
 			}
 
 			if (!written.hasHeight) {

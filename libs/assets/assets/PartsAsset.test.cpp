@@ -364,9 +364,20 @@ TEST_F(PartsAssetTest, Rule3FootprintsHaveSizeAndSides) {
 		"<parts><part name=\"a\"><footprint><round radius=\"0.3\" sides=\"40\"/></footprint><height bottom=\"0\" top=\"1\"/><top color=\"#000000\"/>"
 		"<sides color=\"#000000\"/></part></parts><placements>" + place("a") + "</placements>"
 	);
+	// Thinner than the overlap tolerance, rule 9 could never see them: refused. A millimetre exactly is fine.
+	writeDef("ThinRect", "<parts>" + block("a", 0.2F, 0.5F, 0.8F, 0.5008F, 0, 1) + "</parts><placements>" + place("a") + "</placements>");
+	writeDef("MillimetreRect", "<parts>" + block("a", 0.0F, 0.0F, 0.8F, 0.0011F, 0, 1) + "</parts><placements>" + place("a") + "</placements>");
+	writeDef(
+		"ThinRound",
+		"<parts><part name=\"a\"><footprint><round radius=\"0.0004\" sides=\"6\"/></footprint><height bottom=\"0\" top=\"1\"/><top color=\"#000000\"/>"
+		"<sides color=\"#000000\"/></part></parts><placements>" + place("a") + "</placements>"
+	);
 	load("FlatRect");
 	EXPECT_TRUE(hasIssue("FlatRect", "needs max > min on both axes"));
 	EXPECT_TRUE(hasIssue("ManySides", "whole number of sides, 3 to 32"));
+	EXPECT_TRUE(hasIssue("ThinRect", "thinner than the overlap tolerance"));
+	EXPECT_TRUE(hasIssue("ThinRound", "thinner than the overlap tolerance"));
+	EXPECT_FALSE(hasIssue("MillimetreRect", "thinner than the overlap tolerance"));
 }
 
 TEST_F(PartsAssetTest, Rule3RefusesFewSidesNoRadiusAndAFractionOfASide) {
@@ -627,6 +638,25 @@ TEST_F(PartsAssetTest, Rule9AnOverlapIsOneOverAMillimetreDeepWhateverItsLength) 
 	EXPECT_TRUE(hasIssue("LegIn", "overlap in plan"));
 	EXPECT_FALSE(hasIssue("HalfMillimetre", "overlap in plan"));
 	EXPECT_TRUE(hasIssue("TwoMillimetres", "overlap in plan"));
+}
+
+TEST_F(PartsAssetTest, Rule9APartWhollyInsideAnotherAndARoundAgainstARect) {
+	const auto pair = [&](const std::string& name, const std::string& parts, const std::string& placements) {
+		writeDef(name, "<parts>" + parts + "</parts><placements>" + placements + "</placements>");
+	};
+	const auto drum = [](const std::string& name) {
+		return "<part name=\"" + name + "\"><footprint><round radius=\"0.2\" sides=\"8\"/></footprint><height bottom=\"0\" top=\"0.5\"/>"
+			   "<top color=\"#000000\"/><sides color=\"#000000\"/></part>";
+	};
+	pair("Inside", block("slab", 0.0F, 0.0F, 1.0F, 1.0F, 0.0F, 0.5F) + block("box", 0.4F, 0.4F, 0.5F, 0.5F, 0.0F, 0.5F), place("slab") + place("box"));
+	// An 8-sided round of radius 0.2 has flat ends left and right at its inradius, 0.2 cos(22.5 degrees).
+	const float inradius = 0.2F * std::cos(3.14159265F / 8.0F);
+	pair("DrumIn", drum("drum") + block("slab", 0.0F, -0.5F, 1.0F, 0.5F, 0.0F, 0.5F), place("drum", inradius - 0.01F, 0.0F) + place("slab"));
+	pair("DrumFlush", drum("drum") + block("slab", 0.0F, -0.5F, 1.0F, 0.5F, 0.0F, 0.5F), place("drum", -inradius, 0.0F) + place("slab"));
+	load("Inside");
+	EXPECT_TRUE(hasIssue("Inside", "overlap in plan and in height"));
+	EXPECT_TRUE(hasIssue("DrumIn", "overlap in plan and in height"));
+	EXPECT_FALSE(hasIssue("DrumFlush", "overlap in plan"));
 }
 
 // ─── The art check (rule 6) and area fill rules ─────────────────────────────────────────────────────────
