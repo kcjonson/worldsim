@@ -35,6 +35,10 @@ class OrbitCamera {
     // Sets the zoom target too, so update() doesn't ease back.
     void setDistance(float dist);
 
+    // A press on the globe: stops a drag's inertia where it is and latches the idle spin off, turning
+    // nothing. A drag, once the press becomes one, starts with beginDrag.
+    void hold();
+
     // Input feed methods — call each frame from the scene.
     void beginDrag(float mouseX, float mouseY);
     void drag(float mouseX, float mouseY);

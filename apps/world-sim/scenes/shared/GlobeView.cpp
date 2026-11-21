@@ -1,5 +1,6 @@
 #include "GlobeView.h"
 
+#include <ui/Drag.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 
@@ -99,8 +100,10 @@ bool GlobeView::handleInput(ui::PointerEvent& event, const Foundation::Rect& rec
 			if (!contains(rect, event.screen))
 				break;
 			if (event.button == foundation::MouseButton::Left) {
-				camera.beginDrag(event.screen.x, event.screen.y);
-				dragging = true;
+				camera.hold();
+				pressPoint = event.screen;
+				pressed = true;
+				turned = false;
 				event.consume();
 				return true;
 			}
@@ -113,17 +116,27 @@ bool GlobeView::handleInput(ui::PointerEvent& event, const Foundation::Rect& rec
 			break;
 
 		case ui::PointerEvent::Type::Move:
-			if (dragging) {
-				camera.drag(event.screen.x, event.screen.y);
-				return true;
+			if (!pressed) {
+				break;
 			}
-			break;
+			if (turned) {
+				camera.drag(event.screen.x, event.screen.y);
+			} else {
+				const Foundation::Vec2 travel = event.screen - pressPoint;
+				if (travel.x * travel.x + travel.y * travel.y > ui::kDragThreshold * ui::kDragThreshold) {
+					camera.beginDrag(event.screen.x, event.screen.y);
+					turned = true;
+				}
+			}
+			return true;
 
 		case ui::PointerEvent::Type::Up:
 		case ui::PointerEvent::Type::Cancel:
-			if (dragging && (event.button == foundation::MouseButton::Left || event.type == ui::PointerEvent::Type::Cancel)) {
-				camera.endDrag();
-				dragging = false;
+			if (pressed && (event.button == foundation::MouseButton::Left || event.type == ui::PointerEvent::Type::Cancel)) {
+				if (turned) {
+					camera.endDrag();
+				}
+				pressed = false;
 				event.consume();
 				return true;
 			}

@@ -135,7 +135,6 @@ namespace {
 			owner = &app;
 			LOG_INFO(Game, "WorldCreatorScene - Entering");
 			theme::apply(ui());
-			provisions = assets::biomeProvisionsFromDefinitions(assets::AssetRegistry::Get());
 
 			build();
 
@@ -203,7 +202,7 @@ namespace {
 				}
 			}
 
-			enable(generateButton.get(), panel.seedIsValid());
+			enable(generateButton.get(), panel.seedIsValid() && assetLibraryLoaded());
 			enable(acceptButton.get(), selectedLanding.has_value()); // off while a pick resolves
 
 			const bool ready = model.getState() == world_sim::WorldCreatorState::Reviewing && globe.isReady();
@@ -475,12 +474,7 @@ namespace {
 				.onClick = [this](ui::PointerEvent& event) { stageClick(event); },
 				.onPointerDown = [this](ui::PointerEvent& event) { stagePress(event); },
 				.onPointerUp = [this](ui::PointerEvent& event) { globe.handleInput(event, stageRect(), true); },
-				.onPointerMove =
-					[this](ui::PointerEvent& event) {
-						if (globe.isDragging()) {
-							globe.handleInput(event, stageRect(), true);
-						}
-					},
+				.onPointerMove = [this](ui::PointerEvent& event) { globe.handleInput(event, stageRect(), true); },
 			});
 			if (ui::Component* shownStage = stage.get()) {
 				shownStage->setOnPointer(ui::PointerEvent::Type::Wheel, [this](ui::PointerEvent& event) {
@@ -654,6 +648,13 @@ namespace {
 			});
 		}
 
+		// A dev switch from the splash can reach this scene while the library still loads on its worker, and the
+		// survey's provisions are read from it, so a planet is generated only once it has loaded.
+		static bool assetLibraryLoaded() {
+			const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
+			return !registry.loadProgress().started.load() || registry.isLoadComplete();
+		}
+
 		bool reviewing() const { return model.getState() == world_sim::WorldCreatorState::Reviewing && globe.isReady(); }
 
 		int vizIndex() const {
@@ -664,29 +665,44 @@ namespace {
 			return -1;
 		}
 
-		// A left press begins an orbit drag, the stage holding the pointer until the release; it picks nothing.
+		// A press on the globe holds it, the stage holding the pointer until the release; it picks nothing. A press
+		// that bubbled up from an interactive child (the viz dock's segments) is that child's.
 		void stagePress(ui::PointerEvent& event) {
-			if (!reviewing()) {
+			if (!reviewing() || !pressedOnStage(event)) {
 				return;
 			}
-			if (globe.handleInput(event, stageRect(), true) && globe.isDragging()) {
+			if (globe.handleInput(event, stageRect(), true) && globe.isPressed()) {
 				if (ui::Component* shown = stage.get()) {
 					shown->capturePointer();
 				}
 			}
 		}
 
-		// The ui's click: a left press released within ui::kDragThreshold of where it went down, so a drag that
-		// turned the globe picks nothing. Selects the shown marker under the release, else the tile.
+		// The target of the press, or every component between it and the stage, answers no pointer of its own.
+		bool pressedOnStage(const ui::PointerEvent& event) const {
+			const ui::Component* shownStage = stage.get();
+			for (const ui::Component* component = event.target; component != nullptr && component != shownStage;
+				 component = component->parent().get()) {
+				if (component->handlesPointer()) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		// The ui's click: a left press released within ui::kDragThreshold of where it went down, inside the stage,
+		// with the globe unturned (GlobeView turns it only past the same threshold). Selects the shown marker under
+		// the press, else the tile there.
 		void stageClick(ui::PointerEvent& event) {
-			if (!reviewing()) {
+			const Foundation::Rect rect = stageRect();
+			if (!reviewing() || globe.pressTurnedGlobe() || !rect.contains(event.screen) || !pressedOnStage(event)) {
 				return;
 			}
-			const Foundation::Rect rect = stageRect();
-			if (const std::optional<std::size_t> marker = markerAt(event.screen, rect)) {
+			const Foundation::Vec2 pressPoint = globe.lastPressPoint();
+			if (const std::optional<std::size_t> marker = markerAt(pressPoint, rect)) {
 				selectSuggestion(*marker);
 				setPickHint(false);
-			} else if (auto picked = globe.pick(event.screen, rect)) {
+			} else if (auto picked = globe.pick(pressPoint, rect)) {
 				trySelectSite(*picked);
 			}
 		}
@@ -815,9 +831,10 @@ namespace {
 		}
 
 		void startGeneration() {
-			if (!panel.seedIsValid()) {
+			if (!panel.seedIsValid() || !assetLibraryLoaded()) {
 				return;
 			}
+			provisions = assets::biomeProvisionsFromDefinitions(assets::AssetRegistry::Get());
 
 			// Blank seed means "surprise me": pick a fresh seed each run so regenerating
 			// doesn't silently reproduce the identical world from the preset default.
@@ -944,6 +961,8 @@ namespace {
 				LOG_INFO(Game, "WorldCreatorScene: %zu suggested landing sites", suggestedSites.size());
 				if (!pickMade && !suggestedSites.empty()) {
 					selectSuggestion(0);
+				} else {
+					matchSuggestion();
 				}
 				refreshFooter();
 			}
@@ -966,14 +985,7 @@ namespace {
 
 		void showLanding(worldgen::LandingSite landing) {
 			selectedLanding = std::move(landing);
-			selectedSuggestion.reset();
-			for (std::size_t index = 0; index < suggestedSites.size(); ++index) {
-				if (suggestedSites[index].origin.latDeg == selectedLanding->origin.latDeg &&
-					suggestedSites[index].origin.lonDeg == selectedLanding->origin.lonDeg) {
-					selectedSuggestion = index;
-					break;
-				}
-			}
+			matchSuggestion();
 			refreshDetails();
 			refreshFooter();
 			LOG_INFO(
@@ -984,6 +996,21 @@ namespace {
 				selectedLanding->tile,
 				static_cast<int>(selectedLanding->feature)
 			);
+		}
+
+		// The suggested site whose origin is the shown landing's, if any.
+		void matchSuggestion() {
+			selectedSuggestion.reset();
+			if (!selectedLanding) {
+				return;
+			}
+			for (std::size_t index = 0; index < suggestedSites.size(); ++index) {
+				if (suggestedSites[index].origin.latDeg == selectedLanding->origin.latDeg &&
+					suggestedSites[index].origin.lonDeg == selectedLanding->origin.lonDeg) {
+					selectedSuggestion = index;
+					return;
+				}
+			}
 		}
 
 		// A land-tile click moves the crosshair at once; its landing resolves on the survey's worker.

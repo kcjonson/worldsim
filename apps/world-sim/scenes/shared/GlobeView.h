@@ -49,10 +49,17 @@ class GlobeView {
 	// whole disc fits inside the render rect with a margin.
 	void setViewDistance(float dist) { camera.setDistance(dist); }
 
-	// True while an orbit drag is in progress. Scenes should route input to
-	// the globe FIRST while dragging so widget hover states don't react to
-	// drag mouse-moves.
-	bool isDragging() const { return dragging; }
+	// True from a left press inside the rect until its release: the scene holds the pointer for the globe.
+	bool isPressed() const { return pressed; }
+
+	// Where the current or last left press went down, in the space of handleInput's events. A click picks
+	// here: what was under the pointer when it went down, on a globe that has not turned since.
+	Foundation::Vec2 lastPressPoint() const { return pressPoint; }
+
+	// True when the current or last left press travelled past ui::kDragThreshold and turned the globe. The ui
+	// still calls a press a click when its release is back within the threshold, so a click after one picks
+	// nothing.
+	bool pressTurnedGlobe() const { return turned; }
 
 	void update(float dt) { camera.update(dt); }
 
@@ -71,8 +78,11 @@ class GlobeView {
 	void render(const Foundation::Rect& rect, const Renderer::Viewport& window, float alpha = 1.0F);
 
 	// Orbit drag / wheel zoom within rect, from a ui pointer event at its screen
-	// position. Right-click cycles color mode when cycleOnRightClick. Returns
-	// true when the event was consumed.
+	// position. A left press holds the globe still; it turns only once the pointer
+	// has travelled past ui::kDragThreshold, the travel at which the ui stops
+	// calling the press a click, and from that point, so it starts without a jump.
+	// Right-click cycles color mode when cycleOnRightClick. Returns true when the
+	// event was consumed.
 	bool handleInput(ui::PointerEvent& event, const Foundation::Rect& rect, bool cycleOnRightClick);
 
 	// Ray-pick the lat/lon under a position inside rect, both in one space.
@@ -97,7 +107,9 @@ class GlobeView {
 	std::shared_ptr<const worldgen::GeneratedWorld> currentWorld;
 	const worldgen::SphereGrid* builtGrid{nullptr};
 	planetview::ColorMode       mode{planetview::ColorMode::Terrain};
-	bool dragging{false};
+	Foundation::Vec2            pressPoint{};
+	bool                        pressed{false};
+	bool                        turned{false}; // the press passed the threshold: the camera drags
 
 	void chooseMinDistance(uint32_t n);
 
