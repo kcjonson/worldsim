@@ -508,9 +508,10 @@ level with the segment, never across its line or past its end, and not in the ro
 `SharedWork::wallStandPoint`). With none, the option is NoSource, and when no allowed side can be stood
 on at all by a builder of the default radius, the selected wall's panel, which asks the mesh itself,
 reads "No ground to build from" (`ecs::noGroundToBuildFrom`).
-With no mesh yet the stand point itself is the target. An opening's goal, and a wall's with no
-construction world wired, has the nearest walkable point to its centre as its one target. Deconstruct
-takes no claim either.
+With no mesh yet the stand point itself is the target. A wall's goal with no construction world wired
+has the nearest walkable point to its centre as its one target. An opening's Build, and a Deconstruct
+of a built wall or a window, is worked from a stand point beside the built wall the target lies in, and a
+built door's Deconstruct from its doorway (below). Deconstruct takes no claim either.
 
 A wall whose work reaches its total completes only on a tick in which time passes and nothing holds it
 (`ActionSystem::clearWallToComplete`; what it would close is worked out once per topology change,
@@ -540,6 +541,17 @@ and `startBuildAction`, the same path a blueprint removed mid-build takes). From
 no longer offered as build work, though its Build goal stays Available until `ConstructionSystem`'s next
 pass removes it (`SharedWork::buildSites`), so no colonist selects it again and no builder spot on it is
 taken. A builder carries nothing for a Build, so nothing is stowed or dropped.
+
+An opening's place, and a built wall's own, is on the wall's centreline. In a built wall that is inside
+the band, where no route ends: its delivery, its Build, and a Deconstruct of it or of the wall are routed
+to a stand point beside the wall (`NavigationSystem::standPointsBeside`): one on each side, straight out from
+the target to where the colonist's disc clears every built band, both asked of one route each time he
+asks, so the answer is the side he can get to as he now believes, and a wall he learns on the way sends
+him round to the other. The target stays the opening or wall (`Task::obstructedTarget`); he is judged
+there standing at the stand point. With neither side clear, the route fails with no stand point. A built
+door's centre is walkable, so a door ordered demolished is worked from the doorway. An opening on a wall
+still a blueprint is not inside anything solid, so its delivery goes to its own place; once the wall is
+built, the next route asked for it finds the band and its two sides.
 
 ### Need tasks
 
