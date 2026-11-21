@@ -103,36 +103,44 @@ discrete ordered levels. None uses a single additive float.
 ### 1. Priority key is (tier: int, score: float)
 
 Compare tier first (lower number = higher priority). Score is secondary: it orders options
-within the same tier only and can never lift a lower-tier option above a higher-tier one.
+within the same tier only and can never lift a lower-tier option above a higher-tier one. An
+option's tier is the position of its rung in the ladder of
+[Queries and chains](./queries-and-chains.md#rungs), declared in
+`assets/config/arbitration/priority-tuning.xml`; code and data name a rung, never a number.
 
 ### 2. Tier ladder
 
-| Tier | Name | Trigger | Status |
-|------|------|---------|--------|
-| 1 | Survival / danger | Active threat, flee | RESERVED — not this epic |
-| 2 | Critical needs | Any need past its own critical threshold (the human's `needs.xml`) | Implemented |
-| 3 | Forced player orders | Player queues a direct command | RESERVED — separate epic |
-| 4 | Active work orders | A queued craft/build and its provisioning chain | Implemented — STICKY |
-| 5 | Actionable needs | A need past the comfort threshold | Implemented |
-| 6 | Opportunistic work | Haul loose items, stock storage, undirected harvest | Implemented |
-| 7 | Idle | Gather food for the larder, wander | Implemented |
+The rungs the decision ranks options on, in ladder order; the ladder's other rungs are for later
+behavior and nothing ranks on them:
 
-"Lower number = higher priority" throughout; tier 1 always wins.
+| Rung | Trigger | Status |
+|------|---------|--------|
+| `survival` | Active threat, flee | Reserved, not this epic |
+| `critical_need` | Any need past its own critical threshold (the human's `needs.xml`) | Implemented |
+| `player_order` | Player queues a direct command | Reserved, separate epic |
+| `committed_work` | A queued craft/build and its provisioning chain | Implemented, sticky |
+| `ordinary_need` | A need past the comfort threshold | Implemented |
+| `opportunistic_work` | Haul loose items, stock storage, undirected harvest | Implemented |
+| `idle` | Gather food for the larder, wander | Implemented |
+
+A higher rung always wins; `survival`, at the top, always wins. The load fails, naming the rung,
+when the ladder lacks `survival` or any rung the decision ranks on.
 
 ### 3. Needs vs. work ordering (LOCKED)
 
-Tier 4 (active work orders) sits **above** tier 5 (actionable needs): a colonist finishes a
-committed/queued work order before addressing a non-critical need. Only critical needs (tier 2)
-preempt active work. When idle of assigned work, a hungry colonist eats (tier 5) before
-opportunistic work (tier 6) or wandering (tier 7).
+`committed_work` (active work orders) sits **above** `ordinary_need` (actionable needs): a colonist
+finishes a committed/queued work order before addressing a non-critical need. Only critical needs
+(`critical_need`) preempt active work. When idle of assigned work, a hungry colonist eats
+(`ordinary_need`) before opportunistic work (`opportunistic_work`) or wandering (`idle`).
 
 Design basis: [Multi-colonist Crafting](../design/multi-colonist-crafting.md) §2b —
 "Finishing is very high priority. Completing an in-progress craft outranks starting new work
 by a wide margin, so if the assigned colonist leaves to sleep or eat, they come back and finish
 it before taking on anything new. The station stays reserved for that colonist across the
-interruption." Tier-4 stickiness is the mechanism that delivers the priority half of this. A tier-5
-actionable need (eat, sleep) never preempts tier 4; only a need that goes critical (tier 2, below
-~10%) does, and the colonist then returns to their active work order if it is still the best option.
+interruption." `committed_work` stickiness is the mechanism that delivers the priority half of this.
+An `ordinary_need` (eat, sleep) never preempts `committed_work`; only a need that goes critical
+(`critical_need`, below ~10%) does, and the colonist then returns to their active work order if it
+is still the best option.
 The station reservation half is not built: a crafter holds its station only through the Slot claim
 its Craft task takes at selection, which goes with the task when it leaves for the need, so another
 colonist may take the station meanwhile. The crafter's hold that would keep it is specified in
@@ -141,13 +149,15 @@ colonist may take the station meanwhile. The crafter's hold that would keep it i
 Planned change (owner's ruling, 2026-11-13): ordinary needs split in two. A need past a new urgent
 threshold ("very hungry") interrupts active work; a need only past its seek threshold ("slightly
 hungry") still waits for it, as locked above. [Interruptable Crafts](./interruptable-crafts.md#the-ladder)
-has the nine-tier ladder that results. Until it is built, the ladder in this document is what runs.
+has the ladder that results. Until it is built, the decision ranks only on the rungs in the table
+above.
 
 This resolves the apparent tension with `ai-behavior.md`'s "Actionable Needs above Gather Food"
-ordering: that document's tier-6 "Gather Food / work" slot is what this spec calls
-**opportunistic work** (tier 6), which the new ladder correctly keeps below actionable needs.
-Work that is committed (active order) gets its own tier 4 above needs; the `ai-behavior.md`
-design never had a committed-work tier, so this is an additive split, not a contradiction.
+ordering: that document's "Gather Food / work" slot is what this spec calls
+**opportunistic work** (`opportunistic_work`), which the ladder keeps below actionable needs.
+Work that is committed (active order) gets its own rung, `committed_work`, above needs; the
+`ai-behavior.md` design never had a committed-work tier, so this is an additive split, not a
+contradiction.
 
 ### 4. Within-tier score
 
@@ -156,8 +166,8 @@ known "chops a tree 70 m away over an adjacent one" issue); skill level; task ag
 stickiness / hysteresis bias for the currently in-progress option. Exact weights are an
 open question (see below).
 
-Score factors apply only within one tier. A tier-6 option with a large skill bonus cannot
-surpass any tier-5 option.
+Score factors apply only within one tier. An `opportunistic_work` option with a large skill bonus
+cannot surpass any `ordinary_need` option.
 
 ### 5. Floor constants deleted; chain becomes a tier lock
 
@@ -166,8 +176,8 @@ distance penalties from pushing committed work below Wander; tiers make that unn
 
 The `chainBonus` (+2000 score inflation, from
 [Task Chains](../design/game-systems/colonists/task-chains.md)) becomes a **tier
-classification**: a provisioning haul or harvest that is mid-chain is classified at tier 4
-(active work order), not tier 6 (opportunistic work). The score term disappears.
+classification**: a provisioning haul or harvest that is mid-chain is classified on
+`committed_work` (active work order), not `opportunistic_work`. The score term disappears.
 
 ### 6. Stickiness / hysteresis
 
@@ -184,7 +194,9 @@ failing, re-decides on the interval, not every frame. This section changes only 
 
 A task type's tier is a property of its definition or config, not an if-chain in C++. New
 task types opt in to the right tier at definition time. Designers can retune tiers without
-code changes.
+code changes. The ladder's order is config; which rung each of the existing task types takes is
+`classifyTier`'s, by rung name, until each type's path moves to work entries that name their rung
+([Behavior data migration](./behavior-data-migration.md)).
 
 ### 8. Pull model retained
 
@@ -205,21 +217,21 @@ Comparison: `(t1, s1) > (t2, s2)` iff `t1 < t2`, or `t1 == t2 && s1 > s2`.
 
 ### Tier classifications (current task types)
 
-| Task type | Old base score | New tier | Notes |
+| Task type | Old base score | Rung | Notes |
 |-----------|---------------|----------|-------|
-| FulfillNeed (critical, needValue < 10%) | 300+ | 2 | Unchanged behaviour |
-| FulfillNeed (actionable, needValue < threshold) | 100–150 | 5 | Unchanged behaviour |
-| Craft (queued work order) | 40 | 4 | |
-| Build / Deconstruct (queued work order) | 41 | 4 | |
-| Haul (servesActiveWorkOrder) | 37 (floored at 20) | 4 | chain -> tier classification |
-| Harvest (servesActiveWorkOrder) | 36 (floored at 20) | 4 | chain -> tier classification |
-| Haul (servesStorageStocking) | 36 (floored at 15) | 6 | |
-| Harvest (servesStorageStocking) | 35 (floored at 15) | 6 | |
-| Haul (opportunistic) | 37 | 6 | |
-| Harvest (opportunistic) | 36 | 6 | |
-| PlacePackaged | 38 | 4 or 6 | see open questions |
-| FulfillNeed (gather food sentinel) | 12 (flat) | 7 | |
-| Wander | 10 (flat) | 7 | |
+| FulfillNeed (critical, needValue < 10%) | 300+ | `critical_need` | Unchanged behaviour |
+| FulfillNeed (actionable, needValue < threshold) | 100-150 | `ordinary_need` | Unchanged behaviour |
+| Craft (queued work order) | 40 | `committed_work` | |
+| Build / Deconstruct (queued work order) | 41 | `committed_work` | |
+| Haul (servesActiveWorkOrder) | 37 (floored at 20) | `committed_work` | chain -> tier classification |
+| Harvest (servesActiveWorkOrder) | 36 (floored at 20) | `committed_work` | chain -> tier classification |
+| Haul (servesStorageStocking) | 36 (floored at 15) | `opportunistic_work` | |
+| Harvest (servesStorageStocking) | 35 (floored at 15) | `opportunistic_work` | |
+| Haul (opportunistic) | 37 | `opportunistic_work` | |
+| Harvest (opportunistic) | 36 | `opportunistic_work` | |
+| PlacePackaged | 38 | `committed_work` when serving a work order or carried, else `opportunistic_work` | |
+| FulfillNeed (gather food sentinel) | 12 (flat) | `idle` | |
+| Wander | 10 (flat) | `idle` | |
 
 ### Within-tier score composition
 

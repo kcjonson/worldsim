@@ -34,13 +34,13 @@ Read from the code on `main` at 0b12648a.
   (`recordChainClaims`). The claim dies with the task. Nothing else records who is crafting:
   `CraftingJob` is `{recipeDefName, quantity, completed}`.
 - **The switch gate.** While an action runs, a non-interruptable one blocks every switch, critical
-  needs included; an interruptable one yields to a same or higher tier. Craft, Build, Deconstruct,
+  needs included; an interruptable one yields to a same or higher rung. Craft, Build, Deconstruct,
   Harvest, Pickup, Withdraw, Deposit, PickupPackaged, PlacePackaged, Eat, Drink, and Toilet are
   non-interruptable. Sleep is the only interruptable action.
 - **The AI acts on two of a need's three levels.** Below its seek threshold (hunger and thirst 50,
-  energy, bladder and digestion 30) a need is an option at tier 5. Below its critical threshold it
-  is tier 2; the tier and the decide-at-once trigger (`criticalNeedMask`, `shouldReEvaluate`) both
-  read the need's own `criticalThreshold`. The urgent threshold is read only by `Need::level()`.
+  energy, bladder and digestion 30) a need is an option on the `ordinary_need` rung. Below its
+  critical threshold it is on `critical_need`; the rung and the decide-at-once trigger
+  (`criticalNeedMask`, `shouldReEvaluate`) both read the need's own `criticalThreshold`. The urgent threshold is read only by `Need::level()`.
   The thresholds are data in `assets/world/creatures/Human/needs.xml`; the decay
   rates are literals in `Needs.cpp`.
 - **Build progress is already on the thing built.** `StructureBlueprint::workDone` and `workTotal`;
