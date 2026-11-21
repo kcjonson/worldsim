@@ -2,12 +2,13 @@
 
 // AI Decision System for Colonist Autonomous Behavior
 // Evaluates options and selects a task via a lexicographic (tier, score) key (tier compared
-// first, inviolable; score orders within a tier only). Tier ladder (lower = higher priority):
-// - Tier 2: Critical needs (<10%)
-// - Tier 4: Active work orders (queued craft/build + their provisioning chain) - STICKY
-// - Tier 5: Actionable needs (below seek threshold)
-// - Tier 6: Opportunistic work (loose hauls, stocking, undirected harvest)
-// - Tier 7: Idle (gather food, wander)
+// first, inviolable; score orders within a tier only). An option's tier is the position of its rung
+// in the arbitration ladder (assets::PriorityConfig), highest first. The rungs it ranks on:
+// - critical_need: a need below its critical threshold
+// - committed_work: a queued craft or build and its provisioning chain - STICKY
+// - ordinary_need: a need below its seek threshold
+// - opportunistic_work: loose hauls, stocking, undirected harvest
+// - idle: gather food, wander
 // See /docs/technical/colonist-task-arbitration.md for the (tier, score) design.
 // See /docs/design/game-systems/colonists/ai-behavior.md for the design intent.
 // See /docs/design/game-systems/colonists/decision-trace.md for task queue display.
@@ -25,6 +26,8 @@
 #include "../components/Task.h"
 #include "GoalSystemHelpers.h"
 #include "WorkSources.h"
+
+#include <assets/PriorityConfig.h>
 
 #include <array>
 #include <functional>
@@ -366,8 +369,6 @@ public:
 
 	[[nodiscard]] int priority() const override { return 60; }
 
-	/// PriorityConfig's base tier of each TaskType, indexed by the type
-	using BaseTiers = std::array<int, static_cast<size_t>(TaskType::Wander) + 1>;
 	[[nodiscard]] const char* name() const override { return "AIDecision"; }
 
 private:
@@ -622,9 +623,8 @@ private:
 	ClaimIndex m_claimsCheck;
 #endif
 
-	/// The base tiers as of PriorityConfig::generation() m_baseTiersGeneration, read again when it moves
-	BaseTiers m_baseTiers{};
-	uint64_t  m_baseTiersGeneration = 0;
+	/// The ladder positions of the rungs options are ranked on, read from PriorityConfig at each update
+	assets::DecisionRungs m_rungs;
 
 	/// How often to re-evaluate tasks (seconds)
 	static constexpr float kReEvalInterval = 0.5F;

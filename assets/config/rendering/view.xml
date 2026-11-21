@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  How things with height are drawn: the projection, the one light, part outlines, item drawings,
+  and depth strips (docs/technical/rendering/rotatable-placed-items.md, sections 2, 6, 7, and 18).
+  Every length is in metres. Every value is required.
+-->
+<WorldView>
+  <!-- Screen metres a metre of height rises. Shared by every thing with height. -->
+  <heightRatio>0.35</heightRatio>
+  <!-- The one light: from where on the screen (degrees clockwise from the top of the screen)
+       and how high above the ground. Shading reads it; so does WOR-1135. -->
+  <light azimuthDegrees="315" elevationDegrees="40"/>
+  <!-- Side shading (section 7). -->
+  <sideShading ambient="0.66" diffuse="0.6" wrap="0"/>
+  <!-- Part outlines, metres. -->
+  <partOutline color="#33241A" widthMeters="0.03" topColor="#33241A" topWidthMeters="0.025" topOpacity="0.8"/>
+  <!-- Item drawings (section 6). -->
+  <drawings aspectTolerance="0.01" curveToleranceMeters="0.002" overflowMeters="0.01" faceDetailMinWidthMeters="0.04"/>
+  <!-- Depth strips (section 6.7). -->
+  <depthStripWidthMeters>0.25</depthStripWidthMeters>
+  <depthStripRiseMeters>0.1</depthStripRiseMeters>
+  <depthStripMergeMeters>0.02</depthStripMergeMeters>
+</WorldView>

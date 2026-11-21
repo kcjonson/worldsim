@@ -20,6 +20,8 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace pugi {
@@ -142,6 +144,8 @@ namespace assets {
 		std::string					  file;
 		glm::vec2					  sizeMeters{0.0F};
 		std::vector<ItemDrawingShape> shapes;
+		/// Its shapes' colours averaged by drawn area and alpha, opaque: what a face too narrow for its drawing shows.
+		Foundation::Color averageColor;
 	};
 
 	struct AreaPolygon {
@@ -163,13 +167,23 @@ namespace assets {
 		ItemArea					clearance;
 		/// The tallest top among the parts with height, the height sight and sorting read; 0 for a flat-only item.
 		float bodyTopMeters = 0.0F;
+		/// Each placement's footprint in the item's frame (turn 0), in the winding of its part's; empty for a part
+		/// whose footprint rule 3 refused.
+		std::vector<std::vector<glm::vec2>> placedFootprints;
+		/// Placements by placements, row-major: whether two footprints overlap in plan (rule 9), and for those that
+		/// do, +1 when the row's draws after the column's (it is above), -1 when before, 0 when neither is above.
+		std::vector<bool>	planOverlap;
+		std::vector<int8_t> planOrder;
+
+		[[nodiscard]] bool overlapsInPlan(size_t first, size_t second) const { return planOverlap[first * placements.size() + second]; }
 	};
 
 	/// The tunables loading reads (rotatable-placed-items.md, section 18).
 	struct PartsLoadConfig {
-		float aspectToleranceRelative = 0.01F; ///< `drawings aspectTolerance`
-		float curveToleranceMeters = 0.002F;   ///< `drawings curveToleranceMeters`
-		float overflowMeters = 0.01F;		   ///< `drawings overflowMeters`
+		/// `drawings aspectTolerance`, `curveToleranceMeters`, and `overflowMeters` in the view config (ViewConfig.h).
+		float aspectToleranceRelative = 0.0F;
+		float curveToleranceMeters = 0.0F;
+		float overflowMeters = 0.0F;
 		/// The default use area's distance: `pathingClearanceMeters` in assets/config/construction/constraints.xml,
 		/// which ConstructionRegistry reads after the definitions load, so its value is held here.
 		float defaultUseDistanceMeters = 0.7F;
@@ -180,6 +194,28 @@ namespace assets {
 
 	/// The def elements a parts def may not have (rule 1).
 	inline constexpr std::array<const char*, 6> kElementsPartsRefuses = {"svgPath", "worldHeight", "variantCount", "placement", "collision", "generator"};
+
+	/// A colour written `#RRGGBB`, opaque; nothing when it is written any other way.
+	[[nodiscard]] std::optional<Foundation::Color> parseRgbHexColor(std::string_view text);
+
+	/// The convex hull of points, vertex angle increasing from +X toward +Y (monotone chain).
+	[[nodiscard]] std::vector<glm::vec2> convexHull(std::vector<glm::vec2> points);
+
+	/// The y range a convex ring covers on the vertical line at `x`.
+	[[nodiscard]] std::pair<float, float> ySpanAt(const std::vector<glm::vec2>& ring, float x);
+
+	/// A placement's footprint turned with the item by `itemTurnRadians` (section 6.2), in the same winding.
+	[[nodiscard]] std::vector<glm::vec2> turnedFootprint(const PartsAsset& asset, size_t placement, float itemTurnRadians);
+
+	/// The pairs of the parts order (section 6.6) among placements whose footprints on the screen are
+	/// `screenFootprints` (one a placement, turned with the item): entry i lists the placements that draw after
+	/// placement i. Footprints that overlap in plan put the higher later; disjoint ones sharing a vertical screen line
+	/// put the one further south later; the rest are unordered.
+	[[nodiscard]] std::vector<std::vector<size_t>> partsDrawnAfter(const PartsAsset& asset, const std::vector<std::vector<glm::vec2>>& screenFootprints);
+
+	/// The placements in the order they draw at a turn: a topological sort of partsDrawnAfter, ties broken by placement
+	/// order. A cycle, which validation refuses (rule 9), leaves the rest in placement order.
+	[[nodiscard]] std::vector<uint32_t> partsDrawOrder(const PartsAsset& asset, float itemTurnRadians);
 
 	/// Reads a parts def's <parts>, <placements>, <useAreas>, <clearance>, and <partsScript>. What can't be read as
 	/// written (a malformed number, an unknown element) is an error in `report`.

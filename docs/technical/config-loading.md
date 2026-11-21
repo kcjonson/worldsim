@@ -31,7 +31,7 @@ Everything not listed here must be given. Leaving one of these out has the state
 | RecipeRegistry | `assets/recipes/**/*.xml` | `<input count>`, `<output count>` | one of the thing; when given, a whole number, 1 or more |
 | RecipeRegistry | `assets/recipes/**/*.xml` | `<innate>` | colonists learn the recipe (false) |
 | RecipeRegistry | `assets/recipes/**/*.xml` | `<label>`, `<description>`, `<station>`, `<skill>`, `<inputs>`, `<outputs>` | the label is the defName; no station (as is `<station>none</station>`), no skill, no inputs or outputs |
-| PriorityConfig | `arbitration/priority-tuning.xml` | `<TaskTiers>`, `<WorkCategoryOrder>` | no tiers or order from this file (`loadWorkConfig` then reports every task type without a tier) |
+| PriorityConfig | `arbitration/priority-tuning.xml` | `<WorkCategoryOrder>` | no category order from this file |
 | ThoughtConfig | `thoughts/*.xml` | a feeling's `mood` | the feeling has no mood effect |
 | ThoughtConfig | `thoughts/*.xml` | `stacks`, an action source's `first` | false |
 
@@ -116,10 +116,15 @@ assets/world/creatures/Human/needs.xml
 
 `legacy/` holds `work-types.xml`, which a later ticket of the behavior data migration replaces with entries, so
 no folder the entry loaders own holds a root they do not own. The arbitration folder holds one file, whose root is
-`<arbitration>`: its `<ladder>` of `<rung name>` entries, given once, at most 256 rungs and one of them
-`survival`, and `<TaskTiers>`, `<WorkCategoryOrder>`, and `<Bonuses>`; any other element is an error, and a
+`<arbitration>`: its `<ladder>` of `<rung name>` entries, given once, at most 255 rungs and one of them
+`survival`, and `<WorkCategoryOrder>` and `<Bonuses>`; any other element is an error, and a
 second file in the folder is an error naming both
-(`[arbitration] arbitration: 2 files; one file declares the ladder and the bonuses (...)`).
+(`[arbitration] arbitration: 2 files; one file declares the ladder and the bonuses (...)`). The ladder must
+also have every rung the decision ranks options on (`critical_need`, `committed_work`, `ordinary_need`,
+`opportunistic_work`, `idle`), in that order, with other rungs anywhere among them; `loadWorkConfig` reports
+each one missing
+(`[arbitration] priority-tuning.xml: <ladder> has no rung named "idle", which the decision ranks options on`),
+else the first two out of order (`<ladder> has "idle" above "opportunistic_work"; ...`).
 
 A creature's config sits in its asset folder beside its definition and is found by root element
 (`assets::creatureConfigFiles`, libs/assets/assets/CreatureConfigFiles.h). In a creature folder:
