@@ -1050,6 +1050,48 @@ TEST_F(ItemViewTest, TheOutlineIsCutAtTheBandEdgesAndEachSideOfANotchKeepsItsOwn
 		}
 		EXPECT_GT(inNotch, 0U) << "strip " << arm;
 	}
+
+	// Strips that join two intervals of a band and strips that hold an outline's overflow piece: the C, the U open to
+	// the south, and the stack with an overhang, at turns where joins occur. The registry's kept layout is the view's,
+	// strip for strip (the renderer bounds a record's strip by it).
+	writeNotchedAndStacked();
+	AssetRegistry& registry = AssetRegistry::Get();
+	for (const char* name : {"LetterC", "OpenSouth", "Overhang"}) {
+		const AssetDefinition* def = registry.getDefinition(name);
+		ASSERT_NE(def, nullptr) << name;
+		for (const double degrees : {0.0, 93.0, 165.0, 267.0}) {
+			check(*def, degrees);
+			const ItemLayout* kept = registry.stripLayout(registry.templateId(name, {}), quantaOf(degrees));
+			ASSERT_NE(kept, nullptr);
+			EXPECT_EQ(kept->layout.strips.size(), buildItemMesh(*def, quantaOf(degrees), 0, viewConfig()).strips.size()) << name << " at " << degrees;
+		}
+	}
+}
+
+// A click on the overhang's raised box ranks by the strip that draws there (rotatable-placed-items 15): of the strips
+// whose regions hold a point on the box's top, the frontmost holds a piece of the box.
+TEST_F(ItemViewTest, TheFrontStripUnderTheOverhangsRaisedBoxDrawsTheBox) {
+	writeNotchedAndStacked();
+	const AssetDefinition* def = AssetRegistry::Get().getDefinition("Overhang");
+	ASSERT_NE(def, nullptr);
+	constexpr uint32_t kBox = 2; // the placement of the box over the slab's front edge
+	for (const double degrees : {0.0, 93.0, 165.0, 267.0}) {
+		const StripLayout layout = stripLayout(*def, quantaOf(degrees), viewConfig());
+		const auto		  regions = stripRegions(*def->parts, layout, radiansOf(degrees), viewConfig());
+		const glm::vec2	  centre = turnedPoint({1.18F, 0.39F}, radiansOf(degrees));
+		const glm::vec2	  onTop{centre.x, centre.y - 0.98F * viewConfig().heightRatio};
+		std::optional<size_t> front;
+		for (size_t strip = 0; strip < regions.size(); ++strip) {
+			if (distanceOutsideStrip(regions[strip], onTop) <= viewConfig().outlineHalfWidthMeters() &&
+				(!front.has_value() || layout.strips[strip].anchorLocalY > layout.strips[*front].anchorLocalY)) {
+				front = strip;
+			}
+		}
+		ASSERT_TRUE(front.has_value()) << degrees;
+		EXPECT_TRUE(std::any_of(layout.strips[*front].pieces.begin(), layout.strips[*front].pieces.end(), [](const StripPiece& piece) {
+			return piece.placement == kBox;
+		})) << "at " << degrees << " the front strip there doesn't draw the box";
+	}
 }
 
 TEST_F(ItemViewTest, AMatUnderABenchIsInTheFlatStripFirst) {
