@@ -75,10 +75,13 @@ The site is the foundation of [scenario 04](./04-build-walls.md)'s corner, (14, 
 room's door is built while the room is still shut, from outside; the demolished door and wall leave
 `what=construction`; the log has no `[Nav] Entity <BOB>: no known way to` line at all from step 1 to
 step 5 (the line names where he was to stand, beside the wall, not the opening, so any such line
-counts).
+counts), but one: a door is demolished from its doorway, the wall closes over him as it goes, and
+the first route he asks from there, the first such line after `Opening #<DOOR_OPEN> deconstructed`, may find
+no way. It names his next point, not the door, and he walks on at the decision after.
 
-**Fail:** an opening stays at `progress` 0 with its Wood delivered or carried; a
+**Fail:** an opening stays at `progress` 0 with its Wood delivered or carried; any other
 `[Nav] Entity <BOB>: no known way to` line appears during steps 1 to 5; a demolish order is never worked.
 
-Last verified 2026-11-20: setup and steps 1 to 6, word for word from a fresh Quick Start, on commit
-ac6093f8 of `fix/WOR-1139-openings-reachable` (Debug).
+Last verified 2026-11-20: setup and steps 1 to 6, word for word from a fresh Quick Start, on the merge
+of main (with WOR-1122) into `fix/WOR-1139-openings-reachable`, commit 3f655d62 (Debug). That run had
+the one line after the door's demolition, to his wander point (19.85, 7.82), and no other.
