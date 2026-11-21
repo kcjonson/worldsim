@@ -1,6 +1,7 @@
 #include "ConstructionValidator.h"
 
 #include "ConstructionWorld.h"
+#include "OpeningGeometry.h"
 #include "SnapEngine.h"
 
 #include "../ecs/components/StructureBlueprint.h"
@@ -235,6 +236,7 @@ namespace {
 	ThicknessPreset standardWood() {
 		ThicknessPreset p;
 		p.name = "Standard";
+		p.material = "Wood";
 		p.thicknessMeters = 0.20F;
 		p.thicknessMm = 200;
 		p.halfThicknessMm = 100;
@@ -656,11 +658,11 @@ class OpeningValidation : public ::testing::Test {
 
 	// Commit a single wall of `lengthMeters` along +x at y=6 inside a 20x20 host,
 	// returning its segment id. The host is wide enough for any test length here.
-	SegmentId buildWall(ConstructionWorld& world, float lengthMeters) {
+	SegmentId buildWall(ConstructionWorld& world, float lengthMeters, const std::string& presetName = "Standard") {
 		std::vector<Vec2> sq = {{0.0F, 0.0F}, {20.0F, 0.0F}, {20.0F, 20.0F}, {0.0F, 20.0F}};
 		auto			  f = world.commitFoundation(sq, "Wood");
 		EXPECT_TRUE(f.ok());
-		auto seg = world.commitSegment(mm(2.0F, 6.0F), mm(2.0F + lengthMeters, 6.0F), "Wood", "Standard", f.id, world.version());
+		auto seg = world.commitSegment(mm(2.0F, 6.0F), mm(2.0F + lengthMeters, 6.0F), "Wood", presetName, f.id, world.version());
 		EXPECT_TRUE(seg.ok());
 		return seg.id;
 	}
@@ -673,6 +675,331 @@ TEST_F(OpeningValidation, DoorAtMidpointValid) {
 
 	ConstructionValidator validator(cfg, world);
 	EXPECT_TRUE(validator.validateOpening(seg, 0.5F, "Door", "Wood").ok());
+}
+
+// A wall ending on another wall splits it and re-hosts its openings by t. The door (0.9 m) is at x = 6
+// on a wall (2,6)-(10,6); the opening keeps the clearance openingMargin (0.3 m) from the band end the
+// junction leaves it, so an end near it is refused. A stem ends at (x, 6) leaning left (toward the door)
+// by `angleDegrees` from the host, or square to it at 90. Boundaries are tested a few centimetres either
+// side, never on the line.
+class WallEndOnOpening : public OpeningValidation {
+  protected:
+	static ThicknessPreset presetOf(const std::string& name) { return *ConstructionRegistry::Get().getThicknessPreset("Wood", name); }
+
+	static Vec2 stemStart(float x, float angleDegrees, float lengthMeters = 5.0F) {
+		const float radians = angleDegrees * std::numbers::pi_v<float> / 180.0F;
+		return {x - lengthMeters * std::cos(radians), 6.0F + lengthMeters * std::sin(radians)};
+	}
+
+	// The stem is refused as WallEndsOnOpening, from both validators.
+	static bool refused(const ConstructionValidator& validator, const ThicknessPreset& stem, float x, float angleDegrees) {
+		const Vec2 start = stemStart(x, angleDegrees);
+		const ValidationCode segmentCode = validator.validateWallSegment(start, {x, 6.0F}, stem, kInvalidFoundation).code;
+		const ValidationCode pointCode = validator.validateWallPoint({start}, {x, 6.0F}, stem, kInvalidFoundation).code;
+		const bool			 segmentRefused = segmentCode == ValidationCode::WallEndsOnOpening;
+		const bool			 pointRefused = pointCode == ValidationCode::WallEndsOnOpening;
+		EXPECT_EQ(segmentRefused, pointRefused) << "the two validators agree at x = " << x;
+		return segmentRefused;
+	}
+};
+
+TEST_F(WallEndOnOpening, ASquareStemIsRefusedNearTheDoorAndAcceptedPastIt) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	SegmentId		  seg = buildWall(world, 8.0F);
+	ASSERT_NE(world.addOpening(seg, 0.5F, "Door", "Wood"), kInvalidOpening);
+	const ConstructionValidator validator(cfg, world);
+
+	for (const float x : {6.0F, 6.8F, 5.2F}) {
+		SCOPED_TRACE(x);
+		EXPECT_TRUE(refused(validator, standardWood(), x, 90.0F));
+		EXPECT_EQ(
+			validator.validateWallSegment({x, 6.0F}, {x, 11.0F}, standardWood(), kInvalidFoundation).code, ValidationCode::WallEndsOnOpening
+		);
+	}
+	for (const float x : {6.9F, 5.1F, 3.0F}) {
+		SCOPED_TRACE(x);
+		EXPECT_FALSE(refused(validator, standardWood(), x, 90.0F));
+	}
+	EXPECT_EQ(std::string(validationReason(ValidationCode::WallEndsOnOpening)), "an opening is in the way");
+}
+
+// A chain's first point has no direction yet: only the lower bound (the margin from the door's edge) applies.
+TEST_F(WallEndOnOpening, AFirstPointOnTheDoorsSpanIsRefused) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	SegmentId		  seg = buildWall(world, 8.0F);
+	ASSERT_NE(world.addOpening(seg, 0.5F, "Door", "Wood"), kInvalidOpening);
+	const ConstructionValidator validator(cfg, world);
+
+	for (const float x : {6.0F, 6.7F, 5.3F}) {
+		SCOPED_TRACE(x);
+		EXPECT_EQ(validator.validateWallPoint({}, {x, 6.0F}, standardWood(), kInvalidFoundation).code, ValidationCode::WallEndsOnOpening);
+	}
+	for (const float x : {6.8F, 5.2F}) {
+		SCOPED_TRACE(x);
+		EXPECT_TRUE(validator.validateWallPoint({}, {x, 6.0F}, standardWood(), kInvalidFoundation).ok());
+	}
+}
+
+// The host's trim at the junction is the wedge the stem makes, not the stem's half thickness: a slanted
+// stem on the door's side needs more room, and one leaning away needs less.
+TEST_F(WallEndOnOpening, AnAngledStemNeedsMoreRoomThanASquareOneAndOneLeaningAwayLess) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	SegmentId		  seg = buildWall(world, 8.0F);
+	ASSERT_NE(world.addOpening(seg, 0.5F, "Door", "Wood"), kInvalidOpening);
+	const ConstructionValidator validator(cfg, world);
+
+	EXPECT_FALSE(refused(validator, standardWood(), 6.9F, 90.0F));
+	EXPECT_TRUE(refused(validator, standardWood(), 6.9F, 30.0F)) << "square would pass here; 30 degrees trims 0.37 m";
+	EXPECT_TRUE(refused(validator, standardWood(), 6.95F, 45.0F));
+	EXPECT_FALSE(refused(validator, standardWood(), 7.05F, 45.0F));
+	EXPECT_FALSE(refused(validator, standardWood(), 7.3F, 30.0F));
+	EXPECT_TRUE(refused(validator, standardWood(), 6.8F, 90.0F));
+	EXPECT_FALSE(refused(validator, standardWood(), 6.8F, 150.0F)) << "leaning away from the door trims only 0.03 m";
+}
+
+TEST_F(WallEndOnOpening, TheHostsOwnThicknessCountsToo) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld standardHost;
+	ASSERT_NE(standardHost.addOpening(buildWall(standardHost, 8.0F, "Standard"), 0.5F, "Door", "Wood"), kInvalidOpening);
+	ConstructionWorld heavyHost;
+	ASSERT_NE(heavyHost.addOpening(buildWall(heavyHost, 8.0F, "Heavy"), 0.5F, "Door", "Wood"), kInvalidOpening);
+
+	EXPECT_FALSE(refused(ConstructionValidator(cfg, standardHost), standardWood(), 7.17F, 30.0F));
+	EXPECT_TRUE(refused(ConstructionValidator(cfg, heavyHost), standardWood(), 7.17F, 30.0F));
+	EXPECT_FALSE(refused(ConstructionValidator(cfg, heavyHost), standardWood(), 7.3F, 30.0F));
+}
+
+TEST_F(WallEndOnOpening, AHeavyStemIsRefusedWhereALightOneIsAccepted) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	ASSERT_NE(world.addOpening(buildWall(world, 8.0F), 0.5F, "Door", "Wood"), kInvalidOpening);
+	const ConstructionValidator validator(cfg, world);
+
+	EXPECT_FALSE(refused(validator, presetOf("Light"), 6.86F, 90.0F));
+	EXPECT_TRUE(refused(validator, presetOf("Heavy"), 6.86F, 90.0F));
+}
+
+TEST_F(WallEndOnOpening, AWindowHasItsOwnBoundary) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	ASSERT_NE(world.addOpening(buildWall(world, 8.0F), 0.5F, "Window", "Wood"), kInvalidOpening);
+	const ConstructionValidator validator(cfg, world);
+
+	EXPECT_TRUE(refused(validator, standardWood(), 6.65F, 90.0F));
+	EXPECT_FALSE(refused(validator, standardWood(), 6.75F, 90.0F));
+	EXPECT_FALSE(refused(validator, standardWood(), 6.85F, 90.0F));
+}
+
+// The commonest wall of all: one that joins another's end or a corner, with no opening near.
+TEST_F(WallEndOnOpening, AWallJoiningAnEndOrACornerWithNoOpeningNearIsAccepted) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	ASSERT_NE(world.addOpening(buildWall(world, 8.0F), 0.5F, "Door", "Wood"), kInvalidOpening);
+	const ConstructionValidator validator(cfg, world);
+
+	EXPECT_TRUE(validator.validateWallSegment({10.0F, 11.0F}, {10.0F, 6.0F}, standardWood(), kInvalidFoundation).ok());
+	EXPECT_TRUE(validator.validateWallSegment({2.0F, 11.0F}, {2.0F, 6.0F}, standardWood(), kInvalidFoundation).ok());
+	EXPECT_TRUE(validator.validateWallSegment({12.0F, 6.0F}, {10.0F, 6.0F}, standardWood(), kInvalidFoundation).ok());
+	EXPECT_TRUE(validator.validateWallPoint({{10.0F, 11.0F}}, {10.0F, 6.0F}, standardWood(), kInvalidFoundation).ok());
+}
+
+// A host drawn as two collinear segments trims nothing at the joint; a stem ending on the joint
+// trims the door's segment there, so a door a margin and a half width from the joint loses its margin.
+TEST_F(WallEndOnOpening, AStemEndingOnAnExistingJointNearADoorIsRefused) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	std::vector<Vec2> sq = {{0.0F, 0.0F}, {20.0F, 0.0F}, {20.0F, 20.0F}, {0.0F, 20.0F}};
+	const auto		  foundation = world.commitFoundation(sq, "Wood");
+	ASSERT_TRUE(foundation.ok());
+	ASSERT_TRUE(world.commitSegment(mm(2.0F, 6.0F), mm(6.0F, 6.0F), "Wood", "Standard", foundation.id, world.version()).ok());
+	const auto second = world.commitSegment(mm(6.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", foundation.id, world.version());
+	ASSERT_TRUE(second.ok());
+	ASSERT_NE(world.addOpening(second.id, 0.2F, "Door", "Wood"), kInvalidOpening); // centre x = 6.8
+	const ConstructionValidator validator(cfg, world);
+
+	EXPECT_EQ(
+		validator.validateWallSegment({6.0F, 11.0F}, {6.0F, 6.0F}, standardWood(), foundation.id).code, ValidationCode::WallEndsOnOpening
+	);
+	EXPECT_TRUE(validator.validateWallSegment({8.0F, 11.0F}, {8.0F, 6.0F}, standardWood(), foundation.id).ok());
+}
+
+// A door snapped against a wall end sits exactly on minT (or maxT). A wall that T's in on the other side rescales
+// t in float on the trial split, and openingRange recomputes the range in double: the door can land a float ulp
+// (about 2e-7 m) short of its margin, which is round-off, not a lost margin, so the wall is accepted. Run over
+// host lengths that round differently, with the stem 2 m past the door's edge (the far exit) and 0.45 m past it
+// (just outside that exit, so the trial split decides).
+TEST_F(WallEndOnOpening, ADoorSnappedToAWallEndSurvivesAWallSplittingItsOtherSideAtEveryLength) {
+	ConstraintConfig cfg = defaults();
+	const double	 margin = static_cast<double>(cfg.openingMarginMeters);
+	int				 checked = 0;
+	for (float length = 5.0F; length < 15.0F; length += 0.0173F) {
+		for (const bool atMin : {true, false}) {
+			ConstructionWorld world;
+			const SegmentId	  seg = buildWall(world, length);
+			const auto		  range = openingRange(world, seg, 0.9, margin);
+			ASSERT_TRUE(range.has_value());
+			const float t = atMin ? range->minT : range->maxT;
+			ASSERT_NE(world.addOpening(seg, t, "Door", "Wood"), kInvalidOpening);
+			const ConstructionValidator validator(cfg, world);
+			ASSERT_TRUE(validator.validateOpening(seg, t, "Door", "Wood", world.openings().front().id).ok());
+			const float centre = 2.0F + t * length;
+			for (const float pastTheEdge : {2.0F, 0.45F}) {
+				const float x = atMin ? centre + 0.45F + pastTheEdge : centre - 0.45F - pastTheEdge;
+				EXPECT_FALSE(refused(validator, standardWood(), x, 90.0F))
+					<< "length " << length << (atMin ? ", door at minT, " : ", door at maxT, ") << pastTheEdge << " m past its edge";
+				++checked;
+			}
+		}
+	}
+	EXPECT_GT(checked, 2000);
+}
+
+// A door already wrong where it stands is not a wall's doing, but a wall may not end on it or take more of the
+// room it has left: the junction's trim counts, not only the distance to the door. The door (centre 2.16, edge
+// 2.61) is inside the end margin of a wall (2,6)-(10,6).
+TEST_F(WallEndOnOpening, ADoorAlreadyTooNearItsWallEndStillCannotHaveAWallEndOnIt) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	const SegmentId	  seg = buildWall(world, 8.0F);
+	ASSERT_NE(world.addOpening(seg, 0.02F, "Door", "Wood"), kInvalidOpening);
+	const ConstructionValidator validator(cfg, world);
+
+	EXPECT_TRUE(refused(validator, standardWood(), 2.5F, 90.0F)) << "on the door";
+	EXPECT_TRUE(refused(validator, standardWood(), 3.0F, 90.0F)) << "0.39 m from its edge: 0.29 m of room once trimmed";
+	EXPECT_TRUE(refused(validator, standardWood(), 2.92F, 90.0F));
+	EXPECT_TRUE(refused(validator, standardWood(), 2.92F, 30.0F)) << "a slanted stem trims 0.37 m";
+	EXPECT_FALSE(refused(validator, standardWood(), 3.06F, 90.0F)) << "0.35 m of room left: not worse than the margin";
+	EXPECT_FALSE(refused(validator, standardWood(), 7.0F, 90.0F)) << "far from it";
+}
+
+// A door a tenth of a metre from a free wall end, and a Heavy wall joining that very end at 45 degrees: the join trims the
+// host by 0.31 m, into the door; a wall joining the other end does not touch it.
+TEST_F(WallEndOnOpening, AnLJoinAtTheEndOfAWallCannotCutIntoADoorAlreadyNearIt) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	const SegmentId	  seg = buildWall(world, 8.0F);
+	ASSERT_NE(world.addOpening(seg, 0.06875F, "Door", "Wood"), kInvalidOpening); // centre 2.55, edge 2.10
+	const ConstructionValidator validator(cfg, world);
+
+	EXPECT_EQ(
+		validator.validateWallSegment({6.0F, 10.0F}, {2.0F, 6.0F}, presetOf("Heavy"), kInvalidFoundation).code,
+		ValidationCode::WallEndsOnOpening
+	);
+	EXPECT_TRUE(validator.validateWallSegment({10.0F, 11.0F}, {10.0F, 6.0F}, presetOf("Heavy"), kInvalidFoundation).ok());
+}
+
+// Wherever the validator accepts a stem near a door, the door the split leaves is still placeable by the opening tool's
+// own check (within float round-off). Stem and host presets, angles from shallow to obtuse, and contact points a few
+// centimetres either side of the far exit's boundary, on both sides of the door.
+TEST_F(WallEndOnOpening, EveryStemTheValidatorAcceptsLeavesTheRehostedDoorValid) {
+	ConstraintConfig  cfg = defaults();
+	const double	  margin = static_cast<double>(cfg.openingMarginMeters);
+	const std::string presets[] = {"Light", "Standard", "Heavy"};
+	int				  accepted = 0;
+	int				  refusedNear = 0;
+	for (const std::string& hostName : presets) {
+		for (const std::string& stemName : presets) {
+			const ThicknessPreset stem = presetOf(stemName);
+			const double		  halfThicknesses = static_cast<double>(stem.halfThicknessMm + presetOf(hostName).halfThicknessMm) / 1000.0;
+			for (const float angle : {12.0F, 20.0F, 30.0F, 45.0F, 60.0F, 75.0F, 90.0F, 105.0F, 120.0F, 135.0F, 150.0F, 168.0F}) {
+				const double sine = std::sin(static_cast<double>(angle) * std::numbers::pi / 180.0);
+				for (const float offset : {-0.02F, -0.01F, 0.0F, 0.01F, 0.02F}) {
+					for (const bool rightOfDoor : {true, false}) {
+						ConstructionWorld world;
+						const SegmentId	  seg = buildWall(world, 12.0F, hostName); // (2,6)-(14,6), door centre 8
+						ASSERT_NE(world.addOpening(seg, 0.5F, "Door", "Wood"), kInvalidOpening);
+						const double reach = 0.45 + margin + halfThicknesses / sine + 0.005 + static_cast<double>(offset);
+						const float	 x = static_cast<float>(rightOfDoor ? 8.0 + reach : 8.0 - reach);
+						// Below 90 degrees the stem leans toward the door, the acute side, so the trim is the widest it can be;
+						// above, it leans away and the trim is the least.
+						const float radians = angle * std::numbers::pi_v<float> / 180.0F;
+						const float lean = 5.0F * std::cos(radians);
+						const Vec2	start = {rightOfDoor ? x - lean : x + lean, 6.0F + 5.0F * std::sin(radians)};
+						const ConstructionValidator validator(cfg, world);
+						const auto verdict = validator.validateWallSegment(start, {x, 6.0F}, stem, kInvalidFoundation);
+						if (!verdict.ok()) {
+							++refusedNear;
+							continue;
+						}
+						ConstructionWorld split = world;
+						ASSERT_TRUE(
+							split.commitSegment(mm(start.x, start.y), mm(x, 6.0F), "Wood", stem.name, kInvalidFoundation, split.version())
+								.ok()
+						);
+						const Opening& door = split.openings().front();
+						const ConstructionValidator tool(cfg, split);
+						const auto					after = tool.validateOpening(door.segment, door.t, door.type, door.material, door.id);
+						const bool					measuredAgainstMargin =
+							after.code == ValidationCode::OpeningMarginTooSmall || after.code == ValidationCode::OpeningOverlap;
+						const bool roundOff = measuredAgainstMargin && margin - after.measuredValue <= kMarginToleranceMeters;
+						EXPECT_TRUE(after.ok() || roundOff)
+							<< hostName << " host, " << stemName << " stem, " << angle << " degrees, x = " << x << ", code "
+							<< static_cast<int>(after.code) << ", measured " << after.measuredValue;
+						++accepted;
+					}
+				}
+			}
+		}
+	}
+	EXPECT_GT(accepted, 100);
+	EXPECT_GT(refusedNear, 8);
+}
+
+// A span that passes through a host's interior vertex trims both pieces there.
+TEST_F(WallEndOnOpening, AWallPassingThroughAHostVertexNearADoorIsRefused) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	std::vector<Vec2> sq = {{0.0F, 0.0F}, {20.0F, 0.0F}, {20.0F, 20.0F}, {0.0F, 20.0F}};
+	const auto		  foundation = world.commitFoundation(sq, "Wood");
+	ASSERT_TRUE(foundation.ok());
+	ASSERT_TRUE(world.commitSegment(mm(2.0F, 6.0F), mm(6.0F, 6.0F), "Wood", "Standard", foundation.id, world.version()).ok());
+	const auto second = world.commitSegment(mm(6.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", foundation.id, world.version());
+	ASSERT_TRUE(second.ok());
+	ASSERT_NE(world.addOpening(second.id, 0.2F, "Door", "Wood"), kInvalidOpening); // centre x = 6.8
+	const ConstructionValidator validator(cfg, world);
+
+	EXPECT_EQ(
+		validator.validateWallSegment({6.0F, 11.0F}, {6.0F, 3.0F}, standardWood(), foundation.id).code, ValidationCode::WallEndsOnOpening
+	);
+}
+
+// An L joining a wall's end trims it by the corner; a door a margin and a bit from that end loses its margin.
+TEST_F(WallEndOnOpening, AnLJoinAtTheCornerOfAWallWithADoorNearThatCornerIsRefused) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	const SegmentId	  seg = buildWall(world, 8.0F);
+	ASSERT_NE(world.addOpening(seg, 0.1F, "Door", "Wood"), kInvalidOpening); // centre x = 2.8, 0.35 m clear of the free end
+	const ConstructionValidator validator(cfg, world);
+
+	EXPECT_EQ(
+		validator.validateWallSegment({2.0F, 11.0F}, {2.0F, 6.0F}, standardWood(), kInvalidFoundation).code,
+		ValidationCode::WallEndsOnOpening
+	);
+	EXPECT_TRUE(validator.validateWallSegment({10.0F, 11.0F}, {10.0F, 6.0F}, standardWood(), kInvalidFoundation).ok());
+}
+
+// After a split the validator accepted, the opening the wall re-hosted still passes the opening
+// tool's own placement check on its new half, and has not moved in the world.
+TEST_F(WallEndOnOpening, AnAcceptedSplitLeavesTheRehostedOpeningValidAndWhereItWas) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	ASSERT_NE(world.addOpening(buildWall(world, 8.0F, "Heavy"), 0.5F, "Door", "Wood"), kInvalidOpening);
+	const ThicknessPreset stem = standardWood();
+	const Vec2			  start = stemStart(7.3F, 30.0F);
+	ASSERT_TRUE(ConstructionValidator(cfg, world).validateWallSegment(start, {7.3F, 6.0F}, stem, kInvalidFoundation).ok());
+	ASSERT_TRUE(world.commitSegment(mm(start.x, start.y), mm(7.3F, 6.0F), "Wood", "Standard", kInvalidFoundation, world.version()).ok());
+
+	const Opening&	   door = world.openings().front();
+	const WallSegment* hosted = world.getSegment(door.segment);
+	ASSERT_NE(hosted, nullptr);
+	const double startX = static_cast<double>(world.getVertex(hosted->v0)->pos.x) / 1000.0;
+	const double endX = static_cast<double>(world.getVertex(hosted->v1)->pos.x) / 1000.0;
+	EXPECT_NEAR(startX + (endX - startX) * static_cast<double>(door.t), 6.0, 1e-3) << "the door is still at x = 6 m";
+	EXPECT_NEAR(endX, 7.3, 1e-3) << "on the half that ends at the new junction";
+	EXPECT_TRUE(ConstructionValidator(cfg, world).validateOpening(door.segment, door.t, door.type, door.material, door.id).ok());
 }
 
 TEST_F(OpeningValidation, UnknownSegmentRejected) {

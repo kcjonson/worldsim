@@ -415,3 +415,79 @@ TEST(SubtractRings, SplitWhenBSpansFullWidthThroughMiddle) {
 	EXPECT_FALSE(r.ok());
 	EXPECT_EQ(r.status, BooleanStatus::ResultSplits) << "status=" << static_cast<int>(r.status);
 }
+
+namespace {
+
+	std::int64_t regionArea2(const std::vector<RegionPolygon>& region) {
+		std::int64_t total = 0;
+		for (const RegionPolygon& polygon : region) {
+			total += area2(polygon.outer);
+			for (const Ring& hole : polygon.holes) {
+				total += area2(hole);
+			}
+		}
+		return total;
+	}
+
+} // namespace
+
+TEST(UnionOfFills, OverlappingSquaresMergeIntoOneOutline) {
+	const auto region = unionOfFills({{square(0, 0, 100, 100), square(50, 50, 150, 150)}});
+	ASSERT_EQ(region.size(), 1U);
+	EXPECT_TRUE(region[0].holes.empty());
+	EXPECT_EQ(region[0].outer.size(), 8U);
+	EXPECT_EQ(regionArea2(region), (2 * 100 * 100 - 50 * 50) * 2);
+}
+
+TEST(UnionOfFills, AnLKeepsItsNotch) {
+	const auto region = unionOfFills({{square(0, 0, 300, 100), square(0, 100, 100, 300)}});
+	ASSERT_EQ(region.size(), 1U);
+	EXPECT_EQ(canonical(region[0].outer), (Ring{{0, 0}, {300, 0}, {300, 100}, {100, 100}, {100, 300}, {0, 300}}));
+}
+
+TEST(UnionOfFills, EnclosedGroundIsAHole) {
+	// Four bars round a 100 x 100 gap.
+	const auto region =
+		unionOfFills({{square(0, 0, 300, 100), square(0, 200, 300, 300), square(0, 100, 100, 200), square(200, 100, 300, 200)}});
+	ASSERT_EQ(region.size(), 1U);
+	ASSERT_EQ(region[0].holes.size(), 1U);
+	EXPECT_EQ(area2(region[0].holes[0]), -100 * 100 * 2);
+	EXPECT_EQ(regionArea2(region), (300 * 300 - 100 * 100) * 2);
+}
+
+TEST(UnionOfFills, ApartRingsStayApart) {
+	const auto region = unionOfFills({{square(0, 0, 100, 100)}, {square(200, 0, 300, 100)}});
+	EXPECT_EQ(region.size(), 2U);
+}
+
+TEST(UnionOfFills, CornerTouchSplitsIntoTwoSimpleRings) {
+	const auto region = unionOfFills({{square(0, 0, 100, 100), square(100, 100, 200, 200)}});
+	ASSERT_EQ(region.size(), 2U);
+	for (const RegionPolygon& polygon : region) {
+		EXPECT_EQ(polygon.outer.size(), 4U);
+		EXPECT_TRUE(isSimple(polygon.outer).pass);
+	}
+}
+
+TEST(UnionOfFills, ARingWoundAgainstItsGroupCutsAHoleButNotAnotherGroups) {
+	Ring inner = square(25, 25, 75, 75);
+	std::reverse(inner.begin(), inner.end());
+	const auto holed = unionOfFills({{square(0, 0, 100, 100), inner}});
+	ASSERT_EQ(holed.size(), 1U);
+	EXPECT_EQ(holed[0].holes.size(), 1U);
+	// The same reversed ring as its own group is filled (nonzero), so it fills the first group's hole.
+	const auto filled = unionOfFills({{square(0, 0, 100, 100), inner}, {inner}});
+	ASSERT_EQ(filled.size(), 1U);
+	EXPECT_TRUE(filled[0].holes.empty());
+}
+
+TEST(UnionOfFills, AnIslandInAHoleIsItsOwnPolygon) {
+	const auto region = unionOfFills(
+		{{square(0, 0, 500, 100), square(0, 400, 500, 500), square(0, 100, 100, 400), square(400, 100, 500, 400)}, {square(200, 200, 300, 300)}}
+	);
+	ASSERT_EQ(region.size(), 2U);
+	const std::size_t frame = region[0].holes.empty() ? 1 : 0;
+	EXPECT_EQ(region[frame].holes.size(), 1U);
+	EXPECT_TRUE(region[1 - frame].holes.empty());
+	EXPECT_EQ(area2(region[1 - frame].outer), 100 * 100 * 2);
+}

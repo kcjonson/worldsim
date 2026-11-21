@@ -214,6 +214,95 @@ namespace construction {
 			return ValidationCode::SelfIntersects;
 		}
 
+
+		// A span meeting an opening's wall at a sine below this is never far: a shallow wedge trims a band much
+		// further than a square one, so the cheap exit is not taken and the trial split decides.
+		constexpr double kFarExitMinSine = 0.2;
+		constexpr double kFarExitSlackMeters = 0.005;
+
+		bool onClosedSegment(const geometry::Vec2i64& point, const geometry::Vec2i64& start, const geometry::Vec2i64& end) {
+			return geometry::orientation(start, end, point) == geometry::Orientation::Collinear && point.x >= std::min(start.x, end.x) &&
+				   point.x <= std::max(start.x, end.x) && point.y >= std::min(start.y, end.y) && point.y <= std::max(start.y, end.y);
+		}
+
+		// The along-the-wall distance, in meters, from the edge of `opening` to `point`, which must lie on the opening's
+		// wall; negative when the point is within the opening's own span.
+		double
+		gapToOpening(const ConstructionWorld& world, const Opening& opening, const geometry::Vec2i64& point, double halfWidthMeters) {
+			const WallSegment*		wall = world.getSegment(opening.segment);
+			const geometry::Vec2i64 start = world.getVertex(wall->v0)->pos;
+			const geometry::Vec2i64 along = world.getVertex(wall->v1)->pos - start;
+			const double			lengthSquared = geometry::dot(along, along).toDouble();
+			const double			lengthMeters = std::sqrt(lengthSquared) / static_cast<double>(geometry::kMillimetersPerMeter);
+			const double			pointParam = geometry::dot(point - start, along).toDouble() / lengthSquared;
+			return std::abs(pointParam - static_cast<double>(opening.t)) * lengthMeters - halfWidthMeters;
+		}
+
+		// An opening's clearance, in meters, from the trimmed band end at each end of its wall: the room it has left
+		// there (its margin is the least that is wanted). Both are measured the way validateOpening measures them.
+		struct EndClearances {
+			double atStart = 0.0;
+			double atEnd = 0.0;
+		};
+		std::optional<EndClearances>
+		endClearances(const ConstructionWorld& world, const Opening& opening, double halfWidthMeters, double marginMeters) {
+			const std::optional<OpeningRange> range = openingRange(world, opening.segment, halfWidthMeters * 2.0, marginMeters);
+			if (!range) {
+				return std::nullopt;
+			}
+			const double centre = static_cast<double>(opening.t) * range->lengthMeters;
+			return EndClearances{
+				.atStart = centre - halfWidthMeters - range->trimAtV0Meters,
+				.atEnd = range->lengthMeters - centre - halfWidthMeters - range->trimAtV1Meters,
+			};
+		}
+
+		// Whether every contact between the span and `opening`'s wall is too far from the opening for the junction's trim to
+		// reach it: the contact's gap exceeds the margin plus the widest trim a wedge of these thicknesses can cut, which for
+		// an angle phi between the span and the wall is (stem half + host half) / sin(phi). A span nearly along the wall, or
+		// one whose contact is not a point, is not far.
+		bool openingFarFromSpan(
+			const ConstructionWorld& world,
+			const Opening&			 opening,
+			double					 halfWidthMeters,
+			const geometry::Vec2i64& spanStart,
+			const geometry::Vec2i64& spanEnd,
+			std::int64_t			 stemHalfThicknessMm,
+			double					 marginMeters
+		) {
+			const WallSegment*		wall = world.getSegment(opening.segment);
+			const Vertex*			wallStart = world.getVertex(wall->v0);
+			const Vertex*			wallEnd = world.getVertex(wall->v1);
+			const geometry::Vec2i64 spanAlong = spanEnd - spanStart;
+			const geometry::Vec2i64 wallAlong = wallEnd->pos - wallStart->pos;
+			const double			spanLength = std::sqrt(geometry::dot(spanAlong, spanAlong).toDouble());
+			const double			wallLength = std::sqrt(geometry::dot(wallAlong, wallAlong).toDouble());
+			const double			sine = std::abs(geometry::cross(spanAlong, wallAlong).toDouble()) / (spanLength * wallLength);
+			if (!(sine >= kFarExitMinSine)) {
+				return false;
+			}
+			const auto&					   registry = assets::ConstructionRegistry::Get();
+			const assets::ThicknessPreset* hostPreset = registry.getThicknessPreset(wall->material, wall->thicknessPreset);
+			const std::int64_t			   hostHalfMm = hostPreset != nullptr ? hostPreset->halfThicknessMm : stemHalfThicknessMm;
+			const double halfThicknessesMeters =
+				static_cast<double>(stemHalfThicknessMm + hostHalfMm) / static_cast<double>(geometry::kMillimetersPerMeter);
+			const double trimBound = halfThicknessesMeters / sine + kFarExitSlackMeters;
+
+			bool touches = false;
+			for (const geometry::Vec2i64& contact : {spanStart, spanEnd, wallStart->pos, wallEnd->pos}) {
+				const bool onWall = (contact == spanStart || contact == spanEnd) && onClosedSegment(contact, wallStart->pos, wallEnd->pos);
+				const bool onSpan = (contact == wallStart->pos || contact == wallEnd->pos) && onClosedSegment(contact, spanStart, spanEnd);
+				if (!onWall && !onSpan) {
+					continue;
+				}
+				touches = true;
+				if (gapToOpening(world, opening, contact, halfWidthMeters) < marginMeters + trimBound) {
+					return false;
+				}
+			}
+			return touches;
+		}
+
 	} // namespace
 
 	std::string validationReason(ValidationCode code) {
@@ -260,6 +349,8 @@ namespace construction {
 				return "too close to the end";
 			case ValidationCode::OpeningWallTooShort:
 				return "wall too short for opening";
+			case ValidationCode::WallEndsOnOpening:
+				return "an opening is in the way";
 			case ValidationCode::OpeningOverlap:
 				return "openings overlap";
 			case ValidationCode::TooCloseToFoundation:
@@ -648,8 +739,12 @@ namespace construction {
 		const assets::ThicknessPreset& thickness,
 		FoundationId						   host
 	) const {
-		// First point is always placeable (matches foundation validatePoint).
+		// First point: no direction yet, so only the lower bound applies (matches foundation
+		// validatePoint otherwise: always placeable).
 		if (points.empty()) {
+			if (const ValidationResult onOpening = checkPointClearOfOpenings(candidate); !onOpening.ok()) {
+				return {onOpening.code, 0, 0, onOpening.measuredValue};
+			}
 			return {};
 		}
 
@@ -710,6 +805,11 @@ namespace construction {
 		// Host containment of the new segment's full-thickness footprint.
 		if (!bandContainedInFoundation(prev, cand, thickness.halfThicknessMm, host)) {
 			return {ValidationCode::NotContainedInHostFoundation, candIndex, 0, 0.0};
+		}
+
+		// The segment prev->candidate must leave every opening it touches its clearance.
+		if (const ValidationResult onOpening = checkSpanClearOfOpenings(points.back(), candidate, thickness, host); !onOpening.ok()) {
+			return {onOpening.code, candIndex, 0, onOpening.measuredValue};
 		}
 
 		return {};
@@ -798,13 +898,147 @@ namespace construction {
 			}
 		}
 
-		return {};
+		// Last, so a wall that overlaps or runs along another reports that first.
+		return checkSpanClearOfOpenings(a, b, thickness, host);
 	}
 
 	// --- Openings -----------------------------------------------------------
 
+	ValidationResult ConstructionValidator::checkPointClearOfOpenings(::Foundation::Vec2 point) const {
+		const geometry::Vec2i64 joint = geometry::quantize(point);
+		const auto&				registry = assets::ConstructionRegistry::Get();
+		const double			marginMeters = static_cast<double>(constraints_->openingMarginMeters);
+		for (const Opening& opening : world_->openings()) {
+			const WallSegment* wall = world_->getSegment(opening.segment);
+			const Vertex*	   start = wall != nullptr ? world_->getVertex(wall->v0) : nullptr;
+			const Vertex*	   end = wall != nullptr ? world_->getVertex(wall->v1) : nullptr;
+			if (start == nullptr || end == nullptr || joint == start->pos || joint == end->pos ||
+				!onClosedSegment(joint, start->pos, end->pos)) {
+				continue;
+			}
+			const assets::OpeningTypeDef* type = registry.getOpeningType(opening.type);
+			const double				  halfWidthMeters = type != nullptr ? static_cast<double>(type->widthMeters) / 2.0 : 0.0;
+			const double				  gap = gapToOpening(*world_, opening, joint, halfWidthMeters);
+			if (gap < marginMeters) {
+				return {ValidationCode::WallEndsOnOpening, 0, 0, gap};
+			}
+		}
+		return {};
+	}
+
+	ValidationResult ConstructionValidator::checkSpanClearOfOpenings(
+		::Foundation::Vec2 a, ::Foundation::Vec2 b, const assets::ThicknessPreset& thickness, FoundationId host
+	) const {
+		const geometry::Vec2i64 spanStart = geometry::quantize(a);
+		const geometry::Vec2i64 spanEnd = geometry::quantize(b);
+		const auto&				registry = assets::ConstructionRegistry::Get();
+		const double			marginMeters = static_cast<double>(constraints_->openingMarginMeters);
+
+		// The openings whose host wall the span touches (an end on its interior, an end or a pass through one of its
+		// vertices, or a run along it; a proper crossing is refused elsewhere), leaving out those too far from the
+		// contact for the junction's trim to reach them. A trim the offsetter cannot resolve at all (it rejects the
+		// graph) would refuse a far door too; skipping those leaves such a wall to the renderer's centerline fallback,
+		// as it is for a wall with no door near it.
+		std::vector<OpeningId> touched;
+		for (const Opening& opening : world_->openings()) {
+			const WallSegment* wall = world_->getSegment(opening.segment);
+			const Vertex*	   start = wall != nullptr ? world_->getVertex(wall->v0) : nullptr;
+			const Vertex*	   end = wall != nullptr ? world_->getVertex(wall->v1) : nullptr;
+			if (start == nullptr || end == nullptr) {
+				continue;
+			}
+			const geometry::SegmentRelation relation = geometry::intersectSegments(spanStart, spanEnd, start->pos, end->pos).relation;
+			if (relation == geometry::SegmentRelation::Disjoint || relation == geometry::SegmentRelation::ProperCrossing) {
+				continue;
+			}
+			const assets::OpeningTypeDef* type = registry.getOpeningType(opening.type);
+			const double				  halfWidthMeters = type != nullptr ? static_cast<double>(type->widthMeters) / 2.0 : 0.0;
+			if (!openingFarFromSpan(*world_, opening, halfWidthMeters, spanStart, spanEnd, thickness.halfThicknessMm, marginMeters)) {
+				touched.push_back(opening.id);
+			}
+		}
+		if (touched.empty()) {
+			return {};
+		}
+
+		// A refused commit means a hard topology rule the wall validators check on their own (the segment validator's
+		// loops cover every commitSegment refusal; the point validator defers to the commit), so it is not an opening's.
+		ConstructionWorld trial = *world_;
+		if (!trial.commitSegment(spanStart, spanEnd, thickness.material, thickness.name, host, trial.version()).ok()) {
+			return {};
+		}
+		// A shortfall of a few micrometres is float round-off from the split's rescale of t, not a lost margin: its
+		// measured value is the clearance in meters, to be at least the margin.
+		const auto withinTolerance = [marginMeters](const ValidationResult& result) {
+			if (result.ok()) {
+				return true;
+			}
+			const bool measuredAgainstMargin =
+				result.code == ValidationCode::OpeningMarginTooSmall || result.code == ValidationCode::OpeningOverlap;
+			return measuredAgainstMargin && marginMeters - result.measuredValue <= kMarginToleranceMeters;
+		};
+		const ConstructionValidator before(*constraints_, *world_);
+		const ConstructionValidator after(*constraints_, trial);
+		for (const OpeningId id : touched) {
+			const Opening* standing = world_->getOpening(id);
+			const Opening* rehosted = trial.getOpening(id);
+			if (standing == nullptr || rehosted == nullptr) {
+				continue;
+			}
+			// The check after the split first: it is the one that usually passes, and the one before does not depend on the span.
+			// An OpeningSegmentInvalid here (the offsetter rejects the trial graph) reads as "in the way" for a door that
+			// is near the contact; a far door never gets this far (the wall would be drawn as bare centerlines either way).
+			const ValidationResult result = after.validateOpening(rehosted->segment, rehosted->t, rehosted->type, rehosted->material, id);
+			if (withinTolerance(result)) {
+				continue;
+			}
+			if (withinTolerance(before.validateOpening(standing->segment, standing->t, standing->type, standing->material, id))) {
+				return {ValidationCode::WallEndsOnOpening, 0, 0, result.measuredValue};
+			}
+			// Already wrong where it stands, so not this wall's doing; but the new junction must not take any more of
+			// its room. At each end of the piece it now sits on that the span touches, its clearance after must be at
+			// least the margin, or, where it was already short of that, no less than it was; a new end, made by a split,
+			// had no clearance before and takes the margin. A trial graph the offsetter cannot resolve refuses it, unless
+			// the graph as it stands could not be resolved either (nothing got worse).
+			const assets::OpeningTypeDef* type = registry.getOpeningType(standing->type);
+			const double				  halfWidthMeters = type != nullptr ? static_cast<double>(type->widthMeters) / 2.0 : 0.0;
+			const std::optional<EndClearances> afterClearances = endClearances(trial, *rehosted, halfWidthMeters, marginMeters);
+			const std::optional<EndClearances> standingClearances = endClearances(*world_, *standing, halfWidthMeters, marginMeters);
+			if (!afterClearances) {
+				// Unresolvable after: worse than before only if it could be resolved before.
+				if (standingClearances) {
+					return {ValidationCode::WallEndsOnOpening, 0, 0, result.measuredValue};
+				}
+				continue;
+			}
+			const WallSegment*				   oldWall = world_->getSegment(standing->segment);
+			const WallSegment*				   newWall = trial.getSegment(rehosted->segment);
+			const geometry::Vec2i64			   oldStart = world_->getVertex(oldWall->v0)->pos;
+			const geometry::Vec2i64			   oldEnd = world_->getVertex(oldWall->v1)->pos;
+			for (const bool atStart : {true, false}) {
+				const geometry::Vec2i64 endPos = trial.getVertex(atStart ? newWall->v0 : newWall->v1)->pos;
+				if (endPos != spanStart && endPos != spanEnd && !onClosedSegment(endPos, spanStart, spanEnd)) {
+					continue;
+				}
+				double wanted = marginMeters;
+				if (standingClearances && endPos == oldStart) {
+					wanted = std::min(wanted, standingClearances->atStart);
+				} else if (standingClearances && endPos == oldEnd) {
+					wanted = std::min(wanted, standingClearances->atEnd);
+				}
+				const double room = atStart ? afterClearances->atStart : afterClearances->atEnd;
+				if (room < wanted - kMarginToleranceMeters) {
+					return {ValidationCode::WallEndsOnOpening, 0, 0, room};
+				}
+			}
+		}
+		return {};
+	}
+
 	ValidationResult
-	ConstructionValidator::validateOpening(SegmentId segment, float t, const std::string& type, const std::string& material) const {
+	ConstructionValidator::validateOpening(
+		SegmentId segment, float t, const std::string& type, const std::string& material, OpeningId ignore
+	) const {
 		// 1. Segment exists and is a wall in this world.
 		const WallSegment* wall = world_->getSegment(segment);
 		if (wall == nullptr || world_->getVertex(wall->v0) == nullptr || world_->getVertex(wall->v1) == nullptr) {
@@ -856,7 +1090,7 @@ namespace construction {
 		// centerline. Iterate openings() in stable insertion order (determinism).
 		const double centerM = t * lengthM;
 		for (const Opening& other : world_->openings()) {
-			if (other.segment != segment) {
+			if (other.segment != segment || other.id == ignore) {
 				continue;
 			}
 			const assets::OpeningTypeDef* otherType = reg.getOpeningType(other.type);

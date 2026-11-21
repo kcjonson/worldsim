@@ -44,7 +44,20 @@ namespace assets {
 	namespace {
 
 		bool isKnownAssetType(const std::string& s) {
-			return s == "simple" || s == "Simple" || s == "procedural" || s == "Procedural";
+			return s == "simple" || s == "Simple" || s == "procedural" || s == "Procedural" || s == "parts" || s == "Parts";
+		}
+
+		// Every file a parts def's drawings name (its parts' tops and sides, and its area drawings), so they
+		// count as referenced. Whether each exists and reads is checked where the def loads (PartsAsset.h).
+		void collectPartsDrawings(const pugi::xml_node& node, const fs::path& assetFolder, std::set<std::string>& referenced) {
+			for (const char* attribute : {"drawing", "file"}) {
+				if (const pugi::xml_attribute named = node.attribute(attribute); named && named.value()[0] != '\0') {
+					referenced.insert((assetFolder / named.value()).lexically_normal().string());
+				}
+			}
+			for (const pugi::xml_node child : node.children()) {
+				collectPartsDrawings(child, assetFolder, referenced);
+			}
 		}
 
 		bool isSimpleAssetType(const std::string& s) {
@@ -460,6 +473,10 @@ namespace assets {
 					if (!pathExists(resolved)) {
 						report.add(Severity::Error, defName, "svgPath", "Referenced SVG does not exist", resolved.string());
 					}
+				}
+
+				for (const char* section : {"parts", "useAreas", "clearance"}) {
+					collectPartsDrawings(assetDef.child(section), assetFolder, referencedSvgs);
 				}
 
 				// Generator script must resolve to a real file.

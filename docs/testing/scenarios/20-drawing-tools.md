@@ -1,7 +1,7 @@
 # Scenario 20: Drawing tools
 
 **Status:** ready  
-**Last verified:** 2026-11-20, in two runs: steps 1 to 32 with the crew landing west of the river, before steps 36 to 41 existed; and steps 36 to 41 (the wall, door and window by hand, from a game started through Quick Start after a game with a step 22 triangle in it, as step 28 does). Steps 33 to 35 are person-only and were not run
+**Last verified:** 2026-11-20, in two runs: steps 1 to 32 with the crew landing west of the river, before steps 36 to 44 existed; and steps 36 to 44 by injected input in a game from `--scene=game` with reveal on. Steps 33 to 35 are person-only and were not run
 
 Verifies what scenarios 03 and 04 leave out of the drawing tools: the Rectangle tool's quieter edge cases, Freeform with every helper off, each Drawing Setting no other scenario turns on, and the key guide's rows for the opening and Add tools and for the helper legend.
 
@@ -70,11 +70,14 @@ Every point below is a world point (x, y in meters) on the dry ground east of th
 34. Person only: pick Rectangle in the picker, hold Alt and move the pointer between two grid points: the corner lands on the raw pointer, off the grid, and no grid cross shows.
 35. Person only: pick Wall, hold Ctrl and click the near edge of a foundation: a wall is queued along the whole edge. Then press Esc until the tool closes.
 36. Press Esc until `tool` is `none`. Turn reveal on (`/api/dev/reveal?on=1`), make a built foundation on clear ground (`/api/dev/foundation?pts=18,8;32,8;32,18;18,18&material=Wood&built=1`) and read its id from `?what=construction` (`foundations[0].id`, FOUND_ID), then a wall blueprint on it (`/api/dev/walls?pts=20,10;30,10&material=Wood&thickness=Standard&host=<FOUND_ID>&built=0&close=0`): `?what=construction` lists the wall `Blueprint`. Note its `id` (WALL_ID) and `entity` (WALL_ENTITY).
-37. Pick Build, then Door, and move the pointer onto the wall (send two moves, the first only wakes the pointer): `status.hint` is "Click a wall to place", `opening.snap.wall` is WALL_ID, and the door ghost shows on the blueprint wall.
+37. Pick Build, then Door, and move the pointer onto the wall at (24, 10) (send two moves, the first only wakes the pointer): `status.hint` is "Click a wall to place", `opening.snap.wall` is WALL_ID, and the door ghost shows on the blueprint wall.
 38. Click: a "Door blueprint" toast shows, `?what=construction` lists one opening `Blueprint` on that wall (note its `entity`, DOOR_ENTITY), and the wall's ghost band has a gap at the door.
-39. Pick Build, then Window, and click the wall 3 m along from the door: a second opening, `Window` (note its `entity`, WINDOW_ENTITY), `Blueprint` on the same wall. `/api/ui/lint` reads `"count":0`.
+39. Pick Build, then Window, and click the wall 3 m along from the door toward larger x: a second opening, `Window` (note its `x`, WINDOW_X, and its `entity`, WINDOW_ENTITY), `Blueprint` on the same wall. `/api/ui/lint` reads `"count":0`.
 40. Press Esc (`ev=keydown,escape`, then read `tool`; if it still reads `opening`, send Esc again): `tool` is `none`. Complete the wall (`/api/dev/complete?id=<WALL_ENTITY>`): the wall reads `Built`, both openings stay `Blueprint`, and the gaps in the wall stay.
 41. Complete the openings (`/api/dev/complete?id=<DOOR_ENTITY>`, then `<WINDOW_ENTITY>`): both read `Built`, and the door and window draw in their gaps.
+42. Pick Build, then Wall and move the pointer twice (the first move only wakes it, as in step 37) to (DOOR_X, 14), 4 m south of the wall on the same foundation, where DOOR_X is the door's `x` in `?what=construction`. Click: `status.pointCount` is 1. Move to the door's centre (DOOR_X, 10): `verdict.valid` is false and `status.message` reads "an opening is in the way". Click: `status.pointCount` stays 1, no wall is added, and a toast reads "Invalid point: an opening is in the way".
+43. Move the pointer to the midpoint between the door and the window on the wall, (MID, 10) with MID halfway between DOOR_X and WINDOW_X (about 1 m clear of each one's edge): `verdict.valid` is true. Click, then press Enter: `?what=construction` lists the new wall from (DOOR_X, 14) to there, the host wall in two pieces, and the door on the first piece at the same `x`. Press Esc until `tool` is `none`.
+44. Pick Build, then Wall and move the pointer twice to the door's centre (DOOR_X, 10): `status.message` reads "an opening is in the way". Click: `status.pointCount` stays 0 and the same toast shows. Press Esc until `tool` is `none`.
 
 ---
 

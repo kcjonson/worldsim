@@ -278,6 +278,10 @@ To inherit from an asset in a different folder, use `@defName`:
 | `ageClasses` | No | A tree's age classes, in place of `variantCount` (below) |
 | `detailLevels` | No | The screen densities a mesh is cut for, one mesh a level (below) |
 
+### Parts Asset Elements
+
+The schema is [Rotatable placed items](../rendering/rotatable-placed-items.md#4-asset-schema) section 4 and the checks its section 5. Loading produces `assets::PartsAsset` (`assets/PartsAsset.h`) on `AssetDefinition::parts`, and the derived collider's rings on `AssetDefinition::partsColliders`; its section 5 errors go into the registry's validation report.
+
 ### Age classes
 
 A tree def can split into age classes. Each placed tree gets one age class and one mesh variant from its def, world position, and the world seed (`assets::computeTreeTraits`, [tree-variety.md](./tree-variety.md) R1), so old stands and young regrowth form patches about 30 m across and thickets lean young.

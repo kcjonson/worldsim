@@ -8,6 +8,8 @@ add_library(assets
     assets/MotionEval.cpp
     assets/AssetValidator.cpp
     assets/GroundSvg.cpp
+    assets/LodSvg.cpp
+    assets/PartsAsset.cpp
     assets/GroundTint.cpp
     assets/GroundTransition.cpp
     assets/TessellatedPaths.cpp
@@ -39,6 +41,7 @@ add_library(assets
     assets/WorkConfig.cpp
     assets/lua/LuaEngine.cpp
     assets/lua/LuaGenerator.cpp
+    assets/lua/PartsScript.cpp
     assets/placement/DependencyGraph.cpp
     assets/placement/SpatialIndex.cpp
     assets/placement/PlacementExecutor.cpp
@@ -76,6 +79,8 @@ target_link_libraries(assets
         world
     PRIVATE
         pugixml::pugixml
+        # The art check parts drawings pass (renderer::svg::checkArt).
+        salal::svg_build
         ${LUA_LIBRARIES}
 )
 

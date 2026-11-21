@@ -86,6 +86,8 @@ namespace world_sim {
 	/// answers {"status":"ok","verb":...}.
 	struct DevRefusal {
 		std::string message;
+		/// Extra JSON members (each led by a comma) added to the ok answer when there is no message.
+		std::string okFields;
 	};
 
 	/// The dev verbs and world-state views. Read+write surface for /api/dev/<verb> and
