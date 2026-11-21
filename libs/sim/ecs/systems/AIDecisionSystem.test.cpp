@@ -4256,7 +4256,7 @@ namespace ecs::test {
 			<< "an over-weight colonist offers no craft fetch; the pickup would lift 0 and loop forever";
 	}
 
-	// A harvest must not be offered when the colonist can't carry the yield: applyCollectionEffect
+	// A harvest must not be offered when the colonist can't carry the yield: takeFromSource
 	// clamps the take to carry weight AND backpack slots and adds 0 at the cap, so the staged count
 	// never rises. Emitting the option anyway makes the colonist pick the harvest, collect 0
 	// ("Collected 0 of N ... carry-limited"), re-evaluate, and pick the same harvest again -- an

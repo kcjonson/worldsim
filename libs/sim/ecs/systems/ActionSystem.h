@@ -201,8 +201,43 @@ private:
 	/// rule; tools never go.
 	void makeRoomToEat(struct Inventory& inventory, const struct Task& task, const std::string& food, uint32_t meal, glm::vec2 position);
 
-	/// Process an in-progress action
+	/// The creature an action's effect rows apply to.
+	struct Actor {
+		EntityID			   entity;
+		glm::vec2			   position;
+		struct NeedsComponent& needs;
+		struct Inventory&	   inventory;
+		struct Memory&		   memory;
+	};
+
+	/// Which of an action's rows apply now.
+	enum class RowsDue : uint8_t {
+		All,
+		/// All but its `<restore>` rows, which an action paying along has paid as it went.
+		AllButRestores,
+		/// All but the row an open-ended action ran until, which it paid as it went.
+		AllButBound,
+	};
+
+	/// Advance an action one tick: its time and what it pays along, or its open-ended bound. Marks it Complete once it
+	/// has run its course. See /docs/technical/queries-and-chains.md (An action entry, Paying out as it goes).
+	void advanceAction(float deltaTime, const Actor& actor, struct Action& action);
+
+	/// Advance a fixed-duration action's time.
 	void processAction(float deltaTime, struct Action& action);
+
+	/// Pay an action paying along the share of its `<restore>` rows earned since the last tick, shaped by its curve.
+	void payAlong(struct Action& action, struct NeedsComponent& needs);
+
+	/// Advance an open-ended `<restore>`: its amount per its seconds, stopping at upTo, Complete once its need is there.
+	void advanceRestore(float deltaTime, const RestoreRow& row, struct Action& action, struct NeedsComponent& needs);
+
+	/// Advance an open-ended `<consume>`: every seconds, one round of every row in the order written; Complete once its
+	/// need reaches upTo, or a round takes nothing.
+	void advanceRounds(float deltaTime, const ConsumeRow& row, const Actor& actor, struct Action& action);
+
+	/// Apply the action's due rows in the order written. A row that takes nothing stops the rest; false then.
+	bool applyRows(const Actor& actor, struct Action& action, RowsDue due);
 
 	/// Complete an action and apply effects
 	void completeAction(
@@ -230,61 +265,88 @@ private:
 	/// the cut brings nothing toward a root: a clear, nothing carried, or no need.
 	bool carryHarvestIn(EntityID entity, const struct Position& position, struct Task& task, const struct Inventory& inventory, uint32_t landed);
 
-	/// Apply a completed action's need-restoration effect (primary + side effect).
-	void applyNeedEffect(const struct Action& action, struct NeedsComponent& needs);
+	// --- The primitive effects: one per effect row kind, the only implementation of each. ---
 
-	/// Apply a completed collection effect (Pickup/Harvest/Withdraw): pool-withdraw vs single-shot,
-	/// source removal/cooldown. `colonistPosition` is where
-	/// a tool stowed to free the hands is put away or dropped from (reach starts at the colonist).
-	/// False when nothing came off the source and no clear removed it.
-	bool applyCollectionEffect(
+	/// `<restore>`: move the row's need, the creature's own or the target creature's, by `amount` (restoredAmount, or
+	/// the share of it earned).
+	void applyRestore(const RestoreRow& row, float amount, const EffectContext& context, struct NeedsComponent& needs);
+
+	/// The need a `<restore>` row moves: the creature's own, or the target creature's; null when the target has none.
+	[[nodiscard]] struct Need* restoredNeed(const RestoreRow& row, const EffectContext& context, struct NeedsComponent& needs);
+
+	/// `<consume>`: use up the row's count of the held item the action eats (its ConsumptionEffect). False when the
+	/// item is no longer there.
+	bool applyConsume(const ConsumeRow& row, const struct Action& action, struct Inventory& inventory);
+
+	/// `<take>`: take from the action's target into hands or pack. A harvestable, a loose pile, or a box (its
+	/// CollectionEffect): pool-withdraw vs single-shot, source removal or cooldown, the row's `clears` removing the
+	/// source whatever it is. A packaged item (its PlacePackagedEffect): lifted into both hands once they are cleared.
+	/// `colonistPosition` is where a tool stowed to free the hands is put away or dropped from. False when nothing came
+	/// off the source and no clear removed it, or the package is gone, placed, or carried.
+	bool applyTake(
+		const TakeRow&		 row,
 		const struct Action& action,
-		glm::vec2 colonistPosition,
-		struct Inventory& inventory,
-		struct Memory& memory
+		glm::vec2			 colonistPosition,
+		struct Inventory&	 inventory,
+		struct Memory&		 memory
 	);
 
-	/// Apply a completed consumption effect (Eat): remove item, restore need + side effect. False, with
-	/// nothing restored, when the item is no longer there.
-	bool applyConsumptionEffect(const struct Action& action, struct NeedsComponent& needs, struct Inventory& inventory);
+	/// Take from a harvestable, a loose pile, or a box, `clears` removing the source whatever it is.
+	bool takeFromSource(
+		bool				 clears,
+		const struct Action& action,
+		glm::vec2			 colonistPosition,
+		struct Inventory&	 inventory,
+		struct Memory&		 memory
+	);
 
-	/// Apply a completed spawn effect (pooping spawns a Bio Pile).
-	void applySpawnEffect(const struct Action& action);
+	/// Lift the packaged item into both hands, cleared first.
+	bool liftPackaged(const struct Action& action, struct Inventory& inventory);
 
-	/// Apply a completed crafting effect: consume inputs, add/drop outputs, notify, update WorkQueue.
-	/// False, making and spending nothing, when the station no longer holds every input.
-	bool applyCraftingEffect(const struct Action& action, struct Inventory& inventory);
+	/// `<put>`: put what the creature carries into the action's target (a storage box, a craft station's store, a
+	/// blueprint's manifest), metered to what it still needs and has room for. False when the target took nothing.
+	bool applyPut(const struct Action& action, struct Inventory& inventory);
 
-	/// Apply a completed deposit effect (storage deposit or deliver-to-craft-station). False when the
-	/// target took nothing.
-	bool applyDepositEffect(const struct Action& action, struct Inventory& inventory);
+	/// `<work>` completing: the bound is crossed, so the structure is built, or torn down and refunded.
+	void completeWork(const WorkRow& row, const struct Action& action);
 
-	/// Apply a completed construction progress effect (Build/Deconstruct completion signal).
-	void applyProgressEffect(const struct Action& action);
+	/// `<craft>`: the completion service (see startCraftAction for its start). Checks again that the station's store
+	/// holds every input, spends them, makes the outputs (furniture packaged through the deferred spawn queue, anything
+	/// else to the crafter's hands, belt, pack, then stored or dropped), fires the item-crafted event, and advances the
+	/// job. False, making and spending nothing, when the store no longer holds every input.
+	bool applyCraft(const struct Action& action, struct Inventory& inventory);
 
-	/// Apply a completed PlacePackaged effect (phase 2): move the carried entity to target and unpackage.
-	/// False when the package is gone or already placed.
-	bool applyPlacePackagedEffect(const struct Action& action, struct Inventory& inventory);
+	/// `<spawn>`: a thing of the row's definition where the creature stands (`at`), or with `into="hands"` given to it,
+	/// hands first, as a crafted output is.
+	bool applySpawn(const SpawnRow& row, glm::vec2 at, struct Inventory& inventory);
 
-	/// Start a crafting action based on the task's recipe. Validates the recipe inputs against the
-	/// crafting station's own Inventory store (materials were hauled into it during provisioning).
+	/// `<install>`: put the packaged item the creature carries down at its placement target and unpackage it. False
+	/// when the package is gone or already placed.
+	bool applyInstall(const struct Action& action, struct Inventory& inventory);
+
+	/// Start a crafting action on the task's recipe: the `<craft>` service's start, which sums the recipe's repeated
+	/// input lines and starts nothing unless the station's store holds every input.
 	void startCraftAction(struct Task& task, struct Action& action);
 
-	/// Start a Build or Deconstruct action on the task's blueprint.
-	/// Reads the colonist's Construction skill (if any) to scale the work rate, and validates
-	/// the blueprint is in a workable phase. @param entity is the builder (for skill lookup).
+	/// Start a Build or Deconstruct action on the task's blueprint, once the `<work>` guards let it start.
+	/// Reads the builder's level in the work row's skill to scale the work rate. @param entity is the builder.
 	void startBuildAction(
 		EntityID entity,
 		struct Task& task,
 		struct Action& action
 	);
 
-	/// Advance continuous construction work on the blueprint targeted by a Build/Deconstruct
-	/// action. Moves StructureBlueprint.workDone by constructionWorkRate(skill) x dt (up for
-	/// Build, down for Deconstruct), clamps it, and marks the action Complete when the work
-	/// bound is reached. Separated from processAction because completion is gated by workDone,
-	/// not elapsed time. @return true if the action reached completion this tick.
-	bool advanceConstructionWork(float deltaTime, struct Action& action);
+	/// The `<work>` guards a start passes: a build needs the blueprint under construction with no demolish order; a
+	/// teardown needs work done above 0.
+	[[nodiscard]] static bool workMayStart(const WorkRow& row, const struct StructureBlueprint& blueprint);
+
+	/// `<work>` paying along: advance the work on the action's blueprint by the rate of the skill level it started
+	/// with x dt, up or down as the row says, clamped at its bound, Complete when the bound is crossed. Keeps the
+	/// construction guards each tick: a builder arriving after completion, or at a site ordered demolished, or at a
+	/// teardown already at 0, is cleared without adding work or completing; completion fires once, whatever the
+	/// number of builders; a teardown begins once; a wall waits while it would shut someone in.
+	/// @return true if the action reached completion this tick.
+	bool advanceWork(float deltaTime, const WorkRow& row, struct Action& action);
 
 	/// Readies the wall `blueprintEntity` to complete, true when it may. It is held, moving nobody, while it
 	/// would shut in one of its builders (construction::WallClosure::shutsIn; his action ends, so he decides

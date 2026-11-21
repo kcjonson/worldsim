@@ -246,9 +246,10 @@ namespace ecs::test {
 			 "<put/><put/>",
 			 "[actions] carrying.xml: <action id=\"deposit\"> effect 2 <put> is a second <put>; the sim's Deposit action performs one"},
 			{carrying,
-			 "<take/>",
-			 R"(<take clears="true"/>)",
-			 "[actions] carrying.xml: <action id=\"harvest\"> effect 1 <take> clears must be left out; the sim's Harvest action takes "
+			 R"(id="pickup" on="loose_item" seconds="0.5" hands="free" interruptable="false">)",
+			 R"(id="pickup" on="loose_item" seconds="0.5" hands="free" interruptable="false"><take clears="true"/></action>)"
+			 R"(<action id="spare" seconds="1" interruptable="false">)",
+			 "[actions] carrying.xml: <action id=\"pickup\"> effect 1 <take> clears must be left out; the sim's Pickup action takes "
 			 "without clearing"},
 			// Consume.
 			{eating, R"(<consume capability="edible" count="1"/>)", "", eat + "has no <consume> effect; the sim's Eat action performs one"},
@@ -262,16 +263,6 @@ namespace ecs::test {
 			 R"(<restore need="bladder" amount="100"/>)",
 			 R"(<restore need="bladder" amount="100"/><spawn def="Misc_BioPile"/>)",
 			 urinate + "effect 2 <spawn> is not an effect the sim's Toilet action performs"},
-			{relieving,
-			 defecateSpawn,
-			 R"(<spawn def="Berry"/>)",
-			 defecate + "effect 2 <spawn> must be def=\"Misc_BioPile\" with no into: the engine spawns only that definition for a relief, "
-						"where the creature stands"},
-			{relieving,
-			 defecateSpawn,
-			 R"(<spawn def="Misc_BioPile" into="hands"/>)",
-			 defecate + "effect 2 <spawn> must be def=\"Misc_BioPile\" with no into: the engine spawns only that definition for a relief, "
-						"where the creature stands"},
 			{relieving,
 			 defecateSpawn,
 			 defecateSpawn + defecateSpawn,
@@ -335,6 +326,20 @@ namespace ecs::test {
 			change(tried.file, tried.from, tried.to);
 			EXPECT_EQ(resolved().errors, std::vector<std::string>{tried.error});
 		}
+	}
+
+	TEST_F(ActionEntriesTest, WhatTheRowsTellThePrimitivesIsReadNotRefused) {
+		// The take primitive clears a harvest's source when its row says so, and the spawn primitive spawns the
+		// definition its row names, where the creature stands or into its hands.
+		change("actions/carrying.xml", "<take/>", R"(<take clears="true"/>)");
+		change("behaviors/human/relieving.xml", R"(<spawn def="Misc_BioPile"/>)", R"(<spawn def="Berry" into="hands"/>)");
+		const ActionEntriesLoad load = resolved();
+		EXPECT_TRUE(load.errors.empty()) << ::testing::PrintToString(load.errors);
+		ASSERT_EQ(load.actions.harvest.effects.size(), 1U);
+		EXPECT_TRUE(std::get<TakeRow>(load.actions.harvest.effects[0]).clears);
+		ASSERT_EQ(load.actions.defecate.effects.size(), 2U);
+		EXPECT_EQ(std::get<SpawnRow>(load.actions.defecate.effects[1]).def, "Berry");
+		EXPECT_TRUE(std::get<SpawnRow>(load.actions.defecate.effects[1]).intoHands);
 	}
 
 	TEST_F(ActionEntriesTest, AConsumeThatRunsUntilABoundIsRefusedBesideTheDurationItTakesAway) {

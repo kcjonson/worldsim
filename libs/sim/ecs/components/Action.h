@@ -16,6 +16,7 @@
 // - /docs/design/game-systems/world/entity-capabilities.md
 
 #include "../ActionEntries.h"
+#include "../EntityID.h"
 #include "Needs.h"
 
 #include <assets/Entries.h>
@@ -24,6 +25,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -118,7 +120,33 @@ namespace ecs {
 	}
 
 	// ============================================================================
-	// Effect Types (what happens when the action completes)
+	// Effect context (what an action's effect rows read from where it runs)
+	// ============================================================================
+
+	/// What an action's effect rows name and do not carry, set when it starts.
+	struct EffectContext {
+		/// The nutrition of the unit a `<consume>` uses up, which a `<restore from="nutrition">` scales.
+		float nutrition = 0.0F;
+		/// The target's sleep quality, which a `<restore scaleBy="sleep_quality">` scales.
+		float sleepQuality = 1.0F;
+		/// The step's target creature, whose need a `<restore who="target">` moves.
+		EntityID targetCreature = kInvalidEntity;
+	};
+
+	/// The whole signed amount a `<restore>` row moves its need by: per its `seconds` for an open-ended row.
+	[[nodiscard]] inline float restoredAmount(const RestoreRow& row, const EffectContext& context) {
+		const float amount = row.fromNutrition ? context.nutrition * row.amount : row.amount;
+		return row.bySleepQuality ? amount * context.sleepQuality : amount;
+	}
+
+	/// The share of an action's total an action paying along earns from `fromFraction` to `toFraction` of it done: by a
+	/// fraction f it has earned f^curve of the whole.
+	[[nodiscard]] inline float earnedShare(float fromFraction, float toFraction, float curve) {
+		return std::pow(toFraction, curve) - std::pow(fromFraction, curve);
+	}
+
+	// ============================================================================
+	// Effect Types: the targets and items each effect row acts on
 	// ============================================================================
 
 	/// Effect for need fulfillment actions (Drink, Wash, Sleep, Toilet)
@@ -158,9 +186,9 @@ namespace ecs {
 		/// If destroySource is false and this > 0, entity enters cooldown (regrowth)
 		float regrowthTime = 0.0F;
 
-		/// Construction footprint clear: the source is removed by this action whatever kind it is
-		/// (regrowing, pooled) and however much the colonist can carry; the uncarried yield drops
-		/// as a loose pile.
+		/// Construction footprint clear, set by the harvest factory for a clear goal (a `<take clears="true">` row
+		/// clears too): the source is removed by this action whatever kind it is (regrowing, pooled) and however much
+		/// the colonist can carry; the uncarried yield drops as a loose pile.
 		bool clearsSource = false;
 
 		/// Where the yield the colonist can't carry drops: beside the source when unset; a footprint
@@ -196,10 +224,10 @@ namespace ecs {
 		float sideEffectAmount = 0.0F;
 	};
 
-	/// Effect for construction progress actions (Build, Deconstruct).
+	/// What a `<work>` row works on (Build, Deconstruct).
 	///
 	/// Unlike fixed-duration effects (applied once on completion), construction work is
-	/// continuous: ActionSystem advances the target blueprint's workDone every processAction
+	/// continuous: ActionSystem advances the target blueprint's workDone every
 	/// tick by rate(skill) x dt, so multiple colonists and multiple work sessions accumulate
 	/// onto the same StructureBlueprint. The action ends when the blueprint reaches its work
 	/// bound (workTotal for Build, 0 for Deconstruct), at which point ActionSystem fires the
@@ -208,21 +236,13 @@ namespace ecs {
 		/// Target blueprint entity whose StructureBlueprint.workDone is advanced.
 		uint64_t targetEntityId = 0;
 
-		/// Builder's Construction skill level (0-20), captured when the action starts.
+		/// Builder's level in the work row's skill (0-20), captured when the action starts.
 		/// Scales the per-second work rate; see constructionWorkRate().
 		float skillLevel = 0.0F;
 
-		/// True for Deconstruct (workDone counts down toward 0); false for Build (counts up).
+		/// The work row goes down (Deconstruct, workDone counts toward 0), as the factory reports it; the work
+		/// itself follows the row.
 		bool deconstruct = false;
-	};
-
-	/// Effect for entity spawning (Toilet creates Bio Pile)
-	struct SpawnEffect {
-		/// Position to spawn entity
-		glm::vec2 position{0.0F, 0.0F};
-
-		// TODO: When entity spawning exists:
-		// std::string entityDefName;
 	};
 
 	/// Effect for crafting actions (Craft at station)
@@ -272,8 +292,15 @@ namespace ecs {
 	};
 
 	/// Variant holding the effect data for the current action
-	using ActionEffect =
-		std::variant<std::monostate, NeedEffect, CollectionEffect, ConsumptionEffect, ProgressEffect, SpawnEffect, CraftingEffect, DepositEffect, PlacePackagedEffect>;
+	using ActionEffect = std::variant<
+		std::monostate,
+		NeedEffect,
+		CollectionEffect,
+		ConsumptionEffect,
+		ProgressEffect,
+		CraftingEffect,
+		DepositEffect,
+		PlacePackagedEffect>;
 
 	// ============================================================================
 	// Action Component
@@ -286,14 +313,24 @@ namespace ecs {
 		ActionType	type = ActionType::None;
 		ActionState state = ActionState::Starting;
 
-		/// The action entry the factory read its values from; none while no action runs.
-		assets::EntryHandle<assets::ActionEntry> entry;
+		/// The action entry the action runs, its effect rows applied in the order written; null while no action runs.
+		/// Points into the ActionEntries the ActionSystem was given, which outlives every action.
+		const ActionValues* values = nullptr;
+
+		/// What the effect rows read from where the action runs.
+		EffectContext context;
 
 		/// Duration of the action in seconds
 		float duration = 0.0F;
 
 		/// Elapsed time in this action (seconds)
 		float elapsed = 0.0F;
+
+		/// The fraction of an action paying along already paid out.
+		float paidFraction = 0.0F;
+
+		/// The rounds an open-ended `<consume>` has completed, each one unit's worth of every effect row.
+		uint32_t rounds = 0;
 
 		/// Target position (used for location-based effects like spawning)
 		glm::vec2 targetPosition{0.0F, 0.0F};
@@ -303,7 +340,8 @@ namespace ecs {
 		/// Sleep can be interrupted for critical needs.
 		bool interruptable = true;
 
-		/// Whether this action spawns a Bio Pile on completion (for Toilet/poop)
+		/// Whether the Toilet factory's entry has a `<spawn>` (the bowels), as the factory reports it; the spawn itself is
+		/// the entry's row.
 		bool spawnBioPile = false;
 
 		// --- Effect data (variant - contains type-specific data) ---
@@ -332,12 +370,6 @@ namespace ecs {
 		/// Get the need effect (call hasNeedEffect() first or use std::get_if)
 		[[nodiscard]] const NeedEffect& needEffect() const { return std::get<NeedEffect>(effect); }
 		[[nodiscard]] NeedEffect&		needEffect() { return std::get<NeedEffect>(effect); }
-
-		/// Check if this action has a spawn effect
-		[[nodiscard]] bool hasSpawnEffect() const { return std::holds_alternative<SpawnEffect>(effect); }
-
-		/// Get the spawn effect
-		[[nodiscard]] const SpawnEffect& spawnEffect() const { return std::get<SpawnEffect>(effect); }
 
 		/// Check if this action has a collection effect
 		[[nodiscard]] bool hasCollectionEffect() const { return std::holds_alternative<CollectionEffect>(effect); }
@@ -387,9 +419,12 @@ namespace ecs {
 		void clear() {
 			type = ActionType::None;
 			state = ActionState::Starting;
-			entry = {};
+			values = nullptr;
+			context = EffectContext{};
 			duration = 0.0F;
 			elapsed = 0.0F;
+			paidFraction = 0.0F;
+			rounds = 0;
 			targetPosition = glm::vec2{0.0F, 0.0F};
 			interruptable = true;
 			spawnBioPile = false;
@@ -398,7 +433,21 @@ namespace ecs {
 
 		// --- Factory methods for creating actions ---
 		//
-		// Each factory takes its duration, interruptability, and amounts from its action entry (ActionEntries).
+		// Each factory takes its duration, interruptability, amounts, and effect rows from its action entry
+		// (ActionEntries), and sets the context and targets the rows act on.
+
+		/// An action of `type` starting, running the entry `values` (which must outlive it), with its fixed duration
+		/// and interruptability. The factories start from it; an action with no factory sets its own context and
+		/// targets.
+		static Action fromEntry(ActionType type, const ActionValues& values) {
+			Action action;
+			action.type = type;
+			action.state = ActionState::Starting;
+			action.values = &values;
+			action.duration = values.seconds;
+			action.interruptable = values.interruptable;
+			return action;
+		}
 
 		/// Factory: Eat action - consume food from inventory, restoring each need its entry restores by the food's
 		/// nutrition times the row's scale (hunger up, digestion down as the gut fills).
@@ -407,6 +456,7 @@ namespace ecs {
 		static Action Eat(const ActionEntries& actions, const std::string& itemDefName, float nutrition) {
 			const ActionValues& values = actions.eat;
 			Action				action = fromEntry(ActionType::Eat, values);
+			action.context.nutrition = nutrition;
 
 			ConsumptionEffect consumeEff;
 			consumeEff.itemDefName = itemDefName;
@@ -432,6 +482,7 @@ namespace ecs {
 		/// @param quality The place's sleep quality (the ground's from ActionEntries, 1.0 for a bed)
 		static Action Sleep(const ActionEntries& actions, float quality) {
 			Action action = needAction(ActionType::Sleep, actions.sleep);
+			action.context.sleepQuality = quality;
 			action.needEffect().restoreAmount *= quality;
 			return action;
 		}
@@ -618,7 +669,7 @@ namespace ecs {
 			ProgressEffect progressEff;
 			progressEff.targetEntityId = blueprintEntityId;
 			progressEff.skillLevel = skillLevel;
-			progressEff.deconstruct = false;
+			progressEff.deconstruct = std::get<WorkRow>(actions.build.effects[actions.build.boundRow]).down;
 			action.effect = progressEff;
 
 			return action;
@@ -638,7 +689,7 @@ namespace ecs {
 			ProgressEffect progressEff;
 			progressEff.targetEntityId = blueprintEntityId;
 			progressEff.skillLevel = skillLevel;
-			progressEff.deconstruct = true;
+			progressEff.deconstruct = std::get<WorkRow>(actions.deconstruct.effects[actions.deconstruct.boundRow]).down;
 			action.effect = progressEff;
 
 			return action;
@@ -677,17 +728,6 @@ namespace ecs {
 		}
 
 	  private:
-		/// An action of `type` starting, with its entry's handle, fixed duration, and interruptability.
-		static Action fromEntry(ActionType type, const ActionValues& values) {
-			Action action;
-			action.type = type;
-			action.state = ActionState::Starting;
-			action.entry = values.entry;
-			action.duration = values.seconds;
-			action.interruptable = values.interruptable;
-			return action;
-		}
-
 		/// An action restoring the needs its entry's `<restore>` rows name: the first, and the second as its side effect.
 		static Action needAction(ActionType type, const ActionValues& values) {
 			Action action = fromEntry(type, values);

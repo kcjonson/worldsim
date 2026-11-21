@@ -535,7 +535,7 @@ other. The dev tools' free build and forced completion do not wait.
 
 A site ordered demolished takes no more build work: a Build action on it ends on the next tick it
 would add work, before it could complete, and a builder still walking there starts nothing on arrival.
-Either way the Build task ends and the colonist decides again (`ActionSystem::advanceConstructionWork`
+Either way the Build task ends and the colonist decides again (`ActionSystem::advanceWork`
 and `startBuildAction`, the same path a blueprint removed mid-build takes). From the next decision it is
 no longer offered as build work, though its Build goal stays Available until `ConstructionSystem`'s next
 pass removes it (`SharedWork::buildSites`), so no colonist selects it again and no builder spot on it is

@@ -22,11 +22,11 @@
 
 namespace ecs {
 
-	void ActionSystem::applyProgressEffect(const Action& action) {
+	void ActionSystem::completeWork(const WorkRow& row, const Action& action) {
 		const auto& progressEff = action.progressEffect();
 		auto		blueprintEntity = static_cast<EntityID>(progressEff.targetEntityId);
 
-		if (progressEff.deconstruct) {
+		if (row.down) {
 			LOG_INFO(
 				Engine,
 				"[Action] Deconstruct complete on blueprint %llu - signaling removal/refund",
@@ -65,23 +65,20 @@ namespace ecs {
 			return;
 		}
 
-		const bool deconstruct = (task.type == TaskType::Deconstruct);
+		const bool			deconstruct = (task.type == TaskType::Deconstruct);
+		const ActionValues& values = deconstruct ? actionEntries.deconstruct : actionEntries.build;
+		const auto&			work = std::get<WorkRow>(values.effects[values.boundRow]);
 
-		// Build requires the blueprint to be under construction (materials staged) and not ordered
-		// demolished; Deconstruct requires there to be work to undo. A no-op start clears the action
-		// so the colonist re-evaluates rather than spinning on a finished or not-yet-ready blueprint.
-		if (deconstruct) {
-			if (blueprint->workDone <= 0.0F) {
+		// A start the guards refuse clears the action so the colonist re-evaluates rather than spinning on a
+		// finished or not-yet-ready blueprint.
+		if (!workMayStart(work, *blueprint)) {
+			if (work.down) {
 				LOG_DEBUG(
 					Engine,
 					"[Action] Deconstruct skipped: blueprint %llu has no work to undo",
 					static_cast<unsigned long long>(task.buildBlueprintEntityId)
 				);
-				action.clear();
-				return;
-			}
-		} else {
-			if (blueprint->phase != StructureBlueprint::BuildPhase::UnderConstruction || blueprint->demolishing) {
+			} else {
 				LOG_DEBUG(
 					Engine,
 					"[Action] Build skipped: blueprint %llu not buildable (phase %d, demolishing %d)",
@@ -89,17 +86,16 @@ namespace ecs {
 					static_cast<int>(blueprint->phase),
 					blueprint->demolishing ? 1 : 0
 				);
-				action.clear();
-				return;
 			}
+			action.clear();
+			return;
 		}
 
-		// Capture the builder's level in the entry's work skill to scale the work rate. Skills is optional;
-		// a colonist without it (or untrained) still builds at the base rate.
-		const ActionValues& values = deconstruct ? actionEntries.deconstruct : actionEntries.build;
-		float				skillLevel = 0.0F;
+		// Capture the builder's level in the work row's skill to scale the work rate. Skills is optional; a
+		// colonist without it (or untrained) still builds at the base rate.
+		float skillLevel = 0.0F;
 		if (const auto* skills = world->getComponent<Skills>(entity)) {
-			skillLevel = skills->getLevel(values.skill);
+			skillLevel = skills->getLevel(work.skill);
 		}
 
 		action = deconstruct ? Action::Deconstruct(actionEntries, task.buildBlueprintEntityId, task.targetPosition, skillLevel)
@@ -117,7 +113,14 @@ namespace ecs {
 		);
 	}
 
-	bool ActionSystem::advanceConstructionWork(float deltaTime, Action& action) {
+	bool ActionSystem::workMayStart(const WorkRow& row, const StructureBlueprint& blueprint) {
+		if (row.down) {
+			return blueprint.workDone > 0.0F;
+		}
+		return blueprint.phase == StructureBlueprint::BuildPhase::UnderConstruction && !blueprint.demolishing;
+	}
+
+	bool ActionSystem::advanceWork(float deltaTime, const WorkRow& row, Action& action) {
 		// Transition Starting -> InProgress on the first tick, mirroring processAction.
 		if (action.state == ActionState::Starting) {
 			action.state = ActionState::InProgress;
@@ -145,7 +148,7 @@ namespace ecs {
 		// completion callback (duplicate toast + redundant world version bump). Treat such a
 		// builder as redundant: clear its action and return without firing. A site ordered
 		// demolished takes no more build work from that tick on, and never completes.
-		if (progressEff.deconstruct) {
+		if (row.down) {
 			if (blueprint->workDone <= 0.0F) {
 				action.clear();
 				return false;
@@ -159,7 +162,7 @@ namespace ecs {
 
 		const float delta = constructionWorkRate(progressEff.skillLevel) * deltaTime;
 
-		if (progressEff.deconstruct) {
+		if (row.down) {
 			blueprint->workDone -= delta;
 			blueprint->teardownBegun = true;
 			if (blueprint->workDone <= 0.0F) {

@@ -59,12 +59,17 @@ namespace ecs {
 
 	} // namespace
 
-	bool ActionSystem::applyCollectionEffect(
-		const Action& action,
-		glm::vec2	  colonistPosition,
-		Inventory&	  inventory,
-		Memory&		  memory
-	) {
+	bool
+	ActionSystem::applyTake(const TakeRow& row, const Action& action, glm::vec2 colonistPosition, Inventory& inventory, Memory& memory) {
+		if (action.hasPlacePackagedEffect()) {
+			return liftPackaged(action, inventory);
+		}
+		// A harvest the factory started for a footprint clear clears whatever its row says: the site clear's own
+		// `clear` entry, with `<take clears="true"/>`, is not shipped until the site clear moves to data.
+		return takeFromSource(row.clears || action.collectionEffect().clearsSource, action, colonistPosition, inventory, memory);
+	}
+
+	bool ActionSystem::takeFromSource(bool clears, const Action& action, glm::vec2 colonistPosition, Inventory& inventory, Memory& memory) {
 		const auto& collEff = action.collectionEffect();
 
 		auto& harvestRegistry = assets::AssetRegistry::Get();
@@ -227,11 +232,11 @@ namespace ecs {
 			// whole pool in one pass and removes the bush: the pack takes all that fits (not one cut's
 			// yield) and the rest drops. The source must still stand before its pool pays, as for a
 			// single-shot source. Removing the source erases its pool, so the removal follows the draw.
-			const uint32_t	  request = collEff.clearsSource ? UINT32_MAX : wanted;
-			const uint32_t	  packRoom = collEff.clearsSource ? room : wanted;
+			const uint32_t	  request = clears ? UINT32_MAX : wanted;
+			const uint32_t	  packRoom = clears ? room : wanted;
 			const SourceState state = takeSource(SourceTake::Keep);
 			if (state != SourceState::Ready) {
-				if (state == SourceState::OnCooldown && collEff.clearsSource) {
+				if (state == SourceState::OnCooldown && clears) {
 					takeSource(SourceTake::Remove); // a clear still removes a regrowing source, with no yield
 					took = true;
 				}
@@ -240,7 +245,7 @@ namespace ecs {
 					m_onDecrementResource(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, request);
 				added = inventory.addItem(collEff.itemDefName, std::min(draw.removed, packRoom));
 				dropUncarried(draw.removed - added);
-				took = draw.removed > 0 || collEff.clearsSource;
+				took = draw.removed > 0 || clears;
 				LOG_INFO(
 					Engine,
 					"[Action] Chopped %u x %s (now carrying %u)",
@@ -248,7 +253,7 @@ namespace ecs {
 					collEff.itemDefName.c_str(),
 					inventory.getQuantity(collEff.itemDefName)
 				);
-				if (draw.depleted || collEff.clearsSource) {
+				if (draw.depleted || clears) {
 					takeSource(SourceTake::Remove);
 				}
 			} else {
@@ -277,7 +282,7 @@ namespace ecs {
 
 			if (isTwoHand) {
 				// A fell completes regardless of how much lands in hands; bulk goods never regrow.
-				const bool fells = collEff.destroySource || collEff.clearsSource;
+				const bool fells = collEff.destroySource || clears;
 				if (takeSource(fells ? SourceTake::Remove : SourceTake::Keep) == SourceState::Ready) {
 					// Felling yields a two-hand armful (wood) that needs both hands. If the colonist
 					// crafted/holds a one-hand axe, it sits in a hand and would block the lift; stow it
@@ -301,7 +306,7 @@ namespace ecs {
 					}
 				}
 				SourceTake leaves = SourceTake::Keep;
-				if (collEff.clearsSource || collEff.destroySource) {
+				if (clears || collEff.destroySource) {
 					leaves = SourceTake::Remove;
 				} else if (collEff.regrowthTime > 0.0F) {
 					leaves = SourceTake::Regrow;
@@ -309,9 +314,9 @@ namespace ecs {
 				// A cut gives its whole yield: what the pack can't take drops beside the plant as a loose pile,
 				// as a fell's overflow does, rather than being lost. A loose-item fetch takes only its own item.
 				const bool cut = collEff.sourceDefName != collEff.itemDefName;
-				if ((take > 0 || collEff.clearsSource) && takeSource(leaves) == SourceState::Ready) {
+				if ((take > 0 || clears) && takeSource(leaves) == SourceState::Ready) {
 					added = inventory.addItem(collEff.itemDefName, take);
-					if (cut || collEff.clearsSource) {
+					if (cut || clears) {
 						dropUncarried(collEff.quantity - added);
 					}
 					took = true;
@@ -412,7 +417,7 @@ namespace ecs {
 		}
 
 		// Build the Harvest at the ENTITY's position (the actual tree), not task.targetPosition (the
-		// snapped stand point). applyCollectionEffect resolves the source pool/pile by this position.
+		// snapped stand point). The take resolves the source pool/pile by this position.
 		action = Action::Harvest(
 			actionEntries,
 			harvestCap.yieldDefName,

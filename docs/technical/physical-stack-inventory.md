@@ -58,7 +58,7 @@ Becomes an ordered slot collection (`std::vector<ItemStack>`), each entry one st
 Stay as totals. **Superseded:** a later refactor made `delivered[]` the authoritative tracker (`StructureBlueprint::recordDelivery`); build sites carry no Inventory and `reconcileDelivered` is gone. `materialsComplete()` unchanged.
 
 ### Build-site delivery inventory
-**Superseded:** build sites no longer carry a delivery Inventory. `applyDepositEffect` records straight onto `delivered[]` via `recordDelivery` (capped at the requirement; the surplus bounces back to the colonist's hands); `slotsForManifest`/`createForBuildSite` were deleted.
+**Superseded:** build sites no longer carry a delivery Inventory. `applyPut` records straight onto `delivered[]` via `recordDelivery` (capped at the requirement; the surplus bounces back to the colonist's hands); `slotsForManifest`/`createForBuildSite` were deleted.
 
 ### Ground-pile drop
 `GameScene` drop-resource callback splits a `> stackSize` quantity into multiple `ResourceStack` entities on nearby tiles.
