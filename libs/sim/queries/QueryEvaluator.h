@@ -71,15 +71,17 @@ namespace queries {
 
 	/// How the claims of the step a query runs for are read. A holder of a candidate either takes it from this
 	/// creature (the candidate is passed over) or only holds it (`held` reads 1). Until a claim holder carries
-	/// the need its option serves, an eater is a need task (ecs::TaskType::FulfillNeed) below the idle tier and
-	/// at a tier no lower than this creature's option, as the hand-written food search reads it.
+	/// the need its option serves, an eater is a need task (ecs::TaskType::FulfillNeed) not on the idle rung
+	/// and on a rung no lower than this creature's option, as the decision's food search reads it.
 	struct ClaimReading {
 		/// The claim kinds the step names, as bits of assets::ClaimKind; none passes nothing over for claims.
 		uint8_t kinds = 0;
 		/// An idle chain: every holder takes.
-		bool	everyHolderTakes = false;
-		uint8_t tier = 0;
-		uint8_t idleTier = 7;
+		bool everyHolderTakes = false;
+		/// This creature's option's rung and the idle rung, as positions in the loaded ladder
+		/// (assets::DecisionRungs). Both are the caller's to give whenever claims are read by the eater rule.
+		uint8_t tier = ecs::kUnrankedTier;
+		uint8_t idleTier = ecs::kUnrankedTier;
 		/// Units the step wants of any item, when it is not a meal.
 		uint32_t wanted = 1;
 		/// For a meal: the need points short of the need's seek level. The units wanted of an item are then

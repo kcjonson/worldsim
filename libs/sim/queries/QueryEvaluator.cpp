@@ -744,8 +744,13 @@ namespace queries {
 
 		[[nodiscard]] bool takes(const ecs::ClaimHolder& holder) const {
 			const ClaimReading& reading = request.claims;
-			return reading.everyHolderTakes ||
-				   (holder.taskType == ecs::TaskType::FulfillNeed && holder.tier < reading.idleTier && holder.tier <= reading.tier);
+			if (reading.everyHolderTakes) {
+				return true;
+			}
+			assert(
+				reading.tier != ecs::kUnrankedTier && reading.idleTier != ecs::kUnrankedTier && "the eater rule reads two ladder positions"
+			);
+			return holder.taskType == ecs::TaskType::FulfillNeed && holder.tier != reading.idleTier && holder.tier <= reading.tier;
 		}
 
 		/// A remembered thing is a loose pile when it was remembered as carryable, whichever row found it.

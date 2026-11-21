@@ -124,7 +124,8 @@ behavior and nothing ranks on them:
 | `idle` | Gather food for the larder, wander | Implemented |
 
 A higher rung always wins; `survival`, at the top, always wins. The load fails, naming the rung,
-when the ladder lacks `survival` or any rung the decision ranks on.
+when the ladder lacks `survival` or any rung the decision ranks on, or has those rungs out of order:
+`critical_need` above `committed_work` above `ordinary_need` above `opportunistic_work` above `idle`.
 
 ### 3. Needs vs. work ordering (LOCKED)
 
@@ -369,7 +370,8 @@ interruptions) and the "finishing is very high priority" invariant.
 after eat/sleep" is a critical need (`critical_need`) preempting `committed_work`, then the
 colonist returning; an `ordinary_need` waits for the work order to be done.
 This spec also answers the open question from multi-colonist-crafting.md, "what outranks
-finish-priority?": only `survival` and `critical_need` (danger, critical needs).
+finish-priority?": every rung above `committed_work` in the ladder: `survival`, `critical_need`,
+`low_mood`, `player_order`, `urgent_need`, and `own_unfinished_work`.
 
 ### [Colonist Needs System](../design/game-systems/colonists/needs.md)
 

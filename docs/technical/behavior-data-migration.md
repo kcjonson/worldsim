@@ -44,9 +44,7 @@ All of it is on `main` and on this branch.
   actions and needs by their old names: `events.xml` and `work.xml` use `action="Eat"`, `"Sleep"`,
   `"Craft"`, `"Build"`, and `needs.xml` uses `need="Hunger"` and the rest.
 - Colony membership does not exist: `kinds.xml` maps `colonist` to every mover of the definition.
-- Config: `assets/config/legacy/action-types.xml` (`ActionTypeRegistry`; only `needsHands` of a
-  task's first action is read; Withdraw, PickupPackaged, and PlacePackaged have no entry),
-  `assets/config/legacy/work-types.xml` (`WorkTypeRegistry`, read by nothing but `ConfigValidator`), and
+- Config: `assets/config/legacy/work-types.xml` (`WorkTypeRegistry`, read by nothing but `ConfigValidator`), and
   `assets/config/arbitration/priority-tuning.xml` (the `<ladder>`, read by `PriorityConfig::decisionRungs`
   and the work entries' `rung`; `<WorkCategoryOrder>` parsed and unused; `<TaskTiers>` deleted by ticket 10). Ticket 9 deleted `task-chains.xml` and `TaskChainRegistry`.
 - `TaskType` is used in 22 non-test files (`AIDecisionSystem.cpp` 117 references, `GlobalTaskAdapter`
@@ -329,7 +327,7 @@ marked "behavior change" lands only with the owner's sign-off.
       naming entries; every `TaskType::Chain` consumer listed under Seams.
     - Also: `QueryEvaluator::forget` called when a creature is destroyed; one decision's route answers
       shared by every query that asks; the claim holder given the need id and rung the eater rule needs,
-      in place of the `TaskType::FulfillNeed` and idle tier number the evaluator's `takes()` reads.
+      in place of the `TaskType::FulfillNeed` task type and the idle rung the evaluator's `takes()` reads.
     - Deleted: none.
     - Must pass: `Chains.test.cpp` decision cases, the validator on, `BM_WorkDecision` and
       `BM_ClaimIndexRebuild` within noise.

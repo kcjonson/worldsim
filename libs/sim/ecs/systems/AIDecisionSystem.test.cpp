@@ -5853,7 +5853,7 @@ namespace ecs::test {
 		Task&	   eater = claimWorld.addComponent<Task>(claimWorld.createEntity());
 		eater.type = TaskType::FulfillNeed;
 		eater.instanceId = 1;
-		eater.priorityTier = 3;
+		eater.priorityTier = rungNamed("urgent_need");
 		ASSERT_TRUE(eater.claims.push(Claim::use(TargetKind::WorldKey, hashWorldEntity(kReachable, kWaterDefId))));
 		claims.rebuild(claimWorld);
 
@@ -5867,7 +5867,11 @@ namespace ecs::test {
 				.creature = 70,
 				.position = kStart,
 				.memory = &taken,
-				.claims = {.kinds = static_cast<uint8_t>(1U << static_cast<unsigned>(assets::ClaimKind::Use)), .tier = 5}
+				.claims = {
+					.kinds = static_cast<uint8_t>(1U << static_cast<unsigned>(assets::ClaimKind::Use)),
+					.tier = rungNamed("ordinary_need"),
+					.idleTier = rungNamed("idle")
+			}
 		};
 		queries::QueryRequest forAcross{.query = library.findQuery("test/water"), .creature = 71, .position = kStart, .memory = &across};
 

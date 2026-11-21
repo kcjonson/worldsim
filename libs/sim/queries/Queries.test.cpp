@@ -17,6 +17,7 @@
 #include <ecs/components/ResourceStack.h>
 #include <ecs/components/SourceReachMemo.h>
 #include <ecs/components/Task.h>
+#include <ecs/systems/ShippedPriorityConfig.test.h>
 
 #include <assets/AssetRegistry.h>
 
@@ -30,6 +31,7 @@
 #include <optional>
 #include <random>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -94,6 +96,8 @@ namespace queries::test {
 	class QueriesTest : public ::testing::Test {
 	  protected:
 		void SetUp() override {
+			// The ladder the claim holders' rungs and the eater rule read.
+			ASSERT_TRUE(ecs::loadShippedPriorityConfig());
 			assets::AssetRegistry& registry = assets::AssetRegistry::Get();
 			berry = registerEdible(registry, "Berry", assets::CapabilityQuality::Normal, 0.3F);
 			stew = registerEdible(registry, "Stew", assets::CapabilityQuality::Good, 0.3F);
@@ -148,14 +152,19 @@ namespace queries::test {
 
 		[[nodiscard]] static uint64_t keyOf(glm::vec2 position, uint32_t def) { return ecs::hashWorldEntity(position, def); }
 
-		/// A task in `claimWorld` holding `claim`, at `tier`, doing `type`; returns its instance id.
-		uint64_t holdClaim(const ecs::Claim& claim, ecs::TaskType type, int tier) {
+		/// Claims of `kinds` read for a creature whose option is on the rung `rung`, with the loaded idle rung.
+		[[nodiscard]] static ClaimReading readingAt(uint8_t kinds, std::string_view rung) {
+			return ClaimReading{.kinds = kinds, .tier = ecs::rungNamed(rung), .idleTier = ecs::rungNamed("idle")};
+		}
+
+		/// A task in `claimWorld` holding `claim`, on the ladder's rung `rung`, doing `type`; returns its instance id.
+		uint64_t holdClaim(const ecs::Claim& claim, ecs::TaskType type, std::string_view rung) {
 			const ecs::EntityID holder = claimWorld.createEntity();
 			ecs::Task&			task = claimWorld.addComponent<ecs::Task>(holder);
 			task.type = type;
 			task.instanceId = ++instances;
 			task.claimSeq = instances;
-			task.priorityTier = tier;
+			task.priorityTier = ecs::rungNamed(rung);
 			EXPECT_TRUE(task.claims.push(claim));
 			holders.push_back(holder);
 			claims.rebuild(claimWorld);
@@ -373,7 +382,7 @@ namespace queries::test {
 		toSpot.goal = &goal;
 		toSpot.claims.kinds = 1U << static_cast<unsigned>(assets::ClaimKind::Slot);
 		EXPECT_EQ(pickOf(run(toSpot)).key, 0U);
-		holdClaim(ecs::Claim::slot(70, 0), ecs::TaskType::Build, 4);
+		holdClaim(ecs::Claim::slot(70, 0), ecs::TaskType::Build, "committed_work");
 		const QueryCandidate& spot = pickOf(run(toSpot));
 		EXPECT_EQ(spot.key, 2U) << "the nearest spot is another builder's";
 		EXPECT_EQ(spot.claimKind, assets::ClaimKind::Slot);
@@ -612,9 +621,9 @@ namespace queries::test {
 		remember(nearBush, bush, assets::CapabilityType::Harvestable);
 		remember(farBush, bush, assets::CapabilityType::Harvestable);
 		QueryRequest asked = request("food");
-		asked.claims = {.kinds = kUseClaim, .tier = 5};
+		asked.claims = readingAt(kUseClaim, "ordinary_need");
 
-		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, keyOf(nearBush, bush)), ecs::TaskType::Harvest, 6);
+		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, keyOf(nearBush, bush)), ecs::TaskType::Harvest, "opportunistic_work");
 		const QueryCandidate& heldByWork = pickOf(run(asked));
 		EXPECT_EQ(heldByWork.key, keyOf(nearBush, bush)) << "work never takes food from a hungry creature";
 		EXPECT_FLOAT_EQ(heldByWork.held, 1.0F);
@@ -623,11 +632,11 @@ namespace queries::test {
 		EXPECT_EQ(pickOf(run(preferFree)).key, keyOf(farBush, bush)) << "free food before held food";
 
 		claimWorld.destroyEntity(holders.back());
-		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, keyOf(nearBush, bush)), ecs::TaskType::FulfillNeed, 5);
+		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, keyOf(nearBush, bush)), ecs::TaskType::FulfillNeed, "ordinary_need");
 		EXPECT_EQ(pickOf(run(asked)).key, keyOf(farBush, bush));
 
 		const uint64_t farEater =
-			holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, keyOf(farBush, bush)), ecs::TaskType::FulfillNeed, 3);
+			holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, keyOf(farBush, bush)), ecs::TaskType::FulfillNeed, "urgent_need");
 		const QueryResult waiting = run(asked);
 		EXPECT_EQ(waiting.outcome, QueryOutcome::AllPassedOver);
 		ASSERT_TRUE(waiting.waitingOn.has_value());
@@ -651,9 +660,13 @@ namespace queries::test {
 		const glm::vec2 farPile{9.0F, 0.0F};
 		remember(nearPile, berry, assets::CapabilityType::Carryable);
 		remember(farPile, berry, assets::CapabilityType::Carryable);
-		holdClaim(ecs::Claim::sourceQuantity(ecs::TargetKind::WorldKey, keyOf(nearPile, berry), berry, 1), ecs::TaskType::FulfillNeed, 2);
+		holdClaim(
+			ecs::Claim::sourceQuantity(ecs::TargetKind::WorldKey, keyOf(nearPile, berry), berry, 1),
+			ecs::TaskType::FulfillNeed,
+			"critical_need"
+		);
 		QueryRequest asked = request("food");
-		asked.claims = {.kinds = kSourceClaim, .tier = 5};
+		asked.claims = readingAt(kSourceClaim, "ordinary_need");
 
 		const QueryResult result = run(asked);
 		EXPECT_EQ(pickOf(result).key, keyOf(farPile, berry));
@@ -661,7 +674,7 @@ namespace queries::test {
 		EXPECT_EQ(result.reserved->key, keyOf(nearPile, berry));
 		EXPECT_EQ(result.reservedBy, holders.front());
 
-		asked.claims.tier = 1;
+		asked.claims.tier = ecs::rungNamed("survival");
 		EXPECT_EQ(pickOf(run(asked)).key, keyOf(nearPile, berry)) << "a more urgent eater is not held back";
 	}
 
@@ -676,12 +689,13 @@ namespace queries::test {
 			{.box = 61, .key = 610, .position = {5.0F, 0.0F}, .item = meat, .quantity = 2},
 		};
 		world.boxes = boxes;
-		holdClaim(ecs::Claim::sourceQuantity(ecs::TargetKind::Entity, 60, berry, 1), ecs::TaskType::Haul, 6);
-		holdClaim(ecs::Claim::sourceQuantity(ecs::TargetKind::Entity, 61, meat, 1), ecs::TaskType::Haul, 6);
+		holdClaim(ecs::Claim::sourceQuantity(ecs::TargetKind::Entity, 60, berry, 1), ecs::TaskType::Haul, "opportunistic_work");
+		holdClaim(ecs::Claim::sourceQuantity(ecs::TargetKind::Entity, 61, meat, 1), ecs::TaskType::Haul, "opportunistic_work");
 
 		QueryRequest meal = request("food_box");
 		meal.alternates = 1;
-		meal.claims = {.kinds = kSourceClaim, .tier = 5, .mealShortfall = 70.0F};
+		meal.claims = readingAt(kSourceClaim, "ordinary_need");
+		meal.claims.mealShortfall = 70.0F;
 		const QueryResult	  sized = run(meal);
 		const QueryCandidate& meatBox = pickOf(sized);
 		EXPECT_EQ(meatBox.item, meat);
@@ -692,7 +706,8 @@ namespace queries::test {
 		ASSERT_EQ(sized.ranked.size(), 1U) << "the held berries are in the lower class, not an alternate";
 
 		QueryRequest flat = request("food_box");
-		flat.claims = {.kinds = kSourceClaim, .tier = 5, .wanted = 3};
+		flat.claims = readingAt(kSourceClaim, "ordinary_need");
+		flat.claims.wanted = 3;
 		const QueryCandidate& berryBox = pickOf(run(flat));
 		EXPECT_EQ(berryBox.item, berry) << "with one count for every item both read held, and the nearer wins";
 		EXPECT_FLOAT_EQ(berryBox.held, 1.0F);
@@ -711,7 +726,11 @@ namespace queries::test {
 		);
 		remember({2.0F, 0.0F}, berry, assets::CapabilityType::Carryable);
 		remember({4.0F, 0.0F}, stew, assets::CapabilityType::Carryable);
-		holdClaim(ecs::Claim::sourceQuantity(ecs::TargetKind::WorldKey, keyOf({2.0F, 0.0F}, berry), berry, 1), ecs::TaskType::Haul, 6);
+		holdClaim(
+			ecs::Claim::sourceQuantity(ecs::TargetKind::WorldKey, keyOf({2.0F, 0.0F}, berry), berry, 1),
+			ecs::TaskType::Haul,
+			"opportunistic_work"
+		);
 
 		const QueryGoal forBerries{.goalId = 7, .destination = 70, .item = berry};
 		const QueryGoal forStew{.goalId = 7, .destination = 70, .item = stew};
@@ -726,12 +745,12 @@ namespace queries::test {
 		EXPECT_EQ(pickOf(stewResult).item, stew);
 
 		remember({6.0F, 0.0F}, bush, assets::CapabilityType::Harvestable);
-		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, keyOf({6.0F, 0.0F}, bush)), ecs::TaskType::FulfillNeed, 3);
+		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, keyOf({6.0F, 0.0F}, bush)), ecs::TaskType::FulfillNeed, "urgent_need");
 		QueryRequest eat = request("test/food");
-		eat.claims = {.kinds = kUseClaim, .tier = 5};
+		eat.claims = readingAt(kUseClaim, "ordinary_need");
 		EXPECT_EQ(run(eat).outcome, QueryOutcome::AllPassedOver);
 		EXPECT_TRUE(run(eat).fromWait);
-		eat.claims.tier = 2;
+		eat.claims.tier = ecs::rungNamed("critical_need");
 		const QueryResult critical = run(eat);
 		EXPECT_FALSE(critical.fromWait);
 		EXPECT_EQ(pickOf(critical).key, keyOf({6.0F, 0.0F}, bush));
@@ -746,12 +765,12 @@ namespace queries::test {
 		// A box's one stew is another eater's, so the claims are read and stamped.
 		const std::vector<KnownBox> boxes = {{.box = 55, .key = 550, .position = {20.0F, 0.0F}, .item = stew, .quantity = 1}};
 		world.boxes = boxes;
-		holdClaim(ecs::Claim::sourceQuantity(ecs::TargetKind::Entity, 55, stew, 1), ecs::TaskType::FulfillNeed, 3);
+		holdClaim(ecs::Claim::sourceQuantity(ecs::TargetKind::Entity, 55, stew, 1), ecs::TaskType::FulfillNeed, "urgent_need");
 		regrowUntil(100.0);
 		world.now = 10.0;
 		ecs::SourceReachMemo reach;
 		QueryRequest		 asked = request("food");
-		asked.claims = {.kinds = static_cast<uint8_t>(kUseClaim | kSourceClaim), .tier = 5};
+		asked.claims = readingAt(static_cast<uint8_t>(kUseClaim | kSourceClaim), "ordinary_need");
 		asked.reach = &reach;
 		const auto waits = [&] {
 			return run(asked).outcome == QueryOutcome::AllPassedOver && run(asked).fromWait;
@@ -767,7 +786,7 @@ namespace queries::test {
 		remember({50.0F, 50.0F}, kWater, assets::CapabilityType::Drinkable);
 		EXPECT_TRUE(walksAgain()) << "the memory moved";
 		ASSERT_TRUE(waits());
-		const uint64_t added = holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, 99), ecs::TaskType::Haul, 6);
+		const uint64_t added = holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, 99), ecs::TaskType::Haul, "opportunistic_work");
 		EXPECT_TRUE(walksAgain()) << "a claim was added";
 		ASSERT_TRUE(waits());
 		claims.retire(added);
@@ -798,9 +817,11 @@ namespace queries::test {
 		piles.add(pile, berry, pileAt);
 		world.world = &pileWorld;
 		world.piles = &piles;
-		holdClaim(ecs::Claim::sourceQuantity(ecs::TargetKind::WorldKey, keyOf(pileAt, berry), berry, 1), ecs::TaskType::FulfillNeed, 3);
+		holdClaim(
+			ecs::Claim::sourceQuantity(ecs::TargetKind::WorldKey, keyOf(pileAt, berry), berry, 1), ecs::TaskType::FulfillNeed, "urgent_need"
+		);
 		QueryRequest asked = request("food");
-		asked.claims = {.kinds = kSourceClaim, .tier = 5};
+		asked.claims = readingAt(kSourceClaim, "ordinary_need");
 
 		EXPECT_EQ(run(asked).outcome, QueryOutcome::AllPassedOver);
 		pileWorld.getComponent<ecs::ResourceStack>(pile)->quantity += 5;
@@ -829,26 +850,32 @@ namespace queries::test {
 		remember({3.0F, 0.0F}, bush, assets::CapabilityType::Harvestable);
 		regrowUntil(100.0);
 		EXPECT_EQ(run("food").outcome, QueryOutcome::AllPassedOver);
-		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, 99), ecs::TaskType::Haul, 6);
+		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, 99), ecs::TaskType::Haul, "opportunistic_work");
 		EXPECT_TRUE(run("food").fromWait) << "no claim took a bush, so the claims were not stamped";
 
 		memory.rememberDynamicEntity(7, human, {2.0F, 0.0F}, 100.0);
 		world.now = 105.0;
 		world.recentSightingGameMinutes = 30.0;
-		holdClaim(ecs::Claim::use(ecs::TargetKind::Entity, 7), ecs::TaskType::FulfillNeed, 3);
+		holdClaim(ecs::Claim::use(ecs::TargetKind::Entity, 7), ecs::TaskType::FulfillNeed, "urgent_need");
 		QueryRequest toSomeone = request("someone");
-		toSomeone.claims = {.kinds = kUseClaim, .tier = 5};
+		toSomeone.claims = readingAt(kUseClaim, "ordinary_need");
 		EXPECT_EQ(run(toSomeone).outcome, QueryOutcome::AllPassedOver);
 		EXPECT_FALSE(run(toSomeone).fromWait);
 
 		remember({2.0F, 1.0F}, berry, assets::CapabilityType::Carryable);
 		remember({5.0F, 1.0F}, berry, assets::CapabilityType::Carryable);
-		holdClaim(ecs::Claim::sourceQuantity(ecs::TargetKind::WorldKey, keyOf({2.0F, 1.0F}, berry), berry, 1), ecs::TaskType::Haul, 6);
 		holdClaim(
-			ecs::Claim::sourceQuantity(ecs::TargetKind::WorldKey, keyOf({5.0F, 1.0F}, berry), berry, 1), ecs::TaskType::FulfillNeed, 3
+			ecs::Claim::sourceQuantity(ecs::TargetKind::WorldKey, keyOf({2.0F, 1.0F}, berry), berry, 1),
+			ecs::TaskType::Haul,
+			"opportunistic_work"
+		);
+		holdClaim(
+			ecs::Claim::sourceQuantity(ecs::TargetKind::WorldKey, keyOf({5.0F, 1.0F}, berry), berry, 1),
+			ecs::TaskType::FulfillNeed,
+			"urgent_need"
 		);
 		QueryRequest toPile = request("free_pile");
-		toPile.claims = {.kinds = kSourceClaim, .tier = 5};
+		toPile.claims = readingAt(kSourceClaim, "ordinary_need");
 		EXPECT_EQ(run(toPile).outcome, QueryOutcome::AllPassedOver);
 		EXPECT_FALSE(run(toPile).fromWait);
 	}
@@ -909,7 +936,7 @@ namespace queries::test {
 		QueryRequest asked = request("water");
 		asked.alternates = ecs::kNearestOfCount - 1;
 		asked.keepKey = kept;
-		asked.claims = {.kinds = kUseClaim, .tier = 5};
+		asked.claims = readingAt(kUseClaim, "ordinary_need");
 
 		uint64_t		  admitted = 0;
 		const auto		  chosenKept = mainRound(true, admitted);
@@ -920,7 +947,7 @@ namespace queries::test {
 		EXPECT_EQ(keptResult.visits, admitted);
 		EXPECT_EQ(keptResult.visits, 1U);
 
-		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, kept), ecs::TaskType::FulfillNeed, 3);
+		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, kept), ecs::TaskType::FulfillNeed, "urgent_need");
 		admitted = 0;
 		const auto		  chosenWithout = mainRound(false, admitted);
 		const QueryResult passedOver = run(asked);
@@ -952,9 +979,9 @@ namespace queries::test {
 		const glm::vec2 freeBush{9.0F, 0.0F};
 		remember(heldBush, bush, assets::CapabilityType::Harvestable);
 		remember(freeBush, bush, assets::CapabilityType::Harvestable);
-		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, keyOf(heldBush, bush)), ecs::TaskType::Harvest, 6);
+		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, keyOf(heldBush, bush)), ecs::TaskType::Harvest, "opportunistic_work");
 		QueryRequest eat = request("free_food");
-		eat.claims = {.kinds = kUseClaim, .tier = 5};
+		eat.claims = readingAt(kUseClaim, "ordinary_need");
 		eat.keepKey = keyOf(heldBush, bush);
 		EXPECT_EQ(pickOf(run(eat)).key, keyOf(freeBush, bush)) << "free food first, at any distance";
 	}
@@ -1023,12 +1050,13 @@ namespace queries::test {
 		);
 		rememberTenThousand(memory, {berry, stew}, 5, false);
 		remember({4.0F, 4.0F}, kWaste, assets::CapabilityType::Waste);
-		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, 1), ecs::TaskType::Harvest, 6);
+		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, 1), ecs::TaskType::Harvest, "opportunistic_work");
 		const std::vector<KnownBox> boxes = {{.box = 50, .key = 500, .position = {3.0F, 3.0F}, .item = berry, .quantity = 2}};
 		world.boxes = boxes;
 		QueryRequest food = request("food");
 		food.alternates = ecs::kNearestOfCount - 1;
-		food.claims = {.kinds = kSourceClaim, .tier = 5, .mealShortfall = 40.0F};
+		food.claims = readingAt(kSourceClaim, "ordinary_need");
+		food.claims.mealShortfall = 40.0F;
 		const QueryRequest spot = request("spot");
 		// A gate that refuses stew, made from a lambda per evaluation, and a kept target that is gone, so it is
 		// looked for and the walk goes on, as the decision asks.
@@ -1207,9 +1235,12 @@ namespace queries::test {
 		for (int i = 0; i < 3; ++i) {
 			remember({static_cast<float>(i) * 100.0F, 0.0F}, kWater, assets::CapabilityType::Drinkable);
 		}
-		EXPECT_EQ(evaluator->count(request("free_water"), world).survivors, 3U);
-		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, keyOf({100.0F, 0.0F}, kWater)), ecs::TaskType::Haul, 6);
-		EXPECT_EQ(evaluator->count(request("free_water"), world).survivors, 2U);
+		// `held` reads the claims by the eater rule, so the count is asked with the creature's rungs.
+		QueryRequest asked = request("free_water");
+		asked.claims = readingAt(0, "ordinary_need");
+		EXPECT_EQ(evaluator->count(asked, world).survivors, 3U);
+		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, keyOf({100.0F, 0.0F}, kWater)), ecs::TaskType::Haul, "opportunistic_work");
+		EXPECT_EQ(evaluator->count(asked, world).survivors, 2U);
 	}
 
 	// A harvestable's definition facts read its yield's definition; colony_stock reads the boxes the colony knows,
