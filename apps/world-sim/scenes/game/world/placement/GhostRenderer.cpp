@@ -38,7 +38,8 @@ void GhostRenderer::render(const std::string& defName,
 						   const world::WorldCamera& camera,
 						   int viewportWidth,
 						   int viewportHeight,
-						   bool isValid) {
+						   bool isValid,
+						   float uiScale) {
 	if (defName.empty()) {
 		return;
 	}
@@ -77,7 +78,7 @@ void GhostRenderer::render(const std::string& defName,
 			frame,
 			{.useAreas = true, .clearance = true, .footprints = false, .collider = true},
 			look,
-			{.opacity = isValid ? 1.0F : kInvalidAlpha / kGhostAlpha, .refused = !isValid, .key = kGhostKey}
+			{.pixel = uiScale, .opacity = isValid ? 1.0F : kInvalidAlpha / kGhostAlpha, .refused = !isValid, .key = kGhostKey}
 		);
 		worldview::drawItemView(held->second.mesh, frame, look, ghost);
 		return;

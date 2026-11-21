@@ -36,13 +36,15 @@ class GhostRenderer {
 	/// @param viewportWidth Viewport width in pixels
 	/// @param viewportHeight Viewport height in pixels
 	/// @param isValid Whether the placement position is valid (affects tint color)
+	/// @param uiScale The interface size: a logical pixel of the overlays' lines and labels is this many screen pixels
 	void render(const std::string& defName,
 				Foundation::Vec2 worldPos,
 				uint32_t turnQuanta,
 				const world::WorldCamera& camera,
 				int viewportWidth,
 				int viewportHeight,
-				bool isValid = true);
+				bool isValid,
+				float uiScale);
 
 	/// Drops the views no ghost drew this frame, so a drag through many turns keeps only the one it shows.
 	void endFrame();

@@ -445,7 +445,7 @@ namespace world_sim {
 		}
 	}
 
-	void PlacementSystem::render(int viewportW, int viewportH) {
+	void PlacementSystem::render(int viewportW, int viewportH, float uiScale) {
 		if (camera == nullptr) {
 			return;
 		}
@@ -455,7 +455,8 @@ namespace world_sim {
 		if (placementMode.state() == PlacementState::Placing) {
 			ghostRenderer.render(
 				placementMode.selectedDefName(), placementMode.ghostPosition(), placementMode.ghostTurnQuanta(), *camera, viewportW, viewportH,
-				placementMode.isValidPlacement()
+				placementMode.isValidPlacement(),
+				uiScale
 			);
 		}
 
@@ -474,7 +475,8 @@ namespace world_sim {
 						*camera,
 						viewportW,
 						viewportH,
-						true // Valid placement (already confirmed)
+						true, // Valid placement (already confirmed)
+						uiScale
 					);
 				}
 			}
