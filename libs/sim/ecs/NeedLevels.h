@@ -1,6 +1,6 @@
 #pragma once
 
-// Each need's thresholds and mood cost from data (assets/config/colonists/needs), which a colonist's
+// Each need's thresholds and mood cost from data (assets/world/creatures/Human/needs.xml), which a colonist's
 // NeedsComponent is built from. See /docs/technical/interruptable-crafts.md (Needs in three levels).
 
 #include "components/Needs.h"

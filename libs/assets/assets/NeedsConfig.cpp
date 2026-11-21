@@ -99,14 +99,9 @@ namespace assets {
 		return static_cast<std::size_t>(found - kNeedThresholdNames.begin());
 	}
 
-	NeedsConfigLoad loadNeedsConfig(const std::filesystem::path& folder) {
-		NeedsConfigLoad	  result;
-		const ConfigFiles found = configFilesIn(folder);
-		if (found.error.has_value()) {
-			result.errors.push_back(*found.error);
-			return result;
-		}
-		for (const std::filesystem::path& file : found.files) {
+	NeedsConfigLoad loadNeedsConfig(const std::vector<std::filesystem::path>& files, const std::filesystem::path& folder) {
+		NeedsConfigLoad result;
+		for (const std::filesystem::path& file : files) {
 			for (NeedDef& need : needsInFile(file, configFileName(file, folder), result.errors)) {
 				const auto existing = std::ranges::find(result.config.needs, need.need, &NeedDef::need);
 				if (existing == result.config.needs.end()) {

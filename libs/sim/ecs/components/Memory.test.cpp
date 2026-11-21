@@ -243,8 +243,8 @@ namespace {
 	}
 
 	std::filesystem::path shippedMemoryConfig() {
-		return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path().parent_path() / "assets" / "config" /
-			   "colonists" / "memory.xml";
+		return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path().parent_path() / "assets" / "world" /
+			   "creatures" / "Human" / "memory.xml";
 	}
 
 	/// The recency window a memory.xml with `gameMinutes` loads, validated.

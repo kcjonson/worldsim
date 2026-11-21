@@ -1,7 +1,7 @@
 #pragma once
 
 // Attributes Component - a colonist's static physical and mental attributes.
-// Rolled at spawn from assets/config/colonists/attributes, 0.0-20.0 scale (mirrors Skills). Only
+// Rolled at spawn from assets/world/creatures/Human/attributes.xml, 0.0-20.0 scale (mirrors Skills). Only
 // Strength is read by a system directly: it derives hand-carry capacity. Thoughts read the rest through
 // attribute(name) conditions. Traits never change an attribute; they act through conditions.
 //

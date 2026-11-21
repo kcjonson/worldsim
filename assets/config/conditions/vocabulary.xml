@@ -12,7 +12,7 @@
   <Symbols name [open]>names</Symbols>  a set of names; files that name the same set add to it. An
                                   open="true" set takes any name; one nothing answers reads Unknown.
                                   The owned sets are closed and never declared here: <Kind> fills
-                                  "kind", the trait files (colonists/traits) fill "trait", the sim
+                                  "kind", the trait files (creatures/Human/traits.xml) fill "trait", the sim
                                   fills "need" and "attribute", and the sim's task types and
                                   <TaskGroup> fill "task".
   <TaskGroup name>tasks</TaskGroup>  a name current_task() takes for several task types.
