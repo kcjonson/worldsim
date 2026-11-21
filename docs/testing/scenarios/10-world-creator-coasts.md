@@ -1,7 +1,7 @@
 # Scenario 10: World creator coasts
 
 **Status:** ready  
-**Last verified:** 2026-11-06
+**Last verified:** 2026-11-20
 
 New Game generates a random planet, and its coasts read right from orbit. Quick Start's planet is pre-generated, so it doesn't exercise worldgen changes; use this.
 

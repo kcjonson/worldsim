@@ -18,8 +18,7 @@
 #include <world/rendering/EntityRenderer.h>
 
 #include <worldgen/data/GeneratedWorld.h>
-
-#include <glm/vec2.hpp>
+#include <worldgen/sampling/LandingSite.h>
 
 #include <memory>
 #include <unordered_set>
@@ -41,17 +40,14 @@ namespace world_sim {
 		/// The generated planet for this session. Forwarded from GameStartConfig so
 		/// GameScene can pass it to DevCommandHandler for /api/state?what=landing.
 		std::shared_ptr<const worldgen::GeneratedWorld> planet;
-		double landingLatDeg = 0.0;
-		double landingLonDeg = 0.0;
+
+		/// Where the crew lands: the 2D world origin, its tile, and the raw drop beside its water. GameScene
+		/// snaps the drop to a cleared, on-mesh walkable tile center before spawning.
+		worldgen::LandingSite landing;
 
 		/// Crew to spawn at landing, forwarded from GameStartConfig. Empty ->
 		/// GameScene spawns the single default colonist.
 		std::vector<PartyMember> party;
-
-		/// Colonist drop point (2D world meters): dry land beside clean water,
-		/// chosen by findRiverbankSpawn. Defaults to the landing origin. GameScene
-		/// snaps this to a cleared, on-mesh walkable tile center before spawning.
-		glm::vec2 spawnPosition{0.0F, 0.0F};
 
 		/// The colony: home anchor for the session. GameScene sets colony.originPosition
 		/// to the cleared, on-mesh clearing center once at landing. Single source of truth

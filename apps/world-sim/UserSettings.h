@@ -2,10 +2,10 @@
 
 // UserSettings - the player's game preferences, set from the Settings scene.
 //
-// Values are the construction config's defaults with the settings file read over them, by load(): once at
-// launch, and again when a game loads the construction config, since only then are its defaults read. The
-// Settings scene changes them in place and writes them back as they change, so the second load keeps them.
-// The file is the App's (settings.json, under "drawing"), so --no-settings neither reads nor saves them.
+// Values are their defaults with the settings file read over them, by load(): once at launch, and again when
+// a game loads the construction config, since only then are the drawing defaults read. The Settings scene
+// changes them in place and writes them back as they change, so the second load keeps them. The file is the
+// App's (settings.json, under "drawing" and "landing"), so --no-settings neither reads nor saves them.
 
 #include <assets/ConstructionRegistry.h>
 #include <construction/DrawingAids.h>
@@ -35,6 +35,13 @@ namespace world_sim {
 		bool operator==(const DrawingSettings&) const = default;
 	};
 
+	/// The world creator's options (landing-sites.md section 6).
+	struct LandingSettings {
+		bool showSuggestedSites = false;
+
+		bool operator==(const LandingSettings&) const = default;
+	};
+
 	class UserSettings {
 	  public:
 		static UserSettings& Get() {
@@ -45,8 +52,10 @@ namespace world_sim {
 		/// Starts from snapping.xml's DrawingSettingsDefaults as the registry holds them when this
 		/// singleton is first touched.
 		DrawingSettings drawing;
+		/// Off until the player turns a switch on; no config file sets these defaults.
+		LandingSettings landing;
 
-		/// The registry's defaults, then what the file holds over them; a missing or malformed value keeps
+		/// The defaults, then what the file holds over them; a missing or malformed value keeps
 		/// its default.
 		void load(const app::Settings& file);
 		/// Writes every value into the file's in-memory settings; the caller saves the file.

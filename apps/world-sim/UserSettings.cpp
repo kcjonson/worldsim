@@ -25,6 +25,10 @@ namespace world_sim {
 			{"drawing.showKeyGuide", &DrawingSettings::showKeyGuide},
 		}};
 
+		const std::array<std::pair<const char*, bool LandingSettings::*>, 1> kLandingSwitches{{
+			{"landing.showSuggestedSites", &LandingSettings::showSuggestedSites},
+		}};
+
 		// The spacings the Settings scene offers; anything else in the file is ignored.
 		bool offeredGridSpacing(float meters) {
 			return meters == 1.0F || meters == 0.5F;
@@ -41,6 +45,10 @@ namespace world_sim {
 		if (offeredGridSpacing(spacing)) {
 			drawing.rectangleGridSpacingMeters = spacing;
 		}
+		landing = LandingSettings{};
+		for (const auto& [key, field] : kLandingSwitches) {
+			landing.*field = file.get(key, landing.*field);
+		}
 	}
 
 	void UserSettings::store(app::Settings& file) const {
@@ -48,6 +56,9 @@ namespace world_sim {
 			file.set(key, drawing.*field);
 		}
 		file.set(kGridSpacingKey, drawing.rectangleGridSpacingMeters);
+		for (const auto& [key, field] : kLandingSwitches) {
+			file.set(key, landing.*field);
+		}
 	}
 
 } // namespace world_sim

@@ -102,6 +102,10 @@ class SphereGrid {
     // Return lat (degrees, -90..90) and lon (degrees, -180..180) of a tile center.
     void latLonOf(TileId t, double& latDeg, double& lonDeg) const;
 
+    // Lat/lon in degrees to a unit direction and back, the conversions fromLatLon and latLonOf make.
+    static Vec3d unitVectorFromLatLon(double latDeg, double lonDeg);
+    static void  latLonFromUnitVector(Vec3d direction, double& latDeg, double& lonDeg);
+
     // Result of locating a position within the hex grid.
     struct HexSample {
         TileId tile;         // nearest tile center (the containing hex)

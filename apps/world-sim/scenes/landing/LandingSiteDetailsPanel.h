@@ -7,12 +7,15 @@
 // (title "Landing Zone", kicker "Site Analysis") filling the host the scene
 // gives it, its body scrolling: coords readout, biome-name header, Recommended
 // badge, Temp/Rainfall stat row, a skull-pip difficulty inset, the water
-// verdict, and the field-report sections. Each show() rebuilds the body.
+// verdict, and the field-report sections. Each show() rebuilds the body; showSurveying() keeps the
+// coordinates and says the landing is still being worked out.
 
 #include "scenes/landing/LandingSiteDetailsModel.h"
 
 #include <ui/Component.h>
 #include <ui/theme/Theme.h>
+
+#include <string>
 
 namespace world_sim {
 
@@ -22,8 +25,12 @@ class LandingSiteDetailsPanel {
 	void mount(ui::Ref<ui::Component> host, const ui::Theme& theme);
 
 	void show(const LandingSiteDetails& details);
+	void showSurveying(const std::string& coords);
 
   private:
+	void resetContent();
+	void addCoordinates(const std::string& coords);
+
 	ui::Ref<ui::Component> body;
 	ui::Ref<ui::Component> content;
 	const ui::Theme*	   theme = nullptr;
