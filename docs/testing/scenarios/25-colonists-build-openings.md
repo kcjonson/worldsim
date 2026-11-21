@@ -5,7 +5,7 @@
 
 A door or window not yet built sits inside its wall, where no route ends. The colonist carries its
 materials to beside the wall, on a side he can get to, delivers them there, builds it, and later
-demolishes it from beside it too. A door in a sealed room's wall is supplied and built from outside.
+demolishes it. A door and a window in a sealed room's walls are supplied and built from outside.
 Spec: [task-claims.md](../../technical/task-claims.md#build-and-deconstruct).
 
 ---
@@ -13,43 +13,74 @@ Spec: [task-claims.md](../../technical/task-claims.md#build-and-deconstruct).
 ## Preconditions
 
 Fresh launch (Quick Start): `world-sim --scene=game --background --no-settings`, dev server on
-127.0.0.1:8081, or the port given with `--http-port`; `<PORT>` below is that port. Read every dev
-reply: a refusal answers HTTP 400 with the reason.
+127.0.0.1:8081, or the port given with `--http-port`; `<PORT>` below is that port. Bob, the one
+colonist a Quick Start lands, does all the work. Read every dev reply: a refusal answers HTTP 400 with
+the reason. Nothing moves at `time?speed=0`, though dev verbs still run; the waits below are wall-clock
+seconds at `time?speed=3`. The log is read with `curl.exe -m 3 http://127.0.0.1:<PORT>/stream/logs`.
 
 ---
 
 ## Setup
 
-```
-curl.exe "http://127.0.0.1:<PORT>/api/dev/time?speed=0"
-curl.exe "http://127.0.0.1:<PORT>/api/dev/reveal?on=1"
-curl.exe "http://127.0.0.1:<PORT>/api/dev/foundation?pts=18,8;32,8;32,18;18,18&material=Wood&built=1"
-curl.exe "http://127.0.0.1:<PORT>/api/dev/walls?pts=20,15;30,15&material=Wood&thickness=Standard&host=1&built=1&close=0"
-```
+The site is the foundation of [scenario 04](./04-build-walls.md)'s corner, (14, 0), grown to 16 m by
+12 m. Every coordinate below is written as an offset from it, `FX = 14`, `FY = 0`.
 
-`what=construction` lists the wall as segment 1, `Built`.
+1. `/api/dev/time?speed=0`, then `/api/dev/reveal?on=1`.
+2. Check the ground: `/api/dev/ground?pts=14,0;30,0;30,12;14,12` reads `buildableNow` true at all four.
+   If any is false, add the same amount to every x (or y) below until all four are true, and use the
+   shifted values for `FX`, `FY` from then on.
+3. Build the foundation: `/api/dev/foundation?pts=<FX>,<FY>;<FX+16>,<FY>;<FX+16>,<FY+12>;<FX>,<FY+12>&material=Wood&built=1`,
+   and note its `id` in `/api/state?what=construction` (`foundations`) as `<FOUND>`.
+4. Build an open wall: `/api/dev/walls?pts=<FX+2>,<FY+10>;<FX+12>,<FY+10>&material=Wood&thickness=Standard&host=<FOUND>&built=1&close=0`.
+   In `/api/state?what=construction` it is the wall with `x0` `FX+2`, `y0` `FY+10`; note its `id` as
+   `<SEG_OPEN>`.
+5. Give the Wood, outside every room this scenario builds: `/api/dev/give?material=Wood&n=20&where=loose&at=<FX+7>,<FY+8>`.
 
 ---
 
 ## Steps
 
-1. Blueprint a door (`/api/dev/opening?type=Door&seg=1&t=0.5&built=0`, at 25,15), give Wood (`/api/dev/give?material=Wood&n=20&where=loose&at=22,12`), and set `time?speed=3`: within about 30 s `what=construction` shows the opening `delivered` `Wood` 3, then `state` `Built`, `progress` 1.
-2. Read the log (`curl.exe -m 3 http://127.0.0.1:<PORT>/stream/logs`): a route to `(25.00, 14.58)` or `(25.00, 15.42)` (beside the wall), "Deposit 3 x Wood", "Opening #1 built", and no "no known way to (25.00, 15.00)".
-3. Set `time?speed=0`, build a closed room south of the wall (`/api/dev/walls?pts=19,9;31,9;31,13;19,13&material=Wood&thickness=Standard&host=1&built=1&close=1`), blueprint a door in its north wall (`/api/dev/opening?type=Door&seg=4&t=0.5&built=0`, at 25,13) and a window in its east wall (`/api/dev/opening?type=Window&seg=3&t=0.5&built=0`, at 31,11), give Wood outside (`/api/dev/give?material=Wood&n=20&where=loose&at=25,5`), and set `time?speed=3`.
-4. Within about a minute both openings read `Built`; the log shows the door's delivery and build routed to `(25.00, 13.42)` and the window's to `(31.42, 11.00)`, both outside the room.
-5. Watch Bob for a minute: he walks into the room through the new door and out again.
-6. Pause, click the room's door, and press Demolish in its panel; resume: the log shows "Deconstructing structure", then "Opening #2 deconstructed", and the opening leaves `what=construction`.
-7. Pause, click the room's west wall (19, 9 to 13), and press Demolish; resume: "Wall segment #5 deconstructed", and no "no known way" on the way.
-8. Exit the game (`/api/control?action=exit`).
+1. Blueprint a door in the open wall (`/api/dev/opening?type=Door&seg=<SEG_OPEN>&t=0.5&built=0`); in
+   `what=construction` it is the opening at `x` `FX+7`, `y` `FY+10`; note its `id` as `<DOOR_OPEN>`. Set
+   `time?speed=3`: within about 30 s that opening reads `delivered` `{"Wood":3}`, then `state` `Built`,
+   `progress` 1.
+2. Set `time?speed=0`. Build a closed room south of the pile, its north wall 2 m below the open wall:
+   `/api/dev/walls?pts=<FX+2>,<FY+2>;<FX+12>,<FY+2>;<FX+12>,<FY+6>;<FX+2>,<FY+6>&material=Wood&thickness=Standard&host=<FOUND>&built=1&close=1`.
+   Read the four new walls; note as `<SEG_ROOM_LOW>` the one from (`FX+12`, `FY+6`) to (`FX+2`, `FY+6`)
+   and as `<SEG_ROOM_EAST>` the one from (`FX+12`, `FY+2`) to (`FX+12`, `FY+6`).
+3. Blueprint a door and a window in it: `/api/dev/opening?type=Door&seg=<SEG_ROOM_LOW>&t=0.5&built=0`
+   (at `FX+7`, `FY+6`; note `<DOOR_ROOM>`) and `/api/dev/opening?type=Window&seg=<SEG_ROOM_EAST>&t=0.5&built=0`
+   (at `FX+12`, `FY+4`; note `<WINDOW_ROOM>`). Set `time?speed=3`: within about a minute both read
+   `delivered` in full, `state` `Built`. The log has no `no known way to` line naming either opening's
+   position (`(<FX+7>.00, <FY+6>.00)` or `(<FX+12>.00, <FY+4>.00)`). Whichever opening he builds first,
+   the room is shut until its door is built, so the door is supplied and built from outside.
+4. Give him a reason to go in: `/api/dev/spawn?def=BasicBox&at=<FX+4>,<FY+4>&n=1&scatter=0` and
+   `/api/dev/storage?at=<FX+4>,<FY+4>&item=Wood&priority=High&min=0&max=10`. Within about a minute
+   `/api/state?what=storage` shows that box holding Wood: he carried it in through the room's door.
+5. Demolish the open wall's door from its panel, with `time?speed=0`:
+   - Point the camera at it (`/api/control?action=camera&x=<FX+7>&y=<FY+10>`), read `what=camera`, and
+     turn the door's position into a window pixel with the formulas in
+     [the camera view](../README.md#the-camera-view).
+   - Click it (`/api/input?ev=click,<px>,<py>`). In `/api/ui/tree` find the `Text` node whose content is
+     `Demolish` and click the middle of the `Button` that holds it, its `screenBounds` times `layoutScale`
+     from `/api/state?what=uiscale`. Don't send Escape with no tool active: it opens the pause menu.
+   - Set `time?speed=3`: within about 30 s `<DOOR_OPEN>` is gone from `what=construction`.
+6. Demolish the open wall the same way, clicking it at (`FX+4`, `FY+10`): within about 30 s
+   `<SEG_OPEN>` is gone from `what=construction`. This shows a built wall taken down from beside it;
+   both its sides are open ground.
+7. Exit the game (`/api/control?action=exit`).
 
 ---
 
 ## Pass / fail
 
-**Pass:** every opening is supplied and built by the colonist, from beside its wall and from outside
-a sealed room, and a demolished door and wall are taken down, with no route to an opening's or wall's
-own centre failing.
+**Pass:** both doors and the window end `Built` with their Wood delivered and no dev completion; the
+room's door is built while the room is still shut, from outside; the box inside ends up holding Wood;
+the demolished door and wall leave `what=construction`; no `no known way to` line names an opening's or
+a wall's position.
 
-**Fail:** an opening stays at `progress` 0 with its Wood delivered or carried; the log shows "no known
-way" to an opening or wall followed by "Put down ... nobody wants"; a sealed room's door is supplied
-from inside; a demolish order is never worked.
+**Fail:** an opening stays at `progress` 0 with its Wood delivered or carried; a `no known way to` line
+names an opening's position, followed by "Put down ... nobody wants"; the box stays empty; a demolish
+order is never worked.
+
+Last verified on 2026-11-20 (setup and steps 1 to 7, commit noted in the PR).
