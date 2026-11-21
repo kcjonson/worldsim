@@ -163,7 +163,7 @@ square(0, 1.0)
 }
 
 // A click just inside a mature tree's outline selects it and one just outside does not: at the rightmost point of
-// its hit region, 5 mm in and 20 mm out.
+// its hit region, 5 mm in and 20 mm out. The hit region holds the whole outline.
 TEST(AssetRegistrySilhouette, MatureTreeHitsJustInsideAndMissesJustOutside) {
 	auto& reg = AssetRegistry::Get();
 	reg.clear();
@@ -185,5 +185,10 @@ TEST(AssetRegistrySilhouette, MatureTreeHitsJustInsideAndMissesJustOutside) {
 	}
 	EXPECT_TRUE(insideAny(sil->hitRegion, {rightmost.x - 5, rightmost.y}));
 	EXPECT_FALSE(insideAny(sil->hitRegion, {rightmost.x + 20, rightmost.y}));
+	for (const auto& ring : sil->rings) {
+		for (const auto& vertex : ring) {
+			EXPECT_TRUE(withinMillimetreOf(sil->hitRegion, vertex)) << "the outline at (" << vertex.x << ", " << vertex.y << ") is outside the hit region";
+		}
+	}
 	reg.clear();
 }

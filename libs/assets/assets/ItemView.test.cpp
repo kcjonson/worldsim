@@ -1065,8 +1065,8 @@ TEST_F(ItemViewTest, TheOutlineIsCutAtTheBandEdgesAndEachSideOfANotchKeepsItsOwn
 	}
 }
 
-// The silhouette from the footprints alone (section 15) holds everything the view draws, at any turn, and a narrow
-// gap between two parts is outlined but clicks as the item.
+// The silhouette from the footprints alone (section 15) holds everything the view draws, at any turn, its hit region
+// holds its outline, and a narrow gap between two parts is outlined but clicks as the item.
 TEST_F(ItemViewTest, TheFootprintSilhouetteHoldsTheViewAndBridgesANarrowGap) {
 	const auto inside = [](const std::vector<geometry::Ring>& rings, const geometry::Vec2i64& point) {
 		return std::any_of(rings.begin(), rings.end(), [&](const geometry::Ring& ring) {
@@ -1086,6 +1086,11 @@ TEST_F(ItemViewTest, TheFootprintSilhouetteHoldsTheViewAndBridgesANarrowGap) {
 			for (const Foundation::Vec2& vertex : view.mesh.vertices) {
 				ASSERT_TRUE(inside(silhouette.silhouette.rings, geometry::quantize(vertex)))
 					<< name << " at " << degrees << ": (" << vertex.x << ", " << vertex.y << ") is drawn outside the silhouette";
+			}
+			for (const geometry::Ring& ring : silhouette.silhouette.rings) {
+				for (const geometry::Vec2i64& point : ring) {
+					EXPECT_TRUE(withinMillimetreOf(silhouette.silhouette.hitRegion, point)) << name << " at " << degrees << ": the outline leaves the hit region";
+				}
 			}
 		}
 	}

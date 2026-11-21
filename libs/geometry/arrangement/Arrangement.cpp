@@ -112,7 +112,10 @@ namespace geometry {
 			return p.lo.x <= q.hi.x && q.lo.x <= p.hi.x && p.lo.y <= q.hi.y && q.lo.y <= p.hi.y;
 		}
 
-		// Broad phase for the split pass. Every non-Disjoint relation from
+		// Broad phase for the split pass: a spatial index of the segments' bounding
+		// boxes, which only narrows which pairs get the exact test. No shape is
+		// sampled into its cells; every result comes from the exact segment
+		// predicates on the vector input. Every non-Disjoint relation from
 		// intersectSegments means the two segments share a point, so their closed
 		// boxes overlap and both cover that point's cell. Each segment is registered
 		// in every cell its closed box covers, so no such pair is missed.

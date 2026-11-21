@@ -13,7 +13,12 @@
 #include "assets/AssetRegistry.h"
 #include "assets/ViewConfig.h"
 
+#include <polygon/Polygon.h>
+#include <predicates/Predicates.h>
+
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -23,6 +28,29 @@
 #include <thread>
 
 namespace assets {
+
+	/// Whether a point lies in or on some ring, or within a millimetre of one (the booleans simplify by 1 mm).
+	inline bool withinMillimetreOf(const std::vector<geometry::Ring>& rings, const geometry::Vec2i64& point) {
+		for (const geometry::Ring& ring : rings) {
+			if (geometry::pointInPolygon(point, ring) != geometry::PointInPolygon::Outside) {
+				return true;
+			}
+			for (size_t i = 0; i < ring.size(); ++i) {
+				const geometry::Vec2i64 from = ring[i];
+				const geometry::Vec2i64 to = ring[(i + 1) % ring.size()];
+				const double alongX = static_cast<double>(to.x - from.x);
+				const double alongY = static_cast<double>(to.y - from.y);
+				const double lengthSquared = alongX * alongX + alongY * alongY;
+				const double fraction =
+					lengthSquared > 0.0 ? std::clamp((static_cast<double>(point.x - from.x) * alongX + static_cast<double>(point.y - from.y) * alongY) / lengthSquared, 0.0, 1.0)
+										: 0.0;
+				if (std::hypot(static_cast<double>(point.x - from.x) - fraction * alongX, static_cast<double>(point.y - from.y) - fraction * alongY) <= 1.0) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
 
 	inline void waitForAsyncLoad(const AssetRegistry& reg) {
 		using Clock = std::chrono::steady_clock;

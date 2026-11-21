@@ -491,3 +491,20 @@ TEST(UnionOfFills, AnIslandInAHoleIsItsOwnPolygon) {
 	EXPECT_TRUE(region[1 - frame].holes.empty());
 	EXPECT_EQ(area2(region[1 - frame].outer), 100 * 100 * 2);
 }
+
+TEST(UnionOfFills, SameInputSameRingsInTheSameOrder) {
+	// Crossing skewed rings in two groups, with separate pieces and a hole, so the face flood and the pinch split
+	// both have work to do.
+	const std::vector<std::vector<Ring>> groups{
+		{{{0, 0}, {700, 130}, {610, 520}, {40, 410}}, {{300, -90}, {980, 260}, {520, 690}}, square(1500, 0, 1600, 100)},
+		{square(0, 800, 300, 900), square(0, 900, 100, 1200), square(200, 900, 300, 1200), square(0, 1200, 300, 1300), square(300, 1300, 400, 1400)},
+	};
+	const auto first = unionOfFills(groups);
+	const auto second = unionOfFills(groups);
+	ASSERT_EQ(first.size(), second.size());
+	ASSERT_GE(first.size(), 3U);
+	for (std::size_t i = 0; i < first.size(); ++i) {
+		EXPECT_EQ(first[i].outer, second[i].outer) << "piece " << i;
+		EXPECT_EQ(first[i].holes, second[i].holes) << "piece " << i;
+	}
+}

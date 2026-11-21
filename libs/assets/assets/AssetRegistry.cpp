@@ -830,7 +830,7 @@ namespace assets {
 	bool AssetRegistry::loadDefinitions(const std::string& xmlPath) {
 		std::vector<std::string> loadedNames;
 		const bool				 loaded = parseDefinitions(xmlPath, loadedNames);
-		prewarmTreeVariants(loadedNames);
+		prewarmProceduralTemplates(loadedNames);
 		return loaded;
 	}
 
@@ -1324,7 +1324,7 @@ namespace assets {
 		// this is cheap) so nav/collision see the rect at load instead of racing the
 		// first lazy render. XML <collision> always wins; skip capture when set. Ground tiles
 		// never collide, and their generators are the heaviest scripts, so they are skipped too.
-		// A def with <ageClasses> is skipped as well: prewarmTreeVariants takes each class's rect
+		// A def with <ageClasses> is skipped as well: prewarmProceduralTemplates takes each class's rect
 		// from the variant 0 it generates anyway, after the whole load has parsed.
 		for (size_t n = firstNew; n < loadedNames.size(); ++n) {
 			auto it = definitions.find(loadedNames[n]);
@@ -1379,7 +1379,7 @@ namespace assets {
 		}
 
 		// Every shape set so far counts now, so no later early return in a load leaves the reach short;
-		// prewarmTreeVariants records the aged defs' shapes it sets.
+		// prewarmProceduralTemplates records the aged defs' shapes it sets.
 		admitCollisionShapes({loadedNames.begin() + static_cast<std::ptrdiff_t>(firstNew), loadedNames.end()});
 
 		LOG_DEBUG(Engine, "Loaded %d asset definitions from %s", loadedCount, xmlPath.c_str());
@@ -1476,7 +1476,7 @@ namespace assets {
 		// No GL; safe on the load worker thread.
 		const ValidationReport validated = AssetValidator::validate(folderPath, m_sharedScriptsPath);
 		m_validationReport.issues.insert(m_validationReport.issues.end(), validated.issues.begin(), validated.issues.end());
-		prewarmTreeVariants(loadedNames);
+		prewarmProceduralTemplates(loadedNames);
 		LOG_INFO(
 			Engine, "Asset validation: %d error(s), %d warning(s)", m_validationReport.errorCount(), m_validationReport.warningCount()
 		);
@@ -1989,12 +1989,13 @@ namespace assets {
 		return m_templates[id - 1]->defTall;
 	}
 
-	void AssetRegistry::prewarmTreeVariants(const std::vector<std::string>& defNames) {
+	void AssetRegistry::prewarmProceduralTemplates(const std::vector<std::string>& defNames) {
 		struct Job {
 			AssetDefinition* def = nullptr;
 			TreeTraits		 traits;
 			bool			 mature = false;
 			BuiltTemplate	 built;
+			AssetSilhouette	 silhouette;
 		};
 		// A name parsed twice (two files defining one def) is prewarmed once.
 		std::vector<std::string> names = defNames;
@@ -2008,7 +2009,17 @@ namespace assets {
 				continue;
 			}
 			AssetDefinition& def = found->second;
-			if (def.ageClasses.empty() || def.assetType != AssetType::Procedural) {
+			if (def.assetType != AssetType::Procedural) {
+				continue;
+			}
+			// A procedural def without age classes has a template a variant; prewarmed only when it can be selected,
+			// for its silhouette, which costs more than a click should wait for.
+			if (def.ageClasses.empty()) {
+				if (def.role != AssetRole::Groundcover && def.capabilities.hasAny()) {
+					for (uint16_t v = 0; v < std::max<uint32_t>(def.variantCount, 1U); ++v) {
+						jobs.push_back({.def = &def, .traits = {.ageClass = 0, .variant = v}, .mature = v == 0});
+					}
+				}
 				continue;
 			}
 			const TreeTraits mature = matureTraits(def);
@@ -2040,21 +2051,28 @@ namespace assets {
 		pool.parallelFor(0, jobs.size(), 1, [&](size_t first, size_t last) {
 			for (size_t i = first; i < last; ++i) {
 				jobs[i].built = buildTemplate(*jobs[i].def, jobs[i].traits, referenceDetailLevel(jobs[i].def->detailLevels));
+				// A tree's silhouette costs a few times its mesh, too much for the click that would first ask for it.
+				if (jobs[i].built.mesh.has_value()) {
+					jobs[i].silhouette = silhouetteOfMesh(*jobs[i].built.mesh);
+				}
 			}
 		});
 		for (Job& job : jobs) {
 			if (!job.built.error.empty()) {
 				m_validationReport.add(Severity::Error, job.def->defName, "ageClasses", job.built.error, "");
 			}
-			if (job.traits.variant == 0 && job.built.collision.has_value() && !job.def->collisionFor(job.traits.ageClass).blocks()) {
+			if (!job.def->ageClasses.empty() && job.traits.variant == 0 && job.built.collision.has_value() &&
+				!job.def->collisionFor(job.traits.ageClass).blocks()) {
 				job.def->setCollision(job.traits.ageClass, *job.built.collision);
 			}
-			insertTemplate(*job.def, job.traits, std::move(job.built));
+			const uint32_t id = insertTemplate(*job.def, job.traits, std::move(job.built));
+			std::lock_guard<std::mutex> lock(m_silhouetteCacheMutex);
+			m_silhouetteCache.try_emplace(id, std::move(job.silhouette));
 		}
 		admitCollisionShapes(names);
 		LOG_INFO(
 			Engine,
-			"Prewarmed %zu tree variants in %.1f ms",
+			"Prewarmed %zu procedural templates and their silhouettes in %.1f ms",
 			jobs.size(),
 			std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()
 		);
@@ -2303,8 +2321,15 @@ namespace assets {
 
 		// Compute outside the silhouette lock (the union can be heavy), mirroring
 		// getMotion. getTemplate guards itself with a separate mutex.
+		const auto						 start = std::chrono::steady_clock::now();
 		const renderer::TessellatedMesh* tmpl = getTemplate(templateId);
 		AssetSilhouette					 sil = tmpl != nullptr ? silhouetteOfMesh(*tmpl) : AssetSilhouette{};
+		LOG_DEBUG(
+			Engine,
+			"Built the silhouette of template %u on demand in %.1f ms",
+			templateId,
+			std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()
+		);
 
 		std::lock_guard<std::mutex> lk(m_silhouetteCacheMutex);
 		auto [it, inserted] = m_silhouetteCache.emplace(templateId, std::move(sil));

@@ -456,19 +456,21 @@ namespace assets {
 
 		/// Parses one XML file into `definitions`, appending the names it defined to `loadedNames`.
 		/// Runs the per-def collision passes that need no age classes; leaves each aged def's
-		/// templates and rects to prewarmTreeVariants.
+		/// templates and rects to prewarmProceduralTemplates.
 		bool parseDefinitions(const std::string& xmlPath, std::vector<std::string>& loadedNames);
 
 		/// Reads a parts def's parts (PartsAsset.h), runs its parts script, and resolves and checks them into
 		/// `def`, with what fails in the validation report. The derived collider is admitted with the rest.
 		void loadParts(const pugi::xml_node& defNode, const std::filesystem::path& folder, AssetDefinition& def);
 
-		/// Builds every variant of each named def with age classes at its reference detail level (the
+		/// Builds every variant of each named def with age classes, and of each selectable procedural def without them,
+		/// at its reference detail level (the
 		/// default view's; the renderer requests the others as the camera needs them), in parallel,
 		/// before the first chunk asks for one. A variant over kMaxMeshVertices is an error in the validation report.
-		/// Each class's collision rect is taken from its variant 0 (unless the def authors one).
+		/// Each class's collision rect is taken from its variant 0 (unless the def authors one), and each
+		/// variant's selection silhouette is built with it, so getSilhouette never builds one of these on a click.
 		/// Both load entry points end here, so a def is complete however it was loaded.
-		void prewarmTreeVariants(const std::vector<std::string>& defNames);
+		void prewarmProceduralTemplates(const std::vector<std::string>& defNames);
 
 		/// Admits the named defs' collision shapes as they stand: a polygon the nav mesh can't take (a
 		/// crossing, a point spacing or edge gap under 3 mm rounded at the def's smallest scale, no area) is an

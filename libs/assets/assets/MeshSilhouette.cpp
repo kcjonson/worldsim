@@ -31,8 +31,12 @@ namespace assets {
 
 		AssetSilhouette silhouetteOfRings(std::vector<geometry::Ring> rings, std::int64_t longest) {
 			AssetSilhouette silhouette;
-			silhouette.hitRegion =
+			// The close is simplified, which may cut inside the outline; unioned with the outline again, a click
+			// anywhere on what is outlined hits.
+			std::vector<geometry::Ring> hit =
 				geometry::closeOutline(rings, fractionOf(longest, kHitRegionCloseDivisor), fractionOf(longest, kHitRegionToleranceDivisor));
+			hit.insert(hit.end(), rings.begin(), rings.end());
+			silhouette.hitRegion = geometry::outlineOfUnion(std::move(hit));
 			silhouette.rings = std::move(rings);
 			silhouette.valid = !silhouette.rings.empty();
 			return silhouette;

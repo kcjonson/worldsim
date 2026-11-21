@@ -7,7 +7,8 @@
 
 // Selection silhouettes as vector outlines: unions of polygons, closed and simplified by vector operations only.
 // An outline is a set of disjoint simple CCW rings with their holes filled. Every length is in the input's units
-// (integer millimetres for the game's assets).
+// (integer millimetres for the game's assets). No shape is ever sampled into cells: the unions are exact
+// arrangements of the rings' edges (whose broad phase indexes segment boxes only to pick the pairs it tests).
 
 namespace geometry {
 

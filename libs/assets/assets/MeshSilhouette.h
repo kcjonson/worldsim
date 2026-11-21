@@ -26,7 +26,7 @@ namespace assets {
 	/// Lengths of a silhouette as fractions of the longer side of its box (L): the outline is simplified to within
 	/// L / 512 and closed by L / 512, so gaps under about L / 256 close and wiggles under L / 512 smooth out (a
 	/// mature tree of about 6 m: 12 mm); the hit region is the outline closed by L / 64, bridging gaps up to
-	/// about L / 32, and simplified to within L / 256.
+	/// about L / 32, simplified to within L / 256, and unioned with the outline so it holds all of it.
 	inline constexpr std::int64_t kSilhouetteToleranceDivisor = 512;
 	inline constexpr std::int64_t kSilhouetteCloseDivisor = 512;
 	inline constexpr std::int64_t kHitRegionCloseDivisor = 64;
