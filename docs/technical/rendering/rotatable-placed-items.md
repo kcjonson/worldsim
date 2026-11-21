@@ -23,7 +23,7 @@ How a placed item (furniture, a workstation, storage, anything a colonist crafts
 | Colliders | `CollisionShape` rect or polygon in the def's pivot frame; a polygon is one simple closed ring with area, concave allowed (`collisionPolygonProblem` in `AssetRegistry.cpp`), as nav's wall rings are concave; `nav::placedObstacleOutline` (`NavInputBuilder.h`) puts it in the world through `InstanceTransform` |
 | Selection | Per-template silhouette rings and hit region (`AssetRegistry::getSilhouette`, `geometry::silhouetteOfTriangles`) ([Entity selection silhouette](./entity-selection-silhouette.md)); the outline is injected once into the stream at its anchor |
 | SVG to mesh (salal) | `renderer::loadSVG` gives `LoadedSVGShape`s with flattened paths, fill, `GradientFill` (with its `xform`), stroke colour and width; `appendShapeMesh(shape, mesh)` (`SVGLoader.h`) tessellates the fill, colours it, and builds stroke bands (`appendStrokeBand`), and tags one `MeshPart` per shape. Indices are 16-bit; geometry past 65535 vertices is dropped with a warning. The art check `renderer::svg::checkArt` is in the build-tool library `salal_svg_build`. Foundation has no 2D affine matrix type |
-| Instanced draws (salal) | `Primitives::uploadInstancedMesh` and `drawInstanced(handle, instances, count, camera)`, which draws every index of the mesh for each 32-byte `InstanceData` |
+| Instanced draws (salal) | `Primitives::uploadInstancedMesh` and `drawInstanced(handle, instances, count, camera[, indices])`, which by default draws every index of the mesh for each 32-byte `InstanceData` |
 
 World units are metres: 1 tile is 1 m (`kTileSize`). Art has no pixel size. Every length in this document (part sizes, line widths, offsets, tolerances) is in metres, and the only pixels are screen densities (detail levels, `data-lod`) and screen-space input thresholds, each named where it is used.
 
@@ -82,7 +82,7 @@ Flora keeps its billboard art (the tilt is in the drawing, as [World depth sorti
 
 ### 4.1 The definition
 
-A parts def is `<assetType>parts</assetType>`, a third value for `parseAssetType`. It has no `svgPath`, `worldHeight`, `variantCount`, `placement`, `collision`, or `generator`; the registry refuses a parts def that has any of them. Capabilities, category, `handsRequired`, `<detailLevels>`, and the rest of the def are as for any asset.
+A parts def is `<assetType>parts</assetType>`, a third value for `parseAssetType`. It has no `svgPath`, `worldHeight`, `variantCount`, `placement`, `collision`, or `generator`; the registry refuses a parts def that has any of them. A parts item is placed at scale 1. Capabilities, category, `handsRequired`, `<detailLevels>`, and the rest of the def are as for any asset.
 
 ```xml
 <parts>
@@ -104,7 +104,7 @@ A parts def is `<assetType>parts</assetType>`, a third value for `parseAssetType
 ```
 
 - `<rect minX minY maxX maxY/>`, metres in the part's own frame, the same attributes as the `<collision><rect>` override. Its edges are, in order, back (`minY`), right (`maxX`), front (`maxY`), and left (`minX`): named as a viewer standing in front of the item sees them.
-- `<round x y radius sides/>`: a regular polygon of `sides` (3 to 32) about `(x, y)`, `radius` its circumradius, vertex `i` at angle `(i + 0.5) * 2 pi / sides` from +X toward +Y. It has a flat edge at the front and the back when `sides` is a multiple of 4, and flat ends left and right when `sides` is even and not a multiple of 4. Its faces have no names; they all take the `<sides>` drawing.
+- `<round x y radius sides/>`: a regular polygon of `sides` (3 to 32) about `(x, y)` (each 0 when left out), `radius` its circumradius, vertex `i` at angle `(i + 0.5) * 2 pi / sides` from +X toward +Y. It has a flat edge at the front and the back when `sides` is a multiple of 4, and flat ends left and right when `sides` is even and not a multiple of 4. Its faces have no names; they all take the `<sides>` drawing.
 - `<height bottom top/>` in metres above the ground. `bottom` 0 stands on the ground; a worktop on a carcass has `bottom` equal to the carcass's `top`. `top` equal to `bottom` is a flat part: a top only, no sides, no collider (a crafting spot, a rug).
 - `<top>`: `drawing` if it has one, else a plain fill of `color`.
 - `<sides>`: `color` is every side's plain colour. `drawing` on `<sides>` goes on every face not given one by a `<face>`; it is how a round's facet strip is given. `<face side="left right" drawing=.../>` puts one drawing on several faces, which must have the same proportions.
@@ -124,7 +124,7 @@ A use area and a clearance are the same kind of thing: an **area**, a set of sha
 - `<around distanceMeters="m"/>`: the item's collider (section 11) grown outward by the distance, corners rounded to the drawing curve tolerance.
 - `<circle x="m" y="m" radius="m"/>`: a disc, flattened to the drawing curve tolerance.
 - `<rect minX minY maxX maxY/>`: a rectangle.
-- `<drawing file="area.svg" minX minY maxX maxY/>`: an SVG in the item's folder whose viewBox maps onto that rectangle of the item's frame, at turn 0, left edge to `minX` and top edge to `minY`. Its filled shapes, under their own fill rules, unioned, are the area; strokes are ignored, so an artist can keep an outline of the item's plan in the file as a stroke-only guide. The viewBox's proportions must match the rectangle's within `aspectTolerance`, as for any drawing.
+- `<drawing file="area.svg" minX minY maxX maxY/>`: an SVG in the item's folder whose viewBox maps onto that rectangle of the item's frame, at turn 0, left edge to `minX` and top edge to `minY`. Its filled shapes, each filled by the nonzero rule, unioned, are the area (a `fill-rule="evenodd"` is an error: a hole is wound against its outline); strokes are ignored, so an artist can keep an outline of the item's plan in the file as a stroke-only guide. The viewBox's proportions must match the rectangle's within `aspectTolerance`, as for any drawing.
 
 At load every shape becomes polygons in the item's frame, and an area is their union, a set of simple polygons with holes (`geometry` boolean union, the one the construction code uses). After load there is one representation and one code path whatever the source; validation, the turn, the targeting, the placement checks, and the overlays read only the polygons.
 
@@ -277,7 +277,7 @@ A smelter used only from in front of its mouth, with its use area and its cleara
 
 ### 4.5 An optional script
 
-`<partsScript>parts.lua</partsScript>` names a Lua script in the item's folder that runs once at load, after the XML is read and before validation. It may add parts, placements, and area shapes (`asset:addPart{...}`, `asset:place{...}`, `asset:addUseArea{...}`, `asset:addClearance{...}`, with the XML's fields as table keys) and change a part's size or heights, for an item whose layout is easier computed than written out (a shelf whose shelf count is a parameter). It never draws; drawings are files. The XML alone is a complete item. It is its own hook, not `<generator>`: the generator path builds meshes for procedural defs, and a parts script only edits the def.
+`<partsScript>parts.lua</partsScript>` names a Lua script in the item's folder that runs once at load, after the XML is read and before validation. It may add parts, placements, and area shapes (`asset:addPart{...}`, `asset:place{...}`, `asset:addUseArea{...}`, `asset:addClearance{...}`, with the XML's fields as table keys) and change a part's size or heights, for an item whose layout is easier computed than written out (a shelf of many boards). It takes no parameters and never draws; drawings are files. The XML alone is a complete item. It is its own hook, not `<generator>`: the generator path builds meshes for procedural defs, and a parts script only edits the def.
 
 ## 5. Validation
 
@@ -304,7 +304,7 @@ An **item view** is everything drawn for one def at one turn and one detail leve
 
 ### 6.1 Load
 
-At load the registry reads the def, runs the optional script, and loads each drawing once. Each drawing's text goes through the attribute pass the ground SVG reader uses (`readGroundSvg`'s pugixml walk, factored out so both readers share it): every element's effective `data-lod` (the largest on it and its ancestors, else 0) is resolved and carried through salal's `loadSVG` on the shape id. The shapes are then mapped from the viewBox onto what the drawing covers, in metres: `sx` = covered width over viewBox width, `sy` = covered height over viewBox height (equal to within the aspect tolerance). Vertices are scaled by `(sx, sy)`, stroke widths by `sqrt(sx * sy)`, and the gradient's `xform` is composed with the inverse scale, so after load every drawing is in metres. Curves are flattened at `curveToleranceMeters` (0.002 m), passed to `loadSVG` in the drawing's own units (divided by the scale). The shapes are cached per drawing in the def. Each part's footprint polygon and each face's endpoints, normal, and length are computed in the part's frame.
+At load the registry reads the def, runs the optional script, and loads each drawing once. Each drawing's text goes through the attribute pass the ground SVG reader uses (`readGroundSvg`'s pugixml walk, factored out so both readers share it): every element's effective `data-lod` (the largest on it and its ancestors, else 0) is resolved and carried through salal's `loadSVG` on the shape id. The shapes are then mapped from the viewBox onto what the drawing covers, in metres: `sx` = covered width over viewBox width, `sy` = covered height over viewBox height (equal to within the aspect tolerance). Vertices are scaled by `(sx, sy)`, stroke widths by `sqrt(sx * sy)`, and the gradient's `xform` is composed with the inverse scale, so after load every drawing is in metres. Curves are flattened at `curveToleranceMeters` (0.002 m), passed to `loadSVG` in the drawing's own units (divided by the scale). The shapes are cached in the def per drawing and the size it covers: a file named by two faces of different sizes is read once and mapped once for each. Each part's footprint polygon and each face's endpoints, normal, and length are computed in the part's frame.
 
 ### 6.2 Per placed part
 

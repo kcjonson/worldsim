@@ -280,7 +280,7 @@ To inherit from an asset in a different folder, use `@defName`:
 
 ### Parts Asset Elements
 
-The schema is [Rotatable placed items](../rendering/rotatable-placed-items.md#4-asset-schema) section 4 and the checks its section 5. Loading produces `assets::PartsAsset` (`assets/PartsAsset.h`) on `AssetDefinition::parts`, and the derived collider's rings on `AssetDefinition::partsColliders`; its section 5 errors go into the registry's validation report. The registry builds no template mesh for a parts def, so `getTemplate` answers null for it.
+The schema is [Rotatable placed items](../rendering/rotatable-placed-items.md#4-asset-schema) section 4 and the checks its section 5. Loading produces `assets::PartsAsset` (`assets/PartsAsset.h`) on `AssetDefinition::parts`, and the derived collider's rings on `AssetDefinition::partsColliders`; its section 5 errors go into the registry's validation report.
 
 ### Age classes
 
