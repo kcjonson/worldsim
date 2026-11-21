@@ -60,16 +60,58 @@ namespace assets {
 			[[nodiscard]] float distance(glm::vec2 position) const { return (position.x - point.x) * inward.x + (position.y - point.y) * inward.y; }
 		};
 
+		constexpr uint32_t kNone = std::numeric_limits<uint32_t>::max();
+
+		/// A vertex of a triangle being clipped. A source vertex has `from` its index in the source and `to` kNone; a cut
+		/// vertex lies on the source edge from `from` to `to`.
 		struct ClipVertex {
 			glm::vec2		  position{0.0F};
 			Foundation::Color color;
+			uint32_t		  from = kNone;
+			uint32_t		  to = kNone;
 		};
+
+		Foundation::Color mixed(const Foundation::Color& from, const Foundation::Color& to, float along) {
+			const auto mix = [&](float first, float second) { return first + (second - first) * along; };
+			return {mix(from.r, to.r), mix(from.g, to.g), mix(from.b, to.b), mix(from.a, to.a)};
+		}
+
+		/// Where the edge from `current` to `following` crosses a half-plane's line. On a vertical line (a band edge) the
+		/// cut is computed from the source edge both lie on, its ends in a fixed order, at exactly the line's x, so the
+		/// strips either side of a band edge make bit-identical vertices and no hairline opens between them.
+		ClipVertex cutBetween(const ClipVertex& current, const ClipVertex& following, float currentSide, float followingSide, const HalfPlane& plane,
+							  const WorkMesh& source) {
+			uint32_t first = current.to != kNone ? current.from : following.to != kNone ? following.from : current.from;
+			uint32_t second = current.to != kNone ? current.to : following.to != kNone ? following.to : following.from;
+			// Two cut vertices on different source edges are joined along an earlier plane's line, not a source edge.
+			const bool alongSource = current.to == kNone || following.to == kNone ||
+									 std::minmax(current.from, current.to) == std::minmax(following.from, following.to);
+			if (plane.inward.y != 0.0F || !alongSource) {
+				const float along = currentSide / (currentSide - followingSide);
+				return {current.position + (following.position - current.position) * along, mixed(current.color, following.color, along), first, second};
+			}
+			const glm::vec2& firstPosition = source.positions[first];
+			const glm::vec2& secondPosition = source.positions[second];
+			if (secondPosition.x < firstPosition.x || (secondPosition.x == firstPosition.x && secondPosition.y < firstPosition.y)) {
+				std::swap(first, second);
+			}
+			const glm::dvec2 low(source.positions[first]);
+			const glm::dvec2 high(source.positions[second]);
+			const double	 x = plane.point.x;
+			const double	 along = (x - low.x) / (high.x - low.x);
+			return {
+				{plane.point.x, static_cast<float>(low.y + (high.y - low.y) * along)},
+				mixed(source.colors[first], source.colors[second], static_cast<float>(along)),
+				first,
+				second,
+			};
+		}
 
 		/// Appends `source`'s triangles clipped to the intersection of `planes`. A triangle wholly inside keeps its
 		/// vertices (shared with its neighbours); a cut one is a convex piece fanned back into triangles, its colours
 		/// interpolated linearly along the cut edges.
 		void clipInto(const WorkMesh& source, std::span<const HalfPlane> planes, WorkMesh& out) {
-			std::vector<uint32_t> kept(source.positions.size(), std::numeric_limits<uint32_t>::max());
+			std::vector<uint32_t> kept(source.positions.size(), kNone);
 			const auto			  inside = [&](glm::vec2 position) {
 				 return std::all_of(planes.begin(), planes.end(), [&](const HalfPlane& plane) { return plane.distance(position) >= 0.0F; });
 			};
@@ -79,7 +121,7 @@ namespace assets {
 				const std::array<uint32_t, 3> corners = {source.indices[t], source.indices[t + 1], source.indices[t + 2]};
 				if (std::all_of(corners.begin(), corners.end(), [&](uint32_t index) { return inside(source.positions[index]); })) {
 					for (const uint32_t index : corners) {
-						if (kept[index] == std::numeric_limits<uint32_t>::max()) {
+						if (kept[index] == kNone) {
 							kept[index] = out.add(source.positions[index], source.colors[index]);
 						}
 						out.indices.push_back(kept[index]);
@@ -88,7 +130,7 @@ namespace assets {
 				}
 				polygon.clear();
 				for (const uint32_t index : corners) {
-					polygon.push_back({source.positions[index], source.colors[index]});
+					polygon.push_back({source.positions[index], source.colors[index], index, kNone});
 				}
 				for (const HalfPlane& plane : planes) {
 					next.clear();
@@ -101,17 +143,7 @@ namespace assets {
 							next.push_back(current);
 						}
 						if ((currentSide >= 0.0F) != (followingSide >= 0.0F)) {
-							const float		  along = currentSide / (currentSide - followingSide);
-							const auto		  mix = [&](float from, float to) { return from + (to - from) * along; };
-							next.push_back(
-								{current.position + (following.position - current.position) * along,
-								 Foundation::Color{
-									 mix(current.color.r, following.color.r),
-									 mix(current.color.g, following.color.g),
-									 mix(current.color.b, following.color.b),
-									 mix(current.color.a, following.color.a)
-								 }}
-							);
+							next.push_back(cutBetween(current, following, currentSide, followingSide, plane, source));
 						}
 					}
 					std::swap(polygon, next);
@@ -211,7 +243,9 @@ namespace assets {
 					  matrix.applyToPoint({0.0F, height}),
 				};
 				if (!face.drawsArt) {
-					appendConvexFill(corners, shaded(part.sideColor, face.shade), out);
+					// A face too narrow for its drawing takes the drawing's average colour, so it doesn't pop to another one.
+					const Foundation::Color plain = partFace.drawing.has_value() ? parts.drawings[*partFace.drawing].averageColor : part.sideColor;
+					appendConvexFill(corners, shaded(plain, face.shade), out);
 					continue;
 				}
 				renderer::TessellatedMesh drawn;
@@ -227,9 +261,14 @@ namespace assets {
 				clipInto(art, halfPlanesOf(corners), out);
 			}
 
-			// The top: drawn over the footprint's bounding box, turned with the placement and the item, then lifted.
+			// The top: drawn over the footprint's bounding box, turned with the placement and the item, lifted, and clipped
+			// to the lifted footprint, as a side's art is clipped to its face.
 			const std::vector<glm::vec2> footprint = turnedFootprint(parts, placementIndex, turnRadians);
 			const glm::vec2				 lift{0.0F, -part.topMeters * ratio};
+			std::vector<glm::vec2>		 top;
+			for (const glm::vec2& point : footprint) {
+				top.push_back(point + lift);
+			}
 			if (part.topDrawing.has_value()) {
 				const float		composed = turnRadians + placement.turnRadians;
 				const glm::vec2 origin = turned(turned(part.boundsMin, placement.turnRadians) + placement.offsetMeters, turnRadians) + lift;
@@ -242,22 +281,18 @@ namespace assets {
 						renderer::appendShapeMesh(shape.shape, drawn, {.transform = matrix, .vectorEffect = renderer::VectorEffect::NonScalingStroke});
 					}
 				}
-				out.append(drawn);
+				WorkMesh art;
+				art.append(drawn);
+				clipInto(art, halfPlanesOf(top), out);
 			} else {
-				std::vector<glm::vec2> top;
-				for (const glm::vec2& point : footprint) {
-					top.push_back(point + lift);
-				}
 				appendConvexFill(top, part.topColor, out);
 			}
 
 			// The outline: round the footprint projected at its bottom and its top, then round the top.
 			std::vector<glm::vec2> projected;
-			std::vector<glm::vec2> top;
 			for (const glm::vec2& point : footprint) {
 				projected.push_back(point + glm::vec2{0.0F, -part.bottomMeters * ratio});
 				projected.push_back(point + lift);
-				top.push_back(point + lift);
 			}
 			appendClosedStroke(convexHull(std::move(projected)), config.outlineColor, config.outlineWidthMeters, out);
 			appendClosedStroke(top, config.outlineTopColor, config.outlineTopWidthMeters, out);
@@ -271,6 +306,12 @@ namespace assets {
 			glm::vec2 to{0.0F};
 
 			[[nodiscard]] float yAt(float x) const { return from.y + (to.y - from.y) * (x - from.x) / (to.x - from.x); }
+		};
+
+		/// A collider edge at the turn: southern when its ring lies north of it.
+		struct ColliderEdge {
+			Edge edge;
+			bool south = false;
 		};
 
 		/// One interval of the collider within a band: the trapezoid between a northern edge and the next southern one.
@@ -287,22 +328,33 @@ namespace assets {
 			std::vector<Interval> intervals;
 		};
 
+		/// A part's piece in a band, in the interval holding the middle of the piece, with its y range.
+		struct Cell {
+			size_t	 band = 0;
+			size_t	 interval = 0;
+			uint32_t placement = 0;
+			float	 minY = 0.0F;
+			float	 maxY = 0.0F;
+		};
+
 		/// A strip while the layout is being made: a run of one interval in each of consecutive bands.
 		struct Run {
-			size_t					   firstBand = 0;
-			size_t					   lastBand = 0;
-			Interval				   lastInterval;
-			float					   firstAnchor = 0.0F;
-			float					   anchor = 0.0F;
-			float					   minY = kInfinity;
-			float					   maxY = -kInfinity;
+			size_t									firstBand = 0;
+			size_t									lastBand = 0;
+			Interval								lastInterval;
+			float									leastAnchor = 0.0F;
+			float									greatestAnchor = 0.0F;
+			float									minY = kInfinity;
+			float									maxY = -kInfinity;
 			std::map<uint32_t, std::vector<size_t>> bandsByPlacement;
 		};
 
+		constexpr float kNoOverlap = 1.0e-6F;
+
 		/// The y range of a convex polygon between two x values.
 		std::pair<float, float> yRangeBetween(const std::vector<glm::vec2>& ring, float minX, float maxX) {
-			float low = kInfinity;
-			float high = -kInfinity;
+			float	   low = kInfinity;
+			float	   high = -kInfinity;
 			const auto take = [&](float y) {
 				low = std::min(low, y);
 				high = std::max(high, y);
@@ -322,8 +374,261 @@ namespace assets {
 			return {low, high};
 		}
 
+		std::pair<float, float> xRangeOf(const std::vector<glm::vec2>& ring) {
+			const auto [lowest, highest] = std::minmax_element(ring.begin(), ring.end(), [](glm::vec2 left, glm::vec2 right) { return left.x < right.x; });
+			return {lowest->x, highest->x};
+		}
+
 		bool flatOnGround(const PartDefinition& part) {
 			return part.flat() && part.bottomMeters <= 0.0F;
+		}
+
+		/// The def's collider rings turned, as edges, and every ring vertex's x.
+		std::vector<ColliderEdge> colliderEdges(const AssetDefinition& def, float turnRadians, std::vector<float>& vertexX) {
+			std::vector<ColliderEdge> edges;
+			for (const CollisionShape& collider : def.partsColliders) {
+				std::vector<glm::vec2> ring;
+				float				   doubledArea = 0.0F;
+				for (const glm::vec2& point : collider.pointsMeters) {
+					ring.push_back(turned(point, turnRadians));
+					vertexX.push_back(ring.back().x);
+				}
+				for (size_t i = 0; i < ring.size(); ++i) {
+					doubledArea += ring[i].x * ring[(i + 1) % ring.size()].y - ring[(i + 1) % ring.size()].x * ring[i].y;
+				}
+				for (size_t i = 0; i < ring.size(); ++i) {
+					const Edge edge{ring[i], ring[(i + 1) % ring.size()]};
+					// The ring lies to the left of travel turned by +90 degrees, (-along.y, along.x), times the winding's sign.
+					const float along = edge.to.x - edge.from.x;
+					edges.push_back({edge, (doubledArea >= 0.0F ? along : -along) < 0.0F});
+				}
+			}
+			return edges;
+		}
+
+		bool crosses(const Edge& edge, float x) {
+			return (edge.from.x - x) * (edge.to.x - x) < 0.0F;
+		}
+
+		/// Bands: boundaries at every collider vertex x, each span split evenly into the fewest bands no wider than
+		/// depthStripWidthMeters across which no southern edge rises by more than depthStripRiseMeters; and each band's
+		/// intervals.
+		std::vector<Band> bandsOf(const std::vector<ColliderEdge>& edges, std::vector<float> vertexX, const ViewConfig& config) {
+			constexpr float kSameX = 1.0e-5F;
+			std::sort(vertexX.begin(), vertexX.end());
+			vertexX.erase(std::unique(vertexX.begin(), vertexX.end(), [](float left, float right) { return right - left < kSameX; }), vertexX.end());
+			std::vector<Band> bands;
+			for (size_t span = 0; span + 1 < vertexX.size(); ++span) {
+				const float from = vertexX[span];
+				const float to = vertexX[span + 1];
+				const float width = to - from;
+				const float middle = (from + to) * 0.5F;
+				float		steepest = 0.0F;
+				for (const ColliderEdge& entry : edges) {
+					if (entry.south && crosses(entry.edge, middle)) {
+						steepest = std::max(steepest, std::abs((entry.edge.to.y - entry.edge.from.y) / (entry.edge.to.x - entry.edge.from.x)));
+					}
+				}
+				// The slack keeps a span that is a whole number of bands (a 3 m bench, twelve 0.25 m bands) from taking one more.
+				constexpr double kSlack = 1.0e-4;
+				const double	 byWidth = std::ceil(static_cast<double>(width) / config.depthStripWidthMeters - kSlack);
+				const double	 byRise = std::ceil(static_cast<double>(width) * steepest / config.depthStripRiseMeters - kSlack);
+				const auto		 count = static_cast<size_t>(std::max({1.0, byWidth, byRise}));
+				for (size_t i = 0; i < count; ++i) {
+					Band band;
+					band.minX = from + width * static_cast<float>(i) / static_cast<float>(count);
+					band.maxX = i + 1 == count ? to : from + width * static_cast<float>(i + 1) / static_cast<float>(count);
+					const float bandMiddle = (band.minX + band.maxX) * 0.5F;
+					std::vector<std::pair<float, const ColliderEdge*>> crossing;
+					for (const ColliderEdge& entry : edges) {
+						if (crosses(entry.edge, bandMiddle)) {
+							crossing.emplace_back(entry.edge.yAt(bandMiddle), &entry);
+						}
+					}
+					std::sort(crossing.begin(), crossing.end(), [](const auto& left, const auto& right) { return left.first < right.first; });
+					const Edge* open = nullptr;
+					for (const auto& [y, entry] : crossing) {
+						if (!entry->south) {
+							open = &entry->edge;
+						} else if (open != nullptr) {
+							const Edge& south = entry->edge;
+							band.intervals.push_back(
+								{.north = *open,
+								 .south = south,
+								 .anchor = std::max(south.yAt(band.minX), south.yAt(band.maxX)),
+								 .rise = std::abs(south.yAt(band.maxX) - south.yAt(band.minX))}
+							);
+							open = nullptr;
+						}
+					}
+					bands.push_back(std::move(band));
+				}
+			}
+			return bands;
+		}
+
+		/// Each part with height (or raised and flat) meets a band in one convex piece, which lies in one interval.
+		std::vector<Cell> cellsOf(
+			const PartsAsset& parts, const std::vector<std::vector<glm::vec2>>& footprints, const std::vector<Band>& bands, const ViewConfig& config
+		) {
+			const float		  pad = config.outlineHalfWidthMeters();
+			std::vector<Cell> cells;
+			for (uint32_t placement = 0; placement < parts.placements.size(); ++placement) {
+				const PartDefinition& part = parts.parts[parts.placements[placement].part];
+				if (footprints[placement].empty() || flatOnGround(part)) {
+					continue;
+				}
+				const auto [lowest, highest] = xRangeOf(footprints[placement]);
+				for (size_t band = 0; band < bands.size(); ++band) {
+					const float from = band == 0 ? lowest : std::max(bands[band].minX, lowest);
+					const float to = band + 1 == bands.size() ? highest : std::min(bands[band].maxX, highest);
+					if (to - from <= kNoOverlap || bands[band].intervals.empty()) {
+						continue;
+					}
+					const float x = (from + to) * 0.5F;
+					const auto [top, bottom] = ySpanAt(footprints[placement], x);
+					const float y = (top + bottom) * 0.5F;
+					size_t		best = 0;
+					float		bestDistance = kInfinity;
+					for (size_t index = 0; index < bands[band].intervals.size(); ++index) {
+						const Interval& interval = bands[band].intervals[index];
+						const float		distance = std::max({interval.north.yAt(x) - y, y - interval.south.yAt(x), 0.0F});
+						if (distance < bestDistance) {
+							bestDistance = distance;
+							best = index;
+						}
+					}
+					// The outline reaches pad past the footprint in any direction, so across a steep edge it reaches further
+					// than pad in y: the footprint's y range is taken over the piece widened by pad, then padded.
+					const auto [minY, maxY] = yRangeBetween(footprints[placement], from - pad, to + pad);
+					cells.push_back({.band = band, .interval = best, .placement = placement, .minY = minY - part.topMeters * config.heightRatio - pad, .maxY = maxY + pad});
+				}
+			}
+			return cells;
+		}
+
+		/// Strips, merged left to right: a strip joins the run of the strip beside it in the band to its left when each
+		/// is the only strip of its band the other's interval touches, the southern edges of both rise by no more than
+		/// depthStripMergeMeters across their bands, and the run's anchors with its own spread by no more than
+		/// depthStripMergeMeters. Merging so happens only where the southern edge is near flat, never across a peak.
+		std::vector<Run> runsOf(const std::vector<Band>& bands, const std::vector<Cell>& cells, const ViewConfig& config) {
+			const float merge = config.depthStripMergeMeters;
+			const auto	touches = [](const Interval& left, const Interval& right, float x) {
+				 return std::min(left.south.yAt(x), right.south.yAt(x)) - std::max(left.north.yAt(x), right.north.yAt(x)) > kNoOverlap;
+			};
+			std::vector<Run>	runs;
+			std::vector<size_t> previousRuns; // the runs ending in the band before
+			for (size_t band = 0; band < bands.size(); ++band) {
+				std::vector<size_t> currentRuns;
+				std::vector<size_t> intervalRun(bands[band].intervals.size(), std::numeric_limits<size_t>::max());
+				const float			boundary = bands[band].minX;
+				for (size_t index = 0; index < bands[band].intervals.size(); ++index) {
+					if (std::none_of(cells.begin(), cells.end(), [&](const Cell& cell) { return cell.band == band && cell.interval == index; })) {
+						continue;
+					}
+					const Interval&		interval = bands[band].intervals[index];
+					std::vector<size_t> touching;
+					for (const size_t run : previousRuns) {
+						if (touches(runs[run].lastInterval, interval, boundary)) {
+							touching.push_back(run);
+						}
+					}
+					bool joined = false;
+					if (touching.size() == 1) {
+						Run&	   left = runs[touching.front()];
+						const auto alsoTouching = std::count_if(bands[band].intervals.begin(), bands[band].intervals.end(), [&](const Interval& other) {
+							return touches(left.lastInterval, other, boundary);
+						});
+						const float spread = std::max(left.greatestAnchor, interval.anchor) - std::min(left.leastAnchor, interval.anchor);
+						if (alsoTouching == 1 && interval.rise <= merge && left.lastInterval.rise <= merge && spread <= merge) {
+							left.lastBand = band;
+							left.lastInterval = interval;
+							left.leastAnchor = std::min(left.leastAnchor, interval.anchor);
+							left.greatestAnchor = std::max(left.greatestAnchor, interval.anchor);
+							intervalRun[index] = touching.front();
+							currentRuns.push_back(touching.front());
+							joined = true;
+						}
+					}
+					if (!joined) {
+						runs.push_back(
+							{.firstBand = band, .lastBand = band, .lastInterval = interval, .leastAnchor = interval.anchor, .greatestAnchor = interval.anchor}
+						);
+						intervalRun[index] = runs.size() - 1;
+						currentRuns.push_back(runs.size() - 1);
+					}
+				}
+				for (const Cell& cell : cells) {
+					if (cell.band == band) {
+						Run& run = runs[intervalRun[cell.interval]];
+						run.minY = std::min(run.minY, cell.minY);
+						run.maxY = std::max(run.maxY, cell.maxY);
+						run.bandsByPlacement[cell.placement].push_back(band);
+					}
+				}
+				previousRuns = std::move(currentRuns);
+			}
+			return runs;
+		}
+
+		/// Each run as a strip. A placement's consecutive bands in it are one piece; the first and last band take
+		/// everything beyond the collider, and a part's first and last piece reach its footprint's extent plus the
+		/// outline's half width, so an outline is never cut where a footprint ends on or near a band edge.
+		std::vector<ItemStrip> stripsOf(
+			const std::vector<Run>& runs, const std::vector<Band>& bands, const std::vector<std::vector<glm::vec2>>& footprints, const ViewConfig& config
+		) {
+			const float								  pad = config.outlineHalfWidthMeters();
+			std::map<uint32_t, std::pair<size_t, size_t>> placementBands; // each placement's first and last band
+			for (const Run& run : runs) {
+				for (const auto& [placement, runBands] : run.bandsByPlacement) {
+					const auto found = placementBands.find(placement);
+					const auto low = runBands.front();
+					const auto high = runBands.back();
+					if (found == placementBands.end()) {
+						placementBands.emplace(placement, std::make_pair(low, high));
+					} else {
+						found->second = {std::min(found->second.first, low), std::max(found->second.second, high)};
+					}
+				}
+			}
+			std::vector<ItemStrip> strips;
+			for (const Run& run : runs) {
+				ItemStrip strip;
+				strip.anchorLocalY = run.greatestAnchor;
+				strip.minX = bands[run.firstBand].minX - (run.firstBand == 0 ? pad : 0.0F);
+				strip.maxX = bands[run.lastBand].maxX + (run.lastBand + 1 == bands.size() ? pad : 0.0F);
+				strip.minY = run.minY;
+				strip.maxY = run.maxY;
+				for (const auto& [placement, runBands] : run.bandsByPlacement) {
+					const auto [extentMin, extentMax] = xRangeOf(footprints[placement]);
+					const auto [firstBand, lastBand] = placementBands.at(placement);
+					for (size_t i = 0; i < runBands.size();) {
+						size_t last = i;
+						while (last + 1 < runBands.size() && runBands[last + 1] == runBands[last] + 1) {
+							++last;
+						}
+						const size_t from = runBands[i];
+						const size_t to = runBands[last];
+						StripPiece	 piece{.placement = placement, .minX = bands[from].minX, .maxX = bands[to].maxX};
+						if (from == 0) {
+							piece.minX = -kInfinity;
+						} else if (from == firstBand) {
+							piece.minX = std::min(piece.minX, extentMin - pad);
+							strip.minX = std::min(strip.minX, piece.minX);
+						}
+						if (to + 1 == bands.size()) {
+							piece.maxX = kInfinity;
+						} else if (to == lastBand) {
+							piece.maxX = std::max(piece.maxX, extentMax + pad);
+							strip.maxX = std::max(strip.maxX, piece.maxX);
+						}
+						strip.pieces.push_back(piece);
+						i = last + 1;
+					}
+				}
+				strips.push_back(std::move(strip));
+			}
+			return strips;
 		}
 
 	} // namespace
@@ -402,47 +707,29 @@ namespace assets {
 		}
 		const PartsAsset& parts = *def.parts;
 		const float		  turnRadians = turnRadiansFromQuanta(turnQuanta);
-		const float		  ratio = config.heightRatio;
 		const float		  pad = config.outlineHalfWidthMeters();
 
 		std::vector<std::vector<glm::vec2>> footprints(parts.placements.size());
 		for (size_t i = 0; i < parts.placements.size(); ++i) {
 			footprints[i] = turnedFootprint(parts, i, turnRadians);
 		}
-		const auto partOf = [&](size_t placement) -> const PartDefinition& { return parts.parts[parts.placements[placement].part]; };
-
-		// The collider at the turn, each edge marked southern (its ring lies north of it) or northern.
-		std::vector<std::pair<Edge, bool>> edges;
-		std::vector<float>				   vertexX;
-		for (const CollisionShape& collider : def.partsColliders) {
-			std::vector<glm::vec2> ring;
-			float				   doubledArea = 0.0F;
-			for (const glm::vec2& point : collider.pointsMeters) {
-				ring.push_back(turned(point, turnRadians));
-				vertexX.push_back(ring.back().x);
-			}
-			for (size_t i = 0; i < ring.size(); ++i) {
-				doubledArea += ring[i].x * ring[(i + 1) % ring.size()].y - ring[(i + 1) % ring.size()].x * ring[i].y;
-			}
-			for (size_t i = 0; i < ring.size(); ++i) {
-				const Edge edge{ring[i], ring[(i + 1) % ring.size()]};
-				// The ring lies to the left of travel turned by +90 degrees, (-along.y, along.x), times the winding's sign.
-				const float along = edge.to.x - edge.from.x;
-				edges.emplace_back(edge, (doubledArea >= 0.0F ? along : -along) < 0.0F);
-			}
-		}
+		std::vector<float>				vertexX;
+		const std::vector<ColliderEdge> edges = colliderEdges(def, turnRadians, vertexX);
 
 		// The flat strip: every flat part on the ground, or the whole item when it has no body.
-		ItemStrip flatStrip{.anchorLocalY = std::numeric_limits<float>::lowest(), .minX = kInfinity, .maxX = -kInfinity, .minY = kInfinity, .maxY = -kInfinity, .flat = true, .pieces = {}};
+		ItemStrip flatStrip{
+			.anchorLocalY = std::numeric_limits<float>::lowest(), .minX = kInfinity, .maxX = -kInfinity, .minY = kInfinity, .maxY = -kInfinity, .flat = true, .pieces = {}
+		};
 		for (uint32_t i = 0; i < parts.placements.size(); ++i) {
-			if (footprints[i].empty() || (!edges.empty() && !flatOnGround(partOf(i)))) {
+			const PartDefinition& part = parts.parts[parts.placements[i].part];
+			if (footprints[i].empty() || (!edges.empty() && !flatOnGround(part))) {
 				continue;
 			}
 			flatStrip.pieces.push_back({.placement = i, .minX = -kInfinity, .maxX = kInfinity});
 			for (const glm::vec2& point : footprints[i]) {
 				flatStrip.minX = std::min(flatStrip.minX, point.x - pad);
 				flatStrip.maxX = std::max(flatStrip.maxX, point.x + pad);
-				flatStrip.minY = std::min(flatStrip.minY, point.y - partOf(i).topMeters * ratio - pad);
+				flatStrip.minY = std::min(flatStrip.minY, point.y - part.topMeters * config.heightRatio - pad);
 				flatStrip.maxY = std::max(flatStrip.maxY, point.y + pad);
 			}
 		}
@@ -453,189 +740,11 @@ namespace assets {
 			return layout;
 		}
 
-		// Bands: boundaries at every collider vertex x, each span split evenly into the fewest bands no wider
-		// than depthStripWidthMeters across which no southern edge rises by more than depthStripRiseMeters.
-		constexpr float kSameX = 1.0e-5F;
-		std::sort(vertexX.begin(), vertexX.end());
-		vertexX.erase(std::unique(vertexX.begin(), vertexX.end(), [](float left, float right) { return right - left < kSameX; }), vertexX.end());
-		const auto crosses = [](const Edge& edge, float x) { return (edge.from.x - x) * (edge.to.x - x) < 0.0F; };
-		std::vector<Band> bands;
-		for (size_t span = 0; span + 1 < vertexX.size(); ++span) {
-			const float from = vertexX[span];
-			const float to = vertexX[span + 1];
-			const float width = to - from;
-			const float middle = (from + to) * 0.5F;
-			float		steepest = 0.0F;
-			for (const auto& [edge, south] : edges) {
-				if (south && crosses(edge, middle)) {
-					steepest = std::max(steepest, std::abs((edge.to.y - edge.from.y) / (edge.to.x - edge.from.x)));
-				}
-			}
-			// The slack keeps a span that is a whole number of bands (a 3 m bench, twelve 0.25 m bands) from taking one more.
-			constexpr double kSlack = 1.0e-4;
-			const double	 byWidth = std::ceil(static_cast<double>(width) / config.depthStripWidthMeters - kSlack);
-			const double	 byRise = std::ceil(static_cast<double>(width) * steepest / config.depthStripRiseMeters - kSlack);
-			const auto		 count = static_cast<size_t>(std::max({1.0, byWidth, byRise}));
-			for (size_t i = 0; i < count; ++i) {
-				Band band;
-				band.minX = from + width * static_cast<float>(i) / static_cast<float>(count);
-				band.maxX = i + 1 == count ? to : from + width * static_cast<float>(i + 1) / static_cast<float>(count);
-				const float bandMiddle = (band.minX + band.maxX) * 0.5F;
-				std::vector<std::pair<float, const std::pair<Edge, bool>*>> crossing;
-				for (const auto& entry : edges) {
-					if (crosses(entry.first, bandMiddle)) {
-						crossing.emplace_back(entry.first.yAt(bandMiddle), &entry);
-					}
-				}
-				std::sort(crossing.begin(), crossing.end(), [](const auto& left, const auto& right) { return left.first < right.first; });
-				const Edge* open = nullptr;
-				for (const auto& [y, entry] : crossing) {
-					if (!entry->second) {
-						open = &entry->first;
-					} else if (open != nullptr) {
-						const Edge& south = entry->first;
-						band.intervals.push_back(
-							{.north = *open,
-							 .south = south,
-							 .anchor = std::max(south.yAt(band.minX), south.yAt(band.maxX)),
-							 .rise = std::abs(south.yAt(band.maxX) - south.yAt(band.minX))}
-						);
-						open = nullptr;
-					}
-				}
-				bands.push_back(std::move(band));
-			}
-		}
-
-		// Each part's piece in a band lies in one interval: the one holding the middle of the piece.
-		struct Cell {
-			size_t	 band = 0;
-			size_t	 interval = 0;
-			uint32_t placement = 0;
-			float	 minY = 0.0F;
-			float	 maxY = 0.0F;
-		};
-		std::vector<Cell> cells;
-		constexpr float	  kNoOverlap = 1.0e-6F;
-		for (uint32_t placement = 0; placement < parts.placements.size(); ++placement) {
-			if (footprints[placement].empty() || flatOnGround(partOf(placement))) {
-				continue;
-			}
-			const auto [lowest, highest] = std::minmax_element(
-				footprints[placement].begin(), footprints[placement].end(), [](glm::vec2 left, glm::vec2 right) { return left.x < right.x; }
-			);
-			for (size_t band = 0; band < bands.size(); ++band) {
-				const bool	firstBand = band == 0;
-				const bool	lastBand = band + 1 == bands.size();
-				const float from = firstBand ? lowest->x : std::max(bands[band].minX, lowest->x);
-				const float to = lastBand ? highest->x : std::min(bands[band].maxX, highest->x);
-				if (to - from <= kNoOverlap || bands[band].intervals.empty()) {
-					continue;
-				}
-				const float x = (from + to) * 0.5F;
-				const auto [top, bottom] = ySpanAt(footprints[placement], x);
-				const float y = (top + bottom) * 0.5F;
-				size_t		best = 0;
-				float		bestDistance = kInfinity;
-				for (size_t index = 0; index < bands[band].intervals.size(); ++index) {
-					const Interval& interval = bands[band].intervals[index];
-					const float		distance = std::max({interval.north.yAt(x) - y, y - interval.south.yAt(x), 0.0F});
-					if (distance < bestDistance) {
-						bestDistance = distance;
-						best = index;
-					}
-				}
-				// The outline reaches pad past the footprint in any direction, so across a steep edge it reaches further
-				// than pad in y: the footprint's y range is taken over the band widened by pad, then padded.
-				const auto [minY, maxY] = yRangeBetween(footprints[placement], from - pad, to + pad);
-				cells.push_back({.band = band, .interval = best, .placement = placement, .minY = minY - partOf(placement).topMeters * ratio, .maxY = maxY});
-			}
-		}
-
-		// Strips, merged left to right: a strip joins the run of the strip beside it in the band to its left when
-		// each is the only strip of its band the other's interval touches, the southern edges of both rise by no more
-		// than depthStripMergeMeters across their bands, and its anchor is within depthStripMergeMeters of the run's
-		// first. Merging so happens only where the southern edge is near flat, never across a peak.
-		const auto touches = [](const Interval& left, const Interval& right, float x) {
-			return std::min(left.south.yAt(x), right.south.yAt(x)) - std::max(left.north.yAt(x), right.north.yAt(x)) > kNoOverlap;
-		};
-		std::vector<Run>	runs;
-		std::vector<size_t> previousRuns; // the runs ending in the band before
-		for (size_t band = 0; band < bands.size(); ++band) {
-			std::vector<size_t> currentRuns;
-			std::vector<size_t> intervalRun(bands[band].intervals.size(), std::numeric_limits<size_t>::max());
-			for (size_t index = 0; index < bands[band].intervals.size(); ++index) {
-				const bool used = std::any_of(cells.begin(), cells.end(), [&](const Cell& cell) { return cell.band == band && cell.interval == index; });
-				if (!used) {
-					continue;
-				}
-				const Interval& interval = bands[band].intervals[index];
-				const float		boundary = bands[band].minX;
-				std::vector<size_t> touching;
-				for (const size_t run : previousRuns) {
-					if (touches(runs[run].lastInterval, interval, boundary)) {
-						touching.push_back(run);
-					}
-				}
-				bool joined = false;
-				if (touching.size() == 1) {
-					Run&	   left = runs[touching.front()];
-					const auto alsoTouching = std::count_if(bands[band].intervals.begin(), bands[band].intervals.end(), [&](const Interval& other) {
-						return touches(left.lastInterval, other, boundary);
-					});
-					if (alsoTouching == 1 && interval.rise <= config.depthStripMergeMeters && left.lastInterval.rise <= config.depthStripMergeMeters &&
-						std::abs(interval.anchor - left.firstAnchor) <= config.depthStripMergeMeters) {
-						left.lastBand = band;
-						left.lastInterval = interval;
-						left.anchor = std::max(left.anchor, interval.anchor);
-						intervalRun[index] = touching.front();
-						currentRuns.push_back(touching.front());
-						joined = true;
-					}
-				}
-				if (!joined) {
-					runs.push_back({.firstBand = band, .lastBand = band, .lastInterval = interval, .firstAnchor = interval.anchor, .anchor = interval.anchor});
-					intervalRun[index] = runs.size() - 1;
-					currentRuns.push_back(runs.size() - 1);
-				}
-			}
-			for (const Cell& cell : cells) {
-				if (cell.band != band) {
-					continue;
-				}
-				Run& run = runs[intervalRun[cell.interval]];
-				run.minY = std::min(run.minY, cell.minY - pad);
-				run.maxY = std::max(run.maxY, cell.maxY + pad);
-				run.bandsByPlacement[cell.placement].push_back(band);
-			}
-			previousRuns = std::move(currentRuns);
-		}
-
-		const size_t firstStrip = layout.strips.size();
-		for (const Run& run : runs) {
-			ItemStrip strip;
-			strip.anchorLocalY = run.anchor;
-			strip.minX = bands[run.firstBand].minX - (run.firstBand == 0 ? pad : 0.0F);
-			strip.maxX = bands[run.lastBand].maxX + (run.lastBand + 1 == bands.size() ? pad : 0.0F);
-			strip.minY = run.minY;
-			strip.maxY = run.maxY;
-			for (const auto& [placement, placementBands] : run.bandsByPlacement) {
-				// Consecutive bands are one piece; the first and last band take everything beyond the collider.
-				for (size_t i = 0; i < placementBands.size();) {
-					size_t last = i;
-					while (last + 1 < placementBands.size() && placementBands[last + 1] == placementBands[last] + 1) {
-						++last;
-					}
-					const size_t from = placementBands[i];
-					const size_t to = placementBands[last];
-					strip.pieces.push_back(
-						{.placement = placement,
-						 .minX = from == 0 ? -kInfinity : bands[from].minX,
-						 .maxX = to + 1 == bands.size() ? kInfinity : bands[to].maxX}
-					);
-					i = last + 1;
-				}
-			}
+		const std::vector<Band> bands = bandsOf(edges, std::move(vertexX), config);
+		const std::vector<Cell> cells = cellsOf(parts, footprints, bands, config);
+		const std::vector<Run>	runs = runsOf(bands, cells, config);
+		const size_t			firstStrip = layout.strips.size();
+		for (ItemStrip& strip : stripsOf(runs, bands, footprints, config)) {
 			layout.strips.push_back(std::move(strip));
 		}
 		std::stable_sort(layout.strips.begin() + static_cast<std::ptrdiff_t>(firstStrip), layout.strips.end(), [](const ItemStrip& left, const ItemStrip& right) {

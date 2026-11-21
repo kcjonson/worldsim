@@ -65,23 +65,7 @@ namespace {
 		return {point.x * std::cos(radians) - point.y * std::sin(radians), point.x * std::sin(radians) + point.y * std::cos(radians)};
 	}
 
-	// Whether a point lies in a convex quad, wound either way, within kTolerance.
-	bool insideQuad(glm::vec2 point, const std::array<glm::vec2, 4>& quad) {
-		float doubledArea = 0.0F;
-		for (size_t i = 0; i < 4; ++i) {
-			doubledArea += quad[i].x * quad[(i + 1) % 4].y - quad[(i + 1) % 4].x * quad[i].y;
-		}
-		for (size_t i = 0; i < 4; ++i) {
-			const glm::vec2 along = quad[(i + 1) % 4] - quad[i];
-			const glm::vec2 inward = glm::vec2{-along.y, along.x} * (doubledArea >= 0.0F ? 1.0F : -1.0F) / std::hypot(along.x, along.y);
-			if ((point.x - quad[i].x) * inward.x + (point.y - quad[i].y) * inward.y < -kTolerance) {
-				return false;
-			}
-		}
-		return true;
-	}
-
-	std::array<glm::vec2, 4> faceQuad(const VisibleFace& face, float length, float height) {
+	std::vector<glm::vec2> faceQuad(const VisibleFace& face, float length, float height) {
 		return {
 			face.matrix.applyToPoint({0.0F, 0.0F}),
 			face.matrix.applyToPoint({length, 0.0F}),
@@ -92,6 +76,141 @@ namespace {
 
 	bool isRed(const Foundation::Color& color) {
 		return color.r > 0.5F && color.g == 0.0F && color.b == 0.0F;
+	}
+
+	bool sameColor(const Foundation::Color& color, const Foundation::Color& wanted) {
+		return color.r == wanted.r && color.g == wanted.g && color.b == wanted.b && color.a == wanted.a;
+	}
+
+	// The southernmost y at x of the def's collider turned: its southern edge where the item has no notch facing south.
+	float southAt(const AssetDefinition& def, float turn, float x) {
+		float south = -std::numeric_limits<float>::infinity();
+		for (const CollisionShape& ring : def.partsColliders) {
+			for (size_t i = 0; i < ring.pointsMeters.size(); ++i) {
+				const glm::vec2 from = turnedPoint(ring.pointsMeters[i], turn);
+				const glm::vec2 to = turnedPoint(ring.pointsMeters[(i + 1) % ring.pointsMeters.size()], turn);
+				if ((from.x - x) * (to.x - x) < 0.0F) {
+					south = std::max(south, from.y + (to.y - from.y) * (x - from.x) / (to.x - from.x));
+				}
+			}
+		}
+		return south;
+	}
+
+	struct ExpectedBand {
+		float minX = 0.0F;
+		float maxX = 0.0F;
+		float anchor = 0.0F;
+		float rise = 0.0F;
+	};
+
+	// The bands of section 6.7 worked out from the spans and the rise: a boundary at every collider vertex x, each
+	// span in the fewest even bands no wider than the strip width across which the southern edge rises no more than
+	// the strip rise. For items with no notch facing south.
+	std::vector<ExpectedBand> expectedBands(const AssetDefinition& def, float turn, const ViewConfig& config) {
+		std::vector<float> xs;
+		for (const CollisionShape& ring : def.partsColliders) {
+			for (const glm::vec2& point : ring.pointsMeters) {
+				xs.push_back(turnedPoint(point, turn).x);
+			}
+		}
+		std::sort(xs.begin(), xs.end());
+		xs.erase(std::unique(xs.begin(), xs.end(), [](float left, float right) { return right - left < 1.0e-5F; }), xs.end());
+		const auto south = [&](float x) { return southAt(def, turn, x); };
+		std::vector<ExpectedBand> bands;
+		for (size_t span = 0; span + 1 < xs.size(); ++span) {
+			const float width = xs[span + 1] - xs[span];
+			const float middle = (xs[span] + xs[span + 1]) * 0.5F;
+			const float slope = std::abs(south(middle + width / 4) - south(middle - width / 4)) / (width / 2);
+			const auto	count = static_cast<size_t>(std::max(
+				 {1.0, std::ceil(width / config.depthStripWidthMeters - 1.0e-4), std::ceil(width * slope / config.depthStripRiseMeters - 1.0e-4)}
+			 ));
+			for (size_t i = 0; i < count; ++i) {
+				const float from = xs[span] + width * static_cast<float>(i) / static_cast<float>(count);
+				const float to = xs[span] + width * static_cast<float>(i + 1) / static_cast<float>(count);
+				const float atFrom = south(from + 1.0e-6F);
+				const float atTo = south(to - 1.0e-6F);
+				bands.push_back({from, to, std::max(atFrom, atTo), std::abs(atTo - atFrom)});
+			}
+		}
+		return bands;
+	}
+
+	// The expected bands whose middles lie in a strip's x range.
+	std::vector<ExpectedBand> bandsIn(const ItemStrip& strip, const std::vector<ExpectedBand>& bands) {
+		std::vector<ExpectedBand> inside;
+		for (const ExpectedBand& band : bands) {
+			const float middle = (band.minX + band.maxX) * 0.5F;
+			if (middle > strip.minX && middle < strip.maxX) {
+				inside.push_back(band);
+			}
+		}
+		return inside;
+	}
+
+	// The perpendicular thickness on screen of the triangles of `color` lying along the line from `from` to `to`: those
+	// whose vertices are all within `reach` of it and that span part of the middle three fifths of its length.
+	float bandThickness(const renderer::TessellatedMesh& mesh, const Foundation::Color& color, glm::vec2 from, glm::vec2 to, float reach) {
+		const float		length = std::hypot((to - from).x, (to - from).y);
+		const glm::vec2 along = (to - from) / length;
+		const glm::vec2 across{-along.y, along.x};
+		float			low = std::numeric_limits<float>::infinity();
+		float			high = -std::numeric_limits<float>::infinity();
+		for (size_t t = 0; t + 2 < mesh.indices.size(); t += 3) {
+			std::array<float, 3> position{};
+			std::array<float, 3> distance{};
+			bool				 taken = true;
+			for (size_t corner = 0; corner < 3; ++corner) {
+				const uint16_t index = mesh.indices[t + corner];
+				const glm::vec2 offset = mesh.vertices[index] - from;
+				position[corner] = offset.x * along.x + offset.y * along.y;
+				distance[corner] = offset.x * across.x + offset.y * across.y;
+				taken = taken && sameColor(mesh.colors[index], color) && std::abs(distance[corner]) <= reach;
+			}
+			const auto [first, last] = std::minmax_element(position.begin(), position.end());
+			if (!taken || *last < length * 0.2F || *first > length * 0.8F) {
+				continue;
+			}
+			for (const float value : distance) {
+				low = std::min(low, value);
+				high = std::max(high, value);
+			}
+		}
+		return high - low;
+	}
+
+	// Every strip covers whole bands whose anchors spread by no more than `merge`, and takes the largest of them.
+	void expectMergedWithin(const StripLayout& layout, const std::vector<ExpectedBand>& bands, float merge) {
+		size_t covered = 0;
+		for (const ItemStrip& strip : layout.strips) {
+			const std::vector<ExpectedBand> inside = bandsIn(strip, bands);
+			ASSERT_FALSE(inside.empty()) << "strip from " << strip.minX;
+			float least = inside.front().anchor;
+			float greatest = least;
+			for (const ExpectedBand& band : inside) {
+				least = std::min(least, band.anchor);
+				greatest = std::max(greatest, band.anchor);
+			}
+			EXPECT_LE(greatest - least, merge + 1.0e-5F) << "strip from " << strip.minX << ", " << inside.size() << " bands";
+			EXPECT_NEAR(strip.anchorLocalY, greatest, 1.0e-4F) << "strip from " << strip.minX;
+			covered += inside.size();
+		}
+		EXPECT_EQ(covered, bands.size()) << "each band in one strip";
+	}
+
+	bool insideConvex(glm::vec2 point, const std::vector<glm::vec2>& ring) {
+		float doubledArea = 0.0F;
+		for (size_t i = 0; i < ring.size(); ++i) {
+			doubledArea += ring[i].x * ring[(i + 1) % ring.size()].y - ring[(i + 1) % ring.size()].x * ring[i].y;
+		}
+		for (size_t i = 0; i < ring.size(); ++i) {
+			const glm::vec2 along = ring[(i + 1) % ring.size()] - ring[i];
+			const glm::vec2 inward = glm::vec2{-along.y, along.x} * (doubledArea >= 0.0F ? 1.0F : -1.0F) / std::hypot(along.x, along.y);
+			if ((point.x - ring[i].x) * inward.x + (point.y - ring[i].y) * inward.y < -kTolerance) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	class ItemViewTest : public PartsTest {
@@ -132,6 +251,39 @@ namespace {
 			}
 			writeDef(name, "<parts>" + parts + "</parts><placements>" + placements + "</placements>");
 			return load(name);
+		}
+
+		// An 8-sided round of radius 0.4 whose top drawing fills its bounding box (1.307 times its inradius across)
+		// and spills past it.
+		void writeDrum() {
+			const float across = 2.0F * 0.4F * std::cos(std::numbers::pi_v<float> / 8.0F);
+			folder.write("Drum/top.svg", svg(across, across, "<circle cx=\"70\" cy=\"10\" r=\"20\" fill=\"#FF0000\"/>"));
+			writeDef(
+				"Drum",
+				"<parts><part name=\"drum\"><footprint><round radius=\"0.4\" sides=\"8\"/></footprint><height bottom=\"0\" top=\"0.5\"/>"
+				"<top drawing=\"top.svg\"/><sides color=\"#00FF00\"/></part></parts><placements>" + place("drum") + "</placements>"
+			);
+		}
+
+		// A 3 m slab on four corner legs and one centre leg whose footprint starts on a band edge, x = 0.
+		void writeTable() {
+			writeDef(
+				"Table",
+				"<parts>" + block("slab", -1.5F, -0.4F, 1.5F, 0.4F, 0.7F, 0.75F) + block("corner", -0.05F, -0.05F, 0.05F, 0.05F, 0.0F, 0.7F) +
+					block("centre", 0.0F, 0.3F, 0.1F, 0.4F, 0.0F, 0.7F) + "</parts><placements>" + place("slab") + place("corner", -1.45F, -0.35F) +
+					place("corner", 1.45F, -0.35F) + place("corner", 1.45F, 0.35F) + place("corner", -1.45F, 0.35F) + place("centre") + "</placements>"
+			);
+		}
+
+		// A rect whose top drawing has a red disc spilling 0.1 m past its right edge.
+		void writeOverflowingTop() {
+			folder.write("Overflow/top.svg", svg(0.8F, 0.4F, "<circle cx=\"80\" cy=\"20\" r=\"10\" fill=\"#FF0000\"/>"));
+			writeDef(
+				"Overflow",
+				"<parts><part name=\"box\"><footprint>" + rect(-0.4F, -0.2F, 0.4F, 0.2F) +
+					"</footprint><height bottom=\"0\" top=\"0.5\"/><top drawing=\"top.svg\"/><sides color=\"#00FF00\"/></part></parts><placements>" +
+					place("box") + "</placements>"
+			);
 		}
 
 		// The strips' index ranges follow one another and together cover every index once.
@@ -206,6 +358,19 @@ TEST_F(ItemViewTest, TheFaceMatrixMapsADrawingsCornersOntoTheFaceAndTheVisibleSe
 	EXPECT_FLOAT_EQ(front->left.x, -0.5F);
 	EXPECT_FLOAT_EQ(front->left.y, 0.3F);
 	EXPECT_FLOAT_EQ(front->right.x, 0.5F);
+	// At 35 degrees the front's corners land at absolute points: left (-0.5, 0.3) turned is (-0.58165, -0.04104), right
+	// (0.5, 0.3) turned is (0.23751, 0.53254), raised 0.8 * 0.35 = 0.28 at the top and 0.2 * 0.35 = 0.07 at the bottom.
+	const std::optional<VisibleFace> turned = findFace(visibleFaces(parts, radiansOf(35.0), viewConfig()), 0, 2);
+	ASSERT_TRUE(turned.has_value());
+	const auto expectAt = [&](glm::vec2 drawing, float x, float y) {
+		const glm::vec2 screen = turned->matrix.applyToPoint(drawing);
+		EXPECT_NEAR(screen.x, x, 2.0e-5F) << "(" << drawing.x << ", " << drawing.y << ")";
+		EXPECT_NEAR(screen.y, y, 2.0e-5F) << "(" << drawing.x << ", " << drawing.y << ")";
+	};
+	expectAt({0.0F, 0.0F}, -0.58165F, -0.32104F);
+	expectAt({1.0F, 0.0F}, 0.23751F, 0.25254F);
+	expectAt({1.0F, 0.6F}, 0.23751F, 0.46254F);
+	expectAt({0.0F, 0.6F}, -0.58165F, -0.11104F);
 }
 
 TEST_F(ItemViewTest, NoFaceIsEverMappedMirrored) {
@@ -350,24 +515,97 @@ TEST_F(ItemViewTest, AFaceNarrowerThanTheMinimumWidthDrawsItsPlainColour) {
 	EXPECT_NEAR(std::abs(narrow->right.x - narrow->left.x), 0.025F, 5.0e-4F);
 	EXPECT_FALSE(narrow->drawsArt) << "at 270.5 degrees, 0.025 m wide, it is plain";
 
-	// A red front on a green box: seen nearly edge on (88 degrees, 0.035 m wide) no red is drawn, only green.
-	folder.write("Narrow/front.svg", bareSvg(1.0F, 0.6F, "<rect x=\"0\" y=\"0\" width=\"100\" height=\"60\" fill=\"#FF0000\"/>"));
+	// A front half red, half blue on a green box: seen nearly edge on (88 degrees, 0.035 m wide) it is one plain
+	// rectangle of the drawing's average colour, shaded, never the unrelated green of the plain sides.
+	folder.write(
+		"Narrow/front.svg",
+		bareSvg(1.0F, 0.6F, "<rect x=\"0\" y=\"0\" width=\"50\" height=\"60\" fill=\"#FF0000\"/><rect x=\"50\" y=\"0\" width=\"50\" height=\"60\" fill=\"#0000FF\"/>")
+	);
 	writeDef(
 		"Narrow",
 		"<parts><part name=\"box\"><footprint>" + rect(-0.5F, -0.3F, 0.5F, 0.3F) +
-			"</footprint><height bottom=\"0\" top=\"0.6\"/><top color=\"#0000FF\"/><sides color=\"#00FF00\"><face side=\"front\" drawing=\"front.svg\"/></sides>"
+			"</footprint><height bottom=\"0\" top=\"0.6\"/><top color=\"#FFFFFF\"/><sides color=\"#00FF00\"><face side=\"front\" drawing=\"front.svg\"/></sides>"
 			"</part></parts><placements>" + place("box") + "</placements>"
 	);
 	const AssetDefinition* def = load("Narrow");
 	ASSERT_NE(def, nullptr);
+	const Foundation::Color average = def->parts->drawings[*def->parts->parts[0].faces[2].drawing].averageColor;
+	EXPECT_NEAR(average.r, 0.5F, 1.0e-4F);
+	EXPECT_NEAR(average.g, 0.0F, 1.0e-6F);
+	EXPECT_NEAR(average.b, 0.5F, 1.0e-4F);
 	const auto count = [&](double degrees, auto predicate) {
 		const ItemView view = buildItemView(*def, quantaOf(degrees), 0, viewConfig());
 		return std::count_if(view.mesh.colors.begin(), view.mesh.colors.end(), predicate);
 	};
-	const auto green = [](const Foundation::Color& color) { return color.g > 0.5F && color.r == 0.0F && color.b == 0.0F; };
+	const float shade = findFace(visibleFaces(*def->parts, radiansOf(88.0), viewConfig()), 0, 2)->shade;
+	const auto	averaged = [&](const Foundation::Color& color) {
+		 return std::abs(color.r - 0.5F * shade) < 1.0e-4F && color.g == 0.0F && std::abs(color.b - 0.5F * shade) < 1.0e-4F;
+	};
+	const auto blue = [](const Foundation::Color& color) { return color.b > 0.5F && color.r == 0.0F && color.g == 0.0F; };
 	EXPECT_EQ(count(88.0, isRed), 0);
-	EXPECT_GT(count(88.0, green), 0);
+	EXPECT_EQ(count(88.0, blue), 0);
+	EXPECT_GE(count(88.0, averaged), 3) << "the front's plain rectangle";
 	EXPECT_GT(count(80.0, isRed), 0) << "at 80 degrees (0.17 m wide) the drawing shows";
+}
+
+TEST_F(ItemViewTest, AGradientOnASideIsItsColourAtEachVertexShaded) {
+	// A 1 m x 0.6 m front filled by a gradient from red at its left end to green at its right.
+	folder.write(
+		"Graded/front.svg",
+		bareSvg(
+			1.0F, 0.6F,
+			"<defs><linearGradient id=\"across\" gradientUnits=\"userSpaceOnUse\" x1=\"0\" y1=\"0\" x2=\"100\" y2=\"0\">"
+			"<stop offset=\"0\" stop-color=\"#FF0000\"/><stop offset=\"1\" stop-color=\"#00FF00\"/></linearGradient></defs>"
+			"<rect x=\"0\" y=\"0\" width=\"100\" height=\"60\" fill=\"url(#across)\"/>"
+		)
+	);
+	writeDef(
+		"Graded",
+		"<parts><part name=\"box\"><footprint>" + rect(-0.5F, -0.3F, 0.5F, 0.3F) +
+			"</footprint><height bottom=\"0\" top=\"0.6\"/><top color=\"#FFFFFF\"/><sides color=\"#FFFFFF\"><face side=\"front\" drawing=\"front.svg\"/></sides>"
+			"</part></parts><placements>" + place("box") + "</placements>"
+	);
+	const AssetDefinition* def = load("Graded");
+	ASSERT_NE(def, nullptr);
+	ASSERT_TRUE(issues("Graded").empty()) << ::testing::PrintToString(issues("Graded"));
+	for (const double degrees : {0.0, 30.0, 330.0}) {
+		const ItemView					 view = buildItemView(*def, quantaOf(degrees), 0, viewConfig());
+		const std::optional<VisibleFace> front = findFace(visibleFaces(*def->parts, radiansOf(degrees), viewConfig()), 0, 2);
+		ASSERT_TRUE(front.has_value());
+		size_t checked = 0;
+		for (size_t i = 0; i < view.mesh.vertices.size(); ++i) {
+			const Foundation::Color& color = view.mesh.colors[i];
+			if (color.b != 0.0F || !insideConvex(view.mesh.vertices[i], faceQuad(*front, 1.0F, 0.6F))) {
+				continue; // white sides and top, and the brown outline
+			}
+			// Along the face u = (x - e) / a; the gradient there, times the face's shade.
+			const float along = (view.mesh.vertices[i].x - front->matrix.e) / front->matrix.a;
+			EXPECT_NEAR(color.r, (1.0F - along) * front->shade, 2.0e-3F) << degrees << " degrees, u = " << along;
+			EXPECT_NEAR(color.g, along * front->shade, 2.0e-3F) << degrees << " degrees, u = " << along;
+			EXPECT_FLOAT_EQ(color.a, 1.0F);
+			++checked;
+		}
+		EXPECT_GE(checked, 4U) << degrees << " degrees";
+	}
+}
+
+TEST_F(ItemViewTest, OutlinesKeepTheirWidthAcrossASkewedEdge) {
+	const AssetDefinition* def = loadBox();
+	ASSERT_NE(def, nullptr);
+	const ViewConfig& config = viewConfig();
+	for (const double degrees : {20.0, 35.0, 330.0}) {
+		const ItemView view = buildItemView(*def, quantaOf(degrees), 0, config);
+		ASSERT_TRUE(view.error.empty()) << view.error;
+		const std::optional<VisibleFace> front = findFace(visibleFaces(*def->parts, radiansOf(degrees), config), 0, 2);
+		ASSERT_TRUE(front.has_value());
+		const glm::vec2 bottom{0.0F, -0.2F * config.heightRatio};
+		const glm::vec2 top{0.0F, -0.8F * config.heightRatio};
+		// The part outline runs along the front's bottom edge (the hull's south side); the top outline along its top edge.
+		EXPECT_NEAR(bandThickness(view.mesh, config.outlineColor, front->left + bottom, front->right + bottom, 0.05F), config.outlineWidthMeters, config.outlineWidthMeters * 0.01F)
+			<< degrees << " degrees, the part outline";
+		EXPECT_NEAR(bandThickness(view.mesh, config.outlineTopColor, front->left + top, front->right + top, 0.05F), config.outlineTopWidthMeters, config.outlineTopWidthMeters * 0.01F)
+			<< degrees << " degrees, the top outline";
+	}
 }
 
 TEST_F(ItemViewTest, FaceArtNeverLeavesItsParallelogram) {
@@ -387,12 +625,12 @@ TEST_F(ItemViewTest, FaceArtNeverLeavesItsParallelogram) {
 		const std::optional<VisibleFace> front = findFace(visibleFaces(*def->parts, radiansOf(degrees), viewConfig()), 0, 2);
 		ASSERT_TRUE(front.has_value());
 		ASSERT_TRUE(front->drawsArt);
-		const std::array<glm::vec2, 4> quad = faceQuad(*front, 0.3F, 0.5F);
+		const std::vector<glm::vec2> quad = faceQuad(*front, 0.3F, 0.5F);
 		size_t						   red = 0;
 		for (size_t i = 0; i < view.mesh.vertices.size(); ++i) {
 			if (isRed(view.mesh.colors[i])) {
 				++red;
-				EXPECT_TRUE(insideQuad(view.mesh.vertices[i], quad)) << degrees << " degrees, vertex " << i;
+				EXPECT_TRUE(insideConvex(view.mesh.vertices[i], quad)) << degrees << " degrees, vertex " << i;
 			}
 		}
 		EXPECT_GT(red, 0U) << degrees << " degrees";
@@ -415,6 +653,14 @@ TEST_F(ItemViewTest, TheOrderFollowsTheProjectionNotHeightsOrCentroids) {
 		"<parts>" + block("box", -0.1F, -0.1F, 0.1F, 0.1F, 0.0F, 0.3F) + block("board", -0.6F, -0.05F, 0.6F, 0.05F, 0.5F, 0.55F) +
 			"</parts><placements>" + place("box", -0.45F, -0.15F) + place("board", 0.0F, 0.0F, 45.0F) + "</placements>"
 	);
+	// The same at an item turn of 45 degrees: the board placed square and the box placed where the turn brings it
+	// to (-0.45, -0.15), so at 45 degrees the board is diagonal and the box (a diamond now) south of it on shared lines.
+	const glm::vec2 boxAt = turnedPoint({-0.45F, -0.15F}, -std::numbers::pi_v<float> / 4.0F);
+	writeDef(
+		"BoardTurned",
+		"<parts>" + block("box", -0.1F, -0.1F, 0.1F, 0.1F, 0.0F, 0.3F) + block("board", -0.6F, -0.05F, 0.6F, 0.05F, 0.5F, 0.55F) +
+			"</parts><placements>" + place("box", boxAt.x, boxAt.y) + place("board") + "</placements>"
+	);
 	// A slab on four legs: the slab after every leg.
 	writeDef(
 		"Table",
@@ -424,13 +670,15 @@ TEST_F(ItemViewTest, TheOrderFollowsTheProjectionNotHeightsOrCentroids) {
 	);
 	writeWorkbench();
 	load("Workbench");
-	for (const char* name : {"Shelf", "Board", "Table", "Workbench"}) {
+	for (const char* name : {"Shelf", "Board", "BoardTurned", "Table", "Workbench"}) {
 		EXPECT_TRUE(issues(name).empty()) << name << ::testing::PrintToString(issues(name));
 	}
 	AssetRegistry& registry = AssetRegistry::Get();
 	const auto	   orderOf = [&](const char* name, double degrees) { return partsDrawOrder(*registry.getDefinition(name)->parts, radiansOf(degrees)); };
 	EXPECT_EQ(orderOf("Shelf", 0.0), (std::vector<uint32_t>{2, 0, 1}));
 	EXPECT_EQ(orderOf("Board", 0.0), (std::vector<uint32_t>{1, 0})) << "the box is south of the board where they share verticals";
+	EXPECT_EQ(orderOf("BoardTurned", 45.0), (std::vector<uint32_t>{1, 0})) << "the same pair, turned with the item";
+	EXPECT_EQ(orderOf("BoardTurned", 225.0), (std::vector<uint32_t>{0, 1})) << "half a turn on, the box is north of the board";
 	for (const double degrees : {0.0, 45.0, 200.0}) {
 		const std::vector<uint32_t> table = orderOf("Table", degrees);
 		EXPECT_EQ(table.back(), 0U) << degrees << " degrees: the slab draws last";
@@ -446,73 +694,66 @@ TEST_F(ItemViewTest, TheOrderFollowsTheProjectionNotHeightsOrCentroids) {
 // ─── Depth strips ───────────────────────────────────────────────────────────────────────────────────────
 
 TEST_F(ItemViewTest, StripCountsAndAnchorsForTheStoolAndTheBench) {
+	// Square to the screen each is one strip, its bands merged; at 45 degrees no band merges (each rises 0.088 m or
+	// more), so there is a strip a band: the spec's 8 for the stool and 31 for the bench.
 	const AssetDefinition* stool = loadStool();
 	ASSERT_NE(stool, nullptr);
-	EXPECT_EQ(stripLayout(*stool, quantaOf(0.0), viewConfig()).strips.size(), 1U) << "a stool square to the screen";
-	EXPECT_EQ(stripLayout(*stool, quantaOf(45.0), viewConfig()).strips.size(), 8U) << "two spans of 0.354 m at a slope of 1, four bands each";
+	EXPECT_EQ(stripLayout(*stool, quantaOf(0.0), viewConfig()).strips.size(), 1U);
+	const std::vector<ExpectedBand> stoolBands = expectedBands(*stool, radiansOf(45.0), viewConfig());
+	EXPECT_EQ(stripLayout(*stool, quantaOf(45.0), viewConfig()).strips.size(), stoolBands.size()) << "the spec counts 8";
 
 	const AssetDefinition* bench = loadBench(3.0F, 1.0F);
 	ASSERT_NE(bench, nullptr);
-	EXPECT_EQ(stripLayout(*bench, quantaOf(0.0), viewConfig()).strips.size(), 1U) << "a 3 m bench square to the screen";
-	const StripLayout turned = stripLayout(*bench, quantaOf(45.0), viewConfig());
-	ASSERT_EQ(turned.strips.size(), 31U) << "spans of 0.707, 1.414, and 0.707 m in 8, 15, and 8 bands";
+	EXPECT_EQ(stripLayout(*bench, quantaOf(0.0), viewConfig()).strips.size(), 1U);
+	const StripLayout				turned = stripLayout(*bench, quantaOf(45.0), viewConfig());
+	const std::vector<ExpectedBand> benchBands = expectedBands(*bench, radiansOf(45.0), viewConfig());
+	ASSERT_EQ(turned.strips.size(), benchBands.size()) << "the spec counts 31";
 	expectAscending(turned.strips);
-	// Each anchor is the southern edge's largest y across its band: the anchors fall along the front edge.
-	std::vector<glm::vec2> footprint;
-	for (const glm::vec2& corner : {glm::vec2{-1.5F, -0.5F}, glm::vec2{1.5F, -0.5F}, glm::vec2{1.5F, 0.5F}, glm::vec2{-1.5F, 0.5F}}) {
-		footprint.push_back(turnedPoint(corner, radiansOf(45.0)));
-	}
-	const float pad = viewConfig().outlineHalfWidthMeters();
-	const float reach = 2.0F * std::numbers::sqrt2_v<float> / 2.0F;
+	// Each anchor is its band's southern edge at its southern end: the anchors fall along the front edge.
 	for (const ItemStrip& strip : turned.strips) {
-		const float from = std::max(strip.minX, -reach);
-		const float to = std::min(strip.maxX, reach);
-		const float southern = std::max(ySpanAt(footprint, from + 1.0e-5F).second, ySpanAt(footprint, to - 1.0e-5F).second);
-		EXPECT_NEAR(strip.anchorLocalY, southern, 2.0e-3F) << "strip from " << strip.minX;
+		const std::vector<ExpectedBand> inside = bandsIn(strip, benchBands);
+		ASSERT_EQ(inside.size(), 1U) << "strip from " << strip.minX;
+		EXPECT_NEAR(strip.anchorLocalY, inside.front().anchor, 1.0e-4F) << "strip from " << strip.minX;
 		EXPECT_FALSE(strip.flat);
 	}
-	EXPECT_NEAR(turned.strips.front().minX + pad, -reach, 5.0e-3F) << "the westmost strip has the lowest anchor";
+	EXPECT_NEAR(turned.strips.front().minX + viewConfig().outlineHalfWidthMeters(), benchBands.front().minX, 1.0e-4F)
+		<< "the westmost strip has the lowest anchor";
 }
 
 TEST_F(ItemViewTest, ACounterAtAShallowAngleMergesItsBandsInPairs) {
 	const AssetDefinition* counter = loadBench(6.0F, 0.6F);
 	ASSERT_NE(counter, nullptr);
-	const float		  turn = radiansOf(4.5);
-	const StripLayout layout = stripLayout(*counter, quantaOf(4.5), viewConfig());
-	std::vector<glm::vec2> footprint;
-	std::vector<float>	   xs;
-	for (const glm::vec2& corner : {glm::vec2{-3.0F, -0.3F}, glm::vec2{3.0F, -0.3F}, glm::vec2{3.0F, 0.3F}, glm::vec2{-3.0F, 0.3F}}) {
-		footprint.push_back(turnedPoint(corner, turn));
-		xs.push_back(footprint.back().x);
-	}
-	std::sort(xs.begin(), xs.end());
-	const float span = xs[2] - xs[1];
-	const float bandWidth = span / std::ceil(span / viewConfig().depthStripWidthMeters);
-	const auto	southern = [&](float x) { return ySpanAt(footprint, x).second; };
-	size_t		pairs = 0;
-	size_t		singles = 0;
+	const StripLayout				layout = stripLayout(*counter, quantaOf(4.5), viewConfig());
+	const std::vector<ExpectedBand> bands = expectedBands(*counter, radiansOf(4.5), viewConfig());
+	expectMergedWithin(layout, bands, viewConfig().depthStripMergeMeters);
+	// Each band's anchor is about 0.0195 m past the last along the front, so pairs merge and threes don't.
+	size_t pairs = 0;
 	for (const ItemStrip& strip : layout.strips) {
-		if (strip.minX < xs[1] - kTolerance || strip.maxX > xs[2] + kTolerance) {
-			continue;
-		}
-		if (std::abs(strip.maxX - strip.minX - bandWidth) < 1.0e-4F) {
-			++singles;
-			continue;
-		}
-		ASSERT_NEAR(strip.maxX - strip.minX, 2.0F * bandWidth, 1.0e-4F) << "a pair of bands";
-		const float first = std::max(southern(strip.minX), southern(strip.minX + bandWidth));
-		const float second = std::max(southern(strip.minX + bandWidth), southern(strip.maxX));
-		EXPECT_LE(std::abs(second - first), viewConfig().depthStripMergeMeters + 1.0e-5F) << "a merged strip's anchors spread by at most 0.02 m";
-		EXPECT_NEAR(first, second - 0.0195F, 5.0e-4F) << "each band's anchor 0.0197 m past the last";
-		EXPECT_NEAR(strip.anchorLocalY, std::max(first, second), 1.0e-4F);
-		++pairs;
+		const std::vector<ExpectedBand> inside = bandsIn(strip, bands);
+		EXPECT_LE(inside.size(), 2U) << "strip from " << strip.minX;
+		pairs += inside.size() == 2 ? 1 : 0;
 	}
-	// The main span's first band joins the narrow end span's strip beside it (0.019 m apart, its southern edge the
-	// same front edge), the 22 after it merge in pairs, and the last stands alone: the other end's southern edge is
-	// the steep right end, which never merges.
-	EXPECT_EQ(pairs, 11U);
-	EXPECT_EQ(singles, 1U);
+	EXPECT_GE(pairs, 11U) << "the main span's 24 bands merge in pairs";
+	EXPECT_LT(layout.strips.size(), bands.size());
 	expectAscending(layout.strips);
+}
+
+TEST_F(ItemViewTest, AShallowVsMergedStripsSpreadByNoMoreThanTheMergeDistance) {
+	// Two rects at minus and plus 3 degrees, the second stacked where they overlap: the southern edge is a shallow V
+	// whose apex points north, each band rising 0.013 m, where a run compared only with its first anchor would spread
+	// by twice the merge distance.
+	writeDef(
+		"ShallowV",
+		"<parts>" + block("left", -3.0F, -0.3F, 0.3F, 0.3F, 0.0F, 0.8F) + block("right", -0.3F, -0.3F, 3.0F, 0.3F, 0.8F, 0.9F) + "</parts><placements>" +
+			place("left", 0.0F, 0.0F, -3.0F) + place("right", 0.0F, 0.0F, 3.0F) + "</placements>"
+	);
+	const AssetDefinition* def = load("ShallowV");
+	ASSERT_NE(def, nullptr);
+	ASSERT_TRUE(issues("ShallowV").empty()) << ::testing::PrintToString(issues("ShallowV"));
+	const StripLayout				layout = stripLayout(*def, 0, viewConfig());
+	const std::vector<ExpectedBand> bands = expectedBands(*def, 0.0F, viewConfig());
+	expectMergedWithin(layout, bands, viewConfig().depthStripMergeMeters);
+	EXPECT_LT(layout.strips.size(), bands.size()) << "bands still merge along each arm";
 }
 
 TEST_F(ItemViewTest, NotchedAndSplitBodiesCutIntoAStripAnInterval) {
@@ -523,11 +764,11 @@ TEST_F(ItemViewTest, NotchedAndSplitBodiesCutIntoAStripAnInterval) {
 	const StripLayout c = stripLayout(*letterC, 0, viewConfig());
 	ASSERT_EQ(c.strips.size(), 3U);
 	EXPECT_NEAR(c.strips[0].anchorLocalY, -0.4F, kTolerance) << "the north arm first";
-	EXPECT_NEAR(c.strips[0].minX, -0.4F, kTolerance);
+	EXPECT_NEAR(c.strips[0].minX, -0.4F - viewConfig().outlineHalfWidthMeters(), kTolerance) << "reaching back over the spine by the arm's outline";
 	EXPECT_NEAR(c.strips[1].anchorLocalY, 1.0F, kTolerance) << "the spine";
 	EXPECT_LT(c.strips[1].minX, -0.99F);
 	EXPECT_NEAR(c.strips[2].anchorLocalY, 1.0F, kTolerance) << "the south arm, after the spine left to right";
-	EXPECT_NEAR(c.strips[2].minX, -0.4F, kTolerance) << "two strips in the bands through the notch";
+	EXPECT_NEAR(c.strips[2].minX, -0.4F - viewConfig().outlineHalfWidthMeters(), kTolerance) << "two strips in the bands through the notch";
 
 	// An L whose notch opens to the south-east: the upright and the bar beside the notch.
 	const AssetDefinition* letterL = loadBlocks("LetterL", {{-1.0F, -1.0F, 1.0F, -0.5F}, {-1.0F, -0.5F, -0.5F, 1.0F}});
@@ -579,12 +820,23 @@ TEST_F(ItemViewTest, AMatUnderABenchIsInTheFlatStripFirst) {
 
 TEST_F(ItemViewTest, TheLayoutAgreesWithEveryLevelsViewWhoseStripsAreContiguousAndHoldTheirTriangles) {
 	writeWorkbench();
-	const AssetDefinition* workbench = load("Workbench");
+	writeDrum();
+	writeTable();
+	writeOverflowingTop();
+	writeDef(
+		"LetterL",
+		"<parts>" + block("bar", 0.0F, 0.0F, 2.0F, 0.6F, 0.0F, 0.9F) + block("upright", 0.0F, 0.6F, 0.6F, 2.0F, 0.0F, 0.9F) + "</parts><placements>" +
+			place("bar") + place("upright") + "</placements>"
+	);
 	const AssetDefinition* letterC = loadBlocks("LetterC", {{-1.0F, -1.0F, -0.4F, 1.0F}, {-0.4F, -1.0F, 1.0F, -0.4F}, {-0.4F, 0.4F, 1.0F, 1.0F}});
-	workbench = AssetRegistry::Get().getDefinition("Workbench");
-	ASSERT_NE(workbench, nullptr);
 	ASSERT_NE(letterC, nullptr);
-	for (const AssetDefinition* def : {workbench, letterC}) {
+	std::vector<const AssetDefinition*> defs;
+	for (const char* name : {"Workbench", "LetterC", "LetterL", "Drum", "Table", "Overflow"}) {
+		defs.push_back(AssetRegistry::Get().getDefinition(name));
+		ASSERT_NE(defs.back(), nullptr) << name;
+	}
+	for (const AssetDefinition* def : defs) {
+		const float reach = itemReachMeters(*def->parts, viewConfig());
 		for (const double degrees : {0.0, 35.0, 135.0, 271.0}) {
 			const StripLayout layout = stripLayout(*def, quantaOf(degrees), viewConfig());
 			expectAscending(layout.strips);
@@ -608,8 +860,105 @@ TEST_F(ItemViewTest, TheLayoutAgreesWithEveryLevelsViewWhoseStripsAreContiguousA
 						) << def->defName << " at " << degrees << " degrees, level " << int(level) << ", strip " << i << ": (" << vertex.x << ", " << vertex.y << ")";
 					}
 				}
+				for (const Foundation::Vec2& vertex : view.mesh.vertices) {
+					ASSERT_LE(std::hypot(vertex.x, vertex.y), reach + kTolerance) << def->defName << " at " << degrees << " degrees: past the cull reach";
+				}
 			}
 		}
+	}
+}
+
+TEST_F(ItemViewTest, ATopsArtStaysOnItsFootprint) {
+	writeDrum();
+	writeOverflowingTop();
+	load("Drum");
+	for (const char* name : {"Drum", "Overflow"}) {
+		const AssetDefinition* def = AssetRegistry::Get().getDefinition(name);
+		ASSERT_NE(def, nullptr) << name;
+		EXPECT_TRUE(issues(name).empty()) << name << ::testing::PrintToString(issues(name));
+		const float top = def->parts->parts[0].topMeters * viewConfig().heightRatio;
+		for (const double degrees : {0.0, 22.5, 70.0, 200.0}) {
+			const ItemView		   view = buildItemView(*def, quantaOf(degrees), 0, viewConfig());
+			std::vector<glm::vec2> lifted;
+			for (const glm::vec2& point : turnedFootprint(*def->parts, 0, radiansOf(degrees))) {
+				lifted.push_back(point + glm::vec2{0.0F, -top});
+			}
+			size_t red = 0;
+			size_t grey = 0;
+			for (size_t i = 0; i < view.mesh.vertices.size(); ++i) {
+				const Foundation::Color& color = view.mesh.colors[i];
+				const bool				 topArt = sameColor(color, {1.0F, 0.0F, 0.0F, 1.0F}) || (color.r == color.g && color.g == color.b && color.r > 0.4F && color.r < 0.6F);
+				if (topArt) {
+					red += color.g == 0.0F ? 1 : 0;
+					grey += color.g != 0.0F ? 1 : 0;
+					EXPECT_TRUE(insideConvex(view.mesh.vertices[i], lifted)) << name << " at " << degrees << " degrees, vertex " << i;
+				}
+			}
+			EXPECT_GT(red, 0U) << name << " at " << degrees << " degrees";
+			EXPECT_GT(grey, 0U) << name << " at " << degrees << " degrees";
+		}
+	}
+}
+
+TEST_F(ItemViewTest, AnOutlineIsNeverCutWhereAFootprintEndsOnABandEdge) {
+	const ViewConfig& config = viewConfig();
+	// An L whose upright ends at x = 0.6, a band edge: the upright's outline facing the notch keeps its full width.
+	writeDef(
+		"LetterL",
+		"<parts>" + block("bar", 0.0F, 0.0F, 2.0F, 0.6F, 0.0F, 0.9F) + block("upright", 0.0F, 0.6F, 0.6F, 2.0F, 0.0F, 0.9F) + "</parts><placements>" +
+			place("bar") + place("upright") + "</placements>"
+	);
+	// A 3 m slab whose centre leg starts at x = 0, a band edge: the leg's outline on that side keeps its full width.
+	writeTable();
+	load("Table");
+	const ItemView letter = buildItemView(*AssetRegistry::Get().getDefinition("LetterL"), 0, 0, config);
+	ASSERT_TRUE(letter.error.empty()) << letter.error;
+	EXPECT_NEAR(bandThickness(letter.mesh, config.outlineColor, {0.6F, 1.0F}, {0.6F, 1.8F}, 0.05F), config.outlineWidthMeters, config.outlineWidthMeters * 0.01F);
+	const ItemView table = buildItemView(*AssetRegistry::Get().getDefinition("Table"), 0, 0, config);
+	ASSERT_TRUE(table.error.empty()) << table.error;
+	EXPECT_NEAR(bandThickness(table.mesh, config.outlineColor, {0.0F, 0.12F}, {0.0F, 0.33F}, 0.05F), config.outlineWidthMeters, config.outlineWidthMeters * 0.01F);
+}
+
+TEST_F(ItemViewTest, StripsEitherSideOfABandEdgeShareBitIdenticalCutVertices) {
+	const AssetDefinition* bench = loadBench(3.0F, 1.0F);
+	ASSERT_NE(bench, nullptr);
+	for (const double degrees : {30.0, 45.0, 117.0}) {
+		const ItemView view = buildItemView(*bench, quantaOf(degrees), 0, viewConfig());
+		ASSERT_TRUE(view.error.empty()) << view.error;
+		// Every vertex by its exact x, with the strip it is drawn in.
+		std::map<float, std::vector<std::pair<size_t, uint32_t>>> byX;
+		for (size_t strip = 0; strip < view.strips.size(); ++strip) {
+			for (uint32_t index = view.strips[strip].firstIndex; index < view.strips[strip].firstIndex + view.strips[strip].indexCount; ++index) {
+				byX[view.mesh.vertices[view.mesh.indices[index]].x].emplace_back(strip, view.mesh.indices[index]);
+			}
+		}
+		// Band edges inside a span; at a collider vertex many source edges meet and near points are distinct geometry.
+		std::vector<float> corners;
+		for (const glm::vec2& point : bench->partsColliders.front().pointsMeters) {
+			corners.push_back(turnedPoint(point, radiansOf(degrees)).x);
+		}
+		size_t shared = 0;
+		for (const auto& [x, entries] : byX) {
+			if (std::any_of(corners.begin(), corners.end(), [&](float corner) { return std::abs(corner - x) < 1.0e-3F; })) {
+				continue;
+			}
+			for (size_t i = 0; i < entries.size(); ++i) {
+				for (size_t j = i + 1; j < entries.size(); ++j) {
+					if (entries[i].first == entries[j].first) {
+						continue;
+					}
+					const uint32_t first = entries[i].second;
+					const uint32_t second = entries[j].second;
+					// Two vertices of one surface a hair apart on a band edge would open a seam; they must be one point.
+					const float apart = std::abs(view.mesh.vertices[first].y - view.mesh.vertices[second].y);
+					if (apart < 1.0e-4F && sameColor(view.mesh.colors[first], view.mesh.colors[second])) {
+						ASSERT_EQ(view.mesh.vertices[first].y, view.mesh.vertices[second].y) << degrees << " degrees at x " << x;
+						++shared;
+					}
+				}
+			}
+		}
+		EXPECT_GT(shared, 0U) << degrees << " degrees";
 	}
 }
 
@@ -649,8 +998,7 @@ TEST_F(ItemViewTest, TheTemplateIsTheTurnZeroViewJoined) {
 	EXPECT_EQ(mesh->indices, view.mesh.indices);
 	ASSERT_EQ(mesh->colors.size(), view.mesh.colors.size());
 	for (size_t i = 0; i < mesh->colors.size(); ++i) {
-		ASSERT_EQ(mesh->colors[i].r, view.mesh.colors[i].r);
-		ASSERT_EQ(mesh->colors[i].a, view.mesh.colors[i].a);
+		ASSERT_TRUE(sameColor(mesh->colors[i], view.mesh.colors[i])) << "vertex " << i;
 	}
 	const AssetSilhouette* silhouette = registry.getSilhouette(id);
 	ASSERT_NE(silhouette, nullptr);
@@ -681,8 +1029,26 @@ TEST_F(ItemViewTest, Rule12RefusesAViewOverTheVertexLimitAtAStop) {
 			"</footprint><height bottom=\"0\" top=\"0.4\"/><top drawing=\"top.svg\"/><sides color=\"#808080\"/></part></parts><placements>" +
 			place("slab") + "</placements>"
 	);
+	// A box whose right end carries 13,000 squares (52,000 vertices): hidden at 0 degrees, over the limit once it shows.
+	std::string endSquares;
+	for (int column = 0; column < 130; ++column) {
+		for (int row = 0; row < 100; ++row) {
+			endSquares += "M" + std::to_string(column * 46 / 10) + "." + std::to_string(column * 46 % 10) + " " + std::to_string(row * 10) + "h2v2h-2z";
+		}
+	}
+	folder.write("Sideways/end.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 600 1000\"><path d=\"" + endSquares + "\" fill=\"#808080\"/></svg>");
+	writeDef(
+		"Sideways",
+		"<parts><part name=\"box\"><footprint>" + rect(-0.5F, -0.3F, 0.5F, 0.3F) +
+			"</footprint><height bottom=\"0\" top=\"1\"/><top color=\"#808080\"/><sides color=\"#808080\"><face side=\"right\" drawing=\"end.svg\"/></sides>"
+			"</part></parts><placements>" + place("box") + "</placements>"
+	);
 	writeWorkbench();
 	load("Dense");
-	EXPECT_TRUE(hasIssue("Dense", "vertices at its finest level"));
+	EXPECT_TRUE(hasIssue("Dense", "its view at 0 degrees"));
+	const AssetDefinition* sideways = AssetRegistry::Get().getDefinition("Sideways");
+	ASSERT_NE(sideways, nullptr);
+	EXPECT_LT(buildItemView(*sideways, 0, 0, viewConfig()).vertexCount, kMaxStopViewVertices) << "under the limit at 0 degrees";
+	EXPECT_TRUE(hasIssue("Sideways", "its view at 15 degrees")) << "the first stop that shows the right end";
 	EXPECT_TRUE(issues("Workbench").empty()) << ::testing::PrintToString(issues("Workbench"));
 }

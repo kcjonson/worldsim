@@ -144,6 +144,8 @@ namespace assets {
 		std::string					  file;
 		glm::vec2					  sizeMeters{0.0F};
 		std::vector<ItemDrawingShape> shapes;
+		/// Its shapes' colours averaged by drawn area and alpha, opaque: what a face too narrow for its drawing shows.
+		Foundation::Color averageColor;
 	};
 
 	struct AreaPolygon {

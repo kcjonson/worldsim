@@ -552,6 +552,34 @@ namespace assets {
 			return shape;
 		}
 
+		/// The shapes' colours averaged over their tessellated triangles, each weighted by its area and alpha; opaque.
+		Foundation::Color averageColorOf(const std::vector<ItemDrawingShape>& shapes) {
+			std::array<double, 3> sum{};
+			double				  weight = 0.0;
+			for (const ItemDrawingShape& item : shapes) {
+				renderer::TessellatedMesh mesh;
+				renderer::appendShapeMesh(item.shape, mesh);
+				for (size_t t = 0; t + 2 < mesh.indices.size(); t += 3) {
+					const glm::vec2 first = mesh.vertices[mesh.indices[t]];
+					const glm::vec2 second = mesh.vertices[mesh.indices[t + 1]];
+					const glm::vec2 third = mesh.vertices[mesh.indices[t + 2]];
+					const double	area = std::abs(static_cast<double>(crossOf(first, second, third))) * 0.5;
+					for (size_t corner = 0; corner < 3; ++corner) {
+						const Foundation::Color& color = mesh.colors[mesh.indices[t + corner]];
+						const double			 share = area / 3.0 * color.a;
+						sum[0] += share * color.r;
+						sum[1] += share * color.g;
+						sum[2] += share * color.b;
+						weight += share;
+					}
+				}
+			}
+			if (weight <= 0.0) {
+				return {0.0F, 0.0F, 0.0F, 1.0F};
+			}
+			return {static_cast<float>(sum[0] / weight), static_cast<float>(sum[1] / weight), static_cast<float>(sum[2] / weight), 1.0F};
+		}
+
 		bool sameAspect(glm::vec2 drawing, glm::vec2 covered, float tolerance) {
 			return std::abs((drawing.x / drawing.y) / (covered.x / covered.y) - 1.0F) <= tolerance;
 		}
@@ -693,6 +721,7 @@ namespace assets {
 									 .minPixelsPerMeter = svg.elements[loaded.element].minPixelsPerMeter}
 								);
 							}
+							drawing.averageColor = averageColorOf(drawing.shapes);
 							checkOverflow(drawing, use->what);
 							found = mappedBySize.emplace(key, static_cast<uint32_t>(drawings.size())).first;
 							drawings.push_back(std::move(drawing));
