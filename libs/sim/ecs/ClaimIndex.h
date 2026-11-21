@@ -47,7 +47,7 @@ namespace ecs {
 		EntityID colonist = kInvalidEntity;
 		uint64_t instanceId = 0;
 		uint64_t claimSeq = 0;
-		uint8_t	 tier = 7; // the holding task's priorityTier at index time; lower is higher rank
+		uint8_t	 tier = kUnrankedTier;		// the holding task's rankedTier at index time, a ladder position; lower is higher rank
 		TaskType taskType = TaskType::None; // what the holding task is doing (a record is a Haul)
 		bool	 suspended = false;
 	};

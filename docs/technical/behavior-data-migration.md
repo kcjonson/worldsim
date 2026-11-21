@@ -47,8 +47,8 @@ All of it is on `main` and on this branch.
 - Config: `assets/config/legacy/action-types.xml` (`ActionTypeRegistry`; only `needsHands` of a
   task's first action is read; Withdraw, PickupPackaged, and PlacePackaged have no entry),
   `assets/config/legacy/work-types.xml` (`WorkTypeRegistry`, read by nothing but `ConfigValidator`), and
-  `assets/config/arbitration/priority-tuning.xml` (the `<ladder>`, read by nothing; `<TaskTiers>` read;
-  `<WorkCategoryOrder>` parsed and unused). Ticket 9 deleted `task-chains.xml` and `TaskChainRegistry`.
+  `assets/config/arbitration/priority-tuning.xml` (the `<ladder>`, read by `PriorityConfig::decisionRungs`
+  and the work entries' `rung`; `<WorkCategoryOrder>` parsed and unused; `<TaskTiers>` deleted by ticket 10). Ticket 9 deleted `task-chains.xml` and `TaskChainRegistry`.
 - `TaskType` is used in 22 non-test files (`AIDecisionSystem.cpp` 117 references, `GlobalTaskAdapter`
   40, `ColonyGoalWork` 26, `ChainClaims` 18, `ColonistDetailsModel` 15, the conditions 12,
   `DecisionTrace` 11), and the condition vocabulary's `<TaskGroup name="work">` lists task type names.

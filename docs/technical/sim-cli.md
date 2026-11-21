@@ -785,7 +785,7 @@ temp directory per variant, patches the named values, and runs sim-cli once per 
 
 ```
 node tools/sim-sweep.mjs --scenario apps/sim-cli/scenarios/colony-day.sim
-    --set "arbitration/priority-tuning.xml:TaskTiers/Haul@tier=4,5,6"
+    --set "thoughts/tuning.xml:tuning@whileCheckMinutes=5,15,30"
     --seeds 1-10 --var colonists=8 --var days=3
     --out sweep.jsonl
 ```
