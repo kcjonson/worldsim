@@ -75,6 +75,7 @@
 #include "../ColliderEntityIndex.h"
 #include "../EntityID.h"
 #include "../ISystem.h"
+#include "StandPoints.h"
 
 #include <core/Vec2i64.h>
 
@@ -269,7 +270,7 @@ class NavigationSystem : public ISystem {
 	//   walls it believes in, only a route request (requestRoute) answers.
 	// A point inside a placed obstacle in the mesh stands on no label, so connected is false for it.
 	// To ask about a target that is a placed obstacle (or stands in one), ask from where a mover would
-	// stand to reach it: standPointBeside, or nearestPathablePoint.
+	// stand to reach it: standPointsBeside, or nearestPathablePoint.
 	// Two locates and a compare; reads the nav mesh's labels as of the last joined patch job.
 	[[nodiscard]] bool connected(glm::vec2 aMeters, glm::vec2 bMeters) const;
 	// The component label of the ground at `meters`, as connected compares them: geometry::nav::kNoComponent
@@ -369,14 +370,21 @@ class NavigationSystem : public ISystem {
 	// to the ground beside it, and places things.
 	[[nodiscard]] std::optional<glm::vec2> nearestPathablePoint(glm::vec2 meters) const;
 
-	// Where a colonist at `from` stands to work a target at `target` (a placed entity), read from the
-	// nav mesh: when a placed obstacle in the mesh stands at the target (its entity's position) or holds
-	// it, the spot nearest `from`, on a circle the disc's radius out from the obstacle, that is ground
-	// walkable in truth and in no placed obstacle; with none there, the target itself when it is such
-	// ground, else the nearest point that is. nullopt off meshed ground, and when every spot round the
-	// obstacle is in water, a wall, or another placed obstacle: no standable point beside it. Never a
-	// point inside a placed obstacle.
-	[[nodiscard]] std::optional<glm::vec2> standPointBeside(glm::vec2 target, glm::vec2 from, float agentRadiusMeters) const;
+	// Where a colonist at `from` stands to work a target at `target` (a placed entity, a structure),
+	// read from the nav mesh, nearest `from` first:
+	//  - a placed obstacle in the mesh stands at the target (its entity's position) or holds it: the spot
+	//    nearest `from`, on a circle the disc's radius out from the obstacle, that is ground walkable in
+	//    truth and in no placed obstacle.
+	//  - the target is ground walkable in truth: the target itself.
+	//  - the target is inside a built wall's band (a wall's centreline, an opening not yet built in it):
+	//    a spot on each side of the band, straight out from the target to where the disc stands clear of
+	//    every built band and blocked edge (nearestPathablePoint's clearance), each kept only while that
+	//    clears it within a disc's width of the straight-out spot. Both are asked of one route, whose
+	//    answer is the side he can get to.
+	//  - anything else on the mesh: the nearest point walkable in truth.
+	// Empty off meshed ground, and when no spot beside the obstacle or the band stands clear. Never a
+	// point inside a placed obstacle or a built wall.
+	[[nodiscard]] StandPoints standPointsBeside(glm::vec2 target, glm::vec2 from, float agentRadiusMeters) const;
 
 	// The nearest point where a mover of radius `agentRadiusMeters` stands: his whole disc on ground a
 	// route crosses, clear of water, placed obstacles and the mesh's edge, and of the BUILT-wall

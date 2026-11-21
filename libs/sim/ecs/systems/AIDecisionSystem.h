@@ -25,6 +25,7 @@
 #include "../components/SourceReachMemo.h"
 #include "../components/Task.h"
 #include "GoalSystemHelpers.h"
+#include "StandPoints.h"
 #include "WorkSources.h"
 
 #include <assets/PriorityConfig.h>
@@ -448,10 +449,12 @@ private:
 	/// colonist, any holder holds a bush against gathering. Only food is claimed.
 	[[nodiscard]] bool sourceHeldAgainst(EntityID entity, const struct Task& task, const SourceChoice& choice);
 
-	/// Where a colonist at `from` stands to reach `target`: beside the placed obstacle in the mesh it lies
-	/// in (NavigationSystem::standPointBeside), else the target itself. `placedTarget`: the target is a
-	/// placed thing (a harvest's source), always asked of standPointBeside. nullopt: nowhere to stand.
-	[[nodiscard]] std::optional<glm::vec2> standPointFor(glm::vec2 target, glm::vec2 from, float radius, bool placedTarget) const;
+	/// Where a colonist at `from` may stand to reach `target`, nearest him first: beside the placed obstacle
+	/// in the mesh it lies in, either side of the built wall it lies in, else the target itself
+	/// (NavigationSystem::standPointsBeside); the target itself off every face a mover may stand on (water,
+	/// unmeshed ground), left to the route. `placedTarget`: the target is a placed thing (a harvest's
+	/// source), always asked of standPointsBeside. Empty: nowhere to stand.
+	[[nodiscard]] StandPoints standPointFor(glm::vec2 target, glm::vec2 from, float radius, bool placedTarget) const;
 
 	/// Why a route failed, which decides what the failure says about its targets.
 	enum class RouteFailure : std::uint8_t {

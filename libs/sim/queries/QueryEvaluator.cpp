@@ -740,7 +740,8 @@ namespace queries {
 				return label == hisLabel ? std::optional<glm::vec2>(target) : std::nullopt;
 			}
 			if (hisLabel != geometry::nav::kNoComponent && world.navigation->isOnMesh(target)) {
-				const std::optional<glm::vec2> stand = world.navigation->standPointBeside(target, request.position, request.agentRadius);
+				const std::optional<glm::vec2> stand =
+					world.navigation->standPointsBeside(target, request.position, request.agentRadius).nearest();
 				return stand.has_value() && joined(*stand) ? stand : std::nullopt;
 			}
 			return std::nullopt;
