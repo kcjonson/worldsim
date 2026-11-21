@@ -131,7 +131,7 @@ Organize includes in this order (with blank lines between groups):
 
 ### Readable names
 
-Every name is whole words a reader can say: variables, parameters, members, functions, types, and namespace aliases alike. No one- or two-letter names and no cryptic abbreviations.
+Every name is whole words a reader can say: variables, parameters, members, functions, types, and namespace aliases alike. No one- or two-letter names and no cryptic abbreviations. Where CSS or SVG names a thing, that name is used even when it is a single letter (the `a` to `f` of a transform matrix), because following CSS's names outranks this rule.
 
 ```cpp
 // ❌ NEVER
