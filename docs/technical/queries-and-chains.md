@@ -703,12 +703,12 @@ whether it needs free hands, whether it may be interrupted, and when it pays.
 | Effect | Does |
 |---|---|
 | `<restore need amount>` | moves a need by a signed amount, the creature's own or, with `who="target"`, the target creature's. `amount` is a number, or `from` names a property of what the step consumes (`nutrition`) with `scale`, or `scaleBy` names a fact of the step's target (`sleep_quality`). With `seconds` and `upTo`, it restores `amount` per that many seconds and the action is open-ended, ending when the level reaches `upTo`, where it stops exactly |
-| `<consume capability count>` | uses up held units with the capability, chosen among the held units each time it applies; a `from="nutrition"` restore credits the nutrition of the unit used. An action that consumes is offered only while the creature holds such a unit. With `seconds`, `upTo`, and `need` the action is open-ended and runs in rounds: each `seconds`, the first after `seconds`, one round of every row in the order written; it ends when the need reaches `upTo` or a round takes nothing. The last unit may pass `upTo`, and the need stops at 100 |
+| `<consume capability count>` | uses up held units with the capability, chosen among the units in the creature's pack each time it applies; a `from="nutrition"` restore credits the nutrition of the unit used. An action that consumes is offered only while the creature holds such a unit. With `seconds`, `upTo`, and `need` the action is open-ended and runs in rounds: each `seconds`, the first after `seconds`, one round of every row in the order written; it ends when the need reaches `upTo` or a round takes nothing. The last unit may pass `upTo`, and the need stops at 100 |
 | `<take>` | takes from the target into hands or pack: cuts a harvestable (its yield, its regrowth), picks up from a pile, withdraws from a box, lifts a packaged item. How much is the step's amount ([Amounts](#amounts)); `clears="true"` removes the source whatever it is, and belongs to the site clear's own entry, not the shared `harvest` |
 | `<put>` | puts what the step carries into the target: a box, a station's store, a blueprint's manifest, metered to what the target still needs and has room for |
 | `<work rate direction>` | advances the work saved on the target, a blueprint's `workDone`, up or down, at the rate the named skill gives. The action is open-ended and ends when the work reaches its bound |
 | `<craft>` | makes one unit of the station's current job at the end of a fixed-duration action ([Craft completion](#craft-completion)) |
-| `<spawn def>` | creates a thing where the creature stands (a bio pile), or with `into="hands"` in its hands; with its hands full it goes where a crafted output does, the belt, then the pack, then stored or dropped. A spawn on the ground takes only a definition that is none of carryable, harvestable, craftable, and storage, since it builds no components for them |
+| `<spawn def>` | creates a thing where the creature stood when the action started (a bio pile), or with `into="hands"` in its hands; with its hands full it goes where a crafted output does, the belt, then the pack, then stored or dropped. A spawn on the ground takes only a definition that is none of carryable, harvestable, craftable, and storage, since it builds no components for them |
 | `<install>` | puts the packaged item the creature carries down at its placement target and unpackages it |
 | `<damage amount>` | lowers the target's condition by the amount; a target with no condition is a load error for the step's query |
 
@@ -2122,12 +2122,12 @@ Rules from the first build of the primitive effects (WOR-1071, Primitive effects
 - 2026-11-21: An open-ended `<consume>` runs one round of every row each `seconds`, the first after
   `seconds`, and ends when its need reaches `upTo` or a round takes nothing; the last unit may pass `upTo`,
   and the need stops at 100.
-- 2026-11-21: A `<consume>` chooses its unit among the held units with its capability each time it applies,
+- 2026-11-21: A `<consume>` chooses its unit among the units in the pack with its capability each time it applies,
   and a `from="nutrition"` restore credits that unit's nutrition. The capability is `edible`.
 - 2026-11-21: A `<consume>` in an action with a `from="nutrition"` restore takes `count="1"`; any other count
   is refused.
 - 2026-11-21: `scaleBy` names `sleep_quality`.
-- 2026-11-21: `<spawn>` puts its thing where the creature stands; on the ground it takes a definition that
+- 2026-11-21: `<spawn>` puts its thing where the creature stood when the action started; on the ground it takes a definition that
   is none of carryable, harvestable, craftable, and storage. `into="hands"` with full hands follows the
   craft output's order: hands, belt, pack, then stored or dropped.
 - 2026-11-21: `clears` belongs to the site clear's own entry; the shared `harvest` refuses it.

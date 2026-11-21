@@ -50,50 +50,45 @@ Problems:
 Use `std::variant` to hold type-specific data in a tagged union:
 
 ```cpp
-// Effect types - each contains ONLY relevant data
-struct NeedEffect {
-    NeedType need;
-    float restoreAmount;
-    NeedType sideEffectNeed = NeedType::Count;  // optional
-    float sideEffectAmount = 0.0F;
+// The target data an effect row acts on - each holds ONLY what its kind needs
+struct CollectionEffect {   // a <take> from a harvestable, a pile, or a box
+    std::string itemDefName;
+    uint32_t quantity = 1;
+    glm::vec2 sourcePosition{0.0F, 0.0F};
+    // ...
 };
 
-struct ProductionEffect {
-    std::string recipeId;
-    uint64_t sourceEntityId;
+struct ProgressEffect {     // the blueprint a <work> row advances
+    uint64_t targetEntityId = 0;
+    float skillLevel = 0.0F;
 };
 
-struct ProgressEffect {
-    uint64_t targetEntityId;
-    float progressAmount;
-};
-
-// Variant holds exactly one effect type at a time
-using ActionEffect = std::variant<
-    std::monostate,      // No effect (ActionType::None)
-    NeedEffect,          // Need fulfillment actions
-    ProductionEffect,    // Crafting/harvesting actions
-    ProgressEffect       // Building/repairing actions
->;
+// Variant holds exactly one target kind at a time
+using ActionEffect =
+    std::variant<std::monostate, CollectionEffect, ProgressEffect, CraftingEffect, DepositEffect, PlacePackagedEffect>;
 
 struct Action {
     ActionType type;
     ActionState state;
+    const ActionValues* values;  // the entry it runs: its effect rows, in the order written
+    EffectContext context;       // what the rows read and do not carry (nutrition, sleep quality, ...)
     float duration;
     float elapsed;
-    glm::vec2 targetPosition;
 
-    ActionEffect effect;  // Type-specific data
+    ActionEffect effect;  // the target the rows act on
 
-    // Helper methods for type-safe access
-    [[nodiscard]] bool hasNeedEffect() const {
-        return std::holds_alternative<NeedEffect>(effect);
+    [[nodiscard]] bool hasProgressEffect() const {
+        return std::holds_alternative<ProgressEffect>(effect);
     }
-    [[nodiscard]] const NeedEffect& needEffect() const {
-        return std::get<NeedEffect>(effect);
+    [[nodiscard]] const ProgressEffect& progressEffect() const {
+        return std::get<ProgressEffect>(effect);
     }
 };
 ```
+
+What an action does is not in the variant: it is the entry's effect rows (`<restore>`, `<consume>`, `<take>`, and
+the rest), resolved once at load into `ActionValues::effects`, which `ActionSystem` applies through one primitive per
+row kind ([Queries and chains](./queries-and-chains.md#primitive-effects)).
 
 ### Why std::variant is ECS-Idiomatic
 
@@ -115,71 +110,21 @@ bool ActionSystem::applyPut(const Action& action, Inventory& inventory) {
 }
 ```
 
-**Pattern 2: std::visit (when handling all cases)**
+**Pattern 2: dispatch on a variant of rows**
 ```cpp
-void ActionSystem::applyEffect(Action& action, World& world) {
-    std::visit([&](auto&& effect) {
-        using T = std::decay_t<decltype(effect)>;
-
-        if constexpr (std::is_same_v<T, std::monostate>) {
-            // No effect - do nothing
-        } else if constexpr (std::is_same_v<T, NeedEffect>) {
-            // Handle need restoration
-        } else if constexpr (std::is_same_v<T, ProductionEffect>) {
-            // Handle item production
-        } else if constexpr (std::is_same_v<T, ProgressEffect>) {
-            // Handle construction progress
-        }
-    }, action.effect);
+for (const EffectRow& row : action.values->effects) {
+    if (const auto* restore = std::get_if<RestoreRow>(&row)) {
+        payRestore(index, *restore, restoredAmount(*restore, action.context), action, needs);
+    } else if (const auto* consume = std::get_if<ConsumeRow>(&row)) {
+        took = applyConsume(*consume, action, inventory);
+    } // ... one branch per row kind
 }
 ```
 
-### Adding New Effect Types
+### Adding a target kind
 
-To add a new action category:
-
-1. **Define the effect struct:**
-```cpp
-struct SocialEffect {
-    uint64_t targetColonistId;
-    float moodChange;
-    std::string interactionType;
-};
-```
-
-2. **Add to the variant:**
-```cpp
-using ActionEffect = std::variant<
-    std::monostate,
-    NeedEffect,
-    ProductionEffect,
-    ProgressEffect,
-    SocialEffect  // New!
->;
-```
-
-3. **Add helper methods to Action:**
-```cpp
-[[nodiscard]] bool hasSocialEffect() const {
-    return std::holds_alternative<SocialEffect>(effect);
-}
-[[nodiscard]] const SocialEffect& socialEffect() const {
-    return std::get<SocialEffect>(effect);
-}
-```
-
-4. **Update factory methods:**
-```cpp
-static Action Chat(uint64_t targetId) {
-    Action action;
-    action.type = ActionType::Chat;
-    action.duration = 5.0F;
-    action.effect = SocialEffect{targetId, 5.0F, "chat"};
-    return action;
-}
-```
-
-5. **Update systems** that use `std::visit` to handle the new type.
+A new effect row kind whose target needs data of its own adds a struct to `ActionEffect`, a `has...`/`...()` pair on
+`Action`, and a primitive that refuses (takes nothing, with a warning) when the action carries no such target.
 
 ---
 
@@ -194,34 +139,22 @@ What the colonist is **doing** - the activity itself with timing and state.
 - May have a target position
 
 ### Effect
-What **happens** when the action completes - the outcome.
-
-- `NeedEffect` - Restores/drains a need value
-- `ProductionEffect` - Produces items (crafting, harvesting)
-- `ProgressEffect` - Advances construction/repair
-- `SpawnEffect` - Creates entities in the world
-
-### Why the Separation Matters
-
-The original design used "restoreAmount" which only makes sense for needs:
-- Eating "restores" hunger ✓
-- Crafting "restores" ??? ✗
-
-By separating actions from effects:
-- Actions describe **what you're doing**
-- Effects describe **what happens when you're done**
-- Each effect type uses appropriate terminology
+What **happens** - the action entry's effect rows, applied in the order written: `<restore>` moves a need,
+`<consume>` uses up a held unit, `<take>`, `<put>`, `<craft>`, and `<install>` act on the target in the action's
+`effect`, `<work>` advances a blueprint, `<spawn>` creates a thing. A row paid at the end applies when the action
+completes; one paid along applies as it goes.
 
 ---
 
 ## Factory Pattern for Actions
 
 Actions use static factory methods instead of constructors. Each takes the action entries resolved at load
-(`ecs::ActionEntries`), from which it reads its duration, interruptability, and amounts:
+(`ecs::ActionEntries`), from which it takes its entry (duration, interruptability, effect rows), and sets only the
+context and target the rows act on:
 
 ```cpp
 // Good - factory with meaningful name and clear parameters
-auto action = Action::Eat(actionEntries, itemDefName, nutrition);
+auto action = Action::Eat(actionEntries, foodDefNameId, nutrition);
 auto action = Action::Sleep(actionEntries, quality);
 auto action = Action::Craft(actionEntries, recipeDefName, stationId, stationPos, workAmount, inputs, outputs);
 
@@ -237,32 +170,13 @@ auto action = Action::Craft(actionEntries, recipeDefName, stationId, stationPos,
 
 ---
 
-## Side Effects in NeedEffect
+## Several needs from one action
 
-Some need-fulfillment actions affect multiple needs:
-
-```cpp
-struct NeedEffect {
-    NeedType need;           // Primary need (e.g., Thirst)
-    float restoreAmount;     // Primary restoration (e.g., +40%)
-
-    NeedType sideEffectNeed = NeedType::Count;  // Secondary need (e.g., Bladder)
-    float sideEffectAmount = 0.0F;              // Secondary change (e.g., -15%)
-};
-```
-
-**Sign convention:**
-- Positive `sideEffectAmount` = restore (add to need value)
-- Negative `sideEffectAmount` = drain (subtract from need value)
-
-Example: Drinking restores thirst (+40%) but drains bladder (-15%):
-```cpp
-NeedEffect effect{
-    .need = NeedType::Thirst,
-    .restoreAmount = 40.0F,
-    .sideEffectNeed = NeedType::Bladder,
-    .sideEffectAmount = -15.0F  // Negative = drains
-};
+An action that moves several needs has a `<restore>` row for each, with a signed amount: a rise stops at 100, a fall
+at 0. Drinking restores thirst and drains the bladder:
+```xml
+<restore need="thirst" amount="100"/>
+<restore need="bladder" amount="-15"/>
 ```
 
 ---

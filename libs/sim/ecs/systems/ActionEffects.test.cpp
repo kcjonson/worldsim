@@ -536,6 +536,25 @@ namespace ecs::test {
 		EXPECT_EQ(inventory(bob).belt[0]->defName, "Berry");
 	}
 
+	TEST_F(ActionEffectsTest, ASpawnLandsWhereTheCreatureStoodWhenTheActionStarted) {
+		ASSERT_NO_FATAL_FAILURE(load());
+		const EntityID bob = createColonist({3.0F, 4.0F});
+		start(bob, Action::Toilet(ecs::testing::shippedActions(), {3.0F, 4.0F}, false, true));
+		world->update(1.0F);
+		// Something moves him mid-action without clearing it (a wall finishing over him steps him out).
+		world->getComponent<Position>(bob)->value = {6.0F, 4.0F};
+		world->update(5.0F);
+		int piles = 0;
+		for (auto [entity, position, appearance] : world->view<Position, Appearance>()) {
+			if (appearance.defName == "Misc_BioPile") {
+				++piles;
+				EXPECT_FLOAT_EQ(position.value.x, 3.0F);
+				EXPECT_FLOAT_EQ(position.value.y, 4.0F);
+			}
+		}
+		EXPECT_EQ(piles, 1);
+	}
+
 	TEST_F(ActionEffectsTest, InstallPutsTheCarriedPackageDownAtItsTarget) {
 		ASSERT_NO_FATAL_FAILURE(load());
 		const EntityID bob = createColonist();

@@ -381,8 +381,13 @@ namespace ecs::test {
 			// Effects a factory does not perform, or performs once.
 			{washing,
 			 washRow,
-			 R"(<consume capability="edible" count="1"/>)" + washRow,
-			 wash + "effect 1 <consume> is not an effect the sim's Wash action performs"},
+			 washRow + R"(<consume capability="edible" count="1"/>)",
+			 wash + "effect 2 <consume> comes after a <restore>; a row that can take nothing is written before every <restore> and "
+					"<spawn>"},
+			{eating,
+			 R"(seconds="2" hands="free" interruptable="false">)",
+			 R"(seconds="2" hands="free" interruptable="false" pays="along">)",
+			 eat + "effect 1 <consume> can take nothing, so its action cannot pay along; give it pays=\"end\""},
 			{carrying,
 			 "<put/>",
 			 R"(<put/><damage amount="2"/>)",

@@ -442,7 +442,7 @@ marked "behavior change" lands only with the owner's sign-off.
     - Built: open-ended `human/eat` to 95 on the round engine ticket 13 built, `eat_a_meal`,
       `place_to_eat`. For the owner with this ticket: whether a meal of several units fires one finished
       event and thought or one per unit, and what `count` above 1 means beside a `from="nutrition"`
-      restore, which the resolver refuses meanwhile.
+      restore. The resolver refuses a `count` above 1 beside a `from="nutrition"` restore.
     - Deleted: `eat_from_pack` and `fetch_food` as Hunger's rows.
     - Must pass: new tests; `EatStartsOnArrivalAndFinishesOnceFed`'s changed expectations; scenario 12
       updated.

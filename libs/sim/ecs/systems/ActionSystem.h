@@ -329,8 +329,8 @@ private:
 	/// job. False, making and spending nothing, when the store no longer holds every input.
 	bool applyCraft(const struct Action& action, struct Inventory& inventory);
 
-	/// `<spawn>`: a thing of the row's definition where the creature stands (`standing`), or with `into="hands"` given
-	/// to it, hands first, then belt, pack, and stored or dropped, as a crafted output is.
+	/// `<spawn>`: a thing of the row's definition where the creature stood when the action started (`standing`), or
+	/// with `into="hands"` given to it, hands first, then belt, pack, and stored or dropped, as a crafted output is.
 	bool applySpawn(const SpawnRow& row, glm::vec2 standing, struct Inventory& inventory);
 
 	/// `<install>`: put the packaged item the creature carries down at its placement target and unpackage it. False

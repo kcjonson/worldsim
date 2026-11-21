@@ -133,6 +133,7 @@ TEST(ActionFactoryTest, ToiletActionCreation_PeeOnly) {
 	EXPECT_FLOAT_EQ(action.targetPosition.x, 5.0F);
 	EXPECT_FLOAT_EQ(action.targetPosition.y, 10.0F);
 	EXPECT_FALSE(std::holds_alternative<SpawnRow>(action.values->effects.back())); // Pee doesn't create bio pile
+	EXPECT_TRUE(std::ranges::none_of(action.values->effects, [](const EffectRow& row) { return std::holds_alternative<SpawnRow>(row); }));
 
 	ASSERT_EQ(action.values->effects.size(), 1U);
 	EXPECT_EQ(restoreRowOf(action, 0).need, NeedType::Bladder);
@@ -145,7 +146,8 @@ TEST(ActionFactoryTest, ToiletActionCreation_PoopOnly) {
 
 	EXPECT_EQ(action.type, ActionType::Toilet);
 	EXPECT_FLOAT_EQ(action.duration, 4.0F); // Poop takes longer
-	EXPECT_TRUE(std::holds_alternative<SpawnRow>(action.values->effects.back())); // Poop creates bio pile
+	ASSERT_TRUE(std::holds_alternative<SpawnRow>(action.values->effects.back())); // Poop creates bio pile
+	EXPECT_EQ(std::get<SpawnRow>(action.values->effects.back()).def, "Misc_BioPile");
 
 	ASSERT_EQ(action.values->effects.size(), 2U);
 	EXPECT_EQ(restoreRowOf(action, 0).need, NeedType::Digestion);
@@ -158,7 +160,8 @@ TEST(ActionFactoryTest, ToiletActionCreation_Both) {
 
 	EXPECT_EQ(action.type, ActionType::Toilet);
 	EXPECT_FLOAT_EQ(action.duration, 5.0F); // Both takes longest
-	EXPECT_TRUE(std::holds_alternative<SpawnRow>(action.values->effects.back())); // Poop creates bio pile
+	ASSERT_TRUE(std::holds_alternative<SpawnRow>(action.values->effects.back())); // Poop creates bio pile
+	EXPECT_EQ(std::get<SpawnRow>(action.values->effects.back()).def, "Misc_BioPile");
 
 	ASSERT_EQ(action.values->effects.size(), 3U);
 	EXPECT_EQ(restoreRowOf(action, 0).need, NeedType::Bladder); // Primary is bladder
@@ -179,6 +182,8 @@ TEST(ActionFactoryTest, ActionClear) {
 	EXPECT_FLOAT_EQ(action.duration, 0.0F);
 	EXPECT_FLOAT_EQ(action.elapsed, 0.0F);
 	EXPECT_EQ(action.values, nullptr); // No entry runs
+	EXPECT_TRUE(std::holds_alternative<std::monostate>(action.effect)); // Effect variant reset to monostate
+	EXPECT_EQ(action.context.consumedDefNameId, 0U);					// The food it set out to eat is gone with it
 }
 
 TEST(ActionFactoryTest, ActionIsActive) {

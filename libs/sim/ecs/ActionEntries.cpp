@@ -388,6 +388,11 @@ namespace ecs {
 			}
 		}
 
+		/// The engine refuses the entry's paying along: it is fixed-duration and has a row that can take nothing.
+		[[nodiscard]] bool engineRefusesAlong(const assets::ActionEntry& entry) {
+			return entry.duration != ActionDuration::OpenEnded && entry.pays == Pays::Along && std::ranges::any_of(entry.effects, canFail);
+		}
+
 		/// The engine's rules for one action entry.
 		void checkEngineRules(const assets::ActionEntry& entry, const assets::EntryLibrary& library, std::vector<std::string>& errors) {
 			const std::string		   where = whereOf(entry);
@@ -500,7 +505,7 @@ namespace ecs {
 				if (entry.duration != expected.duration) {
 					// An open-ended entry pays along by definition; the duration is the one fault.
 					refuse("takes " + std::string(durationName(expected.duration)) + " in the sim's " + factory + " action");
-				} else if (entry.pays != expected.pays) {
+				} else if (entry.pays != expected.pays && !engineRefusesAlong(entry)) {
 					refuse(
 						expected.pays == Pays::End ? "pays must be end; the sim's " + factory + " action pays when it completes"
 												   : "pays must be along; the sim's " + factory + " action advances its work as it goes"
@@ -521,10 +526,14 @@ namespace ecs {
 
 			void readEffects(const assets::ActionEntry& entry, const Expected& expected) {
 				EffectTally tally;
+				bool		paying = false;
 				for (std::size_t index = 0; index < entry.effects.size(); ++index) {
 					const assets::EffectRow& row = entry.effects[index];
 					const std::string		 effect = "effect " + std::to_string(index + 1) + " <" + kEffectElements[row.index()] + ">";
 					const Performs			 performs = performedBy(row);
+					const bool				 engineRefusesOrder = canFail(row) && paying;
+					paying =
+						paying || std::holds_alternative<assets::RestoreEffect>(row) || std::holds_alternative<assets::SpawnEffect>(row);
 					if (const auto* restore = std::get_if<assets::RestoreEffect>(&row)) {
 						if (expected.restoreForm == RestoreForm::None) {
 							refuse(effect + " is not an effect the sim's " + factory + " action performs");
@@ -540,7 +549,10 @@ namespace ecs {
 					} else if (std::holds_alternative<assets::DamageEffect>(row)) {
 						continue;
 					} else if (performs == Performs::Nothing || performs != expected.performs) {
-						refuse(effect + " is not an effect the sim's " + factory + " action performs");
+						// A row that can take nothing written after a restore or spawn is the engine's error to report.
+						if (!engineRefusesOrder) {
+							refuse(effect + " is not an effect the sim's " + factory + " action performs");
+						}
 					} else if (++tally.performed > 1) {
 						refuse(effect + " is a second <" + performedElement(performs) + ">; the sim's " + factory + " action performs one");
 					} else {
@@ -664,7 +676,19 @@ namespace ecs {
 		}
 		Resolver resolver(library, load.errors);
 		for (const Expected& expected : kExpected) {
-			load.actions.factories[static_cast<std::size_t>(expected.action)] = resolver.check(expected);
+			const assets::EntryHandle<assets::ActionEntry> handle = resolver.check(expected);
+			load.actions.factories[static_cast<std::size_t>(expected.action)] = handle;
+			if (!handle.valid() || expected.primary == NeedType::Count) {
+				continue;
+			}
+			// The factory's action serves its need wherever the entry writes that row.
+			ActionValues& values = load.actions.entries[handle.index];
+			for (std::size_t index = 0; index < values.effects.size(); ++index) {
+				if (const auto* restore = std::get_if<RestoreRow>(&values.effects[index]);
+					restore != nullptr && restore->need == expected.primary) {
+					values.primaryRow = static_cast<uint8_t>(index);
+				}
+			}
 		}
 		load.actions.groundSleepQuality = library.factTuning[kSleepQualityFact];
 		return load;

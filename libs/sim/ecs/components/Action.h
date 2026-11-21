@@ -289,11 +289,15 @@ namespace ecs {
 		/// moved its need. One that reached its bound before paying anything finishes nothing.
 		uint32_t rounds = 0;
 
-		/// What the action has paid to the need it serves (its values' primary row), which the completion log reports.
+		/// What the action has paid to the need it serves (its values' primary row), which the completion log reports for
+		/// an open-ended action.
 		float restored = 0.0F;
 
 		/// Target position (the point the action works at)
 		glm::vec2 targetPosition{0.0F, 0.0F};
+
+		/// Where the creature stood when the action started, which a `<spawn>` puts its thing at.
+		glm::vec2 startPosition{0.0F, 0.0F};
 
 		/// Whether this action can be interrupted by higher-priority tasks.
 		/// Biological needs (Eat, Drink, Toilet) are NOT interruptable.
@@ -369,6 +373,7 @@ namespace ecs {
 			rounds = 0;
 			restored = 0.0F;
 			targetPosition = glm::vec2{0.0F, 0.0F};
+			startPosition = glm::vec2{0.0F, 0.0F};
 			interruptable = true;
 			effect = std::monostate{};
 		}

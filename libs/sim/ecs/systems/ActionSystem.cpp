@@ -139,6 +139,10 @@ namespace ecs {
 				}
 			}
 
+			// Every action's first tick, factory-started or not: where it started is where its spawn lands.
+			if (action.state == ActionState::Starting) {
+				action.startPosition = position.value;
+			}
 			const Actor actor{.entity = entity, .position = position.value, .needs = needs, .inventory = inventory, .memory = memory};
 			advanceAction(scaledDt, actor, action);
 
@@ -320,7 +324,7 @@ namespace ecs {
 			} else if (std::holds_alternative<CraftRow>(row)) {
 				took = applyCraft(action, actor.inventory);
 			} else if (const auto* spawn = std::get_if<SpawnRow>(&row)) {
-				took = applySpawn(*spawn, actor.position, actor.inventory);
+				took = applySpawn(*spawn, action.startPosition, actor.inventory);
 			} else if (std::holds_alternative<InstallRow>(row)) {
 				took = applyInstall(action, actor.inventory);
 			}
@@ -393,12 +397,18 @@ namespace ecs {
 				took = action.rounds > 0;
 				break;
 		}
+		// What the action restores to the need it serves: a fixed-duration action's whole amount, offered whether or not
+		// its rows took; an open-ended one's what it paid as it went.
+		float restored = action.restored;
+		if (values.bound == ActionBound::None && values.primaryRow != kNoRow) {
+			restored = restoredAmount(std::get<RestoreRow>(values.effects[values.primaryRow]), action.context);
+		}
 		LOG_INFO(
 			Engine,
 			"[Action] Entity %llu: Completed %s action (restored %.1f%%)",
 			static_cast<unsigned long long>(entity),
 			actionTypeName(action.type),
-			action.restored
+			restored
 		);
 		if (took) {
 			reportAction(entity, action, ActionMoment::Finished, task, memory);

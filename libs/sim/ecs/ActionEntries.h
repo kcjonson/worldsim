@@ -40,6 +40,7 @@
 #include <assets/Entries.h>
 
 #include <array>
+#include <cassert>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -164,7 +165,10 @@ namespace ecs {
 		/// The bare ground's sleep quality (the sleep_quality fact's `ground` tuning), which scales a sleep's restore.
 		float groundSleepQuality = 0.0F;
 
-		[[nodiscard]] const ActionValues& of(assets::EntryHandle<assets::ActionEntry> action) const { return entries[action.index]; }
+		[[nodiscard]] const ActionValues& of(assets::EntryHandle<assets::ActionEntry> action) const {
+			assert(action.valid() && action.index < entries.size() && "an action entry of a table that resolved without errors");
+			return entries[action.index];
+		}
 		[[nodiscard]] const ActionValues& of(FactoryAction action) const { return of(factories[static_cast<std::size_t>(action)]); }
 
 		[[nodiscard]] const ActionValues& eat() const { return of(FactoryAction::Eat); }
