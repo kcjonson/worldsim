@@ -153,7 +153,7 @@ Applications:
 | [Pathfinding Architecture](./pathfinding-architecture.md) | Four-tier navigation: planet hex graph, chunk components, CDT navmesh, physical agents; multi-region sim area, runtime-validity predicate, findValidPositionNear |
 | [Vision Architecture](./vision-architecture.md) | Wall-occluded sight: visibility polygons, discovery and reconciliation (built), witnessing (planned), player visibility (built, in its own doc) |
 | [Player Visibility](./player-visibility.md) | Built: the player sees only what colonists have seen; unseen, seen, and visible areas; the seen record as an exact polygon union apart from the nav mesh; a hard-edged cover of two masked fills; nothing under the black drawn or loaded; input rules; measured costs |
-| [Sight Softening](./sight-softening.md) | Soft sight: bodies from the collision map less movers, each with a kind fixed by its size; walls and big rocks opaque with exact shadows and soft edges, trees and wall stubs casting a faint triangle drawn on the cover; forest depth shortening range as a smooth density down to a floor, in a convex sight shape; legs as hulls in the seen record; both cover edges feathered through alpha mask layers in salal, light the greatest any colonist gives |
+| [Sight Softening](./sight-softening.md) | Soft sight: bodies from the collision map less movers, each with a kind fixed by its size; walls and tall placed bodies opaque with exact shadows and soft edges, trees and wall stubs casting a faint triangle drawn on the cover; forest depth shortening range as a smooth density down to a floor, in a convex sight shape; legs as hulls in the seen record; both cover edges feathered through alpha mask layers in salal, light the greatest any colonist gives |
 
 ### Graphics & Rendering
 
