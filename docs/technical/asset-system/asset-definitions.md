@@ -257,7 +257,7 @@ To inherit from an asset in a different folder, use `@defName`:
 | `defName` | Yes | Unique identifier (e.g., `MapleTree`) |
 | `label` | Yes | Human-readable name |
 | `description` | No | Tooltip/documentation text |
-| `assetType` | Yes | `simple` or `procedural` |
+| `assetType` | Yes | `simple`, `procedural`, or `parts` |
 
 ### Simple Asset Elements
 
@@ -275,6 +275,21 @@ To inherit from an asset in a different folder, use `@defName`:
 | `variantCount` | No | Number of variants to pre-generate |
 | `ageClasses` | No | A tree's age classes, in place of `variantCount` (below) |
 | `detailLevels` | No | The screen densities a mesh is cut for, one mesh a level (below) |
+
+### Parts Asset Elements
+
+A placed item (furniture, a workstation) built of upright parts, each a rect or regular n-sided footprint with a bottom and top height, colours, and one SVG per drawing in the item's folder. [Rotatable placed items](../rendering/rotatable-placed-items.md) section 4 has the schema and section 5 the validation; `assets/PartsAsset.h` holds what loading produces.
+
+| Element | Required | Description |
+|---------|----------|-------------|
+| `parts` | Yes | The `<part>`s: `<footprint>` (`<rect>` or `<round>`), `<height bottom top>`, `<top>`, `<sides>` with `<face>`s |
+| `placements` | Yes | `<place part x y turnDegrees>`, one or more; a part may be placed several times |
+| `useAreas` | No | Where the item is used from; the collider grown by `pathingClearanceMeters` (0.7 m) when left out |
+| `clearance` | No | Space other items and walls keep out of |
+| `partsScript` | No | A Lua script in the item's folder that may add parts, placements, and area shapes at load |
+| `detailLevels` | No | The screen densities its views are built for |
+
+A parts def has no `svgPath`, `worldHeight`, `variantCount`, `placement`, `collision`, or `generator`. Its collider is derived: the union of the footprints of its parts with height. The registry builds no template mesh for it; `getTemplate` answers null.
 
 ### Age classes
 
