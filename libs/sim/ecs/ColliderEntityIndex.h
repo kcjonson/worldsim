@@ -1,11 +1,11 @@
 #pragma once
 
 // The ECS entities that are placed obstacles: every entity with a Position and an Appearance whose
-// def has a blocking collider at its age class, movers (AgentRadius) and packaged things (Packaged)
-// aside. Each is held as the
+// def has a blocking collider at its age class (a parts def's collider rings, rotatable-placed-items.md
+// 11.1), movers (AgentRadius) and packaged things (Packaged) aside. Each is held as the
 // assets::PlacedEntity the placement executor would hold for it (def, position, rotation, scale, age
-// class), so nav, collision, and sight put it in the world through nav::placedObstacleOutline like
-// any placed obstacle (rotatable-placed-items.md 11.2).
+// class), so nav, collision, and sight put each of its rings (nav::placedObstacleColliders) in the
+// world through nav::placedObstacleOutline like any placed obstacle (rotatable-placed-items.md 11.2).
 //
 // Derived data: refresh() reads the ECS and diffs it against what the index held, so it is never
 // saved and a world whose entities were restored is indexed by its first refresh. Nothing creating,
@@ -55,13 +55,17 @@ namespace ecs {
 		// the index holds what spawning creates, a handful against the placement executor's thousands.
 		void					  queryRect(glm::vec2 lower, glm::vec2 upper, std::vector<const Entry*>& out) const;
 		[[nodiscard]] std::size_t size() const { return entries.size(); }
+		/// Moves on every refresh that changed anything, so a reader deriving from the entries re-reads them only then.
+		[[nodiscard]] std::uint64_t revision() const { return revisionCount; }
+		/// Every entry, in entity order.
+		[[nodiscard]] const std::map<EntityID, Entry>& all() const { return entries; }
 
 	  private:
 		// Whether the entity's def has a collider at any age class, looked up in the registry only when
 		// the entity is new or its def name changed, so the piles and props with none cost a compare a
 		// refresh. A registry hot reload does not refresh it: a def that gains a collider mid-game leaves its
 		// existing entities non-blocking until they are re-created (a stale true is harmless, since
-		// refresh() re-checks collisionFor).
+		// refresh() re-checks the def's colliders).
 		[[nodiscard]] bool mayCollide(EntityID entity, const std::string& defName, const assets::AssetRegistry& registry);
 
 		struct DefSeen {
@@ -73,6 +77,7 @@ namespace ecs {
 		std::map<EntityID, Entry>			  entries;
 		std::unordered_map<EntityID, DefSeen> defsSeen;
 		std::uint64_t						  pass = 0;
+		std::uint64_t						  revisionCount = 0;
 	};
 
 } // namespace ecs
