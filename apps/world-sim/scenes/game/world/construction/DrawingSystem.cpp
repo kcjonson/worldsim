@@ -3,6 +3,7 @@
 #include "UserSettings.h"
 
 #include <assets/ConstructionRegistry.h>
+#include <construction/ItemClearance.h>
 #include <construction/OpeningGeometry.h>
 #include <construction/RectangleSnap.h>
 #include <ecs/components/Structure.h>
@@ -1289,6 +1290,14 @@ namespace world_sim {
 		return ConstructionRegistry::Get().getThicknessPreset(activeMaterial_, activeThicknessPreset_);
 	}
 
+	bool DrawingSystem::wallMeetsItems(Foundation::Vec2 start, Foundation::Vec2 end, const assets::ThicknessPreset& preset) const {
+		if (navigation_ == nullptr) {
+			return false;
+		}
+		const float halfThicknessMeters = static_cast<float>(preset.halfThicknessMm) / static_cast<float>(geometry::kMillimetersPerMeter);
+		return construction::bandMeetsItems(navigation_->placedItems(), construction::bandRing(start, end, halfThicknessMeters));
+	}
+
 	void DrawingSystem::handleWallMove(Foundation::Vec2 world, bool freeform) {
 		auto& registry = ConstructionRegistry::Get();
 
@@ -1327,6 +1336,10 @@ namespace world_sim {
 		lastSnap_ = snapMemoResult_;
 		cursor_ = lastSnap_.point;
 		lastValidation_ = snapMemoValidation_;
+		// Placed items move without the snap's inputs moving, so this is read on every move, outside the memo.
+		if (preset != nullptr && lastValidation_.ok() && !points_.empty() && wallMeetsItems(points_.back(), cursor_, *preset)) {
+			lastValidation_ = {.code = ec::ValidationCode::MeetsPlacedItem, .vertexIndex = points_.size()};
+		}
 
 		// Live nav feedback for the wall rubber-band: off-mesh cursor reads red (see
 		// renderWallChainPreview). The commit gate re-checks the whole chain regardless.
@@ -1485,6 +1498,10 @@ namespace world_sim {
 				skip(construction::validationReason(check.code));
 				continue;
 			}
+			if (wallMeetsItems(start, end, preset)) {
+				skip(construction::validationReason(construction::ValidationCode::MeetsPlacedItem));
+				continue;
+			}
 			const construction::SegmentCommitResult result = into.commitSegment(
 				geometry::quantize(start), geometry::quantize(end), activeMaterial_, activeThicknessPreset_, wallHost_, placementOrder
 			);
@@ -1620,10 +1637,13 @@ namespace world_sim {
 
 		auto&					  registry = ConstructionRegistry::Get();
 		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
-		const auto				  v = validator.validateWallSegment(bestA, bestB, *preset, host);
-		if (!v.ok()) {
+		ec::ValidationCode		  code = validator.validateWallSegment(bestA, bestB, *preset, host).code;
+		if (code == ec::ValidationCode::Ok && wallMeetsItems(bestA, bestB, *preset)) {
+			code = ec::ValidationCode::MeetsPlacedItem;
+		}
+		if (code != ec::ValidationCode::Ok) {
 			if (callbacks_.onToast) {
-				callbacks_.onToast("Edge fill rejected", ec::validationReason(v.code));
+				callbacks_.onToast("Edge fill rejected", ec::validationReason(code));
 			}
 			return false;
 		}

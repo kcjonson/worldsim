@@ -758,13 +758,22 @@ namespace ecs {
 		if (chunk.y != o.chunk.y || chunk.x != o.chunk.x) {
 			return ChunkLess{}(chunk, o.chunk);
 		}
-		return std::tie(xBits, yBits, defName, entity) < std::tie(o.xBits, o.yBits, o.defName, o.entity);
+		return std::tie(xBits, yBits, defName, entity, ring) < std::tie(o.xBits, o.yBits, o.defName, o.entity, o.ring);
 	}
 
-	NavigationSystem::ObstacleKey NavigationSystem::colliderEntityKey(const ColliderEntityIndex::Entry& entry) {
+	bool NavigationSystem::ObstacleKey::sameObstacle(const ObstacleKey& o) const {
+		return chunk == o.chunk && xBits == o.xBits && yBits == o.yBits && defName == o.defName && entity == o.entity;
+	}
+
+	NavigationSystem::ObstacleKey NavigationSystem::colliderEntityKey(const ColliderEntityIndex::Entry& entry, std::uint32_t ring) {
 		const glm::vec2 at = entry.placed.position;
 		return {world::worldToChunk({at.x, at.y}), std::bit_cast<std::uint32_t>(at.x), std::bit_cast<std::uint32_t>(at.y), entry.placed.defName,
-				entry.entity};
+				entry.entity, ring};
+	}
+
+	std::map<NavigationSystem::ObstacleKey, NavigationSystem::RingId>::const_iterator
+	NavigationSystem::firstColliderEntityKey(const ColliderEntityIndex::Entry& entry) const {
+		return obstacleInMesh.lower_bound(colliderEntityKey(entry, 0));
 	}
 
 	NavigationSystem::NavigationSystem()
@@ -981,6 +990,9 @@ namespace ecs {
 	// --- Ticks, jobs and the join -------------------------------------------------
 
 	void NavigationSystem::update(float /*deltaTime*/) {
+		if (world != nullptr) {
+			placedItemIndex.refresh(*world, assets::AssetRegistry::Get());
+		}
 		settle();
 		startRouteSlice();
 		markStrayedRoutes();
@@ -1427,11 +1439,13 @@ namespace ecs {
 		}
 		ColliderEntityIndex::Changes changes = colliderEntityIndex.refresh(*world, assets::AssetRegistry::Get());
 		for (const ColliderEntityIndex::Entry& entry : changes.removed) {
-			if (const auto it = obstacleInMesh.find(colliderEntityKey(entry)); it != obstacleInMesh.end()) {
+			const ObstacleKey first = colliderEntityKey(entry, 0);
+			auto			  it	= firstColliderEntityKey(entry);
+			while (it != obstacleInMesh.end() && it->first.sameObstacle(first)) {
 				// As queueRemovedDetail: taken after the joined jobs are collected.
 				assert(it->second >= 0);
 				colliderEntityRemovals.push_back(it->second);
-				obstacleInMesh.erase(it);
+				it = obstacleInMesh.erase(it);
 			}
 		}
 		return std::move(changes.added);
@@ -1442,25 +1456,33 @@ namespace ecs {
 		gnav::PatchEdits			 edits;
 		std::vector<ObstacleKey>	 keys;
 		bool						 closesGround = false;
+		geometry::Ring				 outline;
 		for (const ColliderEntityIndex::Entry& entry : added) {
-			std::optional<gnav::NavInputPolygon> ring = nav::placedObstacleRing(entry.placed, registry);
-			if (!ring.has_value()) {
+			const assets::AssetDefinition* def = registry.getDefinition(entry.placed.defName);
+			if (def == nullptr) {
 				continue;
 			}
-			geometry::Vec2i64 lower = ring->ring.front();
-			geometry::Vec2i64 upper = lower;
-			for (const geometry::Vec2i64& point : ring->ring) {
-				lower = {std::min(lower.x, point.x), std::min(lower.y, point.y)};
-				upper = {std::max(upper.x, point.x), std::max(upper.y, point.y)};
+			const std::span<const assets::CollisionShape> colliders = nav::placedObstacleColliders(*def, entry.placed.traits.ageClass);
+			for (std::uint32_t index = 0; index < colliders.size(); ++index) {
+				if (!nav::placedObstacleOutline(entry.placed, colliders[index], outline)) {
+					continue;
+				}
+				gnav::NavInputPolygon ring{outline, true, nav::kProvenancePlaced};
+				geometry::Vec2i64	  lower = ring.ring.front();
+				geometry::Vec2i64	  upper = lower;
+				for (const geometry::Vec2i64& point : ring.ring) {
+					lower = {std::min(lower.x, point.x), std::min(lower.y, point.y)};
+					upper = {std::max(upper.x, point.x), std::max(upper.y, point.y)};
+				}
+				if (ringOnMeshedGround(detailMesh, ring, lower, upper)) {
+					gatheredJob.blockingBoxes.emplace_back(nav::toMeters(lower), nav::toMeters(upper));
+					closesGround = true;
+				}
+				ObstacleKey key = colliderEntityKey(entry, index);
+				obstacleInMesh.emplace(key, kGatheredRing);
+				keys.push_back(std::move(key));
+				edits.adds.push_back(std::move(ring));
 			}
-			if (ringOnMeshedGround(detailMesh, *ring, lower, upper)) {
-				gatheredJob.blockingBoxes.emplace_back(nav::toMeters(lower), nav::toMeters(upper));
-				closesGround = true;
-			}
-			ObstacleKey key = colliderEntityKey(entry);
-			obstacleInMesh.emplace(key, kGatheredRing);
-			keys.push_back(std::move(key));
-			edits.adds.push_back(std::move(*ring));
 		}
 		if (edits.adds.empty()) {
 			return;
@@ -1489,13 +1511,31 @@ namespace ecs {
 				continue;
 			}
 			obstacleInMesh.at(keys[k]) = added[k];
+		}
+		// An obstacle's rings are consecutive keys: one body, one kind, from all of them (rotatable-placed-items 11.2).
+		std::vector<vision::PlacedOccluderIndex::BodyRing> body;
+		for (std::size_t first = 0; first < keys.size();) {
+			std::size_t end = first + 1;
+			while (end < keys.size() && keys[first].entity != kInvalidEntity && keys[end].sameObstacle(keys[first])) {
+				++end;
+			}
 			// A body lower than a colonist's eye stays out of the occluder index: it blocks walking, never
 			// sight (sight-softening.md 2.2).
-			const gnav::NavInputPolygon&   ring = detailMesh.ring(added[k]).polygon;
-			const assets::AssetDefinition* def	= registry.getDefinition(keys[k].defName);
-			if (ring.provenanceId == nav::kProvenancePlaced && ring.blocked && def != nullptr && vision::reachesEyeHeight(*def)) {
-				placedOccluderIndex.add(added[k], ring.ring, keys[k].defName, arrived);
+			const assets::AssetDefinition* def = registry.getDefinition(keys[first].defName);
+			body.clear();
+			for (std::size_t k = first; k < end; ++k) {
+				if (added[k] == gnav::kNoRing) {
+					continue;
+				}
+				const gnav::NavInputPolygon& ring = detailMesh.ring(added[k]).polygon;
+				if (ring.provenanceId == nav::kProvenancePlaced && ring.blocked) {
+					body.push_back({added[k], &ring.ring});
+				}
 			}
+			if (!body.empty() && def != nullptr && vision::reachesEyeHeight(*def)) {
+				placedOccluderIndex.addBody(body, keys[first].defName, arrived);
+			}
+			first = end;
 		}
 	}
 
@@ -1792,8 +1832,15 @@ namespace ecs {
 		if (entry == nullptr) {
 			return false;
 		}
-		const auto it = obstacleInMesh.find(colliderEntityKey(*entry));
-		return it != obstacleInMesh.end() && it->second >= 0;
+		const ObstacleKey first = colliderEntityKey(*entry, 0);
+		bool			  any	= false;
+		for (auto it = firstColliderEntityKey(*entry); it != obstacleInMesh.end() && it->first.sameObstacle(first); ++it) {
+			if (it->second < 0) {
+				return false;
+			}
+			any = true;
+		}
+		return any;
 	}
 
 	bool NavigationSystem::snapHolds(EntityID mover) const {

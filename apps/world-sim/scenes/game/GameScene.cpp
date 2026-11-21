@@ -1129,7 +1129,7 @@ namespace {
 			}
 
 			// Render placement ghost preview (if in placing mode)
-			m_placementSystem->render(w, h);
+			m_placementSystem->render(w, h, ui().getScale());
 
 			// Submit the world's batched draws now so the scene's GPU timer span ends after them;
 			// the ui's draw order comes from SceneStack's sort barrier, not from this flush.

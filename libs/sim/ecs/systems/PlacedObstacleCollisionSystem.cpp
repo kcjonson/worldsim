@@ -30,6 +30,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <vector>
 
 namespace ecs {
@@ -203,6 +204,7 @@ void PlacedObstacleCollisionSystem::update(float /*deltaTime*/) {
 		const assets::PlacedEntity*	  entity	= nullptr;
 		const assets::CollisionShape* collision = nullptr;
 		EntityID					  owner		= kInvalidEntity; // the ECS entity, for one of the collider entity index's
+		std::uint32_t				  ring		= 0;			  // which of its colliders
 	};
 	std::vector<Obstacle>							 obstacles;		   // reused per agent
 	std::vector<const ColliderEntityIndex::Entry*> colliderEntities; // reused per agent
@@ -211,18 +213,18 @@ void PlacedObstacleCollisionSystem::update(float /*deltaTime*/) {
 	// This collider's own reach, not the largest any def has: most of what the query finds is trees
 	// whose trunk is nowhere near the agent. The slack covers the mm rounding of the ring and of the
 	// centre the inside test takes.
-	const auto collisionNear = [&registry](const assets::PlacedEntity& placed, glm::vec2 center) -> const assets::CollisionShape* {
+	const auto near = [](const assets::PlacedEntity& placed, const assets::CollisionShape& collision, glm::vec2 center) {
+		const float		reach  = nav::placedObstacleLocalReachMeters(collision) * std::abs(placed.scale) + kReachSlackMeters;
+		const glm::vec2 offset = center - placed.position;
+		return glm::dot(offset, offset) <= reach * reach;
+	};
+	const auto collisionNear = [&registry, &near](const assets::PlacedEntity& placed, glm::vec2 center) -> const assets::CollisionShape* {
 		const assets::AssetDefinition* def = registry.getDefinition(placed.defName);
 		if (def == nullptr) {
 			return nullptr;
 		}
 		const assets::CollisionShape& collision = def->collisionFor(placed.traits.ageClass);
-		if (!collision.blocks()) {
-			return nullptr;
-		}
-		const float		reach  = nav::placedObstacleLocalReachMeters(collision) * std::abs(placed.scale) + kReachSlackMeters;
-		const glm::vec2 offset = center - placed.position;
-		return glm::dot(offset, offset) <= reach * reach ? &collision : nullptr;
+		return collision.blocks() && near(placed, collision, center) ? &collision : nullptr;
 	};
 
 	// Two relaxation iterations so an agent wedged between two adjacent obstacles
@@ -273,9 +275,15 @@ void PlacedObstacleCollisionSystem::update(float /*deltaTime*/) {
 			colliderEntities.clear();
 			detail->colliderEntities().queryRect({queryMinX, queryMinY}, {queryMaxX, queryMaxY}, colliderEntities);
 			for (const ColliderEntityIndex::Entry* entry : colliderEntities) {
-				const assets::CollisionShape* collision = collisionNear(entry->placed, center);
-				if (collision != nullptr && detail->placedObstacleInNavMesh(entry->entity)) {
-					obstacles.push_back({&entry->placed, collision, entry->entity});
+				const assets::AssetDefinition* def = registry.getDefinition(entry->placed.defName);
+				if (def == nullptr || !detail->placedObstacleInNavMesh(entry->entity)) {
+					continue;
+				}
+				const std::span<const assets::CollisionShape> colliders = nav::placedObstacleColliders(*def, entry->placed.traits.ageClass);
+				for (std::uint32_t ring = 0; ring < colliders.size(); ++ring) {
+					if (near(entry->placed, colliders[ring], center)) {
+						obstacles.push_back({&entry->placed, &colliders[ring], entry->entity, ring});
+					}
 				}
 			}
 
@@ -295,7 +303,10 @@ void PlacedObstacleCollisionSystem::update(float /*deltaTime*/) {
 				if (left.entity->defName != right.entity->defName) {
 					return left.entity->defName < right.entity->defName;
 				}
-				return left.owner < right.owner;
+				if (left.owner != right.owner) {
+					return left.owner < right.owner;
+				}
+				return left.ring < right.ring;
 			});
 
 			for (const Obstacle& obstacle : obstacles) {
