@@ -418,6 +418,7 @@ namespace ecs {
 					task.claims.eraseIf([oldKey](const Claim& claim) {
 						return (claim.kind() == ClaimKind::Use || claim.kind() == ClaimKind::SourceQuantity) && claim.target() == oldKey;
 					});
+					fileClaims(actor);
 					target = again;
 					task.chain.targetAtStepStart = again.position;
 					if (!claimForGo(actor, again)) {
@@ -609,8 +610,8 @@ namespace ecs {
 		}
 		// A station's one slot for a craft; a foundation's numbered spot for a build, and no slot for a build with none.
 		if ((step.claims & bit(assets::ClaimKind::Slot)) != 0) {
-			const bool	   spot = progress.source.claimKind == assets::ClaimKind::Slot;
-			const EntityID site = progress.destination.entity != kInvalidEntity ? progress.destination.entity : target.entity;
+			const bool				   spot = progress.source.claimKind == assets::ClaimKind::Slot;
+			const EntityID			   site = progress.destination.entity != kInvalidEntity ? progress.destination.entity : target.entity;
 			const assets::ActionEntry& named = chainWiring.library->actions[step.action.handle.index];
 			const assets::EntryHandle<assets::ActionEntry> performed = named.group ? memberFor(named, target) : step.action.handle;
 			if (!performed.valid() || !performsWork(actionEntries.of(performed)) || spot) {
@@ -621,21 +622,30 @@ namespace ecs {
 				take(Claim::slot(static_cast<uint64_t>(site), spot ? static_cast<uint16_t>(progress.source.key) : kAnySlot));
 			}
 		}
-		// The goods' claims are sized once, before any take; after one they follow what it lifted and are never sized again.
-		if ((step.claims & bit(assets::ClaimKind::Inbound)) != 0 && !progress.goodsTaken) {
+		if ((step.claims & bit(assets::ClaimKind::Inbound)) != 0) {
 			const EntityID destination = progress.destination.entity;
 			if (goal.rootGoalId == 0 || goal.item == 0 || destination == kInvalidEntity) {
 				LOG_ERROR(Engine, "[Chain] An inbound claim needs the option's goal and destination");
 				return false;
 			}
-			// A cut brings in its cargo and expects its yield; a haul brings its cargo and the planned amount.
-			const bool	   cut = goal.expectedYield > 0;
-			const uint32_t inbound = cut ? goal.cargo : goal.cargo + goal.quantity;
-			const uint32_t inFlight = cut ? goal.cargo + goal.expectedYield : goal.cargo + goal.quantity;
-			if (inbound > 0) {
-				take(Claim::inbound(static_cast<uint64_t>(destination), goal.item, inbound));
+			// Before a take of the goods, from the plan: a cut brings in its cargo and expects its yield, a haul brings its
+			// cargo and the planned amount. After one, the claims follow what was lifted and are not sized again; a step
+			// that names them with none held (a deposit no earlier claim covered) takes them at what is carried.
+			bool holdsGoods = false;
+			for (const Claim& claim : task.claims) {
+				holdsGoods = holdsGoods || ((claim.kind() == ClaimKind::Inbound || claim.kind() == ClaimKind::InFlight) &&
+											claim.itemDefNameId() == goal.item);
 			}
-			take(Claim::inFlight(goal.rootGoalId, goal.item, inFlight));
+			const bool	   cut = goal.expectedYield > 0;
+			const uint32_t carried = goal.cargo + (progress.takenItem == goal.item ? progress.takenQuantity : 0U);
+			const uint32_t inbound = progress.goodsTaken ? carried : cut ? goal.cargo : goal.cargo + goal.quantity;
+			const uint32_t inFlight = progress.goodsTaken ? carried : cut ? goal.cargo + goal.expectedYield : goal.cargo + goal.quantity;
+			if (!progress.goodsTaken || (!holdsGoods && carried > 0)) {
+				if (inbound > 0) {
+					take(Claim::inbound(static_cast<uint64_t>(destination), goal.item, inbound));
+				}
+				take(Claim::inFlight(goal.rootGoalId, goal.item, inFlight));
+			}
 		}
 		if (!fits) {
 			LOG_ERROR(
@@ -673,15 +683,19 @@ namespace ecs {
 		ChainProgress&	 progress = task.chain;
 		const ChainGoal& goal = progress.goal;
 		const uint32_t	 item = lifted.item != 0 ? lifted.item : goal.item;
-		// The cargo its claims carried before the take: read before its own source claim drops, which would otherwise
-		// leave the goods it meant to take reading as carried.
-		const uint32_t cargo = goal.rootGoalId != 0 ? cargoOnClaims(task.claims, goal.rootGoalId, item) : 0U;
+		const bool		 goods = goal.item != 0 && item == goal.item;
+		const uint32_t	 handed = goods ? goal.cargo : 0U;
+		// What it carried of the item before this take: the cargo it was handed and what the chain already took.
+		const uint32_t cargo = handed + (progress.takenItem == item ? progress.takenQuantity : 0U);
 		releaseStepClaims(task, step);
 		if (!took) {
 			fileClaims(actor);
 			return true;
 		}
-		progress.goodsTaken = true;
+		// A tool or other good taken on the way leaves the goal's goods' claims to be sized from the plan.
+		if (goods) {
+			progress.goodsTaken = true;
+		}
 		if (lifted.quantity == 0) {
 			// A take that lifted nothing ends the task at the source, unless it carries cargo on to deliver.
 			if (cargo == 0) {
@@ -721,7 +735,7 @@ namespace ecs {
 			 lifted.item,
 			 ClaimExclusion::of(task)
 		 );
-		const uint32_t carried = std::min(goal.cargo + progress.takenQuantity, need + goal.cargo);
+		const uint32_t carried = std::min(handed + progress.takenQuantity, need + handed);
 		bool		   inFlight = false;
 		bool		   inbound = false;
 		for (Claim& claim : task.claims) {
@@ -900,6 +914,10 @@ namespace ecs {
 		actor.task.claims.eraseIf([item](const Claim& claim) {
 			return (claim.kind() == ClaimKind::Inbound || claim.kind() == ClaimKind::InFlight) && claim.itemDefNameId() == item;
 		});
+		// The goods set down, a later step's goods' claims are sized from the plan again until the next take.
+		if (item == progress.goal.item) {
+			progress.goodsTaken = false;
+		}
 		progress.takenItem = 0;
 		progress.takenQuantity = 0;
 		fileClaims(actor);

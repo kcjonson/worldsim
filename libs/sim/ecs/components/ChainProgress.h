@@ -85,7 +85,8 @@ namespace ecs {
 		/// What the chain's takes lifted, which `drop` sets down and a `have` counts as handed over.
 		uint32_t takenItem = 0;
 		uint32_t takenQuantity = 0;
-		/// A take has completed in this chain: its goods' claims follow what was lifted and are never sized again.
+		/// A take of the goal's item has completed and nothing since dropped it: the goods' claims follow what was lifted
+		/// and are not sized from the plan again.
 		bool goodsTaken = false;
 		/// The item `held_gone` watches and the units of it held when the step began; 0 for none.
 		uint32_t heldItem = 0;

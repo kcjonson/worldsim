@@ -262,10 +262,10 @@ namespace ecs {
 			collection.regrowthTime = harvestable.regrowthTime;
 			// What he can't carry drops where he stands to work the source, or for a site clear just outside its footprint.
 			collection.dropAt = actor.position.value;
-			const bool		clears = std::ranges::any_of(started.values->effects, [](const EffectRow& row) {
-				 const auto* take = std::get_if<TakeRow>(&row);
-				 return take != nullptr && take->clears;
-			 });
+			const bool clears = std::ranges::any_of(started.values->effects, [](const EffectRow& row) {
+				const auto* take = std::get_if<TakeRow>(&row);
+				return take != nullptr && take->clears;
+			});
 			// The clear goal the chain works for carries the footprint; it is a child of the site's root.
 			const GoalTask* goal = clears ? GoalTaskRegistry::Get().getGoal(progress.goal.goalId) : nullptr;
 			if (goal != nullptr && goal->clearFootprint.has_value()) {
