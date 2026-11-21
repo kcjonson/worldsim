@@ -31,7 +31,7 @@ work, an action, or a behavior is adding entries; nothing about what a creature 
 The code that hard-wires what a creature can do and how each thing is done:
 
 - `TaskType` and `ActionType` as closed lists of behaviors, and the names built on them
-  (`assets::kTaskTypeNames`, `kActionTypeNames`, `<TaskTiers>` in `priority-tuning.xml`).
+  (`assets::kTaskTypeNames`, `kActionTypeNames`).
 - The per-need and per-task-type option builders in `AIDecisionSystem`: the needs loop and its hunger
   special case, `evaluateHaulOptions`, `evaluateCarryInOptions`, `evaluateHarvestOptions`,
   `evaluateBuildOptions`, `evaluateDeconstructOptions`, `evaluatePlacePackagedOptions`, the craft

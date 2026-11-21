@@ -66,7 +66,7 @@ Chain steps (`servesActiveWorkOrder == true`) are classified on `committed_work`
 
 ### AI Selection: lexicographic (tier, score)
 
-When a colonist selects their next task, options are compared as `(tier, score)` pairs. The tier is the position in the `<ladder>` of the rung `classifyTier` puts the option on: `critical_need` for a need past its critical threshold, `committed_work` for a craft, a build, a teardown, and provisioning that serves an active work order (or furniture already carried), `ordinary_need` for any other need below its seek threshold, `opportunistic_work` for other hauls, harvests, and placements, and `idle` for gathering food and Wander. A ladder without one of these rungs, or without `survival`, fails the load. Score orders within a tier only:
+When a colonist selects their next task, options are compared as `(tier, score)` pairs. The tier is the position in the `<ladder>` of the rung `classifyTier` puts the option on: `critical_need` for a need past its critical threshold, `committed_work` for a craft, a build, a teardown, and provisioning that serves an active work order (or furniture already carried), `ordinary_need` for any other need below its seek threshold, `opportunistic_work` for other hauls, harvests, and placements, and `idle` for gathering food and Wander. A ladder without one of these rungs or without `survival`, or with these five out of that order, fails the load. Score orders within a tier only:
 
 ```
 score = distanceFactor      // dominant: 300 * max(0, 1 - d/60), nearest source wins
@@ -182,7 +182,7 @@ public:
     // The ladder (AI arbitration). A rung's position is its tier; lower = higher priority.
     const std::vector<std::string>& rungs() const;
     const DecisionRungs& decisionRungs() const;                    // the decision's rungs, as positions
-    const std::vector<std::string>& missingDecisionRungs() const; // one problem per rung the ladder lacks
+    const std::vector<std::string>& decisionRungProblems() const; // a rung missing, or two out of order
 
     // Within-tier score terms
     float   calculateDistanceFactor(float distance) const; // dominant: 300*max(0,1-d/60)
@@ -200,7 +200,7 @@ private:
 
 ### Loading at Startup
 
-`assets::loadWorkConfig(configRoot, human)` loads priority-tuning.xml after the work types, as `PriorityConfig::Get().loadFromFile(configRoot / "arbitration", "priority-tuning.xml")`, and then checks that the ladder has every rung the decision ranks on (`missingDecisionRungs`, one error naming each missing rung). Any problem fails the game load and is shown on the loading scene ([Config Loading](../../../technical/config-loading.md)).
+`assets::loadWorkConfig(configRoot, human)` loads priority-tuning.xml after the work types, as `PriorityConfig::Get().loadFromFile(configRoot / "arbitration", "priority-tuning.xml")`, and then checks that the ladder has every rung the decision ranks on, in the order `critical_need`, `committed_work`, `ordinary_need`, `opportunistic_work`, `idle` (other rungs may sit anywhere among them): `decisionRungProblems` gives one error naming each missing rung, else one naming the first two out of order. The ladder holds at most 255 rungs; position 255 marks a task nothing has ranked. Any problem fails the game load and is shown on the loading scene ([Config Loading](../../../technical/config-loading.md)).
 
 ---
 

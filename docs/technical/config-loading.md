@@ -118,13 +118,15 @@ assets/world/creatures/Human/needs.xml
 
 `legacy/` holds the two files that later tickets of the behavior data migration replace with entries, so no
 folder the entry loaders own holds a root they do not own. The arbitration folder holds one file, whose root is
-`<arbitration>`: its `<ladder>` of `<rung name>` entries, given once, at most 256 rungs and one of them
+`<arbitration>`: its `<ladder>` of `<rung name>` entries, given once, at most 255 rungs and one of them
 `survival`, and `<WorkCategoryOrder>` and `<Bonuses>`; any other element is an error, and a
 second file in the folder is an error naming both
 (`[arbitration] arbitration: 2 files; one file declares the ladder and the bonuses (...)`). The ladder must
 also have every rung the decision ranks options on (`critical_need`, `committed_work`, `ordinary_need`,
-`opportunistic_work`, `idle`); `loadWorkConfig` reports each one missing
-(`[arbitration] priority-tuning.xml: <ladder> has no rung named "idle", which the decision ranks options on`).
+`opportunistic_work`, `idle`), in that order, with other rungs anywhere among them; `loadWorkConfig` reports
+each one missing
+(`[arbitration] priority-tuning.xml: <ladder> has no rung named "idle", which the decision ranks options on`),
+else the first two out of order (`<ladder> has "idle" above "opportunistic_work"; ...`).
 
 A creature's config sits in its asset folder beside its definition and is found by root element
 (`assets::creatureConfigFiles`, libs/assets/assets/CreatureConfigFiles.h). In a creature folder:
