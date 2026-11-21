@@ -43,6 +43,7 @@
 #include <nav/PathQuery.h>
 #include <predicates/Predicates.h>
 #include <visibility/SightClip.h>
+#include <vision/SightHeight.h>
 
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/SyntheticWorldSampler.h>
@@ -989,13 +990,29 @@ TEST_F(NavigationSystemTest, GenerationIgnoresObstaclePatches) {
 // --- The placed occluder index (sight-softening.md 2.4) ---------------------------------------------
 
 namespace {
-	// A rock's collider, padded, is 1.7 m square, 2.4 m across: opaque. A trunk's is 0.4 m: soft.
-	constexpr const char* kSightRock  = "Test_SightRock";
-	constexpr const char* kSightTrunk = "Test_SightTrunk";
+	// Both procedural, as trees are, so they state no height and count as tall (sight-softening.md 2.2).
+	// The tall body's collider, padded, is 1.7 m square, 2.4 m across: opaque. A trunk's is 0.4 m: soft.
+	constexpr const char* kSightTallBody = "Test_SightTallBody";
+	constexpr const char* kSightTrunk	 = "Test_SightTrunk";
+	// Simple defs with a worldHeight: a low rock the size of a BigRock (padded, 1.40 by 1.07 m) and
+	// 1.5 m tall, and a box like TestTallBox (padded, 1.1 m square) and 2.0 m tall.
+	constexpr const char* kSightLowRock = "Test_SightLowRock";
+	constexpr const char* kSightTallBox = "Test_SightTallBox";
+
+	void registerSimpleBody(const std::string& defName, glm::vec2 halfExtents, float worldHeight) {
+		AssetDefinition body;
+		body.defName	 = defName;
+		body.assetType	 = assets::AssetType::Simple;
+		body.worldHeight = worldHeight;
+		body.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = halfExtents});
+		AssetRegistry::Get().registerTestDefinition(body);
+	}
 
 	void registerSightBodies() {
-		registerObstacle(kSightRock, 0.8F);
+		registerObstacle(kSightTallBody, 0.8F);
 		registerObstacle(kSightTrunk, 0.15F);
+		registerSimpleBody(kSightLowRock, {0.65F, 0.485F}, 1.5F);
+		registerSimpleBody(kSightTallBox, {0.5F, 0.5F}, 2.0F);
 	}
 
 	// Stores each (def, position) as a placed entity, all of one chunk's in one index, and marks the
@@ -1036,12 +1053,12 @@ namespace {
 } // namespace
 
 // The index holds each placed ring in the mesh with its kind, and nothing else: no water, no bounds,
-// no mover. Vision's shape is cut by the opaque rock and passes the soft trunk and the mover.
+// no mover. Vision's shape is cut by the opaque tall body and passes the soft trunk and the mover.
 TEST_F(NavigationSystemTest, PlacedObstaclesOccludeByKindAndNothingElseDoes) {
 	registerSightBodies();
 	PlacementExecutor					executor(AssetRegistry::Get());
 	std::unordered_set<ChunkCoordinate> processed;
-	placeMixed(executor, processed, {{kSightRock, {5.0F, 0.0F}}, {kSightTrunk, {0.0F, 5.0F}}});
+	placeMixed(executor, processed, {{kSightTallBody, {5.0F, 0.0F}}, {kSightTrunk, {0.0F, 5.0F}}});
 
 	World			  world;
 	world.registerSystem<TimeSystem>();
@@ -1056,12 +1073,12 @@ TEST_F(NavigationSystemTest, PlacedObstaclesOccludeByKindAndNothingElseDoes) {
 	settle(sys);
 
 	const vision::PlacedOccluderIndex& index = sys.placedOccluders();
-	ASSERT_EQ(index.size(), 2U) << "the rock and the trunk, and no water, bounds, or mover";
+	ASSERT_EQ(index.size(), 2U) << "the tall body and the trunk, and no water, bounds, or mover";
 	std::vector<const vision::PlacedOccluder*> rings;
 	index.within({0, 0}, 100000, rings);
 	for (const vision::PlacedOccluder* ring : rings) {
 		EXPECT_EQ(sys.navMesh().ring(ring->ring).polygon.provenanceId, nav::kProvenancePlaced);
-		EXPECT_EQ(ring->kind, ring->defName == kSightRock ? vision::BodyKind::Opaque : vision::BodyKind::Soft) << ring->defName;
+		EXPECT_EQ(ring->kind, ring->defName == kSightTallBody ? vision::BodyKind::Opaque : vision::BodyKind::Soft) << ring->defName;
 	}
 	const std::int32_t pond = sys.navMesh().locate(nav::toMm({kPatchPond.cx, kPatchPond.cy}));
 	ASSERT_GE(pond, 0);
@@ -1072,14 +1089,14 @@ TEST_F(NavigationSystemTest, PlacedObstaclesOccludeByKindAndNothingElseDoes) {
 	EXPECT_TRUE(water) << "the pond is meshed, and the index never took it";
 
 	world.update(0.016F);
-	EXPECT_FALSE(inShape(vision, observer, {9.0F, 0.0F})) << "behind the rock";
-	EXPECT_TRUE(inShape(vision, observer, {4.0F, 0.0F})) << "short of the rock";
+	EXPECT_FALSE(inShape(vision, observer, {9.0F, 0.0F})) << "behind the tall body";
+	EXPECT_TRUE(inShape(vision, observer, {4.0F, 0.0F})) << "short of the tall body";
 	EXPECT_TRUE(inShape(vision, observer, {0.0F, 9.0F})) << "behind the trunk";
 	EXPECT_TRUE(inShape(vision, observer, {-6.0F, 0.0F})) << "behind the mover";
 	const std::optional<VisionSystem::SightBodies> bodies = vision.sightBodies(observer);
 	ASSERT_TRUE(bodies.has_value());
 	EXPECT_EQ(bodies->bodies->size(), 2U);
-	EXPECT_EQ(bodies->shadowEdges->size(), 2U) << "one shadow edge each side of the rock";
+	EXPECT_EQ(bodies->shadowEdges->size(), 2U) << "one shadow edge each side of the tall body";
 }
 
 // Felling a tree in an observer's reach changes the serials there and rebuilds his shape; new ground
@@ -1327,6 +1344,105 @@ TEST_F(NavigationSystemTest, MovedOrRemovedColliderEntityMovesOrLeavesNavAndSigh
 	EXPECT_EQ(occludersOf(sys).front()->defName, kSightTrunk);
 }
 
+// Sight by height (sight-softening.md 2.2): a body lower than a colonist's eye stays out of the occluder
+// index from either source, the placement executor's or a spawned entity with a collider, so it casts
+// no shadow and spends no forest depth while nav still carves it and routes go round it; a tall simple
+// body is opaque by its size, and a procedural trunk is still a soft body.
+TEST_F(NavigationSystemTest, ALowBodyIsNoSightBodyAndStillBlocksWalking) {
+	registerSightBodies();
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeMixed(executor, processed, {{kSightLowRock, {5.0F, 0.0F}}});
+
+	World			  world;
+	TimeSystem&		  time	 = world.registerSystem<TimeSystem>();
+	VisionSystem&	  vision = world.registerSystem<VisionSystem>();
+	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
+	vision.setUpdateInterval(1);
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	meshAround(world, {0.0F, 0.0F}, 60.0F);
+	const EntityID spawnedRock = spawnThing(world, kSightLowRock, {-5.0F, 0.0F});
+	const EntityID observer	   = sightObserver(world, {0.0F, 0.0F});
+	settle(sys);
+	time.skipTime(10.0F);
+	world.update(0.016F);
+
+	EXPECT_EQ(sys.placedOccluders().size(), 0U) << "neither low rock is a sight body";
+	EXPECT_FALSE(meshClear(sys, {5.0F, 0.0F})) << "the placed low rock still blocks walking";
+	EXPECT_TRUE(sys.placedObstacleInNavMesh(spawnedRock));
+	EXPECT_FALSE(meshClear(sys, {-5.0F, 0.0F})) << "the spawned low rock still blocks walking";
+	const std::optional<std::vector<glm::vec2>> route = routeBetween(sys, {3.0F, 0.0F}, {7.0F, 0.0F});
+	ASSERT_TRUE(route.has_value());
+	float length = 0.0F;
+	for (std::size_t i = 1; i < route->size(); ++i) {
+		length += glm::length((*route)[i] - (*route)[i - 1]);
+	}
+	EXPECT_GT(length, 4.05F) << "bent round the low rock";
+	EXPECT_EQ(vision.sightShape(observer)->path, VisionSystem::SightPath::Open) << "no shadow and no forest depth: the plain disc";
+	EXPECT_TRUE(inShape(vision, observer, {9.0F, 0.0F})) << "behind the placed low rock";
+	EXPECT_TRUE(inShape(vision, observer, {-9.0F, 0.0F})) << "behind the spawned low rock";
+
+	// One patch of low and tall bodies: a third low rock, a low L (concave, so opaque were it tall), a
+	// tall post under the size threshold (padded, 0.7 m square, 0.99 m across), and a box exactly at
+	// eye height, beside the tall box and the trunk.
+	constexpr const char* kLowL		 = "Test_SightLowL";
+	constexpr const char* kTallPost	 = "Test_SightTallPost";
+	constexpr const char* kEyeHighBox = "Test_SightEyeHighBox";
+	AssetDefinition		  lowL;
+	lowL.defName	 = kLowL;
+	lowL.assetType	 = assets::AssetType::Simple;
+	lowL.worldHeight = 1.0F;
+	lowL.setCollision(
+		0,
+		{.type = CollisionShapeType::Polygon,
+		 .pointsMeters = {{-1.0F, -1.0F}, {1.0F, -1.0F}, {1.0F, 0.0F}, {0.0F, 0.0F}, {0.0F, 1.0F}, {-1.0F, 1.0F}}}
+	);
+	AssetRegistry::Get().registerTestDefinition(lowL);
+	registerSimpleBody(kTallPost, {0.3F, 0.3F}, 2.0F);
+	registerSimpleBody(kEyeHighBox, {0.5F, 0.5F}, static_cast<float>(vision::kEyeHeightMm) / 1000.0F);
+	spawnThing(world, kSightTallBox, {0.0F, 5.0F});
+	spawnThing(world, kSightTrunk, {0.0F, -5.0F});
+	const EntityID thirdRock = spawnThing(world, kSightLowRock, {-5.0F, 5.0F});
+	spawnThing(world, kLowL, {5.0F, 5.0F});
+	spawnThing(world, kTallPost, {5.0F, -5.0F});
+	spawnThing(world, kEyeHighBox, {-5.0F, -5.0F});
+	step(world, sys);
+	step(world, sys);
+	time.skipTime(10.0F);
+	world.update(0.016F);
+	ASSERT_TRUE(sys.placedObstacleInNavMesh(thirdRock));
+	EXPECT_FALSE(meshClear(sys, {4.5F, 4.5F})) << "the low L is carved";
+	const auto expectTallBodies = [&] {
+		const std::vector<const vision::PlacedOccluder*> rings = occludersOf(sys);
+		ASSERT_EQ(rings.size(), 4U) << "the tall box, the trunk, the post, and the box at eye height";
+		for (const vision::PlacedOccluder* ring : rings) {
+			const bool opaque = ring->defName == kSightTallBox || ring->defName == kEyeHighBox;
+			EXPECT_EQ(ring->kind, opaque ? vision::BodyKind::Opaque : vision::BodyKind::Soft) << ring->defName;
+			EXPECT_NE(ring->defName, kSightLowRock);
+			EXPECT_NE(ring->defName, kLowL);
+		}
+	};
+	expectTallBodies();
+	EXPECT_EQ(vision.sightShape(observer)->path, VisionSystem::SightPath::Polygon);
+	EXPECT_EQ(vision.sightBodies(observer)->bodies->size(), 4U) << "no low body among his bodies";
+	EXPECT_FALSE(inShape(vision, observer, {0.0F, 9.0F})) << "behind the tall box";
+	EXPECT_FALSE(inShape(vision, observer, {-9.0F, -9.0F})) << "behind the box at eye height";
+	EXPECT_TRUE(inShape(vision, observer, {0.0F, -9.0F})) << "behind the trunk";
+	EXPECT_TRUE(inShape(vision, observer, {9.0F, -9.0F})) << "behind the tall post, a soft body";
+	EXPECT_TRUE(inShape(vision, observer, {9.0F, 9.0F})) << "behind the low L";
+	EXPECT_TRUE(inShape(vision, observer, {9.0F, 0.0F})) << "behind the placed low rock";
+	EXPECT_TRUE(inShape(vision, observer, {-9.0F, 0.0F})) << "behind the spawned low rock";
+
+	// A low body leaving the mesh touches no occluder.
+	world.destroyEntity(thirdRock);
+	step(world, sys);
+	step(world, sys);
+	EXPECT_FALSE(sys.placedObstacleInNavMesh(thirdRock));
+	EXPECT_TRUE(meshClear(sys, {-5.0F, 5.0F})) << "its ground opened";
+	expectTallBodies();
+}
+
 // Entities with a collider the world already holds when nav starts, as a loaded world would, go in with
 // the first build: carved and in the occluder index.
 TEST_F(NavigationSystemTest, ColliderEntitiesAlreadyInTheWorldGoInWithTheFirstBuild) {
@@ -1422,7 +1538,7 @@ TEST_F(NavigationSystemTest, VisionNeverJoinsThePatchJob) {
 	const glm::vec2						tree{3.0F, 4.0F};
 	PlacementExecutor					executor(AssetRegistry::Get());
 	std::unordered_set<ChunkCoordinate> processed;
-	placeMixed(executor, processed, {{kSightTrunk, tree}, {kSightRock, {-4.0F, 0.0F}}});
+	placeMixed(executor, processed, {{kSightTrunk, tree}, {kSightTallBody, {-4.0F, 0.0F}}});
 
 	World			  world;
 	world.registerSystem<TimeSystem>();
@@ -1441,7 +1557,7 @@ TEST_F(NavigationSystemTest, VisionNeverJoinsThePatchJob) {
 	sys.resetNavQueryStats();
 	const std::uint64_t built = vision.polygonBuildCount();
 	vision.update(0.016F);
-	EXPECT_GT(vision.polygonBuildCount(), built) << "the pass read the rock from the index";
+	EXPECT_GT(vision.polygonBuildCount(), built) << "the pass read the tall body from the index";
 	EXPECT_EQ(sys.navQueryStats().navPatches, 0U) << "vision joined the patch job";
 	EXPECT_EQ(sys.placedOccluders().size(), 2U) << "the job is not collected until nav's update";
 	sys.update(0.016F);
@@ -1665,21 +1781,21 @@ TEST_F(NavigationSystemTest, RingArrivingPastSightKeepsTheBuild) {
 }
 
 // The bright shape is the eased forest shape where he stands on every path, the polygon path's cut by
-// it, so a BigRock or a wall coming into reach moves no rim in a forested direction; it stays inside
+// it, so a tall body or a wall coming into reach moves no rim in a forested direction; it stays inside
 // his sight shape and inside seen ground. Once the ease has ended the eased shape is built no more:
 // frames between builds build none.
 TEST_F(NavigationSystemTest, BrightRimInForestIsTheSameOnEveryPath) {
-	enum class Blocker : std::uint8_t { None, Rock, Wall };
+	enum class Blocker : std::uint8_t { None, TallBody, Wall };
 	registerSightBodies();
 	const glm::vec2		 standing{0.3F, 0.2F};
 	const geometry::Vec2i64 standingMm = nav::toMm(standing);
 	std::array<std::int64_t, 3> eastmost{};
-	for (const Blocker blocker : {Blocker::None, Blocker::Rock, Blocker::Wall}) {
+	for (const Blocker blocker : {Blocker::None, Blocker::TallBody, Blocker::Wall}) {
 		PlacementExecutor					executor(AssetRegistry::Get());
 		std::unordered_set<ChunkCoordinate> processed;
 		std::vector<std::pair<std::string, glm::vec2>> placed = trunkClump({10.0F, 0.0F});
-		if (blocker == Blocker::Rock) {
-			placed.push_back({kSightRock, {-27.0F, 10.0F}});
+		if (blocker == Blocker::TallBody) {
+			placed.push_back({kSightTallBody, {-27.0F, 10.0F}});
 		}
 		placeMixed(executor, processed, placed);
 		ConstructionWorld cw;
@@ -1756,20 +1872,20 @@ TEST_F(NavigationSystemTest, BrightRimInForestIsTheSameOnEveryPath) {
 		EXPECT_LT(east, 26000) << "the clump pulls the bright rim in";
 		eastmost[static_cast<std::size_t>(blocker)] = east;
 	}
-	EXPECT_LE(std::abs(eastmost[0] - eastmost[1]), 10) << "a BigRock in reach moves no forested rim";
+	EXPECT_LE(std::abs(eastmost[0] - eastmost[1]), 10) << "a tall body in reach moves no forested rim";
 	EXPECT_LE(std::abs(eastmost[0] - eastmost[2]), 10) << "a wall in reach moves no forested rim";
 }
 
-// A BigRock among trees: the shape is computeVisibilityPolygon's for the rock rings, cut by the
-// forest shape of his reach. The near rock's shadow edges are tagged; a rock past the forest rim the
+// A tall opaque body among trees: the shape is computeVisibilityPolygon's for the tall bodies' rings, cut by the
+// forest shape of his reach. The near tall body's shadow edges are tagged; a tall body past the forest rim the
 // clump pulls in keeps its body and loses its tags, since its shadow lies past the rim.
-TEST_F(NavigationSystemTest, BigRockShapeIsItsVisibilityPolygonCutByTheForestShape) {
+TEST_F(NavigationSystemTest, TallBodyShapeIsItsVisibilityPolygonCutByTheForestShape) {
 	registerSightBodies();
 	PlacementExecutor					executor(AssetRegistry::Get());
 	std::unordered_set<ChunkCoordinate> processed;
 	std::vector<std::pair<std::string, glm::vec2>> placed = trunkClump({-10.0F, 0.0F});
-	placed.push_back({kSightRock, {5.0F, 0.0F}});
-	placed.push_back({kSightRock, {-28.5F, 0.0F}});
+	placed.push_back({kSightTallBody, {5.0F, 0.0F}});
+	placed.push_back({kSightTallBody, {-28.5F, 0.0F}});
 	placeMixed(executor, processed, placed);
 
 	World			  world;
@@ -1791,29 +1907,29 @@ TEST_F(NavigationSystemTest, BigRockShapeIsItsVisibilityPolygonCutByTheForestSha
 	ASSERT_EQ(shape->path, VisionSystem::SightPath::Polygon);
 	std::vector<const vision::PlacedOccluder*> rings;
 	sys.placedOccluders().within({0, 0}, bodies->reachMm, rings);
-	std::vector<geometry::OccluderSegment> rockEdges;
+	std::vector<geometry::OccluderSegment> tallEdges;
 	for (const vision::PlacedOccluder* ring : rings) {
 		if (ring->kind == vision::BodyKind::Opaque) {
 			for (std::size_t corner = 0; corner < ring->outline.size(); ++corner) {
-				rockEdges.push_back({ring->outline[corner], ring->outline[(corner + 1) % ring->outline.size()]});
+				tallEdges.push_back({ring->outline[corner], ring->outline[(corner + 1) % ring->outline.size()]});
 			}
 		}
 	}
-	ASSERT_EQ(rockEdges.size(), 8U);
+	ASSERT_EQ(tallEdges.size(), 8U);
 	const geometry::Ring expected = geometry::starClippedToConvex(
-		geometry::computeVisibilityPolygon({0, 0}, bodies->reachMm, rockEdges),
+		geometry::computeVisibilityPolygon({0, 0}, bodies->reachMm, tallEdges),
 		{0, 0},
 		geometry::forestShape({0, 0}, expectedRanges(sys.placedOccluders(), {0, 0}, bodies->reachMm, bodies->reachMm))
 	);
 	EXPECT_EQ(*shape->polygon, expected);
 	EXPECT_LT((*shape->ranges)[sideToward(180.0)], 26000) << "the clump pulls the west rim in";
-	EXPECT_EQ(bodies->bodies->size(), 18U) << "16 trunks and both rocks";
-	ASSERT_EQ(bodies->shadowEdges->size(), 2U) << "the near rock's two, none for the rock past the rim";
+	EXPECT_EQ(bodies->bodies->size(), 18U) << "16 trunks and both tall bodies";
+	ASSERT_EQ(bodies->shadowEdges->size(), 2U) << "the near tall body's two, none for the tall body past the rim";
 	for (const vision::ShadowEdge& edge : *bodies->shadowEdges) {
 		EXPECT_EQ((*bodies->bodies)[edge.body].centre, nav::toMm({5.0F, 0.0F}));
 	}
-	EXPECT_FALSE(shape->holds({0.0F, 0.0F}, {9.0F, 0.0F})) << "behind the near rock";
-	EXPECT_TRUE(shape->holds({0.0F, 0.0F}, {4.0F, 0.0F})) << "short of the near rock";
+	EXPECT_FALSE(shape->holds({0.0F, 0.0F}, {9.0F, 0.0F})) << "behind the near tall body";
+	EXPECT_TRUE(shape->holds({0.0F, 0.0F}, {4.0F, 0.0F})) << "short of the near tall body";
 	EXPECT_TRUE(shape->holds({0.0F, 0.0F}, {-12.0F, 0.0F})) << "behind a trunk";
 	EXPECT_TRUE(shape->holds({0.0F, 0.0F}, {0.0F, -29.9F})) << "a clear direction";
 }

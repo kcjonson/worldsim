@@ -1142,11 +1142,11 @@ TEST(PlayerVisibilitySystem, TheSpreadEndsALegByTheGameSpeedsTolerance) {
 	EXPECT_GT(endedDense, 0U) << "a " << spreadDense << " mm spread ends it at 10x";
 }
 
-// From open ground into a stand and up to a BigRock and past it (sight-softening.md 5.1, 6.1, 6.3): he
+// From open ground into a stand and up to a tall opaque body and past it (sight-softening.md 5.1, 6.1, 6.3): he
 // takes the open path, a leg, the polygon path, and a leg again; off the polygon path the bright shape
 // is in the record or a pending shape every frame; and the rim behind him, west, moves only as the ease
-// puts it across every change of path, wherever the rock's shadow does not fall there.
-TEST(PlayerVisibilitySystem, OpenGroundIntoForestToABigRockAndOn) {
+// puts it across every change of path, wherever the tall body's shadow does not fall there.
+TEST(PlayerVisibilitySystem, OpenGroundIntoForestToATallBodyAndOn) {
 	ForestColony colony;
 	colony.plant({20.0F, -30.0F}, {110.0F, 30.0F}, 4.0F, 0.65F, 9);
 	colony.place({45.0F, 4.0F}, 1.6F);
@@ -1178,7 +1178,7 @@ TEST(PlayerVisibilitySystem, OpenGroundIntoForestToABigRockAndOn) {
 		if (shape->polygon == nullptr) {
 			expectDrawnSeen(colony.visibility, *drawn, frames);
 		}
-		// Past the rock its shadow falls behind him, west, so only the walk up to it is read there.
+		// Past the tall body its shadow falls behind him, west, so only the walk up to it is read there.
 		const bool westClear = shape->polygon == nullptr || at.x < 43000;
 		ease.frame(*shape, *drawn, at, frames, westClear ? west : std::vector<std::size_t>{});
 	}
@@ -1207,10 +1207,10 @@ TEST(PlayerVisibilitySystem, StandingStillTheRimHoldsWhileARingArrives) {
 	EXPECT_GT(colony.vision.buildCount(), builds + 10) << "the arriving ring rebuilt his shape";
 }
 
-// A BigRock's inside is never in sight, so once a build's polygon sees its outline its footprint
-// joins the record whole, as a seen wall's does (sight-softening.md 6.4); a rock past his sight does
+// A tall opaque body's inside is never in sight, so once a build's polygon sees its outline its footprint
+// joins the record whole, as a seen wall's does (sight-softening.md 6.4); a tall body past his sight does
 // not.
-TEST(PlayerVisibilitySystem, ASeenBigRocksFootprintIsSeenGround) {
+TEST(PlayerVisibilitySystem, ASeenTallBodysFootprintIsSeenGround) {
 	ForestColony colony;
 	colony.place({10.0F, 4.0F}, 1.6F);
 	colony.place({100.0F, 4.0F}, 1.6F);
@@ -1219,13 +1219,13 @@ TEST(PlayerVisibilitySystem, ASeenBigRocksFootprintIsSeenGround) {
 		colony.step(colonist, 0.0F);
 	}
 	colony.remove(colonist);
-	EXPECT_TRUE(colony.visibility.isSeen({10.0F, 4.0F})) << "the near rock's inside";
+	EXPECT_TRUE(colony.visibility.isSeen({10.0F, 4.0F})) << "the near tall body's inside";
 	EXPECT_TRUE(colony.visibility.isSeen({10.7F, 4.7F})) << "its far corner";
-	EXPECT_FALSE(colony.visibility.isSeen({100.0F, 4.0F})) << "a rock never in sight";
+	EXPECT_FALSE(colony.visibility.isSeen({100.0F, 4.0F})) << "a tall body never in sight";
 	EXPECT_FALSE(colony.visibility.isSeen({12.0F, 5.0F})) << "the ground in its shadow";
 }
 
-// No sweep where every opaque body in reach is placed (sight-softening.md 6.6): walking past a rock
+// No sweep where every opaque body in reach is placed (sight-softening.md 6.6): walking past a tall body
 // on the polygon path builds no sweep point; with an opaque wall in reach as well, the walk is swept.
 TEST(PlayerVisibilitySystem, OnlyAnOpaqueWallInReachSweepsThePolygonPath) {
 	assets::ConstructionRegistry::Get().clear();
@@ -1245,11 +1245,11 @@ TEST(PlayerVisibilitySystem, OnlyAnOpaqueWallInReachSweepsThePolygonPath) {
 			colony.step(colonist, 0.0F);
 			polygonFrames += colony.vision.sightShape(colonist)->polygon != nullptr ? 1 : 0;
 		}
-		EXPECT_GT(polygonFrames, 100) << "the rock puts him on the polygon path";
+		EXPECT_GT(polygonFrames, 100) << "the tall body puts him on the polygon path";
 		colony.remove(colonist);
 		return colony.visibility.seenArea().sweepsBuilt();
 	};
-	EXPECT_EQ(sweptWalkingPast(false), 0U) << "a placed rock alone";
+	EXPECT_EQ(sweptWalkingPast(false), 0U) << "a placed tall body alone";
 	EXPECT_GT(sweptWalkingPast(true), 0U) << "a wall in reach";
 	assets::ConstructionRegistry::Get().clear();
 }
@@ -1371,11 +1371,11 @@ TEST(PlayerVisibilitySystem, AJumpOnABuildFrameKeepsTheBrightShapeSeen) {
 	}
 }
 
-// The record takes a polygon-path shape cut to its forest rim, so a rock past the rim, where the
+// The record takes a polygon-path shape cut to its forest rim, so a tall body past the rim, where the
 // trees pull his sight in, is not seen and its footprint does not join the record as an island in
 // unseen ground, though it lies inside the sight disc (sight-softening.md 6.4).
 // On the polygon path in forest, every side of the bright shape that lies on its rim is tagged rim, and
-// the rock's shadow sides and faces are not (sight-softening.md 7.2).
+// the tall body's shadow sides and faces are not (sight-softening.md 7.2).
 TEST(PlayerVisibilitySystem, OnThePolygonPathInForestTheRimSidesAreRim) {
 	ForestColony colony;
 	colony.plant({-40.0F, -40.0F}, {40.0F, 40.0F}, 4.0F, 0.65F, 21);
@@ -1394,20 +1394,20 @@ TEST(PlayerVisibilitySystem, OnThePolygonPathInForestTheRimSidesAreRim) {
 	for (std::size_t side = 0; side < count; ++side) {
 		const Vec2i64& from = drawn->outline[side];
 		const Vec2i64& to	= drawn->outline[(side + 1) % count];
-		// The rock is a 1.6 m square 6 m east: its faces and shadow sides lie within its shadow's wedge.
-		const bool byTheRock = from.x > 4500 && to.x > 4500 && std::abs(from.y) < 4000 && std::abs(to.y) < 4000;
+		// The tall body is a 1.6 m square 6 m east: its faces and shadow sides lie within its shadow's wedge.
+		const bool byTheTallBody = from.x > 4500 && to.x > 4500 && std::abs(from.y) < 4000 && std::abs(to.y) < 4000;
 		const bool farOut	 = geometry::withinDistanceOfSegment(from, {0, 0}, {0, 0}, 15000) == false &&
 							geometry::withinDistanceOfSegment(to, {0, 0}, {0, 0}, 15000) == false;
-		if (farOut && !byTheRock) {
+		if (farOut && !byTheTallBody) {
 			EXPECT_TRUE(drawn->rim[side]) << "side " << side << " from " << from.x << "," << from.y << " to " << to.x << "," << to.y;
 		}
-		if (byTheRock && !farOut) {
+		if (byTheTallBody && !farOut) {
 			EXPECT_FALSE(drawn->rim[side]) << "side " << side;
 		}
 	}
 }
 
-TEST(PlayerVisibilitySystem, ARockPastTheForestRimIsNotSeenGround) {
+TEST(PlayerVisibilitySystem, ATallBodyPastTheForestRimIsNotSeenGround) {
 	ForestColony colony;
 	colony.plant({4.0F, -12.0F}, {22.0F, 12.0F}, 1.2F, 0.65F, 17);
 	colony.place({26.0F, 0.0F}, 1.6F);
@@ -1418,10 +1418,10 @@ TEST(PlayerVisibilitySystem, ARockPastTheForestRimIsNotSeenGround) {
 	}
 	const std::optional<VisionSystem::SightShape> shape = colony.vision.sightShape(colonist);
 	ASSERT_TRUE(shape.has_value());
-	ASSERT_NE(shape->polygon, nullptr) << "the rock puts him on the polygon path";
-	ASSERT_LT((*shape->ranges)[0], 24000) << "the trees pull the rim in short of the rock";
+	ASSERT_NE(shape->polygon, nullptr) << "the tall body puts him on the polygon path";
+	ASSERT_LT((*shape->ranges)[0], 24000) << "the trees pull the rim in short of the tall body";
 	colony.remove(colonist);
-	EXPECT_FALSE(colony.visibility.isSeen({26.0F, 0.0F})) << "the rock past the rim";
+	EXPECT_FALSE(colony.visibility.isSeen({26.0F, 0.0F})) << "the tall body past the rim";
 	EXPECT_FALSE(colony.visibility.isSeen({25.3F, 0.0F})) << "its near face";
 }
 
