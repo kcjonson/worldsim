@@ -195,7 +195,8 @@ namespace {
 	};
 
 	// BigRocks as placement puts them in TemperateDeciduousForest (BigRock.xml): one candidate a 4 m
-	// block at spawnChance 0.004 scaled by the grove field, never within 15 m of another.
+	// block at spawnChance 0.004 scaled by the grove field, never within 15 m of another. Modelled as
+	// opaque bodies of a BigRock's size whatever their height; the game keeps them out of sight.
 	std::vector<Vec2i64> placeRocks(Stand& stand, std::int64_t halfExtentMm, std::mt19937& random) {
 		std::uniform_real_distribution<double> unit(0.0, 1.0);
 		std::vector<Vec2i64>				   rocks;

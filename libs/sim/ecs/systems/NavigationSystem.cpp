@@ -20,6 +20,7 @@
 #include <nav/LimitPolygon.h>
 #include <nav/PathQuery.h>
 #include <predicates/Predicates.h>
+#include <vision/SightHeight.h>
 
 #include <utils/Log.h>
 
@@ -1480,6 +1481,7 @@ namespace ecs {
 	}
 
 	void NavigationSystem::notePlacedObstaclesAdded(const std::vector<ObstacleKey>& keys, const std::vector<RingId>& added, std::int64_t arrived) {
+		const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
 		for (std::size_t k = 0; k < keys.size(); ++k) {
 			if (added[k] == gnav::kNoRing) {
 				// Refused: it never enters the index, so sight and nav agree it is not there.
@@ -1487,8 +1489,11 @@ namespace ecs {
 				continue;
 			}
 			obstacleInMesh.at(keys[k]) = added[k];
-			const gnav::NavInputPolygon& ring = detailMesh.ring(added[k]).polygon;
-			if (ring.provenanceId == nav::kProvenancePlaced && ring.blocked) {
+			// A body lower than a colonist's eye stays out of the occluder index: it blocks walking, never
+			// sight (sight-softening.md 2.2).
+			const gnav::NavInputPolygon&   ring = detailMesh.ring(added[k]).polygon;
+			const assets::AssetDefinition* def	= registry.getDefinition(keys[k].defName);
+			if (ring.provenanceId == nav::kProvenancePlaced && ring.blocked && def != nullptr && vision::reachesEyeHeight(*def)) {
 				placedOccluderIndex.add(added[k], ring.ring, keys[k].defName, arrived);
 			}
 		}
