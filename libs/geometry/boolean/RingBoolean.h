@@ -83,6 +83,10 @@ namespace geometry {
 	// in the input's units, each ring simplified by kBooleanSimplifyEpsMm of them; empty for no area.
 	std::vector<RegionPolygon> unionOfFills(const std::vector<std::vector<Ring>>& groups);
 
+	// The region every group of `within` fills and no group of `without` fills, each group filled by the nonzero
+	// rule, as unionOfFills gives it. Empty when `within` is.
+	std::vector<RegionPolygon> regionOfFills(const std::vector<std::vector<Ring>>& within, const std::vector<std::vector<Ring>>& without);
+
 	constexpr std::int64_t kBooleanSimplifyEpsMm = 1;
 
 } // namespace geometry

@@ -2,6 +2,7 @@
 
 #include "assets/LodSvg.h"
 #include "assets/PointTurn.h"
+#include "assets/UseAreaRoom.h"
 
 #include <boolean/RingBoolean.h>
 #include <polygon/Polygon.h>
@@ -353,99 +354,6 @@ namespace assets {
 					groups.push_back({minkowski({ring[i], ring[(i + 1) % ring.size()]}, brush)});
 				}
 			}
-		}
-
-		bool insideRing(glm::vec2 point, const Ring2& ring) {
-			bool inside = false;
-			for (size_t i = 0, j = ring.size() - 1; i < ring.size(); j = i++) {
-				const glm::vec2& from = ring[i];
-				const glm::vec2& to = ring[j];
-				if ((from.y > point.y) != (to.y > point.y) && point.x < (to.x - from.x) * (point.y - from.y) / (to.y - from.y) + from.x) {
-					inside = !inside;
-				}
-			}
-			return inside;
-		}
-
-		float distanceToSegment(glm::vec2 point, glm::vec2 start, glm::vec2 end) {
-			const glm::vec2 edge = end - start;
-			const float		lengthSquared = edge.x * edge.x + edge.y * edge.y;
-			const float		along =
-				lengthSquared > 0.0F ? std::clamp(((point.x - start.x) * edge.x + (point.y - start.y) * edge.y) / lengthSquared, 0.0F, 1.0F) : 0.0F;
-			const glm::vec2 nearest = start + along * edge;
-			return std::hypot(point.x - nearest.x, point.y - nearest.y);
-		}
-
-		/// Whether a disc of `radius` fits in `area` clear of every `obstacle` ring: a branch and bound over squares
-		/// of the area's box, pruning a square that can hold no point that far from every edge (the distance to the
-		/// nearest edge changes no faster than the point moves).
-		bool hasRoom(const std::vector<AreaPolygon>& area, const std::vector<Ring2>& obstacles, float radius) {
-			std::vector<std::pair<glm::vec2, glm::vec2>> edges;
-			glm::vec2									 low{std::numeric_limits<float>::max()};
-			glm::vec2									 high{std::numeric_limits<float>::lowest()};
-			const auto									 addRing = [&](const Ring2& ring) {
-				  for (size_t i = 0; i < ring.size(); ++i) {
-					  edges.emplace_back(ring[i], ring[(i + 1) % ring.size()]);
-				  }
-			};
-			for (const AreaPolygon& polygon : area) {
-				addRing(polygon.outer);
-				for (const Ring2& hole : polygon.holes) {
-					addRing(hole);
-				}
-				for (const glm::vec2& point : polygon.outer) {
-					low = glm::min(low, point);
-					high = glm::max(high, point);
-				}
-			}
-			for (const Ring2& obstacle : obstacles) {
-				addRing(obstacle);
-			}
-			if (edges.empty()) {
-				return false;
-			}
-			const auto inside = [&](glm::vec2 point) {
-				for (const Ring2& obstacle : obstacles) {
-					if (insideRing(point, obstacle)) {
-						return false;
-					}
-				}
-				for (const AreaPolygon& polygon : area) {
-					if (insideRing(point, polygon.outer) &&
-						std::none_of(polygon.holes.begin(), polygon.holes.end(), [&](const Ring2& hole) { return insideRing(point, hole); })) {
-						return true;
-					}
-				}
-				return false;
-			};
-			constexpr float kSlack = 1.0e-6F;
-			constexpr float kSmallestHalfDiagonal = 0.0005F;
-			const float		half = std::max(high.x - low.x, high.y - low.y) * 0.5F;
-			std::vector<std::pair<glm::vec2, float>> squares{{(low + high) * 0.5F, half}};
-			while (!squares.empty()) {
-				const auto [center, halfSide] = squares.back();
-				squares.pop_back();
-				float clearance = std::numeric_limits<float>::max();
-				for (const auto& [start, end] : edges) {
-					clearance = std::min(clearance, distanceToSegment(center, start, end));
-				}
-				const float halfDiagonal = halfSide * std::numbers::sqrt2_v<float>;
-				const bool	in = inside(center);
-				if (in && clearance >= radius - kSlack) {
-					return true;
-				}
-				// Inside, nothing in the square is further than clearance + halfDiagonal from an edge. Outside, a
-				// point in the square that fits lies radius past the boundary, so at least radius + clearance away.
-				const bool hopeless = in ? clearance + halfDiagonal < radius - kSlack : halfDiagonal < radius + clearance;
-				if (hopeless || halfDiagonal < kSmallestHalfDiagonal) {
-					continue;
-				}
-				const float quarter = halfSide * 0.5F;
-				for (const glm::vec2 offset : {glm::vec2{-1, -1}, glm::vec2{1, -1}, glm::vec2{-1, 1}, glm::vec2{1, 1}}) {
-					squares.emplace_back(center + offset * quarter, quarter);
-				}
-			}
-			return false;
 		}
 
 	} // namespace
@@ -1562,7 +1470,7 @@ namespace assets {
 			ItemArea area{.name = pending.name, .polygons = unionInMeters(pending.groups)};
 			const std::string where = pending.name.empty() ? std::string("the use area") : "use area " + inQuotes(pending.name);
 			// Rule 11: one colonist fits, on open ground beside nothing but the item itself.
-			if (!hasRoom(area.polygons, colliderRings, kLargestColonistRadiusMeters)) {
+			if (standingRegion(area.polygons, colliderRings, nullptr, kLargestColonistRadiusMeters).empty()) {
 				error(
 					"useAreas",
 					where + formatted(" has no room: no disc of %g m radius fits in it clear of the item's collider, so no colonist could ever use the item from it", static_cast<double>(kLargestColonistRadiusMeters))

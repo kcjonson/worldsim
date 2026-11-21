@@ -491,3 +491,15 @@ TEST(UnionOfFills, AnIslandInAHoleIsItsOwnPolygon) {
 	EXPECT_TRUE(region[1 - frame].holes.empty());
 	EXPECT_EQ(area2(region[1 - frame].outer), 100 * 100 * 2);
 }
+
+TEST(RegionOfFills, KeepsWhatEveryWithinFillsLessWhatAnyWithoutFills) {
+	// Two overlapping squares within, a bar through the overlap without: the overlap less the bar is two pieces.
+	const auto region = regionOfFills({{square(0, 0, 300, 300)}, {square(100, 0, 400, 300)}}, {{square(0, 100, 400, 200)}});
+	ASSERT_EQ(region.size(), 2U);
+	for (const RegionPolygon& polygon : region) {
+		EXPECT_EQ(area2(polygon.outer), 200 * 100 * 2);
+	}
+	// Overlapping cuts in one group, and a cut covering everything, leave nothing.
+	EXPECT_TRUE(regionOfFills({{square(0, 0, 100, 100)}}, {{square(-10, -10, 60, 110), square(40, -10, 110, 110)}}).empty());
+	EXPECT_TRUE(regionOfFills({}, {{square(0, 0, 100, 100)}}).empty());
+}

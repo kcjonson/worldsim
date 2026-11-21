@@ -265,7 +265,11 @@ namespace geometry {
 
 	} // namespace
 
-	std::vector<RegionPolygon> unionOfFills(const std::vector<std::vector<Ring>>& groups) {
+	namespace {
+
+	// The region where `inside` holds of which groups fill a point (one flag a group, in group order), each group
+	// filled by the nonzero rule; unionOfFills' contract otherwise.
+	template <typename Inside> std::vector<RegionPolygon> regionWhere(const std::vector<std::vector<Ring>>& groups, const Inside& inside) {
 		struct InputEdge {
 			std::size_t group = 0;
 			Vec2i64		from;
@@ -330,6 +334,8 @@ namespace geometry {
 		// midpoint: the computed side is the one the ray leaves from, the other differs by the edge's weight.
 		std::vector<bool> leftInside(edgeCount, false);
 		std::vector<bool> rightInside(edgeCount, false);
+		std::vector<char> leftFilled(groupCount);
+		std::vector<char> rightFilled(groupCount);
 		for (std::size_t e = 0; e < edgeCount; ++e) {
 			const ArrangementEdge& edge = arrangement.edges[e];
 			const Vec2i64		   from = arrangement.vertices[edge.from];
@@ -338,7 +344,9 @@ namespace geometry {
 			const Vec2i64		   direction = to - from;
 			const bool			   upward = direction.y == 0;
 			const bool			   computedIsRight = upward ? direction.x < 0 : direction.y > 0;
-			for (std::size_t group = 0; group < groupCount && !(leftInside[e] && rightInside[e]); ++group) {
+			for (std::size_t group = 0; group < groupCount; ++group) {
+				leftFilled[group] = 0;
+				rightFilled[group] = 0;
 				const auto& [low, high] = groupBoxes[group];
 				if (!groupBoxSet[group] || middle.x < low.x || middle.x > high.x || middle.y < low.y || middle.y > high.y) {
 					continue;
@@ -346,9 +354,11 @@ namespace geometry {
 				const int weight = weights[e * groupCount + group];
 				const int computed = windingAt(groupEdges[group], middle, upward);
 				const int right = computedIsRight ? computed : computed - weight;
-				leftInside[e] = leftInside[e] || right + weight != 0;
-				rightInside[e] = rightInside[e] || right != 0;
+				leftFilled[group] = static_cast<char>(right + weight != 0);
+				rightFilled[group] = static_cast<char>(right != 0);
 			}
+			leftInside[e] = inside(leftFilled);
+			rightInside[e] = inside(rightFilled);
 		}
 
 		const std::vector<ResultLoop> loops = walkBoundary(mesh, [&](std::size_t halfEdge) {
@@ -399,6 +409,29 @@ namespace geometry {
 			}
 		}
 		return region;
+	}
+
+	} // namespace
+
+	std::vector<RegionPolygon> unionOfFills(const std::vector<std::vector<Ring>>& groups) {
+		return regionWhere(groups, [](const std::vector<char>& filled) { return std::ranges::any_of(filled, [](char flag) { return flag != 0; }); });
+	}
+
+	std::vector<RegionPolygon> regionOfFills(const std::vector<std::vector<Ring>>& within, const std::vector<std::vector<Ring>>& without) {
+		if (within.empty()) {
+			return {};
+		}
+		std::vector<std::vector<Ring>> groups = within;
+		groups.insert(groups.end(), without.begin(), without.end());
+		const std::size_t withinCount = within.size();
+		return regionWhere(groups, [withinCount](const std::vector<char>& filled) {
+			for (std::size_t group = 0; group < filled.size(); ++group) {
+				if ((filled[group] != 0) != (group < withinCount)) {
+					return false;
+				}
+			}
+			return true;
+		});
 	}
 
 	bool ringsInteriorOverlap(const Ring& a, const Ring& b) {
