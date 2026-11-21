@@ -162,7 +162,7 @@ The bonus is `min(skillLevel * 10, 100)`, fixed in AIDecisionSystem.
 
 ### Skill Requirements for Work Types
 
-Defined in `assets/config/work/work-types.xml`:
+Defined in `assets/config/legacy/work-types.xml`:
 
 ```xml
 <WorkType defName="Work_Doctoring">

@@ -363,22 +363,17 @@ Configs must load in dependency order. Each stage validates references to previo
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ 1. action-types.xml (no dependencies)                           │
+│ 1. legacy/action-types.xml (no dependencies)                    │
 │    └─► ActionTypeRegistry populated                             │
 ├─────────────────────────────────────────────────────────────────┤
-│ 2. task-chains.xml                                              │
-│    └─► Validate: step.actionDefName exists in ActionTypeRegistry│
-│    └─► TaskChainRegistry populated                              │
-├─────────────────────────────────────────────────────────────────┤
-│ 3. work-types.xml                                               │
-│    └─► Validate: taskChain exists in TaskChainRegistry          │
+│ 2. legacy/work-types.xml                                        │
 │    └─► Validate: triggerCapability is valid CapabilityType      │
 │    └─► Validate: skillRequired exists (if specified)            │
 │    └─► WorkTypeRegistry populated                               │
 ├─────────────────────────────────────────────────────────────────┤
-│ 4. priority-tuning.xml                                          │
+│ 3. arbitration/priority-tuning.xml                              │
 │    └─► Validate: WorkCategoryOrder categories exist             │
-│    └─► PriorityConfig populated                                 │
+│    └─► PriorityConfig populated (the ladder and the bonuses)    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -390,24 +385,24 @@ Every error is fatal: the load fails and the message reaches the loading scene.
 |------------|---------|
 | XML syntax error | Missing closing tag |
 | Missing required field | WorkType without defName |
-| Malformed value | `<Category tier="1x">`, `optional="ture"` |
-| Invalid reference | `taskChain="Chain_Typo"` |
+| Malformed value | `<Category tier="1x">`, `canDisable="ture"` |
+| Invalid reference | `<WorkCategoryOrder><Category name="Farmnig">` |
 | Duplicate defName | Two WorkTypes with the same name |
 | Unknown element or attribute | `<WorkType foo="bar">` |
 
 ### Implementation
 
-`assets::loadWorkConfig(configRoot, human)` (libs/assets/assets/WorkConfig.h) is the one entry point. It clears the registries, loads each file in the order above (`ActionTypeRegistry`, then `TaskChainRegistry::loadFromFile(configRoot, "work/task-chains.xml")`, `WorkTypeRegistry::loadFromFile(configRoot, "work/work-types.xml")`, and `PriorityConfig::loadFromFile(configRoot, "work/priority-tuning.xml")`), stops at the first file with problems and returns that registry's `problems()`, and ends with `ConfigValidator::validateAll()` for the cross-references. An empty list means the config is loaded. [Config Loading](./config-loading.md) lists the values a file may leave out and the shape of each message.
+`assets::loadWorkConfig(configRoot, human)` (libs/assets/assets/WorkConfig.h) is the one entry point. It clears the registries, loads each file in the order above (`ActionTypeRegistry`, then `WorkTypeRegistry::loadFromFile(configRoot, "legacy/work-types.xml")`, and `PriorityConfig::loadFromFile(configRoot / "arbitration", "priority-tuning.xml")`), stops at the first file with problems and returns that registry's `problems()`, and ends with `ConfigValidator::validateAll()` for the cross-references. An empty list means the config is loaded. [Config Loading](./config-loading.md) lists the values a file may leave out and the shape of each message.
 
 ### Error Message Format
 
 A cross-reference error names the config it came from and the reference, with what would be valid:
 
 ```
-[TaskChains] Chain 'Chain_PickupDeposit' step 1 references unknown action 'Depositt' (Available actions: Pickup, Deposit, Place, Eat, Drink, Sleep, Harvest, Craft, Build)
+[PriorityConfig] WorkCategoryOrder references unknown category 'Farmnig' (Available categories: Emergency, Medical, Farming, Crafting, Construction, Hauling, Cleaning)
 ```
 
-A file's own problems name the file, the element by its instance, and the attribute, as in `work/task-chains.xml: <Chain defName="Chain_Haul"> step 2 optional must be true or false, got "ture"`.
+A file's own problems name the file, the element by its instance, and the attribute, as in `legacy/work-types.xml: <Category defName="Medical"> canDisable must be true or false, got "ture"`.
 
 ### Mod Loading
 

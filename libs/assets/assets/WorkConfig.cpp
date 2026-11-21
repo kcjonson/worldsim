@@ -7,7 +7,6 @@
 #include "assets/MemoryConfig.h"
 #include "assets/MoodConfig.h"
 #include "assets/PriorityConfig.h"
-#include "assets/TaskChainRegistry.h"
 #include "assets/WorkTypeRegistry.h"
 
 #include <cassert>
@@ -18,7 +17,6 @@ namespace assets {
 		assert(human.errors.empty() && "loadWorkConfig takes a human folder with no errors; its errors are the load's");
 		assert(human.mood.size() == 1 && human.memory.size() == 1 && "loadWorkConfig reads the human's one <Mood> and one <Memory> file");
 		ActionTypeRegistry::Get().clear();
-		TaskChainRegistry::Get().clear();
 		WorkTypeRegistry::Get().clear();
 		PriorityConfig::Get().clear();
 		ConstructionRegistry::Get().clear();
@@ -33,24 +31,39 @@ namespace assets {
 			return std::vector<std::string>{"Failed to load " + file.generic_string()};
 		};
 
-		const std::filesystem::path actionTypes = "actions/action-types.xml";
+		const std::filesystem::path actionTypes = "legacy/action-types.xml";
 		if (!ActionTypeRegistry::Get().loadFromFile(configRoot, actionTypes)) {
 			return loadFailure(actionTypes, ActionTypeRegistry::Get().problems());
 		}
 
-		const std::filesystem::path taskChains = "work/task-chains.xml";
-		if (!TaskChainRegistry::Get().loadFromFile(configRoot, taskChains)) {
-			return loadFailure(taskChains, TaskChainRegistry::Get().problems());
-		}
-
-		const std::filesystem::path workTypes = "work/work-types.xml";
+		const std::filesystem::path workTypes = "legacy/work-types.xml";
 		if (!WorkTypeRegistry::Get().loadFromFile(configRoot, workTypes)) {
 			return loadFailure(workTypes, WorkTypeRegistry::Get().problems());
 		}
 
-		const std::filesystem::path priorityTuning = "work/priority-tuning.xml";
-		if (!PriorityConfig::Get().loadFromFile(configRoot, priorityTuning)) {
-			return loadFailure(priorityTuning, PriorityConfig::Get().problems());
+		// The arbitration folder holds the one file that declares the ladder and the bonuses, root <arbitration>.
+		const std::filesystem::path arbitrationFolder = configRoot / "arbitration";
+		const ConfigFiles			arbitration = configFilesIn(arbitrationFolder);
+		if (arbitration.error) {
+			return {"[arbitration] " + *arbitration.error};
+		}
+		if (arbitration.files.size() != 1) {
+			std::string names;
+			for (const std::filesystem::path& file : arbitration.files) {
+				names += (names.empty() ? "" : ", ") + configFileName(file, arbitrationFolder);
+			}
+			return {
+				"[arbitration] arbitration: " + std::to_string(arbitration.files.size()) +
+				" files; one file declares the ladder and the bonuses" + (names.empty() ? std::string() : " (" + names + ")")
+			};
+		}
+		const std::filesystem::path priorityTuning = configFileName(arbitration.files.front(), arbitrationFolder);
+		if (!PriorityConfig::Get().loadFromFile(arbitrationFolder, priorityTuning)) {
+			std::vector<std::string> problems = loadFailure(priorityTuning, PriorityConfig::Get().problems());
+			for (std::string& problem : problems) {
+				problem.insert(0, "[arbitration] ");
+			}
+			return problems;
 		}
 
 		// Every task type the AI can evaluate must have an explicit arbitration tier, or the
@@ -62,7 +75,7 @@ namespace assets {
 			for (const auto& name : missingTiers) {
 				joined += (joined.empty() ? "" : ", ") + name;
 			}
-			return {priorityTuning.generic_string() + " is missing an arbitration tier for task type(s): " + joined};
+			return {"[arbitration] " + priorityTuning.generic_string() + " is missing an arbitration tier for task type(s): " + joined};
 		}
 
 		const std::filesystem::path construction = "construction";

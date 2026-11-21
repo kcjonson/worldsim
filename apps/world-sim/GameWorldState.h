@@ -6,6 +6,7 @@
 
 #include "NewGameSetup.h"
 
+#include <assets/Entries.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <ecs/ColonistRules.h>
 #include <ecs/components/Colony.h>
@@ -61,6 +62,9 @@ namespace world_sim {
 
 		/// The condition vocabulary and thought types, loaded with the rest of the config.
 		ecs::ColonistRules colonistRules;
+
+		/// The behavior library and the creatures built from it, loaded with the rest of the config.
+		assets::EntryLibrary entries;
 
 		/// Store pending state (call from GameLoadingScene when done)
 		static void SetPending(std::unique_ptr<GameWorldState> state);

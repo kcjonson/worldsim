@@ -82,7 +82,7 @@ score = distanceFactor      // dominant: 300 * max(0, 1 - d/60), nearest source 
 
 ## Config File Format
 
-**File:** `assets/config/work/priority-tuning.xml`. The file itself is the reference for values; its comments explain each element. What reads each one:
+**File:** `assets/config/arbitration/priority-tuning.xml` (root `<arbitration>`, which also holds the ladder). The file itself is the reference for values; its comments explain each element. What reads each one:
 
 | Element | Read by | Effect |
 |---|---|---|
@@ -200,7 +200,7 @@ private:
 
 ### Loading at Startup
 
-`assets::loadWorkConfig(configRoot, human)` loads priority-tuning.xml after the work types, as `PriorityConfig::Get().loadFromFile(configRoot, "work/priority-tuning.xml")`, and then checks that every task type has a tier. Any problem fails the game load and is shown on the loading scene ([Config Loading](../../../technical/config-loading.md)).
+`assets::loadWorkConfig(configRoot, human)` loads priority-tuning.xml after the work types, as `PriorityConfig::Get().loadFromFile(configRoot / "arbitration", "priority-tuning.xml")`, and then checks that every task type has a tier. Any problem fails the game load and is shown on the loading scene ([Config Loading](../../../technical/config-loading.md)).
 
 ---
 

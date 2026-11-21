@@ -44,7 +44,9 @@ namespace {
 		static std::filesystem::path shippedHuman() { return repoRoot() / "assets" / "world" / "creatures" / "Human"; }
 
 		/// The load with a config root that does not exist: any loader that runs adds an error of its own.
-		[[nodiscard]] world_sim::GameConfigLoad load() const { return world_sim::loadGameConfig(root / "no-such-config", human); }
+		[[nodiscard]] world_sim::GameConfigLoad load() const {
+			return world_sim::loadGameConfig(root / "no-such-config", root / "creatures");
+		}
 
 		std::filesystem::path root;
 		std::filesystem::path human;
@@ -60,7 +62,7 @@ TEST_F(GameConfigTest, ABrokenHumanFolderIsTheLoadsOnlyErrorsAndNeitherLoaderRun
 		result.errors,
 		std::vector<std::string>{
 			"[creatures] herd.xml: the root element <Herd> is not one a creature folder holds (<Mood>, <Memory>, <Traits>, <Attributes>, "
-			"<Needs>)"
+			"<Needs>, <creature>, <behavior>)"
 		}
 	);
 	EXPECT_TRUE(assets::MoodConfig::Get().loaded()) << "loadWorkConfig never ran";

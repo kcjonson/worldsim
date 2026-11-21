@@ -92,8 +92,6 @@ namespace assets {
 					if (workType.minSkillLevel < 0.0F) {
 						reader.refuseChild(node, "WorkType", "minSkillLevel", "a number, 0 or more");
 					}
-				} else if (element == "taskChain") {
-					workType.taskChain = child.text().as_string();
 				} else if (element == "filter") {
 					workType.filter = filterFrom(child, what, source, reader, errors);
 				} else {

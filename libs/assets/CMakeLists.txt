@@ -20,12 +20,12 @@ add_library(assets
     assets/ConfigFiles.cpp
     assets/ConfigValidator.cpp
     assets/CreatureConfigFiles.cpp
+    assets/EntryLoader.cpp
     assets/MemoryConfig.cpp
     assets/MoodConfig.cpp
     assets/NeedsConfig.cpp
     assets/PriorityConfig.cpp
     assets/RecipeRegistry.cpp
-    assets/TaskChainRegistry.cpp
     assets/ThoughtConfig.cpp
     assets/WorkTypeRegistry.cpp
     assets/WorkConfig.cpp
