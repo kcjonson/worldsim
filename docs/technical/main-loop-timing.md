@@ -38,7 +38,7 @@ Navigation is one persistent mesh, never rebuilt: each nav update gathers what m
 | 9 | Render: `Primitives::beginFrame`, clear, the scene stack, debug layers, `endFrame` | `App::render`, `GameScene::render` | every frame, paused or not |
 | 9a | Ground tiles, stale chunk re-upload capped at `kStaleReuploadBudgetBytes` (4 MiB, `ChunkRenderer.h`) a frame | `ChunkRenderer::render` | every frame |
 | 9b | Committed construction, flush | `DrawingSystem::renderCommitted` | every frame |
-| 9c | Entities: worker-baked chunk meshes uploaded under `kUploadBudgetBytesPerFrame` (2 MiB, `BakedChunkRenderer.h`), a synchronous re-bake on the main thread for a processed chunk whose bake was evicted and is in view again, and of each 64 m sub-region a short static was removed from since its bake (`PlacementExecutor::staticRemovals`; a felled tree is not baked and re-bakes nothing), groundcover (its buckets drop the tufts removed from those same sub-regions), then the depth-sorted upright stream, which tells `TemplateLevelBuilder` which levels it wants | `EntityRenderer::render` | every frame |
+| 9c | Entities: worker-baked chunk meshes uploaded under `kUploadBudgetBytesPerFrame` (2 MiB, `BakedChunkRenderer.h`), a synchronous re-bake on the main thread for a processed chunk whose bake was evicted and is in view again, and of each 64 m sub-region a short static was removed from since its bake (`PlacementExecutor::staticRemovals`; a felled tree is not baked and re-bakes nothing), groundcover (its buckets drop the tufts removed from those same sub-regions), then the depth-sorted upright stream, which tells the `LevelBuilder`s which template levels and item views it wants | `EntityRenderer::render` | every frame |
 | 9d | Drawing preview, then the terrain-polygon, room, nav, and vision overlays (each draws nothing unless toggled) | `GameScene::render` | every frame |
 | 9e | Selection indicator, move marker, placement ghost, flush | `GameScene::render` | every frame |
 | 9f | GPU hold (perf captures only); metrics: tile ms, entity ms, `m_lastUpdateMs`, counts, this frame's ECS per-system timings, GPU times | `GameScene::render` | every frame |
@@ -118,7 +118,7 @@ Clocks: **F** frame count; **R** real seconds (the frame delta, unscaled, still 
 | Placement and bake | `AsyncChunkProcessor::launchTask` | per loaded chunk not yet placed | none | W | runs |
 | Ground tiles | `ChunkRenderer::render` | every frame | `kStaleReuploadBudgetBytes` 4 MiB | F | runs |
 | Entity bake upload | `BakedChunkRenderer::processPendingUploads` | every frame | `kUploadBudgetBytesPerFrame` 2 MiB | F | runs |
-| Template levels | `TemplateLevelBuilder` | when the view wants a level it lacks; uploads capped at `kUploadVertexBudget` (131072 vertices, `InstancedEntityRenderer.h`) a frame | none | W | runs |
+| Template levels and item views | `LevelBuilder` (one each) | when the view wants a level or view it lacks; uploads capped at `kUploadVertexBudget` (131072 vertices, `InstancedEntityRenderer.h`) a frame | none | W | runs |
 | Colonist list, time, top bar, minimap, info panel, open dialogs | `GameUI::update` | every frame | none | F | runs |
 | Resources panel | `ResourcesModel::refresh` | every 0.5 s | `kRefreshInterval` 0.5 (`ResourcesModel.h`) | R | runs |
 | Global task list | `GlobalTaskListModel::refresh` | every 0.2 s | `kRefreshInterval` 0.2 (`GlobalTaskListModel.h`) | R | runs |

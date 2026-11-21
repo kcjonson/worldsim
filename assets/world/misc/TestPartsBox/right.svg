@@ -1,8 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 80">
   <rect x="0" y="0" width="60" height="80" fill="#E0A526"/>
-  <rect x="20" y="15" width="8" height="50" fill="#FFFFFF"/>
-  <rect x="20" y="15" width="20" height="8" fill="#FFFFFF"/>
-  <rect x="20" y="36" width="20" height="8" fill="#FFFFFF"/>
-  <rect x="34" y="15" width="8" height="29" fill="#FFFFFF"/>
-  <path d="M30 44 L38 44 L44 65 L36 65 Z" fill="#FFFFFF"/>
+  <g data-lod="24">
+    <rect x="20" y="15" width="8" height="50" fill="#FFFFFF"/>
+    <rect x="20" y="15" width="20" height="8" fill="#FFFFFF"/>
+    <rect x="20" y="36" width="20" height="8" fill="#FFFFFF"/>
+    <rect x="34" y="15" width="8" height="29" fill="#FFFFFF"/>
+    <path d="M30 44 L38 44 L44 65 L36 65 Z" fill="#FFFFFF"/>
+  </g>
+  <g data-lod="80" fill="#FFFFFF">
+    <circle cx="8" cy="8" r="3"/>
+    <circle cx="52" cy="8" r="3"/>
+    <circle cx="8" cy="72" r="3"/>
+    <circle cx="52" cy="72" r="3"/>
+  </g>
 </svg>

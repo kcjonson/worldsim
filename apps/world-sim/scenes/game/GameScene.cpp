@@ -631,17 +631,21 @@ namespace {
 					std::snprintf(text, sizeof(text), "%g", static_cast<double>(value));
 					return std::string(text);
 				};
-				std::string uses;
-				for (const auto& use : levels.uses) {
-					uses += std::string(uses.empty() ? "" : ",") + "{\"pxPerMeter\":" + number(use.pixelsPerMeter) +
-							",\"instances\":" + std::to_string(use.instances) + "}";
-				}
+				const auto usesJson = [&](const std::vector<worldview::InstancedEntityRenderer::LevelStats::Use>& entries) {
+					std::string json;
+					for (const auto& use : entries) {
+						json += std::string(json.empty() ? "" : ",") + "{\"pxPerMeter\":" + number(use.pixelsPerMeter) +
+								",\"instances\":" + std::to_string(use.instances) + "}";
+					}
+					return json;
+				};
+				const std::string uses = usesJson(levels.uses);
 				return "{\"uprightDrawCalls\":" + std::to_string(m_entityRenderer->lastUprightDrawCallCount()) +
 					   ",\"uprightTriangles\":" + std::to_string(m_entityRenderer->lastUprightTriangleCount()) +
 					   ",\"uprightOverlapSplits\":" + std::to_string(m_entityRenderer->lastUprightOverlapSplits()) +
 					   ",\"itemDrawCalls\":" + std::to_string(m_entityRenderer->lastItemDrawCallCount()) +
 					   ",\"residentViews\":" + std::to_string(levels.residentViews) +
-					   ",\"residentViewBytes\":" + std::to_string(levels.residentViewBytes) +
+					   ",\"residentViewBytes\":" + std::to_string(levels.residentViewBytes) + ",\"viewLevels\":[" + usesJson(levels.viewUses) + "]" +
 					   ",\"screenPxPerMeter\":" + number(levels.screenPixelsPerMeter) + ",\"levels\":[" + uses +
 					   "],\"levelRequestsPending\":" + std::to_string(levels.pendingRequests) +
 					   ",\"residentLevels\":" + std::to_string(levels.residentLevels) +

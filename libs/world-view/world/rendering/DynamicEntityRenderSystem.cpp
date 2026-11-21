@@ -29,6 +29,9 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
     m_partXformStore.clear();
 
     auto& assetRegistry = assets::AssetRegistry::Get();
+    // Last frame's records are gone, so the layouts no item asked for then can go too; every installed item asks for
+    // its own below (rotatable-placed-items 10).
+    assetRegistry.releaseUnaskedLayouts();
     const ecs::PlayerVisibilitySystem* visibility = ecs::PlayerVisibilitySystem::gate(*world);
 
     // Collect all entities with position and appearance
@@ -77,9 +80,9 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
 
         // A parts item enters the stream as its depth strips, each anchored on its own stretch of the
         // item's collider, its turn carried by the strip layout (rotatable-placed-items 8). Told by the
-        // template's def, which takes no name lookup.
-        if (const assets::AssetDefinition* templateDef = assetRegistry.templateDefinition(placed.templateId);
-            templateDef != nullptr && templateDef->parts != nullptr) {
+        // template's def, read with its mesh under the one lock that lookup always took.
+        const assets::AssetRegistry::TemplateRecord templateRecord = assetRegistry.templateRecord(placed.templateId);
+        if (templateRecord.def != nullptr && templateRecord.def->parts != nullptr) {
             pushItemStrips(placed.templateId, appearance, pos.value, assets::turnQuantaFromRadians(rot.radians));
             continue;
         }
@@ -87,7 +90,7 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
 
         // The mesh is about the def's pivot, which the entity's position is: drawn at it, as
         // the outline and hit-test place it.
-        const auto*            mesh   = assetRegistry.getTemplate(placed.templateId);
+        const auto*            mesh   = templateRecord.mesh;
         const Foundation::Rect bounds = worldview::templateBounds(mesh);
         const assets::MeshYExtent meshY{.minY = bounds.y, .maxY = bounds.y + bounds.height}; // maxY: the feet
 
@@ -161,7 +164,11 @@ void DynamicEntityRenderSystem::pushItemStrips(uint32_t templateId, const ecs::A
     if (layout == nullptr) {
         return;
     }
-    // Carried by template id and layout: no name on the records.
+    // Carried by template id and layout: no name on the records. The layout pointer lives from here to this frame's
+    // emitSorted: layouts go only at the next update's releaseUnaskedLayouts or at a registry clear, and a clear runs
+    // on the main thread at the top of a frame (an asset reload, or a dev route, which the dev server runs before the
+    // update), never between this update and the render that reads the records; the renderer follows the registry's
+    // generation before it reads one.
     for (uint32_t strip = 0; strip < layout->layout.strips.size(); ++strip) {
         assets::PlacedEntity placed;
         placed.traits = appearance.traits;

@@ -2,8 +2,12 @@
 
 #include "assets/DetailLevels.h"
 
+#include <core/Vec2i64.h>
+#include <silhouette/Silhouette.h>
 #include <utils/Log.h>
 #include <vector/SVGLoader.h>
+
+#include <glm/common.hpp>
 
 #include <algorithm>
 #include <array>
@@ -636,6 +640,8 @@ namespace assets {
 				strip.maxX = bands[run.lastBand].maxX + (run.lastBand + 1 == bands.size() ? pad : 0.0F);
 				strip.minY = run.minY;
 				strip.maxY = run.maxY;
+				strip.bandMinX = run.firstBand == 0 ? -kInfinity : bands[run.firstBand].minX;
+				strip.bandMaxX = run.lastBand + 1 == bands.size() ? kInfinity : bands[run.lastBand].maxX;
 				for (const auto& [placement, runBands] : run.bandsByPlacement) {
 					const auto [extentMin, extentMax] = xRangeOf(footprints[placement]);
 					const auto [firstBand, lastBand] = placementBands.at(placement);
@@ -666,6 +672,161 @@ namespace assets {
 				strips.push_back(std::move(strip));
 			}
 			return strips;
+		}
+
+		/// The rings of the silhouette of a strip's triangles alone, at a raster cell of `cellMm`.
+		std::vector<geometry::Ring> stripSilhouette(const ItemView& view, const ViewStrip& strip, double cellMm) {
+			const renderer::TessellatedMesh& mesh = view.mesh;
+			std::vector<geometry::Vec2i64>	 vertices;
+			geometry::Vec2i64				 low{std::numeric_limits<int64_t>::max(), std::numeric_limits<int64_t>::max()};
+			geometry::Vec2i64				 high{std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::min()};
+			const auto faint = [&](uint16_t index) { return mesh.hasColors() && mesh.colors[index].a < kSilhouetteMinAlpha; };
+			for (uint32_t i = strip.firstIndex; i + 2 < strip.firstIndex + strip.indexCount; i += 3) {
+				const std::array<uint16_t, 3> corners{mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2]};
+				if (faint(corners[0]) && faint(corners[1]) && faint(corners[2])) {
+					continue;
+				}
+				for (const uint16_t index : corners) {
+					const geometry::Vec2i64 point = geometry::quantize({mesh.vertices[index].x, mesh.vertices[index].y});
+					low = {std::min(low.x, point.x), std::min(low.y, point.y)};
+					high = {std::max(high.x, point.x), std::max(high.y, point.y)};
+					vertices.push_back(point);
+				}
+			}
+			if (vertices.empty()) {
+				return {};
+			}
+			const double longest = static_cast<double>(std::max(high.x - low.x, high.y - low.y));
+			return geometry::silhouetteOfTriangles(vertices, std::max<int64_t>(1, static_cast<int64_t>(std::ceil(longest / cellMm))), 0);
+		}
+
+		double distanceToRings(const std::vector<geometry::Ring>& rings, glm::vec2 pointMm) {
+			double nearest = std::numeric_limits<double>::infinity();
+			for (const geometry::Ring& ring : rings) {
+				for (size_t i = 0; i < ring.size(); ++i) {
+					const glm::dvec2 from{static_cast<double>(ring[i].x), static_cast<double>(ring[i].y)};
+					const glm::dvec2 to{static_cast<double>(ring[(i + 1) % ring.size()].x), static_cast<double>(ring[(i + 1) % ring.size()].y)};
+					const glm::dvec2 along = to - from;
+					const double	 lengthSquared = (along.x * along.x) + (along.y * along.y);
+					const glm::dvec2 point{pointMm.x, pointMm.y};
+					const double	 t = lengthSquared > 0.0 ? std::clamp(((point.x - from.x) * along.x + (point.y - from.y) * along.y) / lengthSquared, 0.0, 1.0) : 0.0;
+					const glm::dvec2 closest = from + (along * t);
+					nearest = std::min(nearest, std::hypot(point.x - closest.x, point.y - closest.y));
+				}
+			}
+			return nearest;
+		}
+
+		/// The silhouette's rings cut at every strip's band edges into open lines, each given to the strip whose band
+		/// holds it; in a band of several strips, to the one whose own silhouette, rasterised at the whole's cell, it
+		/// lies nearest. Consecutive cuts given to one strip stay one line.
+		std::vector<std::vector<std::vector<glm::vec2>>> stripLinesOf(const ItemView& view, const std::vector<geometry::Ring>& rings) {
+			std::vector<std::vector<std::vector<glm::vec2>>> lines(view.strips.size());
+			if (view.strips.empty() || view.mesh.vertices.empty()) {
+				return lines;
+			}
+			std::vector<float> cuts;
+			for (const ViewStrip& strip : view.strips) {
+				for (const float x : {strip.bandMinX, strip.bandMaxX}) {
+					if (std::isfinite(x)) {
+						cuts.push_back(x);
+					}
+				}
+			}
+			std::sort(cuts.begin(), cuts.end());
+			cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
+
+			glm::vec2 low = view.mesh.vertices.front();
+			glm::vec2 high = low;
+			for (const Foundation::Vec2& vertex : view.mesh.vertices) {
+				low = glm::min(low, glm::vec2{vertex.x, vertex.y});
+				high = glm::max(high, glm::vec2{vertex.x, vertex.y});
+			}
+			constexpr double kMillimetresAMetre = 1000.0;
+			constexpr double kSilhouetteCells = 256.0; // silhouetteOfMesh's resolution
+			const double	 cellMm = std::max(1.0, static_cast<double>(std::max(high.x - low.x, high.y - low.y)) * kMillimetresAMetre / kSilhouetteCells);
+			std::vector<std::optional<std::vector<geometry::Ring>>> ownRings(view.strips.size());
+
+			std::vector<uint32_t> candidates;
+			const auto			  ownerAt = [&](glm::vec2 point) {
+				   candidates.clear();
+				   for (uint32_t strip = 0; strip < view.strips.size(); ++strip) {
+					   if (point.x >= view.strips[strip].bandMinX && point.x <= view.strips[strip].bandMaxX && view.strips[strip].indexCount > 0) {
+						   candidates.push_back(strip);
+					   }
+				   }
+				   if (candidates.size() == 1) {
+					   return candidates.front();
+				   }
+				   uint32_t best = candidates.empty() ? 0 : candidates.front();
+				   double	bestDistance = std::numeric_limits<double>::infinity();
+				   for (const uint32_t strip : candidates) {
+					   if (!ownRings[strip].has_value()) {
+						   ownRings[strip] = stripSilhouette(view, view.strips[strip], cellMm);
+					   }
+					   const double distance = distanceToRings(*ownRings[strip], point * static_cast<float>(kMillimetresAMetre));
+					   if (distance < bestDistance) {
+						   bestDistance = distance;
+						   best = strip;
+					   }
+				   }
+				   return best;
+			};
+
+			struct Cut {
+				glm::vec2 from;
+				glm::vec2 to;
+				uint32_t  strip = 0;
+			};
+			for (const geometry::Ring& ring : rings) {
+				if (ring.size() < 2) {
+					continue;
+				}
+				std::vector<Cut> pieces;
+				for (size_t i = 0; i < ring.size(); ++i) {
+					const Foundation::Vec2 fromMetres = geometry::dequantize(ring[i]);
+					const Foundation::Vec2 toMetres = geometry::dequantize(ring[(i + 1) % ring.size()]);
+					const glm::vec2		   from{fromMetres.x, fromMetres.y};
+					const glm::vec2		   to{toMetres.x, toMetres.y};
+					const float			   lowX = std::min(from.x, to.x);
+					const float			   highX = std::max(from.x, to.x);
+					auto				   cut = std::upper_bound(cuts.begin(), cuts.end(), lowX);
+					std::vector<glm::vec2> stops{from};
+					std::vector<glm::vec2> inner;
+					for (; cut != cuts.end() && *cut < highX; ++cut) {
+						const float t = (*cut - from.x) / (to.x - from.x);
+						inner.push_back(from + ((to - from) * t));
+					}
+					if (from.x > to.x) {
+						std::reverse(inner.begin(), inner.end());
+					}
+					stops.insert(stops.end(), inner.begin(), inner.end());
+					stops.push_back(to);
+					for (size_t stop = 0; stop + 1 < stops.size(); ++stop) {
+						pieces.push_back({.from = stops[stop], .to = stops[stop + 1], .strip = ownerAt((stops[stop] + stops[stop + 1]) * 0.5F)});
+					}
+				}
+				// Start where the owner changes, so no line wraps round the ring's first point; a ring all one strip's
+				// is one line that closes on itself.
+				size_t start = 0;
+				for (size_t i = 0; i < pieces.size(); ++i) {
+					if (pieces[i].strip != pieces[(i + pieces.size() - 1) % pieces.size()].strip) {
+						start = i;
+						break;
+					}
+				}
+				std::vector<glm::vec2>* line = nullptr;
+				uint32_t				lineStrip = 0;
+				for (size_t step = 0; step < pieces.size(); ++step) {
+					const Cut& piece = pieces[(start + step) % pieces.size()];
+					if (line == nullptr || piece.strip != lineStrip) {
+						line = &lines[piece.strip].emplace_back(std::vector<glm::vec2>{piece.from});
+						lineStrip = piece.strip;
+					}
+					line->push_back(piece.to);
+				}
+			}
+			return lines;
 		}
 
 	} // namespace
@@ -759,7 +920,7 @@ namespace assets {
 
 		// The flat strip: every flat part on the ground, or the whole item when it has no body.
 		ItemStrip flatStrip{
-			.anchorLocalY = std::numeric_limits<float>::lowest(), .minX = kInfinity, .maxX = -kInfinity, .minY = kInfinity, .maxY = -kInfinity, .flat = true, .pieces = {}
+			.anchorLocalY = std::numeric_limits<float>::lowest(), .minX = kInfinity, .maxX = -kInfinity, .minY = kInfinity, .maxY = -kInfinity, .bandMinX = -kInfinity, .bandMaxX = kInfinity, .flat = true, .pieces = {}
 		};
 		for (uint32_t i = 0; i < parts.placements.size(); ++i) {
 			const PartDefinition& part = parts.parts[parts.placements[i].part];
@@ -838,6 +999,8 @@ namespace assets {
 			out.maxX = strip.maxX;
 			out.minY = strip.minY;
 			out.maxY = strip.maxY;
+			out.bandMinX = strip.bandMinX;
+			out.bandMaxX = strip.bandMaxX;
 			out.flat = strip.flat;
 		}
 
@@ -864,7 +1027,8 @@ namespace assets {
 	ItemView buildItemView(const AssetDefinition& def, uint32_t turnQuanta, uint8_t level, const ViewConfig& config) {
 		ItemView view = buildItemMesh(def, turnQuanta, level, config);
 		if (view.error.empty() && level == referenceDetailLevel(def.detailLevels)) {
-			view.silhouette = silhouetteOfMesh(view.mesh);
+			view.silhouette.silhouette = silhouetteOfMesh(view.mesh);
+			view.silhouette.stripLines = stripLinesOf(view, view.silhouette.silhouette.rings);
 		}
 		return view;
 	}
