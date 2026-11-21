@@ -13,6 +13,7 @@
 #include <construction/ItemClearance.h>
 #include <ecs/EntityID.h>
 #include <ecs/PlacedItemIndex.h>
+#include <ecs/systems/PlacedItemSystem.h>
 #include <ecs/World.h>
 #include <math/Types.h>
 #include <world/camera/WorldCamera.h>
@@ -77,7 +78,10 @@ class PlacementSystem {
 	explicit PlacementSystem(const Args& args);
 
 	/// The walls and foundations a turned item squares to and slides flush against. Null = none.
-	void setConstructionWorld(const construction::ConstructionWorld* world) { constructionWorld = world; }
+	void setConstructionWorld(const construction::ConstructionWorld* world) {
+		constructionWorld = world;
+		wallRingsVersion = UINT64_MAX;
+	}
 
 	// --- Build Menu Flow ---
 
@@ -160,18 +164,19 @@ class PlacementSystem {
 	/// furniture, and a crafted crate's install target's.
 	[[nodiscard]] bool footprintBuildableNow(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta) const;
 
-	/// Why `defName` can't be set up at `worldPos` turned `turnQuanta`, by the rules that hold whoever places it:
-	/// its ground (footprintBuildableNow), then its body and clearance against the other items, installed and
-	/// pending, and the walls (construction::itemsRefusal), `ignore` aside. Nothing when it can. The dev spawn's
-	/// gate and a crafted crate's install target's; the ghost adds player visibility.
+	/// Why `defName` can't be set up at `worldPos` turned `turnQuanta` (rotatable-placed-items 14.2), the checks in order:
+	/// its body against other items' bodies, installed and pending, then against the walls (construction::bodyRefusal);
+	/// its ground (footprintBuildableNow); its footprint seen, when player visibility is on; its clearance
+	/// (construction::clearanceRefusal). `ignore` (the crate being moved) is left out. Nothing when it can. The ghost's,
+	/// the dev spawn's, and a crafted crate's install target's.
 	[[nodiscard]] std::optional<construction::PlacementRefusal>
 	refusalAt(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta, ecs::EntityID ignore) const;
 
 	/// Where a freshly crafted `defName` crate is installed beside the station at `stationPos`, at turn 0: a
 	/// spot at least 1 m off it, tried first along `aim` (NavigationSystem::findValidPositionNear),
-	/// that refusalAt takes. nullopt when none does, so the crate waits for the player to
-	/// place it.
-	[[nodiscard]] std::optional<glm::vec2> installTargetNear(const std::string& defName, glm::vec2 stationPos, glm::vec2 aim) const;
+	/// that refusalAt takes, held in the placed item index as a pending target until its crate is spawned. nullopt
+	/// when none does, so the crate waits for the player to place it.
+	[[nodiscard]] std::optional<glm::vec2> installTargetNear(const std::string& defName, glm::vec2 stationPos, glm::vec2 aim);
 
 	/// Whether `defName` is furniture that is built or installed where it stands: a crafting station
 	/// or a storage container, the two kinds spawnEntity sets up and the build menu places.
@@ -240,14 +245,17 @@ class PlacementSystem {
 	/// def's collision outline as both (it never turns); empty for a def with neither.
 	[[nodiscard]] ecs::ItemOutlines outlinesAt(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta) const;
 
-	/// Rules 3 and 4 (construction::itemsRefusal) for `defName` at `worldPos` turned `turnQuanta`, `ignore` aside.
-	[[nodiscard]] std::optional<construction::PlacementRefusal>
-	itemsRefusalAt(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta, ecs::EntityID ignore) const;
+	/// `defName`'s footprint at `worldPos` turned `turnQuanta`: outlinesAt's collider rings, or just `worldPos` when it
+	/// has none.
+	[[nodiscard]] std::vector<std::vector<glm::vec2>> footprintAt(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta) const;
 
-	/// Why the held item can't go at `worldPos` turned `turnQuanta` (rotatable-placed-items 14.2): its ground, then
-	/// its footprint seen when player visibility is on, then its body and clearance.
-	[[nodiscard]] std::optional<construction::PlacementRefusal> placeable(Foundation::Vec2 worldPos, uint32_t turnQuanta) const;
+	/// The placed item index, from the world's PlacedItemSystem; null when it has none.
+	[[nodiscard]] const ecs::PlacedItemIndex* placedItems() const;
 
+	/// The walls' outlines (construction::wallOutlines), kept until the construction world's version moves.
+	[[nodiscard]] const std::vector<std::vector<glm::vec2>>& wallRings() const;
+	mutable std::vector<std::vector<glm::vec2>> wallRingsCache;
+	mutable std::uint64_t						wallRingsVersion = UINT64_MAX;
 	static constexpr float kPixelsPerMeter = 8.0F;
 };
 

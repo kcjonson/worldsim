@@ -16,6 +16,7 @@
 #include <ecs/components/Packaged.h>
 #include <ecs/components/Transform.h>
 #include <ecs/systems/NavigationSystem.h>
+#include <ecs/systems/PlacedItemSystem.h>
 #include <ecs/systems/PlacedNothing.test.h>
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/SyntheticWorldSampler.h>
@@ -59,6 +60,7 @@ namespace {
 			assets::AssetRegistry::Get().registerTestDefinition(crate);
 
 			navigation = &seen.world.registerSystem<ecs::NavigationSystem>();
+			seen.world.registerSystem<ecs::PlacedItemSystem>();
 			navigation->setChunkManager(landChunks());
 			navigation->setPlacementData(&emptyPlacement.executor, &emptyPlacement.processed);
 			const ecs::EntityID mesher = seen.world.createEntity();
@@ -315,9 +317,9 @@ TEST_F(PlacementFordTest, AWallBuiltBesideAStillGhostSlidesItOnTheNextUpdate) {
 	assets::ConstructionRegistry::Get().clear();
 }
 
-// A ghost over another item reads invalid with its reason: over an installed one its ground, which the item's collider
-// in the mesh refuses (rule 1); over a crate's install target, never in the mesh, the overlap (rule 3). A still ghost
-// learns of an item installed under it on the next update, through the placed items' revision (rotatable-placed-items
+// A ghost over another item reads "Overlaps an item", installed or pending: the overlap is tested before the ground,
+// which the installed item's collider in the mesh also refuses. A box flush against another is placeable. A still ghost
+// learns of a target given under it on the next update, through the placed items' revision (rotatable-placed-items
 // 11.3, 14.2).
 TEST_F(PlacementFordTest, AGhostOverAnotherItemIsRefusedWithItsReason) {
 	loadTestPartsBox();
@@ -325,11 +327,12 @@ TEST_F(PlacementFordTest, AGhostOverAnotherItemIsRefusedWithItsReason) {
 	const Foundation::Vec2 boxAt{10.0F, kCreekY + 4.0F};
 	placement->spawnEntity("TestPartsBox", boxAt, assets::turnQuantaFromDegrees(45.0));
 	seen.world.update(0.016F);
+	seen.world.update(0.016F);
 	placement->selectBuildItem("TestPartsBox");
 
 	hover({boxAt.x + 0.3F, boxAt.y});
 	EXPECT_FALSE(placement->ghostValid());
-	EXPECT_EQ(placement->ghostRefusal(), construction::PlacementRefusal::NotBuildableGround);
+	EXPECT_EQ(placement->ghostRefusal(), construction::PlacementRefusal::OverlapsItem);
 	EXPECT_FALSE(placement->handleRelease());
 
 	const Foundation::Vec2 squareAt{boxAt.x - 4.0F, boxAt.y};
@@ -363,7 +366,8 @@ TEST_F(PlacementFordTest, AGhostOverAnotherItemIsRefusedWithItsReason) {
 	EXPECT_EQ(placement->ghostRefusal(), construction::PlacementRefusal::OverlapsItem);
 }
 
-// An item across a wall's band, blueprint or built, is refused: its reserved region may not meet a band.
+// A body across a wall, blueprint or built, reads "A wall is in the way"; a blueprint wall drawn through a still ghost
+// reaches it on the next move through the construction world's version.
 TEST_F(PlacementFordTest, AGhostAcrossAWallIsRefused) {
 	loadTestPartsBox();
 	std::filesystem::path root = std::filesystem::path(__FILE__);
@@ -374,22 +378,77 @@ TEST_F(PlacementFordTest, AGhostAcrossAWallIsRefused) {
 	construction::ConstructionWorld walls;
 	placement->setConstructionWorld(&walls);
 	const glm::vec2 pivot{10.0F, kCreekY + 4.0F};
+	const auto		wallThrough = [&](glm::vec2 point) {
+		 ASSERT_TRUE(walls
+						 .commitSegment(
+							 geometry::quantize({point.x - 3.0F, point.y}), geometry::quantize({point.x + 3.0F, point.y}), "Wood", "Standard",
+							 construction::kInvalidFoundation, 0
+						 )
+						 .ok());
+	};
+	wallThrough(pivot);
+	placement->cancel();
+	placement->selectBuildItem("TestPartsBox");
+	hover({pivot.x, pivot.y});
+	EXPECT_FALSE(placement->ghostValid());
+	EXPECT_EQ(placement->ghostRefusal(), construction::PlacementRefusal::WallInTheWay);
+
+	const glm::vec2 still{pivot.x, pivot.y + 2.0F};
+	hover(still);
+	ASSERT_TRUE(placement->ghostValid());
+	wallThrough(still);
+	hover(still);
+	EXPECT_EQ(placement->ghostRefusal(), construction::PlacementRefusal::WallInTheWay) << "a blueprint wall beside a still ghost";
+	placement->setConstructionWorld(nullptr);
+	assets::ConstructionRegistry::Get().clear();
+}
+
+// The flush slide is not taken when it would move a ghost from a spot it can stand on to one it can't: a wall in the
+// creek with its face 0.1 m out from the bank would slide the box's back edge into the water.
+TEST_F(PlacementFordTest, AFlushSlideOntoRefusedGroundIsNotTaken) {
+	loadTestPartsBox();
+	std::filesystem::path root = std::filesystem::path(__FILE__);
+	for (int up = 0; up < 7; ++up) {
+		root = root.parent_path();
+	}
+	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((root / "assets" / "config" / "construction").string()));
+	construction::ConstructionWorld walls;
+	placement->setConstructionWorld(&walls);
+	const float bank = kCreekY + kCreekHalfWidthMeters;
+	// A 0.2 m wall: its south face at bank - 0.1.
 	ASSERT_TRUE(walls
 					.commitSegment(
-						geometry::quantize({pivot.x - 3.0F, pivot.y}), geometry::quantize({pivot.x + 3.0F, pivot.y}), "Wood", "Standard",
+						geometry::quantize({6.0F, bank - 0.2F}), geometry::quantize({14.0F, bank - 0.2F}), "Wood", "Standard",
 						construction::kInvalidFoundation, 0
 					)
 					.ok());
 	placement->cancel();
 	placement->selectBuildItem("TestPartsBox");
-	hover({pivot.x, pivot.y});
-	EXPECT_FALSE(placement->ghostValid());
-	EXPECT_EQ(placement->ghostRefusal(), construction::PlacementRefusal::TooClose);
-	hover({pivot.x, pivot.y + 2.0F});
+	// The box's back edge 0.15 m south of the bank, 0.25 m from the face: within the slide's reach.
+	const glm::vec2 pointer{10.0F, bank + 0.15F + 0.3F};
+	hover(pointer);
 	EXPECT_TRUE(placement->ghostValid());
+	EXPECT_NEAR(placement->ghostPosition().y, pointer.y, 0.001F) << "not slid into the creek";
+	EXPECT_EQ(placement->refusalAt("TestPartsBox", {pointer.x, bank - 0.1F + 0.3F}, 0, ecs::kInvalidEntity), construction::PlacementRefusal::NotBuildableGround)
+		<< "where the slide would have put it";
 	placement->setConstructionWorld(nullptr);
 	assets::ConstructionRegistry::Get().clear();
 }
+
+// Two crates crafted in one tick are given targets that keep off each other: a target handed out is held in the placed
+// item index before its crate is spawned.
+TEST_F(PlacementFordTest, TwoInstallTargetsInOneTickKeepApart) {
+	loadTestPartsBox();
+	const glm::vec2				   station{10.0F, kCreekY + 6.0F};
+	const std::optional<glm::vec2> first = placement->installTargetNear("TestPartsBox", station, {1.0F, 0.0F});
+	const std::optional<glm::vec2> second = placement->installTargetNear("TestPartsBox", station, {1.0F, 0.0F});
+	ASSERT_TRUE(first.has_value());
+	ASSERT_TRUE(second.has_value());
+	const glm::vec2 apart = glm::abs(*second - *first);
+	EXPECT_TRUE(apart.x >= 1.2F - 0.002F || apart.y >= 0.6F - 0.002F)
+		<< "overlapping targets (" << first->x << ", " << first->y << ") and (" << second->x << ", " << second->y << ")";
+}
+
 
 // Press fixes the position; past the click distance the front follows the pointer, snapped to the step; release places.
 TEST_F(PlacementFordTest, PressAndDragTurnsTheFrontToThePointer) {

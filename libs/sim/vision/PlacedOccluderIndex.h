@@ -42,12 +42,11 @@ namespace vision {
 		std::int64_t	 perimeterMm = 0;
 		geometry::Int128 diameterSquared;
 		std::int64_t	 diameterMm = 0;
-		// A concave ring is opaque whatever its diameter (sight-softening.md 2.2): a soft body's
-		// silhouette needs the eye outside its hull.
-		bool	 concave = false;
 		// What the kind is decided from: the whole body the ring is one of, its diameter over every
 		// ring's vertices and whether any ring is concave, so a body of several rings is never half
-		// opaque (rotatable-placed-items 11.2). The ring's own for a body of one ring.
+		// opaque (rotatable-placed-items 11.2); the ring's own for a body of one ring. A concave body is
+		// opaque whatever its diameter (sight-softening.md 2.2): a soft body's silhouette needs the eye
+		// outside its hull.
 		geometry::Int128 bodyDiameterSquared;
 		bool			 bodyConcave = false;
 		BodyKind		 kind		 = BodyKind::Soft;

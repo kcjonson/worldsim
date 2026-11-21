@@ -1,15 +1,16 @@
 #pragma once
 
-// The placed item index (rotatable-placed-items.md 11.2, 11.3): every installed parts item and every pending
-// install target, a crate's Packaged.targetPosition and targetRotation, with each entry's collider rings and
-// reserved region (collider unioned with clearance, section 4.2) in the world. Placement, the snap engine, the
-// wall tool, and the dev spawn read it through query(); nav, collision, and sight never do (installed items reach
-// them as obstacles through ColliderEntityIndex), so a pending target is never an obstacle.
+// The placed item index (rotatable-placed-items.md 11.3): the installed parts items and the pending install targets,
+// each with its collider and reserved region (collider unioned with clearance, section 4.2) in the world. Placement,
+// the snap engine, the wall tool, the dev spawn, and a crafted crate's install target read it through query(); nav,
+// collision, and sight never do (installed items reach them as obstacles through ColliderEntityIndex), so a pending
+// target is never an obstacle.
 //
-// Derived data, like ColliderEntityIndex: refresh() reads the ECS and diffs it against what the index held, so it
-// is never saved and a loaded world is indexed by its first refresh. revision() moves on any change, so a reader
-// settling on it (the still placement ghost) needs nothing else to notice an item installed, moved, turned,
-// targeted, or removed.
+// Derived data, never saved: the installed items are the parts entries of ColliderEntityIndex, re-read when its
+// revision moves, and the pending targets the crates the ECS holds with a target, diffed in place each refresh. A
+// target handed out before its crate exists is held (holdTarget) until the next refresh, which by then sees the crate.
+// revision() moves on any change, so a reader settling on it (the still placement ghost) needs nothing else to notice
+// an item installed, moved, turned, targeted, or removed.
 
 #include "EntityID.h"
 
@@ -28,6 +29,7 @@ namespace assets {
 
 namespace ecs {
 
+	class ColliderEntityIndex;
 	class World;
 
 	/// An item's outlines, each ring wound either way: its collider rings and its reserved region's outer rings
@@ -48,52 +50,60 @@ namespace ecs {
 	class PlacedItemIndex {
 	  public:
 		struct Entry {
-			EntityID	 entity = kInvalidEntity;
-			std::string	 defName;
-			glm::vec2	 position{0.0F, 0.0F};
-			float		 turnRadians = 0.0F;
-			bool		 pending = false; ///< an install target, not yet installed
-			ItemOutlines world;			  ///< in the world
-			glm::vec2	 lower{0.0F, 0.0F}; ///< the box of every outline, or the position when it has none
-			glm::vec2	 upper{0.0F, 0.0F};
+			EntityID	  entity = kInvalidEntity; ///< kInvalidEntity for a held target
+			std::string	  defName;
+			glm::vec2	  position{0.0F, 0.0F};
+			float		  turnRadians = 0.0F;
+			bool		  pending = false; ///< an install target, not yet installed
+			ItemOutlines  world;			///< in the world
+			glm::vec2	  lower{0.0F, 0.0F}; ///< the box of every outline, or the position when it has none
+			glm::vec2	  upper{0.0F, 0.0F};
+			std::uint64_t pass = 0;			 ///< the refresh that last saw it
 		};
 
-		/// Brings the index to what `world` holds, moving revision() when anything changed.
-		void refresh(World& world, const assets::AssetRegistry& registry);
+		/// Brings the index to the parts items `obstacles` holds and the crates with a target `world` holds, dropping
+		/// the held targets, and moves revision() when anything changed.
+		void refresh(const ColliderEntityIndex& obstacles, World& world, const assets::AssetRegistry& registry);
 
-		/// The entries whose box meets the box from `lower` to `upper`, in entity order, appended to `out`.
+		/// Holds an install target given out before its crate exists, as a pending entry, until the next refresh.
+		void holdTarget(const std::string& defName, glm::vec2 position, float turnRadians, const assets::AssetRegistry& registry);
+
+		/// The entries whose box meets the box from `lower` to `upper`, appended to `out`: installed and pending in
+		/// entity order, then the held targets.
 		void query(glm::vec2 lower, glm::vec2 upper, std::vector<const Entry*>& out) const;
 
-		[[nodiscard]] const Entry* find(EntityID entity) const;
-		[[nodiscard]] std::size_t  size() const { return entries.size(); }
-		[[nodiscard]] std::uint64_t revision() const { return changes; }
+		/// `entity`'s entry, installed or pending.
+		[[nodiscard]] const Entry*	find(EntityID entity) const;
+		[[nodiscard]] std::size_t	size() const { return entries.size() + heldTargets.size(); }
+		[[nodiscard]] std::uint64_t revision() const { return revisionCount; }
 
 		/// `defName`'s outlines at turn 0 (itemOutlines), kept until the registry reloads.
 		[[nodiscard]] const ItemOutlines& outlinesOf(const std::string& defName, const assets::AssetRegistry& registry) const;
 
 	  private:
+		struct Key {
+			EntityID entity = kInvalidEntity;
+			bool	 pending = false;
+			bool	 operator<(const Key& other) const;
+		};
 		using BucketKey = std::uint64_t;
 		[[nodiscard]] static BucketKey bucketKey(std::int32_t column, std::int32_t row);
 		template <typename Visit> static void eachBucket(glm::vec2 lower, glm::vec2 upper, Visit&& visit);
-		void								  list(const Entry& entry);
-		void								  unlist(const Entry& entry);
 
-		std::map<EntityID, Entry>					   entries;
-		std::unordered_map<BucketKey, std::vector<EntityID>> buckets;
-		std::uint64_t								   changes = 0;
+		/// Puts `defName` at the spot under `key`, replacing an entry there that stands elsewhere; true when it changed.
+		bool place(Key key, const std::string& defName, glm::vec2 position, float turnRadians, const assets::AssetRegistry& registry);
+		void unlist(const Key& key, const Entry& entry);
 
-		// Whether each entity's def is a parts def, looked up in the registry only when the entity is new or its def
-		// name changed, so the colonists, piles, and props cost a compare a refresh.
-		struct DefSeen {
-			std::string	  defName;
-			bool		  parts = false;
-			std::uint64_t pass = 0;
-		};
-		std::unordered_map<EntityID, DefSeen> defsSeen;
-		std::uint64_t						  pass = 0;
+		std::map<Key, Entry>							   entries;
+		std::vector<Entry>								   heldTargets;
+		std::unordered_map<BucketKey, std::vector<Key>> buckets;
+		std::uint64_t									   revisionCount = 0;
+		std::uint64_t									   pass = 0;
+		std::uint64_t									   obstaclesSeen = UINT64_MAX;
+		std::uint64_t									   registrySeen = UINT64_MAX;
 
 		mutable std::unordered_map<std::string, ItemOutlines> outlinesByDef;
-		mutable std::uint64_t								  outlinesGeneration = 0;
+		mutable std::uint64_t								  outlinesGeneration = UINT64_MAX;
 	};
 
 } // namespace ecs

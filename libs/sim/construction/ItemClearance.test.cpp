@@ -7,6 +7,7 @@
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
 #include <assets/PartsAsset.h>
+#include <ecs/ColliderEntityIndex.h>
 #include <ecs/World.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Packaged.h>
@@ -29,6 +30,7 @@ namespace {
 
 	constexpr const char* kBench = "Test_ClearanceBench";
 	constexpr const char* kBox = "Test_ClearanceBox";
+	constexpr const char* kLetterL = "Test_ClearanceL";
 	constexpr float		  kPi = std::numbers::pi_v<float>;
 
 	std::vector<glm::vec2> rect(float minX, float minY, float maxX, float maxY) {
@@ -48,13 +50,15 @@ namespace {
 		AssetRegistry::Get().registerTestDefinition(def);
 	}
 
-	// Rotatable-placed-items 13 and 20: a bench 1.6 m by 0.5 m keeping 0.6 m clear in front of it (+y at turn 0), and
-	// a box 0.6 m square with no clearance; a Wood Standard wall (0.2 m thick) from the shipped construction config.
+	// Rotatable-placed-items 13 and 20: a bench 1.6 m by 0.5 m keeping 0.6 m clear in front of it (+y at turn 0), a box
+	// 0.6 m square and an L 1 m across with arms 0.4 m wide, neither with clearance; Wood Standard walls (0.2 m thick)
+	// from the shipped construction config.
 	class ItemClearanceTest : public ::testing::Test {
 	  protected:
 		void SetUp() override {
 			registerParts(kBench, rect(-0.8F, -0.25F, 0.8F, 0.25F), rect(-0.8F, 0.25F, 0.8F, 0.85F));
 			registerParts(kBox, rect(-0.3F, -0.3F, 0.3F, 0.3F), {});
+			registerParts(kLetterL, {{-0.5F, -0.5F}, {0.5F, -0.5F}, {0.5F, -0.1F}, {-0.1F, -0.1F}, {-0.1F, 0.5F}, {-0.5F, 0.5F}}, {});
 			assets::ConstructionRegistry::Get().clear();
 			std::filesystem::path folder = __FILE__;
 			folder = folder.parent_path().parent_path().parent_path().parent_path() / "assets" / "config" / "construction";
@@ -65,12 +69,17 @@ namespace {
 			assets::ConstructionRegistry::Get().clear();
 		}
 
+		void refresh() {
+			static_cast<void>(obstacles.refresh(world, AssetRegistry::Get()));
+			items.refresh(obstacles, world, AssetRegistry::Get());
+		}
+
 		ecs::EntityID install(const char* defName, glm::vec2 at, float turnRadians = 0.0F) {
 			const ecs::EntityID entity = world.createEntity();
 			world.addComponent<ecs::Position>(entity, ecs::Position{at});
 			world.addComponent<ecs::Rotation>(entity, ecs::Rotation{turnRadians});
 			world.addComponent<ecs::Appearance>(entity, ecs::Appearance{defName});
-			items.refresh(world, AssetRegistry::Get());
+			refresh();
 			return entity;
 		}
 
@@ -78,18 +87,24 @@ namespace {
 			return ecs::placedOutlines(items.outlinesOf(defName, AssetRegistry::Get()), at, turnRadians);
 		}
 
+		// The body rules, then the clearance rule, against the items and the walls.
 		[[nodiscard]] std::optional<PlacementRefusal> refusal(const char* defName, glm::vec2 at, float turnRadians = 0.0F) const {
-			return itemsRefusal(items, &walls, held(defName, at, turnRadians), ecs::kInvalidEntity);
+			const std::vector<std::vector<glm::vec2>> wallRings = wallOutlines(walls);
+			const ecs::ItemOutlines					  outlines = held(defName, at, turnRadians);
+			if (std::optional<PlacementRefusal> body = bodyRefusal(items, wallRings, outlines, ecs::kInvalidEntity)) {
+				return body;
+			}
+			return clearanceRefusal(items, wallRings, outlines, ecs::kInvalidEntity);
 		}
 
-		// A Wood Standard wall, 0.2 m thick, along y = `centreY` from x = 0 to x = 20.
-		void wallAlong(float centreY) {
-			ASSERT_TRUE(walls.commitSegment(millimeters(0.0, centreY), millimeters(20.0, centreY), "Wood", "Standard", kInvalidFoundation, 0).ok());
+		void wall(glm::vec2 start, glm::vec2 end) {
+			ASSERT_TRUE(walls.commitSegment(millimeters(start.x, start.y), millimeters(end.x, end.y), "Wood", "Standard", kInvalidFoundation, 0).ok());
 		}
 
-		ecs::World			 world;
-		ecs::PlacedItemIndex items;
-		ConstructionWorld	 walls;
+		ecs::World				 world;
+		ecs::ColliderEntityIndex obstacles;
+		ecs::PlacedItemIndex	 items;
+		ConstructionWorld		 walls;
 	};
 
 } // namespace
@@ -113,6 +128,31 @@ TEST_F(ItemClearanceTest, FlushShapesDoNotMeetAndOverlappingOnesDo) {
 	EXPECT_TRUE(ringsMeet(turnedSquare(corner), turnedSquare(corner + along * 0.55F))) << "turned, 5 cm in";
 }
 
+// Two points that round to one micrometre are one point, so the ring still tests as it should; a ring that rounds to
+// fewer than three points meets anything its box meets, never nothing.
+TEST_F(ItemClearanceTest, ARingDegenerateInMillimetresFailsClosed) {
+	std::vector<glm::vec2> doubled = rect(0.0F, 0.0F, 1.0F, 1.0F);
+	doubled.insert(doubled.begin() + 1, glm::vec2{0.0000003F, 0.0F});
+	EXPECT_FALSE(ringsMeet(doubled, rect(1.0F, 0.0F, 2.0F, 1.0F))) << "a repeat point dropped, still flush";
+	EXPECT_TRUE(ringsMeet(doubled, rect(0.5F, 0.0F, 2.0F, 1.0F)));
+
+	const std::vector<glm::vec2> sliver{{0.5F, 0.5F}, {0.5000004F, 0.5F}, {0.5000002F, 0.5000003F}};
+	EXPECT_TRUE(ringsMeet(sliver, rect(0.0F, 0.0F, 1.0F, 1.0F)));
+	EXPECT_TRUE(ringsMeet(rect(0.0F, 0.0F, 1.0F, 1.0F), sliver));
+	EXPECT_FALSE(ringsMeet(sliver, rect(3.0F, 3.0F, 4.0F, 4.0F))) << "nowhere near";
+}
+
+// A concave collider is taken in like any other: an L flush against a box, along its outer edge and inside its notch,
+// is accepted, and one 3 mm into it refused.
+TEST_F(ItemClearanceTest, AConcaveColliderSitsFlush) {
+	install(kBox, {10.0F, 10.0F});
+	EXPECT_EQ(refusal(kLetterL, {10.8F, 10.0F}), std::nullopt) << "the L's left edge on the box's right";
+	EXPECT_EQ(refusal(kLetterL, {10.797F, 10.0F}), PlacementRefusal::OverlapsItem) << "3 mm in";
+	// The box in the notch: the notch's walls at local x = -0.1 and y = -0.1, the box's 0.3 m from its centre.
+	EXPECT_EQ(refusal(kLetterL, {9.8F, 9.8F}), std::nullopt) << "the box in the notch, both its walls flush";
+	EXPECT_EQ(refusal(kLetterL, {9.803F, 9.8F}), PlacementRefusal::OverlapsItem);
+}
+
 // A body may not enter another item's clearance, whichever was placed first; a box may sit flush against a box.
 TEST_F(ItemClearanceTest, ABodyIntoAClearanceIsRefusedBothWays) {
 	install(kBench, {10.0F, 10.0F});
@@ -121,17 +161,9 @@ TEST_F(ItemClearanceTest, ABodyIntoAClearanceIsRefusedBothWays) {
 	EXPECT_EQ(refusal(kBox, {10.0F, 9.45F}), std::nullopt) << "flush against the bench's back, which keeps nothing clear";
 	EXPECT_EQ(refusal(kBox, {10.0F, 9.6F}), PlacementRefusal::OverlapsItem);
 
-	ecs::World			 other;
-	ecs::PlacedItemIndex otherItems;
-	const ecs::EntityID	 box = other.createEntity();
-	other.addComponent<ecs::Position>(box, ecs::Position{{20.0F, 20.7F}});
-	other.addComponent<ecs::Rotation>(box, ecs::Rotation{0.0F});
-	other.addComponent<ecs::Appearance>(box, ecs::Appearance{kBox});
-	otherItems.refresh(other, AssetRegistry::Get());
-	EXPECT_EQ(itemsRefusal(otherItems, nullptr, held(kBench, {20.0F, 20.0F}), ecs::kInvalidEntity), PlacementRefusal::TooClose)
-		<< "the bench placed with the box in its clearance";
-	EXPECT_EQ(itemsRefusal(otherItems, nullptr, held(kBench, {20.0F, 20.0F}, kPi), ecs::kInvalidEntity), std::nullopt)
-		<< "turned round, its clearance is behind it";
+	install(kBox, {20.0F, 20.7F});
+	EXPECT_EQ(refusal(kBench, {20.0F, 20.0F}), PlacementRefusal::TooClose) << "the bench placed with the box in its clearance";
+	EXPECT_EQ(refusal(kBench, {20.0F, 20.0F}, kPi), std::nullopt) << "turned round, its clearance is behind it";
 
 	install(kBox, {14.0F, 10.0F});
 	EXPECT_EQ(refusal(kBox, {14.6F, 10.0F}), std::nullopt) << "box against box";
@@ -151,26 +183,40 @@ TEST_F(ItemClearanceTest, APendingTargetRefusesLikeAnInstalledItem) {
 	world.addComponent<ecs::Position>(crate, ecs::Position{{2.0F, 2.0F}});
 	world.addComponent<ecs::Appearance>(crate, ecs::Appearance{kBox});
 	world.addComponent<ecs::Packaged>(crate, ecs::Packaged{});
-	items.refresh(world, AssetRegistry::Get());
+	refresh();
 	EXPECT_EQ(refusal(kBox, {2.0F, 2.0F}), std::nullopt);
 
 	world.getComponent<ecs::Packaged>(crate)->targetPosition = glm::vec2{30.0F, 30.0F};
-	items.refresh(world, AssetRegistry::Get());
+	refresh();
 	EXPECT_EQ(refusal(kBox, {30.2F, 30.0F}), PlacementRefusal::OverlapsItem);
-	EXPECT_EQ(itemsRefusal(items, nullptr, held(kBox, {30.2F, 30.0F}), crate), std::nullopt) << "its own target";
+	EXPECT_EQ(bodyRefusal(items, {}, held(kBox, {30.2F, 30.0F}), crate), std::nullopt) << "its own target";
 }
 
-// A wall's band, not its centreline, is tested against reserved regions, both ways: a wall whose centreline clears a
-// bench's clearance but whose band meets it is refused, and so is the bench placed after the wall. An item backed
-// onto the wall face is allowed.
-TEST_F(ItemClearanceTest, AWallsBandIsTestedBothWays) {
+// A body across a wall is "A wall is in the way"; a clearance into a wall is "Too close". A wall's band, not its
+// centreline, is tested, both ways; an item backed onto the face is allowed.
+TEST_F(ItemClearanceTest, AWallIsTestedByItsBandBothWays) {
 	install(kBench, {10.0F, 10.0F});
 	// The clearance's front edge is at y = 10.85; a centreline 0.05 m past it puts the band 0.05 m into it.
-	EXPECT_TRUE(bandMeetsItems(items, bandRing({5.0F, 10.9F}, {15.0F, 10.9F}, 0.1F)));
-	EXPECT_FALSE(bandMeetsItems(items, bandRing({5.0F, 10.95F}, {15.0F, 10.95F}, 0.1F))) << "the band's face on the clearance's edge";
-	EXPECT_TRUE(bandMeetsItems(items, bandRing({10.0F, 5.0F}, {10.0F, 15.0F}, 0.1F))) << "through the body";
+	EXPECT_TRUE(bandMeetsItems(items, drawnWallBand({5.0F, 10.9F}, {15.0F, 10.9F}, 0.1F, false, false)));
+	EXPECT_FALSE(bandMeetsItems(items, drawnWallBand({5.0F, 10.95F}, {15.0F, 10.95F}, 0.1F, false, false))) << "its face on the clearance's edge";
+	EXPECT_TRUE(bandMeetsItems(items, drawnWallBand({10.0F, 5.0F}, {10.0F, 15.0F}, 0.1F, false, false))) << "through the body";
 
-	wallAlong(20.9F);
-	EXPECT_EQ(refusal(kBench, {10.0F, 20.0F}), PlacementRefusal::TooClose) << "the bench placed after the wall";
+	wall({0.0F, 20.9F}, {20.0F, 20.9F});
+	EXPECT_EQ(refusal(kBench, {10.0F, 20.0F}), PlacementRefusal::TooClose) << "the bench placed after the wall, its clearance in the band";
 	EXPECT_EQ(refusal(kBench, {10.0F, 21.25F}), std::nullopt) << "backed onto the wall's face, its clearance away from it";
+	EXPECT_EQ(refusal(kBox, {10.0F, 20.9F}), PlacementRefusal::WallInTheWay) << "a body across the wall";
+}
+
+// At an L joint the junction fills the outer corner square: an item there meets the wall, and a wall drawn to the
+// joint is carried past its end to cover it.
+TEST_F(ItemClearanceTest, AWallsOuterCornerIsWall) {
+	wall({0.0F, 0.0F}, {10.0F, 0.0F});
+	wall({10.0F, 0.0F}, {10.0F, 10.0F});
+	// The outer corner square runs from (10, -0.1) to (10.1, 0); a box with its corner 5 cm into it.
+	EXPECT_EQ(refusal(kBox, {10.35F - 0.05F, -0.35F + 0.05F}), PlacementRefusal::WallInTheWay);
+	EXPECT_EQ(refusal(kBox, {10.4F, -0.4F}), std::nullopt) << "clear of the corner";
+
+	install(kBox, {10.35F - 0.05F, -0.35F + 0.05F});
+	EXPECT_FALSE(bandMeetsItems(items, drawnWallBand({0.0F, 0.0F}, {10.0F, 0.0F}, 0.1F, false, false))) << "cut at the vertex";
+	EXPECT_TRUE(bandMeetsItems(items, drawnWallBand({0.0F, 0.0F}, {10.0F, 0.0F}, 0.1F, false, true))) << "carried past the joint";
 }

@@ -73,7 +73,6 @@
 // nobody.
 
 #include "../ColliderEntityIndex.h"
-#include "../PlacedItemIndex.h"
 #include "../EntityID.h"
 #include "../ISystem.h"
 #include "StandPoints.h"
@@ -416,11 +415,7 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] bool placedObstacleInNavMesh(EntityID entity) const;
 	// The ECS entities with a collider, as of this tick's update: the obstacles that are not the
 	// placement executor's.
-	[[nodiscard]] const ColliderEntityIndex& colliderEntities() const { return colliderEntityIndex; }
-	// The installed parts items and pending install targets, as of this tick's update (rotatable-placed-items
-	// 11.3): what placement and the wall tool test against. Never read for the mesh.
-	[[nodiscard]] const PlacedItemIndex& placedItems() const { return placedItemIndex; }
-	// The forward snap found `mover` standing in a placed obstacle in the mesh this tick and left it
+	[[nodiscard]] const ColliderEntityIndex& colliderEntities() const { return colliderEntityIndex; }	// The forward snap found `mover` standing in a placed obstacle in the mesh this tick and left it
 	// there (nothing clear ahead): it is the snap's, and collision does not push it. Read between
 	// update() and endTick().
 	[[nodiscard]] bool snapHolds(EntityID mover) const;
@@ -531,7 +526,7 @@ class NavigationSystem : public ISystem {
 		EntityID			   entity = kInvalidEntity; // kInvalidEntity for the executor's
 		std::uint32_t		   ring = 0;				 // 0 for the executor's
 		bool				   operator<(const ObstacleKey& o) const;
-		[[nodiscard]] bool	   sameObstacle(const ObstacleKey& o) const;
+		[[nodiscard]] bool	   sameObstacle(const ObstacleKey& other) const;
 	};
 	[[nodiscard]] static ObstacleKey colliderEntityKey(const ColliderEntityIndex::Entry& entry, std::uint32_t ring);
 	// Where `entry`'s ring keys start in obstacleInMesh; they run while sameObstacle holds.
@@ -730,7 +725,6 @@ class NavigationSystem : public ISystem {
 	std::map<ObstacleKey, RingId> obstacleInMesh;
 	std::vector<RingId>			  detailRemovals;
 	ColliderEntityIndex			  colliderEntityIndex;
-	PlacedItemIndex				  placedItemIndex;
 	// The rings of collider entities that left or changed, taken whole by the next removal patch.
 	std::vector<RingId>			  colliderEntityRemovals;
 	vision::PlacedOccluderIndex	  placedOccluderIndex;

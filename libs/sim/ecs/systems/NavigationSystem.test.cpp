@@ -1414,6 +1414,64 @@ TEST_F(NavigationSystemTest, PartsItemRingsGoIntoNavAndSightAsOneBody) {
 	EXPECT_EQ(sys.placedOccluders().size(), 2U) << "the pair's two rings, once";
 }
 
+// An item is in nav whole: in once every ring has joined, out once it leaves. A world loaded with the same entities (a
+// fresh nav system over them) carves the same rings, and a work target at the item's position is found as an
+// obstacle, so the stand point beside it is off its body.
+TEST_F(NavigationSystemTest, PartsItemRingsAreWholeAndTheSameAfterALoad) {
+	registerTallItems();
+	const glm::vec2 pairAt{20.0F, 20.0F};
+	const glm::vec2 lAt{26.0F, 20.0F};
+	const auto		outlinesOf = [](const NavigationSystem& sys) {
+		 std::vector<geometry::Ring> outlines;
+		 for (const vision::PlacedOccluder* ring : occludersOf(sys)) {
+			 outlines.push_back(ring->outline);
+		 }
+		 const auto pointLess = [](const geometry::Vec2i64& left, const geometry::Vec2i64& right) {
+			 return left.x != right.x ? left.x < right.x : left.y < right.y;
+		 };
+		 std::sort(outlines.begin(), outlines.end(), [&](const geometry::Ring& left, const geometry::Ring& right) {
+			 return std::lexicographical_compare(left.begin(), left.end(), right.begin(), right.end(), pointLess);
+		 });
+		 return outlines;
+	};
+	const auto spawnBoth = [&](World& world) {
+		const EntityID pair = spawnThing(world, kTallPair, pairAt);
+		world.getComponent<Rotation>(pair)->radians = std::numbers::pi_v<float> * 0.25F;
+		return std::pair{pair, spawnThing(world, kTallL, lAt)};
+	};
+
+	World			  first;
+	NavigationSystem& firstSys = first.registerSystem<NavigationSystem>();
+	wireArea(first, firstSys);
+	settle(firstSys);
+	const auto [pair, letterL] = spawnBoth(first);
+	step(first, firstSys);
+	EXPECT_FALSE(firstSys.placedObstacleInNavMesh(pair)) << "gathered, no ring joined";
+	step(first, firstSys);
+	ASSERT_TRUE(firstSys.placedObstacleInNavMesh(pair));
+	ASSERT_EQ(firstSys.placedOccluders().size(), 3U);
+
+	const StandPoints stands = firstSys.standPointsBeside(lAt, lAt + glm::vec2{3.0F, 0.0F}, kAgentRadius);
+	ASSERT_GT(stands.size(), 0U);
+	EXPECT_TRUE(meshClear(firstSys, stands[0])) << "the stand point is off the L";
+	EXPECT_GT(glm::distance(stands[0], lAt), 0.4F) << "the L was found at its position";
+
+	World			  loaded;
+	NavigationSystem& loadedSys = loaded.registerSystem<NavigationSystem>();
+	wireArea(loaded, loadedSys);
+	settle(loadedSys);
+	spawnBoth(loaded);
+	settle(loadedSys);
+	EXPECT_EQ(outlinesOf(loadedSys), outlinesOf(firstSys)) << "the same rings after a load";
+
+	first.destroyEntity(pair);
+	step(first, firstSys);
+	step(first, firstSys);
+	EXPECT_FALSE(firstSys.placedObstacleInNavMesh(pair)) << "every ring out together";
+	EXPECT_EQ(firstSys.placedOccluders().size(), 1U);
+	static_cast<void>(letterL);
+}
+
 // Sight by height (sight-softening.md 2.2): a body lower than a colonist's eye stays out of the occluder
 // index from either source, the placement executor's or a spawned entity with a collider, so it casts
 // no shadow and spends no forest depth while nav still carves it and routes go round it; a tall simple

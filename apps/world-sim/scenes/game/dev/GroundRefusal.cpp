@@ -38,8 +38,7 @@ namespace world_sim {
 			if (*refusal == construction::PlacementRefusal::NotBuildableGround) {
 				return where() + "is not on clear buildable ground (water, a fordable stream, a placed obstacle, or ground no mover has meshed)";
 			}
-			return where() + "is refused: " + std::string(construction::placementRefusalLabel(*refusal)) +
-				   " (another item's body or clearance, or a wall's band)";
+			return where() + "is refused: " + std::string(construction::placementRefusalLabel(*refusal));
 		}
 		const std::string refusal = putDownRefusal(navigation, at);
 		return refusal.empty() ? refusal : "spawn: " + def + " at " + refusal;

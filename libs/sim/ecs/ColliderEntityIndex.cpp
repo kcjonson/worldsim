@@ -95,6 +95,9 @@ namespace ecs {
 			}
 		}
 		entries = std::move(current);
+		if (!changes.removed.empty() || !changes.added.empty()) {
+			++revisionCount;
+		}
 		std::erase_if(defsSeen, [this](const auto& known) { return known.second.pass != pass; });
 		return changes;
 	}

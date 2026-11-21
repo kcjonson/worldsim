@@ -690,8 +690,13 @@ namespace world_sim {
 		/// the material has no wall presets (the wall tool can't commit then).
 		[[nodiscard]] const assets::ThicknessPreset* activePreset() const;
 		/// Whether a wall of `preset` from `start` to `end` would meet a placed item's body or clearance, installed or
-		/// pending, anywhere in its band (rotatable-placed-items 13). False with no nav system.
-		[[nodiscard]] bool wallMeetsItems(Foundation::Vec2 start, Foundation::Vec2 end, const assets::ThicknessPreset& preset) const;
+		/// pending, anywhere in its band, carried past an end that joins another wall (construction::drawnWallBand,
+		/// rotatable-placed-items 13). False with no placed item index.
+		[[nodiscard]] bool wallMeetsItems(
+			Foundation::Vec2 start, Foundation::Vec2 end, const assets::ThicknessPreset& preset, bool joinsAtStart, bool joinsAtEnd
+		) const;
+		/// Whether `point` is a vertex of a wall in `world`.
+		[[nodiscard]] static bool joinsWall(const construction::ConstructionWorld& world, Foundation::Vec2 point);
 
 		/// Commit every consecutive pair of the in-progress chain as a wall segment
 		/// (commitWallSegments) and spawn a blueprint entity per segment. Clears the chain.

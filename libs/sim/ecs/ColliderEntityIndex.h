@@ -55,6 +55,10 @@ namespace ecs {
 		// the index holds what spawning creates, a handful against the placement executor's thousands.
 		void					  queryRect(glm::vec2 lower, glm::vec2 upper, std::vector<const Entry*>& out) const;
 		[[nodiscard]] std::size_t size() const { return entries.size(); }
+		/// Moves on every refresh that changed anything, so a reader deriving from the entries re-reads them only then.
+		[[nodiscard]] std::uint64_t revision() const { return revisionCount; }
+		/// Every entry, in entity order.
+		[[nodiscard]] const std::map<EntityID, Entry>& all() const { return entries; }
 
 	  private:
 		// Whether the entity's def has a collider at any age class, looked up in the registry only when
@@ -73,6 +77,7 @@ namespace ecs {
 		std::map<EntityID, Entry>			  entries;
 		std::unordered_map<EntityID, DefSeen> defsSeen;
 		std::uint64_t						  pass = 0;
+		std::uint64_t						  revisionCount = 0;
 	};
 
 } // namespace ecs

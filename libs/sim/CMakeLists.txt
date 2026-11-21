@@ -25,6 +25,7 @@ add_library(sim
     ecs/systems/CollisionSystem.cpp
     ecs/systems/WallCollisionSystem.cpp
     ecs/systems/WallStandPoint.cpp
+    ecs/systems/PlacedItemSystem.cpp
     ecs/systems/PlacedObstacleCollisionSystem.cpp
     ecs/systems/NavigationSystem.cpp
     ecs/systems/PlayerVisibilitySystem.cpp

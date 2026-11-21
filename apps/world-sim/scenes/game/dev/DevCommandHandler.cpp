@@ -30,6 +30,7 @@
 
 #include <debug/Tunables.h>
 
+#include <ecs/components/Packaged.h>
 #include <ecs/InventoryMass.h>
 #include <ecs/World.h>
 #include <ecs/WorldSource.h>
@@ -132,6 +133,7 @@ namespace world_sim {
 		verb("teleport", &DevCommandHandler::devTeleport);
 		verb("select", &DevCommandHandler::devSelect);
 		verb("place", &DevCommandHandler::devPlace);
+		verb("package", &DevCommandHandler::devPackage);
 		verb("kill", &DevCommandHandler::devKill);
 		verb("complete", &DevCommandHandler::devComplete);
 		verb("foundation", &DevCommandHandler::devFoundation, kFoundationLeastPoints);
@@ -698,6 +700,39 @@ namespace world_sim {
 		m_ctx.placement->selectBuildItem(def);
 		LOG_INFO(Game, "[DevAPI] place: '%s'", def.c_str());
 		return {};
+	}
+
+	DevRefusal DevCommandHandler::devPackage(const app::DevRequest& cmd) {
+		const std::string def = param(cmd, "def");
+		if (!PlacementSystem::turns(def)) {
+			return refuse("package: '" + def + "' is not a parts def");
+		}
+		const std::string targetText = param(cmd, "target");
+		if (targetText.empty()) {
+			return refuse("package: missing target=<x>,<y>");
+		}
+		const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
+		const Foundation::Vec2 target = parsePoint(targetText);
+		char*				   end = nullptr;
+		const std::string	   turnText = param(cmd, "turn", "0");
+		const double		   degrees = std::strtod(turnText.c_str(), &end);
+		if (end == turnText.c_str() || *end != '\0' || !std::isfinite(degrees)) {
+			return refuse("package: turn='" + turnText + "' is not a number of degrees");
+		}
+		const uint32_t turn = assets::turnQuantaFromDegrees(degrees);
+		if (const std::string refusal = putDownRefusal(m_ctx.navigation, at); !refusal.empty()) {
+			return refuse("package: the crate at " + refusal);
+		}
+		// The target is held to the rules a target the player picks is.
+		if (const std::optional<construction::PlacementRefusal> refusal = m_ctx.placement->refusalAt(def, target, turn, ecs::kInvalidEntity)) {
+			return refuse("package: the target is refused: " + std::string(construction::placementRefusalLabel(*refusal)));
+		}
+		const ecs::EntityID crate = m_ctx.placement->spawnEntity(def, at, 0);
+		m_ctx.world->addComponent<ecs::Packaged>(
+			crate, ecs::Packaged{.targetPosition = glm::vec2{target.x, target.y}, .targetRotation = assets::turnRadiansFromQuanta(turn)}
+		);
+		LOG_INFO(Game, "[DevAPI] package: '%s' at (%.1f, %.1f), target (%.1f, %.1f)", def.c_str(), at.x, at.y, target.x, target.y);
+		return {.okFields = ",\"entity\":" + std::to_string(static_cast<unsigned long long>(crate))};
 	}
 
 	void DevCommandHandler::serializePlacement(std::ostringstream& out) {

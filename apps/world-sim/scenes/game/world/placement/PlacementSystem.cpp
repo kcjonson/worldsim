@@ -58,28 +58,29 @@ namespace world_sim {
 			}
 			return ring.empty() ? std::nullopt : std::optional{std::move(ring)};
 		}
-
-		// `defName`'s footprint at `worldPos` turned `turnQuanta`, one ring each: a parts def's collider rings, another
-		// def's collision outline (it never turns), or just `worldPos` when it has neither.
-		std::vector<std::vector<glm::vec2>> footprintAt(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta) {
-			std::vector<std::vector<glm::vec2>> rings;
-			if (const auto* def = assets::AssetRegistry::Get().getDefinition(defName); def != nullptr) {
-				if (def->parts != nullptr) {
-					ecs::ItemOutlines collider;
-					for (const assets::CollisionShape& shape : def->partsColliders) {
-						collider.collider.push_back(shape.pointsMeters);
-					}
-					rings = ecs::placedOutlines(collider, {worldPos.x, worldPos.y}, assets::turnRadiansFromQuanta(turnQuanta)).collider;
-				} else if (std::optional<std::vector<glm::vec2>> outline = collisionOutlineAt(*def, worldPos)) {
-					rings.push_back(std::move(*outline));
-				}
-			}
-			if (rings.empty()) {
-				rings.push_back({{worldPos.x, worldPos.y}});
-			}
-			return rings;
-		}
 	} // namespace
+
+	const ecs::PlacedItemIndex* PlacementSystem::placedItems() const {
+		const ecs::PlacedItemSystem* system = ecsWorld != nullptr ? ecsWorld->tryGetSystem<ecs::PlacedItemSystem>() : nullptr;
+		return system != nullptr ? &system->items() : nullptr;
+	}
+
+	const std::vector<std::vector<glm::vec2>>& PlacementSystem::wallRings() const {
+		const std::uint64_t version = constructionWorld != nullptr ? constructionWorld->version() + 1 : 0;
+		if (version != wallRingsVersion) {
+			wallRingsCache = constructionWorld != nullptr ? construction::wallOutlines(*constructionWorld) : std::vector<std::vector<glm::vec2>>{};
+			wallRingsVersion = version;
+		}
+		return wallRingsCache;
+	}
+
+	std::vector<std::vector<glm::vec2>> PlacementSystem::footprintAt(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta) const {
+		std::vector<std::vector<glm::vec2>> rings = outlinesAt(defName, worldPos, turnQuanta).collider;
+		if (rings.empty()) {
+			rings.push_back({{worldPos.x, worldPos.y}});
+		}
+		return rings;
+	}
 
 	PlacementSystem::PlacementSystem(const Args& args)
 		: ecsWorld(args.world),
@@ -193,7 +194,9 @@ namespace world_sim {
 		}
 		if (navigation != nullptr) {
 			state.navigationGeneration = navigation->generation();
-			state.placedItemsRevision = navigation->placedItems().revision();
+		}
+		if (const ecs::PlacedItemIndex* items = placedItems(); items != nullptr) {
+			state.placedItemsRevision = items->revision();
 		}
 		if (const ecs::PlayerVisibilitySystem* visibility = ecsWorld != nullptr ? ecs::PlayerVisibilitySystem::gate(*ecsWorld) : nullptr) {
 			state.seenEpoch = visibility->epoch();
@@ -262,11 +265,11 @@ namespace world_sim {
 	}
 
 	void PlacementSystem::settleGhost(uint32_t turnQuanta) {
-		const std::string& defName = placementMode.selectedDefName();
-		glm::vec2		   position = rawPosition;
-		if (turns(defName) && navigation != nullptr) {
-			const ecs::PlacedItemIndex&					 items = navigation->placedItems();
-			const std::vector<std::vector<glm::vec2>>& outlines = items.outlinesOf(defName, assets::AssetRegistry::Get()).reserved;
+		const std::string&			defName = placementMode.selectedDefName();
+		const ecs::PlacedItemIndex* items = placedItems();
+		glm::vec2					position = rawPosition;
+		if (turns(defName) && items != nullptr) {
+			const std::vector<std::vector<glm::vec2>>& outlines = items->outlinesOf(defName, assets::AssetRegistry::Get()).reserved;
 			if (!outlines.empty()) {
 				const assets::SnappingConfig& snapping = assets::ConstructionRegistry::Get().snapping();
 				const float					  reach = reachOf(outlines) + snapping.edgeSnapRadiusMeters;
@@ -275,7 +278,7 @@ namespace world_sim {
 					faces = construction::wallFaces(*constructionWorld, rawPosition, reach);
 				}
 				std::vector<const ecs::PlacedItemIndex::Entry*> near;
-				items.query(rawPosition - glm::vec2{reach, reach}, rawPosition + glm::vec2{reach, reach}, near);
+				items->query(rawPosition - glm::vec2{reach, reach}, rawPosition + glm::vec2{reach, reach}, near);
 				for (const ecs::PlacedItemIndex::Entry* other : near) {
 					if (other->entity == relocatingEntityId) {
 						continue;
@@ -288,7 +291,15 @@ namespace world_sim {
 				position += construction::flushSlide(held.reserved, faces, snapping);
 			}
 		}
-		refusal = placeable({position.x, position.y}, turnQuanta);
+		refusal = refusalAt(defName, {position.x, position.y}, turnQuanta, relocatingEntityId);
+		// The slide is a help: one that would take the ghost from a spot it can stand on to one it can't is not taken.
+		if (refusal.has_value() && position != rawPosition) {
+			if (const std::optional<construction::PlacementRefusal> unslid = refusalAt(defName, {rawPosition.x, rawPosition.y}, turnQuanta, relocatingEntityId);
+				!unslid.has_value()) {
+				position = rawPosition;
+				refusal.reset();
+			}
+		}
 		placementMode.updateGhost({position.x, position.y}, turnQuanta, !refusal.has_value());
 	}
 
@@ -306,23 +317,33 @@ namespace world_sim {
 		});
 	}
 
-	std::optional<glm::vec2> PlacementSystem::installTargetNear(const std::string& defName, glm::vec2 stationPos, glm::vec2 aim) const {
+	std::optional<glm::vec2> PlacementSystem::installTargetNear(const std::string& defName, glm::vec2 stationPos, glm::vec2 aim) {
 		if (navigation == nullptr) {
 			return std::nullopt;
 		}
-		return navigation->findValidPositionNear(stationPos, 1.0F, aim, [&](glm::vec2 candidate) {
+		const std::optional<glm::vec2> target = navigation->findValidPositionNear(stationPos, 1.0F, aim, [&](glm::vec2 candidate) {
 			return !refusalAt(defName, {candidate.x, candidate.y}, 0, ecs::kInvalidEntity).has_value();
 		});
+		// Its crate is spawned later in the tick: held until then, so the next craft finishing this tick keeps off it.
+		if (target.has_value()) {
+			if (ecs::PlacedItemSystem* system = ecsWorld != nullptr ? ecsWorld->tryGetSystem<ecs::PlacedItemSystem>() : nullptr) {
+				system->items().holdTarget(defName, *target, 0.0F, assets::AssetRegistry::Get());
+			}
+		}
+		return target;
 	}
 
 	ecs::ItemOutlines PlacementSystem::outlinesAt(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta) const {
 		const assets::AssetRegistry&   registry = assets::AssetRegistry::Get();
 		const assets::AssetDefinition* def = registry.getDefinition(defName);
-		if (def == nullptr || navigation == nullptr) {
+		if (def == nullptr) {
 			return {};
 		}
 		if (def->parts != nullptr) {
-			return ecs::placedOutlines(navigation->placedItems().outlinesOf(defName, registry), {worldPos.x, worldPos.y}, assets::turnRadiansFromQuanta(turnQuanta));
+			const ecs::PlacedItemIndex* items = placedItems();
+			return ecs::placedOutlines(
+				items != nullptr ? items->outlinesOf(defName, registry) : ecs::itemOutlines(*def), {worldPos.x, worldPos.y}, assets::turnRadiansFromQuanta(turnQuanta)
+			);
 		}
 		ecs::ItemOutlines outlines;
 		if (std::optional<std::vector<glm::vec2>> outline = collisionOutlineAt(*def, worldPos)) {
@@ -333,19 +354,24 @@ namespace world_sim {
 	}
 
 	std::optional<construction::PlacementRefusal>
-	PlacementSystem::itemsRefusalAt(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta, ecs::EntityID ignore) const {
-		if (navigation == nullptr) {
-			return std::nullopt;
-		}
-		return construction::itemsRefusal(navigation->placedItems(), constructionWorld, outlinesAt(defName, worldPos, turnQuanta), ignore);
-	}
-
-	std::optional<construction::PlacementRefusal>
 	PlacementSystem::refusalAt(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta, ecs::EntityID ignore) const {
+		const ecs::PlacedItemIndex* items = placedItems();
+		const ecs::ItemOutlines		held = outlinesAt(defName, worldPos, turnQuanta);
+		if (items != nullptr) {
+			if (std::optional<construction::PlacementRefusal> body = construction::bodyRefusal(*items, wallRings(), held, ignore)) {
+				return body;
+			}
+		}
 		if (!footprintBuildableNow(defName, worldPos, turnQuanta)) {
 			return construction::PlacementRefusal::NotBuildableGround;
 		}
-		return itemsRefusalAt(defName, worldPos, turnQuanta, ignore);
+		const ecs::PlayerVisibilitySystem* visibility = ecsWorld != nullptr ? ecs::PlayerVisibilitySystem::gate(*ecsWorld) : nullptr;
+		if (visibility != nullptr && !std::ranges::all_of(footprintAt(defName, worldPos, turnQuanta), [visibility](const std::vector<glm::vec2>& ring) {
+				return visibility->covers(ring);
+			})) {
+			return construction::PlacementRefusal::Unexplored;
+		}
+		return items != nullptr ? construction::clearanceRefusal(*items, wallRings(), held, ignore) : std::nullopt;
 	}
 
 	bool PlacementSystem::isFurniture(const std::string& defName) {
@@ -356,20 +382,6 @@ namespace world_sim {
 	bool PlacementSystem::turns(const std::string& defName) {
 		const auto* def = assets::AssetRegistry::Get().getDefinition(defName);
 		return def != nullptr && def->parts != nullptr;
-	}
-
-	std::optional<construction::PlacementRefusal> PlacementSystem::placeable(Foundation::Vec2 worldPos, uint32_t turnQuanta) const {
-		const std::string& defName = placementMode.selectedDefName();
-		if (!footprintBuildableNow(defName, worldPos, turnQuanta)) {
-			return construction::PlacementRefusal::NotBuildableGround;
-		}
-		const ecs::PlayerVisibilitySystem* visibility = ecsWorld != nullptr ? ecs::PlayerVisibilitySystem::gate(*ecsWorld) : nullptr;
-		if (visibility != nullptr && !std::ranges::all_of(footprintAt(defName, worldPos, turnQuanta), [visibility](const std::vector<glm::vec2>& ring) {
-				return visibility->covers(ring);
-			})) {
-			return construction::PlacementRefusal::Unexplored;
-		}
-		return itemsRefusalAt(defName, worldPos, turnQuanta, relocatingEntityId);
 	}
 
 	bool PlacementSystem::handleRelease() {

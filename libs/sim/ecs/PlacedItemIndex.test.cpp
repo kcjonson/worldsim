@@ -1,5 +1,6 @@
 #include "PlacedItemIndex.h"
 
+#include "ColliderEntityIndex.h"
 #include "World.h"
 #include "components/Appearance.h"
 #include "components/Packaged.h"
@@ -23,20 +24,25 @@ namespace {
 	constexpr const char* kItem = "Test_PlacedItem";
 	constexpr const char* kSimple = "Test_PlacedItemSimple";
 
-	// A parts item 1.2 m by 0.6 m with 0.5 m of clearance in front (+y), and a def that isn't parts.
+	// A parts item 1.2 m by 0.6 m (`halfWidth` 0.6) with 0.5 m of clearance in front (+y).
+	void registerItem(float halfWidth) {
+		AssetDefinition item;
+		item.defName = kItem;
+		item.assetType = assets::AssetType::Parts;
+		assets::PartsAsset parts{.bodyTopMeters = 0.8F};
+		parts.clearance.polygons.push_back({.outer = {{-halfWidth, 0.3F}, {halfWidth, 0.3F}, {halfWidth, 0.8F}, {-halfWidth, 0.8F}}});
+		item.parts = std::make_shared<const assets::PartsAsset>(std::move(parts));
+		item.partsColliders.push_back(
+			{.type = assets::CollisionShapeType::Polygon, .pointsMeters = {{-halfWidth, -0.3F}, {halfWidth, -0.3F}, {halfWidth, 0.3F}, {-halfWidth, 0.3F}}}
+		);
+		AssetRegistry::Get().registerTestDefinition(item);
+	}
+
+	// The item, and a def with a collider that isn't parts.
 	class PlacedItemIndexTest : public ::testing::Test {
 	  protected:
 		void SetUp() override {
-			AssetDefinition item;
-			item.defName = kItem;
-			item.assetType = assets::AssetType::Parts;
-			assets::PartsAsset parts{.bodyTopMeters = 0.8F};
-			parts.clearance.polygons.push_back({.outer = {{-0.6F, 0.3F}, {0.6F, 0.3F}, {0.6F, 0.8F}, {-0.6F, 0.8F}}});
-			item.parts = std::make_shared<const assets::PartsAsset>(std::move(parts));
-			item.partsColliders.push_back(
-				{.type = assets::CollisionShapeType::Polygon, .pointsMeters = {{-0.6F, -0.3F}, {0.6F, -0.3F}, {0.6F, 0.3F}, {-0.6F, 0.3F}}}
-			);
-			AssetRegistry::Get().registerTestDefinition(item);
+			registerItem(0.6F);
 			AssetDefinition simple;
 			simple.defName = kSimple;
 			simple.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {0.5F, 0.5F}});
@@ -52,10 +58,15 @@ namespace {
 			return entity;
 		}
 
-		void refresh() { index.refresh(world, AssetRegistry::Get()); }
+		// What a tick does: nav refreshes the obstacles, then the placed item system the index.
+		void refresh() {
+			static_cast<void>(obstacles.refresh(world, AssetRegistry::Get()));
+			index.refresh(obstacles, world, AssetRegistry::Get());
+		}
 
-		World			world;
-		PlacedItemIndex index;
+		World				world;
+		ColliderEntityIndex obstacles;
+		PlacedItemIndex		index;
 	};
 
 } // namespace
@@ -140,4 +151,36 @@ TEST_F(PlacedItemIndexTest, APendingTargetIsHeldAtItsTarget) {
 	entry = index.find(crate);
 	ASSERT_NE(entry, nullptr);
 	EXPECT_FALSE(entry->pending);
+	EXPECT_EQ(index.size(), 1U) << "installed, its pending target gone";
+}
+
+// A target held for a crate not yet spawned answers queries until the next refresh, which by then sees the crate.
+TEST_F(PlacedItemIndexTest, AHeldTargetLastsUntilTheNextRefresh) {
+	refresh();
+	const std::uint64_t revision = index.revision();
+	index.holdTarget(kItem, {5.0F, 5.0F}, 0.0F, AssetRegistry::Get());
+	EXPECT_GT(index.revision(), revision);
+	std::vector<const PlacedItemIndex::Entry*> found;
+	index.query({4.9F, 4.9F}, {5.1F, 5.1F}, found);
+	ASSERT_EQ(found.size(), 1U);
+	EXPECT_TRUE(found.front()->pending);
+	refresh();
+	found.clear();
+	index.query({4.9F, 4.9F}, {5.1F, 5.1F}, found);
+	EXPECT_TRUE(found.empty());
+}
+
+// A reload is seen by the refresh even when placement read the outlines after it first (a pointer move comes before
+// the tick): the installed item is re-read at the def's new size without moving.
+TEST_F(PlacedItemIndexTest, AReloadIsSeenWhateverReadTheOutlinesFirst) {
+	const EntityID item = place(world, kItem, {10.0F, 20.0F});
+	refresh();
+	ASSERT_NEAR(index.find(item)->lower.x, 9.4F, 1e-4F);
+
+	AssetRegistry::Get().clearDefinitions();
+	registerItem(1.0F);
+	EXPECT_NEAR(index.outlinesOf(kItem, AssetRegistry::Get()).collider.front().front().x, -1.0F, 1e-4F) << "the pointer's read";
+	refresh();
+	ASSERT_NE(index.find(item), nullptr);
+	EXPECT_NEAR(index.find(item)->lower.x, 9.0F, 1e-4F) << "re-read at 2 m wide";
 }

@@ -761,8 +761,8 @@ namespace ecs {
 		return std::tie(xBits, yBits, defName, entity, ring) < std::tie(o.xBits, o.yBits, o.defName, o.entity, o.ring);
 	}
 
-	bool NavigationSystem::ObstacleKey::sameObstacle(const ObstacleKey& o) const {
-		return chunk == o.chunk && xBits == o.xBits && yBits == o.yBits && defName == o.defName && entity == o.entity;
+	bool NavigationSystem::ObstacleKey::sameObstacle(const ObstacleKey& other) const {
+		return chunk == other.chunk && xBits == other.xBits && yBits == other.yBits && defName == other.defName && entity == other.entity;
 	}
 
 	NavigationSystem::ObstacleKey NavigationSystem::colliderEntityKey(const ColliderEntityIndex::Entry& entry, std::uint32_t ring) {
@@ -990,9 +990,6 @@ namespace ecs {
 	// --- Ticks, jobs and the join -------------------------------------------------
 
 	void NavigationSystem::update(float /*deltaTime*/) {
-		if (world != nullptr) {
-			placedItemIndex.refresh(*world, assets::AssetRegistry::Get());
-		}
 		settle();
 		startRouteSlice();
 		markStrayedRoutes();
@@ -1440,12 +1437,12 @@ namespace ecs {
 		ColliderEntityIndex::Changes changes = colliderEntityIndex.refresh(*world, assets::AssetRegistry::Get());
 		for (const ColliderEntityIndex::Entry& entry : changes.removed) {
 			const ObstacleKey first = colliderEntityKey(entry, 0);
-			auto			  it	= firstColliderEntityKey(entry);
-			while (it != obstacleInMesh.end() && it->first.sameObstacle(first)) {
+			auto			  ringKey = firstColliderEntityKey(entry);
+			while (ringKey != obstacleInMesh.end() && ringKey->first.sameObstacle(first)) {
 				// As queueRemovedDetail: taken after the joined jobs are collected.
-				assert(it->second >= 0);
-				colliderEntityRemovals.push_back(it->second);
-				it = obstacleInMesh.erase(it);
+				assert(ringKey->second >= 0);
+				colliderEntityRemovals.push_back(ringKey->second);
+				ringKey = obstacleInMesh.erase(ringKey);
 			}
 		}
 		return std::move(changes.added);
@@ -1504,29 +1501,37 @@ namespace ecs {
 
 	void NavigationSystem::notePlacedObstaclesAdded(const std::vector<ObstacleKey>& keys, const std::vector<RingId>& added, std::int64_t arrived) {
 		const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
-		for (std::size_t k = 0; k < keys.size(); ++k) {
-			if (added[k] == gnav::kNoRing) {
-				// Refused: it never enters the index, so sight and nav agree it is not there.
-				obstacleInMesh.erase(keys[k]);
-				continue;
-			}
-			obstacleInMesh.at(keys[k]) = added[k];
-		}
-		// An obstacle's rings are consecutive keys: one body, one kind, from all of them (rotatable-placed-items 11.2).
+		// An obstacle's rings are consecutive keys, and it is in nav, collision, and sight whole or not at all: one
+		// refused ring takes the rest out (the patch never refuses a blocked ring, but the rule holds), and its rings
+		// share one body and one kind (rotatable-placed-items 11.2).
 		std::vector<vision::PlacedOccluderIndex::BodyRing> body;
 		for (std::size_t first = 0; first < keys.size();) {
 			std::size_t end = first + 1;
 			while (end < keys.size() && keys[first].entity != kInvalidEntity && keys[end].sameObstacle(keys[first])) {
 				++end;
 			}
+			const bool refused = std::any_of(added.begin() + static_cast<std::ptrdiff_t>(first), added.begin() + static_cast<std::ptrdiff_t>(end),
+											 [](RingId ring) { return ring == gnav::kNoRing; });
+			for (std::size_t k = first; k < end; ++k) {
+				if (!refused) {
+					obstacleInMesh.at(keys[k]) = added[k];
+					continue;
+				}
+				// Refused: it never enters the index, so sight and nav agree it is not there.
+				obstacleInMesh.erase(keys[k]);
+				if (added[k] != gnav::kNoRing) {
+					colliderEntityRemovals.push_back(added[k]);
+				}
+			}
+			if (refused) {
+				first = end;
+				continue;
+			}
 			// A body lower than a colonist's eye stays out of the occluder index: it blocks walking, never
 			// sight (sight-softening.md 2.2).
 			const assets::AssetDefinition* def = registry.getDefinition(keys[first].defName);
 			body.clear();
 			for (std::size_t k = first; k < end; ++k) {
-				if (added[k] == gnav::kNoRing) {
-					continue;
-				}
 				const gnav::NavInputPolygon& ring = detailMesh.ring(added[k]).polygon;
 				if (ring.provenanceId == nav::kProvenancePlaced && ring.blocked) {
 					body.push_back({added[k], &ring.ring});
@@ -1834,8 +1839,8 @@ namespace ecs {
 		}
 		const ObstacleKey first = colliderEntityKey(*entry, 0);
 		bool			  any	= false;
-		for (auto it = firstColliderEntityKey(*entry); it != obstacleInMesh.end() && it->first.sameObstacle(first); ++it) {
-			if (it->second < 0) {
+		for (auto ringKey = firstColliderEntityKey(*entry); ringKey != obstacleInMesh.end() && ringKey->first.sameObstacle(first); ++ringKey) {
+			if (ringKey->second < 0) {
 				return false;
 			}
 			any = true;

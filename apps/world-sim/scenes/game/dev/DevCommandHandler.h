@@ -132,6 +132,9 @@ namespace world_sim {
 		// place?def=<asset>: starts placing the def as the build menu does, its ghost at the turn last used for it.
 		// An unknown def is a 400.
 		DevRefusal devPlace(const app::DevRequest& cmd);
+		// package?def=<parts def>&at=<x>,<y>&target=<x>,<y>&turn=<degrees>: a crated item at `at` waiting to be installed
+		// at the target, as a crafted crate or a moved item is; the target held to the placement rules.
+		DevRefusal devPackage(const app::DevRequest& cmd);
 		void devKill(const app::DevRequest& cmd);
 		void devComplete(const app::DevRequest& cmd);
 		DevRefusal devFoundation(const app::DevRequest& cmd);

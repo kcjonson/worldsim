@@ -120,7 +120,6 @@ namespace vision {
 		entry.centre		  = {sum.x / count, sum.y / count};
 		entry.diameterSquared = diameterSquared(entry.outline);
 		entry.diameterMm	  = wholeSquareRoot(entry.diameterSquared);
-		entry.concave		  = concave(entry.outline);
 		entry.kind			  = placedKind(entry, opaqueLeastMm);
 		eachBucket(entry.low, entry.high, [&](BucketKey key) { buckets[key].push_back(entry.serial); });
 		serialOfRing.emplace(ring, entry.serial);

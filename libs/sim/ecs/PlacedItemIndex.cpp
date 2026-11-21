@@ -1,5 +1,6 @@
 #include "PlacedItemIndex.h"
 
+#include "ColliderEntityIndex.h"
 #include "World.h"
 #include "components/Appearance.h"
 #include "components/Packaged.h"
@@ -14,6 +15,7 @@
 #include <glm/common.hpp>
 
 #include <algorithm>
+#include <tuple>
 #include <utility>
 
 namespace ecs {
@@ -50,12 +52,6 @@ namespace ecs {
 	}
 
 	namespace {
-		// What an entry's outlines are built from.
-		bool sameSpot(const PlacedItemIndex::Entry& left, const PlacedItemIndex::Entry& right) {
-			return left.defName == right.defName && left.position == right.position && left.turnRadians == right.turnRadians &&
-				   left.pending == right.pending;
-		}
-
 		void boxOf(PlacedItemIndex::Entry& entry) {
 			entry.lower = entry.position;
 			entry.upper = entry.position;
@@ -70,7 +66,15 @@ namespace ecs {
 				}
 			}
 		}
+
+		bool boxesMeet(const PlacedItemIndex::Entry& entry, glm::vec2 lower, glm::vec2 upper) {
+			return entry.lower.x <= upper.x && entry.upper.x >= lower.x && entry.lower.y <= upper.y && entry.upper.y >= lower.y;
+		}
 	} // namespace
+
+	bool PlacedItemIndex::Key::operator<(const Key& other) const {
+		return std::tie(entity, pending) < std::tie(other.entity, other.pending);
+	}
 
 	const ItemOutlines& PlacedItemIndex::outlinesOf(const std::string& defName, const assets::AssetRegistry& registry) const {
 		if (registry.generation() != outlinesGeneration) {
@@ -85,65 +89,80 @@ namespace ecs {
 		return outlinesByDef.emplace(defName, def != nullptr ? itemOutlines(*def) : ItemOutlines{}).first->second;
 	}
 
-	void PlacedItemIndex::refresh(World& world, const assets::AssetRegistry& registry) {
-		++pass;
-		const bool reloaded = registry.generation() != outlinesGeneration;
-		if (reloaded) {
-			outlinesByDef.clear();
-			outlinesGeneration = registry.generation();
+	bool PlacedItemIndex::place(Key key, const std::string& defName, glm::vec2 position, float turnRadians, const assets::AssetRegistry& registry) {
+		const auto held = entries.find(key);
+		if (held != entries.end()) {
+			Entry& entry = held->second;
+			entry.pass = pass;
+			if (entry.defName == defName && entry.position == position && entry.turnRadians == turnRadians) {
+				return false;
+			}
+			unlist(key, entry);
+			entries.erase(held);
 		}
-		std::map<EntityID, Entry> current;
-		for (auto [entity, position, appearance] : world.view<Position, Appearance>()) {
-			auto [seen, inserted] = defsSeen.try_emplace(entity);
-			if (inserted || seen->second.defName != appearance.defName || reloaded) {
-				const assets::AssetDefinition* def = registry.getDefinition(appearance.defName);
-				seen->second.defName = appearance.defName;
-				seen->second.parts = def != nullptr && def->parts != nullptr;
-			}
-			seen->second.pass = pass;
-			if (!seen->second.parts) {
-				continue;
-			}
-			Entry entry{.entity = entity, .defName = appearance.defName, .position = position.value};
-			if (const Rotation* rotation = world.getComponent<Rotation>(entity); rotation != nullptr) {
-				entry.turnRadians = rotation->radians;
-			}
-			if (const Packaged* packaged = world.getComponent<Packaged>(entity); packaged != nullptr) {
-				// A crate waiting for the player stands nowhere yet; one with a target stands at its target.
-				if (!packaged->targetPosition.has_value()) {
-					continue;
-				}
-				entry.position = *packaged->targetPosition;
-				entry.turnRadians = packaged->targetRotation.value_or(entry.turnRadians);
-				entry.pending = true;
-			}
-			current.emplace(entity, std::move(entry));
-		}
-		std::erase_if(defsSeen, [this](const auto& known) { return known.second.pass != pass; });
+		Entry entry{.entity = key.entity, .defName = defName, .position = position, .turnRadians = turnRadians, .pending = key.pending, .pass = pass};
+		entry.world = placedOutlines(outlinesOf(defName, registry), position, turnRadians);
+		boxOf(entry);
+		eachBucket(entry.lower, entry.upper, [&](BucketKey bucket) { buckets[bucket].push_back(key); });
+		entries.emplace(key, std::move(entry));
+		return true;
+	}
 
-		bool changed = false;
-		for (auto held = entries.begin(); held != entries.end();) {
-			const auto now = current.find(held->first);
-			if (now == current.end() || reloaded || !sameSpot(held->second, now->second)) {
-				unlist(held->second);
-				held = entries.erase(held);
-				changed = true;
-			} else {
-				++held;
+	void PlacedItemIndex::refresh(const ColliderEntityIndex& obstacles, World& world, const assets::AssetRegistry& registry) {
+		++pass;
+		bool changed = !heldTargets.empty();
+		heldTargets.clear();
+		// Its own record of the registry's generation: outlinesOf, read by placement between refreshes, keeps another.
+		const bool reloaded = registry.generation() != registrySeen;
+		registrySeen = registry.generation();
+
+		const bool rereadInstalled = reloaded || obstacles.revision() != obstaclesSeen;
+		obstaclesSeen = obstacles.revision();
+		if (reloaded) {
+			for (const auto& [key, entry] : entries) {
+				unlist(key, entry);
+			}
+			entries.clear();
+			changed = true;
+		}
+		if (rereadInstalled) {
+			for (const auto& [entity, obstacle] : obstacles.all()) {
+				if (!outlinesOf(obstacle.placed.defName, registry).empty()) {
+					changed = place({entity, false}, obstacle.placed.defName, obstacle.placed.position, obstacle.placed.rotation, registry) || changed;
+				}
 			}
 		}
-		for (auto& [entity, entry] : current) {
-			if (entries.contains(entity)) {
+		for (auto [entity, packaged, appearance] : world.view<Packaged, Appearance>()) {
+			// A crate waiting for the player stands nowhere yet; one with a target stands at its target.
+			if (!packaged.targetPosition.has_value() || outlinesOf(appearance.defName, registry).empty()) {
 				continue;
 			}
-			entry.world = placedOutlines(outlinesOf(entry.defName, registry), entry.position, entry.turnRadians);
-			boxOf(entry);
-			list(entries.emplace(entity, std::move(entry)).first->second);
+			const Rotation* rotation = world.getComponent<Rotation>(entity);
+			const float		turn = packaged.targetRotation.value_or(rotation != nullptr ? rotation->radians : 0.0F);
+			changed = place({entity, true}, appearance.defName, *packaged.targetPosition, turn, registry) || changed;
+		}
+		for (auto held = entries.begin(); held != entries.end();) {
+			// An installed entry is kept until the obstacles are read again; a pending one only while its crate is seen.
+			const bool seen = held->second.pass == pass || (!held->first.pending && !rereadInstalled);
+			if (seen) {
+				++held;
+				continue;
+			}
+			unlist(held->first, held->second);
+			held = entries.erase(held);
 			changed = true;
 		}
 		if (changed) {
-			++changes;
+			++revisionCount;
 		}
+	}
+
+	void PlacedItemIndex::holdTarget(const std::string& defName, glm::vec2 position, float turnRadians, const assets::AssetRegistry& registry) {
+		Entry entry{.defName = defName, .position = position, .turnRadians = turnRadians, .pending = true};
+		entry.world = placedOutlines(outlinesOf(defName, registry), position, turnRadians);
+		boxOf(entry);
+		heldTargets.push_back(std::move(entry));
+		++revisionCount;
 	}
 
 	PlacedItemIndex::BucketKey PlacedItemIndex::bucketKey(std::int32_t column, std::int32_t row) {
@@ -160,41 +179,46 @@ namespace ecs {
 		}
 	}
 
-	void PlacedItemIndex::list(const Entry& entry) {
-		eachBucket(entry.lower, entry.upper, [&](BucketKey key) { buckets[key].push_back(entry.entity); });
-	}
-
-	void PlacedItemIndex::unlist(const Entry& entry) {
-		eachBucket(entry.lower, entry.upper, [&](BucketKey key) {
-			std::vector<EntityID>& listed = buckets.at(key);
-			std::erase(listed, entry.entity);
+	void PlacedItemIndex::unlist(const Key& key, const Entry& entry) {
+		eachBucket(entry.lower, entry.upper, [&](BucketKey bucket) {
+			std::vector<Key>& listed = buckets.at(bucket);
+			std::erase_if(listed, [&key](const Key& other) { return other.entity == key.entity && other.pending == key.pending; });
 			if (listed.empty()) {
-				buckets.erase(key);
+				buckets.erase(bucket);
 			}
 		});
 	}
 
 	void PlacedItemIndex::query(glm::vec2 lower, glm::vec2 upper, std::vector<const Entry*>& out) const {
-		std::vector<EntityID> found;
-		eachBucket(lower, upper, [&](BucketKey key) {
-			if (const auto bucket = buckets.find(key); bucket != buckets.end()) {
-				found.insert(found.end(), bucket->second.begin(), bucket->second.end());
+		std::vector<Key> found;
+		eachBucket(lower, upper, [&](BucketKey bucket) {
+			if (const auto listed = buckets.find(bucket); listed != buckets.end()) {
+				found.insert(found.end(), listed->second.begin(), listed->second.end());
 			}
 		});
-		std::ranges::sort(found);
-		const auto [duplicates, end] = std::ranges::unique(found);
-		found.erase(duplicates, end);
-		for (const EntityID entity : found) {
-			const Entry& entry = entries.at(entity);
-			if (entry.lower.x <= upper.x && entry.upper.x >= lower.x && entry.lower.y <= upper.y && entry.upper.y >= lower.y) {
+		std::sort(found.begin(), found.end());
+		const auto sameKey = [](const Key& left, const Key& right) { return left.entity == right.entity && left.pending == right.pending; };
+		found.erase(std::unique(found.begin(), found.end(), sameKey), found.end());
+		for (const Key& key : found) {
+			const Entry& entry = entries.at(key);
+			if (boxesMeet(entry, lower, upper)) {
 				out.push_back(&entry);
+			}
+		}
+		for (const Entry& held : heldTargets) {
+			if (boxesMeet(held, lower, upper)) {
+				out.push_back(&held);
 			}
 		}
 	}
 
 	const PlacedItemIndex::Entry* PlacedItemIndex::find(EntityID entity) const {
-		const auto it = entries.find(entity);
-		return it != entries.end() ? &it->second : nullptr;
+		const auto installed = entries.find({entity, false});
+		if (installed != entries.end()) {
+			return &installed->second;
+		}
+		const auto pending = entries.find({entity, true});
+		return pending != entries.end() ? &pending->second : nullptr;
 	}
 
 } // namespace ecs
