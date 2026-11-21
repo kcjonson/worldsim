@@ -473,6 +473,7 @@ bool ConfigValidator::validateConstruction() {
     require(snappingSource, s.angleIncrementDegrees > 0.0F && s.angleIncrementDegrees <= 90.0F, "angleIncrementDegrees",
             s.angleIncrementDegrees, "in (0, 90]");
     require(snappingSource, s.guideRangeMeters > 0.0F, "guideRangeMeters", s.guideRangeMeters, "positive");
+    require(snappingSource, s.itemAlignRangeMeters >= 0.0F, "itemAlignRangeMeters", s.itemAlignRangeMeters, "non-negative");
     require(snappingSource, s.guideToleranceMeters > 0.0F, "guideToleranceMeters", s.guideToleranceMeters, "positive");
     require(snappingSource, angleWindow >= 0.0F && angleWindow < 90.0F, "the angle catch window", angleWindow, "in [0, 90)");
     require(snappingSource, crossingMinimum > s.guideDirectionToleranceDegrees && crossingMinimum <= 90.0F,

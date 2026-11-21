@@ -39,6 +39,10 @@ struct Packaged {
 	/// Used to hide the entity from world rendering while in transit.
 	/// The entity's Position stays at original location until placed.
 	bool beingCarried = false;
+
+	/// The turn it is installed at (ecs::Rotation's meaning, a whole number of turn quanta), set with targetPosition.
+	/// Unset, the item is installed at the turn it has.
+	std::optional<float> targetRotation;
 };
 
 } // namespace ecs

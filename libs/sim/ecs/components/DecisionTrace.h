@@ -83,6 +83,7 @@ namespace ecs {
 		bool					 carryingPackaged = false;	// The colonist already carries it: committed delivery (committed_work)
 		std::optional<glm::vec2> placeSourcePosition;		// Where the packaged item is
 		std::optional<glm::vec2> placeTargetPosition;		// Where to place it
+		std::optional<float>	 placeTargetRotation;		// The turn to place it at; unset keeps its own
 
 		// Harvest-specific fields (for Harvest tasks)
 		uint64_t harvestTargetKey = 0;	 // Memory key of the harvestable (tree, bush), not an ECS id

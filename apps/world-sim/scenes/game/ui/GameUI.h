@@ -138,7 +138,7 @@ namespace world_sim {
 		void			   showWallThicknesses(const assets::ConstructionRegistry& construction, const std::string& material);
 		void			   setConstructionStatus(const DrawingStatus& status);
 		// The key guide over the strip, for the drawing tool on (none while none is).
-		void			   setKeyGuide(std::optional<ToolKind> tool, const DrawingSettings& settings, bool collapsed);
+		void			   setKeyGuide(std::optional<ToolKind> tool, bool placing, const DrawingSettings& settings, bool collapsed);
 		void			   setRoomsOverlayActive(bool active);
 
 		void			   showColonistDetails(ecs::EntityID colonistId);

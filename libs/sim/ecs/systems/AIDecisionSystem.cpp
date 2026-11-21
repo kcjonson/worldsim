@@ -1529,6 +1529,7 @@ namespace ecs {
 				placeOption.placePackagedEntityId = static_cast<uint64_t>(packagedEntity);
 				placeOption.placeSourcePosition = package.position;
 				placeOption.placeTargetPosition = targetPos;
+				placeOption.placeTargetRotation = package.targetRotation;
 				placeOption.tiebreakId = static_cast<uint64_t>(packagedEntity);
 				placeOption.status = OptionStatus::Available;
 				placeOption.reason = isCarryingThis ? "Delivering {}" : "Placing {}";
@@ -1774,7 +1775,11 @@ namespace ecs {
 		for ([[maybe_unused]] auto [entity, position, packaged, appearance] : world.view<Position, Packaged, Appearance>()) {
 			if (packaged.targetPosition.has_value()) {
 				packageList.push_back(
-					{.entity = entity, .position = position.value, .target = *packaged.targetPosition, .beingCarried = packaged.beingCarried}
+					{.entity = entity,
+					 .position = position.value,
+					 .target = *packaged.targetPosition,
+					 .targetRotation = packaged.targetRotation,
+					 .beingCarried = packaged.beingCarried}
 				);
 			}
 		}
@@ -3473,6 +3478,7 @@ namespace ecs {
 			task.placePackagedEntityId = selected->placePackagedEntityId;
 			task.placeSourcePosition = selected->placeSourcePosition.value_or(glm::vec2{0.0F, 0.0F});
 			task.placeTargetPosition = selected->placeTargetPosition.value_or(glm::vec2{0.0F, 0.0F});
+			task.placeTargetRotation = selected->placeTargetRotation;
 			// The pickup leg first, unless he already carries it: then his pickup spot is stale and he
 			// goes straight to the placement.
 			task.targetPosition = selected->carryingPackaged ? task.placeTargetPosition : task.placeSourcePosition;

@@ -21,6 +21,13 @@
   <!-- Snap radius for cursor-to-edge snapping (T-junction on an existing segment). -->
   <edgeSnapRadiusMeters>0.3</edgeSnapRadiusMeters>
 
+  <!-- Placing an item: the nearest wall face or foundation edge within this distance
+       of the item's pivot turns it square to itself. The item's other snaps share the
+       values above: the angle step, the angle catch window, the edge snap radius (its
+       flush slide), guideDirectionToleranceDegrees, and doubleClickDistancePx (a drag
+       that turns it). -->
+  <itemAlignRangeMeters>2.0</itemAlignRangeMeters>
+
   <!-- Cursor distance from the origin point at which the "click here to close"
        halo appears and snapping locks to the origin. Generous to make closing easy. -->
   <originCloseRadiusMeters>0.5</originCloseRadiusMeters>

@@ -256,6 +256,9 @@ namespace ecs {
 
 		/// Target position for placement (from Packaged.targetPosition)
 		glm::vec2 targetPosition{0.0F, 0.0F};
+
+		/// The turn it is installed at, copied with the position (Packaged.targetRotation); unset keeps its own.
+		std::optional<float> targetRotation;
 	};
 
 	/// Variant holding the effect data for the current action
@@ -649,13 +652,15 @@ namespace ecs {
 		/// Phase 2 of PlacePackaged task. Colonist puts down the item and it becomes placed.
 		/// @param packagedEntityId Entity ID of the packaged item being placed
 		/// @param targetPos Position to place the item (from Packaged.targetPosition)
-		static Action PlacePackaged(const ActionEntries& actions, uint64_t packagedEntityId, glm::vec2 targetPos) {
+		/// @param targetRotation The turn to place it at, taken with the position; unset keeps its own
+		static Action PlacePackaged(const ActionEntries& actions, uint64_t packagedEntityId, glm::vec2 targetPos, std::optional<float> targetRotation) {
 			Action action = fromEntry(ActionType::PlacePackaged, actions.placePackaged());
 			action.targetPosition = targetPos;
 
 			PlacePackagedEffect placeEff;
 			placeEff.packagedEntityId = packagedEntityId;
 			placeEff.targetPosition = targetPos;
+			placeEff.targetRotation = targetRotation;
 			action.effect = placeEff;
 
 			return action;

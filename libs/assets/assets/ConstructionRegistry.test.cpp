@@ -294,6 +294,7 @@ TEST_F(ConstructionRegistryTest, Snapping_Parsed) {
 	EXPECT_GT(s.edgeSnapRadiusMeters, 0.0F);
 	EXPECT_FLOAT_EQ(s.angleIncrementDegrees, 15.0F);
 	EXPECT_FLOAT_EQ(s.originCloseRadiusMeters, 0.5F);
+	EXPECT_FLOAT_EQ(s.itemAlignRangeMeters, 2.0F);
 
 	EXPECT_FLOAT_EQ(s.guideRangeMeters, 8.0F);
 	EXPECT_FLOAT_EQ(s.guideToleranceMeters, 0.3F);
@@ -387,6 +388,7 @@ TEST_F(ConstructionRegistryTest, Snapping_EveryNewKeyParses) {
 	const std::string xml = R"(<?xml version="1.0"?>
 <ConstructionSnapping>
   <angleIncrementDegrees>10.0</angleIncrementDegrees>
+  <itemAlignRangeMeters>3.5</itemAlignRangeMeters>
   <guideRangeMeters>6.0</guideRangeMeters>
   <guideToleranceMeters>0.4</guideToleranceMeters>
   <guideCrossingRadiusMeters>1.5</guideCrossingRadiusMeters>
@@ -434,6 +436,7 @@ TEST_F(ConstructionRegistryTest, Snapping_EveryNewKeyParses) {
 
 	const auto& s = ConstructionRegistry::Get().snapping();
 	EXPECT_FLOAT_EQ(s.angleIncrementDegrees, 10.0F);
+	EXPECT_FLOAT_EQ(s.itemAlignRangeMeters, 3.5F);
 	EXPECT_FLOAT_EQ(s.guideRangeMeters, 6.0F);
 	EXPECT_FLOAT_EQ(s.guideToleranceMeters, 0.4F);
 	EXPECT_FLOAT_EQ(s.guideCrossingRadiusMeters, 1.5F);
@@ -780,6 +783,7 @@ TEST_F(ConstructionRegistryTest, Validation_RejectsOutOfRangeGuideAndLengthKeys)
 	expectSnappingRejected("<guideDirectionToleranceDegrees>8</guideDirectionToleranceDegrees>", "guideDirectionToleranceDegrees");
 	expectSnappingRejected("<angleIncrementDegrees>100</angleIncrementDegrees>", "angleIncrementDegrees");
 	expectSnappingRejected("<doubleClickDistancePx>-1</doubleClickDistancePx>", "doubleClickDistancePx");
+	expectSnappingRejected("<itemAlignRangeMeters>-1</itemAlignRangeMeters>", "itemAlignRangeMeters");
 	expectSnappingRejected("<doubleClickSeconds>0</doubleClickSeconds>", "doubleClickSeconds");
 	expectSnappingRejected("<doubleClickSeconds>-0.25</doubleClickSeconds>", "doubleClickSeconds");
 }

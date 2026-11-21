@@ -319,6 +319,7 @@ struct Task {
 	uint64_t  placePackagedEntityId = 0;		   // Entity ID of the packaged item to carry
 	glm::vec2 placeSourcePosition{0.0F, 0.0F};	   // Where the packaged item currently is
 	glm::vec2 placeTargetPosition{0.0F, 0.0F};	   // Where to place it (from Packaged.targetPosition)
+	std::optional<float> placeTargetRotation;	   // The turn to place it at, taken with the position (Packaged.targetRotation)
 
 	/// Step within a two-leg chain (Haul pickup then deposit, PlacePackaged pickup then place): 0 on
 	/// the first leg, 1 once the goods are in hand. A mid-chain provisioning task is classified on
@@ -423,6 +424,7 @@ struct Task {
 		placePackagedEntityId = 0;
 		placeSourcePosition = glm::vec2{0.0F, 0.0F};
 		placeTargetPosition = glm::vec2{0.0F, 0.0F};
+		placeTargetRotation.reset();
 		chainStep = 0;
 		chain = ChainProgress{};
 		priorityTier = kUnrankedTier;

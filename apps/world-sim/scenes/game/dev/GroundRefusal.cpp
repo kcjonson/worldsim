@@ -21,7 +21,7 @@ namespace world_sim {
 	}
 
 	std::string spawnGroundRefusal(
-		const PlacementSystem& placement, const ecs::NavigationSystem* navigation, const std::string& def, Foundation::Vec2 at
+		const PlacementSystem& placement, const ecs::NavigationSystem* navigation, const std::string& def, Foundation::Vec2 at, uint32_t turnQuanta
 	) {
 		const auto where = [&] { return "spawn: " + def + " at (" + std::to_string(at.x) + ", " + std::to_string(at.y) + ") "; };
 		if (navigation == nullptr) {
@@ -31,7 +31,7 @@ namespace world_sim {
 			if (placement.insideUnbuiltSite(at)) {
 				return where() + "is inside a foundation that is not built yet";
 			}
-			if (placement.footprintBuildableNow(def, at)) {
+			if (placement.footprintBuildableNow(def, at, turnQuanta)) {
 				return {};
 			}
 			return where() + "is not on clear buildable ground (water, a fordable stream, a placed obstacle, or ground no mover has meshed)";
