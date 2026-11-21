@@ -884,7 +884,9 @@ TEST_F(WallEndOnOpening, AnLJoinAtTheEndOfAWallCannotCutIntoADoorAlreadyNearIt) 
 	ASSERT_NE(world.addOpening(seg, 0.06875F, "Door", "Wood"), kInvalidOpening); // centre 2.55, edge 2.10
 	const ConstructionValidator validator(cfg, world);
 
-	EXPECT_EQ(validator.validateWallSegment({6.0F, 10.0F}, {2.0F, 6.0F}, presetOf("Heavy"), kInvalidFoundation).code, ValidationCode::WallEndsOnOpening);
+	EXPECT_EQ(
+		validator.validateWallSegment({6.0F, 10.0F}, {2.0F, 6.0F}, presetOf("Heavy"), kInvalidFoundation).code, ValidationCode::WallEndsOnOpening
+	);
 	EXPECT_TRUE(validator.validateWallSegment({10.0F, 11.0F}, {10.0F, 6.0F}, presetOf("Heavy"), kInvalidFoundation).ok());
 }
 
@@ -911,8 +913,9 @@ TEST_F(WallEndOnOpening, EveryStemTheValidatorAcceptsLeavesTheRehostedDoorValid)
 						const double reach = 0.45 + margin + halfThicknesses / sine + 0.005 + static_cast<double>(offset);
 						const float	 x = static_cast<float>(rightOfDoor ? 8.0 + reach : 8.0 - reach);
 						// The stem leans toward the door, the acute side, so the trim is the widest it can be.
-						const float	   lean = 5.0F * std::cos(angle * std::numbers::pi_v<float> / 180.0F);
-						const Vec2	   start = {rightOfDoor ? x - lean : x + lean, 6.0F + 5.0F * std::sin(angle * std::numbers::pi_v<float> / 180.0F)};
+						const float radians = angle * std::numbers::pi_v<float> / 180.0F;
+						const float lean = 5.0F * std::cos(radians);
+						const Vec2	start = {rightOfDoor ? x - lean : x + lean, 6.0F + 5.0F * std::sin(radians)};
 						const ConstructionValidator validator(cfg, world);
 						const auto verdict = validator.validateWallSegment(start, {x, 6.0F}, stem, kInvalidFoundation);
 						if (!verdict.ok()) {
@@ -920,13 +923,18 @@ TEST_F(WallEndOnOpening, EveryStemTheValidatorAcceptsLeavesTheRehostedDoorValid)
 							continue;
 						}
 						ConstructionWorld split = world;
-						ASSERT_TRUE(split.commitSegment(mm(start.x, start.y), mm(x, 6.0F), "Wood", stem.name, kInvalidFoundation, split.version()).ok());
+						ASSERT_TRUE(
+							split.commitSegment(mm(start.x, start.y), mm(x, 6.0F), "Wood", stem.name, kInvalidFoundation, split.version()).ok()
+						);
 						const Opening& door = split.openings().front();
-						const auto	   after = ConstructionValidator(cfg, split).validateOpening(door.segment, door.t, door.type, door.material, door.id);
-						const bool	   roundOff = (after.code == ValidationCode::OpeningMarginTooSmall || after.code == ValidationCode::OpeningOverlap) &&
-											  margin - after.measuredValue <= 1.5e-4;
-						EXPECT_TRUE(after.ok() || roundOff) << hostName << " host, " << stemName << " stem, " << angle << " degrees, x = " << x
-															<< ", code " << static_cast<int>(after.code) << ", measured " << after.measuredValue;
+						const ConstructionValidator tool(cfg, split);
+						const auto					after = tool.validateOpening(door.segment, door.t, door.type, door.material, door.id);
+						const bool					measuredAgainstMargin =
+							after.code == ValidationCode::OpeningMarginTooSmall || after.code == ValidationCode::OpeningOverlap;
+						const bool roundOff = measuredAgainstMargin && margin - after.measuredValue <= 1.5e-4;
+						EXPECT_TRUE(after.ok() || roundOff)
+							<< hostName << " host, " << stemName << " stem, " << angle << " degrees, x = " << x << ", code "
+							<< static_cast<int>(after.code) << ", measured " << after.measuredValue;
 						++accepted;
 					}
 				}

@@ -249,7 +249,8 @@ namespace construction {
 			double atStart = 0.0;
 			double atEnd = 0.0;
 		};
-		std::optional<EndClearances> endClearances(const ConstructionWorld& world, const Opening& opening, double halfWidthMeters, double marginMeters) {
+		std::optional<EndClearances>
+		endClearances(const ConstructionWorld& world, const Opening& opening, double halfWidthMeters, double marginMeters) {
 			const std::optional<OpeningRange> range = openingRange(world, opening.segment, halfWidthMeters * 2.0, marginMeters);
 			if (!range) {
 				return std::nullopt;
