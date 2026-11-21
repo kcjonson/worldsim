@@ -315,6 +315,82 @@ TEST_F(PlacementFordTest, AWallBuiltBesideAStillGhostSlidesItOnTheNextUpdate) {
 	assets::ConstructionRegistry::Get().clear();
 }
 
+// A ghost over another item reads invalid with its reason: over an installed one its ground, which the item's collider
+// in the mesh refuses (rule 1); over a crate's install target, never in the mesh, the overlap (rule 3). A still ghost
+// learns of an item installed under it on the next update, through the placed items' revision (rotatable-placed-items
+// 11.3, 14.2).
+TEST_F(PlacementFordTest, AGhostOverAnotherItemIsRefusedWithItsReason) {
+	loadTestPartsBox();
+	placement->cancel();
+	const Foundation::Vec2 boxAt{10.0F, kCreekY + 4.0F};
+	placement->spawnEntity("TestPartsBox", boxAt, assets::turnQuantaFromDegrees(45.0));
+	seen.world.update(0.016F);
+	placement->selectBuildItem("TestPartsBox");
+
+	hover({boxAt.x + 0.3F, boxAt.y});
+	EXPECT_FALSE(placement->ghostValid());
+	EXPECT_EQ(placement->ghostRefusal(), construction::PlacementRefusal::NotBuildableGround);
+	EXPECT_FALSE(placement->handleRelease());
+
+	const Foundation::Vec2 squareAt{boxAt.x - 4.0F, boxAt.y};
+	placement->spawnEntity("TestPartsBox", squareAt, 0);
+	seen.world.update(0.016F);
+	seen.world.update(0.016F);
+	hover({squareAt.x + 1.2F, squareAt.y});
+	EXPECT_TRUE(placement->ghostValid()) << "flush against a box in the mesh";
+
+	const glm::vec2		crateTarget{boxAt.x, boxAt.y + 3.0F};
+	const ecs::EntityID crate = seen.world.createEntity();
+	seen.world.addComponent<ecs::Position>(crate, ecs::Position{{boxAt.x - 6.0F, boxAt.y}});
+	seen.world.addComponent<ecs::Appearance>(crate, ecs::Appearance{"TestPartsBox"});
+	seen.world.addComponent<ecs::Packaged>(crate, ecs::Packaged{.targetPosition = crateTarget});
+	seen.world.update(0.016F);
+	hover({crateTarget.x + 0.3F, crateTarget.y});
+	EXPECT_FALSE(placement->ghostValid());
+	EXPECT_EQ(placement->ghostRefusal(), construction::PlacementRefusal::OverlapsItem);
+
+	const glm::vec2 clear{boxAt.x + 4.0F, boxAt.y};
+	hover(clear);
+	ASSERT_TRUE(placement->ghostValid());
+	EXPECT_EQ(placement->ghostRefusal(), std::nullopt);
+	// A target moves nothing in the mesh, so only the index's revision can tell the still ghost.
+	seen.world.getComponent<ecs::Packaged>(crate)->targetPosition = clear;
+	hover(clear);
+	EXPECT_TRUE(placement->ghostValid()) << "the index has not seen it before the update";
+	seen.world.update(0.016F);
+	hover(clear);
+	EXPECT_FALSE(placement->ghostValid()) << "settled again with the pointer still";
+	EXPECT_EQ(placement->ghostRefusal(), construction::PlacementRefusal::OverlapsItem);
+}
+
+// An item across a wall's band, blueprint or built, is refused: its reserved region may not meet a band.
+TEST_F(PlacementFordTest, AGhostAcrossAWallIsRefused) {
+	loadTestPartsBox();
+	std::filesystem::path root = std::filesystem::path(__FILE__);
+	for (int up = 0; up < 7; ++up) {
+		root = root.parent_path();
+	}
+	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((root / "assets" / "config" / "construction").string()));
+	construction::ConstructionWorld walls;
+	placement->setConstructionWorld(&walls);
+	const glm::vec2 pivot{10.0F, kCreekY + 4.0F};
+	ASSERT_TRUE(walls
+					.commitSegment(
+						geometry::quantize({pivot.x - 3.0F, pivot.y}), geometry::quantize({pivot.x + 3.0F, pivot.y}), "Wood", "Standard",
+						construction::kInvalidFoundation, 0
+					)
+					.ok());
+	placement->cancel();
+	placement->selectBuildItem("TestPartsBox");
+	hover({pivot.x, pivot.y});
+	EXPECT_FALSE(placement->ghostValid());
+	EXPECT_EQ(placement->ghostRefusal(), construction::PlacementRefusal::TooClose);
+	hover({pivot.x, pivot.y + 2.0F});
+	EXPECT_TRUE(placement->ghostValid());
+	placement->setConstructionWorld(nullptr);
+	assets::ConstructionRegistry::Get().clear();
+}
+
 // Press fixes the position; past the click distance the front follows the pointer, snapped to the step; release places.
 TEST_F(PlacementFordTest, PressAndDragTurnsTheFrontToThePointer) {
 	loadTestPartsBox();

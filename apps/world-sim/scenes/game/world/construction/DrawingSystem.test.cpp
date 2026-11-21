@@ -6,12 +6,17 @@
 #include "scenes/game/world/WorldPointer.h"
 #include "UserSettings.h"
 
+#include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
+#include <assets/PartsAsset.h>
 #include <construction/ConstructionValidator.h>
 #include <construction/ConstructionWorld.h>
 #include <construction/RoomDetection.h>
 #include <ecs/GoalTaskRegistry.h>
+#include <ecs/components/Appearance.h>
+#include <ecs/components/Packaged.h>
 #include <ecs/components/StructureBlueprint.h>
+#include <ecs/components/Transform.h>
 #include <ecs/systems/ConstructionSystem.h>
 
 #include <glm/geometric.hpp>
@@ -971,6 +976,51 @@ TEST_F(DrawingFordTest, WallCloseOnTheBankIsAccepted) {
 	EXPECT_TRUE(drawing->previewVerdict().valid);
 	clickToClose({6.0F, kCreekY - 12.0F});
 	EXPECT_EQ(drawing->world().segments().size(), 3U) << lastToast();
+}
+
+// A wall's band may not meet a placed item's body or clearance, here a crate's install target, which is in no mesh
+// (rotatable-placed-items 13): the segment reads invalid with the reason, and the click places nothing. Moved clear
+// of the band, the wall goes in.
+TEST_F(DrawingFordTest, AWallThroughAPlacedItemIsRefused) {
+	constexpr const char* kCrateItem = "Test_DrawingWallCrateItem";
+	assets::AssetDefinition item;
+	item.defName = kCrateItem;
+	item.assetType = assets::AssetType::Parts;
+	assets::PartsAsset parts{.bodyTopMeters = 0.8F};
+	parts.clearance.polygons.push_back({.outer = {{-0.3F, 0.3F}, {0.3F, 0.3F}, {0.3F, 0.8F}, {-0.3F, 0.8F}}});
+	item.parts = std::make_shared<const assets::PartsAsset>(std::move(parts));
+	item.partsColliders.push_back(
+		{.type = assets::CollisionShapeType::Polygon, .pointsMeters = {{-0.3F, -0.3F}, {0.3F, -0.3F}, {0.3F, 0.3F}, {-0.3F, 0.3F}}}
+	);
+	assets::AssetRegistry::Get().registerTestDefinition(item);
+	const ecs::EntityID crate = seen.world.createEntity();
+	seen.world.addComponent<ecs::Position>(crate, ecs::Position{{5.0F, kCreekY - 13.0F}});
+	seen.world.addComponent<ecs::Appearance>(crate, ecs::Appearance{kCrateItem});
+	seen.world.addComponent<ecs::Packaged>(crate, ecs::Packaged{.targetPosition = glm::vec2{10.0F, kCreekY - 8.0F}});
+	seen.world.update(0.016F);
+
+	hostFoundation(kCreekY - 14.0F, kCreekY - 2.0F);
+	drawing->activateWallTool();
+	click({10.0F, kCreekY - 11.0F});
+	ASSERT_EQ(drawing->status().pointCount, 1) << lastToast();
+	hover({10.0F, kCreekY - 5.0F});
+	EXPECT_FALSE(drawing->status().valid) << "through the body";
+	EXPECT_EQ(drawing->status().message, "an item or its clearance is in the way");
+	click({10.0F, kCreekY - 5.0F});
+	EXPECT_EQ(drawing->status().pointCount, 1);
+
+	// The clearance reaches 0.8 m south of the target: a 0.2 m wall with its centreline 0.85 m south of it has its band
+	// in the clearance, and one 0.95 m south has its face on the clearance's edge.
+	const auto across = [&](float southOfTarget) {
+		drawing->deactivate();
+		drawing->activateWallTool();
+		click({6.0F, kCreekY - 8.0F + southOfTarget});
+		hover({14.0F, kCreekY - 8.0F + southOfTarget});
+		return drawing->status().valid;
+	};
+	EXPECT_FALSE(across(0.85F)) << "the centreline clear of the clearance, the band in it";
+	EXPECT_TRUE(across(0.95F)) << drawing->status().message;
+	assets::AssetRegistry::Get().clearDefinitions();
 }
 
 // The Add's outline is valid, but it would build across the creek: the outline reads invalid

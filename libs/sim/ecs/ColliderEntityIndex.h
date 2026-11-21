@@ -1,11 +1,11 @@
 #pragma once
 
 // The ECS entities that are placed obstacles: every entity with a Position and an Appearance whose
-// def has a blocking collider at its age class, movers (AgentRadius) and packaged things (Packaged)
-// aside. Each is held as the
+// def has a blocking collider at its age class (a parts def's collider rings, rotatable-placed-items.md
+// 11.1), movers (AgentRadius) and packaged things (Packaged) aside. Each is held as the
 // assets::PlacedEntity the placement executor would hold for it (def, position, rotation, scale, age
-// class), so nav, collision, and sight put it in the world through nav::placedObstacleOutline like
-// any placed obstacle (rotatable-placed-items.md 11.2).
+// class), so nav, collision, and sight put each of its rings (nav::placedObstacleColliders) in the
+// world through nav::placedObstacleOutline like any placed obstacle (rotatable-placed-items.md 11.2).
 //
 // Derived data: refresh() reads the ECS and diffs it against what the index held, so it is never
 // saved and a world whose entities were restored is indexed by its first refresh. Nothing creating,
@@ -61,7 +61,7 @@ namespace ecs {
 		// the entity is new or its def name changed, so the piles and props with none cost a compare a
 		// refresh. A registry hot reload does not refresh it: a def that gains a collider mid-game leaves its
 		// existing entities non-blocking until they are re-created (a stale true is harmless, since
-		// refresh() re-checks collisionFor).
+		// refresh() re-checks the def's colliders).
 		[[nodiscard]] bool mayCollide(EntityID entity, const std::string& defName, const assets::AssetRegistry& registry);
 
 		struct DefSeen {

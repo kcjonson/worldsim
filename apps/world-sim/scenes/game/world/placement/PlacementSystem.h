@@ -10,7 +10,9 @@
 #include "PlacementMode.h"
 #include "PlacementTypes.h"
 
+#include <construction/ItemClearance.h>
 #include <ecs/EntityID.h>
+#include <ecs/PlacedItemIndex.h>
 #include <ecs/World.h>
 #include <math/Types.h>
 #include <world/camera/WorldCamera.h>
@@ -125,14 +127,16 @@ class PlacementSystem {
 
 	/// Render ghost preview (call during render phase)
 	/// Renders both the active placement ghost AND ghosts for all packaged
-	/// items awaiting colonist delivery (those with targetPosition set).
-	void render(int viewportW, int viewportH);
+	/// items awaiting colonist delivery (those with targetPosition set), and beside a refused ghost the reason.
+	void render(int viewportW, int viewportH, float uiScale);
 
 	// --- State Queries ---
 
 	[[nodiscard]] bool isActive() const { return placementMode.isActive(); }
 	[[nodiscard]] PlacementState state() const { return placementMode.state(); }
 	[[nodiscard]] bool ghostValid() const { return placementMode.isValidPlacement(); }
+	/// Why the ghost can't go where it stands (rotatable-placed-items 14.2); nothing while it can.
+	[[nodiscard]] std::optional<construction::PlacementRefusal> ghostRefusal() const { return refusal; }
 	[[nodiscard]] const std::string& selectedDefName() const { return placementMode.selectedDefName(); }
 	[[nodiscard]] Foundation::Vec2 ghostPosition() const { return placementMode.ghostPosition(); }
 	[[nodiscard]] uint32_t ghostTurnQuanta() const { return placementMode.ghostTurnQuanta(); }
@@ -149,15 +153,23 @@ class PlacementSystem {
 	[[nodiscard]] bool insideUnbuiltSite(Foundation::Vec2 worldPos) const;
 
 	/// Whether `defName` may be set up at `worldPos` turned `turnQuanta`: not on an unbuilt foundation
-	/// (insideUnbuiltSite), and its footprint is clear ground out of any ford (NavigationSystem::isAreaBuildableNow).
+	/// (insideUnbuiltSite), and its footprint, taken in by the flush tolerance (construction::takenIn) so it may stand
+	/// flush against an obstacle or a wall, is clear ground out of any ford (NavigationSystem::isAreaBuildableNow).
 	/// The footprint is a parts def's collider rings, another def's collision outline, or just `worldPos` when it
 	/// has neither. False with no nav system. The placement tool's ground gate, the /api/dev/spawn verb's for
 	/// furniture, and a crafted crate's install target's.
 	[[nodiscard]] bool footprintBuildableNow(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta) const;
 
+	/// Why `defName` can't be set up at `worldPos` turned `turnQuanta`, by the rules that hold whoever places it:
+	/// its ground (footprintBuildableNow), then its body and clearance against the other items, installed and
+	/// pending, and the walls (construction::itemsRefusal), `ignore` aside. Nothing when it can. The dev spawn's
+	/// gate and a crafted crate's install target's; the ghost adds player visibility.
+	[[nodiscard]] std::optional<construction::PlacementRefusal>
+	refusalAt(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta, ecs::EntityID ignore) const;
+
 	/// Where a freshly crafted `defName` crate is installed beside the station at `stationPos`, at turn 0: a
 	/// spot at least 1 m off it, tried first along `aim` (NavigationSystem::findValidPositionNear),
-	/// that footprintBuildableNow takes. nullopt when none does, so the crate waits for the player to
+	/// that refusalAt takes. nullopt when none does, so the crate waits for the player to
 	/// place it.
 	[[nodiscard]] std::optional<glm::vec2> installTargetNear(const std::string& defName, glm::vec2 stationPos, glm::vec2 aim) const;
 
@@ -204,14 +216,13 @@ class PlacementSystem {
 		std::uint64_t navigationGeneration = 0; // ground, water, and placed obstacles in the mesh
 		std::uint64_t seenEpoch = 0;			// ground the player has seen
 		bool		  revealed = false;
+		std::uint64_t placedItemsRevision = 0;	// items installed, moved, turned, targeted, or removed
 
 		bool operator==(const PointerState&) const = default;
 	};
 	std::optional<PointerState> lastMove;
-	/// Parts items installed, moved, or given a target change no revision, so a still ghost also settles every
-	/// this many pointer moves (frames while placing).
-	static constexpr uint32_t kItemRefreshMoves = 15;
-	uint32_t				  movesSinceSettle = 0;
+	/// Why the ghost can't go where it was last settled.
+	std::optional<construction::PlacementRefusal> refusal;
 
 	/// The pointer state now, with the world's revisions.
 	[[nodiscard]] PointerState pointerState(glm::vec2 pointerMeters, bool freeform) const;
@@ -222,24 +233,20 @@ class PlacementSystem {
 	/// The last turn used for each def this game, the ghost's starting turn (rotatable-placed-items 14.1).
 	std::unordered_map<std::string, uint32_t> lastTurns;
 
-	/// Each parts def's reserved region outlines at turn 0, read once under the registry's generation.
-	mutable std::unordered_map<std::string, std::vector<std::vector<glm::vec2>>> reservedOutlines;
-	mutable uint64_t															 outlinesGeneration = 0;
-
-	/// `defName`'s reserved region outlines at turn 0 (assets::reservedRegion's outer rings); empty for a def that
-	/// isn't parts or has none.
-	[[nodiscard]] const std::vector<std::vector<glm::vec2>>& reservedOutlinesOf(const std::string& defName) const;
-
 	/// Sets the ghost at `rawPosition` turned `turnQuanta`: slid flush when a parts item, its validity read there.
 	void settleGhost(uint32_t turnQuanta);
 
-	/// The faces near `pivot` the held item slides flush against: wall faces and other items' reserved regions,
-	/// installed and pending, within `reachMeters`.
-	[[nodiscard]] std::vector<std::vector<glm::vec2>> otherReservedRings(glm::vec2 pivot, float reachMeters) const;
+	/// `defName`'s outlines at `worldPos` turned `turnQuanta`: a parts def's collider and reserved region, any other
+	/// def's collision outline as both (it never turns); empty for a def with neither.
+	[[nodiscard]] ecs::ItemOutlines outlinesAt(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta) const;
 
-	/// Whether the held item can go at `worldPos` turned `turnQuanta`: footprintBuildableNow, and with the
-	/// footprint seen when player visibility is on.
-	[[nodiscard]] bool placeable(Foundation::Vec2 worldPos, uint32_t turnQuanta) const;
+	/// Rules 3 and 4 (construction::itemsRefusal) for `defName` at `worldPos` turned `turnQuanta`, `ignore` aside.
+	[[nodiscard]] std::optional<construction::PlacementRefusal>
+	itemsRefusalAt(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta, ecs::EntityID ignore) const;
+
+	/// Why the held item can't go at `worldPos` turned `turnQuanta` (rotatable-placed-items 14.2): its ground, then
+	/// its footprint seen when player visibility is on, then its body and clearance.
+	[[nodiscard]] std::optional<construction::PlacementRefusal> placeable(Foundation::Vec2 worldPos, uint32_t turnQuanta) const;
 
 	static constexpr float kPixelsPerMeter = 8.0F;
 };

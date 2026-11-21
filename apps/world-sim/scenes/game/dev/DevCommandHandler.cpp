@@ -710,6 +710,9 @@ namespace world_sim {
 			const Foundation::Vec2 ghost = placement.ghostPosition();
 			out << ",\"def\":\"" << jsonEscape(placement.selectedDefName()) << "\",\"x\":" << ghost.x << ",\"y\":" << ghost.y
 				<< ",\"turnDegrees\":" << degreesOfQuanta(placement.ghostTurnQuanta()) << ",\"valid\":" << (placement.ghostValid() ? "true" : "false");
+			if (const std::optional<construction::PlacementRefusal> refusal = placement.ghostRefusal()) {
+				out << ",\"reason\":\"" << construction::placementRefusalLabel(*refusal) << "\"";
+			}
 		}
 		out << ",\"items\":[";
 		bool first = true;

@@ -689,6 +689,9 @@ namespace world_sim {
 		/// Resolve the active thickness preset for the active material, or nullptr if
 		/// the material has no wall presets (the wall tool can't commit then).
 		[[nodiscard]] const assets::ThicknessPreset* activePreset() const;
+		/// Whether a wall of `preset` from `start` to `end` would meet a placed item's body or clearance, installed or
+		/// pending, anywhere in its band (rotatable-placed-items 13). False with no nav system.
+		[[nodiscard]] bool wallMeetsItems(Foundation::Vec2 start, Foundation::Vec2 end, const assets::ThicknessPreset& preset) const;
 
 		/// Commit every consecutive pair of the in-progress chain as a wall segment
 		/// (commitWallSegments) and spawn a blueprint entity per segment. Clears the chain.
