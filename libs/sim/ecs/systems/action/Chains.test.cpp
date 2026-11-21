@@ -5,9 +5,9 @@
 
 #include "../AIDecisionSystem.h"
 #include "../ActionSystem.h"
+#include "../FootprintRectangle.test.h"
 #include "../MovementSystem.h"
 #include "../PhysicsSystem.h"
-#include "../FootprintRectangle.test.h"
 #include "../ShippedPriorityConfig.test.h"
 #include "../ThoughtSystem.h"
 #include "../TimeSystem.h"
@@ -1456,8 +1456,13 @@ namespace ecs::test {
 		const Root		  root = buildRoot("Stick", 10, {8.0F, 0.0F});
 		const ChainTarget pile = pileAt(colonist, {2.0F, 0.0F}, "Stick", 2, 3);
 		ASSERT_TRUE(startChainAt(
-			colonist, "deliver", 0, {},
-			{.source = pile, .destination = entityTarget(root.site, {8.0F, 0.0F}), .goal = {.rootGoalId = root.goal, .item = id("Stick"), .quantity = 3}}
+			colonist,
+			"deliver",
+			0,
+			{},
+			{.source = pile,
+			 .destination = entityTarget(root.site, {8.0F, 0.0F}),
+			 .goal = {.rootGoalId = root.goal, .item = id("Stick"), .quantity = 3}}
 		));
 		ASSERT_TRUE(runUntil([&] { return finishedCount("pickup") == 1; }));
 		run(0.3F);
@@ -1472,8 +1477,13 @@ namespace ecs::test {
 		const Root		  root = buildRoot("Stick", 2, {8.0F, 0.0F});
 		const ChainTarget pile = pileAt(colonist, {2.0F, 0.0F}, "Stick", 5, 3);
 		ASSERT_TRUE(startChainAt(
-			colonist, "deliver", 0, {},
-			{.source = pile, .destination = entityTarget(root.site, {8.0F, 0.0F}), .goal = {.rootGoalId = root.goal, .item = id("Stick"), .quantity = 3}}
+			colonist,
+			"deliver",
+			0,
+			{},
+			{.source = pile,
+			 .destination = entityTarget(root.site, {8.0F, 0.0F}),
+			 .goal = {.rootGoalId = root.goal, .item = id("Stick"), .quantity = 3}}
 		));
 		ASSERT_TRUE(runUntil([&] { return finishedCount("pickup") == 1; }));
 		run(0.3F);
@@ -1489,8 +1499,13 @@ namespace ecs::test {
 		const Root		  root = buildRoot("Stick", 10, {8.0F, 0.0F});
 		const ChainTarget bush = remember(colonist, {1.0F, 0.0F}, "StickBush", assets::CapabilityType::Harvestable);
 		ASSERT_TRUE(startChainAt(
-			colonist, "cut_and_deliver", 0, {},
-			{.source = bush, .destination = entityTarget(root.site, {8.0F, 0.0F}), .goal = {.rootGoalId = root.goal, .item = id("Stick"), .expectedYield = 8}}
+			colonist,
+			"cut_and_deliver",
+			0,
+			{},
+			{.source = bush,
+			 .destination = entityTarget(root.site, {8.0F, 0.0F}),
+			 .goal = {.rootGoalId = root.goal, .item = id("Stick"), .expectedYield = 8}}
 		));
 		ASSERT_TRUE(runUntil([&] { return finishedCount("harvest") == 1; }));
 		run(0.3F);
@@ -1501,16 +1516,21 @@ namespace ecs::test {
 	}
 
 	TEST_F(ChainsTest, AHaulFromAnEmptyPileEndsAtTheSourceUnlessItCarriesCargo) {
-		const EntityID	  colonist = createColonist();
-		const Root		  root = buildRoot("Stick", 10, {8.0F, 0.0F});
+		const EntityID colonist = createColonist();
+		const Root	   root = buildRoot("Stick", 10, {8.0F, 0.0F});
 		// The world answers for a pile that has gone as gone.
 		actionSystem->setTakeSourceCallback([](const std::string&, float, float, ActionSystem::SourceTake, float) {
 			return ActionSystem::SourceState::Gone;
 		});
 		const ChainTarget empty = pileAt(colonist, {1.0F, 0.0F}, "Stick", 0, 3);
 		ASSERT_TRUE(startChainAt(
-			colonist, "deliver", 0, {},
-			{.source = empty, .destination = entityTarget(root.site, {8.0F, 0.0F}), .goal = {.rootGoalId = root.goal, .item = id("Stick"), .quantity = 3}}
+			colonist,
+			"deliver",
+			0,
+			{},
+			{.source = empty,
+			 .destination = entityTarget(root.site, {8.0F, 0.0F}),
+			 .goal = {.rootGoalId = root.goal, .item = id("Stick"), .quantity = 3}}
 		));
 		ASSERT_TRUE(runUntil([&] { return !running(colonist, "deliver"); }));
 		EXPECT_LT(position(colonist).x, 2.0F) << "it ended at the source";
@@ -1519,7 +1539,10 @@ namespace ecs::test {
 		inventory(colonist).addItem("Stick", 2);
 		const ChainTarget emptyAgain = pileAt(colonist, {1.0F, 1.0F}, "Stick", 0, 3);
 		ASSERT_TRUE(startChainAt(
-			colonist, "deliver", 0, {},
+			colonist,
+			"deliver",
+			0,
+			{},
 			{.source = emptyAgain,
 			 .destination = entityTarget(root.site, {8.0F, 0.0F}),
 			 .goal = {.rootGoalId = root.goal, .item = id("Stick"), .quantity = 3, .cargo = 2}}
@@ -1538,7 +1561,11 @@ namespace ecs::test {
 		world->addComponent<Inventory>(box, Inventory::createForStorage());
 		inventory(colonist).addItem("Stick", 3);
 		ASSERT_TRUE(startChainAt(
-			colonist, "deliver_carried", 0, {}, {.destination = entityTarget(box, {0.2F, 0.0F}), .goal = {.rootGoalId = 77, .item = id("Stick"), .quantity = 3}}
+			colonist,
+			"deliver_carried",
+			0,
+			{},
+			{.destination = entityTarget(box, {0.2F, 0.0F}), .goal = {.rootGoalId = 77, .item = id("Stick"), .quantity = 3}}
 		));
 		const uint64_t instance = task(colonist).instanceId;
 		EXPECT_EQ(indexedClaims(instance).size(), 2U) << "filed when taken";
@@ -1554,7 +1581,7 @@ namespace ecs::test {
 		site.owner = GoalOwner::ConstructionGoalSystem;
 		site.destinationEntity = kInvalidEntity;
 		const uint64_t umbrella = GoalTaskRegistry::Get().createGoal(site);
-		GoalTask clear;
+		GoalTask	   clear;
 		clear.type = GoalType::Clear;
 		clear.owner = GoalOwner::ConstructionGoalSystem;
 		clear.parentGoalId = umbrella;
@@ -1573,8 +1600,13 @@ namespace ecs::test {
 		const Root		  root = buildRoot("Stick", 10, {8.0F, 0.0F});
 		const ChainTarget bush = remember(colonist, {0.2F, 0.0F}, "StickBush", assets::CapabilityType::Harvestable);
 		ASSERT_TRUE(startChainAt(
-			colonist, "cut_and_deliver", 0, {},
-			{.source = bush, .destination = entityTarget(root.site, {8.0F, 0.0F}), .goal = {.rootGoalId = root.goal, .item = id("Stick"), .expectedYield = 5}}
+			colonist,
+			"cut_and_deliver",
+			0,
+			{},
+			{.source = bush,
+			 .destination = entityTarget(root.site, {8.0F, 0.0F}),
+			 .goal = {.rootGoalId = root.goal, .item = id("Stick"), .expectedYield = 5}}
 		));
 		ASSERT_TRUE(runUntil([&] { return action(colonist).isActive(); }));
 		GoalTaskRegistry::Get().removeGoal(root.goal);
@@ -1584,7 +1616,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(ChainsTest, AStepEndedByAnEventHasReleasedItsClaims) {
-		const EntityID	  colonist = createColonist();
+		const EntityID colonist = createColonist();
 		createColonist({20.0F, 20.0F}); // a bystander, whose decisions rebuild the claim index every update
 		const ChainTarget pond = remember(colonist, {0.0F, 0.0F}, "Pond", assets::CapabilityType::Drinkable);
 		ASSERT_TRUE(startChainAt(colonist, "dawdle_claimed", 0, pond));

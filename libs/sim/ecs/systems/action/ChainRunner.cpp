@@ -313,10 +313,12 @@ namespace ecs {
 				if (names(step.ends, assets::EndEvent::HeldGone)) {
 					// The goods it holds for the step: the food it would eat for an action that consumes, else the chain's.
 					const assets::ActionEntry&					   named = chainWiring.library->actions[doStep->action.handle.index];
-					const assets::EntryHandle<assets::ActionEntry> performed = named.group ? memberFor(named, target) : doStep->action.handle;
-					const bool consumes = performed.valid() && std::ranges::any_of(actionEntries.of(performed).effects, [](const EffectRow& row) {
-						return std::holds_alternative<ConsumeRow>(row);
-					});
+					const assets::EntryHandle<assets::ActionEntry> performed =
+						named.group ? memberFor(named, target) : doStep->action.handle;
+					const bool consumes =
+						performed.valid() && std::ranges::any_of(actionEntries.of(performed).effects, [](const EffectRow& row) {
+							return std::holds_alternative<ConsumeRow>(row);
+						});
 					const std::string* food = consumes ? heldEdibleUnit(actor.inventory) : nullptr;
 					progress.heldItem = food != nullptr			  ? assets::AssetRegistry::Get().getDefNameId(*food)
 										: progress.takenItem != 0 ? progress.takenItem
@@ -609,7 +611,7 @@ namespace ecs {
 		if ((step.claims & bit(assets::ClaimKind::Slot)) != 0) {
 			const bool	   spot = progress.source.claimKind == assets::ClaimKind::Slot;
 			const EntityID site = progress.destination.entity != kInvalidEntity ? progress.destination.entity : target.entity;
-			const assets::ActionEntry&				 named = chainWiring.library->actions[step.action.handle.index];
+			const assets::ActionEntry& named = chainWiring.library->actions[step.action.handle.index];
 			const assets::EntryHandle<assets::ActionEntry> performed = named.group ? memberFor(named, target) : step.action.handle;
 			if (!performed.valid() || !performsWork(actionEntries.of(performed)) || spot) {
 				if (site == kInvalidEntity) {
@@ -732,7 +734,11 @@ namespace ecs {
 		// A cut that set out with no cargo claimed no inbound; the goods it lifted are now on their way to the destination.
 		if (inFlight && !inbound && carried > 0 && progress.destination.entity != kInvalidEntity) {
 			if (task.claims.size() >= ClaimList::kCapacity) {
-				LOG_ERROR(Engine, "[Chain] Entity %llu: no room for the inbound of what its cut lifted", static_cast<unsigned long long>(actor.entity));
+				LOG_ERROR(
+					Engine,
+					"[Chain] Entity %llu: no room for the inbound of what its cut lifted",
+					static_cast<unsigned long long>(actor.entity)
+				);
 				endChain(actor, "its claims have no room for the goods it lifted");
 				return false;
 			}
