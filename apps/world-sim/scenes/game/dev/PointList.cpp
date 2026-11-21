@@ -30,6 +30,14 @@ namespace world_sim {
 		return pts;
 	}
 
+	std::optional<Foundation::Vec2> parseOnePoint(const std::string& spec) {
+		const std::vector<Foundation::Vec2> points = parsePointList(spec);
+		if (points.size() != 1 || spec.find(';') != std::string::npos) {
+			return std::nullopt;
+		}
+		return points.front();
+	}
+
 	std::string pointCountRefusal(const std::string& verb, std::size_t least, std::size_t got) {
 		if (got >= least) {
 			return {};

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Test Clearance Bench - a do-nothing parts item to drop with the dev tools
+     (/api/dev/spawn?def=TestClearanceBench&turn=<degrees>) when working on placed
+     item clearance. A plain bench 1.6 m wide, 0.5 m deep and 0.9 m tall that keeps
+     a strip 0.6 m deep clear along its front: another item's body or a wall's band
+     there is refused, another clearance may share it. Its top is light and its
+     front edge dark, so the side the clearance is on reads at any turn. It has no
+     capabilities, no item, no recipe and no placement, so nothing spawns it but a
+     dev command. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>TestClearanceBench</defName>
+    <label>Test clearance bench</label>
+    <assetType>parts</assetType>
+
+    <parts>
+      <part name="bench">
+        <footprint><rect minX="-0.8" minY="-0.25" maxX="0.8" maxY="0.25"/></footprint>
+        <height bottom="0" top="0.9"/>
+        <top color="#C8B08A"/>
+        <sides color="#6B5236"/>
+      </part>
+      <part name="frontEdge">
+        <footprint><rect minX="-0.8" minY="0.15" maxX="0.8" maxY="0.25"/></footprint>
+        <height bottom="0.9" top="0.92"/>
+        <top color="#3A2A1A"/>
+        <sides color="#3A2A1A"/>
+      </part>
+    </parts>
+
+    <placements>
+      <place part="bench"/>
+      <place part="frontEdge"/>
+    </placements>
+
+    <clearance>
+      <rect minX="-0.8" minY="0.25" maxX="0.8" maxY="0.85"/>
+    </clearance>
+  </AssetDef>
+</AssetDefinitions>

@@ -5,6 +5,7 @@
 #include <assets/DetailLevels.h>
 #include <assets/ItemView.h>
 #include <assets/ViewConfig.h>
+#include <primitives/Primitives.h>
 #include <utils/Log.h>
 #include <world/rendering/ItemViewDrawing.h>
 
@@ -16,6 +17,26 @@ constexpr float	  kInvalidAlpha = 0.3F;	  // More transparent when invalid
 constexpr float	  kPixelsPerMeter = 8.0F; // Match GameScene constant
 constexpr int32_t kGhostKey = 1000;		  // Draw above entities
 } // namespace
+
+void GhostRenderer::renderRefusal(
+	std::string_view label, Foundation::Vec2 worldPos, const world::WorldCamera& camera, int viewportWidth, int viewportHeight, float uiScale
+) {
+	// As the drawing tools' reason beside the cursor; its look is the overlays' (rendering.xml, <ItemOverlays>).
+	const assets::ItemOverlayStyle& look = assets::ConstructionRegistry::Get().rendering().itemOverlays;
+	const Foundation::Vec2			pivot = camera.worldToScreen(worldPos.x, worldPos.y, viewportWidth, viewportHeight, kPixelsPerMeter);
+	const float						shadow = look.refusalShadowPx * uiScale;
+	Foundation::Color				color = worldview::colorOf(look.refusedTint);
+	color.a = 1.0F;
+	Renderer::Primitives::drawText({
+		.text = std::string(label),
+		.position = {pivot.x + look.refusalOffsetXPx * uiScale, pivot.y + look.refusalOffsetYPx * uiScale},
+		.scale = look.refusalTextScale * uiScale,
+		.color = color,
+		.shadow = Foundation::BoxShadow{.color = {0.0F, 0.0F, 0.0F, 0.8F}, .blur = 0.0F, .offset = {shadow, shadow}},
+		.id = "placement_refusal",
+		.key = kGhostKey + 1,
+	});
+}
 
 void GhostRenderer::beginFrame() {
 	// A reload changes the defs the views were built from.

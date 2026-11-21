@@ -30,6 +30,8 @@
 
 #include <debug/Tunables.h>
 
+#include <ecs/systems/PlacedItemSystem.h>
+#include <ecs/components/Packaged.h>
 #include <ecs/InventoryMass.h>
 #include <ecs/World.h>
 #include <ecs/WorldSource.h>
@@ -132,6 +134,7 @@ namespace world_sim {
 		verb("teleport", &DevCommandHandler::devTeleport);
 		verb("select", &DevCommandHandler::devSelect);
 		verb("place", &DevCommandHandler::devPlace);
+		verb("package", &DevCommandHandler::devPackage);
 		verb("kill", &DevCommandHandler::devKill);
 		verb("complete", &DevCommandHandler::devComplete);
 		verb("foundation", &DevCommandHandler::devFoundation, kFoundationLeastPoints);
@@ -443,6 +446,12 @@ namespace world_sim {
 				continue;
 			}
 			spawned.push_back(m_ctx.placement->spawnEntity(def, {placed->x, placed->y}, turn));
+			// The placed item index sees the item only at the next tick: held until then, so the next spot keeps off it.
+			if (PlacementSystem::turns(def)) {
+				if (ecs::PlacedItemSystem* items = m_ctx.world->tryGetSystem<ecs::PlacedItemSystem>()) {
+					items->items().hold(def, *placed, assets::turnRadiansFromQuanta(turn), assets::AssetRegistry::Get());
+				}
+			}
 		}
 		if (spawned.empty()) {
 			return reject("spawn: none of the " + std::to_string(n) + " scattered spots near (" + std::to_string(at.x) + ", " +
@@ -704,6 +713,44 @@ namespace world_sim {
 		return {};
 	}
 
+	DevRefusal DevCommandHandler::devPackage(const app::DevRequest& cmd) {
+		const std::string def = param(cmd, "def");
+		if (!PlacementSystem::turns(def)) {
+			return refuse("package: '" + def + "' is not a parts def");
+		}
+		const std::optional<Foundation::Vec2> crateSpot = parseOnePoint(param(cmd, "at"));
+		if (!crateSpot.has_value()) {
+			return refuse("package: at='" + param(cmd, "at") + "' is not a point <x>,<y>");
+		}
+		const std::optional<Foundation::Vec2> targetSpot = parseOnePoint(param(cmd, "target"));
+		if (!targetSpot.has_value()) {
+			return refuse("package: target='" + param(cmd, "target") + "' is not a point <x>,<y>");
+		}
+		const Foundation::Vec2 at = *crateSpot;
+		const Foundation::Vec2 target = *targetSpot;
+		char*				   end = nullptr;
+		const std::string	   turnText = param(cmd, "turn", "0");
+		const double		   degrees = std::strtod(turnText.c_str(), &end);
+		if (end == turnText.c_str() || *end != '\0' || !std::isfinite(degrees)) {
+			return refuse("package: turn='" + turnText + "' is not a number of degrees");
+		}
+		const uint32_t turn = assets::turnQuantaFromDegrees(degrees);
+		if (const std::string refusal = putDownRefusal(m_ctx.navigation, at); !refusal.empty()) {
+			return refuse("package: the crate at " + refusal);
+		}
+		// The target is held to the rules a target the player picks is, but for the explored rule, as for any dev verb.
+		if (const std::optional<construction::PlacementRefusal> refusal =
+				m_ctx.placement->refusalAt(def, target, turn, ecs::kInvalidEntity, PlacementSystem::PlacementRules::Dev)) {
+			return refuse("package: the target is refused: " + std::string(construction::placementRefusalLabel(*refusal)));
+		}
+		const ecs::EntityID crate = m_ctx.placement->spawnEntity(def, at, 0);
+		m_ctx.world->addComponent<ecs::Packaged>(
+			crate, ecs::Packaged{.targetPosition = glm::vec2{target.x, target.y}, .targetRotation = assets::turnRadiansFromQuanta(turn)}
+		);
+		LOG_INFO(Game, "[DevAPI] package: '%s' at (%.1f, %.1f), target (%.1f, %.1f)", def.c_str(), at.x, at.y, target.x, target.y);
+		return {.okFields = ",\"entity\":" + std::to_string(static_cast<unsigned long long>(crate))};
+	}
+
 	void DevCommandHandler::serializePlacement(std::ostringstream& out) {
 		const PlacementSystem& placement = *m_ctx.placement;
 		const char*			   state = placement.state() == PlacementState::Placing	 ? "placing"
@@ -714,6 +761,9 @@ namespace world_sim {
 			const Foundation::Vec2 ghost = placement.ghostPosition();
 			out << ",\"def\":\"" << jsonEscape(placement.selectedDefName()) << "\",\"x\":" << ghost.x << ",\"y\":" << ghost.y
 				<< ",\"turnDegrees\":" << degreesOfQuanta(placement.ghostTurnQuanta()) << ",\"valid\":" << (placement.ghostValid() ? "true" : "false");
+			if (const std::optional<construction::PlacementRefusal> refusal = placement.ghostRefusal()) {
+				out << ",\"reason\":\"" << construction::placementRefusalLabel(*refusal) << "\"";
+			}
 		}
 		out << ",\"items\":[";
 		bool first = true;

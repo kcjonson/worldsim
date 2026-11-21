@@ -446,6 +446,12 @@ namespace assets {
 		float	   dashPx = 6.0F;
 		float	   gapPx = 4.0F;
 		float	   labelPx = 12.0F;
+		/// The reason beside a refused ghost, in refusedTint: its text scale (1 is 16 logical px), its offset from the
+		/// pivot, and its shadow's offset, all times the interface size.
+		float refusalTextScale = 0.8F;
+		float refusalOffsetXPx = 14.0F;
+		float refusalOffsetYPx = -22.0F;
+		float refusalShadowPx = 1.0F;
 	};
 
 	/// All construction rendering style, loaded from rendering.xml.

@@ -4,10 +4,15 @@
 #include "scenes/game/world/placement/PlacementSystem.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/PartsAsset.h>
 #include <ecs/GoalTaskRegistry.h>
+#include <ecs/components/Appearance.h>
+#include <ecs/components/Packaged.h>
+#include <ecs/components/Transform.h>
 
 #include <gtest/gtest.h>
 
+#include <memory>
 #include <vector>
 
 namespace {
@@ -80,6 +85,35 @@ TEST_F(GroundRefusalTest, SpawnRefusesFurnitureInsideAnUnbuiltFoundation) {
 	EXPECT_NE(refusal.find("not built yet"), std::string::npos) << refusal;
 	EXPECT_TRUE(world_sim::spawnGroundRefusal(gated, &navigation, kStorageBox, {5.0F, 12.0F}, 0).empty());
 	EXPECT_TRUE(world_sim::spawnGroundRefusal(gated, &navigation, kLooseStone, {5.0F, 8.0F}, 0).empty()) << "a loose item is put down, not installed";
+}
+
+// A parts item is spawned by the placement tool's rules: not into another item's body, and flush beside it.
+TEST_F(GroundRefusalTest, SpawnRefusesAPartsItemIntoAnotherItem) {
+	constexpr const char* kPartsBox = "Test_GroundRefusalPartsBox";
+	assets::AssetDefinition partsBox;
+	partsBox.defName = kPartsBox;
+	partsBox.assetType = assets::AssetType::Parts;
+	partsBox.parts = std::make_shared<const assets::PartsAsset>(assets::PartsAsset{.bodyTopMeters = 0.8F});
+	partsBox.partsColliders.push_back(
+		{.type = assets::CollisionShapeType::Polygon, .pointsMeters = {{-0.3F, -0.3F}, {0.3F, -0.3F}, {0.3F, 0.3F}, {-0.3F, 0.3F}}}
+	);
+	assets::AssetRegistry::Get().registerTestDefinition(partsBox);
+	const Foundation::Vec2 at{10.0F, kCreekY - 4.0F};
+	placement.spawnEntity(kPartsBox, at, 0);
+	world.update(0.016F);
+
+	EXPECT_FALSE(world_sim::spawnGroundRefusal(placement, &navigation, kPartsBox, {at.x + 0.3F, at.y}, 0).empty());
+
+	// A crate's install target is in no mesh: the overlap rule refuses a spawn onto it.
+	const ecs::EntityID crate = world.createEntity();
+	world.addComponent<ecs::Position>(crate, ecs::Position{{at.x - 4.0F, at.y}});
+	world.addComponent<ecs::Appearance>(crate, ecs::Appearance{kPartsBox});
+	world.addComponent<ecs::Packaged>(crate, ecs::Packaged{.targetPosition = glm::vec2{at.x, at.y + 3.0F}});
+	world.update(0.016F);
+	const std::string refusal = world_sim::spawnGroundRefusal(placement, &navigation, kPartsBox, {at.x + 0.3F, at.y + 3.0F}, 0);
+	EXPECT_NE(refusal.find("Overlaps an item"), std::string::npos) << refusal;
+	const std::string flush = world_sim::spawnGroundRefusal(placement, &navigation, kPartsBox, {at.x + 0.6F, at.y}, 0);
+	EXPECT_TRUE(flush.empty()) << "flush beside it: " << flush;
 }
 
 // Anything else is put down, not built: a loose item goes in the creek, as a dropped one does.

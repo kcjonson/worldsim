@@ -3,6 +3,7 @@
 #include "UserSettings.h"
 
 #include <assets/ConstructionRegistry.h>
+#include <construction/ItemClearance.h>
 #include <construction/OpeningGeometry.h>
 #include <construction/RectangleSnap.h>
 #include <ecs/components/Structure.h>
@@ -11,6 +12,7 @@
 #include <ecs/components/Transform.h>
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/NavigationSystem.h>
+#include <ecs/systems/PlacedItemSystem.h>
 #include <ecs/systems/PlayerVisibilitySystem.h>
 #include <offset/WallOffset.h>
 #include <predicates/Predicates.h>
@@ -1289,6 +1291,15 @@ namespace world_sim {
 		return ConstructionRegistry::Get().getThicknessPreset(activeMaterial_, activeThicknessPreset_);
 	}
 
+	bool DrawingSystem::wallMeetsItems(
+		const construction::ConstructionWorld& world, const std::vector<Foundation::Vec2>& chain, const assets::ThicknessPreset& preset
+	) const {
+		const ecs::PlacedItemSystem* items = ecsWorld_ != nullptr ? ecsWorld_->tryGetSystem<ecs::PlacedItemSystem>() : nullptr;
+		if (items == nullptr) {
+			return false;
+		}
+		return construction::wallMeetsItems(items->items(), construction::drawnWallOutline(world, Foundation::toGlmVec2(chain), preset.halfThicknessMm));
+	}
 	void DrawingSystem::handleWallMove(Foundation::Vec2 world, bool freeform) {
 		auto& registry = ConstructionRegistry::Get();
 
@@ -1327,6 +1338,14 @@ namespace world_sim {
 		lastSnap_ = snapMemoResult_;
 		cursor_ = lastSnap_.point;
 		lastValidation_ = snapMemoValidation_;
+		// Placed items move without the snap's inputs moving, so this is read on every move, outside the memo.
+		if (preset != nullptr && lastValidation_.ok() && !points_.empty()) {
+			std::vector<Foundation::Vec2> chain = points_;
+			chain.push_back(cursor_);
+			if (wallMeetsItems(constructionWorld_, chain, *preset)) {
+				lastValidation_ = {.code = construction::ValidationCode::MeetsPlacedItem, .vertexIndex = points_.size()};
+			}
+		}
 
 		// Live nav feedback for the wall rubber-band: off-mesh cursor reads red (see
 		// renderWallChainPreview). The commit gate re-checks the whole chain regardless.
@@ -1485,6 +1504,11 @@ namespace world_sim {
 				skip(construction::validationReason(check.code));
 				continue;
 			}
+			// The earlier segments are in `into` by now, so the segment is resolved among them.
+			if (wallMeetsItems(into, {start, end}, preset)) {
+				skip(construction::validationReason(construction::ValidationCode::MeetsPlacedItem));
+				continue;
+			}
 			const construction::SegmentCommitResult result = into.commitSegment(
 				geometry::quantize(start), geometry::quantize(end), activeMaterial_, activeThicknessPreset_, wallHost_, placementOrder
 			);
@@ -1620,10 +1644,14 @@ namespace world_sim {
 
 		auto&					  registry = ConstructionRegistry::Get();
 		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
-		const auto				  v = validator.validateWallSegment(bestA, bestB, *preset, host);
-		if (!v.ok()) {
+		construction::ValidationCode code = validator.validateWallSegment(bestA, bestB, *preset, host).code;
+		if (code == construction::ValidationCode::Ok &&
+			wallMeetsItems(constructionWorld_, {bestA, bestB}, *preset)) {
+			code = construction::ValidationCode::MeetsPlacedItem;
+		}
+		if (code != construction::ValidationCode::Ok) {
 			if (callbacks_.onToast) {
-				callbacks_.onToast("Edge fill rejected", ec::validationReason(v.code));
+				callbacks_.onToast("Edge fill rejected", construction::validationReason(code));
 			}
 			return false;
 		}

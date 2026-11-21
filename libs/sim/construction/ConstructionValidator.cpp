@@ -351,6 +351,8 @@ namespace construction {
 				return "wall too short for opening";
 			case ValidationCode::WallEndsOnOpening:
 				return "an opening is in the way";
+			case ValidationCode::MeetsPlacedItem:
+				return "an item or its clearance is in the way";
 			case ValidationCode::OpeningOverlap:
 				return "openings overlap";
 			case ValidationCode::TooCloseToFoundation:

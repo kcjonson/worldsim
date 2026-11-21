@@ -102,6 +102,7 @@
 #include <ecs/systems/MoodSystem.h>
 #include <ecs/systems/MovementSystem.h>
 #include <ecs/systems/NavigationSystem.h>
+#include <ecs/systems/PlacedItemSystem.h>
 #include <ecs/systems/NeedsDecaySystem.h>
 #include <ecs/systems/PhysicsSystem.h>
 #include <ecs/systems/PlayerVisibilitySystem.h>
@@ -1340,6 +1341,7 @@ namespace {
 			ecsWorld->registerSystem<ecs::ConstructionSystem>();							// Priority 58 - foundation lifecycle goals
 			ecsWorld->registerSystem<ecs::RoomDetectionSystem>();							// Priority 59 - derive rooms from built walls
 			ecsWorld->registerSystem<ecs::NavigationSystem>();								// Priority 51 - cached navmesh + path queries
+			ecsWorld->registerSystem<ecs::PlacedItemSystem>();							// Priority 52 - placed items and install targets, for placement
 			// Priority 60
 			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry, actionEntries, systemSeeds.aiDecision);
 			ecsWorld->registerSystem<ecs::MovementSystem>();								// Priority 100

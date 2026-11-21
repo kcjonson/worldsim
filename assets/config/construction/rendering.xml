@@ -132,6 +132,10 @@
     <dashPx>6.0</dashPx>
     <gapPx>4.0</gapPx>
     <labelPx>12.0</labelPx>
+    <refusalTextScale>0.8</refusalTextScale>        <!-- the reason beside a refused ghost, in refusedTint; 1 is 16 px -->
+    <refusalOffsetXPx>14.0</refusalOffsetXPx>       <!-- from the ghost's pivot -->
+    <refusalOffsetYPx>-22.0</refusalOffsetYPx>
+    <refusalShadowPx>1.0</refusalShadowPx>
   </ItemOverlays>
 
 </ConstructionRendering>

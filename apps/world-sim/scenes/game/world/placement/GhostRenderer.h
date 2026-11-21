@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <string_view>
 #include <tuple>
 
 namespace world_sim {
@@ -45,6 +46,10 @@ class GhostRenderer {
 				int viewportHeight,
 				bool isValid,
 				float uiScale);
+
+	/// The reason a ghost at `worldPos` can't go there (rotatable-placed-items 14.4), a short label beside it in the
+	/// invalid tint, sized by the interface scale.
+	void renderRefusal(std::string_view label, Foundation::Vec2 worldPos, const world::WorldCamera& camera, int viewportWidth, int viewportHeight, float uiScale);
 
 	/// Drops the views no ghost drew this frame, so a drag through many turns keeps only the one it shows.
 	void endFrame();

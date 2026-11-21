@@ -74,6 +74,7 @@ namespace construction {
 		ParallelClearanceTooSmall,	  // faces run closer than minParallelClearance without joining
 		XCrossing,					  // centerline would properly cross an existing wall centerline
 		WallEndsOnOpening,			  // the wall would leave an opening on a wall it touches without its clearance from the junction
+		MeetsPlacedItem,			  // the band meets a placed item's body or clearance, installed or pending (ItemClearance.h)
 		// Opening codes (Epic F). An opening is placed on a wall segment, blueprint or built, at a
 		// centerline parameter t; these are the opening-only reasons.
 		OpeningSegmentInvalid,	// target segment is missing, or its wall graph cannot be resolved (openingRange)

@@ -570,6 +570,10 @@ namespace assets {
 			style.dashPx = number(overlay, "dashPx", style.dashPx);
 			style.gapPx = number(overlay, "gapPx", style.gapPx);
 			style.labelPx = number(overlay, "labelPx", style.labelPx);
+			style.refusalTextScale = number(overlay, "refusalTextScale", style.refusalTextScale);
+			style.refusalOffsetXPx = number(overlay, "refusalOffsetXPx", style.refusalOffsetXPx);
+			style.refusalOffsetYPx = number(overlay, "refusalOffsetYPx", style.refusalOffsetYPx);
+			style.refusalShadowPx = number(overlay, "refusalShadowPx", style.refusalShadowPx);
 		}
 
 		renderingConfig = cfg;

@@ -75,6 +75,14 @@ namespace nav {
 		return registry.maxCollisionReachMeters() + padCornerReachMeters() * registry.maxCollidingScale();
 	}
 
+	std::span<const assets::CollisionShape> placedObstacleColliders(const assets::AssetDefinition& def, std::uint8_t ageClass) {
+		if (def.parts != nullptr) {
+			return def.partsColliders;
+		}
+		const assets::CollisionShape& collision = def.collisionFor(ageClass);
+		return collision.blocks() ? std::span<const assets::CollisionShape>(&collision, 1) : std::span<const assets::CollisionShape>{};
+	}
+
 	float placedObstacleLocalReachMeters(const assets::CollisionShape& collision) {
 		return collision.reachMeters() + padCornerReachMeters();
 	}
