@@ -249,8 +249,8 @@ struct Task {
 	std::uint8_t snapWaitDecisions = 0;
 	static constexpr std::uint8_t kSnapWaitDecisions = 4;
 	// The target itself when targetPosition is the stand point beside the placed obstacle it lies in (a
-	// pile at a source's centre); nullopt when targetPosition is the target. Arrival is judged at
-	// targetPosition, the work done on this.
+	// pile at a source's centre), or beside the built wall it lies in (an opening, or the wall itself);
+	// nullopt when targetPosition is the target. Arrival is judged at targetPosition, the work done on this.
 	std::optional<glm::vec2> obstructedTarget;
 	// The sources a need's route was asked for at once, until its answer picks one (the task holds the
 	// first meanwhile); empty once routed, and for every task with one target.
@@ -361,7 +361,7 @@ struct Task {
 	[[nodiscard]] glm::vec2 workTarget() const { return obstructedTarget.value_or(targetPosition); }
 
 	/// Standing at `position`, he is within `tolerance` of `point`, or `point` is the target in a placed
-	/// obstacle and he is within it of the stand point beside it.
+	/// obstacle or a built wall and he is within it of the stand point beside it.
 	[[nodiscard]] bool standsAt(glm::vec2 point, glm::vec2 position, float tolerance) const {
 		const auto near = [&](glm::vec2 at) {
 			const glm::vec2 d = position - at;

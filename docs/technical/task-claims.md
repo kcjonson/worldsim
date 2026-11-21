@@ -492,7 +492,8 @@ which leaves only carried goods indexed); no construction code releases it.
 
 A Build goal with no spots (a wall's, an opening's, or a foundation's when no construction world is
 wired, as in headless tests) caps no builders: any number work it, from the nearest walkable point to its
-centre, and it takes no claim. Deconstruct takes no claim either.
+centre, or for an opening and a built wall from a stand point beside the wall (below), and it takes no
+claim. Deconstruct takes no claim either.
 
 A site ordered demolished takes no more build work: a Build action on it ends on the next tick it
 would add work, before it could complete, and a builder still walking there starts nothing on arrival.
@@ -508,7 +509,8 @@ stand point beside the wall (`NavigationSystem::standPointsBeside`): one on each
 the target to where the colonist's disc clears every built band, both asked of one route each time he
 asks, so the answer is the side he can get to as he now believes, and a wall he learns on the way sends
 him round to the other. The target stays the opening or wall (`Task::obstructedTarget`); he is judged
-there standing at the stand point. With neither side clear, the route fails with no stand point.
+there standing at the stand point. With neither side clear, the route fails with no stand point. A built
+door's centre is walkable, so a door ordered demolished is worked from the doorway.
 
 ### Need tasks
 

@@ -5990,10 +5990,10 @@ namespace ecs::test {
 			return walls;
 		}
 
-		// A door not yet built at the middle of `segment`, with its site entity where the drawing tool puts
-		// it, the opening's centre on the wall's centreline, waiting on 3 Wood; the construction pass and
-		// actions running. The site.
-		EntityID addDoorSite(construction::SegmentId segment, glm::vec2 at) {
+		// An opening of `type` not yet built at the middle of `segment`, with its site entity where the drawing
+		// tool puts it, the opening's centre on the wall's centreline, waiting on 3 Wood; the construction pass
+		// and actions running. The site.
+		EntityID addOpeningSite(construction::SegmentId segment, glm::vec2 at, const char* type = "Door") {
 			world->registerSystem<ActionSystem>(kTestRngSeed);
 			world->registerSystem<ConstructionSystem>().setConstructionWorld(&construction);
 			assets::AssetDefinition wood;
@@ -6006,7 +6006,7 @@ namespace ecs::test {
 			wood.itemProperties->stackSize = 40;
 			wood.itemProperties->massKg	   = 1.0F;
 			assets::AssetRegistry::Get().registerTestDefinition(std::move(wood));
-			const construction::OpeningId opening = construction.addOpening(segment, 0.5F, "Door", "Wood");
+			const construction::OpeningId opening = construction.addOpening(segment, 0.5F, type, "Wood");
 			EXPECT_NE(opening, construction::kInvalidOpening);
 			const EntityID site = world->createEntity();
 			world->addComponent<Position>(site, Position{at});
@@ -6019,16 +6019,28 @@ namespace ecs::test {
 			return site;
 		}
 
-		// A builder at `at` with the door's Wood in his pack, his needs met.
+		// A builder at `at` with the opening's Wood in his pack, his needs met.
 		EntityID addBuilderWithWood(glm::vec2 at) {
+			const auto colonist = addBuilder(at);
+			world->getComponent<Inventory>(colonist)->addItem("Wood", 3);
+			return colonist;
+		}
+
+		// A colonist at `at` who builds, his needs met.
+		EntityID addBuilder(glm::vec2 at) {
 			const auto colonist = createColonist(at);
 			world->addComponent<Action>(colonist, Action{});
 			satisfyAllNeeds(*getNeeds(colonist));
 			Skills skills;
 			skills.setLevel("Construction", 5.0F);
 			world->addComponent<Skills>(colonist, std::move(skills));
-			world->getComponent<Inventory>(colonist)->addItem("Wood", 3);
 			return colonist;
+		}
+
+		void rememberWalls(EntityID colonist, const std::vector<construction::SegmentId>& walls) {
+			for (const auto id : walls) {
+				world->getComponent<Memory>(colonist)->rememberSegment(static_cast<std::uint64_t>(id));
+			}
 		}
 
 		// Runs updates until `site` has work on it, at most 3000; whether any route of his failed meanwhile.
@@ -6045,8 +6057,61 @@ namespace ecs::test {
 			return failed;
 		}
 
+		// An opening of `type` not yet built in a wall across x = 8 m he knows, supplied from his pack and
+		// built from his side of the wall, with no route failing. The old gate (a target on a wall face read
+		// as clear ground, so no stand point was asked for) fails it: his route to the opening's centre found
+		// no way.
+		void expectSuppliedAndBuiltFromBeside(const char* type) {
+			const std::array<geometry::Vec2i64, 2>	   ends{{{8000, -4000}, {8000, 4000}}};
+			const std::vector<construction::SegmentId> walls = buildWalls(ends, false);
+			const glm::vec2							   openingAt{8.0F, 0.0F};
+			const EntityID							   site		= addOpeningSite(walls.front(), openingAt, type);
+			const EntityID							   colonist = addBuilderWithWood(kStart);
+			rememberWalls(colonist, walls);
+			nav->finishPendingBuilds();
+			ASSERT_FALSE(routesTo(*nav, kStart, openingAt)) << "no route ends inside the wall";
+
+			EXPECT_FALSE(routeFailedBeforeWorked(colonist, site)) << type << ": a route to it failed";
+			const StructureBlueprint& built = *world->getComponent<StructureBlueprint>(site);
+			EXPECT_TRUE(built.materialsComplete()) << type << ": the Wood never reached it";
+			EXPECT_GT(built.workDone, 0.0F) << type << ": never worked";
+			const glm::vec2 at = world->getComponent<Position>(colonist)->value;
+			EXPECT_LT(at.x, openingAt.x) << type << ": worked from his side of the wall";
+			EXPECT_LT(glm::distance(at, openingAt), 1.0F) << type << ": worked from beside it";
+		}
+
+		// A door not yet built across x = 8 m, a colonist west of it carrying its Wood and heading for the
+		// stand point west of it; then a wall is built so close beside that point that he cannot stand there.
+		// The site and the colonist.
+		std::pair<EntityID, EntityID> headForTheWestOfADoor() {
+			const std::array<geometry::Vec2i64, 2>	   ends{{{8000, -4000}, {8000, 4000}}};
+			const std::vector<construction::SegmentId> walls = buildWalls(ends, false);
+			const EntityID							   site		= addOpeningSite(walls.front(), kDoorAt);
+			const EntityID							   colonist = addBuilderWithWood(kStart);
+			rememberWalls(colonist, walls);
+			nav->finishPendingBuilds();
+			for (int i = 0; i < 10 * kTicksAfterMesh; ++i) {
+				world->update(kTick);
+				if (getTask(colonist)->type == TaskType::Haul && followingRoute(colonist)) {
+					break;
+				}
+			}
+			EXPECT_TRUE(getTask(colonist)->type == TaskType::Haul && followingRoute(colonist)) << "test setup: he sets off with the Wood";
+			EXPECT_LT(getTask(colonist)->targetPosition.x, kDoorAt.x) << "test setup: to the west of the door";
+			return {site, colonist};
+		}
+
+		// A built wall, nearly parallel to the one across x = 8 m and close enough beside it at the door that
+		// no colonist stands between them; `side` -1 west, 1 east. He knows it.
+		void wallOffSideOfTheDoor(EntityID colonist, float side) {
+			const auto toMm = [](float meters) { return static_cast<std::int64_t>(std::lround(meters * 1000.0F)); };
+			const std::array<geometry::Vec2i64, 2> ends{{{toMm(8.0F + side * 0.6F), -2000}, {toMm(8.0F + side * 0.8F), 2000}}};
+			rememberWalls(colonist, buildWalls(ends, false));
+		}
+
 		static constexpr glm::vec2 kStart{0.0F, 0.0F};
 		static constexpr glm::vec2 kBush{8.0F, 0.0F};
+		static constexpr glm::vec2 kDoorAt{8.0F, 0.0F};
 		construction::SegmentId	   wallSegment = construction::kInvalidSegment;
 		construction::OpeningId	   door = construction::kInvalidOpening;
 	};
@@ -6076,24 +6141,11 @@ namespace ecs::test {
 	// the wall, where no route ends: he is routed to beside the wall, delivers the Wood there, and builds
 	// the door, with no route failing on the way.
 	TEST_F(AIDecisionWallTest, ADoorInAKnownWallIsSuppliedAndBuilt) {
-		const std::array<geometry::Vec2i64, 2>	   ends{{{8000, -4000}, {8000, 4000}}};
-		const std::vector<construction::SegmentId> walls = buildWalls(ends, false);
-		const glm::vec2							   doorAt{8.0F, 0.0F};
-		const EntityID							   site		= addDoorSite(walls.front(), doorAt);
-		const EntityID							   colonist = addBuilderWithWood(kStart);
-		for (const auto id : walls) {
-			world->getComponent<Memory>(colonist)->rememberSegment(static_cast<std::uint64_t>(id));
-		}
-		nav->finishPendingBuilds();
-		ASSERT_FALSE(routesTo(*nav, kStart, doorAt)) << "no route ends inside the wall";
+		expectSuppliedAndBuiltFromBeside("Door");
+	}
 
-		EXPECT_FALSE(routeFailedBeforeWorked(colonist, site)) << "a route to the door failed";
-		const StructureBlueprint& built = *world->getComponent<StructureBlueprint>(site);
-		EXPECT_TRUE(built.materialsComplete()) << "the Wood never reached the door";
-		EXPECT_GT(built.workDone, 0.0F) << "the door was never worked";
-		const glm::vec2 at = world->getComponent<Position>(colonist)->value;
-		EXPECT_LT(at.x, doorAt.x) << "he works it from his side of the wall";
-		EXPECT_LT(glm::distance(at, doorAt), 1.0F) << "beside the door";
+	TEST_F(AIDecisionWallTest, AWindowInAKnownWallIsSuppliedAndBuilt) {
+		expectSuppliedAndBuiltFromBeside("Window");
 	}
 
 	// A door not yet built in the far wall of a sealed room whose walls he does not know. Through walls he
@@ -6104,27 +6156,25 @@ namespace ecs::test {
 		const std::array<geometry::Vec2i64, 4>	   corners{{{6000, -2000}, {10000, -2000}, {10000, 2000}, {6000, 2000}}};
 		const std::vector<construction::SegmentId> walls = buildWalls(corners, true);
 		const glm::vec2							   doorAt{8.0F, 2.0F};
-		const EntityID							   site		= addDoorSite(walls[2], doorAt);
+		const EntityID							   site		= addOpeningSite(walls[2], doorAt);
 		const EntityID							   colonist = addBuilderWithWood({8.0F, -5.0F});
 		nav->finishPendingBuilds();
 
-		bool headedInside  = false;
-		bool headedOutside = false;
-		bool learned	   = false;
-		const bool failed  = routeFailedBeforeWorked(colonist, site, [&] {
-			 if (getTask(colonist)->type != TaskType::Haul || !followingRoute(colonist)) {
-				 return;
-			 }
-			 if (learned) {
-				 headedOutside = headedOutside || getTask(colonist)->targetPosition.y > doorAt.y;
-				 return;
-			 }
-			 headedInside = getTask(colonist)->targetPosition.y < doorAt.y;
-			for (const auto id : walls) {
-				world->getComponent<Memory>(colonist)->rememberSegment(static_cast<std::uint64_t>(id));
-			}
-			learned = true;
-		});
+		bool	   headedInside	 = false;
+		bool	   headedOutside = false;
+		bool	   learned		 = false;
+		const bool failed		 = routeFailedBeforeWorked(colonist, site, [&] {
+			   if (getTask(colonist)->type != TaskType::Haul || !followingRoute(colonist)) {
+				   return;
+			   }
+			   if (learned) {
+				   headedOutside = headedOutside || getTask(colonist)->targetPosition.y > doorAt.y;
+				   return;
+			   }
+			   headedInside = getTask(colonist)->targetPosition.y < doorAt.y;
+			   rememberWalls(colonist, walls);
+			   learned = true;
+		   });
 		ASSERT_TRUE(headedInside) << "test setup: the room's side reads nearer through walls he does not know";
 		EXPECT_FALSE(failed) << "a route to the door failed";
 		EXPECT_TRUE(headedOutside) << "his task's target is the outside, the side his route reached";
@@ -6132,10 +6182,45 @@ namespace ecs::test {
 		EXPECT_GT(world->getComponent<Position>(colonist)->value.y, doorAt.y) << "he works it from outside";
 	}
 
+	// He is heading for the west of a door when a wall built close beside it leaves nowhere to stand there:
+	// asked again, the door has the east side alone, and he supplies and builds it from there.
+	TEST_F(AIDecisionWallTest, ASideLostOnTheWaySendsHimToTheOtherSide) {
+		const auto [site, colonist] = headForTheWestOfADoor();
+		wallOffSideOfTheDoor(colonist, -1.0F);
+
+		EXPECT_FALSE(routeFailedBeforeWorked(colonist, site)) << "a route to the door failed";
+		EXPECT_GT(world->getComponent<StructureBlueprint>(site)->workDone, 0.0F) << "the door was never worked";
+		EXPECT_GT(world->getComponent<Position>(colonist)->value.x, kDoorAt.x) << "he works it from the east";
+	}
+
+	// Both sides of the door walled off while he heads for it: asked again, it has no stand point, and his
+	// route fails there, a verdict on the door; he is never routed to the spot he was heading for.
+	TEST_F(AIDecisionWallTest, BothSidesLostOnTheWayIsNoStandPoint) {
+		const auto [site, colonist] = headForTheWestOfADoor();
+		const glm::vec2 wasHeadingFor = getTask(colonist)->targetPosition;
+		wallOffSideOfTheDoor(colonist, -1.0F);
+		wallOffSideOfTheDoor(colonist, 1.0F);
+
+		bool routedToTheOldSpot = false;
+		bool failed				= false;
+		for (int i = 0; i < kTicksAfterMesh * 10 && !failed; ++i) {
+			world->update(kTick);
+			const NavPath* route = world->getComponent<NavPath>(colonist);
+			routedToTheOldSpot	 = routedToTheOldSpot || (route != nullptr && route->valid && !route->waypoints.empty() &&
+														  glm::distance(route->waypoints.back(), wasHeadingFor) < 0.1F && i > 0);
+			failed				 = world->getComponent<SourceReachMemo>(colonist)->hasVerdict(hashWorldEntity(kDoorAt, 0));
+		}
+		EXPECT_TRUE(failed) << "no route failure left a verdict on the door";
+		EXPECT_FALSE(routedToTheOldSpot) << "he was routed to the spot he can no longer stand on";
+		EXPECT_FLOAT_EQ(world->getComponent<StructureBlueprint>(site)->workDone, 0.0F);
+	}
+
 	// A built wall he knows, ordered demolished: its place is its own centreline, inside it. He works it
-	// from beside it, with no route failing on the way.
+	// from beside it, and it is taken down, with no route failing on the way. He starts on the side that is
+	// nearest anyway; the old gate (a wall face read as clear ground) fails it at his route to the centre.
 	TEST_F(AIDecisionWallTest, AKnownBuiltWallIsDemolishedFromBesideIt) {
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		auto& actions = world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ConstructionSystem>().setConstructionWorld(&construction);
 		const std::array<geometry::Vec2i64, 2>	   ends{{{8000, -4000}, {8000, 4000}}};
 		const std::vector<construction::SegmentId> walls = buildWalls(ends, false);
 		const glm::vec2							   wallAt{8.0F, 0.0F};
@@ -6148,35 +6233,74 @@ namespace ecs::test {
 		blueprint.workDone	  = 20.0F;
 		blueprint.demolishing = true;
 		world->addComponent<StructureBlueprint>(wall, std::move(blueprint));
+		bool removed = false;
+		actions.setStructureDeconstructedCallback([&](EntityID entity) {
+			removed = construction.removeSegment(walls.front());
+			world->destroyEntity(entity);
+		});
+
+		const auto colonist = addBuilder(kStart);
+		rememberWalls(colonist, walls);
+		nav->finishPendingBuilds();
+
+		bool	  failed = false;
+		glm::vec2 workedFrom{0.0F, 0.0F};
+		for (int i = 0; i < 3000 && !removed; ++i) {
+			world->update(kTick);
+			failed = failed || getTask(colonist)->navState == NavState::CantFindWayTo;
+			if (getTask(colonist)->type == TaskType::Deconstruct && getTask(colonist)->state == TaskState::Arrived) {
+				workedFrom = world->getComponent<Position>(colonist)->value;
+			}
+		}
+		for (int i = 0; i < 3 * kTicksAfterMesh && GoalTaskRegistry::Get().getGoalByDestination(wall) != nullptr; ++i) {
+			world->update(kTick);
+		}
+		EXPECT_FALSE(failed) << "a route to the wall failed";
+		EXPECT_TRUE(removed) << "the wall was never taken down";
+		EXPECT_EQ(construction.getSegment(walls.front()), nullptr);
+		EXPECT_EQ(GoalTaskRegistry::Get().getGoalByDestination(wall), nullptr) << "its Deconstruct goal outlived it";
+		EXPECT_LT(workedFrom.x, wallAt.x) << "he works it from his side";
+		EXPECT_LT(glm::distance(workedFrom, wallAt), 1.0F) << "beside the wall";
+	}
+
+	// A built door's centre is in its doorway, ground he walks: ordered demolished, the door is worked from
+	// there, its own stand point, with no stand point beside the wall.
+	TEST_F(AIDecisionWallTest, ABuiltDoorIsDemolishedFromItsDoorway) {
+		world->registerSystem<ActionSystem>(kTestRngSeed);
+		const std::array<geometry::Vec2i64, 2>	   ends{{{8000, -4000}, {8000, 4000}}};
+		const std::vector<construction::SegmentId> walls   = buildWalls(ends, false);
+		const construction::OpeningId			   opening = construction.addOpening(walls.front(), 0.5F, "Door", "Wood");
+		ASSERT_NE(opening, construction::kInvalidOpening);
+		ASSERT_TRUE(construction.setOpeningState(opening, construction::FoundationState::Built));
+		const EntityID doorEntity = world->createEntity();
+		world->addComponent<Position>(doorEntity, Position{kDoorAt});
+		world->addComponent<Structure>(doorEntity, Structure{StructureKind::Opening, static_cast<uint64_t>(opening)});
+		StructureBlueprint blueprint;
+		blueprint.phase		  = StructureBlueprint::BuildPhase::Complete;
+		blueprint.workTotal	  = 20.0F;
+		blueprint.workDone	  = 20.0F;
+		blueprint.demolishing = true;
+		world->addComponent<StructureBlueprint>(doorEntity, std::move(blueprint));
 		GoalTask goal;
 		goal.type				 = GoalType::Deconstruct;
 		goal.owner				 = GoalOwner::ConstructionGoalSystem;
-		goal.destinationEntity	 = wall;
-		goal.destinationPosition = wallAt;
+		goal.destinationEntity	 = doorEntity;
+		goal.destinationPosition = kDoorAt;
 		goal.status				 = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(goal));
-
-		const auto colonist = createColonist(kStart);
-		world->addComponent<Action>(colonist, Action{});
-		satisfyAllNeeds(*getNeeds(colonist));
-		Skills skills;
-		skills.setLevel("Construction", 5.0F);
-		world->addComponent<Skills>(colonist, std::move(skills));
-		for (const auto id : walls) {
-			world->getComponent<Memory>(colonist)->rememberSegment(static_cast<std::uint64_t>(id));
-		}
+		const auto colonist = addBuilder(kStart);
+		rememberWalls(colonist, walls);
+		world->getComponent<Memory>(colonist)->rememberOpening(static_cast<std::uint64_t>(opening));
 		nav->finishPendingBuilds();
 
-		bool failed = false;
-		for (int i = 0; i < 3000 && world->getComponent<StructureBlueprint>(wall)->workDone >= 20.0F; ++i) {
+		bool routed = false;
+		for (int i = 0; i < kTicksAfterMesh && !routed; ++i) {
 			world->update(kTick);
-			failed = failed || getTask(colonist)->navState == NavState::CantFindWayTo;
+			routed = getTask(colonist)->type == TaskType::Deconstruct && followingRoute(colonist);
 		}
-		EXPECT_FALSE(failed) << "a route to the wall failed";
-		EXPECT_LT(world->getComponent<StructureBlueprint>(wall)->workDone, 20.0F) << "the wall was never worked";
-		const glm::vec2 at = world->getComponent<Position>(colonist)->value;
-		EXPECT_LT(at.x, wallAt.x) << "he works it from his side";
-		EXPECT_LT(glm::distance(at, wallAt), 1.0F) << "beside the wall";
+		ASSERT_TRUE(routed) << "he never set off to demolish the door";
+		EXPECT_EQ(getTask(colonist)->targetPosition, kDoorAt) << "the doorway is its own stand point";
+		EXPECT_FALSE(getTask(colonist)->obstructedTarget.has_value());
 	}
 
 	// Two known waters, one near another colonist 21 m away, one 30 m away the other way. All loaded

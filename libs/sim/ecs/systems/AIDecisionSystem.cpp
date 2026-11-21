@@ -3267,8 +3267,10 @@ namespace ecs {
 				// the colonist's side, read from the placement data so it is the same spot on camera and
 				// off; Build (on a structure with no builder spots) and Deconstruct take the nearest walkable
 				// point. Any other target (a pile, a need source, a box, a station) keeps its own position on the
-				// option and the task, and is moved to a stand point beside the placed obstacle it lies in when
-				// its route is asked (requestRoute); with no stand point there, it is no source.
+				// option and the task, and is moved to a stand point when its route is asked (requestRoute): beside
+				// the placed obstacle it lies in, or either side of the built wall it lies in (an opening's centre,
+				// a built wall's own, which is the nearest walkable point the snap leaves a Build or Deconstruct
+				// in a wall); with no stand point there, it is no source.
 				const bool snapEligible = option.taskType == TaskType::Harvest ||
 										  option.taskType == TaskType::Build || option.taskType == TaskType::Deconstruct;
 				if (haveMesh && needsTarget && snapEligible) {
@@ -3474,29 +3476,27 @@ namespace ecs {
 		if (const auto* agentRadius = world->getComponent<AgentRadius>(entity)) {
 			radius = agentRadius->radiusMeters;
 		}
-		// A target lying in a placed obstacle is reached from the stand point beside it, chosen the first time;
-		// one inside a built wall from either side of it, both asked of the route every time, so the answer is
-		// the side he can get to as he now believes. Nowhere to stand there is no way. Several sources' goals
-		// were found when they were chosen.
+		// A target lying in a placed obstacle is reached from the stand point beside it, chosen the first time.
+		// Any other target is asked for its stand points every time: one inside a built wall (which reads as
+		// clear ground) from whichever side of it is still clear, both asked of the route, so the answer is the
+		// side he can get to as he now believes. Nowhere to stand there is no way. Several sources' goals were
+		// found when they were chosen.
 		std::array<glm::vec2, SourceChoices::kCapacity> goals{task.targetPosition};
 		std::size_t										   goalCount = 1;
-		if (task.sourceChoices.empty()) {
+		const bool standChosen = task.obstructedTarget.has_value() && !m_navSystem->isValidPosition(*task.obstructedTarget);
+		if (task.sourceChoices.empty() && !standChosen) {
 			const glm::vec2	  target = task.workTarget();
 			const StandPoints stands = standPointFor(target, position.value, radius, false);
-			if (stands.size() > 1 || !task.obstructedTarget.has_value()) {
-				if (stands.empty()) {
-					failRoute(entity, task, memory, movementTarget, RouteFailure::NoStandPoint);
-					return;
-				}
-				if (stands[0] != target) {
-					task.obstructedTarget = target;
-					task.targetPosition	  = stands[0];
-					movementTarget.target = stands[0];
-				}
-				goalCount = stands.size();
-				for (std::size_t index = 0; index < goalCount; ++index) {
-					goals[index] = stands[index];
-				}
+			if (stands.empty()) {
+				failRoute(entity, task, memory, movementTarget, RouteFailure::NoStandPoint);
+				return;
+			}
+			task.obstructedTarget = stands[0] != target ? std::optional<glm::vec2>(target) : std::nullopt;
+			task.targetPosition	  = stands[0];
+			movementTarget.target = stands[0];
+			goalCount			  = stands.size();
+			for (std::size_t index = 0; index < goalCount; ++index) {
+				goals[index] = stands[index];
 			}
 		}
 		// Planned over what he remembers: unseen walls are absent, seen walls block, known doors pass.
