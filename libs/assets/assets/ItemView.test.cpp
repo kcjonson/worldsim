@@ -1075,9 +1075,16 @@ TEST_F(ItemViewTest, TheFootprintSilhouetteHoldsTheViewAndBridgesANarrowGap) {
 	};
 	writeWorkbench();
 	writeNotchedAndStacked();
+	writeDrum();
+	// A round so small its sides bulge under a millimetre between corners.
+	writeDef(
+		"Peg",
+		"<parts><part name=\"peg\"><footprint><round radius=\"0.05\" sides=\"32\"/></footprint><height bottom=\"0\" top=\"0.3\"/>"
+		"<sides color=\"#00FF00\"/></part></parts><placements>" + place("peg") + "</placements>"
+	);
 	AssetRegistry& registry = AssetRegistry::Get();
-	for (const char* name : {"Workbench", "Overhang", "LetterC"}) {
-		const AssetDefinition* def = registry.getDefinition(name);
+	for (const char* name : {"Workbench", "Overhang", "LetterC", "Drum", "Peg"}) {
+		const AssetDefinition* def = name == std::string("Drum") || name == std::string("Peg") ? load(name) : registry.getDefinition(name);
 		ASSERT_NE(def, nullptr) << name;
 		for (const double degrees : {0.0, 35.0, 90.0, 200.0, 311.0}) {
 			const ItemView		 view = checkedView(*def, quantaOf(degrees), referenceDetailLevel(def->detailLevels), viewConfig());
@@ -1827,6 +1834,7 @@ TEST_F(ItemViewTest, TheTemplateIsTheTurnZeroViewJoined) {
 	const AssetSilhouette* silhouette = registry.getSilhouette(id);
 	ASSERT_NE(silhouette, nullptr);
 	EXPECT_TRUE(silhouette->valid);
+	EXPECT_EQ(silhouette->rings, buildItemSilhouette(*def, 0, viewConfig()).silhouette.rings) << "the template selects as the item at turn 0";
 	EXPECT_GE(registry.maxReachMeters(), itemReachMeters(*def->parts, viewConfig()) - 1.0e-6F) << "the cull reach covers every turn";
 	EXPECT_NEAR(itemReachMeters(*def->parts, viewConfig()), std::hypot(1.5F, 0.5F) + 0.8F * 0.35F + 0.015F, 1.0e-4F);
 	// Its levels are the view's levels.

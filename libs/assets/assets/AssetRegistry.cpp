@@ -2320,14 +2320,21 @@ namespace assets {
 		}
 
 		// Compute outside the silhouette lock (the union can be heavy), mirroring
-		// getMotion. getTemplate guards itself with a separate mutex.
-		const auto						 start = std::chrono::steady_clock::now();
-		const renderer::TessellatedMesh* tmpl = getTemplate(templateId);
-		AssetSilhouette					 sil = tmpl != nullptr ? silhouetteOfMesh(*tmpl) : AssetSilhouette{};
+		// getMotion. templateRecord guards itself with a separate mutex. A parts template's is its item
+		// silhouette at turn 0, so a packaged item and a placed one at turn 0 select alike.
+		const TemplateRecord record = templateRecord(templateId);
+		const auto			 start = std::chrono::steady_clock::now();
+		AssetSilhouette		 sil;
+		if (record.def != nullptr && record.def->parts != nullptr) {
+			sil = buildItemSilhouette(*record.def, 0, GameViewConfig::Get().config()).silhouette;
+		} else if (record.mesh != nullptr) {
+			sil = silhouetteOfMesh(*record.mesh);
+		}
 		LOG_DEBUG(
 			Engine,
-			"Built the silhouette of template %u on demand in %.1f ms",
+			"Built the silhouette of template %u (%s) on demand in %.1f ms, the silhouette alone",
 			templateId,
+			record.def != nullptr ? record.def->defName.c_str() : "none",
 			std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()
 		);
 

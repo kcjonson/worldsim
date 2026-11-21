@@ -45,9 +45,10 @@ namespace geometry {
 		// across its twin. Such half-edges, chained by rotating around their target
 		// vertex past interior (kept|kept) edges, form closed loops: CCW around a
 		// kept region's outer boundary, CW around an enclosed void.
-		// `keptSide(h)` says whether the region on half-edge h's left, its face, is kept.
+		// `keptSide(h)` says whether the region on half-edge h's left, its face, is kept. With `flagPinches`
+		// each loop's selfTouch is set (below); otherwise it stays false.
 		template <typename KeptSideFn>
-		std::vector<ResultLoop> walkBoundary(const HalfEdgeMesh& mesh, KeptSideFn keptSide) {
+		std::vector<ResultLoop> walkBoundary(const HalfEdgeMesh& mesh, KeptSideFn keptSide, bool flagPinches) {
 			const std::size_t halfCount = mesh.halfEdges.size();
 			auto isBoundary = [&](std::size_t h) {
 				return keptSide(h) && !keptSide(mesh.halfEdges[h].twin);
@@ -78,6 +79,9 @@ namespace geometry {
 				} while (h != start);
 
 				loops.push_back(std::move(loop));
+			}
+			if (!flagPinches) {
+				return loops;
 			}
 
 			// Pinch detection: the kept region touches itself at a vertex. This shows
@@ -149,7 +153,7 @@ namespace geometry {
 			return walkBoundary(mesh, [&](std::size_t h) {
 				const std::size_t f = mesh.halfEdges[h].face;
 				return f < kept.size() && kept[f];
-			});
+			}, true);
 		}
 
 		// Containment via a single interior sample: when the rings share no boundary
@@ -384,7 +388,7 @@ namespace geometry {
 		}
 
 		const std::vector<ResultLoop> loops =
-			walkBoundary(mesh, [&](std::size_t halfEdge) { return faceInside[mesh.halfEdges[halfEdge].face]; });
+			walkBoundary(mesh, [&](std::size_t halfEdge) { return faceInside[mesh.halfEdges[halfEdge].face]; }, false);
 
 		std::vector<Ring> pieces;
 		for (const ResultLoop& loop : loops) {

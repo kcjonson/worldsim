@@ -5,6 +5,7 @@
 #include "../predicates/Predicates.h"
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <utility>
 #include <vector>
@@ -14,36 +15,12 @@ namespace geometry {
 	namespace {
 
 		// The regular octagon whose edges touch the circle of `radius` round the origin, CCW. tan(22.5 degrees)
-		// rounded up, so the octagon never falls inside the circle.
+		// rounded up, so the octagon never falls inside the circle. Eight sides: its corners reach 8% past the
+		// circle (a square's reach 41%), and every edge it sweeps is a hull of at most ten vertices (sixteen sides
+		// would reach 2% past at eighteen).
 		std::vector<Vec2i64> octagon(std::int64_t radius) {
 			const std::int64_t side = (radius * 4'142'136 + 9'999'999) / 10'000'000;
 			return {{radius, side}, {side, radius}, {-side, radius}, {-radius, side}, {-radius, -side}, {-side, -radius}, {side, -radius}, {radius, -side}};
-		}
-
-		// Convex hull, CCW, by the monotone chain; collinear points dropped.
-		Ring convexHullOf(std::vector<Vec2i64> points) {
-			std::sort(points.begin(), points.end());
-			points.erase(std::unique(points.begin(), points.end()), points.end());
-			if (points.size() < 3) {
-				return points;
-			}
-			Ring hull(points.size() * 2);
-			std::size_t count = 0;
-			for (std::size_t i = 0; i < points.size(); ++i) {
-				while (count >= 2 && cross(hull[count - 1] - hull[count - 2], points[i] - hull[count - 2]).sign() <= 0) {
-					--count;
-				}
-				hull[count++] = points[i];
-			}
-			const std::size_t lowerCount = count + 1;
-			for (std::size_t i = points.size() - 1; i-- > 0;) {
-				while (count >= lowerCount && cross(hull[count - 1] - hull[count - 2], points[i] - hull[count - 2]).sign() <= 0) {
-					--count;
-				}
-				hull[count++] = points[i];
-			}
-			hull.resize(count - 1);
-			return hull;
 		}
 
 		// Every edge of the outline swept by the kernel, each a convex ring.
@@ -56,13 +33,14 @@ namespace geometry {
 						points.push_back(ring[i] + offset);
 						points.push_back(ring[(i + 1) % ring.size()] + offset);
 					}
-					out.push_back(convexHullOf(points));
+					out.push_back(convexHull(points));
 				}
 			}
 		}
 
 		// At most this many rings go into one direct union; more are split in two, each half unioned, and the
-		// halves' results unioned.
+		// halves' results unioned. Of 2, 4, 8, 32 and 128 on the shipped trees, 8 was fastest: smaller leaves pay
+		// more unions, larger ones cut more triangle edges against each other.
 		constexpr std::size_t kLeafRings = 8;
 
 		// The nonzero union of CCW rings (each filling its inside, so pieces from two halves, outer rings CCW and
@@ -70,11 +48,11 @@ namespace geometry {
 		// against every edge it crosses; unioning in halves only ever cuts outlines against outlines, so a
 		// triangle's edges inside the shape are gone before they meet the rest. The rings' order is kept, so
 		// neighbours in the input (one path's triangles, which tile without crossing) meet first. Each half's
-		// rings are simplified by `tolerance` before the halves meet (0 keeps them exact). With `fillHoles` a
-		// half's holes are left out where the halves meet, since the whole's would be filled anyway; the result
-		// still has its own.
+		// rings are simplified by `stepTolerance` before the halves meet (0 keeps them as the unions left them).
+		// With `fillHoles` a half's holes are left out where the halves meet, since the whole's would be filled
+		// anyway; the result still has its own.
 		std::vector<RegionPolygon> unionInHalves(
-			const std::vector<Ring>& rings, std::size_t first, std::size_t last, bool fillHoles, std::int64_t tolerance
+			const std::vector<Ring>& rings, std::size_t first, std::size_t last, bool fillHoles, std::int64_t stepTolerance
 		) {
 			std::vector<Ring> group;
 			if (last - first <= kLeafRings) {
@@ -82,13 +60,13 @@ namespace geometry {
 			} else {
 				const std::size_t middle = first + (last - first) / 2;
 				const auto		  take = [&](Ring&& ring) {
-					   if (tolerance > 0) {
-						   simplifyRing(ring, tolerance);
+					   if (stepTolerance > 0) {
+						   simplifyRing(ring, stepTolerance);
 					   }
 					   group.push_back(std::move(ring));
 				};
 				for (std::vector<RegionPolygon> half :
-					 {unionInHalves(rings, first, middle, fillHoles, tolerance), unionInHalves(rings, middle, last, fillHoles, tolerance)}) {
+					 {unionInHalves(rings, first, middle, fillHoles, stepTolerance), unionInHalves(rings, middle, last, fillHoles, stepTolerance)}) {
 					for (RegionPolygon& piece : half) {
 						take(std::move(piece.outer));
 						for (Ring& hole : piece.holes) {
@@ -135,6 +113,29 @@ namespace geometry {
 			return outline;
 		}
 
+		// Rings with area, each wound CCW.
+		std::vector<Ring> filledRings(std::vector<Ring> rings) {
+			std::erase_if(rings, [](const Ring& ring) { return ring.size() < 3 || signedAreaDoubled(ring).sign() == 0; });
+			for (Ring& ring : rings) {
+				ensureCounterClockwise(ring);
+			}
+			return rings;
+		}
+
+		std::vector<Ring> unionOutline(std::vector<Ring> rings, std::int64_t stepTolerance) {
+			rings = filledRings(std::move(rings));
+			if (rings.empty()) {
+				return {};
+			}
+			return outersOf(unionInHalves(rings, 0, rings.size(), true, stepTolerance));
+		}
+
+		std::vector<Ring> grownOutline(const std::vector<Ring>& outline, std::int64_t radius, std::int64_t stepTolerance) {
+			std::vector<Ring> grown = outline;
+			appendEdgeSweeps(outline, octagon(radius), grown);
+			return unionOutline(std::move(grown), stepTolerance);
+		}
+
 		// The outline shrunk by the kernel: the complement inside a box clear of the outline by more than the
 		// kernel's reach, grown by the kernel, has the eroded outline as its holes.
 		std::vector<Ring> erodeOutline(const std::vector<Ring>& outline, std::int64_t radius, std::int64_t stepTolerance) {
@@ -172,24 +173,10 @@ namespace geometry {
 			return eroded;
 		}
 
-		std::vector<Ring> unionOutline(std::vector<Ring> rings, std::int64_t stepTolerance) {
-			std::erase_if(rings, [](const Ring& ring) { return ring.size() < 3 || signedAreaDoubled(ring).sign() == 0; });
-			if (rings.empty()) {
-				return {};
-			}
-			for (Ring& ring : rings) {
-				ensureCounterClockwise(ring);
-			}
-			return outersOf(unionInHalves(rings, 0, rings.size(), true, stepTolerance));
-		}
-
-		std::vector<Ring> grownOutline(const std::vector<Ring>& outline, std::int64_t radius, std::int64_t stepTolerance) {
-			if (radius <= 0 || outline.empty()) {
-				return outline;
-			}
-			std::vector<Ring> grown = outline;
-			appendEdgeSweeps(outline, octagon(radius), grown);
-			return unionOutline(std::move(grown), stepTolerance);
+		// Unions of the halves above the leaves for `ringCount` rings, plus the leaves' own.
+		std::int64_t unionLevels(std::size_t ringCount) {
+			const std::size_t leaves = std::max<std::size_t>(1, (ringCount + kLeafRings - 1) / kLeafRings);
+			return 1 + static_cast<std::int64_t>(std::bit_width(leaves - 1));
 		}
 
 	} // namespace
@@ -198,41 +185,65 @@ namespace geometry {
 		return unionOutline(std::move(rings), 0);
 	}
 
-	std::vector<Ring> dilateOutline(const std::vector<Ring>& outline, std::int64_t radius) {
-		return grownOutline(outline, radius, 0);
+	std::vector<Ring> outlineOfUnionInOnePass(std::vector<Ring> rings) {
+		rings = filledRings(std::move(rings));
+		if (rings.empty()) {
+			return {};
+		}
+		return outersOf(unionOfFills({rings}));
+	}
+
+	Ring dilateConvex(const Ring& convex, std::int64_t radius) {
+		std::vector<Vec2i64> points;
+		points.reserve(convex.size() * 8);
+		for (const Vec2i64& vertex : convex) {
+			for (const Vec2i64& offset : octagon(radius)) {
+				points.push_back(vertex + offset);
+			}
+		}
+		return convexHull(std::move(points));
 	}
 
 	std::vector<Ring> closeOutline(const std::vector<Ring>& outline, std::int64_t radius, std::int64_t tolerance) {
 		if (radius <= 0 || outline.empty()) {
 			return outline;
 		}
-		std::vector<Ring> simplified = outline;
-		for (Ring& ring : simplified) {
-			simplifyRing(ring, tolerance);
-		}
-		return simplifyOutline(erodeOutline(grownOutline(simplified, radius, tolerance), radius, tolerance), tolerance);
+		// The close's own steps are simplified as they go; they only decide which gaps fill, since the result is
+		// unioned with the outline as given.
+		std::vector<Ring> closed = simplifyOutline(outline, tolerance);
+		closed = simplifyOutline(erodeOutline(grownOutline(closed, radius, tolerance), radius, tolerance), tolerance);
+		closed.insert(closed.end(), outline.begin(), outline.end());
+		return outlineOfUnionInOnePass(std::move(closed));
 	}
 
 	std::vector<Ring> simplifyOutline(std::vector<Ring> outline, std::int64_t tolerance) {
 		for (Ring& ring : outline) {
-			simplifyRing(ring, tolerance);
+			Ring simplified = ring;
+			simplifyRing(simplified, tolerance);
+			if (simplified.size() >= 3 && signedAreaDoubled(simplified).sign() != 0) {
+				ring = std::move(simplified);
+			}
 		}
-		return outlineOfUnion(std::move(outline));
+		return outlineOfUnionInOnePass(std::move(outline));
 	}
 
 	std::vector<Ring> silhouetteOfTriangles(const std::vector<Vec2i64>& triangleVertices, std::int64_t closeRadius, std::int64_t tolerance) {
 		std::vector<Ring> triangles;
 		triangles.reserve(triangleVertices.size() / 3);
 		for (std::size_t first = 0; first + 3 <= triangleVertices.size(); first += 3) {
-			const Vec2i64& a = triangleVertices[first];
-			const Vec2i64& b = triangleVertices[first + 1];
-			const Vec2i64& c = triangleVertices[first + 2];
-			if (orientation(a, b, c) != Orientation::Collinear) {
-				triangles.push_back({a, b, c});
+			const Vec2i64& corner = triangleVertices[first];
+			const Vec2i64& next = triangleVertices[first + 1];
+			const Vec2i64& last = triangleVertices[first + 2];
+			if (orientation(corner, next, last) != Orientation::Collinear) {
+				triangles.push_back({corner, next, last});
 			}
 		}
-		const std::vector<Ring> outline = simplifyOutline(unionOutline(std::move(triangles), tolerance), tolerance);
+		const std::vector<Ring> outline = simplifyOutline(outlineOfUnion(std::move(triangles)), tolerance);
 		return closeOutline(outline, closeRadius, tolerance);
+	}
+
+	std::int64_t silhouetteBoundMm(std::size_t triangleCount, std::int64_t tolerance) {
+		return tolerance + (unionLevels(triangleCount) + 2) * kBooleanSimplifyEpsMm;
 	}
 
 } // namespace geometry

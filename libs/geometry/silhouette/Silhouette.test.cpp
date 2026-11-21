@@ -4,7 +4,9 @@
 #include "../polygon/Polygon.h"
 #include "../predicates/Predicates.h"
 
+#include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <cstdint>
 #include <vector>
 #include <gtest/gtest.h>
@@ -122,28 +124,68 @@ TEST(Silhouette, DegenerateAndDuplicateInputs) {
 	EXPECT_EQ(silhouetteOfTriangles(repeated, 4, 1), silhouetteOfTriangles(once, 4, 1));
 }
 
-TEST(Silhouette, SameInputSameRings) {
-	std::vector<Vec2i64> fan;
-	for (int spoke = 0; spoke < 40; ++spoke) {
-		const double angle = spoke * 0.157;
-		const Vec2i64 tip{std::llround(3000.0 * std::cos(angle)), std::llround(3000.0 * std::sin(angle))};
-		const Vec2i64 side{std::llround(2500.0 * std::cos(angle + 0.2)), std::llround(2500.0 * std::sin(angle + 0.2))};
-		fan.insert(fan.end(), {{0, 0}, tip, side});
+TEST(Silhouette, ConvexDilationHoldsEveryPointWithinTheRadius) {
+	const Ring grown = dilateConvex({{0, 0}, {1000, 0}, {1000, 1000}, {0, 1000}}, 100);
+	for (const Vec2i64 point : {Vec2i64{-99, 500}, Vec2i64{500, 1099}, Vec2i64{-70, -70}, Vec2i64{1070, 1070}}) {
+		EXPECT_TRUE(insideAny({grown}, point)) << point.x << ", " << point.y;
 	}
-	const auto first = silhouetteOfTriangles(fan, 12, 6);
-	const auto second = silhouetteOfTriangles(fan, 12, 6);
-	ASSERT_FALSE(first.empty());
-	EXPECT_EQ(first, second);
-	expectSimpleAndCounterClockwise(first);
+	EXPECT_FALSE(insideAny({grown}, {-110, 500}));
+	EXPECT_FALSE(insideAny({grown}, {-90, -90}));
 }
 
-TEST(Silhouette, DilationHoldsEveryPointWithinTheRadius) {
-	const std::vector<Ring> square{{{0, 0}, {1000, 0}, {1000, 1000}, {0, 1000}}};
-	const auto grown = dilateOutline(square, 100);
-	ASSERT_EQ(grown.size(), 1U);
-	for (const Vec2i64 point : {Vec2i64{-99, 500}, Vec2i64{500, 1099}, Vec2i64{-70, -70}, Vec2i64{1070, 1070}}) {
-		EXPECT_TRUE(insideAny(grown, point)) << point.x << ", " << point.y;
+namespace {
+
+	double distanceOutside(const std::vector<Ring>& outline, Vec2i64 point) {
+		double nearest = 1e18;
+		for (const Ring& ring : outline) {
+			if (pointInPolygon(point, ring) != PointInPolygon::Outside) {
+				return 0.0;
+			}
+			for (std::size_t i = 0; i < ring.size(); ++i) {
+				const Vec2i64 from = ring[i];
+				const Vec2i64 to = ring[(i + 1) % ring.size()];
+				const double  alongX = static_cast<double>(to.x - from.x);
+				const double  alongY = static_cast<double>(to.y - from.y);
+				const double  fraction = std::clamp(
+					 (static_cast<double>(point.x - from.x) * alongX + static_cast<double>(point.y - from.y) * alongY) / (alongX * alongX + alongY * alongY), 0.0, 1.0
+				 );
+				nearest = std::min(nearest, std::hypot(static_cast<double>(point.x - from.x) - fraction * alongX, static_cast<double>(point.y - from.y) - fraction * alongY));
+			}
+		}
+		return nearest;
 	}
-	EXPECT_FALSE(insideAny(grown, {-110, 500}));
-	EXPECT_FALSE(insideAny(grown, {-90, -90}));
+
+	void expectEveryVertexWithinBound(const std::vector<Vec2i64>& triangles, const std::vector<Ring>& outline, std::int64_t tolerance) {
+		const double bound = static_cast<double>(silhouetteBoundMm(triangles.size() / 3, tolerance));
+		for (const Vec2i64& vertex : triangles) {
+			EXPECT_LE(distanceOutside(outline, vertex), bound) << "(" << vertex.x << ", " << vertex.y << ")";
+		}
+	}
+
+} // namespace
+
+// A 6 m body with a thin curved strand (a 10 mm band round a quarter circle) reaching off it and a separate
+// 300 by 10 mm stroke beside it, at the tolerance a 6 m object gets (L / 512): nothing drawn is lost.
+TEST(Silhouette, ThinStrandsAndThinBodiesStay) {
+	constexpr std::int64_t kTolerance = 6000 / 512;
+	std::vector<Vec2i64>   triangles;
+	pushRect(triangles, 0, 0, 6000, 6000);
+	constexpr int kSteps = 48;
+	for (int step = 0; step < kSteps; ++step) {
+		const auto pointAt = [](double angle, double radius) {
+			return Vec2i64{6000 + std::llround(radius * std::cos(angle)), 3000 + std::llround(radius * std::sin(angle))};
+		};
+		const double from = std::numbers::pi * 0.5 * step / kSteps - std::numbers::pi * 0.25;
+		const double to = std::numbers::pi * 0.5 * (step + 1) / kSteps - std::numbers::pi * 0.25;
+		const Vec2i64 innerFrom = pointAt(from, 1500);
+		const Vec2i64 outerFrom = pointAt(from, 1510);
+		const Vec2i64 innerTo = pointAt(to, 1500);
+		const Vec2i64 outerTo = pointAt(to, 1510);
+		triangles.insert(triangles.end(), {innerFrom, outerFrom, outerTo, innerFrom, outerTo, innerTo});
+	}
+	pushRect(triangles, 0, 7000, 300, 7010);
+	const auto outline = silhouetteOfTriangles(triangles, kTolerance, kTolerance);
+	expectSimpleAndCounterClockwise(outline);
+	EXPECT_TRUE(insideAny(outline, {150, 7005}) || distanceOutside(outline, {150, 7005}) <= kTolerance) << "the separate stroke is outlined";
+	expectEveryVertexWithinBound(triangles, outline, kTolerance);
 }

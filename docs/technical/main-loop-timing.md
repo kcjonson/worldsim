@@ -265,6 +265,7 @@ Worked examples, at the default walking speed (2 m/s) and the fastest decay (thi
 | Placement and bake | one `std::async` thread per chunk in flight | `AsyncChunkProcessor` | placement, then the CPU mesh bake | not per frame; `waitAll` and `clear` wait |
 | Template level builder | 1 `std::jthread` with its own `foundation::TaskPool` (`hardware_concurrency - 1`, at least 1); one builder, owned by `EntityRenderer`'s `InstancedEntityRenderer` | renderer | mesh levels for the zoom | not per frame |
 | Ground tile bake | a `TaskPool` while baking | `GroundTileBank` | ground tiles | loading only |
+| Asset load | 1 thread for the load (`AssetRegistry::beginLoadAsync`), and in it a `foundation::TaskPool` for `prewarmProceduralTemplates` | `AssetRegistry` | the definitions, then every procedural template that is prewarmed (each tree variant, and each variant of a selectable procedural def without age classes) with its selection silhouette; about 0.5 s on the pool for the shipped library, most of it the silhouettes (a tree's 100 to 160 ms of work) | loading only |
 
 During a pan, chunk generation threads, placement threads, the two nav workers (patch and route), and the level builder's pool can all be runnable at once, more threads than cores; nothing caps the async launches.
 

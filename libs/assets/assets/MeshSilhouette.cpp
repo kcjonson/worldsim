@@ -31,12 +31,9 @@ namespace assets {
 
 		AssetSilhouette silhouetteOfRings(std::vector<geometry::Ring> rings, std::int64_t longest) {
 			AssetSilhouette silhouette;
-			// The close is simplified, which may cut inside the outline; unioned with the outline again, a click
-			// anywhere on what is outlined hits.
-			std::vector<geometry::Ring> hit =
+			// closeOutline holds its input, so a click anywhere on what is outlined hits.
+			silhouette.hitRegion =
 				geometry::closeOutline(rings, fractionOf(longest, kHitRegionCloseDivisor), fractionOf(longest, kHitRegionToleranceDivisor));
-			hit.insert(hit.end(), rings.begin(), rings.end());
-			silhouette.hitRegion = geometry::outlineOfUnion(std::move(hit));
 			silhouette.rings = std::move(rings);
 			silhouette.valid = !silhouette.rings.empty();
 			return silhouette;
@@ -49,10 +46,10 @@ namespace assets {
 		const auto faint = [&](uint16_t index) { return hasColors && mesh.colors[index].a < kSilhouetteMinAlpha; };
 		std::vector<geometry::Vec2i64> triangleVertices;
 		triangleVertices.reserve(mesh.indices.size());
-		for (size_t t = 0; t + 2 < mesh.indices.size(); t += 3) {
-			const uint16_t first = mesh.indices[t];
-			const uint16_t second = mesh.indices[t + 1];
-			const uint16_t third = mesh.indices[t + 2];
+		for (size_t triangle = 0; triangle + 2 < mesh.indices.size(); triangle += 3) {
+			const uint16_t first = mesh.indices[triangle];
+			const uint16_t second = mesh.indices[triangle + 1];
+			const uint16_t third = mesh.indices[triangle + 2];
 			if (faint(first) && faint(second) && faint(third)) {
 				continue;
 			}
@@ -80,7 +77,7 @@ namespace assets {
 		if (longest == 0) {
 			return {};
 		}
-		return silhouetteOfRings(geometry::outlineOfUnion(std::move(shapes)), longest);
+		return silhouetteOfRings(geometry::outlineOfUnionInOnePass(std::move(shapes)), longest);
 	}
 
 } // namespace assets

@@ -162,33 +162,58 @@ square(0, 1.0)
 	reg.clear();
 }
 
-// A click just inside a mature tree's outline selects it and one just outside does not: at the rightmost point of
-// its hit region, 5 mm in and 20 mm out. The hit region holds the whole outline.
-TEST(AssetRegistrySilhouette, MatureTreeHitsJustInsideAndMissesJustOutside) {
+// Every opaque vertex of a mature tree, both stroke-only plant fibre, and each colonist facing lies inside the
+// outline or within the bound the silhouette promises, and the hit region holds the outline. Probed from the mesh:
+// 5 mm inside the tree's rightmost drawn point hits, 20 mm past its hit region's rightmost point misses.
+TEST(AssetRegistrySilhouette, OutlineHoldsWhatIsDrawnAndTheHitRegionHoldsTheOutline) {
 	auto& reg = AssetRegistry::Get();
 	reg.clear();
 	if (!loadShippedLibrary(reg)) {
 		GTEST_SKIP() << "assets/world not found";
 	}
-	const AssetDefinition* def = reg.getDefinition("Flora_TreeOak");
-	ASSERT_NE(def, nullptr);
-	const AssetSilhouette* sil = reg.getSilhouette("Flora_TreeOak", AssetRegistry::matureTraits(*def));
-	ASSERT_NE(sil, nullptr);
-	ASSERT_TRUE(sil->valid);
-	geometry::Vec2i64 rightmost = sil->hitRegion.front().front();
-	for (const auto& ring : sil->hitRegion) {
-		for (const auto& vertex : ring) {
-			if (vertex.x > rightmost.x) {
-				rightmost = vertex;
+	const AssetDefinition* oak = reg.getDefinition("Flora_TreeOak");
+	ASSERT_NE(oak, nullptr);
+	const std::vector<std::pair<std::string, TreeTraits>> templates{
+		{"Flora_TreeOak", AssetRegistry::matureTraits(*oak)},
+		{"PlantFiber", {}},
+		{"Human_down", {}},
+		{"Human_up", {}},
+		{"Human_left", {}},
+		{"Human_right", {}},
+	};
+	for (const auto& [name, traits] : templates) {
+		const renderer::TessellatedMesh* mesh = reg.getTemplate(name, traits);
+		const AssetSilhouette*			 sil = reg.getSilhouette(name, traits);
+		ASSERT_NE(mesh, nullptr) << name;
+		ASSERT_NE(sil, nullptr) << name;
+		ASSERT_TRUE(sil->valid) << name;
+		const OutlineReach reach = outlineReach(*mesh, *sil);
+		EXPECT_LE(reach.worstMm, static_cast<double>(reach.boundMm)) << name << " draws " << reach.worstMm << " mm outside its outline";
+		for (const auto& ring : sil->rings) {
+			for (const auto& vertex : ring) {
+				EXPECT_TRUE(withinMillimetreOf(sil->hitRegion, vertex)) << name << ": the outline at (" << vertex.x << ", " << vertex.y << ") is outside the hit region";
 			}
 		}
 	}
-	EXPECT_TRUE(insideAny(sil->hitRegion, {rightmost.x - 5, rightmost.y}));
-	EXPECT_FALSE(insideAny(sil->hitRegion, {rightmost.x + 20, rightmost.y}));
-	for (const auto& ring : sil->rings) {
-		for (const auto& vertex : ring) {
-			EXPECT_TRUE(withinMillimetreOf(sil->hitRegion, vertex)) << "the outline at (" << vertex.x << ", " << vertex.y << ") is outside the hit region";
+
+	const renderer::TessellatedMesh* mesh = reg.getTemplate("Flora_TreeOak", AssetRegistry::matureTraits(*oak));
+	const AssetSilhouette*			 sil = reg.getSilhouette("Flora_TreeOak", AssetRegistry::matureTraits(*oak));
+	size_t							 triangleCount = 0;
+	geometry::Vec2i64				 drawnRightmost = opaqueVertices(*mesh, triangleCount).front();
+	for (const auto& vertex : opaqueVertices(*mesh, triangleCount)) {
+		if (vertex.x > drawnRightmost.x) {
+			drawnRightmost = vertex;
 		}
 	}
+	geometry::Vec2i64 hitRightmost = sil->hitRegion.front().front();
+	for (const auto& ring : sil->hitRegion) {
+		for (const auto& vertex : ring) {
+			if (vertex.x > hitRightmost.x) {
+				hitRightmost = vertex;
+			}
+		}
+	}
+	EXPECT_TRUE(insideAny(sil->hitRegion, {drawnRightmost.x - 5, drawnRightmost.y}));
+	EXPECT_FALSE(insideAny(sil->hitRegion, {hitRightmost.x + 20, hitRightmost.y}));
 	reg.clear();
 }

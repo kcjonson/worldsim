@@ -1106,7 +1106,7 @@ namespace assets {
 		}
 		const PartsAsset&  parts = *def.parts;
 		const float		   turnRadians = turnRadiansFromQuanta(turnQuanta);
-		// A millimetre more for rounding the footprints to millimetres and another for the union's simplification,
+		// A millimetre more for rounding the footprints to millimetres and another for the one union's simplification,
 		// either of which may cut that far inside, so the outline's stroke stays within the silhouette.
 		const std::int64_t pad = geometry::quantize(Foundation::Vec2{config.outlineHalfWidthMeters(), 0.0F}).x + 1 + geometry::kBooleanSimplifyEpsMm;
 		std::vector<geometry::Ring> shapes;
@@ -1116,18 +1116,12 @@ namespace assets {
 				continue;
 			}
 			const PartDefinition&  part = parts.parts[parts.placements[placement].part];
-			std::vector<glm::vec2> lifted;
+			std::vector<geometry::Vec2i64> lifted;
 			for (const glm::vec2& point : footprint) {
-				lifted.emplace_back(point.x, point.y - part.bottomMeters * config.heightRatio);
-				lifted.emplace_back(point.x, point.y - part.topMeters * config.heightRatio);
+				lifted.push_back(geometry::quantize(Foundation::Vec2{point.x, point.y - part.bottomMeters * config.heightRatio}));
+				lifted.push_back(geometry::quantize(Foundation::Vec2{point.x, point.y - part.topMeters * config.heightRatio}));
 			}
-			geometry::Ring prism;
-			for (const glm::vec2& point : convexHull(std::move(lifted))) {
-				prism.push_back(geometry::quantize(Foundation::Vec2{point.x, point.y}));
-			}
-			for (geometry::Ring& grown : geometry::dilateOutline({prism}, pad)) {
-				shapes.push_back(std::move(grown));
-			}
+			shapes.push_back(geometry::dilateConvex(geometry::convexHull(std::move(lifted)), pad));
 		}
 		silhouette.silhouette = silhouetteOfShapes(std::move(shapes));
 		silhouette.stripLines = stripLinesOf(parts, stripLayout(def, turnQuanta, config), turnRadians, config, silhouette.silhouette.rings);
