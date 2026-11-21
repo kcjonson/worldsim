@@ -1146,6 +1146,25 @@ TEST_F(ItemViewTest, ADrawingsAverageColourIsWhatShows) {
 	EXPECT_FLOAT_EQ(average.a, 1.0F);
 }
 
+TEST_F(ItemViewTest, ATranslucentShapeIsAveragedOncePerPointItCovers) {
+	// A half-transparent red square over grey: the lattice points on the diagonal its two triangles share are painted
+	// once, as every other point is, so the average is the even mix.
+	folder.write("Glass/front.svg", svg(1.0F, 1.0F, "<rect x=\"0\" y=\"0\" width=\"100\" height=\"100\" fill=\"#FF0000\" fill-opacity=\"0.5\"/>"));
+	writeDef(
+		"Glass",
+		"<parts><part name=\"box\"><footprint>" + rect(-0.5F, -0.5F, 0.5F, 0.5F) +
+			"</footprint><height bottom=\"0\" top=\"1\"/><top color=\"#FFFFFF\"/><sides color=\"#00FF00\"><face side=\"front\" drawing=\"front.svg\"/></sides>"
+			"</part></parts><placements>" + place("box") + "</placements>"
+	);
+	const AssetDefinition* def = load("Glass");
+	ASSERT_NE(def, nullptr);
+	const Foundation::Color average = def->parts->drawings[*def->parts->parts[0].faces[2].drawing].averageColor;
+	const float				grey = static_cast<float>(0x80) / 255.0F;
+	EXPECT_NEAR(average.r, (grey + 1.0F) / 2.0F, 1.0e-4F);
+	EXPECT_NEAR(average.g, grey / 2.0F, 1.0e-4F);
+	EXPECT_NEAR(average.b, grey / 2.0F, 1.0e-4F);
+}
+
 TEST_F(ItemViewTest, RandomArtSpillingEveryWayIsClippedToItsFaceAndItsTop) {
 	// 300 random triangles each on a front and a top, most spilling past the viewBox: every vertex they make is
 	// finite and on its face or its top, at turns where the clip has two exactly vertical planes and where it has none.

@@ -575,6 +575,17 @@ namespace assets {
 					if (doubled == 0.0F) {
 						continue;
 					}
+					// A lattice point on an edge two triangles share is painted by one of them (the top-left rule): an edge
+					// owns its points when, taken with the triangle wound positively, it runs down or exactly leftward.
+					const float sign = doubled > 0.0F ? 1.0F : -1.0F;
+					const auto	covers = [sign](glm::vec2 from, glm::vec2 to, glm::vec2 point) {
+						 const float side = sign * crossOf(from, to, point);
+						 if (side != 0.0F) {
+							 return side > 0.0F;
+						 }
+						 const glm::vec2 along = (to - from) * sign;
+						 return along.y > 0.0F || (along.y == 0.0F && along.x < 0.0F);
+					};
 					const glm::vec2 low = glm::min(first, glm::min(second, third));
 					const glm::vec2 high = glm::max(first, glm::max(second, third));
 					const int		fromColumn = std::max(0, static_cast<int>(std::ceil(low.x / cell.x - 0.5F)));
@@ -584,12 +595,12 @@ namespace assets {
 					for (int row = fromRow; row <= toRow; ++row) {
 						for (int column = fromColumn; column <= toColumn; ++column) {
 							const glm::vec2 point{(static_cast<float>(column) + 0.5F) * cell.x, (static_cast<float>(row) + 0.5F) * cell.y};
-							const float		weightFirst = crossOf(point, second, third) / doubled;
-							const float		weightSecond = crossOf(first, point, third) / doubled;
-							const float		weightThird = 1.0F - weightFirst - weightSecond;
-							if (weightFirst < 0.0F || weightSecond < 0.0F || weightThird < 0.0F) {
+							if (!covers(second, third, point) || !covers(third, first, point) || !covers(first, second, point)) {
 								continue;
 							}
+							const float weightFirst = crossOf(point, second, third) / doubled;
+							const float weightSecond = crossOf(first, point, third) / doubled;
+							const float weightThird = 1.0F - weightFirst - weightSecond;
 							glm::dvec4 color{0.0};
 							for (size_t corner = 0; corner < 3; ++corner) {
 								const Foundation::Color& vertex = mesh.colors[corners[corner]];
