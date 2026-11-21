@@ -1,8 +1,8 @@
 // Settings Scene - game options.
 //
-// Options screen: a title, then the interface size and the drawing settings, each under its kicker, one
-// switch (or choice) each. Every change applies at once and is saved to the settings file as it changes:
-// the interface size is the App's ui.scale, the drawing settings world_sim::UserSettings. Opened over the
+// Options screen: a title, then the interface size, the landing settings, and the drawing settings, each
+// under its kicker, one switch (or choice) each. Every change applies at once and is saved to the settings
+// file as it changes: the interface size is the App's ui.scale, the rest world_sim::UserSettings. Opened over the
 // main menu or the paused game, ESC or Back pops it; reached by name (--scene, the dev server's control),
 // with nothing under it, they go to the main menu.
 
@@ -95,7 +95,7 @@ namespace {
 			}
 		}
 
-		void saveDrawingSettings() {
+		void saveSettings() {
 			world_sim::UserSettings::Get().store(owner->settings());
 			if (!owner->settings().save()) {
 				LOG_ERROR(Game, "SettingsScene: the settings file couldn't be saved");
@@ -195,11 +195,6 @@ namespace {
 				.wrap = true,
 			});
 
-			list.addChild<ui::Text>({.id = "settings_drawing_kicker", .style = kicker, .text = "// DRAWING SETTINGS"});
-
-			const assets::SnappingConfig& snapping = assets::ConstructionRegistry::Get().snapping();
-			world_sim::DrawingSettings&	  drawing = world_sim::UserSettings::Get().drawing;
-
 			const auto addSwitch = [&](const char* id, const std::string& label, const std::string& line, bool& field) {
 				ui::Ref<ui::Component> row = list.addChild<ui::Component>({
 					.id = id,
@@ -213,7 +208,7 @@ namespace {
 					.onChange = [this, &field, label](bool on) {
 						field = on;
 						LOG_INFO(Game, "Setting: %s -> %s", label.c_str(), on ? "on" : "off");
-						saveDrawingSettings();
+						saveSettings();
 					},
 				});
 				row.addChild<ui::Text>({
@@ -223,6 +218,19 @@ namespace {
 					.wrap = true,
 				});
 			};
+
+			list.addChild<ui::Text>({.id = "settings_landing_kicker", .style = kicker, .text = "// LANDING"});
+			addSwitch(
+				"landing_suggested_sites",
+				"Show suggested landing sites",
+				"Mark good places to start a colony on the globe: fresh water, food, wood, and a livable climate.",
+				world_sim::UserSettings::Get().landing.showSuggestedSites
+			);
+
+			list.addChild<ui::Text>({.id = "settings_drawing_kicker", .style = kicker, .text = "// DRAWING SETTINGS"});
+
+			const assets::SnappingConfig& snapping = assets::ConstructionRegistry::Get().snapping();
+			world_sim::DrawingSettings&	  drawing = world_sim::UserSettings::Get().drawing;
 
 			addSwitch(
 				"drawing_angle_steps",
@@ -282,7 +290,7 @@ namespace {
 				.onChange = [this, &drawing](int index) {
 					drawing.rectangleGridSpacingMeters = index == 1 ? 0.5F : 1.0F;
 					LOG_INFO(Game, "Setting: rectangle grid spacing -> %g m", drawing.rectangleGridSpacingMeters);
-					saveDrawingSettings();
+					saveSettings();
 				},
 			});
 			grid.addChild<ui::Text>({

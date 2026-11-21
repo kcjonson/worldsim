@@ -342,7 +342,7 @@ The reference level is the one the default view (24 px/m) picks. The load prewar
 | `spawnChance` | Spawn probability (0-1) |
 | `distribution` | `uniform`, `clumped`, or `spaced` |
 | `scale/@min`, `scale/@max` | This def's placement scale range, with 0 < min <= max; default 0.8 to 1.2 for every def. A def that sets it moves only its own scales. |
-| `groups/group` | Groups this asset belongs to |
+| `groups/group` | Groups this asset belongs to. An item with no biome rules can still declare groups here; `wood` marks an item as timber, so flora that yield it give their biomes wood for a landing site |
 | `relationships/*` | Entity relationship rules |
 
 ### Animation Elements

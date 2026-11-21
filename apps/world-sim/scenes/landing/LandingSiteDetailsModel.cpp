@@ -79,24 +79,28 @@ int difficultySkulls(worldgen::Habitability h) {
 
 } // namespace
 
+std::string landingCoordinates(double pickLatDeg, double pickLonDeg) {
+	return std::format("{:.1f} {}  {:.1f} {}",
+		std::abs(pickLatDeg), pickLatDeg >= 0.0 ? "N" : "S",
+		std::abs(pickLonDeg), pickLonDeg >= 0.0 ? "E" : "W");
+}
+
 LandingSiteDetails buildLandingSiteDetails(
-		const worldgen::GeneratedWorld& world, double latDeg, double lonDeg) {
+		const worldgen::GeneratedWorld& world, const worldgen::LandingSite& site, double pickLatDeg, double pickLonDeg) {
 	LandingSiteDetails out;
 
 	out.location = std::format("{:.2f} {}, {:.2f} {}",
-		std::abs(latDeg), latDeg >= 0.0 ? "N" : "S",
-		std::abs(lonDeg), lonDeg >= 0.0 ? "E" : "W");
-	out.coords = std::format("{:.1f} {}  {:.1f} {}",
-		std::abs(latDeg), latDeg >= 0.0 ? "N" : "S",
-		std::abs(lonDeg), lonDeg >= 0.0 ? "E" : "W");
+		std::abs(pickLatDeg), pickLatDeg >= 0.0 ? "N" : "S",
+		std::abs(pickLonDeg), pickLonDeg >= 0.0 ? "E" : "W");
+	out.coords = landingCoordinates(pickLatDeg, pickLonDeg);
 
-	if (!world.grid) {
+	if (!world.grid || site.tile == worldgen::kInvalidTile) {
 		out.verdict = "No world data";
 		out.verdictColor = kNeutral;
 		return out;
 	}
 
-	worldgen::TileId tile = world.grid->fromLatLon(latDeg, lonDeg);
+	const worldgen::TileId tile = site.tile;
 
 	uint16_t rainMm = 0;
 	if (hasField(world, worldgen::WorldField::Precipitation) &&
@@ -104,16 +108,14 @@ LandingSiteDetails buildLandingSiteDetails(
 		rainMm = world.data.precipitation[tile];
 	}
 
-	worldgen::WaterClass water = worldgen::classifyWater(world, tile);
+	const worldgen::WaterClass water = site.assessment.water;
 	waterVerdict(water, rainMm, out.verdict, out.verdictColor);
 
-	out.habitability = worldgen::rateHabitability(world, tile, water);
+	out.habitability = site.assessment.habitability;
 	out.habitabilityText = worldgen::habitabilityToString(out.habitability);
 	out.habitabilityColor = habitabilityColor(out.habitability);
 	out.difficulty = difficultySkulls(out.habitability);
-	out.recommended = worldgen::isFreshwater(water) &&
-					  (out.habitability == worldgen::Habitability::Easy ||
-					   out.habitability == worldgen::Habitability::Moderate);
+	out.recommended = site.recommended();
 
 	if (hasField(world, worldgen::WorldField::Biome) && tile < world.data.biome.size()) {
 		out.biomeName = spacedBiomeName(
@@ -145,6 +147,15 @@ LandingSiteDetails buildLandingSiteDetails(
 			: "Rain only",
 			out.verdictColor});
 		out.sections.push_back(std::move(s));
+	}
+
+	// Provisions section: whether the biome's flora feeds a colony and gives it wood.
+	{
+		DetailSection provisions;
+		provisions.header = "Provisions";
+		provisions.rows.push_back({"Food", site.assessment.hasFood ? "Yes" : "None", site.assessment.hasFood ? kNeutral : kDry});
+		provisions.rows.push_back({"Wood", site.assessment.hasWood ? "Yes" : "None", site.assessment.hasWood ? kNeutral : kDry});
+		out.sections.push_back(std::move(provisions));
 	}
 
 	// Terrain section: biome + elevation relative to sea level.

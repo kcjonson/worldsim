@@ -1,7 +1,7 @@
 # Scenario 21: Colonists wash
 
 **Status:** ready  
-**Last verified:** 2026-11-17
+**Last verified:** 2026-11-20
 
 A colonist low on Hygiene walks to water it knows and washes there, the way it drinks. Spec:
 [needs.md](../../design/game-systems/colonists/needs.md#hygiene).
@@ -11,8 +11,8 @@ A colonist low on Hygiene walks to water it knows and washes there, the way it d
 ## Preconditions
 
 Fresh launch (Quick Start): `world-sim --scene=game --background --no-settings` (RelWithDebInfo), dev
-server on 127.0.0.1:8081. Quick Start lands by a river, so Bob has seen water within his first few
-seconds. Bob's id is in `/api/state?what=colonists`; ids are large numbers (for example 4294967296), so
+server on 127.0.0.1:8081. Quick Start lands about 28 m from a river and gives the crew memory of the landing area, so Bob
+knows the water at once. Bob's id is in `/api/state?what=colonists`; ids are large numbers (for example 4294967296), so
 copy it exactly.
 
 `/stream/logs` never ends, so read it with a bounded request: `curl.exe -m 3 http://127.0.0.1:8081/stream/logs`.

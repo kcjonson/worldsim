@@ -50,6 +50,7 @@ add_library(assets
     assets/placement/BakedEntityMesh.cpp
     assets/placement/WorldDepthSort.cpp
     assets/placement/FloraMeasure.cpp
+    assets/placement/BiomeProvisions.cpp
     assets/placement/CanopyCover.cpp
 )
 

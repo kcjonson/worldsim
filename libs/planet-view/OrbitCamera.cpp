@@ -40,6 +40,13 @@ void OrbitCamera::setDistance(float dist) {
     clampPitch();
 }
 
+void OrbitCamera::hold() {
+    yawVel = 0.0F;
+    pitchVel = 0.0F;
+    userInteracted = true;
+    idleTime = 0.0F;
+}
+
 void OrbitCamera::beginDrag(float mouseX, float mouseY) {
     dragging = true;
     userInteracted = true;
@@ -141,6 +148,11 @@ void OrbitCamera::update(float dt) {
     } else {
         idleTime = 0.0F;
     }
+}
+
+bool OrbitCamera::isMoving() const {
+    return dragging || distance != targetDistance || std::abs(yawVel) > kStillVelocity ||
+           std::abs(pitchVel) > kStillVelocity || !userInteracted;
 }
 
 } // namespace planetview

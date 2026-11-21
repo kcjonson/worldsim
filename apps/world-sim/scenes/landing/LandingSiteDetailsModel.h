@@ -28,7 +28,7 @@ struct DetailRow {
 	Foundation::Color	accent;
 };
 
-// A titled group of rows (Water / Terrain / Climate).
+// A titled group of rows (Water / Provisions / Terrain / Climate).
 struct DetailSection {
 	std::string				header;
 	std::vector<DetailRow>	rows;
@@ -50,10 +50,14 @@ struct LandingSiteDetails {
 	std::vector<DetailSection>	sections;
 };
 
-// Build the pane content for the tile under (latDeg, lonDeg). The world must
-// have a grid; fields are read defensively so a partially-generated world still
-// produces a sensible (if sparser) pane.
+// The pane's coordinate readout for a pick: "14.7 N  79.2 W".
+std::string landingCoordinates(double pickLatDeg, double pickLonDeg);
+
+// Build the pane content for a resolved landing. The coordinates are the pick's (the player never
+// sees the resolution); everything else describes the landing tile, which can be a neighbour of the
+// picked one. Fields are read defensively so a partially-generated world still produces a sensible
+// (if sparser) pane.
 LandingSiteDetails buildLandingSiteDetails(
-	const worldgen::GeneratedWorld& world, double latDeg, double lonDeg);
+	const worldgen::GeneratedWorld& world, const worldgen::LandingSite& site, double pickLatDeg, double pickLonDeg);
 
 } // namespace world_sim
