@@ -7,6 +7,7 @@
 #include "assets/AssetDefinition.h"
 #include "assets/AssetValidator.h"
 #include "assets/IAssetGenerator.h"
+#include "assets/MeshSilhouette.h"
 #include "assets/MotionDef.h"
 #include "assets/TessellatedPaths.h"
 #include "assets/TreeTraits.h"
@@ -39,20 +40,6 @@ namespace assets {
 		std::atomic<bool> started{false};
 		std::atomic<bool> done{false};
 		std::atomic<int>  defsLoaded{0};
-	};
-
-	/// Cached per-defName selection silhouette: the filled outer outline of the
-	/// asset's RENDERED footprint (rasterized from the tessellated mesh triangles, so
-	/// it captures fills AND stroke bands — e.g. a reed's stroke stem — exactly what is
-	/// drawn), in the template's pivot frame in integer millimeters.
-	/// `rings` is the crisp outline (holes filled, disjoint blobs kept separate) used for
-	/// the selection outline and later shadows; `hitRegion` is the same closed with a
-	/// small morphological radius so gaps between disjoint blobs are clickable
-	/// (whole-clump) and narrow concavities forgive slightly — used for hit-testing.
-	struct AssetSilhouette {
-		std::vector<geometry::Ring> rings;
-		std::vector<geometry::Ring> hitRegion;
-		bool						valid = false;
 	};
 
 	/// Central registry for asset definitions and generated templates.
@@ -155,21 +142,13 @@ namespace assets {
 		/// Rotation amps are returned in radians, posX/posY amps in meters. Lazily loaded + cached.
 		const MotionDef* getMotion(const std::string& defName);
 
-		/// Get the cached selection silhouette for a template (see AssetSilhouette).
-		/// Lazily rasterized from the tessellated template mesh triangles (fills AND stroke
-		/// bands) via geometry::silhouetteOfTriangles: `rings` at close 0, `hitRegion` at a
-		/// small close; holes filled, disjoint blobs kept separate. Triangles under
-		/// kSilhouetteMinAlpha (shadows) are left out. `valid` is false only when nothing
-		/// opaque is drawn (no bounds-rect fallback). Thread-safe (own mutex, heavy compute
-		/// off-lock), safe to call from chunk workers like getTemplate.
+		/// Get the cached selection silhouette for a template (MeshSilhouette.h), in the template's pivot
+		/// frame: lazily rasterized from the template mesh's triangles by silhouetteOfMesh. Thread-safe (own
+		/// mutex, heavy compute off-lock), safe to call from chunk workers like getTemplate.
 		const AssetSilhouette* getSilhouette(uint32_t templateId);
 
 		/// getSilhouette(templateId(defName, traits)).
 		const AssetSilhouette* getSilhouette(const std::string& defName, TreeTraits traits);
-
-		/// A triangle whose vertices are all below this alpha (a cast shadow) is not part of
-		/// the silhouette, so it is neither outlined, clicked, nor counted as canopy.
-		static constexpr float kSilhouetteMinAlpha = 0.5F;
 
 		/// Generate an asset directly (does not cache)
 		/// @param defName The definition name

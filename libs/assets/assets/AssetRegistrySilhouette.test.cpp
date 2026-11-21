@@ -67,7 +67,7 @@ TEST(AssetRegistrySilhouette, EnclosesTessellatedFill) {
 
 	// Every non-degenerate opaque triangle centroid should be inside the silhouette. Allow
 	// a small slack for raster staircasing clipping sliver triangles at the boundary.
-	const auto faint = [&](uint16_t i) { return mesh->hasColors() && mesh->colors[i].a < AssetRegistry::kSilhouetteMinAlpha; };
+	const auto faint = [&](uint16_t i) { return mesh->hasColors() && mesh->colors[i].a < kSilhouetteMinAlpha; };
 	int		   inside = 0;
 	int		   total  = 0;
 	for (std::size_t t = 0; t < mesh->getTriangleCount(); ++t) {
