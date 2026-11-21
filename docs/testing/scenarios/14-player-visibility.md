@@ -1,7 +1,7 @@
 # Scenario 14: player visibility
 
 **Status:** ready  
-**Last verified:** 2026-11-20
+**Last verified:** 2026-11-20, after the main merge (steps 1 to 16 and 26 to 49 as written; the BigRock stood at (-64.6, -30.8), not (-63.2, -40.9), so in steps 10 and 11 it was 18 m from Bob and outside his sight at (-48.6, -45.7); step 17's loop was refused, a tree on its line, so 17 to 25 ran moved by the rock's offset (-1.4, 10.1), the room at (-50, -40.1) to (-46, -36.1); step 9's trunk triangles were too faint to judge in a screenshot)
 
 Colonists reveal the ground: bright in sight, tinted once seen, black never seen, with soft edges, faint triangles behind trunks, and soft-sided shadows behind walls and big rocks. Specs: [player-visibility.md](../../technical/player-visibility.md), [sight-softening.md](../../technical/sight-softening.md).
 

@@ -1,7 +1,7 @@
 # Scenario 03: Build wood foundation over trees
 
 **Status:** ready  
-**Last verified:** 2026-11-20 (steps 44 and 53 are person-only and were not run; step 10's dossier has no Tasks tab, only Needs, Bio, Gear and Log)
+**Last verified:** 2026-11-20 (steps 44 and 53 are person-only and were not run. Steps 9 and 10 ran again on a built L foundation: the armful became a heap where Bob stood, and the dossier, opened with the panel's eye button, listed the Deconstruct structure row under Known work on its Tasks tab. On that run (17, 2) to (20, 5) held one tree, not three, and no tree stood at (31, 4.6).)
 
 Verifies the full foundation construction lifecycle: a colonist clears on-footprint trees, chops
 for materials, and builds a `Wood` foundation to completion, unaided, without freezing.
