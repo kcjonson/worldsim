@@ -45,6 +45,7 @@
 #include "../components/Task.h"
 #include "../components/Transform.h"
 
+#include <assets/AssetBootstrap.h>
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
 #include <assets/RecipeRegistry.h>
@@ -1589,8 +1590,13 @@ namespace {
 			return;
 		}
 		assets::AssetRegistry& registry = assets::AssetRegistry::Get();
-		registry.setSharedScriptsPath(projectRoot() / "assets" / "shared" / "scripts");
-		registry.loadDefinitionsFromFolder((projectRoot() / "assets" / "world").string());
+		assets::loadAssetSystem(
+			{.definitions = (projectRoot() / "assets" / "world").string(),
+			 .sharedScripts = (projectRoot() / "assets" / "shared" / "scripts").string(),
+			 .recipes = {},
+			 .config = (projectRoot() / "assets" / "config").string()},
+			false
+		);
 		for (auto _ : state) {
 			assets::PlacementExecutor placement(registry);
 			placement.initialize();
