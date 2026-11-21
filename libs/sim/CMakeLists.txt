@@ -68,6 +68,8 @@ add_library(sim
     construction/WallStand.cpp
     nav/NavInputBuilder.cpp
     nav/RouteQueue.cpp
+    queries/Facts.cpp
+    queries/QueryEvaluator.cpp
     vision/GeometryIndex.cpp
     vision/PlacedOccluderIndex.cpp
     vision/SeenArea.cpp
@@ -85,8 +87,8 @@ target_include_directories(sim
 
 target_compile_features(sim PUBLIC cxx_std_20)
 
-# The simulation: the ECS and its systems, navigation, vision, construction, and the conditions
-# behaviors and thoughts are written in. It links
+# The simulation: the ECS and its systems, navigation, vision, construction, the conditions
+# behaviors and thoughts are written in, and the queries that pick their targets. It links
 # neither renderer nor ui itself; assets still brings salal::renderer (its vector module).
 target_link_libraries(sim
     PUBLIC

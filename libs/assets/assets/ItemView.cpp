@@ -676,6 +676,10 @@ namespace assets {
 		return static_cast<float>(static_cast<double>(turnQuanta) * kTurnQuantumDegrees * std::numbers::pi / 180.0);
 	}
 
+	uint32_t turnQuantaFromRadians(float radians) {
+		return turnQuantaFromDegrees(static_cast<double>(radians) * 180.0 / std::numbers::pi);
+	}
+
 	float sideShade(glm::vec2 normal, const ViewConfig& config) {
 		const double azimuth = static_cast<double>(config.lightAzimuthDegrees) * std::numbers::pi / 180.0;
 		const double elevation = static_cast<double>(config.lightElevationDegrees) * std::numbers::pi / 180.0;

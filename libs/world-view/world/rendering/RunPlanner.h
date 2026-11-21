@@ -30,6 +30,15 @@ class RunPlanner {
 	/// joins. Called in depth order. A small entity is ordered against large ones only.
 	[[nodiscard]] uint32_t place(uint32_t mesh, const OverlapGrid::Cells& cells, bool small);
 
+	/// Gives meshes firstMesh to firstMesh + count - 1 consecutive orders, in that order, unless firstMesh
+	/// already has one this frame: an item's strips, at its first strip in the frame, so each strip ranks
+	/// after the ones before it and stays in their layer (rotatable-placed-items 9.2).
+	void reserveOrders(uint32_t firstMesh, uint32_t count);
+
+	/// Whether `later` is the draw beside `earlier` in one layer, at the next order: nothing can draw
+	/// between them, so drawing both at once changes nothing.
+	[[nodiscard]] bool neighbours(uint32_t earlier, uint32_t later) const { return draws[later].key == draws[earlier].key + 1; }
+
 	/// The draws opened since the last close, in the order they must be drawn. Everything placed
 	/// after this draws after all of them.
 	[[nodiscard]] std::span<const uint32_t> close();
@@ -43,6 +52,9 @@ class RunPlanner {
 	// depth order, so a cell's largest key is the latest place drawn over it. Layers stop at maxLayer,
 	// so a key is at most OverlapGrid::kMaxRunKey.
 	[[nodiscard]] uint32_t keyOf(uint32_t layer, uint32_t order) const { return 1 + (layer << meshShift) + order; }
+
+	// The order a mesh has this frame, given the next one when it has none.
+	uint32_t orderOf(uint32_t mesh);
 
 	// A layer past maxLayer is placed in it instead (logged once): entities there may draw out of
 	// depth order, where a wrapped key would scramble the whole frame. A frame reaches it only after

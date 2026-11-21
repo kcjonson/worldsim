@@ -534,7 +534,7 @@ TEST_F(BehaviorLoaderTest, EachEntryMistakeIsOneErrorNamingTheEntryElementAndAtt
 		{R"(<action id="drink" seconds="1" interruptable="false"><restore need="thrist" amount="1"/></action>)",
 		 "<action id=\"drink\"> effect 1 <restore> need \"thrist\" names no need of any behavior or creature"},
 		// Queries.
-		{R"(<query id="q"><from place="here"/></query>)",
+		{R"(<chain id="c"><go query="q"/></chain><query id="q"><from place="here"/></query>)",
 		 "<query id=\"q\"> neither weighs distance by a negative number nor excludes it above a bound, so nothing ends its search"},
 		{R"(<query id="q" pick="weighted"><from place="here"/><weigh fact="distance" by="-1"/></query>)",
 		 "<query id=\"q\"> picks weighted but excludes no distance above a bound, so its draw has no bound"},
@@ -596,6 +596,34 @@ TEST_F(BehaviorLoaderTest, EachEntryMistakeIsOneErrorNamingTheEntryElementAndAtt
 		sample(entry.written);
 		EXPECT_EQ(onlyError(), "[behaviors] test/sample.xml: " + entry.expected);
 	}
+}
+
+// A query no go step, work source, or low-mood target names can only be counted (count_of), which ranks
+// nothing and walks nothing nearest first, so it need not bound distance; named by a low-mood target, it must.
+TEST_F(BehaviorLoaderTest, OnlyARankedQueryMustBoundDistance) {
+	const std::string counted = R"(<query id="liked_near"><from capability="drinkable"/><exclude fact="held"/></query>)";
+	sample(counted);
+	const EntryLoad loaded = load();
+	EXPECT_TRUE(loaded.errors.empty()) << ::testing::PrintToString(loaded.errors);
+	EXPECT_TRUE(loaded.library.findQuery("test/liked_near").valid());
+
+	sample(
+		counted +
+		R"(<lowMood rampStart="25" rampFull="15" base="4"><target query="liked_near"/><effect chain="c"/><ends after="task"/><relief amount="small"/></lowMood><chain id="c"><go to="target"/></chain>)"
+	);
+	EXPECT_EQ(
+		onlyError(),
+		"[behaviors] test/sample.xml: <query id=\"liked_near\"> neither weighs distance by a negative number nor excludes it "
+		"above a bound, so nothing ends its search"
+	);
+
+	// Counting random points would draw from the sim's generator and count a different set each time.
+	sample(R"(<query id="spots_near"><from place="around" radius="8" count="4"/><exclude fact="distance" above="8"/></query>)");
+	EXPECT_EQ(
+		onlyError(),
+		"[behaviors] test/sample.xml: <query id=\"spots_near\"> row 1 <from> place \"around\" draws random points, which a query only "
+		"counted (count_of) cannot have"
+	);
 }
 
 TEST_F(BehaviorLoaderTest, ChainRulesNameTheChainAndTheStep) {
@@ -858,6 +886,8 @@ TEST_F(WorkLoaderTest, WorkMistakesNameTheEntryAndTheAttribute) {
 		 "<work id=\"w\"> gives both source=\"carried\" and a <source> row; give one"},
 		{R"(<category id="hauling" label="Hauling" order="first"/>)",
 		 "<category id=\"hauling\"> order must be a whole number from 0 to 2147483647, got \"first\""},
+		{R"(<work id="w" goal="haul" category="farming" rung="opportunistic_work"><source query="q"/><chain id="c"/></work><query id="q"><from pile="goal"/></query>)",
+		 "<query id=\"q\"> neither weighs distance by a negative number nor excludes it above a bound, so nothing ends its search"},
 	};
 	for (const Case& entry : cases) {
 		SCOPED_TRACE(entry.written);

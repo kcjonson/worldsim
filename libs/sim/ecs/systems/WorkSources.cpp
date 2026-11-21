@@ -85,8 +85,8 @@ namespace ecs {
 		if (!m_carryDefsListed) {
 			m_carryDefsListed = true;
 			m_carryDefs.clear();
-			for (const auto& [defNameId, keys] : m_memory->worldEntitiesByDef) {
-				if (!keys.empty() && knownCarryable(defNameId) != nullptr) {
+			for (const auto& [defNameId, remembered] : m_memory->worldEntitiesByDef) {
+				if (!remembered.keys.empty() && knownCarryable(defNameId) != nullptr) {
 					m_carryDefs.push_back(defNameId);
 				}
 			}
@@ -162,8 +162,8 @@ namespace ecs {
 
 	std::span<HarvestSource> WorkSources::clearableHarvestables(const FootprintBounds& footprint) {
 		const auto begin = static_cast<uint32_t>(m_harvest.size());
-		for (const auto& [defNameId, keys] : m_memory->worldEntitiesByDef) {
-			if (keys.empty()) {
+		for (const auto& [defNameId, remembered] : m_memory->worldEntitiesByDef) {
+			if (remembered.keys.empty()) {
 				continue;
 			}
 			const HarvestDef& resolved = harvestDef(defNameId);
