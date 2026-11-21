@@ -4,7 +4,10 @@
 #include "scenes/game/ui/adapters/SelectionAdapter.h"
 
 #include <ecs/components/ResourceStack.h>
+#include <ecs/GoalTaskRegistry.h>
+#include <ecs/components/AgentRadius.h>
 #include <ecs/systems/NavigationSystem.h>
+#include <ecs/systems/WallStandPoint.h>
 
 namespace world_sim {
 
@@ -253,8 +256,10 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 		contentData = adaptResourcePile(world, assetRegistry, std::get<ResourcePileSelection>(selection));
 	} else if (isWallSegment && constructionWorld != nullptr) {
 		const auto& wallSel = std::get<WallSegmentSelection>(selection);
+		const auto* segment = constructionWorld->getSegment(wallSel.id);
 		contentData = adaptWallSegment(
-			world, *constructionWorld, wallSel, callbacks.onDemolishWallSegment, world.tryGetSystem<ecs::NavigationSystem>()
+			world, *constructionWorld, wallSel, callbacks.onDemolishWallSegment,
+			segment != nullptr && wallHasNoGround(world, *constructionWorld, segment->entity)
 		);
 	} else if (isOpening && constructionWorld != nullptr) {
 		const auto& openingSel = std::get<OpeningSelection>(selection);
@@ -293,6 +298,28 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 		return UpdateType::Structure;
 	}
 	return UpdateType::Values;
+}
+
+bool EntityInfoModel::wallHasNoGround(ecs::World& world, const construction::ConstructionWorld& constructionWorld, ecs::EntityID wallEntity) {
+	const auto* navigation = world.tryGetSystem<ecs::NavigationSystem>();
+	if (navigation == nullptr) {
+		return false;
+	}
+	const auto*			goal = ecs::GoalTaskRegistry::Get().getGoalByDestination(wallEntity);
+	const WallGroundKey key{
+		.wallEntity = wallEntity,
+		.constructionVersion = constructionWorld.version(),
+		.navigationGeneration = navigation->generation(),
+		.goalId = goal != nullptr ? goal->id : 0,
+		.goalStatus = goal != nullptr ? static_cast<int>(goal->status) : -1,
+	};
+	if (key != wallGroundKey) {
+		wallGroundKey = key;
+		// Asked for a colonist's default radius, as a builder of the wall would be.
+		wallNoGround = goal != nullptr && goal->type == ecs::GoalType::Build &&
+					   ecs::noGroundToBuildFrom(goal->wallStands, ecs::AgentRadius{}.radiusMeters, *navigation);
+	}
+	return wallNoGround;
 }
 
 PanelContent EntityInfoModel::getCraftingStationContent(

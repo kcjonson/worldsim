@@ -6,9 +6,7 @@
 #include <assets/MoodConfig.h>
 #include <cassert>
 #include <core/Vec2i64.h>
-#include <ecs/GoalTaskRegistry.h>
 #include <ecs/InventoryMass.h>
-#include <ecs/components/AgentRadius.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Mood.h>
@@ -19,7 +17,6 @@
 #include <ecs/components/StorageConfiguration.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/Task.h>
-#include <ecs/systems/WallStandPoint.h>
 
 #include <cmath>
 #include <iomanip>
@@ -479,7 +476,7 @@ namespace world_sim {
 		const construction::ConstructionWorld& constructionWorld,
 		const WallSegmentSelection&						selection,
 		const std::function<void()>&					onDemolish,
-		const ecs::NavigationSystem*					navigation
+		bool											noGroundToBuildFrom
 	) {
 		PanelContent content;
 
@@ -524,11 +521,8 @@ namespace world_sim {
 			(segment != nullptr) ? world.getComponent<ecs::StructureBlueprint>(segment->entity) : nullptr;
 
 		if (!built && blueprint != nullptr) {
-			// Asked of the mesh for a colonist's default radius, as a builder of the wall would be.
-			const auto* goal = ecs::GoalTaskRegistry::Get().getGoalByDestination(segment->entity);
-			const bool	noGround = navigation != nullptr && blueprint->phase == ecs::StructureBlueprint::BuildPhase::UnderConstruction &&
-								  !blueprint->demolishing && goal != nullptr && goal->type == ecs::GoalType::Build &&
-								  ecs::noGroundToBuildFrom(goal->wallStands, ecs::AgentRadius{}.radiusMeters, *navigation);
+			const bool noGround =
+				noGroundToBuildFrom && blueprint->phase == ecs::StructureBlueprint::BuildPhase::UnderConstruction && !blueprint->demolishing;
 			content.slots.push_back(
 				TextSlot{"State", noGround ? std::string{"No ground to build from"} : buildPhaseLabel(blueprint->phase, blueprint->demolishing)}
 			);
