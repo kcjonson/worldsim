@@ -6190,13 +6190,19 @@ namespace ecs::test {
 		const std::uint64_t delivery = getTask(colonist)->instanceId;
 		wallOffSideOfTheDoor(colonist, -1.0F);
 
-		bool sameDelivery = true;
+		bool					 sameDelivery = true;
+		std::optional<glm::vec2> deliveredFrom;
 		EXPECT_FALSE(routeFailedBeforeWorked(colonist, site, [&] {
 			if (getTask(colonist)->type == TaskType::Haul) {
 				sameDelivery = sameDelivery && getTask(colonist)->instanceId == delivery;
 			}
+			if (!deliveredFrom.has_value() && world->getComponent<StructureBlueprint>(site)->materialsComplete()) {
+				deliveredFrom = world->getComponent<Position>(colonist)->value;
+			}
 		})) << "a route to the door failed";
 		EXPECT_TRUE(sameDelivery) << "the delivery he set off on ended before the Wood was in";
+		ASSERT_TRUE(deliveredFrom.has_value()) << "the Wood never reached the door";
+		EXPECT_GT(deliveredFrom->x, kDoorAt.x) << "he delivers from the east, the side still clear";
 		EXPECT_GT(world->getComponent<StructureBlueprint>(site)->workDone, 0.0F) << "the door was never worked";
 		EXPECT_GT(world->getComponent<Position>(colonist)->value.x, kDoorAt.x) << "he works it from the east";
 	}
