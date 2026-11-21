@@ -14,7 +14,8 @@ Spec: [task-claims.md](../../technical/task-claims.md#build-and-deconstruct).
 
 Fresh launch (Quick Start): `world-sim --scene=game --background --no-settings`, dev server on
 127.0.0.1:8081, or the port given with `--http-port`; `<PORT>` below is that port. Bob, the one
-colonist a Quick Start lands, does all the work. Read every dev reply: a refusal answers HTTP 400 with
+colonist a Quick Start lands, does all the work; read his `id` from `/api/state?what=colonists` and
+note it as `<BOB>`. Read every dev reply: a refusal answers HTTP 400 with
 the reason. Nothing moves at `time?speed=0`, though dev verbs still run; the waits below are wall-clock
 seconds at `time?speed=3`. The log is read with `curl.exe -m 3 http://127.0.0.1:<PORT>/stream/logs`.
 
@@ -51,8 +52,7 @@ The site is the foundation of [scenario 04](./04-build-walls.md)'s corner, (14, 
 3. Blueprint a door and a window in it: `/api/dev/opening?type=Door&seg=<SEG_ROOM_LOW>&t=0.5&built=0`
    (at `FX+7`, `FY+6`; note `<DOOR_ROOM>`) and `/api/dev/opening?type=Window&seg=<SEG_ROOM_EAST>&t=0.5&built=0`
    (at `FX+12`, `FY+4`; note `<WINDOW_ROOM>`). Set `time?speed=3`: within about a minute both read
-   `delivered` in full, `state` `Built`. The log has no `no known way to` line naming either opening's
-   position (`(<FX+7>.00, <FY+6>.00)` or `(<FX+12>.00, <FY+4>.00)`). Whichever opening he builds first,
+   `delivered` in full, `state` `Built`. Whichever opening he builds first,
    the room is shut until its door is built, so the door is supplied and built from outside.
 4. Demolish the open wall's door from its panel, with `time?speed=0`:
    - Point the camera at it (`/api/control?action=camera&x=<FX+7>&y=<FY+10>`), read `what=camera`, and
@@ -73,11 +73,12 @@ The site is the foundation of [scenario 04](./04-build-walls.md)'s corner, (14, 
 
 **Pass:** both doors and the window end `Built` with their Wood delivered and no dev completion; the
 room's door is built while the room is still shut, from outside; the demolished door and wall leave
-`what=construction`; no `no known way to` line names an opening's or a wall's position.
+`what=construction`; the log has no `[Nav] Entity <BOB>: no known way to` line at all from step 1 to
+step 5 (the line names where he was to stand, beside the wall, not the opening, so any such line
+counts).
 
-**Fail:** an opening stays at `progress` 0 with its Wood delivered or carried; a `no known way to` line
-names an opening's position, followed by "Put down ... nobody wants"; a demolish order is never
-worked.
+**Fail:** an opening stays at `progress` 0 with its Wood delivered or carried; a
+`[Nav] Entity <BOB>: no known way to` line appears during steps 1 to 5; a demolish order is never worked.
 
 Last verified 2026-11-20: setup and steps 1 to 6, word for word from a fresh Quick Start, on commit
 ac6093f8 of `fix/WOR-1139-openings-reachable` (Debug).

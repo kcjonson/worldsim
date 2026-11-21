@@ -3481,6 +3481,7 @@ namespace ecs {
 		// clear ground) from whichever side of it is still clear, both asked of the route, so the answer is the
 		// side he can get to as he now believes. Nowhere to stand there is no way. Several sources' goals were
 		// found when they were chosen.
+		static_assert(StandPoints::kCapacity <= SourceChoices::kCapacity, "a target's stand points fit the goals");
 		std::array<glm::vec2, SourceChoices::kCapacity> goals{task.targetPosition};
 		std::size_t										   goalCount = 1;
 		const bool standChosen = task.obstructedTarget.has_value() && !m_navSystem->isValidPosition(*task.obstructedTarget);

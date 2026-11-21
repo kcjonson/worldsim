@@ -492,8 +492,8 @@ which leaves only carried goods indexed); no construction code releases it.
 
 A Build goal with no spots (a wall's, an opening's, or a foundation's when no construction world is
 wired, as in headless tests) caps no builders: any number work it, from the nearest walkable point to its
-centre, or for an opening and a built wall from a stand point beside the wall (below), and it takes no
-claim. Deconstruct takes no claim either.
+centre, or for an opening's Build from a stand point beside the wall (below), and it takes no claim.
+Deconstruct takes no claim either.
 
 A site ordered demolished takes no more build work: a Build action on it ends on the next tick it
 would add work, before it could complete, and a builder still walking there starts nothing on arrival.

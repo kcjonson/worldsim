@@ -681,12 +681,13 @@ corners, of two limits or of two blocked rings, is its corner gap.
 ticket and stands in the awaiting-route state until it comes, or, replanning a route he is
 walking, keeps walking it and joins the new one where he stands. A target inside a placed
 obstacle is routed to its stand point; one inside a built wall to both of its stand points in one
-request, every time he asks, so the answer is the side he can get to. A "no known way" answer is
-a verdict on that target for that colonist, remembered until the label epoch or his belief moves,
-and a target with a live verdict is not asked about again. A need's source is chosen by one nearest-of route request over
-the nearest few remembered sources (by straight line) that are connected and have no verdict;
-the answer's goal is the choice, and a round that finds no way puts a verdict on all of them so
-the next decision asks the next few. "Not connected" is not remembered: it costs a compare.
+request, every time he asks, so the answer is the side he can get to. A "no known way" answer
+is a verdict on that target for that colonist, remembered until the label epoch or his belief
+moves, and a target with a live verdict is not asked about again. A need's source is chosen by
+one nearest-of route request over the nearest few remembered sources (by straight line) that
+are connected and have no verdict; the answer's goal is the choice, and a round that finds no
+way puts a verdict on all of them so the next decision asks the next few. "Not connected" is
+not remembered: it costs a compare.
 
 ### 4.7 Snap forward
 

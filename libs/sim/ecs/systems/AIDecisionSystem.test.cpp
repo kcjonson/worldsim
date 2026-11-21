@@ -6058,9 +6058,8 @@ namespace ecs::test {
 		}
 
 		// An opening of `type` not yet built in a wall across x = 8 m he knows, supplied from his pack and
-		// built from his side of the wall, with no route failing. The old gate (a target on a wall face read
-		// as clear ground, so no stand point was asked for) fails it: his route to the opening's centre found
-		// no way.
+		// built from his side of the wall, with no route failing. It catches a target on a wall face taken
+		// for clear ground and routed to as it is: no route ends inside the wall.
 		void expectSuppliedAndBuiltFromBeside(const char* type) {
 			const std::array<geometry::Vec2i64, 2>	   ends{{{8000, -4000}, {8000, 4000}}};
 			const std::vector<construction::SegmentId> walls = buildWalls(ends, false);
@@ -6214,24 +6213,25 @@ namespace ecs::test {
 		const glm::vec2 wasHeadingFor = getTask(colonist)->targetPosition;
 		wallOffSideOfTheDoor(colonist, -1.0F);
 		wallOffSideOfTheDoor(colonist, 1.0F);
+		// The walls land in the mesh now, so the first update replans on them.
+		nav->finishPendingBuilds();
+		// The old spot is on his ground, so a route asked to it is searched and answered on a later update,
+		// never at once: a verdict on the first update can only be the failure for want of a stand point.
+		ASSERT_TRUE(nav->connected(world->getComponent<Position>(colonist)->value, wasHeadingFor));
 
-		bool routedToTheOldSpot = false;
-		bool failed				= false;
-		for (int i = 0; i < kTicksAfterMesh * 10 && !failed; ++i) {
-			world->update(kTick);
-			const NavPath* route = world->getComponent<NavPath>(colonist);
-			routedToTheOldSpot	 = routedToTheOldSpot || (route != nullptr && route->valid && !route->waypoints.empty() &&
-														  glm::distance(route->waypoints.back(), wasHeadingFor) < 0.1F && i > 0);
-			failed				 = world->getComponent<SourceReachMemo>(colonist)->hasVerdict(hashWorldEntity(kDoorAt, 0));
-		}
-		EXPECT_TRUE(failed) << "no route failure left a verdict on the door";
-		EXPECT_FALSE(routedToTheOldSpot) << "he was routed to the spot he can no longer stand on";
+		world->update(kTick);
+		EXPECT_TRUE(world->getComponent<SourceReachMemo>(colonist)->hasVerdict(hashWorldEntity(kDoorAt, 0)))
+			<< "no verdict on the door on the first update after both sides were lost";
+		const NavPath* route = world->getComponent<NavPath>(colonist);
+		const bool toTheOldSpot =
+			route != nullptr && route->valid && !route->waypoints.empty() && glm::distance(route->waypoints.back(), wasHeadingFor) < 0.1F;
+		EXPECT_FALSE(toTheOldSpot) << "he was routed to the spot he can no longer stand on";
 		EXPECT_FLOAT_EQ(world->getComponent<StructureBlueprint>(site)->workDone, 0.0F);
 	}
 
 	// A built wall he knows, ordered demolished: its place is its own centreline, inside it. He works it
 	// from beside it, and it is taken down, with no route failing on the way. He starts on the side that is
-	// nearest anyway; the old gate (a wall face read as clear ground) fails it at his route to the centre.
+	// nearest anyway; it catches the wall's centre taken for clear ground and routed to as it is.
 	TEST_F(AIDecisionWallTest, AKnownBuiltWallIsDemolishedFromBesideIt) {
 		auto& actions = world->registerSystem<ActionSystem>(kTestRngSeed);
 		world->registerSystem<ConstructionSystem>().setConstructionWorld(&construction);
@@ -6277,9 +6277,9 @@ namespace ecs::test {
 		EXPECT_LT(glm::distance(workedFrom, wallAt), 1.0F) << "beside the wall";
 	}
 
-	// A built door's centre is in its doorway, ground he walks: ordered demolished, the door is worked from
-	// there, its own stand point, with no stand point beside the wall.
-	TEST_F(AIDecisionWallTest, ABuiltDoorIsDemolishedFromItsDoorway) {
+	// A built door's centre is in its doorway, ground he walks: ordered demolished, he is routed there, its
+	// own stand point, with no stand point beside the wall.
+	TEST_F(AIDecisionWallTest, ABuiltDoorOrderedDemolishedIsRoutedToItsDoorway) {
 		world->registerSystem<ActionSystem>(kTestRngSeed);
 		const std::array<geometry::Vec2i64, 2>	   ends{{{8000, -4000}, {8000, 4000}}};
 		const std::vector<construction::SegmentId> walls   = buildWalls(ends, false);
