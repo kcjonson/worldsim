@@ -161,7 +161,7 @@ namespace world_sim::testing {
 
 			void update(const app::FrameContext& frame) override {
 				gameUI->setConstructionStatus(drawingSystem->status());
-				gameUI->setKeyGuide(drawingSystem->activeTool(), drawingSettings, drawingSystem->keyGuideCollapsed());
+				gameUI->setKeyGuide(drawingSystem->activeTool(), false, drawingSettings, drawingSystem->keyGuideCollapsed());
 				gameUI->update(
 					static_cast<float>(frame.dt),
 					camera,

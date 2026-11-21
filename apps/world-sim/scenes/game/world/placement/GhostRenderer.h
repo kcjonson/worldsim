@@ -23,7 +23,8 @@ class GhostRenderer {
   public:
 	GhostRenderer() = default;
 
-	/// Starts a frame's ghosts: views drawn last frame are kept until endFrame.
+	/// Starts a frame's ghosts: views drawn last frame are kept until endFrame, unless the asset registry has
+	/// reloaded since they were built.
 	void beginFrame();
 
 	/// Render the ghost at the given world position
@@ -50,8 +51,9 @@ class GhostRenderer {
 		renderer::TessellatedMesh mesh;
 		bool					  drawn = false;
 	};
-	// By (def, turn, level).
+	// By (def, turn, level), under the registry generation they were built in.
 	std::map<std::tuple<std::string, uint32_t, uint8_t>, HeldView> views;
+	uint64_t													   viewsGeneration = 0;
 
 	void draw(const renderer::TessellatedMesh& mesh, Foundation::Vec2 offset, const world::WorldCamera& camera, int viewportWidth, int viewportHeight, bool isValid);
 

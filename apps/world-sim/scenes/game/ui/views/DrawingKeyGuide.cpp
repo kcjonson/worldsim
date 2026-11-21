@@ -29,6 +29,10 @@ namespace world_sim {
 			return {.text = std::move(text), .chip = false};
 		}
 
+		std::vector<KeyGuidePart> footLine() {
+			return {key("?"), words("or"), key("H"), words("hides this")};
+		}
+
 		// The design spec's key rows (UI & Selection > Key guide), each tool's in its order.
 		std::vector<KeyGuideKeyRow> keyRowsOf(ToolKind tool) {
 			const KeyGuidePart either = words("/");
@@ -212,7 +216,21 @@ namespace world_sim {
 		return {
 			.keyRows = keyRowsOf(tool),
 			.legendRows = legendRowsOf(tool, settings),
-			.foot = {key("?"), words("or"), key("H"), words("hides this")},
+			.foot = footLine(),
+		};
+	}
+
+	KeyGuideContent placingKeyGuideContent() {
+		const KeyGuidePart either = words("/");
+		return {
+			.keyRows =
+				{
+					{{key("Q"), either, key("E")}, "Turn"},
+					{{key("Drag")}, "Turn to face the pointer"},
+					{{key("Alt")}, "Hold to turn freely"},
+					{{key("Esc"), either, key("Right-click")}, "Leave"},
+				},
+			.foot = footLine(),
 		};
 	}
 
@@ -266,13 +284,13 @@ namespace world_sim {
 									   }});
 	}
 
-	void DrawingKeyGuide::show(std::optional<ToolKind> tool, const DrawingSettings& settings, bool collapsed) {
-		const Shown now{.tool = tool, .settings = settings, .collapsed = collapsed};
+	void DrawingKeyGuide::show(std::optional<ToolKind> tool, bool placing, const DrawingSettings& settings, bool collapsed) {
+		const Shown now{.tool = tool, .placing = placing, .settings = settings, .collapsed = collapsed};
 		if (shown == now) {
 			return;
 		}
 		shown = now;
-		setVisible(keyGuideShown(tool, settings));
+		setVisible(keyGuideShown(tool, settings) || (placing && settings.showKeyGuide));
 		if (isVisible()) {
 			build();
 		}
@@ -281,7 +299,7 @@ namespace world_sim {
 	void DrawingKeyGuide::build() {
 		ui::Component* box = panel.get();
 		ui::Component* collapsedChip = chip.get();
-		if (box == nullptr || collapsedChip == nullptr || !shown || !shown->tool) {
+		if (box == nullptr || collapsedChip == nullptr || !shown || (!shown->tool && !shown->placing)) {
 			return;
 		}
 		box->setVisible(!shown->collapsed);
@@ -295,7 +313,7 @@ namespace world_sim {
 		}
 
 		const ui::Theme&	  theme = getContext()->getTheme();
-		const KeyGuideContent content = keyGuideContent(*shown->tool, shown->settings);
+		const KeyGuideContent content = shown->tool ? keyGuideContent(*shown->tool, shown->settings) : placingKeyGuideContent();
 		const float			  gap = theme.get(tokens::spacing::space1);
 		const ui::Layout	  grid{
 				 .display = ui::Display::Grid,

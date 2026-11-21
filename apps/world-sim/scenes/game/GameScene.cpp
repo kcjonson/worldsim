@@ -724,7 +724,7 @@ namespace {
 			using Type = foundation::InputEvent::Type;
 			windowPresence.observe(event.type);
 			const world_sim::KeyGuideToggle::State keyGuideState{
-				.toolActive = m_drawingSystem->isActive(),
+				.toolActive = m_drawingSystem->isActive() || placingATurnableItem(),
 				.modalDialogOpen = modalDialogOpen(),
 				.showKeyGuide = world_sim::UserSettings::Get().drawing.showKeyGuide,
 			};
@@ -801,13 +801,23 @@ namespace {
 					break;
 			}
 
+			const bool leftRelease = event.type == Type::PointerUp && event.mouseButton == foundation::MouseButton::Left;
+			// The release of a drag placement was cancelled under selects nothing.
+			if (leftRelease && m_placementSystem->takeReleaseOfCancelledPress()) {
+				return true;
+			}
 			if (m_placementSystem->isActive()) {
-				// A right release leaves placement; a left one places, a click or the end of a turning drag.
+				// A right release leaves placement; a left one places, a click or the end of a turning drag, unless it
+				// lands outside the window, which only lets go of the drag.
 				if (event.mouseButton == foundation::MouseButton::Right) {
 					m_placementSystem->cancel();
 					return true;
 				}
-				return event.mouseButton == foundation::MouseButton::Left && m_placementSystem->handleRelease();
+				if (leftRelease && target == world_sim::PointerTarget::OutsideWindow) {
+					m_placementSystem->dropPress();
+					return true;
+				}
+				return leftRelease && m_placementSystem->handleRelease();
 			}
 
 			// Entity selection on a release.
@@ -870,6 +880,10 @@ namespace {
 					m_drawingSystem->hasPendingPress()
 				) == world_sim::PointerAction::CancelPress) {
 				m_drawingSystem->cancelPress();
+			}
+			// Likewise a placement press whose release the interface took or the lost focus swallowed.
+			if (!frame.input.mouse[static_cast<std::size_t>(foundation::MouseButton::Left)].down) {
+				m_placementSystem->leftButtonUp();
 			}
 
 			// The drawing tool pauses while the pointer is not with it, outside the window or with the window in the
@@ -1022,7 +1036,7 @@ namespace {
 			// visibility), and the tool on to the key guide over it.
 			gameUI->setConstructionStatus(m_drawingSystem->status());
 			gameUI->setKeyGuide(
-				m_drawingSystem->activeTool(), world_sim::UserSettings::Get().drawing, m_drawingSystem->keyGuideCollapsed()
+				m_drawingSystem->activeTool(), placingATurnableItem(), world_sim::UserSettings::Get().drawing, m_drawingSystem->keyGuideCollapsed()
 			);
 
 			m_lastUpdateMs = elapsedMs(updateStart, Clock::now());
@@ -1191,6 +1205,12 @@ namespace {
 
 	  private:
 		// The world's one-press keys; false for a key that isn't one, or does nothing now.
+		// Placing an item the key guide has turning keys for.
+		bool placingATurnableItem() const {
+			return m_placementSystem->state() == world_sim::PlacementState::Placing &&
+				   world_sim::PlacementSystem::turns(m_placementSystem->selectedDefName());
+		}
+
 		// `freeform` is Alt held, which turns a placed item by a degree instead of to the next stop.
 		bool handleHotkey(foundation::Key key, bool freeform) {
 			auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
@@ -1889,10 +1909,12 @@ namespace {
 						// would, await the player's [Place] click.
 						const glm::vec2 spawnAt =
 							spawn.targetPosition.has_value() ? *spawn.targetPosition : packageSetDownSpot({spawn.x, spawn.y});
-						// installTargetNear tested the target at turn 0, the Packaged default.
 						auto			entity = m_placementSystem->spawnEntity(spawn.defName, spawnAt, 0);
 						ecs::Packaged	packaged;
 						packaged.targetPosition = spawn.targetPosition;
+						if (spawn.targetPosition.has_value()) {
+							packaged.targetRotation = 0.0F; // the turn installTargetNear tested the target at
+						}
 						ecsWorld->addComponent<ecs::Packaged>(entity, packaged);
 						if (spawn.targetPosition.has_value()) {
 							LOG_INFO(

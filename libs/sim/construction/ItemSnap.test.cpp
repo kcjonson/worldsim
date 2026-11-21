@@ -4,10 +4,11 @@
 #include "SnapTestFixtures.h"
 
 #include <assets/ConstructionRegistry.h>
-#include <assets/ItemView.h>
+#include <assets/TurnQuanta.h>
 
 #include <glm/geometric.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <gtest/gtest.h>
@@ -22,7 +23,7 @@ using snap_test::polar;
 
 namespace {
 
-	constexpr uint32_t kQuantaPerDegree = 100;
+	const auto kQuantaPerDegree = static_cast<uint32_t>(std::lround(1.0 / assets::kTurnQuantumDegrees));
 
 	uint32_t quanta(double degrees) {
 		return assets::turnQuantaFromDegrees(degrees);
@@ -51,11 +52,13 @@ namespace {
 			return polar(polar({0.0F, 0.0F}, kWallDegrees, along), kWallDegrees + 90.0, off);
 		}
 
-		// The item's 1.2 m by 0.6 m rect at `pivot` and `turnDegrees`, its back (local -y) edge toward the wall.
-		static std::vector<Vec2> itemRect(Vec2 pivot, double turnDegrees) {
+		// The item's rect, 1.2 m by 0.6 m unless given, at `pivot` and `turnDegrees`, its back (local -y) edge toward
+		// the wall.
+		static std::vector<Vec2> itemRect(Vec2 pivot, double turnDegrees, float halfWidth = 0.6F, float halfDepth = 0.3F) {
 			std::vector<Vec2> ring;
 			const double	  radians = turnDegrees * snap_test::kRadiansPerDegree;
-			for (const Vec2 corner : {Vec2{-0.6F, -0.3F}, Vec2{0.6F, -0.3F}, Vec2{0.6F, 0.3F}, Vec2{-0.6F, 0.3F}}) {
+			for (const Vec2 corner :
+				 {Vec2{-halfWidth, -halfDepth}, Vec2{halfWidth, -halfDepth}, Vec2{halfWidth, halfDepth}, Vec2{-halfWidth, halfDepth}}) {
 				ring.push_back(
 					{pivot.x + static_cast<float>((corner.x * std::cos(radians)) - (corner.y * std::sin(radians))),
 					 pivot.y + static_cast<float>((corner.x * std::sin(radians)) + (corner.y * std::cos(radians)))}
@@ -150,6 +153,48 @@ TEST_F(ItemSnapTest, TheFlushSlideNeedsTheEdgeNearParallelAndFacingTheWall) {
 	EXPECT_EQ(flushSlide({itemRect(besideWall(3.0, 0.1 + 0.5 + 0.3), kWallDegrees)}, faces, snapping()), Vec2(0.0F, 0.0F)) << "0.5 m off";
 	EXPECT_EQ(flushSlide({itemRect(besideWall(8.0, 0.1 + 0.15 + 0.3), kWallDegrees)}, faces, snapping()), Vec2(0.0F, 0.0F))
 		<< "past the wall's end";
+}
+
+namespace {
+	// How far each of a ring's first two corners (the back edge of itemRect) stands off the wall's centreline.
+	std::pair<double, double> backCornerOffsets(const std::vector<Vec2>& ring, Vec2 slide, double wallDegrees) {
+		const Vec2 normal = polar({0.0F, 0.0F}, wallDegrees + 90.0, 1.0);
+		return {glm::dot(ring[0] + slide, normal), glm::dot(ring[1] + slide, normal)};
+	}
+} // namespace
+
+// A 3 m back edge 0.8 degrees off the wall (inside the 1 degree tolerance, 42 mm out over its length): the end that
+// reaches furthest in goes onto the face, so neither end ends up inside it.
+TEST_F(ItemSnapTest, TheFlushSlideKeepsBothEndsOfANearlyParallelEdgeOutOfTheFace) {
+	const std::vector<FlushFace> faces = wallFaces(world, besideWall(3.0, 1.0), 3.0F);
+	for (const double off : {0.1 + 0.2 + 0.3, 0.1 - 0.1 + 0.3}) {
+		const std::vector<Vec2> item = itemRect(besideWall(3.0, off), kWallDegrees + 0.8, 1.5F, 0.3F);
+		const auto [first, second] = backCornerOffsets(item, flushSlide({item}, faces, snapping()), kWallDegrees);
+		EXPECT_NEAR(std::min(first, second), 0.1, 0.001) << "the inner end on the face, from " << off;
+		EXPECT_GT(std::max(first, second), 0.1 + 0.03) << "the outer end off it";
+	}
+}
+
+// An edge already in the wall by 0.20 or 0.25 m is pushed back out onto the face.
+TEST_F(ItemSnapTest, TheFlushSlidePushesAPenetratingEdgeBackOntoTheFace) {
+	const std::vector<FlushFace> faces = wallFaces(world, besideWall(3.0, 1.0), 3.0F);
+	for (const double inside : {0.20, 0.25}) {
+		const std::vector<Vec2> item = itemRect(besideWall(3.0, 0.1 - inside + 0.3), kWallDegrees);
+		const auto [first, second] = backCornerOffsets(item, flushSlide({item}, faces, snapping()), kWallDegrees);
+		EXPECT_NEAR(first, 0.1, 0.001) << inside;
+		EXPECT_NEAR(second, 0.1, 0.001) << inside;
+	}
+}
+
+// Under Alt the turn is free, and an edge it happens to leave parallel still slides flush (rotatable-placed-items 20).
+TEST_F(ItemSnapTest, UnderAltTheFlushSlideStillPutsAParallelEdgeOnTheWall) {
+	const std::optional<uint32_t> alignment = itemAlignmentQuanta(world, besideWall(3.0, 0.6), snapping());
+	const uint32_t				  turn = snapItemTurn(kWallDegrees + 0.4, alignment, snapping(), true);
+	EXPECT_EQ(turn, quanta(kWallDegrees + 0.4)) << "no snap under Alt";
+	const std::vector<Vec2> item = itemRect(besideWall(3.0, 0.1 + 0.2 + 0.3), static_cast<double>(turn) / kQuantaPerDegree);
+	const auto [first, second] =
+		backCornerOffsets(item, flushSlide({item}, wallFaces(world, besideWall(3.0, 0.6), 3.0F), snapping()), kWallDegrees);
+	EXPECT_NEAR(std::min(first, second), 0.1, 0.001);
 }
 
 // A side of another item's reserved region is a face too: a second box slides up against the first, side to side.

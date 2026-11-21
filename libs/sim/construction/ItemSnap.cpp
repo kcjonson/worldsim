@@ -1,9 +1,10 @@
 #include "ItemSnap.h"
 
-#include "OpeningGeometry.h"
 #include "SnapEngine.h"
+#include "WallSides.h"
+#include "WallStand.h"
 
-#include <assets/ItemView.h>
+#include <assets/TurnQuanta.h>
 #include <core/Vec2i64.h>
 
 #include <glm/geometric.hpp>
@@ -40,16 +41,6 @@ namespace construction {
 			return std::llround(degrees / assets::kTurnQuantumDegrees);
 		}
 
-		::Foundation::Vec2 closestOnSegment(::Foundation::Vec2 point, ::Foundation::Vec2 start, ::Foundation::Vec2 end) {
-			const ::Foundation::Vec2 run = end - start;
-			const float				 lengthSquared = glm::dot(run, run);
-			if (lengthSquared <= 0.0F) {
-				return start;
-			}
-			const float along = std::clamp(glm::dot(point - start, run) / lengthSquared, 0.0F, 1.0F);
-			return start + run * along;
-		}
-
 		uint32_t directionQuanta(::Foundation::Vec2 start, ::Foundation::Vec2 end) {
 			const double degrees =
 				std::atan2(static_cast<double>(end.y - start.y), static_cast<double>(end.x - start.x)) * 180.0 / std::numbers::pi;
@@ -71,18 +62,14 @@ namespace construction {
 			best = edge->distanceMeters;
 		}
 		for (const WallSegment& wall : world.segments()) {
-			const Vertex* first = world.getVertex(wall.v0);
-			const Vertex* second = world.getVertex(wall.v1);
-			if (first == nullptr || second == nullptr) {
+			const std::optional<WallBand> band = wallBand(world, wall);
+			if (!band.has_value()) {
 				continue;
 			}
-			const ::Foundation::Vec2 start = geometry::dequantize(first->pos);
-			const ::Foundation::Vec2 end = geometry::dequantize(second->pos);
-			const float				 halfThickness = static_cast<float>(halfThicknessMm(wall)) / 1000.0F;
-			const float				 toFace = std::max(0.0F, glm::distance(pivot, closestOnSegment(pivot, start, end)) - halfThickness);
+			const float toFace = std::max(0.0F, glm::distance(pivot, band->closestPoint(pivot)) - band->halfThicknessMeters);
 			if (toFace <= range && toFace < best) {
 				best = toFace;
-				direction = directionQuanta(start, end);
+				direction = directionQuanta(band->start, band->end);
 			}
 		}
 		return direction;
@@ -125,7 +112,7 @@ namespace construction {
 		const assets::SnappingConfig& snapping,
 		bool						  freeform
 	) {
-		constexpr int64_t kFreeStepQuanta = 100; // one degree
+		const int64_t kFreeStepQuanta = quantaOfDegrees(1.0);
 		if (freeform) {
 			return wrapQuanta(static_cast<int64_t>(turnQuanta) + (direction > 0 ? kFreeStepQuanta : -kFreeStepQuanta));
 		}
@@ -162,22 +149,19 @@ namespace construction {
 	std::vector<FlushFace> wallFaces(const ConstructionWorld& world, ::Foundation::Vec2 point, float rangeMeters) {
 		std::vector<FlushFace> faces;
 		for (const WallSegment& wall : world.segments()) {
-			const Vertex* first = world.getVertex(wall.v0);
-			const Vertex* second = world.getVertex(wall.v1);
-			if (first == nullptr || second == nullptr) {
+			const std::optional<WallBand> band = wallBand(world, wall);
+			if (!band.has_value()) {
 				continue;
 			}
-			const ::Foundation::Vec2 start = geometry::dequantize(first->pos);
-			const ::Foundation::Vec2 end = geometry::dequantize(second->pos);
-			const float				 length = glm::distance(start, end);
-			if (length <= 0.0F || glm::distance(point, closestOnSegment(point, start, end)) > rangeMeters) {
+			const float length = glm::distance(band->start, band->end);
+			if (length <= 0.0F || glm::distance(point, band->closestPoint(point)) > rangeMeters) {
 				continue;
 			}
-			const ::Foundation::Vec2 along = (end - start) / length;
+			const ::Foundation::Vec2 along = (band->end - band->start) / length;
 			const ::Foundation::Vec2 left{-along.y, along.x};
-			const float				 halfThickness = static_cast<float>(halfThicknessMm(wall)) / 1000.0F;
-			faces.push_back({.start = start + left * halfThickness, .end = end + left * halfThickness, .outwardNormal = left});
-			faces.push_back({.start = start - left * halfThickness, .end = end - left * halfThickness, .outwardNormal = -left});
+			const float				 half = band->halfThicknessMeters;
+			faces.push_back({.start = band->start + left * half, .end = band->end + left * half, .outwardNormal = left});
+			faces.push_back({.start = band->start - left * half, .end = band->end - left * half, .outwardNormal = -left});
 		}
 		return faces;
 	}
@@ -236,10 +220,12 @@ namespace construction {
 				}
 				const float startOff = glm::dot(edge.start - face.start, face.outwardNormal);
 				const float endOff = glm::dot(edge.end - face.start, face.outwardNormal);
-				const float nearer = std::abs(startOff) <= std::abs(endOff) ? startOff : endOff;
-				if (std::abs(nearer) <= radius && std::abs(nearer) < bestDistance) {
-					bestDistance = std::abs(nearer);
-					best = -nearer * face.outwardNormal;
+				// The end furthest into the face: putting it on the face leaves the other end on it or outside, for an
+				// edge not quite parallel and for one already pushed in.
+				const float inward = std::min(startOff, endOff);
+				if (std::abs(inward) <= radius && std::abs(inward) < bestDistance) {
+					bestDistance = std::abs(inward);
+					best = -inward * face.outwardNormal;
 				}
 			}
 		}

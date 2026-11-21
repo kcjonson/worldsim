@@ -99,7 +99,7 @@ namespace world_sim {
 		/// Registers every verb as a route and every view as a state provider, for as long as the
 		/// returned registrations live. Most verbs answer {"status":"ok","verb":...}; spawn, colonist,
 		/// teleport, give, foundation, walls and opening answer a 400 with {"error":...} when they create
-		/// or move nothing, ground they refuse included; verbs with an outcome to report (foundation-edit) answer with it, and flora answers
+		/// or move nothing, ground they refuse included, and place does for a def it doesn't know; verbs with an outcome to report (foundation-edit) answer with it, and flora answers
 		/// with its measurement. The views are camera, colonists, construction, drawing, placement, stations, storage,
 		/// time, landing, tunables and summary.
 		std::vector<app::DevServer::Registration> registerWith(app::DevServer& server);

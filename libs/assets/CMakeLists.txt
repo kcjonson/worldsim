@@ -10,6 +10,7 @@ add_library(assets
     assets/LodSvg.cpp
     assets/PartsAsset.cpp
     assets/ItemView.cpp
+    assets/TurnQuanta.cpp
     assets/MeshSilhouette.cpp
     assets/ViewConfig.cpp
     assets/GroundTint.cpp

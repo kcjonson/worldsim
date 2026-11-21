@@ -1574,6 +1574,7 @@ TEST_F(ActionSystemGoalTest, PlacePackagedFromCraftInstallsAtTargetAndUnpackages
 	task->placePackagedEntityId = static_cast<uint64_t>(box);
 	task->placeSourcePosition = sourcePos;
 	task->placeTargetPosition = targetPos;
+	task->placeTargetRotation = kTargetTurn;
 	task->targetPosition = sourcePos; // phase 1: at the source
 
 	// --- Phase 1: PickupPackaged ---
@@ -1582,6 +1583,10 @@ TEST_F(ActionSystemGoalTest, PlacePackagedFromCraftInstallsAtTargetAndUnpackages
 	auto* inventory = world->getComponent<Inventory>(colonist);
 	ASSERT_TRUE(inventory->carryingPackagedEntity.has_value()) << "phase 1 must pick the box up";
 	EXPECT_EQ(inventory->carryingPackagedEntity.value(), static_cast<uint64_t>(box));
+
+	// The player re-targets the crate in his arms: he installs it at the target he took, position and turn together.
+	world->getComponent<ecs::Packaged>(box)->targetPosition = glm::vec2{6.0F, 6.0F};
+	world->getComponent<ecs::Packaged>(box)->targetRotation = 2.5F;
 
 	// --- Phase 2: arrive at the target and PlacePackaged ---
 	world->getComponent<Position>(colonist)->value = targetPos;
@@ -1598,7 +1603,7 @@ TEST_F(ActionSystemGoalTest, PlacePackagedFromCraftInstallsAtTargetAndUnpackages
 	ASSERT_NE(boxPos, nullptr);
 	EXPECT_FLOAT_EQ(boxPos->value.x, targetPos.x) << "the box must end at its install target";
 	EXPECT_FLOAT_EQ(boxPos->value.y, targetPos.y);
-	EXPECT_EQ(world->getComponent<Rotation>(box)->radians, kTargetTurn) << "installed at its target's turn";
+	EXPECT_EQ(world->getComponent<Rotation>(box)->radians, kTargetTurn) << "installed at the turn taken with its position";
 	EXPECT_FALSE(inventory->carryingPackagedEntity.has_value()) << "the carried box leaves the hands on install";
 	EXPECT_FALSE(inventory->leftHand.has_value());
 	EXPECT_FALSE(inventory->rightHand.has_value());

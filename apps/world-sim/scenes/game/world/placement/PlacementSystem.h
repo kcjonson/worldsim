@@ -107,6 +107,17 @@ class PlacementSystem {
 	/// Q (`direction` -1) or E (+1) while placing a parts item: the next turn stop that way. True when taken.
 	bool handleTurnKey(int direction, bool freeform);
 
+	/// Forgets a held press without placing: its release went outside the window.
+	void dropPress();
+
+	/// The left button is up this frame: a press whose release never reached the world (the interface took it, or
+	/// the window lost focus) is dropped, and so is the record of a press placement was cancelled under.
+	void leftButtonUp();
+
+	/// Whether this left release belongs to a press held when placement was cancelled (a right release or Escape
+	/// mid-drag): true once, so the release selects nothing.
+	bool takeReleaseOfCancelledPress();
+
 	/// Cancel placement mode (Escape key)
 	void cancel();
 
@@ -180,6 +191,16 @@ class PlacementSystem {
 		bool	  turning = false;
 	};
 	std::optional<Press> press;
+	/// Placement was cancelled with a press held; its release is not a click on the world.
+	bool cancelledPress = false;
+
+	/// What the last pointer move settled the ghost with; a move that changes none of it settles nothing.
+	struct PointerState {
+		glm::vec2 pointer{0.0F, 0.0F};
+		bool	  freeform = false;
+		bool	  pressed = false;
+	};
+	std::optional<PointerState> lastMove;
 
 	/// Where the item stands before the flush slide: the pointer, or the press during a drag.
 	glm::vec2 rawPosition{0.0F, 0.0F};

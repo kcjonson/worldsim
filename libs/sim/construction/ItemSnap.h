@@ -58,10 +58,10 @@ namespace construction {
 	/// The edges of a ring (either winding) as faces facing out of it.
 	void appendRingFaces(const std::vector<::Foundation::Vec2>& ring, std::vector<FlushFace>& faces);
 
-	/// The flush slide: the move along a face's normal that puts the nearer end of an edge of `reservedRings` (the
-	/// item's reserved region in the world, either winding) on that face, for an edge parallel to the face within
-	/// guideDirectionToleranceDegrees, facing it, overlapping it along its run, and with that end within
-	/// edgeSnapRadiusMeters of it. The smallest such move wins; zero when no edge qualifies.
+	/// The flush slide: the move along a face's normal that puts the end of an edge of `reservedRings` (the item's
+	/// reserved region in the world, either winding) furthest toward the face's inside on that face, for an edge
+	/// parallel to the face within guideDirectionToleranceDegrees, facing it, overlapping it along its run, and with
+	/// that end within edgeSnapRadiusMeters of it. The smallest such move wins; zero when no edge qualifies.
 	[[nodiscard]] ::Foundation::Vec2 flushSlide(
 		const std::vector<std::vector<::Foundation::Vec2>>& reservedRings,
 		const std::vector<FlushFace>&						faces,

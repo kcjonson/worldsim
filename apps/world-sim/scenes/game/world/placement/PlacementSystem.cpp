@@ -2,10 +2,10 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
-#include <assets/ItemView.h>
 #include <assets/PartsAsset.h>
 #include <assets/RecipeRegistry.h>
 #include <assets/TreeTraits.h>
+#include <assets/TurnQuanta.h>
 #include <assets/placement/InstanceTransform.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <construction/ConstructionWorld.h>
@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <bit>
 #include <random>
+#include <utility>
 
 namespace world_sim {
 
@@ -60,13 +61,11 @@ namespace world_sim {
 			std::vector<std::vector<glm::vec2>> rings;
 			if (const auto* def = assets::AssetRegistry::Get().getDefinition(defName); def != nullptr) {
 				if (def->parts != nullptr) {
-					const assets::InstanceTransform placed({worldPos.x, worldPos.y}, assets::turnRadiansFromQuanta(turnQuanta), 1.0F);
+					std::vector<std::vector<glm::vec2>> colliders;
 					for (const assets::CollisionShape& collider : def->partsColliders) {
-						std::vector<glm::vec2>& ring = rings.emplace_back();
-						for (const glm::vec2 point : collider.pointsMeters) {
-							ring.push_back(placed.toWorld(point));
-						}
+						colliders.push_back(collider.pointsMeters);
 					}
+					rings = placedRings(colliders, {{worldPos.x, worldPos.y}, assets::turnRadiansFromQuanta(turnQuanta), 1.0F});
 				} else {
 					const assets::InstanceTransform placed = assets::uprightInstance({worldPos.x, worldPos.y});
 					const assets::CollisionShape&	footprint = def->collisionFor(0);
@@ -173,7 +172,7 @@ namespace world_sim {
 	void PlacementSystem::selectBuildItem(const std::string& defName) {
 		const auto last = lastTurns.find(defName);
 		placementMode.selectItem(defName, turns(defName) && last != lastTurns.end() ? last->second : 0);
-		press.reset();
+		dropPress();
 		if (callbacks.onHideBuildMenu) {
 			callbacks.onHideBuildMenu();
 		}
@@ -181,7 +180,9 @@ namespace world_sim {
 	}
 
 	void PlacementSystem::beginRelocation(ecs::EntityID entityId, const std::string& defName) {
-		// Store the entity ID we're relocating
+		// The relocation takes over from whatever was being placed, so the item is never left waiting for a spot
+		// with no ghost to pick one.
+		cancel();
 		relocatingEntityId = entityId;
 
 		uint32_t turnQuanta = 0;
@@ -189,7 +190,7 @@ namespace world_sim {
 			turnQuanta = assets::turnQuantaFromRadians(rotation->radians);
 		}
 		placementMode.selectItem(defName, turnQuanta);
-		press.reset();
+		dropPress();
 		LOG_INFO(Game, "Placing entity '%s' (entity %u)", defName.c_str(), static_cast<uint32_t>(entityId));
 	}
 
@@ -198,8 +199,14 @@ namespace world_sim {
 			return;
 		}
 
-		const auto pointer = camera->screenToWorld(screenX, screenY, viewportW, viewportH, kPixelsPerMeter);
-		uint32_t   turnQuanta = placementMode.ghostTurnQuanta();
+		const auto		pointer = camera->screenToWorld(screenX, screenY, viewportW, viewportH, kPixelsPerMeter);
+		const glm::vec2 pointerMeters{pointer.x, pointer.y};
+		// The preview follows the pointer every frame; with the pointer, Alt and the press as they were, nothing moved.
+		if (lastMove.has_value() && lastMove->pointer == pointerMeters && lastMove->freeform == freeform && lastMove->pressed == press.has_value()) {
+			return;
+		}
+		lastMove = PointerState{.pointer = pointerMeters, .freeform = freeform, .pressed = press.has_value()};
+		uint32_t turnQuanta = placementMode.ghostTurnQuanta();
 		if (!press.has_value()) {
 			rawPosition = {pointer.x, pointer.y};
 		} else {
@@ -245,10 +252,6 @@ namespace world_sim {
 	}
 
 	const std::vector<std::vector<glm::vec2>>& PlacementSystem::reservedOutlinesOf(const std::string& defName) const {
-		if (const uint64_t generation = assets::AssetRegistry::Get().generation(); generation != outlinesGeneration) {
-			reservedOutlines.clear();
-			outlinesGeneration = generation;
-		}
 		const auto known = reservedOutlines.find(defName);
 		if (known != reservedOutlines.end()) {
 			return known->second;
@@ -267,8 +270,16 @@ namespace world_sim {
 		if (ecsWorld == nullptr) {
 			return rings;
 		}
+		// Every entity is walked, the parts items told by their def's reserved outlines (empty for any other def),
+		// read from the cache by name. The placed item spatial query (PlacedItemIndex::query, rotatable-placed-items
+		// 11.3: installed and pending items whose reserved region meets a box) answers this from a chunk lookup and
+		// replaces the walk.
 		for (auto [entity, position, rotation, appearance] : ecsWorld->view<ecs::Position, ecs::Rotation, ecs::Appearance>()) {
 			if (entity == relocatingEntityId) {
+				continue;
+			}
+			const std::vector<std::vector<glm::vec2>>& outlines = reservedOutlinesOf(appearance.defName);
+			if (outlines.empty()) {
 				continue;
 			}
 			glm::vec2 at = position.value;
@@ -279,10 +290,9 @@ namespace world_sim {
 					continue;
 				}
 				at = *packaged->targetPosition;
-				turn = packaged->targetRotation;
+				turn = packaged->targetRotation.value_or(turn);
 			}
-			const std::vector<std::vector<glm::vec2>>& outlines = reservedOutlinesOf(appearance.defName);
-			if (outlines.empty() || glm::distance(at, pivot) > reachMeters + reachOf(outlines)) {
+			if (glm::distance(at, pivot) > reachMeters + reachOf(outlines)) {
 				continue;
 			}
 			for (std::vector<glm::vec2>& ring : placedRings(outlines, assets::InstanceTransform(at, turn, 1.0F))) {
@@ -293,6 +303,10 @@ namespace world_sim {
 	}
 
 	void PlacementSystem::settleGhost(uint32_t turnQuanta) {
+		if (const uint64_t generation = assets::AssetRegistry::Get().generation(); generation != outlinesGeneration) {
+			reservedOutlines.clear();
+			outlinesGeneration = generation;
+		}
 		const std::string& defName = placementMode.selectedDefName();
 		glm::vec2		   position = rawPosition;
 		if (turns(defName)) {
@@ -365,6 +379,7 @@ namespace world_sim {
 		// The record can have moved since the last mouse move; refuse on what is seen now.
 		settleGhost(placementMode.ghostTurnQuanta());
 		press.reset();
+		lastMove.reset();
 		if (placementMode.tryPlace()) {
 			// Successfully placed - update UI state
 			if (callbacks.onBuildMenuVisibility) {
@@ -378,6 +393,22 @@ namespace world_sim {
 		return false;
 	}
 
+	void PlacementSystem::dropPress() {
+		press.reset();
+		lastMove.reset();
+	}
+
+	bool PlacementSystem::takeReleaseOfCancelledPress() {
+		return std::exchange(cancelledPress, false);
+	}
+
+	void PlacementSystem::leftButtonUp() {
+		if (press.has_value()) {
+			dropPress();
+		}
+		cancelledPress = false;
+	}
+
 	void PlacementSystem::cancel() {
 		if (!placementMode.isActive()) {
 			return;
@@ -385,7 +416,8 @@ namespace world_sim {
 
 		placementMode.cancel();
 		relocatingEntityId = ecs::EntityID{0};
-		press.reset();
+		cancelledPress = press.has_value();
+		dropPress();
 
 		if (callbacks.onBuildMenuVisibility) {
 			callbacks.onBuildMenuVisibility(false);
@@ -415,10 +447,12 @@ namespace world_sim {
 			for (auto [entity, packaged, appearance] : ecsWorld->view<ecs::Packaged, ecs::Appearance>()) {
 				if (packaged.targetPosition.has_value() && !packaged.beingCarried) {
 					const auto& target = packaged.targetPosition.value();
+					const auto* rotation = ecsWorld->getComponent<ecs::Rotation>(entity);
+					const float turn = packaged.targetRotation.value_or(rotation != nullptr ? rotation->radians : 0.0F);
 					ghostRenderer.render(
 						appearance.defName,
 						{target.x, target.y},
-						assets::turnQuantaFromRadians(packaged.targetRotation),
+						assets::turnQuantaFromRadians(turn),
 						*camera,
 						viewportW,
 						viewportH,

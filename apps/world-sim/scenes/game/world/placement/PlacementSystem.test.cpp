@@ -5,7 +5,7 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/AssetRegistry.test.h>
-#include <assets/ItemView.h>
+#include <assets/TurnQuanta.h>
 #include <ecs/GoalTaskRegistry.h>
 #include <ecs/components/AgentRadius.h>
 #include <ecs/components/Appearance.h>
@@ -321,7 +321,8 @@ TEST_F(PlacementFordTest, MovingATurnedItemStartsAtItsTurnAndCarriesTheNewOne) {
 	ASSERT_TRUE(placement->handleRelease());
 	const ecs::Packaged* packaged = seen.world.getComponent<ecs::Packaged>(item);
 	ASSERT_TRUE(packaged->targetPosition.has_value());
-	EXPECT_EQ(assets::turnQuantaFromRadians(packaged->targetRotation), assets::turnQuantaFromDegrees(60.0));
+	ASSERT_TRUE(packaged->targetRotation.has_value()) << "set with the position";
+	EXPECT_EQ(assets::turnQuantaFromRadians(*packaged->targetRotation), assets::turnQuantaFromDegrees(60.0));
 }
 
 // A crafted crate is installed off the creek: beside a station on the bank, aimed into the creek, the

@@ -20,6 +20,11 @@ constexpr float kPixelsPerMeter = 8.0F; // Match GameScene constant
 } // namespace
 
 void GhostRenderer::beginFrame() {
+	// A reload changes the defs the views were built from.
+	if (const uint64_t generation = assets::AssetRegistry::Get().generation(); generation != viewsGeneration) {
+		views.clear();
+		viewsGeneration = generation;
+	}
 	for (auto& [key, held] : views) {
 		held.drawn = false;
 	}

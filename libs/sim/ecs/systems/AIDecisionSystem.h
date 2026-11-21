@@ -255,8 +255,9 @@ class SharedWork {
 	struct Package {
 		EntityID  entity = kInvalidEntity;
 		glm::vec2 position{0.0F, 0.0F};
-		glm::vec2 target{0.0F, 0.0F};
-		bool	  beingCarried = false;
+		glm::vec2			 target{0.0F, 0.0F};
+		std::optional<float> targetRotation; // Packaged::targetRotation, taken with the target
+		bool				 beingCarried = false;
 	};
 	/// Packaged items with a placement target, in view order.
 	[[nodiscard]] const std::vector<Package>& packages(World& world);

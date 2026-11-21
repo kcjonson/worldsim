@@ -106,6 +106,18 @@ namespace world_sim {
 		}
 	}
 
+	// Placing an item that turns (rotatable-placed-items 14.4): Q / E, drag, Alt, and Esc / Right-click, no legend.
+	TEST(KeyGuideContentTest, PlacingListsTheTurningKeys) {
+		const KeyGuideContent content = placingKeyGuideContent();
+		std::vector<std::string> actions;
+		for (const KeyGuideKeyRow& row : content.keyRows) {
+			actions.push_back(row.action);
+		}
+		EXPECT_EQ(actions, (std::vector<std::string>{"Turn", "Turn to face the pointer", "Hold to turn freely", "Leave"}));
+		EXPECT_TRUE(content.legendRows.empty());
+		EXPECT_EQ(content.foot, keyGuideContent(ToolKind::Foundation, DrawingSettings{}).foot);
+	}
+
 	TEST(KeyGuideContentTest, TheFootLineSaysHowToHideIt) {
 		const KeyGuideContent content = keyGuideContent(ToolKind::Foundation, DrawingSettings{});
 		ASSERT_EQ(content.foot.size(), 4U);

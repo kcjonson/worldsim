@@ -41,7 +41,8 @@ struct Packaged {
 	bool beingCarried = false;
 
 	/// The turn it is installed at (ecs::Rotation's meaning, a whole number of turn quanta), set with targetPosition.
-	float targetRotation = 0.0F;
+	/// Unset, the item is installed at the turn it has.
+	std::optional<float> targetRotation;
 };
 
 } // namespace ecs
