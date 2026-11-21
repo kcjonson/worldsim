@@ -27,8 +27,9 @@ namespace world_sim {
 	/// (NavigationSystem::isLineBuildableNow), the same gate as the wall tool, hosted or freestanding.
 	std::string wallChainGroundRefusal(const ecs::NavigationSystem* navigation, const std::vector<Foundation::Vec2>& pts);
 
-	/// The spawn verb's, for `def` at `at` turned `turnQuanta`. Furniture (PlacementSystem::isFurniture) goes where the
-	/// placement tool would set it up (footprintBuildableNow, never a ford or an unbuilt foundation);
+	/// The spawn verb's, for `def` at `at` turned `turnQuanta`. Furniture (PlacementSystem::isFurniture) and parts items
+	/// go where the placement tool would set them up (PlacementSystem::refusalAt: never a ford or an unbuilt
+	/// foundation, nor into another item's body or clearance or a wall's band);
 	/// anything else, a tree, a reed, or a loose item, goes on clear ground (isValidPosition), a ford
 	/// included, since putting it there builds nothing. With no nav system nothing is taken.
 	std::string spawnGroundRefusal(

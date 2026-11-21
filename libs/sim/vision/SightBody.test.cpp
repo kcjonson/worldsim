@@ -211,9 +211,9 @@ TEST(PlacedOccluderIndex, AConcaveRingIsOpaqueWhateverItsSize) {
 	index.add(1, {{0, 0}, {600, 0}, {600, 300}, {300, 300}, {300, 600}, {0, 600}}, "Test_TallBody", 0);
 	index.add(2, rectangle({2000, 0}, {2600, 600}), "Test_TallBody", 0);
 	ASSERT_EQ(index.size(), 2U);
-	EXPECT_TRUE(index.byRing(1)->concave);
+	EXPECT_TRUE(index.byRing(1)->bodyConcave);
 	EXPECT_EQ(index.byRing(1)->kind, BodyKind::Opaque);
-	EXPECT_FALSE(index.byRing(2)->concave);
+	EXPECT_FALSE(index.byRing(2)->bodyConcave);
 	EXPECT_EQ(index.byRing(2)->kind, BodyKind::Soft);
 	index.setOpaqueLeastDiameterMm(2000);
 	EXPECT_EQ(index.byRing(1)->kind, BodyKind::Opaque) << "a threshold slider never makes it soft";

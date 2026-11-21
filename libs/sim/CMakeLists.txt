@@ -25,6 +25,7 @@ add_library(sim
     ecs/systems/CollisionSystem.cpp
     ecs/systems/WallCollisionSystem.cpp
     ecs/systems/WallStandPoint.cpp
+    ecs/systems/PlacedItemSystem.cpp
     ecs/systems/PlacedObstacleCollisionSystem.cpp
     ecs/systems/NavigationSystem.cpp
     ecs/systems/PlayerVisibilitySystem.cpp
@@ -35,6 +36,7 @@ add_library(sim
     ecs/ColonistRules.cpp
     ecs/GoalTaskRegistry.cpp
     ecs/NeedLevels.cpp
+    ecs/PlacedItemIndex.cpp
     ecs/StoreOrDrop.cpp
     ecs/ThoughtPruning.cpp
     ecs/ThoughtTypes.cpp
@@ -57,6 +59,7 @@ add_library(sim
     construction/ConstructionWorld.cpp
     construction/CornerAngles.cpp
     construction/ConstructionValidator.cpp
+    construction/ItemClearance.cpp
     construction/ItemSnap.cpp
     construction/OpeningGeometry.cpp
     construction/RectangleSnap.cpp

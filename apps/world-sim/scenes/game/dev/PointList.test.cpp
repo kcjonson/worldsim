@@ -23,3 +23,16 @@ TEST(PointList, TooFewPointsAreRefusedWithTheCountTheVerbNeeds) {
 	EXPECT_TRUE(world_sim::pointCountRefusal("foundation", 3, 3).empty());
 	EXPECT_TRUE(world_sim::pointCountRefusal("walls", 2, 5).empty());
 }
+
+// A point parameter (the package verb's at= and target=) is one pair of numbers or nothing: never (0, 0) for a
+// missing or broken one.
+TEST(PointList, APointParameterIsOnePairOrNothing) {
+	const std::optional<Foundation::Vec2> point = world_sim::parseOnePoint("37,31.5");
+	ASSERT_TRUE(point.has_value());
+	EXPECT_FLOAT_EQ(point->x, 37.0F);
+	EXPECT_FLOAT_EQ(point->y, 31.5F);
+	EXPECT_FALSE(world_sim::parseOnePoint("").has_value()) << "missing";
+	EXPECT_FALSE(world_sim::parseOnePoint("37").has_value());
+	EXPECT_FALSE(world_sim::parseOnePoint("37,y").has_value());
+	EXPECT_FALSE(world_sim::parseOnePoint("1,2;3,4").has_value()) << "a list";
+}

@@ -6,6 +6,8 @@
 #include "components/Packaged.h"
 #include "components/Transform.h"
 
+#include "nav/NavInputBuilder.h"
+
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
 
@@ -23,6 +25,9 @@ namespace ecs {
 		bool collidesAtAnyAge(const assets::AssetDefinition* def) {
 			if (def == nullptr) {
 				return false;
+			}
+			if (!def->partsColliders.empty()) {
+				return true;
 			}
 			for (std::size_t ageClass = 0; ageClass < def->collisions.size(); ++ageClass) {
 				if (def->collisions[ageClass].blocks()) {
@@ -56,7 +61,7 @@ namespace ecs {
 				continue;
 			}
 			const assets::AssetDefinition* def = registry.getDefinition(appearance.defName);
-			if (def == nullptr || !def->collisionFor(appearance.traits.ageClass).blocks()) {
+			if (def == nullptr || nav::placedObstacleColliders(*def, appearance.traits.ageClass).empty()) {
 				continue;
 			}
 			Entry entry{.entity = entity};
@@ -90,6 +95,9 @@ namespace ecs {
 			}
 		}
 		entries = std::move(current);
+		if (!changes.removed.empty() || !changes.added.empty()) {
+			++revisionCount;
+		}
 		std::erase_if(defsSeen, [this](const auto& known) { return known.second.pass != pass; });
 		return changes;
 	}

@@ -34,7 +34,15 @@ namespace vision {
 		}
 
 		BodyKind placedKind(const PlacedOccluder& entry, std::int64_t opaqueLeastMm) {
-			return entry.concave ? BodyKind::Opaque : kindOf(entry.diameterSquared, opaqueLeastMm);
+			return entry.bodyConcave ? BodyKind::Opaque : kindOf(entry.bodyDiameterSquared, opaqueLeastMm);
+		}
+
+		geometry::Ring counterClockwise(const geometry::Ring& outline) {
+			geometry::Ring ring = outline;
+			if (doubledArea(ring).sign() < 0) {
+				std::reverse(ring.begin(), ring.end());
+			}
+			return ring;
 		}
 	} // namespace
 
@@ -63,15 +71,40 @@ namespace vision {
 	}
 
 	void PlacedOccluderIndex::add(geometry::nav::RingId ring, const geometry::Ring& outline, std::string defName, std::int64_t clockMs) {
-		if (ring == geometry::nav::kNoRing || outline.size() < 3) {
-			return;
+		const BodyRing body{.ring = ring, .outline = &outline};
+		addBody({&body, 1}, defName, clockMs);
+	}
+
+	void PlacedOccluderIndex::addBody(std::span<const BodyRing> rings, const std::string& defName, std::int64_t clockMs) {
+		std::vector<geometry::Ring>	   outlines;
+		std::vector<geometry::nav::RingId> ids;
+		std::vector<geometry::Vec2i64> vertices;
+		bool						   bodyConcave = false;
+		for (const BodyRing& body : rings) {
+			if (body.ring == geometry::nav::kNoRing || body.outline == nullptr || body.outline->size() < 3) {
+				continue;
+			}
+			geometry::Ring& outline = outlines.emplace_back(counterClockwise(*body.outline));
+			ids.push_back(body.ring);
+			vertices.insert(vertices.end(), outline.begin(), outline.end());
+			bodyConcave = bodyConcave || concave(outline);
 		}
-		// A ring id handed out again while still listed replaces its old entry, buckets and all.
-		remove(ring);
-		PlacedOccluder entry{.serial = nextSerial++, .ring = ring, .outline = outline, .arrivedMs = clockMs, .defName = std::move(defName)};
-		if (doubledArea(entry.outline).sign() < 0) {
-			std::reverse(entry.outline.begin(), entry.outline.end());
+		const geometry::Int128 bodyDiameterSquared = diameterSquared(vertices);
+		for (std::size_t index = 0; index < outlines.size(); ++index) {
+			const geometry::nav::RingId ring = ids[index];
+			// A ring id handed out again while still listed replaces its old entry, buckets and all.
+			remove(ring);
+			PlacedOccluder entry{
+				.serial = nextSerial++, .ring = ring, .outline = std::move(outlines[index]), .arrivedMs = clockMs, .defName = defName
+			};
+			entry.bodyDiameterSquared = bodyDiameterSquared;
+			entry.bodyConcave		  = bodyConcave;
+			insert(std::move(entry));
 		}
+	}
+
+	void PlacedOccluderIndex::insert(PlacedOccluder entry) {
+		const geometry::nav::RingId ring = entry.ring;
 		entry.low			  = entry.outline.front();
 		entry.high			  = entry.outline.front();
 		geometry::Vec2i64 sum{0, 0};
@@ -87,7 +120,6 @@ namespace vision {
 		entry.centre		  = {sum.x / count, sum.y / count};
 		entry.diameterSquared = diameterSquared(entry.outline);
 		entry.diameterMm	  = wholeSquareRoot(entry.diameterSquared);
-		entry.concave		  = concave(entry.outline);
 		entry.kind			  = placedKind(entry, opaqueLeastMm);
 		eachBucket(entry.low, entry.high, [&](BucketKey key) { buckets[key].push_back(entry.serial); });
 		serialOfRing.emplace(ring, entry.serial);

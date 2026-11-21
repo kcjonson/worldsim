@@ -515,18 +515,23 @@ class NavigationSystem : public ISystem {
 		DoorId					  door = -1;
 	};
 
-	// A placed entity by the identity PlacementExecutor removes it by, or an ECS entity with a collider
-	// by its id, with the chunk and position it had when it went in. Ordered chunk first, then
-	// position, so the entries of one position are a contiguous range.
+	// A placed entity by the identity PlacementExecutor removes it by, or one ring of an ECS entity with a
+	// collider by its id and the ring's index, with the chunk and position it had when it went in. Ordered
+	// chunk first, then position, so the entries of one position are a contiguous range, and an entity's
+	// rings follow each other in ring order.
 	struct ObstacleKey {
 		world::ChunkCoordinate chunk;
 		std::uint32_t		   xBits = 0;
 		std::uint32_t		   yBits = 0;
 		std::string			   defName;
 		EntityID			   entity = kInvalidEntity; // kInvalidEntity for the executor's
+		std::uint32_t		   ring = 0;				 // 0 for the executor's
 		bool				   operator<(const ObstacleKey& o) const;
+		[[nodiscard]] bool	   sameObstacle(const ObstacleKey& other) const;
 	};
-	[[nodiscard]] static ObstacleKey colliderEntityKey(const ColliderEntityIndex::Entry& entry);
+	[[nodiscard]] static ObstacleKey colliderEntityKey(const ColliderEntityIndex::Entry& entry, std::uint32_t ring);
+	// Where `entry`'s ring keys start in obstacleInMesh; they run while sameObstacle holds.
+	[[nodiscard]] std::map<ObstacleKey, RingId>::const_iterator firstColliderEntityKey(const ColliderEntityIndex::Entry& entry) const;
 	// A mesh limit waiting to go in: who took it (kInvalidEntity for the landing), its centre
 	// and range, its outline, and the box its placed obstacles are looked for in (the outline's box
 	// grown by footprintReachMeters()).

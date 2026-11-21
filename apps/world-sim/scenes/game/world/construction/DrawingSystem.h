@@ -689,6 +689,12 @@ namespace world_sim {
 		/// Resolve the active thickness preset for the active material, or nullptr if
 		/// the material has no wall presets (the wall tool can't commit then).
 		[[nodiscard]] const assets::ThicknessPreset* activePreset() const;
+		/// Whether the last segment of `chain`, a wall of `preset`, would meet a placed item's body or clearance, installed
+		/// or pending, anywhere in its outline as the offsetter resolves it among the walls of `world` and the chain's
+		/// earlier segments (construction::drawnWallOutline, rotatable-placed-items 13). False with no placed item index.
+		[[nodiscard]] bool wallMeetsItems(
+			const construction::ConstructionWorld& world, const std::vector<Foundation::Vec2>& chain, const assets::ThicknessPreset& preset
+		) const;
 
 		/// Commit every consecutive pair of the in-progress chain as a wall segment
 		/// (commitWallSegments) and spawn a blueprint entity per segment. Clears the chain.
