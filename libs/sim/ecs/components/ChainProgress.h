@@ -54,7 +54,15 @@ namespace ecs {
 		uint32_t item = 0;
 		/// The chain's planned amount: what a take asks for, and what a `have` is met by.
 		uint32_t quantity = 0;
+		/// The cargo handed to the chain with its option (goods earlier legs of a gathering carry toward the root).
+		uint32_t cargo = 0;
+		/// A cut's expected yield, set for a chain whose take cuts: its in-flight is the cargo plus this, its inbound the
+		/// cargo alone. A haul (none) claims the cargo plus the planned amount for both.
+		uint32_t expectedYield = 0;
 	};
+
+	/// What the player sees a running chain as, wherever the task is named.
+	inline constexpr const char* kRunningChainLabel = "Busy";
 
 	struct ChainProgress {
 		/// How deep `run` and unmet `have` steps may nest; deeper is a load error (resolveChainEntries).
@@ -75,9 +83,11 @@ namespace ecs {
 		/// What the chain's takes lifted, which `drop` sets down and a `have` counts as handed over.
 		uint32_t takenItem = 0;
 		uint32_t takenQuantity = 0;
-		/// The units the creature held for the step when it began, of the item `held_gone` watches; 0 for none.
+		/// The item `held_gone` watches and the units of it held when the step began; 0 for none.
 		uint32_t heldItem = 0;
 		uint32_t heldAtStart = 0;
+		/// Where the step's target stood when the step began, which `target_gone` and `target_left` measure from.
+		glm::vec2 targetAtStepStart{0.0F, 0.0F};
 
 		[[nodiscard]] bool				active() const { return depth > 0; }
 		[[nodiscard]] const ChainFrame& frame() const { return frames[depth - 1]; }

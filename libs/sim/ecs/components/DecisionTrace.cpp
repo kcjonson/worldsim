@@ -82,7 +82,7 @@ namespace ecs {
 				case TaskType::None:
 					break;
 				case TaskType::Chain:
-					// No option is a chain until chains are in the decision, whose trace rows name their entries.
+					// The decision offers no chain option, so none is described.
 					break;
 			}
 			return option.reason;

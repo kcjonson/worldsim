@@ -109,8 +109,8 @@ namespace world_sim {
 			for (const std::string& error : load.rules.thoughtTypes->resolveActions(load.entries)) {
 				load.errors.push_back("[thoughts] " + error);
 			}
-			// The chain runner's rules, checked here so a chain it cannot run never loads; the runner gets the table
-			// once chains are in the decision. A thought name nothing declares is already reported above.
+			// The chain runner's rules, checked here so a chain it cannot run never loads. A thought name nothing declares
+			// is already reported above.
 			if (namesKnown) {
 				for (std::string& error : ecs::resolveChainEntries(load.entries, load.actions, load.rules.thoughtTypes.get()).errors) {
 					load.errors.push_back(std::move(error));

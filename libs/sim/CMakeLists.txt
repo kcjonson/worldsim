@@ -15,6 +15,7 @@ add_library(sim
     ecs/systems/action/HaulActions.cpp
     ecs/systems/action/BuildActions.cpp
     ecs/systems/action/ChainRunner.cpp
+    ecs/systems/action/ChainRunnerActions.cpp
     ecs/systems/StorageGoalSystem.cpp
     ecs/systems/WorkSources.cpp
     ecs/systems/ChainClaims.cpp

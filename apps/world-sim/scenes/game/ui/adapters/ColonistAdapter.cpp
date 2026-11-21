@@ -23,7 +23,7 @@ namespace world_sim::adapters {
 				case ecs::TaskType::Build:         return "Building";
 				case ecs::TaskType::Deconstruct:   return "Deconstructing";
 				case ecs::TaskType::Wander:        return "Wandering";
-				case ecs::TaskType::Chain:         return "Busy";
+				case ecs::TaskType::Chain:         return ecs::kRunningChainLabel;
 				default:                           return "";
 			}
 		}

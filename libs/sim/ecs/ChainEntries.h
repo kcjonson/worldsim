@@ -8,11 +8,14 @@
 // - a `<need>` step names a need the sim tracks, and a `<think>` step a thought type;
 // - `<run>` and unmet `<have>` steps nest at most ChainProgress::kMaxDepth chains deep (the loader already refuses a
 //   chain that runs itself);
-// - a step names `inbound` only with `in_flight`, which the claim index pairs (the loader already holds a chain to the
-//   four claims a task holds);
+// - a step names `inbound` only with `in_flight`, which the claim index pairs, and never on a take (the loader already
+//   holds a chain to the four claims a task holds);
 // - a `<do>` step's action (each member of a group) needs the target data of one effect row kind: a take, a put, a
 //   work, a craft, or an install (a take paired with an install, both on one packaged thing);
-// - `<leave_colony/>` is refused: it ends colony membership, which the sim does not have yet.
+// - a `<do>` whose action acts on a target has `on` or a `<go>` before it, and an action naming what it acts on is not
+//   used on what its `<go>`'s query never returns (a harvest after a query of piles);
+// - a `<drop>` has a take before it, and `held_gone` ends only a `<do>`;
+// - `<leave_colony/>` is refused: it ends colony membership, which the sim does not have.
 //
 // See /docs/technical/queries-and-chains.md (Chains, The runner).
 

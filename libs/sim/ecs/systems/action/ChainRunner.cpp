@@ -1,6 +1,7 @@
-// The chain runner: a Task of type Chain runs its chain's steps in order on the Task, Action, and routing machinery,
-// and every `do` step starts its action through one path with no factory. See /docs/technical/queries-and-chains.md
-// (Chains, The runner, Requirements on the chain runner).
+// The chain runner: a Task of type Chain runs its chain's steps in order on the Task, Action, and routing machinery.
+// Every `do` step starts its action through one path with no factory (startChainAction, with its builders in
+// ChainRunnerActions.cpp). See /docs/technical/queries-and-chains.md (Chains, The runner, Requirements on the chain
+// runner).
 
 #include "../ActionSystem.h"
 
@@ -16,9 +17,7 @@
 #include "../../components/NavPath.h"
 #include "../../components/Needs.h"
 #include "../../components/Packaged.h"
-#include "../../components/Skills.h"
 #include "../../components/SourceReachMemo.h"
-#include "../../components/StructureBlueprint.h"
 #include "../../components/Task.h"
 #include "../../components/Thoughts.h"
 #include "../../components/Traits.h"
@@ -39,15 +38,11 @@
 #include <glm/geometric.hpp>
 
 #include <algorithm>
-#include <random>
 #include <variant>
 
 namespace ecs {
 
 	namespace {
-
-		/// A target that is not a creature has gone when it is this far from where it was; a creature target has left.
-		constexpr float kTargetMovedMeters = 0.5F;
 
 		[[nodiscard]] uint8_t bit(assets::ClaimKind kind) {
 			return static_cast<uint8_t>(1U << static_cast<unsigned>(kind));
@@ -71,8 +66,8 @@ namespace ecs {
 
 		/// The claim `target` takes as a use, or as `quantity` units of its item from a pile or box, in its own key space.
 		[[nodiscard]] Claim claimOn(const ChainTarget& target, bool sourceQuantity, uint32_t quantity) {
-			TargetKind space = static_cast<TargetKind>(target.claimSpace);
-			uint64_t   key = target.claimKey;
+			auto	 space = static_cast<TargetKind>(target.claimSpace);
+			uint64_t key = target.claimKey;
 			if (key == 0) {
 				space = target.kind == ChainTarget::Kind::Thing ? TargetKind::WorldKey : TargetKind::Entity;
 				key = target.kind == ChainTarget::Kind::Thing ? target.key : static_cast<uint64_t>(target.entity);
@@ -80,42 +75,8 @@ namespace ecs {
 			return sourceQuantity ? Claim::sourceQuantity(space, key, target.item, quantity) : Claim::use(space, key);
 		}
 
-		/// Units of goods with `capability` the creature carries in its hands and pack.
-		[[nodiscard]] uint32_t heldWithCapability(const Inventory& inventory, assets::CapabilityType capability) {
-			const auto& registry = assets::AssetRegistry::Get();
-			uint32_t	held = 0;
-			const auto	count = [&](const std::string& defName, bool counted) {
-				 // Food is an item's property, not a capability of the thing.
-				 const auto* def = registry.getDefinition(defName);
-				 const bool	 has = capability == assets::CapabilityType::Edible
-									   ? def != nullptr && def->isEdible()
-									   : registry.hasCapability(registry.getDefNameId(defName), capability);
-				 if (!counted && has) {
-					 held += ecs::availableQuantity(inventory, defName);
-				 }
-			};
-			for (std::size_t index = 0; index < inventory.items.size(); ++index) {
-				const std::string& name = inventory.items[index].defName;
-				const bool		   earlier = std::any_of(
-					inventory.items.begin(), inventory.items.begin() + static_cast<std::ptrdiff_t>(index), [&](const ItemStack& stack) {
-						return stack.defName == name;
-					}
-				);
-				count(name, earlier);
-			}
-			const auto inPack = [&](const std::string& name) {
-				return std::any_of(inventory.items.begin(), inventory.items.end(), [&](const ItemStack& stack) {
-					return stack.defName == name;
-				});
-			};
-			if (inventory.leftHand.has_value()) {
-				count(inventory.leftHand->defName, inPack(inventory.leftHand->defName));
-			}
-			if (inventory.rightHand.has_value()) {
-				const bool sameAsLeft = inventory.leftHand.has_value() && inventory.leftHand->defName == inventory.rightHand->defName;
-				count(inventory.rightHand->defName, sameAsLeft || inPack(inventory.rightHand->defName));
-			}
-			return held;
+		[[nodiscard]] bool performsWork(const ActionValues& values) {
+			return values.bound == ActionBound::Work;
 		}
 
 	} // namespace
@@ -169,23 +130,16 @@ namespace ecs {
 			LOG_ERROR(Engine, "[Chain] Entity %llu lacks what a chain runs on; nothing started", static_cast<unsigned long long>(entity));
 			return false;
 		}
-		if (chainWiring.library == nullptr || chainWiring.chains == nullptr || chainWiring.evaluator == nullptr || !start.chain.valid()) {
+		if (chainWiring.library == nullptr || chainWiring.chains == nullptr || chainWiring.evaluator == nullptr || !start.chain.valid() ||
+			start.chain.index >= chainWiring.library->chains.size()) {
 			LOG_ERROR(
-				Engine,
-				"[Chain] Entity %llu: the chain runner is not wired, or no chain was named; nothing started",
+				Engine, "[Chain] Entity %llu: the chain runner is not wired, or the chain named is none of its library's; nothing started",
 				static_cast<unsigned long long>(entity)
 			);
 			return false;
 		}
-		const ChainActor actor{
-			.entity = entity,
-			.position = *position,
-			.task = *task,
-			.action = *action,
-			.needs = *needs,
-			.memory = *memory,
-			.inventory = *inventory
-		};
+		const ChainActor actor{.entity = entity, .position = *position, .task = *task, .action = *action, .needs = *needs, .memory = *memory,
+							   .inventory = *inventory};
 		const assets::ChainEntry& chain = chainWiring.library->chains[start.chain.index];
 
 		// The action in progress goes with the task it served, and a route still out was asked for that task.
@@ -200,7 +154,7 @@ namespace ecs {
 		task->timeSinceEvaluation = 0.0F;
 		task->type = TaskType::Chain;
 		task->priorityTier = start.tier;
-		task->reason = chain.id;
+		task->reason = kRunningChainLabel;
 		const uint64_t sequence = GoalTaskRegistry::Get().allocateClaimSeq();
 		task->instanceId = sequence;
 		task->claimSeq = sequence;
@@ -221,8 +175,8 @@ namespace ecs {
 				walked = go->to ? optionTarget(*task, *go->to) : (index == start.step ? start.target : ChainTarget{});
 			} else if (const auto* doStep = std::get_if<assets::DoStep>(&step.step); doStep != nullptr && doStep->claims != 0) {
 				const ChainTarget& target = doStep->on ? optionTarget(*task, *doStep->on) : walked;
-				if (target.resolved() && !takeStepClaims(*task, *doStep, target)) {
-					endChain(actor, "a claim its steps name cannot be sized: inbound and in_flight need the option's goal and destination");
+				if (target.resolved() && !takeStepClaims(actor, *doStep, target)) {
+					endChain(actor, "a claim its steps name cannot be taken");
 					return false;
 				}
 			}
@@ -241,19 +195,46 @@ namespace ecs {
 	}
 
 	void ActionSystem::endChain(const ChainActor& actor, const char* why) {
+		const ChainProgress& progress = actor.task.chain;
 		LOG_DEBUG(
-			Engine, "[Chain] Entity %llu: %s ends (%s)", static_cast<unsigned long long>(actor.entity), actor.task.reason.c_str(), why
+			Engine, "[Chain] Entity %llu: %s ends (%s)", static_cast<unsigned long long>(actor.entity),
+			progress.active() && chainWiring.library != nullptr && progress.frames[0].chain.index < chainWiring.library->chains.size()
+				? chainWiring.library->chains[progress.frames[0].chain.index].id.c_str()
+				: "a chain",
+			why
 		);
 		actor.action.clear();
 		actor.task.clear();
 		actor.task.timeSinceEvaluation = 0.0F;
 	}
 
+	void ActionSystem::refuseChain(const ChainActor& actor, const char* why) {
+		endChain(actor, why);
+		actor.task.decideAtInterval = true;
+	}
+
+	void ActionSystem::headToTarget(EntityID entity, Task& task, const ChainTarget& target) {
+		headTo(entity, task, target.goal);
+		if (target.goal != target.position) {
+			task.obstructedTarget = target.position;
+		}
+	}
+
+	bool ActionSystem::claimForGo(const ChainActor& actor, const ChainTarget& target) {
+		const assets::DoStep* next = doStepAfterGo(actor.task);
+		return next == nullptr || next->claims == 0 || takeStepClaims(actor, *next, target);
+	}
+
 	bool ActionSystem::runSteps(const ChainActor& actor, const ChainTarget* given) {
 		Task&		   task = actor.task;
 		ChainProgress& progress = task.chain;
 		for (;;) {
-			ChainFrame&				  frame = progress.frame();
+			ChainFrame& frame = progress.frame();
+			if (frame.chain.index >= chainWiring.library->chains.size()) {
+				LOG_ERROR(Engine, "[Chain] Entity %llu runs a chain its library does not hold", static_cast<unsigned long long>(actor.entity));
+				endChain(actor, "its chain is none of the library's");
+				return false;
+			}
 			const assets::ChainEntry& chain = chainWiring.library->chains[frame.chain.index];
 			if (frame.step >= chain.steps.size()) {
 				if (--progress.depth == 0) {
@@ -268,26 +249,23 @@ namespace ecs {
 			progress.stepStartedAt = clockSeconds();
 
 			if (const auto* go = std::get_if<assets::GoStep>(&step.step)) {
-				const ChainTarget target = given != nullptr ? *given : goTarget(actor, *go, std::nullopt);
+				const ChainTarget target = given != nullptr ? *given : goTarget(actor, *go);
 				given = nullptr;
 				if (!target.resolved()) {
 					endChain(actor, "its go step found no target");
 					return false;
 				}
 				progress.stepTarget = target;
-				if (const assets::DoStep* next = doStepAfterGo(task);
-					next != nullptr && next->claims != 0 && !takeStepClaims(task, *next, target)) {
-					endChain(actor, "a claim its steps name cannot be sized");
+				progress.targetAtStepStart = target.position;
+				if (!claimForGo(actor, target)) {
+					endChain(actor, "a claim its steps name cannot be taken");
 					return false;
 				}
 				if (glm::distance(actor.position.value, target.goal) <= kActionReachMeters) {
 					nextStep(task);
 					continue;
 				}
-				headTo(actor.entity, task, target.goal);
-				if (target.goal != target.position) {
-					task.obstructedTarget = target.position;
-				}
+				headToTarget(actor.entity, task, target);
 				return true;
 			}
 			if (const auto* doStep = std::get_if<assets::DoStep>(&step.step)) {
@@ -300,29 +278,39 @@ namespace ecs {
 				if (auto* navPath = world->getComponent<NavPath>(actor.entity)) {
 					navPath->valid = false;
 				}
+				const ChainTarget& target = doTarget(task, *doStep);
+				const auto*		   live =
+					target.entity != kInvalidEntity && world->isAlive(target.entity) ? world->getComponent<Position>(target.entity) : nullptr;
+				progress.targetAtStepStart = live != nullptr ? live->value : target.position;
 				progress.heldItem = 0;
 				progress.heldAtStart = 0;
 				if (names(step.ends, assets::EndEvent::HeldGone)) {
-					const assets::ActionEntry& entry = chainWiring.library->actions[doStep->action.handle.index];
-					const bool				   consumes =
-						!entry.group && std::ranges::any_of(actionEntries.of(doStep->action.handle).effects, [](const EffectRow& row) {
-							return std::holds_alternative<ConsumeRow>(row);
-						});
-					progress.heldItem = consumes ? 0U : (progress.takenItem != 0 ? progress.takenItem : progress.goal.item);
-					progress.heldAtStart = heldForStep(actor, progress.heldItem);
+					// The goods it holds for the step: the food it would eat for an action that consumes, else the chain's.
+					const ActionValues& values = actionEntries.of(doStep->action.handle);
+					const bool			consumes = std::ranges::any_of(values.effects, [](const EffectRow& row) {
+						 return std::holds_alternative<ConsumeRow>(row);
+					 });
+					const std::string*	food = consumes ? heldEdibleUnit(actor.inventory) : nullptr;
+					progress.heldItem = food != nullptr ? assets::AssetRegistry::Get().getDefNameId(*food)
+										: progress.takenItem != 0 ? progress.takenItem
+																  : progress.goal.item;
+					progress.heldAtStart = heldUnits(actor, progress.heldItem);
 				}
 				return true;
 			}
-			if (const auto* have = std::get_if<assets::HaveStep>(&step.step)) {
-				if (haveMet(actor, *have)) {
-					nextStep(task);
-				} else {
-					progress.frames[progress.depth++] = {.chain = have->fetch.handle, .step = 0};
-				}
+			const auto* have = std::get_if<assets::HaveStep>(&step.step);
+			const auto* run = std::get_if<assets::RunStep>(&step.step);
+			if (have != nullptr && haveMet(actor, *have)) {
+				nextStep(task);
 				continue;
 			}
-			if (const auto* run = std::get_if<assets::RunStep>(&step.step)) {
-				progress.frames[progress.depth++] = {.chain = run->chain.handle, .step = 0};
+			if (have != nullptr || run != nullptr) {
+				if (progress.depth >= ChainProgress::kMaxDepth) {
+					LOG_ERROR(Engine, "[Chain] %s nests deeper than a chain may", chain.id.c_str());
+					endChain(actor, "it nests deeper than a chain may");
+					return false;
+				}
+				progress.frames[progress.depth++] = {.chain = have != nullptr ? have->fetch.handle : run->chain.handle, .step = 0};
 				continue;
 			}
 			if (const auto* think = std::get_if<assets::ThinkStep>(&step.step)) {
@@ -340,8 +328,8 @@ namespace ecs {
 				nextStep(task);
 				continue;
 			}
-			LOG_ERROR(Engine, "[Chain] %s: <leave_colony/> needs colony membership, which the sim does not have yet", chain.id.c_str());
-			endChain(actor, "it asked to leave the colony, which the sim cannot do yet");
+			LOG_ERROR(Engine, "[Chain] %s: <leave_colony/> needs colony membership, which the sim does not have", chain.id.c_str());
+			endChain(actor, "it asked to leave the colony, which the sim cannot do");
 			return false;
 		}
 	}
@@ -349,33 +337,42 @@ namespace ecs {
 	void ActionSystem::runChain(float deltaTime, const ChainActor& actor) {
 		Task&	task = actor.task;
 		Action& action = actor.action;
-		if (chainWiring.library == nullptr || chainWiring.chains == nullptr || chainWiring.evaluator == nullptr || !task.chain.active()) {
+		if (chainWiring.library == nullptr || chainWiring.chains == nullptr || chainWiring.evaluator == nullptr) {
 			if (!reportedUnwiredChains) {
-				LOG_ERROR(
-					Engine,
-					"[Chain] Entity %llu runs a chain, but the chain runner is not wired; its task ends",
-					static_cast<unsigned long long>(actor.entity)
-				);
+				LOG_ERROR(Engine, "[Chain] Entity %llu runs a chain, but the chain runner is not wired; its task ends",
+						  static_cast<unsigned long long>(actor.entity));
 				reportedUnwiredChains = true;
 			}
 			endChain(actor, "the chain runner is not wired");
 			return;
 		}
+		if (!task.chain.active() || task.chain.frame().chain.index >= chainWiring.library->chains.size()) {
+			LOG_ERROR(Engine, "[Chain] Entity %llu has a Chain task with no chain of the library to run", static_cast<unsigned long long>(actor.entity));
+			endChain(actor, "it has no chain of the library to run");
+			return;
+		}
 
 		const assets::ChainStep& step = currentStep(task);
+		const auto*				 go = std::get_if<assets::GoStep>(&step.step);
 		if (step.ends != 0 && stepEndEvent(actor, step.ends)) {
+			// The step's target gone or left: a `go` cannot reach it, so the chain ends; a `do` ends its step and goes on.
+			if (go != nullptr) {
+				endChain(actor, "the target it walked to is gone or has left");
+				return;
+			}
 			action.clear();
+			releaseStepClaims(task, std::get<assets::DoStep>(step.step));
 			nextStep(task);
 			runSteps(actor, nullptr);
 			return;
 		}
 
-		if (const auto* go = std::get_if<assets::GoStep>(&step.step)) {
+		if (go != nullptr) {
 			if (task.state == TaskState::Moving) {
-				// A remembered target forgotten on the way: a query is asked again, a target the option named is gone.
-				const ChainTarget& target = task.chain.stepTarget;
+				ChainTarget& target = task.chain.stepTarget;
+				// A remembered target forgotten on the way: a query is asked again; a target the option named is gone.
 				if (target.kind == ChainTarget::Kind::Thing && actor.memory.getWorldEntity(target.key) == nullptr) {
-					const ChainTarget again = go->query ? goTarget(actor, *go, std::nullopt) : ChainTarget{};
+					const ChainTarget again = go->query ? goTarget(actor, *go) : ChainTarget{};
 					if (!again.resolved()) {
 						endChain(actor, "the target it walked to is gone");
 						return;
@@ -384,13 +381,20 @@ namespace ecs {
 					task.claims.eraseIf([oldKey](const Claim& claim) {
 						return (claim.kind() == ClaimKind::Use || claim.kind() == ClaimKind::SourceQuantity) && claim.target() == oldKey;
 					});
-					task.chain.stepTarget = again;
-					if (const assets::DoStep* next = doStepAfterGo(task); next != nullptr && next->claims != 0) {
-						takeStepClaims(task, *next, again);
+					target = again;
+					if (!claimForGo(actor, again)) {
+						endChain(actor, "a claim its steps name cannot be taken");
+						return;
 					}
-					headTo(actor.entity, task, again.goal);
-					if (again.goal != again.position) {
-						task.obstructedTarget = again.position;
+					headToTarget(actor.entity, task, again);
+				}
+				// A creature target is followed: walking on toward where it now stands.
+				if (target.kind == ChainTarget::Kind::Mover && world->isAlive(target.entity)) {
+					if (const auto* at = world->getComponent<Position>(target.entity);
+						at != nullptr && glm::distance(at->value, target.position) > kSameSpotMeters) {
+						target.goal += at->value - target.position;
+						target.position = at->value;
+						headToTarget(actor.entity, task, target);
 					}
 				}
 				if (glm::distance(actor.position.value, task.targetPosition) <= kActionReachMeters) {
@@ -414,12 +418,13 @@ namespace ecs {
 			ChainLift alreadyHeld;
 			switch (startChainAction(actor, *doStep, alreadyHeld)) {
 				case DoStart::Refused:
-					endChain(actor, "its do step started nothing");
+					refuseChain(actor, "its do step started nothing");
 					return;
 				case DoStart::AlreadyHeld:
-					doStepDone(actor, *doStep, alreadyHeld);
-					nextStep(task);
-					runSteps(actor, nullptr);
+					if (doStepDone(actor, *doStep, alreadyHeld, true)) {
+						nextStep(task);
+						runSteps(actor, nullptr);
+					}
 					return;
 				case DoStart::Started:
 					actionStarted(actor.entity, task, action, actor.memory);
@@ -431,13 +436,7 @@ namespace ecs {
 		if (action.state == ActionState::Starting) {
 			action.startPosition = actor.position.value;
 		}
-		const Actor rows{
-			.entity = actor.entity,
-			.position = actor.position.value,
-			.needs = actor.needs,
-			.inventory = actor.inventory,
-			.memory = actor.memory
-		};
+		const Actor rows{.entity = actor.entity, .position = actor.position.value, .needs = actor.needs, .inventory = actor.inventory, .memory = actor.memory};
 		advanceAction(deltaTime, rows, action);
 		if (action.hasCraftingEffect() && action.isActive()) {
 			if (auto* workQueue = world->getComponent<WorkQueue>(static_cast<EntityID>(action.craftingEffect().stationEntityId))) {
@@ -452,21 +451,21 @@ namespace ecs {
 		const uint32_t	   heldBefore = lifting != nullptr ? ecs::availableQuantity(actor.inventory, *lifting) : 0U;
 		const bool		   took = finishAction(actor.entity, actor.position, action, actor.needs, task, actor.inventory, actor.memory);
 		const uint32_t	   heldAfter = lifting != nullptr ? ecs::availableQuantity(actor.inventory, *lifting) : 0U;
-		const ChainLift	   lifted{
-			   .item = lifting != nullptr ? assets::AssetRegistry::Get().getDefNameId(*lifting) : 0U,
-			   .quantity = heldAfter > heldBefore ? heldAfter - heldBefore : 0U
-		   };
+		const ChainLift	   lifted{.item = lifting != nullptr ? assets::AssetRegistry::Get().getDefNameId(*lifting) : 0U,
+								  .quantity = heldAfter > heldBefore ? heldAfter - heldBefore : 0U};
+		const bool		   takes = lifting != nullptr;
 		action.clear();
 		if (!took) {
 			endChain(actor, "its action's effect did not take");
 			return;
 		}
-		doStepDone(actor, *doStep, lifted);
-		nextStep(task);
-		runSteps(actor, nullptr);
+		if (doStepDone(actor, *doStep, lifted, takes)) {
+			nextStep(task);
+			runSteps(actor, nullptr);
+		}
 	}
 
-	ChainTarget ActionSystem::goTarget(const ChainActor& actor, const assets::GoStep& step, std::optional<uint64_t> keep) {
+	ChainTarget ActionSystem::goTarget(const ChainActor& actor, const assets::GoStep& step) {
 		if (step.to) {
 			return optionTarget(actor.task, *step.to);
 		}
@@ -493,7 +492,6 @@ namespace ecs {
 			.wanted = std::max(actor.task.chain.goal.quantity, 1U),
 			.self = ClaimExclusion::of(actor.task),
 		};
-		request.keepKey = keep;
 		const queries::QueryResult	   result = chainWiring.evaluator->evaluate(request, chainQueryWorld());
 		const queries::QueryCandidate* pick = result.target();
 		return pick != nullptr ? chainTargetOf(*pick) : ChainTarget{};
@@ -529,61 +527,79 @@ namespace ecs {
 		return step.on ? optionTarget(task, *step.on) : task.chain.stepTarget;
 	}
 
-	bool ActionSystem::takeStepClaims(Task& task, const assets::DoStep& step, const ChainTarget& target) const {
-		const auto holds = [&task](const Claim& wanted) {
-			return std::any_of(task.claims.begin(), task.claims.end(), [&](const Claim& claim) {
-				return claim.kind() == wanted.kind() && claim.targetKind() == wanted.targetKind() && claim.target() == wanted.target() &&
-					   claim.itemDefNameId() == wanted.itemDefNameId() && claim.slotIndex() == wanted.slotIndex();
-			});
-		};
-		const auto take = [&](const Claim& claim) {
-			if (!holds(claim)) {
-				[[maybe_unused]] const bool pushed = task.claims.push(claim);
+	bool ActionSystem::takeStepClaims(const ChainActor& actor, const assets::DoStep& step, const ChainTarget& target) {
+		Task&		   task = actor.task;
+		bool		   changed = false;
+		bool		   fits = true;
+		const auto take = [&](const Claim& wanted) {
+			for (Claim& claim : task.claims) {
+				if (claim.kind() == wanted.kind() && claim.targetKind() == wanted.targetKind() && claim.target() == wanted.target() &&
+					claim.itemDefNameId() == wanted.itemDefNameId() && claim.slotIndex() == wanted.slotIndex()) {
+					if (wanted.quantity() > claim.quantity()) {
+						claim.setQuantity(wanted.quantity());
+						changed = true;
+					}
+					return;
+				}
 			}
+			if (task.claims.size() >= ClaimList::kCapacity) {
+				fits = false;
+				return;
+			}
+			[[maybe_unused]] const bool pushed = task.claims.push(wanted);
+			changed = true;
 		};
 		const ChainProgress& progress = task.chain;
+		const ChainGoal&	 goal = progress.goal;
 		const bool			 use = (step.claims & bit(assets::ClaimKind::Use)) != 0;
 		const bool			 sourceQuantity = (step.claims & bit(assets::ClaimKind::SourceQuantity)) != 0;
 		if ((use || sourceQuantity) && target.resolved()) {
 			// A step naming both holds the one its target fits.
 			const bool fromSource =
 				sourceQuantity && (!use || target.claimKind == assets::ClaimKind::SourceQuantity || target.kind == ChainTarget::Kind::Box);
-			const uint32_t quantity = target.claimQuantity > 0 ? target.claimQuantity : std::max(progress.goal.quantity, 1U);
+			const uint32_t quantity = target.claimQuantity > 0 ? target.claimQuantity : std::max(goal.quantity, 1U);
 			take(claimOn(target, fromSource, quantity));
 		}
+		// A station's one slot for a craft; a foundation's numbered spot for a build, and no slot for a build with none.
 		if ((step.claims & bit(assets::ClaimKind::Slot)) != 0) {
-			const EntityID station = progress.destination.entity != kInvalidEntity ? progress.destination.entity : target.entity;
-			if (station == kInvalidEntity) {
-				return false;
+			const bool	   spot = progress.source.claimKind == assets::ClaimKind::Slot;
+			const EntityID site = progress.destination.entity != kInvalidEntity ? progress.destination.entity : target.entity;
+			if (!performsWork(actionEntries.of(step.action.handle)) || spot) {
+				if (site == kInvalidEntity) {
+					LOG_ERROR(Engine, "[Chain] A slot claim has no station or site to be on");
+					return false;
+				}
+				take(Claim::slot(static_cast<uint64_t>(site), spot ? static_cast<uint16_t>(progress.source.key) : kAnySlot));
 			}
-			const uint16_t spot =
-				progress.source.claimKind == assets::ClaimKind::Slot ? static_cast<uint16_t>(progress.source.key) : kAnySlot;
-			take(Claim::slot(static_cast<uint64_t>(station), spot));
 		}
 		if ((step.claims & bit(assets::ClaimKind::Inbound)) != 0) {
 			const EntityID destination = progress.destination.entity;
-			if (progress.goal.rootGoalId == 0 || progress.goal.item == 0 || destination == kInvalidEntity) {
+			if (goal.rootGoalId == 0 || goal.item == 0 || destination == kInvalidEntity) {
+				LOG_ERROR(Engine, "[Chain] An inbound claim needs the option's goal and destination");
 				return false;
 			}
-			take(Claim::inbound(static_cast<uint64_t>(destination), progress.goal.item, progress.goal.quantity));
-			take(Claim::inFlight(progress.goal.rootGoalId, progress.goal.item, progress.goal.quantity));
+			// A cut brings in its cargo and expects its yield; a haul brings its cargo and the planned amount.
+			const bool	   cut = goal.expectedYield > 0;
+			const uint32_t inbound = cut ? goal.cargo : goal.cargo + goal.quantity;
+			const uint32_t inFlight = cut ? goal.cargo + goal.expectedYield : goal.cargo + goal.quantity;
+			if (inbound > 0) {
+				take(Claim::inbound(static_cast<uint64_t>(destination), goal.item, inbound));
+			}
+			take(Claim::inFlight(goal.rootGoalId, goal.item, inFlight));
+		}
+		if (!fits) {
+			LOG_ERROR(Engine, "[Chain] Entity %llu: its chain names more claims than a task holds", static_cast<unsigned long long>(actor.entity));
+			return false;
+		}
+		if (changed && chainWiring.appendClaims) {
+			chainWiring.appendClaims(actor.entity, task);
 		}
 		return true;
 	}
 
-	void ActionSystem::doStepDone(const ChainActor& actor, const assets::DoStep& step, ChainLift lifted) {
-		Task&			   task = actor.task;
-		ChainProgress&	   progress = task.chain;
+	void ActionSystem::releaseStepClaims(Task& task, const assets::DoStep& step) const {
 		const ChainTarget& target = doTarget(task, step);
-		if (lifted.quantity > 0) {
-			if (progress.takenItem != lifted.item) {
-				progress.takenQuantity = 0;
-			}
-			progress.takenItem = lifted.item;
-			progress.takenQuantity += lifted.quantity;
-		}
-		// The step's own claims are done with: its use or source share, its slot, and the goods it delivered.
-		const uint64_t targetKey = target.resolved() ? claimOn(target, false, 0).target() : 0U;
+		const uint64_t	   targetKey = target.resolved() ? claimOn(target, false, 0).target() : 0U;
 		task.claims.eraseIf([&](const Claim& claim) {
 			switch (claim.kind()) {
 				case ClaimKind::Use:
@@ -598,16 +614,66 @@ namespace ecs {
 			}
 			return false;
 		});
-		// A take: the claims that follow the goods are rewritten to what the chain carries.
-		if (lifted.quantity > 0) {
-			for (Claim& claim : task.claims) {
-				if ((claim.kind() == ClaimKind::Inbound || claim.kind() == ClaimKind::InFlight) &&
-					claim.itemDefNameId() == progress.takenItem) {
-					claim.setQuantity(std::min(claim.quantity(), progress.takenQuantity));
-				}
-			}
-			task.claims.eraseIf([](const Claim& claim) { return claim.quantity() == 0; });
+	}
+
+	bool ActionSystem::doStepDone(const ChainActor& actor, const assets::DoStep& step, ChainLift lifted, bool took) {
+		Task&			 task = actor.task;
+		ChainProgress&	 progress = task.chain;
+		const ChainGoal& goal = progress.goal;
+		releaseStepClaims(task, step);
+		if (!took) {
+			return true;
 		}
+		const uint32_t item = lifted.item != 0 ? lifted.item : goal.item;
+		const uint32_t cargo = goal.rootGoalId != 0 ? cargoOnClaims(task.claims, goal.rootGoalId, item) : 0U;
+		if (lifted.quantity == 0) {
+			// A take that lifted nothing ends the task at the source, unless it carries cargo on to deliver.
+			if (cargo == 0) {
+				endChain(actor, "its take lifted nothing");
+				return false;
+			}
+			return true;
+		}
+		if (progress.takenItem != lifted.item) {
+			progress.takenQuantity = 0;
+		}
+		progress.takenItem = lifted.item;
+		progress.takenQuantity += lifted.quantity;
+		if (goal.rootGoalId == 0) {
+			return true;
+		}
+		// What follows the goods is what was lifted, capped at what the root still needs with no other task bringing it.
+		const GoalTaskRegistry& goals = GoalTaskRegistry::Get();
+		const GoalTask*			root = goals.getGoal(goal.rootGoalId);
+		if (root == nullptr) {
+			endChain(actor, "the goal it carries goods toward is gone");
+			return false;
+		}
+		static const ClaimIndex kNoClaims;
+		const auto*				ai = world->tryGetSystem<AIDecisionSystem>();
+		const uint32_t			need = rootAvailable(
+			 goals.remainingNeed(*world, goal.rootGoalId, lifted.item, harvestBasis(*root)), ai != nullptr ? ai->claimIndex() : kNoClaims,
+			 goal.rootGoalId, lifted.item, ClaimExclusion::of(task)
+		 );
+		const uint32_t carried = std::min(goal.cargo + progress.takenQuantity, need + goal.cargo);
+		bool		   inFlight = false;
+		bool		   inbound = false;
+		for (Claim& claim : task.claims) {
+			if ((claim.kind() == ClaimKind::Inbound || claim.kind() == ClaimKind::InFlight) && claim.itemDefNameId() == lifted.item) {
+				claim.setQuantity(carried);
+				inFlight = inFlight || claim.kind() == ClaimKind::InFlight;
+				inbound = inbound || claim.kind() == ClaimKind::Inbound;
+			}
+		}
+		// A cut that set out with no cargo claimed no inbound; the goods it lifted are now on their way to the destination.
+		if (inFlight && !inbound && carried > 0 && progress.destination.entity != kInvalidEntity && task.claims.size() < ClaimList::kCapacity) {
+			[[maybe_unused]] const bool pushed = task.claims.push(Claim::inbound(static_cast<uint64_t>(progress.destination.entity), lifted.item, carried));
+		}
+		task.claims.eraseIf([](const Claim& claim) { return claim.quantity() == 0; });
+		if (chainWiring.appendClaims) {
+			chainWiring.appendClaims(actor.entity, task);
+		}
+		return true;
 	}
 
 	bool ActionSystem::stepEndEvent(const ChainActor& actor, uint8_t ends) const {
@@ -615,11 +681,10 @@ namespace ecs {
 		const assets::ChainStep& step = currentStep(actor.task);
 		const auto*				 doStep = std::get_if<assets::DoStep>(&step.step);
 		const ChainTarget&		 target = doStep != nullptr ? doTarget(actor.task, *doStep) : progress.stepTarget;
-		if (names(ends, assets::EndEvent::HeldGone) && progress.heldAtStart > 0 && heldForStep(actor, progress.heldItem) == 0) {
+		if (names(ends, assets::EndEvent::HeldGone) && progress.heldAtStart > 0 && heldUnits(actor, progress.heldItem) == 0) {
 			return true;
 		}
-		const auto* live =
-			target.entity != kInvalidEntity && world->isAlive(target.entity) ? world->getComponent<Position>(target.entity) : nullptr;
+		const auto* live = target.entity != kInvalidEntity && world->isAlive(target.entity) ? world->getComponent<Position>(target.entity) : nullptr;
 		if (names(ends, assets::EndEvent::TargetGone)) {
 			switch (target.kind) {
 				case ChainTarget::Kind::Thing:
@@ -629,7 +694,7 @@ namespace ecs {
 					break;
 				case ChainTarget::Kind::Box:
 				case ChainTarget::Kind::Entity:
-					if (live == nullptr || glm::distance(live->value, target.position) > kTargetMovedMeters) {
+					if (live == nullptr || glm::distance(live->value, progress.targetAtStepStart) > kSameSpotMeters) {
 						return true;
 					}
 					break;
@@ -643,15 +708,13 @@ namespace ecs {
 					break;
 			}
 		}
-		return names(ends, assets::EndEvent::TargetLeft) && target.kind == ChainTarget::Kind::Mover && live != nullptr &&
-			   glm::distance(live->value, target.position) > kTargetMovedMeters;
+		// A creature followed by a `go` has not left; one a `do` acts on has when it is no longer where the step began.
+		return names(ends, assets::EndEvent::TargetLeft) && doStep != nullptr && target.kind == ChainTarget::Kind::Mover && live != nullptr &&
+			   glm::distance(live->value, progress.targetAtStepStart) > kSameSpotMeters;
 	}
 
-	uint32_t ActionSystem::heldForStep(const ChainActor& actor, uint32_t item) const {
-		if (item == 0) {
-			return heldWithCapability(actor.inventory, assets::CapabilityType::Edible);
-		}
-		return ecs::availableQuantity(actor.inventory, assets::AssetRegistry::Get().getDefName(item));
+	uint32_t ActionSystem::heldUnits(const ChainActor& actor, uint32_t item) {
+		return item != 0 ? ecs::availableQuantity(actor.inventory, assets::AssetRegistry::Get().getDefName(item)) : 0U;
 	}
 
 	bool ActionSystem::haveMet(const ChainActor& actor, const assets::HaveStep& step) const {
@@ -661,48 +724,59 @@ namespace ecs {
 			if (const auto* packaged = world->getComponent<Packaged>(packagedEntity)) {
 				const auto* at = world->getComponent<Position>(packagedEntity);
 				return actor.inventory.carryingPackagedEntity == static_cast<uint64_t>(packagedEntity) ||
-					   (packaged->targetPosition.has_value() && at != nullptr &&
-						glm::distance(at->value, *packaged->targetPosition) <= kTargetMovedMeters);
+					   (packaged->targetPosition.has_value() && at != nullptr && glm::distance(at->value, *packaged->targetPosition) <= kSameSpotMeters);
 			}
 		}
 		const auto& registry = assets::AssetRegistry::Get();
-		uint32_t	item = 0;
 		uint32_t	held = 0;
 		if (step.item && step.item->kind != assets::ItemArgument::Kind::Capability) {
-			item = step.item->kind == assets::ItemArgument::Kind::Goal ? progress.goal.item : step.item->defNameId;
+			const uint32_t item = step.item->kind == assets::ItemArgument::Kind::Goal ? progress.goal.item : step.item->defNameId;
 			held = item != 0 ? ecs::availableQuantity(actor.inventory, registry.getDefName(item)) : 0U;
 		} else {
-			held = heldWithCapability(actor.inventory, step.item ? step.item->capability : *step.capability);
+			const assets::CapabilityType capability = step.item ? step.item->capability : *step.capability;
+			std::vector<std::string>	 counted;
+			const auto					 count = [&](const std::string& defName) {
+				  if (std::ranges::find(counted, defName) != counted.end()) {
+					  return;
+				  }
+				  counted.push_back(defName);
+				  const auto* def = registry.getDefinition(defName);
+				  // Food is an item's property, not a capability of the thing.
+				  const bool has = capability == assets::CapabilityType::Edible ? def != nullptr && def->isEdible()
+																				: registry.hasCapability(registry.getDefNameId(defName), capability);
+				  held += has ? ecs::availableQuantity(actor.inventory, defName) : 0U;
+			};
+			for (const ItemStack& stack : actor.inventory.items) {
+				count(stack.defName);
+			}
+			for (const std::optional<ItemStack>* hand : {&actor.inventory.leftHand, &actor.inventory.rightHand}) {
+				if (hand->has_value()) {
+					count((*hand)->defName);
+				}
+			}
 		}
-		const uint32_t handed =
-			item != 0 && progress.goal.rootGoalId != 0 ? cargoOnClaims(actor.task.claims, progress.goal.rootGoalId, item) : 0U;
-		return held >= std::max(progress.goal.quantity, 1U) + handed;
+		// The planned amount beyond the cargo the chain was handed.
+		return held >= std::max(progress.goal.quantity, 1U) + progress.goal.cargo;
 	}
 
 	void ActionSystem::giveThought(const ChainActor& actor, const assets::ThinkStep& step, ThoughtEventTypeId thought) {
 		auto* thoughts = world->tryGetSystem<ThoughtSystem>();
 		if (thoughts == nullptr) {
-			LOG_WARNING(
-				Engine, "[Chain] %s: a <think> step with no ThoughtSystem in the world gives no thought", actor.task.reason.c_str()
-			);
+			LOG_WARNING(Engine, "[Chain] A <think> step with no ThoughtSystem in the world gives no thought");
 			return;
 		}
 		const ChainTarget& target = actor.task.chain.stepTarget.resolved() ? actor.task.chain.stepTarget : actor.task.chain.target;
 		switch (step.to) {
 			case assets::ThoughtRecipient::Self: {
 				const ThoughtSubject subject = target.entity != kInvalidEntity ? ThoughtSubject::aboutEntity(target.entity)
-											   : target.defNameId != 0		   ? ThoughtSubject::aboutKind(target.defNameId)
-																			   : ThoughtSubject::aboutNothing();
+											   : target.defNameId != 0		 ? ThoughtSubject::aboutKind(target.defNameId)
+																			 : ThoughtSubject::aboutNothing();
 				thoughts->create({.colonist = actor.entity, .eventType = thought, .subject = subject});
 				return;
 			}
 			case assets::ThoughtRecipient::Target:
 				if (target.entity == kInvalidEntity || world->getComponent<Thoughts>(target.entity) == nullptr) {
-					LOG_WARNING(
-						Engine,
-						"[Chain] %s: a <think to=\"target\"> step whose target has no thoughts gives none",
-						actor.task.reason.c_str()
-					);
+					LOG_WARNING(Engine, "[Chain] A <think to=\"target\"> step whose target has no thoughts gives none");
 					return;
 				}
 				thoughts->create({.colonist = target.entity, .eventType = thought, .subject = ThoughtSubject::aboutEntity(actor.entity)});
@@ -710,11 +784,7 @@ namespace ecs {
 			case assets::ThoughtRecipient::Witnesses: {
 				const auto* vision = world->tryGetSystem<VisionSystem>();
 				if (vision == nullptr) {
-					LOG_WARNING(
-						Engine,
-						"[Chain] %s: a <think to=\"witnesses\"> step with no VisionSystem has no witnesses",
-						actor.task.reason.c_str()
-					);
+					LOG_WARNING(Engine, "[Chain] A <think to=\"witnesses\"> step with no VisionSystem has no witnesses");
 					return;
 				}
 				for (auto [witness, standing, held] : world->view<Position, Thoughts>()) {
@@ -755,264 +825,6 @@ namespace ecs {
 		});
 		progress.takenItem = 0;
 		progress.takenQuantity = 0;
-	}
-
-	ActionSystem::DoStart ActionSystem::startChainAction(const ChainActor& actor, const assets::DoStep& step, ChainLift& alreadyHeld) {
-		auto&				 registry = assets::AssetRegistry::Get();
-		Task&				 task = actor.task;
-		const ChainProgress& progress = task.chain;
-		const ChainTarget&	 target = doTarget(task, step);
-		const char*			 chainId = task.reason.c_str();
-
-		// The action, or the member of the group whose `on` matches the target.
-		assets::EntryHandle<assets::ActionEntry> handle = step.action.handle;
-		const assets::ActionEntry&				 named = chainWiring.library->actions[handle.index];
-		if (named.group) {
-			handle = {};
-			const auto* packaged = target.entity != kInvalidEntity ? world->getComponent<Packaged>(target.entity) : nullptr;
-			const auto* def = registry.getDefinitionById(target.defNameId);
-			const bool	pile = target.kind == ChainTarget::Kind::Thing && def != nullptr && def->capabilities.carryable.has_value() &&
-							  !def->capabilities.harvestable.has_value();
-			for (const auto& member : named.members) {
-				const std::optional<assets::ActionTarget>& on = chainWiring.library->actions[member.handle.index].on;
-				const bool								   matches = on.has_value() &&
-									 ((on->kind == assets::ActionTarget::Kind::Packaged && packaged != nullptr) ||
-									  (on->kind == assets::ActionTarget::Kind::LooseItem && pile) ||
-									  (on->kind == assets::ActionTarget::Kind::Capability && packaged == nullptr &&
-									   (target.kind == ChainTarget::Kind::Box ? on->capability == assets::CapabilityType::Storage
-																			  : registry.hasCapability(target.defNameId, on->capability))));
-				if (matches) {
-					handle = member.handle;
-					break;
-				}
-			}
-			if (!handle.valid()) {
-				// A remembered thing no member acts on is no longer what it was when the chain set out for it.
-				if (const KnownWorldEntity* known =
-						target.kind == ChainTarget::Kind::Thing ? actor.memory.getWorldEntity(target.key) : nullptr) {
-					actor.memory.forgetWorldEntity(known->position, known->defNameId);
-				}
-				LOG_DEBUG(Engine, "[Chain] %s: no member of action group %s acts on its target", chainId, named.id.c_str());
-				return DoStart::Refused;
-			}
-		}
-		const ActionValues& values = actionEntries.of(handle);
-		Action				started = Action::fromEntry(ActionType::Chain, values);
-		started.targetPosition = target.resolved() ? target.position : actor.position.value;
-
-		bool takes = false;
-		bool puts = false;
-		bool works = false;
-		bool crafts = false;
-		bool installs = false;
-		bool bySleepQuality = false;
-		bool onTarget = false;
-		bool consumes = false;
-		for (const EffectRow& row : values.effects) {
-			takes = takes || std::holds_alternative<TakeRow>(row);
-			puts = puts || std::holds_alternative<PutRow>(row);
-			works = works || std::holds_alternative<WorkRow>(row);
-			crafts = crafts || std::holds_alternative<CraftRow>(row);
-			installs = installs || std::holds_alternative<InstallRow>(row);
-			consumes = consumes || std::holds_alternative<ConsumeRow>(row);
-			if (const auto* restore = std::get_if<RestoreRow>(&row)) {
-				bySleepQuality = bySleepQuality || restore->bySleepQuality;
-				onTarget = onTarget || restore->onTarget;
-			}
-		}
-
-		// An action that consumes starts only while the creature holds a unit; the one it sets out to use is what it
-		// reports being about until its `<consume>` chooses.
-		if (consumes) {
-			const std::string* food = heldEdibleUnit(actor.inventory);
-			if (food == nullptr) {
-				LOG_DEBUG(Engine, "[Chain] %s: %s consumes, and nothing it could consume is held", chainId, values.id.c_str());
-				return DoStart::Refused;
-			}
-			started.context.consumedDefNameId = registry.getDefNameId(*food);
-			started.context.nutrition = nutritionOf(*food);
-		}
-		if (bySleepQuality) {
-			const bool thing = target.kind == ChainTarget::Kind::Thing || target.kind == ChainTarget::Kind::Entity;
-			started.context.sleepQuality = !thing ? actionEntries.groundSleepQuality
-										   : registry.hasCapability(target.defNameId, assets::CapabilityType::Sleepable) ? 1.0F
-																														 : 0.0F;
-		}
-		if (onTarget) {
-			if (target.entity == kInvalidEntity || world->getComponent<NeedsComponent>(target.entity) == nullptr) {
-				LOG_WARNING(Engine, "[Chain] %s: %s restores its target's need, and its target is no creature", chainId, values.id.c_str());
-				return DoStart::Refused;
-			}
-			started.context.targetCreature = target.entity;
-		}
-
-		// What a take asks for, and a put delivers: the step's amount.
-		const auto carriedOf = [&](uint32_t item) {
-			const auto*	   def = registry.getDefinitionById(item);
-			const uint32_t held = ecs::availableQuantity(actor.inventory, registry.getDefName(item));
-			return progress.goal.rootGoalId != 0
-					   ? cargoToward(task, progress.goal.rootGoalId, item, held, def != nullptr && def->isEdible())
-					   : held;
-		};
-		const auto amountOf = [&](uint32_t item) -> uint32_t {
-			if (step.amount == assets::StepAmount::Carried) {
-				return carriedOf(item);
-			}
-			if (target.claimKind == assets::ClaimKind::SourceQuantity && target.claimQuantity > 0) {
-				return target.claimQuantity;
-			}
-			return std::max(progress.goal.quantity, 1U);
-		};
-
-		const auto* packaged = target.entity != kInvalidEntity ? world->getComponent<Packaged>(target.entity) : nullptr;
-		if (takes && packaged != nullptr) {
-			PlacePackagedEffect lift;
-			lift.packagedEntityId = static_cast<uint64_t>(target.entity);
-			lift.targetPosition = packaged->targetPosition.value_or(target.position);
-			started.effect = lift;
-		} else if (takes && target.kind == ChainTarget::Kind::Box) {
-			if (world->getComponent<Inventory>(target.entity) == nullptr || world->hasComponent<Packaged>(target.entity)) {
-				LOG_DEBUG(Engine, "[Chain] %s: box %llu is gone or being moved", chainId, static_cast<unsigned long long>(target.entity));
-				return DoStart::Refused;
-			}
-			const std::string& item = registry.getDefName(target.item);
-			if (progress.goal.rootGoalId != 0 &&
-				carriedOf(target.item) > cargoOnClaims(task.claims, progress.goal.rootGoalId, target.item)) {
-				alreadyHeld = {.item = target.item, .quantity = carriedOf(target.item)};
-				return DoStart::AlreadyHeld;
-			}
-			const uint32_t quantity = amountOf(target.item);
-			if (step.amount == assets::StepAmount::Meal) {
-				makeRoomToEat(actor.inventory, task, item, quantity, actor.position.value);
-			}
-			CollectionEffect withdraw;
-			withdraw.itemDefName = item;
-			withdraw.quantity = quantity;
-			withdraw.sourcePosition = target.position;
-			withdraw.sourceDefName = item;
-			withdraw.destroySource = false;
-			withdraw.sourceStorageId = static_cast<uint64_t>(target.entity);
-			started.effect = withdraw;
-		} else if (takes) {
-			const KnownWorldEntity* known = target.kind == ChainTarget::Kind::Thing ? actor.memory.getWorldEntity(target.key) : nullptr;
-			if (known == nullptr) {
-				LOG_DEBUG(Engine, "[Chain] %s: its take's target is no thing it remembers", chainId);
-				return DoStart::Refused;
-			}
-			const auto* def = registry.getDefinitionById(known->defNameId);
-			if (known->defNameId != target.defNameId || def == nullptr ||
-				(!def->capabilities.harvestable.has_value() && !def->capabilities.carryable.has_value())) {
-				actor.memory.forgetWorldEntity(known->position, known->defNameId);
-				LOG_DEBUG(Engine, "[Chain] %s: its take's target is no longer what it was - forgot it", chainId);
-				return DoStart::Refused;
-			}
-			CollectionEffect collection;
-			collection.sourcePosition = known->position;
-			collection.sourceDefName = def->defName;
-			if (def->capabilities.harvestable.has_value()) {
-				const auto& harvestable = *def->capabilities.harvestable;
-				if (!ecs::inventoryHoldsToolType(actor.inventory, registry, harvestable.requiredToolType)) {
-					LOG_DEBUG(
-						Engine,
-						"[Chain] %s: cannot cut %s without a %s",
-						chainId,
-						def->defName.c_str(),
-						harvestable.requiredToolType.c_str()
-					);
-					return DoStart::Refused;
-				}
-				uint32_t yield = harvestable.amountMin;
-				if (harvestable.amountMax > harvestable.amountMin) {
-					std::uniform_int_distribution<uint32_t> roll(harvestable.amountMin, harvestable.amountMax);
-					yield = roll(m_rng);
-				}
-				if (step.amount == assets::StepAmount::Meal) {
-					makeRoomToEat(
-						actor.inventory, task, harvestable.yieldDefName, std::max(target.claimQuantity, 1U), actor.position.value
-					);
-				}
-				collection.itemDefName = harvestable.yieldDefName;
-				collection.quantity = yield;
-				collection.destroySource = harvestable.destructive;
-				collection.regrowthTime = harvestable.regrowthTime;
-				// What he can't carry drops where he stands to work the source, not at its centre.
-				collection.dropAt = actor.position.value;
-				if (values.duration == assets::ActionDuration::FromDurability) {
-					started.duration = harvestable.durability;
-				}
-			} else {
-				if (progress.goal.rootGoalId != 0 &&
-					carriedOf(known->defNameId) > cargoOnClaims(task.claims, progress.goal.rootGoalId, known->defNameId)) {
-					alreadyHeld = {.item = known->defNameId, .quantity = carriedOf(known->defNameId)};
-					return DoStart::AlreadyHeld;
-				}
-				const uint32_t quantity = amountOf(known->defNameId);
-				if (step.amount == assets::StepAmount::Meal) {
-					makeRoomToEat(actor.inventory, task, def->defName, quantity, actor.position.value);
-				}
-				collection.itemDefName = def->defName;
-				collection.quantity = quantity;
-				collection.destroySource = true;
-			}
-			started.effect = collection;
-		} else if (puts) {
-			const uint32_t item = progress.takenItem != 0 ? progress.takenItem : progress.goal.item != 0 ? progress.goal.item : target.item;
-			if (item == 0 || target.entity == kInvalidEntity || world->hasComponent<Packaged>(target.entity)) {
-				LOG_DEBUG(Engine, "[Chain] %s: its put has nothing to put, or nowhere to put it", chainId);
-				return DoStart::Refused;
-			}
-			DepositEffect deposit;
-			deposit.itemDefName = registry.getDefName(item);
-			deposit.quantity = step.amount == assets::StepAmount::ForGoal ? std::max(progress.goal.quantity, 1U) : carriedOf(item);
-			deposit.storageEntityId = static_cast<uint64_t>(target.entity);
-			deposit.deliverToCraftStation = world->hasComponent<WorkQueue>(target.entity);
-			started.effect = deposit;
-		} else if (works) {
-			const auto* blueprint = target.entity != kInvalidEntity ? world->getComponent<StructureBlueprint>(target.entity) : nullptr;
-			const auto& work = std::get<WorkRow>(values.effects[values.boundRow]);
-			if (blueprint == nullptr || !workMayStart(work, *blueprint)) {
-				LOG_DEBUG(Engine, "[Chain] %s: its work's target is no blueprint it may work", chainId);
-				return DoStart::Refused;
-			}
-			ProgressEffect progressEffect;
-			progressEffect.targetEntityId = static_cast<uint64_t>(target.entity);
-			if (const auto* skills = world->getComponent<Skills>(actor.entity)) {
-				progressEffect.skillLevel = skills->getLevel(work.skill);
-			}
-			started.effect = progressEffect;
-		} else if (crafts) {
-			const auto*				  queue = target.entity != kInvalidEntity ? world->getComponent<WorkQueue>(target.entity) : nullptr;
-			const CraftingJob*		  job = queue != nullptr ? queue->getNextJob() : nullptr;
-			std::optional<CraftReady> ready =
-				job != nullptr ? craftReady(job->recipeDefName, static_cast<uint64_t>(target.entity)) : std::nullopt;
-			if (!ready) {
-				LOG_DEBUG(Engine, "[Chain] %s: its craft's station has no job it can make now", chainId);
-				return DoStart::Refused;
-			}
-			started.duration = ready->workAmount / assets::kJobWorkTicksPerSecond;
-			started.effect = std::move(ready->effect);
-		} else if (installs) {
-			const EntityID placing = packaged != nullptr ? target.entity
-									 : actor.inventory.carryingPackagedEntity
-										 ? static_cast<EntityID>(*actor.inventory.carryingPackagedEntity)
-										 : kInvalidEntity;
-			const auto*	   placingPackage = placing != kInvalidEntity ? world->getComponent<Packaged>(placing) : nullptr;
-			if (placingPackage == nullptr || !placingPackage->targetPosition.has_value()) {
-				LOG_DEBUG(Engine, "[Chain] %s: its install has no packaged thing with a placement", chainId);
-				return DoStart::Refused;
-			}
-			PlacePackagedEffect place;
-			place.packagedEntityId = static_cast<uint64_t>(placing);
-			place.targetPosition = *placingPackage->targetPosition;
-			started.targetPosition = place.targetPosition;
-			started.effect = place;
-		}
-		if (values.duration == assets::ActionDuration::FromDurability && !started.hasCollectionEffect()) {
-			LOG_WARNING(Engine, "[Chain] %s: %s takes its time from a durability, and its target has none", chainId, values.id.c_str());
-			return DoStart::Refused;
-		}
-		actor.action = std::move(started);
-		return DoStart::Started;
 	}
 
 } // namespace ecs

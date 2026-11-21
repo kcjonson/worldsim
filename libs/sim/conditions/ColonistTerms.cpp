@@ -32,8 +32,7 @@ namespace conditions {
 			static_cast<unsigned>(ecs::TaskType::Chain) < std::numeric_limits<TaskMask>::digits,
 			"TaskMask has a bit for every TaskType"
 		);
-		// Every task type but Chain has a name: current_task names a running chain by its chain id once chains are in the
-		// decision, so until then a chain matches no name.
+		// Every task type but Chain has a name: a running chain matches no task type name.
 		static_assert(
 			assets::kTaskTypeNames.size() == static_cast<std::size_t>(ecs::TaskType::Wander),
 			"a name for every TaskType but Chain"

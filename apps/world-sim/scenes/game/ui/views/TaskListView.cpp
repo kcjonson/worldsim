@@ -123,7 +123,10 @@ namespace world_sim {
 				if (action->isActive()) {
 					const int progress = static_cast<int>(action->progress() * 100.0F);
 					lines.push_back(
-						status("current_action", std::format("{} ({}%)", ecs::actionName(*action), progress), LineStatus::Pending)
+						status("current_action", std::format(
+								"{} ({}%)", action->type == ecs::ActionType::Chain ? ecs::kRunningChainLabel : ecs::actionTypeName(action->type),
+								progress
+							), LineStatus::Pending)
 					);
 				} else {
 					lines.push_back(status("current_action", "Idle", LineStatus::Idle));

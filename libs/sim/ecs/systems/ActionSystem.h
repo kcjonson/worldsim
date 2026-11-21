@@ -69,6 +69,10 @@ struct ChainWiring {
 	queries::RegrowthQuery regrowth;
 	/// assets::MemoryConfig::recentSightingGameMinutes, for `<from kind>` rows naming a mover.
 	double recentSightingGameMinutes = 0.0;
+	/// Files a task's claims with the claim index once the runner has taken claims on a target it resolved itself, so a
+	/// creature whose query runs later in the same update reads them (AIDecisionSystem::appendClaims). None files nothing
+	/// until the next rebuild.
+	std::function<void(EntityID creature, const Task& task)> appendClaims;
 };
 
 /// A chain to start on a creature, at a step, with the targets its option already has: the decision's selection, or
@@ -201,20 +205,28 @@ public:
 	void setWallHeldCallback(WallHeldCallback callback) { onWallHeld = std::move(callback); }
 
 	/// Give the chain runner the library, its resolved chains, and the query evaluator. Unwired, a Chain task is an
-	/// error and ends at once.
+	/// error and ends at once. Every Chain task holds handles into `wiring.library`, so whoever reloads the library ends
+	/// every Chain task first.
 	void setChains(ChainWiring wiring) { chainWiring = std::move(wiring); }
 
 	/// Start `start.chain` on `entity` at `start.step`: its action in progress is cleared, its task becomes the chain
 	/// (a new claim identity), the claims of every step whose target is already known are taken, and the steps run up
 	/// to the first that waits (a `go` walking, a `do` acting). False, with the task ended and the reason logged, when
-	/// the chain cannot start (no step target found, a claim it cannot size).
+	/// the chain cannot start (no step target found, a claim it cannot size), or when it finished at once.
 	bool startChain(EntityID entity, const ChainStart& start);
 
-  private:
+	/// A point this close to where a target was is the same spot: a target moved further has gone, a creature target
+	/// further has left, and a leg's source or target is reached within it.
+	static constexpr float kSameSpotMeters = 0.5F;
+
+private:
 	/// Within this of its task's target a colonist acts. Colonists bound for one point (a station, a shore point) push
 	/// one another apart, so no more than one could ever reach the point itself. Inside the haul and placement legs'
-	/// 0.5 m tolerance, so a leg that arrives this way is at its source or target.
+	/// kSameSpotMeters, so a leg that arrives this way is at its source or target.
 	static constexpr float kActionReachMeters = 0.4F;
+
+	/// How far outside a footprint a clear's surplus drops: past the edge by about a pile's width.
+	static constexpr float kClearDropMargin = 0.5F;
 
 	/// The values every action this system starts takes from its entry.
 	const ActionEntries& actionEntries;
@@ -359,12 +371,21 @@ public:
 	/// The current step is done: the next one in its chain.
 	static void nextStep(struct Task& task);
 
-	/// End the chain and the task, its action and claims with it; `why` is logged.
+	/// End the chain and the task, its action and claims with it; `why` is logged. The creature decides again at once.
 	void endChain(const ChainActor& actor, const char* why);
 
-	/// The target a `go` walks to: its query's pick (the target it already heads for asked first, by `keep`), or the
-	/// option's target it names. Unresolved when there is none.
-	[[nodiscard]] ChainTarget goTarget(const ChainActor& actor, const assets::GoStep& step, std::optional<uint64_t> keep);
+	/// A `do` start that started nothing ends the chain as endChain does, and the creature decides again at its normal
+	/// interval rather than at once, so a refusal never repeats every frame.
+	void refuseChain(const ChainActor& actor, const char* why);
+
+	/// The target a `go` walks to: its query's pick, or the option's target it names. Unresolved when there is none.
+	[[nodiscard]] ChainTarget goTarget(const ChainActor& actor, const assets::GoStep& step);
+
+	/// A `go` walked to `target`: the claims the `do` after it names are taken on it. False (logged) when they cannot be.
+	bool claimForGo(const ChainActor& actor, const ChainTarget& target);
+
+	/// Point the current `go` at `target`: the task's target, the stand point beside an obstacle, a fresh route.
+	void headToTarget(EntityID entity, struct Task& task, const ChainTarget& target);
 
 	/// The `do` step after the current `go`, which acts on what it walks to; null when the next step is anything else.
 	[[nodiscard]] const assets::DoStep* doStepAfterGo(const struct Task& task) const;
@@ -377,20 +398,40 @@ public:
 	/// target's durability, or the station's job.
 	DoStart startChainAction(const ChainActor& actor, const assets::DoStep& step, ChainLift& alreadyHeld);
 
-	/// A `do` step completed with its effect taken (what a take lifted, or nothing): its own claims drop and those
-	/// following the goods are rewritten to what the chain carries.
-	void doStepDone(const ChainActor& actor, const assets::DoStep& step, ChainLift lifted);
+	// The start path's builders, one per kind of target data (systems/action/ChainRunnerActions.cpp). Each fills
+	// `started`'s effect, false (logged) when there is nothing to act on.
 
-	/// Take the claims `step` names on `target`, where the creature does not hold them yet. False when a claim cannot be
-	/// sized (inbound or in-flight with no goal and destination).
-	bool takeStepClaims(struct Task& task, const assets::DoStep& step, const ChainTarget& target) const;
+	/// The member of action group `group` whose `on` matches `target`; none when no member acts on it.
+	[[nodiscard]] assets::EntryHandle<assets::ActionEntry> memberFor(const assets::ActionEntry& group, const ChainTarget& target) const;
+	/// `<take>`: from a packaged thing, a box, a harvestable, or a loose pile. AlreadyHeld when the chain's goods beyond
+	/// what it was handed and has taken are carried already.
+	DoStart buildTake(const ChainActor& actor, const assets::DoStep& step, const ChainTarget& target, Action& started, ChainLift& alreadyHeld);
+	bool	buildPut(const ChainActor& actor, const assets::DoStep& step, const ChainTarget& target, Action& started);
+	bool	buildWork(const ChainActor& actor, const ChainTarget& target, Action& started);
+	bool	buildCraft(const ChainTarget& target, Action& started);
+	bool	buildInstall(const ChainActor& actor, const ChainTarget& target, Action& started);
+
+	/// Units of `item` the creature carries toward the chain's root: all it holds of anything but food, of food only
+	/// what its claims carry; all it holds when the chain has no root.
+	[[nodiscard]] uint32_t carriedForChain(const ChainActor& actor, uint32_t item) const;
+
+	/// A `do` step completed with its effect taken: its own claims drop, and after a take the claims that follow the
+	/// goods are rewritten to what it lifted, capped at the root's live need plus the handed cargo. False when the chain
+	/// ends there: a take that lifted nothing with no cargo on its claims, or a root that is gone.
+	bool doStepDone(const ChainActor& actor, const assets::DoStep& step, ChainLift lifted, bool took);
+
+	/// The claims `step` names drop: its use or source share on its target, its slot, and the goods it delivered.
+	void releaseStepClaims(struct Task& task, const assets::DoStep& step) const;
+
+	/// Take the claims `step` names on `target`, where the creature does not hold them yet (raising one it holds smaller),
+	/// and file them with the claim index. False (logged) when a claim cannot be sized or the task has no room for it.
+	bool takeStepClaims(const ChainActor& actor, const assets::DoStep& step, const ChainTarget& target);
 
 	/// Whether one of the events `ends` names has happened to the current step.
 	[[nodiscard]] bool stepEndEvent(const ChainActor& actor, uint8_t ends) const;
 
-	/// Units of the step's held goods the creature carries: the edible units for a step that consumes, else the chain's
-	/// goods.
-	[[nodiscard]] uint32_t heldForStep(const ChainActor& actor, uint32_t item) const;
+	/// Units of `item` the creature carries, which `held_gone` watches.
+	[[nodiscard]] static uint32_t heldUnits(const ChainActor& actor, uint32_t item);
 
 	/// Whether a `have` is met: the creature carries the planned amount beyond the cargo it was handed, or the packaged
 	/// target is carried or already at its placement target.

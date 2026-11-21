@@ -251,7 +251,7 @@ namespace world_sim {
 						bioData.currentTask = "Wandering";
 						break;
 					case ecs::TaskType::Chain:
-						bioData.currentTask = task->reason;
+						bioData.currentTask = ecs::kRunningChainLabel;
 						break;
 					default:
 						bioData.currentTask = "Idle";

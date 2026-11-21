@@ -693,8 +693,8 @@ namespace ecs {
 		return found == kActionTypeNames.end() ? "Unknown" : found->second.data();
 	}
 
-	/// What the logs, the dev tools, and the task list call a running action: a factory's action by its type, a chain's
-	/// by the entry it runs.
+	/// What the logs and the dev tools call a running action: a factory's action by its type, a chain's by the entry it
+	/// runs.
 	[[nodiscard]] inline const char* actionName(const Action& action) {
 		return action.type == ActionType::Chain && action.values != nullptr ? action.values->id.c_str() : actionTypeName(action.type);
 	}

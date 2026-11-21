@@ -90,7 +90,7 @@ namespace ecs {
 					case TaskType::None:
 						break;
 					case TaskType::Chain:
-						// No option is a chain until chains are in the decision, whose rows name their work entry and goal.
+						// The decision offers no chain option, so none names a goal.
 						break;
 				}
 				if (goal == 0) {

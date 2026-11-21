@@ -135,7 +135,7 @@ namespace ecs {
 				case TaskType::None:
 					return nullptr;
 				case TaskType::Chain:
-					// No option is a chain until chains are in the decision, which keys the hands on the chain's first do.
+					// The decision offers no chain option, so none has a first action here.
 					return nullptr;
 			}
 			return nullptr;
@@ -270,7 +270,7 @@ namespace ecs {
 				case TaskType::None:
 					return rungs.idle;
 				case TaskType::Chain:
-					// No option is a chain until chains are in the decision, which ranks one on its entry's rung.
+					// The decision offers no chain option; a running chain keeps the rung it was started on.
 					return rungs.idle;
 			}
 			return rungs.idle;
@@ -312,7 +312,7 @@ namespace ecs {
 				case TaskType::Deconstruct:
 					return option.buildBlueprintEntityId == currentTask.buildBlueprintEntityId;
 				case TaskType::Chain:
-					// No option is a chain until chains are in the decision, which matches one by identity.
+					// The decision offers no chain option to match.
 					return false;
 				default:
 					return false;
@@ -2069,6 +2069,7 @@ namespace ecs {
 				task.snapWaitDecisions = 0;
 			}
 			task.criticalNeedsAtDecision = criticalNeedMask(needs);
+			task.decideAtInterval = false;
 			const bool decidingOnFailedRoute = task.navState == NavState::CantFindWayTo;
 
 			// Store current task state for the (tier, score) interruption comparison
@@ -2146,8 +2147,8 @@ namespace ecs {
 					}
 				}
 
-				// A running chain is offered by no option until chains are in the decision: it holds against every option
-				// not on a strictly higher rung, keeping its own rung, and one whose route failed is a fresh pick.
+				// A running chain matches no option: it holds against every option not on a strictly higher rung, keeping
+				// its own rung, and one whose route failed is a fresh pick.
 				const bool chainHolds = task.type == TaskType::Chain && task.navState != NavState::CantFindWayTo &&
 										(selected == nullptr || selected->tier >= currentTier);
 				if (chainHolds) {
@@ -2408,9 +2409,9 @@ namespace ecs {
 	}
 
 	bool AIDecisionSystem::shouldReEvaluate(const Task& task, const NeedsComponent& needs, bool movementTargetActive) {
-		// Always re-evaluate if no active task
+		// Always re-evaluate if no active task, at the interval when a start refused.
 		if (!task.isActive()) {
-			return true;
+			return !task.decideAtInterval || task.timeSinceEvaluation >= kReEvalInterval;
 		}
 
 		// Re-evaluate if task has arrived (completed movement)

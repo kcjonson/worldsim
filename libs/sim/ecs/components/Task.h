@@ -343,6 +343,10 @@ struct Task {
 	/// clear(), like the timer.
 	bool routeFailureDecided = false;
 
+	/// The task ended on a start that started nothing: the next decision waits for the re-decide interval instead of
+	/// coming at once, so a refusal never repeats every frame. Survives clear(), like the timer; the decision resets it.
+	bool decideAtInterval = false;
+
 	/// Arbitration tier of this task when selected: its rung's position in the ladder (lower = higher
 	/// priority), kUnrankedTier until the decision ranks it. Paired with `priority` (the within-tier score)
 	/// to form the (tier, score) key. The action-interruption gate is tier-only: a strictly higher-tier
