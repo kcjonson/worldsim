@@ -3,7 +3,7 @@
   A demo workbench for the ui-sandbox's item-turntable scene: a parts asset built to the art contract
   (docs/design/game-systems/world/rotatable-placed-items.md) and the worked example in
   docs/technical/rendering/rotatable-placed-items.md, section 4.4. It lives under assets/sandbox, which
-  only the sandbox reads; the game loads assets/world. Drawings are at 64 units a metre.
+  only the sandbox reads; the game loads assets/world. Drawings are in centimetres.
 -->
 <AssetDefinitions>
   <AssetDef>

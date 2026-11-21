@@ -1,6 +1,7 @@
 // Tests for parts defs (rotatable-placed-items.md, sections 4, 5, 6.1, 11.1): the workbench, a stool, a round
 // part, and concave and pinched colliders load; and each validation rule refuses its bad fixture (rule 12, which needs
-// views, is in ItemView.test.cpp). Fixtures are written to a temp folder per test.
+// views, is in ItemView.test.cpp). Fixtures are written to a temp folder per test; the ui-sandbox's demo items are
+// loaded from the repo.
 
 #include "assets/PartsAsset.test.h"
 
@@ -8,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -727,4 +729,19 @@ TEST_F(PartsAssetTest, APartsScriptsRandomNumbersAreTheSameEveryLoad) {
 	for (size_t i = 0; i < firstPlacements.size(); ++i) {
 		EXPECT_EQ(second->parts->placements[i].offsetMeters, firstPlacements[i].offsetMeters) << "placement " << i;
 	}
+}
+
+// The ui-sandbox's demo items (assets/sandbox/items), loaded with the shipped view config, as the sandbox loads them.
+TEST_F(PartsTest, TheSandboxDemoItemsLoadWithNoIssues) {
+	// <root>/libs/assets/assets/PartsAsset.test.cpp -> walk up to <root>.
+	const std::filesystem::path root = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path();
+	ASSERT_TRUE(GameViewConfig::Get().loadFromFile(root / "assets" / "config", kViewConfigFile));
+	AssetRegistry& registry = AssetRegistry::Get();
+	registry.clearDefinitions();
+	EXPECT_GT(registry.loadDefinitionsFromFolder((root / "assets" / "sandbox" / "items").string()), 0U);
+	const ValidationReport& report = registry.getValidationReport();
+	EXPECT_EQ(report.errorCount(), 0) << ::testing::PrintToString(issues("Workbench"));
+	EXPECT_EQ(report.warningCount(), 0) << ::testing::PrintToString(issues("Workbench", Severity::Warning));
+	EXPECT_NE(registry.getDefinition("Workbench"), nullptr);
+	ASSERT_TRUE(loadTestViewConfig());
 }
