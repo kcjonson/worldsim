@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 100">
+  <rect x="0" y="0" width="300" height="100" fill="#b38654"/>
+  <g transform="translate(150 50)">
+    <line x1="-148.4375" y1="-25" x2="148.4375" y2="-25" stroke="#724f30" stroke-width="1.875"/>
+    <line x1="-148.4375" y1="0" x2="148.4375" y2="0" stroke="#724f30" stroke-width="1.875"/>
+    <line x1="-148.4375" y1="25" x2="148.4375" y2="25" stroke="#724f30" stroke-width="1.875"/>
+    <line x1="-62.5" y1="-47.6563" x2="-62.5" y2="-27.3438" stroke="#724f30" stroke-width="1.875"/>
+    <line x1="115.625" y1="-47.6563" x2="115.625" y2="-27.3438" stroke="#724f30" stroke-width="1.875"/>
+    <line x1="43.75" y1="-22.6563" x2="43.75" y2="-2.3438" stroke="#724f30" stroke-width="1.875"/>
+    <line x1="-103.125" y1="2.3438" x2="-103.125" y2="22.6563" stroke="#724f30" stroke-width="1.875"/>
+    <line x1="78.125" y1="27.3438" x2="78.125" y2="47.6563" stroke="#724f30" stroke-width="1.875"/>
+    <g transform="translate(-28.125 9.375) rotate(-7)">
+      <polygon points="-42.1875,-6.25 34.375,-10.9375 34.375,7.8125 28.9063,11.7188 23.4375,7.8125 17.9688,11.7188 12.5,7.8125 7.0313,11.7188 1.5625,7.8125 -3.9063,11.7188 -9.375,7.8125 -14.8438,11.7188 -20.3125,7.8125 -25.7813,11.7188 -31.25,7.8125 -36.7188,11.7188 -42.1875,7.8125" fill="#b7b9b5" stroke="#33241a" stroke-width="2.3438"/>
+      <rect x="31.25" y="-14.0625" width="21.875" height="26.5625" rx="4.6875" fill="#7b5232" stroke="#33241a" stroke-width="2.3438"/>
+      <rect x="37.5" y="-6.25" width="9.375" height="10.9375" rx="3.125" fill="#b38654" stroke="#33241a" stroke-width="1.5625"/>
+    </g>
+    <g transform="translate(56.25 -21.875) rotate(24)">
+      <rect x="-28.125" y="-3.9063" width="46.875" height="7.8125" rx="3.125" fill="#9a6a3f" stroke="#33241a" stroke-width="2.3438"/>
+      <rect x="15.625" y="-12.5" width="12.5" height="25" rx="2.3438" fill="#8d9193" stroke="#33241a" stroke-width="2.3438"/>
+    </g>
+    <rect x="-15.625" y="-42.1875" width="21.875" height="9.375" rx="1.5625" fill="#7b5232" stroke="#33241a" stroke-width="2.3438"/>
+    <g data-lod="24">
+      <circle cx="-93.75" cy="21.875" r="5.4688" fill="#8d9193" stroke="#33241a" stroke-width="1.875"/>
+      <circle cx="-93.75" cy="21.875" r="2.0313" fill="#2a211b"/>
+      <circle cx="-78.125" cy="34.375" r="4.6875" fill="#8d9193" stroke="#33241a" stroke-width="1.875"/>
+      <circle cx="-78.125" cy="34.375" r="1.7188" fill="#2a211b"/>
+      <line x1="6.25" y1="-37.5" x2="15.625" y2="-31.25" stroke="#5c6063" stroke-width="2.5"/>
+      <line x1="18.75" y1="-40.625" x2="20.3125" y2="-29.6875" stroke="#5c6063" stroke-width="2.5"/>
+      <circle cx="-46.875" cy="-31.25" r="4.0625" fill="none" stroke="#5c6063" stroke-width="2.5"/>
+    </g>
+  </g>
+</svg>

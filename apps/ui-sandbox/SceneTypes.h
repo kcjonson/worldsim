@@ -23,7 +23,8 @@ namespace ui_sandbox {
 	X(Tree)          \
 	X(Planet)        \
 	X(Gallery)       \
-	X(GalleryDialog)
+	X(GalleryDialog) \
+	X(ItemTurntable)
 	// clang-format on
 
 	namespace scenes {
