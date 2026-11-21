@@ -20,6 +20,22 @@ namespace vision {
 			}
 			return sum;
 		}
+
+		// Whether a counter-clockwise ring turns clockwise at any corner.
+		bool concave(const geometry::Ring& ring) {
+			for (std::size_t index = 0; index < ring.size(); ++index) {
+				const geometry::Vec2i64& previous = ring[(index + ring.size() - 1) % ring.size()];
+				const geometry::Vec2i64& next	  = ring[(index + 1) % ring.size()];
+				if (geometry::cross(ring[index] - previous, next - ring[index]).sign() < 0) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		BodyKind placedKind(const PlacedOccluder& entry, std::int64_t opaqueLeastMm) {
+			return entry.concave ? BodyKind::Opaque : kindOf(entry.diameterSquared, opaqueLeastMm);
+		}
 	} // namespace
 
 	bool PlacedOccluder::within(geometry::Vec2i64 point, std::int64_t radiusMm) const {
@@ -71,7 +87,8 @@ namespace vision {
 		entry.centre		  = {sum.x / count, sum.y / count};
 		entry.diameterSquared = diameterSquared(entry.outline);
 		entry.diameterMm	  = wholeSquareRoot(entry.diameterSquared);
-		entry.kind			  = kindOf(entry.diameterSquared, opaqueLeastMm);
+		entry.concave		  = concave(entry.outline);
+		entry.kind			  = placedKind(entry, opaqueLeastMm);
 		eachBucket(entry.low, entry.high, [&](BucketKey key) { buckets[key].push_back(entry.serial); });
 		serialOfRing.emplace(ring, entry.serial);
 		bySerial.emplace(entry.serial, std::move(entry));
@@ -101,7 +118,7 @@ namespace vision {
 		}
 		opaqueLeastMm = leastMm;
 		for (auto& [serial, entry] : bySerial) {
-			entry.kind = kindOf(entry.diameterSquared, opaqueLeastMm);
+			entry.kind = placedKind(entry, opaqueLeastMm);
 		}
 	}
 

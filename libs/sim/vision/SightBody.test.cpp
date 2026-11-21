@@ -1,6 +1,10 @@
 #include "PlacedOccluderIndex.h"
 #include "SightBody.h"
+#include "SightHeight.h"
 #include "SightTunables.h"
+
+#include <assets/AssetDefinition.h>
+#include <assets/AssetRegistry.h>
 
 #include <visibility/ForestShape.h>
 #include <visibility/SightClip.h>
@@ -10,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <numbers>
 #include <span>
 #include <vector>
@@ -62,7 +67,7 @@ TEST(SightTunables, ClampToTheirRangesWithTheRayWidthAboveBothThresholds) {
 	EXPECT_EQ(raised.softShadowRayWidthMm, 2001);
 }
 
-// The kind follows the exact diameter: every tree soft and a BigRock opaque at the placed threshold,
+// The kind follows the exact diameter: every tree soft and a tall body 1.40 by 1.07 m opaque at the placed threshold,
 // the shortest wall soft and a 2 m wall opaque at the wall threshold.
 TEST(SightBody, KindFollowsTheDiameter) {
 	const vision::SightTunables start;
@@ -71,7 +76,7 @@ TEST(SightBody, KindFollowsTheDiameter) {
 		 return vision::kindOf(vision::diameterSquared(outline), least);
 	};
 	EXPECT_EQ(kindOfRectangle(820, 820, start.placedOpaqueLeastDiameterMm), BodyKind::Soft) << "a veteran oak, 1.16 m across";
-	EXPECT_EQ(kindOfRectangle(1400, 1070, start.placedOpaqueLeastDiameterMm), BodyKind::Opaque) << "a BigRock, 1.76 m across";
+	EXPECT_EQ(kindOfRectangle(1400, 1070, start.placedOpaqueLeastDiameterMm), BodyKind::Opaque) << "a tall body 1.40 by 1.07 m, 1.76 m across";
 	EXPECT_EQ(kindOfRectangle(500, 150, start.wallOpaqueLeastDiameterMm), BodyKind::Soft) << "the shortest wall";
 	EXPECT_EQ(kindOfRectangle(2000, 150, start.wallOpaqueLeastDiameterMm), BodyKind::Opaque);
 	EXPECT_EQ(kindOfRectangle(600, 0, 600), BodyKind::Opaque) << "the threshold itself is opaque";
@@ -152,10 +157,10 @@ TEST(PlacedOccluderIndex, AddsMeasuresFindsAndRemovesBySerial) {
 	vision::PlacedOccluderIndex index;
 	geometry::Ring				clockwise = rectangle({15500, 0}, {16900, 1070});
 	std::reverse(clockwise.begin(), clockwise.end());
-	index.add(geometry::nav::kNoRing, clockwise, "BigRock", 0);
+	index.add(geometry::nav::kNoRing, clockwise, "Test_TallBody", 0);
 	EXPECT_EQ(index.size(), 0U) << "a refused ring never enters";
 
-	index.add(4, clockwise, "BigRock", 250);
+	index.add(4, clockwise, "Test_TallBody", 250);
 	ASSERT_EQ(index.size(), 1U);
 	const vision::PlacedOccluder* rock = index.byRing(4);
 	ASSERT_NE(rock, nullptr);
@@ -163,7 +168,7 @@ TEST(PlacedOccluderIndex, AddsMeasuresFindsAndRemovesBySerial) {
 	EXPECT_EQ(rock->perimeterMm, 2 * (1400 + 1070));
 	EXPECT_EQ(rock->diameterMm, 1762);
 	EXPECT_EQ(rock->arrivedMs, 250);
-	EXPECT_EQ(rock->defName, "BigRock");
+	EXPECT_EQ(rock->defName, "Test_TallBody");
 	EXPECT_GT(geometry::cross(rock->outline[1] - rock->outline[0], rock->outline[2] - rock->outline[1]).sign(), 0) << "counter-clockwise";
 	const std::uint64_t first = rock->serial;
 
@@ -188,12 +193,72 @@ TEST(PlacedOccluderIndex, AddsMeasuresFindsAndRemovesBySerial) {
 	EXPECT_TRUE(found.empty()) << "the old ring left its buckets";
 
 	// An id handed out again while still listed replaces its entry, buckets and all.
-	index.add(4, clockwise, "BigRock", 750);
+	index.add(4, clockwise, "Test_TallBody", 750);
 	ASSERT_EQ(index.size(), 1U);
 	index.within({0, 0}, 1000, found);
 	EXPECT_TRUE(found.empty()) << "the replaced ring left its buckets";
 	index.within({15000, 500}, 600, found);
 	EXPECT_EQ(found.size(), 1U);
+}
+
+// A concave ring is opaque whatever its diameter, and stays so when the threshold moves; a convex one
+// as small is soft (sight-softening.md 2.2).
+TEST(PlacedOccluderIndex, AConcaveRingIsOpaqueWhateverItsSize) {
+	vision::PlacedOccluderIndex index;
+	// An L 0.6 m on each arm, 0.85 m across: under the placed threshold.
+	index.add(1, {{0, 0}, {600, 0}, {600, 300}, {300, 300}, {300, 600}, {0, 600}}, "Test_TallBody", 0);
+	index.add(2, rectangle({2000, 0}, {2600, 600}), "Test_TallBody", 0);
+	ASSERT_EQ(index.size(), 2U);
+	EXPECT_TRUE(index.byRing(1)->concave);
+	EXPECT_EQ(index.byRing(1)->kind, BodyKind::Opaque);
+	EXPECT_FALSE(index.byRing(2)->concave);
+	EXPECT_EQ(index.byRing(2)->kind, BodyKind::Soft);
+	index.setOpaqueLeastDiameterMm(2000);
+	EXPECT_EQ(index.byRing(1)->kind, BodyKind::Opaque) << "a threshold slider never makes it soft";
+}
+
+// A placed body is a sight body when its top reaches the eye (sight-softening.md 2.2): a simple def by
+// its worldHeight, the threshold itself reaching it; a procedural def states no height and is tall.
+TEST(SightHeight, ABodyReachesTheEyeFromItsDefsHeight) {
+	const auto simple = [](float worldHeight) {
+		assets::AssetDefinition def;
+		def.assetType	= assets::AssetType::Simple;
+		def.worldHeight = worldHeight;
+		return def;
+	};
+	EXPECT_EQ(vision::kEyeHeightMm, 1600);
+	EXPECT_FALSE(vision::reachesEyeHeight(simple(1.599F))) << "just under";
+	EXPECT_TRUE(vision::reachesEyeHeight(simple(1.6F))) << "at it";
+	EXPECT_TRUE(vision::reachesEyeHeight(simple(1.601F))) << "just over";
+	EXPECT_EQ(vision::bodyTopMm(simple(1.5F)), 1500) << "a BigRock";
+	EXPECT_FALSE(vision::reachesEyeHeight(simple(1.5F))) << "a BigRock";
+	EXPECT_TRUE(vision::reachesEyeHeight(simple(2.0F))) << "a TestTallBox";
+
+	assets::AssetDefinition unwritten;
+	unwritten.assetType = assets::AssetType::Simple;
+	EXPECT_EQ(vision::bodyTopMm(unwritten), 1000) << "the parser's default height";
+	EXPECT_FALSE(vision::reachesEyeHeight(unwritten));
+
+	assets::AssetDefinition procedural;
+	procedural.assetType   = assets::AssetType::Procedural;
+	procedural.worldHeight = 0.5F;
+	EXPECT_FALSE(vision::bodyTopMm(procedural).has_value()) << "its generator draws to its own size";
+	EXPECT_TRUE(vision::reachesEyeHeight(procedural)) << "a tree trunk stays a sight body";
+}
+
+// The shipped defs: a BigRock is low, a TestTallBox and an oak reach the eye.
+TEST(SightHeight, ShippedBodies) {
+	const std::filesystem::path repo	 = SIM_TEST_REPO_DIR;
+	assets::AssetRegistry&		registry = assets::AssetRegistry::Get();
+	registry.clearDefinitions();
+	registry.setSharedScriptsPath(repo / "assets" / "shared" / "scripts");
+	for (const char* xml : {"misc/BigRock/BigRock.xml", "misc/TestTallBox/TestTallBox.xml", "flora/OakTree/OakTree.xml"}) {
+		ASSERT_TRUE(registry.loadDefinitions((repo / "assets" / "world" / xml).string())) << xml;
+	}
+	EXPECT_FALSE(vision::reachesEyeHeight(*registry.getDefinition("BigRock")));
+	EXPECT_TRUE(vision::reachesEyeHeight(*registry.getDefinition("TestTallBox")));
+	EXPECT_TRUE(vision::reachesEyeHeight(*registry.getDefinition("Flora_TreeOak")));
+	registry.clearDefinitions();
 }
 
 namespace {

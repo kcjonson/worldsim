@@ -41,7 +41,10 @@ namespace vision {
 		std::int64_t	 perimeterMm = 0;
 		geometry::Int128 diameterSquared;
 		std::int64_t	 diameterMm = 0;
-		BodyKind		 kind		= BodyKind::Soft;
+		// A concave ring is opaque whatever its diameter (sight-softening.md 2.2): a soft body's
+		// silhouette needs the eye outside its hull.
+		bool	 concave = false;
+		BodyKind kind	 = BodyKind::Soft;
 		// The sim clock (TimeSystem::simulationSeconds, in ms) when the index took it.
 		std::int64_t arrivedMs = 0;
 		std::string	 defName;
@@ -53,7 +56,8 @@ namespace vision {
 	class PlacedOccluderIndex {
 	  public:
 		// Takes the ring `ring` with `outline` (either winding) under a new serial, its kind by
-		// opaqueLeastDiameterMm. A ring the patch refused (geometry::nav::kNoRing) never enters, and an
+		// opaqueLeastDiameterMm, or opaque when it is concave. Whether a body is tall enough to enter is
+		// the caller's (SightHeight.h). A ring the patch refused (geometry::nav::kNoRing) never enters, and an
 		// entry already under `ring` leaves first.
 		void add(geometry::nav::RingId ring, const geometry::Ring& outline, std::string defName, std::int64_t clockMs);
 		// Drops the entry for `ring`, if there is one.
