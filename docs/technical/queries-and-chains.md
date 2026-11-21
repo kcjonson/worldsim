@@ -496,7 +496,7 @@ offers it to colony members. The care work's rung is its work entry's.
 | the sim filling the condition vocabulary's `need` set from `kNeedLabels` | every loaded need id |
 | thought triggers `needFalls` and `needRises` checking `kNeedLabels` | the same check against the creature's needs |
 | `<NeedWeights>` in `mood.xml` | the creature's `<moodCost>` rows |
-| the decay literals in `Needs.cpp`, `assets/config/colonists/needs/needs.xml` | each need's `<drains>` and levels |
+| the decay literals in `Needs.cpp`, `assets/world/creatures/Human/needs.xml` | each need's `<drains>` and levels |
 
 ---
 

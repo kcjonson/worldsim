@@ -65,6 +65,11 @@ TEST_F(ConfigFilesTest, ATrailingSeparatorOnTheFolderKeepsItsOwnFilesFirst) {
 	EXPECT_EQ(relativeNames(found), (std::vector<std::string>{"zeta.xml", "aaa/first.xml"}));
 }
 
+TEST_F(ConfigFilesTest, AFileIsNamedRelativeToItsFolderWithForwardSlashes) {
+	touch("mods/later.xml");
+	EXPECT_EQ(assets::configFileName(folder / "mods" / "later.xml", folder), "mods/later.xml");
+}
+
 TEST_F(ConfigFilesTest, AMissingFolderIsAnError) {
 	const assets::ConfigFiles found = assets::configFilesIn(folder / "missing");
 	ASSERT_TRUE(found.error.has_value());

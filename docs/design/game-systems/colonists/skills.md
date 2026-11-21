@@ -185,7 +185,7 @@ If colonist doesn't meet `minSkillLevel`, the work type is **locked** (cannot en
 Colonists start with skills based on backstory:
 
 ```xml
-<!-- assets/config/colonists/backstories.xml -->
+<!-- assets/world/creatures/Human/backstories.xml -->
 <Backstory defName="Backstory_Farmer">
   <label>Farmer</label>
   <description>Grew up on a farm...</description>

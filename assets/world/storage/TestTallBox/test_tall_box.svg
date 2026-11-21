@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 200" width="100" height="200">
+  <!-- Test Tall Box: 1 m wide, 2 m tall drawing (0.01 m per unit), upright
+       three-quarter view, top face over front face, light from the upper left.
+       Plain closed rects and paths, flat fills, no strokes.
+
+       Collision: the ground footprint, 1 m x 1 m, the bottom half of the
+       drawing (y 100 to 200). -->
+  <metadata>
+    <collision>
+      <shape type="aabb" min="0,100" max="100,200"/>
+    </collision>
+  </metadata>
+
+  <!-- Dark outline (sets the bbox). -->
+  <rect x="0" y="0" width="100" height="200" fill="#2b2622"/>
+
+  <!-- Front face. -->
+  <rect x="3" y="36" width="94" height="161" fill="#8a6a45"/>
+
+  <!-- Shaded right edge of the front face (off the light). -->
+  <rect x="82" y="36" width="15" height="161" fill="#745636"/>
+
+  <!-- Lit left edge of the front face. -->
+  <rect x="3" y="36" width="8" height="161" fill="#9c7a52"/>
+
+  <!-- Top face, lighter. -->
+  <rect x="3" y="3" width="94" height="30" fill="#b99669"/>
+
+  <!-- Stencilled box on the front, with a smaller one in it. -->
+  <path d="M26,92 L74,92 L74,152 L26,152 Z M30,96 L30,148 L70,148 L70,96 Z" fill="#2b2622" fill-rule="evenodd"/>
+  <path d="M38,110 L62,110 L62,138 L38,138 Z M41,113 L41,135 L59,135 L59,113 Z" fill="#2b2622" fill-rule="evenodd"/>
+</svg>

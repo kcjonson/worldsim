@@ -95,7 +95,7 @@ namespace world_sim {
 			time = &world.registerSystem<ecs::TimeSystem>();
 			thoughts = &world.registerSystem<ecs::ThoughtSystem>(rules.types, 7U);
 			colonist = spawn("Ada");
-			ASSERT_TRUE(moodConfig.loadFromFile(ecs::testing::repoConfig(), "colonists/mood.xml"));
+			ASSERT_TRUE(moodConfig.loadFromFile(ecs::testing::repoHuman(), "mood.xml"));
 			moods = &world.registerSystem<ecs::MoodSystem>(moodConfig);
 			world.addComponent<ecs::NeedsComponent>(colonist, ecs::testing::shippedNeeds());
 		}
