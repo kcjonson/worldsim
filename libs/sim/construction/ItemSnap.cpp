@@ -112,9 +112,9 @@ namespace construction {
 		const assets::SnappingConfig& snapping,
 		bool						  freeform
 	) {
-		const int64_t kFreeStepQuanta = quantaOfDegrees(1.0);
 		if (freeform) {
-			return wrapQuanta(static_cast<int64_t>(turnQuanta) + (direction > 0 ? kFreeStepQuanta : -kFreeStepQuanta));
+			const int64_t oneDegree = quantaOfDegrees(1.0);
+			return wrapQuanta(static_cast<int64_t>(turnQuanta) + (direction > 0 ? oneDegree : -oneDegree));
 		}
 		std::optional<int64_t> nearest;
 		const auto			   consider = [&](uint32_t stop) {

@@ -194,6 +194,21 @@ namespace world_sim {
 		LOG_INFO(Game, "Placing entity '%s' (entity %u)", defName.c_str(), static_cast<uint32_t>(entityId));
 	}
 
+	PlacementSystem::PointerState PlacementSystem::pointerState(glm::vec2 pointerMeters, bool freeform) const {
+		PointerState state{.pointer = pointerMeters, .freeform = freeform, .pressed = press.has_value()};
+		if (constructionWorld != nullptr) {
+			state.constructionVersion = constructionWorld->version();
+		}
+		if (navigation != nullptr) {
+			state.navigationGeneration = navigation->generation();
+		}
+		if (const ecs::PlayerVisibilitySystem* visibility = ecsWorld != nullptr ? ecs::PlayerVisibilitySystem::gate(*ecsWorld) : nullptr) {
+			state.seenEpoch = visibility->epoch();
+			state.revealed = visibility->revealed();
+		}
+		return state;
+	}
+
 	void PlacementSystem::handleMouseMove(float screenX, float screenY, int viewportW, int viewportH, bool freeform) {
 		if (placementMode.state() != PlacementState::Placing || camera == nullptr) {
 			return;
@@ -201,11 +216,14 @@ namespace world_sim {
 
 		const auto		pointer = camera->screenToWorld(screenX, screenY, viewportW, viewportH, kPixelsPerMeter);
 		const glm::vec2 pointerMeters{pointer.x, pointer.y};
-		// The preview follows the pointer every frame; with the pointer, Alt and the press as they were, nothing moved.
-		if (lastMove.has_value() && lastMove->pointer == pointerMeters && lastMove->freeform == freeform && lastMove->pressed == press.has_value()) {
+		// The preview follows the pointer every frame; with the pointer, Alt, the press and the world as they were,
+		// nothing moved.
+		const PointerState now = pointerState(pointerMeters, freeform);
+		if (lastMove == now && ++movesSinceSettle < kItemRefreshMoves) {
 			return;
 		}
-		lastMove = PointerState{.pointer = pointerMeters, .freeform = freeform, .pressed = press.has_value()};
+		lastMove = now;
+		movesSinceSettle = 0;
 		uint32_t turnQuanta = placementMode.ghostTurnQuanta();
 		if (!press.has_value()) {
 			rawPosition = {pointer.x, pointer.y};

@@ -5,6 +5,9 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/AssetRegistry.test.h>
+#include <assets/ConstructionRegistry.h>
+#include <construction/ConstructionWorld.h>
+#include <core/Vec2i64.h>
 #include <assets/TurnQuanta.h>
 #include <ecs/GoalTaskRegistry.h>
 #include <ecs/components/AgentRadius.h>
@@ -279,6 +282,37 @@ TEST_F(PlacementFordTest, TurnKeysTurnTheItemAndItIsPlacedAtThatTurn) {
 	placement->cancel();
 	placement->selectBuildItem(kBox);
 	EXPECT_FALSE(placement->handleTurnKey(1, false)) << "a def that isn't parts doesn't turn";
+}
+
+// A wall built beside a still ghost reaches it on the next update: the construction world's revision is part of what
+// a move settles on, so the ghost slides flush without the pointer moving.
+TEST_F(PlacementFordTest, AWallBuiltBesideAStillGhostSlidesItOnTheNextUpdate) {
+	loadTestPartsBox();
+	std::filesystem::path root = std::filesystem::path(__FILE__);
+	for (int up = 0; up < 7; ++up) {
+		root = root.parent_path();
+	}
+	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((root / "assets" / "config" / "construction").string()));
+	construction::ConstructionWorld walls;
+	placement->setConstructionWorld(&walls);
+	placement->cancel();
+	placement->selectBuildItem("TestPartsBox");
+	const glm::vec2 pivot{10.0F, kCreekY + 4.0F};
+	hover(pivot);
+	ASSERT_LT(glm::distance(glm::vec2{placement->ghostPosition().x, placement->ghostPosition().y}, pivot), 0.001F);
+
+	// The box's back edge is 0.3 m north of its pivot; a 0.2 m wall whose south face is 0.15 m beyond it.
+	const double centreline = static_cast<double>(pivot.y) - 0.3 - 0.15 - 0.1;
+	ASSERT_TRUE(walls
+					.commitSegment(
+						geometry::quantize({pivot.x - 2.0F, static_cast<float>(centreline)}),
+						geometry::quantize({pivot.x + 2.0F, static_cast<float>(centreline)}), "Wood", "Standard", construction::kInvalidFoundation, 0
+					)
+					.ok());
+	hover(pivot);
+	EXPECT_NEAR(placement->ghostPosition().y, pivot.y - 0.15F, 0.002F) << "slid flush with the pointer still";
+	placement->setConstructionWorld(nullptr);
+	assets::ConstructionRegistry::Get().clear();
 }
 
 // Press fixes the position; past the click distance the front follows the pointer, snapped to the step; release places.

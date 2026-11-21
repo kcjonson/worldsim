@@ -807,13 +807,13 @@ namespace {
 				return true;
 			}
 			if (m_placementSystem->isActive()) {
-				// A right release leaves placement; a left one places, a click or the end of a turning drag, unless it
-				// lands outside the window, which only lets go of the drag.
+				// A right release leaves placement; a left one on the world places, a click or the end of a turning
+				// drag, and anywhere else (outside the window, over the ui) only lets go of the drag.
 				if (event.mouseButton == foundation::MouseButton::Right) {
 					m_placementSystem->cancel();
 					return true;
 				}
-				if (leftRelease && target == world_sim::PointerTarget::OutsideWindow) {
+				if (leftRelease && target != world_sim::PointerTarget::World) {
 					m_placementSystem->dropPress();
 					return true;
 				}
@@ -895,7 +895,8 @@ namespace {
 			pointerWasWithTool = withTool;
 
 			// The drawing tool's and placement's previews follow the pointer every frame, so they track the world
-			// moving under a still cursor, but not while the pointer is over the ui.
+			// moving under a still cursor, but not while the pointer is over the ui. Placement settles again only when
+			// the pointer, Alt, the press, or a world revision moved, and every few frames for items placed nearby.
 			if (windowPresence.pointerInWindow && pointer == world_sim::PointerTarget::World) {
 				int logicalW = 0;
 				int logicalH = 0;
@@ -1204,14 +1205,14 @@ namespace {
 		const char* name() const override { return kSceneName; }
 
 	  private:
-		// The world's one-press keys; false for a key that isn't one, or does nothing now.
 		// Placing an item the key guide has turning keys for.
 		bool placingATurnableItem() const {
 			return m_placementSystem->state() == world_sim::PlacementState::Placing &&
 				   world_sim::PlacementSystem::turns(m_placementSystem->selectedDefName());
 		}
 
-		// `freeform` is Alt held, which turns a placed item by a degree instead of to the next stop.
+		// The world's one-press keys; false for a key that isn't one, or does nothing now. `freeform` is Alt held,
+		// which turns a placed item by a degree instead of to the next stop.
 		bool handleHotkey(foundation::Key key, bool freeform) {
 			auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
 			switch (key) {

@@ -194,13 +194,27 @@ class PlacementSystem {
 	/// Placement was cancelled with a press held; its release is not a click on the world.
 	bool cancelledPress = false;
 
-	/// What the last pointer move settled the ghost with; a move that changes none of it settles nothing.
+	/// What the last pointer move settled the ghost with, the world's revisions among it; a move that changes none
+	/// of it settles nothing.
 	struct PointerState {
-		glm::vec2 pointer{0.0F, 0.0F};
-		bool	  freeform = false;
-		bool	  pressed = false;
+		glm::vec2	  pointer{0.0F, 0.0F};
+		bool		  freeform = false;
+		bool		  pressed = false;
+		std::uint64_t constructionVersion = 0; // walls and foundations
+		std::uint64_t navigationGeneration = 0; // ground, water, and placed obstacles in the mesh
+		std::uint64_t seenEpoch = 0;			// ground the player has seen
+		bool		  revealed = false;
+
+		bool operator==(const PointerState&) const = default;
 	};
 	std::optional<PointerState> lastMove;
+	/// Parts items installed, moved, or given a target change no revision, so a still ghost also settles every
+	/// this many pointer moves (frames while placing).
+	static constexpr uint32_t kItemRefreshMoves = 15;
+	uint32_t				  movesSinceSettle = 0;
+
+	/// The pointer state now, with the world's revisions.
+	[[nodiscard]] PointerState pointerState(glm::vec2 pointerMeters, bool freeform) const;
 
 	/// Where the item stands before the flush slide: the pointer, or the press during a drag.
 	glm::vec2 rawPosition{0.0F, 0.0F};
