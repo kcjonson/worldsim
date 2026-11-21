@@ -14,9 +14,11 @@
 
 #include <glm/vec2.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <unordered_map>
 #include <unordered_set>
@@ -67,6 +69,12 @@ namespace ecs {
 		/// Memory::definitionsWithCapability for it.
 		std::array<uint32_t, assets::kCapabilityNames.size()> capabilityCounts{};
 		std::array<uint32_t, assets::kCapabilityNames.size()> capabilitySlots{};
+		/// Every cell a thing of the definition has lain in since it was first remembered falls within these
+		/// bounds; they only grow, so a walk outward in rings knows where to stop.
+		int32_t minCellX = std::numeric_limits<int32_t>::max();
+		int32_t maxCellX = std::numeric_limits<int32_t>::min();
+		int32_t minCellY = std::numeric_limits<int32_t>::max();
+		int32_t maxCellY = std::numeric_limits<int32_t>::min();
 
 		[[nodiscard]] const MemoryCell* cellAt(int32_t x, int32_t y) const {
 			const auto found = cellIndex.find(memoryCellKey(x, y));
@@ -109,8 +117,10 @@ namespace ecs {
 		/// Maximum number of movers a colonist can remember; past it the one seen longest ago is forgotten
 		static constexpr size_t kMaxDynamicEntities = 512;
 
-		/// Number of capability types (must match AssetRegistry::kCapabilityTypeCount)
+		/// Number of capability types, one per assets::kCapabilityNames entry
 		static constexpr size_t kCapabilityTypeCount = 10;
+		static_assert(kCapabilityTypeCount == assets::kCapabilityNames.size(), "a capability index for every capability");
+		static_assert(kCapabilityTypeCount <= 16, "a capability mask holds every capability in 16 bits");
 
 		// --- Owner ---
 
@@ -243,6 +253,10 @@ namespace ecs {
 			if (capabilityMask == 0) {
 				return false;
 			}
+			// A position that is not a number has no cell and no key that could be found again.
+			if (!std::isfinite(position.x) || !std::isfinite(position.y)) {
+				return false;
+			}
 
 			uint64_t key = ecs::hashWorldEntity(position, defNameId);
 
@@ -266,6 +280,10 @@ namespace ecs {
 				ofDef.cellIndex.try_emplace(memoryCellKey(cellX, cellY), static_cast<uint32_t>(ofDef.cells.size()));
 			if (newCell) {
 				ofDef.cells.push_back(MemoryCell{.x = cellX, .y = cellY, .keys = {}});
+				ofDef.minCellX = std::min(ofDef.minCellX, cellX);
+				ofDef.maxCellX = std::max(ofDef.maxCellX, cellX);
+				ofDef.minCellY = std::min(ofDef.minCellY, cellY);
+				ofDef.maxCellY = std::max(ofDef.maxCellY, cellY);
 			}
 			MemoryCell& cell = ofDef.cells[cellAt->second];
 			knownWorldEntities[key] = KnownWorldEntity{
@@ -375,14 +393,14 @@ namespace ecs {
 
 		/// The keys of the remembered world entities of one def, in no order.
 		[[nodiscard]] std::span<const uint64_t> worldEntitiesOfDef(uint32_t defNameId) const {
-			const auto it = worldEntitiesByDef.find(defNameId);
-			return it != worldEntitiesByDef.end() ? std::span<const uint64_t>(it->second.keys) : std::span<const uint64_t>();
+			const auto found = worldEntitiesByDef.find(defNameId);
+			return found != worldEntitiesByDef.end() ? std::span<const uint64_t>(found->second.keys) : std::span<const uint64_t>();
 		}
 
 		/// What is remembered of one def, keys and grid; nullptr when nothing of it ever was.
 		[[nodiscard]] const RememberedOfDefinition* rememberedOfDefinition(uint32_t defNameId) const {
-			const auto it = worldEntitiesByDef.find(defNameId);
-			return it != worldEntitiesByDef.end() ? &it->second : nullptr;
+			const auto found = worldEntitiesByDef.find(defNameId);
+			return found != worldEntitiesByDef.end() ? &found->second : nullptr;
 		}
 
 		/// The defs at least one remembered thing of which carries `capability`, in no order.
@@ -549,13 +567,15 @@ namespace ecs {
 		/// Remove an entity from all data structures
 		void removeEntity(uint64_t key) {
 			// Remove from primary storage
-			auto it = knownWorldEntities.find(key);
-			if (it != knownWorldEntities.end()) {
-				// Remove from capability indices
-				for (auto& index : capabilityIndex) {
-					index.erase(key);
+			const auto found = knownWorldEntities.find(key);
+			if (found != knownWorldEntities.end()) {
+				const KnownWorldEntity& known = found->second;
+				// Remove from the capability indices it was filed under
+				for (size_t cap = 0; cap < kCapabilityTypeCount; ++cap) {
+					if ((known.capabilityMask & (1 << cap)) != 0) {
+						capabilityIndex[cap].erase(key);
+					}
 				}
-				const KnownWorldEntity& known = it->second;
 				RememberedOfDefinition& ofDef = worldEntitiesByDef.find(known.defNameId)->second;
 				const uint32_t			slot = known.defSlot;
 				const uint64_t			moved = ofDef.keys.back();
@@ -597,7 +617,7 @@ namespace ecs {
 						worldEntitiesByDef.find(movedDefinition)->second.capabilitySlots[cap] = capabilitySlot;
 					}
 				}
-				knownWorldEntities.erase(it);
+				knownWorldEntities.erase(found);
 				++worldEntityVersion;
 			}
 

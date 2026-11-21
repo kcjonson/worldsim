@@ -18,10 +18,12 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -173,10 +175,74 @@ TEST(MemoryComponent, ClearResetsLru) {
 
 namespace {
 
+	/// The first way the memory's indexes disagree with what it remembers, or empty: every key is in exactly
+	/// one cell of its def, the one it lies in, with its slots right; each def's capability counts are the real
+	/// number of its things with each bit, and the def is listed once under exactly those capabilities; each
+	/// capability index holds exactly the keys remembered with that bit.
+	std::string indexViolation(const ecs::Memory& memory) {
+		std::size_t listed = 0;
+		for (const auto& [defNameId, remembered] : memory.worldEntitiesByDef) {
+			std::array<uint32_t, ecs::Memory::kCapabilityTypeCount> counted{};
+			for (std::size_t slot = 0; slot < remembered.keys.size(); ++slot) {
+				const ecs::KnownWorldEntity* entity = memory.getWorldEntity(remembered.keys[slot]);
+				if (entity == nullptr || entity->defNameId != defNameId || entity->defSlot != slot) {
+					return "def " + std::to_string(defNameId) + " key slot " + std::to_string(slot);
+				}
+				const ecs::MemoryCell* cell =
+					remembered.cellAt(ecs::memoryCellCoordinate(entity->position.x), ecs::memoryCellCoordinate(entity->position.y));
+				if (cell == nullptr || entity->cellSlot >= cell->keys.size() || cell->keys[entity->cellSlot] != remembered.keys[slot]) {
+					return "def " + std::to_string(defNameId) + " key " + std::to_string(slot) + " is not in its cell";
+				}
+				for (std::size_t capability = 0; capability < counted.size(); ++capability) {
+					counted[capability] += (entity->capabilityMask >> capability) & 1U;
+				}
+			}
+			listed += remembered.keys.size();
+			std::size_t filed = 0;
+			for (const ecs::MemoryCell& cell : remembered.cells) {
+				filed += cell.keys.size();
+				if (cell.keys.empty() || remembered.cellAt(cell.x, cell.y) != &cell) {
+					return "def " + std::to_string(defNameId) + " cell (" + std::to_string(cell.x) + ", " + std::to_string(cell.y) + ")";
+				}
+			}
+			if (filed != remembered.keys.size() || remembered.cellIndex.size() != remembered.cells.size()) {
+				return "def " + std::to_string(defNameId) + " files " + std::to_string(filed) + " of " +
+					   std::to_string(remembered.keys.size());
+			}
+			for (std::size_t capability = 0; capability < counted.size(); ++capability) {
+				const auto&		  withCapability = memory.definitionsWithCapability[capability];
+				const std::size_t listings = static_cast<std::size_t>(std::count(withCapability.begin(), withCapability.end(), defNameId));
+				if (remembered.capabilityCounts[capability] != counted[capability] || listings != (counted[capability] > 0 ? 1U : 0U) ||
+					(listings == 1 && withCapability[remembered.capabilitySlots[capability]] != defNameId)) {
+					return "def " + std::to_string(defNameId) + " capability " + std::to_string(capability);
+				}
+			}
+		}
+		if (listed != memory.worldEntityCount()) {
+			return "defs list " + std::to_string(listed) + " of " + std::to_string(memory.worldEntityCount());
+		}
+		for (std::size_t capability = 0; capability < ecs::Memory::kCapabilityTypeCount; ++capability) {
+			std::size_t withBit = 0;
+			for (const auto& [key, known] : memory.knownWorldEntities) {
+				if (((known.capabilityMask >> capability) & 1U) != 0) {
+					++withBit;
+					if (memory.capabilityIndex[capability].count(key) == 0) {
+						return "capability index " + std::to_string(capability) + " misses a key";
+					}
+				}
+			}
+			if (withBit != memory.capabilityIndex[capability].size()) {
+				return "capability index " + std::to_string(capability) + " holds a stale key";
+			}
+		}
+		return {};
+	}
+
 	/// Every remembered key sits in its def's list at its defSlot and in the grid cell it lies in at its
 	/// cellSlot, the lists and cells hold nothing else, and each def is listed under exactly the
 	/// capabilities its remembered things carry.
 	void expectDefListsMatch(const ecs::Memory& m) {
+		EXPECT_EQ(indexViolation(m), "");
 		size_t listed = 0;
 		size_t filed = 0;
 		for (const auto& [defNameId, remembered] : m.worldEntitiesByDef) {
@@ -257,6 +323,73 @@ TEST(MemoryComponent, DefListsFollowRememberForgetAndEvict) {
 	m.clear();
 	EXPECT_TRUE(m.worldEntitiesOfDef(kDefId).empty());
 	expectDefListsMatch(m);
+}
+
+// Seeded random remembers, forgets, copies, moves, and clears over a few defs and capability masks, at
+// positions of mixed sign, on cell boundaries, and far from the origin, then a fill past the cap so it
+// evicts: the whole index holds after every step. A position that is not a number is refused.
+TEST(MemoryComponent, IndexHoldsUnderRandomRememberForgetEvictCopyAndMove) {
+	const std::array<glm::vec2, 8> boundaries = {
+		{{-16.0F, 0.0F},
+		 {16.0F, -16.0F},
+		 {-0.0F, -0.0F},
+		 {0.0F, 16.0F},
+		 {1.0e6F, -1.0e6F},
+		 {-1.0e6F, 1.0e6F},
+		 {15.999F, -16.001F},
+		 {-32.0F, 32.0F}}
+	};
+	std::mt19937								generator(20261121);
+	ecs::Memory									memory;
+	std::vector<std::pair<glm::vec2, uint32_t>> remembered;
+	const auto									randomPosition = [&]() {
+		 if (generator() % 4 == 0) {
+			 return boundaries[generator() % boundaries.size()];
+		 }
+		 const float x = static_cast<float>(static_cast<int>(generator() % 2001) - 1000) * 0.5F;
+		 const float y = static_cast<float>(static_cast<int>(generator() % 2001) - 1000) * 0.5F;
+		 return glm::vec2{x, y};
+	};
+	for (int step = 0; step < 1500; ++step) {
+		const uint32_t operation = generator() % 100;
+		if (operation < 60) {
+			const glm::vec2 position = randomPosition();
+			const uint32_t	def = 1 + generator() % 4;
+			const auto		mask = static_cast<uint16_t>(1 + generator() % 1023);
+			memory.rememberWorldEntity(position, def, mask);
+			remembered.emplace_back(position, def);
+		} else if (operation < 88 && !remembered.empty()) {
+			const auto& [position, def] = remembered[generator() % remembered.size()];
+			memory.forgetWorldEntity(position, def);
+		} else if (operation < 93) {
+			const ecs::Memory copy = memory;
+			memory = copy;
+		} else if (operation < 98) {
+			ecs::Memory moved = std::move(memory);
+			memory = std::move(moved);
+		} else if (operation == 99) {
+			memory.clear();
+			remembered.clear();
+		}
+		ASSERT_EQ(indexViolation(memory), "") << "step " << step;
+	}
+	for (std::size_t i = 0; memory.worldEntityCount() < ecs::Memory::kMaxWorldEntities; ++i) {
+		memory.rememberWorldEntity(posFor(i), 1 + static_cast<uint32_t>(i % 4), static_cast<uint16_t>(1 + i % 1023));
+	}
+	ASSERT_EQ(indexViolation(memory), "");
+	for (int overflow = 0; overflow < 20; ++overflow) {
+		const glm::vec2 position = randomPosition();
+		const uint32_t	def = 1 + generator() % 4;
+		const auto		mask = static_cast<uint16_t>(1 + generator() % 1023);
+		memory.rememberWorldEntity(position, def, mask);
+		ASSERT_EQ(memory.worldEntityCount(), ecs::Memory::kMaxWorldEntities);
+		ASSERT_EQ(indexViolation(memory), "") << "overflow " << overflow;
+	}
+
+	const std::size_t before = memory.worldEntityCount();
+	EXPECT_FALSE(memory.rememberWorldEntity({std::numeric_limits<float>::quiet_NaN(), 1.0F}, 1, 1));
+	EXPECT_FALSE(memory.rememberWorldEntity({1.0F, std::numeric_limits<float>::infinity()}, 1, 1));
+	EXPECT_EQ(memory.worldEntityCount(), before);
 }
 
 namespace {
