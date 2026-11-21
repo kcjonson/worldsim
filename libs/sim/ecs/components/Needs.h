@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -61,11 +62,13 @@ namespace ecs {
 			}
 		}
 
-		/// Restore need (clamped to 100)
-		void restore(float amount) {
+		/// Move the need by a signed amount: a rise stops at 100, a fall at 0.
+		void move(float amount) {
 			value += amount;
-			if (value > 100.0f) {
-				value = 100.0f;
+			if (amount > 0.0F) {
+				value = std::min(value, 100.0F);
+			} else {
+				value = std::max(value, 0.0F);
 			}
 		}
 	};

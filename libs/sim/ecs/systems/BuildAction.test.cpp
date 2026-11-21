@@ -74,7 +74,7 @@ namespace ecs::test {
 		const auto& eff = action.progressEffect();
 		EXPECT_EQ(eff.targetEntityId, 42U);
 		EXPECT_FLOAT_EQ(eff.skillLevel, 5.0F);
-		EXPECT_FALSE(eff.deconstruct);
+		EXPECT_FALSE(std::get<WorkRow>(action.values->effects[action.values->boundRow]).down);
 	}
 
 	TEST(BuildActionFactoryTest, DeconstructActionCreation) {
@@ -85,7 +85,7 @@ namespace ecs::test {
 		const auto& eff = action.progressEffect();
 		EXPECT_EQ(eff.targetEntityId, 7U);
 		EXPECT_FLOAT_EQ(eff.skillLevel, 12.0F);
-		EXPECT_TRUE(eff.deconstruct);
+		EXPECT_TRUE(std::get<WorkRow>(action.values->effects[action.values->boundRow]).down);
 	}
 
 	// =============================================================================

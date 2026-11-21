@@ -206,7 +206,15 @@ namespace assets::entry_loading {
 		if (const std::optional<std::size_t> pays = choice(node, "pays", label, kPays, false)) {
 			entry.pays = static_cast<Pays>(*pays);
 		}
-		if (!node.attribute("curve").empty()) {
+		if (entry.duration == ActionDuration::OpenEnded) {
+			// An open-ended action pays as it goes: pays may be left out or along, and nothing done to shape a curve by.
+			if (entry.pays == Pays::End && !node.attribute("pays").empty()) {
+				refuse(label, node, "pays", "left out or along; an open-ended action pays as it goes");
+			} else if (!node.attribute("curve").empty()) {
+				refuse(label, node, "curve", "left out; an open-ended action pays at its rate, with no fraction done to shape");
+			}
+			entry.pays = Pays::Along;
+		} else if (!node.attribute("curve").empty()) {
 			if (entry.pays != Pays::Along) {
 				refuse(label, node, "curve", "left out; it shapes an action that pays along");
 			} else {

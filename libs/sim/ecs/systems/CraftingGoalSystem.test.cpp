@@ -355,7 +355,7 @@ TEST_F(MultiSystemGoalTest, MultiUnitCraftReprovisionsBetweenUnitsAndCompletesAl
 	auto& registry = GoalTaskRegistry::Get();
 
 	// Mirror one unit of crafting: consume the recipe inputs from the store and bump completed,
-	// exactly as ActionSystem::applyCraftingEffect does on a finished craft.
+	// exactly as ActionSystem::applyCraft does on a finished craft.
 	auto craftOneUnit = [&]() {
 		for (const auto& input : recipe.inputs) {
 			store.removeItem(input.defName, input.count);

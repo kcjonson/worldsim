@@ -3604,12 +3604,12 @@ namespace ecs::test {
 	TEST_F(AIDecisionSystemTest, TheShippedActionEntriesSayWhichNeedFreeHands) {
 		// The hands rule reads whether a task's first action needs free hands from that action's entry.
 		const ActionEntries& actions = ecs::testing::shippedActions();
-		EXPECT_TRUE(actions.pickup.freeHands) << "Pickup action should need hands";
-		EXPECT_TRUE(actions.craft.freeHands) << "Craft action should need hands";
-		EXPECT_TRUE(actions.harvest.freeHands) << "Harvest action should need hands";
-		EXPECT_FALSE(actions.sleep.freeHands) << "Sleep action should NOT need hands";
-		EXPECT_FALSE(actions.urinate.freeHands) << "Relieving should NOT need hands";
-		EXPECT_TRUE(actions.eat.freeHands) << "Eat action should need hands";
+		EXPECT_TRUE(actions.pickup().freeHands) << "Pickup action should need hands";
+		EXPECT_TRUE(actions.craft().freeHands) << "Craft action should need hands";
+		EXPECT_TRUE(actions.harvest().freeHands) << "Harvest action should need hands";
+		EXPECT_FALSE(actions.sleep().freeHands) << "Sleep action should NOT need hands";
+		EXPECT_FALSE(actions.urinate().freeHands) << "Relieving should NOT need hands";
+		EXPECT_TRUE(actions.eat().freeHands) << "Eat action should need hands";
 	}
 
 	// =============================================================================
@@ -4263,7 +4263,7 @@ namespace ecs::test {
 			<< "an over-weight colonist offers no craft fetch; the pickup would lift 0 and loop forever";
 	}
 
-	// A harvest must not be offered when the colonist can't carry the yield: applyCollectionEffect
+	// A harvest must not be offered when the colonist can't carry the yield: takeFromSource
 	// clamps the take to carry weight AND backpack slots and adds 0 at the cap, so the staged count
 	// never rises. Emitting the option anyway makes the colonist pick the harvest, collect 0
 	// ("Collected 0 of N ... carry-limited"), re-evaluate, and pick the same harvest again -- an

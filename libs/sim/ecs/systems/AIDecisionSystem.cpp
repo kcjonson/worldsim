@@ -100,31 +100,31 @@ namespace ecs {
 		[[nodiscard]] const ActionValues* firstAction(const ActionEntries& actions, TaskType taskType, NeedType needType) {
 			switch (taskType) {
 				case TaskType::Haul:
-					return &actions.pickup;
+					return &actions.pickup();
 				case TaskType::PlacePackaged:
-					return &actions.pickupPackaged;
+					return &actions.pickupPackaged();
 				case TaskType::Craft:
-					return &actions.craft;
+					return &actions.craft();
 				case TaskType::Harvest:
-					return &actions.harvest;
+					return &actions.harvest();
 				case TaskType::Build:
-					return &actions.build;
+					return &actions.build();
 				case TaskType::Deconstruct:
-					return &actions.deconstruct;
+					return &actions.deconstruct();
 				case TaskType::FulfillNeed:
 					switch (needType) {
 						case NeedType::Hunger:
-							return &actions.eat;
+							return &actions.eat();
 						case NeedType::Thirst:
-							return &actions.drink;
+							return &actions.drink();
 						case NeedType::Energy:
-							return &actions.sleep;
+							return &actions.sleep();
 						case NeedType::Bladder:
-							return &actions.urinate;
+							return &actions.urinate();
 						case NeedType::Digestion:
-							return &actions.defecate;
+							return &actions.defecate();
 						case NeedType::Hygiene:
-							return &actions.wash;
+							return &actions.wash();
 						case NeedType::Recreation:
 						case NeedType::Temperature:
 						case NeedType::Count:

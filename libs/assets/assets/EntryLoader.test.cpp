@@ -561,6 +561,12 @@ TEST_F(BehaviorLoaderTest, EachEntryMistakeIsOneErrorNamingTheEntryElementAndAtt
 			 R"(<action id="enjoy" seconds="5" interruptable="true" pays="along"><restore need="thirst" amount="2" seconds="60" upTo="90"/></action>)",
 		 "<action id=\"enjoy\"> seconds must be left out; an open-ended action (a <work> effect or an upTo bound) runs until its bound, "
 		 "got \"5\""},
+		{std::string(kThirst) +
+			 R"(<action id="enjoy" interruptable="true" pays="end"><restore need="thirst" amount="2" seconds="60" upTo="90"/></action>)",
+		 "<action id=\"enjoy\"> pays must be left out or along; an open-ended action pays as it goes, got \"end\""},
+		{std::string(kThirst) +
+			 R"(<action id="enjoy" interruptable="true" pays="along" curve="2"><restore need="thirst" amount="2" seconds="60" upTo="90"/></action>)",
+		 "<action id=\"enjoy\"> curve must be left out; an open-ended action pays at its rate, with no fraction done to shape, got \"2\""},
 		{R"(<action id="drink" seconds="1"><put/></action>)", "<action id=\"drink\"> interruptable is missing"},
 		{R"(<action id="drink" seconds="1" interruptable="false" curve="2"><put/></action>)",
 		 "<action id=\"drink\"> curve must be left out; it shapes an action that pays along, got \"2\""},

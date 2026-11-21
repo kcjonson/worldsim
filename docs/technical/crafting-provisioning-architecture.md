@@ -24,7 +24,7 @@ stayed in the hauler's pack and the craft consumed them from the colonist's inve
 - The deposit effect's craft-station branch moves carried material from the colonist into the
   station store (the pack empties), mirroring the build-site branch, and credits the parent Craft
   goal by what physically landed.
-- `applyCraftingEffect` / `startCraftAction` consume and validate against the station store, not
+- `applyCraft` / `startCraftAction` consume and validate against the station store, not
   the colonist. The Craft option in the AI gates on the station holding every input.
 - `CraftingGoalSystem` is store-aware: materials already in the store count as delivered (only the
   shortfall is provisioned), and an input a colonist already carries resolves to a Haul (deliver
