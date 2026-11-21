@@ -169,8 +169,12 @@ namespace assets {
 			return {};
 		}
 		const std::string text = node.text().as_string();
-		if (parseAssetType(defNode.child_value("assetType")) != AssetType::Procedural) {
-			issues.push_back({"detailLevels", "only a procedural def's generator can cut a mesh for a density", text});
+		// Exactly procedural (an empty <assetType> is one) and parts; an unknown type is refused, though the
+		// loader reads it as procedural.
+		const std::string_view type = defNode.child_value("assetType");
+		const bool			   procedural = type.empty() || type == "procedural" || type == "Procedural";
+		if (!procedural && parseAssetType(std::string(type)) != AssetType::Parts) {
+			issues.push_back({"detailLevels", "only a procedural def's generator or a parts def's views are cut for a density", text});
 			return {};
 		}
 

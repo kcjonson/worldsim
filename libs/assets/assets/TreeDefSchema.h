@@ -43,8 +43,8 @@ namespace assets {
 	std::optional<float> readCrownSpacing(const pugi::xml_node& defNode, std::vector<TreeDefIssue>& issues);
 
 	/// The def's <detailLevels> (DetailLevels.h), a comma-separated list of the screen densities in pixels
-	/// a meter its generator cuts a mesh for: positive, strictly ascending, at most kMaxDetailLevels, on a
-	/// procedural def. Empty when it has none or the list is refused (with an issue), so the def has one mesh.
+	/// a meter its generator cuts a mesh for (a parts def's, its views are built for): positive, strictly
+	/// ascending, at most kMaxDetailLevels, on a procedural or parts def. Empty when it has none or the list is refused (with an issue), so the def has one mesh.
 	std::vector<float> readDetailLevels(const pugi::xml_node& defNode, std::vector<TreeDefIssue>& issues);
 
 } // namespace assets

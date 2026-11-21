@@ -3,7 +3,7 @@
 // A ground def's SVG variant read into the paths a ground generator draws (docs/technical/ground-textures.md,
 // "Ground tile assets" and "LOD"): each shape one GeneratedPath in document order, so the registry ranks,
 // wraps and tessellates it as it does a Lua generator's output. The loader and AssetValidator read an SVG
-// through this one function.
+// through this one function, which reads it through the shared data-lod pass (LodSvg.h).
 
 #include "assets/IAssetGenerator.h"
 

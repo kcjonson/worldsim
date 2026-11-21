@@ -4,6 +4,7 @@
 #include "assets/AssetRegistry.h"
 #include "assets/DetailLevels.h"
 #include "assets/GroundSvg.h"
+#include "assets/PartsAsset.h"
 #include "assets/SvgPathNodes.h"
 #include "assets/TreeDefSchema.h"
 #include "assets/VariantSeed.h"
@@ -750,6 +751,31 @@ namespace assets {
 		LOG_DEBUG(Engine, "Set shared scripts path: %s", path.string().c_str());
 	}
 
+	void AssetRegistry::loadParts(const pugi::xml_node& defNode, const std::filesystem::path& folder, AssetDefinition& def) {
+		for (const char* refused : kElementsPartsRefuses) {
+			if (defNode.child(refused)) {
+				m_validationReport.add(
+					Severity::Error, def.defName, refused, std::string("a parts def has no <") + refused + ">; its parts are its art, size, and collider"
+				);
+			}
+		}
+		PartsAuthored authored = readPartsXml(defNode, def.defName, m_validationReport);
+		if (!authored.scriptPath.empty()) {
+			const std::filesystem::path script = (folder / authored.scriptPath).lexically_normal();
+			const std::filesystem::path back = script.lexically_relative(folder.lexically_normal());
+			if (back.empty() || *back.begin() == "..") {
+				m_validationReport.add(Severity::Error, def.defName, "partsScript", "the parts script is outside the item's folder", script.string());
+			} else if (const std::string failure = runPartsScript(script, authored); !failure.empty()) {
+				m_validationReport.add(Severity::Error, def.defName, "partsScript", failure, script.string());
+			}
+		}
+		ResolvedParts resolved = resolveParts(authored, folder, def.defName, PartsLoadConfig{}, m_validationReport);
+		def.parts = std::make_shared<const PartsAsset>(std::move(resolved.asset));
+		def.partsColliders = std::move(resolved.colliders);
+		// A placed item stands at its authored size.
+		def.placement.scale = {.min = 1.0F, .max = 1.0F};
+	}
+
 	bool AssetRegistry::loadDefinitions(const std::string& xmlPath) {
 		std::vector<std::string> loadedNames;
 		const bool				 loaded = parseDefinitions(xmlPath, loadedNames);
@@ -1228,6 +1254,10 @@ namespace assets {
 				}
 			}
 
+			if (def.assetType == AssetType::Parts) {
+				loadParts(defNode, baseFolder, def);
+			}
+
 			// Store base folder for relative path resolution
 			def.baseFolder = baseFolder;
 
@@ -1564,7 +1594,7 @@ namespace assets {
 	}
 
 	std::optional<TreeTraits> AssetRegistry::templateTraits(const AssetDefinition& def, TreeTraits traits) {
-		if (def.assetType == AssetType::Simple || def.role == AssetRole::Groundcover) {
+		if (def.assetType != AssetType::Procedural || def.role == AssetRole::Groundcover) {
 			return TreeTraits{};
 		}
 		if (def.ageClasses.empty()) {
@@ -1604,6 +1634,11 @@ namespace assets {
 		BuiltTemplate			  out;
 		renderer::TessellatedMesh mesh;
 
+		// A parts def's template is its item view at turn 0 (rotatable-placed-items 6.9), which the registry
+		// doesn't build; it has no mesh, as a template whose build failed has none.
+		if (def.assetType == AssetType::Parts) {
+			return out;
+		}
 		if (def.assetType == AssetType::Simple) {
 			if (def.svgPaths.empty()) {
 				LOG_ERROR(Engine, "Simple asset %s has no svgPath", def.defName.c_str());
@@ -1903,6 +1938,27 @@ namespace assets {
 				LOG_ERROR(Engine, "AssetDef '%s' %s", name.c_str(), message.c_str());
 				m_validationReport.add(Severity::Error, name, "collision", message);
 			}
+			// A parts def's derived collider, ring by ring (rotatable-placed-items rule 10).
+			for (size_t ring = 0; ring < def.partsColliders.size(); ++ring) {
+				CollisionShape&	  shape = def.partsColliders[ring];
+				const std::string problem = collisionPolygonProblem(shape, smallest);
+				if (problem.empty()) {
+					if (geometry::windingOrder(collisionPolygonMm(shape, 1.0F)) == geometry::Winding::Clockwise) {
+						std::reverse(shape.pointsMeters.begin(), shape.pointsMeters.end());
+					}
+					continue;
+				}
+				const std::string message = "collider ring " + std::to_string(ring) + ", the union of its parts with height, " + problem +
+											"; the nav mesh can't take it, so it is dropped";
+				LOG_ERROR(Engine, "AssetDef '%s' %s", name.c_str(), message.c_str());
+				m_validationReport.add(Severity::Error, name, "parts", message);
+				shape = CollisionShape{};
+			}
+			std::erase_if(def.partsColliders, [](const CollisionShape& shape) { return !shape.blocks(); });
+			for (const CollisionShape& shape : def.partsColliders) {
+				raiseTo(largestCollisionReach, shape.reachMeters() * scale);
+				raiseTo(largestCollidingScale, scale);
+			}
 			for (const CollisionShape& shape : def.collisions) {
 				if (shape.blocks()) {
 					raiseTo(largestCollisionReach, shape.reachMeters() * scale);
@@ -1964,8 +2020,9 @@ namespace assets {
 			BuiltTemplate built;
 		};
 		std::vector<std::string> names;
+		// A parts def's levels are its item views', not its template's.
 		for (const auto& [name, def] : definitions) {
-			if (!def.detailLevels.empty()) {
+			if (!def.detailLevels.empty() && def.assetType != AssetType::Parts) {
 				names.push_back(name);
 			}
 		}
@@ -2340,8 +2397,8 @@ namespace assets {
 			return false;
 		}
 
-		// A simple asset other than a ground tile is one drawing; reuse the cached, normalized template.
-		if (def->assetType == AssetType::Simple && def->role != AssetRole::Ground) {
+		// A simple asset other than a ground tile, or a parts item, is one drawing; reuse the cached, normalized template.
+		if (def->assetType != AssetType::Procedural && def->role != AssetRole::Ground) {
 			const renderer::TessellatedMesh* tmpl = getTemplate(defName, TreeTraits{});
 			if (tmpl == nullptr || tmpl->vertices.empty()) {
 				return false;

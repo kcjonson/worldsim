@@ -11,6 +11,8 @@
 #include <polygon/Polygon.h>
 
 #include <algorithm>
+#include <array>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <iterator>
@@ -123,8 +125,9 @@ namespace nav {
 					  std::vector<WallJunction>* outJunctions) {
 		// The BUILT segments as the offsetter takes them, with a parallel list of their ids for
 		// door spans and provenance.
-		std::vector<geometry::WallSegment>		   geoSegments;
-		std::vector<construction::SegmentId>	   segmentIds;
+		std::vector<geometry::WallSegment>				   geoSegments;
+		std::vector<construction::SegmentId>			   segmentIds;
+		std::vector<std::array<construction::VertexId, 2>> segmentEnds;
 		for (const construction::WallSegment& seg : world.segments()) {
 			if (!construction::isBuilt(seg)) {
 				continue;
@@ -141,6 +144,7 @@ namespace nav {
 			}
 			geoSegments.push_back({v0->pos, v1->pos, half});
 			segmentIds.push_back(seg.id);
+			segmentEnds.push_back({seg.v0, seg.v1});
 		}
 
 		if (geoSegments.empty()) {
@@ -202,7 +206,7 @@ namespace nav {
 		// safer than a hole in the navmesh. Bands come out in segment order, then the junctions.
 		struct Junction {
 			geometry::Ring						 ring;
-			std::int64_t						 provenance = kProvenanceJunction;
+			construction::VertexId				 vertex = construction::kInvalidVertex;
 			std::vector<construction::SegmentId> walls;
 		};
 		std::vector<std::vector<gnav::NavInputPolygon>> polygonsOfSegment(geoSegments.size());
@@ -259,25 +263,21 @@ namespace nav {
 				}
 			}
 
-			// Each junction is tagged with its smallest incident wall id, so belief gates it by
-			// knowing one of its walls, and lists every wall meeting there.
+			// Each junction is named by the vertex its walls meet at and lists every wall meeting there.
 			for (std::size_t junctionIndex = 0; junctionIndex < bands.junctions.size(); ++junctionIndex) {
 				if (bands.junctions[junctionIndex].size() < 3) {
 					continue;
 				}
-				Junction junction{.ring = bands.junctions[junctionIndex]};
-				if (junctionIndex < bands.junctionSegments.size()) {
-					for (const std::size_t k : bands.junctionSegments[junctionIndex]) {
-						if (k >= graph.size()) {
-							continue;
-						}
-						const construction::SegmentId wall = segmentIds[graph[k]];
-						junction.walls.push_back(wall);
-						const auto id = static_cast<std::int64_t>(wall);
-						if (junction.provenance == kProvenanceJunction || id < junction.provenance) {
-							junction.provenance = id;
-						}
-					}
+				// resolveWallBands makes a junction only where two or more segments meet.
+				assert(junctionIndex < bands.junctionSegments.size() && bands.junctionSegments[junctionIndex].size() >= 2);
+				const std::vector<std::size_t>&				 incident = bands.junctionSegments[junctionIndex];
+				const std::array<construction::VertexId, 2>& first	  = segmentEnds[graph[incident[0]]];
+				const std::array<construction::VertexId, 2>& second	  = segmentEnds[graph[incident[1]]];
+				const bool startMeets = (first[0] == second[0]) || (first[0] == second[1]);
+				assert(startMeets || (first[1] == second[0]) || (first[1] == second[1]));
+				Junction junction{.ring = bands.junctions[junctionIndex], .vertex = startMeets ? first[0] : first[1]};
+				for (const std::size_t k : incident) {
+					junction.walls.push_back(segmentIds[graph[k]]);
 				}
 				junctions.push_back(std::move(junction));
 			}
@@ -287,10 +287,14 @@ namespace nav {
 			std::move(polygons.begin(), polygons.end(), std::back_inserter(outPolys));
 		}
 		for (Junction& junction : junctions) {
+			gnav::NavInputPolygon polygon{.ring = std::move(junction.ring), .blocked = true, .provenanceId = junctionTag(junction.vertex)};
+			for (const construction::SegmentId wall : junction.walls) {
+				polygon.blockerGroup.push_back(static_cast<std::int64_t>(wall));
+			}
 			if (outJunctions != nullptr) {
 				outJunctions->push_back({outPolys.size(), std::move(junction.walls)});
 			}
-			outPolys.push_back({std::move(junction.ring), true, junction.provenance, gnav::kNoOpening});
+			outPolys.push_back(std::move(polygon));
 		}
 	}
 

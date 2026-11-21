@@ -53,6 +53,8 @@ namespace {
 						  std::vector<nav::WallJunction>* outJunctions) {
 			std::vector<geometry::WallSegment>	 geoSegments;
 			std::vector<construction::SegmentId> segmentIds;
+			std::vector<construction::VertexId>	 segmentStarts;
+			std::vector<construction::VertexId>	 segmentEnds;
 			for (const construction::WallSegment& seg : world.segments()) {
 				if (seg.state != FoundationState::Built) {
 					continue;
@@ -69,6 +71,8 @@ namespace {
 				}
 				geoSegments.push_back({v0->pos, v1->pos, half});
 				segmentIds.push_back(seg.id);
+				segmentStarts.push_back(seg.v0);
+				segmentEnds.push_back(seg.v1);
 			}
 
 			if (geoSegments.empty()) {
@@ -191,23 +195,28 @@ namespace {
 					if (j.size() < 3) {
 						continue;
 					}
-					std::int64_t						 prov = nav::kProvenanceJunction;
-					std::vector<construction::SegmentId> incident;
+					std::map<construction::VertexId, std::size_t> endsAt;
+					gnav::NavInputPolygon						  polygon{.ring = j, .blocked = true};
+					std::vector<construction::SegmentId>		  incident;
 					if (ji < bands.junctionSegments.size()) {
 						for (std::size_t segIdx : bands.junctionSegments[ji]) {
 							if (segIdx < segmentIds.size()) {
 								incident.push_back(segmentIds[segIdx]);
-								const std::int64_t id = static_cast<std::int64_t>(segmentIds[segIdx]);
-								if (prov == nav::kProvenanceJunction || id < prov) {
-									prov = id;
-								}
+								polygon.blockerGroup.push_back(static_cast<std::int64_t>(segmentIds[segIdx]));
+								++endsAt[segmentStarts[segIdx]];
+								++endsAt[segmentEnds[segIdx]];
 							}
+						}
+					}
+					for (const auto& [vertex, count] : endsAt) {
+						if (count == incident.size()) {
+							polygon.provenanceId = nav::junctionTag(vertex);
 						}
 					}
 					if (outJunctions != nullptr) {
 						outJunctions->push_back({outPolys.size(), std::move(incident)});
 					}
-					outPolys.push_back({j, true, prov, gnav::kNoOpening});
+					outPolys.push_back(std::move(polygon));
 				}
 			}
 		}
@@ -241,7 +250,7 @@ namespace {
 		}
 	}
 
-	using PolygonKey = std::tuple<std::int64_t, std::int64_t, bool, bool, bool, Ring>;
+	using PolygonKey = std::tuple<std::int64_t, std::int64_t, bool, bool, bool, Ring, std::vector<std::int64_t>>;
 	using JunctionKey = std::pair<Ring, std::vector<SegmentId>>;
 	using PortalKey	 = std::tuple<std::int64_t, Vec2i64, Vec2i64, std::int64_t>;
 
@@ -284,8 +293,10 @@ namespace {
 
 		WallOutput output;
 		for (const gnav::NavInputPolygon& polygon : polygons) {
+			std::vector<std::int64_t> group = polygon.blockerGroup;
+			std::sort(group.begin(), group.end());
 			output.polygons.emplace_back(polygon.provenanceId, polygon.openingId, polygon.blocked, polygon.holeCapable, polygon.coverOnly,
-										 polygon.ring);
+										 polygon.ring, std::move(group));
 		}
 		for (const nav::WallJunction& junction : junctions) {
 			EXPECT_LT(junction.polygon, polygons.size());
@@ -403,6 +414,7 @@ namespace {
 			EXPECT_EQ(std::get<2>(a), std::get<2>(e));
 			EXPECT_EQ(std::get<3>(a), std::get<3>(e));
 			EXPECT_EQ(std::get<4>(a), std::get<4>(e));
+			EXPECT_EQ(std::get<6>(a), std::get<6>(e));
 			const std::optional<std::int64_t> difference = largestDifference(ringOf(a), ringOf(e));
 			ASSERT_TRUE(difference.has_value()) << describe(ringOf(a)) << "against " << describe(ringOf(e));
 			EXPECT_LE(*difference, 1) << describe(ringOf(a)) << "against " << describe(ringOf(e));
