@@ -16,6 +16,7 @@
 // - /docs/design/game-systems/world/entity-capabilities.md
 
 #include "../ActionEntries.h"
+#include "../EntityID.h"
 #include "Needs.h"
 
 #include <assets/Entries.h>
@@ -24,6 +25,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -118,24 +120,40 @@ namespace ecs {
 	}
 
 	// ============================================================================
-	// Effect Types (what happens when the action completes)
+	// Effect context (what an action's effect rows read from where it runs)
 	// ============================================================================
 
-	/// Effect for need fulfillment actions (Drink, Wash, Sleep, Toilet)
-	/// Restores one need, optionally affects another as a side effect.
-	struct NeedEffect {
-		/// The primary need being restored
-		NeedType need = NeedType::Count;
-
-		/// Amount to restore (0-100 scale)
-		float restoreAmount = 0.0F;
-
-		/// Optional side effect need (e.g., drinking affects bladder)
-		NeedType sideEffectNeed = NeedType::Count;
-
-		/// Side effect amount (positive = restore, negative = drain)
-		float sideEffectAmount = 0.0F;
+	/// What an action's effect rows name and do not carry: set when it starts, and by its `<consume>` each time it
+	/// uses up a unit.
+	struct EffectContext {
+		/// The definition of the unit the last `<consume>` used up, or the one the action set out to eat; 0 for none.
+		uint32_t consumedDefNameId = 0;
+		/// The nutrition of the unit the last `<consume>` used up, which a `<restore from="nutrition">` scales.
+		float nutrition = 0.0F;
+		/// The target's sleep quality, which a `<restore scaleBy="sleep_quality">` scales.
+		float sleepQuality = 1.0F;
+		/// The step's target creature, whose need a `<restore who="target">` moves.
+		EntityID targetCreature = kInvalidEntity;
 	};
+
+	/// The whole signed amount a `<restore>` row moves its need by: per its `seconds` for an open-ended row.
+	[[nodiscard]] inline float restoredAmount(const RestoreRow& row, const EffectContext& context) {
+		const float amount = row.fromNutrition ? context.nutrition * row.amount : row.amount;
+		return row.bySleepQuality ? amount * context.sleepQuality : amount;
+	}
+
+	/// The share of an action's total an action paying along earns from `fromFraction` to `toFraction` of it done: by a
+	/// fraction f it has earned f^curve of the whole.
+	[[nodiscard]] inline float earnedShare(float fromFraction, float toFraction, float curve) {
+		if (curve == 1.0F) {
+			return toFraction - fromFraction;
+		}
+		return std::pow(toFraction, curve) - std::pow(fromFraction, curve);
+	}
+
+	// ============================================================================
+	// Effect Types: the targets and items each effect row acts on
+	// ============================================================================
 
 	/// Effect for item collection actions (Pickup, Harvest)
 	/// Adds items to inventory and optionally affects the source entity.
@@ -158,9 +176,9 @@ namespace ecs {
 		/// If destroySource is false and this > 0, entity enters cooldown (regrowth)
 		float regrowthTime = 0.0F;
 
-		/// Construction footprint clear: the source is removed by this action whatever kind it is
-		/// (regrowing, pooled) and however much the colonist can carry; the uncarried yield drops
-		/// as a loose pile.
+		/// Construction footprint clear, set by the harvest factory for a clear goal (a `<take clears="true">` row
+		/// clears too): the source is removed by this action whatever kind it is (regrowing, pooled) and however much
+		/// the colonist can carry; the uncarried yield drops as a loose pile.
 		bool clearsSource = false;
 
 		/// Where the yield the colonist can't carry drops: beside the source when unset; a footprint
@@ -174,32 +192,10 @@ namespace ecs {
 		uint64_t sourceStorageId = 0;
 	};
 
-	/// Effect for consuming items from inventory (Eat action)
-	/// Removes item from inventory and restores a need, with optional side effect.
-	struct ConsumptionEffect {
-		/// Item definition name to consume from inventory
-		std::string itemDefName;
-
-		/// Quantity to consume
-		uint32_t quantity = 1;
-
-		/// Which need to restore
-		NeedType need = NeedType::Hunger;
-
-		/// Amount to restore (0-100 scale)
-		float restoreAmount = 30.0F;
-
-		/// Optional side effect need (e.g., eating fills digestion)
-		NeedType sideEffectNeed = NeedType::Count;
-
-		/// Side effect amount (positive = restore, negative = drain)
-		float sideEffectAmount = 0.0F;
-	};
-
-	/// Effect for construction progress actions (Build, Deconstruct).
+	/// What a `<work>` row works on (Build, Deconstruct).
 	///
 	/// Unlike fixed-duration effects (applied once on completion), construction work is
-	/// continuous: ActionSystem advances the target blueprint's workDone every processAction
+	/// continuous: ActionSystem advances the target blueprint's workDone every
 	/// tick by rate(skill) x dt, so multiple colonists and multiple work sessions accumulate
 	/// onto the same StructureBlueprint. The action ends when the blueprint reaches its work
 	/// bound (workTotal for Build, 0 for Deconstruct), at which point ActionSystem fires the
@@ -208,21 +204,9 @@ namespace ecs {
 		/// Target blueprint entity whose StructureBlueprint.workDone is advanced.
 		uint64_t targetEntityId = 0;
 
-		/// Builder's Construction skill level (0-20), captured when the action starts.
+		/// Builder's level in the work row's skill (0-20), captured when the action starts.
 		/// Scales the per-second work rate; see constructionWorkRate().
 		float skillLevel = 0.0F;
-
-		/// True for Deconstruct (workDone counts down toward 0); false for Build (counts up).
-		bool deconstruct = false;
-	};
-
-	/// Effect for entity spawning (Toilet creates Bio Pile)
-	struct SpawnEffect {
-		/// Position to spawn entity
-		glm::vec2 position{0.0F, 0.0F};
-
-		// TODO: When entity spawning exists:
-		// std::string entityDefName;
 	};
 
 	/// Effect for crafting actions (Craft at station)
@@ -272,8 +256,7 @@ namespace ecs {
 	};
 
 	/// Variant holding the effect data for the current action
-	using ActionEffect =
-		std::variant<std::monostate, NeedEffect, CollectionEffect, ConsumptionEffect, ProgressEffect, SpawnEffect, CraftingEffect, DepositEffect, PlacePackagedEffect>;
+	using ActionEffect = std::variant<std::monostate, CollectionEffect, ProgressEffect, CraftingEffect, DepositEffect, PlacePackagedEffect>;
 
 	// ============================================================================
 	// Action Component
@@ -286,8 +269,12 @@ namespace ecs {
 		ActionType	type = ActionType::None;
 		ActionState state = ActionState::Starting;
 
-		/// The action entry the factory read its values from; none while no action runs.
-		assets::EntryHandle<assets::ActionEntry> entry;
+		/// The action entry the action runs, its effect rows applied in the order written; null while no action runs.
+		/// Points into the ActionEntries the ActionSystem was given, which outlives every action.
+		const ActionValues* values = nullptr;
+
+		/// What the effect rows read from where the action runs.
+		EffectContext context;
 
 		/// Duration of the action in seconds
 		float duration = 0.0F;
@@ -295,16 +282,27 @@ namespace ecs {
 		/// Elapsed time in this action (seconds)
 		float elapsed = 0.0F;
 
-		/// Target position (used for location-based effects like spawning)
+		/// The fraction of an action paying along already paid out.
+		float paidFraction = 0.0F;
+
+		/// The times an open-ended action has paid as it went: each round of its `<consume>`, each tick its `<restore>`
+		/// moved its need. One that reached its bound before paying anything finishes nothing.
+		uint32_t rounds = 0;
+
+		/// What the action has paid to the need it serves (its values' primary row), which the completion log reports for
+		/// an open-ended action.
+		float restored = 0.0F;
+
+		/// Target position (the point the action works at)
 		glm::vec2 targetPosition{0.0F, 0.0F};
+
+		/// Where the creature stood when the action started, which a `<spawn>` puts its thing at.
+		glm::vec2 startPosition{0.0F, 0.0F};
 
 		/// Whether this action can be interrupted by higher-priority tasks.
 		/// Biological needs (Eat, Drink, Toilet) are NOT interruptable.
 		/// Sleep can be interrupted for critical needs.
 		bool interruptable = true;
-
-		/// Whether this action spawns a Bio Pile on completion (for Toilet/poop)
-		bool spawnBioPile = false;
 
 		// --- Effect data (variant - contains type-specific data) ---
 
@@ -326,32 +324,12 @@ namespace ecs {
 			return elapsed / duration;
 		}
 
-		/// Check if this action has a need effect
-		[[nodiscard]] bool hasNeedEffect() const { return std::holds_alternative<NeedEffect>(effect); }
-
-		/// Get the need effect (call hasNeedEffect() first or use std::get_if)
-		[[nodiscard]] const NeedEffect& needEffect() const { return std::get<NeedEffect>(effect); }
-		[[nodiscard]] NeedEffect&		needEffect() { return std::get<NeedEffect>(effect); }
-
-		/// Check if this action has a spawn effect
-		[[nodiscard]] bool hasSpawnEffect() const { return std::holds_alternative<SpawnEffect>(effect); }
-
-		/// Get the spawn effect
-		[[nodiscard]] const SpawnEffect& spawnEffect() const { return std::get<SpawnEffect>(effect); }
-
 		/// Check if this action has a collection effect
 		[[nodiscard]] bool hasCollectionEffect() const { return std::holds_alternative<CollectionEffect>(effect); }
 
 		/// Get the collection effect
 		[[nodiscard]] const CollectionEffect& collectionEffect() const { return std::get<CollectionEffect>(effect); }
 		[[nodiscard]] CollectionEffect&		  collectionEffect() { return std::get<CollectionEffect>(effect); }
-
-		/// Check if this action has a consumption effect
-		[[nodiscard]] bool hasConsumptionEffect() const { return std::holds_alternative<ConsumptionEffect>(effect); }
-
-		/// Get the consumption effect
-		[[nodiscard]] const ConsumptionEffect& consumptionEffect() const { return std::get<ConsumptionEffect>(effect); }
-		[[nodiscard]] ConsumptionEffect&	   consumptionEffect() { return std::get<ConsumptionEffect>(effect); }
 
 		/// Check if this action has a crafting effect
 		[[nodiscard]] bool hasCraftingEffect() const { return std::holds_alternative<CraftingEffect>(effect); }
@@ -387,65 +365,71 @@ namespace ecs {
 		void clear() {
 			type = ActionType::None;
 			state = ActionState::Starting;
-			entry = {};
+			values = nullptr;
+			context = EffectContext{};
 			duration = 0.0F;
 			elapsed = 0.0F;
+			paidFraction = 0.0F;
+			rounds = 0;
+			restored = 0.0F;
 			targetPosition = glm::vec2{0.0F, 0.0F};
+			startPosition = glm::vec2{0.0F, 0.0F};
 			interruptable = true;
-			spawnBioPile = false;
 			effect = std::monostate{};
 		}
 
 		// --- Factory methods for creating actions ---
 		//
-		// Each factory takes its duration, interruptability, and amounts from its action entry (ActionEntries).
+		// Each factory takes its duration, interruptability, amounts, and effect rows from its action entry
+		// (ActionEntries), and sets the context and targets the rows act on.
 
-		/// Factory: Eat action - consume food from inventory, restoring each need its entry restores by the food's
-		/// nutrition times the row's scale (hunger up, digestion down as the gut fills).
-		/// @param itemDefName Item to consume from inventory
-		/// @param nutrition The food's nutrition (0-1 scale)
-		static Action Eat(const ActionEntries& actions, const std::string& itemDefName, float nutrition) {
-			const ActionValues& values = actions.eat;
-			Action				action = fromEntry(ActionType::Eat, values);
+		/// An action of `type` starting, running the entry `values` (which must outlive it), with its fixed duration
+		/// and interruptability. The factories start from it; an action with no factory sets its own context and
+		/// targets.
+		static Action fromEntry(ActionType type, const ActionValues& values) {
+			Action action;
+			action.type = type;
+			action.state = ActionState::Starting;
+			action.values = &values;
+			action.duration = values.seconds;
+			action.interruptable = values.interruptable;
+			return action;
+		}
 
-			ConsumptionEffect consumeEff;
-			consumeEff.itemDefName = itemDefName;
-			consumeEff.quantity = values.consumes;
-			consumeEff.need = values.restores[0].need;
-			consumeEff.restoreAmount = nutrition * values.restores[0].amount;
-			if (values.restoreCount > 1) {
-				consumeEff.sideEffectNeed = values.restores[1].need;
-				consumeEff.sideEffectAmount = nutrition * values.restores[1].amount;
-			}
-			action.effect = consumeEff;
-
+		/// Factory: Eat action - its `<consume>` uses up a held unit of food, chosen when it applies, and its restores
+		/// scale by that unit's nutrition (hunger up, digestion down as the gut fills).
+		/// @param foodDefNameId The food the colonist sets out to eat, which the started action reports
+		/// @param nutrition That food's nutrition (0-1 scale)
+		static Action Eat(const ActionEntries& actions, uint32_t foodDefNameId, float nutrition) {
+			Action action = fromEntry(ActionType::Eat, actions.eat());
+			action.context.consumedDefNameId = foodDefNameId;
+			action.context.nutrition = nutrition;
 			return action;
 		}
 
 		/// Factory: Drink action at water, which is inexhaustible.
-		static Action Drink(const ActionEntries& actions) { return needAction(ActionType::Drink, actions.drink); }
+		static Action Drink(const ActionEntries& actions) { return fromEntry(ActionType::Drink, actions.drink()); }
 
 		/// Factory: Wash action at water.
-		static Action Wash(const ActionEntries& actions) { return needAction(ActionType::Wash, actions.wash); }
+		static Action Wash(const ActionEntries& actions) { return fromEntry(ActionType::Wash, actions.wash()); }
 
 		/// Factory: Sleep action - restores energy by its entry's amount times the sleep quality.
 		/// @param quality The place's sleep quality (the ground's from ActionEntries, 1.0 for a bed)
 		static Action Sleep(const ActionEntries& actions, float quality) {
-			Action action = needAction(ActionType::Sleep, actions.sleep);
-			action.needEffect().restoreAmount *= quality;
+			Action action = fromEntry(ActionType::Sleep, actions.sleep());
+			action.context.sleepQuality = quality;
 			return action;
 		}
 
 		/// Factory: Toilet action - relieves the bladder, the bowels, or both, from the matching entry; only a relief
 		/// whose entry spawns (the bowels) leaves a bio pile.
-		/// @param position Position for Bio Pile if pooping
+		/// @param position Where the colonist relieves himself
 		/// @param doPee Whether to relieve bladder; at least one of doPee and doPoop is true
 		/// @param doPoop Whether to relieve digestion
 		static Action Toilet(const ActionEntries& actions, glm::vec2 position, bool doPee, bool doPoop) {
-			const ActionValues& values = doPee && doPoop ? actions.relieveBoth : (doPoop ? actions.defecate : actions.urinate);
-			Action				action = needAction(ActionType::Toilet, values);
+			const ActionValues& values = doPee && doPoop ? actions.relieveBoth() : (doPoop ? actions.defecate() : actions.urinate());
+			Action				action = fromEntry(ActionType::Toilet, values);
 			action.targetPosition = position;
-			action.spawnBioPile = values.spawns;
 			return action;
 		}
 
@@ -461,7 +445,7 @@ namespace ecs {
 			glm::vec2			 sourcePos,
 			const std::string&	 sourceDefName
 		) {
-			Action action = fromEntry(ActionType::Pickup, actions.pickup);
+			Action action = fromEntry(ActionType::Pickup, actions.pickup());
 			action.targetPosition = sourcePos;
 
 			CollectionEffect collEff;
@@ -491,7 +475,7 @@ namespace ecs {
 			uint64_t			 sourceStorageId,
 			glm::vec2			 sourcePos
 		) {
-			Action action = fromEntry(ActionType::Withdraw, actions.withdraw);
+			Action action = fromEntry(ActionType::Withdraw, actions.withdraw());
 			action.targetPosition = sourcePos;
 
 			CollectionEffect collEff;
@@ -526,7 +510,7 @@ namespace ecs {
 			bool				 destructive,
 			float				 regrowthTime
 		) {
-			Action action = fromEntry(ActionType::Harvest, actions.harvest);
+			Action action = fromEntry(ActionType::Harvest, actions.harvest());
 			action.duration = durability;
 			action.targetPosition = sourcePos;
 
@@ -558,7 +542,7 @@ namespace ecs {
 			const std::vector<std::pair<std::string, uint32_t>>& inputs,
 			const std::vector<std::pair<std::string, uint32_t>>& outputs
 		) {
-			Action action = fromEntry(ActionType::Craft, actions.craft);
+			Action action = fromEntry(ActionType::Craft, actions.craft());
 			action.duration = workAmount / assets::kJobWorkTicksPerSecond;
 			action.targetPosition = stationPos;
 
@@ -587,7 +571,7 @@ namespace ecs {
 			glm::vec2			 storagePos,
 			bool				 deliverToCraftStation = false
 		) {
-			Action action = fromEntry(ActionType::Deposit, actions.deposit);
+			Action action = fromEntry(ActionType::Deposit, actions.deposit());
 			action.targetPosition = storagePos;
 
 			DepositEffect depEff;
@@ -612,13 +596,12 @@ namespace ecs {
 		/// @param skillLevel Builder's Construction skill (0-20)
 		static Action Build(const ActionEntries& actions, uint64_t blueprintEntityId, glm::vec2 blueprintPos, float skillLevel) {
 			// Open-ended: completion is gated by workDone >= workTotal, not elapsed time, so the duration is 0.
-			Action action = fromEntry(ActionType::Build, actions.build);
+			Action action = fromEntry(ActionType::Build, actions.build());
 			action.targetPosition = blueprintPos;
 
 			ProgressEffect progressEff;
 			progressEff.targetEntityId = blueprintEntityId;
 			progressEff.skillLevel = skillLevel;
-			progressEff.deconstruct = false;
 			action.effect = progressEff;
 
 			return action;
@@ -632,13 +615,12 @@ namespace ecs {
 		/// @param blueprintPos Position of the deconstruct work slot
 		/// @param skillLevel Builder's Construction skill (0-20)
 		static Action Deconstruct(const ActionEntries& actions, uint64_t blueprintEntityId, glm::vec2 blueprintPos, float skillLevel) {
-			Action action = fromEntry(ActionType::Deconstruct, actions.deconstruct);
+			Action action = fromEntry(ActionType::Deconstruct, actions.deconstruct());
 			action.targetPosition = blueprintPos;
 
 			ProgressEffect progressEff;
 			progressEff.targetEntityId = blueprintEntityId;
 			progressEff.skillLevel = skillLevel;
-			progressEff.deconstruct = true;
 			action.effect = progressEff;
 
 			return action;
@@ -649,7 +631,7 @@ namespace ecs {
 		/// @param packagedEntityId Entity ID of the packaged item
 		/// @param sourcePos Position of the packaged item
 		static Action PickupPackaged(const ActionEntries& actions, uint64_t packagedEntityId, glm::vec2 sourcePos) {
-			Action action = fromEntry(ActionType::PickupPackaged, actions.pickupPackaged);
+			Action action = fromEntry(ActionType::PickupPackaged, actions.pickupPackaged());
 			action.targetPosition = sourcePos;
 
 			PlacePackagedEffect placeEff;
@@ -665,41 +647,13 @@ namespace ecs {
 		/// @param packagedEntityId Entity ID of the packaged item being placed
 		/// @param targetPos Position to place the item (from Packaged.targetPosition)
 		static Action PlacePackaged(const ActionEntries& actions, uint64_t packagedEntityId, glm::vec2 targetPos) {
-			Action action = fromEntry(ActionType::PlacePackaged, actions.placePackaged);
+			Action action = fromEntry(ActionType::PlacePackaged, actions.placePackaged());
 			action.targetPosition = targetPos;
 
 			PlacePackagedEffect placeEff;
 			placeEff.packagedEntityId = packagedEntityId;
 			placeEff.targetPosition = targetPos;
 			action.effect = placeEff;
-
-			return action;
-		}
-
-	  private:
-		/// An action of `type` starting, with its entry's handle, fixed duration, and interruptability.
-		static Action fromEntry(ActionType type, const ActionValues& values) {
-			Action action;
-			action.type = type;
-			action.state = ActionState::Starting;
-			action.entry = values.entry;
-			action.duration = values.seconds;
-			action.interruptable = values.interruptable;
-			return action;
-		}
-
-		/// An action restoring the needs its entry's `<restore>` rows name: the first, and the second as its side effect.
-		static Action needAction(ActionType type, const ActionValues& values) {
-			Action action = fromEntry(type, values);
-
-			NeedEffect needEffect;
-			needEffect.need = values.restores[0].need;
-			needEffect.restoreAmount = values.restores[0].amount;
-			if (values.restoreCount > 1) {
-				needEffect.sideEffectNeed = values.restores[1].need;
-				needEffect.sideEffectAmount = values.restores[1].amount;
-			}
-			action.effect = needEffect;
 
 			return action;
 		}

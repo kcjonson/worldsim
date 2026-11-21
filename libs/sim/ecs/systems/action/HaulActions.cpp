@@ -28,7 +28,10 @@
 
 namespace ecs {
 
-	bool ActionSystem::applyDepositEffect(const Action& action, Inventory& inventory) {
+	bool ActionSystem::applyPut(const Action& action, Inventory& inventory) {
+		if (!action.hasDepositEffect()) {
+			return refuseWithoutTarget(action, "put");
+		}
 		const auto& depEff = action.depositEffect();
 
 		auto&	   registry = assets::AssetRegistry::Get();
@@ -163,7 +166,48 @@ namespace ecs {
 		return false;
 	}
 
-	bool ActionSystem::applyPlacePackagedEffect(const Action& action, Inventory& inventory) {
+	bool ActionSystem::liftPackaged(const Action& action, Inventory& inventory) {
+		const auto& placeEffect = action.placePackagedEffect();
+		const auto	packagedEntity = static_cast<EntityID>(placeEffect.packagedEntityId);
+		const auto* packaged = world->getComponent<Packaged>(packagedEntity);
+		if (packaged == nullptr || packaged->beingCarried) {
+			return false;
+		}
+
+		// Hand clearing: stow items to backpack, drop if can't fit
+		clearHandsForTwoHandedPickup(inventory, action.targetPosition);
+
+		// Mark the entity as being carried (hides from world rendering); fetched again, since clearing the hands
+		// may have put goods into the world.
+		world->getComponent<Packaged>(packagedEntity)->beingCarried = true;
+		inventory.carryingPackagedEntity = placeEffect.packagedEntityId;
+
+		// Put the entity's defName in both hands (for UI display)
+		auto* appearance = world->getComponent<Appearance>(packagedEntity);
+		if (appearance != nullptr && !appearance->defName.empty()) {
+			inventory.leftHand = ItemStack{appearance->defName, 1};
+			inventory.rightHand = ItemStack{appearance->defName, 1};
+			LOG_INFO(
+				Engine,
+				"[Action] Picked up %s (entity %llu) - now carrying in both hands",
+				appearance->defName.c_str(),
+				static_cast<unsigned long long>(placeEffect.packagedEntityId)
+			);
+		} else {
+			LOG_WARNING(
+				Engine,
+				"[Action] Could not set hands: appearance=%p, defName=%s",
+				static_cast<void*>(appearance),
+				appearance ? appearance->defName.c_str() : "(null)"
+			);
+		}
+		return true;
+	}
+
+	bool ActionSystem::applyInstall(const Action& action, Inventory& inventory) {
+		if (!action.hasPlacePackagedEffect()) {
+			return refuseWithoutTarget(action, "install");
+		}
 		const auto& placeEff = action.placePackagedEffect();
 
 		// Get the packaged entity
@@ -316,7 +360,7 @@ namespace ecs {
 				if (def != nullptr && def->capabilities.carryable.has_value()) {
 					// A pickup takes what its claim was sized to (the root's need net of in-flight, the
 					// carry), never more than is there: a pile yields that and keeps the rest, a single
-					// loose item is capped to its own carryable count (applyCollectionEffect). A harvest
+					// loose item is capped to its own carryable count (takeFromSource). A harvest
 					// instead takes all it can carry, so freshly cut goods aren't stranded at a far tree.
 					const uint32_t pickupQty = pickupPending ? sourceClaim->quantity() : task.haulQuantity;
 					action = Action::Pickup(actionEntries, defName, pickupQty, entity->position, defName);
