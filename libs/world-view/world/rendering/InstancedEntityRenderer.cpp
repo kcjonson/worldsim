@@ -152,43 +152,42 @@ namespace worldview {
 		lastLevelStats.residentViewBytes = viewBytes;
 	}
 
-	uint32_t InstancedEntityRenderer::viewFor(const assets::ItemLayout& layout, const assets::PlacedEntity& entity) {
-		const uint8_t  level = levelsOf(layout.templateId).reference;
-		const uint64_t key = (static_cast<uint64_t>(layout.templateId) << 24U) | (static_cast<uint64_t>(layout.turnQuanta) << 8U) | level;
-		const auto [found, inserted] = viewOfKey.try_emplace(key, static_cast<uint32_t>(viewSlots.size()));
-		if (inserted) {
+	uint32_t InstancedEntityRenderer::viewFor(const assets::ItemLayout& layout) {
+		const uint8_t level = levelsOf(layout.templateId).reference;
+		const auto [index, isNew] = itemViews.viewSlot(layout.templateId, layout.turnQuanta, level);
+		if (isNew) {
 			ViewSlot& slot = viewSlots.emplace_back();
 			slot.state = SlotState::Failed;
-			const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(entity.defName);
+			const assets::AssetDefinition* def = assets::AssetRegistry::Get().templateDefinition(layout.templateId);
 			if (def == nullptr) {
-				LOG_ERROR(Engine, "No definition %s for its item view", entity.defName.c_str());
-				return kNoView;
+				LOG_ERROR(Engine, "No definition for template %u's item view", layout.templateId);
+				return kNotAView;
 			}
 			// The reference level on this thread at its first want, uploaded at once, so the item draws on the frame
 			// it first appears (rotatable-placed-items 10).
 			assets::ItemView view = assets::buildItemMesh(*def, layout.turnQuanta, level, assets::GameViewConfig::Get().config());
 			if (!view.error.empty()) {
-				LOG_ERROR(Engine, "No view of %s at %u quanta: %s", entity.defName.c_str(), layout.turnQuanta, view.error.c_str());
-				return kNoView;
+				LOG_ERROR(Engine, "No view of %s at %u quanta: %s", def->defName.c_str(), layout.turnQuanta, view.error.c_str());
+				return kNotAView;
 			}
 			if (view.strips.size() != layout.layout.strips.size()) {
 				LOG_ERROR(
-					Engine, "The view of %s at %u quanta has %zu strips where its layout has %zu", entity.defName.c_str(), layout.turnQuanta,
+					Engine, "The view of %s at %u quanta has %zu strips where its layout has %zu", def->defName.c_str(), layout.turnQuanta,
 					view.strips.size(), layout.layout.strips.size()
 				);
-				return kNoView;
+				return kNotAView;
 			}
 			slot.handle = Renderer::Primitives::uploadInstancedMesh(view.mesh, kInitialViewInstanceCapacity);
 			if (!slot.handle.isValid()) {
-				LOG_ERROR(Engine, "The view of %s at %u quanta failed to upload", entity.defName.c_str(), layout.turnQuanta);
-				return kNoView;
+				LOG_ERROR(Engine, "The view of %s at %u quanta failed to upload", def->defName.c_str(), layout.turnQuanta);
+				return kNotAView;
 			}
 			slot.capacity = kInitialViewInstanceCapacity;
 			slot.mesh = std::move(view.mesh);
 			slot.strips = std::move(view.strips);
 			slot.state = SlotState::Ready;
 		}
-		return viewSlots[found->second].state == SlotState::Ready ? found->second : kNoView;
+		return viewSlots[index].state == SlotState::Ready ? index : kNotAView;
 	}
 
 	void InstancedEntityRenderer::emitAnimated(
@@ -260,7 +259,9 @@ namespace worldview {
 		}
 	}
 
-	void InstancedEntityRenderer::emitSorted(const std::vector<assets::DepthSortItem>& items, const assets::RenderContext& ctx, RenderStats& stats) {
+	void InstancedEntityRenderer::emitSorted(
+		const std::vector<assets::DepthSortItem>& items, uint32_t stripUprights, const assets::RenderContext& ctx, RenderStats& stats
+	) {
 		// GL state note: Primitives::drawInstanced() sets up its own GL state internally,
 		// so we don't need to carry state from the baked path here.
 		// NOTE: do NOT early-out on items.empty(). A selectable static below the tall-occluder
@@ -292,16 +293,16 @@ namespace worldview {
 		const uint32_t		   slotBound = (assets::AssetRegistry::Get().templateCount() + 1) * static_cast<uint32_t>(assets::kMaxDetailLevels);
 		LevelStats			   levelStats{.screenPixelsPerMeter = scale};
 		const Foundation::Vec2 screenOffset{halfViewW - (camX * scale), halfViewH - (camY * scale)};
-		// Every strip of every kept layout has its own planner mesh id after the template slots (the layouts were
-		// made with the items, before this).
-		planner.beginFrame(ctx.viewportWidth, ctx.viewportHeight, slotBound + assets::AssetRegistry::Get().stripLayoutStripCount());
+		// Each parts item's layout in the stream numbers its strips' planner mesh ids on from the template slots at
+		// its first strip, so the bound grows only with the strips in view (rotatable-placed-items 9.2). A registry
+		// clear started template ids and layouts over: the views kept by them go.
+		planner.beginFrame(ctx.viewportWidth, ctx.viewportHeight, slotBound + stripUprights);
+		uint32_t nextStripMesh = slotBound;
+		if (itemViews.follow(assets::AssetRegistry::Get().generation())) {
+			viewSlots.clear();
+		}
 		runCount = 0;
 
-		// drawInstanced draws immediately; the CPU triangle batch only draws when the
-		// BatchRenderer is flushed. To keep depth order we draw every open run before an
-		// interleaving animated entity (so the runs sit behind it), and force the anim batch
-		// out (drawTriangles + flush) before the next instanced entity opens or joins a run
-		// (so the anim sits behind it). Only one of the two kinds is ever pending at a time.
 		// One ranged draw of `strips` consecutive depth strips of a view, from the run's strip on.
 		auto drawStrips = [&](Run& run, uint32_t strips) {
 			ViewSlot&  view = viewSlots[run.view];
@@ -330,12 +331,23 @@ namespace worldview {
 			stats.uprightTriangles += count * (indices / 3);
 		};
 
+		// drawInstanced draws immediately; the CPU triangle batch only draws when the
+		// BatchRenderer is flushed. To keep depth order we draw every open run before an
+		// interleaving animated entity (so the runs sit behind it), and force the anim batch
+		// out (drawTriangles + flush) before the next instanced entity opens or joins a run
+		// (so the anim sits behind it). Only one of the two kinds is ever pending at a time.
 		auto flushRuns = [&]() {
 			const std::span<const uint32_t> closing = planner.close();
+			for (const uint32_t index : closing) {
+				Run& run = runs[index];
+				if (run.view != kNotAView) {
+					run.itemsApart = !itemViews.frameOf(run.layout).itemsMeet;
+				}
+			}
 			spanRuns(planner, closing, runs, runSpans);
 			for (const RunSpan& span : runSpans) {
 				Run& run = runs[closing[span.first]];
-				if (run.view != kNoView) {
+				if (run.view != kNotAView) {
 					drawStrips(run, span.count);
 					for (uint32_t i = 0; i < span.count; ++i) {
 						runs[closing[span.first + i]].instances.clear();
@@ -439,20 +451,17 @@ namespace worldview {
 			// with the strip as its mesh (rotatable-placed-items 9.2).
 			if (upright.itemLayout != nullptr) {
 				const assets::ItemLayout& layout = *upright.itemLayout;
-				if (layout.id >= layoutFrames.size()) {
-					layoutFrames.resize(static_cast<size_t>(layout.id) + 1);
-				}
-				LayoutFrame& settled = layoutFrames[layout.id];
-				if (settled.frame != frameIndex) {
-					settled.frame = frameIndex;
-					settled.view = viewFor(layout, *upright.entity);
+				LayoutFrame*			  settled = nullptr;
+				if (itemViews.settle(layout, frameIndex, nextStripMesh, settled)) {
+					settled->view = viewFor(layout);
 					// In the stored order, ascending anchor, as the stream brings them, so each strip ranks after
 					// the strips of its item it shares cells with and stays in their layer.
-					planner.reserveOrders(slotBound + layout.firstStrip, static_cast<uint32_t>(layout.layout.strips.size()));
+					planner.reserveOrders(settled->firstMesh, static_cast<uint32_t>(layout.layout.strips.size()));
 				}
-				if (settled.view == kNoView || viewSlots[settled.view].strips[upright.strip].indexCount == 0) {
+				if (settled->view == kNotAView || viewSlots[settled->view].strips[upright.strip].indexCount == 0) {
 					continue;
 				}
+				ItemViewIndex::noteItem(*settled, upright.position);
 				const assets::ItemStrip& box = layout.layout.strips[upright.strip];
 				const Foundation::Vec2	 position{upright.position.x, upright.position.y};
 				const Foundation::Vec2	 pixelMin = ((position + Foundation::Vec2{box.minX, box.minY}) * scale) + screenOffset;
@@ -460,16 +469,17 @@ namespace worldview {
 				const bool				 small = std::max(pixelMax.x - pixelMin.x, pixelMax.y - pixelMin.y) <= kUnorderedFootprintPixels;
 
 				flushAnim(); // draw any pending anim behind this strip
-				const uint32_t r = planner.place(slotBound + layout.firstStrip + upright.strip, planner.cellsOf(pixelMin, pixelMax), small);
-				if (r == runCount) {
+				const uint32_t runIndex = planner.place(settled->firstMesh + upright.strip, planner.cellsOf(pixelMin, pixelMax), small);
+				if (runIndex == runCount) {
 					if (runCount == runs.size()) {
 						runs.emplace_back();
 					}
 					Run& run = runs[runCount++];
-					run.view = settled.view;
+					run.view = settled->view;
+					run.layout = layout.id;
 					run.strip = upright.strip;
 				}
-				runs[r].instances.emplace_back(position, 0.0F, 1.0F, upright.colorTint);
+				runs[runIndex].instances.emplace_back(position, 0.0F, 1.0F, upright.colorTint);
 				stats.entities++;
 				continue;
 			}
@@ -532,7 +542,7 @@ namespace worldview {
 				}
 				Run& run = runs[runCount++];
 				run.slot = slot;
-				run.view = kNoView;
+				run.view = kNotAView;
 			}
 			runs[r].instances.emplace_back(position, upright.rotation, upright.scale, upright.colorTint);
 			stats.entities++;

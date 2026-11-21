@@ -26,7 +26,7 @@ public:
 
 private:
     /// One record a depth strip of a parts item at its turn, at scale 1 and rotation 0 (the view is turned).
-    void pushItemStrips(const ecs::Appearance& appearance, glm::vec2 position, uint32_t turnQuanta);
+    void pushItemStrips(uint32_t templateId, const ecs::Appearance& appearance, glm::vec2 position, uint32_t turnQuanta);
 
     std::vector<assets::PlacedEntity> renderData;
 

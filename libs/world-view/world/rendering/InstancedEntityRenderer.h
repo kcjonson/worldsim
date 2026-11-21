@@ -12,6 +12,7 @@
 #include "primitives/InstanceData.h"
 #include "world/rendering/RenderStats.h"
 #include "world/rendering/RunPlanner.h"
+#include "world/rendering/ItemViewIndex.h"
 #include "world/rendering/SelectionOutline.h"
 #include "world/rendering/StripRuns.h"
 #include "world/rendering/TemplateLevelBuilder.h"
@@ -25,7 +26,6 @@
 #include <deque>
 #include <optional>
 #include <span>
-#include <unordered_map>
 #include <vector>
 
 namespace worldview {
@@ -61,8 +61,9 @@ class InstancedEntityRenderer {
 		size_t			 residentViewBytes = 0; // and their vertex, index, and instance buffer bytes
 	};
 
-	/// Emit the pre-sorted upright stream in order (ascending anchorY).
-	void emitSorted(const std::vector<assets::DepthSortItem>& items, const assets::RenderContext& ctx, RenderStats& stats);
+	/// Emit the pre-sorted upright stream in order (ascending anchorY). stripUprights is how many of the items are
+	/// parts items' depth strips (WorldDepthGather::stripUprightCount), which bounds the strips' planner mesh ids.
+	void emitSorted(const std::vector<assets::DepthSortItem>& items, uint32_t stripUprights, const assets::RenderContext& ctx, RenderStats& stats);
 
 	/// Set (or clear) the selected entity's outline for this frame. Injected into
 	/// the depth-sort stream at its anchorY so nearer entities occlude it.
@@ -157,7 +158,7 @@ class InstancedEntityRenderer {
 	// A parts item's view (def, turn, level) on the GPU (rotatable-placed-items 9.2 and 10), uploaded once: its
 	// mesh, kept to re-upload when its instance buffer grows, and each depth strip's index range, in the
 	// layout's order. A reference view is built on the main thread the first time it is wanted and stays until
-	// the renderer goes.
+	// the registry clears (itemViews follows its generation) or the renderer goes.
 	struct ViewSlot {
 		Renderer::InstancedMeshHandle  handle;
 		renderer::TessellatedMesh	   mesh;
@@ -165,24 +166,18 @@ class InstancedEntityRenderer {
 		uint32_t					   capacity = 0;
 		SlotState					   state = SlotState::Absent;
 	};
-	std::vector<ViewSlot>				   viewSlots;
-	std::unordered_map<uint64_t, uint32_t> viewOfKey; // (template id, turn quanta, level) -> viewSlots
-
-	static constexpr uint32_t kNoView = kNotAView;
-
-	// Per kept strip layout (ItemLayout::id): the view this frame draws its strips from, settled at its first strip.
-	struct LayoutFrame {
-		uint64_t frame = 0;
-		uint32_t view = kNoView;
-	};
-	std::vector<LayoutFrame> layoutFrames;
+	std::vector<ViewSlot> viewSlots; // by ItemViewIndex::viewSlot
+	ItemViewIndex		  itemViews;
 
 	// This frame's runs, by the index the planner gave them; the planner says the order they draw in. A run of a
-	// template draws its slot's mesh; a run of a depth strip (view != kNoView) draws that strip of the view.
+	// template draws its slot's mesh; a run of a depth strip (view != kNotAView) draws that strip of the view, and
+	// itemsApart, set as it closes, is whether its layout's items in the frame are apart on the screen.
 	struct Run {
 		uint32_t							slot = 0;
-		uint32_t							view = kNoView;
+		uint32_t							view = kNotAView;
+		uint32_t							layout = 0;
 		uint32_t							strip = 0;
+		bool								itemsApart = false;
 		std::vector<Renderer::InstanceData> instances;
 	};
 	std::vector<Run>	 runs;
@@ -227,8 +222,8 @@ class InstancedEntityRenderer {
 	void evictStale();
 
 	/// The view a parts item's strips draw from this frame, built and uploaded now the first time it is wanted;
-	/// kNoView when it failed (logged once).
-	uint32_t viewFor(const assets::ItemLayout& layout, const assets::PlacedEntity& entity);
+	/// kNotAView when it failed (logged once).
+	uint32_t viewFor(const assets::ItemLayout& layout);
 
 	/// Append one animated entity's per-part-deformed, screen-space triangles to
 	/// the CPU batch (anim*). animVertexBase tracks the batch's 16-bit index base.

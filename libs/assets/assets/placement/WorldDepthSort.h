@@ -98,6 +98,10 @@ namespace assets {
 	  public:
 		void gather(const RenderContext& ctx, std::vector<DepthSortItem>& out);
 
+		/// How many of the last gather's uprights are parts items' depth strips: a bound on the distinct strips
+		/// the frame draws, whatever the registry keeps.
+		[[nodiscard]] uint32_t stripUprightCount() const { return stripUprights; }
+
 	  private:
 		// A chunk's statics as of an index version, stable-sorted by anchorY from the index's
 		// query order, the box their positions span, and the farthest any anchorY is from its
@@ -115,6 +119,7 @@ namespace assets {
 		std::vector<world::ChunkCoordinate>						 orderedChunks;
 		std::vector<size_t>										 segmentEnds; // per chunk, where its items end in out
 		std::vector<Upright>									 dynamics;	  // this frame's visible dynamic entities
+		uint32_t												 stripUprights = 0;
 		uint64_t												 frame = 0;
 
 		/// The chunk's sorted statics, rebuilt when its index is new or has changed.

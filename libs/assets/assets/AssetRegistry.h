@@ -114,9 +114,13 @@ namespace assets {
 		/// Null for a template that isn't a parts def's.
 		[[nodiscard]] const ItemLayout* stripLayout(uint32_t templateId, uint32_t turnQuanta);
 
-		/// How many strips the kept layouts have between them: every ItemLayout::firstStrip + its strip count is at
-		/// most this.
-		[[nodiscard]] uint32_t stripLayoutStripCount() const;
+		/// The definition a template id was made for, or nullptr for 0 or an id not handed out since the last clear.
+		/// One vector read, no name lookup.
+		[[nodiscard]] const AssetDefinition* templateDefinition(uint32_t templateId) const;
+
+		/// Changes at every clear, when template ids start over and kept layouts are dropped: what a renderer
+		/// keeps by template id or layout is stale once this moves.
+		[[nodiscard]] uint64_t generation() const { return cacheGeneration.load(std::memory_order_acquire); }
 
 		/// The seed a template is generated with: 0 for a def with a single variant, else the
 		/// shared variantSeed hash of the def and age class name, at the variant.
@@ -463,10 +467,10 @@ namespace assets {
 		std::atomic<float>										largestCollidingScale{0.0F};
 
 		// Strip layouts by (template id, turn quanta), each kept at a stable address. Guarded separately.
-		std::unordered_map<uint64_t, uint32_t>	   m_layoutIds; // into m_layouts
-		std::vector<std::unique_ptr<ItemLayout>> m_layouts;
-		uint32_t								   m_layoutStrips = 0;
-		mutable std::mutex						   m_layoutMutex;
+		std::unordered_map<uint64_t, uint32_t>	 layoutIds; // into layouts
+		std::vector<std::unique_ptr<ItemLayout>> layouts;
+		mutable std::mutex						 layoutMutex;
+		std::atomic<uint64_t>					 cacheGeneration{0};
 
 		// Resolved motion per def (empty MotionDef = "resolved, has none"). Guarded separately.
 		std::unordered_map<std::string, MotionDef> m_motionCache;

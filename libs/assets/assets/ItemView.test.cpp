@@ -1165,12 +1165,13 @@ TEST_F(ItemViewTest, Rule12RefusesAViewOverTheVertexLimitAtAStop) {
 
 // ─── Kept layouts and the cull reach (sections 8 and 6.9) ────────────────────────────────────────────────
 
-TEST_F(ItemViewTest, TheRegistryKeepsOneLayoutATemplateAndTurnAndNumbersTheirStrips) {
+TEST_F(ItemViewTest, TheRegistryKeepsOneLayoutATemplateAndTurnUntilAClear) {
 	ASSERT_NE(loadBench(3.0F, 1.0F), nullptr);
 	AssetRegistry& registry = AssetRegistry::Get();
 	const uint32_t bench = registry.templateId("Bench", {});
 	ASSERT_NE(bench, 0U);
-	EXPECT_EQ(registry.stripLayoutStripCount(), 0U);
+	EXPECT_EQ(registry.templateDefinition(bench), registry.getDefinition("Bench"));
+	EXPECT_EQ(registry.templateDefinition(0), nullptr);
 
 	const ItemLayout* square = registry.stripLayout(bench, quantaOf(0.0));
 	const ItemLayout* turned = registry.stripLayout(bench, quantaOf(45.0));
@@ -1181,10 +1182,7 @@ TEST_F(ItemViewTest, TheRegistryKeepsOneLayoutATemplateAndTurnAndNumbersTheirStr
 	EXPECT_EQ(turned->layout.strips.size(), 31U);
 	EXPECT_EQ(turned->templateId, bench);
 	EXPECT_EQ(turned->turnQuanta, quantaOf(45.0));
-	EXPECT_EQ(square->firstStrip, 0U);
-	EXPECT_EQ(turned->firstStrip, 1U) << "numbered on from the layouts before it";
 	EXPECT_EQ(turned->id, square->id + 1);
-	EXPECT_EQ(registry.stripLayoutStripCount(), 32U);
 	const StripLayout fresh = stripLayout(*registry.getDefinition("Bench"), quantaOf(45.0), viewConfig());
 	ASSERT_EQ(fresh.strips.size(), turned->layout.strips.size());
 	for (size_t i = 0; i < fresh.strips.size(); ++i) {
@@ -1192,8 +1190,11 @@ TEST_F(ItemViewTest, TheRegistryKeepsOneLayoutATemplateAndTurnAndNumbersTheirStr
 	}
 
 	EXPECT_EQ(registry.stripLayout(0, 0), nullptr);
-	registry.clearDefinitions();
-	EXPECT_EQ(registry.stripLayoutStripCount(), 0U) << "dropped with the templates";
+	const uint64_t generation = registry.generation();
+	ASSERT_NE(load("Bench"), nullptr);
+	EXPECT_NE(registry.generation(), generation) << "a clear moves the generation";
+	const uint32_t again = registry.templateId("Bench", {});
+	EXPECT_EQ(registry.stripLayout(again, quantaOf(45.0))->id, 0U) << "layouts were dropped with the templates and start over";
 }
 
 // The gather culls an item by its position, the view padded on each axis by the registry's reach: every strip's box,
@@ -1221,4 +1222,31 @@ TEST_F(ItemViewTest, TheCullReachHoldsEveryStripAtEveryTurn) {
 		}
 	}
 	EXPECT_GT(farthest, templateReach) << "height lifts a turned top past the turn-0 template's reach";
+}
+
+// A tall second part: a 3 m bench with a 2.2 m chimney standing against its east end. At 90 degrees the chimney is at
+// the bench's south end and at 270 at its north end, where its top, lifted 0.77 m, draws farthest from the pivot.
+TEST_F(ItemViewTest, TheCullReachHoldsATallSecondPartAtEveryTurn) {
+	writeDef(
+		"Forge", "<parts>" + block("bench", -1.5F, -0.5F, 1.5F, 0.5F, 0.0F, 0.8F) + block("chimney", 1.5F, -0.15F, 1.8F, 0.15F, 0.0F, 2.2F) +
+					 "</parts><placements>" + place("bench") + place("chimney") + "</placements>"
+	);
+	ASSERT_NE(load("Forge"), nullptr);
+	ASSERT_TRUE(issues("Forge").empty()) << ::testing::PrintToString(issues("Forge"));
+	AssetRegistry& registry = AssetRegistry::Get();
+	ASSERT_NE(registry.templateId("Forge", {}), 0U);
+	const float			   reach = registry.maxReachMeters();
+	const AssetDefinition& forge = *registry.getDefinition("Forge");
+	EXPECT_NEAR(reach, std::hypot(1.8F, 0.15F) + (2.2F * 0.35F) + 0.015F, 1.0e-4F) << "the chimney's top sets the reach";
+	for (int degrees = 0; degrees < 360; degrees += 5) {
+		for (const ItemStrip& strip : stripLayout(forge, quantaOf(degrees), viewConfig()).strips) {
+			EXPECT_LE(std::max({std::abs(strip.minX), std::abs(strip.maxX), std::abs(strip.minY), std::abs(strip.maxY)}), reach + 1.0e-4F)
+				<< degrees << " degrees";
+		}
+	}
+	float north = 0.0F;
+	for (const ItemStrip& strip : stripLayout(forge, quantaOf(270.0), viewConfig()).strips) {
+		north = std::min(north, strip.minY);
+	}
+	EXPECT_LT(north, -1.8F) << "at 270 degrees the chimney's top stands north past the bench's whole length";
 }

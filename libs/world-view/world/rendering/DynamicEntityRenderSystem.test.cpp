@@ -157,6 +157,56 @@ TEST_F(ItemStripRecordTest, TheTurnComesFromTheEntitysRotation) {
 	EXPECT_EQ(data.front().itemLayout->turnQuanta, 27000U) << "a quarter turn back is 270 degrees";
 }
 
+#ifdef DEVELOPMENT_BUILD
+// Telling a parts item apart takes no name lookup: an entity that isn't one costs the lookups it always did, its
+// template id (templateId) and its anchor (getDefinition), and a parts item costs its template id alone, however many
+// strips it has.
+TEST_F(ItemStripRecordTest, TellingAPartsItemApartTakesNoNameLookup) {
+	folder.write("Stone/stone.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 10 10\"><rect x=\"0\" y=\"0\" width=\"10\" height=\"10\" fill=\"#808080\"/></svg>");
+	folder.write(
+		"Stone/Stone.xml", "<?xml version=\"1.0\"?><AssetDefinitions><AssetDef><defName>Stone</defName><assetType>simple</assetType>"
+						   "<svgPath>stone.svg</svgPath><worldHeight>0.5</worldHeight></AssetDef></AssetDefinitions>"
+	);
+	ASSERT_NE(load("Stone"), nullptr);
+	assets::AssetRegistry& registry = assets::AssetRegistry::Get();
+	struct Counting {
+		assets::AssetRegistry& registry;
+		explicit Counting(assets::AssetRegistry& counted) : registry(counted) { registry.countNameLookups(true); }
+		~Counting() { registry.countNameLookups(false); }
+		Counting(const Counting&) = delete;
+		Counting& operator=(const Counting&) = delete;
+	} counting{registry};
+	const auto lookupsOfAFrame = [&]() {
+		const uint64_t before = registry.nameLookups();
+		(void)records();
+		return registry.nameLookups() - before;
+	};
+
+	(void)registry.templateId("Stone", {});
+	uint64_t before = registry.nameLookups();
+	(void)registry.templateId("Stone", {});
+	(void)registry.getDefinition("Stone");
+	const uint64_t mainPerEntity = registry.nameLookups() - before;
+	before = registry.nameLookups();
+	(void)registry.templateId("Bench", {});
+	const uint64_t templateIdAlone = registry.nameLookups() - before;
+
+	add("Stone", {0.0F, 0.0F}, 0.0F);
+	const uint64_t oneStone = lookupsOfAFrame();
+	add("Stone", {5.0F, 0.0F}, 0.0F);
+	EXPECT_EQ(lookupsOfAFrame() - oneStone, mainPerEntity) << "a stone looks names up as it did before parts items";
+
+	const uint64_t stones = lookupsOfAFrame();
+	add("Bench", {20.0F, 0.0F}, std::numbers::pi_v<float> / 4.0F);
+	EXPECT_EQ(lookupsOfAFrame() - stones, templateIdAlone) << "31 strips, one template id";
+	for (const assets::PlacedEntity& record : render.getRenderData()) {
+		if (record.itemLayout != nullptr) {
+			EXPECT_TRUE(record.defName.empty()) << "a strip carries its template id and layout, not a name";
+		}
+	}
+}
+#endif
+
 // Everything that isn't a parts def is one record as before: rotation forced to 0, no layout.
 TEST_F(ItemStripRecordTest, AnEntityThatIsNotAPartsItemIsUntouched) {
 	add("Test_RenderedStill", {3.0F, 4.0F}, 1.0F);

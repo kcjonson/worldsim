@@ -29,13 +29,16 @@ namespace worldview {
 	}
 
 	/// Splits a close's runs, in the order they draw, into draws. `RunType` has `view` (kNotAView for a template),
-	/// `strip`, and `instances`; `runs` is indexed by the planner's draw index.
+	/// `strip`, `instances`, and `itemsApart` (no two of its view's items in the frame meet on the screen); `runs`
+	/// is indexed by the planner's draw index. A merged draw draws each instance's strips together, which reorders
+	/// strips of different items against each other, so runs of several instances merge only when their items are
+	/// apart; one instance's strips in stored order are its own depth order.
 	template <typename RunType>
 	void spanRuns(const RunPlanner& planner, std::span<const uint32_t> closing, const std::vector<RunType>& runs, std::vector<RunSpan>& out) {
 		out.clear();
 		for (uint32_t i = 0; i < closing.size(); ++i) {
 			const RunType& run = runs[closing[i]];
-			if (!out.empty() && run.view != kNotAView) {
+			if (!out.empty() && run.view != kNotAView && (run.instances.size() == 1 || run.itemsApart)) {
 				RunSpan&	   last = out.back();
 				const uint32_t previousIndex = closing[last.first + last.count - 1];
 				const RunType& previous = runs[previousIndex];

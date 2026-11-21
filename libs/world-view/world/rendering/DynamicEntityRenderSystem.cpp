@@ -63,14 +63,6 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
             continue;
         }
 
-        // A parts item enters the stream as its depth strips, each anchored on its own stretch of the
-        // item's collider, its turn carried by the strip layout (rotatable-placed-items 8).
-        if (const assets::AssetDefinition* def = assetRegistry.getDefinition(appearance.defName);
-            def != nullptr && def->assetType == assets::AssetType::Parts) {
-            pushItemStrips(appearance, pos.value, assets::turnQuantaFromRadians(rot.radians));
-            continue;
-        }
-
         // Normal (non-packaged) entity rendering
         assets::PlacedEntity placed;
 
@@ -80,9 +72,18 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
             defName += ecs::directionSuffix(facing->direction);
         }
 
-        placed.defName = defName;
         placed.traits = appearance.traits;
         placed.templateId = assetRegistry.templateId(defName, appearance.traits);
+
+        // A parts item enters the stream as its depth strips, each anchored on its own stretch of the
+        // item's collider, its turn carried by the strip layout (rotatable-placed-items 8). Told by the
+        // template's def, which takes no name lookup.
+        if (const assets::AssetDefinition* templateDef = assetRegistry.templateDefinition(placed.templateId);
+            templateDef != nullptr && templateDef->parts != nullptr) {
+            pushItemStrips(placed.templateId, appearance, pos.value, assets::turnQuantaFromRadians(rot.radians));
+            continue;
+        }
+        placed.defName = defName;
 
         // The mesh is about the def's pivot, which the entity's position is: drawn at it, as
         // the outline and hit-test place it.
@@ -155,16 +156,14 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
     }
 }
 
-void DynamicEntityRenderSystem::pushItemStrips(const ecs::Appearance& appearance, glm::vec2 position, uint32_t turnQuanta) {
-    auto&                     assetRegistry = assets::AssetRegistry::Get();
-    const uint32_t            templateId = assetRegistry.templateId(appearance.defName, appearance.traits);
-    const assets::ItemLayout* layout = assetRegistry.stripLayout(templateId, turnQuanta);
+void DynamicEntityRenderSystem::pushItemStrips(uint32_t templateId, const ecs::Appearance& appearance, glm::vec2 position, uint32_t turnQuanta) {
+    const assets::ItemLayout* layout = assets::AssetRegistry::Get().stripLayout(templateId, turnQuanta);
     if (layout == nullptr) {
         return;
     }
+    // Carried by template id and layout: no name on the records.
     for (uint32_t strip = 0; strip < layout->layout.strips.size(); ++strip) {
         assets::PlacedEntity placed;
-        placed.defName = appearance.defName;
         placed.traits = appearance.traits;
         placed.templateId = templateId;
         placed.position = position;

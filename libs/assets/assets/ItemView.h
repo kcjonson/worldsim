@@ -104,9 +104,6 @@ namespace assets {
 		uint32_t	turnQuanta = 0;
 		/// Its place among the layouts kept since the last clear, from 0.
 		uint32_t	id = 0;
-		/// Every kept layout's strips are numbered on from the layouts before it: this one's are firstStrip and on,
-		/// all below AssetRegistry::stripLayoutStripCount().
-		uint32_t	firstStrip = 0;
 		StripLayout layout;
 	};
 
