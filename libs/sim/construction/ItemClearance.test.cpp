@@ -130,7 +130,7 @@ TEST_F(ItemClearanceTest, FlushShapesDoNotMeetAndOverlappingOnesDo) {
 
 // Two points that round to one micrometre are one point, so the ring still tests as it should; a ring that rounds to
 // fewer than three points meets anything its box meets, never nothing.
-TEST_F(ItemClearanceTest, ARingDegenerateInMillimetresFailsClosed) {
+TEST_F(ItemClearanceTest, ARingDegenerateInMicrometresFailsClosed) {
 	std::vector<glm::vec2> doubled = rect(0.0F, 0.0F, 1.0F, 1.0F);
 	doubled.insert(doubled.begin() + 1, glm::vec2{0.0000003F, 0.0F});
 	EXPECT_FALSE(ringsMeet(doubled, rect(1.0F, 0.0F, 2.0F, 1.0F))) << "a repeat point dropped, still flush";
@@ -197,9 +197,10 @@ TEST_F(ItemClearanceTest, APendingTargetRefusesLikeAnInstalledItem) {
 TEST_F(ItemClearanceTest, AWallIsTestedByItsBandBothWays) {
 	install(kBench, {10.0F, 10.0F});
 	// The clearance's front edge is at y = 10.85; a centreline 0.05 m past it puts the band 0.05 m into it.
-	EXPECT_TRUE(bandMeetsItems(items, drawnWallBand({5.0F, 10.9F}, {15.0F, 10.9F}, 0.1F, false, false)));
-	EXPECT_FALSE(bandMeetsItems(items, drawnWallBand({5.0F, 10.95F}, {15.0F, 10.95F}, 0.1F, false, false))) << "its face on the clearance's edge";
-	EXPECT_TRUE(bandMeetsItems(items, drawnWallBand({10.0F, 5.0F}, {10.0F, 15.0F}, 0.1F, false, false))) << "through the body";
+	const auto drawn = [&](glm::vec2 start, glm::vec2 end) { return wallMeetsItems(items, drawnWallOutline(walls, {start, end}, 100)); };
+	EXPECT_TRUE(drawn({5.0F, 10.9F}, {15.0F, 10.9F}));
+	EXPECT_FALSE(drawn({5.0F, 10.95F}, {15.0F, 10.95F})) << "its face on the clearance's edge";
+	EXPECT_TRUE(drawn({10.0F, 5.0F}, {10.0F, 15.0F})) << "through the body";
 
 	wall({0.0F, 20.9F}, {20.0F, 20.9F});
 	EXPECT_EQ(refusal(kBench, {10.0F, 20.0F}), PlacementRefusal::TooClose) << "the bench placed after the wall, its clearance in the band";
@@ -207,16 +208,53 @@ TEST_F(ItemClearanceTest, AWallIsTestedByItsBandBothWays) {
 	EXPECT_EQ(refusal(kBox, {10.0F, 20.9F}), PlacementRefusal::WallInTheWay) << "a body across the wall";
 }
 
-// At an L joint the junction fills the outer corner square: an item there meets the wall, and a wall drawn to the
-// joint is carried past its end to cover it.
+// At an L joint the junction fills the outer corner square: an item there meets the wall whichever came first, the
+// wall drawn to the joint resolved with the junction it will have.
 TEST_F(ItemClearanceTest, AWallsOuterCornerIsWall) {
 	wall({0.0F, 0.0F}, {10.0F, 0.0F});
-	wall({10.0F, 0.0F}, {10.0F, 10.0F});
 	// The outer corner square runs from (10, -0.1) to (10.1, 0); a box with its corner 5 cm into it.
-	EXPECT_EQ(refusal(kBox, {10.35F - 0.05F, -0.35F + 0.05F}), PlacementRefusal::WallInTheWay);
-	EXPECT_EQ(refusal(kBox, {10.4F, -0.4F}), std::nullopt) << "clear of the corner";
+	const glm::vec2 inCorner{10.35F - 0.05F, -0.35F + 0.05F};
+	const ecs::EntityID cornerBox = install(kBox, inCorner);
+	EXPECT_TRUE(wallMeetsItems(items, drawnWallOutline(walls, {{10.0F, 0.0F}, {10.0F, 10.0F}}, 100))) << "the wall drawn after the box";
+	EXPECT_FALSE(wallMeetsItems(items, drawnWallOutline(walls, {{10.0F, 1.0F}, {10.0F, 10.0F}}, 100))) << "a wall clear of the joint";
 
-	install(kBox, {10.35F - 0.05F, -0.35F + 0.05F});
-	EXPECT_FALSE(bandMeetsItems(items, drawnWallBand({0.0F, 0.0F}, {10.0F, 0.0F}, 0.1F, false, false))) << "cut at the vertex";
-	EXPECT_TRUE(bandMeetsItems(items, drawnWallBand({0.0F, 0.0F}, {10.0F, 0.0F}, 0.1F, false, true))) << "carried past the joint";
+	world.destroyEntity(cornerBox);
+	refresh();
+	wall({10.0F, 0.0F}, {10.0F, 10.0F});
+	EXPECT_EQ(refusal(kBox, inCorner), PlacementRefusal::WallInTheWay) << "the box placed after the wall";
+	EXPECT_EQ(refusal(kBox, {10.4F, -0.4F}), std::nullopt) << "clear of the corner";
+}
+
+// At a 30 degree joint the miter reaches far past the joint (about 3.9 half thicknesses): an item in its tip meets the
+// wall whichever came first, and one past the tip meets nothing.
+TEST_F(ItemClearanceTest, AnAcuteJointsMiterIsWallBothWays) {
+	wall({0.0F, 0.0F}, {10.0F, 0.0F});
+	const glm::vec2 back{10.0F - 8.660254F, 5.0F};
+	// The miter's tip lies near (10.37, -0.1); a box whose left edge reaches 10.25 there, and one whose reaches 10.55.
+	const glm::vec2 inTip{10.55F, -0.1F};
+	const glm::vec2 pastTip{10.85F, -0.1F};
+	install(kBox, inTip);
+	EXPECT_TRUE(wallMeetsItems(items, drawnWallOutline(walls, {{10.0F, 0.0F}, back}, 100))) << "drawn after the box";
+
+	const ecs::PlacedItemIndex noItems;
+	wall({10.0F, 0.0F}, back);
+	EXPECT_EQ(bodyRefusal(noItems, wallOutlines(walls), held(kBox, inTip), ecs::kInvalidEntity), PlacementRefusal::WallInTheWay)
+		<< "the box placed after the wall";
+	EXPECT_EQ(bodyRefusal(noItems, wallOutlines(walls), held(kBox, pastTip), ecs::kInvalidEntity), std::nullopt) << "past the tip";
+}
+
+// The flush tolerance is the same in either order: a box turned 45 degrees with its corner 2.5 mm into a square box's
+// edge meets it placed first or second, and with its corner 2.3 mm in (under the 2.41 mm a right corner reaches) meets
+// it neither way.
+TEST_F(ItemClearanceTest, TheToleranceIsTheSameInEitherOrder) {
+	const auto turnedBoxDown = [](float into) {
+		const float		half = 0.3F * std::numbers::sqrt2_v<float>;
+		const glm::vec2 apex{0.5F, 1.0F - into};
+		return std::vector<glm::vec2>{apex, apex + glm::vec2{half, half}, apex + glm::vec2{0.0F, 2.0F * half}, apex + glm::vec2{-half, half}};
+	};
+	const std::vector<glm::vec2> square = rect(0.0F, 0.0F, 1.0F, 1.0F);
+	EXPECT_TRUE(ringsMeet(turnedBoxDown(0.0025F), square));
+	EXPECT_TRUE(ringsMeet(square, turnedBoxDown(0.0025F)));
+	EXPECT_FALSE(ringsMeet(turnedBoxDown(0.0023F), square));
+	EXPECT_FALSE(ringsMeet(square, turnedBoxDown(0.0023F)));
 }

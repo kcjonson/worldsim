@@ -5,6 +5,7 @@
 #include <math/Types.h> // Foundation::Vec2
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -12,6 +13,9 @@ namespace world_sim {
 
 	/// The points of a list in world metres, in order. A pair that is not two numbers is skipped.
 	std::vector<Foundation::Vec2> parsePointList(const std::string& spec);
+
+	/// The one point an 'x,y' parameter carries; nothing when it is empty, not two numbers, or a list.
+	std::optional<Foundation::Vec2> parseOnePoint(const std::string& spec);
 
 	/// Empty when `got` reaches `least`; otherwise the message naming the verb and how many points it needs.
 	std::string pointCountRefusal(const std::string& verb, std::size_t least, std::size_t got);

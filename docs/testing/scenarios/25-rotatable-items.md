@@ -1,7 +1,7 @@
 # Scenario 25: rotatable items
 
 **Status:** draft  
-**Last verified:** 2026-11-21, steps 1 to 5, 7, 8, 10 to 15, 17 to 21, 23 to 26, 28, 29, 32 and 33; 9 and 16 the same day before PR 542 merged (6: the second box's spawn was moved off the first's collider, so they didn't overlap; 22, 30 and 31 need a held Alt, which injected input can't send; 27 not run); 34 to 55 on 2026-11-21 after PR 543 merged
+**Last verified:** 2026-11-21, steps 1 to 5, 7, 8, 10 to 15, 17 to 21, 23 to 26, 28, 29, 32 and 33; 9 and 16 the same day before PR 542 merged (6: the second box's spawn was moved off the first's collider, so they didn't overlap; 22, 30 and 31 need a held Alt, which injected input can't send; 27 not run); 34 to 56 on 2026-11-21 after PR 543 merged
 
 A parts item draws at any turn with the faces the turn shows, sorts against a colonist and another item along its whole length, doesn't pop at the edge of the screen, draws its detail levels as the camera zooms, selects by its turned shape, and is turned while placing it with Q/E or a drag, snapped square to a wall and flush against it. Placed, it is an obstacle colonists walk round; a ghost over another item, across a wall, or in a clearance is refused with the reason, and a wall can't be drawn through an item or its clearance. Spec: [rotatable-placed-items.md](../../technical/rendering/rotatable-placed-items.md), sections 3, 6.8, 8, 9, 10, 11, 13, 14, and 15.
 
@@ -92,8 +92,9 @@ Steps 19 on start with game time running again (`...dev/time?speed=1`).
 49. Click there: no point is added (`status.pointCount` 1).
 50. Press Esc: the point is dropped (`status.pointCount` 0).
 51. Click `27,31.6`: one point placed.
-52. Move the pointer to `33,31.6`, through the bench's clearance and clear of its body: red with the same reason, and a click there adds no point.
-53. Press Esc until the wall tool closes (`tool` `none`).
-54. `spawn?def=TestPartsBox&at=30.2,27&n=1&scatter=0`, into the box: a 400 naming "Overlaps an item".
-55. `spawn?def=TestPartsBox&at=30,31.6&n=1&scatter=0`, into the bench's clearance: a 400 naming "Too close".
-56. Exit the game.
+52. Move the pointer to `33,31.6`, through the bench's clearance and clear of its body: red with the same reason.
+53. Click there: no point is added (`status.pointCount` 1).
+54. Press Esc until the wall tool closes (`tool` `none`).
+55. `spawn?def=TestPartsBox&at=30.2,27&n=1&scatter=0`, into the box: a 400 naming "Overlaps an item".
+56. `spawn?def=TestPartsBox&at=30,31.6&n=1&scatter=0`, into the bench's clearance: a 400 naming "Too close".
+57. Exit the game.

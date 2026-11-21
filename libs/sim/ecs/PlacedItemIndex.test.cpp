@@ -158,7 +158,7 @@ TEST_F(PlacedItemIndexTest, APendingTargetIsHeldAtItsTarget) {
 TEST_F(PlacedItemIndexTest, AHeldTargetLastsUntilTheNextRefresh) {
 	refresh();
 	const std::uint64_t revision = index.revision();
-	index.holdTarget(kItem, {5.0F, 5.0F}, 0.0F, AssetRegistry::Get());
+	index.hold(kItem, {5.0F, 5.0F}, 0.0F, AssetRegistry::Get());
 	EXPECT_GT(index.revision(), revision);
 	std::vector<const PlacedItemIndex::Entry*> found;
 	index.query({4.9F, 4.9F}, {5.1F, 5.1F}, found);

@@ -122,15 +122,34 @@ namespace construction {
 			return out;
 		}
 
-		// The ring taken in by the flush tolerance, by half of it where a part is too narrow for all of it, and as it is
-		// where too narrow for that: such a ring meets what touches it.
-		geometry::Ring takenInLattice(const geometry::Ring& ring) {
-			for (const double inset : {static_cast<double>(kFlushToleranceMm) * kUnitsPerMillimeter, static_cast<double>(kFlushToleranceMm) * kUnitsPerMillimeter * 0.5}) {
+		// The ring taken in by `insetMm`, by half of that where a part is too narrow for all of it, and as it is where too
+		// narrow for that: such a ring meets what touches it.
+		geometry::Ring takenInLattice(const geometry::Ring& ring, double insetMm) {
+			for (const double inset : {insetMm * kUnitsPerMillimeter, insetMm * kUnitsPerMillimeter * 0.5}) {
 				if (std::optional<geometry::Ring> taken = insetBy(ring, inset)) {
 					return std::move(*taken);
 				}
 			}
 			return ring;
+		}
+
+		// Every wall segment of `world` with a thickness, as the offsetter takes it.
+		std::vector<geometry::WallSegment> wallSegmentsOf(const ConstructionWorld& world) {
+			std::vector<geometry::WallSegment> segments;
+			for (const WallSegment& segment : world.segments()) {
+				const Vertex*					first = world.getVertex(segment.v0);
+				const Vertex*					second = world.getVertex(segment.v1);
+				const assets::ThicknessPreset* preset = assets::ConstructionRegistry::Get().getThicknessPreset(segment.material, segment.thicknessPreset);
+				if (first == nullptr || second == nullptr || preset == nullptr || preset->halfThicknessMm <= 0 || first->pos == second->pos) {
+					continue;
+				}
+				segments.push_back({first->pos, second->pos, preset->halfThicknessMm});
+			}
+			return segments;
+		}
+
+		std::vector<glm::vec2> millimetersToMeters(const geometry::Ring& ring) {
+			return toMeters(ring, static_cast<double>(geometry::kMillimetersPerMeter));
 		}
 
 		bool anyMeet(const std::vector<std::vector<glm::vec2>>& first, const std::vector<std::vector<glm::vec2>>& second) {
@@ -187,26 +206,19 @@ namespace construction {
 		if (!firstLattice.has_value() || !secondLattice.has_value()) {
 			return true;
 		}
-		return geometry::ringsInteriorOverlap(takenInLattice(*firstLattice), *secondLattice);
+		// Each taken in by half the tolerance, so the answer is the same whichever shape is first.
+		const double half = static_cast<double>(kFlushToleranceMm) * 0.5;
+		return geometry::ringsInteriorOverlap(takenInLattice(*firstLattice, half), takenInLattice(*secondLattice, half));
 	}
 
 	std::vector<glm::vec2> takenIn(const std::vector<glm::vec2>& ring) {
 		const std::optional<geometry::Ring> lattice = toLattice(ring);
-		return lattice.has_value() ? toMeters(takenInLattice(*lattice), kUnitsPerMeter) : ring;
+		return lattice.has_value() ? toMeters(takenInLattice(*lattice, static_cast<double>(kFlushToleranceMm)), kUnitsPerMeter) : ring;
 	}
 
 	std::vector<std::vector<glm::vec2>> wallOutlines(const ConstructionWorld& world) {
-		std::vector<geometry::WallSegment> segments;
-		for (const WallSegment& segment : world.segments()) {
-			const Vertex*					first = world.getVertex(segment.v0);
-			const Vertex*					second = world.getVertex(segment.v1);
-			const assets::ThicknessPreset* preset = assets::ConstructionRegistry::Get().getThicknessPreset(segment.material, segment.thicknessPreset);
-			if (first == nullptr || second == nullptr || preset == nullptr || preset->halfThicknessMm <= 0 || first->pos == second->pos) {
-				continue;
-			}
-			segments.push_back({first->pos, second->pos, preset->halfThicknessMm});
-		}
-		std::vector<std::vector<glm::vec2>> outlines;
+		const std::vector<geometry::WallSegment> segments = wallSegmentsOf(world);
+		std::vector<std::vector<glm::vec2>>		 outlines;
 		for (const std::vector<std::size_t>& graph : geometry::connectedWallGraphs(segments)) {
 			std::vector<geometry::WallSegment> members;
 			members.reserve(graph.size());
@@ -216,31 +228,58 @@ namespace construction {
 			const geometry::WallBands bands = geometry::resolveWallBands(members, geometry::kDefaultMiterLimit);
 			if (!geometry::bandsAccepted(bands)) {
 				for (const geometry::WallSegment& member : members) {
-					outlines.push_back(toMeters(geometry::band(member.a, member.b, member.halfThicknessMm), static_cast<double>(geometry::kMillimetersPerMeter)));
+					outlines.push_back(millimetersToMeters(geometry::band(member.a, member.b, member.halfThicknessMm)));
 				}
 				continue;
 			}
 			for (const std::vector<geometry::Ring>* rings : {&bands.bands, &bands.junctions}) {
 				for (const geometry::Ring& ring : *rings) {
-					outlines.push_back(toMeters(ring, static_cast<double>(geometry::kMillimetersPerMeter)));
+					outlines.push_back(millimetersToMeters(ring));
 				}
 			}
 		}
 		return outlines;
 	}
 
-	std::vector<glm::vec2> drawnWallBand(glm::vec2 start, glm::vec2 end, float halfThicknessMeters, bool joinsAtStart, bool joinsAtEnd) {
-		const float length = glm::distance(start, end);
-		if (length <= 0.0F) {
+	std::vector<std::vector<glm::vec2>>
+	drawnWallOutline(const ConstructionWorld& world, const std::vector<glm::vec2>& chain, std::int64_t halfThicknessMm) {
+		if (chain.size() < 2 || halfThicknessMm <= 0 || geometry::quantize(chain[chain.size() - 2]) == geometry::quantize(chain.back())) {
 			return {};
 		}
-		const glm::vec2 along = (end - start) / length;
-		const glm::vec2 from = joinsAtStart ? start - along * halfThicknessMeters : start;
-		const glm::vec2 to = joinsAtEnd ? end + along * halfThicknessMeters : end;
-		const glm::vec2 side = glm::vec2{-along.y, along.x} * halfThicknessMeters;
-		return {from - side, to - side, to + side, from + side};
+		std::vector<geometry::WallSegment> segments = wallSegmentsOf(world);
+		for (std::size_t index = 0; index + 1 < chain.size(); ++index) {
+			const geometry::Vec2i64 from = geometry::quantize(chain[index]);
+			const geometry::Vec2i64 to = geometry::quantize(chain[index + 1]);
+			if (from != to) {
+				segments.push_back({from, to, halfThicknessMm});
+			}
+		}
+		const std::size_t drawn = segments.size() - 1;
+		for (const std::vector<std::size_t>& graph : geometry::connectedWallGraphs(segments)) {
+			const auto found = std::ranges::find(graph, drawn);
+			if (found == graph.end()) {
+				continue;
+			}
+			const auto						   position = static_cast<std::size_t>(found - graph.begin());
+			std::vector<geometry::WallSegment> members;
+			members.reserve(graph.size());
+			for (const std::size_t index : graph) {
+				members.push_back(segments[index]);
+			}
+			const geometry::WallBands bands = geometry::resolveWallBands(members, geometry::kDefaultMiterLimit);
+			if (!geometry::bandsAccepted(bands)) {
+				return {millimetersToMeters(geometry::band(segments[drawn].a, segments[drawn].b, segments[drawn].halfThicknessMm))};
+			}
+			std::vector<std::vector<glm::vec2>> outline{millimetersToMeters(bands.bands[position])};
+			for (std::size_t junction = 0; junction < bands.junctions.size(); ++junction) {
+				if (std::ranges::find(bands.junctionSegments[junction], position) != bands.junctionSegments[junction].end()) {
+					outline.push_back(millimetersToMeters(bands.junctions[junction]));
+				}
+			}
+			return outline;
+		}
+		return {};
 	}
-
 	std::optional<PlacementRefusal> bodyRefusal(
 		const ecs::PlacedItemIndex& items, const std::vector<std::vector<glm::vec2>>& wallRings, const ecs::ItemOutlines& held, ecs::EntityID ignore
 	) {
@@ -269,14 +308,13 @@ namespace construction {
 		return std::nullopt;
 	}
 
-	bool bandMeetsItems(const ecs::PlacedItemIndex& items, const std::vector<glm::vec2>& band) {
-		if (band.empty()) {
+	bool wallMeetsItems(const ecs::PlacedItemIndex& items, const std::vector<std::vector<glm::vec2>>& wall) {
+		const std::optional<Box> box = boxOfAll(wall);
+		if (!box.has_value()) {
 			return false;
 		}
-		const Box										box = boxOf(band);
 		std::vector<const ecs::PlacedItemIndex::Entry*> near;
-		items.query(box.lower, box.upper, near);
-		return std::ranges::any_of(near, [&band](const ecs::PlacedItemIndex::Entry* entry) { return anyMeet({band}, entry->world.reserved); });
+		items.query(box->lower, box->upper, near);
+		return std::ranges::any_of(near, [&wall](const ecs::PlacedItemIndex::Entry* entry) { return anyMeet(wall, entry->world.reserved); });
 	}
-
 } // namespace construction

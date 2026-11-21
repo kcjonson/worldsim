@@ -157,7 +157,7 @@ namespace ecs {
 		}
 	}
 
-	void PlacedItemIndex::holdTarget(const std::string& defName, glm::vec2 position, float turnRadians, const assets::AssetRegistry& registry) {
+	void PlacedItemIndex::hold(const std::string& defName, glm::vec2 position, float turnRadians, const assets::AssetRegistry& registry) {
 		Entry entry{.defName = defName, .position = position, .turnRadians = turnRadians, .pending = true};
 		entry.world = placedOutlines(outlinesOf(defName, registry), position, turnRadians);
 		boxOf(entry);

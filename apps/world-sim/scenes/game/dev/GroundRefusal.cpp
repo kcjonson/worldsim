@@ -31,7 +31,7 @@ namespace world_sim {
 			if (placement.insideUnbuiltSite(at)) {
 				return where() + "is inside a foundation that is not built yet";
 			}
-			const std::optional<construction::PlacementRefusal> refusal = placement.refusalAt(def, at, turnQuanta, ecs::kInvalidEntity);
+			const std::optional<construction::PlacementRefusal> refusal = placement.refusalAt(def, at, turnQuanta, ecs::kInvalidEntity, PlacementSystem::PlacementRules::Dev);
 			if (!refusal.has_value()) {
 				return {};
 			}

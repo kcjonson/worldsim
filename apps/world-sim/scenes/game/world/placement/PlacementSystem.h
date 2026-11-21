@@ -160,17 +160,20 @@ class PlacementSystem {
 	/// (insideUnbuiltSite), and its footprint, taken in by the flush tolerance (construction::takenIn) so it may stand
 	/// flush against an obstacle or a wall, is clear ground out of any ford (NavigationSystem::isAreaBuildableNow).
 	/// The footprint is a parts def's collider rings, another def's collision outline, or just `worldPos` when it
-	/// has neither. False with no nav system. The placement tool's ground gate, the /api/dev/spawn verb's for
-	/// furniture, and a crafted crate's install target's.
+	/// has neither. False with no nav system. The ground rule of refusalAt.
 	[[nodiscard]] bool footprintBuildableNow(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta) const;
+
+	/// Which of the placement rules a check applies: all of them, as the player's ghost and a crafted crate's install
+	/// target do, or all but the explored rule, as the dev verbs do (they put things on meshed ground no one has seen).
+	enum class PlacementRules : uint8_t { Player, Dev };
 
 	/// Why `defName` can't be set up at `worldPos` turned `turnQuanta` (rotatable-placed-items 14.2), the checks in order:
 	/// its body against other items' bodies, installed and pending, then against the walls (construction::bodyRefusal);
-	/// its ground (footprintBuildableNow); its footprint seen, when player visibility is on; its clearance
+	/// its ground (footprintBuildableNow); its footprint seen, when player visibility is on and `rules` is Player; its clearance
 	/// (construction::clearanceRefusal). `ignore` (the crate being moved) is left out. Nothing when it can. The ghost's,
 	/// the dev spawn's, and a crafted crate's install target's.
 	[[nodiscard]] std::optional<construction::PlacementRefusal>
-	refusalAt(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta, ecs::EntityID ignore) const;
+	refusalAt(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta, ecs::EntityID ignore, PlacementRules rules) const;
 
 	/// Where a freshly crafted `defName` crate is installed beside the station at `stationPos`, at turn 0: a
 	/// spot at least 1 m off it, tried first along `aim` (NavigationSystem::findValidPositionNear),

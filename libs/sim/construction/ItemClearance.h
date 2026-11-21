@@ -33,14 +33,15 @@ namespace construction {
 	/// How deep two shapes may share ground at their edges and still not meet.
 	inline constexpr std::int64_t kFlushToleranceMm = 2;
 
-	/// Whether two rings in metres, either winding, share ground deeper than kFlushToleranceMm. The first is taken in
-	/// by the tolerance (by half of it where a part is too narrow for all of it, as it is where too narrow for that)
-	/// and tested against the second exactly, in micrometres. A ring with under three distinct micrometre points, or one that crosses
-	/// itself there, meets anything.
+	/// Whether two rings in metres, either winding, share ground deeper than kFlushToleranceMm. Each is taken in by half
+	/// the tolerance (by a quarter where a part is too narrow for that, and not at all where too narrow for a quarter),
+	/// so the answer is the same in either order, and the two are tested exactly, in micrometres. A ring with under
+	/// three distinct micrometre points, or one that crosses itself there, meets anything.
 	[[nodiscard]] bool ringsMeet(const std::vector<glm::vec2>& first, const std::vector<glm::vec2>& second);
 
-	/// `ring` in metres, either winding, taken in as ringsMeet takes it in: what a test of the ground under an item
-	/// reads, so an obstacle or a wall in the mesh that only touches the item's edge doesn't refuse it.
+	/// `ring` in metres, either winding, taken in by the whole tolerance (half where too narrow, none where too narrow
+	/// for that): what a test of the ground under an item reads, so an obstacle or a wall in the mesh that only touches
+	/// the item's edge doesn't refuse it.
 	[[nodiscard]] std::vector<glm::vec2> takenIn(const std::vector<glm::vec2>& ring);
 
 	/// Every wall of `world`, blueprint and built, as the offsetter outlines it (geometry::resolveWallBands over each
@@ -48,11 +49,13 @@ namespace construction {
 	/// wall), in metres. A band runs whole across its openings. A graph the offsetter rejects is its raw bands.
 	[[nodiscard]] std::vector<std::vector<glm::vec2>> wallOutlines(const ConstructionWorld& world);
 
-	/// The band a wall from `start` to `end` would have, `halfThicknessMeters` each side of the centreline, carried on
-	/// by the half thickness past an end that joins another wall (`joinsAtStart`, `joinsAtEnd`), which covers the
-	/// corner the joint's junction fills.
-	[[nodiscard]] std::vector<glm::vec2>
-	drawnWallBand(glm::vec2 start, glm::vec2 end, float halfThicknessMeters, bool joinsAtStart, bool joinsAtEnd);
+	/// The outline the last segment of `chain` (points in metres, its walls `halfThicknessMm` each side) would have
+	/// among the walls of `world` and the chain's earlier segments: the offsetter resolves the graph with the chain
+	/// added, and this is the segment's trimmed band and the junctions at its ends, the same outline wallOutlines gives
+	/// it once it is built, at any joint angle. A graph the offsetter rejects gives the segment's raw band. Empty for a
+	/// chain of under two distinct points.
+	[[nodiscard]] std::vector<std::vector<glm::vec2>>
+	drawnWallOutline(const ConstructionWorld& world, const std::vector<glm::vec2>& chain, std::int64_t halfThicknessMm);
 
 	/// Rules 1 and 2 of 14.2 for an item whose outlines in the world are `held`, against every other item `items`
 	/// holds (installed and pending, `ignore` aside: the crate being moved) and the walls `wallRings`
@@ -67,7 +70,8 @@ namespace construction {
 		const ecs::PlacedItemIndex& items, const std::vector<std::vector<glm::vec2>>& wallRings, const ecs::ItemOutlines& held, ecs::EntityID ignore
 	);
 
-	/// Whether the wall band `band` (a ring in metres) meets the reserved region of any item `items` holds.
-	[[nodiscard]] bool bandMeetsItems(const ecs::PlacedItemIndex& items, const std::vector<glm::vec2>& band);
+	/// Whether the wall outline `wall` (rings in metres, drawnWallOutline's) meets the reserved region of any item
+	/// `items` holds.
+	[[nodiscard]] bool wallMeetsItems(const ecs::PlacedItemIndex& items, const std::vector<std::vector<glm::vec2>>& wall);
 
 } // namespace construction

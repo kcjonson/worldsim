@@ -6,7 +6,7 @@
 // It runs right after NavigationSystem (51), which refreshes ColliderEntityIndex as it gathers: an item that leaves its
 // crate to be installed (the install action, 350) is read as an obstacle and loses its pending target in the same
 // refresh, the next tick, so it is never in neither. Spawns and removals the tick defers (DeferredEditsSystem, 800)
-// arrive the tick after; an install target handed out in between is held (PlacedItemIndex::holdTarget) until then.
+// arrive the tick after; an install target handed out in between is held (PlacedItemIndex::hold) until then.
 // The world's input, read before World::update, sees the index as of the last tick.
 
 #include "../ColliderEntityIndex.h"

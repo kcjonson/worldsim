@@ -1,5 +1,6 @@
 #include "scenes/game/world/placement/PlacementSystem.h"
 
+#include "scenes/game/dev/GroundRefusal.h"
 #include "scenes/game/world/CreekWorldFixture.test.h"
 #include "scenes/game/world/PlayerVisibilityFixture.test.h"
 
@@ -113,6 +114,23 @@ TEST_F(PlacementVisibilityTest, ClickRefusesOnUnseenGroundAndPlacesOnSeenGround)
 	EXPECT_EQ(placement->state(), world_sim::PlacementState::Placing);
 	hover(kSeenPoint);
 	EXPECT_TRUE(placement->handleRelease());
+}
+
+// The dev verbs skip the explored rule: furniture is spawned on meshed, unseen, buildable ground the ghost refuses.
+TEST_F(PlacementVisibilityTest, ADevSpawnOnUnseenMeshedGroundIsTaken) {
+	assets::AssetDefinition shelf;
+	shelf.defName = "Test_PlacementUnseenShelf";
+	shelf.capabilities.storage = assets::StorageCapability{};
+	shelf.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {0.4F, 0.4F}});
+	assets::AssetRegistry::Get().registerTestDefinition(shelf);
+	ASSERT_TRUE(world_sim::PlacementSystem::isFurniture(shelf.defName));
+	ASSERT_FALSE(seen.visibility.isSeen(kUnseenPoint));
+	const std::string refusal = world_sim::spawnGroundRefusal(*placement, navigation, shelf.defName, {kUnseenPoint.x, kUnseenPoint.y}, 0);
+	EXPECT_TRUE(refusal.empty()) << refusal;
+	EXPECT_EQ(
+		placement->refusalAt(shelf.defName, {kUnseenPoint.x, kUnseenPoint.y}, 0, ecs::kInvalidEntity, world_sim::PlacementSystem::PlacementRules::Player),
+		construction::PlacementRefusal::Unexplored
+	) << "the player's rules refuse it";
 }
 
 TEST_F(PlacementVisibilityTest, RevealTurnsTheRuleOff) {
@@ -429,7 +447,7 @@ TEST_F(PlacementFordTest, AFlushSlideOntoRefusedGroundIsNotTaken) {
 	hover(pointer);
 	EXPECT_TRUE(placement->ghostValid());
 	EXPECT_NEAR(placement->ghostPosition().y, pointer.y, 0.001F) << "not slid into the creek";
-	EXPECT_EQ(placement->refusalAt("TestPartsBox", {pointer.x, bank - 0.1F + 0.3F}, 0, ecs::kInvalidEntity), construction::PlacementRefusal::NotBuildableGround)
+	EXPECT_EQ(placement->refusalAt("TestPartsBox", {pointer.x, bank - 0.1F + 0.3F}, 0, ecs::kInvalidEntity, world_sim::PlacementSystem::PlacementRules::Player), construction::PlacementRefusal::NotBuildableGround)
 		<< "where the slide would have put it";
 	placement->setConstructionWorld(nullptr);
 	assets::ConstructionRegistry::Get().clear();

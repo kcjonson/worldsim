@@ -280,7 +280,7 @@ namespace world_sim {
 				std::vector<const ecs::PlacedItemIndex::Entry*> near;
 				items->query(rawPosition - glm::vec2{reach, reach}, rawPosition + glm::vec2{reach, reach}, near);
 				for (const ecs::PlacedItemIndex::Entry* other : near) {
-					if (other->entity == relocatingEntityId) {
+					if (relocatingEntityId != ecs::EntityID{0} && other->entity == relocatingEntityId) {
 						continue;
 					}
 					for (const std::vector<glm::vec2>& ring : other->world.reserved) {
@@ -291,10 +291,10 @@ namespace world_sim {
 				position += construction::flushSlide(held.reserved, faces, snapping);
 			}
 		}
-		refusal = refusalAt(defName, {position.x, position.y}, turnQuanta, relocatingEntityId);
+		refusal = refusalAt(defName, {position.x, position.y}, turnQuanta, relocatingEntityId, PlacementRules::Player);
 		// The slide is a help: one that would take the ghost from a spot it can stand on to one it can't is not taken.
 		if (refusal.has_value() && position != rawPosition) {
-			if (const std::optional<construction::PlacementRefusal> unslid = refusalAt(defName, {rawPosition.x, rawPosition.y}, turnQuanta, relocatingEntityId);
+			if (const std::optional<construction::PlacementRefusal> unslid = refusalAt(defName, {rawPosition.x, rawPosition.y}, turnQuanta, relocatingEntityId, PlacementRules::Player);
 				!unslid.has_value()) {
 				position = rawPosition;
 				refusal.reset();
@@ -322,12 +322,12 @@ namespace world_sim {
 			return std::nullopt;
 		}
 		const std::optional<glm::vec2> target = navigation->findValidPositionNear(stationPos, 1.0F, aim, [&](glm::vec2 candidate) {
-			return !refusalAt(defName, {candidate.x, candidate.y}, 0, ecs::kInvalidEntity).has_value();
+			return !refusalAt(defName, {candidate.x, candidate.y}, 0, ecs::kInvalidEntity, PlacementRules::Player).has_value();
 		});
 		// Its crate is spawned later in the tick: held until then, so the next craft finishing this tick keeps off it.
 		if (target.has_value()) {
 			if (ecs::PlacedItemSystem* system = ecsWorld != nullptr ? ecsWorld->tryGetSystem<ecs::PlacedItemSystem>() : nullptr) {
-				system->items().holdTarget(defName, *target, 0.0F, assets::AssetRegistry::Get());
+				system->items().hold(defName, *target, 0.0F, assets::AssetRegistry::Get());
 			}
 		}
 		return target;
@@ -354,7 +354,7 @@ namespace world_sim {
 	}
 
 	std::optional<construction::PlacementRefusal>
-	PlacementSystem::refusalAt(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta, ecs::EntityID ignore) const {
+	PlacementSystem::refusalAt(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta, ecs::EntityID ignore, PlacementRules rules) const {
 		const ecs::PlacedItemIndex* items = placedItems();
 		const ecs::ItemOutlines		held = outlinesAt(defName, worldPos, turnQuanta);
 		if (items != nullptr) {
@@ -365,7 +365,8 @@ namespace world_sim {
 		if (!footprintBuildableNow(defName, worldPos, turnQuanta)) {
 			return construction::PlacementRefusal::NotBuildableGround;
 		}
-		const ecs::PlayerVisibilitySystem* visibility = ecsWorld != nullptr ? ecs::PlayerVisibilitySystem::gate(*ecsWorld) : nullptr;
+		const ecs::PlayerVisibilitySystem* visibility =
+			rules == PlacementRules::Player && ecsWorld != nullptr ? ecs::PlayerVisibilitySystem::gate(*ecsWorld) : nullptr;
 		if (visibility != nullptr && !std::ranges::all_of(footprintAt(defName, worldPos, turnQuanta), [visibility](const std::vector<glm::vec2>& ring) {
 				return visibility->covers(ring);
 			})) {

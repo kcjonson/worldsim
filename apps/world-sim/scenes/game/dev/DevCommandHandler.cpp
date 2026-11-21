@@ -30,6 +30,7 @@
 
 #include <debug/Tunables.h>
 
+#include <ecs/systems/PlacedItemSystem.h>
 #include <ecs/components/Packaged.h>
 #include <ecs/InventoryMass.h>
 #include <ecs/World.h>
@@ -445,6 +446,12 @@ namespace world_sim {
 				continue;
 			}
 			spawned.push_back(m_ctx.placement->spawnEntity(def, {placed->x, placed->y}, turn));
+			// The placed item index sees the item only at the next tick: held until then, so the next spot keeps off it.
+			if (PlacementSystem::turns(def)) {
+				if (ecs::PlacedItemSystem* items = m_ctx.world->tryGetSystem<ecs::PlacedItemSystem>()) {
+					items->items().hold(def, *placed, assets::turnRadiansFromQuanta(turn), assets::AssetRegistry::Get());
+				}
+			}
 		}
 		if (spawned.empty()) {
 			return reject("spawn: none of the " + std::to_string(n) + " scattered spots near (" + std::to_string(at.x) + ", " +
@@ -711,12 +718,16 @@ namespace world_sim {
 		if (!PlacementSystem::turns(def)) {
 			return refuse("package: '" + def + "' is not a parts def");
 		}
-		const std::string targetText = param(cmd, "target");
-		if (targetText.empty()) {
-			return refuse("package: missing target=<x>,<y>");
+		const std::optional<Foundation::Vec2> crateSpot = parseOnePoint(param(cmd, "at"));
+		if (!crateSpot.has_value()) {
+			return refuse("package: at='" + param(cmd, "at") + "' is not a point <x>,<y>");
 		}
-		const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
-		const Foundation::Vec2 target = parsePoint(targetText);
+		const std::optional<Foundation::Vec2> targetSpot = parseOnePoint(param(cmd, "target"));
+		if (!targetSpot.has_value()) {
+			return refuse("package: target='" + param(cmd, "target") + "' is not a point <x>,<y>");
+		}
+		const Foundation::Vec2 at = *crateSpot;
+		const Foundation::Vec2 target = *targetSpot;
 		char*				   end = nullptr;
 		const std::string	   turnText = param(cmd, "turn", "0");
 		const double		   degrees = std::strtod(turnText.c_str(), &end);
@@ -727,8 +738,9 @@ namespace world_sim {
 		if (const std::string refusal = putDownRefusal(m_ctx.navigation, at); !refusal.empty()) {
 			return refuse("package: the crate at " + refusal);
 		}
-		// The target is held to the rules a target the player picks is.
-		if (const std::optional<construction::PlacementRefusal> refusal = m_ctx.placement->refusalAt(def, target, turn, ecs::kInvalidEntity)) {
+		// The target is held to the rules a target the player picks is, but for the explored rule, as for any dev verb.
+		if (const std::optional<construction::PlacementRefusal> refusal =
+				m_ctx.placement->refusalAt(def, target, turn, ecs::kInvalidEntity, PlacementSystem::PlacementRules::Dev)) {
 			return refuse("package: the target is refused: " + std::string(construction::placementRefusalLabel(*refusal)));
 		}
 		const ecs::EntityID crate = m_ctx.placement->spawnEntity(def, at, 0);

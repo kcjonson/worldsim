@@ -1292,20 +1292,14 @@ namespace world_sim {
 	}
 
 	bool DrawingSystem::wallMeetsItems(
-		Foundation::Vec2 start, Foundation::Vec2 end, const assets::ThicknessPreset& preset, bool joinsAtStart, bool joinsAtEnd
+		const construction::ConstructionWorld& world, const std::vector<Foundation::Vec2>& chain, const assets::ThicknessPreset& preset
 	) const {
 		const ecs::PlacedItemSystem* items = ecsWorld_ != nullptr ? ecsWorld_->tryGetSystem<ecs::PlacedItemSystem>() : nullptr;
 		if (items == nullptr) {
 			return false;
 		}
-		const float halfThicknessMeters = static_cast<float>(preset.halfThicknessMm) / static_cast<float>(geometry::kMillimetersPerMeter);
-		return construction::bandMeetsItems(items->items(), construction::drawnWallBand(start, end, halfThicknessMeters, joinsAtStart, joinsAtEnd));
+		return construction::wallMeetsItems(items->items(), construction::drawnWallOutline(world, Foundation::toGlmVec2(chain), preset.halfThicknessMm));
 	}
-
-	bool DrawingSystem::joinsWall(const construction::ConstructionWorld& world, Foundation::Vec2 point) {
-		return world.vertexAt(geometry::quantize(point)) != construction::kInvalidVertex;
-	}
-
 	void DrawingSystem::handleWallMove(Foundation::Vec2 world, bool freeform) {
 		auto& registry = ConstructionRegistry::Get();
 
@@ -1346,9 +1340,9 @@ namespace world_sim {
 		lastValidation_ = snapMemoValidation_;
 		// Placed items move without the snap's inputs moving, so this is read on every move, outside the memo.
 		if (preset != nullptr && lastValidation_.ok() && !points_.empty()) {
-			const bool joinsAtStart = points_.size() >= 2 || joinsWall(constructionWorld_, points_.back());
-			const bool joinsAtEnd = joinsWall(constructionWorld_, cursor_) || construction::closesWallChain(points_, cursor_);
-			if (wallMeetsItems(points_.back(), cursor_, *preset, joinsAtStart, joinsAtEnd)) {
+			std::vector<Foundation::Vec2> chain = points_;
+			chain.push_back(cursor_);
+			if (wallMeetsItems(constructionWorld_, chain, *preset)) {
 				lastValidation_ = {.code = construction::ValidationCode::MeetsPlacedItem, .vertexIndex = points_.size()};
 			}
 		}
@@ -1510,10 +1504,8 @@ namespace world_sim {
 				skip(construction::validationReason(check.code));
 				continue;
 			}
-			const bool closed = chain.size() > 2 && geometry::quantize(chain.front()) == geometry::quantize(chain.back());
-			const bool joinsAtStart = i > 0 || closed || joinsWall(into, start);
-			const bool joinsAtEnd = i + 2 < chain.size() || closed || joinsWall(into, end);
-			if (wallMeetsItems(start, end, preset, joinsAtStart, joinsAtEnd)) {
+			// The earlier segments are in `into` by now, so the segment is resolved among them.
+			if (wallMeetsItems(into, {start, end}, preset)) {
 				skip(construction::validationReason(construction::ValidationCode::MeetsPlacedItem));
 				continue;
 			}
@@ -1654,7 +1646,7 @@ namespace world_sim {
 		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
 		construction::ValidationCode code = validator.validateWallSegment(bestA, bestB, *preset, host).code;
 		if (code == construction::ValidationCode::Ok &&
-			wallMeetsItems(bestA, bestB, *preset, joinsWall(constructionWorld_, bestA), joinsWall(constructionWorld_, bestB))) {
+			wallMeetsItems(constructionWorld_, {bestA, bestB}, *preset)) {
 			code = construction::ValidationCode::MeetsPlacedItem;
 		}
 		if (code != construction::ValidationCode::Ok) {

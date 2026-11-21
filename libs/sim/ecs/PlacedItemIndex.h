@@ -8,7 +8,7 @@
 //
 // Derived data, never saved: the installed items are the parts entries of ColliderEntityIndex, re-read when its
 // revision moves, and the pending targets the crates the ECS holds with a target, diffed in place each refresh. A
-// target handed out before its crate exists is held (holdTarget) until the next refresh, which by then sees the crate.
+// target handed out before its crate exists is held (hold) until the next refresh, which by then sees the crate.
 // revision() moves on any change, so a reader settling on it (the still placement ghost) needs nothing else to notice
 // an item installed, moved, turned, targeted, or removed.
 
@@ -65,8 +65,9 @@ namespace ecs {
 		/// the held targets, and moves revision() when anything changed.
 		void refresh(const ColliderEntityIndex& obstacles, World& world, const assets::AssetRegistry& registry);
 
-		/// Holds an install target given out before its crate exists, as a pending entry, until the next refresh.
-		void holdTarget(const std::string& defName, glm::vec2 position, float turnRadians, const assets::AssetRegistry& registry);
+		/// Holds an item given a spot before a refresh can see it (a crafted crate's install target before the crate
+		/// spawns, an item a dev spawn has just put down), as a pending entry, until the next refresh.
+		void hold(const std::string& defName, glm::vec2 position, float turnRadians, const assets::AssetRegistry& registry);
 
 		/// The entries whose box meets the box from `lower` to `upper`, appended to `out`: installed and pending in
 		/// entity order, then the held targets.

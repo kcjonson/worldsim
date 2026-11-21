@@ -415,7 +415,8 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] bool placedObstacleInNavMesh(EntityID entity) const;
 	// The ECS entities with a collider, as of this tick's update: the obstacles that are not the
 	// placement executor's.
-	[[nodiscard]] const ColliderEntityIndex& colliderEntities() const { return colliderEntityIndex; }	// The forward snap found `mover` standing in a placed obstacle in the mesh this tick and left it
+	[[nodiscard]] const ColliderEntityIndex& colliderEntities() const { return colliderEntityIndex; }
+	// The forward snap found `mover` standing in a placed obstacle in the mesh this tick and left it
 	// there (nothing clear ahead): it is the snap's, and collision does not push it. Read between
 	// update() and endTick().
 	[[nodiscard]] bool snapHolds(EntityID mover) const;
