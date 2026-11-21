@@ -1,8 +1,9 @@
 #pragma once
 
 // Mood tuning: how fast mood follows its target, how each need's level turns into a mood penalty, and
-// the band names. Loaded from assets/config/colonists/mood.xml. Each need's cost is on its own entry in
-// assets/config/colonists/needs (NeedsConfig). See /docs/design/game-systems/colonists/mood.md.
+// the band names. Loaded from the file with a <Mood> root in the human's folder
+// (assets/world/creatures/Human/mood.xml). Each need's cost is on its own entry in needs.xml beside it
+// (NeedsConfig). See /docs/design/game-systems/colonists/mood.md.
 
 #include <filesystem>
 #include <string>

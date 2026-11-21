@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Test Tall Box - a do-nothing 1 m x 1 m x 2 m box to drop with the dev tools
+     (/api/dev/spawn?def=TestTallBox) when working on shadows and sight. It is
+     taller than a colonist's eye, and its collider (in the SVG metadata) makes a
+     spawned one block walking, collision and sight. It has no capabilities, no
+     item, no recipe and no placement, so nothing spawns it but a dev command.
+     The spawn point is the middle of the drawing, so the box's base is 1 m below
+     it on screen and its 1 m square footprint runs from the spawn point's y to
+     1 m south of it. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>TestTallBox</defName>
+    <label>Test tall box</label>
+    <assetType>simple</assetType>
+    <svgPath>test_tall_box.svg</svgPath>
+    <worldHeight>2.0</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+    </rendering>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>

@@ -19,6 +19,7 @@ add_library(assets
     assets/ConditionConfig.cpp
     assets/ConfigFiles.cpp
     assets/ConfigValidator.cpp
+    assets/CreatureConfigFiles.cpp
     assets/MemoryConfig.cpp
     assets/MoodConfig.cpp
     assets/NeedsConfig.cpp

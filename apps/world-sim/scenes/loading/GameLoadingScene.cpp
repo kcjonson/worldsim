@@ -7,6 +7,7 @@
 // `quickstart-planet` CMake target). It is never generated at runtime.
 
 #include "GameBootstrap.h"
+#include "GameConfig.h"
 #include "GameStartConfig.h"
 #include "GameWorldState.h"
 #include "SceneTypes.h"
@@ -20,7 +21,6 @@
 
 #include <application/App.h>
 #include <assets/AssetRegistry.h>
-#include <assets/WorkConfig.h>
 #include <assets/placement/AsyncChunkProcessor.h>
 #include <assets/placement/BiomeProvisions.h>
 #include <assets/placement/CanopyCover.h>
@@ -362,12 +362,10 @@ namespace {
 			// Load work configuration first. Goals are process-wide too; a new game starts with none.
 			updateStatusText("Loading configuration...");
 			ecs::GoalTaskRegistry::Get().clear();
-			std::vector<std::string> configErrors = assets::loadWorkConfig("assets/config");
-			ecs::ColonistRulesLoad colonistRules = ecs::loadColonistRules("assets/config");
-			configErrors.insert(configErrors.end(), colonistRules.errors.begin(), colonistRules.errors.end());
-			worldState->colonistRules = std::move(colonistRules.rules);
-			if (!configErrors.empty()) {
-				fail(std::move(configErrors));
+			world_sim::GameConfigLoad config = world_sim::loadGameConfig("assets/config", "assets/world/creatures/Human");
+			worldState->colonistRules = std::move(config.rules);
+			if (!config.errors.empty()) {
+				fail(std::move(config.errors));
 				return;
 			}
 			LOG_INFO(Game, "Configuration loaded successfully");

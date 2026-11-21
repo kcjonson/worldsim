@@ -9,7 +9,7 @@ Colonists reveal the ground: bright in sight, tinted once seen, black never seen
 
 ## Setup
 
-Launch as [../README.md](../README.md) says and take Quick Start. It is seeded, so the landing is the same each run: forest west of a river, the drop at (-29, -17) (`/api/state?what=landing`), and a BigRock at (-63.2, -40.9), 42 m north-west of the drop. The river runs through the origin, east of the crew, and blocks them; every place below is on the crew's side. The verbs used are `/api/dev/` `select`, `walls`, `opening`, `colonist`, `kill`, `teleport`, `reveal`, `time`, and `visibility?x=&y=` (seen, visible). To order drafted Bob to a point, jump the camera there and right-click the window's centre. Once he is drafted, never left-click empty ground with no tool active: that deselects him, which releases him. +y is south.
+Launch as [../README.md](../README.md) says and take Quick Start. It is seeded, so the landing is the same each run: forest west of a river, the drop at (-29, -17) (`/api/state?what=landing`), and a BigRock at (-63.2, -40.9), 42 m north-west of the drop. The river runs through the origin, east of the crew, and blocks them; every place below is on the crew's side. The verbs used are `/api/dev/` `spawn`, `ground`, `select`, `walls`, `opening`, `colonist`, `kill`, `teleport`, `reveal`, `time`, and `visibility?x=&y=` (seen, visible). To order drafted Bob to a point, jump the camera there and right-click the window's centre. Once he is drafted, never left-click empty ground with no tool active: that deselects him, which releases him. +y is south.
 
 ---
 
@@ -58,4 +58,9 @@ Launch as [../README.md](../README.md) says and take Quick Start. It is seeded, 
 41. Build a wall from (-43, -13) to (-43, -7), 6 m east of Bob, and zoom 20 on it: the tint starts at its west face.
 42. Look at its top: an even mid brown.
 43. Turn reveal on: the top turns light tan. Turn reveal off.
-44. Click Release, then exit.
+44. Spawn a `TestTallBox` at (-45, -10), 4 m east of Bob: the answer's `entities` holds one id; note it.
+45. Read `sightBodies`: the box is `opaque`, about 1555 mm across, and a full shadow runs from it to his rim.
+46. Read `ground` at (-45, -9.5), the footprint's middle: `valid` is false.
+47. `kill` the box's id: its shadow and its body are gone.
+48. Read `ground` at (-45, -9.5): `valid` is true.
+49. Click Release, then exit.

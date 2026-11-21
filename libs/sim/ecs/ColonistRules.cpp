@@ -9,6 +9,8 @@
 
 #include <utils/Log.h>
 
+#include <cassert>
+
 namespace ecs {
 
 	namespace {
@@ -19,12 +21,13 @@ namespace ecs {
 		}
 	} // namespace
 
-	std::vector<std::string> loadAttributeRolls(AttributeRolls& rolls, const std::filesystem::path& folder) {
+	std::vector<std::string>
+	loadAttributeRolls(AttributeRolls& rolls, const std::vector<std::filesystem::path>& files, const std::filesystem::path& folder) {
 		std::vector<std::string_view> names;
 		for (const AttributeField& field : kAttributeFields) {
 			names.push_back(field.id);
 		}
-		assets::AttributeConfigLoad config = assets::loadAttributeConfig(folder, names);
+		assets::AttributeConfigLoad config = assets::loadAttributeConfig(files, folder, names);
 		if (!config.errors.empty()) {
 			return config.errors;
 		}
@@ -67,8 +70,9 @@ namespace ecs {
 		return errors;
 	}
 
-	std::vector<std::string> loadNeedLevels(NeedLevels& levels, const std::filesystem::path& folder) {
-		const assets::NeedsConfigLoad config = assets::loadNeedsConfig(folder);
+	std::vector<std::string>
+	loadNeedLevels(NeedLevels& levels, const std::vector<std::filesystem::path>& files, const std::filesystem::path& folder) {
+		const assets::NeedsConfigLoad config = assets::loadNeedsConfig(files, folder);
 		if (!config.errors.empty()) {
 			return config.errors;
 		}
@@ -79,7 +83,9 @@ namespace ecs {
 		return errors;
 	}
 
-	ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot) {
+	ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot, const assets::CreatureConfigFiles& human) {
+		assert(human.errors.empty() && "loadColonistRules takes a human folder with no errors; its errors are the load's");
+		assert(!human.traits.empty() && !human.attributes.empty() && !human.needs.empty() && "loadColonistRules reads every kind it loads");
 		ColonistRulesLoad load;
 		load.rules.traits = std::make_unique<assets::TraitRegistry>();
 		load.rules.attributes = std::make_unique<AttributeRolls>();
@@ -87,17 +93,17 @@ namespace ecs {
 		load.rules.thoughtTypes = std::make_unique<ThoughtTypes>(*load.rules.vocabulary);
 		load.rules.needLevels = std::make_unique<NeedLevels>();
 
-		addErrors(load.errors, "traits", load.rules.traits->loadFromFolder(configRoot / "colonists" / "traits"));
+		addErrors(load.errors, "traits", load.rules.traits->loadFromFiles(human.traits, human.folder));
 		if (!load.errors.empty()) {
 			return load;
 		}
 		const assets::TraitRegistry& traits = *load.rules.traits;
-		LOG_INFO(Engine, "Loaded %zu traits from %s", traits.traits().size(), (configRoot / "colonists" / "traits").generic_string().c_str());
-		addErrors(load.errors, "attributes", loadAttributeRolls(*load.rules.attributes, configRoot / "colonists" / "attributes"));
+		LOG_INFO(Engine, "Loaded %zu traits from %s", traits.traits().size(), human.folder.generic_string().c_str());
+		addErrors(load.errors, "attributes", loadAttributeRolls(*load.rules.attributes, human.attributes, human.folder));
 		if (!load.errors.empty()) {
 			return load;
 		}
-		addErrors(load.errors, "needs", loadNeedLevels(*load.rules.needLevels, configRoot / "colonists" / "needs"));
+		addErrors(load.errors, "needs", loadNeedLevels(*load.rules.needLevels, human.needs, human.folder));
 		if (!load.errors.empty()) {
 			return load;
 		}

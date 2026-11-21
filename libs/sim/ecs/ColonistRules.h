@@ -10,6 +10,7 @@
 
 #include <conditions/ConditionVocabulary.h>
 
+#include <assets/CreatureConfigFiles.h>
 #include <assets/TraitRegistry.h>
 
 #include <filesystem>
@@ -34,9 +35,11 @@ namespace ecs {
 		std::vector<std::string> errors;
 	};
 
-	/// Fill `rolls` from the attribute config in `folder`, one range for every attribute in kAttributeFields.
-	/// An empty error list means it is ready; that is logged with the attribute count.
-	[[nodiscard]] std::vector<std::string> loadAttributeRolls(AttributeRolls& rolls, const std::filesystem::path& folder);
+	/// Fill `rolls` from the attribute config in `files` (named relative to `folder`), one range for every
+	/// attribute in kAttributeFields. An empty error list means it is ready; that is logged with the attribute
+	/// count.
+	[[nodiscard]] std::vector<std::string>
+	loadAttributeRolls(AttributeRolls& rolls, const std::vector<std::filesystem::path>& files, const std::filesystem::path& folder);
 
 	/// Declare `vocabulary` from the condition config in `folder`, answer it with the sim's terms (trait
 	/// names from `traits`), and freeze it. An empty error list means it is ready; that is logged with its
@@ -48,15 +51,18 @@ namespace ecs {
 	/// logged with the feeling, thought type, and source counts.
 	[[nodiscard]] std::vector<std::string> loadThoughtTypes(ThoughtTypes& types, const std::filesystem::path& folder);
 
-	/// Build `levels` from the need config in `folder`. An empty error list means they are ready; that is
-	/// logged with the need count.
-	[[nodiscard]] std::vector<std::string> loadNeedLevels(NeedLevels& levels, const std::filesystem::path& folder);
+	/// Build `levels` from the need config in `files` (named relative to `folder`). An empty error list means
+	/// they are ready; that is logged with the need count.
+	[[nodiscard]] std::vector<std::string>
+	loadNeedLevels(NeedLevels& levels, const std::vector<std::filesystem::path>& files, const std::filesystem::path& folder);
 
-	/// Load the traits from `configRoot`/colonists/traits, the attribute ranges from
-	/// `configRoot`/colonists/attributes, the need levels from `configRoot`/colonists/needs, build the
-	/// vocabulary from `configRoot`/conditions, then the thought types from `configRoot`/thoughts, stopping at
-	/// the first stage with errors. Errors name their stage; an empty list means all are ready. Every part of
-	/// the rules exists either way; a stage that failed or never ran is empty.
-	[[nodiscard]] ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot);
+	/// Load the traits, the attribute ranges, and the need levels from `human`'s <Traits>, <Attributes>, and
+	/// <Needs> files, build the vocabulary from `configRoot`/conditions, then the thought types from
+	/// `configRoot`/thoughts, stopping at the first stage with errors. `human` must have no errors and a file
+	/// of each kind this reads (asserted): a caller with a broken human folder reports its errors and loads
+	/// nothing. Errors name their stage; an
+	/// empty list means all are ready. Every part of the rules exists either way; a stage that failed or never
+	/// ran is empty.
+	[[nodiscard]] ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot, const assets::CreatureConfigFiles& human);
 
 } // namespace ecs

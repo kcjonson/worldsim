@@ -89,7 +89,7 @@ Clocks: **F** frame count; **R** real seconds (the frame delta, unscaled, still 
 | Game clock | `TimeSystem::update` | every frame | `kSpeedMultipliers` {0, 1, 3, 10}, `baseTimeScale` 1 game minute per real second (`TimeSystem.h`) | G | stops |
 | Idle thought rolls | `ThoughtSourceSystem::update` | one roll per idle source per colonist when its time comes, however long the jump since the last; taken only when no thought arrived on the colonist within the interval | the source's `everyMinutes` (assets/config/thoughts) | G | stops |
 | Thought expiry | `ThoughtSystem::update` | every frame; ends each held thought whose timed mood effect has run out, in expiry order, stamped at its expiry time, so a jump ends several in the order they ran out | per thought, `MoodEffect::durationGameHours`, restarted by a repeat (`Thoughts.h`) | G | stops |
-| Mood easing | `MoodSystem::update` | every frame; mood moves toward its target by the game time since the colonist's last update, never past it | `pointsPerGameHour` 5 (`assets/config/colonists/mood.xml`) | G | stops |
+| Mood easing | `MoodSystem::update` | every frame; mood moves toward its target by the game time since the colonist's last update, never past it | `pointsPerGameHour` 5 (`assets/world/creatures/Human/mood.xml`) | G | stops |
 | Vision | `VisionSystem::update` | every 5th frame, every observer in that frame; the counter starts at 5, so frames 1, 6, 11, ... | `m_updateInterval` 5 (`VisionSystem.h`) | F | runs |
 | Needs decay | `NeedsDecaySystem::update` | every frame | per-need `decayRate`, 0.01 to 0.12 % per game minute (`Needs.cpp`, table below) | G | stops |
 | Nav join and gather | `NavigationSystem::update` | every frame; gathers only the mesh limits movers have taken and what isn't meshed, under per-tick counts (never a time budget), so a backlog drains over several frames; a mover's urgent limit goes in outside every budget; nothing is ever taken out but what leaves the world | `kLimitsPerTick` 1, `kDetailRingsPerTick` 32, `kDetailRemovalsPerTick` 128 (`NavigationSystem.h`) | F | runs |
@@ -219,7 +219,7 @@ Frame rate is at most 120 (the cap), and with vsync on (the default) 60 on a 60 
 
 What changes with frame rate: vision, the goal polls, construction, the Rerouting hold, collision pushes per second, and every per-frame AI state (decisions per second double from 60 to 120 fps). What changes with game speed: every R and F rate, measured in game time; G rates are fixed in game time.
 
-A colonist's needs are constructed from the need levels (`NeedsComponent(const NeedLevels&)`): the decay rates are in `Needs.cpp`, the thresholds in `assets/config/colonists/needs/`. Rates are % per game minute; a need is sought below its seek threshold and critical below its critical one. Only the first six are actionable (`kActionableNeeds`), and the AI's critical tier reads each need's own critical threshold (`Need::isCritical`).
+A colonist's needs are constructed from the need levels (`NeedsComponent(const NeedLevels&)`): the decay rates are in `Needs.cpp`, the thresholds in `assets/world/creatures/Human/needs.xml`. Rates are % per game minute; a need is sought below its seek threshold and critical below its critical one. Only the first six are actionable (`kActionableNeeds`), and the AI's critical tier reads each need's own critical threshold (`Need::isCritical`).
 
 | Need | Decay | Seek | Critical |
 |---|---|---|---|
