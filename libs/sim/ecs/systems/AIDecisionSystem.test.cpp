@@ -5951,7 +5951,7 @@ namespace ecs::test {
 		// tool puts it, the opening's centre on the wall's centreline, waiting on 3 Wood; the construction pass
 		// and actions running. The site.
 		EntityID addOpeningSite(construction::SegmentId segment, glm::vec2 at, const char* type = "Door") {
-			world->registerSystem<ActionSystem>(kTestRngSeed);
+			world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 			world->registerSystem<ConstructionSystem>().setConstructionWorld(&construction);
 			assets::AssetDefinition wood;
 			wood.defName				   = "Wood";
@@ -6190,7 +6190,7 @@ namespace ecs::test {
 	// from beside it, and it is taken down, with no route failing on the way. He starts on the side that is
 	// nearest anyway; it catches the wall's centre taken for clear ground and routed to as it is.
 	TEST_F(AIDecisionWallTest, AKnownBuiltWallIsDemolishedFromBesideIt) {
-		auto& actions = world->registerSystem<ActionSystem>(kTestRngSeed);
+		auto& actions = world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		world->registerSystem<ConstructionSystem>().setConstructionWorld(&construction);
 		const std::array<geometry::Vec2i64, 2>	   ends{{{8000, -4000}, {8000, 4000}}};
 		const std::vector<construction::SegmentId> walls = buildWalls(ends, false);
@@ -6237,7 +6237,7 @@ namespace ecs::test {
 	// A built door's centre is in its doorway, ground he walks: ordered demolished, he is routed there, its
 	// own stand point, with no stand point beside the wall.
 	TEST_F(AIDecisionWallTest, ABuiltDoorOrderedDemolishedIsRoutedToItsDoorway) {
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		const std::array<geometry::Vec2i64, 2>	   ends{{{8000, -4000}, {8000, 4000}}};
 		const std::vector<construction::SegmentId> walls   = buildWalls(ends, false);
 		const construction::OpeningId			   opening = construction.addOpening(walls.front(), 0.5F, "Door", "Wood");
