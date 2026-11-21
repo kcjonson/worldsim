@@ -148,6 +148,24 @@ namespace assets {
 		Foundation::Color averageColor;
 	};
 
+	/// One use of a drawing file as loading checked it: what it maps onto and whether its viewBox has the
+	/// proportions of that (rule 7). A file named by two faces is two uses.
+	struct DrawingUseCheck {
+		enum class Verdict : uint8_t {
+			Unread,	  ///< refused before its proportions could be read: outside the folder, missing, or no viewBox
+			Matches,  ///< within aspectTolerance
+			Mismatch, ///< outside it: the face, top, or area draws without the drawing
+		};
+		std::string				file;
+		std::string				covers;		 ///< what it maps onto, as validation names it: "face front of part \"carcass\""
+		std::optional<uint32_t> part;		 ///< the part whose top or face it is; unset for an area's drawing
+		glm::vec2				coversMeters{0.0F};
+		glm::vec2				viewBoxSize{0.0F}; ///< in the drawing's own units; zero when Unread
+		/// |viewBox width / height over covered width / height - 1|, the number rule 7 holds within aspectTolerance.
+		float	aspectDifference = 0.0F;
+		Verdict verdict = Verdict::Unread;
+	};
+
 	struct AreaPolygon {
 		std::vector<glm::vec2>				outer; ///< vertex angle increasing from +X toward +Y
 		std::vector<std::vector<glm::vec2>> holes; ///< wound the other way
@@ -163,6 +181,8 @@ namespace assets {
 		std::vector<PartDefinition> parts;
 		std::vector<PartPlacement>	placements;
 		std::vector<ItemDrawing>	drawings;
+		/// Every drawing use, ordered by file, as loading checked it; for the asset manager's drawings list.
+		std::vector<DrawingUseCheck> drawingChecks;
 		std::vector<ItemArea>		useAreas;
 		ItemArea					clearance;
 		/// The tallest top among the parts with height, the height sight and sorting read; 0 for a flat-only item.

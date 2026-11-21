@@ -10,6 +10,7 @@ add_library(world-view
     world/rendering/GroundTileCache.cpp
     world/rendering/GroundTileFilter.cpp
     world/rendering/InstancedEntityRenderer.cpp
+    world/rendering/ItemViewDrawing.cpp
     world/rendering/ItemViewIndex.cpp
     world/rendering/OverlapGrid.cpp
     world/rendering/RunPlanner.cpp

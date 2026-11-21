@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 120">
+  <!-- Guide: the drawing's rectangle, a stroke, so not area. -->
+  <rect x="0" y="0" width="80" height="120" fill="none" stroke="#888888" stroke-width="1"/>
+  <path d="M20 4 L60 4 L76 30 L76 90 L60 116 L20 116 L4 90 L4 30 Z" fill="#33CC88"/>
+</svg>

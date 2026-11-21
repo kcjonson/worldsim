@@ -7,6 +7,7 @@
 #include <assets/placement/InstanceTransform.h>
 #include <primitives/Primitives.h>
 #include <utils/Log.h>
+#include <world/rendering/ItemViewDrawing.h>
 
 namespace world_sim {
 
@@ -62,6 +63,7 @@ void GhostRenderer::render(const std::string& defName,
 			held = views.emplace(key, HeldView{.mesh = std::move(view.mesh)}).first;
 		}
 		held->second.drawn = true;
+		drawOverlays(*def, turnQuanta, worldPos, camera, viewportWidth, viewportHeight, isValid);
 		draw(held->second.mesh, worldPos, camera, viewportWidth, viewportHeight, isValid);
 		return;
 	}
@@ -72,6 +74,31 @@ void GhostRenderer::render(const std::string& defName,
 		return;
 	}
 	draw(*mesh, worldPos, camera, viewportWidth, viewportHeight, isValid);
+}
+
+// Under the ghost, on the ground: its use areas, clearance, and collider at its turn (rotatable-placed-items 14.4),
+// tinted with it where placement is refused.
+void GhostRenderer::drawOverlays(const assets::AssetDefinition& def,
+								 uint32_t turnQuanta,
+								 Foundation::Vec2 worldPos,
+								 const world::WorldCamera& camera,
+								 int viewportWidth,
+								 int viewportHeight,
+								 bool isValid) {
+	if (overlays.turnQuanta != turnQuanta || overlaysDef != def.defName || overlaysGeneration != viewsGeneration) {
+		overlays = assets::itemOverlays(def, turnQuanta);
+		overlaysDef = def.defName;
+		overlaysGeneration = viewsGeneration;
+	}
+	const Foundation::Vec2 pivot = camera.worldToScreen(worldPos.x, worldPos.y, viewportWidth, viewportHeight, kPixelsPerMeter);
+	const Foundation::Vec2 metreOn = camera.worldToScreen(worldPos.x + 1.0F, worldPos.y, viewportWidth, viewportHeight, kPixelsPerMeter);
+	// The collider is the footprint line of 14.4; the parts' own footprints are the asset manager's.
+	worldview::drawItemOverlays(
+		overlays,
+		{.pivot = pivot, .pixelsPerMeter = metreOn.x - pivot.x},
+		{.useAreas = true, .clearance = true, .footprints = false, .collider = true},
+		{.opacity = isValid ? 1.0F : kInvalidAlpha / kGhostAlpha, .refused = !isValid, .key = 1000}
+	);
 }
 
 void GhostRenderer::draw(

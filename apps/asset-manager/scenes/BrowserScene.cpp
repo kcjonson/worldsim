@@ -14,6 +14,7 @@
 #include <theme/Theme.h>
 #include <theme/Tokens.h>
 #include <ui/components/Button.h>
+#include <ui/components/SegmentedControl.h>
 #include <ui/components/TextInput.h>
 #include <ui/shapes/Rectangle.h>
 #include <ui/shapes/Text.h>
@@ -90,15 +91,17 @@ namespace {
 			// Prefer the SOURCE assets/ -- this is a live authoring tool, so Reload should
 			// re-read the files being edited, not the build-time copy beside the exe.
 			if (const std::filesystem::path src = findSourceAssetsRoot(); !src.empty()) {
-				assetsRoot = (src / "world").string();
+				worldRoot = (src / "world").string();
+				sandboxRoot = (src / "sandbox" / "items").string();
 				sharedScripts = (src / "shared" / "scripts").string();
-				recipes = std::filesystem::exists(src / "recipes") ? (src / "recipes").string()
-																   : Foundation::findResourceString("assets/recipes");
-				LOG_INFO(Engine, "AssetManager: live source assets at %s", assetsRoot.c_str());
+				worldRecipes = std::filesystem::exists(src / "recipes") ? (src / "recipes").string()
+																		: Foundation::findResourceString("assets/recipes");
+				LOG_INFO(Engine, "AssetManager: live source assets at %s", worldRoot.c_str());
 			} else {
-				assetsRoot = Foundation::findResourceString("assets/world");
+				worldRoot = Foundation::findResourceString("assets/world");
+				sandboxRoot = Foundation::findResourceString("assets/sandbox/items");
 				sharedScripts = Foundation::findResourceString("assets/shared/scripts");
-				recipes = Foundation::findResourceString("assets/recipes");
+				worldRecipes = Foundation::findResourceString("assets/recipes");
 			}
 			refreshNames();
 
@@ -133,6 +136,18 @@ namespace {
 				},
 			});
 			topBar.addChild<ui::Button>({.id = "am_reload", .label = "Reload", .onPress = [this] { reload(); }});
+			// The game's assets, or the ui-sandbox's demo items (the parts workbench), one set at a time.
+			topBar.addChild<ui::SegmentedControl>({
+				.id = "am_source",
+				.options = {"World", "Sandbox"},
+				.selected = sandbox ? 1 : 0,
+				.controlSize = ui::ControlSize::Sm,
+				.onChange =
+					[this](int index) {
+						sandbox = index == 1;
+						reload();
+					},
+			});
 			summary = topBar.addChild<ui::Text>({.id = "am_summary", .style = ui::styles::text::secondary});
 
 			// Free to be shorter than its content, so a long definition scrolls in its well instead of
@@ -169,7 +184,10 @@ namespace {
 
 		void render(float /*alpha*/) override { Renderer::Primitives::clear(ui().getTheme().get(t::color::bgVoid)); }
 
-		std::string exportState() const override { return R"({"scene": "browser", "selected": ")" + selected + "\"}"; }
+		std::string exportState() const override {
+			return R"({"scene": "browser", "source": ")" + std::string(sandbox ? "sandbox" : "world") + R"(", "selected": ")" + selected +
+				   R"(", "partsTurnQuanta": )" + std::to_string(detail.get() != nullptr ? detail.get()->partsTurn() : 0) + "}";
+		}
 		const char* name() const override { return kSceneName; }
 
 	  private:
@@ -221,7 +239,10 @@ namespace {
 		void reload() {
 			asset_manager::AssetThumbnail::clearCache();
 			asset_manager::GroundBakeView::clearCache();
-			assets::loadAssetSystem({.definitions = assetsRoot, .sharedScripts = sharedScripts, .recipes = recipes}, false);
+			assets::loadAssetSystem(
+				{.definitions = sandbox ? sandboxRoot : worldRoot, .sharedScripts = sharedScripts, .recipes = sandbox ? std::string() : worldRecipes},
+				false
+			);
 			refreshNames();
 			updateSummary();
 
@@ -296,9 +317,11 @@ namespace {
 		ui::Ref<ui::Component>					list;
 		ui::Ref<asset_manager::AssetDetailView> detail;
 
-		std::string					assetsRoot;
+		std::string					worldRoot;
+		std::string					sandboxRoot;
 		std::string					sharedScripts;
-		std::string					recipes;
+		std::string					worldRecipes;
+		bool						sandbox = false; // browsing the sandbox's items instead of the world's
 		std::vector<std::string>	allNames;
 		std::string					searchText;
 		std::string					selected;

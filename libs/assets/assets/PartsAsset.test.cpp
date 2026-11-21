@@ -5,6 +5,10 @@
 
 #include "assets/PartsAsset.test.h"
 
+#include "assets/ItemOverlays.h"
+#include "assets/PointTurn.h"
+#include "assets/TurnQuanta.h"
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -347,9 +351,23 @@ TEST_F(PartsAssetTest, Rule7ProportionsMatchAndDataLodIsANumber) {
 		"<parts><part name=\"a\"><footprint>" + rect(0, 0, 1, 1) + "</footprint><height bottom=\"0\" top=\"1\"/><top drawing=\"top.svg\"/>"
 		"<sides color=\"#000000\"><face side=\"front\" drawing=\"front.svg\"/></sides></part></parts><placements>" + place("a") + "</placements>"
 	);
-	load("Skew");
+	const AssetDefinition* def = load("Skew");
 	EXPECT_TRUE(hasIssue("Skew", "their proportions must match")) << "a side drawing 2% off its face";
 	EXPECT_TRUE(hasIssue("Skew", "data-lod=\"lots\""));
+
+	// Each use is kept with its verdict, for the asset manager's drawings list.
+	ASSERT_NE(def, nullptr);
+	ASSERT_EQ(def->parts->drawingChecks.size(), 2U);
+	const DrawingUseCheck& front = def->parts->drawingChecks[0];
+	EXPECT_EQ(front.file, "front.svg");
+	EXPECT_EQ(front.covers, "face front of part 'a'");
+	EXPECT_EQ(front.part, std::optional<uint32_t>(0));
+	EXPECT_EQ(front.verdict, DrawingUseCheck::Verdict::Mismatch);
+	EXPECT_NEAR(front.aspectDifference, 0.02F, 1e-5F);
+	EXPECT_NEAR(front.viewBoxSize.x, 102.0F, 1e-4F);
+	const DrawingUseCheck& top = def->parts->drawingChecks[1];
+	EXPECT_EQ(top.verdict, DrawingUseCheck::Verdict::Matches);
+	EXPECT_EQ(top.covers, "the top of part 'a'");
 }
 
 TEST_F(PartsAssetTest, Rule8ArtPastTheViewBoxIsAWarning) {
@@ -420,6 +438,104 @@ TEST_F(PartsAssetTest, AnXmlRectAndADrawingOfItGiveTheSameArea) {
 		EXPECT_NEAR(fromDrawing[i].x, fromXml[i].x, 1e-5F);
 		EXPECT_NEAR(fromDrawing[i].y, fromXml[i].y, 1e-5F);
 	}
+}
+
+// ─── Overlays (sections 14.4 and 16) ──────────────────────────────────────────────────────────────────────
+
+namespace {
+
+	bool insideRing(const std::vector<glm::vec2>& ring, glm::vec2 point) {
+		bool inside = false;
+		for (size_t i = 0, j = ring.size() - 1; i < ring.size(); j = i++) {
+			if ((ring[i].y > point.y) != (ring[j].y > point.y) &&
+				point.x < (ring[j].x - ring[i].x) * (point.y - ring[i].y) / (ring[j].y - ring[i].y) + ring[i].x) {
+				inside = !inside;
+			}
+		}
+		return inside;
+	}
+
+	bool insideArea(const std::vector<AreaPolygon>& polygons, glm::vec2 point) {
+		bool inside = false;
+		for (const AreaPolygon& polygon : polygons) {
+			inside ^= insideRing(polygon.outer, point);
+			for (const auto& hole : polygon.holes) {
+				inside ^= insideRing(hole, point);
+			}
+		}
+		return inside;
+	}
+
+	float hatchedArea(const std::vector<std::array<glm::vec2, 2>>& lines, float spacing) {
+		float length = 0.0F;
+		for (const auto& line : lines) {
+			length += std::hypot(line[1].x - line[0].x, line[1].y - line[0].y);
+		}
+		return length * spacing;
+	}
+
+} // namespace
+
+TEST_F(PartsAssetTest, OverlaysTurnTheAreasFootprintsAndColliderWithTheItem) {
+	writeWorkbench();
+	const AssetDefinition* def = load("Workbench");
+	ASSERT_NE(def, nullptr);
+	const uint32_t	   turn = turnQuantaFromDegrees(35.0);
+	const float		   radians = turnRadiansFromQuanta(turn);
+	const ItemOverlays overlays = itemOverlays(*def, turn);
+	EXPECT_EQ(overlays.turnQuanta, turn);
+
+	// The use area is the def's own polygon, each vertex turned.
+	ASSERT_EQ(overlays.useAreas.size(), 1U);
+	const auto& source = def->parts->useAreas[0].polygons[0].outer;
+	const auto& turned = overlays.useAreas[0].polygons[0].outer;
+	ASSERT_EQ(turned.size(), source.size());
+	for (size_t i = 0; i < source.size(); ++i) {
+		const glm::vec2 expected = turnedPoint(source[i], radians);
+		EXPECT_NEAR(turned[i].x, expected.x, 1e-5F);
+		EXPECT_NEAR(turned[i].y, expected.y, 1e-5F);
+	}
+	// Its fill covers it: 2.4 m by 0.7 m.
+	const renderer::TessellatedMesh& fill = overlays.useAreas[0].fill;
+	double							 filled = 0.0;
+	for (size_t i = 0; i + 2 < fill.indices.size(); i += 3) {
+		const Foundation::Vec2& a = fill.vertices[fill.indices[i]];
+		const Foundation::Vec2& b = fill.vertices[fill.indices[i + 1]];
+		const Foundation::Vec2& c = fill.vertices[fill.indices[i + 2]];
+		filled += std::abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) * 0.5;
+	}
+	EXPECT_NEAR(filled, 2.4 * 0.7, 1e-3);
+	EXPECT_TRUE(insideArea(overlays.useAreas[0].polygons, overlays.useAreas[0].labelPoint));
+
+	// A footprint a placement, the vise's at its offset; the collider's one ring.
+	ASSERT_EQ(overlays.footprints.size(), 4U);
+	const glm::vec2 viseCorner = turnedPoint(def->parts->placedFootprints[2][0], radians);
+	EXPECT_NEAR(overlays.footprints[2][0].x, viseCorner.x, 1e-5F);
+	EXPECT_NEAR(overlays.footprints[2][0].y, viseCorner.y, 1e-5F);
+	ASSERT_EQ(overlays.collider.size(), 1U);
+	EXPECT_NEAR(std::abs(area(overlays.collider[0])), 3.0 + 0.32 * 0.04, 1e-4);
+
+	// The hatching lies inside the clearance, edge to edge, and covers it.
+	ASSERT_FALSE(overlays.clearanceHatch.empty());
+	for (const auto& line : overlays.clearanceHatch) {
+		EXPECT_NEAR(line[1].x - line[0].x, line[1].y - line[0].y, 1e-4F) << "parallel to the screen's diagonal";
+		EXPECT_TRUE(insideArea(overlays.clearance.polygons, (line[0] + line[1]) * 0.5F));
+	}
+	EXPECT_NEAR(hatchedArea(overlays.clearanceHatch, kHatchSpacingMeters), 3.0F * 0.6F, 0.05F * 3.0F * 0.6F);
+}
+
+TEST_F(PartsAssetTest, HatchingSkipsAnAreasHoles) {
+	AreaPolygon framed;
+	framed.outer = {{0.0F, 0.0F}, {2.0F, 0.0F}, {2.0F, 2.0F}, {0.0F, 2.0F}};
+	framed.holes = {{{0.5F, 0.5F}, {0.5F, 1.5F}, {1.5F, 1.5F}, {1.5F, 0.5F}}};
+	const float spacing = 0.05F;
+	const auto	lines = hatchLines({framed}, spacing);
+	ASSERT_FALSE(lines.empty());
+	for (const auto& line : lines) {
+		const glm::vec2 middle = (line[0] + line[1]) * 0.5F;
+		EXPECT_FALSE(middle.x > 0.5F && middle.x < 1.5F && middle.y > 0.5F && middle.y < 1.5F) << "a piece in the hole";
+	}
+	EXPECT_NEAR(hatchedArea(lines, spacing), 3.0F, 0.05F * 3.0F);
 }
 
 // ─── Touching, rounding, and the collider's islands ─────────────────────────────────────────────────────

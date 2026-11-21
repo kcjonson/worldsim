@@ -4,6 +4,7 @@ add_executable(asset-manager
     AssetThumbnail.cpp
     AssetRow.cpp
     AssetDetailView.cpp
+    PartsPreview.cpp
     GroundBakeView.cpp
     TileImageStrip.cpp
     scenes/BrowserScene.cpp

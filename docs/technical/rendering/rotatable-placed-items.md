@@ -597,13 +597,14 @@ Each injection closes the open runs and the animated batch and then draws (`flus
 
 The detail pane for a parts def shows:
 
-- The item at a turn, with a turn slider and Q/E stepping, and a row of 24 small views every 15 degrees, so a face that reads wrong at some angle is seen at once. A level picker shows each detail level.
-- Over the large view and every small one, at the view's turn, the same overlays as the placement ghost (section 14.4): use areas filled in the accent colour, the clearance hatched, the derived collider as the existing cyan outline. Each use area is labelled with its name. Toggles hide each kind.
+- The item at a turn, set by 15 degree step buttons, a degrees entry, and Left and Right (1 degree with Alt) while the pane has focus, and a sheet of 24 small views every 15 degrees, so a face that reads wrong at some angle is seen at once; a click on a small view turns the large one to it. A level picker shows each detail level, or the one the preview's density draws.
+- Over the large view and every small one, at the view's turn, the same overlays as the placement ghost (section 14.4), from the same geometry (`assets::itemOverlays`) and the same drawing (`worldview::drawItemOverlays`): use areas filled with a solid edge, the clearance hatched with a dashed edge, each placed part's footprint as a thin line, the derived collider as the cyan outline, and the depth strips with their anchors. The areas lie under the item and the outlines over it. Each named use area is labelled with its name. A toggle hides each kind, its swatch beside it, so the toggles are the legend.
 - The parts list: each part's footprint, heights, and placements, and its tops and faces with the drawing each uses or "plain" and the colour, so an author sees which faces still need art; the use areas and clearance with each shape's source (XML or the drawing's file).
 - The counts: unique parts, placements, drawings (tops, sides, areas), plain faces, and vertices at the finest level.
-- Validation issues per drawing (proportions against faces, the art check) and per area.
+- Every use of a drawing (`PartsAsset::drawingChecks`): the file, the face, top, or area rectangle it maps onto, that size in metres, and rule 7's check, the viewBox's proportion against the covered one and how far apart they are, green within `aspectTolerance` and red outside it or when the file couldn't be read.
+- Validation issues by part, an issue naming a part or one of its drawings under that part, the rest under the item.
 
-Thumbnails are the turn-0 template (section 6.9). Reload rebuilds views, since drawings are files.
+Thumbnails are the turn-0 template (section 6.9). Reload rebuilds views and overlays, since drawings and the def are files. The asset manager browses the game's assets or the ui-sandbox's demo items (`assets/sandbox/items`), one set at a time.
 
 ## 17. What a shadow system reads
 

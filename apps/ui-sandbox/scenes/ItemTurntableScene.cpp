@@ -1,12 +1,13 @@
 // item-turntable: a parts asset's item views (docs/technical/rendering/rotatable-placed-items.md, sections 2 to 7) on
 // a plain floor. The demo workbench in assets/sandbox/items, loaded through the game's loader and validation, drawn
 // large at a turn the viewer sets, beside a sheet of the same item every 15 degrees. Each view is built by
-// assets::buildItemMesh, uploaded once, and drawn strip by strip in its stored order by index range.
+// assets::buildItemMesh and drawn, with its overlays, by worldview's item view drawing, as the asset manager draws it.
 //
 // Keys: Left and Right turn by the drawing tools' angle step (snapping.xml), Alt+Left and Alt+Right by 1 degree;
-// 1, 2, 3, and 4 toggle the collider, the use areas, the clearance, and the depth strips with their anchors.
-// Dev server: /api/control?action=turn&degrees=35 sets the turn, /api/control?action=overlay&collider=1&use=0&
-// clearance=0&strips=1 sets the overlays, and /api/state?what=scene reads them back with the view and its validation.
+// 1, 2, 3, 4, and 5 toggle the collider, the use areas, the clearance, the depth strips with their anchors, and the
+// part footprints. Dev server: /api/control?action=turn&degrees=35 sets the turn,
+// /api/control?action=overlay&collider=1&use=0&clearance=0&strips=1&footprints=0 sets the overlays, and
+// /api/state?what=scene reads them back with the view and its validation.
 
 #include "SceneTypes.h"
 
@@ -16,18 +17,18 @@
 #include <assets/AssetValidator.h>
 #include <assets/ConstructionRegistry.h>
 #include <assets/DetailLevels.h>
+#include <assets/ItemOverlays.h>
 #include <assets/ItemView.h>
 #include <assets/PartsAsset.h>
-#include <assets/PointTurn.h>
 #include <assets/ViewConfig.h>
 #include <theme/Keys.h>
 #include <theme/Theme.h>
+#include <world/rendering/ItemViewDrawing.h>
 
 #include <application/App.h>
 #include <graphics/Color.h>
 #include <graphics/Rect.h>
 #include <input/InputTypes.h>
-#include <primitives/InstanceData.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <ui/shapes/Text.h>
@@ -70,29 +71,20 @@ namespace {
 	constexpr float kLargeShare = 0.42F;
 	// Room round the farthest thing drawn, so nothing touches a cell's edge.
 	constexpr float kFitMargin = 1.08F;
-	// Logical px
-	constexpr float kOverlayWidth = 2.0F;
-	constexpr float kAnchorRadius = 4.0F;
 
 	const Foundation::Color kFloor(0.557F, 0.541F, 0.514F, 1.0F); // #8E8A83
-	const Foundation::Color kColliderColor(0.85F, 0.12F, 0.12F, 1.0F);
-	const Foundation::Color kUseAreaColor(0.15F, 0.75F, 0.25F, 1.0F);
-	const Foundation::Color kClearanceColor(0.95F, 0.75F, 0.1F, 1.0F);
-	const Foundation::Color kStripColor(0.1F, 0.75F, 0.95F, 1.0F);
-	const Foundation::Color kAnchorColor(0.9F, 0.2F, 0.85F, 1.0F);
 
 	struct Overlays {
 		bool collider = false;
 		bool useAreas = false;
 		bool clearance = false;
 		bool strips = false;
+		bool footprints = false;
 	};
 
-	// One built view and its uploaded mesh.
 	struct DrawnView {
-		assets::ItemView			  view;
-		Renderer::InstancedMeshHandle handle;
-		bool						  built = false;
+		assets::ItemView view;
+		bool			 built = false;
 	};
 
 	// Where everything goes, in ui px.
@@ -155,9 +147,10 @@ namespace {
 			devRegistrations.push_back(owner.devServer().control("overlay", [this](const app::DevRequest& request) {
 				Overlays requested = overlays;
 				if (!readFlag(request, "collider", requested.collider) || !readFlag(request, "use", requested.useAreas) ||
-					!readFlag(request, "clearance", requested.clearance) || !readFlag(request, "strips", requested.strips)) {
+					!readFlag(request, "clearance", requested.clearance) || !readFlag(request, "strips", requested.strips) ||
+					!readFlag(request, "footprints", requested.footprints)) {
 					return app::DevResponse{
-						.status = 400, .body = R"({"error":"overlay flags are collider, use, clearance, and strips, each 0 or 1"})"
+						.status = 400, .body = R"({"error":"overlay flags are collider, use, clearance, strips, and footprints, each 0 or 1"})"
 					};
 				}
 				overlays = requested;
@@ -192,14 +185,30 @@ namespace {
 				floor.height -= kLabelHeight;
 				Renderer::Primitives::drawRect({.bounds = logical(floor, scale), .style = {.fill = kFloor}, .id = "sheet_floor"});
 			}
-			// The views draw at once, not batched: the floor has to be down first.
-			Renderer::Primitives::flush();
-
-			drawView(large, layout.largeCenter * scale, layout.largePixelsPerMeter * scale);
+			const worldview::ItemScreenFrame largeFrame{.pivot = layout.largeCenter * scale, .pixelsPerMeter = layout.largePixelsPerMeter * scale};
+			// The areas lie on the ground under the item; the outlines over it, or the body would hide them.
+			worldview::drawItemOverlays(
+				overlayGeometry,
+				largeFrame,
+				{.useAreas = overlays.useAreas, .clearance = overlays.clearance, .footprints = false, .collider = false},
+				{.pixel = scale}
+			);
+			worldview::drawItemView(large.view.mesh, largeFrame);
 			for (size_t index = 0; index < kSheetCount; ++index) {
-				drawView(sheet[index], layout.cellCenters[index] * scale, layout.sheetPixelsPerMeter * scale);
+				worldview::drawItemView(
+					sheet[index].view.mesh,
+					{.pivot = layout.cellCenters[index] * scale, .pixelsPerMeter = layout.sheetPixelsPerMeter * scale}
+				);
 			}
-			drawOverlays(layout.largeCenter * scale, layout.largePixelsPerMeter * scale);
+			worldview::drawItemOverlays(
+				overlayGeometry,
+				largeFrame,
+				{.useAreas = false, .clearance = false, .footprints = overlays.footprints, .collider = overlays.collider},
+				{.pixel = scale}
+			);
+			if (overlays.strips) {
+				worldview::drawItemStrips(large.view, largeFrame, fitRadiusMeters, {.pixel = scale});
+			}
 		}
 
 		std::string exportState() const override {
@@ -221,7 +230,7 @@ namespace {
 			}
 			return std::format(
 				R"({{"def":"{}","loaded":{},"turnDegrees":{},"turnQuanta":{},"stepDegrees":{},"level":{},"vertices":{},"strips":[{}],)"
-				R"("viewError":"{}","overlays":{{"collider":{},"use":{},"clearance":{},"strips":{}}},)"
+				R"("viewError":"{}","overlays":{{"collider":{},"use":{},"clearance":{},"strips":{},"footprints":{}}},)"
 				R"("validation":{{"errors":{},"warnings":{},"issues":[{}]}}}})",
 				kDefName,
 				definition != nullptr,
@@ -236,6 +245,7 @@ namespace {
 				overlays.useAreas,
 				overlays.clearance,
 				overlays.strips,
+				overlays.footprints,
 				report.errorCount(),
 				report.warningCount(),
 				issues
@@ -295,7 +305,8 @@ namespace {
 				{.position = {kMargin, kMargin + 30.0F},
 				 .style = ui::styles::text::secondary,
 				 .text =
-					 "Left / Right: turn a step    Alt + Left / Right: 1 degree    1 collider    2 use areas    3 clearance    4 strips"}
+					 "Left / Right: turn a step    Alt + Left / Right: 1 degree    1 collider    2 use areas    3 clearance    4 strips    "
+					 "5 footprints"}
 			);
 			status = root().addChild<ui::Text>({.position = {kMargin, kMargin + 52.0F}, .style = ui::styles::text::secondary, .text = ""});
 			for (size_t index = 0; index < kSheetCount; ++index) {
@@ -318,6 +329,7 @@ namespace {
 			overlays.useAreas ^= theme::key(input, Key::Num2).pressed();
 			overlays.clearance ^= theme::key(input, Key::Num3).pressed();
 			overlays.strips ^= theme::key(input, Key::Num4).pressed();
+			overlays.footprints ^= theme::key(input, Key::Num5).pressed();
 		}
 
 		SceneLayout computeLayout() {
@@ -361,11 +373,8 @@ namespace {
 				return;
 			}
 			drawn.view = assets::buildItemMesh(*definition, quanta, level, viewConfig);
-			drawn.handle = {};
 			if (!drawn.view.error.empty()) {
 				LOG_ERROR(UI, "Item turntable: no view at %s degrees: %s", degreesText(quanta).c_str(), drawn.view.error.c_str());
-			} else if (!drawn.view.mesh.vertices.empty()) {
-				drawn.handle = Renderer::Primitives::uploadInstancedMesh(drawn.view.mesh, 1);
 			}
 			drawn.built = true;
 		}
@@ -373,6 +382,9 @@ namespace {
 		void rebuildViews() {
 			if (definition == nullptr) {
 				return;
+			}
+			if (!large.built || large.view.turnQuanta != turnQuanta) {
+				overlayGeometry = assets::itemOverlays(*definition, turnQuanta);
 			}
 			rebuild(large, turnQuanta, levelFor(layout.largePixelsPerMeter));
 			const uint8_t sheetLevel = levelFor(layout.sheetPixelsPerMeter);
@@ -405,110 +417,6 @@ namespace {
 			return {box.x * scale, box.y * scale, box.width * scale, box.height * scale};
 		}
 
-		void drawView(const DrawnView& drawn, Foundation::Vec2 center, float pixelsPerMeter) const {
-			if (!drawn.handle.isValid() || pixelsPerMeter <= 0.0F) {
-				return;
-			}
-			int viewportWidth = 0;
-			int viewportHeight = 0;
-			Renderer::Primitives::getLogicalViewport(viewportWidth, viewportHeight);
-			// The item stands at the world origin; the camera puts the origin on `center`.
-			const Foundation::Vec2 halfViewport(static_cast<float>(viewportWidth) * 0.5F, static_cast<float>(viewportHeight) * 0.5F);
-			const Renderer::Primitives::WorldCamera camera{
-				.position = (halfViewport - center) / pixelsPerMeter, .zoom = 1.0F, .pixelsPerMeter = pixelsPerMeter
-			};
-			const Renderer::InstanceData instance;
-			for (const assets::ViewStrip& strip : drawn.view.strips) {
-				Renderer::Primitives::drawInstanced(
-					drawn.handle, &instance, 1, camera, {.first = strip.firstIndex, .count = strip.indexCount}
-				);
-			}
-		}
-
-		void drawRing(
-			std::span<const glm::vec2> ring,
-			float					   radians,
-			Foundation::Vec2		   center,
-			float					   pixelsPerMeter,
-			const Foundation::Color&   color
-		) const {
-			std::vector<Foundation::Vec2> points;
-			points.reserve(ring.size());
-			for (const glm::vec2& point : ring) {
-				const glm::vec2 onScreen = assets::turnedPoint(point, radians) * pixelsPerMeter;
-				points.emplace_back(center.x + onScreen.x, center.y + onScreen.y);
-			}
-			Renderer::Primitives::drawPolyline(
-				{.points = points, .width = kOverlayWidth, .color = color, .closed = true, .id = "turntable_overlay"}
-			);
-		}
-
-		void drawArea(
-			const assets::ItemArea&	 area,
-			float					 radians,
-			Foundation::Vec2		 center,
-			float					 pixelsPerMeter,
-			const Foundation::Color& color
-		) const {
-			for (const assets::AreaPolygon& polygon : area.polygons) {
-				drawRing(polygon.outer, radians, center, pixelsPerMeter, color);
-				for (const std::vector<glm::vec2>& hole : polygon.holes) {
-					drawRing(hole, radians, center, pixelsPerMeter, color);
-				}
-			}
-		}
-
-		void drawOverlays(Foundation::Vec2 center, float pixelsPerMeter) const {
-			if (definition == nullptr) {
-				return;
-			}
-			const float radians = assets::turnRadiansFromQuanta(turnQuanta);
-			if (overlays.collider) {
-				for (const assets::CollisionShape& ring : definition->partsColliders) {
-					drawRing(ring.pointsMeters, radians, center, pixelsPerMeter, kColliderColor);
-				}
-			}
-			if (overlays.useAreas) {
-				for (const assets::ItemArea& area : definition->parts->useAreas) {
-					drawArea(area, radians, center, pixelsPerMeter, kUseAreaColor);
-				}
-			}
-			if (overlays.clearance) {
-				drawArea(definition->parts->clearance, radians, center, pixelsPerMeter, kClearanceColor);
-			}
-			if (overlays.strips) {
-				// Strip boxes and anchors are already on the screen, relative to the pivot: no turn.
-				for (const assets::ViewStrip& strip : large.view.strips) {
-					const std::array<glm::vec2, 4> box{
-						glm::vec2{strip.minX, strip.minY},
-						glm::vec2{strip.maxX, strip.minY},
-						glm::vec2{strip.maxX, strip.maxY},
-						glm::vec2{strip.minX, strip.maxY}
-					};
-					drawRing(box, 0.0F, center, pixelsPerMeter, kStripColor);
-					// The flat strip's anchor is the lowest float, which has nowhere on the screen to go.
-					if (strip.flat) {
-						continue;
-					}
-					const float anchorY = center.y + strip.anchorLocalY * pixelsPerMeter;
-					const float anchorLeft = center.x + std::max(strip.minX, -fitRadiusMeters) * pixelsPerMeter;
-					const float anchorRight = center.x + std::min(strip.maxX, fitRadiusMeters) * pixelsPerMeter;
-					Renderer::Primitives::drawLine(
-						{.start = {anchorLeft, anchorY},
-						 .end = {anchorRight, anchorY},
-						 .style = {.color = kAnchorColor, .width = kOverlayWidth},
-						 .id = "turntable_anchor"}
-					);
-					Renderer::Primitives::drawCircle(
-						{.center = {(anchorLeft + anchorRight) * 0.5F, anchorY},
-						 .radius = kAnchorRadius,
-						 .style = {.fill = kAnchorColor},
-						 .id = "turntable_anchor"}
-					);
-				}
-			}
-		}
-
 		const assets::AssetDefinition*	   definition = nullptr;
 		assets::ViewConfig				   viewConfig;
 		float							   fitRadiusMeters = 1.0F;
@@ -518,6 +426,7 @@ namespace {
 		SceneLayout						   layout;
 		DrawnView						   large;
 		std::array<DrawnView, kSheetCount> sheet;
+		assets::ItemOverlays			   overlayGeometry; // at the large view's turn
 
 		ui::Ref<ui::Text>						   title;
 		ui::Ref<ui::Text>						   status;

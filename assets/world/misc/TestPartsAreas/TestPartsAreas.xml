@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Test Parts Areas - a do-nothing parts item whose use areas and clearance are authored both ways, as XML
+     shapes and as drawn SVG shapes, to check the overlays in the asset manager and on the placement ghost
+     (/api/dev/place?def=TestPartsAreas). A box 1.0 m wide, 0.8 m deep and 0.9 m tall. Use area "front" is an
+     XML rect before its front; use area "side" is drawn (side-use.svg) off its right end. The clearance is a
+     0.1 m margin all round plus a drawn apron (clear.svg) before its front. It has no capabilities, no item, no
+     recipe and no placement, so nothing spawns it but a dev command. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>TestPartsAreas</defName>
+    <label>Test parts areas</label>
+    <assetType>parts</assetType>
+
+    <parts>
+      <part name="box">
+        <footprint><rect minX="-0.5" minY="-0.4" maxX="0.5" maxY="0.4"/></footprint>
+        <height bottom="0" top="0.9"/>
+        <top color="#7A8C99"/>
+        <sides color="#5E6E7A"/>
+      </part>
+    </parts>
+
+    <placements>
+      <place part="box"/>
+    </placements>
+
+    <useAreas>
+      <area name="front">
+        <rect minX="-0.6" minY="0.4" maxX="0.6" maxY="1.2"/>
+      </area>
+      <area name="side">
+        <drawing file="side-use.svg" minX="0.5" minY="-0.6" maxX="1.3" maxY="0.6"/>
+      </area>
+    </useAreas>
+    <clearance marginMeters="0.1">
+      <drawing file="clear.svg" minX="-0.8" minY="0.4" maxX="0.8" maxY="1.4"/>
+    </clearance>
+  </AssetDef>
+</AssetDefinitions>

@@ -482,6 +482,7 @@ namespace assets {
 			std::vector<std::vector<Ring2>>* fillGroups = nullptr; ///< an area drawing's filled shapes go here, a nonzero group each
 			glm::vec2				 originMeters{0.0F}; ///< where an area drawing's top left lands in the item's frame
 			bool					 failed = false;
+			std::optional<uint32_t>	 part; ///< the part whose top or face it is
 		};
 
 		std::string withoutSpaces(std::string_view text) {
@@ -621,8 +622,12 @@ namespace assets {
 			return {static_cast<float>(total.r / total.a), static_cast<float>(total.g / total.a), static_cast<float>(total.b / total.a), 1.0F};
 		}
 
+		float aspectDifference(glm::vec2 drawing, glm::vec2 covered) {
+			return std::abs((drawing.x / drawing.y) / (covered.x / covered.y) - 1.0F);
+		}
+
 		bool sameAspect(glm::vec2 drawing, glm::vec2 covered, float tolerance) {
-			return std::abs((drawing.x / drawing.y) / (covered.x / covered.y) - 1.0F) <= tolerance;
+			return aspectDifference(drawing, covered) <= tolerance;
 		}
 
 		std::string describeAspect(glm::vec2 size) {
@@ -642,16 +647,20 @@ namespace assets {
 			}
 
 			/// Reads every used drawing once and maps it onto each size it covers.
-			void loadDrawings(std::vector<DrawingUse>& uses, std::vector<ItemDrawing>& drawings) {
+			void loadDrawings(std::vector<DrawingUse>& uses, std::vector<ItemDrawing>& drawings, std::vector<DrawingUseCheck>& checks) {
 				std::map<std::string, std::vector<DrawingUse*>> byFile;
 				for (DrawingUse& use : uses) {
 					byFile[use.file].push_back(&use);
 				}
+				const auto checkOf = [](const DrawingUse& use) {
+					return DrawingUseCheck{.file = use.file, .covers = use.what, .part = use.part, .coversMeters = use.coversMeters};
+				};
 				for (auto& [file, fileUses] : byFile) {
 					const auto fail = [&](const std::string& message, const std::string& context) {
 						error("drawing", message, context);
 						for (DrawingUse* use : fileUses) {
 							use->failed = true;
+							checks.push_back(checkOf(*use));
 						}
 					};
 					const std::filesystem::path relative(file);
@@ -716,7 +725,12 @@ namespace assets {
 					std::map<std::pair<long, long>, uint32_t> mappedBySize;
 					bool						   proportionReported = false;
 					for (DrawingUse* use : fileUses) {
-						if (!sameAspect(viewBoxSize, use->coversMeters, config.aspectToleranceRelative)) {
+						DrawingUseCheck& check = checks.emplace_back(checkOf(*use));
+						check.viewBoxSize = viewBoxSize;
+						check.aspectDifference = aspectDifference(viewBoxSize, use->coversMeters);
+						check.verdict = sameAspect(viewBoxSize, use->coversMeters, config.aspectToleranceRelative) ? DrawingUseCheck::Verdict::Matches
+																												   : DrawingUseCheck::Verdict::Mismatch;
+						if (check.verdict == DrawingUseCheck::Verdict::Mismatch) {
 							use->failed = true;
 							if (!proportionReported) {
 								error(
@@ -1180,7 +1194,13 @@ namespace assets {
 				error("parts", where + "'s <top> needs a color or a drawing", where);
 			}
 			if (!written.topDrawing.empty() && !part.footprint.empty()) {
-				uses.push_back({.file = written.topDrawing, .coversMeters = part.boundsMax - part.boundsMin, .what = "the top of " + where, .target = &part.topDrawing});
+				uses.push_back(
+					{.file = written.topDrawing,
+					 .coversMeters = part.boundsMax - part.boundsMin,
+					 .what = "the top of " + where,
+					 .target = &part.topDrawing,
+					 .part = static_cast<uint32_t>(asset.parts.size() - 1)}
+				);
 			}
 
 			// Faces: a drawing named by a <face>, else the <sides> drawing, else plain.
@@ -1253,7 +1273,8 @@ namespace assets {
 					{.file = file,
 					 .coversMeters = {part.faces[i].lengthMeters, part.topMeters - part.bottomMeters},
 					 .what = faceName + " of part " + inQuotes(part.name),
-					 .target = &part.faces[i].drawing}
+					 .target = &part.faces[i].drawing,
+					 .part = static_cast<uint32_t>(partNumber)}
 				);
 			}
 		}
@@ -1556,7 +1577,7 @@ namespace assets {
 			queueAreaDrawings(*authored.clearance, *pendingClearance, "the clearance");
 		}
 
-		resolver.loadDrawings(uses, asset.drawings);
+		resolver.loadDrawings(uses, asset.drawings, asset.drawingChecks);
 
 		for (PendingArea& pending : pendingUse) {
 			ItemArea area{.name = pending.name, .polygons = unionInMeters(pending.groups)};
