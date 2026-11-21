@@ -1,7 +1,7 @@
 # Scenario 04: Build walls on foundation
 
 **Status:** ready  
-**Last verified:** 2026-11-20: steps 22 to 34 as written on PLACEHOLDER_SHA; 5, 7, and 8 in part, and a variant of 1 to 4, on ab0f3eec
+**Last verified:** 2026-11-20: steps 22 to 34 as written on 4d104363; the earlier wording of the two-rooms steps, 5, 7, and 8 in part, and a variant of 1 to 4, on ab0f3eec
 
 Verifies that a colonist builds all four wall segments on an existing foundation to completion,
 unaided.
