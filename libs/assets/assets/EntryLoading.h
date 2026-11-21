@@ -377,7 +377,7 @@ namespace assets::entry_loading {
 		void checkChains();
 		/// A query a go step, a work source, or a low-mood target names ranks its candidates, so it must weigh
 		/// distance by a negative number or exclude it above a bound; one nothing names is only counted
-		/// (count_of), ranks nothing, and is exempt.
+		/// (count_of), ranks nothing, and is exempt, but may not draw random points (`place="around"`).
 		void checkQueryBounds();
 		void warnUnstarted();
 

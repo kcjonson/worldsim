@@ -8,12 +8,16 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <random>
 #include <string>
+#include <string_view>
+#include <utility>
 
-namespace queries::testing {
+namespace queries::test_entries {
 
 	/// The library holding `queries` (the inside of a `<behavior>`, as `behaviors/test/sample.xml` writes it, so
 	/// its ids are `test/<id>`) and `workQueries` (the inside of a `<colonyWork>` in `work/`, top-level ids, where
@@ -41,8 +45,8 @@ namespace queries::testing {
 		const assets::EntrySources	 sources{
 			  .configRoot = root,
 			  .definitionId = [&registry](std::string_view name) -> std::optional<uint32_t> {
-				  const uint32_t id = registry.getDefNameId(std::string(name));
-				  return registry.getDefinitionById(id) == nullptr ? std::nullopt : std::optional<uint32_t>(id);
+				  const uint32_t definition = registry.getDefNameId(std::string(name));
+				  return registry.getDefinitionById(definition) == nullptr ? std::nullopt : std::optional<uint32_t>(definition);
 			  },
 		  };
 		assets::EntryLoad loaded = assets::loadEntries(sources);
@@ -51,4 +55,4 @@ namespace queries::testing {
 		return std::move(loaded.library);
 	}
 
-} // namespace queries::testing
+} // namespace queries::test_entries

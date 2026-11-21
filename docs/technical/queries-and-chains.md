@@ -830,7 +830,7 @@ A `<from>` row names one source of candidates, and a query may have several:
 | `<from box="Wood"/>` or `box="edible"` | storage boxes the colony knows that hold the item, or any item with the capability; each (box, item) pair is a candidate, so a box with two foods is two |
 | `<from place="here"/>` | where the creature stands, as a place with no thing in it |
 | any row with `fallback="true"` | its candidates are taken only when no candidate of the other rows survives, and no exclusion or prefer row removes them |
-| `<from place="around" radius="r" count="n" minRadius="m"/>` | up to `n` points, each at a seeded random angle and a distance between `m` (default 0) and `r`, kept only where the creature's disc fits on walkable ground joined to it |
+| `<from place="around" radius="r" count="n" minRadius="m"/>` | up to `n` points: for each, an angle and then a distance between `m` (default 0) and `r` drawn from the sim's seeded generator, and the point skipped where the creature's disc does not fit on walkable ground joined to it; with no generator nothing is drawn. A query only counted (`count_of`) may not have this row, a load error, since counting would draw |
 | `<from place="grid" spacing="s" radius="r"/>` | points on a grid of spacing `s` around the creature out to `r`, walkable and joined to it |
 | `<from goal="destination"/>` | the destination of the goal the work serves: a box, a station, a blueprint, a creature |
 | `<from goal="spots"/>` | the builder spots of the goal's foundation |
@@ -852,8 +852,12 @@ packaged box as a source or destination, and a target claims take against the cr
 A fact is one number about this candidate, for this creature, at this moment. Facts are an enumerated
 set provided by the sim in C++, like the condition terms, and each declares its range and its scope:
 definition when it depends only on the candidate's asset definition and the creature, item when it
-depends on the one thing. A fact may take one argument, as a condition term does (`contains(meat)`). A
-fact the sim declares and nothing answers reads 0, and the load logs once that it is unanswered.
+depends on the one thing. A fact may take one argument, as a condition term does (`contains(meat)`).
+
+A fact the sim declares and nothing answers has no value. A `weigh` or `scale` row on it gives every
+candidate the same 0. An `exclude` or `prefer` row on it would draw its line on a value the sim does not
+have, so the query walks nothing and answers that the fact is not answered, naming the row, as a row with
+a condition does; a counted query answers the same. The load logs each row that reads such a fact.
 
 The values a fact reads from tuning are in `assets/config/facts/`, never in C++:
 
@@ -873,13 +877,13 @@ low-mood behavior's roll multiplier can read what its query weighed.
 |---|---|---|---|
 | `distance` | item | 0 m and up | straight-line metres from the creature |
 | `held` | item | 0 or 1 | another task holds a claim on it that does not take it from this creature (food held by a less urgent eater or by work) |
-| `on_shore` | item | 0 or 1 | a place within the tuned distance of water, that distance included |
-| `waste_nearby` | item | 0 and up | the sum, over remembered waste things (bio piles) within the tuned distance `r`, of `1 - d/r` for each at distance `d` |
-| `food_nearby` | item | 0 and up | the same sum over remembered edible things within its tuned distance |
+| `on_shore` | item | 0 or 1 | a place within the tuned distance of water, that distance included; 0 on a thing |
+| `waste_nearby` | item | 0 and up | at a place, the sum, over remembered waste things (bio piles) within the tuned distance `r`, of `1 - d/r` for each at distance `d`; 0 on a thing |
+| `food_nearby` | item | 0 and up | the same sum over remembered edible things within its tuned distance, at a place; 0 on a thing |
 | `is_place` | item | 0 or 1 | the candidate is a place (`here`, `around`, `grid`) rather than a thing |
-| `sleep_quality` | item | 0 to 1 | how well the creature sleeps there: the tuned ground value on the ground, 1 at a sleepable thing |
+| `sleep_quality` | item | 0 to 1 | how well the creature sleeps there: the tuned ground value on the ground, 1 at a sleepable thing, 0 at a thing that is not sleepable |
 | `below_destination` | item | 0 or 1 | for a box candidate, its priority for the goal's item is strictly below the destination's |
-| `quality` | definition | 0 to 1 | the edible capability's `quality`, Terrible 0 to Excellent 1 in steps of 0.25 |
+| `quality` | definition | 0 to 1 | the edible capability's `quality`, Terrible 0 to Excellent 1 in steps of 0.25; 0 for a definition with no edible capability |
 | `liking` | definition | -1 to 1 | the creature's like or dislike of this kind of thing ([Thoughts](../design/game-systems/colonists/thoughts.md#recalling-old-thoughts)) |
 | `against_diet` | definition | 0 or 1 | the thing holds something against the creature's diet (a vegetarian and meat), by ingredient tags on definitions; it is weighed, never excluded on |
 | `contains(tag)` | definition | 0 or 1 | the definition carries the ingredient tag |
@@ -910,7 +914,8 @@ one fact, `fits_meal_time`; no query asks what hour it is.
   of that definition at once. It may carry one `when`.
 - `<prefer fact>` splits the candidates in two classes by the same line an exclusion uses: a candidate
   that the row would exclude ranks below every candidate it would keep, whatever their scores, and is
-  picked only when no kept candidate survives. A query's prefer rows apply together.
+  picked only when no kept candidate survives. A query's prefer rows apply together: a candidate kept by
+  every one is in the upper class, and one any of them would exclude is in the lower.
 - `<scale trait fact by>` multiplies that fact's weight by `by` for a creature with the trait. Several
   scale rows that match multiply together. A trait the trait registry lacks is a load error, as it is in
   a condition.
@@ -959,10 +964,14 @@ The case to design for is a creature that knows 10,000 edible items (`Memory::kM
    `Memory::worldEntitiesByDef`. Because the distance weight is declared and every other fact has a
    declared range, the engine knows for each definition the best score an item of it could reach apart
    from distance: its cached definition terms plus, for each item-scoped fact, the larger of the weight
-   times the range's ends. That bound less the best score found so far, divided by the distance weight's
-   size, is the farthest an item of that definition could still win from. The walk passes over an item
-   beyond its definition's horizon and ends when the next candidate is beyond every horizon. A prefer
-   row's lower class is walked only when the upper class has no survivor.
+   times the range's ends (a place fact reads 0 on a thing, so it adds nothing). That bound less the best
+   score found so far, divided by the distance weight's size, is the farthest an item of that definition
+   could still win from. A positive weight on a fact with no upper bound gives the walk no horizon from
+   that fact. The walk passes over an item beyond its definition's horizon and ends when the next
+   candidate is beyond every horizon. A definition with few occupied cells has them all opened at once; one
+   with more is walked outward from the creature in rings of cells, until looking costs more than opening
+   every occupied cell left. A prefer row's lower class is walked only until the upper class has a
+   survivor.
 3. Per-item facts only for survivors. An item-scoped fact other than distance is read only for a
    candidate inside its definition's horizon that no exclusion removed.
 4. Keep a chosen target. A creature heading for a target a query chose keeps it while it is valid; a
@@ -975,14 +984,22 @@ The case to design for is a creature that knows 10,000 edible items (`Memory::kM
    candidate the route reached, and a reached candidate taken in the meantime ends the task. A round
    whose nearest few are all sealed asks the next few at the next decision.
 6. Wait when everything is passed over. A query whose every candidate was passed over (regrowing,
-   verdicts, taken) records a wait, and is not walked again until something it read changes: a
-   remembered thing added, a claim released, a source ready again, a box's contents changed.
+   verdicts, not joined, taken) records a wait, and is not walked again until something it read changes:
+   the creature's memory, a claim added, changed, or released, the earliest regrowing source ready, a box
+   or what it holds, the creature's verdicts, the request (the goal, the claim reading, the traits, the
+   kept target), the mesh's connectivity when a candidate was passed over as not joined, and where the
+   creature stands (its exact position when the query has place rows or a distance bound, else the
+   connectivity component it stands on). No wait is recorded when a passed-over candidate was a mover or a
+   pile read by its live count, or when a work gate turned a definition away, since no stamp covers those.
 7. Answer once per decision. A source's reach answer is shared by every query and work entry that asks
    in the same decision; each pile is offered to one goal only per decision; the colony's food boxes
    are listed once per update.
 8. No allocation in the steady state. The walk, the definition cache, and the results use scratch
-   buffers the query system owns and reuses across creatures. Results are in a total order: score,
-   then distance, then the memory key. Nothing depends on hash or view order.
+   buffers the query system owns and reuses across creatures. Results are in a total order: a fallback
+   candidate after every other, then the prefer class, then the score, the distance, and the key, where
+   the key is the memory key for a thing, the box's key and then the item for a box, the scan index for a
+   grid point, the draw index for an `around` point, and the index for a spot. Nothing depends on hash or
+   view order.
 
 ### Claims and the query
 
@@ -1903,9 +1920,10 @@ way for food without it, but a starving vegetarian who knows only meat eats the 
 
 ### Relief spots sampled
 
-The query `human/place_to_relieve` draws 16 points within 20 m by `place="around"` in place of the 3 m
-grid, and its waste and food facts read how close the nearest one is (0 to 1) in place of the
-proximity sum.
+A later change to `human/place_to_relieve`, the query [The human behaviors](#the-human-behaviors)
+defines: its `<from place="grid">` row becomes a `place="around"` row drawing 16 points within 20 m, and
+its waste and food facts change to read how close the nearest one is (0 to 1) in place of the proximity
+sum. Its other rows stay as they are.
 
 ---
 
@@ -2032,6 +2050,28 @@ Rules from the first build of queries (WOR-1070, Facts and queries):
   to the rule; any query one of them names is. A weighted query still excludes distance above a bound.
 - 2026-11-21: `on_shore` counts a place exactly the tuned distance from water (1.5 m) as on the shore, as the
   toilet finder does: a relief spot is kept only when its distance to water is strictly greater.
+- 2026-11-21: The total order in full: a fallback candidate after every other, then the prefer class, the
+  score, the distance, and the key (the memory key for a thing, the box's key then the item for a box, the
+  scan index for a grid point, the draw index for an `around` point, the index for a spot).
+- 2026-11-21: A wait ends when anything it read changes: the memory, the claims, the earliest regrowing
+  source, the boxes, the verdicts, the request, the connectivity only when a candidate was passed over as
+  not joined, and the creature's position when the query has place rows or a distance bound, else its
+  connectivity component. A passed-over mover or live-counted pile, or a work gate that turned a definition
+  away, records no wait.
+- 2026-11-21: A fact nothing answers gives a `weigh` or `scale` row the same 0 for every candidate; an
+  `exclude` or `prefer` row on it makes the query, and a count of it, answer that the fact is not answered,
+  naming the row.
+- 2026-11-21: A positive weight on a fact with no upper bound gives the walk no horizon from that fact.
+- 2026-11-21: `quality` reads 0 for a definition with no edible capability, and `sleep_quality` 0 at a thing
+  that is not sleepable.
+- 2026-11-21: `place="around"` draws an angle and then a distance for each point from the sim's seeded
+  generator, skips a point whose disc does not fit, and draws nothing without a generator.
+- 2026-11-21: A prefer row's lower class is walked only until the upper class has a survivor.
+- 2026-11-21: `on_shore`, `waste_nearby`, and `food_nearby` are place facts and read 0 on a thing, so a known
+  latrine is taken by distance alone, as the hand-written decision takes the nearest it can reach.
+- 2026-11-21: A query only counted may not have a `place="around"` row, a load error, since counting would
+  draw from the generator.
+- 2026-11-21: "Relief spots sampled" is a later change to the grid query The human behaviors defines.
 
 Choices made in writing this document, not put to the owner:
 

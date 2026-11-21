@@ -1,6 +1,6 @@
 #pragma once
 
-// The facts a query weighs: each one's scope, its range, and whether the sim answers it yet. Indexed like
+// The facts a query weighs: each one's scope, its range, and whether the sim answers it. Indexed like
 // assets::kFacts, the names the loaders accept. See /docs/technical/queries-and-chains.md (Facts).
 
 #include <assets/Entries.h>
@@ -23,8 +23,8 @@ namespace queries {
 		FactScope		 scope;
 		float			 low;
 		float			 high;
-		/// False for a fact whose input no system holds yet: it reads 0, and the load logs once each query
-		/// that uses it.
+		/// False for a fact whose input no system holds: a `weigh` row on it reads 0 for every candidate, an
+		/// `exclude` or `prefer` row on it makes the query answer FactNotAnswered, and the load logs each row.
 		bool answered;
 	};
 
@@ -82,11 +82,17 @@ namespace queries {
 		inline constexpr uint16_t kColonyStock = factIndex("colony_stock");
 	} // namespace fact
 
+	/// `on_shore` at a measured distance to water: a place exactly the tuned distance away is on the shore, as
+	/// the toilet finder keeps a spot only when it is strictly farther.
+	[[nodiscard]] inline bool onShoreAtDistance(double distanceToWaterMm, float withinMeters) {
+		return !(distanceToWaterMm > static_cast<double>(withinMeters) * 1000.0);
+	}
+
 	/// The position among `query`'s rows, as written, of its fact row `index` (the loaders keep the position of
 	/// `<from>` and `<scale>` rows; a fact row's is the one left between them, in order).
 	[[nodiscard]] uint16_t writtenPositionOfFactRow(const assets::QueryEntry& query, std::size_t index);
 
-	/// One line per query row in `library` that reads a fact nothing answers yet, naming the file, the query,
+	/// One line per query row in `library` that reads a fact nothing answers, naming the file, the query,
 	/// the row, and the fact, for the load to log once.
 	[[nodiscard]] std::vector<std::string> unansweredFactUses(const assets::EntryLibrary& library);
 

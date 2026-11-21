@@ -16,11 +16,15 @@ namespace queries {
 		}
 		static_assert(namesMatchTheLoaders(), "kFactSpecs lists assets::kFacts in the same order");
 
+		/// A weigh or scale row on an unanswered fact gives every candidate the same 0; an exclude or prefer row
+		/// would draw its line on a value the sim does not have, so the query is not walked.
 		[[nodiscard]] std::string
-		usedUnanswered(const assets::QueryEntry& query, uint16_t position, std::string_view element, uint16_t fact) {
+		usedUnanswered(const assets::QueryEntry& query, uint16_t position, std::string_view element, uint16_t factIndex) {
 			const std::string_view shortId = std::string_view(query.id).substr(query.id.rfind('/') + 1);
+			const bool			   weighs = element == "weigh" || element == "scale";
 			return query.file + ": <query id=\"" + std::string(shortId) + "\"> row " + std::to_string(position + 1) + " <" +
-				   std::string(element) + "> fact \"" + std::string(kFactSpecs[fact].name) + "\" is answered by nothing yet and reads 0";
+				   std::string(element) + "> fact \"" + std::string(kFactSpecs[factIndex].name) + "\" is answered by nothing" +
+				   (weighs ? ", so it reads 0 for every candidate" : ", so the query answers that the fact is not answered");
 		}
 
 	} // namespace

@@ -457,6 +457,14 @@ namespace assets::entry_loading {
 					" neither weighs distance by a negative number nor excludes it above a bound, so nothing ends its search"
 				);
 			}
+			// Counting random points would advance the sim's generator and count a different set each time.
+			const auto around = std::ranges::find(query.from, CandidateSource::PlaceAround, &FromRow::source);
+			if (!ranked[index] && around != query.from.end()) {
+				fail(
+					query.file + ": " + entryLabel("query", query.id) + " " + rowLabel(around->row, "from") +
+					" place \"around\" draws random points, which a query only counted (count_of) cannot have"
+				);
+			}
 		}
 	}
 

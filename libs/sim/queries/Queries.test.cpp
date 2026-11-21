@@ -1,17 +1,21 @@
 // Query evaluation (/docs/technical/queries-and-chains.md, Queries): each source, each row, both picks, the
-// walk's horizon and the alternates that widen it, fallback rows, claims, the wait, the Reserved row, the cost
-// at 10,000 remembered things, no allocation once warm, determinism, and the nearest source against
-// nearestAdmitted. Entries are read by the real loader (QueryEntries.test.h). No nav system is wired here, so
-// everything is reachable and every place walkable; the relief query against the toilet finder on real
-// terrain is in AIDecisionSystem.test.cpp, beside the tests that pin the finder.
+// walk's horizon and the alternates that widen it, fallback rows, claims, the wait and everything that ends it,
+// the Reserved row, meals sized per item, work gates, the kept target, the cost at 10,000 remembered things, no
+// allocation once warm, determinism, and the nearest source against nearestAdmitted. Entries are read by the
+// real loader (QueryEntries.test.h). No nav system is wired here, so everything is reachable and every place
+// walkable; the relief query against the toilet finder on real terrain, and the wait's component and epoch
+// stamps, are in AIDecisionSystem.test.cpp.
 
 #include "QueryEntries.test.h"
 #include "QueryEvaluator.h"
 
 #include <ecs/ClaimIndex.h>
+#include <ecs/LoosePileIndex.h>
 #include <ecs/World.h>
 #include <ecs/components/Memory.h>
 #include <ecs/components/MemoryQueries.h>
+#include <ecs/components/ResourceStack.h>
+#include <ecs/components/SourceReachMemo.h>
 #include <ecs/components/Task.h>
 
 #include <assets/AssetRegistry.h>
@@ -23,8 +27,11 @@
 #include <algorithm>
 #include <cstdlib>
 #include <new>
+#include <optional>
 #include <random>
+#include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 // Allocations are counted only while a test asks (NoAllocationOnceWarm); every other allocation of the binary
@@ -68,14 +75,28 @@ namespace queries::test {
 
 		constexpr ecs::EntityID kSelf = 900;
 
+		constexpr uint8_t kUseClaim = 1U << static_cast<unsigned>(assets::ClaimKind::Use);
+		constexpr uint8_t kSourceClaim = 1U << static_cast<unsigned>(assets::ClaimKind::SourceQuantity);
+
+		/// The pick, after checking there is one; an empty candidate (and a failure) when there is none.
+		const QueryCandidate& pickOf(const QueryResult& result) {
+			static const QueryCandidate kNone;
+			EXPECT_EQ(result.outcome, QueryOutcome::Found);
+			if (result.target() == nullptr) {
+				ADD_FAILURE() << "no pick";
+				return kNone;
+			}
+			return *result.target();
+		}
+
 	} // namespace
 
 	class QueriesTest : public ::testing::Test {
 	  protected:
 		void SetUp() override {
 			assets::AssetRegistry& registry = assets::AssetRegistry::Get();
-			berry = registerEdible(registry, "Berry", assets::CapabilityQuality::Normal);
-			stew = registerEdible(registry, "Stew", assets::CapabilityQuality::Good);
+			berry = registerEdible(registry, "Berry", assets::CapabilityQuality::Normal, 0.3F);
+			stew = registerEdible(registry, "Stew", assets::CapabilityQuality::Good, 0.3F);
 			assets::AssetDefinition bushDef;
 			bushDef.defName = "BerryBush";
 			bushDef.label = "Berry bush";
@@ -92,38 +113,40 @@ namespace queries::test {
 
 		void TearDown() override { assets::AssetRegistry::Get().clearDefinitions(); }
 
-		static uint32_t registerEdible(assets::AssetRegistry& registry, const char* name, assets::CapabilityQuality quality) {
+		static uint32_t
+		registerEdible(assets::AssetRegistry& registry, const char* name, assets::CapabilityQuality quality, float nutrition) {
 			assets::AssetDefinition def;
 			def.defName = name;
 			def.label = name;
 			def.capabilities.carryable = assets::CarryableCapability{1};
 			def.itemProperties = assets::ItemProperties{};
 			def.itemProperties->stackSize = 20;
-			def.itemProperties->edible = assets::EdibleCapability{0.3F, quality, false};
+			def.itemProperties->edible = assets::EdibleCapability{nutrition, quality, false};
 			registry.registerTestDefinition(std::move(def));
 			return registry.getDefNameId(name);
 		}
 
 		void load(const std::string& queries, const std::string& workQueries = {}) {
-			library = testing::loadQueryEntries(queries, workQueries);
+			library = test_entries::loadQueryEntries(queries, workQueries);
 			evaluator.emplace(library, assets::AssetRegistry::Get(), kinds);
 		}
 
-		[[nodiscard]] QueryRequest request(std::string_view id) {
-			const auto handle =
-				library.findQuery(id.find('/') == std::string_view::npos && behaviorQuery ? "test/" + std::string(id) : std::string(id));
-			EXPECT_TRUE(handle.valid()) << id;
+		[[nodiscard]] QueryRequest request(std::string_view name) {
+			const auto handle = library.findQuery(
+				name.find('/') == std::string_view::npos && behaviorQuery ? "test/" + std::string(name) : std::string(name)
+			);
+			EXPECT_TRUE(handle.valid()) << name;
 			return QueryRequest{.query = handle, .creature = kSelf, .position = {0.0F, 0.0F}, .memory = &memory};
 		}
 
 		QueryResult run(const QueryRequest& asked) { return evaluator->evaluate(asked, world); }
-		QueryResult run(std::string_view id) { return run(request(id)); }
+		QueryResult run(std::string_view name) { return run(request(name)); }
 
-		void remember(glm::vec2 at, uint32_t def, assets::CapabilityType capability) {
-			memory.rememberWorldEntity(at, def, bitOf(capability));
+		void remember(glm::vec2 position, uint32_t def, assets::CapabilityType capability) {
+			memory.rememberWorldEntity(position, def, bitOf(capability));
 		}
 
-		[[nodiscard]] static uint64_t keyOf(glm::vec2 at, uint32_t def) { return ecs::hashWorldEntity(at, def); }
+		[[nodiscard]] static uint64_t keyOf(glm::vec2 position, uint32_t def) { return ecs::hashWorldEntity(position, def); }
 
 		/// A task in `claimWorld` holding `claim`, at `tier`, doing `type`; returns its instance id.
 		uint64_t holdClaim(const ecs::Claim& claim, ecs::TaskType type, int tier) {
@@ -140,6 +163,12 @@ namespace queries::test {
 			return task.instanceId;
 		}
 
+		/// Bushes regrow until `readyAt`, on the simulation clock.
+		void regrowUntil(double newReadyAt) {
+			readyAt = newReadyAt;
+			world.regrowth = &regrowth;
+		}
+
 		ecs::Memory							  memory;
 		assets::EntryLibrary				  library;
 		std::optional<QueryEvaluator>		  evaluator;
@@ -152,27 +181,31 @@ namespace queries::test {
 		ecs::ClaimIndex			   claims;
 		std::vector<ecs::EntityID> holders;
 		uint64_t				   instances = 0;
-		bool					   behaviorQuery = true;
-		uint32_t				   berry = 0;
-		uint32_t				   stew = 0;
-		uint32_t				   bush = 0;
-		uint32_t				   human = 0;
+		double					   readyAt = 0.0;
+		RegrowthQuery			   regrowth = [this](uint32_t, glm::vec2, double now) -> std::optional<double> {
+			 return now < readyAt ? std::optional<double>(readyAt) : std::nullopt;
+		};
+		bool	 behaviorQuery = true;
+		uint32_t berry = 0;
+		uint32_t stew = 0;
+		uint32_t bush = 0;
+		uint32_t human = 0;
 	};
 
 	// --- Sources ---------------------------------------------------------------------------------------------------
 
 	TEST_F(QueriesTest, CapabilityRowTakesRememberedThingsWithTheCapability) {
 		load(R"(<query id="water"><from capability="drinkable"/><weigh fact="distance" by="-1"/></query>)");
+		EXPECT_EQ(run("water").outcome, QueryOutcome::NothingKnown);
 		remember({5.0F, 0.0F}, kWater, assets::CapabilityType::Drinkable);
 		remember({3.0F, 0.0F}, kWater, assets::CapabilityType::Drinkable);
 		remember({1.0F, 0.0F}, kOtherWater, assets::CapabilityType::Edible);
 
-		const QueryResult result = run("water");
-		ASSERT_EQ(result.outcome, QueryOutcome::Found);
-		EXPECT_EQ(result.target()->kind, CandidateKind::Thing);
-		EXPECT_EQ(result.target()->key, keyOf({3.0F, 0.0F}, kWater));
-		EXPECT_EQ(result.target()->claimKind, assets::ClaimKind::Use);
-		EXPECT_FLOAT_EQ(result.target()->distance, 3.0F);
+		const QueryCandidate& water = pickOf(run("water"));
+		EXPECT_EQ(water.kind, CandidateKind::Thing);
+		EXPECT_EQ(water.key, keyOf({3.0F, 0.0F}, kWater));
+		EXPECT_EQ(water.claimKind, assets::ClaimKind::Use);
+		EXPECT_FLOAT_EQ(water.distance, 3.0F);
 	}
 
 	TEST_F(QueriesTest, KindRowTakesItsCapabilityOrItsRecentlySeenMovers) {
@@ -184,25 +217,20 @@ namespace queries::test {
 		world.now = 105.0;
 		world.recentSightingGameMinutes = 30.0;
 
-		const QueryResult bed = run("bed");
-		ASSERT_EQ(bed.outcome, QueryOutcome::Found);
-		EXPECT_EQ(bed.target()->key, keyOf({4.0F, 0.0F}, kBed));
-		const QueryResult someone = run("someone");
-		ASSERT_EQ(someone.outcome, QueryOutcome::Found);
-		EXPECT_EQ(someone.target()->kind, CandidateKind::Mover);
-		EXPECT_EQ(someone.target()->entity, 7U) << "the nearer mover was seen too long ago to count";
+		EXPECT_EQ(pickOf(run("bed")).key, keyOf({4.0F, 0.0F}, kBed));
+		const QueryCandidate& someone = pickOf(run("someone"));
+		EXPECT_EQ(someone.kind, CandidateKind::Mover);
+		EXPECT_EQ(someone.entity, 7U) << "the nearer mover was seen too long ago to count";
 	}
 
 	TEST_F(QueriesTest, ItemRowTakesOneDefinition) {
 		load(R"(<query id="berries"><from item="Berry"/><weigh fact="distance" by="-1"/></query>)");
 		remember({6.0F, 0.0F}, berry, assets::CapabilityType::Carryable);
 		remember({2.0F, 0.0F}, stew, assets::CapabilityType::Carryable);
-
-		const QueryResult result = run("berries");
-		ASSERT_EQ(result.outcome, QueryOutcome::Found);
-		EXPECT_EQ(result.target()->key, keyOf({6.0F, 0.0F}, berry));
+		EXPECT_EQ(pickOf(run("berries")).key, keyOf({6.0F, 0.0F}, berry));
 	}
 
+	// A regrowing bush is passed over for a ready one; when every bush regrows the query waits on the nearest.
 	TEST_F(QueriesTest, YieldsRowTakesRememberedHarvestablesOfTheItem) {
 		load(R"(<query id="bushes"><from yields="Berry"/><weigh fact="distance" by="-1"/></query>
 			<query id="food_bushes"><from yields="edible"/><weigh fact="distance" by="-1"/></query>)");
@@ -210,12 +238,18 @@ namespace queries::test {
 		remember({2.0F, 0.0F}, bush, assets::CapabilityType::Carryable); // not remembered as a harvestable
 		remember({1.0F, 0.0F}, berry, assets::CapabilityType::Carryable);
 
-		for (const char* id : {"bushes", "food_bushes"}) {
-			const QueryResult result = run(id);
-			ASSERT_EQ(result.outcome, QueryOutcome::Found) << id;
-			EXPECT_EQ(result.target()->key, keyOf({5.0F, 0.0F}, bush)) << id;
-			EXPECT_EQ(result.target()->item, berry) << id;
+		for (const char* name : {"bushes", "food_bushes"}) {
+			const QueryCandidate& found = pickOf(run(name));
+			EXPECT_EQ(found.key, keyOf({5.0F, 0.0F}, bush)) << name;
+			EXPECT_EQ(found.item, berry) << name;
 		}
+
+		regrowUntil(50.0);
+		const QueryResult regrowing = run("bushes");
+		EXPECT_EQ(regrowing.outcome, QueryOutcome::AllPassedOver);
+		EXPECT_EQ(regrowing.waitingOnReason, PassOverReason::Regrowing);
+		ASSERT_TRUE(regrowing.waitingOn.has_value());
+		EXPECT_EQ(regrowing.waitingOn->key, keyOf({5.0F, 0.0F}, bush));
 	}
 
 	TEST_F(QueriesTest, PileRowTakesLoosePilesOfTheItem) {
@@ -224,11 +258,10 @@ namespace queries::test {
 		remember({3.0F, 0.0F}, stew, assets::CapabilityType::Carryable);
 		remember({1.0F, 0.0F}, bush, assets::CapabilityType::Harvestable);
 
-		const QueryResult result = run("piles");
-		ASSERT_EQ(result.outcome, QueryOutcome::Found);
-		EXPECT_EQ(result.target()->key, keyOf({3.0F, 0.0F}, stew));
-		EXPECT_EQ(result.target()->item, stew);
-		EXPECT_EQ(result.target()->claimKind, assets::ClaimKind::SourceQuantity);
+		const QueryCandidate& pile = pickOf(run("piles"));
+		EXPECT_EQ(pile.key, keyOf({3.0F, 0.0F}, stew));
+		EXPECT_EQ(pile.item, stew);
+		EXPECT_EQ(pile.claimKind, assets::ClaimKind::SourceQuantity);
 	}
 
 	TEST_F(QueriesTest, BoxRowTakesEveryBoxAndItemTheColonyKnows) {
@@ -238,14 +271,15 @@ namespace queries::test {
 			{.box = 50, .key = 500, .position = {5.0F, 0.0F}, .item = berry, .quantity = 3},
 			{.box = 50, .key = 500, .position = {5.0F, 0.0F}, .item = stew, .quantity = 2},
 			{.box = 51, .key = 510, .position = {2.0F, 0.0F}, .item = stew, .quantity = 1},
+			{.box = 52, .key = 520, .position = {1.0F, 0.0F}, .item = berry, .quantity = 4, .packaged = true},
 		};
 		world.boxes = boxes;
 
 		const QueryResult berries = run("berry_box");
-		ASSERT_EQ(berries.outcome, QueryOutcome::Found);
-		EXPECT_EQ(berries.target()->entity, 50U);
-		EXPECT_EQ(berries.target()->item, berry);
-		EXPECT_EQ(berries.target()->left, 3U);
+		const QueryCandidate& berryBox = pickOf(berries);
+		EXPECT_EQ(berryBox.entity, 50U) << "a packaged box is no source";
+		EXPECT_EQ(berryBox.item, berry);
+		EXPECT_EQ(berryBox.left, 3U);
 		EXPECT_EQ(berries.ranked.size(), 1U);
 
 		QueryRequest asked = request("food_box");
@@ -255,21 +289,28 @@ namespace queries::test {
 		EXPECT_EQ(food.ranked[0].entity, 51U);
 		EXPECT_EQ(std::make_pair(food.ranked[1].entity, food.ranked[1].item), std::make_pair(boxes[0].box, std::min(berry, stew)));
 		EXPECT_EQ(std::make_pair(food.ranked[2].entity, food.ranked[2].item), std::make_pair(boxes[0].box, std::max(berry, stew)));
+
+		const std::vector<KnownBox> onlyPackaged = {boxes[3]};
+		world.boxes = onlyPackaged;
+		const QueryResult packaged = run("berry_box");
+		EXPECT_EQ(packaged.outcome, QueryOutcome::AllPassedOver);
+		EXPECT_EQ(packaged.waitingOnReason, PassOverReason::Packaged);
 	}
 
 	TEST_F(QueriesTest, PlaceHereIsWhereTheCreatureStands) {
 		load(R"(<query id="ground"><from place="here"/><weigh fact="distance" by="-1"/></query>)");
 		QueryRequest asked = request("ground");
 		asked.position = {12.5F, -3.0F};
-		const QueryResult result = run(asked);
-		ASSERT_EQ(result.outcome, QueryOutcome::Found);
-		EXPECT_EQ(result.target()->kind, CandidateKind::Place);
-		EXPECT_EQ(result.target()->position, asked.position);
+		const QueryCandidate& ground = pickOf(run(asked));
+		EXPECT_EQ(ground.kind, CandidateKind::Place);
+		EXPECT_EQ(ground.position, asked.position);
 	}
 
 	TEST_F(QueriesTest, PlaceAroundDrawsSeededPointsInTheRing) {
+		// A go step names the query: a query only counted may not draw points.
 		load(
-			R"(<query id="ring" pick="weighted"><from place="around" minRadius="2" radius="8" count="5"/><exclude fact="distance" above="8"/></query>)"
+			R"(<chain id="wander"><go query="ring"/></chain>
+			<query id="ring" pick="weighted"><from place="around" minRadius="2" radius="8" count="5"/><exclude fact="distance" above="8"/></query>)"
 		);
 		QueryRequest asked = request("ring");
 		asked.alternates = 4;
@@ -300,10 +341,9 @@ namespace queries::test {
 		remember({6.5F, 0.0F}, kWaste, assets::CapabilityType::Waste);
 
 		// -6 + 10 x (1 - 0.5 / 8) = 3.375 at (6, 0), against 2.625 at (3, 0) and 1.875 at (0, 0).
-		const QueryResult result = run("spot");
-		ASSERT_EQ(result.outcome, QueryOutcome::Found);
-		EXPECT_EQ(result.target()->position, glm::vec2(6.0F, 0.0F));
-		EXPECT_FLOAT_EQ(result.target()->score, 3.375F);
+		const QueryCandidate& spot = pickOf(run("spot"));
+		EXPECT_EQ(spot.position, glm::vec2(6.0F, 0.0F));
+		EXPECT_FLOAT_EQ(spot.score, 3.375F);
 
 		uint32_t inRadius = 0;
 		for (int dy = -9; dy <= 9; ++dy) {
@@ -311,7 +351,9 @@ namespace queries::test {
 				inRadius += glm::length(glm::vec2(static_cast<float>(dx) * 3.0F, static_cast<float>(dy) * 3.0F)) <= 25.0F ? 1U : 0U;
 			}
 		}
-		EXPECT_EQ(evaluator->count(request("spot"), world), std::optional<uint32_t>(inRadius));
+		const QueryCount counted = evaluator->count(request("spot"), world);
+		EXPECT_EQ(counted.outcome, QueryOutcome::Found);
+		EXPECT_EQ(counted.survivors, inRadius);
 	}
 
 	TEST_F(QueriesTest, GoalRowsTakeTheDestinationAndItsFreeSpots) {
@@ -323,20 +365,18 @@ namespace queries::test {
 
 		QueryRequest toDestination = request("to_destination");
 		toDestination.goal = &goal;
-		const QueryResult destination = run(toDestination);
-		ASSERT_EQ(destination.outcome, QueryOutcome::Found);
-		EXPECT_EQ(destination.target()->kind, CandidateKind::Destination);
-		EXPECT_EQ(destination.target()->entity, 70U);
+		const QueryCandidate& destination = pickOf(run(toDestination));
+		EXPECT_EQ(destination.kind, CandidateKind::Destination);
+		EXPECT_EQ(destination.entity, 70U);
 
 		QueryRequest toSpot = request("to_spot");
 		toSpot.goal = &goal;
 		toSpot.claims.kinds = 1U << static_cast<unsigned>(assets::ClaimKind::Slot);
-		EXPECT_EQ(run(toSpot).target()->key, 0U);
+		EXPECT_EQ(pickOf(run(toSpot)).key, 0U);
 		holdClaim(ecs::Claim::slot(70, 0), ecs::TaskType::Build, 4);
-		const QueryResult spot = run(toSpot);
-		ASSERT_EQ(spot.outcome, QueryOutcome::Found);
-		EXPECT_EQ(spot.target()->key, 2U) << "the nearest spot is another builder's";
-		EXPECT_EQ(spot.target()->claimKind, assets::ClaimKind::Slot);
+		const QueryCandidate& spot = pickOf(run(toSpot));
+		EXPECT_EQ(spot.key, 2U) << "the nearest spot is another builder's";
+		EXPECT_EQ(spot.claimKind, assets::ClaimKind::Slot);
 	}
 
 	// --- Rows ------------------------------------------------------------------------------------------------------
@@ -346,11 +386,11 @@ namespace queries::test {
 		remember({5.0F, 0.0F}, berry, assets::CapabilityType::Carryable);
 		remember({20.0F, 0.0F}, stew, assets::CapabilityType::Carryable);
 		// Berries -0.5 + 4 x 0.5 = 1.5; stew at 20 m -2 + 4 x 0.75 = 1.
-		EXPECT_EQ(run("food").target()->item, berry);
-		EXPECT_FLOAT_EQ(run("food").target()->score, 1.5F);
+		EXPECT_EQ(pickOf(run("food")).item, berry);
+		EXPECT_FLOAT_EQ(pickOf(run("food")).score, 1.5F);
 
 		remember({10.0F, 0.0F}, stew, assets::CapabilityType::Carryable);
-		EXPECT_EQ(run("food").target()->key, keyOf({10.0F, 0.0F}, stew)) << "stew at 10 m scores 2";
+		EXPECT_EQ(pickOf(run("food")).key, keyOf({10.0F, 0.0F}, stew)) << "stew at 10 m scores 2";
 	}
 
 	TEST_F(QueriesTest, ExcludeRemovesWhatIsBeyondItsLine) {
@@ -359,7 +399,7 @@ namespace queries::test {
 		remember({10.0F, 0.0F}, kWater, assets::CapabilityType::Drinkable);
 		EXPECT_EQ(run("near").outcome, QueryOutcome::AllExcluded);
 		remember({6.0F, 0.0F}, kWater, assets::CapabilityType::Drinkable);
-		EXPECT_EQ(run("near").target()->key, keyOf({6.0F, 0.0F}, kWater));
+		EXPECT_EQ(pickOf(run("near")).key, keyOf({6.0F, 0.0F}, kWater));
 
 		// A definition-scoped exclusion removes every berry before any is visited.
 		for (int i = 0; i < 20; ++i) {
@@ -367,25 +407,30 @@ namespace queries::test {
 		}
 		remember({30.0F, 0.0F}, stew, assets::CapabilityType::Carryable);
 		const QueryResult good = run("good_food");
-		ASSERT_EQ(good.outcome, QueryOutcome::Found);
-		EXPECT_EQ(good.target()->item, stew);
+		EXPECT_EQ(pickOf(good).item, stew);
 		EXPECT_EQ(good.visits, 1U);
 	}
 
+	// Prefer by an item fact at a place (sleep), above a line (distance), and by a definition fact (quality).
 	TEST_F(QueriesTest, PreferRanksWhatItWouldExcludeBelowEverythingItKeeps) {
 		load(
-			R"(<query id="sleep"><from capability="sleepable"/><from place="here"/><prefer fact="sleep_quality" below="1"/><weigh fact="distance" by="-1"/></query>)"
+			R"(<query id="sleep"><from capability="sleepable"/><from place="here"/><prefer fact="sleep_quality" below="1"/><weigh fact="distance" by="-1"/></query>
+			<query id="near_first"><from pile="edible"/><prefer fact="distance" above="10"/><weigh fact="quality" by="4"/></query>
+			<query id="good_first"><from pile="edible"/><prefer fact="quality" below="0.6"/><weigh fact="distance" by="-1"/></query>)"
 		);
-		const QueryResult ground = run("sleep");
-		ASSERT_EQ(ground.outcome, QueryOutcome::Found);
-		EXPECT_EQ(ground.target()->kind, CandidateKind::Place);
-		EXPECT_EQ(ground.target()->preferClass, 1U);
+		const QueryCandidate& ground = pickOf(run("sleep"));
+		EXPECT_EQ(ground.kind, CandidateKind::Place);
+		EXPECT_EQ(ground.preferClass, 1U);
 
 		remember({30.0F, 0.0F}, kBed, assets::CapabilityType::Sleepable);
 		const QueryResult bed = run("sleep");
-		ASSERT_EQ(bed.outcome, QueryOutcome::Found);
-		EXPECT_EQ(bed.target()->key, keyOf({30.0F, 0.0F}, kBed)) << "any bed before the ground, at any distance";
+		EXPECT_EQ(pickOf(bed).key, keyOf({30.0F, 0.0F}, kBed)) << "any bed before the ground, at any distance";
 		EXPECT_EQ(bed.visits, 1U) << "the ground, the lower class, is not walked once a bed survives";
+
+		remember({6.0F, 0.0F}, berry, assets::CapabilityType::Carryable);
+		remember({12.0F, 0.0F}, stew, assets::CapabilityType::Carryable);
+		EXPECT_EQ(pickOf(run("near_first")).item, berry) << "the better stew is past the line";
+		EXPECT_EQ(pickOf(run("good_first")).item, stew) << "the nearer berries are below the quality line";
 	}
 
 	TEST_F(QueriesTest, ScaleMultipliesAFactsWeightForACreatureWithTheTrait) {
@@ -393,20 +438,21 @@ namespace queries::test {
 			<scale trait="gourmand" fact="quality" by="2"/></query>)");
 		remember({1.0F, 0.0F}, berry, assets::CapabilityType::Carryable);
 		remember({2.5F, 0.0F}, stew, assets::CapabilityType::Carryable);
-		EXPECT_EQ(run("food").target()->item, berry) << "-1 + 2 against -2.5 + 3";
+		EXPECT_EQ(pickOf(run("food")).item, berry) << "-1 + 2 against -2.5 + 3";
 
 		const std::vector<std::string> traits = {"gourmand"};
 		QueryRequest				   gourmand = request("food");
 		gourmand.traits = traits;
-		EXPECT_EQ(run(gourmand).target()->item, stew) << "-1 + 4 against -2.5 + 6";
+		EXPECT_EQ(pickOf(run(gourmand)).item, stew) << "-1 + 4 against -2.5 + 6";
 	}
 
 	// --- Picks -----------------------------------------------------------------------------------------------------
 
 	TEST_F(QueriesTest, PickBestTakesTheHighestScoreThenTheNearestThenTheLowestKey) {
-		load(R"(<query id="water"><from capability="drinkable"/><weigh fact="distance" by="-1"/></query>)");
-		for (const glm::vec2 at : {glm::vec2{3.0F, 0.0F}, glm::vec2{0.0F, 3.0F}, glm::vec2{-3.0F, 0.0F}, glm::vec2{0.0F, 4.0F}}) {
-			remember(at, kWater, assets::CapabilityType::Drinkable);
+		load(R"(<query id="water"><from capability="drinkable"/><weigh fact="distance" by="-1"/></query>
+			<query id="food"><from pile="edible"/><weigh fact="distance" by="-1"/><weigh fact="quality" by="4"/></query>)");
+		for (const glm::vec2 position : {glm::vec2{3.0F, 0.0F}, glm::vec2{0.0F, 3.0F}, glm::vec2{-3.0F, 0.0F}, glm::vec2{0.0F, 4.0F}}) {
+			remember(position, kWater, assets::CapabilityType::Drinkable);
 		}
 		QueryRequest asked = request("water");
 		asked.alternates = 3;
@@ -418,6 +464,13 @@ namespace queries::test {
 			EXPECT_EQ(result.ranked[index].key, tied[index]);
 		}
 		EXPECT_EQ(result.ranked[3].key, keyOf({0.0F, 4.0F}, kWater));
+
+		// Berries at 3 m score -3 + 2, stew at 4 m -4 + 3: equal, and the nearer is first.
+		remember({4.0F, 0.0F}, stew, assets::CapabilityType::Carryable);
+		remember({0.0F, -3.0F}, berry, assets::CapabilityType::Carryable);
+		const QueryCandidate& food = pickOf(run("food"));
+		EXPECT_FLOAT_EQ(food.score, -1.0F);
+		EXPECT_EQ(food.item, berry);
 	}
 
 	TEST_F(QueriesTest, PickWeightedDrawsBySeedFromTheBestSixteen) {
@@ -432,7 +485,7 @@ namespace queries::test {
 			world.generator = &generator;
 			std::vector<int> picks(21, 0);
 			for (int draw = 0; draw < 2000; ++draw) {
-				++picks[static_cast<std::size_t>(run("water").target()->distance)];
+				++picks[static_cast<std::size_t>(pickOf(run("water")).distance)];
 			}
 			return picks;
 		};
@@ -452,11 +505,11 @@ namespace queries::test {
 
 	// Each thing its own definition, so each is its own seed of the walk: the horizon stops it after the winner,
 	// or after the alternates a need's nearest-of round asks for (kNearestOfCount, widened by doubling); a weight
-	// on a fact with no upper bound leaves no horizon.
+	// on a thing's fact with no upper bound leaves no horizon.
 	TEST_F(QueriesTest, TheHorizonEndsTheWalkAndAlternatesWidenIt) {
 		load(
 			R"(<query id="water"><from capability="drinkable"/><weigh fact="distance" by="-1"/></query>
-			<query id="water_by_waste"><from capability="drinkable"/><weigh fact="distance" by="-1"/><weigh fact="waste_nearby" by="1"/></query>)"
+			<query id="water_by_stock"><from capability="drinkable"/><weigh fact="distance" by="-1"/><weigh fact="colony_stock" by="1"/></query>)"
 		);
 		for (uint32_t i = 0; i < 50; ++i) {
 			remember({static_cast<float>(i + 1), 0.0F}, kWater + 100 + i, assets::CapabilityType::Drinkable);
@@ -470,24 +523,40 @@ namespace queries::test {
 			ASSERT_EQ(result.ranked.size(), round);
 			EXPECT_FLOAT_EQ(result.ranked.back().distance, static_cast<float>(round));
 		}
-		EXPECT_EQ(run("water_by_waste").visits, 50U);
+		// colony_stock reads 0 for every water (no box holds one), so the bound comes from the definitions.
+		EXPECT_EQ(run("water_by_stock").visits, 1U);
 	}
 
 	TEST_F(QueriesTest, AFallbackRowIsTakenOnlyWhenNothingElseSurvivesAndIgnoresTheRows) {
 		load(
 			R"(<query id="relief"><from capability="toilet"/><from place="here" fallback="true"/><exclude fact="is_place"/><exclude fact="distance" above="20"/><weigh fact="distance" by="-1"/></query>)"
 		);
-		const QueryResult ground = run("relief");
-		ASSERT_EQ(ground.outcome, QueryOutcome::Found);
-		EXPECT_TRUE(ground.target()->fallback);
-		EXPECT_EQ(ground.target()->kind, CandidateKind::Place) << "no exclusion removes a fallback candidate";
+		const QueryCandidate& ground = pickOf(run("relief"));
+		EXPECT_TRUE(ground.fallback);
+		EXPECT_EQ(ground.kind, CandidateKind::Place) << "no exclusion removes a fallback candidate";
 
 		remember({30.0F, 0.0F}, kToilet, assets::CapabilityType::Toilet);
-		EXPECT_TRUE(run("relief").target()->fallback) << "the latrine is excluded, so nothing else survives";
+		EXPECT_TRUE(pickOf(run("relief")).fallback) << "the latrine is excluded, so nothing else survives";
 		remember({12.0F, 0.0F}, kToilet, assets::CapabilityType::Toilet);
-		const QueryResult latrine = run("relief");
-		EXPECT_FALSE(latrine.target()->fallback);
-		EXPECT_EQ(latrine.target()->key, keyOf({12.0F, 0.0F}, kToilet));
+		const QueryCandidate& latrine = pickOf(run("relief"));
+		EXPECT_FALSE(latrine.fallback);
+		EXPECT_EQ(latrine.key, keyOf({12.0F, 0.0F}, kToilet));
+	}
+
+	// The place facts read 0 on a thing: a latrine by bio piles is no better than a bare one, and a latrine is
+	// never on the shore.
+	TEST_F(QueriesTest, PlaceFactsReadZeroOnAThing) {
+		load(
+			R"(<query id="relief"><from capability="toilet"/><weigh fact="distance" by="-1"/><weigh fact="waste_nearby" by="10"/></query>)"
+		);
+		remember({4.0F, 0.0F}, kToilet, assets::CapabilityType::Toilet);
+		remember({9.0F, 0.0F}, kToilet, assets::CapabilityType::Toilet);
+		remember({9.0F, 0.5F}, kWaste, assets::CapabilityType::Waste);
+		const QueryCandidate& latrine = pickOf(run("relief"));
+		EXPECT_EQ(latrine.key, keyOf({4.0F, 0.0F}, kToilet));
+		EXPECT_FLOAT_EQ(latrine.score, -4.0F);
+		EXPECT_TRUE(onShoreAtDistance(1500.0, library.factTuning[fact::kOnShore])) << "exactly the tuned distance is on the shore";
+		EXPECT_FALSE(onShoreAtDistance(1500.5, library.factTuning[fact::kOnShore]));
 	}
 
 	// --- Claims ----------------------------------------------------------------------------------------------------
@@ -502,19 +571,19 @@ namespace queries::test {
 		remember(nearBush, bush, assets::CapabilityType::Harvestable);
 		remember(farBush, bush, assets::CapabilityType::Harvestable);
 		QueryRequest asked = request("food");
-		asked.claims = {.kinds = 1U << static_cast<unsigned>(assets::ClaimKind::Use), .tier = 5};
+		asked.claims = {.kinds = kUseClaim, .tier = 5};
 
 		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, keyOf(nearBush, bush)), ecs::TaskType::Harvest, 6);
-		const QueryResult heldByWork = run(asked);
-		EXPECT_EQ(heldByWork.target()->key, keyOf(nearBush, bush)) << "work never takes food from a hungry creature";
-		EXPECT_FLOAT_EQ(heldByWork.target()->held, 1.0F);
+		const QueryCandidate& heldByWork = pickOf(run(asked));
+		EXPECT_EQ(heldByWork.key, keyOf(nearBush, bush)) << "work never takes food from a hungry creature";
+		EXPECT_FLOAT_EQ(heldByWork.held, 1.0F);
 		QueryRequest preferFree = request("free_food");
 		preferFree.claims = asked.claims;
-		EXPECT_EQ(run(preferFree).target()->key, keyOf(farBush, bush)) << "free food before held food";
+		EXPECT_EQ(pickOf(run(preferFree)).key, keyOf(farBush, bush)) << "free food before held food";
 
 		claimWorld.destroyEntity(holders.back());
 		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, keyOf(nearBush, bush)), ecs::TaskType::FulfillNeed, 5);
-		EXPECT_EQ(run(asked).target()->key, keyOf(farBush, bush));
+		EXPECT_EQ(pickOf(run(asked)).key, keyOf(farBush, bush));
 
 		const uint64_t farEater =
 			holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, keyOf(farBush, bush)), ecs::TaskType::FulfillNeed, 3);
@@ -522,6 +591,7 @@ namespace queries::test {
 		EXPECT_EQ(waiting.outcome, QueryOutcome::AllPassedOver);
 		ASSERT_TRUE(waiting.waitingOn.has_value());
 		EXPECT_EQ(waiting.waitingOn->key, keyOf(nearBush, bush));
+		EXPECT_EQ(waiting.waitingOnReason, PassOverReason::Claimed);
 		EXPECT_EQ(waiting.visits, 2U);
 		const QueryResult stillWaiting = run(asked);
 		EXPECT_TRUE(stillWaiting.fromWait);
@@ -531,8 +601,7 @@ namespace queries::test {
 		claims.retire(farEater);
 		const QueryResult released = run(asked);
 		EXPECT_FALSE(released.fromWait);
-		ASSERT_EQ(released.outcome, QueryOutcome::Found);
-		EXPECT_EQ(released.target()->key, keyOf(farBush, bush));
+		EXPECT_EQ(pickOf(released).key, keyOf(farBush, bush));
 	}
 
 	TEST_F(QueriesTest, TheReservedRowIsTheBestTakenCandidateAheadOfThePick) {
@@ -543,17 +612,245 @@ namespace queries::test {
 		remember(farPile, berry, assets::CapabilityType::Carryable);
 		holdClaim(ecs::Claim::sourceQuantity(ecs::TargetKind::WorldKey, keyOf(nearPile, berry), berry, 1), ecs::TaskType::FulfillNeed, 2);
 		QueryRequest asked = request("food");
-		asked.claims = {.kinds = 1U << static_cast<unsigned>(assets::ClaimKind::SourceQuantity), .tier = 5};
+		asked.claims = {.kinds = kSourceClaim, .tier = 5};
 
 		const QueryResult result = run(asked);
-		ASSERT_EQ(result.outcome, QueryOutcome::Found);
-		EXPECT_EQ(result.target()->key, keyOf(farPile, berry));
+		EXPECT_EQ(pickOf(result).key, keyOf(farPile, berry));
 		ASSERT_TRUE(result.reserved.has_value());
 		EXPECT_EQ(result.reserved->key, keyOf(nearPile, berry));
 		EXPECT_EQ(result.reservedBy, holders.front());
 
 		asked.claims.tier = 1;
-		EXPECT_EQ(run(asked).target()->key, keyOf(nearPile, berry)) << "a more urgent eater is not held back";
+		EXPECT_EQ(pickOf(run(asked)).key, keyOf(nearPile, berry)) << "a more urgent eater is not held back";
+	}
+
+	// A meal's units follow the item's nutrition: 70 points short is 3 berries (30 a unit) but 1 piece of meat
+	// (80). Each box holds 2, one of them claimed by a hauler. By the decision's rule (unclaimed < the smaller
+	// of the meal and what is left) the berries are held and the meat is free.
+	TEST_F(QueriesTest, AMealIsSizedPerItemAndHeldFollowsIt) {
+		const uint32_t meat = registerEdible(assets::AssetRegistry::Get(), "Meat", assets::CapabilityQuality::Normal, 0.8F);
+		load(R"(<query id="food_box"><from box="edible"/><prefer fact="held"/><weigh fact="distance" by="-1"/></query>)");
+		const std::vector<KnownBox> boxes = {
+			{.box = 60, .key = 600, .position = {3.0F, 0.0F}, .item = berry, .quantity = 2},
+			{.box = 61, .key = 610, .position = {5.0F, 0.0F}, .item = meat, .quantity = 2},
+		};
+		world.boxes = boxes;
+		holdClaim(ecs::Claim::sourceQuantity(ecs::TargetKind::Entity, 60, berry, 1), ecs::TaskType::Haul, 6);
+		holdClaim(ecs::Claim::sourceQuantity(ecs::TargetKind::Entity, 61, meat, 1), ecs::TaskType::Haul, 6);
+
+		QueryRequest meal = request("food_box");
+		meal.alternates = 1;
+		meal.claims = {.kinds = kSourceClaim, .tier = 5, .mealShortfall = 70.0F};
+		const QueryResult	  sized = run(meal);
+		const QueryCandidate& meatBox = pickOf(sized);
+		EXPECT_EQ(meatBox.item, meat);
+		EXPECT_FLOAT_EQ(meatBox.held, 0.0F);
+		EXPECT_EQ(meatBox.wanted, 1U);
+		EXPECT_EQ(meatBox.left, 2U);
+		EXPECT_EQ(meatBox.claimQuantity, 1U);
+		ASSERT_EQ(sized.ranked.size(), 1U) << "the held berries are in the lower class, not an alternate";
+
+		QueryRequest flat = request("food_box");
+		flat.claims = {.kinds = kSourceClaim, .tier = 5, .wanted = 3};
+		const QueryCandidate& berryBox = pickOf(run(flat));
+		EXPECT_EQ(berryBox.item, berry) << "with one count for every item both read held, and the nearer wins";
+		EXPECT_FLOAT_EQ(berryBox.held, 1.0F);
+		EXPECT_EQ(berryBox.claimQuantity, 2U);
+	}
+
+	// --- The wait --------------------------------------------------------------------------------------------------
+
+	// A wait is the answer to one request: asked for another goal item, or by a creature whose need turned
+	// critical (so the eater ahead of it no longer takes the food), the query is walked again.
+	TEST_F(QueriesTest, AWaitHoldsOnlyForTheRequestItWasRecordedFor) {
+		behaviorQuery = false;
+		load(
+			R"(<query id="food"><from yields="Berry"/><weigh fact="distance" by="-1"/></query>)",
+			R"(<query id="pile_for_goal"><from pile="goal"/><weigh fact="distance" by="-1"/></query>)"
+		);
+		remember({2.0F, 0.0F}, berry, assets::CapabilityType::Carryable);
+		remember({4.0F, 0.0F}, stew, assets::CapabilityType::Carryable);
+		holdClaim(ecs::Claim::sourceQuantity(ecs::TargetKind::WorldKey, keyOf({2.0F, 0.0F}, berry), berry, 1), ecs::TaskType::Haul, 6);
+
+		const QueryGoal forBerries{.goalId = 7, .destination = 70, .item = berry};
+		const QueryGoal forStew{.goalId = 7, .destination = 70, .item = stew};
+		QueryRequest	haul = request("pile_for_goal");
+		haul.claims = {.kinds = kSourceClaim, .everyHolderTakes = true};
+		haul.goal = &forBerries;
+		EXPECT_EQ(run(haul).outcome, QueryOutcome::AllPassedOver);
+		EXPECT_TRUE(run(haul).fromWait);
+		haul.goal = &forStew;
+		const QueryResult stewResult = run(haul);
+		EXPECT_FALSE(stewResult.fromWait);
+		EXPECT_EQ(pickOf(stewResult).item, stew);
+
+		remember({6.0F, 0.0F}, bush, assets::CapabilityType::Harvestable);
+		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, keyOf({6.0F, 0.0F}, bush)), ecs::TaskType::FulfillNeed, 3);
+		QueryRequest eat = request("test/food");
+		eat.claims = {.kinds = kUseClaim, .tier = 5};
+		EXPECT_EQ(run(eat).outcome, QueryOutcome::AllPassedOver);
+		EXPECT_TRUE(run(eat).fromWait);
+		eat.claims.tier = 2;
+		const QueryResult critical = run(eat);
+		EXPECT_FALSE(critical.fromWait);
+		EXPECT_EQ(pickOf(critical).key, keyOf({6.0F, 0.0F}, bush));
+	}
+
+	// Each thing a wait read ends it: the memory, a claim released and a claim added, a box's contents, a verdict,
+	// and the source turning ready. Moving does not, for a query with no place rows and no distance bound.
+	TEST_F(QueriesTest, EverythingAWaitReadEndsItAndMovingDoesNot) {
+		load(R"(<query id="food"><from yields="Berry"/><from box="Stew"/><weigh fact="distance" by="-1"/></query>)");
+		remember({3.0F, 0.0F}, bush, assets::CapabilityType::Harvestable);
+		remember({8.0F, 0.0F}, bush, assets::CapabilityType::Harvestable);
+		regrowUntil(100.0);
+		world.now = 10.0;
+		ecs::SourceReachMemo reach;
+		QueryRequest		 asked = request("food");
+		asked.claims = {.kinds = kUseClaim, .tier = 5};
+		asked.reach = &reach;
+		const auto waits = [&] {
+			return run(asked).outcome == QueryOutcome::AllPassedOver && run(asked).fromWait;
+		};
+		const auto walksAgain = [&] {
+			return !run(asked).fromWait;
+		};
+
+		ASSERT_TRUE(waits());
+		asked.position = {40.0F, -25.0F};
+		EXPECT_TRUE(run(asked).fromWait) << "moving changes nothing this query read";
+
+		remember({50.0F, 50.0F}, kWater, assets::CapabilityType::Drinkable);
+		EXPECT_TRUE(walksAgain()) << "the memory moved";
+		ASSERT_TRUE(waits());
+		const uint64_t added = holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, 99), ecs::TaskType::Haul, 6);
+		EXPECT_TRUE(walksAgain()) << "a claim was added";
+		ASSERT_TRUE(waits());
+		claims.retire(added);
+		EXPECT_TRUE(walksAgain()) << "a claim was released";
+		ASSERT_TRUE(waits());
+		world.boxesStamp = 1;
+		EXPECT_TRUE(walksAgain()) << "a box's contents changed";
+		ASSERT_TRUE(waits());
+		reach.recordVerdict(12345, {.connectivityEpoch = 0, .beliefVersion = memory.beliefVersion}, 0);
+		EXPECT_TRUE(walksAgain()) << "a verdict was found";
+		ASSERT_TRUE(waits());
+		world.now = 100.0;
+		const QueryResult ready = run(asked);
+		EXPECT_FALSE(ready.fromWait);
+		EXPECT_EQ(pickOf(ready).key, keyOf({8.0F, 0.0F}, bush)) << "the sources are ready, and from (40, -25) this one is nearer";
+	}
+
+	// A pile's live count is read from the world, and grows with no claim, memory, or box changing, so a pile
+	// passed over records no wait.
+	TEST_F(QueriesTest, APilePassedOverOnItsLiveCountRecordsNoWait) {
+		load(R"(<query id="food"><from pile="Berry"/><weigh fact="distance" by="-1"/></query>)");
+		const glm::vec2 pileAt{2.0F, 0.0F};
+		remember(pileAt, berry, assets::CapabilityType::Carryable);
+		ecs::World			pileWorld;
+		ecs::LoosePileIndex piles;
+		const ecs::EntityID pile = pileWorld.createEntity();
+		pileWorld.addComponent<ecs::ResourceStack>(pile, ecs::ResourceStack{.quantity = 1});
+		piles.add(pile, berry, pileAt);
+		world.world = &pileWorld;
+		world.piles = &piles;
+		holdClaim(ecs::Claim::sourceQuantity(ecs::TargetKind::WorldKey, keyOf(pileAt, berry), berry, 1), ecs::TaskType::FulfillNeed, 3);
+		QueryRequest asked = request("food");
+		asked.claims = {.kinds = kSourceClaim, .tier = 5};
+
+		EXPECT_EQ(run(asked).outcome, QueryOutcome::AllPassedOver);
+		pileWorld.getComponent<ecs::ResourceStack>(pile)->quantity += 5;
+		const QueryResult dropped = run(asked);
+		EXPECT_FALSE(dropped.fromWait);
+		EXPECT_EQ(pickOf(dropped).left, 5U);
+	}
+
+	TEST_F(QueriesTest, ForgettingACreatureDropsItsWait) {
+		load(R"(<query id="food"><from yields="Berry"/><weigh fact="distance" by="-1"/></query>)");
+		remember({3.0F, 0.0F}, bush, assets::CapabilityType::Harvestable);
+		regrowUntil(100.0);
+		EXPECT_EQ(run("food").outcome, QueryOutcome::AllPassedOver);
+		EXPECT_TRUE(run("food").fromWait);
+		evaluator->forget(kSelf);
+		EXPECT_FALSE(run("food").fromWait);
+	}
+
+	// --- Gates and the kept target ---------------------------------------------------------------------------------
+
+	// The request's gate answers per definition, before any thing of it is visited: no tool for the bush, no room
+	// for the stew, so the berries are taken. It is asked each evaluation; nothing of it is kept.
+	TEST_F(QueriesTest, TheWorkGateIsAskedPerDefinitionBeforeAnyThing) {
+		load(R"(<query id="food"><from yields="edible"/><from pile="edible"/><weigh fact="distance" by="-1"/></query>)");
+		remember({1.0F, 0.0F}, bush, assets::CapabilityType::Harvestable);
+		remember({2.0F, 0.0F}, stew, assets::CapabilityType::Carryable);
+		remember({5.0F, 0.0F}, berry, assets::CapabilityType::Carryable);
+		bool				 haveTool = false;
+		bool				 haveRoomForStew = false;
+		const DefinitionGate gate = [&](uint32_t definition) {
+			return (definition != bush || haveTool) && (definition != stew || haveRoomForStew);
+		};
+		QueryRequest asked = request("food");
+		asked.gate = &gate;
+		const QueryResult gated = run(asked);
+		EXPECT_EQ(pickOf(gated).item, berry);
+		EXPECT_EQ(gated.visits, 1U);
+		haveTool = true;
+		EXPECT_EQ(pickOf(run(asked)).key, keyOf({1.0F, 0.0F}, bush));
+	}
+
+	// The target the creature heads for is asked first: taken alone while it survives (one visit, as
+	// nearestAdmitted's keepKey), and when it is passed over the round goes on to the nearest 8 with 9 visits.
+	TEST_F(QueriesTest, TheKeptTargetIsAskedFirstAsNearestAdmittedAsksIt) {
+		load(R"(<query id="water"><from capability="drinkable"/><weigh fact="distance" by="-1"/></query>)");
+		for (uint32_t i = 0; i < 50; ++i) {
+			remember({static_cast<float>(i + 1), 0.0F}, kWater + 100 + i, assets::CapabilityType::Drinkable);
+		}
+		const uint64_t kept = keyOf({20.0F, 0.0F}, kWater + 119);
+		const auto	   mainRound = [&](bool keptAdmitted, uint64_t& admitted) {
+			std::vector<ecs::SourceCandidate> scratch;
+			std::vector<ecs::SourceCandidate> chosen;
+			ecs::collectWithCapability(
+				memory,
+				assets::CapabilityType::Drinkable,
+				{0.0F, 0.0F},
+				[](uint64_t, const ecs::KnownWorldEntity&) { return true; },
+				scratch
+			);
+			ecs::nearestAdmitted(
+				scratch,
+				chosen,
+				[&](ecs::SourceCandidate& candidate) {
+					++admitted;
+					return keptAdmitted || candidate.key != kept;
+				},
+				ecs::kNearestOfCount,
+				kept
+			);
+			return chosen;
+		};
+		QueryRequest asked = request("water");
+		asked.alternates = ecs::kNearestOfCount - 1;
+		asked.keepKey = kept;
+		asked.claims = {.kinds = kUseClaim, .tier = 5};
+
+		uint64_t		  admitted = 0;
+		const auto		  chosenKept = mainRound(true, admitted);
+		const QueryResult keptResult = run(asked);
+		ASSERT_EQ(keptResult.ranked.size(), 1U);
+		EXPECT_EQ(keptResult.ranked[0].key, kept);
+		EXPECT_EQ(chosenKept.size(), 1U);
+		EXPECT_EQ(keptResult.visits, admitted);
+		EXPECT_EQ(keptResult.visits, 1U);
+
+		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, kept), ecs::TaskType::FulfillNeed, 3);
+		admitted = 0;
+		const auto		  chosenWithout = mainRound(false, admitted);
+		const QueryResult passedOver = run(asked);
+		ASSERT_EQ(passedOver.ranked.size(), chosenWithout.size());
+		for (std::size_t index = 0; index < chosenWithout.size(); ++index) {
+			EXPECT_EQ(passedOver.ranked[index].key, chosenWithout[index].key) << index;
+		}
+		EXPECT_EQ(passedOver.visits, admitted);
+		EXPECT_EQ(passedOver.visits, 9U);
 	}
 
 	// --- Cost, allocation, determinism ---------------------------------------------------------------------------
@@ -574,25 +871,32 @@ namespace queries::test {
 					std::swap(things[i], things[shuffler() % (i + 1)]);
 				}
 			}
-			for (const auto& [at, def] : things) {
+			for (const auto& [position, def] : things) {
 				memory.rememberWorldEntity(
-					at, def, static_cast<uint16_t>(bitOf(assets::CapabilityType::Carryable) | bitOf(assets::CapabilityType::Edible))
+					position, def, static_cast<uint16_t>(bitOf(assets::CapabilityType::Carryable) | bitOf(assets::CapabilityType::Edible))
 				);
 			}
 		}
 	} // namespace
 
 	TEST_F(QueriesTest, TenThousandRememberedThingsVisitOnlyTheNearest) {
-		const uint32_t cabbage = registerEdible(assets::AssetRegistry::Get(), "Cabbage", assets::CapabilityQuality::Poor);
+		const uint32_t cabbage = registerEdible(assets::AssetRegistry::Get(), "Cabbage", assets::CapabilityQuality::Poor, 0.3F);
 		load(R"(<query id="food"><from pile="edible"/><weigh fact="distance" by="-1"/></query>)");
 		rememberTenThousand(memory, {berry, stew, cabbage}, 11, false);
 		ASSERT_EQ(memory.worldEntityCount(), ecs::Memory::kMaxWorldEntities);
+		std::size_t occupiedCells = 0;
+		for (const uint32_t food : {berry, stew, cabbage}) {
+			occupiedCells += memory.rememberedOfDefinition(food)->cells.size();
+		}
 
 		QueryRequest asked = request("food");
 		asked.alternates = ecs::kNearestOfCount - 1;
 		const QueryResult result = run(asked);
 		ASSERT_EQ(result.ranked.size(), ecs::kNearestOfCount);
 		EXPECT_EQ(result.visits, ecs::kNearestOfCount);
+		EXPECT_LT(result.cellsTouched, 400U) << "of " << occupiedCells << " occupied cells: the walk goes out in rings";
+		RecordProperty("cellsTouched", static_cast<int>(result.cellsTouched));
+		RecordProperty("occupiedCells", static_cast<int>(occupiedCells));
 
 		std::vector<std::pair<float, uint64_t>> everything;
 		for (const auto& [key, known] : memory.knownWorldEntities) {
@@ -608,8 +912,8 @@ namespace queries::test {
 	TEST_F(QueriesTest, NoAllocationOnceWarm) {
 		load(
 			R"(<query id="food"><from pile="edible"/><from box="edible"/><from place="here" fallback="true"/><prefer fact="held"/>
-			<weigh fact="distance" by="-1"/><weigh fact="quality" by="2"/><weigh fact="food_nearby" by="-0.1"/></query>
-			<query id="spot"><from place="grid" spacing="3" radius="25"/><weigh fact="distance" by="-1"/><weigh fact="waste_nearby" by="10"/></query>)"
+			<weigh fact="distance" by="-1"/><weigh fact="quality" by="2"/></query>
+			<query id="spot"><from place="grid" spacing="3" radius="25"/><weigh fact="distance" by="-1"/><weigh fact="waste_nearby" by="10"/><weigh fact="food_nearby" by="-20"/></query>)"
 		);
 		rememberTenThousand(memory, {berry, stew}, 5, false);
 		remember({4.0F, 4.0F}, kWaste, assets::CapabilityType::Waste);
@@ -618,7 +922,7 @@ namespace queries::test {
 		world.boxes = boxes;
 		QueryRequest food = request("food");
 		food.alternates = ecs::kNearestOfCount - 1;
-		food.claims = {.kinds = 1U << static_cast<unsigned>(assets::ClaimKind::SourceQuantity), .tier = 5};
+		food.claims = {.kinds = kSourceClaim, .tier = 5, .mealShortfall = 40.0F};
 		const QueryRequest spot = request("spot");
 
 		for (int warmUp = 0; warmUp < 2; ++warmUp) {
@@ -642,18 +946,24 @@ namespace queries::test {
 		EXPECT_EQ(allocationsCounted, 0U);
 	}
 
+	// The same memory filled in another order: the same picks, keys, and scores to the bit, with exact ties among
+	// mirrored piles broken by key.
 	TEST_F(QueriesTest, TheSameMemoryFilledInAnotherOrderGivesTheSameResult) {
-		load(
-			R"(<query id="food"><from pile="edible"/><weigh fact="distance" by="-1"/><weigh fact="food_nearby" by="0.5"/></query>
-			<query id="spot"><from place="grid" spacing="3" radius="25"/><weigh fact="distance" by="-1"/><weigh fact="food_nearby" by="-20"/></query>)"
-		);
+		load(R"(<query id="food"><from pile="edible"/><weigh fact="distance" by="-1"/><weigh fact="quality" by="1"/></query>
+			<query id="spot"><from place="grid" spacing="3" radius="25"/><weigh fact="distance" by="-1"/><weigh fact="food_nearby" by="-20"/></query>
+			<query id="mirrored"><from capability="drinkable"/><weigh fact="distance" by="-1"/></query>)");
 		ecs::Memory shuffled;
 		rememberTenThousand(memory, {berry, stew}, 3, false);
 		rememberTenThousand(shuffled, {berry, stew}, 3, true);
+		const std::vector<glm::vec2> mirror = {{13.0F, -2.0F}, {13.0F, -12.0F}, {8.0F, -7.0F}, {18.0F, -7.0F}};
+		for (std::size_t index = 0; index < mirror.size(); ++index) {
+			memory.rememberWorldEntity(mirror[index], kWater, bitOf(assets::CapabilityType::Drinkable));
+			shuffled.rememberWorldEntity(mirror[mirror.size() - 1 - index], kWater, bitOf(assets::CapabilityType::Drinkable));
+		}
 		ASSERT_EQ(memory.worldEntityCount(), shuffled.worldEntityCount());
 
-		for (const char* id : {"food", "spot"}) {
-			QueryRequest asked = request(id);
+		for (const char* name : {"food", "spot", "mirrored"}) {
+			QueryRequest asked = request(name);
 			asked.position = {13.0F, -7.0F};
 			asked.alternates = 5;
 			const QueryResult				  first = run(asked);
@@ -661,11 +971,18 @@ namespace queries::test {
 			asked.memory = &shuffled;
 			asked.creature = kSelf + 1;
 			const QueryResult other = run(asked);
-			ASSERT_EQ(other.ranked.size(), inOrder.size()) << id;
+			ASSERT_EQ(other.ranked.size(), inOrder.size()) << name;
 			for (std::size_t index = 0; index < inOrder.size(); ++index) {
-				EXPECT_EQ(other.ranked[index].key, inOrder[index].key) << id << " " << index;
-				EXPECT_EQ(other.ranked[index].position, inOrder[index].position) << id << " " << index;
-				EXPECT_EQ(other.ranked[index].score, inOrder[index].score) << id << " " << index << ": scores equal to the bit";
+				EXPECT_EQ(other.ranked[index].key, inOrder[index].key) << name << " " << index;
+				EXPECT_EQ(other.ranked[index].position, inOrder[index].position) << name << " " << index;
+				EXPECT_EQ(other.ranked[index].score, inOrder[index].score) << name << " " << index << ": scores equal to the bit";
+			}
+			if (std::string_view(name) == "mirrored") {
+				ASSERT_EQ(inOrder.size(), 4U);
+				for (std::size_t index = 1; index < inOrder.size(); ++index) {
+					EXPECT_EQ(inOrder[index].score, inOrder[0].score) << "all four tie";
+					EXPECT_LT(inOrder[index - 1].key, inOrder[index].key) << "ties go by key";
+				}
 			}
 		}
 	}
@@ -717,23 +1034,49 @@ namespace queries::test {
 		EXPECT_EQ(result.visits, 8U);
 	}
 
-	// --- What is not evaluated yet -------------------------------------------------------------------------------
+	// --- What is not evaluated -----------------------------------------------------------------------------------
 
-	TEST_F(QueriesTest, ARowWithAConditionIsNotEvaluatedAndAnUnansweredFactIsNamed) {
+	// A condition on a row is not evaluated; an exclude or prefer row on a fact nothing answers would decide on a
+	// value the sim does not have; both name the row and walk nothing. A weigh row on such a fact reads 0 for
+	// every candidate, and the load log names each row.
+	TEST_F(QueriesTest, RowsThatCannotBeEvaluatedAreNamedAndWalkNothing) {
 		load(
-			R"(<query id="seat"><from capability="sleepable"/><weigh fact="distance" by="-1"/><weigh fact="comfort" by="3" when="need(energy) &lt; 30"/></query>)"
+			R"xml(<query id="seat"><from capability="sleepable"/><weigh fact="distance" by="-1"/><weigh fact="comfort" by="3" when="need(energy) &lt; 30"/></query>
+			<query id="fresh_food"><from pile="edible"/><weigh fact="distance" by="-1"/><exclude fact="freshness" below="0.5"/></query>
+			<query id="own_bed"><from kind="bed"/><exclude fact="owned_by_self" below="1"/></query>
+			<query id="meaty"><from pile="edible"/><weigh fact="distance" by="-1"/><weigh fact="contains(meat)" by="5"/></query>)xml"
 		);
 		remember({2.0F, 0.0F}, kBed, assets::CapabilityType::Sleepable);
-		const QueryResult result = run("seat");
-		EXPECT_EQ(result.outcome, QueryOutcome::ConditionNotEvaluated);
-		EXPECT_EQ(result.conditionRow, 2U);
-		EXPECT_TRUE(result.ranked.empty());
-		EXPECT_FALSE(evaluator->count(request("seat"), world).has_value());
+		remember({3.0F, 0.0F}, berry, assets::CapabilityType::Carryable);
+
+		const QueryResult seat = run("seat");
+		EXPECT_EQ(seat.outcome, QueryOutcome::ConditionNotEvaluated);
+		EXPECT_EQ(seat.row, 2U);
+		EXPECT_TRUE(seat.ranked.empty());
+		EXPECT_EQ(evaluator->count(request("seat"), world).outcome, QueryOutcome::ConditionNotEvaluated);
+
+		const QueryResult fresh = run("fresh_food");
+		EXPECT_EQ(fresh.outcome, QueryOutcome::FactNotAnswered);
+		EXPECT_EQ(fresh.row, 2U);
+		EXPECT_EQ(fresh.visits, 0U);
+		const QueryCount ownBeds = evaluator->count(request("own_bed"), world);
+		EXPECT_EQ(ownBeds.outcome, QueryOutcome::FactNotAnswered);
+		EXPECT_EQ(ownBeds.row, 1U);
+		EXPECT_FLOAT_EQ(pickOf(run("meaty")).score, -3.0F);
+
 		EXPECT_EQ(
 			unansweredFactUses(library),
-			std::vector<std::string>{
-				"[behaviors] test/sample.xml: <query id=\"seat\"> row 3 <weigh> fact \"comfort\" is answered by nothing yet and reads 0"
-			}
+			(std::vector<std::string>{
+				"[behaviors] test/sample.xml: <query id=\"seat\"> row 3 <weigh> fact \"comfort\" is answered by nothing, so it reads 0 for "
+				"every candidate",
+				"[behaviors] test/sample.xml: <query id=\"fresh_food\"> row 3 <exclude> fact \"freshness\" is answered by nothing, so the "
+				"query answers that the fact is not answered",
+				"[behaviors] test/sample.xml: <query id=\"own_bed\"> row 2 <exclude> fact \"owned_by_self\" is answered by nothing, so the "
+				"query answers that the fact is not answered",
+				"[behaviors] test/sample.xml: <query id=\"meaty\"> row 3 <weigh> fact \"contains\" is answered by nothing, so it reads 0 "
+				"for "
+				"every candidate",
+			})
 		);
 	}
 
@@ -744,9 +1087,9 @@ namespace queries::test {
 		for (int i = 0; i < 3; ++i) {
 			remember({static_cast<float>(i) * 100.0F, 0.0F}, kWater, assets::CapabilityType::Drinkable);
 		}
-		EXPECT_EQ(evaluator->count(request("free_water"), world), std::optional<uint32_t>(3U));
+		EXPECT_EQ(evaluator->count(request("free_water"), world).survivors, 3U);
 		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, keyOf({100.0F, 0.0F}, kWater)), ecs::TaskType::Haul, 6);
-		EXPECT_EQ(evaluator->count(request("free_water"), world), std::optional<uint32_t>(2U));
+		EXPECT_EQ(evaluator->count(request("free_water"), world).survivors, 2U);
 	}
 
 	// A harvestable's definition facts read its yield's definition; colony_stock reads the boxes the colony knows,
@@ -755,17 +1098,17 @@ namespace queries::test {
 		load(R"(<query id="bush_quality"><from yields="Berry"/><weigh fact="distance" by="-1"/><weigh fact="quality" by="4"/></query>
 			<query id="stocked"><from pile="edible"/><weigh fact="distance" by="-1"/><weigh fact="colony_stock" by="-1"/></query>)");
 		remember({1.0F, 0.0F}, bush, assets::CapabilityType::Harvestable);
-		EXPECT_FLOAT_EQ(run("bush_quality").target()->score, -1.0F + 4.0F * 0.5F);
+		EXPECT_FLOAT_EQ(pickOf(run("bush_quality")).score, -1.0F + 4.0F * 0.5F);
 
 		remember({1.0F, 0.0F}, berry, assets::CapabilityType::Carryable);
 		remember({3.0F, 0.0F}, stew, assets::CapabilityType::Carryable);
-		EXPECT_EQ(run("stocked").target()->item, berry);
+		EXPECT_EQ(pickOf(run("stocked")).item, berry);
 		const std::vector<KnownBox> boxes = {{.box = 50, .key = 500, .position = {9.0F, 0.0F}, .item = berry, .quantity = 5}};
 		world.boxes = boxes;
 		world.boxesStamp = 1;
-		const QueryResult stocked = run("stocked");
-		EXPECT_EQ(stocked.target()->item, stew) << "berries the colony holds five of score -6, stew at 3 m -3";
-		EXPECT_FLOAT_EQ(stocked.target()->score, -3.0F);
+		const QueryCandidate& stocked = pickOf(run("stocked"));
+		EXPECT_EQ(stocked.item, stew) << "berries the colony holds five of score -6, stew at 3 m -3";
+		EXPECT_FLOAT_EQ(stocked.score, -3.0F);
 	}
 
 	TEST_F(QueriesTest, BelowDestinationReadsTheBoxsPriorityAgainstTheGoals) {
@@ -782,9 +1125,7 @@ namespace queries::test {
 		const QueryGoal goal{.goalId = 9, .destination = 60, .destinationPosition = {20.0F, 0.0F}, .item = berry, .destinationPriority = 2};
 		QueryRequest	asked = request("pull");
 		asked.goal = &goal;
-		const QueryResult result = run(asked);
-		ASSERT_EQ(result.outcome, QueryOutcome::Found);
-		EXPECT_EQ(result.target()->entity, 51U) << "only a box strictly below the destination's priority is pulled from";
+		EXPECT_EQ(pickOf(run(asked)).entity, 51U) << "only a box strictly below the destination's priority is pulled from";
 	}
 
 } // namespace queries::test

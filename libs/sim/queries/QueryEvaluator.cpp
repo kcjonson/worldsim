@@ -37,6 +37,10 @@ namespace queries {
 		/// The most candidates a weighted pick draws from.
 		constexpr std::size_t kWeightedPool = 16;
 
+		/// A definition with at most this many occupied cells has them all opened at once; one with more is
+		/// walked outward from the creature in rings of cells.
+		constexpr std::size_t kCellsOpenedAtOnce = 32;
+
 		/// A draw in [0, 1) from the top 24 bits of one 32-bit output, the same on every platform (the standard
 		/// distributions are not).
 		[[nodiscard]] float unitDraw(std::mt19937& generator) {
@@ -49,6 +53,24 @@ namespace queries {
 
 		[[nodiscard]] bool namesClaim(uint8_t kinds, assets::ClaimKind kind) {
 			return (kinds & (1U << static_cast<unsigned>(kind))) != 0;
+		}
+
+		/// 64-bit mixing for the stamps (splitmix64's finalizer).
+		[[nodiscard]] uint64_t mixed(uint64_t value) {
+			value += 0x9E3779B97F4A7C15ULL;
+			value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ULL;
+			value = (value ^ (value >> 27)) * 0x94D049BB133111EBULL;
+			return value ^ (value >> 31);
+		}
+
+		[[nodiscard]] uint64_t combined(uint64_t stamp, uint64_t value) {
+			return mixed(stamp ^ mixed(value));
+		}
+
+		/// The facts that describe a place; a thing reads 0 for each.
+		[[nodiscard]] bool isPlaceFact(uint16_t factIndex) {
+			return factIndex == fact::kOnShore || factIndex == fact::kWasteNearby || factIndex == fact::kFoodNearby ||
+				   factIndex == fact::kIsPlace;
 		}
 
 		/// The total rank order: no fallback first, then the prefer class, the score, the distance, and the keys.
@@ -77,6 +99,27 @@ namespace queries {
 			return static_cast<uint8_t>(first.kind) < static_cast<uint8_t>(second.kind);
 		}
 
+		/// How telling a pass-over reason is for the trace: higher shows first.
+		[[nodiscard]] int tellingness(PassOverReason reason) {
+			switch (reason) {
+				case PassOverReason::Claimed:
+					return 6;
+				case PassOverReason::Regrowing:
+					return 5;
+				case PassOverReason::Exhausted:
+					return 4;
+				case PassOverReason::Packaged:
+					return 3;
+				case PassOverReason::Verdict:
+					return 2;
+				case PassOverReason::Unreachable:
+					return 1;
+				case PassOverReason::None:
+					break;
+			}
+			return 0;
+		}
+
 		/// The smallest squared distance from `point` to the square of a memory cell.
 		[[nodiscard]] float distanceSquaredToCell(glm::vec2 point, int32_t cellX, int32_t cellY) {
 			const float minX = static_cast<float>(cellX) * ecs::kMemoryCellMeters;
@@ -84,6 +127,21 @@ namespace queries {
 			const float gapX = std::max({minX - point.x, 0.0F, point.x - (minX + ecs::kMemoryCellMeters)});
 			const float gapY = std::max({minY - point.y, 0.0F, point.y - (minY + ecs::kMemoryCellMeters)});
 			return gapX * gapX + gapY * gapY;
+		}
+
+		/// The smallest squared distance from `point`, in cell (`centerX`, `centerY`), to any cell of the ring
+		/// `ring` cells out from it.
+		[[nodiscard]] float distanceSquaredToRing(glm::vec2 point, int32_t centerX, int32_t centerY, int32_t ring) {
+			if (ring == 0) {
+				return 0.0F;
+			}
+			const float inside = static_cast<float>(ring - 1);
+			const float lowX = (static_cast<float>(centerX) - inside) * ecs::kMemoryCellMeters;
+			const float highX = (static_cast<float>(centerX) + inside + 1.0F) * ecs::kMemoryCellMeters;
+			const float lowY = (static_cast<float>(centerY) - inside) * ecs::kMemoryCellMeters;
+			const float highY = (static_cast<float>(centerY) + inside + 1.0F) * ecs::kMemoryCellMeters;
+			const float gap = std::max(0.0F, std::min({point.x - lowX, highX - point.x, point.y - lowY, highY - point.y}));
+			return gap * gap;
 		}
 
 		/// Whether a row's line takes a candidate with `value`: above 0 by default, or above `above`, or below
@@ -98,20 +156,19 @@ namespace queries {
 
 		/// The value a fact has at every place, when it is the same at all of them; none when it depends on
 		/// where the place is.
-		[[nodiscard]] std::optional<float> placeConstant(uint16_t fact, const assets::EntryLibrary& library) {
-			if (fact == fact::kDistance || fact == fact::kOnShore || fact == fact::kWasteNearby || fact == fact::kFoodNearby) {
+		[[nodiscard]] std::optional<float> placeConstant(uint16_t factIndex, const assets::EntryLibrary& library) {
+			if (factIndex == fact::kDistance || factIndex == fact::kOnShore || factIndex == fact::kWasteNearby ||
+				factIndex == fact::kFoodNearby) {
 				return std::nullopt;
 			}
-			if (fact == fact::kIsPlace) {
+			if (factIndex == fact::kIsPlace) {
 				return 1.0F;
 			}
-			if (fact == fact::kSleepQuality) {
-				return library.factTuning[fact];
+			if (factIndex == fact::kSleepQuality) {
+				return library.factTuning[factIndex];
 			}
 			return 0.0F;
 		}
-
-		enum class PassOver : uint8_t { None, Verdict, Packaged, Exhausted, Regrowing, Unreachable, Claimed };
 
 	} // namespace
 
@@ -145,9 +202,9 @@ namespace queries {
 			}
 			std::vector<uint32_t> items;
 			for (const std::string& name : registry.getDefinitionNames()) {
-				const uint32_t id = registry.getDefNameId(name);
-				if (registry.hasCapability(id, capability)) {
-					items.push_back(id);
+				const uint32_t definition = registry.getDefNameId(name);
+				if (registry.hasCapability(definition, capability)) {
+					items.push_back(definition);
 				}
 			}
 			std::ranges::sort(items);
@@ -163,6 +220,9 @@ namespace queries {
 			if (!row.when.empty() && !plan.conditionRow.has_value()) {
 				plan.conditionRow = writtenPositionOfFactRow(entry, index);
 			}
+			if (row.kind != assets::FactRowKind::Weigh && !kFactSpecs[row.fact.fact].answered && !plan.unansweredRow.has_value()) {
+				plan.unansweredRow = writtenPositionOfFactRow(entry, index);
+			}
 			if (row.kind == assets::FactRowKind::Exclude && row.fact.fact == fact::kDistance && row.above.has_value()) {
 				plan.distanceAbove = std::min(plan.distanceAbove, *row.above);
 			}
@@ -170,15 +230,16 @@ namespace queries {
 		}
 
 		// A place row whose every prefer row reads a fact that is the same at every place has one class
-		// wherever the place is; when that is the lower class, the row is walked only if nothing above survives.
-		bool					placesBelow = false;
-		bool					placeClassKnown = true;
-		std::optional<uint16_t> anyPrefer;
+		// wherever the place is; when that is the lower class, the row is walked only while nothing above
+		// survives.
+		bool placesBelow = false;
+		bool placeClassKnown = true;
+		bool anyPrefer = false;
 		for (const FactRowPlan& row : plan.rows) {
 			if (row.kind != assets::FactRowKind::Prefer) {
 				continue;
 			}
-			anyPrefer = row.fact;
+			anyPrefer = true;
 			const std::optional<float> value = placeConstant(row.fact, library);
 			if (!value.has_value()) {
 				placeClassKnown = false;
@@ -186,7 +247,7 @@ namespace queries {
 				placesBelow = true;
 			}
 		}
-		placesBelow = anyPrefer.has_value() && placeClassKnown && placesBelow;
+		placesBelow = anyPrefer && placeClassKnown && placesBelow;
 
 		for (const assets::FromRow& from : entry.from) {
 			SourcePlan source{.source = from.source, .row = from.row, .fallback = from.fallback};
@@ -239,6 +300,7 @@ namespace queries {
 				case assets::CandidateSource::PlaceHere:
 				case assets::CandidateSource::PlaceAround:
 				case assets::CandidateSource::PlaceGrid:
+					plan.hasPlaceRows = true;
 					source.radius = from.radius;
 					source.minRadius = from.minRadius;
 					source.spacing = from.spacing;
@@ -256,14 +318,14 @@ namespace queries {
 	}
 
 	QueryEvaluator::Record& QueryEvaluator::recordFor(ecs::EntityID creature, uint32_t query) {
-		const auto at =
+		const auto found =
 			std::lower_bound(records.begin(), records.end(), std::pair{creature, query}, [](const Record& record, const auto& key) {
 				return std::pair{record.creature, record.query} < key;
 			});
-		if (at != records.end() && at->creature == creature && at->query == query) {
-			return *at;
+		if (found != records.end() && found->creature == creature && found->query == query) {
+			return *found;
 		}
-		return *records.insert(at, Record{.creature = creature, .query = query});
+		return *records.insert(found, Record{.creature = creature, .query = query});
 	}
 
 	void QueryEvaluator::forget(ecs::EntityID creature) {
@@ -284,6 +346,8 @@ namespace queries {
 			  record(newEvaluator.recordFor(newRequest.creature, newRequest.query.index)) {
 			haveMesh = world.navigation != nullptr && world.navigation->hasMesh();
 			hisLabel = haveMesh ? world.navigation->componentAt(request.position) : geometry::nav::kNoComponent;
+			centerX = ecs::memoryCellCoordinate(request.position.x);
+			centerY = ecs::memoryCellCoordinate(request.position.y);
 			weighRows();
 			capacity = std::max<std::size_t>(request.alternates + 1, entry.pick == assets::QueryPick::Weighted ? kWeightedPool : 1);
 			itemPreferRows = std::ranges::any_of(plan.rows, [](const FactRowPlan& row) {
@@ -299,27 +363,37 @@ namespace queries {
 			QueryResult result;
 			if (plan.conditionRow.has_value()) {
 				result.outcome = QueryOutcome::ConditionNotEvaluated;
-				result.conditionRow = *plan.conditionRow;
+				result.row = *plan.conditionRow;
+				return result;
+			}
+			if (plan.unansweredRow.has_value()) {
+				result.outcome = QueryOutcome::FactNotAnswered;
+				result.row = *plan.unansweredRow;
 				return result;
 			}
 			if (record.wait.has_value() && waitHolds(*record.wait)) {
 				result.outcome = QueryOutcome::AllPassedOver;
 				result.waitingOn = record.waitingOn;
+				result.waitingOnReason = record.waitingOnReason;
 				result.reserved = record.reserved;
 				result.reservedBy = record.reservedBy;
 				result.fromWait = true;
 				return result;
 			}
 
-			walkPhase(false);
-			if (evaluator.upperClass.empty() && evaluator.lowerClass.empty()) {
-				walkPhase(true);
+			const bool keptAlone = considerKept();
+			if (!keptAlone) {
+				walkPhase(false);
+				if (evaluator.upperClass.empty() && evaluator.lowerClass.empty()) {
+					walkPhase(true);
+				}
 			}
 
 			const std::vector<QueryCandidate>& chosen = !evaluator.upperClass.empty()	? evaluator.upperClass
 														: !evaluator.lowerClass.empty() ? evaluator.lowerClass
 																						: evaluator.fallbackClass;
 			result.visits = visits;
+			result.cellsTouched = cellsTouched;
 			evaluator.ranked.clear();
 			if (chosen.empty()) {
 				result.outcome = !anyCandidate	 ? QueryOutcome::NothingKnown
@@ -327,9 +401,10 @@ namespace queries {
 												 : QueryOutcome::AllExcluded;
 			} else {
 				result.outcome = QueryOutcome::Found;
-				const std::size_t pick = entry.pick == assets::QueryPick::Weighted ? weightedPick(chosen) : 0;
+				const std::size_t pick = !keptAlone && entry.pick == assets::QueryPick::Weighted ? weightedPick(chosen) : 0;
 				evaluator.ranked.push_back(chosen[pick]);
-				for (std::size_t index = 0; index < chosen.size() && evaluator.ranked.size() < request.alternates + 1; ++index) {
+				const std::size_t kept = keptAlone ? 1 : request.alternates + 1;
+				for (std::size_t index = 0; index < chosen.size() && evaluator.ranked.size() < kept; ++index) {
 					if (index != pick) {
 						evaluator.ranked.push_back(chosen[index]);
 					}
@@ -341,40 +416,52 @@ namespace queries {
 				result.reservedBy = bestClaimedHolder;
 			}
 			if (result.outcome == QueryOutcome::AllPassedOver) {
-				result.waitingOn = bestPassedOver;
+				result.waitingOn = waitingOn;
+				result.waitingOnReason = waitingOnReason;
 			}
 
 			record.wait.reset();
-			if (result.outcome == QueryOutcome::AllPassedOver && waitable) {
+			// A gate's answer follows the creature's inventory, which no stamp covers.
+			if (result.outcome == QueryOutcome::AllPassedOver && waitable && !gated) {
 				record.wait = stampNow();
 				record.waitingOn = result.waitingOn;
+				record.waitingOnReason = result.waitingOnReason;
 				record.reserved = result.reserved;
 				record.reservedBy = result.reservedBy;
 			}
 			return result;
 		}
 
-		std::optional<uint32_t> count() {
+		QueryCount count() {
+			QueryCount counted;
 			if (plan.conditionRow.has_value()) {
-				return std::nullopt;
+				counted.outcome = QueryOutcome::ConditionNotEvaluated;
+				counted.row = *plan.conditionRow;
+				return counted;
+			}
+			if (plan.unansweredRow.has_value()) {
+				counted.outcome = QueryOutcome::FactNotAnswered;
+				counted.row = *plan.unansweredRow;
+				return counted;
 			}
 			counting = true;
-			uint32_t survivors = countPhase(false);
-			if (survivors == 0) {
-				survivors = countPhase(true);
+			counted.survivors = countPhase(false);
+			if (counted.survivors == 0) {
+				counted.survivors = countPhase(true);
 			}
-			return survivors;
+			return counted;
 		}
 
 	  private:
-		// --- Weights and the definition cache ---
+		// --- Weights, stamps, and the definition cache ---
 
 		void weighRows() {
 			evaluator.rowWeights.assign(plan.rows.size(), 0.0F);
-			uint64_t stamp = plan.usesColonyStock ? world.boxesStamp : 0;
+			uint64_t traits = 0;
 			for (const std::string& trait : request.traits) {
-				stamp = stamp * 1099511628211ULL ^ std::hash<std::string_view>{}(trait);
+				traits = combined(traits, std::hash<std::string_view>{}(trait));
 			}
+			const uint64_t definitionStamp = plan.usesColonyStock ? combined(traits, world.boxesStamp) : traits;
 			for (std::size_t index = 0; index < plan.rows.size(); ++index) {
 				const FactRowPlan& row = plan.rows[index];
 				if (row.kind != assets::FactRowKind::Weigh) {
@@ -389,18 +476,38 @@ namespace queries {
 				evaluator.rowWeights[index] = weight;
 				if (row.fact == fact::kDistance) {
 					distanceWeight += weight;
-				} else if (kFactSpecs[row.fact].scope == FactScope::Item && weight != 0.0F) {
+				} else if (kFactSpecs[row.fact].scope == FactScope::Item && !isPlaceFact(row.fact) && weight != 0.0F) {
+					// The best a remembered thing could add apart from distance: place facts read 0 on a thing.
 					const FactSpec& spec = kFactSpecs[row.fact];
 					itemBound += std::max(weight * spec.low, weight * spec.high);
 				}
 			}
-			if (record.definitionStamp != stamp) {
+			if (record.definitionStamp != definitionStamp) {
 				record.definitions.clear();
-				record.definitionStamp = stamp;
+				record.definitionStamp = definitionStamp;
 			}
+
+			// What the wait must be asked with again: the goal, the claim reading, the traits, the keep key.
+			const ClaimReading& reading = request.claims;
+			uint64_t			stamp = combined(traits, reading.kinds);
+			stamp =
+				combined(stamp, (reading.everyHolderTakes ? 1U : 0U) | (uint64_t{reading.tier} << 8) | (uint64_t{reading.idleTier} << 16));
+			stamp = combined(stamp, reading.self.current);
+			stamp = combined(stamp, reading.self.suspended);
+			stamp = combined(stamp, request.keepKey.has_value() ? *request.keepKey + 1 : 0);
+			if (request.goal != nullptr) {
+				const QueryGoal& goal = *request.goal;
+				stamp = combined(stamp, goal.goalId);
+				stamp = combined(stamp, goal.destination);
+				stamp = combined(stamp, (uint64_t{goal.item} << 8) | goal.destinationPriority);
+				for (const glm::vec2 spot : goal.builderSpots) {
+					stamp = combined(stamp, (uint64_t{std::bit_cast<uint32_t>(spot.x)} << 32) | std::bit_cast<uint32_t>(spot.y));
+				}
+			}
+			requestStamp = stamp;
 		}
 
-		/// The definition-scoped fact `fact` of definition `definition`; a harvestable reads its yield's.
+		/// The definition-scoped fact `factIndex` of definition `definition`; a harvestable reads its yield's.
 		[[nodiscard]] float definitionFact(uint16_t factIndex, uint32_t definition) const {
 			const uint32_t yield = evaluator.registry.harvestYieldId(definition);
 			const uint32_t subject = yield != 0 ? yield : definition;
@@ -444,6 +551,30 @@ namespace queries {
 			return record.definitions.emplace(definition, terms).first->second;
 		}
 
+		/// Whether the request's gate (tool, carry room, box room) lets `definition` serve; asked every
+		/// evaluation, never cached.
+		[[nodiscard]] bool gateLets(uint32_t definition) {
+			if (request.gate == nullptr || !*request.gate || (*request.gate)(definition)) {
+				return true;
+			}
+			gated = true;
+			return false;
+		}
+
+		/// Units the step wants of `item`: a meal's size at the item's nutrition, or the request's units.
+		[[nodiscard]] uint32_t wantedOf(uint32_t item) const {
+			const ClaimReading& reading = request.claims;
+			if (!reading.mealShortfall.has_value()) {
+				return reading.wanted;
+			}
+			const assets::AssetDefinition* def = evaluator.registry.getDefinitionById(item);
+			const float restore = def != nullptr && def->itemProperties.has_value() && def->itemProperties->edible.has_value()
+									  ? def->itemProperties->edible->nutrition * 100.0F
+									  : 0.0F;
+			const float shortfall = *reading.mealShortfall;
+			return restore > 0.0F && shortfall > restore ? static_cast<uint32_t>(std::ceil(shortfall / restore)) : 1U;
+		}
+
 		// --- Item facts ---
 
 		[[nodiscard]] bool chunkReady(glm::vec2 point) const {
@@ -464,7 +595,9 @@ namespace queries {
 			}
 			const double					 withinMm = static_cast<double>(evaluator.library.factTuning[fact::kOnShore]) * 1000.0;
 			const world::TerrainPolygonQuery water(chunk->terrainPolygons());
-			return !(water.distanceToWaterMm(geometry::quantize(point), withinMm) > withinMm);
+			return onShoreAtDistance(
+				water.distanceToWaterMm(geometry::quantize(point), withinMm), evaluator.library.factTuning[fact::kOnShore]
+			);
 		}
 
 		/// The sum over remembered things with `capability` within the tuned distance `r` of `point`, strictly,
@@ -514,6 +647,9 @@ namespace queries {
 			if (factIndex == fact::kHeld) {
 				return candidate.held;
 			}
+			if (isPlaceFact(factIndex) && candidate.kind != CandidateKind::Place) {
+				return 0.0F;
+			}
 			if (factIndex == fact::kOnShore) {
 				return onShore(candidate.position) ? 1.0F : 0.0F;
 			}
@@ -524,7 +660,7 @@ namespace queries {
 				return proximity(assets::CapabilityType::Edible, factIndex, candidate.position);
 			}
 			if (factIndex == fact::kIsPlace) {
-				return candidate.kind == CandidateKind::Place ? 1.0F : 0.0F;
+				return 1.0F;
 			}
 			if (factIndex == fact::kSleepQuality) {
 				if (candidate.kind == CandidateKind::Place) {
@@ -535,17 +671,22 @@ namespace queries {
 				return known != nullptr && (known->capabilityMask & capabilityBit(assets::CapabilityType::Sleepable)) != 0 ? 1.0F : 0.0F;
 			}
 			if (factIndex == fact::kBelowDestination) {
-				if (candidate.kind != CandidateKind::Box || request.goal == nullptr) {
-					return 0.0F;
-				}
-				for (const KnownBox& box : world.boxes) {
-					if (box.box == candidate.entity && box.item == candidate.item) {
-						return box.priority < request.goal->destinationPriority ? 1.0F : 0.0F;
-					}
-				}
-				return 0.0F;
+				const KnownBox* box = boxOf(candidate);
+				return box != nullptr && request.goal != nullptr && box->priority < request.goal->destinationPriority ? 1.0F : 0.0F;
 			}
 			return 0.0F;
+		}
+
+		[[nodiscard]] const KnownBox* boxOf(const QueryCandidate& candidate) const {
+			if (candidate.kind != CandidateKind::Box) {
+				return nullptr;
+			}
+			for (const KnownBox& box : world.boxes) {
+				if (box.box == candidate.entity && box.item == candidate.item) {
+					return &box;
+				}
+			}
+			return nullptr;
 		}
 
 		// --- Pass-overs ---
@@ -587,14 +728,25 @@ namespace queries {
 				   (holder.taskType == ecs::TaskType::FulfillNeed && holder.tier < reading.idleTier && holder.tier <= reading.tier);
 		}
 
-		/// Reads the claims on `candidate`: whether it is held, what a pile or a box has left, and the holder that
-		/// takes it from this creature when the step names the claim that fits it.
-		[[nodiscard]] PassOver readClaims(QueryCandidate& candidate, std::optional<ecs::ClaimHolder>& holder) const {
+		/// A remembered thing is a loose pile when it was remembered as carryable, whichever row found it.
+		[[nodiscard]] bool isPile(const QueryCandidate& candidate) const {
+			if (candidate.kind != CandidateKind::Thing) {
+				return false;
+			}
+			const ecs::KnownWorldEntity* known = memory.getWorldEntity(candidate.key);
+			return known != nullptr && (known->capabilityMask & capabilityBit(assets::CapabilityType::Carryable)) != 0;
+		}
+
+		/// Reads the claims on `candidate`: whether it is held, what a pile or a box has left, the claim it would
+		/// take, and the holder that takes it from this creature when the step names the claim that fits it.
+		[[nodiscard]] PassOverReason readClaims(QueryCandidate& candidate, std::optional<ecs::ClaimHolder>& holder) {
 			const ClaimReading&	   reading = request.claims;
 			const ecs::ClaimIndex* claims = world.claims;
-			candidate.left = reading.wanted;
+			candidate.wanted = wantedOf(candidate.item);
+			candidate.left = candidate.wanted;
+			candidate.claimQuantity = 1;
 			if (candidate.kind == CandidateKind::Place) {
-				return PassOver::None;
+				return PassOverReason::None;
 			}
 			if (candidate.kind == CandidateKind::Spot) {
 				candidate.claimKind = assets::ClaimKind::Slot;
@@ -605,28 +757,23 @@ namespace queries {
 				candidate.held = slotHolder.has_value() ? 1.0F : 0.0F;
 				if (slotHolder.has_value() && namesClaim(reading.kinds, assets::ClaimKind::Slot)) {
 					holder = slotHolder;
-					return PassOver::Claimed;
+					return PassOverReason::Claimed;
 				}
-				return PassOver::None;
+				return PassOverReason::None;
 			}
-			const bool fromPile =
-				candidate.kind == CandidateKind::Thing && plan.sources[sourceIndexOf(candidate)].source == assets::CandidateSource::Pile;
-			if (candidate.kind == CandidateKind::Box || fromPile) {
+			if (candidate.kind == CandidateKind::Box || isPile(candidate)) {
 				candidate.claimKind = assets::ClaimKind::SourceQuantity;
 				candidate.claimTarget = candidate.kind == CandidateKind::Box
 											? ecs::ClaimTarget{.kind = ecs::TargetKind::Entity, .key = candidate.entity}
 											: ecs::ClaimTarget{.kind = ecs::TargetKind::WorldKey, .key = candidate.key};
 				std::optional<uint32_t> live;
-				if (candidate.kind == CandidateKind::Box) {
-					for (const KnownBox& box : world.boxes) {
-						if (box.box == candidate.entity && box.item == candidate.item) {
-							live = box.quantity;
-						}
-					}
-				} else if (world.piles != nullptr && world.world != nullptr) {
+				if (const KnownBox* box = boxOf(candidate)) {
+					live = box->quantity;
+				} else if (candidate.kind == CandidateKind::Thing && world.piles != nullptr && world.world != nullptr) {
 					const ecs::EntityID pile = world.piles->find(*world.world, candidate.item, candidate.position);
 					if (pile != ecs::kInvalidEntity) {
 						live = world.world->getComponent<ecs::ResourceStack>(pile)->quantity;
+						liveCountRead = true;
 					}
 				}
 				ecs::ClaimIndex::SourceShare taken;
@@ -637,25 +784,27 @@ namespace queries {
 					);
 					claimed = claims->sourceClaimed(candidate.claimTarget, candidate.item, reading.self);
 				}
-				const uint32_t have = live.value_or(taken.quantity > 0 ? 0U : reading.wanted);
+				const uint32_t wanted = candidate.wanted;
+				const uint32_t have = live.value_or(taken.quantity > 0 ? 0U : wanted);
 				candidate.left = have > taken.quantity ? have - taken.quantity : 0U;
-				const uint32_t unclaimed = live.has_value() ? (have > claimed ? have - claimed : 0U) : (claimed > 0 ? 0U : reading.wanted);
-				candidate.held = unclaimed < std::min(reading.wanted, candidate.left) ? 1.0F : 0.0F;
+				const uint32_t unclaimed = live.has_value() ? (have > claimed ? have - claimed : 0U) : (claimed > 0 ? 0U : wanted);
+				candidate.held = unclaimed < std::min(wanted, candidate.left) ? 1.0F : 0.0F;
+				candidate.claimQuantity = std::min(wanted, candidate.left);
 				if (live.has_value() && *live == 0) {
-					return PassOver::Exhausted;
+					return PassOverReason::Exhausted;
 				}
 				if (candidate.left == 0 && namesClaim(reading.kinds, assets::ClaimKind::SourceQuantity)) {
 					holder = taken.holder;
-					return taken.holder.has_value() ? PassOver::Claimed : PassOver::Exhausted;
+					return taken.holder.has_value() ? PassOverReason::Claimed : PassOverReason::Exhausted;
 				}
-				return PassOver::None;
+				return PassOverReason::None;
 			}
 			candidate.claimKind = assets::ClaimKind::Use;
 			candidate.claimTarget = candidate.kind == CandidateKind::Thing
 										? ecs::ClaimTarget{.kind = ecs::TargetKind::WorldKey, .key = candidate.key}
 										: ecs::ClaimTarget{.kind = ecs::TargetKind::Entity, .key = candidate.entity};
 			if (claims == nullptr) {
-				return PassOver::None;
+				return PassOverReason::None;
 			}
 			const std::optional<ecs::ClaimHolder> anyHolder = claims->useHolder(candidate.claimTarget, reading.self);
 			const std::optional<ecs::ClaimHolder> taker =
@@ -666,66 +815,63 @@ namespace queries {
 					  });
 			if (taker.has_value() && namesClaim(reading.kinds, assets::ClaimKind::Use)) {
 				holder = taker;
-				return PassOver::Claimed;
+				return PassOverReason::Claimed;
 			}
 			candidate.held = anyHolder.has_value() ? 1.0F : 0.0F;
-			return PassOver::None;
+			return PassOverReason::None;
 		}
 
-		[[nodiscard]] std::size_t sourceIndexOf(const QueryCandidate& candidate) const {
-			for (std::size_t index = 0; index < plan.sources.size(); ++index) {
-				if (plan.sources[index].row == candidate.sourceRow) {
-					return index;
+		[[nodiscard]] const SourcePlan& sourceOf(const QueryCandidate& candidate) const {
+			for (const SourcePlan& source : plan.sources) {
+				if (source.row == candidate.sourceRow) {
+					return source;
 				}
 			}
-			return 0;
+			return plan.sources.front();
 		}
 
-		[[nodiscard]] PassOver passOver(QueryCandidate& candidate, std::optional<ecs::ClaimHolder>& holder) {
-			const SourcePlan& source = plan.sources[sourceIndexOf(candidate)];
+		/// The pass-overs in order: a route verdict, a packaged box, not joined, regrowing (so the regrowing
+		/// source shown is the nearest the creature can reach), and the claims.
+		[[nodiscard]] PassOverReason passOver(QueryCandidate& candidate, std::optional<ecs::ClaimHolder>& holder) {
 			if (candidate.kind == CandidateKind::Place) {
-				if (source.source != assets::CandidateSource::PlaceHere && hasVerdict(0, candidate.position)) {
-					return PassOver::Verdict;
+				if (sourceOf(candidate).source != assets::CandidateSource::PlaceHere && hasVerdict(0, candidate.position)) {
+					return PassOverReason::Verdict;
 				}
 				candidate.goal = candidate.position;
 				return readClaims(candidate, holder);
 			}
 			const uint64_t verdictKey = candidate.kind == CandidateKind::Thing || candidate.kind == CandidateKind::Box ? candidate.key : 0;
 			if (hasVerdict(verdictKey, candidate.position)) {
-				return PassOver::Verdict;
+				return PassOverReason::Verdict;
 			}
-			if (candidate.kind == CandidateKind::Box) {
-				for (const KnownBox& box : world.boxes) {
-					if (box.box == candidate.entity && box.item == candidate.item && box.packaged) {
-						return PassOver::Packaged;
-					}
-				}
+			if (const KnownBox* box = boxOf(candidate); box != nullptr && box->packaged) {
+				return PassOverReason::Packaged;
 			}
+			const std::optional<glm::vec2> end = routeEnd(candidate.position);
+			if (!end.has_value()) {
+				return PassOverReason::Unreachable;
+			}
+			candidate.goal = *end;
 			if (candidate.kind == CandidateKind::Thing && world.regrowth != nullptr && *world.regrowth) {
 				const ecs::KnownWorldEntity* known = memory.getWorldEntity(candidate.key);
 				if ((known->capabilityMask & capabilityBit(assets::CapabilityType::Harvestable)) != 0) {
 					if (const std::optional<double> readyAt = (*world.regrowth)(candidate.defNameId, candidate.position, world.now)) {
 						firstReadyAt = std::min(firstReadyAt, *readyAt);
-						return PassOver::Regrowing;
+						return PassOverReason::Regrowing;
 					}
 				}
 			}
-			const std::optional<glm::vec2> end = routeEnd(candidate.position);
-			if (!end.has_value()) {
-				return PassOver::Unreachable;
-			}
-			candidate.goal = *end;
 			return readClaims(candidate, holder);
 		}
 
 		// --- Considering one candidate ---
 
 		void keepIn(std::vector<QueryCandidate>& list, const QueryCandidate& candidate) const {
-			const auto at = std::upper_bound(list.begin(), list.end(), candidate, ranksAhead);
-			if (static_cast<std::size_t>(at - list.begin()) >= capacity) {
+			const auto place = std::upper_bound(list.begin(), list.end(), candidate, ranksAhead);
+			if (static_cast<std::size_t>(place - list.begin()) >= capacity) {
 				return;
 			}
-			list.insert(at, candidate);
+			list.insert(place, candidate);
 			if (list.size() > capacity) {
 				list.pop_back();
 			}
@@ -741,23 +887,29 @@ namespace queries {
 			return false;
 		}
 
-		/// Exclusions, pass-overs, the score, and the prefer class; a survivor joins its class's ranking.
-		void consider(QueryCandidate candidate, const DefinitionTerms* terms) {
+		/// Exclusions, pass-overs, the score, and the prefer class; a survivor joins its class's ranking. True
+		/// when it survived.
+		bool consider(QueryCandidate candidate, const DefinitionTerms* terms) {
 			anyCandidate = true;
 			if (counting) {
 				directSurvivors += survives(candidate, terms) ? 1U : 0U;
-				return;
+				return false;
+			}
+			if (keptConsidered.has_value() && candidate.key == *keptConsidered && candidate.kind != CandidateKind::Place &&
+				candidate.kind != CandidateKind::Spot) {
+				return false;
 			}
 			if (!candidate.fallback && excludedBy(candidate, false)) {
 				excludedAny = true;
-				return;
+				return false;
 			}
 			++visits;
 			std::optional<ecs::ClaimHolder> holder;
-			const PassOver					reason = passOver(candidate, holder);
-			if (reason == PassOver::None && !candidate.fallback && excludedBy(candidate, true)) {
+			liveCountRead = false;
+			const PassOverReason reason = passOver(candidate, holder);
+			if (reason == PassOverReason::None && !candidate.fallback && excludedBy(candidate, true)) {
 				excludedAny = true;
-				return;
+				return false;
 			}
 			float score = terms != nullptr ? terms->score : 0.0F;
 			bool  below = !candidate.fallback && terms != nullptr && terms->preferredBelow;
@@ -775,19 +927,67 @@ namespace queries {
 			candidate.score = score;
 			candidate.preferClass = below ? 1 : 0;
 
-			if (reason != PassOver::None) {
-				passedOverAny = true;
-				waitable = waitable && candidate.kind != CandidateKind::Mover;
-				if (!bestPassedOver.has_value() || ranksAhead(candidate, *bestPassedOver)) {
-					bestPassedOver = candidate;
-				}
-				if (reason == PassOver::Claimed && (!bestClaimed.has_value() || ranksAhead(candidate, *bestClaimed))) {
-					bestClaimed = candidate;
-					bestClaimedHolder = holder.has_value() ? holder->colonist : ecs::kInvalidEntity;
-				}
-				return;
+			if (reason != PassOverReason::None) {
+				notePassedOver(candidate, reason, holder);
+				return false;
 			}
 			keepIn(candidate.fallback ? evaluator.fallbackClass : below ? evaluator.lowerClass : evaluator.upperClass, candidate);
+			return true;
+		}
+
+		void notePassedOver(const QueryCandidate& candidate, PassOverReason reason, const std::optional<ecs::ClaimHolder>& holder) {
+			passedOverAny = true;
+			// What no stamp covers: where a mover is now, and a pile's live count.
+			waitable = waitable && candidate.kind != CandidateKind::Mover && !(isPile(candidate) && liveCountRead);
+			passedOverUnreachable = passedOverUnreachable || reason == PassOverReason::Unreachable;
+			if (!waitingOn.has_value() || tellingness(reason) > tellingness(waitingOnReason) ||
+				(reason == waitingOnReason && ranksAhead(candidate, *waitingOn))) {
+				waitingOn = candidate;
+				waitingOnReason = reason;
+			}
+			if (reason == PassOverReason::Claimed && (!bestClaimed.has_value() || ranksAhead(candidate, *bestClaimed))) {
+				bestClaimed = candidate;
+				bestClaimedHolder = holder.has_value() ? holder->colonist : ecs::kInvalidEntity;
+			}
+		}
+
+		// --- The kept target ---
+
+		/// The target the creature is heading for is asked first: when it still survives, it is taken alone.
+		/// When it does not, the walk passes it by, so it is asked once.
+		bool considerKept() {
+			if (!request.keepKey.has_value()) {
+				return false;
+			}
+			const uint64_t keepKey = *request.keepKey;
+			bool		   survived = false;
+			if (const ecs::KnownWorldEntity* known = memory.getWorldEntity(keepKey)) {
+				collectSeeds(false);
+				const auto seed = std::ranges::lower_bound(evaluator.seeds, known->defNameId, {}, &Seed::definition);
+				if (seed != evaluator.seeds.end() && seed->definition == known->defNameId) {
+					const std::optional<std::size_t> row = rowAccepting(seed->rows, known->capabilityMask);
+					const DefinitionTerms&			 terms = termsOf(known->defNameId);
+					if (row.has_value() && !terms.excluded && gateLets(known->defNameId)) {
+						QueryCandidate candidate = thingCandidate(*known, keepKey, *row, false);
+						candidate.distance = glm::length(known->position - request.position);
+						survived = consider(candidate, &terms);
+					}
+				}
+			} else {
+				for (const SourcePlan& source : plan.sources) {
+					if (source.source != assets::CandidateSource::Box || source.fallback) {
+						continue;
+					}
+					for (const KnownBox& box : world.boxes) {
+						if (survived || box.key != keepKey || !boxWanted(source, box)) {
+							continue;
+						}
+						survived = considerBox(source, box, false);
+					}
+				}
+			}
+			keptConsidered = keepKey;
+			return survived;
 		}
 
 		// --- Horizons ---
@@ -848,7 +1048,8 @@ namespace queries {
 			evaluator.seeds.push_back(Seed{.definition = definition, .rows = 1U << sourceIndex});
 		}
 
-		/// The remembered definitions the phase's memory rows name, one seed each with every row naming it.
+		/// The remembered definitions the phase's memory rows name, one seed each with every row naming it,
+		/// sorted by definition.
 		void collectSeeds(bool fallbackPhase) {
 			std::vector<Seed>& seeds = evaluator.seeds;
 			seeds.clear();
@@ -907,18 +1108,91 @@ namespace queries {
 			seeds.resize(kept);
 		}
 
+		/// A remembered thing as a candidate. What it is a source of comes from how it was remembered, not from
+		/// which row found it: a carryable thing is a pile of itself, a harvestable a source of its yield.
 		[[nodiscard]] QueryCandidate
 		thingCandidate(const ecs::KnownWorldEntity& known, uint64_t key, std::size_t sourceIndex, bool fallbackPhase) const {
 			const SourcePlan& source = plan.sources[sourceIndex];
 			QueryCandidate	  candidate{
 				   .kind = CandidateKind::Thing, .sourceRow = source.row, .fallback = fallbackPhase, .key = key, .defNameId = known.defNameId
 			   };
-			candidate.item = source.source == assets::CandidateSource::Pile		? known.defNameId
-							 : source.source == assets::CandidateSource::Yields ? evaluator.registry.harvestYieldId(known.defNameId)
-																				: 0;
+			if ((known.capabilityMask & capabilityBit(assets::CapabilityType::Carryable)) != 0) {
+				candidate.item = known.defNameId;
+			} else if ((known.capabilityMask & capabilityBit(assets::CapabilityType::Harvestable)) != 0) {
+				candidate.item = evaluator.registry.harvestYieldId(known.defNameId);
+			}
 			candidate.position = known.position;
 			candidate.goal = known.position;
 			return candidate;
+		}
+
+		void pushCell(const ecs::RememberedOfDefinition& remembered, uint32_t seedIndex, uint32_t cell) {
+			const ecs::MemoryCell& memoryCell = remembered.cells[cell];
+			evaluator.cellSteps.push_back(
+				{.distanceSquared = distanceSquaredToCell(request.position, memoryCell.x, memoryCell.y), .seed = seedIndex, .cell = cell}
+			);
+			++cellsTouched;
+		}
+
+		/// The ring `ring` of cells around the creature's cell, for `seed`: the occupied ones become cell steps
+		/// and the next ring is queued, until looking costs more than opening every occupied cell left, which
+		/// are then opened at once.
+		void openRing(uint32_t seedIndex, int32_t ring, std::vector<CellStep>& cells) {
+			Seed&							   seed = evaluator.seeds[seedIndex];
+			const ecs::RememberedOfDefinition& remembered = *memory.rememberedOfDefinition(seed.definition);
+			const uint32_t					   ringCells = ring == 0 ? 1U : 8U * static_cast<uint32_t>(ring);
+			const auto						   cellFarther = [](const CellStep& first, const CellStep& second) {
+				return first.distanceSquared > second.distanceSquared;
+			};
+			const auto ringOf = [&](int32_t cellX, int32_t cellY) {
+				return std::max(std::abs(static_cast<int64_t>(cellX) - centerX), std::abs(static_cast<int64_t>(cellY) - centerY));
+			};
+			if (seed.ringLookups + ringCells > remembered.cells.size()) {
+				for (uint32_t cell = 0; cell < remembered.cells.size(); ++cell) {
+					if (ringOf(remembered.cells[cell].x, remembered.cells[cell].y) >= ring) {
+						pushCell(remembered, seedIndex, cell);
+						std::push_heap(cells.begin(), cells.end(), cellFarther);
+					}
+				}
+				return;
+			}
+			seed.ringLookups += ringCells;
+			cellsTouched += ringCells;
+			const auto lookIn = [&](int32_t cellX, int32_t cellY) {
+				if (const ecs::MemoryCell* found = remembered.cellAt(cellX, cellY)) {
+					const auto cell = static_cast<uint32_t>(found - remembered.cells.data());
+					cells.push_back(
+						{.distanceSquared = distanceSquaredToCell(request.position, cellX, cellY), .seed = seedIndex, .cell = cell}
+					);
+					std::push_heap(cells.begin(), cells.end(), cellFarther);
+				}
+			};
+			if (ring == 0) {
+				lookIn(centerX, centerY);
+			} else {
+				for (int32_t cellX = centerX - ring; cellX <= centerX + ring; ++cellX) {
+					lookIn(cellX, centerY - ring);
+					lookIn(cellX, centerY + ring);
+				}
+				for (int32_t cellY = centerY - ring + 1; cellY <= centerY + ring - 1; ++cellY) {
+					lookIn(centerX - ring, cellY);
+					lookIn(centerX + ring, cellY);
+				}
+			}
+			const int64_t outermost = std::max(
+				{ringOf(remembered.minCellX, remembered.minCellY),
+				 ringOf(remembered.maxCellX, remembered.maxCellY),
+				 ringOf(remembered.minCellX, remembered.maxCellY),
+				 ringOf(remembered.maxCellX, remembered.minCellY)}
+			);
+			if (ring < outermost) {
+				cells.push_back(
+					{.distanceSquared = distanceSquaredToRing(request.position, centerX, centerY, ring + 1),
+					 .seed = seedIndex,
+					 .ring = ring + 1}
+				);
+				std::push_heap(cells.begin(), cells.end(), cellFarther);
+			}
 		}
 
 		/// The phase's remembered things nearest first, each definition only out to its horizon, ending when the
@@ -939,19 +1213,18 @@ namespace queries {
 				}
 				anyCandidate = true;
 				seed.terms = &termsOf(seed.definition);
-				if (!fallbackPhase && seed.terms->excluded) {
+				if ((!fallbackPhase && seed.terms->excluded) || !gateLets(seed.definition)) {
 					excludedAny = true;
 					continue;
 				}
 				seed.bound = seed.terms->score + itemBound;
 				maxBound = std::max(maxBound, seed.bound);
-				for (uint32_t cell = 0; cell < remembered->cells.size(); ++cell) {
-					const ecs::MemoryCell& memoryCell = remembered->cells[cell];
-					cells.push_back(
-						{.distanceSquared = distanceSquaredToCell(request.position, memoryCell.x, memoryCell.y),
-						 .seed = index,
-						 .cell = cell}
-					);
+				if (remembered->cells.size() <= kCellsOpenedAtOnce) {
+					for (uint32_t cell = 0; cell < remembered->cells.size(); ++cell) {
+						pushCell(*remembered, index, cell);
+					}
+				} else {
+					cells.push_back({.distanceSquared = 0.0F, .seed = index, .ring = 0});
 				}
 			}
 			const auto cellFarther = [](const CellStep& first, const CellStep& second) {
@@ -992,6 +1265,10 @@ namespace queries {
 				cells.pop_back();
 				const Seed& seed = seeds[step.seed];
 				if (std::sqrt(step.distanceSquared) > seedHorizon(seed, fallbackPhase) + kHorizonSlackMeters) {
+					continue;
+				}
+				if (step.ring >= 0) {
+					openRing(step.seed, step.ring, cells);
 					continue;
 				}
 				const ecs::MemoryCell& cell = memory.rememberedOfDefinition(seed.definition)->cells[step.cell];
@@ -1074,7 +1351,9 @@ namespace queries {
 				}
 				return;
 			}
-			if (world.generator == nullptr) {
+			// An angle, then a distance, for each point; a point whose disc does not fit is skipped. Counting draws
+			// nothing.
+			if (world.generator == nullptr || counting) {
 				return;
 			}
 			for (int index = 0; index < source.count; ++index) {
@@ -1090,6 +1369,20 @@ namespace queries {
 			}
 		}
 
+		[[nodiscard]] bool boxWanted(const SourcePlan& source, const KnownBox& box) const {
+			return source.itemIsGoal ? request.goal != nullptr && box.item == request.goal->item
+									 : std::ranges::binary_search(source.items, box.item);
+		}
+
+		bool considerBox(const SourcePlan& source, const KnownBox& box, bool fallbackPhase) {
+			QueryCandidate candidate = directCandidate(CandidateKind::Box, source, fallbackPhase, box.position);
+			candidate.key = box.key;
+			candidate.item = box.item;
+			candidate.defNameId = box.item;
+			candidate.entity = box.box;
+			return considerDefined(candidate, fallbackPhase);
+		}
+
 		/// The phase's candidates that are not remembered things: boxes, movers, the goal's, and places (only
 		/// those of `placesBelow`).
 		void considerDirect(bool fallbackPhase, bool placesBelow) {
@@ -1103,17 +1396,9 @@ namespace queries {
 							break;
 						}
 						for (const KnownBox& box : world.boxes) {
-							const bool wanted = source.itemIsGoal ? request.goal != nullptr && box.item == request.goal->item
-																  : std::ranges::binary_search(source.items, box.item);
-							if (!wanted) {
-								continue;
+							if (boxWanted(source, box)) {
+								considerBox(source, box, fallbackPhase);
 							}
-							QueryCandidate candidate = directCandidate(CandidateKind::Box, source, fallbackPhase, box.position);
-							candidate.key = box.key;
-							candidate.item = box.item;
-							candidate.defNameId = box.item;
-							candidate.entity = box.box;
-							considerDefined(candidate, fallbackPhase);
 						}
 						break;
 					case assets::CandidateSource::Kind:
@@ -1164,14 +1449,14 @@ namespace queries {
 			}
 		}
 
-		void considerDefined(const QueryCandidate& candidate, bool fallbackPhase) {
+		bool considerDefined(const QueryCandidate& candidate, bool fallbackPhase) {
 			const DefinitionTerms& terms = termsOf(candidate.defNameId);
-			if (!fallbackPhase && terms.excluded) {
+			if ((!fallbackPhase && terms.excluded) || !gateLets(candidate.defNameId)) {
 				anyCandidate = true;
 				excludedAny = true;
-				return;
+				return false;
 			}
-			consider(candidate, &terms);
+			return consider(candidate, &terms);
 		}
 
 		void walkPhase(bool fallbackPhase) {
@@ -1204,7 +1489,7 @@ namespace queries {
 			collectSeeds(fallbackPhase);
 			for (const Seed& seed : evaluator.seeds) {
 				const ecs::RememberedOfDefinition* remembered = memory.rememberedOfDefinition(seed.definition);
-				if (remembered == nullptr) {
+				if (remembered == nullptr || !gateLets(seed.definition)) {
 					continue;
 				}
 				const DefinitionTerms& terms = termsOf(seed.definition);
@@ -1256,23 +1541,37 @@ namespace queries {
 
 		// --- The wait ---
 
+		/// What the walk read that can change: the creature's memory, the claims, its verdicts, the boxes, the
+		/// request, the mesh's connectivity when a candidate was passed over as not joined, and where it stands
+		/// (its exact position when the query has places or a distance bound, else the component it stands on).
 		[[nodiscard]] Wait stampNow() const {
-			return Wait{
+			Wait wait{
 				.memoryVersion = memory.worldEntityVersion,
 				.readyAt = firstReadyAt,
 				.claimsFingerprint = world.claims != nullptr ? world.claims->fingerprint() : 0,
 				.verdictGeneration = request.reach != nullptr ? request.reach->verdictsChanged() : 0,
 				.boxesStamp = world.boxesStamp,
-				.connectivityEpoch = haveMesh ? world.navigation->connectivityEpoch() : 0,
-				.position = request.position,
+				.requestStamp = requestStamp,
 			};
+			if (passedOverUnreachable && haveMesh) {
+				wait.connectivityEpoch = world.navigation->connectivityEpoch();
+			}
+			if (plan.hasPlaceRows || plan.distanceAbove != kInfinity) {
+				wait.position = request.position;
+			} else {
+				wait.component = hisLabel;
+			}
+			return wait;
 		}
 
 		[[nodiscard]] bool waitHolds(const Wait& wait) const {
-			const Wait now = stampNow();
-			return now.memoryVersion == wait.memoryVersion && world.now < wait.readyAt && now.claimsFingerprint == wait.claimsFingerprint &&
-				   now.verdictGeneration == wait.verdictGeneration && now.boxesStamp == wait.boxesStamp &&
-				   now.connectivityEpoch == wait.connectivityEpoch && now.position == wait.position;
+			const bool epochHolds =
+				!wait.connectivityEpoch.has_value() || (haveMesh && world.navigation->connectivityEpoch() == *wait.connectivityEpoch);
+			const bool placeHolds = wait.position.has_value() ? *wait.position == request.position : wait.component == hisLabel;
+			return memory.worldEntityVersion == wait.memoryVersion && world.now < wait.readyAt &&
+				   (world.claims != nullptr ? world.claims->fingerprint() : 0) == wait.claimsFingerprint &&
+				   (request.reach != nullptr ? request.reach->verdictsChanged() : 0) == wait.verdictGeneration &&
+				   world.boxesStamp == wait.boxesStamp && requestStamp == wait.requestStamp && epochHolds && placeHolds;
 		}
 
 		QueryEvaluator&				  evaluator;
@@ -1284,19 +1583,28 @@ namespace queries {
 		Record&						  record;
 		bool						  haveMesh = false;
 		geometry::nav::ComponentLabel hisLabel = geometry::nav::kNoComponent;
+		int32_t						  centerX = 0;
+		int32_t						  centerY = 0;
 		float						  distanceWeight = 0.0F;
 		float						  itemBound = 0.0F;
+		uint64_t					  requestStamp = 0;
 		std::size_t					  capacity = 1;
 		bool						  itemPreferRows = false;
 		bool						  counting = false;
 		std::size_t					  directSurvivors = 0;
 		uint32_t					  visits = 0;
+		uint32_t					  cellsTouched = 0;
 		bool						  anyCandidate = false;
 		bool						  excludedAny = false;
 		bool						  passedOverAny = false;
+		bool						  passedOverUnreachable = false;
 		bool						  waitable = true;
+		bool						  gated = false;
+		bool						  liveCountRead = false;
 		double						  firstReadyAt = std::numeric_limits<double>::infinity();
-		std::optional<QueryCandidate> bestPassedOver;
+		std::optional<uint64_t>		  keptConsidered;
+		std::optional<QueryCandidate> waitingOn;
+		PassOverReason				  waitingOnReason = PassOverReason::None;
 		std::optional<QueryCandidate> bestClaimed;
 		ecs::EntityID				  bestClaimedHolder = ecs::kInvalidEntity;
 	};
@@ -1307,7 +1615,7 @@ namespace queries {
 		return evaluation.run();
 	}
 
-	std::optional<uint32_t> QueryEvaluator::count(const QueryRequest& request, const QueryWorld& world) {
+	QueryCount QueryEvaluator::count(const QueryRequest& request, const QueryWorld& world) {
 		assert(request.query.valid() && request.memory != nullptr);
 		Evaluation evaluation(*this, request, world);
 		return evaluation.count();

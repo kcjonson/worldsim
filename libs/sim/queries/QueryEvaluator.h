@@ -16,6 +16,7 @@
 
 #include <glm/vec2.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -79,10 +80,19 @@ namespace queries {
 		bool	everyHolderTakes = false;
 		uint8_t tier = 0;
 		uint8_t idleTier = 7;
-		/// Units the step wants from a pile or a box (a meal), for what is left and whether it is held.
-		uint32_t			wanted = 1;
-		ecs::ClaimExclusion self{};
+		/// Units the step wants of any item, when it is not a meal.
+		uint32_t wanted = 1;
+		/// For a meal: the need points short of the need's seek level. The units wanted of an item are then
+		/// what takes the need back to seek at the item's nutrition (x 100), at least one, as the meal amount
+		/// is sized.
+		std::optional<float> mealShortfall;
+		ecs::ClaimExclusion	 self{};
 	};
+
+	/// Whether a remembered definition can serve the request at all (a tool to cut it, room to carry its yield,
+	/// a box's room for it): asked once per definition per evaluation, before any of its things is visited, and
+	/// never cached, since the answer follows the creature's inventory.
+	using DefinitionGate = std::function<bool(uint32_t defNameId)>;
 
 	/// What one evaluation is for: the creature, where it stands, what it remembers, and the step's claims.
 	struct QueryRequest {
@@ -100,6 +110,10 @@ namespace queries {
 		/// round asks a route for them all at once.
 		std::size_t		 alternates = 0;
 		const QueryGoal* goal = nullptr;
+		/// The memory key (or box key) of the target the creature is heading for: asked first, and taken alone
+		/// when it still survives the rows and the pass-overs.
+		std::optional<uint64_t> keepKey;
+		const DefinitionGate*	gate = nullptr;
 	};
 
 	/// When a remembered harvestable of a definition at a position is ready to give again, at a simulation
@@ -130,17 +144,21 @@ namespace queries {
 
 	enum class CandidateKind : uint8_t { Thing, Box, Mover, Place, Destination, Spot };
 
+	/// Why a candidate that survived the rows was passed over.
+	enum class PassOverReason : uint8_t { None, Verdict, Packaged, Exhausted, Unreachable, Regrowing, Claimed };
+
 	struct QueryCandidate {
 		CandidateKind kind = CandidateKind::Thing;
-		/// The `<from>` row it came from, by its position among the query's rows.
+		/// The first `<from>` row that names it, by its position among the query's rows.
 		uint16_t sourceRow = 0;
 		bool	 fallback = false;
 		/// 0 when every prefer row keeps it, 1 when one would exclude it.
 		uint8_t preferClass = 0;
-		/// A thing's memory key, a box's world key, a mover's entity id, a place's position in its source's
-		/// order, a spot's index.
+		/// A thing's memory key, a box's world key, a mover's entity id, a grid point's scan index, an `around`
+		/// point's draw index, a spot's index.
 		uint64_t	  key = 0;
 		uint32_t	  defNameId = 0;
+		/// What it is a source of: a pile's or a box's item, a harvestable's yield.
 		uint32_t	  item = 0;
 		ecs::EntityID entity = ecs::kInvalidEntity;
 		glm::vec2	  position{0.0F, 0.0F};
@@ -149,25 +167,32 @@ namespace queries {
 		float	  distance = 0.0F;
 		float	  score = 0.0F;
 		float	  held = 0.0F;
+		/// Units the step wants of its item (a meal at its nutrition, or the request's units).
+		uint32_t wanted = 1;
 		/// What a pile or a box has left for this creature once the holders that take it are counted.
 		uint32_t left = 0;
 		/// The claim the target takes when its step names it: use for a thing taken whole, source quantity for
-		/// a pile or a box, a slot for a builder spot.
+		/// a pile or a box (the smaller of what is wanted and what is left), a slot for a builder spot.
 		ecs::ClaimTarget  claimTarget{};
 		assets::ClaimKind claimKind = assets::ClaimKind::Use;
+		uint32_t		  claimQuantity = 1;
 	};
 
 	enum class QueryOutcome : uint8_t {
 		Found,
 		/// No candidate at all.
 		NothingKnown,
-		/// Every candidate was removed by an exclusion.
+		/// Every candidate was removed by an exclusion or a definition gate.
 		AllExcluded,
 		/// Every candidate that survived the exclusions was passed over (a route verdict, regrowing, not
-		/// joined, a packaged box, taken by a claim): the spec's wait.
+		/// joined, a packaged box, nothing left, taken by a claim): the spec's wait.
 		AllPassedOver,
-		/// A row with a `when` is in the query, and no condition is evaluated yet; nothing was walked.
-		ConditionNotEvaluated
+		/// A row with a `when` is in the query, and conditions on query rows are not evaluated; nothing was
+		/// walked.
+		ConditionNotEvaluated,
+		/// An `exclude` or `prefer` row reads a fact nothing answers, so its line would decide on a value the
+		/// sim does not have; nothing was walked.
+		FactNotAnswered
 	};
 
 	struct QueryResult {
@@ -179,16 +204,29 @@ namespace queries {
 		/// is none): the option's Reserved row, and who holds it.
 		std::optional<QueryCandidate> reserved;
 		ecs::EntityID				  reservedBy = ecs::kInvalidEntity;
-		/// With AllPassedOver: the best candidate passed over, for the trace.
+		/// With AllPassedOver, for the trace: of the candidates passed over, the best ranked with the most
+		/// telling reason (taken by a claim, then regrowing, then nothing left, a packaged box, a verdict, not
+		/// joined), and that reason.
 		std::optional<QueryCandidate> waitingOn;
-		/// With ConditionNotEvaluated: the first row with a `when`, by its position among the query's rows.
-		uint16_t conditionRow = 0;
+		PassOverReason				  waitingOnReason = PassOverReason::None;
+		/// With ConditionNotEvaluated or FactNotAnswered: the row, by its position among the query's rows.
+		uint16_t row = 0;
 		/// Candidates whose pass-overs were asked (verdicts, regrowth, reach, claims).
 		uint32_t visits = 0;
+		/// Memory cells the walk opened or looked for while walking outward in rings.
+		uint32_t cellsTouched = 0;
 		/// The answer is the creature's recorded wait: nothing it read has changed, so nothing was walked.
 		bool fromWait = false;
 
 		[[nodiscard]] const QueryCandidate* target() const { return ranked.empty() ? nullptr : &ranked.front(); }
+	};
+
+	/// What `count_of` reads: Found with the survivors, or why the count cannot be made.
+	struct QueryCount {
+		QueryOutcome outcome = QueryOutcome::Found;
+		uint32_t	 survivors = 0;
+		/// With ConditionNotEvaluated or FactNotAnswered: the row, by its position among the query's rows.
+		uint16_t row = 0;
 	};
 
 	/// Runs queries. One evaluator serves every creature: it owns the scratch every evaluation reuses, so none
@@ -205,11 +243,12 @@ namespace queries {
 		[[nodiscard]] QueryResult evaluate(const QueryRequest& request, const QueryWorld& world);
 
 		/// How many candidates survive the query's exclusions, scoring and passing over none: `count_of`. A
-		/// fallback row's candidates count only when no other row's survives. None when the query has a row with
-		/// a `when`, which is not evaluated yet.
-		[[nodiscard]] std::optional<uint32_t> count(const QueryRequest& request, const QueryWorld& world);
+		/// fallback row's candidates count only when no other row's survives; `place="around"` rows draw
+		/// nothing here (the loader refuses them in a counted query).
+		[[nodiscard]] QueryCount count(const QueryRequest& request, const QueryWorld& world);
 
-		/// Drop what is kept for `creature` (its definition caches and waits), when it is gone.
+		/// Drop what is kept for `creature` (its definition caches and waits) once it is gone. Nothing owns an
+		/// evaluator until chains are in the decision, which calls this on destruction.
 		void forget(ecs::EntityID creature);
 
 	  private:
@@ -231,7 +270,7 @@ namespace queries {
 			float				  minRadius = 0.0F;
 			float				  spacing = 0.0F;
 			int					  count = 0;
-			/// A place row every prefer row ranks below what they keep, whatever the place: walked only when
+			/// A place row every prefer row ranks below what they keep, whatever the place: walked only while
 			/// nothing of the upper class survives.
 			bool placesBelow = false;
 		};
@@ -248,9 +287,11 @@ namespace queries {
 			std::vector<SourcePlan>	 sources;
 			std::vector<FactRowPlan> rows;
 			std::optional<uint16_t>	 conditionRow;
+			std::optional<uint16_t>	 unansweredRow;
 			/// The smallest `<exclude fact="distance" above>`.
 			float distanceAbove = std::numeric_limits<float>::infinity();
 			bool  usesColonyStock = false;
+			bool  hasPlaceRows = false;
 		};
 
 		/// A remembered definition's terms for one creature and query: its definition-scoped facts weighed,
@@ -261,14 +302,21 @@ namespace queries {
 			bool  preferredBelow = false;
 		};
 
+		/// What a recorded wait read, so it is walked again the moment any of it changes.
 		struct Wait {
-			uint64_t  memoryVersion = 0;
-			double	  readyAt = 0.0;
-			uint64_t  claimsFingerprint = 0;
-			uint64_t  verdictGeneration = 0;
-			uint64_t  boxesStamp = 0;
-			uint64_t  connectivityEpoch = 0;
-			glm::vec2 position{0.0F, 0.0F};
+			uint64_t memoryVersion = 0;
+			double	 readyAt = 0.0;
+			uint64_t claimsFingerprint = 0;
+			uint64_t verdictGeneration = 0;
+			uint64_t boxesStamp = 0;
+			/// The goal, the claim reading, the traits, and the keep key it was asked with.
+			uint64_t requestStamp = 0;
+			/// Stamped only when a candidate was passed over as not joined.
+			std::optional<uint64_t> connectivityEpoch;
+			/// Where the creature stood, when the query has place rows or a distance bound; otherwise the nav
+			/// component it stood on.
+			std::optional<glm::vec2> position;
+			int64_t					 component = 0;
 		};
 
 		/// What is kept for one creature and query between evaluations.
@@ -279,6 +327,7 @@ namespace queries {
 			std::unordered_map<uint32_t, DefinitionTerms> definitions;
 			std::optional<Wait>							  wait;
 			std::optional<QueryCandidate>				  waitingOn;
+			PassOverReason								  waitingOnReason = PassOverReason::None;
 			std::optional<QueryCandidate>				  reserved;
 			ecs::EntityID								  reservedBy = ecs::kInvalidEntity;
 		};
@@ -289,12 +338,18 @@ namespace queries {
 			uint32_t			   rows = 0; // bits by index in Plan::sources
 			float				   bound = 0.0F;
 			const DefinitionTerms* terms = nullptr;
+			/// Cells looked for while walking outward in rings, which stops once it would cost more than
+			/// opening every occupied cell.
+			uint32_t ringLookups = 0;
 		};
 
+		/// An occupied cell of a seed's definition (`ring` negative), or the next ring of cells around the
+		/// creature to look in, keyed by the nearest any of it can be.
 		struct CellStep {
 			float	 distanceSquared = 0.0F;
 			uint32_t seed = 0;
 			uint32_t cell = 0;
+			int32_t	 ring = -1;
 		};
 
 		struct ThingStep {

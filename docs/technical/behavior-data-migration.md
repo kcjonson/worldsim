@@ -298,6 +298,8 @@ marked "behavior change" lands only with the owner's sign-off.
       per-definition spatial index in `Memory`; the nearest-first walk with horizons; rows including
       `prefer`; `fallback` rows; `pick`; `place="around"` and `place="grid"`; the claims pass-over;
       Reserved rows; the wait when everything is passed over.
+    - Left out: a `when` on a query row, which the conditions pass evaluates with the rest of the entries'
+      conditions; before it, a query with one answers that its condition is not evaluated.
     - Deleted: none.
     - Must pass: new `Queries.test.cpp` (10,000 memories, no allocation warm, determinism), the vision
       bench within noise.
@@ -319,6 +321,9 @@ marked "behavior change" lands only with the owner's sign-off.
     - Built: chain options; identity in `isOptionCurrentTask`; claims on steps sized at selection; one
       option for a chain several needs name, ranked by the needs it serves; the hands key; trace rows
       naming entries; every `TaskType::Chain` consumer listed under Seams.
+    - Also: `QueryEvaluator::forget` called when a creature is destroyed; one decision's route answers
+      shared by every query that asks; the claim holder given the need id and rung the eater rule needs,
+      in place of the `TaskType::FulfillNeed` and idle tier number the evaluator's `takes()` reads.
     - Deleted: none.
     - Must pass: `Chains.test.cpp` decision cases, the validator on, `BM_WorkDecision` and
       `BM_ClaimIndexRebuild` within noise.
@@ -511,7 +516,8 @@ marked "behavior change" lands only with the owner's sign-off.
     - Depends on: 35, 36.
 39. The gathering: cut, pile haul, and carry-in.
     - Built: the entries with `gathers`, the cargo handoff between tasks, the decision at once after a
-      landed cut or a gathering pickup.
+      landed cut or a gathering pickup; the work gates (the tool to cut, room to carry the yield, a box's
+      room) as the query request's definition gate.
     - Deleted: `evaluateHarvestOptions`, the pile part of `evaluateHaulOptions`,
       `evaluateCarryInOptions`, `headToDeposit`, `carryHarvestIn`, `startHarvestAction`, the pile part
       of `startHaulAction`, `chainStep`, the haul and harvest fields.

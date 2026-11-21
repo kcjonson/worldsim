@@ -611,6 +611,14 @@ TEST_F(BehaviorLoaderTest, OnlyARankedQueryMustBoundDistance) {
 		"[behaviors] test/sample.xml: <query id=\"liked_near\"> neither weighs distance by a negative number nor excludes it "
 		"above a bound, so nothing ends its search"
 	);
+
+	// Counting random points would draw from the sim's generator and count a different set each time.
+	sample(R"(<query id="spots_near"><from place="around" radius="8" count="4"/><exclude fact="distance" above="8"/></query>)");
+	EXPECT_EQ(
+		onlyError(),
+		"[behaviors] test/sample.xml: <query id=\"spots_near\"> row 1 <from> place \"around\" draws random points, which a query only "
+		"counted (count_of) cannot have"
+	);
 }
 
 TEST_F(BehaviorLoaderTest, ChainRulesNameTheChainAndTheStep) {
@@ -831,6 +839,8 @@ TEST_F(WorkLoaderTest, WorkMistakesNameTheEntryAndTheAttribute) {
 		 "<work id=\"w\"> gives both source=\"carried\" and a <source> row; give one"},
 		{R"(<category id="hauling" label="Hauling" order="first"/>)",
 		 "<category id=\"hauling\"> order must be a whole number from 0 to 2147483647, got \"first\""},
+		{R"(<work id="w" goal="haul" category="farming" rung="opportunistic_work"><source query="q"/><chain id="c"/></work><query id="q"><from pile="goal"/></query>)",
+		 "<query id=\"q\"> neither weighs distance by a negative number nor excludes it above a bound, so nothing ends its search"},
 	};
 	for (const Case& entry : cases) {
 		SCOPED_TRACE(entry.written);
