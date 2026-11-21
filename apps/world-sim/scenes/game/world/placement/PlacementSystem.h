@@ -37,6 +37,7 @@ namespace construction {
 
 namespace ecs {
 	class NavigationSystem;
+	class PlayerVisibilitySystem;
 }
 
 namespace world_sim {
@@ -170,10 +171,21 @@ class PlacementSystem {
 	/// Why `defName` can't be set up at `worldPos` turned `turnQuanta` (rotatable-placed-items 14.2), the checks in order:
 	/// its body against other items' bodies, installed and pending, then against the walls (construction::bodyRefusal);
 	/// its ground (footprintBuildableNow); its footprint seen, when player visibility is on and `rules` is Player; its clearance
-	/// (construction::clearanceRefusal). `ignore` (the crate being moved) is left out. Nothing when it can. The ghost's,
-	/// the dev spawn's, and a crafted crate's install target's.
+	/// (construction::clearanceRefusal); room to use it, and room left for the items beside it (useRefusal). `ignore`
+	/// (the crate being moved) is left out. Nothing when it can. The ghost's, the dev spawn's, and a crafted crate's
+	/// install target's.
 	[[nodiscard]] std::optional<construction::PlacementRefusal>
 	refusalAt(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta, ecs::EntityID ignore, PlacementRules rules) const;
+
+	/// Rules 6 and 7 of rotatable-placed-items 14.2 for an item whose outlines in the world are `held`: NoRoomToUse when
+	/// no use area of its own has room with its collider and the walls counted, UseAreaUnexplored when the only room
+	/// could be on unexplored or unmeshed ground, and BlocksAnotherItem when an item, installed or pending, that has room
+	/// now would have none with `held`'s collider standing here (ecs::judgeUse). `visibility` null takes all ground as
+	/// explored, as the dev verbs do.
+	[[nodiscard]] std::optional<construction::PlacementRefusal> useRefusal(
+		const ecs::PlacedItemIndex& items, const ecs::ItemOutlines& held, glm::vec2 position, ecs::EntityID ignore,
+		const ecs::PlayerVisibilitySystem* visibility
+	) const;
 
 	/// Where a freshly crafted `defName` crate is installed beside the station at `stationPos`, at turn 0: a
 	/// spot at least 1 m off it, tried first along `aim` (NavigationSystem::findValidPositionNear),

@@ -12,6 +12,9 @@ namespace world_sim::adapters {
 		/// The status, its flags, and the status's own part of the detail.
 		TaskRowText rowStatus(const TaskRowFacts& facts) {
 			const bool working = !facts.workers.empty();
+			if (facts.nowhereToStand) {
+				return {.status = "Blocked: nowhere to stand", .detail = "move what is in the way", .blocked = true};
+			}
 			if (facts.buildSite) {
 				if (!facts.underConstruction) {
 					return {.status = "Needs materials", .detail = facts.workers, .blocked = true};

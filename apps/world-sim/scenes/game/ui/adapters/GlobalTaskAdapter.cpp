@@ -231,6 +231,7 @@ namespace world_sim::adapters {
 				.teardownSite = goal.type == ecs::GoalType::Deconstruct,
 				.blocked = goal.status == ecs::GoalStatus::Blocked,
 				.noSource = goal.status == ecs::GoalStatus::NoSource,
+				.nowhereToStand = goal.status == ecs::GoalStatus::NowhereToStand,
 				.allSourcesClaimed = work.allSourcesClaimed(goal.id),
 				.distance = data.distanceValue,
 				.workers = colonistNames(world, work.workersOf(goal)),

@@ -63,6 +63,7 @@ add_library(world-sim-game STATIC
     # Game scene - world subsystems
     scenes/game/world/MoveOrderGoal.cpp
     scenes/game/world/WorldPointer.cpp
+    scenes/game/world/placement/BlockedMarkers.cpp
     scenes/game/world/placement/GhostRenderer.cpp
     scenes/game/world/placement/PlacementMode.cpp
     scenes/game/world/placement/PlacementSystem.cpp

@@ -7,9 +7,39 @@
 #include <ecs/GoalTaskRegistry.h>
 #include <ecs/components/AgentRadius.h>
 #include <ecs/systems/NavigationSystem.h>
+#include <ecs/systems/PlacedItemSystem.h>
 #include <ecs/systems/WallStandPoint.h>
 
 namespace world_sim {
+
+namespace {
+
+	/// What is wrong with an item a colonist can't use (rotatable-placed-items 12) and what to do about it, first in
+	/// its panel; nothing while it is usable.
+	void prependUseNote(ecs::World& world, ecs::EntityID entity, PanelContent& content) {
+		const ecs::PlacedItemSystem*	   items = world.tryGetSystem<ecs::PlacedItemSystem>();
+		const ecs::PlacedItemIndex::Entry* entry = items != nullptr ? items->items().find(entity) : nullptr;
+		if (entry == nullptr || entry->pending || entry->use == ecs::UseState::Usable) {
+			return;
+		}
+		std::vector<InfoSlot> note;
+		if (entry->use == ecs::UseState::Blocked) {
+			note.emplace_back(TextSlot{.label = "Blocked", .value = "Nowhere to stand"});
+			note.emplace_back(TextListSlot{
+				.header = "Something is in the way of the place a colonist stands to use this.",
+				.items = {"Move what is in the way, or move this somewhere with room to stand. Its orders wait until then."},
+			});
+		} else {
+			note.emplace_back(TextSlot{.label = "Use area", .value = "Unexplored"});
+			note.emplace_back(TextListSlot{
+				.header = "Nobody has seen the ground a colonist would stand on to use this.",
+				.items = {"It can be used once a colonist has been there."},
+			});
+		}
+		content.slots.insert(content.slots.begin(), note.begin(), note.end());
+	}
+
+} // namespace
 
 // ============================================================================
 // CachedSelection implementation
@@ -240,6 +270,7 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 		contentData = adaptColonistStatus(world, colonistId);
 	} else if (isStation) {
 		contentData = getCraftingStationContent(world, stationId, stationDefName, callbacks.onOpenCraftingDialog);
+		prependUseNote(world, stationId, contentData);
 	} else if (isFurniture) {
 		const auto& furnitureSel = std::get<FurnitureSelection>(selection);
 		// Create onConfigure callback that captures entity info for storage config dialog
@@ -252,6 +283,7 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 			};
 		}
 		contentData = adaptFurniture(assetRegistry, furnitureSel, callbacks.onPlace, callbacks.onMoveFurniture, onConfigure);
+		prependUseNote(world, furnitureSel.entityId, contentData);
 	} else if (isPile) {
 		contentData = adaptResourcePile(world, assetRegistry, std::get<ResourcePileSelection>(selection));
 	} else if (isWallSegment && constructionWorld != nullptr) {

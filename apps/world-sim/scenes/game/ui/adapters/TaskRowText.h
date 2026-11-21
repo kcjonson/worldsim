@@ -31,6 +31,7 @@ namespace world_sim::adapters {
 		int	  teardownPercent = 0;		 // teardown site: how much is torn down
 		bool  blocked = false;			 // goal status Blocked
 		bool  noSource = false;			 // goal status NoSource
+		bool  nowhereToStand = false;	 // goal status NowhereToStand: its item has no room in any use area
 		bool  allSourcesClaimed = false;
 		float distance = 0.0F;					   // meters from the reference point
 		std::optional<CraftMaterials> materials; // a blocked craft's
@@ -47,7 +48,7 @@ namespace world_sim::adapters {
 		bool		unassigned = false;
 	};
 
-	/// The row's status, by precedence Blocked, Waiting (no source found), Working, Waiting (all known
+	/// The row's status, by precedence Blocked: nowhere to stand (over every other, a build site's too), Blocked, Waiting (no source found), Working, Waiting (all known
 	/// sources claimed), then Available (further than 50m) or Unassigned; a build site reads Needs
 	/// materials, Building, or Ready to build, and a teardown site Blocked (something still stands on
 	/// it), Deconstructing, or Ready to deconstruct. The detail joins with "; " the status's own part, the

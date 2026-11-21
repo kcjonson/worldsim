@@ -193,6 +193,12 @@ namespace construction {
 				return "Unexplored";
 			case PlacementRefusal::TooClose:
 				return "Too close";
+			case PlacementRefusal::NoRoomToUse:
+				return "No room to use it";
+			case PlacementRefusal::UseAreaUnexplored:
+				return "Use area unexplored";
+			case PlacementRefusal::BlocksAnotherItem:
+				return "Blocks another item";
 		}
 		return {};
 	}

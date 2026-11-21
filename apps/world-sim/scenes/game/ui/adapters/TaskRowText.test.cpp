@@ -27,11 +27,15 @@ namespace world_sim::adapters {
 		TaskRowFacts facts{
 			.blocked = true,
 			.noSource = true,
+			.nowhereToStand = true,
 			.allSourcesClaimed = true,
 			.distance = 80.0F,
 			.workers = "Alice",
 		};
 		const auto status = [&] { return taskRowText(facts).status; };
+		EXPECT_EQ(status(), "Blocked: nowhere to stand");
+		EXPECT_TRUE(taskRowText(facts).blocked);
+		facts.nowhereToStand = false;
 		EXPECT_EQ(status(), "Blocked");
 		EXPECT_TRUE(taskRowText(facts).blocked);
 		facts.blocked = false;

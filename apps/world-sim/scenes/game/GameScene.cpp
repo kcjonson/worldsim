@@ -15,6 +15,7 @@
 #include "scenes/game/world/nav/NavOverlay.h"
 #include "scenes/game/world/MoveOrderGoal.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
+#include "scenes/game/world/placement/BlockedMarkers.h"
 #include "scenes/game/world/rooms/RoomOverlay.h"
 #include "scenes/game/world/selection/SelectionSystem.h"
 #include "scenes/game/world/terrain/TerrainPolygonOverlay.h"
@@ -1112,6 +1113,9 @@ namespace {
 			// Vision debug overlay (visibility polygons + occluders). No-op unless on (V).
 			m_visionOverlay->render(w, h);
 
+			// Items with nowhere to stand.
+			world_sim::BlockedMarkers::render(*ecsWorld, *m_camera, w, h, kPixelsPerMeter, ui().getScale());
+
 			// Render selection indicator in world-space (after entities, before UI)
 			m_selectionSystem->renderIndicator(w, h);
 
@@ -1396,6 +1400,12 @@ namespace {
 			// (which owns the ConstructionWorld) is created, back in initialize().
 			auto& constructionSystem = ecsWorld->getSystem<ecs::ConstructionSystem>();
 			constructionSystem.setPlacementData(m_placementExecutor.get(), &m_processedChunks);
+
+			// An item a colonist can no longer use, told once as it becomes blocked.
+			ecsWorld->getSystem<ecs::PlacedItemSystem>().setBlockedCallback([this](ecs::EntityID entity, const std::string& defName) {
+				LOG_INFO(Game, "Item %llu (%s) blocked: nowhere to stand", static_cast<unsigned long long>(entity), defName.c_str());
+				toastNowhereToStand(defName);
+			});
 
 			// Wire up ActionSystem for "item crafted" notifications
 			auto& actionSystem = ecsWorld->getSystem<ecs::ActionSystem>();
@@ -1773,6 +1783,15 @@ namespace {
 			);
 		}
 
+		/// Tells the player an item has nowhere to stand: once as it becomes blocked, and at an order it refuses.
+		void toastNowhereToStand(const std::string& defName) {
+			const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(defName);
+			const std::string			   label = def != nullptr && !def->label.empty() ? def->label : defName;
+			gameUI->pushNotification(
+				label + " blocked: nowhere to stand", "Something is in the way of the place a colonist stands to use it.", ui::ToastSeverity::Warning
+			);
+		}
+
 		/// Handle recipe queue request from crafting station UI.
 		/// Adds a crafting job to the selected station's WorkQueue.
 		void handleQueueRecipe(const std::string& recipeDefName, uint32_t quantity) {
@@ -1788,6 +1807,12 @@ namespace {
 			auto* workQueue = ecsWorld->getComponent<ecs::WorkQueue>(stationSel->entityId);
 			if (workQueue == nullptr) {
 				LOG_WARNING(Game, "Cannot queue recipe: station has no WorkQueue");
+				return;
+			}
+
+			// A station with nowhere to stand takes no new order; the ones it has wait (rotatable-placed-items 12).
+			if (ecs::nowhereToStand(*ecsWorld, stationSel->entityId)) {
+				toastNowhereToStand(stationSel->defName);
 				return;
 			}
 

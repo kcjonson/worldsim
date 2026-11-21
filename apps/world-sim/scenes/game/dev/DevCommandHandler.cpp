@@ -30,6 +30,7 @@
 
 #include <debug/Tunables.h>
 
+#include <ecs/components/Task.h>
 #include <ecs/systems/PlacedItemSystem.h>
 #include <ecs/components/Packaged.h>
 #include <ecs/InventoryMass.h>
@@ -99,6 +100,35 @@ namespace world_sim {
 		double turnDegreesOf(ecs::World& world, ecs::EntityID entity) {
 			const auto* rotation = world.getComponent<ecs::Rotation>(entity);
 			return rotation != nullptr ? degreesOfQuanta(assets::turnQuantaFromRadians(rotation->radians)) : 0.0;
+		}
+
+		const char* useStateName(ecs::UseState use) {
+			switch (use) {
+				case ecs::UseState::Usable:
+					return "usable";
+				case ecs::UseState::Unexplored:
+					return "unexplored";
+				case ecs::UseState::Blocked:
+					return "blocked";
+			}
+			return "usable";
+		}
+
+		// Whether a colonist can use the item (rotatable-placed-items 12): `,"blocked":...,"use":"..."`; an entity that is
+		// no placed parts item is usable.
+		std::string useFields(ecs::World& world, ecs::EntityID entity) {
+			const ecs::PlacedItemSystem*	   items = world.tryGetSystem<ecs::PlacedItemSystem>();
+			const ecs::PlacedItemIndex::Entry* entry = items != nullptr ? items->items().find(entity) : nullptr;
+			const ecs::UseState				   use = entry != nullptr && !entry->pending ? entry->use : ecs::UseState::Usable;
+			return std::string(",\"blocked\":") + (use == ecs::UseState::Blocked ? "true" : "false") + ",\"use\":\"" + useStateName(use) + "\"";
+		}
+
+		void ringJson(std::ostringstream& out, const std::vector<glm::vec2>& ring) {
+			out << "[";
+			for (std::size_t i = 0; i < ring.size(); ++i) {
+				out << (i > 0 ? "," : "") << "[" << ring[i].x << "," << ring[i].y << "]";
+			}
+			out << "]";
 		}
 	} // namespace
 
@@ -773,7 +803,34 @@ namespace world_sim {
 			}
 			out << (first ? "" : ",") << "{\"id\":" << static_cast<unsigned long long>(entity) << ",\"def\":\"" << jsonEscape(appearance.defName)
 				<< "\",\"x\":" << position.value.x << ",\"y\":" << position.value.y
-				<< ",\"turnDegrees\":" << degreesOfQuanta(assets::turnQuantaFromRadians(rotation.radians)) << "}";
+				<< ",\"turnDegrees\":" << degreesOfQuanta(assets::turnQuantaFromRadians(rotation.radians)) << useFields(*m_ctx.world, entity);
+			// Its use areas in the world, and where a colonist may stand in them as last worked out (outer rings).
+			const ecs::PlacedItemSystem*	   items = m_ctx.world->tryGetSystem<ecs::PlacedItemSystem>();
+			const ecs::PlacedItemIndex::Entry* entry = items != nullptr ? items->items().find(entity) : nullptr;
+			if (entry != nullptr && !entry->pending) {
+				out << ",\"useAreas\":[";
+				bool firstRing = true;
+				for (const std::vector<assets::AreaPolygon>& area : entry->world.useAreas) {
+					for (const assets::AreaPolygon& polygon : area) {
+						out << (firstRing ? "" : ",");
+						ringJson(out, polygon.outer);
+						firstRing = false;
+					}
+				}
+				out << "],\"standing\":[";
+				firstRing = true;
+				for (const geometry::RegionPolygon& piece : entry->standing.pieces) {
+					std::vector<glm::vec2> ring;
+					for (const geometry::Vec2i64& point : piece.outer) {
+						ring.emplace_back(static_cast<float>(static_cast<double>(point.x) * 1.0e-6), static_cast<float>(static_cast<double>(point.y) * 1.0e-6));
+					}
+					out << (firstRing ? "" : ",");
+					ringJson(out, ring);
+					firstRing = false;
+				}
+				out << "]";
+			}
+			out << "}";
 			first = false;
 		}
 		out << "]}";
@@ -1492,6 +1549,12 @@ namespace world_sim {
 			if (const auto* action = m_ctx.world->getComponent<ecs::Action>(entity)) {
 				out << ",\"action\":\"" << ecs::actionTypeName(action->type) << "\"";
 			}
+			// Where his task sends him and what it works on there: a stand point beside its target, or the target itself.
+			if (const auto* task = m_ctx.world->getComponent<ecs::Task>(entity); task != nullptr && task->isActive()) {
+				const glm::vec2 workTarget = task->workTarget();
+				out << ",\"task\":{\"standPoint\":[" << task->targetPosition.x << "," << task->targetPosition.y << "],\"workTarget\":[" << workTarget.x
+					<< "," << workTarget.y << "]}";
+			}
 			if (const auto* inv = m_ctx.world->getComponent<ecs::Inventory>(entity)) {
 				// Aggregate hands + backpack so each defName appears once (no duplicate keys).
 				std::unordered_map<std::string, uint32_t> totals;
@@ -1650,7 +1713,7 @@ namespace world_sim {
 			out << (first ? "" : ",");
 			first = false;
 			out << "{\"id\":" << static_cast<unsigned long long>(entity) << ",\"x\":" << pos.value.x << ",\"y\":" << pos.value.y
-				<< ",\"turnDegrees\":" << turnDegreesOf(*m_ctx.world, entity);
+				<< ",\"turnDegrees\":" << turnDegreesOf(*m_ctx.world, entity) << useFields(*m_ctx.world, entity);
 
 			out << ",\"jobs\":[";
 			bool firstJob = true;
@@ -1691,7 +1754,7 @@ namespace world_sim {
 			}
 
 			out << "{\"id\":" << static_cast<unsigned long long>(entity) << ",\"defName\":\"" << jsonEscape(defName) << "\",\"x\":"
-				<< pos.value.x << ",\"y\":" << pos.value.y << ",\"turnDegrees\":" << turnDegreesOf(*m_ctx.world, entity);
+				<< pos.value.x << ",\"y\":" << pos.value.y << ",\"turnDegrees\":" << turnDegreesOf(*m_ctx.world, entity) << useFields(*m_ctx.world, entity);
 
 			// Inventory contents (backpack only; storage containers don't use hand slots)
 			out << ",\"inventory\":{";

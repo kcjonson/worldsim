@@ -25,7 +25,7 @@
 namespace construction {
 
 	/// Why an item can't go where the ghost stands (rotatable-placed-items 14.2), in the order the checks run.
-	enum class PlacementRefusal : std::uint8_t { OverlapsItem, WallInTheWay, NotBuildableGround, Unexplored, TooClose };
+	enum class PlacementRefusal : std::uint8_t { OverlapsItem, WallInTheWay, NotBuildableGround, Unexplored, TooClose, NoRoomToUse, UseAreaUnexplored, BlocksAnotherItem };
 
 	/// The short label the ghost shows (14.4).
 	[[nodiscard]] std::string_view placementRefusalLabel(PlacementRefusal refusal);

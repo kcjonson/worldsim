@@ -18,9 +18,11 @@
 #include <ecs/components/WorkQueue.h>
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/PlayerVisibilitySystem.h>
+#include <ecs/systems/UseRoom.h>
 #include <primitives/Primitives.h>
 #include <utils/Log.h>
 
+#include <glm/common.hpp>
 #include <glm/geometric.hpp>
 
 #include <algorithm>
@@ -372,7 +374,60 @@ namespace world_sim {
 			})) {
 			return construction::PlacementRefusal::Unexplored;
 		}
-		return items != nullptr ? construction::clearanceRefusal(*items, wallRings(), held, ignore) : std::nullopt;
+		if (items == nullptr) {
+			return std::nullopt;
+		}
+		if (std::optional<construction::PlacementRefusal> clearance = construction::clearanceRefusal(*items, wallRings(), held, ignore)) {
+			return clearance;
+		}
+		return useRefusal(*items, held, {worldPos.x, worldPos.y}, ignore, visibility);
+	}
+
+	std::optional<construction::PlacementRefusal> PlacementSystem::useRefusal(
+		const ecs::PlacedItemIndex& items, const ecs::ItemOutlines& held, glm::vec2 position, ecs::EntityID ignore,
+		const ecs::PlayerVisibilitySystem* visibility
+	) const {
+		if (navigation == nullptr) {
+			return std::nullopt;
+		}
+		// Rule 6: some use area of its own has room, with its collider and the walls, blueprints among them, counted.
+		std::vector<std::vector<glm::vec2>> obstacles = held.collider;
+		obstacles.insert(obstacles.end(), wallRings().begin(), wallRings().end());
+		switch (ecs::judgeUse(*navigation, items, held, position, obstacles, visibility, ignore, ignore).use) {
+			case ecs::UseState::Blocked:
+				return construction::PlacementRefusal::NoRoomToUse;
+			case ecs::UseState::Unexplored:
+				return construction::PlacementRefusal::UseAreaUnexplored;
+			case ecs::UseState::Usable:
+				break;
+		}
+		// Rule 7: no other item that has room now is left with none once this collider stands here.
+		if (held.collider.empty()) {
+			return std::nullopt;
+		}
+		glm::vec2 lower = held.collider.front().front();
+		glm::vec2 upper = lower;
+		for (const std::vector<glm::vec2>& ring : held.collider) {
+			for (const glm::vec2 point : ring) {
+				lower = glm::min(lower, point);
+				upper = glm::max(upper, point);
+			}
+		}
+		const glm::vec2								 reach{assets::kLargestColonistRadiusMeters, assets::kLargestColonistRadiusMeters};
+		std::vector<const ecs::PlacedItemIndex::Entry*> near;
+		items.query(lower - reach, upper + reach, near);
+		for (const ecs::PlacedItemIndex::Entry* other : near) {
+			const bool overlapsUse = other->useLower.x <= upper.x + reach.x && other->useUpper.x >= lower.x - reach.x &&
+									 other->useLower.y <= upper.y + reach.y && other->useUpper.y >= lower.y - reach.y;
+			if (other->entity == ecs::kInvalidEntity || other->entity == ignore || other->use != ecs::UseState::Usable || other->world.useAreas.empty() ||
+				!overlapsUse) {
+				continue;
+			}
+			if (ecs::judgeUse(*navigation, items, other->world, other->position, held.collider, visibility, other->entity, ignore).use != ecs::UseState::Usable) {
+				return construction::PlacementRefusal::BlocksAnotherItem;
+			}
+		}
+		return std::nullopt;
 	}
 
 	bool PlacementSystem::isFurniture(const std::string& defName) {
