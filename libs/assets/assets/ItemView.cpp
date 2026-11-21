@@ -11,6 +11,7 @@
 #include <limits>
 #include <map>
 #include <numbers>
+#include <optional>
 #include <span>
 
 namespace assets {
@@ -62,13 +63,17 @@ namespace assets {
 
 		constexpr uint32_t kNone = std::numeric_limits<uint32_t>::max();
 
-		/// A vertex of a triangle being clipped. A source vertex has `from` its index in the source and `to` kNone; a cut
-		/// vertex lies on the source edge from `from` to `to`.
+		/// A vertex of a triangle being clipped. A source vertex has `from` its index in the source and `to` kNone. A cut
+		/// vertex made on a source edge (a band edge's exact cut) is on the edge from `from` to `to`; one made by
+		/// interpolating a polygon edge lies on an earlier plane's line instead and is not on a source edge.
+		enum class Place : uint8_t { Source, OnSourceEdge, OnPlane };
+
 		struct ClipVertex {
 			glm::vec2		  position{0.0F};
 			Foundation::Color color;
 			uint32_t		  from = kNone;
 			uint32_t		  to = kNone;
+			Place			  place = Place::Source;
 		};
 
 		Foundation::Color mixed(const Foundation::Color& from, const Foundation::Color& to, float along) {
@@ -76,50 +81,82 @@ namespace assets {
 			return {mix(from.r, to.r), mix(from.g, to.g), mix(from.b, to.b), mix(from.a, to.a)};
 		}
 
-		/// Where the edge from `current` to `following` crosses a half-plane's line. On a vertical line (a band edge) the
-		/// cut is computed from the source edge both lie on, its ends in a fixed order, at exactly the line's x, so the
-		/// strips either side of a band edge make bit-identical vertices and no hairline opens between them.
+		/// The source edge a polygon edge lies along, when it lies along one: both ends source vertices (an edge of the
+		/// triangle), a source vertex and a cut on an edge of its own, or two cuts on the same source edge.
+		std::optional<std::pair<uint32_t, uint32_t>> sourceEdgeOf(const ClipVertex& current, const ClipVertex& following) {
+			const bool currentSource = current.place == Place::Source;
+			const bool followingSource = following.place == Place::Source;
+			if (currentSource && followingSource) {
+				return std::make_pair(current.from, following.from);
+			}
+			if (currentSource || followingSource) {
+				const ClipVertex& vertex = currentSource ? current : following;
+				const ClipVertex& cut = currentSource ? following : current;
+				if (cut.place == Place::OnSourceEdge && (vertex.from == cut.from || vertex.from == cut.to)) {
+					return std::make_pair(cut.from, cut.to);
+				}
+				return std::nullopt;
+			}
+			if (current.place == Place::OnSourceEdge && following.place == Place::OnSourceEdge && std::minmax(current.from, current.to) == std::minmax(following.from, following.to)) {
+				return std::make_pair(current.from, current.to);
+			}
+			return std::nullopt;
+		}
+
+		/// Where the edge from `current` to `following` crosses a half-plane's line. On a vertical line (a band edge) an
+		/// edge along a source edge is cut from that source edge, its ends in a fixed order, at exactly the line's x, so the
+		/// strips either side of a band edge make bit-identical vertices and no hairline opens between them. Any other
+		/// cut interpolates the polygon edge and is marked as on no source edge.
 		ClipVertex cutBetween(const ClipVertex& current, const ClipVertex& following, float currentSide, float followingSide, const HalfPlane& plane,
 							  const WorkMesh& source) {
-			uint32_t first = current.to != kNone ? current.from : following.to != kNone ? following.from : current.from;
-			uint32_t second = current.to != kNone ? current.to : following.to != kNone ? following.to : following.from;
-			// Two cut vertices on different source edges are joined along an earlier plane's line, not a source edge.
-			const bool alongSource = current.to == kNone || following.to == kNone ||
-									 std::minmax(current.from, current.to) == std::minmax(following.from, following.to);
-			if (plane.inward.y != 0.0F || !alongSource) {
-				const float along = currentSide / (currentSide - followingSide);
-				return {current.position + (following.position - current.position) * along, mixed(current.color, following.color, along), first, second};
+			const std::optional<std::pair<uint32_t, uint32_t>> edge = plane.inward.y == 0.0F ? sourceEdgeOf(current, following) : std::nullopt;
+			if (edge.has_value() && source.positions[edge->first].x != source.positions[edge->second].x) {
+				auto [first, second] = *edge;
+				const glm::vec2& firstPosition = source.positions[first];
+				const glm::vec2& secondPosition = source.positions[second];
+				if (secondPosition.x < firstPosition.x || (secondPosition.x == firstPosition.x && secondPosition.y < firstPosition.y)) {
+					std::swap(first, second);
+				}
+				const glm::dvec2 low(source.positions[first]);
+				const glm::dvec2 high(source.positions[second]);
+				const double	 along = (static_cast<double>(plane.point.x) - low.x) / (high.x - low.x);
+				return {
+					{plane.point.x, static_cast<float>(low.y + (high.y - low.y) * along)},
+					mixed(source.colors[first], source.colors[second], static_cast<float>(along)),
+					first,
+					second,
+					Place::OnSourceEdge,
+				};
 			}
-			const glm::vec2& firstPosition = source.positions[first];
-			const glm::vec2& secondPosition = source.positions[second];
-			if (secondPosition.x < firstPosition.x || (secondPosition.x == firstPosition.x && secondPosition.y < firstPosition.y)) {
-				std::swap(first, second);
-			}
-			const glm::dvec2 low(source.positions[first]);
-			const glm::dvec2 high(source.positions[second]);
-			const double	 x = plane.point.x;
-			const double	 along = (x - low.x) / (high.x - low.x);
-			return {
-				{plane.point.x, static_cast<float>(low.y + (high.y - low.y) * along)},
-				mixed(source.colors[first], source.colors[second], static_cast<float>(along)),
-				first,
-				second,
-			};
+			const float along = currentSide / (currentSide - followingSide);
+			return {current.position + (following.position - current.position) * along, mixed(current.color, following.color, along), kNone, kNone, Place::OnPlane};
 		}
+
 
 		/// Appends `source`'s triangles clipped to the intersection of `planes`. A triangle wholly inside keeps its
 		/// vertices (shared with its neighbours); a cut one is a convex piece fanned back into triangles, its colours
 		/// interpolated linearly along the cut edges.
 		void clipInto(const WorkMesh& source, std::span<const HalfPlane> planes, WorkMesh& out) {
-			std::vector<uint32_t> kept(source.positions.size(), kNone);
-			const auto			  inside = [&](glm::vec2 position) {
-				 return std::all_of(planes.begin(), planes.end(), [&](const HalfPlane& plane) { return plane.distance(position) >= 0.0F; });
-			};
+			std::vector<uint32_t>	kept(source.positions.size(), kNone);
 			std::vector<ClipVertex> polygon;
 			std::vector<ClipVertex> next;
 			for (size_t t = 0; t + 2 < source.indices.size(); t += 3) {
 				const std::array<uint32_t, 3> corners = {source.indices[t], source.indices[t + 1], source.indices[t + 2]};
-				if (std::all_of(corners.begin(), corners.end(), [&](uint32_t index) { return inside(source.positions[index]); })) {
+				// Wholly outside one plane (for a band, its x range misses the band's): nothing to clip.
+				bool outside = false;
+				bool inside = true;
+				for (const HalfPlane& plane : planes) {
+					int in = 0;
+					for (const uint32_t index : corners) {
+						in += plane.distance(source.positions[index]) >= 0.0F ? 1 : 0;
+					}
+					outside = outside || in == 0;
+					inside = inside && in == 3;
+				}
+				if (outside) {
+					continue;
+				}
+				if (inside) {
 					for (const uint32_t index : corners) {
 						if (kept[index] == kNone) {
 							kept[index] = out.add(source.positions[index], source.colors[index]);
@@ -130,7 +167,7 @@ namespace assets {
 				}
 				polygon.clear();
 				for (const uint32_t index : corners) {
-					polygon.push_back({source.positions[index], source.colors[index], index, kNone});
+					polygon.push_back({source.positions[index], source.colors[index], index, kNone, Place::Source});
 				}
 				for (const HalfPlane& plane : planes) {
 					next.clear();

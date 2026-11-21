@@ -13,6 +13,7 @@
 #include <map>
 #include <numbers>
 #include <optional>
+#include <random>
 #include <set>
 #include <string>
 #include <vector>
@@ -179,6 +180,21 @@ namespace {
 		return high - low;
 	}
 
+	// Every view the tests build: each vertex position and colour finite, so no test passes over a NaN.
+	ItemView checkedView(const AssetDefinition& def, uint32_t turnQuanta, uint8_t level, const ViewConfig& config) {
+		ItemView view = buildItemView(def, turnQuanta, level, config);
+		const auto finite = [](float value) { return std::isfinite(value); };
+		for (size_t i = 0; i < view.mesh.vertices.size(); ++i) {
+			const Foundation::Vec2&	 vertex = view.mesh.vertices[i];
+			const Foundation::Color& color = view.mesh.colors[i];
+			if (!(finite(vertex.x) && finite(vertex.y) && finite(color.r) && finite(color.g) && finite(color.b) && finite(color.a))) {
+				ADD_FAILURE() << def.defName << " at turn " << turnQuanta << ", level " << int(level) << ": vertex " << i << " is not finite";
+				break;
+			}
+		}
+		return view;
+	}
+
 	// Every strip covers whole bands whose anchors spread by no more than `merge`, and takes the largest of them.
 	void expectMergedWithin(const StripLayout& layout, const std::vector<ExpectedBand>& bands, float merge) {
 		size_t covered = 0;
@@ -206,7 +222,8 @@ namespace {
 		for (size_t i = 0; i < ring.size(); ++i) {
 			const glm::vec2 along = ring[(i + 1) % ring.size()] - ring[i];
 			const glm::vec2 inward = glm::vec2{-along.y, along.x} * (doubledArea >= 0.0F ? 1.0F : -1.0F) / std::hypot(along.x, along.y);
-			if ((point.x - ring[i].x) * inward.x + (point.y - ring[i].y) * inward.y < -kTolerance) {
+			// Written so that a NaN point is outside.
+			if (!((point.x - ring[i].x) * inward.x + (point.y - ring[i].y) * inward.y >= -kTolerance)) {
 				return false;
 			}
 		}
@@ -477,7 +494,7 @@ TEST_F(ItemViewTest, AStrokeOnASkewedFaceKeepsItsWidth) {
 	const AssetDefinition* def = load("Seam");
 	ASSERT_NE(def, nullptr);
 	for (const double degrees : {0.0, 30.0, 60.0}) {
-		const ItemView view = buildItemView(*def, quantaOf(degrees), 0, viewConfig());
+		const ItemView view = checkedView(*def, quantaOf(degrees), 0, viewConfig());
 		ASSERT_TRUE(view.error.empty()) << view.error;
 		const std::optional<VisibleFace> front = findFace(visibleFaces(*def->parts, radiansOf(degrees), viewConfig()), 0, 2);
 		ASSERT_TRUE(front.has_value());
@@ -534,7 +551,7 @@ TEST_F(ItemViewTest, AFaceNarrowerThanTheMinimumWidthDrawsItsPlainColour) {
 	EXPECT_NEAR(average.g, 0.0F, 1.0e-6F);
 	EXPECT_NEAR(average.b, 0.5F, 1.0e-4F);
 	const auto count = [&](double degrees, auto predicate) {
-		const ItemView view = buildItemView(*def, quantaOf(degrees), 0, viewConfig());
+		const ItemView view = checkedView(*def, quantaOf(degrees), 0, viewConfig());
 		return std::count_if(view.mesh.colors.begin(), view.mesh.colors.end(), predicate);
 	};
 	const float shade = findFace(visibleFaces(*def->parts, radiansOf(88.0), viewConfig()), 0, 2)->shade;
@@ -569,7 +586,7 @@ TEST_F(ItemViewTest, AGradientOnASideIsItsColourAtEachVertexShaded) {
 	ASSERT_NE(def, nullptr);
 	ASSERT_TRUE(issues("Graded").empty()) << ::testing::PrintToString(issues("Graded"));
 	for (const double degrees : {0.0, 30.0, 330.0}) {
-		const ItemView					 view = buildItemView(*def, quantaOf(degrees), 0, viewConfig());
+		const ItemView					 view = checkedView(*def, quantaOf(degrees), 0, viewConfig());
 		const std::optional<VisibleFace> front = findFace(visibleFaces(*def->parts, radiansOf(degrees), viewConfig()), 0, 2);
 		ASSERT_TRUE(front.has_value());
 		size_t checked = 0;
@@ -594,7 +611,7 @@ TEST_F(ItemViewTest, OutlinesKeepTheirWidthAcrossASkewedEdge) {
 	ASSERT_NE(def, nullptr);
 	const ViewConfig& config = viewConfig();
 	for (const double degrees : {20.0, 35.0, 330.0}) {
-		const ItemView view = buildItemView(*def, quantaOf(degrees), 0, config);
+		const ItemView view = checkedView(*def, quantaOf(degrees), 0, config);
 		ASSERT_TRUE(view.error.empty()) << view.error;
 		const std::optional<VisibleFace> front = findFace(visibleFaces(*def->parts, radiansOf(degrees), config), 0, 2);
 		ASSERT_TRUE(front.has_value());
@@ -621,7 +638,7 @@ TEST_F(ItemViewTest, FaceArtNeverLeavesItsParallelogram) {
 	ASSERT_NE(def, nullptr);
 	EXPECT_TRUE(hasIssue("Spill", "draws past its viewBox", Severity::Warning));
 	for (const double degrees : {0.0, 20.0, 60.0, 330.0}) {
-		const ItemView	   view = buildItemView(*def, quantaOf(degrees), 0, viewConfig());
+		const ItemView	   view = checkedView(*def, quantaOf(degrees), 0, viewConfig());
 		const std::optional<VisibleFace> front = findFace(visibleFaces(*def->parts, radiansOf(degrees), viewConfig()), 0, 2);
 		ASSERT_TRUE(front.has_value());
 		ASSERT_TRUE(front->drawsArt);
@@ -700,14 +717,16 @@ TEST_F(ItemViewTest, StripCountsAndAnchorsForTheStoolAndTheBench) {
 	ASSERT_NE(stool, nullptr);
 	EXPECT_EQ(stripLayout(*stool, quantaOf(0.0), viewConfig()).strips.size(), 1U);
 	const std::vector<ExpectedBand> stoolBands = expectedBands(*stool, radiansOf(45.0), viewConfig());
-	EXPECT_EQ(stripLayout(*stool, quantaOf(45.0), viewConfig()).strips.size(), stoolBands.size()) << "the spec counts 8";
+	EXPECT_EQ(stripLayout(*stool, quantaOf(45.0), viewConfig()).strips.size(), stoolBands.size());
+	EXPECT_EQ(stripLayout(*stool, quantaOf(45.0), viewConfig()).strips.size(), 8U) << "the spec's count";
 
 	const AssetDefinition* bench = loadBench(3.0F, 1.0F);
 	ASSERT_NE(bench, nullptr);
 	EXPECT_EQ(stripLayout(*bench, quantaOf(0.0), viewConfig()).strips.size(), 1U);
 	const StripLayout				turned = stripLayout(*bench, quantaOf(45.0), viewConfig());
 	const std::vector<ExpectedBand> benchBands = expectedBands(*bench, radiansOf(45.0), viewConfig());
-	ASSERT_EQ(turned.strips.size(), benchBands.size()) << "the spec counts 31";
+	ASSERT_EQ(turned.strips.size(), benchBands.size());
+	EXPECT_EQ(turned.strips.size(), 31U) << "the spec's count";
 	expectAscending(turned.strips);
 	// Each anchor is its band's southern edge at its southern end: the anchors fall along the front edge.
 	for (const ItemStrip& strip : turned.strips) {
@@ -739,13 +758,13 @@ TEST_F(ItemViewTest, ACounterAtAShallowAngleMergesItsBandsInPairs) {
 }
 
 TEST_F(ItemViewTest, AShallowVsMergedStripsSpreadByNoMoreThanTheMergeDistance) {
-	// Two rects at minus and plus 3 degrees, the second stacked where they overlap: the southern edge is a shallow V
-	// whose apex points north, each band rising 0.013 m, where a run compared only with its first anchor would spread
+	// Two rects at minus and plus 2.5 degrees, the second stacked where they overlap: the southern edge is a shallow V
+	// past the merge distance (0.028 m; the run's least and greatest anchors keep it to 0.017 m).
 	// by twice the merge distance.
 	writeDef(
 		"ShallowV",
 		"<parts>" + block("left", -3.0F, -0.3F, 0.3F, 0.3F, 0.0F, 0.8F) + block("right", -0.3F, -0.3F, 3.0F, 0.3F, 0.8F, 0.9F) + "</parts><placements>" +
-			place("left", 0.0F, 0.0F, -3.0F) + place("right", 0.0F, 0.0F, 3.0F) + "</placements>"
+			place("left", 0.0F, 0.0F, -2.5F) + place("right", 0.0F, 0.0F, 2.5F) + "</placements>"
 	);
 	const AssetDefinition* def = load("ShallowV");
 	ASSERT_NE(def, nullptr);
@@ -761,14 +780,14 @@ TEST_F(ItemViewTest, NotchedAndSplitBodiesCutIntoAStripAnInterval) {
 	const AssetDefinition* letterC = loadBlocks("LetterC", {{-1.0F, -1.0F, -0.4F, 1.0F}, {-0.4F, -1.0F, 1.0F, -0.4F}, {-0.4F, 0.4F, 1.0F, 1.0F}});
 	ASSERT_NE(letterC, nullptr);
 	ASSERT_EQ(letterC->partsColliders.size(), 1U);
-	const StripLayout c = stripLayout(*letterC, 0, viewConfig());
-	ASSERT_EQ(c.strips.size(), 3U);
-	EXPECT_NEAR(c.strips[0].anchorLocalY, -0.4F, kTolerance) << "the north arm first";
-	EXPECT_NEAR(c.strips[0].minX, -0.4F - viewConfig().outlineHalfWidthMeters(), kTolerance) << "reaching back over the spine by the arm's outline";
-	EXPECT_NEAR(c.strips[1].anchorLocalY, 1.0F, kTolerance) << "the spine";
-	EXPECT_LT(c.strips[1].minX, -0.99F);
-	EXPECT_NEAR(c.strips[2].anchorLocalY, 1.0F, kTolerance) << "the south arm, after the spine left to right";
-	EXPECT_NEAR(c.strips[2].minX, -0.4F - viewConfig().outlineHalfWidthMeters(), kTolerance) << "two strips in the bands through the notch";
+	const StripLayout letterLayout = stripLayout(*letterC, 0, viewConfig());
+	ASSERT_EQ(letterLayout.strips.size(), 3U);
+	EXPECT_NEAR(letterLayout.strips[0].anchorLocalY, -0.4F, kTolerance) << "the north arm first";
+	EXPECT_NEAR(letterLayout.strips[0].minX, -0.4F - viewConfig().outlineHalfWidthMeters(), kTolerance) << "reaching back over the spine by the arm's outline";
+	EXPECT_NEAR(letterLayout.strips[1].anchorLocalY, 1.0F, kTolerance) << "the spine";
+	EXPECT_LT(letterLayout.strips[1].minX, -0.99F);
+	EXPECT_NEAR(letterLayout.strips[2].anchorLocalY, 1.0F, kTolerance) << "the south arm, after the spine left to right";
+	EXPECT_NEAR(letterLayout.strips[2].minX, -0.4F - viewConfig().outlineHalfWidthMeters(), kTolerance) << "two strips in the bands through the notch";
 
 	// An L whose notch opens to the south-east: the upright and the bar beside the notch.
 	const AssetDefinition* letterL = loadBlocks("LetterL", {{-1.0F, -1.0F, 1.0F, -0.5F}, {-1.0F, -0.5F, -0.5F, 1.0F}});
@@ -812,7 +831,7 @@ TEST_F(ItemViewTest, AMatUnderABenchIsInTheFlatStripFirst) {
 			EXPECT_EQ(piece.placement, 0U) << "only the bench is cut into the upright strips";
 		}
 	}
-	const ItemView view = buildItemView(*def, quantaOf(30.0), 0, viewConfig());
+	const ItemView view = checkedView(*def, quantaOf(30.0), 0, viewConfig());
 	ASSERT_TRUE(view.error.empty()) << view.error;
 	EXPECT_GT(view.strips.front().indexCount, 0U);
 	expectContiguous(view);
@@ -841,7 +860,7 @@ TEST_F(ItemViewTest, TheLayoutAgreesWithEveryLevelsViewWhoseStripsAreContiguousA
 			const StripLayout layout = stripLayout(*def, quantaOf(degrees), viewConfig());
 			expectAscending(layout.strips);
 			for (uint8_t level = 0; level < std::max<size_t>(def->detailLevels.size(), 1); ++level) {
-				const ItemView view = buildItemView(*def, quantaOf(degrees), level, viewConfig());
+				const ItemView view = checkedView(*def, quantaOf(degrees), level, viewConfig());
 				ASSERT_TRUE(view.error.empty()) << view.error;
 				ASSERT_EQ(view.strips.size(), layout.strips.size()) << def->defName << " " << degrees;
 				expectContiguous(view);
@@ -878,7 +897,7 @@ TEST_F(ItemViewTest, ATopsArtStaysOnItsFootprint) {
 		EXPECT_TRUE(issues(name).empty()) << name << ::testing::PrintToString(issues(name));
 		const float top = def->parts->parts[0].topMeters * viewConfig().heightRatio;
 		for (const double degrees : {0.0, 22.5, 70.0, 200.0}) {
-			const ItemView		   view = buildItemView(*def, quantaOf(degrees), 0, viewConfig());
+			const ItemView		   view = checkedView(*def, quantaOf(degrees), 0, viewConfig());
 			std::vector<glm::vec2> lifted;
 			for (const glm::vec2& point : turnedFootprint(*def->parts, 0, radiansOf(degrees))) {
 				lifted.push_back(point + glm::vec2{0.0F, -top});
@@ -911,10 +930,10 @@ TEST_F(ItemViewTest, AnOutlineIsNeverCutWhereAFootprintEndsOnABandEdge) {
 	// A 3 m slab whose centre leg starts at x = 0, a band edge: the leg's outline on that side keeps its full width.
 	writeTable();
 	load("Table");
-	const ItemView letter = buildItemView(*AssetRegistry::Get().getDefinition("LetterL"), 0, 0, config);
+	const ItemView letter = checkedView(*AssetRegistry::Get().getDefinition("LetterL"), 0, 0, config);
 	ASSERT_TRUE(letter.error.empty()) << letter.error;
 	EXPECT_NEAR(bandThickness(letter.mesh, config.outlineColor, {0.6F, 1.0F}, {0.6F, 1.8F}, 0.05F), config.outlineWidthMeters, config.outlineWidthMeters * 0.01F);
-	const ItemView table = buildItemView(*AssetRegistry::Get().getDefinition("Table"), 0, 0, config);
+	const ItemView table = checkedView(*AssetRegistry::Get().getDefinition("Table"), 0, 0, config);
 	ASSERT_TRUE(table.error.empty()) << table.error;
 	EXPECT_NEAR(bandThickness(table.mesh, config.outlineColor, {0.0F, 0.12F}, {0.0F, 0.33F}, 0.05F), config.outlineWidthMeters, config.outlineWidthMeters * 0.01F);
 }
@@ -923,7 +942,7 @@ TEST_F(ItemViewTest, StripsEitherSideOfABandEdgeShareBitIdenticalCutVertices) {
 	const AssetDefinition* bench = loadBench(3.0F, 1.0F);
 	ASSERT_NE(bench, nullptr);
 	for (const double degrees : {30.0, 45.0, 117.0}) {
-		const ItemView view = buildItemView(*bench, quantaOf(degrees), 0, viewConfig());
+		const ItemView view = checkedView(*bench, quantaOf(degrees), 0, viewConfig());
 		ASSERT_TRUE(view.error.empty()) << view.error;
 		// Every vertex by its exact x, with the strip it is drawn in.
 		std::map<float, std::vector<std::pair<size_t, uint32_t>>> byX;
@@ -962,6 +981,82 @@ TEST_F(ItemViewTest, StripsEitherSideOfABandEdgeShareBitIdenticalCutVertices) {
 	}
 }
 
+TEST_F(ItemViewTest, ADrawingsAverageColourIsWhatShows) {
+	// A grey background with a red panel painted over its right half: half grey and half red, not the background
+	// counted whole under the panel.
+	folder.write("Panel/front.svg", svg(1.0F, 0.6F, "<rect x=\"50\" y=\"0\" width=\"50\" height=\"60\" fill=\"#FF0000\"/>"));
+	writeDef(
+		"Panel",
+		"<parts><part name=\"box\"><footprint>" + rect(-0.5F, -0.3F, 0.5F, 0.3F) +
+			"</footprint><height bottom=\"0\" top=\"0.6\"/><top color=\"#FFFFFF\"/><sides color=\"#00FF00\"><face side=\"front\" drawing=\"front.svg\"/></sides>"
+			"</part></parts><placements>" + place("box") + "</placements>"
+	);
+	const AssetDefinition* def = load("Panel");
+	ASSERT_NE(def, nullptr);
+	const Foundation::Color average = def->parts->drawings[*def->parts->parts[0].faces[2].drawing].averageColor;
+	const float				grey = static_cast<float>(0x80) / 255.0F;
+	EXPECT_NEAR(average.r, (grey + 1.0F) / 2.0F, 1.0e-4F);
+	EXPECT_NEAR(average.g, grey / 2.0F, 1.0e-4F);
+	EXPECT_NEAR(average.b, grey / 2.0F, 1.0e-4F);
+	EXPECT_FLOAT_EQ(average.a, 1.0F);
+}
+
+TEST_F(ItemViewTest, RandomArtSpillingEveryWayIsClippedToItsFaceAndItsTop) {
+	// 300 random triangles each on a front and a top, most spilling past the viewBox: every vertex they make is
+	// finite and on its face or its top, at turns where the clip has two exactly vertical planes and where it has none.
+	std::mt19937						  random(1146);
+	std::uniform_real_distribution<float> acrossFront(-50.0F, 150.0F);
+	std::uniform_real_distribution<float> downFront(-40.0F, 100.0F);
+	std::uniform_real_distribution<float> acrossTop(-40.0F, 120.0F);
+	std::uniform_real_distribution<float> downTop(-30.0F, 90.0F);
+	std::uniform_int_distribution<int>	  shade(64, 255);
+	const auto							  triangles = [&](auto& across, auto& down, bool red) {
+		 std::string out;
+		 for (int i = 0; i < 300; ++i) {
+			 char color[8];
+			 std::snprintf(color, sizeof(color), red ? "#%02X0000" : "#0000%02X", shade(random));
+			 out += "<path d=\"M " + number(across(random)) + " " + number(down(random)) + " L " + number(across(random)) + " " + number(down(random)) +
+					" L " + number(across(random)) + " " + number(down(random)) + " Z\" fill=\"" + color + "\"/>";
+		 }
+		 return out;
+	};
+	folder.write("Scatter/front.svg", bareSvg(1.0F, 0.6F, triangles(acrossFront, downFront, true)));
+	folder.write("Scatter/top.svg", bareSvg(1.0F, 0.6F, triangles(acrossTop, downTop, false)));
+	writeDef(
+		"Scatter",
+		"<parts><part name=\"box\"><footprint>" + rect(-0.5F, -0.3F, 0.5F, 0.3F) +
+			"</footprint><height bottom=\"0\" top=\"0.6\"/><top drawing=\"top.svg\"/><sides color=\"#00FF00\"><face side=\"front\" drawing=\"front.svg\"/></sides>"
+			"</part></parts><placements>" + place("box") + "</placements>"
+	);
+	const AssetDefinition* def = load("Scatter");
+	ASSERT_NE(def, nullptr);
+	const float lift = 0.6F * viewConfig().heightRatio;
+	for (const double degrees : {0.0, 17.0, 45.0, 300.0, 333.0}) {
+		const ItemView					 view = checkedView(*def, quantaOf(degrees), 0, viewConfig());
+		const std::optional<VisibleFace> front = findFace(visibleFaces(*def->parts, radiansOf(degrees), viewConfig()), 0, 2);
+		ASSERT_TRUE(front.has_value());
+		const std::vector<glm::vec2> face = faceQuad(*front, 1.0F, 0.6F);
+		std::vector<glm::vec2>		 top;
+		for (const glm::vec2& point : turnedFootprint(*def->parts, 0, radiansOf(degrees))) {
+			top.push_back(point + glm::vec2{0.0F, -lift});
+		}
+		size_t frontArt = 0;
+		size_t topArt = 0;
+		for (size_t i = 0; i < view.mesh.vertices.size(); ++i) {
+			const Foundation::Color& color = view.mesh.colors[i];
+			if (color.r > 0.0F && color.g == 0.0F && color.b == 0.0F) {
+				++frontArt;
+				ASSERT_TRUE(insideConvex(view.mesh.vertices[i], face)) << degrees << " degrees, front vertex " << i;
+			} else if (color.b > 0.0F && color.r == 0.0F && color.g == 0.0F) {
+				++topArt;
+				ASSERT_TRUE(insideConvex(view.mesh.vertices[i], top)) << degrees << " degrees, top vertex " << i;
+			}
+		}
+		EXPECT_GT(frontArt, 300U) << degrees << " degrees";
+		EXPECT_GT(topArt, 300U) << degrees << " degrees";
+	}
+}
+
 // ─── Detail levels, the template, and rule 12 ───────────────────────────────────────────────────────────
 
 TEST_F(ItemViewTest, DetailLevelsDropTaggedShapes) {
@@ -973,12 +1068,12 @@ TEST_F(ItemViewTest, DetailLevelsDropTaggedShapes) {
 			return color.r == 0.0F && color.g == 0.0F && color.b == 0.0F;
 		});
 	};
-	const ItemView reference = buildItemView(*def, 0, 1, viewConfig());
-	const ItemView finest = buildItemView(*def, 0, 2, viewConfig());
+	const ItemView reference = checkedView(*def, 0, 1, viewConfig());
+	const ItemView finest = checkedView(*def, 0, 2, viewConfig());
 	EXPECT_EQ(black(reference), 0) << "the worktop's data-lod=60 square is not drawn at 24 px/m";
 	EXPECT_GT(black(finest), 0) << "it is at 60 px/m";
 	EXPECT_GT(finest.mesh.vertices.size(), reference.mesh.vertices.size());
-	EXPECT_FALSE(buildItemView(*def, 0, 3, viewConfig()).error.empty()) << "no level 3";
+	EXPECT_FALSE(checkedView(*def, 0, 3, viewConfig()).error.empty()) << "no level 3";
 	EXPECT_TRUE(reference.silhouette.valid) << "the reference level carries the silhouette";
 	EXPECT_FALSE(finest.silhouette.valid);
 }
@@ -992,7 +1087,7 @@ TEST_F(ItemViewTest, TheTemplateIsTheTurnZeroViewJoined) {
 	ASSERT_NE(id, 0U);
 	const renderer::TessellatedMesh* mesh = registry.getTemplate(id);
 	ASSERT_NE(mesh, nullptr);
-	const ItemView view = buildItemView(*def, 0, referenceDetailLevel(def->detailLevels), viewConfig());
+	const ItemView view = checkedView(*def, 0, referenceDetailLevel(def->detailLevels), viewConfig());
 	ASSERT_TRUE(view.error.empty()) << view.error;
 	EXPECT_EQ(mesh->vertices, view.mesh.vertices);
 	EXPECT_EQ(mesh->indices, view.mesh.indices);
@@ -1009,7 +1104,7 @@ TEST_F(ItemViewTest, TheTemplateIsTheTurnZeroViewJoined) {
 	// Its levels are the view's levels.
 	const AssetRegistry::BuiltTemplate finest = registry.buildTemplateLevel(id, 2);
 	ASSERT_TRUE(finest.mesh.has_value()) << finest.error;
-	EXPECT_EQ(finest.mesh->vertices, buildItemView(*def, 0, 2, viewConfig()).mesh.vertices);
+	EXPECT_EQ(finest.mesh->vertices, checkedView(*def, 0, 2, viewConfig()).mesh.vertices);
 	std::vector<renderer::TessellatedMesh> meshes;
 	EXPECT_TRUE(registry.buildMeshes("Workbench", 0, meshes));
 }
@@ -1048,7 +1143,7 @@ TEST_F(ItemViewTest, Rule12RefusesAViewOverTheVertexLimitAtAStop) {
 	EXPECT_TRUE(hasIssue("Dense", "its view at 0 degrees"));
 	const AssetDefinition* sideways = AssetRegistry::Get().getDefinition("Sideways");
 	ASSERT_NE(sideways, nullptr);
-	EXPECT_LT(buildItemView(*sideways, 0, 0, viewConfig()).vertexCount, kMaxStopViewVertices) << "under the limit at 0 degrees";
+	EXPECT_LT(checkedView(*sideways, 0, 0, viewConfig()).vertexCount, kMaxStopViewVertices) << "under the limit at 0 degrees";
 	EXPECT_TRUE(hasIssue("Sideways", "its view at 15 degrees")) << "the first stop that shows the right end";
 	EXPECT_TRUE(issues("Workbench").empty()) << ::testing::PrintToString(issues("Workbench"));
 }

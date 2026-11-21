@@ -6,6 +6,10 @@
 #include <polygon/Polygon.h>
 #include <vector/ArtBuild.h>
 
+#include <glm/common.hpp>
+#include <glm/vec3.hpp>
+#include <glm/vec4.hpp>
+
 #include <pugixml.hpp>
 
 #include <algorithm>
@@ -552,32 +556,60 @@ namespace assets {
 			return shape;
 		}
 
-		/// The shapes' colours averaged over their tessellated triangles, each weighted by its area and alpha; opaque.
-		Foundation::Color averageColorOf(const std::vector<ItemDrawingShape>& shapes) {
-			std::array<double, 3> sum{};
-			double				  weight = 0.0;
+		/// What a drawing shows, averaged: its shapes painted in order onto a 32 x 32 lattice of points over its size (a
+		/// later shape over an earlier one, each by its alpha, as SVG paints them), then the painted points' colours
+		/// averaged by their coverage. Opaque. Detail finer than a lattice cell may fall between the points.
+		Foundation::Color averageColorOf(const std::vector<ItemDrawingShape>& shapes, glm::vec2 size) {
+			constexpr int					  kLattice = 32;
+			std::array<glm::dvec4, kLattice * kLattice> painted{}; // premultiplied colour and coverage
+			const glm::vec2					  cell = size / static_cast<float>(kLattice);
 			for (const ItemDrawingShape& item : shapes) {
 				renderer::TessellatedMesh mesh;
 				renderer::appendShapeMesh(item.shape, mesh);
 				for (size_t t = 0; t + 2 < mesh.indices.size(); t += 3) {
-					const glm::vec2 first = mesh.vertices[mesh.indices[t]];
-					const glm::vec2 second = mesh.vertices[mesh.indices[t + 1]];
-					const glm::vec2 third = mesh.vertices[mesh.indices[t + 2]];
-					const double	area = std::abs(static_cast<double>(crossOf(first, second, third))) * 0.5;
-					for (size_t corner = 0; corner < 3; ++corner) {
-						const Foundation::Color& color = mesh.colors[mesh.indices[t + corner]];
-						const double			 share = area / 3.0 * color.a;
-						sum[0] += share * color.r;
-						sum[1] += share * color.g;
-						sum[2] += share * color.b;
-						weight += share;
+					const std::array<uint16_t, 3> corners = {mesh.indices[t], mesh.indices[t + 1], mesh.indices[t + 2]};
+					const glm::vec2				  first = mesh.vertices[corners[0]];
+					const glm::vec2				  second = mesh.vertices[corners[1]];
+					const glm::vec2				  third = mesh.vertices[corners[2]];
+					const float					  doubled = crossOf(first, second, third);
+					if (doubled == 0.0F) {
+						continue;
+					}
+					const glm::vec2 low = glm::min(first, glm::min(second, third));
+					const glm::vec2 high = glm::max(first, glm::max(second, third));
+					const int		fromColumn = std::max(0, static_cast<int>(std::ceil(low.x / cell.x - 0.5F)));
+					const int		toColumn = std::min(kLattice - 1, static_cast<int>(std::floor(high.x / cell.x - 0.5F)));
+					const int		fromRow = std::max(0, static_cast<int>(std::ceil(low.y / cell.y - 0.5F)));
+					const int		toRow = std::min(kLattice - 1, static_cast<int>(std::floor(high.y / cell.y - 0.5F)));
+					for (int row = fromRow; row <= toRow; ++row) {
+						for (int column = fromColumn; column <= toColumn; ++column) {
+							const glm::vec2 point{(static_cast<float>(column) + 0.5F) * cell.x, (static_cast<float>(row) + 0.5F) * cell.y};
+							const float		weightFirst = crossOf(point, second, third) / doubled;
+							const float		weightSecond = crossOf(first, point, third) / doubled;
+							const float		weightThird = 1.0F - weightFirst - weightSecond;
+							if (weightFirst < 0.0F || weightSecond < 0.0F || weightThird < 0.0F) {
+								continue;
+							}
+							glm::dvec4 color{0.0};
+							for (size_t corner = 0; corner < 3; ++corner) {
+								const Foundation::Color& vertex = mesh.colors[corners[corner]];
+								const double			 weight = corner == 0 ? weightFirst : corner == 1 ? weightSecond : weightThird;
+								color += weight * glm::dvec4(vertex.r, vertex.g, vertex.b, vertex.a);
+							}
+							glm::dvec4& under = painted[static_cast<size_t>(row * kLattice + column)];
+							under = under * (1.0 - color.a) + glm::dvec4(glm::dvec3(color) * color.a, color.a);
+						}
 					}
 				}
 			}
-			if (weight <= 0.0) {
+			glm::dvec4 total{0.0};
+			for (const glm::dvec4& point : painted) {
+				total += point;
+			}
+			if (total.a <= 0.0) {
 				return {0.0F, 0.0F, 0.0F, 1.0F};
 			}
-			return {static_cast<float>(sum[0] / weight), static_cast<float>(sum[1] / weight), static_cast<float>(sum[2] / weight), 1.0F};
+			return {static_cast<float>(total.r / total.a), static_cast<float>(total.g / total.a), static_cast<float>(total.b / total.a), 1.0F};
 		}
 
 		bool sameAspect(glm::vec2 drawing, glm::vec2 covered, float tolerance) {
@@ -721,7 +753,7 @@ namespace assets {
 									 .minPixelsPerMeter = svg.elements[loaded.element].minPixelsPerMeter}
 								);
 							}
-							drawing.averageColor = averageColorOf(drawing.shapes);
+							drawing.averageColor = averageColorOf(drawing.shapes, drawing.sizeMeters);
 							checkOverflow(drawing, use->what);
 							found = mappedBySize.emplace(key, static_cast<uint32_t>(drawings.size())).first;
 							drawings.push_back(std::move(drawing));

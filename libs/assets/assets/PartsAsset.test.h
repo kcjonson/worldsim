@@ -1,7 +1,7 @@
 #pragma once
 
 // Fixtures for parts defs (rotatable-placed-items.md): defs and drawings written to a temp folder, loaded through the
-// registry with the shipped view config. Shared by PartsAsset.test.cpp and ItemView.test.cpp.
+// registry with the test view config (kTestViewXml in AssetRegistry.test.h). Shared by PartsAsset.test.cpp and ItemView.test.cpp.
 
 #include "assets/AssetRegistry.h"
 #include "assets/AssetRegistry.test.h"
