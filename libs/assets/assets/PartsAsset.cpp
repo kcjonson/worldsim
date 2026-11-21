@@ -576,10 +576,13 @@ namespace assets {
 						continue;
 					}
 					// A lattice point on an edge two triangles share is painted by one of them (the top-left rule): an edge
-					// owns its points when, taken with the triangle wound positively, it runs down or exactly leftward.
+					// owns its points when, taken with the triangle wound positively, it runs down or exactly leftward. The
+					// side is computed from the edge's ends in one fixed order, so the two triangles get exactly opposite
+					// values and no point falls between them.
 					const float sign = doubled > 0.0F ? 1.0F : -1.0F;
 					const auto	covers = [sign](glm::vec2 from, glm::vec2 to, glm::vec2 point) {
-						 const float side = sign * crossOf(from, to, point);
+						 const bool	 ordered = from.x < to.x || (from.x == to.x && from.y < to.y);
+						 const float side = sign * (ordered ? crossOf(from, to, point) : -crossOf(to, from, point));
 						 if (side != 0.0F) {
 							 return side > 0.0F;
 						 }

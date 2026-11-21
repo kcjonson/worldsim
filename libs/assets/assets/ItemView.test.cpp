@@ -1158,11 +1158,14 @@ TEST_F(ItemViewTest, ATranslucentShapeIsAveragedOncePerPointItCovers) {
 	);
 	const AssetDefinition* def = load("Glass");
 	ASSERT_NE(def, nullptr);
-	const Foundation::Color average = def->parts->drawings[*def->parts->parts[0].faces[2].drawing].averageColor;
-	const float				grey = static_cast<float>(0x80) / 255.0F;
-	EXPECT_NEAR(average.r, (grey + 1.0F) / 2.0F, 1.0e-4F);
-	EXPECT_NEAR(average.g, grey / 2.0F, 1.0e-4F);
-	EXPECT_NEAR(average.b, grey / 2.0F, 1.0e-4F);
+	const ItemDrawing& drawing = def->parts->drawings[*def->parts->parts[0].faces[2].drawing];
+	ASSERT_EQ(drawing.shapes.size(), 2U);
+	// The opacity as the SVG reader stores it, a byte: 127/255, not 0.5.
+	const float alpha = drawing.shapes[1].shape.fillColor.a;
+	const float grey = static_cast<float>(0x80) / 255.0F;
+	EXPECT_NEAR(drawing.averageColor.r, grey * (1.0F - alpha) + alpha, 1.0e-4F);
+	EXPECT_NEAR(drawing.averageColor.g, grey * (1.0F - alpha), 1.0e-4F);
+	EXPECT_NEAR(drawing.averageColor.b, grey * (1.0F - alpha), 1.0e-4F);
 }
 
 TEST_F(ItemViewTest, RandomArtSpillingEveryWayIsClippedToItsFaceAndItsTop) {
