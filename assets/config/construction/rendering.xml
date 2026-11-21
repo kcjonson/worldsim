@@ -112,7 +112,7 @@
        hatchSpacingMeters apart on the ground, thinned on screen so none are closer than hatchMinGapPx. Widths, the
        dash, and the label size are logical pixels. -->
   <ItemOverlays>
-    <useAreaColor>#4DCC9EFF</useAreaColor>
+    <useAreaColor>#3A87FFFF</useAreaColor>
     <useAreaFillAlpha>0.28</useAreaFillAlpha>
     <clearanceColor>#DBD6C7FF</clearanceColor>
     <hatchAlpha>0.6</hatchAlpha>
@@ -121,7 +121,7 @@
     <footprintColor>#D98CF2FF</footprintColor>
     <footprintAlpha>0.85</footprintAlpha>
     <colliderColor>#00E5FFFF</colliderColor>
-    <stripColor>#738CFFFF</stripColor>
+    <stripColor>#F5E663FF</stripColor>
     <anchorColor>#F259BFFF</anchorColor>
     <refusedTint>#FF4D4DFF</refusedTint>
     <labelBacking>#0F1214BF</labelBacking>
@@ -135,7 +135,6 @@
     <refusalTextScale>0.8</refusalTextScale>        <!-- the reason beside a refused ghost, in refusedTint; 1 is 16 px -->
     <refusalOffsetXPx>14.0</refusalOffsetXPx>       <!-- from the ghost's pivot -->
     <refusalOffsetYPx>-22.0</refusalOffsetYPx>
-    <refusalShadowPx>1.0</refusalShadowPx>
   </ItemOverlays>
 
 </ConstructionRendering>

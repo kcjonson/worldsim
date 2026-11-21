@@ -426,11 +426,11 @@ namespace assets {
 	/// footprint, the collider, and the depth strips with their anchors. refusedTint multiplies the ghost's colours, and
 	/// replaces the overlays', where placement is refused. Widths and the label size are logical pixels.
 	struct ItemOverlayStyle {
-		StyleColor useAreaColor{0.30F, 0.80F, 0.62F, 1.0F};
+		StyleColor useAreaColor{0.23F, 0.53F, 1.0F, 1.0F};
 		StyleColor clearanceColor{0.86F, 0.84F, 0.78F, 1.0F};
 		StyleColor footprintColor{0.85F, 0.55F, 0.95F, 1.0F};
 		StyleColor colliderColor{0.0F, 0.9F, 1.0F, 1.0F};
-		StyleColor stripColor{0.45F, 0.55F, 1.0F, 1.0F};
+		StyleColor stripColor{0.96F, 0.90F, 0.39F, 1.0F};
 		StyleColor anchorColor{0.95F, 0.35F, 0.75F, 1.0F};
 		StyleColor refusedTint{1.0F, 0.3F, 0.3F, 1.0F};
 		StyleColor labelBacking{0.06F, 0.07F, 0.08F, 0.75F};
@@ -446,12 +446,11 @@ namespace assets {
 		float	   dashPx = 6.0F;
 		float	   gapPx = 4.0F;
 		float	   labelPx = 12.0F;
-		/// The reason beside a refused ghost, in refusedTint: its text scale (1 is 16 logical px), its offset from the
-		/// pivot, and its shadow's offset, all times the interface size.
+		/// The reason beside a refused ghost, in refusedTint on the labelBacking plate: its text scale (1 is 16 logical
+		/// px) and its offset from the pivot, both times the interface size.
 		float refusalTextScale = 0.8F;
 		float refusalOffsetXPx = 14.0F;
 		float refusalOffsetYPx = -22.0F;
-		float refusalShadowPx = 1.0F;
 	};
 
 	/// All construction rendering style, loaded from rendering.xml.

@@ -29,10 +29,10 @@ Launch `asset-manager`; the dev server is on its usual port.
 Preconditions: asset-manager running with World selected and the search box empty. `TestPartsAreas` (`assets/world/misc`) has three named use areas, `front` an XML rect, `side` drawn, and `back` two separate circles, and a clearance of a 0.1 m margin and a drawn apron clear of it; `TestPartsBox` has detail levels 8, 24 and 80 px/m with corner dots only at 80; the Workbench is under Sandbox.
 
 13. Type `TestParts` in search: the tree shows TestPartsAreas and TestPartsBox, the box's row drawn front-down.
-14. Click TestPartsBox: the badge reads PARTS in the same grey as SIMPLE, and the pane shows the turn controls, the level picker at 80 px/m, the overlay toggles, a large view, and 24 small views labelled 0 to 345.
+14. Click TestPartsBox: the badge reads PARTS, in grey, and the pane shows the turn controls, the level picker at 80 px/m, the overlay toggles, a large view, and 24 small views labelled 0 to 345.
 15. Click `8 px/m`: the corner dots go from the large view and every small one, and the right column reads `level  8 px/m`.
 16. Click `80 px/m`: the corner dots come back and the right column reads `level  80 px/m, the finest`.
-17. Click TestPartsAreas: under the box lie three green areas, `front`, `side` and `back` (two circles), each name on a dark plate inside its area.
+17. Click TestPartsAreas: under the box lie three blue areas, `front`, `side` and `back` (two circles), each name on a dark plate inside its area.
 18. Look at the clearance: the apron before the box and the margin round it are two hatched pieces with dashed edges, and the cyan collider outlines the box.
 19. Click `+15`: the entry reads 15.00 and the large view and its overlays turn clockwise together.
 20. Click the entry, replace its text with `271` and press Enter: the view shows the left end and a sliver of the front.
@@ -41,9 +41,9 @@ Preconditions: asset-manager running with World selected and the search box empt
 23. Press Left: 271.00.
 24. Click the Clearance checkbox, then press Right: the turn stays 271.00.
 25. Click the small view labelled 90: the entry reads 90.00 and the large view matches it.
-26. Untick Use areas: the green areas go from the large view and every small one.
+26. Untick Use areas: the blue areas go from the large view and every small one.
 27. Tick Footprints: the box's footprint is outlined in violet.
-28. Read the right column's USE AREAS AND CLEARANCE: `front` reads `rect -0.6, 0.4 to 0.6, 1.2 m`, `side` reads `drawing side-use.svg over ...`, `back` two `circle` lines, and `clearance` reads `margin 0.1 m` and `drawing clear.svg over ...`.
+28. Read the right column's USE AREAS AND CLEARANCE - METRES, each shape on a line of its own: `front` reads `rect (-0.6,0.4) to (0.6,1.2)`, `side` reads `drawing side-use.svg over ...`, `back` two `circle` lines, and `clearance` reads `margin 0.1` and `drawing clear.svg over ...`.
 29. Read DRAWINGS: `clear.svg` and `side-use.svg` each with what it maps onto, its size in metres, and `ok` with its proportions in green.
 30. Read VALIDATION: `box` and `item` read `no issues`.
 31. In `clear.svg`, change the path's `L130 100 L30 100` to `L80 100`, then click Reload: the apron is a hatched triangle in the large view and every small one.

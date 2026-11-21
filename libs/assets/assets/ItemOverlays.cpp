@@ -112,23 +112,40 @@ namespace assets {
 			lowY = std::min(lowY, point.y);
 			highY = std::max(highY, point.y);
 		}
+		// A few heights about the middle, none through a vertex: a line along a horizontal edge would put the span's
+		// middle on the boundary. The middle of a span crossing at no vertex lies strictly inside.
+		const auto onVertex = [&polygon](double y) {
+			const auto ringHas = [y](const std::vector<glm::vec2>& ring) {
+				return std::any_of(ring.begin(), ring.end(), [y](glm::vec2 point) { return static_cast<double>(point.y) == y; });
+			};
+			return ringHas(polygon.outer) || std::any_of(polygon.holes.begin(), polygon.holes.end(), ringHas);
+		};
 		const double		middleY = (static_cast<double>(lowY) + highY) * 0.5;
+		const double		height = static_cast<double>(highY) - lowY;
 		std::vector<double> crossings;
-		crossingsOf(
-			polygon,
-			[middleY](glm::vec2 point) { return static_cast<double>(point.y) - middleY; },
-			[](glm::vec2 from, glm::vec2 to, double fraction) { return static_cast<double>(from.x) + fraction * (static_cast<double>(to.x) - from.x); },
-			crossings
-		);
-		double bestFrom = crossings.empty() ? polygon.outer.front().x : crossings.front();
-		double bestTo = bestFrom;
-		for (size_t i = 0; i + 1 < crossings.size(); i += 2) {
-			if (crossings[i + 1] - crossings[i] > bestTo - bestFrom) {
-				bestFrom = crossings[i];
-				bestTo = crossings[i + 1];
+		double				bestFrom = polygon.outer.front().x;
+		double				bestTo = bestFrom;
+		double				bestY = middleY;
+		for (const double offset : {0.0, 0.07, -0.07, 0.14, -0.14, 0.21, -0.21}) {
+			const double y = middleY + offset * height;
+			if (onVertex(y)) {
+				continue;
+			}
+			crossingsOf(
+				polygon,
+				[y](glm::vec2 point) { return static_cast<double>(point.y) - y; },
+				[](glm::vec2 from, glm::vec2 to, double fraction) { return static_cast<double>(from.x) + fraction * (static_cast<double>(to.x) - from.x); },
+				crossings
+			);
+			for (size_t i = 0; i + 1 < crossings.size(); i += 2) {
+				if (crossings[i + 1] - crossings[i] > bestTo - bestFrom) {
+					bestFrom = crossings[i];
+					bestTo = crossings[i + 1];
+					bestY = y;
+				}
 			}
 		}
-		return {static_cast<float>((bestFrom + bestTo) * 0.5), static_cast<float>(middleY)};
+		return {static_cast<float>((bestFrom + bestTo) * 0.5), static_cast<float>(bestY)};
 	}
 
 	std::vector<HatchLine> hatchLines(const std::vector<AreaPolygon>& polygons, float spacingMeters) {

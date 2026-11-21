@@ -561,8 +561,18 @@ namespace assets {
 			style.useAreaFillAlpha = number(overlay, "useAreaFillAlpha", style.useAreaFillAlpha);
 			style.hatchAlpha = number(overlay, "hatchAlpha", style.hatchAlpha);
 			style.footprintAlpha = number(overlay, "footprintAlpha", style.footprintAlpha);
-			style.hatchSpacingMeters = number(overlay, "hatchSpacingMeters", style.hatchSpacingMeters);
-			style.hatchMinGapPx = number(overlay, "hatchMinGapPx", style.hatchMinGapPx);
+			// The hatch's spacing divides and its gap is cast to a line count, so a value that isn't a positive finite
+			// number keeps the default.
+			const auto positive = [&](const char* tag, float fallback) {
+				const float value = number(overlay, tag, fallback);
+				if (!(std::isfinite(value) && value > 0.0F)) {
+					LOG_WARNING(Engine, "Construction rendering: <%s> must be a positive number, keeping %g", tag, static_cast<double>(fallback));
+					return fallback;
+				}
+				return value;
+			};
+			style.hatchSpacingMeters = positive("hatchSpacingMeters", style.hatchSpacingMeters);
+			style.hatchMinGapPx = positive("hatchMinGapPx", style.hatchMinGapPx);
 			style.edgeWidth = number(overlay, "edgeWidth", style.edgeWidth);
 			style.hatchWidth = number(overlay, "hatchWidth", style.hatchWidth);
 			style.footprintWidth = number(overlay, "footprintWidth", style.footprintWidth);
@@ -573,7 +583,6 @@ namespace assets {
 			style.refusalTextScale = number(overlay, "refusalTextScale", style.refusalTextScale);
 			style.refusalOffsetXPx = number(overlay, "refusalOffsetXPx", style.refusalOffsetXPx);
 			style.refusalOffsetYPx = number(overlay, "refusalOffsetYPx", style.refusalOffsetYPx);
-			style.refusalShadowPx = number(overlay, "refusalShadowPx", style.refusalShadowPx);
 		}
 
 		renderingConfig = cfg;

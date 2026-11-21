@@ -205,7 +205,7 @@ namespace assets {
 			onlyKeys(table, {"marginMeters", "shapes"}, "addClearance");
 			AuthoredArea& clearance = authored.clearance.has_value() ? *authored.clearance : authored.clearance.emplace();
 			if (const sol::optional<double> margin = table["marginMeters"]; margin.has_value() && *margin != 0.0) {
-				clearance.shapes.push_back({.kind = AuthoredAreaShape::Kind::Around, .distanceMeters = static_cast<float>(*margin)});
+				clearance.shapes.push_back({.kind = AuthoredAreaShape::Kind::Margin, .distanceMeters = static_cast<float>(*margin)});
 			}
 			appendShapes(table, clearance);
 		});

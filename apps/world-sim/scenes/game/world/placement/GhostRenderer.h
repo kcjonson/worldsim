@@ -36,6 +36,7 @@ class GhostRenderer {
 	/// @param camera World camera for coordinate transforms
 	/// @param viewportWidth Viewport width in pixels
 	/// @param viewportHeight Viewport height in pixels
+	/// @param placing The ghost being placed, drawn over every pending install's; false for a pending install
 	/// @param isValid Whether the placement position is valid (affects tint color)
 	/// @param uiScale The interface size: a logical pixel of the overlays' lines and labels is this many screen pixels
 	void render(const std::string& defName,
@@ -44,6 +45,7 @@ class GhostRenderer {
 				const world::WorldCamera& camera,
 				int viewportWidth,
 				int viewportHeight,
+				bool placing,
 				bool isValid,
 				float uiScale);
 

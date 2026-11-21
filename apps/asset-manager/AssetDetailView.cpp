@@ -58,18 +58,23 @@ namespace asset_manager {
 			return std::format("{:g}", std::round(static_cast<double>(value) * 1000.0) / 1000.0);
 		}
 
-		/// Where an area's shape came from, as written, with its sizes in metres.
+		/// A point as one token, "(x,y)", so a wrapped line never parts its coordinates.
+		std::string pointText(float x, float y) {
+			return "(" + meters(x) + "," + meters(y) + ")";
+		}
+
+		/// Where an area's shape came from, as written, its sizes in metres (the list's heading says so, so no value is
+		/// parted from its unit by a wrap).
 		std::string shapeSource(const assets::AuthoredAreaShape& shape) {
 			using Kind = assets::AuthoredAreaShape::Kind;
-			const std::string span =
-				std::format("{}, {} to {}, {} m", meters(shape.minX), meters(shape.minY), meters(shape.maxX), meters(shape.maxY));
+			const std::string span = pointText(shape.minX, shape.minY) + " to " + pointText(shape.maxX, shape.maxY);
 			switch (shape.kind) {
 				case Kind::Around:
-					return std::format("around, the collider grown {} m", meters(shape.distanceMeters));
+					return "around, the collider grown " + meters(shape.distanceMeters);
 				case Kind::Margin:
-					return std::format("margin {} m", meters(shape.distanceMeters));
+					return "margin " + meters(shape.distanceMeters);
 				case Kind::Circle:
-					return std::format("circle at {}, {} m, radius {} m", meters(shape.x), meters(shape.y), meters(shape.radius));
+					return "circle " + pointText(shape.x, shape.y) + " radius " + meters(shape.radius);
 				case Kind::Rect:
 					return "rect " + span;
 				case Kind::Drawing:
@@ -525,7 +530,7 @@ namespace asset_manager {
 		keyValue("vertices", std::format("{} at that level, front on (turn 0)", front.vertexCount));
 
 		// Each area and the shapes it was made of, so an artist sees which came from the XML and which from a drawing.
-		heading("USE AREAS AND CLEARANCE");
+		heading("USE AREAS AND CLEARANCE  -  METRES");
 		const auto areaRows = [&](const std::string& name, const assets::ItemArea& area) {
 			std::string shapes;
 			for (const assets::AuthoredAreaShape& shape : area.shapes) {

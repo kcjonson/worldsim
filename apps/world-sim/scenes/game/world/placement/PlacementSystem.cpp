@@ -451,7 +451,7 @@ namespace world_sim {
 		// Render active placement ghost (during placement mode)
 		if (placementMode.state() == PlacementState::Placing) {
 			ghostRenderer.render(
-				placementMode.selectedDefName(), placementMode.ghostPosition(), placementMode.ghostTurnQuanta(), *camera, viewportW, viewportH,
+				placementMode.selectedDefName(), placementMode.ghostPosition(), placementMode.ghostTurnQuanta(), *camera, viewportW, viewportH, true,
 				placementMode.isValidPlacement(),
 				uiScale
 			);
@@ -475,7 +475,8 @@ namespace world_sim {
 						*camera,
 						viewportW,
 						viewportH,
-						true, // Valid placement (already confirmed)
+						false, // a pending install
+						true,  // Valid placement (already confirmed)
 						uiScale
 					);
 				}

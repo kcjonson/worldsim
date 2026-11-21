@@ -9,6 +9,8 @@
 #include "assets/PointTurn.h"
 #include "assets/TurnQuanta.h"
 
+#include <glm/geometric.hpp>
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -599,8 +601,20 @@ TEST_F(PartsAssetTest, ALabelPointLiesInsideAnLAndAC) {
 	shapeL.outer = {{0.0F, 0.0F}, {3.0F, 0.0F}, {3.0F, 0.5F}, {0.5F, 0.5F}, {0.5F, 3.0F}, {0.0F, 3.0F}};
 	AreaPolygon shapeC;
 	shapeC.outer = {{0.0F, 0.0F}, {3.0F, 0.0F}, {3.0F, 0.5F}, {0.5F, 0.5F}, {0.5F, 2.5F}, {3.0F, 2.5F}, {3.0F, 3.0F}, {0.0F, 3.0F}};
-	for (const AreaPolygon& shape : {shapeL, shapeC}) {
-		EXPECT_TRUE(insideRing(shape.outer, pointInside(shape)));
+	// Two offset rectangles stacked as a step: the middle height runs along the step's edge.
+	AreaPolygon shapeStep;
+	shapeStep.outer = {{0.0F, 0.0F}, {2.0F, 0.0F}, {2.0F, 1.0F}, {3.0F, 1.0F}, {3.0F, 2.0F}, {1.0F, 2.0F}, {1.0F, 1.0F}, {0.0F, 1.0F}};
+	for (const AreaPolygon& shape : {shapeL, shapeC, shapeStep}) {
+		const glm::vec2 point = pointInside(shape);
+		EXPECT_TRUE(insideRing(shape.outer, point));
+		// Strictly inside: clear of every edge.
+		for (size_t i = 0; i < shape.outer.size(); ++i) {
+			const glm::vec2 from = shape.outer[i];
+			const glm::vec2 to = shape.outer[(i + 1) % shape.outer.size()];
+			const glm::vec2 along = to - from;
+			const float		fraction = std::clamp(glm::dot(point - from, along) / glm::dot(along, along), 0.0F, 1.0F);
+			EXPECT_GT(glm::length(point - (from + along * fraction)), 0.01F) << "on edge " << i;
+		}
 	}
 }
 
@@ -900,6 +914,8 @@ TEST_F(PartsAssetTest, APartsScriptAddsAreasAndClearanceAndReshapesAPart) {
 	ASSERT_EQ(def->parts->useAreas.size(), 2U);
 	EXPECT_EQ(def->parts->useAreas[1].name, "back");
 	EXPECT_GT(area(def->parts->clearance), 1.6);
+	ASSERT_EQ(def->parts->clearance.shapes.size(), 1U);
+	EXPECT_EQ(def->parts->clearance.shapes[0].kind, AuthoredAreaShape::Kind::Margin) << "a script's margin reads as the XML's";
 }
 
 TEST_F(PartsAssetTest, APartsScriptsErrorsAreReported) {

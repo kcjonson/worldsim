@@ -23,8 +23,7 @@ namespace assets {
 		std::string				  name; ///< empty for an unnamed area
 		std::vector<AreaPolygon>  polygons;
 		renderer::TessellatedMesh fill; ///< vertices only; the drawer colours them
-		/// Inside the largest polygon, away from its edges: the middle of the widest span across it at the height of
-		/// its middle.
+		/// Strictly inside the largest polygon (pointInside).
 		glm::vec2 labelPoint{0.0F};
 	};
 
@@ -64,8 +63,8 @@ namespace assets {
 	/// its middle, so every polygon shows hatched.
 	[[nodiscard]] std::vector<HatchLine> hatchLines(const std::vector<AreaPolygon>& polygons, float spacingMeters);
 
-	/// A point inside a polygon with holes: the middle of the widest span across it on the horizontal line through the
-	/// middle of its height.
+	/// A point strictly inside a polygon with holes: the middle of the widest span across it on a few horizontal lines
+	/// about the middle of its height, none through a vertex.
 	[[nodiscard]] glm::vec2 pointInside(const AreaPolygon& polygon);
 
 } // namespace assets
