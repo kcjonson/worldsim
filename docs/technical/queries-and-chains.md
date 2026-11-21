@@ -179,13 +179,15 @@ errors.
 Every entry has an `id` and, where the player sees it, a `label`. An entry is defined with `id` and
 referred to by the same id; there is no second name. Ids are case-sensitive paths. The shipped library
 names its files and entries in snake_case; a creature's folder part is its definition name as written.
+Every declared id, and every file and folder name an id is made from, is letters, digits, and underscores,
+case as written; anything else is a load error showing the text. The entries of `actions/`, `work/`,
+`orders/`, and `facts/` take top-level ids, so a subfolder in one of those folders is a load error.
 
 Ids are unique per entry type: behavior, chain, query, action (actions and action groups together), work,
 order, and category. A need is keyed by its behavior and its id, so two behaviors may each bring a need of
-one id, and the creature that includes both settles which one it takes. The attribute that refers to an entry
-names its type
-(`chain="human/sleep"`, `action="human/sleep"`, `query=`, `work=`), so a chain and an action may share
-an id, and a work entry and its chain often do.
+one id, and the creature that includes both settles which one it takes. The attribute that refers to an
+entry names its type (`chain="human/sleep"`, `action="human/sleep"`, `query=`, `work=`), so a chain and an
+action may share an id, and a work entry and its chain often do.
 
 A behavior's id is its path under `assets/config/behaviors/` without the extension:
 `assets/config/behaviors/human/eating.xml` is `human/eating`, and
@@ -2013,6 +2015,13 @@ behaviors):
   id and settled per creature, as the human's and the deer's `hunger` require.
 - 2026-11-21: A creature naming its own behavior file in a `<behavior id>` row places it in the order and
   is not the included-twice error, as the cow example requires.
+
+Rules from the first build of the loaders:
+
+- 2026-11-21: Every declared id, and every file and folder name an id is made from, is letters, digits, and
+  underscores, case as written.
+- 2026-11-21: A subfolder under `actions/`, `work/`, `orders/`, or `facts/` is a load error, since their
+  entries take top-level ids.
 
 Choices made in writing this document, not put to the owner:
 

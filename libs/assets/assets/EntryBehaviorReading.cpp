@@ -165,7 +165,7 @@ namespace assets::entry_loading {
 		}
 		// One or more end conditions; the run stops at the first of them.
 		if (!node.child("ends")) {
-			failAt(label + " has no <ends> row; it takes one or more");
+			failAt(label + " has no <ends> row; it takes an <ends> row");
 		}
 		row = 0;
 		for (const pugi::xml_node ends : node.children("ends")) {

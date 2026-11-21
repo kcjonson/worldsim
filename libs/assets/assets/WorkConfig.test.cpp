@@ -727,6 +727,8 @@ TEST_F(WorkConfigTest, PriorityConfig_LadderMistakesNameTheFileAndLoadNothing) {
 		problemsFor("<ladder><rung name=\"idle\"/></ladder>"),
 		std::vector<std::string>{"<ladder> has no rung named \"survival\", which is reserved for threats"}
 	);
+	EXPECT_EQ(problemsFor("<ladder><rung/></ladder>"), std::vector<std::string>{"<ladder> rung 1 name is missing"})
+		<< "a nameless rung is the one error, not also the missing survival rung";
 	std::string manyRungs = "<ladder><rung name=\"survival\"/>";
 	for (int rung = 1; rung < 257; ++rung) {
 		manyRungs += "<rung name=\"rung_" + std::to_string(rung) + "\"/>";

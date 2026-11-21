@@ -566,7 +566,7 @@ TEST_F(BehaviorLoaderTest, EachEntryMistakeIsOneErrorNamingTheEntryElementAndAtt
 		 "<action id=\"drink\"> effect 1 <restore> gives both amount and from; give exactly one"},
 		// Low-mood episodes.
 		{R"(<lowMood rampStart="25" rampFull="15" base="4"><effect chain="c"/><relief amount="small"/></lowMood>)" + lowMood,
-		 "<behavior id=\"sample\"> <lowMood> has no <ends> row; it takes one or more"},
+		 "<behavior id=\"sample\"> <lowMood> has no <ends> row; it takes an <ends> row"},
 		{R"(<lowMood rampStart="25" rampFull="15" base="4"><effect chain="c"/><ends after="task"/><ends after="task"/><relief amount="small"/></lowMood>)" +
 			 lowMood,
 		 "<behavior id=\"sample\"> <lowMood> row 2 <ends> after \"task\" is given twice"},
@@ -680,6 +680,11 @@ TEST_F(ActionLoaderTest, GroupAndFolderMistakesNameTheFileAndTheEntry) {
 	write("config/actions/shared.xml", "<actions/>");
 	write("config/actions/extra/more.xml", "<actions/>");
 	EXPECT_EQ(onlyError(), "[actions] extra: a subfolder, which actions/ may not have; its entries take top-level ids");
+	std::filesystem::remove_all(root / "config/actions/extra");
+	std::filesystem::create_directories(root / "config/actions/empty");
+	EXPECT_EQ(onlyError(), "[actions] empty: a subfolder, which actions/ may not have; its entries take top-level ids")
+		<< "an empty subfolder is refused too";
+	std::filesystem::remove_all(root / "config/actions/empty");
 
 	std::filesystem::remove_all(root / "config/actions");
 	EXPECT_EQ(onlyError(), "[actions] " + (root / "config" / "actions").generic_string() + ": not a folder");
@@ -1067,6 +1072,32 @@ TEST_F(CreatureLoaderTest, EachCreatureMistakeIsOneError) {
 		cow(entry.written);
 		EXPECT_EQ(cowError(), entry.expected);
 	}
+
+	// A failed include hides only what it could have brought: a mood cost naming no need of any behavior is
+	// still its own fault.
+	cow(
+		R"(<creature mood="true"><behavior id="herbivore/eatin"/><moodCost need="thrist" cost="25"/><moodCost need="milking" cost="5"/></creature>)"
+	);
+	EXPECT_EQ(
+		load({"Cow"}).errors,
+		(std::vector<std::string>{
+			"[creatures] Cow/Cow.xml: <creature> row 1 <behavior> id \"herbivore/eatin\" names no behavior",
+			"[creatures] Cow/Cow.xml: <moodCost need=\"thrist\"> names a need the creature does not have",
+		})
+	);
+}
+
+TEST_F(CreatureLoaderTest, ACreaturesFolderAndOwnFileNamesAreIdParts) {
+	std::filesystem::rename(root / "creatures/Cow/being_milked.xml", root / "creatures/Cow/being milked.xml");
+	cow(R"(<creature mood="false"/>)");
+	EXPECT_EQ(cowError(), "[creatures] Cow/being milked.xml: the file name \"being milked\" must be letters, digits, and underscores");
+
+	write(
+		"creatures/Cow-2/Cow-2.xml",
+		R"(<AssetDefinitions><AssetDef><defName>Cow-2</defName><creature mood="false"/></AssetDef></AssetDefinitions>)"
+	);
+	std::filesystem::remove(root / "creatures/Cow/being milked.xml");
+	EXPECT_EQ(onlyError({"Cow-2"}), "[creatures] Cow-2/Cow-2.xml: the folder name \"Cow-2\" must be letters, digits, and underscores");
 }
 
 TEST_F(CreatureLoaderTest, CreatureFilesAndTheBlocksPlaceAreChecked) {

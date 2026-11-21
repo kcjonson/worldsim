@@ -32,7 +32,7 @@ namespace assets {
 		EntryLibrary			 library;
 		std::vector<std::string> errors;
 		/// What loads but is likely a mistake (a short id hiding a top-level one, a chain nothing starts),
-		/// each also logged at warning level.
+		/// kept for the caller to log once the whole config has loaded; empty when the load had an error.
 		std::vector<std::string> warnings;
 	};
 

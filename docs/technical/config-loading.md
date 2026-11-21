@@ -207,7 +207,8 @@ Errors name the file, the entry, the element, and the attribute, in the shape th
 with any problem of its own loads nothing; the references between entries are resolved only once every file
 reads clean, so a broken file never shows as a cascade of names it would have defined; one fault gives one
 error; and an error of any kind leaves the library empty. Warnings (a folder entry hiding a top-level id, a
-chain nothing starts) do not fail the load, and are logged at warning level only when it succeeds. A clean
+chain nothing starts) do not fail the load, and `loadGameConfig` logs them at warning level only when the
+whole config load succeeds, the name check below included. A clean
 load logs its counts at info level.
 
 The names an entry borrows from config that loads after it, a `<scale trait>`, a `<from kind>`, and a

@@ -8,6 +8,7 @@
 #include <assets/WorkConfig.h>
 #include <conditions/ConditionVocabulary.h>
 #include <ecs/ThoughtTypes.h>
+#include <utils/Log.h>
 
 #include <algorithm>
 #include <system_error>
@@ -54,7 +55,8 @@ namespace world_sim {
 		}
 
 		load.errors = assets::loadWorkConfig(configRoot, *human);
-		const bool workConfigLoaded = load.errors.empty();
+		const bool				 workConfigLoaded = load.errors.empty();
+		std::vector<std::string> entryWarnings;
 		if (workConfigLoaded) {
 			const assets::AssetRegistry& definitions = assets::AssetRegistry::Get();
 			const auto					 definitionId = [&definitions](std::string_view name) -> std::optional<uint32_t> {
@@ -67,6 +69,7 @@ namespace world_sim {
 			assets::EntryLoad entries = assets::loadEntries(sources);
 			load.errors = std::move(entries.errors);
 			load.entries = std::move(entries.library);
+			entryWarnings = std::move(entries.warnings);
 		}
 		const bool			   entriesLoaded = workConfigLoaded && load.errors.empty();
 		ecs::ColonistRulesLoad colonistRules = ecs::loadColonistRules(configRoot, *human);
@@ -92,6 +95,11 @@ namespace world_sim {
 		}
 		if (!load.errors.empty()) {
 			load.entries = assets::EntryLibrary{};
+			return load;
+		}
+		// A warning is worth reading only about a config that loaded; a failed load's errors say what to fix first.
+		for (const std::string& warning : entryWarnings) {
+			LOG_WARNING(Game, "%s", warning.c_str());
 		}
 		return load;
 	}

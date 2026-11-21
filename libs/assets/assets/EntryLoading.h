@@ -388,7 +388,7 @@ namespace assets::entry_loading {
 		void resolveSatisfiedBy(std::vector<SatisfiedBy>& rows, std::string_view inFolder, const std::string& where);
 
 		void fail(std::string message) { result.errors.push_back(std::move(message)); }
-		/// Kept, and logged by run() only when the load succeeds.
+		/// Kept for the caller, which logs them only when the whole config load succeeds.
 		void warn(std::string message) { result.warnings.push_back(std::move(message)); }
 
 		const EntrySources&		  sources;

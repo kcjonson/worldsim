@@ -196,12 +196,16 @@ namespace assets::entry_loading {
 
 			// The creature's order: the primary block's includes, then its <creature> files', then its own
 			// behavior files not already placed by a row.
-			// One fault gives one error: when an include names no behavior, nothing can tell which needs it would
-			// have brought, so a row or a mood cost for a need no included behavior brings says nothing more; nor
-			// does a mood cost for a need whose behaviors are left unsettled.
+			// One fault gives one error: when an include names no behavior, a row or a mood cost for a need some
+			// library behavior brings (one the failed include could have brought) says nothing more; nor does a mood
+			// cost for a need whose behaviors are left unsettled. A need no behavior brings is still checked.
 			std::map<uint32_t, std::string> placedBy;
 			bool							includeFailed = false;
 			std::set<std::string>			unsettled;
+			const auto						couldHaveBeenBrought = [&](std::string_view id) {
+				 return includeFailed &&
+						std::ranges::any_of(library.needs, [&](const NeedEntry& need) { return library.needIds[need.id.index] == id; });
+			};
 			for (CreatureInclude& include : rows.includes) {
 				const std::string where = include.source + ": <creature> " + rowLabel(include.row, "behavior");
 				const auto		  found = library.behaviorIds.find(include.id);
@@ -365,7 +369,7 @@ namespace assets::entry_loading {
 				}
 				const std::string where = rows.primarySource + ": <creature> need " + inQuotes(id);
 				if (!label || !seek || !urgent || !critical || !move) {
-					if (base == nullptr && broughtBy == brought.end() && !includeFailed && settledBy == nullptr) {
+					if (base == nullptr && broughtBy == brought.end() && !couldHaveBeenBrought(id) && settledBy == nullptr) {
 						std::vector<std::string_view> missing;
 						if (!label) {
 							missing.emplace_back("label");
@@ -425,7 +429,7 @@ namespace assets::entry_loading {
 					return library.needIds[candidate.id.index] == cost.need;
 				});
 				if (need == creature.needs.end()) {
-					if (!includeFailed && !unsettled.contains(cost.need)) {
+					if (!couldHaveBeenBrought(cost.need) && !unsettled.contains(cost.need)) {
 						fail(where + " names a need the creature does not have");
 					}
 					continue;

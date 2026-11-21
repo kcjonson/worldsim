@@ -68,17 +68,19 @@ namespace assets {
 			}
 			// The shared folders' entries take top-level ids, so a subfolder would add nothing to an id and is refused.
 			std::set<std::string> subfolders;
-			for (const std::filesystem::path& file : found.files) {
-				const std::string name = configFileName(file, folder);
-				if (name.find('/') != std::string::npos) {
-					const std::string subfolder = name.substr(0, name.find('/'));
-					if (subfolders.insert(subfolder).second) {
-						fail(
-							prefix + subfolder + ": a subfolder, which " + std::string(folderName) +
-							"/ may not have; its entries take top-level ids"
-						);
-					}
+			std::error_code		  walkError;
+			for (std::filesystem::directory_iterator entry(folder, walkError), end; !walkError && entry != end;
+				 entry.increment(walkError)) {
+				std::error_code typeError;
+				if (entry->is_directory(typeError)) {
+					subfolders.insert(entry->path().filename().generic_string());
 				}
+			}
+			for (const std::string& subfolder : subfolders) {
+				fail(
+					prefix + subfolder + ": a subfolder, which " + std::string(folderName) +
+					"/ may not have; its entries take top-level ids"
+				);
 			}
 			if (!subfolders.empty()) {
 				return;
@@ -212,9 +214,6 @@ namespace assets {
 				return std::move(result);
 			}
 			warnUnstarted();
-			for (const std::string& warning : result.warnings) {
-				LOG_WARNING(Engine, "%s", warning.c_str());
-			}
 			const EntryLibrary& library = result.library;
 			LOG_INFO(
 				Engine,

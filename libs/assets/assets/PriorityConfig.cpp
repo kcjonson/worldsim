@@ -173,7 +173,8 @@ namespace assets {
 		}
 		const pugi::xml_node ladder = root.child("ladder");
 		onlyAttributes(ladder, {}, "<ladder>", source, problems);
-		std::size_t index = 0;
+		const std::size_t problemsBefore = problems.size();
+		std::size_t		  index = 0;
 		for (const pugi::xml_node rung : ladder.children()) {
 			if (rung.type() != pugi::node_element) {
 				continue;
@@ -201,7 +202,7 @@ namespace assets {
 			problems.push_back(
 				source + ": <ladder> has " + std::to_string(index) + " rungs; it holds at most " + std::to_string(kMaxRungs)
 			);
-		} else if (std::ranges::find(rungNames, "survival") == rungNames.end()) {
+		} else if (problems.size() == problemsBefore && std::ranges::find(rungNames, "survival") == rungNames.end()) {
 			problems.push_back(source + ": <ladder> has no rung named \"survival\", which is reserved for threats");
 		}
 	}
