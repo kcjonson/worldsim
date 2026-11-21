@@ -308,7 +308,8 @@ namespace assets {
 			}
 			if (part.topDrawing.has_value()) {
 				const float		composed = turnRadians + placement.turnRadians;
-				const glm::vec2 origin = turnedPoint(turnedPoint(part.boundsMin, placement.turnRadians) + placement.offsetMeters, turnRadians) + lift;
+				const glm::vec2 origin =
+					turnedPoint(turnedPoint(part.boundsMin, placement.turnRadians) + placement.offsetMeters, turnRadians) + lift;
 				const Foundation::AffineTransform2D matrix{
 					.a = std::cos(composed), .b = std::sin(composed), .c = -std::sin(composed), .d = std::cos(composed), .e = origin.x, .f = origin.y
 				};

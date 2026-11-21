@@ -90,19 +90,19 @@ namespace {
 
 	// One built view and its uploaded mesh.
 	struct DrawnView {
-		assets::ItemView				view;
-		Renderer::InstancedMeshHandle	handle;
-		bool							built = false;
+		assets::ItemView			  view;
+		Renderer::InstancedMeshHandle handle;
+		bool						  built = false;
 	};
 
 	// Where everything goes, in ui px.
 	struct SceneLayout {
-		Foundation::Rect					   largeBox;
-		Foundation::Vec2					   largeCenter{0.0F, 0.0F};
-		float								   largePixelsPerMeter = 0.0F;
+		Foundation::Rect						  largeBox;
+		Foundation::Vec2						  largeCenter{0.0F, 0.0F};
+		float									  largePixelsPerMeter = 0.0F;
 		std::array<Foundation::Rect, kSheetCount> cellBoxes{};
 		std::array<Foundation::Vec2, kSheetCount> cellCenters{};
-		float								   sheetPixelsPerMeter = 0.0F;
+		float									  sheetPixelsPerMeter = 0.0F;
 	};
 
 	std::string degreesText(uint32_t turnQuanta) {
@@ -143,8 +143,8 @@ namespace {
 			buildInterface();
 
 			devRegistrations.push_back(owner.devServer().control("turn", [this](const app::DevRequest& request) {
-				const auto degrees = request.params.find("degrees");
-				char*	   end = nullptr;
+				const auto	 degrees = request.params.find("degrees");
+				char*		 end = nullptr;
 				const double value = degrees == request.params.end() ? 0.0 : std::strtod(degrees->second.c_str(), &end);
 				if (degrees == request.params.end() || end == degrees->second.c_str() || *end != '\0' || !std::isfinite(value)) {
 					return app::DevResponse{.status = 400, .body = R"({"error":"turn needs degrees=<number>"})"};
@@ -156,7 +156,9 @@ namespace {
 				Overlays requested = overlays;
 				if (!readFlag(request, "collider", requested.collider) || !readFlag(request, "use", requested.useAreas) ||
 					!readFlag(request, "clearance", requested.clearance) || !readFlag(request, "strips", requested.strips)) {
-					return app::DevResponse{.status = 400, .body = R"({"error":"overlay flags are collider, use, clearance, and strips, each 0 or 1"})"};
+					return app::DevResponse{
+						.status = 400, .body = R"({"error":"overlay flags are collider, use, clearance, and strips, each 0 or 1"})"
+					};
 				}
 				overlays = requested;
 				return app::DevResponse{.body = exportState()};
@@ -209,17 +211,34 @@ namespace {
 			std::string strips;
 			for (const assets::ViewStrip& strip : large.view.strips) {
 				strips += std::format(
-					"{}{{\"firstIndex\":{},\"indexCount\":{},\"anchorLocalY\":{:.4f},\"flat\":{}}}", strips.empty() ? "" : ",", strip.firstIndex,
-					strip.indexCount, strip.anchorLocalY, strip.flat
+					"{}{{\"firstIndex\":{},\"indexCount\":{},\"anchorLocalY\":{:.4f},\"flat\":{}}}",
+					strips.empty() ? "" : ",",
+					strip.firstIndex,
+					strip.indexCount,
+					strip.anchorLocalY,
+					strip.flat
 				);
 			}
 			return std::format(
 				R"({{"def":"{}","loaded":{},"turnDegrees":{},"turnQuanta":{},"stepDegrees":{},"level":{},"vertices":{},"strips":[{}],)"
 				R"("viewError":"{}","overlays":{{"collider":{},"use":{},"clearance":{},"strips":{}}},)"
 				R"("validation":{{"errors":{},"warnings":{},"issues":[{}]}}}})",
-				kDefName, definition != nullptr, degreesText(turnQuanta), turnQuanta, degreesText(stepQuanta), large.view.level,
-				large.view.vertexCount, strips, jsonEscaped(large.view.error), overlays.collider, overlays.useAreas, overlays.clearance,
-				overlays.strips, report.errorCount(), report.warningCount(), issues
+				kDefName,
+				definition != nullptr,
+				degreesText(turnQuanta),
+				turnQuanta,
+				degreesText(stepQuanta),
+				large.view.level,
+				large.view.vertexCount,
+				strips,
+				jsonEscaped(large.view.error),
+				overlays.collider,
+				overlays.useAreas,
+				overlays.clearance,
+				overlays.strips,
+				report.errorCount(),
+				report.warningCount(),
+				issues
 			);
 		}
 
@@ -275,7 +294,8 @@ namespace {
 			root().addChild<ui::Text>(
 				{.position = {kMargin, kMargin + 30.0F},
 				 .style = ui::styles::text::secondary,
-				 .text = "Left / Right: turn a step    Alt + Left / Right: 1 degree    1 collider    2 use areas    3 clearance    4 strips"}
+				 .text =
+					 "Left / Right: turn a step    Alt + Left / Right: 1 degree    1 collider    2 use areas    3 clearance    4 strips"}
 			);
 			status = root().addChild<ui::Text>({.position = {kMargin, kMargin + 52.0F}, .style = ui::styles::text::secondary, .text = ""});
 			for (size_t index = 0; index < kSheetCount; ++index) {
@@ -365,8 +385,13 @@ namespace {
 			const assets::ValidationReport& report = assets::AssetRegistry::Get().getValidationReport();
 			title.get()->setText(std::format("Workbench at {} degrees", degreesText(turnQuanta)));
 			std::string line = std::format(
-				"Step {} degrees    level {}    {} vertices    {} strips    validation: {} errors, {} warnings", degreesText(stepQuanta),
-				large.view.level, large.view.vertexCount, large.view.strips.size(), report.errorCount(), report.warningCount()
+				"Step {} degrees    level {}    {} vertices    {} strips    validation: {} errors, {} warnings",
+				degreesText(stepQuanta),
+				large.view.level,
+				large.view.vertexCount,
+				large.view.strips.size(),
+				report.errorCount(),
+				report.warningCount()
 			);
 			if (definition == nullptr) {
 				line = "The demo workbench didn't load: see the log";
@@ -394,21 +419,37 @@ namespace {
 			};
 			const Renderer::InstanceData instance;
 			for (const assets::ViewStrip& strip : drawn.view.strips) {
-				Renderer::Primitives::drawInstanced(drawn.handle, &instance, 1, camera, {.first = strip.firstIndex, .count = strip.indexCount});
+				Renderer::Primitives::drawInstanced(
+					drawn.handle, &instance, 1, camera, {.first = strip.firstIndex, .count = strip.indexCount}
+				);
 			}
 		}
 
-		void drawRing(std::span<const glm::vec2> ring, float radians, Foundation::Vec2 center, float pixelsPerMeter, const Foundation::Color& color) const {
+		void drawRing(
+			std::span<const glm::vec2> ring,
+			float					   radians,
+			Foundation::Vec2		   center,
+			float					   pixelsPerMeter,
+			const Foundation::Color&   color
+		) const {
 			std::vector<Foundation::Vec2> points;
 			points.reserve(ring.size());
 			for (const glm::vec2& point : ring) {
 				const glm::vec2 onScreen = assets::turnedPoint(point, radians) * pixelsPerMeter;
 				points.emplace_back(center.x + onScreen.x, center.y + onScreen.y);
 			}
-			Renderer::Primitives::drawPolyline({.points = points, .width = kOverlayWidth, .color = color, .closed = true, .id = "turntable_overlay"});
+			Renderer::Primitives::drawPolyline(
+				{.points = points, .width = kOverlayWidth, .color = color, .closed = true, .id = "turntable_overlay"}
+			);
 		}
 
-		void drawArea(const assets::ItemArea& area, float radians, Foundation::Vec2 center, float pixelsPerMeter, const Foundation::Color& color) const {
+		void drawArea(
+			const assets::ItemArea&	 area,
+			float					 radians,
+			Foundation::Vec2		 center,
+			float					 pixelsPerMeter,
+			const Foundation::Color& color
+		) const {
 			for (const assets::AreaPolygon& polygon : area.polygons) {
 				drawRing(polygon.outer, radians, center, pixelsPerMeter, color);
 				for (const std::vector<glm::vec2>& hole : polygon.holes) {
@@ -439,7 +480,9 @@ namespace {
 				// Strip boxes and anchors are already on the screen, relative to the pivot: no turn.
 				for (const assets::ViewStrip& strip : large.view.strips) {
 					const std::array<glm::vec2, 4> box{
-						glm::vec2{strip.minX, strip.minY}, glm::vec2{strip.maxX, strip.minY}, glm::vec2{strip.maxX, strip.maxY},
+						glm::vec2{strip.minX, strip.minY},
+						glm::vec2{strip.maxX, strip.minY},
+						glm::vec2{strip.maxX, strip.maxY},
 						glm::vec2{strip.minX, strip.maxY}
 					};
 					drawRing(box, 0.0F, center, pixelsPerMeter, kStripColor);
@@ -457,24 +500,27 @@ namespace {
 						 .id = "turntable_anchor"}
 					);
 					Renderer::Primitives::drawCircle(
-						{.center = {(anchorLeft + anchorRight) * 0.5F, anchorY}, .radius = kAnchorRadius, .style = {.fill = kAnchorColor}, .id = "turntable_anchor"}
+						{.center = {(anchorLeft + anchorRight) * 0.5F, anchorY},
+						 .radius = kAnchorRadius,
+						 .style = {.fill = kAnchorColor},
+						 .id = "turntable_anchor"}
 					);
 				}
 			}
 		}
 
-		const assets::AssetDefinition* definition = nullptr;
-		assets::ViewConfig			   viewConfig;
-		float						   fitRadiusMeters = 1.0F;
-		uint32_t					   turnQuanta = 0;
-		uint32_t					   stepQuanta = kSheetStepDegrees * kQuantaPerDegree;
-		Overlays					   overlays;
-		SceneLayout					   layout;
-		DrawnView					   large;
+		const assets::AssetDefinition*	   definition = nullptr;
+		assets::ViewConfig				   viewConfig;
+		float							   fitRadiusMeters = 1.0F;
+		uint32_t						   turnQuanta = 0;
+		uint32_t						   stepQuanta = kSheetStepDegrees * kQuantaPerDegree;
+		Overlays						   overlays;
+		SceneLayout						   layout;
+		DrawnView						   large;
 		std::array<DrawnView, kSheetCount> sheet;
 
-		ui::Ref<ui::Text>						 title;
-		ui::Ref<ui::Text>						 status;
+		ui::Ref<ui::Text>						   title;
+		ui::Ref<ui::Text>						   status;
 		std::array<ui::Ref<ui::Text>, kSheetCount> sheetLabels;
 
 		std::vector<app::DevServer::Registration> devRegistrations;
