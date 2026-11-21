@@ -448,11 +448,11 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] const NavQueryStats& navQueryStats() const { return navStats; }
 	void							   resetNavQueryStats() { navStats = {}; }
 
-
-	// The placed occluder index (sight-softening.md 2.4): every placed ring in the mesh as sight reads
-	// it, updated as each patch job is collected, in patch order, and never by a query, so reading it
-	// never waits for a patch job. A ring shows here from the tick after nav collects it. Vision owns
-	// the kind threshold and sets it through the mutable overload.
+	// The placed occluder index (sight-softening.md 2.4): every placed ring in the mesh whose body
+	// reaches a colonist's eye (2.2), as sight reads it, updated as each patch job is collected, in
+	// patch order, and never by a query, so reading it never waits for a patch job. A ring shows here
+	// from the tick after nav collects it. Vision owns the kind threshold and sets it through the
+	// mutable overload.
 	[[nodiscard]] const vision::PlacedOccluderIndex& placedOccluders() const { return placedOccluderIndex; }
 	[[nodiscard]] vision::PlacedOccluderIndex&		 placedOccluders() { return placedOccluderIndex; }
 
@@ -676,8 +676,8 @@ class NavigationSystem : public ISystem {
 	// One patch adding the rings of `added`, outside every budget.
 	void gatherColliderEntities(std::vector<ColliderEntityIndex::Entry> added);
 	// A patch's collect for the placed obstacles it added, the first keys.size() of `added`: each
-	// takes its ring id in obstacleInMesh and enters the placed occluder index, or, refused, leaves
-	// obstacleInMesh so sight and nav agree it is not there.
+	// takes its ring id in obstacleInMesh and, when its def reaches eye height, enters the placed
+	// occluder index, or, refused, leaves obstacleInMesh so sight and nav agree it is not there.
 	void notePlacedObstaclesAdded(const std::vector<ObstacleKey>& keys, const std::vector<RingId>& added, std::int64_t arrived);
 	// The chunk's placement is in and finished, so its placed obstacles can be read.
 	[[nodiscard]] bool placementReady(world::ChunkCoordinate coord) const;
