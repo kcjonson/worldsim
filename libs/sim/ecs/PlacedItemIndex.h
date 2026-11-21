@@ -67,7 +67,7 @@ namespace ecs {
 			float		  turnRadians = 0.0F;
 			bool		  pending = false; ///< an install target, not yet installed
 			ItemOutlines  world;			///< in the world
-			glm::vec2	  lower{0.0F, 0.0F}; ///< the box of every outline, or the position when it has none
+			glm::vec2	  lower{0.0F, 0.0F}; ///< the box of every outline and the position
 			glm::vec2	  upper{0.0F, 0.0F};
 			glm::vec2	  useLower{0.0F, 0.0F}; ///< the box of its use areas, or the position when it has none
 			glm::vec2	  useUpper{0.0F, 0.0F};

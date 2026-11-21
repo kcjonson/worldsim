@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Test Parts Station - a parts crafting station for working on use areas
+     (/api/dev/spawn?def=TestPartsStation&turn=<degrees>, then /api/dev/craft at it).
+     A bench 1.2 m wide, 0.6 m deep and 0.9 m tall, worked only from a drawn patch
+     in front of it (front-use.svg, 1.2 m by 0.8 m, its corners rounded): a box set
+     down in that patch leaves it with nowhere to stand. The top carries an arrow
+     pointing to the front. It has no item, no recipe and no placement, so nothing
+     spawns it but a dev command; any recipe may be queued at it. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>TestPartsStation</defName>
+    <label>Test parts station</label>
+    <assetType>parts</assetType>
+
+    <capabilities>
+      <craftable/>
+    </capabilities>
+
+    <parts>
+      <part name="bench">
+        <footprint><rect minX="-0.6" minY="-0.3" maxX="0.6" maxY="0.3"/></footprint>
+        <height bottom="0" top="0.9"/>
+        <top drawing="top.svg"/>
+        <sides color="#6B5236"/>
+      </part>
+    </parts>
+
+    <placements>
+      <place part="bench"/>
+    </placements>
+
+    <useAreas>
+      <drawing file="front-use.svg" minX="-0.6" minY="0.3" maxX="0.6" maxY="1.1"/>
+    </useAreas>
+  </AssetDef>
+</AssetDefinitions>

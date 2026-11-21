@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Test Parts Crate - a parts storage box for working on use areas
+     (/api/dev/spawn?def=TestPartsCrate&turn=<degrees>, then /api/dev/storage to give
+     it rules). A crate 0.6 m square and 0.6 m tall used from two areas written in
+     the XML: a rectangle off its left side and a circle off its right. Either one
+     alone is enough to use it; it has nowhere to stand only when both are taken.
+     It has no item, no recipe and no placement, so nothing spawns it but a dev
+     command. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>TestPartsCrate</defName>
+    <label>Test parts crate</label>
+    <assetType>parts</assetType>
+    <category>Furniture</category>
+
+    <capabilities>
+      <storage>
+        <acceptedCategories>
+          <category>RawMaterial</category>
+        </acceptedCategories>
+        <capacity>50</capacity>
+      </storage>
+    </capabilities>
+
+    <parts>
+      <part name="crate">
+        <footprint><rect minX="-0.3" minY="-0.3" maxX="0.3" maxY="0.3"/></footprint>
+        <height bottom="0" top="0.6"/>
+        <top color="#A07A4C"/>
+        <sides color="#7A5A36"/>
+      </part>
+    </parts>
+
+    <placements>
+      <place part="crate"/>
+    </placements>
+
+    <useAreas>
+      <area name="left">
+        <rect minX="-1.0" minY="-0.4" maxX="-0.3" maxY="0.4"/>
+      </area>
+      <area name="right">
+        <circle x="0.75" y="0" radius="0.45"/>
+      </area>
+    </useAreas>
+  </AssetDef>
+</AssetDefinitions>

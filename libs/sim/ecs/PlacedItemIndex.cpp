@@ -84,9 +84,10 @@ namespace ecs {
 					grow(entry.useLower, entry.useUpper, firstUse, polygon.outer);
 				}
 			}
-			entry.lower = entry.useLower;
-			entry.upper = entry.useUpper;
-			bool first = firstUse;
+			// The whole box holds the position too, so installedAt finds an item whose outlines all lie off its pivot.
+			entry.lower = glm::min(entry.useLower, entry.position);
+			entry.upper = glm::max(entry.useUpper, entry.position);
+			bool first = false;
 			for (const std::vector<std::vector<glm::vec2>>* rings : {&entry.world.collider, &entry.world.reserved}) {
 				for (const std::vector<glm::vec2>& ring : *rings) {
 					grow(entry.lower, entry.upper, first, ring);

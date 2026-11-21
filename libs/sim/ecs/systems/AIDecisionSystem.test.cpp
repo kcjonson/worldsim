@@ -10,6 +10,9 @@
 #include "WallStandPoint.h"
 #include "NavigationSystem.h"
 #include "PhysicsSystem.h"
+#include "CraftingGoalSystem.h"
+#include "PlacedItemSystem.h"
+#include "StorageGoalSystem.h"
 #include "TimeSystem.h"
 #include "VisionSystem.h"
 #include "FootprintRectangle.test.h"
@@ -31,6 +34,7 @@
 #include "../components/MemoryQueries.h"
 #include "../components/Movement.h"
 #include "../components/NavPath.h"
+#include "../components/Packaged.h"
 #include "../components/Needs.h"
 #include "../components/PlayerControlled.h"
 #include "../components/Skills.h"
@@ -47,6 +51,7 @@
 #include <queries/QueryEvaluator.h>
 
 #include "assets/AssetRegistry.h"
+#include "assets/PartsAsset.h"
 #include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
 #include "assets/RecipeDef.test.h"
@@ -8427,6 +8432,195 @@ namespace ecs::test {
 			world->update(kTick);
 		}
 		EXPECT_GT(store.getQuantity("Berry"), 0U) << "the cut never reached the station";
+	}
+
+	// Use areas and blocked items (rotatable-placed-items 12): a parts station worked only from a strip in front of it,
+	// with its real goal systems and the placed item system that judges its room.
+	class AIDecisionUseAreaTest : public AIDecisionHarvestStandTest {
+	  protected:
+		static constexpr const char* kStation = "Test_UseAreaStation";
+		static constexpr const char* kBlocker = "Test_UseAreaBlocker";
+		static constexpr glm::vec2	 kStationAt{20.0F, 20.0F};
+
+		void SetUp() override {
+			AIDecisionHarvestStandTest::SetUp();
+			world->registerSystem<PlacedItemSystem>().setBlockedCallback([this](EntityID, const std::string&) { ++blockedToasts; });
+			world->registerSystem<CraftingGoalSystem>();
+			// A bench 1.2 m by 0.6 m used from 0.3 m to 1.1 m in front of it (+y at turn 0).
+			assets::AssetDefinition station;
+			station.defName = kStation;
+			station.assetType = assets::AssetType::Parts;
+			assets::PartsAsset parts{.bodyTopMeters = 0.9F};
+			parts.useAreas.push_back({.name = {}, .polygons = {{.outer = {{-0.6F, 0.3F}, {0.6F, 0.3F}, {0.6F, 1.1F}, {-0.6F, 1.1F}}}}});
+			station.parts = std::make_shared<const assets::PartsAsset>(std::move(parts));
+			station.partsColliders.push_back(
+				{.type = assets::CollisionShapeType::Polygon, .pointsMeters = {{-0.6F, -0.3F}, {0.6F, -0.3F}, {0.6F, 0.3F}, {-0.6F, 0.3F}}}
+			);
+			station.capabilities.craftable = assets::CraftableCapability{};
+			assets::AssetRegistry::Get().registerTestDefinition(std::move(station));
+			// A box filling the strip but for 2 cm along the bench, where no colonist fits.
+			assets::AssetDefinition blocker;
+			blocker.defName = kBlocker;
+			blocker.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {0.75F, 0.44F}});
+			assets::AssetRegistry::Get().registerTestDefinition(std::move(blocker));
+			assets::RecipeDef recipe;
+			recipe.defName = "Recipe_Nothing";
+			recipe.label = recipe.defName;
+			recipe.workAmount = assets::kTestRecipeWorkAmount;
+			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+		}
+
+		EntityID addStation() {
+			GoalTaskRegistry::Get().clear();
+			const EntityID station = world->createEntity();
+			world->addComponent<Position>(station, Position{kStationAt});
+			world->addComponent<Rotation>(station, Rotation{0.0F});
+			world->addComponent<Appearance>(station, Appearance{kStation});
+			world->addComponent<WorkQueue>(station).addJob("Recipe_Nothing", 3);
+			world->addComponent<Inventory>(station, Inventory::createForStorage());
+			return station;
+		}
+
+		EntityID addBlocker() {
+			const EntityID box = world->createEntity();
+			world->addComponent<Position>(box, Position{kStationAt + glm::vec2{0.0F, 0.76F}});
+			world->addComponent<Appearance>(box, Appearance{kBlocker});
+			return box;
+		}
+
+		[[nodiscard]] UseState useOf(EntityID entity) const {
+			const PlacedItemIndex::Entry* entry = world->getSystem<PlacedItemSystem>().items().find(entity);
+			return entry != nullptr ? entry->use : UseState::Usable;
+		}
+
+		[[nodiscard]] GoalStatus craftStatus(EntityID station) const {
+			const GoalTask* craft = GoalTaskRegistry::Get().getGoalByDestination(station);
+			return craft != nullptr ? craft->status : GoalStatus::Available;
+		}
+
+		int blockedToasts = 0;
+	};
+
+	// The colonist walks round from behind the bench and crafts standing in its use area, never behind it or at its
+	// ends, where a stand-off round the collider would have put him.
+	TEST_F(AIDecisionUseAreaTest, AColonistCraftsStandingInTheUseArea) {
+		meshBand(*world, {{10.0F, 20.0F}, {30.0F, 20.0F}});
+		nav->finishPendingBuilds();
+		const EntityID station = addStation();
+		const EntityID colonist = createColonist(kStationAt + glm::vec2{0.0F, -3.0F});
+		world->addComponent<Action>(colonist, Action{});
+		satisfyAllNeeds(*getNeeds(colonist));
+		std::optional<glm::vec2> craftedFrom;
+		for (int i = 0; i < 1500 && !craftedFrom.has_value(); ++i) {
+			world->update(kTick);
+			const Action* action = world->getComponent<Action>(colonist);
+			if (getTask(colonist)->type == TaskType::Craft && action->isActive()) {
+				craftedFrom = world->getComponent<Position>(colonist)->value;
+			}
+		}
+		ASSERT_TRUE(craftedFrom.has_value()) << "never crafted";
+		EXPECT_EQ(useOf(station), UseState::Usable);
+		const glm::vec2 local = *craftedFrom - kStationAt;
+		EXPECT_GE(local.y, 0.3F + 0.25F) << "not standing in the strip in front: (" << local.x << ", " << local.y << ")";
+		EXPECT_LE(local.y, 1.1F);
+		EXPECT_LE(std::abs(local.x), 0.6F);
+	}
+
+	// A box set down in the strip leaves the bench with nowhere to stand: one toast, its craft NowhereToStand across
+	// later polls (never Blocked or Available), its bills kept, and a colonist on his way there drops the task. The box
+	// taken away, the craft comes back of itself and the bills are worked; set down again, a second toast.
+	TEST_F(AIDecisionUseAreaTest, ABlockedStationPausesItsBillsAndAColonistDropsItsCraft) {
+		meshBand(*world, {{10.0F, 20.0F}, {30.0F, 20.0F}});
+		nav->finishPendingBuilds();
+		const EntityID station = addStation();
+		const EntityID colonist = createColonist(kStationAt + glm::vec2{-8.0F, 3.0F});
+		world->addComponent<Action>(colonist, Action{});
+		satisfyAllNeeds(*getNeeds(colonist));
+		for (int i = 0; i < 200 && getTask(colonist)->type != TaskType::Craft; ++i) {
+			world->update(kTick);
+		}
+		ASSERT_EQ(getTask(colonist)->type, TaskType::Craft) << "never set off to craft";
+
+		const EntityID box = addBlocker();
+		bool		   dropped = false;
+		for (int i = 0; i < 200; ++i) {
+			world->update(kTick);
+			EXPECT_NE(craftStatus(station), GoalStatus::Blocked);
+			dropped = dropped || getTask(colonist)->type != TaskType::Craft;
+		}
+		EXPECT_EQ(useOf(station), UseState::Blocked);
+		EXPECT_EQ(blockedToasts, 1) << "told once, not every tick";
+		EXPECT_EQ(craftStatus(station), GoalStatus::NowhereToStand);
+		EXPECT_TRUE(dropped) << "kept walking to a station with nowhere to stand";
+		EXPECT_NE(getTask(colonist)->type, TaskType::Craft);
+		ASSERT_FALSE(world->getComponent<WorkQueue>(station)->jobs.empty()) << "the bills went";
+		EXPECT_EQ(world->getComponent<WorkQueue>(station)->jobs.front().completed, 0U);
+
+		world->destroyEntity(box);
+		const auto completed = [&] { return world->getComponent<WorkQueue>(station)->jobs.empty() ? 3U : world->getComponent<WorkQueue>(station)->jobs.front().completed; };
+		for (int i = 0; i < 2000 && completed() == 0U; ++i) {
+			world->update(kTick);
+		}
+		EXPECT_EQ(useOf(station), UseState::Usable);
+		EXPECT_GT(completed(), 0U) << "the bills never went on";
+		EXPECT_EQ(blockedToasts, 1);
+
+		addBlocker();
+		for (int i = 0; i < 100; ++i) {
+			world->update(kTick);
+		}
+		EXPECT_EQ(blockedToasts, 2) << "blocked anew after it cleared";
+	}
+
+	// A crate's install target in the strip is an obstacle to the room test though it is in no mesh, and a storage box
+	// with nowhere to stand has its umbrella NowhereToStand.
+	TEST_F(AIDecisionUseAreaTest, APendingTargetBlocksAndAStorageBoxTakesNowhereToStand) {
+		world->registerSystem<StorageGoalSystem>();
+		assets::AssetDefinition box;
+		box.defName = "Test_UseAreaBox";
+		box.assetType = assets::AssetType::Parts;
+		assets::PartsAsset parts{.bodyTopMeters = 0.6F};
+		parts.useAreas.push_back({.name = {}, .polygons = {{.outer = {{-0.6F, 0.3F}, {0.6F, 0.3F}, {0.6F, 1.1F}, {-0.6F, 1.1F}}}}});
+		box.parts = std::make_shared<const assets::PartsAsset>(std::move(parts));
+		box.partsColliders.push_back(
+			{.type = assets::CollisionShapeType::Polygon, .pointsMeters = {{-0.6F, -0.3F}, {0.6F, -0.3F}, {0.6F, 0.3F}, {-0.6F, 0.3F}}}
+		);
+		assets::AssetRegistry::Get().registerTestDefinition(std::move(box));
+		meshBand(*world, {{10.0F, 20.0F}, {30.0F, 20.0F}});
+		nav->finishPendingBuilds();
+
+		const EntityID storage = world->createEntity();
+		world->addComponent<Position>(storage, Position{kStationAt});
+		world->addComponent<Rotation>(storage, Rotation{0.0F});
+		world->addComponent<Appearance>(storage, Appearance{"Test_UseAreaBox"});
+		world->addComponent<Inventory>(storage, Inventory::createForStorage());
+		StorageConfiguration config;
+		config.rules.push_back({.defName = "Berry", .minAmount = 0, .maxAmount = 10});
+		world->addComponent<StorageConfiguration>(storage, std::move(config));
+		for (int i = 0; i < 70; ++i) {
+			world->update(kTick);
+		}
+		ASSERT_EQ(useOf(storage), UseState::Usable);
+
+		// A packaged blocker waiting to be installed across the strip.
+		const EntityID crate = world->createEntity();
+		world->addComponent<Position>(crate, Position{{12.0F, 22.0F}});
+		world->addComponent<Appearance>(crate, Appearance{"Test_UseAreaBox"});
+		world->addComponent<Packaged>(crate, Packaged{.targetPosition = kStationAt + glm::vec2{0.0F, 0.92F}});
+		for (int i = 0; i < 70; ++i) {
+			world->update(kTick);
+		}
+		EXPECT_EQ(useOf(storage), UseState::Blocked) << "the pending target is in the way";
+		const GoalTask* umbrella = GoalTaskRegistry::Get().getGoalByDestination(storage);
+		ASSERT_NE(umbrella, nullptr);
+		EXPECT_EQ(umbrella->status, GoalStatus::NowhereToStand);
+
+		world->destroyEntity(crate);
+		for (int i = 0; i < 70; ++i) {
+			world->update(kTick);
+		}
+		EXPECT_EQ(useOf(storage), UseState::Usable);
+		EXPECT_EQ(GoalTaskRegistry::Get().getGoalByDestination(storage)->status, GoalStatus::Available);
 	}
 
 	// A need whose way there detours 60 m from it: water 20 m north behind a long wall the colonist

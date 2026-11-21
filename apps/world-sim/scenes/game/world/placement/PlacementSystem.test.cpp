@@ -610,3 +610,59 @@ TEST_F(PlacementUnbuiltSiteTest, InstallTargetSearchKeepsOffTheSite) {
 	EXPECT_GE(glm::distance(*target, station), 0.99F);
 	EXPECT_FALSE(placement->footprintBuildableNow(kBox, {4.0F, 8.0F}, 0));
 }
+
+namespace {
+
+	// The shipped test station: a bench 1.2 m by 0.6 m worked only from a drawn strip 0.3 m to 1.1 m in front of it.
+	void loadTestPartsStation() {
+		std::filesystem::path root = std::filesystem::path(__FILE__);
+		for (int up = 0; up < 7; ++up) {
+			root = root.parent_path();
+		}
+		ASSERT_TRUE(assets::loadTestViewConfig());
+		ASSERT_TRUE(assets::AssetRegistry::Get().loadDefinitions((root / "assets" / "world" / "misc" / "TestPartsStation" / "TestPartsStation.xml").string()));
+		ASSERT_NE(assets::AssetRegistry::Get().getDefinition("TestPartsStation"), nullptr);
+	}
+
+	constexpr world_sim::PlacementSystem::PlacementRules kPlayer = world_sim::PlacementSystem::PlacementRules::Player;
+
+} // namespace
+
+// Rules 6 and 7 (rotatable-placed-items 14.2): a station whose strip a box already fills has no room to use it, and a box
+// set down in an installed station's strip would block it. Beside it, each is placeable.
+TEST_F(PlacementFordTest, NoRoomToUseItAndBlocksAnotherItem) {
+	loadTestPartsBox();
+	loadTestPartsStation();
+	placement->cancel();
+	const Foundation::Vec2 stationAt{10.0F, kCreekY + 5.0F};
+	placement->spawnEntity("TestPartsStation", stationAt, 0);
+	seen.world.update(0.016F);
+	seen.world.update(0.016F);
+
+	const Foundation::Vec2 inStrip{stationAt.x, stationAt.y + 0.75F};
+	EXPECT_EQ(placement->refusalAt("TestPartsBox", inStrip, 0, ecs::kInvalidEntity, kPlayer), construction::PlacementRefusal::BlocksAnotherItem);
+	EXPECT_EQ(placement->refusalAt("TestPartsBox", {stationAt.x + 2.0F, stationAt.y}, 0, ecs::kInvalidEntity, kPlayer), std::nullopt);
+
+	const Foundation::Vec2 boxAt{stationAt.x + 5.0F, stationAt.y};
+	placement->spawnEntity("TestPartsBox", boxAt, 0);
+	seen.world.update(0.016F);
+	seen.world.update(0.016F);
+	EXPECT_EQ(
+		placement->refusalAt("TestPartsStation", {boxAt.x, boxAt.y - 0.75F}, 0, ecs::kInvalidEntity, kPlayer), construction::PlacementRefusal::NoRoomToUse
+	) << "its strip is under the box";
+	EXPECT_EQ(placement->refusalAt("TestPartsStation", {boxAt.x, boxAt.y + 1.5F}, 0, ecs::kInvalidEntity, kPlayer), std::nullopt)
+		<< "its strip faces away from the box";
+}
+
+// Rule 6 on the edge of what is seen: a station on seen ground whose strip lies on unseen ground reads "Use area
+// unexplored"; the dev verbs' rules take it.
+TEST_F(PlacementVisibilityTest, AUseAreaOnUnseenGroundIsUnexplored) {
+	loadTestPartsStation();
+	// Turned so its front faces +x, its body just inside the seen disc and its strip outside it.
+	const Foundation::Vec2 edge{world_sim::testing::kSeenRadiusMeters - 0.45F, 0.0F};
+	const uint32_t		   facingEast = assets::turnQuantaFromDegrees(270.0);
+	EXPECT_EQ(placement->refusalAt("TestPartsStation", edge, facingEast, ecs::kInvalidEntity, kPlayer), construction::PlacementRefusal::UseAreaUnexplored);
+	EXPECT_EQ(
+		placement->refusalAt("TestPartsStation", edge, facingEast, ecs::kInvalidEntity, world_sim::PlacementSystem::PlacementRules::Dev), std::nullopt
+	);
+}
