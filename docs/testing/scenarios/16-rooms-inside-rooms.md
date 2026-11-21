@@ -1,7 +1,7 @@
 # Scenario 16: Rooms inside rooms
 
 **Status:** draft  
-**Last verified:** steps 1 to 7 on 2026-11-20 at 960fb407; steps 8 to 15 on 2026-11-20 at 0c69a7be
+**Last verified:** steps 1 to 7 on 2026-11-20 at 960fb407; steps 8 to 15 on 2026-11-20 at 5a44ce85
 
 A closed wall loop standing free inside another is its own room. Each keeps its own name, floor
 tint, outline, label, and click target, whichever loop was built first. It also covers the builder of a
