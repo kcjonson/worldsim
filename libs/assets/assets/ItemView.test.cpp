@@ -278,7 +278,12 @@ namespace {
 		return std::hypot(point.x - nearest.x, point.y - nearest.y);
 	}
 
-	// The middle of what `polygon` and the convex `clip` (either winding) share, when they share more than a sliver.
+	// Two triangles that only touch along an edge share, by float rounding, up to about 6e-8 m2; a real overlap of an
+	// outline over a part is 1e-4 m2 and up. A square millimetre sits between, well clear of both.
+	constexpr float kOverlapAreaSquareMeters = 1.0e-6F;
+
+	// The middle of what `polygon` and the convex `clip` (either winding) share, when they share more than
+	// kOverlapAreaSquareMeters.
 	std::optional<glm::vec2> overlapCentre(std::vector<glm::vec2> polygon, const std::vector<glm::vec2>& clip) {
 		float clipArea = 0.0F;
 		for (size_t i = 0; i < clip.size(); ++i) {
@@ -309,7 +314,7 @@ namespace {
 			doubledArea += crossOf({0.0F, 0.0F}, polygon[i], polygon[(i + 1) % polygon.size()]);
 			centre += polygon[i] / static_cast<float>(polygon.size());
 		}
-		if (std::abs(doubledArea) < 1.0e-8F) {
+		if (std::abs(doubledArea) * 0.5F < kOverlapAreaSquareMeters) {
 			return std::nullopt;
 		}
 		return centre;
@@ -348,6 +353,42 @@ namespace {
 		const AssetDefinition* loadBench(float length, float depth, bool mat = false) {
 			writeBench(length, depth, mat);
 			return load("Bench");
+		}
+
+		// Items of plain blocks, each part its own pure hue: an L, a C, a U open to the south, two bodies side by side, and
+		// a stack with an overhang (a base, a slab on it, and a box on the slab over its front edge, as a vise on a
+		// worktop). Loads them and returns their names.
+		std::vector<std::string> writeNotchedAndStacked() {
+			// minX, minY, maxX, maxY, bottom, top
+			const std::vector<std::pair<std::string, std::vector<std::array<float, 6>>>> items = {
+				{"LetterL", {{-1.0F, -1.0F, 1.0F, -0.5F, 0.0F, 0.9F}, {-1.0F, -0.5F, -0.5F, 1.0F, 0.0F, 0.9F}}},
+				{"LetterC",
+				 {{-1.0F, -1.0F, -0.4F, 1.0F, 0.0F, 0.9F}, {-0.4F, -1.0F, 1.0F, -0.4F, 0.0F, 0.9F}, {-0.4F, 0.4F, 1.0F, 1.0F, 0.0F, 0.9F}}},
+				{"OpenSouth",
+				 {{-1.0F, -1.0F, 1.0F, -0.6F, 0.0F, 0.9F}, {-1.0F, -0.6F, -0.6F, 1.0F, 0.0F, 0.9F}, {0.6F, -0.6F, 1.0F, 1.0F, 0.0F, 0.9F}}},
+				{"TwoBodies", {{-1.0F, -0.3F, -0.2F, 0.3F, 0.0F, 0.9F}, {0.2F, -0.3F, 1.0F, 0.3F, 0.0F, 0.9F}}},
+				{"Overhang",
+				 {{-1.42F, -0.42F, 1.42F, 0.42F, 0.0F, 0.72F},
+				  {-1.5F, -0.5F, 1.5F, 0.5F, 0.72F, 0.8F},
+				  {1.02F, 0.24F, 1.34F, 0.54F, 0.8F, 0.98F}}},
+			};
+			const std::array<const char*, 3> hues = {"#FF0000", "#00FF00", "#0000FF"};
+			std::vector<std::string>		 names;
+			for (const auto& [name, rects] : items) {
+				std::string parts;
+				std::string placements;
+				for (size_t i = 0; i < rects.size(); ++i) {
+					const std::string part = "block" + std::to_string(i);
+					parts += "<part name=\"" + part + "\"><footprint>" + rect(rects[i][0], rects[i][1], rects[i][2], rects[i][3]) +
+							 "</footprint><height bottom=\"" + number(rects[i][4]) + "\" top=\"" + number(rects[i][5]) +
+							 "\"/><top color=\"" + hues[i] + "\"/><sides color=\"" + hues[i] + "\"/></part>";
+					placements += place(part);
+				}
+				writeDef(name, "<parts>" + parts + "</parts><placements>" + placements + "</placements>");
+				names.push_back(name);
+			}
+			load(names.front());
+			return names;
 		}
 
 		// A slab on a narrower base, as a worktop on its carcass: the base blue, the slab's top green and its sides red,
@@ -1229,34 +1270,14 @@ TEST_F(ItemViewTest, NothingOfALowerPartShowsThroughThePartAboveIt) {
 }
 
 TEST_F(ItemViewTest, WhereTwoPartsOverlapOnScreenThePartInFrontDrawsLater) {
-	// Bodies with notches and gaps, where an outline past a footprint's end lands in another interval's strip. Each
-	// part has its own pure hue (its sides shaded, its top not), and the parts share the outline colour. Wherever two triangles of
-	// different parts overlap on screen, the one drawn later must not belong to a part the parts order puts behind
-	// the other's (section 6.6). An outline triangle belongs to whichever parts' outlines pass under it; a pair is
-	// wrong only when every way of reading it is. Every 3 degrees.
-	const std::vector<std::pair<std::string, std::vector<std::array<float, 6>>>> items = {
-		{"LetterL", {{-1.0F, -1.0F, 1.0F, -0.5F, 0.0F, 0.9F}, {-1.0F, -0.5F, -0.5F, 1.0F, 0.0F, 0.9F}}},
-		{"LetterC",
-		 {{-1.0F, -1.0F, -0.4F, 1.0F, 0.0F, 0.9F}, {-0.4F, -1.0F, 1.0F, -0.4F, 0.0F, 0.9F}, {-0.4F, 0.4F, 1.0F, 1.0F, 0.0F, 0.9F}}},
-		{"OpenSouth",
-		 {{-1.0F, -1.0F, 1.0F, -0.6F, 0.0F, 0.9F}, {-1.0F, -0.6F, -0.6F, 1.0F, 0.0F, 0.9F}, {0.6F, -0.6F, 1.0F, 1.0F, 0.0F, 0.9F}}},
-		{"TwoBodies", {{-1.0F, -0.3F, -0.2F, 0.3F, 0.0F, 0.9F}, {0.2F, -0.3F, 1.0F, 0.3F, 0.0F, 0.9F}}},
-	};
-	const std::array<const char*, 3> hues = {"#FF0000", "#00FF00", "#0000FF"};
-	for (const auto& [name, rects] : items) {
-		std::string parts;
-		std::string placements;
-		for (size_t i = 0; i < rects.size(); ++i) {
-			const std::string part = "block" + std::to_string(i);
-			parts += "<part name=\"" + part + "\"><footprint>" + rect(rects[i][0], rects[i][1], rects[i][2], rects[i][3]) +
-					 "</footprint><height bottom=\"" + number(rects[i][4]) + "\" top=\"" + number(rects[i][5]) + "\"/><top color=\"" +
-					 hues[i] + "\"/><sides color=\"" + hues[i] + "\"/></part>";
-			placements += place(part);
-		}
-		writeDef(name, "<parts>" + parts + "</parts><placements>" + placements + "</placements>");
-	}
-	load("LetterL");
-	const ViewConfig& config = viewConfig();
+	// Bodies with notches and gaps, where an outline past a footprint's end lands in another interval's strip, and a
+	// stack with an overhang. Each part has its own pure hue (its sides shaded, its top not), and the parts share the
+	// outline colour. Wherever two triangles of different parts overlap on screen by more than kOverlapAreaSquareMeters,
+	// the one drawn later must not belong to a part the parts order puts behind the other's (section 6.6). An outline
+	// triangle belongs to whichever parts' outlines pass under it; a pair is wrong only when every way of reading it is.
+	// Every 3 degrees.
+	const std::vector<std::string> items = writeNotchedAndStacked();
+	const ViewConfig&			   config = viewConfig();
 	// The part a colour is, by its one channel; none for the outline colour.
 	const auto partOf = [](const Foundation::Color& color) -> std::optional<size_t> {
 		const std::array<float, 3> channels = {color.r, color.g, color.b};
@@ -1273,8 +1294,7 @@ TEST_F(ItemViewTest, WhereTwoPartsOverlapOnScreenThePartInFrontDrawsLater) {
 	};
 	size_t views = 0;
 	size_t pairs = 0;
-	for (const auto& item : items) {
-		const std::string&	   name = item.first;
+	for (const std::string& name : items) {
 		const AssetDefinition* def = AssetRegistry::Get().getDefinition(name);
 		ASSERT_NE(def, nullptr) << name;
 		const PartsAsset& parts = *def->parts;
@@ -1382,8 +1402,99 @@ TEST_F(ItemViewTest, WhereTwoPartsOverlapOnScreenThePartInFrontDrawsLater) {
 			}
 		}
 	}
-	EXPECT_EQ(views, 4U * 120U);
+	EXPECT_EQ(views, 5U * 120U);
 	EXPECT_GT(pairs, 0U);
+}
+
+TEST_F(ItemViewTest, IntervalsJoinOnlyWhereTheirOutlinesCanMeet) {
+	// On a vertical line through the collider, two neighbouring intervals are one strip exactly when their facing
+	// edges are closer than the outline's whole width across the gap (section 6.7): a join never swallows a gap
+	// something could stand in, and a gap outlines can cross is never left between two strips. So the strips with a
+	// piece across the line are as many as the line's intervals less its joined gaps. Lines near a cut or a band edge,
+	// where the two readings differ by rounding, are skipped. Every 3 degrees.
+	const std::vector<std::string> items = writeNotchedAndStacked();
+	const ViewConfig&			   config = viewConfig();
+	const float					   halfWidth = config.outlineHalfWidthMeters();
+	constexpr int				   kLines = 64;
+	size_t						   checked = 0;
+	size_t						   joined = 0;
+	for (const std::string& name : items) {
+		const AssetDefinition* def = AssetRegistry::Get().getDefinition(name);
+		ASSERT_NE(def, nullptr) << name;
+		for (int degrees = 0; degrees < 360; degrees += 3) {
+			const float		  turn = radiansOf(degrees);
+			const StripLayout layout = stripLayout(*def, quantaOf(degrees), config);
+			struct Crossing {
+				float y;
+				float reach; // the outline's reach in y across this edge
+			};
+			std::vector<std::pair<glm::vec2, glm::vec2>> edges;
+			float										 lowest = std::numeric_limits<float>::infinity();
+			float										 highest = -std::numeric_limits<float>::infinity();
+			for (const CollisionShape& ring : def->partsColliders) {
+				for (size_t i = 0; i < ring.pointsMeters.size(); ++i) {
+					edges.emplace_back(
+						turnedPoint(ring.pointsMeters[i], turn), turnedPoint(ring.pointsMeters[(i + 1) % ring.pointsMeters.size()], turn)
+					);
+					lowest = std::min(lowest, edges.back().first.x);
+					highest = std::max(highest, edges.back().first.x);
+				}
+			}
+			std::vector<float> pieceEdges;
+			for (const ItemStrip& strip : layout.strips) {
+				for (const StripPiece& piece : strip.pieces) {
+					pieceEdges.push_back(piece.minX);
+					pieceEdges.push_back(piece.maxX);
+				}
+			}
+			for (int line = 1; line < kLines; ++line) {
+				const float x = lowest + (highest - lowest) * static_cast<float>(line) / kLines;
+				if (std::any_of(pieceEdges.begin(), pieceEdges.end(), [&](float edge) { return std::abs(edge - x) < 1.0e-4F; })) {
+					continue;
+				}
+				std::vector<Crossing> crossings;
+				for (const auto& [from, to] : edges) {
+					if ((from.x - x) * (to.x - x) < 0.0F) {
+						const glm::vec2 along = to - from;
+						crossings.push_back(
+							{from.y + along.y * (x - from.x) / along.x, halfWidth * std::hypot(along.x, along.y) / std::abs(along.x)}
+						);
+					}
+				}
+				if (crossings.empty()) {
+					continue;
+				}
+				std::sort(crossings.begin(), crossings.end(), [](const Crossing& left, const Crossing& right) { return left.y < right.y; });
+				size_t groups = 1;
+				bool   ambiguous = false;
+				for (size_t i = 2; i + 1 < crossings.size(); i += 2) {
+					const float gap = crossings[i].y - crossings[i - 1].y;
+					const float join = crossings[i].reach + crossings[i - 1].reach;
+					ambiguous = ambiguous || std::abs(gap - join) < 1.0e-3F;
+					groups += gap > join ? 1 : 0;
+					joined += gap > join ? 0 : 1;
+				}
+				if (ambiguous) {
+					continue;
+				}
+				size_t strips = 0;
+				for (const ItemStrip& strip : layout.strips) {
+					strips += std::any_of(
+								  strip.pieces.begin(),
+								  strip.pieces.end(),
+								  [&](const StripPiece& piece) { return piece.minX < x && x < piece.maxX; }
+							  )
+								  ? 1
+								  : 0;
+				}
+				++checked;
+				EXPECT_EQ(strips, groups) << name << " at " << degrees << " degrees, x " << x << ": " << crossings.size() / 2
+										  << " intervals";
+			}
+		}
+	}
+	EXPECT_GT(checked, 0U);
+	EXPECT_GT(joined, 0U) << "some line crosses a gap narrow enough to join";
 }
 
 TEST_F(ItemViewTest, ADrawingsAverageColourIsWhatShows) {
