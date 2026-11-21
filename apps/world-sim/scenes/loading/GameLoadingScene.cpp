@@ -13,6 +13,7 @@
 #include "SceneTypes.h"
 #include "UserSettings.h"
 #include "scenes/game/dev/DevJson.h"
+#include "scenes/shared/LandingSiteSurvey.h"
 #include "scenes/shared/LoadFailureView.h"
 #include "scenes/shared/SalalUi.h"
 #include "scenes/shared/Starfield.h"
@@ -21,6 +22,7 @@
 #include <application/App.h>
 #include <assets/AssetRegistry.h>
 #include <assets/placement/AsyncChunkProcessor.h>
+#include <assets/placement/BiomeProvisions.h>
 #include <assets/placement/CanopyCover.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <ecs/ColonistRules.h>
@@ -42,13 +44,13 @@
 #include <worldgen/data/Biome.h>
 #include <worldgen/io/PlanetIO.h>
 #include <worldgen/sampling/LandingSite.h>
-#include <worldgen/sampling/SpawnSite.h>
 
 #include <ui/components/ProgressBar.h>
 #include <ui/shapes/Text.h>
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <vector>
 
@@ -62,7 +64,7 @@ namespace {
 	namespace family = ui::tokens::font::family;
 
 	/// Loading phases
-	enum class LoadingPhase { BakingGround, PreparingPlanet, Initializing, Failed, LoadingChunks, PlacingEntities, Complete, Cancelling };
+	enum class LoadingPhase { BakingGround, PreparingPlanet, ChoosingSite, Initializing, Failed, LoadingChunks, PlacingEntities, Complete, Cancelling };
 
 	class GameLoadingScene : public app::Scene {
 	  public:
@@ -116,6 +118,10 @@ namespace {
 					preparePlanet();
 					break;
 
+				case LoadingPhase::ChoosingSite:
+					chooseSite();
+					break;
+
 				case LoadingPhase::Initializing:
 					initializeWorldSystems();
 					break;
@@ -152,6 +158,7 @@ namespace {
 
 		void onExit() override {
 			LOG_INFO(Game, "GameLoadingScene - Exiting");
+			siteSurvey.cancel();
 			asyncProcessor.reset();
 			// Note: worldState is moved to GameWorldState::SetPending() before exit
 		}
@@ -318,14 +325,34 @@ namespace {
 			adoptQuickstartPlanet(std::move(planet));
 		}
 
+		// Quick Start lands on the first suggested site with its biome preference, found on the survey's worker.
 		void adoptQuickstartPlanet(std::shared_ptr<const worldgen::GeneratedWorld> planet) {
-			auto site = worldgen::findDefaultLandingSite(*planet, worldgen::Biome::TemperateDeciduousForest);
 			startConfig->world = std::move(planet);
-			startConfig->landingLatDeg = site.latDeg;
-			startConfig->landingLonDeg = site.lonDeg;
-			LOG_DEBUG(Game, "GameLoadingScene - Quickstart landing site lat=%.2f lon=%.2f", site.latDeg, site.lonDeg);
+			siteSurvey.start(
+				startConfig->world, assets::biomeProvisionsFromDefinitions(assets::AssetRegistry::Get()), worldgen::quickStartSiteQuery()
+			);
+			phase = LoadingPhase::ChoosingSite;
+			updateStatusText("Choosing a landing site...");
+		}
+
+		void chooseSite() {
+			std::optional<std::vector<worldgen::LandingSite>> sites = siteSurvey.takeSites();
+			if (!sites) {
+				return;
+			}
+			siteSurvey.cancel();
+			if (sites->empty()) {
+				fail({"The quickstart planet has no landing site with fresh water, food, wood, and a livable climate."});
+				return;
+			}
+			startConfig->landing = sites->front();
+			LOG_DEBUG(
+				Game,
+				"GameLoadingScene - Quickstart landing site lat=%.2f lon=%.2f",
+				startConfig->landing.origin.latDeg,
+				startConfig->landing.origin.lonDeg
+			);
 			phase = LoadingPhase::Initializing;
-			progress = 0.3F;
 		}
 
 		/// Phase 1: Initialize world systems
@@ -348,12 +375,11 @@ namespace {
 			world_sim::UserSettings::Get().load(owner->settings());
 
 			// Create world sampler and chunk manager from the generated planet;
-			// the landing site maps to the 2D world origin
-			auto sampler =
-				std::make_unique<world::GeneratedWorldSampler>(startConfig->world, startConfig->landingLatDeg, startConfig->landingLonDeg);
+			// the landing origin maps to the 2D world origin
+			const worldgen::LatLon origin = startConfig->landing.origin;
+			auto sampler = std::make_unique<world::GeneratedWorldSampler>(startConfig->world, origin.latDeg, origin.lonDeg);
 			worldState->planet = startConfig->world;
-			worldState->landingLatDeg = startConfig->landingLatDeg;
-			worldState->landingLonDeg = startConfig->landingLonDeg;
+			worldState->landing = startConfig->landing;
 			worldState->party = std::move(startConfig->party);
 			worldState->chunkManager =
 				std::make_unique<world::ChunkManager>(std::move(sampler), assets::canopyCoverFromDefinitions(assets::AssetRegistry::Get()));
@@ -362,24 +388,21 @@ namespace {
 			worldState->chunkManager->setLoadRadius(1);
 			worldState->chunkManager->setUnloadRadius(2);
 
-			// Drop the colony beside clean water (riverbank > lake shore > coast);
-			// a colony dies without it. Falls back to the origin when none is near.
-			worldgen::SpawnSite spawn =
-				worldgen::findRiverbankSpawn(startConfig->world, startConfig->landingLatDeg, startConfig->landingLonDeg);
-			worldState->spawnPosition = {static_cast<float>(spawn.xMeters), static_cast<float>(spawn.yMeters)};
+			// The drop the landing resolution chose, beside its water when it found one.
+			const worldgen::SpawnSite& spawn = worldState->landing.spawn;
 			LOG_DEBUG(
 				Game,
-				"GameLoadingScene - Spawn (%.1f, %.1f) nearWater=%d fresh=%d",
-				worldState->spawnPosition.x,
-				worldState->spawnPosition.y,
-				spawn.nearWater ? 1 : 0,
-				spawn.freshWater ? 1 : 0
+				"GameLoadingScene - Spawn (%.1f, %.1f) water=%d at %.1f m",
+				spawn.xMeters,
+				spawn.yMeters,
+				static_cast<int>(spawn.water),
+				static_cast<double>(spawn.waterDistanceMeters)
 			);
 
 			// Create camera centered on the spawn point
 			worldState->camera = std::make_unique<world::WorldCamera>();
 			worldState->camera->setPanSpeed(200.0F);
-			worldState->camera->setPosition({worldState->spawnPosition.x, worldState->spawnPosition.y});
+			worldState->camera->setPosition({static_cast<float>(spawn.xMeters), static_cast<float>(spawn.yMeters)});
 
 			// Create renderers
 			worldState->renderer = std::make_unique<worldview::ChunkRenderer>(kPixelsPerMeter, world_sim::groundTiles());
@@ -479,6 +502,7 @@ namespace {
 
 		/// Cancel loading - waits for async tasks to complete with UI feedback
 		void cancelLoading() {
+			siteSurvey.cancel();
 			// Poll for completed tasks (non-blocking)
 			if (asyncProcessor) {
 				asyncProcessor->pollCompleted();
@@ -502,6 +526,9 @@ namespace {
 		int						 chunksLoaded = 0;
 		int						 chunksProcessed = 0;
 		std::vector<std::string> failureMessages; // why the load failed, once phase is Failed
+
+		// Finds Quick Start's landing site off the main thread
+		world_sim::LandingSiteSurvey siteSurvey;
 
 		// Async chunk processor (shared implementation)
 		std::unique_ptr<assets::AsyncChunkProcessor> asyncProcessor;

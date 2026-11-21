@@ -3,8 +3,10 @@
 #include "assets/DetailLevels.h"
 #include "assets/PointTurn.h"
 
+#include <core/Vec2i64.h>
 #include <utils/Log.h>
 #include <vector/SVGLoader.h>
+
 
 #include <algorithm>
 #include <array>
@@ -701,6 +703,8 @@ namespace assets {
 				strip.maxX = bands[run.lastBand].maxX + (run.lastBand + 1 == bands.size() ? pad : 0.0F);
 				strip.minY = run.minY;
 				strip.maxY = run.maxY;
+				strip.bandMinX = run.firstBand == 0 ? -kInfinity : bands[run.firstBand].minX;
+				strip.bandMaxX = run.lastBand + 1 == bands.size() ? kInfinity : bands[run.lastBand].maxX;
 				for (const auto& [placement, runBands] : run.bandsByPlacement) {
 					for (size_t i = 0; i < runBands.size();) {
 						size_t last = i;
@@ -735,7 +739,187 @@ namespace assets {
 			return strips;
 		}
 
+		/// A polygon clipped to minX <= x <= maxX (Sutherland-Hodgman against the two lines).
+		std::vector<glm::vec2> clippedToColumn(const std::vector<glm::vec2>& polygon, float minX, float maxX) {
+			std::vector<glm::vec2> clipped = polygon;
+			for (const float sign : {1.0F, -1.0F}) {
+				const float			   bound = sign > 0.0F ? minX : maxX;
+				const std::vector<glm::vec2> input = std::move(clipped);
+				clipped.clear();
+				if (!std::isfinite(bound)) {
+					clipped = input;
+					continue;
+				}
+				for (size_t i = 0; i < input.size(); ++i) {
+					const glm::vec2 from = input[i];
+					const glm::vec2 to = input[(i + 1) % input.size()];
+					const bool		fromInside = sign * (from.x - bound) >= 0.0F;
+					const bool		toInside = sign * (to.x - bound) >= 0.0F;
+					if (fromInside) {
+						clipped.push_back(from);
+					}
+					if (fromInside != toInside) {
+						const float fraction = (bound - from.x) / (to.x - from.x);
+						clipped.push_back(from + ((to - from) * fraction));
+					}
+				}
+			}
+			return clipped;
+		}
+
+		/// How far a point lies outside a convex polygon; 0 inside or on it.
+		float distanceOutside(const std::vector<glm::vec2>& convex, glm::vec2 point) {
+			if (convex.empty()) {
+				return kInfinity;
+			}
+			float nearest = kInfinity;
+			bool  left = false;
+			bool  right = false;
+			for (size_t i = 0; i < convex.size(); ++i) {
+				const glm::vec2 from = convex[i];
+				const glm::vec2 to = convex[(i + 1) % convex.size()];
+				const glm::vec2 along = to - from;
+				const float		side = (along.x * (point.y - from.y)) - (along.y * (point.x - from.x));
+				left = left || side > 0.0F;
+				right = right || side < 0.0F;
+				const float lengthSquared = (along.x * along.x) + (along.y * along.y);
+				const float fraction = lengthSquared > 0.0F ? std::clamp(((point.x - from.x) * along.x + (point.y - from.y) * along.y) / lengthSquared, 0.0F, 1.0F) : 0.0F;
+				const glm::vec2 closest = from + (along * fraction);
+				nearest = std::min(nearest, std::hypot(point.x - closest.x, point.y - closest.y));
+			}
+			return left && right ? nearest : 0.0F;
+		}
+
+		/// The silhouette's rings cut at every strip's band edges into open lines, each given to the strip whose band
+		/// holds it; in a band of several strips (a notch's two sides, or the flat strip), to the strip with the nearest
+		/// region (stripRegions), equal distances going to the strip with the lesser anchor. A cut lies about half a
+		/// stroke outside every region, since the rings include the outline. Consecutive cuts given to one strip stay one
+		/// line.
+		std::vector<std::vector<std::vector<glm::vec2>>> stripLinesOf(
+			const PartsAsset& parts, const StripLayout& layout, float turnRadians, const ViewConfig& config, const std::vector<geometry::Ring>& rings
+		) {
+			std::vector<std::vector<std::vector<glm::vec2>>> lines(layout.strips.size());
+			if (layout.strips.empty()) {
+				return lines;
+			}
+			std::vector<float> cuts;
+			for (const ItemStrip& strip : layout.strips) {
+				for (const float x : {strip.bandMinX, strip.bandMaxX}) {
+					if (std::isfinite(x)) {
+						cuts.push_back(x);
+					}
+				}
+			}
+			std::sort(cuts.begin(), cuts.end());
+			cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
+			const std::vector<std::vector<std::vector<glm::vec2>>> regions = stripRegions(parts, layout, turnRadians, config);
+
+			std::vector<uint32_t> candidates;
+			const auto			  ownerAt = [&](glm::vec2 point) {
+				   candidates.clear();
+				   for (uint32_t strip = 0; strip < layout.strips.size(); ++strip) {
+					   if (point.x >= layout.strips[strip].bandMinX && point.x <= layout.strips[strip].bandMaxX && !layout.strips[strip].pieces.empty()) {
+						   candidates.push_back(strip);
+					   }
+				   }
+				   if (candidates.size() == 1) {
+					   return candidates.front();
+				   }
+				   // Candidates come in layout order, ascending anchor, so the strict comparison keeps the lesser anchor.
+				   uint32_t best = candidates.empty() ? 0 : candidates.front();
+				   float	bestDistance = kInfinity;
+				   for (const uint32_t strip : candidates) {
+					   const float distance = distanceOutsideStrip(regions[strip], point);
+					   if (distance < bestDistance) {
+						   bestDistance = distance;
+						   best = strip;
+					   }
+				   }
+				   return best;
+			};
+
+			struct Cut {
+				glm::vec2 from;
+				glm::vec2 to;
+				uint32_t  strip = 0;
+			};
+			for (const geometry::Ring& ring : rings) {
+				if (ring.size() < 2) {
+					continue;
+				}
+				std::vector<Cut> pieces;
+				for (size_t i = 0; i < ring.size(); ++i) {
+					const Foundation::Vec2 fromMetres = geometry::dequantize(ring[i]);
+					const Foundation::Vec2 toMetres = geometry::dequantize(ring[(i + 1) % ring.size()]);
+					const glm::vec2		   from{fromMetres.x, fromMetres.y};
+					const glm::vec2		   to{toMetres.x, toMetres.y};
+					const float			   lowX = std::min(from.x, to.x);
+					const float			   highX = std::max(from.x, to.x);
+					auto				   cut = std::upper_bound(cuts.begin(), cuts.end(), lowX);
+					std::vector<glm::vec2> stops{from};
+					std::vector<glm::vec2> inner;
+					for (; cut != cuts.end() && *cut < highX; ++cut) {
+						const float fraction = (*cut - from.x) / (to.x - from.x);
+						inner.push_back(from + ((to - from) * fraction));
+					}
+					if (from.x > to.x) {
+						std::reverse(inner.begin(), inner.end());
+					}
+					stops.insert(stops.end(), inner.begin(), inner.end());
+					stops.push_back(to);
+					for (size_t stop = 0; stop + 1 < stops.size(); ++stop) {
+						pieces.push_back({.from = stops[stop], .to = stops[stop + 1], .strip = ownerAt((stops[stop] + stops[stop + 1]) * 0.5F)});
+					}
+				}
+				// Start where the owner changes, so no line wraps round the ring's first point; a ring all one strip's
+				// is one line that closes on itself.
+				size_t start = 0;
+				for (size_t i = 0; i < pieces.size(); ++i) {
+					if (pieces[i].strip != pieces[(i + pieces.size() - 1) % pieces.size()].strip) {
+						start = i;
+						break;
+					}
+				}
+				std::vector<glm::vec2>* line = nullptr;
+				uint32_t				lineStrip = 0;
+				for (size_t step = 0; step < pieces.size(); ++step) {
+					const Cut& piece = pieces[(start + step) % pieces.size()];
+					if (line == nullptr || piece.strip != lineStrip) {
+						line = &lines[piece.strip].emplace_back(std::vector<glm::vec2>{piece.from});
+						lineStrip = piece.strip;
+					}
+					line->push_back(piece.to);
+				}
+			}
+			return lines;
+		}
+
 	} // namespace
+
+	std::vector<std::vector<std::vector<glm::vec2>>> stripRegions(const PartsAsset& parts, const StripLayout& layout, float turnRadians, const ViewConfig& config) {
+		std::vector<std::vector<std::vector<glm::vec2>>> regions(layout.strips.size());
+		for (size_t strip = 0; strip < layout.strips.size(); ++strip) {
+			for (const StripPiece& piece : layout.strips[strip].pieces) {
+				const PartDefinition&		 part = parts.parts[parts.placements[piece.placement].part];
+				const std::vector<glm::vec2> slice = clippedToColumn(turnedFootprint(parts, piece.placement, turnRadians), piece.minX, piece.maxX);
+				std::vector<glm::vec2>		 lifted;
+				for (const glm::vec2& point : slice) {
+					lifted.emplace_back(point.x, point.y - part.bottomMeters * config.heightRatio);
+					lifted.emplace_back(point.x, point.y - part.topMeters * config.heightRatio);
+				}
+				regions[strip].push_back(convexHull(std::move(lifted)));
+			}
+		}
+		return regions;
+	}
+
+	float distanceOutsideStrip(const std::vector<std::vector<glm::vec2>>& region, glm::vec2 point) {
+		float nearest = kInfinity;
+		for (const std::vector<glm::vec2>& polygon : region) {
+			nearest = std::min(nearest, distanceOutside(polygon, point));
+		}
+		return nearest;
+	}
 
 	float sideShade(glm::vec2 normal, const ViewConfig& config) {
 		const double azimuth = static_cast<double>(config.lightAzimuthDegrees) * std::numbers::pi / 180.0;
@@ -812,7 +996,7 @@ namespace assets {
 
 		// The flat strip: every flat part on the ground, or the whole item when it has no body.
 		ItemStrip flatStrip{
-			.anchorLocalY = std::numeric_limits<float>::lowest(), .minX = kInfinity, .maxX = -kInfinity, .minY = kInfinity, .maxY = -kInfinity, .flat = true, .pieces = {}
+			.anchorLocalY = std::numeric_limits<float>::lowest(), .minX = kInfinity, .maxX = -kInfinity, .minY = kInfinity, .maxY = -kInfinity, .bandMinX = -kInfinity, .bandMaxX = kInfinity, .flat = true, .pieces = {}
 		};
 		for (uint32_t i = 0; i < parts.placements.size(); ++i) {
 			const PartDefinition& part = parts.parts[parts.placements[i].part];
@@ -917,7 +1101,10 @@ namespace assets {
 	ItemView buildItemView(const AssetDefinition& def, uint32_t turnQuanta, uint8_t level, const ViewConfig& config) {
 		ItemView view = buildItemMesh(def, turnQuanta, level, config);
 		if (view.error.empty() && level == referenceDetailLevel(def.detailLevels)) {
-			view.silhouette = silhouetteOfMesh(view.mesh);
+			view.silhouette.silhouette = silhouetteOfMesh(view.mesh);
+			view.silhouette.stripLines = stripLinesOf(
+				*def.parts, stripLayout(def, turnQuanta, config), turnRadiansFromQuanta(turnQuanta), config, view.silhouette.silhouette.rings
+			);
 		}
 		return view;
 	}

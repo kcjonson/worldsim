@@ -4,13 +4,16 @@
      placed items. A plain box 1.2 m wide, 0.6 m deep and 0.8 m tall whose sides
      tell themselves apart: the front is red with an F, the back blue with a B,
      the left green with an L, the right orange with an R, and the top carries an
-     arrow pointing to the front. It has no capabilities, no item, no recipe and
-     no placement, so nothing spawns it but a dev command. -->
+     arrow pointing to the front. Three detail levels: zoomed out (8 px/m) the
+     letters drop, and zoomed in past 80 px/m a white dot shows in each corner of
+     every side. It has no capabilities, no item, no recipe and no placement, so
+     nothing spawns it but a dev command. -->
 <AssetDefinitions>
   <AssetDef>
     <defName>TestPartsBox</defName>
     <label>Test parts box</label>
     <assetType>parts</assetType>
+    <detailLevels>8, 24, 80</detailLevels>
 
     <parts>
       <part name="box">

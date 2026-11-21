@@ -1,9 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80">
   <rect x="0" y="0" width="120" height="80" fill="#2E5FA8"/>
-  <rect x="48" y="15" width="8" height="50" fill="#FFFFFF"/>
-  <rect x="48" y="15" width="22" height="8" fill="#FFFFFF"/>
-  <rect x="48" y="36" width="22" height="8" fill="#FFFFFF"/>
-  <rect x="48" y="57" width="22" height="8" fill="#FFFFFF"/>
-  <rect x="66" y="15" width="8" height="29" fill="#FFFFFF"/>
-  <rect x="66" y="36" width="8" height="29" fill="#FFFFFF"/>
+  <g data-lod="24">
+    <rect x="48" y="15" width="8" height="50" fill="#FFFFFF"/>
+    <rect x="48" y="15" width="22" height="8" fill="#FFFFFF"/>
+    <rect x="48" y="36" width="22" height="8" fill="#FFFFFF"/>
+    <rect x="48" y="57" width="22" height="8" fill="#FFFFFF"/>
+    <rect x="66" y="15" width="8" height="29" fill="#FFFFFF"/>
+    <rect x="66" y="36" width="8" height="29" fill="#FFFFFF"/>
+  </g>
+  <g data-lod="80" fill="#FFFFFF">
+    <circle cx="8" cy="8" r="3"/>
+    <circle cx="112" cy="8" r="3"/>
+    <circle cx="8" cy="72" r="3"/>
+    <circle cx="112" cy="72" r="3"/>
+  </g>
 </svg>

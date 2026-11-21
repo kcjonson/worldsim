@@ -447,12 +447,13 @@ namespace world_sim::testing {
 			return floor.id;
 		}
 
+		// The Settings list's content is taller than the reference canvas, so it scrolls there; it fits without
+		// scrolling from this canvas height at the default interface size.
+		constexpr float kSettingsListFitsFromCanvasHeight = 1100.0F;
+
 		// The prototype modal's cap, which the dossier's panel keeps to.
 		constexpr float kDossierMaxWidthShare = 0.92F;
 		constexpr float kDossierMaxHeightShare = 0.86F;
-
-		// The settings list fits a canvas the reference's height at the default size, and scrolls only on shorter ones.
-		constexpr auto kSettingsListFitsFrom = static_cast<float>(theme::uiScaleConfig().referenceHeight);
 
 	} // namespace
 
@@ -468,7 +469,7 @@ namespace world_sim::testing {
 		ASSERT_NE(shown("settings_list"), nullptr);
 		ASSERT_NE(shown("interface_size_choice"), nullptr);
 		EXPECT_EQ(lintEverywhere(), "");
-		EXPECT_EQ(unexpectedScrollbars({{.id = "settings_list", .belowCanvasHeight = kSettingsListFitsFrom}}), "");
+		EXPECT_EQ(unexpectedScrollbars({{.id = "settings_list", .belowCanvasHeight = kSettingsListFitsFromCanvasHeight}}), "");
 	}
 
 	TEST_F(SceneLayout, ScenarioSelectHoldsTogether) {

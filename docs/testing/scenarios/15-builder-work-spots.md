@@ -1,7 +1,7 @@
 # Scenario 15: Builder work spots
 
 **Status:** draft  
-**Last verified:** 2026-11-16
+**Last verified:** 2026-11-20
 
 A foundation has 1 builder spot plus 1 per 10 m2 of area; each builder stands at its own spot just
 inside the edge, and the colonists past the last spot do other work. When a builder is removed, a

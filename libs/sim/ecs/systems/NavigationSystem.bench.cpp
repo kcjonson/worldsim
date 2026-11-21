@@ -30,6 +30,7 @@
 #include "MovementSystem.h"
 #include "PhysicsSystem.h"
 #include "PlacedNothing.test.h"
+#include "QuickStartLanding.bench.h"
 
 #include "../World.h"
 #include "../components/AgentRadius.h"
@@ -69,9 +70,6 @@
 #include <world/chunk/GeneratedWorldSampler.h>
 #include <world/chunk/IWorldSampler.h>
 #include <world/chunk/TerrainPolygonQuery.h>
-#include <worldgen/io/PlanetIO.h>
-#include <worldgen/sampling/LandingSite.h>
-#include <worldgen/sampling/SpawnSite.h>
 
 #include <benchmark/benchmark.h>
 
@@ -83,7 +81,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
 #include <limits>
 #include <map>
 #include <memory>
@@ -133,11 +130,6 @@ namespace {
 	constexpr float	 kAgentRadius  = 0.3F;
 	const glm::vec2	 kColony{500.0F, 555.0F};		// 12 m from the x = 512 chunk side; the river is ~30 m north
 	const char*		kObstacleDef = "Bench_NavObstacle";
-
-	std::filesystem::path projectRoot() {
-		std::filesystem::path p = __FILE__;
-		return p.parent_path().parent_path().parent_path().parent_path().parent_path();
-	}
 
 	float riverY(double x) { return static_cast<float>(600.0 + 22.0 * std::sin(x / 90.0)); }
 
@@ -271,7 +263,7 @@ namespace {
 		ObstacleField() {
 			foundation::Logger::initialize();
 			assets::ConstructionRegistry::Get().clear();
-			assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string());
+			assets::ConstructionRegistry::Get().load((bench::projectRoot() / "assets" / "config" / "construction").string());
 
 			const ObstacleLayout		layout = obstacleLayout();
 			assets::AssetDefinition obstacle;
@@ -1064,43 +1056,16 @@ namespace {
 		state.counters["chunks"] = static_cast<double>(chunks.loadedChunkCount());
 	}
 
-	struct Landing {
-		std::shared_ptr<const worldgen::GeneratedWorld> planet;
-		worldgen::LatLon								site;
-		glm::vec2										at{0.0F, 0.0F};
-	};
-
-	// The Quick Start planet and its landing spawn; null without the file. A worktree has no planets/ of
-	// its own unless it is junctioned; WORLDSIM_PLANET names the file.
-	const Landing* quickstartLanding() {
-		static const std::optional<Landing> landing = []() -> std::optional<Landing> {
-			const char*					planetEnv  = std::getenv("WORLDSIM_PLANET");
-			const std::filesystem::path planetPath = planetEnv != nullptr ? std::filesystem::path(planetEnv) : projectRoot() / "planets" / "quickstart.wsplanet";
-			if (!std::filesystem::exists(planetPath)) {
-				return std::nullopt;
-			}
-			Landing out;
-			out.planet = worldgen::loadPlanet(planetPath);
-			if (!out.planet) {
-				return std::nullopt;
-			}
-			out.site						= worldgen::findDefaultLandingSite(*out.planet, worldgen::Biome::TemperateDeciduousForest);
-			const worldgen::SpawnSite spawn = worldgen::findRiverbankSpawn(out.planet, out.site.latDeg, out.site.lonDeg);
-			out.at							= {static_cast<float>(spawn.xMeters), static_cast<float>(spawn.yMeters)};
-			return out;
-		}();
-		return landing ? &*landing : nullptr;
-	}
-
 	// The 25 real chunks around the Quick Start landing spawn, ground only, ticked until settled.
 	void BM_RealChunksGround(benchmark::State& state) {
-		const Landing* landing = quickstartLanding();
+		const bench::QuickStartLanding* landing = bench::quickStartLanding(state);
 		if (landing == nullptr) {
-			state.SkipWithMessage("no planet (WORLDSIM_PLANET)");
 			return;
 		}
-		const glm::vec2		at = landing->at;
-		world::ChunkManager chunks(std::make_unique<world::GeneratedWorldSampler>(landing->planet, landing->site.latDeg, landing->site.lonDeg));
+		const glm::vec2		at = landing->drop;
+		world::ChunkManager chunks(
+			std::make_unique<world::GeneratedWorldSampler>(landing->planet, landing->landing.origin.latDeg, landing->landing.origin.lonDeg)
+		);
 		chunks.setLoadRadius(2);
 		chunks.setUnloadRadius(4);
 		chunks.update({at.x, at.y});
@@ -1588,28 +1553,29 @@ namespace {
 	// with the real asset definitions. Per chunk: placed obstacles (entities with a blocking collision
 	// ring, nav::placedObstacleRing) and water share on a 2 m grid.
 	void BM_PlacedObstacleDensity(benchmark::State& state) {
-		const Landing* landing = quickstartLanding();
+		const bench::QuickStartLanding* landing = bench::quickStartLanding(state);
 		if (landing == nullptr) {
-			state.SkipWithMessage("no planet (WORLDSIM_PLANET)");
 			return;
 		}
 		assets::AssetRegistry& registry = assets::AssetRegistry::Get();
 		assets::loadAssetSystem(
-			{.definitions = (projectRoot() / "assets" / "world").string(),
-			 .sharedScripts = (projectRoot() / "assets" / "shared" / "scripts").string(),
+			{.definitions = (bench::projectRoot() / "assets" / "world").string(),
+			 .sharedScripts = (bench::projectRoot() / "assets" / "shared" / "scripts").string(),
 			 .recipes = {},
-			 .config = (projectRoot() / "assets" / "config").string()},
+			 .config = (bench::projectRoot() / "assets" / "config").string()},
 			false
 		);
 		for (auto _ : state) {
 			assets::PlacementExecutor placement(registry);
 			placement.initialize();
-			world::ChunkManager chunks(std::make_unique<world::GeneratedWorldSampler>(landing->planet, landing->site.latDeg, landing->site.lonDeg));
+			world::ChunkManager chunks(
+				std::make_unique<world::GeneratedWorldSampler>(landing->planet, landing->landing.origin.latDeg, landing->landing.origin.lonDeg)
+			);
 			chunks.setLoadRadius(2);
 			chunks.setUnloadRadius(4);
-			chunks.update({landing->at.x, landing->at.y});
+			chunks.update({landing->drop.x, landing->drop.y});
 			chunks.finishPendingGeneration();
-			const world::ChunkCoordinate home = world::worldToChunk({landing->at.x, landing->at.y});
+			const world::ChunkCoordinate home = world::worldToChunk({landing->drop.x, landing->drop.y});
 
 			struct Counted {
 				int	   ring		  = 0; // Chebyshev distance from the landing chunk

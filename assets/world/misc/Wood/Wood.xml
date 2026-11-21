@@ -34,6 +34,12 @@
       <carryable/>
     </capabilities>
 
-    <!-- No placement - wood doesn't spawn naturally, it's chopped from trees -->
+    <!-- No biome rules: wood doesn't spawn naturally, it's chopped from trees. The wood group makes
+         the flora that yield it count as a biome's timber for a landing site. -->
+    <placement>
+      <groups>
+        <group>wood</group>
+      </groups>
+    </placement>
   </AssetDef>
 </AssetDefinitions>
