@@ -72,6 +72,7 @@ add_library(sim
     vision/SeenArea.cpp
     vision/SightBody.cpp
     vision/SightFeed.cpp
+    vision/SightHeight.cpp
     vision/SightTunables.cpp
 )
 

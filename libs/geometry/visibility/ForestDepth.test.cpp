@@ -196,8 +196,8 @@ TEST(ForestDepth, WalkingChangesEachSideByAtMostTheStepBound) {
 }
 
 // Limit 4 (sight-softening.md 10): a lone trunk up to a mature oak (0.55 m square) shortens the rim by
-// at most 0.6 m on any side, and a veteran oak (0.82 m square) or a BigRock (1.4 by 1.07 m) by at most
-// 0.8 m, wherever it stands in sight.
+// at most 0.6 m on any side, and a veteran oak (0.82 m square) or a tall body 1.4 by 1.07 m by at most
+// 0.8 m, wherever it stands in sight. A BigRock of that size is lower than the eye and spends none.
 TEST(ForestDepth, LimitFourALoneBodyShortensTheRimByAtMost) {
 	struct Lone {
 		std::int64_t perimeterMm;
@@ -220,10 +220,10 @@ TEST(ForestDepth, LimitFourALoneBodyShortensTheRimByAtMost) {
 	}
 }
 
-// Limit 5: walking past a veteran oak or a BigRock at 2 m and at 10 m, no side's range changes by more
-// than 0.2 m between consecutive builds at 1x, builds 0.5 m apart, and 0.3 m at 10x, builds 1.667 m
-// apart (6.6).
-TEST(ForestDepth, LimitFiveWalkingPastAVeteranOrABigRock) {
+// Limit 5: walking past a veteran oak or a tall body 1.4 by 1.07 m at 2 m and at 10 m, no side's range
+// changes by more than 0.2 m between consecutive builds at 1x, builds 0.5 m apart, and 0.3 m at 10x,
+// builds 1.667 m apart (6.6).
+TEST(ForestDepth, LimitFiveWalkingPastAVeteranOrATallBody) {
 	struct Speed {
 		std::int64_t betweenBuildsMm;
 		std::int64_t mostChangeMm;
