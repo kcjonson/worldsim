@@ -26,17 +26,30 @@ Launch `asset-manager`; the dev server is on its usual port.
 
 ## Parts items
 
-Preconditions: asset-manager running with World selected. `TestPartsAreas` (`assets/world/misc`) has two named use areas, `front` written as an XML rect and `side` drawn, and a clearance of a 0.1 m margin and a drawn apron; the Workbench is under Sandbox.
+Preconditions: asset-manager running with World selected and the search box empty. `TestPartsAreas` (`assets/world/misc`) has three named use areas, `front` an XML rect, `side` drawn, and `back` two separate circles, and a clearance of a 0.1 m margin and a drawn apron clear of it; `TestPartsBox` has detail levels 8, 24 and 80 px/m with corner dots only at 80; the Workbench is under Sandbox.
 
-13. Search `TestParts` and pick TestPartsBox: the badge reads PARTS (not PROCEDURAL), the tree row shows the box front-down, and the pane shows the turn controls, the overlay toggles, a large view, and a sheet of 24 small views labelled 0 to 345.
-14. Pick TestPartsAreas: green `front` and `side` areas lie under the box, each labelled, the clearance is hatched with a dashed edge, and the cyan collider outlines the box; every small view shows them turned with the box.
-15. Click `+15` twice: the entry reads 30.00 and the large view and its overlays turn clockwise together.
-16. Type `271` in the entry and press Enter: the view shows the left end and a sliver of the front.
-17. Click the large view, then press Right: 286.00. Press Left: 271.00.
-18. Click the small view labelled 90: the entry reads 90.00 and the large view matches it.
-19. Untick Use areas, Clearance and Collider: the overlays go from the large view and every small one. Tick Footprints: each part's footprint is outlined. Tick them back.
-20. The right column lists `clear.svg` and `side-use.svg`, each with what it maps onto, its size in metres, and `ok` with its proportions in green; under VALIDATION, `box` and `item` read `no issues`.
-21. Narrow the apron in `clear.svg` (its path's last two points made one, `L80 100`) and click Reload: the hatched clearance before the box is a triangle in the large view and every small one. Put the file back and Reload.
-22. Pick Sandbox, then Workbench: the vise and toolbox stand on the worktop at every turn of the sheet; the level picker offers 8, 24 and 60 px/m with 60 picked, and the right column reads `level  60 px/m, the finest`.
-23. Change `carcass-front.svg`'s viewBox to `0 0 300 72` and Reload: the summary turns red with one error, `carcass-front.svg` reads `off` in red with `5.6% off`, and VALIDATION lists the proportion error under `carcass`. Put the file back and Reload: 0 errors.
-24. `/api/ui/lint`: `"count":0`.
+13. Type `TestParts` in search: the tree shows TestPartsAreas and TestPartsBox, the box's row drawn front-down.
+14. Click TestPartsBox: the badge reads PARTS in the same grey as SIMPLE, and the pane shows the turn controls, the level picker at 80 px/m, the overlay toggles, a large view, and 24 small views labelled 0 to 345.
+15. Click `8 px/m`: the corner dots go from the large view and every small one, and the right column reads `level  8 px/m`.
+16. Click `80 px/m`: the corner dots come back and the right column reads `level  80 px/m, the finest`.
+17. Click TestPartsAreas: under the box lie three green areas, `front`, `side` and `back` (two circles), each name on a dark halo inside its area.
+18. Look at the clearance: the apron before the box and the margin round it are two hatched pieces with dashed edges, and the cyan collider outlines the box.
+19. Click `+15`: the entry reads 15.00 and the large view and its overlays turn clockwise together.
+20. Click the entry, replace its text with `271` and press Enter: the view shows the left end and a sliver of the front.
+21. Replace the entry's text with `12abc` and press Enter: the entry goes back to 271.00.
+22. Click the large view, then press Right: 286.00.
+23. Press Left: 271.00.
+24. Click the Clearance checkbox, then press Right: the turn stays 271.00.
+25. Click the small view labelled 90: the entry reads 90.00 and the large view matches it.
+26. Untick Use areas: the green areas go from the large view and every small one.
+27. Tick Footprints: the box's footprint is outlined in violet.
+28. Read the right column's USE AREAS AND CLEARANCE: `front` reads `rect -0.6, 0.4 to 0.6, 1.2 m`, `side` reads `drawing side-use.svg over ...`, `back` two `circle` lines, and `clearance` reads `margin 0.1 m` and `drawing clear.svg over ...`.
+29. Read DRAWINGS: `clear.svg` and `side-use.svg` each with what it maps onto, its size in metres, and `ok` with its proportions in green.
+30. Read VALIDATION: `box` and `item` read `no issues`.
+31. In `clear.svg`, change the path's `L130 100 L30 100` to `L80 100`, then click Reload: the apron is a hatched triangle in the large view and every small one.
+32. Put `clear.svg` back and click Reload: the apron is a trapezoid again.
+33. Click Sandbox, then Workbench: the level picker offers 8, 24 and 60 px/m with 60 picked, and the vise and toolbox stand on the worktop in every small view.
+34. Change `carcass-front.svg`'s viewBox to `0 0 300 72` and click Reload: the summary turns red with `1 error`.
+35. Read DRAWINGS: `carcass-front.svg` reads `off` in red with `5.6% off`.
+36. Read VALIDATION: the proportion error is listed under `carcass`, and nothing else is listed.
+37. Put `carcass-front.svg` back and click Reload: `0 errors`.

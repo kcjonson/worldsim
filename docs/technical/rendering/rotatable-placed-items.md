@@ -575,15 +575,15 @@ Then the position, the flush slide, which stays under Alt, as the wall tools kee
 
 ### 14.4 The ghost
 
-`GhostRenderer` draws the ghost from a view at the ghost's turn: from the cache when built, else built on the main thread for that turn at the camera's level (one item's parts, a few dozen shapes) and put in the cache. During a free drag it is rebuilt at most once a frame. One item is cheap on the CPU batch, so the ghost keeps it: the view's strips joined, through `drawTriangles`, with the existing ghost alpha and invalid tint, on top (key 1000).
+`GhostRenderer` draws the ghost from a view at the ghost's turn: from the cache when built, else built on the main thread for that turn at the camera's level (one item's parts, a few dozen shapes) and put in the cache. During a free drag it is rebuilt at most once a frame. One item is cheap on the CPU batch, so the ghost keeps it: the view's strips joined, through `worldview::drawItemView` (the one drawing the asset manager and the ui-sandbox's turntable use), at the ghost alpha, on top (key 1000).
 
 Under the ghost, on the ground and before the item, it draws:
 
-- each use area, filled in the overlay's accent colour at low opacity with a solid edge;
-- the clearance, hatched with diagonal lines in a neutral colour and a dashed edge, so it reads as kept clear rather than as a place;
-- the footprint (the collider rings), a thin solid line.
+- each use area, filled in `useAreaColor` at `useAreaFillAlpha` with a solid edge, and labelled with its name on a dark halo;
+- the clearance, hatched with diagonal lines `hatchSpacingMeters` apart in `clearanceColor` (thinned on the screen to none closer than `hatchMinGapPx`, every piece keeping at least one) and a dashed edge, so it reads as kept clear rather than as a place;
+- the collider's rings in `colliderColor`, a solid line.
 
-All three follow the ghost's turn. Where placement is refused, the ghost and its overlays take the invalid tint and the reason (14.2) is drawn beside the ghost in a short label: "Not buildable ground", "Unexplored", "Overlaps an item", "Too close", "No room to use it", "Use area unexplored", "Blocks another item". For "Blocks another item" the other item's use areas are drawn too, in the invalid tint. Pending installs (`Packaged.targetPosition` set) draw their ghost and overlays at their target turn. The overlay colours and line widths are keys in the placement config beside the ghost's alpha.
+All three follow the ghost's turn. Where placement is refused, the ghost's colours are multiplied by `refusedTint` and its overlays drawn in it, and the reason (14.2) is drawn beside the ghost in a short label: "Not buildable ground", "Unexplored", "Overlaps an item", "Too close", "No room to use it", "Use area unexplored", "Blocks another item". For "Blocks another item" the other item's use areas are drawn too, in `refusedTint`. Pending installs (`Packaged.targetPosition` set) draw their ghost and overlays at their target turn. The overlays' colours, line widths, hatch spacing, and the refused tint are keys under `<ItemOverlays>` in the construction rendering config (section 18).
 
 The key guide panel ([Building and construction, Key guide](../../design/game-systems/world/building-construction.md#key-guide)) gets a row for placing: "Q / E: turn. Drag: turn to face the pointer. Alt: hold to turn freely. Esc / Right-click: leave."
 
@@ -599,12 +599,12 @@ Each injection closes the open runs and the animated batch and then draws (`flus
 
 The detail pane for a parts def shows:
 
-- The item at a turn, set by 15 degree step buttons, a degrees entry, and Left and Right (1 degree with Alt) while the pane has focus, and a sheet of 24 small views every 15 degrees, so a face that reads wrong at some angle is seen at once; a click on a small view turns the large one to it. A level picker shows each detail level, the finest until another is picked, and the counts name the level shown.
+- The item at a turn, set by 15 degree step buttons, a degrees entry, and Left and Right (1 degree with Alt) once the large view has focus, and a sheet of 24 small views every 15 degrees, so a face that reads wrong at some angle is seen at once; a click on a small view turns the large one to it. A level picker shows each detail level, the finest until another is picked, and the counts name the level shown.
 - Over the large view and every small one, at the view's turn, the same overlays as the placement ghost (section 14.4), from the same geometry (`assets::itemOverlays`) and the same drawing (`worldview::drawItemOverlays`): use areas filled with a solid edge, the clearance hatched with a dashed edge, each placed part's footprint as a thin line, the derived collider as the cyan outline, and the depth strips with their anchors. The areas lie under the item and the outlines over it. Each named use area is labelled with its name. A toggle hides each kind, its swatch beside it, so the toggles are the legend.
 - The parts list: each part's footprint, heights, and placements, and its tops and faces with the drawing each uses or "plain" and the colour, so an author sees which faces still need art; the use areas and clearance with each shape's source (XML or the drawing's file).
-- The counts: unique parts, placements, drawings (tops, sides, areas), plain faces, and vertices at the finest level.
-- Every use of a drawing (`PartsAsset::drawingChecks`): the file, the face, top, or area rectangle it maps onto, that size in metres, and rule 7's check, the viewBox's proportion against the covered one and how far apart they are, green within `aspectTolerance` and red outside it or when the file couldn't be read.
-- Validation issues by part, an issue naming a part or one of its drawings under that part, the rest under the item.
+- The counts: unique parts, placements, drawings (tops, sides, areas), plain faces, the level shown, and vertices at that level with the front on (turn 0).
+- Every use of a drawing (`PartsAsset::drawingChecks`): the file, the face, top, or area rectangle it maps onto, that size in metres, and rule 7's check, the viewBox's proportion against the covered one and how far apart they are, green within `aspectTolerance`, red outside it, when the file couldn't be read, or for an area drawing with no filled shape.
+- Every validation issue of the def, under each part the loader ties it to (by the part, or by a drawing on it, a drawing shared by two parts under both), the rest under the item.
 
 Thumbnails are the turn-0 template (section 6.9). Reload rebuilds views and overlays, since drawings and the def are files. The asset manager browses the game's assets or the ui-sandbox's demo items (`assets/sandbox/items`), one set at a time.
 
@@ -625,6 +625,8 @@ A placed item's part footprints, placements, bottom and top heights, and turn ar
 | `itemAlignRangeMeters` | `assets/config/construction/snapping.xml` | 2.0 | How far a wall or edge turns an item square to it |
 | `angleIncrementDegrees`, `guideAngleWindowDegrees` (read through `effectiveGuideAngleWindowDegrees()`), `edgeSnapRadiusMeters`, `guideDirectionToleranceDegrees`, `doubleClickDistancePx` | same (existing) | 15 degrees, 7.5 degrees, 0.3 m, 1 degree, 4 logical pixels | Shared with the drawing tools; `doubleClickDistancePx` is a screen-space input threshold in logical pixels |
 | `pathingClearanceMeters` | `assets/config/construction/constraints.xml` (existing) | 0.7 | The default use area's distance |
+| `ItemOverlays useAreaColor`, `useAreaFillAlpha`, `clearanceColor`, `hatchAlpha`, `hatchSpacingMeters`, `hatchMinGapPx`, `footprintColor`, `footprintAlpha`, `colliderColor`, `stripColor`, `anchorColor`, `refusedTint`, `labelBacking` | `assets/config/construction/rendering.xml` (existing) | #4DCC9E, 0.28, #DBD6C7, 0.6, 0.1 m, 4, #D98CF2, 0.85, #00E5FF, #738CFF, #F259BF, #FF4D4D, #0F1214 at 0.75 | The overlays' look (sections 14.4 and 16): colours, the hatch's spacing on the ground and its least gap on the screen, the refused tint, and the label's halo |
+| `ItemOverlays edgeWidth`, `hatchWidth`, `footprintWidth`, `colliderWidth`, `dashPx`, `gapPx`, `labelPx` | same | 1.5, 1, 1, 2, 6, 4, 12 | The overlays' line widths, the clearance edge's dash, and the label size, in logical pixels |
 
 The turn quantum, 0.01 degrees, is part of the stored format, not tuning, and is a constant (`kTurnQuantumDegrees`). So are `kInitialViewInstanceCapacity` (16 instances, section 9.1), `kLargestColonistRadiusMeters` (0.3 m, section 4.2), which `ecs::AgentRadius` takes its default from, and `kEyeHeightMm` (1600 mm, `libs/sim/vision`, section 11.2), below which a placed body casts no sight shadow and adds no forest depth.
 
@@ -666,7 +668,7 @@ Unit tests (`assets-tests`, `world-view-tests`, `sim-tests`), merged into the su
 
 Happy-path scenario: `docs/testing/scenarios/25-rotatable-items.md`, with `TestPartsBox` spawned by `turn=`: the faces each of six turns shows, the item draw count, a colonist on both sides of a 45-degree box's high and low ends, a second box in front of and behind it, and a turned box across the screen's edges. Placement, selection, use areas, blocking, and sight add their steps to it as they land. Scenario 01's crate steps cover installing a parts item. The player visibility scenario's opaque placed body is a spawned `TestTallBox`.
 
-These tests cover what the code decides: geometry, order, snapping, and the rules. Whether a drawing reads well at every angle is the asset manager's 24-view row, checked by eye.
+These tests cover what the code decides: geometry, order, snapping, and the rules. Whether a drawing reads well at every angle is the asset manager's 24-view sheet, checked by eye.
 
 Performance: what can move is the upright stream's draw count, the planner's work, and view builds and uploads. A scoped capture (`node scripts/perf.mjs capture`, after a `machine-load` check reads `idle` or `mostly-idle`) at zooms 1 and 0.25 over a room of 30 items at free turns with colonists walking among them, against `main` with the same room as upright items, read through `node scripts/perf.mjs compare` and `uprightDrawCalls` from `what=uprights`. View builds are timed on the builder: a workbench view, and the load-time build for 500 placed items.
 

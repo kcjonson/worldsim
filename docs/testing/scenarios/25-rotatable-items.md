@@ -72,5 +72,8 @@ Steps 19 on start with game time running again (`...dev/time?speed=1`).
 31. Under Alt, turned parallel to the wall: it still slides flush.
 32. Press on the ground, drag onto the HUD and release there, then move over the ground: the ghost follows the pointer and doesn't turn.
 33. Press on the ground and right-click while holding it, then release the left button: placement ends and nothing is selected.
-34. Leave placing, then `curl.exe "http://127.0.0.1:<PORT>/api/dev/place?def=TestPartsAreas"` over open ground: under the see-through box lie its green `front` and `side` use areas, labelled, its clearance hatched with a dashed edge, and its collider in cyan. Press E: they turn with the box. Move it onto a tree or into water: the box and every overlay turn red.
-35. Exit the game.
+34. Start placing `TestPartsAreas` (`curl.exe "http://127.0.0.1:<PORT>/api/dev/place?def=TestPartsAreas"`) and hold the pointer over open ground: under the see-through box lie its green `front`, `side` and `back` use areas, each named, its clearance hatched with a dashed edge, and its collider in cyan.
+35. Press E: the box and its overlays turn together.
+36. Move the pointer onto a tree trunk: the box and every overlay turn red.
+37. Place two packaged `TestPartsAreas` crates for install somewhere they haven't been carried to yet: each target shows its see-through box with the same overlays, at its own turn.
+38. Exit the game.
