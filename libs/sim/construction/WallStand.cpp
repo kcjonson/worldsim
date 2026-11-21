@@ -17,13 +17,17 @@ namespace construction {
 		constexpr float kServesSlackMeters = 0.001F;
 	} // namespace
 
-	glm::vec2 WallBand::closestPoint(glm::vec2 position) const {
+	glm::vec2 closestOnSegment(glm::vec2 position, glm::vec2 start, glm::vec2 end) {
 		const glm::vec2 along = end - start;
 		const float		lengthSquared = glm::dot(along, along);
 		if (lengthSquared <= 0.0F) {
 			return start;
 		}
 		return start + along * std::clamp(glm::dot(position - start, along) / lengthSquared, 0.0F, 1.0F);
+	}
+
+	glm::vec2 WallBand::closestPoint(glm::vec2 position) const {
+		return closestOnSegment(position, start, end);
 	}
 
 	bool WallBand::overlaps(glm::vec2 position, float radiusMeters) const {

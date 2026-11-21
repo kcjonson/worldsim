@@ -13,6 +13,9 @@
 
 namespace construction {
 
+	// The point of the segment from `start` to `end` nearest `position`; `start` for a segment of no length.
+	[[nodiscard]] glm::vec2 closestOnSegment(glm::vec2 position, glm::vec2 start, glm::vec2 end);
+
 	// A wall segment's band: its centreline and half its thickness. WallCollisionSystem pushes colonists out
 	// of it once the wall is built, and the wall does not complete while a colonist the player controls
 	// overlaps it.

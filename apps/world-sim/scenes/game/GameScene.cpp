@@ -370,6 +370,7 @@ namespace {
 			{
 				auto& constructionSystem = ecsWorld->getSystem<ecs::ConstructionSystem>();
 				constructionSystem.setConstructionWorld(&m_drawingSystem->world());
+				m_placementSystem->setConstructionWorld(&m_drawingSystem->world());
 
 				// NavigationSystem reads the same ConstructionWorld (walls/doors) to build
 				// its navmesh input; wired here for the same reason ConstructionSystem is.
@@ -723,7 +724,7 @@ namespace {
 			using Type = foundation::InputEvent::Type;
 			windowPresence.observe(event.type);
 			const world_sim::KeyGuideToggle::State keyGuideState{
-				.toolActive = m_drawingSystem->isActive(),
+				.toolActive = m_drawingSystem->isActive() || placingATurnableItem(),
 				.modalDialogOpen = modalDialogOpen(),
 				.showKeyGuide = world_sim::UserSettings::Get().drawing.showKeyGuide,
 			};
@@ -750,7 +751,7 @@ namespace {
 					return true;
 				}
 				// Typing in a dialog's field sends its keys here too, so a modal dialog holds them off the world.
-				return !modalDialogOpen() && handleHotkey(event.key);
+				return !modalDialogOpen() && handleHotkey(event.key, (event.mods & foundation::ModAlt) != 0);
 			}
 			if (event.type == Type::Scroll) {
 				if (!modalDialogOpen()) {
@@ -768,6 +769,11 @@ namespace {
 			// The drawing tool takes presses and releases before placement and selection while it's active.
 			const bool						freeform = (event.mods & foundation::ModAlt) != 0;
 			const world_sim::PointerTarget target = pointerTargetOf(event.position);
+			// A press on the world while placing a turnable item holds it there for a drag that turns it.
+			if (event.type == Type::PointerDown && event.mouseButton == foundation::MouseButton::Left && target == world_sim::PointerTarget::World &&
+				m_placementSystem->handlePress(event.position.x, event.position.y, logicalW, logicalH)) {
+				return true;
+			}
 			switch (world_sim::drawingPointerAction(
 				event.type == Type::PointerDown ? world_sim::PointerInput::Press : world_sim::PointerInput::Release,
 				event.mouseButton,
@@ -795,8 +801,23 @@ namespace {
 					break;
 			}
 
+			const bool leftRelease = event.type == Type::PointerUp && event.mouseButton == foundation::MouseButton::Left;
+			// The release of a drag placement was cancelled under selects nothing.
+			if (leftRelease && m_placementSystem->takeReleaseOfCancelledPress()) {
+				return true;
+			}
 			if (m_placementSystem->isActive()) {
-				return m_placementSystem->handleClick(); // a successful placement takes the click
+				// A right release leaves placement; a left one on the world places, a click or the end of a turning
+				// drag, and anywhere else (outside the window, over the ui) only lets go of the drag.
+				if (event.mouseButton == foundation::MouseButton::Right) {
+					m_placementSystem->cancel();
+					return true;
+				}
+				if (leftRelease && target != world_sim::PointerTarget::World) {
+					m_placementSystem->dropPress();
+					return true;
+				}
+				return leftRelease && m_placementSystem->handleRelease();
 			}
 
 			// Entity selection on a release.
@@ -860,6 +881,10 @@ namespace {
 				) == world_sim::PointerAction::CancelPress) {
 				m_drawingSystem->cancelPress();
 			}
+			// Likewise a placement press whose release the interface took or the lost focus swallowed.
+			if (!frame.input.mouse[static_cast<std::size_t>(foundation::MouseButton::Left)].down) {
+				m_placementSystem->leftButtonUp();
+			}
 
 			// The drawing tool pauses while the pointer is not with it, outside the window or with the window in the
 			// background, and resumes at the pointer on its next move.
@@ -870,7 +895,8 @@ namespace {
 			pointerWasWithTool = withTool;
 
 			// The drawing tool's and placement's previews follow the pointer every frame, so they track the world
-			// moving under a still cursor, but not while the pointer is over the ui.
+			// moving under a still cursor, but not while the pointer is over the ui. Placement settles again only when
+			// the pointer, Alt, the press, or a world revision moved, and every few frames for items placed nearby.
 			if (windowPresence.pointerInWindow && pointer == world_sim::PointerTarget::World) {
 				int logicalW = 0;
 				int logicalH = 0;
@@ -881,7 +907,7 @@ namespace {
 						m_drawingSystem->handleMouseMove(at.x, at.y, logicalW, logicalH, (frame.input.mods & foundation::ModAlt) != 0);
 					}
 				} else if (m_placementSystem->isActive()) {
-					m_placementSystem->handleMouseMove(at.x, at.y, logicalW, logicalH);
+					m_placementSystem->handleMouseMove(at.x, at.y, logicalW, logicalH, (frame.input.mods & foundation::ModAlt) != 0);
 				}
 			}
 
@@ -1011,7 +1037,7 @@ namespace {
 			// visibility), and the tool on to the key guide over it.
 			gameUI->setConstructionStatus(m_drawingSystem->status());
 			gameUI->setKeyGuide(
-				m_drawingSystem->activeTool(), world_sim::UserSettings::Get().drawing, m_drawingSystem->keyGuideCollapsed()
+				m_drawingSystem->activeTool(), placingATurnableItem(), world_sim::UserSettings::Get().drawing, m_drawingSystem->keyGuideCollapsed()
 			);
 
 			m_lastUpdateMs = elapsedMs(updateStart, Clock::now());
@@ -1179,10 +1205,21 @@ namespace {
 		const char* name() const override { return kSceneName; }
 
 	  private:
-		// The world's one-press keys; false for a key that isn't one, or does nothing now.
-		bool handleHotkey(foundation::Key key) {
+		// Placing an item the key guide has turning keys for.
+		bool placingATurnableItem() const {
+			return m_placementSystem->state() == world_sim::PlacementState::Placing &&
+				   world_sim::PlacementSystem::turns(m_placementSystem->selectedDefName());
+		}
+
+		// The world's one-press keys; false for a key that isn't one, or does nothing now. `freeform` is Alt held,
+		// which turns a placed item by a degree instead of to the next stop.
+		bool handleHotkey(foundation::Key key, bool freeform) {
 			auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
 			switch (key) {
+				case foundation::Key::Q: // turns the item being placed counter-clockwise
+					return m_placementSystem->handleTurnKey(-1, freeform);
+				case foundation::Key::E: // and clockwise
+					return m_placementSystem->handleTurnKey(1, freeform);
 				case foundation::Key::Backspace: // the last placed point, while drawing
 					if (!m_drawingSystem->isActive()) {
 						return false;
@@ -1873,9 +1910,12 @@ namespace {
 						// would, await the player's [Place] click.
 						const glm::vec2 spawnAt =
 							spawn.targetPosition.has_value() ? *spawn.targetPosition : packageSetDownSpot({spawn.x, spawn.y});
-						auto			entity = m_placementSystem->spawnEntity(spawn.defName, spawnAt);
+						auto			entity = m_placementSystem->spawnEntity(spawn.defName, spawnAt, 0);
 						ecs::Packaged	packaged;
 						packaged.targetPosition = spawn.targetPosition;
+						if (spawn.targetPosition.has_value()) {
+							packaged.targetRotation = 0.0F; // the turn installTargetNear tested the target at
+						}
 						ecsWorld->addComponent<ecs::Packaged>(entity, packaged);
 						if (spawn.targetPosition.has_value()) {
 							LOG_INFO(
@@ -1914,7 +1954,7 @@ namespace {
 			}
 			const uint32_t defNameId = registry.getDefNameId(defName);
 			for (const auto& [pos, qty] : plan.spawns) {
-				ecs::makeLoosePile(*ecsWorld, m_placementSystem->spawnEntity(defName, {pos.x, pos.y}), defNameId, pos, qty);
+				ecs::makeLoosePile(*ecsWorld, m_placementSystem->spawnEntity(defName, {pos.x, pos.y}, 0), defNameId, pos, qty);
 			}
 			LOG_INFO(
 				Game,

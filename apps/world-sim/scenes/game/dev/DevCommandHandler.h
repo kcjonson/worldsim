@@ -99,9 +99,9 @@ namespace world_sim {
 		/// Registers every verb as a route and every view as a state provider, for as long as the
 		/// returned registrations live. Most verbs answer {"status":"ok","verb":...}; spawn, colonist,
 		/// teleport, give, foundation, walls and opening answer a 400 with {"error":...} when they create
-		/// or move nothing, ground they refuse included; verbs with an outcome to report (foundation-edit) answer with it, and flora answers
-		/// with its measurement. The views are camera, colonists, construction, drawing, stations, storage, time,
-		/// landing, tunables and summary.
+		/// or move nothing, ground they refuse included, and place does for a def it doesn't know; verbs with an outcome to report (foundation-edit) answer with it, and flora answers
+		/// with its measurement. The views are camera, colonists, construction, drawing, placement, stations, storage,
+		/// time, landing, tunables and summary.
 		std::vector<app::DevServer::Registration> registerWith(app::DevServer& server);
 
 	  private:
@@ -129,6 +129,9 @@ namespace world_sim {
 		// obstacle (moverGroundRefusal); ground no mover has meshed takes him.
 		DevRefusal devTeleport(const app::DevRequest& cmd);
 		void devSelect(const app::DevRequest& cmd);
+		// place?def=<asset>: starts placing the def as the build menu does, its ghost at the turn last used for it.
+		// An unknown def is a 400.
+		DevRefusal devPlace(const app::DevRequest& cmd);
 		void devKill(const app::DevRequest& cmd);
 		void devComplete(const app::DevRequest& cmd);
 		DevRefusal devFoundation(const app::DevRequest& cmd);
@@ -190,6 +193,9 @@ namespace world_sim {
 		void serializeConstruction(std::ostringstream& out);
 		void serializeStations(std::ostringstream& out);
 		void serializeStorage(std::ostringstream& out);
+		// The placement tool's state and ghost (def, position, turnDegrees, valid), and every placed parts item's
+		// position and turn.
+		void serializePlacement(std::ostringstream& out);
 		void serializeTime(std::ostringstream& out);
 		void serializeLanding(std::ostringstream& out);
 		void serializeSummary(std::ostringstream& out);

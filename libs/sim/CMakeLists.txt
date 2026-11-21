@@ -57,6 +57,7 @@ add_library(sim
     construction/ConstructionWorld.cpp
     construction/CornerAngles.cpp
     construction/ConstructionValidator.cpp
+    construction/ItemSnap.cpp
     construction/OpeningGeometry.cpp
     construction/RectangleSnap.cpp
     construction/RoomDetection.cpp

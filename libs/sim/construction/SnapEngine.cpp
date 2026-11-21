@@ -5,6 +5,7 @@
 #include "OpeningGeometry.h"
 #include "SnapGuidesDetail.h"
 #include "SnapLengthsDetail.h"
+#include "WallStand.h"
 
 #include <assets/ConstructionRegistry.h>
 
@@ -25,19 +26,6 @@ namespace construction {
 			const float dx = a.x - b.x;
 			const float dy = a.y - b.y;
 			return std::sqrt(dx * dx + dy * dy);
-		}
-
-		// Nearest point on segment [a,b] to p, all in world meters.
-		::Foundation::Vec2 closestOnSegment(::Foundation::Vec2 p, ::Foundation::Vec2 a, ::Foundation::Vec2 b) {
-			const float abx = b.x - a.x;
-			const float aby = b.y - a.y;
-			const float lenSq = abx * abx + aby * aby;
-			if (lenSq <= 0.0F) {
-				return a;
-			}
-			float t = ((p.x - a.x) * abx + (p.y - a.y) * aby) / lenSq;
-			t = std::clamp(t, 0.0F, 1.0F);
-			return {a.x + abx * t, a.y + aby * t};
 		}
 
 		// Unclamped projection parameter of p onto the line through a->b. A value

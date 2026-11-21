@@ -18,6 +18,7 @@
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
 #include <assets/MoodConfig.h>
+#include <assets/TurnQuanta.h>
 #include <assets/placement/FloraMeasure.h>
 #include <assets/placement/PlacementExecutor.h>
 
@@ -87,6 +88,16 @@ namespace world_sim {
 	namespace {
 		constexpr std::size_t kFoundationLeastPoints = 3;
 		constexpr std::size_t kWallsLeastPoints = 2;
+
+		double degreesOfQuanta(uint32_t turnQuanta) {
+			return static_cast<double>(turnQuanta) * assets::kTurnQuantumDegrees;
+		}
+
+		// An entity's turn in degrees clockwise, the front down the screen at 0 (rotatable-placed-items 3); 0 without one.
+		double turnDegreesOf(ecs::World& world, ecs::EntityID entity) {
+			const auto* rotation = world.getComponent<ecs::Rotation>(entity);
+			return rotation != nullptr ? degreesOfQuanta(assets::turnQuantaFromRadians(rotation->radians)) : 0.0;
+		}
 	} // namespace
 
 	std::vector<app::DevServer::Registration> DevCommandHandler::registerWith(app::DevServer& server) {
@@ -120,6 +131,7 @@ namespace world_sim {
 		verb("time", &DevCommandHandler::devTime);
 		verb("teleport", &DevCommandHandler::devTeleport);
 		verb("select", &DevCommandHandler::devSelect);
+		verb("place", &DevCommandHandler::devPlace);
 		verb("kill", &DevCommandHandler::devKill);
 		verb("complete", &DevCommandHandler::devComplete);
 		verb("foundation", &DevCommandHandler::devFoundation, kFoundationLeastPoints);
@@ -163,6 +175,7 @@ namespace world_sim {
 			Renderer::Primitives::getLogicalViewport(width, height);
 			return cameraStateJson(*m_ctx.camera, m_ctx.pixelsPerMeter, width, height);
 		}));
+		view("placement", &DevCommandHandler::serializePlacement);
 		view("stations", &DevCommandHandler::serializeStations);
 		view("storage", &DevCommandHandler::serializeStorage);
 		view("time", &DevCommandHandler::serializeTime);
@@ -393,9 +406,9 @@ namespace world_sim {
 		}
 		// Degrees clockwise, the front down the screen at 0, rounded to the turn quantum (rotatable-placed-items 3). Only a
 		// parts item draws turned, so only a parts def takes one: another's collider would turn and its picture wouldn't.
-		float turn = 0.0F;
+		uint32_t turn = 0;
 		if (const std::string turnText = param(cmd, "turn"); !turnText.empty()) {
-			if (assets::AssetRegistry::Get().getDefinition(def)->parts == nullptr) {
+			if (!PlacementSystem::turns(def)) {
 				return reject("spawn: turn= is for a parts def, and " + def + " isn't one");
 			}
 			char*		 end = nullptr;
@@ -403,10 +416,10 @@ namespace world_sim {
 			if (end == turnText.c_str() || *end != '\0' || !std::isfinite(degrees)) {
 				return reject("spawn: turn='" + turnText + "' is not a number of degrees");
 			}
-			turn = assets::turnRadiansFromQuanta(assets::turnQuantaFromDegrees(degrees));
+			turn = assets::turnQuantaFromDegrees(degrees);
 		}
 		const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
-		if (const std::string refusal = spawnGroundRefusal(*m_ctx.placement, m_ctx.navigation, def, at); !refusal.empty()) {
+		if (const std::string refusal = spawnGroundRefusal(*m_ctx.placement, m_ctx.navigation, def, at, turn); !refusal.empty()) {
 			return reject(refusal);
 		}
 		const long			   nRaw = std::strtol(param(cmd, "n", "1").c_str(), nullptr, 10);
@@ -422,14 +435,10 @@ namespace world_sim {
 			const Foundation::Vec2 off = spreadOffset(i, n, scatter);
 			const glm::vec2		   raw{at.x + off.x, at.y + off.y};
 			const std::optional<glm::vec2> placed = m_ctx.navigation->findValidPositionNear(raw, 0.0F);
-			if (!placed.has_value() || !spawnGroundRefusal(*m_ctx.placement, m_ctx.navigation, def, {placed->x, placed->y}).empty()) {
+			if (!placed.has_value() || !spawnGroundRefusal(*m_ctx.placement, m_ctx.navigation, def, {placed->x, placed->y}, turn).empty()) {
 				continue;
 			}
-			const ecs::EntityID entity = m_ctx.placement->spawnEntity(def, {placed->x, placed->y});
-			if (auto* rotation = m_ctx.world->getComponent<ecs::Rotation>(entity)) {
-				rotation->radians = turn;
-			}
-			spawned.push_back(entity);
+			spawned.push_back(m_ctx.placement->spawnEntity(def, {placed->x, placed->y}, turn));
 		}
 		if (spawned.empty()) {
 			return reject("spawn: none of the " + std::to_string(n) + " scattered spots near (" + std::to_string(at.x) + ", " +
@@ -674,6 +683,46 @@ namespace world_sim {
 		}
 		m_ctx.selection->selectColonist(id);
 		LOG_INFO(Game, "[DevAPI] select: colonist #%llu", static_cast<unsigned long long>(id));
+	}
+
+	DevRefusal DevCommandHandler::devPlace(const app::DevRequest& cmd) {
+		const std::string def = param(cmd, "def");
+		if (assets::AssetRegistry::Get().getDefinition(def) == nullptr) {
+			return refuse("place: unknown asset '" + def + "'");
+		}
+		// One tool owns world input, as when the build menu picks an item.
+		if (m_ctx.drawing != nullptr) {
+			m_ctx.drawing->deactivate();
+		}
+		m_ctx.placement->cancel();
+		m_ctx.placement->selectBuildItem(def);
+		LOG_INFO(Game, "[DevAPI] place: '%s'", def.c_str());
+		return {};
+	}
+
+	void DevCommandHandler::serializePlacement(std::ostringstream& out) {
+		const PlacementSystem& placement = *m_ctx.placement;
+		const char*			   state = placement.state() == PlacementState::Placing	 ? "placing"
+										 : placement.state() == PlacementState::MenuOpen ? "menu"
+																						 : "none";
+		out << "{\"state\":\"" << state << "\"";
+		if (placement.state() == PlacementState::Placing) {
+			const Foundation::Vec2 ghost = placement.ghostPosition();
+			out << ",\"def\":\"" << jsonEscape(placement.selectedDefName()) << "\",\"x\":" << ghost.x << ",\"y\":" << ghost.y
+				<< ",\"turnDegrees\":" << degreesOfQuanta(placement.ghostTurnQuanta()) << ",\"valid\":" << (placement.ghostValid() ? "true" : "false");
+		}
+		out << ",\"items\":[";
+		bool first = true;
+		for (auto [entity, position, rotation, appearance] : m_ctx.world->view<ecs::Position, ecs::Rotation, ecs::Appearance>()) {
+			if (!PlacementSystem::turns(appearance.defName)) {
+				continue;
+			}
+			out << (first ? "" : ",") << "{\"id\":" << static_cast<unsigned long long>(entity) << ",\"def\":\"" << jsonEscape(appearance.defName)
+				<< "\",\"x\":" << position.value.x << ",\"y\":" << position.value.y
+				<< ",\"turnDegrees\":" << degreesOfQuanta(assets::turnQuantaFromRadians(rotation.radians)) << "}";
+			first = false;
+		}
+		out << "]}";
 	}
 
 	void DevCommandHandler::devKill(const app::DevRequest& cmd) {
@@ -1546,7 +1595,8 @@ namespace world_sim {
 		for (auto [entity, workQueue, pos] : m_ctx.world->view<ecs::WorkQueue, ecs::Position>()) {
 			out << (first ? "" : ",");
 			first = false;
-			out << "{\"id\":" << static_cast<unsigned long long>(entity) << ",\"x\":" << pos.value.x << ",\"y\":" << pos.value.y;
+			out << "{\"id\":" << static_cast<unsigned long long>(entity) << ",\"x\":" << pos.value.x << ",\"y\":" << pos.value.y
+				<< ",\"turnDegrees\":" << turnDegreesOf(*m_ctx.world, entity);
 
 			out << ",\"jobs\":[";
 			bool firstJob = true;
@@ -1587,7 +1637,7 @@ namespace world_sim {
 			}
 
 			out << "{\"id\":" << static_cast<unsigned long long>(entity) << ",\"defName\":\"" << jsonEscape(defName) << "\",\"x\":"
-				<< pos.value.x << ",\"y\":" << pos.value.y;
+				<< pos.value.x << ",\"y\":" << pos.value.y << ",\"turnDegrees\":" << turnDegreesOf(*m_ctx.world, entity);
 
 			// Inventory contents (backpack only; storage containers don't use hand slots)
 			out << ",\"inventory\":{";
