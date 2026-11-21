@@ -122,7 +122,7 @@ namespace ecs {
 			// Host gate: a wall waits on its host foundation being Built; an opening waits
 			// on its host wall segment being Built. While gated the blueprint holds nothing
 			// but a Blocked umbrella, and no haul/build goals emit (design: Walls /
-			// Prerequisites; openings sit on a built wall). This is the front of the pipeline.
+			// Prerequisites; an opening sits on a wall and is built only once the wall is Built). This is the front of the pipeline.
 			const bool hostGated = (isWall && !isWallHostBuilt(graphId)) || (isOpening && !isOpeningHostSegmentBuilt(graphId));
 			if (hostGated) {
 				ensureUmbrellaGoal(entity, structure, blueprint, GoalStatus::Blocked);
@@ -666,8 +666,32 @@ namespace ecs {
 		blueprint.delivered.clear();
 	}
 
+	void ConstructionSystem::cancelOpeningsOnWall(uint64_t segmentId, bool returnMaterials) {
+		if (m_constructionWorld == nullptr) {
+			return;
+		}
+		for (const auto& opening : m_constructionWorld->openings()) {
+			if (opening.segment != segmentId || opening.entity == kInvalidEntity) {
+				continue;
+			}
+			auto* openingBlueprint = world->getComponent<StructureBlueprint>(opening.entity);
+			if (openingBlueprint == nullptr) {
+				continue;
+			}
+			openingBlueprint->demolishing = true;
+			if (returnMaterials) {
+				dumpDeliveredToGround(opening.entity, *openingBlueprint);
+				resetBlueprintGoals(opening.entity);
+			}
+		}
+	}
+
 	void ConstructionSystem::decideDeconstruct(EntityID blueprintEntity, const Structure& structure, StructureBlueprint& blueprint) {
 		auto& registry = GoalTaskRegistry::Get();
+
+		if (structure.kind == StructureKind::Wall) {
+			cancelOpeningsOnWall(structure.graphId, /*returnMaterials=*/blueprint.workDone <= 0.0F);
+		}
 
 		// A demolishing structure with no work to undo can't be work-deconstructed (startBuildAction
 		// rejects workDone <= 0). Remove it immediately through the SAME removal callback a worked

@@ -1,6 +1,7 @@
 #pragma once
 
-// Colonist memory tuning. Loaded from assets/config/colonists/memory.xml.
+// Colonist memory tuning. Loaded from the file with a <Memory> root in the human's folder
+// (assets/world/creatures/Human/memory.xml).
 // See /docs/design/game-systems/colonists/memory.md.
 
 #include <filesystem>

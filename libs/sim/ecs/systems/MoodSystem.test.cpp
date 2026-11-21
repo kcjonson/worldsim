@@ -79,9 +79,9 @@ namespace ecs::test {
 </Mood>)";
 
 		std::filesystem::path shippedMoodConfig() {
-			// <root>/libs/sim/ecs/systems/MoodSystem.test.cpp -> <root>/assets/config/colonists/mood.xml
+			// <root>/libs/sim/ecs/systems/MoodSystem.test.cpp -> <root>/assets/world/creatures/Human/mood.xml
 			return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path().parent_path() / "assets" /
-				   "config" / "colonists" / "mood.xml";
+				   "world" / "creatures" / "Human" / "mood.xml";
 		}
 	} // namespace
 

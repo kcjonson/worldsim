@@ -1036,7 +1036,7 @@ namespace world_sim {
 		auto& constructionWorld = m_ctx.drawing->world();
 
 		// Resolve the target segment + centerline t: seg= names it directly (t defaults to
-		// center), pt= snaps to the nearest built wall (t from the snap).
+		// center), pt= snaps to the nearest wall (t from the snap).
 		construction::SegmentId segment = construction::kInvalidSegment;
 		float							t = 0.5F;
 		if (hasParam(cmd, "seg")) {
@@ -1049,7 +1049,7 @@ namespace world_sim {
 			const construction::SnapEngine snap(registry.snapping(), constructionWorld);
 			const auto					   os = snap.snapOpening(pts.front(), typeDef->widthMeters);
 			if (!os.valid) {
-				return refuse("opening: no built wall near pt that can hold a " + type);
+				return refuse("opening: no wall near pt that can hold a " + type);
 			}
 			segment = os.segment;
 			t = os.t;

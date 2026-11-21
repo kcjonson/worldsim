@@ -1,7 +1,10 @@
 #pragma once
 
-// Work configuration: action types, task chains, work types, priority tuning, construction, and mood,
-// loaded from one config folder into their registries and cross-validated.
+// Work configuration: action types, task chains, work types, priority tuning, and construction from the
+// config folder, and mood and memory from the human's folder, loaded into their registries and
+// cross-validated.
+
+#include "assets/CreatureConfigFiles.h"
 
 #include <array>
 #include <filesystem>
@@ -16,9 +19,11 @@ namespace assets {
 		"FulfillNeed", "Harvest", "Craft", "Haul", "PlacePackaged", "Build", "Deconstruct", "Wander"
 	};
 
-	/// Clears the work-config registries and loads them from configRoot (the folder holding
-	/// actions/, work/, construction/, and colonists/), in dependency order, then cross-validates them.
+	/// Clears the work-config registries and loads them from configRoot (the folder holding actions/, work/,
+	/// and construction/) and the mood and memory config from `human`'s one <Mood> and one <Memory> file, in
+	/// dependency order, then cross-validates them. `human` must have no errors and its one <Mood> and one
+	/// <Memory> file (asserted): a caller with a broken human folder reports its errors and loads nothing.
 	/// Returns every error found; an empty list means the configuration is loaded and valid.
-	[[nodiscard]] std::vector<std::string> loadWorkConfig(const std::filesystem::path& configRoot);
+	[[nodiscard]] std::vector<std::string> loadWorkConfig(const std::filesystem::path& configRoot, const CreatureConfigFiles& human);
 
 } // namespace assets

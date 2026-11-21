@@ -13,7 +13,7 @@
     <source trigger .../>                           what in the sim creates it; a type may have several or
                                                     none, and every trigger is a change:
       trigger="needFalls" need threshold            a need falls below a threshold (seek, urgent, critical in
-      trigger="needRises" need threshold            assets/config/colonists/needs) or rises back to it;
+      trigger="needRises" need threshold            assets/world/creatures/Human/needs.xml) or rises back to it;
                                                     a change across several is told once, by the level it
                                                     lands in
       trigger="actionStarts|actionFinishes" action [on] [first]

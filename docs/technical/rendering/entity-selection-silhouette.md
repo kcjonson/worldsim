@@ -161,6 +161,8 @@ Each tree draws its own (def, age class, variant) mesh, so the silhouette is cac
 
 Triangles whose three vertices are all below `AssetRegistry::kSilhouetteMinAlpha` (0.5) are left out of the raster, so a drop shadow is not part of the outline, the hit area, or the flora view's canopy cover.
 
+A placed item (`parts` def) takes its silhouette from its view at its turn, already turned, so it is translated and never rotated, and its outline is injected into the stream in pieces, one at each depth strip ([Rotatable placed items, section 15](./rotatable-placed-items.md#15-selection)).
+
 The world-entity broad phase queries out to `AssetRegistry::maxReachMeters` (the farthest any non-groundcover template reaches from its origin, times its def's largest placement scale, never under `kSelectionRadius`) instead of a fixed 8 m.
 
 ## 13. Decisions log

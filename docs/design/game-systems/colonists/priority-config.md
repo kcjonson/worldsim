@@ -200,7 +200,7 @@ private:
 
 ### Loading at Startup
 
-`assets::loadWorkConfig(configRoot)` loads priority-tuning.xml after the work types, as `PriorityConfig::Get().loadFromFile(configRoot, "work/priority-tuning.xml")`, and then checks that every task type has a tier. Any problem fails the game load and is shown on the loading scene ([Config Loading](../../../technical/config-loading.md)).
+`assets::loadWorkConfig(configRoot, human)` loads priority-tuning.xml after the work types, as `PriorityConfig::Get().loadFromFile(configRoot, "work/priority-tuning.xml")`, and then checks that every task type has a tier. Any problem fails the game load and is shown on the loading scene ([Config Loading](../../../technical/config-loading.md)).
 
 ---
 

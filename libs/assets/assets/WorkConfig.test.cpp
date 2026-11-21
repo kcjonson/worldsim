@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -539,10 +540,29 @@ namespace {
 		// <root>/libs/assets/assets/WorkConfig.test.cpp -> <root>/assets/config
 		return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "assets" / "config";
 	}
+
+	std::filesystem::path shippedHumanFolder() {
+		return shippedConfigRoot().parent_path() / "world" / "creatures" / "Human";
+	}
+
+	/// The shipped human's files; a broken shipped folder stops the run, as the sim tests' shippedHumanConfig does.
+	CreatureConfigFiles shippedHuman() {
+		CreatureConfigFiles			   human = creatureConfigFiles(shippedHumanFolder());
+		std::vector<std::string>	   errors = human.errors;
+		const std::vector<std::string> missing = missingKinds(human);
+		errors.insert(errors.end(), missing.begin(), missing.end());
+		for (const std::string& error : errors) {
+			std::fprintf(stderr, "shipped human config: %s\n", error.c_str());
+		}
+		if (!errors.empty()) {
+			std::abort();
+		}
+		return human;
+	}
 } // namespace
 
 TEST_F(WorkConfigTest, LoadWorkConfig_ShippedConfigLoadsClean) {
-	for (const auto& error : loadWorkConfig(shippedConfigRoot())) {
+	for (const auto& error : loadWorkConfig(shippedConfigRoot(), shippedHuman())) {
 		ADD_FAILURE() << error;
 	}
 	EXPECT_GT(ActionTypeRegistry::Get().size(), 0);
@@ -586,7 +606,7 @@ TEST_F(WorkConfigTest, PriorityConfig_ShippedValuesArePinned) {
 
 TEST_F(WorkConfigTest, MoodConfig_ShippedValuesArePinned) {
 	MoodConfig config;
-	ASSERT_TRUE(config.loadFromFile(shippedConfigRoot(), "colonists/mood.xml"));
+	ASSERT_TRUE(config.loadFromFile(shippedHumanFolder(), "mood.xml"));
 	EXPECT_TRUE(config.problems().empty());
 	EXPECT_FLOAT_EQ(config.pointsPerGameHour(), 5.0F);
 	EXPECT_FLOAT_EQ(config.needPenaltyCurve().comfortable, 70.0F);
@@ -684,7 +704,7 @@ TEST_F(WorkConfigTest, MoodConfig_BadNumbersAreErrorsNamingFileElementAndAttribu
 }
 
 TEST_F(WorkConfigTest, LoadWorkConfig_MissingFolderReportsError) {
-	EXPECT_FALSE(loadWorkConfig(std::filesystem::temp_directory_path() / "no-such-work-config").empty());
+	EXPECT_FALSE(loadWorkConfig(std::filesystem::temp_directory_path() / "no-such-work-config", shippedHuman()).empty());
 }
 
 TEST_F(WorkConfigTest, ConfigValidator_MemoryWindowMustBeAPositiveNumber) {
@@ -725,7 +745,7 @@ TEST_F(WorkConfigTest, ConfigValidator_MemoryWindowMustBeAPositiveNumber) {
 }
 
 TEST_F(WorkConfigTest, LoadWorkConfig_ShippedValuesArePinned) {
-	ASSERT_TRUE(loadWorkConfig(shippedConfigRoot()).empty());
+	ASSERT_TRUE(loadWorkConfig(shippedConfigRoot(), shippedHuman()).empty());
 
 	const TaskChainDef* haul = TaskChainRegistry::Get().getChain("Chain_PickupDeposit");
 	ASSERT_NE(haul, nullptr);
@@ -980,7 +1000,7 @@ TEST_F(WorkConfigTest, LoadWorkConfig_ErrorsNameFilesRelativeToTheConfigRoot) {
 		"<Step order=\"one\" action=\"Deposit\" target=\"destination\""
 	);
 	EXPECT_EQ(
-		loadWorkConfig(root),
+		loadWorkConfig(root, shippedHuman()),
 		std::vector<std::string>{
 			"work/task-chains.xml: <Chain defName=\"Chain_PickupDeposit\"> step 2 order must be a whole number from 0 to 255, got \"one\""
 		}
@@ -989,7 +1009,7 @@ TEST_F(WorkConfigTest, LoadWorkConfig_ErrorsNameFilesRelativeToTheConfigRoot) {
 
 	replaceIn("actions/action-types.xml", "<Action defName=\"Eat\" needsHands=\"true\">", "<Action defName=\"Eat\" needsHands=\"ture\">");
 	EXPECT_EQ(
-		loadWorkConfig(root),
+		loadWorkConfig(root, shippedHuman()),
 		std::vector<std::string>{"actions/action-types.xml: <Action defName=\"Eat\"> needsHands must be true or false, got \"ture\""}
 	);
 	EXPECT_EQ(ActionTypeRegistry::Get().size(), 0U);
