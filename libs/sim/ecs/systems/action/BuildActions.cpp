@@ -255,7 +255,8 @@ namespace ecs {
 
 		// What holds the wall, moving nobody: a builder of it it would shut in, whose work ends so he decides
 		// again and goes to a side it allows; anyone else not under the player's control it would shut in who
-		// is building another wall (that wall completes first, and frees him) or is on the way out (leaving);
+		// is building another wall (waited for until that work ends, its route not found wanting) or is on
+		// the way out (leaving);
 		// and a colonist the player controls in its band. Someone whose task keeps them inside is not waited
 		// for.
 		const construction::WallClosure& closure = wallClosure(blueprintEntity, segment->id);
@@ -269,7 +270,8 @@ namespace ecs {
 				if (auto* work = world->getComponent<Action>(colonist)) {
 					work->clear();
 				}
-			} else if (world->getComponent<PlayerControlled>(colonist) == nullptr && (buildsAWall(task) || leaving(task, closure))) {
+			} else if (world->getComponent<PlayerControlled>(colonist) == nullptr &&
+					   ((task.navState != NavState::CantFindWayTo && buildsAWall(task)) || leaving(task, closure))) {
 				shutsInSomeone = true;
 			}
 		}

@@ -501,9 +501,9 @@ a segment or an opening is built, added, or removed. A builder walking to the wa
 his next decision; one already at work there keeps working until the completion check below sends him
 round. A builder takes the side whose stand point is nearest, among those he can get to. A side's stand
 points lie off the wall's line by half its thickness, the builder's radius, and 0.1 m, beside its middle
-first and then toward each end; the side's point is what `nearestPathablePoint(point, agentRadius)` gives
+first and then toward each end, held a stand offset short of either end; the side's point is what `nearestPathablePoint(point, agentRadius)` gives
 for the first of them it serves: on that side, no farther from that stand point than that offset, and
-level with the segment, never across its line or past its end (`construction::WallStand::serves`,
+level with the segment, never across its line or past its end, and not in the room the wall would shut in (`construction::WallStand::serves`,
 `ecs::wallStandPoint`; worked out once per site, side, and radius in an update,
 `SharedWork::wallStandPoint`). With none, the option is NoSource, and when no allowed side can be stood
 on at all by a builder of the default radius, the selected wall's panel, which asks the mesh itself,
@@ -518,15 +518,15 @@ A wall whose work reaches its total completes only on a tick in which time passe
 would shut in (`WallClosure::shutsIn`: the side with no way out, when the other side has one; another
 sealed room elsewhere is not its): a builder of it (a colonist whose Build task is on it, at work or
 walking there), whose action ends so that he decides again and goes to a side it allows; a colonist not
-under the player's control whose Build task is on another wall, his work left going (that wall completes
-first and frees him); and anyone else not under the player's control who is on the way out. And a
+under the player's control whose Build task is on another wall, his work left going (waited for until that work ends, his route
+not found wanting); and anyone else not under the player's control who is on the way out. And a
 colonist under the player's control in its band (the band `WallCollisionSystem` pushes out of once it is
 built), which raises one "Wall waiting" toast naming them as the hold begins, and again only after a
 release. On the way out means a task under way (its route not found wanting) whose point, the one its
 current leg walks to (`Task::targetPosition`: a wander's point, a need's source, a work stand, a haul's
 pickup, or the deposit for a carry-in of goods already carried), or a later leg's (a haul's deposit, a
 packaged item's placement), is not shut in. Someone whose task keeps them inside, with no task or one
-whose every point is inside (working, eating, or sleeping there), is not waited for, and neither is a
+whose every point is inside (crafting, eating, or sleeping there), is not waited for, and neither is a
 colonist under the player's control who is inside but not in the band. While it waits, the Build action
 is interruptable, so the builder may be taken away as from any interruptable work: by a higher tier, or
 a same-tier option that wins its hysteresis margin. Once nothing holds it, any other colonist in the band

@@ -58,7 +58,10 @@ namespace construction {
 
 	bool WallStand::shutIn(glm::vec2 point) const {
 		const geometry::Vec2i64 millimeters{std::llround(static_cast<double>(point.x) * 1000.0), std::llround(static_cast<double>(point.y) * 1000.0)};
-		return std::any_of(shutRegion.begin(), shutRegion.end(), [&](const ShutRoom& room) {
+		if (shutRegion == nullptr) {
+			return false;
+		}
+		return std::any_of(shutRegion->begin(), shutRegion->end(), [&](const ShutRoom& room) {
 			if (geometry::pointInPolygon(millimeters, room.ring) == geometry::PointInPolygon::Outside) {
 				return false;
 			}

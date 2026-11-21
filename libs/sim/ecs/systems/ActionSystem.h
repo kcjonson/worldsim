@@ -288,7 +288,7 @@ private:
 
 	/// What completing the wall `blueprintEntity` closes, worked out again when the topology has changed.
 	const construction::WallClosure& wallClosure(EntityID blueprintEntity, construction::SegmentId segment);
-	/// Whether 	ask is a Build on a wall blueprint.
+	/// Whether `task` is a Build on a wall blueprint.
 	[[nodiscard]] bool buildsAWall(const struct Task& task) const;
 	/// Drop what is kept for a wall: its hold toast and its closure. Done as it completes, and in update for
 	/// walls that are gone or complete.

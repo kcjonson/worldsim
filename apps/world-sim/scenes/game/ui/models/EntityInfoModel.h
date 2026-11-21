@@ -138,6 +138,7 @@ class EntityInfoModel {
 		ecs::EntityID wallEntity = ecs::kInvalidEntity;
 		std::uint64_t constructionVersion = 0;
 		std::uint64_t navigationGeneration = 0;
+		std::uint64_t navigationConnectivity = 0; // moves when a placed obstacle or collider comes or goes
 		std::uint64_t goalId = 0;
 		int			  goalStatus = -1;
 		bool		  operator==(const WallGroundKey&) const = default;

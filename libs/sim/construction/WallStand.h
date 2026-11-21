@@ -5,6 +5,7 @@
 #include <glm/vec2.hpp>
 
 #include <array>
+#include <memory>
 #include <vector>
 
 // A wall segment's band and the sides a builder stands on to work it, in meters (building-construction:
@@ -43,8 +44,8 @@ namespace construction {
 		float	  halfThicknessMeters = 0.0F;
 		float	  halfLengthMeters = 0.0F;
 		// The rooms completing the wall would shut in, when it closes one with no way out; no stand point lies
-		// in them. Empty otherwise.
-		std::vector<ShutRoom> shutRegion;
+		// in them. Shared, not copied, by every copy of the stand. Null otherwise.
+		std::shared_ptr<const std::vector<ShutRoom>> shutRegion;
 
 		// How far off the centreline a builder of `agentRadiusMeters` stands: half the wall's thickness, his
 		// radius, and kStandMarginMeters.

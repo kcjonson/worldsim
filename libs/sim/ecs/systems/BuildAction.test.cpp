@@ -658,8 +658,8 @@ namespace ecs::test {
 		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::Complete) << "those staying inside are not waited for";
 	}
 
-	// Neither someone inside whose route out was found wanting, nor a colonist the player controls inside
-	// (out of the band), is waited for.
+	// Neither someone inside whose route out was found wanting, nor a builder of another wall whose route
+	// there was, nor a colonist the player controls inside (out of the band), is waited for.
 	TEST_F(WallBandHoldTest, AClosingWallDoesNotWaitForAFailedRouteOrAControlledColonistInside) {
 		const EntityID blueprint = wallSite(closingWallOfASquare());
 		const EntityID stuck = colonistAt({1.0F, 2.0F}, false);
@@ -672,6 +672,16 @@ namespace ecs::test {
 		const EntityID controlled = colonistAt({3.0F, 2.0F}, true);
 		walkOut.navState = NavState::Traveling;
 		world->addComponent<Task>(controlled, walkOut);
+		const EntityID otherWall = createBlueprint(1000.0F);
+		world->addComponent<Structure>(otherWall, Structure{.kind = StructureKind::Wall, .graphId = wall({1.0F, 1.0F}, {1.0F, 3.0F}, false)});
+		const EntityID strandedBuilder = colonistAt({2.0F, 3.0F}, false);
+		Task buildOther;
+		buildOther.type = TaskType::Build;
+		buildOther.state = TaskState::Moving;
+		buildOther.navState = NavState::CantFindWayTo;
+		buildOther.buildBlueprintEntityId = otherWall;
+		buildOther.targetPosition = {1.6F, 2.0F};
+		world->addComponent<Task>(strandedBuilder, buildOther);
 
 		world->update(0.5F);
 		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::Complete);

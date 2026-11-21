@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <memory>
 #include <numeric>
 #include <unordered_set>
 
@@ -153,12 +154,14 @@ namespace construction {
 			return;
 		}
 		shutRoot = leftRoot == open ? rightRoot : leftRoot;
-		WallStand outside = leftRoot == open ? leftStand : rightStand;
+		WallStand						 outside = leftRoot == open ? leftStand : rightStand;
+		auto							 region = std::make_shared<std::vector<ShutRoom>>();
 		for (std::size_t room = 0; room < rooms.size(); ++room) {
 			if (regionRoots[room] == shutRoot) {
-				outside.shutRegion.push_back({.ring = rooms[room].ring, .holes = rooms[room].holes});
+				region->push_back({.ring = rooms[room].ring, .holes = rooms[room].holes});
 			}
 		}
+		outside.shutRegion = std::move(region);
 		sides = {std::move(outside)};
 	}
 

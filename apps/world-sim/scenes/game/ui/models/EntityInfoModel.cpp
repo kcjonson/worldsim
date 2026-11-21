@@ -310,6 +310,7 @@ bool EntityInfoModel::wallHasNoGround(ecs::World& world, const construction::Con
 		.wallEntity = wallEntity,
 		.constructionVersion = constructionWorld.version(),
 		.navigationGeneration = navigation->generation(),
+		.navigationConnectivity = navigation->connectivityEpoch(),
 		.goalId = goal != nullptr ? goal->id : 0,
 		.goalStatus = goal != nullptr ? static_cast<int>(goal->status) : -1,
 	};
