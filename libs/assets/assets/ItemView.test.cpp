@@ -860,7 +860,10 @@ TEST_F(ItemViewTest, TheOutlineIsCutAtTheBandEdgesAndEachSideOfANotchKeepsItsOwn
 		}
 		float lineLength = 0.0F;
 		for (size_t strip = 0; strip < view.strips.size(); ++strip) {
-			EXPECT_FALSE(view.silhouette.stripLines[strip].empty()) << def.defName << " at " << degrees << ": strip " << strip << " has no outline";
+			// A mat round a body is the outer ring wherever it reaches, so then only the flat strip must have lines.
+			if (!layout.strips.front().flat || layout.strips[strip].flat) {
+				EXPECT_FALSE(view.silhouette.stripLines[strip].empty()) << def.defName << " at " << degrees << ": strip " << strip << " has no outline";
+			}
 			for (const std::vector<glm::vec2>& line : view.silhouette.stripLines[strip]) {
 				lineLength += length(line, false);
 				for (const glm::vec2& point : line) {
@@ -876,11 +879,15 @@ TEST_F(ItemViewTest, TheOutlineIsCutAtTheBandEdgesAndEachSideOfANotchKeepsItsOwn
 	ASSERT_NE(bench, nullptr);
 	check(*bench, 0.0);
 	check(*bench, 45.0);
+	const AssetDefinition* matBench = loadBench(3.0F, 1.0F, true);
+	ASSERT_NE(matBench, nullptr);
+	check(*matBench, 30.0); // the flat strip spans every band
 
 	// The C open to the east: through the notch the north arm's outline stays north of it and the south arm's south.
 	const AssetDefinition* letterC = loadBlocks("LetterC", {{-1.0F, -1.0F, -0.4F, 1.0F}, {-0.4F, -1.0F, 1.0F, -0.4F}, {-0.4F, 0.4F, 1.0F, 1.0F}});
 	ASSERT_NE(letterC, nullptr);
 	check(*letterC, 0.0);
+	check(*letterC, 35.0);
 	const ItemView view = checkedView(*letterC, 0, 0, viewConfig());
 	ASSERT_EQ(view.strips.size(), 3U);
 	for (const size_t arm : {size_t{0}, size_t{2}}) {

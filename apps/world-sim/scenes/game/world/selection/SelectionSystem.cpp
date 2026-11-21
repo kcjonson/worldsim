@@ -1,4 +1,5 @@
 #include "SelectionSystem.h"
+#include "SelectionPick.h"
 
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
@@ -152,41 +153,34 @@ namespace {
 		);
 	}
 
-	// One entity under the click, as a stations or furniture loop weighs it. Two placed parts items both under it are
-	// ranked by which draws in front there: the larger anchor among each one's strips whose box holds the click, as
-	// the depth sort orders them. Anything else is ranked by distance to the click, as before.
-	struct Pick {
-		ecs::EntityID		 entity = 0;
-		float				 distance = 0.0F;
-		std::optional<float> frontAnchor;
-
-		[[nodiscard]] bool beats(const Pick& other) const {
-			if (other.entity == 0) {
-				return true;
-			}
-			if (frontAnchor.has_value() && other.frontAnchor.has_value() && *frontAnchor != *other.frontAnchor) {
-				return *frontAnchor > *other.frontAnchor;
-			}
-			return distance < other.distance;
-		}
-	};
-
-	// The depth a placed parts item draws at a world point: the largest anchor among its strips whose screen box
-	// holds the point (rotatable-placed-items 8).
+	// The depth a placed parts item draws at a world point: the largest anchor among its strips whose region
+	// (assets::stripRegions) lies within the outline's half width of the point, else the nearest strip's
+	// (rotatable-placed-items 15).
 	std::optional<float> frontAnchorAt(uint32_t templateId, uint32_t turnQuanta, glm::vec2 position, glm::vec2 worldPos) {
-		const assets::ItemLayout* layout = assets::AssetRegistry::Get().stripLayout(templateId, turnQuanta);
-		if (layout == nullptr) {
+		auto&					  registry = assets::AssetRegistry::Get();
+		const assets::ItemLayout* layout = registry.stripLayout(templateId, turnQuanta);
+		const assets::AssetDefinition* def = registry.templateRecord(templateId).def;
+		if (layout == nullptr || def == nullptr || def->parts == nullptr || layout->layout.strips.empty()) {
 			return std::nullopt;
 		}
-		const glm::vec2		 local = worldPos - position;
-		std::optional<float> front;
-		for (const assets::ItemStrip& strip : layout->layout.strips) {
-			if (local.x >= strip.minX && local.x <= strip.maxX && local.y >= strip.minY && local.y <= strip.maxY) {
-				const float anchor = assets::computeAnchorY(position.y, strip.anchorLocalY, 1.0F);
+		const assets::ViewConfig& config = assets::GameViewConfig::Get().config();
+		const auto regions = assets::stripRegions(*def->parts, layout->layout, assets::turnRadiansFromQuanta(turnQuanta), config);
+		const glm::vec2			  local = worldPos - position;
+		std::optional<float>	  front;
+		size_t					  nearest = 0;
+		float					  nearestDistance = std::numeric_limits<float>::infinity();
+		for (size_t strip = 0; strip < regions.size(); ++strip) {
+			const float distance = assets::distanceOutsideStrip(regions[strip], local);
+			if (distance < nearestDistance) {
+				nearestDistance = distance;
+				nearest = strip;
+			}
+			if (distance <= config.outlineHalfWidthMeters()) {
+				const float anchor = assets::computeAnchorY(position.y, layout->layout.strips[strip].anchorLocalY, 1.0F);
 				front = front.has_value() ? std::max(*front, anchor) : anchor;
 			}
 		}
-		return front;
+		return front.has_value() ? front : assets::computeAnchorY(position.y, layout->layout.strips[nearest].anchorLocalY, 1.0F);
 	}
 
 	// The sprites packaged furniture draws (back crate, item, front crate), laid out exactly as
@@ -392,19 +386,24 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		candidates.emplace_back(ColonistSelection{closestColonist});
 	}
 
-	// Priority 1.5: Check ECS stations (entities with WorkQueue). Same centroid pre-cull
-	// then silhouette test as colonists.
-	// A placed parts item's Pick: its front anchor at the click when it is one.
+	// A candidate's SelectionPick: a placed parts item's front anchor at the click when it is one.
 	const auto pickOf = [&](ecs::EntityID entity, const ecs::Appearance& appearance, glm::vec2 position, float distance, bool packaged) {
-		Pick pick{.entity = entity, .distance = distance};
+		SelectionPick pick{.entity = entity, .distance = distance};
 		if (const uint32_t templateId = dynamicRenderTemplate(ecsWorld, entity, appearance); !packaged && isPartsTemplate(templateId)) {
 			pick.frontAnchor = frontAnchorAt(templateId, turnOf(ecsWorld, entity), position, worldPos);
 		}
 		return pick;
 	};
 
-	Pick station;
+	// Priority 1.5: Check ECS stations (entities with WorkQueue). Same centroid pre-cull
+	// then silhouette test as colonists; a packaged station tests its crate, and one a colonist
+	// carries isn't drawn where it was, so it isn't picked there.
+	SelectionPick station;
 	for (auto [entity, pos, appearance, workQueue] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::WorkQueue>()) {
+		const auto* packaging = ecsWorld->getComponent<ecs::Packaged>(entity);
+		if (packaging != nullptr && packaging->beingCarried) {
+			continue;
+		}
 		if (!selectableAt(entity, pos.value)) {
 			continue;
 		}
@@ -415,10 +414,13 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		if (dist >= kSelectionRadius) {
 			continue;
 		}
-		if (!dynamicUnderClick(ecsWorld, entity, appearance, pos.value, worldPos)) {
+		const bool packaged = packaging != nullptr;
+		const bool under = packaged ? packagedUnderClick(appearance, pos.value, worldPos, kSelectionRadius)
+									: dynamicUnderClick(ecsWorld, entity, appearance, pos.value, worldPos);
+		if (!under) {
 			continue;
 		}
-		if (const Pick pick = pickOf(entity, appearance, pos.value, dist, false); pick.beats(station)) {
+		if (const SelectionPick pick = pickOf(entity, appearance, pos.value, dist, packaged); pick.beats(station)) {
 			station = pick;
 		}
 	}
@@ -437,7 +439,7 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 	// but no WorkQueue) and any other placed parts item (a table, a test box). Packaged ones
 	// test the crate layers + item; placed ones test their own silhouette. Centroid pre-cull
 	// first, same as the other dynamic types.
-	Pick furniture;
+	SelectionPick furniture;
 	for (auto [entity, pos, appearance] : ecsWorld->view<ecs::Position, ecs::Appearance>()) {
 		// Skip crafting stations (WorkQueue), colonists (they have Inventory for carrying items), and piles
 		if (ecsWorld->getComponent<ecs::WorkQueue>(entity) != nullptr || ecsWorld->getComponent<ecs::Colonist>(entity) != nullptr ||
@@ -471,7 +473,7 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		if (!under) {
 			continue;
 		}
-		if (const Pick pick = pickOf(entity, appearance, pos.value, dist, packaged); pick.beats(furniture)) {
+		if (const SelectionPick pick = pickOf(entity, appearance, pos.value, dist, packaged); pick.beats(furniture)) {
 			furniture = pick;
 		}
 	}

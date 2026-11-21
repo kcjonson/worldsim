@@ -700,34 +700,6 @@ namespace assets {
 			return clipped;
 		}
 
-		/// The convex hull of points (monotone chain), in no particular winding.
-		std::vector<glm::vec2> convexHull(std::vector<glm::vec2> points) {
-			std::sort(points.begin(), points.end(), [](glm::vec2 left, glm::vec2 right) { return left.x != right.x ? left.x < right.x : left.y < right.y; });
-			if (points.size() < 3) {
-				return points;
-			}
-			const auto cross = [](glm::vec2 origin, glm::vec2 first, glm::vec2 second) {
-				return ((first.x - origin.x) * (second.y - origin.y)) - ((first.y - origin.y) * (second.x - origin.x));
-			};
-			std::vector<glm::vec2> hull(points.size() * 2);
-			size_t				   count = 0;
-			for (const glm::vec2& point : points) {
-				while (count >= 2 && cross(hull[count - 2], hull[count - 1], point) <= 0.0F) {
-					--count;
-				}
-				hull[count++] = point;
-			}
-			const size_t lower = count + 1;
-			for (size_t i = points.size() - 1; i-- > 0;) {
-				while (count >= lower && cross(hull[count - 2], hull[count - 1], points[i]) <= 0.0F) {
-					--count;
-				}
-				hull[count++] = points[i];
-			}
-			hull.resize(count - 1);
-			return hull;
-		}
-
 		/// How far a point lies outside a convex polygon; 0 inside or on it.
 		float distanceOutside(const std::vector<glm::vec2>& convex, glm::vec2 point) {
 			if (convex.empty()) {
@@ -751,29 +723,11 @@ namespace assets {
 			return left && right ? nearest : 0.0F;
 		}
 
-		/// Where each strip draws, as vector polygons: each of its pieces is a placement's footprint between the piece's
-		/// x values, lifted as the view lifts it (its sides from its bottom to its top, and its top), whose convex hull
-		/// holds the piece's triangles but for the outline's half width.
-		std::vector<std::vector<std::vector<glm::vec2>>> stripRegions(const PartsAsset& parts, const StripLayout& layout, float turnRadians, const ViewConfig& config) {
-			std::vector<std::vector<std::vector<glm::vec2>>> regions(layout.strips.size());
-			for (size_t strip = 0; strip < layout.strips.size(); ++strip) {
-				for (const StripPiece& piece : layout.strips[strip].pieces) {
-					const PartDefinition&		 part = parts.parts[parts.placements[piece.placement].part];
-					const std::vector<glm::vec2> slice = clippedToColumn(turnedFootprint(parts, piece.placement, turnRadians), piece.minX, piece.maxX);
-					std::vector<glm::vec2>		 lifted;
-					for (const glm::vec2& point : slice) {
-						lifted.emplace_back(point.x, point.y - part.bottomMeters * config.heightRatio);
-						lifted.emplace_back(point.x, point.y - part.topMeters * config.heightRatio);
-					}
-					regions[strip].push_back(convexHull(std::move(lifted)));
-				}
-			}
-			return regions;
-		}
-
 		/// The silhouette's rings cut at every strip's band edges into open lines, each given to the strip whose band
-		/// holds it; in a band of several strips (a notch's two sides, or the flat strip), to the strip whose region
-		/// (stripRegions) it lies on, the nearest on a tie. Consecutive cuts given to one strip stay one line.
+		/// holds it; in a band of several strips (a notch's two sides, or the flat strip), to the strip with the nearest
+		/// region (stripRegions), equal distances going to the strip with the lesser anchor. A cut lies about half a
+		/// stroke outside every region, since the rings include the outline. Consecutive cuts given to one strip stay one
+		/// line.
 		std::vector<std::vector<std::vector<glm::vec2>>> stripLinesOf(
 			const PartsAsset& parts, const StripLayout& layout, float turnRadians, const ViewConfig& config, const std::vector<geometry::Ring>& rings
 		) {
@@ -804,15 +758,14 @@ namespace assets {
 				   if (candidates.size() == 1) {
 					   return candidates.front();
 				   }
+				   // Candidates come in layout order, ascending anchor, so the strict comparison keeps the lesser anchor.
 				   uint32_t best = candidates.empty() ? 0 : candidates.front();
 				   float	bestDistance = kInfinity;
 				   for (const uint32_t strip : candidates) {
-					   for (const std::vector<glm::vec2>& region : regions[strip]) {
-						   const float distance = distanceOutside(region, point);
-						   if (distance < bestDistance) {
-							   bestDistance = distance;
-							   best = strip;
-						   }
+					   const float distance = distanceOutsideStrip(regions[strip], point);
+					   if (distance < bestDistance) {
+						   bestDistance = distance;
+						   best = strip;
 					   }
 				   }
 				   return best;
@@ -875,6 +828,31 @@ namespace assets {
 		}
 
 	} // namespace
+
+	std::vector<std::vector<std::vector<glm::vec2>>> stripRegions(const PartsAsset& parts, const StripLayout& layout, float turnRadians, const ViewConfig& config) {
+		std::vector<std::vector<std::vector<glm::vec2>>> regions(layout.strips.size());
+		for (size_t strip = 0; strip < layout.strips.size(); ++strip) {
+			for (const StripPiece& piece : layout.strips[strip].pieces) {
+				const PartDefinition&		 part = parts.parts[parts.placements[piece.placement].part];
+				const std::vector<glm::vec2> slice = clippedToColumn(turnedFootprint(parts, piece.placement, turnRadians), piece.minX, piece.maxX);
+				std::vector<glm::vec2>		 lifted;
+				for (const glm::vec2& point : slice) {
+					lifted.emplace_back(point.x, point.y - part.bottomMeters * config.heightRatio);
+					lifted.emplace_back(point.x, point.y - part.topMeters * config.heightRatio);
+				}
+				regions[strip].push_back(convexHull(std::move(lifted)));
+			}
+		}
+		return regions;
+	}
+
+	float distanceOutsideStrip(const std::vector<std::vector<glm::vec2>>& region, glm::vec2 point) {
+		float nearest = kInfinity;
+		for (const std::vector<glm::vec2>& polygon : region) {
+			nearest = std::min(nearest, distanceOutside(polygon, point));
+		}
+		return nearest;
+	}
 
 	uint32_t turnQuantaFromDegrees(double degrees) {
 		const auto count = static_cast<long long>(kTurnQuantaPerTurn);

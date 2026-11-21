@@ -1,4 +1,5 @@
 #include "scenes/game/world/selection/SelectionSystem.h"
+#include "scenes/game/world/selection/SelectionPick.h"
 
 #include "scenes/game/world/PlayerVisibilityFixture.test.h"
 
@@ -12,6 +13,7 @@
 #include <ecs/components/Packaged.h>
 #include <ecs/components/ResourceStack.h>
 #include <ecs/components/Transform.h>
+#include <ecs/components/WorkQueue.h>
 
 #include <assets/PartsAsset.test.h>
 #include <core/Vec2i64.h>
@@ -243,7 +245,7 @@ TEST_F(SelectionPartsTest, OfTwoOverlappingItemsTheOneDrawnInFrontIsPicked) {
 	EXPECT_GT(nearerTheBack, 0U) << "some of those clicks are nearer the box behind";
 }
 
-// A packaged item a colonist is carrying is not drawn where it was, so it isn't picked there.
+// A packaged item or station a colonist is carrying is not drawn where it was, so it isn't picked there.
 TEST_F(SelectionPartsTest, ACarriedPackagedItemIsNotPicked) {
 	const glm::vec2		at{5.0F, 5.0F};
 	const ecs::EntityID box = addBox(at, 0.0);
@@ -251,4 +253,52 @@ TEST_F(SelectionPartsTest, ACarriedPackagedItemIsNotPicked) {
 	EXPECT_EQ(clickAt(at), box) << "packaged and on the ground";
 	seen.world.getComponent<ecs::Packaged>(box)->beingCarried = true;
 	EXPECT_EQ(clickAt(at), 0U);
+
+	const glm::vec2		stationAt{8.0F, 5.0F};
+	const ecs::EntityID station = addBox(stationAt, 35.0);
+	seen.world.addComponent<ecs::WorkQueue>(station, ecs::WorkQueue{});
+	seen.world.addComponent<ecs::Packaged>(station, ecs::Packaged{});
+	const auto stationClicked = [&] {
+		selection->clearSelection();
+		const glm::vec2 screen = seen.screenOf(stationAt);
+		selection->handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight);
+		const auto* picked = std::get_if<world_sim::CraftingStationSelection>(&selection->current());
+		return picked != nullptr ? picked->entityId : ecs::EntityID{0};
+	};
+	EXPECT_EQ(stationClicked(), station) << "a packaged station on the ground";
+	seen.world.getComponent<ecs::Packaged>(station)->beingCarried = true;
+	EXPECT_EQ(stationClicked(), 0U) << "carried";
+}
+
+// The candidates' order is total, so which wins never depends on the order the loop meets them: those with a front
+// anchor first, by anchor, then the rest by distance.
+TEST(SelectionPickTest, TheWinnerDoesNotDependOnTheOrderCandidatesComeIn) {
+	using world_sim::SelectionPick;
+	const std::vector<SelectionPick> candidates{
+		{.entity = 1, .distance = 2.0F, .frontAnchor = 5.0F},
+		{.entity = 2, .distance = 1.0F, .frontAnchor = std::nullopt},
+		{.entity = 3, .distance = 0.5F, .frontAnchor = 3.0F},
+		{.entity = 4, .distance = 0.2F, .frontAnchor = std::nullopt},
+	};
+	std::vector<size_t> order{0, 1, 2, 3};
+	do {
+		SelectionPick best;
+		for (const size_t index : order) {
+			if (candidates[index].beats(best)) {
+				best = candidates[index];
+			}
+		}
+		EXPECT_EQ(best.entity, 1U) << "the largest front anchor";
+	} while (std::next_permutation(order.begin(), order.end()));
+
+	order = {1, 3};
+	do {
+		SelectionPick best;
+		for (const size_t index : order) {
+			if (candidates[index].beats(best)) {
+				best = candidates[index];
+			}
+		}
+		EXPECT_EQ(best.entity, 4U) << "with no front anchor, the nearest";
+	} while (std::next_permutation(order.begin(), order.end()));
 }

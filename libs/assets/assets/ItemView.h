@@ -101,6 +101,17 @@ namespace assets {
 	/// nothing is tessellated, so it is cheap enough for the main thread. Empty for a def that isn't parts.
 	[[nodiscard]] StripLayout stripLayout(const AssetDefinition& def, uint32_t turnQuanta, const ViewConfig& config);
 
+	/// Where each strip of a layout draws, as vector polygons (section 15), by strip: each of its pieces is the piece's
+	/// placement footprint between the piece's x values, lifted as the view lifts it (its sides from the part's bottom to
+	/// its top, and its top), as one convex polygon, which holds the piece's triangles but for the outline's half width.
+	/// What the selection outline's cuts and a click on overlapping items are both told apart by.
+	[[nodiscard]] std::vector<std::vector<std::vector<glm::vec2>>> stripRegions(
+		const PartsAsset& parts, const StripLayout& layout, float turnRadians, const ViewConfig& config
+	);
+
+	/// How far a point (relative to the pivot) lies outside a strip's region: the least over its polygons, 0 inside one.
+	[[nodiscard]] float distanceOutsideStrip(const std::vector<std::vector<glm::vec2>>& region, glm::vec2 point);
+
 	/// A strip layout the registry keeps for a template at a turn (AssetRegistry::stripLayout), which an item's
 	/// stream records point into (section 8).
 	struct ItemLayout {
