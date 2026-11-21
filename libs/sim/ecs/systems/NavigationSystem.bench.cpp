@@ -46,6 +46,7 @@
 #include "../components/Task.h"
 #include "../components/Transform.h"
 
+#include <assets/AssetBootstrap.h>
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
 #include <assets/RecipeRegistry.h>
@@ -797,7 +798,9 @@ namespace {
 		}
 		for (auto _ : state) {
 			Rig					   rig(state.range(0));
-			ecs::AIDecisionSystem& ai = rig.world.registerSystem<ecs::AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234U);
+			ecs::AIDecisionSystem& ai = rig.world.registerSystem<ecs::AIDecisionSystem>(
+				assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), 1234U
+			);
 			ai.setNavigationSystem(&rig.nav);
 			rig.world.registerSystem<ecs::MovementSystem>();
 			rig.world.registerSystem<ecs::PhysicsSystem>();
@@ -918,7 +921,9 @@ namespace {
 		}
 		for (auto _ : state) {
 			Rig					   rig(0);
-			ecs::AIDecisionSystem& ai = rig.world.registerSystem<ecs::AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234U);
+			ecs::AIDecisionSystem& ai = rig.world.registerSystem<ecs::AIDecisionSystem>(
+				assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), 1234U
+			);
 			ai.setNavigationSystem(&rig.nav);
 			colony(rig);
 			const ecs::EntityID e = rig.world.createEntity();
@@ -1553,6 +1558,13 @@ namespace {
 			return;
 		}
 		assets::AssetRegistry& registry = assets::AssetRegistry::Get();
+		assets::loadAssetSystem(
+			{.definitions = (bench::projectRoot() / "assets" / "world").string(),
+			 .sharedScripts = (bench::projectRoot() / "assets" / "shared" / "scripts").string(),
+			 .recipes = {},
+			 .config = (bench::projectRoot() / "assets" / "config").string()},
+			false
+		);
 		for (auto _ : state) {
 			assets::PlacementExecutor placement(registry);
 			placement.initialize();

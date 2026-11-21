@@ -1,10 +1,12 @@
 #include "ClaimIndex.h"
 
 #include "World.h"
+#include "systems/ShippedPriorityConfig.test.h"
 
 #include <gtest/gtest.h>
 
 #include <initializer_list>
+#include <string_view>
 
 namespace ecs::test {
 
@@ -21,9 +23,16 @@ namespace ecs::test {
 		struct TaskSpec {
 			uint64_t					 instanceId = 0;
 			uint64_t					 claimSeq = 0;
-			int							 tier = 6;
+			std::string_view			 rung = "opportunistic_work";
 			std::initializer_list<Claim> claims;
 		};
+
+		/// The shipped ladder's rung `name`, loading the shipped config on first use: the index ranks by it.
+		uint8_t shippedRung(std::string_view name) {
+			static const bool kLoaded = loadShippedPriorityConfig();
+			EXPECT_TRUE(kLoaded);
+			return rungNamed(name);
+		}
 
 		EntityID addColonist(World& world, const TaskSpec& spec) {
 			const EntityID colonist = world.createEntity();
@@ -31,7 +40,7 @@ namespace ecs::test {
 			task.type = TaskType::Haul;
 			task.instanceId = spec.instanceId;
 			task.claimSeq = spec.claimSeq;
-			task.priorityTier = spec.tier;
+			task.priorityTier = shippedRung(spec.rung);
 			for (const Claim& claim : spec.claims) {
 				EXPECT_TRUE(task.claims.push(claim));
 			}
@@ -52,7 +61,7 @@ namespace ecs::test {
 							.claims = {Claim::sourceQuantity(TargetKind::WorldKey, kPile, kWood, 3), Claim::inbound(kBox, kWood, 3),
 									   Claim::inFlight(kRoot, kWood, 3)}});
 		addColonist(world, {.instanceId = 3, .claims = {Claim::use(TargetKind::WorldKey, kTree), Claim::inFlight(kRoot, kWood, 8)}});
-		addColonist(world, {.instanceId = 4, .tier = 4, .claims = {Claim::slot(kStation)}});
+		addColonist(world, {.instanceId = 4, .rung = "committed_work", .claims = {Claim::slot(kStation)}});
 
 		ClaimIndex index;
 		index.rebuild(world);
@@ -90,8 +99,10 @@ namespace ecs::test {
 	// A filtered holder query passes over holders the filter rejects, however they rank.
 	TEST(ClaimIndexTest, UseHolderWhereSkipsHoldersTheFilterRejects) {
 		World		   world;
-		const EntityID worker = addColonist(world, {.instanceId = 1, .tier = 4, .claims = {Claim::use(TargetKind::WorldKey, kTree)}});
-		const EntityID eater = addColonist(world, {.instanceId = 2, .tier = 5, .claims = {Claim::use(TargetKind::WorldKey, kTree)}});
+		const EntityID worker =
+			addColonist(world, {.instanceId = 1, .rung = "committed_work", .claims = {Claim::use(TargetKind::WorldKey, kTree)}});
+		const EntityID eater =
+			addColonist(world, {.instanceId = 2, .rung = "ordinary_need", .claims = {Claim::use(TargetKind::WorldKey, kTree)}});
 		world.getComponent<Task>(eater)->type = TaskType::FulfillNeed;
 
 		ClaimIndex index;
@@ -129,7 +140,7 @@ namespace ecs::test {
 		ASSERT_TRUE(task.suspended.has_value());
 		task.type = TaskType::FulfillNeed;
 		task.instanceId = 9;
-		task.priorityTier = 2;
+		task.priorityTier = shippedRung("critical_need");
 
 		ClaimIndex index;
 		index.rebuild(world);
@@ -173,15 +184,21 @@ namespace ecs::test {
 
 	TEST(ClaimIndexTest, HolderIsTheHighestRankedClaimant) {
 		World world;
-		addColonist(world, {.instanceId = 1, .claimSeq = 1, .tier = 6, .claims = {Claim::use(TargetKind::WorldKey, kTree), Claim::slot(kStation)}});
-		addColonist(world, {.instanceId = 2, .claimSeq = 3, .tier = 2, .claims = {Claim::use(TargetKind::WorldKey, kTree)}});
-		addColonist(world, {.instanceId = 3, .claimSeq = 2, .tier = 2, .claims = {Claim::use(TargetKind::WorldKey, kTree)}});
-		addColonist(world, {.instanceId = 4, .claimSeq = 4, .tier = 4, .claims = {Claim::slot(kStation)}});
+		addColonist(
+			world,
+			{.instanceId = 1,
+			 .claimSeq = 1,
+			 .rung = "opportunistic_work",
+			 .claims = {Claim::use(TargetKind::WorldKey, kTree), Claim::slot(kStation)}}
+		);
+		addColonist(world, {.instanceId = 2, .claimSeq = 3, .rung = "critical_need", .claims = {Claim::use(TargetKind::WorldKey, kTree)}});
+		addColonist(world, {.instanceId = 3, .claimSeq = 2, .rung = "critical_need", .claims = {Claim::use(TargetKind::WorldKey, kTree)}});
+		addColonist(world, {.instanceId = 4, .claimSeq = 4, .rung = "committed_work", .claims = {Claim::slot(kStation)}});
 
 		ClaimIndex index;
 		index.rebuild(world);
 
-		// Lower tier number first; equal tiers go to the earlier sequence.
+		// The higher rung first; equal rungs go to the earlier sequence.
 		EXPECT_EQ(index.useHolder(kTreeTarget, {})->instanceId, 3U);
 		EXPECT_EQ(index.slotHolder(kStationTarget, kAnySlot, {})->instanceId, 4U);
 	}

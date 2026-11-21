@@ -196,6 +196,7 @@ if(BUILD_TESTING)
     target_link_libraries(world-sim-tests
         PRIVATE
             world-sim-game
+            assets-test-support
             nlohmann_json::nlohmann_json
             GTest::gtest
             GTest::gtest_main

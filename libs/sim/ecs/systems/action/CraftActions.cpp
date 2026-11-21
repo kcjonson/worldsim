@@ -180,7 +180,9 @@ namespace ecs {
 		}
 
 		// Create the craft action
-		action = Action::Craft(task.craftRecipeDefName, task.targetStationId, task.targetPosition, recipe->workAmount, inputs, outputs);
+		action = Action::Craft(
+			actionEntries, task.craftRecipeDefName, task.targetStationId, task.targetPosition, recipe->workAmount, inputs, outputs
+		);
 
 		LOG_DEBUG(Engine, "[Action] Starting Craft action for %s (%.1fs duration)", recipe->label.c_str(), action.duration);
 	}

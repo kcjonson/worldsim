@@ -129,6 +129,12 @@ namespace {
 		constexpr uint64_t	kTreeBase  = 0x7EE00000ULL;
 		constexpr uint64_t	kDestBase  = 50000; // goal g's destination entity
 		constexpr uint64_t	kStockBase = 60000; // the box a fetch takes from
+		if (!ecs::loadShippedPriorityConfig()) {
+			state.SkipWithError("priority-tuning.xml did not load");
+			return;
+		}
+		const uint8_t committedWork = ecs::rungNamed("committed_work");
+		const uint8_t opportunisticWork = ecs::rungNamed("opportunistic_work");
 		for (auto _ : state) {
 			ecs::World world;
 			for (int c = 0; c < kColonists; ++c) {
@@ -140,13 +146,13 @@ namespace {
 				task.claimSeq				 = static_cast<uint64_t>(c) + 1;
 				if (c % 2 == 0) {
 					task.type		  = ecs::TaskType::Harvest;
-					task.priorityTier = 4;
+					task.priorityTier = committedWork;
 					(void)task.claims.push(ecs::Claim::use(ecs::TargetKind::WorldKey, kTreeBase + static_cast<uint64_t>(c)));
 					(void)task.claims.push(ecs::Claim::inbound(dest, kWood, 3));
 					(void)task.claims.push(ecs::Claim::inFlight(goal, kWood, 3));
 				} else {
 					task.type		  = ecs::TaskType::Haul;
-					task.priorityTier = 6;
+					task.priorityTier = opportunisticWork;
 					(void)task.claims.push(ecs::Claim::sourceQuantity(ecs::TargetKind::Entity, kStockBase + static_cast<uint64_t>(c % 20), kStone, 5));
 					(void)task.claims.push(ecs::Claim::inbound(dest, kStone, 5));
 					(void)task.claims.push(ecs::Claim::inFlight(goal, kStone, 5));
@@ -315,7 +321,9 @@ namespace {
 		for (auto _ : state) {
 			ecs::GoalTaskRegistry::Get().clear();
 			ecs::World				world;
-			ecs::AIDecisionSystem&	ai = world.registerSystem<ecs::AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234U);
+			ecs::AIDecisionSystem&	ai = world.registerSystem<ecs::AIDecisionSystem>(
+				 assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), 1234U
+			 );
 			wantWood(world);
 
 			// One memory of trees within 100 m of the colony, which every colonist holds. Memory keys a

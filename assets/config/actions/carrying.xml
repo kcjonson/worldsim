@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Taking goods from a source and putting them into a target. See /docs/technical/queries-and-chains.md (The shared actions). -->
+<actions>
+  <action id="harvest" on="harvestable" workFrom="durability" skill="Harvesting" hands="free" interruptable="false">
+    <take/>
+  </action>
+  <action id="pickup" on="loose_item" seconds="0.5" hands="free" interruptable="false">
+    <take/>
+  </action>
+  <action id="withdraw" on="storage" seconds="0.5" hands="free" interruptable="false">
+    <take/>
+  </action>
+  <action id="deposit" seconds="1" hands="any" interruptable="false">
+    <put/>
+  </action>
+</actions>

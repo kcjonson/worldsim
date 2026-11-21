@@ -40,7 +40,6 @@
 #include "../components/Task.h"
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
-#include "assets/ActionTypeRegistry.h"
 #include "assets/AssetRegistry.h"
 #include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
@@ -103,13 +102,12 @@ namespace ecs::test {
 			woodId = registry.getDefNameId("Wood");
 			stickId = registry.getDefNameId("Stick");
 
-			ai = &world->registerSystem<AIDecisionSystem>(registry, assets::RecipeRegistry::Get(), kSeed);
-			actions = &world->registerSystem<ActionSystem>(kSeed);
+			ai = &world->registerSystem<AIDecisionSystem>(registry, assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), kSeed);
+			actions = &world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kSeed);
 		}
 
 		void TearDown() override {
 			assets::RecipeRegistry::Get().clear();
-			assets::ActionTypeRegistry::Get().clear();
 			assets::AssetRegistry::Get().clearDefinitions();
 			GoalTaskRegistry::Get().clear();
 			world.reset();
@@ -823,10 +821,6 @@ namespace ecs::test {
 	}
 
 	TEST_F(ChainClaimsTest, ADroppedArmfulLeavesNoRecordAndNoClaims) {
-		assets::ActionTypeDef eat;
-		eat.defName = "Eat";
-		eat.needsHands = true;
-		assets::ActionTypeRegistry::Get().registerTestAction(std::move(eat));
 		int drops = 0;
 		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t, glm::vec2) { ++drops; });
 
@@ -854,11 +848,6 @@ namespace ecs::test {
 	// colonist deciding later in that update sizes its haul to the room the box has left, not what it had
 	// when the first colonist decided.
 	TEST_F(ChainClaimsTest, GoodsPutAwayInsideAnUpdateShowInLaterDecisions) {
-		assets::ActionTypeDef eat;
-		eat.defName = "Eat";
-		eat.needsHands = true;
-		assets::ActionTypeRegistry::Get().registerTestAction(std::move(eat));
-
 		const glm::vec2 boxPos{1.0F, 0.0F};
 		const EntityID	box = world->createEntity();
 		world->addComponent<Position>(box, Position{boxPos});
@@ -958,10 +947,6 @@ namespace ecs::test {
 	// to the site delivers what he holds, so it needs no free hands: the wood goes with him, not onto the
 	// ground to be fetched again.
 	TEST_F(ChainClaimsTest, AnArmfulBoundForABoxGoesToASiteWithoutBeingDropped) {
-		assets::ActionTypeDef pickup;
-		pickup.defName = "Pickup";
-		pickup.needsHands = true;
-		assets::ActionTypeRegistry::Get().registerTestAction(std::move(pickup));
 		uint32_t dropped = 0;
 		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity, glm::vec2) { dropped += quantity; });
 		const glm::vec2 boxPos{0.0F, 10.0F};
@@ -1578,7 +1563,7 @@ namespace ecs::test {
 			task.targetPosition = {50.0F, 50.0F};
 			task.harvestTargetKey = 1;
 			task.harvestYieldDefNameId = woodId;
-			task.priorityTier = 4;
+			task.priorityTier = rungNamed("committed_work");
 			task.instanceId = GoalTaskRegistry::Get().allocateClaimSeq();
 			task.claimSeq = task.instanceId;
 			ASSERT_TRUE(task.claims.push(Claim::inbound(static_cast<uint64_t>(gathered.blueprint), woodId, 3)));
@@ -2186,7 +2171,7 @@ namespace ecs::test {
 		task.targetPosition = {50.0F, 50.0F};
 		task.harvestTargetKey = 1;
 		task.harvestYieldDefNameId = fibreId;
-		task.priorityTier = 4;
+		task.priorityTier = rungNamed("committed_work");
 		task.instanceId = GoalTaskRegistry::Get().allocateClaimSeq();
 		task.claimSeq = task.instanceId;
 		ASSERT_TRUE(task.claims.push(Claim::inbound(static_cast<uint64_t>(site.blueprint), fibreId, 9)));
@@ -2294,7 +2279,7 @@ namespace ecs::test {
 		EXPECT_FALSE(clearTookTheGoods) << "the clear is its own task, holding no cargo";
 	}
 
-	// Critically hungry in the middle of tier-4 work, with food only in a box: he leaves the work, takes a
+	// Critically hungry in the middle of committed_work, with food only in a box: he leaves the work, takes a
 	// meal from the box, eats, and goes back to finish the work.
 	TEST_F(ChainWalkTest, CriticalHungerLeavesWorkForABoxAndReturns) {
 		const Site		site = fibreSite({0.0F, 12.0F}, 6);
@@ -2315,7 +2300,7 @@ namespace ecs::test {
 			const Task& task = *getTask(colonist);
 			return task.type == TaskType::Harvest && claimOf(task, ClaimKind::Inbound).has_value();
 		}));
-		ASSERT_EQ(getTask(colonist)->priorityTier, 4);
+		ASSERT_EQ(getTask(colonist)->priorityTier, rungNamed("committed_work"));
 		const uint64_t gathering = getTask(colonist)->instanceId;
 
 		auto& hunger = world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger);
@@ -2330,7 +2315,7 @@ namespace ecs::test {
 			}
 			return delivered(site) == 6;
 		})) << "delivered " << delivered(site);
-		EXPECT_TRUE(leftTheWork) << "the critical need took him off tier-4 work to the box";
+		EXPECT_TRUE(leftTheWork) << "the critical need took him off committed_work to the box";
 		EXPECT_LT(world->getComponent<Inventory>(box)->getQuantity("Berry"), 5U);
 		EXPECT_GE(hunger.value, 10.0F) << "he ate";
 		EXPECT_EQ(resumedBy, gathering) << "the next cut took his gathering back up";
@@ -3510,7 +3495,7 @@ namespace ecs::test {
 		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value = 5.0F;
 		decide(colonist);
 		ASSERT_EQ(getTask(colonist)->instanceId, instance) << "the same meal, kept";
-		EXPECT_EQ(getTask(colonist)->priorityTier, 2);
+		EXPECT_EQ(getTask(colonist)->priorityTier, rungNamed("critical_need"));
 		EXPECT_EQ(getTask(colonist)->needQuantity, 2U) << "two berries take hunger from 5 past 50";
 		EXPECT_EQ(ai->claimIndex().sourceClaimed({.kind = TargetKind::WorldKey, .key = hashWorldEntity(pilePos, berryId)}, berryId, {}), 2U);
 	}

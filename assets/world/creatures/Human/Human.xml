@@ -9,7 +9,13 @@
     <motion>biped.motion.xml</motion>
     <worldHeight>1.0</worldHeight>
     <!-- The creature: its behaviors and mood costs, read by the creature loader, not the asset registry. -->
-    <creature mood="true"/>
+    <creature mood="true">
+      <behavior id="human/eating"/>
+      <behavior id="common/drinking_at_water"/>
+      <behavior id="human/sleeping"/>
+      <behavior id="human/relieving"/>
+      <behavior id="human/washing"/>
+    </creature>
   </AssetDef>
 
   <!-- Directional variants -->

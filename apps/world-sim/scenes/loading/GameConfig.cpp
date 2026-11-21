@@ -64,12 +64,22 @@ namespace world_sim {
 				  return definitions.getDefinitionById(id) == nullptr ? std::nullopt : std::optional<uint32_t>(id);
 			};
 			// A work entry's rung names a rung of the ladder the arbitration file just declared.
-			assets::EntrySources sources{.configRoot = configRoot, .creatures = creatures, .rungs = assets::PriorityConfig::Get().rungs()};
+			assets::EntrySources sources{
+				.configRoot = configRoot,
+				.creatures = creatures,
+				.rungs = assets::PriorityConfig::Get().rungs(),
+				.trackedNeeds = ecs::trackedNeedIds(),
+			};
 			sources.definitionId = definitionId;
 			assets::EntryLoad entries = assets::loadEntries(sources);
 			load.errors = std::move(entries.errors);
 			load.entries = std::move(entries.library);
 			entryWarnings = std::move(entries.warnings);
+			if (load.errors.empty()) {
+				ecs::ActionEntriesLoad actions = ecs::resolveActionEntries(load.entries);
+				load.errors = std::move(actions.errors);
+				load.actions = std::move(actions.actions);
+			}
 		}
 		const bool			   entriesLoaded = workConfigLoaded && load.errors.empty();
 		ecs::ColonistRulesLoad colonistRules = ecs::loadColonistRules(configRoot, *human);
@@ -92,9 +102,14 @@ namespace world_sim {
 			  };
 			std::vector<std::string> nameErrors = assets::checkEntryNames(load.entries, names);
 			load.errors.insert(load.errors.end(), nameErrors.begin(), nameErrors.end());
+			// Thought sources name the action entries, which load before them.
+			for (const std::string& error : load.rules.thoughtTypes->resolveActions(load.entries)) {
+				load.errors.push_back("[thoughts] " + error);
+			}
 		}
 		if (!load.errors.empty()) {
 			load.entries = assets::EntryLibrary{};
+			load.actions = ecs::ActionEntries{};
 			return load;
 		}
 		// A warning is worth reading only about a config that loaded; a failed load's errors say what to fix first.

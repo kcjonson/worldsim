@@ -53,7 +53,7 @@ namespace ecs {
 			heardEvents.push_back({
 				.colonist = event.colonist,
 				.trigger = event.moment == ActionMoment::Started ? ThoughtTrigger::ActionStarts : ThoughtTrigger::ActionFinishes,
-				.action = event.type,
+				.action = event.action,
 				.definition = event.aboutDefinition,
 			});
 		});
@@ -123,7 +123,8 @@ namespace ecs {
 				continue;
 			}
 			const bool actionTrigger = source.trigger == ThoughtTrigger::ActionStarts || source.trigger == ThoughtTrigger::ActionFinishes;
-			if (actionTrigger && source.action != event.action) {
+			// An action source ThoughtTypes::resolveActions has not resolved matches no action.
+			if (actionTrigger && (!source.action.valid() || source.action != event.action)) {
 				continue;
 			}
 			if (!thingMatches(source, event.definition)) {

@@ -1,6 +1,7 @@
 #include "assets/AssetBootstrap.h"
 #include "assets/AssetRegistry.h"
 #include "assets/RecipeRegistry.h"
+#include "assets/ViewConfig.h"
 
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
@@ -14,6 +15,13 @@ namespace assets {
 		definitions.clear();
 		RecipeRegistry::Get().clear();
 		definitions.setSharedScriptsPath(sources.sharedScripts);
+
+		// Parts defs are read with it, so it loads first; its problems go into the definitions' report.
+		if (sources.config.empty()) {
+			GameViewConfig::Get().clear(std::string("no config folder was found, so ") + kViewConfigFile + " wasn't read");
+		} else {
+			GameViewConfig::Get().loadFromFile(sources.config, kViewConfigFile);
+		}
 
 		// Recipes resolve their def-name ids against the definition index, so they load after the
 		// definitions in both paths: on the worker before it reports done, or after the blocking load.

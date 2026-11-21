@@ -917,8 +917,11 @@ namespace ecs::test {
 	}
 
 	TEST(ThoughtTypeDefinitions, TheShippedRulesLoadClean) {
-		const ColonistRulesLoad load = loadColonistRules(testing::repoConfig(), testing::shippedHumanConfig());
+		ColonistRulesLoad load = loadColonistRules(testing::repoConfig(), testing::shippedHumanConfig());
 		for (const std::string& error : load.errors) {
+			ADD_FAILURE() << error;
+		}
+		for (const std::string& error : load.rules.thoughtTypes->resolveActions(testing::shippedEntries())) {
 			ADD_FAILURE() << error;
 		}
 		const ThoughtTypes& types = *load.rules.thoughtTypes;
