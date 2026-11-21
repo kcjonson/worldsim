@@ -65,8 +65,8 @@ namespace assets {
 		double sine;
 	};
 
-	// An instance that is never turned or scaled: what the player places (furniture, stations) is
-	// drawn upright at scale 1.
+	// An instance that is never turned or scaled: what the player places is drawn at scale 1, and
+	// upright unless it is a parts item, whose turn is in its view.
 	[[nodiscard]] inline InstanceTransform uprightInstance(glm::vec2 position) {
 		return {position, 0.0F, 1.0F};
 	}

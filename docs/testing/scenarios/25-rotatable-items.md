@@ -1,9 +1,9 @@
 # Scenario 25: rotatable items
 
 **Status:** draft  
-**Last verified:** 2026-11-21, steps 9 to 18; steps 1 to 8 on 2026-11-20
+**Last verified:** 2026-11-21, steps 1 to 5, 7, 8, 10 to 15, 17 to 21, 23 to 26, 28, 29, 32 and 33; 9 and 16 the same day before PR 542 merged (6: the second box's spawn was moved off the first's collider, so they didn't overlap; 22, 30 and 31 need a held Alt, which injected input can't send; 27 not run)
 
-A parts item draws at any turn with the faces the turn shows, sorts against a colonist and another item along its whole length, doesn't pop at the edge of the screen, draws its detail levels as the camera zooms, and selects by its turned shape. Spec: [rotatable-placed-items.md](../../technical/rendering/rotatable-placed-items.md), sections 3, 6.8, 8, 9, 10, and 15.
+A parts item draws at any turn with the faces the turn shows, sorts against a colonist and another item along its whole length, doesn't pop at the edge of the screen, draws its detail levels as the camera zooms, selects by its turned shape, and is turned while placing it with Q/E or a drag, snapped square to a wall and flush against it. Spec: [rotatable-placed-items.md](../../technical/rendering/rotatable-placed-items.md), sections 3, 6.8, 8, 9, 10, 14, and 15.
 
 ---
 
@@ -14,6 +14,8 @@ Fresh launch (Quick Start): `world-sim --scene=game --background --no-settings` 
 The test item is `TestPartsBox`: a box 1.2 m wide (local x), 0.6 m deep and 0.8 m tall, front red with an F, back blue with a B, left end green with an L, right end orange with an R, and an arrow on its top pointing to the front. It has three detail levels: at 8 px/m the letters drop, and from 80 px/m a white dot shows in each corner of every side. A spawn is `curl.exe "http://127.0.0.1:<PORT>/api/dev/spawn?def=TestPartsBox&at=<x>,<y>&n=1&scatter=0&turn=<degrees>"`: `at` is the centre of the box's 1.2 by 0.6 m footprint, and `turn` is degrees clockwise with the front down the screen at 0. A spawn that refuses its spot answers HTTP 400 naming water or an obstacle: move the spot a metre and try again. Steps 3 to 6 put Bob and a second box at offsets from that centre.
 
 Read Bob's `id`, `x` and `y` from `/api/state?what=colonists` (BID, BX, BY) and pick a row of open ground near him; call its west end RX,RY.
+
+Placing (steps 19 on): `curl.exe "http://127.0.0.1:<PORT>/api/dev/place?def=TestPartsBox"` starts placing it; pointer moves, keys, presses and releases go in through `/api/input` (`ev=move,<x>,<y>`, `ev=keydown,e`, one key a request, `ev=down,<x>,<y>`, `ev=up,<x>,<y>`, `ev=click,<x>,<y>,right`). `/api/state?what=placement` reads the ghost's `turnDegrees` and position and lists placed parts items with their turns. The wall of steps 26 to 31 is `/api/dev/walls?pts=<WX>,<WY>;<WX+5.64>,<WY+2.05>&host=0&built=1`, 6 m at 20 degrees on open ground. Injected input can't hold Alt: steps 22, 30 and 31 are done on the keyboard. Exit is `curl.exe "http://127.0.0.1:<PORT>/api/control?action=exit"`.
 
 ---
 
@@ -50,6 +52,24 @@ Step 16 starts with the 45 degree box of step 3 selected by a click on its top a
 
 Step 17 starts with game time stopped (`...dev/time?speed=0`; `action=pause` would hold the click too) and the camera at zoom 14 on Bob's `x` and `y` from `what=colonists`.
 
-17. Click 60 pixels below the middle of the window, on Bob's legs: Bob is selected and outlined as before.
+17. Click the middle of the window, on Bob: Bob is selected and outlined as before.
 18. `curl.exe -i "http://127.0.0.1:<PORT>/api/dev/spawn?def=TestPartsBox&at=<RX>,<RY>&turn="`: HTTP 400 saying `turn=` is empty.
-19. `curl.exe "http://127.0.0.1:<PORT>/api/control?action=exit"`.
+
+Steps 19 on start with game time running again (`...dev/time?speed=1`).
+
+19. Kill every box and start placing a `TestPartsBox` over open ground: a see-through box follows the pointer, red front and arrow down, turn 0.
+20. Press E twice: the ghost turns clockwise to 30, front and orange right end showing.
+21. Press Q: 15.
+22. Hold Alt and press E: 16. Let go and press E: 30.
+23. Press on the ground and drag 100 px right: the ghost stays at the press and turns its red front to the pointer, 270.
+24. Release: the box is placed there at 270.
+25. Place again: the ghost starts at 270.
+26. With the 20 degree wall built, hold the ghost 1 m south of its middle and press E round: it stops at 20, 110, 200 and 290 among the 15 degree steps.
+27. Drag to within 7.5 degrees of one of those four: the turn snaps to it.
+28. Turned square to the wall, bring the long side within 0.3 m of the face: it jumps flush against the face.
+29. Move the pointer along the wall: the ghost stays flush.
+30. Hold Alt and drag: the turn follows the pointer with no snap.
+31. Under Alt, turned parallel to the wall: it still slides flush.
+32. Press on the ground, drag onto the HUD and release there, then move over the ground: the ghost follows the pointer and doesn't turn.
+33. Press on the ground and right-click while holding it, then release the left button: placement ends and nothing is selected.
+34. Exit the game.

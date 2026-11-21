@@ -353,8 +353,8 @@ namespace world_sim {
 		configStrip.get()->setStatus(status);
 	}
 
-	void GameUI::setKeyGuide(std::optional<ToolKind> tool, const DrawingSettings& settings, bool collapsed) {
-		keyGuide.get()->show(tool, settings, collapsed);
+	void GameUI::setKeyGuide(std::optional<ToolKind> tool, bool placing, const DrawingSettings& settings, bool collapsed) {
+		keyGuide.get()->show(tool, placing, settings, collapsed);
 	}
 
 	void GameUI::setRoomsOverlayActive(bool active) {

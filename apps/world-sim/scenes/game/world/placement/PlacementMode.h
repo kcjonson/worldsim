@@ -9,6 +9,7 @@
 
 #include <math/Types.h>
 
+#include <cstdint>
 #include <functional>
 #include <string>
 
@@ -25,8 +26,8 @@ enum class PlacementState {
 /// Manages the flow: None -> MenuOpen -> Placing -> None
 class PlacementMode {
   public:
-	/// Callback signature for when an entity should be spawned
-	using PlaceCallback = std::function<void(const std::string& defName, Foundation::Vec2 worldPos)>;
+	/// Called to place `defName` at `worldPos`, turned `turnQuanta` (rotatable-placed-items 3).
+	using PlaceCallback = std::function<void(const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta)>;
 
 	struct Args {
 		PlaceCallback onPlace;
@@ -47,6 +48,9 @@ class PlacementMode {
 	/// Get current ghost position in world coordinates
 	[[nodiscard]] Foundation::Vec2 ghostPosition() const { return m_ghostPosition; }
 
+	/// The ghost's turn in quanta: the turn the item is placed at.
+	[[nodiscard]] uint32_t ghostTurnQuanta() const { return m_ghostTurnQuanta; }
+
 	/// Check if current ghost position is valid for placement
 	[[nodiscard]] bool isValidPlacement() const { return m_isValidPlacement; }
 
@@ -55,26 +59,27 @@ class PlacementMode {
 	/// Open the build menu (transitions None -> MenuOpen)
 	void enterMenu();
 
-	/// Select an item to place (transitions MenuOpen -> Placing)
-	void selectItem(const std::string& defName);
+	/// Select an item to place, its ghost starting at `turnQuanta` (transitions MenuOpen -> Placing)
+	void selectItem(const std::string& defName, uint32_t turnQuanta);
 
 	/// Cancel placement and return to normal (transitions any -> None)
 	void cancel();
 
-	/// Update ghost position from world coordinates and whether that spot is placeable.
-	/// `valid` comes from PlacementSystem's ground gate (footprintBuildableNow, and the footprint seen);
-	/// PlacementMode itself owns no terrain knowledge. Called each frame while Placing.
-	void updateGhostPosition(Foundation::Vec2 worldPos, bool valid);
+	/// Update the ghost's position, turn, and whether it is placeable there. `valid` comes from
+	/// PlacementSystem's ground gate (footprintBuildableNow, and the footprint seen); PlacementMode itself
+	/// owns no terrain knowledge. Called each frame while Placing.
+	void updateGhost(Foundation::Vec2 worldPos, uint32_t turnQuanta, bool valid);
 
 	/// Attempt to place at current ghost position
 	/// Returns true if placement succeeded (transitions Placing -> None)
 	bool tryPlace();
 
   private:
-	PlacementState m_state = PlacementState::None;
-	std::string m_selectedDefName;
+	PlacementState	 m_state = PlacementState::None;
+	std::string		 m_selectedDefName;
 	Foundation::Vec2 m_ghostPosition{0.0F, 0.0F};
-	bool m_isValidPlacement = false; // set each frame from the nav-mesh validity gate
+	uint32_t		 m_ghostTurnQuanta = 0;
+	bool			 m_isValidPlacement = false; // set each frame from the nav-mesh validity gate
 
 	PlaceCallback m_onPlace;
 };

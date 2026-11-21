@@ -207,6 +207,10 @@ namespace assets {
 	/// A placement's footprint turned with the item by `itemTurnRadians` (section 6.2), in the same winding.
 	[[nodiscard]] std::vector<glm::vec2> turnedFootprint(const PartsAsset& asset, size_t placement, float itemTurnRadians);
 
+	/// A parts def's reserved region (section 4.2): its collider unioned with its clearance, in the item's frame at
+	/// turn 0. Empty for a def with neither.
+	[[nodiscard]] std::vector<AreaPolygon> reservedRegion(const AssetDefinition& def);
+
 	/// The pairs of the parts order (section 6.6) among placements whose footprints on the screen are
 	/// `screenFootprints` (one a placement, turned with the item): entry i lists the placements that draw after
 	/// placement i. Footprints that overlap in plan put the higher later; disjoint ones sharing a vertical screen line

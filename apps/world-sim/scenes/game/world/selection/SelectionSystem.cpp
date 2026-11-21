@@ -5,6 +5,7 @@
 #include <assets/ConstructionRegistry.h>
 #include <assets/placement/InstanceTransform.h>
 #include <assets/placement/PlacementExecutor.h>
+#include <assets/TurnQuanta.h>
 #include <assets/placement/WorldDepthSort.h>
 #include <boolean/RingBoolean.h>
 #include <construction/ConstructionWorld.h>

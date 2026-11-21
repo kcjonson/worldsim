@@ -60,8 +60,8 @@ TEST_F(GroundRefusalTest, FoundationAcrossTheCreekIsRefusedAndBesideItIsTaken) {
 // The spawn verb sets furniture up where the placement tool would, never in the creek.
 TEST_F(GroundRefusalTest, SpawnRefusesFurnitureInTheCreekAndTakesItOnTheBank) {
 	ASSERT_TRUE(world_sim::PlacementSystem::isFurniture(kStorageBox));
-	EXPECT_FALSE(world_sim::spawnGroundRefusal(placement, &navigation, kStorageBox, {10.0F, kCreekY}).empty());
-	EXPECT_TRUE(world_sim::spawnGroundRefusal(placement, &navigation, kStorageBox, {10.0F, kCreekY - 2.0F}).empty());
+	EXPECT_FALSE(world_sim::spawnGroundRefusal(placement, &navigation, kStorageBox, {10.0F, kCreekY}, 0).empty());
+	EXPECT_TRUE(world_sim::spawnGroundRefusal(placement, &navigation, kStorageBox, {10.0F, kCreekY - 2.0F}, 0).empty());
 }
 
 // Furniture is not spawned inside a foundation still to be built, and is on bare ground beside it.
@@ -76,17 +76,17 @@ TEST_F(GroundRefusalTest, SpawnRefusesFurnitureInsideAnUnbuiltFoundation) {
 		   .callbacks = {},
 		   .insideUnbuiltSite = [&sites](glm::vec2 point) { return ecs::anyFootprintContains(sites, point); }
 	}};
-	const std::string refusal = world_sim::spawnGroundRefusal(gated, &navigation, kStorageBox, {5.0F, 8.0F});
+	const std::string refusal = world_sim::spawnGroundRefusal(gated, &navigation, kStorageBox, {5.0F, 8.0F}, 0);
 	EXPECT_NE(refusal.find("not built yet"), std::string::npos) << refusal;
-	EXPECT_TRUE(world_sim::spawnGroundRefusal(gated, &navigation, kStorageBox, {5.0F, 12.0F}).empty());
-	EXPECT_TRUE(world_sim::spawnGroundRefusal(gated, &navigation, kLooseStone, {5.0F, 8.0F}).empty()) << "a loose item is put down, not installed";
+	EXPECT_TRUE(world_sim::spawnGroundRefusal(gated, &navigation, kStorageBox, {5.0F, 12.0F}, 0).empty());
+	EXPECT_TRUE(world_sim::spawnGroundRefusal(gated, &navigation, kLooseStone, {5.0F, 8.0F}, 0).empty()) << "a loose item is put down, not installed";
 }
 
 // Anything else is put down, not built: a loose item goes in the creek, as a dropped one does.
 TEST_F(GroundRefusalTest, SpawnPutsANonFurnitureDefInTheCreek) {
 	ASSERT_FALSE(world_sim::PlacementSystem::isFurniture(kLooseStone));
-	EXPECT_TRUE(world_sim::spawnGroundRefusal(placement, &navigation, kLooseStone, {10.0F, kCreekY}).empty());
-	EXPECT_FALSE(world_sim::spawnGroundRefusal(placement, &navigation, kLooseStone, {500.0F, 500.0F}).empty()) << "ground no mover has meshed";
+	EXPECT_TRUE(world_sim::spawnGroundRefusal(placement, &navigation, kLooseStone, {10.0F, kCreekY}, 0).empty());
+	EXPECT_FALSE(world_sim::spawnGroundRefusal(placement, &navigation, kLooseStone, {500.0F, 500.0F}, 0).empty()) << "ground no mover has meshed";
 }
 
 // A mover goes anywhere he could stand, and onto ground no mover has meshed, which his own limit meshes.

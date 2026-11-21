@@ -218,6 +218,10 @@ namespace assets {
 		float	edgeSnapRadiusMeters = 0.3F;
 		int64_t edgeSnapRadiusMm = 300;
 
+		// How far from a placed item's pivot the nearest wall face or foundation edge turns it square to
+		// itself (rotatable-placed-items 14.3).
+		float itemAlignRangeMeters = 2.0F;
+
 		// The reach of every guide from committed structures: a corner (a foundation
 		// corner, or in the wall tool a wall vertex) within this distance of the cursor
 		// gives guides, and an edge within it gives a nearby direction. The shape's own
