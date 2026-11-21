@@ -119,7 +119,7 @@ Test coverage:
 - [ ] **Stray double blank line** — `DecisionTrace.h:47-48` — gather-field deletion artifact.
 - [ ] **New `m_`-prefixed members vs standard** — `AIDecisionSystem.h:167` (`m_colonyOrigin`), `GameScene.cpp:287` (`m_colony`) — name them `colonyOrigin`/`colony`.
 - [ ] **`[NavBuild]` logs at INFO** — `NavigationSystem.cpp:288,296,332,444,453,479` — build-timing/lifecycle telemetry that spams on pan; lower to `LOG_DEBUG` (lower only, never raise existing DEBUG).
-- [ ] **Long single functions wanting internal helpers** — `CraftingGoalSystem::update` (~223 lines), `HaulActions.cpp` `applyDepositEffect`/`startHaulAction` (~178/~168), `NavMesh.cpp` width/portal-capacity cluster — no file split needed.
+- [ ] **Long single functions wanting internal helpers** — `CraftingGoalSystem::update` (~223 lines), `HaulActions.cpp` `applyPut`/`startHaulAction` (~178/~168), `NavMesh.cpp` width/portal-capacity cluster — no file split needed.
 - [ ] **Copy-pasted bounce-leftover block** — `HaulActions.cpp:109-113,151-155,179-183` (4th at 219-223 differs: `removed` not `leftover`) — extract a helper.
 - [x] **Near-duplicate chain-leg handoff blocks** (done on integration/colonist-survival: every way into a deposit leg goes through `ActionSystem::headToDeposit`) — `ActionSystem.cpp:231-242` vs `301-312` — extract `handOffToNextLeg`.
 - [ ] **Harvest item-add bypasses `giveItemToColonist` + dup two-hand dispatch** — `HarvestActions.cpp:110-115,196-234` — refactor nit only; the cargo-to-backpack divergence is intentional (not the high-severity bug it was filed as). (Both two-hand branches now call `stowHeldToolsForArmful` before `addArmful`, so the held-axe-blocks-armful case is handled even though the add still goes through the dedicated path.)

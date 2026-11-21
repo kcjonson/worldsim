@@ -22,18 +22,35 @@
 namespace ecs {
 
 	namespace {
-		// A recipe may list one item on several lines; checking and spending need its total.
-		void addRequired(std::vector<std::pair<std::string, uint32_t>>& required, const std::string& itemName, uint32_t count) {
-			const auto line = std::ranges::find(required, itemName, &std::pair<std::string, uint32_t>::first);
-			if (line != required.end()) {
-				line->second += count;
-			} else {
-				required.emplace_back(itemName, count);
+		using CraftInputs = std::vector<std::pair<std::string, uint32_t>>;
+
+		/// The recipe's inputs, an item listed on several lines summed: the total is what checking and spending need.
+		[[nodiscard]] CraftInputs craftInputs(const assets::RecipeDef& recipe) {
+			CraftInputs required;
+			for (const auto& input : recipe.inputs) {
+				const auto line = std::ranges::find(required, input.defName, &std::pair<std::string, uint32_t>::first);
+				if (line != required.end()) {
+					line->second += input.count;
+				} else {
+					required.emplace_back(input.defName, input.count);
+				}
 			}
+			return required;
+		}
+
+		/// The first input the station's store holds fewer of than the craft needs; null when it holds them all.
+		[[nodiscard]] const std::pair<std::string, uint32_t>* firstMissingInput(const Inventory& store, const CraftInputs& inputs) {
+			const auto missing = std::ranges::find_if(inputs, [&](const std::pair<std::string, uint32_t>& input) {
+				return store.getQuantity(input.first) < input.second;
+			});
+			return missing != inputs.end() ? &*missing : nullptr;
 		}
 	} // namespace
 
-	bool ActionSystem::applyCraftingEffect(const Action& action, Inventory& inventory) {
+	bool ActionSystem::applyCraft(const Action& action, Inventory& inventory) {
+		if (!action.hasCraftingEffect()) {
+			return refuseWithoutTarget(action, "craft");
+		}
 		const auto& craftEff = action.craftingEffect();
 
 		auto& assetRegistry = assets::AssetRegistry::Get();
@@ -42,15 +59,10 @@ namespace ecs {
 		// Consume inputs from the STATION's store, not the colonist's pack: the materials were
 		// hauled into the station's Inventory during provisioning (mirroring construction, where
 		// the build consumes from the on-site manifest). The crafted output goes to the colonist.
-		// A store that no longer holds every input makes nothing and spends nothing.
+		// A store that no longer holds every input makes nothing and spends nothing. The inputs
+		// were summed at the start.
 		auto* stationInv = world->getComponent<Inventory>(static_cast<EntityID>(craftEff.stationEntityId));
-		std::vector<std::pair<std::string, uint32_t>> required;
-		for (const auto& [itemName, count] : craftEff.inputs) {
-			addRequired(required, itemName, count);
-		}
-		if (stationInv == nullptr || std::ranges::any_of(required, [&](const std::pair<std::string, uint32_t>& input) {
-				return stationInv->getQuantity(input.first) < input.second;
-			})) {
+		if (stationInv == nullptr || firstMissingInput(*stationInv, craftEff.inputs) != nullptr) {
 			LOG_WARNING(
 				Engine,
 				"[Action] Craft of %s failed: station %llu no longer holds its inputs",
@@ -62,7 +74,7 @@ namespace ecs {
 			}
 			return false;
 		}
-		for (const auto& [itemName, count] : required) {
+		for (const auto& [itemName, count] : craftEff.inputs) {
 			stationInv->removeItem(itemName, count);
 		}
 
@@ -160,16 +172,13 @@ namespace ecs {
 			action.clear();
 			return;
 		}
-		std::vector<std::pair<std::string, uint32_t>> inputs;
-		for (const auto& input : recipe->inputs) {
-			addRequired(inputs, input.defName, input.count);
-		}
-		for (const auto& [itemName, count] : inputs) {
-			if (stationInv->getQuantity(itemName) < count) {
-				LOG_WARNING(Engine, "[Action] Cannot craft %s - station missing %u x %s", recipe->label.c_str(), count, itemName.c_str());
-				action.clear();
-				return;
-			}
+		const CraftInputs inputs = craftInputs(*recipe);
+		if (const auto* missing = firstMissingInput(*stationInv, inputs)) {
+			LOG_WARNING(
+				Engine, "[Action] Cannot craft %s - station missing %u x %s", recipe->label.c_str(), missing->second, missing->first.c_str()
+			);
+			action.clear();
+			return;
 		}
 
 		// Build the outputs vector for the action
