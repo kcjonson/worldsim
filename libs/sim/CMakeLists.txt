@@ -29,6 +29,7 @@ add_library(sim
     ecs/systems/NavigationSystem.cpp
     ecs/systems/PlayerVisibilitySystem.cpp
     ecs/spatial/AgentSpatialHash.cpp
+    ecs/ActionEntries.cpp
     ecs/ClaimIndex.cpp
     ecs/ColliderEntityIndex.cpp
     ecs/ColonistRules.cpp
@@ -113,6 +114,7 @@ if(BUILD_TESTING)
         target_link_libraries(sim-benchmarks
             PRIVATE
                 sim
+                assets-test-support
                 benchmark::benchmark
                 benchmark::benchmark_main
         )
@@ -129,6 +131,7 @@ if(BUILD_TESTING)
         target_link_libraries(sim-tests
             PRIVATE
                 sim
+                assets-test-support
                 GTest::gtest
                 GTest::gtest_main
         )

@@ -4,13 +4,13 @@
 // creates thoughts from. See /docs/design/game-systems/colonists/thoughts.md.
 
 #include "ThoughtPruning.h"
-#include "components/Action.h"
 #include "components/Needs.h"
 #include "components/Thoughts.h"
 
 #include <conditions/Condition.h>
 
 #include <assets/AssetDefinition.h>
+#include <assets/Entries.h>
 #include <assets/ThoughtConfig.h>
 
 #include <cstdint>
@@ -66,8 +66,9 @@ namespace ecs {
 		ThoughtTrigger	   trigger = ThoughtTrigger::Idle;
 		NeedType		   need = NeedType::Count;
 		/// The threshold a need crosses: an index into assets::kNeedThresholdNames, highest first.
-		std::size_t				threshold = 0;
-		ActionType				action = ActionType::None;
+		std::size_t threshold = 0;
+		/// The action entry an action source names, set by ThoughtTypes::resolveActions.
+		assets::EntryHandle<assets::ActionEntry> action;
 		ThingFilter				thing = ThingFilter::Any;
 		assets::CapabilityType	capability{};
 		bool					first = false;
@@ -97,8 +98,13 @@ namespace ecs {
 		/// Replaces everything with `config`. Returns every error: an unknown feeling, a type with no
 		/// feeling, a line limited to a feeling its type cannot produce, a condition that does not parse
 		/// (with its position), an <ends> naming no type or making a cycle, a line longer than the tuning
-		/// allows, or a source naming no need or no action. Nothing is kept when there are errors.
+		/// allows, or a source naming no need. Nothing is kept when there are errors. The action sources' actions
+		/// are entries of the behavior library, which resolveActions resolves once both have loaded.
 		std::vector<std::string> load(const assets::ThoughtConfig& config);
+
+		/// Resolve each action source's action, by its action entry id, in `entries`. Returns one error for each
+		/// that names no action, or names an action group.
+		std::vector<std::string> resolveActions(const assets::EntryLibrary& entries);
 
 		[[nodiscard]] std::optional<ThoughtEventTypeId>		 findType(std::string_view name) const;
 		[[nodiscard]] std::optional<FeelingId>				 findFeeling(std::string_view name) const;
@@ -113,7 +119,15 @@ namespace ecs {
 		[[nodiscard]] const conditions::ConditionVocabulary& vocabulary() const { return conditionVocabulary; }
 
 	  private:
+		/// An action source's action as written, and where, until resolveActions resolves it.
+		struct ActionName {
+			std::size_t source = 0;
+			std::string written;
+			std::string place;
+		};
+
 		const conditions::ConditionVocabulary&				conditionVocabulary;
+		std::vector<ActionName>								actionNames;
 		std::vector<FeelingDefinition>						feelings;
 		std::vector<ThoughtType>							types;
 		std::vector<ThoughtSource>							thoughtSources;

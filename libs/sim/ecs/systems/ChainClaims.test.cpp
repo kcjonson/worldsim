@@ -40,7 +40,6 @@
 #include "../components/Task.h"
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
-#include "assets/ActionTypeRegistry.h"
 #include "assets/AssetRegistry.h"
 #include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
@@ -103,13 +102,12 @@ namespace ecs::test {
 			woodId = registry.getDefNameId("Wood");
 			stickId = registry.getDefNameId("Stick");
 
-			ai = &world->registerSystem<AIDecisionSystem>(registry, assets::RecipeRegistry::Get(), kSeed);
-			actions = &world->registerSystem<ActionSystem>(kSeed);
+			ai = &world->registerSystem<AIDecisionSystem>(registry, assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), kSeed);
+			actions = &world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kSeed);
 		}
 
 		void TearDown() override {
 			assets::RecipeRegistry::Get().clear();
-			assets::ActionTypeRegistry::Get().clear();
 			assets::AssetRegistry::Get().clearDefinitions();
 			GoalTaskRegistry::Get().clear();
 			world.reset();
@@ -823,10 +821,6 @@ namespace ecs::test {
 	}
 
 	TEST_F(ChainClaimsTest, ADroppedArmfulLeavesNoRecordAndNoClaims) {
-		assets::ActionTypeDef eat;
-		eat.defName = "Eat";
-		eat.needsHands = true;
-		assets::ActionTypeRegistry::Get().registerTestAction(std::move(eat));
 		int drops = 0;
 		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t, glm::vec2) { ++drops; });
 
@@ -854,11 +848,6 @@ namespace ecs::test {
 	// colonist deciding later in that update sizes its haul to the room the box has left, not what it had
 	// when the first colonist decided.
 	TEST_F(ChainClaimsTest, GoodsPutAwayInsideAnUpdateShowInLaterDecisions) {
-		assets::ActionTypeDef eat;
-		eat.defName = "Eat";
-		eat.needsHands = true;
-		assets::ActionTypeRegistry::Get().registerTestAction(std::move(eat));
-
 		const glm::vec2 boxPos{1.0F, 0.0F};
 		const EntityID	box = world->createEntity();
 		world->addComponent<Position>(box, Position{boxPos});
@@ -958,10 +947,6 @@ namespace ecs::test {
 	// to the site delivers what he holds, so it needs no free hands: the wood goes with him, not onto the
 	// ground to be fetched again.
 	TEST_F(ChainClaimsTest, AnArmfulBoundForABoxGoesToASiteWithoutBeingDropped) {
-		assets::ActionTypeDef pickup;
-		pickup.defName = "Pickup";
-		pickup.needsHands = true;
-		assets::ActionTypeRegistry::Get().registerTestAction(std::move(pickup));
 		uint32_t dropped = 0;
 		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity, glm::vec2) { dropped += quantity; });
 		const glm::vec2 boxPos{0.0F, 10.0F};

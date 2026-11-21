@@ -404,7 +404,7 @@ namespace assets::entry_loading {
 		std::vector<CreatureRows> creatureRows;
 		/// Which file tuned each fact, for the duplicate's message.
 		std::array<std::string, kFacts.size()> factSources;
-		/// The need ids some behavior or creature has; an effect may name only these.
+		/// The need ids some behavior or creature has, and the sim's tracked needs; an effect may name only these.
 		std::set<uint16_t> definedNeeds;
 	};
 

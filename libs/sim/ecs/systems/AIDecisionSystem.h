@@ -12,6 +12,7 @@
 // See /docs/design/game-systems/colonists/ai-behavior.md for the design intent.
 // See /docs/design/game-systems/colonists/decision-trace.md for task queue display.
 
+#include "../ActionEntries.h"
 #include "../ClaimIndex.h"
 #include "../DropResourceCallback.h"
 #include "../EntityID.h"
@@ -301,9 +302,11 @@ class AIDecisionSystem : public ISystem {
 	friend class test::AIDecisionSystemTest;
 
 public:
-	explicit AIDecisionSystem(
+	/// `actions` must outlive the system.
+	AIDecisionSystem(
 		const assets::AssetRegistry& registry,
 		const assets::RecipeRegistry& recipeRegistry,
+		const ActionEntries& actions,
 		uint32_t rngSeed);
 
 	void update(float deltaTime) override;
@@ -525,6 +528,8 @@ private:
 
 	const assets::AssetRegistry& m_registry;
 	const assets::RecipeRegistry& m_recipeRegistry;
+	/// The action entries the hands rule reads whether a task's first action needs free hands from.
+	const ActionEntries& actionEntries;
 
 	/// ChunkManager for terrain queries (optional, fallback to current position if null)
 	world::ChunkManager* m_chunkManager = nullptr;

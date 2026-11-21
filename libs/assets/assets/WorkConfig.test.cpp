@@ -1,9 +1,8 @@
 // Unit tests for Work Configuration System
-// Tests ActionTypeRegistry, WorkTypeRegistry, PriorityConfig (the arbitration file),
-// ConfigValidator, and loadWorkConfig.
+// Tests WorkTypeRegistry, PriorityConfig (the arbitration file), ConfigValidator, and
+// loadWorkConfig.
 
 #include "assets/WorkConfig.h"
-#include "assets/ActionTypeRegistry.h"
 #include "assets/ConfigValidator.h"
 #include "assets/ConstructionRegistry.h"
 #include "assets/MemoryConfig.h"
@@ -34,7 +33,6 @@ class WorkConfigTest : public ::testing::Test {
   protected:
 	void SetUp() override {
 		// Clear all registries before each test
-		ActionTypeRegistry::Get().clear();
 		WorkTypeRegistry::Get().clear();
 		PriorityConfig::Get().clear();
 		ConstructionRegistry::Get().clear();
@@ -80,72 +78,6 @@ class WorkConfigTest : public ::testing::Test {
 
 	std::vector<std::string> tempFiles;
 };
-
-// ============================================================================
-// ActionTypeRegistry Tests
-// ============================================================================
-
-TEST_F(WorkConfigTest, ActionTypeRegistry_LoadValidXML) {
-	std::string xml = R"(<?xml version="1.0"?>
-<ActionTypes>
-  <Action defName="Eat" needsHands="true">
-    <description>Consuming food</description>
-  </Action>
-  <Action defName="Sleep" needsHands="false">
-    <description>Resting</description>
-  </Action>
-</ActionTypes>)";
-
-	std::string path = writeTempFile(xml, ".xml");
-	ASSERT_FALSE(path.empty());
-
-	bool loaded = loadTemp(ActionTypeRegistry::Get(), path);
-	EXPECT_TRUE(loaded);
-	EXPECT_EQ(ActionTypeRegistry::Get().size(), 2);
-}
-
-TEST_F(WorkConfigTest, ActionTypeRegistry_GetAction) {
-	std::string xml = R"(<?xml version="1.0"?>
-<ActionTypes>
-  <Action defName="Pickup" needsHands="true"/>
-</ActionTypes>)";
-
-	std::string path = writeTempFile(xml, ".xml");
-	loadTemp(ActionTypeRegistry::Get(), path);
-
-	const auto* action = ActionTypeRegistry::Get().getAction("Pickup");
-	ASSERT_NE(action, nullptr);
-	EXPECT_EQ(action->defName, "Pickup");
-	EXPECT_TRUE(action->needsHands);
-}
-
-TEST_F(WorkConfigTest, ActionTypeRegistry_ActionNeedsHands) {
-	std::string xml = R"(<?xml version="1.0"?>
-<ActionTypes>
-  <Action defName="Eat" needsHands="true"/>
-  <Action defName="Sleep" needsHands="false"/>
-</ActionTypes>)";
-
-	std::string path = writeTempFile(xml, ".xml");
-	loadTemp(ActionTypeRegistry::Get(), path);
-
-	EXPECT_TRUE(ActionTypeRegistry::Get().actionNeedsHands("Eat"));
-	EXPECT_FALSE(ActionTypeRegistry::Get().actionNeedsHands("Sleep"));
-	EXPECT_FALSE(ActionTypeRegistry::Get().actionNeedsHands("NonExistent"));
-}
-
-TEST_F(WorkConfigTest, ActionTypeRegistry_HasAction) {
-	std::string xml = R"(<?xml version="1.0"?>
-<ActionTypes>
-  <Action defName="Craft" needsHands="true"/>
-</ActionTypes>)";
-
-	std::string path = writeTempFile(xml, ".xml");
-	loadTemp(ActionTypeRegistry::Get(), path);
-
-	EXPECT_TRUE(ActionTypeRegistry::Get().hasAction("Craft"));
-	EXPECT_FALSE(ActionTypeRegistry::Get().hasAction("NonExistent"));
-}
 
 // ============================================================================
 // WorkTypeRegistry Tests
@@ -267,15 +199,6 @@ TEST_F(WorkConfigTest, PriorityConfig_LoadValidXML) {
 // ============================================================================
 
 TEST_F(WorkConfigTest, ConfigValidator_ValidConfig) {
-	// Load valid action types
-	std::string actionXml = R"(<?xml version="1.0"?>
-<ActionTypes>
-  <Action defName="Pickup" needsHands="true"/>
-  <Action defName="Deposit" needsHands="true"/>
-</ActionTypes>)";
-	std::string actionPath = writeTempFile(actionXml, "_actions.xml");
-	loadTemp(ActionTypeRegistry::Get(), actionPath);
-
 	std::string workXml = R"(<?xml version="1.0"?>
 <WorkTypes>
   <Category defName="Hauling" tier="6">
@@ -288,7 +211,6 @@ TEST_F(WorkConfigTest, ConfigValidator_ValidConfig) {
 	loadTemp(WorkTypeRegistry::Get(), workPath);
 
 	// Validate
-	EXPECT_TRUE(ConfigValidator::validateActionTypes());
 	EXPECT_TRUE(ConfigValidator::validateWorkTypes());
 	EXPECT_EQ(ConfigValidator::getErrorCount(), 0);
 }
@@ -300,18 +222,7 @@ TEST_F(WorkConfigTest, ConfigValidator_ValidConfig) {
 TEST_F(WorkConfigTest, Integration_FullConfigLoad) {
 	// This tests loading all configs in dependency order
 
-	// 1. Action types (no deps)
-	std::string actionXml = R"(<?xml version="1.0"?>
-<ActionTypes>
-  <Action defName="Eat" needsHands="true"/>
-  <Action defName="Pickup" needsHands="true"/>
-  <Action defName="Deposit" needsHands="true"/>
-  <Action defName="Harvest" needsHands="true"/>
-</ActionTypes>)";
-	std::string actionPath = writeTempFile(actionXml, "_actions.xml");
-	ASSERT_TRUE(loadTemp(ActionTypeRegistry::Get(), actionPath));
-
-	// 2. Work types
+	// 1. Work types
 	std::string workXml = R"(<?xml version="1.0"?>
 <WorkTypes>
   <Category defName="Farming" tier="3">
@@ -329,7 +240,7 @@ TEST_F(WorkConfigTest, Integration_FullConfigLoad) {
 	ASSERT_TRUE(loadTemp(WorkTypeRegistry::Get(), workPath));
 	ASSERT_TRUE(ConfigValidator::validateWorkTypes());
 
-	// 3. The arbitration file (deps: work types for category order)
+	// 2. The arbitration file (deps: work types for category order)
 	std::string priorityXml = R"(<?xml version="1.0"?>
 <arbitration>
   <ladder><rung name="survival"/><rung name="idle"/></ladder>
@@ -349,7 +260,6 @@ TEST_F(WorkConfigTest, Integration_FullConfigLoad) {
 	ASSERT_TRUE(ConfigValidator::validatePriorityConfig());
 
 	// Verify everything loaded correctly
-	EXPECT_EQ(ActionTypeRegistry::Get().size(), 4);
 	EXPECT_EQ(WorkTypeRegistry::Get().categoryCount(), 2);
 	EXPECT_EQ(WorkTypeRegistry::Get().workTypeCount(), 2);
 }
@@ -388,7 +298,6 @@ TEST_F(WorkConfigTest, LoadWorkConfig_ShippedConfigLoadsClean) {
 	for (const auto& error : loadWorkConfig(shippedConfigRoot(), shippedHuman())) {
 		ADD_FAILURE() << error;
 	}
-	EXPECT_GT(ActionTypeRegistry::Get().size(), 0);
 	EXPECT_GT(WorkTypeRegistry::Get().workTypeCount(), 0);
 	EXPECT_TRUE(ConstructionRegistry::Get().materialsLoaded());
 }
@@ -611,75 +520,6 @@ TEST_F(WorkConfigTest, LoadWorkConfig_ShippedValuesArePinned) {
 	EXPECT_EQ(WorkTypeRegistry::Get().getWorkType("Work_Doctoring")->minSkillLevel, 1.0F);
 	EXPECT_EQ(WorkTypeRegistry::Get().getWorkType("Work_HarvestCrops")->minSkillLevel, 0.0F) << "minSkillLevel left out means no minimum";
 	EXPECT_EQ(MemoryConfig::Get().recentSightingGameMinutes(), 30.0F);
-
-	const std::map<std::string, bool> needsHands = {
-		{"Eat", true},
-		{"Drink", true},
-		{"Wash", true},
-		{"Sleep", false},
-		{"Toilet", false},
-		{"Harvest", true},
-		{"Craft", true},
-		{"Build", true},
-		{"Deconstruct", true},
-		{"Pickup", true},
-		{"Deposit", true},
-		{"Place", true},
-		{"Gather", true},
-		{"Talk", false},
-		{"Wander", false},
-		{"Flee", false},
-		{"MeleeAttack", true},
-		{"RangedAttack", true}
-	};
-	ASSERT_EQ(ActionTypeRegistry::Get().size(), needsHands.size());
-	for (const auto& [name, hands] : needsHands) {
-		const ActionTypeDef* action = ActionTypeRegistry::Get().getAction(name);
-		ASSERT_NE(action, nullptr) << name;
-		EXPECT_EQ(action->needsHands, hands) << name;
-		EXPECT_FALSE(action->description.empty()) << name;
-	}
-	EXPECT_EQ(ActionTypeRegistry::Get().getAction("Eat")->description, "Consuming food");
-}
-
-TEST_F(WorkConfigTest, ActionTypeRegistry_MistakesNameTheActionAndLoadNothing) {
-	const auto problemsFor = [this](const std::string& actions) {
-		const std::string path =
-			writeTempFile("<ActionTypes><Action defName=\"Eat\" needsHands=\"true\"/>" + actions + "</ActionTypes>", ".xml");
-		EXPECT_FALSE(loadTemp(ActionTypeRegistry::Get(), path));
-		EXPECT_EQ(ActionTypeRegistry::Get().size(), 0U) << "a file with any mistake loads no action type";
-		std::vector<std::string> problems = ActionTypeRegistry::Get().problems();
-		for (std::string& problem : problems) {
-			EXPECT_EQ(problem.rfind(fileNameOf(path) + ": ", 0), 0U) << problem;
-			problem.erase(0, fileNameOf(path).size() + 2);
-		}
-		return problems;
-	};
-
-	EXPECT_EQ(
-		problemsFor("<Action defName=\"Pickup\" needsHands=\"ture\"/>"),
-		std::vector<std::string>{"<Action defName=\"Pickup\"> needsHands must be true or false, got \"ture\""}
-	);
-	EXPECT_EQ(
-		problemsFor("<Action defName=\"Pickup\" hands=\"2\"/>"),
-		std::vector<std::string>{"<Action defName=\"Pickup\">: unknown attribute 'hands'"}
-	);
-	EXPECT_EQ(
-		problemsFor("<Action defName=\"Pickup\"><label>Pick up</label></Action>"),
-		std::vector<std::string>{"<Action defName=\"Pickup\">: unknown element <label>"}
-	);
-	EXPECT_EQ(problemsFor("<Action needsHands=\"true\"/>"), std::vector<std::string>{"an <Action> has no defName"});
-	EXPECT_EQ(problemsFor("<Action defName=\"Eat\"/>"), std::vector<std::string>{"<Action defName=\"Eat\"> is declared twice"});
-	EXPECT_EQ(problemsFor("<Chain defName=\"Pickup\"/>"), std::vector<std::string>{"unknown element <Chain>"});
-
-	const std::string path = writeTempFile("<ActionTypes><Action defName=\"Talk\"/></ActionTypes>", ".xml");
-	ASSERT_TRUE(loadTemp(ActionTypeRegistry::Get(), path));
-	EXPECT_FALSE(ActionTypeRegistry::Get().actionNeedsHands("Talk")) << "needsHands left out means the action leaves the hands free";
-	EXPECT_TRUE(ActionTypeRegistry::Get().getAction("Talk")->description.empty());
-
-	EXPECT_FALSE(loadTemp(ActionTypeRegistry::Get(), writeTempFile("<ActionTypes/>", ".xml")));
-	ASSERT_EQ(ActionTypeRegistry::Get().problems().size(), 1U);
-	EXPECT_NE(ActionTypeRegistry::Get().problems().front().find(": no <Action>"), std::string::npos);
 }
 
 TEST_F(WorkConfigTest, PriorityConfig_LadderMistakesNameTheFileAndLoadNothing) {
@@ -837,11 +677,15 @@ TEST_F(WorkConfigTest, LoadWorkConfig_ErrorsNameFilesRelativeToTheConfigRoot) {
 		}
 	);
 
-	replaceIn("legacy/action-types.xml", "<Action defName=\"Eat\" needsHands=\"true\">", "<Action defName=\"Eat\" needsHands=\"ture\">");
+	replaceIn(
+		"legacy/work-types.xml",
+		"<Category defName=\"Emergency\" tier=\"1\" canDisable=\"false\">",
+		"<Category defName=\"Emergency\" tier=\"1\" canDisable=\"ture\">"
+	);
 	EXPECT_EQ(
 		loadWorkConfig(root, shippedHuman()),
-		std::vector<std::string>{"legacy/action-types.xml: <Action defName=\"Eat\"> needsHands must be true or false, got \"ture\""}
+		std::vector<std::string>{"legacy/work-types.xml: <Category defName=\"Emergency\"> canDisable must be true or false, got \"ture\""}
 	);
-	EXPECT_EQ(ActionTypeRegistry::Get().size(), 0U);
+	EXPECT_EQ(WorkTypeRegistry::Get().categoryCount(), 0U);
 	std::filesystem::remove_all(root);
 }

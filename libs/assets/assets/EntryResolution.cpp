@@ -223,6 +223,9 @@ namespace assets::entry_loading {
 	}
 
 	void Loader::checkNeedReferences() {
+		for (const std::string& tracked : sources.trackedNeeds) {
+			definedNeeds.insert(intern(tracked).index);
+		}
 		const EntryLibrary& library = result.library;
 		for (const ChainEntry& chain : library.chains) {
 			for (std::size_t index = 0; index < chain.steps.size(); ++index) {

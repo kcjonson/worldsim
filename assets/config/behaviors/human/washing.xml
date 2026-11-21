@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- human/washing. See /docs/technical/queries-and-chains.md (The human behaviors). -->
+<behavior id="washing" label="Washing">
+  <action id="wash" seconds="3" hands="free" interruptable="false">
+    <restore need="hygiene" amount="100"/>
+  </action>
+</behavior>

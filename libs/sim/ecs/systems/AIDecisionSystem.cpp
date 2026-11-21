@@ -35,7 +35,6 @@
 #include "TimeSystem.h"
 #include "WorkSources.h"
 
-#include "assets/ActionTypeRegistry.h"
 #include "assets/AssetDefinition.h"
 #include "assets/AssetRegistry.h"
 #include "assets/ItemProperties.h"
@@ -96,66 +95,65 @@ namespace ecs {
 			return assets::CapabilityType::Edible;
 		}
 
-		/// Get the first action defName for a task type (for chain interruption checks)
-		/// Maps TaskType (+ NeedType for FulfillNeed) to the action that will be triggered first.
-		/// Returns string_view to avoid allocation - all values are compile-time constants.
-		[[nodiscard]] std::string_view getFirstActionDefName(TaskType taskType, NeedType needType) {
+		/// The entry of the action a task performs first, for the hands rule; none for a wander, which performs no
+		/// action, and for a task or need with no action.
+		[[nodiscard]] const ActionValues* firstAction(const ActionEntries& actions, TaskType taskType, NeedType needType) {
 			switch (taskType) {
 				case TaskType::Haul:
+					return &actions.pickup;
 				case TaskType::PlacePackaged:
-					return "Pickup"; // Both start with picking something up
+					return &actions.pickupPackaged;
 				case TaskType::Craft:
-					return "Craft";
+					return &actions.craft;
 				case TaskType::Harvest:
-					return "Harvest";
+					return &actions.harvest;
 				case TaskType::Build:
-					return "Build";
+					return &actions.build;
 				case TaskType::Deconstruct:
-					return "Deconstruct";
+					return &actions.deconstruct;
 				case TaskType::FulfillNeed:
 					switch (needType) {
 						case NeedType::Hunger:
-							return "Eat";
+							return &actions.eat;
 						case NeedType::Thirst:
-							return "Drink";
+							return &actions.drink;
 						case NeedType::Energy:
-							return "Sleep";
+							return &actions.sleep;
 						case NeedType::Bladder:
+							return &actions.urinate;
 						case NeedType::Digestion:
-							return "Toilet";
+							return &actions.defecate;
 						case NeedType::Hygiene:
-							return "Wash";
+							return &actions.wash;
 						case NeedType::Recreation:
 						case NeedType::Temperature:
 						case NeedType::Count:
-							return ""; // Non-actionable needs
+							return nullptr; // Non-actionable needs
 					}
-					return ""; // Unreachable but satisfies compiler
+					return nullptr; // Unreachable but satisfies compiler
 				case TaskType::Wander:
-					return "Wander";
 				case TaskType::None:
-					return "";
+					return nullptr;
 			}
-			return "";
+			return nullptr;
 		}
 
-		/// Check if a task's first action requires free hands
-		/// Uses ActionTypeRegistry for config-driven behavior per task-chains.md spec.
-		[[nodiscard]] bool taskFirstActionNeedsHands(TaskType taskType, NeedType needType) {
-			std::string_view actionDefName = getFirstActionDefName(taskType, needType);
-			if (actionDefName.empty()) {
-				// No first action or unknown task/need combination; assume it does not require hands.
-				// Log a warning because this may indicate a missing case in getFirstActionDefName.
-				LOG_WARNING(
-					Engine,
-					"taskFirstActionNeedsHands: empty first action for TaskType %d, NeedType %d; assuming no "
-					"hands needed",
-					static_cast<int>(taskType),
-					static_cast<int>(needType)
-				);
+		/// Whether a task's first action needs free hands, as its action entry says (task-chains.md).
+		[[nodiscard]] bool taskFirstActionNeedsHands(const ActionEntries& actions, TaskType taskType, NeedType needType) {
+			const ActionValues* action = firstAction(actions, taskType, needType);
+			if (action == nullptr) {
+				// A wander performs no action. Any other task with none may be a missing case in firstAction.
+				if (taskType != TaskType::Wander) {
+					LOG_WARNING(
+						Engine,
+						"taskFirstActionNeedsHands: no first action for TaskType %d, NeedType %d; assuming no hands needed",
+						static_cast<int>(taskType),
+						static_cast<int>(needType)
+					);
+				}
 				return false;
 			}
-			return assets::ActionTypeRegistry::Get().actionNeedsHands(std::string(actionDefName));
+			return action->freeHands;
 		}
 
 		/// Check if inventory contains any edible food item
@@ -1872,10 +1870,12 @@ namespace ecs {
 	AIDecisionSystem::AIDecisionSystem(
 		const assets::AssetRegistry&  registry,
 		const assets::RecipeRegistry& recipeRegistry,
+		const ActionEntries&		  actions,
 		uint32_t					  rngSeed
 	)
 		: m_registry(registry),
 		  m_recipeRegistry(recipeRegistry),
+		  actionEntries(actions),
 		  m_rng(rngSeed) {}
 
 	void AIDecisionSystem::update(float deltaTime) {
@@ -3822,7 +3822,7 @@ namespace ecs {
 
 		// A carry-in delivers what the colonist holds, so it needs no free hands: the goods ride along to it.
 		const bool carriesIn = selected.taskType == TaskType::Haul && selected.haulFromInventory;
-		if (carriesIn || !taskFirstActionNeedsHands(selected.taskType, selected.needType)) {
+		if (carriesIn || !taskFirstActionNeedsHands(actionEntries, selected.taskType, selected.needType)) {
 			keepGoods();
 			return;
 		}
@@ -3885,7 +3885,8 @@ namespace ecs {
 			return;
 		}
 		// Sleep and other hands-free needs keep it, and the placement resumes after.
-		if (selected.taskType == TaskType::FulfillNeed && !selected.gathersFood && !taskFirstActionNeedsHands(selected.taskType, selected.needType)) {
+		if (selected.taskType == TaskType::FulfillNeed && !selected.gathersFood &&
+			!taskFirstActionNeedsHands(actionEntries, selected.taskType, selected.needType)) {
 			return;
 		}
 		// Set down as the packaged item it is, where he stands or on the nearest valid ground off a site:

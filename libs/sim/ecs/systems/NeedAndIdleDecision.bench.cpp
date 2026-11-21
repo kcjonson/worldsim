@@ -295,8 +295,9 @@ namespace {
 		for (auto _ : state) {
 			ecs::GoalTaskRegistry::Get().clear();
 			ecs::World			   world;
-			ecs::AIDecisionSystem& decisions =
-				world.registerSystem<ecs::AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234U);
+			ecs::AIDecisionSystem& decisions = world.registerSystem<ecs::AIDecisionSystem>(
+				assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), 1234U
+			);
 			std::vector<ecs::EntityID> colonists;
 			std::vector<glm::vec2>	   homes;
 			for (int index = 0; index < colonistCount; ++index) {
@@ -403,8 +404,9 @@ namespace {
 		for (auto _ : state) {
 			ecs::GoalTaskRegistry::Get().clear();
 			ecs::World			   world;
-			ecs::AIDecisionSystem& decisions =
-				world.registerSystem<ecs::AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234U);
+			ecs::AIDecisionSystem& decisions = world.registerSystem<ecs::AIDecisionSystem>(
+				assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), 1234U
+			);
 			std::vector<ecs::EntityID> colonists;
 			for (int index = 0; index < colonistCount; ++index) {
 				colonists.push_back(addColonist(world, {static_cast<float>(index) * 2.0F, 0.0F}, 100.0F, memory));

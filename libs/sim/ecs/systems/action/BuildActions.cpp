@@ -94,15 +94,16 @@ namespace ecs {
 			}
 		}
 
-		// Capture the builder's Construction skill to scale the work rate. Skills is optional;
+		// Capture the builder's level in the entry's work skill to scale the work rate. Skills is optional;
 		// a colonist without it (or untrained) still builds at the base rate.
-		float skillLevel = 0.0F;
+		const ActionValues& values = deconstruct ? actionEntries.deconstruct : actionEntries.build;
+		float				skillLevel = 0.0F;
 		if (const auto* skills = world->getComponent<Skills>(entity)) {
-			skillLevel = skills->getLevel("Construction");
+			skillLevel = skills->getLevel(values.skill);
 		}
 
-		action = deconstruct ? Action::Deconstruct(task.buildBlueprintEntityId, task.targetPosition, skillLevel)
-							  : Action::Build(task.buildBlueprintEntityId, task.targetPosition, skillLevel);
+		action = deconstruct ? Action::Deconstruct(actionEntries, task.buildBlueprintEntityId, task.targetPosition, skillLevel)
+							 : Action::Build(actionEntries, task.buildBlueprintEntityId, task.targetPosition, skillLevel);
 
 		LOG_DEBUG(
 			Engine,

@@ -32,10 +32,6 @@ class ConfigValidator {
   public:
     // --- Per-Registry Validation ---
 
-    /// Validate ActionTypes - just syntax (no dependencies)
-    /// @return true if valid
-    static bool validateActionTypes();
-
     /// Validate ConstructionRegistry - material palettes, constraint consistency,
     /// snapping radii. Must be called after ConstructionRegistry::load().
     /// @return true if valid

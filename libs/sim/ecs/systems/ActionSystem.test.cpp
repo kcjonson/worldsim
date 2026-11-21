@@ -73,7 +73,7 @@ TEST(HarvestWorkRateTest, SkillClampedToValidRange) {
 // =============================================================================
 
 TEST(ActionFactoryTest, EatActionCreation) {
-	auto action = Action::Eat("Berry", 0.5F);
+	auto action = Action::Eat(ecs::testing::shippedActions(), "Berry", 0.5F);
 
 	EXPECT_EQ(action.type, ActionType::Eat);
 	EXPECT_EQ(action.state, ActionState::Starting);
@@ -89,7 +89,7 @@ TEST(ActionFactoryTest, EatActionCreation) {
 }
 
 TEST(ActionFactoryTest, DrinkActionCreation) {
-	auto action = Action::Drink();
+	auto action = Action::Drink(ecs::testing::shippedActions());
 
 	EXPECT_EQ(action.type, ActionType::Drink);
 	EXPECT_EQ(action.state, ActionState::Starting);
@@ -105,7 +105,7 @@ TEST(ActionFactoryTest, DrinkActionCreation) {
 }
 
 TEST(ActionFactoryTest, SleepActionCreation) {
-	auto action = Action::Sleep(0.5F); // Ground quality
+	auto action = Action::Sleep(ecs::testing::shippedActions(), 0.5F); // Ground quality
 
 	EXPECT_EQ(action.type, ActionType::Sleep);
 	EXPECT_EQ(action.state, ActionState::Starting);
@@ -120,7 +120,7 @@ TEST(ActionFactoryTest, SleepActionCreation) {
 
 TEST(ActionFactoryTest, ToiletActionCreation_PeeOnly) {
 	glm::vec2 spawnPos{5.0F, 10.0F};
-	auto action = Action::Toilet(spawnPos, true, false); // Pee only
+	auto	  action = Action::Toilet(ecs::testing::shippedActions(), spawnPos, true, false); // Pee only
 
 	EXPECT_EQ(action.type, ActionType::Toilet);
 	EXPECT_EQ(action.state, ActionState::Starting);
@@ -137,7 +137,7 @@ TEST(ActionFactoryTest, ToiletActionCreation_PeeOnly) {
 
 TEST(ActionFactoryTest, ToiletActionCreation_PoopOnly) {
 	glm::vec2 spawnPos{5.0F, 10.0F};
-	auto action = Action::Toilet(spawnPos, false, true); // Poop only
+	auto	  action = Action::Toilet(ecs::testing::shippedActions(), spawnPos, false, true); // Poop only
 
 	EXPECT_EQ(action.type, ActionType::Toilet);
 	EXPECT_FLOAT_EQ(action.duration, 4.0F); // Poop takes longer
@@ -151,7 +151,7 @@ TEST(ActionFactoryTest, ToiletActionCreation_PoopOnly) {
 
 TEST(ActionFactoryTest, ToiletActionCreation_Both) {
 	glm::vec2 spawnPos{5.0F, 10.0F};
-	auto action = Action::Toilet(spawnPos, true, true); // Both
+	auto	  action = Action::Toilet(ecs::testing::shippedActions(), spawnPos, true, true); // Both
 
 	EXPECT_EQ(action.type, ActionType::Toilet);
 	EXPECT_FLOAT_EQ(action.duration, 5.0F); // Both takes longest
@@ -166,7 +166,7 @@ TEST(ActionFactoryTest, ToiletActionCreation_Both) {
 }
 
 TEST(ActionFactoryTest, ActionClear) {
-	auto action = Action::Eat("Berry", 0.8F);
+	auto action = Action::Eat(ecs::testing::shippedActions(), "Berry", 0.8F);
 	action.elapsed = 1.5F;
 	action.state = ActionState::InProgress;
 
@@ -183,12 +183,12 @@ TEST(ActionFactoryTest, ActionIsActive) {
 	Action action{};
 	EXPECT_FALSE(action.isActive());
 
-	action = Action::Eat("Berry", 0.5F);
+	action = Action::Eat(ecs::testing::shippedActions(), "Berry", 0.5F);
 	EXPECT_TRUE(action.isActive());
 }
 
 TEST(ActionFactoryTest, ActionProgress) {
-	auto action = Action::Eat("Berry", 0.5F);
+	auto action = Action::Eat(ecs::testing::shippedActions(), "Berry", 0.5F);
 	EXPECT_FLOAT_EQ(action.progress(), 0.0F);
 
 	action.elapsed = 1.0F;
@@ -216,7 +216,7 @@ class ActionSystemTest : public ::testing::Test {
 		berryDef.itemProperties->edible = assets::EdibleCapability{0.3F, assets::CapabilityQuality::Normal, true};
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(berryDef));
 
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 	}
 
 	void TearDown() override {
@@ -634,7 +634,7 @@ class ActionSystemGoalTest : public ::testing::Test {
 		GoalTaskRegistry::Get().clear();
 		assets::RecipeRegistry::Get().clear();
 		world = std::make_unique<World>();
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 	}
 
 	void TearDown() override {
@@ -720,7 +720,9 @@ TEST_F(ActionSystemGoalTest, HarvestBecomesItsDepositLegAndDeliversTheYield) {
 	ASSERT_TRUE(task->claims.push(Claim::inFlight(craftId, stickId, 3)));
 
 	auto* action = world->getComponent<Action>(colonist);
-	*action = Action::Harvest("Stick", 3, 4.0F, {1.0F, 1.0F}, "Flora_WoodyBush", /*destructive=*/false, /*regrowthTime=*/0.0F);
+	*action = Action::Harvest(
+		ecs::testing::shippedActions(), "Stick", 3, 4.0F, {1.0F, 1.0F}, "Flora_WoodyBush", /*destructive=*/false, /*regrowthTime=*/0.0F
+	);
 
 	world->update(0.1F); // start
 	world->update(5.0F); // complete (duration 4s)
@@ -1132,8 +1134,16 @@ TEST_F(ActionSystemGoalTest, HarvestTakesFullYieldEvenAboveRecipeNeed) {
 
 	// Reed yields 5 PlantFiber (source defName differs from the yield -> harvest path, not a pickup).
 	auto* action = world->getComponent<Action>(colonist);
-	*action = Action::Harvest("PlantFiber", 5, 4.0F, reedPos, "Flora_Reed",
-							  /*destructive=*/true, /*regrowthTime=*/0.0F);
+	*action = Action::Harvest(
+		ecs::testing::shippedActions(),
+		"PlantFiber",
+		5,
+		4.0F,
+		reedPos,
+		"Flora_Reed",
+		/*destructive=*/true,
+		/*regrowthTime=*/0.0F
+	);
 
 	world->update(0.1F); // start
 	world->update(5.0F); // complete (4s)
@@ -1729,7 +1739,7 @@ class FellingTest : public ::testing::Test {
 		woodDef.itemProperties->massKg = 2.5F;
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(woodDef));
 
-		auto& action = world->registerSystem<ActionSystem>(kTestRngSeed);
+		auto& action = world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		action.setDropResourceCallback(
 			[this](const std::string& defName, float /*x*/, float /*y*/, uint32_t quantity, glm::vec2) {
 				++dropCalls;
@@ -1775,8 +1785,16 @@ class FellingTest : public ::testing::Test {
 		// harvestGoalId left 0: no goal bookkeeping, just the collection effect.
 
 		auto* action = world->getComponent<Action>(colonist);
-		*action = Action::Harvest("Wood", yield, 1.0F, {1.0F, 1.0F}, "Flora_TreeOak",
-								  /*destructive=*/true, /*regrowthTime=*/0.0F);
+		*action = Action::Harvest(
+			ecs::testing::shippedActions(),
+			"Wood",
+			yield,
+			1.0F,
+			{1.0F, 1.0F},
+			"Flora_TreeOak",
+			/*destructive=*/true,
+			/*regrowthTime=*/0.0F
+		);
 
 		world->update(0.1F); // start
 		world->update(2.0F); // complete (duration 1s)
@@ -1803,7 +1821,7 @@ class FellingTest : public ::testing::Test {
 		task->targetPosition = {1.0F, 1.0F};
 
 		auto* action = world->getComponent<Action>(colonist);
-		*action = Action::PickupPackaged(static_cast<uint64_t>(packaged), {1.0F, 1.0F});
+		*action = Action::PickupPackaged(ecs::testing::shippedActions(), static_cast<uint64_t>(packaged), {1.0F, 1.0F});
 
 		world->update(0.1F); // start
 		world->update(2.0F); // complete (PickupPackaged duration 1.5s) -> clears hands, picks up shelf
@@ -2125,7 +2143,7 @@ class LoosePileHaulTest : public ::testing::Test {
 		woodDef.itemProperties->massKg = 2.5F;
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(woodDef));
 
-		auto& action = world->registerSystem<ActionSystem>(kTestRngSeed);
+		auto& action = world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		// Mirror GameScene: a drained pile is removed by its exact entity id (not a position
 		// scan), so two same-material piles can never alias. The game queues it and its drain
 		// destroys it the same way, after the update.
@@ -2175,7 +2193,7 @@ class LoosePileHaulTest : public ::testing::Test {
 		task->targetPosition = pilePos;
 
 		auto* action = world->getComponent<Action>(colonist);
-		*action = Action::Pickup("Wood", UINT32_MAX, pilePos, "Wood");
+		*action = Action::Pickup(ecs::testing::shippedActions(), "Wood", UINT32_MAX, pilePos, "Wood");
 
 		world->update(0.1F); // start
 		world->update(1.0F); // complete (Pickup duration 0.5s)
@@ -2228,7 +2246,8 @@ TEST_F(LoosePileHaulTest, FullPackStillTakesATwoHandArmful) {
 	task->type = TaskType::Harvest;
 	task->state = TaskState::Arrived;
 	task->targetPosition = boxPos;
-	*world->getComponent<Action>(puller) = Action::Withdraw("Wood", UINT32_MAX, static_cast<uint64_t>(box), boxPos);
+	*world->getComponent<Action>(puller) =
+		Action::Withdraw(ecs::testing::shippedActions(), "Wood", UINT32_MAX, static_cast<uint64_t>(box), boxPos);
 	world->update(0.1F);
 	world->update(1.0F);
 	EXPECT_EQ(handHeldQuantity(*pullerInventory, "Wood"), kArmful) << "the Withdraw lifts the armful the gate promised";
@@ -2440,7 +2459,7 @@ class HandMaterialActionTest : public ::testing::Test {
 		plankDef.itemProperties->massKg = 0.5F;
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(plankDef));
 
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 	}
 
 	void TearDown() override {
@@ -2505,7 +2524,7 @@ TEST_F(HandMaterialActionTest, DepositFromHandsBouncesStorageFullRemainderToBoth
 	task->targetPosition = {0.0F, 0.0F};
 
 	auto* action = world->getComponent<Action>(colonist);
-	*action = Action::Deposit("Wood", 14, static_cast<uint64_t>(storage), {0.0F, 0.0F});
+	*action = Action::Deposit(ecs::testing::shippedActions(), "Wood", 14, static_cast<uint64_t>(storage), {0.0F, 0.0F});
 
 	world->update(0.1F); // start
 	world->update(2.0F); // complete (deposit duration 1s)
@@ -2545,7 +2564,8 @@ TEST_F(HandMaterialActionTest, DepositIntoAFullStorageKeepsTheGoodsAndDoesNotFin
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
 	task->targetPosition = {0.0F, 0.0F};
-	*world->getComponent<Action>(colonist) = Action::Deposit("Wood", 14, static_cast<uint64_t>(storage), {0.0F, 0.0F});
+	*world->getComponent<Action>(colonist) =
+		Action::Deposit(ecs::testing::shippedActions(), "Wood", 14, static_cast<uint64_t>(storage), {0.0F, 0.0F});
 
 	world->update(0.1F);
 	world->update(2.0F);
@@ -2584,7 +2604,7 @@ TEST_F(HandMaterialActionTest, DepositFromHandsToMissingStorageReturnsAllToBothH
 	task->targetPosition = {0.0F, 0.0F};
 
 	auto* action = world->getComponent<Action>(colonist);
-	*action = Action::Deposit("Wood", 14, kMissingStorage, {0.0F, 0.0F});
+	*action = Action::Deposit(ecs::testing::shippedActions(), "Wood", 14, kMissingStorage, {0.0F, 0.0F});
 
 	world->update(0.1F);
 	world->update(2.0F);
@@ -2633,7 +2653,7 @@ TEST_F(HandMaterialActionTest, DepositToBuildSiteRecordsOnManifestAndBouncesOver
 	task->targetPosition = {0.0F, 0.0F};
 
 	auto* action = world->getComponent<Action>(colonist);
-	*action = Action::Deposit("Wood", 14, static_cast<uint64_t>(buildSite), {0.0F, 0.0F});
+	*action = Action::Deposit(ecs::testing::shippedActions(), "Wood", 14, static_cast<uint64_t>(buildSite), {0.0F, 0.0F});
 
 	world->update(0.1F); // start
 	world->update(2.0F); // complete (deposit duration 1s)
@@ -2687,7 +2707,7 @@ TEST_F(HandMaterialActionTest, StorageHaulFillsAcrossStacksAndGoalSurvivesWhileS
 	task->targetPosition = {0.0F, 0.0F};
 
 	auto* action = world->getComponent<Action>(colonist);
-	*action = Action::Deposit("Wood", 50, static_cast<uint64_t>(storage), {0.0F, 0.0F});
+	*action = Action::Deposit(ecs::testing::shippedActions(), "Wood", 50, static_cast<uint64_t>(storage), {0.0F, 0.0F});
 
 	world->update(0.1F); // start
 	world->update(2.0F); // complete (deposit duration 1s)
@@ -2730,7 +2750,7 @@ TEST_F(HandMaterialActionTest, FullStorageAcceptsNothing) {
 	task->targetPosition = {0.0F, 0.0F};
 
 	auto* action = world->getComponent<Action>(colonist);
-	*action = Action::Deposit("Wood", 14, static_cast<uint64_t>(storage), {0.0F, 0.0F});
+	*action = Action::Deposit(ecs::testing::shippedActions(), "Wood", 14, static_cast<uint64_t>(storage), {0.0F, 0.0F});
 
 	world->update(0.1F);
 	world->update(2.0F);
@@ -3047,7 +3067,7 @@ class ActionSystemTimeTest : public ::testing::Test {
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(berryDef));
 
 		timeSystem = &world->registerSystem<TimeSystem>();
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 	}
 
 	void TearDown() override {
@@ -3203,7 +3223,7 @@ class ActionSystemHarvestTimeTest : public ::testing::Test {
 		tree.capabilities.harvestable = cap;
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(tree));
 
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 	}
 
 	void TearDown() override {
@@ -3313,7 +3333,7 @@ class ActionSystemHarvestLocateTest : public ::testing::Test {
 		tree.capabilities.harvestable = cap;
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(tree));
 
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 	}
 
 	void TearDown() override {
@@ -3452,7 +3472,7 @@ class ClearHarvestTest : public ::testing::Test {
 		shrub.capabilities.harvestable = cap;
 		registry.registerTestDefinition(std::move(shrub));
 
-		auto& action = world->registerSystem<ActionSystem>(kTestRngSeed);
+		auto& action = world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		action.setDecrementResourceCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, uint32_t requested) {
 			const uint32_t removed = std::min(requested, pool);
 			pool -= removed;
