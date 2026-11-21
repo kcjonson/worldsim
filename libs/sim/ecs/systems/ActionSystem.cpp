@@ -61,7 +61,13 @@ namespace ecs {
 			if (task.type == TaskType::Chain) {
 				runChain(
 					scaledDt,
-					{.entity = entity, .position = position, .task = task, .action = action, .needs = needs, .memory = memory, .inventory = inventory}
+					{.entity = entity,
+					 .position = position,
+					 .task = task,
+					 .action = action,
+					 .needs = needs,
+					 .memory = memory,
+					 .inventory = inventory}
 				);
 				continue;
 			}
@@ -163,7 +169,10 @@ namespace ecs {
 			action.duration /= harvestWorkRate(skillLevel);
 		}
 		LOG_INFO(
-			Engine, "[Action] Entity %llu: Started %s action (%.1fs duration)", static_cast<unsigned long long>(entity), actionName(action),
+			Engine,
+			"[Action] Entity %llu: Started %s action (%.1fs duration)",
+			static_cast<unsigned long long>(entity),
+			actionName(action),
 			action.duration
 		);
 		if (!continuesWork(action)) {
@@ -418,12 +427,13 @@ namespace ecs {
 	) {
 		// What a cut or a pickup lands is what its collection adds to the colonist; what it held of the
 		// item before is not this chain's.
-		const bool		   cutLands = task.type == TaskType::Harvest && action.type == ActionType::Harvest;
-		const bool		   haulLifts = task.type == TaskType::Haul && (action.type == ActionType::Pickup || action.type == ActionType::Withdraw);
+		const bool cutLands = task.type == TaskType::Harvest && action.type == ActionType::Harvest;
+		const bool haulLifts = task.type == TaskType::Haul && (action.type == ActionType::Pickup || action.type == ActionType::Withdraw);
 		const std::string& yieldDefName = assets::AssetRegistry::Get().getDefName(cutLands ? task.harvestYieldDefNameId : 0U);
-		const uint32_t	   heldBefore = cutLands	? ecs::availableQuantity(inventory, yieldDefName)
-											: haulLifts ? ecs::availableQuantity(inventory, assets::AssetRegistry::Get().getDefName(task.haulItemDefNameId))
-														: 0U;
+		const uint32_t	   heldBefore = cutLands ? ecs::availableQuantity(inventory, yieldDefName)
+										: haulLifts
+											? ecs::availableQuantity(inventory, assets::AssetRegistry::Get().getDefName(task.haulItemDefNameId))
+											: 0U;
 		// Goods a pile pickup took over from earlier legs of a gathering ride along with what it lifts.
 		const uint32_t carriedBefore = haulLifts ? std::min(taskCargo(task), heldBefore) : 0U;
 

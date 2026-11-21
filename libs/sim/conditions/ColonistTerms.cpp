@@ -29,11 +29,15 @@ namespace conditions {
 		/// One bit per TaskType: the task types a current_task() name stands for.
 		using TaskMask = uint16_t;
 		static_assert(
-			static_cast<unsigned>(ecs::TaskType::Chain) < std::numeric_limits<TaskMask>::digits, "TaskMask has a bit for every TaskType"
+			static_cast<unsigned>(ecs::TaskType::Chain) < std::numeric_limits<TaskMask>::digits,
+			"TaskMask has a bit for every TaskType"
 		);
 		// Every task type but Chain has a name: current_task names a running chain by its chain id once chains are in the
 		// decision, so until then a chain matches no name.
-		static_assert(assets::kTaskTypeNames.size() == static_cast<std::size_t>(ecs::TaskType::Wander), "a name for every TaskType but Chain");
+		static_assert(
+			assets::kTaskTypeNames.size() == static_cast<std::size_t>(ecs::TaskType::Wander),
+			"a name for every TaskType but Chain"
+		);
 
 		/// The engine's names for `term`'s first parameter, added to its symbol set and bound to their values.
 		/// The set is owned (assets::kOwnedSymbolSets), so these are all the names it holds.

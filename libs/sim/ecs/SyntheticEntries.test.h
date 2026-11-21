@@ -43,15 +43,16 @@ namespace ecs::testing {
 		};
 
 		/// An empty config root holding the shipped fact tuning and the folders the loader reads, named for `purpose`.
-		explicit SyntheticEntries(std::string_view purpose, Options options = {}) : settings(std::move(options)) {
+		explicit SyntheticEntries(std::string_view purpose, Options options = {})
+			: settings(std::move(options)) {
 			static const std::string runToken = [] {
 				std::random_device device;
 				return std::to_string(device()) + "_" + std::to_string(device());
 			}();
-			static int roots = 0;
+			static int	roots = 0;
 			const auto* test = ::testing::UnitTest::GetInstance()->current_test_info();
-			rootPath = std::filesystem::temp_directory_path() /
-					   ("worldsim-" + std::string(purpose) + "-" + runToken + "-" + (test != nullptr ? test->name() : "") + "-" + std::to_string(++roots));
+			rootPath = std::filesystem::temp_directory_path() / ("worldsim-" + std::string(purpose) + "-" + runToken + "-" +
+																 (test != nullptr ? test->name() : "") + "-" + std::to_string(++roots));
 			std::filesystem::remove_all(rootPath);
 			const std::filesystem::path shipped = assets::testing::shippedRepoRoot() / "assets" / "config";
 			for (const char* folder : {"behaviors", "actions", "work", "orders", "facts"}) {
@@ -60,7 +61,9 @@ namespace ecs::testing {
 			std::filesystem::copy(shipped / "facts", rootPath / "facts", std::filesystem::copy_options::recursive);
 			for (const std::string& folder : settings.shippedFolders) {
 				std::filesystem::copy(
-					shipped / folder, rootPath / folder, std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing
+					shipped / folder,
+					rootPath / folder,
+					std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing
 				);
 			}
 		}

@@ -132,7 +132,9 @@ namespace ecs::test {
 				ChainEntriesLoad chains = resolveChainEntries(library, actionEntries, &thoughts->types);
 				ASSERT_TRUE(chains.errors.empty()) << ::testing::PrintToString(chains.errors);
 				chainEntries = std::move(chains.chains);
-				evaluator = std::make_unique<queries::QueryEvaluator>(library, assets::AssetRegistry::Get(), std::span<const assets::ConditionKindDef>{});
+				evaluator = std::make_unique<queries::QueryEvaluator>(
+					library, assets::AssetRegistry::Get(), std::span<const assets::ConditionKindDef>{}
+				);
 
 				world = std::make_unique<World>();
 				world->registerSystem<TimeSystem>();
@@ -143,7 +145,9 @@ namespace ecs::test {
 				world->registerSystem<PhysicsSystem>();
 				actionSystem = &world->registerSystem<ActionSystem>(actionEntries, 42U);
 				world->registerSystem<ThoughtSystem>(thoughts->types, 42U);
-				actionSystem->setChains({.library = &library, .chains = &chainEntries, .evaluator = evaluator.get(), .regrowth = regrowing});
+				actionSystem->setChains(
+					{.library = &library, .chains = &chainEntries, .evaluator = evaluator.get(), .regrowth = regrowing}
+				);
 				actionSystem->setDropResourceCallback([this](const std::string& defName, float, float, uint32_t quantity, glm::vec2) {
 					dropped.emplace_back(defName, quantity);
 				});
@@ -173,9 +177,14 @@ namespace ecs::test {
 				registry.registerTestDefinition(std::move(berry));
 				assets::AssetDefinition bush;
 				bush.defName = "BerryBush";
-				bush.capabilities.harvestable =
-					assets::HarvestableCapability{.yieldDefName = "Berry", .amountMin = 3, .amountMax = 3, .durability = 10.0F, .destructive = false,
-												  .regrowthTime = 60.0F};
+				bush.capabilities.harvestable = assets::HarvestableCapability{
+					.yieldDefName = "Berry",
+					.amountMin = 3,
+					.amountMax = 3,
+					.durability = 10.0F,
+					.destructive = false,
+					.regrowthTime = 60.0F
+				};
 				registry.registerTestDefinition(std::move(bush));
 				assets::AssetDefinition pond;
 				pond.defName = "Pond";
@@ -232,7 +241,8 @@ namespace ecs::test {
 				target.kind = ChainTarget::Kind::Thing;
 				target.key = hashWorldEntity(at, id(defName));
 				target.defNameId = id(defName);
-				target.item = def != nullptr && def->capabilities.harvestable ? id(def->capabilities.harvestable->yieldDefName) : id(defName);
+				target.item =
+					def != nullptr && def->capabilities.harvestable ? id(def->capabilities.harvestable->yieldDefName) : id(defName);
 				target.position = at;
 				target.goal = at;
 				return target;
@@ -269,12 +279,24 @@ namespace ecs::test {
 
 			/// The one way a test starts a chain (behavior-data-migration.md, Porting tests): `chain` on `colonist` at
 			/// `step`, with the option's target and, for work, its source, destination, goal, and rung.
-			bool startChainAt(EntityID colonist, const std::string& chain, uint8_t step, const ChainTarget& target, const ChainOption& option = {}) {
+			bool startChainAt(
+				EntityID		   colonist,
+				const std::string& chain,
+				uint8_t			   step,
+				const ChainTarget& target,
+				const ChainOption& option = {}
+			) {
 				const auto handle = library.findChain(chainId(chain));
 				EXPECT_TRUE(handle.valid()) << chain;
 				return actionSystem->startChain(
-					colonist, {.chain = handle, .step = step, .target = target, .source = option.source, .destination = option.destination,
-							   .goal = option.goal, .tier = option.tier.value_or(assets::PriorityConfig::Get().decisionRungs().committedWork)}
+					colonist,
+					{.chain = handle,
+					 .step = step,
+					 .target = target,
+					 .source = option.source,
+					 .destination = option.destination,
+					 .goal = option.goal,
+					 .tier = option.tier.value_or(assets::PriorityConfig::Get().decisionRungs().committedWork)}
 				);
 			}
 
@@ -300,8 +322,10 @@ namespace ecs::test {
 			[[nodiscard]] Inventory& inventory(EntityID colonist) { return *world->getComponent<Inventory>(colonist); }
 			[[nodiscard]] Memory&	 memory(EntityID colonist) { return *world->getComponent<Memory>(colonist); }
 			[[nodiscard]] glm::vec2	 position(EntityID colonist) { return world->getComponent<Position>(colonist)->value; }
-			[[nodiscard]] float		 need(EntityID colonist, NeedType type) { return world->getComponent<NeedsComponent>(colonist)->get(type).value; }
-			void					 setNeed(EntityID colonist, NeedType type, float value) {
+			[[nodiscard]] float		 need(EntityID colonist, NeedType type) {
+				 return world->getComponent<NeedsComponent>(colonist)->get(type).value;
+			}
+			void setNeed(EntityID colonist, NeedType type, float value) {
 				world->getComponent<NeedsComponent>(colonist)->get(type).value = value;
 			}
 			[[nodiscard]] bool running(EntityID colonist, const std::string& chain) {
@@ -327,27 +351,27 @@ namespace ecs::test {
 				return claims;
 			}
 
-			std::optional<ecs::testing::SyntheticEntries>	   entries;
-			assets::EntryLibrary							   library;
-			ActionEntries									   actionEntries;
-			ChainEntries									   chainEntries;
-			std::unique_ptr<ecs::testing::TestThoughtTypes>	   thoughts;
-			std::unique_ptr<queries::QueryEvaluator>		   evaluator;
-			std::unique_ptr<World>							   world;
-			AIDecisionSystem*								   ai = nullptr;
-			ActionSystem*									   actionSystem = nullptr;
-			std::vector<std::string>						   started;
-			std::vector<std::string>						   finished;
-			std::vector<std::pair<std::string, uint32_t>>	   dropped;
+			std::optional<ecs::testing::SyntheticEntries>	entries;
+			assets::EntryLibrary							library;
+			ActionEntries									actionEntries;
+			ChainEntries									chainEntries;
+			std::unique_ptr<ecs::testing::TestThoughtTypes> thoughts;
+			std::unique_ptr<queries::QueryEvaluator>		evaluator;
+			std::unique_ptr<World>							world;
+			AIDecisionSystem*								ai = nullptr;
+			ActionSystem*									actionSystem = nullptr;
+			std::vector<std::string>						started;
+			std::vector<std::string>						finished;
+			std::vector<std::pair<std::string, uint32_t>>	dropped;
 			/// The regrowing sources the runner's queries read: position x to when it is ready again.
 			std::vector<std::pair<float, double>> regrowingAt;
-			queries::RegrowthQuery regrowing = [this](uint32_t, glm::vec2 at, double) -> std::optional<double> {
-				for (const auto& [x, readyAt] : regrowingAt) {
-					if (x == at.x) {
-						return readyAt;
-					}
-				}
-				return std::nullopt;
+			queries::RegrowthQuery				  regrowing = [this](uint32_t, glm::vec2 at, double) -> std::optional<double> {
+				   for (const auto& [x, readyAt] : regrowingAt) {
+					   if (x == at.x) {
+						   return readyAt;
+					   }
+				   }
+				   return std::nullopt;
 			};
 		};
 
@@ -712,7 +736,8 @@ namespace ecs::test {
 		EXPECT_NE(all.find("<chain id=\\\"deep_1\\\"> nests chains more than 4 deep"), std::string::npos) << all;
 		EXPECT_EQ(all.find("<chain id=\\\"deep_2\\\"> nests"), std::string::npos) << all;
 		EXPECT_NE(all.find("<chain id=\\\"half\\\"> step 2 <do> names inbound without in_flight"), std::string::npos) << all;
-		EXPECT_NE(all.find("<chain id=\\\"musing\\\"> step 1 <think> thought \\\"pondered\\\" is no thought type"), std::string::npos) << all;
+		EXPECT_NE(all.find("<chain id=\\\"musing\\\"> step 1 <think> thought \\\"pondered\\\" is no thought type"), std::string::npos)
+			<< all;
 	}
 
 	// --- Ways a step ends ---
@@ -735,7 +760,7 @@ namespace ecs::test {
 		const EntityID colonist = createColonist();
 		const EntityID friendly = world->createEntity();
 		world->addComponent<Position>(friendly, Position{{0.2F, 0.0F}});
-		ChainTarget	   target = entityTarget(friendly, {0.2F, 0.0F});
+		ChainTarget target = entityTarget(friendly, {0.2F, 0.0F});
 		target.kind = ChainTarget::Kind::Mover;
 		target.goal = {0.0F, 0.0F};
 		setNeed(colonist, NeedType::Hygiene, 50.0F);
@@ -810,8 +835,8 @@ namespace ecs::test {
 	}
 
 	TEST_F(ChainsTest, AGroupTakesFromAPileWithItsPickupMember) {
-		const EntityID	  colonist = createColonist();
-		ChainTarget		  pile = remember(colonist, {1.0F, 0.0F}, "Berry", assets::CapabilityType::Carryable);
+		const EntityID colonist = createColonist();
+		ChainTarget	   pile = remember(colonist, {1.0F, 0.0F}, "Berry", assets::CapabilityType::Carryable);
 		pile.claimKind = assets::ClaimKind::SourceQuantity;
 		pile.claimQuantity = 2;
 		ASSERT_TRUE(startChainAt(colonist, "take_target", 0, pile));
@@ -852,7 +877,13 @@ namespace ecs::test {
 		pile.claimKind = assets::ClaimKind::SourceQuantity;
 		pile.claimQuantity = 3;
 		ChainTarget destination = entityTarget(box, {6.0F, 0.0F});
-		ASSERT_TRUE(startChainAt(colonist, "deliver", 0, {}, {.source = pile, .destination = destination, .goal = {.rootGoalId = 77, .item = id("Berry"), .quantity = 3}}));
+		ASSERT_TRUE(startChainAt(
+			colonist,
+			"deliver",
+			0,
+			{},
+			{.source = pile, .destination = destination, .goal = {.rootGoalId = 77, .item = id("Berry"), .quantity = 3}}
+		));
 		const uint64_t instance = task(colonist).instanceId;
 		ASSERT_EQ(task(colonist).claims.size(), 3U) << "the source share, and the goods' inbound and in-flight, all taken at the start";
 		world->update(kTick);
@@ -943,12 +974,12 @@ namespace ecs::test {
 	TEST_F(ChainsTest, ClaimsGoWithTheChainOnInterruptionFailureAndDestruction) {
 		const EntityID colonist = createColonist();
 		createColonist({20.0F, 20.0F}); // a bystander, whose decisions rebuild the claim index every update
-		const auto	   claimedBush = [&]() {
-			   const ChainTarget bush = remember(colonist, {4.0F, 0.0F}, "BerryBush", assets::CapabilityType::Harvestable);
-			   EXPECT_TRUE(startChainAt(colonist, "take_target", 0, bush));
-			   EXPECT_EQ(task(colonist).claims.size(), 1U);
-			   EXPECT_EQ(task(colonist).claims[0].kind(), ClaimKind::Use);
-			   return task(colonist).instanceId;
+		const auto claimedBush = [&]() {
+			const ChainTarget bush = remember(colonist, {4.0F, 0.0F}, "BerryBush", assets::CapabilityType::Harvestable);
+			EXPECT_TRUE(startChainAt(colonist, "take_target", 0, bush));
+			EXPECT_EQ(task(colonist).claims.size(), 1U);
+			EXPECT_EQ(task(colonist).claims[0].kind(), ClaimKind::Use);
+			return task(colonist).instanceId;
 		};
 
 		uint64_t instance = claimedBush();

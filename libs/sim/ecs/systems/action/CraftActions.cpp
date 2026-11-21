@@ -191,7 +191,12 @@ namespace ecs {
 			return;
 		}
 		action = Action::Craft(
-			actionEntries, task.craftRecipeDefName, task.targetStationId, task.targetPosition, ready->workAmount, ready->effect.inputs,
+			actionEntries,
+			task.craftRecipeDefName,
+			task.targetStationId,
+			task.targetPosition,
+			ready->workAmount,
+			ready->effect.inputs,
 			ready->effect.outputs
 		);
 

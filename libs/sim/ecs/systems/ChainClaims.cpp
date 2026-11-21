@@ -233,7 +233,8 @@ namespace ecs {
 	}
 
 	std::optional<SuspendedWork> suspendableWork(const Task& task, uint32_t held) {
-		if ((task.type != TaskType::Haul && task.type != TaskType::Harvest && task.type != TaskType::Chain) || held == 0 || task.instanceId == 0) {
+		if ((task.type != TaskType::Haul && task.type != TaskType::Harvest && task.type != TaskType::Chain) || held == 0 ||
+			task.instanceId == 0) {
 			return std::nullopt;
 		}
 		const uint32_t item = chainItem(task);

@@ -210,7 +210,7 @@ public:
 	/// the chain cannot start (no step target found, a claim it cannot size).
 	bool startChain(EntityID entity, const ChainStart& start);
 
-private:
+  private:
 	/// Within this of its task's target a colonist acts. Colonists bound for one point (a station, a shore point) push
 	/// one another apart, so no more than one could ever reach the point itself. Inside the haul and placement legs'
 	/// 0.5 m tolerance, so a leg that arrives this way is at its source or target.
@@ -307,13 +307,13 @@ private:
 	/// The rows a completing action has not yet paid, applied in the order written, its completion logged, and its
 	/// finish reported when every row took. True when they all took.
 	bool finishAction(
-		EntityID entity,
+		EntityID			   entity,
 		const struct Position& position,
-		struct Action& action,
+		struct Action&		   action,
 		struct NeedsComponent& needs,
-		struct Task& task,
-		struct Inventory& inventory,
-		struct Memory& memory
+		struct Task&		   task,
+		struct Inventory&	   inventory,
+		struct Memory&		   memory
 	);
 
 	// --- The chain runner: a Task of type Chain, its steps run in order (systems/action/ChainRunner.cpp). ---

@@ -23,8 +23,8 @@ namespace ecs {
 		/// A thing's memory key, a box's world key; 0 otherwise.
 		uint64_t key = 0;
 		/// A box, a creature, or an entity target; kInvalidEntity for a thing or a place.
-		EntityID  entity = kInvalidEntity;
-		uint32_t  defNameId = 0;
+		EntityID entity = kInvalidEntity;
+		uint32_t defNameId = 0;
 		/// What it is a source of: a pile's or a box's item, a harvestable's yield.
 		uint32_t  item = 0;
 		glm::vec2 position{0.0F, 0.0F};

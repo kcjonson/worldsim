@@ -639,7 +639,8 @@ namespace ecs {
 
 	std::optional<NeedType> trackedNeed(const assets::EntryLibrary& library, assets::NeedId id) {
 		const std::string& needId = library.needIds[id.index];
-		const auto tracked = std::ranges::find_if(kNeedLabels, [&needId](const char* label) { return conditions::conditionName(label) == needId; });
+		const auto		   tracked =
+			std::ranges::find_if(kNeedLabels, [&needId](const char* label) { return conditions::conditionName(label) == needId; });
 		if (tracked == kNeedLabels.end()) {
 			return std::nullopt;
 		}

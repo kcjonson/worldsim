@@ -45,8 +45,11 @@ namespace ecs {
 		/// already running above it; the first nesting past the limit is reported once. The loader refuses a chain that runs
 		/// itself, so the limit ends every walk.
 		bool checkNesting(
-			const assets::EntryLibrary& library, assets::EntryHandle<assets::ChainEntry> chain, std::vector<uint32_t>& running,
-			std::vector<std::string>& errors, const assets::ChainEntry& root
+			const assets::EntryLibrary&				library,
+			assets::EntryHandle<assets::ChainEntry> chain,
+			std::vector<uint32_t>&					running,
+			std::vector<std::string>&				errors,
+			const assets::ChainEntry&				root
 		) {
 			if (running.size() >= ChainProgress::kMaxDepth) {
 				errors.push_back(
@@ -94,16 +97,21 @@ namespace ecs {
 		}
 
 		void checkDoStep(
-			const assets::EntryLibrary& library, const ActionEntries& actions, const assets::DoStep& step, const std::string& where,
-			std::vector<std::string>& errors
+			const assets::EntryLibrary& library,
+			const ActionEntries&		actions,
+			const assets::DoStep&		step,
+			const std::string&			where,
+			std::vector<std::string>&	errors
 		) {
 			const bool inbound = (step.claims & bit(assets::ClaimKind::Inbound)) != 0;
 			const bool inFlight = (step.claims & bit(assets::ClaimKind::InFlight)) != 0;
 			if (inbound != inFlight) {
-				errors.push_back(where + " names " + (inbound ? "inbound without in_flight" : "in_flight without inbound") +
-								 "; goods on their way to a destination are claimed toward their root too");
+				errors.push_back(
+					where + " names " + (inbound ? "inbound without in_flight" : "in_flight without inbound") +
+					"; goods on their way to a destination are claimed toward their root too"
+				);
 			}
-			const assets::ActionEntry& entry = library.actions[step.action.handle.index];
+			const assets::ActionEntry&							  entry = library.actions[step.action.handle.index];
 			std::vector<assets::EntryHandle<assets::ActionEntry>> performed;
 			if (entry.group) {
 				for (const auto& member : entry.members) {
@@ -112,9 +120,8 @@ namespace ecs {
 			} else {
 				performed.push_back(step.action.handle);
 			}
-			const auto takeAndInstall = static_cast<uint8_t>(
-				(1U << static_cast<unsigned>(TargetData::Take)) | (1U << static_cast<unsigned>(TargetData::Install))
-			);
+			const auto takeAndInstall =
+				static_cast<uint8_t>((1U << static_cast<unsigned>(TargetData::Take)) | (1U << static_cast<unsigned>(TargetData::Install)));
 			for (const auto handle : performed) {
 				const uint8_t needed = targetDataOf(actions.of(handle));
 				if (std::popcount(needed) > 1 && needed != takeAndInstall) {
@@ -129,8 +136,8 @@ namespace ecs {
 	} // namespace
 
 	ChainEntriesLoad resolveChainEntries(const assets::EntryLibrary& library, const ActionEntries& actions, const ThoughtTypes* thoughts) {
-		ChainEntriesLoad load;
-		ChainEntries&	 chains = load.chains;
+		ChainEntriesLoad	  load;
+		ChainEntries&		  chains = load.chains;
 		std::vector<uint32_t> running;
 		for (const assets::ChainEntry& chain : library.chains) {
 			chains.firstStep.push_back(static_cast<uint32_t>(chains.steps.size()));
@@ -149,7 +156,8 @@ namespace ecs {
 						load.errors.push_back(where + " need \"" + library.needIds[need->need.index] + "\" is no need the sim tracks");
 					}
 				} else if (const auto* think = std::get_if<assets::ThinkStep>(&step.step)) {
-					const std::optional<ThoughtEventTypeId> thought = thoughts != nullptr ? thoughts->findType(think->thought) : std::nullopt;
+					const std::optional<ThoughtEventTypeId> thought =
+						thoughts != nullptr ? thoughts->findType(think->thought) : std::nullopt;
 					if (thought) {
 						values.thought = *thought;
 					} else {
