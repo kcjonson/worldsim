@@ -156,7 +156,7 @@ void renderV2() { }  // Just name it render() and delete the old one
 - Functions/Methods: camelCase (`loadTexture()`, `isValid()`)
 - Variables/Members: camelCase, no prefix (`frameCount`, `deltaTime`)
 - Constants: `k` prefix (`kMaxTextures`)
-- Every name is whole readable words. No one- or two-letter names or namespace aliases (`P::`, `td::`); loop indices and x/y/z are the exceptions
+- Every name is whole readable words. No one- or two-letter names or namespace aliases (`P::`, `td::`); loop indices and x/y/z are the exceptions, and so are CSS and SVG's own names (the `a` to `f` of a transform matrix), which outrank this rule
 
 **Terminology:**
 - Use "scene" not "screen" (`SplashScene`, not `SplashScreen`)
