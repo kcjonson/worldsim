@@ -1,6 +1,6 @@
 // Tests for AssetRegistry::getSilhouette (Story B): the per-template selection
 // silhouette, plus the tessellator coverage-oracle cross-check that geometry
-// can't run (it can't link the renderer). The silhouette is rasterized from the
+// can't run (it can't link the renderer). The silhouette is the union of the
 // tessellated mesh triangles, so it must ENCLOSE the region the tessellator fills
 // (it fills holes, so silhouette >= fill), and stroke-only assets get a real
 // silhouette from their stroke bands (no bounds-rect fallback).
@@ -66,7 +66,7 @@ TEST(AssetRegistrySilhouette, EnclosesTessellatedFill) {
 	ASSERT_NE(sil, nullptr);
 
 	// Every non-degenerate opaque triangle centroid should be inside the silhouette. Allow
-	// a small slack for raster staircasing clipping sliver triangles at the boundary.
+	// a small slack for the simplification clipping sliver triangles at the boundary.
 	const auto faint = [&](uint16_t i) { return mesh->hasColors() && mesh->colors[i].a < kSilhouetteMinAlpha; };
 	int		   inside = 0;
 	int		   total  = 0;
@@ -83,7 +83,7 @@ TEST(AssetRegistrySilhouette, EnclosesTessellatedFill) {
 		const float area2 =
 			std::abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y));
 		if (area2 < 1e-4F) {
-			continue; // sliver/degenerate; centroid ill-defined vs the raster grid
+			continue; // sliver/degenerate; centroid ill-defined at millimetre precision
 		}
 		const Foundation::Vec2 centroid{(a.x + b.x + c.x) / 3.0F, (a.y + b.y + c.y) / 3.0F};
 		++total;
@@ -107,7 +107,7 @@ TEST(AssetRegistrySilhouette, EnclosesTessellatedFill) {
 }
 
 // A stroke-only asset (SVG entirely fill="none", e.g. PlantFiber) still gets a real
-// silhouette: rasterizing the tessellated STROKE BANDS captures the drawn strands, so
+// silhouette: unioning the tessellated STROKE BANDS captures the drawn strands, so
 // no bounds-rect fallback is needed. Guards that stroke geometry reaches the silhouette.
 TEST(AssetRegistrySilhouette, StrokeOnlyGetsRealSilhouette) {
 	auto& reg = AssetRegistry::Get();
@@ -159,5 +159,31 @@ square(0, 1.0)
 	EXPECT_TRUE(insideAny(sil->rings, geometry::quantize({0.0F, 0.0F})));
 	EXPECT_FALSE(insideAny(sil->rings, geometry::quantize({5.0F, 0.0F})));
 	EXPECT_FALSE(insideAny(sil->hitRegion, geometry::quantize({5.0F, 0.0F})));
+	reg.clear();
+}
+
+// A click just inside a mature tree's outline selects it and one just outside does not: at the rightmost point of
+// its hit region, 5 mm in and 20 mm out.
+TEST(AssetRegistrySilhouette, MatureTreeHitsJustInsideAndMissesJustOutside) {
+	auto& reg = AssetRegistry::Get();
+	reg.clear();
+	if (!loadShippedLibrary(reg)) {
+		GTEST_SKIP() << "assets/world not found";
+	}
+	const AssetDefinition* def = reg.getDefinition("Flora_TreeOak");
+	ASSERT_NE(def, nullptr);
+	const AssetSilhouette* sil = reg.getSilhouette("Flora_TreeOak", AssetRegistry::matureTraits(*def));
+	ASSERT_NE(sil, nullptr);
+	ASSERT_TRUE(sil->valid);
+	geometry::Vec2i64 rightmost = sil->hitRegion.front().front();
+	for (const auto& ring : sil->hitRegion) {
+		for (const auto& vertex : ring) {
+			if (vertex.x > rightmost.x) {
+				rightmost = vertex;
+			}
+		}
+	}
+	EXPECT_TRUE(insideAny(sil->hitRegion, {rightmost.x - 5, rightmost.y}));
+	EXPECT_FALSE(insideAny(sil->hitRegion, {rightmost.x + 20, rightmost.y}));
 	reg.clear();
 }

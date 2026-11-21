@@ -8,6 +8,7 @@
 #include "assets/PointTurn.h"
 
 #include <core/Vec2i64.h>
+#include <predicates/Predicates.h>
 
 #include <gtest/gtest.h>
 
@@ -204,12 +205,6 @@ namespace {
 	}
 
 	ItemView checkedView(const AssetDefinition& def, uint32_t turnQuanta, uint8_t level, const ViewConfig& config) {
-		ItemView view = buildItemView(def, turnQuanta, level, config);
-		expectWellFormed(def, view, level);
-		return view;
-	}
-
-	ItemView checkedMesh(const AssetDefinition& def, uint32_t turnQuanta, uint8_t level, const ViewConfig& config) {
 		ItemView view = buildItemMesh(def, turnQuanta, level, config);
 		expectWellFormed(def, view, level);
 		return view;
@@ -994,11 +989,12 @@ TEST_F(ItemViewTest, TheOutlineIsCutAtTheBandEdgesAndEachSideOfANotchKeepsItsOwn
 	const auto check = [&](const AssetDefinition& def, double degrees) {
 		const ItemView view = checkedView(def, quantaOf(degrees), 0, viewConfig());
 		ASSERT_TRUE(view.error.empty()) << view.error;
-		ASSERT_TRUE(view.silhouette.silhouette.valid);
-		ASSERT_EQ(view.silhouette.stripLines.size(), view.strips.size());
+		const ItemSilhouette silhouette = buildItemSilhouette(def, quantaOf(degrees), viewConfig());
+		ASSERT_TRUE(silhouette.silhouette.valid);
+		ASSERT_EQ(silhouette.stripLines.size(), view.strips.size());
 		const StripLayout layout = stripLayout(def, quantaOf(degrees), viewConfig());
 		float ringLength = 0.0F;
-		for (const geometry::Ring& ring : view.silhouette.silhouette.rings) {
+		for (const geometry::Ring& ring : silhouette.silhouette.rings) {
 			std::vector<glm::vec2> points;
 			for (const geometry::Vec2i64& point : ring) {
 				const Foundation::Vec2 metres = geometry::dequantize(point);
@@ -1010,9 +1006,9 @@ TEST_F(ItemViewTest, TheOutlineIsCutAtTheBandEdgesAndEachSideOfANotchKeepsItsOwn
 		for (size_t strip = 0; strip < view.strips.size(); ++strip) {
 			// A mat round a body is the outer ring wherever it reaches, so then only the flat strip must have lines.
 			if (!layout.strips.front().flat || layout.strips[strip].flat) {
-				EXPECT_FALSE(view.silhouette.stripLines[strip].empty()) << def.defName << " at " << degrees << ": strip " << strip << " has no outline";
+				EXPECT_FALSE(silhouette.stripLines[strip].empty()) << def.defName << " at " << degrees << ": strip " << strip << " has no outline";
 			}
-			for (const std::vector<glm::vec2>& line : view.silhouette.stripLines[strip]) {
+			for (const std::vector<glm::vec2>& line : silhouette.stripLines[strip]) {
 				lineLength += length(line, false);
 				for (const glm::vec2& point : line) {
 					EXPECT_GE(point.x, layout.strips[strip].bandMinX - 1.0e-4F) << def.defName << " at " << degrees << ": strip " << strip;
@@ -1038,9 +1034,10 @@ TEST_F(ItemViewTest, TheOutlineIsCutAtTheBandEdgesAndEachSideOfANotchKeepsItsOwn
 	check(*letterC, 35.0);
 	const ItemView view = checkedView(*letterC, 0, 0, viewConfig());
 	ASSERT_EQ(view.strips.size(), 3U);
+	const ItemSilhouette letterSilhouette = buildItemSilhouette(*letterC, 0, viewConfig());
 	for (const size_t arm : {size_t{0}, size_t{2}}) {
 		size_t inNotch = 0;
-		for (const std::vector<glm::vec2>& line : view.silhouette.stripLines[arm]) {
+		for (const std::vector<glm::vec2>& line : letterSilhouette.stripLines[arm]) {
 			for (const glm::vec2& point : line) {
 				if (point.x > -0.3F) {
 					++inNotch;
@@ -1066,6 +1063,40 @@ TEST_F(ItemViewTest, TheOutlineIsCutAtTheBandEdgesAndEachSideOfANotchKeepsItsOwn
 			EXPECT_EQ(kept->layout.strips.size(), buildItemMesh(*def, quantaOf(degrees), 0, viewConfig()).strips.size()) << name << " at " << degrees;
 		}
 	}
+}
+
+// The silhouette from the footprints alone (section 15) holds everything the view draws, at any turn, and a narrow
+// gap between two parts is outlined but clicks as the item.
+TEST_F(ItemViewTest, TheFootprintSilhouetteHoldsTheViewAndBridgesANarrowGap) {
+	const auto inside = [](const std::vector<geometry::Ring>& rings, const geometry::Vec2i64& point) {
+		return std::any_of(rings.begin(), rings.end(), [&](const geometry::Ring& ring) {
+			return geometry::pointInPolygon(point, ring) != geometry::PointInPolygon::Outside;
+		});
+	};
+	writeWorkbench();
+	writeNotchedAndStacked();
+	AssetRegistry& registry = AssetRegistry::Get();
+	for (const char* name : {"Workbench", "Overhang", "LetterC"}) {
+		const AssetDefinition* def = registry.getDefinition(name);
+		ASSERT_NE(def, nullptr) << name;
+		for (const double degrees : {0.0, 35.0, 90.0, 200.0, 311.0}) {
+			const ItemView		 view = checkedView(*def, quantaOf(degrees), referenceDetailLevel(def->detailLevels), viewConfig());
+			const ItemSilhouette silhouette = buildItemSilhouette(*def, quantaOf(degrees), viewConfig());
+			ASSERT_TRUE(silhouette.silhouette.valid) << name << " at " << degrees;
+			for (const Foundation::Vec2& vertex : view.mesh.vertices) {
+				ASSERT_TRUE(inside(silhouette.silhouette.rings, geometry::quantize(vertex)))
+					<< name << " at " << degrees << ": (" << vertex.x << ", " << vertex.y << ") is drawn outside the silhouette";
+			}
+		}
+	}
+
+	const AssetDefinition* split = loadBlocks("Split", {{-1.0F, -0.5F, -0.025F, 0.5F}, {0.025F, -0.5F, 1.0F, 0.5F}});
+	ASSERT_NE(split, nullptr);
+	const ItemSilhouette silhouette = buildItemSilhouette(*split, 0, viewConfig());
+	EXPECT_EQ(silhouette.silhouette.rings.size(), 2U) << "a 5 cm gap is wider than the outline's whole width";
+	EXPECT_FALSE(inside(silhouette.silhouette.rings, {0, 0}));
+	EXPECT_TRUE(inside(silhouette.silhouette.hitRegion, {0, 0})) << "a click in the gap selects the item";
+	EXPECT_FALSE(inside(silhouette.silhouette.hitRegion, {0, 800})) << "a click well clear of it does not";
 }
 
 // A click on the overhang's raised box ranks by the strip that draws there (rotatable-placed-items 15): of the strips
@@ -1293,7 +1324,7 @@ TEST_F(ItemViewTest, NoTwoStripsOverlapOnScreenAtAnyTurn) {
 		const AssetDefinition* def = AssetRegistry::Get().getDefinition(name);
 		ASSERT_NE(def, nullptr) << name;
 		for (const double degrees : turns) {
-			const ItemView view = checkedMesh(*def, quantaOf(degrees), 0, viewConfig());
+			const ItemView view = checkedView(*def, quantaOf(degrees), 0, viewConfig());
 			ASSERT_TRUE(view.error.empty()) << view.error;
 			++views;
 			float allowed = 1.0e-6F;
@@ -1348,7 +1379,7 @@ TEST_F(ItemViewTest, NothingOfALowerPartShowsThroughThePartAboveIt) {
 	size_t		views = 0;
 	for (int degrees = 0; degrees < 360; degrees += 3) {
 		const float	   turn = radiansOf(degrees);
-		const ItemView view = checkedMesh(*def, quantaOf(degrees), 0, config);
+		const ItemView view = checkedView(*def, quantaOf(degrees), 0, config);
 		ASSERT_TRUE(view.error.empty()) << view.error;
 		++views;
 		std::vector<glm::vec2> inner;
@@ -1416,7 +1447,7 @@ TEST_F(ItemViewTest, WhereTwoPartsOverlapOnScreenThePartInFrontDrawsLater) {
 		const PartsAsset& parts = *def->parts;
 		for (int degrees = 0; degrees < 360; degrees += 3) {
 			const float	   turn = radiansOf(degrees);
-			const ItemView view = checkedMesh(*def, quantaOf(degrees), 0, config);
+			const ItemView view = checkedView(*def, quantaOf(degrees), 0, config);
 			ASSERT_TRUE(view.error.empty()) << view.error;
 			++views;
 			std::vector<std::vector<glm::vec2>> footprints;
@@ -1769,8 +1800,6 @@ TEST_F(ItemViewTest, DetailLevelsDropTaggedShapes) {
 	EXPECT_GT(black(finest), 0) << "it is at 60 px/m";
 	EXPECT_GT(finest.mesh.vertices.size(), reference.mesh.vertices.size());
 	EXPECT_FALSE(checkedView(*def, 0, 3, viewConfig()).error.empty()) << "no level 3";
-	EXPECT_TRUE(reference.silhouette.silhouette.valid) << "the reference level carries the silhouette";
-	EXPECT_FALSE(finest.silhouette.silhouette.valid);
 }
 
 TEST_F(ItemViewTest, TheTemplateIsTheTurnZeroViewJoined) {
@@ -1793,7 +1822,6 @@ TEST_F(ItemViewTest, TheTemplateIsTheTurnZeroViewJoined) {
 	const AssetSilhouette* silhouette = registry.getSilhouette(id);
 	ASSERT_NE(silhouette, nullptr);
 	EXPECT_TRUE(silhouette->valid);
-	EXPECT_EQ(silhouette->rings, view.silhouette.silhouette.rings);
 	EXPECT_GE(registry.maxReachMeters(), itemReachMeters(*def->parts, viewConfig()) - 1.0e-6F) << "the cull reach covers every turn";
 	EXPECT_NEAR(itemReachMeters(*def->parts, viewConfig()), std::hypot(1.5F, 0.5F) + 0.8F * 0.35F + 0.015F, 1.0e-4F);
 	// Its levels are the view's levels.
@@ -1872,11 +1900,11 @@ TEST_F(ItemViewTest, TheRegistryKeepsALayoutWhileItIsAskedForAndUntilAClear) {
 
 	EXPECT_EQ(registry.stripLayout(0, 0), nullptr);
 
-	// The silhouette is kept with its layout, at the turn: the view's at the reference level.
+	// The silhouette is kept with its layout, at the turn.
 	const ItemSilhouette* silhouette = registry.itemSilhouette(bench, quantaOf(45.0));
 	ASSERT_NE(silhouette, nullptr);
 	EXPECT_EQ(registry.itemSilhouette(bench, quantaOf(45.0)), silhouette) << "kept, not built again";
-	EXPECT_EQ(silhouette->silhouette.rings, checkedView(*registry.getDefinition("Bench"), quantaOf(45.0), 0, viewConfig()).silhouette.silhouette.rings);
+	EXPECT_EQ(silhouette->silhouette.rings, buildItemSilhouette(*registry.getDefinition("Bench"), quantaOf(45.0), viewConfig()).silhouette.rings);
 	EXPECT_EQ(silhouette->stripLines.size(), 31U);
 
 	// A release keeps what was asked for since the last one and drops the rest, and a dropped layout's id is handed

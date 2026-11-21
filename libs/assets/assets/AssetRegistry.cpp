@@ -1939,11 +1939,9 @@ namespace assets {
 				return layouts[found->second]->silhouette.get();
 			}
 		}
-		// Rasterised off the lock; another thread that got there first keeps its own.
-		const AssetDefinition& def = *templateRecord(templateId).def;
-		auto silhouette = std::make_unique<ItemSilhouette>(
-			buildItemView(def, turnQuanta, referenceDetailLevel(def.detailLevels), GameViewConfig::Get().config()).silhouette
-		);
+		// Built off the lock; another thread that got there first keeps its own.
+		auto silhouette =
+			std::make_unique<ItemSilhouette>(buildItemSilhouette(*templateRecord(templateId).def, turnQuanta, GameViewConfig::Get().config()));
 		std::lock_guard<std::mutex> lock(layoutMutex);
 		const auto					found = layoutIds.find(key);
 		if (found == layoutIds.end()) {
@@ -2303,7 +2301,7 @@ namespace assets {
 			}
 		}
 
-		// Compute outside the silhouette lock (rasterization can be heavy), mirroring
+		// Compute outside the silhouette lock (the union can be heavy), mirroring
 		// getMotion. getTemplate guards itself with a separate mutex.
 		const renderer::TessellatedMesh* tmpl = getTemplate(templateId);
 		AssetSilhouette					 sil = tmpl != nullptr ? silhouetteOfMesh(*tmpl) : AssetSilhouette{};

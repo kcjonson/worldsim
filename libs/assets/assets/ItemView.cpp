@@ -3,10 +3,11 @@
 #include "assets/DetailLevels.h"
 #include "assets/PointTurn.h"
 
+#include <boolean/RingBoolean.h>
 #include <core/Vec2i64.h>
+#include <silhouette/Silhouette.h>
 #include <utils/Log.h>
 #include <vector/SVGLoader.h>
-
 
 #include <algorithm>
 #include <array>
@@ -1098,15 +1099,39 @@ namespace assets {
 		return view;
 	}
 
-	ItemView buildItemView(const AssetDefinition& def, uint32_t turnQuanta, uint8_t level, const ViewConfig& config) {
-		ItemView view = buildItemMesh(def, turnQuanta, level, config);
-		if (view.error.empty() && level == referenceDetailLevel(def.detailLevels)) {
-			view.silhouette.silhouette = silhouetteOfMesh(view.mesh);
-			view.silhouette.stripLines = stripLinesOf(
-				*def.parts, stripLayout(def, turnQuanta, config), turnRadiansFromQuanta(turnQuanta), config, view.silhouette.silhouette.rings
-			);
+	ItemSilhouette buildItemSilhouette(const AssetDefinition& def, uint32_t turnQuanta, const ViewConfig& config) {
+		ItemSilhouette silhouette;
+		if (def.parts == nullptr) {
+			return silhouette;
 		}
-		return view;
+		const PartsAsset&  parts = *def.parts;
+		const float		   turnRadians = turnRadiansFromQuanta(turnQuanta);
+		// A millimetre more for rounding the footprints to millimetres and another for the union's simplification,
+		// either of which may cut that far inside, so the outline's stroke stays within the silhouette.
+		const std::int64_t pad = geometry::quantize(Foundation::Vec2{config.outlineHalfWidthMeters(), 0.0F}).x + 1 + geometry::kBooleanSimplifyEpsMm;
+		std::vector<geometry::Ring> shapes;
+		for (uint32_t placement = 0; placement < parts.placements.size(); ++placement) {
+			const std::vector<glm::vec2> footprint = turnedFootprint(parts, placement, turnRadians);
+			if (footprint.empty()) {
+				continue;
+			}
+			const PartDefinition&  part = parts.parts[parts.placements[placement].part];
+			std::vector<glm::vec2> lifted;
+			for (const glm::vec2& point : footprint) {
+				lifted.emplace_back(point.x, point.y - part.bottomMeters * config.heightRatio);
+				lifted.emplace_back(point.x, point.y - part.topMeters * config.heightRatio);
+			}
+			geometry::Ring prism;
+			for (const glm::vec2& point : convexHull(std::move(lifted))) {
+				prism.push_back(geometry::quantize(Foundation::Vec2{point.x, point.y}));
+			}
+			for (geometry::Ring& grown : geometry::dilateOutline({prism}, pad)) {
+				shapes.push_back(std::move(grown));
+			}
+		}
+		silhouette.silhouette = silhouetteOfShapes(std::move(shapes));
+		silhouette.stripLines = stripLinesOf(parts, stripLayout(def, turnQuanta, config), turnRadians, config, silhouette.silhouette.rings);
+		return silhouette;
 	}
 
 } // namespace assets

@@ -13,95 +13,137 @@ using namespace geometry;
 
 namespace {
 
-	// Coordinates are in millimeters; 1000 mm = 1 m. Raster silhouette output is
-	// blocky and approximate, so tests assert topology and area within a few %,
-	// never exact vertices. Probe points sit well away from every boundary so
-	// raster staircasing cannot flip an inside/outside answer.
+	// Coordinates are in millimetres.
 
-	bool insideAny(const std::vector<Ring>& s, Vec2i64 p) {
-		for (const Ring& r : s) {
-			if (pointInPolygon(p, r) == PointInPolygon::Inside) {
+	bool insideAny(const std::vector<Ring>& outline, Vec2i64 point) {
+		for (const Ring& ring : outline) {
+			if (pointInPolygon(point, ring) == PointInPolygon::Inside) {
 				return true;
 			}
 		}
 		return false;
 	}
 
-	double totalArea(const std::vector<Ring>& s) {
-		double a = 0.0;
-		for (const Ring& r : s) {
-			a += std::abs(signedAreaDoubled(r).toDouble()) * 0.5;
+	double totalArea(const std::vector<Ring>& outline) {
+		double area = 0.0;
+		for (const Ring& ring : outline) {
+			area += std::abs(signedAreaDoubled(ring).toDouble()) * 0.5;
 		}
-		return a;
+		return area;
 	}
 
-	void expectNear(double got, double want, double tol) {
-		EXPECT_LE(std::abs(got - want), tol * want) << "got " << got << " want " << want;
+	// Appends the two triangles of an axis-aligned rectangle, the second wound clockwise.
+	void pushRect(std::vector<Vec2i64>& vertices, std::int64_t x0, std::int64_t y0, std::int64_t x1, std::int64_t y1) {
+		vertices.insert(vertices.end(), {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y0}, {x0, y1}, {x1, y1}});
 	}
 
-	// Appends the two triangles of an axis-aligned rectangle.
-	void pushRect(std::vector<Vec2i64>& v, std::int64_t x0, std::int64_t y0, std::int64_t x1, std::int64_t y1) {
-		v.insert(v.end(), {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y0}, {x1, y1}, {x0, y1}});
+	void expectSimpleAndCounterClockwise(const std::vector<Ring>& outline) {
+		for (const Ring& ring : outline) {
+			EXPECT_TRUE(isSimple(ring).pass);
+			EXPECT_GT(signedAreaDoubled(ring).sign(), 0);
+		}
 	}
 
 } // namespace
 
-TEST(Silhouette, SingleTriangleOneRing) {
-	const std::vector<Vec2i64> tri = {{0, 0}, {4000, 0}, {0, 4000}};
-	const auto				   s   = silhouetteOfTriangles(tri);
-	ASSERT_EQ(s.size(), 1u);
-	EXPECT_TRUE(insideAny(s, {1333, 1333})); // centroid
-	EXPECT_FALSE(insideAny(s, {3000, 3000})); // outside the hypotenuse
-	expectNear(totalArea(s), 8'000'000.0, 0.15);
+TEST(Silhouette, SquareOfTwoTrianglesIsExact) {
+	std::vector<Vec2i64> square;
+	pushRect(square, 0, 0, 4000, 4000);
+	const auto outline = silhouetteOfTriangles(square, 0, 1);
+	ASSERT_EQ(outline.size(), 1U);
+	EXPECT_EQ(outline.front().size(), 4U);
+	EXPECT_DOUBLE_EQ(totalArea(outline), 16'000'000.0);
+	expectSimpleAndCounterClockwise(outline);
 }
 
-TEST(Silhouette, TwoTrianglesFormSquare) {
-	// Shared diagonal (0,0)-(4000,4000); the union is a solid square.
-	const std::vector<Vec2i64> tris = {
-		{0, 0}, {4000, 0}, {4000, 4000}, // lower-right
-		{0, 0}, {4000, 4000}, {0, 4000}, // upper-left
-	};
-	const auto s = silhouetteOfTriangles(tris);
-	ASSERT_EQ(s.size(), 1u);
-	EXPECT_TRUE(insideAny(s, {2000, 2000}));
-	expectNear(totalArea(s), 16'000'000.0, 0.10);
+TEST(Silhouette, LShapeKeepsItsNotch) {
+	std::vector<Vec2i64> shape;
+	pushRect(shape, 0, 0, 3000, 1000);
+	pushRect(shape, 0, 1000, 1000, 3000);
+	const auto outline = silhouetteOfTriangles(shape, 5, 5);
+	ASSERT_EQ(outline.size(), 1U);
+	EXPECT_EQ(outline.front().size(), 6U);
+	// The close rounds the inner corner and the simplification may lean an edge by up to its tolerance.
+	EXPECT_NEAR(totalArea(outline), 5'000'000.0, 5.0 * 3000.0);
+	EXPECT_FALSE(insideAny(outline, {2000, 2000}));
 }
 
-TEST(Silhouette, TriangulatedAnnulusHoleFilled) {
-	// Square frame (outer 6000, inner hole 2000..4000) as four strips of triangles;
-	// the triangular/quad hole in the middle must fill to a single ring.
-	std::vector<Vec2i64> tris;
-	pushRect(tris, 0, 0, 6000, 2000);	 // bottom
-	pushRect(tris, 0, 4000, 6000, 6000); // top
-	pushRect(tris, 0, 2000, 2000, 4000); // left
-	pushRect(tris, 4000, 2000, 6000, 4000); // right
-	const auto s = silhouetteOfTriangles(tris);
-	ASSERT_EQ(s.size(), 1u);
-	EXPECT_TRUE(insideAny(s, {3000, 3000})); // filled hole center
-}
-
-TEST(Silhouette, CloseBridgesDisjointBlobs) {
+TEST(Silhouette, SeparateBodiesStaySeparateUntilClosed) {
 	std::vector<Vec2i64> two;
-	pushRect(two, 0, 0, 4000, 6000);	  // A
-	pushRect(two, 6000, 0, 10000, 6000);  // B, 2000mm gap between facing walls
+	pushRect(two, 0, 0, 4000, 6000);
+	pushRect(two, 4006, 0, 8000, 6000); // a 6 mm gap
+	const auto open = silhouetteOfTriangles(two, 0, 1);
+	ASSERT_EQ(open.size(), 2U);
+	EXPECT_FALSE(insideAny(open, {4003, 3000}));
 
-	// No close: two separate rings, gap is exterior.
-	const auto open = silhouetteOfTriangles(two, 128, 0);
-	ASSERT_EQ(open.size(), 2u);
-	EXPECT_TRUE(insideAny(open, {2000, 3000}));
-	EXPECT_TRUE(insideAny(open, {8000, 3000}));
-	EXPECT_FALSE(insideAny(open, {5000, 3000})); // the gap
+	const auto closed = silhouetteOfTriangles(two, 4, 1);
+	ASSERT_EQ(closed.size(), 1U);
+	EXPECT_TRUE(insideAny(closed, {4003, 3000}));
+	EXPECT_NEAR(totalArea(closed), 48'000'000.0, 48'000'000.0 * 0.001) << "the close keeps the outer boundary";
+	expectSimpleAndCounterClockwise(closed);
 
-	// Close wide enough to bridge the 2000mm gap: one ring, gap now inside.
-	const auto closed = silhouetteOfTriangles(two, 128, 20);
-	ASSERT_EQ(closed.size(), 1u);
-	EXPECT_TRUE(insideAny(closed, {5000, 3000}));
+	const auto wide = silhouetteOfTriangles(two, 2, 1);
+	EXPECT_EQ(wide.size(), 2U) << "a gap past twice the radius stays open";
 }
 
-TEST(Silhouette, EmptyAndDegenerateInputs) {
-	EXPECT_TRUE(silhouetteOfTriangles({}).empty());
-	// A single zero-area (collinear) triangle: no coverage -> no rings.
-	EXPECT_TRUE(silhouetteOfTriangles({{0, 0}, {1000, 0}, {2000, 0}}).empty());
-	// Zero-extent bbox (all verts coincident).
-	EXPECT_TRUE(silhouetteOfTriangles({{5, 5}, {5, 5}, {5, 5}}).empty());
+TEST(Silhouette, HoleIsFilled) {
+	std::vector<Vec2i64> frame;
+	pushRect(frame, 0, 0, 6000, 2000);
+	pushRect(frame, 0, 4000, 6000, 6000);
+	pushRect(frame, 0, 2000, 2000, 4000);
+	pushRect(frame, 4000, 2000, 6000, 4000);
+	const auto outline = silhouetteOfTriangles(frame, 0, 1);
+	ASSERT_EQ(outline.size(), 1U);
+	EXPECT_TRUE(insideAny(outline, {3000, 3000}));
+	EXPECT_DOUBLE_EQ(totalArea(outline), 36'000'000.0);
+}
+
+TEST(Silhouette, IslandInAHoleGoesWithTheFill) {
+	std::vector<Vec2i64> frame;
+	pushRect(frame, 0, 0, 6000, 2000);
+	pushRect(frame, 0, 4000, 6000, 6000);
+	pushRect(frame, 0, 2000, 2000, 4000);
+	pushRect(frame, 4000, 2000, 6000, 4000);
+	pushRect(frame, 2500, 2500, 3500, 3500);
+	EXPECT_EQ(silhouetteOfTriangles(frame, 0, 1).size(), 1U);
+}
+
+TEST(Silhouette, DegenerateAndDuplicateInputs) {
+	EXPECT_TRUE(silhouetteOfTriangles({}, 4, 1).empty());
+	EXPECT_TRUE(silhouetteOfTriangles({{0, 0}, {1000, 0}, {2000, 0}}, 4, 1).empty());
+	EXPECT_TRUE(silhouetteOfTriangles({{5, 5}, {5, 5}, {5, 5}}, 4, 1).empty());
+
+	std::vector<Vec2i64> once;
+	pushRect(once, 0, 0, 3000, 2000);
+	std::vector<Vec2i64> repeated = once;
+	repeated.insert(repeated.end(), once.begin(), once.end());
+	repeated.insert(repeated.end(), {{0, 0}, {3000, 0}, {3000, 0}}); // a triangle with a repeated corner
+	repeated.insert(repeated.end(), {{0, 0}, {1000, 0}, {2000, 0}});
+	EXPECT_EQ(silhouetteOfTriangles(repeated, 4, 1), silhouetteOfTriangles(once, 4, 1));
+}
+
+TEST(Silhouette, SameInputSameRings) {
+	std::vector<Vec2i64> fan;
+	for (int spoke = 0; spoke < 40; ++spoke) {
+		const double angle = spoke * 0.157;
+		const Vec2i64 tip{std::llround(3000.0 * std::cos(angle)), std::llround(3000.0 * std::sin(angle))};
+		const Vec2i64 side{std::llround(2500.0 * std::cos(angle + 0.2)), std::llround(2500.0 * std::sin(angle + 0.2))};
+		fan.insert(fan.end(), {{0, 0}, tip, side});
+	}
+	const auto first = silhouetteOfTriangles(fan, 12, 6);
+	const auto second = silhouetteOfTriangles(fan, 12, 6);
+	ASSERT_FALSE(first.empty());
+	EXPECT_EQ(first, second);
+	expectSimpleAndCounterClockwise(first);
+}
+
+TEST(Silhouette, DilationHoldsEveryPointWithinTheRadius) {
+	const std::vector<Ring> square{{{0, 0}, {1000, 0}, {1000, 1000}, {0, 1000}}};
+	const auto grown = dilateOutline(square, 100);
+	ASSERT_EQ(grown.size(), 1U);
+	for (const Vec2i64 point : {Vec2i64{-99, 500}, Vec2i64{500, 1099}, Vec2i64{-70, -70}, Vec2i64{1070, 1070}}) {
+		EXPECT_TRUE(insideAny(grown, point)) << point.x << ", " << point.y;
+	}
+	EXPECT_FALSE(insideAny(grown, {-110, 500}));
+	EXPECT_FALSE(insideAny(grown, {-90, -90}));
 }

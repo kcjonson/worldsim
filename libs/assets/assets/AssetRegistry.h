@@ -115,9 +115,9 @@ namespace assets {
 		/// template that isn't a parts def's.
 		[[nodiscard]] const ItemLayout* stripLayout(uint32_t templateId, uint32_t turnQuanta);
 
-		/// The selection silhouette of a parts template at a turn (rotatable-placed-items 15): its view at the reference
-		/// level rasterised, built on the asking thread the first time and kept with the strip layout, which this asks
-		/// for. Valid as stripLayout's pointer is; null for a template that isn't a parts def's.
+		/// The selection silhouette of a parts template at a turn (rotatable-placed-items 15, buildItemSilhouette), built
+		/// on the asking thread the first time and kept with the strip layout, which this asks for. Valid as
+		/// stripLayout's pointer is; null for a template that isn't a parts def's.
 		[[nodiscard]] const ItemSilhouette* itemSilhouette(uint32_t templateId, uint32_t turnQuanta);
 
 		/// Releases every strip layout, and its silhouette, that nothing asked for since the last call. Every installed
@@ -182,7 +182,7 @@ namespace assets {
 		const MotionDef* getMotion(const std::string& defName);
 
 		/// Get the cached selection silhouette for a template (MeshSilhouette.h), in the template's pivot
-		/// frame: lazily rasterized from the template mesh's triangles by silhouetteOfMesh. Thread-safe (own
+		/// frame: built lazily from the template mesh's triangles by silhouetteOfMesh. Thread-safe (own
 		/// mutex, heavy compute off-lock), safe to call from chunk workers like getTemplate.
 		const AssetSilhouette* getSilhouette(uint32_t templateId);
 
@@ -513,9 +513,9 @@ namespace assets {
 		std::unordered_map<std::string, MotionDef> m_motionCache;
 		mutable std::mutex						   m_motionCacheMutex;
 
-		// Lazily-computed selection silhouette per template id. Guarded separately; the raster
-		// rasterize/flood-fill runs off-lock (like getMotion), the cache lock is held only
-		// to check/insert. Rasterized from the template mesh triangles.
+		// Lazily-computed selection silhouette per template id. Guarded separately; the union of the
+		// template mesh's triangles runs off-lock (like getMotion), the cache lock is held only
+		// to check/insert.
 		std::unordered_map<uint32_t, AssetSilhouette> m_silhouetteCache;
 		mutable std::mutex							  m_silhouetteCacheMutex;
 
