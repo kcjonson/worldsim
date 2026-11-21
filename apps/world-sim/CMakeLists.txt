@@ -93,6 +93,7 @@ add_library(world-sim-game STATIC
     scenes/world-creator/ui/WorldSurveyPanel.cpp
     scenes/landing/LandingSiteDetailsModel.cpp
     scenes/landing/LandingSiteDetailsPanel.cpp
+    scenes/loading/GameConfig.cpp
     scenes/loading/GameLoadingScene.cpp
     scenes/game/dev/CameraCommand.cpp
     scenes/game/dev/CameraStateJson.cpp
@@ -184,6 +185,7 @@ if(BUILD_TESTING)
         scenes/game/ui/adapters/TaskRowText.test.cpp
         scenes/game/ui/models/ThoughtLogModel.test.cpp
         scenes/game/ui/views/DrawingKeyGuide.test.cpp
+        scenes/loading/GameConfig.test.cpp
         scenes/SceneLayout.test.cpp
     )
     # Not beside world-sim: the tests must not find the files staged for the game (the quickstart

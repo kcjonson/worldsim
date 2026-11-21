@@ -4,7 +4,7 @@
     capability="..."  things a colonist's memory holds under that capability, spelled as asset
                       definitions spell it under <capabilities>;
     mover="..."       movers of that asset definition the colonist saw within the recent-sighting
-                      window (assets/config/colonists/memory.xml), at the places he last saw them.
+                      window (assets/world/creatures/Human/memory.xml), at the places he last saw them.
   A kind with neither is declared but nothing answers it, so it reads Unknown and a condition naming it
   is logged. A mod adds a kind, or replaces one's mapping, with a <Kind> in a file of its own.
 -->

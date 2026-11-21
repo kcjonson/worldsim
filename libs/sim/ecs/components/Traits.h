@@ -1,7 +1,7 @@
 #pragma once
 
 // Traits Component - the trait ids a colonist was given at creation, defined in
-// assets/config/colonists/traits. Effects come through conditions (trait(id)), not from this component.
+// assets/world/creatures/Human/traits.xml. Effects come through conditions (trait(id)), not from this component.
 //
 // See /docs/design/game-systems/colonists/attributes.md (Traits).
 

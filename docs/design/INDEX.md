@@ -88,6 +88,7 @@ World mechanics, rooms, resources, and entity interactions.
 | [Crowding](./game-systems/world/crowding.md) | People nearby against personal tolerance |
 | [Wetness](./game-systems/world/wetness.md) | Rain, wet clothes, drying |
 | [Roofs](./game-systems/world/roofs.md) | Which spaces are indoors, open-air enclosures |
+| [Rotatable Placed Items](./game-systems/world/rotatable-placed-items.md) | Furniture and stations that turn to any angle and show their height: parts, the art contract, use areas and clearance, placing with turn snapping |
 
 ### Features
 

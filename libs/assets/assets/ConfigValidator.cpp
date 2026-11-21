@@ -130,7 +130,7 @@ bool ConfigValidator::validateMemory(const MemoryConfig& config) {
     const std::string source = "Memory";
 
     if (!config.loaded()) {
-        addError(source, "No memory config loaded", "Ensure assets/config/colonists/memory.xml exists and is valid");
+        addError(source, "No memory config loaded", "Ensure assets/world/creatures/Human/memory.xml exists and is valid");
         return false;
     }
 
@@ -152,7 +152,7 @@ bool ConfigValidator::validateMood(const MoodConfig& config) {
 
     if (!config.loaded()) {
         if (config.problems().empty()) {
-            addError(source, "No mood config loaded", "Ensure assets/config/colonists/mood.xml exists and is valid");
+            addError(source, "No mood config loaded", "Ensure assets/world/creatures/Human/mood.xml exists and is valid");
         }
         return false;
     }

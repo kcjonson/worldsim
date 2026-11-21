@@ -12,6 +12,8 @@ Asset definitions are XML files that describe what assets exist in the game. The
 
 This approach is inspired by RimWorld's Def system, which has proven highly moddable and extensible.
 
+Player-placed items (furniture, stations, storage) are a third type, `parts`, defined in [Rotatable placed items](../rendering/rotatable-placed-items.md#4-asset-schema).
+
 **Key change**: Each asset lives in its own folder with all resources co-located. Paths in definitions are **relative to the asset folder**.
 
 ## Design Principles
@@ -257,7 +259,7 @@ To inherit from an asset in a different folder, use `@defName`:
 | `defName` | Yes | Unique identifier (e.g., `MapleTree`) |
 | `label` | Yes | Human-readable name |
 | `description` | No | Tooltip/documentation text |
-| `assetType` | Yes | `simple` or `procedural` |
+| `assetType` | Yes | `simple`, `procedural`, or `parts` (a player-placed item, see [Rotatable placed items](../rendering/rotatable-placed-items.md#4-asset-schema)) |
 
 ### Simple Asset Elements
 

@@ -11,7 +11,8 @@ namespace {
 
 	AttributeRolls shippedRolls() {
 		AttributeRolls rolls;
-		for (const std::string& error : loadAttributeRolls(rolls, ecs::testing::repoConfig() / "colonists" / "attributes")) {
+		const assets::CreatureConfigFiles human = ecs::testing::shippedHumanConfig();
+		for (const std::string& error : loadAttributeRolls(rolls, human.attributes, human.folder)) {
 			ADD_FAILURE() << error;
 		}
 		return rolls;

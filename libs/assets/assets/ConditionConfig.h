@@ -44,7 +44,7 @@ namespace assets {
 
 	inline constexpr std::array<OwnedSymbolSet, 5> kOwnedSymbolSets = {{
 		{.name = kKindSymbols, .owner = "the <Kind> declarations"},
-		{.name = kTraitSymbols, .owner = "the trait definitions (colonists/traits)"},
+		{.name = kTraitSymbols, .owner = "the trait definitions (creatures/Human/traits.xml)"},
 		{.name = kNeedSymbols, .owner = "the sim's needs"},
 		{.name = kAttributeSymbols, .owner = "the sim's attributes"},
 		{.name = kTaskSymbols, .owner = "the sim's task types and the <TaskGroup> declarations"},

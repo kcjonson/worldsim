@@ -757,7 +757,13 @@ namespace ecs {
 		if (chunk.y != o.chunk.y || chunk.x != o.chunk.x) {
 			return ChunkLess{}(chunk, o.chunk);
 		}
-		return std::tie(xBits, yBits, defName) < std::tie(o.xBits, o.yBits, o.defName);
+		return std::tie(xBits, yBits, defName, entity) < std::tie(o.xBits, o.yBits, o.defName, o.entity);
+	}
+
+	NavigationSystem::ObstacleKey NavigationSystem::colliderEntityKey(const ColliderEntityIndex::Entry& entry) {
+		const glm::vec2 at = entry.placed.position;
+		return {world::worldToChunk({at.x, at.y}), std::bit_cast<std::uint32_t>(at.x), std::bit_cast<std::uint32_t>(at.y), entry.placed.defName,
+				entry.entity};
 	}
 
 	NavigationSystem::NavigationSystem()
@@ -1103,9 +1109,11 @@ namespace ecs {
 		collectAnchors();
 		trackMovers();
 		queueRemovedDetail();
+		std::vector<ColliderEntityIndex::Entry> colliderEntitiesAdded = queueChangedColliderEntities();
 		gatherWalls();
 		rederiveChangedWater();
 		gatherRemovals(removeBudget);
+		gatherColliderEntities(std::move(colliderEntitiesAdded));
 		gatherLimits(addBudget, limitBudget, holdLimits);
 	}
 
@@ -1402,13 +1410,101 @@ namespace ecs {
 		}
 	}
 
-	void NavigationSystem::gatherRemovals(std::size_t removeBudget) {
-		const std::size_t count = std::min(removeBudget, detailRemovals.size());
-		if (count == 0) {
+	namespace {
+		// A placed obstacle over ground already meshed can land across a route: its box closes ground,
+		// as a wall's does. `lo` and `hi` are the ring's box.
+		bool ringOnMeshedGround(const gnav::PatchableMesh& mesh, const gnav::NavInputPolygon& ring, geometry::Vec2i64 lower, geometry::Vec2i64 upper) {
+			const auto meshed = [&mesh](geometry::Vec2i64 point) { return mesh.locate(point) >= 0; };
+			return meshed(lower) || meshed(upper) || meshed({lower.x, upper.y}) || meshed({upper.x, lower.y}) ||
+				   std::any_of(ring.ring.begin(), ring.ring.end(), meshed);
+		}
+	} // namespace
+
+	std::vector<ColliderEntityIndex::Entry> NavigationSystem::queueChangedColliderEntities() {
+		if (world == nullptr) {
+			return {};
+		}
+		ColliderEntityIndex::Changes changes = colliderEntityIndex.refresh(*world, assets::AssetRegistry::Get());
+		for (const ColliderEntityIndex::Entry& entry : changes.removed) {
+			if (const auto it = obstacleInMesh.find(colliderEntityKey(entry)); it != obstacleInMesh.end()) {
+				// As queueRemovedDetail: taken after the joined jobs are collected.
+				assert(it->second >= 0);
+				colliderEntityRemovals.push_back(it->second);
+				obstacleInMesh.erase(it);
+			}
+		}
+		return std::move(changes.added);
+	}
+
+	void NavigationSystem::gatherColliderEntities(std::vector<ColliderEntityIndex::Entry> added) {
+		const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
+		gnav::PatchEdits			 edits;
+		std::vector<ObstacleKey>	 keys;
+		bool						 closesGround = false;
+		for (const ColliderEntityIndex::Entry& entry : added) {
+			std::optional<gnav::NavInputPolygon> ring = nav::placedObstacleRing(entry.placed, registry);
+			if (!ring.has_value()) {
+				continue;
+			}
+			geometry::Vec2i64 lower = ring->ring.front();
+			geometry::Vec2i64 upper = lower;
+			for (const geometry::Vec2i64& point : ring->ring) {
+				lower = {std::min(lower.x, point.x), std::min(lower.y, point.y)};
+				upper = {std::max(upper.x, point.x), std::max(upper.y, point.y)};
+			}
+			if (ringOnMeshedGround(detailMesh, *ring, lower, upper)) {
+				gatheredJob.blockingBoxes.emplace_back(nav::toMeters(lower), nav::toMeters(upper));
+				closesGround = true;
+			}
+			ObstacleKey key = colliderEntityKey(entry);
+			obstacleInMesh.emplace(key, kGatheredRing);
+			keys.push_back(std::move(key));
+			edits.adds.push_back(std::move(*ring));
+		}
+		if (edits.adds.empty()) {
 			return;
 		}
+		if (closesGround) {
+			++gatheredJob.routePatches;
+		}
+		gatheredJob.patches.push_back(std::move(edits));
+		gatheredJob.onPatched.emplace_back([this, keys = std::move(keys)](const gnav::PatchReport& report, double) {
+			notePlacedObstaclesAdded(keys, report.added, clockMs());
+			const auto what		= [count = keys.size()] { return std::to_string(count) + " placed entities with a collider"; };
+			const auto describe = [&keys](std::size_t i) {
+				return "entity " + std::to_string(static_cast<unsigned long long>(keys[i].entity)) + " " + keys[i].defName + " at " +
+					   pointName({std::bit_cast<float>(keys[i].xBits), std::bit_cast<float>(keys[i].yBits)});
+			};
+			logUnsupported(report, what, describe);
+		});
+	}
+
+	void NavigationSystem::notePlacedObstaclesAdded(const std::vector<ObstacleKey>& keys, const std::vector<RingId>& added, std::int64_t arrived) {
+		for (std::size_t k = 0; k < keys.size(); ++k) {
+			if (added[k] == gnav::kNoRing) {
+				// Refused: it never enters the index, so sight and nav agree it is not there.
+				obstacleInMesh.erase(keys[k]);
+				continue;
+			}
+			obstacleInMesh.at(keys[k]) = added[k];
+			const gnav::NavInputPolygon& ring = detailMesh.ring(added[k]).polygon;
+			if (ring.provenanceId == nav::kProvenancePlaced && ring.blocked) {
+				placedOccluderIndex.add(added[k], ring.ring, keys[k].defName, arrived);
+			}
+		}
+	}
+
+	void NavigationSystem::gatherRemovals(std::size_t removeBudget) {
+		const std::size_t count = std::min(removeBudget, detailRemovals.size());
+		if (count == 0 && colliderEntityRemovals.empty()) {
+			return;
+		}
+		// The collider entities' first and outside the budget: they are few, and a moved one's new ring
+		// goes in after this patch in the same job, so its old ring must leave in it.
 		gnav::PatchEdits edits;
-		edits.removes.assign(detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(count));
+		edits.removes = std::move(colliderEntityRemovals);
+		colliderEntityRemovals.clear();
+		edits.removes.insert(edits.removes.end(), detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(count));
 		// The ids it removes, for the placed occluder index: a count would not say which entries leave.
 		std::vector<RingId> removed = edits.removes;
 		gatheredJob.patches.push_back(std::move(edits));
@@ -1512,16 +1608,9 @@ namespace ecs {
 		const bool		  withGround = take == found.size();
 		gnav::PatchEdits  edits;
 		std::vector<ObstacleKey> keys;
-		// A placed obstacle over ground already meshed (one back in the world after it left the mesh)
-		// can land across a route: its box closes ground, as a wall's does.
-		const auto onMeshedGround = [this](const Found& f) {
-			const auto meshed = [this](geometry::Vec2i64 p) { return detailMesh.locate(p) >= 0; };
-			return meshed(f.lo) || meshed(f.hi) || meshed({f.lo.x, f.hi.y}) || meshed({f.hi.x, f.lo.y}) ||
-				   std::any_of(f.ring.ring.begin(), f.ring.ring.end(), meshed);
-		};
 		bool closesGround = false;
 		for (std::size_t k = 0; k < take; ++k) {
-			if (onMeshedGround(found[k])) {
+			if (ringOnMeshedGround(detailMesh, found[k].ring, found[k].lo, found[k].hi)) {
 				gatheredJob.blockingBoxes.emplace_back(nav::toMeters(found[k].lo), nav::toMeters(found[k].hi));
 				closesGround = true;
 			}
@@ -1569,20 +1658,8 @@ namespace ecs {
 			if (ground.has_value()) {
 				noteServed(*ground);
 			}
-			std::size_t		   k	   = 0;
-			const std::int64_t arrived = clockMs();
-			for (; k < keys.size(); ++k) {
-				if (added[k] == gnav::kNoRing) {
-					// Refused: it never enters the index, so sight and nav agree it is not there.
-					obstacleInMesh.erase(keys[k]);
-				} else {
-					obstacleInMesh.at(keys[k]) = added[k];
-					const gnav::NavInputPolygon& ring = detailMesh.ring(added[k]).polygon;
-					if (ring.provenanceId == nav::kProvenancePlaced && ring.blocked) {
-						placedOccluderIndex.add(added[k], ring.ring, keys[k].defName, arrived);
-					}
-				}
-			}
+			notePlacedObstaclesAdded(keys, added, clockMs());
+			std::size_t k = keys.size();
 			for (std::size_t c = 0; c < waterChunks.size(); ++c) {
 				std::vector<RingId>& ids = water.at(waterChunks[c]).rings;
 				for (std::size_t r = 0; r < waterRings[c]; ++r) {
@@ -1702,6 +1779,15 @@ namespace ecs {
 	bool NavigationSystem::placedObstacleInNavMesh(world::ChunkCoordinate chunk, const assets::PlacedEntity& entity) const {
 		const auto it = obstacleInMesh.find(
 			ObstacleKey{chunk, std::bit_cast<std::uint32_t>(entity.position.x), std::bit_cast<std::uint32_t>(entity.position.y), entity.defName});
+		return it != obstacleInMesh.end() && it->second >= 0;
+	}
+
+	bool NavigationSystem::placedObstacleInNavMesh(EntityID entity) const {
+		const ColliderEntityIndex::Entry* entry = colliderEntityIndex.find(entity);
+		if (entry == nullptr) {
+			return false;
+		}
+		const auto it = obstacleInMesh.find(colliderEntityKey(*entry));
 		return it != obstacleInMesh.end() && it->second >= 0;
 	}
 
