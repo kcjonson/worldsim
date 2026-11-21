@@ -1,7 +1,7 @@
 # Scenario 04: Build walls on foundation
 
 **Status:** ready  
-**Last verified:** 2026-11-20: steps 22 to 40 on 4d104363, run before 34 to 40 were split out of one step, with the second door on the divider as 39 now says; the earlier wording of the two-rooms steps, 5, 7, and 8 in part, and a variant of 1 to 4, on ab0f3eec
+**Last verified:** 2026-11-20: the steps now numbered 22 to 33, and the loop-and-divider layout of 34 to 40 as one step with the second door on the divider, on 4d104363; steps 34 to 40 as now written not rerun; the earlier wording of the two-rooms steps, 5, 7, and 8 in part, and a variant of 1 to 4, on ab0f3eec
 
 Verifies that a colonist builds all four wall segments on an existing foundation to completion,
 unaided.
@@ -158,12 +158,12 @@ In a new Quick Start game, at speed 1 (nothing moves or meshes at speed 0). The 
 The same rooms drawn as one loop and a divider, which here has the higher id:
 
 34. Start a new Quick Start game and centre the camera as above.
-35. Step 22's foundation: `?what=construction` lists it `Built`; its `id` is FOUND_ID.
+35. Run step 22's `foundation` command in this game: `?what=construction` lists it `Built`; its `id` is FOUND_ID.
 36. `walls?pts=25,2;31,2;31,7;25,7&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=1`: four walls, all `Built`.
 37. `walls?pts=28,2;28,7&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=0`: seven walls, all `Built`; the divider splits the north and south walls at x = 28, and the divider from (28, 2) to (28, 7) has the highest id.
 38. `opening?seg=<id of the north piece from (25, 2) to (28, 2)>&type=Door&t=0.5&built=1`: a door at (26.5, 2), `Built`.
 39. `opening?seg=<id of the divider from (28, 2) to (28, 7)>&type=Door&t=0.5&built=1`: a door at (28, 4.5), `Built`.
-40. Steps 27 to 32 again: after step 32, Eve's `x,y` read 28 < x < 31 and 2 < y < 7, inside the second room.
+40. Run steps 27 to 32 in this game: after step 32, Eve's `x,y` read 28 < x < 31 and 2 < y < 7, inside the second room.
 
 **Pass:** steps 22 to 40 read as written. **Fail:** Eve stops anywhere else after step 32 or 40, for instance against the outside of the south wall near (28, 7.4), or `?what=colonists` never shows her inside the second room.
 
