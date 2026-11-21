@@ -413,15 +413,21 @@ namespace world_sim {
 
 		// --- Dev/test hook ---
 
+		/// What devCommitWalls did: the segments created, and the spans skipped because they would leave
+		/// an opening without its clearance from a junction.
+		struct DevWallCommit {
+			int committed = 0;
+			int skippedOnOpening = 0;
+		};
+
 		/// Commit a wall chain straight to the topology, bypassing the draw tool and
 		/// the soft validator (the wall analogue of the /api/dev/foundation path).
 		/// Each consecutive (pts[i], pts[i+1]) becomes a segment on `host` (0 ==
 		/// freestanding); when `built`, the created segments flip to Built so they
-		/// enclose rooms immediately. Reconciles segment entities once. Returns the
-		/// number of segments created.
+		/// enclose rooms immediately. Reconciles segment entities once.
 		/// Precondition: callers must nav-validate the chain first (the dev verb does
 		/// via wallChainGroundRefusal); this bypasses the on-mesh check.
-		int devCommitWalls(
+		DevWallCommit devCommitWalls(
 			const std::vector<Foundation::Vec2>& pts,
 			const std::string&					 material,
 			const std::string&					 thicknessPreset,

@@ -1372,6 +1372,12 @@ namespace world_sim {
 				}
 				return true;
 			}
+			if (!lastValidation_.ok()) {
+				if (callbacks_.onToast) {
+					callbacks_.onToast("Invalid point", ec::validationReason(lastValidation_.code));
+				}
+				return true;
+			}
 			wallHost_ = host;
 			points_.push_back(cursor_);
 			recordPlacement();
@@ -1493,7 +1499,7 @@ namespace world_sim {
 		return commit;
 	}
 
-	int DrawingSystem::devCommitWalls(
+	DrawingSystem::DevWallCommit DrawingSystem::devCommitWalls(
 		const std::vector<Foundation::Vec2>& pts,
 		const std::string&					 material,
 		const std::string&					 thicknessPreset,
@@ -1503,12 +1509,25 @@ namespace world_sim {
 		// Dev/test bypass (mirrors the /api/dev/foundation path): commit each
 		// consecutive pair straight to the topology with no soft-validator pass, so a
 		// caller can stamp a wall loop in one shot. commitSegment still enforces the
-		// hard topology invariants (zero-length, X-crossing, duplicate, T-split).
+		// hard topology invariants (zero-length, X-crossing, duplicate, T-split). The one soft
+		// check it keeps is the opening clearance: a span that would leave an opening too near a
+		// junction is skipped and counted. A preset the registry does not know is replaced by one that
+		// only names the material and preset, so the band trim is whatever the registry resolves (none).
 		const std::uint64_t placementOrder = constructionWorld_.version();
-		int					committed = 0;
+		DevWallCommit		outcome;
+		assets::ThicknessPreset namedPreset;
+		namedPreset.material = material;
+		namedPreset.name = thicknessPreset;
+		const assets::ThicknessPreset* registryPreset = ConstructionRegistry::Get().getThicknessPreset(material, thicknessPreset);
+		const assets::ThicknessPreset& devPreset = registryPreset != nullptr ? *registryPreset : namedPreset;
 		for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
 			const geometry::Vec2i64 qa = geometry::quantize(pts[i]);
 			const geometry::Vec2i64 qb = geometry::quantize(pts[i + 1]);
+			const construction::ConstructionValidator devValidator(ConstructionRegistry::Get().constraints(), constructionWorld_);
+			if (!devValidator.checkSpanClearOfOpenings(pts[i], pts[i + 1], devPreset, host).ok()) {
+				++outcome.skippedOnOpening;
+				continue;
+			}
 			const auto				result = constructionWorld_.commitSegment(qa, qb, material, thicknessPreset, host, placementOrder);
 			if (!result.ok()) {
 				continue;
@@ -1534,10 +1553,10 @@ namespace world_sim {
 					}
 				}
 			}
-			committed += static_cast<int>(result.createdSegments.size());
+			outcome.committed += static_cast<int>(result.createdSegments.size());
 		}
 		reconcileSegmentEntities();
-		return committed;
+		return outcome;
 	}
 
 	bool DrawingSystem::tryEdgeFill(Foundation::Vec2 world) {

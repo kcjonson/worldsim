@@ -211,6 +211,7 @@ namespace assets {
 				for (pugi::xml_node presetNode : matNode.children("Preset")) {
 					ThicknessPreset preset;
 					preset.name = presetNode.attribute("name").as_string();
+					preset.material = matName;
 					if (preset.name.empty()) {
 						LOG_WARNING(Engine, "Wall preset for '%s' missing name attribute, skipping", matName.c_str());
 						continue;
