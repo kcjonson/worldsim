@@ -32,7 +32,7 @@ Preconditions: asset-manager running with World selected and the search box empt
 14. Click TestPartsBox: the badge reads PARTS in the same grey as SIMPLE, and the pane shows the turn controls, the level picker at 80 px/m, the overlay toggles, a large view, and 24 small views labelled 0 to 345.
 15. Click `8 px/m`: the corner dots go from the large view and every small one, and the right column reads `level  8 px/m`.
 16. Click `80 px/m`: the corner dots come back and the right column reads `level  80 px/m, the finest`.
-17. Click TestPartsAreas: under the box lie three green areas, `front`, `side` and `back` (two circles), each name on a dark halo inside its area.
+17. Click TestPartsAreas: under the box lie three green areas, `front`, `side` and `back` (two circles), each name on a dark plate inside its area.
 18. Look at the clearance: the apron before the box and the margin round it are two hatched pieces with dashed edges, and the cyan collider outlines the box.
 19. Click `+15`: the entry reads 15.00 and the large view and its overlays turn clockwise together.
 20. Click the entry, replace its text with `271` and press Enter: the view shows the left end and a sliver of the front.

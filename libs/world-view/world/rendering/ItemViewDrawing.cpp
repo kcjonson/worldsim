@@ -1,5 +1,6 @@
 #include "world/rendering/ItemViewDrawing.h"
 
+#include <font/FontRenderer.h>
 #include <primitives/Primitives.h>
 
 #include <algorithm>
@@ -14,8 +15,7 @@ namespace worldview {
 	namespace {
 
 		constexpr float kLabelBoxWidth = 240.0F; // logical px; the label is centred in it
-		constexpr float kLabelHaloSpread = 3.0F;
-		constexpr float kLabelHaloBlur = 2.0F;
+		constexpr float kLabelPadding = 3.0F;
 		constexpr float kAnchorRadius = 4.0F;
 		constexpr float kFontBaseSize = 16.0F;
 
@@ -169,12 +169,23 @@ namespace worldview {
 					continue;
 				}
 				const Foundation::Vec2 at = frame.toScreen(area.labelPoint);
+				const float			   textScale = look.labelPx * pixel / kFontBaseSize;
+				// A plate behind the name, so it reads over the area's own fill and the hatching.
+				if (const Renderer::FontRenderer* fonts = Renderer::Primitives::getFontRenderer()) {
+					const glm::vec2 size = fonts->MeasureText(area.name, textScale);
+					const float		pad = kLabelPadding * pixel;
+					Renderer::Primitives::drawRect({
+						.bounds = {at.x - size.x * 0.5F - pad, at.y - look.labelPx * pixel * 0.5F - pad, size.x + 2.0F * pad, look.labelPx * pixel + 2.0F * pad},
+						.style = {.fill = backing},
+						.id = "item_overlay_label",
+						.key = style.key,
+					});
+				}
 				Renderer::Primitives::drawText({
 					.text = area.name,
 					.position = {at.x - kLabelBoxWidth * pixel * 0.5F, at.y - look.labelPx * pixel * 0.5F},
-					.scale = look.labelPx * pixel / kFontBaseSize,
+					.scale = textScale,
 					.color = styled(look.useAreaColor, 1.0F, look, style),
-					.shadow = Foundation::BoxShadow{.color = backing, .blur = kLabelHaloBlur * pixel, .spread = kLabelHaloSpread * pixel},
 					.hAlign = Foundation::HorizontalAlign::Center,
 					.vAlign = Foundation::VerticalAlign::Middle,
 					.boxWidth = kLabelBoxWidth * pixel,

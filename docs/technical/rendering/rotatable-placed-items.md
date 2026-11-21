@@ -579,7 +579,7 @@ Then the position, the flush slide, which stays under Alt, as the wall tools kee
 
 Under the ghost, on the ground and before the item, it draws:
 
-- each use area, filled in `useAreaColor` at `useAreaFillAlpha` with a solid edge, and labelled with its name on a dark halo;
+- each use area, filled in `useAreaColor` at `useAreaFillAlpha` with a solid edge, and labelled with its name on a dark plate;
 - the clearance, hatched with diagonal lines `hatchSpacingMeters` apart in `clearanceColor` (thinned on the screen to none closer than `hatchMinGapPx`, every piece keeping at least one) and a dashed edge, so it reads as kept clear rather than as a place;
 - the collider's rings in `colliderColor`, a solid line.
 
@@ -625,7 +625,7 @@ A placed item's part footprints, placements, bottom and top heights, and turn ar
 | `itemAlignRangeMeters` | `assets/config/construction/snapping.xml` | 2.0 | How far a wall or edge turns an item square to it |
 | `angleIncrementDegrees`, `guideAngleWindowDegrees` (read through `effectiveGuideAngleWindowDegrees()`), `edgeSnapRadiusMeters`, `guideDirectionToleranceDegrees`, `doubleClickDistancePx` | same (existing) | 15 degrees, 7.5 degrees, 0.3 m, 1 degree, 4 logical pixels | Shared with the drawing tools; `doubleClickDistancePx` is a screen-space input threshold in logical pixels |
 | `pathingClearanceMeters` | `assets/config/construction/constraints.xml` (existing) | 0.7 | The default use area's distance |
-| `ItemOverlays useAreaColor`, `useAreaFillAlpha`, `clearanceColor`, `hatchAlpha`, `hatchSpacingMeters`, `hatchMinGapPx`, `footprintColor`, `footprintAlpha`, `colliderColor`, `stripColor`, `anchorColor`, `refusedTint`, `labelBacking` | `assets/config/construction/rendering.xml` (existing) | #4DCC9E, 0.28, #DBD6C7, 0.6, 0.1 m, 4, #D98CF2, 0.85, #00E5FF, #738CFF, #F259BF, #FF4D4D, #0F1214 at 0.75 | The overlays' look (sections 14.4 and 16): colours, the hatch's spacing on the ground and its least gap on the screen, the refused tint, and the label's halo |
+| `ItemOverlays useAreaColor`, `useAreaFillAlpha`, `clearanceColor`, `hatchAlpha`, `hatchSpacingMeters`, `hatchMinGapPx`, `footprintColor`, `footprintAlpha`, `colliderColor`, `stripColor`, `anchorColor`, `refusedTint`, `labelBacking` | `assets/config/construction/rendering.xml` (existing) | #4DCC9E, 0.28, #DBD6C7, 0.6, 0.1 m, 4, #D98CF2, 0.85, #00E5FF, #738CFF, #F259BF, #FF4D4D, #0F1214 at 0.75 | The overlays' look (sections 14.4 and 16): colours, the hatch's spacing on the ground and its least gap on the screen, the refused tint, and the plate behind a use area's name |
 | `ItemOverlays edgeWidth`, `hatchWidth`, `footprintWidth`, `colliderWidth`, `dashPx`, `gapPx`, `labelPx` | same | 1.5, 1, 1, 2, 6, 4, 12 | The overlays' line widths, the clearance edge's dash, and the label size, in logical pixels |
 
 The turn quantum, 0.01 degrees, is part of the stored format, not tuning, and is a constant (`kTurnQuantumDegrees`). So are `kInitialViewInstanceCapacity` (16 instances, section 9.1), `kLargestColonistRadiusMeters` (0.3 m, section 4.2), which `ecs::AgentRadius` takes its default from, and `kEyeHeightMm` (1600 mm, `libs/sim/vision`, section 11.2), below which a placed body casts no sight shadow and adds no forest depth.

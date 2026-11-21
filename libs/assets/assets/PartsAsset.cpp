@@ -744,7 +744,7 @@ namespace assets {
 							if (!proportionReported) {
 								error(
 									"drawing",
-									"drawing " + inQuotes(file) + "'s viewBox is " + describeAspect(viewBoxSize) + ", but " + use->what + " is " +
+									"the viewBox of drawing " + inQuotes(file) + " is " + describeAspect(viewBoxSize) + ", but " + use->what + " is " +
 										describeAspect(use->coversMeters) + "; their proportions must match",
 									resolved.string(),
 									fileParts
