@@ -790,11 +790,30 @@ namespace assets {
 		def.placement.scale = {.min = 1.0F, .max = 1.0F};
 
 		// Rule 12: the view at every 15 degree stop, at the finest level, stays under three quarters of the
-		// 16-bit index space, leaving room for the extra clipped vertices of turns between stops.
+		// 16-bit index space, leaving room for the extra clipped vertices of turns between stops. A vertex that isn't
+		// finite would otherwise load silently and draw as a spike or a hole, so it fails too.
 		constexpr uint32_t kStopQuanta = 1500;
 		const auto		   finest = static_cast<uint8_t>(std::max<size_t>(def.detailLevels.size(), 1) - 1);
 		for (uint32_t turn = 0; turn < kTurnQuantaPerTurn; turn += kStopQuanta) {
 			const ItemView built = buildItemMesh(def, turn, finest, view.config());
+			const bool	   finite =
+				std::all_of(
+					built.mesh.vertices.begin(),
+					built.mesh.vertices.end(),
+					[](const Foundation::Vec2& vertex) { return std::isfinite(vertex.x) && std::isfinite(vertex.y); }
+				) &&
+				std::all_of(built.mesh.colors.begin(), built.mesh.colors.end(), [](const Foundation::Color& color) {
+					return std::isfinite(color.r) && std::isfinite(color.g) && std::isfinite(color.b) && std::isfinite(color.a);
+				});
+			if (!finite) {
+				m_validationReport.add(
+					Severity::Error,
+					def.defName,
+					"parts",
+					"its view at " + std::to_string(turn / 100) + " degrees has a vertex that isn't a finite number"
+				);
+				break;
+			}
 			if (built.vertexCount >= kMaxStopViewVertices) {
 				m_validationReport.add(
 					Severity::Error,
@@ -1849,30 +1868,114 @@ namespace assets {
 		return getTemplate(templateId(defName, traits));
 	}
 
-	const AssetDefinition* AssetRegistry::templateDefinition(uint32_t templateId) const {
+	AssetRegistry::TemplateRecord AssetRegistry::templateRecord(uint32_t templateId) const {
 		std::lock_guard<std::mutex> lock(templateCacheMutex);
-		return templateId == 0 || templateId > m_templates.size() ? nullptr : m_templates[templateId - 1]->def;
+		if (templateId == 0 || templateId > m_templates.size()) {
+			return {};
+		}
+		const TemplateEntry& entry = *m_templates[templateId - 1];
+		return {.mesh = entry.mesh.has_value() ? &*entry.mesh : nullptr, .def = entry.def};
 	}
 
-	const ItemLayout* AssetRegistry::stripLayout(uint32_t templateId, uint32_t turnQuanta) {
-		const AssetDefinition* def = templateDefinition(templateId);
+	namespace {
+		uint64_t layoutKey(uint32_t templateId, uint32_t turnQuanta) {
+			return (static_cast<uint64_t>(templateId) << 32U) | turnQuanta;
+		}
+	} // namespace
+
+	AssetRegistry::KeptLayout* AssetRegistry::keptLayout(uint32_t templateId, uint32_t turnQuanta) {
+		const AssetDefinition* def = templateRecord(templateId).def;
 		if (def == nullptr || def->parts == nullptr) {
 			return nullptr;
 		}
-		const uint64_t				key = (static_cast<uint64_t>(templateId) << 32U) | turnQuanta;
+		const uint64_t				key = layoutKey(templateId, turnQuanta);
 		std::lock_guard<std::mutex> lock(layoutMutex);
 		if (const auto found = layoutIds.find(key); found != layoutIds.end()) {
-			return layouts[found->second].get();
+			KeptLayout& kept = *layouts[found->second];
+			kept.asked = true;
+			return &kept;
 		}
-		auto layout = std::make_unique<ItemLayout>(ItemLayout{
-			.templateId = templateId,
-			.turnQuanta = turnQuanta,
-			.id = static_cast<uint32_t>(layouts.size()),
-			.layout = assets::stripLayout(*def, turnQuanta, GameViewConfig::Get().config()),
+		uint32_t id = static_cast<uint32_t>(layouts.size());
+		if (!freeLayoutIds.empty()) {
+			id = freeLayoutIds.back();
+			freeLayoutIds.pop_back();
+		} else {
+			layouts.emplace_back();
+		}
+		layouts[id] = std::make_unique<KeptLayout>(KeptLayout{
+			.layout =
+				{
+					.templateId = templateId,
+					.turnQuanta = turnQuanta,
+					.id = id,
+					.layout = assets::stripLayout(*def, turnQuanta, GameViewConfig::Get().config()),
+				},
+			.silhouette = nullptr,
+			.asked = true,
 		});
-		layoutIds.emplace(key, layout->id);
-		layouts.push_back(std::move(layout));
-		return layouts.back().get();
+		layoutIds.emplace(key, id);
+		return layouts[id].get();
+	}
+
+	const ItemLayout* AssetRegistry::stripLayout(uint32_t templateId, uint32_t turnQuanta) {
+		const KeptLayout* kept = keptLayout(templateId, turnQuanta);
+		return kept != nullptr ? &kept->layout : nullptr;
+	}
+
+	const ItemSilhouette* AssetRegistry::itemSilhouette(uint32_t templateId, uint32_t turnQuanta) {
+		if (keptLayout(templateId, turnQuanta) == nullptr) {
+			return nullptr;
+		}
+		// The layout is only ever read by key under the lock: a release on another thread may drop it at any point the
+		// lock is not held.
+		const uint64_t key = layoutKey(templateId, turnQuanta);
+		{
+			std::lock_guard<std::mutex> lock(layoutMutex);
+			const auto					found = layoutIds.find(key);
+			if (found == layoutIds.end()) {
+				return nullptr;
+			}
+			if (layouts[found->second]->silhouette != nullptr) {
+				return layouts[found->second]->silhouette.get();
+			}
+		}
+		// Rasterised off the lock; another thread that got there first keeps its own.
+		const AssetDefinition& def = *templateRecord(templateId).def;
+		auto silhouette = std::make_unique<ItemSilhouette>(
+			buildItemView(def, turnQuanta, referenceDetailLevel(def.detailLevels), GameViewConfig::Get().config()).silhouette
+		);
+		std::lock_guard<std::mutex> lock(layoutMutex);
+		const auto					found = layoutIds.find(key);
+		if (found == layoutIds.end()) {
+			return nullptr;
+		}
+		KeptLayout& current = *layouts[found->second];
+		if (current.silhouette == nullptr) {
+			current.silhouette = std::move(silhouette);
+		}
+		return current.silhouette.get();
+	}
+
+	void AssetRegistry::releaseUnaskedLayouts() {
+		std::lock_guard<std::mutex> lock(layoutMutex);
+		for (uint32_t id = 0; id < layouts.size(); ++id) {
+			std::unique_ptr<KeptLayout>& kept = layouts[id];
+			if (kept == nullptr) {
+				continue;
+			}
+			if (kept->asked) {
+				kept->asked = false;
+				continue;
+			}
+			layoutIds.erase(layoutKey(kept->layout.templateId, kept->layout.turnQuanta));
+			kept.reset();
+			freeLayoutIds.push_back(id);
+		}
+	}
+
+	bool AssetRegistry::keepsStripLayout(uint32_t templateId, uint32_t turnQuanta) const {
+		std::lock_guard<std::mutex> lock(layoutMutex);
+		return layoutIds.contains(layoutKey(templateId, turnQuanta));
 	}
 
 	bool AssetRegistry::isTallDef(const std::string& defName) {
@@ -2780,6 +2883,7 @@ namespace assets {
 			std::lock_guard<std::mutex> lk(layoutMutex);
 			layoutIds.clear();
 			layouts.clear();
+			freeLayoutIds.clear();
 		}
 		cacheGeneration.fetch_add(1, std::memory_order_acq_rel);
 		{

@@ -27,6 +27,12 @@ curl.exe "http://127.0.0.1:<PORT>/api/dev/give?material=AxePrimitive&n=1&where=c
 
 ## Setup
 
+The crew lands west of the river, so put Bob on the east bank (`<BOB_ID>` is `colonists[0].id`):
+
+```
+curl.exe "http://127.0.0.1:<PORT>/api/dev/teleport?colonist=<BOB_ID>&to=12,8"
+```
+
 Get the foundation `id` from state (needed for `host=`):
 
 ```
@@ -131,7 +137,7 @@ The drawing steps below read `/api/state?what=drawing`. Their points are world p
 14. Open the top bar's Menu and pick Main Menu: the main menu shows.
 15. Pick Settings and, under Drawing Settings, switch Angle readout on if it is off: it reads on.
 16. Pick Back, then Quick Start: a new game shows, and `settings.angleReadout` is true.
-17. Make the built foundation again with the precondition's `built=1` command and centre the camera on it again: `?what=construction` lists it `Built`.
+17. Teleport Bob back to (12, 8) as in Setup, make the built foundation again with the precondition's `built=1` command and centre the camera on it again: `?what=construction` lists it `Built`.
 18. Pick Wall in the Build menu and click (16, 3) and (19, 3) inside the built foundation, leaving the pointer on the second: the two points and the band between them show, nothing red, and no "wall too short" (`status.hint` "Right-click / Enter to finish", `verdict.proposed` false).
 19. Move the pointer off at an angle that is not square: an arc and the angle between the two walls show at the middle point.
 20. Read the new foundation's id from `?what=construction` (`foundations[0].id`, FOUND_ID for this game) and make a built wall on it: `walls?pts=15,5;21,5&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=0` (inside the 8 m x 6 m foundation from (14, 0) to (22, 6)): `?what=construction` lists the wall `Built`.
@@ -170,6 +176,8 @@ The same rooms drawn as one loop and a divider, which here has the higher id:
 ---
 
 ## Notes
+
+The crew lands about 28 m west of the river, which blocks movement, and every point here is on the east bank, hence the teleport in Setup (repeat it after each new game).
 
 `walls` defaults to `built=1` (instant); always pass `built=0` explicitly when you want a
 blueprint that the colonist builds. Omitting it silently skips the scenario.

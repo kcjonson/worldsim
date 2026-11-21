@@ -11,6 +11,7 @@ add_executable(ui-sandbox
     scenes/PlanetScene.cpp
     scenes/GalleryScene.cpp
     scenes/GalleryDialogScene.cpp
+    scenes/ItemTurntableScene.cpp
 )
 
 target_include_directories(ui-sandbox

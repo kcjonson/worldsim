@@ -646,14 +646,22 @@ TileId SphereGrid::fromUnitVectorHinted(Vec3d dir, uint32_t& rhombusHint) const 
     return encodeOwned(rh, static_cast<uint32_t>(i), static_cast<uint32_t>(j));
 }
 
-TileId SphereGrid::fromLatLon(double latDeg, double lonDeg) const {
+Vec3d SphereGrid::unitVectorFromLatLon(double latDeg, double lonDeg) {
     using foundation::det_math::cos;
     using foundation::det_math::sin;
-    double lat = latDeg * kPiOver180;
-    double lon = lonDeg * kPiOver180;
-    double cosLat = cos(lat);
-    Vec3d dir = {cosLat * cos(lon), cosLat * sin(lon), sin(lat)};
-    return fromUnitVector(dir);
+    const double lat = latDeg * kPiOver180;
+    const double lon = lonDeg * kPiOver180;
+    const double cosLat = cos(lat);
+    return {cosLat * cos(lon), cosLat * sin(lon), sin(lat)};
+}
+
+void SphereGrid::latLonFromUnitVector(Vec3d direction, double& latDeg, double& lonDeg) {
+    latDeg = safeAsin(direction.z) * k180OverPi;
+    lonDeg = detAtan2(direction.y, direction.x) * k180OverPi;
+}
+
+TileId SphereGrid::fromLatLon(double latDeg, double lonDeg) const {
+    return fromUnitVector(unitVectorFromLatLon(latDeg, lonDeg));
 }
 
 Vec3d SphereGrid::tileCenter(TileId t) const {
@@ -667,18 +675,11 @@ Vec3d SphereGrid::tileCenter(TileId t) const {
 }
 
 void SphereGrid::latLonOf(TileId t, double& latDeg, double& lonDeg) const {
-    Vec3d d = tileCenter(t);
-    latDeg = safeAsin(d.z) * k180OverPi;
-    lonDeg = detAtan2(d.y, d.x) * k180OverPi;
+    latLonFromUnitVector(tileCenter(t), latDeg, lonDeg);
 }
 
 SphereGrid::HexSample SphereGrid::locateHex(double latDeg, double lonDeg) const {
-    using foundation::det_math::cos;
-    using foundation::det_math::sin;
-    double lat = latDeg * kPiOver180;
-    double lon = lonDeg * kPiOver180;
-    double cosLat = cos(lat);
-    Vec3d dir = {cosLat * cos(lon), cosLat * sin(lon), sin(lat)};
+    const Vec3d dir = unitVectorFromLatLon(latDeg, lonDeg);
 
     uint32_t rh{};
     double u{}, v{};

@@ -1,6 +1,7 @@
 #include "assets/PartsAsset.h"
 
 #include "assets/LodSvg.h"
+#include "assets/PointTurn.h"
 
 #include <boolean/RingBoolean.h>
 #include <polygon/Polygon.h>
@@ -155,12 +156,6 @@ namespace assets {
 		}
 
 		// ─── Geometry helpers ────────────────────────────────────────────────────────────────────────
-
-		glm::vec2 turned(glm::vec2 point, float radians) {
-			const float cosine = std::cos(radians);
-			const float sine = std::sin(radians);
-			return {point.x * cosine - point.y * sine, point.x * sine + point.y * cosine};
-		}
 
 		geometry::Ring toMillimetres(const Ring2& ring) {
 			geometry::Ring out;
@@ -575,6 +570,20 @@ namespace assets {
 					if (doubled == 0.0F) {
 						continue;
 					}
+					// A lattice point on an edge two triangles share is painted by one of them (the top-left rule): an edge
+					// owns its points when, taken with the triangle wound positively, it runs down or exactly leftward. The
+					// side is computed from the edge's ends in one fixed order, so the two triangles get exactly opposite
+					// values and no point falls between them.
+					const float sign = doubled > 0.0F ? 1.0F : -1.0F;
+					const auto	covers = [sign](glm::vec2 from, glm::vec2 to, glm::vec2 point) {
+						 const bool	 ordered = from.x < to.x || (from.x == to.x && from.y < to.y);
+						 const float side = sign * (ordered ? crossOf(from, to, point) : -crossOf(to, from, point));
+						 if (side != 0.0F) {
+							 return side > 0.0F;
+						 }
+						 const glm::vec2 along = (to - from) * sign;
+						 return along.y > 0.0F || (along.y == 0.0F && along.x < 0.0F);
+					};
 					const glm::vec2 low = glm::min(first, glm::min(second, third));
 					const glm::vec2 high = glm::max(first, glm::max(second, third));
 					const int		fromColumn = std::max(0, static_cast<int>(std::ceil(low.x / cell.x - 0.5F)));
@@ -584,12 +593,12 @@ namespace assets {
 					for (int row = fromRow; row <= toRow; ++row) {
 						for (int column = fromColumn; column <= toColumn; ++column) {
 							const glm::vec2 point{(static_cast<float>(column) + 0.5F) * cell.x, (static_cast<float>(row) + 0.5F) * cell.y};
-							const float		weightFirst = crossOf(point, second, third) / doubled;
-							const float		weightSecond = crossOf(first, point, third) / doubled;
-							const float		weightThird = 1.0F - weightFirst - weightSecond;
-							if (weightFirst < 0.0F || weightSecond < 0.0F || weightThird < 0.0F) {
+							if (!covers(second, third, point) || !covers(third, first, point) || !covers(first, second, point)) {
 								continue;
 							}
+							const float weightFirst = crossOf(point, second, third) / doubled;
+							const float weightSecond = crossOf(first, point, third) / doubled;
+							const float weightThird = 1.0F - weightFirst - weightSecond;
 							glm::dvec4 color{0.0};
 							for (size_t corner = 0; corner < 3; ++corner) {
 								const Foundation::Color& vertex = mesh.colors[corners[corner]];
@@ -891,7 +900,7 @@ namespace assets {
 		std::vector<glm::vec2> ring;
 		ring.reserve(asset.placedFootprints[placement].size());
 		for (const glm::vec2& point : asset.placedFootprints[placement]) {
-			ring.push_back(turned(point, itemTurnRadians));
+			ring.push_back(turnedPoint(point, itemTurnRadians));
 		}
 		return ring;
 	}
@@ -1274,7 +1283,7 @@ namespace assets {
 		for (const PartPlacement& placement : asset.placements) {
 			Ring2& ring = placedFootprints.emplace_back();
 			for (const glm::vec2& point : asset.parts[placement.part].footprint) {
-				ring.push_back(turned(point, placement.turnRadians) + placement.offsetMeters);
+				ring.push_back(turnedPoint(point, placement.turnRadians) + placement.offsetMeters);
 			}
 		}
 		const auto hasBody = [&](size_t placement) {
