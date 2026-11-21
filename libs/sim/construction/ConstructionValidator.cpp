@@ -215,11 +215,6 @@ namespace construction {
 		}
 
 
-		// Tolerance on an opening's margin shortfall when it is revalidated after a trial split: the split rescales
-		// t in float and openingRange recomputes minT in double, so a door sitting on its margin can land a float ulp
-		// (a few micrometres) short. A tenth of a millimetre covers it and is far below anything a player can place.
-		constexpr double kMarginToleranceMeters = 1e-4;
-
 		// A span meeting an opening's wall at a sine below this is never far: a shallow wedge trims a band much
 		// further than a square one, so the cheap exit is not taken and the trial split decides.
 		constexpr double kFarExitMinSine = 0.2;
@@ -292,7 +287,6 @@ namespace construction {
 			const double halfThicknessesMeters =
 				static_cast<double>(stemHalfThicknessMm + hostHalfMm) / static_cast<double>(geometry::kMillimetersPerMeter);
 			const double trimBound = halfThicknessesMeters / sine + kFarExitSlackMeters;
-
 
 			bool touches = false;
 			for (const geometry::Vec2i64& contact : {spanStart, spanEnd, wallStart->pos, wallEnd->pos}) {
@@ -1004,14 +998,19 @@ namespace construction {
 			// Already wrong where it stands, so not this wall's doing; but the new junction must not take any more of
 			// its room. At each end of the piece it now sits on that the span touches, its clearance after must be at
 			// least the margin, or, where it was already short of that, no less than it was; a new end, made by a split,
-			// had no clearance before and takes the margin. A trial graph the offsetter cannot resolve refuses it.
+			// had no clearance before and takes the margin. A trial graph the offsetter cannot resolve refuses it, unless
+			// the graph as it stands could not be resolved either (nothing got worse).
 			const assets::OpeningTypeDef* type = registry.getOpeningType(standing->type);
 			const double				  halfWidthMeters = type != nullptr ? static_cast<double>(type->widthMeters) / 2.0 : 0.0;
 			const std::optional<EndClearances> afterClearances = endClearances(trial, *rehosted, halfWidthMeters, marginMeters);
-			if (!afterClearances) {
-				return {ValidationCode::WallEndsOnOpening, 0, 0, result.measuredValue};
-			}
 			const std::optional<EndClearances> standingClearances = endClearances(*world_, *standing, halfWidthMeters, marginMeters);
+			if (!afterClearances) {
+				// Unresolvable after: worse than before only if it could be resolved before.
+				if (standingClearances) {
+					return {ValidationCode::WallEndsOnOpening, 0, 0, result.measuredValue};
+				}
+				continue;
+			}
 			const WallSegment*				   oldWall = world_->getSegment(standing->segment);
 			const WallSegment*				   newWall = trial.getSegment(rehosted->segment);
 			const geometry::Vec2i64			   oldStart = world_->getVertex(oldWall->v0)->pos;

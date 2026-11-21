@@ -885,7 +885,8 @@ TEST_F(WallEndOnOpening, AnLJoinAtTheEndOfAWallCannotCutIntoADoorAlreadyNearIt) 
 	const ConstructionValidator validator(cfg, world);
 
 	EXPECT_EQ(
-		validator.validateWallSegment({6.0F, 10.0F}, {2.0F, 6.0F}, presetOf("Heavy"), kInvalidFoundation).code, ValidationCode::WallEndsOnOpening
+		validator.validateWallSegment({6.0F, 10.0F}, {2.0F, 6.0F}, presetOf("Heavy"), kInvalidFoundation).code,
+		ValidationCode::WallEndsOnOpening
 	);
 	EXPECT_TRUE(validator.validateWallSegment({10.0F, 11.0F}, {10.0F, 6.0F}, presetOf("Heavy"), kInvalidFoundation).ok());
 }
@@ -912,7 +913,8 @@ TEST_F(WallEndOnOpening, EveryStemTheValidatorAcceptsLeavesTheRehostedDoorValid)
 						ASSERT_NE(world.addOpening(seg, 0.5F, "Door", "Wood"), kInvalidOpening);
 						const double reach = 0.45 + margin + halfThicknesses / sine + 0.005 + static_cast<double>(offset);
 						const float	 x = static_cast<float>(rightOfDoor ? 8.0 + reach : 8.0 - reach);
-						// The stem leans toward the door, the acute side, so the trim is the widest it can be.
+						// Below 90 degrees the stem leans toward the door, the acute side, so the trim is the widest it can be;
+						// above, it leans away and the trim is the least.
 						const float radians = angle * std::numbers::pi_v<float> / 180.0F;
 						const float lean = 5.0F * std::cos(radians);
 						const Vec2	start = {rightOfDoor ? x - lean : x + lean, 6.0F + 5.0F * std::sin(radians)};
@@ -924,14 +926,15 @@ TEST_F(WallEndOnOpening, EveryStemTheValidatorAcceptsLeavesTheRehostedDoorValid)
 						}
 						ConstructionWorld split = world;
 						ASSERT_TRUE(
-							split.commitSegment(mm(start.x, start.y), mm(x, 6.0F), "Wood", stem.name, kInvalidFoundation, split.version()).ok()
+							split.commitSegment(mm(start.x, start.y), mm(x, 6.0F), "Wood", stem.name, kInvalidFoundation, split.version())
+								.ok()
 						);
 						const Opening& door = split.openings().front();
 						const ConstructionValidator tool(cfg, split);
 						const auto					after = tool.validateOpening(door.segment, door.t, door.type, door.material, door.id);
 						const bool					measuredAgainstMargin =
 							after.code == ValidationCode::OpeningMarginTooSmall || after.code == ValidationCode::OpeningOverlap;
-						const bool roundOff = measuredAgainstMargin && margin - after.measuredValue <= 1.5e-4;
+						const bool roundOff = measuredAgainstMargin && margin - after.measuredValue <= kMarginToleranceMeters;
 						EXPECT_TRUE(after.ok() || roundOff)
 							<< hostName << " host, " << stemName << " stem, " << angle << " degrees, x = " << x << ", code "
 							<< static_cast<int>(after.code) << ", measured " << after.measuredValue;
@@ -972,7 +975,8 @@ TEST_F(WallEndOnOpening, AnLJoinAtTheCornerOfAWallWithADoorNearThatCornerIsRefus
 	const ConstructionValidator validator(cfg, world);
 
 	EXPECT_EQ(
-		validator.validateWallSegment({2.0F, 11.0F}, {2.0F, 6.0F}, standardWood(), kInvalidFoundation).code, ValidationCode::WallEndsOnOpening
+		validator.validateWallSegment({2.0F, 11.0F}, {2.0F, 6.0F}, standardWood(), kInvalidFoundation).code,
+		ValidationCode::WallEndsOnOpening
 	);
 	EXPECT_TRUE(validator.validateWallSegment({10.0F, 11.0F}, {10.0F, 6.0F}, standardWood(), kInvalidFoundation).ok());
 }

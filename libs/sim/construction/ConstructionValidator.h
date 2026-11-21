@@ -112,6 +112,11 @@ namespace construction {
 	// (the candidate point is the last index) so the tool can highlight the
 	// offending vertex or edge. `measuredValue` is the measured quantity in the
 	// constraint's natural units (degrees or meters), for richer messages.
+	// Tolerance on an opening's margin shortfall when it is revalidated after a trial split: the split rescales t in
+	// float and openingRange recomputes minT in double, so a door sitting on its margin can land a float ulp (a few
+	// micrometres) short. A tenth of a millimetre covers it and is far below anything a player can place.
+	constexpr double kMarginToleranceMeters = 1e-4;
+
 	struct ValidationResult {
 		ValidationCode code = ValidationCode::Ok;
 		std::size_t	   vertexIndex = 0;
@@ -255,7 +260,9 @@ namespace construction {
 		// the span is committed into a copy of the world and validateOpening runs on each such opening as it
 		// would stand after the commit; one that fails after (beyond a tenth of a millimetre of float round-off
 		// in the split) and was valid before refuses the span. One already wrong refuses a span that takes more of
-		// the room it has left at an end the span touches (at least its margin, or what it had). An opening far
+		// the room it has left at an end the span touches (at least its margin, or what it had; a new end made by a
+		// split had none and takes the margin; a trial graph the offsetter cannot resolve refuses it, unless the
+		// graph as it stands could not be resolved either). An opening far
 		// enough from every contact for any trim to miss it is not revalidated, and a span touching no opening
 		// costs only a scan of the openings. The result carries validateOpening's
 		// `measuredValue`. Called by both wall validators with the span's ends known, so a split's real band
