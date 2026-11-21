@@ -26,7 +26,7 @@ Read from the code on `main` at 0b12648a.
   `Action::elapsed`. `WorkQueue::progress` is a copy made each tick for the UI; nothing reads it
   back. Skill does not change craft speed.
 - **Inputs are consumed at the end.** `startCraftAction` checks that the station's store holds every
-  input and takes nothing. `applyCraftingEffect` removes the inputs, produces the outputs, and
+  input and takes nothing. `applyCraft` removes the inputs, produces the outputs, and
   counts the unit (`completed++`) when the action completes.
 - **A job of N units is N Craft tasks.** The store is metered to one unit's bill of materials, so
   each unit is provisioned, crafted, and counted, and the Craft task ends after each one.
@@ -471,7 +471,7 @@ Deleted, each in the change that replaces it:
 - `Action::Craft`'s duration and its `interruptable = false`; the `workAmount` parameter and the
   work-ticks conversion in the factory. Build's and Deconstruct's `interruptable = false`.
 - `WorkQueue::progress`, the per-tick copy into it in `ActionSystem`, its resets in
-  `applyCraftingEffect` and `removeJob`, and its two readers (`CraftingAdapter` and
+  `applyCraft` and `removeJob`, and its two readers (`CraftingAdapter` and
   `CraftingDialogModel`). `kWorkUnitsPerSecond` in `CraftingDialogModel.cpp`.
 - The decay literals in `Needs.cpp`.
 - Direct calls to `WorkQueue::removeJob` from the game, in favour of `cancelCraftingJob`.
@@ -479,7 +479,7 @@ Deleted, each in the change that replaces it:
 - Bare tier numbers in C++ (the `kTier*` constants, `<TaskTiers>`, and the numbered `tierLabel` in
   `TaskListView.cpp`), in favour of the named rungs, which `Task::priorityTier`, `EvaluatedOption::tier`,
   and `ClaimHolder::tier` hold as ladder positions (WOR-1068, Named ladder).
-- Sleep's restore at completion (`applyNeedEffect` for a Sleep), replaced by the per-tick payout.
+- Sleep's restore at completion (`human/sleep` paying at its end), replaced by the per-tick payout.
 - The `GlobalTaskAdapter` lookup of a Craft row's worker through colonists' current tasks, replaced
   by the job's crafter.
 - The planned `CraftBinding` struct and job ids, which were never built: the "Craft binding

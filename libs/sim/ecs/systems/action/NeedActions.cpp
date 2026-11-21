@@ -25,6 +25,14 @@
 
 namespace ecs {
 
+	namespace {
+		/// A food's nutrition (0-1 scale), 0.3 for one whose definition gives none.
+		[[nodiscard]] float nutritionOf(const std::string& food) {
+			const auto edible = assets::getEdibleItemInfo(food);
+			return edible ? edible->nutrition : 0.3F;
+		}
+	} // namespace
+
 	void ActionSystem::startNeedAction(
 		Task&				  task,
 		Action&				  action,
@@ -38,22 +46,17 @@ namespace ecs {
 		// Handle FulfillNeed tasks
 		switch (task.needToFulfill) {
 			case NeedType::Hunger: {
-				// Priority 1: Check inventory for any edible food (data-driven)
-				for (const auto& edibleItemName : registry.edibleItemNames()) {
-					if (inventory.hasItem(edibleItemName)) {
-						// Get nutrition from item properties
-						auto  edibleInfo = assets::getEdibleItemInfo(edibleItemName);
-						float nutrition = edibleInfo ? edibleInfo->nutrition : 0.3F;
-						action = Action::Eat(actionEntries, edibleItemName, nutrition);
-						LOG_DEBUG(
-							Engine,
-							"[Action] Creating Eat action for %s (nutrition %.2f, qty %u)",
-							edibleItemName.c_str(),
-							nutrition,
-							inventory.getQuantity(edibleItemName)
-						);
-						break;
-					}
+				// Priority 1: food already held, the unit the eat's `<consume>` will use up.
+				if (const std::string* food = heldEdibleUnit(inventory)) {
+					const float nutrition = nutritionOf(*food);
+					action = Action::Eat(actionEntries, registry.getDefNameId(*food), nutrition);
+					LOG_DEBUG(
+						Engine,
+						"[Action] Creating Eat action for %s (nutrition %.2f, qty %u)",
+						food->c_str(),
+						nutrition,
+						inventory.getQuantity(*food)
+					);
 				}
 
 				// If we already created an eat action from inventory, we're done
@@ -96,7 +99,7 @@ namespace ecs {
 						const auto& harvestCap = def->capabilities.harvestable.value();
 
 						// The decision passes over a regrowing bush, but one another colonist cut while this
-						// one walked over still pays nothing at completion (applyCollectionEffect).
+						// one walked over still pays nothing at completion (takeFromSource).
 
 						// An eater makes room for its meal as at a pile or box; a pack that could take none of
 						// the yield would leave the bush standing ready and bring him back to it. Gathering
@@ -333,74 +336,45 @@ namespace ecs {
 		}
 	}
 
-	void ActionSystem::applyNeedEffect(const Action& action, NeedsComponent& needs) {
-		const auto& needEff = action.needEffect();
-
-		// Apply primary need restoration
-		if (needEff.need < NeedType::Count) {
-			needs.get(needEff.need).restore(needEff.restoreAmount);
-		}
-
-		// Apply side effect (if any)
-		if (needEff.sideEffectNeed < NeedType::Count) {
-			// Side effect amount: positive = restore, negative = drain
-			if (needEff.sideEffectAmount > 0.0F) {
-				needs.get(needEff.sideEffectNeed).restore(needEff.sideEffectAmount);
-			} else {
-				// Negative amount means drain (e.g., drinking fills bladder)
-				auto& need = needs.get(needEff.sideEffectNeed);
-				need.value += needEff.sideEffectAmount; // sideEffectAmount is already negative
-				if (need.value < 0.0F) {
-					need.value = 0.0F;
-				}
+	const std::string* ActionSystem::heldEdibleUnit(const Inventory& inventory) {
+		for (const std::string& food : assets::AssetRegistry::Get().edibleItemNames()) {
+			if (inventory.hasItem(food)) {
+				return &food;
 			}
 		}
+		return nullptr;
 	}
 
-	bool ActionSystem::applyConsumptionEffect(const Action& action, NeedsComponent& needs, Inventory& inventory) {
-		const auto& consumeEff = action.consumptionEffect();
-
-		const uint32_t removed = inventory.removeItem(consumeEff.itemDefName, consumeEff.quantity);
-		if (removed == 0) {
-			LOG_WARNING(Engine, "[Action] Failed to consume %s from inventory (not found)", consumeEff.itemDefName.c_str());
+	bool ActionSystem::applyConsume(const ConsumeRow& row, Action& action, Inventory& inventory) {
+		const std::string* unit = heldEdibleUnit(inventory);
+		if (unit == nullptr) {
+			LOG_WARNING(Engine, "[Action] Failed to consume: no %s unit held", assets::capabilityName(row.capability));
 			return false;
 		}
-		if (consumeEff.need < NeedType::Count) {
-			needs.get(consumeEff.need).restore(consumeEff.restoreAmount);
-		}
-
-		// Apply side effect (e.g., eating fills digestion)
-		if (consumeEff.sideEffectNeed < NeedType::Count) {
-			if (consumeEff.sideEffectAmount > 0.0F) {
-				needs.get(consumeEff.sideEffectNeed).restore(consumeEff.sideEffectAmount);
-			} else {
-				// Negative amount means drain (e.g., eating fills gut)
-				auto& need = needs.get(consumeEff.sideEffectNeed);
-				need.value += consumeEff.sideEffectAmount; // sideEffectAmount is already negative
-				if (need.value < 0.0F) {
-					need.value = 0.0F;
-				}
-			}
-		}
-
-		LOG_INFO(
-			Engine,
-			"[Action] Consumed %u x %s from inventory, restored %.1f%% %s",
-			removed,
-			consumeEff.itemDefName.c_str(),
-			consumeEff.restoreAmount,
-			consumeEff.need == NeedType::Hunger ? "hunger" : "need"
-		);
+		const uint32_t removed = inventory.removeItem(*unit, row.count);
+		action.context.consumedDefNameId = assets::AssetRegistry::Get().getDefNameId(*unit);
+		action.context.nutrition = nutritionOf(*unit);
+		LOG_INFO(Engine, "[Action] Consumed %u x %s from inventory", removed, unit->c_str());
 		return true;
 	}
 
-	void ActionSystem::applySpawnEffect(const Action& action) {
-		// Spawn Bio Pile entity at action.targetPosition
-		auto bioPile = world->createEntity();
-		world->addComponent<Position>(bioPile, Position{action.targetPosition});
-		world->addComponent<Rotation>(bioPile, Rotation{0.0F});
-		world->addComponent<Appearance>(bioPile, Appearance{std::string(kReliefSpawnDefinition), 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
-		LOG_INFO(Engine, "[Action] Spawned Bio Pile at (%.1f, %.1f)", action.targetPosition.x, action.targetPosition.y);
+	bool ActionSystem::applySpawn(const SpawnRow& row, glm::vec2 standing, Inventory& inventory) {
+		auto&		registry = assets::AssetRegistry::Get();
+		const auto* def = registry.getDefinition(row.def);
+		const char* name = def != nullptr ? def->label.c_str() : row.def.c_str();
+		if (row.intoHands) {
+			giveItemToColonist(inventory, registry, row.def, 1, [&](const std::string& defName, uint32_t quantity) {
+				storeOrDrop(*world, defName, quantity, standing, m_onDropResource);
+			});
+			LOG_INFO(Engine, "[Action] Spawned %s into the hands", name);
+			return true;
+		}
+		auto spawned = world->createEntity();
+		world->addComponent<Position>(spawned, Position{standing});
+		world->addComponent<Rotation>(spawned, Rotation{0.0F});
+		world->addComponent<Appearance>(spawned, Appearance{row.def, 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		LOG_INFO(Engine, "[Action] Spawned %s at (%.1f, %.1f)", name, standing.x, standing.y);
+		return true;
 	}
 
 } // namespace ecs

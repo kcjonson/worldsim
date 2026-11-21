@@ -152,7 +152,7 @@ TEST_F(GameConfigNamesTest, EntriesNamingAnUnknownKindTraitOrThoughtFailTheLoad)
 TEST_F(GameConfigNamesTest, AThoughtSourceNamingNoActionEntryFailsTheLoad) {
 	const world_sim::GameConfigLoad shipped = loadAll();
 	EXPECT_TRUE(shipped.errors.empty()) << ::testing::PrintToString(shipped.errors);
-	EXPECT_EQ(shipped.actions.eat.entry, shipped.entries.findAction("human/eat")) << "the factories' entries resolve with the load";
+	EXPECT_EQ(shipped.actions.eat().entry, shipped.entries.findAction("human/eat")) << "the factories' entries resolve with the load";
 
 	std::ofstream(root / "config" / "thoughts" / "stray.xml") << R"(<thoughts>
   <thought id="stray" label="Stray" importance="trivial"><source trigger="actionFinishes" action="human/eats"/><feeling is="content"/></thought>

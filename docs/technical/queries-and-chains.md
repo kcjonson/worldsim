@@ -702,13 +702,13 @@ whether it needs free hands, whether it may be interrupted, and when it pays.
 
 | Effect | Does |
 |---|---|
-| `<restore need amount>` | moves a need by a signed amount, the creature's own or, with `who="target"`, the target creature's. `amount` is a number, or `from` names a property of what the step consumes (`nutrition`) with `scale`, or `scaleBy` names a fact of the step's target (`sleep_quality`). With `seconds` and `upTo`, it restores `amount` per that many seconds and the action is open-ended, ending when the level reaches `upTo` |
-| `<consume capability count>` | uses up held units with the capability. An action that consumes is offered only while the creature holds such a unit |
-| `<take>` | takes from the target into hands or pack: cuts a harvestable (its yield, its regrowth), picks up from a pile, withdraws from a box, lifts a packaged item. How much is the step's amount ([Amounts](#amounts)); `clears="true"` removes the source whatever it is, for a site clear |
+| `<restore need amount>` | moves a need by a signed amount, the creature's own or, with `who="target"`, the target creature's. `amount` is a number, or `from` names a property of what the step consumes (`nutrition`) with `scale`, or `scaleBy` names a fact of the step's target (`sleep_quality`). With `seconds` and `upTo`, it restores `amount` per that many seconds and the action is open-ended, ending when the level reaches `upTo`, where it stops exactly |
+| `<consume capability count>` | uses up held units with the capability, chosen among the units in the creature's pack each time it applies; a `from="nutrition"` restore credits the nutrition of the unit used. An action that consumes is offered only while the creature holds such a unit. With `seconds`, `upTo`, and `need` the action is open-ended and runs in rounds: each `seconds`, the first after `seconds`, one round of every row in the order written; it ends when the need reaches `upTo` or a round takes nothing. The last unit may pass `upTo`, and the need stops at 100 |
+| `<take>` | takes from the target into hands or pack: cuts a harvestable (its yield, its regrowth), picks up from a pile, withdraws from a box, lifts a packaged item. How much is the step's amount ([Amounts](#amounts)); `clears="true"` removes the source whatever it is, and belongs to the site clear's own entry, not the shared `harvest` |
 | `<put>` | puts what the step carries into the target: a box, a station's store, a blueprint's manifest, metered to what the target still needs and has room for |
 | `<work rate direction>` | advances the work saved on the target, a blueprint's `workDone`, up or down, at the rate the named skill gives. The action is open-ended and ends when the work reaches its bound |
 | `<craft>` | makes one unit of the station's current job at the end of a fixed-duration action ([Craft completion](#craft-completion)) |
-| `<spawn def>` | creates a thing where the creature stands (a bio pile), or with `into="hands"` in its hands |
+| `<spawn def>` | creates a thing where the creature stood when the action started (a bio pile), or with `into="hands"` in its hands; with its hands full it goes where a crafted output does, the belt, then the pack, then stored or dropped. A spawn on the ground takes only a definition that is none of carryable, harvestable, craftable, and storage, since it builds no components for them |
 | `<install>` | puts the packaged item the creature carries down at its placement target and unpackages it |
 | `<damage amount>` | lowers the target's condition by the amount; a target with no condition is a load error for the step's query |
 
@@ -717,13 +717,18 @@ reacts to an action with its own `actionStarts` and `actionFinishes` sources, wh
 ids ([Thoughts](../design/game-systems/colonists/thoughts.md)). Effects apply in the order written.
 Effect rows carry no `when`: an action whose effects differ is two actions.
 
+The rows that can take nothing (`<consume>`, `<take>`, `<put>`, `<craft>`, `<install>`) are written
+before every `<restore>` and `<spawn>`, and an action that writes one after is a load error. A row
+that takes nothing stops the rows after it, so an action that takes nothing pays nothing and does not
+finish.
+
 ### An action entry
 
 - Duration is one of `seconds`, a fixed time; `workFrom="durability" skill="Harvesting"`, the target's
   durability over the work rate that skill gives; `workFrom="job"`, the station's current job's work amount
   at the fixed rate of 100 work ticks a second, with no `skill`; or nothing, with an open-ended effect
-  (`<work>`, or a `<restore>` with `upTo`), so the action runs until its bound. A skill is named as the sim
-  names it, case included.
+  (`<work>`, a `<restore>` with `upTo`, or a `<consume>` with `upTo`), so the action runs until its bound.
+  An open-ended action has one bound. A skill is named as the sim names it, case included.
 - `hands="free"` means the action needs free hands, and the hands rules run when its chain is selected
   ([Hands](#hands)); `hands="any"`, the default, means the creature keeps carrying.
 - `interruptable` is whether a running action yields to an option of the same or a higher rung; one
@@ -737,11 +742,16 @@ Effect rows carry no `when`: an action whose effects differ is two actions.
 
 ### Paying out as it goes
 
-With `pays="along"` each tick applies the share of the action's effects earned since the last tick. A
-`curve` shapes it: by the fraction `f` of the action done the creature has earned `total x f^curve`,
-so `curve="1"` (the default) pays evenly and a larger curve pays little at first and more toward the
-end. A whole action earns the whole total and completion adds nothing. An open-ended action pays at its
-rate as it goes.
+With `pays="along"` a fixed-duration action pays its `<restore>` rows as it goes: each tick applies
+the share earned since the last tick. A `curve` shapes it: by the fraction `f` of the action done the
+creature has earned `total x f^curve`, so `curve="1"` (the default) pays evenly and a larger curve pays
+little at first and more toward the end. A whole action earns the whole total and completion adds
+nothing to the restores; its other rows apply at completion. Such an action has no row that can take
+nothing.
+
+An open-ended action pays at its rate as it goes, by definition: `pays` is left out or `along`, never
+`end`, and it takes no `curve`. It has one bound, and its rows beside the bound apply once, at the end.
+An open-ended action already at its bound when it starts does nothing and finishes nothing.
 
 A long, low-value activity relies on this: enjoying nature restores a little Recreation over a long
 time, and a colonist pulled away by hunger keeps what it gained.
@@ -1400,7 +1410,8 @@ the craft option is offered only for a station the creature can reach.
 ```
 
 `on="destination"` makes the do step work on the blueprint while standing at the spot. A build goal
-with no spots (an opening) has the blueprint's nearest walkable point as its one candidate and
+with no spots (an opening) has the blueprint's nearest walkable point as its one candidate, its route
+ending beside the wall when that point is inside a built one ([task claims](task-claims.md#build-and-deconstruct)), and
 takes no claim; a wall's builders stand on a side its goal allows ([task claims](task-claims.md#build-and-deconstruct)). A site ordered demolished is not offered as build work, and a build step on it ends
 before it adds work, the build action's open-ended work checking its site each tick
 ([Construction work](#construction-work)). Materials reach the site through the build goal's due
@@ -2096,6 +2107,32 @@ Forms added by the first build of the action entries (WOR-1069, Action entries a
   to the later interruptable-crafts change.
 - 2026-11-21: Skill names (`skill`, `<work rate>`) are the sim's skill names as written, case included
   (`Harvesting`, `Construction`).
+
+Rules from the first build of the primitive effects (WOR-1071, Primitive effects):
+
+- 2026-11-21: Every action entry is resolved at load, and what the engine cannot do is a load error.
+- 2026-11-21: The rows that can take nothing (`<consume>`, `<take>`, `<put>`, `<craft>`, `<install>`) are
+  written before every `<restore>` and `<spawn>`; an action that takes nothing pays nothing and does not
+  finish.
+- 2026-11-21: A fixed-duration action paying along pays its restores by the curve and applies its other
+  rows at completion, and has no row that can take nothing.
+- 2026-11-21: An open-ended action pays as it goes: `pays` left out or `along`, no `curve`, one bound, and
+  its rows beside the bound apply once at the end.
+- 2026-11-21: An open-ended action already at its bound when it starts does nothing and finishes nothing.
+- 2026-11-21: `<restore seconds upTo>` stops exactly at `upTo`.
+- 2026-11-21: An open-ended `<consume>` runs one round of every row each `seconds`, the first after
+  `seconds`, and ends when its need reaches `upTo` or a round takes nothing; the last unit may pass `upTo`,
+  and the need stops at 100.
+- 2026-11-21: A `<consume>` chooses its unit among the units in the pack with its capability each time it applies,
+  and a `from="nutrition"` restore credits that unit's nutrition. The capability is `edible`.
+- 2026-11-21: A `<consume>` in an action with a `from="nutrition"` restore takes `count="1"`; any other count
+  is refused.
+- 2026-11-21: `scaleBy` names `sleep_quality`.
+- 2026-11-21: `<spawn>` puts its thing where the creature stood when the action started; on the ground it takes a definition that
+  is none of carryable, harvestable, craftable, and storage. `into="hands"` with full hands follows the
+  craft output's order: hands, belt, pack, then stored or dropped.
+- 2026-11-21: `clears` belongs to the site clear's own entry; the shared `harvest` refuses it.
+- 2026-11-21: `<damage>` is refused, since nothing in the sim has a condition for it to lower.
 
 Choices made in writing this document, not put to the owner:
 

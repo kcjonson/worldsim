@@ -72,20 +72,27 @@ TEST(HarvestWorkRateTest, SkillClampedToValidRange) {
 // Action Factory Tests (Unit tests for Action struct)
 // =============================================================================
 
+// The food an eat sets out to eat, as an asset id.
+constexpr uint32_t kBerryId = 7;
+
+/// The `<restore>` row at `index` of the action's entry.
+static const RestoreRow& restoreRowOf(const Action& action, std::size_t index) {
+	return std::get<RestoreRow>(action.values->effects[index]);
+}
+
 TEST(ActionFactoryTest, EatActionCreation) {
-	auto action = Action::Eat(ecs::testing::shippedActions(), "Berry", 0.5F);
+	auto action = Action::Eat(ecs::testing::shippedActions(), kBerryId, 0.5F);
 
 	EXPECT_EQ(action.type, ActionType::Eat);
 	EXPECT_EQ(action.state, ActionState::Starting);
 	EXPECT_FLOAT_EQ(action.duration, 2.0F);
 	EXPECT_FLOAT_EQ(action.elapsed, 0.0F);
 
-	// Check variant-based effect - Eat now uses ConsumptionEffect
-	ASSERT_TRUE(action.hasConsumptionEffect());
-	const auto& effect = action.consumptionEffect();
-	EXPECT_EQ(effect.itemDefName, "Berry");
-	EXPECT_EQ(effect.need, NeedType::Hunger);
-	EXPECT_FLOAT_EQ(effect.restoreAmount, 50.0F); // 0.5 * 100
+	// The eat's rows: a consume, then hunger restored by the food's nutrition.
+	ASSERT_TRUE(std::holds_alternative<ConsumeRow>(action.values->effects[0]));
+	EXPECT_EQ(action.context.consumedDefNameId, kBerryId);
+	EXPECT_EQ(restoreRowOf(action, 1).need, NeedType::Hunger);
+	EXPECT_FLOAT_EQ(restoredAmount(restoreRowOf(action, 1), action.context), 50.0F); // 0.5 * 100
 }
 
 TEST(ActionFactoryTest, DrinkActionCreation) {
@@ -95,13 +102,12 @@ TEST(ActionFactoryTest, DrinkActionCreation) {
 	EXPECT_EQ(action.state, ActionState::Starting);
 	EXPECT_FLOAT_EQ(action.duration, 1.5F);
 
-	// Check variant-based effect with side effects
-	ASSERT_TRUE(action.hasNeedEffect());
-	const auto& effect = action.needEffect();
-	EXPECT_EQ(effect.need, NeedType::Thirst);
-	EXPECT_FLOAT_EQ(effect.restoreAmount, 100.0F); // Full thirst restoration from water tiles
-	EXPECT_EQ(effect.sideEffectNeed, NeedType::Bladder);
-	EXPECT_FLOAT_EQ(effect.sideEffectAmount, -15.0F); // negative = drains bladder
+	// The drink's rows: thirst, then its side effect
+	ASSERT_EQ(action.values->effects.size(), 2U);
+	EXPECT_EQ(restoreRowOf(action, 0).need, NeedType::Thirst);
+	EXPECT_FLOAT_EQ(restoreRowOf(action, 0).amount, 100.0F); // Full thirst restoration from water tiles
+	EXPECT_EQ(restoreRowOf(action, 1).need, NeedType::Bladder);
+	EXPECT_FLOAT_EQ(restoreRowOf(action, 1).amount, -15.0F); // negative = drains bladder
 }
 
 TEST(ActionFactoryTest, SleepActionCreation) {
@@ -111,11 +117,10 @@ TEST(ActionFactoryTest, SleepActionCreation) {
 	EXPECT_EQ(action.state, ActionState::Starting);
 	EXPECT_FLOAT_EQ(action.duration, 8.0F);
 
-	// Check variant-based effect
-	ASSERT_TRUE(action.hasNeedEffect());
-	const auto& effect = action.needEffect();
-	EXPECT_EQ(effect.need, NeedType::Energy);
-	EXPECT_FLOAT_EQ(effect.restoreAmount, 30.0F); // 60% * 0.5 quality
+	// The sleep's row, scaled by the place's quality
+	ASSERT_EQ(action.values->effects.size(), 1U);
+	EXPECT_EQ(restoreRowOf(action, 0).need, NeedType::Energy);
+	EXPECT_FLOAT_EQ(restoredAmount(restoreRowOf(action, 0), action.context), 30.0F); // 60% * 0.5 quality
 }
 
 TEST(ActionFactoryTest, ToiletActionCreation_PeeOnly) {
@@ -127,12 +132,12 @@ TEST(ActionFactoryTest, ToiletActionCreation_PeeOnly) {
 	EXPECT_FLOAT_EQ(action.duration, 2.0F); // Pee only is quick
 	EXPECT_FLOAT_EQ(action.targetPosition.x, 5.0F);
 	EXPECT_FLOAT_EQ(action.targetPosition.y, 10.0F);
-	EXPECT_FALSE(action.spawnBioPile); // Pee doesn't create bio pile
+	EXPECT_FALSE(std::holds_alternative<SpawnRow>(action.values->effects.back())); // Pee doesn't create bio pile
+	EXPECT_TRUE(std::ranges::none_of(action.values->effects, [](const EffectRow& row) { return std::holds_alternative<SpawnRow>(row); }));
 
-	ASSERT_TRUE(action.hasNeedEffect());
-	const auto& effect = action.needEffect();
-	EXPECT_EQ(effect.need, NeedType::Bladder);
-	EXPECT_FLOAT_EQ(effect.restoreAmount, 100.0F);
+	ASSERT_EQ(action.values->effects.size(), 1U);
+	EXPECT_EQ(restoreRowOf(action, 0).need, NeedType::Bladder);
+	EXPECT_FLOAT_EQ(restoreRowOf(action, 0).amount, 100.0F);
 }
 
 TEST(ActionFactoryTest, ToiletActionCreation_PoopOnly) {
@@ -141,12 +146,12 @@ TEST(ActionFactoryTest, ToiletActionCreation_PoopOnly) {
 
 	EXPECT_EQ(action.type, ActionType::Toilet);
 	EXPECT_FLOAT_EQ(action.duration, 4.0F); // Poop takes longer
-	EXPECT_TRUE(action.spawnBioPile); // Poop creates bio pile
+	ASSERT_TRUE(std::holds_alternative<SpawnRow>(action.values->effects.back())); // Poop creates bio pile
+	EXPECT_EQ(std::get<SpawnRow>(action.values->effects.back()).def, "Misc_BioPile");
 
-	ASSERT_TRUE(action.hasNeedEffect());
-	const auto& effect = action.needEffect();
-	EXPECT_EQ(effect.need, NeedType::Digestion);
-	EXPECT_FLOAT_EQ(effect.restoreAmount, 100.0F);
+	ASSERT_EQ(action.values->effects.size(), 2U);
+	EXPECT_EQ(restoreRowOf(action, 0).need, NeedType::Digestion);
+	EXPECT_FLOAT_EQ(restoreRowOf(action, 0).amount, 100.0F);
 }
 
 TEST(ActionFactoryTest, ToiletActionCreation_Both) {
@@ -155,18 +160,18 @@ TEST(ActionFactoryTest, ToiletActionCreation_Both) {
 
 	EXPECT_EQ(action.type, ActionType::Toilet);
 	EXPECT_FLOAT_EQ(action.duration, 5.0F); // Both takes longest
-	EXPECT_TRUE(action.spawnBioPile); // Poop creates bio pile
+	ASSERT_TRUE(std::holds_alternative<SpawnRow>(action.values->effects.back())); // Poop creates bio pile
+	EXPECT_EQ(std::get<SpawnRow>(action.values->effects.back()).def, "Misc_BioPile");
 
-	ASSERT_TRUE(action.hasNeedEffect());
-	const auto& effect = action.needEffect();
-	EXPECT_EQ(effect.need, NeedType::Bladder); // Primary is bladder
-	EXPECT_FLOAT_EQ(effect.restoreAmount, 100.0F);
-	EXPECT_EQ(effect.sideEffectNeed, NeedType::Digestion); // Side effect is digestion
-	EXPECT_FLOAT_EQ(effect.sideEffectAmount, 100.0F); // Full relief
+	ASSERT_EQ(action.values->effects.size(), 3U);
+	EXPECT_EQ(restoreRowOf(action, 0).need, NeedType::Bladder); // Primary is bladder
+	EXPECT_FLOAT_EQ(restoreRowOf(action, 0).amount, 100.0F);
+	EXPECT_EQ(restoreRowOf(action, 1).need, NeedType::Digestion); // Side effect is digestion
+	EXPECT_FLOAT_EQ(restoreRowOf(action, 1).amount, 100.0F);	  // Full relief
 }
 
 TEST(ActionFactoryTest, ActionClear) {
-	auto action = Action::Eat(ecs::testing::shippedActions(), "Berry", 0.8F);
+	auto action = Action::Eat(ecs::testing::shippedActions(), kBerryId, 0.8F);
 	action.elapsed = 1.5F;
 	action.state = ActionState::InProgress;
 
@@ -176,19 +181,21 @@ TEST(ActionFactoryTest, ActionClear) {
 	EXPECT_EQ(action.state, ActionState::Starting);
 	EXPECT_FLOAT_EQ(action.duration, 0.0F);
 	EXPECT_FLOAT_EQ(action.elapsed, 0.0F);
-	EXPECT_FALSE(action.hasConsumptionEffect()); // Effect variant reset to monostate
+	EXPECT_EQ(action.values, nullptr); // No entry runs
+	EXPECT_TRUE(std::holds_alternative<std::monostate>(action.effect)); // Effect variant reset to monostate
+	EXPECT_EQ(action.context.consumedDefNameId, 0U);					// The food it set out to eat is gone with it
 }
 
 TEST(ActionFactoryTest, ActionIsActive) {
 	Action action{};
 	EXPECT_FALSE(action.isActive());
 
-	action = Action::Eat(ecs::testing::shippedActions(), "Berry", 0.5F);
+	action = Action::Eat(ecs::testing::shippedActions(), kBerryId, 0.5F);
 	EXPECT_TRUE(action.isActive());
 }
 
 TEST(ActionFactoryTest, ActionProgress) {
-	auto action = Action::Eat(ecs::testing::shippedActions(), "Berry", 0.5F);
+	auto action = Action::Eat(ecs::testing::shippedActions(), kBerryId, 0.5F);
 	EXPECT_FLOAT_EQ(action.progress(), 0.0F);
 
 	action.elapsed = 1.0F;

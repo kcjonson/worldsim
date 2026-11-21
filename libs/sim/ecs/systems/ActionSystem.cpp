@@ -8,13 +8,11 @@
 #include "NavigationSystem.h"
 #include "TimeSystem.h"
 #include "../components/Action.h"
-#include "../components/Appearance.h"
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/NavPath.h"
 #include "../components/Needs.h"
-#include "../components/Packaged.h"
 #include "../components/Skills.h"
 #include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
@@ -25,7 +23,8 @@
 
 #include <glm/geometric.hpp>
 
-#include <limits>
+#include <algorithm>
+#include <variant>
 
 namespace ecs {
 
@@ -59,7 +58,8 @@ namespace ecs {
 		// colonist loses the task another way (direct control, or a snap back onto the
 		// nav mesh), which clears the action with it. When AIDecisionSystem switches away
 		// from an interruptable one, it clears the action with the task, and nothing
-		// resumes: an interrupted sleep pays out nothing.
+		// resumes: an action paying at its end pays nothing, and one paying along keeps
+		// what it has paid.
 		for (auto [entity, position, task, action, needs, memory, inventory] :
 			 world->view<Position, Task, Action, NeedsComponent, Memory, Inventory>()) {
 
@@ -93,17 +93,16 @@ namespace ecs {
 					startAction(entity, task, action, position, memory, needs, inventory);
 				}
 
-				// Harvest is work-based, not a fixed time: the action is created with the
-				// harvestable's `durability` (work units) in `duration`, which we convert to
-				// seconds here using the colonist's level in the harvest entry's skill (time =
-				// durability / rate). A skilled chopper fells a tree faster. Sampled once per chop;
-				// other action types keep their authored seconds.
-				if (action.type == ActionType::Harvest) {
-					float harvestSkill = 0.0F;
+				// A duration from the target's durability is work, not a fixed time: the action is created with
+				// the durability (work units) in `duration`, which we convert to seconds here using the
+				// colonist's level in the entry's skill (time = durability / rate). A skilled chopper fells a
+				// tree faster. Sampled once per action; other actions keep their authored seconds.
+				if (action.isActive() && action.values->duration == assets::ActionDuration::FromDurability) {
+					float skillLevel = 0.0F;
 					if (const auto* skills = world->getComponent<Skills>(entity)) {
-						harvestSkill = skills->getLevel(actionEntries.harvest.skill);
+						skillLevel = skills->getLevel(action.values->skill);
 					}
-					action.duration /= harvestWorkRate(harvestSkill);
+					action.duration /= harvestWorkRate(skillLevel);
 				}
 
 				// Only log a genuine start. A start routine may decline to start an action (no
@@ -140,14 +139,12 @@ namespace ecs {
 				}
 			}
 
-			// Construction actions advance continuously by workDone, not by elapsed/duration.
-			// A failed start (e.g. blueprint gone) clears the action, so guard on the effect.
-			if (action.hasProgressEffect()) {
-				advanceConstructionWork(scaledDt, action);
-			} else {
-				// Process the action
-				processAction(scaledDt, action);
+			// Every action's first tick, factory-started or not: where it started is where its spawn lands.
+			if (action.state == ActionState::Starting) {
+				action.startPosition = position.value;
 			}
+			const Actor actor{.entity = entity, .position = position.value, .needs = needs, .inventory = inventory, .memory = memory};
+			advanceAction(scaledDt, actor, action);
 
 			// Update WorkQueue progress for craft actions (for UI progress bar)
 			if (action.hasCraftingEffect() && action.isActive()) {
@@ -160,19 +157,6 @@ namespace ecs {
 
 			// Complete action if done
 			if (action.isComplete()) {
-				float restoreAmount = 0.0F;
-				if (action.hasNeedEffect()) {
-					restoreAmount = action.needEffect().restoreAmount;
-				} else if (action.hasConsumptionEffect()) {
-					restoreAmount = action.consumptionEffect().restoreAmount;
-				}
-				LOG_INFO(
-					Engine,
-					"[Action] Entity %llu: Completed %s action (restored %.1f%%)",
-					static_cast<unsigned long long>(entity),
-					actionTypeName(action.type),
-					restoreAmount
-				);
 				completeAction(entity, position, action, needs, task, inventory, memory);
 			}
 		}
@@ -222,6 +206,27 @@ namespace ecs {
 		startNeedAction(task, action, position, memory, needs, inventory);
 	}
 
+	void ActionSystem::advanceAction(float deltaTime, const Actor& actor, Action& action) {
+		const ActionValues& values = *action.values;
+		switch (values.bound) {
+			case ActionBound::Work:
+				advanceWork(deltaTime, std::get<WorkRow>(values.effects[values.boundRow]), action);
+				return;
+			case ActionBound::Restore:
+				advanceRestore(deltaTime, std::get<RestoreRow>(values.effects[values.boundRow]), action, actor.needs);
+				return;
+			case ActionBound::Consume:
+				advanceRounds(deltaTime, std::get<ConsumeRow>(values.effects[values.boundRow]), actor, action);
+				return;
+			case ActionBound::None:
+				break;
+		}
+		processAction(deltaTime, action);
+		if (values.pays == assets::Pays::Along) {
+			payAlong(action, actor.needs);
+		}
+	}
+
 	void ActionSystem::processAction(float deltaTime, Action& action) {
 		// Update elapsed time
 		action.elapsed += deltaTime;
@@ -235,6 +240,118 @@ namespace ecs {
 		if (action.elapsed >= action.duration) {
 			action.state = ActionState::Complete;
 		}
+	}
+
+	void ActionSystem::payAlong(Action& action, NeedsComponent& needs) {
+		const ActionValues& values = *action.values;
+		const float			done = action.duration > 0.0F ? std::min(action.elapsed / action.duration, 1.0F) : 1.0F;
+		const float			share = earnedShare(action.paidFraction, done, values.curve);
+		action.paidFraction = done;
+		for (std::size_t index = 0; index < values.effects.size(); ++index) {
+			if (const auto* restore = std::get_if<RestoreRow>(&values.effects[index])) {
+				payRestore(index, *restore, restoredAmount(*restore, action.context) * share, action, needs);
+			}
+		}
+	}
+
+	void ActionSystem::advanceRestore(float deltaTime, const RestoreRow& row, Action& action, NeedsComponent& needs) {
+		action.elapsed += deltaTime;
+		if (action.state == ActionState::Starting) {
+			action.state = ActionState::InProgress;
+		}
+		const Need* need = restoredNeed(row, action.context, needs);
+		const float rate = restoredAmount(row, action.context) / row.seconds;
+		const auto	reached = [&] {
+			 return rate > 0.0F ? need->value >= row.upTo : need->value <= row.upTo;
+		};
+		if (need == nullptr || reached()) {
+			action.state = ActionState::Complete;
+			return;
+		}
+		const float toBound = row.upTo - need->value;
+		const float step = rate > 0.0F ? std::min(rate * deltaTime, toBound) : std::max(rate * deltaTime, toBound);
+		payRestore(action.values->boundRow, row, step, action, needs);
+		++action.rounds;
+		if (reached()) {
+			action.state = ActionState::Complete;
+		}
+	}
+
+	void ActionSystem::payRestore(std::size_t index, const RestoreRow& row, float amount, Action& action, NeedsComponent& needs) {
+		applyRestore(row, amount, action.context, needs);
+		if (index == action.values->primaryRow) {
+			action.restored += amount;
+		}
+	}
+
+	void ActionSystem::advanceRounds(float deltaTime, const ConsumeRow& row, const Actor& actor, Action& action) {
+		action.elapsed += deltaTime;
+		if (action.state == ActionState::Starting) {
+			action.state = ActionState::InProgress;
+		}
+		const Need& need = actor.needs.get(row.need);
+		while (need.value < row.upTo) {
+			if (action.elapsed < static_cast<float>(action.rounds + 1) * row.seconds) {
+				return;
+			}
+			if (!applyRows(actor, action, RowsDue::All)) {
+				break;
+			}
+			++action.rounds;
+		}
+		action.state = ActionState::Complete;
+	}
+
+	bool ActionSystem::applyRows(const Actor& actor, Action& action, RowsDue due) {
+		const ActionValues& values = *action.values;
+		for (std::size_t index = 0; index < values.effects.size(); ++index) {
+			const EffectRow& row = values.effects[index];
+			if ((due == RowsDue::AllButBound && index == values.boundRow) ||
+				(due == RowsDue::AllButRestores && std::holds_alternative<RestoreRow>(row))) {
+				continue;
+			}
+			bool took = true;
+			if (const auto* restore = std::get_if<RestoreRow>(&row)) {
+				payRestore(index, *restore, restoredAmount(*restore, action.context), action, actor.needs);
+			} else if (const auto* consume = std::get_if<ConsumeRow>(&row)) {
+				took = applyConsume(*consume, action, actor.inventory);
+			} else if (const auto* take = std::get_if<TakeRow>(&row)) {
+				took = applyTake(*take, action, actor.position, actor.inventory, actor.memory);
+			} else if (std::holds_alternative<PutRow>(row)) {
+				took = applyPut(action, actor.inventory);
+			} else if (const auto* work = std::get_if<WorkRow>(&row)) {
+				took = completeWork(*work, action);
+			} else if (std::holds_alternative<CraftRow>(row)) {
+				took = applyCraft(action, actor.inventory);
+			} else if (const auto* spawn = std::get_if<SpawnRow>(&row)) {
+				took = applySpawn(*spawn, action.startPosition, actor.inventory);
+			} else if (std::holds_alternative<InstallRow>(row)) {
+				took = applyInstall(action, actor.inventory);
+			}
+			if (!took) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	bool ActionSystem::refuseWithoutTarget(const Action& action, const char* element) {
+		LOG_WARNING(Engine, "[Action] %s: its <%s> has no target to act on, so it takes nothing", action.values->id.c_str(), element);
+		return false;
+	}
+
+	void ActionSystem::applyRestore(const RestoreRow& row, float amount, const EffectContext& context, NeedsComponent& needs) {
+		if (Need* need = restoredNeed(row, context, needs)) {
+			need->move(amount);
+		}
+	}
+
+	Need* ActionSystem::restoredNeed(const RestoreRow& row, const EffectContext& context, NeedsComponent& needs) {
+		if (!row.onTarget) {
+			return &needs.get(row.need);
+		}
+		auto* target = world->getComponent<NeedsComponent>(context.targetCreature);
+		return target != nullptr ? &target->get(row.need) : nullptr;
 	}
 
 	void ActionSystem::completeAction(
@@ -257,40 +374,42 @@ namespace ecs {
 		// Goods a pile pickup took over from earlier legs of a gathering ride along with what it lifts.
 		const uint32_t carriedBefore = haulLifts ? std::min(taskCargo(task), heldBefore) : 0U;
 
-		// Whether the action's effect took: only then has the colonist finished it. A need, a toilet, and a
-		// construction bound reached always take; the rest can find their thing gone at completion.
-		bool took = true;
-		if (action.hasNeedEffect()) {
-			applyNeedEffect(action, needs);
+		// The rows not yet paid apply in the order written, and the action finishes only when every one takes: a
+		// restore, a spawn, and a construction bound reached always take; the rest can find their thing gone at
+		// completion, which stops the rows after it. An action paying along has paid its restores; an open-ended
+		// one has paid its bound (a work bound's row completing signals the layer above, which knows the
+		// ConstructionWorld), and an open-ended consume has applied every row once per round. An open-ended
+		// restore or consume already at its bound when it started has paid nothing and finishes nothing.
+		const ActionValues& values = *action.values;
+		const Actor			actor{.entity = entity, .position = position.value, .needs = needs, .inventory = inventory, .memory = memory};
+		bool				took = true;
+		switch (values.bound) {
+			case ActionBound::None:
+				took = applyRows(actor, action, values.pays == assets::Pays::Along ? RowsDue::AllButRestores : RowsDue::All);
+				break;
+			case ActionBound::Work:
+				took = applyRows(actor, action, RowsDue::All);
+				break;
+			case ActionBound::Restore:
+				took = action.rounds > 0 && applyRows(actor, action, RowsDue::AllButBound);
+				break;
+			case ActionBound::Consume:
+				took = action.rounds > 0;
+				break;
 		}
-		if (action.hasCollectionEffect()) {
-			took = applyCollectionEffect(action, position.value, inventory, memory);
+		// What the action restores to the need it serves: a fixed-duration action's whole amount, offered whether or not
+		// its rows took; an open-ended one's what it paid as it went.
+		float restored = action.restored;
+		if (values.bound == ActionBound::None && values.primaryRow != kNoRow) {
+			restored = restoredAmount(std::get<RestoreRow>(values.effects[values.primaryRow]), action.context);
 		}
-		if (action.hasConsumptionEffect()) {
-			took = applyConsumptionEffect(action, needs, inventory);
-		}
-		// Pooping creates a Bio Pile, peeing does not.
-		if (action.spawnBioPile) {
-			applySpawnEffect(action);
-		}
-		if (action.hasCraftingEffect()) {
-			took = applyCraftingEffect(action, inventory);
-		}
-		if (action.hasDepositEffect()) {
-			took = applyDepositEffect(action, inventory);
-		}
-		// advanceConstructionWork already moved workDone to the bound and set the phase; here we
-		// signal the layer above ActionSystem (which doesn't know ConstructionWorld) via callback.
-		if (action.hasProgressEffect()) {
-			applyProgressEffect(action);
-		}
-		if (action.type == ActionType::PickupPackaged) {
-			const auto* packaged = world->getComponent<Packaged>(static_cast<EntityID>(action.placePackagedEffect().packagedEntityId));
-			took = packaged != nullptr && !packaged->beingCarried;
-		}
-		if (action.type == ActionType::PlacePackaged) {
-			took = applyPlacePackagedEffect(action, inventory);
-		}
+		LOG_INFO(
+			Engine,
+			"[Action] Entity %llu: Completed %s action (restored %.1f%%)",
+			static_cast<unsigned long long>(entity),
+			actionTypeName(action.type),
+			restored
+		);
 		if (took) {
 			reportAction(entity, action, ActionMoment::Finished, task, memory);
 		}
@@ -362,36 +481,9 @@ namespace ecs {
 				return;
 			}
 
-			// Phase 1 complete (PickupPackaged) - clear hands, pick up entity, then move to phase 2
-			// Hand clearing: stow items to backpack, drop if can't fit
-			clearHandsForTwoHandedPickup(inventory, action.targetPosition);
-
-			// The packaged item is possessed now; nobody else can take it.
+			// Phase 1 complete (PickupPackaged): the take lifted the item. The packaged item is possessed now;
+			// nobody else can take it.
 			claimsToDeliveryLeg(task, 0);
-
-			// Mark the entity as being carried (hides from world rendering)
-			world->getComponent<Packaged>(packagedEntity)->beingCarried = true;
-			inventory.carryingPackagedEntity = placeEffect.packagedEntityId;
-
-			// Put the entity's defName in both hands (for UI display)
-			auto* appearance = world->getComponent<Appearance>(packagedEntity);
-			if (appearance != nullptr && !appearance->defName.empty()) {
-				inventory.leftHand = ItemStack{appearance->defName, 1};
-				inventory.rightHand = ItemStack{appearance->defName, 1};
-				LOG_INFO(
-					Engine,
-					"[Action] Picked up %s (entity %llu) - now carrying in both hands",
-					appearance->defName.c_str(),
-					static_cast<unsigned long long>(placeEffect.packagedEntityId)
-				);
-			} else {
-				LOG_WARNING(
-					Engine,
-					"[Action] Could not set hands: appearance=%p, defName=%s",
-					static_cast<void*>(appearance),
-					appearance ? appearance->defName.c_str() : "(null)"
-				);
-			}
 
 			// Transition to phase 2 - walk to placement target.
 			headTo(entity, task, task.placeTargetPosition);
@@ -428,8 +520,8 @@ namespace ecs {
 		}
 		const auto& registry = assets::AssetRegistry::Get();
 		uint32_t	about = 0;
-		if (action.hasConsumptionEffect()) {
-			about = registry.getDefNameId(action.consumptionEffect().itemDefName);
+		if (action.context.consumedDefNameId != 0) {
+			about = action.context.consumedDefNameId;
 		} else if (action.hasCraftingEffect() && !action.craftingEffect().outputs.empty()) {
 			about = registry.getDefNameId(action.craftingEffect().outputs.front().first);
 		} else if (action.hasCollectionEffect()) {
@@ -440,7 +532,7 @@ namespace ecs {
 			about = source->defNameId;
 		}
 		m_reportedActions.push_back(
-			{.colonist = entity, .type = action.type, .action = action.entry, .moment = moment, .aboutDefinition = about}
+			{.colonist = entity, .type = action.type, .action = action.values->entry, .moment = moment, .aboutDefinition = about}
 		);
 	}
 
@@ -451,7 +543,8 @@ namespace ecs {
 			if (blueprint == nullptr) {
 				return false;
 			}
-			return effect.deconstruct ? blueprint->teardownBegun : blueprint->workDone > 0.0F;
+			const auto& work = std::get<WorkRow>(action.values->effects[action.values->boundRow]);
+			return work.down ? blueprint->teardownBegun : blueprint->workDone > 0.0F;
 		}
 		if (action.hasCraftingEffect()) {
 			const CraftingEffect& effect = action.craftingEffect();
