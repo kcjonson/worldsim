@@ -67,6 +67,9 @@ namespace ecs {
 		// Placement Actions
 		PickupPackaged, // Clear hands + pick up 2-handed packaged item
 		PlacePackaged,	// Place packaged item at target location
+
+		// A chain's `do` step: any action entry, started by the one chain start path with no factory
+		Chain,
 	};
 
 	/// Action state machine
@@ -665,7 +668,7 @@ namespace ecs {
 	};
 
 	/// Every action type with its name.
-	inline constexpr std::array<std::pair<ActionType, std::string_view>, 15> kActionTypeNames = {{
+	inline constexpr std::array<std::pair<ActionType, std::string_view>, 16> kActionTypeNames = {{
 		{ActionType::None, "None"},
 		{ActionType::Eat, "Eat"},
 		{ActionType::Drink, "Drink"},
@@ -681,12 +684,19 @@ namespace ecs {
 		{ActionType::Deconstruct, "Deconstruct"},
 		{ActionType::PickupPackaged, "PickupPackaged"},
 		{ActionType::PlacePackaged, "PlacePackaged"},
+		{ActionType::Chain, "Chain"},
 	}};
 
-	/// The action type's name, for logs and the dev tools.
+	/// The action type's name.
 	[[nodiscard]] inline const char* actionTypeName(ActionType type) {
 		const auto found = std::ranges::find(kActionTypeNames, type, &std::pair<ActionType, std::string_view>::first);
 		return found == kActionTypeNames.end() ? "Unknown" : found->second.data();
+	}
+
+	/// What the logs, the dev tools, and the task list call a running action: a factory's action by its type, a chain's
+	/// by the entry it runs.
+	[[nodiscard]] inline const char* actionName(const Action& action) {
+		return action.type == ActionType::Chain && action.values != nullptr ? action.values->id.c_str() : actionTypeName(action.type);
 	}
 
 } // namespace ecs

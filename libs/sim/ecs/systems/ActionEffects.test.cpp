@@ -7,6 +7,7 @@
 
 #include "../InventoryMass.h"
 #include "../ShippedConfig.test.h"
+#include "../SyntheticEntries.test.h"
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
@@ -22,16 +23,12 @@
 #include <assets/AssetRegistry.h>
 #include <assets/EntryLoader.h>
 #include <assets/RecipeRegistry.h>
-#include <assets/ShippedEntries.test.h>
 
 #include <gtest/gtest.h>
 
-#include <filesystem>
-#include <fstream>
 #include <map>
 #include <memory>
 #include <optional>
-#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -109,17 +106,12 @@ namespace ecs::test {
 		class ActionEffectsTest : public ::testing::Test {
 		  protected:
 			void SetUp() override {
-				root = std::filesystem::temp_directory_path() / ("worldsim-action-effects-" + std::to_string(std::random_device{}()) + "-" +
-																 ::testing::UnitTest::GetInstance()->current_test_info()->name());
-				std::filesystem::create_directories(root);
-				std::filesystem::copy(
-					assets::testing::shippedRepoRoot() / "assets" / "config" / "facts",
-					root / "facts",
-					std::filesystem::copy_options::recursive
+				entries.emplace(
+					"action-effects",
+					ecs::testing::SyntheticEntries::Options{
+						.definitions = ecs::testing::SyntheticEntries::Definitions::Shipped, .trackedNeeds = trackedNeedIds()
+					}
 				);
-				for (const char* folder : {"behaviors", "actions", "work", "orders"}) {
-					std::filesystem::create_directories(root / folder);
-				}
 				write("actions/synthetic.xml", kSyntheticActions);
 
 				registerFood("Berry", 0.3F);
@@ -137,7 +129,7 @@ namespace ecs::test {
 			void TearDown() override {
 				world.reset();
 				assets::AssetRegistry::Get().clearDefinitions();
-				std::filesystem::remove_all(root);
+				entries.reset();
 			}
 
 			static void registerFood(const std::string& name, float nutrition) {
@@ -150,19 +142,11 @@ namespace ecs::test {
 				assets::AssetRegistry::Get().registerTestDefinition(std::move(food));
 			}
 
-			void write(const std::string& relative, const std::string& body) const {
-				std::filesystem::create_directories((root / relative).parent_path());
-				std::ofstream(root / relative) << body;
-			}
+			void write(const std::string& relative, const std::string& body) const { entries->write(relative, body); }
 
 			/// The library in the temp root; a fatal failure when it does not load.
 			void load() {
-				assets::EntrySources sources{.configRoot = root, .trackedNeeds = trackedNeedIds()};
-				sources.definitionId = [](std::string_view name) -> std::optional<uint32_t> {
-					const auto found = assets::testing::shippedDefinitionNames().find(name);
-					return found == assets::testing::shippedDefinitionNames().end() ? std::nullopt : std::optional<uint32_t>(found->second);
-				};
-				assets::EntryLoad loaded = assets::loadEntries(sources);
+				assets::EntryLoad loaded = entries->load();
 				ASSERT_TRUE(loaded.errors.empty()) << ::testing::PrintToString(loaded.errors);
 				library = std::move(loaded.library);
 			}
@@ -214,7 +198,7 @@ namespace ecs::test {
 			[[nodiscard]] Inventory& inventory(EntityID colonist) { return *world->getComponent<Inventory>(colonist); }
 			[[nodiscard]] Action&	 action(EntityID colonist) { return *world->getComponent<Action>(colonist); }
 
-			std::filesystem::path					   root;
+			std::optional<ecs::testing::SyntheticEntries> entries;
 			assets::EntryLibrary					   library;
 			std::vector<std::unique_ptr<ActionValues>> resolvedValues;
 			std::unique_ptr<World>					   world;

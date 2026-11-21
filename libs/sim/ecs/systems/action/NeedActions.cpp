@@ -25,13 +25,10 @@
 
 namespace ecs {
 
-	namespace {
-		/// A food's nutrition (0-1 scale), 0.3 for one whose definition gives none.
-		[[nodiscard]] float nutritionOf(const std::string& food) {
-			const auto edible = assets::getEdibleItemInfo(food);
-			return edible ? edible->nutrition : 0.3F;
-		}
-	} // namespace
+	float ActionSystem::nutritionOf(const std::string& food) {
+		const auto edible = assets::getEdibleItemInfo(food);
+		return edible ? edible->nutrition : 0.3F;
+	}
 
 	void ActionSystem::startNeedAction(
 		Task&				  task,

@@ -93,9 +93,18 @@ namespace ecs {
 				return task.haulItemDefNameId;
 			case TaskType::Harvest:
 				return task.harvestYieldDefNameId;
-			default:
+			case TaskType::Chain:
+				return task.chain.goal.item;
+			case TaskType::None:
+			case TaskType::FulfillNeed:
+			case TaskType::Craft:
+			case TaskType::PlacePackaged:
+			case TaskType::Build:
+			case TaskType::Deconstruct:
+			case TaskType::Wander:
 				return 0;
 		}
+		return 0;
 	}
 
 	uint32_t rootAvailable(uint32_t need, const ClaimIndex& claims, uint64_t rootGoalId, uint32_t itemDefNameId, ClaimExclusion exclude) {
@@ -197,6 +206,9 @@ namespace ecs {
 			case TaskType::Wander:
 			case TaskType::None:
 				break;
+			case TaskType::Chain:
+				// A chain's claims are named on its steps, and the runner takes them (ActionSystem::startChain).
+				break;
 		}
 	}
 
@@ -221,7 +233,8 @@ namespace ecs {
 	}
 
 	std::optional<SuspendedWork> suspendableWork(const Task& task, uint32_t held) {
-		if ((task.type != TaskType::Haul && task.type != TaskType::Harvest) || held == 0 || task.instanceId == 0) {
+		if ((task.type != TaskType::Haul && task.type != TaskType::Harvest && task.type != TaskType::Chain) || held == 0 ||
+			task.instanceId == 0) {
 			return std::nullopt;
 		}
 		const uint32_t item = chainItem(task);

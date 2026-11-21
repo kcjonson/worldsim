@@ -15,6 +15,7 @@
 #include <utils/Log.h>
 
 #include <algorithm>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -153,47 +154,53 @@ namespace ecs {
 		return true;
 	}
 
-	void ActionSystem::startCraftAction(Task& task, Action& action) {
-		auto& recipeRegistry = assets::RecipeRegistry::Get();
-
-		// Get the recipe
-		const auto* recipe = recipeRegistry.getRecipe(task.craftRecipeDefName);
+	std::optional<ActionSystem::CraftReady> ActionSystem::craftReady(const std::string& recipeDefName, uint64_t stationEntityId) const {
+		const auto* recipe = assets::RecipeRegistry::Get().getRecipe(recipeDefName);
 		if (recipe == nullptr) {
-			LOG_ERROR(Engine, "[Action] Unknown recipe: %s", task.craftRecipeDefName.c_str());
-			action.clear();
-			return;
+			LOG_ERROR(Engine, "[Action] Unknown recipe: %s", recipeDefName.c_str());
+			return std::nullopt;
 		}
 
 		// Verify the station's store holds all required inputs (hauled in during provisioning).
 		// This mirrors construction gating on materialsComplete() before the build proceeds.
-		const auto* stationInv = world->getComponent<Inventory>(static_cast<EntityID>(task.targetStationId));
+		const auto* stationInv = world->getComponent<Inventory>(static_cast<EntityID>(stationEntityId));
 		if (stationInv == nullptr) {
 			LOG_WARNING(Engine, "[Action] Cannot craft %s - station has no Inventory store", recipe->label.c_str());
-			action.clear();
-			return;
+			return std::nullopt;
 		}
-		const CraftInputs inputs = craftInputs(*recipe);
-		if (const auto* missing = firstMissingInput(*stationInv, inputs)) {
+		CraftReady ready{.workAmount = recipe->workAmount, .label = recipe->label};
+		ready.effect.recipeDefName = recipeDefName;
+		ready.effect.stationEntityId = stationEntityId;
+		ready.effect.inputs = craftInputs(*recipe);
+		if (const auto* missing = firstMissingInput(*stationInv, ready.effect.inputs)) {
 			LOG_WARNING(
 				Engine, "[Action] Cannot craft %s - station missing %u x %s", recipe->label.c_str(), missing->second, missing->first.c_str()
 			);
+			return std::nullopt;
+		}
+		for (const auto& output : recipe->outputs) {
+			ready.effect.outputs.emplace_back(output.defName, output.count);
+		}
+		return ready;
+	}
+
+	void ActionSystem::startCraftAction(Task& task, Action& action) {
+		const std::optional<CraftReady> ready = craftReady(task.craftRecipeDefName, task.targetStationId);
+		if (!ready) {
 			action.clear();
 			return;
 		}
-
-		// Build the outputs vector for the action
-
-		std::vector<std::pair<std::string, uint32_t>> outputs;
-		for (const auto& output : recipe->outputs) {
-			outputs.emplace_back(output.defName, output.count);
-		}
-
-		// Create the craft action
 		action = Action::Craft(
-			actionEntries, task.craftRecipeDefName, task.targetStationId, task.targetPosition, recipe->workAmount, inputs, outputs
+			actionEntries,
+			task.craftRecipeDefName,
+			task.targetStationId,
+			task.targetPosition,
+			ready->workAmount,
+			ready->effect.inputs,
+			ready->effect.outputs
 		);
 
-		LOG_DEBUG(Engine, "[Action] Starting Craft action for %s (%.1fs duration)", recipe->label.c_str(), action.duration);
+		LOG_DEBUG(Engine, "[Action] Starting Craft action for %s (%.1fs duration)", ready->label.c_str(), action.duration);
 	}
 
 } // namespace ecs

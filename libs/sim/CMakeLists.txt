@@ -14,6 +14,7 @@ add_library(sim
     ecs/systems/action/CraftActions.cpp
     ecs/systems/action/HaulActions.cpp
     ecs/systems/action/BuildActions.cpp
+    ecs/systems/action/ChainRunner.cpp
     ecs/systems/StorageGoalSystem.cpp
     ecs/systems/WorkSources.cpp
     ecs/systems/ChainClaims.cpp
@@ -30,6 +31,7 @@ add_library(sim
     ecs/systems/PlayerVisibilitySystem.cpp
     ecs/spatial/AgentSpatialHash.cpp
     ecs/ActionEntries.cpp
+    ecs/ChainEntries.cpp
     ecs/ClaimIndex.cpp
     ecs/ColliderEntityIndex.cpp
     ecs/ColonistRules.cpp
