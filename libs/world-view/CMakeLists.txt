@@ -14,7 +14,7 @@ add_library(world-view
     world/rendering/OverlapGrid.cpp
     world/rendering/RunPlanner.cpp
     world/rendering/ScreenStateGuard.cpp
-    world/rendering/TemplateLevelBuilder.cpp
+    world/rendering/SelectionOutline.cpp
     world/rendering/TemplateMeshCache.cpp
     world/rendering/CoverPieces.cpp
     world/rendering/DrawnShadows.cpp

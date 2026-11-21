@@ -3,13 +3,47 @@
 #include <assets/AssetRegistry.h>
 #include <assets/placement/InstanceTransform.h>
 #include <primitives/Primitives.h>
+#include <threading/TaskPool.h>
 #include <utils/Log.h>
 #include <vector/Types.h>
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <unordered_set>
 
 namespace worldview {
+
+	namespace {
+		size_t meshBytes(const renderer::TessellatedMesh& mesh, uint32_t capacity) {
+			return (mesh.vertices.size() * (sizeof(Foundation::Vec2) + sizeof(Foundation::Color))) + (mesh.indices.size() * sizeof(uint16_t)) +
+				   (static_cast<size_t>(capacity) * sizeof(Renderer::InstanceData));
+		}
+
+		uint32_t useOf(std::vector<InstancedEntityRenderer::LevelStats::Use>& uses, float density) {
+			auto use = std::find_if(uses.begin(), uses.end(), [&](const InstancedEntityRenderer::LevelStats::Use& entry) {
+				return entry.pixelsPerMeter == density;
+			});
+			if (use == uses.end()) {
+				use = uses.insert(uses.end(), InstancedEntityRenderer::LevelStats::Use{.pixelsPerMeter = density});
+			}
+			return static_cast<uint32_t>(use - uses.begin());
+		}
+	} // namespace
+
+	InstancedEntityRenderer::InstancedEntityRenderer()
+		: levelBuilder([](const TemplateLevelKey& key) {
+			  assets::AssetRegistry::BuiltTemplate built = assets::AssetRegistry::Get().buildTemplateLevel(key.templateId, key.level);
+			  return std::move(built.mesh);
+		  }),
+		  // Both builds read a def off the lock on the pool; AssetRegistry::generation says why that holds.
+		  viewBuilder([](const ItemViewKey& key) -> std::optional<assets::ItemView> {
+			  const assets::AssetDefinition* def = assets::AssetRegistry::Get().templateRecord(key.templateId).def;
+			  if (def == nullptr) {
+				  return std::nullopt;
+			  }
+			  return assets::buildItemMesh(*def, key.turnQuanta, key.level, assets::GameViewConfig::Get().config());
+		  }) {}
 
 	InstancedEntityRenderer::TemplateLevels& InstancedEntityRenderer::levelsOf(uint32_t templateId) {
 		if (templateId >= templateLevels.size()) {
@@ -50,36 +84,63 @@ namespace worldview {
 			slot.state = SlotState::Requested;
 		}
 		if (slot.state == SlotState::Requested) {
-			levelBuilder.want(templateId, level);
+			levelBuilder.want({.templateId = templateId, .level = level});
 		}
 	}
 
 	void InstancedEntityRenderer::collectAndUpload() {
-		for (TemplateLevelBuilder::Finished& done : levelBuilder.takeFinished()) {
-			const uint32_t index = slotIndex(done.templateId, done.level);
+		for (auto& done : levelBuilder.takeFinished()) {
+			const uint32_t index = slotIndex(done.key.templateId, done.key.level);
 			MeshSlot&	   slot = slotAt(index);
-			if (!done.mesh.has_value() || done.mesh->vertices.empty()) {
-				LOG_ERROR(Engine, "Template %u has no mesh at detail level %u", done.templateId, static_cast<unsigned>(done.level));
+			if (!done.result.has_value() || done.result->vertices.empty()) {
+				LOG_ERROR(Engine, "Template %u has no mesh at detail level %u", done.key.templateId, static_cast<unsigned>(done.key.level));
 				slot.state = SlotState::Failed;
 				continue;
 			}
-			slot.builtMesh = std::move(done.mesh);
+			slot.builtMesh = std::move(done.result);
 			slot.state = SlotState::Waiting;
-			uploadQueue.push_back(index);
+			uploadQueue.push_back({.index = index, .view = false});
+		}
+
+		const uint64_t generation = assets::AssetRegistry::Get().generation();
+		for (auto& done : viewBuilder.takeFinished()) {
+			const std::optional<uint32_t> slot =
+				done.key.generation == generation ? itemViews.findView(done.key.templateId, done.key.turnQuanta, done.key.level) : std::nullopt;
+			if (!slot.has_value() || itemViews.view(*slot).state != ViewState::Requested) {
+				continue; // released, or from before a clear
+			}
+			if (!done.result.has_value() || !done.result->error.empty() || done.result->mesh.vertices.empty()) {
+				LOG_ERROR(
+					Engine, "Template %u has no view at %u quanta, detail level %u: %s", done.key.templateId, done.key.turnQuanta,
+					static_cast<unsigned>(done.key.level), done.result.has_value() ? done.result->error.c_str() : "the build failed"
+				);
+				itemViews.setState(*slot, ViewState::Failed);
+				continue;
+			}
+			viewSlots[*slot].mesh = std::move(done.result->mesh);
+			viewSlots[*slot].strips = std::move(done.result->strips);
+			itemViews.setState(*slot, ViewState::Waiting);
+			uploadQueue.push_back({.index = *slot, .view = true});
 		}
 
 		uint32_t uploadedVertices = 0;
 		while (!uploadQueue.empty()) {
-			MeshSlot&						 slot = meshSlots[uploadQueue.front()];
-			const renderer::TessellatedMesh& mesh = *slot.mesh();
-			const auto						 vertices = static_cast<uint32_t>(mesh.vertices.size());
+			const Upload next = uploadQueue.front();
+			if (next.view && itemViews.view(next.index).state != ViewState::Waiting) {
+				uploadQueue.pop_front(); // released while it waited
+				continue;
+			}
+			const auto vertices = static_cast<uint32_t>(next.view ? viewSlots[next.index].mesh.vertices.size() : meshSlots[next.index].mesh()->vertices.size());
 			if (uploadedVertices > 0 && uploadedVertices + vertices > kUploadVertexBudget) {
 				break;
 			}
-			const uint32_t index = uploadQueue.front();
 			uploadQueue.pop_front();
 			uploadedVertices += vertices;
-			upload(index);
+			if (next.view) {
+				uploadView(next.index);
+			} else {
+				upload(next.index);
+			}
 		}
 	}
 
@@ -132,62 +193,142 @@ namespace worldview {
 				continue;
 			}
 			++resident;
-			bytes += (slot.builtMesh->vertices.size() * (sizeof(Foundation::Vec2) + sizeof(Foundation::Color))) +
-					 (slot.builtMesh->indices.size() * sizeof(uint16_t)) + (static_cast<size_t>(slot.capacity) * sizeof(Renderer::InstanceData));
+			bytes += meshBytes(*slot.builtMesh, slot.capacity);
 		}
 		lastLevelStats.residentLevels = resident;
 		lastLevelStats.residentBytes = bytes;
 
+		// A reference view stays while an installed item stands at its template and turn: the registry keeps that
+		// layout exactly as long (AssetRegistry::releaseUnaskedLayouts).
+		assets::AssetRegistry& registry = assets::AssetRegistry::Get();
+		for (const uint32_t slot : itemViews.releaseStale(frameIndex, kEvictAfterFrames, [&](uint32_t templateId, uint32_t turnQuanta) {
+				 return registry.keepsStripLayout(templateId, turnQuanta);
+			 })) {
+			viewSlots[slot] = ViewSlot{};
+		}
 		uint32_t views = 0;
 		size_t	 viewBytes = 0;
 		for (const ViewSlot& view : viewSlots) {
-			if (view.state != SlotState::Ready) {
-				continue;
+			if (view.handle.isValid()) {
+				++views;
+				viewBytes += meshBytes(view.mesh, view.capacity);
 			}
-			++views;
-			viewBytes += (view.mesh.vertices.size() * (sizeof(Foundation::Vec2) + sizeof(Foundation::Color))) + (view.mesh.indices.size() * sizeof(uint16_t)) +
-						 (static_cast<size_t>(view.capacity) * sizeof(Renderer::InstanceData));
 		}
 		lastLevelStats.residentViews = views;
 		lastLevelStats.residentViewBytes = viewBytes;
 	}
 
-	uint32_t InstancedEntityRenderer::viewFor(const assets::ItemLayout& layout) {
-		const uint8_t level = levelsOf(layout.templateId).reference;
-		const auto [index, isNew] = itemViews.viewSlot(layout.templateId, layout.turnQuanta, level);
-		if (isNew) {
-			ViewSlot& slot = viewSlots.emplace_back();
-			slot.state = SlotState::Failed;
-			const assets::AssetDefinition* def = assets::AssetRegistry::Get().templateDefinition(layout.templateId);
-			if (def == nullptr) {
-				LOG_ERROR(Engine, "No definition for template %u's item view", layout.templateId);
-				return kNotAView;
-			}
-			// The reference level on this thread at its first want, uploaded at once, so the item draws on the frame
-			// it first appears (rotatable-placed-items 10).
-			assets::ItemView view = assets::buildItemMesh(*def, layout.turnQuanta, level, assets::GameViewConfig::Get().config());
-			if (!view.error.empty()) {
-				LOG_ERROR(Engine, "No view of %s at %u quanta: %s", def->defName.c_str(), layout.turnQuanta, view.error.c_str());
-				return kNotAView;
-			}
-			if (view.strips.size() != layout.layout.strips.size()) {
-				LOG_ERROR(
-					Engine, "The view of %s at %u quanta has %zu strips where its layout has %zu", def->defName.c_str(), layout.turnQuanta,
-					view.strips.size(), layout.layout.strips.size()
-				);
-				return kNotAView;
-			}
-			slot.handle = Renderer::Primitives::uploadInstancedMesh(view.mesh, kInitialViewInstanceCapacity);
-			if (!slot.handle.isValid()) {
-				LOG_ERROR(Engine, "The view of %s at %u quanta failed to upload", def->defName.c_str(), layout.turnQuanta);
-				return kNotAView;
-			}
-			slot.capacity = kInitialViewInstanceCapacity;
-			slot.mesh = std::move(view.mesh);
-			slot.strips = std::move(view.strips);
-			slot.state = SlotState::Ready;
+	void InstancedEntityRenderer::installView(uint32_t slot, assets::ItemView view) {
+		const ViewRecord& record = itemViews.view(slot);
+		if (!view.error.empty() || view.mesh.vertices.empty()) {
+			LOG_ERROR(
+				Engine, "Template %u has no view at %u quanta, detail level %u: %s", record.templateId, record.turnQuanta,
+				static_cast<unsigned>(record.level), view.error.empty() ? "nothing drawn" : view.error.c_str()
+			);
+			itemViews.setState(slot, ViewState::Failed);
+			return;
 		}
-		return viewSlots[index].state == SlotState::Ready ? index : kNotAView;
+		viewSlots[slot].mesh = std::move(view.mesh);
+		viewSlots[slot].strips = std::move(view.strips);
+		uploadView(slot);
+	}
+
+	void InstancedEntityRenderer::uploadView(uint32_t slot) {
+		ViewSlot& view = viewSlots[slot];
+		view.handle = Renderer::Primitives::uploadInstancedMesh(view.mesh, kInitialViewInstanceCapacity);
+		if (!view.handle.isValid()) {
+			const ViewRecord& record = itemViews.view(slot);
+			LOG_ERROR(Engine, "The view of template %u at %u quanta, detail level %u, failed to upload", record.templateId, record.turnQuanta, static_cast<unsigned>(record.level));
+			viewSlots[slot] = ViewSlot{};
+			itemViews.setState(slot, ViewState::Failed);
+			return;
+		}
+		view.capacity = kInitialViewInstanceCapacity;
+		itemViews.view(slot).drawnFrame = frameIndex;
+		itemViews.setState(slot, ViewState::Ready);
+	}
+
+	void InstancedEntityRenderer::wantView(const assets::ItemLayout& layout, uint8_t level, uint8_t reference) {
+		const auto [slot, isNew] = itemViews.viewSlot(layout.templateId, layout.turnQuanta, level, level == reference, frameIndex);
+		if (slot >= viewSlots.size()) {
+			viewSlots.resize(static_cast<size_t>(slot) + 1);
+		}
+		ViewRecord& record = itemViews.view(slot);
+		record.wantedFrame = frameIndex;
+		if (record.state == ViewState::Absent) {
+			if (level == reference) {
+				// On this thread at its first want, uploaded at once, so the item draws on the frame it first appears
+				// (rotatable-placed-items 10): one item's parts, a few dozen shapes.
+				const assets::AssetDefinition* def = assets::AssetRegistry::Get().templateRecord(layout.templateId).def;
+				installView(
+					slot, def != nullptr ? assets::buildItemMesh(*def, layout.turnQuanta, level, assets::GameViewConfig::Get().config())
+										 : assets::ItemView{.error = "no definition"}
+				);
+				return;
+			}
+			itemViews.setState(slot, ViewState::Requested);
+		}
+		if (record.state == ViewState::Requested) {
+			viewBuilder.want({.templateId = layout.templateId, .turnQuanta = layout.turnQuanta, .level = level, .generation = assets::AssetRegistry::Get().generation()});
+		}
+	}
+
+	uint32_t InstancedEntityRenderer::settleView(const assets::ItemLayout& layout, LevelStats& levelStats) {
+		const TemplateLevels& levels = levelsOf(layout.templateId);
+		const uint8_t		  wanted = assets::detailLevelFor(levels.densities, levelStats.screenPixelsPerMeter);
+		wantView(layout, levels.reference, levels.reference); // the fallback of last resort
+		wantView(layout, wanted, levels.reference);
+
+		const std::optional<uint8_t> level = assets::nearestReadyLevel(itemViews.readyMask(layout.templateId, layout.turnQuanta), wanted);
+		if (!level.has_value()) {
+			return kNotAView;
+		}
+		const uint32_t slot = *itemViews.findView(layout.templateId, layout.turnQuanta, *level);
+		itemViews.view(slot).drawnFrame = frameIndex;
+		return slot;
+	}
+
+	void InstancedEntityRenderer::prepareFirstViews(const std::vector<assets::DepthSortItem>& items, float screenPixelsPerMeter) {
+		struct Job {
+			uint32_t					   slot = 0;
+			const assets::AssetDefinition* def = nullptr;
+			uint32_t					   turnQuanta = 0;
+			uint8_t						   level = 0;
+		};
+		std::vector<Job>			 jobs;
+		std::unordered_set<uint32_t> seenLayouts;
+		for (const assets::DepthSortItem& item : items) {
+			const assets::ItemLayout* layout = item.upright->itemLayout;
+			if (layout == nullptr || !itemViews.readable(item.upright->layoutGeneration) || !seenLayouts.insert(layout->id).second) {
+				continue;
+			}
+			const TemplateLevels&		   levels = levelsOf(layout->templateId);
+			const assets::AssetDefinition* def = assets::AssetRegistry::Get().templateRecord(layout->templateId).def;
+			for (const uint8_t level : {levels.reference, assets::detailLevelFor(levels.densities, screenPixelsPerMeter)}) {
+				const auto [slot, isNew] = itemViews.viewSlot(layout->templateId, layout->turnQuanta, level, level == levels.reference, frameIndex);
+				if (isNew) {
+					jobs.push_back({.slot = slot, .def = def, .turnQuanta = layout->turnQuanta, .level = level});
+				}
+			}
+		}
+		if (jobs.empty()) {
+			return;
+		}
+		viewSlots.resize(std::max<size_t>(viewSlots.size(), itemViews.slotBound()));
+		std::vector<assets::ItemView> built(jobs.size());
+		{
+			foundation::TaskPool pool;
+			pool.parallelFor(0, jobs.size(), 1, [&](size_t first, size_t last) {
+				for (size_t i = first; i < last; ++i) {
+					built[i] = jobs[i].def != nullptr ? assets::buildItemMesh(*jobs[i].def, jobs[i].turnQuanta, jobs[i].level, assets::GameViewConfig::Get().config())
+													  : assets::ItemView{.error = "no definition"};
+				}
+			});
+		}
+		for (size_t i = 0; i < jobs.size(); ++i) {
+			installView(jobs[i].slot, std::move(built[i]));
+		}
+		LOG_DEBUG(Engine, "Built %zu item views for the first frame on the task pool", jobs.size());
 	}
 
 	void InstancedEntityRenderer::emitAnimated(
@@ -248,15 +389,40 @@ namespace worldview {
 		levels.boundsMax = slot.boundsMax;
 		levels.radius = slot.radius;
 		if (!levels.densities.empty()) {
-			const float density = levels.densities[*level];
-			auto		use = std::find_if(levelStats.uses.begin(), levelStats.uses.end(), [&](const LevelStats::Use& u) {
-				   return u.pixelsPerMeter == density;
-			   });
-			if (use == levelStats.uses.end()) {
-				use = levelStats.uses.insert(levelStats.uses.end(), LevelStats::Use{.pixelsPerMeter = density});
-			}
-			levels.use = static_cast<uint32_t>(use - levelStats.uses.begin());
+			levels.use = useOf(levelStats.uses, levels.densities[*level]);
 		}
+	}
+
+	void InstancedEntityRenderer::drawOutlinePieces(size_t first, size_t count, const assets::RenderContext& ctx) {
+		const SelectionOutline& outline = selectionOutline;
+		const Foundation::Color color{outline.rgba.r, outline.rgba.g, outline.rgba.b, outline.rgba.a};
+		const auto				toScreen = [&](Foundation::Vec2 point) {
+			 return ctx.camera.worldToScreen(point.x, point.y, ctx.viewportWidth, ctx.viewportHeight, ctx.pixelsPerMeter);
+		};
+		for (size_t index = first; index < first + count; ++index) {
+			const SelectionOutline::Piece& piece = outline.pieces[index];
+			for (const std::vector<Foundation::Vec2>& line : piece.lines) {
+				const size_t points = line.size();
+				if (points < 2) {
+					continue;
+				}
+				const size_t segments = piece.closed ? points : points - 1;
+				for (size_t i = 0; i < segments; ++i) {
+					const Foundation::Vec2 from = toScreen(line[i]);
+					const Foundation::Vec2 to = toScreen(line[(i + 1) % points]);
+					Renderer::Primitives::drawLine(Renderer::Primitives::LineArgs{
+						.start = from, .end = to, .style = {.color = color, .width = outline.widthPx}, .id = "sel-outline", .key = 0
+					});
+				}
+				// Filled dot per vertex for round joins (drawLine has butt caps); an open line's last end too.
+				for (size_t i = 0; i < points; ++i) {
+					Renderer::Primitives::drawCircle(Renderer::Primitives::CircleArgs{
+						.center = toScreen(line[i]), .radius = outline.widthPx * 0.5F, .style = {.fill = color}, .id = "sel-join", .key = 0
+					});
+				}
+			}
+		}
+		Renderer::Primitives::flush(); // draw at this sorted position
 	}
 
 	void InstancedEntityRenderer::emitSorted(
@@ -266,7 +432,7 @@ namespace worldview {
 		// so we don't need to carry state from the baked path here.
 		// NOTE: do NOT early-out on items.empty(). A selectable static below the tall-occluder
 		// height (small rock/bush) is drawn by the baked path, so `items` can be empty while a
-		// selection outline still needs stroking; the loop no-ops and the trailing drawOutline runs.
+		// selection outline still needs stroking; the loop no-ops and the trailing outline draw runs.
 
 		const float			   zoom = ctx.camera.zoom();
 		const float			   camX = ctx.camera.position().x;
@@ -282,11 +448,20 @@ namespace worldview {
 		animIndices.clear();
 		uint32_t animVertexBase = 0;
 
-		// Take what the level builder finished and upload it within budget first, so the walk below
+		// A registry clear started template ids and layouts over: the views kept by them go, with their waiting uploads.
+		if (itemViews.follow(assets::AssetRegistry::Get().generation())) {
+			viewSlots.clear();
+			std::erase_if(uploadQueue, [](const Upload& upload) { return upload.view; });
+		}
+
+		// Take what the level builders finished and upload it within budget first, so the walk below
 		// draws every level that is ready: a level other than the reference first wanted in this
 		// frame's walk draws from a later frame, and its template draws the nearest ready level until
 		// then. A reference level uploads in the walk, the first time its template is drawn.
 		collectAndUpload();
+		if (frameIndex == 1) {
+			prepareFirstViews(items, scale);
+		}
 
 		// The items were gathered before this, so every template they name has an id the registry
 		// has handed out, and every slot the walk can draw is below this bound.
@@ -294,20 +469,37 @@ namespace worldview {
 		LevelStats			   levelStats{.screenPixelsPerMeter = scale};
 		const Foundation::Vec2 screenOffset{halfViewW - (camX * scale), halfViewH - (camY * scale)};
 		// Each parts item's layout in the stream numbers its strips' planner mesh ids on from the template slots at
-		// its first strip, so the bound grows only with the strips in view (rotatable-placed-items 9.2). A registry
-		// clear started template ids and layouts over: the views kept by them go.
+		// its first strip, so the bound grows only with the strips in view (rotatable-placed-items 9.2).
 		planner.beginFrame(ctx.viewportWidth, ctx.viewportHeight, slotBound + stripUprights);
 		uint32_t nextStripMesh = slotBound;
-		if (itemViews.follow(assets::AssetRegistry::Get().generation())) {
-			viewSlots.clear();
-		}
 		runCount = 0;
+
+		// The outline's pieces and their boxes on the screen, padded by the line's half width.
+		outlineAnchors.clear();
+		outlineBoxes.clear();
+		if (selectionOutline.valid) {
+			const float pad = selectionOutline.widthPx * 0.5F;
+			for (const SelectionOutline::Piece& piece : selectionOutline.pieces) {
+				ScreenBox box{.min = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max()},
+							  .max = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()}};
+				for (const std::vector<Foundation::Vec2>& line : piece.lines) {
+					for (const Foundation::Vec2& point : line) {
+						const Foundation::Vec2 pixel = (point * scale) + screenOffset;
+						box.min = {std::min(box.min.x, pixel.x - pad), std::min(box.min.y, pixel.y - pad)};
+						box.max = {std::max(box.max.x, pixel.x + pad), std::max(box.max.y, pixel.y + pad)};
+					}
+				}
+				outlineAnchors.push_back(piece.anchorY);
+				outlineBoxes.push_back(box);
+			}
+		}
+		outlineCursor.begin(outlineAnchors, outlineBoxes);
 
 		// One ranged draw of `strips` consecutive depth strips of a view, from the run's strip on.
 		auto drawStrips = [&](Run& run, uint32_t strips) {
 			ViewSlot&  view = viewSlots[run.view];
 			const auto count = static_cast<uint32_t>(run.instances.size());
-			if (view.state == SlotState::Ready && count > view.capacity) {
+			if (itemViews.view(run.view).state == ViewState::Ready && count > view.capacity) {
 				uint32_t capacity = view.capacity;
 				while (capacity < count) {
 					capacity *= 2;
@@ -316,10 +508,11 @@ namespace worldview {
 				view.capacity = capacity;
 				if (!view.handle.isValid()) {
 					LOG_ERROR(Engine, "Item view %u failed to grow to %u instances; it is dropped", run.view, capacity);
-					view.state = SlotState::Failed;
+					view = ViewSlot{};
+					itemViews.setState(run.view, ViewState::Failed);
 				}
 			}
-			if (view.state != SlotState::Ready) {
+			if (itemViews.view(run.view).state != ViewState::Ready) {
 				return;
 			}
 			const assets::ViewStrip& first = view.strips[run.strip];
@@ -400,73 +593,63 @@ namespace worldview {
 			animVertexBase = 0;
 		};
 
-		// Stroke the selected entity's outline (world-space rings -> screen) and flush
-		// it now, so it sits at this depth in the stream and nearer entities occlude it.
-		auto drawOutline = [&]() {
-			if (!selectionOutline.valid) {
+		// The outline pieces due before an upright at `anchorY` (OutlineCursor), stroked and flushed now, so
+		// everything at or behind their depth draws first and everything nearer draws after, occluding them.
+		auto injectOutline = [&](float anchorY, const std::optional<ScreenBox>& box, bool ownStrip) {
+			const size_t first = outlineCursor.drawnSoFar();
+			const size_t count = outlineCursor.before(anchorY, box, ownStrip);
+			if (count == 0) {
 				return;
 			}
-			const auto&				so = selectionOutline;
-			const Foundation::Color col{so.rgba.r, so.rgba.g, so.rgba.b, so.rgba.a};
-			for (const auto& ring : so.worldRings) {
-				const size_t n = ring.size();
-				if (n < 2) {
-					continue;
-				}
-				for (size_t i = 0; i < n; ++i) {
-					const Foundation::Vec2 a =
-						ctx.camera.worldToScreen(ring[i].x, ring[i].y, ctx.viewportWidth, ctx.viewportHeight, ctx.pixelsPerMeter);
-					const Foundation::Vec2 b = ctx.camera.worldToScreen(
-						ring[(i + 1) % n].x, ring[(i + 1) % n].y, ctx.viewportWidth, ctx.viewportHeight, ctx.pixelsPerMeter
-					);
-					Renderer::Primitives::drawLine(Renderer::Primitives::LineArgs{
-						.start = a, .end = b, .style = {.color = col, .width = so.widthPx}, .id = "sel-outline", .key = 0
-					});
-					// Filled dot per vertex for round joins (drawLine has butt caps).
-					Renderer::Primitives::drawCircle(Renderer::Primitives::CircleArgs{
-						.center = a, .radius = so.widthPx * 0.5F, .style = {.fill = col}, .id = "sel-join", .key = 0
-					});
-				}
-			}
-			Renderer::Primitives::flush(); // draw at this sorted position
+			flushRuns();
+			flushAnim();
+			drawOutlinePieces(first, count, ctx);
 		};
 
 		// One walk of the stream: each upright is classified, bounded on the screen by the level its
 		// template draws this frame, and placed in a run as it comes.
-		bool outlineInjected = false;
 		for (const assets::DepthSortItem& item : items) {
-			// Inject the outline right before the first entity strictly nearer than it,
-			// so everything at-or-behind its depth draws first (and it occludes them),
-			// and everything nearer draws after (occluding it).
-			if (!outlineInjected && selectionOutline.valid && item.anchorY > selectionOutline.anchorY) {
-				flushRuns();
-				flushAnim();
-				drawOutline();
-				outlineInjected = true;
-			}
-
 			const assets::Upright& upright = *item.upright;
 
 			// A parts item's depth strip: drawn as an index range of its view, placed like any instanced entity
 			// with the strip as its mesh (rotatable-placed-items 9.2).
 			if (upright.itemLayout != nullptr) {
+				if (!itemViews.readable(upright.layoutGeneration)) {
+					continue; // made before a registry clear, which freed its layout
+				}
 				const assets::ItemLayout& layout = *upright.itemLayout;
 				LayoutFrame*			  settled = nullptr;
 				if (itemViews.settle(layout, frameIndex, nextStripMesh, settled)) {
-					settled->view = viewFor(layout);
+					settled->view = settleView(layout, levelStats);
+					const TemplateLevels& levels = levelsOf(layout.templateId);
+					if (settled->view != kNotAView && !levels.densities.empty()) {
+						settled->levelUse = useOf(levelStats.viewUses, levels.densities[itemViews.view(settled->view).level]);
+					}
 					// In the stored order, ascending anchor, as the stream brings them, so each strip ranks after
 					// the strips of its item it shares cells with and stays in their layer.
 					planner.reserveOrders(settled->firstMesh, static_cast<uint32_t>(layout.layout.strips.size()));
 				}
-				if (settled->view == kNotAView || viewSlots[settled->view].strips[upright.strip].indexCount == 0) {
+				// Strip 0 has the item's least anchor, so it comes first of its strips, and the gather keeps or culls
+				// an item's strips together by its position: once an item.
+				if (upright.strip == 0) {
+					ItemViewIndex::noteItem(*settled, upright.position);
+					if (settled->levelUse != kNoLevelUse) {
+						++levelStats.viewUses[settled->levelUse].instances;
+					}
+				}
+				if (settled->view == kNotAView || upright.strip >= viewSlots[settled->view].strips.size() ||
+					viewSlots[settled->view].strips[upright.strip].indexCount == 0) {
 					continue;
 				}
-				ItemViewIndex::noteItem(*settled, upright.position);
 				const assets::ItemStrip& box = layout.layout.strips[upright.strip];
 				const Foundation::Vec2	 position{upright.position.x, upright.position.y};
 				const Foundation::Vec2	 pixelMin = ((position + Foundation::Vec2{box.minX, box.minY}) * scale) + screenOffset;
 				const Foundation::Vec2	 pixelMax = ((position + Foundation::Vec2{box.maxX, box.maxY}) * scale) + screenOffset;
 				const bool				 small = std::max(pixelMax.x - pixelMin.x, pixelMax.y - pixelMin.y) <= kUnorderedFootprintPixels;
+				injectOutline(
+					item.anchorY, ScreenBox{.min = pixelMin, .max = pixelMax},
+					&layout == selectionOutline.itemLayout && upright.position == selectionOutline.itemPosition
+				);
 
 				flushAnim(); // draw any pending anim behind this strip
 				const uint32_t runIndex = planner.place(settled->firstMesh + upright.strip, planner.cellsOf(pixelMin, pixelMax), small);
@@ -492,6 +675,7 @@ namespace worldview {
 				continue;
 			}
 			if (upright.isAnimated && !templateMesh->parts.empty()) {
+				injectOutline(item.anchorY, std::nullopt, false);
 				// Animated entities carry per-part transforms; they can't be GPU-instanced
 				// (each has unique deformed geometry), so emit them on the CPU triangle path.
 				flushRuns(); // draw the open runs behind this actor
@@ -532,6 +716,7 @@ namespace worldview {
 			const Foundation::Vec2 pixelMin = (worldMin * scale) + screenOffset;
 			const Foundation::Vec2 pixelMax = (worldMax * scale) + screenOffset;
 			const bool			   small = std::max(pixelMax.x - pixelMin.x, pixelMax.y - pixelMin.y) <= kUnorderedFootprintPixels;
+			injectOutline(item.anchorY, ScreenBox{.min = pixelMin, .max = pixelMax}, false);
 
 			flushAnim(); // draw any pending anim behind this entity
 			const uint32_t slot = levels.drawSlot;
@@ -551,15 +736,17 @@ namespace worldview {
 		flushRuns();
 		flushAnim();
 		stats.uprightOverlapSplits += planner.splits();
-		if (!outlineInjected) {
-			drawOutline(); // frontmost selection: draw last, on top of everything
+		const size_t firstLeft = outlineCursor.drawnSoFar();
+		if (const size_t left = outlineCursor.remaining(); left > 0) {
+			drawOutlinePieces(firstLeft, left, ctx); // frontmost: drawn last, on top of everything
 		}
 
 		levelBuilder.endFrame();
-		std::sort(levelStats.uses.begin(), levelStats.uses.end(), [](const LevelStats::Use& a, const LevelStats::Use& b) {
-			return a.pixelsPerMeter < b.pixelsPerMeter;
-		});
-		levelStats.pendingRequests = static_cast<uint32_t>(levelBuilder.pending() + uploadQueue.size());
+		viewBuilder.endFrame();
+		const auto byDensity = [](const LevelStats::Use& left, const LevelStats::Use& right) { return left.pixelsPerMeter < right.pixelsPerMeter; };
+		std::sort(levelStats.uses.begin(), levelStats.uses.end(), byDensity);
+		std::sort(levelStats.viewUses.begin(), levelStats.viewUses.end(), byDensity);
+		levelStats.pendingRequests = static_cast<uint32_t>(levelBuilder.pending() + viewBuilder.pending() + uploadQueue.size());
 		lastLevelStats = std::move(levelStats);
 		evictStale();
 	}

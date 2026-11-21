@@ -10,12 +10,12 @@
 #include "assets/placement/RenderContext.h"
 #include "assets/placement/WorldDepthSort.h"
 #include "primitives/InstanceData.h"
+#include "world/rendering/ItemViewIndex.h"
+#include "world/rendering/LevelBuilder.h"
 #include "world/rendering/RenderStats.h"
 #include "world/rendering/RunPlanner.h"
-#include "world/rendering/ItemViewIndex.h"
 #include "world/rendering/SelectionOutline.h"
 #include "world/rendering/StripRuns.h"
-#include "world/rendering/TemplateLevelBuilder.h"
 
 #include <assets/ItemView.h>
 #include <graphics/Color.h>
@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <optional>
 #include <span>
 #include <vector>
@@ -41,11 +42,13 @@ namespace worldview {
 ///
 /// A template whose def declares <detailLevels> draws at the level the camera's density
 /// picks (assets::detailLevelFor). The registry holds the reference level's mesh, uploaded the
-/// first time its template is drawn; the others are built on request by a TemplateLevelBuilder
+/// first time its template is drawn; the others are built on request by a LevelBuilder
 /// off this thread, uploaded here within kUploadVertexBudget a frame, and until a level is
 /// uploaded its template draws the nearest one that is. A level not drawn for kEvictAfterFrames is released.
+/// A parts item's views (template, turn, level) choose their level the same way (rotatable-placed-items 6.8, 10).
 class InstancedEntityRenderer {
   public:
+	InstancedEntityRenderer();
 	/// What the last frame drew at which detail level, for /api/state?what=uprights.
 	struct LevelStats {
 		struct Use {
@@ -54,6 +57,7 @@ class InstancedEntityRenderer {
 		};
 		float			 screenPixelsPerMeter = 0.0F;
 		std::vector<Use> uses;				// instances of leveled templates, by the level they drew
+		std::vector<Use> viewUses;			// parts items of defs with levels, by the level their views drew
 		uint32_t		 pendingRequests = 0; // levels wanted and not yet uploaded
 		uint32_t		 residentLevels = 0;  // non-reference level meshes on the GPU
 		size_t			 residentBytes = 0;   // and their vertex, index, and instance buffer bytes
@@ -150,21 +154,50 @@ class InstancedEntityRenderer {
 	};
 	std::vector<TemplateLevels> templateLevels;
 
-	TemplateLevelBuilder levelBuilder;
-	std::deque<uint32_t> uploadQueue; // slot indices in Waiting, oldest first
-	uint64_t			 frameIndex = 0;
-	LevelStats			 lastLevelStats;
+	struct TemplateLevelKey {
+		uint32_t templateId = 0;
+		uint8_t	 level = 0;
+		bool	 operator==(const TemplateLevelKey&) const = default;
+		struct Hash {
+			size_t operator()(const TemplateLevelKey& key) const { return std::hash<uint64_t>{}((static_cast<uint64_t>(key.templateId) << 8U) | key.level); }
+		};
+	};
+	// The registry generation is part of a view's key: a view built before a clear is not the view of the same
+	// template id after it.
+	struct ItemViewKey {
+		uint32_t templateId = 0;
+		uint32_t turnQuanta = 0;
+		uint8_t	 level = 0;
+		uint64_t generation = 0;
+		bool	 operator==(const ItemViewKey&) const = default;
+		struct Hash {
+			size_t operator()(const ItemViewKey& key) const {
+				return std::hash<uint64_t>{}((static_cast<uint64_t>(key.templateId) << 24U) ^ (static_cast<uint64_t>(key.turnQuanta) << 8U) ^ key.level ^
+											 (key.generation << 56U));
+			}
+		};
+	};
+
+	LevelBuilder<TemplateLevelKey, renderer::TessellatedMesh> levelBuilder;
+	LevelBuilder<ItemViewKey, assets::ItemView>				  viewBuilder;
+
+	// A mesh waiting for its upload, oldest first: a template level's slot or an item view's.
+	struct Upload {
+		uint32_t index = 0;
+		bool	 view = false;
+	};
+	std::deque<Upload> uploadQueue;
+	uint64_t		   frameIndex = 0;
+	LevelStats		   lastLevelStats;
 
 	// A parts item's view (def, turn, level) on the GPU (rotatable-placed-items 9.2 and 10), uploaded once: its
 	// mesh, kept to re-upload when its instance buffer grows, and each depth strip's index range, in the
-	// layout's order. A reference view is built on the main thread the first time it is wanted and stays until
-	// the registry clears (itemViews follows its generation) or the renderer goes.
+	// layout's order. Its state and when it was wanted and drawn are in itemViews.
 	struct ViewSlot {
 		Renderer::InstancedMeshHandle  handle;
 		renderer::TessellatedMesh	   mesh;
 		std::vector<assets::ViewStrip> strips;
 		uint32_t					   capacity = 0;
-		SlotState					   state = SlotState::Absent;
 	};
 	std::vector<ViewSlot> viewSlots; // by ItemViewIndex::viewSlot
 	ItemViewIndex		  itemViews;
@@ -192,8 +225,11 @@ class InstancedEntityRenderer {
 	std::vector<uint16_t>		   animIndices;
 
 	// The selected entity's outline for this frame (valid=false when nothing
-	// entity-backed is selected). Drawn at its anchorY inside emitSorted.
-	SelectionOutline selectionOutline;
+	// entity-backed is selected). Its pieces drawn at their anchors inside emitSorted.
+	SelectionOutline	   selectionOutline;
+	OutlineCursor		   outlineCursor;
+	std::vector<float>	   outlineAnchors; // the pieces', this frame
+	std::vector<ScreenBox> outlineBoxes;
 
 	/// A template's mesh and detail levels, read from the registry the first time.
 	TemplateLevels& levelsOf(uint32_t templateId);
@@ -221,9 +257,27 @@ class InstancedEntityRenderer {
 	/// Releases the non-reference levels not drawn for kEvictAfterFrames, and counts the rest.
 	void evictStale();
 
-	/// The view a parts item's strips draw from this frame, built and uploaded now the first time it is wanted;
-	/// kNotAView when it failed (logged once).
-	uint32_t viewFor(const assets::ItemLayout& layout);
+	/// Settles a layout's view for this frame, at its first strip, as settleLevel does a template's level: asks for
+	/// the level the camera's density picks and the reference level, and draws the nearest one that is ready.
+	/// kNotAView when none is.
+	uint32_t settleView(const assets::ItemLayout& layout, LevelStats& levelStats);
+
+	/// Asks for a layout's view at a level this frame: the reference level is built on this thread and uploaded at
+	/// once the first time, so an item draws the frame it first appears; another goes to the view builder.
+	void wantView(const assets::ItemLayout& layout, uint8_t level, uint8_t reference);
+
+	/// The view slot's mesh, sized to its slot, for a view that was built (or why not); Ready or Failed after.
+	void installView(uint32_t slot, assets::ItemView view);
+
+	/// Uploads a waiting view; Ready, or Failed (logged).
+	void uploadView(uint32_t slot);
+
+	/// Before the world is first shown, every view the first frame draws, at its wanted level and the reference
+	/// level, built on a task pool while this waits, and uploaded (rotatable-placed-items 10, load).
+	void prepareFirstViews(const std::vector<assets::DepthSortItem>& items, float screenPixelsPerMeter);
+
+	/// Strokes outline pieces [first, first + count) and flushes, at this point in the stream.
+	void drawOutlinePieces(size_t first, size_t count, const assets::RenderContext& ctx);
 
 	/// Append one animated entity's per-part-deformed, screen-space triangles to
 	/// the CPU batch (anim*). animVertexBase tracks the batch's 16-bit index base.
