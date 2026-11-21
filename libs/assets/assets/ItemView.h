@@ -64,6 +64,10 @@ namespace assets {
 		float maxX = 0.0F;
 		float minY = 0.0F;
 		float maxY = 0.0F;
+		/// The x range of its bands, where the selection outline is cut (section 15): -infinity and +infinity at the
+		/// layout's first and last band, and both for the flat strip.
+		float bandMinX = 0.0F;
+		float bandMaxX = 0.0F;
 		bool  flat = false;
 		/// Each placement's triangles in it, by x range, ordered by placement then x.
 		std::vector<StripPiece> pieces;
@@ -79,6 +83,17 @@ namespace assets {
 	/// The strip layout of a parts def at a turn, from its collider and footprints alone: no drawing is read and
 	/// nothing is tessellated, so it is cheap enough for the main thread. Empty for a def that isn't parts.
 	[[nodiscard]] StripLayout stripLayout(const AssetDefinition& def, uint32_t turnQuanta, const ViewConfig& config);
+
+	/// Where each strip of a layout draws, as vector polygons (section 15), by strip: each of its pieces is the piece's
+	/// placement footprint between the piece's x values, lifted as the view lifts it (its sides from the part's bottom to
+	/// its top, and its top), as one convex polygon, which holds the piece's triangles but for the outline's half width.
+	/// What the selection outline's cuts and a click on overlapping items are both told apart by.
+	[[nodiscard]] std::vector<std::vector<std::vector<glm::vec2>>> stripRegions(
+		const PartsAsset& parts, const StripLayout& layout, float turnRadians, const ViewConfig& config
+	);
+
+	/// How far a point (relative to the pivot) lies outside a strip's region: the least over its polygons, 0 inside one.
+	[[nodiscard]] float distanceOutsideStrip(const std::vector<std::vector<glm::vec2>>& region, glm::vec2 point);
 
 	/// A strip layout the registry keeps for a template at a turn (AssetRegistry::stripLayout), which an item's
 	/// stream records point into (section 8).
@@ -109,6 +124,16 @@ namespace assets {
 		bool	 flat = false;
 	};
 
+	/// A view's selection silhouette (section 15): its rings and hit region, in pivot millimetres with the turn in
+	/// them, and the rings cut at the strips' band edges into open lines, each strip's in its own entry, so the outline
+	/// draws at the strips' depths. Within a band of several strips (the two sides of a notch) a line goes to the strip
+	/// whose lifted part footprints it lies on.
+	struct ItemSilhouette {
+		AssetSilhouette silhouette;
+		/// By strip, in the layout's order: open lines in metres relative to the pivot.
+		std::vector<std::vector<std::vector<glm::vec2>>> stripLines;
+	};
+
 	struct ItemView {
 		uint32_t turnQuanta = 0;
 		uint8_t	 level = 0;
@@ -117,7 +142,7 @@ namespace assets {
 		/// In the layout's order, each a contiguous index range; together they cover every index once.
 		std::vector<ViewStrip> strips;
 		/// Built from the view's triangles at the reference level (section 15); invalid at any other level.
-		AssetSilhouette silhouette;
+		ItemSilhouette silhouette;
 		/// How far from the pivot anything drawn at any turn reaches (section 6.9).
 		float reachMeters = 0.0F;
 		/// Why there is no view (past kMaxViewVertices, an unknown level, not a parts def); empty when built.

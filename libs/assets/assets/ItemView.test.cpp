@@ -7,6 +7,8 @@
 #include "assets/PartsAsset.test.h"
 #include "assets/PointTurn.h"
 
+#include <core/Vec2i64.h>
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -978,6 +980,120 @@ TEST_F(ItemViewTest, NotchedAndSplitBodiesCutIntoAStripAnInterval) {
 	EXPECT_NEAR(stacked.strips[1].anchorLocalY, 1.0F, kTolerance);
 }
 
+// The selection outline (section 15): the silhouette's rings cut at the band edges, every cut kept once, each in its
+// strip's bands, and in the bands through a notch each side's outline with its own arm.
+TEST_F(ItemViewTest, TheOutlineIsCutAtTheBandEdgesAndEachSideOfANotchKeepsItsOwn) {
+	const auto length = [](const std::vector<glm::vec2>& line, bool closed) {
+		float total = 0.0F;
+		for (size_t i = 0; i + 1 < line.size() + (closed ? 1 : 0); ++i) {
+			const glm::vec2 step = line[(i + 1) % line.size()] - line[i];
+			total += std::hypot(step.x, step.y);
+		}
+		return total;
+	};
+	const auto check = [&](const AssetDefinition& def, double degrees) {
+		const ItemView view = checkedView(def, quantaOf(degrees), 0, viewConfig());
+		ASSERT_TRUE(view.error.empty()) << view.error;
+		ASSERT_TRUE(view.silhouette.silhouette.valid);
+		ASSERT_EQ(view.silhouette.stripLines.size(), view.strips.size());
+		const StripLayout layout = stripLayout(def, quantaOf(degrees), viewConfig());
+		float ringLength = 0.0F;
+		for (const geometry::Ring& ring : view.silhouette.silhouette.rings) {
+			std::vector<glm::vec2> points;
+			for (const geometry::Vec2i64& point : ring) {
+				const Foundation::Vec2 metres = geometry::dequantize(point);
+				points.emplace_back(metres.x, metres.y);
+			}
+			ringLength += length(points, true);
+		}
+		float lineLength = 0.0F;
+		for (size_t strip = 0; strip < view.strips.size(); ++strip) {
+			// A mat round a body is the outer ring wherever it reaches, so then only the flat strip must have lines.
+			if (!layout.strips.front().flat || layout.strips[strip].flat) {
+				EXPECT_FALSE(view.silhouette.stripLines[strip].empty()) << def.defName << " at " << degrees << ": strip " << strip << " has no outline";
+			}
+			for (const std::vector<glm::vec2>& line : view.silhouette.stripLines[strip]) {
+				lineLength += length(line, false);
+				for (const glm::vec2& point : line) {
+					EXPECT_GE(point.x, layout.strips[strip].bandMinX - 1.0e-4F) << def.defName << " at " << degrees << ": strip " << strip;
+					EXPECT_LE(point.x, layout.strips[strip].bandMaxX + 1.0e-4F) << def.defName << " at " << degrees << ": strip " << strip;
+				}
+			}
+		}
+		EXPECT_NEAR(lineLength, ringLength, 1.0e-3F) << def.defName << " at " << degrees << ": every stretch of the outline once";
+	};
+
+	const AssetDefinition* bench = loadBench(3.0F, 1.0F);
+	ASSERT_NE(bench, nullptr);
+	check(*bench, 0.0);
+	check(*bench, 45.0);
+	const AssetDefinition* matBench = loadBench(3.0F, 1.0F, true);
+	ASSERT_NE(matBench, nullptr);
+	check(*matBench, 30.0); // the flat strip spans every band
+
+	// The C open to the east: through the notch the north arm's outline stays north of it and the south arm's south.
+	const AssetDefinition* letterC = loadBlocks("LetterC", {{-1.0F, -1.0F, -0.4F, 1.0F}, {-0.4F, -1.0F, 1.0F, -0.4F}, {-0.4F, 0.4F, 1.0F, 1.0F}});
+	ASSERT_NE(letterC, nullptr);
+	check(*letterC, 0.0);
+	check(*letterC, 35.0);
+	const ItemView view = checkedView(*letterC, 0, 0, viewConfig());
+	ASSERT_EQ(view.strips.size(), 3U);
+	for (const size_t arm : {size_t{0}, size_t{2}}) {
+		size_t inNotch = 0;
+		for (const std::vector<glm::vec2>& line : view.silhouette.stripLines[arm]) {
+			for (const glm::vec2& point : line) {
+				if (point.x > -0.3F) {
+					++inNotch;
+					EXPECT_TRUE(arm == 0 ? point.y < 0.0F : point.y > 0.0F) << "strip " << arm << " at (" << point.x << ", " << point.y << ")";
+				}
+			}
+		}
+		EXPECT_GT(inNotch, 0U) << "strip " << arm;
+	}
+
+	// Strips that join two intervals of a band and strips that hold an outline's overflow piece: the C, the U open to
+	// the south, and the stack with an overhang, at turns where joins occur. The registry's kept layout is the view's,
+	// strip for strip (the renderer bounds a record's strip by it).
+	writeNotchedAndStacked();
+	AssetRegistry& registry = AssetRegistry::Get();
+	for (const char* name : {"LetterC", "OpenSouth", "Overhang"}) {
+		const AssetDefinition* def = registry.getDefinition(name);
+		ASSERT_NE(def, nullptr) << name;
+		for (const double degrees : {0.0, 93.0, 165.0, 267.0}) {
+			check(*def, degrees);
+			const ItemLayout* kept = registry.stripLayout(registry.templateId(name, {}), quantaOf(degrees));
+			ASSERT_NE(kept, nullptr);
+			EXPECT_EQ(kept->layout.strips.size(), buildItemMesh(*def, quantaOf(degrees), 0, viewConfig()).strips.size()) << name << " at " << degrees;
+		}
+	}
+}
+
+// A click on the overhang's raised box ranks by the strip that draws there (rotatable-placed-items 15): of the strips
+// whose regions hold a point on the box's top, the frontmost holds a piece of the box.
+TEST_F(ItemViewTest, TheFrontStripUnderTheOverhangsRaisedBoxDrawsTheBox) {
+	writeNotchedAndStacked();
+	const AssetDefinition* def = AssetRegistry::Get().getDefinition("Overhang");
+	ASSERT_NE(def, nullptr);
+	constexpr uint32_t kBox = 2; // the placement of the box over the slab's front edge
+	for (const double degrees : {0.0, 93.0, 165.0, 267.0}) {
+		const StripLayout layout = stripLayout(*def, quantaOf(degrees), viewConfig());
+		const auto		  regions = stripRegions(*def->parts, layout, radiansOf(degrees), viewConfig());
+		const glm::vec2	  centre = turnedPoint({1.18F, 0.39F}, radiansOf(degrees));
+		const glm::vec2	  onTop{centre.x, centre.y - 0.98F * viewConfig().heightRatio};
+		std::optional<size_t> front;
+		for (size_t strip = 0; strip < regions.size(); ++strip) {
+			if (distanceOutsideStrip(regions[strip], onTop) <= viewConfig().outlineHalfWidthMeters() &&
+				(!front.has_value() || layout.strips[strip].anchorLocalY > layout.strips[*front].anchorLocalY)) {
+				front = strip;
+			}
+		}
+		ASSERT_TRUE(front.has_value()) << degrees;
+		EXPECT_TRUE(std::any_of(layout.strips[*front].pieces.begin(), layout.strips[*front].pieces.end(), [](const StripPiece& piece) {
+			return piece.placement == kBox;
+		})) << "at " << degrees << " the front strip there doesn't draw the box";
+	}
+}
+
 TEST_F(ItemViewTest, AMatUnderABenchIsInTheFlatStripFirst) {
 	const AssetDefinition* def = loadBench(3.0F, 1.0F, true);
 	ASSERT_NE(def, nullptr);
@@ -1653,8 +1769,8 @@ TEST_F(ItemViewTest, DetailLevelsDropTaggedShapes) {
 	EXPECT_GT(black(finest), 0) << "it is at 60 px/m";
 	EXPECT_GT(finest.mesh.vertices.size(), reference.mesh.vertices.size());
 	EXPECT_FALSE(checkedView(*def, 0, 3, viewConfig()).error.empty()) << "no level 3";
-	EXPECT_TRUE(reference.silhouette.valid) << "the reference level carries the silhouette";
-	EXPECT_FALSE(finest.silhouette.valid);
+	EXPECT_TRUE(reference.silhouette.silhouette.valid) << "the reference level carries the silhouette";
+	EXPECT_FALSE(finest.silhouette.silhouette.valid);
 }
 
 TEST_F(ItemViewTest, TheTemplateIsTheTurnZeroViewJoined) {
@@ -1677,7 +1793,7 @@ TEST_F(ItemViewTest, TheTemplateIsTheTurnZeroViewJoined) {
 	const AssetSilhouette* silhouette = registry.getSilhouette(id);
 	ASSERT_NE(silhouette, nullptr);
 	EXPECT_TRUE(silhouette->valid);
-	EXPECT_EQ(silhouette->rings, view.silhouette.rings);
+	EXPECT_EQ(silhouette->rings, view.silhouette.silhouette.rings);
 	EXPECT_GE(registry.maxReachMeters(), itemReachMeters(*def->parts, viewConfig()) - 1.0e-6F) << "the cull reach covers every turn";
 	EXPECT_NEAR(itemReachMeters(*def->parts, viewConfig()), std::hypot(1.5F, 0.5F) + 0.8F * 0.35F + 0.015F, 1.0e-4F);
 	// Its levels are the view's levels.
@@ -1729,13 +1845,14 @@ TEST_F(ItemViewTest, Rule12RefusesAViewOverTheVertexLimitAtAStop) {
 
 // ─── Kept layouts and the cull reach (sections 8 and 6.9) ────────────────────────────────────────────────
 
-TEST_F(ItemViewTest, TheRegistryKeepsOneLayoutATemplateAndTurnUntilAClear) {
+TEST_F(ItemViewTest, TheRegistryKeepsALayoutWhileItIsAskedForAndUntilAClear) {
 	ASSERT_NE(loadBench(3.0F, 1.0F), nullptr);
 	AssetRegistry& registry = AssetRegistry::Get();
 	const uint32_t bench = registry.templateId("Bench", {});
 	ASSERT_NE(bench, 0U);
-	EXPECT_EQ(registry.templateDefinition(bench), registry.getDefinition("Bench"));
-	EXPECT_EQ(registry.templateDefinition(0), nullptr);
+	EXPECT_EQ(registry.templateRecord(bench).def, registry.getDefinition("Bench"));
+	EXPECT_EQ(registry.templateRecord(bench).mesh, registry.getTemplate(bench));
+	EXPECT_EQ(registry.templateRecord(0).def, nullptr);
 
 	const ItemLayout* square = registry.stripLayout(bench, quantaOf(0.0));
 	const ItemLayout* turned = registry.stripLayout(bench, quantaOf(45.0));
@@ -1754,6 +1871,30 @@ TEST_F(ItemViewTest, TheRegistryKeepsOneLayoutATemplateAndTurnUntilAClear) {
 	}
 
 	EXPECT_EQ(registry.stripLayout(0, 0), nullptr);
+
+	// The silhouette is kept with its layout, at the turn: the view's at the reference level.
+	const ItemSilhouette* silhouette = registry.itemSilhouette(bench, quantaOf(45.0));
+	ASSERT_NE(silhouette, nullptr);
+	EXPECT_EQ(registry.itemSilhouette(bench, quantaOf(45.0)), silhouette) << "kept, not built again";
+	EXPECT_EQ(silhouette->silhouette.rings, checkedView(*registry.getDefinition("Bench"), quantaOf(45.0), 0, viewConfig()).silhouette.silhouette.rings);
+	EXPECT_EQ(silhouette->stripLines.size(), 31U);
+
+	// A release keeps what was asked for since the last one and drops the rest, and a dropped layout's id is handed
+	// out again, so ids stay below the most layouts kept at once however many turns come and go.
+	const uint32_t turnedId = turned->id;
+	registry.releaseUnaskedLayouts();
+	EXPECT_TRUE(registry.keepsStripLayout(bench, quantaOf(45.0))) << "asked since it was made";
+	EXPECT_EQ(registry.stripLayout(bench, quantaOf(0.0)), square);
+	registry.releaseUnaskedLayouts();
+	EXPECT_TRUE(registry.keepsStripLayout(bench, quantaOf(0.0)));
+	EXPECT_FALSE(registry.keepsStripLayout(bench, quantaOf(45.0))) << "nothing asked for it since the last release";
+	for (int degrees = 1; degrees < 200; ++degrees) {
+		EXPECT_EQ(registry.stripLayout(bench, quantaOf(0.0)), square) << "the item that stays keeps its layout";
+		// The square one, the last turn's (released at the next release), and this one's.
+		EXPECT_LE(registry.stripLayout(bench, quantaOf(static_cast<double>(degrees)))->id, turnedId + 1) << "a turn dragged round";
+		registry.releaseUnaskedLayouts();
+	}
+
 	const uint64_t generation = registry.generation();
 	ASSERT_NE(load("Bench"), nullptr);
 	EXPECT_NE(registry.generation(), generation) << "a clear moves the generation";

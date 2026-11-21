@@ -1,7 +1,7 @@
 # Scenario 20: Drawing tools
 
 **Status:** ready  
-**Last verified:** 2026-11-20, steps 36 to 44 by injected input in a game from `--scene=game` with reveal on (steps 1 to 35 were not re-run)
+**Last verified:** 2026-11-20, in two runs: steps 1 to 32 with the crew landing west of the river, before steps 36 to 44 existed; and steps 36 to 44 by injected input in a game from `--scene=game` with reveal on. Steps 33 to 35 are person-only and were not run
 
 Verifies what scenarios 03 and 04 leave out of the drawing tools: the Rectangle tool's quieter edge cases, Freeform with every helper off, each Drawing Setting no other scenario turns on, and the key guide's rows for the opening and Add tools and for the helper legend.
 

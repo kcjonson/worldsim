@@ -138,6 +138,7 @@ Applications:
 | [Continental Margins](./continental-margins.md) | Spec: shelves and inland seas from rift thinning, isostasy, flexure, sediment fill, and glacial lowstands (replaces the painted shelf ramp) |
 | [Chunk Management System](./chunk-management-system.md) | Infinite 2D world from 3D sphere |
 | [3D to 2D Sampling](./3d-to-2d-sampling.md) | Converting spherical world to tiles (locateHex) |
+| [Landing Sites](./landing-sites.md) | Spec: one bar for a good start (fresh water, food and wood from flora data, livable temperature); up to ten suggested sites as globe markers behind a setting; every globe pick resolved to a landing beside its river or lake, unseen by the player; Quick Start's landing held still |
 | [Flat Tile Storage Refactor](./flat-tile-storage-refactor.md) | Proposed: Replace layered tiles with flat array |
 | [Ground Textures](./ground-textures.md) | Built: Lua ground tile assets baked to texture arrays and hex-mixed in the shader, the height contest at surface edges, per-chunk render tiles, a summary of the D16 land field that paints them, and the perf ledger |
 | [Organic Terrain Geometry](./organic-terrain-geometry.md) | Research: tile centers as lattice samples, organic shorelines, river ribbons |

@@ -81,10 +81,12 @@ namespace assets {
 		const std::vector<PartTransform>* partTransforms = nullptr;
 
 		// One depth strip of a parts item (rotatable-placed-items 8): the registry's strip layout for the item's
-		// template and turn (AssetRegistry::stripLayout), which outlives the record, and the strip's index in it.
+		// template and turn (AssetRegistry::stripLayout) and the strip's index in it, and the registry generation the
+		// layout was asked for under: the renderer reads the layout only while the generation is still that one.
 		// The turn is in the layout, so such a record's rotation is 0. Null for everything else.
 		const ItemLayout* itemLayout = nullptr;
 		uint32_t		  strip = 0;
+		uint64_t		  layoutGeneration = 0;
 
 		// Age class and mesh variant (computeTreeTraits), set where the entity is made.
 		TreeTraits traits{};

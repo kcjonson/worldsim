@@ -407,7 +407,11 @@ namespace world_sim {
 		// Degrees clockwise, the front down the screen at 0, rounded to the turn quantum (rotatable-placed-items 3). Only a
 		// parts item draws turned, so only a parts def takes one: another's collider would turn and its picture wouldn't.
 		uint32_t turn = 0;
-		if (const std::string turnText = param(cmd, "turn"); !turnText.empty()) {
+		if (hasParam(cmd, "turn")) {
+			const std::string turnText = param(cmd, "turn");
+			if (turnText.empty()) {
+				return reject("spawn: turn= is empty; give it degrees clockwise, or leave it out for 0");
+			}
 			if (!PlacementSystem::turns(def)) {
 				return reject("spawn: turn= is for a parts def, and " + def + " isn't one");
 			}
@@ -1678,39 +1682,47 @@ namespace world_sim {
 	}
 
 	void DevCommandHandler::serializeLanding(std::ostringstream& out) {
-		out << "{\"landingLatDeg\":" << m_ctx.landingLatDeg
-		    << ",\"landingLonDeg\":" << m_ctx.landingLonDeg;
+		const worldgen::LandingSite landing = m_ctx.landing != nullptr ? *m_ctx.landing : worldgen::LandingSite{};
+		const worldgen::SpawnSite&	spawn = landing.spawn;
+		// Full double precision: the view is the check that a landing has not moved.
+		out << std::setprecision(std::numeric_limits<double>::max_digits10) << "{\"landingLatDeg\":" << landing.origin.latDeg
+			<< ",\"landingLonDeg\":" << landing.origin.lonDeg;
 
-		if (!m_ctx.planet || !m_ctx.planet->grid) {
+		const bool	river = landing.feature == worldgen::FreshWaterFeature::River;
+		const bool	lake = landing.feature == worldgen::FreshWaterFeature::Lake;
+		const char* feature = river ? "river" : (lake ? "lake" : "none");
+		out << ",\"feature\":\"" << feature << "\",\"spawnXMeters\":" << spawn.xMeters << ",\"spawnYMeters\":" << spawn.yMeters
+			<< ",\"featureDistanceMeters\":";
+		if (river || lake) {
+			out << spawn.waterDistanceMeters;
+		} else {
+			out << "null";
+		}
+
+		const worldgen::TileId tile = landing.tile;
+		if (!m_ctx.planet || !m_ctx.planet->grid || tile == worldgen::kInvalidTile) {
 			// No planet available (test/fallback session): return coords only.
 			out << ",\"biome\":null,\"waterClass\":null,\"riverInTile\":null}";
 			return;
 		}
 
 		const worldgen::GeneratedWorld& planet = *m_ctx.planet;
-		const worldgen::TileId tile = planet.grid->fromLatLon(m_ctx.landingLatDeg, m_ctx.landingLonDeg);
-
-		// Biome at the landing tile.
 		const bool haveBiome = (planet.validFields & static_cast<uint32_t>(worldgen::WorldField::Biome)) != 0;
-		if (haveBiome && tile != worldgen::kInvalidTile && tile < planet.data.biome.size()) {
+		if (haveBiome && tile < planet.data.biome.size()) {
 			const worldgen::Biome b = static_cast<worldgen::Biome>(planet.data.biome[tile]);
 			out << ",\"biome\":\"" << worldgen::biomeToString(b) << "\"";
 		} else {
 			out << ",\"biome\":null";
 		}
 
-		// Water classification using the same logic as the landing-site scorer.
+		// The verified class the landing resolution found, not the tile flags.
+		out << ",\"waterClass\":\"" << worldgen::waterClassToString(landing.assessment.water) << "\"";
 		const bool haveFlags = (planet.validFields & static_cast<uint32_t>(worldgen::WorldField::Flags)) != 0;
-		if (haveFlags && tile != worldgen::kInvalidTile && tile < planet.data.flags.size()) {
-			const worldgen::WaterClass wc = worldgen::classifyWater(planet, tile);
-			out << ",\"waterClass\":\"" << worldgen::waterClassToString(wc) << "\"";
-
-			// River-through-tile is the "best" water signal: the landing origin IS the
-			// channel center, which means a riverbank is within a few meters of spawn.
+		if (haveFlags && tile < planet.data.flags.size()) {
 			const bool riverInTile = (planet.data.flags[tile] & worldgen::kFlagRiver) != 0;
 			out << ",\"riverInTile\":" << (riverInTile ? "true" : "false");
 		} else {
-			out << ",\"waterClass\":null,\"riverInTile\":null";
+			out << ",\"riverInTile\":null";
 		}
 
 		out << "}";

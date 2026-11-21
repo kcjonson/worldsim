@@ -66,6 +66,7 @@ namespace assets {
 			.isAnimated = entity.partTransforms != nullptr && !entity.partTransforms->empty(),
 			.itemLayout = entity.itemLayout,
 			.strip = entity.strip,
+			.layoutGeneration = entity.layoutGeneration,
 			.entity = &entity,
 		};
 	}

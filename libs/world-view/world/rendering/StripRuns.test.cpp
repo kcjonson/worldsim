@@ -1,9 +1,11 @@
-// The draw path for parts items (rotatable-placed-items 9.1, 9.2): depth strips placed through the RunPlanner with
-// their layout's orders reserved, merged into ranged draws at each close. The stream here is what emitSorted walks:
-// strips of real layouts, and colonists, which close every open run where they sort (flushRuns).
+// The draw path for parts items (rotatable-placed-items 9.1, 9.2, 10, 15): depth strips placed through the RunPlanner
+// with their layout's orders reserved, merged into ranged draws at each close, their views released when nothing wants
+// them, and a selected item's outline drawn in pieces at its strips. The stream here is what emitSorted walks: strips
+// of real layouts, and colonists, which close every open run where they sort (flushRuns).
 
 #include "world/rendering/ItemViewIndex.h"
 #include "world/rendering/RunPlanner.h"
+#include "world/rendering/SelectionOutline.h"
 #include "world/rendering/StripRuns.h"
 
 #include <assets/ItemView.h>
@@ -12,6 +14,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <optional>
 #include <set>
 #include <vector>
 
@@ -134,7 +137,9 @@ namespace {
 				settled->view = layout.id;
 				planner.reserveOrders(settled->firstMesh, static_cast<uint32_t>(layout.layout.strips.size()));
 			}
-			worldview::ItemViewIndex::noteItem(*settled, entry.item->position);
+			if (entry.strip == 0) {
+				worldview::ItemViewIndex::noteItem(*settled, entry.item->position);
+			}
 			const assets::ItemStrip& box = layout.layout.strips[entry.strip];
 			const Foundation::Vec2	 position{entry.item->position.x, entry.item->position.y};
 			const Foundation::Vec2	 pixelMin = (position + Foundation::Vec2{box.minX, box.minY}) * kPixelsPerMeter;
@@ -270,6 +275,7 @@ TEST_F(ItemStripDrawTest, ItemsOfOneViewThatMeetOnScreenAreNotMergedAcrossEachOt
 	uint32_t					stripsDrawn = 0;
 	for (const ItemDraw& draw : draws) {
 		if (draw.instances > 1) {
+			EXPECT_EQ(draw.instances, 2U);
 			EXPECT_EQ(draw.strips, 1U) << "a run of both items is drawn alone";
 		}
 		stripsDrawn += draw.strips * static_cast<uint32_t>(draw.instances);
@@ -317,14 +323,91 @@ TEST_F(ItemStripDrawTest, AStreamWithoutItemsDrawsTheRunsThePlannerAloneGives) {
 	EXPECT_GT(planner.splits(), 0U) << "the trees overlap, so the stream has layers to keep in order";
 }
 
+// The selection outline of a 45-degree bench (rotatable-placed-items 15): with nothing sorting among its strips it is
+// one draw; each upright that sorts among them and whose box meets the outline adds one, an upright whose box is
+// elsewhere on the screen adds none, and one whose box isn't known (an animated colonist) is taken to meet it.
+TEST_F(ItemStripDrawTest, ATurnedItemsOutlineIsOneDrawUnlessSomethingMeetingItSortsAmongItsStrips) {
+	const assets::ItemLayout*	  layout = layoutAt(45.0);
+	const assets::ItemSilhouette* silhouette = assets::AssetRegistry::Get().itemSilhouette(bench, layout->turnQuanta);
+	ASSERT_NE(silhouette, nullptr);
+	const glm::vec2 at{40.0F, 40.0F};
+	const auto		pixels = [](glm::vec2 point) { return Foundation::Vec2{point.x * kPixelsPerMeter, point.y * kPixelsPerMeter}; };
+
+	std::vector<float>				  anchors;
+	std::vector<worldview::ScreenBox> boxes;
+	for (size_t strip = 0; strip < layout->layout.strips.size(); ++strip) {
+		worldview::ScreenBox box{.min = {1.0e9F, 1.0e9F}, .max = {-1.0e9F, -1.0e9F}};
+		for (const std::vector<glm::vec2>& line : silhouette->stripLines[strip]) {
+			for (const glm::vec2& point : line) {
+				const Foundation::Vec2 pixel = pixels(at + point);
+				box.min = {std::min(box.min.x, pixel.x), std::min(box.min.y, pixel.y)};
+				box.max = {std::max(box.max.x, pixel.x), std::max(box.max.y, pixel.y)};
+			}
+		}
+		anchors.push_back(at.y + layout->layout.strips[strip].anchorLocalY);
+		boxes.push_back(box);
+	}
+	const auto stripBox = [&](size_t strip, glm::vec2 offset) {
+		const assets::ItemStrip& box = layout->layout.strips[strip];
+		return worldview::ScreenBox{.min = pixels(at + offset + glm::vec2{box.minX, box.minY}), .max = pixels(at + offset + glm::vec2{box.maxX, box.maxY})};
+	};
+	size_t between = 0; // a gap in the anchors halfway along
+	for (size_t strip = anchors.size() / 2; strip + 1 < anchors.size(); ++strip) {
+		if (anchors[strip] < anchors[strip + 1]) {
+			between = strip;
+			break;
+		}
+	}
+	ASSERT_GT(between, 0U);
+	const float betweenAnchor = (anchors[between] + anchors[between + 1]) * 0.5F;
+
+	struct Upright {
+		float							   anchorY = 0.0F;
+		std::optional<worldview::ScreenBox> box;
+		bool							   own = false;
+	};
+	const auto drawsWith = [&](const std::vector<Upright>& others) {
+		std::vector<Upright> stream;
+		for (size_t strip = 0; strip < anchors.size(); ++strip) {
+			stream.push_back({.anchorY = anchors[strip], .box = stripBox(strip, {0.0F, 0.0F}), .own = true});
+		}
+		stream.insert(stream.end(), others.begin(), others.end());
+		std::stable_sort(stream.begin(), stream.end(), [](const Upright& left, const Upright& right) { return left.anchorY < right.anchorY; });
+		worldview::OutlineCursor cursor;
+		cursor.begin(anchors, boxes);
+		size_t draws = 0;
+		size_t pieces = 0;
+		for (const Upright& upright : stream) {
+			const size_t count = cursor.before(upright.anchorY, upright.box, upright.own);
+			draws += count > 0 ? 1 : 0;
+			pieces += count;
+		}
+		const size_t left = cursor.remaining();
+		draws += left > 0 ? 1 : 0;
+		EXPECT_EQ(pieces + left, anchors.size()) << "every piece drawn once";
+		return draws;
+	};
+
+	EXPECT_EQ(drawsWith({}), 1U);
+	const Upright meeting{.anchorY = betweenAnchor, .box = stripBox(between, {0.0F, 0.0F})};
+	EXPECT_EQ(drawsWith({meeting}), 2U);
+	EXPECT_EQ(drawsWith({{.anchorY = betweenAnchor, .box = stripBox(between, {100.0F, 0.0F})}}), 1U) << "far to the east";
+	EXPECT_EQ(drawsWith({{.anchorY = betweenAnchor, .box = std::nullopt}}), 2U) << "a colonist";
+	EXPECT_EQ(drawsWith({meeting, {.anchorY = anchors.back() + 1.0F, .box = stripBox(0, {0.0F, 0.0F})}}), 2U) << "one in front of every strip adds nothing";
+	EXPECT_EQ(drawsWith({{.anchorY = anchors.front() - 1.0F, .box = stripBox(0, {0.0F, 0.0F})}}), 1U) << "nor one behind them all";
+	const Upright earlier{.anchorY = (anchors[2] + anchors[between]) * 0.5F, .box = stripBox(2, {0.0F, 0.0F})};
+	if (anchors[2] < earlier.anchorY && earlier.anchorY < anchors[between]) {
+		EXPECT_EQ(drawsWith({earlier, meeting}), 3U);
+	}
+}
+
 // A registry clear starts template ids and layouts over, so what was kept by them is dropped.
 TEST_F(ItemStripDrawTest, ViewsAndLayoutFramesAreDroppedWhenTheRegistryClears) {
 	worldview::ItemViewIndex views;
 	assets::AssetRegistry&	 registry = assets::AssetRegistry::Get();
 	EXPECT_FALSE(views.follow(registry.generation())) << "nothing to drop the first time";
-	const auto [slot, isNew] = views.viewSlot(bench, 4500, 0);
-	EXPECT_TRUE(isNew);
-	EXPECT_FALSE(views.viewSlot(bench, 4500, 0).second) << "kept";
+	EXPECT_TRUE(views.viewSlot(bench, 4500, 0, true, 1).second);
+	EXPECT_FALSE(views.viewSlot(bench, 4500, 0, true, 1).second) << "kept";
 	uint32_t				nextMesh = 0;
 	worldview::LayoutFrame* frame = nullptr;
 	EXPECT_TRUE(views.settle(*layoutAt(45.0), 1, nextMesh, frame));
@@ -334,6 +417,49 @@ TEST_F(ItemStripDrawTest, ViewsAndLayoutFramesAreDroppedWhenTheRegistryClears) {
 	ASSERT_NE(load("Bench"), nullptr);
 	EXPECT_TRUE(views.follow(registry.generation())) << "a clear drops them";
 	EXPECT_EQ(views.viewCount(), 0U);
-	EXPECT_TRUE(views.viewSlot(registry.templateId("Bench", {}), 4500, 0).second) << "a view is made again for the new ids";
-	(void)slot;
+	EXPECT_TRUE(views.viewSlot(registry.templateId("Bench", {}), 4500, 0, true, 1).second) << "a view is made again for the new ids";
+}
+
+// The release rule (rotatable-placed-items 10): a finer view not drawn for the eviction span goes; a reference view
+// goes only when it is also stale and no installed item stands at its template and turn. A view never ready goes
+// once nothing has wanted it for the span. Slots are handed out again, so placing, turning, and removing items
+// doesn't grow the slots without bound.
+TEST_F(ItemStripDrawTest, ViewsNothingWantsAreReleasedAndTheirSlotsHandedOutAgain) {
+	using worldview::ViewState;
+	constexpr uint64_t		 kEvict = 100;
+	worldview::ItemViewIndex views;
+	(void)views.follow(assets::AssetRegistry::Get().generation());
+	bool		standing = true; // an item stands at (bench, 45 degrees)
+	const auto	kept = [&](uint32_t templateId, uint32_t turnQuanta) { return standing && templateId == bench && turnQuanta == 4500; };
+	const auto	reference = views.viewSlot(bench, 4500, 1, true, 1).first;
+	const auto	finer = views.viewSlot(bench, 4500, 2, false, 1).first;
+	const auto	requested = views.viewSlot(bench, 9000, 2, false, 1).first;
+	views.setState(reference, ViewState::Ready);
+	views.setState(finer, ViewState::Ready);
+	views.setState(requested, ViewState::Requested);
+	EXPECT_EQ(views.readyMask(bench, 4500), 0b110);
+
+	views.view(finer).drawnFrame = 50;
+	views.view(requested).wantedFrame = 90;
+	EXPECT_TRUE(views.releaseStale(1 + kEvict, kEvict, kept).empty()) << "nothing is stale yet";
+	EXPECT_EQ(views.releaseStale(151, kEvict, kept), std::vector<uint32_t>{finer}) << "the finer view, not drawn for the span";
+	EXPECT_EQ(views.readyMask(bench, 4500), 0b010);
+	EXPECT_FALSE(views.findView(bench, 4500, 2).has_value());
+
+	const std::vector<uint32_t> late = views.releaseStale(1000, kEvict, kept);
+	EXPECT_EQ(late, std::vector<uint32_t>{requested}) << "never ready and not wanted for the span; the reference view stays while the item stands";
+	EXPECT_TRUE(views.findView(bench, 4500, 1).has_value());
+	standing = false;
+	EXPECT_EQ(views.releaseStale(1000, kEvict, kept), std::vector<uint32_t>{reference}) << "the item is gone";
+	EXPECT_EQ(views.viewCount(), 0U);
+	EXPECT_EQ(views.readyMask(bench, 4500), 0);
+
+	// A turn dragged through a thousand angles, each view released as the next comes: the slots stay few.
+	for (uint32_t turn = 0; turn < 1000; ++turn) {
+		const uint64_t frame = 2000 + (static_cast<uint64_t>(turn) * (kEvict + 1));
+		views.setState(views.viewSlot(bench, turn, 1, true, frame).first, ViewState::Ready);
+		(void)views.releaseStale(frame, kEvict, kept);
+	}
+	EXPECT_LE(views.slotBound(), 3U);
+	EXPECT_LE(views.viewCount(), 2U);
 }

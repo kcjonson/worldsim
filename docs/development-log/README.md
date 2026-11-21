@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### November 2026
 
+- [2026-11-20 - Landing sites: suggested spots on the globe, and a landing beside its water](./entries/2026-11-20-landing-sites.md)
 - [2026-11-19 - Sight softening: soft edges, faint trunk shadows, forest depth](./entries/2026-11-19-sight-softening.md)
 - [2026-11-17 - Colonist thoughts and mood: the foundation, and strict config loading](./entries/2026-11-17-colonist-thoughts-and-mood-foundation.md)
 - [2026-11-17 - Drawing tools redesign: Rectangle, Freeform, helpers, and the key guide (WOR-741)](./entries/2026-11-17-drawing-tools-redesign.md)

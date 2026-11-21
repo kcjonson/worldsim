@@ -9,13 +9,14 @@
 
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <span>
 #include <vector>
 
 namespace worldview {
 
 	/// A run that draws a template, not a strip of a view.
-	inline constexpr uint32_t kNotAView = UINT32_MAX;
+	inline constexpr uint32_t kNotAView = std::numeric_limits<uint32_t>::max();
 
 	/// One draw at a close: `count` runs of the closing list from `first`, drawn at once.
 	struct RunSpan {
