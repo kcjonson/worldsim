@@ -273,7 +273,8 @@ spec, and the `/perf-nightly` skill runs it.
 | 23 | Colonists relieve themselves | [scenarios/23-colonists-relieve-themselves.md](./scenarios/23-colonists-relieve-themselves.md) |
 | 24 | Box-to-box pull | [scenarios/24-box-to-box-pull.md](./scenarios/24-box-to-box-pull.md) |
 | 25 | Rotatable items | [scenarios/25-rotatable-items.md](./scenarios/25-rotatable-items.md) |
-| 26 | Landing sites | [scenarios/26-landing-sites.md](./scenarios/26-landing-sites.md) |
+| 26 | Colonists build openings | [scenarios/26-colonists-build-openings.md](./scenarios/26-colonists-build-openings.md) |
+| 27 | Landing sites | [scenarios/27-landing-sites.md](./scenarios/27-landing-sites.md) |
 
 **Scenarios that look away from the colonists turn reveal on** (`/api/dev/reveal?on=1`), since ground no colonist has seen is black (player visibility); a launch starts with it off. Scenario 14 is the one that tests the cover itself.
 

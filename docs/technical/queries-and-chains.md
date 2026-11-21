@@ -1400,7 +1400,8 @@ the craft option is offered only for a station the creature can reach.
 ```
 
 `on="destination"` makes the do step work on the blueprint while standing at the spot. A build goal
-with no spots (an opening) has the blueprint's nearest walkable point as its one candidate and
+with no spots (an opening) has the blueprint's nearest walkable point as its one candidate, its route
+ending beside the wall when that point is inside a built one ([task claims](task-claims.md#build-and-deconstruct)), and
 takes no claim; a wall's builders stand on a side its goal allows ([task claims](task-claims.md#build-and-deconstruct)). A site ordered demolished is not offered as build work, and a build step on it ends
 before it adds work, the build action's open-ended work checking its site each tick
 ([Construction work](#construction-work)). Materials reach the site through the build goal's due

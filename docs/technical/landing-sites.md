@@ -321,7 +321,7 @@ The synthetic worlds (a block of grassland in an ocean, rivers carved across it,
 - **Survey** (`LandingSiteSurvey.test.cpp`, in `world-sim-tests`). The sites are handed back once, then the newest of two picks is the one resolved; a cancel leaves no survey running, no pick waiting, and no sites to take.
 - **Setting** (`UserSettings.test.cpp`, in `world-sim-tests`). `landing.showSuggestedSites` comes back as it was stored, and an empty file (what a `--no-settings` launch loads) or a malformed value reads as off whatever was on before.
 
-Happy path: [scenario 26](../testing/scenarios/26-landing-sites.md).
+Happy path: [scenario 27](../testing/scenarios/27-landing-sites.md).
 
 ---
 
