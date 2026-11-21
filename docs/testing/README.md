@@ -372,7 +372,7 @@ nothing, so check the state view after it.
 
 | Verb | Key params | Notes |
 |------|-----------|-------|
-| `spawn` | `def=<asset>&at=x,y&n=1&scatter=0` | Spawns a world entity (tree, station, container, loose item). A station or storage container goes where the placement tool would take it: its footprint (its collision outline, else its centre) on clear ground (no water, ford, placed obstacle, or unmeshed ground). Anything else goes on clear ground, a ford included. Refused ground is a 400. A scattered spot is snapped off water and skipped if refused; when every spot is skipped the answer is a 400. A missing or unknown `def` is a 400 too. |
+| `spawn` | `def=<asset>&at=x,y&n=1&scatter=0` | Spawns a world entity (tree, station, container, loose item). A station or storage container goes where the placement tool would take it: its footprint (its collision outline, else its centre) on clear ground (no water, ford, placed obstacle, or unmeshed ground). Anything else goes on clear ground, a ford included. Refused ground is a 400. A scattered spot is snapped off water and skipped if refused; when every spot is skipped the answer is a 400. A missing or unknown `def` is a 400 too. Answers `{"status":"ok","verb":"spawn","entities":[<id>,...]}`, the entity ids it created in the order spawned, which `kill` and `teleport` take. |
 | `colonist` | `at=x,y&n=1&name=` | Spawns a colonist at the given position. Water or a placed obstacle is a 400; ground no mover has meshed takes him, and he meshes it. |
 | `give` | `material=<defName>&n=<qty>&where=site\|loose\|colonist\|storage[&at=x,y][&slot=pack\|hands\|belt]` | Gives material to the colonist, a site, or storage; `loose` drops it on the ground at `at` as stack-capped piles, refused over 50 piles. A `material` that is not an item (an unknown name, furniture, a station) is a 400 for every `where`. `slot` is for `where=colonist` (pack by default). Answers `{"status":"ok","verb":"give","added":<count>,"asked":<n>}`, with `"shortfall":"<what was in the way>"` when it added fewer than asked (hands hold two one-hand items, or one armful of a two-hand material up to its weight). For `loose`, `added` is the count asked for, not one read back from the piles. A give that added nothing is a 400 naming why, e.g. `{"error":"give: added 0 of 10 Wood to the nearest colonist's hands: hands occupied by AxePrimitive"}`; so is one with no target, an unknown `where`, or a refused `at`. |
 | `need` | `colonist=<id>&need=Hunger\|Thirst\|Energy\|...&value=0..100` | Sets a colonist's need to the given value. |
@@ -381,7 +381,7 @@ nothing, so check the state view after it.
 | `time` | `speed=0..3` or `set=HH:MM` or `skip=Nh\|Nm` | Controls game time. `speed=3` accelerates. |
 | `teleport` | `colonist=<id>&to=x,y` | Teleports a colonist and drops his task, route, and action, so he decides afresh at the next update (one the player controls stays controlled, without his move order). Water or a placed obstacle is a 400 `{"error":"teleport: (x, y) is water or a placed obstacle"}` and he stays put, as is an id that names nothing. Ground no mover has meshed takes him, and he meshes it. |
 | `select` | `colonist=<id>` or `at=x,y` | Selects a colonist for the UI. |
-| `kill` | `colonist=<id>` | Removes a colonist. |
+| `kill` | `colonist=<id>` | Removes the entity with that id: a colonist, or anything `spawn` answered (the parameter is `colonist` either way). |
 | `complete` | `id=<entity>` | Instantly completes a task/entity. |
 | `craft` | `recipe=<Recipe_*>&n=1&at=x,y` | Queues a recipe at the nearest crafting station. |
 | `storage` | `at=x,y&item=<defName\|*>&category=RawMaterial\|Food\|Tool\|Furniture&priority=Low\|Medium\|High\|Critical&min=0&max=0` | Sets a StorageRule on the nearest container: a rule already there for the same item (same `item` and category) is replaced by the one given, so repeating the call with new `min`/`max`/`priority` leaves one rule, and a rule for another item is added beside it. Answers `{"status":"ok","verb":"storage","replaced":<n>}`, where `n` counts the same-item rules it replaced; the category wildcard a named item removes (as the storage dialog does) is separate and not counted. A named item's category comes from its definition (`category` is only for `item=*`, RawMaterial by default); an unknown item, or a `category` that isn't the item's, answers 400. |
@@ -431,7 +431,7 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
 - `wall`: `hostFoundation`, the foundation the chain is on, 0 until the first point is placed; a pointer over a foundation does not set it.
   - Before the first point, `verdict.proposed` is true with the pointer on a foundation and false off every one (a click there places nothing), and `status.valid` is true with the hint `Click a foundation to start` either way.
   - A refusal for the ground outranks both: over ground that cannot be built on, `verdict.valid` is false, `proposed` is true and `reason` says why.
-- `opening`: `type`, and `snap` or null when no built wall is in range. The snap is `wall` (the segment id), `fractionAlongWall` (how far along that wall the opening sits: 0 at the wall's first vertex, 1 at its second) and `point`, which is on the wall's line.
+- `opening`: `type`, and `snap` or null when no wall is in range. The snap is `wall` (the segment id), `fractionAlongWall` (how far along that wall the opening sits: 0 at the wall's first vertex, 1 at its second) and `point`, which is on the wall's line.
 - `snap`: the snapped point, `kind`, `guides`, the length step, and `closesShape` (the next click closes the shape; in the Rectangle tool, commits it). Null while paused, and for the opening tool, whose snap is under `opening`.
   - `kind` is a `SnapKind`: `None`, `Angle`, `Vertex`, `Edge`, `Origin`, `WallEndpoint`, `WallSegment`, `GuideLine` or `GuideCrossing`. In the Rectangle tool it is a `RectangleSnapKind`: `None`, `Vertex`, `Edge` or `Grid`. A close the rescue makes, with the pointer near the first point but not on it, has `kind` `None` and `closesShape` true.
   - Each guide has `source` (`DrawnShape`, `NearbyStructure` or `WorldAxes`), `relation` (`Parallel`, `Perpendicular` or `AngleStep`), `from` (the node it runs from) and `distanceFromNodeMeters`.
@@ -448,12 +448,12 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
     - Add / Subtract with no point: `Draw a region across the foundation edge`.
     - Freeform with no point, and no tool: `Ready`.
     - Wall: `Click a foundation to start` (no point placed), `Right-click / Enter to finish` (one or more).
-    - Opening: `Click a wall to place` (valid), `no wall in range` (the pointer is not near a built wall), `Hover a built wall` (paused, nothing proposed), or the validator's refusal.
+    - Opening: `Click a wall to place` (valid), `no wall in range` (the pointer is not near a wall), `Hover a wall` (paused, nothing proposed), or the validator's refusal.
   - How the keys relate:
     - `message` carries the refusal, and is empty when `valid` is true.
     - `hint` is the strip's line: the refusal or an instruction.
     - `hint` equals `message` when `valid` is false and `message` is not empty, whatever the tool and however many points are placed (a refusal beats `Keep placing points`).
-    - `valid` is false with an empty `message` only for the opening tool while paused, where `hint` is `Hover a built wall`; everywhere else a false `valid` carries a `message`, and `hint` is that message.
+    - `valid` is false with an empty `message` only for the opening tool while paused, where `hint` is `Hover a wall`; everywhere else a false `valid` carries a `message`, and `hint` is that message.
     - `verdict.reason` is the same text as `status.message` for every tool.
     - The view reports text only; the strip's colour for the line is not in it.
   - A scenario that checks a refusal asserts `status.valid` false and `status.message`.

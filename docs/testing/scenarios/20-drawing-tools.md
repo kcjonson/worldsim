@@ -1,7 +1,7 @@
 # Scenario 20: Drawing tools
 
 **Status:** ready  
-**Last verified:** 2026-11-17
+**Last verified:** 2026-11-20, steps 36 to 41 (the wall, door and window by hand, from a game started through Quick Start after a game with a step 22 triangle in it, as step 28 does); steps 1 to 35 not re-run for the 2026-11-20 change
 
 Verifies what scenarios 03 and 04 leave out of the drawing tools: the Rectangle tool's quieter edge cases, Freeform with every helper off, each Drawing Setting no other scenario turns on, and the key guide's rows for the opening and Add tools and for the helper legend.
 
@@ -47,7 +47,7 @@ Every point below is a world point (x, y in meters) on the dry ground east of th
 11. Pick Build, then Foundation (Freeform opens again). Click (40, 10), (46, 10) and (43, 14), then move to (40.2, 10.2): `snap.closesShape` is true and `status.hint` is "Click origin to close". Click: `?what=construction` lists only that one foundation, with `"area":12`.
 12. Pick Build, then Wall: the strip shows the material and thickness cards and no Rectangle or Freeform cards.
 13. Pick Build, then Door, and move the pointer to (45, 12): the strip reads "Opening: Door" with no Rectangle or Freeform cards, the key guide lists two rows, "Click a wall" and "Esc / Right-click", and `status.hint` is "no wall in range". Pick Window: the same with "Opening: Window".
-14. Move the pointer out of the window (`ev=move,-5,-5`, raw window pixels, not a world point): `followingPointer` is false and `status.hint` is "Hover a built wall". Move back over the ground: "no wall in range". Press Esc: `tool` is `none`.
+14. Move the pointer out of the window (`ev=move,-5,-5`, raw window pixels, not a world point): `followingPointer` is false and `status.hint` is "Hover a wall". Move back over the ground: "no wall in range". Press Esc: `tool` is `none`.
 15. Click the foundation at (43, 11) (a tree on the spot takes the first click, so click again to step to the foundation), then pick Add in its panel: `tool` is `foundationEdit`, `status.hint` is "Draw a region across the foundation edge", the strip shows no Rectangle or Freeform cards, and the key guide lists the Freeform rows with "Close the shape and apply it (the tool stays on for the next)" on the second.
 16. Move the pointer out of the window and back: `followingPointer` is false with `pointer` null, then true.
 17. Click (44, 9) and leave the pointer on it: no red reason beside the cursor, `status.hint` is "Keep placing points" and `verdict.proposed` is false. Press Backspace.
@@ -69,6 +69,12 @@ Every point below is a world point (x, y in meters) on the dry ground east of th
 33. Person only: pick Build, Foundation, then Freeform, click a point, hold Alt and move the pointer: the point goes where the pointer is, with no guide and no rounding.
 34. Person only: pick Rectangle in the picker, hold Alt and move the pointer between two grid points: the corner lands on the raw pointer, off the grid, and no grid cross shows.
 35. Person only: pick Wall, hold Ctrl and click the near edge of a foundation: a wall is queued along the whole edge. Then press Esc until the tool closes.
+36. Press Esc until `tool` is `none`. Turn reveal on (`/api/dev/reveal?on=1`), make a built foundation on clear ground (`/api/dev/foundation?pts=18,8;32,8;32,18;18,18&material=Wood&built=1`) and read its id from `?what=construction` (`foundations[0].id`, FOUND_ID), then a wall blueprint on it (`/api/dev/walls?pts=20,10;30,10&material=Wood&thickness=Standard&host=<FOUND_ID>&built=0&close=0`): `?what=construction` lists the wall `Blueprint`. Note its `id` (WALL_ID) and `entity` (WALL_ENTITY).
+37. Pick Build, then Door, and move the pointer onto the wall (send two moves, the first only wakes the pointer): `status.hint` is "Click a wall to place", `opening.snap.wall` is WALL_ID, and the door ghost shows on the blueprint wall.
+38. Click: a "Door blueprint" toast shows, `?what=construction` lists one opening `Blueprint` on that wall (note its `entity`, DOOR_ENTITY), and the wall's ghost band has a gap at the door.
+39. Pick Build, then Window, and click the wall 3 m along from the door: a second opening, `Window` (note its `entity`, WINDOW_ENTITY), `Blueprint` on the same wall. `/api/ui/lint` reads `"count":0`.
+40. Press Esc (`ev=keydown,escape`, then read `tool`; if it still reads `opening`, send Esc again): `tool` is `none`. Complete the wall (`/api/dev/complete?id=<WALL_ENTITY>`): the wall reads `Built`, both openings stay `Blueprint`, and the gaps in the wall stay.
+41. Complete the openings (`/api/dev/complete?id=<DOOR_ENTITY>`, then `<WINDOW_ENTITY>`): both read `Built`, and the door and window draw in their gaps.
 
 ---
 

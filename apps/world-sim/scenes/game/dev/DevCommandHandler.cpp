@@ -111,7 +111,6 @@ namespace world_sim {
 		verb("freebuild", &DevCommandHandler::devFreeBuild);
 		verb("construction", &DevCommandHandler::devFreeBuild);
 		verb("reveal", &DevCommandHandler::devReveal);
-		verb("spawn", &DevCommandHandler::devSpawn);
 		verb("colonist", &DevCommandHandler::devColonist);
 		verb("need", &DevCommandHandler::devNeed);
 		verb("attribute", &DevCommandHandler::devAttribute);
@@ -129,6 +128,7 @@ namespace world_sim {
 			return app::DevResponse{.body = devFoundationEdit(cmd)};
 		}));
 		registrations.push_back(server.route("give", [this](const app::DevRequest& cmd) { return devGive(cmd); }));
+		registrations.push_back(server.route("spawn", [this](const app::DevRequest& cmd) { return devSpawn(cmd); }));
 		registrations.push_back(server.route("flora", [this](const app::DevRequest& cmd) { return devFlora(cmd); }));
 		registrations.push_back(server.route("ground", [this](const app::DevRequest& cmd) { return devGround(cmd); }));
 		registrations.push_back(server.route("storage", [this](const app::DevRequest& cmd) { return devStorage(cmd); }));
@@ -377,17 +377,20 @@ namespace world_sim {
 		return reject("unknown where=" + where + " (site|loose|colonist|storage)");
 	}
 
-	DevRefusal DevCommandHandler::devSpawn(const app::DevRequest& cmd) {
+	app::DevResponse DevCommandHandler::devSpawn(const app::DevRequest& cmd) {
+		const auto reject = [this](const std::string& message) {
+			return app::DevResponse{.status = 400, .body = "{\"error\":\"" + jsonEscape(refuse(message).message) + "\"}"};
+		};
 		const std::string def = param(cmd, "def");
 		if (def.empty()) {
-			return refuse("spawn: missing def=<assetName>");
+			return reject("spawn: missing def=<assetName>");
 		}
 		if (assets::AssetRegistry::Get().getDefinition(def) == nullptr) {
-			return refuse("spawn: unknown asset '" + def + "'");
+			return reject("spawn: unknown asset '" + def + "'");
 		}
 		const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
-		if (DevRefusal refusal = refuse(spawnGroundRefusal(*m_ctx.placement, m_ctx.navigation, def, at)); !refusal.message.empty()) {
-			return refusal;
+		if (const std::string refusal = spawnGroundRefusal(*m_ctx.placement, m_ctx.navigation, def, at); !refusal.empty()) {
+			return reject(refusal);
 		}
 		const long			   nRaw = std::strtol(param(cmd, "n", "1").c_str(), nullptr, 10);
 		const long			   n = nRaw < 1 ? 1 : nRaw;
@@ -397,7 +400,7 @@ namespace world_sim {
 		// river. Snap every scattered position onto walkable ground with the same primitive the
 		// colonist drops use (minDist 0 keeps a position that is already valid), then skip one the
 		// gate refuses (furniture in a ford, say) or with no mesh anywhere near it.
-		long spawned = 0;
+		std::vector<ecs::EntityID> spawned;
 		for (long i = 0; i < n; ++i) {
 			const Foundation::Vec2 off = spreadOffset(i, n, scatter);
 			const glm::vec2		   raw{at.x + off.x, at.y + off.y};
@@ -405,16 +408,19 @@ namespace world_sim {
 			if (!placed.has_value() || !spawnGroundRefusal(*m_ctx.placement, m_ctx.navigation, def, {placed->x, placed->y}).empty()) {
 				continue;
 			}
-			m_ctx.placement->spawnEntity(def, {placed->x, placed->y});
-			++spawned;
+			spawned.push_back(m_ctx.placement->spawnEntity(def, {placed->x, placed->y}));
 		}
-		if (spawned == 0) {
-			return refuse("spawn: none of the " + std::to_string(n) + " scattered spots near (" + std::to_string(at.x) + ", " +
+		if (spawned.empty()) {
+			return reject("spawn: none of the " + std::to_string(n) + " scattered spots near (" + std::to_string(at.x) + ", " +
 						  std::to_string(at.y) + ") takes " + def);
 		}
-		LOG_INFO(Game, "[DevAPI] spawn: %ld/%ld x '%s' near (%.1f, %.1f)", spawned, n, def.c_str(), at.x, at.y);
-		m_ctx.ui->pushNotification("Dev", "Spawned " + std::to_string(spawned) + " " + def, ui::ToastSeverity::Info);
-		return {};
+		LOG_INFO(Game, "[DevAPI] spawn: %zu/%ld x '%s' near (%.1f, %.1f)", spawned.size(), n, def.c_str(), at.x, at.y);
+		m_ctx.ui->pushNotification("Dev", "Spawned " + std::to_string(spawned.size()) + " " + def, ui::ToastSeverity::Info);
+		std::string body = "{\"status\":\"ok\",\"verb\":\"spawn\",\"entities\":[";
+		for (std::size_t i = 0; i < spawned.size(); ++i) {
+			body += (i > 0 ? "," : "") + std::to_string(static_cast<unsigned long long>(spawned[i]));
+		}
+		return app::DevResponse{.body = body + "]}"};
 	}
 
 	DevRefusal DevCommandHandler::devColonist(const app::DevRequest& cmd) {
@@ -1030,7 +1036,7 @@ namespace world_sim {
 		auto& constructionWorld = m_ctx.drawing->world();
 
 		// Resolve the target segment + centerline t: seg= names it directly (t defaults to
-		// center), pt= snaps to the nearest built wall (t from the snap).
+		// center), pt= snaps to the nearest wall (t from the snap).
 		construction::SegmentId segment = construction::kInvalidSegment;
 		float							t = 0.5F;
 		if (hasParam(cmd, "seg")) {
@@ -1043,7 +1049,7 @@ namespace world_sim {
 			const construction::SnapEngine snap(registry.snapping(), constructionWorld);
 			const auto					   os = snap.snapOpening(pts.front(), typeDef->widthMeters);
 			if (!os.valid) {
-				return refuse("opening: no built wall near pt that can hold a " + type);
+				return refuse("opening: no wall near pt that can hold a " + type);
 			}
 			segment = os.segment;
 			t = os.t;

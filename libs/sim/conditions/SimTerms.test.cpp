@@ -42,7 +42,7 @@ namespace {
 	}
 
 	std::filesystem::path shippedMemoryConfig() {
-		return ecs::testing::repoConfig() / "colonists" / "memory.xml";
+		return ecs::testing::repoHuman() / "memory.xml";
 	}
 
 	/// The mover definitions these tests see, each with a non-zero id (id 0 is the registry's "none").

@@ -38,7 +38,7 @@ These are fixed values assigned at colonist creation, each on a 0 to 20 scale (0
 
 ### Rolling
 
-Every attribute is rolled once at spawn, evenly across a range, from the same seeded generator that rolls the colonist's traits, so a seed gives the same colonist on every platform. The ranges are data, in the XML files under `assets/config/colonists/attributes`: one `<Attribute name="kindness" min="4" max="16"/>` per attribute, named as conditions name it (`strength`, `agility`, `intelligence`, `civility`, `sanity`, `kindness`, `work_ethic`, `social_need`). A later file replaces an attribute by name and the replacement is logged; a mod can narrow or widen any range this way.
+Every attribute is rolled once at spawn, evenly across a range, from the same seeded generator that rolls the colonist's traits, so a seed gives the same colonist on every platform. The ranges are data, in the human's `assets/world/creatures/Human/attributes.xml`: one `<Attribute name="kindness" min="4" max="16"/>` per attribute, named as conditions name it (`strength`, `agility`, `intelligence`, `civility`, `sanity`, `kindness`, `work_ethic`, `social_need`). A later file replaces an attribute by name and the replacement is logged; a mod can narrow or widen any range this way.
 
 The merged files give every attribute exactly one range. A name that is no attribute, a missing or non-numeric `min` or `max`, a range outside 0 to 20 or with `min` above `max`, a name given twice in one file, and an attribute no file gives are all load errors naming the file and the `<Attribute name="...">`; any error loads nothing.
 
@@ -74,7 +74,7 @@ Each colonist has a procedurally generated backstory affecting:
 
 Traits are special modifiers beyond the core attributes. Each colonist has 1-3 traits, rolled at creation; a pair marked mutually exclusive never lands on one colonist.
 
-Traits are data, not code. Each has an id written in snake_case (`volatile`), a display name, and a one-line description, in the XML files under `assets/config/colonists/traits`; the same files give the 1-3 range and the exclusive groups. A mod adds a trait, or replaces one by reusing its id, with a file of its own.
+Traits are data, not code. Each has an id written in snake_case (`volatile`), a display name, and a one-line description, in the human's `assets/world/creatures/Human/traits.xml`; the same file gives the 1-3 range and the exclusive groups. A mod adds a trait, or replaces one by reusing its id, with a file of its own.
 
 A range may start at 0, so a game can leave some colonists with no trait. The smallest count has to be reachable: a range whose min asks for more traits than the exclusive groups allow one colonist to hold is a config error, reported when the traits load. The max is only an upper bound, so a max above what the groups allow is legal and logs nothing; a roll for more than fits gives as many as fit. A trait listed in several groups is excluded from every member of each of them. A roll never ends short of the min: each draw is kept only when the rest of the count can still be filled around it.
 

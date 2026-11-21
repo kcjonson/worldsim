@@ -2,6 +2,8 @@
 
 #include "../ShippedConfig.test.h"
 
+#include <assets/ConfigFiles.h>
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -29,7 +31,7 @@ namespace {
 			file << "<Traits>" << body << "</Traits>";
 		}
 		assets::TraitRegistry		   registry;
-		const std::vector<std::string> errors = registry.loadFromFolder(folder);
+		const std::vector<std::string> errors = registry.loadFromFiles(assets::configFilesIn(folder).files, folder);
 		std::filesystem::remove_all(folder);
 		EXPECT_TRUE(errors.empty()) << (errors.empty() ? "" : errors.front());
 		return registry;
