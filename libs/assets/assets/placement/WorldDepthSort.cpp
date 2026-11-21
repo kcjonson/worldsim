@@ -64,6 +64,8 @@ namespace assets {
 			.colorTint = entity.colorTint,
 			.templateId = entity.templateId,
 			.isAnimated = entity.partTransforms != nullptr && !entity.partTransforms->empty(),
+			.itemLayout = entity.itemLayout,
+			.strip = entity.strip,
 			.entity = &entity,
 		};
 	}
@@ -159,6 +161,7 @@ namespace assets {
 		// of equal anchorY.
 		const size_t staticCount = out.size();
 		dynamics.clear();
+		stripUprights = 0;
 		const std::optional<VisibleBounds> shown = ctx.drawBound.within(view, reachMargin);
 		if (ctx.dynamicEntities != nullptr && shown.has_value()) {
 			const VisibleBounds& vis = *shown;
@@ -168,6 +171,7 @@ namespace assets {
 					continue;
 				}
 				dynamics.push_back(uprightOf(entity));
+				stripUprights += entity.itemLayout != nullptr ? 1U : 0U;
 			}
 		}
 		for (const Upright& dynamic : dynamics) {

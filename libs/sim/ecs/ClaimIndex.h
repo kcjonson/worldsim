@@ -158,6 +158,11 @@ namespace ecs {
 		/// Entries held, retired ones included.
 		[[nodiscard]] size_t size() const { return entries.size(); }
 
+		/// What the index holds, as one number: every unretired claim with its holder, in no order, so equal
+		/// contents give equal numbers however they were added. A query's recorded wait compares it to tell a
+		/// claim released or changed.
+		[[nodiscard]] uint64_t fingerprint() const { return contentFingerprint; }
+
 #ifdef DEVELOPMENT_BUILD
 		/// The subset rule: a fresh rebuild from `world` (into `scratch`) is a subset of this index,
 		/// and every surplus entry belongs to an instance id no live task or suspended record holds.
@@ -205,6 +210,7 @@ namespace ecs {
 		};
 
 		[[nodiscard]] static uint64_t bucketOf(const Key& key);
+		[[nodiscard]] static uint64_t fingerprintOf(const Entry& entry);
 		void						  add(const Claim& claim, const ClaimHolder& holder);
 		void						  addCurrent(EntityID colonist, const Task& task);
 		void						  addSuspended(EntityID colonist, const Task& task);
@@ -265,6 +271,8 @@ namespace ecs {
 		std::vector<Bucket>		  table;
 		uint32_t				  generation = 1;
 		uint32_t				  usedBuckets = 0;
+		/// The wrapping sum of fingerprintOf over the unretired entries.
+		uint64_t contentFingerprint = 0;
 	};
 
 	template <typename StackRoomFn>

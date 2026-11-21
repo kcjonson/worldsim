@@ -22,6 +22,9 @@ namespace worldview {
 		uint32_t uprightDrawCalls = 0;
 		uint32_t uprightTriangles = 0;
 
+		// The upright draws that were parts items' depth strips, ranged draws of their views (rotatable-placed-items 9.2).
+		uint32_t itemDrawCalls = 0;
+
 		// Runs opened only because something drawn after its mesh's open run overlapped the
 		// entity on screen; the rest of the upright draws are a mesh's first run since a flush.
 		uint32_t uprightOverlapSplits = 0;

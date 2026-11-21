@@ -1,4 +1,4 @@
-# Scenario 25: Landing sites
+# Scenario 26: Landing sites
 
 **Status:** ready  
 **Last verified:** 2026-11-20, every step as now written on RelWithDebInfo with injected input (step 7's and 9's open land and water clicks taken after step 13's zoom, once the first land point chosen turned out to be water)

@@ -78,6 +78,10 @@ namespace assets::entry_loading {
 
 	std::optional<uint16_t> factIndex(std::string_view name);
 
+	/// Whether `entry` weighs distance by a negative number (`Weigh`) or excludes it above a bound (`Exclude`),
+	/// on a row with no `when`.
+	bool boundsDistance(const QueryEntry& entry, FactRowKind rowKind);
+
 	/// Whether `name` is an id part: one or more ASCII letters, digits, and underscores, case as written.
 	bool							  isIdPart(std::string_view name);
 	inline constexpr std::string_view kIdPartRule = "letters, digits, and underscores";
@@ -371,6 +375,10 @@ namespace assets::entry_loading {
 		/// so this runs once the creatures' own needs are known.
 		void checkNeedReferences();
 		void checkChains();
+		/// A query a go step, a work source, or a low-mood target names ranks its candidates, so it must weigh
+		/// distance by a negative number or exclude it above a bound; one nothing names is only counted
+		/// (count_of), ranks nothing, and is exempt, but may not draw random points (`place="around"`).
+		void checkQueryBounds();
 		void warnUnstarted();
 
 		template <typename Entry>

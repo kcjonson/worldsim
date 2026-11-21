@@ -391,6 +391,20 @@ namespace world_sim {
 		if (assets::AssetRegistry::Get().getDefinition(def) == nullptr) {
 			return reject("spawn: unknown asset '" + def + "'");
 		}
+		// Degrees clockwise, the front down the screen at 0, rounded to the turn quantum (rotatable-placed-items 3). Only a
+		// parts item draws turned, so only a parts def takes one: another's collider would turn and its picture wouldn't.
+		float turn = 0.0F;
+		if (const std::string turnText = param(cmd, "turn"); !turnText.empty()) {
+			if (assets::AssetRegistry::Get().getDefinition(def)->parts == nullptr) {
+				return reject("spawn: turn= is for a parts def, and " + def + " isn't one");
+			}
+			char*		 end = nullptr;
+			const double degrees = std::strtod(turnText.c_str(), &end);
+			if (end == turnText.c_str() || *end != '\0' || !std::isfinite(degrees)) {
+				return reject("spawn: turn='" + turnText + "' is not a number of degrees");
+			}
+			turn = assets::turnRadiansFromQuanta(assets::turnQuantaFromDegrees(degrees));
+		}
 		const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
 		if (const std::string refusal = spawnGroundRefusal(*m_ctx.placement, m_ctx.navigation, def, at); !refusal.empty()) {
 			return reject(refusal);
@@ -411,7 +425,11 @@ namespace world_sim {
 			if (!placed.has_value() || !spawnGroundRefusal(*m_ctx.placement, m_ctx.navigation, def, {placed->x, placed->y}).empty()) {
 				continue;
 			}
-			spawned.push_back(m_ctx.placement->spawnEntity(def, {placed->x, placed->y}));
+			const ecs::EntityID entity = m_ctx.placement->spawnEntity(def, {placed->x, placed->y});
+			if (auto* rotation = m_ctx.world->getComponent<ecs::Rotation>(entity)) {
+				rotation->radians = turn;
+			}
+			spawned.push_back(entity);
 		}
 		if (spawned.empty()) {
 			return reject("spawn: none of the " + std::to_string(n) + " scattered spots near (" + std::to_string(at.x) + ", " +

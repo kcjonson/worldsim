@@ -34,7 +34,7 @@ Now there is one definition of a good starting spot (fresh water, food, wood, a 
 - A test that generates a planet sat in the fast bucket; it is in a Heavy suite.
 
 **Things learned.**
-- The globe turns on its own until first touched (a press, scroll, right-click, or key) (`OrbitCamera`, 0.05 rad/s after 3 s idle), which is why injected clicks seemed to land in different places. Scenario 25 says how to still it.
+- The globe turns on its own until first touched (a press, scroll, right-click, or key) (`OrbitCamera`, 0.05 rad/s after 3 s idle), which is why injected clicks seemed to land in different places. Scenario 26 says how to still it.
 - An injected scroll goes to the last pointer position, not its own x,y (salal). Send a move first. Filed as SAL-184.
 - The provisions measure counts placement tries: clumps now count their plants, spaced trees are still counted before grove scale and spacing, so wood densities overstate standing trees. Good enough for a presence floor, not for comparing biomes.
 
@@ -43,7 +43,7 @@ Now there is one definition of a good starting spot (fresh water, food, wood, a 
 ## Related Documentation
 
 - [Landing sites](../../technical/landing-sites.md): the spec
-- [Scenario 25: Landing sites](../../testing/scenarios/25-landing-sites.md)
+- [Scenario 26: Landing sites](../../testing/scenarios/26-landing-sites.md)
 - [Landing site screen](../../design/ui/screens/landing-site.md)
 
 ## Next Steps
