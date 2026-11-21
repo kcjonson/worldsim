@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Crafting, building, and placing what was made. See /docs/technical/queries-and-chains.md (The shared actions). -->
+<actions>
+  <action id="craft" workFrom="job" skill="Crafting" hands="free" interruptable="false">
+    <craft/>
+  </action>
+  <action id="build" hands="free" interruptable="false" pays="along">
+    <work rate="Construction" direction="up"/>
+  </action>
+  <action id="deconstruct" hands="free" interruptable="false" pays="along">
+    <work rate="Construction" direction="down"/>
+  </action>
+  <action id="pickup_packaged" on="packaged" seconds="1.5" hands="free" interruptable="false">
+    <take/>
+  </action>
+  <action id="place_packaged" seconds="2" hands="free" interruptable="false">
+    <install/>
+  </action>
+</actions>

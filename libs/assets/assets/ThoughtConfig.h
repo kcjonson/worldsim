@@ -69,7 +69,7 @@ namespace assets {
 		ThoughtTrigger trigger = ThoughtTrigger::Idle;
 		std::string	   need;			 // NeedFalls, NeedRises: the need's label
 		std::size_t	   threshold = 0;	 // NeedFalls, NeedRises: an index into kNeedThresholdNames
-		std::string	   action;			 // ActionStarts, ActionFinishes: the sim's action name
+		std::string	   action;			 // ActionStarts, ActionFinishes: an action entry's id
 		/// ActionStarts, ActionFinishes (`on`): kGroundName when the action is about no thing, or a capability
 		/// the kind of thing it is about has. FirstSight (`of`): a capability the kind seen has. Empty for any.
 		std::string thing;

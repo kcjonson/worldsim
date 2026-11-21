@@ -3,12 +3,14 @@
 
 #include "assets/EntryLoader.h"
 
+#include "assets/NeedsConfig.h"
 #include "assets/PriorityConfig.h"
+#include "assets/ShippedEntries.test.h"
 
 #include <gtest/gtest.h>
 
-#include <pugixml.hpp>
-
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -93,6 +95,7 @@ namespace {
 			EntrySources sources{
 				.configRoot = root / "config",
 				.rungs = kRungs,
+				.trackedNeeds = trackedNeeds,
 				.definitionId = [](std::string_view name) -> std::optional<uint32_t> {
 					static const std::map<std::string, uint32_t, std::less<>> kDefinitions = {
 						{"Berry", 11}, {"Misc_BioPile", 12}, {"Milk", 13}
@@ -133,6 +136,8 @@ namespace {
 		}
 
 		std::filesystem::path root;
+		/// The sim's tracked needs the load is given; none unless a test sets them.
+		std::vector<std::string> trackedNeeds;
 	};
 
 	class BehaviorLoaderTest : public EntryLoaderTest {};
@@ -647,6 +652,34 @@ TEST_F(ActionLoaderTest, TheSharedActionsLoadAndTheGroupResolvesItsMembers) {
 	ASSERT_FALSE(deconstruct.effects.empty());
 	ASSERT_TRUE(std::holds_alternative<WorkEffect>(deconstruct.effects.front()));
 	EXPECT_EQ(std::get<WorkEffect>(deconstruct.effects.front()).direction, WorkDirection::Down);
+}
+
+TEST_F(ActionLoaderTest, ACraftTakesTheJobsWorkAmountAtItsSkillsRate) {
+	write("config/actions/craft.xml", R"(<actions>
+  <action id="craft" workFrom="job" skill="crafting" hands="free" interruptable="false"><craft/></action>
+</actions>)");
+	const EntryLoad loaded = clean();
+	ASSERT_TRUE(loaded.library.findAction("craft").valid());
+	const ActionEntry& craft = loaded.library.actions[loaded.library.findAction("craft").index];
+	EXPECT_EQ(craft.duration, ActionDuration::FromJob);
+	EXPECT_EQ(craft.skill, "crafting");
+}
+
+TEST_F(ActionLoaderTest, AnEffectMayNameANeedTheSimTracksBeforeAnyBehaviorBringsIt) {
+	write("config/actions/drink.xml", R"(<actions>
+  <action id="drink" seconds="1.5" hands="free" interruptable="false"><restore need="thirst" amount="100"/></action>
+</actions>)");
+	EXPECT_EQ(
+		onlyError(),
+		"[actions] drink.xml: <action id=\"drink\"> effect 1 <restore> need \"thirst\" names no need of any behavior or creature"
+	);
+	trackedNeeds = {"thirst"};
+	const EntryLoad loaded = clean();
+	ASSERT_TRUE(loaded.library.findNeed("thirst").has_value());
+	ASSERT_TRUE(loaded.library.findAction("drink").valid());
+	const ActionEntry& drink = loaded.library.actions[loaded.library.findAction("drink").index];
+	ASSERT_EQ(drink.effects.size(), 1U);
+	EXPECT_EQ(std::get<RestoreEffect>(drink.effects.front()).need, *loaded.library.findNeed("thirst"));
 }
 
 TEST_F(ActionLoaderTest, GroupAndFolderMistakesNameTheFileAndTheEntry) {
@@ -1178,29 +1211,26 @@ TEST_F(BehaviorLoaderTest, EachBorrowedNameIsCheckedOnceTheirConfigHasLoaded) {
 
 namespace {
 
-	/// The shipped asset definitions' names, read from every definition file under assets/world, with ids in the
-	/// order found: enough to tell whether an entry names a definition that exists.
-	std::map<std::string, uint32_t, std::less<>> shippedDefinitionNames() {
-		std::map<std::string, uint32_t, std::less<>> names;
-		for (const auto& entry : std::filesystem::recursive_directory_iterator(repoRoot() / "assets" / "world")) {
-			if (!entry.is_regular_file() || entry.path().extension() != ".xml") {
-				continue;
-			}
-			pugi::xml_document document;
-			if (!document.load_file(entry.path().string().c_str())) {
-				continue;
-			}
-			for (const pugi::xml_node definition : document.child("AssetDefinitions").children("AssetDef")) {
-				names.try_emplace(definition.child_value("defName"), static_cast<uint32_t>(names.size()));
-			}
-		}
-		return names;
-	}
-
 	class ShippedEntriesTest : public ::testing::Test {
 	  protected:
 		void TearDown() override { PriorityConfig::Get().clear(); }
 	};
+
+	/// The needs the human's needs config gives, as need ids: the sim's tracked needs (its labels in lower case).
+	std::vector<std::string> humanNeedIds() {
+		const CreatureConfigFiles human = creatureConfigFiles(repoRoot() / "assets" / "world" / "creatures" / "Human");
+		const NeedsConfigLoad	  needs = loadNeedsConfig(human.needs, human.folder);
+		EXPECT_TRUE(needs.errors.empty()) << ::testing::PrintToString(needs.errors);
+		std::vector<std::string> ids;
+		for (const NeedDef& need : needs.config.needs) {
+			std::string id = need.need;
+			std::ranges::transform(id, id.begin(), [](char letter) {
+				return static_cast<char>(std::tolower(static_cast<unsigned char>(letter)));
+			});
+			ids.push_back(std::move(id));
+		}
+		return ids;
+	}
 
 } // namespace
 
@@ -1208,27 +1238,21 @@ TEST_F(ShippedEntriesTest, TheShippedConfigAndCreaturesLoadClean) {
 	const std::filesystem::path config = repoRoot() / "assets" / "config";
 	ASSERT_TRUE(PriorityConfig::Get().loadFromFile(config / "arbitration", "priority-tuning.xml"))
 		<< ::testing::PrintToString(PriorityConfig::Get().problems());
-	EntrySources									   sources{.configRoot = config, .rungs = PriorityConfig::Get().rungs()};
-	const std::map<std::string, uint32_t, std::less<>> definitions = shippedDefinitionNames();
+	const auto& definitions = assets::testing::shippedDefinitionNames();
 	ASSERT_TRUE(definitions.contains("Human") && definitions.contains("Misc_BioPile")) << "the shipped definitions were read";
-	sources.definitionId = [&definitions](std::string_view name) -> std::optional<uint32_t> {
-		const auto found = definitions.find(name);
-		return found == definitions.end() ? std::nullopt : std::optional<uint32_t>(found->second);
-	};
-	for (const auto& folder : std::filesystem::directory_iterator(repoRoot() / "assets" / "world" / "creatures")) {
-		if (!folder.is_directory()) {
-			continue;
-		}
-		CreatureConfigFiles files = creatureConfigFiles(folder.path());
-		ASSERT_TRUE(files.errors.empty()) << ::testing::PrintToString(files.errors);
-		sources.creatures.push_back(std::move(files));
-	}
-	const EntryLoad loaded = loadEntries(sources);
+	const assets::testing::ShippedEntrySources shipped =
+		assets::testing::shippedEntrySources(PriorityConfig::Get().rungs(), humanNeedIds());
+	ASSERT_TRUE(shipped.errors.empty()) << ::testing::PrintToString(shipped.errors);
+	const EntryLoad loaded = loadEntries(shipped.sources);
 	EXPECT_TRUE(loaded.errors.empty()) << ::testing::PrintToString(loaded.errors);
 	EXPECT_TRUE(loaded.warnings.empty()) << ::testing::PrintToString(loaded.warnings);
 	const CreatureEntry* creature = loaded.library.findCreature("Human");
 	ASSERT_NE(creature, nullptr);
 	EXPECT_TRUE(creature->mood);
+	ASSERT_FALSE(creature->behaviors.empty());
+	EXPECT_EQ(creature->behaviors.front(), loaded.library.findBehavior("human/eating"))
+		<< "the human includes the behaviors its actions are in";
+	EXPECT_TRUE(loaded.library.findAction("craft").valid()) << "the shared actions load beside the behaviors";
 	const auto tuning = [&loaded](std::string_view fact) {
 		const auto found = std::ranges::find(kFacts, fact, &FactDeclaration::name);
 		return loaded.library.factTuning[static_cast<std::size_t>(found - kFacts.begin())];

@@ -1,5 +1,4 @@
 add_library(assets
-    assets/ActionTypeRegistry.cpp
     assets/AttributeConfig.cpp
     assets/AssetBootstrap.cpp
     assets/AssetRegistry.cpp

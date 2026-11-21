@@ -8,6 +8,7 @@
 
 #include <assets/Entries.h>
 #include <assets/placement/PlacementExecutor.h>
+#include <ecs/ActionEntries.h>
 #include <ecs/ColonistRules.h>
 #include <ecs/components/Colony.h>
 #include <world/camera/WorldCamera.h>
@@ -65,6 +66,9 @@ namespace world_sim {
 
 		/// The behavior library and the creatures built from it, loaded with the rest of the config.
 		assets::EntryLibrary entries;
+
+		/// The action entries the sim's action factories read, resolved from `entries`.
+		ecs::ActionEntries actionEntries;
 
 		/// Store pending state (call from GameLoadingScene when done)
 		static void SetPending(std::unique_ptr<GameWorldState> state);

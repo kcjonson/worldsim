@@ -94,13 +94,13 @@ namespace ecs {
 
 				// Harvest is work-based, not a fixed time: the action is created with the
 				// harvestable's `durability` (work units) in `duration`, which we convert to
-				// seconds here using the colonist's Harvesting skill (time = durability / rate).
-				// A skilled chopper fells a tree faster. Sampled once per chop; other action
-				// types keep their authored seconds.
+				// seconds here using the colonist's level in the harvest entry's skill (time =
+				// durability / rate). A skilled chopper fells a tree faster. Sampled once per chop;
+				// other action types keep their authored seconds.
 				if (action.type == ActionType::Harvest) {
 					float harvestSkill = 0.0F;
 					if (const auto* skills = world->getComponent<Skills>(entity)) {
-						harvestSkill = skills->getLevel("Harvesting");
+						harvestSkill = skills->getLevel(actionEntries.harvest.skill);
 					}
 					action.duration /= harvestWorkRate(harvestSkill);
 				}
@@ -438,7 +438,9 @@ namespace ecs {
 		} else if (const KnownWorldEntity* source = memory.getWorldEntity(task.needSourceKey); source != nullptr) {
 			about = source->defNameId;
 		}
-		m_reportedActions.push_back({.colonist = entity, .type = action.type, .moment = moment, .aboutDefinition = about});
+		m_reportedActions.push_back(
+			{.colonist = entity, .type = action.type, .action = action.entry, .moment = moment, .aboutDefinition = about}
+		);
 	}
 
 	bool ActionSystem::continuesWork(const Action& action) const {

@@ -167,9 +167,10 @@ namespace assets::entry_loading {
 			entry.duration = ActionDuration::Seconds;
 			entry.seconds = boundedNumber(node, "seconds", label, 0.0F, std::numeric_limits<float>::max(), true);
 		} else if (hasWorkFrom) {
-			entry.duration = ActionDuration::FromDurability;
-			static constexpr std::array<std::string_view, 1> kWorkFrom = {"durability"};
-			choice(node, "workFrom", label, kWorkFrom, true);
+			static constexpr std::array<std::string_view, 2> kWorkFrom = {"durability", "job"};
+			if (const std::optional<std::size_t> from = choice(node, "workFrom", label, kWorkFrom, true)) {
+				entry.duration = *from == 0 ? ActionDuration::FromDurability : ActionDuration::FromJob;
+			}
 			entry.skill = required(node, "skill", label);
 		} else if (openEnded) {
 			entry.duration = ActionDuration::OpenEnded;

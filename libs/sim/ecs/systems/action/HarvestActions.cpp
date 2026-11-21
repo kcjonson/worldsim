@@ -414,6 +414,7 @@ namespace ecs {
 		// Build the Harvest at the ENTITY's position (the actual tree), not task.targetPosition (the
 		// snapped stand point). applyCollectionEffect resolves the source pool/pile by this position.
 		action = Action::Harvest(
+			actionEntries,
 			harvestCap.yieldDefName,
 			yieldAmount,
 			harvestCap.durability,

@@ -165,6 +165,7 @@ namespace {
 			m_landingLonDeg = loadedState->landingLonDeg;
 			m_party = std::move(loadedState->party);
 			colonistRules = std::move(loadedState->colonistRules);
+			actionEntries = std::move(loadedState->actionEntries);
 			LOG_INFO(Game, "Loaded world: %zu chunks, %zu processed", m_chunkManager->loadedChunkCount(), m_processedChunks.size());
 			m_visibilityCover = std::make_unique<worldview::VisibilityCoverRenderer>();
 			// The camera loads only chunks that can show; the rest would be drawn under the cover's opaque fill.
@@ -1148,6 +1149,7 @@ namespace {
 			gameUI.reset();
 			ecsWorld.reset();
 			colonistRules = {};
+			actionEntries = {};
 			m_placementExecutor.reset();
 			m_chunkManager.reset();
 			m_camera.reset();
@@ -1288,13 +1290,13 @@ namespace {
 			ecsWorld->registerSystem<ecs::RoomDetectionSystem>();							// Priority 59 - derive rooms from built walls
 			ecsWorld->registerSystem<ecs::NavigationSystem>();								// Priority 51 - cached navmesh + path queries
 			// Priority 60
-			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry, systemSeeds.aiDecision);
+			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry, actionEntries, systemSeeds.aiDecision);
 			ecsWorld->registerSystem<ecs::MovementSystem>();								// Priority 100
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
 			ecsWorld->registerSystem<ecs::CollisionSystem>();			// Priority 250 - positional separation after physics
 			ecsWorld->registerSystem<ecs::WallCollisionSystem>();		// Priority 260 - wall safety-net after agent separation
 			ecsWorld->registerSystem<ecs::PlacedObstacleCollisionSystem>(); // Priority 270 - placed-obstacle safety-net after wall collision
-			ecsWorld->registerSystem<ecs::ActionSystem>(systemSeeds.action); // Priority 350
+			ecsWorld->registerSystem<ecs::ActionSystem>(actionEntries, systemSeeds.action); // Priority 350
 			ecsWorld->registerSystem<ecs::ThoughtSourceSystem>(*colonistRules.thoughtTypes, systemSeeds.thoughtSource)
 				.listenTo(ecsWorld->getSystem<ecs::ActionSystem>(), ecsWorld->getSystem<ecs::VisionSystem>()); // Priority 360
 			ecsWorld->registerSystem<world_sim::DeferredEditsSystem>([this] { drainDeferredEdits(); }); // Priority 800
@@ -2223,6 +2225,9 @@ namespace {
 		// The thought types ThoughtSystem creates from, and the vocabulary their conditions are written in.
 		// Declared before ecsWorld, so the systems that read them are destroyed first.
 		ecs::ColonistRules								   colonistRules;
+		// The action entries ActionSystem's factories and AIDecisionSystem's hands rule read. Declared before
+		// ecsWorld, like the rules.
+		ecs::ActionEntries									actionEntries;
 		std::unique_ptr<worldview::ChunkRenderer>		   m_renderer;
 		std::unique_ptr<worldview::EntityRenderer>		   m_entityRenderer;
 		std::unique_ptr<worldview::VisibilityCoverRenderer> m_visibilityCover;

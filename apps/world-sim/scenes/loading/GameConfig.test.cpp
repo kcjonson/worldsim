@@ -2,7 +2,7 @@
 
 #include "GameConfig.h"
 
-#include <assets/ActionTypeRegistry.h>
+#include <assets/AssetRegistry.h>
 #include <assets/ConfigValidator.h>
 #include <assets/ConstructionRegistry.h>
 #include <assets/MemoryConfig.h>
@@ -94,17 +94,20 @@ TEST_F(GameConfigTest, EachKindTheHumanLacksIsOneErrorAndNeitherLoaderRuns) {
 namespace {
 
 	/// The whole shipped config copied beside the human, so every loader runs; the work config's registries are
-	/// cleared after, as the load fills them.
+	/// cleared after, as the load fills them. The asset registry holds the one definition the shipped entries spawn.
 	class GameConfigNamesTest : public GameConfigTest {
 	  protected:
 		void SetUp() override {
 			GameConfigTest::SetUp();
 			std::filesystem::copy(repoRoot() / "assets" / "config", root / "config", std::filesystem::copy_options::recursive);
+			assets::AssetDefinition bioPile;
+			bioPile.defName = "Misc_BioPile";
+			assets::AssetRegistry::Get().registerTestDefinition(std::move(bioPile));
 		}
 
 		void TearDown() override {
 			GameConfigTest::TearDown();
-			assets::ActionTypeRegistry::Get().clear();
+			assets::AssetRegistry::Get().clearDefinitions();
 			assets::WorkTypeRegistry::Get().clear();
 			assets::PriorityConfig::Get().clear();
 			assets::ConstructionRegistry::Get().clear();
@@ -144,4 +147,16 @@ TEST_F(GameConfigNamesTest, EntriesNamingAnUnknownKindTraitOrThoughtFailTheLoad)
 		})
 	);
 	EXPECT_FALSE(unknown.entries.findChain("test/look").valid()) << "a failed load leaves the library empty";
+}
+
+TEST_F(GameConfigNamesTest, AThoughtSourceNamingNoActionEntryFailsTheLoad) {
+	const world_sim::GameConfigLoad shipped = loadAll();
+	EXPECT_TRUE(shipped.errors.empty()) << ::testing::PrintToString(shipped.errors);
+	EXPECT_EQ(shipped.actions.eat.entry, shipped.entries.findAction("human/eat")) << "the factories' entries resolve with the load";
+
+	std::ofstream(root / "config" / "thoughts" / "stray.xml") << R"(<thoughts>
+  <thought id="stray" label="Stray" importance="trivial"><source trigger="actionFinishes" action="human/eats"/><feeling is="content"/></thought>
+</thoughts>)";
+	const world_sim::GameConfigLoad stray = loadAll();
+	EXPECT_EQ(stray.errors, std::vector<std::string>{"[thoughts] stray.xml: thought 'stray' source 1: no action is called 'human/eats'"});
 }

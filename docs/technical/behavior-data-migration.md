@@ -102,6 +102,12 @@ During the move both paths run, on disjoint ground that phase 7 deletes:
   `work` group), the UI adapters, and the dev `what=colonists` JSON.
 - `NeedType` stays as the old loop's handle, resolved to a need id at load, until Eat deletes its last
   case, so the tests change once.
+- Need ids before the need entries: the entry loader takes the sim's fixed list of needs as need ids
+  (`EntrySources::trackedNeeds`, `ecs::trackedNeedIds`), so the action entries' `<restore>` rows name
+  `hunger` and the rest while no behavior brings a need. The need-entries ticket deletes it.
+- Action values: the hand-written factories take their durations, interruptability, amounts, and hands
+  from the shipped action entries, resolved once at load (`ecs::ActionEntries`), until each path deletes
+  its factory.
 - No cargo handoff spans two runners: gather food moves with Eat, and the box-to-box pull moves after
   the gathering.
 

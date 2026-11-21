@@ -338,6 +338,7 @@ namespace {
 			world_sim::GameConfigLoad config = world_sim::loadGameConfig("assets/config", "assets/world/creatures");
 			worldState->colonistRules = std::move(config.rules);
 			worldState->entries = std::move(config.entries);
+			worldState->actionEntries = std::move(config.actions);
 			if (!config.errors.empty()) {
 				fail(std::move(config.errors));
 				return;

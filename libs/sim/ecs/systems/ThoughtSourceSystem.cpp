@@ -53,7 +53,7 @@ namespace ecs {
 			heardEvents.push_back({
 				.colonist = event.colonist,
 				.trigger = event.moment == ActionMoment::Started ? ThoughtTrigger::ActionStarts : ThoughtTrigger::ActionFinishes,
-				.action = event.type,
+				.action = event.action,
 				.definition = event.aboutDefinition,
 			});
 		});

@@ -28,6 +28,7 @@ add_library(sim
     ecs/systems/NavigationSystem.cpp
     ecs/systems/PlayerVisibilitySystem.cpp
     ecs/spatial/AgentSpatialHash.cpp
+    ecs/ActionEntries.cpp
     ecs/ClaimIndex.cpp
     ecs/ColliderEntityIndex.cpp
     ecs/ColonistRules.cpp

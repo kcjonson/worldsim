@@ -25,16 +25,6 @@
 
 namespace ecs {
 
-	namespace {
-
-		/// Default ground quality for sleep (reduced recovery rate)
-		constexpr float kGroundSleepQuality = 0.5F;
-
-		/// Default water quality for drinking
-		constexpr float kDefaultWaterQuality = 1.0F;
-
-	} // namespace
-
 	void ActionSystem::startNeedAction(
 		Task&				  task,
 		Action&				  action,
@@ -54,7 +44,7 @@ namespace ecs {
 						// Get nutrition from item properties
 						auto  edibleInfo = assets::getEdibleItemInfo(edibleItemName);
 						float nutrition = edibleInfo ? edibleInfo->nutrition : 0.3F;
-						action = Action::Eat(edibleItemName, nutrition);
+						action = Action::Eat(actionEntries, edibleItemName, nutrition);
 						LOG_DEBUG(
 							Engine,
 							"[Action] Creating Eat action for %s (nutrition %.2f, qty %u)",
@@ -85,10 +75,10 @@ namespace ecs {
 							break;
 						}
 						makeRoomToEat(inventory, task, food, task.needQuantity, position.value);
-						action = Action::Withdraw(food, task.needQuantity, task.needSourceStorageId, task.workTarget());
+						action = Action::Withdraw(actionEntries, food, task.needQuantity, task.needSourceStorageId, task.workTarget());
 					} else {
 						makeRoomToEat(inventory, task, food, task.needQuantity, position.value);
-						action = Action::Pickup(food, task.needQuantity, task.workTarget(), food);
+						action = Action::Pickup(actionEntries, food, task.needQuantity, task.workTarget(), food);
 					}
 					LOG_DEBUG(Engine, "[Action] Taking %u x %s to eat", task.needQuantity, food.c_str());
 					break;
@@ -123,6 +113,7 @@ namespace ecs {
 						}
 
 						action = Action::Harvest(
+							actionEntries,
 							harvestCap.yieldDefName,
 							yield,
 							harvestCap.durability,
@@ -163,20 +154,20 @@ namespace ecs {
 
 			case NeedType::Thirst: {
 				// Water tiles are inexhaustible - drinking fully restores thirst
-				action = Action::Drink();
+				action = Action::Drink(actionEntries);
 				break;
 			}
 
 			case NeedType::Hygiene: {
-				action = Action::Wash();
+				action = Action::Wash(actionEntries);
 				break;
 			}
 
 			case NeedType::Energy: {
 				// Check if at current position (ground fallback) or at a bed
 				bool  isGroundFallback = (task.targetPosition == position.value);
-				float quality = isGroundFallback ? kGroundSleepQuality : 1.0F;
-				action = Action::Sleep(quality);
+				float quality = isGroundFallback ? actionEntries.groundSleepQuality : 1.0F;
+				action = Action::Sleep(actionEntries, quality);
 				break;
 			}
 
@@ -197,7 +188,7 @@ namespace ecs {
 					needsPoop = true; // Always do what we came for
 				}
 
-				action = Action::Toilet(position.value, needsPee, needsPoop);
+				action = Action::Toilet(actionEntries, position.value, needsPee, needsPoop);
 				break;
 			}
 

@@ -15,7 +15,10 @@
 // - /docs/design/game-systems/colonists/ai-behavior.md
 // - /docs/design/game-systems/world/entity-capabilities.md
 
+#include "../ActionEntries.h"
 #include "Needs.h"
+
+#include <assets/Entries.h>
 
 #include <glm/vec2.hpp>
 
@@ -283,6 +286,9 @@ namespace ecs {
 		ActionType	type = ActionType::None;
 		ActionState state = ActionState::Starting;
 
+		/// The action entry the factory read its values from; none while no action runs.
+		assets::EntryHandle<assets::ActionEntry> entry;
+
 		/// Duration of the action in seconds
 		float duration = 0.0F;
 
@@ -381,6 +387,7 @@ namespace ecs {
 		void clear() {
 			type = ActionType::None;
 			state = ActionState::Starting;
+			entry = {};
 			duration = 0.0F;
 			elapsed = 0.0F;
 			targetPosition = glm::vec2{0.0F, 0.0F};
@@ -390,143 +397,55 @@ namespace ecs {
 		}
 
 		// --- Factory methods for creating actions ---
+		//
+		// Each factory takes its duration, interruptability, and amounts from its action entry (ActionEntries).
 
-		/// Factory: Eat action - consume food from inventory
-		/// Colonists always eat from inventory. Food must be harvested/collected first.
-		/// Eating restores hunger and fills digestion (food enters gut).
+		/// Factory: Eat action - consume food from inventory, restoring each need its entry restores by the food's
+		/// nutrition times the row's scale (hunger up, digestion down as the gut fills).
 		/// @param itemDefName Item to consume from inventory
-		/// @param nutrition Amount of hunger to restore (0-1 scale)
-		static Action Eat(const std::string& itemDefName, float nutrition) {
-			Action action;
-			action.type = ActionType::Eat;
-			action.state = ActionState::Starting;
-			action.duration = 2.0F;		  // 2 seconds to eat
-			action.interruptable = false; // Can't stop mid-bite!
+		/// @param nutrition The food's nutrition (0-1 scale)
+		static Action Eat(const ActionEntries& actions, const std::string& itemDefName, float nutrition) {
+			const ActionValues& values = actions.eat;
+			Action				action = fromEntry(ActionType::Eat, values);
 
 			ConsumptionEffect consumeEff;
 			consumeEff.itemDefName = itemDefName;
-			consumeEff.quantity = 1;
-			consumeEff.need = NeedType::Hunger;
-			consumeEff.restoreAmount = nutrition * 100.0F;
-			// Eating fills the gut - digestion need DECREASES (becomes more urgent over time)
-			consumeEff.sideEffectNeed = NeedType::Digestion;
-			consumeEff.sideEffectAmount = -nutrition * 100.0F; // Negative = drain (fill gut)
+			consumeEff.quantity = values.consumes;
+			consumeEff.need = values.restores[0].need;
+			consumeEff.restoreAmount = nutrition * values.restores[0].amount;
+			if (values.restoreCount > 1) {
+				consumeEff.sideEffectNeed = values.restores[1].need;
+				consumeEff.sideEffectAmount = nutrition * values.restores[1].amount;
+			}
 			action.effect = consumeEff;
 
 			return action;
 		}
 
-		/// Factory: Drink action - restores thirst fully, fills bladder
-		/// Water tiles are inexhaustible, so drinking always fully restores thirst.
-		static Action Drink() {
-			Action action;
-			action.type = ActionType::Drink;
-			action.state = ActionState::Starting;
-			action.duration = 1.5F;		  // 1.5 seconds to drink
-			action.interruptable = false; // Can't stop mid-gulp!
+		/// Factory: Drink action at water, which is inexhaustible.
+		static Action Drink(const ActionEntries& actions) { return needAction(ActionType::Drink, actions.drink); }
 
-			NeedEffect needEff;
-			needEff.need = NeedType::Thirst;
-			needEff.restoreAmount = 100.0F; // Full thirst restoration from water tiles
-			needEff.sideEffectNeed = NeedType::Bladder;
-			needEff.sideEffectAmount = -15.0F; // Drinking DECREASES bladder (fills it up)
-			action.effect = needEff;
+		/// Factory: Wash action at water.
+		static Action Wash(const ActionEntries& actions) { return needAction(ActionType::Wash, actions.wash); }
 
+		/// Factory: Sleep action - restores energy by its entry's amount times the sleep quality.
+		/// @param quality The place's sleep quality (the ground's from ActionEntries, 1.0 for a bed)
+		static Action Sleep(const ActionEntries& actions, float quality) {
+			Action action = needAction(ActionType::Sleep, actions.sleep);
+			action.needEffect().restoreAmount *= quality;
 			return action;
 		}
 
-		/// Seconds a wash at water takes.
-		static constexpr float kWashSeconds = 3.0F;
-
-		/// Hygiene a wash at water restores: water is inexhaustible, so a wash restores it fully.
-		static constexpr float kWashHygieneRestored = 100.0F;
-
-		/// Factory: Wash action - restores hygiene at water
-		static Action Wash() {
-			Action action;
-			action.type = ActionType::Wash;
-			action.state = ActionState::Starting;
-			action.duration = kWashSeconds;
-			action.interruptable = false;
-
-			NeedEffect needEffect;
-			needEffect.need = NeedType::Hygiene;
-			needEffect.restoreAmount = kWashHygieneRestored;
-			action.effect = needEffect;
-
-			return action;
-		}
-
-		/// Factory: Sleep action - restores energy
-		/// @param quality Sleep quality affects restoration rate (0.5 for ground, 1.0 for bed)
-		static Action Sleep(float quality = 0.5F) {
-			Action action;
-			action.type = ActionType::Sleep;
-			action.state = ActionState::Starting;
-			action.duration = 8.0F;		 // 8 seconds of sleep (game time scaled)
-			action.interruptable = true; // Can be woken for emergencies
-
-			NeedEffect needEff;
-			needEff.need = NeedType::Energy;
-			needEff.restoreAmount = 60.0F * quality; // Quality affects restoration
-			action.effect = needEff;
-
-			return action;
-		}
-
-		/// Factory: Smart Toilet action - handles peeing and/or pooping based on needs
+		/// Factory: Toilet action - relieves the bladder, the bowels, or both, from the matching entry; only a relief
+		/// whose entry spawns (the bowels) leaves a bio pile.
 		/// @param position Position for Bio Pile if pooping
-		/// @param doPee Whether to relieve bladder (peeing)
-		/// @param doPoop Whether to relieve digestion (pooping, creates Bio Pile)
-		///
-		/// Duration logic:
-		///   - Both pee and poop: 5.0s (combined action takes longest)
-		///   - Poop only: 4.0s (pooping takes longer than peeing)
-		///   - Pee only: 2.0s (quick action)
-		static Action Toilet(glm::vec2 position, bool doPee, bool doPoop) {
-			Action action;
-			action.type = ActionType::Toilet;
-			action.state = ActionState::Starting;
+		/// @param doPee Whether to relieve bladder; at least one of doPee and doPoop is true
+		/// @param doPoop Whether to relieve digestion
+		static Action Toilet(const ActionEntries& actions, glm::vec2 position, bool doPee, bool doPoop) {
+			const ActionValues& values = doPee && doPoop ? actions.relieveBoth : (doPoop ? actions.defecate : actions.urinate);
+			Action				action = needAction(ActionType::Toilet, values);
 			action.targetPosition = position;
-			action.interruptable = false; // Definitely can't stop this!
-
-			// Duration depends on what we're doing
-			if (doPee && doPoop) {
-				action.duration = 5.0F; // Both takes longer
-			} else if (doPoop) {
-				action.duration = 4.0F; // Pooping takes longer
-			} else {
-				action.duration = 2.0F; // Just peeing is quick
-			}
-
-			// Store what we're doing in effect
-			// We'll use NeedEffect for the primary action, and flags for secondary
-			NeedEffect needEff;
-			if (doPee && doPoop) {
-				// Both - primary is bladder, side effect is digestion
-				needEff.need = NeedType::Bladder;
-				needEff.restoreAmount = 100.0F;
-				needEff.sideEffectNeed = NeedType::Digestion;
-				needEff.sideEffectAmount = 100.0F; // Positive = restore (relief)
-			} else if (doPoop) {
-				// Just pooping
-				needEff.need = NeedType::Digestion;
-				needEff.restoreAmount = 100.0F;
-			} else if (doPee) {
-				// Just peeing
-				needEff.need = NeedType::Bladder;
-				needEff.restoreAmount = 100.0F;
-			} else {
-				// Neither pee nor poop - shouldn't happen, but return a no-op action
-				// This is a programming error; caller should ensure at least one is true
-				needEff.need = NeedType::Bladder;
-				needEff.restoreAmount = 0.0F;
-			}
-			action.effect = needEff;
-
-			// Store poop flag for Bio Pile spawning (checked in ActionSystem)
-			action.spawnBioPile = doPoop;
-
+			action.spawnBioPile = values.spawns;
 			return action;
 		}
 
@@ -535,13 +454,15 @@ namespace ecs {
 		/// @param quantity Number of items to pick up
 		/// @param sourcePos Position of the source entity
 		/// @param sourceDefName DefName of the source entity (for removal)
-		static Action Pickup(const std::string& itemDefName, uint32_t quantity, glm::vec2 sourcePos, const std::string& sourceDefName) {
-			Action action;
-			action.type = ActionType::Pickup;
-			action.state = ActionState::Starting;
-			action.duration = 0.5F; // Quick pickup
+		static Action Pickup(
+			const ActionEntries& actions,
+			const std::string&	 itemDefName,
+			uint32_t			 quantity,
+			glm::vec2			 sourcePos,
+			const std::string&	 sourceDefName
+		) {
+			Action action = fromEntry(ActionType::Pickup, actions.pickup);
 			action.targetPosition = sourcePos;
-			action.interruptable = false; // Don't interrupt mid-pickup
 
 			CollectionEffect collEff;
 			collEff.itemDefName = itemDefName;
@@ -563,13 +484,15 @@ namespace ecs {
 		/// @param quantity Number of items to withdraw
 		/// @param sourceStorageId Entity ID of the source storage container
 		/// @param sourcePos Position of the source box (the walk-to target)
-		static Action Withdraw(const std::string& itemDefName, uint32_t quantity, uint64_t sourceStorageId, glm::vec2 sourcePos) {
-			Action action;
-			action.type = ActionType::Withdraw;
-			action.state = ActionState::Starting;
-			action.duration = 0.5F; // Quick withdraw, mirrors Pickup
+		static Action Withdraw(
+			const ActionEntries& actions,
+			const std::string&	 itemDefName,
+			uint32_t			 quantity,
+			uint64_t			 sourceStorageId,
+			glm::vec2			 sourcePos
+		) {
+			Action action = fromEntry(ActionType::Withdraw, actions.withdraw);
 			action.targetPosition = sourcePos;
-			action.interruptable = false; // Don't interrupt mid-withdraw
 
 			CollectionEffect collEff;
 			collEff.itemDefName = itemDefName;
@@ -584,29 +507,28 @@ namespace ecs {
 			return action;
 		}
 
-		/// Factory: Harvest action - harvest items from an entity
+		/// Factory: Harvest action - harvest items from an entity. Its duration is the source's durability in work
+		/// units, which ActionSystem turns into seconds at the work rate of the entry's skill when it starts.
 		/// @param itemDefName Item definition to yield
 		/// @param quantity Number of items to harvest
-		/// @param harvestDuration Time to complete harvest
+		/// @param durability The source's durability (work units)
 		/// @param sourcePos Position of the source entity
 		/// @param sourceDefName DefName of the source entity
 		/// @param destructive If true, entity is destroyed after harvest
 		/// @param regrowthTime If not destructive, time until harvestable again
 		static Action Harvest(
-			const std::string& itemDefName,
-			uint32_t		   quantity,
-			float			   harvestDuration,
-			glm::vec2		   sourcePos,
-			const std::string& sourceDefName,
-			bool			   destructive,
-			float			   regrowthTime
+			const ActionEntries& actions,
+			const std::string&	 itemDefName,
+			uint32_t			 quantity,
+			float				 durability,
+			glm::vec2			 sourcePos,
+			const std::string&	 sourceDefName,
+			bool				 destructive,
+			float				 regrowthTime
 		) {
-			Action action;
-			action.type = ActionType::Harvest;
-			action.state = ActionState::Starting;
-			action.duration = harvestDuration;
+			Action action = fromEntry(ActionType::Harvest, actions.harvest);
+			action.duration = durability;
 			action.targetPosition = sourcePos;
-			action.interruptable = false; // Don't interrupt mid-harvest
 
 			CollectionEffect collEff;
 			collEff.itemDefName = itemDefName;
@@ -620,7 +542,7 @@ namespace ecs {
 			return action;
 		}
 
-		/// Factory: Craft action - craft items at a station
+		/// Factory: Craft action - craft items at a station, for the job's work amount at the crafter's work rate.
 		/// @param recipeDefName Recipe to craft
 		/// @param stationEntityId Entity ID of the crafting station
 		/// @param stationPos Position of the station
@@ -628,6 +550,7 @@ namespace ecs {
 		/// @param inputs Input items to consume (defName -> count)
 		/// @param outputs Output items to produce (defName -> count)
 		static Action Craft(
+			const ActionEntries&								 actions,
 			const std::string&									 recipeDefName,
 			uint64_t											 stationEntityId,
 			glm::vec2											 stationPos,
@@ -635,14 +558,11 @@ namespace ecs {
 			const std::vector<std::pair<std::string, uint32_t>>& inputs,
 			const std::vector<std::pair<std::string, uint32_t>>& outputs
 		) {
-			Action action;
-			action.type = ActionType::Craft;
-			action.state = ActionState::Starting;
-			// Convert work amount to duration (work ticks -> seconds)
+			Action action = fromEntry(ActionType::Craft, actions.craft);
+			// Every crafter works 100 work ticks a second, whatever its skill.
 			constexpr float kWorkTicksPerSecond = 100.0F;
 			action.duration = workAmount / kWorkTicksPerSecond;
 			action.targetPosition = stationPos;
-			action.interruptable = false; // Don't interrupt mid-craft
 
 			CraftingEffect craftEff;
 			craftEff.recipeDefName = recipeDefName;
@@ -662,18 +582,15 @@ namespace ecs {
 		/// @param deliverToCraftStation If true, the target is a crafting station: items stay
 		///        in inventory and the deposit only marks them delivered (see DepositEffect).
 		static Action Deposit(
-			const std::string& itemDefName,
-			uint32_t		   quantity,
-			uint64_t		   storageEntityId,
-			glm::vec2		   storagePos,
-			bool			   deliverToCraftStation = false
+			const ActionEntries& actions,
+			const std::string&	 itemDefName,
+			uint32_t			 quantity,
+			uint64_t			 storageEntityId,
+			glm::vec2			 storagePos,
+			bool				 deliverToCraftStation = false
 		) {
-			Action action;
-			action.type = ActionType::Deposit;
-			action.state = ActionState::Starting;
-			action.duration = 1.0F; // 1 second to deposit items
+			Action action = fromEntry(ActionType::Deposit, actions.deposit);
 			action.targetPosition = storagePos;
-			action.interruptable = false; // Don't interrupt mid-deposit
 
 			DepositEffect depEff;
 			depEff.itemDefName = itemDefName;
@@ -695,13 +612,10 @@ namespace ecs {
 		/// @param blueprintEntityId Entity carrying the StructureBlueprint to build
 		/// @param blueprintPos Position of the build work slot
 		/// @param skillLevel Builder's Construction skill (0-20)
-		static Action Build(uint64_t blueprintEntityId, glm::vec2 blueprintPos, float skillLevel) {
-			Action action;
-			action.type = ActionType::Build;
-			action.state = ActionState::Starting;
-			action.duration = 0.0F; // Completion is gated by workDone >= workTotal, not elapsed time
+		static Action Build(const ActionEntries& actions, uint64_t blueprintEntityId, glm::vec2 blueprintPos, float skillLevel) {
+			// Open-ended: completion is gated by workDone >= workTotal, not elapsed time, so the duration is 0.
+			Action action = fromEntry(ActionType::Build, actions.build);
 			action.targetPosition = blueprintPos;
-			action.interruptable = false; // Commit to the work session like other work actions
 
 			ProgressEffect progressEff;
 			progressEff.targetEntityId = blueprintEntityId;
@@ -719,13 +633,9 @@ namespace ecs {
 		/// @param blueprintEntityId Entity carrying the StructureBlueprint to deconstruct
 		/// @param blueprintPos Position of the deconstruct work slot
 		/// @param skillLevel Builder's Construction skill (0-20)
-		static Action Deconstruct(uint64_t blueprintEntityId, glm::vec2 blueprintPos, float skillLevel) {
-			Action action;
-			action.type = ActionType::Deconstruct;
-			action.state = ActionState::Starting;
-			action.duration = 0.0F;
+		static Action Deconstruct(const ActionEntries& actions, uint64_t blueprintEntityId, glm::vec2 blueprintPos, float skillLevel) {
+			Action action = fromEntry(ActionType::Deconstruct, actions.deconstruct);
 			action.targetPosition = blueprintPos;
-			action.interruptable = false;
 
 			ProgressEffect progressEff;
 			progressEff.targetEntityId = blueprintEntityId;
@@ -740,13 +650,9 @@ namespace ecs {
 		/// Phase 1 of PlacePackaged task. Colonist clears hands first, then picks up.
 		/// @param packagedEntityId Entity ID of the packaged item
 		/// @param sourcePos Position of the packaged item
-		static Action PickupPackaged(uint64_t packagedEntityId, glm::vec2 sourcePos) {
-			Action action;
-			action.type = ActionType::PickupPackaged;
-			action.state = ActionState::Starting;
-			action.duration = 1.5F; // Time to clear hands + pick up
+		static Action PickupPackaged(const ActionEntries& actions, uint64_t packagedEntityId, glm::vec2 sourcePos) {
+			Action action = fromEntry(ActionType::PickupPackaged, actions.pickupPackaged);
 			action.targetPosition = sourcePos;
-			action.interruptable = false; // Don't interrupt mid-pickup
 
 			PlacePackagedEffect placeEff;
 			placeEff.packagedEntityId = packagedEntityId;
@@ -760,13 +666,9 @@ namespace ecs {
 		/// Phase 2 of PlacePackaged task. Colonist puts down the item and it becomes placed.
 		/// @param packagedEntityId Entity ID of the packaged item being placed
 		/// @param targetPos Position to place the item (from Packaged.targetPosition)
-		static Action PlacePackaged(uint64_t packagedEntityId, glm::vec2 targetPos) {
-			Action action;
-			action.type = ActionType::PlacePackaged;
-			action.state = ActionState::Starting;
-			action.duration = 2.0F; // Time to carefully place the item
+		static Action PlacePackaged(const ActionEntries& actions, uint64_t packagedEntityId, glm::vec2 targetPos) {
+			Action action = fromEntry(ActionType::PlacePackaged, actions.placePackaged);
 			action.targetPosition = targetPos;
-			action.interruptable = false; // Don't interrupt mid-placement
 
 			PlacePackagedEffect placeEff;
 			placeEff.packagedEntityId = packagedEntityId;
@@ -775,9 +677,37 @@ namespace ecs {
 
 			return action;
 		}
+
+	  private:
+		/// An action of `type` starting, with its entry's handle, fixed duration, and interruptability.
+		static Action fromEntry(ActionType type, const ActionValues& values) {
+			Action action;
+			action.type = type;
+			action.state = ActionState::Starting;
+			action.entry = values.entry;
+			action.duration = values.seconds;
+			action.interruptable = values.interruptable;
+			return action;
+		}
+
+		/// An action restoring the needs its entry's `<restore>` rows name: the first, and the second as its side effect.
+		static Action needAction(ActionType type, const ActionValues& values) {
+			Action action = fromEntry(type, values);
+
+			NeedEffect needEffect;
+			needEffect.need = values.restores[0].need;
+			needEffect.restoreAmount = values.restores[0].amount;
+			if (values.restoreCount > 1) {
+				needEffect.sideEffectNeed = values.restores[1].need;
+				needEffect.sideEffectAmount = values.restores[1].amount;
+			}
+			action.effect = needEffect;
+
+			return action;
+		}
 	};
 
-	/// Every action type with its name, the one list both directions read.
+	/// Every action type with its name.
 	inline constexpr std::array<std::pair<ActionType, std::string_view>, 15> kActionTypeNames = {{
 		{ActionType::None, "None"},
 		{ActionType::Eat, "Eat"},
@@ -796,16 +726,10 @@ namespace ecs {
 		{ActionType::PlacePackaged, "PlacePackaged"},
 	}};
 
-	/// The action type's name, for logs, the dev tools, and the thought config.
+	/// The action type's name, for logs and the dev tools.
 	[[nodiscard]] inline const char* actionTypeName(ActionType type) {
 		const auto found = std::ranges::find(kActionTypeNames, type, &std::pair<ActionType, std::string_view>::first);
 		return found == kActionTypeNames.end() ? "Unknown" : found->second.data();
-	}
-
-	/// The action type a name names; none when it names none.
-	[[nodiscard]] inline std::optional<ActionType> actionTypeFromName(std::string_view name) {
-		const auto found = std::ranges::find(kActionTypeNames, name, &std::pair<ActionType, std::string_view>::second);
-		return found == kActionTypeNames.end() ? std::nullopt : std::optional(found->first);
 	}
 
 } // namespace ecs

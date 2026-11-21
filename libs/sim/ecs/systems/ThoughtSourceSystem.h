@@ -38,9 +38,9 @@ namespace ecs {
 		/// An action or a discovery, held until this system's update.
 		struct HeardEvent {
 			EntityID	   colonist = kInvalidEntity;
-			ThoughtTrigger trigger = ThoughtTrigger::Idle;
-			ActionType	   action = ActionType::None;
-			uint32_t	   definition = 0;
+			ThoughtTrigger							 trigger = ThoughtTrigger::Idle;
+			assets::EntryHandle<assets::ActionEntry> action;
+			uint32_t								 definition = 0;
 		};
 
 		ThoughtSourceState& stateOf(EntityID colonist, double now);

@@ -32,7 +32,9 @@ enum class ActionMoment : uint8_t { Started, Finished };
 struct ActionEvent {
 	EntityID	 colonist = kInvalidEntity;
 	ActionType	 type = ActionType::None;
-	ActionMoment moment = ActionMoment::Started;
+	/// The action entry the action was built from, which a thought source names.
+	assets::EntryHandle<assets::ActionEntry> action;
+	ActionMoment							 moment = ActionMoment::Started;
 	/// The AssetRegistry id of the kind of thing the action is about (the food eaten, the bed slept in,
 	/// the item crafted, the plant harvested); 0 when it is about no thing, as a sleep on the ground is.
 	uint32_t aboutDefinition = 0;
@@ -42,8 +44,10 @@ using ActionObserver = std::function<void(const ActionEvent& event)>;
 
 class ActionSystem : public ISystem {
 public:
-	explicit ActionSystem(uint32_t rngSeed)
-		: m_rng(rngSeed) {}
+	/// `actions` must outlive the system.
+	ActionSystem(const ActionEntries& actions, uint32_t rngSeed)
+		: actionEntries(actions),
+		  m_rng(rngSeed) {}
 
 	void update(float deltaTime) override;
 
@@ -140,6 +144,9 @@ public:
 	}
 
 private:
+	/// The values every action this system starts takes from its entry.
+	const ActionEntries& actionEntries;
+
 	/// Random number generator for yield calculations
 	std::mt19937 m_rng;
 

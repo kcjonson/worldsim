@@ -1,7 +1,8 @@
 #pragma once
 
 // Thought types for tests: the shipped condition vocabulary, and thought types written in the test as
-// the body of a <thoughts> file, both loaded through the entry points the game's loadColonistRules uses.
+// the body of a <thoughts> file, both loaded through the entry points the game's loadColonistRules uses, their
+// action sources resolved against the shipped entries as the game's config load does.
 
 #include "ColonistRules.h"
 #include "ShippedConfig.test.h"
@@ -60,6 +61,9 @@ namespace ecs::testing {
 				file << "<thoughts>" << laterBody << "</thoughts>";
 			}
 			errors = loadThoughtTypes(types, folder);
+			if (errors.empty()) {
+				errors = types.resolveActions(shippedEntries());
+			}
 			std::filesystem::remove_all(folder);
 		}
 

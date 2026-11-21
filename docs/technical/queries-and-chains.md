@@ -720,8 +720,9 @@ Effect rows carry no `when`: an action whose effects differ is two actions.
 ### An action entry
 
 - Duration is one of `seconds`, a fixed time; `workFrom="durability" skill="harvesting"`, the target's
-  durability over the work rate that skill gives; or nothing, with an open-ended effect (`<work>`, or
-  a `<restore>` with `upTo`), so the action runs until its bound.
+  durability over the work rate that skill gives; `workFrom="job" skill="crafting"`, the station's current
+  job's work amount over the crafter's work rate; or nothing, with an open-ended effect (`<work>`, or a
+  `<restore>` with `upTo`), so the action runs until its bound.
 - `hands="free"` means the action needs free hands, and the hands rules run when its chain is selected
   ([Hands](#hands)); `hands="any"`, the default, means the creature keeps carrying.
 - `interruptable` is whether a running action yields to an option of the same or a higher rung; one
@@ -767,7 +768,7 @@ These are in `assets/config/actions/`, with the values the hand-written factorie
 | pickup (`on` loose_item) | take | 0.5 s | free | no | end |
 | withdraw (`on` storage) | take | 0.5 s | free | no | end |
 | deposit | put | 1 s | any | no | end |
-| craft | craft, crafting | the job's work amount over the work rate | free | no | end |
+| craft | craft | from the job's work amount, crafting (`workFrom="job"`) | free | no | end |
 | build | work, construction, up | open-ended | free | no | along |
 | deconstruct | work, construction, down | open-ended | free | no | along |
 | pickup_packaged (`on` packaged) | take | 1.5 s | free | no | end |
@@ -2022,6 +2023,12 @@ Rules from the first build of the loaders:
   underscores, case as written.
 - 2026-11-21: A subfolder under `actions/`, `work/`, `orders/`, or `facts/` is a load error, since their
   entries take top-level ids.
+
+Forms added by the first build of the action entries (WOR-1069, Action entries as the one source of action values):
+
+- 2026-11-21: `workFrom="job"` with `skill`, the station's current job's work amount over the crafter's work
+  rate, so the `craft` entry reproduces the shipped fixed-duration craft. The open-ended craft of
+  [Interruptable crafts](#interruptable-crafts) stays a later behavior change.
 
 Choices made in writing this document, not put to the owner:
 

@@ -250,7 +250,7 @@ namespace-scope, excluding `const` and `constexpr`), with a verdict on each:
 |---|---|
 | Chain id counter | Done (build step 3): the three per-system `nextChainId` statics became one `GoalTaskRegistry` counter; WOR-46 later deleted chain ids, which nothing read. The registry's claim sequence counter, which `clear()` resets at session construction, is the one left. |
 | `GoalTaskRegistry` instance | Cleared at session construction. |
-| Work-config registries (`ActionTypeRegistry`, `WorkTypeRegistry`, `PriorityConfig`, `ConstructionRegistry`) and `ConfigValidator::errors` | Cleared and reloaded by `loadWorkConfig`. |
+| Work-config registries (`WorkTypeRegistry`, `PriorityConfig`, `ConstructionRegistry`) and `ConfigValidator::errors` | Cleared and reloaded by `loadWorkConfig`. |
 | `AssetRegistry`, `RecipeRegistry`, `GeneratorRegistry` | Loaded once per process; definitions don't change between sessions. The synthetic `Terrain_Shore` def is registered idempotently (`AssetRegistry::registerSyntheticDefinition`, called from `VisionSystem::ensureTerrainDefinitionsRegistered`), so ids match across sessions. |
 | The edible item list | No static: `AssetRegistry::edibleItemNames()` is built with the definitions and cleared with them. |
 | `GameWorldState::s_pending` (app) | Handled by the loading scene, above. |

@@ -40,7 +40,6 @@
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
 
-#include "assets/ActionTypeRegistry.h"
 #include "assets/AssetRegistry.h"
 #include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
@@ -131,7 +130,7 @@ namespace ecs::test {
 
 			// Register system with deterministic RNG seed for reproducible tests
 			auto& recipeRegistry = assets::RecipeRegistry::Get();
-			world->registerSystem<AIDecisionSystem>(registry, recipeRegistry, kTestRngSeed);
+			world->registerSystem<AIDecisionSystem>(registry, recipeRegistry, ecs::testing::shippedActions(), kTestRngSeed);
 		}
 
 		void TearDown() override {
@@ -596,7 +595,9 @@ namespace ecs::test {
 	TEST_F(AIDecisionSystemTest, WanderSequenceFollowsSeed) {
 		auto wanderTargets = [this](uint32_t seed) {
 			world = std::make_unique<World>();
-			world->registerSystem<AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), seed);
+			world->registerSystem<AIDecisionSystem>(
+				assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), seed
+			);
 			auto colonist = createColonist({0.0F, 0.0F});
 			for (auto need : {NeedType::Hunger, NeedType::Thirst, NeedType::Energy, NeedType::Bladder}) {
 				setNeedValue(colonist, need, 100.0F);
@@ -856,7 +857,7 @@ namespace ecs::test {
 		world = std::make_unique<World>();
 		auto& registry = assets::AssetRegistry::Get();
 		auto& recipeRegistry = assets::RecipeRegistry::Get();
-		world->registerSystem<AIDecisionSystem>(registry, recipeRegistry, kTestRngSeed);
+		world->registerSystem<AIDecisionSystem>(registry, recipeRegistry, ecs::testing::shippedActions(), kTestRngSeed);
 
 		auto colonist2 = createColonist({0.0F, 0.0F});
 		setNeedValue(colonist2, NeedType::Hunger, 100.0F);
@@ -2467,7 +2468,7 @@ namespace ecs::test {
 		EXPECT_EQ(ecs::handHeldQuantity(*inventory, "Wood"), 14U) << "the full armful is intact -- nothing dropped";
 
 		// Arrived at B, the deposit stops at B's max and the rest stays in hand.
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		world->addComponent<Action>(colonist, Action{});
 		world->getComponent<Position>(colonist)->value = destPos;
 		task->state = TaskState::Arrived;
@@ -3041,8 +3042,8 @@ namespace ecs::test {
 			// Register BOTH systems to test their interaction
 			// This is critical - the bug only manifests when both systems run
 			auto& recipeRegistry = assets::RecipeRegistry::Get();
-			world->registerSystem<AIDecisionSystem>(registry, recipeRegistry, kTestRngSeed);
-			world->registerSystem<ActionSystem>(kTestRngSeed);
+			world->registerSystem<AIDecisionSystem>(registry, recipeRegistry, ecs::testing::shippedActions(), kTestRngSeed);
+			world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		}
 
 		void TearDown() override {
@@ -3341,8 +3342,8 @@ namespace ecs::test {
 
 	// Chain-interruption stowing drives the real AIDecisionSystem::handleChainInterruption,
 	// not a stand-in. A freed one-hand tool goes belt -> backpack -> drop, in that order. The
-	// handler only proceeds when the NEW task's first action needs hands, so each test seeds the
-	// ActionTypeRegistry with a hands-needing action and drives a Harvest interruption.
+	// handler only proceeds when the NEW task's first action needs hands, so each test drives an
+	// interruption by a task whose first action's entry needs free hands, as the shipped harvest's does.
 	class ChainInterruptionFixture : public AIDecisionSystemTest {
 	  protected:
 		// Register a 1-hand Axe tool and ensure the new task's first action (Harvest) needs hands.
@@ -3370,11 +3371,6 @@ namespace ecs::test {
 			stickDef.itemProperties->massKg = 0.5F;
 			registry.registerTestDefinition(std::move(stickDef));
 
-			assets::ActionTypeDef harvestAction;
-			harvestAction.defName = "Harvest";
-			harvestAction.needsHands = true;
-			assets::ActionTypeRegistry::Get().registerTestAction(std::move(harvestAction));
-
 			// Capture drops through the real callback the handler fires.
 			world->getSystem<AIDecisionSystem>().setDropResourceCallback(
 				[this](const std::string& defName, float /*x*/, float /*y*/, uint32_t quantity, glm::vec2) {
@@ -3390,11 +3386,6 @@ namespace ecs::test {
 		uint32_t	droppedQty = 0;
 		uint32_t	droppedTotal = 0;
 		int			dropCalls = 0;
-
-		void TearDown() override {
-			assets::ActionTypeRegistry::Get().clear();
-			AIDecisionSystemTest::TearDown();
-		}
 
 		// Put the colonist mid-Haul, holding the Axe in one hand (chainStep=1).
 		Task* armMidHaulCarryingAxe(EntityID colonist) {
@@ -3442,10 +3433,6 @@ namespace ecs::test {
 	// A switch to Build reads Build's own action, which needs the hands: the carried item is stowed as for
 	// any other hands-on work, not kept in hand on an unknown action.
 	TEST_F(ChainInterruptionFixture, ASwitchToBuildFreesTheHands) {
-		assets::ActionTypeDef buildAction;
-		buildAction.defName = "Build";
-		buildAction.needsHands = true;
-		assets::ActionTypeRegistry::Get().registerTestAction(std::move(buildAction));
 		auto  colonist = createColonist({5.0F, 5.0F});
 		auto* inventory = world->getComponent<Inventory>(colonist);
 		inventory->pickUp("Axe", 1);
@@ -3605,46 +3592,14 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TaskFirstActionNeedsHandsMapping) {
-		// Unit test: Verify ActionTypeRegistry returns expected needsHands values.
-		// The getFirstActionDefName() helper maps TaskType→ActionDefName, and
-		// ActionTypeRegistry provides the needsHands property from XML config.
-
-		auto& actionRegistry = assets::ActionTypeRegistry::Get();
-
-		// Check if action types are loaded (they should be from game config)
-		// If not loaded in test environment, we verify the registry API works
-		if (actionRegistry.size() == 0) {
-			// Registry not loaded - just verify the API exists and doesn't crash
-			// The actual values are tested in WorkConfig.test.cpp
-			EXPECT_FALSE(actionRegistry.actionNeedsHands("NonExistent"));
-			return;
-		}
-
-		// If registry is loaded, verify expected mappings from action-types.xml:
-		// - Pickup: needsHands=true (picking up items)
-		// - Craft: needsHands=true (crafting actions)
-		// - Harvest: needsHands=true (gathering actions)
-		// - Sleep: needsHands=false (sleeping doesn't need hands)
-		// - Wander: needsHands=false (walking around)
-		// - Toilet: needsHands=false (using toilet)
-		// - Eat: needsHands=true (eating food)
-
-		if (actionRegistry.hasAction("Pickup")) {
-			EXPECT_TRUE(actionRegistry.actionNeedsHands("Pickup"))
-			    << "Pickup action should need hands";
-		}
-		if (actionRegistry.hasAction("Sleep")) {
-			EXPECT_FALSE(actionRegistry.actionNeedsHands("Sleep"))
-			    << "Sleep action should NOT need hands";
-		}
-		if (actionRegistry.hasAction("Wander")) {
-			EXPECT_FALSE(actionRegistry.actionNeedsHands("Wander"))
-			    << "Wander action should NOT need hands";
-		}
-		if (actionRegistry.hasAction("Eat")) {
-			EXPECT_TRUE(actionRegistry.actionNeedsHands("Eat"))
-			    << "Eat action should need hands";
-		}
+		// The hands rule reads whether a task's first action needs free hands from that action's entry.
+		const ActionEntries& actions = ecs::testing::shippedActions();
+		EXPECT_TRUE(actions.pickup.freeHands) << "Pickup action should need hands";
+		EXPECT_TRUE(actions.craft.freeHands) << "Craft action should need hands";
+		EXPECT_TRUE(actions.harvest.freeHands) << "Harvest action should need hands";
+		EXPECT_FALSE(actions.sleep.freeHands) << "Sleep action should NOT need hands";
+		EXPECT_FALSE(actions.urinate.freeHands) << "Relieving should NOT need hands";
+		EXPECT_TRUE(actions.eat.freeHands) << "Eat action should need hands";
 	}
 
 	// =============================================================================
@@ -3850,7 +3805,7 @@ namespace ecs::test {
 		ballast.itemProperties->stackSize = 40;
 		ballast.itemProperties->massKg = 1.5F;
 		registry.registerTestDefinition(std::move(ballast));
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 
 		auto colonist = createColonist({0.0F, 0.0F});
 		world->addComponent<Action>(colonist, Action{});
@@ -5095,7 +5050,7 @@ namespace ecs::test {
 	  protected:
 		void SetUp() override {
 			AIDecisionFirstMeshTest::SetUp();
-			world->registerSystem<ActionSystem>(kTestRngSeed);
+			world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		}
 
 		[[nodiscard]] world::ChunkManager* chunkRegion() const override { return slidePondChunks(); }
@@ -5261,7 +5216,7 @@ namespace ecs::test {
 		for (int i = 0; i < 200 && action->isActive(); ++i) {
 			world->update(kTick);
 		}
-		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Hygiene).value, Action::kWashHygieneRestored);
+		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Hygiene).value, 100.0F);
 		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Thirst).value, 100.0F) << "washing is not drinking";
 		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Bladder).value, 100.0F) << "washing fills no bladder";
 	}
@@ -5491,7 +5446,7 @@ namespace ecs::test {
 	// who has seen nothing yet sees the river, chooses a shore point, walks to the bank and drinks there.
 	TEST_F(AIDecisionRiverTest, ThirstyColonistDrinksAtAShorePointVisionRecorded) {
 		world->registerSystem<TimeSystem>();
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		auto& vision = world->registerSystem<VisionSystem>();
 		vision.setChunkManager(twoRiverChunks());
 		vision.setUpdateInterval(1);
@@ -6446,7 +6401,7 @@ namespace ecs::test {
 		void SetUp() override {
 			AIDecisionFirstMeshTest::SetUp();
 			world->registerSystem<TimeSystem>();
-			world->registerSystem<ActionSystem>(kTestRngSeed);
+			world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 			world->getSystem<ActionSystem>().setTakeSourceCallback(
 				[this](const std::string& defName, float x, float y, ActionSystem::SourceTake take, float seconds) {
 					return takeWorldSource(trees, *world, pendingRemoval, defName, {x, y}, take, seconds);
@@ -7572,7 +7527,7 @@ namespace ecs::test {
 	// knows, its only end 60 m east. The task survives the detour (one decision) and he drinks.
 	TEST_F(AIDecisionWallTest, NeedSurvivesADetourFarFromItsTarget) {
 		world->registerSystem<TimeSystem>();
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		assets::AssetDefinition water;
 		water.defName = "Water";
 		water.label	  = "Water";
@@ -7740,7 +7695,7 @@ namespace ecs::test {
 	// water and drinks.
 	TEST_F(AIDecisionFirstMeshTest, WaterInGroundNothingLoadsIsNeverChosen) {
 		world->registerSystem<TimeSystem>();
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		assets::AssetDefinition water;
 		water.defName = "Water";
 		water.label	  = "Water";
@@ -7775,7 +7730,7 @@ namespace ecs::test {
 	// walks and drinks.
 	TEST_F(AIDecisionArrivingGroundTest, WaterBeyondMeshedGroundIsNotAskedForUntilItsGroundLands) {
 		world->registerSystem<TimeSystem>();
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		assets::AssetDefinition water;
 		water.defName = "Water";
 		water.label	  = "Water";
@@ -7813,7 +7768,7 @@ namespace ecs::test {
 	  protected:
 		int targetChangesWalkingToWater(bool groundLandsElsewhere) {
 			world->registerSystem<TimeSystem>();
-			world->registerSystem<ActionSystem>(kTestRngSeed);
+			world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 			assets::AssetDefinition water;
 			water.defName = "Water";
 			water.label	  = "Water";
@@ -7873,7 +7828,7 @@ namespace ecs::test {
 		void SetUp() override {
 			AIDecisionFirstMeshTest::SetUp();
 			world->registerSystem<TimeSystem>();
-			world->registerSystem<ActionSystem>(kTestRngSeed);
+			world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 			assets::AssetDefinition stone;
 			stone.defName					= "Stone";
 			stone.label						= "Stone";
@@ -8592,7 +8547,7 @@ namespace ecs::test {
 		const auto lookupsForOneDecision = [&](int perKind) {
 			GoalTaskRegistry::Get().clear();
 			world = std::make_unique<World>();
-			world->registerSystem<AIDecisionSystem>(registry, assets::RecipeRegistry::Get(), kTestRngSeed);
+			world->registerSystem<AIDecisionSystem>(registry, assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), kTestRngSeed);
 
 			makeStockingHarvest({0.0F, 8.0F}, "Wood");
 			const glm::vec2 highPos{8.0F, 0.0F};

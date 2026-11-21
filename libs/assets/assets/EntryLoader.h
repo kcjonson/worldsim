@@ -24,6 +24,9 @@ namespace assets {
 		std::vector<CreatureConfigFiles> creatures;
 		/// The arbitration ladder's rung names, highest first; a work entry's `rung` names one.
 		std::vector<std::string> rungs;
+		/// The needs the sim tracks in its fixed list, by need id, which no behavior brings until the need entries
+		/// land (behavior-data-migration.md, Seams); an action's effect may name one.
+		std::vector<std::string> trackedNeeds;
 		/// The id of a loaded asset definition by its name, or none when no definition has that name.
 		std::function<std::optional<uint32_t>(std::string_view)> definitionId;
 	};
