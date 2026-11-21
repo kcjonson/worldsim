@@ -40,9 +40,9 @@ This folder contains all design documents related to colonist behavior and mecha
 
 ```
 AI Behavior
-    ├── Needs System (triggers tiers 3 and 5)
+    ├── Needs System (triggers the critical_need and ordinary_need rungs)
     ├── Memory System (filters available tasks)
-    ├── Work Priorities (tier 6 behavior)
+    ├── Work Priorities (opportunistic_work behavior)
     └── Entity Capabilities (need fulfillment)
 
 Memory System
@@ -59,7 +59,7 @@ Skills
 
 For the first playable prototype:
 
-- **Included:** Hunger, Thirst, Energy, Bladder needs; AI tiers 5-7; basic task queue
+- **Included:** Hunger, Thirst, Energy, Bladder needs; the ordinary_need, opportunistic_work, and idle rungs; basic task queue
 - **Deferred:** Panic/Breakdown, Hygiene/Recreation, player control modes, skills
 
 See [MVP Scope](../mvp-scope.md) for complete details.
@@ -69,5 +69,5 @@ See [MVP Scope](../mvp-scope.md) for complete details.
 ## Related Topics
 
 - [Entity Capabilities](../world/entity-capabilities.md) — How entities fulfill needs
-- [Player Control](../features/player-control.md) — AI tier 4 behavior
+- [Player Control](../features/player-control.md) — the player_order rung
 - [Storage System](../features/storage-system.md) — Hauling work type

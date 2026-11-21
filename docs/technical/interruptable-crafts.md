@@ -34,13 +34,13 @@ Read from the code on `main` at 0b12648a.
   (`recordChainClaims`). The claim dies with the task. Nothing else records who is crafting:
   `CraftingJob` is `{recipeDefName, quantity, completed}`.
 - **The switch gate.** While an action runs, a non-interruptable one blocks every switch, critical
-  needs included; an interruptable one yields to a same or higher tier. Craft, Build, Deconstruct,
+  needs included; an interruptable one yields to a same or higher rung. Craft, Build, Deconstruct,
   Harvest, Pickup, Withdraw, Deposit, PickupPackaged, PlacePackaged, Eat, Drink, and Toilet are
   non-interruptable. Sleep is the only interruptable action.
 - **The AI acts on two of a need's three levels.** Below its seek threshold (hunger and thirst 50,
-  energy, bladder and digestion 30) a need is an option at tier 5. Below its critical threshold it
-  is tier 2; the tier and the decide-at-once trigger (`criticalNeedMask`, `shouldReEvaluate`) both
-  read the need's own `criticalThreshold`. The urgent threshold is read only by `Need::level()`.
+  energy, bladder and digestion 30) a need is an option on the `ordinary_need` rung. Below its
+  critical threshold it is on `critical_need`; the rung and the decide-at-once trigger
+  (`criticalNeedMask`, `shouldReEvaluate`) both read the need's own `criticalThreshold`. The urgent threshold is read only by `Need::level()`.
   The thresholds are data in `assets/world/creatures/Human/needs.xml`; the decay
   rates are literals in `Needs.cpp`.
 - **Build progress is already on the thing built.** `StructureBlueprint::workDone` and `workTotal`;
@@ -403,9 +403,9 @@ digestion; 40, 25, 15 for hygiene and temperature; and 30, 20, 10 for recreation
 in the work entries' `rung`. The engine promotes a need to `urgent_need` or `critical_need` by its
 thresholds, a held Craft to `own_unfinished_work`, and work serving a work order to `committed_work`;
 an idle chain is on `idle`, and a satisfied need offers no option. Code names a rung by its ladder name
-and never by a number, so none of `installDefaultTaskTiers`, `Task::priorityTier`,
-`EvaluatedOption::tier`, `ClaimHolder::tier`, or `tierLabel` in `TaskListView.cpp` can come to mean the
-wrong rung.
+and never by a number: `Task::priorityTier`, `EvaluatedOption::tier`, and `ClaimHolder::tier` hold a
+rung's position in the loaded ladder, and `rungLabel` in `TaskListView.cpp` labels a rung by its name, so
+none of them can come to mean the wrong rung.
 
 **Claim index.** After the per-task pass, `ClaimIndex::rebuild` walks the stations' queues and
 records each live crafter against its station in a table of its own, not as a claim: a hold has no
@@ -476,9 +476,9 @@ Deleted, each in the change that replaces it:
 - The decay literals in `Needs.cpp`.
 - Direct calls to `WorkQueue::removeJob` from the game, in favour of `cancelCraftingJob`.
 - The inline sleep quality choice in `NeedActions.cpp`, in favour of `sleepQuality`.
-- Bare tier numbers in C++ defaults (`installDefaultTaskTiers`, `Task::priorityTier`,
-  `EvaluatedOption::tier`, `ClaimHolder::tier`, and `tierLabel`, listed under Data), in favour of the
-  named rungs.
+- Bare tier numbers in C++ (the `kTier*` constants, `<TaskTiers>`, and the numbered `tierLabel` in
+  `TaskListView.cpp`), in favour of the named rungs, which `Task::priorityTier`, `EvaluatedOption::tier`,
+  and `ClaimHolder::tier` hold as ladder positions (WOR-1068, Named ladder).
 - Sleep's restore at completion (`applyNeedEffect` for a Sleep), replaced by the per-tick payout.
 - The `GlobalTaskAdapter` lookup of a Craft row's worker through colonists' current tasks, replaced
   by the job's crafter.

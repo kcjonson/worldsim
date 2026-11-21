@@ -13,8 +13,7 @@
 
 namespace assets {
 
-	/// The config name of every task type the AI evaluates, in ecs::TaskType order after None. Each must
-	/// have an arbitration tier in arbitration/priority-tuning.xml's <TaskTiers>.
+	/// The config name of every task type the AI evaluates, in ecs::TaskType order after None.
 	inline constexpr std::array<const char*, 8> kTaskTypeNames = {
 		"FulfillNeed", "Harvest", "Craft", "Haul", "PlacePackaged", "Build", "Deconstruct", "Wander"
 	};
