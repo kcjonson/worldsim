@@ -5,8 +5,10 @@
 #include "../offset/WallOffset.h"
 #include "../predicates/Predicates.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <map>
+#include <utility>
 #include <vector>
 
 namespace geometry {
@@ -43,12 +45,10 @@ namespace geometry {
 		// across its twin. Such half-edges, chained by rotating around their target
 		// vertex past interior (kept|kept) edges, form closed loops: CCW around a
 		// kept region's outer boundary, CW around an enclosed void.
-		std::vector<ResultLoop> walkBoundary(const HalfEdgeMesh& mesh, const std::vector<bool>& kept) {
-			const std::size_t					halfCount = mesh.halfEdges.size();
-			auto keptSide = [&](std::size_t h) {
-				const std::size_t f = mesh.halfEdges[h].face;
-				return f < kept.size() && kept[f];
-			};
+		// `keptSide(h)` says whether the region on half-edge h's left, its face, is kept.
+		template <typename KeptSideFn>
+		std::vector<ResultLoop> walkBoundary(const HalfEdgeMesh& mesh, KeptSideFn keptSide) {
+			const std::size_t halfCount = mesh.halfEdges.size();
 			auto isBoundary = [&](std::size_t h) {
 				return keptSide(h) && !keptSide(mesh.halfEdges[h].twin);
 			};
@@ -156,7 +156,10 @@ namespace geometry {
 				kept[f]				  = keepFace(insideA, insideB);
 			}
 
-			return walkBoundary(mesh, kept);
+			return walkBoundary(mesh, [&](std::size_t h) {
+				const std::size_t f = mesh.halfEdges[h].face;
+				return f < kept.size() && kept[f];
+			});
 		}
 
 		// Containment via a single interior sample: when the rings share no boundary
@@ -216,7 +219,187 @@ namespace geometry {
 			return false;
 		}
 
+		// An arrangement edge of one fill group, `weight` the group's net count of rings running along it
+		// from `a` to `b` (against counts -1). Coordinates doubled, so an edge's midpoint is a lattice point.
+		struct WeightedEdge {
+			Vec2i64 a;
+			Vec2i64 b;
+			int		weight = 0;
+		};
+
+		// The winding number of weighted edges round `point` (doubled), by a ray toward +x (+y when
+		// `upward`), the edge rule half-open. An edge through the point is not counted, so for a point on
+		// an edge the answer is the winding just off it toward +x (+y): the side the ray leaves from.
+		int windingAt(const std::vector<WeightedEdge>& edges, Vec2i64 point, bool upward) {
+			// A quarter turn taking +y to +x keeps every winding and makes the upward ray a rightward one.
+			const auto turned = [upward](Vec2i64 v) { return upward ? Vec2i64{v.y, -v.x} : v; };
+			const Vec2i64 q = turned(point);
+			int			  winding = 0;
+			for (const WeightedEdge& edge : edges) {
+				const Vec2i64 a = turned(edge.a);
+				const Vec2i64 b = turned(edge.b);
+				if (a.y <= q.y) {
+					if (b.y > q.y && cross(b - a, q - a).sign() > 0) {
+						winding += edge.weight;
+					}
+				} else if (b.y <= q.y && cross(b - a, q - a).sign() < 0) {
+					winding -= edge.weight;
+				}
+			}
+			return winding;
+		}
+
+		// Cuts a loop where it visits a vertex twice, so each piece visits every vertex once.
+		void splitAtRepeatedVertices(const Ring& loop, std::vector<Ring>& out) {
+			Ring open;
+			for (const Vec2i64& vertex : loop) {
+				const auto repeat = std::find(open.begin(), open.end(), vertex);
+				if (repeat != open.end()) {
+					out.emplace_back(repeat, open.end());
+					open.erase(repeat, open.end());
+				}
+				open.push_back(vertex);
+			}
+			out.push_back(std::move(open));
+		}
+
 	} // namespace
+
+	std::vector<RegionPolygon> unionOfFills(const std::vector<std::vector<Ring>>& groups) {
+		struct InputEdge {
+			std::size_t group = 0;
+			Vec2i64		a;
+			Vec2i64		b;
+		};
+		std::vector<InputEdge>	  inputs;
+		std::vector<InputSegment> segments;
+		for (std::size_t group = 0; group < groups.size(); ++group) {
+			for (const Ring& ring : groups[group]) {
+				for (std::size_t i = 0; i < ring.size(); ++i) {
+					const Vec2i64& a = ring[i];
+					const Vec2i64& b = ring[(i + 1) % ring.size()];
+					if (a == b) {
+						continue;
+					}
+					segments.push_back({a, b, static_cast<std::int64_t>(inputs.size())});
+					inputs.push_back({group, a, b});
+				}
+			}
+		}
+		if (segments.empty()) {
+			return {};
+		}
+
+		const Arrangement  arrangement = buildArrangement(segments);
+		const HalfEdgeMesh mesh = extractFaces(arrangement);
+		const std::size_t  groupCount = groups.size();
+		const std::size_t  edgeCount = arrangement.edges.size();
+
+		// Each group's edges with their net weights, and the doubled box outside which its winding is 0.
+		std::vector<int>						weights(edgeCount * groupCount, 0);
+		std::vector<std::vector<WeightedEdge>>	groupEdges(groupCount);
+		std::vector<std::pair<Vec2i64, Vec2i64>> groupBoxes(groupCount);
+		std::vector<bool>						groupBoxSet(groupCount, false);
+		for (std::size_t e = 0; e < edgeCount; ++e) {
+			const ArrangementEdge& edge = arrangement.edges[e];
+			const Vec2i64		   from = arrangement.vertices[edge.from];
+			const Vec2i64		   to = arrangement.vertices[edge.to];
+			for (const std::int64_t source : edge.provenance) {
+				const InputEdge& input = inputs[static_cast<std::size_t>(source)];
+				weights[e * groupCount + input.group] += dot(input.b - input.a, to - from).sign() > 0 ? 1 : -1;
+			}
+			for (std::size_t group = 0; group < groupCount; ++group) {
+				const int weight = weights[e * groupCount + group];
+				if (weight == 0) {
+					continue;
+				}
+				groupEdges[group].push_back({from * 2, to * 2, weight});
+				auto& [low, high] = groupBoxes[group];
+				for (const Vec2i64 point : {from * 2, to * 2}) {
+					if (!groupBoxSet[group]) {
+						low = high = point;
+						groupBoxSet[group] = true;
+					}
+					low = {std::min(low.x, point.x), std::min(low.y, point.y)};
+					high = {std::max(high.x, point.x), std::max(high.y, point.y)};
+				}
+			}
+		}
+
+		// Whether the region left and right of each edge (from -> to) is in the union, tested at the edge's
+		// midpoint: the computed side is the one the ray leaves from, the other differs by the edge's weight.
+		std::vector<bool> leftInside(edgeCount, false);
+		std::vector<bool> rightInside(edgeCount, false);
+		for (std::size_t e = 0; e < edgeCount; ++e) {
+			const ArrangementEdge& edge = arrangement.edges[e];
+			const Vec2i64		   from = arrangement.vertices[edge.from];
+			const Vec2i64		   to = arrangement.vertices[edge.to];
+			const Vec2i64		   middle = from + to;
+			const Vec2i64		   direction = to - from;
+			const bool			   upward = direction.y == 0;
+			const bool			   computedIsRight = upward ? direction.x < 0 : direction.y > 0;
+			for (std::size_t group = 0; group < groupCount && !(leftInside[e] && rightInside[e]); ++group) {
+				const auto& [low, high] = groupBoxes[group];
+				if (!groupBoxSet[group] || middle.x < low.x || middle.x > high.x || middle.y < low.y || middle.y > high.y) {
+					continue;
+				}
+				const int weight = weights[e * groupCount + group];
+				const int computed = windingAt(groupEdges[group], middle, upward);
+				const int right = computedIsRight ? computed : computed - weight;
+				leftInside[e] = leftInside[e] || right + weight != 0;
+				rightInside[e] = rightInside[e] || right != 0;
+			}
+		}
+
+		const std::vector<ResultLoop> loops = walkBoundary(mesh, [&](std::size_t h) {
+			const HalfEdge& half = mesh.halfEdges[h];
+			return half.origin == arrangement.edges[half.edge].from ? leftInside[half.edge] : rightInside[half.edge];
+		});
+
+		std::vector<Ring> pieces;
+		for (const ResultLoop& loop : loops) {
+			splitAtRepeatedVertices(loop.ring, pieces);
+		}
+		std::vector<RegionPolygon> region;
+		std::vector<Ring>		   holes;
+		for (Ring& piece : pieces) {
+			simplifyRing(piece, kBooleanSimplifyEpsMm);
+			const int sign = piece.size() < 3 ? 0 : signedAreaDoubled(piece).sign();
+			if (sign > 0) {
+				region.push_back({std::move(piece), {}});
+			} else if (sign < 0) {
+				holes.push_back(std::move(piece));
+			}
+		}
+
+		// A hole belongs to the smallest outline round the middle of its first edge.
+		std::vector<Ring> doubledOuters;
+		doubledOuters.reserve(region.size());
+		for (const RegionPolygon& polygon : region) {
+			Ring doubled;
+			doubled.reserve(polygon.outer.size());
+			for (const Vec2i64& point : polygon.outer) {
+				doubled.push_back(point * 2);
+			}
+			doubledOuters.push_back(std::move(doubled));
+		}
+		for (Ring& hole : holes) {
+			const Vec2i64 probe = hole[0] + hole[1];
+			std::size_t	  owner = region.size();
+			for (std::size_t i = 0; i < region.size(); ++i) {
+				if (pointInPolygon(probe, doubledOuters[i]) != PointInPolygon::Inside) {
+					continue;
+				}
+				if (owner == region.size() || signedAreaDoubled(region[i].outer) < signedAreaDoubled(region[owner].outer)) {
+					owner = i;
+				}
+			}
+			if (owner < region.size()) {
+				region[owner].holes.push_back(std::move(hole));
+			}
+		}
+		return region;
+	}
 
 	bool ringsInteriorOverlap(const Ring& a, const Ring& b) {
 		if (!ringValid(a) || !ringValid(b)) {

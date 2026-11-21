@@ -4,6 +4,7 @@
 #include "../polygon/Polygon.h"
 
 #include <cstdint>
+#include <vector>
 
 // Polygon booleans for foundation shape editing (building-construction D2/G).
 // Inputs are two SIMPLE rings; the only legal output is a SINGLE simple ring
@@ -67,6 +68,20 @@ namespace geometry {
 	// separate foundations placed on top of each other while allowing edge-to-edge
 	// snapping. Returns false on invalid (non-simple) input.
 	bool ringsInteriorOverlap(const Ring& a, const Ring& b);
+
+	// One piece of a region: a simple CCW outline and the simple CW outlines of its holes.
+	struct RegionPolygon {
+		Ring			  outer;
+		std::vector<Ring> holes;
+	};
+
+	// The union of several fills, each a group of rings filled by the nonzero rule (a point is in a group
+	// when the group's rings wind round it a nonzero number of times, so a ring wound against the others
+	// cuts a hole), as disjoint simple polygons with their holes. Where the region touches itself at a
+	// single point the outline is split there, one ring each side, so every ring is simple on its own.
+	// Rings may overlap, touch, cross themselves, or nest; zero-length edges are ignored. The result is
+	// in the input's units, each ring simplified by kBooleanSimplifyEpsMm of them; empty for no area.
+	std::vector<RegionPolygon> unionOfFills(const std::vector<std::vector<Ring>>& groups);
 
 	constexpr std::int64_t kBooleanSimplifyEpsMm = 1;
 
