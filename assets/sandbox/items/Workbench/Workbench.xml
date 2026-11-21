@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A demo workbench for the ui-sandbox's item-turntable scene: a parts asset built to the art contract
+  (docs/design/game-systems/world/rotatable-placed-items.md) and the worked example in
+  docs/technical/rendering/rotatable-placed-items.md, section 4.4. It lives under assets/sandbox, which
+  only the sandbox reads; the game loads assets/world. Drawings are at 64 units a metre.
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Workbench</defName>
+    <label>Workbench</label>
+    <assetType>parts</assetType>
+    <category>Furniture</category>
+    <handsRequired>2</handsRequired>
+    <capabilities>
+      <craftable/>
+    </capabilities>
+    <detailLevels>8, 24, 60</detailLevels>
+
+    <parts>
+      <part name="carcass">
+        <footprint><rect minX="-1.42" minY="-0.42" maxX="1.42" maxY="0.42"/></footprint>
+        <height bottom="0" top="0.72"/>
+        <top color="#9A6A3F"/>
+        <sides color="#9A6A3F">
+          <face side="front" drawing="carcass-front.svg"/>
+          <face side="back" drawing="carcass-back.svg"/>
+          <face side="left right" drawing="carcass-end.svg"/>
+        </sides>
+      </part>
+      <part name="worktop">
+        <footprint><rect minX="-1.5" minY="-0.5" maxX="1.5" maxY="0.5"/></footprint>
+        <height bottom="0.72" top="0.8"/>
+        <top drawing="worktop-top.svg"/>
+        <sides color="#B38654">
+          <face side="left right" drawing="worktop-end.svg"/>
+        </sides>
+      </part>
+      <part name="vise">
+        <footprint><rect minX="-0.16" minY="-0.15" maxX="0.16" maxY="0.15"/></footprint>
+        <height bottom="0.8" top="0.98"/>
+        <top drawing="vise-top.svg"/>
+        <sides color="#8D9193">
+          <face side="front back" drawing="vise-front.svg"/>
+          <face side="left right" drawing="vise-end.svg"/>
+        </sides>
+      </part>
+      <part name="toolbox">
+        <footprint><rect minX="-0.23" minY="-0.14" maxX="0.23" maxY="0.14"/></footprint>
+        <height bottom="0.8" top="1.0"/>
+        <top drawing="toolbox-top.svg"/>
+        <sides color="#8B4A37">
+          <face side="front" drawing="toolbox-front.svg"/>
+          <face side="back" drawing="toolbox-back.svg"/>
+          <face side="left right" drawing="toolbox-end.svg"/>
+        </sides>
+      </part>
+    </parts>
+
+    <placements>
+      <place part="carcass"/>
+      <place part="worktop"/>
+      <place part="vise" x="1.18" y="0.39"/>
+      <place part="toolbox" x="-1.09" y="-0.28"/>
+    </placements>
+
+    <useAreas>
+      <rect minX="-1.2" minY="0.5" maxX="1.2" maxY="1.2"/>
+    </useAreas>
+    <clearance>
+      <rect minX="-1.5" minY="0.5" maxX="1.5" maxY="1.1"/>
+    </clearance>
+  </AssetDef>
+</AssetDefinitions>

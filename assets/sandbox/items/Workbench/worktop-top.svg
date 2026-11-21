@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 64">
+  <rect x="0" y="0" width="192" height="64" fill="#b38654"/>
+  <g transform="translate(96 32)">
+    <line x1="-95" y1="-16" x2="95" y2="-16" stroke="#724f30" stroke-width="1.2"/>
+    <line x1="-95" y1="0" x2="95" y2="0" stroke="#724f30" stroke-width="1.2"/>
+    <line x1="-95" y1="16" x2="95" y2="16" stroke="#724f30" stroke-width="1.2"/>
+    <line x1="-40" y1="-30.5" x2="-40" y2="-17.5" stroke="#724f30" stroke-width="1.2"/>
+    <line x1="74" y1="-30.5" x2="74" y2="-17.5" stroke="#724f30" stroke-width="1.2"/>
+    <line x1="28" y1="-14.5" x2="28" y2="-1.5" stroke="#724f30" stroke-width="1.2"/>
+    <line x1="-66" y1="1.5" x2="-66" y2="14.5" stroke="#724f30" stroke-width="1.2"/>
+    <line x1="50" y1="17.5" x2="50" y2="30.5" stroke="#724f30" stroke-width="1.2"/>
+    <g transform="translate(-18 6) rotate(-7)">
+      <polygon points="-27,-4 22,-7 22,5 18.5,7.5 15,5 11.5,7.5 8,5 4.5,7.5 1,5 -2.5,7.5 -6,5 -9.5,7.5 -13,5 -16.5,7.5 -20,5 -23.5,7.5 -27,5" fill="#b7b9b5" stroke="#33241a" stroke-width="1.5"/>
+      <rect x="20" y="-9" width="14" height="17" rx="3" fill="#7b5232" stroke="#33241a" stroke-width="1.5"/>
+      <rect x="24" y="-4" width="6" height="7" rx="2" fill="#b38654" stroke="#33241a" stroke-width="1"/>
+    </g>
+    <g transform="translate(36 -14) rotate(24)">
+      <rect x="-18" y="-2.5" width="30" height="5" rx="2" fill="#9a6a3f" stroke="#33241a" stroke-width="1.5"/>
+      <rect x="10" y="-8" width="8" height="16" rx="1.5" fill="#8d9193" stroke="#33241a" stroke-width="1.5"/>
+    </g>
+    <rect x="-10" y="-27" width="14" height="6" rx="1" fill="#7b5232" stroke="#33241a" stroke-width="1.5"/>
+    <g data-lod="24">
+      <circle cx="-60" cy="14" r="3.5" fill="#8d9193" stroke="#33241a" stroke-width="1.2"/>
+      <circle cx="-60" cy="14" r="1.3" fill="#2a211b"/>
+      <circle cx="-50" cy="22" r="3" fill="#8d9193" stroke="#33241a" stroke-width="1.2"/>
+      <circle cx="-50" cy="22" r="1.1" fill="#2a211b"/>
+      <line x1="4" y1="-24" x2="10" y2="-20" stroke="#5c6063" stroke-width="1.6"/>
+      <line x1="12" y1="-26" x2="13" y2="-19" stroke="#5c6063" stroke-width="1.6"/>
+      <circle cx="-30" cy="-20" r="2.6" fill="none" stroke="#5c6063" stroke-width="1.6"/>
+    </g>
+  </g>
+</svg>
