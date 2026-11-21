@@ -197,8 +197,11 @@ namespace geometry {
 			vertices[index] = placedVertex(halfPlanes, kept[(index + keptCount - 1) % keptCount], kept[index]);
 		}
 		HullList		  hull;
-		const std::size_t hullCount = convexHullInto(vertices.data(), keptCount, hull.data());
-		assert(hullCount >= 3);
+		std::sort(vertices.begin(), vertices.begin() + static_cast<std::ptrdiff_t>(keptCount));
+		const auto distinctCount =
+			static_cast<std::size_t>(std::unique(vertices.begin(), vertices.begin() + static_cast<std::ptrdiff_t>(keptCount)) - vertices.begin());
+		assert(distinctCount >= 3);
+		const std::size_t hullCount = convexHullInto(vertices.data(), distinctCount, hull.data());
 		std::size_t		  first = 0;
 		for (std::size_t index = 0; index < hullCount; ++index) {
 			if (inUpperHalfTurn(hull[index]) && !inUpperHalfTurn(hull[(index + hullCount - 1) % hullCount])) {

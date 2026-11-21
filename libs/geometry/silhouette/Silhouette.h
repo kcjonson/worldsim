@@ -42,7 +42,9 @@ namespace geometry {
 	// degenerate triangles are ignored. The triangles' union in halves of their order (each half's outline unioned
 	// with the other's, so a triangle's inner edges never meet the rest of the shape), simplified by `tolerance`,
 	// then closed by `closeRadius` (closeOutline). Every triangle lies inside the result or within
-	// silhouetteBoundMm of it. Empty for no area.
+	// silhouetteBoundMm of it, but for a body under about 2 mm across: each union's own simplification by
+	// kBooleanSimplifyEpsMm can collapse one that thin (a 0.8 by 300 mm stroke), and a piece left with fewer than three
+	// vertices is dropped. Empty for no area.
 	std::vector<Ring> silhouetteOfTriangles(
 		const std::vector<Vec2i64>& triangleVertices, std::int64_t closeRadius, std::int64_t tolerance
 	);

@@ -182,7 +182,9 @@ namespace assets {
 		const MotionDef* getMotion(const std::string& defName);
 
 		/// Get the cached selection silhouette for a template (MeshSilhouette.h), in the template's pivot
-		/// frame: built lazily from the template mesh's triangles by silhouetteOfMesh. Thread-safe (own
+		/// frame: a prewarmed procedural template's was built at load (prewarmProceduralTemplates); any other's is
+		/// built on first ask, by silhouetteOfMesh from the template mesh's triangles, or for a parts template by
+		/// buildItemSilhouette at turn 0. Thread-safe (own
 		/// mutex, heavy compute off-lock), safe to call from chunk workers like getTemplate.
 		const AssetSilhouette* getSilhouette(uint32_t templateId);
 

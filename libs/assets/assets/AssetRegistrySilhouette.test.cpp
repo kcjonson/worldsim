@@ -189,6 +189,11 @@ TEST(AssetRegistrySilhouette, OutlineHoldsWhatIsDrawnAndTheHitRegionHoldsTheOutl
 		ASSERT_TRUE(sil->valid) << name;
 		const OutlineReach reach = outlineReach(*mesh, *sil);
 		EXPECT_LE(reach.worstMm, static_cast<double>(reach.boundMm)) << name << " draws " << reach.worstMm << " mm outside its outline";
+		// The formula's bound is loose for small objects (about 10 mm for a colonist facing). Measured: 1.0 mm for every
+		// colonist facing, 0.7 mm for plant fibre; the mask this replaced reached 2 to 4 mm. A fixed 2 mm holds them there.
+		if (name != "Flora_TreeOak") {
+			EXPECT_LE(reach.worstMm, 2.0) << name << " draws " << reach.worstMm << " mm outside its outline";
+		}
 		for (const auto& ring : sil->rings) {
 			for (const auto& vertex : ring) {
 				EXPECT_TRUE(withinMillimetreOf(sil->hitRegion, vertex)) << name << ": the outline at (" << vertex.x << ", " << vertex.y << ") is outside the hit region";

@@ -13,7 +13,8 @@ namespace assets {
 	/// `rings` is the outline (holes filled, separate bodies kept apart) used for the selection outline; `hitRegion`
 	/// is the same closed by a wider radius and holding all of `rings`, so gaps between separate bodies are clickable
 	/// (whole-clump) and narrow notches forgive a little, used for hit-testing. Every opaque triangle lies inside `rings`
-	/// or within geometry::silhouetteBoundMm of it.
+	/// or within geometry::silhouetteBoundMm of it, but for a body under about 2 mm across, which the unions' 1 mm
+	/// simplification can collapse.
 	struct AssetSilhouette {
 		std::vector<geometry::Ring> rings;
 		std::vector<geometry::Ring> hitRegion;
