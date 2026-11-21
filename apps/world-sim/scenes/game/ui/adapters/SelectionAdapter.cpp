@@ -475,7 +475,8 @@ namespace world_sim {
 		const ecs::World&								world,
 		const construction::ConstructionWorld& constructionWorld,
 		const WallSegmentSelection&						selection,
-		const std::function<void()>&					onDemolish
+		const std::function<void()>&					onDemolish,
+		bool											noGroundToBuildFrom
 	) {
 		PanelContent content;
 
@@ -520,7 +521,11 @@ namespace world_sim {
 			(segment != nullptr) ? world.getComponent<ecs::StructureBlueprint>(segment->entity) : nullptr;
 
 		if (!built && blueprint != nullptr) {
-			content.slots.push_back(TextSlot{"State", buildPhaseLabel(blueprint->phase, blueprint->demolishing)});
+			const bool noGround =
+				noGroundToBuildFrom && blueprint->phase == ecs::StructureBlueprint::BuildPhase::UnderConstruction && !blueprint->demolishing;
+			content.slots.push_back(
+				TextSlot{"State", noGround ? std::string{"No ground to build from"} : buildPhaseLabel(blueprint->phase, blueprint->demolishing)}
+			);
 			content.slots.push_back(TextSlot{"Materials", materialsSummary(*blueprint)});
 			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->displayProgress(blueprint->demolishing) * 100.0F});
 		}

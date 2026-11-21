@@ -491,8 +491,47 @@ released only by the task going away (finished, replaced by a need or other work
 which leaves only carried goods indexed); no construction code releases it.
 
 A Build goal with no spots (a wall's, an opening's, or a foundation's when no construction world is
-wired, as in headless tests) caps no builders: any number work it, from the nearest walkable point to its
-centre, and it takes no claim. Deconstruct takes no claim either.
+wired, as in headless tests) caps no builders: any number work it, and it takes no claim. A wall's goal
+carries instead the sides of the wall a builder may stand on (`GoalTask::wallStands`,
+`construction::wallStands`): both, unless completing the wall closes a loop of built walls, and then the
+sides that open onto open ground or onto a room joined to it through built doors (a room whose only
+openings are windows or door blueprints has no way out), or both again when neither does.
+`ConstructionSystem` sets them as the goal turns Available and works them out again on the frame after
+a segment or an opening is built, added, or removed. A builder walking to the wall takes the new sides at
+his next decision; one already at work there keeps working until the completion check below sends him
+round. A builder takes the side whose stand point is nearest, among those he can get to. A side's stand
+points lie off the wall's line by half its thickness, the builder's radius, and 0.1 m, beside its middle
+first and then toward each end, held a stand offset short of either end; the side's point is what `nearestPathablePoint(point, agentRadius)` gives
+for the first of them it serves: on that side, no farther from that stand point than that offset, and
+level with the segment, never across its line or past its end, and not in the room the wall would shut in (`construction::WallStand::serves`,
+`ecs::wallStandPoint`; worked out once per site, side, and radius in an update,
+`SharedWork::wallStandPoint`). With none, the option is NoSource, and when no allowed side can be stood
+on at all by a builder of the default radius, the selected wall's panel, which asks the mesh itself,
+reads "No ground to build from" (`ecs::noGroundToBuildFrom`).
+With no mesh yet the stand point itself is the target. An opening's goal, and a wall's with no
+construction world wired, has the nearest walkable point to its centre as its one target. Deconstruct
+takes no claim either.
+
+A wall whose work reaches its total completes only on a tick in which time passes and nothing holds it
+(`ActionSystem::clearWallToComplete`; what it would close is worked out once per topology change,
+`construction::WallClosure`). Four things hold it, and while any does nobody is moved. In the region it
+would shut in (`WallClosure::shutsIn`: the side with no way out, when the other side has one; another
+sealed room elsewhere is not its): a builder of it (a colonist whose Build task is on it, at work or
+walking there), whose action ends so that he decides again and goes to a side it allows; a colonist not
+under the player's control whose Build task is on another wall, his work left going (waited for until that work ends, his route
+not found wanting); and anyone else not under the player's control who is on the way out. And a
+colonist under the player's control in its band (the band `WallCollisionSystem` pushes out of once it is
+built), which raises one "Wall waiting" toast naming them as the hold begins, and again only after a
+release. On the way out means a task under way (its route not found wanting) whose point, the one its
+current leg walks to (`Task::targetPosition`: a wander's point, a need's source, a work stand, a haul's
+pickup, or the deposit for a carry-in of goods already carried), or a later leg's (a haul's deposit, a
+packaged item's placement), is not shut in. Someone whose task keeps them inside, with no task or one
+whose every point is inside (crafting, eating, or sleeping there), is not waited for, and neither is a
+colonist under the player's control who is inside but not in the band. While it waits, the Build action
+is interruptable, so the builder may be taken away as from any interruptable work: by a higher tier, or
+a same-tier option that wins its hysteresis margin. Once nothing holds it, any other colonist in the band
+steps out of it as it completes, to the allowed side he is on, or to the allowed side when he is on the
+other. The dev tools' free build and forced completion do not wait.
 
 A site ordered demolished takes no more build work: a Build action on it ends on the next tick it
 would add work, before it could complete, and a builder still walking there starts nothing on arrival.

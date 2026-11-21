@@ -629,6 +629,45 @@ TEST_F(NavigationSystemTest, BeliefFilterGatesQueryVsTruth) {
 		<< "knowing the walls and the door should route through it";
 }
 
+// Two rooms sharing a wall, every outer wall known and no door: neither room has a known way in,
+// the T where the shared wall meets the south walls included. Both south walls are then demolished
+// and built again where they were, so that T keeps its outline and its vertex and only the walls
+// it lists change: the mesh takes the new list, and knowing the rebuilt walls still blocks it.
+TEST_F(NavigationSystemTest, JunctionTakesItsRebuiltWalls) {
+	ConstructionWorld cw;
+	const SegmentId	  firstNorth = buildWall(cw, {0, 0}, {3000, 0});
+	buildWall(cw, {3000, 0}, {3000, 5000});
+	SegmentId		  firstSouth  = buildWall(cw, {3000, 5000}, {0, 5000});
+	const SegmentId	  firstWest	  = buildWall(cw, {0, 5000}, {0, 0});
+	const SegmentId	  secondNorth = buildWall(cw, {3000, 0}, {6000, 0});
+	const SegmentId	  secondEast  = buildWall(cw, {6000, 0}, {6000, 5000});
+	SegmentId		  secondSouth = buildWall(cw, {6000, 5000}, {3000, 5000});
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(world, sys);
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+
+	const glm::vec2							outside{4.5F, 7.0F};
+	const glm::vec2							inside{4.5F, 2.5F};
+	const std::unordered_set<std::uint64_t> noOpenings;
+	const std::unordered_set<std::uint64_t> noSegments;
+	ASSERT_TRUE(routeBetween(sys, outside, inside, {&noSegments, &noOpenings}).has_value()) << "knowing nothing, the way is open";
+	auto outerWalls = [&] { return std::unordered_set<std::uint64_t>{firstNorth, firstSouth, firstWest, secondNorth, secondEast, secondSouth}; };
+	const std::unordered_set<std::uint64_t> before = outerWalls();
+	EXPECT_FALSE(routeBetween(sys, outside, inside, {&before, &noOpenings}).has_value());
+
+	ASSERT_TRUE(cw.removeSegment(firstSouth));
+	ASSERT_TRUE(cw.removeSegment(secondSouth));
+	firstSouth	= buildWall(cw, {3000, 5000}, {0, 5000});
+	secondSouth = buildWall(cw, {6000, 5000}, {3000, 5000});
+	settle(sys);
+	const std::unordered_set<std::uint64_t> after = outerWalls();
+	ASSERT_NE(after, before);
+	EXPECT_FALSE(routeBetween(sys, outside, inside, {&after, &noOpenings}).has_value()) << "the T still lists the old south walls";
+}
+
 // generation() bumps on the tick that first meshes ground an anchor holds and on every later patch
 // there.
 TEST_F(NavigationSystemTest, GenerationBumpsOnPatch) {

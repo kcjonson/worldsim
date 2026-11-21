@@ -74,12 +74,16 @@ class LuaEngine {
 	/// Get the last error message
 	const std::string& getLastError() const { return m_lastError; }
 
+	/// Takes from a state everything an asset script must not reach (files, the OS, loading other code,
+	/// the debug library): what every asset script runs under, generators and parts scripts alike.
+	static void sandbox(sol::state& lua);
+
+	/// Seeds math.random from `seed` alone, so a script draws the same numbers on every load and platform.
+	static void seedRandom(sol::state& lua, uint32_t seed);
+
   private:
 	/// Register all API bindings (Vec2, Color, Path, Asset)
 	void registerBindings();
-
-	/// Set up a sandboxed environment for script execution
-	void setupSandbox();
 
 	/// Run the prelude files in the state; false (m_lastError set, logged) at the first that fails
 	bool runPrelude();

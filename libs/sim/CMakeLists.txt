@@ -24,6 +24,7 @@ add_library(sim
     ecs/systems/RoomDetectionSystem.cpp
     ecs/systems/CollisionSystem.cpp
     ecs/systems/WallCollisionSystem.cpp
+    ecs/systems/WallStandPoint.cpp
     ecs/systems/PlacedObstacleCollisionSystem.cpp
     ecs/systems/NavigationSystem.cpp
     ecs/systems/PlayerVisibilitySystem.cpp
@@ -63,6 +64,8 @@ add_library(sim
     construction/SnapEngine.cpp
     construction/SnapGuidesDetail.cpp
     construction/SnapLengthsDetail.cpp
+    construction/WallSides.cpp
+    construction/WallStand.cpp
     nav/NavInputBuilder.cpp
     nav/RouteQueue.cpp
     vision/GeometryIndex.cpp
@@ -131,7 +134,8 @@ if(BUILD_TESTING)
         # Where the shipped asset defs are, whatever the working directory.
         target_compile_definitions(sim-tests PRIVATE SIM_TEST_REPO_DIR="${CMAKE_SOURCE_DIR}")
         if(MSVC)
-            target_compile_options(sim-tests PRIVATE /Od)
+            # /bigobj: AIDecisionSystem.test.cpp's fixtures and tests outgrow the default section count.
+            target_compile_options(sim-tests PRIVATE /Od /bigobj)
         else()
             target_compile_options(sim-tests PRIVATE -O0 -g)
         endif()

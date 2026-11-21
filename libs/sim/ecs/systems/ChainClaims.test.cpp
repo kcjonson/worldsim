@@ -2832,8 +2832,8 @@ namespace ecs::test {
 		EXPECT_EQ(spotHolder(site.blueprint, 0), waiting);
 	}
 
-	// A structure with no builder spots (a wall, an opening) caps no builders: every colonist builds it
-	// from the centre and nobody claims anything.
+	// A structure with no builder spots (a wall, an opening) caps no builders and nobody claims anything.
+	// With no wall sides on its goal, as here, every colonist builds it from the centre.
 	TEST_F(ChainClaimsTest, AWallsBuildTakesNoSpotAndNoClaim) {
 		const glm::vec2 centre{0.0F, 6.0F};
 		buildSite(centre, {});

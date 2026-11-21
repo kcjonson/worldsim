@@ -83,7 +83,8 @@ namespace assets {
 
 namespace construction {
 	class ConstructionWorld;
-}
+	struct WallStand;
+} // namespace construction
 
 namespace ecs {
 
@@ -217,8 +218,9 @@ namespace ecs {
 		[[nodiscard]] bool isWallHostBuilt(uint64_t segmentId) const;
 
 		/// True once the opening's host wall segment is Built. An opening sits on a wall,
-		/// blueprint or built, and is built only once the wall is Built, so this gates an opening blueprint's haul + build goals exactly as
-		/// isWallHostBuilt gates a wall's (one level up the topology: opening -> segment).
+		/// blueprint or built, and is built only once the wall is Built, so this gates an
+		/// opening blueprint's haul + build goals exactly as isWallHostBuilt gates a wall's
+		/// (one level up the topology: opening -> segment).
 		/// True (ungated) when there is no ConstructionWorld wired (headless contexts);
 		/// an unknown opening or unknown host segment stays gated (false).
 		[[nodiscard]] bool isOpeningHostSegmentBuilt(uint64_t openingId) const;
@@ -234,6 +236,18 @@ namespace ecs {
 		/// The builder spots of a foundation's footprint (construction/BuilderSpots.h) under the
 		/// constraints.xml caps; empty for a wall or an opening, or with no topology wired.
 		[[nodiscard]] std::vector<glm::vec2> foundationBuilderSpots(const Structure& structure) const;
+
+		/// The sides of a wall its builders may stand on (construction::wallStands); empty for a foundation
+		/// or an opening, or with no topology wired. A wall's umbrella takes them as it turns Available and
+		/// drops them when it stops being Available, like a foundation's spots.
+		[[nodiscard]] std::vector<construction::WallStand> wallStandsFor(const Structure& structure) const;
+
+		/// Work out every Available wall umbrella's sides again when what they depend on has changed (a
+		/// segment or an opening built, added, or removed), checked every frame rather than every
+		/// kUpdateFrameInterval: a wall completing beside one being built can close its loop.
+		void refreshWallStands();
+		/// The segments and openings by id and built state, hashed: what a wall's sides depend on.
+		[[nodiscard]] std::uint64_t wallSidesInputs() const;
 
 		/// How far into the footprint a builder spot sits from the ring: a colonist's half-width
 		/// (pathingClearanceMeters 0.7 / 2) plus a margin, so a builder at a spot in the middle of an
@@ -258,9 +272,10 @@ namespace ecs {
 
 		/// Dump ALL of a demolished blueprint's staged delivered[] materials to the ground as loose,
 		/// haulable piles at its position (via the drop-resource callback, which splits each quantity
-		/// into stacks and scatters them), then clear delivered[]. The no-work cancel branch calls it for the
-		/// blueprint itself and, through cancelOpeningsOnWall, for each opening on a cancelled wall: there's no structure to tear down, so the site is removed promptly and its in-flight
-		/// materials go loose at once. A worked/built teardown does NOT call this; its salvage drop
+		/// into stacks and scatters them), then clear delivered[]. The no-work cancel branch calls
+		/// it for the blueprint itself and, through cancelOpeningsOnWall, for each opening on a
+		/// cancelled wall: there's no structure to tear down, so the site is removed promptly and
+		/// its in-flight materials go loose at once. A worked/built teardown does NOT call this; its salvage drop
 		/// happens at deconstruct-COMPLETION (the structure is removed) via GameScene's deconstructed
 		/// callback, which reads the still-intact delivered[] and returns only the refundPercent% cut.
 		/// No-op when delivered[] is empty or no drop callback is wired (headless); delivered[] is
@@ -327,6 +342,10 @@ namespace ecs {
 		std::unordered_set<EntityID> m_warnedNoDeconstructCallback;
 
 		size_t m_activeBlueprintCount = 0;
+
+		// The topology version and wallSidesInputs() the wall umbrellas' sides were last worked out at.
+		std::uint64_t wallSidesVersion = 0;
+		std::uint64_t wallSidesHash = 0;
 
 		// This pass's spawned harvestables, gathered by the first site still clearing (reused storage)
 		std::vector<SpawnedHarvestable> m_spawnedHarvestables;

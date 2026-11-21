@@ -7,16 +7,25 @@
 #include "../ShippedConfig.test.h"
 #include "../World.h"
 #include "../components/Action.h"
+#include "../components/AgentRadius.h"
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
+#include "../components/PlayerControlled.h"
 #include "../components/Skills.h"
+#include "../components/Structure.h"
 #include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
 
+#include <assets/ConstructionRegistry.h>
+#include <construction/ConstructionWorld.h>
+#include <construction/WallSides.h>
+
 #include <gtest/gtest.h>
+
+#include <filesystem>
 
 namespace ecs::test {
 
@@ -447,6 +456,256 @@ namespace ecs::test {
 		ASSERT_EQ(salvaged.size(), 1U) << "one salvaged material";
 		EXPECT_EQ(salvaged.front().first, "Wood");
 		EXPECT_EQ(salvaged.front().second, 15U) << "refundPercent 50 of 30 Wood = 15";
+	}
+
+	// A wall does not complete while a colonist the player controls stands in its band, nor while it would
+	// shut in one of its builders or someone on the way out (building-construction: Walls / Lifecycle).
+	class WallBandHoldTest : public BuildActionSystemTest {
+	  protected:
+		void SetUp() override {
+			BuildActionSystemTest::SetUp();
+			assets::ConstructionRegistry::Get().clear();
+			std::filesystem::path folder = __FILE__; // libs/sim/ecs/systems/BuildAction.test.cpp
+			folder = folder.parent_path().parent_path().parent_path().parent_path().parent_path() / "assets" / "config" / "construction";
+			ASSERT_TRUE(assets::ConstructionRegistry::Get().load(folder.string()));
+			actionSystem->setConstructionWorld(&construction);
+		}
+		void TearDown() override {
+			BuildActionSystemTest::TearDown();
+			assets::ConstructionRegistry::Get().clear();
+		}
+
+		// A Standard Wood wall (0.2 m) from `from` to `to` in meters, built or a blueprint.
+		construction::SegmentId wall(glm::vec2 from, glm::vec2 to, bool built) {
+			const auto result = construction.commitSegment(
+				{static_cast<int64_t>(from.x * 1000.0F), static_cast<int64_t>(from.y * 1000.0F)},
+				{static_cast<int64_t>(to.x * 1000.0F), static_cast<int64_t>(to.y * 1000.0F)}, "Wood", "Standard",
+				construction::kInvalidFoundation, construction.version()
+			);
+			EXPECT_TRUE(result.ok());
+			if (built) {
+				construction.setSegmentState(result.id, construction::FoundationState::Built);
+			}
+			return result.id;
+		}
+
+		// The wall blueprint entity of `segment`, its work almost done, worked by a builder at `builderAt`.
+		EntityID wallSite(construction::SegmentId segment, glm::vec2 builderAt = {2.0F, -0.6F}) {
+			const EntityID blueprint = createBlueprint(10.0F);
+			world->getComponent<StructureBlueprint>(blueprint)->workDone = 9.0F;
+			world->addComponent<Structure>(blueprint, Structure{.kind = StructureKind::Wall, .graphId = segment});
+			builder = createBuilder(0.0F, builderAt);
+			assignBuildTask(builder, blueprint);
+			world->getComponent<Task>(builder)->targetPosition = builderAt;
+			return blueprint;
+		}
+
+		// The three built walls of the square (0, 0) to (4, 4) other than its south side, the wall from
+		// (0, 0) to (4, 0) that closes it.
+		construction::SegmentId closingWallOfASquare() {
+			wall({4.0F, 0.0F}, {4.0F, 4.0F}, true);
+			wall({4.0F, 4.0F}, {0.0F, 4.0F}, true);
+			wall({0.0F, 4.0F}, {0.0F, 0.0F}, true);
+			return wall({0.0F, 0.0F}, {4.0F, 0.0F}, false);
+		}
+
+		EntityID colonistAt(glm::vec2 position, bool playerControlled) {
+			const EntityID colonist = world->createEntity();
+			world->addComponent<Position>(colonist, Position{position});
+			world->addComponent<AgentRadius>(colonist, AgentRadius{});
+			if (playerControlled) {
+				world->addComponent<PlayerControlled>(colonist, PlayerControlled{});
+			}
+			return colonist;
+		}
+
+		[[nodiscard]] StructureBlueprint::BuildPhase phaseOf(EntityID blueprint) {
+			return world->getComponent<StructureBlueprint>(blueprint)->phase;
+		}
+
+		construction::ConstructionWorld construction;
+		EntityID						builder = kInvalidEntity;
+	};
+
+	// A player-controlled colonist on the wall's line: the work reaches its end and the wall waits for as
+	// long as he stands there, saying so once, moving nobody, and leaving its builder free to go; it
+	// completes once he steps off.
+	TEST_F(WallBandHoldTest, AWallWaitsForAPlayerControlledColonistInItsBandAndCompletesWhenHeLeaves) {
+		int					  completions = 0;
+		std::vector<EntityID> heldBy;
+		actionSystem->setStructureCompletedCallback([&](EntityID) { ++completions; });
+		actionSystem->setWallHeldCallback([&](EntityID, EntityID colonist) { heldBy.push_back(colonist); });
+		const EntityID blueprint = wallSite(wall({0.0F, 0.0F}, {4.0F, 0.0F}, false));
+		const EntityID standing = colonistAt({2.0F, 0.35F}, true); // 0.35 m off: his disc reaches the 0.1 m half-thickness
+		const EntityID crossing = colonistAt({1.0F, 0.1F}, false);
+
+		for (int tick = 0; tick < 20; ++tick) {
+			world->update(0.5F);
+		}
+		const auto* site = world->getComponent<StructureBlueprint>(blueprint);
+		EXPECT_FLOAT_EQ(site->workDone, site->workTotal) << "the work is done";
+		EXPECT_EQ(site->phase, StructureBlueprint::BuildPhase::UnderConstruction) << "the wall is not";
+		EXPECT_EQ(completions, 0);
+		EXPECT_EQ(heldBy, std::vector<EntityID>{standing}) << "the hold is told once, naming who holds it";
+		EXPECT_EQ(world->getComponent<Position>(standing)->value, glm::vec2(2.0F, 0.35F)) << "a controlled colonist is the player's to move";
+		EXPECT_EQ(world->getComponent<Position>(crossing)->value, glm::vec2(1.0F, 0.1F)) << "nobody is moved while the wall waits";
+		EXPECT_TRUE(world->getComponent<Action>(builder)->interruptable) << "waiting is no work to commit to";
+
+		world->getComponent<Position>(standing)->value = {2.0F, 0.45F};
+		world->update(0.5F);
+		EXPECT_EQ(site->phase, StructureBlueprint::BuildPhase::Complete);
+		EXPECT_EQ(completions, 1);
+		EXPECT_GT(world->getComponent<Position>(crossing)->value.y, 0.1F + 0.3F) << "the other colonist steps out, on his side, as it completes";
+	}
+
+	// Anyone else in the band steps out as the wall completes, to the outside of the room it closes.
+	TEST_F(WallBandHoldTest, AColonistInTheBandOfAClosingWallStepsOutOfTheRoom) {
+		const EntityID blueprint = wallSite(closingWallOfASquare());
+		const EntityID inside = colonistAt({1.0F, 0.05F}, false); // on the room's side of the line
+		const EntityID onLine = colonistAt({3.0F, 0.0F}, false);
+
+		world->update(0.5F);
+		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::Complete);
+		const auto band = construction::wallBand(construction, *construction.getSegment(world->getComponent<Structure>(blueprint)->graphId));
+		for (const EntityID colonist : {inside, onLine}) {
+			const glm::vec2 at = world->getComponent<Position>(colonist)->value;
+			EXPECT_LT(at.y, 0.0F) << "outside the room, which lies at y > 0";
+			EXPECT_FALSE(band->overlaps(at, AgentRadius{}.radiusMeters));
+		}
+		EXPECT_NEAR(world->getComponent<Position>(inside)->value.x, 1.0F, 1e-4F) << "level with where he stood";
+	}
+
+	// A wall that closes nothing: a colonist in its band keeps the side he is on, and one exactly on its
+	// line steps out to one side, either way clear of the band.
+	TEST_F(WallBandHoldTest, AColonistInTheBandOfAWallThatClosesNothingKeepsHisSide) {
+		const EntityID blueprint = wallSite(wall({0.0F, 0.0F}, {4.0F, 0.0F}, false));
+		const EntityID above = colonistAt({1.0F, 0.2F}, false);
+		const EntityID below = colonistAt({2.0F, -0.1F}, false);
+		const EntityID onLine = colonistAt({3.0F, 0.0F}, false);
+
+		world->update(0.5F);
+		ASSERT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::Complete);
+		const auto band = construction::wallBand(construction, *construction.getSegment(world->getComponent<Structure>(blueprint)->graphId));
+		EXPECT_GT(world->getComponent<Position>(above)->value.y, 0.0F);
+		EXPECT_LT(world->getComponent<Position>(below)->value.y, 0.0F);
+		for (const EntityID colonist : {above, below, onLine}) {
+			EXPECT_FALSE(band->overlaps(world->getComponent<Position>(colonist)->value, AgentRadius{}.radiusMeters));
+		}
+	}
+
+	// In a paused game no time passes: a wall whose hold has just ended does not complete, and nobody is
+	// moved, until time runs again.
+	TEST_F(WallBandHoldTest, NothingCompletesOrMovesOnATickInWhichNoTimePasses) {
+		const EntityID blueprint = wallSite(wall({0.0F, 0.0F}, {4.0F, 0.0F}, false));
+		const EntityID standing = colonistAt({2.0F, 0.35F}, true);
+		const EntityID crossing = colonistAt({1.0F, 0.1F}, false);
+		world->update(0.5F);
+		world->update(0.5F);
+		ASSERT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::UnderConstruction);
+
+		world->getComponent<Position>(standing)->value = {2.0F, 2.0F};
+		world->update(0.0F);
+		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::UnderConstruction);
+		EXPECT_EQ(world->getComponent<Position>(crossing)->value, glm::vec2(1.0F, 0.1F));
+
+		world->update(0.5F);
+		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::Complete);
+	}
+
+	// A builder the closing wall would shut in holds it: his work ends, so he decides again and goes to the
+	// side it allows, and it completes once he works it from outside.
+	TEST_F(WallBandHoldTest, AClosingWallWaitsForItsBuilderInsideTheRoom) {
+		const EntityID blueprint = wallSite(closingWallOfASquare(), {2.0F, 0.6F});
+
+		world->update(0.5F);
+		world->update(0.5F);
+		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::UnderConstruction);
+		EXPECT_FALSE(world->getComponent<Action>(builder)->isActive()) << "his work ends so he decides again";
+
+		world->getComponent<Position>(builder)->value = {2.0F, -0.6F};
+		world->getComponent<Task>(builder)->targetPosition = {2.0F, -0.6F};
+		world->update(0.5F);
+		world->update(0.5F);
+		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::Complete);
+	}
+
+	// Someone the closing wall would shut in who is on the way out (a task walking him outside) holds it
+	// until he is out; someone staying inside (no task, or one whose point is inside) does not.
+	TEST_F(WallBandHoldTest, AClosingWallWaitsForSomeoneOnTheWayOutButNotForSomeoneStaying) {
+		const EntityID blueprint = wallSite(closingWallOfASquare());
+		const EntityID idle = colonistAt({1.0F, 3.0F}, false);
+		world->addComponent<Task>(idle, Task{});
+		const EntityID eatingInside = colonistAt({3.0F, 3.0F}, false);
+		Task eat;
+		eat.type = TaskType::FulfillNeed;
+		eat.state = TaskState::Arrived;
+		eat.targetPosition = {3.0F, 3.0F};
+		world->addComponent<Task>(eatingInside, eat);
+		const EntityID leaving = colonistAt({2.0F, 1.0F}, false);
+		Task walkOut;
+		walkOut.type = TaskType::Wander;
+		walkOut.state = TaskState::Moving;
+		walkOut.targetPosition = {2.0F, -3.0F};
+		world->addComponent<Task>(leaving, walkOut);
+
+		world->update(0.5F);
+		world->update(0.5F);
+		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::UnderConstruction) << "it waits for the one leaving";
+		EXPECT_EQ(world->getComponent<Position>(leaving)->value, glm::vec2(2.0F, 1.0F)) << "nobody is moved while it waits";
+
+		world->getComponent<Position>(leaving)->value = {2.0F, -1.0F};
+		world->update(0.5F);
+		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::Complete) << "those staying inside are not waited for";
+	}
+
+	// Neither someone inside whose route out was found wanting, nor a builder of another wall whose route
+	// there was, nor a colonist the player controls inside (out of the band), is waited for.
+	TEST_F(WallBandHoldTest, AClosingWallDoesNotWaitForAFailedRouteOrAControlledColonistInside) {
+		const EntityID blueprint = wallSite(closingWallOfASquare());
+		const EntityID stuck = colonistAt({1.0F, 2.0F}, false);
+		Task walkOut;
+		walkOut.type = TaskType::Wander;
+		walkOut.state = TaskState::Moving;
+		walkOut.navState = NavState::CantFindWayTo;
+		walkOut.targetPosition = {2.0F, -3.0F};
+		world->addComponent<Task>(stuck, walkOut);
+		const EntityID controlled = colonistAt({3.0F, 2.0F}, true);
+		walkOut.navState = NavState::Traveling;
+		world->addComponent<Task>(controlled, walkOut);
+		const EntityID otherWall = createBlueprint(1000.0F);
+		world->addComponent<Structure>(otherWall, Structure{.kind = StructureKind::Wall, .graphId = wall({1.0F, 1.0F}, {1.0F, 3.0F}, false)});
+		const EntityID strandedBuilder = colonistAt({2.0F, 3.0F}, false);
+		Task buildOther;
+		buildOther.type = TaskType::Build;
+		buildOther.state = TaskState::Moving;
+		buildOther.navState = NavState::CantFindWayTo;
+		buildOther.buildBlueprintEntityId = otherWall;
+		buildOther.targetPosition = {1.6F, 2.0F};
+		world->addComponent<Task>(strandedBuilder, buildOther);
+
+		world->update(0.5F);
+		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::Complete);
+	}
+
+	// A builder of another wall, inside the room this one would close, holds it with his work left going:
+	// that wall completes first and frees him.
+	TEST_F(WallBandHoldTest, AClosingWallWaitsForABuilderOfAnotherWallInsideTheRoom) {
+		const EntityID blueprint = wallSite(closingWallOfASquare());
+		const EntityID otherWall = createBlueprint(1000.0F);
+		world->addComponent<Structure>(otherWall, Structure{.kind = StructureKind::Wall, .graphId = wall({1.0F, 1.0F}, {1.0F, 3.0F}, false)});
+		const EntityID otherBuilder = createBuilder(0.0F, {1.6F, 2.0F});
+		assignBuildTask(otherBuilder, otherWall);
+		world->getComponent<Task>(otherBuilder)->targetPosition = {1.6F, 2.0F};
+
+		world->update(0.5F);
+		world->update(0.5F);
+		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::UnderConstruction);
+		EXPECT_TRUE(world->getComponent<Action>(otherBuilder)->isActive()) << "his own work goes on";
+
+		world->getComponent<StructureBlueprint>(otherWall)->phase = StructureBlueprint::BuildPhase::Complete;
+		world->getComponent<Task>(otherBuilder)->clear();
+		world->update(0.5F);
+		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::Complete);
 	}
 
 } // namespace ecs::test
