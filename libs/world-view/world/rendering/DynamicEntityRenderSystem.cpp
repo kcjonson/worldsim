@@ -63,6 +63,14 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
             continue;
         }
 
+        // A parts item enters the stream as its depth strips, each anchored on its own stretch of the
+        // item's collider, its turn carried by the strip layout (rotatable-placed-items 8).
+        if (const assets::AssetDefinition* def = assetRegistry.getDefinition(appearance.defName);
+            def != nullptr && def->assetType == assets::AssetType::Parts) {
+            pushItemStrips(appearance, pos.value, assets::turnQuantaFromRadians(rot.radians));
+            continue;
+        }
+
         // Normal (non-packaged) entity rendering
         assets::PlacedEntity placed;
 
@@ -143,6 +151,27 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
             }
         }
 
+        renderData.push_back(std::move(placed));
+    }
+}
+
+void DynamicEntityRenderSystem::pushItemStrips(const ecs::Appearance& appearance, glm::vec2 position, uint32_t turnQuanta) {
+    auto&                     assetRegistry = assets::AssetRegistry::Get();
+    const uint32_t            templateId = assetRegistry.templateId(appearance.defName, appearance.traits);
+    const assets::ItemLayout* layout = assetRegistry.stripLayout(templateId, turnQuanta);
+    if (layout == nullptr) {
+        return;
+    }
+    for (uint32_t strip = 0; strip < layout->layout.strips.size(); ++strip) {
+        assets::PlacedEntity placed;
+        placed.defName = appearance.defName;
+        placed.traits = appearance.traits;
+        placed.templateId = templateId;
+        placed.position = position;
+        placed.colorTint = appearance.colorTint;
+        placed.anchorY = assets::computeAnchorY(position.y, layout->layout.strips[strip].anchorLocalY, 1.0F);
+        placed.itemLayout = layout;
+        placed.strip = strip;
         renderData.push_back(std::move(placed));
     }
 }

@@ -34,6 +34,10 @@ namespace assets {
 	/// A turn's radians, k times the quantum, computed in double and stored as float.
 	[[nodiscard]] float turnRadiansFromQuanta(uint32_t turnQuanta);
 
+	/// The turn an entity's ecs::Rotation stands for: its radians, positive from +X toward +Y (clockwise on the
+	/// screen), in degrees, rounded to the quantum and wrapped as turnQuantaFromDegrees does.
+	[[nodiscard]] uint32_t turnQuantaFromRadians(float radians);
+
 	// ─── Faces and shading (sections 6.3 and 7) ──────────────────────────────────────────────────────────
 
 	/// A side face that shows at a turn: its outward plan normal points down the screen.
@@ -92,6 +96,19 @@ namespace assets {
 	/// The strip layout of a parts def at a turn, from its collider and footprints alone: no drawing is read and
 	/// nothing is tessellated, so it is cheap enough for the main thread. Empty for a def that isn't parts.
 	[[nodiscard]] StripLayout stripLayout(const AssetDefinition& def, uint32_t turnQuanta, const ViewConfig& config);
+
+	/// A strip layout the registry keeps for a template at a turn (AssetRegistry::stripLayout), which an item's
+	/// stream records point into (section 8).
+	struct ItemLayout {
+		uint32_t	templateId = 0;
+		uint32_t	turnQuanta = 0;
+		/// Its place among the layouts kept since the last clear, from 0.
+		uint32_t	id = 0;
+		/// Every kept layout's strips are numbered on from the layouts before it: this one's are firstStrip and on,
+		/// all below AssetRegistry::stripLayoutStripCount().
+		uint32_t	firstStrip = 0;
+		StripLayout layout;
+	};
 
 	// ─── Views (section 6) ────────────────────────────────────────────────────────────────────────────────
 

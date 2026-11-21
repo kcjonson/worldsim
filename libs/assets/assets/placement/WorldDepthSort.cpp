@@ -64,6 +64,8 @@ namespace assets {
 			.colorTint = entity.colorTint,
 			.templateId = entity.templateId,
 			.isAnimated = entity.partTransforms != nullptr && !entity.partTransforms->empty(),
+			.itemLayout = entity.itemLayout,
+			.strip = entity.strip,
 			.entity = &entity,
 		};
 	}

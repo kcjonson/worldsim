@@ -338,6 +338,21 @@ TEST(TurnQuantum, RoundsThenWrapsAtTheWholeTurn) {
 	EXPECT_NEAR(turnRadiansFromQuanta(35999), 359.99F * std::numbers::pi_v<float> / 180.0F, 1.0e-5F);
 }
 
+// An entity's ecs::Rotation is radians from +X toward +Y, clockwise on the screen, the same sense as a turn's degrees.
+TEST(TurnQuantum, AnEntitysRotationIsItsTurnClockwise) {
+	constexpr float kPi = std::numbers::pi_v<float>;
+	EXPECT_EQ(turnQuantaFromRadians(0.0F), 0U);
+	EXPECT_EQ(turnQuantaFromRadians(kPi / 2.0F), 9000U);
+	EXPECT_EQ(turnQuantaFromRadians(kPi), 18000U);
+	EXPECT_EQ(turnQuantaFromRadians(3.0F * kPi / 2.0F), 27000U);
+	EXPECT_EQ(turnQuantaFromRadians(-kPi / 2.0F), 27000U) << "a quarter turn back is three quarters on";
+	EXPECT_EQ(turnQuantaFromRadians(-35.0F * kPi / 180.0F), 32500U);
+	EXPECT_EQ(turnQuantaFromRadians(2.0F * kPi), 0U);
+	for (const uint32_t quanta : {0U, 3500U, 9000U, 18000U, 27100U, 32500U, 35999U}) {
+		EXPECT_EQ(turnQuantaFromRadians(turnRadiansFromQuanta(quanta)), quanta) << "a stored turn reads back as itself";
+	}
+}
+
 // ─── Faces ──────────────────────────────────────────────────────────────────────────────────────────────
 
 TEST_F(ItemViewTest, TheFaceMatrixMapsADrawingsCornersOntoTheFaceAndTheVisibleSetFollowsTheTurn) {
@@ -1146,4 +1161,64 @@ TEST_F(ItemViewTest, Rule12RefusesAViewOverTheVertexLimitAtAStop) {
 	EXPECT_LT(checkedView(*sideways, 0, 0, viewConfig()).vertexCount, kMaxStopViewVertices) << "under the limit at 0 degrees";
 	EXPECT_TRUE(hasIssue("Sideways", "its view at 15 degrees")) << "the first stop that shows the right end";
 	EXPECT_TRUE(issues("Workbench").empty()) << ::testing::PrintToString(issues("Workbench"));
+}
+
+// ─── Kept layouts and the cull reach (sections 8 and 6.9) ────────────────────────────────────────────────
+
+TEST_F(ItemViewTest, TheRegistryKeepsOneLayoutATemplateAndTurnAndNumbersTheirStrips) {
+	ASSERT_NE(loadBench(3.0F, 1.0F), nullptr);
+	AssetRegistry& registry = AssetRegistry::Get();
+	const uint32_t bench = registry.templateId("Bench", {});
+	ASSERT_NE(bench, 0U);
+	EXPECT_EQ(registry.stripLayoutStripCount(), 0U);
+
+	const ItemLayout* square = registry.stripLayout(bench, quantaOf(0.0));
+	const ItemLayout* turned = registry.stripLayout(bench, quantaOf(45.0));
+	ASSERT_NE(square, nullptr);
+	ASSERT_NE(turned, nullptr);
+	EXPECT_EQ(registry.stripLayout(bench, quantaOf(45.0)), turned) << "kept, not made again";
+	EXPECT_EQ(square->layout.strips.size(), 1U);
+	EXPECT_EQ(turned->layout.strips.size(), 31U);
+	EXPECT_EQ(turned->templateId, bench);
+	EXPECT_EQ(turned->turnQuanta, quantaOf(45.0));
+	EXPECT_EQ(square->firstStrip, 0U);
+	EXPECT_EQ(turned->firstStrip, 1U) << "numbered on from the layouts before it";
+	EXPECT_EQ(turned->id, square->id + 1);
+	EXPECT_EQ(registry.stripLayoutStripCount(), 32U);
+	const StripLayout fresh = stripLayout(*registry.getDefinition("Bench"), quantaOf(45.0), viewConfig());
+	ASSERT_EQ(fresh.strips.size(), turned->layout.strips.size());
+	for (size_t i = 0; i < fresh.strips.size(); ++i) {
+		EXPECT_EQ(fresh.strips[i].anchorLocalY, turned->layout.strips[i].anchorLocalY) << "strip " << i;
+	}
+
+	EXPECT_EQ(registry.stripLayout(0, 0), nullptr);
+	registry.clearDefinitions();
+	EXPECT_EQ(registry.stripLayoutStripCount(), 0U) << "dropped with the templates";
+}
+
+// The gather culls an item by its position, the view padded on each axis by the registry's reach: every strip's box,
+// at every turn, lies within that reach of the pivot on each axis, so a turned item at the edge of the view is
+// gathered, where the turn-0 template's own reach would cull it.
+TEST_F(ItemViewTest, TheCullReachHoldsEveryStripAtEveryTurn) {
+	ASSERT_NE(loadBench(3.0F, 1.0F), nullptr);
+	AssetRegistry& registry = AssetRegistry::Get();
+	const uint32_t id = registry.templateId("Bench", {});
+	ASSERT_NE(id, 0U);
+	const float						 reach = registry.maxReachMeters();
+	const renderer::TessellatedMesh* turnZero = registry.getTemplate(id);
+	ASSERT_NE(turnZero, nullptr);
+	float templateReach = 0.0F;
+	for (const auto& vertex : turnZero->vertices) {
+		templateReach = std::max(templateReach, std::hypot(vertex.x, vertex.y));
+	}
+	const AssetDefinition& bench = *registry.getDefinition("Bench");
+	float				   farthest = 0.0F;
+	for (int degrees = 0; degrees < 360; degrees += 5) {
+		for (const ItemStrip& strip : stripLayout(bench, quantaOf(degrees), viewConfig()).strips) {
+			const float extent = std::max({std::abs(strip.minX), std::abs(strip.maxX), std::abs(strip.minY), std::abs(strip.maxY)});
+			EXPECT_LE(extent, reach + 1.0e-4F) << degrees << " degrees";
+			farthest = std::max(farthest, extent);
+		}
+	}
+	EXPECT_GT(farthest, templateReach) << "height lifts a turned top past the turn-0 template's reach";
 }

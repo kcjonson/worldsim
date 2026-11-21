@@ -66,6 +66,8 @@ namespace assets {
 		glm::vec4			colorTint{1.0F, 1.0F, 1.0F, 1.0F};
 		uint32_t			templateId = 0;
 		bool				isAnimated = false; // per-part deformed colonist -> CPU path, breaks instanced runs
+		const ItemLayout*	itemLayout = nullptr; // a parts item's depth strip: drawn from its view, not its template
+		uint32_t			strip = 0;
 		const PlacedEntity* entity = nullptr;
 	};
 

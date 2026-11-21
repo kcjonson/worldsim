@@ -7,6 +7,7 @@
 #include "assets/AssetDefinition.h"
 #include "assets/AssetValidator.h"
 #include "assets/IAssetGenerator.h"
+#include "assets/ItemView.h"
 #include "assets/MeshSilhouette.h"
 #include "assets/MotionDef.h"
 #include "assets/TessellatedPaths.h"
@@ -107,6 +108,15 @@ namespace assets {
 
 		/// getTemplate(templateId(defName, traits)).
 		const renderer::TessellatedMesh* getTemplate(const std::string& defName, TreeTraits traits);
+
+		/// A parts template's strip layout at a turn (rotatable-placed-items 8): computed from its def the first time
+		/// it is asked for, on the asking thread, and kept until the next clear, so the pointer stays valid until then.
+		/// Null for a template that isn't a parts def's.
+		[[nodiscard]] const ItemLayout* stripLayout(uint32_t templateId, uint32_t turnQuanta);
+
+		/// How many strips the kept layouts have between them: every ItemLayout::firstStrip + its strip count is at
+		/// most this.
+		[[nodiscard]] uint32_t stripLayoutStripCount() const;
 
 		/// The seed a template is generated with: 0 for a def with a single variant, else the
 		/// shared variantSeed hash of the def and age class name, at the variant.
@@ -451,6 +461,12 @@ namespace assets {
 		std::atomic<float>										m_maxReach{0.0F};
 		std::atomic<float>										largestCollisionReach{0.0F};
 		std::atomic<float>										largestCollidingScale{0.0F};
+
+		// Strip layouts by (template id, turn quanta), each kept at a stable address. Guarded separately.
+		std::unordered_map<uint64_t, uint32_t>	   m_layoutIds; // into m_layouts
+		std::vector<std::unique_ptr<ItemLayout>> m_layouts;
+		uint32_t								   m_layoutStrips = 0;
+		mutable std::mutex						   m_layoutMutex;
 
 		// Resolved motion per def (empty MotionDef = "resolved, has none"). Guarded separately.
 		std::unordered_map<std::string, MotionDef> m_motionCache;

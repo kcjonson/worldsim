@@ -2,6 +2,7 @@
 
 #include "assets/placement/SpatialIndex.h"
 #include <ecs/ISystem.h>
+#include <ecs/components/Appearance.h>
 
 #include <deque>
 #include <vector>
@@ -24,6 +25,9 @@ public:
     }
 
 private:
+    /// One record a depth strip of a parts item at its turn, at scale 1 and rotation 0 (the view is turned).
+    void pushItemStrips(const ecs::Appearance& appearance, glm::vec2 position, uint32_t turnQuanta);
+
     std::vector<assets::PlacedEntity> renderData;
 
     // Per-frame backing store for animated entities' per-part transforms. A deque so push_back
