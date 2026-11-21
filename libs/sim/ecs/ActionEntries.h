@@ -2,7 +2,7 @@
 
 // The action entries the hand-written action factories and the hands rule take their values from, each resolved
 // once at load from the behavior library to its handle and plain values, so nothing reads the library when an
-// action starts. See /docs/technical/queries-and-chains.md (Actions) and behavior-data-migration.md (ticket 11).
+// action starts. See /docs/technical/queries-and-chains.md (Actions) and behavior-data-migration.md (Seams).
 //
 // An entry never says one thing while the sim does another: every factory reads a fixed shape, and anything else in
 // its entry is a load error naming the file, the entry, and the element. Every entry's `interruptable` and `hands`
