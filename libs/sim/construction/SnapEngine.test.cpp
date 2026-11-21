@@ -707,8 +707,7 @@ TEST(SnapEngine, OuterFaceFlushCornerOnDiagonalFoundationStaysInside) {
 namespace {
 
 	// A 20x20 m foundation plus one BUILT wall (2,6)->(2+len,6), Wood/Standard.
-	// Returns the segment id. Openings snap only to built walls, so the segment is
-	// promoted to Built here.
+	// Returns the segment id, promoted to Built.
 	SegmentId buildBuiltWall(ConstructionWorld& world, float lengthMeters) {
 		std::vector<Vec2> sq = {{0.0F, 0.0F}, {20.0F, 0.0F}, {20.0F, 20.0F}, {0.0F, 20.0F}};
 		auto			  f = world.commitFoundation(sq, "Wood");
@@ -765,7 +764,7 @@ TEST(SnapEngine, OpeningTClampedAwayFromEnds) {
 	EXPECT_NEAR(r.point.x, 2.0F + 0.125F * 6.0F, 1e-2F);
 }
 
-TEST(SnapEngine, OpeningDoesNotSnapToBlueprintWall) {
+TEST(SnapEngine, OpeningSnapsToBlueprintWall) {
 	SnappingConfig	  cfg = defaults();
 	ConstructionWorld world;
 	// A wall left in the default Blueprint state (NOT promoted to Built).
@@ -776,9 +775,10 @@ TEST(SnapEngine, OpeningDoesNotSnapToBlueprintWall) {
 	ASSERT_TRUE(seg.ok());
 
 	SnapEngine engine(cfg, world);
-	// Cursor right on the blueprint wall: must NOT snap (only built walls qualify).
 	auto r = engine.snapOpening({6.0F, 6.1F}, 0.9F);
-	EXPECT_FALSE(r.valid);
+	ASSERT_TRUE(r.valid);
+	EXPECT_EQ(r.segment, seg.id);
+	EXPECT_NEAR(r.t, 0.5F, 1e-3F);
 }
 
 TEST(SnapEngine, OpeningSkipsWallTooShortForOpening) {

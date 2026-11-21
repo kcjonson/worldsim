@@ -348,7 +348,7 @@ Same as foundations: blueprint → haul → build → built. Work is length × t
 
 ### Segments and Demolition
 
-A drawn chain is split into **segments** at junctions. Segments are the unit of selection, demolition, and retrofit. Demolishing a segment is work and refunds a percentage of its materials (same config as foundations). Demolition can split a room or unmake it; room detection updates automatically.
+A drawn chain is split into **segments** at junctions. Segments are the unit of selection, demolition, and retrofit. Demolishing a segment is work and refunds a percentage of its materials (same config as foundations). Demolishing or cancelling a wall takes the openings on it down too, and a cancelled blueprint wall returns what was delivered to its openings to the ground. Demolition can split a room or unmake it; room detection updates automatically.
 
 ---
 
@@ -396,7 +396,7 @@ Cases:
 
 Doors and windows place onto walls, blueprint or built. The cursor slides along the wall, showing a ghost of the opening at the snapped position, colorized for validity.
 
-An opening **sits on the wall** as its own blueprint with its own materials and work; it does not cut, consume, or modify the wall (deliberately unlike the real world, where a door needs a hole framed for it). The wall and the opening are independent: placing an opening adds no wall work and costs no wall material, there is no cut-and-patch step, and removing an opening leaves the wall fully intact. Openings can be added to a wall (blueprint or built) at any time, so buildings stay renovatable forever.
+An opening **sits on the wall** as its own blueprint with its own materials and work; it does not cut, consume, or modify the wall (deliberately unlike the real world, where a door needs a hole framed for it). The wall and the opening are independent: placing an opening adds no wall work and costs no wall material, there is no cut-and-patch step, and removing an opening leaves the wall fully intact. Openings can be added to a wall (blueprint or built, except one being demolished) at any time, so buildings stay renovatable forever.
 
 ### Sizes
 

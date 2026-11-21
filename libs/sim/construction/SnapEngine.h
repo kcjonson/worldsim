@@ -189,10 +189,10 @@ namespace construction {
 		[[nodiscard]] bool closesShape() const { return kind == SnapKind::Origin; }
 	};
 
-	// Result of an opening snap: the BUILT wall segment the cursor snapped to, the
+	// Result of an opening snap: the wall segment (blueprint or built) the cursor snapped to, the
 	// centerline parameter t (clamped so an opening of the queried width honors the
 	// end margins), and the snapped world point (centerline at t) for the ghost
-	// preview. `valid` is false when no built wall is within the snap radius or the
+	// preview. `valid` is false when no wall is within the snap radius or the
 	// nearest one is too short to fit the opening; the other fields are unspecified
 	// then. The OpeningTool reads `segment` + `t` to commit and `point` to draw.
 	struct OpeningSnap {
@@ -288,15 +288,14 @@ namespace construction {
 		[[nodiscard]] SnapResult
 		snapWall(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, const SnapInput& input) const;
 
-		// Opening snap (Epic F). Find the nearest BUILT wall segment whose centerline
+		// Opening snap (Epic F). Find the nearest wall segment, blueprint or built, whose centerline
 		// passes within edgeSnapRadius of `cursor`, project the cursor onto it, and
 		// return the placement for an opening of `openingWidthMeters`. t is clamped to
 		// openingRange (OpeningGeometry.h), the range the validator accepts: the end
 		// margins from openingMargin config, measured from each end of the wall's
 		// band as its corners trim it. A wall with no range (its wall graph cannot be
 		// resolved) or too short to fit the opening is skipped, and a farther wall may
-		// win. Returns valid=false if no built wall in range is left. Only BUILT
-		// segments are candidates (a blueprint wall has no surface to cut yet).
+		// win. Returns valid=false if no wall in range is left.
 		// Reads segments() in stable order; ties keep the lowest-id segment.
 		[[nodiscard]] OpeningSnap snapOpening(::Foundation::Vec2 cursor, float openingWidthMeters) const;
 
