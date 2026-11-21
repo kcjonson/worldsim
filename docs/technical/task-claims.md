@@ -514,21 +514,24 @@ takes no claim either.
 
 A wall whose work reaches its total completes only on a tick in which time passes and nothing holds it
 (`ActionSystem::clearWallToComplete`; what it would close is worked out once per topology change,
-`construction::WallClosure`). Three things hold it, and while any does nobody is moved: a builder of it
-(a colonist whose Build task is on it, at work or walking there) whom completing it would shut in
-(`WallClosure::shutsIn`), whose action ends so that he decides again and goes to a side it allows;
-anyone else not under the player's control whom it would shut in and who is on the way out; and a
+`construction::WallClosure`). Four things hold it, and while any does nobody is moved. In the region it
+would shut in (`WallClosure::shutsIn`: the side with no way out, when the other side has one; another
+sealed room elsewhere is not its): a builder of it (a colonist whose Build task is on it, at work or
+walking there), whose action ends so that he decides again and goes to a side it allows; a colonist not
+under the player's control whose Build task is on another wall, his work left going (that wall completes
+first and frees him); and anyone else not under the player's control who is on the way out. And a
 colonist under the player's control in its band (the band `WallCollisionSystem` pushes out of once it is
 built), which raises one "Wall waiting" toast naming them as the hold begins, and again only after a
 release. On the way out means a task under way (its route not found wanting) whose point, the one its
 current leg walks to (`Task::targetPosition`: a wander's point, a need's source, a work stand, a haul's
-pickup), or a later leg's (a haul's deposit, a packaged item's placement), is not shut in. Someone who
-stays inside by choice, with no task, or one whose every point is inside (working, eating, or sleeping
-there), is not waited for. While it waits, the Build action is interruptable, so the builder may be taken
-away as from any interruptable work: by a higher tier, or a same-tier option that wins its hysteresis
-margin. Once nothing holds it, any other colonist in the band steps out of it as it completes, to the
-allowed side he is on, or to the allowed side when he is on the other. The dev tools' free build and
-forced completion do not wait.
+pickup, or the deposit for a carry-in of goods already carried), or a later leg's (a haul's deposit, a
+packaged item's placement), is not shut in. Someone whose task keeps them inside, with no task or one
+whose every point is inside (working, eating, or sleeping there), is not waited for, and neither is a
+colonist under the player's control who is inside but not in the band. While it waits, the Build action
+is interruptable, so the builder may be taken away as from any interruptable work: by a higher tier, or
+a same-tier option that wins its hysteresis margin. Once nothing holds it, any other colonist in the band
+steps out of it as it completes, to the allowed side he is on, or to the allowed side when he is on the
+other. The dev tools' free build and forced completion do not wait.
 
 A site ordered demolished takes no more build work: a Build action on it ends on the next tick it
 would add work, before it could complete, and a builder still walking there starts nothing on arrival.
