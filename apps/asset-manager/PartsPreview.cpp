@@ -1,6 +1,7 @@
 #include "PartsPreview.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/ConstructionRegistry.h>
 #include <assets/ViewConfig.h>
 #include <utils/Log.h>
 
@@ -12,14 +13,17 @@ namespace asset_manager {
 	namespace {
 		// Room round the farthest thing drawn, so nothing touches the box's edge.
 		constexpr float kFitMargin = 1.06F;
+
+		const assets::ItemOverlayStyle& look() {
+			return assets::ConstructionRegistry::Get().rendering().itemOverlays;
+		}
 	} // namespace
 
-	float partsFitRadiusMeters(const std::string& defName) {
-		const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(defName);
-		if (def == nullptr || def->parts == nullptr) {
+	float partsFitRadiusMeters(const assets::AssetDefinition& def) {
+		if (def.parts == nullptr) {
 			return 1.0F;
 		}
-		float radius = assets::itemReachMeters(*def->parts, assets::GameViewConfig::Get().config());
+		float radius = assets::itemReachMeters(*def.parts, assets::GameViewConfig::Get().config());
 		const auto reach = [&radius](const std::vector<assets::AreaPolygon>& polygons) {
 			for (const assets::AreaPolygon& polygon : polygons) {
 				for (const glm::vec2& point : polygon.outer) {
@@ -27,10 +31,10 @@ namespace asset_manager {
 				}
 			}
 		};
-		for (const assets::ItemArea& area : def->parts->useAreas) {
+		for (const assets::ItemArea& area : def.parts->useAreas) {
 			reach(area.polygons);
 		}
-		reach(def->parts->clearance.polygons);
+		reach(def.parts->clearance.polygons);
 		return std::max(radius, 0.01F) * kFitMargin;
 	}
 
@@ -54,23 +58,25 @@ namespace asset_manager {
 		overlays = value;
 	}
 
-	bool PartsPreview::refresh(uint8_t level) {
+	const assets::AssetDefinition* PartsPreview::refresh() {
 		// Re-resolved by name: a reload clears the registry, and a stored definition would dangle.
 		const assets::AssetRegistry&   registry = assets::AssetRegistry::Get();
 		const assets::AssetDefinition* def = registry.getDefinition(defName);
 		if (def == nullptr || def->parts == nullptr || !assets::GameViewConfig::Get().loaded()) {
 			hasView = false;
-			return false;
+			return nullptr;
 		}
 		const uint64_t generation = registry.generation();
-		if (hasView && builtGeneration == generation && built.turnQuanta == turnQuanta && built.level == level) {
-			return true;
+		const uint8_t  level = partsPreviewLevel(*def, fixedLevel);
+		const bool	   fresh = hasView && builtGeneration == generation;
+		if (fresh && built.turnQuanta == turnQuanta && built.level == level) {
+			return def;
 		}
-		if (!hasView || builtGeneration != generation) {
-			fitRadiusMeters = partsFitRadiusMeters(defName);
+		if (!fresh) {
+			fitRadiusMeters = partsFitRadiusMeters(*def);
 		}
-		if (!hasView || builtGeneration != generation || geometry.turnQuanta != turnQuanta) {
-			geometry = assets::itemOverlays(*def, turnQuanta);
+		if (!fresh || geometry.turnQuanta != turnQuanta) {
+			geometry = assets::itemOverlays(*def, turnQuanta, look().hatchSpacingMeters);
 		}
 		built = assets::buildItemMesh(*def, turnQuanta, level, assets::GameViewConfig::Get().config());
 		if (!built.error.empty()) {
@@ -78,35 +84,27 @@ namespace asset_manager {
 		}
 		builtGeneration = generation;
 		hasView = true;
-		return true;
+		return def;
 	}
 
 	void PartsPreview::render() {
 		const Foundation::Vec2 size = getSize();
-		if (size.x <= 0.0F || size.y <= 0.0F) {
+		if (size.x <= 0.0F || size.y <= 0.0F || refresh() == nullptr) {
 			return;
 		}
-		const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(defName);
-		if (def == nullptr || def->parts == nullptr) {
-			return;
-		}
-		const float	  pixelsPerMeter = std::min(size.x, size.y) / (2.0F * partsFitRadiusMeters(defName));
-		const uint8_t level = partsPreviewLevel(*def, fixedLevel);
-		if (!refresh(level)) {
-			return;
-		}
-
-		const worldview::ItemScreenFrame frame{.pivot = {size.x * 0.5F, size.y * 0.5F}, .pixelsPerMeter = pixelsPerMeter};
-		const worldview::ItemOverlayStyle style{.opacity = opacity(), .labels = labels, .key = drawKey()};
+		const worldview::ItemScreenFrame frame{
+			.pivot = {size.x * 0.5F, size.y * 0.5F}, .pixelsPerMeter = std::min(size.x, size.y) / (2.0F * fitRadiusMeters)
+		};
+		const worldview::ItemDrawStyle style{.opacity = opacity(), .labels = labels, .key = drawKey()};
 		worldview::drawItemOverlays(
-			geometry, frame, {.useAreas = overlays.useAreas, .clearance = overlays.clearance, .footprints = false, .collider = false}, style
+			geometry, frame, {.useAreas = overlays.useAreas, .clearance = overlays.clearance, .footprints = false, .collider = false}, look(), style
 		);
-		worldview::drawItemView(built.mesh, frame, drawKey());
+		worldview::drawItemView(built.mesh, frame, look(), style);
 		worldview::drawItemOverlays(
-			geometry, frame, {.useAreas = false, .clearance = false, .footprints = overlays.footprints, .collider = overlays.collider}, style
+			geometry, frame, {.useAreas = false, .clearance = false, .footprints = overlays.footprints, .collider = overlays.collider}, look(), style
 		);
 		if (overlays.strips) {
-			worldview::drawItemStrips(built, frame, fitRadiusMeters, style);
+			worldview::drawItemStrips(built, frame, fitRadiusMeters, look(), style);
 		}
 	}
 

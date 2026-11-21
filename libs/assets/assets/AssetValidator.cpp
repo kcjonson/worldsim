@@ -25,8 +25,10 @@ namespace assets {
 
 	namespace fs = std::filesystem;
 
-	void ValidationReport::add(Severity severity, std::string defName, std::string field, std::string message, std::string context) {
-		issues.push_back({severity, std::move(defName), std::move(field), std::move(message), std::move(context)});
+	void ValidationReport::add(
+		Severity severity, std::string defName, std::string field, std::string message, std::string context, std::vector<std::string> parts
+	) {
+		issues.push_back({severity, std::move(defName), std::move(field), std::move(message), std::move(context), std::move(parts)});
 	}
 
 	int ValidationReport::errorCount() const {

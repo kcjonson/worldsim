@@ -8,6 +8,7 @@
 #include <assets/AssetBootstrap.h>
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
+#include <assets/ConstructionRegistry.h>
 #include <assets/RecipeRegistry.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
@@ -94,6 +95,7 @@ namespace {
 				worldRoot = (src / "world").string();
 				sandboxRoot = (src / "sandbox" / "items").string();
 				sharedScripts = (src / "shared" / "scripts").string();
+				renderingFile = (src / "config" / "construction" / "rendering.xml").string();
 				worldRecipes = std::filesystem::exists(src / "recipes") ? (src / "recipes").string()
 																		: Foundation::findResourceString("assets/recipes");
 				LOG_INFO(Engine, "AssetManager: live source assets at %s", worldRoot.c_str());
@@ -101,8 +103,11 @@ namespace {
 				worldRoot = Foundation::findResourceString("assets/world");
 				sandboxRoot = Foundation::findResourceString("assets/sandbox/items");
 				sharedScripts = Foundation::findResourceString("assets/shared/scripts");
+				renderingFile = Foundation::findResourceString("assets/config/construction/rendering.xml");
 				worldRecipes = Foundation::findResourceString("assets/recipes");
 			}
+			// The parts overlays' look; a missing file keeps the built-in one.
+			assets::ConstructionRegistry::Get().loadRendering(renderingFile);
 			refreshNames();
 
 			theme::apply(ui());
@@ -201,9 +206,10 @@ namespace {
 			const assets::ValidationReport& report = assets::AssetRegistry::Get().getValidationReport();
 			const int errors = report.errorCount() + static_cast<int>(assets::RecipeRegistry::Get().problems().size());
 			ui::Text* shown = summary.get();
+			const auto counted = [](size_t count, const char* noun) { return std::to_string(count) + " " + noun + (count == 1 ? "" : "s"); };
 			shown->setText(
-				std::to_string(allNames.size()) + " assets    -    " + std::to_string(errors) + " errors, " +
-				std::to_string(report.warningCount()) + " warnings"
+				counted(allNames.size(), "asset") + "    -    " + counted(static_cast<size_t>(errors), "error") + ", " +
+				counted(static_cast<size_t>(report.warningCount()), "warning")
 			);
 			shown->setStyle(
 				ui::styles::text::secondary.extend({.color = ui().getTheme().get(errors > 0 ? t::color::statusCrit : t::color::textDim)})
@@ -239,6 +245,7 @@ namespace {
 		void reload() {
 			asset_manager::AssetThumbnail::clearCache();
 			asset_manager::GroundBakeView::clearCache();
+			assets::ConstructionRegistry::Get().loadRendering(renderingFile);
 			assets::loadAssetSystem(
 				{.definitions = sandbox ? sandboxRoot : worldRoot, .sharedScripts = sharedScripts, .recipes = sandbox ? std::string() : worldRecipes},
 				false
@@ -320,6 +327,7 @@ namespace {
 		std::string					worldRoot;
 		std::string					sandboxRoot;
 		std::string					sharedScripts;
+		std::string					renderingFile;
 		std::string					worldRecipes;
 		bool						sandbox = false; // browsing the sandbox's items instead of the world's
 		std::vector<std::string>	allNames;

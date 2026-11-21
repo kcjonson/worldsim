@@ -420,12 +420,41 @@ namespace assets {
 		float		   cursorRadiusPx = 6.0F;
 	};
 
+	/// The overlays over a parts item (rotatable-placed-items.md, sections 14.4 and 16), on the placement ghost and in
+	/// the asset manager: use areas filled at useAreaFillAlpha with a solid edge, the clearance hatched (lines
+	/// hatchSpacingMeters apart, thinned on screen to one at least hatchMinGapPx apart) with a dashed edge, each part's
+	/// footprint, the collider, and the depth strips with their anchors. refusedTint multiplies the ghost's colours, and
+	/// replaces the overlays', where placement is refused. Widths and the label size are logical pixels.
+	struct ItemOverlayStyle {
+		StyleColor useAreaColor{0.30F, 0.80F, 0.62F, 1.0F};
+		StyleColor clearanceColor{0.86F, 0.84F, 0.78F, 1.0F};
+		StyleColor footprintColor{0.85F, 0.55F, 0.95F, 1.0F};
+		StyleColor colliderColor{0.0F, 0.9F, 1.0F, 1.0F};
+		StyleColor stripColor{0.45F, 0.55F, 1.0F, 1.0F};
+		StyleColor anchorColor{0.95F, 0.35F, 0.75F, 1.0F};
+		StyleColor refusedTint{1.0F, 0.3F, 0.3F, 1.0F};
+		StyleColor labelBacking{0.06F, 0.07F, 0.08F, 0.75F};
+		float	   useAreaFillAlpha = 0.28F;
+		float	   hatchAlpha = 0.6F;
+		float	   footprintAlpha = 0.85F;
+		float	   hatchSpacingMeters = 0.1F;
+		float	   hatchMinGapPx = 4.0F;
+		float	   edgeWidth = 1.5F;
+		float	   hatchWidth = 1.0F;
+		float	   footprintWidth = 1.0F;
+		float	   colliderWidth = 2.0F;
+		float	   dashPx = 6.0F;
+		float	   gapPx = 4.0F;
+		float	   labelPx = 12.0F;
+	};
+
 	/// All construction rendering style, loaded from rendering.xml.
 	struct RenderingConfig {
-		FoundationStyle foundation;
-		WallStyle		wall;
-		OpeningStyle	opening;
-		PreviewStyle	preview;
+		FoundationStyle	 foundation;
+		WallStyle		 wall;
+		OpeningStyle	 opening;
+		PreviewStyle	 preview;
+		ItemOverlayStyle itemOverlays;
 	};
 
 	// ---------------------------------------------------------------------------

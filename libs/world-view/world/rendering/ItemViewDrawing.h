@@ -2,9 +2,11 @@
 
 // Drawing a parts item's view and its overlays on the CPU batch (docs/technical/rendering/rotatable-placed-items.md,
 // sections 6, 14.4 and 16): the one drawing path the asset manager's preview, the ui-sandbox's turntable, and the
-// placement ghost's overlays share. Geometry comes from libs/assets (assets::buildItemMesh, assets::itemOverlays);
-// this maps it from pivot-relative metres into whatever space the caller draws in.
+// placement ghost share. Geometry comes from libs/assets (assets::buildItemMesh, assets::itemOverlays) and the look
+// from assets/config/construction/rendering.xml (assets::ItemOverlayStyle); this maps pivot-relative metres into
+// whatever space the caller draws in.
 
+#include <assets/ConstructionRegistry.h>
 #include <assets/ItemOverlays.h>
 #include <assets/ItemView.h>
 
@@ -36,17 +38,8 @@ namespace worldview {
 		bool collider = true;
 	};
 
-	/// The overlays' colours, the legend's swatches too.
-	inline const Foundation::Color kUseAreaColor{0.25F, 0.85F, 0.55F, 1.0F};
-	inline const Foundation::Color kClearanceColor{0.88F, 0.86F, 0.80F, 1.0F};
-	inline const Foundation::Color kFootprintColor{0.96F, 0.94F, 0.88F, 1.0F};
-	inline const Foundation::Color kColliderColor{0.0F, 1.0F, 1.0F, 1.0F};
-	inline const Foundation::Color kStripColor{0.1F, 0.75F, 0.95F, 1.0F};
-	inline const Foundation::Color kAnchorColor{0.9F, 0.2F, 0.85F, 1.0F};
-	inline const Foundation::Color kRefusedColor{1.0F, 0.3F, 0.3F, 1.0F};
-
-	struct ItemOverlayStyle {
-		/// One logical pixel in the caller's units: line widths, dashes, and labels are sized in it.
+	struct ItemDrawStyle {
+		/// One logical pixel in the caller's units: line widths, dashes, labels, and the hatch's thinning are sized in it.
 		float pixel = 1.0F;
 		/// Opacity over everything, and the refused tint (the ghost where placement is refused).
 		float	opacity = 1.0F;
@@ -55,17 +48,30 @@ namespace worldview {
 		int32_t key = 0;
 	};
 
-	/// A view's triangles (or any pivot-relative mesh), in its stored order, on the batch.
-	void drawItemView(const renderer::TessellatedMesh& mesh, const ItemScreenFrame& frame, int32_t key = 0);
+	/// The look's colour as the renderer takes it.
+	[[nodiscard]] Foundation::Color colorOf(const assets::StyleColor& color);
 
-	/// Use areas filled with a solid edge and their names, the clearance hatched with a dashed edge, each placement's
-	/// footprint as a thin line, and the collider's rings: in that order, so the lines lie over the fills.
+	/// A view's triangles, or any mesh about the pivot (a template), in its stored order, on the batch: each colour's
+	/// alpha times the opacity, and its colour times the refused tint where refused. A mesh with no colours is white.
+	void drawItemView(
+		const renderer::TessellatedMesh& mesh, const ItemScreenFrame& frame, const assets::ItemOverlayStyle& look, const ItemDrawStyle& style
+	);
+
+	/// Use areas filled with a solid edge and their names, the clearance hatched with a dashed edge, each placed part's
+	/// footprint as a thin line, and the collider's rings: in that order, so the lines lie over the fills. Hatch lines
+	/// closer on the screen than the look's hatchMinGapPx are thinned to every Nth.
 	void drawItemOverlays(
-		const assets::ItemOverlays& overlays, const ItemScreenFrame& frame, const ItemOverlayShown& shown, const ItemOverlayStyle& style
+		const assets::ItemOverlays&		  overlays,
+		const ItemScreenFrame&			  frame,
+		const ItemOverlayShown&			  shown,
+		const assets::ItemOverlayStyle&	  look,
+		const ItemDrawStyle&			  style
 	);
 
 	/// A view's depth strips: each strip's screen box, and its anchor as a line across it with a dot (the flat
 	/// strip's anchor has nowhere on the screen to go). Already on the screen relative to the pivot: no turn.
-	void drawItemStrips(const assets::ItemView& view, const ItemScreenFrame& frame, float reachMeters, const ItemOverlayStyle& style);
+	void drawItemStrips(
+		const assets::ItemView& view, const ItemScreenFrame& frame, float reachMeters, const assets::ItemOverlayStyle& look, const ItemDrawStyle& style
+	);
 
 } // namespace worldview

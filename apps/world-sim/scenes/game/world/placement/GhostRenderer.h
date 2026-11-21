@@ -2,12 +2,11 @@
 
 // GhostRenderer - Renders a semi-transparent preview of an entity during placement.
 // A parts item is drawn from its item view at the ghost's turn (assets::buildItemMesh, the builder the placed
-// item's view comes from), any other def from its template, upright; both on the CPU batch with alpha. Under a parts
-// item, its use areas, clearance, and collider (assets::itemOverlays, drawn by worldview::drawItemOverlays).
+// item's view comes from), any other def from its template, upright; both through worldview::drawItemView with alpha,
+// tinted where placement is refused. Under a parts item, its use areas, clearance, and collider (assets::itemOverlays,
+// drawn by worldview::drawItemOverlays).
 
-#include <assets/AssetDefinition.h>
 #include <assets/ItemOverlays.h>
-#include <graphics/Color.h>
 #include <math/Types.h>
 #include <vector/Types.h>
 #include <world/camera/WorldCamera.h>
@@ -16,7 +15,6 @@
 #include <map>
 #include <string>
 #include <tuple>
-#include <vector>
 
 namespace world_sim {
 
@@ -50,32 +48,15 @@ class GhostRenderer {
 	void endFrame();
 
   private:
+	// A parts ghost's view and overlays: the placing ghost and every pending install each hold one.
 	struct HeldView {
 		renderer::TessellatedMesh mesh;
+		assets::ItemOverlays	  overlays;
 		bool					  drawn = false;
 	};
 	// By (def, turn, level), under the registry generation they were built in.
 	std::map<std::tuple<std::string, uint32_t, uint8_t>, HeldView> views;
 	uint64_t													   viewsGeneration = 0;
-
-	// The overlays at the turn drawn last, rebuilt when the def, the turn, or the registry changes.
-	assets::ItemOverlays overlays;
-	std::string			 overlaysDef;
-	uint64_t			 overlaysGeneration = 0;
-
-	void drawOverlays(const assets::AssetDefinition& def,
-					  uint32_t turnQuanta,
-					  Foundation::Vec2 worldPos,
-					  const world::WorldCamera& camera,
-					  int viewportWidth,
-					  int viewportHeight,
-					  bool isValid);
-
-	void draw(const renderer::TessellatedMesh& mesh, Foundation::Vec2 offset, const world::WorldCamera& camera, int viewportWidth, int viewportHeight, bool isValid);
-
-	// Per-frame buffers for transformed mesh (reused to avoid allocations)
-	std::vector<Foundation::Vec2> m_transformedVertices;
-	std::vector<Foundation::Color> m_ghostColors;
 };
 
 } // namespace world_sim

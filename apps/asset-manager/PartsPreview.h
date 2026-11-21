@@ -43,18 +43,15 @@ namespace asset_manager {
 		void setTurn(uint32_t turnQuanta);
 		void setOverlays(const PartsOverlays& overlays);
 
-		[[nodiscard]] uint32_t				  turn() const { return turnQuanta; }
-		/// The view drawn last, for the pane's counts.
-		[[nodiscard]] const assets::ItemView& view() const { return built; }
-
 		[[nodiscard]] const char* typeName() const override { return "PartsPreview"; }
 
 	  protected:
 		void render() override;
 
 	  private:
-		/// Builds the view and overlays when the turn, level, or registry changed; false when there is nothing to draw.
-		bool refresh(uint8_t level);
+		/// Builds the view and overlays when the turn, level, or registry changed; the def, or null when there is nothing
+		/// to draw.
+		const assets::AssetDefinition* refresh();
 
 		std::string					defName;
 		uint32_t					turnQuanta;
@@ -70,7 +67,7 @@ namespace asset_manager {
 	};
 
 	/// How far from the pivot a parts def's view and its areas reach at any turn, in metres.
-	[[nodiscard]] float partsFitRadiusMeters(const std::string& defName);
+	[[nodiscard]] float partsFitRadiusMeters(const assets::AssetDefinition& def);
 
 	/// The level a preview draws: `level` when the def has it, else its finest.
 	[[nodiscard]] uint8_t partsPreviewLevel(const assets::AssetDefinition& def, std::optional<uint8_t> level);

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <numbers>
 
@@ -34,10 +35,36 @@ namespace assets {
 			return std::abs(twice) * 0.5;
 		}
 
+		/// Where a line crosses a polygon's rings, as a parameter along it, sorted. `side(point)` is the point's signed
+		/// offset from the line; `along(from, to, t)` the parameter of the crossing at fraction t of an edge.
+		template <typename Side, typename Along>
+		void crossingsOf(const AreaPolygon& polygon, Side side, Along along, std::vector<double>& crossings) {
+			crossings.clear();
+			const auto ringCrossings = [&](const std::vector<glm::vec2>& ring) {
+				for (size_t i = 0; i < ring.size(); ++i) {
+					const glm::vec2& from = ring[i];
+					const glm::vec2& to = ring[(i + 1) % ring.size()];
+					const double	 fromSide = side(from);
+					const double	 toSide = side(to);
+					// Half-open, so a line through a vertex crosses one of its two edges, never both or neither.
+					if ((fromSide > 0.0) == (toSide > 0.0)) {
+						continue;
+					}
+					crossings.push_back(along(from, to, fromSide / (fromSide - toSide)));
+				}
+			};
+			ringCrossings(polygon.outer);
+			for (const std::vector<glm::vec2>& hole : polygon.holes) {
+				ringCrossings(hole);
+			}
+			std::sort(crossings.begin(), crossings.end());
+		}
+
 		OverlayArea turnedArea(const ItemArea& area, float radians) {
 			OverlayArea result{.name = area.name, .polygons = {}, .fill = {}, .labelPoint = glm::vec2{0.0F}};
+			result.polygons.reserve(area.polygons.size());
 			std::vector<renderer::VectorPath> contours;
-			const std::vector<glm::vec2>*	  largest = nullptr;
+			size_t							  largest = 0;
 			double							  largestArea = -1.0;
 			for (const AreaPolygon& polygon : area.polygons) {
 				AreaPolygon& turned = result.polygons.emplace_back();
@@ -57,7 +84,7 @@ namespace assets {
 				}
 				if (const double size = ringArea(turned.outer); size > largestArea) {
 					largestArea = size;
-					largest = &turned.outer;
+					largest = result.polygons.size() - 1;
 				}
 			}
 			if (!contours.empty()) {
@@ -67,74 +94,104 @@ namespace assets {
 					result.fill.clear();
 				}
 			}
-			if (largest != nullptr && !largest->empty()) {
-				glm::vec2 low = largest->front();
-				glm::vec2 high = low;
-				for (const glm::vec2& point : *largest) {
-					low = glm::min(low, point);
-					high = glm::max(high, point);
-				}
-				result.labelPoint = (low + high) * 0.5F;
+			if (!result.polygons.empty()) {
+				result.labelPoint = pointInside(result.polygons[largest]);
 			}
 			return result;
 		}
 
 	} // namespace
 
-	std::vector<std::array<glm::vec2, 2>> hatchLines(const std::vector<AreaPolygon>& polygons, float spacingMeters) {
-		std::vector<std::array<glm::vec2, 2>> lines;
-		std::vector<const std::vector<glm::vec2>*> rings;
-		float lowest = std::numeric_limits<float>::max();
-		float highest = std::numeric_limits<float>::lowest();
-		for (const AreaPolygon& polygon : polygons) {
-			rings.push_back(&polygon.outer);
-			for (const std::vector<glm::vec2>& hole : polygon.holes) {
-				rings.push_back(&hole);
-			}
-			for (const glm::vec2& point : polygon.outer) {
-				lowest = std::min(lowest, point.x - point.y);
-				highest = std::max(highest, point.x - point.y);
+	glm::vec2 pointInside(const AreaPolygon& polygon) {
+		if (polygon.outer.empty()) {
+			return glm::vec2{0.0F};
+		}
+		float lowY = polygon.outer.front().y;
+		float highY = lowY;
+		for (const glm::vec2& point : polygon.outer) {
+			lowY = std::min(lowY, point.y);
+			highY = std::max(highY, point.y);
+		}
+		const double		middleY = (static_cast<double>(lowY) + highY) * 0.5;
+		std::vector<double> crossings;
+		crossingsOf(
+			polygon,
+			[middleY](glm::vec2 point) { return static_cast<double>(point.y) - middleY; },
+			[](glm::vec2 from, glm::vec2 to, double fraction) { return static_cast<double>(from.x) + fraction * (static_cast<double>(to.x) - from.x); },
+			crossings
+		);
+		double bestFrom = crossings.empty() ? polygon.outer.front().x : crossings.front();
+		double bestTo = bestFrom;
+		for (size_t i = 0; i + 1 < crossings.size(); i += 2) {
+			if (crossings[i + 1] - crossings[i] > bestTo - bestFrom) {
+				bestFrom = crossings[i];
+				bestTo = crossings[i + 1];
 			}
 		}
-		if (rings.empty() || !(spacingMeters > 0.0F)) {
+		return {static_cast<float>((bestFrom + bestTo) * 0.5), static_cast<float>(middleY)};
+	}
+
+	std::vector<HatchLine> hatchLines(const std::vector<AreaPolygon>& polygons, float spacingMeters) {
+		std::vector<HatchLine> lines;
+		if (!(spacingMeters > 0.0F)) {
 			return lines;
 		}
-		// Along a line x - y = c, a point is (c + s, s) / 1 for the parameter s = y; lines of c apart by step are
-		// spacingMeters apart perpendicular to them.
-		const double		step = static_cast<double>(spacingMeters) * std::numbers::sqrt2;
 		std::vector<double> crossings;
-		for (double offset = std::ceil(lowest / step) * step; offset <= highest; offset += step) {
-			crossings.clear();
-			for (const std::vector<glm::vec2>* ring : rings) {
-				for (size_t i = 0; i < ring->size(); ++i) {
-					const glm::vec2& from = (*ring)[i];
-					const glm::vec2& to = (*ring)[(i + 1) % ring->size()];
-					const double	 fromSide = static_cast<double>(from.x) - from.y - offset;
-					const double	 toSide = static_cast<double>(to.x) - to.y - offset;
-					// Half-open, so a line through a vertex crosses one of its two edges, never both or neither.
-					if ((fromSide > 0.0) == (toSide > 0.0)) {
+		for (const AreaPolygon& polygon : polygons) {
+			if (polygon.outer.empty()) {
+				continue;
+			}
+			double lowest = std::numeric_limits<double>::max();
+			double highest = std::numeric_limits<double>::lowest();
+			for (const glm::vec2& point : polygon.outer) {
+				lowest = std::min(lowest, static_cast<double>(point.x) - point.y);
+				highest = std::max(highest, static_cast<double>(point.x) - point.y);
+			}
+			// Lines x - y = c whose c are step apart lie spacingMeters apart, perpendicular to them; a point on one is
+			// (c + s, s) for the parameter s, its y.
+			double step = static_cast<double>(spacingMeters) * std::numbers::sqrt2;
+			step = std::max(step, (highest - lowest) / static_cast<double>(kMaxHatchLinesPerPolygon));
+			const auto piecesAt = [&](double offset, int64_t index) {
+				crossingsOf(
+					polygon,
+					[offset](glm::vec2 point) { return static_cast<double>(point.x) - point.y - offset; },
+					[](glm::vec2 from, glm::vec2 to, double fraction) { return static_cast<double>(from.y) + fraction * (static_cast<double>(to.y) - from.y); },
+					crossings
+				);
+				for (size_t i = 0; i + 1 < crossings.size(); i += 2) {
+					if (crossings[i + 1] - crossings[i] <= 0.0) {
 						continue;
 					}
-					const double along = fromSide / (fromSide - toSide);
-					crossings.push_back(static_cast<double>(from.y) + along * (static_cast<double>(to.y) - from.y));
+					lines.push_back(
+						{.from = {static_cast<float>(offset + crossings[i]), static_cast<float>(crossings[i])},
+						 .to = {static_cast<float>(offset + crossings[i + 1]), static_cast<float>(crossings[i + 1])},
+						 .index = index}
+					);
 				}
+			};
+			const size_t  first = lines.size();
+			const int64_t lowIndex = static_cast<int64_t>(std::ceil(lowest / step));
+			const int64_t highIndex = static_cast<int64_t>(std::floor(highest / step));
+			for (int64_t index = lowIndex; index <= highIndex; ++index) {
+				piecesAt(static_cast<double>(index) * step, index);
 			}
-			std::sort(crossings.begin(), crossings.end());
-			for (size_t i = 0; i + 1 < crossings.size(); i += 2) {
-				if (crossings[i + 1] - crossings[i] <= 0.0) {
-					continue;
-				}
-				lines.push_back(
-					{glm::vec2{static_cast<float>(offset + crossings[i]), static_cast<float>(crossings[i])},
-					 glm::vec2{static_cast<float>(offset + crossings[i + 1]), static_cast<float>(crossings[i + 1])}}
-				);
+			if (lines.size() == first) {
+				// Too thin across the lines to meet one: the line through its middle.
+				piecesAt((lowest + highest) * 0.5, 0);
+			}
+			if (lines.size() > first) {
+				const double middle = (lowest + highest) * 0.5 / step;
+				auto		 nearest = std::min_element(lines.begin() + static_cast<std::ptrdiff_t>(first), lines.end(), [middle](const HatchLine& left, const HatchLine& right) {
+					return std::abs(static_cast<double>(left.index) - middle) < std::abs(static_cast<double>(right.index) - middle);
+				});
+				nearest->middle = true;
 			}
 		}
 		return lines;
 	}
 
-	ItemOverlays itemOverlays(const AssetDefinition& def, uint32_t turnQuanta) {
-		ItemOverlays overlays{.turnQuanta = turnQuanta};
+	ItemOverlays itemOverlays(const AssetDefinition& def, uint32_t turnQuanta, float hatchSpacingMeters) {
+		ItemOverlays overlays{.turnQuanta = turnQuanta, .hatchSpacingMeters = hatchSpacingMeters};
 		if (def.parts == nullptr) {
 			return overlays;
 		}
@@ -144,7 +201,7 @@ namespace assets {
 			overlays.useAreas.push_back(turnedArea(area, radians));
 		}
 		overlays.clearance = turnedArea(parts.clearance, radians);
-		overlays.clearanceHatch = hatchLines(overlays.clearance.polygons, kHatchSpacingMeters);
+		overlays.clearanceHatch = hatchLines(overlays.clearance.polygons, hatchSpacingMeters);
 		for (size_t placement = 0; placement < parts.placements.size(); ++placement) {
 			overlays.footprints.push_back(turnedFootprint(parts, placement, radians));
 		}

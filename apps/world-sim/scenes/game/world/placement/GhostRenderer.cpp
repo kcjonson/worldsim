@@ -1,23 +1,20 @@
 #include "GhostRenderer.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/ConstructionRegistry.h>
 #include <assets/DetailLevels.h>
 #include <assets/ItemView.h>
 #include <assets/ViewConfig.h>
-#include <assets/placement/InstanceTransform.h>
-#include <primitives/Primitives.h>
 #include <utils/Log.h>
 #include <world/rendering/ItemViewDrawing.h>
 
 namespace world_sim {
 
 namespace {
-constexpr float kGhostAlpha = 0.5F;	   // Semi-transparent
-constexpr float kInvalidAlpha = 0.3F;  // More transparent when invalid
-constexpr float kInvalidTintR = 1.0F;  // Red tint for invalid placement
-constexpr float kInvalidTintG = 0.3F;
-constexpr float kInvalidTintB = 0.3F;
-constexpr float kPixelsPerMeter = 8.0F; // Match GameScene constant
+constexpr float	  kGhostAlpha = 0.5F;	  // Semi-transparent
+constexpr float	  kInvalidAlpha = 0.3F;	  // More transparent when invalid
+constexpr float	  kPixelsPerMeter = 8.0F; // Match GameScene constant
+constexpr int32_t kGhostKey = 1000;		  // Draw above entities
 } // namespace
 
 void GhostRenderer::beginFrame() {
@@ -46,6 +43,14 @@ void GhostRenderer::render(const std::string& defName,
 		return;
 	}
 
+	// Meshes are about the pivot: a template upright at scale 1 (PlacementSystem::spawnEntity), a view turned already.
+	const worldview::ItemScreenFrame frame{
+		.pivot = camera.worldToScreen(worldPos.x, worldPos.y, viewportWidth, viewportHeight, kPixelsPerMeter),
+		.pixelsPerMeter = camera.worldDistanceToScreen(1.0F, kPixelsPerMeter),
+	};
+	const assets::ItemOverlayStyle& look = assets::ConstructionRegistry::Get().rendering().itemOverlays;
+	const worldview::ItemDrawStyle	ghost{.opacity = isValid ? kGhostAlpha : kInvalidAlpha, .refused = !isValid, .key = kGhostKey};
+
 	auto&		registry = assets::AssetRegistry::Get();
 	const auto* def = registry.getDefinition(defName);
 	if (def != nullptr && def->parts != nullptr) {
@@ -60,11 +65,21 @@ void GhostRenderer::render(const std::string& defName,
 				LOG_ERROR(Game, "No ghost view of %s at %u quanta: %s", defName.c_str(), turnQuanta, view.error.c_str());
 				return;
 			}
-			held = views.emplace(key, HeldView{.mesh = std::move(view.mesh)}).first;
+			held = views
+					   .emplace(key, HeldView{.mesh = std::move(view.mesh), .overlays = assets::itemOverlays(*def, turnQuanta, look.hatchSpacingMeters)})
+					   .first;
 		}
 		held->second.drawn = true;
-		drawOverlays(*def, turnQuanta, worldPos, camera, viewportWidth, viewportHeight, isValid);
-		draw(held->second.mesh, worldPos, camera, viewportWidth, viewportHeight, isValid);
+		// Under the ghost, on the ground; the collider is 14.4's footprint line, the parts' own footprints the asset
+		// manager's.
+		worldview::drawItemOverlays(
+			held->second.overlays,
+			frame,
+			{.useAreas = true, .clearance = true, .footprints = false, .collider = true},
+			look,
+			{.opacity = isValid ? 1.0F : kInvalidAlpha / kGhostAlpha, .refused = !isValid, .key = kGhostKey}
+		);
+		worldview::drawItemView(held->second.mesh, frame, look, ghost);
 		return;
 	}
 
@@ -73,89 +88,7 @@ void GhostRenderer::render(const std::string& defName,
 	if (mesh == nullptr) {
 		return;
 	}
-	draw(*mesh, worldPos, camera, viewportWidth, viewportHeight, isValid);
-}
-
-// Under the ghost, on the ground: its use areas, clearance, and collider at its turn (rotatable-placed-items 14.4),
-// tinted with it where placement is refused.
-void GhostRenderer::drawOverlays(const assets::AssetDefinition& def,
-								 uint32_t turnQuanta,
-								 Foundation::Vec2 worldPos,
-								 const world::WorldCamera& camera,
-								 int viewportWidth,
-								 int viewportHeight,
-								 bool isValid) {
-	if (overlays.turnQuanta != turnQuanta || overlaysDef != def.defName || overlaysGeneration != viewsGeneration) {
-		overlays = assets::itemOverlays(def, turnQuanta);
-		overlaysDef = def.defName;
-		overlaysGeneration = viewsGeneration;
-	}
-	const Foundation::Vec2 pivot = camera.worldToScreen(worldPos.x, worldPos.y, viewportWidth, viewportHeight, kPixelsPerMeter);
-	const Foundation::Vec2 metreOn = camera.worldToScreen(worldPos.x + 1.0F, worldPos.y, viewportWidth, viewportHeight, kPixelsPerMeter);
-	// The collider is the footprint line of 14.4; the parts' own footprints are the asset manager's.
-	worldview::drawItemOverlays(
-		overlays,
-		{.pivot = pivot, .pixelsPerMeter = metreOn.x - pivot.x},
-		{.useAreas = true, .clearance = true, .footprints = false, .collider = true},
-		{.opacity = isValid ? 1.0F : kInvalidAlpha / kGhostAlpha, .refused = !isValid, .key = 1000}
-	);
-}
-
-void GhostRenderer::draw(
-	const renderer::TessellatedMesh& mesh, Foundation::Vec2 offset, const world::WorldCamera& camera, int viewportWidth, int viewportHeight, bool isValid
-) {
-	if (mesh.vertices.empty()) {
-		return;
-	}
-	// The mesh is about the pivot: a template upright at scale 1 (PlacementSystem::spawnEntity), a view turned already.
-	const assets::InstanceTransform placed = assets::uprightInstance({offset.x, offset.y});
-	m_transformedVertices.resize(mesh.vertices.size());
-	for (size_t i = 0; i < mesh.vertices.size(); ++i) {
-		const glm::vec2 world	 = placed.toWorld({mesh.vertices[i].x, mesh.vertices[i].y});
-		m_transformedVertices[i] = camera.worldToScreen(world.x, world.y, viewportWidth, viewportHeight, kPixelsPerMeter);
-	}
-
-	// Create ghost colors with transparency
-	float alpha = isValid ? kGhostAlpha : kInvalidAlpha;
-	m_ghostColors.resize(mesh.vertices.size());
-
-	if (mesh.hasColors()) {
-		// Apply alpha to existing colors, with optional red tint for invalid
-		for (size_t i = 0; i < mesh.colors.size(); ++i) {
-			const auto& c = mesh.colors[i];
-			if (isValid) {
-				m_ghostColors[i] = {c.r, c.g, c.b, c.a * alpha};
-			} else {
-				// Red-tinted for invalid placement
-				m_ghostColors[i] = {
-					c.r * kInvalidTintR,
-					c.g * kInvalidTintG,
-					c.b * kInvalidTintB,
-					c.a * alpha
-				};
-			}
-		}
-	} else {
-		// Use white with alpha if no colors
-		Foundation::Color ghostColor = isValid
-			? Foundation::Color{1.0F, 1.0F, 1.0F, alpha}
-			: Foundation::Color{kInvalidTintR, kInvalidTintG, kInvalidTintB, alpha};
-
-		for (auto& c : m_ghostColors) {
-			c = ghostColor;
-		}
-	}
-
-	// Draw the ghost using primitives API
-	Renderer::Primitives::drawTriangles({
-		.vertices = m_transformedVertices.data(),
-		.indices = mesh.indices.data(),
-		.vertexCount = m_transformedVertices.size(),
-		.indexCount = mesh.indices.size(),
-		.colors = m_ghostColors.data(),
-		.id = "placement_ghost",
-		.key = 1000  // Draw above entities
-	});
+	worldview::drawItemView(*mesh, frame, look, ghost);
 }
 
 } // namespace world_sim

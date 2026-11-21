@@ -3,6 +3,7 @@
 
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
+#include <assets/ConstructionRegistry.h>
 #include <assets/ItemView.h>
 #include <assets/PartsAsset.h>
 #include <assets/TurnQuanta.h>
@@ -22,9 +23,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -53,8 +54,28 @@ namespace asset_manager {
 			return std::format("{} {}{}", count, noun, count == 1 ? "" : "s");
 		}
 
-		std::string metres(float value) {
+		std::string meters(float value) {
 			return std::format("{:g}", std::round(static_cast<double>(value) * 1000.0) / 1000.0);
+		}
+
+		/// Where an area's shape came from, as written, with its sizes in metres.
+		std::string shapeSource(const assets::AuthoredAreaShape& shape) {
+			using Kind = assets::AuthoredAreaShape::Kind;
+			const std::string span =
+				std::format("{}, {} to {}, {} m", meters(shape.minX), meters(shape.minY), meters(shape.maxX), meters(shape.maxY));
+			switch (shape.kind) {
+				case Kind::Around:
+					return std::format("around, the collider grown {} m", meters(shape.distanceMeters));
+				case Kind::Margin:
+					return std::format("margin {} m", meters(shape.distanceMeters));
+				case Kind::Circle:
+					return std::format("circle at {}, {} m, radius {} m", meters(shape.x), meters(shape.y), meters(shape.radius));
+				case Kind::Rect:
+					return "rect " + span;
+				case Kind::Drawing:
+					return "drawing " + shape.file + " over " + span;
+			}
+			return {};
 		}
 
 		ui::Layout row(float gap) {
@@ -106,6 +127,9 @@ namespace asset_manager {
 
 	void AssetDetailView::setAsset(const std::string& name) {
 		const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(name);
+		if (name != defName) {
+			partsLevel.reset(); // each asset opens at its own finest level
+		}
 		defName = def != nullptr ? name : std::string();
 		procedural = def != nullptr && def->assetType == assets::AssetType::Procedural;
 		parts = def != nullptr && def->assetType == assets::AssetType::Parts && def->parts != nullptr;
@@ -128,18 +152,6 @@ namespace asset_manager {
 		content = addChild<ui::Component>({
 			.size = {ui::percent(100.0F), ui::percent(100.0F)},
 			.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = kGap, .padding = kPad},
-			// Left and Right turn a parts def's preview while anything in the pane but a text entry has focus.
-			.onKeyDown =
-				[this](ui::KeyEvent& event) {
-					if (!parts || event.consumed || event.type != ui::KeyEvent::Type::Down ||
-						(event.key != foundation::Key::Left && event.key != foundation::Key::Right)) {
-						return;
-					}
-					const uint32_t step = (event.mods & foundation::ModAlt) != 0 ? kQuantaPerDegree : kStepDegrees * kQuantaPerDegree;
-					const uint32_t forward = event.key == foundation::Key::Right ? step : assets::kTurnQuantaPerTurn - step;
-					setPartsTurn((partsTurnQuanta + forward) % assets::kTurnQuantaPerTurn);
-					event.consume();
-				},
 		});
 		const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(defName);
 		if (def == nullptr) {
@@ -155,7 +167,7 @@ namespace asset_manager {
 		content.addChild<ui::Badge>({
 			.layout = kHug,
 			.label = parts ? "PARTS" : procedural ? "PROCEDURAL" : "SIMPLE",
-			.tone = parts ? ui::Tone::Positive : procedural ? ui::Tone::Accent : ui::Tone::Info,
+			.tone = parts ? ui::Tone::Default : procedural ? ui::Tone::Accent : ui::Tone::Info,
 		});
 
 		if (parts) {
@@ -320,7 +332,8 @@ namespace asset_manager {
 
 	// The item view at the pane's turn, its controls and overlay toggles above it, the sheet of turns below.
 	void AssetDetailView::partsPreview(ui::Ref<ui::Component> column) {
-		const assets::AssetDefinition& def = *assets::AssetRegistry::Get().getDefinition(defName);
+		const assets::AssetDefinition&	def = *assets::AssetRegistry::Get().getDefinition(defName);
+		const assets::ItemOverlayStyle& look = assets::ConstructionRegistry::Get().rendering().itemOverlays;
 
 		ui::Ref<ui::Component> controls = column.addChild<ui::Component>({.layout = row(kGap)});
 		controls.addChild<ui::Button>({
@@ -335,13 +348,12 @@ namespace asset_manager {
 			.text = degreesText(partsTurnQuanta),
 			.onSubmit =
 				[this](const std::string& text) {
-					char*		 end = nullptr;
-					const double degrees = std::strtod(text.c_str(), &end);
-					if (end != text.c_str() && std::isfinite(degrees)) {
-						setPartsTurn(assets::turnQuantaFromDegrees(degrees));
-					} else {
-						setPartsTurn(partsTurnQuanta); // puts the entry back
-					}
+					// A number and nothing else; any size, wrapped into a turn before it becomes quanta.
+					double			   degrees = 0.0;
+					const char*		   end = text.data() + text.size();
+					const auto		   parsed = std::from_chars(text.data(), end, degrees);
+					const bool		   whole = parsed.ec == std::errc() && parsed.ptr == end && std::isfinite(degrees);
+					setPartsTurn(whole ? assets::turnQuantaFromDegrees(std::fmod(degrees, 360.0)) : partsTurnQuanta);
 				},
 		});
 		controls.addChild<ui::Button>({
@@ -350,7 +362,7 @@ namespace asset_manager {
 			.controlSize = ui::ControlSize::Sm,
 			.onPress = [this] { setPartsTurn((partsTurnQuanta + kStepDegrees * kQuantaPerDegree) % assets::kTurnQuantaPerTurn); },
 		});
-		controls.addChild<ui::Text>({.style = ui::styles::text::secondary, .text = "degrees    Left / Right turn, Alt 1 degree"});
+		controls.addChild<ui::Text>({.style = ui::styles::text::secondary, .text = "degrees    click the view, then Left / Right turn it, Alt 1 degree"});
 
 		// The detail level, the finest unless one is picked; the counts follow it, so a pick rebuilds the pane.
 		std::vector<std::string> levels;
@@ -368,15 +380,16 @@ namespace asset_manager {
 					[this](int index) {
 						partsLevel = static_cast<uint8_t>(index);
 						pendingBuild = true;
+						requestUpdate();
 					},
 			});
 		}
 
 		// The toggles are the legend: each overlay's swatch beside its name.
 		ui::Ref<ui::Component> legend = column.addChild<ui::Component>({.id = "am_overlays", .layout = row(16.0F)});
-		const auto			   toggle = [&](const char* id, const char* label, const Foundation::Color& color, bool PartsOverlays::*flag) {
+		const auto			   toggle = [&](const char* id, const char* label, const assets::StyleColor& color, bool PartsOverlays::*flag) {
 			  ui::Ref<ui::Component> entry = legend.addChild<ui::Component>({.layout = row(6.0F)});
-			  entry.addChild<ui::Rectangle>({.size = {12.0F, 12.0F}, .layout = kKeepHeight, .style = {.backgroundColor = color}});
+			  entry.addChild<ui::Rectangle>({.size = {12.0F, 12.0F}, .layout = kKeepHeight, .style = {.backgroundColor = worldview::colorOf(color)}});
 			  entry.addChild<ui::Checkbox>({
 				  .id = id,
 				  .label = label,
@@ -388,19 +401,30 @@ namespace asset_manager {
 					  },
 			  });
 		};
-		toggle("am_overlay_use", "Use areas", worldview::kUseAreaColor, &PartsOverlays::useAreas);
-		toggle("am_overlay_clearance", "Clearance", worldview::kClearanceColor, &PartsOverlays::clearance);
-		toggle("am_overlay_footprints", "Footprints", worldview::kFootprintColor, &PartsOverlays::footprints);
-		toggle("am_overlay_collider", "Collider", worldview::kColliderColor, &PartsOverlays::collider);
-		toggle("am_overlay_strips", "Depth strips", worldview::kStripColor, &PartsOverlays::strips);
+		toggle("am_overlay_use", "Use areas", look.useAreaColor, &PartsOverlays::useAreas);
+		toggle("am_overlay_clearance", "Clearance", look.clearanceColor, &PartsOverlays::clearance);
+		toggle("am_overlay_footprints", "Footprints", look.footprintColor, &PartsOverlays::footprints);
+		toggle("am_overlay_collider", "Collider", look.colliderColor, &PartsOverlays::collider);
+		toggle("am_overlay_strips", "Depth strips", look.stripColor, &PartsOverlays::strips);
 
-		// Focusable, so a click on it takes the keys.
+		// Focusable, so a click on it takes Left and Right; the arrows move focus as usual everywhere else.
 		ui::Ref<ui::Rectangle> frame = column.addChild<ui::Rectangle>({
 			.id = "am_parts_large",
 			.minSize = {ui::kAuto, 0.0F},
 			.layout = {.padding = 8.0F, .flexGrow = 3.0F},
 			.style = ui::styles::inset,
 			.focusable = true,
+			.onKeyDown =
+				[this](ui::KeyEvent& event) {
+					if (event.consumed || event.type != ui::KeyEvent::Type::Down ||
+						(event.key != foundation::Key::Left && event.key != foundation::Key::Right)) {
+						return;
+					}
+					const uint32_t step = (event.mods & foundation::ModAlt) != 0 ? kQuantaPerDegree : kStepDegrees * kQuantaPerDegree;
+					const uint32_t forward = event.key == foundation::Key::Right ? step : assets::kTurnQuantaPerTurn - step;
+					setPartsTurn((partsTurnQuanta + forward) % assets::kTurnQuantaPerTurn);
+					event.consume();
+				},
 		});
 		largePreview = frame.addChild<PartsPreview>({
 			.size = {ui::percent(100.0F), ui::percent(100.0F)},
@@ -442,7 +466,8 @@ namespace asset_manager {
 		}
 	}
 
-	// Counts, the drawings with their proportion checks, and the validation issues by part.
+	// Counts, the use areas and clearance with each shape's source, the drawings with their proportion checks, and the
+	// validation issues by part.
 	void AssetDetailView::partsInfo(ui::Ref<ui::Component> column) {
 		const assets::AssetDefinition& def = *assets::AssetRegistry::Get().getDefinition(defName);
 		const assets::PartsAsset&	   item = *def.parts;
@@ -456,6 +481,9 @@ namespace asset_manager {
 			ui::Ref<ui::Component> line = column.addChild<ui::Component>({.layout = row(kGap)});
 			line.addChild<ui::Text>({.size = {120.0F, ui::kAuto}, .layout = kKeepHeight, .style = ui::styles::text::secondary, .text = key});
 			line.addChild<ui::Text>({.layout = {.flexShrink = 1.0F}, .style = valueStyle, .text = value, .wrap = true});
+		};
+		const auto heading = [&column](const std::string& text) {
+			column.addChild<ui::Text>({.layout = kKeepHeight, .style = ui::styles::label, .text = text});
 		};
 
 		if (!def.label.empty()) {
@@ -472,7 +500,17 @@ namespace asset_manager {
 		std::set<std::string> sides;
 		std::set<std::string> areas;
 		for (const assets::DrawingUseCheck& check : item.drawingChecks) {
-			(check.part.has_value() ? (check.covers.starts_with("the top") ? tops : sides) : areas).insert(check.file);
+			switch (check.kind) {
+				case assets::DrawingUseCheck::Kind::Top:
+					tops.insert(check.file);
+					break;
+				case assets::DrawingUseCheck::Kind::Face:
+					sides.insert(check.file);
+					break;
+				case assets::DrawingUseCheck::Kind::Area:
+					areas.insert(check.file);
+					break;
+			}
 		}
 		keyValue("parts", counted(item.parts.size(), "part") + ", " + counted(item.placements.size(), "placement"));
 		keyValue("drawings", counted(tops.size(), "top") + ", " + counted(sides.size(), "side") + ", " + counted(areas.size(), "area"));
@@ -481,21 +519,28 @@ namespace asset_manager {
 		const bool	  finest = level + 1U >= def.detailLevels.size();
 		keyValue(
 			"level",
-			def.detailLevels.empty() ? "one level"
-									 : std::format("{:g} px/m{}", def.detailLevels[level], finest ? ", the finest" : "")
+			def.detailLevels.empty() ? "one level" : std::format("{:g} px/m{}", def.detailLevels[level], finest ? ", the finest" : "")
 		);
 		const assets::ItemView front = assets::buildItemMesh(def, 0, level, assets::GameViewConfig::Get().config());
-		keyValue("vertices", std::format("{} at that level, turn 0", front.vertexCount));
-		keyValue("use areas", std::to_string(item.useAreas.size()));
-		keyValue("clearance", item.clearance.polygons.empty() ? "none" : counted(item.clearance.polygons.size(), "polygon"));
+		keyValue("vertices", std::format("{} at that level, front on (turn 0)", front.vertexCount));
+
+		// Each area and the shapes it was made of, so an artist sees which came from the XML and which from a drawing.
+		heading("USE AREAS AND CLEARANCE");
+		const auto areaRows = [&](const std::string& name, const assets::ItemArea& area) {
+			std::string shapes;
+			for (const assets::AuthoredAreaShape& shape : area.shapes) {
+				shapes += (shapes.empty() ? "" : "\n") + shapeSource(shape) + (area.defaulted ? " (the default)" : "");
+			}
+			keyValue(name, shapes.empty() ? "none" : shapes);
+		};
+		for (const assets::ItemArea& area : item.useAreas) {
+			areaRows(area.name.empty() ? "use area" : "use area " + area.name, area);
+		}
+		areaRows("clearance", item.clearance);
 
 		// Every drawing use, so an artist sees which SVG is off and by how much.
 		const float tolerance = assets::GameViewConfig::Get().config().aspectToleranceRelative;
-		column.addChild<ui::Text>({
-			.layout = kKeepHeight,
-			.style = ui::styles::label,
-			.text = std::format("DRAWINGS  -  PROPORTIONS WITHIN {:g}%", static_cast<double>(tolerance) * 100.0),
-		});
+		heading(std::format("DRAWINGS  -  PROPORTIONS WITHIN {:g}%", static_cast<double>(tolerance) * 100.0));
 		if (item.drawingChecks.empty()) {
 			column.addChild<ui::Text>({.layout = kKeepHeight, .style = ui::styles::text::secondary, .text = "No drawings: every face and top is plain"});
 		}
@@ -505,73 +550,57 @@ namespace asset_manager {
 			entry.addChild<ui::Text>({
 				.layout = kKeepHeight,
 				.style = ui::styles::text::secondary,
-				.text = std::format(
-					"{}  -  {} x {} m", check.covers, metres(check.coversMeters.x), metres(check.coversMeters.y)
-				),
+				.text = std::format("{}  -  {} x {} m", check.covers, meters(check.coversMeters.x), meters(check.coversMeters.y)),
 				.wrap = true,
 			});
-			std::string verdict;
-			const ui::Style* style = &ok;
-			const float		 covered = check.coversMeters.x / check.coversMeters.y;
+			const auto ratios = [&check](const char* verdict) {
+				return std::format(
+					"{}  viewBox {:.3f}, covers {:.3f}, {:.1f}% off",
+					verdict,
+					static_cast<double>(check.viewBoxSize.x / check.viewBoxSize.y),
+					static_cast<double>(check.coversMeters.x / check.coversMeters.y),
+					static_cast<double>(check.aspectDifference) * 100.0
+				);
+			};
+			std::string		 verdict;
+			const ui::Style* style = &crit;
 			switch (check.verdict) {
 				case assets::DrawingUseCheck::Verdict::Unread:
-					verdict = "not read: see the part's issues";
-					style = &crit;
+					verdict = "not read: see the validation issues";
 					break;
 				case assets::DrawingUseCheck::Verdict::Matches:
+					verdict = ratios("ok");
+					style = &ok;
+					break;
 				case assets::DrawingUseCheck::Verdict::Mismatch:
-					verdict = std::format(
-						"{}  viewBox {:.3f}, covers {:.3f}, {:.1f}% off",
-						check.verdict == assets::DrawingUseCheck::Verdict::Matches ? "ok" : "off",
-						static_cast<double>(check.viewBoxSize.x / check.viewBoxSize.y),
-						static_cast<double>(covered),
-						static_cast<double>(check.aspectDifference) * 100.0
-					);
-					style = check.verdict == assets::DrawingUseCheck::Verdict::Matches ? &ok : &crit;
+					verdict = ratios("off");
+					break;
+				case assets::DrawingUseCheck::Verdict::NoFill:
+					verdict = "no filled shape, so no area: strokes are guides";
 					break;
 			}
 			entry.addChild<ui::Text>({.layout = kKeepHeight, .style = *style, .text = verdict, .wrap = true});
 		}
 
-		// Issues by the part they name, by name or by one of its drawings; the rest are the item's.
-		const std::vector<assets::ValidationIssue>& all = assets::AssetRegistry::Get().getValidationReport().issues;
-		std::vector<const assets::ValidationIssue*> mine;
-		for (const assets::ValidationIssue& issue : all) {
-			if (issue.defName == defName) {
-				mine.push_back(&issue);
-			}
-		}
-		const auto partOf = [&item](const assets::ValidationIssue& issue) -> std::optional<size_t> {
-			for (size_t index = 0; index < item.parts.size(); ++index) {
-				const std::string named = "part '" + item.parts[index].name + "'";
-				if (issue.message.find(named) != std::string::npos || issue.context.find(named) != std::string::npos) {
-					return index;
-				}
-			}
-			for (const assets::DrawingUseCheck& check : item.drawingChecks) {
-				if (check.part.has_value() && issue.message.find("'" + check.file + "'") != std::string::npos) {
-					return *check.part;
-				}
-			}
-			return std::nullopt;
-		};
-		column.addChild<ui::Text>({.layout = kKeepHeight, .style = ui::styles::label, .text = "VALIDATION"});
-		const auto issueList = [&](const std::string& heading, const std::optional<size_t>& part) {
+		// Every issue of the def: under each part the loader named on it, the rest under the item.
+		heading("VALIDATION");
+		const auto issueList = [&](const std::string& title, const std::string& part) {
 			std::string text;
 			bool		anyError = false;
-			for (const assets::ValidationIssue* issue : mine) {
-				if (partOf(*issue) != part) {
+			for (const assets::ValidationIssue& issue : assets::AssetRegistry::Get().getValidationReport().issues) {
+				const bool named = std::find(issue.parts.begin(), issue.parts.end(), part) != issue.parts.end();
+				if (issue.defName != defName || (part.empty() ? !issue.parts.empty() : !named)) {
 					continue;
 				}
-				anyError = anyError || issue->severity == assets::Severity::Error;
-				text += (text.empty() ? "" : "\n") + std::string(issue->severity == assets::Severity::Error ? "[error] " : "[warning] ") + issue->message;
+				anyError = anyError || issue.severity == assets::Severity::Error;
+				text += (text.empty() ? "" : "\n") + std::string(issue.severity == assets::Severity::Error ? "[error] " : "[warning] ") + issue.message;
 			}
-			keyValue(heading, text.empty() ? "no issues" : text, text.empty() ? ok : anyError ? crit : warn);
+			keyValue(title, text.empty() ? "no issues" : text, text.empty() ? ok : anyError ? crit : warn);
 		};
-		for (size_t index = 0; index < item.parts.size(); ++index) {
-			issueList(item.parts[index].name, index);
+		for (const assets::PartDefinition& part : item.parts) {
+			issueList(part.name, part.name);
 		}
-		issueList("item", std::nullopt);
+		issueList("item", "");
 
 		definitionWell(column, false);
 	}

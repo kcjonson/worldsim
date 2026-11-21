@@ -362,12 +362,20 @@ TEST_F(PartsAssetTest, Rule7ProportionsMatchAndDataLodIsANumber) {
 	EXPECT_EQ(front.file, "front.svg");
 	EXPECT_EQ(front.covers, "face front of part 'a'");
 	EXPECT_EQ(front.part, std::optional<uint32_t>(0));
+	EXPECT_EQ(front.kind, DrawingUseCheck::Kind::Face);
+	// The proportion error names its part, as does the art check's error on the top drawing.
+	for (const ValidationIssue& issue : AssetRegistry::Get().getValidationReport().issues) {
+		if (issue.defName == "Skew" && issue.field == "drawing") {
+			EXPECT_EQ(issue.parts, (std::vector<std::string>{"a"})) << issue.message;
+		}
+	}
 	EXPECT_EQ(front.verdict, DrawingUseCheck::Verdict::Mismatch);
 	EXPECT_NEAR(front.aspectDifference, 0.02F, 1e-5F);
 	EXPECT_NEAR(front.viewBoxSize.x, 102.0F, 1e-4F);
 	const DrawingUseCheck& top = def->parts->drawingChecks[1];
 	EXPECT_EQ(top.verdict, DrawingUseCheck::Verdict::Matches);
 	EXPECT_EQ(top.covers, "the top of part 'a'");
+	EXPECT_EQ(top.kind, DrawingUseCheck::Kind::Top);
 }
 
 TEST_F(PartsAssetTest, Rule8ArtPastTheViewBoxIsAWarning) {
@@ -466,13 +474,15 @@ namespace {
 		return inside;
 	}
 
-	float hatchedArea(const std::vector<std::array<glm::vec2, 2>>& lines, float spacing) {
+	float hatchedArea(const std::vector<HatchLine>& lines, float spacing) {
 		float length = 0.0F;
-		for (const auto& line : lines) {
-			length += std::hypot(line[1].x - line[0].x, line[1].y - line[0].y);
+		for (const HatchLine& line : lines) {
+			length += std::hypot(line.to.x - line.from.x, line.to.y - line.from.y);
 		}
 		return length * spacing;
 	}
+
+	constexpr float kSpacing = 0.1F;
 
 } // namespace
 
@@ -482,7 +492,7 @@ TEST_F(PartsAssetTest, OverlaysTurnTheAreasFootprintsAndColliderWithTheItem) {
 	ASSERT_NE(def, nullptr);
 	const uint32_t	   turn = turnQuantaFromDegrees(35.0);
 	const float		   radians = turnRadiansFromQuanta(turn);
-	const ItemOverlays overlays = itemOverlays(*def, turn);
+	const ItemOverlays overlays = itemOverlays(*def, turn, kSpacing);
 	EXPECT_EQ(overlays.turnQuanta, turn);
 
 	// The use area is the def's own polygon, each vertex turned.
@@ -517,25 +527,81 @@ TEST_F(PartsAssetTest, OverlaysTurnTheAreasFootprintsAndColliderWithTheItem) {
 
 	// The hatching lies inside the clearance, edge to edge, and covers it.
 	ASSERT_FALSE(overlays.clearanceHatch.empty());
-	for (const auto& line : overlays.clearanceHatch) {
-		EXPECT_NEAR(line[1].x - line[0].x, line[1].y - line[0].y, 1e-4F) << "parallel to the screen's diagonal";
-		EXPECT_TRUE(insideArea(overlays.clearance.polygons, (line[0] + line[1]) * 0.5F));
+	for (const HatchLine& line : overlays.clearanceHatch) {
+		EXPECT_NEAR(line.to.x - line.from.x, line.to.y - line.from.y, 1e-4F) << "parallel to the screen's diagonal";
+		EXPECT_TRUE(insideArea(overlays.clearance.polygons, (line.from + line.to) * 0.5F));
 	}
-	EXPECT_NEAR(hatchedArea(overlays.clearanceHatch, kHatchSpacingMeters), 3.0F * 0.6F, 0.05F * 3.0F * 0.6F);
+	EXPECT_NEAR(hatchedArea(overlays.clearanceHatch, kSpacing), 3.0F * 0.6F, 0.05F * 3.0F * 0.6F);
 }
 
-TEST_F(PartsAssetTest, HatchingSkipsAnAreasHoles) {
+TEST_F(PartsAssetTest, OverlaysOfAnAreaInTwoPiecesAndAClearanceApartFromItsMargin) {
+	// A use area of two separate rects, and a clearance of a margin and a drawn apron 0.5 m clear of it.
+	folder.write("Apart/apron.svg", svg(1.0F, 0.5F));
+	writeDef(
+		"Apart",
+		"<parts>" + block("box", -0.5F, -0.5F, 0.5F, 0.5F, 0, 1) + "</parts><placements>" + place("box") +
+			"</placements><useAreas><area name=\"ends\">" + rect(-1.5F, -0.5F, -0.5F, 0.5F) + rect(0.5F, -0.5F, 1.5F, 0.5F) +
+			"</area></useAreas><clearance marginMeters=\"0.1\"><drawing file=\"apron.svg\" minX=\"-0.5\" minY=\"1.1\" maxX=\"0.5\" maxY=\"1.6\"/></clearance>"
+	);
+	const AssetDefinition* def = load("Apart");
+	ASSERT_NE(def, nullptr);
+	EXPECT_TRUE(issues("Apart").empty()) << ::testing::PrintToString(issues("Apart"));
+	const ItemOverlays overlays = itemOverlays(*def, turnQuantaFromDegrees(20.0), kSpacing);
+
+	ASSERT_EQ(overlays.useAreas.size(), 1U);
+	EXPECT_EQ(overlays.useAreas[0].polygons.size(), 2U) << "two pieces stay two polygons";
+	EXPECT_TRUE(insideArea(overlays.useAreas[0].polygons, overlays.useAreas[0].labelPoint));
+	EXPECT_EQ(overlays.clearance.polygons.size(), 2U) << "the margin and the apron don't meet";
+	for (const AreaPolygon& piece : overlays.clearance.polygons) {
+		const bool hatched = std::any_of(overlays.clearanceHatch.begin(), overlays.clearanceHatch.end(), [&](const HatchLine& line) {
+			return insideArea({piece}, (line.from + line.to) * 0.5F);
+		});
+		EXPECT_TRUE(hatched) << "each piece is hatched";
+	}
+
+	// Each shape keeps where it came from.
+	ASSERT_EQ(def->parts->useAreas[0].shapes.size(), 2U);
+	EXPECT_EQ(def->parts->useAreas[0].shapes[0].kind, AuthoredAreaShape::Kind::Rect);
+	ASSERT_EQ(def->parts->clearance.shapes.size(), 2U);
+	EXPECT_EQ(def->parts->clearance.shapes[0].kind, AuthoredAreaShape::Kind::Margin);
+	EXPECT_EQ(def->parts->clearance.shapes[1].kind, AuthoredAreaShape::Kind::Drawing);
+	EXPECT_EQ(def->parts->clearance.shapes[1].file, "apron.svg");
+}
+
+TEST_F(PartsAssetTest, HatchingSkipsHolesAndMarksEveryPiece) {
 	AreaPolygon framed;
 	framed.outer = {{0.0F, 0.0F}, {2.0F, 0.0F}, {2.0F, 2.0F}, {0.0F, 2.0F}};
 	framed.holes = {{{0.5F, 0.5F}, {0.5F, 1.5F}, {1.5F, 1.5F}, {1.5F, 0.5F}}};
 	const float spacing = 0.05F;
 	const auto	lines = hatchLines({framed}, spacing);
 	ASSERT_FALSE(lines.empty());
-	for (const auto& line : lines) {
-		const glm::vec2 middle = (line[0] + line[1]) * 0.5F;
+	for (const HatchLine& line : lines) {
+		const glm::vec2 middle = (line.from + line.to) * 0.5F;
 		EXPECT_FALSE(middle.x > 0.5F && middle.x < 1.5F && middle.y > 0.5F && middle.y < 1.5F) << "a piece in the hole";
 	}
 	EXPECT_NEAR(hatchedArea(lines, spacing), 3.0F, 0.05F * 3.0F);
+
+	// A sliver along the lines' own direction, too thin to meet one of them, still gets the one through its middle.
+	AreaPolygon sliver;
+	sliver.outer = {{0.0F, 0.0F}, {1.0F, 1.0F}, {0.99F, 1.01F}, {-0.01F, 0.01F}};
+	const auto thin = hatchLines({sliver}, 0.1F);
+	ASSERT_EQ(std::count_if(thin.begin(), thin.end(), [](const HatchLine& line) { return line.middle; }), 1);
+	EXPECT_FALSE(thin.empty());
+
+	// A square a kilometre across is capped, not a million lines.
+	AreaPolygon huge;
+	huge.outer = {{0.0F, 0.0F}, {1000.0F, 0.0F}, {1000.0F, 1000.0F}, {0.0F, 1000.0F}};
+	EXPECT_LE(static_cast<int64_t>(hatchLines({huge}, 0.01F).size()), kMaxHatchLinesPerPolygon + 1);
+}
+
+TEST_F(PartsAssetTest, ALabelPointLiesInsideAnLAndAC) {
+	AreaPolygon shapeL;
+	shapeL.outer = {{0.0F, 0.0F}, {3.0F, 0.0F}, {3.0F, 0.5F}, {0.5F, 0.5F}, {0.5F, 3.0F}, {0.0F, 3.0F}};
+	AreaPolygon shapeC;
+	shapeC.outer = {{0.0F, 0.0F}, {3.0F, 0.0F}, {3.0F, 0.5F}, {0.5F, 0.5F}, {0.5F, 2.5F}, {3.0F, 2.5F}, {3.0F, 3.0F}, {0.0F, 3.0F}};
+	for (const AreaPolygon& shape : {shapeL, shapeC}) {
+		EXPECT_TRUE(insideRing(shape.outer, pointInside(shape)));
+	}
 }
 
 // ─── Touching, rounding, and the collider's islands ─────────────────────────────────────────────────────

@@ -55,6 +55,7 @@ namespace {
 	constexpr const char* kSceneName = "item-turntable";
 	constexpr const char* kItemsFolder = "assets/sandbox/items";
 	constexpr const char* kSnappingFile = "assets/config/construction/snapping.xml";
+	constexpr const char* kRenderingFile = "assets/config/construction/rendering.xml";
 	constexpr const char* kDefName = "Workbench";
 
 	constexpr uint32_t kQuantaPerDegree = 100;
@@ -83,8 +84,9 @@ namespace {
 	};
 
 	struct DrawnView {
-		assets::ItemView view;
-		bool			 built = false;
+		assets::ItemView	 view;
+		assets::ItemOverlays overlays; // at the view's turn
+		bool				 built = false;
 	};
 
 	// Where everything goes, in ui px.
@@ -186,28 +188,12 @@ namespace {
 				Renderer::Primitives::drawRect({.bounds = logical(floor, scale), .style = {.fill = kFloor}, .id = "sheet_floor"});
 			}
 			const worldview::ItemScreenFrame largeFrame{.pivot = layout.largeCenter * scale, .pixelsPerMeter = layout.largePixelsPerMeter * scale};
-			// The areas lie on the ground under the item; the outlines over it, or the body would hide them.
-			worldview::drawItemOverlays(
-				overlayGeometry,
-				largeFrame,
-				{.useAreas = overlays.useAreas, .clearance = overlays.clearance, .footprints = false, .collider = false},
-				{.pixel = scale}
-			);
-			worldview::drawItemView(large.view.mesh, largeFrame);
+			drawTurned(large, largeFrame, scale, true);
 			for (size_t index = 0; index < kSheetCount; ++index) {
-				worldview::drawItemView(
-					sheet[index].view.mesh,
-					{.pivot = layout.cellCenters[index] * scale, .pixelsPerMeter = layout.sheetPixelsPerMeter * scale}
-				);
+				drawTurned(sheet[index], {.pivot = layout.cellCenters[index] * scale, .pixelsPerMeter = layout.sheetPixelsPerMeter * scale}, scale, false);
 			}
-			worldview::drawItemOverlays(
-				overlayGeometry,
-				largeFrame,
-				{.useAreas = false, .clearance = false, .footprints = overlays.footprints, .collider = overlays.collider},
-				{.pixel = scale}
-			);
 			if (overlays.strips) {
-				worldview::drawItemStrips(large.view, largeFrame, fitRadiusMeters, {.pixel = scale});
+				worldview::drawItemStrips(large.view, largeFrame, fitRadiusMeters, look(), {.pixel = scale});
 			}
 		}
 
@@ -275,6 +261,8 @@ namespace {
 			if (!construction.loadSnapping(Foundation::findResourceString(kSnappingFile))) {
 				LOG_WARNING(UI, "Item turntable: %s didn't load; stepping by its default", kSnappingFile);
 			}
+			// The overlays' look; a missing file keeps the built-in one.
+			construction.loadRendering(Foundation::findResourceString(kRenderingFile));
 			stepQuanta = assets::turnQuantaFromDegrees(construction.snapping().angleIncrementDegrees);
 
 			definition = assets::AssetRegistry::Get().getDefinition(kDefName);
@@ -372,6 +360,9 @@ namespace {
 			if (drawn.built && drawn.view.turnQuanta == quanta && drawn.view.level == level) {
 				return;
 			}
+			if (!drawn.built || drawn.view.turnQuanta != quanta) {
+				drawn.overlays = assets::itemOverlays(*definition, quanta, look().hatchSpacingMeters);
+			}
 			drawn.view = assets::buildItemMesh(*definition, quanta, level, viewConfig);
 			if (!drawn.view.error.empty()) {
 				LOG_ERROR(UI, "Item turntable: no view at %s degrees: %s", degreesText(quanta).c_str(), drawn.view.error.c_str());
@@ -382,9 +373,6 @@ namespace {
 		void rebuildViews() {
 			if (definition == nullptr) {
 				return;
-			}
-			if (!large.built || large.view.turnQuanta != turnQuanta) {
-				overlayGeometry = assets::itemOverlays(*definition, turnQuanta);
 			}
 			rebuild(large, turnQuanta, levelFor(layout.largePixelsPerMeter));
 			const uint8_t sheetLevel = levelFor(layout.sheetPixelsPerMeter);
@@ -413,6 +401,21 @@ namespace {
 			status.get()->setText(line);
 		}
 
+		static const assets::ItemOverlayStyle& look() { return assets::ConstructionRegistry::Get().rendering().itemOverlays; }
+
+		/// A view with the overlays switched on: the areas on the ground under the item, the outlines over it, or the
+		/// body would hide them.
+		void drawTurned(const DrawnView& drawn, const worldview::ItemScreenFrame& frame, float scale, bool labels) const {
+			const worldview::ItemDrawStyle style{.pixel = scale, .labels = labels};
+			worldview::drawItemOverlays(
+				drawn.overlays, frame, {.useAreas = overlays.useAreas, .clearance = overlays.clearance, .footprints = false, .collider = false}, look(), style
+			);
+			worldview::drawItemView(drawn.view.mesh, frame, look(), style);
+			worldview::drawItemOverlays(
+				drawn.overlays, frame, {.useAreas = false, .clearance = false, .footprints = overlays.footprints, .collider = overlays.collider}, look(), style
+			);
+		}
+
 		static Foundation::Rect logical(const Foundation::Rect& box, float scale) {
 			return {box.x * scale, box.y * scale, box.width * scale, box.height * scale};
 		}
@@ -426,7 +429,6 @@ namespace {
 		SceneLayout						   layout;
 		DrawnView						   large;
 		std::array<DrawnView, kSheetCount> sheet;
-		assets::ItemOverlays			   overlayGeometry; // at the large view's turn
 
 		ui::Ref<ui::Text>						   title;
 		ui::Ref<ui::Text>						   status;
