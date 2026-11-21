@@ -163,10 +163,21 @@ namespace assets::entry_loading {
 			attributesOnly(effect, {"chain"}, label + " <effect>");
 			entry.effect = reference<ChainEntry>(effect, "chain", label + " <effect>");
 		}
-		if (const pugi::xml_node ends = exactlyOne("ends", true)) {
-			attributesOnly(ends, {"after"}, label + " <ends>");
+		// One or more end conditions; the run stops at the first of them.
+		if (!node.child("ends")) {
+			failAt(label + " has no <ends> row; it takes one or more");
+		}
+		row = 0;
+		for (const pugi::xml_node ends : node.children("ends")) {
+			const std::string								 where = label + " " + rowLabel(row++, "ends");
 			static constexpr std::array<std::string_view, 1> kAfter = {"task"};
-			entry.endsAfterTask = choice(ends, "after", label + " <ends>", kAfter, true).has_value();
+			attributesOnly(ends, {"after"}, where);
+			if (choice(ends, "after", where, kAfter, true)) {
+				if (entry.endsAfterTask) {
+					fail(where, "after \"task\" is given twice");
+				}
+				entry.endsAfterTask = true;
+			}
 		}
 		if (const pugi::xml_node relief = exactlyOne("relief", true)) {
 			attributesOnly(relief, {"amount"}, label + " <relief>");

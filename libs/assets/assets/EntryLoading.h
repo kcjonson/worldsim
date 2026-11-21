@@ -78,6 +78,10 @@ namespace assets::entry_loading {
 
 	std::optional<uint16_t> factIndex(std::string_view name);
 
+	/// Whether `name` is an id part: one or more ASCII letters, digits, and underscores, case as written.
+	bool							  isIdPart(std::string_view name);
+	inline constexpr std::string_view kIdPartRule = "letters, digits, and underscores";
+
 	// --- Reading one file ------------------------------------------------------------------------------------
 
 	/// What a file is, which decides the root it must have, what its entries may hold, and how their ids are made.
@@ -197,7 +201,7 @@ namespace assets::entry_loading {
 			}
 		}
 
-		/// A declared id: the short form, without a folder.
+		/// A declared id: the short form, without a folder, of letters, digits, and underscores.
 		std::string declaredId(pugi::xml_node node, std::string_view element) {
 			const std::string id = node.attribute("id").value();
 			const std::string label = "<" + std::string(element) + ">";
@@ -205,8 +209,8 @@ namespace assets::entry_loading {
 				refuse(label, node, "id", "");
 				return {};
 			}
-			if (id.empty() || id.find('/') != std::string::npos) {
-				refuse(label, node, "id", "a short id, without a folder");
+			if (!isIdPart(id)) {
+				refuse(label, node, "id", std::string(kIdPartRule));
 				return {};
 			}
 			return id;
@@ -356,10 +360,16 @@ namespace assets::entry_loading {
 		void readBehaviorFile(const std::filesystem::path& file, const std::string& source, const std::string& fullId);
 		void append(FileReader& file);
 		void checkFactTuning();
+		/// False, with one error per offending part, when a folder or file name in an id's path is not letters,
+		/// digits, and underscores.
+		bool idPathIsClean(const std::string& source, std::string_view path);
 
 		void registerIds();
 		void resolve();
 		void resolveCreatures();
+		/// Every need an effect, a need step, or a care work entry names must be some behavior's or creature's need,
+		/// so this runs once the creatures' own needs are known.
+		void checkNeedReferences();
 		void checkChains();
 		void warnUnstarted();
 
@@ -378,10 +388,8 @@ namespace assets::entry_loading {
 		void resolveSatisfiedBy(std::vector<SatisfiedBy>& rows, std::string_view inFolder, const std::string& where);
 
 		void fail(std::string message) { result.errors.push_back(std::move(message)); }
-		void warn(std::string message) {
-			LOG_WARNING(Engine, "%s", message.c_str());
-			result.warnings.push_back(std::move(message));
-		}
+		/// Kept, and logged by run() only when the load succeeds.
+		void warn(std::string message) { result.warnings.push_back(std::move(message)); }
 
 		const EntrySources&		  sources;
 		EntryLoad				  result;

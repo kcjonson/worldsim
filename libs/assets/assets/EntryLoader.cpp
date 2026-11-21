@@ -66,6 +66,23 @@ namespace assets {
 				fail(prefix + *found.error);
 				return;
 			}
+			// The shared folders' entries take top-level ids, so a subfolder would add nothing to an id and is refused.
+			std::set<std::string> subfolders;
+			for (const std::filesystem::path& file : found.files) {
+				const std::string name = configFileName(file, folder);
+				if (name.find('/') != std::string::npos) {
+					const std::string subfolder = name.substr(0, name.find('/'));
+					if (subfolders.insert(subfolder).second) {
+						fail(
+							prefix + subfolder + ": a subfolder, which " + std::string(folderName) +
+							"/ may not have; its entries take top-level ids"
+						);
+					}
+				}
+			}
+			if (!subfolders.empty()) {
+				return;
+			}
 			for (const std::filesystem::path& file : found.files) {
 				const std::string		 source = prefix + configFileName(file, folder);
 				pugi::xml_document		 document;
@@ -132,8 +149,33 @@ namespace assets {
 					fail(source + ": a behavior file sits in a folder under behaviors/, the folder its id starts with");
 					continue;
 				}
+				if (!idPathIsClean(source, fullBehaviorId)) {
+					continue;
+				}
 				readBehaviorFile(file, source, fullBehaviorId);
 			}
+		}
+
+		bool Loader::idPathIsClean(const std::string& source, std::string_view path) {
+			bool		clean = true;
+			std::size_t start = 0;
+			while (start <= path.size()) {
+				const std::size_t	   slash = path.find('/', start);
+				const std::size_t	   end = slash == std::string_view::npos ? path.size() : slash;
+				const std::string_view part = path.substr(start, end - start);
+				if (!isIdPart(part)) {
+					fail(
+						source + ": the " + (slash == std::string_view::npos ? "file" : "folder") + " name " + inQuotes(part) +
+						" must be " + std::string(kIdPartRule)
+					);
+					clean = false;
+				}
+				if (slash == std::string_view::npos) {
+					break;
+				}
+				start = slash + 1;
+			}
+			return clean;
 		}
 
 		void Loader::checkFactTuning() {
@@ -161,6 +203,7 @@ namespace assets {
 				registerIds();
 				resolve();
 				resolveCreatures();
+				checkNeedReferences();
 				checkChains();
 			}
 			if (!result.errors.empty()) {
@@ -169,6 +212,9 @@ namespace assets {
 				return std::move(result);
 			}
 			warnUnstarted();
+			for (const std::string& warning : result.warnings) {
+				LOG_WARNING(Engine, "%s", warning.c_str());
+			}
 			const EntryLibrary& library = result.library;
 			LOG_INFO(
 				Engine,

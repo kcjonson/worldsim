@@ -26,12 +26,14 @@ namespace assets::entry_loading {
 		childrenOnly(node, {"source", "chain"}, label);
 		reserveScript(node, label);
 		WorkEntry entry{.id = shortId, .file = source};
-		if (const std::optional<std::size_t> goal = choice(node, "goal", label, kWorkGoalNames, true)) {
+		const std::optional<std::size_t> goal = choice(node, "goal", label, kWorkGoalNames, true);
+		if (goal) {
 			entry.goal = static_cast<WorkGoal>(*goal);
 		}
-		if (entry.goal == WorkGoal::Care) {
+		// Whether `need` belongs depends on the goal, so a goal that is wrong or missing says nothing about it.
+		if (goal && entry.goal == WorkGoal::Care) {
 			entry.need = needName(node, "need", label);
-		} else if (!node.attribute("need").empty()) {
+		} else if (goal && !node.attribute("need").empty()) {
 			refuse(label, node, "need", "left out; it names the need of a care goal");
 		}
 		entry.category = reference<CategoryEntry>(node, "category", label);

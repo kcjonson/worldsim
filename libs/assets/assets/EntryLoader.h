@@ -36,6 +36,18 @@ namespace assets {
 		std::vector<std::string> warnings;
 	};
 
+	/// The names entries borrow from config that loads after them: the traits, the condition vocabulary's kinds, and
+	/// the thought types.
+	struct EntryNameSets {
+		std::function<bool(std::string_view)> isTrait;
+		std::function<bool(std::string_view)> isKind;
+		std::function<bool(std::string_view)> isThought;
+	};
+
+	/// Every `<scale trait>`, `<from kind>`, and `<think thought>` in `library` that names nothing in `names`, one error
+	/// each, in the loaders' form. Run once the traits, the vocabulary, and the thought types have loaded.
+	[[nodiscard]] std::vector<std::string> checkEntryNames(const EntryLibrary& library, const EntryNameSets& names);
+
 	/// Read every entry and creature, then resolve the references between them. Each error names the file
 	/// (prefixed by its folder: [behaviors], [actions], [work], [orders], [facts], or [creatures]), the entry,
 	/// the element, and the attribute. A file with any problem of its own loads nothing, and the references

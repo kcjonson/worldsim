@@ -130,6 +130,8 @@ namespace assets {
 		float		spacing = 0.0F;
 		int			count = 0;
 		bool		fallback = false;
+		/// The row's position among the query's rows, for messages.
+		uint16_t row = 0;
 	};
 
 	enum class FactRowKind : uint8_t { Weigh, Exclude, Prefer };
@@ -148,6 +150,8 @@ namespace assets {
 		std::string trait;
 		FactUse		fact;
 		float		by = 0.0F;
+		/// The row's position among the query's rows, for messages.
+		uint16_t row = 0;
 	};
 
 	enum class QueryPick : uint8_t { Best, Weighted };

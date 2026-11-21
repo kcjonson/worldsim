@@ -117,6 +117,7 @@ namespace assets::entry_loading {
 			const std::string	   where = label + " " + rowLabel(index++, element);
 			if (element == "from") {
 				if (std::optional<FromRow> from = fromRow(row, where)) {
+					from->row = static_cast<uint16_t>(index - 1);
 					entry.from.push_back(std::move(*from));
 				}
 			} else if (element == "weigh" || element == "exclude" || element == "prefer") {
@@ -149,7 +150,9 @@ namespace assets::entry_loading {
 			} else if (element == "scale") {
 				attributesOnly(row, {"trait", "fact", "by"}, where);
 				childrenOnly(row, {}, where);
-				ScaleRow scale{.trait = required(row, "trait", where), .by = number(row, "by", where)};
+				ScaleRow scale{
+					.trait = required(row, "trait", where), .by = number(row, "by", where), .row = static_cast<uint16_t>(index - 1)
+				};
 				if (const std::optional<FactUse> used = fact(row, "fact", where)) {
 					scale.fact = *used;
 					entry.scales.push_back(std::move(scale));

@@ -116,10 +116,11 @@ assets/world/creatures/Human/attributes.xml
 assets/world/creatures/Human/needs.xml
 ```
 
-`legacy/` holds the two files the behavior data migration has yet to replace with entries, so no folder the
-entry loaders own holds a root they do not own. The arbitration folder holds one file, whose root is
-`<arbitration>`: its `<ladder>` of `<rung name>` entries, given once, and `<TaskTiers>`, `<WorkCategoryOrder>`,
-and `<Bonuses>`; any other element is an error, and a second file in the folder is an error naming both
+`legacy/` holds the two files that later tickets of the behavior data migration replace with entries, so no
+folder the entry loaders own holds a root they do not own. The arbitration folder holds one file, whose root is
+`<arbitration>`: its `<ladder>` of `<rung name>` entries, given once, at most 256 rungs and one of them
+`survival`, and `<TaskTiers>`, `<WorkCategoryOrder>`, and `<Bonuses>`; any other element is an error, and a
+second file in the folder is an error naming both
 (`[arbitration] arbitration: 2 files; one file declares the ladder and the bonuses (...)`).
 
 A creature's config sits in its asset folder beside its definition and is found by root element
@@ -178,8 +179,8 @@ holds back the entry loaders, whose rungs come from the arbitration file, until 
 
 `assets::loadEntries` (libs/assets/assets/EntryLoader.h) reads the entries [Queries and
 chains](./queries-and-chains.md) defines into an `assets::EntryLibrary` (libs/assets/assets/Entries.h), which
-`GameLoadingScene` hands to `GameScene` through `GameWorldState` beside the colonist rules. Nothing reads it at
-decision time yet; the tickets of [Behavior data migration](./behavior-data-migration.md) wire it in.
+`GameLoadingScene` hands to `GameScene` through `GameWorldState` beside the colonist rules. The tickets of
+[Behavior data migration](./behavior-data-migration.md) are what read it when a creature decides.
 
 | Folder | Root | Prefix |
 |---|---|---|
@@ -190,20 +191,31 @@ decision time yet; the tickets of [Behavior data migration](./behavior-data-migr
 | `facts/` | `<facts>` | `[facts]` |
 | a creature folder | the base definition's `<creature>` block, `<creature>` and `<behavior>` files | `[creatures]` |
 
-Each folder must exist, and loads its own files first, then its subfolders' in path order (`configFilesIn`);
-the shipped folders with no entries yet keep a `.gitkeep`. A file with another root is an error, so no file
-in an owned folder is skipped. The library loads first, then the creatures, in folder name order. A behavior's
-id is its path under `behaviors/` without the extension, a creature's own behavior's id is the creature's
-name and the file's (`Cow/being_milked`), and the entries a behavior file holds take its folder; ids are
-unique per entry type, and a short id names an entry of the same folder, else a top-level one. Every
-`<fact>` the sim's facts read a value from must be given once across `facts/`.
+Each folder must exist; a shipped folder that holds no entry keeps a `.gitkeep`. `behaviors/` loads its own
+files first, then its subfolders' in path order (`configFilesIn`); `actions/`, `work/`, `orders/`, and
+`facts/` hold no subfolder, since their entries take top-level ids, and one is an error naming it. A file
+with another root is an error, so no file in an owned folder is skipped. The library loads first, then the
+creatures, in folder name order. A behavior's id is its path under `behaviors/` without the extension, a
+creature's own behavior's id is the creature's name and the file's (`Cow/being_milked`), and the entries a
+behavior file holds take its folder. Every declared id, file name, and folder name in an id is letters,
+digits, and underscores, case as written. Ids are unique per entry type, and a short id names an entry of
+the same folder, else a top-level one. Every `<fact>` the sim's facts read a value from must be given once
+across `facts/`.
 
 Errors name the file, the entry, the element, and the attribute, in the shape the other loaders use, as
-`[behaviors] human/eating.xml: <chain id="fetch_food"> step 2 <do> action "takee" names no action`. A file with
-any problem of its own loads nothing; the references between entries are resolved only once every file read
-clean, so a broken file never shows as a cascade of names it would have defined; and an error of any kind
-leaves the library empty. Warnings (a folder entry hiding a top-level id, a chain nothing starts) are logged
-at warning level and do not fail the load. A clean load logs its counts at info level.
+`[behaviors] human/eating.xml: <chain id="fetch_food"> step 2 <do> action "takee" names no action`. A file
+with any problem of its own loads nothing; the references between entries are resolved only once every file
+reads clean, so a broken file never shows as a cascade of names it would have defined; one fault gives one
+error; and an error of any kind leaves the library empty. Warnings (a folder entry hiding a top-level id, a
+chain nothing starts) do not fail the load, and are logged at warning level only when it succeeds. A clean
+load logs its counts at info level.
+
+The names an entry borrows from config that loads after it, a `<scale trait>`, a `<from kind>`, and a
+`<think thought>`, are checked by `assets::checkEntryNames` once `loadColonistRules` has loaded the traits,
+the condition vocabulary, and the thought types, and each one that names nothing is an error in the same
+shape. Conditions (`when`, `per`) and skill names (`skill`, `<work rate>`) are kept as written and checked by
+nothing at load: the conditions wait on the vocabulary owning the loaded need ids, and no loaded config
+declares the skills.
 
 The human's traits, attributes, and needs, then `conditions/` and `thoughts/`, load through
 `ecs::loadColonistRules(configRoot, human)` (libs/sim/ecs/ColonistRules.h), stopping at the first stage

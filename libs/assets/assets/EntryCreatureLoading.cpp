@@ -45,15 +45,16 @@ namespace assets::entry_loading {
 
 	void FileReader::readCreatureBlock(pugi::xml_node block, bool primary, CreatureRows& rows) {
 		const std::string label = "<creature>";
+		reserveScript(block, label);
 		if (primary) {
-			attributesOnly(block, {"mood"}, label);
+			attributesOnly(block, {"mood", "script"}, label);
 			if (block.attribute("mood").empty()) {
 				refuse(label, block, "mood", "");
 			} else {
 				rows.mood = boolean(block, "mood", label).value_or(false);
 			}
 		} else {
-			attributesOnly(block, {}, label);
+			attributesOnly(block, {"script"}, label);
 		}
 		childrenOnly(block, {"behavior", "need", "moodCost"}, label);
 		std::size_t index = 0;
@@ -100,6 +101,11 @@ namespace assets::entry_loading {
 			}
 			const std::string name = folder.filename().string();
 			CreatureRows	  rows{.name = name, .primarySource = "[creatures] " + name + "/" + name + ".xml"};
+			// The folder's name starts the ids of the creature's own behaviors.
+			if (!isIdPart(name)) {
+				fail(rows.primarySource + ": the folder name " + inQuotes(name) + " must be " + std::string(kIdPartRule));
+				continue;
+			}
 
 			pugi::xml_document			 definitions;
 			const pugi::xml_parse_result parsed = definitions.load_file((folder / (name + ".xml")).string().c_str());
@@ -169,7 +175,11 @@ namespace assets::entry_loading {
 			for (const std::filesystem::path& file : creature.behaviors) {
 				const std::string stem = file.stem().string();
 				const std::string fullBehaviorId = name + "/" + stem;
-				readBehaviorFile(file, "[creatures] " + name + "/" + file.filename().string(), fullBehaviorId);
+				const std::string source = "[creatures] " + name + "/" + file.filename().string();
+				if (!idPathIsClean(source, fullBehaviorId)) {
+					continue;
+				}
+				readBehaviorFile(file, source, fullBehaviorId);
 				rows.ownBehaviors.push_back(fullBehaviorId);
 			}
 			creatureRows.push_back(std::move(rows));
@@ -186,12 +196,18 @@ namespace assets::entry_loading {
 
 			// The creature's order: the primary block's includes, then its <creature> files', then its own
 			// behavior files not already placed by a row.
+			// One fault gives one error: when an include names no behavior, nothing can tell which needs it would
+			// have brought, so a row or a mood cost for a need no included behavior brings says nothing more; nor
+			// does a mood cost for a need whose behaviors are left unsettled.
 			std::map<uint32_t, std::string> placedBy;
+			bool							includeFailed = false;
+			std::set<std::string>			unsettled;
 			for (CreatureInclude& include : rows.includes) {
 				const std::string where = include.source + ": <creature> " + rowLabel(include.row, "behavior");
 				const auto		  found = library.behaviorIds.find(include.id);
 				if (found == library.behaviorIds.end()) {
 					fail(where + " id " + inQuotes(include.id) + " names no behavior");
+					includeFailed = true;
 					continue;
 				}
 				const auto [placed, added] = placedBy.try_emplace(found->second, where);
@@ -267,6 +283,7 @@ namespace assets::entry_loading {
 								settledBy->source + ": " + needLabel + " from " + inQuotes(settledBy->from) +
 								" names no included behavior that brings the need"
 							);
+							unsettled.insert(id);
 						} else {
 							base = &library.needs[*match];
 						}
@@ -279,6 +296,7 @@ namespace assets::entry_loading {
 							rows.primarySource + ": <creature> need " + inQuotes(id) + " comes from more than one included behavior (" +
 							joined(names) + "); settle it with <need id=" + inQuotes(id) + " from=\"...\"/>"
 						);
+						unsettled.insert(id);
 					} else {
 						base = &library.needs[broughtBy->second.front()];
 					}
@@ -347,7 +365,7 @@ namespace assets::entry_loading {
 				}
 				const std::string where = rows.primarySource + ": <creature> need " + inQuotes(id);
 				if (!label || !seek || !urgent || !critical || !move) {
-					if (base == nullptr && broughtBy == brought.end()) {
+					if (base == nullptr && broughtBy == brought.end() && !includeFailed && settledBy == nullptr) {
 						std::vector<std::string_view> missing;
 						if (!label) {
 							missing.emplace_back("label");
@@ -407,7 +425,9 @@ namespace assets::entry_loading {
 					return library.needIds[candidate.id.index] == cost.need;
 				});
 				if (need == creature.needs.end()) {
-					fail(where + " names a need the creature does not have");
+					if (!includeFailed && !unsettled.contains(cost.need)) {
+						fail(where + " names a need the creature does not have");
+					}
 					continue;
 				}
 				need->moodCost = cost.cost;

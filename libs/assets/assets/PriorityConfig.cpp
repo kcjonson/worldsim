@@ -193,8 +193,16 @@ namespace assets {
 				rungNames.push_back(name);
 			}
 		}
+		// A rung's position is stored in eight bits, and survival is the rung the loaders keep for threats.
+		constexpr std::size_t kMaxRungs = 256;
 		if (index == 0) {
 			problems.push_back(source + ": <ladder> has no <rung>");
+		} else if (index > kMaxRungs) {
+			problems.push_back(
+				source + ": <ladder> has " + std::to_string(index) + " rungs; it holds at most " + std::to_string(kMaxRungs)
+			);
+		} else if (std::ranges::find(rungNames, "survival") == rungNames.end()) {
+			problems.push_back(source + ": <ladder> has no rung named \"survival\", which is reserved for threats");
 		}
 	}
 

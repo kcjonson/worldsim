@@ -371,7 +371,7 @@ At load time, the system:
 
 Create a new XML file that extends the category:
 
-**File:** `mods/my-mod/config/work/extra-farming.xml`
+**File:** `mods/my-mod/config/legacy/extra-farming.xml`
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <WorkTypes>
@@ -392,7 +392,7 @@ Create a new XML file that extends the category:
 
 Create a new category with a tier number:
 
-**File:** `mods/my-mod/config/work/magic.xml`
+**File:** `mods/my-mod/config/legacy/magic.xml`
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <WorkTypes>
@@ -413,8 +413,11 @@ Create a new category with a tier number:
 ### Loading Order
 
 Config files are loaded in order:
-1. Base game: `assets/config/work/work-types.xml`
-2. Mods: `mods/*/config/work/*.xml` (alphabetical by mod, then file)
+1. Base game: `assets/config/legacy/work-types.xml`
+2. Mods: `mods/*/config/legacy/*.xml` (alphabetical by mod, then file)
+
+A `<WorkTypes>` file sits in `legacy/` because `work/` holds the `<colonyWork>` files of
+[Queries and chains](../../../technical/queries-and-chains.md#work), whose `<category>` entries replace it.
 
 Later definitions can:
 - Add new work types to existing categories
@@ -436,7 +439,7 @@ Later definitions can:
 | Work categories & types | `assets/config/legacy/work-types.xml` |
 | Priority tuning | `assets/config/arbitration/priority-tuning.xml` |
 | Entity groups | Individual asset XML files |
-| Mod work types | `mods/*/config/work/*.xml` |
+| Mod work types | `mods/*/config/legacy/*.xml` |
 
 **All work behavior is config-driven.** Adding a new work type = add XML. No code changes required.
 

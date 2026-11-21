@@ -40,8 +40,8 @@ Edit only the staged copies beside the exe, the human's folder `build/apps/world
 27. In the staged `mood.xml`, delete the `</Mood>` closing tag.
 28. Launch as in step 19: the asset check stops the load; the loading scene's panel shows, and `errors` holds, exactly one message, `Human: [creatures] mood.xml: not readable XML: Start-end tags mismatch`.
 29. `/api/control?action=exit`, then copy the source `mood.xml` over the staged `mood.xml`.
-30. Write a staged `config/behaviors/human/sample.xml` holding `<behavior id="sample"><idle chain="go"/><chain id="go"><go query="nowhere"/></chain></behavior>`, and a staged `config/actions/stray.xml` holding `<Actions/>`.
-31. Launch as in step 19: the asset check passes and the config load fails; the loading scene's panel shows, and `errors` holds, exactly one message, `[actions] stray.xml: the root element is not <actions>`. The broken reference in `sample.xml` is not reported yet: references are resolved only once every file reads clean.
+30. Create the staged folder `config/behaviors/human/`, and write in it a `sample.xml` holding `<behavior id="sample"><idle chain="go"/><chain id="go"><go query="nowhere"/></chain></behavior>`, and a staged `config/actions/stray.xml` holding `<Actions/>`.
+31. Launch as in step 19: the asset check passes and the config load fails; the loading scene's panel shows, and `errors` holds, exactly one message, `[actions] stray.xml: the root element is not <actions>`. The broken reference in `sample.xml` is left out of it: references are resolved only once every file reads clean.
 32. `/api/control?action=exit`, then delete the staged `stray.xml`.
 33. Launch as in step 19: the loading scene's panel shows, and `errors` holds, exactly one message, `[behaviors] human/sample.xml: <chain id="go"> step 1 <go> query "nowhere" names no query`.
 34. `/api/control?action=exit`. In the staged `sample.xml`, add `script="go.lua"` to the `<chain>`.

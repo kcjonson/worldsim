@@ -70,6 +70,13 @@ namespace assets::entry_loading {
 		return static_cast<uint16_t>(found - kFacts.begin());
 	}
 
+	bool isIdPart(std::string_view name) {
+		return !name.empty() && std::ranges::all_of(name, [](char letter) {
+			return (letter >= 'a' && letter <= 'z') || (letter >= 'A' && letter <= 'Z') || (letter >= '0' && letter <= '9') ||
+				   letter == '_';
+		});
+	}
+
 	// --- FileReader: values ----------------------------------------------------------------------------------
 
 	std::optional<uint32_t> FileReader::definition(pugi::xml_node node, const char* attribute, const std::string& label) {
@@ -161,8 +168,8 @@ namespace assets::entry_loading {
 		if (name.empty()) {
 			return std::nullopt;
 		}
-		if (name.find('/') != std::string::npos) {
-			refuse(label, node, attribute, "a need id, a plain name");
+		if (!isIdPart(name)) {
+			refuse(label, node, attribute, std::string(kIdPartRule));
 			return std::nullopt;
 		}
 		return loader.intern(name);

@@ -11,6 +11,7 @@ namespace assets::entry_loading {
 		reserveScript(node, label);
 		ChainEntry	entry{.id = fullId(shortId), .file = source};
 		std::size_t index = 0;
+		bool		unknownStep = false;
 		for (const pugi::xml_node stepNode : node.children()) {
 			if (stepNode.type() != pugi::node_element) {
 				continue;
@@ -102,6 +103,7 @@ namespace assets::entry_loading {
 				step.step = RunStep{.chain = reference<ChainEntry>(stepNode, "chain", where)};
 			} else {
 				failAt(label + ": unknown element <" + std::string(element) + ">");
+				unknownStep = true;
 				continue;
 			}
 			childrenOnly(stepNode, {"ends"}, where);
@@ -118,7 +120,7 @@ namespace assets::entry_loading {
 			}
 			entry.steps.push_back(std::move(step));
 		}
-		if (entry.steps.empty()) {
+		if (entry.steps.empty() && !unknownStep) {
 			failAt(label + " has no step");
 		}
 		if (shortId.empty()) {

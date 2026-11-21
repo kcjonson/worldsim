@@ -7,10 +7,13 @@
 
 #include <gtest/gtest.h>
 
+#include <pugixml.hpp>
+
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <random>
 #include <string>
 #include <variant>
 #include <vector>
@@ -44,13 +47,28 @@ namespace {
 		return std::filesystem::path(__FILE__).lexically_normal().parent_path().parent_path().parent_path().parent_path();
 	}
 
+	/// A token unique to this run, so test binaries ctest runs in parallel never share a folder.
+	const std::string& runToken() {
+		static const std::string token = [] {
+			std::random_device device;
+			return std::to_string(device()) + "_" + std::to_string(device());
+		}();
+		return token;
+	}
+
+	/// One case of a table: the text written, and the one error (or warning) it gives.
+	struct Case {
+		std::string written;
+		std::string expected;
+	};
+
 	/// A config root and a creatures root under a fresh temp folder, the shared folders present and the facts tuned.
 	class EntryLoaderTest : public ::testing::Test {
 	  protected:
 		void SetUp() override {
+			const ::testing::TestInfo* info = ::testing::UnitTest::GetInstance()->current_test_info();
 			root = std::filesystem::temp_directory_path() /
-				   ("worldsim-entries-" + std::string(::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name()) + "-" +
-					::testing::UnitTest::GetInstance()->current_test_info()->name());
+				   ("worldsim-entries-" + runToken() + "-" + std::string(info->test_suite_name()) + "-" + info->name());
 			std::filesystem::remove_all(root);
 			for (const char* folder : {"behaviors", "actions", "work", "orders", "facts"}) {
 				std::filesystem::create_directories(root / "config" / folder);
@@ -76,8 +94,10 @@ namespace {
 				.configRoot = root / "config",
 				.rungs = kRungs,
 				.definitionId = [](std::string_view name) -> std::optional<uint32_t> {
-					static const std::map<std::string, uint32_t, std::less<>> kDefinitions = {{"Berry", 11}, {"BioPile", 12}, {"Milk", 13}};
-					const auto												  found = kDefinitions.find(name);
+					static const std::map<std::string, uint32_t, std::less<>> kDefinitions = {
+						{"Berry", 11}, {"Misc_BioPile", 12}, {"Milk", 13}
+					};
+					const auto found = kDefinitions.find(name);
 					return found == kDefinitions.end() ? std::nullopt : std::optional<uint32_t>(found->second);
 				},
 			};
@@ -94,15 +114,22 @@ namespace {
 			const EntryLoad loaded = load(creatures);
 			EXPECT_EQ(loaded.errors.size(), 1U) << ::testing::PrintToString(loaded.errors);
 			EXPECT_TRUE(loaded.library.chains.empty() && loaded.library.behaviors.empty()) << "an error leaves the library empty";
+			EXPECT_TRUE(loaded.warnings.empty()) << "a failed load keeps no warning";
 			return loaded.errors.size() == 1 ? loaded.errors.front() : std::string();
 		}
 
-		/// The load's one warning; fails the test when it has an error or not exactly one warning.
-		[[nodiscard]] std::string onlyWarning() const {
+		/// The load's warnings; fails the test when it has an error.
+		[[nodiscard]] std::vector<std::string> warnings() const {
 			const EntryLoad loaded = load();
 			EXPECT_TRUE(loaded.errors.empty()) << ::testing::PrintToString(loaded.errors);
-			EXPECT_EQ(loaded.warnings.size(), 1U) << ::testing::PrintToString(loaded.warnings);
-			return loaded.warnings.size() == 1 ? loaded.warnings.front() : std::string();
+			return loaded.warnings;
+		}
+
+		/// A clean load; fails the test on any error.
+		[[nodiscard]] EntryLoad clean(const std::vector<std::string>& creatures = {}) const {
+			EntryLoad loaded = load(creatures);
+			EXPECT_TRUE(loaded.errors.empty()) << ::testing::PrintToString(loaded.errors);
+			return loaded;
 		}
 
 		std::filesystem::path root;
@@ -133,13 +160,21 @@ namespace {
   <chain id="go_there"><go query="spot"/></chain>
   <query id="spot"><from place="here"/><weigh fact="distance" by="-1"/></query>)";
 
+	constexpr const char* kThirst =
+		R"(<need id="thirst" label="Thirst" seek="50" urgent="25" critical="10"><drains perGameMinute="0.1"/></need>)";
+
+	template <typename Step>
+	const Step* stepOf(const ChainEntry& chain, std::size_t index) {
+		return index < chain.steps.size() ? std::get_if<Step>(&chain.steps[index].step) : nullptr;
+	}
+
 } // namespace
 
 // --- Behaviors -------------------------------------------------------------------------------------------
 
 TEST_F(BehaviorLoaderTest, TheSpecsHumanBehaviorsLoadWithEveryReferenceResolved) {
 	write("config/actions/shared.xml", kSharedActions);
-	write("config/behaviors/human/eating.xml", R"(<behavior id="eating" label="Eating">
+	write("config/behaviors/human/eating.xml", R"xml(<behavior id="eating" label="Eating">
   <need id="hunger" label="Hunger" seek="50" urgent="25" critical="10">
     <drains perGameMinute="0.08"/>
     <satisfiedBy chain="eat_from_pack"/>
@@ -163,7 +198,7 @@ TEST_F(BehaviorLoaderTest, TheSpecsHumanBehaviorsLoadWithEveryReferenceResolved)
     <restore need="hunger" from="nutrition" scale="100"/>
     <restore need="digestion" from="nutrition" scale="-100"/>
   </action>
-</behavior>)");
+</behavior>)xml");
 	write("config/behaviors/human/relieving.xml", R"xml(<behavior id="relieving" label="Relieving self">
   <need id="bladder" label="Bladder" seek="30" urgent="20" critical="10">
     <drains perGameMinute="0.03"/>
@@ -190,7 +225,7 @@ TEST_F(BehaviorLoaderTest, TheSpecsHumanBehaviorsLoadWithEveryReferenceResolved)
   <action id="relieve_both" seconds="5" hands="any" interruptable="false">
     <restore need="bladder" amount="100"/>
     <restore need="digestion" amount="100"/>
-    <spawn def="BioPile"/>
+    <spawn def="Misc_BioPile"/>
   </action>
 </behavior>)xml");
 	write("config/behaviors/human/sleeping.xml", R"(<behavior id="sleeping" label="Sleeping">
@@ -256,50 +291,116 @@ TEST_F(BehaviorLoaderTest, TheSpecsHumanBehaviorsLoadWithEveryReferenceResolved)
     <think thought="soiled_a_bed" to="self"/>
   </chain>
 </behavior>)xml");
+	// The step and effect forms the spec's human behaviors leave out.
+	write("config/behaviors/human/tinkering.xml", R"(<behavior id="tinkering">
+  <idle chain="tinker_about"/>
+  <chain id="tinker_about">
+    <have capability="edible" fetch="fetch_food"/>
+    <go query="berry_spot"><ends on="target_gone"/><ends on="held_gone"/></go>
+    <need id="hunger" change="-5"/>
+    <do action="tinker"/>
+    <drop/>
+    <run chain="common/wander"/>
+    <leave_colony/>
+  </chain>
+  <query id="berry_spot"><from item="Berry"/><weigh fact="distance" by="-1"/></query>
+  <action id="tinker" hands="free" interruptable="true">
+    <craft/>
+    <damage amount="2"/>
+    <spawn def="Berry" into="hands"/>
+    <consume capability="edible" count="1" seconds="2" upTo="95" need="hunger"/>
+  </action>
+</behavior>)");
 
-	const EntryLoad loaded = load();
-	ASSERT_TRUE(loaded.errors.empty()) << ::testing::PrintToString(loaded.errors);
+	const EntryLoad loaded = clean();
 	EXPECT_TRUE(loaded.warnings.empty()) << ::testing::PrintToString(loaded.warnings);
 	const EntryLibrary& library = loaded.library;
 
-	EXPECT_EQ(library.behaviors.size(), 7U);
+	EXPECT_EQ(library.behaviors.size(), 8U);
 	ASSERT_TRUE(library.findBehavior("human/eating").valid()) << "a behavior's id is its path under behaviors/";
+	ASSERT_TRUE(library.findChain("human/fetch_food").valid());
 	const ChainEntry& fetch = library.chains[library.findChain("human/fetch_food").index];
-	ASSERT_EQ(fetch.steps.size(), 2U);
-	const auto& go = std::get<GoStep>(fetch.steps[0].step);
-	EXPECT_EQ(go.query->handle, library.findQuery("human/food_to_eat")) << "a short id names an entry of the same folder";
-	const auto& take = std::get<DoStep>(fetch.steps[1].step);
-	EXPECT_EQ(take.action.handle, library.findAction("take")) << "else a top-level entry of the shared folders";
-	EXPECT_EQ(take.claims, (1U << static_cast<int>(ClaimKind::Use)) | (1U << static_cast<int>(ClaimKind::SourceQuantity)));
-	EXPECT_EQ(take.amount, StepAmount::Meal);
+	const GoStep*	  go = stepOf<GoStep>(fetch, 0);
+	ASSERT_NE(go, nullptr);
+	ASSERT_TRUE(go->query.has_value());
+	EXPECT_EQ(go->query->handle, library.findQuery("human/food_to_eat")) << "a short id names an entry of the same folder";
+	const DoStep* take = stepOf<DoStep>(fetch, 1);
+	ASSERT_NE(take, nullptr);
+	EXPECT_EQ(take->action.handle, library.findAction("take")) << "else a top-level entry of the shared folders";
+	EXPECT_EQ(take->claims, (1U << static_cast<int>(ClaimKind::Use)) | (1U << static_cast<int>(ClaimKind::SourceQuantity)));
+	EXPECT_EQ(take->amount, StepAmount::Meal);
 
-	const NeedEntry& hunger = library.needs[library.behaviors[library.findBehavior("human/eating").index].needs.front().index];
+	const BehaviorEntry& eating = library.behaviors[library.findBehavior("human/eating").index];
+	ASSERT_EQ(eating.needs.size(), 1U);
+	const NeedEntry& hunger = library.needs[eating.needs.front().index];
 	EXPECT_EQ(library.needIds[hunger.id.index], "hunger");
 	EXPECT_FLOAT_EQ(hunger.move.perGameMinute, 0.08F);
 	ASSERT_EQ(hunger.satisfiedBy.size(), 2U);
 	EXPECT_EQ(hunger.satisfiedBy[1].when, "carried_food < 1");
-	const NeedEntry& temperature = library.needs[library.behaviors[library.findBehavior("human/temperature").index].needs.front().index];
-	EXPECT_EQ(temperature.move.kind, NeedMove::Kind::SetBy);
+	ASSERT_TRUE(library.findBehavior("human/temperature").valid());
+	const BehaviorEntry& temperatureBehavior = library.behaviors[library.findBehavior("human/temperature").index];
+	ASSERT_EQ(temperatureBehavior.needs.size(), 1U);
+	EXPECT_EQ(library.needs[temperatureBehavior.needs.front().index].move.kind, NeedMove::Kind::SetBy);
 
+	ASSERT_TRUE(library.findAction("human/enjoy_nature").valid());
 	const ActionEntry& enjoy = library.actions[library.findAction("human/enjoy_nature").index];
 	EXPECT_EQ(enjoy.duration, ActionDuration::OpenEnded);
 	EXPECT_EQ(enjoy.pays, Pays::Along);
+	ASSERT_TRUE(library.findAction("human/sleep").valid());
 	EXPECT_TRUE(library.actions[library.findAction("human/sleep").index].asleep);
+	ASSERT_TRUE(library.findAction("harvest").valid());
 	EXPECT_EQ(library.actions[library.findAction("harvest").index].duration, ActionDuration::FromDurability);
+	ASSERT_TRUE(library.findQuery("human/place_to_relieve").valid());
 	const QueryEntry& relief = library.queries[library.findQuery("human/place_to_relieve").index];
 	ASSERT_EQ(relief.from.size(), 3U);
 	EXPECT_TRUE(relief.from[2].fallback);
+	ASSERT_TRUE(library.findQuery("common/wander_point").valid());
 	EXPECT_EQ(library.queries[library.findQuery("common/wander_point").index].pick, QueryPick::Weighted);
 
 	const BehaviorEntry& soil = library.behaviors[library.findBehavior("human/soil_bed").index];
 	ASSERT_TRUE(soil.lowMood.has_value());
 	EXPECT_EQ(soil.lowMood->effect.handle, library.findChain("human/soil_bed"));
 	EXPECT_EQ(soil.lowMood->relief, Relief::Medium);
+	EXPECT_TRUE(soil.lowMood->endsAfterTask);
+	ASSERT_EQ(soil.lowMood->weights.size(), 2U);
 	EXPECT_EQ(soil.lowMood->weights[1].per, "holds_in_a_row");
+
+	ASSERT_TRUE(library.findChain("human/tinker_about").valid());
+	const ChainEntry& tinker = library.chains[library.findChain("human/tinker_about").index];
+	ASSERT_EQ(tinker.steps.size(), 7U);
+	const HaveStep* have = stepOf<HaveStep>(tinker, 0);
+	ASSERT_NE(have, nullptr);
+	EXPECT_EQ(have->capability, CapabilityType::Edible);
+	EXPECT_EQ(have->fetch.handle, library.findChain("human/fetch_food"));
+	EXPECT_EQ(tinker.steps[1].ends, (1U << static_cast<int>(EndEvent::TargetGone)) | (1U << static_cast<int>(EndEvent::HeldGone)));
+	const NeedStep* needStep = stepOf<NeedStep>(tinker, 2);
+	ASSERT_NE(needStep, nullptr);
+	EXPECT_EQ(needStep->need, hunger.id);
+	EXPECT_FLOAT_EQ(needStep->change, -5.0F);
+	EXPECT_NE(stepOf<DropStep>(tinker, 4), nullptr);
+	const RunStep* run = stepOf<RunStep>(tinker, 5);
+	ASSERT_NE(run, nullptr);
+	EXPECT_EQ(run->chain.handle, library.findChain("common/wander")) << "a full id reaches another folder";
+	EXPECT_NE(stepOf<LeaveColonyStep>(tinker, 6), nullptr);
+	ASSERT_TRUE(library.findQuery("human/berry_spot").valid());
+	const QueryEntry& berrySpot = library.queries[library.findQuery("human/berry_spot").index];
+	ASSERT_EQ(berrySpot.from.size(), 1U);
+	EXPECT_EQ(berrySpot.from.front().item.kind, ItemArgument::Kind::Definition);
+	EXPECT_EQ(berrySpot.from.front().item.defNameId, 11U);
+	ASSERT_TRUE(library.findAction("human/tinker").valid());
+	const ActionEntry& tinkerAction = library.actions[library.findAction("human/tinker").index];
+	ASSERT_EQ(tinkerAction.effects.size(), 4U);
+	EXPECT_TRUE(std::holds_alternative<CraftEffect>(tinkerAction.effects[0]));
+	ASSERT_TRUE(std::holds_alternative<DamageEffect>(tinkerAction.effects[1]));
+	EXPECT_FLOAT_EQ(std::get<DamageEffect>(tinkerAction.effects[1]).amount, 2.0F);
+	ASSERT_TRUE(std::holds_alternative<SpawnEffect>(tinkerAction.effects[2]));
+	EXPECT_TRUE(std::get<SpawnEffect>(tinkerAction.effects[2]).intoHands);
+	ASSERT_TRUE(std::holds_alternative<ConsumeEffect>(tinkerAction.effects[3]));
+	EXPECT_EQ(std::get<ConsumeEffect>(tinkerAction.effects[3]).need, hunger.id);
+	EXPECT_EQ(tinkerAction.duration, ActionDuration::OpenEnded);
 }
 
-TEST_F(BehaviorLoaderTest, AFileDeclaresTheLastPartOfItsIdAndSitsInAFolder) {
-	sample(kIdleSample);
+TEST_F(BehaviorLoaderTest, AFileDeclaresTheLastPartOfItsIdAndSitsInANamedFolder) {
 	write("config/behaviors/test/sample.xml", std::string("<behavior id=\"other\">") + kIdleSample + "</behavior>");
 	EXPECT_EQ(onlyError(), "[behaviors] test/sample.xml: <behavior id=\"other\"> id must be the file's name, \"sample\", got \"other\"");
 
@@ -310,6 +411,14 @@ TEST_F(BehaviorLoaderTest, AFileDeclaresTheLastPartOfItsIdAndSitsInAFolder) {
 	std::filesystem::remove(root / "config/behaviors/loose.xml");
 	write("config/behaviors/test/sample.xml", "<behaviour id=\"sample\"/>");
 	EXPECT_EQ(onlyError(), "[behaviors] test/sample.xml: the root element is not <behavior>");
+
+	std::filesystem::remove_all(root / "config/behaviors/test");
+	write("config/behaviors/hu-man/eating.xml", std::string("<behavior id=\"eating\">") + kIdleSample + "</behavior>");
+	EXPECT_EQ(onlyError(), "[behaviors] hu-man/eating.xml: the folder name \"hu-man\" must be letters, digits, and underscores");
+
+	std::filesystem::remove_all(root / "config/behaviors/hu-man");
+	write("config/behaviors/human/eat ing.xml", std::string("<behavior id=\"eat ing\">") + kIdleSample + "</behavior>");
+	EXPECT_EQ(onlyError(), "[behaviors] human/eat ing.xml: the file name \"eat ing\" must be letters, digits, and underscores");
 }
 
 TEST_F(BehaviorLoaderTest, TheSameFullIdTwiceIsAnErrorNamingBothFiles) {
@@ -326,283 +435,251 @@ TEST_F(BehaviorLoaderTest, TheSameFullIdTwiceIsAnErrorNamingBothFiles) {
 
 TEST_F(BehaviorLoaderTest, AFolderEntryHidingATopLevelOneLoadsWithAWarningAndWinsInsideItsFolder) {
 	write("config/actions/shared.xml", R"(<actions><action id="drink" seconds="1" interruptable="false"><put/></action></actions>)");
-	sample(
-		R"(<need id="thirst" label="Thirst" seek="50" urgent="25" critical="10"><drains perGameMinute="0.1"/><satisfiedBy chain="drink_here"/></need>
-  <chain id="drink_here"><do action="drink"/><do action="deposit"/></chain>
-  <action id="drink" seconds="1.5" hands="free" interruptable="false"><restore need="thirst" amount="100"/></action>)"
-	);
 	write("config/actions/more.xml", R"(<actions><action id="deposit" seconds="1" interruptable="false"><put/></action></actions>)");
+	write(
+		"config/work/w.xml",
+		R"(<colonyWork><category id="k" label="K" order="1"/>
+  <work id="w" goal="haul" category="k" rung="opportunistic_work"><source query="q"/><chain id="c"/></work>
+  <chain id="c"><go to="destination"/></chain>
+  <query id="q"><from pile="goal"/><weigh fact="distance" by="-1"/></query></colonyWork>)"
+	);
+	sample(std::string(kThirst).insert(std::string(kThirst).find("</need>"), R"(<satisfiedBy chain="drink_here"/>)") + R"(
+  <chain id="drink_here"><do action="drink"/><do action="deposit"/></chain>
+  <action id="drink" seconds="1.5" hands="free" interruptable="false"><restore need="thirst" amount="100"/></action>
+  <idle chain="c"/>
+  <chain id="c"><go query="q"/></chain>
+  <query id="q"><from place="here"/><weigh fact="distance" by="-1"/></query>)");
 
 	EXPECT_EQ(
-		onlyWarning(),
-		"[behaviors] test/sample.xml: <action id=\"drink\"> action \"test/drink\" hides the top-level action \"drink\" ([actions] "
-		"shared.xml) "
-		"inside test/"
+		warnings(),
+		(std::vector<std::string>{
+			"[behaviors] test/sample.xml: <chain id=\"c\"> chain \"test/c\" hides the top-level chain \"c\" ([work] w.xml) inside test/",
+			"[behaviors] test/sample.xml: <query id=\"q\"> query \"test/q\" hides the top-level query \"q\" ([work] w.xml) inside test/",
+			"[behaviors] test/sample.xml: <action id=\"drink\"> action \"test/drink\" hides the top-level action \"drink\" ([actions] "
+			"shared.xml) "
+			"inside test/",
+		})
 	);
 	const EntryLibrary library = load().library;
-	const ChainEntry&  chain = library.chains[library.findChain("test/drink_here").index];
-	EXPECT_EQ(std::get<DoStep>(chain.steps[0].step).action.handle, library.findAction("test/drink"));
-	EXPECT_EQ(std::get<DoStep>(chain.steps[1].step).action.handle, library.findAction("deposit"));
+	ASSERT_TRUE(library.findChain("test/drink_here").valid());
+	const ChainEntry& chain = library.chains[library.findChain("test/drink_here").index];
+	ASSERT_NE(stepOf<DoStep>(chain, 0), nullptr);
+	ASSERT_NE(stepOf<DoStep>(chain, 1), nullptr);
+	EXPECT_EQ(stepOf<DoStep>(chain, 0)->action.handle, library.findAction("test/drink"));
+	EXPECT_EQ(stepOf<DoStep>(chain, 1)->action.handle, library.findAction("deposit"));
 }
 
 TEST_F(BehaviorLoaderTest, AChainNothingStartsLoadsWithAWarning) {
 	sample(std::string(kIdleSample) + R"(<chain id="lonely"><go query="spot"/></chain>)");
 	EXPECT_EQ(
-		onlyWarning(),
-		"[behaviors] test/sample.xml: <chain id=\"lonely\"> chain \"test/lonely\" is started by nothing: no need, idle row, work entry, "
-		"order, or "
-		"episode names it"
+		warnings(),
+		std::vector<std::string>{"[behaviors] test/sample.xml: <chain id=\"lonely\"> chain \"test/lonely\" is started by nothing: no need, "
+								 "idle row, work entry, "
+								 "order, or episode names it"}
 	);
 }
 
-TEST_F(BehaviorLoaderTest, TheScriptAttributeIsReservedOnEveryEntry) {
-	sample(R"(<idle chain="go_there"/><chain id="go_there" script="go.lua"><go query="spot"/></chain>
-  <query id="spot"><from place="here"/><weigh fact="distance" by="-1"/></query>)");
-	EXPECT_EQ(
-		onlyError(),
-		"[behaviors] test/sample.xml: <chain id=\"go_there\"> script must be left out; it is reserved for a Lua hook that runs nothing "
-		"yet, got "
-		"\"go.lua\""
-	);
-}
-
-TEST_F(BehaviorLoaderTest, UnknownElementsAttributesAndNamesAreErrors) {
-	sample(std::string(kIdleSample) + "<task/>");
-	EXPECT_EQ(onlyError(), "[behaviors] test/sample.xml: <behavior id=\"sample\">: unknown element <task>");
-
-	sample(R"(<idle chain="go_there"/><chain id="go_there" loop="true"><go query="spot"/></chain>
-  <query id="spot"><from place="here"/><weigh fact="distance" by="-1"/></query>)");
-	EXPECT_EQ(onlyError(), "[behaviors] test/sample.xml: <chain id=\"go_there\">: unknown attribute 'loop'");
-
-	sample(R"(<idle chain="go_there"/><chain id="go_there"><go query="spott"/></chain>
-  <query id="spot"><from place="here"/><weigh fact="distance" by="-1"/></query>)");
-	EXPECT_EQ(onlyError(), "[behaviors] test/sample.xml: <chain id=\"go_there\"> step 1 <go> query \"spott\" names no query");
-}
-
-TEST_F(BehaviorLoaderTest, NeedMistakesNameTheNeedAndTheValue) {
-	const auto needError = [this](const std::string& need) {
-		sample(std::string(kIdleSample) + need);
-		return onlyError();
+TEST_F(BehaviorLoaderTest, EachEntryMistakeIsOneErrorNamingTheEntryElementAndAttribute) {
+	const std::string spot = R"(<query id="spot"><from place="here"/><weigh fact="distance" by="-1"/></query>)";
+	const std::string lowMood =
+		R"(<chain id="c"><go to="target"/></chain><query id="q" pick="weighted"><from kind="bed"/><exclude fact="distance" above="5"/></query>)";
+	const std::vector<Case> cases = {
+		{std::string(kIdleSample) + "<task/>", "<behavior id=\"sample\">: unknown element <task>"},
+		{R"(<idle chain="go_there"/><chain id="go_there" loop="true"><go query="spot"/></chain>)" + spot,
+		 "<chain id=\"go_there\">: unknown attribute 'loop'"},
+		{R"(<idle chain="go_there"/><chain id="go_there"><go query="spott"/></chain>)" + spot,
+		 "<chain id=\"go_there\"> step 1 <go> query \"spott\" names no query"},
+		{R"(<idle chain="go_there"/><chain id="go_there" script="go.lua"><go query="spot"/></chain>)" + spot,
+		 "<chain id=\"go_there\"> script must be left out; it is reserved for a Lua hook that runs nothing yet, got \"go.lua\""},
+		{R"(<chain id="go "><go to="target"/></chain>)", "<chain> id must be letters, digits, and underscores, got \"go \""},
+		// Steps.
+		{R"(<chain id="c"><go query="q" to="target"/></chain>)",
+		 "<chain id=\"c\"> step 1 <go> names both a query and a target; give exactly one of query and to"},
+		{R"(<chain id="c"><go/></chain>)",
+		 "<chain id=\"c\"> step 1 <go> names neither a query nor a target; give exactly one of query and to"},
+		{R"(<chain id="c"><have item="Berry" capability="edible" fetch="c"/></chain>)",
+		 "<chain id=\"c\"> step 1 <have> names both an item and a capability; give exactly one"},
+		{R"(<chain id="c"><have fetch="c"/></chain>)",
+		 "<chain id=\"c\"> step 1 <have> names neither an item nor a capability; give exactly one"},
+		{R"(<chain id="c"/>)", "<chain id=\"c\"> has no step"},
+		{R"(<chain id="c"><walk/></chain>)", "<chain id=\"c\">: unknown element <walk>"},
+		{R"(<chain id="c"><go to="target"><ends on="target_gone"/><ends on="target_gone"/></go></chain>)",
+		 "<chain id=\"c\"> step 1 <go> <ends> on \"target_gone\" is given twice"},
+		{R"(<chain id="c"><do action="x" claims="use use"/></chain>)", "<chain id=\"c\"> step 1 <do> claims names \"use\" twice"},
+		{R"(<chain id="c"><do action="x" claims="use grab"/></chain>)",
+		 "<chain id=\"c\"> step 1 <do> claims \"grab\" is not a claim kind (use, source_quantity, slot, inbound, in_flight)"},
+		// Needs.
+		{R"(<need id="thirst" label="Thirst" seek="20" urgent="25" critical="10"><drains perGameMinute="0.1"/></need>)",
+		 "<need id=\"thirst\"> urgent must be below seek (20), got \"25\""},
+		{R"(<need id="thirst" label="Thirst" seek="50" urgent="25" critical="30"><drains perGameMinute="0.1"/></need>)",
+		 "<need id=\"thirst\"> critical must be below urgent (25), got \"30\""},
+		{R"(<need id="thirst" label="Thirst" seek="abc" urgent="25" critical="10"><drains perGameMinute="0.1"/></need>)",
+		 "<need id=\"thirst\"> seek must be a number, got \"abc\""},
+		{R"(<need id="thirst!" label="Thirst" seek="50" urgent="25" critical="10"><drains perGameMinute="0.1"/></need>)",
+		 "<need> id must be letters, digits, and underscores, got \"thirst!\""},
+		{R"(<need id="thirst" label="Thirst" seek="50" urgent="25" critical="10"><drains perGameMinute="0.1"/><setBy provider="thermal_comfort"/></need>)",
+		 "<need id=\"thirst\"> has more than one of <drains> and <setBy>; a level moves in exactly one way"},
+		{R"(<need id="thirst" label="Thirst" seek="50" urgent="25" critical="10"><setBy provider="weather"/></need>)",
+		 "<need id=\"thirst\"> <setBy> provider must be one of thermal_comfort, got \"weather\""},
+		{R"(<need id="thirst" label="Thirst" seek="50" urgent="25" critical="10"><drains perGameMinute="0.1"/><satisfiedBy when="x"/></need>)",
+		 "<need id=\"thirst\"> row 1 <satisfiedBy> names neither a chain nor a work entry; give exactly one"},
+		{R"(<need id="thirst" label="Thirst" seek="50" urgent="25" critical="10"><drains perGameMinute="0.1"/><satisfiedBy chain="c" work="w"/></need>)",
+		 "<need id=\"thirst\"> row 1 <satisfiedBy> names both a chain and a work entry; give exactly one"},
+		{std::string(kThirst) + kThirst, "<behavior id=\"sample\"> <need id=\"thirst\"> is given twice in one behavior"},
+		{R"(<action id="drink" seconds="1" interruptable="false"><restore need="thrist" amount="1"/></action>)",
+		 "<action id=\"drink\"> effect 1 <restore> need \"thrist\" names no need of any behavior or creature"},
+		// Queries.
+		{R"(<query id="q"><from place="here"/></query>)",
+		 "<query id=\"q\"> neither weighs distance by a negative number nor excludes it above a bound, so nothing ends its search"},
+		{R"(<query id="q" pick="weighted"><from place="here"/><weigh fact="distance" by="-1"/></query>)",
+		 "<query id=\"q\"> picks weighted but excludes no distance above a bound, so its draw has no bound"},
+		{R"(<query id="q"><weigh fact="distance" by="-1"/></query>)", "<query id=\"q\"> has no <from> row, so it has no candidates"},
+		{R"(<query id="q"><from place="here"/><weigh fact="nearness" by="-1"/></query>)",
+		 "<query id=\"q\"> row 2 <weigh> fact \"nearness\" names no fact the sim provides"},
+		{R"(<query id="q"><from place="here"/><weigh fact="distance" by="-1"/><weigh fact="contains" by="1"/></query>)",
+		 "<query id=\"q\"> row 3 <weigh> fact \"contains\" takes one argument, as contains(tag)"},
+		{R"(<query id="q"><from capability="drinkable" place="here"/><weigh fact="distance" by="-1"/></query>)",
+		 "<query id=\"q\"> row 1 <from> names more than one source (capability, place); give exactly one of capability, kind, item, "
+		 "yields, pile, box, place, goal"},
+		{R"(<query id="q"><from goal="destination"/><weigh fact="distance" by="-1"/></query>)",
+		 "<query id=\"q\"> row 1 <from> goal \"destination\" reads the goal a work option serves, which only a query in work/ has"},
+		{R"(<query id="q"><from item="Wod"/><weigh fact="distance" by="-1"/></query>)",
+		 "<query id=\"q\"> row 1 <from> item \"Wod\" names no definition"},
+		{R"(<query id="q" pick="weighted"><from place="around" radius="8" count="1" minRadius="9"/><exclude fact="distance" above="8"/></query>)",
+		 "<query id=\"q\"> row 1 <from> minRadius must be below radius (8), got \"9\""},
+		{R"(<query id="q"><from place="here"/><exclude fact="distance" above="1" below="2"/><weigh fact="distance" by="-1"/></query>)",
+		 "<query id=\"q\"> row 2 <exclude> gives both above and below; a row draws one line"},
+		// Actions.
+		{std::string(kThirst) + R"(<action id="drink" interruptable="false"><put/></action>)",
+		 "<action id=\"drink\"> has no duration; give seconds, workFrom with skill, or an open-ended effect"},
+		{std::string(kThirst) +
+			 R"(<action id="enjoy" seconds="5" interruptable="true" pays="along"><restore need="thirst" amount="2" seconds="60" upTo="90"/></action>)",
+		 "<action id=\"enjoy\"> seconds must be left out; an open-ended action (a <work> effect or an upTo bound) runs until its bound, "
+		 "got \"5\""},
+		{R"(<action id="drink" seconds="1"><put/></action>)", "<action id=\"drink\"> interruptable is missing"},
+		{R"(<action id="drink" seconds="1" interruptable="false" curve="2"><put/></action>)",
+		 "<action id=\"drink\"> curve must be left out; it shapes an action that pays along, got \"2\""},
+		{R"(<action id="drink" seconds="1" interruptable="false"><put/><heal/></action>)", "<action id=\"drink\">: unknown element <heal>"},
+		{R"(<action id="drink" seconds="1" interruptable="false"><heal/></action>)", "<action id=\"drink\">: unknown element <heal>"},
+		{std::string(kThirst) +
+			 R"(<action id="drink" seconds="1" interruptable="false"><restore need="thirst" amount="1" from="nutrition" scale="1"/></action>)",
+		 "<action id=\"drink\"> effect 1 <restore> gives both amount and from; give exactly one"},
+		// Low-mood episodes.
+		{R"(<lowMood rampStart="25" rampFull="15" base="4"><effect chain="c"/><relief amount="small"/></lowMood>)" + lowMood,
+		 "<behavior id=\"sample\"> <lowMood> has no <ends> row; it takes one or more"},
+		{R"(<lowMood rampStart="25" rampFull="15" base="4"><effect chain="c"/><ends after="task"/><ends after="task"/><relief amount="small"/></lowMood>)" +
+			 lowMood,
+		 "<behavior id=\"sample\"> <lowMood> row 2 <ends> after \"task\" is given twice"},
+		{R"(<lowMood rampStart="25" rampFull="30" base="4"><effect chain="c"/><ends after="task"/><relief amount="small"/></lowMood>)" +
+			 lowMood,
+		 "<behavior id=\"sample\"> <lowMood> rampFull must be below rampStart (25), got \"30\""},
+		{R"(<lowMood rampStart="25" rampFull="15" base="4"><target query="q"/><target query="q"/><effect chain="c"/><ends after="task"/><relief amount="small"/></lowMood>)" +
+			 lowMood,
+		 "<behavior id=\"sample\"> <lowMood> has 2 <target> rows; it takes at most one"},
+		{R"(<lowMood rampStart="25" rampFull="15" base="4"><weight when="x" per="y" multiply="2"/><effect chain="c"/><ends after="task"/><relief amount="small"/></lowMood>)" +
+			 lowMood,
+		 "<behavior id=\"sample\"> <lowMood> row 1 <weight> gives both when and per; give exactly one"},
+		{R"(<lowMood rampStart="25" rampFull="15" base="4"><effect chain="c"/><ends after="task"/><relief amount="huge"/></lowMood>)" +
+			 lowMood,
+		 "<behavior id=\"sample\"> <lowMood> <relief> amount must be one of none, small, medium, large, got \"huge\""},
+		{R"(<lowMood rampStart="25" rampFull="15" base="4"><effect chain="c"/><ends after="task"/><relief amount="small"/></lowMood><lowMood rampStart="25" rampFull="15" base="4"><effect chain="c"/><ends after="task"/><relief amount="small"/></lowMood>)" +
+			 lowMood,
+		 "<behavior id=\"sample\"> has more than one <lowMood>; a low-mood behavior holds one"},
 	};
-	EXPECT_EQ(
-		needError(R"(<need id="thirst" label="Thirst" seek="20" urgent="25" critical="10"><drains perGameMinute="0.1"/></need>)"),
-		"[behaviors] test/sample.xml: <need id=\"thirst\"> urgent must be below seek (20), got \"25\""
-	);
-	EXPECT_EQ(
-		needError(R"(<need id="thirst" label="Thirst" seek="abc" urgent="25" critical="10"><drains perGameMinute="0.1"/></need>)"),
-		"[behaviors] test/sample.xml: <need id=\"thirst\"> seek must be a number, got \"abc\""
-	);
-	EXPECT_EQ(
-		needError(
-			R"(<need id="thirst" label="Thirst" seek="50" urgent="25" critical="10"><drains perGameMinute="0.1"/><setBy provider="thermal_comfort"/></need>)"
-		),
-		"[behaviors] test/sample.xml: <need id=\"thirst\"> has more than one of <drains> and <setBy>; a level moves in exactly one way"
-	);
-	EXPECT_EQ(
-		needError(R"(<need id="thirst" label="Thirst" seek="50" urgent="25" critical="10"><setBy provider="weather"/></need>)"),
-		"[behaviors] test/sample.xml: <need id=\"thirst\"> <setBy> provider must be one of thermal_comfort, got \"weather\""
-	);
-	EXPECT_EQ(
-		needError(
-			R"(<need id="thirst" label="Thirst" seek="50" urgent="25" critical="10"><drains perGameMinute="0.1"/><satisfiedBy when="x"/></need>)"
-		),
-		"[behaviors] test/sample.xml: <need id=\"thirst\"> row 1 <satisfiedBy> names neither a chain nor a work entry; give exactly one"
-	);
-	const std::string thirst =
-		R"(<need id="thirst" label="Thirst" seek="50" urgent="25" critical="10"><drains perGameMinute="0.1"/></need>)";
-	EXPECT_EQ(
-		needError(thirst + thirst),
-		"[behaviors] test/sample.xml: <behavior id=\"sample\"> <need id=\"thirst\"> is given twice in one behavior"
-	);
-	EXPECT_EQ(
-		needError(R"(<action id="drink" seconds="1" interruptable="false"><restore need="thrist" amount="1"/></action>)"),
-		"[behaviors] test/sample.xml: <action id=\"drink\"> effect 1 <restore> need \"thrist\" names no need of any behavior or creature"
-	);
-}
-
-TEST_F(BehaviorLoaderTest, QueryMistakesNameTheQueryAndTheRow) {
-	const auto queryError = [this](const std::string& query) {
-		sample(std::string(R"(<idle chain="go_there"/><chain id="go_there"><go query="spot"/></chain>)") + query);
-		return onlyError();
-	};
-	EXPECT_EQ(
-		queryError(R"(<query id="spot"><from place="here"/></query>)"),
-		"[behaviors] test/sample.xml: <query id=\"spot\"> neither weighs distance by a negative number nor excludes it above a bound, so "
-		"nothing ends its search"
-	);
-	EXPECT_EQ(
-		queryError(R"(<query id="spot" pick="weighted"><from place="here"/><weigh fact="distance" by="-1"/></query>)"),
-		"[behaviors] test/sample.xml: <query id=\"spot\"> picks weighted but excludes no distance above a bound, so its draw has no bound"
-	);
-	EXPECT_EQ(
-		queryError(R"(<query id="spot"><from place="here"/><weigh fact="nearness" by="-1"/></query>)"),
-		"[behaviors] test/sample.xml: <query id=\"spot\"> row 2 <weigh> fact \"nearness\" names no fact the sim provides"
-	);
-	EXPECT_EQ(
-		queryError(R"(<query id="spot"><from place="here"/><weigh fact="distance" by="-1"/><weigh fact="contains" by="1"/></query>)"),
-		"[behaviors] test/sample.xml: <query id=\"spot\"> row 3 <weigh> fact \"contains\" takes one argument, as contains(tag)"
-	);
-	EXPECT_EQ(
-		queryError(R"(<query id="spot"><from capability="drinkable" place="here"/><weigh fact="distance" by="-1"/></query>)"),
-		"[behaviors] test/sample.xml: <query id=\"spot\"> row 1 <from> names more than one source (capability, place); give exactly one of "
-		"capability, kind, item, yields, pile, box, place, goal"
-	);
-	EXPECT_EQ(
-		queryError(R"(<query id="spot"><from goal="destination"/><weigh fact="distance" by="-1"/></query>)"),
-		"[behaviors] test/sample.xml: <query id=\"spot\"> row 1 <from> goal \"destination\" reads the goal a work option serves, which "
-		"only a "
-		"query in work/ has"
-	);
-	EXPECT_EQ(
-		queryError(R"(<query id="spot"><from item="Wod"/><weigh fact="distance" by="-1"/></query>)"),
-		"[behaviors] test/sample.xml: <query id=\"spot\"> row 1 <from> item \"Wod\" names no definition"
-	);
-}
-
-TEST_F(BehaviorLoaderTest, ActionMistakesNameTheActionAndTheEffect) {
-	const auto actionError = [this](const std::string& action) {
-		sample(
-			std::string(kIdleSample) +
-			R"(<need id="thirst" label="Thirst" seek="50" urgent="25" critical="10"><drains perGameMinute="0.1"/></need>)" + action
-		);
-		return onlyError();
-	};
-	EXPECT_EQ(
-		actionError(R"(<action id="drink" interruptable="false"><put/></action>)"),
-		"[behaviors] test/sample.xml: <action id=\"drink\"> has no duration; give seconds, workFrom with skill, or an open-ended effect"
-	);
-	EXPECT_EQ(
-		actionError(
-			R"(<action id="enjoy" seconds="5" interruptable="true" pays="along"><restore need="thirst" amount="2" seconds="60" upTo="90"/></action>)"
-		),
-		"[behaviors] test/sample.xml: <action id=\"enjoy\"> seconds must be left out; an open-ended action (a <work> effect or an upTo "
-		"bound) runs "
-		"until its bound, got \"5\""
-	);
-	EXPECT_EQ(
-		actionError(R"(<action id="drink" seconds="1"><put/></action>)"),
-		"[behaviors] test/sample.xml: <action id=\"drink\"> interruptable is missing"
-	);
-	EXPECT_EQ(
-		actionError(R"(<action id="drink" seconds="1" interruptable="false" curve="2"><put/></action>)"),
-		"[behaviors] test/sample.xml: <action id=\"drink\"> curve must be left out; it shapes an action that pays along, got \"2\""
-	);
-	EXPECT_EQ(
-		actionError(R"(<action id="drink" seconds="1" interruptable="false"><put/><heal/></action>)"),
-		"[behaviors] test/sample.xml: <action id=\"drink\">: unknown element <heal>"
-	);
-	EXPECT_EQ(
-		actionError(
-			R"(<action id="drink" seconds="1" interruptable="false"><restore need="thirst" amount="1" from="nutrition" scale="1"/></action>)"
-		),
-		"[behaviors] test/sample.xml: <action id=\"drink\"> effect 1 <restore> gives both amount and from; give exactly one"
-	);
+	for (const Case& entry : cases) {
+		SCOPED_TRACE(entry.written);
+		sample(entry.written);
+		EXPECT_EQ(onlyError(), "[behaviors] test/sample.xml: " + entry.expected);
+	}
 }
 
 TEST_F(BehaviorLoaderTest, ChainRulesNameTheChainAndTheStep) {
 	write("config/actions/shared.xml", kSharedActions);
-	const auto chainError = [this](const std::string& chains) {
-		sample(
-			R"(<need id="thirst" label="Thirst" seek="50" urgent="25" critical="10"><drains perGameMinute="0.1"/><satisfiedBy chain="a"/></need>
-  <action id="drink" seconds="1" interruptable="false"><restore need="thirst" amount="1"/></action>
-  <query id="spot"><from place="here"/><weigh fact="distance" by="-1"/></query>)" +
-			chains
-		);
-		return onlyError();
+	const std::string base = std::string(kThirst).insert(std::string(kThirst).find("</need>"), R"(<satisfiedBy chain="a"/>)") +
+							 R"(<action id="drink" seconds="1" interruptable="false"><restore need="thirst" amount="1"/></action>)";
+	const std::vector<Case> cases = {
+		{R"(<chain id="a"><do action="pickup" claims="use source_quantity slot"/><do action="deposit" claims="inbound in_flight"/><do action="pickup" claims="use"/></chain>)",
+		 "<chain id=\"a\"> names 5 claims with the chains it runs; a task holds four"},
+		{R"(<chain id="a"><do action="deposit" claims="inbound in_flight"/><do action="deposit" claims="inbound in_flight"/></chain>)",
+		 "<chain id=\"a\"> names 4 inbound and in_flight claims with the chains it runs; a suspended record holds two"},
+		{R"(<chain id="a"><run chain="b"/></chain><chain id="b"><run chain="a"/></chain>)",
+		 "<chain id=\"a\"> runs itself: \"test/a\" -> \"test/b\" -> \"test/a\""},
+		{R"(<chain id="a"><run chain="b"/></chain><chain id="b"><run chain="b"/></chain>)",
+		 "<chain id=\"b\"> runs itself: \"test/b\" -> \"test/b\""},
+		{R"(<chain id="a"><do action="drink" amount="meal"/></chain>)",
+		 "<chain id=\"a\"> step 1 <do> amount is for a step whose action takes or puts; \"drink\" does neither"},
+		{R"(<chain id="a"><go query="food"/><do action="take"/></chain>
+  <query id="food"><from yields="edible"/><from pile="edible"/><from box="edible"/><from capability="drinkable"/><weigh fact="distance" by="-1"/></query>)",
+		 "<chain id=\"a\"> step 2 <do> action group \"take\" has no member for drinkable, which query \"food\" can return"},
 	};
-	EXPECT_EQ(
-		chainError(
-			R"(<chain id="a"><do action="pickup" claims="use source_quantity slot"/><do action="deposit" claims="inbound in_flight"/></chain>)"
-		),
-		"[behaviors] test/sample.xml: <chain id=\"a\"> names 5 claims with the chains it runs; a task holds four"
+	for (const Case& entry : cases) {
+		SCOPED_TRACE(entry.written);
+		sample(base + entry.written);
+		EXPECT_EQ(onlyError(), "[behaviors] test/sample.xml: " + entry.expected);
+	}
+
+	sample(
+		base +
+		R"(<chain id="a"><do action="pickup" claims="use source_quantity slot"/><do action="deposit" claims="inbound in_flight"/></chain>)"
 	);
-	EXPECT_EQ(
-		chainError(
-			R"(<chain id="a"><do action="deposit" claims="inbound in_flight"/><do action="deposit" claims="inbound in_flight"/></chain>)"
-		),
-		"[behaviors] test/sample.xml: <chain id=\"a\"> names 4 inbound and in_flight claims with the chains it runs; a suspended record "
-		"holds two"
-	);
-	EXPECT_EQ(
-		chainError(R"(<chain id="a"><run chain="b"/></chain><chain id="b"><run chain="a"/></chain>)"),
-		"[behaviors] test/sample.xml: <chain id=\"a\"> runs itself: \"test/a\" -> \"test/b\" -> \"test/a\""
-	);
-	EXPECT_EQ(
-		chainError(R"(<chain id="a"><do action="pickup" claims="use grab"/></chain>)"),
-		"[behaviors] test/sample.xml: <chain id=\"a\"> step 1 <do> claims \"grab\" is not a claim kind (use, source_quantity, slot, "
-		"inbound, in_flight)"
-	);
-	EXPECT_EQ(
-		chainError(R"(<chain id="a"><do action="drink" amount="meal"/></chain>)"),
-		"[behaviors] test/sample.xml: <chain id=\"a\"> step 1 <do> amount is for a step whose action takes or puts; \"drink\" does neither"
-	);
-	EXPECT_EQ(
-		chainError(
-			R"(<chain id="a"><go query="food"/><do action="take"/></chain>
-  <query id="food"><from yields="edible"/><from pile="edible"/><from box="edible"/><from capability="drinkable"/><weigh fact="distance" by="-1"/></query>)"
-		),
-		"[behaviors] test/sample.xml: <chain id=\"a\"> step 2 <do> action group \"take\" has no member for drinkable, which query \"food\" "
-		"can return"
-	);
+	EXPECT_TRUE(load().errors.empty()) << "use and source_quantity on one step hold one claim, so four in all";
 }
 
 // --- Actions ---------------------------------------------------------------------------------------------
 
 TEST_F(ActionLoaderTest, TheSharedActionsLoadAndTheGroupResolvesItsMembers) {
 	write("config/actions/shared.xml", kSharedActions);
-	const EntryLoad loaded = load();
-	ASSERT_TRUE(loaded.errors.empty()) << ::testing::PrintToString(loaded.errors);
+	const EntryLoad		loaded = clean();
 	const EntryLibrary& library = loaded.library;
 	EXPECT_EQ(library.actions.size(), 10U);
+	ASSERT_TRUE(library.findAction("take").valid());
 	const ActionEntry& take = library.actions[library.findAction("take").index];
 	ASSERT_TRUE(take.group);
 	ASSERT_EQ(take.members.size(), 3U);
 	EXPECT_EQ(take.members[2].handle, library.findAction("withdraw"));
+	ASSERT_TRUE(library.findAction("clear").valid());
 	const ActionEntry& clear = library.actions[library.findAction("clear").index];
+	ASSERT_FALSE(clear.effects.empty());
+	ASSERT_TRUE(std::holds_alternative<TakeEffect>(clear.effects.front()));
 	EXPECT_TRUE(std::get<TakeEffect>(clear.effects.front()).clears);
-	EXPECT_EQ(
-		std::get<WorkEffect>(library.actions[library.findAction("deconstruct").index].effects.front()).direction, WorkDirection::Down
-	);
+	ASSERT_TRUE(library.findAction("deconstruct").valid());
+	const ActionEntry& deconstruct = library.actions[library.findAction("deconstruct").index];
+	ASSERT_FALSE(deconstruct.effects.empty());
+	ASSERT_TRUE(std::holds_alternative<WorkEffect>(deconstruct.effects.front()));
+	EXPECT_EQ(std::get<WorkEffect>(deconstruct.effects.front()).direction, WorkDirection::Down);
 }
 
 TEST_F(ActionLoaderTest, GroupAndFolderMistakesNameTheFileAndTheEntry) {
-	const auto actionsError = [this](const std::string& actions) {
-		write("config/actions/shared.xml", "<actions>" + actions + "</actions>");
-		return onlyError();
+	const std::string		pickup = R"(<action id="pickup" on="loose_item" seconds="0.5" interruptable="false"><take/></action>)";
+	const std::vector<Case> cases = {
+		{pickup + R"(<actionGroup id="take">pickup</actionGroup><actionGroup id="outer">take</actionGroup>)",
+		 "<actionGroup id=\"outer\"> member \"take\" is an action group; a group's members are actions"},
+		{pickup +
+			 R"(<action id="deposit" seconds="1" interruptable="false"><put/></action><actionGroup id="take">pickup deposit</actionGroup>)",
+		 "<actionGroup id=\"take\"> member \"deposit\" has no on, so no target can choose it"},
+		{pickup +
+			 R"(<action id="lift" on="loose_item" seconds="1" interruptable="false"><take/></action><actionGroup id="take">pickup lift</actionGroup>)",
+		 "<actionGroup id=\"take\"> members \"pickup\" and \"lift\" both work on loose_item"},
+		{R"(<actionGroup id="take"/>)", "<actionGroup id=\"take\"> names no member action"},
+		{pickup + R"(<actionGroup id="pickup">pickup</actionGroup>)",
+		 "<actionGroup id=\"pickup\"> action \"pickup\" is defined twice, first in [actions] shared.xml"},
+		{R"(<action id="lift" on="tree" seconds="1" interruptable="false"><take/></action>)",
+		 "<action id=\"lift\"> on must be a capability (edible, drinkable, sleepable, toilet, waste, carryable, harvestable, craftable, "
+		 "storage, "
+		 "washable), loose_item, or packaged, got \"tree\""},
 	};
-	const std::string pickup = R"(<action id="pickup" on="loose_item" seconds="0.5" interruptable="false"><take/></action>)";
-	EXPECT_EQ(
-		actionsError(pickup + R"(<actionGroup id="take">pickup</actionGroup><actionGroup id="outer">take</actionGroup>)"),
-		"[actions] shared.xml: <actionGroup id=\"outer\"> member \"take\" is an action group; a group's members are actions"
-	);
-	EXPECT_EQ(
-		actionsError(
-			pickup +
-			R"(<action id="deposit" seconds="1" interruptable="false"><put/></action><actionGroup id="take">pickup deposit</actionGroup>)"
-		),
-		"[actions] shared.xml: <actionGroup id=\"take\"> member \"deposit\" has no on, so no target can choose it"
-	);
-	EXPECT_EQ(
-		actionsError(
-			pickup +
-			R"(<action id="lift" on="loose_item" seconds="1" interruptable="false"><take/></action><actionGroup id="take">pickup lift</actionGroup>)"
-		),
-		"[actions] shared.xml: <actionGroup id=\"take\"> members \"pickup\" and \"lift\" both work on loose_item"
-	);
-	EXPECT_EQ(actionsError(R"(<actionGroup id="take"/>)"), "[actions] shared.xml: <actionGroup id=\"take\"> names no member action");
-	EXPECT_EQ(
-		actionsError(pickup + R"(<actionGroup id="pickup">pickup</actionGroup>)"),
-		"[actions] shared.xml: <actionGroup id=\"pickup\"> action \"pickup\" is defined twice, first in [actions] shared.xml"
-	);
-	EXPECT_EQ(
-		actionsError(R"(<action id="lift" on="tree" seconds="1" interruptable="false"><take/></action>)"),
-		"[actions] shared.xml: <action id=\"lift\"> on must be a capability (edible, drinkable, sleepable, toilet, waste, carryable, "
-		"harvestable, "
-		"craftable, storage, washable), loose_item, or packaged, got \"tree\""
-	);
+	for (const Case& entry : cases) {
+		SCOPED_TRACE(entry.written);
+		write("config/actions/shared.xml", "<actions>" + entry.written + "</actions>");
+		EXPECT_EQ(onlyError(), "[actions] shared.xml: " + entry.expected);
+	}
 
 	write("config/actions/shared.xml", "<actionList/>");
 	EXPECT_EQ(onlyError(), "[actions] shared.xml: the root element is not <actions>");
+
+	write("config/actions/shared.xml", "<actions/>");
+	write("config/actions/extra/more.xml", "<actions/>");
+	EXPECT_EQ(onlyError(), "[actions] extra: a subfolder, which actions/ may not have; its entries take top-level ids");
 
 	std::filesystem::remove_all(root / "config/actions");
 	EXPECT_EQ(onlyError(), "[actions] " + (root / "config" / "actions").generic_string() + ": not a folder");
@@ -610,10 +687,11 @@ TEST_F(ActionLoaderTest, GroupAndFolderMistakesNameTheFileAndTheEntry) {
 
 // --- Work ------------------------------------------------------------------------------------------------
 
-TEST_F(WorkLoaderTest, TheSpecsHaulLoadsWithItsRungsAndSources) {
+TEST_F(WorkLoaderTest, TheSpecsHaulAndACareEntryLoadWithTheirRungsAndSources) {
 	write("config/actions/shared.xml", kSharedActions);
 	write("config/work/hauling.xml", R"(<colonyWork>
   <category id="hauling" label="Hauling" order="6"/>
+  <category id="emergency" label="Emergency" order="1" canDisable="false"/>
   <work id="haul_pile" goal="haul" category="hauling" rung="opportunistic_work" gathers="true">
     <source query="pile_for_goal"/>
     <chain id="haul_from_pile"/>
@@ -624,6 +702,13 @@ TEST_F(WorkLoaderTest, TheSpecsHaulLoadsWithItsRungsAndSources) {
   </work>
   <work id="carry_in" goal="root" source="carried" category="hauling" rung="opportunistic_work" gathers="true">
     <chain id="carry_in"/>
+  </work>
+  <work id="build" goal="build" category="emergency" rung="committed_work">
+    <source query="builder_spot"/>
+    <chain id="build_at_spot"/>
+  </work>
+  <work id="milk" goal="care" need="milking" category="emergency" rung="opportunistic_work">
+    <chain id="milk_a_cow"/>
   </work>
   <chain id="haul_from_pile">
     <have item="goal" fetch="pick_up_for_goal"/>
@@ -638,83 +723,99 @@ TEST_F(WorkLoaderTest, TheSpecsHaulLoadsWithItsRungsAndSources) {
   </chain>
   <chain id="withdraw_for_goal"><go to="source"/><do action="withdraw" claims="source_quantity"/></chain>
   <chain id="carry_in"><go to="destination"/><do action="deposit" claims="inbound in_flight" amount="carried"/></chain>
+  <chain id="build_at_spot"><go to="source"/><do action="build" on="destination" claims="slot"/></chain>
+  <chain id="milk_a_cow"><go to="destination"/><do action="milk" claims="use"/></chain>
   <query id="pile_for_goal"><from pile="goal"/><weigh fact="distance" by="-1"/></query>
   <query id="box_to_pull_from">
     <from box="goal"/>
     <exclude fact="below_destination" below="1"/>
     <weigh fact="distance" by="-1"/>
   </query>
+  <query id="builder_spot"><from goal="spots"/><weigh fact="distance" by="-1"/></query>
+  <action id="milk" seconds="5" hands="free" interruptable="false">
+    <restore who="target" need="milking" amount="100"/>
+    <spawn def="Milk" into="hands"/>
+  </action>
 </colonyWork>)");
+	write("config/behaviors/test/being_milked.xml", R"(<behavior id="being_milked">
+  <need id="milking" label="Milking" seek="40" urgent="20" critical="5"><drains perGameMinute="0.02"/><satisfiedBy work="milk"/></need>
+</behavior>)");
 
-	const EntryLoad loaded = load();
-	ASSERT_TRUE(loaded.errors.empty()) << ::testing::PrintToString(loaded.errors);
+	const EntryLoad loaded = clean();
 	EXPECT_TRUE(loaded.warnings.empty()) << ::testing::PrintToString(loaded.warnings);
 	const EntryLibrary& library = loaded.library;
-	const WorkEntry&	pile = library.work[library.findWork("haul_pile").index];
+	ASSERT_TRUE(library.findWork("haul_pile").valid());
+	const WorkEntry& pile = library.work[library.findWork("haul_pile").index];
+	ASSERT_LT(pile.rung, kRungs.size());
 	EXPECT_EQ(kRungs[pile.rung], "opportunistic_work");
 	EXPECT_TRUE(pile.gathers);
+	ASSERT_TRUE(pile.source.has_value());
 	EXPECT_EQ(pile.source->handle, library.findQuery("pile_for_goal"));
 	EXPECT_EQ(pile.chain.handle, library.findChain("haul_from_pile"));
 	EXPECT_EQ(pile.category.handle, library.findCategory("hauling"));
+	ASSERT_TRUE(library.findWork("carry_in").valid());
 	const WorkEntry& carry = library.work[library.findWork("carry_in").index];
 	EXPECT_EQ(carry.goal, WorkGoal::Root);
 	EXPECT_TRUE(carry.sourceCarried);
 	EXPECT_EQ(carry.chain.handle, library.findChain("carry_in")) << "a work entry and its chain may share an id";
-	const ChainEntry& haul = library.chains[library.findChain("haul_from_pile").index];
-	EXPECT_EQ(std::get<HaveStep>(haul.steps[0].step).item->kind, ItemArgument::Kind::Goal);
+	ASSERT_TRUE(library.findChain("haul_from_pile").valid());
+	const HaveStep* have = stepOf<HaveStep>(library.chains[library.findChain("haul_from_pile").index], 0);
+	ASSERT_NE(have, nullptr);
+	ASSERT_TRUE(have->item.has_value());
+	EXPECT_EQ(have->item->kind, ItemArgument::Kind::Goal);
+	ASSERT_TRUE(library.findQuery("builder_spot").valid());
+	const QueryEntry& spots = library.queries[library.findQuery("builder_spot").index];
+	ASSERT_EQ(spots.from.size(), 1U);
+	EXPECT_EQ(spots.from.front().source, CandidateSource::GoalSpots);
+	ASSERT_TRUE(library.findCategory("hauling").valid() && library.findCategory("emergency").valid());
 	EXPECT_EQ(library.categories[library.findCategory("hauling").index].order, 6);
 	EXPECT_TRUE(library.categories[library.findCategory("hauling").index].canDisable);
+	EXPECT_FALSE(library.categories[library.findCategory("emergency").index].canDisable);
+	ASSERT_TRUE(library.findWork("milk").valid());
+	const WorkEntry& milk = library.work[library.findWork("milk").index];
+	ASSERT_TRUE(milk.need.has_value());
+	EXPECT_EQ(library.needIds[milk.need->index], "milking");
+	ASSERT_TRUE(library.findBehavior("test/being_milked").valid());
+	const BehaviorEntry& milked = library.behaviors[library.findBehavior("test/being_milked").index];
+	ASSERT_EQ(milked.needs.size(), 1U);
+	const NeedEntry& milking = library.needs[milked.needs.front().index];
+	ASSERT_EQ(milking.satisfiedBy.size(), 1U);
+	ASSERT_TRUE(milking.satisfiedBy.front().work.has_value());
+	EXPECT_EQ(milking.satisfiedBy.front().work->handle, library.findWork("milk"));
 }
 
 TEST_F(WorkLoaderTest, WorkMistakesNameTheEntryAndTheAttribute) {
-	const auto workError = [this](const std::string& work) {
+	const std::vector<Case> cases = {
+		{R"(<work id="milk" goal="care" category="farming" rung="opportunistic_work"><chain id="c"/></work>)",
+		 "<work id=\"milk\"> need is missing"},
+		{R"(<work id="w" goal="haul" need="hunger" category="farming" rung="opportunistic_work"><chain id="c"/></work>)",
+		 "<work id=\"w\"> need must be left out; it names the need of a care goal, got \"hunger\""},
+		{R"(<work id="w" goal="mine" need="hunger" category="farming" rung="committed_work"><chain id="c"/></work>)",
+		 "<work id=\"w\"> goal must be one of haul, harvest, clear, craft, build, deconstruct, place_packaged, care, root, got \"mine\""},
+		{R"(<work id="w" goal="haul" category="farming" rung="survival"><chain id="c"/></work>)",
+		 "<work id=\"w\"> rung must be a rung other than survival, which is reserved, got \"survival\""},
+		{R"(<work id="w" goal="haul" category="farming" rung="work"><chain id="c"/></work>)",
+		 "<work id=\"w\"> rung must be a rung of the ladder (survival, critical_need, low_mood, player_order, urgent_need, "
+		 "own_unfinished_work, "
+		 "committed_work, ordinary_need, opportunistic_work, idle), got \"work\""},
+		{R"(<work id="w" goal="haul" category="farm" rung="committed_work"><chain id="c"/></work>)",
+		 "<work id=\"w\"> category \"farm\" names no category"},
+		{R"(<work id="w" goal="haul" category="farming" rung="committed_work"><chain id="c"/><chain id="c"/></work>)",
+		 "<work id=\"w\"> has 2 <chain> rows; it names exactly one"},
+		{R"(<work id="w" goal="root" source="carried" category="farming" rung="committed_work"><source query="q"/><chain id="c"/></work>)",
+		 "<work id=\"w\"> gives both source=\"carried\" and a <source> row; give one"},
+		{R"(<category id="hauling" label="Hauling" order="first"/>)",
+		 "<category id=\"hauling\"> order must be a whole number from 0 to 2147483647, got \"first\""},
+	};
+	for (const Case& entry : cases) {
+		SCOPED_TRACE(entry.written);
 		write(
 			"config/work/w.xml",
-			"<colonyWork><category id=\"farming\" label=\"Farming\" order=\"3\"/><chain id=\"c\"><go to=\"destination\"/></chain>" + work +
-				"</colonyWork>"
+			"<colonyWork><category id=\"farming\" label=\"Farming\" order=\"3\"/><chain id=\"c\"><go to=\"destination\"/></chain>" +
+				entry.written + "</colonyWork>"
 		);
-		return onlyError();
-	};
-	EXPECT_EQ(
-		workError(R"(<work id="milk" goal="care" category="farming" rung="opportunistic_work"><chain id="c"/></work>)"),
-		"[work] w.xml: <work id=\"milk\"> need is missing"
-	);
-	EXPECT_EQ(
-		workError(R"(<work id="w" goal="haul" need="hunger" category="farming" rung="opportunistic_work"><chain id="c"/></work>)"),
-		"[work] w.xml: <work id=\"w\"> need must be left out; it names the need of a care goal, got \"hunger\""
-	);
-	EXPECT_EQ(
-		workError(R"(<work id="w" goal="haul" category="farming" rung="survival"><chain id="c"/></work>)"),
-		"[work] w.xml: <work id=\"w\"> rung must be a rung other than survival, which is reserved, got \"survival\""
-	);
-	EXPECT_EQ(
-		workError(R"(<work id="w" goal="haul" category="farming" rung="work"><chain id="c"/></work>)"),
-		"[work] w.xml: <work id=\"w\"> rung must be a rung of the ladder (survival, critical_need, low_mood, player_order, urgent_need, "
-		"own_unfinished_work, committed_work, ordinary_need, opportunistic_work, idle), got \"work\""
-	);
-	EXPECT_EQ(
-		workError(R"(<work id="w" goal="haul" category="farm" rung="committed_work"><chain id="c"/></work>)"),
-		"[work] w.xml: <work id=\"w\"> category \"farm\" names no category"
-	);
-	EXPECT_EQ(
-		workError(R"(<work id="w" goal="haul" category="farming" rung="committed_work"><chain id="c"/><chain id="c"/></work>)"),
-		"[work] w.xml: <work id=\"w\"> has 2 <chain> rows; it names exactly one"
-	);
-	EXPECT_EQ(
-		workError(
-			R"(<work id="w" goal="root" source="carried" category="farming" rung="committed_work"><source query="q"/><chain id="c"/></work>)"
-		),
-		"[work] w.xml: <work id=\"w\"> gives both source=\"carried\" and a <source> row; give one"
-	);
-	EXPECT_EQ(
-		workError(R"(<work id="w" goal="mine" category="farming" rung="committed_work"><chain id="c"/></work>)"),
-		"[work] w.xml: <work id=\"w\"> goal must be one of haul, harvest, clear, craft, build, deconstruct, place_packaged, care, root, "
-		"got \"mine\""
-	);
-	EXPECT_EQ(
-		workError(R"(<category id="hauling" label="Hauling" order="first"/>)"),
-		"[work] w.xml: <category id=\"hauling\"> order must be a whole number from 0 to 2147483647, got \"first\""
-	);
+		EXPECT_EQ(onlyError(), "[work] w.xml: " + entry.expected);
+	}
 }
 
 // --- Orders ----------------------------------------------------------------------------------------------
@@ -729,46 +830,44 @@ TEST_F(OrderLoaderTest, TheSpecsOrdersLoadAndReachIntoABehaviorsFolderByFullId) 
   <chain id="harvest_target"><go to="target"/><do action="harvest" claims="use"/></chain>
   <chain id="relieve_at_target"><go to="target"/><do action="test/urinate"/></chain>
 </orders>)");
-	const EntryLoad loaded = load();
-	ASSERT_TRUE(loaded.errors.empty()) << ::testing::PrintToString(loaded.errors);
+	const EntryLoad		loaded = clean();
 	const EntryLibrary& library = loaded.library;
-	const OrderEntry&	relieve = library.orders[library.findOrder("relieve_here").index];
+	ASSERT_TRUE(library.findOrder("relieve_here").valid());
+	const OrderEntry& relieve = library.orders[library.findOrder("relieve_here").index];
 	EXPECT_EQ(relieve.on.kind, OrderTarget::Kind::Ground);
 	EXPECT_EQ(relieve.label, "Relieve self");
-	const ChainEntry& chain = library.chains[relieve.chain.handle.index];
-	EXPECT_EQ(std::get<DoStep>(chain.steps[1].step).action.handle, library.findAction("test/urinate"));
+	ASSERT_TRUE(relieve.chain.handle.valid());
+	const DoStep* urinate = stepOf<DoStep>(library.chains[relieve.chain.handle.index], 1);
+	ASSERT_NE(urinate, nullptr);
+	EXPECT_EQ(urinate->action.handle, library.findAction("test/urinate"));
+	ASSERT_TRUE(library.findOrder("harvest").valid());
 	EXPECT_EQ(library.orders[library.findOrder("harvest").index].on.capability, CapabilityType::Harvestable);
 }
 
 TEST_F(OrderLoaderTest, OrderMistakesNameTheOrder) {
-	const auto orderError = [this](const std::string& order) {
-		write("config/orders/orders.xml", "<orders><chain id=\"harvest_target\"><go to=\"target\"/></chain>" + order + "</orders>");
-		return onlyError();
+	const std::vector<Case> cases = {
+		{R"(<order id="harvest" label="Harvest" on="tree" chain="harvest_target"/>)",
+		 "<order id=\"harvest\"> on must be a capability (edible, drinkable, sleepable, toilet, waste, carryable, harvestable, craftable, "
+		 "storage, "
+		 "washable) or ground, got \"tree\""},
+		{R"(<order id="harvest" label="Harvest" on="harvestable" chain="harvest_targt"/>)",
+		 "<order id=\"harvest\"> chain \"harvest_targt\" names no chain"},
+		{R"(<order id="harvest" on="harvestable" chain="harvest_target"/>)", "<order id=\"harvest\"> label is missing"},
 	};
-	EXPECT_EQ(
-		orderError(R"(<order id="harvest" label="Harvest" on="tree" chain="harvest_target"/>)"),
-		"[orders] orders.xml: <order id=\"harvest\"> on must be a capability (edible, drinkable, sleepable, toilet, waste, carryable, "
-		"harvestable, "
-		"craftable, storage, washable) or ground, got \"tree\""
-	);
-	EXPECT_EQ(
-		orderError(R"(<order id="harvest" label="Harvest" on="harvestable" chain="harvest_targt"/>)"),
-		"[orders] orders.xml: <order id=\"harvest\"> chain \"harvest_targt\" names no chain"
-	);
-	EXPECT_EQ(
-		orderError(R"(<order id="harvest" on="harvestable" chain="harvest_target"/>)"),
-		"[orders] orders.xml: <order id=\"harvest\"> label is missing"
-	);
+	for (const Case& entry : cases) {
+		SCOPED_TRACE(entry.written);
+		write("config/orders/orders.xml", "<orders><chain id=\"harvest_target\"><go to=\"target\"/></chain>" + entry.written + "</orders>");
+		EXPECT_EQ(onlyError(), "[orders] orders.xml: " + entry.expected);
+	}
 }
 
 // --- Facts -----------------------------------------------------------------------------------------------
 
 TEST_F(FactLoaderTest, EachTunedFactReadsItsValue) {
-	const EntryLoad loaded = load();
-	ASSERT_TRUE(loaded.errors.empty()) << ::testing::PrintToString(loaded.errors);
-	const auto tuning = [&loaded](std::string_view fact) {
-		const auto found = std::ranges::find(kFacts, fact, &FactDeclaration::name);
-		return loaded.library.factTuning[static_cast<std::size_t>(found - kFacts.begin())];
+	const EntryLoad loaded = clean();
+	const auto		tuning = [&loaded](std::string_view fact) {
+		 const auto found = std::ranges::find(kFacts, fact, &FactDeclaration::name);
+		 return loaded.library.factTuning[static_cast<std::size_t>(found - kFacts.begin())];
 	};
 	EXPECT_FLOAT_EQ(tuning("on_shore"), 1.5F);
 	EXPECT_FLOAT_EQ(tuning("food_nearby"), 15.0F);
@@ -788,17 +887,15 @@ TEST_F(FactLoaderTest, FactMistakesNameTheFact) {
 	EXPECT_EQ(onlyError(), "[facts] more.xml: <fact id=\"on_shore\"> is also given in [facts] facts.xml");
 	std::filesystem::remove(root / "config/facts/more.xml");
 
-	const auto factError = [this](const std::string& fact) {
-		write("config/facts/facts.xml", std::string(kFactTuning).insert(std::string(kFactTuning).find("</facts>"), fact));
-		return onlyError();
+	const std::vector<Case> cases = {
+		{R"(<fact id="distance" within="3"/>)", "<fact id=\"distance\"> reads no tuning value, so it has no row here"},
+		{R"(<fact id="wetness" within="1"/>)", "<fact> id must be a fact the sim provides, got \"wetness\""},
 	};
-	EXPECT_EQ(
-		factError(R"(<fact id="distance" within="3"/>)"),
-		"[facts] facts.xml: <fact id=\"distance\"> reads no tuning value, so it has no row here"
-	);
-	EXPECT_EQ(
-		factError(R"(<fact id="wetness" within="1"/>)"), "[facts] facts.xml: <fact> id must be a fact the sim provides, got \"wetness\""
-	);
+	for (const Case& entry : cases) {
+		SCOPED_TRACE(entry.written);
+		write("config/facts/facts.xml", std::string(kFactTuning).insert(std::string(kFactTuning).find("</facts>"), entry.written));
+		EXPECT_EQ(onlyError(), "[facts] facts.xml: " + entry.expected);
+	}
 	write(
 		"config/facts/facts.xml",
 		R"(<facts><fact id="on_shore" within="1.5"/><fact id="waste_nearby" within="8"/><fact id="food_nearby" within="15"/><fact id="sleep_quality" ground="2"/></facts>)"
@@ -840,12 +937,16 @@ class CreatureLoaderTest : public EntryLoaderTest {
 		write("creatures/Cow/being_milked.xml", kMilking);
 	}
 
-	void cow(const std::string& block, const std::string& variants = "") const {
+	void cow(const std::string& block, const std::string& variants = "", const std::string& defName = "Cow") const {
 		write(
 			"creatures/Cow/Cow.xml",
-			"<AssetDefinitions><AssetDef><defName>Cow</defName><assetType>simple</assetType>" + block + "</AssetDef>" + variants +
-				"</AssetDefinitions>"
+			"<AssetDefinitions><AssetDef><defName>" + defName + "</defName><assetType>simple</assetType>" + block + "</AssetDef>" +
+				variants + "</AssetDefinitions>"
 		);
+	}
+
+	void browsing() const {
+		write("config/behaviors/common/browsing.xml", std::string(kGrazing).replace(std::string(kGrazing).find("eating"), 6, "browsing"));
 	}
 
 	[[nodiscard]] std::string cowError() const { return onlyError({"Cow"}); }
@@ -858,8 +959,7 @@ TEST_F(CreatureLoaderTest, TheSpecsCowIncludesItsBehaviorsAndOverridesOneValue) 
   <behavior id="Cow/being_milked"/>
   <need id="hunger"><drains perGameMinute="0.05"/></need>
 </creature>)");
-	const EntryLoad loaded = load({"Cow"});
-	ASSERT_TRUE(loaded.errors.empty()) << ::testing::PrintToString(loaded.errors);
+	const EntryLoad		 loaded = clean({"Cow"});
 	const EntryLibrary&	 library = loaded.library;
 	const CreatureEntry* creature = library.findCreature("Cow");
 	ASSERT_NE(creature, nullptr);
@@ -872,6 +972,8 @@ TEST_F(CreatureLoaderTest, TheSpecsCowIncludesItsBehaviorsAndOverridesOneValue) 
 	EXPECT_FLOAT_EQ(hunger.move.perGameMinute, 0.05F) << "the row changes only the value it gives";
 	EXPECT_EQ(hunger.label, "Hunger");
 	EXPECT_FLOAT_EQ(hunger.seek, 50.0F);
+	ASSERT_FALSE(hunger.satisfiedBy.empty());
+	ASSERT_TRUE(hunger.satisfiedBy.front().chain.has_value());
 	EXPECT_EQ(hunger.satisfiedBy.front().chain->handle, library.findChain("herbivore/graze"));
 	EXPECT_EQ(library.needIds[creature->needs[2].id.index], "milking");
 	EXPECT_FALSE(hunger.moodCost.has_value());
@@ -883,44 +985,91 @@ TEST_F(CreatureLoaderTest, OwnBehaviorsJoinTheOrderAfterTheIncludesAndCreatureFi
 		"creatures/Cow/herd.xml",
 		R"(<creature><behavior id="common/drinking_at_water"/><moodCost need="thirst" cost="25"/><moodCost need="milking" cost="5"/></creature>)"
 	);
-	const EntryLoad loaded = load({"Cow"});
-	ASSERT_TRUE(loaded.errors.empty()) << ::testing::PrintToString(loaded.errors);
+	const EntryLoad		 loaded = clean({"Cow"});
 	const CreatureEntry* creature = loaded.library.findCreature("Cow");
 	ASSERT_NE(creature, nullptr);
 	ASSERT_EQ(creature->behaviors.size(), 3U);
 	EXPECT_EQ(creature->behaviors[1], loaded.library.findBehavior("common/drinking_at_water"));
 	EXPECT_EQ(creature->behaviors[2], loaded.library.findBehavior("Cow/being_milked"));
+	ASSERT_EQ(creature->needs.size(), 3U);
 	EXPECT_EQ(creature->needs[2].moodCost, 5.0F);
 }
 
-TEST_F(CreatureLoaderTest, TheCreatureBlockSitsOnTheBaseDefinitionOnly) {
-	cow("");
-	EXPECT_EQ(
-		cowError(),
-		"[creatures] Cow/Cow.xml: <AssetDef defName=\"Cow\"> has no <creature> block; the base definition of a creature folder carries one"
+TEST_F(CreatureLoaderTest, ACreaturesOwnNeedIsANeedEveryEffectMayName) {
+	cow(
+		R"(<creature mood="false"><need id="salt" label="Salt" seek="40" urgent="20" critical="5"><drains perGameMinute="0.01"/></need></creature>)"
 	);
-	cow(R"(<creature mood="false"/>)", R"(<AssetDef><defName>Cow_up</defName><creature mood="false"/></AssetDef>)");
-	EXPECT_EQ(
-		cowError(),
-		"[creatures] Cow/Cow.xml: <AssetDef defName=\"Cow_up\"> has a <creature> block, which only the base definition (Cow) carries"
-	);
-	cow("<creature/>");
-	EXPECT_EQ(cowError(), "[creatures] Cow/Cow.xml: <creature> mood is missing");
-	write(
-		"creatures/Cow/being_milked.xml",
-		R"(<behavior id="milked"><need id="milking" label="Milking" seek="40" urgent="20" critical="5"><drains perGameMinute="0.02"/></need></behavior>)"
-	);
-	cow(R"(<creature mood="false"/>)");
-	EXPECT_EQ(
-		cowError(),
-		"[creatures] Cow/being_milked.xml: <behavior id=\"milked\"> id must be the file's name, \"being_milked\", got \"milked\""
-	);
+	write("config/behaviors/herbivore/licking.xml", R"(<behavior id="licking">
+  <action id="lick" seconds="2" hands="any" interruptable="false"><restore need="salt" amount="50"/></action>
+</behavior>)");
+	const EntryLoad		 loaded = clean({"Cow"});
+	const CreatureEntry* creature = loaded.library.findCreature("Cow");
+	ASSERT_NE(creature, nullptr);
+	ASSERT_EQ(creature->needs.size(), 2U);
+	EXPECT_EQ(loaded.library.needIds[creature->needs[1].id.index], "salt");
+	EXPECT_FALSE(creature->needs[1].behavior.valid()) << "the creature's own need has no behavior";
 }
 
-TEST_F(CreatureLoaderTest, IncludesAndNeedRowsAreCheckedAgainstTheBehaviors) {
-	cow(R"(<creature mood="false"><behavior id="herbivore/eatin"/></creature>)");
-	EXPECT_EQ(cowError(), "[creatures] Cow/Cow.xml: <creature> row 1 <behavior> id \"herbivore/eatin\" names no behavior");
+TEST_F(CreatureLoaderTest, SettlingTwoBehaviorsThatBringOneNeedTakesTheNamedOne) {
+	browsing();
+	cow(
+		R"(<creature mood="false"><behavior id="herbivore/eating"/><behavior id="common/browsing"/><need id="hunger" from="common/browsing"/></creature>)"
+	);
+	const EntryLoad loaded = clean({"Cow"});
+	ASSERT_NE(loaded.library.findCreature("Cow"), nullptr);
+	ASSERT_FALSE(loaded.library.findCreature("Cow")->needs.empty());
+	EXPECT_EQ(loaded.library.findCreature("Cow")->needs.front().behavior, loaded.library.findBehavior("common/browsing"));
+}
 
+TEST_F(CreatureLoaderTest, EachCreatureMistakeIsOneError) {
+	const std::string		twoGrazers = R"(<behavior id="herbivore/eating"/><behavior id="common/browsing"/>)";
+	const std::vector<Case> cases = {
+		{R"(<creature mood="false"><behavior id="herbivore/eatin"/></creature>)",
+		 "[creatures] Cow/Cow.xml: <creature> row 1 <behavior> id \"herbivore/eatin\" names no behavior"},
+		{R"(<creature/>)", "[creatures] Cow/Cow.xml: <creature> mood is missing"},
+		{R"(<creature mood="false" script="cow.lua"/>)",
+		 "[creatures] Cow/Cow.xml: <creature> script must be left out; it is reserved for a Lua hook that runs nothing yet, got \"cow.lua\""},
+		{"<creature mood=\"false\">" + twoGrazers + "</creature>",
+		 "[creatures] Cow/Cow.xml: <creature> need \"hunger\" comes from more than one included behavior (\"herbivore/eating\", "
+		 "\"common/browsing\"); settle it with <need id=\"hunger\" from=\"...\"/>"},
+		{R"(<creature mood="false"><behavior id="herbivore/eating"/><need id="hunger" from="common/drinking_at_water"/></creature>)",
+		 "[creatures] Cow/Cow.xml: <need id=\"hunger\"> from \"common/drinking_at_water\" names no included behavior that brings the need"},
+		{R"(<creature mood="false"><behavior id="herbivore/eating"/><need id="thirst" from="herbivore/eating"/></creature>)",
+		 "[creatures] Cow/Cow.xml: <need id=\"thirst\"> from \"herbivore/eating\" settles a need no included behavior brings"},
+		{R"(<creature mood="false"><behavior id="herbivore/eating"/><need id="hunger" urgent="60"/></creature>)",
+		 "[creatures] Cow/Cow.xml: <creature> need \"hunger\" urgent must be below seek (50), got \"60\""},
+		{R"(<creature mood="false"><behavior id="herbivore/eating"/><need id="hunger" critical="30"/></creature>)",
+		 "[creatures] Cow/Cow.xml: <creature> need \"hunger\" critical must be below urgent (25), got \"30\""},
+		{R"(<creature mood="false"><behavior id="herbivore/eating"/><need id="hunger"><satisfiedBy chain="herbivore/graze"/></need></creature>)",
+		 "[creatures] Cow/Cow.xml: <need id=\"hunger\"> has <satisfiedBy> rows; what meets an included need comes from its behavior"},
+		{R"(<creature mood="false"><need id="calving" label="Calving"/></creature>)",
+		 "[creatures] Cow/Cow.xml: <creature> need \"calving\" is no included behavior's need, so the creature's rows give all of it, and "
+		 "they give "
+		 "no seek, urgent, critical, <drains> or <setBy>"},
+		{R"(<creature mood="true"><behavior id="herbivore/eating"/><behavior id="common/drinking_at_water"/><moodCost need="hunger" cost="25"/><moodCost need="milking" cost="5"/></creature>)",
+		 "[creatures] Cow/Cow.xml: <creature> need \"thirst\" has no <moodCost>; a creature with mood gives every need a cost"},
+		{R"(<creature mood="false"><behavior id="herbivore/eating"/><moodCost need="hunger" cost="25"/></creature>)",
+		 "[creatures] Cow/Cow.xml: <moodCost need=\"hunger\"> gives a mood cost, and the creature has no mood (mood=\"false\")"},
+		{R"(<creature mood="true"><behavior id="herbivore/eating"/><moodCost need="hunger" cost="25"/><moodCost need="milking" cost="5"/><moodCost need="hygiene" cost="5"/></creature>)",
+		 "[creatures] Cow/Cow.xml: <moodCost need=\"hygiene\"> names a need the creature does not have"},
+		{R"(<creature mood="true"><behavior id="herbivore/eating"/><moodCost need="hunger" cost="25"/><moodCost need="hunger" cost="20"/><moodCost need="milking" cost="5"/></creature>)",
+		 "[creatures] Cow/Cow.xml: <moodCost need=\"hunger\"> is also given in [creatures] Cow/Cow.xml"},
+		// One fault, one error: what a failed include or an unsettled need would have settled says nothing more.
+		{R"(<creature mood="true"><behavior id="herbivore/eatin"/><need id="hunger"><drains perGameMinute="0.05"/></need><moodCost need="hunger" cost="25"/><moodCost need="milking" cost="5"/></creature>)",
+		 "[creatures] Cow/Cow.xml: <creature> row 1 <behavior> id \"herbivore/eatin\" names no behavior"},
+		{"<creature mood=\"true\">" + twoGrazers + R"(<moodCost need="hunger" cost="25"/><moodCost need="milking" cost="5"/></creature>)",
+		 "[creatures] Cow/Cow.xml: <creature> need \"hunger\" comes from more than one included behavior (\"herbivore/eating\", "
+		 "\"common/browsing\"); settle it with <need id=\"hunger\" from=\"...\"/>"},
+	};
+	browsing();
+	for (const Case& entry : cases) {
+		SCOPED_TRACE(entry.written);
+		cow(entry.written);
+		EXPECT_EQ(cowError(), entry.expected);
+	}
+}
+
+TEST_F(CreatureLoaderTest, CreatureFilesAndTheBlocksPlaceAreChecked) {
 	cow(R"(<creature mood="false"><behavior id="herbivore/eating"/></creature>)");
 	write("creatures/Cow/herd.xml", R"(<creature><behavior id="herbivore/eating"/></creature>)");
 	EXPECT_EQ(
@@ -928,22 +1077,10 @@ TEST_F(CreatureLoaderTest, IncludesAndNeedRowsAreCheckedAgainstTheBehaviors) {
 		"[creatures] Cow/herd.xml: <creature> row 1 <behavior> id \"herbivore/eating\" includes a behavior already included at [creatures] "
 		"Cow/Cow.xml: <creature> row 1 <behavior>"
 	);
-	std::filesystem::remove(root / "creatures/Cow/herd.xml");
 
-	write("config/behaviors/common/browsing.xml", std::string(kGrazing).replace(std::string(kGrazing).find("eating"), 6, "browsing"));
-	cow(R"(<creature mood="false"><behavior id="herbivore/eating"/><behavior id="common/browsing"/></creature>)");
-	EXPECT_EQ(
-		cowError(),
-		"[creatures] Cow/Cow.xml: <creature> need \"hunger\" comes from more than one included behavior (\"herbivore/eating\", "
-		"\"common/browsing\"); settle it with <need id=\"hunger\" from=\"...\"/>"
-	);
-	cow(
-		R"(<creature mood="false"><behavior id="herbivore/eating"/><behavior id="common/browsing"/><need id="hunger" from="common/browsing"/></creature>)"
-	);
-	const EntryLoad settled = load({"Cow"});
-	ASSERT_TRUE(settled.errors.empty()) << ::testing::PrintToString(settled.errors);
-	EXPECT_EQ(settled.library.findCreature("Cow")->needs.front().behavior, settled.library.findBehavior("common/browsing"));
-	std::filesystem::remove(root / "config/behaviors/common/browsing.xml");
+	cow(R"(<creature mood="false"><behavior id="herbivore/eating"/><need id="hunger" from="herbivore/eating"/></creature>)");
+	write("creatures/Cow/herd.xml", R"(<creature><need id="hunger" from="herbivore/eating"/></creature>)");
+	EXPECT_EQ(cowError(), "[creatures] Cow/herd.xml: <need id=\"hunger\"> from is also given in [creatures] Cow/Cow.xml");
 
 	cow(R"(<creature mood="false"><behavior id="herbivore/eating"/><need id="hunger"><drains perGameMinute="0.05"/></need></creature>)");
 	write("creatures/Cow/herd.xml", R"(<creature><need id="hunger"><drains perGameMinute="0.06"/></need></creature>)");
@@ -953,59 +1090,120 @@ TEST_F(CreatureLoaderTest, IncludesAndNeedRowsAreCheckedAgainstTheBehaviors) {
 	);
 	std::filesystem::remove(root / "creatures/Cow/herd.xml");
 
-	cow(
-		R"(<creature mood="false"><behavior id="herbivore/eating"/><need id="hunger"><satisfiedBy chain="herbivore/graze"/></need></creature>)"
-	);
+	cow("");
 	EXPECT_EQ(
 		cowError(),
-		"[creatures] Cow/Cow.xml: <need id=\"hunger\"> has <satisfiedBy> rows; what meets an included need comes from its behavior"
+		"[creatures] Cow/Cow.xml: <AssetDef defName=\"Cow\"> has no <creature> block; the base definition of a creature folder carries one"
 	);
+	cow(R"(<creature mood="false"/><creature mood="false"/>)");
+	EXPECT_EQ(cowError(), "[creatures] Cow/Cow.xml: <AssetDef defName=\"Cow\"> has more than one <creature> block");
+	cow(R"(<creature mood="false"/>)", R"(<AssetDef><defName>Cow_up</defName><creature mood="false"/></AssetDef>)");
+	EXPECT_EQ(
+		cowError(),
+		"[creatures] Cow/Cow.xml: <AssetDef defName=\"Cow_up\"> has a <creature> block, which only the base definition (Cow) carries"
+	);
+	cow("", "", "Ox");
+	EXPECT_EQ(cowError(), "[creatures] Cow/Cow.xml: no <AssetDef> has the folder's name, \"Cow\", so the creature has no base definition");
 
-	cow(R"(<creature mood="false"><need id="calving" label="Calving"/></creature>)");
+	cow(R"(<creature mood="false"/>)");
+	write(
+		"creatures/Cow/being_milked.xml",
+		R"(<behavior id="milked"><need id="milking" label="Milking" seek="40" urgent="20" critical="5"><drains perGameMinute="0.02"/></need></behavior>)"
+	);
 	EXPECT_EQ(
 		cowError(),
-		"[creatures] Cow/Cow.xml: <creature> need \"calving\" is no included behavior's need, so the creature's rows give all of it, and "
-		"they give "
-		"no seek, urgent, critical, <drains> or <setBy>"
+		"[creatures] Cow/being_milked.xml: <behavior id=\"milked\"> id must be the file's name, \"being_milked\", got \"milked\""
 	);
 }
 
-TEST_F(CreatureLoaderTest, MoodCostsFollowTheCreaturesMood) {
-	cow(
-		R"(<creature mood="true"><behavior id="herbivore/eating"/><behavior id="common/drinking_at_water"/><moodCost need="hunger" cost="25"/><moodCost need="milking" cost="5"/></creature>)"
-	);
+// --- Names from the config that loads after the entries --------------------------------------------------
+
+TEST_F(BehaviorLoaderTest, EachBorrowedNameIsCheckedOnceTheirConfigHasLoaded) {
+	sample(R"(<idle chain="soil"/>
+  <chain id="soil"><go query="bed"/><think thought="soiled_a_bed" to="self"/><think thought="soiled_bed" to="self"/></chain>
+  <query id="bed" pick="weighted">
+    <from kind="bed"/><from kind="bedd"/>
+    <exclude fact="distance" above="5"/>
+    <scale trait="gourmand" fact="distance" by="2"/>
+    <scale trait="gourmet" fact="distance" by="2"/>
+  </query>)");
+	const EntryLoad		loaded = clean();
+	const EntryNameSets names{
+		.isTrait = [](std::string_view name) { return name == "gourmand"; },
+		.isKind = [](std::string_view name) { return name == "bed"; },
+		.isThought = [](std::string_view name) { return name == "soiled_a_bed"; },
+	};
 	EXPECT_EQ(
-		cowError(), "[creatures] Cow/Cow.xml: <creature> need \"thirst\" has no <moodCost>; a creature with mood gives every need a cost"
+		checkEntryNames(loaded.library, names),
+		(std::vector<std::string>{
+			"[behaviors] test/sample.xml: <query id=\"bed\"> row 2 <from> kind \"bedd\" names no kind",
+			"[behaviors] test/sample.xml: <query id=\"bed\"> row 5 <scale> trait \"gourmet\" names no trait",
+			"[behaviors] test/sample.xml: <chain id=\"soil\"> step 3 <think> thought \"soiled_bed\" names no thought type",
+		})
 	);
-	cow(R"(<creature mood="false"><behavior id="herbivore/eating"/><moodCost need="hunger" cost="25"/></creature>)");
-	EXPECT_EQ(
-		cowError(), "[creatures] Cow/Cow.xml: <moodCost need=\"hunger\"> gives a mood cost, and the creature has no mood (mood=\"false\")"
-	);
-	cow(
-		R"(<creature mood="true"><behavior id="herbivore/eating"/><moodCost need="hunger" cost="25"/><moodCost need="milking" cost="5"/><moodCost need="hygiene" cost="5"/></creature>)"
-	);
-	EXPECT_EQ(cowError(), "[creatures] Cow/Cow.xml: <moodCost need=\"hygiene\"> names a need the creature does not have");
 }
 
 // --- The shipped config ----------------------------------------------------------------------------------
 
-TEST(ShippedEntriesTest, TheShippedConfigAndCreaturesLoadClean) {
-	const std::filesystem::path config = repoRoot() / "assets" / "config";
-	ASSERT_TRUE(PriorityConfig::Get().loadFromFile(config / "arbitration", "priority-tuning.xml"));
-	const CreatureConfigFiles human = creatureConfigFiles(repoRoot() / "assets" / "world" / "creatures" / "Human");
-	ASSERT_TRUE(human.errors.empty()) << ::testing::PrintToString(human.errors);
-	const EntryLoad loaded = loadEntries(
-		EntrySources{
-			.configRoot = config,
-			.creatures = {human},
-			.rungs = PriorityConfig::Get().rungs(),
-			.definitionId = [](std::string_view) { return std::optional<uint32_t>(); },
+namespace {
+
+	/// The shipped asset definitions' names, read from every definition file under assets/world, with ids in the
+	/// order found: enough to tell whether an entry names a definition that exists.
+	std::map<std::string, uint32_t, std::less<>> shippedDefinitionNames() {
+		std::map<std::string, uint32_t, std::less<>> names;
+		for (const auto& entry : std::filesystem::recursive_directory_iterator(repoRoot() / "assets" / "world")) {
+			if (!entry.is_regular_file() || entry.path().extension() != ".xml") {
+				continue;
+			}
+			pugi::xml_document document;
+			if (!document.load_file(entry.path().string().c_str())) {
+				continue;
+			}
+			for (const pugi::xml_node definition : document.child("AssetDefinitions").children("AssetDef")) {
+				names.try_emplace(definition.child_value("defName"), static_cast<uint32_t>(names.size()));
+			}
 		}
-	);
-	PriorityConfig::Get().clear();
+		return names;
+	}
+
+	class ShippedEntriesTest : public ::testing::Test {
+	  protected:
+		void TearDown() override { PriorityConfig::Get().clear(); }
+	};
+
+} // namespace
+
+TEST_F(ShippedEntriesTest, TheShippedConfigAndCreaturesLoadClean) {
+	const std::filesystem::path config = repoRoot() / "assets" / "config";
+	ASSERT_TRUE(PriorityConfig::Get().loadFromFile(config / "arbitration", "priority-tuning.xml"))
+		<< ::testing::PrintToString(PriorityConfig::Get().problems());
+	EntrySources									   sources{.configRoot = config, .rungs = PriorityConfig::Get().rungs()};
+	const std::map<std::string, uint32_t, std::less<>> definitions = shippedDefinitionNames();
+	ASSERT_TRUE(definitions.contains("Human") && definitions.contains("Misc_BioPile")) << "the shipped definitions were read";
+	sources.definitionId = [&definitions](std::string_view name) -> std::optional<uint32_t> {
+		const auto found = definitions.find(name);
+		return found == definitions.end() ? std::nullopt : std::optional<uint32_t>(found->second);
+	};
+	for (const auto& folder : std::filesystem::directory_iterator(repoRoot() / "assets" / "world" / "creatures")) {
+		if (!folder.is_directory()) {
+			continue;
+		}
+		CreatureConfigFiles files = creatureConfigFiles(folder.path());
+		ASSERT_TRUE(files.errors.empty()) << ::testing::PrintToString(files.errors);
+		sources.creatures.push_back(std::move(files));
+	}
+	const EntryLoad loaded = loadEntries(sources);
 	EXPECT_TRUE(loaded.errors.empty()) << ::testing::PrintToString(loaded.errors);
 	EXPECT_TRUE(loaded.warnings.empty()) << ::testing::PrintToString(loaded.warnings);
 	const CreatureEntry* creature = loaded.library.findCreature("Human");
 	ASSERT_NE(creature, nullptr);
 	EXPECT_TRUE(creature->mood);
+	const auto tuning = [&loaded](std::string_view fact) {
+		const auto found = std::ranges::find(kFacts, fact, &FactDeclaration::name);
+		return loaded.library.factTuning[static_cast<std::size_t>(found - kFacts.begin())];
+	};
+	EXPECT_FLOAT_EQ(tuning("on_shore"), 1.5F);
+	EXPECT_FLOAT_EQ(tuning("waste_nearby"), 8.0F);
+	EXPECT_FLOAT_EQ(tuning("food_nearby"), 15.0F);
+	EXPECT_FLOAT_EQ(tuning("sleep_quality"), 0.5F);
 }

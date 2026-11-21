@@ -23,7 +23,7 @@ There are **two separate ordering systems**:
 | System | Purpose | Includes | Used By |
 |--------|---------|----------|---------|
 | **Global Display Priority** | UI ordering for player | Base priority + distance from reference | GlobalTaskListView |
-| **Colonist Selection Priority** | Which task a colonist picks | Base + distance + skill + chain + in-progress | AIDecisionSystem |
+| **Colonist Selection Priority** | Which task a colonist picks | Base + distance + skill + in-progress | AIDecisionSystem |
 
 ### Global Display Priority (UI)
 
@@ -34,7 +34,6 @@ The global task list shows tasks ordered by:
 **Does NOT include:**
 - Skill bonuses (which colonist's skills?)
 - Work preference filtering (which colonist's preferences?)
-- Chain continuation bonus (which colonist's chain?)
 - In-progress bonus (which colonist's current task?)
 
 ```cpp
@@ -199,7 +198,6 @@ All tasks known to ANY colonist, ordered by:
 
 - Per-colonist priority scoring
 - Skill bonuses (would need to pick a colonist)
-- Chain bonuses (specific to one colonist)
 - Whether a specific colonist would choose this task
 
 ### Example UI
@@ -409,12 +407,11 @@ A file's own problems name the file, the element by its instance, and the attrib
 Mods load after base game configs, following the same validation:
 
 ```
-Base: assets/config/work/*.xml
-Mods: mods/my-mod/config/work/*.xml (alphabetical order)
+Base: assets/config/legacy/*.xml
+Mods: mods/my-mod/config/legacy/*.xml (alphabetical order)
 ```
 
 Each mod config is validated against the accumulated registry. A mod can:
-- ✅ Add new work types referencing base game chains
-- ✅ Add new chains referencing base game actions
+- ✅ Add new work types and categories
 - ✅ Override base game definitions (same defName)
 - ❌ Reference another mod's definitions (unless loaded earlier alphabetically)

@@ -243,7 +243,7 @@ TEST_F(WorkConfigTest, WorkTypeRegistry_CategoriesSortedByTier) {
 TEST_F(WorkConfigTest, PriorityConfig_LoadValidXML) {
 	std::string xml = R"(<?xml version="1.0"?>
 <arbitration>
-  <ladder><rung name="critical_need"/><rung name="idle"/></ladder>
+  <ladder><rung name="survival"/><rung name="critical_need"/><rung name="idle"/></ladder>
   <Bonuses>
     <DistanceFactor><maxDistance>60</maxDistance><maxFactor>300</maxFactor></DistanceFactor>
     <InProgress>
@@ -259,7 +259,7 @@ TEST_F(WorkConfigTest, PriorityConfig_LoadValidXML) {
 
 	EXPECT_TRUE(loaded);
 	EXPECT_EQ(PriorityConfig::Get().getInProgressBonus(), 40);
-	EXPECT_EQ(PriorityConfig::Get().rungs(), (std::vector<std::string>{"critical_need", "idle"}));
+	EXPECT_EQ(PriorityConfig::Get().rungs(), (std::vector<std::string>{"survival", "critical_need", "idle"}));
 }
 
 // ============================================================================
@@ -332,7 +332,7 @@ TEST_F(WorkConfigTest, Integration_FullConfigLoad) {
 	// 3. The arbitration file (deps: work types for category order)
 	std::string priorityXml = R"(<?xml version="1.0"?>
 <arbitration>
-  <ladder><rung name="idle"/></ladder>
+  <ladder><rung name="survival"/><rung name="idle"/></ladder>
   <WorkCategoryOrder>
     <Category name="Farming" tier="3"/>
     <Category name="Hauling" tier="6"/>
@@ -395,7 +395,7 @@ TEST_F(WorkConfigTest, LoadWorkConfig_ShippedConfigLoadsClean) {
 
 namespace {
 	std::string priorityTuningWith(const std::string& maxDistance, const std::string& tier = "5") {
-		return "<arbitration><ladder><rung name=\"idle\"/></ladder><TaskTiers><Task name=\"Craft\" tier=\"" + tier +
+		return "<arbitration><ladder><rung name=\"survival\"/></ladder><TaskTiers><Task name=\"Craft\" tier=\"" + tier +
 			   "\"/></TaskTiers><Bonuses>" + "<DistanceFactor>" + maxDistance + "<maxFactor>300</maxFactor></DistanceFactor>" +
 			   "<InProgress><bonus>50</bonus></InProgress>" +
 			   "<TaskAge><bonusPerMinute>1</bonusPerMinute><maxBonus>100</maxBonus></TaskAge>" +
@@ -486,7 +486,7 @@ TEST_F(WorkConfigTest, PriorityConfig_BadNumbersAreErrorsNamingFileElementAndAtt
 
 TEST_F(WorkConfigTest, PriorityConfig_ElementTextIsTrimmedAndALeadingPlusIsRead) {
 	const std::string path = writeTempFile(
-		"<arbitration><ladder><rung name=\"idle\"/></ladder><Bonuses><DistanceFactor><maxDistance>\n  60\n</maxDistance>"
+		"<arbitration><ladder><rung name=\"survival\"/></ladder><Bonuses><DistanceFactor><maxDistance>\n  60\n</maxDistance>"
 		"<maxFactor>+300</maxFactor></DistanceFactor>"
 		"<InProgress><bonus>-32768</bonus></InProgress><TaskAge><bonusPerMinute> 1 </bonusPerMinute><maxBonus>32767</maxBonus></TaskAge>"
 		"<StoragePriority><weight>32767</weight></StoragePriority></Bonuses></arbitration>",
@@ -503,7 +503,7 @@ TEST_F(WorkConfigTest, PriorityConfig_ElementTextIsTrimmedAndALeadingPlusIsRead)
 
 TEST_F(WorkConfigTest, PriorityConfig_NumbersInSixteenBitFieldsAreRangeChecked) {
 	const std::string path = writeTempFile(
-		"<arbitration><ladder><rung name=\"idle\"/></ladder><Bonuses><DistanceFactor><maxDistance>\n  60\n</maxDistance>"
+		"<arbitration><ladder><rung name=\"survival\"/></ladder><Bonuses><DistanceFactor><maxDistance>\n  60\n</maxDistance>"
 		"<maxFactor>+300</maxFactor></DistanceFactor>"
 		"<InProgress><bonus>40000</bonus></InProgress><TaskAge><bonusPerMinute> 1 </bonusPerMinute><maxBonus>-32769</maxBonus></TaskAge>"
 		"<StoragePriority><weight>32767</weight></StoragePriority></Bonuses></arbitration>",
@@ -705,22 +705,33 @@ TEST_F(WorkConfigTest, PriorityConfig_LadderMistakesNameTheFileAndLoadNothing) {
 	);
 	EXPECT_EQ(problemsFor("<ladder/>"), std::vector<std::string>{"<ladder> has no <rung>"});
 	EXPECT_EQ(
-		problemsFor("<ladder><rung name=\"idle\"/><rung name=\"idle\"/></ladder>"),
-		std::vector<std::string>{"<ladder> rung 2 name \"idle\" is given twice"}
+		problemsFor("<ladder><rung name=\"survival\"/><rung name=\"idle\"/><rung name=\"idle\"/></ladder>"),
+		std::vector<std::string>{"<ladder> rung 3 name \"idle\" is given twice"}
 	);
-	EXPECT_EQ(problemsFor("<ladder><rung/></ladder>"), std::vector<std::string>{"<ladder> rung 1 name is missing"});
 	EXPECT_EQ(
-		problemsFor("<ladder><rung name=\"idle\" tier=\"9\"/></ladder>"),
-		std::vector<std::string>{"<ladder> rung 1: unknown attribute 'tier'"}
+		problemsFor("<ladder><rung name=\"survival\"/><rung/></ladder>"), std::vector<std::string>{"<ladder> rung 2 name is missing"}
+	);
+	EXPECT_EQ(
+		problemsFor("<ladder><rung name=\"survival\"/><rung name=\"idle\" tier=\"9\"/></ladder>"),
+		std::vector<std::string>{"<ladder> rung 2: unknown attribute 'tier'"}
 	);
 	EXPECT_EQ(
 		problemsFor("<ladder><step name=\"idle\"/></ladder>"),
 		(std::vector<std::string>{"<ladder>: unknown element <step>", "<ladder> has no <rung>"})
 	);
 	EXPECT_EQ(
-		problemsFor("<ladder><rung name=\"idle\"/></ladder>", "<Chains/>"),
+		problemsFor("<ladder><rung name=\"survival\"/></ladder>", "<Chains/>"),
 		std::vector<std::string>{"<arbitration>: unknown element <Chains>"}
 	);
+	EXPECT_EQ(
+		problemsFor("<ladder><rung name=\"idle\"/></ladder>"),
+		std::vector<std::string>{"<ladder> has no rung named \"survival\", which is reserved for threats"}
+	);
+	std::string manyRungs = "<ladder><rung name=\"survival\"/>";
+	for (int rung = 1; rung < 257; ++rung) {
+		manyRungs += "<rung name=\"rung_" + std::to_string(rung) + "\"/>";
+	}
+	EXPECT_EQ(problemsFor(manyRungs + "</ladder>"), std::vector<std::string>{"<ladder> has 257 rungs; it holds at most 256"});
 }
 
 TEST_F(WorkConfigTest, WorkTypeRegistry_MistakesNameTheInstanceAndLoadNothing) {
@@ -759,6 +770,10 @@ TEST_F(WorkConfigTest, WorkTypeRegistry_MistakesNameTheInstanceAndLoadNothing) {
 		problemsFor(" tier=\"2\"", "<skill>Medicine</skill>"),
 		std::vector<std::string>{"<WorkType defName=\"Work_Doctoring\">: unknown element <skill>"}
 	);
+	EXPECT_EQ(
+		problemsFor(" tier=\"2\"", "<taskChain>Chain_Rescue</taskChain>"),
+		std::vector<std::string>{"<WorkType defName=\"Work_Doctoring\">: unknown element <taskChain>"}
+	) << "task-chains.xml is gone, so a leftover chain name is no longer read";
 	EXPECT_EQ(
 		problemsFor(" tier=\"-1\"", ""),
 		std::vector<std::string>{"<Category defName=\"Medical\"> tier must be a number, 0 or more, got \"-1\""}

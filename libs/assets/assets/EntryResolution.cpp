@@ -154,8 +154,6 @@ namespace assets::entry_loading {
 							resolveReference(
 								step.chain, library.chainIds, inFolder, label + " " + stepLabel(index, "run"), "chain", "chain"
 							);
-						} else if constexpr (std::is_same_v<Step, NeedStep>) {
-							checkNeedDefined(step.need, label + " " + stepLabel(index, "need"), "id");
 						}
 					},
 					chain.steps[index].step
@@ -165,14 +163,6 @@ namespace assets::entry_loading {
 		for (ActionEntry& action : library.actions) {
 			const std::string label = action.file + ": " + entryLabel(action.group ? "actionGroup" : "action", action.id);
 			if (!action.group) {
-				for (std::size_t index = 0; index < action.effects.size(); ++index) {
-					const std::string where = label + " effect " + std::to_string(index + 1);
-					if (const auto* restore = std::get_if<RestoreEffect>(&action.effects[index])) {
-						checkNeedDefined(restore->need, where + " <restore>", "need");
-					} else if (const auto* consume = std::get_if<ConsumeEffect>(&action.effects[index]); consume && consume->need) {
-						checkNeedDefined(*consume->need, where + " <consume>", "need");
-					}
-				}
 				continue;
 			}
 			std::vector<const ActionEntry*> members;
@@ -226,12 +216,38 @@ namespace assets::entry_loading {
 				resolveReference(*work.source, library.queryIds, "", label + " <source>", "query", "query");
 			}
 			resolveReference(work.chain, library.chainIds, "", label + " <chain>", "id", "chain");
-			if (work.need) {
-				checkNeedDefined(*work.need, label, "need");
-			}
 		}
 		for (OrderEntry& order : library.orders) {
 			resolveReference(order.chain, library.chainIds, "", order.file + ": " + entryLabel("order", order.id), "chain", "chain");
+		}
+	}
+
+	void Loader::checkNeedReferences() {
+		const EntryLibrary& library = result.library;
+		for (const ChainEntry& chain : library.chains) {
+			for (std::size_t index = 0; index < chain.steps.size(); ++index) {
+				if (const auto* needStep = std::get_if<NeedStep>(&chain.steps[index].step)) {
+					checkNeedDefined(
+						needStep->need, chain.file + ": " + entryLabel("chain", chain.id) + " " + stepLabel(index, "need"), "id"
+					);
+				}
+			}
+		}
+		for (const ActionEntry& action : library.actions) {
+			const std::string label = action.file + ": " + entryLabel("action", action.id);
+			for (std::size_t index = 0; index < action.effects.size(); ++index) {
+				const std::string where = label + " effect " + std::to_string(index + 1);
+				if (const auto* restore = std::get_if<RestoreEffect>(&action.effects[index])) {
+					checkNeedDefined(restore->need, where + " <restore>", "need");
+				} else if (const auto* consume = std::get_if<ConsumeEffect>(&action.effects[index]); consume && consume->need) {
+					checkNeedDefined(*consume->need, where + " <consume>", "need");
+				}
+			}
+		}
+		for (const WorkEntry& work : library.work) {
+			if (work.need) {
+				checkNeedDefined(*work.need, work.file + ": " + entryLabel("work", work.id), "need");
+			}
 		}
 	}
 
@@ -255,7 +271,7 @@ namespace assets::entry_loading {
 		enum class Visit : uint8_t { New, Open, Done };
 		std::vector<Visit>	  visits(library.chains.size(), Visit::New);
 		std::vector<uint32_t> path;
-		std::vector<bool>	  inCycle(library.chains.size(), false);
+		bool				  anyCycle = false;
 		const auto			  visit = [&](auto& self, uint32_t chain) -> void {
 			   visits[chain] = Visit::Open;
 			   path.push_back(chain);
@@ -265,8 +281,8 @@ namespace assets::entry_loading {
 					   const auto  start = std::ranges::find(path, child);
 					   for (auto at = start; at != path.end(); ++at) {
 						   loop += inQuotes(library.chains[*at].id) + " -> ";
-						   inCycle[*at] = true;
 					   }
+					   anyCycle = true;
 					   fail(
 						   library.chains[child].file + ": " + entryLabel("chain", library.chains[child].id) + " runs itself: " + loop +
 						   inQuotes(library.chains[child].id)
@@ -285,9 +301,13 @@ namespace assets::entry_loading {
 		}
 
 		// The claims a chain names in its own steps and in every chain it may run: four on a task, of which the
-		// two that follow the goods (inbound, in-flight) are what a suspended record keeps.
+		// two that follow the goods (inbound, in-flight) are what a suspended record keeps. A step naming both use
+		// and source_quantity holds the one that fits its target, so the two count once. The count walks the runs,
+		// so it waits until no chain runs itself.
 		constexpr uint8_t kGoodsClaims =
 			(1U << static_cast<uint8_t>(ClaimKind::Inbound)) | (1U << static_cast<uint8_t>(ClaimKind::InFlight));
+		constexpr uint8_t kTargetClaims =
+			(1U << static_cast<uint8_t>(ClaimKind::Use)) | (1U << static_cast<uint8_t>(ClaimKind::SourceQuantity));
 		std::vector<std::optional<std::pair<int, int>>> totals(library.chains.size());
 		const auto										claimTotal = [&](auto& self, uint32_t chain) -> std::pair<int, int> {
 			 if (totals[chain]) {
@@ -296,7 +316,7 @@ namespace assets::entry_loading {
 			 std::pair<int, int> total{0, 0};
 			 for (const ChainStep& step : library.chains[chain].steps) {
 				 if (const auto* doStep = std::get_if<DoStep>(&step.step)) {
-					 total.first += std::popcount(doStep->claims);
+					 total.first += std::popcount(doStep->claims) - ((doStep->claims & kTargetClaims) == kTargetClaims ? 1 : 0);
 					 total.second += std::popcount(static_cast<uint8_t>(doStep->claims & kGoodsClaims));
 				 }
 			 }
@@ -311,7 +331,7 @@ namespace assets::entry_loading {
 		for (uint32_t chain = 0; chain < library.chains.size(); ++chain) {
 			const ChainEntry& entry = library.chains[chain];
 			const std::string label = entry.file + ": " + entryLabel("chain", entry.id);
-			if (!inCycle[chain]) {
+			if (!anyCycle) {
 				const std::pair<int, int> total = claimTotal(claimTotal, chain);
 				if (total.first > 4) {
 					fail(label + " names " + std::to_string(total.first) + " claims with the chains it runs; a task holds four");
@@ -468,3 +488,37 @@ namespace assets::entry_loading {
 	}
 
 } // namespace assets::entry_loading
+
+namespace assets {
+
+	std::vector<std::string> checkEntryNames(const EntryLibrary& library, const EntryNameSets& names) {
+		using namespace entry_loading;
+		std::vector<std::string> errors;
+		for (const QueryEntry& query : library.queries) {
+			const std::string label = query.file + ": " + entryLabel("query", query.id);
+			for (const FromRow& from : query.from) {
+				if (from.source == CandidateSource::Kind && !names.isKind(from.kind)) {
+					errors.push_back(label + " " + rowLabel(from.row, "from") + " kind " + inQuotes(from.kind) + " names no kind");
+				}
+			}
+			for (const ScaleRow& scale : query.scales) {
+				if (!names.isTrait(scale.trait)) {
+					errors.push_back(label + " " + rowLabel(scale.row, "scale") + " trait " + inQuotes(scale.trait) + " names no trait");
+				}
+			}
+		}
+		for (const ChainEntry& chain : library.chains) {
+			for (std::size_t index = 0; index < chain.steps.size(); ++index) {
+				const auto* think = std::get_if<ThinkStep>(&chain.steps[index].step);
+				if (think != nullptr && !names.isThought(think->thought)) {
+					errors.push_back(
+						chain.file + ": " + entryLabel("chain", chain.id) + " " + stepLabel(index, "think") + " thought " +
+						inQuotes(think->thought) + " names no thought type"
+					);
+				}
+			}
+		}
+		return errors;
+	}
+
+} // namespace assets

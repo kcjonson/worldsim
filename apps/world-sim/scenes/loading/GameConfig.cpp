@@ -4,7 +4,10 @@
 #include <assets/CreatureConfigFiles.h>
 #include <assets/EntryLoader.h>
 #include <assets/PriorityConfig.h>
+#include <assets/TraitRegistry.h>
 #include <assets/WorkConfig.h>
+#include <conditions/ConditionVocabulary.h>
+#include <ecs/ThoughtTypes.h>
 
 #include <algorithm>
 #include <system_error>
@@ -51,7 +54,8 @@ namespace world_sim {
 		}
 
 		load.errors = assets::loadWorkConfig(configRoot, *human);
-		if (load.errors.empty()) {
+		const bool workConfigLoaded = load.errors.empty();
+		if (workConfigLoaded) {
 			const assets::AssetRegistry& definitions = assets::AssetRegistry::Get();
 			const auto					 definitionId = [&definitions](std::string_view name) -> std::optional<uint32_t> {
 				  const uint32_t id = definitions.getDefNameId(std::string(name));
@@ -64,9 +68,31 @@ namespace world_sim {
 			load.errors = std::move(entries.errors);
 			load.entries = std::move(entries.library);
 		}
+		const bool			   entriesLoaded = workConfigLoaded && load.errors.empty();
 		ecs::ColonistRulesLoad colonistRules = ecs::loadColonistRules(configRoot, *human);
 		load.errors.insert(load.errors.end(), colonistRules.errors.begin(), colonistRules.errors.end());
 		load.rules = std::move(colonistRules.rules);
+
+		// Entries name traits, kinds, and thought types, which the colonist rules load after them.
+		if (entriesLoaded && colonistRules.errors.empty()) {
+			const ecs::ColonistRules&	  rules = load.rules;
+			const std::optional<uint32_t> kindSet = rules.vocabulary->findSymbolSet("kind");
+			const assets::EntryNameSets	  names{
+				  .isTrait = [&rules](std::string_view name) { return rules.traits->find(name) != nullptr; },
+				  .isKind =
+					  [&rules, kindSet](std::string_view name) {
+						  return kindSet && std::ranges::any_of(rules.vocabulary->symbolSet(*kindSet), [name](const auto& symbol) {
+									 return symbol.name == name;
+								 });
+					  },
+				  .isThought = [&rules](std::string_view name) { return rules.thoughtTypes->findType(name).has_value(); },
+			  };
+			std::vector<std::string> nameErrors = assets::checkEntryNames(load.entries, names);
+			load.errors.insert(load.errors.end(), nameErrors.begin(), nameErrors.end());
+		}
+		if (!load.errors.empty()) {
+			load.entries = assets::EntryLibrary{};
+		}
 		return load;
 	}
 

@@ -118,6 +118,7 @@ namespace assets::entry_loading {
 		reserveScript(node, label);
 		ActionEntry entry{.id = fullId(shortId), .file = source};
 		std::size_t index = 0;
+		bool		unknownEffect = false;
 		for (const pugi::xml_node effectNode : node.children()) {
 			if (effectNode.type() != pugi::node_element) {
 				continue;
@@ -127,6 +128,7 @@ namespace assets::entry_loading {
 			};
 			if (!indexIn(kEffects, effectNode.name())) {
 				failAt(label + ": unknown element <" + std::string(effectNode.name()) + ">");
+				unknownEffect = true;
 				continue;
 			}
 			if (std::optional<EffectRow> row =
@@ -134,7 +136,7 @@ namespace assets::entry_loading {
 				entry.effects.push_back(std::move(*row));
 			}
 		}
-		if (index == 0) {
+		if (index == 0 && !unknownEffect) {
 			failAt(label + " has no effect");
 		}
 
