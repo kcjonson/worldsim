@@ -202,9 +202,28 @@ void PlacedObstacleCollisionSystem::update(float /*deltaTime*/) {
 	struct Obstacle {
 		const assets::PlacedEntity*	  entity	= nullptr;
 		const assets::CollisionShape* collision = nullptr;
+		EntityID					  owner		= kInvalidEntity; // the ECS entity, for one of the collider entity index's
 	};
-	std::vector<Obstacle> obstacles; // reused per agent
-	geometry::Ring		  outline;	 // reused per obstacle
+	std::vector<Obstacle>							 obstacles;		   // reused per agent
+	std::vector<const ColliderEntityIndex::Entry*> colliderEntities; // reused per agent
+	geometry::Ring									 outline;		   // reused per obstacle
+
+	// This collider's own reach, not the largest any def has: most of what the query finds is trees
+	// whose trunk is nowhere near the agent. The slack covers the mm rounding of the ring and of the
+	// centre the inside test takes.
+	const auto collisionNear = [&registry](const assets::PlacedEntity& placed, glm::vec2 center) -> const assets::CollisionShape* {
+		const assets::AssetDefinition* def = registry.getDefinition(placed.defName);
+		if (def == nullptr) {
+			return nullptr;
+		}
+		const assets::CollisionShape& collision = def->collisionFor(placed.traits.ageClass);
+		if (!collision.blocks()) {
+			return nullptr;
+		}
+		const float		reach  = nav::placedObstacleLocalReachMeters(collision) * std::abs(placed.scale) + kReachSlackMeters;
+		const glm::vec2 offset = center - placed.position;
+		return glm::dot(offset, offset) <= reach * reach ? &collision : nullptr;
+	};
 
 	// Two relaxation iterations so an agent wedged between two adjacent obstacles
 	// settles against both (iteration 1 clears the deepest, iteration 2 re-projects
@@ -237,23 +256,8 @@ void PlacedObstacleCollisionSystem::update(float /*deltaTime*/) {
 					// padded by the collision reach.
 					std::vector<const assets::PlacedEntity*> hits = index->queryRect(queryMinX, queryMinY, queryMaxX, queryMaxY);
 					for (const assets::PlacedEntity* placed : hits) {
-						const assets::AssetDefinition* def = registry.getDefinition(placed->defName);
-						if (def == nullptr) {
-							continue;
-						}
-						const assets::CollisionShape& collision = def->collisionFor(placed->traits.ageClass);
-						if (!collision.blocks()) {
-							continue;
-						}
-						// This collider's own reach, not the largest any def has: most of what the
-						// query finds is trees whose trunk is nowhere near the agent. The slack covers
-						// the mm rounding of the ring and of the centre the inside test takes.
-						const float		reach  = nav::placedObstacleLocalReachMeters(collision) * std::abs(placed->scale) + kReachSlackMeters;
-						const glm::vec2 offset = center - placed->position;
-						if (glm::dot(offset, offset) > reach * reach) {
-							continue;
-						}
-						if (!detail->placedObstacleInNavMesh({chunkX, chunkY}, *placed)) {
+						const assets::CollisionShape* collision = collisionNear(*placed, center);
+						if (collision == nullptr || !detail->placedObstacleInNavMesh({chunkX, chunkY}, *placed)) {
 							continue;
 						}
 						if (registry.maxCollisionReachMeters() == 0.0F && !warnedZeroReach) {
@@ -261,8 +265,17 @@ void PlacedObstacleCollisionSystem::update(float /*deltaTime*/) {
 							LOG_WARNING(Engine, "[PlacedObstacleCollision] %s blocks but no collider reach is recorded: colliders off their position are not pushed against",
 										placed->defName.c_str());
 						}
-						obstacles.push_back({placed, &collision});
+						obstacles.push_back({placed, collision});
 					}
+				}
+			}
+
+			colliderEntities.clear();
+			detail->colliderEntities().queryRect({queryMinX, queryMinY}, {queryMaxX, queryMaxY}, colliderEntities);
+			for (const ColliderEntityIndex::Entry* entry : colliderEntities) {
+				const assets::CollisionShape* collision = collisionNear(entry->placed, center);
+				if (collision != nullptr && detail->placedObstacleInNavMesh(entry->entity)) {
+					obstacles.push_back({&entry->placed, collision, entry->entity});
 				}
 			}
 
@@ -270,8 +283,8 @@ void PlacedObstacleCollisionSystem::update(float /*deltaTime*/) {
 				continue;
 			}
 
-			// Deterministic ordering: resolve in a fixed (position x, then y, then def) order so
-			// the accumulated push-out is independent of queryRect/chunk layout.
+			// Deterministic ordering: resolve in a fixed (position x, then y, then def, then entity)
+			// order so the accumulated push-out is independent of queryRect/chunk layout.
 			std::sort(obstacles.begin(), obstacles.end(), [](const Obstacle& left, const Obstacle& right) {
 				if (left.entity->position.x != right.entity->position.x) {
 					return left.entity->position.x < right.entity->position.x;
@@ -279,7 +292,10 @@ void PlacedObstacleCollisionSystem::update(float /*deltaTime*/) {
 				if (left.entity->position.y != right.entity->position.y) {
 					return left.entity->position.y < right.entity->position.y;
 				}
-				return left.entity->defName < right.entity->defName;
+				if (left.entity->defName != right.entity->defName) {
+					return left.entity->defName < right.entity->defName;
+				}
+				return left.owner < right.owner;
 			});
 
 			for (const Obstacle& obstacle : obstacles) {
