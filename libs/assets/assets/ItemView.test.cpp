@@ -5,6 +5,7 @@
 #include "assets/DetailLevels.h"
 #include "assets/ItemView.h"
 #include "assets/PartsAsset.test.h"
+#include "assets/PointTurn.h"
 
 #include <gtest/gtest.h>
 
@@ -61,10 +62,6 @@ namespace {
 			}
 		}
 		return std::nullopt;
-	}
-
-	glm::vec2 turnedPoint(glm::vec2 point, float radians) {
-		return {point.x * std::cos(radians) - point.y * std::sin(radians), point.x * std::sin(radians) + point.y * std::cos(radians)};
 	}
 
 	std::vector<glm::vec2> faceQuad(const VisibleFace& face, float length, float height) {
@@ -1218,17 +1215,16 @@ TEST_F(ItemViewTest, NothingOfALowerPartShowsThroughThePartAboveIt) {
 }
 
 TEST_F(ItemViewTest, WhereTwoPartsOverlapOnScreenThePartInFrontDrawsLater) {
-	// Bodies with notches and gaps, where an outline past a footprint's end can have no interval of its own beside it
-	// and is drawn with another's strip. Each part has its own pure hue (its sides shaded, its top not), and the parts
-	// share the outline colour. Wherever two triangles of different parts overlap on screen, the one drawn later must
-	// not belong to a part the parts order puts behind the other's (section 6.6), except where the earlier is outline
-	// only, as section 8 allows. A later outline belongs to whichever part's outline passes under it; it is wrong only when every such part is behind the
-	// earlier one. Every 3 degrees.
-	const std::vector<std::pair<std::string, std::vector<std::array<float, 4>>>> items = {
-		{"LetterL", {{-1.0F, -1.0F, 1.0F, -0.5F}, {-1.0F, -0.5F, -0.5F, 1.0F}}},
-		{"LetterC", {{-1.0F, -1.0F, -0.4F, 1.0F}, {-0.4F, -1.0F, 1.0F, -0.4F}, {-0.4F, 0.4F, 1.0F, 1.0F}}},
-		{"OpenSouth", {{-1.0F, -1.0F, 1.0F, -0.6F}, {-1.0F, -0.6F, -0.6F, 1.0F}, {0.6F, -0.6F, 1.0F, 1.0F}}},
-		{"TwoBodies", {{-1.0F, -0.3F, -0.2F, 0.3F}, {0.2F, -0.3F, 1.0F, 0.3F}}},
+	// Bodies with notches and gaps, where an outline past a footprint's end lands in another interval's strip. Each
+	// part has its own pure hue (its sides shaded, its top not), and the parts share the outline colour. Wherever two triangles of
+	// different parts overlap on screen, the one drawn later must not belong to a part the parts order puts behind
+	// the other's (section 6.6). An outline triangle belongs to whichever parts' outlines pass under it; a pair is
+	// wrong only when every way of reading it is. Every 3 degrees.
+	const std::vector<std::pair<std::string, std::vector<std::array<float, 6>>>> items = {
+		{"LetterL", {{-1.0F, -1.0F, 1.0F, -0.5F, 0.0F, 0.9F}, {-1.0F, -0.5F, -0.5F, 1.0F, 0.0F, 0.9F}}},
+		{"LetterC", {{-1.0F, -1.0F, -0.4F, 1.0F, 0.0F, 0.9F}, {-0.4F, -1.0F, 1.0F, -0.4F, 0.0F, 0.9F}, {-0.4F, 0.4F, 1.0F, 1.0F, 0.0F, 0.9F}}},
+		{"OpenSouth", {{-1.0F, -1.0F, 1.0F, -0.6F, 0.0F, 0.9F}, {-1.0F, -0.6F, -0.6F, 1.0F, 0.0F, 0.9F}, {0.6F, -0.6F, 1.0F, 1.0F, 0.0F, 0.9F}}},
+		{"TwoBodies", {{-1.0F, -0.3F, -0.2F, 0.3F, 0.0F, 0.9F}, {0.2F, -0.3F, 1.0F, 0.3F, 0.0F, 0.9F}}},
 	};
 	const std::array<const char*, 3> hues = {"#FF0000", "#00FF00", "#0000FF"};
 	for (const auto& [name, rects] : items) {
@@ -1237,7 +1233,7 @@ TEST_F(ItemViewTest, WhereTwoPartsOverlapOnScreenThePartInFrontDrawsLater) {
 		for (size_t i = 0; i < rects.size(); ++i) {
 			const std::string part = "block" + std::to_string(i);
 			parts += "<part name=\"" + part + "\"><footprint>" + rect(rects[i][0], rects[i][1], rects[i][2], rects[i][3]) +
-					 "</footprint><height bottom=\"0\" top=\"0.9\"/><top color=\"" + hues[i] + "\"/><sides color=\"" + hues[i] + "\"/></part>";
+					 "</footprint><height bottom=\"" + number(rects[i][4]) + "\" top=\"" + number(rects[i][5]) + "\"/><top color=\"" + hues[i] + "\"/><sides color=\"" + hues[i] + "\"/></part>";
 			placements += place(part);
 		}
 		writeDef(name, "<parts>" + parts + "</parts><placements>" + placements + "</placements>");
@@ -1334,10 +1330,6 @@ TEST_F(ItemViewTest, WhereTwoPartsOverlapOnScreenThePartInFrontDrawsLater) {
 					}
 					const size_t				   earlier = std::min(boxes[a].index, boxes[b].index);
 					const size_t				   later = std::max(boxes[a].index, boxes[b].index);
-					const std::optional<size_t>	   earlierPart = partOf(view.mesh.colors[view.mesh.indices[earlier]]);
-					if (!earlierPart.has_value()) {
-						continue; // the earlier is outline only
-					}
 					const std::array<glm::vec2, 3> earlierCorners = triangleOf(view, earlier);
 					const std::array<glm::vec2, 3> laterCorners = triangleOf(view, later);
 					const std::optional<glm::vec2> centre = overlapCentre(
@@ -1347,15 +1339,21 @@ TEST_F(ItemViewTest, WhereTwoPartsOverlapOnScreenThePartInFrontDrawsLater) {
 						continue;
 					}
 					++pairs;
-					const std::optional<size_t> laterPart = partOf(view.mesh.colors[view.mesh.indices[later]]);
-					const std::vector<size_t>	candidates = laterPart.has_value() ? std::vector<size_t>{*laterPart} : outlinesAt(*centre);
-					const bool					wrong = !candidates.empty() && std::all_of(candidates.begin(), candidates.end(), [&](size_t part) {
-						   return part != *earlierPart && behind(part, *earlierPart);
-					   });
+					const auto partsOf = [&](size_t index) {
+						const std::optional<size_t> part = partOf(view.mesh.colors[view.mesh.indices[index]]);
+						return part.has_value() ? std::vector<size_t>{*part} : outlinesAt(*centre);
+					};
+					const std::vector<size_t> earlierParts = partsOf(earlier);
+					const std::vector<size_t> laterParts = partsOf(later);
+					bool					  wrong = !earlierParts.empty() && !laterParts.empty();
+					for (const size_t earlierPart : earlierParts) {
+						for (const size_t laterPart : laterParts) {
+							wrong = wrong && laterPart != earlierPart && behind(laterPart, earlierPart);
+						}
+					}
 					if (wrong) {
-						ADD_FAILURE() << name << " at " << degrees << " degrees: triangle " << later / 3 << " of part " << candidates.front()
-									  << " draws over triangle " << earlier / 3 << " of part " << *earlierPart << ", which is in front of it, at (" << centre->x << ", "
-									  << centre->y << ")";
+						ADD_FAILURE() << name << " at " << degrees << " degrees: triangle " << later / 3 << " of part " << laterParts.front() << " draws over triangle "
+									  << earlier / 3 << " of part " << earlierParts.front() << ", which is in front of it, at (" << centre->x << ", " << centre->y << ")";
 						return;
 					}
 				}

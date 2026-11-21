@@ -1,6 +1,7 @@
 #include "assets/ItemView.h"
 
 #include "assets/DetailLevels.h"
+#include "assets/PointTurn.h"
 
 #include <utils/Log.h>
 #include <vector/SVGLoader.h>
@@ -19,12 +20,6 @@ namespace assets {
 	namespace {
 
 		constexpr float kInfinity = std::numeric_limits<float>::infinity();
-
-		glm::vec2 turned(glm::vec2 point, float radians) {
-			const float cosine = std::cos(radians);
-			const float sine = std::sin(radians);
-			return {point.x * cosine - point.y * sine, point.x * sine + point.y * cosine};
-		}
 
 		Foundation::Color shaded(Foundation::Color color, float shade) {
 			return {std::min(color.r * shade, 1.0F), std::min(color.g * shade, 1.0F), std::min(color.b * shade, 1.0F), color.a};
@@ -313,7 +308,7 @@ namespace assets {
 			}
 			if (part.topDrawing.has_value()) {
 				const float		composed = turnRadians + placement.turnRadians;
-				const glm::vec2 origin = turned(turned(part.boundsMin, placement.turnRadians) + placement.offsetMeters, turnRadians) + lift;
+				const glm::vec2 origin = turnedPoint(turnedPoint(part.boundsMin, placement.turnRadians) + placement.offsetMeters, turnRadians) + lift;
 				const Foundation::AffineTransform2D matrix{
 					.a = std::cos(composed), .b = std::sin(composed), .c = -std::sin(composed), .d = std::cos(composed), .e = origin.x, .f = origin.y
 				};
@@ -432,7 +427,7 @@ namespace assets {
 				std::vector<glm::vec2> ring;
 				float				   doubledArea = 0.0F;
 				for (const glm::vec2& point : collider.pointsMeters) {
-					ring.push_back(turned(point, turnRadians));
+					ring.push_back(turnedPoint(point, turnRadians));
 					vertexX.push_back(ring.back().x);
 				}
 				for (size_t i = 0; i < ring.size(); ++i) {
@@ -543,7 +538,8 @@ namespace assets {
 							bestDistance = distance;
 							best = index;
 						}
-					}					// The outline reaches pad past the footprint in any direction, so across a steep edge it reaches further
+					}
+					// The outline reaches pad past the footprint in any direction, so across a steep edge it reaches further
 					// than pad in y: the footprint's y range is taken over the piece widened by pad, then padded.
 					const auto [minY, maxY] = yRangeBetween(footprints[placement], from - pad, to + pad);
 					cells.push_back({.band = band, .interval = best, .placement = placement, .minY = minY - part.topMeters * config.heightRatio - pad, .maxY = maxY + pad});

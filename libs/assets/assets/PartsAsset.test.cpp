@@ -732,16 +732,13 @@ TEST_F(PartsAssetTest, APartsScriptsRandomNumbersAreTheSameEveryLoad) {
 }
 
 // The ui-sandbox's demo items (assets/sandbox/items), loaded with the shipped view config, as the sandbox loads them.
-TEST_F(PartsTest, TheSandboxDemoItemsLoadWithNoIssues) {
-	// <root>/libs/assets/assets/PartsAsset.test.cpp -> walk up to <root>.
-	const std::filesystem::path root = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path();
-	ASSERT_TRUE(GameViewConfig::Get().loadFromFile(root / "assets" / "config", kViewConfigFile));
+TEST_F(PartsAssetTest, TheSandboxDemoItemsLoadWithNoIssues) {
+	ASSERT_TRUE(loadShippedViewConfig());
 	AssetRegistry& registry = AssetRegistry::Get();
 	registry.clearDefinitions();
-	EXPECT_GT(registry.loadDefinitionsFromFolder((root / "assets" / "sandbox" / "items").string()), 0U);
+	EXPECT_GT(registry.loadDefinitionsFromFolder((shippedConfigFolder().parent_path() / "sandbox" / "items").string()), 0U);
 	const ValidationReport& report = registry.getValidationReport();
 	EXPECT_EQ(report.errorCount(), 0) << ::testing::PrintToString(issues("Workbench"));
 	EXPECT_EQ(report.warningCount(), 0) << ::testing::PrintToString(issues("Workbench", Severity::Warning));
 	EXPECT_NE(registry.getDefinition("Workbench"), nullptr);
-	ASSERT_TRUE(loadTestViewConfig());
 }

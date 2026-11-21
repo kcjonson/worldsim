@@ -18,6 +18,7 @@
 #include <assets/DetailLevels.h>
 #include <assets/ItemView.h>
 #include <assets/PartsAsset.h>
+#include <assets/PointTurn.h>
 #include <assets/ViewConfig.h>
 #include <theme/Keys.h>
 #include <theme/Theme.h>
@@ -103,12 +104,6 @@ namespace {
 		std::array<Foundation::Vec2, kSheetCount> cellCenters{};
 		float								   sheetPixelsPerMeter = 0.0F;
 	};
-
-	glm::vec2 turned(glm::vec2 point, float radians) {
-		const float cosine = std::cos(radians);
-		const float sine = std::sin(radians);
-		return {point.x * cosine - point.y * sine, point.x * sine + point.y * cosine};
-	}
 
 	std::string degreesText(uint32_t turnQuanta) {
 		return std::format("{:.2f}", static_cast<double>(turnQuanta) / kQuantaPerDegree);
@@ -407,7 +402,7 @@ namespace {
 			std::vector<Foundation::Vec2> points;
 			points.reserve(ring.size());
 			for (const glm::vec2& point : ring) {
-				const glm::vec2 onScreen = turned(point, radians) * pixelsPerMeter;
+				const glm::vec2 onScreen = assets::turnedPoint(point, radians) * pixelsPerMeter;
 				points.emplace_back(center.x + onScreen.x, center.y + onScreen.y);
 			}
 			Renderer::Primitives::drawPolyline({.points = points, .width = kOverlayWidth, .color = color, .closed = true, .id = "turntable_overlay"});

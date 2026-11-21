@@ -1,6 +1,7 @@
 #include "assets/PartsAsset.h"
 
 #include "assets/LodSvg.h"
+#include "assets/PointTurn.h"
 
 #include <boolean/RingBoolean.h>
 #include <polygon/Polygon.h>
@@ -155,12 +156,6 @@ namespace assets {
 		}
 
 		// ─── Geometry helpers ────────────────────────────────────────────────────────────────────────
-
-		glm::vec2 turned(glm::vec2 point, float radians) {
-			const float cosine = std::cos(radians);
-			const float sine = std::sin(radians);
-			return {point.x * cosine - point.y * sine, point.x * sine + point.y * cosine};
-		}
 
 		geometry::Ring toMillimetres(const Ring2& ring) {
 			geometry::Ring out;
@@ -905,7 +900,7 @@ namespace assets {
 		std::vector<glm::vec2> ring;
 		ring.reserve(asset.placedFootprints[placement].size());
 		for (const glm::vec2& point : asset.placedFootprints[placement]) {
-			ring.push_back(turned(point, itemTurnRadians));
+			ring.push_back(turnedPoint(point, itemTurnRadians));
 		}
 		return ring;
 	}
@@ -1273,7 +1268,7 @@ namespace assets {
 		for (const PartPlacement& placement : asset.placements) {
 			Ring2& ring = placedFootprints.emplace_back();
 			for (const glm::vec2& point : asset.parts[placement.part].footprint) {
-				ring.push_back(turned(point, placement.turnRadians) + placement.offsetMeters);
+				ring.push_back(turnedPoint(point, placement.turnRadians) + placement.offsetMeters);
 			}
 		}
 		const auto hasBody = [&](size_t placement) {
