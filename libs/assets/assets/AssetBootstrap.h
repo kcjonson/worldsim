@@ -1,5 +1,7 @@
 #pragma once
 
+#include <utils/ResourcePath.h>
+
 #include <string>
 
 namespace assets {
@@ -9,9 +11,13 @@ namespace assets {
 		std::string definitions;   // asset definitions, <Name>/<Name>.xml
 		std::string sharedScripts; // Lua behind the @shared/ prefix; empty for none
 		std::string recipes;	   // recipe XML; empty for none
+		// The config root the view config (ViewConfig.h) is read from: the shipped assets/config unless a caller
+		// names another; empty when it can't be found, which leaves the view config unloaded and its parts defs
+		// unread.
+		std::string config = Foundation::findResourceString("assets/config");
 	};
 
-	/// Replace what AssetRegistry and RecipeRegistry hold with `sources`: clear both, load the
+	/// Replace what AssetRegistry and RecipeRegistry hold with `sources`: read the view config, clear both, load the
 	/// definitions and build their id index (on a worker thread when `async`, otherwise blocking),
 	/// then load the recipes against that index. The apps' startup and the asset manager's Reload
 	/// go through here, since a definition's interned id is only good for the index it was read

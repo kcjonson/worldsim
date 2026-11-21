@@ -52,7 +52,7 @@ namespace assets {
 	// young tree stands small beside an old one. Every cell is as big as the largest mesh, and each
 	// mesh's origin (a tree's trunk foot) sits at the same place in its cell. A row shorter than the
 	// longest leaves its last cells empty. `silhouette` fills every triangle the selection silhouette
-	// keeps (at least one vertex at AssetRegistry::kSilhouetteMinAlpha) in one flat dark grey and leaves
+	// keeps (at least one vertex at kSilhouetteMinAlpha) in one flat dark grey and leaves
 	// out the rest. Requires a current GL context with Renderer::Primitives initialized. Empty pixels
 	// when a mesh is null or empty, or the sheet is over 16384 pixels a side.
 	RenderedImage renderMeshSheet(

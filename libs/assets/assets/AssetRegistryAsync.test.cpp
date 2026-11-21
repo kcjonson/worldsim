@@ -108,7 +108,7 @@ namespace {
 	}
 
 	AssetSources sourcesOf(const TempAssetFolder& definitions, const TempAssetFolder& recipes) {
-		return {.definitions = definitions.root.string(), .sharedScripts = "", .recipes = recipes.root.string()};
+		return {.definitions = definitions.root.string(), .sharedScripts = "", .recipes = recipes.root.string(), .config = testConfigFolder().string()};
 	}
 
 } // namespace
