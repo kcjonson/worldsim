@@ -1109,7 +1109,8 @@ box, so a step whose query can return either names both, and its target holds th
   cargo, and its own source claim drops; a cut that set out with no cargo takes its inbound then. A take
   that lifts nothing ends the task at the source unless it carries cargo, which is the cargo handed over
   plus what the chain's takes already lifted of the item, never a reading of its claims; carrying some, it
-  goes on with its goods' claims at that cargo. A root gone by then ends the task too. Any other claim is held until the step naming it completes. The task's last step
+  goes on with its goods' claims at the amount an earlier take's rewrite left, else at the handed cargo. A
+  root gone by then ends the task too. Any other claim is held until the step naming it completes. The task's last step
   completing ends the task and every claim with it.
 - A craft's slot is the station's one unnumbered slot. A build takes the numbered slot of the builder
   spot its source is, and a build with no spot takes no slot.
@@ -1201,8 +1202,8 @@ which keeps every hard-won fix that lives there:
   lifted and are not sized from the plan again by a later step. A take of another item (a tool a `have`
   fetches) leaves them to the plan. A `drop` of the goal's item releases them and returns them to the plan
   until the next take. A later step that names them while the task holds none (a deposit in a nested
-  chain, which selection did not claim) takes them at what is carried: the handed cargo plus what the
-  chain's takes lifted.
+  chain, which selection did not claim) takes them at the amount the last take's rewrite left, and none
+  when that rewrite capped them to nothing. A take that lifts nothing leaves them at that amount too.
 - The packaged thing a `place_packaged` installs is the one the creature carries, else the option's
   `target` when that is a packaged thing, else the step's own target when that is one.
 - A `put` with no `amount` puts what the creature carries toward the root, capped at the goal's planned
@@ -2232,10 +2233,10 @@ Rules from the first build of the chain runner:
 - 2026-11-21: Once a take of the goal's item has completed, the goods' claims are not sized from the plan again.
 - 2026-11-21: A take of another item leaves the goods' claims to the plan.
 - 2026-11-21: A `drop` of the goal's item returns the goods' claims to the plan until the next take.
-- 2026-11-21: A step naming the goods' claims after a take, with none held, takes them at what is carried.
+- 2026-11-21: A step naming the goods' claims after a take, with none held, takes them at the amount the last take's rewrite left.
 - 2026-11-21: The cargo a take reads is the handed cargo plus what the chain took of the item, never its claims.
 - 2026-11-21: A take that lifts nothing while carrying no cargo ends the task at the source.
-- 2026-11-21: A take that lifts nothing while carrying cargo goes on with its goods' claims at the cargo.
+- 2026-11-21: A take that lifts nothing while carrying cargo goes on with its goods' claims at the last rewrite's amount, else the handed cargo.
 - 2026-11-21: A build with no builder spot takes no slot.
 - 2026-11-21: `place_packaged` installs the package carried, else the option's `target`, else the step's own target.
 - 2026-11-21: A `put` with no `amount` puts what is carried, capped at the goal's planned amount plus the handed cargo.

@@ -1761,6 +1761,48 @@ namespace ecs::test {
 		EXPECT_EQ(world->getComponent<StructureBlueprint>(root.site)->remaining("Stick"), 8U);
 	}
 
+	TEST_F(ChainsTest, GoodsClaimsCappedAtTheRootsNeedStaySoForTheRestOfTheChain) {
+		const EntityID	  colonist = createColonist();
+		const Root		  covered = buildRoot("Stick", 3, {8.0F, 0.0F});
+		const ChainTarget pile = pileAt(colonist, {2.0F, 0.0F}, "Stick", 3, 3);
+		ASSERT_TRUE(startChainAt(
+			colonist,
+			"deliver",
+			0,
+			{},
+			{.source = pile,
+			 .destination = entityTarget(covered.site, {8.0F, 0.0F}),
+			 .goal = {.rootGoalId = covered.goal, .item = id("Stick"), .quantity = 3}}
+		));
+		world->getComponent<StructureBlueprint>(covered.site)->delivered = {{"Stick", 3}}; // its need met by others
+		ASSERT_TRUE(runUntil([&] { return finishedCount("pickup") == 1; }));
+		run(0.3F);
+		ASSERT_TRUE(running(colonist, "deliver")) << "it walks on with the three it lifted";
+		EXPECT_EQ(claimed(task(colonist), ClaimKind::Inbound), 0U) << "capped to nothing at the take, and not taken back";
+		EXPECT_EQ(claimed(task(colonist), ClaimKind::InFlight), 0U);
+
+		// A later take that lifts nothing keeps the cap an earlier take set.
+		actionSystem->setTakeSourceCallback([](const std::string&, float, float, ActionSystem::SourceTake, float) {
+			return ActionSystem::SourceState::Gone;
+		});
+		const EntityID	  other = createColonist({0.0F, 4.0F});
+		const Root		  needsOne = buildRoot("Stick", 1, {8.0F, 4.0F});
+		const ChainTarget first = pileAt(other, {1.0F, 4.0F}, "Stick", 2, 2);
+		const ChainTarget gone = pileAt(other, {-1.0F, 4.0F}, "Stick", 0, 2);
+		ASSERT_TRUE(startChainAt(
+			other,
+			"take_twice_deliver",
+			0,
+			first,
+			{.source = gone,
+			 .destination = entityTarget(needsOne.site, {8.0F, 4.0F}),
+			 .goal = {.rootGoalId = needsOne.goal, .item = id("Stick"), .quantity = 4}}
+		));
+		ASSERT_TRUE(runUntil([&] { return task(other).chain.active() && task(other).chain.frame().step >= 4; }));
+		EXPECT_EQ(claimed(task(other), ClaimKind::Inbound), 1U) << "the root needs one";
+		EXPECT_EQ(claimed(task(other), ClaimKind::InFlight), 1U);
+	}
+
 	TEST_F(ChainsTest, TakingOrReleasingControlClearsARefusalsWait) {
 		const EntityID	  colonist = createColonist();
 		const ChainTarget tree = remember(colonist, {0.0F, 0.0F}, "IronTree", assets::CapabilityType::Harvestable);

@@ -630,17 +630,18 @@ namespace ecs {
 			}
 			// Before a take of the goods, from the plan: a cut brings in its cargo and expects its yield, a haul brings its
 			// cargo and the planned amount. After one, the claims follow what was lifted and are not sized again; a step
-			// that names them with none held (a deposit no earlier claim covered) takes them at what is carried.
+			// that names them with none held (a deposit no earlier claim covered) takes them at what the last take's
+			// rewrite left, and none when that capped them to nothing.
 			bool holdsGoods = false;
 			for (const Claim& claim : task.claims) {
 				holdsGoods = holdsGoods || ((claim.kind() == ClaimKind::Inbound || claim.kind() == ClaimKind::InFlight) &&
 											claim.itemDefNameId() == goal.item);
 			}
 			const bool	   cut = goal.expectedYield > 0;
-			const uint32_t carried = goal.cargo + (progress.takenItem == goal.item ? progress.takenQuantity : 0U);
-			const uint32_t inbound = progress.goodsTaken ? carried : cut ? goal.cargo : goal.cargo + goal.quantity;
-			const uint32_t inFlight = progress.goodsTaken ? carried : cut ? goal.cargo + goal.expectedYield : goal.cargo + goal.quantity;
-			if (!progress.goodsTaken || (!holdsGoods && carried > 0)) {
+			const uint32_t claimed = progress.goodsClaimed;
+			const uint32_t inbound = progress.goodsTaken ? claimed : cut ? goal.cargo : goal.cargo + goal.quantity;
+			const uint32_t inFlight = progress.goodsTaken ? claimed : cut ? goal.cargo + goal.expectedYield : goal.cargo + goal.quantity;
+			if (!progress.goodsTaken || (!holdsGoods && claimed > 0)) {
 				if (inbound > 0) {
 					take(Claim::inbound(static_cast<uint64_t>(destination), goal.item, inbound));
 				}
@@ -692,6 +693,7 @@ namespace ecs {
 			fileClaims(actor);
 			return true;
 		}
+		const bool rewritten = progress.goodsTaken;
 		// A tool or other good taken on the way leaves the goal's goods' claims to be sized from the plan.
 		if (goods) {
 			progress.goodsTaken = true;
@@ -702,11 +704,17 @@ namespace ecs {
 				endChain(actor, "its take lifted nothing");
 				return false;
 			}
+			// The goods' claims stay at what an earlier take's rewrite left, which the root's need may have capped.
+			const uint32_t claimed = goods && rewritten ? progress.goodsClaimed : cargo;
+			if (goods) {
+				progress.goodsClaimed = claimed;
+			}
 			for (Claim& claim : task.claims) {
 				if ((claim.kind() == ClaimKind::Inbound || claim.kind() == ClaimKind::InFlight) && claim.itemDefNameId() == item) {
-					claim.setQuantity(cargo);
+					claim.setQuantity(claimed);
 				}
 			}
+			task.claims.eraseIf([](const Claim& claim) { return claim.quantity() == 0; });
 			fileClaims(actor);
 			return true;
 		}
@@ -736,8 +744,11 @@ namespace ecs {
 			 ClaimExclusion::of(task)
 		 );
 		const uint32_t carried = std::min(handed + progress.takenQuantity, need + handed);
-		bool		   inFlight = false;
-		bool		   inbound = false;
+		if (goods) {
+			progress.goodsClaimed = carried;
+		}
+		bool inFlight = false;
+		bool inbound = false;
 		for (Claim& claim : task.claims) {
 			if ((claim.kind() == ClaimKind::Inbound || claim.kind() == ClaimKind::InFlight) && claim.itemDefNameId() == lifted.item) {
 				claim.setQuantity(carried);
@@ -917,6 +928,7 @@ namespace ecs {
 		// The goods set down, a later step's goods' claims are sized from the plan again until the next take.
 		if (item == progress.goal.item) {
 			progress.goodsTaken = false;
+			progress.goodsClaimed = 0;
 		}
 		progress.takenItem = 0;
 		progress.takenQuantity = 0;

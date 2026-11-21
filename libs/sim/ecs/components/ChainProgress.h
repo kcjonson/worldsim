@@ -88,6 +88,8 @@ namespace ecs {
 		/// A take of the goal's item has completed and nothing since dropped it: the goods' claims follow what was lifted
 		/// and are not sized from the plan again.
 		bool goodsTaken = false;
+		/// What the last take's rewrite left on the goods' claims, capped at the root's need: what a later step re-takes.
+		uint32_t goodsClaimed = 0;
 		/// The item `held_gone` watches and the units of it held when the step began; 0 for none.
 		uint32_t heldItem = 0;
 		uint32_t heldAtStart = 0;
