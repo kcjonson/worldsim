@@ -650,14 +650,12 @@ namespace construction {
 		const assets::ThicknessPreset& thickness,
 		FoundationId						   host
 	) const {
-		// An end landing on an opening's span on an existing wall is refused for every point, the
-		// first included.
-		if (const ValidationResult junction = checkJunctionClearOfOpenings(candidate, thickness.halfThicknessMm); !junction.ok()) {
-			return {junction.code, points.size(), 0, junction.measuredValue};
-		}
-
-		// First point is always placeable (matches foundation validatePoint).
+		// First point: no direction yet, so only the lower bound applies (matches foundation
+		// validatePoint otherwise: always placeable).
 		if (points.empty()) {
+			if (const ValidationResult onOpening = checkPointClearOfOpenings(candidate); !onOpening.ok()) {
+				return {onOpening.code, 0, 0, onOpening.measuredValue};
+			}
 			return {};
 		}
 
@@ -720,6 +718,11 @@ namespace construction {
 			return {ValidationCode::NotContainedInHostFoundation, candIndex, 0, 0.0};
 		}
 
+		// The segment prev->candidate must leave every opening it touches its clearance.
+		if (const ValidationResult onOpening = checkSpanClearOfOpenings(points.back(), candidate, thickness, host); !onOpening.ok()) {
+			return {onOpening.code, candIndex, 0, onOpening.measuredValue};
+		}
+
 		return {};
 	}
 
@@ -744,13 +747,6 @@ namespace construction {
 		// Host containment.
 		if (!bandContainedInFoundation(qa, qb, thickness.halfThicknessMm, host)) {
 			return {ValidationCode::NotContainedInHostFoundation, 0, 0, 0.0};
-		}
-
-		// Each end that joins a wall carrying an opening must clear that opening.
-		for (const ::Foundation::Vec2 end : {a, b}) {
-			if (const ValidationResult junction = checkJunctionClearOfOpenings(end, thickness.halfThicknessMm); !junction.ok()) {
-				return junction;
-			}
 		}
 
 		// The candidate footprint, built once.
@@ -813,44 +809,97 @@ namespace construction {
 			}
 		}
 
-		return {};
+		// Last, so a wall that overlaps or runs along another reports that first.
+		return checkSpanClearOfOpenings(a, b, thickness, host);
 	}
 
 	// --- Openings -----------------------------------------------------------
 
-	ValidationResult ConstructionValidator::checkJunctionClearOfOpenings(::Foundation::Vec2 point, std::int64_t stemHalfThicknessMm) const {
-		const geometry::Vec2i64 p = geometry::quantize(point);
-		const auto&				reg = assets::ConstructionRegistry::Get();
-		const double			marginM = static_cast<double>(constraints_->openingMarginMeters);
-		const double			stemHalfM = static_cast<double>(stemHalfThicknessMm) / static_cast<double>(geometry::kMillimetersPerMeter);
+	ValidationResult ConstructionValidator::checkPointClearOfOpenings(::Foundation::Vec2 point) const {
+		const geometry::Vec2i64 joint = geometry::quantize(point);
+		const auto&				registry = assets::ConstructionRegistry::Get();
+		const double			marginMeters = static_cast<double>(constraints_->openingMarginMeters);
 		for (const Opening& opening : world_->openings()) {
 			const WallSegment* wall = world_->getSegment(opening.segment);
 			if (wall == nullptr) {
 				continue;
 			}
-			const Vertex* v0 = world_->getVertex(wall->v0);
-			const Vertex* v1 = world_->getVertex(wall->v1);
-			if (v0 == nullptr || v1 == nullptr || p == v0->pos || p == v1->pos) {
+			const Vertex* start = world_->getVertex(wall->v0);
+			const Vertex* end = world_->getVertex(wall->v1);
+			if (start == nullptr || end == nullptr || joint == start->pos || joint == end->pos) {
 				continue;
 			}
-			if (geometry::orientation(v0->pos, v1->pos, p) != geometry::Orientation::Collinear || p.x < std::min(v0->pos.x, v1->pos.x) ||
-				p.x > std::max(v0->pos.x, v1->pos.x) || p.y < std::min(v0->pos.y, v1->pos.y) || p.y > std::max(v0->pos.y, v1->pos.y)) {
+			if (geometry::orientation(start->pos, end->pos, joint) != geometry::Orientation::Collinear ||
+				joint.x < std::min(start->pos.x, end->pos.x) || joint.x > std::max(start->pos.x, end->pos.x) ||
+				joint.y < std::min(start->pos.y, end->pos.y) || joint.y > std::max(start->pos.y, end->pos.y)) {
 				continue;
 			}
-			const double lengthM = std::sqrt(geometry::dot(v1->pos - v0->pos, v1->pos - v0->pos).toDouble()) / static_cast<double>(geometry::kMillimetersPerMeter);
-			const double joinParam = geometry::dot(p - v0->pos, v1->pos - v0->pos).toDouble() / geometry::dot(v1->pos - v0->pos, v1->pos - v0->pos).toDouble();
-			const assets::OpeningTypeDef* type = reg.getOpeningType(opening.type);
-			const double				  halfWidthM = type != nullptr ? static_cast<double>(type->widthMeters) / 2.0 : 0.0;
-			const double				  clearance = std::abs(joinParam - static_cast<double>(opening.t)) * lengthM - halfWidthM;
-			if (clearance < marginM + stemHalfM) {
-				return {ValidationCode::WallEndsOnOpening, 0, 0, clearance};
+			const geometry::Vec2i64 along = end->pos - start->pos;
+			const double lengthMeters = std::sqrt(geometry::dot(along, along).toDouble()) / static_cast<double>(geometry::kMillimetersPerMeter);
+			const double jointParam = geometry::dot(joint - start->pos, along).toDouble() / geometry::dot(along, along).toDouble();
+			const assets::OpeningTypeDef* type = registry.getOpeningType(opening.type);
+			const double				  halfWidthMeters = type != nullptr ? static_cast<double>(type->widthMeters) / 2.0 : 0.0;
+			const double				  gap = std::abs(jointParam - static_cast<double>(opening.t)) * lengthMeters - halfWidthMeters;
+			if (gap < marginMeters) {
+				return {ValidationCode::WallEndsOnOpening, 0, 0, gap};
+			}
+		}
+		return {};
+	}
+
+	ValidationResult ConstructionValidator::checkSpanClearOfOpenings(
+		::Foundation::Vec2 a, ::Foundation::Vec2 b, const assets::ThicknessPreset& thickness, FoundationId host
+	) const {
+		const geometry::Vec2i64 spanStart = geometry::quantize(a);
+		const geometry::Vec2i64 spanEnd = geometry::quantize(b);
+
+		// The openings whose host wall the span touches: an end on its interior, an end or a pass through
+		// one of its vertices, or a run along it. A proper crossing is refused elsewhere.
+		std::vector<OpeningId> touched;
+		for (const Opening& opening : world_->openings()) {
+			const WallSegment* wall = world_->getSegment(opening.segment);
+			const Vertex*	   start = wall != nullptr ? world_->getVertex(wall->v0) : nullptr;
+			const Vertex*	   end = wall != nullptr ? world_->getVertex(wall->v1) : nullptr;
+			if (start == nullptr || end == nullptr) {
+				continue;
+			}
+			const geometry::SegmentRelation relation = geometry::intersectSegments(spanStart, spanEnd, start->pos, end->pos).relation;
+			if (relation != geometry::SegmentRelation::Disjoint && relation != geometry::SegmentRelation::ProperCrossing) {
+				touched.push_back(opening.id);
+			}
+		}
+		if (touched.empty()) {
+			return {};
+		}
+
+		ConstructionWorld trial = *world_;
+		if (!trial.commitSegment(spanStart, spanEnd, thickness.material, thickness.name, host, trial.version()).ok()) {
+			return {};
+		}
+		const ConstructionValidator before(*constraints_, *world_);
+		const ConstructionValidator after(*constraints_, trial);
+		for (const OpeningId id : touched) {
+			const Opening* standing = world_->getOpening(id);
+			const Opening* rehosted = trial.getOpening(id);
+			if (standing == nullptr || rehosted == nullptr) {
+				continue;
+			}
+			// An opening that is already wrong where it stands is not this wall's doing.
+			if (!before.validateOpening(standing->segment, standing->t, standing->type, standing->material, id).ok()) {
+				continue;
+			}
+			const ValidationResult result = after.validateOpening(rehosted->segment, rehosted->t, rehosted->type, rehosted->material, id);
+			if (!result.ok()) {
+				return {ValidationCode::WallEndsOnOpening, 0, 0, result.measuredValue};
 			}
 		}
 		return {};
 	}
 
 	ValidationResult
-	ConstructionValidator::validateOpening(SegmentId segment, float t, const std::string& type, const std::string& material) const {
+	ConstructionValidator::validateOpening(
+		SegmentId segment, float t, const std::string& type, const std::string& material, OpeningId ignore
+	) const {
 		// 1. Segment exists and is a wall in this world.
 		const WallSegment* wall = world_->getSegment(segment);
 		if (wall == nullptr || world_->getVertex(wall->v0) == nullptr || world_->getVertex(wall->v1) == nullptr) {
@@ -902,7 +951,7 @@ namespace construction {
 		// centerline. Iterate openings() in stable insertion order (determinism).
 		const double centerM = t * lengthM;
 		for (const Opening& other : world_->openings()) {
-			if (other.segment != segment) {
+			if (other.segment != segment || other.id == ignore) {
 				continue;
 			}
 			const assets::OpeningTypeDef* otherType = reg.getOpeningType(other.type);

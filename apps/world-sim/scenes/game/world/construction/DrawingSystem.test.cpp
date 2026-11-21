@@ -462,6 +462,44 @@ TEST_F(DrawingWallChainTest, AWallEndOnADoorsSpanIsRefusedEverywhereTheVerdictIs
 	EXPECT_EQ(drawing->world().segments().size(), 6U) << lastToast();
 }
 
+// A first click on a door's span places nothing, with the toast the other points give.
+TEST_F(DrawingWallChainTest, AFirstClickOnADoorsSpanIsRefusedAndPlacesNothing) {
+	hostFoundation(*drawing);
+	drawing->activateWallTool();
+	clickRoomCorners(*drawing);
+	clickWith(*drawing, kRoom[0]);
+	const construction::SegmentId south = drawing->world().segments().front().id;
+	ASSERT_NE(drawing->world().addOpening(south, 0.5F, "Door", "Wood"), construction::kInvalidOpening);
+
+	drawing->activateWallTool();
+	hover({0.0F, -8.0F});
+	EXPECT_EQ(drawing->status().message, "an opening is in the way");
+	clickWith(*drawing, {0.0F, -8.0F});
+	EXPECT_EQ(drawing->status().pointCount, 0);
+	EXPECT_EQ(lastToast(), "Invalid point: an opening is in the way");
+
+	clickWith(*drawing, {3.0F, -8.0F});
+	EXPECT_EQ(drawing->status().pointCount, 1) << lastToast();
+}
+
+// The dev walls bypass keeps one soft check: a span that would leave an opening without its clearance
+// is skipped and counted, the rest of the call still commits.
+TEST_F(DrawingWallChainTest, TheDevWallsVerbSkipsASpanThatEndsOnADoor) {
+	const construction::FoundationId host = hostFoundation(*drawing);
+	drawing->activateWallTool();
+	clickRoomCorners(*drawing);
+	clickWith(*drawing, kRoom[0]);
+	const construction::SegmentId south = drawing->world().segments().front().id;
+	ASSERT_NE(drawing->world().addOpening(south, 0.5F, "Door", "Wood"), construction::kInvalidOpening);
+
+	const auto skipped = drawing->devCommitWalls({{0.0F, 4.0F}, {0.0F, -8.0F}}, "Wood", "Standard", host, false);
+	EXPECT_EQ(skipped.committed, 0);
+	EXPECT_EQ(skipped.skippedOnOpening, 1);
+	const auto placed = drawing->devCommitWalls({{-3.0F, 4.0F}, {-3.0F, -8.0F}}, "Wood", "Standard", host, false);
+	EXPECT_GT(placed.committed, 0);
+	EXPECT_EQ(placed.skippedOnOpening, 0);
+}
+
 TEST_F(DrawingWallChainTest, ClosedLoopMatchesTheTwoChainWorkaround) {
 	hostFoundation(*drawing);
 	drawing->activateWallTool();
@@ -633,7 +671,7 @@ TEST_F(DrawingWallChainTest, DevClosedLoopBuiltFormsARoom) {
 		loop.push_back({corner.x, corner.y});
 	}
 	loop.push_back(loop.front());
-	EXPECT_EQ(drawing->devCommitWalls(loop, "Wood", "Standard", host, true), 4);
+	EXPECT_EQ(drawing->devCommitWalls(loop, "Wood", "Standard", host, true).committed, 4);
 	EXPECT_EQ(drawing->world().vertices().size(), 4U);
 	EXPECT_EQ(construction::detectRooms(drawing->world()).size(), 1U);
 }
@@ -646,7 +684,7 @@ TEST_F(DrawingWallChainTest, DevCommittedChainSharesOnePlacementOrderEqualToTheV
 	}
 	loop.push_back(loop.front());
 	const std::uint64_t versionBefore = drawing->world().version();
-	ASSERT_EQ(drawing->devCommitWalls(loop, "Wood", "Standard", host, false), 4);
+	ASSERT_EQ(drawing->devCommitWalls(loop, "Wood", "Standard", host, false).committed, 4);
 	ASSERT_EQ(drawing->world().segments().size(), 4U);
 	for (const construction::WallSegment& segment : drawing->world().segments()) {
 		EXPECT_EQ(segment.placementOrder, versionBefore);

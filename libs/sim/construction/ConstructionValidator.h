@@ -243,14 +243,22 @@ namespace construction {
 		[[nodiscard]] ValidationResult
 		validateWallSegment(::Foundation::Vec2 a, ::Foundation::Vec2 b, const assets::ThicknessPreset& thickness, FoundationId host) const;
 
-		// A wall end at `point` (world meters) joins an existing wall there. When it lands on the
-		// interior of a wall that carries an opening, the join splits that wall and re-hosts the
-		// opening on one half; a join within the opening's half width plus openingMargin plus the
-		// new wall's half thickness (`stemHalfThicknessMm`, the band trim at the junction) of the
-		// opening's centre is refused, since the opening would end up on the junction. A point that
-		// is not on a wall's interior, or clear of every opening there, passes. Called by both wall
-		// validators for each end they place.
-		[[nodiscard]] ValidationResult checkJunctionClearOfOpenings(::Foundation::Vec2 point, std::int64_t stemHalfThicknessMm) const;
+		// Cheap lower bound for a wall point that has no direction yet (a chain's first point): refuses a
+		// point landing on the interior of a wall within an opening's half width plus openingMargin of
+		// the opening's centre, since no trim can be less than none. `measuredValue` is the gap in meters
+		// from the opening's edge to the point.
+		[[nodiscard]] ValidationResult checkPointClearOfOpenings(::Foundation::Vec2 point) const;
+
+		// The full rule for a span a->b (world meters) with `thickness`'s material and preset: an opening
+		// keeps its clearance from a wall junction whichever is placed first. When the span touches a wall
+		// that carries an opening (an end on its interior, an end on or a pass through one of its vertices),
+		// the span is committed into a copy of the world and validateOpening runs on each such opening as it
+		// would stand after the commit; one that was valid before and fails after refuses the span. The
+		// result carries validateOpening's `measuredValue`. Spans touching no opening cost only a scan of
+		// the openings; the copy is made only for the rest. Called by both wall validators with the
+		// span's ends known, so a split's real band trim at the junction is the one the opening tool uses.
+		[[nodiscard]] ValidationResult
+		checkSpanClearOfOpenings(::Foundation::Vec2 a, ::Foundation::Vec2 b, const assets::ThicknessPreset& thickness, FoundationId host) const;
 
 		// --- Openings -------------------------------------------------------
 
@@ -265,9 +273,11 @@ namespace construction {
 		// SAME segment. Width is resolved from the registry's OpeningTypeDef (passing
 		// the type name keeps the validator reading config the same way
 		// validateWallSegment does for existing-wall thickness). First failure is reported with the measured
-		// value; the result's vertexIndex/otherIndex are unused for openings.
-		[[nodiscard]] ValidationResult
-		validateOpening(SegmentId segment, float t, const std::string& type, const std::string& material) const;
+		// value; the result's vertexIndex/otherIndex are unused for openings. `ignore` names an opening
+		// already in the world to leave out of the overlap check (revalidating it where it stands).
+		[[nodiscard]] ValidationResult validateOpening(
+			SegmentId segment, float t, const std::string& type, const std::string& material, OpeningId ignore = kInvalidOpening
+		) const;
 
 	  private:
 		// Shared ring-shape checks (spacing, angle, simplicity, clearance) over a

@@ -418,10 +418,15 @@ namespace world_sim {
 		/// Each consecutive (pts[i], pts[i+1]) becomes a segment on `host` (0 ==
 		/// freestanding); when `built`, the created segments flip to Built so they
 		/// enclose rooms immediately. Reconciles segment entities once. Returns the
-		/// number of segments created.
+		/// number of segments created, and of spans skipped because an end landed where an opening
+		/// would lose its clearance.
 		/// Precondition: callers must nav-validate the chain first (the dev verb does
 		/// via wallChainGroundRefusal); this bypasses the on-mesh check.
-		int devCommitWalls(
+		struct DevWallCommit {
+			int committed = 0;
+			int skippedOnOpening = 0;
+		};
+		DevWallCommit devCommitWalls(
 			const std::vector<Foundation::Vec2>& pts,
 			const std::string&					 material,
 			const std::string&					 thicknessPreset,

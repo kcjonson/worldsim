@@ -95,17 +95,20 @@ namespace world_sim {
 		const auto verb = [&](const char* name, auto run, std::size_t leastPoints = 0) {
 			registrations.push_back(server.route(name, [this, run, leastPoints](const app::DevRequest& cmd) {
 				std::string refusal = pointCountRefusal(cmd.name, leastPoints, parsePointList(param(cmd, "pts")).size());
+				std::string okFields;
 				if (!refusal.empty()) {
 					LOG_WARNING(Game, "[DevAPI] %s", refusal.c_str());
 				} else if constexpr (std::is_same_v<std::invoke_result_t<decltype(run), DevCommandHandler*, const app::DevRequest&>, DevRefusal>) {
-					refusal = (this->*run)(cmd).message;
+					DevRefusal outcome = (this->*run)(cmd);
+					refusal = std::move(outcome.message);
+					okFields = std::move(outcome.okFields);
 				} else {
 					(this->*run)(cmd);
 				}
 				if (!refusal.empty()) {
 					return app::DevResponse{.status = 400, .body = "{\"error\":\"" + jsonEscape(refusal) + "\"}"};
 				}
-				return app::DevResponse{.body = "{\"status\":\"ok\",\"verb\":\"" + jsonEscape(cmd.name) + "\"}"};
+				return app::DevResponse{.body = "{\"status\":\"ok\",\"verb\":\"" + jsonEscape(cmd.name) + "\"" + okFields + "}"};
 			}));
 		};
 		verb("freebuild", &DevCommandHandler::devFreeBuild);
@@ -1002,21 +1005,26 @@ namespace world_sim {
 			return refusal;
 		}
 
-		const int n = m_ctx.drawing->devCommitWalls(pts, material, thickness, host, built);
+		const DrawingSystem::DevWallCommit outcome = m_ctx.drawing->devCommitWalls(pts, material, thickness, host, built);
+		const int						   n = outcome.committed;
 		LOG_INFO(
 			Game,
-			"[DevAPI] walls: committed %d segment(s) (%s/%s, built=%d, host=%llu)",
+			"[DevAPI] walls: committed %d segment(s), skipped %d on an opening (%s/%s, built=%d, host=%llu)",
 			n,
+			outcome.skippedOnOpening,
 			material.c_str(),
 			thickness.c_str(),
 			built ? 1 : 0,
 			static_cast<unsigned long long>(host)
 		);
 		if (n == 0) {
-			return refuse("walls: no wall segment was committed (every span was rejected, for example one that duplicates an existing wall or ends on a door or window)");
+			return refuse(
+				"walls: no wall segment was committed (every span was rejected, for example one that duplicates an existing wall; " +
+				std::to_string(outcome.skippedOnOpening) + " ended on a door or window)"
+			);
 		}
 		m_ctx.ui->pushNotification("Dev", std::to_string(n) + (built ? " built wall(s)" : " wall blueprint(s)"), ui::ToastSeverity::Info);
-		return {};
+		return {.okFields = ",\"committed\":" + std::to_string(n) + ",\"skippedOnOpening\":" + std::to_string(outcome.skippedOnOpening)};
 	}
 
 	DevRefusal DevCommandHandler::devOpening(const app::DevRequest& cmd) {

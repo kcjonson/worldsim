@@ -75,7 +75,9 @@ Every point below is a world point (x, y in meters) on the dry ground east of th
 39. Pick Build, then Window, and click the wall 3 m along from the door: a second opening, `Window` (note its `entity`, WINDOW_ENTITY), `Blueprint` on the same wall. `/api/ui/lint` reads `"count":0`.
 40. Press Esc (`ev=keydown,escape`, then read `tool`; if it still reads `opening`, send Esc again): `tool` is `none`. Complete the wall (`/api/dev/complete?id=<WALL_ENTITY>`): the wall reads `Built`, both openings stay `Blueprint`, and the gaps in the wall stay.
 41. Complete the openings (`/api/dev/complete?id=<DOOR_ENTITY>`, then `<WINDOW_ENTITY>`): both read `Built`, and the door and window draw in their gaps.
-42. Pick Build, then Wall, click a point on the foundation 4 m south of the wall (x equal to the door's `x`), and move the pointer to the door's centre on the wall: `status.hint` is "an opening is in the way" and the preview is red. Click: no segment is added and a toast reads "Invalid point: an opening is in the way". Move 1 m along the wall: the preview is valid, and a click places it.
+42. Pick Build, then Wall and move the pointer twice (the first move only wakes it, as in step 37) to (DOOR_X, 14), 4 m south of the wall on the same foundation, where DOOR_X is the door's `x` in `?what=construction`. Click: `status.pointCount` is 1. Move to the door's centre (DOOR_X, 10): `verdict.valid` is false and `status.message` reads "an opening is in the way". Click: `status.pointCount` stays 1, no wall is added, and a toast reads "Invalid point: an opening is in the way".
+43. Move the pointer 3 m along the wall to (DOOR_X + 3, 10): `verdict.valid` is true. Click, then press Enter: `?what=construction` lists the new wall from (DOOR_X, 14) to there, the host wall in two pieces, and the door on the first piece at the same `x`. Press Esc until `tool` is `none`.
+44. Pick Build, then Wall and move the pointer twice to the door's centre (DOOR_X, 10): `status.message` reads "an opening is in the way". Click: `status.pointCount` stays 0 and the same toast shows. Press Esc until `tool` is `none`.
 
 ---
 
