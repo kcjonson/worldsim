@@ -405,11 +405,12 @@ private:
 	[[nodiscard]] assets::EntryHandle<assets::ActionEntry> memberFor(const assets::ActionEntry& group, const ChainTarget& target) const;
 	/// `<take>`: from a packaged thing, a box, a harvestable, or a loose pile. AlreadyHeld when the chain's goods beyond
 	/// what it was handed and has taken are carried already.
-	DoStart buildTake(const ChainActor& actor, const assets::DoStep& step, const ChainTarget& target, Action& started, ChainLift& alreadyHeld);
-	bool	buildPut(const ChainActor& actor, const assets::DoStep& step, const ChainTarget& target, Action& started);
-	bool	buildWork(const ChainActor& actor, const ChainTarget& target, Action& started);
-	bool	buildCraft(const ChainTarget& target, Action& started);
-	bool	buildInstall(const ChainActor& actor, const ChainTarget& target, Action& started);
+	DoStart
+		 buildTake(const ChainActor& actor, const assets::DoStep& step, const ChainTarget& target, Action& started, ChainLift& alreadyHeld);
+	bool buildPut(const ChainActor& actor, const assets::DoStep& step, const ChainTarget& target, Action& started);
+	bool buildWork(const ChainActor& actor, const ChainTarget& target, Action& started);
+	bool buildCraft(const ChainTarget& target, Action& started);
+	bool buildInstall(const ChainActor& actor, const ChainTarget& target, Action& started);
 
 	/// Units of `item` the creature carries toward the chain's root: all it holds of anything but food, of food only
 	/// what its claims carry; all it holds when the chain has no root.

@@ -52,12 +52,11 @@ namespace ecs {
 			if (!on.has_value()) {
 				continue;
 			}
-			const bool matches =
-				(on->kind == assets::ActionTarget::Kind::Packaged && packaged != nullptr) ||
-				(on->kind == assets::ActionTarget::Kind::LooseItem && pile) ||
-				(on->kind == assets::ActionTarget::Kind::Capability && packaged == nullptr &&
-				 (target.kind == ChainTarget::Kind::Box ? on->capability == assets::CapabilityType::Storage
-														: registry.hasCapability(target.defNameId, on->capability)));
+			const bool matches = (on->kind == assets::ActionTarget::Kind::Packaged && packaged != nullptr) ||
+								 (on->kind == assets::ActionTarget::Kind::LooseItem && pile) ||
+								 (on->kind == assets::ActionTarget::Kind::Capability && packaged == nullptr &&
+								  (target.kind == ChainTarget::Kind::Box ? on->capability == assets::CapabilityType::Storage
+																		 : registry.hasCapability(target.defNameId, on->capability)));
 			if (matches) {
 				return member.handle;
 			}
@@ -83,7 +82,8 @@ namespace ecs {
 			handle = memberFor(named, target);
 			if (!handle.valid()) {
 				// A remembered thing no member acts on is no longer what it was when the chain set out for it.
-				if (const KnownWorldEntity* known = target.kind == ChainTarget::Kind::Thing ? actor.memory.getWorldEntity(target.key) : nullptr) {
+				if (const KnownWorldEntity* known =
+						target.kind == ChainTarget::Kind::Thing ? actor.memory.getWorldEntity(target.key) : nullptr) {
 					actor.memory.forgetWorldEntity(known->position, known->defNameId);
 				}
 				LOG_DEBUG(Engine, "[Chain] No member of action group %s acts on its target", named.id.c_str());
@@ -130,7 +130,7 @@ namespace ecs {
 			const bool thing = target.kind == ChainTarget::Kind::Thing || target.kind == ChainTarget::Kind::Entity;
 			started.context.sleepQuality = !thing ? actionEntries.groundSleepQuality
 										   : registry.hasCapability(target.defNameId, assets::CapabilityType::Sleepable) ? 1.0F
-																														: 0.0F;
+																														 : 0.0F;
 		}
 		if (onTarget) {
 			if (target.entity == kInvalidEntity || world->getComponent<NeedsComponent>(target.entity) == nullptr) {
@@ -166,8 +166,13 @@ namespace ecs {
 		return DoStart::Started;
 	}
 
-	ActionSystem::DoStart
-	ActionSystem::buildTake(const ChainActor& actor, const assets::DoStep& step, const ChainTarget& target, Action& started, ChainLift& alreadyHeld) {
+	ActionSystem::DoStart ActionSystem::buildTake(
+		const ChainActor&	  actor,
+		const assets::DoStep& step,
+		const ChainTarget&	  target,
+		Action&				  started,
+		ChainLift&			  alreadyHeld
+	) {
 		auto&				 registry = assets::AssetRegistry::Get();
 		Task&				 task = actor.task;
 		const ChainProgress& progress = task.chain;
@@ -257,10 +262,10 @@ namespace ecs {
 			collection.regrowthTime = harvestable.regrowthTime;
 			// What he can't carry drops where he stands to work the source, or for a site clear just outside its footprint.
 			collection.dropAt = actor.position.value;
-			const bool clears = std::ranges::any_of(started.values->effects, [](const EffectRow& row) {
-				const auto* take = std::get_if<TakeRow>(&row);
-				return take != nullptr && take->clears;
-			});
+			const bool		clears = std::ranges::any_of(started.values->effects, [](const EffectRow& row) {
+				 const auto* take = std::get_if<TakeRow>(&row);
+				 return take != nullptr && take->clears;
+			 });
 			const GoalTask* goal = clears ? GoalTaskRegistry::Get().getGoal(progress.goal.rootGoalId) : nullptr;
 			if (goal != nullptr && goal->clearFootprint.has_value()) {
 				collection.dropAt = goal->clearFootprint->nearestOutside(known->position, kClearDropMargin);
@@ -283,7 +288,7 @@ namespace ecs {
 
 	bool ActionSystem::buildPut(const ChainActor& actor, const assets::DoStep& step, const ChainTarget& target, Action& started) {
 		const ChainProgress& progress = actor.task.chain;
-		const uint32_t		 item = progress.takenItem != 0 ? progress.takenItem : progress.goal.item != 0 ? progress.goal.item : target.item;
+		const uint32_t item = progress.takenItem != 0 ? progress.takenItem : progress.goal.item != 0 ? progress.goal.item : target.item;
 		if (item == 0 || target.entity == kInvalidEntity || world->hasComponent<Packaged>(target.entity)) {
 			LOG_DEBUG(Engine, "[Chain] Its put has nothing to put, or nowhere to put it");
 			return false;
@@ -325,7 +330,8 @@ namespace ecs {
 	bool ActionSystem::buildCraft(const ChainTarget& target, Action& started) {
 		const auto*				  queue = target.entity != kInvalidEntity ? world->getComponent<WorkQueue>(target.entity) : nullptr;
 		const CraftingJob*		  job = queue != nullptr ? queue->getNextJob() : nullptr;
-		std::optional<CraftReady> ready = job != nullptr ? craftReady(job->recipeDefName, static_cast<uint64_t>(target.entity)) : std::nullopt;
+		std::optional<CraftReady> ready =
+			job != nullptr ? craftReady(job->recipeDefName, static_cast<uint64_t>(target.entity)) : std::nullopt;
 		if (!ready) {
 			LOG_DEBUG(Engine, "[Chain] Its craft's station has no job it can make now");
 			return false;
@@ -337,7 +343,9 @@ namespace ecs {
 
 	bool ActionSystem::buildInstall(const ChainActor& actor, const ChainTarget& target, Action& started) {
 		// The packaged thing it carries, else the option's target when that is a packaged thing, else the step's own.
-		const auto packagedAt = [this](EntityID entity) { return entity != kInvalidEntity && world->hasComponent<Packaged>(entity); };
+		const auto packagedAt = [this](EntityID entity) {
+			return entity != kInvalidEntity && world->hasComponent<Packaged>(entity);
+		};
 		const EntityID optionTarget = actor.task.chain.target.entity;
 		EntityID	   placing = kInvalidEntity;
 		if (actor.inventory.carryingPackagedEntity) {

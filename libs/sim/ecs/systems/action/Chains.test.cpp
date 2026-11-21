@@ -12,6 +12,7 @@
 #include "../TimeSystem.h"
 
 #include "../../ChainEntries.h"
+#include "../../GoalTaskRegistry.h"
 #include "../../InventoryMass.h"
 #include "../../ShippedConfig.test.h"
 #include "../../SyntheticEntries.test.h"
@@ -26,16 +27,15 @@
 #include "../../components/Movement.h"
 #include "../../components/NavPath.h"
 #include "../../components/Needs.h"
-#include "../../GoalTaskRegistry.h"
 #include "../../components/Packaged.h"
 #include "../../components/ResourceStack.h"
-#include "../ChainClaims.h"
 #include "../../components/SourceReachMemo.h"
 #include "../../components/StructureBlueprint.h"
 #include "../../components/Task.h"
 #include "../../components/Thoughts.h"
 #include "../../components/Transform.h"
 #include "../../components/WorkQueue.h"
+#include "../ChainClaims.h"
 
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
@@ -229,7 +229,12 @@ namespace ecs::test {
 				assets::AssetDefinition stickBush;
 				stickBush.defName = "StickBush";
 				stickBush.capabilities.harvestable = assets::HarvestableCapability{
-					.yieldDefName = "Stick", .amountMin = 5, .amountMax = 5, .durability = 10.0F, .destructive = false, .regrowthTime = 60.0F
+					.yieldDefName = "Stick",
+					.amountMin = 5,
+					.amountMax = 5,
+					.durability = 10.0F,
+					.destructive = false,
+					.regrowthTime = 60.0F
 				};
 				registry.registerTestDefinition(std::move(stickBush));
 				assets::AssetDefinition ironTree;
@@ -248,8 +253,9 @@ namespace ecs::test {
 				}
 				assets::AssetDefinition tree;
 				tree.defName = "Tree";
-				tree.capabilities.harvestable =
-					assets::HarvestableCapability{.yieldDefName = "Log", .amountMin = 3, .amountMax = 3, .durability = 10.0F, .destructive = true};
+				tree.capabilities.harvestable = assets::HarvestableCapability{
+					.yieldDefName = "Log", .amountMin = 3, .amountMax = 3, .durability = 10.0F, .destructive = true
+				};
 				registry.registerTestDefinition(std::move(tree));
 				assets::AssetDefinition bed;
 				bed.defName = "Bed";
@@ -318,7 +324,14 @@ namespace ecs::test {
 
 			/// A loose pile of `quantity` units of `defName` at `at`: a real pile entity filed with the pile index, which the
 			/// colonist remembers. Its target carries the source share the query would size.
-			ChainTarget pileAt(EntityID colonist, glm::vec2 at, const std::string& defName, uint32_t quantity, uint32_t share, EntityID* pile = nullptr) {
+			ChainTarget pileAt(
+				EntityID		   colonist,
+				glm::vec2		   at,
+				const std::string& defName,
+				uint32_t		   quantity,
+				uint32_t		   share,
+				EntityID*		   pile = nullptr
+			) {
 				const EntityID entity = world->createEntity();
 				world->addComponent<Position>(entity, Position{at});
 				world->addComponent<Appearance>(entity, Appearance{defName});
@@ -649,8 +662,8 @@ namespace ecs::test {
 		ASSERT_TRUE(startChainAt(colonist, "wander", 0, {}));
 		const glm::vec2 first = task(colonist).targetPosition;
 		// A second world seeded alike, its runner wired to the same library.
-		World		   other;
-		ActionSystem&  otherActions = other.registerSystem<ActionSystem>(actionEntries, 42U);
+		World		  other;
+		ActionSystem& otherActions = other.registerSystem<ActionSystem>(actionEntries, 42U);
 		otherActions.setChains({.library = &library, .chains = &chainEntries, .evaluator = evaluator.get()});
 		const EntityID again = other.createEntity();
 		other.addComponent<Position>(again, Position{{0.0F, 0.0F}});
@@ -849,13 +862,19 @@ namespace ecs::test {
 		EXPECT_NE(all.find("<chain id=\\\"half\\\"> step 2 <do> names inbound without in_flight"), std::string::npos) << all;
 		EXPECT_NE(all.find("<chain id=\\\"musing\\\"> step 1 <think> thought \\\"pondered\\\" is no thought type"), std::string::npos)
 			<< all;
-		EXPECT_NE(all.find("<chain id=\\\"empty_drop\\\"> step 2 <drop> sets down what the chain took, and no step before it takes"), std::string::npos)
-			<< all;
+		EXPECT_NE(
+			all.find("<chain id=\\\"empty_drop\\\"> step 2 <drop> sets down what the chain took, and no step before it takes"),
+			std::string::npos
+		) << all;
 		EXPECT_NE(all.find("<chain id=\\\"claimed_take\\\"> step 2 <do> claims inbound or in_flight on a take"), std::string::npos) << all;
-		EXPECT_NE(all.find("<chain id=\\\"nowhere\\\"> step 1 <do> performs \\\"deposit\\\", which acts on a target, with no `on`"), std::string::npos)
-			<< all;
-		EXPECT_NE(all.find("<chain id=\\\"wrong_kind\\\"> step 2 <do> performs \\\"harvest\\\" on what query \\\"test/piles_only\\\" picks"), std::string::npos)
-			<< all;
+		EXPECT_NE(
+			all.find("<chain id=\\\"nowhere\\\"> step 1 <do> performs \\\"deposit\\\", which acts on a target, with no `on`"),
+			std::string::npos
+		) << all;
+		EXPECT_NE(
+			all.find("<chain id=\\\"wrong_kind\\\"> step 2 <do> performs \\\"harvest\\\" on what query \\\"test/piles_only\\\" picks"),
+			std::string::npos
+		) << all;
 		EXPECT_NE(all.find("<chain id=\\\"held_walk\\\"> step 1 <go> ends on held_gone"), std::string::npos) << all;
 	}
 
@@ -1012,7 +1031,10 @@ namespace ecs::test {
 		}
 		ASSERT_TRUE(runUntil([&] { return !running(colonist, "deliver"); }));
 		EXPECT_EQ(world->getComponent<StructureBlueprint>(root.site)->remaining("Berry"), 0U) << "recorded on the site's manifest";
-		EXPECT_FALSE(world->isAlive(heap) && world->getComponent<ResourceStack>(heap) != nullptr && world->getComponent<ResourceStack>(heap)->quantity > 0);
+		EXPECT_FALSE(
+			world->isAlive(heap) && world->getComponent<ResourceStack>(heap) != nullptr &&
+			world->getComponent<ResourceStack>(heap)->quantity > 0
+		);
 		EXPECT_EQ(inventory(colonist).getQuantity("Berry"), 0U);
 		EXPECT_TRUE(task(colonist).claims.empty());
 		world->update(kTick);
@@ -1078,7 +1100,11 @@ namespace ecs::test {
 		// A put into the station's store is metered to the job's need.
 		inventory(colonist).addItem("Berry", 5);
 		ASSERT_TRUE(startChainAt(
-			colonist, "deliver_for_goal", 0, {}, {.destination = entityTarget(station, {1.0F, 0.0F}), .goal = {.item = id("Berry"), .quantity = 5}}
+			colonist,
+			"deliver_for_goal",
+			0,
+			{},
+			{.destination = entityTarget(station, {1.0F, 0.0F}), .goal = {.item = id("Berry"), .quantity = 5}}
 		));
 		ASSERT_TRUE(runUntil([&] { return !running(colonist, "deliver_for_goal"); }));
 		EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Berry"), 2U);
@@ -1142,8 +1168,13 @@ namespace ecs::test {
 		inventory(colonist).addItem("Stick", 2); // the cargo handed to it
 		const ChainTarget pile = pileAt(colonist, {2.0F, 0.0F}, "Stick", 4, 3);
 		ASSERT_TRUE(startChainAt(
-			colonist, "deliver", 0, {},
-			{.source = pile, .destination = entityTarget(root.site, {8.0F, 0.0F}), .goal = {.rootGoalId = root.goal, .item = id("Stick"), .quantity = 3, .cargo = 2}}
+			colonist,
+			"deliver",
+			0,
+			{},
+			{.source = pile,
+			 .destination = entityTarget(root.site, {8.0F, 0.0F}),
+			 .goal = {.rootGoalId = root.goal, .item = id("Stick"), .quantity = 3, .cargo = 2}}
 		));
 		EXPECT_EQ(claimed(task(colonist), ClaimKind::SourceQuantity), 3U);
 		EXPECT_EQ(claimed(task(colonist), ClaimKind::Inbound), 5U);
@@ -1151,13 +1182,18 @@ namespace ecs::test {
 	}
 
 	TEST_F(ChainsTest, ACutClaimsItsCargoInboundAndTheCargoWithItsExpectedYieldInFlight) {
-		const EntityID colonist = createColonist();
-		const Root	   root = buildRoot("Stick", 10, {8.0F, 0.0F});
+		const EntityID	  colonist = createColonist();
+		const Root		  root = buildRoot("Stick", 10, {8.0F, 0.0F});
 		const ChainTarget bush = remember(colonist, {2.0F, 0.0F}, "StickBush", assets::CapabilityType::Harvestable);
 		inventory(colonist).addItem("Stick", 1);
 		ASSERT_TRUE(startChainAt(
-			colonist, "cut_and_deliver", 0, {},
-			{.source = bush, .destination = entityTarget(root.site, {8.0F, 0.0F}), .goal = {.rootGoalId = root.goal, .item = id("Stick"), .cargo = 1, .expectedYield = 3}}
+			colonist,
+			"cut_and_deliver",
+			0,
+			{},
+			{.source = bush,
+			 .destination = entityTarget(root.site, {8.0F, 0.0F}),
+			 .goal = {.rootGoalId = root.goal, .item = id("Stick"), .cargo = 1, .expectedYield = 3}}
 		));
 		EXPECT_EQ(claimed(task(colonist), ClaimKind::Use), 1U);
 		EXPECT_EQ(claimed(task(colonist), ClaimKind::Inbound), 1U);
@@ -1166,8 +1202,13 @@ namespace ecs::test {
 		// With nothing handed over, its uncut goods are no cargo: a route that fails at once leaves nothing it carries.
 		inventory(colonist).removeItem("Stick", 1);
 		ASSERT_TRUE(startChainAt(
-			colonist, "cut_and_deliver", 0, {},
-			{.source = bush, .destination = entityTarget(root.site, {8.0F, 0.0F}), .goal = {.rootGoalId = root.goal, .item = id("Stick"), .expectedYield = 3}}
+			colonist,
+			"cut_and_deliver",
+			0,
+			{},
+			{.source = bush,
+			 .destination = entityTarget(root.site, {8.0F, 0.0F}),
+			 .goal = {.rootGoalId = root.goal, .item = id("Stick"), .expectedYield = 3}}
 		));
 		EXPECT_EQ(claimed(task(colonist), ClaimKind::Inbound), 0U);
 		EXPECT_EQ(cargoOnClaims(task(colonist).claims, root.goal, id("Stick")), 0U);
@@ -1179,8 +1220,13 @@ namespace ecs::test {
 		ecs::addArmful(inventory(colonist), assets::AssetRegistry::Get(), "Boulder", 1);
 		const ChainTarget tree = remember(colonist, {1.0F, 0.0F}, "Tree", assets::CapabilityType::Harvestable);
 		ASSERT_TRUE(startChainAt(
-			colonist, "cut_and_deliver", 0, {},
-			{.source = tree, .destination = entityTarget(root.site, {12.0F, 0.0F}), .goal = {.rootGoalId = root.goal, .item = id("Log"), .expectedYield = 3}}
+			colonist,
+			"cut_and_deliver",
+			0,
+			{},
+			{.source = tree,
+			 .destination = entityTarget(root.site, {12.0F, 0.0F}),
+			 .goal = {.rootGoalId = root.goal, .item = id("Log"), .expectedYield = 3}}
 		));
 		ASSERT_TRUE(runUntil([&] { return !running(colonist, "cut_and_deliver"); }));
 		EXPECT_EQ(finishedCount("harvest"), 1U) << "the tree fell";
@@ -1194,20 +1240,30 @@ namespace ecs::test {
 		inventory(colonist).addItem("Stick", 5);
 		const ChainTarget pile = pileAt(colonist, {-3.0F, 0.0F}, "Stick", 4, 4);
 		ASSERT_TRUE(startChainAt(
-			colonist, "haul_from_pile", 0, {},
-			{.source = pile, .destination = entityTarget(root.site, {6.0F, 0.0F}), .goal = {.rootGoalId = root.goal, .item = id("Stick"), .quantity = 5}}
+			colonist,
+			"haul_from_pile",
+			0,
+			{},
+			{.source = pile,
+			 .destination = entityTarget(root.site, {6.0F, 0.0F}),
+			 .goal = {.rootGoalId = root.goal, .item = id("Stick"), .quantity = 5}}
 		));
 		EXPECT_EQ(task(colonist).chain.depth, 1) << "five held for a goal of five: no fetch";
 		EXPECT_GT(task(colonist).targetPosition.x, 0.0F) << "on its way to the site";
 	}
 
 	TEST_F(ChainsTest, ACutsClaimsAreRewrittenToWhatItLiftedCappedAtTheRootsNeed) {
-		const EntityID colonist = createColonist();
-		const Root	   root = buildRoot("Stick", 6, {12.0F, 0.0F});
+		const EntityID	  colonist = createColonist();
+		const Root		  root = buildRoot("Stick", 6, {12.0F, 0.0F});
 		const ChainTarget bush = remember(colonist, {1.0F, 0.0F}, "StickBush", assets::CapabilityType::Harvestable);
 		ASSERT_TRUE(startChainAt(
-			colonist, "cut_and_deliver", 0, {},
-			{.source = bush, .destination = entityTarget(root.site, {12.0F, 0.0F}), .goal = {.rootGoalId = root.goal, .item = id("Stick"), .expectedYield = 3}}
+			colonist,
+			"cut_and_deliver",
+			0,
+			{},
+			{.source = bush,
+			 .destination = entityTarget(root.site, {12.0F, 0.0F}),
+			 .goal = {.rootGoalId = root.goal, .item = id("Stick"), .expectedYield = 3}}
 		));
 		ASSERT_TRUE(runUntil([&] { return finishedCount("harvest") == 1; }));
 		EXPECT_EQ(claimed(task(colonist), ClaimKind::InFlight), 5U) << "planned 3, the cut gave 5, the root needs 6";
@@ -1215,7 +1271,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(ChainsTest, TwoCreaturesRequeryingInOneUpdateNeverBothTakeOneThing) {
-		const uint8_t idle = assets::PriorityConfig::Get().decisionRungs().idle;
+		const uint8_t  idle = assets::PriorityConfig::Get().decisionRungs().idle;
 		const EntityID first = createColonist({0.0F, 0.0F});
 		const EntityID second = createColonist({0.0F, 1.0F});
 		ChainTarget	   gone;
@@ -1246,12 +1302,20 @@ namespace ecs::test {
 		world->addComponent<Inventory>(box, Inventory::createForStorage());
 		inventory(colonist).addItem("Stick", 7);
 		ASSERT_TRUE(startChainAt(
-			colonist, "deliver_carried", 0, {}, {.destination = entityTarget(box, {1.0F, 0.0F}), .goal = {.rootGoalId = 77, .item = id("Stick"), .quantity = 3}}
+			colonist,
+			"deliver_carried",
+			0,
+			{},
+			{.destination = entityTarget(box, {1.0F, 0.0F}), .goal = {.rootGoalId = 77, .item = id("Stick"), .quantity = 3}}
 		));
 		ASSERT_TRUE(runUntil([&] { return !running(colonist, "deliver_carried"); }));
 		EXPECT_EQ(world->getComponent<Inventory>(box)->getQuantity("Stick"), 3U) << "the inbound it held, not all seven";
 		ASSERT_TRUE(startChainAt(
-			colonist, "deliver_for_goal", 0, {}, {.destination = entityTarget(box, {1.0F, 0.0F}), .goal = {.item = id("Stick"), .quantity = 2}}
+			colonist,
+			"deliver_for_goal",
+			0,
+			{},
+			{.destination = entityTarget(box, {1.0F, 0.0F}), .goal = {.item = id("Stick"), .quantity = 2}}
 		));
 		ASSERT_TRUE(runUntil([&] { return !running(colonist, "deliver_for_goal"); }));
 		EXPECT_EQ(world->getComponent<Inventory>(box)->getQuantity("Stick"), 5U) << "the goal's two";
@@ -1259,11 +1323,13 @@ namespace ecs::test {
 	}
 
 	TEST_F(ChainsTest, ATakeOfGoodsAlreadyCarriedCountsWhatTheChainTookOnceAndAsksNothingOfItsSource) {
-		const EntityID colonist = createColonist();
-		const Root	   root = buildRoot("Stick", 10, {12.0F, 0.0F});
+		const EntityID	  colonist = createColonist();
+		const Root		  root = buildRoot("Stick", 10, {12.0F, 0.0F});
 		const ChainTarget first = pileAt(colonist, {1.0F, 0.0F}, "Stick", 2, 2);
 		const ChainTarget second = pileAt(colonist, {-1.0F, 0.0F}, "Stick", 2, 2);
-		ASSERT_TRUE(startChainAt(colonist, "take_twice", 0, first, {.source = second, .goal = {.rootGoalId = root.goal, .item = id("Stick"), .quantity = 2}}));
+		ASSERT_TRUE(startChainAt(
+			colonist, "take_twice", 0, first, {.source = second, .goal = {.rootGoalId = root.goal, .item = id("Stick"), .quantity = 2}}
+		));
 		ASSERT_TRUE(runUntil([&] { return !running(colonist, "take_twice"); }));
 		EXPECT_EQ(finishedCount("pickup"), 2U) << "the second take lifts its own two";
 		EXPECT_EQ(inventory(colonist).getQuantity("Stick"), 4U);
@@ -1272,7 +1338,9 @@ namespace ecs::test {
 		ChainTarget stale = second;
 		stale.key = hashWorldEntity({30.0F, 30.0F}, id("Stick"));
 		stale.position = stale.goal = position(colonist);
-		ASSERT_TRUE(startChainAt(colonist, "take_target", 0, stale, {.goal = {.rootGoalId = root.goal, .item = id("Stick"), .quantity = 2}}));
+		ASSERT_TRUE(
+			startChainAt(colonist, "take_target", 0, stale, {.goal = {.rootGoalId = root.goal, .item = id("Stick"), .quantity = 2}})
+		);
 		world->update(kTick);
 		EXPECT_FALSE(running(colonist, "take_target"));
 		EXPECT_FALSE(task(colonist).decideAtInterval) << "it finished; nothing refused";

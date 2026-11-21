@@ -122,12 +122,15 @@ namespace world_sim {
 			if (const auto* action = world.getComponent<ecs::Action>(colonistId)) {
 				if (action->isActive()) {
 					const int progress = static_cast<int>(action->progress() * 100.0F);
-					lines.push_back(
-						status("current_action", std::format(
-								"{} ({}%)", action->type == ecs::ActionType::Chain ? ecs::kRunningChainLabel : ecs::actionTypeName(action->type),
-								progress
-							), LineStatus::Pending)
-					);
+					lines.push_back(status(
+						"current_action",
+						std::format(
+							"{} ({}%)",
+							action->type == ecs::ActionType::Chain ? ecs::kRunningChainLabel : ecs::actionTypeName(action->type),
+							progress
+						),
+						LineStatus::Pending
+					));
 				} else {
 					lines.push_back(status("current_action", "Idle", LineStatus::Idle));
 				}

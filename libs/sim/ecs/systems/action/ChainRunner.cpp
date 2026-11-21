@@ -133,13 +133,21 @@ namespace ecs {
 		if (chainWiring.library == nullptr || chainWiring.chains == nullptr || chainWiring.evaluator == nullptr || !start.chain.valid() ||
 			start.chain.index >= chainWiring.library->chains.size()) {
 			LOG_ERROR(
-				Engine, "[Chain] Entity %llu: the chain runner is not wired, or the chain named is none of its library's; nothing started",
+				Engine,
+				"[Chain] Entity %llu: the chain runner is not wired, or the chain named is none of its library's; nothing started",
 				static_cast<unsigned long long>(entity)
 			);
 			return false;
 		}
-		const ChainActor actor{.entity = entity, .position = *position, .task = *task, .action = *action, .needs = *needs, .memory = *memory,
-							   .inventory = *inventory};
+		const ChainActor actor{
+			.entity = entity,
+			.position = *position,
+			.task = *task,
+			.action = *action,
+			.needs = *needs,
+			.memory = *memory,
+			.inventory = *inventory
+		};
 		const assets::ChainEntry& chain = chainWiring.library->chains[start.chain.index];
 
 		// The action in progress goes with the task it served, and a route still out was asked for that task.
@@ -197,7 +205,9 @@ namespace ecs {
 	void ActionSystem::endChain(const ChainActor& actor, const char* why) {
 		const ChainProgress& progress = actor.task.chain;
 		LOG_DEBUG(
-			Engine, "[Chain] Entity %llu: %s ends (%s)", static_cast<unsigned long long>(actor.entity),
+			Engine,
+			"[Chain] Entity %llu: %s ends (%s)",
+			static_cast<unsigned long long>(actor.entity),
 			progress.active() && chainWiring.library != nullptr && progress.frames[0].chain.index < chainWiring.library->chains.size()
 				? chainWiring.library->chains[progress.frames[0].chain.index].id.c_str()
 				: "a chain",
@@ -231,7 +241,9 @@ namespace ecs {
 		for (;;) {
 			ChainFrame& frame = progress.frame();
 			if (frame.chain.index >= chainWiring.library->chains.size()) {
-				LOG_ERROR(Engine, "[Chain] Entity %llu runs a chain its library does not hold", static_cast<unsigned long long>(actor.entity));
+				LOG_ERROR(
+					Engine, "[Chain] Entity %llu runs a chain its library does not hold", static_cast<unsigned long long>(actor.entity)
+				);
 				endChain(actor, "its chain is none of the library's");
 				return false;
 			}
@@ -279,19 +291,19 @@ namespace ecs {
 					navPath->valid = false;
 				}
 				const ChainTarget& target = doTarget(task, *doStep);
-				const auto*		   live =
-					target.entity != kInvalidEntity && world->isAlive(target.entity) ? world->getComponent<Position>(target.entity) : nullptr;
+				const auto*		   live = target.entity != kInvalidEntity && world->isAlive(target.entity)
+											  ? world->getComponent<Position>(target.entity)
+											  : nullptr;
 				progress.targetAtStepStart = live != nullptr ? live->value : target.position;
 				progress.heldItem = 0;
 				progress.heldAtStart = 0;
 				if (names(step.ends, assets::EndEvent::HeldGone)) {
 					// The goods it holds for the step: the food it would eat for an action that consumes, else the chain's.
 					const ActionValues& values = actionEntries.of(doStep->action.handle);
-					const bool			consumes = std::ranges::any_of(values.effects, [](const EffectRow& row) {
-						 return std::holds_alternative<ConsumeRow>(row);
-					 });
-					const std::string*	food = consumes ? heldEdibleUnit(actor.inventory) : nullptr;
-					progress.heldItem = food != nullptr ? assets::AssetRegistry::Get().getDefNameId(*food)
+					const bool			consumes =
+						std::ranges::any_of(values.effects, [](const EffectRow& row) { return std::holds_alternative<ConsumeRow>(row); });
+					const std::string* food = consumes ? heldEdibleUnit(actor.inventory) : nullptr;
+					progress.heldItem = food != nullptr			  ? assets::AssetRegistry::Get().getDefNameId(*food)
 										: progress.takenItem != 0 ? progress.takenItem
 																  : progress.goal.item;
 					progress.heldAtStart = heldUnits(actor, progress.heldItem);
@@ -339,15 +351,22 @@ namespace ecs {
 		Action& action = actor.action;
 		if (chainWiring.library == nullptr || chainWiring.chains == nullptr || chainWiring.evaluator == nullptr) {
 			if (!reportedUnwiredChains) {
-				LOG_ERROR(Engine, "[Chain] Entity %llu runs a chain, but the chain runner is not wired; its task ends",
-						  static_cast<unsigned long long>(actor.entity));
+				LOG_ERROR(
+					Engine,
+					"[Chain] Entity %llu runs a chain, but the chain runner is not wired; its task ends",
+					static_cast<unsigned long long>(actor.entity)
+				);
 				reportedUnwiredChains = true;
 			}
 			endChain(actor, "the chain runner is not wired");
 			return;
 		}
 		if (!task.chain.active() || task.chain.frame().chain.index >= chainWiring.library->chains.size()) {
-			LOG_ERROR(Engine, "[Chain] Entity %llu has a Chain task with no chain of the library to run", static_cast<unsigned long long>(actor.entity));
+			LOG_ERROR(
+				Engine,
+				"[Chain] Entity %llu has a Chain task with no chain of the library to run",
+				static_cast<unsigned long long>(actor.entity)
+			);
 			endChain(actor, "it has no chain of the library to run");
 			return;
 		}
@@ -436,7 +455,13 @@ namespace ecs {
 		if (action.state == ActionState::Starting) {
 			action.startPosition = actor.position.value;
 		}
-		const Actor rows{.entity = actor.entity, .position = actor.position.value, .needs = actor.needs, .inventory = actor.inventory, .memory = actor.memory};
+		const Actor rows{
+			.entity = actor.entity,
+			.position = actor.position.value,
+			.needs = actor.needs,
+			.inventory = actor.inventory,
+			.memory = actor.memory
+		};
 		advanceAction(deltaTime, rows, action);
 		if (action.hasCraftingEffect() && action.isActive()) {
 			if (auto* workQueue = world->getComponent<WorkQueue>(static_cast<EntityID>(action.craftingEffect().stationEntityId))) {
@@ -451,9 +476,11 @@ namespace ecs {
 		const uint32_t	   heldBefore = lifting != nullptr ? ecs::availableQuantity(actor.inventory, *lifting) : 0U;
 		const bool		   took = finishAction(actor.entity, actor.position, action, actor.needs, task, actor.inventory, actor.memory);
 		const uint32_t	   heldAfter = lifting != nullptr ? ecs::availableQuantity(actor.inventory, *lifting) : 0U;
-		const ChainLift	   lifted{.item = lifting != nullptr ? assets::AssetRegistry::Get().getDefNameId(*lifting) : 0U,
-								  .quantity = heldAfter > heldBefore ? heldAfter - heldBefore : 0U};
-		const bool		   takes = lifting != nullptr;
+		const ChainLift	   lifted{
+			   .item = lifting != nullptr ? assets::AssetRegistry::Get().getDefNameId(*lifting) : 0U,
+			   .quantity = heldAfter > heldBefore ? heldAfter - heldBefore : 0U
+		   };
+		const bool takes = lifting != nullptr;
 		action.clear();
 		if (!took) {
 			endChain(actor, "its action's effect did not take");
@@ -528,9 +555,9 @@ namespace ecs {
 	}
 
 	bool ActionSystem::takeStepClaims(const ChainActor& actor, const assets::DoStep& step, const ChainTarget& target) {
-		Task&		   task = actor.task;
-		bool		   changed = false;
-		bool		   fits = true;
+		Task&	   task = actor.task;
+		bool	   changed = false;
+		bool	   fits = true;
 		const auto take = [&](const Claim& wanted) {
 			for (Claim& claim : task.claims) {
 				if (claim.kind() == wanted.kind() && claim.targetKind() == wanted.targetKind() && claim.target() == wanted.target() &&
@@ -588,7 +615,9 @@ namespace ecs {
 			take(Claim::inFlight(goal.rootGoalId, goal.item, inFlight));
 		}
 		if (!fits) {
-			LOG_ERROR(Engine, "[Chain] Entity %llu: its chain names more claims than a task holds", static_cast<unsigned long long>(actor.entity));
+			LOG_ERROR(
+				Engine, "[Chain] Entity %llu: its chain names more claims than a task holds", static_cast<unsigned long long>(actor.entity)
+			);
 			return false;
 		}
 		if (changed && chainWiring.appendClaims) {
@@ -652,8 +681,11 @@ namespace ecs {
 		static const ClaimIndex kNoClaims;
 		const auto*				ai = world->tryGetSystem<AIDecisionSystem>();
 		const uint32_t			need = rootAvailable(
-			 goals.remainingNeed(*world, goal.rootGoalId, lifted.item, harvestBasis(*root)), ai != nullptr ? ai->claimIndex() : kNoClaims,
-			 goal.rootGoalId, lifted.item, ClaimExclusion::of(task)
+			 goals.remainingNeed(*world, goal.rootGoalId, lifted.item, harvestBasis(*root)),
+			 ai != nullptr ? ai->claimIndex() : kNoClaims,
+			 goal.rootGoalId,
+			 lifted.item,
+			 ClaimExclusion::of(task)
 		 );
 		const uint32_t carried = std::min(goal.cargo + progress.takenQuantity, need + goal.cargo);
 		bool		   inFlight = false;
@@ -666,8 +698,10 @@ namespace ecs {
 			}
 		}
 		// A cut that set out with no cargo claimed no inbound; the goods it lifted are now on their way to the destination.
-		if (inFlight && !inbound && carried > 0 && progress.destination.entity != kInvalidEntity && task.claims.size() < ClaimList::kCapacity) {
-			[[maybe_unused]] const bool pushed = task.claims.push(Claim::inbound(static_cast<uint64_t>(progress.destination.entity), lifted.item, carried));
+		if (inFlight && !inbound && carried > 0 && progress.destination.entity != kInvalidEntity &&
+			task.claims.size() < ClaimList::kCapacity) {
+			[[maybe_unused]] const bool pushed =
+				task.claims.push(Claim::inbound(static_cast<uint64_t>(progress.destination.entity), lifted.item, carried));
 		}
 		task.claims.eraseIf([](const Claim& claim) { return claim.quantity() == 0; });
 		if (chainWiring.appendClaims) {
@@ -684,7 +718,8 @@ namespace ecs {
 		if (names(ends, assets::EndEvent::HeldGone) && progress.heldAtStart > 0 && heldUnits(actor, progress.heldItem) == 0) {
 			return true;
 		}
-		const auto* live = target.entity != kInvalidEntity && world->isAlive(target.entity) ? world->getComponent<Position>(target.entity) : nullptr;
+		const auto* live =
+			target.entity != kInvalidEntity && world->isAlive(target.entity) ? world->getComponent<Position>(target.entity) : nullptr;
 		if (names(ends, assets::EndEvent::TargetGone)) {
 			switch (target.kind) {
 				case ChainTarget::Kind::Thing:
@@ -709,8 +744,8 @@ namespace ecs {
 			}
 		}
 		// A creature followed by a `go` has not left; one a `do` acts on has when it is no longer where the step began.
-		return names(ends, assets::EndEvent::TargetLeft) && doStep != nullptr && target.kind == ChainTarget::Kind::Mover && live != nullptr &&
-			   glm::distance(live->value, progress.targetAtStepStart) > kSameSpotMeters;
+		return names(ends, assets::EndEvent::TargetLeft) && doStep != nullptr && target.kind == ChainTarget::Kind::Mover &&
+			   live != nullptr && glm::distance(live->value, progress.targetAtStepStart) > kSameSpotMeters;
 	}
 
 	uint32_t ActionSystem::heldUnits(const ChainActor& actor, uint32_t item) {
@@ -724,7 +759,8 @@ namespace ecs {
 			if (const auto* packaged = world->getComponent<Packaged>(packagedEntity)) {
 				const auto* at = world->getComponent<Position>(packagedEntity);
 				return actor.inventory.carryingPackagedEntity == static_cast<uint64_t>(packagedEntity) ||
-					   (packaged->targetPosition.has_value() && at != nullptr && glm::distance(at->value, *packaged->targetPosition) <= kSameSpotMeters);
+					   (packaged->targetPosition.has_value() && at != nullptr &&
+						glm::distance(at->value, *packaged->targetPosition) <= kSameSpotMeters);
 			}
 		}
 		const auto& registry = assets::AssetRegistry::Get();
@@ -742,8 +778,9 @@ namespace ecs {
 				  counted.push_back(defName);
 				  const auto* def = registry.getDefinition(defName);
 				  // Food is an item's property, not a capability of the thing.
-				  const bool has = capability == assets::CapabilityType::Edible ? def != nullptr && def->isEdible()
-																				: registry.hasCapability(registry.getDefNameId(defName), capability);
+				  const bool has = capability == assets::CapabilityType::Edible
+													   ? def != nullptr && def->isEdible()
+													   : registry.hasCapability(registry.getDefNameId(defName), capability);
 				  held += has ? ecs::availableQuantity(actor.inventory, defName) : 0U;
 			};
 			for (const ItemStack& stack : actor.inventory.items) {
@@ -769,8 +806,8 @@ namespace ecs {
 		switch (step.to) {
 			case assets::ThoughtRecipient::Self: {
 				const ThoughtSubject subject = target.entity != kInvalidEntity ? ThoughtSubject::aboutEntity(target.entity)
-											   : target.defNameId != 0		 ? ThoughtSubject::aboutKind(target.defNameId)
-																			 : ThoughtSubject::aboutNothing();
+											   : target.defNameId != 0		   ? ThoughtSubject::aboutKind(target.defNameId)
+																			   : ThoughtSubject::aboutNothing();
 				thoughts->create({.colonist = actor.entity, .eventType = thought, .subject = subject});
 				return;
 			}

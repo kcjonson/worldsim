@@ -17,7 +17,8 @@ namespace ecs {
 
 		constexpr std::array<const char*, 8> kStepElements = {"go", "do", "have", "think", "need", "drop", "run", "leave_colony"};
 		static_assert(
-			kStepElements.size() == std::variant_size_v<decltype(assets::ChainStep::step)>, "an element name for every step kind"
+			kStepElements.size() == std::variant_size_v<decltype(assets::ChainStep::step)>,
+			"an element name for every step kind"
 		);
 
 		[[nodiscard]] std::string_view shortOf(std::string_view id) {
@@ -60,7 +61,8 @@ namespace ecs {
 		) {
 			if (running.size() >= ChainProgress::kMaxDepth) {
 				errors.push_back(
-					chainLabel(root) + " nests chains more than " + std::to_string(ChainProgress::kMaxDepth) + " deep through <run> and <have>"
+					chainLabel(root) + " nests chains more than " + std::to_string(ChainProgress::kMaxDepth) +
+					" deep through <run> and <have>"
 				);
 				return false;
 			}
@@ -105,7 +107,8 @@ namespace ecs {
 		}
 
 		/// The actions a `do` step may perform: its action, or each member of its group.
-		[[nodiscard]] std::vector<assets::EntryHandle<assets::ActionEntry>> performedBy(const assets::EntryLibrary& library, const assets::DoStep& step) {
+		[[nodiscard]] std::vector<assets::EntryHandle<assets::ActionEntry>>
+		performedBy(const assets::EntryLibrary& library, const assets::DoStep& step) {
 			const assets::ActionEntry& entry = library.actions[step.action.handle.index];
 			if (!entry.group) {
 				return {step.action.handle};
@@ -118,7 +121,8 @@ namespace ecs {
 		}
 
 		/// Whether `chain`, or a chain it runs, has a step that takes.
-		[[nodiscard]] bool takesIn(const assets::EntryLibrary& library, const ActionEntries& actions, const assets::ChainEntry& chain, std::size_t steps) {
+		[[nodiscard]] bool
+		takesIn(const assets::EntryLibrary& library, const ActionEntries& actions, const assets::ChainEntry& chain, std::size_t steps) {
 			for (std::size_t index = 0; index < steps && index < chain.steps.size(); ++index) {
 				const assets::ChainStep& step = chain.steps[index];
 				if (const auto* doStep = std::get_if<assets::DoStep>(&step.step)) {
@@ -158,10 +162,10 @@ namespace ecs {
 			const std::string&			where,
 			std::vector<std::string>&	errors
 		) {
-			const auto&	   doStep = std::get<assets::DoStep>(chain.steps[index].step);
-			const bool	   inbound = (doStep.claims & bit(assets::ClaimKind::Inbound)) != 0;
-			const bool	   inFlight = (doStep.claims & bit(assets::ClaimKind::InFlight)) != 0;
-			const auto	   performed = performedBy(library, doStep);
+			const auto&	  doStep = std::get<assets::DoStep>(chain.steps[index].step);
+			const bool	  inbound = (doStep.claims & bit(assets::ClaimKind::Inbound)) != 0;
+			const bool	  inFlight = (doStep.claims & bit(assets::ClaimKind::InFlight)) != 0;
+			const auto	  performed = performedBy(library, doStep);
 			const uint8_t takeAndInstall = dataBit(TargetData::Take) | dataBit(TargetData::Install);
 			if (inbound != inFlight) {
 				errors.push_back(
@@ -190,7 +194,9 @@ namespace ecs {
 					);
 				}
 				if ((needed & dataBit(TargetData::Take)) != 0 && (inbound || inFlight)) {
-					errors.push_back(where + " claims inbound or in_flight on a take; the goods' claims are on the step that delivers them");
+					errors.push_back(
+						where + " claims inbound or in_flight on a take; the goods' claims are on the step that delivers them"
+					);
 				}
 				if (targeted != 0 && !doStep.on && go == nullptr) {
 					errors.push_back(where + " performs \"" + entry.id + "\", which acts on a target, with no `on` and no <go> before it");
@@ -199,7 +205,8 @@ namespace ecs {
 				const bool fromGroup = library.actions[doStep.action.handle.index].group;
 				if (!fromGroup && entry.on.has_value() && !doStep.on && go != nullptr && go->query) {
 					const auto& from = library.queries[go->query->handle.index].from;
-					const bool	reachable = std::ranges::any_of(from, [&](const assets::FromRow& row) { return actsOn(*entry.on, row.source); });
+					const bool	reachable =
+						std::ranges::any_of(from, [&](const assets::FromRow& row) { return actsOn(*entry.on, row.source); });
 					if (!from.empty() && !reachable) {
 						errors.push_back(
 							where + " performs \"" + entry.id + "\" on what query \"" + library.queries[go->query->handle.index].id +
@@ -233,7 +240,8 @@ namespace ecs {
 						load.errors.push_back(where + " need \"" + library.needIds[need->need.index] + "\" is no need the sim tracks");
 					}
 				} else if (const auto* think = std::get_if<assets::ThinkStep>(&step.step)) {
-					const std::optional<ThoughtEventTypeId> thought = thoughts != nullptr ? thoughts->findType(think->thought) : std::nullopt;
+					const std::optional<ThoughtEventTypeId> thought =
+						thoughts != nullptr ? thoughts->findType(think->thought) : std::nullopt;
 					if (thought) {
 						values.thought = *thought;
 					} else {
