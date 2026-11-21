@@ -92,12 +92,12 @@ namespace assets {
 		[[nodiscard]] const std::vector<std::string>& rungs() const { return rungNames; }
 
 		/// The rungs the decision ranks options on, found by name in the ladder at load. Each is the rung's
-		/// position only when missingDecisionRungs() is empty; loadWorkConfig fails the load otherwise.
+		/// position only when decisionRungProblems() is empty; loadWorkConfig fails the load otherwise.
 		[[nodiscard]] const DecisionRungs& decisionRungs() const { return decisionRungPositions; }
 
-		/// One problem for each rung the decision ranks options on that the ladder lacks, naming the file and the
-		/// rung; empty when the ladder has them all.
-		[[nodiscard]] const std::vector<std::string>& missingDecisionRungs() const { return missingDecisionRungList; }
+		/// What is wrong with the ladder for the decision, each naming the file and the rungs: one problem for each of its
+		/// rungs the ladder lacks, else one for the first two out of order; empty when the ladder has them all in order.
+		[[nodiscard]] const std::vector<std::string>& decisionRungProblems() const { return decisionRungProblemList; }
 
 		// --- Bonus Calculations ---
 
@@ -153,7 +153,7 @@ namespace assets {
 		std::vector<std::string> rungNames;
 
 		DecisionRungs			 decisionRungPositions;
-		std::vector<std::string> missingDecisionRungList;
+		std::vector<std::string> decisionRungProblemList;
 
 		/// Bonus configs
 		DistanceFactorConfig  distanceFactorConfig;

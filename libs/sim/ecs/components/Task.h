@@ -9,8 +9,8 @@
 #include <glm/vec2.hpp>
 
 #include <array>
-#include <cstdint>
 #include <cstdlib>
+#include <cstdint>
 #include <limits>
 #include <optional>
 #include <string>
@@ -180,6 +180,10 @@ class SourceChoices {
 	std::uint8_t						count = 0;
 };
 
+/// The tier of a task, an option, or a claim holder nothing has ranked: past every ladder position (the ladder holds
+/// at most 255 rungs). A task reads it as the idle rung (Task::rankedTier); an option is never compared with it.
+inline constexpr uint8_t kUnrankedTier = std::numeric_limits<uint8_t>::max();
+
 /// Task types that colonists can perform. The rung each is ranked on (AIDecisionSystem's classifyTier):
 /// see colonist-task-arbitration.md.
 enum class TaskType : uint8_t {
@@ -334,16 +338,15 @@ struct Task {
 	bool routeFailureDecided = false;
 
 	/// Arbitration tier of this task when selected: its rung's position in the ladder (lower = higher
-	/// priority), kUnranked until the decision ranks it. Paired with `priority` (the within-tier score)
+	/// priority), kUnrankedTier until the decision ranks it. Paired with `priority` (the within-tier score)
 	/// to form the (tier, score) key. The action-interruption gate is tier-only: a strictly higher-tier
 	/// challenger interrupts, a same-tier (or lower) challenger does not. The anti-thrash margin is NOT
 	/// re-applied here; it already lives in the score at selection (the in-progress option carries the
 	/// hysteresis bonus), so re-checking it at the gate would double-count.
-	static constexpr uint8_t kUnranked = std::numeric_limits<uint8_t>::max();
-	uint8_t					 priorityTier = kUnranked;
+	uint8_t priorityTier = kUnrankedTier;
 
 	/// The tier the task ranks at: a task the decision has not ranked ranks on the idle rung.
-	[[nodiscard]] uint8_t rankedTier(uint8_t idleRung) const { return priorityTier == kUnranked ? idleRung : priorityTier; }
+	[[nodiscard]] uint8_t rankedTier(uint8_t idleRung) const { return priorityTier == kUnrankedTier ? idleRung : priorityTier; }
 
 	/// Within-tier score when this task was selected (used for the same-tier switch threshold).
 	float priority = 0.0F;
@@ -416,7 +419,7 @@ struct Task {
 		placeSourcePosition = glm::vec2{0.0F, 0.0F};
 		placeTargetPosition = glm::vec2{0.0F, 0.0F};
 		chainStep = 0;
-		priorityTier = kUnranked;
+		priorityTier = kUnrankedTier;
 		priority = 0.0F;
 		// Note: timeSinceEvaluation NOT reset here - caller handles timer logic
 		reason.clear();

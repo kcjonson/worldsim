@@ -11,6 +11,7 @@
 #include <glm/vec2.hpp>
 
 #include <algorithm>
+#include <cassert>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -117,9 +118,10 @@ namespace ecs {
 
 		// --- (tier, score) arbitration key ---
 		// tier: the position of the option's rung in the ladder, compared FIRST. Lower number = higher
-		// priority. Set by AIDecisionSystem's classifyTier() before the option is ranked.
+		// priority. Set by AIDecisionSystem's classifyTier() before the option is ranked; an option still at
+		// kUnrankedTier is never compared (higherPriority asserts it), and would rank below every rung.
 		// score: orders options WITHIN one tier only; never crosses a tier boundary.
-		uint8_t tier = 0;
+		uint8_t tier = kUnrankedTier;
 		float	score = 0.0F; // = distanceFactor + skillBonus + taskAgeBonus + hysteresisBonus
 
 		// Skill-related fields (for work tasks with skill requirements)
@@ -175,6 +177,7 @@ namespace ecs {
 		/// (a multiplayer-determinism guard, since the goal registry iterates hash-bucket order).
 		/// This is THE arbitration: tier is inviolable, score can never cross a tier boundary.
 		[[nodiscard]] static bool higherPriority(const EvaluatedOption& a, const EvaluatedOption& b) {
+			assert(a.tier != kUnrankedTier && b.tier != kUnrankedTier && "an option is classified before it is ranked");
 			if (a.tier != b.tier) {
 				return a.tier < b.tier;
 			}

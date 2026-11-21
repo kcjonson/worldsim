@@ -2576,7 +2576,7 @@ namespace ecs {
 		const Need&			 hunger = needs.get(NeedType::Hunger);
 		const uint8_t		 hungerTier = needTier(hunger, m_rungs);
 		const auto			 eats = [hungerTier, idle = m_rungs.idle](const ClaimHolder& holder) {
-			return holder.taskType == TaskType::FulfillNeed && holder.tier < idle && holder.tier <= hungerTier;
+			return holder.taskType == TaskType::FulfillNeed && holder.tier != idle && holder.tier <= hungerTier;
 		};
 		const bool packHasFood = hasEdibleFood(m_registry, inventory);
 		const bool seeksFood = !packHasFood && hunger.needsAttention();
@@ -3655,7 +3655,7 @@ namespace ecs {
 		const ClaimExclusion self		= ClaimExclusion::of(task);
 		const uint8_t		 hungerTier = needTier(needs->get(NeedType::Hunger), m_rungs);
 		const auto			 eats		= [hungerTier, idle = m_rungs.idle](const ClaimHolder& holder) {
-			  return holder.taskType == TaskType::FulfillNeed && holder.tier < idle && holder.tier <= hungerTier;
+			  return holder.taskType == TaskType::FulfillNeed && holder.tier != idle && holder.tier <= hungerTier;
 		};
 		if (choice.itemDefNameId == 0) {
 			const ClaimTarget bush{.kind = TargetKind::WorldKey, .key = choice.sourceKey};

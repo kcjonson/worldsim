@@ -12,7 +12,8 @@
   The ladder is the rungs in order, highest first; an entry names a rung, never a tier number
   (see /docs/technical/queries-and-chains.md, Rungs). survival is reserved and no entry names it.
   The decision ranks options on critical_need, committed_work, ordinary_need, opportunistic_work,
-  and idle, so a ladder without one of them fails the load.
+  and idle, so a ladder without one of them, or with them out of that order, fails the load. Other
+  rungs may sit anywhere among them. The ladder holds at most 255 rungs.
 
   See /docs/design/game-systems/colonists/priority-config.md for details.
 -->

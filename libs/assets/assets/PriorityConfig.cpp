@@ -89,7 +89,7 @@ namespace assets {
 	void PriorityConfig::clear() {
 		rungNames.clear();
 		decisionRungPositions = DecisionRungs{};
-		missingDecisionRungList.clear();
+		decisionRungProblemList.clear();
 
 		distanceFactorConfig = DistanceFactorConfig{};
 		inProgressConfig = InProgressBonusConfig{};
@@ -172,8 +172,9 @@ namespace assets {
 				rungNames.push_back(name);
 			}
 		}
-		// A rung's position is stored in eight bits, and survival is the rung the loaders keep for threats.
-		constexpr std::size_t kMaxRungs = 256;
+		// A rung's position is stored in eight bits, with 255 kept for a task nothing has ranked; survival is the rung
+		// the loaders keep for threats.
+		constexpr std::size_t kMaxRungs = 255;
 		if (index == 0) {
 			problems.push_back(source + ": <ladder> has no <rung>");
 		} else if (index > kMaxRungs) {
@@ -189,11 +190,28 @@ namespace assets {
 		for (const DecisionRungName& rung : kDecisionRungNames) {
 			const auto found = std::ranges::find(rungNames, rung.name);
 			if (found == rungNames.end()) {
-				missingDecisionRungList.push_back(
+				decisionRungProblemList.push_back(
 					source + ": <ladder> has no rung named \"" + std::string(rung.name) + "\", which the decision ranks options on"
 				);
 			} else {
 				decisionRungPositions.*rung.position = static_cast<uint8_t>(found - rungNames.begin());
+			}
+		}
+		if (!decisionRungProblemList.empty()) {
+			return;
+		}
+		// The decision reads an unranked task, and a decision with nothing selected, as idle, so idle must be the lowest
+		// of its rungs, and they keep the order the decision was written for. Other rungs may sit anywhere among them.
+		for (std::size_t index = 1; index < kDecisionRungNames.size(); ++index) {
+			const DecisionRungName& higher = kDecisionRungNames[index - 1];
+			const DecisionRungName& lower = kDecisionRungNames[index];
+			if (decisionRungPositions.*higher.position > decisionRungPositions.*lower.position) {
+				decisionRungProblemList.push_back(
+					source + ": <ladder> has \"" + std::string(lower.name) + "\" above \"" + std::string(higher.name) +
+					"\"; the decision ranks options on critical_need, committed_work, ordinary_need, opportunistic_work, and idle, in "
+					"that order"
+				);
+				return;
 			}
 		}
 	}

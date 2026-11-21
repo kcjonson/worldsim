@@ -14,6 +14,7 @@
 #include <ui/components/Button.h>
 
 #include <array>
+#include <cassert>
 #include <cstdint>
 #include <format>
 #include <string>
@@ -85,7 +86,9 @@ namespace world_sim {
 
 		// "T8 Need": the option's tier, counted from 1 at the top rung, and its rung's label.
 		std::string tierText(uint8_t tier) {
-			return std::format("T{} {}", static_cast<int>(tier) + 1, rungLabel(assets::PriorityConfig::Get().rungs()[tier]));
+			const std::vector<std::string>& rungs = assets::PriorityConfig::Get().rungs();
+			assert(tier < rungs.size() && "a traced option's tier is a position in the loaded ladder");
+			return std::format("T{} {}", static_cast<int>(tier) + 1, rungLabel(rungs[tier]));
 		}
 
 		Line header(std::string key, std::string text) {

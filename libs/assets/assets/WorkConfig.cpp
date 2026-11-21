@@ -66,9 +66,10 @@ namespace assets {
 			return problems;
 		}
 
-		// The decision ranks every option on a rung it names; a ladder without one of them never reaches play.
-		if (!PriorityConfig::Get().missingDecisionRungs().empty()) {
-			std::vector<std::string> problems = PriorityConfig::Get().missingDecisionRungs();
+		// The decision ranks every option on a rung it names; a ladder without one of them, or with them out of order,
+		// never reaches play.
+		if (!PriorityConfig::Get().decisionRungProblems().empty()) {
+			std::vector<std::string> problems = PriorityConfig::Get().decisionRungProblems();
 			for (std::string& problem : problems) {
 				problem.insert(0, "[arbitration] ");
 			}

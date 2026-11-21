@@ -394,6 +394,11 @@ TEST_F(WorkConfigTest, LoadWorkConfig_ShippedConfigLoadsClean) {
 }
 
 namespace {
+	/// Every bonus an <arbitration> file must give, at the shipped values.
+	const std::string kBonuses = "<Bonuses><DistanceFactor><maxDistance>60</maxDistance><maxFactor>300</maxFactor></DistanceFactor>"
+								 "<InProgress><bonus>50</bonus></InProgress><TaskAge><bonusPerMinute>1</bonusPerMinute>"
+								 "<maxBonus>100</maxBonus></TaskAge><StoragePriority><weight>300</weight></StoragePriority></Bonuses>";
+
 	std::string priorityTuningWith(const std::string& maxDistance, const std::string& extra = "") {
 		return "<arbitration><ladder><rung name=\"survival\"/></ladder>" + extra + "<Bonuses>" + "<DistanceFactor>" + maxDistance +
 			   "<maxFactor>300</maxFactor></DistanceFactor>" + "<InProgress><bonus>50</bonus></InProgress>" +
@@ -433,7 +438,12 @@ TEST_F(WorkConfigTest, PriorityConfig_ShippedValuesArePinned) {
 	EXPECT_EQ(config.getStoragePriorityWeight(), 300);
 	EXPECT_EQ(config.getTaskAgeConfig().bonusPerMinute, 1);
 	EXPECT_EQ(config.getTaskAgeConfig().maxBonus, 100);
-	EXPECT_TRUE(config.missingDecisionRungs().empty());
+	EXPECT_TRUE(config.decisionRungProblems().empty());
+	const DecisionRungs& rungs = config.decisionRungs();
+	EXPECT_LT(rungs.criticalNeed, rungs.committedWork);
+	EXPECT_LT(rungs.committedWork, rungs.ordinaryNeed);
+	EXPECT_LT(rungs.ordinaryNeed, rungs.opportunisticWork);
+	EXPECT_LT(rungs.opportunisticWork, rungs.idle);
 	EXPECT_EQ(config.rungs()[config.decisionRungs().ordinaryNeed], "ordinary_need");
 	EXPECT_EQ(config.rungs()[config.decisionRungs().committedWork], "committed_work");
 	EXPECT_EQ(config.rungs()[config.decisionRungs().opportunisticWork], "opportunistic_work");
@@ -683,10 +693,7 @@ TEST_F(WorkConfigTest, ActionTypeRegistry_MistakesNameTheActionAndLoadNothing) {
 
 TEST_F(WorkConfigTest, PriorityConfig_LadderMistakesNameTheFileAndLoadNothing) {
 	const auto problemsFor = [this](const std::string& ladder, const std::string& extra = "") {
-		const std::string bonuses = "<Bonuses><DistanceFactor><maxDistance>60</maxDistance><maxFactor>300</maxFactor></DistanceFactor>"
-									"<InProgress><bonus>50</bonus></InProgress><TaskAge><bonusPerMinute>1</bonusPerMinute>"
-									"<maxBonus>100</maxBonus></TaskAge><StoragePriority><weight>300</weight></StoragePriority></Bonuses>";
-		const std::string path = writeTempFile("<arbitration>" + ladder + extra + bonuses + "</arbitration>", ".xml");
+		const std::string path = writeTempFile("<arbitration>" + ladder + extra + kBonuses + "</arbitration>", ".xml");
 		EXPECT_FALSE(loadTemp(PriorityConfig::Get(), path));
 		EXPECT_TRUE(PriorityConfig::Get().rungs().empty()) << "a file with any mistake loads no rung";
 		std::vector<std::string> problems = PriorityConfig::Get().problems();
@@ -729,10 +736,59 @@ TEST_F(WorkConfigTest, PriorityConfig_LadderMistakesNameTheFileAndLoadNothing) {
 	EXPECT_EQ(problemsFor("<ladder><rung/></ladder>"), std::vector<std::string>{"<ladder> rung 1 name is missing"})
 		<< "a nameless rung is the one error, not also the missing survival rung";
 	std::string manyRungs = "<ladder><rung name=\"survival\"/>";
-	for (int rung = 1; rung < 257; ++rung) {
+	for (int rung = 1; rung < 255; ++rung) {
 		manyRungs += "<rung name=\"rung_" + std::to_string(rung) + "\"/>";
 	}
-	EXPECT_EQ(problemsFor(manyRungs + "</ladder>"), std::vector<std::string>{"<ladder> has 257 rungs; it holds at most 256"});
+	EXPECT_TRUE(
+		loadTemp(PriorityConfig::Get(), writeTempFile("<arbitration>" + manyRungs + "</ladder>" + kBonuses + "</arbitration>", ".xml"))
+	) << "255 rungs fit: position 255 is the unranked mark";
+	EXPECT_EQ(PriorityConfig::Get().rungs().size(), 255U);
+	manyRungs += "<rung name=\"rung_255\"/>";
+	EXPECT_EQ(problemsFor(manyRungs + "</ladder>"), std::vector<std::string>{"<ladder> has 256 rungs; it holds at most 255"});
+}
+
+TEST_F(WorkConfigTest, PriorityConfig_TheDecisionsRungsKeepTheirOrder) {
+	const auto problemsFor = [this](const std::string& rungs) {
+		const std::string path = writeTempFile("<arbitration><ladder>" + rungs + "</ladder>" + kBonuses + "</arbitration>", ".xml");
+		EXPECT_TRUE(loadTemp(PriorityConfig::Get(), path)) << "the order is the work config's check, not the file's";
+		std::vector<std::string> problems = PriorityConfig::Get().decisionRungProblems();
+		for (std::string& problem : problems) {
+			EXPECT_EQ(problem.rfind(fileNameOf(path) + ": ", 0), 0U) << problem;
+			problem.erase(0, fileNameOf(path).size() + 2);
+		}
+		return problems;
+	};
+	const auto rung = [](const char* name) {
+		return std::string("<rung name=\"") + name + "\"/>";
+	};
+
+	EXPECT_TRUE(
+		problemsFor(
+			rung("critical_need") + rung("survival") + rung("committed_work") + rung("low_mood") + rung("ordinary_need") +
+			rung("opportunistic_work") + rung("idle") + rung("after_idle")
+		)
+			.empty()
+	) << "other rungs may sit anywhere among the decision's";
+	EXPECT_EQ(
+		problemsFor(
+			rung("survival") + rung("critical_need") + rung("committed_work") + rung("ordinary_need") + rung("idle") +
+			rung("opportunistic_work")
+		),
+		std::vector<std::string>{
+			"<ladder> has \"idle\" above \"opportunistic_work\"; the decision ranks options on critical_need, committed_work, "
+			"ordinary_need, opportunistic_work, and idle, in that order"
+		}
+	);
+	EXPECT_EQ(
+		problemsFor(
+			rung("survival") + rung("ordinary_need") + rung("critical_need") + rung("committed_work") + rung("opportunistic_work") +
+			rung("idle")
+		),
+		std::vector<std::string>{
+			"<ladder> has \"ordinary_need\" above \"committed_work\"; the decision ranks options on critical_need, committed_work, "
+			"ordinary_need, opportunistic_work, and idle, in that order"
+		}
+	) << "one error, naming the first two out of order";
 }
 
 TEST_F(WorkConfigTest, WorkTypeRegistry_MistakesNameTheInstanceAndLoadNothing) {

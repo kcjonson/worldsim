@@ -6,6 +6,7 @@
 #include <assets/PriorityConfig.h>
 
 #include <algorithm>
+#include <cassert>
 #include <tuple>
 
 namespace ecs {
@@ -31,6 +32,7 @@ namespace ecs {
 	}
 
 	bool outranks(const ClaimHolder& a, const ClaimHolder& b) {
+		assert(a.tier != kUnrankedTier && b.tier != kUnrankedTier && "a holder is ranked from its task before it is compared");
 		return std::tie(a.tier, a.claimSeq, a.instanceId) < std::tie(b.tier, b.claimSeq, b.instanceId);
 	}
 

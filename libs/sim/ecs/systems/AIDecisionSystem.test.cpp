@@ -1664,7 +1664,7 @@ namespace ecs::test {
 	//
 	// These pin the KEY semantics on bare EvaluatedOptions: tier is set directly (the system's
 	// classifyTier() is .cpp-private). Classification itself is exercised end-to-end by the
-	// "...ClassifiesTier..." integration tests further down, which build a real DecisionTrace through
+	// "...Classifies..." integration tests further down, which build a real DecisionTrace through
 	// world->update() and assert the tier the system stamped on the resulting option.
 	// Each tier is a rung of the shipped ladder, by name (rungNamed). score = distanceFactor + skill +
 	// age + hysteresis.
@@ -1954,7 +1954,7 @@ namespace ecs::test {
 	// A Harvest that provisions an active work order (its parent goal is a Craft) classifies on
 	// committed_work. This is the chain-becomes-tier-lock: servesActiveWorkOrder -> committed_work, no
 	// score bonus.
-	TEST_F(AIDecisionSystemTest, WorkOrderHarvestClassifiesTier4) {
+	TEST_F(AIDecisionSystemTest, WorkOrderHarvestClassifiesCommittedWork) {
 		auto& registry = assets::AssetRegistry::Get();
 		auto [bushId, stickId] = registerHarvestableYielding(registry, "Flora_WorkBush", "WorkStick");
 
@@ -1997,7 +1997,7 @@ namespace ecs::test {
 
 	// A stocking Harvest (owned by StorageGoalSystem, no Craft/Build parent) is opportunistic work:
 	// it classifies on opportunistic_work, strictly below work orders.
-	TEST_F(AIDecisionSystemTest, StockingHarvestClassifiesTier6) {
+	TEST_F(AIDecisionSystemTest, StockingHarvestClassifiesOpportunisticWork) {
 		auto& registry = assets::AssetRegistry::Get();
 		auto [bushId, stickId] = registerHarvestableYielding(registry, "Flora_StockBush", "StockStick");
 
@@ -2232,7 +2232,7 @@ namespace ecs::test {
 
 	// 7. Within-tier ordering: a Critical-dest pull and a Low-dest pull -> both on opportunistic_work, the
 	//    Critical-dest pull has the higher score and is Selected.
-	TEST_F(AIDecisionSystemTest, PullCriticalDestinationOutscoresLowWithinTier6) {
+	TEST_F(AIDecisionSystemTest, PullCriticalDestinationOutscoresLowWithinOpportunisticWork) {
 		auto& registry = assets::AssetRegistry::Get();
 		const uint32_t woodId = registerPullItem(registry, "Wood");
 		registerStorageDef(registry, "Box");
@@ -2603,7 +2603,7 @@ namespace ecs::test {
 	// The gather-food option (emitted when the colonist has no food and knows an edible harvestable)
 	// classifies on idle and, with my wander-floor fix,
 	// outranks the same-tier wander option because wander's within-tier score is pinned to 0.
-	TEST_F(AIDecisionSystemTest, GatherFoodClassifiesTier7AndBeatsWander) {
+	TEST_F(AIDecisionSystemTest, GatherFoodClassifiesIdleAndBeatsWander) {
 		auto& registry = assets::AssetRegistry::Get();
 		// A harvestable yielding the already-registered edible Berry, so the gather-food path fires.
 		assets::AssetDefinition berryBush;
@@ -2669,7 +2669,7 @@ namespace ecs::test {
 	}
 
 	// A critical need (below its critical threshold) classifies on critical_need (above every rung the decision ranks on).
-	TEST_F(AIDecisionSystemTest, CriticalNeedClassifiesTier2) {
+	TEST_F(AIDecisionSystemTest, CriticalNeedClassifiesCriticalNeed) {
 		auto colonist = createColonist({0.0F, 0.0F});
 		auto* inventory = world->getComponent<Inventory>(colonist);
 		inventory->addItem("Berry", 3); // a valid hunger fulfillment path (eat from inventory)
@@ -2691,7 +2691,7 @@ namespace ecs::test {
 	}
 
 	// An actionable need (below its seek threshold but not critical) classifies on ordinary_need.
-	TEST_F(AIDecisionSystemTest, ActionableNeedClassifiesTier5) {
+	TEST_F(AIDecisionSystemTest, ActionableNeedClassifiesOrdinaryNeed) {
 		auto colonist = createColonist({0.0F, 0.0F});
 		// A known water source so thirst is actionable (Available), not NoSource.
 		addKnownEntity(colonist, {3.0F, 4.0F}, kWaterDefId, assets::CapabilityType::Drinkable);
@@ -3296,9 +3296,8 @@ namespace ecs::test {
 
 	TEST_F(AIDecisionSystemTest, ChainHasNoScoreTermOnlyTierClassification) {
 		// A mid-chain provisioning task is a committed_work classification (servesActiveWorkOrder), with no
-		// score term of its own. The
-		// AvailableWorkOrderHaulClassifiesTier4 / ...Tier6 integration tests below exercise that
-		// classification end-to-end through a real trace; this unit test pins the score side: the
+		// score term of its own. WorkOrderHarvestClassifiesCommittedWork and
+		// StockingHarvestClassifiesOpportunisticWork exercise that classification end-to-end through a real trace; this unit test pins the score side: the
 		// within-tier score is composed ONLY of distanceFactor + skill + age + hysteresis, with no
 		// hidden +2000 chain term, so a far provisioning haul cannot swamp a near one inside committed_work.
 		EvaluatedOption provisioningHaul;
