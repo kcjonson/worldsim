@@ -766,8 +766,8 @@ so they can stage "the last ingredient unit" and "the last berries".
 
 ## Experiments
 
-Experiments sweep parameters and compare outcomes, for example haul tiers in
-`assets/config/arbitration/priority-tuning.xml` against idle time across seeds. They are phase 2.
+Experiments sweep parameters and compare outcomes, for example `whileCheckMinutes` in
+`assets/config/thoughts/tuning.xml` against idle time across seeds. They are phase 2.
 
 `sim-cli run <file> --json-summary` prints one summary object as its last stdout line:
 

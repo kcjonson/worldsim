@@ -33,7 +33,7 @@ namespace worldview {
 		splitCount = 0;
 	}
 
-	uint32_t RunPlanner::place(uint32_t mesh, const OverlapGrid::Cells& cells, bool small) {
+	uint32_t RunPlanner::orderOf(uint32_t mesh) {
 		uint32_t order = orderOfMesh[mesh];
 		if (order == kNone) {
 			order = static_cast<uint32_t>(meshOfOrder.size());
@@ -45,6 +45,20 @@ namespace worldview {
 			}
 			openedAt[order] = kNone;
 		}
+		return order;
+	}
+
+	void RunPlanner::reserveOrders(uint32_t firstMesh, uint32_t count) {
+		if (count == 0 || orderOfMesh[firstMesh] != kNone) {
+			return;
+		}
+		for (uint32_t mesh = firstMesh; mesh < firstMesh + count; ++mesh) {
+			(void)orderOf(mesh);
+		}
+	}
+
+	uint32_t RunPlanner::place(uint32_t mesh, const OverlapGrid::Cells& cells, bool small) {
+		const uint32_t order = orderOf(mesh);
 
 		uint32_t	   layer = floorLayer;
 		const uint32_t latest = (small ? large : all).latest(cells);

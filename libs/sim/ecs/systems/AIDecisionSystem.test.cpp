@@ -28,6 +28,7 @@
 #include "../components/DecisionTrace.h"
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
+#include "../components/MemoryQueries.h"
 #include "../components/Movement.h"
 #include "../components/NavPath.h"
 #include "../components/Needs.h"
@@ -41,6 +42,9 @@
 #include "../components/ToiletLocationFinder.h"
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
+
+#include <queries/QueryEntries.test.h>
+#include <queries/QueryEvaluator.h>
 
 #include "assets/AssetRegistry.h"
 #include "assets/ConstructionRegistry.h"
@@ -5682,6 +5686,219 @@ namespace ecs::test {
 		addKnownWaste(colonist, standing + glm::vec2(-6.0F, 0.0F));
 		ASSERT_EQ(spotFromMemory(standing, *world->getComponent<Memory>(colonist)), std::nullopt);
 		expectNeedTarget(colonist, NeedType::Bladder, standing);
+	}
+
+	// The spec's place_to_relieve query (queries-and-chains.md, The human behaviors), read by the loader, against
+	// findToiletLocation on every layout the tests above use, plus two: mirrored piles that tie (the finder keeps
+	// the first point in its scan, the query the lowest key at equal score and distance, which is the scan order),
+	// and chunks that are not ready while the mesh is. Where the finder finds no spot the query takes its fallback,
+	// where the colonist stands, as the decision does.
+	TEST_F(RelievingSpotTest, ThePlaceToRelieveQueryPicksTheFindersSpot) {
+		const assets::EntryLibrary library = queries::test_entries::loadQueryEntries(R"(<query id="place_to_relieve">
+			<from capability="toilet"/>
+			<from place="grid" spacing="3" radius="25"/>
+			<from place="here" fallback="true"/>
+			<exclude fact="on_shore"/>
+			<prefer fact="is_place"/>
+			<weigh fact="distance" by="-1"/>
+			<weigh fact="waste_nearby" by="10"/>
+			<weigh fact="food_nearby" by="-20"/>
+		</query>)");
+		ASSERT_TRUE(library.findQuery("test/place_to_relieve").valid());
+		queries::QueryEvaluator evaluator(library, assets::AssetRegistry::Get(), {});
+		world::ChunkManager		unready(std::make_unique<world::SyntheticWorldSampler>(7U, world::SyntheticMap{}));
+		makeColonistBetweenRivers();
+
+		const auto bothFrom = [&](glm::vec2						from,
+								  const std::vector<glm::vec2>& wastes,
+								  const std::vector<glm::vec2>& foods,
+								  world::ChunkManager&			chunks) -> std::optional<glm::vec2> {
+			const EntityID knower = world->createEntity();
+			world->addComponent<Memory>(knower, Memory{});
+			for (const glm::vec2 waste : wastes) {
+				addKnownWaste(knower, waste);
+			}
+			for (const glm::vec2 food : foods) {
+				addKnownEntity(knower, food, kFoodDefId, assets::CapabilityType::Edible);
+			}
+			const Memory&				   memory = *world->getComponent<Memory>(knower);
+			const std::optional<glm::vec2> spot = findToiletLocation(from, chunks, *nav, memory);
+			const queries::QueryWorld	   on{.navigation = nav, .chunks = &chunks};
+			const queries::QueryResult	   result = evaluator.evaluate(
+				{.query = library.findQuery("test/place_to_relieve"), .creature = knower, .position = from, .memory = &memory}, on
+			);
+			EXPECT_EQ(result.outcome, queries::QueryOutcome::Found);
+			if (result.target() == nullptr) {
+				return spot;
+			}
+			EXPECT_EQ(result.target()->kind, queries::CandidateKind::Place);
+			EXPECT_EQ(result.target()->fallback, !spot.has_value()) << "at (" << from.x << ", " << from.y << ")";
+			EXPECT_EQ(result.target()->position, spot.value_or(from)) << "at (" << from.x << ", " << from.y << ")";
+			return spot;
+		};
+		world::ChunkManager& ready = *twoRiverChunks();
+		const auto			 both = [&](glm::vec2 from, const std::vector<glm::vec2>& wastes, const std::vector<glm::vec2>& foods = {}) {
+			  return bothFrom(from, wastes, foods, ready);
+		};
+
+		// NothingKnownTakesWhereTheColonistStands, with beyond the mesh the walkability gate.
+		EXPECT_EQ(both(kStart, {}), std::optional<glm::vec2>(kStart));
+		EXPECT_EQ(both({600.0F, 0.0F}, {}), std::nullopt);
+		// KeepsMoreThanOneAndAHalfMetersOffWater.
+		float shoreLine = 12.0F;
+		while (shoreLine < kRiverY && waterDistanceMeters({0.0F, shoreLine}) >= 1.5) {
+			shoreLine += 0.01F;
+		}
+		const glm::vec2 offShore{0.0F, shoreLine - 0.25F};
+		const glm::vec2 onShore{0.0F, shoreLine + 0.25F};
+		EXPECT_EQ(both(offShore, {}), std::optional<glm::vec2>(offShore));
+		EXPECT_EQ(both(onShore, {onShore + glm::vec2(0.0F, -1.0F)}), std::optional<glm::vec2>(onShore + glm::vec2(0.0F, -3.0F)));
+		// SearchesTwentyFiveMeters.
+		EXPECT_EQ(both(kStart, pileCluster({24.0F, 6.0F})), std::optional<glm::vec2>(glm::vec2(24.0F, 6.0F)));
+		EXPECT_EQ(both(kStart, pileCluster({24.0F, 9.0F})), std::optional<glm::vec2>(glm::vec2(21.0F, 9.0F)));
+		// WasteBonusIsTenWithinEightMeters.
+		for (const glm::vec2 pile :
+			 {glm::vec2{-6.5F, 1.5F}, glm::vec2{-9.0F, 1.5F}, glm::vec2{9.5F, 0.0F}, glm::vec2{-7.0F, 1.5F}, glm::vec2{-8.5F, 1.5F}}) {
+			EXPECT_TRUE(both(kStart, {pile}).has_value());
+		}
+		// WastePullsSum.
+		EXPECT_EQ(both(kStart, {{-6.0F, 0.0F}, {6.0F, 1.0F}, {6.0F, -1.0F}}), std::optional<glm::vec2>(glm::vec2(6.0F, 0.0F)));
+		// KnownFoodPushesTheSpotAway.
+		EXPECT_EQ(both(kStart, {}, {{-5.0F, 0.0F}}), std::optional<glm::vec2>(glm::vec2(9.0F, 0.0F)));
+		EXPECT_EQ(
+			both(kStart, {{-6.0F, 0.0F}, {-6.0F, 0.5F}, {-6.0F, -0.5F}}, {{-6.0F, 3.0F}}), std::optional<glm::vec2>(glm::vec2(-6.0F, 0.0F))
+		);
+		// NoLatrineGoesToTheFinderSpot.
+		EXPECT_EQ(both(kStart, {kStart + glm::vec2(-6.0F, 0.0F)}), std::optional<glm::vec2>(kStart + glm::vec2(-6.0F, 0.0F)));
+		// A tie: 101 at (-9, 0) and at (9, 0), against 100 where he stands. The finder's scan meets (-9, 0) first.
+		EXPECT_EQ(both(kStart, {{-9.0F, 0.0F}, {9.0F, 0.0F}}), std::optional<glm::vec2>(glm::vec2(-9.0F, 0.0F)));
+		// The chunk gate: meshed ground in chunks that are not ready has no spot.
+		EXPECT_EQ(bothFrom(kStart, {kStart + glm::vec2(-6.0F, 0.0F)}, {}, unready), std::nullopt);
+
+		// Latrines: the decision takes the nearest it can reach (nearestAdmitted), wherever the water and the piles
+		// are, and so does the query, whose place facts read 0 on a thing. A latrine 0.25 m inside the shore line
+		// against one farther on dry ground; then a near latrine against a far one ringed by bio piles.
+		const auto latrineFrom = [&](const std::vector<glm::vec2>& latrines, const std::vector<glm::vec2>& wastes) {
+			const EntityID knower = world->createEntity();
+			world->addComponent<Memory>(knower, Memory{});
+			for (const glm::vec2 latrine : latrines) {
+				addKnownEntity(knower, latrine, kToiletDefId, assets::CapabilityType::Toilet);
+			}
+			for (const glm::vec2 waste : wastes) {
+				addKnownWaste(knower, waste);
+			}
+			const Memory&				 memory = *world->getComponent<Memory>(knower);
+			std::vector<SourceCandidate> scratch;
+			std::vector<SourceCandidate> chosen;
+			collectWithCapability(
+				memory, assets::CapabilityType::Toilet, kStart, [](uint64_t, const KnownWorldEntity&) { return true; }, scratch
+			);
+			nearestAdmitted(
+				scratch,
+				chosen,
+				[&](SourceCandidate& candidate) { return nav->componentAt(candidate.position) == nav->componentAt(kStart); },
+				kNearestOfCount
+			);
+			const queries::QueryResult result = evaluator.evaluate(
+				{.query = library.findQuery("test/place_to_relieve"), .creature = knower, .position = kStart, .memory = &memory},
+				{.navigation = nav, .chunks = &ready}
+			);
+			EXPECT_EQ(result.outcome, queries::QueryOutcome::Found);
+			EXPECT_FALSE(chosen.empty());
+			if (result.target() != nullptr && !chosen.empty()) {
+				EXPECT_EQ(result.target()->kind, queries::CandidateKind::Thing);
+				EXPECT_EQ(result.target()->position, chosen.front().position);
+			}
+			return chosen.empty() ? kStart : chosen.front().position;
+		};
+		ASSERT_LT(glm::length(onShore - kStart), 18.0F);
+		EXPECT_EQ(latrineFrom({onShore, {18.0F, 0.0F}}, {}), onShore);
+		EXPECT_EQ(latrineFrom({{6.0F, 0.0F}, {-10.0F, 0.0F}}, pileCluster({-10.0F, 1.0F})), glm::vec2(6.0F, 0.0F));
+
+		// A route verdict on the finder's spot. The query passes the spot over, as it passes over every target with
+		// a verdict, and takes the next spot. The decision's hand-written path relieves where he stands instead
+		// (SpotWhoseRouteFailedFallsBackToWhereTheColonistStands). The spec states both; the owner rules on which
+		// the data path keeps.
+		const EntityID knower = world->createEntity();
+		world->addComponent<Memory>(knower, Memory{});
+		addKnownWaste(knower, kStart + glm::vec2(-6.0F, 0.0F));
+		const Memory&	memory = *world->getComponent<Memory>(knower);
+		SourceReachMemo reach;
+		reach.recordVerdict(
+			hashWorldEntity(kStart + glm::vec2(-6.0F, 0.0F), 0), {.connectivityEpoch = nav->connectivityEpoch(), .beliefVersion = memory.beliefVersion}, 0
+		);
+		const queries::QueryResult passedOver = evaluator.evaluate(
+			{.query = library.findQuery("test/place_to_relieve"), .creature = knower, .position = kStart, .memory = &memory, .reach = &reach},
+			{.navigation = nav, .chunks = &ready}
+		);
+		ASSERT_EQ(passedOver.outcome, queries::QueryOutcome::Found);
+		EXPECT_FALSE(passedOver.target()->fallback);
+		EXPECT_NE(passedOver.target()->position, kStart + glm::vec2(-6.0F, 0.0F));
+	}
+
+	// A query's wait reads where the creature stands as the component it stands on (no place rows, no distance
+	// bound), and the mesh's connectivity only when a candidate was passed over as not joined: water taken by an
+	// eater waits across a connectivity change, water across the river does not, and stepping onto that bank ends
+	// the wait.
+	TEST_F(AIDecisionRiverTest, AQueryWaitReadsTheComponentAndTheEpochOnlyWhenReachMattered) {
+		const assets::EntryLibrary library = queries::test_entries::loadQueryEntries(
+			R"(<query id="water"><from capability="drinkable"/><weigh fact="distance" by="-1"/></query>)"
+		);
+		queries::QueryEvaluator evaluator(library, assets::AssetRegistry::Get(), {});
+		makeColonistBetweenRivers();
+		const auto drinkable = static_cast<uint16_t>(1U << static_cast<unsigned>(assets::CapabilityType::Drinkable));
+
+		World	   claimWorld;
+		ClaimIndex claims;
+		Task&	   eater = claimWorld.addComponent<Task>(claimWorld.createEntity());
+		eater.type = TaskType::FulfillNeed;
+		eater.instanceId = 1;
+		eater.priorityTier = rungNamed("critical_need");
+		ASSERT_TRUE(eater.claims.push(Claim::use(TargetKind::WorldKey, hashWorldEntity(kReachable, kWaterDefId))));
+		claims.rebuild(claimWorld);
+
+		Memory taken;
+		taken.rememberWorldEntity(kReachable, kWaterDefId, drinkable);
+		Memory across;
+		across.rememberWorldEntity(northBank(0.0F), kWaterDefId, drinkable);
+		const queries::QueryWorld on{.navigation = nav, .chunks = twoRiverChunks(), .claims = &claims};
+		queries::QueryRequest	  forTaken{
+				.query = library.findQuery("test/water"),
+				.creature = 70,
+				.position = kStart,
+				.memory = &taken,
+				.claims = {
+					.kinds = static_cast<uint8_t>(1U << static_cast<unsigned>(assets::ClaimKind::Use)),
+					.tier = rungNamed("ordinary_need"),
+					.idleTier = rungNamed("idle")
+			}
+		};
+		queries::QueryRequest forAcross{.query = library.findQuery("test/water"), .creature = 71, .position = kStart, .memory = &across};
+
+		const queries::QueryResult claimed = evaluator.evaluate(forTaken, on);
+		EXPECT_EQ(claimed.outcome, queries::QueryOutcome::AllPassedOver);
+		EXPECT_EQ(claimed.waitingOnReason, queries::PassOverReason::Claimed);
+		const queries::QueryResult unreachable = evaluator.evaluate(forAcross, on);
+		EXPECT_EQ(unreachable.outcome, queries::QueryOutcome::AllPassedOver);
+		EXPECT_EQ(unreachable.waitingOnReason, queries::PassOverReason::Unreachable);
+		forTaken.position = kStart + glm::vec2(5.0F, 3.0F);
+		forAcross.position = kStart + glm::vec2(5.0F, 3.0F);
+		EXPECT_TRUE(evaluator.evaluate(forTaken, on).fromWait) << "the same component";
+		EXPECT_TRUE(evaluator.evaluate(forAcross, on).fromWait) << "the same component";
+
+		// Another mover's ground lands, which moves the mesh's connectivity epoch.
+		const std::uint64_t epoch = nav->connectivityEpoch();
+		createColonist({300.0F, 0.0F});
+		nav->finishPendingBuilds();
+		ASSERT_NE(nav->connectivityEpoch(), epoch);
+		EXPECT_TRUE(evaluator.evaluate(forTaken, on).fromWait) << "nothing it passed over was for reach";
+		EXPECT_FALSE(evaluator.evaluate(forAcross, on).fromWait) << "it passed over water it could not reach";
+
+		ASSERT_TRUE(evaluator.evaluate(forAcross, on).fromWait);
+		forAcross.position = northBank(2.0F);
+		const queries::QueryResult onTheBank = evaluator.evaluate(forAcross, on);
+		EXPECT_FALSE(onTheBank.fromWait);
+		EXPECT_EQ(onTheBank.outcome, queries::QueryOutcome::Found);
 	}
 
 	// A reachable bed is taken before the ground he stands on, though it is 12 m off and the ground 0.

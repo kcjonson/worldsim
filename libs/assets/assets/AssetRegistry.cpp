@@ -1849,6 +1849,32 @@ namespace assets {
 		return getTemplate(templateId(defName, traits));
 	}
 
+	const AssetDefinition* AssetRegistry::templateDefinition(uint32_t templateId) const {
+		std::lock_guard<std::mutex> lock(templateCacheMutex);
+		return templateId == 0 || templateId > m_templates.size() ? nullptr : m_templates[templateId - 1]->def;
+	}
+
+	const ItemLayout* AssetRegistry::stripLayout(uint32_t templateId, uint32_t turnQuanta) {
+		const AssetDefinition* def = templateDefinition(templateId);
+		if (def == nullptr || def->parts == nullptr) {
+			return nullptr;
+		}
+		const uint64_t				key = (static_cast<uint64_t>(templateId) << 32U) | turnQuanta;
+		std::lock_guard<std::mutex> lock(layoutMutex);
+		if (const auto found = layoutIds.find(key); found != layoutIds.end()) {
+			return layouts[found->second].get();
+		}
+		auto layout = std::make_unique<ItemLayout>(ItemLayout{
+			.templateId = templateId,
+			.turnQuanta = turnQuanta,
+			.id = static_cast<uint32_t>(layouts.size()),
+			.layout = assets::stripLayout(*def, turnQuanta, GameViewConfig::Get().config()),
+		});
+		layoutIds.emplace(key, layout->id);
+		layouts.push_back(std::move(layout));
+		return layouts.back().get();
+	}
+
 	bool AssetRegistry::isTallDef(const std::string& defName) {
 		const AssetDefinition* def = getDefinition(defName);
 		if (def == nullptr) {
@@ -2750,6 +2776,12 @@ namespace assets {
 			m_templates.clear();
 		}
 		m_maxReach.store(0.0F, std::memory_order_relaxed);
+		{
+			std::lock_guard<std::mutex> lk(layoutMutex);
+			layoutIds.clear();
+			layouts.clear();
+		}
+		cacheGeneration.fetch_add(1, std::memory_order_acq_rel);
 		{
 			std::lock_guard<std::mutex> lk(m_motionCacheMutex);
 			m_motionCache.clear();

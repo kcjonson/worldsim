@@ -7,6 +7,7 @@
 #include "assets/AssetDefinition.h"
 #include "assets/AssetValidator.h"
 #include "assets/IAssetGenerator.h"
+#include "assets/ItemView.h"
 #include "assets/MeshSilhouette.h"
 #include "assets/MotionDef.h"
 #include "assets/TessellatedPaths.h"
@@ -107,6 +108,19 @@ namespace assets {
 
 		/// getTemplate(templateId(defName, traits)).
 		const renderer::TessellatedMesh* getTemplate(const std::string& defName, TreeTraits traits);
+
+		/// A parts template's strip layout at a turn (rotatable-placed-items 8): computed from its def the first time
+		/// it is asked for, on the asking thread, and kept until the next clear, so the pointer stays valid until then.
+		/// Null for a template that isn't a parts def's.
+		[[nodiscard]] const ItemLayout* stripLayout(uint32_t templateId, uint32_t turnQuanta);
+
+		/// The definition a template id was made for, or nullptr for 0 or an id not handed out since the last clear.
+		/// One vector read, no name lookup.
+		[[nodiscard]] const AssetDefinition* templateDefinition(uint32_t templateId) const;
+
+		/// Changes at every clear, when template ids start over and kept layouts are dropped: what a renderer
+		/// keeps by template id or layout is stale once this moves.
+		[[nodiscard]] uint64_t generation() const { return cacheGeneration.load(std::memory_order_acquire); }
 
 		/// The seed a template is generated with: 0 for a def with a single variant, else the
 		/// shared variantSeed hash of the def and age class name, at the variant.
@@ -451,6 +465,12 @@ namespace assets {
 		std::atomic<float>										m_maxReach{0.0F};
 		std::atomic<float>										largestCollisionReach{0.0F};
 		std::atomic<float>										largestCollidingScale{0.0F};
+
+		// Strip layouts by (template id, turn quanta), each kept at a stable address. Guarded separately.
+		std::unordered_map<uint64_t, uint32_t>	 layoutIds; // into layouts
+		std::vector<std::unique_ptr<ItemLayout>> layouts;
+		mutable std::mutex						 layoutMutex;
+		std::atomic<uint64_t>					 cacheGeneration{0};
 
 		// Resolved motion per def (empty MotionDef = "resolved, has none"). Guarded separately.
 		std::unordered_map<std::string, MotionDef> m_motionCache;

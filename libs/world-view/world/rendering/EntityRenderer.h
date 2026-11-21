@@ -75,6 +75,7 @@ class EntityRenderer {
 	[[nodiscard]] uint32_t lastUprightDrawCallCount() const { return m_lastUprightDrawCallCount; }
 	[[nodiscard]] uint32_t lastUprightTriangleCount() const { return m_lastUprightTriangleCount; }
 	[[nodiscard]] uint32_t lastUprightOverlapSplits() const { return m_lastUprightOverlapSplits; }
+	[[nodiscard]] uint32_t lastItemDrawCallCount() const { return m_lastItemDrawCallCount; }
 	/// The detail levels last frame's upright stream drew, and the level requests still pending
 	[[nodiscard]] const InstancedEntityRenderer::LevelStats& lastUprightLevels() const { return instancedDynamic.levelStats(); }
 
@@ -99,6 +100,7 @@ class EntityRenderer {
 	uint32_t m_lastUprightDrawCallCount = 0;
 	uint32_t m_lastUprightTriangleCount = 0;
 	uint32_t m_lastUprightOverlapSplits = 0;
+	uint32_t m_lastItemDrawCallCount = 0;
 	uint64_t frameCounter = 0;  // Incremented each render call (for LRU tracking)
 
 	// --- Path sub-renderers (owned by value) ---
