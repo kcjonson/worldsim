@@ -448,11 +448,11 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] const NavQueryStats& navQueryStats() const { return navStats; }
 	void							   resetNavQueryStats() { navStats = {}; }
 
-
 	// The placed occluder index (sight-softening.md 2.4): every placed ring in the mesh whose body
-	// reaches a colonist's eye (2.2), as sight reads it, updated as each patch job is collected, in patch order, and never by a query, so reading it
-	// never waits for a patch job. A ring shows here from the tick after nav collects it. Vision owns
-	// the kind threshold and sets it through the mutable overload.
+	// reaches a colonist's eye (2.2), as sight reads it, updated as each patch job is collected, in
+	// patch order, and never by a query, so reading it never waits for a patch job. A ring shows here
+	// from the tick after nav collects it. Vision owns the kind threshold and sets it through the
+	// mutable overload.
 	[[nodiscard]] const vision::PlacedOccluderIndex& placedOccluders() const { return placedOccluderIndex; }
 	[[nodiscard]] vision::PlacedOccluderIndex&		 placedOccluders() { return placedOccluderIndex; }
 

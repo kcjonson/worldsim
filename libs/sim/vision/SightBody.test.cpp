@@ -76,7 +76,7 @@ TEST(SightBody, KindFollowsTheDiameter) {
 		 return vision::kindOf(vision::diameterSquared(outline), least);
 	};
 	EXPECT_EQ(kindOfRectangle(820, 820, start.placedOpaqueLeastDiameterMm), BodyKind::Soft) << "a veteran oak, 1.16 m across";
-	EXPECT_EQ(kindOfRectangle(1400, 1070, start.placedOpaqueLeastDiameterMm), BodyKind::Opaque) << "a tall body 1.40 by 1.07 m, 1.76 m across";
+	EXPECT_EQ(kindOfRectangle(1400, 1070, start.placedOpaqueLeastDiameterMm), BodyKind::Opaque) << "1.40 by 1.07 m, 1.76 m across";
 	EXPECT_EQ(kindOfRectangle(500, 150, start.wallOpaqueLeastDiameterMm), BodyKind::Soft) << "the shortest wall";
 	EXPECT_EQ(kindOfRectangle(2000, 150, start.wallOpaqueLeastDiameterMm), BodyKind::Opaque);
 	EXPECT_EQ(kindOfRectangle(600, 0, 600), BodyKind::Opaque) << "the threshold itself is opaque";

@@ -43,6 +43,7 @@
 #include <nav/PathQuery.h>
 #include <predicates/Predicates.h>
 #include <visibility/SightClip.h>
+#include <vision/SightHeight.h>
 
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/SyntheticWorldSampler.h>
@@ -1343,23 +1344,64 @@ TEST_F(NavigationSystemTest, ALowBodyIsNoSightBodyAndStillBlocksWalking) {
 	EXPECT_TRUE(inShape(vision, observer, {9.0F, 0.0F})) << "behind the placed low rock";
 	EXPECT_TRUE(inShape(vision, observer, {-9.0F, 0.0F})) << "behind the spawned low rock";
 
+	// One patch of low and tall bodies: a third low rock, a low L (concave, so opaque were it tall), a
+	// tall post under the size threshold (padded, 0.7 m square, 0.99 m across), and a box exactly at
+	// eye height, beside the tall box and the trunk.
+	constexpr const char* kLowL		 = "Test_SightLowL";
+	constexpr const char* kTallPost	 = "Test_SightTallPost";
+	constexpr const char* kEyeHighBox = "Test_SightEyeHighBox";
+	AssetDefinition		  lowL;
+	lowL.defName	 = kLowL;
+	lowL.assetType	 = assets::AssetType::Simple;
+	lowL.worldHeight = 1.0F;
+	lowL.setCollision(
+		0,
+		{.type = CollisionShapeType::Polygon,
+		 .pointsMeters = {{-1.0F, -1.0F}, {1.0F, -1.0F}, {1.0F, 0.0F}, {0.0F, 0.0F}, {0.0F, 1.0F}, {-1.0F, 1.0F}}}
+	);
+	AssetRegistry::Get().registerTestDefinition(lowL);
+	registerSimpleBody(kTallPost, {0.3F, 0.3F}, 2.0F);
+	registerSimpleBody(kEyeHighBox, {0.5F, 0.5F}, static_cast<float>(vision::kEyeHeightMm) / 1000.0F);
 	spawnThing(world, kSightTallBox, {0.0F, 5.0F});
 	spawnThing(world, kSightTrunk, {0.0F, -5.0F});
+	const EntityID thirdRock = spawnThing(world, kSightLowRock, {-5.0F, 5.0F});
+	spawnThing(world, kLowL, {5.0F, 5.0F});
+	spawnThing(world, kTallPost, {5.0F, -5.0F});
+	spawnThing(world, kEyeHighBox, {-5.0F, -5.0F});
 	step(world, sys);
 	step(world, sys);
 	time.skipTime(10.0F);
 	world.update(0.016F);
-	const std::vector<const vision::PlacedOccluder*> rings = occludersOf(sys);
-	ASSERT_EQ(rings.size(), 2U) << "the tall box and the trunk";
-	for (const vision::PlacedOccluder* ring : rings) {
-		EXPECT_EQ(ring->kind, ring->defName == kSightTallBox ? vision::BodyKind::Opaque : vision::BodyKind::Soft) << ring->defName;
-	}
+	ASSERT_TRUE(sys.placedObstacleInNavMesh(thirdRock));
+	EXPECT_FALSE(meshClear(sys, {4.5F, 4.5F})) << "the low L is carved";
+	const auto expectTallBodies = [&] {
+		const std::vector<const vision::PlacedOccluder*> rings = occludersOf(sys);
+		ASSERT_EQ(rings.size(), 4U) << "the tall box, the trunk, the post, and the box at eye height";
+		for (const vision::PlacedOccluder* ring : rings) {
+			const bool opaque = ring->defName == kSightTallBox || ring->defName == kEyeHighBox;
+			EXPECT_EQ(ring->kind, opaque ? vision::BodyKind::Opaque : vision::BodyKind::Soft) << ring->defName;
+			EXPECT_NE(ring->defName, kSightLowRock);
+			EXPECT_NE(ring->defName, kLowL);
+		}
+	};
+	expectTallBodies();
 	EXPECT_EQ(vision.sightShape(observer)->path, VisionSystem::SightPath::Polygon);
-	EXPECT_EQ(vision.sightBodies(observer)->bodies->size(), 2U) << "no low rock among his bodies";
+	EXPECT_EQ(vision.sightBodies(observer)->bodies->size(), 4U) << "no low body among his bodies";
 	EXPECT_FALSE(inShape(vision, observer, {0.0F, 9.0F})) << "behind the tall box";
+	EXPECT_FALSE(inShape(vision, observer, {-9.0F, -9.0F})) << "behind the box at eye height";
 	EXPECT_TRUE(inShape(vision, observer, {0.0F, -9.0F})) << "behind the trunk";
+	EXPECT_TRUE(inShape(vision, observer, {9.0F, -9.0F})) << "behind the tall post, a soft body";
+	EXPECT_TRUE(inShape(vision, observer, {9.0F, 9.0F})) << "behind the low L";
 	EXPECT_TRUE(inShape(vision, observer, {9.0F, 0.0F})) << "behind the placed low rock";
 	EXPECT_TRUE(inShape(vision, observer, {-9.0F, 0.0F})) << "behind the spawned low rock";
+
+	// A low body leaving the mesh touches no occluder.
+	world.destroyEntity(thirdRock);
+	step(world, sys);
+	step(world, sys);
+	EXPECT_FALSE(sys.placedObstacleInNavMesh(thirdRock));
+	EXPECT_TRUE(meshClear(sys, {-5.0F, 5.0F})) << "its ground opened";
+	expectTallBodies();
 }
 
 // Entities with a collider the world already holds when nav starts, as a loaded world would, go in with
