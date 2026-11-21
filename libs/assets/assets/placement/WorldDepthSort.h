@@ -68,6 +68,7 @@ namespace assets {
 		bool				isAnimated = false; // per-part deformed colonist -> CPU path, breaks instanced runs
 		const ItemLayout*	itemLayout = nullptr; // a parts item's depth strip: drawn from its view, not its template
 		uint32_t			strip = 0;
+		uint64_t			layoutGeneration = 0;
 		const PlacedEntity* entity = nullptr;
 	};
 

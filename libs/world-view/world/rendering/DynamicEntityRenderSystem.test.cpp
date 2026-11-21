@@ -207,6 +207,39 @@ TEST_F(ItemStripRecordTest, TellingAPartsItemApartTakesNoNameLookup) {
 }
 #endif
 
+// A layout is kept while an item stands at its template and turn: an item turned or removed leaves its old layout
+// behind, released at the second update after (the first still has last frame's ask). A reload clears every layout;
+// the next update's records point at the new ones, made under the new generation.
+TEST_F(ItemStripRecordTest, LayoutsFollowTheItemsAndAReload) {
+	assets::AssetRegistry& registry = assets::AssetRegistry::Get();
+	const ecs::EntityID	   entity = add("Bench", {0.0F, 0.0F}, std::numbers::pi_v<float> / 4.0F);
+	const uint32_t		   bench = registry.templateId("Bench", {});
+	(void)records();
+	EXPECT_TRUE(registry.keepsStripLayout(bench, 4500U));
+	world.getComponent<ecs::Rotation>(entity)->radians = std::numbers::pi_v<float> / 2.0F;
+	(void)records();
+	EXPECT_TRUE(registry.keepsStripLayout(bench, 9000U));
+	EXPECT_TRUE(registry.keepsStripLayout(bench, 4500U)) << "asked for last frame";
+	(void)records();
+	EXPECT_FALSE(registry.keepsStripLayout(bench, 4500U)) << "nothing stands at 45 degrees any more";
+	world.destroyEntity(entity);
+	(void)records();
+	(void)records();
+	EXPECT_FALSE(registry.keepsStripLayout(bench, 9000U)) << "the item is gone";
+
+	add("Bench", {0.0F, 0.0F}, std::numbers::pi_v<float> / 4.0F);
+	(void)records();
+	const uint64_t generation = registry.generation();
+	ASSERT_NE(load("Bench"), nullptr);
+	ASSERT_NE(registry.generation(), generation);
+	const std::vector<assets::PlacedEntity>& data = records();
+	ASSERT_FALSE(data.empty());
+	const assets::ItemLayout* fresh = registry.stripLayout(registry.templateId("Bench", {}), 4500U);
+	for (const assets::PlacedEntity& record : data) {
+		EXPECT_EQ(record.itemLayout, fresh) << "the next frame's records carry the layouts made after the clear";
+	}
+}
+
 // Everything that isn't a parts def is one record as before: rotation forced to 0, no layout.
 TEST_F(ItemStripRecordTest, AnEntityThatIsNotAPartsItemIsUntouched) {
 	add("Test_RenderedStill", {3.0F, 4.0F}, 1.0F);

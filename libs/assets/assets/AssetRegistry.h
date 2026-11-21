@@ -110,16 +110,41 @@ namespace assets {
 		const renderer::TessellatedMesh* getTemplate(const std::string& defName, TreeTraits traits);
 
 		/// A parts template's strip layout at a turn (rotatable-placed-items 8): computed from its def the first time
-		/// it is asked for, on the asking thread, and kept until the next clear, so the pointer stays valid until then.
-		/// Null for a template that isn't a parts def's.
+		/// it is asked for, on the asking thread, and kept while something asks for it between two calls of
+		/// releaseUnaskedLayouts. The pointer is valid until the next releaseUnaskedLayouts or clear. Null for a
+		/// template that isn't a parts def's.
 		[[nodiscard]] const ItemLayout* stripLayout(uint32_t templateId, uint32_t turnQuanta);
 
-		/// The definition a template id was made for, or nullptr for 0 or an id not handed out since the last clear.
-		/// One vector read, no name lookup.
-		[[nodiscard]] const AssetDefinition* templateDefinition(uint32_t templateId) const;
+		/// The selection silhouette of a parts template at a turn (rotatable-placed-items 15): its view at the reference
+		/// level rasterised, built on the asking thread the first time and kept with the strip layout, which this asks
+		/// for. Valid as stripLayout's pointer is; null for a template that isn't a parts def's.
+		[[nodiscard]] const ItemSilhouette* itemSilhouette(uint32_t templateId, uint32_t turnQuanta);
+
+		/// Releases every strip layout, and its silhouette, that nothing asked for since the last call. Every installed
+		/// parts item asks for its layout each frame (DynamicEntityRenderSystem), which calls this first, so a layout
+		/// stays exactly while an item stands at its template and turn.
+		void releaseUnaskedLayouts();
+
+		/// Whether a strip layout is kept for the template at the turn, without asking for it.
+		[[nodiscard]] bool keepsStripLayout(uint32_t templateId, uint32_t turnQuanta) const;
+
+		/// A template id's reference mesh and the definition it was made for, read under one lock and with no name
+		/// lookup; both null for 0 or an id not handed out since the last clear.
+		struct TemplateRecord {
+			const renderer::TessellatedMesh* mesh = nullptr;
+			const AssetDefinition*			 def = nullptr;
+		};
+		[[nodiscard]] TemplateRecord templateRecord(uint32_t templateId) const;
 
 		/// Changes at every clear, when template ids start over and kept layouts are dropped: what a renderer
 		/// keeps by template id or layout is stale once this moves.
+		///
+		/// Definitions do not change while a game runs. They are loaded before the game scene starts, and only clear,
+		/// clearDefinitions, a load, and overrideGeneratorParams (asset-cli's, the asset manager's reload, and tests)
+		/// replace or free them; world-sim calls none of these once its scene is up. The off-thread builds
+		/// (LevelBuilder's template levels and item views, buildTemplateLevel) read a def through a pointer taken
+		/// without holding any lock across the build, and rely on this: a clear while one runs would free the def it
+		/// reads. An app that reloads while drawing must first stop or drain those builds.
 		[[nodiscard]] uint64_t generation() const { return cacheGeneration.load(std::memory_order_acquire); }
 
 		/// The seed a template is generated with: 0 for a def with a single variant, else the
@@ -466,10 +491,22 @@ namespace assets {
 		std::atomic<float>										largestCollisionReach{0.0F};
 		std::atomic<float>										largestCollidingScale{0.0F};
 
-		// Strip layouts by (template id, turn quanta), each kept at a stable address. Guarded separately.
+		// Strip layouts by (template id, turn quanta), each kept at a stable address with its silhouette once one is
+		// asked for. An id released by releaseUnaskedLayouts is handed out again, so ids stay below the most layouts
+		// ever kept at once. Guarded separately.
+		struct KeptLayout {
+			ItemLayout						layout;
+			std::unique_ptr<ItemSilhouette> silhouette;
+			bool							asked = true; // since the last releaseUnaskedLayouts
+		};
 		std::unordered_map<uint64_t, uint32_t>	 layoutIds; // into layouts
-		std::vector<std::unique_ptr<ItemLayout>> layouts;
+		std::vector<std::unique_ptr<KeptLayout>> layouts;	// null where an id was released
+		std::vector<uint32_t>					 freeLayoutIds;
 		mutable std::mutex						 layoutMutex;
+
+		/// The kept layout of (template, turn), made the first time and marked asked; null for a template that isn't
+		/// a parts def's. Takes layoutMutex.
+		KeptLayout* keptLayout(uint32_t templateId, uint32_t turnQuanta);
 		std::atomic<uint64_t>					 cacheGeneration{0};
 
 		// Resolved motion per def (empty MotionDef = "resolved, has none"). Guarded separately.

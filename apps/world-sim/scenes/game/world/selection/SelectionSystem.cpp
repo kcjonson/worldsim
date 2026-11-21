@@ -1,9 +1,12 @@
 #include "SelectionSystem.h"
+#include "SelectionPick.h"
 
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
 #include <assets/placement/InstanceTransform.h>
 #include <assets/placement/PlacementExecutor.h>
+#include <assets/TurnQuanta.h>
+#include <assets/placement/WorldDepthSort.h>
 #include <boolean/RingBoolean.h>
 #include <construction/ConstructionWorld.h>
 #include <construction/OpeningGeometry.h>
@@ -31,6 +34,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -106,6 +110,22 @@ namespace {
 		return silhouetteRingsContain(*sil, assets::InstanceTransform(pe.position, pe.rotation, pe.scale), worldPos);
 	}
 
+	// The template a dynamic entity draws, as DynamicEntityRenderSystem resolves it.
+	uint32_t dynamicRenderTemplate(ecs::World* world, ecs::EntityID entity, const ecs::Appearance& appearance) {
+		return assets::AssetRegistry::Get().templateId(dynamicRenderDefName(world, entity, appearance.defName), appearance.traits);
+	}
+
+	bool isPartsTemplate(uint32_t templateId) {
+		const assets::AssetDefinition* def = assets::AssetRegistry::Get().templateRecord(templateId).def;
+		return def != nullptr && def->parts != nullptr;
+	}
+
+	// A parts item's turn, from its ecs::Rotation as DynamicEntityRenderSystem reads it.
+	uint32_t turnOf(ecs::World* world, ecs::EntityID entity) {
+		const auto* rotation = world->getComponent<ecs::Rotation>(entity);
+		return assets::turnQuantaFromRadians(rotation != nullptr ? rotation->radians : 0.0F);
+	}
+
 	// True if the click is under a dynamic ECS entity's rendered silhouette. Resolves the
 	// render defName (Appearance defName + facing suffix) and the instance transform
 	// exactly as DynamicEntityRenderSystem. Returns true (defer to the caller's
@@ -114,14 +134,54 @@ namespace {
 	bool dynamicUnderClick(
 		ecs::World* world, ecs::EntityID entity, const ecs::Appearance& appearance, glm::vec2 entityPos, glm::vec2 worldPos
 	) {
-		const std::string defName = dynamicRenderDefName(world, entity, appearance.defName);
-		const auto*		  sil = assets::AssetRegistry::Get().getSilhouette(defName, appearance.traits);
+		auto&		   registry = assets::AssetRegistry::Get();
+		const uint32_t templateId = dynamicRenderTemplate(world, entity, appearance);
+		if (isPartsTemplate(templateId)) {
+			// A parts item's hit region is its view's at its turn, the turn already in it, so placed with no rotation
+			// (rotatable-placed-items 15).
+			const assets::ItemSilhouette* item = registry.itemSilhouette(templateId, turnOf(world, entity));
+			if (item == nullptr || !item->silhouette.valid) {
+				return true;
+			}
+			return silhouetteRingsContain(item->silhouette, assets::InstanceTransform(entityPos, 0.0F, 1.0F), worldPos);
+		}
+		const auto* sil = registry.getSilhouette(templateId);
 		if (sil == nullptr || !sil->valid) {
 			return true;
 		}
 		return silhouetteRingsContain(
 			*sil, assets::InstanceTransform(entityPos, 0.0F, appearance.scale), worldPos
 		);
+	}
+
+	// The depth a placed parts item draws at a world point: the largest anchor among its strips whose region
+	// (assets::stripRegions) lies within the outline's half width of the point, else the nearest strip's
+	// (rotatable-placed-items 15).
+	std::optional<float> frontAnchorAt(uint32_t templateId, uint32_t turnQuanta, glm::vec2 position, glm::vec2 worldPos) {
+		auto&					  registry = assets::AssetRegistry::Get();
+		const assets::ItemLayout* layout = registry.stripLayout(templateId, turnQuanta);
+		const assets::AssetDefinition* def = registry.templateRecord(templateId).def;
+		if (layout == nullptr || def == nullptr || def->parts == nullptr || layout->layout.strips.empty()) {
+			return std::nullopt;
+		}
+		const assets::ViewConfig& config = assets::GameViewConfig::Get().config();
+		const auto regions = assets::stripRegions(*def->parts, layout->layout, assets::turnRadiansFromQuanta(turnQuanta), config);
+		const glm::vec2			  local = worldPos - position;
+		std::optional<float>	  front;
+		size_t					  nearest = 0;
+		float					  nearestDistance = std::numeric_limits<float>::infinity();
+		for (size_t strip = 0; strip < regions.size(); ++strip) {
+			const float distance = assets::distanceOutsideStrip(regions[strip], local);
+			if (distance < nearestDistance) {
+				nearestDistance = distance;
+				nearest = strip;
+			}
+			if (distance <= config.outlineHalfWidthMeters()) {
+				const float anchor = assets::computeAnchorY(position.y, layout->layout.strips[strip].anchorLocalY, 1.0F);
+				front = front.has_value() ? std::max(*front, anchor) : anchor;
+			}
+		}
+		return front.has_value() ? front : assets::computeAnchorY(position.y, layout->layout.strips[nearest].anchorLocalY, 1.0F);
 	}
 
 	// The sprites packaged furniture draws (back crate, item, front crate), laid out exactly as
@@ -327,12 +387,38 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		candidates.emplace_back(ColonistSelection{closestColonist});
 	}
 
-	// Priority 1.5: Check ECS stations (entities with WorkQueue). Same centroid pre-cull
-	// then silhouette test as colonists.
-	float		  closestStationDist = kSelectionRadius;
-	ecs::EntityID closestStation = 0;
+	// A candidate's SelectionPick, at the depth it draws at under the click, as the renderer sorts it: a packaged
+	// entity its crate's, a placed parts item its front strip's there, anything else its own anchor.
+	const auto pickOf = [&](ecs::EntityID entity, const ecs::Appearance& appearance, glm::vec2 position, float distance, bool packaged) {
+		SelectionPick pick{.entity = entity, .distance = distance};
+		if (packaged) {
+			pick.anchorY = packagedLayoutFor(appearance, position).crateFront.anchorY;
+			return pick;
+		}
+		auto&		   registry = assets::AssetRegistry::Get();
+		const uint32_t templateId = dynamicRenderTemplate(ecsWorld, entity, appearance);
+		if (isPartsTemplate(templateId)) {
+			if (const std::optional<float> front = frontAnchorAt(templateId, turnOf(ecsWorld, entity), position, worldPos); front.has_value()) {
+				pick.anchorY = *front;
+				return pick;
+			}
+		}
+		pick.anchorY = worldview::dynamicAnchorY(
+			registry.getDefinition(dynamicRenderDefName(ecsWorld, entity, appearance.defName)), appearance.traits.ageClass,
+			worldview::templateBounds(registry.getTemplate(templateId)), position.y, appearance.scale
+		);
+		return pick;
+	};
 
+	// Priority 1.5: Check ECS stations (entities with WorkQueue). Same centroid pre-cull
+	// then silhouette test as colonists; a packaged station tests its crate, and one a colonist
+	// carries isn't drawn where it was, so it isn't picked there.
+	SelectionPick station;
 	for (auto [entity, pos, appearance, workQueue] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::WorkQueue>()) {
+		const auto* packaging = ecsWorld->getComponent<ecs::Packaged>(entity);
+		if (packaging != nullptr && packaging->beingCarried) {
+			continue;
+		}
 		if (!selectableAt(entity, pos.value)) {
 			continue;
 		}
@@ -340,17 +426,21 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		float dy = pos.value.y - worldPos.y;
 		float dist = std::sqrt(dx * dx + dy * dy);
 
-		if (dist >= closestStationDist) {
+		if (dist >= kSelectionRadius) {
 			continue;
 		}
-		if (!dynamicUnderClick(ecsWorld, entity, appearance, pos.value, worldPos)) {
+		const bool packaged = packaging != nullptr;
+		const bool under = packaged ? packagedUnderClick(appearance, pos.value, worldPos, kSelectionRadius)
+									: dynamicUnderClick(ecsWorld, entity, appearance, pos.value, worldPos);
+		if (!under) {
 			continue;
 		}
-		closestStationDist = dist;
-		closestStation = entity;
+		if (const SelectionPick pick = pickOf(entity, appearance, pos.value, dist, packaged); pick.beats(station)) {
+			station = pick;
+		}
 	}
 
-	if (closestStation != 0) {
+	if (const ecs::EntityID closestStation = station.entity; closestStation != 0) {
 		auto* pos = ecsWorld->getComponent<ecs::Position>(closestStation);
 		auto* appearance = ecsWorld->getComponent<ecs::Appearance>(closestStation);
 		if (pos != nullptr && appearance != nullptr) {
@@ -360,19 +450,21 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		}
 	}
 
-	// Priority 1.6: Check ECS storage containers (entities with Inventory but no
-	// WorkQueue). Packaged ones test the crate layers + item; placed ones test their own
-	// silhouette. Centroid pre-cull first, same as the other dynamic types.
-	float		  closestStorageDist = kSelectionRadius;
-	ecs::EntityID closestStorage = 0;
-
-	for (auto [entity, pos, appearance, inventory] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::Inventory>()) {
-		// Skip entities that also have WorkQueue (those are crafting stations)
-		if (ecsWorld->getComponent<ecs::WorkQueue>(entity) != nullptr) {
+	// Priority 1.6: Furniture and placed objects: storage containers (entities with Inventory
+	// but no WorkQueue) and any other placed parts item (a table, a test box). Packaged ones
+	// test the crate layers + item; placed ones test their own silhouette. Centroid pre-cull
+	// first, same as the other dynamic types.
+	SelectionPick furniture;
+	for (auto [entity, pos, appearance] : ecsWorld->view<ecs::Position, ecs::Appearance>()) {
+		// Skip crafting stations (WorkQueue), colonists (they have Inventory for carrying items), and piles
+		if (ecsWorld->getComponent<ecs::WorkQueue>(entity) != nullptr || ecsWorld->getComponent<ecs::Colonist>(entity) != nullptr ||
+			ecsWorld->getComponent<ecs::ResourceStack>(entity) != nullptr) {
 			continue;
 		}
-		// Skip colonists (they have Inventory for carrying items)
-		if (ecsWorld->getComponent<ecs::Colonist>(entity) != nullptr) {
+		// A packaged item in a colonist's hands is not drawn here (DynamicEntityRenderSystem skips it), so it isn't
+		// picked here either.
+		const auto* packaging = ecsWorld->getComponent<ecs::Packaged>(entity);
+		if (packaging != nullptr && packaging->beingCarried) {
 			continue;
 		}
 		if (!selectableAt(entity, pos.value)) {
@@ -383,21 +475,25 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		float dy = pos.value.y - worldPos.y;
 		float dist = std::sqrt(dx * dx + dy * dy);
 
-		if (dist >= closestStorageDist) {
+		if (dist >= kSelectionRadius) {
 			continue;
 		}
-		const bool packaged = ecsWorld->getComponent<ecs::Packaged>(entity) != nullptr;
+		if (ecsWorld->getComponent<ecs::Inventory>(entity) == nullptr && !isPartsTemplate(dynamicRenderTemplate(ecsWorld, entity, appearance))) {
+			continue;
+		}
+		const bool packaged = packaging != nullptr;
 		const bool under = packaged
 							 ? packagedUnderClick(appearance, pos.value, worldPos, kSelectionRadius)
 							 : dynamicUnderClick(ecsWorld, entity, appearance, pos.value, worldPos);
 		if (!under) {
 			continue;
 		}
-		closestStorageDist = dist;
-		closestStorage = entity;
+		if (const SelectionPick pick = pickOf(entity, appearance, pos.value, dist, packaged); pick.beats(furniture)) {
+			furniture = pick;
+		}
 	}
 
-	if (closestStorage != 0) {
+	if (const ecs::EntityID closestStorage = furniture.entity; closestStorage != 0) {
 		auto* pos = ecsWorld->getComponent<ecs::Position>(closestStorage);
 		auto* appearance = ecsWorld->getComponent<ecs::Appearance>(closestStorage);
 		if (pos != nullptr && appearance != nullptr) {
@@ -783,6 +879,8 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 	float canonicalAnchorY = kNoY;
 	// Composite selections (packaged furniture, piles) collect world-mm rings here to union.
 	std::vector<geometry::Ring> compositeMm;
+	// Everything but a parts item is one piece of closed rings.
+	std::vector<std::vector<Foundation::Vec2>> worldRings;
 
 	// World entities: re-resolve the live PlacedEntity by defName + position and
 	// build its silhouette at the static/baked transform. A felled or unloaded
@@ -797,9 +895,7 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 		if (sil == nullptr || !sil->valid) {
 			return outline;
 		}
-		appendWorldRings(
-			sil->rings, assets::InstanceTransform(pe->position, pe->rotation, pe->scale), outline.worldRings, maxY
-		);
+		appendWorldRings(sil->rings, assets::InstanceTransform(pe->position, pe->rotation, pe->scale), worldRings, maxY);
 	} else if (const auto* pileSel = std::get_if<ResourcePileSelection>(&selection)) {
 		// Loose pile: every sprite of the shared pile layout at its instance
 		// transform, unioned into one outline around the heap as drawn. A drained (destroyed)
@@ -823,14 +919,12 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 	} else {
 		// Colonists, crafting stations, and placed furniture all resolve from the ECS.
 		ecs::EntityID entityId = 0;
-		bool		  isFurniture = false;
 		if (const auto* colonistSel = std::get_if<ColonistSelection>(&selection)) {
 			entityId = colonistSel->entityId;
 		} else if (const auto* stationSel = std::get_if<CraftingStationSelection>(&selection)) {
 			entityId = stationSel->entityId;
 		} else if (const auto* furnitureSel = std::get_if<FurnitureSelection>(&selection)) {
 			entityId = furnitureSel->entityId;
-			isFurniture = true;
 		}
 		if (entityId == 0) {
 			return outline; // construction / room / no selection: not entity-backed
@@ -842,10 +936,10 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 			return outline;
 		}
 
-		// Packaged furniture: crate layers + item at their layout transforms (drawn as
+		// Any packaged entity, furniture or station: crate layers + item at their layout transforms (drawn as
 		// instances, matching the render path), unioned into one outline. With the item inside the crate that is the
 		// crate's silhouette.
-		if (isFurniture && ecsWorld->getComponent<ecs::Packaged>(entityId) != nullptr) {
+		if (ecsWorld->getComponent<ecs::Packaged>(entityId) != nullptr) {
 			const worldview::PackagedLayout pl = packagedLayoutFor(*appearance, pos->value);
 			for (const assets::PlacedEntity* sub : {&pl.crateBack, &pl.item, &pl.crateFront}) {
 				const auto* sil = assetRegistry.getSilhouette(sub->templateId);
@@ -854,16 +948,43 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 				}
 			}
 			canonicalAnchorY = pl.crateFront.anchorY;
+		} else if (const uint32_t templateId = dynamicRenderTemplate(ecsWorld, entityId, *appearance); isPartsTemplate(templateId)) {
+			// A parts item: its view's outline at its turn, a piece a depth strip, each drawn at its strip's anchor, so
+			// something sorting among the strips draws over the outline where it is in front (rotatable-placed-items 15).
+			const uint32_t				  turn = turnOf(ecsWorld, entityId);
+			const assets::ItemSilhouette* item = assetRegistry.itemSilhouette(templateId, turn);
+			const assets::ItemLayout*	  layout = assetRegistry.stripLayout(templateId, turn);
+			if (item == nullptr || layout == nullptr || !item->silhouette.valid) {
+				return outline;
+			}
+			for (size_t strip = 0; strip < layout->layout.strips.size() && strip < item->stripLines.size(); ++strip) {
+				if (item->stripLines[strip].empty()) {
+					continue;
+				}
+				worldview::SelectionOutline::Piece& piece = outline.pieces.emplace_back();
+				piece.closed = false;
+				piece.anchorY = assets::computeAnchorY(pos->value.y, layout->layout.strips[strip].anchorLocalY, 1.0F);
+				for (const std::vector<glm::vec2>& line : item->stripLines[strip]) {
+					std::vector<Foundation::Vec2>& worldLine = piece.lines.emplace_back();
+					worldLine.reserve(line.size());
+					for (const glm::vec2& point : line) {
+						worldLine.push_back(Foundation::Vec2{pos->value.x + point.x, pos->value.y + point.y});
+					}
+				}
+			}
+			outline.itemLayout = layout;
+			outline.itemPosition = pos->value;
+			outline.valid = !outline.pieces.empty();
+			outline.rgba = {1.0F, 0.85F, 0.0F, 0.9F};
+			outline.widthPx = kOutlineWidthPx;
+			return outline;
 		} else {
 			// Non-packaged dynamic entity: the facing sprite's silhouette at its position.
-			const std::string defName = dynamicRenderDefName(ecsWorld, entityId, appearance->defName);
-			const auto*		  sil = assetRegistry.getSilhouette(defName, appearance->traits);
+			const auto* sil = assetRegistry.getSilhouette(templateId);
 			if (sil == nullptr || !sil->valid) {
 				return outline;
 			}
-			appendWorldRings(
-				sil->rings, assets::InstanceTransform(pos->value, 0.0F, appearance->scale), outline.worldRings, maxY
-			);
+			appendWorldRings(sil->rings, assets::InstanceTransform(pos->value, 0.0F, appearance->scale), worldRings, maxY);
 		}
 	}
 
@@ -876,16 +997,16 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 				worldRing.push_back(w);
 				maxY = std::max(maxY, w.y);
 			}
-			outline.worldRings.push_back(std::move(worldRing));
+			worldRings.push_back(std::move(worldRing));
 		}
 	}
 
-	outline.valid = !outline.worldRings.empty();
+	outline.valid = !worldRings.empty();
 	if (outline.valid) {
 		// Canonical sprite anchorY when we have it (world entities, piles, packaged crates; a
 		// unioned ring's maxY can land under the sprite's key), else the silhouette ground-contact
 		// (dynamic entities, whose sprite bottom == the silhouette bottom).
-		outline.anchorY = (canonicalAnchorY != kNoY) ? canonicalAnchorY : maxY;
+		outline.pieces.push_back({.lines = std::move(worldRings), .closed = true, .anchorY = (canonicalAnchorY != kNoY) ? canonicalAnchorY : maxY});
 		outline.rgba	= {1.0F, 0.85F, 0.0F, 0.9F};
 		outline.widthPx = kOutlineWidthPx;
 	}

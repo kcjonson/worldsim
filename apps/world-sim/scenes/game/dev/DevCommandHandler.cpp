@@ -407,7 +407,11 @@ namespace world_sim {
 		// Degrees clockwise, the front down the screen at 0, rounded to the turn quantum (rotatable-placed-items 3). Only a
 		// parts item draws turned, so only a parts def takes one: another's collider would turn and its picture wouldn't.
 		uint32_t turn = 0;
-		if (const std::string turnText = param(cmd, "turn"); !turnText.empty()) {
+		if (hasParam(cmd, "turn")) {
+			const std::string turnText = param(cmd, "turn");
+			if (turnText.empty()) {
+				return reject("spawn: turn= is empty; give it degrees clockwise, or leave it out for 0");
+			}
 			if (!PlacementSystem::turns(def)) {
 				return reject("spawn: turn= is for a parts def, and " + def + " isn't one");
 			}
