@@ -2,9 +2,10 @@
 // which faces show, shading, constant line width, narrow faces, the face clip, the parts order, depth strips and
 // their layout, detail levels, the turn-0 template, and validation rule 12. Fixtures are written to a temp folder.
 
-#include "assets/DetailLevels.h"
 #include "assets/ItemView.h"
+#include "assets/DetailLevels.h"
 #include "assets/PartsAsset.test.h"
+#include "assets/PointTurn.h"
 
 #include <gtest/gtest.h>
 
@@ -12,6 +13,7 @@
 #include <cmath>
 #include <map>
 #include <numbers>
+#include <numeric>
 #include <optional>
 #include <random>
 #include <set>
@@ -60,10 +62,6 @@ namespace {
 			}
 		}
 		return std::nullopt;
-	}
-
-	glm::vec2 turnedPoint(glm::vec2 point, float radians) {
-		return {point.x * std::cos(radians) - point.y * std::sin(radians), point.x * std::sin(radians) + point.y * std::cos(radians)};
 	}
 
 	std::vector<glm::vec2> faceQuad(const VisibleFace& face, float length, float height) {
@@ -180,18 +178,38 @@ namespace {
 		return high - low;
 	}
 
-	// Every view the tests build: each vertex position and colour finite, so no test passes over a NaN.
-	ItemView checkedView(const AssetDefinition& def, uint32_t turnQuanta, uint8_t level, const ViewConfig& config) {
-		ItemView view = buildItemView(def, turnQuanta, level, config);
+	// Every view the tests build: each vertex position and colour finite, so no test passes over a NaN, and no
+	// triangle three copies of one point (what a clip makes of a triangle that only touches its plane).
+	void expectWellFormed(const AssetDefinition& def, const ItemView& view, uint8_t level) {
 		const auto finite = [](float value) { return std::isfinite(value); };
 		for (size_t i = 0; i < view.mesh.vertices.size(); ++i) {
 			const Foundation::Vec2&	 vertex = view.mesh.vertices[i];
 			const Foundation::Color& color = view.mesh.colors[i];
 			if (!(finite(vertex.x) && finite(vertex.y) && finite(color.r) && finite(color.g) && finite(color.b) && finite(color.a))) {
-				ADD_FAILURE() << def.defName << " at turn " << turnQuanta << ", level " << int(level) << ": vertex " << i << " is not finite";
+				ADD_FAILURE() << def.defName << " at turn " << view.turnQuanta << ", level " << int(level) << ": vertex " << i
+							  << " is not finite";
 				break;
 			}
 		}
+		for (size_t index = 0; index + 2 < view.mesh.indices.size(); index += 3) {
+			const Foundation::Vec2& first = view.mesh.vertices[view.mesh.indices[index]];
+			if (first == view.mesh.vertices[view.mesh.indices[index + 1]] && first == view.mesh.vertices[view.mesh.indices[index + 2]]) {
+				ADD_FAILURE() << def.defName << " at turn " << view.turnQuanta << ", level " << int(level) << ": triangle " << index / 3
+							  << " is three copies of (" << first.x << ", " << first.y << ")";
+				break;
+			}
+		}
+	}
+
+	ItemView checkedView(const AssetDefinition& def, uint32_t turnQuanta, uint8_t level, const ViewConfig& config) {
+		ItemView view = buildItemView(def, turnQuanta, level, config);
+		expectWellFormed(def, view, level);
+		return view;
+	}
+
+	ItemView checkedMesh(const AssetDefinition& def, uint32_t turnQuanta, uint8_t level, const ViewConfig& config) {
+		ItemView view = buildItemMesh(def, turnQuanta, level, config);
+		expectWellFormed(def, view, level);
 		return view;
 	}
 
@@ -230,6 +248,78 @@ namespace {
 		return true;
 	}
 
+	std::array<glm::vec2, 3> triangleOf(const ItemView& view, size_t first) {
+		return {
+			view.mesh.vertices[view.mesh.indices[first]],
+			view.mesh.vertices[view.mesh.indices[first + 1]],
+			view.mesh.vertices[view.mesh.indices[first + 2]]
+		};
+	}
+
+	float crossOf(glm::vec2 origin, glm::vec2 first, glm::vec2 second) {
+		return (first.x - origin.x) * (second.y - origin.y) - (first.y - origin.y) * (second.x - origin.x);
+	}
+
+	bool containsPoint(const std::array<glm::vec2, 3>& corners, glm::vec2 point) {
+		const float first = crossOf(corners[0], corners[1], point);
+		const float second = crossOf(corners[1], corners[2], point);
+		const float third = crossOf(corners[2], corners[0], point);
+		const float slack = 1.0e-9F;
+		return (first >= -slack && second >= -slack && third >= -slack) || (first <= slack && second <= slack && third <= slack);
+	}
+
+	float distanceToSegment(glm::vec2 point, glm::vec2 from, glm::vec2 to) {
+		const glm::vec2 along = to - from;
+		const float		lengthSquared = along.x * along.x + along.y * along.y;
+		const float		at = lengthSquared > 0.0F
+								 ? std::clamp(((point.x - from.x) * along.x + (point.y - from.y) * along.y) / lengthSquared, 0.0F, 1.0F)
+								 : 0.0F;
+		const glm::vec2 nearest = from + along * at;
+		return std::hypot(point.x - nearest.x, point.y - nearest.y);
+	}
+
+	// Two triangles that only touch along an edge share, by float rounding, up to about 6e-8 m2; a real overlap of an
+	// outline over a part is 1e-4 m2 and up. A square millimetre sits between, well clear of both.
+	constexpr float kOverlapAreaSquareMeters = 1.0e-6F;
+
+	// The middle of what `polygon` and the convex `clip` (either winding) share, when they share more than
+	// kOverlapAreaSquareMeters.
+	std::optional<glm::vec2> overlapCentre(std::vector<glm::vec2> polygon, const std::vector<glm::vec2>& clip) {
+		float clipArea = 0.0F;
+		for (size_t i = 0; i < clip.size(); ++i) {
+			clipArea += crossOf({0.0F, 0.0F}, clip[i], clip[(i + 1) % clip.size()]);
+		}
+		const float sign = clipArea >= 0.0F ? 1.0F : -1.0F;
+		for (size_t edge = 0; edge < clip.size() && !polygon.empty(); ++edge) {
+			const glm::vec2		   from = clip[edge];
+			const glm::vec2		   to = clip[(edge + 1) % clip.size()];
+			std::vector<glm::vec2> kept;
+			for (size_t i = 0; i < polygon.size(); ++i) {
+				const glm::vec2 current = polygon[i];
+				const glm::vec2 following = polygon[(i + 1) % polygon.size()];
+				const float		currentSide = sign * crossOf(from, to, current);
+				const float		followingSide = sign * crossOf(from, to, following);
+				if (currentSide >= 0.0F) {
+					kept.push_back(current);
+				}
+				if ((currentSide >= 0.0F) != (followingSide >= 0.0F)) {
+					kept.push_back(current + (following - current) * (currentSide / (currentSide - followingSide)));
+				}
+			}
+			polygon = std::move(kept);
+		}
+		float	  doubledArea = 0.0F;
+		glm::vec2 centre{0.0F};
+		for (size_t i = 0; i < polygon.size(); ++i) {
+			doubledArea += crossOf({0.0F, 0.0F}, polygon[i], polygon[(i + 1) % polygon.size()]);
+			centre += polygon[i] / static_cast<float>(polygon.size());
+		}
+		if (std::abs(doubledArea) * 0.5F < kOverlapAreaSquareMeters) {
+			return std::nullopt;
+		}
+		return centre;
+	}
+
 	class ItemViewTest : public PartsTest {
 	  protected:
 		// One rect part, 1.0 x 0.6 m, standing from 0.2 to 0.8 m.
@@ -239,22 +329,81 @@ namespace {
 		}
 
 		// The stool of section 4.4: four legs under a 0.5 m seat.
-		const AssetDefinition* loadStool() {
+		void writeStool() {
 			writeDef(
 				"Stool",
 				"<parts>" + block("leg", -0.035F, -0.035F, 0.035F, 0.035F, 0.0F, 0.43F) + block("seat", -0.25F, -0.25F, 0.25F, 0.25F, 0.43F, 0.5F) +
 					"</parts><placements>" + place("leg", -0.19F, -0.19F) + place("leg", 0.19F, -0.19F) + place("leg", 0.19F, 0.19F) +
 					place("leg", -0.19F, 0.19F) + place("seat") + "</placements>"
 			);
+		}
+
+		const AssetDefinition* loadStool() {
+			writeStool();
 			return load("Stool");
 		}
 
 		// A plain bench, `length` by `depth`, 0.8 m tall, and optionally a mat on the ground under it.
-		const AssetDefinition* loadBench(float length, float depth, bool mat = false) {
+		void writeBench(float length, float depth, bool mat = false) {
 			const std::string parts =
 				block("bench", -length / 2, -depth / 2, length / 2, depth / 2, 0.0F, 0.8F) + (mat ? block("mat", -2.0F, -1.0F, 2.0F, 1.0F, 0.0F, 0.0F) : "");
 			writeDef("Bench", "<parts>" + parts + "</parts><placements>" + place("bench") + (mat ? place("mat") : "") + "</placements>");
+		}
+
+		const AssetDefinition* loadBench(float length, float depth, bool mat = false) {
+			writeBench(length, depth, mat);
 			return load("Bench");
+		}
+
+		// Items of plain blocks, each part its own pure hue: an L, a C, a U open to the south, two bodies side by side, and
+		// a stack with an overhang (a base, a slab on it, and a box on the slab over its front edge, as a vise on a
+		// worktop). Loads them and returns their names.
+		std::vector<std::string> writeNotchedAndStacked() {
+			// minX, minY, maxX, maxY, bottom, top
+			const std::vector<std::pair<std::string, std::vector<std::array<float, 6>>>> items = {
+				{"LetterL", {{-1.0F, -1.0F, 1.0F, -0.5F, 0.0F, 0.9F}, {-1.0F, -0.5F, -0.5F, 1.0F, 0.0F, 0.9F}}},
+				{"LetterC",
+				 {{-1.0F, -1.0F, -0.4F, 1.0F, 0.0F, 0.9F}, {-0.4F, -1.0F, 1.0F, -0.4F, 0.0F, 0.9F}, {-0.4F, 0.4F, 1.0F, 1.0F, 0.0F, 0.9F}}},
+				{"OpenSouth",
+				 {{-1.0F, -1.0F, 1.0F, -0.6F, 0.0F, 0.9F}, {-1.0F, -0.6F, -0.6F, 1.0F, 0.0F, 0.9F}, {0.6F, -0.6F, 1.0F, 1.0F, 0.0F, 0.9F}}},
+				{"TwoBodies", {{-1.0F, -0.3F, -0.2F, 0.3F, 0.0F, 0.9F}, {0.2F, -0.3F, 1.0F, 0.3F, 0.0F, 0.9F}}},
+				{"Overhang",
+				 {{-1.42F, -0.42F, 1.42F, 0.42F, 0.0F, 0.72F},
+				  {-1.5F, -0.5F, 1.5F, 0.5F, 0.72F, 0.8F},
+				  {1.02F, 0.24F, 1.34F, 0.54F, 0.8F, 0.98F}}},
+			};
+			const std::array<const char*, 3> hues = {"#FF0000", "#00FF00", "#0000FF"};
+			std::vector<std::string>		 names;
+			for (const auto& [name, rects] : items) {
+				std::string parts;
+				std::string placements;
+				for (size_t i = 0; i < rects.size(); ++i) {
+					const std::string part = "block" + std::to_string(i);
+					parts += "<part name=\"" + part + "\"><footprint>" + rect(rects[i][0], rects[i][1], rects[i][2], rects[i][3]) +
+							 "</footprint><height bottom=\"" + number(rects[i][4]) + "\" top=\"" + number(rects[i][5]) +
+							 "\"/><top color=\"" + hues[i] + "\"/><sides color=\"" + hues[i] + "\"/></part>";
+					placements += place(part);
+				}
+				writeDef(name, "<parts>" + parts + "</parts><placements>" + placements + "</placements>");
+				names.push_back(name);
+			}
+			load(names.front());
+			return names;
+		}
+
+		// A slab on a narrower base, as a worktop on its carcass: the base blue, the slab's top green and its sides red,
+		// so no other triangle is the colour of the slab's top.
+		void writeSlab() {
+			writeDef(
+				"Slab",
+				"<parts><part name=\"base\"><footprint>" + rect(-1.42F, -0.42F, 1.42F, 0.42F) +
+					"</footprint><height bottom=\"0\" top=\"0.72\"/><top color=\"#0000FF\"/><sides color=\"#0000FF\"/></part>"
+					"<part name=\"slab\"><footprint>" +
+					rect(-1.5F, -0.5F, 1.5F, 0.5F) +
+					"</footprint><height bottom=\"0.72\" top=\"0.8\"/><top color=\"#00FF00\"/><sides "
+					"color=\"#FF0000\"/></part></parts><placements>" +
+					place("base") + place("slab") + "</placements>"
+			);
 		}
 
 		// An item of plain blocks, each `name minX minY maxX maxY`, 0 to 0.9 m tall.
@@ -775,7 +924,6 @@ TEST_F(ItemViewTest, ACounterAtAShallowAngleMergesItsBandsInPairs) {
 TEST_F(ItemViewTest, AShallowVsMergedStripsSpreadByNoMoreThanTheMergeDistance) {
 	// Two rects at minus and plus 2.5 degrees, the second stacked where they overlap: the southern edge is a shallow V
 	// past the merge distance (0.028 m; the run's least and greatest anchors keep it to 0.017 m).
-	// by twice the merge distance.
 	writeDef(
 		"ShallowV",
 		"<parts>" + block("left", -3.0F, -0.3F, 0.3F, 0.3F, 0.0F, 0.8F) + block("right", -0.3F, -0.3F, 3.0F, 0.3F, 0.8F, 0.9F) + "</parts><placements>" +
@@ -798,11 +946,11 @@ TEST_F(ItemViewTest, NotchedAndSplitBodiesCutIntoAStripAnInterval) {
 	const StripLayout letterLayout = stripLayout(*letterC, 0, viewConfig());
 	ASSERT_EQ(letterLayout.strips.size(), 3U);
 	EXPECT_NEAR(letterLayout.strips[0].anchorLocalY, -0.4F, kTolerance) << "the north arm first";
-	EXPECT_NEAR(letterLayout.strips[0].minX, -0.4F - viewConfig().outlineHalfWidthMeters(), kTolerance) << "reaching back over the spine by the arm's outline";
+	EXPECT_NEAR(letterLayout.strips[0].minX, -0.4F, kTolerance) << "the arm's outline over the spine is in the spine's strip";
 	EXPECT_NEAR(letterLayout.strips[1].anchorLocalY, 1.0F, kTolerance) << "the spine";
 	EXPECT_LT(letterLayout.strips[1].minX, -0.99F);
 	EXPECT_NEAR(letterLayout.strips[2].anchorLocalY, 1.0F, kTolerance) << "the south arm, after the spine left to right";
-	EXPECT_NEAR(letterLayout.strips[2].minX, -0.4F - viewConfig().outlineHalfWidthMeters(), kTolerance) << "two strips in the bands through the notch";
+	EXPECT_NEAR(letterLayout.strips[2].minX, -0.4F, kTolerance) << "two strips in the bands through the notch";
 
 	// An L whose notch opens to the south-east: the upright and the bar beside the notch.
 	const AssetDefinition* letterL = loadBlocks("LetterL", {{-1.0F, -1.0F, 1.0F, -0.5F}, {-1.0F, -0.5F, -0.5F, 1.0F}});
@@ -996,6 +1144,396 @@ TEST_F(ItemViewTest, StripsEitherSideOfABandEdgeShareBitIdenticalCutVertices) {
 	}
 }
 
+TEST_F(ItemViewTest, NoTwoStripsOverlapOnScreenAtAnyTurn) {
+	// Items whose collider is convex rings, so every band holds at most one interval and is drawn by one strip: the
+	// strips' triangles lie in x ranges that never overlap, and the strip order alone can't put one part over another
+	// the wrong way. A slab on a narrower base and a slab on legs (one starting on a band edge) are what the outline's
+	// reach past a footprint once broke. Two bodies side by side are sampled while the gap between them is open: there
+	// each body's outline stays with its own strip, so where the gap is narrower than two of the outline's half widths
+	// the two strips overlap by design, by the gap or by what the two outlines share of it, whichever is less.
+	writeTable();
+	writeSlab();
+	writeStool();
+	writeBench(3.0F, 1.0F);
+	writeDef(
+		"SideBySide",
+		"<parts>" + block("west", -1.0F, -0.3F, -0.2F, 0.3F, 0.0F, 0.9F) + block("east", 0.2F, -0.3F, 1.0F, 0.3F, 0.0F, 0.9F) +
+			"</parts><placements>" + place("west") + place("east") + "</placements>"
+	);
+	load("Table");
+	const float			pad = viewConfig().outlineHalfWidthMeters();
+	std::vector<double> everyDegree(360);
+	std::iota(everyDegree.begin(), everyDegree.end(), 0.0);
+	// The gap closes at about 33.7 degrees; it is under two half widths from 31.5 and under one from 32.5.
+	const std::vector<std::pair<const char*, std::vector<double>>> cases = {
+		{"Table", everyDegree},
+		{"Slab", everyDegree},
+		{"Stool", everyDegree},
+		{"Bench", everyDegree},
+		{"SideBySide", {0, 10, 20, 30, 31, 31.5, 32, 32.5, 32.75, 33, 33.25, 33.5, 33.6, 160, 170, 180, 190, 200, 212.5, 213, 340, 350}}
+	};
+	size_t views = 0;
+	for (const auto& [name, turns] : cases) {
+		const AssetDefinition* def = AssetRegistry::Get().getDefinition(name);
+		ASSERT_NE(def, nullptr) << name;
+		for (const double degrees : turns) {
+			const ItemView view = checkedMesh(*def, quantaOf(degrees), 0, viewConfig());
+			ASSERT_TRUE(view.error.empty()) << view.error;
+			++views;
+			float allowed = 1.0e-6F;
+			if (std::string(name) == "SideBySide") {
+				const float							   turn = radiansOf(degrees);
+				std::array<std::pair<float, float>, 2> extents;
+				for (size_t placement = 0; placement < 2; ++placement) {
+					extents[placement] = {std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity()};
+					for (const glm::vec2& point : turnedFootprint(*def->parts, placement, turn)) {
+						extents[placement].first = std::min(extents[placement].first, point.x);
+						extents[placement].second = std::max(extents[placement].second, point.x);
+					}
+				}
+				const float gap = std::max(extents[1].first - extents[0].second, extents[0].first - extents[1].second);
+				allowed += std::max(0.0F, std::min(gap, 2.0F * pad - gap));
+			}
+			std::vector<std::pair<float, float>> ranges;
+			for (const ViewStrip& strip : view.strips) {
+				std::pair<float, float> range{std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity()};
+				for (uint32_t index = strip.firstIndex; index < strip.firstIndex + strip.indexCount; ++index) {
+					range.first = std::min(range.first, view.mesh.vertices[view.mesh.indices[index]].x);
+					range.second = std::max(range.second, view.mesh.vertices[view.mesh.indices[index]].x);
+				}
+				ranges.push_back(range);
+			}
+			for (size_t first = 0; first < ranges.size(); ++first) {
+				for (size_t second = first + 1; second < ranges.size(); ++second) {
+					const float overlap =
+						std::min(ranges[first].second, ranges[second].second) - std::max(ranges[first].first, ranges[second].first);
+					EXPECT_LE(overlap, allowed) << name << " at " << degrees << " degrees: strips " << first << " [" << ranges[first].first
+												<< ", " << ranges[first].second << "] and " << second << " [" << ranges[second].first
+												<< ", " << ranges[second].second << "]";
+				}
+			}
+		}
+	}
+	EXPECT_EQ(views, 4U * 360U + 22U);
+}
+
+TEST_F(ItemViewTest, NothingOfALowerPartShowsThroughThePartAboveIt) {
+	// A slab on a narrower base, as a worktop on its carcass. The slab is above the base in plan, so drawing the strips
+	// in order is the parts order there: nothing of the base (its sides, its top, its outline) lands over the slab's
+	// top after the slab's top has drawn, in whatever strips the layout cuts. Every 3 degrees: the fault this guards
+	// against showed at about 60 turns in a row.
+	writeSlab();
+	const AssetDefinition* def = load("Slab");
+	ASSERT_NE(def, nullptr);
+	const ViewConfig&		config = viewConfig();
+	const Foundation::Color slabTop(0.0F, 1.0F, 0.0F, 1.0F);
+	// The slab's top less the band its own outlines reach into.
+	const float inset = std::max(config.outlineWidthMeters, config.outlineTopWidthMeters);
+	size_t		views = 0;
+	for (int degrees = 0; degrees < 360; degrees += 3) {
+		const float	   turn = radiansOf(degrees);
+		const ItemView view = checkedMesh(*def, quantaOf(degrees), 0, config);
+		ASSERT_TRUE(view.error.empty()) << view.error;
+		++views;
+		std::vector<glm::vec2> inner;
+		for (const glm::vec2 corner :
+			 {glm::vec2{-1.5F + inset, -0.5F + inset},
+			  glm::vec2{1.5F - inset, -0.5F + inset},
+			  glm::vec2{1.5F - inset, 0.5F - inset},
+			  glm::vec2{-1.5F + inset, 0.5F - inset}}) {
+			inner.push_back(turnedPoint(corner, turn) + glm::vec2{0.0F, -0.8F * config.heightRatio});
+		}
+		for (size_t index = 0; index + 2 < view.mesh.indices.size(); index += 3) {
+			if (sameColor(view.mesh.colors[view.mesh.indices[index]], slabTop)) {
+				continue;
+			}
+			// The part of this triangle over the slab's inner top, and a point inside that part.
+			const std::array<glm::vec2, 3> corners = triangleOf(view, index);
+			const std::optional<glm::vec2> centre = overlapCentre(std::vector<glm::vec2>(corners.begin(), corners.end()), inner);
+			if (!centre.has_value()) {
+				continue;
+			}
+			// The slab's top must draw over it there: a slab top triangle holding that point comes later.
+			bool covered = false;
+			for (size_t later = index + 3; later + 2 < view.mesh.indices.size() && !covered; later += 3) {
+				covered = sameColor(view.mesh.colors[view.mesh.indices[later]], slabTop) && containsPoint(triangleOf(view, later), *centre);
+			}
+			if (!covered) {
+				ADD_FAILURE() << degrees << " degrees: triangle " << index / 3 << " (" << corners[0].x << ", " << corners[0].y << ") ("
+							  << corners[1].x << ", " << corners[1].y << ") (" << corners[2].x << ", " << corners[2].y
+							  << ") shows over the slab's top at (" << centre->x << ", " << centre->y << ")";
+				break;
+			}
+		}
+	}
+	EXPECT_EQ(views, 120U);
+}
+
+TEST_F(ItemViewTest, WhereTwoPartsOverlapOnScreenThePartInFrontDrawsLater) {
+	// Bodies with notches and gaps, where an outline past a footprint's end lands in another interval's strip, and a
+	// stack with an overhang. Each part has its own pure hue (its sides shaded, its top not), and the parts share the
+	// outline colour. Wherever two triangles of different parts overlap on screen by more than kOverlapAreaSquareMeters,
+	// the one drawn later must not belong to a part the parts order puts behind the other's (section 6.6). An outline
+	// triangle belongs to whichever parts' outlines pass under it; a pair is wrong only when every way of reading it is.
+	// Every 3 degrees.
+	const std::vector<std::string> items = writeNotchedAndStacked();
+	const ViewConfig&			   config = viewConfig();
+	// The part a colour is, by its one channel; none for the outline colour.
+	const auto partOf = [](const Foundation::Color& color) -> std::optional<size_t> {
+		const std::array<float, 3> channels = {color.r, color.g, color.b};
+		std::optional<size_t>	   found;
+		for (size_t i = 0; i < 3; ++i) {
+			if (channels[i] > 0.0F) {
+				if (found.has_value()) {
+					return std::nullopt;
+				}
+				found = i;
+			}
+		}
+		return found;
+	};
+	size_t views = 0;
+	size_t pairs = 0;
+	for (const std::string& name : items) {
+		const AssetDefinition* def = AssetRegistry::Get().getDefinition(name);
+		ASSERT_NE(def, nullptr) << name;
+		const PartsAsset& parts = *def->parts;
+		for (int degrees = 0; degrees < 360; degrees += 3) {
+			const float	   turn = radiansOf(degrees);
+			const ItemView view = checkedMesh(*def, quantaOf(degrees), 0, config);
+			ASSERT_TRUE(view.error.empty()) << view.error;
+			++views;
+			std::vector<std::vector<glm::vec2>> footprints;
+			std::vector<std::vector<glm::vec2>> outlines; // each placement's two outline rings, end to end
+			std::vector<size_t>					outlineSplit;
+			for (size_t placement = 0; placement < parts.placements.size(); ++placement) {
+				const PartDefinition&  part = parts.parts[parts.placements[placement].part];
+				std::vector<glm::vec2> footprint = turnedFootprint(parts, placement, turn);
+				std::vector<glm::vec2> projected;
+				std::vector<glm::vec2> top;
+				for (const glm::vec2& point : footprint) {
+					projected.push_back(point + glm::vec2{0.0F, -part.bottomMeters * config.heightRatio});
+					projected.push_back(point + glm::vec2{0.0F, -part.topMeters * config.heightRatio});
+					top.push_back(point + glm::vec2{0.0F, -part.topMeters * config.heightRatio});
+				}
+				std::vector<glm::vec2> rings = convexHull(projected);
+				outlineSplit.push_back(rings.size());
+				rings.insert(rings.end(), top.begin(), top.end());
+				outlines.push_back(std::move(rings));
+				footprints.push_back(std::move(footprint));
+			}
+			const std::vector<std::vector<size_t>> drawnAfter = partsDrawnAfter(parts, footprints);
+			const auto							   behind = [&](size_t part, size_t other) {
+				return std::find(drawnAfter[part].begin(), drawnAfter[part].end(), other) != drawnAfter[part].end();
+			};
+			// The parts whose outline passes under a point.
+			const auto outlinesAt = [&](glm::vec2 point) {
+				std::vector<size_t> found;
+				const float			reach = config.outlineHalfWidthMeters() + 2.0e-3F;
+				for (size_t placement = 0; placement < outlines.size(); ++placement) {
+					const std::vector<glm::vec2>& rings = outlines[placement];
+					const size_t				  split = outlineSplit[placement];
+					bool						  near = false;
+					for (size_t i = 0; i < rings.size() && !near; ++i) {
+						const size_t	ringStart = i < split ? 0 : split;
+						const size_t	ringSize = i < split ? split : rings.size() - split;
+						const glm::vec2 from = rings[i];
+						const glm::vec2 to = rings[ringStart + (i - ringStart + 1) % ringSize];
+						near = distanceToSegment(point, from, to) <= reach;
+					}
+					if (near) {
+						found.push_back(placement);
+					}
+				}
+				return found;
+			};
+			struct Box {
+				float  minX, maxX, minY, maxY;
+				size_t index;
+			};
+			std::vector<Box> boxes;
+			for (size_t index = 0; index + 2 < view.mesh.indices.size(); index += 3) {
+				const std::array<glm::vec2, 3> corners = triangleOf(view, index);
+				boxes.push_back(
+					{std::min({corners[0].x, corners[1].x, corners[2].x}),
+					 std::max({corners[0].x, corners[1].x, corners[2].x}),
+					 std::min({corners[0].y, corners[1].y, corners[2].y}),
+					 std::max({corners[0].y, corners[1].y, corners[2].y}),
+					 index}
+				);
+			}
+			std::sort(boxes.begin(), boxes.end(), [](const Box& left, const Box& right) { return left.minX < right.minX; });
+			for (size_t a = 0; a < boxes.size(); ++a) {
+				for (size_t b = a + 1; b < boxes.size() && boxes[b].minX < boxes[a].maxX; ++b) {
+					if (boxes[b].minY >= boxes[a].maxY || boxes[a].minY >= boxes[b].maxY) {
+						continue;
+					}
+					const size_t				   earlier = std::min(boxes[a].index, boxes[b].index);
+					const size_t				   later = std::max(boxes[a].index, boxes[b].index);
+					const std::array<glm::vec2, 3> earlierCorners = triangleOf(view, earlier);
+					const std::array<glm::vec2, 3> laterCorners = triangleOf(view, later);
+					const std::optional<glm::vec2> centre = overlapCentre(
+						std::vector<glm::vec2>(laterCorners.begin(), laterCorners.end()),
+						std::vector<glm::vec2>(earlierCorners.begin(), earlierCorners.end())
+					);
+					if (!centre.has_value()) {
+						continue;
+					}
+					++pairs;
+					const auto partsOf = [&](size_t index) {
+						const std::optional<size_t> part = partOf(view.mesh.colors[view.mesh.indices[index]]);
+						return part.has_value() ? std::vector<size_t>{*part} : outlinesAt(*centre);
+					};
+					const std::vector<size_t> earlierParts = partsOf(earlier);
+					const std::vector<size_t> laterParts = partsOf(later);
+					bool					  wrong = !earlierParts.empty() && !laterParts.empty();
+					for (const size_t earlierPart : earlierParts) {
+						for (const size_t laterPart : laterParts) {
+							wrong = wrong && laterPart != earlierPart && behind(laterPart, earlierPart);
+						}
+					}
+					if (wrong) {
+						ADD_FAILURE() << name << " at " << degrees << " degrees: triangle " << later / 3 << " of part "
+									  << laterParts.front() << " draws over triangle " << earlier / 3 << " of part " << earlierParts.front()
+									  << ", which is in front of it, at (" << centre->x << ", " << centre->y << ")";
+						return;
+					}
+				}
+			}
+		}
+	}
+	EXPECT_EQ(views, 5U * 120U);
+	EXPECT_GT(pairs, 0U);
+}
+
+TEST_F(ItemViewTest, IntervalsJoinOnlyWhereTheirOutlinesCanMeet) {
+	// On a vertical line through the collider, two neighbouring intervals are one strip exactly when their facing
+	// edges are closer than the outline's whole width across the gap (section 6.7): a join never swallows a gap
+	// something could stand in, and a gap outlines can cross is never left between two strips. So the strips with a
+	// piece across the line are as many as the line's intervals less its joined gaps. Lines near a cut or a band edge,
+	// where the two readings differ by rounding, are skipped. Every 3 degrees.
+	const std::vector<std::string> items = writeNotchedAndStacked();
+	const ViewConfig&			   config = viewConfig();
+	const float					   halfWidth = config.outlineHalfWidthMeters();
+	constexpr int				   kLines = 64;
+	size_t						   checked = 0;
+	size_t						   joined = 0;
+	for (const std::string& name : items) {
+		const AssetDefinition* def = AssetRegistry::Get().getDefinition(name);
+		ASSERT_NE(def, nullptr) << name;
+		for (int degrees = 0; degrees < 360; degrees += 3) {
+			const float		  turn = radiansOf(degrees);
+			const StripLayout layout = stripLayout(*def, quantaOf(degrees), config);
+			struct Crossing {
+				float y;
+				float reach; // the outline's reach in y across this edge
+			};
+			std::vector<std::pair<glm::vec2, glm::vec2>> edges;
+			float										 lowest = std::numeric_limits<float>::infinity();
+			float										 highest = -std::numeric_limits<float>::infinity();
+			for (const CollisionShape& ring : def->partsColliders) {
+				for (size_t i = 0; i < ring.pointsMeters.size(); ++i) {
+					edges.emplace_back(
+						turnedPoint(ring.pointsMeters[i], turn), turnedPoint(ring.pointsMeters[(i + 1) % ring.pointsMeters.size()], turn)
+					);
+					lowest = std::min(lowest, edges.back().first.x);
+					highest = std::max(highest, edges.back().first.x);
+				}
+			}
+			std::vector<float> pieceEdges;
+			for (const ItemStrip& strip : layout.strips) {
+				for (const StripPiece& piece : strip.pieces) {
+					pieceEdges.push_back(piece.minX);
+					pieceEdges.push_back(piece.maxX);
+				}
+			}
+			for (int line = 1; line < kLines; ++line) {
+				const float x = lowest + (highest - lowest) * static_cast<float>(line) / kLines;
+				if (std::any_of(pieceEdges.begin(), pieceEdges.end(), [&](float edge) { return std::abs(edge - x) < 1.0e-4F; })) {
+					continue;
+				}
+				std::vector<Crossing> crossings;
+				for (const auto& [from, to] : edges) {
+					if ((from.x - x) * (to.x - x) < 0.0F) {
+						const glm::vec2 along = to - from;
+						crossings.push_back(
+							{from.y + along.y * (x - from.x) / along.x, halfWidth * std::hypot(along.x, along.y) / std::abs(along.x)}
+						);
+					}
+				}
+				if (crossings.empty()) {
+					continue;
+				}
+				std::sort(crossings.begin(), crossings.end(), [](const Crossing& left, const Crossing& right) { return left.y < right.y; });
+				size_t groups = 1;
+				size_t joinedHere = 0;
+				bool   ambiguous = false;
+				for (size_t i = 2; i + 1 < crossings.size(); i += 2) {
+					const float gap = crossings[i].y - crossings[i - 1].y;
+					const float join = crossings[i].reach + crossings[i - 1].reach;
+					ambiguous = ambiguous || std::abs(gap - join) < 1.0e-3F;
+					groups += gap > join ? 1 : 0;
+					joinedHere += gap > join ? 0 : 1;
+				}
+				if (ambiguous) {
+					continue;
+				}
+				joined += joinedHere;
+				size_t strips = 0;
+				for (const ItemStrip& strip : layout.strips) {
+					strips += std::any_of(
+								  strip.pieces.begin(),
+								  strip.pieces.end(),
+								  [&](const StripPiece& piece) { return piece.minX < x && x < piece.maxX; }
+							  )
+								  ? 1
+								  : 0;
+				}
+				++checked;
+				EXPECT_EQ(strips, groups) << name << " at " << degrees << " degrees, x " << x << ": " << crossings.size() / 2
+										  << " intervals";
+			}
+		}
+	}
+	EXPECT_GT(checked, 0U);
+	EXPECT_GT(joined, 0U) << "some line crosses a gap narrow enough to join";
+}
+
+TEST_F(ItemViewTest, AGapClosingAHairFromACutStillJoinsItsBand) {
+	// Two blocks meeting only at a corner at the origin, a V open to the east between them: the north one's southern
+	// edge runs to (1, -1.55) m and the south one's northern edge to (2, 1.204) m, so the gap widens 2.152 a metre from
+	// the apex and reaches the outline's whole width across it (0.015 * (1.8446 / 1 + 2.3345 / 2) = 0.04518 m) at
+	// x 0.0209931. The collider is on a millimetre grid, and a third block far south puts a vertex at x 0.021, 6.9
+	// micrometres past that crossing: too near for a cut of its own, and the gap there is 1.5e-5 m over the join gap.
+	// The band from the apex to it is joined, as all but its last micrometres are narrower than the outline.
+	const float northLength = std::hypot(1.0F, 1.55F);
+	const float northTurn = std::atan2(-1.55F, 1.0F) * 180.0F / std::numbers::pi_v<float>;
+	const float southLength = std::hypot(2.0F, 1.204F);
+	const float southTurn = std::atan2(1.204F, 2.0F) * 180.0F / std::numbers::pi_v<float>;
+	writeDef(
+		"Vee",
+		"<parts>" + block("north", 0.0F, -0.3F, northLength, 0.0F, 0.0F, 0.9F) + block("south", 0.0F, 0.0F, southLength, 0.3F, 0.0F, 0.9F) +
+			block("far", 0.021F, 3.0F, 0.321F, 3.3F, 0.0F, 0.9F) + "</parts><placements>" + place("north", 0.0F, 0.0F, northTurn) +
+			place("south", 0.0F, 0.0F, southTurn) + place("far") + "</placements>"
+	);
+	const AssetDefinition* def = load("Vee");
+	ASSERT_NE(def, nullptr);
+	ASSERT_TRUE(issues("Vee").empty()) << ::testing::PrintToString(issues("Vee"));
+	const StripLayout layout = stripLayout(*def, 0, viewConfig());
+	for (const float x : {0.002F, 0.01F, 0.019F}) {
+		size_t strips = 0;
+		for (const ItemStrip& strip : layout.strips) {
+			strips +=
+				std::any_of(
+					strip.pieces.begin(), strip.pieces.end(), [&](const StripPiece& piece) { return piece.minX < x && x < piece.maxX; }
+				)
+					? 1
+					: 0;
+		}
+		EXPECT_EQ(strips, 1U) << "the blocks either side of the narrow gap are one strip at x " << x;
+	}
+}
+
 TEST_F(ItemViewTest, ADrawingsAverageColourIsWhatShows) {
 	// A grey background with a red panel painted over its right half: half grey and half red, not the background
 	// counted whole under the panel.
@@ -1014,6 +1552,32 @@ TEST_F(ItemViewTest, ADrawingsAverageColourIsWhatShows) {
 	EXPECT_NEAR(average.g, grey / 2.0F, 1.0e-4F);
 	EXPECT_NEAR(average.b, grey / 2.0F, 1.0e-4F);
 	EXPECT_FLOAT_EQ(average.a, 1.0F);
+}
+
+TEST_F(ItemViewTest, ATranslucentShapeIsAveragedOncePerPointItCovers) {
+	// A half-transparent red square over grey: the lattice points on the diagonal its two triangles share are painted
+	// once, as every other point is, so the average is the even mix.
+	folder.write(
+		"Glass/front.svg", svg(1.0F, 1.0F, "<rect x=\"0\" y=\"0\" width=\"100\" height=\"100\" fill=\"#FF0000\" fill-opacity=\"0.5\"/>")
+	);
+	writeDef(
+		"Glass",
+		"<parts><part name=\"box\"><footprint>" + rect(-0.5F, -0.5F, 0.5F, 0.5F) +
+			"</footprint><height bottom=\"0\" top=\"1\"/><top color=\"#FFFFFF\"/><sides color=\"#00FF00\"><face side=\"front\" "
+			"drawing=\"front.svg\"/></sides>"
+			"</part></parts><placements>" +
+			place("box") + "</placements>"
+	);
+	const AssetDefinition* def = load("Glass");
+	ASSERT_NE(def, nullptr);
+	const ItemDrawing& drawing = def->parts->drawings[*def->parts->parts[0].faces[2].drawing];
+	ASSERT_EQ(drawing.shapes.size(), 2U);
+	// The opacity as the SVG reader stores it, a byte: 127/255, not 0.5.
+	const float alpha = drawing.shapes[1].shape.fillColor.a;
+	const float grey = static_cast<float>(0x80) / 255.0F;
+	EXPECT_NEAR(drawing.averageColor.r, grey * (1.0F - alpha) + alpha, 1.0e-4F);
+	EXPECT_NEAR(drawing.averageColor.g, grey * (1.0F - alpha), 1.0e-4F);
+	EXPECT_NEAR(drawing.averageColor.b, grey * (1.0F - alpha), 1.0e-4F);
 }
 
 TEST_F(ItemViewTest, RandomArtSpillingEveryWayIsClippedToItsFaceAndItsTop) {
