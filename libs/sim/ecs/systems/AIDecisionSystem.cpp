@@ -1,6 +1,7 @@
 #include "AIDecisionSystem.h"
 
 #include "GoalSystemHelpers.h"
+#include "WallStandPoint.h"
 
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
@@ -1712,18 +1713,24 @@ namespace ecs {
 		return buildList;
 	}
 
+	namespace {
+		// A site's stands for builders of `agentRadius`, `count` of them, made the first time that radius asks.
+		std::vector<SharedWork::Site::SpotStand>& standsAtRadius(std::vector<SharedWork::Site::StandsAtRadius>& byRadius, float agentRadius, std::size_t count) {
+			const auto sameRadius = [&](const SharedWork::Site::StandsAtRadius& memo) { return memo.agentRadius == agentRadius; };
+			auto	   atRadius = std::find_if(byRadius.begin(), byRadius.end(), sameRadius);
+			if (atRadius == byRadius.end()) {
+				byRadius.push_back({.agentRadius = agentRadius, .stands = std::vector<SharedWork::Site::SpotStand>(count)});
+				atRadius = std::prev(byRadius.end());
+			}
+			return atRadius->stands;
+		}
+	} // namespace
+
 	std::optional<glm::vec2> SharedWork::builderSpotStand(
 		std::size_t site, std::size_t spot, float agentRadius, const NavigationSystem& nav
 	) {
-		Site&							   buildSite = buildList[site];
-		std::vector<Site::StandsAtRadius>& byRadius = buildSite.standsByRadius;
-		const auto						   sameRadius = [&](const Site::StandsAtRadius& memo) { return memo.agentRadius == agentRadius; };
-		auto							   atRadius = std::find_if(byRadius.begin(), byRadius.end(), sameRadius);
-		if (atRadius == byRadius.end()) {
-			byRadius.push_back({.agentRadius = agentRadius, .stands = std::vector<Site::SpotStand>(buildSite.builderSpots.size())});
-			atRadius = std::prev(byRadius.end());
-		}
-		Site::SpotStand& stand = atRadius->stands[spot];
+		Site&			 buildSite = buildList[site];
+		Site::SpotStand& stand = standsAtRadius(buildSite.standsByRadius, agentRadius, buildSite.builderSpots.size())[spot];
 		if (!stand.asked) {
 			stand.asked = true;
 			const glm::vec2				   point = buildSite.builderSpots[spot];
@@ -1742,21 +1749,11 @@ namespace ecs {
 	}
 
 	std::optional<glm::vec2> SharedWork::wallStandPoint(std::size_t site, std::size_t side, float agentRadius, const NavigationSystem& nav) {
-		Site&							   buildSite = buildList[site];
-		std::vector<Site::StandsAtRadius>& byRadius = buildSite.wallStandsByRadius;
-		auto atRadius = std::find_if(byRadius.begin(), byRadius.end(), [&](const Site::StandsAtRadius& memo) { return memo.agentRadius == agentRadius; });
-		if (atRadius == byRadius.end()) {
-			byRadius.push_back({.agentRadius = agentRadius, .stands = std::vector<Site::SpotStand>(buildSite.wallStands.size())});
-			atRadius = std::prev(byRadius.end());
-		}
-		Site::SpotStand& stand = atRadius->stands[side];
+		Site&			 buildSite = buildList[site];
+		Site::SpotStand& stand = standsAtRadius(buildSite.wallStandsByRadius, agentRadius, buildSite.wallStands.size())[side];
 		if (!stand.asked) {
 			stand.asked = true;
-			const construction::WallStand& wallSide = buildSite.wallStands[side];
-			const std::optional<glm::vec2> snapped = nav.nearestPathablePoint(wallSide.standPoint(agentRadius), agentRadius);
-			if (snapped.has_value() && wallSide.serves(*snapped, agentRadius)) {
-				stand.point = snapped;
-			}
+			stand.point = ecs::wallStandPoint(buildSite.wallStands[side], agentRadius, nav);
 		}
 		return stand.point;
 	}
@@ -3252,23 +3249,18 @@ namespace ecs {
 		};
 		// A wall's Build stands beside it, on one of the sides its goal allows (construction::wallStands),
 		// the nearest he can get to, at the mesh's stand point for that side when it serves the side
-		// (SharedWork::wallStandPoint). With no side that can be stood on at all, the wall says so.
+		// (SharedWork::wallStandPoint).
 		const auto chooseWallStand = [&](EvaluatedOption& option, std::size_t siteIndex, std::span<const construction::WallStand> stands) {
 			std::optional<glm::vec2> chosen;
-			bool					 anyStandable = false;
 			for (std::size_t side = 0; side < stands.size(); ++side) {
 				const std::optional<glm::vec2> point =
 					haveMesh ? m_sharedWork.wallStandPoint(siteIndex, side, agentRadius, *m_navSystem) : stands[side].standPoint(agentRadius);
-				anyStandable = anyStandable || point.has_value();
 				if (!point.has_value() || (haveMesh && *point != position.value && !canTake(option.sourceKey, *point))) {
 					continue;
 				}
 				if (!chosen.has_value() || glm::distance(position.value, *point) < glm::distance(position.value, *chosen)) {
 					chosen = point;
 				}
-			}
-			if (auto* blueprint = world->getComponent<StructureBlueprint>(static_cast<EntityID>(option.buildBlueprintEntityId))) {
-				blueprint->noGroundToBuildFrom = !anyStandable;
 			}
 			if (!chosen.has_value()) {
 				return OptionStatus::NoSource;

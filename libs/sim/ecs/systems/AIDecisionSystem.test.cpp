@@ -7,6 +7,7 @@
 #include "ActionSystem.h"
 #include "ConstructionSystem.h"
 #include "MovementSystem.h"
+#include "WallStandPoint.h"
 #include "NavigationSystem.h"
 #include "PhysicsSystem.h"
 #include "TimeSystem.h"
@@ -6359,6 +6360,11 @@ namespace ecs::test {
 			return findOption(*getTrace(colonist), [](const EvaluatedOption& option) { return option.taskType == TaskType::Build; });
 		}
 
+		// Whether the wall's panel says it has no ground to build from (ecs::noGroundToBuildFrom).
+		[[nodiscard]] bool noGround(EntityID blueprint) {
+			return noGroundToBuildFrom(GoalTaskRegistry::Get().getGoalByDestination(blueprint)->wallStands, AgentRadius{}.radiusMeters, *nav);
+		}
+
 		[[nodiscard]] bool built(EntityID blueprint) {
 			return world->getComponent<StructureBlueprint>(blueprint)->phase == StructureBlueprint::BuildPhase::Complete;
 		}
@@ -6405,6 +6411,11 @@ namespace ecs::test {
 		// The wall from (2, 2) to (6, 2): half its 0.2 m and a colonist's 0.3 m off its line, and more.
 		static constexpr float kWallY = 2.0F;
 		static constexpr float kClear = 0.1F + 0.3F;
+
+		// Placed obstacles a test stands on the ground, in place of the fixture's empty placement. The base
+		// TearDown resets the world, and with it the NavigationSystem reading these, before they go.
+		assets::PlacementExecutor				   obstacles{assets::AssetRegistry::Get()};
+		std::unordered_set<world::ChunkCoordinate> obstacleChunks;
 	};
 
 	// The last wall of a doorless square: one builder starting inside it and one outside both work it from
@@ -6502,6 +6513,62 @@ namespace ecs::test {
 		EXPECT_FALSE(built(wallEntity));
 	}
 
+	// The last two walls of a doorless square, each worked from inside by its own builder. The first done
+	// frees its builder inside, and he goes out to eat while the other is sent round: the closing wall waits
+	// for him too, as he is on his way out, and both end outside.
+	TEST_F(AIDecisionWallBuildTest, AColonistOnHisWayOutIsWaitedForWhenTheLastWallCloses) {
+		runConstruction();
+		wall({2.0F, 6.0F}, {6.0F, 6.0F}, true);
+		wall({6.0F, 6.0F}, {6.0F, 2.0F}, true);
+		const EntityID west = wallSite(wall({2.0F, 6.0F}, {2.0F, 2.0F}, false), {2.0F, 4.0F}, 10.0F);
+		const EntityID south = wallSite(wall({6.0F, 2.0F}, {2.0F, 2.0F}, false), {4.0F, 2.0F}, 12.0F);
+		const EntityID eater = idleColonist({2.8F, 4.0F});
+		const EntityID southBuilder = idleColonist({4.0F, 2.8F});
+		nav->finishPendingBuilds();
+
+		int tick = 0;
+		for (; tick < 300 && !built(west); ++tick) {
+			world->update(kTick);
+		}
+		ASSERT_TRUE(built(west));
+		ASSERT_FALSE(built(south)) << "the south wall must still be open when the west one completes";
+		ASSERT_TRUE(insideSquare(world->getComponent<Position>(eater)->value)) << "he finished the west wall from inside";
+		addKnownEntity(eater, {4.0F, -3.0F}, registerBerryBush(assets::AssetRegistry::Get()), assets::CapabilityType::Harvestable);
+		setNeedValue(eater, NeedType::Hunger, 5.0F);
+		for (; tick < 600 && !built(south); ++tick) {
+			world->update(kTick);
+		}
+		ASSERT_TRUE(built(south)) << "the south wall never completed";
+		for (const EntityID colonist : {eater, southBuilder}) {
+			const glm::vec2 at = world->getComponent<Position>(colonist)->value;
+			EXPECT_FALSE(insideSquare(at)) << "shut in at (" << at.x << ", " << at.y << ")";
+		}
+	}
+
+	// A boulder outside the middle of a wall: the ground at its middle stand point is taken, so the
+	// builder stands farther along the same side, and the wall can be built.
+	TEST_F(AIDecisionWallBuildTest, ABoulderOutsideTheMiddleOfAWallLeavesItBuildableFartherAlong) {
+		assets::AssetDefinition boulder;
+		boulder.defName = "Test_WallBoulder";
+		boulder.label = boulder.defName;
+		boulder.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {0.5F, 0.5F}});
+		assets::AssetRegistry::Get().registerTestDefinition(std::move(boulder));
+		assets::AsyncChunkPlacementResult placedBoulder;
+		placedBoulder.coord = world::worldToChunk({4.0F, 1.3F});
+		placedBoulder.spatialIndex.insert({"Test_WallBoulder", {4.0F, 1.3F}});
+		obstacleChunks.insert(placedBoulder.coord);
+		obstacles.storeChunkResult(std::move(placedBoulder));
+		placeNothingElsewhere(obstacles, &obstacleChunks);
+		nav->setPlacementData(&obstacles, &obstacleChunks);
+
+		const EntityID blueprint = wallSite(wall({2.0F, kWallY}, {6.0F, kWallY}, false), {4.0F, kWallY});
+		const EntityID builder = idleColonist({4.0F, -1.0F});
+		const glm::vec2 target = buildTargets({builder}).front();
+		EXPECT_LT(target.y, kWallY - kClear) << "on his side, below the wall";
+		EXPECT_GT(std::abs(target.x - 4.0F), 0.5F) << "clear of the boulder, farther along";
+		EXPECT_FALSE(noGround(blueprint));
+	}
+
 	// Walls on the rivers fixture's ground: one whose only allowed side is in the water, and one across a
 	// river from the colonist.
 	class AIDecisionWallBuildRiverTest : public AIDecisionWallBuildTest {
@@ -6526,7 +6593,7 @@ namespace ecs::test {
 		ASSERT_NE(option, nullptr);
 		EXPECT_EQ(option->status, OptionStatus::NoSource);
 		EXPECT_NE(getTask(builder)->type, TaskType::Build);
-		EXPECT_TRUE(world->getComponent<StructureBlueprint>(blueprint)->noGroundToBuildFrom);
+		EXPECT_TRUE(noGround(blueprint)) << "what the wall's panel shows";
 	}
 
 	// A wall on the far bank: both its sides can be stood on but he cannot get to either, so it is no
@@ -6542,7 +6609,7 @@ namespace ecs::test {
 		const EvaluatedOption* option = buildOption(builder);
 		ASSERT_NE(option, nullptr);
 		EXPECT_EQ(option->status, OptionStatus::NoSource);
-		EXPECT_FALSE(world->getComponent<StructureBlueprint>(blueprint)->noGroundToBuildFrom);
+		EXPECT_FALSE(noGround(blueprint));
 	}
 
 	namespace {

@@ -4,6 +4,7 @@
 #include "scenes/game/ui/adapters/SelectionAdapter.h"
 
 #include <ecs/components/ResourceStack.h>
+#include <ecs/systems/NavigationSystem.h>
 
 namespace world_sim {
 
@@ -252,7 +253,9 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 		contentData = adaptResourcePile(world, assetRegistry, std::get<ResourcePileSelection>(selection));
 	} else if (isWallSegment && constructionWorld != nullptr) {
 		const auto& wallSel = std::get<WallSegmentSelection>(selection);
-		contentData = adaptWallSegment(world, *constructionWorld, wallSel, callbacks.onDemolishWallSegment);
+		contentData = adaptWallSegment(
+			world, *constructionWorld, wallSel, callbacks.onDemolishWallSegment, world.tryGetSystem<ecs::NavigationSystem>()
+		);
 	} else if (isOpening && constructionWorld != nullptr) {
 		const auto& openingSel = std::get<OpeningSelection>(selection);
 		contentData = adaptOpening(world, *constructionWorld, openingSel, callbacks.onDemolishOpening);

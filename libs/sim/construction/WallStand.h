@@ -2,6 +2,8 @@
 
 #include <glm/vec2.hpp>
 
+#include <array>
+
 // A wall segment's band and the sides a builder stands on to work it, in meters (building-construction:
 // Walls / Lifecycle). Plain values; WallSides.h works them out from the topology store.
 
@@ -35,16 +37,21 @@ namespace construction {
 		// How far off the centreline a builder of `agentRadiusMeters` stands: half the wall's thickness, his
 		// radius, and kStandMarginMeters.
 		[[nodiscard]] float standOffset(float agentRadiusMeters) const;
-		// Where a builder of `agentRadiusMeters` stands, standOffset off the midpoint.
-		[[nodiscard]] glm::vec2 standPoint(float agentRadiusMeters) const;
+		// Where a builder of `agentRadiusMeters` stands, standOffset off the centreline at `alongMeters` from
+		// the midpoint toward one end.
+		[[nodiscard]] glm::vec2 standPoint(float agentRadiusMeters, float alongMeters = 0.0F) const;
+		// The stand points a builder tries, in order: the middle, then toward each end
+		// (kProbeFractions of halfLengthMeters).
+		[[nodiscard]] std::array<glm::vec2, 5> standPoints(float agentRadiusMeters) const;
 		// Whether `position` lies on this side of the centreline's line.
 		[[nodiscard]] bool onSide(glm::vec2 position) const;
-		// Whether `point`, where the mesh puts a builder of `agentRadiusMeters` for this side, serves it: on
-		// this side, no farther from the stand point than standOffset, and level with the segment (not past
-		// either end), so it is never across the wall's line or round a corner into the room it closes.
-		[[nodiscard]] bool serves(glm::vec2 point, float agentRadiusMeters) const;
+		// Whether `point`, where the mesh puts a builder of `agentRadiusMeters` for the stand point `stand`,
+		// serves this side: on it, no farther from `stand` than standOffset, and level with the segment (not
+		// past either end), so it is never across the wall's line or round a corner into the room it closes.
+		[[nodiscard]] bool serves(glm::vec2 point, glm::vec2 stand, float agentRadiusMeters) const;
 
-		static constexpr float kStandMarginMeters = 0.1F;
+		static constexpr float				  kStandMarginMeters = 0.1F;
+		static constexpr std::array<float, 5> kProbeFractions{0.0F, -0.5F, 0.5F, -0.85F, 0.85F};
 	};
 
 } // namespace construction

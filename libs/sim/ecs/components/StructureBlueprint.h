@@ -81,10 +81,6 @@ namespace ecs {
 		/// resumes the teardown rather than starting it.
 		bool teardownBegun = false;
 
-		/// A wall's: no side its builders may stand on can be stood on (the ground there is water, off the
-		/// mesh, or taken), as the last colonist to weigh building it found. Set and cleared by AIDecisionSystem.
-		bool noGroundToBuildFrom = false;
-
 		// =========================================================================
 		// Query helpers
 		// =========================================================================

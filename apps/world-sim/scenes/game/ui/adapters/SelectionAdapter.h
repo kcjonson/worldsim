@@ -17,6 +17,10 @@
 #include <functional>
 #include <optional>
 
+namespace ecs {
+	class NavigationSystem;
+}
+
 namespace world_sim {
 
 /// Callback to query remaining resource count for a world entity
@@ -114,11 +118,15 @@ struct FoundationActions {
 /// @param constructionWorld Topology store (geometry, material, thickness, state).
 /// @param selection The selected wall segment.
 /// @param onDemolish Callback for the Demolish button (nullable).
+/// @param navigation The mesh a wall under construction is asked of for ground beside it, so its state
+///        reads "No ground to build from" when no side its builders may use can be stood on (nullable:
+///        not asked).
 [[nodiscard]] PanelContent adaptWallSegment(
 	const ecs::World& world,
 	const construction::ConstructionWorld& constructionWorld,
 	const WallSegmentSelection& selection,
-	const std::function<void()>& onDemolish = {}
+	const std::function<void()>& onDemolish = {},
+	const ecs::NavigationSystem* navigation = nullptr
 );
 
 /// Convert a selected opening (door/window) into panel content.

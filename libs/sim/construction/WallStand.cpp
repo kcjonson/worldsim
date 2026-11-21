@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 
 namespace construction {
 
@@ -35,17 +36,26 @@ namespace construction {
 		return halfThicknessMeters + agentRadiusMeters + kStandMarginMeters;
 	}
 
-	glm::vec2 WallStand::standPoint(float agentRadiusMeters) const {
-		return midpoint + outward * standOffset(agentRadiusMeters);
+	glm::vec2 WallStand::standPoint(float agentRadiusMeters, float alongMeters) const {
+		const glm::vec2 along{outward.y, -outward.x};
+		return midpoint + along * alongMeters + outward * standOffset(agentRadiusMeters);
+	}
+
+	std::array<glm::vec2, 5> WallStand::standPoints(float agentRadiusMeters) const {
+		std::array<glm::vec2, 5> points{};
+		for (std::size_t probe = 0; probe < points.size(); ++probe) {
+			points[probe] = standPoint(agentRadiusMeters, kProbeFractions[probe] * halfLengthMeters);
+		}
+		return points;
 	}
 
 	bool WallStand::onSide(glm::vec2 position) const {
 		return glm::dot(position - midpoint, outward) > 0.0F;
 	}
 
-	bool WallStand::serves(glm::vec2 point, float agentRadiusMeters) const {
+	bool WallStand::serves(glm::vec2 point, glm::vec2 stand, float agentRadiusMeters) const {
 		const glm::vec2 along{outward.y, -outward.x};
-		return onSide(point) && glm::distance(point, standPoint(agentRadiusMeters)) <= standOffset(agentRadiusMeters) + kServesSlackMeters &&
+		return onSide(point) && glm::distance(point, stand) <= standOffset(agentRadiusMeters) + kServesSlackMeters &&
 			   std::abs(glm::dot(point - midpoint, along)) <= halfLengthMeters + kServesSlackMeters;
 	}
 

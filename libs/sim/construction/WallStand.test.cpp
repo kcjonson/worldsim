@@ -9,6 +9,7 @@
 #include <glm/geometric.hpp>
 #include <glm/vec2.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -103,7 +104,7 @@ namespace {
 			EXPECT_NEAR(stand.halfLengthMeters, 2.0F, 1e-5F);
 			const glm::vec2 point = stand.standPoint(kAgentRadius);
 			EXPECT_NEAR(std::abs(point.x), halfThickness + kAgentRadius + WallStand::kStandMarginMeters, 1e-5F);
-			EXPECT_TRUE(stand.serves(point, kAgentRadius));
+			EXPECT_TRUE(stand.serves(point, point, kAgentRadius));
 			EXPECT_FALSE(wallBand(world, *world.getSegment(segment))->overlaps(point, kAgentRadius));
 		}
 		EXPECT_LT(glm::dot(stands[0].outward, stands[1].outward), 0.0F) << "one on each side";
@@ -193,11 +194,16 @@ namespace {
 
 		const WallStand& outside = stands.front();
 		const float		 offset = outside.standOffset(kAgentRadius);
-		EXPECT_TRUE(outside.serves({3.0F, 2.0F - offset}, kAgentRadius));
-		EXPECT_TRUE(outside.serves({3.1F, 2.0F - offset + 0.2F}, kAgentRadius)) << "a little off the stand point";
-		EXPECT_FALSE(outside.serves({3.0F, 2.0F + offset}, kAgentRadius)) << "across the wall's line, in the room";
-		EXPECT_FALSE(outside.serves({4.3F, 1.9F}, kAgentRadius)) << "past the wall's end, round the corner into the room";
-		EXPECT_FALSE(outside.serves({3.0F, 2.0F - 2.5F * offset}, kAgentRadius)) << "farther than the stand offset";
+		const glm::vec2	 middle = outside.standPoint(kAgentRadius);
+		EXPECT_TRUE(outside.serves({3.0F, 2.0F - offset}, middle, kAgentRadius));
+		EXPECT_TRUE(outside.serves({3.1F, 2.0F - offset + 0.2F}, middle, kAgentRadius)) << "a little off the stand point";
+		EXPECT_FALSE(outside.serves({3.0F, 2.0F + offset}, middle, kAgentRadius)) << "across the wall's line, in the room";
+		const auto		probes = outside.standPoints(kAgentRadius);
+		const glm::vec2 nearEnd = *std::max_element(probes.begin(), probes.end(), [](glm::vec2 one, glm::vec2 other) { return one.x < other.x; });
+		ASSERT_GT(nearEnd.x, 3.5F) << "the last stand point lies toward the east end";
+		EXPECT_TRUE(outside.serves(nearEnd, nearEnd, kAgentRadius));
+		EXPECT_FALSE(outside.serves({4.05F, nearEnd.y + 0.1F}, nearEnd, kAgentRadius)) << "past the wall's end, round the corner into the room";
+		EXPECT_FALSE(outside.serves({3.0F, 2.0F - 2.5F * offset}, middle, kAgentRadius)) << "farther than the stand offset";
 	}
 
 	TEST_F(WallStandTest, AnUnknownSegmentHasNoStand) {
