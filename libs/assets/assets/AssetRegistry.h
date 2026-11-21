@@ -27,6 +27,10 @@
 #include <unordered_map>
 #include <vector>
 
+namespace pugi {
+	class xml_node;
+}
+
 namespace assets {
 
 	/// Snapshot of asynchronous asset loading. All fields are atomic so the splash
@@ -436,6 +440,10 @@ namespace assets {
 		/// Runs the per-def collision passes that need no age classes; leaves each aged def's
 		/// templates and rects to prewarmTreeVariants.
 		bool parseDefinitions(const std::string& xmlPath, std::vector<std::string>& loadedNames);
+
+		/// Reads a parts def's parts (PartsAsset.h), runs its parts script, and resolves and checks them into
+		/// `def`, with what fails in the validation report. The derived collider is admitted with the rest.
+		void loadParts(const pugi::xml_node& defNode, const std::filesystem::path& folder, AssetDefinition& def);
 
 		/// Builds every variant of each named def with age classes at its reference detail level (the
 		/// default view's; the renderer requests the others as the camera needs them), in parallel,

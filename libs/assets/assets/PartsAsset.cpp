@@ -1,0 +1,1276 @@
+#include "assets/PartsAsset.h"
+
+#include "assets/LodSvg.h"
+
+#include <boolean/RingBoolean.h>
+#include <polygon/Polygon.h>
+
+#include <pugixml.hpp>
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdio>
+#include <fstream>
+#include <iterator>
+#include <limits>
+#include <map>
+#include <numbers>
+#include <sstream>
+#include <utility>
+
+namespace assets {
+
+	namespace {
+
+		using Ring2 = std::vector<glm::vec2>;
+
+		constexpr double kMicrometresPerMeter = 1.0e6;
+		constexpr float	 kPi = std::numbers::pi_v<float>;
+
+		std::string formatted(const char* format, auto... values) {
+			std::array<char, 256> buffer{};
+			std::snprintf(buffer.data(), buffer.size(), format, values...);
+			return buffer.data();
+		}
+
+		std::string inQuotes(const std::string& text) {
+			return "'" + text + "'";
+		}
+
+		// ─── Reading the XML ─────────────────────────────────────────────────────────────────────────
+
+		class XmlReader {
+		  public:
+			XmlReader(const std::string& newDefName, ValidationReport& newReport)
+				: defName(newDefName),
+				  report(newReport) {}
+
+			/// An attribute as a finite number; `fallback` when it is missing (an error when there is none).
+			float number(const pugi::xml_node& node, const char* attribute, const std::string& where, std::optional<float> fallback = std::nullopt) {
+				const pugi::xml_attribute found = node.attribute(attribute);
+				if (!found) {
+					if (!fallback.has_value()) {
+						error(where, std::string("<") + node.name() + "> needs " + attribute);
+					}
+					return fallback.value_or(0.0F);
+				}
+				const std::optional<float> value = parseSvgNumber(found.value());
+				if (!value.has_value()) {
+					error(where, std::string("<") + node.name() + "> " + attribute + "=\"" + found.value() + "\" is not a number");
+					return fallback.value_or(0.0F);
+				}
+				return *value;
+			}
+
+			void unknown(const pugi::xml_node& node, const std::string& where) {
+				error(where, std::string("<") + node.name() + "> is not read here");
+			}
+
+			void error(const std::string& where, const std::string& message) {
+				report.add(Severity::Error, defName, "parts", message, where);
+			}
+
+		  private:
+			const std::string& defName;
+			ValidationReport&  report;
+		};
+
+		std::vector<std::string> words(const std::string& text) {
+			std::istringstream		 stream(text);
+			std::vector<std::string> out;
+			for (std::string word; stream >> word;) {
+				out.push_back(word);
+			}
+			return out;
+		}
+
+		void readFootprint(const pugi::xml_node& node, AuthoredFootprint& footprint, const std::string& where, XmlReader& reader) {
+			for (const pugi::xml_node shape : node.children()) {
+				if (shape.type() != pugi::node_element) {
+					continue;
+				}
+				const std::string_view name = shape.name();
+				if (name == "rect") {
+					footprint.shape = AuthoredFootprint::Shape::Rect;
+					footprint.minX = reader.number(shape, "minX", where);
+					footprint.minY = reader.number(shape, "minY", where);
+					footprint.maxX = reader.number(shape, "maxX", where);
+					footprint.maxY = reader.number(shape, "maxY", where);
+				} else if (name == "round") {
+					footprint.shape = AuthoredFootprint::Shape::Round;
+					footprint.x = reader.number(shape, "x", where, 0.0F);
+					footprint.y = reader.number(shape, "y", where, 0.0F);
+					footprint.radius = reader.number(shape, "radius", where);
+					footprint.sides = static_cast<int32_t>(std::lround(reader.number(shape, "sides", where)));
+				} else {
+					reader.unknown(shape, where);
+					continue;
+				}
+				++footprint.shapeCount;
+			}
+		}
+
+		void readAreaShapes(const pugi::xml_node& node, AuthoredArea& area, const std::string& where, XmlReader& reader) {
+			for (const pugi::xml_node shape : node.children()) {
+				if (shape.type() != pugi::node_element) {
+					continue;
+				}
+				const std::string_view name = shape.name();
+				AuthoredAreaShape	   out;
+				if (name == "around") {
+					out.kind = AuthoredAreaShape::Kind::Around;
+					out.distanceMeters = reader.number(shape, "distanceMeters", where);
+				} else if (name == "circle") {
+					out.kind = AuthoredAreaShape::Kind::Circle;
+					out.x = reader.number(shape, "x", where, 0.0F);
+					out.y = reader.number(shape, "y", where, 0.0F);
+					out.radius = reader.number(shape, "radius", where);
+				} else if (name == "rect" || name == "drawing") {
+					out.kind = name == "rect" ? AuthoredAreaShape::Kind::Rect : AuthoredAreaShape::Kind::Drawing;
+					out.minX = reader.number(shape, "minX", where);
+					out.minY = reader.number(shape, "minY", where);
+					out.maxX = reader.number(shape, "maxX", where);
+					out.maxY = reader.number(shape, "maxY", where);
+					out.file = shape.attribute("file").as_string();
+					if (out.kind == AuthoredAreaShape::Kind::Drawing && out.file.empty()) {
+						reader.error(where, "<drawing> needs a file");
+					}
+				} else if (name == "area") {
+					continue; // read by the caller
+				} else {
+					reader.unknown(shape, where);
+					continue;
+				}
+				area.shapes.push_back(std::move(out));
+			}
+		}
+
+		// ─── Geometry helpers ────────────────────────────────────────────────────────────────────────
+
+		glm::vec2 turned(glm::vec2 point, float radians) {
+			const float cosine = std::cos(radians);
+			const float sine = std::sin(radians);
+			return {point.x * cosine - point.y * sine, point.x * sine + point.y * cosine};
+		}
+
+		geometry::Ring toMicrometres(const Ring2& ring) {
+			geometry::Ring out;
+			out.reserve(ring.size());
+			for (const glm::vec2& point : ring) {
+				out.push_back(
+					{std::llround(static_cast<double>(point.x) * kMicrometresPerMeter), std::llround(static_cast<double>(point.y) * kMicrometresPerMeter)}
+				);
+			}
+			return out;
+		}
+
+		Ring2 toMeters(const geometry::Ring& ring) {
+			Ring2 out;
+			out.reserve(ring.size());
+			for (const geometry::Vec2i64& point : ring) {
+				out.push_back({static_cast<float>(static_cast<double>(point.x) / kMicrometresPerMeter),
+							   static_cast<float>(static_cast<double>(point.y) / kMicrometresPerMeter)});
+			}
+			return out;
+		}
+
+		/// The union of groups of rings in metres, each group filled by the nonzero rule.
+		std::vector<AreaPolygon> unionInMeters(const std::vector<std::vector<Ring2>>& groups) {
+			std::vector<std::vector<geometry::Ring>> converted;
+			converted.reserve(groups.size());
+			for (const std::vector<Ring2>& group : groups) {
+				std::vector<geometry::Ring>& out = converted.emplace_back();
+				for (const Ring2& ring : group) {
+					out.push_back(toMicrometres(ring));
+				}
+			}
+			std::vector<AreaPolygon> region;
+			for (const geometry::RegionPolygon& polygon : geometry::unionOfFills(converted)) {
+				AreaPolygon& out = region.emplace_back();
+				out.outer = toMeters(polygon.outer);
+				for (const geometry::Ring& hole : polygon.holes) {
+					out.holes.push_back(toMeters(hole));
+				}
+			}
+			return region;
+		}
+
+		double ringArea(const Ring2& ring) {
+			double doubled = 0.0;
+			for (size_t i = 0; i < ring.size(); ++i) {
+				const glm::vec2& a = ring[i];
+				const glm::vec2& b = ring[(i + 1) % ring.size()];
+				doubled += static_cast<double>(a.x) * b.y - static_cast<double>(b.x) * a.y;
+			}
+			return doubled * 0.5;
+		}
+
+		double regionArea(const std::vector<AreaPolygon>& region) {
+			double area = 0.0;
+			for (const AreaPolygon& polygon : region) {
+				area += ringArea(polygon.outer);
+				for (const Ring2& hole : polygon.holes) {
+					area += ringArea(hole);
+				}
+			}
+			return area;
+		}
+
+		/// A regular polygon on a circle, its edges within `tolerance` of it.
+		Ring2 disc(glm::vec2 center, float radius, float tolerance) {
+			const float ratio = std::clamp(1.0F - tolerance / radius, -1.0F, 1.0F);
+			const int	sides = std::max(8, static_cast<int>(std::ceil(kPi / std::acos(ratio))));
+			Ring2		ring;
+			ring.reserve(static_cast<size_t>(sides));
+			for (int i = 0; i < sides; ++i) {
+				const float angle = 2.0F * kPi * static_cast<float>(i) / static_cast<float>(sides);
+				ring.push_back(center + radius * glm::vec2{std::cos(angle), std::sin(angle)});
+			}
+			return ring;
+		}
+
+		float crossOf(glm::vec2 origin, glm::vec2 a, glm::vec2 b) {
+			return (a.x - origin.x) * (b.y - origin.y) - (a.y - origin.y) * (b.x - origin.x);
+		}
+
+		/// The convex hull, vertex angle increasing from +X toward +Y (monotone chain).
+		Ring2 convexHull(Ring2 points) {
+			std::sort(points.begin(), points.end(), [](glm::vec2 a, glm::vec2 b) { return a.x != b.x ? a.x < b.x : a.y < b.y; });
+			points.erase(std::unique(points.begin(), points.end()), points.end());
+			if (points.size() < 3) {
+				return points;
+			}
+			Ring2 hull(points.size() * 2);
+			size_t count = 0;
+			for (const glm::vec2& point : points) {
+				while (count >= 2 && crossOf(hull[count - 2], hull[count - 1], point) <= 0.0F) {
+					--count;
+				}
+				hull[count++] = point;
+			}
+			const size_t lower = count + 1;
+			for (size_t i = points.size() - 1; i-- > 0;) {
+				while (count >= lower && crossOf(hull[count - 2], hull[count - 1], points[i]) <= 0.0F) {
+					--count;
+				}
+				hull[count++] = points[i];
+			}
+			hull.resize(count - 1);
+			return hull;
+		}
+
+		bool isConvex(const Ring2& ring) {
+			for (size_t i = 0; i < ring.size(); ++i) {
+				if (crossOf(ring[i], ring[(i + 1) % ring.size()], ring[(i + 2) % ring.size()]) < 0.0F) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		Ring2 minkowski(const Ring2& points, const Ring2& brush) {
+			Ring2 sums;
+			sums.reserve(points.size() * brush.size());
+			for (const glm::vec2& point : points) {
+				for (const glm::vec2& offset : brush) {
+					sums.push_back(point + offset);
+				}
+			}
+			return convexHull(std::move(sums));
+		}
+
+		/// Rings grown outward by `distance` (corners rounded to `tolerance`), as groups for unionInMeters: a convex
+		/// ring is its hull with a disc, a concave one itself and one hull a side, the side swept by the disc.
+		void appendGrown(const std::vector<Ring2>& rings, float distance, float tolerance, std::vector<std::vector<Ring2>>& groups) {
+			if (distance <= 0.0F) {
+				groups.push_back(rings);
+				return;
+			}
+			const Ring2 brush = disc({0.0F, 0.0F}, distance, tolerance);
+			for (const Ring2& ring : rings) {
+				if (isConvex(ring)) {
+					groups.push_back({minkowski(ring, brush)});
+					continue;
+				}
+				groups.push_back({ring});
+				for (size_t i = 0; i < ring.size(); ++i) {
+					groups.push_back({minkowski({ring[i], ring[(i + 1) % ring.size()]}, brush)});
+				}
+			}
+		}
+
+		bool insideRing(glm::vec2 point, const Ring2& ring) {
+			bool inside = false;
+			for (size_t i = 0, j = ring.size() - 1; i < ring.size(); j = i++) {
+				const glm::vec2& a = ring[i];
+				const glm::vec2& b = ring[j];
+				if ((a.y > point.y) != (b.y > point.y) && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x) {
+					inside = !inside;
+				}
+			}
+			return inside;
+		}
+
+		float distanceToSegment(glm::vec2 point, glm::vec2 a, glm::vec2 b) {
+			const glm::vec2 edge = b - a;
+			const float		lengthSquared = edge.x * edge.x + edge.y * edge.y;
+			const float		t = lengthSquared > 0.0F ? std::clamp(((point.x - a.x) * edge.x + (point.y - a.y) * edge.y) / lengthSquared, 0.0F, 1.0F) : 0.0F;
+			const glm::vec2 nearest = a + t * edge;
+			return std::hypot(point.x - nearest.x, point.y - nearest.y);
+		}
+
+		/// Whether a disc of `radius` fits in `area` clear of every `obstacle` ring: a branch and bound over squares
+		/// of the area's box, pruning a square that can hold no point that far from every edge (the distance to the
+		/// nearest edge changes no faster than the point moves).
+		bool hasRoom(const std::vector<AreaPolygon>& area, const std::vector<Ring2>& obstacles, float radius) {
+			std::vector<std::pair<glm::vec2, glm::vec2>> edges;
+			glm::vec2									 low{std::numeric_limits<float>::max()};
+			glm::vec2									 high{std::numeric_limits<float>::lowest()};
+			const auto									 addRing = [&](const Ring2& ring) {
+				  for (size_t i = 0; i < ring.size(); ++i) {
+					  edges.emplace_back(ring[i], ring[(i + 1) % ring.size()]);
+				  }
+			};
+			for (const AreaPolygon& polygon : area) {
+				addRing(polygon.outer);
+				for (const Ring2& hole : polygon.holes) {
+					addRing(hole);
+				}
+				for (const glm::vec2& point : polygon.outer) {
+					low = glm::min(low, point);
+					high = glm::max(high, point);
+				}
+			}
+			for (const Ring2& obstacle : obstacles) {
+				addRing(obstacle);
+			}
+			if (edges.empty()) {
+				return false;
+			}
+			const auto inside = [&](glm::vec2 point) {
+				for (const Ring2& obstacle : obstacles) {
+					if (insideRing(point, obstacle)) {
+						return false;
+					}
+				}
+				for (const AreaPolygon& polygon : area) {
+					if (insideRing(point, polygon.outer) &&
+						std::none_of(polygon.holes.begin(), polygon.holes.end(), [&](const Ring2& hole) { return insideRing(point, hole); })) {
+						return true;
+					}
+				}
+				return false;
+			};
+			constexpr float kSlack = 1.0e-6F;
+			constexpr float kSmallestHalfDiagonal = 0.0005F;
+			const float		half = std::max(high.x - low.x, high.y - low.y) * 0.5F;
+			std::vector<std::pair<glm::vec2, float>> squares{{(low + high) * 0.5F, half}};
+			while (!squares.empty()) {
+				const auto [center, halfSide] = squares.back();
+				squares.pop_back();
+				float clearance = std::numeric_limits<float>::max();
+				for (const auto& [a, b] : edges) {
+					clearance = std::min(clearance, distanceToSegment(center, a, b));
+				}
+				const float halfDiagonal = halfSide * std::numbers::sqrt2_v<float>;
+				const bool	in = inside(center);
+				if (in && clearance >= radius - kSlack) {
+					return true;
+				}
+				// Inside, nothing in the square is further than clearance + halfDiagonal from an edge. Outside, a
+				// point in the square that fits lies radius past the boundary, so at least radius + clearance away.
+				const bool hopeless = in ? clearance + halfDiagonal < radius - kSlack : halfDiagonal < radius + clearance;
+				if (hopeless || halfDiagonal < kSmallestHalfDiagonal) {
+					continue;
+				}
+				const float quarter = halfSide * 0.5F;
+				for (const glm::vec2 offset : {glm::vec2{-1, -1}, glm::vec2{1, -1}, glm::vec2{-1, 1}, glm::vec2{1, 1}}) {
+					squares.emplace_back(center + offset * quarter, quarter);
+				}
+			}
+			return false;
+		}
+
+		/// The y range a convex ring covers on the vertical line at `x`.
+		std::pair<float, float> sliceAt(const Ring2& ring, float x) {
+			float low = std::numeric_limits<float>::max();
+			float high = std::numeric_limits<float>::lowest();
+			for (size_t i = 0; i < ring.size(); ++i) {
+				const glm::vec2& a = ring[i];
+				const glm::vec2& b = ring[(i + 1) % ring.size()];
+				if ((a.x - x) * (b.x - x) > 0.0F) {
+					continue;
+				}
+				const float y = a.x == b.x ? std::min(a.y, b.y) : a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x);
+				const float other = a.x == b.x ? std::max(a.y, b.y) : y;
+				low = std::min(low, y);
+				high = std::max(high, other);
+			}
+			return {low, high};
+		}
+
+		// ─── Drawings ────────────────────────────────────────────────────────────────────────────────
+
+		/// One place a drawing is drawn: what it covers and how the error names it. `target` receives the mapped
+		/// drawing's index (unset for an area's drawing, which is read for its fills).
+		struct DrawingUse {
+			std::string				 file;
+			glm::vec2				 coversMeters{0.0F};
+			std::string				 what;
+			std::optional<uint32_t>* target = nullptr;
+			std::vector<std::vector<Ring2>>* fillGroups = nullptr; ///< an area drawing's filled shapes go here, a nonzero group each
+			glm::vec2				 originMeters{0.0F}; ///< where an area drawing's top left lands in the item's frame
+			bool					 failed = false;
+		};
+
+		std::optional<std::array<float, 4>> viewBoxOf(const std::string& bytes) {
+			pugi::xml_document doc;
+			if (!doc.load_buffer(bytes.data(), bytes.size())) {
+				return std::nullopt;
+			}
+			const pugi::xml_node root = doc.document_element();
+			std::array<float, 4> box{};
+			std::istringstream	 stream(std::string(root.attribute("viewBox").value()));
+			std::string			 text;
+			for (float& value : box) {
+				if (!(stream >> text)) {
+					return std::nullopt;
+				}
+				text.erase(std::remove(text.begin(), text.end(), ','), text.end());
+				const std::optional<float> number = parseSvgNumber(text.c_str());
+				if (!number.has_value()) {
+					return std::nullopt;
+				}
+				value = *number;
+			}
+			return box;
+		}
+
+		/// The shape moved from viewBox units onto [0, size] metres: vertices scaled, stroke width by the mean
+		/// scale, and the gradient's transform composed with the inverse, so each vertex keeps its colour.
+		renderer::LoadedSVGShape mapped(renderer::LoadedSVGShape shape, glm::vec2 origin, glm::vec2 scale, glm::vec2 sizeMeters) {
+			for (renderer::VectorPath& path : shape.paths) {
+				for (Foundation::Vec2& vertex : path.vertices) {
+					vertex.x = (vertex.x - origin.x) * scale.x;
+					vertex.y = (vertex.y - origin.y) * scale.y;
+				}
+			}
+			shape.strokeWidth *= std::sqrt(scale.x * scale.y);
+			float(&xform)[6] = shape.gradient.xform;
+			const float a = xform[0];
+			const float b = xform[1];
+			const float c = xform[2];
+			const float d = xform[3];
+			xform[4] += a * origin.x + c * origin.y;
+			xform[5] += b * origin.x + d * origin.y;
+			xform[0] = a / scale.x;
+			xform[1] = b / scale.x;
+			xform[2] = c / scale.y;
+			xform[3] = d / scale.y;
+			shape.width = sizeMeters.x;
+			shape.height = sizeMeters.y;
+			return shape;
+		}
+
+		bool sameAspect(glm::vec2 a, glm::vec2 b, float tolerance) {
+			return std::abs((a.x / a.y) / (b.x / b.y) - 1.0F) <= tolerance;
+		}
+
+		std::string describeAspect(glm::vec2 size) {
+			return formatted("%g x %g (%.3f)", static_cast<double>(size.x), static_cast<double>(size.y), static_cast<double>(size.x / size.y));
+		}
+
+		class Resolver {
+		  public:
+			Resolver(const std::filesystem::path& newFolder, const std::string& newDefName, const PartsLoadConfig& newConfig, ValidationReport& newReport)
+				: folder(newFolder),
+				  defName(newDefName),
+				  config(newConfig),
+				  report(newReport) {}
+
+			void error(const std::string& field, const std::string& message, const std::string& context = "") {
+				report.add(Severity::Error, defName, field, message, context);
+			}
+
+			/// Reads every used drawing once and maps it onto each size it covers.
+			void loadDrawings(std::vector<DrawingUse>& uses, std::vector<ItemDrawing>& drawings) {
+				std::map<std::string, std::vector<DrawingUse*>> byFile;
+				for (DrawingUse& use : uses) {
+					byFile[use.file].push_back(&use);
+				}
+				for (auto& [file, fileUses] : byFile) {
+					const auto fail = [&](const std::string& message, const std::string& context) {
+						error("drawing", message, context);
+						for (DrawingUse* use : fileUses) {
+							use->failed = true;
+						}
+					};
+					const std::filesystem::path relative(file);
+					const std::filesystem::path resolved = (folder / relative).lexically_normal();
+					const std::filesystem::path back = resolved.lexically_relative(folder.lexically_normal());
+					if (file.rfind("@shared/", 0) == 0 || relative.is_absolute() || relative.has_root_name() || back.empty() ||
+						*back.begin() == "..") {
+						fail("drawing " + inQuotes(file) + " is outside the item's folder; parts and their art belong to their item", fileUses.front()->what);
+						continue;
+					}
+					std::ifstream in(resolved, std::ios::binary);
+					if (!in) {
+						fail("drawing " + inQuotes(file) + " does not exist", resolved.string());
+						continue;
+					}
+					const std::string bytes{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+					const std::optional<std::array<float, 4>> box = viewBoxOf(bytes);
+					if (!box.has_value() || (*box)[2] <= 0.0F || (*box)[3] <= 0.0F) {
+						fail("drawing " + inQuotes(file) + " has no viewBox with a width and height; its proportions are the viewBox's", resolved.string());
+						continue;
+					}
+					const glm::vec2 viewBoxSize{(*box)[2], (*box)[3]};
+					float			finestScale = 0.0F;
+					for (const DrawingUse* use : fileUses) {
+						finestScale = std::max({finestScale, use->coversMeters.x / viewBoxSize.x, use->coversMeters.y / viewBoxSize.y});
+					}
+					std::vector<std::string> issues;
+					const LodSvg			 svg = readLodSvg(
+						 {.svg = std::as_bytes(std::span(bytes)),
+						  .curveTolerance = finestScale > 0.0F ? config.curveToleranceMeters / finestScale : 1.0F,
+						  .name = resolved.string()},
+						 issues
+					 );
+					for (const std::string& issue : issues) {
+						error("drawing", "drawing " + inQuotes(file) + ": " + issue, resolved.string());
+					}
+
+					const glm::vec2				   origin{(*box)[0], (*box)[1]};
+					std::map<std::pair<long, long>, uint32_t> mappedBySize;
+					bool						   proportionReported = false;
+					for (DrawingUse* use : fileUses) {
+						if (!sameAspect(viewBoxSize, use->coversMeters, config.aspectToleranceRelative)) {
+							use->failed = true;
+							if (!proportionReported) {
+								error(
+									"drawing",
+									"drawing " + inQuotes(file) + "'s viewBox is " + describeAspect(viewBoxSize) + ", but " + use->what + " is " +
+										describeAspect(use->coversMeters) + "; their proportions must match",
+									resolved.string()
+								);
+								proportionReported = true;
+							}
+							continue;
+						}
+						const glm::vec2 scale = use->coversMeters / viewBoxSize;
+						if (use->fillGroups != nullptr) {
+							size_t filled = 0;
+							for (const LodSvgShape& loaded : svg.shapes) {
+								if (!loaded.shape.hasFill) {
+									continue;
+								}
+								std::vector<Ring2>& group = use->fillGroups->emplace_back();
+								for (const renderer::VectorPath& path : mapped(loaded.shape, origin, scale, use->coversMeters).paths) {
+									Ring2& ring = group.emplace_back();
+									for (const Foundation::Vec2& vertex : path.vertices) {
+										ring.push_back(use->originMeters + glm::vec2{vertex.x, vertex.y});
+									}
+								}
+								++filled;
+							}
+							if (filled == 0) {
+								use->failed = true;
+								error("useAreas", "area drawing " + inQuotes(file) + " has no filled shape", use->what);
+							}
+							continue;
+						}
+						// Sizes equal to a micrometre are one size: a round's faces differ in their last float bits.
+						const auto key = std::make_pair(std::lround(use->coversMeters.x * 1.0e6F), std::lround(use->coversMeters.y * 1.0e6F));
+						auto	   found = mappedBySize.find(key);
+						if (found == mappedBySize.end()) {
+							ItemDrawing drawing{.file = file, .sizeMeters = use->coversMeters, .shapes = {}};
+							for (const LodSvgShape& loaded : svg.shapes) {
+								drawing.shapes.push_back(
+									{.shape = mapped(loaded.shape, origin, scale, use->coversMeters),
+									 .minPixelsPerMeter = svg.elements[loaded.element].minPixelsPerMeter}
+								);
+							}
+							checkOverflow(drawing, use->what);
+							found = mappedBySize.emplace(key, static_cast<uint32_t>(drawings.size())).first;
+							drawings.push_back(std::move(drawing));
+						}
+						*use->target = found->second;
+					}
+				}
+			}
+
+		  private:
+			/// Rule 8: art past the viewBox by more than overflowMeters is lost to the face's clip; a warning.
+			void checkOverflow(const ItemDrawing& drawing, const std::string& what) {
+				const float limit = config.overflowMeters;
+				for (const ItemDrawingShape& item : drawing.shapes) {
+					const float halfStroke = item.shape.hasStroke ? item.shape.strokeWidth * 0.5F : 0.0F;
+					for (const renderer::VectorPath& path : item.shape.paths) {
+						for (const Foundation::Vec2& vertex : path.vertices) {
+							if (vertex.x - halfStroke < -limit || vertex.y - halfStroke < -limit ||
+								vertex.x + halfStroke > drawing.sizeMeters.x + limit || vertex.y + halfStroke > drawing.sizeMeters.y + limit) {
+								report.add(
+									Severity::Warning,
+									defName,
+									"drawing",
+									"drawing " + inQuotes(drawing.file) + " draws past its viewBox by more than " +
+										formatted("%g", static_cast<double>(limit)) + " m on " + what + "; art past the edge is clipped away",
+									(folder / drawing.file).string()
+								);
+								return;
+							}
+						}
+					}
+				}
+			}
+
+			const std::filesystem::path& folder;
+			const std::string&			 defName;
+			const PartsLoadConfig&		 config;
+			ValidationReport&			 report;
+		};
+
+		std::optional<Foundation::Color> parseColor(const std::string& text) {
+			if (text.size() != 7 || text[0] != '#') {
+				return std::nullopt;
+			}
+			std::array<float, 3> channels{};
+			for (size_t i = 0; i < 3; ++i) {
+				unsigned value = 0;
+				for (const char digit : text.substr(1 + i * 2, 2)) {
+					const int nibble = std::isdigit(static_cast<unsigned char>(digit)) != 0 ? digit - '0'
+									   : (digit >= 'a' && digit <= 'f')				   ? digit - 'a' + 10
+									   : (digit >= 'A' && digit <= 'F')				   ? digit - 'A' + 10
+																					   : -1;
+					if (nibble < 0) {
+						return std::nullopt;
+					}
+					value = value * 16 + static_cast<unsigned>(nibble);
+				}
+				channels[i] = static_cast<float>(value) / 255.0F;
+			}
+			return Foundation::Color{channels[0], channels[1], channels[2], 1.0F};
+		}
+
+		constexpr std::array<const char*, 4> kRectFaceNames = {"back", "right", "front", "left"};
+
+		/// A footprint's polygon in the part's frame, or empty when rule 3 refuses it.
+		Ring2 footprintPolygon(const AuthoredFootprint& footprint) {
+			if (footprint.shapeCount != 1) {
+				return {};
+			}
+			if (footprint.shape == AuthoredFootprint::Shape::Rect) {
+				if (!(footprint.maxX > footprint.minX && footprint.maxY > footprint.minY)) {
+					return {};
+				}
+				return {{footprint.minX, footprint.minY}, {footprint.maxX, footprint.minY}, {footprint.maxX, footprint.maxY}, {footprint.minX, footprint.maxY}};
+			}
+			if (!(footprint.radius > 0.0F) || footprint.sides < 3 || footprint.sides > 32) {
+				return {};
+			}
+			Ring2 ring;
+			for (int32_t i = 0; i < footprint.sides; ++i) {
+				const float angle = (static_cast<float>(i) + 0.5F) * 2.0F * kPi / static_cast<float>(footprint.sides);
+				ring.push_back({footprint.x + footprint.radius * std::cos(angle), footprint.y + footprint.radius * std::sin(angle)});
+			}
+			return ring;
+		}
+
+		std::vector<std::string> cycleIn(const std::vector<std::vector<size_t>>& later, const std::vector<std::string>& names) {
+			// Depth-first search for a back edge; the stack from its target is the cycle.
+			std::vector<int>	state(later.size(), 0);
+			std::vector<size_t> stack;
+			std::vector<std::string> found;
+			const auto visit = [&](auto&& self, size_t node) -> bool {
+				state[node] = 1;
+				stack.push_back(node);
+				for (const size_t next : later[node]) {
+					if (state[next] == 1) {
+						for (auto it = std::find(stack.begin(), stack.end(), next); it != stack.end(); ++it) {
+							found.push_back(names[*it]);
+						}
+						return true;
+					}
+					if (state[next] == 0 && self(self, next)) {
+						return true;
+					}
+				}
+				stack.pop_back();
+				state[node] = 2;
+				return false;
+			};
+			for (size_t node = 0; node < later.size() && found.empty(); ++node) {
+				if (state[node] == 0) {
+					visit(visit, node);
+				}
+			}
+			std::sort(found.begin(), found.end());
+			found.erase(std::unique(found.begin(), found.end()), found.end());
+			return found;
+		}
+
+	} // namespace
+
+	PartsAuthored readPartsXml(const pugi::xml_node& defNode, const std::string& defName, ValidationReport& report) {
+		PartsAuthored authored;
+		XmlReader	  reader(defName, report);
+
+		for (const pugi::xml_node partNode : defNode.child("parts").children()) {
+			if (partNode.type() != pugi::node_element) {
+				continue;
+			}
+			if (std::string_view(partNode.name()) != "part") {
+				reader.unknown(partNode, "<parts>");
+				continue;
+			}
+			AuthoredPart part;
+			part.name = partNode.attribute("name").as_string();
+			const std::string where = "part " + inQuotes(part.name);
+			for (const pugi::xml_node child : partNode.children()) {
+				if (child.type() != pugi::node_element) {
+					continue;
+				}
+				const std::string_view name = child.name();
+				if (name == "footprint") {
+					readFootprint(child, part.footprint, where, reader);
+				} else if (name == "height") {
+					part.hasHeight = true;
+					part.bottom = reader.number(child, "bottom", where);
+					part.top = reader.number(child, "top", where);
+				} else if (name == "top") {
+					part.topColor = child.attribute("color").as_string();
+					part.topDrawing = child.attribute("drawing").as_string();
+				} else if (name == "sides") {
+					part.hasSides = true;
+					part.sideColor = child.attribute("color").as_string();
+					part.sidesDrawing = child.attribute("drawing").as_string();
+					for (const pugi::xml_node face : child.children()) {
+						if (face.type() != pugi::node_element) {
+							continue;
+						}
+						if (std::string_view(face.name()) != "face") {
+							reader.unknown(face, where);
+							continue;
+						}
+						part.faces.push_back({.sides = words(face.attribute("side").as_string()), .drawing = face.attribute("drawing").as_string()});
+					}
+				} else {
+					reader.unknown(child, where);
+				}
+			}
+			authored.parts.push_back(std::move(part));
+		}
+
+		for (const pugi::xml_node place : defNode.child("placements").children()) {
+			if (place.type() != pugi::node_element) {
+				continue;
+			}
+			if (std::string_view(place.name()) != "place") {
+				reader.unknown(place, "<placements>");
+				continue;
+			}
+			authored.placements.push_back(
+				{.part = place.attribute("part").as_string(),
+				 .x = reader.number(place, "x", "<placements>", 0.0F),
+				 .y = reader.number(place, "y", "<placements>", 0.0F),
+				 .turnDegrees = reader.number(place, "turnDegrees", "<placements>", 0.0F)}
+			);
+		}
+
+		if (const pugi::xml_node useAreas = defNode.child("useAreas")) {
+			std::vector<AuthoredArea>& areas = authored.useAreas.emplace();
+			AuthoredArea			   unnamed;
+			readAreaShapes(useAreas, unnamed, "<useAreas>", reader);
+			for (const pugi::xml_node areaNode : useAreas.children("area")) {
+				AuthoredArea& area = areas.emplace_back();
+				area.name = areaNode.attribute("name").as_string();
+				readAreaShapes(areaNode, area, "use area " + inQuotes(area.name), reader);
+			}
+			if (!unnamed.shapes.empty()) {
+				if (!areas.empty()) {
+					reader.error("<useAreas>", "<useAreas> holds either named <area>s or the shapes of one unnamed area, not both");
+				}
+				areas.insert(areas.begin(), std::move(unnamed));
+			}
+		}
+
+		if (const pugi::xml_node clearance = defNode.child("clearance")) {
+			AuthoredArea& area = authored.clearance.emplace();
+			readAreaShapes(clearance, area, "<clearance>", reader);
+			if (clearance.attribute("marginMeters")) {
+				area.shapes.insert(
+					area.shapes.begin(),
+					{.kind = AuthoredAreaShape::Kind::Around, .distanceMeters = reader.number(clearance, "marginMeters", "<clearance>")}
+				);
+			}
+		}
+
+		authored.scriptPath = defNode.child_value("partsScript");
+		return authored;
+	}
+
+	ResolvedParts resolveParts(
+		const PartsAuthored& authored, const std::filesystem::path& folder, const std::string& defName, const PartsLoadConfig& config,
+		ValidationReport& report
+	) {
+		ResolvedParts resolved;
+		PartsAsset&	  asset = resolved.asset;
+		Resolver	  resolver(folder, defName, config, report);
+		const auto	  error = [&](const std::string& field, const std::string& message, const std::string& context = "") {
+			   resolver.error(field, message, context);
+		};
+		std::vector<DrawingUse> uses;
+
+		// Parts: rules 2 (unique names), 3, 4 (heights, a flat part's sides), and 5.
+		std::map<std::string, uint32_t>		  partIndex;
+		std::vector<std::vector<std::string>> faceFiles; // per part, each face's drawing or empty for plain
+		asset.parts.reserve(authored.parts.size());
+		for (const AuthoredPart& written : authored.parts) {
+			PartDefinition& part = asset.parts.emplace_back();
+			part.name = written.name;
+			const std::string where = "part " + inQuotes(written.name);
+			if (written.name.empty()) {
+				error("parts", "a part has no name");
+			} else if (!partIndex.emplace(written.name, static_cast<uint32_t>(asset.parts.size() - 1)).second) {
+				error("parts", "two parts are named " + inQuotes(written.name) + "; part names are unique");
+			}
+
+			if (written.footprint.shapeCount != 1) {
+				error("parts", where + " needs one footprint, a <rect> or a <round>", where);
+			}
+			part.footprint = footprintPolygon(written.footprint);
+			if (written.footprint.shapeCount == 1 && part.footprint.empty()) {
+				error(
+					"parts",
+					written.footprint.shape == AuthoredFootprint::Shape::Rect ? where + "'s footprint rect needs max > min on both axes"
+																			   : where + "'s footprint round needs a radius over 0 and 3 to 32 sides",
+					where
+				);
+			}
+
+			if (!written.hasHeight) {
+				error("parts", where + " needs a <height bottom top>", where);
+			} else if (!(written.bottom >= 0.0F && written.bottom <= written.top)) {
+				error("parts", where + formatted(" has bottom %g and top %g; 0 <= bottom <= top", static_cast<double>(written.bottom), static_cast<double>(written.top)), where);
+			} else {
+				part.bottomMeters = written.bottom;
+				part.topMeters = written.top;
+			}
+			const bool flat = part.flat();
+			if (flat && written.hasSides) {
+				error("parts", where + " is flat (top equals bottom), so it has no sides; drop its <sides>", where);
+			}
+
+			if (!part.footprint.empty()) {
+				part.boundsMin = part.boundsMax = part.footprint.front();
+				for (const glm::vec2& point : part.footprint) {
+					part.boundsMin = glm::min(part.boundsMin, point);
+					part.boundsMax = glm::max(part.boundsMax, point);
+				}
+			}
+
+			if (const std::optional<Foundation::Color> color = parseColor(written.topColor); color.has_value()) {
+				part.topColor = *color;
+			} else if (!written.topColor.empty()) {
+				error("parts", where + "'s top color " + inQuotes(written.topColor) + " is not #RRGGBB", where);
+			} else if (written.topDrawing.empty()) {
+				error("parts", where + "'s <top> needs a color or a drawing", where);
+			}
+			if (!written.topDrawing.empty() && !part.footprint.empty()) {
+				uses.push_back({.file = written.topDrawing, .coversMeters = part.boundsMax - part.boundsMin, .what = "the top of " + where, .target = &part.topDrawing});
+			}
+
+			// Faces: a drawing named by a <face>, else the <sides> drawing, else plain.
+			const bool rect = written.footprint.shape == AuthoredFootprint::Shape::Rect;
+			std::vector<std::string> faceDrawing(part.footprint.size(), flat ? std::string() : written.sidesDrawing);
+			std::vector<bool>		 named(part.footprint.size(), false);
+			for (const AuthoredFace& face : written.faces) {
+				for (const std::string& side : face.sides) {
+					const auto found = std::find(kRectFaceNames.begin(), kRectFaceNames.end(), side);
+					if (!rect || found == kRectFaceNames.end()) {
+						error(
+							"parts",
+							where + " has no face " + inQuotes(side) +
+								(rect ? "; a rect's faces are front, back, left, and right" : "; a round's faces have no names, they all take the <sides> drawing"),
+							where
+						);
+						continue;
+					}
+					const size_t index = static_cast<size_t>(found - kRectFaceNames.begin());
+					if (index >= named.size()) {
+						continue;
+					}
+					if (named[index]) {
+						error("parts", where + " names face " + inQuotes(side) + " more than once", where);
+					}
+					named[index] = true;
+					faceDrawing[index] = face.drawing;
+				}
+			}
+			if (!flat && !part.footprint.empty()) {
+				const std::optional<Foundation::Color> sideColor = parseColor(written.sideColor);
+				if (sideColor.has_value()) {
+					part.sideColor = *sideColor;
+				} else if (!written.sideColor.empty()) {
+					error("parts", where + "'s side color " + inQuotes(written.sideColor) + " is not #RRGGBB", where);
+				} else if (std::any_of(faceDrawing.begin(), faceDrawing.end(), [](const std::string& file) { return file.empty(); })) {
+					error("parts", where + " has a plain face, so its <sides> needs a color", where);
+				}
+				part.faces.resize(part.footprint.size());
+				for (size_t i = 0; i < part.footprint.size(); ++i) {
+					PartFace& face = part.faces[i];
+					face.start = part.footprint[i];
+					face.end = part.footprint[(i + 1) % part.footprint.size()];
+					const glm::vec2 direction = face.end - face.start;
+					face.lengthMeters = std::hypot(direction.x, direction.y);
+					face.normal = glm::vec2{direction.y, -direction.x} / face.lengthMeters;
+				}
+			}
+			faceFiles.push_back(std::move(faceDrawing));
+		}
+		// Face drawings are queued once every part's faces exist, so the targets stay put.
+		for (size_t p = 0; p < asset.parts.size(); ++p) {
+			PartDefinition& part = asset.parts[p];
+			const bool		rect = authored.parts[p].footprint.shape == AuthoredFootprint::Shape::Rect;
+			for (size_t i = 0; i < part.faces.size(); ++i) {
+				const std::string& file = faceFiles[p][i];
+				if (file.empty()) {
+					continue;
+				}
+				const std::string faceName = rect ? std::string("face ") + kRectFaceNames[i] : formatted("face %zu", i);
+				uses.push_back(
+					{.file = file,
+					 .coversMeters = {part.faces[i].lengthMeters, part.topMeters - part.bottomMeters},
+					 .what = faceName + " of part " + inQuotes(part.name),
+					 .target = &part.faces[i].drawing}
+				);
+			}
+		}
+
+		// Placements: rule 2.
+		std::vector<bool> placed(asset.parts.size(), false);
+		for (const AuthoredPlacement& written : authored.placements) {
+			const auto found = partIndex.find(written.part);
+			if (found == partIndex.end()) {
+				error("placements", "a <place> names part " + inQuotes(written.part) + ", which the item has none of");
+				continue;
+			}
+			placed[found->second] = true;
+			asset.placements.push_back({.part = found->second, .offsetMeters = {written.x, written.y}, .turnRadians = written.turnDegrees * kPi / 180.0F});
+		}
+		if (authored.placements.empty()) {
+			error("placements", "the item places no parts; it needs at least one <place>");
+		}
+		for (size_t p = 0; p < asset.parts.size(); ++p) {
+			if (!placed[p] && !asset.parts[p].name.empty()) {
+				error("placements", "part " + inQuotes(asset.parts[p].name) + " is placed nowhere");
+			}
+		}
+
+		// Each placement's footprint in the item's frame, at turn 0.
+		std::vector<Ring2> placedFootprints;
+		for (const PartPlacement& placement : asset.placements) {
+			Ring2& ring = placedFootprints.emplace_back();
+			for (const glm::vec2& point : asset.parts[placement.part].footprint) {
+				ring.push_back(turned(point, placement.turnRadians) + placement.offsetMeters);
+			}
+		}
+		const auto hasBody = [&](size_t placement) {
+			return !placedFootprints[placement].empty() && !asset.parts[asset.placements[placement].part].flat();
+		};
+
+		// The collider (section 11.1): the union of the footprints with height, holes filled.
+		std::vector<Ring2> bodyFootprints;
+		for (size_t i = 0; i < asset.placements.size(); ++i) {
+			if (hasBody(i)) {
+				bodyFootprints.push_back(placedFootprints[i]);
+				asset.bodyTopMeters = std::max(asset.bodyTopMeters, asset.parts[asset.placements[i].part].topMeters);
+			}
+		}
+		std::vector<Ring2> colliderRings;
+		if (!bodyFootprints.empty()) {
+			for (const AreaPolygon& polygon : unionInMeters({bodyFootprints})) {
+				colliderRings.push_back(polygon.outer);
+				CollisionShape shape;
+				shape.type = CollisionShapeType::Polygon;
+				shape.pointsMeters = polygon.outer;
+				resolved.colliders.push_back(std::move(shape));
+			}
+		}
+
+		// Rule 4: a raised flat part rests, at every placement, on the footprints of parts with height below it.
+		for (size_t i = 0; i < asset.placements.size(); ++i) {
+			const PartDefinition& part = asset.parts[asset.placements[i].part];
+			if (!part.flat() || part.bottomMeters <= 0.0F || placedFootprints[i].empty()) {
+				continue;
+			}
+			std::vector<Ring2> supports;
+			for (size_t j = 0; j < asset.placements.size(); ++j) {
+				if (hasBody(j) && asset.parts[asset.placements[j].part].topMeters <= part.bottomMeters) {
+					supports.push_back(placedFootprints[j]);
+				}
+			}
+			const double supported = supports.empty() ? 0.0 : regionArea(unionInMeters({supports}));
+			supports.push_back(placedFootprints[i]);
+			const double withPart = regionArea(unionInMeters({supports}));
+			if (withPart - supported > 1.0e-6) {
+				error("parts", "part " + inQuotes(part.name) + formatted(" is flat and raised %g m, but rests on nothing there: ", static_cast<double>(part.bottomMeters)) +
+								   "it must lie within the footprints of parts with height whose top is at or below its bottom");
+			}
+		}
+
+		// Rule 9, first half: parts that overlap in plan are separated in height.
+		const size_t					   count = asset.placements.size();
+		std::vector<geometry::Ring>		   footprintsMicrometres;
+		for (const Ring2& ring : placedFootprints) {
+			footprintsMicrometres.push_back(toMicrometres(ring));
+		}
+		std::vector<std::vector<int>> overlapOrder(count, std::vector<int>(count, 0)); // +1: i draws after j
+		std::vector<std::vector<bool>> overlapping(count, std::vector<bool>(count, false));
+		for (size_t i = 0; i < count; ++i) {
+			for (size_t j = i + 1; j < count; ++j) {
+				if (placedFootprints[i].empty() || placedFootprints[j].empty() ||
+					!geometry::ringsInteriorOverlap(footprintsMicrometres[i], footprintsMicrometres[j])) {
+					continue;
+				}
+				overlapping[i][j] = overlapping[j][i] = true;
+				const PartDefinition& a = asset.parts[asset.placements[i].part];
+				const PartDefinition& b = asset.parts[asset.placements[j].part];
+				const bool			  aAbove = a.bottomMeters >= b.topMeters;
+				const bool			  bAbove = b.bottomMeters >= a.topMeters;
+				if (!aAbove && !bAbove) {
+					error("parts", "parts " + inQuotes(a.name) + " and " + inQuotes(b.name) + " overlap in plan and in height; one's bottom must be at or above the other's top");
+				} else if (aAbove != bAbove) {
+					overlapOrder[i][j] = aAbove ? 1 : -1;
+					overlapOrder[j][i] = -overlapOrder[i][j];
+				}
+			}
+		}
+
+		// Rule 9, second half: the order of section 6.6 has no cycle at any turn. It changes only where a vertex of
+		// one placement and one of another share a screen x, so it is checked once between each two such turns.
+		if (count >= 3) {
+			std::vector<float> turns;
+			for (size_t i = 0; i < count; ++i) {
+				for (size_t j = i + 1; j < count; ++j) {
+					if (overlapping[i][j]) {
+						continue;
+					}
+					for (const glm::vec2& a : placedFootprints[i]) {
+						for (const glm::vec2& b : placedFootprints[j]) {
+							const glm::vec2 d = a - b;
+							if (d.x == 0.0F && d.y == 0.0F) {
+								continue;
+							}
+							// x(t) = d.x cos t - d.y sin t vanishes at t = atan2(d.x, d.y), and half a turn on.
+							float turn = std::atan2(d.x, d.y);
+							for (int half = 0; half < 2; ++half, turn += kPi) {
+								turns.push_back(std::fmod(turn + 4.0F * kPi, 2.0F * kPi));
+							}
+						}
+					}
+				}
+			}
+			std::sort(turns.begin(), turns.end());
+			turns.erase(std::unique(turns.begin(), turns.end(), [](float a, float b) { return b - a < 1.0e-6F; }), turns.end());
+			if (turns.empty()) {
+				turns.push_back(0.0F);
+			}
+			std::vector<std::string> names;
+			for (const PartPlacement& placement : asset.placements) {
+				names.push_back(asset.parts[placement.part].name);
+			}
+			struct Run {
+				float					 from = 0.0F;
+				float					 to = 0.0F;
+				std::vector<std::string> parts;
+			};
+			std::vector<Run> runs;
+			for (size_t k = 0; k < turns.size(); ++k) {
+				const float from = turns[k];
+				const float to = k + 1 < turns.size() ? turns[k + 1] : turns.front() + 2.0F * kPi;
+				const float middle = (from + to) * 0.5F;
+				std::vector<Ring2> screen(count);
+				for (size_t i = 0; i < count; ++i) {
+					for (const glm::vec2& point : placedFootprints[i]) {
+						screen[i].push_back(turned(point, middle));
+					}
+				}
+				std::vector<std::vector<size_t>> later(count);
+				for (size_t i = 0; i < count; ++i) {
+					for (size_t j = i + 1; j < count; ++j) {
+						if (screen[i].empty() || screen[j].empty()) {
+							continue;
+						}
+						if (overlapping[i][j]) {
+							if (overlapOrder[i][j] > 0) {
+								later[j].push_back(i);
+							} else if (overlapOrder[i][j] < 0) {
+								later[i].push_back(j);
+							}
+							continue;
+						}
+						const auto xRange = [](const Ring2& ring) {
+							const auto [low, high] = std::minmax_element(ring.begin(), ring.end(), [](glm::vec2 a, glm::vec2 b) { return a.x < b.x; });
+							return std::make_pair(low->x, high->x);
+						};
+						const auto [aLow, aHigh] = xRange(screen[i]);
+						const auto [bLow, bHigh] = xRange(screen[j]);
+						const float low = std::max(aLow, bLow);
+						const float high = std::min(aHigh, bHigh);
+						if (high <= low) {
+							continue;
+						}
+						const auto [aTop, aBottom] = sliceAt(screen[i], (low + high) * 0.5F);
+						const auto [bTop, bBottom] = sliceAt(screen[j], (low + high) * 0.5F);
+						if (aTop + aBottom > bTop + bBottom) {
+							later[j].push_back(i); // i is further south, so it draws after j
+						} else {
+							later[i].push_back(j);
+						}
+					}
+				}
+				std::vector<std::string> cycle = cycleIn(later, names);
+				if (cycle.empty()) {
+					continue;
+				}
+				if (!runs.empty() && runs.back().to == from && runs.back().parts == cycle) {
+					runs.back().to = to;
+				} else {
+					runs.push_back({from, to, std::move(cycle)});
+				}
+			}
+			for (const Run& run : runs) {
+				std::string parts;
+				for (const std::string& name : run.parts) {
+					parts += (parts.empty() ? "" : ", ") + name;
+				}
+				const auto degrees = [](float radians) { return static_cast<double>(std::fmod(radians, 2.0F * kPi) * 180.0F / kPi); };
+				error("parts", formatted("parts order cycles between %.1f and %.1f degrees: ", degrees(run.from), degrees(run.to)) + parts);
+			}
+		}
+
+		// Areas (section 4.2), every shape as nonzero groups of rings in the item's frame.
+		std::vector<Ring2> aroundBase = colliderRings;
+		if (aroundBase.empty()) {
+			std::vector<Ring2> footprints;
+			for (const Ring2& ring : placedFootprints) {
+				if (!ring.empty()) {
+					footprints.push_back(ring);
+				}
+			}
+			if (!footprints.empty()) {
+				for (const AreaPolygon& polygon : unionInMeters({footprints})) {
+					aroundBase.push_back(polygon.outer);
+				}
+			}
+		}
+		struct PendingArea {
+			std::string						name;
+			std::string						field;
+			std::vector<std::vector<Ring2>> groups;
+		};
+		const auto shapesOf = [&](const AuthoredArea& area, const std::string& field, const std::string& where) {
+			PendingArea pending{.name = area.name, .field = field, .groups = {}};
+			for (const AuthoredAreaShape& shape : area.shapes) {
+				switch (shape.kind) {
+					case AuthoredAreaShape::Kind::Around:
+						if (shape.distanceMeters < 0.0F) {
+							error(field, where + formatted(" grows the collider by %g m; the distance can't be negative", static_cast<double>(shape.distanceMeters)));
+						} else {
+							appendGrown(aroundBase, shape.distanceMeters, config.curveToleranceMeters, pending.groups);
+						}
+						break;
+					case AuthoredAreaShape::Kind::Circle:
+						if (!(shape.radius > 0.0F)) {
+							error(field, where + " has a circle with no radius; it needs a radius over 0");
+						} else {
+							pending.groups.push_back({disc({shape.x, shape.y}, shape.radius, config.curveToleranceMeters)});
+						}
+						break;
+					case AuthoredAreaShape::Kind::Rect:
+					case AuthoredAreaShape::Kind::Drawing:
+						if (!(shape.maxX > shape.minX && shape.maxY > shape.minY)) {
+							error(field, where + " has a " + (shape.kind == AuthoredAreaShape::Kind::Rect ? "rect" : "drawing") + " whose max isn't above its min on both axes");
+						} else if (shape.kind == AuthoredAreaShape::Kind::Rect) {
+							pending.groups.push_back({{{shape.minX, shape.minY}, {shape.maxX, shape.minY}, {shape.maxX, shape.maxY}, {shape.minX, shape.maxY}}});
+						}
+						break;
+				}
+			}
+			return pending;
+		};
+
+		std::vector<PendingArea> pendingUse;
+		if (authored.useAreas.has_value()) {
+			for (const AuthoredArea& area : *authored.useAreas) {
+				pendingUse.push_back(shapesOf(area, "useAreas", area.name.empty() ? std::string("the use area") : "use area " + inQuotes(area.name)));
+			}
+		} else {
+			AuthoredArea defaultArea;
+			defaultArea.shapes.push_back({.kind = AuthoredAreaShape::Kind::Around, .distanceMeters = config.defaultUseDistanceMeters});
+			pendingUse.push_back(shapesOf(defaultArea, "useAreas", "the default use area"));
+		}
+		std::optional<PendingArea> pendingClearance;
+		if (authored.clearance.has_value()) {
+			pendingClearance = shapesOf(*authored.clearance, "clearance", "the clearance");
+		}
+
+		// Area drawings, read with the parts' drawings so a file used twice is read once.
+		const auto queueAreaDrawings = [&](const AuthoredArea& area, PendingArea& pending, const std::string& where) {
+			for (const AuthoredAreaShape& shape : area.shapes) {
+				if (shape.kind == AuthoredAreaShape::Kind::Drawing && !shape.file.empty() && shape.maxX > shape.minX && shape.maxY > shape.minY) {
+					uses.push_back(
+						{.file = shape.file,
+						 .coversMeters = {shape.maxX - shape.minX, shape.maxY - shape.minY},
+						 .what = where + "'s drawing rectangle",
+						 .fillGroups = &pending.groups,
+						 .originMeters = {shape.minX, shape.minY}}
+					);
+				}
+			}
+		};
+		if (authored.useAreas.has_value()) {
+			for (size_t i = 0; i < authored.useAreas->size(); ++i) {
+				const AuthoredArea& area = (*authored.useAreas)[i];
+				queueAreaDrawings(area, pendingUse[i], area.name.empty() ? std::string("the use area") : "use area " + inQuotes(area.name));
+			}
+		}
+		if (pendingClearance.has_value()) {
+			queueAreaDrawings(*authored.clearance, *pendingClearance, "the clearance");
+		}
+
+		resolver.loadDrawings(uses, asset.drawings);
+
+		for (PendingArea& pending : pendingUse) {
+			ItemArea area{.name = pending.name, .polygons = unionInMeters(pending.groups)};
+			const std::string where = pending.name.empty() ? std::string("the use area") : "use area " + inQuotes(pending.name);
+			// Rule 11: one colonist fits, on open ground beside nothing but the item itself.
+			if (!hasRoom(area.polygons, colliderRings, kLargestColonistRadiusMeters)) {
+				error(
+					"useAreas",
+					where + formatted(" has no room: no disc of %g m radius fits in it clear of the item's collider, so no colonist could ever use the item from it", static_cast<double>(kLargestColonistRadiusMeters))
+				);
+			}
+			asset.useAreas.push_back(std::move(area));
+		}
+		if (pendingClearance.has_value()) {
+			asset.clearance = {.name = {}, .polygons = unionInMeters(pendingClearance->groups)};
+		}
+		return resolved;
+	}
+
+	std::optional<float> bodyHeightMeters(const AssetDefinition& def) {
+		switch (def.assetType) {
+			case AssetType::Parts:
+				return def.parts != nullptr ? def.parts->bodyTopMeters : 0.0F;
+			case AssetType::Simple:
+				return def.worldHeight;
+			case AssetType::Procedural:
+				return std::nullopt;
+		}
+		return std::nullopt;
+	}
+
+} // namespace assets

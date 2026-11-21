@@ -141,7 +141,8 @@ namespace assets {
 			m_lua->open_libraries(sol::lib::base, sol::lib::math, sol::lib::string, sol::lib::table);
 
 			registerBindings();
-			setupSandbox();
+			sandbox(*m_lua);
+			LOG_DEBUG(Engine, "Lua sandbox configured");
 
 			m_initialized = true;
 			LOG_INFO(Engine, "Lua scripting engine initialized");
@@ -339,7 +340,7 @@ namespace assets {
 		LOG_DEBUG(Engine, "Lua API bindings registered");
 	}
 
-	void LuaEngine::setupSandbox() {
+	void LuaEngine::sandbox(sol::state& lua) {
 		// Sandbox Lua environment for safe asset generation scripts.
 		// Scripts can only use math, string manipulation, and our registered APIs.
 		// Removed capabilities:
@@ -347,15 +348,13 @@ namespace assets {
 		// - loadfile/dofile: Could execute untrusted code from disk
 		// - debug: Allows introspection/modification of Lua internals
 		// - package/require: Could load external modules with arbitrary code
-		(*m_lua)["os"] = sol::lua_nil;
-		(*m_lua)["io"] = sol::lua_nil;
-		(*m_lua)["loadfile"] = sol::lua_nil;
-		(*m_lua)["dofile"] = sol::lua_nil;
-		(*m_lua)["debug"] = sol::lua_nil;
-		(*m_lua)["package"] = sol::lua_nil;
-		(*m_lua)["require"] = sol::lua_nil;
-
-		LOG_DEBUG(Engine, "Lua sandbox configured");
+		lua["os"] = sol::lua_nil;
+		lua["io"] = sol::lua_nil;
+		lua["loadfile"] = sol::lua_nil;
+		lua["dofile"] = sol::lua_nil;
+		lua["debug"] = sol::lua_nil;
+		lua["package"] = sol::lua_nil;
+		lua["require"] = sol::lua_nil;
 	}
 
 	bool LuaEngine::runPrelude() {
