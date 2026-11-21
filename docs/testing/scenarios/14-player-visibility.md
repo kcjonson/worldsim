@@ -36,7 +36,7 @@ Launch as [../README.md](../README.md) says and take Quick Start. It is seeded, 
 19. Read `ground` at (-3.6, 40.8), the footprint's middle: `valid` is false.
 20. Order him to (-2, 35), then to (6, 35): the box's shadow turns, its soft side sliding with no jump.
 21. Watch behind him on that walk: the tinted area never shrinks.
-22. Order him to (-7, 40.8), behind the box: he walks round it.
+22. Order him to (-7, 42.8), past the box on a straight line through it: he walks round its north face.
 23. `kill` the box's id: its shadow and its body are gone.
 24. Read `ground` at (-3.6, 40.8): `valid` is true.
 25. Order him to (10, 43.5): he walks there.
