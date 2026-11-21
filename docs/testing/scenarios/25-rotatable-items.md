@@ -72,4 +72,5 @@ Steps 19 on start with game time running again (`...dev/time?speed=1`).
 31. Under Alt, turned parallel to the wall: it still slides flush.
 32. Press on the ground, drag onto the HUD and release there, then move over the ground: the ghost follows the pointer and doesn't turn.
 33. Press on the ground and right-click while holding it, then release the left button: placement ends and nothing is selected.
-34. Exit the game.
+34. Leave placing, then `curl.exe "http://127.0.0.1:<PORT>/api/dev/place?def=TestPartsAreas"` over open ground: under the see-through box lie its green `front` and `side` use areas, labelled, its clearance hatched with a dashed edge, and its collider in cyan. Press E: they turn with the box. Move it onto a tree or into water: the box and every overlay turn red.
+35. Exit the game.

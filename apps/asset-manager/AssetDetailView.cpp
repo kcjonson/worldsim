@@ -49,6 +49,10 @@ namespace asset_manager {
 			return std::format("{:.2f}", static_cast<double>(turnQuanta) / kQuantaPerDegree);
 		}
 
+		std::string counted(size_t count, const char* noun) {
+			return std::format("{} {}{}", count, noun, count == 1 ? "" : "s");
+		}
+
 		std::string metres(float value) {
 			return std::format("{:g}", std::round(static_cast<double>(value) * 1000.0) / 1000.0);
 		}
@@ -470,8 +474,8 @@ namespace asset_manager {
 		for (const assets::DrawingUseCheck& check : item.drawingChecks) {
 			(check.part.has_value() ? (check.covers.starts_with("the top") ? tops : sides) : areas).insert(check.file);
 		}
-		keyValue("parts", std::format("{} parts, {} placements", item.parts.size(), item.placements.size()));
-		keyValue("drawings", std::format("{} tops, {} sides, {} areas", tops.size(), sides.size(), areas.size()));
+		keyValue("parts", counted(item.parts.size(), "part") + ", " + counted(item.placements.size(), "placement"));
+		keyValue("drawings", counted(tops.size(), "top") + ", " + counted(sides.size(), "side") + ", " + counted(areas.size(), "area"));
 		keyValue("plain faces", std::to_string(plainFaces));
 		const uint8_t level = partsPreviewLevel(def, partsLevel);
 		const bool	  finest = level + 1U >= def.detailLevels.size();
@@ -483,11 +487,7 @@ namespace asset_manager {
 		const assets::ItemView front = assets::buildItemMesh(def, 0, level, assets::GameViewConfig::Get().config());
 		keyValue("vertices", std::format("{} at that level, turn 0", front.vertexCount));
 		keyValue("use areas", std::to_string(item.useAreas.size()));
-		keyValue(
-			"clearance",
-			item.clearance.polygons.empty() ? "none"
-											: std::format("{} polygon{}", item.clearance.polygons.size(), item.clearance.polygons.size() == 1 ? "" : "s")
-		);
+		keyValue("clearance", item.clearance.polygons.empty() ? "none" : counted(item.clearance.polygons.size(), "polygon"));
 
 		// Every drawing use, so an artist sees which SVG is off and by how much.
 		const float tolerance = assets::GameViewConfig::Get().config().aspectToleranceRelative;

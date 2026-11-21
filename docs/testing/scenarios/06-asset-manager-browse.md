@@ -37,6 +37,6 @@ Preconditions: asset-manager running with World selected. `TestPartsAreas` (`ass
 19. Untick Use areas, Clearance and Collider: the overlays go from the large view and every small one. Tick Footprints: each part's footprint is outlined. Tick them back.
 20. The right column lists `clear.svg` and `side-use.svg`, each with what it maps onto, its size in metres, and `ok` with its proportions in green; under VALIDATION, `box` and `item` read `no issues`.
 21. Narrow the apron in `clear.svg` (its path's last two points made one, `L80 100`) and click Reload: the hatched clearance before the box is a triangle in the large view and every small one. Put the file back and Reload.
-22. Pick Sandbox, then Workbench: the vise and toolbox stand on the worktop at every turn of the sheet; the level picker offers Auto, 8, 24 and 60 px/m.
+22. Pick Sandbox, then Workbench: the vise and toolbox stand on the worktop at every turn of the sheet; the level picker offers 8, 24 and 60 px/m with 60 picked, and the right column reads `level  60 px/m, the finest`.
 23. Change `carcass-front.svg`'s viewBox to `0 0 300 72` and Reload: the summary turns red with one error, `carcass-front.svg` reads `off` in red with `5.6% off`, and VALIDATION lists the proportion error under `carcass`. Put the file back and Reload: 0 errors.
 24. `/api/ui/lint`: `"count":0`.
