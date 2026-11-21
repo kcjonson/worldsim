@@ -55,7 +55,7 @@ namespace geometry::nav {
 	// Provenance ids at or above this are blocker groups' tags (NavInputPolygon::blockerGroup);
 	// below it a positive id is a single blocker's.
 	constexpr std::int64_t kBlockerGroupTagBase = std::int64_t{1} << 62;
-	inline bool isBlockerGroupTag(std::int64_t tag) {
+	constexpr bool isBlockerGroupTag(std::int64_t tag) {
 		return tag >= kBlockerGroupTagBase;
 	}
 

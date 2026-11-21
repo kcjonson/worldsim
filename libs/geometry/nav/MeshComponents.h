@@ -12,10 +12,11 @@
 // from one to the other over the mesh with every wall read open, so a different label
 // means no mover of any size or belief can cross between them on meshed ground.
 //
-// What a label reads as open is decided by face tag: floor, any belief-gated face (tag > 0:
-// a blocker's own or a blocker group's), and the negative tags named in
-// MeshComponentsArgs::openTags. Every other negative tag (water, placed obstacles) blocks. A tag class that must never cut a
-// component, such as mover footprints, goes in openTags.
+// What a label reads as open is decided by face tag: floor, any belief-gated face (tag
+// > 0, a blocker's own or a blocker group's), and the negative tags named in
+// MeshComponentsArgs::openTags. Every other negative tag (water, placed obstacles)
+// blocks. A tag class that must never cut a component, such as mover footprints, goes
+// in openTags.
 
 namespace geometry::nav {
 

@@ -1,7 +1,7 @@
 # Scenario 04: Build walls on foundation
 
 **Status:** ready  
-**Last verified:** 2026-11-20: steps 22 to 34 as written on 4d104363; the earlier wording of the two-rooms steps, 5, 7, and 8 in part, and a variant of 1 to 4, on ab0f3eec
+**Last verified:** 2026-11-20: steps 22 to 40 on 4d104363, run before 34 to 40 were split out of one step, with the second door on the divider as 39 now says; the earlier wording of the two-rooms steps, 5, 7, and 8 in part, and a variant of 1 to 4, on ab0f3eec
 
 Verifies that a colonist builds all four wall segments on an existing foundation to completion,
 unaided.
@@ -155,9 +155,17 @@ In a new Quick Start game, at speed 1 (nothing moves or meshes at speed 0). The 
 31. Right-click (29.5, 4.5).
 32. `control?action=resume`: Eve was drafted where she stood, before wandering. Read her `x,y` until they stop changing: 28 < x < 31 and 2 < y < 7, inside the second room. On the way she passes north of the rooms (y < 2) and through both doors.
 33. Right-click (29.5, 11): read her `x,y` until they stop changing: y > 7.5, outside the rooms, south of them.
-34. In a new game, steps 22 and 27 to 32 with the rooms drawn as one loop and a divider instead of steps 23 and 24: `walls?pts=25,2;31,2;31,7;25,7&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=1`, then `walls?pts=28,2;28,7&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=0`. The divider has the higher id here, and it splits the north wall at (28, 2), so step 25's door goes on the piece from (25, 2) to (28, 2), read from `?what=construction`. Step 32 reads the same: inside the second room.
+The same rooms drawn as one loop and a divider, which here has the higher id:
 
-**Pass:** steps 22 to 34 read as written. **Fail:** Eve stops anywhere else after step 32 or 34, for instance against the outside of the south wall near (28, 7.4), or `?what=colonists` never shows her inside the second room.
+34. Start a new Quick Start game and centre the camera as above.
+35. Step 22's foundation: `?what=construction` lists it `Built`; its `id` is FOUND_ID.
+36. `walls?pts=25,2;31,2;31,7;25,7&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=1`: four walls, all `Built`.
+37. `walls?pts=28,2;28,7&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=0`: seven walls, all `Built`; the divider splits the north and south walls at x = 28, and the divider from (28, 2) to (28, 7) has the highest id.
+38. `opening?seg=<id of the north piece from (25, 2) to (28, 2)>&type=Door&t=0.5&built=1`: a door at (26.5, 2), `Built`.
+39. `opening?seg=<id of the divider from (28, 2) to (28, 7)>&type=Door&t=0.5&built=1`: a door at (28, 4.5), `Built`.
+40. Steps 27 to 32 again: after step 32, Eve's `x,y` read 28 < x < 31 and 2 < y < 7, inside the second room.
+
+**Pass:** steps 22 to 40 read as written. **Fail:** Eve stops anywhere else after step 32 or 40, for instance against the outside of the south wall near (28, 7.4), or `?what=colonists` never shows her inside the second room.
 
 ---
 
@@ -169,7 +177,7 @@ blueprint that the colonist builds. Omitting it silently skips the scenario.
 `close=1` adds a closing segment between the last and first point. For a 4-corner polygon this
 produces 4 segments. For a 3-corner (triangle) footprint it produces 3.
 
-Steps 32 and 34 depend on what Eve has seen. A wall counts as seen once its end shows at a corner, so a colonist who has wandered down both the west and the east side of the rooms knows both north walls without the door in them, and answers "no known way" to step 31's order: correct for what she knows. That is why steps 29 to 32 draft her before she moves; drafted that way, she must get in, and anything else is a fail.
+Steps 32 and 40 depend on what Eve has seen. A wall counts as seen once its end shows at a corner, so a colonist who has wandered down both the west and the east side of the rooms knows both north walls without the door in them, and answers "no known way" to step 31's order: correct for what she knows. That is why steps 29 to 32 draft her before she moves; drafted that way, she must get in, and anything else is a fail.
 
 On-water and off-navmesh wall placements are refused with the same error as foundations; see
 [../regressions.md](../regressions.md).

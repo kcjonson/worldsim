@@ -492,23 +492,23 @@ namespace {
 } // namespace
 
 TEST(PathQuery, BeliefKnowingAnyWallOfAJunctionBlocksIt) {
-	const NavMesh m = buildNavMesh(tJunction(/*junctionIsGroup=*/true));
+	const NavMesh mesh = buildNavMesh(tJunction(/*junctionIsGroup=*/true));
 
 	// The through wall seen from the south, the stub (the junction's lowest id) not: the junction is
 	// known, so the route goes round an end of the through wall.
 	std::unordered_set<std::uint64_t> through{static_cast<std::uint64_t>(kThroughWest), static_cast<std::uint64_t>(kThroughEast)};
 	std::unordered_set<std::uint64_t> noOps;
-	const PathResult				  around = pathThrough(m, kSouthOfT, kNorthOfT, 0, BeliefFilter{&through, &noOps});
+	const PathResult				  around = pathThrough(mesh, kSouthOfT, kNorthOfT, 0, BeliefFilter{&through, &noOps});
 	ASSERT_TRUE(around.reachable);
 	EXPECT_FALSE(pathHitsRing(around, kTJunctionRing)) << "a junction one of whose walls is known blocks";
 
 	// The stub alone known blocks it the same.
 	std::unordered_set<std::uint64_t> stub{static_cast<std::uint64_t>(kStub)};
-	EXPECT_FALSE(pathHitsRing(pathThrough(m, kSouthOfT, kNorthOfT, 0, BeliefFilter{&stub, &noOps}), kTJunctionRing));
+	EXPECT_FALSE(pathHitsRing(pathThrough(mesh, kSouthOfT, kNorthOfT, 0, BeliefFilter{&stub, &noOps}), kTJunctionRing));
 
 	// No wall of the junction known: it is absent, and the route runs straight through it.
 	std::unordered_set<std::uint64_t> noSegs;
-	const PathResult				  straight = pathThrough(m, kSouthOfT, kNorthOfT, 0, BeliefFilter{&noSegs, &noOps});
+	const PathResult				  straight = pathThrough(mesh, kSouthOfT, kNorthOfT, 0, BeliefFilter{&noSegs, &noOps});
 	ASSERT_TRUE(straight.reachable);
 	EXPECT_EQ(straight.points.size(), 2u);
 	EXPECT_TRUE(pathHitsRing(straight, kTJunctionRing));
@@ -526,18 +526,19 @@ TEST(PathQuery, BeliefKnowingAnyWallOfAJunctionBlocksIt) {
 
 	// A group tag whose list the mesh has lost reads as known, so it never opens a way where knowing
 	// nothing would cross it. A debug build stops at the assert first.
-	NavView lost		= navView(m);
+	NavView lost		= navView(mesh);
 	lost.blockerGroupIn = [](const void*, std::int64_t) -> const std::vector<std::int64_t>* { return nullptr; };
 	EXPECT_DEBUG_DEATH(
 		{
 			const PathResult lostPath = pathThrough(lost, kSouthOfT, kNorthOfT, 0, BeliefFilter{&noSegs, &noOps});
+			ASSERT_TRUE(lostPath.reachable);
 			EXPECT_FALSE(pathHitsRing(lostPath, kTJunctionRing));
 		},
-		"");
+		"group != nullptr");
 
 	// Truth is what it was with the junction tagged as one plain wall.
 	const NavMesh plain = buildNavMesh(tJunction(/*junctionIsGroup=*/false));
-	const PathResult truth = pathThrough(m, kSouthOfT, kNorthOfT, 0);
+	const PathResult truth = pathThrough(mesh, kSouthOfT, kNorthOfT, 0);
 	ASSERT_TRUE(truth.reachable);
 	EXPECT_EQ(truth.points, pathThrough(plain, kSouthOfT, kNorthOfT, 0).points);
 	EXPECT_FALSE(pathHitsRing(truth, kTJunctionRing));
@@ -651,20 +652,20 @@ TEST(PathQuery, BeliefKnowingOneBlockerOfACornerOrACrossBlocksTheJunction) {
 	const Junction cross{{west, north, east, south}, {30}};
 	for (const Junction& shape : {corner, cross}) {
 		SCOPED_TRACE(shape.arms.size());
-		NavMeshInput in;
-		in.polygons.push_back(border({{-2000, -2000}, {6000, -2000}, {6000, 6000}, {-2000, 6000}}));
+		NavMeshInput input;
+		input.polygons.push_back(border({{-2000, -2000}, {6000, -2000}, {6000, 6000}, {-2000, 6000}}));
 		NavInputPolygon ring = blocked(square, kBlockerGroupTagBase + 2);
 		for (const NavInputPolygon& arm : shape.arms) {
-			in.polygons.push_back(arm);
+			input.polygons.push_back(arm);
 			ring.blockerGroup.push_back(arm.provenanceId);
 		}
-		in.polygons.push_back(std::move(ring));
-		const NavMesh m = buildNavMesh(in);
+		input.polygons.push_back(std::move(ring));
+		const NavMesh mesh = buildNavMesh(input);
 
-		const PathResult known = pathThrough(m, southEast, northWest, 0, BeliefFilter{&shape.known, &noOps});
+		const PathResult known = pathThrough(mesh, southEast, northWest, 0, BeliefFilter{&shape.known, &noOps});
 		ASSERT_TRUE(known.reachable);
 		EXPECT_FALSE(pathHitsRing(known, square));
-		const PathResult blind = pathThrough(m, southEast, northWest, 0, BeliefFilter{&none, &noOps});
+		const PathResult blind = pathThrough(mesh, southEast, northWest, 0, BeliefFilter{&none, &noOps});
 		ASSERT_TRUE(blind.reachable);
 		EXPECT_TRUE(pathHitsRing(blind, square));
 	}
