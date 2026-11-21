@@ -54,6 +54,7 @@ namespace asset_manager {
 
 	  protected:
 		void onMount() override;
+		void update(float dt) override;
 
 	  private:
 		void build();
@@ -82,7 +83,8 @@ namespace asset_manager {
 		// A parts def's preview; the turn, the overlays, and the level are kept across selections.
 		uint32_t						 partsTurnQuanta = 0;
 		PartsOverlays					 partsOverlays;
-		std::optional<uint8_t>			 partsLevel;
+		std::optional<uint8_t>			 partsLevel; // unset: the finest
+		bool							 pendingBuild = false; // a level picked: rebuilt after the event that picked it
 		ui::Ref<PartsPreview>			 largePreview;
 		std::vector<ui::Ref<PartsPreview>> sheetPreviews;
 		ui::Ref<ui::TextInput>			 turnEntry;

@@ -348,22 +348,22 @@ namespace asset_manager {
 		});
 		controls.addChild<ui::Text>({.style = ui::styles::text::secondary, .text = "degrees    Left / Right turn, Alt 1 degree"});
 
-		// The detail level: by the preview's density, as the camera picks it, or one of the def's.
-		std::vector<std::string> levels{"Auto"};
+		// The detail level, the finest unless one is picked; the counts follow it, so a pick rebuilds the pane.
+		std::vector<std::string> levels;
 		for (const float density : def.detailLevels) {
 			levels.push_back(std::format("{:g} px/m", density));
 		}
-		if (levels.size() > 2) {
+		if (levels.size() > 1) {
 			column.addChild<ui::SegmentedControl>({
 				.id = "am_level",
 				.layout = kHug,
 				.options = levels,
-				.selected = partsLevel.has_value() ? *partsLevel + 1 : 0,
+				.selected = partsPreviewLevel(def, partsLevel),
 				.controlSize = ui::ControlSize::Sm,
 				.onChange =
 					[this](int index) {
-						partsLevel = index == 0 ? std::nullopt : std::optional<uint8_t>(static_cast<uint8_t>(index - 1));
-						applyOverlays();
+						partsLevel = static_cast<uint8_t>(index);
+						pendingBuild = true;
 					},
 			});
 		}
@@ -404,7 +404,6 @@ namespace asset_manager {
 			.turnQuanta = partsTurnQuanta,
 			.overlays = partsOverlays,
 			.level = partsLevel,
-			.coordinateSystem = coordinateSystem,
 		});
 
 		ui::Ref<ui::Component> sheet = column.addChild<ui::Component>(
@@ -434,7 +433,6 @@ namespace asset_manager {
 					.overlays = partsOverlays,
 					.level = partsLevel,
 					.labels = false,
-					.coordinateSystem = coordinateSystem,
 				}));
 			}
 		}
@@ -475,9 +473,15 @@ namespace asset_manager {
 		keyValue("parts", std::format("{} parts, {} placements", item.parts.size(), item.placements.size()));
 		keyValue("drawings", std::format("{} tops, {} sides, {} areas", tops.size(), sides.size(), areas.size()));
 		keyValue("plain faces", std::to_string(plainFaces));
-		const uint8_t finest = static_cast<uint8_t>(std::max<size_t>(def.detailLevels.size(), 1) - 1);
-		const assets::ItemView finestView = assets::buildItemMesh(def, partsTurnQuanta, finest, assets::GameViewConfig::Get().config());
-		keyValue("vertices", std::format("{} at the finest level", finestView.vertexCount));
+		const uint8_t level = partsPreviewLevel(def, partsLevel);
+		const bool	  finest = level + 1U >= def.detailLevels.size();
+		keyValue(
+			"level",
+			def.detailLevels.empty() ? "one level"
+									 : std::format("{:g} px/m{}", def.detailLevels[level], finest ? ", the finest" : "")
+		);
+		const assets::ItemView front = assets::buildItemMesh(def, 0, level, assets::GameViewConfig::Get().config());
+		keyValue("vertices", std::format("{} at that level, turn 0", front.vertexCount));
 		keyValue("use areas", std::to_string(item.useAreas.size()));
 		keyValue(
 			"clearance",
@@ -585,13 +589,18 @@ namespace asset_manager {
 	void AssetDetailView::applyOverlays() {
 		if (PartsPreview* shown = largePreview.get()) {
 			shown->setOverlays(partsOverlays);
-			shown->setLevel(partsLevel);
 		}
 		for (const ui::Ref<PartsPreview>& cell : sheetPreviews) {
 			if (PartsPreview* shown = cell.get()) {
 				shown->setOverlays(partsOverlays);
-				shown->setLevel(partsLevel);
 			}
+		}
+	}
+
+	void AssetDetailView::update(float /*dt*/) {
+		if (pendingBuild) {
+			pendingBuild = false;
+			build();
 		}
 	}
 

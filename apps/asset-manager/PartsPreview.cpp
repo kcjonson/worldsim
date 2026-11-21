@@ -1,15 +1,11 @@
 #include "PartsPreview.h"
 
-#include <CoordinateSystem/CoordinateSystem.h>
 #include <assets/AssetRegistry.h>
-#include <assets/DetailLevels.h>
 #include <assets/ViewConfig.h>
-#include <ui/Context.h>
 #include <utils/Log.h>
 
 #include <algorithm>
 #include <cmath>
-#include <span>
 
 namespace asset_manager {
 
@@ -38,13 +34,17 @@ namespace asset_manager {
 		return std::max(radius, 0.01F) * kFitMargin;
 	}
 
+	uint8_t partsPreviewLevel(const assets::AssetDefinition& def, std::optional<uint8_t> level) {
+		const uint8_t finest = static_cast<uint8_t>(std::max<size_t>(def.detailLevels.size(), 1) - 1);
+		return level.has_value() && *level <= finest ? *level : finest;
+	}
+
 	PartsPreview::PartsPreview(const Args& args)
 		: defName(args.defName),
 		  turnQuanta(args.turnQuanta),
 		  overlays(args.overlays),
 		  fixedLevel(args.level),
-		  labels(args.labels),
-		  coordinateSystem(args.coordinateSystem) {}
+		  labels(args.labels) {}
 
 	void PartsPreview::setTurn(uint32_t value) {
 		turnQuanta = value;
@@ -52,10 +52,6 @@ namespace asset_manager {
 
 	void PartsPreview::setOverlays(const PartsOverlays& value) {
 		overlays = value;
-	}
-
-	void PartsPreview::setLevel(std::optional<uint8_t> value) {
-		fixedLevel = value;
 	}
 
 	bool PartsPreview::refresh(uint8_t level) {
@@ -94,13 +90,8 @@ namespace asset_manager {
 		if (def == nullptr || def->parts == nullptr) {
 			return;
 		}
-		// Fit before the build: the level is the one the fitted density draws.
-		const float pixelsPerMeter = std::min(size.x, size.y) / (2.0F * partsFitRadiusMeters(defName));
-		const float ratio = coordinateSystem != nullptr ? coordinateSystem->getPixelRatio() : 1.0F;
-		const float devicePixelsPerMeter = pixelsPerMeter * ratio * (getContext() != nullptr ? getContext()->getScale() : 1.0F);
-		const uint8_t level = fixedLevel.has_value() && *fixedLevel < std::max<size_t>(def->detailLevels.size(), 1)
-								  ? *fixedLevel
-								  : assets::detailLevelFor(std::span<const float>(def->detailLevels), devicePixelsPerMeter);
+		const float	  pixelsPerMeter = std::min(size.x, size.y) / (2.0F * partsFitRadiusMeters(defName));
+		const uint8_t level = partsPreviewLevel(*def, fixedLevel);
 		if (!refresh(level)) {
 			return;
 		}

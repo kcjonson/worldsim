@@ -15,10 +15,6 @@
 #include <optional>
 #include <string>
 
-namespace Renderer {
-	class CoordinateSystem;
-}
-
 namespace asset_manager {
 
 	/// The overlays the detail pane's toggles switch.
@@ -37,17 +33,15 @@ namespace asset_manager {
 			std::string	  defName;
 			uint32_t	  turnQuanta = 0;
 			PartsOverlays overlays;
-			/// A detail level by index; unset picks the one the preview's density draws, as the game's camera does.
-			std::optional<uint8_t>		level;
-			bool						labels = true; ///< use area names
-			Renderer::CoordinateSystem* coordinateSystem = nullptr; ///< for the pixel ratio the density reads
+			/// A detail level by index; unset is the finest, everything the art has.
+			std::optional<uint8_t> level;
+			bool				   labels = true; ///< use area names
 		};
 
 		explicit PartsPreview(const Args& args);
 
 		void setTurn(uint32_t turnQuanta);
 		void setOverlays(const PartsOverlays& overlays);
-		void setLevel(std::optional<uint8_t> level);
 
 		[[nodiscard]] uint32_t				  turn() const { return turnQuanta; }
 		/// The view drawn last, for the pane's counts.
@@ -67,7 +61,6 @@ namespace asset_manager {
 		PartsOverlays				overlays;
 		std::optional<uint8_t>		fixedLevel;
 		bool						labels;
-		Renderer::CoordinateSystem* coordinateSystem;
 
 		assets::ItemView	 built;
 		assets::ItemOverlays geometry;
@@ -78,5 +71,8 @@ namespace asset_manager {
 
 	/// How far from the pivot a parts def's view and its areas reach at any turn, in metres.
 	[[nodiscard]] float partsFitRadiusMeters(const std::string& defName);
+
+	/// The level a preview draws: `level` when the def has it, else its finest.
+	[[nodiscard]] uint8_t partsPreviewLevel(const assets::AssetDefinition& def, std::optional<uint8_t> level);
 
 } // namespace asset_manager
