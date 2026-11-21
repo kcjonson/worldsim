@@ -46,7 +46,10 @@ namespace ecs {
 		/// many times it moves meanwhile.
 		void keep(const Key& now, std::uint64_t tick) {
 			if (!key.has_value() || key->beliefVersion != now.beliefVersion) {
-				verdicts.clear();
+				if (!verdicts.empty()) {
+					verdicts.clear();
+					++verdictGeneration;
+				}
 				key			 = now;
 				staleBefore	 = 0;
 				sweepPending = false;
@@ -61,7 +64,7 @@ namespace ecs {
 				return;
 			}
 			sweepPending = false;
-			std::erase_if(verdicts, [&](const Verdict& verdict) {
+			const std::size_t forgotten = std::erase_if(verdicts, [&](const Verdict& verdict) {
 				if (verdict.tick >= staleBefore) {
 					return false;
 				}
@@ -71,6 +74,9 @@ namespace ecs {
 				sweepPending = true;
 				return false;
 			});
+			if (forgotten > 0) {
+				++verdictGeneration;
+			}
 		}
 
 		/// No known way to `target`, found under his current belief: held from AI update `tick`, under the
@@ -85,8 +91,13 @@ namespace ecs {
 				at->tick = tick;
 			} else {
 				verdicts.insert(at, Verdict{target, tick});
+				++verdictGeneration;
 			}
 		}
+
+		/// Moves whenever the set of verdicts changes, so a query's recorded wait can tell one forgotten or
+		/// found by one compare.
+		[[nodiscard]] std::uint64_t verdictsChanged() const { return verdictGeneration; }
 
 		/// A route found no known way to `target`, and the verdict still holds as of the last keep.
 		[[nodiscard]] bool hasVerdict(std::uint64_t target) const {
@@ -129,6 +140,7 @@ namespace ecs {
 		};
 		std::optional<Key>	 key;
 		std::vector<Verdict> verdicts; // sorted by target
+		std::uint64_t		 verdictGeneration = 0;
 		std::uint64_t		 staleBefore  = 0;	   // the AI update the epoch last moved in
 		bool				 sweepPending = false; // a verdict from before that move is still held
 	};

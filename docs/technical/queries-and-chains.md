@@ -873,7 +873,7 @@ low-mood behavior's roll multiplier can read what its query weighed.
 |---|---|---|---|
 | `distance` | item | 0 m and up | straight-line metres from the creature |
 | `held` | item | 0 or 1 | another task holds a claim on it that does not take it from this creature (food held by a less urgent eater or by work) |
-| `on_shore` | item | 0 or 1 | a place within the tuned distance of water |
+| `on_shore` | item | 0 or 1 | a place within the tuned distance of water, that distance included |
 | `waste_nearby` | item | 0 and up | the sum, over remembered waste things (bio piles) within the tuned distance `r`, of `1 - d/r` for each at distance `d` |
 | `food_nearby` | item | 0 and up | the same sum over remembered edible things within its tuned distance |
 | `is_place` | item | 0 or 1 | the candidate is a place (`here`, `around`, `grid`) rather than a thing |
@@ -916,7 +916,8 @@ one fact, `fits_meal_time`; no query asks what hour it is.
   a condition.
 
 A query weighs `distance` with a negative weight or excludes it above a bound; one that does neither is
-a load error, since nothing would end its search (see [Evaluation](#evaluation)).
+a load error, since nothing would end its search (see [Evaluation](#evaluation)). A query only counted
+(`count_of`), which no `go` step, work `<source>`, or low-mood `<target>` names, ranks nothing and is exempt.
 
 `<prefer fact="held"/>` is the food rule of [Task claims](./task-claims.md#need-tasks): free
 food first at any distance, held food only when no free food is known, and food that is taken never.
@@ -2022,6 +2023,15 @@ Rules from the first build of the loaders:
   underscores, case as written.
 - 2026-11-21: A subfolder under `actions/`, `work/`, `orders/`, or `facts/` is a load error, since their
   entries take top-level ids.
+
+Rules from the first build of queries (WOR-1070, Facts and queries):
+
+- 2026-11-21: A query used only to count (`count_of`) is exempt from the rule that a query bounds distance: a
+  count ranks nothing and walks nothing nearest first. The loader tells a counted query by its references: a
+  query no `go` step, work entry `<source>`, or low-mood `<target>` names can only be counted, and is not held
+  to the rule; any query one of them names is. A weighted query still excludes distance above a bound.
+- 2026-11-21: `on_shore` counts a place exactly the tuned distance from water (1.5 m) as on the shore, as the
+  toilet finder does: a relief spot is kept only when its distance to water is strictly greater.
 
 Choices made in writing this document, not put to the owner:
 

@@ -529,7 +529,7 @@ TEST_F(BehaviorLoaderTest, EachEntryMistakeIsOneErrorNamingTheEntryElementAndAtt
 		{R"(<action id="drink" seconds="1" interruptable="false"><restore need="thrist" amount="1"/></action>)",
 		 "<action id=\"drink\"> effect 1 <restore> need \"thrist\" names no need of any behavior or creature"},
 		// Queries.
-		{R"(<query id="q"><from place="here"/></query>)",
+		{R"(<chain id="c"><go query="q"/></chain><query id="q"><from place="here"/></query>)",
 		 "<query id=\"q\"> neither weighs distance by a negative number nor excludes it above a bound, so nothing ends its search"},
 		{R"(<query id="q" pick="weighted"><from place="here"/><weigh fact="distance" by="-1"/></query>)",
 		 "<query id=\"q\"> picks weighted but excludes no distance above a bound, so its draw has no bound"},
@@ -591,6 +591,26 @@ TEST_F(BehaviorLoaderTest, EachEntryMistakeIsOneErrorNamingTheEntryElementAndAtt
 		sample(entry.written);
 		EXPECT_EQ(onlyError(), "[behaviors] test/sample.xml: " + entry.expected);
 	}
+}
+
+// A query no go step, work source, or low-mood target names can only be counted (count_of), which ranks
+// nothing and walks nothing nearest first, so it need not bound distance; named by a low-mood target, it must.
+TEST_F(BehaviorLoaderTest, OnlyARankedQueryMustBoundDistance) {
+	const std::string counted = R"(<query id="liked_near"><from capability="drinkable"/><exclude fact="held"/></query>)";
+	sample(counted);
+	const EntryLoad loaded = load();
+	EXPECT_TRUE(loaded.errors.empty()) << ::testing::PrintToString(loaded.errors);
+	EXPECT_TRUE(loaded.library.findQuery("test/liked_near").valid());
+
+	sample(
+		counted +
+		R"(<lowMood rampStart="25" rampFull="15" base="4"><target query="liked_near"/><effect chain="c"/><ends after="task"/><relief amount="small"/></lowMood><chain id="c"><go to="target"/></chain>)"
+	);
+	EXPECT_EQ(
+		onlyError(),
+		"[behaviors] test/sample.xml: <query id=\"liked_near\"> neither weighs distance by a negative number nor excludes it "
+		"above a bound, so nothing ends its search"
+	);
 }
 
 TEST_F(BehaviorLoaderTest, ChainRulesNameTheChainAndTheStep) {

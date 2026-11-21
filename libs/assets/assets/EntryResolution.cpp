@@ -426,6 +426,40 @@ namespace assets::entry_loading {
 		}
 	}
 
+	void Loader::checkQueryBounds() {
+		const EntryLibrary& library = result.library;
+		std::vector<bool>	ranked(library.queries.size(), false);
+		const auto			ranks = [&](const std::optional<EntryReference<QueryEntry>>& query) {
+			 if (query && query->handle.valid()) {
+				 ranked[query->handle.index] = true;
+			 }
+		};
+		for (const ChainEntry& chain : library.chains) {
+			for (const ChainStep& step : chain.steps) {
+				if (const auto* go = std::get_if<GoStep>(&step.step)) {
+					ranks(go->query);
+				}
+			}
+		}
+		for (const WorkEntry& work : library.work) {
+			ranks(work.source);
+		}
+		for (const BehaviorEntry& behavior : library.behaviors) {
+			if (behavior.lowMood) {
+				ranks(behavior.lowMood->target);
+			}
+		}
+		for (std::size_t index = 0; index < library.queries.size(); ++index) {
+			const QueryEntry& query = library.queries[index];
+			if (ranked[index] && !boundsDistance(query, FactRowKind::Weigh) && !boundsDistance(query, FactRowKind::Exclude)) {
+				fail(
+					query.file + ": " + entryLabel("query", query.id) +
+					" neither weighs distance by a negative number nor excludes it above a bound, so nothing ends its search"
+				);
+			}
+		}
+	}
+
 	void Loader::warnUnstarted() {
 		const EntryLibrary&	  library = result.library;
 		std::vector<bool>	  started(library.chains.size(), false);
