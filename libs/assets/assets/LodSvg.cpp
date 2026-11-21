@@ -64,7 +64,7 @@ namespace assets {
 					elements.push_back({.minPixelsPerMeter = minPixelsPerMeter, .where = location, .defined = defined});
 				}
 				if (args.onElement) {
-					args.onElement(node, location, index);
+					args.onElement(node, location, defined, index);
 				}
 				if (index.has_value()) {
 					pugi::xml_attribute id = node.attribute("id");

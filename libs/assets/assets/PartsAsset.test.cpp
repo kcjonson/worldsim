@@ -26,10 +26,10 @@ namespace {
 
 	// An SVG whose viewBox has the proportions of width x height (100 units a metre), filled edge to edge.
 	std::string svg(float width, float height, const std::string& inner = "") {
-		const std::string w = number(width * 100.0F);
-		const std::string h = number(height * 100.0F);
-		return "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 " + w + " " + h + "\"><rect x=\"0\" y=\"0\" width=\"" + w +
-			   "\" height=\"" + h + "\" fill=\"#808080\"/>" + inner + "</svg>";
+		const std::string boxWidth = number(width * 100.0F);
+		const std::string boxHeight = number(height * 100.0F);
+		return "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 " + boxWidth + " " + boxHeight + "\"><rect x=\"0\" y=\"0\" width=\"" +
+			   boxWidth + "\" height=\"" + boxHeight + "\" fill=\"#808080\"/>" + inner + "</svg>";
 	}
 
 	std::string partsDef(const std::string& name, const std::string& inner) {
@@ -54,9 +54,9 @@ namespace {
 	double area(const std::vector<glm::vec2>& ring) {
 		double doubled = 0.0;
 		for (size_t i = 0; i < ring.size(); ++i) {
-			const glm::vec2& a = ring[i];
-			const glm::vec2& b = ring[(i + 1) % ring.size()];
-			doubled += static_cast<double>(a.x) * b.y - static_cast<double>(b.x) * a.y;
+			const glm::vec2& from = ring[i];
+			const glm::vec2& to = ring[(i + 1) % ring.size()];
+			doubled += static_cast<double>(from.x) * to.y - static_cast<double>(to.x) * from.y;
 		}
 		return doubled * 0.5;
 	}
@@ -285,7 +285,7 @@ TEST_F(PartsAssetTest, AFlatOnlyItemHasNoColliderAndItsUseAreaGrowsItsFootprint)
 	EXPECT_TRUE(issues("Spot").empty()) << ::testing::PrintToString(issues("Spot"));
 	EXPECT_TRUE(def->partsColliders.empty());
 	EXPECT_FLOAT_EQ(def->parts->bodyTopMeters, 0.0F);
-	EXPECT_NEAR(area(def->parts->useAreas[0]), 1.0 + 4.0 * 0.7 + 3.14159 * 0.49, 0.01);
+	EXPECT_NEAR(area(def->parts->useAreas[0]), 1.0 + 4.0 * 0.7 + 3.14159 * 0.49, 0.02) << "a little under, for the flattened corners";
 }
 
 TEST_F(PartsAssetTest, APartsScriptAddsPartsAndPlacements) {
@@ -325,11 +325,17 @@ TEST_F(PartsAssetTest, APartsDefHasNoTemplateAndAskingForOneIsSafe) {
 
 TEST_F(PartsAssetTest, TheFileValidatorKnowsPartsAndTheirDrawings) {
 	writeWorkbench();
+	folder.write("Workbench/stray.svg", svg(1.0F, 1.0F));
 	const ValidationReport report = AssetValidator::validate(folder.root, {});
+	size_t orphans = 0;
 	for (const ValidationIssue& issue : report.issues) {
-		EXPECT_EQ(issue.message.find("orphan"), std::string::npos) << issue.context;
+		if (issue.message.find("orphan") != std::string::npos) {
+			++orphans;
+			EXPECT_NE(issue.context.find("stray.svg"), std::string::npos) << issue.context;
+		}
 		EXPECT_EQ(issue.message.find("Unknown assetType"), std::string::npos);
 	}
+	EXPECT_EQ(orphans, 1U) << "the twelve drawings are referenced; only the stray file is an orphan";
 }
 
 // ─── One fixture per rule of section 5 ──────────────────────────────────────────────────────────────────
@@ -361,7 +367,30 @@ TEST_F(PartsAssetTest, Rule3FootprintsHaveSizeAndSides) {
 	);
 	load("FlatRect");
 	EXPECT_TRUE(hasIssue("FlatRect", "needs max > min on both axes"));
-	EXPECT_TRUE(hasIssue("ManySides", "3 to 32 sides"));
+	EXPECT_TRUE(hasIssue("ManySides", "whole number of sides, 3 to 32"));
+}
+
+TEST_F(PartsAssetTest, Rule3RefusesFewSidesNoRadiusAndAFractionOfASide) {
+	const auto roundPart = [&](const std::string& name, const std::string& round) {
+		writeDef(
+			name,
+			"<parts><part name=\"drum\"><footprint>" + round + "</footprint><height bottom=\"0\" top=\"1\"/><top color=\"#000000\"/>"
+			"<sides color=\"#000000\"/></part></parts><placements>" + place("drum") + "</placements>"
+		);
+	};
+	roundPart("TwoSides", "<round radius=\"0.3\" sides=\"2\"/>");
+	roundPart("NoRadius", "<round radius=\"0\" sides=\"6\"/>");
+	roundPart("PartSide", "<round radius=\"0.3\" sides=\"4.6\"/>");
+	folder.write("ScriptSide/parts.lua", "asset:setFootprint('drum', { round = { radius = 0.3, sides = 4.6 } })\n");
+	writeDef(
+		"ScriptSide",
+		"<partsScript>parts.lua</partsScript><parts><part name=\"drum\"><footprint><round radius=\"0.3\" sides=\"6\"/></footprint>"
+		"<height bottom=\"0\" top=\"1\"/><top color=\"#000000\"/><sides color=\"#000000\"/></part></parts><placements>" + place("drum") + "</placements>"
+	);
+	load("TwoSides");
+	for (const char* name : {"TwoSides", "NoRadius", "PartSide", "ScriptSide"}) {
+		EXPECT_TRUE(hasIssue(name, "whole number of sides, 3 to 32")) << name;
+	}
 }
 
 TEST_F(PartsAssetTest, Rule4HeightsAndARaisedFlatPartRestsOnSomething) {
@@ -496,11 +525,243 @@ TEST_F(PartsAssetTest, AnXmlRectAndADrawingOfItGiveTheSameArea) {
 	EXPECT_TRUE(issues("Drawn").empty()) << ::testing::PrintToString(issues("Drawn"));
 	ASSERT_EQ(drawn->parts->useAreas[0].polygons.size(), 1U);
 	ASSERT_EQ(written->parts->useAreas[0].polygons.size(), 1U);
-	const auto& a = drawn->parts->useAreas[0].polygons[0].outer;
-	const auto& b = written->parts->useAreas[0].polygons[0].outer;
-	ASSERT_EQ(a.size(), b.size());
-	for (size_t i = 0; i < a.size(); ++i) {
-		EXPECT_NEAR(a[i].x, b[i].x, 1e-5F);
-		EXPECT_NEAR(a[i].y, b[i].y, 1e-5F);
+	const auto& fromDrawing = drawn->parts->useAreas[0].polygons[0].outer;
+	const auto& fromXml = written->parts->useAreas[0].polygons[0].outer;
+	ASSERT_EQ(fromDrawing.size(), fromXml.size());
+	for (size_t i = 0; i < fromDrawing.size(); ++i) {
+		EXPECT_NEAR(fromDrawing[i].x, fromXml[i].x, 1e-5F);
+		EXPECT_NEAR(fromDrawing[i].y, fromXml[i].y, 1e-5F);
+	}
+}
+
+// ─── Touching, rounding, and the collider's islands ─────────────────────────────────────────────────────
+
+TEST_F(PartsAssetTest, APartTouchingAnotherWithinRoundingIsATouchNotAnOverlap) {
+	// The leg's corner is 11 micrometres inside the slab: under the millimetre the geometry rounds to.
+	writeDef(
+		"Touch",
+		"<parts>" + block("slab", -0.5F, -0.3F, 0.5F, 0.3F, 0.0F, 0.8F) + block("leg", -0.05F, -0.05F, 0.05F, 0.05F, 0.0F, 0.8F) +
+			"</parts><placements>" + place("slab") + place("leg", 0.5707F, 0.0F, 45.0F) + "</placements>"
+	);
+	const AssetDefinition* def = load("Touch");
+	ASSERT_NE(def, nullptr);
+	EXPECT_TRUE(issues("Touch").empty()) << ::testing::PrintToString(issues("Touch"));
+	EXPECT_EQ(def->partsColliders.size(), 2U) << "the leg's corner touches the slab's edge at a point, so the union splits there";
+}
+
+TEST_F(PartsAssetTest, PartsSharingAnEdgeAtThirtyDegreesTouchAndARealOverlapStillFails) {
+	writeDef(
+		"Shared",
+		"<parts>" + block("near", 0.0F, 0.0F, 1.0F, 0.5F, 0.0F, 0.9F) + block("far", 0.0F, 0.5F, 1.0F, 1.0F, 0.0F, 0.9F) + "</parts><placements>" +
+			place("near", 0.0F, 0.0F, 30.0F) + place("far", 0.0F, 0.0F, 30.0F) + "</placements>"
+	);
+	writeDef(
+		"Deep",
+		"<parts>" + block("near", 0.0F, 0.0F, 1.0F, 0.5F, 0.0F, 0.9F) + block("far", 0.0F, 0.45F, 1.0F, 1.0F, 0.0F, 0.9F) + "</parts><placements>" +
+			place("near", 0.0F, 0.0F, 30.0F) + place("far", 0.0F, 0.0F, 30.0F) + "</placements>"
+	);
+	const AssetDefinition* shared = load("Shared");
+	ASSERT_NE(shared, nullptr);
+	EXPECT_TRUE(issues("Shared").empty()) << ::testing::PrintToString(issues("Shared"));
+	EXPECT_EQ(shared->partsColliders.size(), 1U);
+	EXPECT_TRUE(hasIssue("Deep", "overlap in plan and in height")) << "5 cm deep is an overlap";
+}
+
+TEST_F(PartsAssetTest, AnIslandInsideAFilledHoleAddsNoColliderRing) {
+	writeDef(
+		"Moat",
+		"<parts>" + block("bar", 0.0F, 0.0F, 3.0F, 0.5F, 0.0F, 0.5F) + block("post", 0.0F, 0.0F, 0.5F, 2.0F, 0.0F, 0.5F) +
+			block("plinth", 1.2F, 1.2F, 1.8F, 1.8F, 0.0F, 0.5F) + "</parts><placements>" + place("bar") + place("bar", 0.0F, 2.5F) +
+			place("post", 0.0F, 0.5F) + place("post", 2.5F, 0.5F) + place("plinth") + "</placements>"
+	);
+	const AssetDefinition* def = load("Moat");
+	ASSERT_NE(def, nullptr);
+	ASSERT_EQ(def->partsColliders.size(), 1U) << "the plinth stands in the filled hole";
+	EXPECT_NEAR(area(def->partsColliders[0].pointsMeters), 9.0, 1e-4);
+}
+
+// ─── The art check (rule 6) and area fill rules ─────────────────────────────────────────────────────────
+
+TEST_F(PartsAssetTest, Rule6TheEngineArtCheckRefusesWhatLoadSvgDrops) {
+	const std::string open = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\">";
+	const std::string square = "<rect x=\"0\" y=\"0\" width=\"100\" height=\"100\" fill=\"#808080\"/>";
+	const std::vector<std::pair<std::string, std::string>> kinds = {
+		{"use", open + "<rect id=\"r\" width=\"100\" height=\"100\" fill=\"#000\"/><use href=\"#r\"/></svg>"},
+		{"text", open + square + "<text x=\"1\" y=\"10\">hi</text></svg>"},
+		{"image", open + square + "<image href=\"x.png\" width=\"10\" height=\"10\"/></svg>"},
+		{"filter", open + "<rect width=\"100\" height=\"100\" fill=\"#000\" filter=\"url(#f)\"/></svg>"},
+		{"mask", open + "<rect width=\"100\" height=\"100\" fill=\"#000\" mask=\"url(#m)\"/></svg>"},
+		{"clip", open + "<rect width=\"100\" height=\"100\" fill=\"#000\" clip-path=\"url(#c)\"/></svg>"},
+		{"pattern", open + "<defs><pattern id=\"p\" width=\"10\" height=\"10\"/></defs><rect width=\"100\" height=\"100\" fill=\"url(#p)\"/></svg>"},
+		{"dangling", open + "<rect width=\"100\" height=\"100\" fill=\"url(#nothing)\"/></svg>"},
+		{"nothing", open + "<g/></svg>"},
+	};
+	std::string partsXml;
+	std::string placements;
+	float		x = 0.0F;
+	for (const auto& [kind, text] : kinds) {
+		folder.write("Art/" + kind + ".svg", text);
+		partsXml += "<part name=\"" + kind + "\"><footprint>" + rect(0, 0, 1, 1) + "</footprint><height bottom=\"0\" top=\"1\"/><top drawing=\"" +
+					kind + ".svg\"/><sides color=\"#000000\"/></part>";
+		placements += place(kind, x);
+		x += 2.0F;
+	}
+	writeDef("Art", "<parts>" + partsXml + "</parts><placements>" + placements + "</placements>");
+	load("Art");
+	EXPECT_TRUE(hasIssue("Art", "<use> is not drawn by loadSVG"));
+	EXPECT_TRUE(hasIssue("Art", "<text> is not drawn by loadSVG"));
+	EXPECT_TRUE(hasIssue("Art", "<image> is not drawn by loadSVG"));
+	EXPECT_TRUE(hasIssue("Art", "has a filter"));
+	EXPECT_TRUE(hasIssue("Art", "has a mask"));
+	EXPECT_TRUE(hasIssue("Art", "has a clip-path"));
+	EXPECT_TRUE(hasIssue("Art", "pattern.svg:1: <rect> paints with url(#p), which names no gradient"));
+	EXPECT_TRUE(hasIssue("Art", "dangling.svg:1: <rect> paints with url(#nothing), which names no gradient"));
+	EXPECT_TRUE(hasIssue("Art", "nothing.svg: draws nothing"));
+}
+
+TEST_F(PartsAssetTest, Rule6RefusesSharedAndAbsoluteDrawingPaths) {
+	writeDef(
+		"Paths",
+		"<parts><part name=\"a\"><footprint>" + rect(0, 0, 1, 1) + "</footprint><height bottom=\"0\" top=\"1\"/><top drawing=\"@shared/top.svg\"/>"
+		"<sides color=\"#000000\" drawing=\"/elsewhere/side.svg\"/></part></parts><placements>" + place("a") + "</placements>"
+	);
+	load("Paths");
+	EXPECT_TRUE(hasIssue("Paths", "'@shared/top.svg' is outside the item's folder"));
+	EXPECT_TRUE(hasIssue("Paths", "'/elsewhere/side.svg' is outside the item's folder"));
+}
+
+TEST_F(PartsAssetTest, AnAreaDrawingFilledEvenOddIsRefused) {
+	const std::string body = "<parts>" + block("box", -0.5F, -0.5F, 0.5F, 0.5F, 0, 1) + "</parts><placements>" + place("box") + "</placements>";
+	folder.write(
+		"Ring/ring.svg",
+		"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><path fill=\"#000\" fill-rule=\"evenodd\" "
+		"d=\"M0 0 H100 V100 H0 Z M25 25 H75 V75 H25 Z\"/></svg>"
+	);
+	writeDef("Ring", body + "<useAreas><drawing file=\"ring.svg\" minX=\"-1\" minY=\"0.5\" maxX=\"1\" maxY=\"2.5\"/></useAreas>");
+	load("Ring");
+	EXPECT_TRUE(hasIssue("Ring", "fill-rule evenodd"));
+}
+
+// ─── Drawings mapped into metres ────────────────────────────────────────────────────────────────────────
+
+TEST_F(PartsAssetTest, StrokesGradientsAndDetailLevelsCarryIntoMetresOnASide) {
+	folder.write(
+		"Crate/front.svg",
+		"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 100\"><defs><linearGradient id=\"shade\" gradientUnits=\"userSpaceOnUse\" "
+		"x1=\"0\" y1=\"0\" x2=\"200\" y2=\"0\"><stop offset=\"0\" stop-color=\"#000000\"/><stop offset=\"1\" stop-color=\"#ffffff\"/></linearGradient></defs>"
+		"<rect x=\"0\" y=\"0\" width=\"200\" height=\"100\" fill=\"url(#shade)\"/>"
+		"<g data-lod=\"40\"><rect x=\"20\" y=\"20\" width=\"60\" height=\"60\" fill=\"none\" stroke=\"#000\" stroke-width=\"10\"/></g></svg>"
+	);
+	writeDef(
+		"Crate",
+		"<parts><part name=\"box\"><footprint>" + rect(-1, -0.25F, 1, 0.25F) + "</footprint><height bottom=\"0\" top=\"1\"/><top color=\"#000000\"/>"
+		"<sides color=\"#000000\"><face side=\"front\" drawing=\"front.svg\"/></sides></part></parts><placements>" + place("box") + "</placements>"
+	);
+	const AssetDefinition* def = load("Crate");
+	ASSERT_NE(def, nullptr);
+	EXPECT_TRUE(issues("Crate").empty()) << ::testing::PrintToString(issues("Crate"));
+	const PartFace& front = def->parts->parts[0].faces[2];
+	ASSERT_TRUE(front.drawing.has_value());
+	const ItemDrawing& drawing = def->parts->drawings[*front.drawing];
+	ASSERT_EQ(drawing.shapes.size(), 2U);
+	EXPECT_FLOAT_EQ(drawing.shapes[0].minPixelsPerMeter, 0.0F);
+	EXPECT_FLOAT_EQ(drawing.shapes[1].minPixelsPerMeter, 40.0F) << "the detail-level pass on a side drawing";
+	EXPECT_NEAR(drawing.shapes[1].shape.strokeWidth, 0.1F, 1e-5F) << "10 units at 100 units a metre";
+	// The gradient runs across the 2 m face: a quarter of the way along, a quarter grey.
+	const renderer::GradientFill& gradient = drawing.shapes[0].shape.gradient;
+	ASSERT_NE(gradient.type, renderer::GradientFill::Type::None);
+	EXPECT_NEAR(gradient.colorAt({0.5F, 0.5F}).r, 0.25F, 0.02F);
+	EXPECT_NEAR(gradient.colorAt({1.5F, 0.2F}).r, 0.75F, 0.02F);
+}
+
+TEST_F(PartsAssetTest, Rule7APairJustInsideTheToleranceLoads) {
+	folder.write("Close/front.svg", svg(1.005F, 1.0F));
+	writeDef(
+		"Close",
+		"<parts><part name=\"a\"><footprint>" + rect(0, 0, 1, 1) + "</footprint><height bottom=\"0\" top=\"1\"/><top color=\"#000000\"/>"
+		"<sides color=\"#000000\"><face side=\"front\" drawing=\"front.svg\"/></sides></part></parts><placements>" + place("a") + "</placements>"
+	);
+	load("Close");
+	EXPECT_TRUE(issues("Close").empty()) << ::testing::PrintToString(issues("Close"));
+}
+
+// ─── The parser's and the script's checks ──────────────────────────────────────────────────────────────
+
+TEST_F(PartsAssetTest, AClearanceMarginOfZeroIsNoClearance) {
+	writeDef("Zero", "<parts>" + block("box", -0.5F, -0.5F, 0.5F, 0.5F, 0, 1) + "</parts><placements>" + place("box") + "</placements><clearance marginMeters=\"0\"/>");
+	const AssetDefinition* def = load("Zero");
+	ASSERT_NE(def, nullptr);
+	EXPECT_TRUE(def->parts->clearance.polygons.empty());
+}
+
+TEST_F(PartsAssetTest, AreasAndFacesNeedWhatTheSchemaRequires) {
+	const std::string body = "<parts>" + block("box", -0.5F, -0.5F, 0.5F, 0.5F, 0, 1) + "</parts><placements>" + place("box") + "</placements>";
+	writeDef("NoAreas", body + "<useAreas/>");
+	writeDef("Nameless", body + "<useAreas><area>" + rect(-1, 0.5F, 1, 1.5F) + "</area></useAreas>");
+	writeDef(
+		"Twins",
+		body + "<useAreas><area name=\"front\">" + rect(-1, 0.5F, 1, 1.5F) + "</area><area name=\"front\">" + rect(-1, -1.5F, 1, -0.5F) + "</area></useAreas>"
+	);
+	writeDef(
+		"BareFace",
+		"<parts><part name=\"a\"><footprint>" + rect(0, 0, 1, 1) + "</footprint><height bottom=\"0\" top=\"1\"/><top color=\"#000000\"/>"
+		"<sides color=\"#000000\"><face drawing=\"x.svg\"/><face side=\"front\"/></sides></part></parts><placements>" + place("a") + "</placements>"
+	);
+	folder.write("Mixed/parts.lua", "asset:addUseArea{ shapes = { { circle = { x = 0, y = -1.5, radius = 0.6 } } } }\n");
+	writeDef("Mixed", body + "<partsScript>parts.lua</partsScript><useAreas><area name=\"front\">" + rect(-1, 0.5F, 1, 1.5F) + "</area></useAreas>");
+	load("NoAreas");
+	EXPECT_TRUE(hasIssue("NoAreas", "holds no area"));
+	EXPECT_TRUE(hasIssue("Nameless", "an <area> needs a name"));
+	EXPECT_TRUE(hasIssue("Twins", "two use areas are named 'front'"));
+	EXPECT_TRUE(hasIssue("BareFace", "names no side"));
+	EXPECT_TRUE(hasIssue("BareFace", "a <face> with no drawing"));
+	EXPECT_TRUE(hasIssue("Mixed", "not both")) << "a script's areas pass the XML's checks";
+}
+
+TEST_F(PartsAssetTest, APartsScriptAddsAreasAndClearanceAndReshapesAPart) {
+	folder.write(
+		"Bench/parts.lua",
+		"asset:setFootprint('top', { rect = { minX = -1, minY = -0.4, maxX = 1, maxY = 0.4 } })\n"
+		"asset:addUseArea{ name = 'front', shapes = { { rect = { minX = -1, minY = 0.4, maxX = 1, maxY = 1.2 } } } }\n"
+		"asset:addUseArea{ name = 'back', shapes = { { circle = { x = 0, y = -1.2, radius = 0.6 } } } }\n"
+		"asset:addClearance{ marginMeters = 0.1 }\n"
+	);
+	writeDef("Bench", "<partsScript>parts.lua</partsScript><parts>" + block("top", -0.5F, -0.5F, 0.5F, 0.5F, 0, 0.8F) + "</parts><placements>" + place("top") + "</placements>");
+	const AssetDefinition* def = load("Bench");
+	ASSERT_NE(def, nullptr);
+	EXPECT_TRUE(issues("Bench").empty()) << ::testing::PrintToString(issues("Bench"));
+	EXPECT_NEAR(area(def->partsColliders[0].pointsMeters), 1.6, 1e-4) << "reshaped to 2 m x 0.8 m";
+	ASSERT_EQ(def->parts->useAreas.size(), 2U);
+	EXPECT_EQ(def->parts->useAreas[1].name, "back");
+	EXPECT_GT(area(def->parts->clearance), 1.6);
+}
+
+TEST_F(PartsAssetTest, APartsScriptsErrorsAreReported) {
+	const std::string body = "<parts>" + block("box", -0.5F, -0.5F, 0.5F, 0.5F, 0, 1) + "</parts><placements>" + place("box") + "</placements>";
+	folder.write("Broken/parts.lua", "asset:place{ part = 'box' \n");
+	writeDef("Broken", "<partsScript>parts.lua</partsScript>" + body);
+	folder.write("Typo/parts.lua", "asset:place{ prat = 'box' }\n");
+	writeDef("Typo", "<partsScript>parts.lua</partsScript>" + body);
+	load("Broken");
+	EXPECT_FALSE(issues("Broken").empty()) << "a syntax error is an error";
+	EXPECT_TRUE(hasIssue("Typo", "unknown key 'prat' in place"));
+}
+
+TEST_F(PartsAssetTest, APartsScriptsRandomNumbersAreTheSameEveryLoad) {
+	folder.write(
+		"Random/parts.lua",
+		"for i = 1, 3 do\n"
+		"  asset:place{ part = 'box', x = i * 2 + math.random(), y = math.random() }\n"
+		"end\n"
+	);
+	writeDef("Random", "<partsScript>parts.lua</partsScript><parts>" + block("box", -0.5F, -0.5F, 0.5F, 0.5F, 0, 1) + "</parts>");
+	const AssetDefinition* first = load("Random");
+	ASSERT_NE(first, nullptr);
+	const std::vector<PartPlacement> firstPlacements = first->parts->placements;
+	const AssetDefinition*			 second = load("Random");
+	ASSERT_NE(second, nullptr);
+	ASSERT_EQ(second->parts->placements.size(), firstPlacements.size());
+	for (size_t i = 0; i < firstPlacements.size(); ++i) {
+		EXPECT_EQ(second->parts->placements[i].offsetMeters, firstPlacements[i].offsetMeters) << "placement " << i;
 	}
 }

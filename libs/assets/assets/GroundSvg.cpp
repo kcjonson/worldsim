@@ -74,15 +74,11 @@ namespace assets {
 
 		// Each drawable element's data-height: its own, else its nearest ancestor's, else unset.
 		std::vector<std::optional<float>> heights;
-		const auto						  checkElement = [&](const pugi::xml_node& node, const std::string& where, std::optional<size_t> drawable) {
+		const auto checkElement = [&](const pugi::xml_node& node, const std::string& where, bool defined, std::optional<size_t> drawable) {
 			 if (const pugi::xml_attribute own = node.attribute("data-height"); own && !ownHeight(node).has_value()) {
 				 issues.push_back(where + ": data-height=\"" + own.value() + "\" must be a number from 0 to 1");
 			 }
 			 const std::string_view name = node.name();
-			 bool					defined = false;
-			 for (pugi::xml_node ancestor = node; ancestor; ancestor = ancestor.parent()) {
-				 defined = defined || std::string_view(ancestor.name()) == "defs";
-			 }
 			 if (!defined && std::find(kUndrawn.begin(), kUndrawn.end(), name) != kUndrawn.end()) {
 				 issues.push_back(where + " is never drawn; ground art is paths and basic shapes");
 			 }

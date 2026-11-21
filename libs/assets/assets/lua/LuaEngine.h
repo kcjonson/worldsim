@@ -78,6 +78,9 @@ class LuaEngine {
 	/// the debug library): what every asset script runs under, generators and parts scripts alike.
 	static void sandbox(sol::state& lua);
 
+	/// Seeds math.random from `seed` alone, so a script draws the same numbers on every load and platform.
+	static void seedRandom(sol::state& lua, uint32_t seed);
+
   private:
 	/// Register all API bindings (Vec2, Color, Path, Asset)
 	void registerBindings();

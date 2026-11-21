@@ -70,6 +70,8 @@ target_link_libraries(assets
         world
     PRIVATE
         pugixml::pugixml
+        # The art check parts drawings pass (renderer::svg::checkArt); the engine has no salal:: alias for it.
+        salal_svg_build
         ${LUA_LIBRARIES}
 )
 

@@ -49,9 +49,10 @@ namespace assets {
 		std::span<const std::byte> svg;
 		float					   curveTolerance = 1.0F; ///< in viewBox units
 		std::string_view		   name;				  ///< what the log calls the SVG
-		/// Called for every element, before its id is replaced, with where it is and, for a drawable
-		/// element, its index in LodSvg::elements: the hook a reader adds its own checks on.
-		std::function<void(const pugi::xml_node& element, const std::string& where, std::optional<std::size_t> drawable)> onElement;
+		/// Called for every element, before its id is replaced, with where it is, whether it is under <defs>
+		/// (never drawn), and, for a drawable element, its index in LodSvg::elements: the hook a reader adds
+		/// its own checks on.
+		std::function<void(const pugi::xml_node& element, const std::string& where, bool defined, std::optional<std::size_t> drawable)> onElement;
 	};
 
 	/// An attribute's text as a finite number, surrounding whitespace allowed.

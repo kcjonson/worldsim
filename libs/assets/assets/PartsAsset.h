@@ -41,7 +41,7 @@ namespace assets {
 		float	 x = 0.0F;
 		float	 y = 0.0F;
 		float	 radius = 0.0F;
-		int32_t	 sides = 0;
+		float	 sides = 0.0F; ///< as written; a whole number from 3 to 32 is valid
 	};
 
 	struct AuthoredFace {
@@ -170,7 +170,9 @@ namespace assets {
 		float aspectToleranceRelative = 0.01F; ///< `drawings aspectTolerance`
 		float curveToleranceMeters = 0.002F;   ///< `drawings curveToleranceMeters`
 		float overflowMeters = 0.01F;		   ///< `drawings overflowMeters`
-		float defaultUseDistanceMeters = 0.7F; ///< `pathingClearanceMeters`: the default use area's distance
+		/// The default use area's distance: `pathingClearanceMeters` in assets/config/construction/constraints.xml,
+		/// which ConstructionRegistry reads after the definitions load, so its value is held here.
+		float defaultUseDistanceMeters = 0.7F;
 	};
 
 	/// The largest colonist collider's radius: a use area has room when a disc this size fits in it.
@@ -193,8 +195,7 @@ namespace assets {
 	};
 
 	/// Resolves what was written into the item, loading each drawing from `folder`, and checks it: every rule of
-	/// section 5 that the def and its drawings decide, but the art check (6) and the view size (12), is an
-	/// error (rule 8 a warning) in `report` naming the def, the part, and the face, area, or file. The collider's
+	/// section 5 that the def and its drawings decide, all but the view size (12), is an error (rule 8 a warning) in `report` naming the def, the part, and the face, area, or file. The collider's
 	/// rings are checked by the registry's collision admission (rule 10).
 	[[nodiscard]] ResolvedParts resolveParts(
 		const PartsAuthored& authored, const std::filesystem::path& folder, const std::string& defName, const PartsLoadConfig& config,

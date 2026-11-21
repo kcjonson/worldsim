@@ -340,6 +340,11 @@ namespace assets {
 		LOG_DEBUG(Engine, "Lua API bindings registered");
 	}
 
+	void LuaEngine::seedRandom(sol::state& lua, uint32_t seed) {
+		// sol2's call, not a built string, so nothing is injected.
+		lua["math"]["randomseed"](seed);
+	}
+
 	void LuaEngine::sandbox(sol::state& lua) {
 		// Sandbox Lua environment for safe asset generation scripts.
 		// Scripts can only use math, string manipulation, and our registered APIs.
@@ -429,8 +434,7 @@ namespace assets {
 			}
 
 			// Seed from the seed alone: it is already distinct per variant (AssetRegistry::generationSeed).
-			// sol2's call, not a built string, so nothing is injected.
-			(*m_lua)["math"]["randomseed"](ctx.seed);
+			seedRandom(*m_lua, ctx.seed);
 
 			// Create helper functions to access params
 			// NOTE: These lambdas capture `params` and `outAsset` by reference. This is safe
