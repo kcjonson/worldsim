@@ -45,7 +45,7 @@ namespace ecs {
 		OptionStatus status = OptionStatus::Satisfied;
 
 		// The idle gather-food option: a Hunger task that picks food for the pack while nobody is
-		// hungry. Tier 7, and described by its reason rather than as a need.
+		// hungry. On the idle rung, and described by its reason rather than as a need.
 		bool gathersFood = false;
 
 		// Target information (if Available or Selected)
@@ -79,7 +79,7 @@ namespace ecs {
 
 		// PlacePackaged-specific fields (for PlacePackaged tasks)
 		uint64_t				 placePackagedEntityId = 0; // Entity ID of packaged item
-		bool					 carryingPackaged = false;	// The colonist already carries it: committed delivery (tier 4)
+		bool					 carryingPackaged = false;	// The colonist already carries it: committed delivery (committed_work)
 		std::optional<glm::vec2> placeSourcePosition;		// Where the packaged item is
 		std::optional<glm::vec2> placeTargetPosition;		// Where to place it
 
@@ -95,13 +95,13 @@ namespace ecs {
 		// True when this Haul/Harvest/Build provisions or performs an active work order
 		// (a child of a Craft goal with a queued job, a construction material delivery, or the
 		// Build action on a ready blueprint). This is committed work, not a loose chore:
-		// classifyTier() promotes it to tier 4 (active work orders), above opportunistic work and
+		// classifyTier() promotes it to committed_work (active work orders), above opportunistic work and
 		// idle, so a far material source or build site can't make the colonist abandon started work.
 		bool servesActiveWorkOrder = false;
 
 		// True when this Haul/Harvest exists only to top up a storage container toward its
 		// configured minimum (a Task B "stocking" goal owned by StorageGoalSystem). Stocking is real
-		// work but ranks below work orders: it stays at the opportunistic tier (6), so a colonist
+		// work but ranks below work orders: it stays on opportunistic_work, so a colonist
 		// always prefers building/crafting (and provisioning those) over filling a box.
 		// Mutually exclusive with servesActiveWorkOrder: a stocking goal is not a work order.
 		bool servesStorageStocking = false;
@@ -116,11 +116,11 @@ namespace ecs {
 		int8_t gatheringRank = 0;
 
 		// --- (tier, score) arbitration key ---
-		// tier: categorical priority, compared FIRST. Lower number = higher priority (1 best).
-		// Set by AIDecisionSystem's classifyTier() from the config base + runtime promotions.
+		// tier: the position of the option's rung in the ladder, compared FIRST. Lower number = higher
+		// priority. Set by AIDecisionSystem's classifyTier() before the option is ranked.
 		// score: orders options WITHIN one tier only; never crosses a tier boundary.
-		int	  tier = 7;	   // Default to the idle tier until classified
-		float score = 0.0F; // = distanceFactor + skillBonus + taskAgeBonus + hysteresisBonus
+		uint8_t tier = 0;
+		float	score = 0.0F; // = distanceFactor + skillBonus + taskAgeBonus + hysteresisBonus
 
 		// Skill-related fields (for work tasks with skill requirements)
 		float	skillLevel = 0.0F; // Colonist's skill level for this work
@@ -133,7 +133,7 @@ namespace ecs {
 		int16_t hysteresisBonus = 0;   // Stickiness margin, applied only to the in-progress option
 
 		// Storage-stocking only (servesStorageStocking): destination box priority rank (0..3) * weight.
-		// Orders stocking hauls WITHIN tier 6 so a higher-priority destination box wins even when
+		// Orders stocking hauls WITHIN opportunistic_work so a higher-priority destination box wins even when
 		// farther. Weighted to dominate distanceFactor; 0 for every non-stocking option. Never crosses
 		// a tier (tier is compared first).
 		int16_t storagePriorityBias = 0;

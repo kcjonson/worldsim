@@ -11,9 +11,11 @@
 #include <pugixml.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <string_view>
 #include <vector>
 
 namespace assets {
@@ -21,6 +23,19 @@ namespace assets {
 	namespace {
 		constexpr int kInt16Min = std::numeric_limits<int16_t>::min();
 		constexpr int kInt16Max = std::numeric_limits<int16_t>::max();
+
+		/// Each rung the decision ranks options on, by its ladder name.
+		struct DecisionRungName {
+			std::string_view name;
+			uint8_t DecisionRungs::* position;
+		};
+		constexpr std::array<DecisionRungName, 5> kDecisionRungNames = {{
+			{"critical_need", &DecisionRungs::criticalNeed},
+			{"committed_work", &DecisionRungs::committedWork},
+			{"ordinary_need", &DecisionRungs::ordinaryNeed},
+			{"opportunistic_work", &DecisionRungs::opportunisticWork},
+			{"idle", &DecisionRungs::idle},
+		}};
 	} // namespace
 
 	PriorityConfig& PriorityConfig::Get() {
@@ -43,16 +58,12 @@ namespace assets {
 		onlyAttributes(root, {}, "<arbitration>", source, structure);
 		for (const pugi::xml_node child : root.children()) {
 			const std::string_view element = child.name();
-			if (child.type() == pugi::node_element && element != "ladder" && element != "TaskTiers" && element != "WorkCategoryOrder" &&
-				element != "Bonuses") {
+			if (child.type() == pugi::node_element && element != "ladder" && element != "WorkCategoryOrder" && element != "Bonuses") {
 				structure.push_back(source + ": <arbitration>: unknown element <" + std::string(element) + ">");
 			}
 		}
 		parseLadder(root, source, structure);
-
-		if (auto tiersNode = root.child("TaskTiers")) {
-			parseTaskTiers(&tiersNode, reader);
-		}
+		resolveDecisionRungs(source);
 
 		const pugi::xml_node bonusesNode = root.child("Bonuses");
 		parseBonuses(&bonusesNode, reader);
@@ -76,9 +87,9 @@ namespace assets {
 	}
 
 	void PriorityConfig::clear() {
-		++m_generation;
-		taskTiers.clear();
 		rungNames.clear();
+		decisionRungPositions = DecisionRungs{};
+		missingDecisionRungList.clear();
 
 		distanceFactorConfig = DistanceFactorConfig{};
 		inProgressConfig = InProgressBonusConfig{};
@@ -86,25 +97,6 @@ namespace assets {
 		taskAgeConfig = TaskAgeBonusConfig{};
 		categoryOrder.clear();
 		problemList.clear();
-	}
-
-	int PriorityConfig::getTaskTier(const std::string& taskTypeName) const {
-		auto it = taskTiers.find(taskTypeName);
-		if (it != taskTiers.end()) {
-			return it->second;
-		}
-		return kUnassignedTier;
-	}
-
-	bool PriorityConfig::validateTaskTiers(const std::vector<std::string>& requiredTypeNames, std::vector<std::string>& missingOut) const {
-		missingOut.clear();
-		for (const auto& name : requiredTypeNames) {
-			auto it = taskTiers.find(name);
-			if (it == taskTiers.end()) {
-				missingOut.push_back(name);
-			}
-		}
-		return missingOut.empty();
 	}
 
 	float PriorityConfig::calculateDistanceFactor(float distance) const {
@@ -129,20 +121,6 @@ namespace assets {
 		const float minutes = taskAge / 60.0F;
 		const float bonus = minutes * static_cast<float>(taskAgeConfig.bonusPerMinute);
 		return static_cast<int16_t>(std::clamp(bonus, static_cast<float>(kInt16Min), static_cast<float>(taskAgeConfig.maxBonus)));
-	}
-
-	void PriorityConfig::parseTaskTiers(const void* nodePtr, ConfigReader& reader) {
-		const pugi::xml_node& node = *static_cast<const pugi::xml_node*>(nodePtr);
-
-		for (pugi::xml_node tierNode : node.children("Task")) {
-			std::string name = tierNode.attribute("name").as_string();
-			if (name.empty()) {
-				continue;
-			}
-			const int tier = reader.attributeInteger(tierNode, "Task", "tier");
-			taskTiers[name] = tier;
-			LOG_DEBUG(Engine, "Task tier: %s = %d", name.c_str(), tier);
-		}
 	}
 
 	void PriorityConfig::parseBonuses(const void* nodePtr, ConfigReader& reader) {
@@ -204,6 +182,19 @@ namespace assets {
 			);
 		} else if (problems.size() == problemsBefore && std::ranges::find(rungNames, "survival") == rungNames.end()) {
 			problems.push_back(source + ": <ladder> has no rung named \"survival\", which is reserved for threats");
+		}
+	}
+
+	void PriorityConfig::resolveDecisionRungs(const std::string& source) {
+		for (const DecisionRungName& rung : kDecisionRungNames) {
+			const auto found = std::ranges::find(rungNames, rung.name);
+			if (found == rungNames.end()) {
+				missingDecisionRungList.push_back(
+					source + ": <ladder> has no rung named \"" + std::string(rung.name) + "\", which the decision ranks options on"
+				);
+			} else {
+				decisionRungPositions.*rung.position = static_cast<uint8_t>(found - rungNames.begin());
+			}
 		}
 	}
 

@@ -5,15 +5,14 @@
 // tunable weights for task priority calculations. Last in the work config's load order; depends on
 // WorkTypeRegistry.
 //
-// The AI arbitrates by a lexicographic (tier, score) key: <TaskTiers> gives each task type its base
-// tier, and the <Bonuses> weights make up the within-tier score.
+// The AI arbitrates by a lexicographic (tier, score) key: an option's tier is the position of its rung in
+// the ladder, and the <Bonuses> weights make up the within-tier score.
 //
 // See /docs/design/game-systems/colonists/priority-config.md for design details.
 
 #include <cstdint>
 #include <filesystem>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace pugi {
@@ -50,14 +49,24 @@ namespace assets {
 		int16_t maxBonus = 0;		// Cap for age bonus
 	};
 
-	/// Storage-priority weight config (AI arbitration, within tier 6 only).
+	/// Storage-priority weight config (AI arbitration, within the opportunistic_work rung only).
 	/// A storage-stocking option's destination box has a StoragePriority for the item (Low..Critical,
 	/// ranked 0..3). The within-tier score gains rank * weight, so a higher-priority destination box
 	/// outranks a lower-priority one even when farther. Set to the distance factor's max (300) so
-	/// storage priority DOMINATES distance within tier 6 (a Critical box farther away beats a Low box
+	/// storage priority DOMINATES distance within that rung (a Critical box farther away beats a Low box
 	/// nearer). It can never cross a tier boundary: tier is compared first, lexicographically.
 	struct StoragePriorityConfig {
 		int16_t weight = 0; // Per-priority-rank score weight (rank 0..3 * weight)
+	};
+
+	/// The rungs the decision ranks its options on, each as its position in the ladder (0 the top), the
+	/// handle a work entry's rung is too: a lower position outranks a higher one.
+	struct DecisionRungs {
+		uint8_t criticalNeed = 0;
+		uint8_t committedWork = 0;
+		uint8_t ordinaryNeed = 0;
+		uint8_t opportunisticWork = 0;
+		uint8_t idle = 0;
 	};
 
 	/// Priority tuning configuration
@@ -79,30 +88,16 @@ namespace assets {
 		/// Clear all loaded config
 		void clear();
 
-		/// Moves on every load and clear, so a reader that caches values can tell they may have changed.
-		[[nodiscard]] uint64_t generation() const { return m_generation; }
-
 		/// The ladder's rung names, highest first; a rung's position is its tier.
 		[[nodiscard]] const std::vector<std::string>& rungs() const { return rungNames; }
 
-		// --- Task Tier Queries (arbitration) ---
+		/// The rungs the decision ranks options on, found by name in the ladder at load. Each is the rung's
+		/// position only when missingDecisionRungs() is empty; loadWorkConfig fails the load otherwise.
+		[[nodiscard]] const DecisionRungs& decisionRungs() const { return decisionRungPositions; }
 
-		/// Get the base tier for a task type by name (lower number = higher priority).
-		/// This is the BASE tier from config; runtime classifiers in AIDecisionSystem may promote a
-		/// specific option to a higher tier (e.g. a critical need, or a haul serving a work order).
-		/// @param taskTypeName Task type name (e.g. "Craft", "Haul", "Wander")
-		/// @return Base tier, or kUnassignedTier if the type has no explicit tier configured
-		[[nodiscard]] int getTaskTier(const std::string& taskTypeName) const;
-
-		/// Sentinel tier for a task type that has no explicit entry in the config. Used by
-		/// validateTaskTiers to fail loud at load if any required type is missing a tier.
-		static constexpr int kUnassignedTier = 9999;
-
-		/// Validate that every required task type has an explicit base tier configured. Returns true
-		/// and leaves missingOut empty when all are present; otherwise returns false and fills
-		/// missingOut with the names of the unassigned types. Called at config load so a task type
-		/// added without a tier fails loud rather than defaulting silently.
-		[[nodiscard]] bool validateTaskTiers(const std::vector<std::string>& requiredTypeNames, std::vector<std::string>& missingOut) const;
+		/// One problem for each rung the decision ranks options on that the ladder lacks, naming the file and the
+		/// rung; empty when the ladder has them all.
+		[[nodiscard]] const std::vector<std::string>& missingDecisionRungs() const { return missingDecisionRungList; }
 
 		// --- Bonus Calculations ---
 
@@ -116,7 +111,7 @@ namespace assets {
 		/// @return In-progress bonus value
 		[[nodiscard]] int16_t getInProgressBonus() const;
 
-		/// Get the per-rank storage-priority score weight (AI arbitration, within tier 6).
+		/// Get the per-rank storage-priority score weight (AI arbitration, within the opportunistic_work rung).
 		/// @return Storage-priority weight value
 		[[nodiscard]] int16_t getStoragePriorityWeight() const;
 
@@ -143,8 +138,8 @@ namespace assets {
 		/// Read the one <ladder> under `root` into rungNames, adding what is wrong with it to `problems`.
 		void parseLadder(const pugi::xml_node& root, const std::string& source, std::vector<std::string>& problems);
 
-		/// Parse per-task-type tier table from XML node
-		void parseTaskTiers(const void* node, ConfigReader& reader);
+		/// Find the decision's rungs in rungNames, noting each one missing against `source`.
+		void resolveDecisionRungs(const std::string& source);
 
 		/// Parse bonuses from XML node
 		void parseBonuses(const void* node, ConfigReader& reader);
@@ -154,19 +149,17 @@ namespace assets {
 
 		// --- Storage ---
 
-		/// Per-task-type base tier for the (tier, score) arbitration (lower number = higher priority)
-		std::unordered_map<std::string, int> taskTiers;
-
 		/// The ladder's rung names, highest first
 		std::vector<std::string> rungNames;
+
+		DecisionRungs			 decisionRungPositions;
+		std::vector<std::string> missingDecisionRungList;
 
 		/// Bonus configs
 		DistanceFactorConfig  distanceFactorConfig;
 		InProgressBonusConfig inProgressConfig;
 		StoragePriorityConfig storagePriorityConfig;
 		TaskAgeBonusConfig	  taskAgeConfig;
-
-		uint64_t m_generation = 1;
 
 		std::vector<std::string> problemList;
 

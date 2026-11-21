@@ -66,16 +66,13 @@ namespace assets {
 			return problems;
 		}
 
-		// Every task type the AI can evaluate must have an explicit arbitration tier, or the
-		// (tier, score) ordering would put a new type in an unintended tier. Fail loud instead.
-		const std::vector<std::string> requiredTaskTiers(kTaskTypeNames.begin(), kTaskTypeNames.end());
-		std::vector<std::string>	   missingTiers;
-		if (!PriorityConfig::Get().validateTaskTiers(requiredTaskTiers, missingTiers)) {
-			std::string joined;
-			for (const auto& name : missingTiers) {
-				joined += (joined.empty() ? "" : ", ") + name;
+		// The decision ranks every option on a rung it names; a ladder without one of them never reaches play.
+		if (!PriorityConfig::Get().missingDecisionRungs().empty()) {
+			std::vector<std::string> problems = PriorityConfig::Get().missingDecisionRungs();
+			for (std::string& problem : problems) {
+				problem.insert(0, "[arbitration] ");
 			}
-			return {"[arbitration] " + priorityTuning.generic_string() + " is missing an arbitration tier for task type(s): " + joined};
+			return problems;
 		}
 
 		const std::filesystem::path construction = "construction";

@@ -9,13 +9,17 @@
 #include <ecs/components/DecisionTrace.h>
 #include <ecs/components/Task.h>
 
+#include <assets/PriorityConfig.h>
 #include <ui/Context.h>
 #include <ui/components/Button.h>
 
+#include <array>
 #include <cstdint>
 #include <format>
 #include <string>
+#include <string_view>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace world_sim {
@@ -57,26 +61,31 @@ namespace world_sim {
 			return LineStatus::Available;
 		}
 
-		// Each arbitration tier's name, 1 best, 7 idle.
-		const char* tierLabel(int tier) {
-			switch (tier) {
-				case 1:
-					return "Survival";
-				case 2:
-					return "Critical need";
-				case 3:
-					return "Forced order";
-				case 4:
-					return "Work order";
-				case 5:
-					return "Need";
-				case 6:
-					return "Opportunistic";
-				case 7:
-					return "Idle";
-				default:
-					return "Unknown";
+		// Each rung's label in the task queue, by its ladder name; a rung with none shows its name.
+		std::string_view rungLabel(std::string_view rung) {
+			static constexpr std::array<std::pair<std::string_view, std::string_view>, 10> kLabels = {{
+				{"survival", "Survival"},
+				{"critical_need", "Critical need"},
+				{"low_mood", "Low mood"},
+				{"player_order", "Player order"},
+				{"urgent_need", "Urgent need"},
+				{"own_unfinished_work", "Own unfinished work"},
+				{"committed_work", "Work order"},
+				{"ordinary_need", "Need"},
+				{"opportunistic_work", "Opportunistic"},
+				{"idle", "Idle"},
+			}};
+			for (const auto& [name, label] : kLabels) {
+				if (name == rung) {
+					return label;
+				}
 			}
+			return rung;
+		}
+
+		// "T8 Need": the option's tier, counted from 1 at the top rung, and its rung's label.
+		std::string tierText(uint8_t tier) {
+			return std::format("T{} {}", static_cast<int>(tier) + 1, rungLabel(assets::PriorityConfig::Get().rungs()[tier]));
 		}
 
 		Line header(std::string key, std::string text) {
@@ -136,7 +145,7 @@ namespace world_sim {
 					const std::string reason = ecs::describeOption(world, option);
 					lines.push_back(status(
 						key,
-						std::format("[T{} {}] {} - score {}", option.tier, tierLabel(option.tier), reason, static_cast<int>(option.score)),
+						std::format("[{}] {} - score {}", tierText(option.tier), reason, static_cast<int>(option.score)),
 						lineStatusOf(option.status)
 					));
 					lines.push_back({

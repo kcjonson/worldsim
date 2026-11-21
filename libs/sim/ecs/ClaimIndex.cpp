@@ -3,6 +3,8 @@
 #include "World.h"
 #include "systems/ChainClaims.h"
 
+#include <assets/PriorityConfig.h>
+
 #include <algorithm>
 #include <tuple>
 
@@ -19,7 +21,7 @@ namespace ecs {
 		}
 
 		uint8_t tierOf(const Task& task) {
-			return static_cast<uint8_t>(std::clamp(task.priorityTier, 0, 255));
+			return task.rankedTier(assets::PriorityConfig::Get().decisionRungs().idle);
 		}
 	} // namespace
 
