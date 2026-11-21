@@ -73,6 +73,7 @@ namespace construction {
 		WallsOverlap,				  // footprint overlaps another wall's footprint (not a junction)
 		ParallelClearanceTooSmall,	  // faces run closer than minParallelClearance without joining
 		XCrossing,					  // centerline would properly cross an existing wall centerline
+		WallEndsOnOpening,			  // the wall would leave an opening on a wall it touches without its clearance from the junction
 		// Opening codes (Epic F). An opening is placed on a wall segment, blueprint or built, at a
 		// centerline parameter t; these are the opening-only reasons.
 		OpeningSegmentInvalid,	// target segment is missing, or its wall graph cannot be resolved (openingRange)
@@ -105,6 +106,11 @@ namespace construction {
 		EditUnderWall,			// subtract: a hosted wall's footprint would leave the remainder
 		BeingDemolished,		// the target is marked for demolition
 	};
+
+	// Tolerance on an opening's margin shortfall when it is revalidated after a trial split: the split rescales t in
+	// float and openingRange recomputes minT in double, so a door sitting on its margin can land a float ulp (a few
+	// micrometres) short. A tenth of a millimetre covers it and is far below anything a player can place.
+	constexpr double kMarginToleranceMeters = 1e-4;
 
 	// Result of a check. `code` drives both the red colorizing and the reason
 	// text. `vertexIndex`/`otherIndex` index into the meters polygon passed in
@@ -242,6 +248,28 @@ namespace construction {
 		[[nodiscard]] ValidationResult
 		validateWallSegment(::Foundation::Vec2 a, ::Foundation::Vec2 b, const assets::ThicknessPreset& thickness, FoundationId host) const;
 
+		// Cheap lower bound for a wall point that has no direction yet (a chain's first point): refuses a
+		// point landing on the interior of a wall within an opening's half width plus openingMargin of
+		// the opening's centre, since no trim can be less than none. `measuredValue` is the gap in meters
+		// from the opening's edge to the point.
+		[[nodiscard]] ValidationResult checkPointClearOfOpenings(::Foundation::Vec2 point) const;
+
+		// The full rule for a span a->b (world meters) with `thickness`'s material and preset: an opening
+		// keeps its clearance from a wall junction whichever is placed first. When the span touches a wall
+		// that carries an opening (an end on its interior, an end on or a pass through one of its vertices),
+		// the span is committed into a copy of the world and validateOpening runs on each such opening as it
+		// would stand after the commit; one that fails after (beyond a tenth of a millimetre of float round-off
+		// in the split) and was valid before refuses the span. One already wrong refuses a span that takes more of
+		// the room it has left at an end the span touches (at least its margin, or what it had; a new end made by a
+		// split had none and takes the margin; a trial graph the offsetter cannot resolve refuses it, unless the
+		// graph as it stands could not be resolved either). An opening far enough from every contact for any trim to
+		// miss it is not revalidated, and a span touching no opening costs only a scan of the openings. The result
+		// carries validateOpening's `measuredValue`. Called by both wall validators with the span's ends known, so a
+		// split's real band trim at the junction is the one the opening tool uses.
+		[[nodiscard]] ValidationResult checkSpanClearOfOpenings(
+			::Foundation::Vec2 a, ::Foundation::Vec2 b, const assets::ThicknessPreset& thickness, FoundationId host
+		) const;
+
 		// --- Openings -------------------------------------------------------
 
 		// Validate placing an opening of `type` (material `material`) on wall
@@ -255,9 +283,11 @@ namespace construction {
 		// SAME segment. Width is resolved from the registry's OpeningTypeDef (passing
 		// the type name keeps the validator reading config the same way
 		// validateWallSegment does for existing-wall thickness). First failure is reported with the measured
-		// value; the result's vertexIndex/otherIndex are unused for openings.
-		[[nodiscard]] ValidationResult
-		validateOpening(SegmentId segment, float t, const std::string& type, const std::string& material) const;
+		// value; the result's vertexIndex/otherIndex are unused for openings. `ignore` names an opening
+		// already in the world to leave out of the overlap check (revalidating it where it stands).
+		[[nodiscard]] ValidationResult validateOpening(
+			SegmentId segment, float t, const std::string& type, const std::string& material, OpeningId ignore = kInvalidOpening
+		) const;
 
 	  private:
 		// Shared ring-shape checks (spacing, angle, simplicity, clearance) over a
