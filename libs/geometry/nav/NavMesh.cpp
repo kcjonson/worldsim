@@ -863,6 +863,7 @@ namespace geometry::nav {
 		std::vector<SampleRing>				blockedRings(input.polygons.size());
 		bool								anyBounds = false;
 		for (const NavInputPolygon& poly : input.polygons) {
+			assert(poly.blockerGroup.empty() != isBlockerGroupTag(poly.provenanceId));
 			if (poly.ring.size() >= 3) {
 				if (poly.blocked) {
 					blockedRings[rings.size()] = sampleRing(poly);

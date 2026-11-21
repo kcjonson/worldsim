@@ -74,8 +74,9 @@ namespace geometry::nav {
 	//                                through it); a seen wall blocks unless the agent
 	//                                also knows a door through it.
 	// A negative faceBlocker is a common-knowledge terrain sentinel (water/placed obstacle) and
-	// always blocks, filter or not. A face tagged with a blocker group (where walls meet,
-	// NavInputPolygon::blockerGroup) is seen when any wall in the group is, and otherwise absent.
+	// always blocks, filter or not. A face tagged with a blocker group (where several blockers
+	// meet, NavInputPolygon::blockerGroup) is seen when any blocker in the group is, and
+	// otherwise absent.
 	struct BeliefFilter {
 		const std::unordered_set<std::uint64_t>* knownSegments = nullptr;
 		const std::unordered_set<std::uint64_t>* knownOpenings = nullptr;

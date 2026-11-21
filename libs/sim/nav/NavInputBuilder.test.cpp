@@ -36,6 +36,7 @@
 #include <string>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -1011,9 +1012,9 @@ TEST_F(NavEndToEndTest, WindowBlocksPath) {
 
 namespace {
 
-	bool pathCrosses(const geometry::nav::PathResult& path, Vec2i64 a, Vec2i64 b) {
+	bool pathCrosses(const geometry::nav::PathResult& path, Vec2i64 from, Vec2i64 to) {
 		for (std::size_t i = 0; i + 1 < path.points.size(); ++i) {
-			if (geometry::intersectSegments(path.points[i], path.points[i + 1], a, b).relation == geometry::SegmentRelation::ProperCrossing) {
+			if (geometry::intersectSegments(path.points[i], path.points[i + 1], from, to).relation == geometry::SegmentRelation::ProperCrossing) {
 				return true;
 			}
 		}
@@ -1036,9 +1037,10 @@ namespace {
 } // namespace
 
 // Two rooms sharing a wall drawn with the first room, so the shared wall has the lower id at both
-// of its T junctions with the outer walls (WOR-1123). Doors in the first room's north wall and in
-// the shared wall. A colonist south of the far room who knows the outer walls and the outer door,
-// but not the shared wall behind them, is routed in through the outer door, never through a T.
+// of its T junctions with the outer walls. Doors in the first room's north wall and in the shared
+// wall. A colonist south of the far room who knows the outer walls and the outer door, but not the
+// shared wall behind them, is routed in through the outer door, never through a T, on a mesh built
+// whole and on one patched from the same rings.
 TEST_F(NavEndToEndTest, BeliefRoutesIntoRoomBehindSharedWallByItsDoor) {
 	ConstructionWorld cw;
 	const SegmentId	  firstNorth  = buildWall(cw, meters(25, 2), meters(28, 2));
@@ -1069,23 +1071,38 @@ TEST_F(NavEndToEndTest, BeliefRoutesIntoRoomBehindSharedWallByItsDoor) {
 	const DoorPortal sharedDoor = portalOf(doors[1]);
 	ASSERT_EQ(junctions.size(), 6u);
 
+	geometry::nav::PatchableMesh patched;
+	geometry::nav::PatchEdits	 edits;
+	edits.adds = input.polygons;
+	patched.applyPatch(edits);
+	for (const DoorPortal& door : input.doors) {
+		patched.addDoor(door);
+	}
+	patched.refreshWidths();
+	ASSERT_EQ(patched.validate(), "");
+
 	const Vec2i64					  outside = meters(29.5, 10);
 	const Vec2i64					  inside  = meters(29.5, 4.5);
 	std::unordered_set<std::uint64_t> walls{firstNorth, firstSouth, firstWest, secondNorth, secondEast, secondSouth};
 	std::unordered_set<std::uint64_t> openings{doors[0]};
 	const geometry::nav::PathResult	  believed = geometry::nav::pathThrough(mesh, outside, inside, 300, {&walls, &openings});
 	ASSERT_TRUE(believed.reachable);
+	const Vec2i64 end = believed.points.back();
+	EXPECT_TRUE(end.x > 28000 && end.x < 31000 && end.y > 2000 && end.y < 7000)
+		<< "the route ends inside the far room";
 	EXPECT_TRUE(pathCrosses(believed, outerDoor.a, outerDoor.b)) << "in through the first room's outer door";
 	EXPECT_FALSE(pathCrosses(believed, meters(25, 7), meters(31, 7))) << "through the south walls, at the T";
 	for (const WallJunction& junction : junctions) {
 		EXPECT_FALSE(pathEntersRing(believed, input.polygons[junction.polygon].ring)) << "through a junction one of whose walls is known";
 	}
+	EXPECT_EQ(geometry::nav::pathThrough(patched.view(), outside, inside, 300, {&walls, &openings}).points, believed.points);
 
 	// Once he knows the shared wall and its door too, the route takes both doors, as truth does.
 	walls.insert(shared);
 	openings.insert(doors[1]);
 	for (const geometry::nav::PathResult& path :
-		 {geometry::nav::pathThrough(mesh, outside, inside, 300, {&walls, &openings}), geometry::nav::pathThrough(mesh, outside, inside, 300)}) {
+		 {geometry::nav::pathThrough(mesh, outside, inside, 300, {&walls, &openings}), geometry::nav::pathThrough(mesh, outside, inside, 300),
+		  geometry::nav::pathThrough(patched.view(), outside, inside, 300, {&walls, &openings})}) {
 		ASSERT_TRUE(path.reachable);
 		EXPECT_TRUE(pathCrosses(path, outerDoor.a, outerDoor.b));
 		EXPECT_TRUE(pathCrosses(path, sharedDoor.a, sharedDoor.b));

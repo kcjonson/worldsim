@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <iterator>
@@ -264,14 +265,17 @@ namespace nav {
 
 			// Each junction is named by the vertex its walls meet at and lists every wall meeting there.
 			for (std::size_t junctionIndex = 0; junctionIndex < bands.junctions.size(); ++junctionIndex) {
-				if (bands.junctions[junctionIndex].size() < 3 || junctionIndex >= bands.junctionSegments.size() ||
-					bands.junctionSegments[junctionIndex].size() < 2) {
+				if (bands.junctions[junctionIndex].size() < 3) {
 					continue;
 				}
+				// resolveWallBands makes a junction only where two or more segments meet.
+				assert(junctionIndex < bands.junctionSegments.size() && bands.junctionSegments[junctionIndex].size() >= 2);
 				const std::vector<std::size_t>&				 incident = bands.junctionSegments[junctionIndex];
 				const std::array<construction::VertexId, 2>& first	  = segmentEnds[graph[incident[0]]];
 				const std::array<construction::VertexId, 2>& second	  = segmentEnds[graph[incident[1]]];
-				Junction junction{.ring = bands.junctions[junctionIndex], .vertex = first[0] == second[0] || first[0] == second[1] ? first[0] : first[1]};
+				const bool startMeets = (first[0] == second[0]) || (first[0] == second[1]);
+				assert(startMeets || (first[1] == second[0]) || (first[1] == second[1]));
+				Junction junction{.ring = bands.junctions[junctionIndex], .vertex = startMeets ? first[0] : first[1]};
 				for (const std::size_t k : incident) {
 					junction.walls.push_back(segmentIds[graph[k]]);
 				}

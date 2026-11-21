@@ -455,7 +455,7 @@ namespace {
 	constexpr std::int64_t kStub		= 10;
 	constexpr std::int64_t kThroughWest = 20;
 	constexpr std::int64_t kThroughEast = 21;
-	constexpr std::int64_t kTJunction	= 1000;
+	constexpr std::int64_t kTJunction	= kBlockerGroupTagBase + 1;
 	constexpr std::int64_t kStubDoor	= 8;
 
 	const std::vector<Vec2i64> kTJunctionRing = {{1900, 1900}, {2100, 1900}, {2100, 2100}, {1900, 2100}};
@@ -530,6 +530,132 @@ TEST(PathQuery, BeliefKnowingAnyWallOfAJunctionBlocksIt) {
 	ASSERT_TRUE(truth.reachable);
 	EXPECT_EQ(truth.points, pathThrough(plain, kSouthOfT, kNorthOfT, 0).points);
 	EXPECT_FALSE(pathHitsRing(truth, kTJunctionRing));
+}
+
+// The mesh's index of blocker groups through patches: a group replaced in the patch that removes it,
+// once by a ring in a higher slot and once in a lower one, then removed outright. Each time the
+// belief answer is the group's as it is now.
+TEST(PathQuery, BlockerGroupFollowsItsRingThroughPatches) {
+	const std::unordered_set<std::uint64_t> stub{static_cast<std::uint64_t>(kStub)};
+	const std::unordered_set<std::uint64_t> noOps;
+	auto junctionOpenToStubKnower = [&](const PatchableMesh& mesh) {
+		return pathHitsRing(pathThrough(mesh.view(), kSouthOfT, kNorthOfT, 0, BeliefFilter{&stub, &noOps}), kTJunctionRing);
+	};
+	auto junction = [](std::vector<std::int64_t> group) {
+		NavInputPolygon ring = blocked(kTJunctionRing, kTJunction);
+		ring.blockerGroup	 = std::move(group);
+		return ring;
+	};
+
+	PatchableMesh mesh;
+	PatchEdits	  first;
+	first.adds.push_back(border({{-2000, -2000}, {6000, -2000}, {6000, 6000}, {-2000, 6000}}));
+	first.adds.push_back(blocked({{5000, 5000}, {5500, 5000}, {5500, 5500}, {5000, 5500}}, 50));
+	for (NavInputPolygon& wall : tWalls(/*junctionIsGroup=*/true)) {
+		first.adds.push_back(std::move(wall));
+	}
+	const PatchReport built = mesh.applyPatch(first);
+	mesh.refreshWidths();
+	ASSERT_EQ(mesh.validate(), "");
+	const RingId spare	 = built.added[1];
+	RingId		 current = built.added.back();
+	EXPECT_FALSE(junctionOpenToStubKnower(mesh));
+
+	// Without the stub in its group, knowing the stub leaves the junction absent. No slot is free,
+	// so the new ring takes a higher one.
+	PatchEdits withoutStub;
+	withoutStub.removes.push_back(current);
+	withoutStub.adds.push_back(junction({kThroughWest, kThroughEast}));
+	RingId next = mesh.applyPatch(withoutStub).added.front();
+	mesh.refreshWidths();
+	EXPECT_GT(next, current);
+	current = next;
+	ASSERT_EQ(mesh.validate(), "");
+	EXPECT_TRUE(junctionOpenToStubKnower(mesh));
+
+	// The stub back in the group, its ring in the slot the spare obstacle freed, below the old one.
+	PatchEdits freeSlot;
+	freeSlot.removes.push_back(spare);
+	mesh.applyPatch(freeSlot);
+	PatchEdits withStub;
+	withStub.removes.push_back(current);
+	withStub.adds.push_back(junction({kStub, kThroughWest, kThroughEast}));
+	next = mesh.applyPatch(withStub).added.front();
+	mesh.refreshWidths();
+	EXPECT_LT(next, current);
+	current = next;
+	ASSERT_EQ(mesh.validate(), "");
+	EXPECT_FALSE(junctionOpenToStubKnower(mesh));
+
+	// Removed outright: nothing indexed, and the square is floor.
+	PatchEdits removed;
+	removed.removes.push_back(current);
+	mesh.applyPatch(removed);
+	mesh.refreshWidths();
+	EXPECT_EQ(mesh.validate(), "");
+	EXPECT_TRUE(junctionOpenToStubKnower(mesh));
+
+	// Two live rings under one tag leave one of them out of the index when the other goes, and
+	// validate says so. (No test seam reaches the index itself; this is the public way to stale it.)
+	// Which of the two the index holds is the patch's business, so each is dropped in its own mesh.
+	auto validateAfterDropping = [&](std::size_t dropped) {
+		PatchableMesh twice;
+		PatchEdits	  both;
+		both.adds.push_back(border({{-2000, -2000}, {6000, -2000}, {6000, 6000}, {-2000, 6000}}));
+		both.adds.push_back(junction({kStub}));
+		NavInputPolygon elsewhere = blocked({{5000, 5000}, {5500, 5000}, {5500, 5500}, {5000, 5500}}, kTJunction);
+		elsewhere.blockerGroup	  = {kStub};
+		both.adds.push_back(std::move(elsewhere));
+		const PatchReport twiceBuilt = twice.applyPatch(both);
+		PatchEdits		  drop;
+		drop.removes.push_back(twiceBuilt.added[dropped]);
+		twice.applyPatch(drop);
+		return twice.validate();
+	};
+	const std::string firstDropped	= validateAfterDropping(1);
+	const std::string secondDropped = validateAfterDropping(2);
+	EXPECT_TRUE(firstDropped.find("not indexed") != std::string::npos || secondDropped.find("not indexed") != std::string::npos)
+		<< firstDropped << " / " << secondDropped;
+}
+
+// A corner of two blockers and a cross of four, each with one blocker known: the one known is the
+// corner's higher id, then one arm of the cross. Its junction blocks; with none known it is absent.
+TEST(PathQuery, BeliefKnowingOneBlockerOfACornerOrACrossBlocksTheJunction) {
+	const std::vector<Vec2i64> square	= {{1900, 1900}, {2100, 1900}, {2100, 2100}, {1900, 2100}};
+	const Vec2i64			   southEast{2600, 1400};
+	const Vec2i64			   northWest{1400, 2600};
+	const NavInputPolygon	   west		= blocked({{0, 1900}, {1900, 1900}, {1900, 2100}, {0, 2100}}, 30);
+	const NavInputPolygon	   north	= blocked({{1900, 2100}, {2100, 2100}, {2100, 4000}, {1900, 4000}}, 31);
+	const NavInputPolygon	   east		= blocked({{2100, 1900}, {4000, 1900}, {4000, 2100}, {2100, 2100}}, 32);
+	const NavInputPolygon	   south	= blocked({{1900, 0}, {2100, 0}, {2100, 1900}, {1900, 1900}}, 33);
+	const std::unordered_set<std::uint64_t> none;
+	const std::unordered_set<std::uint64_t> noOps;
+
+	struct Junction {
+		std::vector<NavInputPolygon>	  arms;
+		std::unordered_set<std::uint64_t> known;
+	};
+	const Junction corner{{west, north}, {31}};
+	const Junction cross{{west, north, east, south}, {30}};
+	for (const Junction& shape : {corner, cross}) {
+		SCOPED_TRACE(shape.arms.size());
+		NavMeshInput in;
+		in.polygons.push_back(border({{-2000, -2000}, {6000, -2000}, {6000, 6000}, {-2000, 6000}}));
+		NavInputPolygon ring = blocked(square, kBlockerGroupTagBase + 2);
+		for (const NavInputPolygon& arm : shape.arms) {
+			in.polygons.push_back(arm);
+			ring.blockerGroup.push_back(arm.provenanceId);
+		}
+		in.polygons.push_back(std::move(ring));
+		const NavMesh m = buildNavMesh(in);
+
+		const PathResult known = pathThrough(m, southEast, northWest, 0, BeliefFilter{&shape.known, &noOps});
+		ASSERT_TRUE(known.reachable);
+		EXPECT_FALSE(pathHitsRing(known, square));
+		const PathResult blind = pathThrough(m, southEast, northWest, 0, BeliefFilter{&none, &noOps});
+		ASSERT_TRUE(blind.reachable);
+		EXPECT_TRUE(pathHitsRing(blind, square));
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -3015,6 +3015,7 @@ namespace geometry::nav {
 				continue;
 			}
 			m.ringGridOf(c.polygon).insert(id, c.lo, c.hi);
+			assert(c.polygon.blockerGroup.empty() != isBlockerGroupTag(c.polygon.provenanceId));
 			if (!c.polygon.blockerGroup.empty()) {
 				m.blockerGroupRings[c.polygon.provenanceId] = id;
 			}

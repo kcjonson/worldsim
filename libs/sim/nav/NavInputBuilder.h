@@ -24,6 +24,7 @@
 
 #include "PlacedObstacle.h"
 
+#include <cassert>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -40,11 +41,11 @@ namespace nav {
 	// movement, and a face's cover says the ground there is a stream bed, which building refuses.
 	constexpr std::int64_t kProvenanceFord	   = -5;
 
-	// A wall junction's provenance: the construction vertex its walls meet at, offset above every
-	// segment id. Its ring's blocker group lists those walls, so belief sees it with any of them.
-	constexpr std::int64_t kJunctionTagBase = std::int64_t{1} << 62;
+	// A wall junction's provenance: the construction vertex its walls meet at, as a blocker group
+	// tag. Its ring's blocker group lists those walls, so belief sees it with any of them.
 	[[nodiscard]] constexpr std::int64_t junctionTag(construction::VertexId vertex) {
-		return kJunctionTagBase + static_cast<std::int64_t>(vertex);
+		assert(vertex < static_cast<construction::VertexId>(geometry::nav::kBlockerGroupTagBase));
+		return geometry::nav::kBlockerGroupTagBase + static_cast<std::int64_t>(vertex);
 	}
 
 	// --- Ground ------------------------------------------------------------------

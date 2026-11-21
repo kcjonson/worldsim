@@ -79,7 +79,7 @@ namespace {
 				return;
 			}
 
-			const geometry::WallBands bands	  =geometry::resolveWallBands(geoSegments, geometry::kDefaultMiterLimit);
+			const geometry::WallBands bands	  = geometry::resolveWallBands(geoSegments, geometry::kDefaultMiterLimit);
 			const bool				  bandsOk = bands.status == geometry::OffsetStatus::Ok && bands.bands.size() == geoSegments.size();
 
 			std::unordered_map<construction::SegmentId, std::size_t> segIndexById;
@@ -250,7 +250,7 @@ namespace {
 		}
 	}
 
-	using PolygonKey = std::tuple<std::int64_t, std::int64_t, bool, bool, bool, Ring>;
+	using PolygonKey = std::tuple<std::int64_t, std::int64_t, bool, bool, bool, Ring, std::vector<std::int64_t>>;
 	using JunctionKey = std::pair<Ring, std::vector<SegmentId>>;
 	using PortalKey	 = std::tuple<std::int64_t, Vec2i64, Vec2i64, std::int64_t>;
 
@@ -293,8 +293,10 @@ namespace {
 
 		WallOutput output;
 		for (const gnav::NavInputPolygon& polygon : polygons) {
+			std::vector<std::int64_t> group = polygon.blockerGroup;
+			std::sort(group.begin(), group.end());
 			output.polygons.emplace_back(polygon.provenanceId, polygon.openingId, polygon.blocked, polygon.holeCapable, polygon.coverOnly,
-										 polygon.ring);
+										 polygon.ring, std::move(group));
 		}
 		for (const nav::WallJunction& junction : junctions) {
 			EXPECT_LT(junction.polygon, polygons.size());
@@ -412,6 +414,7 @@ namespace {
 			EXPECT_EQ(std::get<2>(a), std::get<2>(e));
 			EXPECT_EQ(std::get<3>(a), std::get<3>(e));
 			EXPECT_EQ(std::get<4>(a), std::get<4>(e));
+			EXPECT_EQ(std::get<6>(a), std::get<6>(e));
 			const std::optional<std::int64_t> difference = largestDifference(ringOf(a), ringOf(e));
 			ASSERT_TRUE(difference.has_value()) << describe(ringOf(a)) << "against " << describe(ringOf(e));
 			EXPECT_LE(*difference, 1) << describe(ringOf(a)) << "against " << describe(ringOf(e));

@@ -1,7 +1,7 @@
 # Scenario 04: Build walls on foundation
 
 **Status:** ready  
-**Last verified:** 2026-11-20
+**Last verified:** 2026-11-20: steps 22 to 34 as written on PLACEHOLDER_SHA; 5, 7, and 8 in part, and a variant of 1 to 4, on ab0f3eec
 
 Verifies that a colonist builds all four wall segments on an existing foundation to completion,
 unaided.
@@ -141,13 +141,23 @@ The drawing steps below read `/api/state?what=drawing`. Their points are world p
 
 ## Two rooms sharing a wall
 
-In a new Quick Start game. The second room reuses the first room's east wall, so that shared wall has the lower id where it meets the outer walls. Segment ids are in `?what=construction`.
+In a new Quick Start game, at speed 1 (nothing moves or meshes at speed 0). The second room reuses the first room's east wall, so that shared wall has the lower id where it meets the outer walls. Ids come from the views: the foundation's, the walls' (`walls[].id` with `x0,y0,x1,y1`), and the doors' from `?what=construction`; Eve's from `?what=colonists`, by `name`. Points are world points, turned into pixels with `what=camera` ([the camera view](../README.md#the-camera-view)). Centre the camera with `control?action=camera&x=28.5&y=5.5&zoom=12`, so no destination lies under the entity panel (a right-click under the panel gives no order).
 
-22. `foundation?pts=12,1;32,1;32,8;12,8&material=Wood&built=1`, then `walls?pts=25,2;28,2;28,7;25,7&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=1` and `walls?pts=28,2;31,2;31,7;28,7&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=1`: seven walls, all `Built`.
-23. `opening?seg=<the first room's wall from (25, 2) to (28, 2)>&type=Door&t=0.5&built=1` and the same on the shared wall from (28, 2) to (28, 7): two doors, both `Built`.
-24. `colonist?at=29.5,10&name=Eve`, `select?colonist=<EVE_ID>`, `control?action=pause`, click Draft (`entity_info_draft` in `/api/ui/tree`), right-click (29.5, 4.5), and `control?action=resume`, so she is drafted where she stands and has not wandered round the rooms first: Eve walks round the rooms to the north door, through the first room, and through the shared wall's door, and stops inside the second room. She never stands pressed against the corner at (28, 7).
-25. Right-click (29.5, 11): she leaves the second room the same way, through both doors.
-26. In a new game, the same rooms drawn as one loop and a divider (`walls?pts=25,2;31,2;31,7;25,7&...&close=1`, then `walls?pts=28,2;28,7&...&close=0`), with the same two doors: step 24's order takes her in the same way.
+22. `foundation?pts=12,1;32,1;32,8;12,8&material=Wood&built=1`: `?what=construction` lists it `Built`; its `id` is FOUND_ID.
+23. `walls?pts=25,2;28,2;28,7;25,7&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=1`: four walls, all `Built`.
+24. `walls?pts=28,2;31,2;31,7;28,7&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=1`: three more, seven in all, all `Built`; the wall from (28, 2) to (28, 7) has a lower id than every wall from step 24.
+25. `opening?seg=<id of the wall from (25, 2) to (28, 2)>&type=Door&t=0.5&built=1`: a door at (26.5, 2), `Built`.
+26. `opening?seg=<id of the wall from (28, 2) to (28, 7)>&type=Door&t=0.5&built=1`: a door at (28, 4.5), `Built`.
+27. `colonist?at=29.5,10&name=Eve`: Eve is listed at (29.5, 10).
+28. `select?colonist=<EVE_ID>`: her panel opens.
+29. `control?action=pause`.
+30. Click Draft: its position is `entity_info_draft`'s `screenBounds` centre in `/api/ui/tree` times `layoutScale` from `?what=uiscale`.
+31. Right-click (29.5, 4.5).
+32. `control?action=resume`: Eve was drafted where she stood, before wandering. Read her `x,y` until they stop changing: 28 < x < 31 and 2 < y < 7, inside the second room. On the way she passes north of the rooms (y < 2) and through both doors.
+33. Right-click (29.5, 11): read her `x,y` until they stop changing: y > 7.5, outside the rooms, south of them.
+34. In a new game, steps 22 and 27 to 32 with the rooms drawn as one loop and a divider instead of steps 23 and 24: `walls?pts=25,2;31,2;31,7;25,7&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=1`, then `walls?pts=28,2;28,7&material=Wood&thickness=Standard&host=<FOUND_ID>&built=1&close=0`. The divider has the higher id here, and it splits the north wall at (28, 2), so step 25's door goes on the piece from (25, 2) to (28, 2), read from `?what=construction`. Step 32 reads the same: inside the second room.
+
+**Pass:** steps 22 to 34 read as written. **Fail:** Eve stops anywhere else after step 32 or 34, for instance against the outside of the south wall near (28, 7.4), or `?what=colonists` never shows her inside the second room.
 
 ---
 
@@ -159,7 +169,7 @@ blueprint that the colonist builds. Omitting it silently skips the scenario.
 `close=1` adds a closing segment between the last and first point. For a 4-corner polygon this
 produces 4 segments. For a 3-corner (triangle) footprint it produces 3.
 
-Steps 24 and 26 depend on what Eve has seen. A wall counts as seen once its end shows at a corner, so a colonist who has wandered down both the west and the east side of the rooms knows both north walls without the door in them, and answers "no known way" to step 24's order: correct for what she knows, not a fail.
+Steps 32 and 34 depend on what Eve has seen. A wall counts as seen once its end shows at a corner, so a colonist who has wandered down both the west and the east side of the rooms knows both north walls without the door in them, and answers "no known way" to step 31's order: correct for what she knows. That is why steps 29 to 32 draft her before she moves; drafted that way, she must get in, and anything else is a fail.
 
 On-water and off-navmesh wall placements are refused with the same error as foundations; see
 [../regressions.md](../regressions.md).

@@ -52,6 +52,12 @@ namespace geometry::nav {
 	// walkable regardless of belief. Distinct from kNoProvenance only conceptually;
 	// shares the same INT64_MIN bit pattern (no provenance == real floor).
 	constexpr std::int64_t kNoBlocker = INT64_MIN;
+	// Provenance ids at or above this are blocker groups' tags (NavInputPolygon::blockerGroup);
+	// below it a positive id is a single blocker's.
+	constexpr std::int64_t kBlockerGroupTagBase = std::int64_t{1} << 62;
+	inline bool isBlockerGroupTag(std::int64_t tag) {
+		return tag >= kBlockerGroupTagBase;
+	}
 
 	// Corridor-width sentinel: a passage no common-knowledge obstacle constrains
 	// (e.g. an open-floor sliver). Larger than any real millimeter width, so the
@@ -86,9 +92,10 @@ namespace geometry::nav {
 		// whatever else covers it and every query crosses it. Readers of
 		// PatchableMesh::cover use it to tell that ground from the ground around it.
 		bool				 coverOnly	  = false;
-		// Set on a blocked ring standing where several blockers meet (positive provenance ids):
-		// a belief knows its faces when it knows any blocker listed. Its provenanceId is then a
-		// tag no other ring carries, which the mesh keys the list by. Empty on every other ring.
+		// Set on a blocked ring standing where several blockers meet (positive provenance ids below
+		// kBlockerGroupTagBase): a belief knows its faces when it knows any blocker listed. Its
+		// provenanceId is then a tag at or above kBlockerGroupTagBase that no other ring carries,
+		// which the mesh keys the list by. A ring has a group exactly when its tag is in that range.
 		std::vector<std::int64_t> blockerGroup;
 	};
 
@@ -126,7 +133,7 @@ namespace geometry::nav {
 		// Per-face blocker tag, the belief filter's hook. The whole region (wall
 		// interiors included) is triangulated; this says what each triangle sits on:
 		//   kNoBlocker (== INT64_MIN) -> real floor, always walkable.
-		//   > 0  -> a wall segment id, or a blocker group's tag (NavInputPolygon::blockerGroup);
+		//   > 0  -> a wall segment id, or a blocker group's tag (kBlockerGroupTagBase and up);
 		//           belief-gated (truth: walkable iff faceOpening is set, i.e. a door
 		//           passes and solid wall blocks).
 		//   < 0  -> a terrain/common-knowledge sentinel (water/placed obstacle); always blocks.
@@ -440,8 +447,8 @@ namespace geometry::nav {
 		// Changes whenever the triangles or their tags do, to a value no mesh state in the
 		// process has had before (nextMeshGeneration).
 		std::uint64_t epoch() const { return epochIn(owner); }
-		// The blockers a face tagged `tag` stands for (NavInputPolygon::blockerGroup); null when
-		// the tag is no group's.
+		// The blockers a face tagged with group tag `tag` stands for (NavInputPolygon::blockerGroup);
+		// null when no live ring carries the tag.
 		const std::vector<std::int64_t>* blockerGroup(std::int64_t tag) const { return blockerGroupIn(owner, tag); }
 	};
 

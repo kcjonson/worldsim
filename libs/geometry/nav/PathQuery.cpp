@@ -137,20 +137,25 @@ namespace geometry::nav {
 			if (isCommonKnowledgeTerrainFace(t)) {
 				return false; // common-knowledge terrain: always blocks, filter or not
 			}
-			// faceBlocker > 0: a wall segment id, or a blocker group's tag.
+			// faceBlocker > 0: a blocker's id, or a blocker group's tag.
 			if (knowsAll(belief)) {
-				// TRUTH: the wall is known solid unless this face is a door span.
+				// TRUTH: the blocker is solid unless this face is a door span.
 				return t.faceOpening != kNoOpening;
 			}
-			// BELIEF: an unseen wall is absent (walkable); a seen wall blocks unless the
+			// BELIEF: an unseen blocker is absent (walkable); a seen one blocks unless the
 			// agent also knows a door through it on this very face. A group's face is seen
-			// when any blocker in the group is.
-			const std::vector<std::int64_t>* group = mesh.blockerGroup(t.faceBlocker);
-			const bool						 known = group != nullptr ? std::any_of(group->begin(), group->end(),
-																						  [&belief](std::int64_t blocker) {
-																							  return knowsSegment(belief, static_cast<std::uint64_t>(blocker));
-																						  })
-																	   : knowsSegment(belief, static_cast<std::uint64_t>(t.faceBlocker));
+			// when any blocker in the group is; a group tag the mesh has no list for is seen,
+			// so a lost list never opens a way.
+			bool known = false;
+			if (isBlockerGroupTag(t.faceBlocker)) {
+				const std::vector<std::int64_t>* group = mesh.blockerGroup(t.faceBlocker);
+				assert(group != nullptr);
+				known = group == nullptr || std::any_of(group->begin(), group->end(), [&belief](std::int64_t blocker) {
+							return knowsSegment(belief, static_cast<std::uint64_t>(blocker));
+						});
+			} else {
+				known = knowsSegment(belief, static_cast<std::uint64_t>(t.faceBlocker));
+			}
 			if (!known) {
 				return true;
 			}
