@@ -443,6 +443,11 @@ namespace geometry::nav {
 			v.vertices.of(m.vertices);
 			v.triangles.of(m.triangles);
 		};
+		view.blockerGroupIn = [](const void* owner, std::int64_t tag) -> const std::vector<std::int64_t>* {
+			const auto& groups = static_cast<const NavMesh*>(owner)->blockerGroups;
+			const auto	found  = groups.find(tag);
+			return found != groups.end() ? &found->second : nullptr;
+		};
 		return view;
 	}
 
@@ -858,9 +863,13 @@ namespace geometry::nav {
 		std::vector<SampleRing>				blockedRings(input.polygons.size());
 		bool								anyBounds = false;
 		for (const NavInputPolygon& poly : input.polygons) {
+			assert(poly.blockerGroup.empty() != isBlockerGroupTag(poly.provenanceId));
 			if (poly.ring.size() >= 3) {
 				if (poly.blocked) {
 					blockedRings[rings.size()] = sampleRing(poly);
+					if (!poly.blockerGroup.empty()) {
+						result.blockerGroups[poly.provenanceId] = poly.blockerGroup;
+					}
 				} else {
 					anyBounds = true;
 				}

@@ -45,6 +45,28 @@ namespace assets {
 		return clean;
 	}
 
+	/// False when `node` has a child element not in `allowed`, each one added to `errors` as
+	/// "<source>: <what>: unknown element <name>".
+	inline bool onlyChildren(
+		pugi::xml_node							node,
+		std::initializer_list<std::string_view> allowed,
+		const std::string&						what,
+		const std::string&						source,
+		std::vector<std::string>&				errors
+	) {
+		bool clean = true;
+		for (const pugi::xml_node child : node.children()) {
+			if (child.type() != pugi::node_element) {
+				continue;
+			}
+			if (std::ranges::find(allowed, std::string_view(child.name())) == allowed.end()) {
+				errors.push_back(source + ": " + what + ": unknown element <" + child.name() + ">");
+				clean = false;
+			}
+		}
+		return clean;
+	}
+
 	/// The `rootName` element of the XML file at `path`, which errors call `source`; an empty node, with the reason
 	/// added to `errors` as "<source>: not readable XML: ..." or "<source>: the root element is not <rootName>", when
 	/// the file can't be read or has another root.

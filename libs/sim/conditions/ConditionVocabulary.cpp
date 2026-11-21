@@ -205,6 +205,14 @@ namespace conditions {
 		return symbolSets[*declared.parameters[parameter].symbolSet].symbols;
 	}
 
+	std::optional<uint32_t> ConditionVocabulary::findSymbolSet(std::string_view name) const {
+		const auto existing = symbolSetsByName.find(std::string(name));
+		if (existing == symbolSetsByName.end()) {
+			return std::nullopt;
+		}
+		return existing->second;
+	}
+
 	std::optional<SymbolId> ConditionVocabulary::findSymbol(std::string_view name) const {
 		const auto existing = symbols.find(std::string(name));
 		if (existing == symbols.end()) {

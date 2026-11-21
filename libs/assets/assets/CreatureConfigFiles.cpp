@@ -28,14 +28,18 @@ namespace assets {
 			std::vector<std::filesystem::path> CreatureConfigFiles::* files;
 			/// <Mood> and <Memory> are one file each; the others merge across files.
 			bool oneFile;
+			/// A kind the human reads, which missingKinds checks.
+			bool humanReads;
 		};
 
-		constexpr std::array<RootList, 5> kRootLists = {{
-			{.root = "Mood", .files = &CreatureConfigFiles::mood, .oneFile = true},
-			{.root = "Memory", .files = &CreatureConfigFiles::memory, .oneFile = true},
-			{.root = "Traits", .files = &CreatureConfigFiles::traits, .oneFile = false},
-			{.root = "Attributes", .files = &CreatureConfigFiles::attributes, .oneFile = false},
-			{.root = "Needs", .files = &CreatureConfigFiles::needs, .oneFile = false},
+		constexpr std::array<RootList, 7> kRootLists = {{
+			{.root = "Mood", .files = &CreatureConfigFiles::mood, .oneFile = true, .humanReads = true},
+			{.root = "Memory", .files = &CreatureConfigFiles::memory, .oneFile = true, .humanReads = true},
+			{.root = "Traits", .files = &CreatureConfigFiles::traits, .oneFile = false, .humanReads = true},
+			{.root = "Attributes", .files = &CreatureConfigFiles::attributes, .oneFile = false, .humanReads = true},
+			{.root = "Needs", .files = &CreatureConfigFiles::needs, .oneFile = false, .humanReads = true},
+			{.root = "creature", .files = &CreatureConfigFiles::creature, .oneFile = false, .humanReads = false},
+			{.root = "behavior", .files = &CreatureConfigFiles::behaviors, .oneFile = false, .humanReads = false},
 		}};
 
 		const RootList* listFor(std::string_view root) {
@@ -184,7 +188,7 @@ namespace assets {
 	std::vector<std::string> missingKinds(const CreatureConfigFiles& found) {
 		std::vector<std::string> errors;
 		for (const RootList& list : kRootLists) {
-			if ((found.*(list.files)).empty()) {
+			if (list.humanReads && (found.*(list.files)).empty()) {
 				errors.push_back(
 					std::string(kPrefix) + shortNameOf(found.folder) + ": no file has a <" + std::string(list.root) + "> root"
 				);

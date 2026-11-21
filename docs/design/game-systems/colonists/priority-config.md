@@ -8,7 +8,7 @@
 
 ## Overview
 
-Task priority is calculated using a lexicographic `(tier: int, score: float)` key. Tier is compared first (lower number = higher priority) and is inviolable; a far tier-4 option always beats a near tier-5 one. Score orders options within the same tier only. All score weights and tier assignments are defined in `assets/config/work/priority-tuning.xml`, allowing tuning without code changes.
+Task priority is calculated using a lexicographic `(tier: int, score: float)` key. Tier is compared first (lower number = higher priority) and is inviolable; a far tier-4 option always beats a near tier-5 one. Score orders options within the same tier only. All score weights and tier assignments are defined in `assets/config/arbitration/priority-tuning.xml`, allowing tuning without code changes.
 
 The numeric bands of the earlier design (`Critical 30000`, `Needs 10000`, etc.) were replaced by the tier integer and are gone, config and accessors both: nothing read them. See [Colonist Task Arbitration](../../../technical/colonist-task-arbitration.md) for the full implementation.
 
@@ -82,7 +82,7 @@ score = distanceFactor      // dominant: 300 * max(0, 1 - d/60), nearest source 
 
 ## Config File Format
 
-**File:** `assets/config/work/priority-tuning.xml`. The file itself is the reference for values; its comments explain each element. What reads each one:
+**File:** `assets/config/arbitration/priority-tuning.xml` (root `<arbitration>`, which also holds the ladder). The file itself is the reference for values; its comments explain each element. What reads each one:
 
 | Element | Read by | Effect |
 |---|---|---|
@@ -200,7 +200,7 @@ private:
 
 ### Loading at Startup
 
-`assets::loadWorkConfig(configRoot, human)` loads priority-tuning.xml after the work types, as `PriorityConfig::Get().loadFromFile(configRoot, "work/priority-tuning.xml")`, and then checks that every task type has a tier. Any problem fails the game load and is shown on the loading scene ([Config Loading](../../../technical/config-loading.md)).
+`assets::loadWorkConfig(configRoot, human)` loads priority-tuning.xml after the work types, as `PriorityConfig::Get().loadFromFile(configRoot / "arbitration", "priority-tuning.xml")`, and then checks that every task type has a tier. Any problem fails the game load and is shown on the loading scene ([Config Loading](../../../technical/config-loading.md)).
 
 ---
 

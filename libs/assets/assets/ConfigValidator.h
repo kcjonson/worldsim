@@ -41,11 +41,7 @@ class ConfigValidator {
     /// @return true if valid
     static bool validateConstruction();
 
-    /// Validate TaskChains - check action references
-    /// @return true if valid
-    static bool validateTaskChains();
-
-    /// Validate WorkTypes - check chain references and capability names
+    /// Validate WorkTypes - warns about a work type with no trigger capability
     /// @return true if valid
     static bool validateWorkTypes();
 

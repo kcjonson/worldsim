@@ -2,7 +2,7 @@
 
 // Work Type Registry
 // Central catalog for work categories and work types loaded from XML.
-// Third in the config load order - depends on TaskChainRegistry.
+// Read from assets/config/legacy/work-types.xml, second in the work config's load order.
 //
 // See /docs/design/game-systems/colonists/work-types-config.md for design details.
 

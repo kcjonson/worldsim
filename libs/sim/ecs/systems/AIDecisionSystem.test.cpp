@@ -5,7 +5,9 @@
 #include "AIDecisionSystem.h"
 #include "ShippedPriorityConfig.test.h"
 #include "ActionSystem.h"
+#include "ConstructionSystem.h"
 #include "MovementSystem.h"
+#include "WallStandPoint.h"
 #include "NavigationSystem.h"
 #include "PhysicsSystem.h"
 #include "TimeSystem.h"
@@ -49,6 +51,7 @@
 #include "assets/placement/PlacementExecutor.h"
 
 #include <construction/ConstructionWorld.h>
+#include <construction/WallSides.h>
 
 #include <world/Biome.h>
 #include <world/BiomeWeights.h>
@@ -6274,6 +6277,376 @@ namespace ecs::test {
 	TEST_F(AIDecisionNearFordTest, BushBehindWinsOverALongerWayRound) {
 		const auto colonist = hungryColonistKnowing({kAcross, kBehind});
 		EXPECT_EQ(hungerTarget(colonist), std::optional<glm::vec2>(kBehind));
+	}
+
+	// A wall's builder stands beside it, never on its line, and outside the room it would close. The wall's
+	// Build goal carries the sides as ConstructionSystem sets them: by hand here, or ConstructionSystem itself
+	// where the tests run walls to completion with ActionSystem.
+	class AIDecisionWallBuildTest : public AIDecisionWallTest {
+	  protected:
+		construction::SegmentId wall(glm::vec2 from, glm::vec2 to, bool built) {
+			const auto commit = construction.commitSegment(
+				{static_cast<std::int64_t>(from.x * 1000.0F), static_cast<std::int64_t>(from.y * 1000.0F)},
+				{static_cast<std::int64_t>(to.x * 1000.0F), static_cast<std::int64_t>(to.y * 1000.0F)}, "Wood", "Standard",
+				construction::kInvalidFoundation, construction.version()
+			);
+			EXPECT_TRUE(commit.ok());
+			if (built) {
+				construction.setSegmentState(commit.id, construction::FoundationState::Built);
+			}
+			return commit.id;
+		}
+
+		// The wall blueprint of `segment` at `midpoint`, its materials in, needing `workTotal` of work.
+		EntityID wallBlueprint(construction::SegmentId segment, glm::vec2 midpoint, StructureBlueprint::BuildPhase phase, float workTotal) {
+			const EntityID blueprint = world->createEntity();
+			world->addComponent<Position>(blueprint, Position{midpoint});
+			world->addComponent<Structure>(blueprint, Structure{.kind = StructureKind::Wall, .graphId = segment});
+			StructureBlueprint site;
+			site.phase = phase;
+			site.workTotal = workTotal;
+			world->addComponent<StructureBlueprint>(blueprint, std::move(site));
+			return blueprint;
+		}
+
+		// The wall blueprint of `segment` under construction, and its Available Build goal with its sides.
+		EntityID wallSite(construction::SegmentId segment, glm::vec2 midpoint, float workTotal = 1000.0F) {
+			const EntityID blueprint = wallBlueprint(segment, midpoint, StructureBlueprint::BuildPhase::UnderConstruction, workTotal);
+			GoalTask umbrella;
+			umbrella.type = GoalType::Build;
+			umbrella.owner = GoalOwner::ConstructionGoalSystem;
+			umbrella.destinationEntity = blueprint;
+			umbrella.destinationPosition = midpoint;
+			umbrella.status = GoalStatus::Available;
+			umbrella.wallStands = construction::wallStands(construction, segment);
+			GoalTaskRegistry::Get().createGoal(std::move(umbrella));
+			return blueprint;
+		}
+
+		// ConstructionSystem keeps the walls' goals and their sides current.
+		void runConstructionSystem() { world->registerSystem<ConstructionSystem>().setConstructionWorld(&construction); }
+
+		// And ActionSystem works them; a completed wall is built in the topology, as GameScene's callback does.
+		void runConstruction() {
+			runConstructionSystem();
+			auto& actions = world->registerSystem<ActionSystem>(kTestRngSeed);
+			actions.setConstructionWorld(&construction);
+			actions.setStructureCompletedCallback([this](EntityID blueprint) {
+				construction.setSegmentState(world->getComponent<Structure>(blueprint)->graphId, construction::FoundationState::Built);
+			});
+		}
+
+		EntityID idleColonist(glm::vec2 at) {
+			const EntityID colonist = createColonist(at);
+			satisfyAllNeeds(*getNeeds(colonist));
+			world->addComponent<Action>(colonist, Action{});
+			return colonist;
+		}
+
+		// Where each colonist's first decision sends him, with the mesh built round them.
+		std::vector<glm::vec2> buildTargets(std::initializer_list<EntityID> colonists) {
+			nav->finishPendingBuilds();
+			EXPECT_TRUE(nav->hasMesh());
+			world->update(kTick);
+			std::vector<glm::vec2> targets;
+			for (const EntityID colonist : colonists) {
+				EXPECT_EQ(getTask(colonist)->type, TaskType::Build);
+				targets.push_back(getTask(colonist)->targetPosition);
+			}
+			return targets;
+		}
+
+		[[nodiscard]] const EvaluatedOption* buildOption(EntityID colonist) {
+			return findOption(*getTrace(colonist), [](const EvaluatedOption& option) { return option.taskType == TaskType::Build; });
+		}
+
+		// Whether the wall's panel says it has no ground to build from (ecs::noGroundToBuildFrom).
+		[[nodiscard]] bool noGround(EntityID blueprint) {
+			return noGroundToBuildFrom(GoalTaskRegistry::Get().getGoalByDestination(blueprint)->wallStands, AgentRadius{}.radiusMeters, *nav);
+		}
+
+		[[nodiscard]] bool built(EntityID blueprint) {
+			return world->getComponent<StructureBlueprint>(blueprint)->phase == StructureBlueprint::BuildPhase::Complete;
+		}
+
+		[[nodiscard]] static bool insideSquare(glm::vec2 at) { return at.x > 2.0F && at.x < 6.0F && at.y > 2.0F && at.y < 6.0F; }
+
+		// The last two walls of a doorless square (2, 2) to (6, 6), each worked from inside by its own builder
+		// (alone, neither closes anything), two seconds of an untrained builder's work each. The first to
+		// complete makes the other the closing wall; both builders end outside. With `sameTick`, both walls
+		// finish in one ActionSystem pass once both builders are at work.
+		void bothBuildersEndOutside(bool sameTick) {
+			runConstruction();
+			wall({2.0F, 6.0F}, {6.0F, 6.0F}, true);
+			wall({6.0F, 6.0F}, {6.0F, 2.0F}, true);
+			const EntityID west = wallSite(wall({2.0F, 6.0F}, {2.0F, 2.0F}, false), {2.0F, 4.0F}, 20.0F);
+			const EntityID south = wallSite(wall({6.0F, 2.0F}, {2.0F, 2.0F}, false), {4.0F, 2.0F}, 20.0F);
+			const EntityID westBuilder = idleColonist({2.8F, 4.0F});
+			const EntityID southBuilder = idleColonist({4.0F, 2.8F});
+			nav->finishPendingBuilds();
+
+			bool bothWorking = false;
+			for (int tick = 0; tick < 600 && !(built(west) && built(south)); ++tick) {
+				world->update(kTick);
+				if (sameTick && !bothWorking) {
+					bothWorking = world->getComponent<Action>(westBuilder)->type == ActionType::Build &&
+								  world->getComponent<Action>(southBuilder)->type == ActionType::Build;
+					if (bothWorking) {
+						for (const EntityID blueprint : {west, south}) {
+							ASSERT_FALSE(built(blueprint)) << "a wall finished before both builders were at work";
+							auto* site = world->getComponent<StructureBlueprint>(blueprint);
+							site->workDone = site->workTotal - 0.001F;
+						}
+					}
+				}
+			}
+			ASSERT_TRUE(built(west) && built(south)) << "the walls never both completed";
+			EXPECT_TRUE(!sameTick || bothWorking);
+			for (const EntityID builder : {westBuilder, southBuilder}) {
+				const glm::vec2 at = world->getComponent<Position>(builder)->value;
+				EXPECT_FALSE(insideSquare(at)) << "a builder shut in at (" << at.x << ", " << at.y << ")";
+			}
+		}
+
+		// The wall from (2, 2) to (6, 2): half its 0.2 m and a colonist's 0.3 m off its line, and more.
+		static constexpr float kWallY = 2.0F;
+		static constexpr float kClear = 0.1F + 0.3F;
+
+		// Placed obstacles a test stands on the ground, in place of the fixture's empty placement. The base
+		// TearDown resets the world, and with it the NavigationSystem reading these, before they go.
+		assets::PlacementExecutor				   obstacles{assets::AssetRegistry::Get()};
+		std::unordered_set<world::ChunkCoordinate> obstacleChunks;
+	};
+
+	// The last wall of a doorless square: one builder starting inside it and one outside both work it from
+	// outside.
+	TEST_F(AIDecisionWallBuildTest, TheLastWallOfADoorlessRoomIsBuiltFromOutside) {
+		wall({6.0F, kWallY}, {6.0F, 6.0F}, true);
+		wall({6.0F, 6.0F}, {2.0F, 6.0F}, true);
+		wall({2.0F, 6.0F}, {2.0F, kWallY}, true);
+		wallSite(wall({2.0F, kWallY}, {6.0F, kWallY}, false), {4.0F, kWallY});
+		const EntityID inside = idleColonist({4.0F, 4.0F});
+		const EntityID outside = idleColonist({4.5F, -1.0F});
+
+		for (const glm::vec2 target : buildTargets({inside, outside})) {
+			EXPECT_LT(target.y, kWallY - kClear) << "(" << target.x << ", " << target.y << ") is not outside the room, beside the wall";
+			EXPECT_GT(target.x, 2.0F + kClear);
+			EXPECT_LT(target.x, 6.0F - kClear);
+		}
+	}
+
+	// A wall that closes nothing is built from the side the builder is on.
+	TEST_F(AIDecisionWallBuildTest, AWallThatClosesNothingIsBuiltFromTheBuildersSide) {
+		wallSite(wall({2.0F, kWallY}, {6.0F, kWallY}, false), {4.0F, kWallY});
+		const EntityID above = idleColonist({4.0F, 4.0F});
+		const EntityID below = idleColonist({4.5F, -1.0F});
+
+		const std::vector<glm::vec2> targets = buildTargets({above, below});
+		EXPECT_GT(targets[0].y, kWallY + kClear) << "beside the wall on his side, off its line";
+		EXPECT_LT(targets[1].y, kWallY - kClear) << "beside the wall on his side, off its line";
+	}
+
+	// The last two walls of a doorless square, each worked from inside by its own builder (alone, neither
+	// closes anything): the first to complete makes the other the closing wall, and both builders end
+	// outside, the two walls finishing one after the other.
+	TEST_F(AIDecisionWallBuildTest, BothBuildersOfTheLastTwoWallsOfADoorlessRoomEndOutside) {
+		bothBuildersEndOutside(false);
+	}
+
+	// The same, with both walls finishing in one ActionSystem pass: the first flips built inside it, and
+	// the second then waits for its builder.
+	TEST_F(AIDecisionWallBuildTest, BothBuildersEndOutsideWhenTheLastTwoWallsFinishInOnePass) {
+		bothBuildersEndOutside(true);
+	}
+
+	// A builder on his way to the inside of a wall that closes nothing turns to its outside once a wall
+	// completing beside it makes it the closing wall.
+	TEST_F(AIDecisionWallBuildTest, ABuilderWalkingToTheInsideTurnsOutsideWhenTheLoopCloses) {
+		runConstructionSystem();
+		wall({2.0F, 6.0F}, {6.0F, 6.0F}, true);
+		wall({6.0F, 6.0F}, {6.0F, 2.0F}, true);
+		const construction::SegmentId westWall = wall({2.0F, 6.0F}, {2.0F, 2.0F}, false);
+		wallSite(wall({6.0F, 2.0F}, {2.0F, 2.0F}, false), {4.0F, 2.0F});
+		const EntityID builder = idleColonist({4.0F, 5.5F});
+		nav->finishPendingBuilds();
+
+		world->update(kTick);
+		ASSERT_EQ(getTask(builder)->type, TaskType::Build);
+		ASSERT_GT(getTask(builder)->targetPosition.y, kWallY) << "the wall closes nothing yet: he takes the inside, his side";
+		ASSERT_EQ(getTask(builder)->state, TaskState::Moving);
+
+		construction.setSegmentState(westWall, construction::FoundationState::Built);
+		bool turned = false;
+		for (int tick = 0; tick < 20 && !turned; ++tick) {
+			world->update(kTick);
+			turned = getTask(builder)->type == TaskType::Build && getTask(builder)->targetPosition.y < kWallY - kClear;
+		}
+		EXPECT_TRUE(turned) << "still bound for (" << getTask(builder)->targetPosition.x << ", " << getTask(builder)->targetPosition.y << ")";
+	}
+
+	// A builder at a wall held by a colonist the player controls is free to leave it: a critical need takes
+	// him away.
+	TEST_F(AIDecisionWallBuildTest, ABuilderAtAHeldWallLeavesForACriticalNeed) {
+		runConstruction();
+		const EntityID wallEntity = wallSite(wall({2.0F, kWallY}, {6.0F, kWallY}, false), {4.0F, kWallY}, 2.0F);
+		const EntityID holding = addLookout({4.0F, kWallY});
+		world->addComponent<PlayerControlled>(holding, PlayerControlled{});
+		const EntityID builder = idleColonist({4.0F, -1.0F});
+		nav->finishPendingBuilds();
+
+		const auto* site = world->getComponent<StructureBlueprint>(wallEntity);
+		for (int tick = 0; tick < 120 && !(site->workDone >= site->workTotal && site->workTotal > 0.0F); ++tick) {
+			world->update(kTick);
+		}
+		ASSERT_GE(site->workDone, site->workTotal) << "the work never finished";
+		ASSERT_FALSE(built(wallEntity)) << "the wall must be held";
+		ASSERT_EQ(getTask(builder)->type, TaskType::Build);
+
+		addKnownEntity(builder, {0.0F, -3.0F}, registerBerryBush(assets::AssetRegistry::Get()), assets::CapabilityType::Harvestable);
+		setNeedValue(builder, NeedType::Hunger, 5.0F);
+		bool left = false;
+		for (int tick = 0; tick < 20 && !left; ++tick) {
+			world->update(kTick);
+			left = getTask(builder)->type == TaskType::FulfillNeed;
+		}
+		EXPECT_TRUE(left) << "still on " << static_cast<int>(getTask(builder)->type);
+		EXPECT_FALSE(built(wallEntity));
+	}
+
+	// The last two walls of a doorless square, each worked from inside by its own builder. The first done
+	// frees its builder inside, and he goes out to eat while the other is sent round: the closing wall waits
+	// for him too, as he is on his way out, and both end outside.
+	TEST_F(AIDecisionWallBuildTest, AColonistOnHisWayOutIsWaitedForWhenTheLastWallCloses) {
+		runConstruction();
+		wall({2.0F, 6.0F}, {6.0F, 6.0F}, true);
+		wall({6.0F, 6.0F}, {6.0F, 2.0F}, true);
+		const EntityID west = wallSite(wall({2.0F, 6.0F}, {2.0F, 2.0F}, false), {2.0F, 4.0F}, 10.0F);
+		const EntityID south = wallSite(wall({6.0F, 2.0F}, {2.0F, 2.0F}, false), {4.0F, 2.0F}, 12.0F);
+		const EntityID eater = idleColonist({2.8F, 4.0F});
+		const EntityID southBuilder = idleColonist({4.0F, 2.8F});
+		nav->finishPendingBuilds();
+
+		int tick = 0;
+		for (; tick < 300 && !built(west); ++tick) {
+			world->update(kTick);
+		}
+		ASSERT_TRUE(built(west));
+		ASSERT_FALSE(built(south)) << "the south wall must still be open when the west one completes";
+		ASSERT_TRUE(insideSquare(world->getComponent<Position>(eater)->value)) << "he finished the west wall from inside";
+		addKnownEntity(eater, {4.0F, -3.0F}, registerBerryBush(assets::AssetRegistry::Get()), assets::CapabilityType::Harvestable);
+		setNeedValue(eater, NeedType::Hunger, 5.0F);
+		bool heldForHim = false;
+		for (; tick < 600 && !built(south); ++tick) {
+			world->update(kTick);
+			const auto* southSite = world->getComponent<StructureBlueprint>(south);
+			heldForHim = heldForHim || (southSite->workDone >= southSite->workTotal && !built(south) &&
+										insideSquare(world->getComponent<Position>(eater)->value) &&
+										!insideSquare(world->getComponent<Position>(southBuilder)->value));
+		}
+		ASSERT_TRUE(built(south)) << "the south wall never completed";
+		EXPECT_TRUE(heldForHim) << "the south wall never sat at full work with only him inside";
+		for (const EntityID colonist : {eater, southBuilder}) {
+			const glm::vec2 at = world->getComponent<Position>(colonist)->value;
+			EXPECT_FALSE(insideSquare(at)) << "shut in at (" << at.x << ", " << at.y << ")";
+		}
+	}
+
+	// A doorless building of two rooms, (2, 2) to (6, 6) and (6, 2) to (10, 6), whose last gaps are its west
+	// wall and the partition between them, a builder on each, both starting in the west room. The partition's
+	// builder works it from the west room, which is open while the west wall is; the west wall, which would
+	// shut in both rooms, waits at full work for him until the partition is done, and both end outside.
+	TEST_F(AIDecisionWallBuildTest, TheOuterWallWaitsForTheBuilderOfAPartitionInside) {
+		runConstruction();
+		wall({2.0F, 2.0F}, {6.0F, 2.0F}, true);
+		wall({6.0F, 2.0F}, {10.0F, 2.0F}, true);
+		wall({10.0F, 2.0F}, {10.0F, 6.0F}, true);
+		wall({10.0F, 6.0F}, {6.0F, 6.0F}, true);
+		wall({6.0F, 6.0F}, {2.0F, 6.0F}, true);
+		const EntityID partition = wallSite(wall({6.0F, 2.0F}, {6.0F, 6.0F}, false), {6.0F, 4.0F}, 40.0F);
+		const EntityID west = wallSite(wall({2.0F, 6.0F}, {2.0F, 2.0F}, false), {2.0F, 4.0F}, 10.0F);
+		const EntityID westBuilder = idleColonist({2.8F, 4.0F});
+		const EntityID partitionBuilder = idleColonist({5.2F, 4.0F});
+		nav->finishPendingBuilds();
+
+		bool westHeldForThePartition = false;
+		for (int tick = 0; tick < 600 && !(built(west) && built(partition)); ++tick) {
+			world->update(kTick);
+			const auto* westSite = world->getComponent<StructureBlueprint>(west);
+			westHeldForThePartition = westHeldForThePartition || (westSite->workDone >= westSite->workTotal && !built(west) && !built(partition));
+		}
+		ASSERT_TRUE(built(west) && built(partition)) << "the walls never both completed";
+		EXPECT_TRUE(westHeldForThePartition) << "the west wall never sat at full work while the partition was unfinished";
+		for (const EntityID builder : {westBuilder, partitionBuilder}) {
+			const glm::vec2 at = world->getComponent<Position>(builder)->value;
+			EXPECT_FALSE(at.x > 2.0F && at.x < 10.0F && at.y > 2.0F && at.y < 6.0F) << "shut in at (" << at.x << ", " << at.y << ")";
+		}
+	}
+
+	// A boulder outside the middle of a wall: the ground at its middle stand point is taken, so the
+	// builder stands farther along the same side, and the wall can be built.
+	TEST_F(AIDecisionWallBuildTest, ABoulderOutsideTheMiddleOfAWallLeavesItBuildableFartherAlong) {
+		assets::AssetDefinition boulder;
+		boulder.defName = "Test_WallBoulder";
+		boulder.label = boulder.defName;
+		boulder.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {0.5F, 0.5F}});
+		assets::AssetRegistry::Get().registerTestDefinition(std::move(boulder));
+		assets::AsyncChunkPlacementResult placedBoulder;
+		placedBoulder.coord = world::worldToChunk({4.0F, 1.3F});
+		placedBoulder.spatialIndex.insert({"Test_WallBoulder", {4.0F, 1.3F}});
+		obstacleChunks.insert(placedBoulder.coord);
+		obstacles.storeChunkResult(std::move(placedBoulder));
+		placeNothingElsewhere(obstacles, &obstacleChunks);
+		nav->setPlacementData(&obstacles, &obstacleChunks);
+
+		const EntityID blueprint = wallSite(wall({2.0F, kWallY}, {6.0F, kWallY}, false), {4.0F, kWallY});
+		const EntityID builder = idleColonist({4.0F, -1.0F});
+		const glm::vec2 target = buildTargets({builder}).front();
+		EXPECT_LT(target.y, kWallY - kClear) << "on his side, below the wall";
+		EXPECT_GT(std::abs(target.x - 4.0F), 0.5F) << "clear of the boulder, farther along";
+		EXPECT_FALSE(noGround(blueprint));
+	}
+
+	// Walls on the rivers fixture's ground: one whose only allowed side is in the water, and one across a
+	// river from the colonist.
+	class AIDecisionWallBuildRiverTest : public AIDecisionWallBuildTest {
+	  protected:
+		[[nodiscard]] world::ChunkManager* chunkRegion() const override { return twoRiverChunks(); }
+	};
+
+	// A doorless room whose closing wall stands well into the river: its outside is water, the
+	// mesh's nearest ground for it is back across its line or on the far bank, and neither serves. The
+	// builder inside is given nothing to build, and the wall says why.
+	TEST_F(AIDecisionWallBuildRiverTest, AWallWithNoGroundOnItsAllowedSideIsNoSourceAndSaysWhy) {
+		const float wallY = kRiverY - 0.5F;
+		wall({6.0F, 14.0F}, {6.0F, wallY}, true);
+		wall({2.0F, wallY}, {2.0F, 14.0F}, true);
+		wall({2.0F, 14.0F}, {6.0F, 14.0F}, true);
+		const EntityID blueprint = wallSite(wall({6.0F, wallY}, {2.0F, wallY}, false), {4.0F, wallY});
+		const EntityID builder = idleColonist({4.0F, 15.0F});
+		nav->finishPendingBuilds();
+		world->update(kTick);
+
+		const EvaluatedOption* option = buildOption(builder);
+		ASSERT_NE(option, nullptr);
+		EXPECT_EQ(option->status, OptionStatus::NoSource);
+		EXPECT_NE(getTask(builder)->type, TaskType::Build);
+		EXPECT_TRUE(noGround(blueprint)) << "what the wall's panel shows";
+	}
+
+	// A wall on the far bank: both its sides can be stood on but he cannot get to either, so it is no
+	// source for him, and the wall does not say it has no ground.
+	TEST_F(AIDecisionWallBuildRiverTest, AWallWhoseSidesHeCannotReachIsNoSource) {
+		const EntityID blueprint = wallSite(wall({2.0F, 27.0F}, {6.0F, 27.0F}, false), {4.0F, 27.0F});
+		addLookout({4.0F, 29.0F}, kDefaultSightRadius);
+		const EntityID builder = idleColonist(kStart);
+		nav->finishPendingBuilds();
+		ASSERT_FALSE(nav->connected(kStart, {4.0F, 27.5F}));
+		world->update(kTick);
+
+		const EvaluatedOption* option = buildOption(builder);
+		ASSERT_NE(option, nullptr);
+		EXPECT_EQ(option->status, OptionStatus::NoSource);
+		EXPECT_FALSE(noGround(blueprint));
 	}
 
 	namespace {

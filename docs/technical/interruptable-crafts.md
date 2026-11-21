@@ -633,4 +633,4 @@ worker back.
   the model craft work now follows.
 - [Colonist Needs](../design/game-systems/colonists/needs.md): thresholds and decay.
 - [Priority Configuration](../design/game-systems/colonists/priority-config.md) and
-  `assets/config/work/priority-tuning.xml`: priorities as data.
+  `assets/config/arbitration/priority-tuning.xml`: priorities as data.

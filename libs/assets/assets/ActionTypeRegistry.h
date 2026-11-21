@@ -2,7 +2,7 @@
 
 // Action Type Registry
 // Central catalog for action type definitions loaded from XML configuration.
-// First in the config load order - has no dependencies on other config files.
+// Read from assets/config/legacy/action-types.xml, first in the work config's load order.
 //
 // See /docs/design/game-systems/colonists/task-chains.md for design details.
 

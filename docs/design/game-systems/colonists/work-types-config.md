@@ -41,7 +41,7 @@ Trigger Capability: Harvestable
 
 ## Config File Format
 
-**File:** `assets/config/work/work-types.xml`
+**File:** `assets/config/legacy/work-types.xml`
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -61,7 +61,6 @@ Trigger Capability: Harvestable
       <label>Rescue</label>
       <description>Carry incapacitated colonists to safety</description>
       <triggerCapability>Incapacitated</triggerCapability>
-      <taskChain>Chain_Rescue</taskChain>
     </WorkType>
 
     <WorkType defName="Work_Firefight">
@@ -152,7 +151,6 @@ Trigger Capability: Harvestable
       <filter>
         <stationType>{StationDefName}</stationType>
       </filter>
-      <taskChain>Chain_CraftWithGather</taskChain>
       <skillRequired>{StationSkill}</skillRequired>
     </WorkType>
   </Category>
@@ -195,7 +193,6 @@ Trigger Capability: Harvestable
       <filter>
         <looseItem>true</looseItem>
       </filter>
-      <taskChain>Chain_PickupDeposit</taskChain>
       <!-- No skill - speed based on Strength attribute -->
     </WorkType>
 
@@ -207,7 +204,6 @@ Trigger Capability: Harvestable
       <filter>
         <neededByRecipe>true</neededByRecipe>
       </filter>
-      <taskChain>Chain_PickupDeposit</taskChain>
     </WorkType>
 
     <WorkType defName="Work_HaulToConstruction">
@@ -218,7 +214,6 @@ Trigger Capability: Harvestable
       <filter>
         <neededByBlueprint>true</neededByBlueprint>
       </filter>
-      <taskChain>Chain_PickupDeposit</taskChain>
     </WorkType>
 
     <WorkType defName="Work_PlaceItem">
@@ -228,7 +223,6 @@ Trigger Capability: Harvestable
       <filter>
         <hasPlacementTarget>true</hasPlacementTarget>
       </filter>
-      <taskChain>Chain_PlaceItem</taskChain>
     </WorkType>
   </Category>
 
@@ -302,7 +296,6 @@ Trigger Capability: Harvestable
 | `skillRequired` | none | Skill needed to do this work |
 | `minSkillLevel` | 0.0 | Minimum skill level required |
 | `targetCapability` | none | Second capability for two-target tasks |
-| `taskChain` | none | Chain definition for multi-step tasks |
 | `filter` | none | Additional conditions for task generation |
 
 ---
@@ -378,7 +371,7 @@ At load time, the system:
 
 Create a new XML file that extends the category:
 
-**File:** `mods/my-mod/config/work/extra-farming.xml`
+**File:** `mods/my-mod/config/legacy/extra-farming.xml`
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <WorkTypes>
@@ -399,7 +392,7 @@ Create a new XML file that extends the category:
 
 Create a new category with a tier number:
 
-**File:** `mods/my-mod/config/work/magic.xml`
+**File:** `mods/my-mod/config/legacy/magic.xml`
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <WorkTypes>
@@ -420,8 +413,11 @@ Create a new category with a tier number:
 ### Loading Order
 
 Config files are loaded in order:
-1. Base game: `assets/config/work/work-types.xml`
-2. Mods: `mods/*/config/work/*.xml` (alphabetical by mod, then file)
+1. Base game: `assets/config/legacy/work-types.xml`
+2. Mods: `mods/*/config/legacy/*.xml` (alphabetical by mod, then file)
+
+A `<WorkTypes>` file sits in `legacy/` because `work/` holds the `<colonyWork>` files of
+[Queries and chains](../../../technical/queries-and-chains.md#work), whose `<category>` entries replace it.
 
 Later definitions can:
 - Add new work types to existing categories
@@ -432,7 +428,7 @@ Later definitions can:
 
 ## WorkTypeRegistry (Code)
 
-`assets::WorkTypeRegistry` (libs/assets/assets/WorkTypeRegistry.h) holds the categories and work types from `work/work-types.xml`, loaded by `assets::loadWorkConfig` (see [Config Loading](../../../technical/config-loading.md)). Task generation asks it for the work types a capability triggers, checks each one's filter against the entity, and makes a task naming the work type and its chain.
+`assets::WorkTypeRegistry` (libs/assets/assets/WorkTypeRegistry.h) holds the categories and work types from `legacy/work-types.xml`, loaded by `assets::loadWorkConfig` (see [Config Loading](../../../technical/config-loading.md)). Task generation asks it for the work types a capability triggers, checks each one's filter against the entity, and makes a task naming the work type.
 
 ---
 
@@ -440,11 +436,10 @@ Later definitions can:
 
 | What | Where |
 |------|-------|
-| Work categories & types | `assets/config/work/work-types.xml` |
-| Task chains | `assets/config/work/task-chains.xml` |
-| Priority tuning | `assets/config/work/priority-tuning.xml` |
+| Work categories & types | `assets/config/legacy/work-types.xml` |
+| Priority tuning | `assets/config/arbitration/priority-tuning.xml` |
 | Entity groups | Individual asset XML files |
-| Mod work types | `mods/*/config/work/*.xml` |
+| Mod work types | `mods/*/config/legacy/*.xml` |
 
 **All work behavior is config-driven.** Adding a new work type = add XML. No code changes required.
 
