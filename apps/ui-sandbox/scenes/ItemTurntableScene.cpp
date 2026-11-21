@@ -44,7 +44,6 @@
 #include <cstdlib>
 #include <format>
 #include <memory>
-#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -126,12 +125,17 @@ namespace {
 		return out;
 	}
 
-	std::optional<bool> flagParam(const app::DevRequest& request, const char* key) {
+	/// A flag the request sets with key=0 or key=1: false when it is written any other way.
+	bool readFlag(const app::DevRequest& request, const char* key, bool& flag) {
 		const auto found = request.params.find(key);
 		if (found == request.params.end()) {
-			return std::nullopt;
+			return true;
 		}
-		return found->second == "1" || found->second == "true";
+		if (found->second != "0" && found->second != "1") {
+			return false;
+		}
+		flag = found->second == "1";
+		return true;
 	}
 
 	class ItemTurntableScene : public app::Scene {
@@ -154,10 +158,12 @@ namespace {
 				return app::DevResponse{.body = exportState()};
 			}));
 			devRegistrations.push_back(owner.devServer().control("overlay", [this](const app::DevRequest& request) {
-				overlays.collider = flagParam(request, "collider").value_or(overlays.collider);
-				overlays.useAreas = flagParam(request, "use").value_or(overlays.useAreas);
-				overlays.clearance = flagParam(request, "clearance").value_or(overlays.clearance);
-				overlays.strips = flagParam(request, "strips").value_or(overlays.strips);
+				Overlays requested = overlays;
+				if (!readFlag(request, "collider", requested.collider) || !readFlag(request, "use", requested.useAreas) ||
+					!readFlag(request, "clearance", requested.clearance) || !readFlag(request, "strips", requested.strips)) {
+					return app::DevResponse{.status = 400, .body = R"({"error":"overlay flags are collider, use, clearance, and strips, each 0 or 1"})"};
+				}
+				overlays = requested;
 				return app::DevResponse{.body = exportState()};
 			}));
 		}
@@ -216,7 +222,7 @@ namespace {
 				R"({{"def":"{}","loaded":{},"turnDegrees":{},"turnQuanta":{},"stepDegrees":{},"level":{},"vertices":{},"strips":[{}],)"
 				R"("viewError":"{}","overlays":{{"collider":{},"use":{},"clearance":{},"strips":{}}},)"
 				R"("validation":{{"errors":{},"warnings":{},"issues":[{}]}}}})",
-				kDefName, definition != nullptr, degreesText(turnQuanta), turnQuanta, stepQuanta / kQuantaPerDegree, large.view.level,
+				kDefName, definition != nullptr, degreesText(turnQuanta), turnQuanta, degreesText(stepQuanta), large.view.level,
 				large.view.vertexCount, strips, jsonEscaped(large.view.error), overlays.collider, overlays.useAreas, overlays.clearance,
 				overlays.strips, report.errorCount(), report.warningCount(), issues
 			);
@@ -271,7 +277,7 @@ namespace {
 		void buildInterface() {
 			theme::apply(ui());
 			title = root().addChild<ui::Text>({.position = {kMargin, kMargin}, .style = ui::styles::text::title, .text = "Workbench"});
-			help = root().addChild<ui::Text>(
+			root().addChild<ui::Text>(
 				{.position = {kMargin, kMargin + 30.0F},
 				 .style = ui::styles::text::secondary,
 				 .text = "Left / Right: turn a step    Alt + Left / Right: 1 degree    1 collider    2 use areas    3 clearance    4 strips"}
@@ -364,7 +370,7 @@ namespace {
 			const assets::ValidationReport& report = assets::AssetRegistry::Get().getValidationReport();
 			title.get()->setText(std::format("Workbench at {} degrees", degreesText(turnQuanta)));
 			std::string line = std::format(
-				"Step {} degrees    level {}    {} vertices    {} strips    validation: {} errors, {} warnings", stepQuanta / kQuantaPerDegree,
+				"Step {} degrees    level {}    {} vertices    {} strips    validation: {} errors, {} warnings", degreesText(stepQuanta),
 				large.view.level, large.view.vertexCount, large.view.strips.size(), report.errorCount(), report.warningCount()
 			);
 			if (definition == nullptr) {
@@ -442,6 +448,10 @@ namespace {
 						glm::vec2{strip.minX, strip.maxY}
 					};
 					drawRing(box, 0.0F, center, pixelsPerMeter, kStripColor);
+					// The flat strip's anchor is the lowest float, which has nowhere on the screen to go.
+					if (strip.flat) {
+						continue;
+					}
 					const float anchorY = center.y + strip.anchorLocalY * pixelsPerMeter;
 					const float anchorLeft = center.x + std::max(strip.minX, -fitRadiusMeters) * pixelsPerMeter;
 					const float anchorRight = center.x + std::min(strip.maxX, fitRadiusMeters) * pixelsPerMeter;
@@ -469,7 +479,6 @@ namespace {
 		std::array<DrawnView, kSheetCount> sheet;
 
 		ui::Ref<ui::Text>						 title;
-		ui::Ref<ui::Text>						 help;
 		ui::Ref<ui::Text>						 status;
 		std::array<ui::Ref<ui::Text>, kSheetCount> sheetLabels;
 
