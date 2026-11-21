@@ -72,11 +72,6 @@ inline constexpr bool isFreshwater(WaterClass w) {
 // A lake or ocean tile by its flags, or a tile below sea level: no landing comes down on one.
 [[nodiscard]] bool isWaterTile(const GeneratedWorld& world, TileId tile);
 
-// The tile-level screen: where to look for fresh water (kFlagRiver or kFlagLake on the tile or a
-// neighbour), else Coastal on an ocean neighbour, else RainFed. Tile flags promise water somewhere
-// in a 3.5 km tile; only resolveLandingSite turns that into a verified class.
-WaterClass classifyWater(const GeneratedWorld& world, TileId tile);
-
 // Habitability rating, coarsest-to-harshest. A guide for the player, not a sim.
 enum class Habitability : uint8_t {
     Easy,

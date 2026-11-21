@@ -3,7 +3,6 @@
 #include "worldgen/data/GeneratedWorld.h"
 
 #include <math/DeterministicMath.h>
-#include <utils/Log.h>
 
 #include <algorithm>
 #include <array>
@@ -33,8 +32,13 @@ constexpr int kEasyScoreMinimum = 4;
 constexpr int kModerateScoreMinimum = 2;
 constexpr int kHardScoreMinimum = 0;
 
-bool hasField(const GeneratedWorld& world, WorldField f) {
-    return (world.validFields & static_cast<uint32_t>(f)) != 0;
+// What findWatersideSpawn reads, and the anchors' flags with it.
+constexpr uint32_t kSpawnSearchFields = static_cast<uint32_t>(WorldField::Elevation) |
+                                        static_cast<uint32_t>(WorldField::Biome) |
+                                        static_cast<uint32_t>(WorldField::Flags);
+
+bool hasField(const GeneratedWorld& world, WorldField field) {
+    return (world.validFields & static_cast<uint32_t>(field)) != 0;
 }
 
 // A tile below sea level is water whatever its flags say.
@@ -42,29 +46,24 @@ bool belowSeaLevel(const GeneratedWorld& world, TileId tile) {
     return hasField(world, WorldField::Elevation) && world.data.elevation[tile] < world.seaLevelMeters;
 }
 
-// Coast = land tile with at least one OCEAN neighbor. Computed from the grid
-// rather than kFlagCoast so it works on worlds saved before BiomeStage set the
-// flag. Ocean-only (not lake) so it maps to "saltwater" in the signal.
-bool hasOceanNeighbor(const GeneratedWorld& world, TileId t) {
-    std::array<TileId, 6> nbrs{};
-    uint32_t count = world.grid->neighbors(t, nbrs);
-    for (uint32_t i = 0; i < count; ++i) {
-        const uint8_t flags = world.data.flags[nbrs[i]];
-        if ((flags & kFlagOcean) != 0) return true;
-        if ((flags & kFlagLake) == 0 && belowSeaLevel(world, nbrs[i])) return true;
-    }
-    return false;
+bool isLakeTile(const GeneratedWorld& world, TileId tile) {
+    return hasField(world, WorldField::Flags) && (world.data.flags[tile] & kFlagLake) != 0;
 }
 
-// True if the tile itself or any neighbor carries the given flag.
-bool tileOrNeighborHasFlag(const GeneratedWorld& world, TileId t, uint8_t flag) {
-    if ((world.data.flags[t] & flag) != 0) return true;
-    std::array<TileId, 6> nbrs{};
-    uint32_t count = world.grid->neighbors(t, nbrs);
-    for (uint32_t i = 0; i < count; ++i) {
-        if ((world.data.flags[nbrs[i]] & flag) != 0) return true;
-    }
-    return false;
+template <typename Test>
+bool anyNeighbour(const GeneratedWorld& world, TileId tile, Test test) {
+    std::array<TileId, 6> neighbours{};
+    const uint32_t count = world.grid->neighbors(tile, neighbours);
+    return std::any_of(neighbours.begin(), neighbours.begin() + count, test);
+}
+
+// Salt water beside the tile: a water tile (isWaterTile) that is not a lake.
+bool hasOceanNeighbor(const GeneratedWorld& world, TileId tile) {
+    return anyNeighbour(world, tile, [&](TileId neighbour) { return isWaterTile(world, neighbour) && !isLakeTile(world, neighbour); });
+}
+
+bool bordersLake(const GeneratedWorld& world, TileId tile) {
+    return anyNeighbour(world, tile, [&](TileId neighbour) { return isLakeTile(world, neighbour); });
 }
 
 double dotProduct(const Vec3d& first, const Vec3d& second) {
@@ -153,7 +152,7 @@ std::optional<LandingSite> landOnTile(const std::shared_ptr<const GeneratedWorld
     if ((planet.data.flags[tile] & kFlagRiver) != 0) {
         if (auto site = landAt(world, provisions, centreOf(grid, tile))) return site;
     }
-    const auto isLake = [&](TileId neighbour) { return (planet.data.flags[neighbour] & kFlagLake) != 0; };
+    const auto isLake = [&](TileId neighbour) { return isLakeTile(planet, neighbour); };
     for (const TileId lake : neighboursNearestFirst(grid, tile, pickDirection, isLake)) {
         if (auto site = landAt(world, provisions, lakeAnchor(planet, tile, lake))) return site;
     }
@@ -179,15 +178,6 @@ bool ranksBefore(const Candidate& first, const Candidate& second) {
     if (first.kind != second.kind) return first.kind < second.kind;
     if (first.habitabilityScore != second.habitabilityScore) return first.habitabilityScore > second.habitabilityScore;
     return first.tile < second.tile;
-}
-
-bool bordersLake(const GeneratedWorld& world, TileId tile) {
-    std::array<TileId, 6> neighbours{};
-    const uint32_t count = world.grid->neighbors(tile, neighbours);
-    for (uint32_t i = 0; i < count; ++i) {
-        if ((world.data.flags[neighbours[i]] & kFlagLake) != 0) return true;
-    }
-    return false;
 }
 
 // The best kCandidatesPerSlot of each (bin, kind, biome) slot. A total order with no ties, so what is
@@ -231,22 +221,6 @@ class CandidateSlots {
 bool isWaterTile(const GeneratedWorld& world, TileId tile) {
     if (hasField(world, WorldField::Flags) && (world.data.flags[tile] & (kFlagOcean | kFlagLake)) != 0) return true;
     return belowSeaLevel(world, tile);
-}
-
-WaterClass classifyWater(const GeneratedWorld& world, TileId tile) {
-    if (!world.grid) {
-        LOG_ERROR(World, "classifyWater: world has no grid");
-        return WaterClass::RainFed;
-    }
-
-    // River and lake flags only exist when Flags were written. Without them we
-    // can only distinguish coast (from elevation) vs rain-fed.
-    if (hasField(world, WorldField::Flags)) {
-        if (tileOrNeighborHasFlag(world, tile, kFlagRiver)) return WaterClass::River;
-        if (tileOrNeighborHasFlag(world, tile, kFlagLake))  return WaterClass::Lake;
-    }
-    if (hasOceanNeighbor(world, tile)) return WaterClass::Coastal;
-    return WaterClass::RainFed;
 }
 
 const char* waterClassToString(WaterClass w) {
@@ -339,8 +313,9 @@ LandingSite resolveLandingSite(const std::shared_ptr<const GeneratedWorld>& worl
     const GeneratedWorld& planet = *world;
     const SphereGrid& grid = *planet.grid;
     const TileId picked = grid.fromLatLon(pick.latDeg, pick.lonDeg);
+    const bool spawnFields = (planet.validFields & kSpawnSearchFields) == kSpawnSearchFields;
 
-    if (hasField(planet, WorldField::Flags) && !isWaterTile(planet, picked)) {
+    if (spawnFields && !isWaterTile(planet, picked)) {
         const Vec3d pickDirection = SphereGrid::unitVectorFromLatLon(pick.latDeg, pick.lonDeg);
         if (auto site = landOnTile(world, provisions, picked, pickDirection)) return *site;
         const auto isLandRiver = [&](TileId neighbour) {
@@ -351,9 +326,10 @@ LandingSite resolveLandingSite(const std::shared_ptr<const GeneratedWorld>& worl
         }
     }
 
+    // Without the fields the spawn search reads, the drop is the pick, with no water in reach.
+    const SpawnSite spawn = spawnFields ? findWatersideSpawn(world, pick.latDeg, pick.lonDeg) : SpawnSite{};
     const WaterClass water = hasOceanNeighbor(planet, picked) ? WaterClass::Coastal : WaterClass::RainFed;
-    return LandingSite{pick, picked, FreshWaterFeature::None, findWatersideSpawn(world, pick.latDeg, pick.lonDeg),
-                       assessLandingTile(planet, provisions, picked, water)};
+    return LandingSite{pick, picked, FreshWaterFeature::None, spawn, assessLandingTile(planet, provisions, picked, water)};
 }
 
 SuggestedSiteQuery quickStartSiteQuery() {
@@ -367,10 +343,7 @@ std::vector<LandingSite> findSuggestedLandingSites(const std::shared_ptr<const G
                                                    const BiomeProvisionTable& provisions,
                                                    const SuggestedSiteQuery& query) {
     const GeneratedWorld& planet = *world;
-    constexpr uint32_t kRequiredFields = static_cast<uint32_t>(WorldField::Elevation) |
-                                         static_cast<uint32_t>(WorldField::Biome) |
-                                         static_cast<uint32_t>(WorldField::Flags);
-    if (!planet.grid || (planet.validFields & kRequiredFields) != kRequiredFields || query.maximumSites == 0) {
+    if (!planet.grid || (planet.validFields & kSpawnSearchFields) != kSpawnSearchFields || query.maximumSites == 0) {
         return {};
     }
     const auto checkpoint = [&query] {

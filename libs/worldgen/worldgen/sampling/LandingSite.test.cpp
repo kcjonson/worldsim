@@ -318,6 +318,14 @@ TEST(LandingSiteResolution, DryPickStaysAtThePick) {
     EXPECT_FALSE(site.recommended());
 
     expectSameLanding(resolveLandingSite(world, grasslandProvisions(), site.origin), site);
+
+    // A neighbour below sea level with no flag is water, and salt: the same pick is then coastal.
+    std::array<TileId, 6> neighbours{};
+    world->grid->neighbors(site.tile, neighbours);
+    world->data.elevation[neighbours[0]] = -100.0f;
+    ASSERT_EQ(world->data.flags[neighbours[0]], 0);
+    EXPECT_TRUE(isWaterTile(*world, neighbours[0]));
+    EXPECT_EQ(resolveLandingSite(world, grasslandProvisions(), pick).assessment.water, WaterClass::Coastal);
 }
 
 // The search on a narrow strip finds fresh water but no dry point 30 m from it; that drop is not a
@@ -426,6 +434,17 @@ TEST(LandingSiteFinder, SitesMeetTheBarStandApartAndVaryByKindAndBiome) {
     EXPECT_EQ(static_cast<Biome>(swapped->data.biome[ranked[0].tile]), Biome::TemperateDeciduousForest);
     EXPECT_GT(ranked[0].tile, sites[0].tile) << "the grassland river has the lower TileId";
     EXPECT_EQ(ranked[0].assessment.habitabilityScore, sites[0].assessment.habitabilityScore + 1);
+
+    // Quick Start's query prefers the forest and takes one site: with both rivers scoring the same, the
+    // southern forest river still comes first.
+    const SuggestedSiteQuery quickStart = quickStartSiteQuery();
+    EXPECT_EQ(quickStart.preferredBiome, Biome::TemperateDeciduousForest);
+    const std::vector<LandingSite> preferred = findSuggestedLandingSites(swapped, twoBiomeProvisions(), quickStart);
+    ASSERT_EQ(preferred.size(), 1u);
+    EXPECT_EQ(preferred[0].feature, FreshWaterFeature::River);
+    EXPECT_EQ(static_cast<Biome>(swapped->data.biome[preferred[0].tile]), Biome::TemperateDeciduousForest);
+    EXPECT_GT(preferred[0].tile, sites[0].tile) << "the grassland river has the lower TileId";
+    EXPECT_EQ(preferred[0].assessment.habitabilityScore, sites[0].assessment.habitabilityScore);
 }
 
 // Rivers outrank lakes, so without the cap every site would be a river; with lake sites to be had, the rivers
@@ -502,7 +521,8 @@ TEST(LandingSiteFinder, StopDuringSelectionReturnsTheSitesTakenSoFar) {
 }
 
 // Every suggested site's drop is clear: 30 m from water within the tolerance, the distance read independently
-// round it (the channels its RiverNetwork2D gathers for a river site, the lake's samples for a lake site).
+// on rings round it (the river's channel as RiverNetwork2D samples it for a river site, the lake's samples
+// for a lake site).
 TEST(LandingSiteFinderHeavy, GeneratedPlanetSitesStandClearOfTheirWater) {
     PlanetParams params = PlanetParams::preset(Preset::EarthLike);
     params.gridSubdivision = 64;
@@ -532,20 +552,14 @@ TEST(LandingSiteFinderHeavy, GeneratedPlanetSitesStandClearOfTheirWater) {
         double nearest = -1.0;
         if (site.feature == FreshWaterFeature::River) {
             const RiverNetwork2D rivers(world, site.origin.latDeg, site.origin.lonDeg);
-            std::vector<RiverNetwork2D::Segment> segments;
-            rivers.gatherSegments(dropX - kReachMeters, dropY - kReachMeters, dropX + kReachMeters, dropY + kReachMeters, segments);
-            for (const RiverNetwork2D::Segment& segment : segments) {
-                const double spanX = segment.x1 - segment.x0;
-                const double spanY = segment.y1 - segment.y0;
-                const double lengthSquared = spanX * spanX + spanY * spanY;
-                const double along = lengthSquared > 0.0
-                    ? std::clamp(((dropX - segment.x0) * spanX + (dropY - segment.y0) * spanY) / lengthSquared, 0.0, 1.0)
-                    : 0.0;
-                const double halfWidth = segment.halfWidth0 + (segment.halfWidth1 - segment.halfWidth0) * along;
-                const double edge = std::hypot(dropX - (segment.x0 + spanX * along), dropY - (segment.y0 + spanY * along)) - halfWidth;
-                if (nearest < 0.0 || edge < nearest) nearest = edge;
+            for (double radius = 0.0; nearest < 0.0 && radius <= kReachMeters; radius += 0.5) {
+                const int points = std::max(1, static_cast<int>(std::ceil(2.0 * std::numbers::pi * radius / 0.5)));
+                for (int j = 0; j < points && nearest < 0.0; ++j) {
+                    const double angle = 2.0 * std::numbers::pi * j / points;
+                    if (rivers.sampleAt(dropX + radius * std::cos(angle), dropY + radius * std::sin(angle)).isRiver) nearest = radius;
+                }
             }
-            EXPECT_NEAR(nearest, site.spawn.waterDistanceMeters, 0.5) << "site " << i;
+            EXPECT_NEAR(nearest, site.spawn.waterDistanceMeters, 1.0) << "site " << i;
         } else {
             ASSERT_EQ(site.feature, FreshWaterFeature::Lake) << "site " << i;
             const PlanetSampler sampler(world, site.origin.latDeg, site.origin.lonDeg);

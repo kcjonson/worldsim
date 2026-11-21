@@ -5,6 +5,7 @@
 #include "worldgen/sampling/PlanetSampler.h"
 #include "worldgen/sampling/RiverNetwork2D.h"
 #include "worldgen/sampling/RiverWorld.test.h"
+#include "worldgen/sampling/SphericalProjection.h"
 
 #include <gtest/gtest.h>
 
@@ -13,12 +14,14 @@
 #include <cmath>
 #include <memory>
 #include <numbers>
+#include <utility>
 #include <vector>
 
 namespace worldgen {
 
 namespace {
 
+using test_support::addLake;
 using test_support::carveRiver;
 using test_support::dotProduct;
 using test_support::GrasslandBlock;
@@ -48,42 +51,119 @@ Landing riverSource() {
     return landing;
 }
 
-// A point on the east coast of the grassland: `inlandMeters` back from the edge between a land tile and its
-// ocean neighbour, found by bisection on the grid's own lookup, and `alongCoastMeters` along that edge.
-// With `riverToSea`, a river runs from the land tile into that ocean neighbour, across the edge there.
-Landing eastCoast(double inlandMeters, double alongCoastMeters, bool riverToSea) {
-    Landing           landing{makeWorld()};
-    GeneratedWorld&   world = *landing.world;
+// The east coast of the grassland on the equator: its easternmost land tile, that tile's easternmost ocean
+// neighbour, and the edge between them as the grid's own lookup draws it.
+struct Coast {
+    std::shared_ptr<GeneratedWorld> world;
+    TileId                          land{kInvalidTile};
+    TileId                          across{kInvalidTile};
+    Vec3d                           edge{};   // on the edge, on the line between the two centres
+    Vec3d                           inward{}; // unit, tangent, toward the land tile's centre
+    Vec3d                           along{};  // unit, tangent, along the edge
+
+    // The point inwardMeters toward the land tile and alongMeters along the edge from `edge`, on the sphere.
+    [[nodiscard]] Vec3d offset(double inwardMeters, double alongMeters) const {
+        const double radius = world->derived.planetRadiusMeters;
+        const Vec3d  moved{edge.x + (inward.x * inwardMeters + along.x * alongMeters) / radius,
+                          edge.y + (inward.y * inwardMeters + along.y * alongMeters) / radius,
+                          edge.z + (inward.z * inwardMeters + along.z * alongMeters) / radius};
+        const double length = std::sqrt(dotProduct(moved, moved));
+        return Vec3d{moved.x / length, moved.y / length, moved.z / length};
+    }
+
+    // Where the land tile's boundary lies alongMeters along, as meters inward of the straight line through
+    // `edge`: the edge bends away from that line, so it is found by bisection across it, to a centimetre.
+    [[nodiscard]] double boundaryAt(double alongMeters) const {
+        constexpr double kAcrossMeters = 20000.0; // past how far the edge strays from that line on this grid
+        double           outside = -kAcrossMeters;
+        double           inside = kAcrossMeters;
+        while (inside - outside > 0.01) {
+            const double middle = 0.5 * (inside + outside);
+            if (world->grid->fromUnitVector(offset(middle, alongMeters)) == land) {
+                inside = middle;
+            } else {
+                outside = middle;
+            }
+        }
+        return inside;
+    }
+
+    // The tile just outside the land tile's boundary alongMeters along: `across` while on this edge.
+    [[nodiscard]] TileId outsideAt(double alongMeters) const {
+        return world->grid->fromUnitVector(offset(boundaryAt(alongMeters) - 1.0, alongMeters));
+    }
+
+    // A landing origin inlandMeters back from the edge where it lies alongMeters along.
+    [[nodiscard]] Landing at(double inlandMeters, double alongMeters) const {
+        Landing landing{world};
+        SphereGrid::latLonFromUnitVector(offset(boundaryAt(alongMeters) + inlandMeters, alongMeters), landing.latDeg,
+                                         landing.lonDeg);
+        return landing;
+    }
+
+    // How far along the edge it ends, to a metre by bisection, and the third tile at that corner: of the two
+    // tiles bordering both, the one whose centre is nearer the corner.
+    [[nodiscard]] std::pair<double, TileId> corner() const {
+        constexpr double kFarPastAnyCornerMeters = 500000.0;
+        double           onEdge = 0.0;
+        double           pastEnd = kFarPastAnyCornerMeters;
+        while (pastEnd - onEdge > 1.0) {
+            const double middle = 0.5 * (onEdge + pastEnd);
+            if (outsideAt(middle) == across) {
+                onEdge = middle;
+            } else {
+                pastEnd = middle;
+            }
+        }
+        const SphereGrid&     grid = *world->grid;
+        const Vec3d           cornerPoint = offset(boundaryAt(onEdge), onEdge);
+        std::array<TileId, 6> landNeighbours{};
+        std::array<TileId, 6> acrossNeighbours{};
+        const uint32_t        landCount = grid.neighbors(land, landNeighbours);
+        const uint32_t        acrossCount = grid.neighbors(across, acrossNeighbours);
+        TileId                third = kInvalidTile;
+        for (uint32_t i = 0; i < landCount; ++i) {
+            const TileId candidate = landNeighbours[i];
+            const bool   bordersAcross = std::find(acrossNeighbours.begin(), acrossNeighbours.begin() + acrossCount, candidate) !=
+                                       acrossNeighbours.begin() + acrossCount;
+            if (bordersAcross &&
+                (third == kInvalidTile || dotProduct(grid.tileCenter(candidate), cornerPoint) > dotProduct(grid.tileCenter(third), cornerPoint))) {
+                third = candidate;
+            }
+        }
+        return {onEdge, third};
+    }
+};
+
+Coast eastCoast() {
+    Coast             coast{makeWorld()};
+    GeneratedWorld&   world = *coast.world;
     const SphereGrid& grid = *world.grid;
-    // The easternmost land tile on the equator and its easternmost ocean neighbour.
-    TileId land = kInvalidTile;
-    double landLonDeg = -180.0;
+    double            landLonDeg = -180.0;
     for (TileId tile = 0; tile < grid.tileCount(); ++tile) {
         double latDeg = 0.0;
         double lonDeg = 0.0;
         grid.latLonOf(tile, latDeg, lonDeg);
         if (std::abs(latDeg) < 2.0 && (world.data.flags[tile] & kFlagOcean) == 0 && lonDeg > landLonDeg) {
-            land = tile;
+            coast.land = tile;
             landLonDeg = lonDeg;
         }
     }
     std::array<TileId, 6> neighbours{};
-    const uint32_t        count = grid.neighbors(land, neighbours);
-    TileId                ocean = kInvalidTile;
+    const uint32_t        count = grid.neighbors(coast.land, neighbours);
     double                oceanLonDeg = -180.0;
     for (uint32_t i = 0; i < count; ++i) {
         double latDeg = 0.0;
         double lonDeg = 0.0;
         grid.latLonOf(neighbours[i], latDeg, lonDeg);
         if ((world.data.flags[neighbours[i]] & kFlagOcean) != 0 && lonDeg > oceanLonDeg) {
-            ocean = neighbours[i];
+            coast.across = neighbours[i];
             oceanLonDeg = lonDeg;
         }
     }
-    if (riverToSea) carveRiver(world, land, ocean);
 
-    const Vec3d from = grid.tileCenter(land);
-    const Vec3d to = grid.tileCenter(ocean);
+    const Vec3d from = grid.tileCenter(coast.land);
+    const Vec3d to = grid.tileCenter(coast.across);
     const auto  between = [&](double share) {
         const Vec3d  mixed{from.x + (to.x - from.x) * share, from.y + (to.y - from.y) * share, from.z + (to.z - from.z) * share};
         const double length = std::sqrt(dotProduct(mixed, mixed));
@@ -93,25 +173,28 @@ Landing eastCoast(double inlandMeters, double alongCoastMeters, bool riverToSea)
     double outside = 1.0;
     for (int halving = 0; halving < 60; ++halving) {
         const double middle = 0.5 * (inside + outside);
-        if (grid.fromUnitVector(between(middle)) == land) {
+        if (grid.fromUnitVector(between(middle)) == coast.land) {
             inside = middle;
         } else {
             outside = middle;
         }
     }
-    const Vec3d  edge = between(inside);
-    const Vec3d  inwardRaw{from.x - edge.x * dotProduct(edge, from), from.y - edge.y * dotProduct(edge, from),
+    const Vec3d edge = between(inside);
+    const Vec3d inwardRaw{from.x - edge.x * dotProduct(edge, from), from.y - edge.y * dotProduct(edge, from),
                           from.z - edge.z * dotProduct(edge, from)};
     const double inwardLength = std::sqrt(dotProduct(inwardRaw, inwardRaw));
     const Vec3d  inward{inwardRaw.x / inwardLength, inwardRaw.y / inwardLength, inwardRaw.z / inwardLength};
-    const Vec3d  along{edge.y * inward.z - edge.z * inward.y, edge.z * inward.x - edge.x * inward.z,
-                      edge.x * inward.y - edge.y * inward.x};
-    const double radius = world.derived.planetRadiusMeters;
-    const Vec3d  moved{edge.x + (inward.x * inlandMeters + along.x * alongCoastMeters) / radius,
-                      edge.y + (inward.y * inlandMeters + along.y * alongCoastMeters) / radius,
-                      edge.z + (inward.z * inlandMeters + along.z * alongCoastMeters) / radius};
-    SphereGrid::latLonFromUnitVector(moved, landing.latDeg, landing.lonDeg);
-    return landing;
+    coast.edge = edge;
+    coast.inward = inward;
+    coast.along = Vec3d{edge.y * inward.z - edge.z * inward.y, edge.z * inward.x - edge.x * inward.z, edge.x * inward.y - edge.y * inward.x};
+    return coast;
+}
+
+// A tile, land or ocean, turned into a lake above sea level.
+void makeLake(GeneratedWorld& world, TileId tile) {
+    world.data.flags[tile] = 0;
+    addLake(world, tile);
+    world.data.elevation[tile] = 500.0F;
 }
 
 struct NearestWater {
@@ -196,7 +279,7 @@ TEST(SpawnSite, NoPointThirtyMetersFromWaterTakesTheFarthest) {
 }
 
 TEST(SpawnSite, OceanShoreGivesAnOceanDropThirtyMetersBack) {
-    const Landing   landing = eastCoast(20.0, 0.0, false);
+    const Landing   landing = eastCoast().at(20.0, 0.0);
     const SpawnSite site = findWatersideSpawn(landing.world, landing.latDeg, landing.lonDeg);
     EXPECT_EQ(site.water, SpawnWater::Ocean);
     EXPECT_TRUE(site.clear);
@@ -207,16 +290,66 @@ TEST(SpawnSite, OceanShoreGivesAnOceanDropThirtyMetersBack) {
     EXPECT_NEAR(nearest.radius, site.waterDistanceMeters, kStepMeters) << "the shore read independently";
 }
 
-// The ocean is the water nearest the origin, a river a little farther along the coast: the drop still takes
-// the river.
-TEST(SpawnSite, RiverComesBeforeANearerOcean) {
-    const Landing landing = eastCoast(20.0, 120.0, true);
-    ASSERT_FALSE(nearestWater(landing, 0.0, 0.0, 60.0).river) << "the ocean is nearer the origin than the river";
+// The origin is 20 m in from the shore at the coast's tile across; the point 30 m in, straight inland of it,
+// is a clear drop beside that shore. Checked independently: dry, its nearest water that shore 30 m off, and
+// nearer the origin than the drop the search took.
+void expectClearShorePointNearerThan(const Coast& coast, const Landing& landing, const SpawnSite& drop, double alongMeters) {
+    const SphericalProjection projection(landing.world->derived.planetRadiusMeters, landing.latDeg, landing.lonDeg);
+    const Landing             point = coast.at(kLandingWaterDistanceMeters, alongMeters);
+    const WorldPos2d          position = projection.latLonToWorld({point.latDeg, point.lonDeg});
 
+    const PlanetSampler sampler(landing.world, landing.latDeg, landing.lonDeg);
+    EXPECT_FALSE(sampler.sampleAt(position.x, position.y).water);
+    const NearestWater nearest = nearestWater(landing, position.x, position.y, 40.0);
+    EXPECT_FALSE(nearest.river);
+    EXPECT_NEAR(nearest.radius, kLandingWaterDistanceMeters, kLandingWaterDistanceToleranceMeters);
+    EXPECT_LT(std::hypot(position.x, position.y), std::hypot(drop.xMeters, drop.yMeters))
+        << "the shore's clear point is nearer the origin than the drop";
+}
+
+// A clear ocean drop lies nearer the origin than the river's, which the drop still takes.
+TEST(SpawnSite, RiverComesBeforeANearerOcean) {
+    const Coast coast = eastCoast();
+    carveRiver(*coast.world, coast.land, coast.across);
+    const Landing   landing = coast.at(20.0, 120.0);
     const SpawnSite site = findWatersideSpawn(landing.world, landing.latDeg, landing.lonDeg);
+    expectClearShorePointNearerThan(coast, landing, site, 120.0);
+
     EXPECT_EQ(site.water, SpawnWater::River);
     EXPECT_TRUE(site.clear);
     EXPECT_TRUE(nearestWater(landing, site.xMeters, site.yMeters, 40.0).river);
+}
+
+// The same with a lake across the shore: a clear lake drop lies nearer, and the drop takes the river.
+TEST(SpawnSite, RiverComesBeforeANearerLake) {
+    const Coast coast = eastCoast();
+    makeLake(*coast.world, coast.across);
+    carveRiver(*coast.world, coast.land, coast.across);
+    const Landing   landing = coast.at(20.0, 120.0);
+    const SpawnSite site = findWatersideSpawn(landing.world, landing.latDeg, landing.lonDeg);
+    expectClearShorePointNearerThan(coast, landing, site, 120.0);
+
+    EXPECT_EQ(site.water, SpawnWater::River);
+    EXPECT_TRUE(site.clear);
+    EXPECT_TRUE(nearestWater(landing, site.xMeters, site.yMeters, 40.0).river);
+}
+
+// The ocean 20 m off, and the tile at the end of the coast's edge, 100 m along it, made a lake: a clear ocean
+// drop lies nearer, and the drop takes the lake.
+TEST(SpawnSite, LakeComesBeforeANearerOcean) {
+    const Coast coast = eastCoast();
+    const auto [cornerMeters, beyond] = coast.corner();
+    makeLake(*coast.world, beyond);
+    const double    alongMeters = cornerMeters - 100.0;
+    const Landing   landing = coast.at(20.0, alongMeters);
+    const SpawnSite site = findWatersideSpawn(landing.world, landing.latDeg, landing.lonDeg);
+    expectClearShorePointNearerThan(coast, landing, site, alongMeters);
+
+    EXPECT_EQ(site.water, SpawnWater::Lake);
+    EXPECT_TRUE(site.clear);
+    const PlanetSampler sampler(landing.world, landing.latDeg, landing.lonDeg);
+    EXPECT_FALSE(sampler.sampleAt(site.xMeters, site.yMeters).water);
+    EXPECT_NEAR(site.waterDistanceMeters, kLandingWaterDistanceMeters, kLandingWaterDistanceToleranceMeters);
 }
 
 TEST(SpawnSite, DryWorldFallsBackToOrigin) {
