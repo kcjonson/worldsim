@@ -20,7 +20,15 @@ add_library(assets
     assets/ConfigFiles.cpp
     assets/ConfigValidator.cpp
     assets/CreatureConfigFiles.cpp
+    assets/EntryActionReading.cpp
+    assets/EntryBehaviorReading.cpp
+    assets/EntryChainReading.cpp
+    assets/EntryCreatureLoading.cpp
     assets/EntryLoader.cpp
+    assets/EntryQueryReading.cpp
+    assets/EntryReading.cpp
+    assets/EntryResolution.cpp
+    assets/EntrySharedReading.cpp
     assets/MemoryConfig.cpp
     assets/MoodConfig.cpp
     assets/NeedsConfig.cpp

@@ -453,6 +453,10 @@ namespace assets {
 
 	// --- The library ---------------------------------------------------------------------------------------
 
+	namespace entry_loading {
+		class Loader;
+	}
+
 	/// Everything loadEntries read, with every reference resolved. Empty when the load had any error.
 	struct EntryLibrary {
 		std::vector<std::string>   needIds;
@@ -480,6 +484,11 @@ namespace assets {
 		[[nodiscard]] std::optional<NeedId> findNeed(std::string_view id) const;
 
 		using IdIndex = std::map<std::string, uint32_t, std::less<>>;
+
+	  private:
+		/// The loader fills the indexes; everything else reads them through the find functions.
+		friend class entry_loading::Loader;
+
 		IdIndex behaviorIds;
 		IdIndex chainIds;
 		IdIndex queryIds;
@@ -489,7 +498,6 @@ namespace assets {
 		IdIndex orderIds;
 		IdIndex needIndex;
 
-	  private:
 		template <typename Entry>
 		static EntryHandle<Entry> find(const IdIndex& index, std::string_view id) {
 			const auto found = index.find(id);
