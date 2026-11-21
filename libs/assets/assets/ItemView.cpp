@@ -141,15 +141,19 @@ namespace assets {
 			std::vector<ClipVertex> next;
 			for (size_t t = 0; t + 2 < source.indices.size(); t += 3) {
 				const std::array<uint32_t, 3> corners = {source.indices[t], source.indices[t + 1], source.indices[t + 2]};
-				// Wholly outside one plane (for a band, its x range misses the band's): nothing to clip.
+				// Nothing strictly inside one plane (for a band, its x range misses the band's or only touches its edge):
+				// no area to keep, so nothing to clip, and a corner merely on the line doesn't become a triangle.
 				bool outside = false;
 				bool inside = true;
 				for (const HalfPlane& plane : planes) {
 					int insideCount = 0;
+					int strictlyInsideCount = 0;
 					for (const uint32_t index : corners) {
-						insideCount += plane.distance(source.positions[index]) >= 0.0F ? 1 : 0;
+						const float distance = plane.distance(source.positions[index]);
+						insideCount += distance >= 0.0F ? 1 : 0;
+						strictlyInsideCount += distance > 0.0F ? 1 : 0;
 					}
-					outside = outside || insideCount == 0;
+					outside = outside || strictlyInsideCount == 0;
 					inside = inside && insideCount == 3;
 				}
 				if (outside) {
@@ -178,7 +182,9 @@ namespace assets {
 						if (currentSide >= 0.0F) {
 							next.push_back(current);
 						}
-						if ((currentSide >= 0.0F) != (followingSide >= 0.0F)) {
+						// Only an edge from strictly one side to strictly the other is cut: an end on the line is kept as
+						// itself, so no cut repeats it and a triangle touching the region at a point leaves no piece.
+						if ((currentSide > 0.0F && followingSide < 0.0F) || (currentSide < 0.0F && followingSide > 0.0F)) {
 							next.push_back(cutBetween(current, following, currentSide, followingSide, plane, source));
 						}
 					}
@@ -523,7 +529,8 @@ namespace assets {
 					if (to - from <= kNoOverlap || bands[band].intervals.empty()) {
 						continue;
 					}
-					// Past the footprint's end, the interval its edge touches: the one nearest the footprint at its end.
+					// Past the footprint's end, the interval its edge touches: the one nearest the middle of the footprint's
+					// y span at its end x, the northern of two equally near.
 					const float x = std::clamp((from + to) * 0.5F, lowest, highest);
 					const auto [top, bottom] = ySpanAt(footprints[placement], x);
 					const float y = (top + bottom) * 0.5F;
@@ -536,8 +543,7 @@ namespace assets {
 							bestDistance = distance;
 							best = index;
 						}
-					}
-					// The outline reaches pad past the footprint in any direction, so across a steep edge it reaches further
+					}					// The outline reaches pad past the footprint in any direction, so across a steep edge it reaches further
 					// than pad in y: the footprint's y range is taken over the piece widened by pad, then padded.
 					const auto [minY, maxY] = yRangeBetween(footprints[placement], from - pad, to + pad);
 					cells.push_back({.band = band, .interval = best, .placement = placement, .minY = minY - part.topMeters * config.heightRatio - pad, .maxY = maxY + pad});
@@ -638,13 +644,14 @@ namespace assets {
 							  .maxX = to + 1 == bands.size() ? kInfinity : bands[to].maxX
 						  };
 						// A band with no collider in it (a gap between two bodies) holds no strip, so the outline reaching
-						// into it stays with this piece: nothing but outlines reaching from either side is drawn there.
+						// into it stays with this piece: nothing but outlines reaching from either side is drawn there. Only
+						// the body on that side of the gap takes it; an outline that crossed a narrow gap is cut at its edge.
 						const auto [extentMin, extentMax] = xRangeOf(footprints[placement]);
-						if (from > 0 && bands[from - 1].intervals.empty()) {
+						if (from > 0 && bands[from - 1].intervals.empty() && extentMin >= bands[from - 1].minX) {
 							piece.minX = std::max(bands[from - 1].minX, extentMin - pad);
 							strip.minX = std::min(strip.minX, piece.minX);
 						}
-						if (to + 1 < bands.size() && bands[to + 1].intervals.empty()) {
+						if (to + 1 < bands.size() && bands[to + 1].intervals.empty() && extentMax <= bands[to + 1].maxX) {
 							piece.maxX = std::min(bands[to + 1].maxX, extentMax + pad);
 							strip.maxX = std::max(strip.maxX, piece.maxX);
 						}
