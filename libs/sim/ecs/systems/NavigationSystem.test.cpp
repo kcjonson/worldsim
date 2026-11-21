@@ -3393,7 +3393,9 @@ TEST_F(NavigationSystemTest, OffMeshColonistSnappedOntoMesh) {
 	settle(nav);
 	ASSERT_TRUE(nav.hasMesh()) << "navmesh never built";
 
-	AIDecisionSystem& ai = world.registerSystem<AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234u);
+	AIDecisionSystem& ai = world.registerSystem<AIDecisionSystem>(
+		assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), 1234u
+	);
 	ai.setNavigationSystem(&nav);
 	ai.setColonyOrigin(glm::vec2{0.0F, 0.0F});
 
@@ -3427,7 +3429,9 @@ TEST_F(NavigationSystemTest, ColonistInAObstacleIsNotStranded) {
 	nav.setConstructionWorld(&cw);
 	settle(nav);
 
-	AIDecisionSystem& ai = world.registerSystem<AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234u);
+	AIDecisionSystem& ai = world.registerSystem<AIDecisionSystem>(
+		assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), 1234u
+	);
 	ai.setNavigationSystem(&nav);
 	ai.setColonyOrigin(glm::vec2{0.0F, 0.0F});
 	ASSERT_FALSE(meshClear(nav, obstacleAt)) << "the obstacle is not clear ground";
@@ -3474,7 +3478,9 @@ TEST_F(NavigationSystemTest, UnmeshedColonistNotRelocated) {
 	settle(nav);
 	ASSERT_TRUE(nav.hasMesh()) << "navmesh never built";
 
-	AIDecisionSystem& ai = world.registerSystem<AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234u);
+	AIDecisionSystem& ai = world.registerSystem<AIDecisionSystem>(
+		assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), 1234u
+	);
 	ai.setNavigationSystem(&nav);
 	ai.setColonyOrigin(glm::vec2{2.0F, 1.5F});
 
@@ -3689,7 +3695,8 @@ TEST_F(ForwardSnapTest, ClearRouteOnWalkableGroundIsKept) {
 // On walkable ground with a wall built across the route ahead, the AI replans from where it stands: a
 // route stamped with the new generation that goes round the wall.
 TEST_F(ForwardSnapTest, RouteBlockedAheadIsReplannedFromWhereItStands) {
-	AIDecisionSystem& ai = world.registerSystem<AIDecisionSystem>(AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234u);
+	AIDecisionSystem& ai =
+		world.registerSystem<AIDecisionSystem>(AssetRegistry::Get(), assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), 1234u);
 	ai.setNavigationSystem(sys);
 	const glm::vec2 at{-16.0F, 20.0F};
 	const glm::vec2 goal{-4.0F, 20.0F};
@@ -3826,7 +3833,9 @@ TEST_F(NavigationSystemTest, WalkerShovedIntoAnObstacleKeepsItsTask) {
 		nav.setConstructionWorld(&cw);
 		settle(nav);
 
-		AIDecisionSystem& ai = world.registerSystem<AIDecisionSystem>(AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234u);
+		AIDecisionSystem& ai = world.registerSystem<AIDecisionSystem>(
+			AssetRegistry::Get(), assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), 1234u
+		);
 		ai.setNavigationSystem(&nav);
 		world.registerSystem<MovementSystem>();
 		world.registerSystem<PhysicsSystem>();
@@ -4238,7 +4247,9 @@ namespace {
 		// Registers the AI and the movers once the obstacles placed so far are in.
 		void start() {
 			settle(nav);
-			ai = &world.registerSystem<AIDecisionSystem>(AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234u);
+			ai = &world.registerSystem<AIDecisionSystem>(
+				AssetRegistry::Get(), assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), 1234u
+			);
 			ai->setNavigationSystem(&nav);
 			world.registerSystem<MovementSystem>();
 			world.registerSystem<PhysicsSystem>();
@@ -4899,7 +4910,8 @@ TEST_F(NavigationSystemTest, LongMoveOrderKeepsItsGroundWhileTheCameraWanders) {
 	stream();
 	settle(nav);
 	world.destroyEntity(lookout);
-	auto& ai = world.registerSystem<AIDecisionSystem>(AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234u);
+	auto& ai =
+		world.registerSystem<AIDecisionSystem>(AssetRegistry::Get(), assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), 1234u);
 	ai.setNavigationSystem(&nav);
 	world.registerSystem<MovementSystem>();
 	world.registerSystem<PhysicsSystem>();

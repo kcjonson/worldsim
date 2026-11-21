@@ -5,7 +5,7 @@
 -->
 <thoughts>
   <thought id="starting_craft" label="Started a craft" importance="trivial">
-    <source trigger="actionStarts" action="Craft"/>
+    <source trigger="actionStarts" action="craft"/>
     <feeling is="eager"/>
     <feeling is="bored" when="attribute(intelligence) &lt; 7"/>
     <line>One {subject}, coming up.</line>
@@ -15,7 +15,7 @@
   </thought>
 
   <thought id="first_craft" label="Finished a first craft" importance="normal">
-    <source trigger="actionFinishes" action="Craft" first="true"/>
+    <source trigger="actionFinishes" action="craft" first="true"/>
     <feeling is="proud" mood="+3" hours="12"/>
     <line>My very first {subject}!</line>
     <line>Look what I made!</line>
@@ -23,7 +23,7 @@
   </thought>
 
   <thought id="finished_building" label="Finished building" importance="trivial">
-    <source trigger="actionFinishes" action="Build"/>
+    <source trigger="actionFinishes" action="build"/>
     <feeling is="proud"/>
     <line>Built that with my own hands.</line>
     <line>Not bad, if I say so myself.</line>

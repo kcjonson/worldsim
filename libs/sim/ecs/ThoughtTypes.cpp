@@ -87,14 +87,6 @@ namespace ecs {
 				}
 				source.need = *need;
 			}
-			if (def.trigger == ThoughtTrigger::ActionStarts || def.trigger == ThoughtTrigger::ActionFinishes) {
-				const std::optional<ActionType> action = actionTypeFromName(def.action);
-				if (!action.has_value() || *action == ActionType::None) {
-					errors.push_back(where + ": no action is called '" + def.action + "'");
-					return std::nullopt;
-				}
-				source.action = *action;
-			}
 			if (def.thing == assets::kGroundName) {
 				source.thing = ThingFilter::Ground;
 			} else if (const std::optional<assets::CapabilityType> capability = assets::capabilityFromName(def.thing)) {
@@ -140,6 +132,7 @@ namespace ecs {
 
 		std::vector<ThoughtType>   newTypes;
 		std::vector<ThoughtSource> newSources;
+		std::vector<ActionName>	   newActionNames;
 		for (const assets::ThoughtTypeDef& def : config.types) {
 			const std::string what = def.source + ": thought '" + def.id + "'";
 			ThoughtType		  type{.name = def.id, .label = def.label, .importance = def.importance, .stacks = def.stacks};
@@ -202,8 +195,12 @@ namespace ecs {
 			}
 
 			for (std::size_t index = 0; index < def.sources.size(); ++index) {
-				if (std::optional<ThoughtSource> source =
-						buildSource(def.sources[index], newTypesByName.at(def.id), what + " source " + std::to_string(index + 1), errors)) {
+				const assets::ThoughtSourceDef& sourceDef = def.sources[index];
+				const std::string				where = what + " source " + std::to_string(index + 1);
+				if (std::optional<ThoughtSource> source = buildSource(sourceDef, newTypesByName.at(def.id), where, errors)) {
+					if (sourceDef.trigger == ThoughtTrigger::ActionStarts || sourceDef.trigger == ThoughtTrigger::ActionFinishes) {
+						newActionNames.push_back({.source = newSources.size(), .written = sourceDef.action, .place = where});
+					}
 					newSources.push_back(*source);
 				}
 			}
@@ -262,10 +259,26 @@ namespace ecs {
 		feelingsByName = std::move(newFeelingsByName);
 		types = std::move(newTypes);
 		thoughtSources = std::move(newSources);
+		actionNames = std::move(newActionNames);
 		typesByName = std::move(newTypesByName);
 		whileCheckSeconds = static_cast<double>(tuning.whileCheckMinutes) * kSimulationSecondsPerGameHour / kGameMinutesPerHour;
 		subjectNameLength = tuning.maxSubjectNameLength;
 		thoughtKeeping = newKeeping;
+		return errors;
+	}
+
+	std::vector<std::string> ThoughtTypes::resolveActions(const assets::EntryLibrary& entries) {
+		std::vector<std::string> errors;
+		for (const ActionName& name : actionNames) {
+			const assets::EntryHandle<assets::ActionEntry> action = entries.findAction(name.written);
+			if (!action.valid()) {
+				errors.push_back(name.place + ": no action is called '" + name.written + "'");
+			} else if (entries.actions[action.index].group) {
+				errors.push_back(name.place + ": '" + name.written + "' is an action group; a source names one action");
+			} else {
+				thoughtSources[name.source].action = action;
+			}
+		}
 		return errors;
 	}
 

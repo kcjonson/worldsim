@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- human/sleeping. See /docs/technical/queries-and-chains.md (The human behaviors). -->
+<behavior id="sleeping" label="Sleeping">
+  <action id="sleep" seconds="8" hands="any" interruptable="true" asleep="true">
+    <restore need="energy" amount="60" scaleBy="sleep_quality"/>
+  </action>
+</behavior>

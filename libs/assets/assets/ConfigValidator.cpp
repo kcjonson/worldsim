@@ -2,7 +2,6 @@
 // Validates cross-registry references for work configuration.
 
 #include "assets/ConfigValidator.h"
-#include "assets/ActionTypeRegistry.h"
 #include "assets/ConstructionRegistry.h"
 #include "assets/MemoryConfig.h"
 #include "assets/MoodConfig.h"
@@ -17,16 +16,6 @@
 namespace assets {
 
 std::vector<ValidationError> ConfigValidator::errors;
-
-bool ConfigValidator::validateActionTypes() {
-    // ActionTypes has no dependencies - just check it's loaded
-    if (ActionTypeRegistry::Get().size() == 0) {
-        addError("ActionTypes", "No action types loaded",
-                "Ensure assets/config/legacy/action-types.xml exists and is valid");
-        return false;
-    }
-    return true;
-}
 
 bool ConfigValidator::validateWorkTypes() {
     const auto& workTypeRegistry = WorkTypeRegistry::Get();
@@ -549,11 +538,6 @@ bool ConfigValidator::validateAll() {
     bool valid = true;
 
     // Validate in dependency order
-    if (!validateActionTypes()) {
-        LOG_ERROR(Engine, "ActionTypes validation failed");
-        valid = false;
-    }
-
     if (!validateWorkTypes()) {
         LOG_ERROR(Engine, "WorkTypes validation failed");
         valid = false;

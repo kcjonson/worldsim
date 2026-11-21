@@ -17,8 +17,9 @@
                                                     a change across several is told once, by the level it
                                                     lands in
       trigger="actionStarts|actionFinishes" action [on] [first]
-                                                    a colonist starts or finishes an action (Eat, Sleep,
-                                                    Craft, Build, ...); on="ground" for one about no thing,
+                                                    a colonist starts or finishes an action, named by its
+                                                    action entry id (human/eat, human/sleep, craft, build,
+                                                    ...); on="ground" for one about no thing,
                                                     or a capability its kind of thing has (sleepable);
                                                     first="true" only the first time for that kind of thing
                                                     Taking up work already begun (a blueprint with work
@@ -36,7 +37,7 @@
 -->
 <thoughts>
   <thought id="ate_good_meal" label="Ate a good meal" importance="normal">
-    <source trigger="actionFinishes" action="Eat"/>
+    <source trigger="actionFinishes" action="human/eat"/>
     <feeling is="content" mood="+5" hours="6"/>
     <feeling is="grateful" when="attribute(kindness) >= 14" mood="+5" hours="6"/>
     <line>That hit the spot.</line>
@@ -46,7 +47,7 @@
   </thought>
 
   <thought id="slept_on_ground" label="Slept on the ground" importance="normal">
-    <source trigger="actionFinishes" action="Sleep" on="ground"/>
+    <source trigger="actionFinishes" action="human/sleep" on="ground"/>
     <feeling is="miserable" mood="-10" hours="24"/>
     <feeling is="resigned" when="attribute(sanity) >= 14" mood="-6" hours="24"/>
     <feeling is="furious" when="attribute(civility) &lt; 6 and attribute(sanity) &lt; 8" mood="-12" hours="24"/>
@@ -59,7 +60,7 @@
   </thought>
 
   <thought id="slept_in_bed" label="Slept in a bed" importance="normal">
-    <source trigger="actionFinishes" action="Sleep" on="sleepable"/>
+    <source trigger="actionFinishes" action="human/sleep" on="sleepable"/>
     <feeling is="content" mood="+4" hours="12"/>
     <feeling is="delighted" when="attribute(sanity) >= 15" mood="+5" hours="12"/>
     <line>Slept like a log.</line>
