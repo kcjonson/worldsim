@@ -905,6 +905,21 @@ namespace assets {
 		return ring;
 	}
 
+	std::vector<AreaPolygon> reservedRegion(const AssetDefinition& def) {
+		std::vector<std::vector<Ring2>> groups;
+		for (const CollisionShape& collider : def.partsColliders) {
+			groups.push_back({collider.pointsMeters});
+		}
+		if (def.parts != nullptr) {
+			for (const AreaPolygon& polygon : def.parts->clearance.polygons) {
+				std::vector<Ring2>& group = groups.emplace_back();
+				group.push_back(polygon.outer);
+				group.insert(group.end(), polygon.holes.begin(), polygon.holes.end());
+			}
+		}
+		return groups.empty() ? std::vector<AreaPolygon>{} : unionInMeters(groups);
+	}
+
 	std::vector<std::vector<size_t>> partsDrawnAfter(const PartsAsset& asset, const std::vector<std::vector<glm::vec2>>& screenFootprints) {
 		const size_t					 count = screenFootprints.size();
 		std::vector<std::vector<size_t>> later(count);

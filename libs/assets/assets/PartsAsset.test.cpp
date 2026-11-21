@@ -659,6 +659,25 @@ TEST_F(PartsAssetTest, AClearanceMarginOfZeroIsNoClearance) {
 	EXPECT_TRUE(def->parts->clearance.polygons.empty());
 }
 
+// The reserved region (section 4.2) is the collider unioned with the clearance: a 1 m box with a 0.5 m clearance strip
+// that overlaps its front by 0.1 m is one outline of 1 + 0.4 square metres, and a box with no clearance is its collider.
+TEST_F(PartsAssetTest, TheReservedRegionIsTheColliderUnionedWithTheClearance) {
+	const std::string box = "<parts>" + block("box", -0.5F, -0.5F, 0.5F, 0.5F, 0, 1) + "</parts><placements>" + place("box") + "</placements>";
+	writeDef("Kept", box + "<clearance>" + rect(-0.5F, 0.4F, 0.5F, 0.9F) + "</clearance>");
+	writeDef("Bare", box);
+	const AssetDefinition* kept = load("Kept");
+	ASSERT_NE(kept, nullptr);
+	const std::vector<AreaPolygon> region = reservedRegion(*kept);
+	ASSERT_EQ(region.size(), 1U);
+	EXPECT_NEAR(area(ItemArea{.polygons = region}), 1.4, 1e-4);
+
+	const AssetDefinition* bare = AssetRegistry::Get().getDefinition("Bare");
+	ASSERT_NE(bare, nullptr);
+	const std::vector<AreaPolygon> colliderOnly = reservedRegion(*bare);
+	ASSERT_EQ(colliderOnly.size(), 1U);
+	EXPECT_NEAR(area(ItemArea{.polygons = colliderOnly}), 1.0, 1e-4);
+}
+
 TEST_F(PartsAssetTest, AreasAndFacesNeedWhatTheSchemaRequires) {
 	const std::string body = "<parts>" + block("box", -0.5F, -0.5F, 0.5F, 0.5F, 0, 1) + "</parts><placements>" + place("box") + "</placements>";
 	writeDef("NoAreas", body + "<useAreas/>");

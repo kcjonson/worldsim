@@ -16,7 +16,7 @@ void PlacementMode::enterMenu() {
 	LOG_DEBUG(Game, "PlacementMode: entered menu");
 }
 
-void PlacementMode::selectItem(const std::string& defName) {
+void PlacementMode::selectItem(const std::string& defName, uint32_t turnQuanta) {
 	// Allow selection from None (direct dropdown) or MenuOpen (build menu flow)
 	if (m_state != PlacementState::None && m_state != PlacementState::MenuOpen) {
 		return;
@@ -25,6 +25,7 @@ void PlacementMode::selectItem(const std::string& defName) {
 		return;
 	}
 	m_selectedDefName = defName;
+	m_ghostTurnQuanta = turnQuanta;
 	m_state = PlacementState::Placing;
 	// Invalid until the first ghost update reports a placeable spot under the cursor.
 	m_isValidPlacement = false;
@@ -41,8 +42,9 @@ void PlacementMode::cancel() {
 	m_isValidPlacement = false;
 }
 
-void PlacementMode::updateGhostPosition(Foundation::Vec2 worldPos, bool valid) {
+void PlacementMode::updateGhost(Foundation::Vec2 worldPos, uint32_t turnQuanta, bool valid) {
 	m_ghostPosition = worldPos;
+	m_ghostTurnQuanta = turnQuanta;
 	m_isValidPlacement = valid;
 }
 
@@ -60,9 +62,12 @@ bool PlacementMode::tryPlace() {
 		return false;
 	}
 
-	LOG_DEBUG(Game, "PlacementMode: placing '%s' at (%.1f, %.1f)", m_selectedDefName.c_str(), m_ghostPosition.x, m_ghostPosition.y);
+	LOG_DEBUG(
+		Game, "PlacementMode: placing '%s' at (%.1f, %.1f) turned %u quanta", m_selectedDefName.c_str(), m_ghostPosition.x, m_ghostPosition.y,
+		m_ghostTurnQuanta
+	);
 
-	m_onPlace(m_selectedDefName, m_ghostPosition);
+	m_onPlace(m_selectedDefName, m_ghostPosition, m_ghostTurnQuanta);
 
 	// Return to normal state after placing
 	m_state = PlacementState::None;

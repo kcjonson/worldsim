@@ -242,6 +242,11 @@ namespace ecs {
 			);
 			return false;
 		}
+		// Position and turn both come from the task's copy of the target, so a crate re-targeted since is installed
+		// at one target, never half of each.
+		if (auto* rotation = world->getComponent<Rotation>(packagedEntity); rotation != nullptr && placeEff.targetRotation.has_value()) {
+			rotation->radians = *placeEff.targetRotation;
+		}
 		if (auto* entityPos = world->getComponent<Position>(packagedEntity); entityPos != nullptr) {
 			entityPos->value = placeEff.targetPosition;
 			LOG_INFO(
@@ -494,7 +499,7 @@ namespace ecs {
 			// Phase 2: At target OR already carrying - do PlacePackaged
 			// If already carrying but not at target, this will still start the action
 			// (movement system should get us to target)
-			action = Action::PlacePackaged(actionEntries, task.placePackagedEntityId, task.placeTargetPosition);
+			action = Action::PlacePackaged(actionEntries, task.placePackagedEntityId, task.placeTargetPosition, task.placeTargetRotation);
 			LOG_DEBUG(
 				Engine,
 				"[Action] PlacePackaged phase 2: PlacePackaged entity %llu at (%.1f, %.1f)%s",

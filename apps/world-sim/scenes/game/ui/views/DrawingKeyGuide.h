@@ -56,6 +56,10 @@ namespace world_sim {
 	/// only), then the foot line.
 	[[nodiscard]] KeyGuideContent keyGuideContent(ToolKind tool, const DrawingSettings& settings);
 
+	/// What the key guide lists while an item that turns is being placed (rotatable-placed-items 14.4): its key
+	/// rows, no legend, and the foot line.
+	[[nodiscard]] KeyGuideContent placingKeyGuideContent();
+
 	/// Whether `event` collapses or opens the key guide: the `?` character, whatever keys typed it,
 	/// or a press of H that is not a repeat.
 	[[nodiscard]] bool togglesKeyGuide(const foundation::InputEvent& event);
@@ -88,9 +92,9 @@ namespace world_sim {
 
 		explicit DrawingKeyGuide(const Args& args);
 
-		/// Shown while `tool` is on and `settings` shows the key guide: the panel, or the chip while
-		/// `collapsed`. The rows are built again only when one of the three changes.
-		void show(std::optional<ToolKind> tool, const DrawingSettings& settings, bool collapsed);
+		/// Shown while `tool` is on, or an item that turns is being placed (`placing`), and `settings` shows the key
+		/// guide: the panel, or the chip while `collapsed`. The rows are built again only when one of them changes.
+		void show(std::optional<ToolKind> tool, bool placing, const DrawingSettings& settings, bool collapsed);
 
 		[[nodiscard]] const char* typeName() const override { return "DrawingKeyGuide"; }
 
@@ -102,6 +106,7 @@ namespace world_sim {
 
 		struct Shown {
 			std::optional<ToolKind> tool;
+			bool					placing = false;
 			DrawingSettings			settings;
 			bool					collapsed = false;
 

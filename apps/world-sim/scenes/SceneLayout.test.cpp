@@ -151,8 +151,8 @@ namespace world_sim::testing {
 						.onHideBuildMenu = [this] { gameUI->hideBuildMenu(); }
 					},
 				});
-				spawned.station = placement->spawnEntity("CraftingSpot", {4.0F, 0.0F});
-				spawned.box = placement->spawnEntity("BasicBox", {-4.0F, 0.0F});
+				spawned.station = placement->spawnEntity("CraftingSpot", {4.0F, 0.0F}, 0);
+				spawned.box = placement->spawnEntity("BasicBox", {-4.0F, 0.0F}, 0);
 
 				if (open) {
 					open(*this);
@@ -161,7 +161,7 @@ namespace world_sim::testing {
 
 			void update(const app::FrameContext& frame) override {
 				gameUI->setConstructionStatus(drawingSystem->status());
-				gameUI->setKeyGuide(drawingSystem->activeTool(), drawingSettings, drawingSystem->keyGuideCollapsed());
+				gameUI->setKeyGuide(drawingSystem->activeTool(), false, drawingSettings, drawingSystem->keyGuideCollapsed());
 				gameUI->update(
 					static_cast<float>(frame.dt),
 					camera,
