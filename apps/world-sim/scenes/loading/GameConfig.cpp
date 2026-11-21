@@ -8,6 +8,7 @@
 #include <assets/WorkConfig.h>
 #include <conditions/ConditionVocabulary.h>
 #include <ecs/ThoughtTypes.h>
+#include <queries/Facts.h>
 #include <utils/Log.h>
 
 #include <algorithm>
@@ -115,6 +116,9 @@ namespace world_sim {
 		// A warning is worth reading only about a config that loaded; a failed load's errors say what to fix first.
 		for (const std::string& warning : entryWarnings) {
 			LOG_WARNING(Game, "%s", warning.c_str());
+		}
+		for (const std::string& unanswered : queries::unansweredFactUses(load.entries)) {
+			LOG_INFO(Game, "%s", unanswered.c_str());
 		}
 		return load;
 	}

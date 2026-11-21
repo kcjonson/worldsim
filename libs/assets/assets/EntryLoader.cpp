@@ -207,6 +207,7 @@ namespace assets {
 				resolveCreatures();
 				checkNeedReferences();
 				checkChains();
+				checkQueryBounds();
 			}
 			if (!result.errors.empty()) {
 				result.warnings.clear();
