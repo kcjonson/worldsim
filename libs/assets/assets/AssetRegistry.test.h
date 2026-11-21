@@ -83,6 +83,33 @@ namespace assets {
 		return GameViewConfig::Get().loadFromFile(shippedConfigFolder(), kViewConfigFile);
 	}
 
+	// The view config the tests' numbers are worked against, owned here so tuning the shipped file breaks no test.
+	inline constexpr const char* kTestViewXml = R"(<?xml version="1.0"?>
+<WorldView>
+  <heightRatio>0.35</heightRatio>
+  <light azimuthDegrees="315" elevationDegrees="40"/>
+  <sideShading ambient="0.66" diffuse="0.6" wrap="0"/>
+  <partOutline color="#33241A" widthMeters="0.03" topColor="#33241A" topWidthMeters="0.025" topOpacity="0.8"/>
+  <drawings aspectTolerance="0.01" curveToleranceMeters="0.002" overflowMeters="0.01" faceDetailMinWidthMeters="0.04"/>
+  <depthStripWidthMeters>0.25</depthStripWidthMeters>
+  <depthStripRiseMeters>0.1</depthStripRiseMeters>
+  <depthStripMergeMeters>0.02</depthStripMergeMeters>
+</WorldView>
+)";
+
+	// A config root holding kTestViewXml as rendering/view.xml, written once and removed at exit.
+	inline const std::filesystem::path& testConfigFolder() {
+		static const TempAssetFolder folder;
+		static const bool			 written = (folder.write(kViewConfigFile, kTestViewXml), true);
+		(void)written;
+		return folder.root;
+	}
+
+	// Loads kTestViewXml into GameViewConfig; false when it doesn't load.
+	inline bool loadTestViewConfig() {
+		return GameViewConfig::Get().loadFromFile(testConfigFolder(), kViewConfigFile);
+	}
+
 	// Loads the shipped library (<root>/assets/world, with its shared scripts) through
 	// beginLoadAsync and waits for it. False when the library isn't there to load.
 	inline bool loadShippedLibrary(AssetRegistry& reg) {

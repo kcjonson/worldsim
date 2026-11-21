@@ -242,7 +242,7 @@ TEST_F(PartsAssetTest, Rule3FootprintsHaveSizeAndSides) {
 	);
 	// Thinner than the overlap tolerance, rule 9 could never see them: refused. A millimetre exactly is fine.
 	writeDef("ThinRect", "<parts>" + block("a", 0.2F, 0.5F, 0.8F, 0.5008F, 0, 1) + "</parts><placements>" + place("a") + "</placements>");
-	writeDef("MillimetreRect", "<parts>" + block("a", 0.0F, 0.0F, 0.8F, 0.0011F, 0, 1) + "</parts><placements>" + place("a") + "</placements>");
+	writeDef("MillimetreRect", "<parts>" + block("a", 0.0F, 0.0F, 0.8F, 0.001F, 0, 1) + "</parts><placements>" + place("a") + "</placements>");
 	writeDef(
 		"ThinRound",
 		"<parts><part name=\"a\"><footprint><round radius=\"0.0004\" sides=\"6\"/></footprint><height bottom=\"0\" top=\"1\"/><top color=\"#000000\"/>"

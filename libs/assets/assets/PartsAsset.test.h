@@ -57,7 +57,7 @@ namespace assets::parts_fixtures {
 
 	class PartsTest : public ::testing::Test {
 	  protected:
-		void SetUp() override { ASSERT_TRUE(loadShippedViewConfig()); }
+		void SetUp() override { ASSERT_TRUE(loadTestViewConfig()); }
 		void TearDown() override { AssetRegistry::Get().clearDefinitions(); }
 
 		const AssetDefinition* load(const std::string& name) {
