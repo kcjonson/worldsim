@@ -18,13 +18,16 @@
 #include <functional>
 #include <optional>
 #include <random>
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 namespace construction {
 	class ConstructionWorld;
-}
+	class WallClosure;
+} // namespace construction
 
 namespace ecs {
 
@@ -276,10 +279,18 @@ private:
 
 	/// Readies the wall `blueprintEntity` to complete, true when it may. It is held, moving nobody, while it
 	/// would shut in one of its builders (construction::WallClosure::shutsIn; his action ends, so he decides
-	/// again and goes to a side it allows) or while a colonist the player controls stands in its band
+	/// again and goes to a side it allows), or anyone else not under the player's control whose task is
+	/// taking them out of the room it closes, or while a colonist the player controls stands in its band
 	/// (construction::wallBand). Otherwise anyone else in the band steps out to a side its builders may stand
-	/// on, the side he is on when it is one, and it may complete. True for anything but a wall.
+	/// on, the side he is on when it is one, and it may complete. True for a wall with no band.
 	bool clearWallToComplete(EntityID blueprintEntity);
+
+	/// What completing the wall `blueprintEntity` closes, worked out again when the topology has changed.
+	const construction::WallClosure& wallClosure(EntityID blueprintEntity, std::uint64_t segment);
+	/// Drop what is kept for a wall: its hold toast and its closure. Done as it completes, and in update for
+	/// walls that are gone or complete.
+	void forgetWall(EntityID blueprintEntity);
+	void forgetGoneWalls();
 
 	/// Start a harvest action for goal-driven harvesting (crafting materials)
 	/// Finds harvestable at target position that yields the required item type.
@@ -392,6 +403,12 @@ private:
 	const construction::ConstructionWorld* constructionWorld = nullptr;
 	WallHeldCallback					   onWallHeld = nullptr;
 	std::unordered_set<EntityID>		   wallsHeldByControlled;
+	struct CachedClosure {
+		std::uint64_t									 segment = 0;
+		std::uint64_t									 version = 0;
+		std::shared_ptr<const construction::WallClosure> closure;
+	};
+	std::unordered_map<EntityID, CachedClosure> wallClosures;
 };
 
 } // namespace ecs

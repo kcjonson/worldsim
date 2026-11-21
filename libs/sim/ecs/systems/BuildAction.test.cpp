@@ -458,9 +458,8 @@ namespace ecs::test {
 		EXPECT_EQ(salvaged.front().second, 15U) << "refundPercent 50 of 30 Wood = 15";
 	}
 
-
 	// A wall does not complete while a colonist the player controls stands in its band, nor while it would
-	// shut in one of its builders (building-construction: Walls / Lifecycle).
+	// shut in one of its builders or someone on the way out (building-construction: Walls / Lifecycle).
 	class WallBandHoldTest : public BuildActionSystemTest {
 	  protected:
 		void SetUp() override {
@@ -628,6 +627,35 @@ namespace ecs::test {
 		world->update(0.5F);
 		world->update(0.5F);
 		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::Complete);
+	}
+
+	// Someone the closing wall would shut in who is on the way out (a task walking him outside) holds it
+	// until he is out; someone staying inside (no task, or one whose point is inside) does not.
+	TEST_F(WallBandHoldTest, AClosingWallWaitsForSomeoneOnTheWayOutButNotForSomeoneStaying) {
+		const EntityID blueprint = wallSite(closingWallOfASquare());
+		const EntityID idle = colonistAt({1.0F, 3.0F}, false);
+		world->addComponent<Task>(idle, Task{});
+		const EntityID eatingInside = colonistAt({3.0F, 3.0F}, false);
+		Task eat;
+		eat.type = TaskType::FulfillNeed;
+		eat.state = TaskState::Arrived;
+		eat.targetPosition = {3.0F, 3.0F};
+		world->addComponent<Task>(eatingInside, eat);
+		const EntityID leaving = colonistAt({2.0F, 1.0F}, false);
+		Task walkOut;
+		walkOut.type = TaskType::Wander;
+		walkOut.state = TaskState::Moving;
+		walkOut.targetPosition = {2.0F, -3.0F};
+		world->addComponent<Task>(leaving, walkOut);
+
+		world->update(0.5F);
+		world->update(0.5F);
+		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::UnderConstruction) << "it waits for the one leaving";
+		EXPECT_EQ(world->getComponent<Position>(leaving)->value, glm::vec2(2.0F, 1.0F)) << "nobody is moved while it waits";
+
+		world->getComponent<Position>(leaving)->value = {2.0F, -1.0F};
+		world->update(0.5F);
+		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::Complete) << "those staying inside are not waited for";
 	}
 
 } // namespace ecs::test

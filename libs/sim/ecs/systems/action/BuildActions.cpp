@@ -16,6 +16,7 @@
 #include <utils/Log.h>
 
 #include <algorithm>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -166,21 +167,74 @@ namespace ecs {
 				return true;
 			}
 		} else {
-			// The work can be done while the wall is not: it waits there until nothing holds it. Nothing
-			// completes and nobody is moved on a tick in which no time passes (a paused game).
-			blueprint->workDone = std::min(blueprint->workDone + delta, blueprint->workTotal);
+			blueprint->workDone += delta;
 			if (blueprint->workDone >= blueprint->workTotal) {
-				if (deltaTime > 0.0F && clearWallToComplete(blueprintEntity)) {
+				blueprint->workDone = blueprint->workTotal;
+				// A wall's work can be done while the wall is not: it waits there until nothing holds it, and
+				// nothing completes or moves on a tick in which no time passes (a paused game).
+				const auto* structure = world->getComponent<Structure>(blueprintEntity);
+				const bool	isWall = structure != nullptr && structure->kind == StructureKind::Wall;
+				if (!isWall || (deltaTime > 0.0F && clearWallToComplete(blueprintEntity))) {
 					blueprint->phase = StructureBlueprint::BuildPhase::Complete;
 					action.state = ActionState::Complete;
+					forgetWall(blueprintEntity);
 					return true;
 				}
-				// Waiting is no work to commit to: anything that outranks it may take the builder away.
+				// Waiting is no work to commit to: the builder may be taken away like from interruptable work.
 				action.interruptable = true;
 			}
 		}
 
 		return false;
+	}
+
+	namespace {
+		// Whether `task` is taking a colonist out of the room `closure` would close: it is under way (its
+		// route not found wanting), and the point it walks to, or a later leg's (a haul's deposit, a
+		// placement's spot), is not shut in.
+		bool leaving(const Task& task, const construction::WallClosure& closure) {
+			if (!task.isActive() || task.navState == NavState::CantFindWayTo) {
+				return false;
+			}
+			if (!closure.shutsIn(task.targetPosition)) {
+				return true;
+			}
+			if (task.type == TaskType::Haul) {
+				return !closure.shutsIn(task.haulTargetPosition);
+			}
+			if (task.type == TaskType::PlacePackaged) {
+				return !closure.shutsIn(task.placeTargetPosition);
+			}
+			return false;
+		}
+	} // namespace
+
+	const construction::WallClosure& ActionSystem::wallClosure(EntityID blueprintEntity, construction::SegmentId segment) {
+		auto cached = wallClosures.find(blueprintEntity);
+		if (cached == wallClosures.end() || cached->second.segment != segment || cached->second.version != constructionWorld->version()) {
+			cached = wallClosures
+						 .insert_or_assign(
+							 blueprintEntity, CachedClosure{.segment = segment,
+															.version = constructionWorld->version(),
+															.closure = std::make_shared<const construction::WallClosure>(*constructionWorld, segment)}
+						 )
+						 .first;
+		}
+		return *cached->second.closure;
+	}
+
+	void ActionSystem::forgetWall(EntityID blueprintEntity) {
+		wallsHeldByControlled.erase(blueprintEntity);
+		wallClosures.erase(blueprintEntity);
+	}
+
+	void ActionSystem::forgetGoneWalls() {
+		const auto gone = [this](EntityID blueprintEntity) {
+			const auto* blueprint = world->getComponent<StructureBlueprint>(blueprintEntity);
+			return blueprint == nullptr || blueprint->phase == StructureBlueprint::BuildPhase::Complete;
+		};
+		std::erase_if(wallsHeldByControlled, gone);
+		std::erase_if(wallClosures, [&gone](const auto& entry) { return gone(entry.first); });
 	}
 
 	bool ActionSystem::clearWallToComplete(EntityID blueprintEntity) {
@@ -194,18 +248,23 @@ namespace ecs {
 			return true;
 		}
 
-		// What holds the wall: a builder of it it would shut in, whose work ends so he decides again and goes
-		// to a side it allows, or a colonist the player controls in its band. Nobody is moved while it holds.
-		const construction::WallClosure closure(*constructionWorld, segment->id);
-		bool							shutsInBuilder = false;
-		for (auto [builder, position, task] : world->view<Position, Task>()) {
-			if (task.type != TaskType::Build || task.buildBlueprintEntityId != static_cast<uint64_t>(blueprintEntity) ||
-				!closure.shutsIn(position.value)) {
+		// What holds the wall, moving nobody: a builder of it it would shut in, whose work ends so he decides
+		// again and goes to a side it allows; anyone else not under the player's control it would shut in who
+		// is on the way out (leaving); and a colonist the player controls in its band. Someone who stays
+		// inside by choice is not waited for.
+		const construction::WallClosure& closure = wallClosure(blueprintEntity, segment->id);
+		bool							 shutsInSomeone = false;
+		for (auto [colonist, position, task] : world->view<Position, Task>()) {
+			if (!closure.shutsIn(position.value)) {
 				continue;
 			}
-			shutsInBuilder = true;
-			if (auto* work = world->getComponent<Action>(builder)) {
-				work->clear();
+			if (task.type == TaskType::Build && task.buildBlueprintEntityId == static_cast<uint64_t>(blueprintEntity)) {
+				shutsInSomeone = true;
+				if (auto* work = world->getComponent<Action>(colonist)) {
+					work->clear();
+				}
+			} else if (world->getComponent<PlayerControlled>(colonist) == nullptr && leaving(task, closure)) {
+				shutsInSomeone = true;
 			}
 		}
 		EntityID controlledInBand = kInvalidEntity;
@@ -222,7 +281,7 @@ namespace ecs {
 		} else {
 			wallsHeldByControlled.erase(blueprintEntity);
 		}
-		if (shutsInBuilder || controlledInBand != kInvalidEntity) {
+		if (shutsInSomeone || controlledInBand != kInvalidEntity) {
 			return false;
 		}
 
