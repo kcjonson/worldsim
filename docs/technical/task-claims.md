@@ -1172,7 +1172,7 @@ scratch index, so a warm check allocates nothing.
 Done, each deleted in the same change that replaced it, per the no-legacy rule:
 
 - `GoalStatus::InProgress` and `GoalStatus::Complete` (never assigned). `GoalStatus` is `Available`,
-  `Blocked`, and `NoSource`.
+  `Blocked`, `NoSource`, and `NowhereToStand` (an item with no room to stand, rotatable-placed-items 12).
 - `GoalOwner::None`, with the registry's owner-index guards for it.
 - `reservationTimeout`: `TimingConfig::reservationTimeout`, `getReservationTimeout()`, its parse in
   `PriorityConfig.cpp`, the element in `priority-tuning.xml`.

@@ -63,7 +63,7 @@ namespace ecs {
 		for (auto [entity, position, task, action, needs, memory, inventory] :
 			 world->view<Position, Task, Action, NeedsComponent, Memory, Inventory>()) {
 
-			if (task.state == TaskState::Moving && actsOnArrival(task.type) &&
+			if (task.state == TaskState::Moving && actsOnArrival(task.type) && !task.standsInUseArea &&
 				glm::distance(position.value, task.targetPosition) <= kActionReachMeters) {
 				task.state = TaskState::Arrived;
 				if (auto* movementTarget = world->getComponent<MovementTarget>(entity)) {
@@ -572,6 +572,7 @@ namespace ecs {
 		// colonist never slides straight at it, and the old leg's route can't carry him the wrong way.
 		task.targetPosition = target;
 		task.obstructedTarget.reset();
+		task.standsInUseArea = false;
 		task.state			= TaskState::Moving;
 		if (auto* movementTarget = world->getComponent<MovementTarget>(entity)) {
 			movementTarget->target = target;

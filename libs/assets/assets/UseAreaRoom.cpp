@@ -18,9 +18,9 @@ namespace assets {
 		/// nothing and one a millimetre wider keeps a millimetre. 32 sides reach under 0.5% of the radius past the circle.
 		constexpr int kDiscSides = 32;
 
-		/// How far a stand point on a region's edge is taken inside it, so a route ending there doesn't land a float
-		/// rounding outside.
-		constexpr double kStandInsetMeters = 0.005;
+		/// How far a stand point on a region's edge is taken inside it: a route ending there keeps the 2 cm nav keeps
+		/// between a standing disc and what it stands beside, rather than ending exactly touching it.
+		constexpr double kStandInsetMeters = 0.02;
 
 		geometry::Vec2i64 micrometres(glm::vec2 meters) {
 			return {std::llround(static_cast<double>(meters.x) * kMicrometresPerMeter), std::llround(static_cast<double>(meters.y) * kMicrometresPerMeter)};
@@ -112,25 +112,41 @@ namespace assets {
 		/// The boundary point nearest `from` taken kStandInsetMeters in along its edge's inward normal, or left on the
 		/// edge where the piece is too narrow for that.
 		glm::dvec2 nearestInside(const geometry::RegionPolygon& piece, const glm::dvec2& from) {
+			const auto closestOn = [](const glm::dvec2& point, const glm::dvec2& start, const glm::dvec2& along, double lengthSquared) {
+				return start + along * std::clamp(((point.x - start.x) * along.x + (point.y - start.y) * along.y) / lengthSquared, 0.0, 1.0);
+			};
 			double	   best = std::numeric_limits<double>::max();
 			glm::dvec2 nearest = metersOf(piece.outer.front());
-			glm::dvec2 inward{0.0, 0.0};
 			eachEdge(piece, [&](const glm::dvec2& start, const glm::dvec2& end) {
 				const glm::dvec2 along = end - start;
 				const double	 lengthSquared = along.x * along.x + along.y * along.y;
 				if (lengthSquared <= 0.0) {
 					return;
 				}
-				const double	 fraction = std::clamp(((from.x - start.x) * along.x + (from.y - start.y) * along.y) / lengthSquared, 0.0, 1.0);
-				const glm::dvec2 point = start + along * fraction;
+				const glm::dvec2 point = closestOn(from, start, along, lengthSquared);
 				const double	 distance = (point.x - from.x) * (point.x - from.x) + (point.y - from.y) * (point.y - from.y);
 				if (distance < best) {
 					best = distance;
 					nearest = point;
-					inward = glm::dvec2{-along.y, along.x} / std::sqrt(lengthSquared);
 				}
 			});
-			const glm::dvec2 inset = nearest + inward * kStandInsetMeters;
+			// In along the inward normals of every edge through the point: one edge's, or at a corner the two's together.
+			glm::dvec2 inward{0.0, 0.0};
+			eachEdge(piece, [&](const glm::dvec2& start, const glm::dvec2& end) {
+				const glm::dvec2 along = end - start;
+				const double	 lengthSquared = along.x * along.x + along.y * along.y;
+				if (lengthSquared > 0.0) {
+					const glm::dvec2 point = closestOn(nearest, start, along, lengthSquared);
+					if ((point.x - nearest.x) * (point.x - nearest.x) + (point.y - nearest.y) * (point.y - nearest.y) < 1.0e-14) {
+						inward += glm::dvec2{-along.y, along.x} / std::sqrt(lengthSquared);
+					}
+				}
+			});
+			const double length = std::sqrt(inward.x * inward.x + inward.y * inward.y);
+			if (length <= 0.0) {
+				return nearest;
+			}
+			const glm::dvec2 inset = nearest + inward * (kStandInsetMeters / length);
 			return holds(piece, inset) ? inset : nearest;
 		}
 

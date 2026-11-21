@@ -3559,6 +3559,7 @@ namespace ecs {
 				return;
 			}
 			task.obstructedTarget = stands[0] != target ? std::optional<glm::vec2>(target) : std::nullopt;
+			task.standsInUseArea  = itemUsedAt(*world, target) != nullptr;
 			task.targetPosition	  = stands[0];
 			movementTarget.target = stands[0];
 			goalCount			  = stands.size();

@@ -257,6 +257,9 @@ struct Task {
 	// pile at a source's centre), or beside the built wall it lies in (an opening, or the wall itself);
 	// nullopt when targetPosition is the target. Arrival is judged at targetPosition, the work done on this.
 	std::optional<glm::vec2> obstructedTarget;
+	// targetPosition is a stand point in an item's use area (rotatable-placed-items 12): he acts once his route ends
+	// there, not on coming within ActionSystem's reach of it, which could leave him outside the area.
+	bool standsInUseArea = false;
 	// The sources a need's route was asked for at once, until its answer picks one (the task holds the
 	// first meanwhile); empty once routed, and for every task with one target.
 	SourceChoices sourceChoices;
@@ -394,6 +397,7 @@ struct Task {
 		routeWaitTicks = 0;
 		awaitingSnap = false;
 		obstructedTarget.reset();
+		standsInUseArea = false;
 		needSourceKey = 0;
 		targetPosition = glm::vec2{0.0F, 0.0F};
 		needToFulfill = NeedType::Count;

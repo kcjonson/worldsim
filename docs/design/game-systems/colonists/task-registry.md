@@ -91,7 +91,7 @@ INFINITE WORLD
 
 The registry is `GoalTaskRegistry` (`libs/sim/ecs/GoalTaskRegistry.h`), one `GoalTask` per goal:
 type, destination, accepted items, owning goal system, parent goal (a Harvest or Haul feeding a
-Craft), and status (`Available`, `Blocked`, `NoSource`). How much more a goal wants is its root's
+Craft), and status (`Available`, `Blocked`, `NoSource`, `NowhereToStand`). How much more a goal wants is its root's
 remaining need, read from the world (`GoalTaskRegistry::remainingNeed`), never a counter on the goal.
 Goals hold no reservations and no `knownBy` set. Which colonist is working a goal, and how much is on its way, comes from the claims on
 colonists' tasks ([Task Claims](../../../technical/task-claims.md)).
@@ -145,6 +145,9 @@ what that colonist knows.
   Craft, or placement row names whoever works its entity.
 - **Building <name> (N%)**, **Ready to build (N%)**, **Needs materials**: a Build umbrella, from its
   blueprint's phase and progress; "Needs materials" names whoever is delivering, if anyone.
+- **Blocked: nowhere to stand**: the goal is `NowhereToStand`, its item having no room in any use area
+  ([Rotatable placed items, 12](../../../technical/rendering/rotatable-placed-items.md#12-use-areas-and-targeting)); it
+  shows in place of every other status, and nothing is offered for the row until room returns.
 - **Blocked**: a Craft waiting for its materials, with "landed/required materials".
 - **Waiting (no source found)**: the goal is `NoSource`.
 - **Available (far)**: nobody works it and it is more than 50 m away.

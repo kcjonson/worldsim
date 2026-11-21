@@ -39,7 +39,7 @@ namespace assets {
 	standingRegion(const std::vector<AreaPolygon>& area, const std::vector<std::vector<glm::vec2>>& obstacles, const OpenGround* ground, float radiusMeters);
 
 	/// The point of `piece` nearest `from`, in metres: `from` itself when it lies inside, else the nearest boundary point
-	/// taken a few millimetres in where the piece is wide enough.
+	/// taken 2 cm in where the piece is wide enough.
 	[[nodiscard]] glm::vec2 nearestPointIn(const geometry::RegionPolygon& piece, glm::vec2 from);
 
 	/// A point inside `piece`, in metres.

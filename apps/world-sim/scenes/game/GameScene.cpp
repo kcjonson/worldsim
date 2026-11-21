@@ -1788,7 +1788,7 @@ namespace {
 			const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(defName);
 			const std::string			   label = def != nullptr && !def->label.empty() ? def->label : defName;
 			gameUI->pushNotification(
-				label + " blocked: nowhere to stand", "Something is in the way of the place a colonist stands to use it.", ui::ToastSeverity::Warning
+				label + " blocked", "Nowhere to stand: something is in the way of where a colonist stands to use it.", ui::ToastSeverity::Warning
 			);
 		}
 

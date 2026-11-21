@@ -26,13 +26,13 @@ namespace {
 		if (entry->use == ecs::UseState::Blocked) {
 			note.emplace_back(TextSlot{.label = "Blocked", .value = "Nowhere to stand"});
 			note.emplace_back(TextListSlot{
-				.header = "Something is in the way of the place a colonist stands to use this.",
+				.header = "Something is in the way of where a colonist stands to use this",
 				.items = {"Move what is in the way, or move this somewhere with room to stand. Its orders wait until then."},
 			});
 		} else {
 			note.emplace_back(TextSlot{.label = "Use area", .value = "Unexplored"});
 			note.emplace_back(TextListSlot{
-				.header = "Nobody has seen the ground a colonist would stand on to use this.",
+				.header = "Nobody has seen where a colonist would stand to use this",
 				.items = {"It can be used once a colonist has been there."},
 			});
 		}

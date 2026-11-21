@@ -83,7 +83,7 @@ TEST(UseAreaRoomTest, TheStandPointIsTheNearestPointOfTheRegion) {
 	const geometry::RegionPolygon& piece = region.pieces.front();
 	EXPECT_EQ(nearestPointIn(piece, {1.0F, 1.2F}), glm::vec2(1.0F, 1.2F));
 	const glm::vec2 fromLeft = nearestPointIn(piece, {-5.0F, 1.0F});
-	EXPECT_NEAR(fromLeft.x, 0.305F, 0.002F);
+	EXPECT_NEAR(fromLeft.x, 0.32F, 0.002F);
 	EXPECT_NEAR(fromLeft.y, 1.0F, 0.002F);
 	EXPECT_TRUE(pieceHolds(piece, fromLeft));
 	EXPECT_TRUE(pieceHolds(piece, pointInside(piece)));
