@@ -90,6 +90,8 @@ namespace conditions {
 		}
 
 		[[nodiscard]] std::optional<SymbolId>		  findSymbol(std::string_view name) const;
+		/// The index of the symbol set declared under `name` (`kind`, `trait`), for symbolSet().
+		[[nodiscard]] std::optional<uint32_t>		  findSymbolSet(std::string_view name) const;
 		[[nodiscard]] std::optional<uint32_t>		  findTerm(std::string_view name) const;
 		[[nodiscard]] std::size_t					  termCount() const { return terms.size(); }
 		[[nodiscard]] const TermSignature&			  signature(uint32_t term) const { return terms[term].signature; }

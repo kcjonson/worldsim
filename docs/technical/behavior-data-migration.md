@@ -44,11 +44,11 @@ All of it is on `main` and on this branch.
   actions and needs by their old names: `events.xml` and `work.xml` use `action="Eat"`, `"Sleep"`,
   `"Craft"`, `"Build"`, and `needs.xml` uses `need="Hunger"` and the rest.
 - Colony membership does not exist: `kinds.xml` maps `colonist` to every mover of the definition.
-- Config: `assets/config/actions/action-types.xml` (`ActionTypeRegistry`; only `needsHands` of a
+- Config: `assets/config/legacy/action-types.xml` (`ActionTypeRegistry`; only `needsHands` of a
   task's first action is read; Withdraw, PickupPackaged, and PlacePackaged have no entry),
-  `assets/config/work/task-chains.xml` (`TaskChainRegistry`, read by nothing but `ConfigValidator`),
-  `assets/config/work/work-types.xml` (`WorkTypeRegistry`, same), `assets/config/work/priority-tuning.xml`
-  (`<TaskTiers>` read; `<WorkCategoryOrder>` parsed and unused).
+  `assets/config/legacy/work-types.xml` (`WorkTypeRegistry`, read by nothing but `ConfigValidator`), and
+  `assets/config/arbitration/priority-tuning.xml` (the `<ladder>`, read by nothing; `<TaskTiers>` read;
+  `<WorkCategoryOrder>` parsed and unused). Ticket 9 deleted `task-chains.xml` and `TaskChainRegistry`.
 - `TaskType` is used in 22 non-test files (`AIDecisionSystem.cpp` 117 references, `GlobalTaskAdapter`
   40, `ColonyGoalWork` 26, `ChainClaims` 18, `ColonistDetailsModel` 15, the conditions 12,
   `DecisionTrace` 11), and the condition vocabulary's `<TaskGroup name="work">` lists task type names.

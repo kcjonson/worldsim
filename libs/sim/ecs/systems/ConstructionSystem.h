@@ -83,7 +83,8 @@ namespace assets {
 
 namespace construction {
 	class ConstructionWorld;
-}
+	struct WallStand;
+} // namespace construction
 
 namespace ecs {
 
@@ -235,6 +236,18 @@ namespace ecs {
 		/// constraints.xml caps; empty for a wall or an opening, or with no topology wired.
 		[[nodiscard]] std::vector<glm::vec2> foundationBuilderSpots(const Structure& structure) const;
 
+		/// The sides of a wall its builders may stand on (construction::wallStands); empty for a foundation
+		/// or an opening, or with no topology wired. A wall's umbrella takes them as it turns Available and
+		/// drops them when it stops being Available, like a foundation's spots.
+		[[nodiscard]] std::vector<construction::WallStand> wallStandsFor(const Structure& structure) const;
+
+		/// Work out every Available wall umbrella's sides again when what they depend on has changed (a
+		/// segment or an opening built, added, or removed), checked every frame rather than every
+		/// kUpdateFrameInterval: a wall completing beside one being built can close its loop.
+		void refreshWallStands();
+		/// The segments and openings by id and built state, hashed: what a wall's sides depend on.
+		[[nodiscard]] std::uint64_t wallSidesInputs() const;
+
 		/// How far into the footprint a builder spot sits from the ring: a colonist's half-width
 		/// (pathingClearanceMeters 0.7 / 2) plus a margin, so a builder at a spot in the middle of an
 		/// edge stands clear of it. Near a sharp corner a spot can still sit close to the other edge,
@@ -327,6 +340,10 @@ namespace ecs {
 		std::unordered_set<EntityID> m_warnedNoDeconstructCallback;
 
 		size_t m_activeBlueprintCount = 0;
+
+		// The topology version and wallSidesInputs() the wall umbrellas' sides were last worked out at.
+		std::uint64_t wallSidesVersion = 0;
+		std::uint64_t wallSidesHash = 0;
 
 		// This pass's spawned harvestables, gathered by the first site still clearing (reused storage)
 		std::vector<SpawnedHarvestable> m_spawnedHarvestables;

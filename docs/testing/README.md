@@ -263,7 +263,7 @@ spec, and the `/perf-nightly` skill runs it.
 | 13 | Colonists walk round obstacles | [scenarios/13-colonists-walk-round-obstacles.md](./scenarios/13-colonists-walk-round-obstacles.md) |
 | 14 | Player visibility | [scenarios/14-player-visibility.md](./scenarios/14-player-visibility.md) |
 | 15 | Builder work spots | [scenarios/15-builder-work-spots.md](./scenarios/15-builder-work-spots.md) |
-| 16 | Rooms inside rooms | [scenarios/16-rooms-inside-rooms.md](./scenarios/16-rooms-inside-rooms.md) |
+| 16 | Rooms inside rooms, and the builder of a closing wall ending outside | [scenarios/16-rooms-inside-rooms.md](./scenarios/16-rooms-inside-rooms.md) |
 | 17 | Interface size | [scenarios/17-interface-size.md](./scenarios/17-interface-size.md) |
 | 18 | Colonist thoughts | [scenarios/18-colonist-thoughts.md](./scenarios/18-colonist-thoughts.md) |
 | 19 | Load errors on screen | [scenarios/19-load-errors-on-screen.md](./scenarios/19-load-errors-on-screen.md) |

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The tuning values the sim's facts read: a relief spot within 1.5 m of water is on the shore, waste
+  within 8 m and food within 15 m count toward a spot's proximity sums, and the ground sleeps at 0.5.
+  See /docs/technical/queries-and-chains.md (Facts).
+-->
+<facts>
+  <fact id="on_shore" within="1.5"/>
+  <fact id="waste_nearby" within="8"/>
+  <fact id="food_nearby" within="15"/>
+  <fact id="sleep_quality" ground="0.5"/>
+</facts>

@@ -7,7 +7,6 @@
 #include "assets/MemoryConfig.h"
 #include "assets/MoodConfig.h"
 #include "assets/PriorityConfig.h"
-#include "assets/TaskChainRegistry.h"
 #include "assets/WorkTypeRegistry.h"
 
 #include <utils/Log.h>
@@ -23,60 +22,20 @@ bool ConfigValidator::validateActionTypes() {
     // ActionTypes has no dependencies - just check it's loaded
     if (ActionTypeRegistry::Get().size() == 0) {
         addError("ActionTypes", "No action types loaded",
-                "Ensure assets/config/actions/action-types.xml exists and is valid");
+                "Ensure assets/config/legacy/action-types.xml exists and is valid");
         return false;
     }
     return true;
 }
 
-bool ConfigValidator::validateTaskChains() {
-    const auto& chainRegistry = TaskChainRegistry::Get();
-    const auto& actionRegistry = ActionTypeRegistry::Get();
-
-    bool valid = true;
-
-    for (const auto& [chainDefName, chain] : chainRegistry.getAllChains()) {
-        for (const auto& step : chain.steps) {
-            // Check action reference
-            if (!actionRegistry.hasAction(step.actionDefName)) {
-                addError("TaskChains",
-                        "Chain '" + chainDefName + "' step " + std::to_string(step.order) +
-                        " references unknown action '" + step.actionDefName + "'",
-                        "Available actions: " + actionRegistry.getAvailableActionsString());
-                valid = false;
-            }
-        }
-    }
-
-    return valid;
-}
-
 bool ConfigValidator::validateWorkTypes() {
     const auto& workTypeRegistry = WorkTypeRegistry::Get();
-    const auto& chainRegistry = TaskChainRegistry::Get();
 
     bool valid = true;
 
     for (const auto& workTypeDefName : workTypeRegistry.getWorkTypeNames()) {
         const auto* workType = workTypeRegistry.getWorkType(workTypeDefName);
         if (!workType) continue;
-
-        // Check task chain reference
-        if (workType->taskChain.has_value() && !workType->taskChain->empty()) {
-            if (!chainRegistry.hasChain(*workType->taskChain)) {
-                std::string availableChains;
-                for (const auto& name : chainRegistry.getChainNames()) {
-                    if (!availableChains.empty()) availableChains += ", ";
-                    availableChains += name;
-                }
-
-                addError("WorkTypes",
-                        "WorkType '" + workTypeDefName + "' references unknown chain '" +
-                        *workType->taskChain + "'",
-                        "Available chains: " + availableChains);
-                valid = false;
-            }
-        }
 
         // Check trigger capability is specified
         if (workType->triggerCapability.empty()) {
@@ -592,11 +551,6 @@ bool ConfigValidator::validateAll() {
     // Validate in dependency order
     if (!validateActionTypes()) {
         LOG_ERROR(Engine, "ActionTypes validation failed");
-        valid = false;
-    }
-
-    if (!validateTaskChains()) {
-        LOG_ERROR(Engine, "TaskChains validation failed");
         valid = false;
     }
 
