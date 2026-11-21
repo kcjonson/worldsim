@@ -81,6 +81,9 @@ namespace ecs {
 				case TaskType::Wander:
 				case TaskType::None:
 					break;
+				case TaskType::Chain:
+					// The decision offers no chain option, so none is described.
+					break;
 			}
 			return option.reason;
 		}

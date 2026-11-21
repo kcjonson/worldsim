@@ -210,6 +210,9 @@ namespace world_sim {
 							case ecs::TaskType::Harvest:
 								dest = "resource";
 								break;
+							case ecs::TaskType::Chain:
+								dest = "target";
+								break;
 							default:
 								dest = "target";
 								break;
@@ -246,6 +249,9 @@ namespace world_sim {
 						break;
 					case ecs::TaskType::Wander:
 						bioData.currentTask = "Wandering";
+						break;
+					case ecs::TaskType::Chain:
+						bioData.currentTask = ecs::kRunningChainLabel;
 						break;
 					default:
 						bioData.currentTask = "Idle";

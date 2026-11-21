@@ -7,6 +7,7 @@
 #include <assets/TraitRegistry.h>
 #include <assets/WorkConfig.h>
 #include <conditions/ConditionVocabulary.h>
+#include <ecs/ChainEntries.h>
 #include <ecs/ThoughtTypes.h>
 #include <queries/Facts.h>
 #include <utils/Log.h>
@@ -102,10 +103,18 @@ namespace world_sim {
 				  .isThought = [&rules](std::string_view name) { return rules.thoughtTypes->findType(name).has_value(); },
 			  };
 			std::vector<std::string> nameErrors = assets::checkEntryNames(load.entries, names);
+			const bool				 namesKnown = nameErrors.empty();
 			load.errors.insert(load.errors.end(), nameErrors.begin(), nameErrors.end());
 			// Thought sources name the action entries, which load before them.
 			for (const std::string& error : load.rules.thoughtTypes->resolveActions(load.entries)) {
 				load.errors.push_back("[thoughts] " + error);
+			}
+			// The chain runner's rules, checked here so a chain it cannot run never loads. A thought name nothing declares
+			// is already reported above.
+			if (namesKnown) {
+				for (std::string& error : ecs::resolveChainEntries(load.entries, load.actions, load.rules.thoughtTypes.get()).errors) {
+					load.errors.push_back(std::move(error));
+				}
 			}
 		}
 		if (!load.errors.empty()) {
