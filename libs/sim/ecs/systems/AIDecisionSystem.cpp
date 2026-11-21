@@ -3970,6 +3970,7 @@ namespace ecs {
 			dropRoute(*task);
 			task->clear();
 			task->timeSinceEvaluation = 0.0F;
+			task->decideAtInterval = false;
 		}
 		// He decides nothing while controlled, so his last trace would keep offering its work to the
 		// task panel (ColonyGoalWork) until release.
@@ -4002,6 +4003,7 @@ namespace ecs {
 			dropRoute(*task);
 			task->clear();
 			task->timeSinceEvaluation = 0.0F;
+			task->decideAtInterval = false;
 		}
 		if (auto* action = world->getComponent<Action>(entity)) {
 			action->clear();

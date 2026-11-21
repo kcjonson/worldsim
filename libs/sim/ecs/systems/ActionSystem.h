@@ -374,6 +374,10 @@ private:
 	/// End the chain and the task, its action and claims with it; `why` is logged. The creature decides again at once.
 	void endChain(const ChainActor& actor, const char* why);
 
+	/// File the task's claims as they now stand with the claim index (a released claim leaves it), so a creature reading
+	/// the index later in the same update sees them.
+	void fileClaims(const ChainActor& actor);
+
 	/// A `do` start that started nothing ends the chain as endChain does, and the creature decides again at its normal
 	/// interval rather than at once, so a refusal never repeats every frame.
 	void refuseChain(const ChainActor& actor, const char* why);

@@ -173,7 +173,7 @@ namespace ecs {
 					"; goods on their way to a destination are claimed toward their root too"
 				);
 			}
-			// The go before this step, in this chain; none when the step is the chain's first or follows another kind.
+			// The nearest go before this step in its chain, whatever steps lie between; none when no go comes before it.
 			const assets::GoStep* go = nullptr;
 			for (std::size_t earlier = index; earlier-- > 0;) {
 				go = std::get_if<assets::GoStep>(&chain.steps[earlier].step);

@@ -22,28 +22,30 @@
 
 namespace ecs::testing {
 
+	/// Where a definition a synthetic entry names is looked up.
+	enum class SyntheticDefinitions : uint8_t {
+		/// The definitions the test registered in the asset registry.
+		Registry,
+		/// The definitions the shipped asset folders declare.
+		Shipped,
+		/// The registry's, then the shipped folders' for a name the registry lacks.
+		RegistryThenShipped,
+	};
+
+	/// How synthetic entries load. At namespace scope, not nested in SyntheticEntries: a default argument of the
+	/// enclosing class may not use a nested type's default member initializers while that class is incomplete.
+	struct SyntheticEntryOptions {
+		SyntheticDefinitions definitions = SyntheticDefinitions::Registry;
+		/// The sim's fixed list of needs as need ids (EntrySources::trackedNeeds).
+		std::vector<std::string> trackedNeeds;
+		/// Shipped config folders (`behaviors`, `actions`) copied in beside what the test writes.
+		std::vector<std::string> shippedFolders;
+	};
+
 	class SyntheticEntries {
 	  public:
-		/// Where a definition an entry names is looked up.
-		enum class Definitions : uint8_t {
-			/// The definitions the test registered in the asset registry.
-			Registry,
-			/// The definitions the shipped asset folders declare.
-			Shipped,
-			/// The registry's, then the shipped folders' for a name the registry lacks.
-			RegistryThenShipped,
-		};
-
-		struct Options {
-			Definitions definitions = Definitions::Registry;
-			/// The sim's fixed list of needs as need ids (EntrySources::trackedNeeds).
-			std::vector<std::string> trackedNeeds;
-			/// Shipped config folders (`behaviors`, `actions`) copied in beside what the test writes.
-			std::vector<std::string> shippedFolders;
-		};
-
 		/// An empty config root holding the shipped fact tuning and the folders the loader reads, named for `purpose`.
-		explicit SyntheticEntries(std::string_view purpose, Options options = {})
+		explicit SyntheticEntries(std::string_view purpose, SyntheticEntryOptions options = {})
 			: settings(std::move(options)) {
 			static const std::string runToken = [] {
 				std::random_device device;
@@ -87,15 +89,15 @@ namespace ecs::testing {
 		/// Everything under the root, read by loadEntries.
 		[[nodiscard]] assets::EntryLoad load() const {
 			assets::EntrySources sources{.configRoot = rootPath, .trackedNeeds = settings.trackedNeeds};
-			sources.definitionId = [definitions = settings.definitions](std::string_view name) -> std::optional<uint32_t> {
-				if (definitions != Definitions::Shipped) {
+			sources.definitionId = [lookup = settings.definitions](std::string_view name) -> std::optional<uint32_t> {
+				if (lookup != SyntheticDefinitions::Shipped) {
 					const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
 					const uint32_t				 definition = registry.getDefNameId(std::string(name));
 					if (registry.getDefinitionById(definition) != nullptr) {
 						return definition;
 					}
 				}
-				if (definitions != Definitions::Registry) {
+				if (lookup != SyntheticDefinitions::Registry) {
 					const auto found = assets::testing::shippedDefinitionNames().find(name);
 					if (found != assets::testing::shippedDefinitionNames().end()) {
 						return found->second;
@@ -107,7 +109,7 @@ namespace ecs::testing {
 		}
 
 	  private:
-		Options				  settings;
+		SyntheticEntryOptions settings;
 		std::filesystem::path rootPath;
 	};
 

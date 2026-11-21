@@ -266,7 +266,8 @@ namespace ecs {
 				 const auto* take = std::get_if<TakeRow>(&row);
 				 return take != nullptr && take->clears;
 			 });
-			const GoalTask* goal = clears ? GoalTaskRegistry::Get().getGoal(progress.goal.rootGoalId) : nullptr;
+			// The clear goal the chain works for carries the footprint; it is a child of the site's root.
+			const GoalTask* goal = clears ? GoalTaskRegistry::Get().getGoal(progress.goal.goalId) : nullptr;
 			if (goal != nullptr && goal->clearFootprint.has_value()) {
 				collection.dropAt = goal->clearFootprint->nearestOutside(known->position, kClearDropMargin);
 			}

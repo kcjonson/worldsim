@@ -50,6 +50,8 @@ namespace ecs {
 	/// The goal a work chain serves, which sizes its inbound and in-flight claims and the item a `have` names as
 	/// `goal`; none for a need's, an idle, or an order's chain.
 	struct ChainGoal {
+		/// The goal the chain works for (a site clear's own goal, a haul or harvest child), which may be the root.
+		uint64_t goalId = 0;
 		uint64_t rootGoalId = 0;
 		uint32_t item = 0;
 		/// The chain's planned amount: what a take asks for, and what a `have` is met by.
@@ -83,6 +85,8 @@ namespace ecs {
 		/// What the chain's takes lifted, which `drop` sets down and a `have` counts as handed over.
 		uint32_t takenItem = 0;
 		uint32_t takenQuantity = 0;
+		/// A take has completed in this chain: its goods' claims follow what was lifted and are never sized again.
+		bool goodsTaken = false;
 		/// The item `held_gone` watches and the units of it held when the step began; 0 for none.
 		uint32_t heldItem = 0;
 		uint32_t heldAtStart = 0;

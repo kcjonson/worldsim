@@ -108,8 +108,8 @@ namespace ecs::test {
 			void SetUp() override {
 				entries.emplace(
 					"action-effects",
-					ecs::testing::SyntheticEntries::Options{
-						.definitions = ecs::testing::SyntheticEntries::Definitions::Shipped, .trackedNeeds = trackedNeedIds()
+					ecs::testing::SyntheticEntryOptions{
+						.definitions = ecs::testing::SyntheticDefinitions::Shipped, .trackedNeeds = trackedNeedIds()
 					}
 				);
 				write("actions/synthetic.xml", kSyntheticActions);

@@ -158,9 +158,13 @@ namespace ecs {
 			}
 			task->routeTicket = 0;
 		}
+		// The task it replaces leaves its claims behind, from the index too.
+		task->claims.clear();
+		fileClaims(actor);
 		task->clear();
 		task->timeSinceEvaluation = 0.0F;
 		task->type = TaskType::Chain;
+		task->decideAtInterval = false;
 		task->priorityTier = start.tier;
 		task->reason = kRunningChainLabel;
 		const uint64_t sequence = GoalTaskRegistry::Get().allocateClaimSeq();
@@ -214,8 +218,17 @@ namespace ecs {
 			why
 		);
 		actor.action.clear();
+		// The claims go with the task, from the index too, so a creature reading it later this update sees them free.
+		actor.task.claims.clear();
+		fileClaims(actor);
 		actor.task.clear();
 		actor.task.timeSinceEvaluation = 0.0F;
+	}
+
+	void ActionSystem::fileClaims(const ChainActor& actor) {
+		if (chainWiring.appendClaims && actor.task.instanceId != 0) {
+			chainWiring.appendClaims(actor.entity, actor.task);
+		}
 	}
 
 	void ActionSystem::refuseChain(const ChainActor& actor, const char* why) {
@@ -257,7 +270,7 @@ namespace ecs {
 				continue;
 			}
 			const assets::ChainStep& step = chain.steps[frame.step];
-			const ChainStepValues&	 values = chainWiring.chains->of(frame.chain, frame.step);
+			const ChainStepValues&	 stepValues = chainWiring.chains->of(frame.chain, frame.step);
 			progress.stepStartedAt = clockSeconds();
 
 			if (const auto* go = std::get_if<assets::GoStep>(&step.step)) {
@@ -299,9 +312,11 @@ namespace ecs {
 				progress.heldAtStart = 0;
 				if (names(step.ends, assets::EndEvent::HeldGone)) {
 					// The goods it holds for the step: the food it would eat for an action that consumes, else the chain's.
-					const ActionValues& values = actionEntries.of(doStep->action.handle);
-					const bool			consumes =
-						std::ranges::any_of(values.effects, [](const EffectRow& row) { return std::holds_alternative<ConsumeRow>(row); });
+					const assets::ActionEntry&					   named = chainWiring.library->actions[doStep->action.handle.index];
+					const assets::EntryHandle<assets::ActionEntry> performed = named.group ? memberFor(named, target) : doStep->action.handle;
+					const bool consumes = performed.valid() && std::ranges::any_of(actionEntries.of(performed).effects, [](const EffectRow& row) {
+						return std::holds_alternative<ConsumeRow>(row);
+					});
 					const std::string* food = consumes ? heldEdibleUnit(actor.inventory) : nullptr;
 					progress.heldItem = food != nullptr			  ? assets::AssetRegistry::Get().getDefNameId(*food)
 										: progress.takenItem != 0 ? progress.takenItem
@@ -326,12 +341,12 @@ namespace ecs {
 				continue;
 			}
 			if (const auto* think = std::get_if<assets::ThinkStep>(&step.step)) {
-				giveThought(actor, *think, values.thought);
+				giveThought(actor, *think, stepValues.thought);
 				nextStep(task);
 				continue;
 			}
 			if (const auto* need = std::get_if<assets::NeedStep>(&step.step)) {
-				actor.needs.get(values.need).move(need->change);
+				actor.needs.get(stepValues.need).move(need->change);
 				nextStep(task);
 				continue;
 			}
@@ -381,6 +396,7 @@ namespace ecs {
 			}
 			action.clear();
 			releaseStepClaims(task, std::get<assets::DoStep>(step.step));
+			fileClaims(actor);
 			nextStep(task);
 			runSteps(actor, nullptr);
 			return;
@@ -401,6 +417,7 @@ namespace ecs {
 						return (claim.kind() == ClaimKind::Use || claim.kind() == ClaimKind::SourceQuantity) && claim.target() == oldKey;
 					});
 					target = again;
+					task.chain.targetAtStepStart = again.position;
 					if (!claimForGo(actor, again)) {
 						endChain(actor, "a claim its steps name cannot be taken");
 						return;
@@ -482,7 +499,8 @@ namespace ecs {
 		   };
 		const bool takes = lifting != nullptr;
 		action.clear();
-		if (!took) {
+		// A take that took nothing is a take that lifted nothing, which ends the chain unless it carries cargo on.
+		if (!took && !takes) {
 			endChain(actor, "its action's effect did not take");
 			return;
 		}
@@ -591,7 +609,9 @@ namespace ecs {
 		if ((step.claims & bit(assets::ClaimKind::Slot)) != 0) {
 			const bool	   spot = progress.source.claimKind == assets::ClaimKind::Slot;
 			const EntityID site = progress.destination.entity != kInvalidEntity ? progress.destination.entity : target.entity;
-			if (!performsWork(actionEntries.of(step.action.handle)) || spot) {
+			const assets::ActionEntry&				 named = chainWiring.library->actions[step.action.handle.index];
+			const assets::EntryHandle<assets::ActionEntry> performed = named.group ? memberFor(named, target) : step.action.handle;
+			if (!performed.valid() || !performsWork(actionEntries.of(performed)) || spot) {
 				if (site == kInvalidEntity) {
 					LOG_ERROR(Engine, "[Chain] A slot claim has no station or site to be on");
 					return false;
@@ -599,7 +619,8 @@ namespace ecs {
 				take(Claim::slot(static_cast<uint64_t>(site), spot ? static_cast<uint16_t>(progress.source.key) : kAnySlot));
 			}
 		}
-		if ((step.claims & bit(assets::ClaimKind::Inbound)) != 0) {
+		// The goods' claims are sized once, before any take; after one they follow what it lifted and are never sized again.
+		if ((step.claims & bit(assets::ClaimKind::Inbound)) != 0 && !progress.goodsTaken) {
 			const EntityID destination = progress.destination.entity;
 			if (goal.rootGoalId == 0 || goal.item == 0 || destination == kInvalidEntity) {
 				LOG_ERROR(Engine, "[Chain] An inbound claim needs the option's goal and destination");
@@ -620,8 +641,8 @@ namespace ecs {
 			);
 			return false;
 		}
-		if (changed && chainWiring.appendClaims) {
-			chainWiring.appendClaims(actor.entity, task);
+		if (changed) {
+			fileClaims(actor);
 		}
 		return true;
 	}
@@ -649,18 +670,28 @@ namespace ecs {
 		Task&			 task = actor.task;
 		ChainProgress&	 progress = task.chain;
 		const ChainGoal& goal = progress.goal;
+		const uint32_t	 item = lifted.item != 0 ? lifted.item : goal.item;
+		// The cargo its claims carried before the take: read before its own source claim drops, which would otherwise
+		// leave the goods it meant to take reading as carried.
+		const uint32_t cargo = goal.rootGoalId != 0 ? cargoOnClaims(task.claims, goal.rootGoalId, item) : 0U;
 		releaseStepClaims(task, step);
 		if (!took) {
+			fileClaims(actor);
 			return true;
 		}
-		const uint32_t item = lifted.item != 0 ? lifted.item : goal.item;
-		const uint32_t cargo = goal.rootGoalId != 0 ? cargoOnClaims(task.claims, goal.rootGoalId, item) : 0U;
+		progress.goodsTaken = true;
 		if (lifted.quantity == 0) {
 			// A take that lifted nothing ends the task at the source, unless it carries cargo on to deliver.
 			if (cargo == 0) {
 				endChain(actor, "its take lifted nothing");
 				return false;
 			}
+			for (Claim& claim : task.claims) {
+				if ((claim.kind() == ClaimKind::Inbound || claim.kind() == ClaimKind::InFlight) && claim.itemDefNameId() == item) {
+					claim.setQuantity(cargo);
+				}
+			}
+			fileClaims(actor);
 			return true;
 		}
 		if (progress.takenItem != lifted.item) {
@@ -669,6 +700,7 @@ namespace ecs {
 		progress.takenItem = lifted.item;
 		progress.takenQuantity += lifted.quantity;
 		if (goal.rootGoalId == 0) {
+			fileClaims(actor);
 			return true;
 		}
 		// What follows the goods is what was lifted, capped at what the root still needs with no other task bringing it.
@@ -698,15 +730,17 @@ namespace ecs {
 			}
 		}
 		// A cut that set out with no cargo claimed no inbound; the goods it lifted are now on their way to the destination.
-		if (inFlight && !inbound && carried > 0 && progress.destination.entity != kInvalidEntity &&
-			task.claims.size() < ClaimList::kCapacity) {
+		if (inFlight && !inbound && carried > 0 && progress.destination.entity != kInvalidEntity) {
+			if (task.claims.size() >= ClaimList::kCapacity) {
+				LOG_ERROR(Engine, "[Chain] Entity %llu: no room for the inbound of what its cut lifted", static_cast<unsigned long long>(actor.entity));
+				endChain(actor, "its claims have no room for the goods it lifted");
+				return false;
+			}
 			[[maybe_unused]] const bool pushed =
 				task.claims.push(Claim::inbound(static_cast<uint64_t>(progress.destination.entity), lifted.item, carried));
 		}
 		task.claims.eraseIf([](const Claim& claim) { return claim.quantity() == 0; });
-		if (chainWiring.appendClaims) {
-			chainWiring.appendClaims(actor.entity, task);
-		}
+		fileClaims(actor);
 		return true;
 	}
 
@@ -862,6 +896,7 @@ namespace ecs {
 		});
 		progress.takenItem = 0;
 		progress.takenQuantity = 0;
+		fileClaims(actor);
 	}
 
 } // namespace ecs
