@@ -52,6 +52,8 @@ namespace world_sim {
 					return "Placing";
 				case ecs::TaskType::Wander:
 					return "Wandering";
+				case ecs::TaskType::Chain:
+					return ecs::kRunningChainLabel;
 			}
 			return "Unknown";
 		}

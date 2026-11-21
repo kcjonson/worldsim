@@ -1490,7 +1490,7 @@ namespace world_sim {
 				serializeThoughts(out, *thoughts);
 			}
 			if (const auto* action = m_ctx.world->getComponent<ecs::Action>(entity)) {
-				out << ",\"action\":\"" << ecs::actionTypeName(action->type) << "\"";
+				out << ",\"action\":\"" << ecs::actionName(*action) << "\"";
 			}
 			if (const auto* inv = m_ctx.world->getComponent<ecs::Inventory>(entity)) {
 				// Aggregate hands + backpack so each defName appears once (no duplicate keys).

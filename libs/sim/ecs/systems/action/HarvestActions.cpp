@@ -21,9 +21,6 @@ namespace ecs {
 
 	namespace {
 
-		/// How far outside a footprint a clear's surplus drops: past the edge by about a pile's width.
-		constexpr float kClearDropMargin = 0.5F;
-
 		/// The loose pile found at a position: the matched entity plus the live ResourceStack
 		/// to mutate. `stack` is nullptr (and `entity` kInvalidEntity) when no pile is there.
 		struct LoosePile {

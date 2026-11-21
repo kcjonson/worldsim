@@ -29,9 +29,14 @@ namespace conditions {
 		/// One bit per TaskType: the task types a current_task() name stands for.
 		using TaskMask = uint16_t;
 		static_assert(
-			static_cast<unsigned>(ecs::TaskType::Wander) < std::numeric_limits<TaskMask>::digits, "TaskMask has a bit for every TaskType"
+			static_cast<unsigned>(ecs::TaskType::Chain) < std::numeric_limits<TaskMask>::digits,
+			"TaskMask has a bit for every TaskType"
 		);
-		static_assert(assets::kTaskTypeNames.size() == static_cast<std::size_t>(ecs::TaskType::Wander), "a name for every TaskType");
+		// Every task type but Chain has a name: a running chain matches no task type name.
+		static_assert(
+			assets::kTaskTypeNames.size() == static_cast<std::size_t>(ecs::TaskType::Wander),
+			"a name for every TaskType but Chain"
+		);
 
 		/// The engine's names for `term`'s first parameter, added to its symbol set and bound to their values.
 		/// The set is owned (assets::kOwnedSymbolSets), so these are all the names it holds.
@@ -187,6 +192,8 @@ namespace conditions {
 					return servesCraft(task.haulGoalId);
 				case ecs::TaskType::Harvest:
 					return servesCraft(task.harvestGoalId);
+				case ecs::TaskType::Chain:
+					return servesCraft(task.chain.goal.rootGoalId);
 				default:
 					return false;
 			}

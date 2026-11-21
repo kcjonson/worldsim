@@ -134,6 +134,9 @@ namespace ecs {
 				case TaskType::Wander:
 				case TaskType::None:
 					return nullptr;
+				case TaskType::Chain:
+					// The decision offers no chain option, so none has a first action here.
+					return nullptr;
 			}
 			return nullptr;
 		}
@@ -182,6 +185,9 @@ namespace ecs {
 
 		/// The verdict key of what a task is heading for.
 		[[nodiscard]] std::uint64_t verdictKeyOf(const Task& task) {
+			if (task.type == TaskType::Chain) {
+				return verdictKey(task.chain.stepTarget.key, task.workTarget());
+			}
 			return verdictKey(task.type == TaskType::Harvest ? task.harvestTargetKey : task.needSourceKey, task.workTarget());
 		}
 
@@ -263,6 +269,9 @@ namespace ecs {
 				case TaskType::Wander:
 				case TaskType::None:
 					return rungs.idle;
+				case TaskType::Chain:
+					// The decision offers no chain option; a running chain keeps the rung it was started on.
+					return rungs.idle;
 			}
 			return rungs.idle;
 		}
@@ -302,6 +311,9 @@ namespace ecs {
 				case TaskType::Build:
 				case TaskType::Deconstruct:
 					return option.buildBlueprintEntityId == currentTask.buildBlueprintEntityId;
+				case TaskType::Chain:
+					// The decision offers no chain option to match.
+					return false;
 				default:
 					return false;
 			}
@@ -2057,6 +2069,7 @@ namespace ecs {
 				task.snapWaitDecisions = 0;
 			}
 			task.criticalNeedsAtDecision = criticalNeedMask(needs);
+			task.decideAtInterval = false;
 			const bool decidingOnFailedRoute = task.navState == NavState::CantFindWayTo;
 
 			// Store current task state for the (tier, score) interruption comparison
@@ -2134,9 +2147,17 @@ namespace ecs {
 					}
 				}
 
+				// A running chain matches no option: it holds against every option not on a strictly higher rung, keeping
+				// its own rung, and one whose route failed is a fresh pick.
+				const bool chainHolds = task.type == TaskType::Chain && task.navState != NavState::CantFindWayTo &&
+										(selected == nullptr || selected->tier >= currentTier);
+				if (chainHolds) {
+					task.timeSinceEvaluation = 0.0F;
+				}
+
 				// Decision: Should we switch tasks?
 				// Don't switch if it's the same task we're already doing
-				bool shouldSwitch = !isSameTask;
+				bool shouldSwitch = !isSameTask && !chainHolds;
 
 				// The next leg of the same gathering: a further cut toward the root the colonist carries
 				// goods for, or their carry-in. The goods ride along under the same claims, so nothing is
@@ -2388,9 +2409,9 @@ namespace ecs {
 	}
 
 	bool AIDecisionSystem::shouldReEvaluate(const Task& task, const NeedsComponent& needs, bool movementTargetActive) {
-		// Always re-evaluate if no active task
+		// Always re-evaluate if no active task, at the interval when a start refused.
 		if (!task.isActive()) {
-			return true;
+			return !task.decideAtInterval || task.timeSinceEvaluation >= kReEvalInterval;
 		}
 
 		// Re-evaluate if task has arrived (completed movement)
@@ -3823,7 +3844,7 @@ namespace ecs {
 		const auto entityId = static_cast<unsigned long long>(entity);
 
 		// For Haul and Harvest tasks: the goods may be in hands
-		if ((task.type == TaskType::Haul || task.type == TaskType::Harvest) && !item.empty()) {
+		if ((task.type == TaskType::Haul || task.type == TaskType::Harvest || task.type == TaskType::Chain) && !item.empty()) {
 			// Verify item is actually in hands before operating
 			if (!inventory.isHolding(item)) {
 				keepGoods(); // goods in the pack ride along
@@ -3949,6 +3970,7 @@ namespace ecs {
 			dropRoute(*task);
 			task->clear();
 			task->timeSinceEvaluation = 0.0F;
+			task->decideAtInterval = false;
 		}
 		// He decides nothing while controlled, so his last trace would keep offering its work to the
 		// task panel (ColonyGoalWork) until release.
@@ -3981,6 +4003,7 @@ namespace ecs {
 			dropRoute(*task);
 			task->clear();
 			task->timeSinceEvaluation = 0.0F;
+			task->decideAtInterval = false;
 		}
 		if (auto* action = world->getComponent<Action>(entity)) {
 			action->clear();

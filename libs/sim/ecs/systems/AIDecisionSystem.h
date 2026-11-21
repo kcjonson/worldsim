@@ -369,6 +369,10 @@ public:
 	/// this system (ActionSystem) see it that stale.
 	[[nodiscard]] const ClaimIndex& claimIndex() const { return m_claims; }
 
+	/// File `task`'s current claims with the index, for claims the chain runner took after this update's decisions, so a
+	/// creature whose query reads the index later in the same update sees them.
+	void appendClaims(EntityID colonist, const Task& task) { m_claims.append(colonist, task); }
+
 	[[nodiscard]] int priority() const override { return 60; }
 
 	[[nodiscard]] const char* name() const override { return "AIDecision"; }
