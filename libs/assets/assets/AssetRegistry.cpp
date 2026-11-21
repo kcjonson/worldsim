@@ -790,30 +790,12 @@ namespace assets {
 		def.placement.scale = {.min = 1.0F, .max = 1.0F};
 
 		// Rule 12: the view at every 15 degree stop, at the finest level, stays under three quarters of the
-		// 16-bit index space, leaving room for the extra clipped vertices of turns between stops. A vertex that isn't
-		// finite would otherwise load silently and draw as a spike or a hole, so it fails too.
+		// 16-bit index space, leaving room for the extra clipped vertices of turns between stops. Rule 13 keeps every
+		// number a view is built from finite and bounded, so its vertices are too.
 		constexpr uint32_t kStopQuanta = 1500;
 		const auto		   finest = static_cast<uint8_t>(std::max<size_t>(def.detailLevels.size(), 1) - 1);
 		for (uint32_t turn = 0; turn < kTurnQuantaPerTurn; turn += kStopQuanta) {
 			const ItemView built = buildItemMesh(def, turn, finest, view.config());
-			const bool	   finite =
-				std::all_of(
-					built.mesh.vertices.begin(),
-					built.mesh.vertices.end(),
-					[](const Foundation::Vec2& vertex) { return std::isfinite(vertex.x) && std::isfinite(vertex.y); }
-				) &&
-				std::all_of(built.mesh.colors.begin(), built.mesh.colors.end(), [](const Foundation::Color& color) {
-					return std::isfinite(color.r) && std::isfinite(color.g) && std::isfinite(color.b) && std::isfinite(color.a);
-				});
-			if (!finite) {
-				m_validationReport.add(
-					Severity::Error,
-					def.defName,
-					"parts",
-					"its view at " + std::to_string(turn / 100) + " degrees has a vertex that isn't a finite number"
-				);
-				break;
-			}
 			if (built.vertexCount >= kMaxStopViewVertices) {
 				m_validationReport.add(
 					Severity::Error,

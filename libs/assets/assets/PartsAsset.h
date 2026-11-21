@@ -158,6 +158,7 @@ namespace assets {
 			Matches,  ///< within aspectTolerance
 			Mismatch, ///< outside it: the face, top, or area draws without the drawing
 			NoFill,	  ///< an area's drawing in proportion but with no filled shape, so no area (rule 11)
+			TooLarge, ///< in proportion, but mapped onto what it covers it passes kLargestPartsLengthMeters (rule 13)
 		};
 		std::string				file;
 		Kind					kind = Kind::Face;
@@ -219,6 +220,11 @@ namespace assets {
 
 	/// The largest colonist collider's radius: a use area has room when a disc this size fits in it.
 	inline constexpr float kLargestColonistRadiusMeters = 0.3F;
+
+	/// Rule 13: how far from zero any length a parts def writes, and any point of a drawing mapped onto what it covers,
+	/// may lie. Far past any item; within it a float holds well under the millimetre the collider is rounded to, and no
+	/// product a view or a boolean forms nears the float limit.
+	inline constexpr float kLargestPartsLengthMeters = 1000.0F;
 
 	/// The def elements a parts def may not have (rule 1).
 	inline constexpr std::array<const char*, 6> kElementsPartsRefuses = {"svgPath", "worldHeight", "variantCount", "placement", "collision", "generator"};

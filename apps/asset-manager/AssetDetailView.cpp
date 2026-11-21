@@ -583,6 +583,9 @@ namespace asset_manager {
 				case assets::DrawingUseCheck::Verdict::NoFill:
 					verdict = "no filled shape, so no area: strokes are guides";
 					break;
+				case assets::DrawingUseCheck::Verdict::TooLarge:
+					verdict = "out of scale: mapped onto what it covers it passes the parts length limit";
+					break;
 			}
 			entry.addChild<ui::Text>({.layout = kKeepHeight, .style = *style, .text = verdict, .wrap = true});
 		}
