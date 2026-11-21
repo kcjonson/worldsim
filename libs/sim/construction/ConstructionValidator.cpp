@@ -232,7 +232,8 @@ namespace construction {
 
 		// The along-the-wall distance, in meters, from the edge of `opening` to `point`, which must lie on the opening's
 		// wall; negative when the point is within the opening's own span.
-		double gapToOpening(const ConstructionWorld& world, const Opening& opening, const geometry::Vec2i64& point, double halfWidthMeters) {
+		double
+		gapToOpening(const ConstructionWorld& world, const Opening& opening, const geometry::Vec2i64& point, double halfWidthMeters) {
 			const WallSegment*		wall = world.getSegment(opening.segment);
 			const geometry::Vec2i64 start = world.getVertex(wall->v0)->pos;
 			const geometry::Vec2i64 along = world.getVertex(wall->v1)->pos - start;
@@ -260,15 +261,18 @@ namespace construction {
 			const Vertex*	   wallEnd = world.getVertex(wall->v1);
 			const geometry::Vec2i64 spanAlong = spanEnd - spanStart;
 			const geometry::Vec2i64 wallAlong = wallEnd->pos - wallStart->pos;
-			const double			sine = std::abs(geometry::cross(spanAlong, wallAlong).toDouble()) /
-						   (std::sqrt(geometry::dot(spanAlong, spanAlong).toDouble()) * std::sqrt(geometry::dot(wallAlong, wallAlong).toDouble()));
+			const double			spanLength = std::sqrt(geometry::dot(spanAlong, spanAlong).toDouble());
+			const double			wallLength = std::sqrt(geometry::dot(wallAlong, wallAlong).toDouble());
+			const double			sine = std::abs(geometry::cross(spanAlong, wallAlong).toDouble()) / (spanLength * wallLength);
 			if (!(sine >= kFarExitMinSine)) {
 				return false;
 			}
-			const assets::ThicknessPreset* hostPreset = assets::ConstructionRegistry::Get().getThicknessPreset(wall->material, wall->thicknessPreset);
+			const auto&					   registry = assets::ConstructionRegistry::Get();
+			const assets::ThicknessPreset* hostPreset = registry.getThicknessPreset(wall->material, wall->thicknessPreset);
 			const std::int64_t			   hostHalfMm = hostPreset != nullptr ? hostPreset->halfThicknessMm : stemHalfThicknessMm;
-			const double trimBound = static_cast<double>(stemHalfThicknessMm + hostHalfMm) / static_cast<double>(geometry::kMillimetersPerMeter) / sine +
-									 kFarExitSlackMeters;
+			const double halfThicknessesMeters =
+				static_cast<double>(stemHalfThicknessMm + hostHalfMm) / static_cast<double>(geometry::kMillimetersPerMeter);
+			const double trimBound = halfThicknessesMeters / sine + kFarExitSlackMeters;
 
 			bool touches = false;
 			for (const geometry::Vec2i64& contact : {spanStart, spanEnd, wallStart->pos, wallEnd->pos}) {
@@ -894,7 +898,8 @@ namespace construction {
 			const WallSegment* wall = world_->getSegment(opening.segment);
 			const Vertex*	   start = wall != nullptr ? world_->getVertex(wall->v0) : nullptr;
 			const Vertex*	   end = wall != nullptr ? world_->getVertex(wall->v1) : nullptr;
-			if (start == nullptr || end == nullptr || joint == start->pos || joint == end->pos || !onClosedSegment(joint, start->pos, end->pos)) {
+			if (start == nullptr || end == nullptr || joint == start->pos || joint == end->pos ||
+				!onClosedSegment(joint, start->pos, end->pos)) {
 				continue;
 			}
 			const assets::OpeningTypeDef* type = registry.getOpeningType(opening.type);
@@ -954,7 +959,8 @@ namespace construction {
 			if (result.ok()) {
 				return true;
 			}
-			const bool measuredAgainstMargin = result.code == ValidationCode::OpeningMarginTooSmall || result.code == ValidationCode::OpeningOverlap;
+			const bool measuredAgainstMargin =
+				result.code == ValidationCode::OpeningMarginTooSmall || result.code == ValidationCode::OpeningOverlap;
 			return measuredAgainstMargin && marginMeters - result.measuredValue <= kMarginToleranceMeters;
 		};
 		const ConstructionValidator before(*constraints_, *world_);

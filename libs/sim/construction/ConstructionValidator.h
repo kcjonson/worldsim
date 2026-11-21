@@ -253,10 +253,12 @@ namespace construction {
 		// keeps its clearance from a wall junction whichever is placed first. When the span touches a wall
 		// that carries an opening (an end on its interior, an end on or a pass through one of its vertices),
 		// the span is committed into a copy of the world and validateOpening runs on each such opening as it
-		// would stand after the commit; one that was valid before and fails after refuses the span. The
-		// result carries validateOpening's `measuredValue`. Spans touching no opening cost only a scan of
-		// the openings; the copy is made only for the rest. Called by both wall validators with the
-		// span's ends known, so a split's real band trim at the junction is the one the opening tool uses.
+		// would stand after the commit; one that fails after (beyond a tenth of a millimetre of float round-off
+		// in the split) and was valid before refuses the span, and one already wrong refuses a wall ending on
+		// its span. An opening far enough from every contact for any trim to miss it is not revalidated, and
+		// a span touching no opening costs only a scan of the openings. The result carries validateOpening's
+		// `measuredValue`. Called by both wall validators with the span's ends known, so a split's real band
+		// trim at the junction is the one the opening tool uses.
 		[[nodiscard]] ValidationResult checkSpanClearOfOpenings(
 			::Foundation::Vec2 a, ::Foundation::Vec2 b, const assets::ThicknessPreset& thickness, FoundationId host
 		) const;

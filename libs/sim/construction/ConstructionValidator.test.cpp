@@ -826,15 +826,16 @@ TEST_F(WallEndOnOpening, AStemEndingOnAnExistingJointNearADoorIsRefused) {
 	EXPECT_TRUE(validator.validateWallSegment({8.0F, 11.0F}, {8.0F, 6.0F}, standardWood(), foundation.id).ok());
 }
 
-// A door snapped against a wall end sits exactly on minT (or maxT); a wall that T's in two metres past its
-// edge rescales t in float on the trial split, which can leave it a ulp short of the recomputed range. That
-// is no lost margin, so the wall is accepted, over host lengths that give different roundings.
-TEST_F(WallEndOnOpening, ADoorSnappedToAWallEndSurvivesAFarWallsSplitAtEveryLength) {
+// A door snapped against a wall end sits exactly on minT (or maxT). A wall that T's in on the other side rescales
+// t in float on the trial split, and openingRange recomputes the range in double: the door can land a float ulp
+// (about 2e-7 m) short of its margin, which is round-off, not a lost margin, so the wall is accepted. Run over
+// host lengths that round differently, with the stem 2 m past the door's edge (the far exit) and 0.45 m past it
+// (just outside that exit, so the trial split decides).
+TEST_F(WallEndOnOpening, ADoorSnappedToAWallEndSurvivesAWallSplittingItsOtherSideAtEveryLength) {
 	ConstraintConfig cfg = defaults();
 	const double	 margin = static_cast<double>(cfg.openingMarginMeters);
 	int				 checked = 0;
-	for (float length = 5.0F; length < 15.0F; length += 0.37F) {
-		SCOPED_TRACE(length);
+	for (float length = 5.0F; length < 15.0F; length += 0.0173F) {
 		for (const bool atMin : {true, false}) {
 			ConstructionWorld world;
 			const SegmentId	  seg = buildWall(world, length);
@@ -842,15 +843,18 @@ TEST_F(WallEndOnOpening, ADoorSnappedToAWallEndSurvivesAFarWallsSplitAtEveryLeng
 			ASSERT_TRUE(range.has_value());
 			const float t = atMin ? range->minT : range->maxT;
 			ASSERT_NE(world.addOpening(seg, t, "Door", "Wood"), kInvalidOpening);
-			const float	centre = 2.0F + t * length;
-			const float	x = atMin ? centre + 0.45F + 2.0F : centre - 0.45F - 2.0F;
 			const ConstructionValidator validator(cfg, world);
 			ASSERT_TRUE(validator.validateOpening(seg, t, "Door", "Wood", world.openings().front().id).ok());
-			EXPECT_FALSE(refused(validator, standardWood(), x, 90.0F)) << (atMin ? "door at minT" : "door at maxT");
-			++checked;
+			const float centre = 2.0F + t * length;
+			for (const float pastTheEdge : {2.0F, 0.45F}) {
+				const float x = atMin ? centre + 0.45F + pastTheEdge : centre - 0.45F - pastTheEdge;
+				EXPECT_FALSE(refused(validator, standardWood(), x, 90.0F))
+					<< "length " << length << (atMin ? ", door at minT, " : ", door at maxT, ") << pastTheEdge << " m past its edge";
+				++checked;
+			}
 		}
 	}
-	EXPECT_GT(checked, 20);
+	EXPECT_GT(checked, 2000);
 }
 
 // A door already wrong where it stands is not a wall's doing, but no wall may still end on its span.
@@ -878,7 +882,9 @@ TEST_F(WallEndOnOpening, AWallPassingThroughAHostVertexNearADoorIsRefused) {
 	ASSERT_NE(world.addOpening(second.id, 0.2F, "Door", "Wood"), kInvalidOpening); // centre x = 6.8
 	const ConstructionValidator validator(cfg, world);
 
-	EXPECT_EQ(validator.validateWallSegment({6.0F, 11.0F}, {6.0F, 3.0F}, standardWood(), foundation.id).code, ValidationCode::WallEndsOnOpening);
+	EXPECT_EQ(
+		validator.validateWallSegment({6.0F, 11.0F}, {6.0F, 3.0F}, standardWood(), foundation.id).code, ValidationCode::WallEndsOnOpening
+	);
 }
 
 // An L joining a wall's end trims it by the corner; a door a margin and a bit from that end loses its margin.
@@ -889,7 +895,9 @@ TEST_F(WallEndOnOpening, AnLJoinAtTheCornerOfAWallWithADoorNearThatCornerIsRefus
 	ASSERT_NE(world.addOpening(seg, 0.1F, "Door", "Wood"), kInvalidOpening); // centre x = 2.8, 0.35 m clear of the free end
 	const ConstructionValidator validator(cfg, world);
 
-	EXPECT_EQ(validator.validateWallSegment({2.0F, 11.0F}, {2.0F, 6.0F}, standardWood(), kInvalidFoundation).code, ValidationCode::WallEndsOnOpening);
+	EXPECT_EQ(
+		validator.validateWallSegment({2.0F, 11.0F}, {2.0F, 6.0F}, standardWood(), kInvalidFoundation).code, ValidationCode::WallEndsOnOpening
+	);
 	EXPECT_TRUE(validator.validateWallSegment({10.0F, 11.0F}, {10.0F, 6.0F}, standardWood(), kInvalidFoundation).ok());
 }
 
