@@ -73,7 +73,7 @@ namespace construction {
 		WallsOverlap,				  // footprint overlaps another wall's footprint (not a junction)
 		ParallelClearanceTooSmall,	  // faces run closer than minParallelClearance without joining
 		XCrossing,					  // centerline would properly cross an existing wall centerline
-		WallEndsOnOpening,			  // an end of the wall would land within an opening's span (plus margin) on an existing wall
+		WallEndsOnOpening,			  // the wall would leave an opening on a wall it touches without its clearance from the junction
 		// Opening codes (Epic F). An opening is placed on a wall segment, blueprint or built, at a
 		// centerline parameter t; these are the opening-only reasons.
 		OpeningSegmentInvalid,	// target segment is missing, or its wall graph cannot be resolved (openingRange)

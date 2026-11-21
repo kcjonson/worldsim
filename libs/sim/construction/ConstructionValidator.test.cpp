@@ -1,6 +1,7 @@
 #include "ConstructionValidator.h"
 
 #include "ConstructionWorld.h"
+#include "OpeningGeometry.h"
 #include "SnapEngine.h"
 
 #include "../ecs/components/StructureBlueprint.h"
@@ -823,6 +824,73 @@ TEST_F(WallEndOnOpening, AStemEndingOnAnExistingJointNearADoorIsRefused) {
 		validator.validateWallSegment({6.0F, 11.0F}, {6.0F, 6.0F}, standardWood(), foundation.id).code, ValidationCode::WallEndsOnOpening
 	);
 	EXPECT_TRUE(validator.validateWallSegment({8.0F, 11.0F}, {8.0F, 6.0F}, standardWood(), foundation.id).ok());
+}
+
+// A door snapped against a wall end sits exactly on minT (or maxT); a wall that T's in two metres past its
+// edge rescales t in float on the trial split, which can leave it a ulp short of the recomputed range. That
+// is no lost margin, so the wall is accepted, over host lengths that give different roundings.
+TEST_F(WallEndOnOpening, ADoorSnappedToAWallEndSurvivesAFarWallsSplitAtEveryLength) {
+	ConstraintConfig cfg = defaults();
+	const double	 margin = static_cast<double>(cfg.openingMarginMeters);
+	int				 checked = 0;
+	for (float length = 5.0F; length < 15.0F; length += 0.37F) {
+		SCOPED_TRACE(length);
+		for (const bool atMin : {true, false}) {
+			ConstructionWorld world;
+			const SegmentId	  seg = buildWall(world, length);
+			const auto		  range = openingRange(world, seg, 0.9, margin);
+			ASSERT_TRUE(range.has_value());
+			const float t = atMin ? range->minT : range->maxT;
+			ASSERT_NE(world.addOpening(seg, t, "Door", "Wood"), kInvalidOpening);
+			const float	centre = 2.0F + t * length;
+			const float	x = atMin ? centre + 0.45F + 2.0F : centre - 0.45F - 2.0F;
+			const ConstructionValidator validator(cfg, world);
+			ASSERT_TRUE(validator.validateOpening(seg, t, "Door", "Wood", world.openings().front().id).ok());
+			EXPECT_FALSE(refused(validator, standardWood(), x, 90.0F)) << (atMin ? "door at minT" : "door at maxT");
+			++checked;
+		}
+	}
+	EXPECT_GT(checked, 20);
+}
+
+// A door already wrong where it stands is not a wall's doing, but no wall may still end on its span.
+TEST_F(WallEndOnOpening, ADoorAlreadyTooNearItsWallEndStillCannotHaveAWallEndOnIt) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	const SegmentId	  seg = buildWall(world, 8.0F);
+	ASSERT_NE(world.addOpening(seg, 0.02F, "Door", "Wood"), kInvalidOpening); // centre x = 2.16: inside the end margin
+	const ConstructionValidator validator(cfg, world);
+
+	EXPECT_TRUE(refused(validator, standardWood(), 2.5F, 90.0F));
+	EXPECT_FALSE(refused(validator, standardWood(), 5.0F, 90.0F));
+}
+
+// A span that passes through a host's interior vertex trims both pieces there.
+TEST_F(WallEndOnOpening, AWallPassingThroughAHostVertexNearADoorIsRefused) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	std::vector<Vec2> sq = {{0.0F, 0.0F}, {20.0F, 0.0F}, {20.0F, 20.0F}, {0.0F, 20.0F}};
+	const auto		  foundation = world.commitFoundation(sq, "Wood");
+	ASSERT_TRUE(foundation.ok());
+	ASSERT_TRUE(world.commitSegment(mm(2.0F, 6.0F), mm(6.0F, 6.0F), "Wood", "Standard", foundation.id, world.version()).ok());
+	const auto second = world.commitSegment(mm(6.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", foundation.id, world.version());
+	ASSERT_TRUE(second.ok());
+	ASSERT_NE(world.addOpening(second.id, 0.2F, "Door", "Wood"), kInvalidOpening); // centre x = 6.8
+	const ConstructionValidator validator(cfg, world);
+
+	EXPECT_EQ(validator.validateWallSegment({6.0F, 11.0F}, {6.0F, 3.0F}, standardWood(), foundation.id).code, ValidationCode::WallEndsOnOpening);
+}
+
+// An L joining a wall's end trims it by the corner; a door a margin and a bit from that end loses its margin.
+TEST_F(WallEndOnOpening, AnLJoinAtTheCornerOfAWallWithADoorNearThatCornerIsRefused) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	const SegmentId	  seg = buildWall(world, 8.0F);
+	ASSERT_NE(world.addOpening(seg, 0.1F, "Door", "Wood"), kInvalidOpening); // centre x = 2.8, 0.35 m clear of the free end
+	const ConstructionValidator validator(cfg, world);
+
+	EXPECT_EQ(validator.validateWallSegment({2.0F, 11.0F}, {2.0F, 6.0F}, standardWood(), kInvalidFoundation).code, ValidationCode::WallEndsOnOpening);
+	EXPECT_TRUE(validator.validateWallSegment({10.0F, 11.0F}, {10.0F, 6.0F}, standardWood(), kInvalidFoundation).ok());
 }
 
 // After a split the validator accepted, the opening the wall re-hosted still passes the opening
