@@ -201,7 +201,9 @@ namespace {
 			std::size_t filed = 0;
 			for (const ecs::MemoryCell& cell : remembered.cells) {
 				filed += cell.keys.size();
-				if (cell.keys.empty() || remembered.cellAt(cell.x, cell.y) != &cell) {
+				const bool withinBounds = cell.x >= remembered.minCellX && cell.x <= remembered.maxCellX && cell.y >= remembered.minCellY &&
+										  cell.y <= remembered.maxCellY;
+				if (cell.keys.empty() || remembered.cellAt(cell.x, cell.y) != &cell || !withinBounds) {
 					return "def " + std::to_string(defNameId) + " cell (" + std::to_string(cell.x) + ", " + std::to_string(cell.y) + ")";
 				}
 			}
@@ -389,6 +391,7 @@ TEST(MemoryComponent, IndexHoldsUnderRandomRememberForgetEvictCopyAndMove) {
 	const std::size_t before = memory.worldEntityCount();
 	EXPECT_FALSE(memory.rememberWorldEntity({std::numeric_limits<float>::quiet_NaN(), 1.0F}, 1, 1));
 	EXPECT_FALSE(memory.rememberWorldEntity({1.0F, std::numeric_limits<float>::infinity()}, 1, 1));
+	EXPECT_FALSE(memory.rememberWorldEntity({-1.0e9F, 1.0F}, 1, 1)) << "past the key's integers";
 	EXPECT_EQ(memory.worldEntityCount(), before);
 }
 

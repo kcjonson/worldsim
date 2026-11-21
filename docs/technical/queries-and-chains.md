@@ -966,8 +966,7 @@ The case to design for is a creature that knows 10,000 edible items (`Memory::kM
    from distance: its cached definition terms plus, for each item-scoped fact, the larger of the weight
    times the range's ends (a place fact reads 0 on a thing, so it adds nothing). That bound less the best
    score found so far, divided by the distance weight's size, is the farthest an item of that definition
-   could still win from. A positive weight on a fact with no upper bound gives the walk no horizon from
-   that fact. The walk passes over an item beyond its definition's horizon and ends when the next
+   could still win from. The walk passes over an item beyond its definition's horizon and ends when the next
    candidate is beyond every horizon. A definition with few occupied cells has them all opened at once; one
    with more is walked outward from the creature in rings of cells, until looking costs more than opening
    every occupied cell left. A prefer row's lower class is walked only until the upper class has a
@@ -985,12 +984,18 @@ The case to design for is a creature that knows 10,000 edible items (`Memory::kM
    whose nearest few are all sealed asks the next few at the next decision.
 6. Wait when everything is passed over. A query whose every candidate was passed over (regrowing,
    verdicts, not joined, taken) records a wait, and is not walked again until something it read changes:
-   the creature's memory, a claim added, changed, or released, the earliest regrowing source ready, a box
-   or what it holds, the creature's verdicts, the request (the goal, the claim reading, the traits, the
-   kept target), the mesh's connectivity when a candidate was passed over as not joined, and where the
-   creature stands (its exact position when the query has place rows or a distance bound, else the
-   connectivity component it stands on). No wait is recorded when a passed-over candidate was a mover or a
-   pile read by its live count, or when a work gate turned a definition away, since no stamp covers those.
+   the creature's memory, the earliest regrowing source ready, a box or what it holds, the creature's
+   verdicts, the request, the colony's claims when a candidate was passed over as taken by one, the mesh's
+   connectivity when a candidate was passed over as not joined, and where the creature stands (its exact
+   position when the query has place rows or an `exclude` row on distance, else the connectivity component
+   it stands on). The request it reads is the goal (its id, destination and the destination's position,
+   item, priority, and spots), the claim reading's kinds, tiers, and the creature's own excluded claims, the
+   traits, and the kept target. It does not read the units the step wants: a candidate is passed over for
+   claims only when nothing is left once the takers' claims are counted, which reads quantities and claims,
+   never the units wanted. No wait is recorded when the query has a `<from kind>` row naming a mover (a
+   sighting moves no memory version), when a passed-over candidate was a pile read by its live count, when
+   an exclusion on `held` removed a candidate, or when a work gate turned a definition away, since no stamp
+   covers those.
 7. Answer once per decision. A source's reach answer is shared by every query and work entry that asks
    in the same decision; each pile is offered to one goal only per decision; the colony's food boxes
    are listed once per update.
@@ -2053,15 +2058,19 @@ Rules from the first build of queries (WOR-1070, Facts and queries):
 - 2026-11-21: The total order in full: a fallback candidate after every other, then the prefer class, the
   score, the distance, and the key (the memory key for a thing, the box's key then the item for a box, the
   scan index for a grid point, the draw index for an `around` point, the index for a spot).
-- 2026-11-21: A wait ends when anything it read changes: the memory, the claims, the earliest regrowing
-  source, the boxes, the verdicts, the request, the connectivity only when a candidate was passed over as
-  not joined, and the creature's position when the query has place rows or a distance bound, else its
-  connectivity component. A passed-over mover or live-counted pile, or a work gate that turned a definition
-  away, records no wait.
+- 2026-11-21: A wait ends when anything it read changes: the memory, the earliest regrowing source, the
+  boxes, the verdicts, the request (the goal with its destination's position, the claim kinds and tiers and
+  the creature's own excluded claims, the traits, the kept target, and not the units wanted, which no
+  pass-over reads), the claims only when one took a candidate, the connectivity only when a candidate was
+  passed over as not joined, and the creature's position when the query has place rows or an `exclude` row
+  on distance, else its connectivity component. A mover row, a passed-over live-counted pile, an exclusion
+  on `held` that removed a candidate, or a work gate that turned a definition away records no wait.
+- 2026-11-21: The kept target is asked first among the rows that are not fallback rows, as a remembered thing
+  when such a row takes it, else as a box the colony knows under that key, and is taken alone only when it
+  survives in the upper prefer class.
 - 2026-11-21: A fact nothing answers gives a `weigh` or `scale` row the same 0 for every candidate; an
   `exclude` or `prefer` row on it makes the query, and a count of it, answer that the fact is not answered,
   naming the row.
-- 2026-11-21: A positive weight on a fact with no upper bound gives the walk no horizon from that fact.
 - 2026-11-21: `quality` reads 0 for a definition with no edible capability, and `sleep_quality` 0 at a thing
   that is not sleepable.
 - 2026-11-21: `place="around"` draws an angle and then a distance for each point from the sim's seeded

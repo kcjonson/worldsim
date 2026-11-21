@@ -91,8 +91,28 @@ namespace queries {
 
 	/// Whether a remembered definition can serve the request at all (a tool to cut it, room to carry its yield,
 	/// a box's room for it): asked once per definition per evaluation, before any of its things is visited, and
-	/// never cached, since the answer follows the creature's inventory.
-	using DefinitionGate = std::function<bool(uint32_t defNameId)>;
+	/// never cached, since the answer follows the creature's inventory. It refers to a callable the caller keeps
+	/// alive for the evaluation and owns nothing, so making one never allocates. An empty gate lets everything.
+	class DefinitionGate {
+	  public:
+		DefinitionGate() = default;
+
+		template <typename Callable>
+		[[nodiscard]] static DefinitionGate of(const Callable& callable) {
+			DefinitionGate gate;
+			gate.context = &callable;
+			gate.ask = [](const void* context, uint32_t defNameId) {
+				return (*static_cast<const Callable*>(context))(defNameId);
+			};
+			return gate;
+		}
+
+		[[nodiscard]] bool admits(uint32_t defNameId) const { return ask == nullptr || ask(context, defNameId); }
+
+	  private:
+		const void* context = nullptr;
+		bool (*ask)(const void*, uint32_t) = nullptr;
+	};
 
 	/// What one evaluation is for: the creature, where it stands, what it remembers, and the step's claims.
 	struct QueryRequest {
@@ -110,10 +130,10 @@ namespace queries {
 		/// round asks a route for them all at once.
 		std::size_t		 alternates = 0;
 		const QueryGoal* goal = nullptr;
-		/// The memory key (or box key) of the target the creature is heading for: asked first, and taken alone
-		/// when it still survives the rows and the pass-overs.
+		/// The memory key (or box key) of the target the creature is heading for: asked first, among the rows that
+		/// are not fallback rows, and taken alone when it still survives in the upper prefer class.
 		std::optional<uint64_t> keepKey;
-		const DefinitionGate*	gate = nullptr;
+		DefinitionGate			gate{};
 	};
 
 	/// When a remembered harvestable of a definition at a position is ready to give again, at a simulation
@@ -247,8 +267,8 @@ namespace queries {
 		/// nothing here (the loader refuses them in a counted query).
 		[[nodiscard]] QueryCount count(const QueryRequest& request, const QueryWorld& world);
 
-		/// Drop what is kept for `creature` (its definition caches and waits) once it is gone. Nothing owns an
-		/// evaluator until chains are in the decision, which calls this on destruction.
+		/// Drop what is kept for `creature` (its definition caches and waits) once it is gone; the owner of the
+		/// evaluator calls it when a creature is destroyed.
 		void forget(ecs::EntityID creature);
 
 	  private:
@@ -290,8 +310,12 @@ namespace queries {
 			std::optional<uint16_t>	 unansweredRow;
 			/// The smallest `<exclude fact="distance" above>`.
 			float distanceAbove = std::numeric_limits<float>::infinity();
-			bool  usesColonyStock = false;
-			bool  hasPlaceRows = false;
+			/// An `<exclude fact="distance">` row, above or below, so where the creature stands decides it.
+			bool excludesDistance = false;
+			bool usesColonyStock = false;
+			bool hasPlaceRows = false;
+			/// A `<from kind>` row naming a mover, whose sightings move no memory version.
+			bool hasMoverRows = false;
 		};
 
 		/// A remembered definition's terms for one creature and query: its definition-scoped facts weighed,
@@ -306,11 +330,13 @@ namespace queries {
 		struct Wait {
 			uint64_t memoryVersion = 0;
 			double	 readyAt = 0.0;
-			uint64_t claimsFingerprint = 0;
 			uint64_t verdictGeneration = 0;
 			uint64_t boxesStamp = 0;
-			/// The goal, the claim reading, the traits, and the keep key it was asked with.
+			/// The goal, the claim reading's kinds, tiers, and exclusion, the traits, and the keep key it was asked
+			/// with.
 			uint64_t requestStamp = 0;
+			/// Stamped only when a candidate was passed over as taken by a claim: the fingerprint is colony-wide.
+			std::optional<uint64_t> claimsFingerprint;
 			/// Stamped only when a candidate was passed over as not joined.
 			std::optional<uint64_t> connectivityEpoch;
 			/// Where the creature stood, when the query has place rows or a distance bound; otherwise the nav

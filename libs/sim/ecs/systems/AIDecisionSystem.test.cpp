@@ -5859,9 +5859,10 @@ namespace ecs::test {
 		EXPECT_EQ(latrineFrom({onShore, {18.0F, 0.0F}}, {}), onShore);
 		EXPECT_EQ(latrineFrom({{6.0F, 0.0F}, {-10.0F, 0.0F}}, pileCluster({-10.0F, 1.0F})), glm::vec2(6.0F, 0.0F));
 
-		// A route verdict on the finder's spot: the query passes it over, as it passes over every target with
-		// one, and takes the next spot, where the decision relieves where he stands
-		// (SpotWhoseRouteFailedFallsBackToWhereTheColonistStands). The spec says both; the owner rules.
+		// A route verdict on the finder's spot. The query passes the spot over, as it passes over every target with
+		// a verdict, and takes the next spot. The decision's hand-written path relieves where he stands instead
+		// (SpotWhoseRouteFailedFallsBackToWhereTheColonistStands). The spec states both; the owner rules on which
+		// the data path keeps.
 		const EntityID knower = world->createEntity();
 		world->addComponent<Memory>(knower, Memory{});
 		addKnownWaste(knower, kStart + glm::vec2(-6.0F, 0.0F));
@@ -5910,7 +5911,7 @@ namespace ecs::test {
 				.creature = 70,
 				.position = kStart,
 				.memory = &taken,
-				.claims = {.kinds = 1, .tier = 5}
+				.claims = {.kinds = static_cast<uint8_t>(1U << static_cast<unsigned>(assets::ClaimKind::Use)), .tier = 5}
 		};
 		queries::QueryRequest forAcross{.query = library.findQuery("test/water"), .creature = 71, .position = kStart, .memory = &across};
 

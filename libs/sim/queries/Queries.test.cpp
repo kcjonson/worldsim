@@ -504,8 +504,9 @@ namespace queries::test {
 	// --- The walk --------------------------------------------------------------------------------------------------
 
 	// Each thing its own definition, so each is its own seed of the walk: the horizon stops it after the winner,
-	// or after the alternates a need's nearest-of round asks for (kNearestOfCount, widened by doubling); a weight
-	// on a thing's fact with no upper bound leaves no horizon.
+	// or after the alternates a need's nearest-of round asks for (kNearestOfCount, widened by doubling). A
+	// definition-scoped fact with no upper bound (colony_stock) is worked out per definition, so it still leaves
+	// each definition a horizon.
 	TEST_F(QueriesTest, TheHorizonEndsTheWalkAndAlternatesWidenIt) {
 		load(
 			R"(<query id="water"><from capability="drinkable"/><weigh fact="distance" by="-1"/></query>
@@ -523,8 +524,48 @@ namespace queries::test {
 			ASSERT_EQ(result.ranked.size(), round);
 			EXPECT_FLOAT_EQ(result.ranked.back().distance, static_cast<float>(round));
 		}
-		// colony_stock reads 0 for every water (no box holds one), so the bound comes from the definitions.
+		// colony_stock reads 0 for every water (no box holds one), so each definition's bound is its own terms.
 		EXPECT_EQ(run("water_by_stock").visits, 1U);
+	}
+
+	// A definition with more than 32 occupied cells is walked outward in rings: from beside a block of cells
+	// the walk looks in a few rings and finds the nearest; from far away it switches partway to opening every
+	// occupied cell left. Both pick what a brute-force sort picks.
+	TEST_F(QueriesTest, TheRingWalkFindsWhatABruteForceSortFinds) {
+		load(R"(<query id="water"><from capability="drinkable"/><weigh fact="distance" by="-1"/></query>)");
+		for (int cellX = 1; cellX <= 10; ++cellX) {
+			for (int cellY = 0; cellY < 10; ++cellY) {
+				const glm::vec2 position{static_cast<float>(cellX) * 16.0F + 3.0F, static_cast<float>(cellY) * 16.0F + 5.0F};
+				remember(position, kWater, assets::CapabilityType::Drinkable);
+			}
+		}
+		const std::size_t occupied = memory.rememberedOfDefinition(kWater)->cells.size();
+		ASSERT_GT(occupied, 32U);
+		const auto bruteForce = [&](glm::vec2 from) {
+			std::vector<std::pair<float, uint64_t>> everything;
+			for (const auto& [key, known] : memory.knownWorldEntities) {
+				const glm::vec2 offset = known.position - from;
+				everything.emplace_back(glm::dot(offset, offset), key);
+			}
+			std::ranges::sort(everything);
+			return everything;
+		};
+		for (const glm::vec2 from : {glm::vec2{8.0F, 80.0F}, glm::vec2{-3000.0F, -2500.0F}}) {
+			QueryRequest asked = request("water");
+			asked.position = from;
+			asked.alternates = ecs::kNearestOfCount - 1;
+			const QueryResult result = run(asked);
+			const auto		  expected = bruteForce(from);
+			ASSERT_EQ(result.ranked.size(), ecs::kNearestOfCount);
+			for (std::size_t index = 0; index < ecs::kNearestOfCount; ++index) {
+				EXPECT_EQ(result.ranked[index].key, expected[index].second) << "from (" << from.x << ", " << from.y << ") " << index;
+			}
+			if (from.x > 0.0F) {
+				EXPECT_LT(result.cellsTouched, occupied) << "beside the block, a few rings";
+			} else {
+				EXPECT_GT(result.cellsTouched, occupied) << "far away, rings cost more, and every occupied cell is opened";
+			}
+		}
 	}
 
 	TEST_F(QueriesTest, AFallbackRowIsTakenOnlyWhenNothingElseSurvivesAndIgnoresTheRows) {
@@ -702,11 +743,15 @@ namespace queries::test {
 		load(R"(<query id="food"><from yields="Berry"/><from box="Stew"/><weigh fact="distance" by="-1"/></query>)");
 		remember({3.0F, 0.0F}, bush, assets::CapabilityType::Harvestable);
 		remember({8.0F, 0.0F}, bush, assets::CapabilityType::Harvestable);
+		// A box's one stew is another eater's, so the claims are read and stamped.
+		const std::vector<KnownBox> boxes = {{.box = 55, .key = 550, .position = {20.0F, 0.0F}, .item = stew, .quantity = 1}};
+		world.boxes = boxes;
+		holdClaim(ecs::Claim::sourceQuantity(ecs::TargetKind::Entity, 55, stew, 1), ecs::TaskType::FulfillNeed, 3);
 		regrowUntil(100.0);
 		world.now = 10.0;
 		ecs::SourceReachMemo reach;
 		QueryRequest		 asked = request("food");
-		asked.claims = {.kinds = kUseClaim, .tier = 5};
+		asked.claims = {.kinds = static_cast<uint8_t>(kUseClaim | kSourceClaim), .tier = 5};
 		asked.reach = &reach;
 		const auto waits = [&] {
 			return run(asked).outcome == QueryOutcome::AllPassedOver && run(asked).fromWait;
@@ -774,6 +819,40 @@ namespace queries::test {
 		EXPECT_FALSE(run("food").fromWait);
 	}
 
+	// What a wait does not stamp, and where it records none. Bushes that only regrow wait across a claim anyone
+	// adds (the claims are read only when a claim took a candidate). A mover row records no wait (a sighting moves
+	// no memory version), nor does an exclusion on `held` (it read the units wanted and live counts).
+	TEST_F(QueriesTest, AWaitStampsClaimsOnlyWhenOneWasReadAndRecordsNoneWhereNothingCoversIt) {
+		load(R"(<query id="food"><from yields="Berry"/><weigh fact="distance" by="-1"/></query>
+			<query id="someone"><from kind="colonist"/><weigh fact="distance" by="-1"/></query>
+			<query id="free_pile"><from pile="Berry"/><exclude fact="held"/><weigh fact="distance" by="-1"/></query>)");
+		remember({3.0F, 0.0F}, bush, assets::CapabilityType::Harvestable);
+		regrowUntil(100.0);
+		EXPECT_EQ(run("food").outcome, QueryOutcome::AllPassedOver);
+		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, 99), ecs::TaskType::Haul, 6);
+		EXPECT_TRUE(run("food").fromWait) << "no claim took a bush, so the claims were not stamped";
+
+		memory.rememberDynamicEntity(7, human, {2.0F, 0.0F}, 100.0);
+		world.now = 105.0;
+		world.recentSightingGameMinutes = 30.0;
+		holdClaim(ecs::Claim::use(ecs::TargetKind::Entity, 7), ecs::TaskType::FulfillNeed, 3);
+		QueryRequest toSomeone = request("someone");
+		toSomeone.claims = {.kinds = kUseClaim, .tier = 5};
+		EXPECT_EQ(run(toSomeone).outcome, QueryOutcome::AllPassedOver);
+		EXPECT_FALSE(run(toSomeone).fromWait);
+
+		remember({2.0F, 1.0F}, berry, assets::CapabilityType::Carryable);
+		remember({5.0F, 1.0F}, berry, assets::CapabilityType::Carryable);
+		holdClaim(ecs::Claim::sourceQuantity(ecs::TargetKind::WorldKey, keyOf({2.0F, 1.0F}, berry), berry, 1), ecs::TaskType::Haul, 6);
+		holdClaim(
+			ecs::Claim::sourceQuantity(ecs::TargetKind::WorldKey, keyOf({5.0F, 1.0F}, berry), berry, 1), ecs::TaskType::FulfillNeed, 3
+		);
+		QueryRequest toPile = request("free_pile");
+		toPile.claims = {.kinds = kSourceClaim, .tier = 5};
+		EXPECT_EQ(run(toPile).outcome, QueryOutcome::AllPassedOver);
+		EXPECT_FALSE(run(toPile).fromWait);
+	}
+
 	// --- Gates and the kept target ---------------------------------------------------------------------------------
 
 	// The request's gate answers per definition, before any thing of it is visited: no tool for the bush, no room
@@ -785,11 +864,11 @@ namespace queries::test {
 		remember({5.0F, 0.0F}, berry, assets::CapabilityType::Carryable);
 		bool				 haveTool = false;
 		bool				 haveRoomForStew = false;
-		const DefinitionGate gate = [&](uint32_t definition) {
-			return (definition != bush || haveTool) && (definition != stew || haveRoomForStew);
+		const auto			 gate = [&](uint32_t definition) {
+			  return (definition != bush || haveTool) && (definition != stew || haveRoomForStew);
 		};
 		QueryRequest asked = request("food");
-		asked.gate = &gate;
+		asked.gate = DefinitionGate::of(gate);
 		const QueryResult gated = run(asked);
 		EXPECT_EQ(pickOf(gated).item, berry);
 		EXPECT_EQ(gated.visits, 1U);
@@ -851,6 +930,33 @@ namespace queries::test {
 		}
 		EXPECT_EQ(passedOver.visits, admitted);
 		EXPECT_EQ(passedOver.visits, 9U);
+	}
+
+	// A storage box is remembered under the same key the colony files it by: kept, it is still asked as a box.
+	// A kept bush held by work lands in the lower prefer class, so it is not taken alone and a free bush wins.
+	TEST_F(QueriesTest, AKeptBoxIsAskedAsABoxAndAKeptHeldBushDoesNotEndTheChoice) {
+		constexpr uint32_t kBoxDef = 3010;
+		load(R"(<query id="food_box"><from box="edible"/><weigh fact="distance" by="-1"/></query>
+			<query id="free_food"><from yields="Berry"/><prefer fact="held"/><weigh fact="distance" by="-1"/></query>)");
+		const glm::vec2 boxAt{6.0F, 0.0F};
+		remember(boxAt, kBoxDef, assets::CapabilityType::Storage);
+		const std::vector<KnownBox> boxes = {{.box = 50, .key = keyOf(boxAt, kBoxDef), .position = boxAt, .item = berry, .quantity = 3}};
+		world.boxes = boxes;
+		QueryRequest toBox = request("food_box");
+		toBox.keepKey = keyOf(boxAt, kBoxDef);
+		const QueryResult kept = run(toBox);
+		EXPECT_EQ(pickOf(kept).entity, 50U);
+		EXPECT_EQ(kept.ranked.size(), 1U);
+
+		const glm::vec2 heldBush{2.0F, 0.0F};
+		const glm::vec2 freeBush{9.0F, 0.0F};
+		remember(heldBush, bush, assets::CapabilityType::Harvestable);
+		remember(freeBush, bush, assets::CapabilityType::Harvestable);
+		holdClaim(ecs::Claim::use(ecs::TargetKind::WorldKey, keyOf(heldBush, bush)), ecs::TaskType::Harvest, 6);
+		QueryRequest eat = request("free_food");
+		eat.claims = {.kinds = kUseClaim, .tier = 5};
+		eat.keepKey = keyOf(heldBush, bush);
+		EXPECT_EQ(pickOf(run(eat)).key, keyOf(freeBush, bush)) << "free food first, at any distance";
 	}
 
 	// --- Cost, allocation, determinism ---------------------------------------------------------------------------
@@ -924,10 +1030,24 @@ namespace queries::test {
 		food.alternates = ecs::kNearestOfCount - 1;
 		food.claims = {.kinds = kSourceClaim, .tier = 5, .mealShortfall = 40.0F};
 		const QueryRequest spot = request("spot");
+		// A gate that refuses stew, made from a lambda per evaluation, and a kept target that is gone, so it is
+		// looked for and the walk goes on, as the decision asks.
+		uint32_t   refused = 0;
+		const auto noStew = [&refused, this](uint32_t definition) {
+			refused += definition == stew ? 1U : 0U;
+			return definition != stew;
+		};
+		const auto gatedAndKept = [&] {
+			QueryRequest asked = food;
+			asked.gate = DefinitionGate::of(noStew);
+			asked.keepKey = 501;
+			return run(asked);
+		};
 
 		for (int warmUp = 0; warmUp < 2; ++warmUp) {
 			(void)run(food);
 			(void)run(spot);
+			(void)gatedAndKept();
 		}
 		countAllocations = true;
 		{ const std::vector<int> probe(1); }
@@ -940,9 +1060,11 @@ namespace queries::test {
 		for (int i = 0; i < 50; ++i) {
 			found += run(food).outcome == QueryOutcome::Found ? 1U : 0U;
 			found += run(spot).outcome == QueryOutcome::Found ? 1U : 0U;
+			found += gatedAndKept().outcome == QueryOutcome::Found ? 1U : 0U;
 		}
 		countAllocations = false;
-		EXPECT_EQ(found, 100U);
+		EXPECT_EQ(found, 150U);
+		EXPECT_GT(refused, 0U) << "the gate was asked";
 		EXPECT_EQ(allocationsCounted, 0U);
 	}
 
@@ -1064,18 +1186,16 @@ namespace queries::test {
 		EXPECT_EQ(ownBeds.row, 1U);
 		EXPECT_FLOAT_EQ(pickOf(run("meaty")).score, -3.0F);
 
+		const std::string file = "[behaviors] test/sample.xml: <query id=\"";
+		const std::string readsZero = " is answered by nothing, so it reads 0 for every candidate";
+		const std::string notAnswered = " is answered by nothing, so the query answers that the fact is not answered";
 		EXPECT_EQ(
 			unansweredFactUses(library),
 			(std::vector<std::string>{
-				"[behaviors] test/sample.xml: <query id=\"seat\"> row 3 <weigh> fact \"comfort\" is answered by nothing, so it reads 0 for "
-				"every candidate",
-				"[behaviors] test/sample.xml: <query id=\"fresh_food\"> row 3 <exclude> fact \"freshness\" is answered by nothing, so the "
-				"query answers that the fact is not answered",
-				"[behaviors] test/sample.xml: <query id=\"own_bed\"> row 2 <exclude> fact \"owned_by_self\" is answered by nothing, so the "
-				"query answers that the fact is not answered",
-				"[behaviors] test/sample.xml: <query id=\"meaty\"> row 3 <weigh> fact \"contains\" is answered by nothing, so it reads 0 "
-				"for "
-				"every candidate",
+				file + "seat\"> row 3 <weigh> fact \"comfort\"" + readsZero,
+				file + "fresh_food\"> row 3 <exclude> fact \"freshness\"" + notAnswered,
+				file + "own_bed\"> row 2 <exclude> fact \"owned_by_self\"" + notAnswered,
+				file + "meaty\"> row 3 <weigh> fact \"contains\"" + readsZero,
 			})
 		);
 	}

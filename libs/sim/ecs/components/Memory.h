@@ -43,6 +43,9 @@ namespace ecs {
 	/// The side of a square cell of the grid remembered things are filed under, per definition.
 	inline constexpr float kMemoryCellMeters = 16.0F;
 
+	/// The farthest from the origin a remembered thing may be: its key's 0.1 m cell is a 32-bit integer.
+	inline constexpr float kMaxRememberedMeters = 1.0e8F;
+
 	/// One cell of a definition's grid: the keys of its remembered things that lie in it, in no order.
 	struct MemoryCell {
 		int32_t				  x = 0;
@@ -253,8 +256,9 @@ namespace ecs {
 			if (capabilityMask == 0) {
 				return false;
 			}
-			// A position that is not a number has no cell and no key that could be found again.
-			if (!std::isfinite(position.x) || !std::isfinite(position.y)) {
+			// A position that is not a number, or too far out for the 0.1 m key's integers, has no key that could
+			// be found again.
+			if (!(std::abs(position.x) <= kMaxRememberedMeters) || !(std::abs(position.y) <= kMaxRememberedMeters)) {
 				return false;
 			}
 
