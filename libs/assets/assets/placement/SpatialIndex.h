@@ -41,6 +41,8 @@
 
 namespace assets {
 
+	struct ItemLayout;
+
 	/// A placed entity in the world
 	struct PlacedEntity {
 		std::string defName;		// Asset definition name
@@ -77,6 +79,12 @@ namespace assets {
 		// animated; such entities render through the fast instanced path. The pointee is owned by
 		// the producer (DynamicEntityRenderSystem) for the frame; PlacedEntity only references it.
 		const std::vector<PartTransform>* partTransforms = nullptr;
+
+		// One depth strip of a parts item (rotatable-placed-items 8): the registry's strip layout for the item's
+		// template and turn (AssetRegistry::stripLayout), which outlives the record, and the strip's index in it.
+		// The turn is in the layout, so such a record's rotation is 0. Null for everything else.
+		const ItemLayout* itemLayout = nullptr;
+		uint32_t		  strip = 0;
 
 		// Age class and mesh variant (computeTreeTraits), set where the entity is made.
 		TreeTraits traits{};

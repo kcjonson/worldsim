@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Test Parts Box - a do-nothing parts item to drop with the dev tools
+     (/api/dev/spawn?def=TestPartsBox&turn=<degrees>) when working on rotatable
+     placed items. A plain box 1.2 m wide, 0.6 m deep and 0.8 m tall whose sides
+     tell themselves apart: the front is red with an F, the back blue with a B,
+     the left green with an L, the right orange with an R, and the top carries an
+     arrow pointing to the front. It has no capabilities, no item, no recipe and
+     no placement, so nothing spawns it but a dev command. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>TestPartsBox</defName>
+    <label>Test parts box</label>
+    <assetType>parts</assetType>
+
+    <parts>
+      <part name="box">
+        <footprint><rect minX="-0.6" minY="-0.3" maxX="0.6" maxY="0.3"/></footprint>
+        <height bottom="0" top="0.8"/>
+        <top drawing="top.svg"/>
+        <sides color="#808080">
+          <face side="front" drawing="front.svg"/>
+          <face side="back" drawing="back.svg"/>
+          <face side="left" drawing="left.svg"/>
+          <face side="right" drawing="right.svg"/>
+        </sides>
+      </part>
+    </parts>
+
+    <placements>
+      <place part="box"/>
+    </placements>
+  </AssetDef>
+</AssetDefinitions>
