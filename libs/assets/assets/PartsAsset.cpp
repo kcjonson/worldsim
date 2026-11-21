@@ -179,40 +179,53 @@ namespace assets {
 			return out;
 		}
 
-		/// Twice the area of a region, exact in square millimetres.
-		double doubledArea(const std::vector<geometry::RegionPolygon>& region) {
-			double total = 0.0;
-			for (const geometry::RegionPolygon& polygon : region) {
-				total += geometry::signedAreaDoubled(polygon.outer).toDouble();
-				for (const geometry::Ring& hole : polygon.holes) {
-					total += geometry::signedAreaDoubled(hole).toDouble();
+		/// How deep two parts must reach into each other to overlap in plan: parts authored to touch, flush at any
+		/// turn, differ by float error far under a millimetre, and an overlap a millimetre deep is one on purpose.
+		constexpr double kOverlapToleranceMeters = 0.001;
+
+		/// Whether two convex footprints (a rect or a regular polygon, wound with interior on the left) overlap in
+		/// plan: shrunk inward by half the tolerance each, they still share area. Each footprint is the
+		/// intersection of its edges' half-planes, so the shrunk overlap is the first ring clipped by every half-
+		/// plane of both, each moved inward by half the tolerance. Unrounded, in double.
+		bool overlapInPlan(const Ring2& first, const Ring2& second) {
+			std::vector<glm::dvec2> clipped;
+			for (const glm::vec2& point : first) {
+				clipped.emplace_back(point);
+			}
+			const double inset = kOverlapToleranceMeters * 0.5;
+			for (const Ring2* ring : {&first, &second}) {
+				for (size_t i = 0; i < ring->size() && clipped.size() >= 3; ++i) {
+					const glm::dvec2 start((*ring)[i]);
+					const glm::dvec2 end((*ring)[(i + 1) % ring->size()]);
+					const glm::dvec2 along = end - start;
+					const double	 length = std::hypot(along.x, along.y);
+					// Signed distance inside the edge's half-plane, less the inset: kept where it is 0 or more.
+					const auto inside = [&](const glm::dvec2& point) {
+						return (along.x * (point.y - start.y) - along.y * (point.x - start.x)) / length - inset;
+					};
+					std::vector<glm::dvec2> kept;
+					for (size_t j = 0; j < clipped.size(); ++j) {
+						const glm::dvec2& current = clipped[j];
+						const glm::dvec2& next = clipped[(j + 1) % clipped.size()];
+						const double	  currentSide = inside(current);
+						const double	  nextSide = inside(next);
+						if (currentSide >= 0.0) {
+							kept.push_back(current);
+						}
+						if ((currentSide >= 0.0) != (nextSide >= 0.0)) {
+							kept.push_back(current + (next - current) * (currentSide / (currentSide - nextSide)));
+						}
+					}
+					clipped = std::move(kept);
 				}
 			}
-			return total;
-		}
-
-		double perimeterMillimetres(const geometry::Ring& ring) {
-			double length = 0.0;
-			for (size_t i = 0; i < ring.size(); ++i) {
-				const geometry::Vec2i64 step = ring[(i + 1) % ring.size()] - ring[i];
-				length += std::hypot(static_cast<double>(step.x), static_cast<double>(step.y));
+			double doubledArea = 0.0;
+			for (size_t j = 0; j < clipped.size(); ++j) {
+				const glm::dvec2& current = clipped[j];
+				const glm::dvec2& next = clipped[(j + 1) % clipped.size()];
+				doubledArea += current.x * next.y - next.x * current.y;
 			}
-			return length;
-		}
-
-		/// Whether two footprints, in millimetres, overlap in plan by more than rounding can make of a touch. Each
-		/// vertex rounds to the millimetre, moving at most 0.71 mm, so two edges meant to coincide can cross into a
-		/// sliver under a millimetre wide along at most half the smaller footprint's perimeter. The overlap counts
-		/// only when its area, area(a) + area(b) - area(a union b), exact on the integer rings, is larger than that.
-		bool overlapInPlan(const geometry::Ring& first, const geometry::Ring& second) {
-			if (!geometry::ringsInteriorOverlap(first, second)) {
-				return false;
-			}
-			const double overlapDoubled = std::abs(geometry::signedAreaDoubled(first).toDouble()) + std::abs(geometry::signedAreaDoubled(second).toDouble()) -
-										  doubledArea(geometry::unionOfFills({{first}, {second}}));
-			constexpr double kSliverWidthMillimetres = 1.0;
-			const double	 sliverArea = kSliverWidthMillimetres * 0.5 * std::min(perimeterMillimetres(first), perimeterMillimetres(second));
-			return overlapDoubled > 2.0 * sliverArea;
+			return clipped.size() >= 3 && doubledArea > 1.0e-12;
 		}
 
 		/// The union of groups of rings in metres, each group filled by the nonzero rule.
@@ -613,9 +626,12 @@ namespace assets {
 						 .onElement = checkElement},
 						issues
 					);
+					const bool artSaysNothing = std::any_of(problems.begin(), problems.end(), [](const renderer::svg::Problem& problem) {
+						return problem.message.starts_with("draws nothing");
+					});
 					for (const std::string& issue : issues) {
 						// The art check reports a drawing that draws nothing already.
-						if (issue == "draws no shapes" && !problems.empty()) {
+						if (issue == "draws no shapes" && artSaysNothing) {
 							continue;
 						}
 						error("drawing", "drawing " + inQuotes(file) + ": " + issue, resolved.string());
@@ -1078,11 +1094,25 @@ namespace assets {
 		std::vector<Ring2> colliderRings;
 		if (!bodyFootprints.empty()) {
 			const std::vector<AreaPolygon> body = unionInMeters({bodyFootprints});
+			// Each outline in doubled millimetres, so the middle of an edge is a lattice point.
+			std::vector<geometry::Ring> doubledOutlines;
 			for (const AreaPolygon& polygon : body) {
+				geometry::Ring& doubled = doubledOutlines.emplace_back(toMillimetres(polygon.outer));
+				for (geometry::Vec2i64& point : doubled) {
+					point = point * 2;
+				}
+			}
+			for (size_t index = 0; index < body.size(); ++index) {
+				const AreaPolygon& polygon = body[index];
 				// A hole is filled, so an island inside another polygon's hole is inside its filled outline: no ring.
-				const bool island = std::any_of(body.begin(), body.end(), [&](const AreaPolygon& other) {
-					return &other != &polygon && insideRing(polygon.outer.front(), other.outer);
-				});
+				// The probe is the middle of the island's first edge, strictly inside the other outline: a vertex
+				// could be a pinch, which lies on the other outline's boundary.
+				const geometry::Ring&	outline = doubledOutlines[index];
+				const geometry::Vec2i64 probe{(outline[0].x + outline[1].x) / 2, (outline[0].y + outline[1].y) / 2};
+				bool					island = false;
+				for (size_t other = 0; other < body.size() && !island; ++other) {
+					island = other != index && geometry::pointInPolygon(probe, doubledOutlines[other]) == geometry::PointInPolygon::Inside;
+				}
 				if (island) {
 					continue;
 				}
@@ -1117,15 +1147,11 @@ namespace assets {
 
 		// Rule 9, first half: parts that overlap in plan are separated in height.
 		const size_t					   count = asset.placements.size();
-		std::vector<geometry::Ring>		   footprintsMillimetres;
-		for (const Ring2& ring : placedFootprints) {
-			footprintsMillimetres.push_back(toMillimetres(ring));
-		}
 		std::vector<std::vector<int>> overlapOrder(count, std::vector<int>(count, 0)); // +1: i draws after j
 		std::vector<std::vector<bool>> overlapping(count, std::vector<bool>(count, false));
 		for (size_t i = 0; i < count; ++i) {
 			for (size_t j = i + 1; j < count; ++j) {
-				if (placedFootprints[i].empty() || placedFootprints[j].empty() || !overlapInPlan(footprintsMillimetres[i], footprintsMillimetres[j])) {
+				if (placedFootprints[i].empty() || placedFootprints[j].empty() || !overlapInPlan(placedFootprints[i], placedFootprints[j])) {
 					continue;
 				}
 				overlapping[i][j] = overlapping[j][i] = true;

@@ -579,6 +579,56 @@ TEST_F(PartsAssetTest, AnIslandInsideAFilledHoleAddsNoColliderRing) {
 	EXPECT_NEAR(area(def->partsColliders[0].pointsMeters), 9.0, 1e-4);
 }
 
+TEST_F(PartsAssetTest, ALegTouchingAnySideOfASlabAtACornerKeepsItsRing) {
+	// The leg's corner on the slab's left, right, top, and bottom side: the right one is the touch above mirrored.
+	const std::vector<std::pair<std::string, glm::vec2>> sides = {
+		{"Left", {-0.5707F, 0.0F}}, {"Right", {0.5707F, 0.0F}}, {"Top", {0.0F, -0.3707F}}, {"Bottom", {0.0F, 0.3707F}}};
+	for (const auto& [name, at] : sides) {
+		writeDef(
+			name,
+			"<parts>" + block("slab", -0.5F, -0.3F, 0.5F, 0.3F, 0.0F, 0.8F) + block("leg", -0.05F, -0.05F, 0.05F, 0.05F, 0.0F, 0.8F) +
+				"</parts><placements>" + place("slab") + place("leg", at.x, at.y, 45.0F) + "</placements>"
+		);
+	}
+	load("Left");
+	for (const auto& [name, at] : sides) {
+		const AssetDefinition* def = AssetRegistry::Get().getDefinition(name);
+		ASSERT_NE(def, nullptr) << name;
+		EXPECT_TRUE(issues(name).empty()) << name << ::testing::PrintToString(issues(name));
+		EXPECT_EQ(def->partsColliders.size(), 2U) << name << ": the slab's ring and the leg's";
+	}
+}
+
+TEST_F(PartsAssetTest, Rule9AnOverlapIsOneOverAMillimetreDeepWhateverItsLength) {
+	const auto pair = [&](const std::string& name, const std::string& parts, const std::string& placements) {
+		writeDef(name, "<parts>" + parts + "</parts><placements>" + placements + "</placements>");
+	};
+	// A box flush on a turned slab's front edge never overlaps it, at any turn.
+	const std::vector<int> turns = {1, 7, 23, 37, 61, 89, 133, 271};
+	for (const int turn : turns) {
+		pair(
+			"Flush" + std::to_string(turn),
+			block("slab", -0.5F, -0.3F, 0.5F, 0.3F, 0.0F, 0.5F) + block("box", 0.15F, 0.3F, 0.25F, 0.4F, 0.0F, 0.5F),
+			place("slab", 0.0F, 0.0F, static_cast<float>(turn)) + place("box", 0.0F, 0.0F, static_cast<float>(turn))
+		);
+	}
+	// A 400 x 20 mm board reaching 9 mm into a block at its end, and a 20 mm leg 9 mm into a slab, overlap.
+	pair("BoardEnd", block("board", 0.0F, 0.0F, 0.4F, 0.02F, 0.0F, 0.5F) + block("block", 0.391F, -0.1F, 0.8F, 0.1F, 0.0F, 0.5F), place("board") + place("block"));
+	pair("LegIn", block("slab", 0.0F, 0.0F, 1.0F, 1.0F, 0.0F, 0.5F) + block("leg", -0.01F, 0.4F, 0.01F, 0.42F, 0.0F, 0.5F), place("slab") + place("leg", -0.001F, 0.0F));
+	// Half a millimetre deep is a touch; two millimetres is an overlap.
+	pair("HalfMillimetre", block("first", 0.0F, 0.0F, 1.0F, 1.0F, 0.0F, 0.5F) + block("second", 0.9995F, 0.0F, 2.0F, 1.0F, 0.0F, 0.5F), place("first") + place("second"));
+	pair("TwoMillimetres", block("first", 0.0F, 0.0F, 1.0F, 1.0F, 0.0F, 0.5F) + block("second", 0.998F, 0.0F, 2.0F, 1.0F, 0.0F, 0.5F), place("first") + place("second"));
+	load("BoardEnd");
+	for (const int turn : turns) {
+		const std::string name = "Flush" + std::to_string(turn);
+		EXPECT_FALSE(hasIssue(name, "overlap in plan")) << name;
+	}
+	EXPECT_TRUE(hasIssue("BoardEnd", "overlap in plan"));
+	EXPECT_TRUE(hasIssue("LegIn", "overlap in plan"));
+	EXPECT_FALSE(hasIssue("HalfMillimetre", "overlap in plan"));
+	EXPECT_TRUE(hasIssue("TwoMillimetres", "overlap in plan"));
+}
+
 // ─── The art check (rule 6) and area fill rules ─────────────────────────────────────────────────────────
 
 TEST_F(PartsAssetTest, Rule6TheEngineArtCheckRefusesWhatLoadSvgDrops) {
@@ -631,14 +681,22 @@ TEST_F(PartsAssetTest, Rule6RefusesSharedAndAbsoluteDrawingPaths) {
 
 TEST_F(PartsAssetTest, AnAreaDrawingFilledEvenOddIsRefused) {
 	const std::string body = "<parts>" + block("box", -0.5F, -0.5F, 0.5F, 0.5F, 0, 1) + "</parts><placements>" + place("box") + "</placements>";
-	folder.write(
-		"Ring/ring.svg",
-		"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><path fill=\"#000\" fill-rule=\"evenodd\" "
-		"d=\"M0 0 H100 V100 H0 Z M25 25 H75 V75 H25 Z\"/></svg>"
-	);
-	writeDef("Ring", body + "<useAreas><drawing file=\"ring.svg\" minX=\"-1\" minY=\"0.5\" maxX=\"1\" maxY=\"2.5\"/></useAreas>");
-	load("Ring");
-	EXPECT_TRUE(hasIssue("Ring", "fill-rule evenodd"));
+	const std::string ring = "d=\"M0 0 H100 V100 H0 Z M25 25 H75 V75 H25 Z\"";
+	const std::string open = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\">";
+	// On the shape, on a group round it, and in an inline style.
+	const std::vector<std::pair<std::string, std::string>> drawings = {
+		{"OnPath", open + "<path fill=\"#000\" fill-rule=\"evenodd\" " + ring + "/></svg>"},
+		{"OnGroup", open + "<g fill-rule=\"evenodd\"><path fill=\"#000\" " + ring + "/></g></svg>"},
+		{"InStyle", open + "<path style=\"fill: #000; fill-rule: evenodd\" " + ring + "/></svg>"},
+	};
+	for (const auto& [name, text] : drawings) {
+		folder.write(name + "/ring.svg", text);
+		writeDef(name, body + "<useAreas><drawing file=\"ring.svg\" minX=\"-1\" minY=\"0.5\" maxX=\"1\" maxY=\"2.5\"/></useAreas>");
+	}
+	load("OnPath");
+	for (const auto& [name, text] : drawings) {
+		EXPECT_TRUE(hasIssue(name, "fill-rule evenodd")) << name;
+	}
 }
 
 // ─── Drawings mapped into metres ────────────────────────────────────────────────────────────────────────

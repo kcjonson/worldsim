@@ -220,10 +220,10 @@ namespace geometry {
 		}
 
 		// An arrangement edge of one fill group, `weight` the group's net count of rings running along it
-		// from `a` to `b` (against counts -1). Coordinates doubled, so an edge's midpoint is a lattice point.
+		// from `from` to `to` (against counts -1). Coordinates doubled, so an edge's midpoint is a lattice point.
 		struct WeightedEdge {
-			Vec2i64 a;
-			Vec2i64 b;
+			Vec2i64 from;
+			Vec2i64 to;
 			int		weight = 0;
 		};
 
@@ -232,17 +232,17 @@ namespace geometry {
 		// an edge the answer is the winding just off it toward +x (+y): the side the ray leaves from.
 		int windingAt(const std::vector<WeightedEdge>& edges, Vec2i64 point, bool upward) {
 			// A quarter turn taking +y to +x keeps every winding and makes the upward ray a rightward one.
-			const auto turned = [upward](Vec2i64 v) { return upward ? Vec2i64{v.y, -v.x} : v; };
-			const Vec2i64 q = turned(point);
+			const auto	  turned = [upward](Vec2i64 vertex) { return upward ? Vec2i64{vertex.y, -vertex.x} : vertex; };
+			const Vec2i64 probe = turned(point);
 			int			  winding = 0;
 			for (const WeightedEdge& edge : edges) {
-				const Vec2i64 a = turned(edge.a);
-				const Vec2i64 b = turned(edge.b);
-				if (a.y <= q.y) {
-					if (b.y > q.y && cross(b - a, q - a).sign() > 0) {
+				const Vec2i64 start = turned(edge.from);
+				const Vec2i64 end = turned(edge.to);
+				if (start.y <= probe.y) {
+					if (end.y > probe.y && cross(end - start, probe - start).sign() > 0) {
 						winding += edge.weight;
 					}
-				} else if (b.y <= q.y && cross(b - a, q - a).sign() < 0) {
+				} else if (end.y <= probe.y && cross(end - start, probe - start).sign() < 0) {
 					winding -= edge.weight;
 				}
 			}
@@ -268,21 +268,21 @@ namespace geometry {
 	std::vector<RegionPolygon> unionOfFills(const std::vector<std::vector<Ring>>& groups) {
 		struct InputEdge {
 			std::size_t group = 0;
-			Vec2i64		a;
-			Vec2i64		b;
+			Vec2i64		from;
+			Vec2i64		to;
 		};
 		std::vector<InputEdge>	  inputs;
 		std::vector<InputSegment> segments;
 		for (std::size_t group = 0; group < groups.size(); ++group) {
 			for (const Ring& ring : groups[group]) {
 				for (std::size_t i = 0; i < ring.size(); ++i) {
-					const Vec2i64& a = ring[i];
-					const Vec2i64& b = ring[(i + 1) % ring.size()];
-					if (a == b) {
+					const Vec2i64& from = ring[i];
+					const Vec2i64& to = ring[(i + 1) % ring.size()];
+					if (from == to) {
 						continue;
 					}
-					segments.push_back({a, b, static_cast<std::int64_t>(inputs.size())});
-					inputs.push_back({group, a, b});
+					segments.push_back({from, to, static_cast<std::int64_t>(inputs.size())});
+					inputs.push_back({group, from, to});
 				}
 			}
 		}
@@ -306,7 +306,7 @@ namespace geometry {
 			const Vec2i64		   to = arrangement.vertices[edge.to];
 			for (const std::int64_t source : edge.provenance) {
 				const InputEdge& input = inputs[static_cast<std::size_t>(source)];
-				weights[e * groupCount + input.group] += dot(input.b - input.a, to - from).sign() > 0 ? 1 : -1;
+				weights[e * groupCount + input.group] += dot(input.to - input.from, to - from).sign() > 0 ? 1 : -1;
 			}
 			for (std::size_t group = 0; group < groupCount; ++group) {
 				const int weight = weights[e * groupCount + group];
@@ -351,8 +351,8 @@ namespace geometry {
 			}
 		}
 
-		const std::vector<ResultLoop> loops = walkBoundary(mesh, [&](std::size_t h) {
-			const HalfEdge& half = mesh.halfEdges[h];
+		const std::vector<ResultLoop> loops = walkBoundary(mesh, [&](std::size_t halfEdge) {
+			const HalfEdge& half = mesh.halfEdges[halfEdge];
 			return half.origin == arrangement.edges[half.edge].from ? leftInside[half.edge] : rightInside[half.edge];
 		});
 
