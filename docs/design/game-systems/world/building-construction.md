@@ -341,10 +341,11 @@ Same pathfinding rationale as foundations: a gap between walls is either zero (j
 | Overlap | Walls can't overlap other walls; they may only meet at junction points | — |
 | Containment | The wall's full thickness footprint must lie within the foundation | — |
 | Crossing | Drawing across an existing wall snaps to a junction on it rather than crossing (no X-crossings in v1; make two T-junctions) | — |
+| Opening clearance | An opening keeps its clearance from a wall junction whichever is placed first: a wall can't end on, or run through, a wall or vertex where it would leave a door or window nearer a junction than an opening may sit | — |
 
 ### Lifecycle
 
-Same as foundations: blueprint → haul → build → built. Work is length × thickness × material work factor. Wall blueprints do not block colonist pathing; built walls do. A wall segment will not complete construction while a colonist stands in its footprint (builders stand adjacent; pawns in the way cause the builder to wait).
+Same as foundations: blueprint → haul → build → built. Work is length × thickness × material work factor. Wall blueprints do not block colonist pathing; built walls do. A wall segment completes only once no colonist the player controls stands in its footprint; any other colonist in it is stepped out, to a side its builders use, as it completes. Builders stand beside the wall, never on its line, and when the segment would close a room with no way out (no built door to open ground, room to room), on the outside. It does not complete while one of its builders, a builder of another wall, or anyone else on their way out of such a room is still inside it; someone whose task keeps them inside is not waited for.
 
 ### Segments and Demolition
 
@@ -695,3 +696,13 @@ A supplement, not part of the spec. Where it and the spec disagree, the spec is 
 - **At once when the room forms, the pulse separate**, over appearing with the formation pulse: the shade is the lighting changing, the pulse a notification, and they have different reasons.
 - **Open-air enclosures wait for roofs**, over leaving courtyards and pens out by some other rule: walled courtyards, animal pens, a courtyard inside a building, and roofs over spaces walls do not enclose all come with the roof tool, WOR-1112 (Roofs: the roof tool and open-air enclosures).
 - **A flat fill over the room**, over a dark band along the inside of the walls (needs a general polygon inset the geometry library does not have) and over a shadow cast outside the walls (reads as wall height more than enclosure).
+
+## Addendum: closing wall decisions
+
+A supplement, not part of the spec. Where it and the spec disagree, the spec is right. What keeps a builder from shutting himself in, over what, and why, where the sources give a reason.
+
+- **Both protections, no rescue**, over the stand side alone and over a rescue for a colonist found shut in: the builder of a closing wall stands outside the room it closes, and a wall does not complete while a colonist the player controls stands in it; "same intent, different mechanisms. good to have both as protection. no rescue though, worst case is the player destroys the wall."
+- **The builder ends outside the room**, from the owner: "we want to make sure the final "work" location that the colonist stands is outside the shape, so that when it finishes they're not trapped." Read as: outside whenever the room it closes has no way out, either side when it has one.
+- **The closing wall waits for its builders, for builders of other walls inside, and for anyone inside on the way out**, chosen in the build, not by the owner, over waiting for its own builders only: a free builder going out, or the builder of a partition inside, would otherwise be shut in by the last wall. It does not wait for someone whose task keeps them inside (crafting, eating, or sleeping there), under "no rescue".
+- **A way out is a built door to open ground, room to room**, over any opening: a window does not let a colonist through, and a door blueprint is no door until it is built.
+- **Only a colonist the player controls holds the wall; anyone else steps out of it**, chosen in the build, not by the owner, and narrowing the spec's earlier "no colonist in its footprint": a colonist left to themselves in the band could otherwise hold the wall without end, and one the player placed there is the player's to move.

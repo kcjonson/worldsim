@@ -214,6 +214,7 @@ class SharedWork {
 		EntityID			   blueprint = kInvalidEntity;
 		glm::vec2			   position{0.0F, 0.0F};
 		std::vector<glm::vec2> builderSpots; // the Build goal's (GoalTask::builderSpots); none on a teardown site
+		std::vector<construction::WallStand> wallStands; // the Build goal's (GoalTask::wallStands); none on a teardown site
 
 		// Worked out by builderSpotStand, a spot at a time as colonists ask.
 		struct SpotStand {
@@ -226,6 +227,7 @@ class SharedWork {
 		};
 		std::vector<float>			spotSlack; // one per builder spot, negative until asked
 		std::vector<StandsAtRadius> standsByRadius;
+		std::vector<StandsAtRadius> wallStandsByRadius; // one per wall side, worked out by wallStandPoint
 	};
 	/// Available Build goals whose blueprint is UnderConstruction, in goal order.
 	[[nodiscard]] const std::vector<Site>& buildSites(World& world);
@@ -235,6 +237,12 @@ class SharedWork {
 	/// served. The mesh is asked once per spot and radius in an update, the first time a colonist needs it.
 	[[nodiscard]] std::optional<glm::vec2> builderSpotStand(
 		std::size_t site, std::size_t spot, float agentRadius, const NavigationSystem& nav
+	);
+	/// Where a builder of `agentRadius` stands to work side `side` of build site `site`'s wall: the mesh's
+	/// stand point for it, when it serves that side (construction::WallStand::serves); nullopt otherwise.
+	/// The mesh is asked once per side and radius in an update.
+	[[nodiscard]] std::optional<glm::vec2> wallStandPoint(
+		std::size_t site, std::size_t side, float agentRadius, const NavigationSystem& nav
 	);
 	/// Available Deconstruct goals whose blueprint has work to undo, in goal order.
 	[[nodiscard]] const std::vector<Site>& teardownSites(World& world);

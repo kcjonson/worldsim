@@ -50,6 +50,7 @@ namespace ecs {
 			timeScale = timeSystem->effectiveTimeScale();
 		}
 		const float scaledDt = deltaTime * timeScale;
+		forgetGoneWalls();
 
 		// Process all colonists with the required components.
 		//

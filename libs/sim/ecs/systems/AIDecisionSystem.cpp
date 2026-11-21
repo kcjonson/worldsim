@@ -1,6 +1,7 @@
 #include "AIDecisionSystem.h"
 
 #include "GoalSystemHelpers.h"
+#include "WallStandPoint.h"
 
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
@@ -1706,23 +1707,30 @@ namespace ecs {
 								 .blueprint = goal.destinationEntity,
 								 .position = goal.destinationPosition,
 								 .builderSpots = goal.builderSpots,
+								 .wallStands = goal.wallStands,
 								 .spotSlack = std::vector<float>(goal.builderSpots.size(), -1.0F)});
 		});
 		return buildList;
 	}
 
+	namespace {
+		// A site's stands for builders of `agentRadius`, `count` of them, made the first time that radius asks.
+		std::vector<SharedWork::Site::SpotStand>& standsAtRadius(std::vector<SharedWork::Site::StandsAtRadius>& byRadius, float agentRadius, std::size_t count) {
+			const auto sameRadius = [&](const SharedWork::Site::StandsAtRadius& memo) { return memo.agentRadius == agentRadius; };
+			auto	   atRadius = std::find_if(byRadius.begin(), byRadius.end(), sameRadius);
+			if (atRadius == byRadius.end()) {
+				byRadius.push_back({.agentRadius = agentRadius, .stands = std::vector<SharedWork::Site::SpotStand>(count)});
+				atRadius = std::prev(byRadius.end());
+			}
+			return atRadius->stands;
+		}
+	} // namespace
+
 	std::optional<glm::vec2> SharedWork::builderSpotStand(
 		std::size_t site, std::size_t spot, float agentRadius, const NavigationSystem& nav
 	) {
-		Site&							   buildSite = buildList[site];
-		std::vector<Site::StandsAtRadius>& byRadius = buildSite.standsByRadius;
-		const auto						   sameRadius = [&](const Site::StandsAtRadius& memo) { return memo.agentRadius == agentRadius; };
-		auto							   atRadius = std::find_if(byRadius.begin(), byRadius.end(), sameRadius);
-		if (atRadius == byRadius.end()) {
-			byRadius.push_back({.agentRadius = agentRadius, .stands = std::vector<Site::SpotStand>(buildSite.builderSpots.size())});
-			atRadius = std::prev(byRadius.end());
-		}
-		Site::SpotStand& stand = atRadius->stands[spot];
+		Site&			 buildSite = buildList[site];
+		Site::SpotStand& stand = standsAtRadius(buildSite.standsByRadius, agentRadius, buildSite.builderSpots.size())[spot];
 		if (!stand.asked) {
 			stand.asked = true;
 			const glm::vec2				   point = buildSite.builderSpots[spot];
@@ -1736,6 +1744,16 @@ namespace ecs {
 					stand.point = snapped;
 				}
 			}
+		}
+		return stand.point;
+	}
+
+	std::optional<glm::vec2> SharedWork::wallStandPoint(std::size_t site, std::size_t side, float agentRadius, const NavigationSystem& nav) {
+		Site&			 buildSite = buildList[site];
+		Site::SpotStand& stand = standsAtRadius(buildSite.wallStandsByRadius, agentRadius, buildSite.wallStands.size())[side];
+		if (!stand.asked) {
+			stand.asked = true;
+			stand.point = ecs::wallStandPoint(buildSite.wallStands[side], agentRadius, nav);
 		}
 		return stand.point;
 	}
@@ -3229,6 +3247,28 @@ namespace ecs {
 			}
 			return OptionStatus::NoSource;
 		};
+		// A wall's Build stands beside it, on one of the sides its goal allows (construction::wallStands),
+		// the nearest he can get to, at the mesh's stand point for that side when it serves the side
+		// (SharedWork::wallStandPoint).
+		const auto chooseWallStand = [&](EvaluatedOption& option, std::size_t siteIndex, std::span<const construction::WallStand> stands) {
+			std::optional<glm::vec2> chosen;
+			for (std::size_t side = 0; side < stands.size(); ++side) {
+				const std::optional<glm::vec2> point =
+					haveMesh ? m_sharedWork.wallStandPoint(siteIndex, side, agentRadius, *m_navSystem) : stands[side].standPoint(agentRadius);
+				if (!point.has_value() || (haveMesh && *point != position.value && !canTake(option.sourceKey, *point))) {
+					continue;
+				}
+				if (!chosen.has_value() || glm::distance(position.value, *point) < glm::distance(position.value, *chosen)) {
+					chosen = point;
+				}
+			}
+			if (!chosen.has_value()) {
+				return OptionStatus::NoSource;
+			}
+			option.targetPosition = chosen;
+			option.targetReachable = true;
+			return OptionStatus::Selected;
+		};
 		std::size_t at = 0;
 		while (at < trace.options.size()) {
 			EvaluatedOption& option = trace.options[at];
@@ -3259,13 +3299,16 @@ namespace ecs {
 					if (site != sites.end() && !site->builderSpots.empty()) {
 						return chooseBuilderSpot(option, static_cast<std::size_t>(site - sites.begin()), site->builderSpots);
 					}
+					if (site != sites.end() && !site->wallStands.empty()) {
+						return chooseWallStand(option, static_cast<std::size_t>(site - sites.begin()), site->wallStands);
+					}
 				}
 				// Snap only the task types whose action looks its target up by entity/footprint and so
 				// is satisfied by arriving ADJACENT: Harvest (incl. footprint clearing), Build, and
 				// Deconstruct. Their stored target is a CENTER that can sit inside a tree's collider or a
 				// wall, which no route ends in. A harvest stands just outside the target's collider on
 				// the colonist's side, read from the placement data so it is the same spot on camera and
-				// off; Build (on a structure with no builder spots) and Deconstruct take the nearest walkable
+				// off; Build (on a structure with no builder spots or wall sides) and Deconstruct take the nearest walkable
 				// point. Any other target (a pile, a need source, a box, a station) keeps its own position on the
 				// option and the task, and is moved to a stand point beside the placed obstacle it lies in when
 				// its route is asked (requestRoute); with no stand point there, it is no source.

@@ -36,7 +36,9 @@ namespace construction {
 	// Enclosed regions of the built-wall graph, in the arrangement's canonical
 	// face order (deterministic across platforms; safe for multiplayer). An open
 	// chain or a loop with no built segments yields an empty result.
-	std::vector<RoomFace> detectRooms(const ConstructionWorld& world);
+	// `takenAsBuilt` counts as built whatever its state: the rooms there would be
+	// once that segment completes.
+	std::vector<RoomFace> detectRooms(const ConstructionWorld& world, SegmentId takenAsBuilt = kInvalidSegment);
 
 	// Exact containment of `point` in a room: Inside when strictly inside `ring` and
 	// strictly outside every hole, OnBoundary when on the ring or on any hole's

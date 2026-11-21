@@ -18,7 +18,7 @@ namespace vision {
 	constexpr std::int64_t kEyeHeightMm = 1600;
 
 	// The height of the top of a placed body of `def`, from the def alone: a simple def's worldHeight
-	// (the parser's 1.0 m when unwritten). None when the def states no height: a procedural def's
+	// (the parser's 1.0 m when unwritten), a parts item's tallest part top (0 for flat parts only). None when the def states no height: a procedural def's
 	// generator draws to its own size.
 	[[nodiscard]] std::optional<std::int64_t> bodyTopMm(const assets::AssetDefinition& def);
 
