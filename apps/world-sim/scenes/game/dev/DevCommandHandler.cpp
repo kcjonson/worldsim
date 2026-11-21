@@ -391,6 +391,20 @@ namespace world_sim {
 		if (assets::AssetRegistry::Get().getDefinition(def) == nullptr) {
 			return reject("spawn: unknown asset '" + def + "'");
 		}
+		// Degrees clockwise, the front down the screen at 0, rounded to the turn quantum (rotatable-placed-items 3). Only a
+		// parts item draws turned, so only a parts def takes one: another's collider would turn and its picture wouldn't.
+		float turn = 0.0F;
+		if (const std::string turnText = param(cmd, "turn"); !turnText.empty()) {
+			if (assets::AssetRegistry::Get().getDefinition(def)->parts == nullptr) {
+				return reject("spawn: turn= is for a parts def, and " + def + " isn't one");
+			}
+			char*		 end = nullptr;
+			const double degrees = std::strtod(turnText.c_str(), &end);
+			if (end == turnText.c_str() || *end != '\0' || !std::isfinite(degrees)) {
+				return reject("spawn: turn='" + turnText + "' is not a number of degrees");
+			}
+			turn = assets::turnRadiansFromQuanta(assets::turnQuantaFromDegrees(degrees));
+		}
 		const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
 		if (const std::string refusal = spawnGroundRefusal(*m_ctx.placement, m_ctx.navigation, def, at); !refusal.empty()) {
 			return reject(refusal);
@@ -398,8 +412,6 @@ namespace world_sim {
 		const long			   nRaw = std::strtol(param(cmd, "n", "1").c_str(), nullptr, 10);
 		const long			   n = nRaw < 1 ? 1 : nRaw;
 		const float			   scatter = std::strtof(param(cmd, "scatter", "0").c_str(), nullptr);
-		// Degrees clockwise, the front down the screen at 0, rounded to the turn quantum (rotatable-placed-items 3).
-		const float turn = assets::turnRadiansFromQuanta(assets::turnQuantaFromDegrees(std::strtod(param(cmd, "turn", "0").c_str(), nullptr)));
 
 		// The gate took the CENTER, but each scattered offset is its own point that can land in a
 		// river. Snap every scattered position onto walkable ground with the same primitive the
