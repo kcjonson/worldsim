@@ -27,6 +27,7 @@
 #include <cassert>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace nav {
@@ -87,6 +88,10 @@ namespace nav {
 
 	// The same from the collider already looked up for the entity's age class.
 	[[nodiscard]] bool placedObstacleOutline(const assets::PlacedEntity& entity, const assets::CollisionShape& collision, geometry::Ring& out);
+
+	// The colliders an entity of `def` at `ageClass` blocks with, one ring each: a parts def's derived rings
+	// (rotatable-placed-items 11.1), any other def's one collision shape; empty when it blocks nothing.
+	[[nodiscard]] std::span<const assets::CollisionShape> placedObstacleColliders(const assets::AssetDefinition& def, std::uint8_t ageClass);
 
 	// How far the outline of `collision` can reach from the entity's position at scale 1: the shape's
 	// reach plus the pad's corner, the rule placedObstacleReachMeters takes over every def. What a

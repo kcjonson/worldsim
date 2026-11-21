@@ -17,7 +17,27 @@ constexpr float kInvalidTintR = 1.0F;  // Red tint for invalid placement
 constexpr float kInvalidTintG = 0.3F;
 constexpr float kInvalidTintB = 0.3F;
 constexpr float kPixelsPerMeter = 8.0F; // Match GameScene constant
+// The refusal label, as the drawing tools' reason beside the cursor: text scale and offset from the pivot in
+// logical px, both times the interface scale.
+constexpr float			   kRefusalTextScale = 0.8F;
+constexpr Foundation::Vec2 kRefusalOffset{14.0F, -22.0F};
+constexpr float			   kRefusalShadowPx = 1.0F;
 } // namespace
+
+void GhostRenderer::renderRefusal(
+	std::string_view label, Foundation::Vec2 worldPos, const world::WorldCamera& camera, int viewportWidth, int viewportHeight, float uiScale
+) {
+	const Foundation::Vec2 pivot = camera.worldToScreen(worldPos.x, worldPos.y, viewportWidth, viewportHeight, kPixelsPerMeter);
+	Renderer::Primitives::drawText({
+		.text = std::string(label),
+		.position = {pivot.x + kRefusalOffset.x * uiScale, pivot.y + kRefusalOffset.y * uiScale},
+		.scale = kRefusalTextScale * uiScale,
+		.color = {kInvalidTintR, kInvalidTintG, kInvalidTintB, 1.0F},
+		.shadow = Foundation::BoxShadow{.color = {0.0F, 0.0F, 0.0F, 0.8F}, .blur = 0.0F, .offset = {kRefusalShadowPx, kRefusalShadowPx}},
+		.id = "placement_refusal",
+		.key = 1001,
+	});
+}
 
 void GhostRenderer::beginFrame() {
 	// A reload changes the defs the views were built from.

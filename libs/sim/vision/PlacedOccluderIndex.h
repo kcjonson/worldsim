@@ -20,6 +20,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -41,10 +42,14 @@ namespace vision {
 		std::int64_t	 perimeterMm = 0;
 		geometry::Int128 diameterSquared;
 		std::int64_t	 diameterMm = 0;
-		// A concave ring is opaque whatever its diameter (sight-softening.md 2.2): a soft body's
-		// silhouette needs the eye outside its hull.
-		bool	 concave = false;
-		BodyKind kind	 = BodyKind::Soft;
+		// What the kind is decided from: the whole body the ring is one of, its diameter over every
+		// ring's vertices and whether any ring is concave, so a body of several rings is never half
+		// opaque (rotatable-placed-items 11.2); the ring's own for a body of one ring. A concave body is
+		// opaque whatever its diameter (sight-softening.md 2.2): a soft body's silhouette needs the eye
+		// outside its hull.
+		geometry::Int128 bodyDiameterSquared;
+		bool			 bodyConcave = false;
+		BodyKind		 kind		 = BodyKind::Soft;
 		// The sim clock (TimeSystem::simulationSeconds, in ms) when the index took it.
 		std::int64_t arrivedMs = 0;
 		std::string	 defName;
@@ -55,11 +60,19 @@ namespace vision {
 
 	class PlacedOccluderIndex {
 	  public:
+		struct BodyRing {
+			geometry::nav::RingId ring = geometry::nav::kNoRing;
+			const geometry::Ring* outline = nullptr;
+		};
+
 		// Takes the ring `ring` with `outline` (either winding) under a new serial, its kind by
 		// opaqueLeastDiameterMm, or opaque when it is concave. Whether a body is tall enough to enter is
 		// the caller's (SightHeight.h). A ring the patch refused (geometry::nav::kNoRing) never enters, and an
 		// entry already under `ring` leaves first.
 		void add(geometry::nav::RingId ring, const geometry::Ring& outline, std::string defName, std::int64_t clockMs);
+		// The same for each ring of one body, every ring taking the kind of the whole: by its diameter over
+		// all their vertices, or opaque when any ring is concave.
+		void addBody(std::span<const BodyRing> rings, const std::string& defName, std::int64_t clockMs);
 		// Drops the entry for `ring`, if there is one.
 		void remove(geometry::nav::RingId ring);
 
@@ -78,6 +91,8 @@ namespace vision {
 		using BucketKey = std::uint64_t;
 		[[nodiscard]] static BucketKey bucketKey(std::int64_t column, std::int64_t row);
 		template <typename Visit> static void eachBucket(geometry::Vec2i64 low, geometry::Vec2i64 high, Visit&& visit);
+		// Lists `entry`, its outline counter-clockwise and its body's kind inputs set, deriving the rest.
+		void insert(PlacedOccluder entry);
 
 		std::int64_t											 opaqueLeastMm = SightTunables{}.placedOpaqueLeastDiameterMm;
 		std::uint64_t											 nextSerial	   = 1;

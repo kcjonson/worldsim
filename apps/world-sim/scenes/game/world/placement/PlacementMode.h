@@ -66,8 +66,9 @@ class PlacementMode {
 	void cancel();
 
 	/// Update the ghost's position, turn, and whether it is placeable there. `valid` comes from
-	/// PlacementSystem's ground gate (footprintBuildableNow, and the footprint seen); PlacementMode itself
-	/// owns no terrain knowledge. Called each frame while Placing.
+	/// PlacementSystem's checks (its ground, the footprint seen, and other items' bodies and clearance and the
+	/// walls, rotatable-placed-items 14.2); PlacementMode itself owns no terrain knowledge. Called each frame while
+	/// Placing.
 	void updateGhost(Foundation::Vec2 worldPos, uint32_t turnQuanta, bool valid);
 
 	/// Attempt to place at current ghost position

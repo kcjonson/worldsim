@@ -11,6 +11,7 @@
 
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
+#include <assets/PartsAsset.h>
 #include <assets/placement/InstanceTransform.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <assets/placement/SpatialIndex.h>
@@ -37,6 +38,8 @@
 #include <fstream>
 #include <initializer_list>
 #include <limits>
+#include <memory>
+#include <numbers>
 #include <optional>
 #include <string>
 #include <vector>
@@ -897,4 +900,42 @@ TEST_F(PlacedObstacleCollisionSystemTest, AgentInsideAColliderEntityIsPushedOut)
 	nav.finishPendingBuilds();
 	sys.update(0.0F);
 	EXPECT_EQ(world.getComponent<Position>(afterRemoval)->value, movedTo + offset) << "pushed against a removed entity";
+}
+
+// A parts item's colliders are pushed against through the entity-keyed gate, each ring at the item's turn: an agent
+// inside the second of two cabinets is pushed out of it, and one in the gap between them is left alone
+// (rotatable-placed-items 11.2).
+TEST_F(PlacedObstacleCollisionSystemTest, AgentInsideAPartsItemsSecondRingIsPushedOut) {
+	AssetRegistry&	reg = AssetRegistry::Get();
+	AssetDefinition pair;
+	pair.defName   = "Test_PushedPartsPair";
+	pair.assetType = assets::AssetType::Parts;
+	pair.parts	   = std::make_shared<const assets::PartsAsset>(assets::PartsAsset{.bodyTopMeters = 0.8F});
+	for (const float side : {-1.0F, 1.0F}) {
+		const float near = side * 0.5F;
+		const float far	 = side * 1.1F;
+		pair.partsColliders.push_back({.type		 = CollisionShapeType::Polygon,
+									   .pointsMeters = {{std::min(near, far), -0.3F}, {std::max(near, far), -0.3F}, {std::max(near, far), 0.3F}, {std::min(near, far), 0.3F}}});
+	}
+	reg.registerTestDefinition(pair);
+
+	// A quarter turn stands the cabinets along y, the second (local +x) at +0.8 m.
+	const glm::vec2	  pairAt{20.0F, 20.0F};
+	PlacementExecutor executor(reg);
+	World			  world;
+	const EntityID	  entity = world.createEntity();
+	world.addComponent<Position>(entity, Position{pairAt});
+	world.addComponent<Rotation>(entity, Rotation{std::numbers::pi_v<float> * 0.5F});
+	world.addComponent<Appearance>(entity, Appearance{"Test_PushedPartsPair"});
+	const EntityID				   inSecond = spawnAgent(world, pairAt + glm::vec2{0.05F, 0.75F});
+	const EntityID				   inGap	= spawnAgent(world, pairAt + glm::vec2{0.05F, 0.0F});
+	PlacedObstacleCollisionSystem& sys		= wire(world, executor);
+	ASSERT_TRUE(world.getSystem<NavigationSystem>().placedObstacleInNavMesh(entity));
+	sys.update(0.0F);
+	const glm::vec2 pushed = world.getComponent<Position>(inSecond)->value;
+	EXPECT_TRUE(std::abs(pushed.x - pairAt.x) >= 0.3F - kLandingMeters || pushed.y <= pairAt.y + 0.5F + kLandingMeters ||
+				pushed.y >= pairAt.y + 1.1F - kLandingMeters)
+		<< "still inside the second cabinet at (" << pushed.x << ", " << pushed.y << ")";
+	const glm::vec2 gapAt = pairAt + glm::vec2(0.05F, 0.0F);
+	EXPECT_EQ(world.getComponent<Position>(inGap)->value, gapAt) << "the gap is open";
 }

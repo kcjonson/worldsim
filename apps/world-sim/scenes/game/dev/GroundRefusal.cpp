@@ -27,14 +27,18 @@ namespace world_sim {
 		if (navigation == nullptr) {
 			return where() + "has no nav mesh to stand on";
 		}
-		if (PlacementSystem::isFurniture(def)) {
+		if (PlacementSystem::isFurniture(def) || PlacementSystem::turns(def)) {
 			if (placement.insideUnbuiltSite(at)) {
 				return where() + "is inside a foundation that is not built yet";
 			}
-			if (placement.footprintBuildableNow(def, at, turnQuanta)) {
+			const std::optional<construction::PlacementRefusal> refusal = placement.refusalAt(def, at, turnQuanta, ecs::kInvalidEntity, PlacementSystem::PlacementRules::Dev);
+			if (!refusal.has_value()) {
 				return {};
 			}
-			return where() + "is not on clear buildable ground (water, a fordable stream, a placed obstacle, or ground no mover has meshed)";
+			if (*refusal == construction::PlacementRefusal::NotBuildableGround) {
+				return where() + "is not on clear buildable ground (water, a fordable stream, a placed obstacle, or ground no mover has meshed)";
+			}
+			return where() + "is refused: " + std::string(construction::placementRefusalLabel(*refusal));
 		}
 		const std::string refusal = putDownRefusal(navigation, at);
 		return refusal.empty() ? refusal : "spawn: " + def + " at " + refusal;

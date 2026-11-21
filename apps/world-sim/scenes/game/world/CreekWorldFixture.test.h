@@ -8,6 +8,7 @@
 #include <ecs/components/Memory.h>
 #include <ecs/components/Transform.h>
 #include <ecs/systems/NavigationSystem.h>
+#include <ecs/systems/PlacedItemSystem.h>
 #include <ecs/systems/PlacedNothing.test.h>
 #include <nav/NavCoords.h>
 #include <nav/NavInputBuilder.h>
@@ -61,6 +62,7 @@ namespace world_sim::testing {
 	// on it fails when it has turned into plain ground or open water.
 	inline ecs::NavigationSystem& meshCreekWorld(ecs::World& world, ecs::EmptyPlacement& placement) {
 		auto& navigation = world.registerSystem<ecs::NavigationSystem>();
+		world.registerSystem<ecs::PlacedItemSystem>();
 		navigation.setChunkManager(creekChunks());
 		navigation.setPlacementData(&placement.executor, &placement.processed);
 		const ecs::EntityID mesher = world.createEntity();
