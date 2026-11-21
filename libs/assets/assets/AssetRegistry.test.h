@@ -11,6 +11,7 @@
 // load was still advancing.
 
 #include "assets/AssetRegistry.h"
+#include "assets/ViewConfig.h"
 
 #include <atomic>
 #include <chrono>
@@ -71,6 +72,17 @@ namespace assets {
 		std::filesystem::path root;
 	};
 
+	// The shipped config root, <root>/assets/config.
+	inline std::filesystem::path shippedConfigFolder() {
+		// <root>/libs/assets/assets/AssetRegistry.test.h -> walk up to <root>.
+		return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "assets" / "config";
+	}
+
+	// Loads the shipped view config into GameViewConfig, which parts defs are read with; false when it doesn't load.
+	inline bool loadShippedViewConfig() {
+		return GameViewConfig::Get().loadFromFile(shippedConfigFolder(), kViewConfigFile);
+	}
+
 	// Loads the shipped library (<root>/assets/world, with its shared scripts) through
 	// beginLoadAsync and waits for it. False when the library isn't there to load.
 	inline bool loadShippedLibrary(AssetRegistry& reg) {
@@ -81,6 +93,7 @@ namespace assets {
 			return false;
 		}
 		reg.setSharedScriptsPath(root / "assets" / "shared" / "scripts");
+		loadShippedViewConfig();
 		reg.beginLoadAsync(world.string());
 		waitForAsyncLoad(reg);
 		return true;

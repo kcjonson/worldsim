@@ -287,31 +287,34 @@ namespace assets {
 			return (first.x - origin.x) * (second.y - origin.y) - (first.y - origin.y) * (second.x - origin.x);
 		}
 
-		/// The convex hull, vertex angle increasing from +X toward +Y (monotone chain).
-		Ring2 convexHull(Ring2 points) {
-			std::sort(points.begin(), points.end(), [](glm::vec2 left, glm::vec2 right) { return left.x != right.x ? left.x < right.x : left.y < right.y; });
-			points.erase(std::unique(points.begin(), points.end()), points.end());
-			if (points.size() < 3) {
-				return points;
-			}
-			Ring2 hull(points.size() * 2);
-			size_t count = 0;
-			for (const glm::vec2& point : points) {
-				while (count >= 2 && crossOf(hull[count - 2], hull[count - 1], point) <= 0.0F) {
-					--count;
-				}
-				hull[count++] = point;
-			}
-			const size_t lower = count + 1;
-			for (size_t i = points.size() - 1; i-- > 0;) {
-				while (count >= lower && crossOf(hull[count - 2], hull[count - 1], points[i]) <= 0.0F) {
-					--count;
-				}
-				hull[count++] = points[i];
-			}
-			hull.resize(count - 1);
-			return hull;
+	} // namespace
+
+	std::vector<glm::vec2> convexHull(std::vector<glm::vec2> points) {
+		std::sort(points.begin(), points.end(), [](glm::vec2 left, glm::vec2 right) { return left.x != right.x ? left.x < right.x : left.y < right.y; });
+		points.erase(std::unique(points.begin(), points.end()), points.end());
+		if (points.size() < 3) {
+			return points;
 		}
+		std::vector<glm::vec2> hull(points.size() * 2);
+		size_t				   count = 0;
+		for (const glm::vec2& point : points) {
+			while (count >= 2 && crossOf(hull[count - 2], hull[count - 1], point) <= 0.0F) {
+				--count;
+			}
+			hull[count++] = point;
+		}
+		const size_t lower = count + 1;
+		for (size_t i = points.size() - 1; i-- > 0;) {
+			while (count >= lower && crossOf(hull[count - 2], hull[count - 1], points[i]) <= 0.0F) {
+				--count;
+			}
+			hull[count++] = points[i];
+		}
+		hull.resize(count - 1);
+		return hull;
+	}
+
+	namespace {
 
 		bool isConvex(const Ring2& ring) {
 			for (size_t i = 0; i < ring.size(); ++i) {
@@ -446,24 +449,27 @@ namespace assets {
 			return false;
 		}
 
-		/// The y range a convex ring covers on the vertical line at `x`.
-		std::pair<float, float> sliceAt(const Ring2& ring, float x) {
-			float low = std::numeric_limits<float>::max();
-			float high = std::numeric_limits<float>::lowest();
-			for (size_t i = 0; i < ring.size(); ++i) {
-				const glm::vec2& from = ring[i];
-				const glm::vec2& to = ring[(i + 1) % ring.size()];
-				if ((from.x - x) * (to.x - x) > 0.0F) {
-					continue;
-				}
-				const bool	vertical = from.x == to.x;
-				const float y = vertical ? std::min(from.y, to.y) : from.y + (to.y - from.y) * (x - from.x) / (to.x - from.x);
-				const float other = vertical ? std::max(from.y, to.y) : y;
-				low = std::min(low, y);
-				high = std::max(high, other);
+	} // namespace
+
+	std::pair<float, float> ySpanAt(const std::vector<glm::vec2>& ring, float x) {
+		float low = std::numeric_limits<float>::max();
+		float high = std::numeric_limits<float>::lowest();
+		for (size_t i = 0; i < ring.size(); ++i) {
+			const glm::vec2& from = ring[i];
+			const glm::vec2& to = ring[(i + 1) % ring.size()];
+			if ((from.x - x) * (to.x - x) > 0.0F) {
+				continue;
 			}
-			return {low, high};
+			const bool	vertical = from.x == to.x;
+			const float y = vertical ? std::min(from.y, to.y) : from.y + (to.y - from.y) * (x - from.x) / (to.x - from.x);
+			const float other = vertical ? std::max(from.y, to.y) : y;
+			low = std::min(low, y);
+			high = std::max(high, other);
 		}
+		return {low, high};
+	}
+
+	namespace {
 
 		// ─── Drawings ────────────────────────────────────────────────────────────────────────────────
 
@@ -727,28 +733,6 @@ namespace assets {
 			ValidationReport&			 report;
 		};
 
-		std::optional<Foundation::Color> parseColor(const std::string& text) {
-			if (text.size() != 7 || text[0] != '#') {
-				return std::nullopt;
-			}
-			std::array<float, 3> channels{};
-			for (size_t i = 0; i < 3; ++i) {
-				unsigned value = 0;
-				for (const char digit : text.substr(1 + i * 2, 2)) {
-					const int nibble = std::isdigit(static_cast<unsigned char>(digit)) != 0 ? digit - '0'
-									   : (digit >= 'a' && digit <= 'f')				   ? digit - 'a' + 10
-									   : (digit >= 'A' && digit <= 'F')				   ? digit - 'A' + 10
-																					   : -1;
-					if (nibble < 0) {
-						return std::nullopt;
-					}
-					value = value * 16 + static_cast<unsigned>(nibble);
-				}
-				channels[i] = static_cast<float>(value) / 255.0F;
-			}
-			return Foundation::Color{channels[0], channels[1], channels[2], 1.0F};
-		}
-
 		constexpr std::array<const char*, 4> kRectFaceNames = {"back", "right", "front", "left"};
 
 		/// Whether a valid footprint is too thin for rule 9 to see: shrunk inward by half the overlap tolerance it
@@ -819,6 +803,122 @@ namespace assets {
 		}
 
 	} // namespace
+
+	std::optional<Foundation::Color> parseRgbHexColor(std::string_view text) {
+		if (text.size() != 7 || text[0] != '#') {
+			return std::nullopt;
+		}
+		std::array<float, 3> channels{};
+		for (size_t i = 0; i < 3; ++i) {
+			unsigned value = 0;
+			for (const char digit : text.substr(1 + i * 2, 2)) {
+				const int nibble = std::isdigit(static_cast<unsigned char>(digit)) != 0 ? digit - '0'
+								   : (digit >= 'a' && digit <= 'f')				   ? digit - 'a' + 10
+								   : (digit >= 'A' && digit <= 'F')				   ? digit - 'A' + 10
+																				   : -1;
+				if (nibble < 0) {
+					return std::nullopt;
+				}
+				value = value * 16 + static_cast<unsigned>(nibble);
+			}
+			channels[i] = static_cast<float>(value) / 255.0F;
+		}
+		return Foundation::Color{channels[0], channels[1], channels[2], 1.0F};
+	}
+
+	std::vector<glm::vec2> turnedFootprint(const PartsAsset& asset, size_t placement, float itemTurnRadians) {
+		std::vector<glm::vec2> ring;
+		ring.reserve(asset.placedFootprints[placement].size());
+		for (const glm::vec2& point : asset.placedFootprints[placement]) {
+			ring.push_back(turned(point, itemTurnRadians));
+		}
+		return ring;
+	}
+
+	std::vector<std::vector<size_t>> partsDrawnAfter(const PartsAsset& asset, const std::vector<std::vector<glm::vec2>>& screenFootprints) {
+		const size_t					 count = screenFootprints.size();
+		std::vector<std::vector<size_t>> later(count);
+		const auto xRange = [](const Ring2& ring) {
+			const auto [low, high] = std::minmax_element(ring.begin(), ring.end(), [](glm::vec2 left, glm::vec2 right) { return left.x < right.x; });
+			return std::make_pair(low->x, high->x);
+		};
+		for (size_t i = 0; i < count; ++i) {
+			for (size_t j = i + 1; j < count; ++j) {
+				if (screenFootprints[i].empty() || screenFootprints[j].empty()) {
+					continue;
+				}
+				const int8_t order = asset.planOrder[i * count + j];
+				if (asset.overlapsInPlan(i, j)) {
+					if (order > 0) {
+						later[j].push_back(i);
+					} else if (order < 0) {
+						later[i].push_back(j);
+					}
+					continue;
+				}
+				const auto [firstLow, firstHigh] = xRange(screenFootprints[i]);
+				const auto [secondLow, secondHigh] = xRange(screenFootprints[j]);
+				const float low = std::max(firstLow, secondLow);
+				const float high = std::min(firstHigh, secondHigh);
+				if (high <= low) {
+					continue;
+				}
+				// Disjoint and convex, so which is further south is the same on every shared vertical line.
+				const auto [firstTop, firstBottom] = ySpanAt(screenFootprints[i], (low + high) * 0.5F);
+				const auto [secondTop, secondBottom] = ySpanAt(screenFootprints[j], (low + high) * 0.5F);
+				if (firstTop + firstBottom > secondTop + secondBottom) {
+					later[j].push_back(i);
+				} else {
+					later[i].push_back(j);
+				}
+			}
+		}
+		return later;
+	}
+
+	std::vector<uint32_t> partsDrawOrder(const PartsAsset& asset, float itemTurnRadians) {
+		const size_t					 count = asset.placements.size();
+		std::vector<std::vector<glm::vec2>> screen(count);
+		for (size_t i = 0; i < count; ++i) {
+			screen[i] = turnedFootprint(asset, i, itemTurnRadians);
+		}
+		const std::vector<std::vector<size_t>> later = partsDrawnAfter(asset, screen);
+		std::vector<uint32_t>				   waiting(count, 0);
+		for (const std::vector<size_t>& after : later) {
+			for (const size_t placement : after) {
+				++waiting[placement];
+			}
+		}
+		// Kahn's sort, the earliest placement first among those ready, so ties keep placement order.
+		std::vector<uint32_t> order;
+		std::vector<bool>	  done(count, false);
+		order.reserve(count);
+		while (order.size() < count) {
+			size_t next = count;
+			for (size_t i = 0; i < count; ++i) {
+				if (!done[i] && waiting[i] == 0) {
+					next = i;
+					break;
+				}
+			}
+			if (next == count) {
+				// A cycle, which validation reports (rule 9): the rest in placement order.
+				for (size_t i = 0; i < count; ++i) {
+					if (!done[i]) {
+						done[i] = true;
+						order.push_back(static_cast<uint32_t>(i));
+					}
+				}
+				break;
+			}
+			done[next] = true;
+			order.push_back(static_cast<uint32_t>(next));
+			for (const size_t placement : later[next]) {
+				--waiting[placement];
+			}
+		}
+		return order;
+	}
 
 	PartsAuthored readPartsXml(const pugi::xml_node& defNode, const std::string& defName, ValidationReport& report) {
 		PartsAuthored authored;
@@ -987,7 +1087,7 @@ namespace assets {
 				}
 			}
 
-			if (const std::optional<Foundation::Color> color = parseColor(written.topColor); color.has_value()) {
+			if (const std::optional<Foundation::Color> color = parseRgbHexColor(written.topColor); color.has_value()) {
 				part.topColor = *color;
 			} else if (!written.topColor.empty()) {
 				error("parts", where + "'s top color " + inQuotes(written.topColor) + " is not #RRGGBB", where);
@@ -1034,7 +1134,7 @@ namespace assets {
 				}
 			}
 			if (!flat && !part.footprint.empty()) {
-				const std::optional<Foundation::Color> sideColor = parseColor(written.sideColor);
+				const std::optional<Foundation::Color> sideColor = parseRgbHexColor(written.sideColor);
 				if (sideColor.has_value()) {
 					part.sideColor = *sideColor;
 				} else if (!written.sideColor.empty()) {
@@ -1094,7 +1194,7 @@ namespace assets {
 		}
 
 		// Each placement's footprint in the item's frame, at turn 0.
-		std::vector<Ring2> placedFootprints;
+		std::vector<Ring2>& placedFootprints = asset.placedFootprints;
 		for (const PartPlacement& placement : asset.placements) {
 			Ring2& ring = placedFootprints.emplace_back();
 			for (const glm::vec2& point : asset.parts[placement.part].footprint) {
@@ -1169,14 +1269,14 @@ namespace assets {
 
 		// Rule 9, first half: parts that overlap in plan are separated in height.
 		const size_t					   count = asset.placements.size();
-		std::vector<std::vector<int>> overlapOrder(count, std::vector<int>(count, 0)); // +1: i draws after j
-		std::vector<std::vector<bool>> overlapping(count, std::vector<bool>(count, false));
+		asset.planOverlap.assign(count * count, false);
+		asset.planOrder.assign(count * count, 0);
 		for (size_t i = 0; i < count; ++i) {
 			for (size_t j = i + 1; j < count; ++j) {
 				if (placedFootprints[i].empty() || placedFootprints[j].empty() || !overlapInPlan(placedFootprints[i], placedFootprints[j])) {
 					continue;
 				}
-				overlapping[i][j] = overlapping[j][i] = true;
+				asset.planOverlap[i * count + j] = asset.planOverlap[j * count + i] = true;
 				const PartDefinition& first = asset.parts[asset.placements[i].part];
 				const PartDefinition& second = asset.parts[asset.placements[j].part];
 				const bool			  firstAbove = first.bottomMeters >= second.topMeters;
@@ -1187,8 +1287,8 @@ namespace assets {
 						"parts " + inQuotes(first.name) + " and " + inQuotes(second.name) + " overlap in plan and in height; one's bottom must be at or above the other's top"
 					);
 				} else if (firstAbove != secondAbove) {
-					overlapOrder[i][j] = firstAbove ? 1 : -1;
-					overlapOrder[j][i] = -overlapOrder[i][j];
+					asset.planOrder[i * count + j] = static_cast<int8_t>(firstAbove ? 1 : -1);
+					asset.planOrder[j * count + i] = static_cast<int8_t>(firstAbove ? -1 : 1);
 				}
 			}
 		}
@@ -1199,7 +1299,7 @@ namespace assets {
 			std::vector<float> turns;
 			for (size_t i = 0; i < count; ++i) {
 				for (size_t j = i + 1; j < count; ++j) {
-					if (overlapping[i][j]) {
+					if (asset.overlapsInPlan(i, j)) {
 						continue;
 					}
 					for (const glm::vec2& vertex : placedFootprints[i]) {
@@ -1240,44 +1340,9 @@ namespace assets {
 				const float middle = (from + to) * 0.5F;
 				std::vector<Ring2> screen(count);
 				for (size_t i = 0; i < count; ++i) {
-					for (const glm::vec2& point : placedFootprints[i]) {
-						screen[i].push_back(turned(point, middle));
-					}
+					screen[i] = turnedFootprint(asset, i, middle);
 				}
-				std::vector<std::vector<size_t>> later(count);
-				for (size_t i = 0; i < count; ++i) {
-					for (size_t j = i + 1; j < count; ++j) {
-						if (screen[i].empty() || screen[j].empty()) {
-							continue;
-						}
-						if (overlapping[i][j]) {
-							if (overlapOrder[i][j] > 0) {
-								later[j].push_back(i);
-							} else if (overlapOrder[i][j] < 0) {
-								later[i].push_back(j);
-							}
-							continue;
-						}
-						const auto xRange = [](const Ring2& ring) {
-							const auto [low, high] = std::minmax_element(ring.begin(), ring.end(), [](glm::vec2 left, glm::vec2 right) { return left.x < right.x; });
-							return std::make_pair(low->x, high->x);
-						};
-						const auto [firstLow, firstHigh] = xRange(screen[i]);
-						const auto [secondLow, secondHigh] = xRange(screen[j]);
-						const float low = std::max(firstLow, secondLow);
-						const float high = std::min(firstHigh, secondHigh);
-						if (high <= low) {
-							continue;
-						}
-						const auto [firstTop, firstBottom] = sliceAt(screen[i], (low + high) * 0.5F);
-						const auto [secondTop, secondBottom] = sliceAt(screen[j], (low + high) * 0.5F);
-						if (firstTop + firstBottom > secondTop + secondBottom) {
-							later[j].push_back(i); // i is further south, so it draws after j
-						} else {
-							later[i].push_back(j);
-						}
-					}
-				}
+				const std::vector<std::vector<size_t>> later = partsDrawnAfter(asset, screen);
 				std::vector<std::string> cycle = cycleIn(later, names);
 				if (cycle.empty()) {
 					continue;
