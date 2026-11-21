@@ -8,9 +8,9 @@
 
 ## Overview
 
-Task priority is calculated using a lexicographic `(tier: int, score: float)` key. Tier is compared first (lower number = higher priority) and is inviolable; a far tier-4 option always beats a near tier-5 one. Score orders options within the same tier only. All score weights and tier assignments are defined in `assets/config/arbitration/priority-tuning.xml`, allowing tuning without code changes.
+Task priority is calculated using a lexicographic `(tier, score)` key. An option's tier is the position of its rung in the ladder (lower position = higher priority), compared first and inviolable; a far `committed_work` option always beats a near `ordinary_need` one. Score orders options within the same tier only. The ladder and all score weights are defined in `assets/config/arbitration/priority-tuning.xml`, allowing tuning without code changes; code names a rung, never a number.
 
-The numeric bands of the earlier design (`Critical 30000`, `Needs 10000`, etc.) were replaced by the tier integer and are gone, config and accessors both: nothing read them. See [Colonist Task Arbitration](../../../technical/colonist-task-arbitration.md) for the full implementation.
+The numeric bands of the earlier design (`Critical 30000`, `Needs 10000`, etc.) were replaced by the tier and are gone, config and accessors both: nothing read them. See [Colonist Task Arbitration](../../../technical/colonist-task-arbitration.md) for the full implementation.
 
 **Design Goal:** Make priority tuning a data-driven process. When testers report "colonists walk too far for low-priority tasks," designers can adjust distance penalties without programmer involvement.
 
@@ -58,7 +58,7 @@ score = distanceFactor          // dominant; 300*max(0,1-d/60), nearest source w
       + hysteresisBonus         // +50 on the current in-progress option only
 ```
 
-Chain steps (`servesActiveWorkOrder == true`) are classified at tier 4, not scored higher within tier 6. Work type preference (1-9) affects within-tier ordering for tier 6 opportunistic work.
+Chain steps (`servesActiveWorkOrder == true`) are classified on `committed_work`, not scored higher within `opportunistic_work`. Work type preference (1-9) affects within-tier ordering for `opportunistic_work`.
 
 ---
 
@@ -66,7 +66,7 @@ Chain steps (`servesActiveWorkOrder == true`) are classified at tier 4, not scor
 
 ### AI Selection: lexicographic (tier, score)
 
-When a colonist selects their next task, options are compared as `(tier, score)` pairs. Tier comes from the task type's definition in `priority-tuning.xml <TaskTiers>` (validated at startup; unassigned types fail with an error). Score orders within a tier only:
+When a colonist selects their next task, options are compared as `(tier, score)` pairs. The tier is the position in the `<ladder>` of the rung `classifyTier` puts the option on: `critical_need` for a need past its critical threshold, `committed_work` for a craft, a build, a teardown, and provisioning that serves an active work order (or furniture already carried), `ordinary_need` for any other need below its seek threshold, `opportunistic_work` for other hauls, harvests, and placements, and `idle` for gathering food and Wander. A ladder without one of these rungs or without `survival`, or with these five out of that order, fails the load. Score orders within a tier only:
 
 ```
 score = distanceFactor      // dominant: 300 * max(0, 1 - d/60), nearest source wins
@@ -76,7 +76,7 @@ score = distanceFactor      // dominant: 300 * max(0, 1 - d/60), nearest source 
       + storagePriorityBias // stocking only: the destination box's priority rank (0..3) * 300
 ```
 
-`chainBonus` (+2000) is gone; a chain step is classified at tier 4 (active work order), not scored higher within tier 6. `inProgressBonus` is gone; it is replaced by the `hysteresisBonus` (50) applied within the same tier only. `kWorkOrderProvisionFloor` and `kStorageStockingFloor` are deleted; tiers make them unnecessary.
+`chainBonus` (+2000) is gone; a chain step is classified on `committed_work` (active work order), not scored higher within `opportunistic_work`. `inProgressBonus` is gone; it is replaced by the `hysteresisBonus` (50) applied within the same tier only. `kWorkOrderProvisionFloor` and `kStorageStockingFloor` are deleted; tiers make them unnecessary.
 
 ---
 
@@ -86,7 +86,7 @@ score = distanceFactor      // dominant: 300 * max(0, 1 - d/60), nearest source 
 
 | Element | Read by | Effect |
 |---|---|---|
-| `<TaskTiers>` | `AIDecisionSystem` (`readBaseTiers`), checked at load by `validateTaskTiers` | each task type's base tier |
+| `<ladder>` | `PriorityConfig::decisionRungs` at load, checked by `loadWorkConfig`; `AIDecisionSystem` (`classifyTier`), `ClaimIndex`, the task list | each rung's position, which is its tier |
 | `<WorkCategoryOrder>` | `ConfigValidator` only | none on decisions |
 | `<Bonuses><DistanceFactor>` (`maxDistance` 60, `maxFactor` 300) | `calculateDistanceFactor` | the distance term |
 | `<Bonuses><InProgress><bonus>` (50) | `getInProgressBonus` | the hysteresis term |
@@ -128,9 +128,9 @@ Skilled colonists naturally gravitate toward work they're good at. The bonus is 
 
 ### Chain continuation
 
-Chain steps are kept together by tier classification, not score inflation. Any haul or harvest task with `servesActiveWorkOrder == true` is assigned tier 4 (active work order). Since tier 4 beats tier 5 (actionable needs) and tier 6 (opportunistic work), chain steps stay bound to their parent order without a score term. The old `+2000 chainBonus` is deleted.
+Chain steps are kept together by tier classification, not score inflation. Any haul or harvest task with `servesActiveWorkOrder == true` is classified on `committed_work` (active work order). Since `committed_work` outranks `ordinary_need` (actionable needs) and `opportunistic_work`, chain steps stay bound to their parent order without a score term. The old `+2000 chainBonus` is deleted.
 
-**Effect:** A colonist finishing a provisioning haul cannot be pulled away by a non-critical need or an opportunistic task, because the chain step is tier 4 and those alternatives are tier 5 or tier 6.
+**Effect:** A colonist finishing a provisioning haul cannot be pulled away by a non-critical need or an opportunistic task, because the chain step is on `committed_work` and those alternatives are on `ordinary_need` or `opportunistic_work`.
 
 ### Task Age Bonus
 
@@ -154,7 +154,7 @@ In the game the age is not a goal's own: no goal system stamps `createdAt` (it s
 
 The "hauling problem" (from RimWorld) is colonists hauling everything before other work, walking across the map for low-value items. Nothing hauling-specific guards against it; the general `(tier, score)` key does, as follows.
 
-1. **Tier.** A Haul or Harvest serving an active work order (`servesActiveWorkOrder`: provisioning a build or a craft) is tier 4; any other, storage stocking included, keeps its base tier 6. A PlacePackaged serving a work order or already carried is tier 4. Tier 6 loses to every need (tier 5, or 2 when critical) and to work orders, so an opportunistic haul only happens when nothing above it is available (`classifyTier`).
+1. **Tier.** A Haul or Harvest serving an active work order (`servesActiveWorkOrder`: provisioning a build or a craft) is on `committed_work`; any other, storage stocking included, is on `opportunistic_work`. A PlacePackaged serving a work order or already carried is on `committed_work`. `opportunistic_work` loses to every need (`ordinary_need`, or `critical_need` when critical) and to work orders, so an opportunistic haul only happens when nothing above it is available (`classifyTier`).
 2. **Gathering rank, within a tier and before the score** (`EvaluatedOption::gatheringRank`): the carry-in the colonist has already chosen to walk (3, `kRankChosenDelivery`), then a loose pile toward a root it gathers for (2), then a further cut toward it (1), then everything else, a carry-in not yet chosen included (0), then a fresh cut toward a root and item a known pile also serves (-1). A colonist fills its trip before walking it in, and takes a pile before cutting another plant.
 3. **Score, within a tier and rank** (`populatePriorityBonuses`, `EvaluatedOption::computeScore`), the sum of:
    - distance factor, `300 * max(0, 1 - d / 60)`, so the nearest reachable source wins;
@@ -179,11 +179,10 @@ public:
     bool loadFromFile(const std::filesystem::path& configRoot, const std::filesystem::path& file);
     const std::vector<std::string>& problems() const;
 
-    // Task tier queries (AI arbitration). Tier is compared first; lower = higher priority.
-    int getTaskTier(const std::string& taskTypeName) const;            // base tier, or kUnassignedTier
-    static constexpr int kUnassignedTier = 9999;
-    bool validateTaskTiers(const std::vector<std::string>& requiredTypeNames,
-                           std::vector<std::string>& missingOut) const; // fail-loud at load
+    // The ladder (AI arbitration). A rung's position is its tier; lower = higher priority.
+    const std::vector<std::string>& rungs() const;
+    const DecisionRungs& decisionRungs() const;                    // the decision's rungs, as positions
+    const std::vector<std::string>& decisionRungProblems() const; // a rung missing, or two out of order
 
     // Within-tier score terms
     float   calculateDistanceFactor(float distance) const; // dominant: 300*max(0,1-d/60)
@@ -191,7 +190,8 @@ public:
     int16_t getInProgressBonus() const;                    // within-tier hysteresis margin (50)
 
 private:
-    std::unordered_map<std::string, int> taskTiers;  // per-task-type base tier (arbitration)
+    std::vector<std::string> rungNames;   // the ladder, highest first
+    DecisionRungs            decisionRungPositions;
     DistanceFactorConfig  distanceFactorConfig;
     InProgressBonusConfig inProgressConfig;
     TaskAgeBonusConfig    taskAgeConfig;
@@ -200,13 +200,13 @@ private:
 
 ### Loading at Startup
 
-`assets::loadWorkConfig(configRoot, human)` loads priority-tuning.xml after the work types, as `PriorityConfig::Get().loadFromFile(configRoot / "arbitration", "priority-tuning.xml")`, and then checks that every task type has a tier. Any problem fails the game load and is shown on the loading scene ([Config Loading](../../../technical/config-loading.md)).
+`assets::loadWorkConfig(configRoot, human)` loads priority-tuning.xml after the work types, as `PriorityConfig::Get().loadFromFile(configRoot / "arbitration", "priority-tuning.xml")`, and then checks that the ladder has every rung the decision ranks on, in the order `critical_need`, `committed_work`, `ordinary_need`, `opportunistic_work`, `idle` (other rungs may sit anywhere among them): `decisionRungProblems` gives one error naming each missing rung, else one naming the first two out of order. The ladder holds at most 255 rungs; position 255 marks a task nothing has ranked. Any problem fails the game load and is shown on the loading scene ([Config Loading](../../../technical/config-loading.md)).
 
 ---
 
 ## Tuning Guidelines
 
-Tier is decided first and is not tuned by a score: move a task type between tiers in `<TaskTiers>`, or fix `classifyTier` when one option lands in the wrong tier. The knobs below only reorder options inside a tier.
+Tier is decided first and is not tuned by a score: reorder the rungs in `<ladder>`, or fix `classifyTier` when one option lands on the wrong rung. The knobs below only reorder options inside a tier.
 
 ### When to increase the distance factor
 
@@ -228,12 +228,12 @@ The skill bonus is `min(skillLevel * 10, 100)`, fixed in AIDecisionSystem; `prio
 
 **Symptom:** A higher-priority box is stocked after a nearer lower-priority one, or the reverse is wanted.
 
-**Fix:** `<StoragePriority><weight>` at or above `maxFactor` makes box priority beat distance within tier 6; below it, a much nearer lower box can win.
+**Fix:** `<StoragePriority><weight>` at or above `maxFactor` makes box priority beat distance within `opportunistic_work`; below it, a much nearer lower box can win.
 
 ### Chain continuation (no score to tune)
 
 There is no chain score to tune. A provisioning step (`servesActiveWorkOrder == true`) is
-classified at tier 4, and tier beats score, so the colonist stays on the chain by construction.
+classified on `committed_work`, and tier beats score, so the colonist stays on the chain by construction.
 If chains break, the bug is in tier classification (the option not being marked as serving the
 work order), not in a bonus value.
 

@@ -1,4 +1,4 @@
-# Scenario 25: Colonists build openings
+# Scenario 26: Colonists build openings
 
 **Status:** ready  
 **Last verified:** 2026-11-20

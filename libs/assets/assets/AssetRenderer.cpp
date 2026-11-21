@@ -229,7 +229,7 @@ namespace assets {
 						continue;
 					}
 					const auto faint = [&mesh](uint16_t i) {
-						return mesh.hasColors() && mesh.colors[i].a < AssetRegistry::kSilhouetteMinAlpha;
+						return mesh.hasColors() && mesh.colors[i].a < kSilhouetteMinAlpha;
 					};
 					auto& kept = keptCells.emplace_back();
 					for (size_t t = 0; t + 2 < mesh.indices.size(); t += 3) {

@@ -106,6 +106,37 @@ namespace worldview {
 		}
 	}
 
+	// An item's strips get their orders together at its first strip, so a strip that comes after one of its item it
+	// overlaps ranks after it and joins its layer, whichever strip appears first.
+	TEST(RunPlanner, ReservedOrdersKeepAnItemsStripsInOneLayerSideBySide) {
+		RunPlanner planner;
+		planner.beginFrame(1000, 400, 8);
+		planner.reserveOrders(4, 3);
+		planner.reserveOrders(4, 3); // a second reservation of the same item changes nothing
+		const uint32_t first = planner.place(4, at(planner, 0.0F), false);
+		const uint32_t second = planner.place(5, at(planner, 10.0F), false);
+		const uint32_t third = planner.place(6, at(planner, 20.0F), false);
+		EXPECT_EQ(closeAll(planner), (std::vector<uint32_t>{first, second, third}));
+		EXPECT_EQ(planner.splits(), 0U);
+		EXPECT_TRUE(planner.neighbours(first, second));
+		EXPECT_TRUE(planner.neighbours(second, third));
+		EXPECT_FALSE(planner.neighbours(first, third));
+	}
+
+	// Orders reserved in another order than the stream brings the strips (left to right, where the anchors fall to the
+	// right): each overlapping strip comes after one of a higher order and opens a layer.
+	TEST(RunPlanner, StripsReservedOutOfStreamOrderOpenALayerEach) {
+		RunPlanner planner;
+		planner.beginFrame(1000, 400, 8);
+		planner.reserveOrders(4, 3);
+		const uint32_t right = planner.place(6, at(planner, 20.0F), false);
+		const uint32_t middle = planner.place(5, at(planner, 10.0F), false);
+		const uint32_t left = planner.place(4, at(planner, 0.0F), false);
+		EXPECT_EQ(closeAll(planner), (std::vector<uint32_t>{right, middle, left}));
+		EXPECT_FALSE(planner.neighbours(right, middle)) << "a layer apart";
+		EXPECT_FALSE(planner.neighbours(middle, left));
+	}
+
 	TEST(RunPlanner, ANewFrameStartsEmpty) {
 		RunPlanner planner;
 		planner.beginFrame(1000, 400, 2);

@@ -7,6 +7,8 @@
 
 #include "assets/AssetDefinition.h"
 #include "assets/AssetRegistry.h"
+#include "assets/ItemView.h"
+#include "assets/PartsAsset.test.h"
 
 #include "assets/placement/FloraRouting.h"
 #include "assets/placement/RenderContext.h"
@@ -337,6 +339,93 @@ namespace assets {
 		const RenderContext emptyCtx{executor, processed, &actors, camera, 8000, 6000, 16.0F, 1, nothing};
 		gather.gather(emptyCtx, out);
 		EXPECT_TRUE(out.empty());
+	}
+
+	// ─── Parts items (rotatable-placed-items 8 and 6.9) ──────────────────────────────────────────────────
+
+	namespace {
+
+		// A 3 m bench with a 2.2 m chimney against its east end: its reach is the chimney's top, 2.59 m, past the
+		// 2 m least margin and past the turn-0 template's own reach.
+		class PartsGatherTest : public parts_fixtures::PartsTest {
+		  protected:
+			void SetUp() override {
+				PartsTest::SetUp();
+				using parts_fixtures::block;
+				using parts_fixtures::place;
+				writeDef(
+					"Forge", "<parts>" + block("bench", -1.5F, -0.5F, 1.5F, 0.5F, 0.0F, 0.8F) + block("chimney", 1.5F, -0.15F, 1.8F, 0.15F, 0.0F, 2.2F) +
+								 "</parts><placements>" + place("bench") + place("chimney") + "</placements>"
+				);
+				ASSERT_NE(load("Forge"), nullptr);
+				forge = AssetRegistry::Get().templateId("Forge", {});
+				ASSERT_NE(forge, 0U);
+			}
+
+			// One record a strip, as DynamicEntityRenderSystem makes them.
+			void addItem(glm::vec2 position, double degrees) {
+				const ItemLayout* layout = AssetRegistry::Get().stripLayout(forge, turnQuantaFromDegrees(degrees));
+				ASSERT_NE(layout, nullptr);
+				for (uint32_t strip = 0; strip < layout->layout.strips.size(); ++strip) {
+					PlacedEntity record;
+					record.templateId = forge;
+					record.position = position;
+					record.anchorY = computeAnchorY(position.y, layout->layout.strips[strip].anchorLocalY, 1.0F);
+					record.itemLayout = layout;
+					record.strip = strip;
+					actors.push_back(record);
+				}
+			}
+
+			uint32_t gathered() {
+				PlacementExecutor								executor(AssetRegistry::Get());
+				const std::unordered_set<world::ChunkCoordinate> processed;
+				const RenderContext ctx{executor, processed, &actors, camera, 800, 600, 16.0F, 1, DrawBound::everywhere()};
+				std::vector<DepthSortItem> out;
+				gather.gather(ctx, out);
+				EXPECT_EQ(gather.stripUprightCount(), out.size()) << "every upright here is a strip";
+				return gather.stripUprightCount();
+			}
+
+			uint32_t				  forge = 0;
+			std::vector<PlacedEntity> actors;
+			world::WorldCamera		  camera;
+			WorldDepthGather		  gather;
+		};
+
+	} // namespace
+
+	// At 270 degrees the chimney stands at the north end and its top reaches 2.59 m north of the pivot: an item 2.5 m
+	// below the view's bottom edge still draws into the view, and is gathered.
+	TEST_F(PartsGatherTest, ATurnedItemJustOutsideTheViewIsGathered) {
+		camera.setPosition({0.0F, 0.0F});
+		const VisibleBounds view = computeVisibleBounds(camera, 800, 600, 16.0F, 0.0F);
+		const float			reach = AssetRegistry::Get().maxReachMeters();
+		ASSERT_GT(reach, 2.5F);
+		addItem({0.0F, view.maxY + 2.5F}, 270.0);
+		float north = 0.0F;
+		for (const ItemStrip& strip : actors.front().itemLayout->layout.strips) {
+			north = std::min(north, strip.minY);
+		}
+		ASSERT_LT(view.maxY + 2.5F + north, view.maxY) << "its chimney's top is on screen";
+		EXPECT_EQ(gathered(), actors.size());
+		actors.clear();
+		addItem({0.0F, view.maxY + reach + 0.1F}, 270.0);
+		EXPECT_EQ(gathered(), 0U) << "past the reach nothing of it can show";
+	}
+
+	// The planner is sized from the strips in the stream: kept layouts the view doesn't hold add nothing.
+	TEST_F(PartsGatherTest, TheStripCountIsTheStreamsWhateverTheRegistryKeeps) {
+		camera.setPosition({0.0F, 0.0F});
+		addItem({0.0F, 0.0F}, 45.0);
+		const uint32_t withOneLayout = gathered();
+		EXPECT_EQ(withOneLayout, actors.size());
+		for (uint32_t turn = 0; turn < 10000; ++turn) {
+			ASSERT_NE(AssetRegistry::Get().stripLayout(forge, turn), nullptr);
+		}
+		EXPECT_EQ(gathered(), withOneLayout) << "10,000 kept layouts";
+		actors.clear();
+		EXPECT_EQ(gathered(), 0U) << "no item in view: the bound is the template slots', as before parts items";
 	}
 
 } // namespace assets

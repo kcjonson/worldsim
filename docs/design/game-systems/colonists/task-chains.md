@@ -12,7 +12,7 @@ Every multi-step thing a creature does (eating, hauling, a cut and its carry-in,
 
 Some tasks require multiple steps that should stay together. A colonist who picks up an item should carry it to storage, not drop it halfway to eat a berry.
 
-**Task Chains** keep related steps on one task. A haul's pickup becomes its deposit leg, and a landed cut becomes its own delivery, on the same `Task`, so the next step is never a separate choice. Steps that serve an active work order are classified at tier 4 ([Colonist Task Arbitration](../../../technical/colonist-task-arbitration.md)), which keeps the colonist on them; there is no shared chain id and no chain score bonus.
+**Task Chains** keep related steps on one task. A haul's pickup becomes its deposit leg, and a landed cut becomes its own delivery, on the same `Task`, so the next step is never a separate choice. Steps that serve an active work order are classified on the `committed_work` rung ([Colonist Task Arbitration](../../../technical/colonist-task-arbitration.md)), which keeps the colonist on them; there is no shared chain id and no chain score bonus.
 
 ---
 

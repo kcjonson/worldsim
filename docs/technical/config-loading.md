@@ -12,7 +12,7 @@ This document specifies **when** and **how** work configuration files are loaded
 
 ## Numbers
 
-Config numbers and true-or-false values go through the strict parsers (`parseConfigNumber` and `parseConfigInteger`, read by `ConfigReader`, in `libs/assets/assets/ConfigNumber.h`). A leading `+` is accepted; empty text, trailing characters ("30abc"), `nan`, `inf`, and values too large for the type are refused rather than read as a number. A true-or-false value (`ConfigReader`'s boolean readers) is exactly `true` or `false`; `1`, `yes`, and `ture` are refused rather than read as true or false. Text inside an element is trimmed first. Attribute text is not trimmed, so `gameMinutes=" 30"` is refused. A missing, malformed, or out-of-range value (a field stored in 16 bits or 8 bits is checked against its range, never truncated) is a config error naming the file, the element by its instance (its `name` or `defName` attribute, or its `<defName>` child, as in `<Task name="Haul"> tier`, `<Need name="Hunger"> seek`, or `<RecipeDef defName="Recipe_AxePrimitive"> workAmount`; an entry of the behavior library by its `id`, as in `<need id="hunger"> seek`), and the attribute, in the shape `<file>: <element> <attribute> must be <what is allowed>, got "<text>"` or `... is missing`. A loader that names a nested element itself (the thoughts' `thought 'ate' feeling 1 mood`) uses the same shape. The errors are shown on the loading scene ([where load errors surface](#where-load-errors-surface)). Base tuning lives in XML, so there is no C++ default for it.
+Config numbers and true-or-false values go through the strict parsers (`parseConfigNumber` and `parseConfigInteger`, read by `ConfigReader`, in `libs/assets/assets/ConfigNumber.h`). A leading `+` is accepted; empty text, trailing characters ("30abc"), `nan`, `inf`, and values too large for the type are refused rather than read as a number. A true-or-false value (`ConfigReader`'s boolean readers) is exactly `true` or `false`; `1`, `yes`, and `ture` are refused rather than read as true or false. Text inside an element is trimmed first. Attribute text is not trimmed, so `gameMinutes=" 30"` is refused. A missing, malformed, or out-of-range value (a field stored in 16 bits or 8 bits is checked against its range, never truncated) is a config error naming the file, the element by its instance (its `name` or `defName` attribute, or its `<defName>` child, as in `<Need name="Hunger"> seek` or `<RecipeDef defName="Recipe_AxePrimitive"> workAmount`; an entry of the behavior library by its `id`, as in `<need id="hunger"> seek`), and the attribute, in the shape `<file>: <element> <attribute> must be <what is allowed>, got "<text>"` or `... is missing`. A loader that names a nested element itself (the thoughts' `thought 'ate' feeling 1 mood`) uses the same shape. The errors are shown on the loading scene ([where load errors surface](#where-load-errors-surface)). Base tuning lives in XML, so there is no C++ default for it.
 
 A file is named by its path relative to the folder its load was given, with forward slashes on every platform: `loadWorkConfig`'s files relative to the config root (`legacy/work-types.xml`), the arbitration file relative to its folder after `[arbitration]` (`[arbitration] priority-tuning.xml`), the human's config files relative to its folder (`mood.xml`, and after the colonist rules' stage prefix `[needs] needs.xml`), the condition and thought files relative to their folder after their prefix, the behavior library's files relative to their folder after its prefix (`[behaviors] human/eating.xml`, `[actions] shared.xml`), a creature's files relative to the creatures folder after `[creatures]` (`[creatures] Human/Human.xml`), and the recipes relative to `assets/recipes` after `[recipes]` (`[recipes] tools/AxePrimitive.xml`).
 
@@ -31,7 +31,7 @@ Everything not listed here must be given. Leaving one of these out has the state
 | RecipeRegistry | `assets/recipes/**/*.xml` | `<input count>`, `<output count>` | one of the thing; when given, a whole number, 1 or more |
 | RecipeRegistry | `assets/recipes/**/*.xml` | `<innate>` | colonists learn the recipe (false) |
 | RecipeRegistry | `assets/recipes/**/*.xml` | `<label>`, `<description>`, `<station>`, `<skill>`, `<inputs>`, `<outputs>` | the label is the defName; no station (as is `<station>none</station>`), no skill, no inputs or outputs |
-| PriorityConfig | `arbitration/priority-tuning.xml` | `<TaskTiers>`, `<WorkCategoryOrder>` | no tiers or order from this file (`loadWorkConfig` then reports every task type without a tier) |
+| PriorityConfig | `arbitration/priority-tuning.xml` | `<WorkCategoryOrder>` | no category order from this file |
 | ThoughtConfig | `thoughts/*.xml` | a feeling's `mood` | the feeling has no mood effect |
 | ThoughtConfig | `thoughts/*.xml` | `stacks`, an action source's `first` | false |
 
@@ -116,10 +116,15 @@ assets/world/creatures/Human/needs.xml
 
 `legacy/` holds `work-types.xml`, which a later ticket of the behavior data migration replaces with entries, so
 no folder the entry loaders own holds a root they do not own. The arbitration folder holds one file, whose root is
-`<arbitration>`: its `<ladder>` of `<rung name>` entries, given once, at most 256 rungs and one of them
-`survival`, and `<TaskTiers>`, `<WorkCategoryOrder>`, and `<Bonuses>`; any other element is an error, and a
+`<arbitration>`: its `<ladder>` of `<rung name>` entries, given once, at most 255 rungs and one of them
+`survival`, and `<WorkCategoryOrder>` and `<Bonuses>`; any other element is an error, and a
 second file in the folder is an error naming both
-(`[arbitration] arbitration: 2 files; one file declares the ladder and the bonuses (...)`).
+(`[arbitration] arbitration: 2 files; one file declares the ladder and the bonuses (...)`). The ladder must
+also have every rung the decision ranks options on (`critical_need`, `committed_work`, `ordinary_need`,
+`opportunistic_work`, `idle`), in that order, with other rungs anywhere among them; `loadWorkConfig` reports
+each one missing
+(`[arbitration] priority-tuning.xml: <ladder> has no rung named "idle", which the decision ranks options on`),
+else the first two out of order (`<ladder> has "idle" above "opportunistic_work"; ...`).
 
 A creature's config sits in its asset folder beside its definition and is found by root element
 (`assets::creatureConfigFiles`, libs/assets/assets/CreatureConfigFiles.h). In a creature folder:
@@ -317,7 +322,8 @@ shipped entry's full id is the duplicate-id error ([Queries and chains](./querie
 `assets::loadWorkConfig(configRoot, human)` (libs/assets/assets/WorkConfig.h) clears the work-config
 registries (WorkTypeRegistry, PriorityConfig, ConstructionRegistry, MoodConfig,
 MemoryConfig, and ConfigValidator's errors), loads them from `configRoot` in the order above, checks that
-the arbitration file gives every task type an arbitration tier, loads construction, then mood and memory
+the arbitration file's ladder has `survival` and the five rungs the decision ranks on (`critical_need`,
+`committed_work`, `ordinary_need`, `opportunistic_work`, `idle`), the five in that order, loads construction, then mood and memory
 from the human's one `<Mood>` and one `<Memory>` file (its caller has already refused none, or more than
 one), and cross-validates. It returns every error as a string; an empty list means the config is loaded. It
 needs no GL and no scene.

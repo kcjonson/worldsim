@@ -5,6 +5,7 @@
 // machine-readable with --json. No window and no debug server, so many
 // invocations can run in parallel (agent loops, CI matrices).
 
+#include "assets/AssetBootstrap.h"
 #include "assets/AssetDefinition.h"
 #include "assets/AssetRegistry.h"
 #include "assets/AssetRenderer.h"
@@ -125,7 +126,7 @@ namespace {
 	}
 
 	const char* typeName(AssetType t) {
-		return t == AssetType::Simple ? "simple" : "procedural";
+		return t == AssetType::Simple ? "simple" : t == AssetType::Parts ? "parts" : "procedural";
 	}
 
 	const char* severityName(Severity s) {
@@ -140,11 +141,8 @@ namespace {
 			std::cerr << "error: could not locate assets/world (run from a directory with assets/, or next to the staged exe)\n";
 			return false;
 		}
-		const std::string shared = Foundation::findResourceString("assets/shared/scripts");
-		if (!shared.empty()) {
-			AssetRegistry::Get().setSharedScriptsPath(shared);
-		}
-		AssetRegistry::Get().loadDefinitionsFromFolder(assetsRoot);
+		// The game's own load, so the view config parts defs are read with loads too and its problems are reported.
+		assets::loadAssetSystem({.definitions = assetsRoot, .sharedScripts = Foundation::findResourceString("assets/shared/scripts"), .recipes = {}}, false);
 		return true;
 	}
 

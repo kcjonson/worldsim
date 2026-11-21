@@ -3,7 +3,10 @@
 #include "World.h"
 #include "systems/ChainClaims.h"
 
+#include <assets/PriorityConfig.h>
+
 #include <algorithm>
+#include <cassert>
 #include <tuple>
 
 namespace ecs {
@@ -19,9 +22,23 @@ namespace ecs {
 		}
 
 		uint8_t tierOf(const Task& task) {
-			return static_cast<uint8_t>(std::clamp(task.priorityTier, 0, 255));
+			return task.rankedTier(assets::PriorityConfig::Get().decisionRungs().idle);
 		}
 	} // namespace
+
+	uint64_t ClaimIndex::fingerprintOf(const Entry& entry) {
+		const Claim&	   claim = entry.claim;
+		const ClaimHolder& holder = entry.holder;
+		uint64_t		   value = mix(claim.target());
+		value = mix(value ^ ((uint64_t{claim.itemDefNameId()} << 32) | claim.quantity()));
+		value =
+			mix(value ^ ((uint64_t{claim.slotIndex()} << 24) | (uint64_t{static_cast<uint8_t>(claim.kind())} << 16) |
+						 (uint64_t{static_cast<uint8_t>(claim.targetKind())} << 8) | holder.tier));
+		value = mix(value ^ holder.instanceId);
+		value = mix(value ^ holder.claimSeq);
+		value = mix(value ^ holder.colonist);
+		return mix(value ^ ((uint64_t{static_cast<uint8_t>(holder.taskType)} << 1) | (holder.suspended ? 1U : 0U)));
+	}
 
 	uint64_t ClaimIndex::bucketOf(const Key& key) {
 		return mix(key.target ^ mix((uint64_t{key.sub} << 16) | (uint64_t{static_cast<uint8_t>(key.tag)} << 8) |
@@ -29,6 +46,7 @@ namespace ecs {
 	}
 
 	bool outranks(const ClaimHolder& a, const ClaimHolder& b) {
+		assert(a.tier != kUnrankedTier && b.tier != kUnrankedTier && "a holder is ranked from its task before it is compared");
 		return std::tie(a.tier, a.claimSeq, a.instanceId) < std::tie(b.tier, b.claimSeq, b.instanceId);
 	}
 
@@ -36,6 +54,7 @@ namespace ecs {
 		entries.clear();
 		groups.clear();
 		usedBuckets = 0;
+		contentFingerprint = 0;
 		if (++generation == 0) {
 			for (auto& bucket : table) {
 				bucket.generation = 0;
@@ -70,7 +89,10 @@ namespace ecs {
 		}
 		for (uint32_t index = find(keyOf(KeyTag::Instance, TargetKind::Entity, instanceId, 0)); index != kNone;
 			 index = entries[index].nextOfInstance) {
-			entries[index].retired = true;
+			if (!entries[index].retired) {
+				entries[index].retired = true;
+				contentFingerprint -= fingerprintOf(entries[index]);
+			}
 		}
 	}
 
@@ -147,6 +169,7 @@ namespace ecs {
 	void ClaimIndex::add(const Claim& claim, const ClaimHolder& holder) {
 		const auto entryIndex = static_cast<uint32_t>(entries.size());
 		entries.push_back({.claim = claim, .holder = holder});
+		contentFingerprint += fingerprintOf(entries.back());
 
 		// Each findOrInsert may grow the table, so no bucket reference outlives the next insert.
 		if (holder.instanceId != 0) {

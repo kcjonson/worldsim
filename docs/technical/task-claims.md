@@ -357,8 +357,8 @@ selects a Haul past its pickup (`Task::deliveryChosen`), the colonist is no long
 root: no cut or pile toward it ranks as a leg of the trip, and the chosen carry-in ranks above every
 other option in its tier, so a source that regrows or is released on the walk in, or on the arrival
 frame before the deposit starts, does not turn him back. This holds for any delivery past its pickup,
-plain pile-to-storage hauls included: once kept, a tier-6 haul to a box outranks every other tier-6
-option until it is deposited. A build-site clear brings nothing toward a need and is never a leg of a
+plain pile-to-storage hauls included: once kept, an `opportunistic_work` haul to a box outranks every
+other `opportunistic_work` option until it is deposited. A build-site clear brings nothing toward a need and is never a leg of a
 gathering. While it gathers, the colonist's in-flight toward the root covers what it carries plus the
 cut it has accepted, so another colonist does not cut what those cover, and the cargo moves from task
 to task under one instance id with no window in which it is uncommitted. A need that interrupts the
@@ -774,7 +774,7 @@ and counts again once it wakes. Awake, the carry-in adopts the record if the roo
 goods; if the other colonist's delivery covered the need, no carry-in is offered, the next selection
 discards the record, and the goods stay carried until a carry-in to storage takes them.
 
-Work preempted by other work (tier 4 over tier 6, or a same-tier switch past the hysteresis margin)
+Work preempted by other work (`committed_work` over `opportunistic_work`, or a same-tier switch past the hysteresis margin)
 keeps no record; its claims end with the task, and carried goods are uncommitted until the colonist
 picks carry-in from possession.
 

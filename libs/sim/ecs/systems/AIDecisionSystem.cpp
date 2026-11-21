@@ -228,80 +228,52 @@ namespace ecs {
 			option.skillBonus = skill.bonus;
 		}
 
-		/// Config name for a TaskType, used to look up its BASE tier in PriorityConfig's TaskTiers
-		/// table. Must match the names in priority-tuning.xml's <TaskTiers> block.
-		[[nodiscard]] const char* taskTypeConfigName(TaskType type) {
-			static_assert(assets::kTaskTypeNames.size() == static_cast<size_t>(TaskType::Wander), "a config name for every TaskType");
-			return type == TaskType::None ? "None" : assets::kTaskTypeNames[static_cast<size_t>(type) - 1];
-		}
-
-		/// PriorityConfig's base tier of every TaskType, by its config name.
-		void readBaseTiers(AIDecisionSystem::BaseTiers& tiers) {
-			const auto& config = assets::PriorityConfig::Get();
-			for (size_t type = 0; type < tiers.size(); ++type) {
-				tiers[type] = config.getTaskTier(taskTypeConfigName(static_cast<TaskType>(type)));
-			}
-		}
-
-		/// Arbitration tier promotion thresholds. Named so the classifier rules mirror the spec
-		/// table directly rather than hiding magic numbers.
-		constexpr int	kTierCriticalNeed = 2; // a need past its critical threshold
-		constexpr int	kTierActiveWorkOrder = 4; // committed/queued work + its provisioning chain
-		constexpr int	kTierIdle = 7;			  // gathering food and Wander
-
-		/// Classify an option's arbitration tier: the config BASE tier for its task type, with a
-		/// small set of named runtime promotions layered on (mirrors the spec's classification
-		/// table exactly). Lower tier = higher priority.
+		/// Classify an option's rung, as its ladder position (the option's tier; a lower one outranks a higher):
 		///
-		///   FulfillNeed: past critical threshold -> tier 2 (critical need)
-		///                gather food             -> tier 7 (idle)
-		///                else (actionable)       -> config base (5)
-		///   Haul/Harvest: servesActiveWorkOrder  -> tier 4 (work order, incl. mid-chain provisioning)
-		///                 else                    -> config base (6, covers stocking + opportunistic)
-		///   PlacePackaged: serving a work order OR already carrying (in-transit) -> tier 4
-		///                  else                   -> config base (6)
-		///   Craft/Build/Deconstruct               -> config base (4)
-		///   Wander                                -> config base (7)
-		[[nodiscard]] int classifyTier(const EvaluatedOption& option, const AIDecisionSystem::BaseTiers& baseTiers) {
-			const int baseTier = baseTiers[static_cast<size_t>(option.taskType)];
-
+		///   FulfillNeed: past critical threshold -> critical_need
+		///                gather food, satisfied  -> idle
+		///                else                    -> ordinary_need
+		///   Haul/Harvest: servesActiveWorkOrder  -> committed_work (incl. mid-chain provisioning)
+		///                 else                   -> opportunistic_work (stocking and opportunistic)
+		///   PlacePackaged: serving a work order OR already carrying (in-transit) -> committed_work
+		///                  else                  -> opportunistic_work
+		///   Craft/Build/Deconstruct              -> committed_work
+		///   Wander                               -> idle
+		[[nodiscard]] uint8_t classifyTier(const EvaluatedOption& option, const assets::DecisionRungs& rungs) {
 			switch (option.taskType) {
-				case TaskType::FulfillNeed: {
-					// Gathering food for the pack is idle filler, tier 7.
-					if (option.gathersFood) {
-						return kTierIdle;
+				case TaskType::FulfillNeed:
+					// Gathering food for the pack is idle filler. A satisfied need needs no action; sort it to
+					// idle so it can't outrank real work in the trace (it's filtered from selection anyway by
+					// its status).
+					if (option.gathersFood || option.status == OptionStatus::Satisfied) {
+						return rungs.idle;
 					}
-					// A satisfied need needs no action; sort it to the idle tier so it can't outrank
-					// real work in the trace (it's filtered from selection anyway by its status).
-					if (option.status == OptionStatus::Satisfied) {
-						return kTierIdle;
-					}
-					return option.critical ? kTierCriticalNeed : baseTier;
-				}
+					return option.critical ? rungs.criticalNeed : rungs.ordinaryNeed;
 				case TaskType::Haul:
 				case TaskType::Harvest:
-					return option.servesActiveWorkOrder ? kTierActiveWorkOrder : baseTier;
+					return option.servesActiveWorkOrder ? rungs.committedWork : rungs.opportunisticWork;
 				case TaskType::PlacePackaged:
 					// Serving a work order, or already carrying the item: either way it's committed
-					// delivery -> tier 4, so a carrying colonist isn't rerouted mid-carry.
-					return (option.servesActiveWorkOrder || option.carryingPackaged) ? kTierActiveWorkOrder : baseTier;
+					// delivery, so a carrying colonist isn't rerouted mid-carry.
+					return (option.servesActiveWorkOrder || option.carryingPackaged) ? rungs.committedWork : rungs.opportunisticWork;
 				case TaskType::Craft:
 				case TaskType::Build:
 				case TaskType::Deconstruct:
+					return rungs.committedWork;
 				case TaskType::Wander:
 				case TaskType::None:
-					return baseTier;
+					return rungs.idle;
 			}
-			return baseTier;
+			return rungs.idle;
 		}
 
-		/// The tier a need's option takes (classifyTier's FulfillNeed rule): critical, actionable, or idle
+		/// The rung a need's option takes (classifyTier's FulfillNeed rule): critical, ordinary, or idle
 		/// while the need is met.
-		[[nodiscard]] int needTier(const Need& need, const AIDecisionSystem::BaseTiers& baseTiers) {
+		[[nodiscard]] uint8_t needTier(const Need& need, const assets::DecisionRungs& rungs) {
 			if (!need.needsAttention()) {
-				return kTierIdle;
+				return rungs.idle;
 			}
-			return need.isCritical() ? kTierCriticalNeed : baseTiers[static_cast<size_t>(TaskType::FulfillNeed)];
+			return need.isCritical() ? rungs.criticalNeed : rungs.ordinaryNeed;
 		}
 
 		/// Check if an option matches the current task (for the hysteresis margin)
@@ -374,22 +346,28 @@ namespace ecs {
 		/// Populate the (tier, score) arbitration key for an evaluated option.
 		/// Sets option.tier (classifyTier) and the within-tier score breakdown (distanceFactor,
 		/// taskAgeBonus, hysteresisBonus), then composes option.score. skillBonus is set by the
-		/// evaluators. The chain bonus is GONE: a mid-chain provisioning task is tier 4 instead.
+		/// evaluators. The chain bonus is GONE: a mid-chain provisioning task is committed_work instead.
 		/// @param world ECS world (to read a stocking haul's destination box priority)
 		/// @param boxes This update's box cache, holding each (box, item)'s priority
 		/// @param option The option to populate (skillBonus already set by its evaluator)
 		/// @param currentTask Current colonist task (for the hysteresis margin)
 		/// @param currentHaulItemId The current task's haul item, interned (0 when not hauling)
 		/// @param currentTime Current game time (for task age calculation)
-		/// @param baseTiers Each task type's base tier
+		/// @param rungs The ladder positions of the rungs options are ranked on
 		void populatePriorityBonuses(
-			World& world, BoxRoomCache& boxes, const assets::AssetRegistry& registry, EvaluatedOption& option, const Task& currentTask,
-			uint32_t currentHaulItemId, float currentTime, const AIDecisionSystem::BaseTiers& baseTiers
+			World&						 world,
+			BoxRoomCache&				 boxes,
+			const assets::AssetRegistry& registry,
+			EvaluatedOption&			 option,
+			const Task&					 currentTask,
+			uint32_t					 currentHaulItemId,
+			float						 currentTime,
+			const assets::DecisionRungs& rungs
 		) {
 			const auto& priorityConfig = assets::PriorityConfig::Get();
 
 			// Categorical tier first: it is compared before any score term.
-			option.tier = classifyTier(option, baseTiers);
+			option.tier = classifyTier(option, rungs);
 
 			// Wander is the idle floor; no nearest-source preference applies. It never sets
 			// distanceToTarget, so the distance factor would otherwise compute to its MAX (~300) and
@@ -414,11 +392,11 @@ namespace ecs {
 			option.hysteresisBonus = hysteresisBonusOf(option, currentTask, currentHaulItemId);
 
 			// Storage-priority within-tier bias: a storage-stocking option (a loose haul, a pull from a
-			// lower-priority box, a stocking carry-in, or a stocking cut) is ordered within tier 6 by its
-			// DESTINATION box's priority for the item. Rank the dest box's StoragePriority (Low=0..Critical=3)
+			// lower-priority box, a stocking carry-in, or a stocking cut) is ordered within opportunistic_work by
+			// its DESTINATION box's priority for the item. Rank the dest box's StoragePriority (Low=0..Critical=3)
 			// and weight it to dominate distance, so a Critical box farther away beats a Low box nearer, and
 			// goods never go first to a box a higher one would pull them from. Tier is compared first, so
-			// this never lets stocking preempt a tier-5 need or tier-4 work order. 0 for every non-stocking
+			// this never lets stocking preempt an ordinary need or committed work. 0 for every non-stocking
 			// option.
 			const GoalTask* stockedBy = option.taskType == TaskType::Harvest && option.servesStorageStocking
 											? GoalTaskRegistry::Get().getGoal(option.harvestGoalId)
@@ -462,10 +440,10 @@ namespace ecs {
 			const Task&						   currentTask;
 			uint32_t						   currentHaulItemId = 0;
 			float							   currentTime = 0.0F;
-			const AIDecisionSystem::BaseTiers& baseTiers;
+			const assets::DecisionRungs&	   rungs;
 
 			void operator()(EvaluatedOption& option) const {
-				populatePriorityBonuses(world, boxes, registry, option, currentTask, currentHaulItemId, currentTime, baseTiers);
+				populatePriorityBonuses(world, boxes, registry, option, currentTask, currentHaulItemId, currentTime, rungs);
 			}
 			/// The score `option` would have with a source `trip` metres away: the rank of a work group's
 			/// candidate, set on the option before the candidate is one.
@@ -861,7 +839,7 @@ namespace ecs {
 				haul.haulDestinationId = static_cast<uint64_t>(goal.destinationEntity);
 				haul.haulTargetPosition = goal.destinationPosition;
 				haul.haulGoalId = goal.id;
-				// Fetching loose stock to provision a started craft is committed work (tier 4), so a far
+				// Fetching loose stock to provision a started craft is committed work (committed_work), so a far
 				// pile can't strand a half-provisioned craft.
 				haul.servesActiveWorkOrder = craftFetch;
 				haul.servesStorageStocking = goal.owner == GoalOwner::StorageGoalSystem;
@@ -948,7 +926,7 @@ namespace ecs {
 				pull.haulDestinationId = static_cast<uint64_t>(goal.destinationEntity);
 				pull.haulTargetPosition = goal.destinationPosition;
 				pull.haulGoalId = goal.id;
-				// A pull tops up a box toward its config: opportunistic stocking (tier 6), ordered
+				// A pull tops up a box toward its config: opportunistic stocking (opportunistic_work), ordered
 				// within-tier by the dest box priority (populatePriorityBonuses).
 				pull.servesStorageStocking = true;
 				pull.status = OptionStatus::Available;
@@ -1197,8 +1175,8 @@ namespace ecs {
 					if (supply.delivering(root.id, kind.item) && supply.task.haulDestinationId == static_cast<uint64_t>(root.destinationEntity)) {
 						option.gatheringRank = kRankChosenDelivery;
 					}
-					// Craft and construction deliveries provision an active work order (tier 4); filling a
-					// box is stocking, strictly below work orders (tier 6).
+					// Craft and construction deliveries provision an active work order (committed_work); filling
+					// a box is stocking, strictly below work orders (opportunistic_work).
 					option.servesActiveWorkOrder = !storage;
 					option.servesStorageStocking = storage;
 					option.tiebreakId = root.id ^ (static_cast<uint64_t>(kind.item) << 1);
@@ -1313,7 +1291,7 @@ namespace ecs {
 					return;
 				}
 
-				// A Harvest that feeds a Craft or Build goal provisions an active work order: tier 4, so a
+				// A Harvest that feeds a Craft or Build goal provisions an active work order: committed_work, so a
 				// far harvestable can't strand a started craft or construction. One owned by
 				// StorageGoalSystem is stocking: above Wander but strictly below work orders.
 				const bool servesWorkOrder = root->type == GoalType::Craft || root->type == GoalType::Build;
@@ -1885,10 +1863,7 @@ namespace ecs {
 		// Only the regrowth callback reports a regrowing source, so without it no food wait is set and
 		// the time goes unread; a world that wires it has a TimeSystem.
 		m_simulationNow = onSourceRegrowth ? simulationSeconds(*world) : 0.0;
-		if (const uint64_t generation = assets::PriorityConfig::Get().generation(); generation != m_baseTiersGeneration) {
-			readBaseTiers(m_baseTiers);
-			m_baseTiersGeneration = generation;
-		}
+		m_rungs = assets::PriorityConfig::Get().decisionRungs();
 		m_colonyStorage.invalidate();
 		m_needs.invalidate();
 		m_boxRooms.invalidate();
@@ -2080,7 +2055,7 @@ namespace ecs {
 			const bool decidingOnFailedRoute = task.navState == NavState::CantFindWayTo;
 
 			// Store current task state for the (tier, score) interruption comparison
-			int		  currentTier = task.priorityTier;
+			uint8_t	  currentTier = task.rankedTier(m_rungs.idle);
 			bool	  hasActiveAction = (action != nullptr && action->isActive());
 			TaskState previousState = task.state;
 
@@ -2100,7 +2075,7 @@ namespace ecs {
 
 				// Get the best option's (tier, score) key
 				const auto* selected = trace->getSelected();
-				int			newTier = (selected != nullptr) ? selected->tier : kTierIdle;
+				uint8_t		newTier = (selected != nullptr) ? selected->tier : m_rungs.idle;
 				float		newScore = (selected != nullptr) ? selected->score : 0.0F;
 
 				// Check if the new task is actually different from current task
@@ -2178,7 +2153,7 @@ namespace ecs {
 				// Two escapes/limits keep this from ever pinning a colonist on a stuck haul:
 				//   - It never fires when the delivery itself has no believed route to its destination
 				//     (navState CantFindWayTo) -- holding an undeliverable load would strand it.
-				//   - A strictly-higher-tier challenger (critical need, active work order) still preempts;
+				//   - A strictly-higher-tier challenger (critical need, committed work) still preempts;
 				//     dropping for an emergency is acceptable. Only same-or-lower-priority challengers
 				//     (the opportunistic pull, idle Wander) are blocked.
 				const bool currentHaulUnreachable = (task.navState == NavState::CantFindWayTo);
@@ -2198,7 +2173,7 @@ namespace ecs {
 					// original two-hand-drop bug this guard was built for.
 					const bool sameYieldHarvest = selected->taskType == TaskType::Harvest && selected->harvestYieldDefNameId == chainGoods;
 					// Case 2: ANY same-or-lower-priority challenger. A two-hand carry must finish its deposit
-					// before taking on any task that does not outrank it -- idle Wander (tier 7) included. Two
+					// before taking on any task that does not outrank it -- idle Wander included. Two
 					// ways this fires: (a) the storage-priority pull, where mid-carry evaluateHaulOptions'
 					// pull-source scan re-emits a fresh withdraw option still pointing at the SOURCE box (it
 					// still has stock) with a high score (distance 0, the colonist is standing on it), whose
@@ -2208,8 +2183,8 @@ namespace ecs {
 					// its min so no pull is offered and the top option is Wander, which -- not being a Haul
 					// -- the old taskType==Haul restriction let slip past, so the colonist walked off
 					// carrying the load indefinitely. A strictly-higher-tier challenger (critical need,
-					// active work order) still preempts; dropping for an emergency is acceptable.
-					const bool sameOrLowerPriorityChallenger = selected->tier >= task.priorityTier;
+					// committed work) still preempts; dropping for an emergency is acceptable.
+					const bool sameOrLowerPriorityChallenger = selected->tier >= task.rankedTier(m_rungs.idle);
 					if (sameYieldHarvest || sameOrLowerPriorityChallenger) {
 						shouldSwitch = false;
 						task.timeSinceEvaluation = 0.0F; // we did evaluate; hold the delivery
@@ -2221,7 +2196,7 @@ namespace ecs {
 					// Keeping a delivery leg is choosing to deliver: a top-up cut no longer turns it back.
 					task.deliveryChosen = task.deliveryChosen || (task.type == TaskType::Haul && task.chainStep == 1);
 					// Update the (tier, score) key even when staying on the same task (the score can
-					// change, e.g. PlacePackaged promotes to tier 4 when the colonist starts carrying).
+					// change, e.g. PlacePackaged promotes to committed_work when the colonist starts carrying).
 					task.priorityTier = newTier;
 					task.priority = newScore;
 					// A meal is sized to the hunger at each decision: one who turns critical on the way takes
@@ -2298,7 +2273,7 @@ namespace ecs {
 						"[AI] Entity %llu: %s (tier %d, score %.0f) → (%.1f, %.1f)",
 						static_cast<unsigned long long>(entity),
 						task.reason.c_str(),
-						task.priorityTier,
+						static_cast<int>(task.priorityTier) + 1, // tiers are counted from 1 at the top rung, as the task list shows them
 						task.priority,
 						task.targetPosition.x,
 						task.targetPosition.y
@@ -2433,7 +2408,7 @@ namespace ecs {
 			return true;
 		}
 
-		// A need crossing into critical decides at once (tier 2 interrupts all lower tiers); one that
+		// A need crossing into critical decides at once (critical_need interrupts every lower rung); one that
 		// stays critical waits for the interval, so a colonist with nothing reachable doesn't decide
 		// every frame. Already serving a critical need, he isn't interrupted for another.
 		const uint8_t newlyCritical = static_cast<uint8_t>(criticalNeedMask(needs) & ~task.criticalNeedsAtDecision);
@@ -2449,7 +2424,7 @@ namespace ecs {
 		// task is taken the instant it appears, with no commitment lag. isSameTask keeps the wander target
 		// from thrashing (nothing better -> stays on the same leg), so discovery is preserved; this trades
 		// a per-tick decision-trace rebuild for that responsiveness.
-		// Real work (tiers 1-6) keeps its periodic throttle above. Gate on an ACTIVE target so the
+		// Every other task keeps its periodic throttle above. Gate on an ACTIVE target so the
 		// no-option HOLD (selectTaskFromTrace parks a Wander with movement OFF when nothing is reachable)
 		// stays on the periodic throttle instead of rebuilding the trace every frame while standing still.
 		if (task.type == TaskType::Wander && task.state == TaskState::Moving) {
@@ -2599,9 +2574,9 @@ namespace ecs {
 		// nearest free bush.
 		const ClaimExclusion self = ClaimExclusion::of(currentTask);
 		const Need&			 hunger = needs.get(NeedType::Hunger);
-		const int			 hungerTier = needTier(hunger, m_baseTiers);
-		const auto			 eats = [hungerTier](const ClaimHolder& holder) {
-			return holder.taskType == TaskType::FulfillNeed && holder.tier < kTierIdle && holder.tier <= hungerTier;
+		const uint8_t		 hungerTier = needTier(hunger, m_rungs);
+		const auto			 eats = [hungerTier, idle = m_rungs.idle](const ClaimHolder& holder) {
+			return holder.taskType == TaskType::FulfillNeed && holder.tier != idle && holder.tier <= hungerTier;
 		};
 		const bool packHasFood = hasEdibleFood(m_registry, inventory);
 		const bool seeksFood = !packHasFood && hunger.needsAttention();
@@ -2978,7 +2953,7 @@ namespace ecs {
 			trace.options.push_back(option);
 		}
 
-		// Add "Gather Food" work option (tier 7): the nearest free bush, while the pack has no food. Not
+		// Add "Gather Food" work option (idle): the nearest free bush, while the pack has no food. Not
 		// known when the search stopped at stored food a hungry colonist will eat first; it is not shown then.
 		if (!packHasFood && (gatherSource.has_value() || !seeksFood || searchExhausted)) {
 			EvaluatedOption gatherOption;
@@ -3064,7 +3039,7 @@ namespace ecs {
 			trace.options.push_back(std::move(craftOption));
 		}
 		// Goal-driven work: fetch goods for storage and crafts, carry in what the colonist holds, cut
-		// for what a root still needs (tier 4 when serving an active work order, else tier 6).
+		// for what a root still needs (committed_work when serving an active work order, else opportunistic_work).
 		const RootSupply supply{*world, m_needs, m_claims, self, currentTask, inventory, m_registry, m_loosePiles, m_boxRooms};
 		// Goal createdAt is always 0, so a goal's age is m_elapsedTime, monotonic, which is all the
 		// within-tier age term needs.
@@ -3075,7 +3050,7 @@ namespace ecs {
 			.currentTask = currentTask,
 			.currentHaulItemId = currentTask.type == TaskType::Haul ? currentTask.haulItemDefNameId : 0U,
 			.currentTime = m_elapsedTime,
-			.baseTiers = m_baseTiers,
+			.rungs = m_rungs,
 		};
 		m_workSources.begin(memory, m_registry, inventory, position.value);
 		m_workGroups.clear();
@@ -3167,7 +3142,7 @@ namespace ecs {
 		}
 
 		// Sort by the lexicographic (tier asc, score desc, tiebreakId asc) key. Tier is categorical
-		// and compared first: a far tier-4 option always beats any tier-5 option, with no floor
+		// and compared first: a far committed_work option always beats any ordinary_need option, with no floor
 		// constants. The tiebreak id gives a deterministic total order independent of container
 		// iteration (the goal registry is hash-bucket ordered), so two equal-(tier,score) options
 		// can't route colonists nondeterministically (a multiplayer desync). higherPriority()
@@ -3689,9 +3664,9 @@ namespace ecs {
 		}
 		ensureClaimIndex();
 		const ClaimExclusion self		= ClaimExclusion::of(task);
-		const int			 hungerTier = needTier(needs->get(NeedType::Hunger), m_baseTiers);
-		const auto			 eats		= [hungerTier](const ClaimHolder& holder) {
-			  return holder.taskType == TaskType::FulfillNeed && holder.tier < kTierIdle && holder.tier <= hungerTier;
+		const uint8_t		 hungerTier = needTier(needs->get(NeedType::Hunger), m_rungs);
+		const auto			 eats		= [hungerTier, idle = m_rungs.idle](const ClaimHolder& holder) {
+			  return holder.taskType == TaskType::FulfillNeed && holder.tier != idle && holder.tier <= hungerTier;
 		};
 		if (choice.itemDefNameId == 0) {
 			const ClaimTarget bush{.kind = TargetKind::WorldKey, .key = choice.sourceKey};

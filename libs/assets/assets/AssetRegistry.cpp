@@ -4,6 +4,8 @@
 #include "assets/AssetRegistry.h"
 #include "assets/DetailLevels.h"
 #include "assets/GroundSvg.h"
+#include "assets/ItemView.h"
+#include "assets/ViewConfig.h"
 #include "assets/PartsAsset.h"
 #include "assets/SvgPathNodes.h"
 #include "assets/TreeDefSchema.h"
@@ -759,6 +761,13 @@ namespace assets {
 				);
 			}
 		}
+		const GameViewConfig& view = GameViewConfig::Get();
+		if (!view.loaded()) {
+			m_validationReport.add(
+				Severity::Error, def.defName, "parts", std::string("the view config (") + kViewConfigFile + ") isn't loaded, so a parts def can't be read"
+			);
+			return;
+		}
 		PartsAuthored authored = readPartsXml(defNode, def.defName, m_validationReport);
 		if (!authored.scriptPath.empty()) {
 			const std::filesystem::path script = (folder / authored.scriptPath).lexically_normal();
@@ -769,11 +778,34 @@ namespace assets {
 				m_validationReport.add(Severity::Error, def.defName, "partsScript", failure, script.string());
 			}
 		}
-		ResolvedParts resolved = resolveParts(authored, folder, def.defName, PartsLoadConfig{}, m_validationReport);
+		const PartsLoadConfig loadConfig{
+			.aspectToleranceRelative = view.config().aspectToleranceRelative,
+			.curveToleranceMeters = view.config().curveToleranceMeters,
+			.overflowMeters = view.config().overflowMeters,
+		};
+		ResolvedParts resolved = resolveParts(authored, folder, def.defName, loadConfig, m_validationReport);
 		def.parts = std::make_shared<const PartsAsset>(std::move(resolved.asset));
 		def.partsColliders = std::move(resolved.colliders);
 		// A placed item stands at its authored size.
 		def.placement.scale = {.min = 1.0F, .max = 1.0F};
+
+		// Rule 12: the view at every 15 degree stop, at the finest level, stays under three quarters of the
+		// 16-bit index space, leaving room for the extra clipped vertices of turns between stops.
+		constexpr uint32_t kStopQuanta = 1500;
+		const auto		   finest = static_cast<uint8_t>(std::max<size_t>(def.detailLevels.size(), 1) - 1);
+		for (uint32_t turn = 0; turn < kTurnQuantaPerTurn; turn += kStopQuanta) {
+			const ItemView built = buildItemMesh(def, turn, finest, view.config());
+			if (built.vertexCount >= kMaxStopViewVertices) {
+				m_validationReport.add(
+					Severity::Error,
+					def.defName,
+					"parts",
+					"its view at " + std::to_string(turn / 100) + " degrees has " + std::to_string(built.vertexCount) + " vertices at its finest level; a view stays under " +
+						std::to_string(kMaxStopViewVertices) + " at every 15 degree stop"
+				);
+				break;
+			}
+		}
 	}
 
 	bool AssetRegistry::loadDefinitions(const std::string& xmlPath) {
@@ -1356,6 +1388,9 @@ namespace assets {
 		}
 
 		m_validationReport.issues.clear();
+		for (const std::string& problem : GameViewConfig::Get().problems()) {
+			m_validationReport.add(Severity::Error, "", "view", problem, kViewConfigFile);
+		}
 		size_t totalLoaded = 0;
 		size_t filesProcessed = 0;
 		std::vector<std::string> loadedNames;
@@ -1634,9 +1669,18 @@ namespace assets {
 		BuiltTemplate			  out;
 		renderer::TessellatedMesh mesh;
 
-		// A parts def's template is its item view at turn 0 (rotatable-placed-items 6.9), which the registry
-		// doesn't build; it has no mesh, as a template whose build failed has none.
+		// A parts def's template is its item view at turn 0, its strips joined (rotatable-placed-items 6.9).
 		if (def.assetType == AssetType::Parts) {
+			if (def.parts == nullptr) {
+				out.error = def.defName + " has no parts";
+				return out;
+			}
+			ItemView view = buildItemMesh(def, 0, level, GameViewConfig::Get().config());
+			if (!view.error.empty()) {
+				out.error = std::move(view.error);
+				return out;
+			}
+			out.mesh = std::move(view.mesh);
 			return out;
 		}
 		if (def.assetType == AssetType::Simple) {
@@ -1712,7 +1756,10 @@ namespace assets {
 		const bool defTall =
 			isMature ? routesTall(built.mesh.has_value() ? meshHeight(*built.mesh) : 0.0F, groundcover) : isTallDef(def.defName);
 		const float levelMargin = def.detailLevels.empty() ? 1.0F : kLevelReachMargin;
-		const float reach = built.mesh.has_value() ? meshReach(*built.mesh) * def.placement.scale.max * levelMargin : 0.0F;
+		// A parts item's reach covers every turn, not just the template's turn 0 (rotatable-placed-items 6.9).
+		const float reach = def.parts != nullptr  ? itemReachMeters(*def.parts, GameViewConfig::Get().config())
+							: built.mesh.has_value() ? meshReach(*built.mesh) * def.placement.scale.max * levelMargin
+													 : 0.0F;
 
 		uint32_t id = 0;
 		{
@@ -1800,6 +1847,32 @@ namespace assets {
 
 	const renderer::TessellatedMesh* AssetRegistry::getTemplate(const std::string& defName, TreeTraits traits) {
 		return getTemplate(templateId(defName, traits));
+	}
+
+	const AssetDefinition* AssetRegistry::templateDefinition(uint32_t templateId) const {
+		std::lock_guard<std::mutex> lock(templateCacheMutex);
+		return templateId == 0 || templateId > m_templates.size() ? nullptr : m_templates[templateId - 1]->def;
+	}
+
+	const ItemLayout* AssetRegistry::stripLayout(uint32_t templateId, uint32_t turnQuanta) {
+		const AssetDefinition* def = templateDefinition(templateId);
+		if (def == nullptr || def->parts == nullptr) {
+			return nullptr;
+		}
+		const uint64_t				key = (static_cast<uint64_t>(templateId) << 32U) | turnQuanta;
+		std::lock_guard<std::mutex> lock(layoutMutex);
+		if (const auto found = layoutIds.find(key); found != layoutIds.end()) {
+			return layouts[found->second].get();
+		}
+		auto layout = std::make_unique<ItemLayout>(ItemLayout{
+			.templateId = templateId,
+			.turnQuanta = turnQuanta,
+			.id = static_cast<uint32_t>(layouts.size()),
+			.layout = assets::stripLayout(*def, turnQuanta, GameViewConfig::Get().config()),
+		});
+		layoutIds.emplace(key, layout->id);
+		layouts.push_back(std::move(layout));
+		return layouts.back().get();
 	}
 
 	bool AssetRegistry::isTallDef(const std::string& defName) {
@@ -2129,43 +2202,8 @@ namespace assets {
 
 		// Compute outside the silhouette lock (rasterization can be heavy), mirroring
 		// getMotion. getTemplate guards itself with a separate mutex.
-		constexpr std::int64_t kSilhouetteResolution	 = 256; // pixels along the longest side
-		constexpr std::int64_t kHitRegionCloseRadiusPx = 4;	// bridge disjoint-blob gaps (whole-clump)
-
-		AssetSilhouette sil;
-
 		const renderer::TessellatedMesh* tmpl = getTemplate(templateId);
-		if (tmpl != nullptr && !tmpl->vertices.empty() && !tmpl->indices.empty()) {
-			// Rasterize the ACTUAL rendered geometry: expand the tessellated triangles into
-			// the template-local mm frame. This captures fills AND stroke bands (e.g. a reed's
-			// stroke stem, which a fill-contour silhouette would miss), so the outline hugs
-			// exactly what is drawn and the reed stays one connected shape.
-			const bool hasColors = tmpl->hasColors();
-			const auto faint	 = [&](uint16_t idx) { return hasColors && tmpl->colors[idx].a < kSilhouetteMinAlpha; };
-			std::vector<geometry::Vec2i64> triVerts;
-			triVerts.reserve(tmpl->indices.size());
-			for (size_t t = 0; t + 2 < tmpl->indices.size(); t += 3) {
-				const uint16_t i0 = tmpl->indices[t];
-				const uint16_t i1 = tmpl->indices[t + 1];
-				const uint16_t i2 = tmpl->indices[t + 2];
-				if (faint(i0) && faint(i1) && faint(i2)) {
-					continue;
-				}
-				for (const uint16_t idx : {i0, i1, i2}) {
-					const Foundation::Vec2& v = tmpl->vertices[idx];
-					triVerts.push_back(geometry::quantize({v.x, v.y}));
-				}
-			}
-			if (!triVerts.empty()) {
-				sil.rings	  = geometry::silhouetteOfTriangles(triVerts, kSilhouetteResolution, 0);
-				sil.hitRegion = geometry::silhouetteOfTriangles(triVerts, kSilhouetteResolution, kHitRegionCloseRadiusPx);
-			}
-		}
-
-		if (sil.hitRegion.empty()) {
-			sil.hitRegion = sil.rings; // single-blob / degenerate: the outline is the hit region
-		}
-		sil.valid = !sil.rings.empty();
+		AssetSilhouette					 sil = tmpl != nullptr ? silhouetteOfMesh(*tmpl) : AssetSilhouette{};
 
 		std::lock_guard<std::mutex> lk(m_silhouetteCacheMutex);
 		auto [it, inserted] = m_silhouetteCache.emplace(templateId, std::move(sil));
@@ -2738,6 +2776,12 @@ namespace assets {
 			m_templates.clear();
 		}
 		m_maxReach.store(0.0F, std::memory_order_relaxed);
+		{
+			std::lock_guard<std::mutex> lk(layoutMutex);
+			layoutIds.clear();
+			layouts.clear();
+		}
+		cacheGeneration.fetch_add(1, std::memory_order_acq_rel);
 		{
 			std::lock_guard<std::mutex> lk(m_motionCacheMutex);
 			m_motionCache.clear();

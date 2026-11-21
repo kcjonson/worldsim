@@ -9,6 +9,9 @@ add_library(assets
     assets/GroundSvg.cpp
     assets/LodSvg.cpp
     assets/PartsAsset.cpp
+    assets/ItemView.cpp
+    assets/MeshSilhouette.cpp
+    assets/ViewConfig.cpp
     assets/GroundTint.cpp
     assets/GroundTransition.cpp
     assets/TessellatedPaths.cpp

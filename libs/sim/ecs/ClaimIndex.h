@@ -47,7 +47,7 @@ namespace ecs {
 		EntityID colonist = kInvalidEntity;
 		uint64_t instanceId = 0;
 		uint64_t claimSeq = 0;
-		uint8_t	 tier = 7; // the holding task's priorityTier at index time; lower is higher rank
+		uint8_t	 tier = kUnrankedTier;		// the holding task's rankedTier at index time, a ladder position; lower is higher rank
 		TaskType taskType = TaskType::None; // what the holding task is doing (a record is a Haul)
 		bool	 suspended = false;
 	};
@@ -158,6 +158,11 @@ namespace ecs {
 		/// Entries held, retired ones included.
 		[[nodiscard]] size_t size() const { return entries.size(); }
 
+		/// What the index holds, as one number: every unretired claim with its holder, in no order, so equal
+		/// contents give equal numbers however they were added. A query's recorded wait compares it to tell a
+		/// claim released or changed.
+		[[nodiscard]] uint64_t fingerprint() const { return contentFingerprint; }
+
 #ifdef DEVELOPMENT_BUILD
 		/// The subset rule: a fresh rebuild from `world` (into `scratch`) is a subset of this index,
 		/// and every surplus entry belongs to an instance id no live task or suspended record holds.
@@ -205,6 +210,7 @@ namespace ecs {
 		};
 
 		[[nodiscard]] static uint64_t bucketOf(const Key& key);
+		[[nodiscard]] static uint64_t fingerprintOf(const Entry& entry);
 		void						  add(const Claim& claim, const ClaimHolder& holder);
 		void						  addCurrent(EntityID colonist, const Task& task);
 		void						  addSuspended(EntityID colonist, const Task& task);
@@ -265,6 +271,8 @@ namespace ecs {
 		std::vector<Bucket>		  table;
 		uint32_t				  generation = 1;
 		uint32_t				  usedBuckets = 0;
+		/// The wrapping sum of fingerprintOf over the unretired entries.
+		uint64_t contentFingerprint = 0;
 	};
 
 	template <typename StackRoomFn>

@@ -6,6 +6,16 @@
 
 namespace assets::entry_loading {
 
+	bool boundsDistance(const QueryEntry& entry, FactRowKind rowKind) {
+		const uint16_t distance = *factIndex("distance");
+		return std::ranges::any_of(entry.rows, [&](const FactRow& row) {
+			if (row.kind != rowKind || row.fact.fact != distance || !row.when.empty()) {
+				return false;
+			}
+			return rowKind == FactRowKind::Weigh ? row.by < 0.0F : row.above.has_value();
+		});
+	}
+
 	std::optional<FromRow> FileReader::fromRow(pugi::xml_node node, const std::string& label) {
 		static constexpr std::array<std::string_view, 8> kSources = {
 			"capability", "kind", "item", "yields", "pile", "box", "place", "goal"
@@ -161,23 +171,14 @@ namespace assets::entry_loading {
 				failAt(label + ": unknown element <" + std::string(element) + ">");
 			}
 		}
+		// Whether a ranked query bounds its search waits for the references (Loader::checkQueryBounds): a query
+		// only counted (count_of) walks nothing nearest first.
 		if (problems.size() + reader.problemCount() == problemsBefore) {
-			const uint16_t distance = *factIndex("distance");
-			const auto	   bounded = [&](FactRowKind rowKind) {
-				return std::ranges::any_of(entry.rows, [&](const FactRow& row) {
-					if (row.kind != rowKind || row.fact.fact != distance || !row.when.empty()) {
-						return false;
-					}
-					return rowKind == FactRowKind::Weigh ? row.by < 0.0F : row.above.has_value();
-				});
-			};
 			if (entry.from.empty()) {
 				failAt(label + " has no <from> row, so it has no candidates");
 			}
-			if (entry.pick == QueryPick::Weighted && !bounded(FactRowKind::Exclude)) {
+			if (entry.pick == QueryPick::Weighted && !boundsDistance(entry, FactRowKind::Exclude)) {
 				failAt(label + " picks weighted but excludes no distance above a bound, so its draw has no bound");
-			} else if (!bounded(FactRowKind::Weigh) && !bounded(FactRowKind::Exclude)) {
-				failAt(label + " neither weighs distance by a negative number nor excludes it above a bound, so nothing ends its search");
 			}
 		}
 		if (shortId.empty()) {

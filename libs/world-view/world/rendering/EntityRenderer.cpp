@@ -53,7 +53,7 @@ namespace worldview {
 		// then emitted in that order so submission order == depth order (larger
 		// anchorY drawn later / in front).
 		uprightGather.gather(ctx, m_sortedUprights);
-		instancedDynamic.emitSorted(m_sortedUprights, ctx, stats);
+		instancedDynamic.emitSorted(m_sortedUprights, uprightGather.stripUprightCount(), ctx, stats);
 
 		// LRU cache eviction.
 		baked.evictLRU(processedChunks);
@@ -65,6 +65,7 @@ namespace worldview {
 		m_lastUprightDrawCallCount = stats.uprightDrawCalls;
 		m_lastUprightTriangleCount = stats.uprightTriangles;
 		m_lastUprightOverlapSplits = stats.uprightOverlapSplits;
+		m_lastItemDrawCallCount = stats.itemDrawCalls;
 	}
 
 	// A worker bake arrives with each placement of a chunk, the first and every reload: the baked

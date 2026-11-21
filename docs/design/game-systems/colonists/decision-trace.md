@@ -73,12 +73,14 @@ struct DecisionTrace {
 
 Options are sorted by a lexicographic key (see [Priority Config](./priority-config.md)), `EvaluatedOption::higherPriority`:
 
-1. `tier`, lower first. The base tier per task type comes from `<TaskTiers>` in `priority-tuning.xml`; `classifyTier` promotes a need below 10% to tier 2 and provisioning that serves an active work order (or furniture already carried) to tier 4, and puts gathering food, a satisfied need, and Wander at tier 7.
+1. `tier`, lower first: the position of the option's rung in the `<ladder>` of `priority-tuning.xml`. `classifyTier` puts a need below its critical threshold on `critical_need`, any other need below its seek threshold on `ordinary_need`, a craft, a build, a teardown, and provisioning that serves an active work order (or furniture already carried) on `committed_work`, other hauls, harvests, and placements on `opportunistic_work`, and gathering food, a satisfied need, and Wander on `idle`.
 2. `gatheringRank`, higher first (a cut that continues a gathering trip).
 3. `score`, higher first, compared only within a tier: `distanceFactor + skillBonus + taskAgeBonus + hysteresisBonus + storagePriorityBias`.
 4. `tiebreakId`, lower first, so equal options resolve the same way on every machine.
 
-No score can lift an option across a tier boundary, so a hungry colonist (tier 5) finishes a work-order delivery (tier 4) before eating, and a critically hungry one (tier 2) stops for food.
+No score can lift an option across a tier boundary, so a hungry colonist (`ordinary_need`) finishes a work-order delivery (`committed_work`) before eating, and a critically hungry one (`critical_need`) stops for food.
+
+The task queue shows each option's tier counted from 1 at the top rung, with its rung's label, then its reason and score: `[T8 Need] Hunger at 40% (12m away) - score 240`. The labels are Survival, Critical need, Low mood, Player order, Urgent need, Own unfinished work, Work order (`committed_work`), Need (`ordinary_need`), Opportunistic, and Idle; a rung without a label shows its name. The `[AI]` log line gives the same tier number.
 
 ---
 
