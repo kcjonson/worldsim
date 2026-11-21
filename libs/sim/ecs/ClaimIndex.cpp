@@ -3,7 +3,10 @@
 #include "World.h"
 #include "systems/ChainClaims.h"
 
+#include <assets/PriorityConfig.h>
+
 #include <algorithm>
+#include <cassert>
 #include <tuple>
 
 namespace ecs {
@@ -19,7 +22,7 @@ namespace ecs {
 		}
 
 		uint8_t tierOf(const Task& task) {
-			return static_cast<uint8_t>(std::clamp(task.priorityTier, 0, 255));
+			return task.rankedTier(assets::PriorityConfig::Get().decisionRungs().idle);
 		}
 	} // namespace
 
@@ -29,6 +32,7 @@ namespace ecs {
 	}
 
 	bool outranks(const ClaimHolder& a, const ClaimHolder& b) {
+		assert(a.tier != kUnrankedTier && b.tier != kUnrankedTier && "a holder is ranked from its task before it is compared");
 		return std::tie(a.tier, a.claimSeq, a.instanceId) < std::tie(b.tier, b.claimSeq, b.instanceId);
 	}
 

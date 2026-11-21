@@ -42,7 +42,6 @@
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
 
-#include "assets/ActionTypeRegistry.h"
 #include "assets/AssetRegistry.h"
 #include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
@@ -117,7 +116,7 @@ namespace ecs::test {
 			GoalTaskRegistry::Get().clear();
 
 			// PriorityConfig is a singleton too: load the shipped tuning so classifyTier sees the real
-			// per-task tiers regardless of what an earlier suite left in it.
+			// ladder regardless of what an earlier suite left in it.
 			ASSERT_TRUE(loadShippedPriorityConfig());
 
 			// Initialize AssetRegistry (singleton) - needed for capability lookups
@@ -134,7 +133,7 @@ namespace ecs::test {
 
 			// Register system with deterministic RNG seed for reproducible tests
 			auto& recipeRegistry = assets::RecipeRegistry::Get();
-			world->registerSystem<AIDecisionSystem>(registry, recipeRegistry, kTestRngSeed);
+			world->registerSystem<AIDecisionSystem>(registry, recipeRegistry, ecs::testing::shippedActions(), kTestRngSeed);
 		}
 
 		void TearDown() override {
@@ -599,7 +598,9 @@ namespace ecs::test {
 	TEST_F(AIDecisionSystemTest, WanderSequenceFollowsSeed) {
 		auto wanderTargets = [this](uint32_t seed) {
 			world = std::make_unique<World>();
-			world->registerSystem<AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), seed);
+			world->registerSystem<AIDecisionSystem>(
+				assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), seed
+			);
 			auto colonist = createColonist({0.0F, 0.0F});
 			for (auto need : {NeedType::Hunger, NeedType::Thirst, NeedType::Energy, NeedType::Bladder}) {
 				setNeedValue(colonist, need, 100.0F);
@@ -673,7 +674,7 @@ namespace ecs::test {
 		setNeedValue(colonist, NeedType::Hunger, 5.0F);
 		world->update(0.016F);
 		EXPECT_EQ(task->needToFulfill, NeedType::Hunger);
-		EXPECT_EQ(task->priorityTier, 2);
+		EXPECT_EQ(task->priorityTier, rungNamed("critical_need"));
 	}
 
 	TEST_F(AIDecisionSystemTest, DoesNotReEvaluateWhileHandlingCriticalNeed) {
@@ -859,7 +860,7 @@ namespace ecs::test {
 		world = std::make_unique<World>();
 		auto& registry = assets::AssetRegistry::Get();
 		auto& recipeRegistry = assets::RecipeRegistry::Get();
-		world->registerSystem<AIDecisionSystem>(registry, recipeRegistry, kTestRngSeed);
+		world->registerSystem<AIDecisionSystem>(registry, recipeRegistry, ecs::testing::shippedActions(), kTestRngSeed);
 
 		auto colonist2 = createColonist({0.0F, 0.0F});
 		setNeedValue(colonist2, NeedType::Hunger, 100.0F);
@@ -1664,10 +1665,10 @@ namespace ecs::test {
 	//
 	// These pin the KEY semantics on bare EvaluatedOptions: tier is set directly (the system's
 	// classifyTier() is .cpp-private). Classification itself is exercised end-to-end by the
-	// "...ClassifiesTier..." integration tests further down, which build a real DecisionTrace through
+	// "...Classifies..." integration tests further down, which build a real DecisionTrace through
 	// world->update() and assert the tier the system stamped on the resulting option.
-	// The tier numbers mirror the spec ladder: 2 critical need, 4 active work order, 5 actionable
-	// need, 6 opportunistic work, 7 idle. score = distanceFactor + skill + age + hysteresis.
+	// Each tier is a rung of the shipped ladder, by name (rungNamed). score = distanceFactor + skill +
+	// age + hysteresis.
 	// =============================================================================
 
 	namespace {
@@ -1686,14 +1687,14 @@ namespace ecs::test {
 		}
 	} // namespace
 
-	// Tier dominance: a tier-4 active-work-order option, even FAR away (low score), beats a tier-5
+	// Tier dominance: a committed_work option, even FAR away (low score), beats an ordinary_need
 	// actionable-need option that is RIGHT HERE (max score). The guarantee is the key's tier,
 	// compared first, with no floor constant.
 	TEST_F(AIDecisionSystemTest, TierDominanceWorkOrderBeatsNearerNeed) {
 		EvaluatedOption farWorkOrder;
 		farWorkOrder.taskType = TaskType::Build;
 		farWorkOrder.status = OptionStatus::Available;
-		farWorkOrder.tier = 4;					// active work order
+		farWorkOrder.tier = rungNamed("committed_work");
 		farWorkOrder.distanceFactor = distanceFactorAt(59.0F); // ~5: nearly out of range
 		farWorkOrder.skillBonus = 0;
 		farWorkOrder.score = farWorkOrder.computeScore();
@@ -1702,24 +1703,24 @@ namespace ecs::test {
 		nearNeed.taskType = TaskType::FulfillNeed;
 		nearNeed.needType = NeedType::Hunger;
 		nearNeed.status = OptionStatus::Available;
-		nearNeed.tier = 5;								   // actionable need
+		nearNeed.tier = rungNamed("ordinary_need");
 		nearNeed.distanceFactor = distanceFactorAt(0.0F); // 300: right here
 		nearNeed.taskAgeBonus = 100;					   // pile on every within-tier term
 		nearNeed.score = nearNeed.computeScore();
 
 		EXPECT_LT(farWorkOrder.score, nearNeed.score) << "sanity: the work order has the LOWER score";
 		EXPECT_TRUE(EvaluatedOption::higherPriority(farWorkOrder, nearNeed))
-			<< "tier 4 must beat tier 5 regardless of score (no floor needed)";
+			<< "committed_work must beat ordinary_need regardless of score (no floor needed)";
 		EXPECT_FALSE(EvaluatedOption::higherPriority(nearNeed, farWorkOrder));
 	}
 
-	// Opportunistic work can't preempt a work order: a tier-6 haul with a huge skill bonus cannot
-	// outrank any tier-4 option, even a far/zero-skill one.
+	// Opportunistic work can't preempt a work order: an opportunistic_work haul with a huge skill bonus
+	// cannot outrank any committed_work option, even a far/zero-skill one.
 	TEST_F(AIDecisionSystemTest, OpportunisticCannotPreemptWorkOrder) {
 		EvaluatedOption opportunisticHaul;
 		opportunisticHaul.taskType = TaskType::Haul;
 		opportunisticHaul.status = OptionStatus::Available;
-		opportunisticHaul.tier = 6;								  // opportunistic
+		opportunisticHaul.tier = rungNamed("opportunistic_work");
 		opportunisticHaul.distanceFactor = distanceFactorAt(0.0F); // right here
 		opportunisticHaul.skillBonus = 100;						  // max skill
 		opportunisticHaul.taskAgeBonus = 100;					  // max age
@@ -1728,12 +1729,12 @@ namespace ecs::test {
 		EvaluatedOption farWorkOrder;
 		farWorkOrder.taskType = TaskType::Craft;
 		farWorkOrder.status = OptionStatus::Available;
-		farWorkOrder.tier = 4;
+		farWorkOrder.tier = rungNamed("committed_work");
 		farWorkOrder.distanceFactor = distanceFactorAt(55.0F); // far
 		farWorkOrder.score = farWorkOrder.computeScore();
 
 		EXPECT_TRUE(EvaluatedOption::higherPriority(farWorkOrder, opportunisticHaul))
-			<< "tier 4 work order outranks tier 6 opportunistic haul regardless of score";
+			<< "a committed_work order outranks an opportunistic_work haul regardless of score";
 		EXPECT_FALSE(EvaluatedOption::higherPriority(opportunisticHaul, farWorkOrder));
 	}
 
@@ -1744,7 +1745,7 @@ namespace ecs::test {
 		EvaluatedOption nearHarvest;
 		nearHarvest.taskType = TaskType::Harvest;
 		nearHarvest.status = OptionStatus::Available;
-		nearHarvest.tier = 6;
+		nearHarvest.tier = rungNamed("opportunistic_work");
 		nearHarvest.distanceToTarget = 3.0F;
 		nearHarvest.distanceFactor = distanceFactorAt(3.0F);
 		nearHarvest.skillBonus = 0; // unskilled
@@ -1753,7 +1754,7 @@ namespace ecs::test {
 		EvaluatedOption farSkilledHarvest;
 		farSkilledHarvest.taskType = TaskType::Harvest;
 		farSkilledHarvest.status = OptionStatus::Available;
-		farSkilledHarvest.tier = 6;
+		farSkilledHarvest.tier = rungNamed("opportunistic_work");
 		farSkilledHarvest.distanceToTarget = 70.0F; // out of range -> factor 0
 		farSkilledHarvest.distanceFactor = distanceFactorAt(70.0F);
 		farSkilledHarvest.skillBonus = 100; // max skill
@@ -1776,7 +1777,7 @@ namespace ecs::test {
 		EvaluatedOption inProgress;
 		inProgress.taskType = TaskType::Harvest;
 		inProgress.status = OptionStatus::Available;
-		inProgress.tier = 6;
+		inProgress.tier = rungNamed("opportunistic_work");
 		inProgress.distanceFactor = distanceFactorAt(30.0F); // 150
 		inProgress.hysteresisBonus = kHysteresis;
 		inProgress.score = inProgress.computeScore(); // 200
@@ -1786,7 +1787,7 @@ namespace ecs::test {
 		EvaluatedOption tinyBetter;
 		tinyBetter.taskType = TaskType::Harvest;
 		tinyBetter.status = OptionStatus::Available;
-		tinyBetter.tier = 6;
+		tinyBetter.tier = rungNamed("opportunistic_work");
 		tinyBetter.distanceFactor = distanceFactorAt(29.0F); // 155
 		tinyBetter.tiebreakId = 1;							  // distinct id; must still lose on score
 		tinyBetter.score = tinyBetter.computeScore();
@@ -1799,7 +1800,7 @@ namespace ecs::test {
 		EvaluatedOption clearlyCloser;
 		clearlyCloser.taskType = TaskType::Harvest;
 		clearlyCloser.status = OptionStatus::Available;
-		clearlyCloser.tier = 6;
+		clearlyCloser.tier = rungNamed("opportunistic_work");
 		clearlyCloser.distanceFactor = distanceFactorAt(0.0F); // 300
 		clearlyCloser.tiebreakId = 2;
 		clearlyCloser.score = clearlyCloser.computeScore();
@@ -1815,7 +1816,7 @@ namespace ecs::test {
 	TEST_F(AIDecisionSystemTest, EqualKeyBreaksTiesOnTiebreakId) {
 		EvaluatedOption a;
 		a.taskType = TaskType::Harvest;
-		a.tier = 6;
+		a.tier = rungNamed("opportunistic_work");
 		a.distanceFactor = distanceFactorAt(5.0F);
 		a.score = a.computeScore();
 		a.tiebreakId = 10;
@@ -1827,26 +1828,26 @@ namespace ecs::test {
 		EXPECT_FALSE(EvaluatedOption::higherPriority(b, a));
 	}
 
-	// Within the idle tier (7), a reachable gather-food option must outrank wander. Wander never sets
+	// Within the idle rung, a reachable gather-food option must outrank wander. Wander never sets
 	// distanceToTarget, so before the fix its distance factor computed to the MAX (~300) and it beat
 	// gather-food; the fix pins wander's within-tier score to 0 (the idle floor). A gather-food
 	// option with a nearby reachable source carries a positive
 	// distance factor plus any Farming skill, so it wins the (tier, score) key.
 	TEST_F(AIDecisionSystemTest, GatherFoodRanksAboveWanderInIdleTier) {
-		// Wander after the fix: tier 7, score 0 (no distance/skill/age/hysteresis).
+		// Wander after the fix: idle, score 0 (no distance/skill/age/hysteresis).
 		EvaluatedOption wander;
 		wander.taskType = TaskType::Wander;
 		wander.status = OptionStatus::Available;
-		wander.tier = 7;
+		wander.tier = rungNamed("idle");
 		wander.score = 0.0F; // the idle floor
 
-		// Gather food: tier 7, a nearby (5 m) reachable food source plus modest Farming skill.
+		// Gather food: idle, a nearby (5 m) reachable food source plus modest Farming skill.
 		EvaluatedOption gatherFood;
 		gatherFood.taskType = TaskType::FulfillNeed;
 		gatherFood.needType = NeedType::Hunger;
 		gatherFood.gathersFood = true;
 		gatherFood.status = OptionStatus::Available;
-		gatherFood.tier = 7;
+		gatherFood.tier = rungNamed("idle");
 		gatherFood.distanceToTarget = 5.0F;
 		gatherFood.distanceFactor = distanceFactorAt(5.0F); // ~275
 		gatherFood.skillBonus = 20;							// some Farming skill
@@ -1854,7 +1855,7 @@ namespace ecs::test {
 
 		EXPECT_GT(gatherFood.score, wander.score) << "reachable gather-food scores above the wander floor";
 		EXPECT_TRUE(EvaluatedOption::higherPriority(gatherFood, wander))
-			<< "gather-food wins the (tier, score) key over wander within tier 7";
+			<< "gather-food wins the (tier, score) key over wander within idle";
 		EXPECT_FALSE(EvaluatedOption::higherPriority(wander, gatherFood));
 	}
 
@@ -1880,12 +1881,12 @@ namespace ecs::test {
 		ASSERT_NE(trace, nullptr);
 		ASSERT_FALSE(trace->options.empty());
 
-		// First option (highest priority) should be the critical hunger, classified at tier 2.
+		// First option (highest priority) should be the critical hunger, classified on critical_need.
 		const auto& first = trace->options[0];
 		EXPECT_EQ(first.taskType, TaskType::FulfillNeed);
 		EXPECT_EQ(first.needType, NeedType::Hunger);
 		EXPECT_EQ(first.status, OptionStatus::Selected);
-		EXPECT_EQ(first.tier, 2) << "a critical need is tier 2";
+		EXPECT_EQ(first.tier, rungNamed("critical_need")) << "a critical need is on critical_need";
 	}
 
 	// =============================================================================
@@ -1894,8 +1895,8 @@ namespace ecs::test {
 	// These build a REAL DecisionTrace through world->update() (the only path that calls the
 	// .cpp-private classifyTier on every option) and assert the tier the system stamped onto the
 	// resulting option. They cover each runtime classification rule from the spec Model table:
-	// work-order Haul/Harvest -> 4, stocking Haul/Harvest -> 6, gather food -> 7 (above
-	// wander), critical need -> 2, actionable need -> 5.
+	// work-order Haul/Harvest -> committed_work, stocking Haul/Harvest -> opportunistic_work, gather
+	// food -> idle (above wander), critical need -> critical_need, actionable need -> ordinary_need.
 	// =============================================================================
 
 	namespace {
@@ -1951,9 +1952,10 @@ namespace ecs::test {
 		}
 	} // namespace
 
-	// A Harvest that provisions an active work order (its parent goal is a Craft) classifies at
-	// tier 4. This is the chain-becomes-tier-lock: servesActiveWorkOrder -> tier 4, no score bonus.
-	TEST_F(AIDecisionSystemTest, WorkOrderHarvestClassifiesTier4) {
+	// A Harvest that provisions an active work order (its parent goal is a Craft) classifies on
+	// committed_work. This is the chain-becomes-tier-lock: servesActiveWorkOrder -> committed_work, no
+	// score bonus.
+	TEST_F(AIDecisionSystemTest, WorkOrderHarvestClassifiesCommittedWork) {
 		auto& registry = assets::AssetRegistry::Get();
 		auto [bushId, stickId] = registerHarvestableYielding(registry, "Flora_WorkBush", "WorkStick");
 
@@ -1991,12 +1993,12 @@ namespace ecs::test {
 		const auto* harvestOption = findOption(*trace, [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; });
 		ASSERT_NE(harvestOption, nullptr) << "a work-order harvest option should be present";
 		EXPECT_TRUE(harvestOption->servesActiveWorkOrder) << "harvest feeding a Craft serves the work order";
-		EXPECT_EQ(harvestOption->tier, 4) << "a work-order harvest classifies at tier 4";
+		EXPECT_EQ(harvestOption->tier, rungNamed("committed_work")) << "a work-order harvest classifies on committed_work";
 	}
 
 	// A stocking Harvest (owned by StorageGoalSystem, no Craft/Build parent) is opportunistic work:
-	// it classifies at tier 6, strictly below work orders.
-	TEST_F(AIDecisionSystemTest, StockingHarvestClassifiesTier6) {
+	// it classifies on opportunistic_work, strictly below work orders.
+	TEST_F(AIDecisionSystemTest, StockingHarvestClassifiesOpportunisticWork) {
 		auto& registry = assets::AssetRegistry::Get();
 		auto [bushId, stickId] = registerHarvestableYielding(registry, "Flora_StockBush", "StockStick");
 
@@ -2005,7 +2007,7 @@ namespace ecs::test {
 		addKnownEntity(colonist, {2.0F, 0.0F}, bushId, assets::CapabilityType::Harvestable);
 
 		// A stocking harvest: StorageGoalSystem chops to fill a box toward its minimum. No Craft/Build
-		// root, so servesActiveWorkOrder is false and it stays at the opportunistic base tier.
+		// root, so servesActiveWorkOrder is false and it stays on opportunistic_work.
 		(void)stickId;
 		makeStockingHarvest({4.0F, 0.0F}, "StockStick");
 
@@ -2017,7 +2019,7 @@ namespace ecs::test {
 		ASSERT_NE(harvestOption, nullptr) << "a stocking harvest option should be present";
 		EXPECT_FALSE(harvestOption->servesActiveWorkOrder) << "stocking is not a work order";
 		EXPECT_TRUE(harvestOption->servesStorageStocking);
-		EXPECT_EQ(harvestOption->tier, 6) << "a stocking harvest classifies at tier 6 (opportunistic)";
+		EXPECT_EQ(harvestOption->tier, rungNamed("opportunistic_work")) << "a stocking harvest classifies on opportunistic_work";
 	}
 
 	// =============================================================================
@@ -2144,7 +2146,7 @@ namespace ecs::test {
 
 	// 4. Conflict, higher dest wins: a Low box holds Wood; a High box and a Critical box both want it.
 	//    The selected option's destination is the Critical box (storagePriorityBias breaks the tie
-	//    within tier 6), deterministically.
+	//    within opportunistic_work), deterministically.
 	TEST_F(AIDecisionSystemTest, PullConflictHigherDestinationWins) {
 		auto& registry = assets::AssetRegistry::Get();
 		const uint32_t woodId = registerPullItem(registry, "Wood");
@@ -2173,7 +2175,7 @@ namespace ecs::test {
 		ASSERT_NE(selected, nullptr);
 		EXPECT_EQ(selected->haulSourceStorageId, static_cast<uint64_t>(lowBox));
 		EXPECT_EQ(selected->haulDestinationId, static_cast<uint64_t>(critBox))
-			<< "the Critical destination outranks the High one within tier 6";
+			<< "the Critical destination outranks the High one within opportunistic_work";
 	}
 
 	// 5. Don't-drain-below-min: source Low box holds 10 Wood with its OWN rule min=8 -> pull qty == 2.
@@ -2229,16 +2231,16 @@ namespace ecs::test {
 		EXPECT_EQ(pull->haulQuantity, 5U) << "dest max 15 - 10 already held = 5 room";
 	}
 
-	// 7. Within-tier ordering: a Critical-dest pull and a Low-dest pull -> both at tier 6, the
+	// 7. Within-tier ordering: a Critical-dest pull and a Low-dest pull -> both on opportunistic_work, the
 	//    Critical-dest pull has the higher score and is Selected.
-	TEST_F(AIDecisionSystemTest, PullCriticalDestinationOutscoresLowWithinTier6) {
+	TEST_F(AIDecisionSystemTest, PullCriticalDestinationOutscoresLowWithinOpportunisticWork) {
 		auto& registry = assets::AssetRegistry::Get();
 		const uint32_t woodId = registerPullItem(registry, "Wood");
 		registerStorageDef(registry, "Box");
 		const uint32_t boxDefId = registry.getDefNameId("Box");
 
 		// One shared Low source feeds BOTH a Medium dest and a Critical dest (Low < both, so each is a
-		// legal pull). Both pulls are tier 6; the Critical destination's bias gives it the higher score.
+		// legal pull). Both pulls are opportunistic_work; the Critical destination's bias gives it the higher score.
 		const glm::vec2 lowSrcPos{2.0F, 0.0F};
 		const glm::vec2 medDestPos{4.0F, 0.0F};
 		const glm::vec2 critDestPos{6.0F, 0.0F};
@@ -2265,8 +2267,8 @@ namespace ecs::test {
 		});
 		ASSERT_NE(medPull, nullptr);
 		ASSERT_NE(critPull, nullptr);
-		EXPECT_EQ(medPull->tier, 6) << "stocking pulls stay at tier 6";
-		EXPECT_EQ(critPull->tier, 6) << "stocking pulls stay at tier 6";
+		EXPECT_EQ(medPull->tier, rungNamed("opportunistic_work")) << "stocking pulls stay on opportunistic_work";
+		EXPECT_EQ(critPull->tier, rungNamed("opportunistic_work")) << "stocking pulls stay on opportunistic_work";
 		EXPECT_GT(critPull->score, medPull->score) << "Critical destination outscores Medium within the tier";
 		EXPECT_EQ(getTrace(colonist)->getSelected()->haulDestinationId, static_cast<uint64_t>(critBox));
 	}
@@ -2334,8 +2336,8 @@ namespace ecs::test {
 		const EntityID destBox = makeStorageBox(destPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/0, /*min=*/20);
 
 		// Colonist standing ON the source box, mid-carry: a two-hand Wood armful in hands, task on its
-		// deposit leg (phase 2) heading to the dest box. priorityTier 6 = the opportunistic-stocking
-		// tier the original pull selection stamped (a same-tier challenger must NOT preempt it).
+		// deposit leg (phase 2) heading to the dest box. priorityTier opportunistic_work = the stocking
+		// rung the original pull selection stamped (a same-tier challenger must NOT preempt it).
 		auto  colonist = createColonist(srcPos);
 		satisfyAllNeeds(*getNeeds(colonist));
 		addKnownEntity(colonist, srcPos, boxDefId, assets::CapabilityType::Storage);
@@ -2364,7 +2366,7 @@ namespace ecs::test {
 		task->haulFromInventory = false;
 		task->targetPosition = destPos; // the deposit leg targets B; the fresh pull option targets A
 		task->chainStep = 1; // past the Withdraw leg
-		task->priorityTier = 6; // opportunistic stocking tier
+		task->priorityTier = rungNamed("opportunistic_work");
 		task->timeSinceEvaluation = 1.0F; // > kReEvalInterval (0.5) -> force a re-eval this tick
 
 		world->update(0.016F);
@@ -2445,7 +2447,7 @@ namespace ecs::test {
 		task->haulFromInventory = false;
 		task->targetPosition = destPos;
 		task->chainStep = 1;			   // past the Withdraw leg
-		task->priorityTier = 6;			   // opportunistic stocking tier
+		task->priorityTier = rungNamed("opportunistic_work");
 		task->timeSinceEvaluation = 1.0F;  // > kReEvalInterval (0.5) -> force a re-eval this tick
 
 		world->update(0.016F);
@@ -2470,7 +2472,7 @@ namespace ecs::test {
 		EXPECT_EQ(ecs::handHeldQuantity(*inventory, "Wood"), 14U) << "the full armful is intact -- nothing dropped";
 
 		// Arrived at B, the deposit stops at B's max and the rest stays in hand.
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		world->addComponent<Action>(colonist, Action{});
 		world->getComponent<Position>(colonist)->value = destPos;
 		task->state = TaskState::Arrived;
@@ -2481,8 +2483,8 @@ namespace ecs::test {
 		EXPECT_EQ(ecs::handHeldQuantity(*inventory, "Wood"), 7U) << "the surplus stays carried";
 	}
 
-	// 9c. The broadening must NOT over-hold: a strictly-HIGHER-tier challenger (a critical need, tier 2)
-	//     must still preempt the mid-carry two-hand haul (tier 6). Dropping the load for an emergency is
+	// 9c. The broadening must NOT over-hold: a strictly-HIGHER-tier challenger (a critical need)
+	//     must still preempt the mid-carry two-hand haul (opportunistic_work). Dropping the load for an emergency is
 	//     acceptable; the guard only blocks same-or-lower-priority challengers. Guards the broadened
 	//     condition from pinning a colonist on a haul through a genuine emergency.
 	TEST_F(AIDecisionSystemTest, TwoHandPullYieldsToCriticalNeedMidCarry) {
@@ -2509,13 +2511,13 @@ namespace ecs::test {
 		auto colonist = createColonist(srcPos);
 		addKnownEntity(colonist, srcPos, boxDefId, assets::CapabilityType::Storage);
 		addKnownEntity(colonist, destPos, boxDefId, assets::CapabilityType::Storage);
-		// A critical hunger (5%) with a valid eat-from-inventory path -> tier 2, strictly above the haul.
+		// A critical hunger (5%) with a valid eat-from-inventory path -> critical_need, strictly above the haul.
 		auto* needsForPreempt = getNeeds(colonist);
 		needsForPreempt->get(NeedType::Thirst).value = 100.0F;
 		needsForPreempt->get(NeedType::Energy).value = 100.0F;
 		needsForPreempt->get(NeedType::Bladder).value = 100.0F;
 		needsForPreempt->get(NeedType::Digestion).value = 100.0F;
-		needsForPreempt->get(NeedType::Hunger).value = 5.0F; // critical -> tier 2
+		needsForPreempt->get(NeedType::Hunger).value = 5.0F; // critical -> critical_need
 
 		const uint64_t haulId = makeUmbrellaGoal(destBox, destPos, woodId);
 
@@ -2541,14 +2543,14 @@ namespace ecs::test {
 		task->haulFromInventory = false;
 		task->targetPosition = destPos;
 		task->chainStep = 1;
-		task->priorityTier = 6;
+		task->priorityTier = rungNamed("opportunistic_work");
 		task->timeSinceEvaluation = 1.0F;
 
 		world->update(0.016F);
 
 		// A critical need outranks the stocking haul: the guard must NOT hold here. The colonist switches
 		// off the haul to the need (dropping the armful is the accepted emergency cost).
-		EXPECT_NE(task->type, TaskType::Haul) << "a critical need (tier 2) preempts the held haul (tier 6)";
+		EXPECT_NE(task->type, TaskType::Haul) << "a critical need preempts the held opportunistic_work haul";
 		EXPECT_EQ(task->type, TaskType::FulfillNeed) << "switched to fulfilling the critical need";
 		EXPECT_EQ(task->needToFulfill, NeedType::Hunger) << "the critical hunger is the new task";
 	}
@@ -2571,7 +2573,7 @@ namespace ecs::test {
 		addKnownEntity(colonist, {30.0F, 0.0F}, bushId, assets::CapabilityType::Harvestable);  // A
 		addKnownEntity(colonist, {0.0F, 30.0F}, bushId, assets::CapabilityType::Harvestable);  // B
 
-		// A stocking goal makes both bushes Available tier-6 harvest options.
+		// A stocking goal makes both bushes Available opportunistic_work harvest options.
 		(void)stickId;
 		makeStockingHarvest({2.0F, 2.0F}, "HystStick", /*minAmount=*/100);
 
@@ -2600,9 +2602,9 @@ namespace ecs::test {
 	}
 
 	// The gather-food option (emitted when the colonist has no food and knows an edible harvestable)
-	// classifies at tier 7 (idle) and, with my wander-floor fix,
+	// classifies on idle and, with my wander-floor fix,
 	// outranks the same-tier wander option because wander's within-tier score is pinned to 0.
-	TEST_F(AIDecisionSystemTest, GatherFoodClassifiesTier7AndBeatsWander) {
+	TEST_F(AIDecisionSystemTest, GatherFoodClassifiesIdleAndBeatsWander) {
 		auto& registry = assets::AssetRegistry::Get();
 		// A harvestable yielding the already-registered edible Berry, so the gather-food path fires.
 		assets::AssetDefinition berryBush;
@@ -2629,8 +2631,8 @@ namespace ecs::test {
 		ASSERT_NE(gatherFood, nullptr) << "an empty-inventory colonist with a known edible source gathers food";
 		ASSERT_NE(wander, nullptr) << "wander is always offered as the idle floor";
 
-		EXPECT_EQ(gatherFood->tier, 7) << "gathering food is tier 7 (idle)";
-		EXPECT_EQ(wander->tier, 7) << "wander is tier 7 (idle)";
+		EXPECT_EQ(gatherFood->tier, rungNamed("idle")) << "gathering food is idle";
+		EXPECT_EQ(wander->tier, rungNamed("idle")) << "wander is idle";
 		EXPECT_FLOAT_EQ(wander->score, 0.0F) << "wander is the idle floor: within-tier score pinned to 0";
 		EXPECT_GT(gatherFood->score, wander->score) << "reachable gather-food outranks wander within the idle tier";
 		EXPECT_TRUE(EvaluatedOption::higherPriority(*gatherFood, *wander))
@@ -2658,17 +2660,17 @@ namespace ecs::test {
 		const auto* atShippedLevels = hungerOption();
 		ASSERT_NE(atShippedLevels, nullptr);
 		EXPECT_FALSE(atShippedLevels->critical);
-		EXPECT_EQ(atShippedLevels->tier, 5) << "12% is above Hunger's shipped critical threshold of 10";
+		EXPECT_EQ(atShippedLevels->tier, rungNamed("ordinary_need")) << "12% is above Hunger's shipped critical threshold of 10";
 
 		world->getComponent<NeedsComponent>(colonist)->hunger().criticalThreshold = 15.0F;
 		const auto* raised = hungerOption();
 		ASSERT_NE(raised, nullptr);
 		EXPECT_TRUE(raised->critical);
-		EXPECT_EQ(raised->tier, 2) << "12% is below a critical threshold of 15";
+		EXPECT_EQ(raised->tier, rungNamed("critical_need")) << "12% is below a critical threshold of 15";
 	}
 
-	// A critical need (below its critical threshold) classifies at tier 2 (above everything in Phase 1/2).
-	TEST_F(AIDecisionSystemTest, CriticalNeedClassifiesTier2) {
+	// A critical need (below its critical threshold) classifies on critical_need (above every rung the decision ranks on).
+	TEST_F(AIDecisionSystemTest, CriticalNeedClassifiesCriticalNeed) {
 		auto colonist = createColonist({0.0F, 0.0F});
 		auto* inventory = world->getComponent<Inventory>(colonist);
 		inventory->addItem("Berry", 3); // a valid hunger fulfillment path (eat from inventory)
@@ -2686,11 +2688,11 @@ namespace ecs::test {
 			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger;
 		});
 		ASSERT_NE(hunger, nullptr);
-		EXPECT_EQ(hunger->tier, 2) << "a need below its critical threshold classifies at tier 2";
+		EXPECT_EQ(hunger->tier, rungNamed("critical_need")) << "a need below its critical threshold classifies on critical_need";
 	}
 
-	// An actionable need (below its seek threshold but not critical) classifies at tier 5.
-	TEST_F(AIDecisionSystemTest, ActionableNeedClassifiesTier5) {
+	// An actionable need (below its seek threshold but not critical) classifies on ordinary_need.
+	TEST_F(AIDecisionSystemTest, ActionableNeedClassifiesOrdinaryNeed) {
 		auto colonist = createColonist({0.0F, 0.0F});
 		// A known water source so thirst is actionable (Available), not NoSource.
 		addKnownEntity(colonist, {3.0F, 4.0F}, kWaterDefId, assets::CapabilityType::Drinkable);
@@ -2709,7 +2711,7 @@ namespace ecs::test {
 		});
 		ASSERT_NE(thirst, nullptr);
 		EXPECT_EQ(thirst->status, OptionStatus::Selected) << "the actionable thirst is the chosen task";
-		EXPECT_EQ(thirst->tier, 5) << "an actionable (non-critical) need classifies at tier 5";
+		EXPECT_EQ(thirst->tier, rungNamed("ordinary_need")) << "an actionable (non-critical) need classifies on ordinary_need";
 	}
 
 	// =============================================================================
@@ -2736,12 +2738,12 @@ namespace ecs::test {
 
 	// Hungry with an empty pack and a work order on offer: the nearest known harvestable yields sticks,
 	// a berry bush sits a little farther off. Hunger targets the berry bush, never reading the stick
-	// bush as "no food source". Critical hunger (tier 2) preempts the work order (tier 4); routine
-	// hunger (tier 5) is on offer below it.
+	// bush as "no food source". Critical hunger (critical_need) preempts the work order (committed_work);
+	// routine hunger (ordinary_need) is on offer below it.
 	struct HungerLevelCase {
-		float hunger;
-		int	  tier;
-		bool  preemptsWork;
+		float		hunger;
+		const char* rung;
+		bool		preemptsWork;
 	};
 
 	class HungerEdibleSourceTest : public AIDecisionSystemTest, public ::testing::WithParamInterface<HungerLevelCase> {};
@@ -2759,7 +2761,7 @@ namespace ecs::test {
 		addKnownEntity(colonist, {2.0F, 0.0F}, stickBushId, assets::CapabilityType::Harvestable);
 		addKnownEntity(colonist, berryPos, berryBushId, assets::CapabilityType::Harvestable);
 
-		// A work order wanting sticks: a tier-4 Harvest of the nearer bush.
+		// A work order wanting sticks: a committed_work Harvest of the nearer bush.
 		const auto station = world->createEntity();
 		world->addComponent<Position>(station, Position{{6.0F, 0.0F}});
 		makeStationNeed(station, "WorkStick", 2);
@@ -2788,7 +2790,7 @@ namespace ecs::test {
 		ASSERT_NE(work, nullptr) << "the work order offers a harvest";
 		const auto* hunger = findOption(*trace, isHungerNeedOption);
 		ASSERT_NE(hunger, nullptr);
-		EXPECT_EQ(hunger->tier, level.tier);
+		EXPECT_EQ(hunger->tier, rungNamed(level.rung));
 		ASSERT_TRUE(hunger->targetPosition.has_value());
 		EXPECT_EQ(*hunger->targetPosition, berryPos) << "hunger targets the edible source, not the nearer stick bush";
 		if (level.preemptsWork) {
@@ -2801,8 +2803,9 @@ namespace ecs::test {
 	}
 
 	INSTANTIATE_TEST_SUITE_P(
-		HungerLevels, HungerEdibleSourceTest,
-		::testing::Values(HungerLevelCase{5.0F, 2, true}, HungerLevelCase{40.0F, 5, false})
+		HungerLevels,
+		HungerEdibleSourceTest,
+		::testing::Values(HungerLevelCase{5.0F, "critical_need", true}, HungerLevelCase{40.0F, "ordinary_need", false})
 	);
 
 	// Knowing only harvestables that aren't food is the one case a hungry colonist has no source:
@@ -2855,7 +2858,7 @@ namespace ecs::test {
 		addKnownEntity(colonist, regrowingSticks, stickBushId, assets::CapabilityType::Harvestable);
 		addKnownEntity(colonist, readySticks, stickBushId, assets::CapabilityType::Harvestable);
 
-		// A work order wanting sticks, so a tier-4 Harvest outranks the tier-5 hunger.
+		// A work order wanting sticks, so a committed_work Harvest outranks the ordinary_need hunger.
 		const auto station = world->createEntity();
 		world->addComponent<Position>(station, Position{{0.0F, 0.0F}});
 		makeStationNeed(station, "WorkStick", 2);
@@ -3026,7 +3029,7 @@ namespace ecs::test {
 		void SetUp() override {
 			world = std::make_unique<World>();
 
-			// Task selection here depends on the per-task tier table, so load the shipped tuning rather
+			// Task selection here depends on the ladder, so load the shipped tuning rather
 			// than what an earlier suite left in the PriorityConfig singleton.
 			ASSERT_TRUE(loadShippedPriorityConfig());
 
@@ -3044,8 +3047,8 @@ namespace ecs::test {
 			// Register BOTH systems to test their interaction
 			// This is critical - the bug only manifests when both systems run
 			auto& recipeRegistry = assets::RecipeRegistry::Get();
-			world->registerSystem<AIDecisionSystem>(registry, recipeRegistry, kTestRngSeed);
-			world->registerSystem<ActionSystem>(kTestRngSeed);
+			world->registerSystem<AIDecisionSystem>(registry, recipeRegistry, ecs::testing::shippedActions(), kTestRngSeed);
+			world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		}
 
 		void TearDown() override {
@@ -3293,12 +3296,11 @@ namespace ecs::test {
 	// ========================================================================
 
 	TEST_F(AIDecisionSystemTest, ChainHasNoScoreTermOnlyTierClassification) {
-		// A mid-chain provisioning task is a tier-4 classification (servesActiveWorkOrder), with no
-		// score term of its own. The
-		// AvailableWorkOrderHaulClassifiesTier4 / ...Tier6 integration tests below exercise that
-		// classification end-to-end through a real trace; this unit test pins the score side: the
+		// A mid-chain provisioning task is a committed_work classification (servesActiveWorkOrder), with no
+		// score term of its own. WorkOrderHarvestClassifiesCommittedWork and
+		// StockingHarvestClassifiesOpportunisticWork exercise that classification end-to-end through a real trace; this unit test pins the score side: the
 		// within-tier score is composed ONLY of distanceFactor + skill + age + hysteresis, with no
-		// hidden +2000 chain term, so a far provisioning haul cannot swamp a near one inside tier 4.
+		// hidden +2000 chain term, so a far provisioning haul cannot swamp a near one inside committed_work.
 		EvaluatedOption provisioningHaul;
 		provisioningHaul.taskType = TaskType::Haul;
 		provisioningHaul.status = OptionStatus::Available;
@@ -3344,8 +3346,8 @@ namespace ecs::test {
 
 	// Chain-interruption stowing drives the real AIDecisionSystem::handleChainInterruption,
 	// not a stand-in. A freed one-hand tool goes belt -> backpack -> drop, in that order. The
-	// handler only proceeds when the NEW task's first action needs hands, so each test seeds the
-	// ActionTypeRegistry with a hands-needing action and drives a Harvest interruption.
+	// handler only proceeds when the NEW task's first action needs hands, so each test drives an
+	// interruption by a task whose first action's entry needs free hands, as the shipped harvest's does.
 	class ChainInterruptionFixture : public AIDecisionSystemTest {
 	  protected:
 		// Register a 1-hand Axe tool and ensure the new task's first action (Harvest) needs hands.
@@ -3373,11 +3375,6 @@ namespace ecs::test {
 			stickDef.itemProperties->massKg = 0.5F;
 			registry.registerTestDefinition(std::move(stickDef));
 
-			assets::ActionTypeDef harvestAction;
-			harvestAction.defName = "Harvest";
-			harvestAction.needsHands = true;
-			assets::ActionTypeRegistry::Get().registerTestAction(std::move(harvestAction));
-
 			// Capture drops through the real callback the handler fires.
 			world->getSystem<AIDecisionSystem>().setDropResourceCallback(
 				[this](const std::string& defName, float /*x*/, float /*y*/, uint32_t quantity, glm::vec2) {
@@ -3393,11 +3390,6 @@ namespace ecs::test {
 		uint32_t	droppedQty = 0;
 		uint32_t	droppedTotal = 0;
 		int			dropCalls = 0;
-
-		void TearDown() override {
-			assets::ActionTypeRegistry::Get().clear();
-			AIDecisionSystemTest::TearDown();
-		}
 
 		// Put the colonist mid-Haul, holding the Axe in one hand (chainStep=1).
 		Task* armMidHaulCarryingAxe(EntityID colonist) {
@@ -3445,10 +3437,6 @@ namespace ecs::test {
 	// A switch to Build reads Build's own action, which needs the hands: the carried item is stowed as for
 	// any other hands-on work, not kept in hand on an unknown action.
 	TEST_F(ChainInterruptionFixture, ASwitchToBuildFreesTheHands) {
-		assets::ActionTypeDef buildAction;
-		buildAction.defName = "Build";
-		buildAction.needsHands = true;
-		assets::ActionTypeRegistry::Get().registerTestAction(std::move(buildAction));
 		auto  colonist = createColonist({5.0F, 5.0F});
 		auto* inventory = world->getComponent<Inventory>(colonist);
 		inventory->pickUp("Axe", 1);
@@ -3607,47 +3595,15 @@ namespace ecs::test {
 		EXPECT_EQ(droppedQty, 14U);
 	}
 
-	TEST_F(AIDecisionSystemTest, TaskFirstActionNeedsHandsMapping) {
-		// Unit test: Verify ActionTypeRegistry returns expected needsHands values.
-		// The getFirstActionDefName() helper maps TaskType→ActionDefName, and
-		// ActionTypeRegistry provides the needsHands property from XML config.
-
-		auto& actionRegistry = assets::ActionTypeRegistry::Get();
-
-		// Check if action types are loaded (they should be from game config)
-		// If not loaded in test environment, we verify the registry API works
-		if (actionRegistry.size() == 0) {
-			// Registry not loaded - just verify the API exists and doesn't crash
-			// The actual values are tested in WorkConfig.test.cpp
-			EXPECT_FALSE(actionRegistry.actionNeedsHands("NonExistent"));
-			return;
-		}
-
-		// If registry is loaded, verify expected mappings from action-types.xml:
-		// - Pickup: needsHands=true (picking up items)
-		// - Craft: needsHands=true (crafting actions)
-		// - Harvest: needsHands=true (gathering actions)
-		// - Sleep: needsHands=false (sleeping doesn't need hands)
-		// - Wander: needsHands=false (walking around)
-		// - Toilet: needsHands=false (using toilet)
-		// - Eat: needsHands=true (eating food)
-
-		if (actionRegistry.hasAction("Pickup")) {
-			EXPECT_TRUE(actionRegistry.actionNeedsHands("Pickup"))
-			    << "Pickup action should need hands";
-		}
-		if (actionRegistry.hasAction("Sleep")) {
-			EXPECT_FALSE(actionRegistry.actionNeedsHands("Sleep"))
-			    << "Sleep action should NOT need hands";
-		}
-		if (actionRegistry.hasAction("Wander")) {
-			EXPECT_FALSE(actionRegistry.actionNeedsHands("Wander"))
-			    << "Wander action should NOT need hands";
-		}
-		if (actionRegistry.hasAction("Eat")) {
-			EXPECT_TRUE(actionRegistry.actionNeedsHands("Eat"))
-			    << "Eat action should need hands";
-		}
+	TEST_F(AIDecisionSystemTest, TheShippedActionEntriesSayWhichNeedFreeHands) {
+		// The hands rule reads whether a task's first action needs free hands from that action's entry.
+		const ActionEntries& actions = ecs::testing::shippedActions();
+		EXPECT_TRUE(actions.pickup.freeHands) << "Pickup action should need hands";
+		EXPECT_TRUE(actions.craft.freeHands) << "Craft action should need hands";
+		EXPECT_TRUE(actions.harvest.freeHands) << "Harvest action should need hands";
+		EXPECT_FALSE(actions.sleep.freeHands) << "Sleep action should NOT need hands";
+		EXPECT_FALSE(actions.urinate.freeHands) << "Relieving should NOT need hands";
+		EXPECT_TRUE(actions.eat.freeHands) << "Eat action should need hands";
 	}
 
 	// =============================================================================
@@ -3853,7 +3809,7 @@ namespace ecs::test {
 		ballast.itemProperties->stackSize = 40;
 		ballast.itemProperties->massKg = 1.5F;
 		registry.registerTestDefinition(std::move(ballast));
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 
 		auto colonist = createColonist({0.0F, 0.0F});
 		world->addComponent<Action>(colonist, Action{});
@@ -5098,7 +5054,7 @@ namespace ecs::test {
 	  protected:
 		void SetUp() override {
 			AIDecisionFirstMeshTest::SetUp();
-			world->registerSystem<ActionSystem>(kTestRngSeed);
+			world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		}
 
 		[[nodiscard]] world::ChunkManager* chunkRegion() const override { return slidePondChunks(); }
@@ -5264,7 +5220,7 @@ namespace ecs::test {
 		for (int i = 0; i < 200 && action->isActive(); ++i) {
 			world->update(kTick);
 		}
-		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Hygiene).value, Action::kWashHygieneRestored);
+		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Hygiene).value, 100.0F);
 		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Thirst).value, 100.0F) << "washing is not drinking";
 		EXPECT_FLOAT_EQ(getNeeds(colonist)->get(NeedType::Bladder).value, 100.0F) << "washing fills no bladder";
 	}
@@ -5494,7 +5450,7 @@ namespace ecs::test {
 	// who has seen nothing yet sees the river, chooses a shore point, walks to the bank and drinks there.
 	TEST_F(AIDecisionRiverTest, ThirstyColonistDrinksAtAShorePointVisionRecorded) {
 		world->registerSystem<TimeSystem>();
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		auto& vision = world->registerSystem<VisionSystem>();
 		vision.setChunkManager(twoRiverChunks());
 		vision.setUpdateInterval(1);
@@ -6329,7 +6285,7 @@ namespace ecs::test {
 		// And ActionSystem works them; a completed wall is built in the topology, as GameScene's callback does.
 		void runConstruction() {
 			runConstructionSystem();
-			auto& actions = world->registerSystem<ActionSystem>(kTestRngSeed);
+			auto& actions = world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 			actions.setConstructionWorld(&construction);
 			actions.setStructureCompletedCallback([this](EntityID blueprint) {
 				construction.setSegmentState(world->getComponent<Structure>(blueprint)->graphId, construction::FoundationState::Built);
@@ -6819,7 +6775,7 @@ namespace ecs::test {
 		void SetUp() override {
 			AIDecisionFirstMeshTest::SetUp();
 			world->registerSystem<TimeSystem>();
-			world->registerSystem<ActionSystem>(kTestRngSeed);
+			world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 			world->getSystem<ActionSystem>().setTakeSourceCallback(
 				[this](const std::string& defName, float x, float y, ActionSystem::SourceTake take, float seconds) {
 					return takeWorldSource(trees, *world, pendingRemoval, defName, {x, y}, take, seconds);
@@ -6961,7 +6917,7 @@ namespace ecs::test {
 			return colonist;
 		}
 
-		// A station at `at` whose job needs berries, so a cut of a berry tree is wanted (tier 4).
+		// A station at `at` whose job needs berries, so a cut of a berry tree is wanted (committed_work).
 		EntityID addCutFor(glm::vec2 at) {
 			GoalTaskRegistry::Get().clear();
 			const EntityID station = world->createEntity();
@@ -7945,7 +7901,7 @@ namespace ecs::test {
 	// knows, its only end 60 m east. The task survives the detour (one decision) and he drinks.
 	TEST_F(AIDecisionWallTest, NeedSurvivesADetourFarFromItsTarget) {
 		world->registerSystem<TimeSystem>();
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		assets::AssetDefinition water;
 		water.defName = "Water";
 		water.label	  = "Water";
@@ -8113,7 +8069,7 @@ namespace ecs::test {
 	// water and drinks.
 	TEST_F(AIDecisionFirstMeshTest, WaterInGroundNothingLoadsIsNeverChosen) {
 		world->registerSystem<TimeSystem>();
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		assets::AssetDefinition water;
 		water.defName = "Water";
 		water.label	  = "Water";
@@ -8148,7 +8104,7 @@ namespace ecs::test {
 	// walks and drinks.
 	TEST_F(AIDecisionArrivingGroundTest, WaterBeyondMeshedGroundIsNotAskedForUntilItsGroundLands) {
 		world->registerSystem<TimeSystem>();
-		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		assets::AssetDefinition water;
 		water.defName = "Water";
 		water.label	  = "Water";
@@ -8186,7 +8142,7 @@ namespace ecs::test {
 	  protected:
 		int targetChangesWalkingToWater(bool groundLandsElsewhere) {
 			world->registerSystem<TimeSystem>();
-			world->registerSystem<ActionSystem>(kTestRngSeed);
+			world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 			assets::AssetDefinition water;
 			water.defName = "Water";
 			water.label	  = "Water";
@@ -8246,7 +8202,7 @@ namespace ecs::test {
 		void SetUp() override {
 			AIDecisionFirstMeshTest::SetUp();
 			world->registerSystem<TimeSystem>();
-			world->registerSystem<ActionSystem>(kTestRngSeed);
+			world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 			assets::AssetDefinition stone;
 			stone.defName					= "Stone";
 			stone.label						= "Stone";
@@ -8965,7 +8921,7 @@ namespace ecs::test {
 		const auto lookupsForOneDecision = [&](int perKind) {
 			GoalTaskRegistry::Get().clear();
 			world = std::make_unique<World>();
-			world->registerSystem<AIDecisionSystem>(registry, assets::RecipeRegistry::Get(), kTestRngSeed);
+			world->registerSystem<AIDecisionSystem>(registry, assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), kTestRngSeed);
 
 			makeStockingHarvest({0.0F, 8.0F}, "Wood");
 			const glm::vec2 highPos{8.0F, 0.0F};

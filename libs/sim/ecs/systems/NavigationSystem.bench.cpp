@@ -806,7 +806,9 @@ namespace {
 		}
 		for (auto _ : state) {
 			Rig					   rig(state.range(0));
-			ecs::AIDecisionSystem& ai = rig.world.registerSystem<ecs::AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234U);
+			ecs::AIDecisionSystem& ai = rig.world.registerSystem<ecs::AIDecisionSystem>(
+				assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), 1234U
+			);
 			ai.setNavigationSystem(&rig.nav);
 			rig.world.registerSystem<ecs::MovementSystem>();
 			rig.world.registerSystem<ecs::PhysicsSystem>();
@@ -927,7 +929,9 @@ namespace {
 		}
 		for (auto _ : state) {
 			Rig					   rig(0);
-			ecs::AIDecisionSystem& ai = rig.world.registerSystem<ecs::AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234U);
+			ecs::AIDecisionSystem& ai = rig.world.registerSystem<ecs::AIDecisionSystem>(
+				assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), 1234U
+			);
 			ai.setNavigationSystem(&rig.nav);
 			colony(rig);
 			const ecs::EntityID e = rig.world.createEntity();

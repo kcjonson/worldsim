@@ -11,6 +11,7 @@
 #include <array>
 #include <cstdlib>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 
@@ -179,18 +180,22 @@ class SourceChoices {
 	std::uint8_t						count = 0;
 };
 
-/// Task types that colonists can perform. Arbitration tiers (assigned in priority-tuning.xml's
-/// <TaskTiers> + classifyTier promotions): see colonist-task-arbitration.md.
+/// The tier of a task, an option, or a claim holder nothing has ranked: past every ladder position (the ladder holds
+/// at most 255 rungs). A task reads it as the idle rung (Task::rankedTier); an option is never compared with it.
+inline constexpr uint8_t kUnrankedTier = std::numeric_limits<uint8_t>::max();
+
+/// Task types that colonists can perform. The rung each is ranked on (AIDecisionSystem's classifyTier):
+/// see colonist-task-arbitration.md.
 enum class TaskType : uint8_t {
 	None = 0,
-	FulfillNeed,   // Need fulfillment: tier 2 (critical), 5 (actionable), or 7 (gathering food)
-	Harvest,	   // Harvesting resources: tier 4 if serving a work order, else 6 (opportunistic)
-	Craft,		   // Crafting at a station: tier 4 (active work order)
-	Haul,		   // Moving loose items to storage: tier 4 if serving a work order, else 6
-	PlacePackaged, // Carrying packaged items to placement: tier 4 if serving/carrying, else 6
-	Build,		   // Advancing construction on a blueprint: tier 4 (active work order)
-	Deconstruct,   // Tearing down a structure: tier 4 (active work order)
-	Wander		   // Random exploration: tier 7 (idle)
+	FulfillNeed,   // Need fulfillment: critical_need, ordinary_need, or idle (gathering food)
+	Harvest,	   // Harvesting resources: committed_work if serving a work order, else opportunistic_work
+	Craft,		   // Crafting at a station: committed_work
+	Haul,		   // Moving loose items to storage: committed_work if serving a work order, else opportunistic_work
+	PlacePackaged, // Carrying packaged items to placement: committed_work if serving/carrying, else opportunistic_work
+	Build,		   // Advancing construction on a blueprint: committed_work
+	Deconstruct,   // Tearing down a structure: committed_work
+	Wander		   // Random exploration: idle
 };
 
 /// Task state machine
@@ -314,8 +319,8 @@ struct Task {
 	glm::vec2 placeTargetPosition{0.0F, 0.0F};	   // Where to place it (from Packaged.targetPosition)
 
 	/// Step within a two-leg chain (Haul pickup then deposit, PlacePackaged pickup then place): 0 on
-	/// the first leg, 1 once the goods are in hand. A mid-chain provisioning task is classified at
-	/// tier 4 in the (tier, score) arbitration (see colonist-task-arbitration.md).
+	/// the first leg, 1 once the goods are in hand. A mid-chain provisioning task is classified on
+	/// committed_work in the (tier, score) arbitration (see colonist-task-arbitration.md).
 	uint8_t chainStep = 0;
 
 	/// Time since last decision re-evaluation (seconds)
@@ -332,13 +337,16 @@ struct Task {
 	/// clear(), like the timer.
 	bool routeFailureDecided = false;
 
-	/// Arbitration tier of this task when selected (lower = higher priority). Paired with `priority`
-	/// (the within-tier score) to form the (tier, score) key. The action-interruption gate is
-	/// tier-only: a strictly higher-tier challenger interrupts, a same-tier (or lower) challenger
-	/// does not. The anti-thrash margin is NOT re-applied here; it already lives in the score at
-	/// selection (the in-progress option carries the hysteresis bonus), so re-checking it at the
-	/// gate would double-count.
-	int priorityTier = 7;
+	/// Arbitration tier of this task when selected: its rung's position in the ladder (lower = higher
+	/// priority), kUnrankedTier until the decision ranks it. Paired with `priority` (the within-tier score)
+	/// to form the (tier, score) key. The action-interruption gate is tier-only: a strictly higher-tier
+	/// challenger interrupts, a same-tier (or lower) challenger does not. The anti-thrash margin is NOT
+	/// re-applied here; it already lives in the score at selection (the in-progress option carries the
+	/// hysteresis bonus), so re-checking it at the gate would double-count.
+	uint8_t priorityTier = kUnrankedTier;
+
+	/// The tier the task ranks at: a task the decision has not ranked ranks on the idle rung.
+	[[nodiscard]] uint8_t rankedTier(uint8_t idleRung) const { return priorityTier == kUnrankedTier ? idleRung : priorityTier; }
 
 	/// Within-tier score when this task was selected (used for the same-tier switch threshold).
 	float priority = 0.0F;
@@ -411,7 +419,7 @@ struct Task {
 		placeSourcePosition = glm::vec2{0.0F, 0.0F};
 		placeTargetPosition = glm::vec2{0.0F, 0.0F};
 		chainStep = 0;
-		priorityTier = 7;
+		priorityTier = kUnrankedTier;
 		priority = 0.0F;
 		// Note: timeSinceEvaluation NOT reset here - caller handles timer logic
 		reason.clear();

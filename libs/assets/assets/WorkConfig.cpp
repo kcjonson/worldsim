@@ -1,6 +1,5 @@
 #include "assets/WorkConfig.h"
 
-#include "assets/ActionTypeRegistry.h"
 #include "assets/ConfigFiles.h"
 #include "assets/ConfigValidator.h"
 #include "assets/ConstructionRegistry.h"
@@ -16,7 +15,6 @@ namespace assets {
 	std::vector<std::string> loadWorkConfig(const std::filesystem::path& configRoot, const CreatureConfigFiles& human) {
 		assert(human.errors.empty() && "loadWorkConfig takes a human folder with no errors; its errors are the load's");
 		assert(human.mood.size() == 1 && human.memory.size() == 1 && "loadWorkConfig reads the human's one <Mood> and one <Memory> file");
-		ActionTypeRegistry::Get().clear();
 		WorkTypeRegistry::Get().clear();
 		PriorityConfig::Get().clear();
 		ConstructionRegistry::Get().clear();
@@ -30,11 +28,6 @@ namespace assets {
 			}
 			return std::vector<std::string>{"Failed to load " + file.generic_string()};
 		};
-
-		const std::filesystem::path actionTypes = "legacy/action-types.xml";
-		if (!ActionTypeRegistry::Get().loadFromFile(configRoot, actionTypes)) {
-			return loadFailure(actionTypes, ActionTypeRegistry::Get().problems());
-		}
 
 		const std::filesystem::path workTypes = "legacy/work-types.xml";
 		if (!WorkTypeRegistry::Get().loadFromFile(configRoot, workTypes)) {
@@ -66,16 +59,14 @@ namespace assets {
 			return problems;
 		}
 
-		// Every task type the AI can evaluate must have an explicit arbitration tier, or the
-		// (tier, score) ordering would put a new type in an unintended tier. Fail loud instead.
-		const std::vector<std::string> requiredTaskTiers(kTaskTypeNames.begin(), kTaskTypeNames.end());
-		std::vector<std::string>	   missingTiers;
-		if (!PriorityConfig::Get().validateTaskTiers(requiredTaskTiers, missingTiers)) {
-			std::string joined;
-			for (const auto& name : missingTiers) {
-				joined += (joined.empty() ? "" : ", ") + name;
+		// The decision ranks every option on a rung it names; a ladder without one of them, or with them out of order,
+		// never reaches play.
+		if (!PriorityConfig::Get().decisionRungProblems().empty()) {
+			std::vector<std::string> problems = PriorityConfig::Get().decisionRungProblems();
+			for (std::string& problem : problems) {
+				problem.insert(0, "[arbitration] ");
 			}
-			return {"[arbitration] " + priorityTuning.generic_string() + " is missing an arbitration tier for task type(s): " + joined};
+			return problems;
 		}
 
 		const std::filesystem::path construction = "construction";

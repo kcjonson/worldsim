@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- human/relieving. See /docs/technical/queries-and-chains.md (The human behaviors). -->
+<behavior id="relieving" label="Relieving self">
+  <action id="urinate" seconds="2" hands="any" interruptable="false">
+    <restore need="bladder" amount="100"/>
+  </action>
+  <action id="defecate" seconds="4" hands="any" interruptable="false">
+    <restore need="digestion" amount="100"/>
+    <spawn def="Misc_BioPile"/>
+  </action>
+  <action id="relieve_both" seconds="5" hands="any" interruptable="false">
+    <restore need="bladder" amount="100"/>
+    <restore need="digestion" amount="100"/>
+    <spawn def="Misc_BioPile"/>
+  </action>
+</behavior>

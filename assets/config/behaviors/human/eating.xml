@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- human/eating. See /docs/technical/queries-and-chains.md (The human behaviors). -->
+<behavior id="eating" label="Eating">
+  <action id="eat" seconds="2" hands="free" interruptable="false">
+    <consume capability="edible" count="1"/>
+    <restore need="hunger" from="nutrition" scale="100"/>
+    <restore need="digestion" from="nutrition" scale="-100"/>
+  </action>
+</behavior>

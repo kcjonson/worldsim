@@ -4,13 +4,16 @@
   Tunable weights for task priority calculations.
 
   AI ARBITRATION uses a lexicographic (tier, score) key (see colonist-task-arbitration.md):
-    - tier (TaskTiers below): categorical, compared first. Lower number = higher priority.
-      Runtime classifiers promote specific options (critical need -> 2, serves-work-order -> 4).
+    - tier: the position of the option's rung in the ladder below, compared first. A higher rung
+      outranks a lower one.
     - score = distanceFactor + skillBonus + taskAgeBonus + hysteresisBonus, compared only WITHIN
-      a tier. It can never lift an option across a tier boundary.
+      a rung. It can never lift an option across a rung.
 
   The ladder is the rungs in order, highest first; an entry names a rung, never a tier number
   (see /docs/technical/queries-and-chains.md, Rungs). survival is reserved and no entry names it.
+  The decision ranks options on critical_need, committed_work, ordinary_need, opportunistic_work,
+  and idle, so a ladder without one of them, or with them out of that order, fails the load. Other
+  rungs may sit anywhere among them. The ladder holds at most 255 rungs.
 
   See /docs/design/game-systems/colonists/priority-config.md for details.
 -->
@@ -27,24 +30,6 @@
     <rung name="opportunistic_work"/>
     <rung name="idle"/>
   </ladder>
-
-  <!--
-    AI arbitration tiers, per task type. Lower number = higher priority; tier is compared before
-    score. These are BASE tiers; AIDecisionSystem promotes specific options at runtime:
-      FulfillNeed: needValue<10% -> 2 (critical); gather-food sentinel -> 7; else stays 5.
-      Haul/Harvest/PlacePackaged: serving an active work order (or carrying) -> 4; else stays 6.
-    Every task type the engine can evaluate MUST have an entry here or load fails (validateTaskTiers).
-  -->
-  <TaskTiers>
-    <Task name="FulfillNeed" tier="5"/>
-    <Task name="Craft" tier="4"/>
-    <Task name="Build" tier="4"/>
-    <Task name="Deconstruct" tier="4"/>
-    <Task name="Haul" tier="6"/>
-    <Task name="Harvest" tier="6"/>
-    <Task name="PlacePackaged" tier="6"/>
-    <Task name="Wander" tier="7"/>
-  </TaskTiers>
 
   <!-- Work category tier ordering (for simple mode) -->
   <WorkCategoryOrder>
@@ -82,11 +67,11 @@
       <maxBonus>100</maxBonus>
     </TaskAge>
 
-    <!-- Storage priority: within-tier (tier 6) ordering of storage-stocking hauls by the
+    <!-- Storage priority: ordering of storage-stocking hauls within opportunistic_work by the
          destination box's per-item priority (Low..Critical, ranked 0..3). The within-tier score
          gains rank * weight, so a higher-priority box wins even when farther. Set to the distance
-         factor's max (300) so storage priority DOMINATES distance within tier 6. Tier is compared
-         first, so this can never preempt a tier-5 need or tier-4 work order. -->
+         factor's max (300) so storage priority DOMINATES distance within that rung. The rung is
+         compared first, so this can never preempt an ordinary need or committed work. -->
     <StoragePriority>
       <weight>300</weight>
     </StoragePriority>

@@ -228,6 +228,7 @@ namespace ecs {
 			const auto targetEntity = static_cast<EntityID>(task.haulDestinationId);
 			const bool targetIsCraftStation = world->hasComponent<WorkQueue>(targetEntity);
 			action = Action::Deposit(
+				actionEntries,
 				haulItem,
 				task.haulQuantity,
 				task.haulDestinationId,
@@ -292,7 +293,7 @@ namespace ecs {
 					action.clear();
 					return;
 				}
-				action = Action::Withdraw(haulItem, task.haulQuantity, task.haulSourceStorageId, task.haulSourcePosition);
+				action = Action::Withdraw(actionEntries, haulItem, task.haulQuantity, task.haulSourceStorageId, task.haulSourcePosition);
 				LOG_DEBUG(
 					Engine,
 					"[Action] Haul phase 1: Withdraw %u x %s from box %llu at (%.1f, %.1f)",
@@ -318,7 +319,7 @@ namespace ecs {
 					// loose item is capped to its own carryable count (applyCollectionEffect). A harvest
 					// instead takes all it can carry, so freshly cut goods aren't stranded at a far tree.
 					const uint32_t pickupQty = pickupPending ? sourceClaim->quantity() : task.haulQuantity;
-					action = Action::Pickup(defName, pickupQty, entity->position, defName);
+					action = Action::Pickup(actionEntries, defName, pickupQty, entity->position, defName);
 					LOG_DEBUG(
 						Engine,
 						"[Action] Haul phase 1: Pickup %u x %s at (%.1f, %.1f)",
@@ -369,6 +370,7 @@ namespace ecs {
 			claimsToDeliveryLeg(task, cargoHeld);
 			const bool toCraftStation = world->hasComponent<WorkQueue>(storageEntity);
 			action = Action::Deposit(
+				actionEntries,
 				haulItem,
 				task.haulQuantity,
 				task.haulDestinationId,
@@ -436,7 +438,7 @@ namespace ecs {
 
 		if (atSource && !atTarget && !alreadyCarrying) {
 			// Phase 1: At source and not yet carrying - do PickupPackaged
-			action = Action::PickupPackaged(task.placePackagedEntityId, task.placeSourcePosition);
+			action = Action::PickupPackaged(actionEntries, task.placePackagedEntityId, task.placeSourcePosition);
 			LOG_DEBUG(
 				Engine,
 				"[Action] PlacePackaged phase 1: PickupPackaged entity %llu at (%.1f, %.1f)",
@@ -448,7 +450,7 @@ namespace ecs {
 			// Phase 2: At target OR already carrying - do PlacePackaged
 			// If already carrying but not at target, this will still start the action
 			// (movement system should get us to target)
-			action = Action::PlacePackaged(task.placePackagedEntityId, task.placeTargetPosition);
+			action = Action::PlacePackaged(actionEntries, task.placePackagedEntityId, task.placeTargetPosition);
 			LOG_DEBUG(
 				Engine,
 				"[Action] PlacePackaged phase 2: PlacePackaged entity %llu at (%.1f, %.1f)%s",
@@ -464,7 +466,7 @@ namespace ecs {
 				Engine,
 				"[Action] PlacePackaged: not at source or target, defaulting to phase 1 (pickup)"
 			);
-			action = Action::PickupPackaged(task.placePackagedEntityId, task.placeSourcePosition);
+			action = Action::PickupPackaged(actionEntries, task.placePackagedEntityId, task.placeSourcePosition);
 		}
 	}
 
