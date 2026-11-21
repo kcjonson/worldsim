@@ -202,8 +202,4 @@ namespace assets {
 		ValidationReport& report
 	);
 
-	/// The height of a def's body top, which sight and sorting read: a parts item's tallest part top, a simple
-	/// def's worldHeight; none for a procedural def, which counts as tall.
-	[[nodiscard]] std::optional<float> bodyHeightMeters(const AssetDefinition& def);
-
 } // namespace assets

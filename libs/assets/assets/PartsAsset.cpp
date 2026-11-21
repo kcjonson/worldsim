@@ -1378,16 +1378,4 @@ namespace assets {
 		return resolved;
 	}
 
-	std::optional<float> bodyHeightMeters(const AssetDefinition& def) {
-		switch (def.assetType) {
-			case AssetType::Parts:
-				return def.parts != nullptr ? def.parts->bodyTopMeters : 0.0F;
-			case AssetType::Simple:
-				return def.worldHeight;
-			case AssetType::Procedural:
-				return std::nullopt;
-		}
-		return std::nullopt;
-	}
-
 } // namespace assets

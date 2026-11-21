@@ -5,6 +5,7 @@
 
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
+#include <assets/PartsAsset.h>
 
 #include <visibility/ForestShape.h>
 #include <visibility/SightClip.h>
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <memory>
 #include <numbers>
 #include <span>
 #include <vector>
@@ -244,6 +246,22 @@ TEST(SightHeight, ABodyReachesTheEyeFromItsDefsHeight) {
 	procedural.worldHeight = 0.5F;
 	EXPECT_FALSE(vision::bodyTopMm(procedural).has_value()) << "its generator draws to its own size";
 	EXPECT_TRUE(vision::reachesEyeHeight(procedural)) << "a tree trunk stays a sight body";
+}
+
+// A parts item's body top is its tallest part top: a workbench is low, a tall cabinet reaches the eye, and
+// an item of flat parts only (a crafting spot) has no body to see over.
+TEST(SightHeight, APartsItemReachesTheEyeByItsTallestPart) {
+	const auto parts = [](float bodyTopMeters) {
+		assets::AssetDefinition def;
+		def.assetType = assets::AssetType::Parts;
+		def.parts	  = std::make_shared<const assets::PartsAsset>(assets::PartsAsset{.bodyTopMeters = bodyTopMeters});
+		return def;
+	};
+	EXPECT_EQ(vision::bodyTopMm(parts(0.8F)), 800);
+	EXPECT_FALSE(vision::reachesEyeHeight(parts(0.8F)));
+	EXPECT_TRUE(vision::reachesEyeHeight(parts(2.0F)));
+	EXPECT_EQ(vision::bodyTopMm(parts(0.0F)), 0) << "flat parts only";
+	EXPECT_FALSE(vision::reachesEyeHeight(parts(0.0F)));
 }
 
 // The shipped defs: a BigRock is low, a TestTallBox and an oak reach the eye.

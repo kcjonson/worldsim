@@ -162,7 +162,6 @@ TEST_F(PartsAssetTest, TheWorkbenchLoadsIntoPartsDrawingsAreasAndACollider) {
 	EXPECT_EQ(parts.placements.size(), 4U);
 	EXPECT_EQ(parts.drawings.size(), 12U) << "twelve drawings: three tops and nine sides";
 	EXPECT_FLOAT_EQ(parts.bodyTopMeters, 1.0F) << "the toolbox's top";
-	EXPECT_EQ(bodyHeightMeters(*def), std::optional<float>(1.0F));
 
 	// The carcass's faces run back, right, front, left; its ends share one drawing.
 	const PartDefinition& carcass = parts.parts[0];
