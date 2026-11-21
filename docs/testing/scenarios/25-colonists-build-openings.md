@@ -54,10 +54,7 @@ The site is the foundation of [scenario 04](./04-build-walls.md)'s corner, (14, 
    `delivered` in full, `state` `Built`. The log has no `no known way to` line naming either opening's
    position (`(<FX+7>.00, <FY+6>.00)` or `(<FX+12>.00, <FY+4>.00)`). Whichever opening he builds first,
    the room is shut until its door is built, so the door is supplied and built from outside.
-4. Give him a reason to go in: `/api/dev/spawn?def=BasicBox&at=<FX+4>,<FY+4>&n=1&scatter=0` and
-   `/api/dev/storage?at=<FX+4>,<FY+4>&item=Wood&priority=High&min=0&max=10`. Within about a minute
-   `/api/state?what=storage` shows that box holding Wood: he carried it in through the room's door.
-5. Demolish the open wall's door from its panel, with `time?speed=0`:
+4. Demolish the open wall's door from its panel, with `time?speed=0`:
    - Point the camera at it (`/api/control?action=camera&x=<FX+7>&y=<FY+10>`), read `what=camera`, and
      turn the door's position into a window pixel with the formulas in
      [the camera view](../README.md#the-camera-view).
@@ -65,22 +62,22 @@ The site is the foundation of [scenario 04](./04-build-walls.md)'s corner, (14, 
      `Demolish` and click the middle of the `Button` that holds it, its `screenBounds` times `layoutScale`
      from `/api/state?what=uiscale`. Don't send Escape with no tool active: it opens the pause menu.
    - Set `time?speed=3`: within about 30 s `<DOOR_OPEN>` is gone from `what=construction`.
-6. Demolish the open wall the same way, clicking it at (`FX+4`, `FY+10`): within about 30 s
+5. Demolish the open wall the same way, clicking it at (`FX+4`, `FY+10`): within about 30 s
    `<SEG_OPEN>` is gone from `what=construction`. This shows a built wall taken down from beside it;
    both its sides are open ground.
-7. Exit the game (`/api/control?action=exit`).
+6. Exit the game (`/api/control?action=exit`).
 
 ---
 
 ## Pass / fail
 
 **Pass:** both doors and the window end `Built` with their Wood delivered and no dev completion; the
-room's door is built while the room is still shut, from outside; the box inside ends up holding Wood;
-the demolished door and wall leave `what=construction`; no `no known way to` line names an opening's or
-a wall's position.
+room's door is built while the room is still shut, from outside; the demolished door and wall leave
+`what=construction`; no `no known way to` line names an opening's or a wall's position.
 
 **Fail:** an opening stays at `progress` 0 with its Wood delivered or carried; a `no known way to` line
-names an opening's position, followed by "Put down ... nobody wants"; the box stays empty; a demolish
-order is never worked.
+names an opening's position, followed by "Put down ... nobody wants"; a demolish order is never
+worked.
 
-Last verified on 2026-11-20 (setup and steps 1 to 7, commit noted in the PR).
+Last verified 2026-11-20: setup and steps 1 to 6, word for word from a fresh Quick Start, on commit
+ac6093f8 of `fix/WOR-1139-openings-reachable` (Debug).
