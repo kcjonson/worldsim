@@ -132,7 +132,6 @@ namespace assets {
 			return {current.position + (following.position - current.position) * along, mixed(current.color, following.color, along), kNone, kNone, Place::OnPlane};
 		}
 
-
 		/// Appends `source`'s triangles clipped to the intersection of `planes`. A triangle wholly inside keeps its
 		/// vertices (shared with its neighbours); a cut one is a convex piece fanned back into triangles, its colours
 		/// interpolated linearly along the cut edges.
@@ -146,12 +145,12 @@ namespace assets {
 				bool outside = false;
 				bool inside = true;
 				for (const HalfPlane& plane : planes) {
-					int in = 0;
+					int insideCount = 0;
 					for (const uint32_t index : corners) {
-						in += plane.distance(source.positions[index]) >= 0.0F ? 1 : 0;
+						insideCount += plane.distance(source.positions[index]) >= 0.0F ? 1 : 0;
 					}
-					outside = outside || in == 0;
-					inside = inside && in == 3;
+					outside = outside || insideCount == 0;
+					inside = inside && insideCount == 3;
 				}
 				if (outside) {
 					continue;
@@ -515,14 +514,17 @@ namespace assets {
 				if (footprints[placement].empty() || flatOnGround(part)) {
 					continue;
 				}
+				// The outline reaches pad past the footprint's x ends, and each band that reach meets takes the part's
+				// triangles there in its own strip, drawn in parts order with whatever covers that band.
 				const auto [lowest, highest] = xRangeOf(footprints[placement]);
 				for (size_t band = 0; band < bands.size(); ++band) {
-					const float from = band == 0 ? lowest : std::max(bands[band].minX, lowest);
-					const float to = band + 1 == bands.size() ? highest : std::min(bands[band].maxX, highest);
+					const float from = band == 0 ? lowest - pad : std::max(bands[band].minX, lowest - pad);
+					const float to = band + 1 == bands.size() ? highest + pad : std::min(bands[band].maxX, highest + pad);
 					if (to - from <= kNoOverlap || bands[band].intervals.empty()) {
 						continue;
 					}
-					const float x = (from + to) * 0.5F;
+					// Past the footprint's end, the interval its edge touches: the one nearest the footprint at its end.
+					const float x = std::clamp((from + to) * 0.5F, lowest, highest);
 					const auto [top, bottom] = ySpanAt(footprints[placement], x);
 					const float y = (top + bottom) * 0.5F;
 					size_t		best = 0;
@@ -608,26 +610,12 @@ namespace assets {
 			return runs;
 		}
 
-		/// Each run as a strip. A placement's consecutive bands in it are one piece; the first and last band take
-		/// everything beyond the collider, and a part's first and last piece reach its footprint's extent plus the
-		/// outline's half width, so an outline is never cut where a footprint ends on or near a band edge.
+		/// Each run as a strip. A placement's consecutive bands in it are one piece, cut at the band edges; the first and
+		/// last band take everything beyond the collider.
 		std::vector<ItemStrip> stripsOf(
 			const std::vector<Run>& runs, const std::vector<Band>& bands, const std::vector<std::vector<glm::vec2>>& footprints, const ViewConfig& config
 		) {
-			const float								  pad = config.outlineHalfWidthMeters();
-			std::map<uint32_t, std::pair<size_t, size_t>> placementBands; // each placement's first and last band
-			for (const Run& run : runs) {
-				for (const auto& [placement, runBands] : run.bandsByPlacement) {
-					const auto found = placementBands.find(placement);
-					const auto low = runBands.front();
-					const auto high = runBands.back();
-					if (found == placementBands.end()) {
-						placementBands.emplace(placement, std::make_pair(low, high));
-					} else {
-						found->second = {std::min(found->second.first, low), std::max(found->second.second, high)};
-					}
-				}
-			}
+			const float			   pad = config.outlineHalfWidthMeters();
 			std::vector<ItemStrip> strips;
 			for (const Run& run : runs) {
 				ItemStrip strip;
@@ -637,8 +625,6 @@ namespace assets {
 				strip.minY = run.minY;
 				strip.maxY = run.maxY;
 				for (const auto& [placement, runBands] : run.bandsByPlacement) {
-					const auto [extentMin, extentMax] = xRangeOf(footprints[placement]);
-					const auto [firstBand, lastBand] = placementBands.at(placement);
 					for (size_t i = 0; i < runBands.size();) {
 						size_t last = i;
 						while (last + 1 < runBands.size() && runBands[last + 1] == runBands[last] + 1) {
@@ -646,17 +632,20 @@ namespace assets {
 						}
 						const size_t from = runBands[i];
 						const size_t to = runBands[last];
-						StripPiece	 piece{.placement = placement, .minX = bands[from].minX, .maxX = bands[to].maxX};
-						if (from == 0) {
-							piece.minX = -kInfinity;
-						} else if (from == firstBand) {
-							piece.minX = std::min(piece.minX, extentMin - pad);
+						StripPiece	 piece{
+							  .placement = placement,
+							  .minX = from == 0 ? -kInfinity : bands[from].minX,
+							  .maxX = to + 1 == bands.size() ? kInfinity : bands[to].maxX
+						  };
+						// A band with no collider in it (a gap between two bodies) holds no strip, so the outline reaching
+						// into it stays with this piece: nothing but outlines reaching from either side is drawn there.
+						const auto [extentMin, extentMax] = xRangeOf(footprints[placement]);
+						if (from > 0 && bands[from - 1].intervals.empty()) {
+							piece.minX = std::max(bands[from - 1].minX, extentMin - pad);
 							strip.minX = std::min(strip.minX, piece.minX);
 						}
-						if (to + 1 == bands.size()) {
-							piece.maxX = kInfinity;
-						} else if (to == lastBand) {
-							piece.maxX = std::max(piece.maxX, extentMax + pad);
+						if (to + 1 < bands.size() && bands[to + 1].intervals.empty()) {
+							piece.maxX = std::min(bands[to + 1].maxX, extentMax + pad);
 							strip.maxX = std::max(strip.maxX, piece.maxX);
 						}
 						strip.pieces.push_back(piece);
