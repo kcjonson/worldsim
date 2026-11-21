@@ -133,15 +133,14 @@ namespace assets {
 
 	} // namespace
 
-	AttributeConfigLoad loadAttributeConfig(const std::filesystem::path& folder, std::span<const std::string_view> names) {
+	AttributeConfigLoad loadAttributeConfig(
+		const std::vector<std::filesystem::path>& files,
+		const std::filesystem::path&			  folder,
+		std::span<const std::string_view>		  names
+	) {
 		AttributeConfigLoad load;
-		const ConfigFiles	found = configFilesIn(folder);
-		if (found.error.has_value()) {
-			load.errors.push_back(*found.error);
-			return load;
-		}
-		Loader loader(names);
-		for (const std::filesystem::path& file : found.files) {
+		Loader				loader(names);
+		for (const std::filesystem::path& file : files) {
 			loader.loadFile(file, configFileName(file, folder));
 		}
 		loader.check();

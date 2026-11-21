@@ -81,7 +81,7 @@ namespace world_sim::testing {
 			ASSERT_NE(assets::AssetRegistry::Get().getDefinition("CraftingSpot"), nullptr);
 			ASSERT_GT(assets::RecipeRegistry::Get().size(), 0U);
 			ASSERT_TRUE(assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string()));
-			ASSERT_TRUE(assets::MoodConfig::Get().loadFromFile(projectRoot() / "assets" / "config", "colonists/mood.xml"));
+			ASSERT_TRUE(assets::MoodConfig::Get().loadFromFile(projectRoot() / "assets" / "world" / "creatures" / "Human", "mood.xml"));
 		}
 
 		static void TearDownTestSuite() {

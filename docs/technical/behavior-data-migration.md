@@ -13,14 +13,14 @@ All of it is on `main` and on this branch.
 
 - Needs: `NeedType` (eight values), `kNeedLabels`, `NeedsComponent` with a fixed array and
   `kActionableNeeds` (six, Wash included), decay rates as literals in
-  `libs/sim/ecs/components/Needs.cpp`, thresholds in `assets/config/colonists/needs/needs.xml` read by
-  `NeedLevels`, mood weights in `assets/config/colonists/mood.xml` (`<NeedWeights>`, an average). PR 506
+  `libs/sim/ecs/components/Needs.cpp`, thresholds in `assets/world/creatures/Human/needs.xml` read by
+  `NeedLevels`, mood weights in `assets/world/creatures/Human/mood.xml` (`<NeedWeights>`, an average). PR 506
   (WOR-1055) replaces the average with summed costs and ships each cost on the human's need entries in
   `needs.xml`, not in a `<NeedCosts>` block; the config-move ticket carries `needs.xml` into the human's
   folder, and the need-entries ticket turns each cost into a `<moodCost>` row of the human's definition.
 - The human: the asset folder `assets/world/creatures/Human/` (`Human.xml` with the `Human`,
-  `Human_up` and the other facing definitions, `biped.motion.xml`, the SVGs), and its config in
-  `assets/config/colonists/` (`mood.xml`, `memory.xml`, `traits/`, `attributes/`, `needs/`). Code names
+  `Human_up` and the other facing definitions, `biped.motion.xml`, the SVGs), and its config beside them,
+  found by root element (`mood.xml`, `memory.xml`, `traits.xml`, `attributes.xml`, `needs.xml`). Code names
   the definition `"Human"` in `GameScene.cpp` (the spawned `Appearance`), in `kinds.xml`
   (`<Kind name="colonist" mover="Human"/>`), and in the facing variants.
 - Options: `AIDecisionSystem.cpp` (about 4,000 lines). The needs loop with its hunger special case
@@ -59,7 +59,7 @@ All of it is on `main` and on this branch.
   `AIDecision.bench.cpp`. The tests hold about 310 `== TaskType::X` asserts and 104 hand assignments of
   `task.type`. `BM_WorkDecision` sets every need to 100, so no bench covers the needs path.
 - Scenarios: none covers sleep, relieving (and the bio pile), or the box-to-box pull. Scenario 19
-  names `colonists/needs/needs.xml` and its error text; scenario 21 expects Recreation and Temperature
+  names `creatures/Human/needs.xml` and its error text; scenario 21 expects Recreation and Temperature
   dimmed under Comfort.
 
 ## Rules for the move

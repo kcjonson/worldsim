@@ -284,7 +284,7 @@ namespace world_sim::testing {
 				for (std::size_t index = 0; index < kFailureMessageCount; ++index) {
 					messages.push_back(
 						std::format(
-							"[needs] assets/config/colonists/needs/needs-{}.xml: <Need name=\"Hunger\"> seek must be a number, got "
+							"[needs] needs-{}.xml: <Need name=\"Hunger\"> seek must be a number, got "
 							"\"abc\"; every threshold of a need is a number between 0 and 100, and a file with any error adds no "
 							"need, so each need it gave is missing too and named by the check that every need is given",
 							index

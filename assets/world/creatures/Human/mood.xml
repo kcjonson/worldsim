@@ -4,7 +4,7 @@
 
   Target mood = the needs score + every held thought's mood effect, clamped 0 to 100.
   Needs score = 100 - sum(cost x penalty), never below 0. Each need takes its own cost off, given on its
-  own <Need> in assets/config/colonists/needs; a met need gives no credit against one that is not.
+  own <Need> in needs.xml beside this file; a met need gives no credit against one that is not.
   Mood moves toward its target at up to pointsPerGameHour.
 -->
 <Mood>

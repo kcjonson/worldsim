@@ -2,6 +2,8 @@
 // and the mistakes the loader reports.
 
 #include "assets/NeedsConfig.h"
+#include "assets/ConfigFiles.h"
+#include "assets/CreatureConfigFiles.h"
 
 #include <gtest/gtest.h>
 
@@ -16,13 +18,15 @@ using namespace assets;
 
 namespace {
 
-	std::filesystem::path shippedNeeds() {
-		// <root>/libs/assets/assets/NeedsConfig.test.cpp -> <root>/assets/config/colonists/needs
-		return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "assets" / "config" / "colonists" /
-			   "needs";
+	CreatureConfigFiles shippedHuman() {
+		// <root>/libs/assets/assets/NeedsConfig.test.cpp -> <root>/assets/world/creatures/Human
+		return creatureConfigFiles(
+			std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "assets" / "world" / "creatures" /
+			"Human"
+		);
 	}
 
-	/// A fresh folder holding `body` as needs.xml and, when given, `laterBody` as mods/later.xml.
+	/// A fresh folder holding `body` as needs.xml and, when given, `laterBody` as z-later.xml, which loads after it.
 	class NeedsFolder {
 	  public:
 		explicit NeedsFolder(const std::string& body, const std::string& laterBody = {})
@@ -32,17 +36,17 @@ namespace {
 				   std::to_string(nextFolder++))
 			  ) {
 			std::filesystem::remove_all(folder);
-			std::filesystem::create_directories(folder / "mods");
+			std::filesystem::create_directories(folder);
 			std::ofstream(folder / "needs.xml") << body;
 			if (!laterBody.empty()) {
-				std::ofstream(folder / "mods" / "later.xml") << laterBody;
+				std::ofstream(folder / "z-later.xml") << laterBody;
 			}
 		}
 		~NeedsFolder() { std::filesystem::remove_all(folder); }
 		NeedsFolder(const NeedsFolder&) = delete;
 		NeedsFolder& operator=(const NeedsFolder&) = delete;
 
-		[[nodiscard]] NeedsConfigLoad load() const { return loadNeedsConfig(folder); }
+		[[nodiscard]] NeedsConfigLoad load() const { return loadNeedsConfig(configFilesIn(folder).files, folder); }
 
 		std::filesystem::path folder;
 
@@ -61,7 +65,9 @@ namespace {
 } // namespace
 
 TEST(NeedsConfig, TheShippedNeedsLoadClean) {
-	const NeedsConfigLoad load = loadNeedsConfig(shippedNeeds());
+	const CreatureConfigFiles human = shippedHuman();
+	ASSERT_TRUE(human.errors.empty()) << ::testing::PrintToString(human.errors);
+	const NeedsConfigLoad load = loadNeedsConfig(human.needs, human.folder);
 	for (const std::string& error : load.errors) {
 		ADD_FAILURE() << error;
 	}
@@ -98,7 +104,7 @@ TEST(NeedsConfig, ALaterFileReplacesANeedByNameCostIncluded) {
 	ASSERT_EQ(load.config.needs.size(), 2U);
 	EXPECT_EQ(load.config.needs[0].thresholds[0], 60.0F);
 	EXPECT_EQ(load.config.needs[0].moodCost, 50.0F);
-	EXPECT_EQ(load.config.needs[0].source, "mods/later.xml") << "a file is named relative to the needs folder, with forward slashes";
+	EXPECT_EQ(load.config.needs[0].source, "z-later.xml") << "a file is named relative to the folder";
 	EXPECT_EQ(load.config.needs[1].thresholds[0], 50.0F);
 	EXPECT_EQ(load.config.needs[1].moodCost, 25.0F);
 }
@@ -159,7 +165,7 @@ TEST(NeedsConfig, ACostIsRequiredANumberAndZeroOrMore) {
 									 R"(<Needs><Need name="Hunger" seek="50" urgent="25" critical="10"/></Needs>)"
 	)
 									 .load();
-	EXPECT_TRUE(mentions(load.errors, "mods/later.xml: <Need name=\"Hunger\"> cost is missing"));
+	EXPECT_TRUE(mentions(load.errors, "z-later.xml: <Need name=\"Hunger\"> cost is missing"));
 	ASSERT_EQ(load.config.needs.size(), 1U);
 	EXPECT_EQ(load.config.needs[0].moodCost, 25.0F) << "a later file with an error replaces nothing";
 }

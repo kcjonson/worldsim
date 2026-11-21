@@ -13,12 +13,12 @@ namespace world_sim {
 
 	namespace {
 		std::filesystem::path shippedMoodConfig() {
-			// <root>/apps/world-sim/scenes/game/ui/adapters/SelectionAdapter.test.cpp -> <root>/assets/config/colonists/mood.xml
+			// <root>/apps/world-sim/scenes/game/ui/adapters/SelectionAdapter.test.cpp -> <root>/assets/world/creatures/Human/mood.xml
 			std::filesystem::path root = std::filesystem::path(__FILE__);
 			for (int level = 0; level < 7; ++level) {
 				root = root.parent_path();
 			}
-			return root / "assets" / "config" / "colonists" / "mood.xml";
+			return root / "assets" / "world" / "creatures" / "Human" / "mood.xml";
 		}
 	} // namespace
 

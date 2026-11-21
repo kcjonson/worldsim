@@ -41,7 +41,7 @@ Read from the code on `main` at 0b12648a.
   energy, bladder and digestion 30) a need is an option at tier 5. Below its critical threshold it
   is tier 2; the tier and the decide-at-once trigger (`criticalNeedMask`, `shouldReEvaluate`) both
   read the need's own `criticalThreshold`. The urgent threshold is read only by `Need::level()`.
-  The thresholds are data in `assets/config/colonists/needs/`; the decay
+  The thresholds are data in `assets/world/creatures/Human/needs.xml`; the decay
   rates are literals in `Needs.cpp`.
 - **Build progress is already on the thing built.** `StructureBlueprint::workDone` and `workTotal`;
   the Build action has no duration and adds work each tick. A builder who stops loses nothing and
