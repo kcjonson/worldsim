@@ -270,17 +270,48 @@ TEST_F(SelectionPartsTest, ACarriedPackagedItemIsNotPicked) {
 	EXPECT_EQ(stationClicked(), 0U) << "carried";
 }
 
-// The candidates' order is total, so which wins never depends on the order the loop meets them: those with a front
-// anchor first, by anchor, then the rest by distance.
+// A packaged item set down just south of a placed one: its crate draws over the placed item where they overlap, so a
+// click there picks the crate, whatever kinds the two are.
+TEST_F(SelectionPartsTest, ACrateDrawnInFrontOfAPlacedItemIsPicked) {
+	const glm::vec2		crateAt{5.0F, 5.6F};
+	const glm::vec2		overlap{5.0F, 5.1F};
+	const ecs::EntityID crate = addBox(crateAt, 0.0);
+	seen.world.addComponent<ecs::Packaged>(crate, ecs::Packaged{});
+	ASSERT_EQ(clickAt(overlap), crate) << "the point is on the crate";
+	(void)addBox({5.0F, 5.0F}, 0.0);
+	ASSERT_TRUE(inHitRegion({5.0F, 5.0F}, 0.0, overlap)) << "and on the placed box behind it";
+	EXPECT_EQ(clickAt(overlap), crate);
+}
+
+// A packaged station draws as its crate, so it outlines as its crate, as packaged furniture does.
+TEST_F(SelectionPartsTest, APackagedStationOutlinesAsItsCrate) {
+	const ecs::EntityID station = addBox({5.0F, 5.0F}, 35.0);
+	seen.world.addComponent<ecs::WorkQueue>(station, ecs::WorkQueue{});
+	selection->setSelection(world_sim::CraftingStationSelection{station, "Box", Foundation::Vec2{5.0F, 5.0F}});
+	const worldview::SelectionOutline installed = selection->buildEntityOutline();
+	ASSERT_TRUE(installed.valid);
+	EXPECT_NE(installed.itemLayout, nullptr) << "installed: the turned item's strip pieces";
+
+	seen.world.addComponent<ecs::Packaged>(station, ecs::Packaged{});
+	const worldview::SelectionOutline packaged = selection->buildEntityOutline();
+	ASSERT_TRUE(packaged.valid);
+	EXPECT_EQ(packaged.itemLayout, nullptr);
+	ASSERT_EQ(packaged.pieces.size(), 1U);
+	EXPECT_TRUE(packaged.pieces.front().closed) << "the crate's closed rings";
+}
+
+// The candidates' order is total, so which wins never depends on the order the loop meets them: the larger anchor,
+// then the nearer, then the lesser id; the empty pick beats nothing.
 TEST(SelectionPickTest, TheWinnerDoesNotDependOnTheOrderCandidatesComeIn) {
 	using world_sim::SelectionPick;
 	const std::vector<SelectionPick> candidates{
-		{.entity = 1, .distance = 2.0F, .frontAnchor = 5.0F},
-		{.entity = 2, .distance = 1.0F, .frontAnchor = std::nullopt},
-		{.entity = 3, .distance = 0.5F, .frontAnchor = 3.0F},
-		{.entity = 4, .distance = 0.2F, .frontAnchor = std::nullopt},
+		{.entity = 1, .anchorY = 5.0F, .distance = 2.0F},
+		{.entity = 2, .anchorY = 5.6F, .distance = 1.0F}, // a crate in front
+		{.entity = 3, .anchorY = 3.0F, .distance = 0.5F},
+		{.entity = 4, .anchorY = 5.6F, .distance = 1.0F},
+		{.entity = 5, .anchorY = 5.6F, .distance = 1.5F},
 	};
-	std::vector<size_t> order{0, 1, 2, 3};
+	std::vector<size_t> order{0, 1, 2, 3, 4};
 	do {
 		SelectionPick best;
 		for (const size_t index : order) {
@@ -288,17 +319,9 @@ TEST(SelectionPickTest, TheWinnerDoesNotDependOnTheOrderCandidatesComeIn) {
 				best = candidates[index];
 			}
 		}
-		EXPECT_EQ(best.entity, 1U) << "the largest front anchor";
+		EXPECT_EQ(best.entity, 2U) << "the largest anchor, the nearer of those, the lesser id of those";
 	} while (std::next_permutation(order.begin(), order.end()));
-
-	order = {1, 3};
-	do {
-		SelectionPick best;
-		for (const size_t index : order) {
-			if (candidates[index].beats(best)) {
-				best = candidates[index];
-			}
-		}
-		EXPECT_EQ(best.entity, 4U) << "with no front anchor, the nearest";
-	} while (std::next_permutation(order.begin(), order.end()));
+	EXPECT_FALSE(SelectionPick{}.beats(candidates.front()));
+	EXPECT_FALSE(SelectionPick{}.beats(SelectionPick{}));
 }
+

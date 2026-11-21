@@ -4,27 +4,24 @@
 
 #include <ecs/EntityID.h>
 
-#include <optional>
-
 namespace world_sim {
 
 	struct SelectionPick {
-		ecs::EntityID		 entity = 0;
-		float				 distance = 0.0F;	// from the click to the entity's position
-		std::optional<float> frontAnchor;		// a placed parts item's: the depth it draws at under the click
+		ecs::EntityID entity = 0;		// 0: no candidate yet
+		float		  anchorY = 0.0F;	// the depth it draws at under the click; larger draws later, in front
+		float		  distance = 0.0F;	// from the click to the entity's position
 
-		/// A total order: candidates with a front anchor first, the larger anchor (drawn later, so in front) first,
-		/// then the rest by distance, nearer first; equal keys by distance, then by entity id, so the winner never
-		/// depends on the order the candidates come in.
+		/// A total order over candidates: the larger anchor first, then the nearer, then the lesser entity id, so the
+		/// winner never depends on the order the candidates come in. The empty pick beats nothing and loses to any.
 		[[nodiscard]] bool beats(const SelectionPick& other) const {
+			if (entity == 0) {
+				return false;
+			}
 			if (other.entity == 0) {
-				return entity != 0;
+				return true;
 			}
-			if (frontAnchor.has_value() != other.frontAnchor.has_value()) {
-				return frontAnchor.has_value();
-			}
-			if (frontAnchor.has_value() && *frontAnchor != *other.frontAnchor) {
-				return *frontAnchor > *other.frontAnchor;
+			if (anchorY != other.anchorY) {
+				return anchorY > other.anchorY;
 			}
 			if (distance != other.distance) {
 				return distance < other.distance;

@@ -387,12 +387,26 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		candidates.emplace_back(ColonistSelection{closestColonist});
 	}
 
-	// A candidate's SelectionPick: a placed parts item's front anchor at the click when it is one.
+	// A candidate's SelectionPick, at the depth it draws at under the click, as the renderer sorts it: a packaged
+	// entity its crate's, a placed parts item its front strip's there, anything else its own anchor.
 	const auto pickOf = [&](ecs::EntityID entity, const ecs::Appearance& appearance, glm::vec2 position, float distance, bool packaged) {
 		SelectionPick pick{.entity = entity, .distance = distance};
-		if (const uint32_t templateId = dynamicRenderTemplate(ecsWorld, entity, appearance); !packaged && isPartsTemplate(templateId)) {
-			pick.frontAnchor = frontAnchorAt(templateId, turnOf(ecsWorld, entity), position, worldPos);
+		if (packaged) {
+			pick.anchorY = packagedLayoutFor(appearance, position).crateFront.anchorY;
+			return pick;
 		}
+		auto&		   registry = assets::AssetRegistry::Get();
+		const uint32_t templateId = dynamicRenderTemplate(ecsWorld, entity, appearance);
+		if (isPartsTemplate(templateId)) {
+			if (const std::optional<float> front = frontAnchorAt(templateId, turnOf(ecsWorld, entity), position, worldPos); front.has_value()) {
+				pick.anchorY = *front;
+				return pick;
+			}
+		}
+		pick.anchorY = worldview::dynamicAnchorY(
+			registry.getDefinition(dynamicRenderDefName(ecsWorld, entity, appearance.defName)), appearance.traits.ageClass,
+			worldview::templateBounds(registry.getTemplate(templateId)), position.y, appearance.scale
+		);
 		return pick;
 	};
 
@@ -905,14 +919,12 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 	} else {
 		// Colonists, crafting stations, and placed furniture all resolve from the ECS.
 		ecs::EntityID entityId = 0;
-		bool		  isFurniture = false;
 		if (const auto* colonistSel = std::get_if<ColonistSelection>(&selection)) {
 			entityId = colonistSel->entityId;
 		} else if (const auto* stationSel = std::get_if<CraftingStationSelection>(&selection)) {
 			entityId = stationSel->entityId;
 		} else if (const auto* furnitureSel = std::get_if<FurnitureSelection>(&selection)) {
 			entityId = furnitureSel->entityId;
-			isFurniture = true;
 		}
 		if (entityId == 0) {
 			return outline; // construction / room / no selection: not entity-backed
@@ -924,10 +936,10 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 			return outline;
 		}
 
-		// Packaged furniture: crate layers + item at their layout transforms (drawn as
+		// Any packaged entity, furniture or station: crate layers + item at their layout transforms (drawn as
 		// instances, matching the render path), unioned into one outline. With the item inside the crate that is the
 		// crate's silhouette.
-		if (isFurniture && ecsWorld->getComponent<ecs::Packaged>(entityId) != nullptr) {
+		if (ecsWorld->getComponent<ecs::Packaged>(entityId) != nullptr) {
 			const worldview::PackagedLayout pl = packagedLayoutFor(*appearance, pos->value);
 			for (const assets::PlacedEntity* sub : {&pl.crateBack, &pl.item, &pl.crateFront}) {
 				const auto* sil = assetRegistry.getSilhouette(sub->templateId);
