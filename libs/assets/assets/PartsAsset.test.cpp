@@ -6,8 +6,10 @@
 #include "assets/PartsAsset.test.h"
 
 #include "assets/ItemOverlays.h"
+#include "assets/ItemView.h"
 #include "assets/PointTurn.h"
 #include "assets/TurnQuanta.h"
+#include "assets/ViewConfig.h"
 
 #include <glm/geometric.hpp>
 
@@ -16,6 +18,8 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <limits>
+#include <numbers>
 #include <string>
 #include <vector>
 
@@ -835,6 +839,34 @@ TEST_F(PartsAssetTest, StrokesGradientsAndDetailLevelsCarryIntoMetresOnASide) {
 	EXPECT_NEAR(gradient.colorAt({1.5F, 0.2F}).r, 0.75F, 0.02F);
 }
 
+TEST_F(PartsAssetTest, AViewBoxAwayFromTheOriginMapsItsCornerOntoTheFacesCorner) {
+	folder.write(
+		"Shifted/front.svg",
+		"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"50 20 200 100\"><rect x=\"50\" y=\"20\" width=\"200\" height=\"100\" fill=\"#808080\"/></svg>"
+	);
+	writeDef(
+		"Shifted",
+		"<parts><part name=\"box\"><footprint>" + rect(-1, -0.25F, 1, 0.25F) + "</footprint><height bottom=\"0\" top=\"1\"/><top color=\"#000000\"/>"
+		"<sides color=\"#000000\"><face side=\"front\" drawing=\"front.svg\"/></sides></part></parts><placements>" + place("box") + "</placements>"
+	);
+	const AssetDefinition* def = load("Shifted");
+	ASSERT_NE(def, nullptr);
+	EXPECT_TRUE(issues("Shifted").empty()) << ::testing::PrintToString(issues("Shifted"));
+	EXPECT_TRUE(issues("Shifted", Severity::Warning).empty()) << ::testing::PrintToString(issues("Shifted", Severity::Warning));
+	const PartFace& front = def->parts->parts[0].faces[2];
+	ASSERT_TRUE(front.drawing.has_value());
+	glm::vec2 low{std::numeric_limits<float>::max()};
+	glm::vec2 high{std::numeric_limits<float>::lowest()};
+	for (const Foundation::Vec2& vertex : def->parts->drawings[*front.drawing].shapes[0].shape.paths[0].vertices) {
+		low = glm::min(low, glm::vec2{vertex.x, vertex.y});
+		high = glm::max(high, glm::vec2{vertex.x, vertex.y});
+	}
+	EXPECT_NEAR(low.x, 0.0F, 1e-5F);
+	EXPECT_NEAR(low.y, 0.0F, 1e-5F);
+	EXPECT_NEAR(high.x, 2.0F, 1e-5F);
+	EXPECT_NEAR(high.y, 1.0F, 1e-5F);
+}
+
 TEST_F(PartsAssetTest, Rule7APairJustInsideTheToleranceLoads) {
 	folder.write("Close/front.svg", svg(1.005F, 1.0F));
 	writeDef(
@@ -958,4 +990,101 @@ TEST_F(PartsAssetTest, TheSandboxDemoItemsLoadWithNoIssues) {
 	EXPECT_EQ(report.errorCount(), 0) << ::testing::PrintToString(issues("Workbench"));
 	EXPECT_EQ(report.warningCount(), 0) << ::testing::PrintToString(issues("Workbench", Severity::Warning));
 	EXPECT_NE(registry.getDefinition("Workbench"), nullptr);
+}
+
+// ─── Malformed numbers (rule 13) ────────────────────────────────────────────────────────────────────────
+
+// Each row a def that once crashed the loader, loaded silently out of scale, or built a view that wasn't finite: it
+// loads, fails by its message, and every view rule 12 builds of what is left is finite.
+TEST_F(PartsAssetTest, Rule13MalformedNumbersFailValidationAndNeverCrashTheLoader) {
+	struct Row {
+		std::string name;
+		std::string inner; ///< the def after <parts>, or the whole def when it starts with <parts>
+		std::string drawing; ///< front.svg, the box's front face's drawing; a plain square when empty
+		std::string script;	 ///< parts.lua, run when not empty
+		std::string message;
+	};
+	const auto box = [](const std::string& footprint, const std::string& height = "<height bottom=\"0\" top=\"1\"/>") {
+		return "<parts><part name=\"a\"><footprint>" + footprint + "</footprint>" + height +
+			   "<top color=\"#000000\"/><sides color=\"#000000\"><face side=\"front\" drawing=\"front.svg\"/></sides></part></parts>";
+	};
+	const std::string unit = rect(0, 0, 1, 1);
+	const std::string placed = "<placements>" + place("a") + "</placements>";
+	const auto drawing = [](const std::string& viewBox, const std::string& inner) {
+		return "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"" + viewBox + "\">" + inner + "</svg>";
+	};
+	const std::string pastLimit = "a parts length is a finite number within 1000 m";
+	const std::string outOfScale = "a mapped drawing stays within 1000 m";
+	const std::vector<Row> rows = {
+		// Drawings mapped past the limit: the crash was salal tessellating an infinite vertex for the average colour.
+		{"TinyViewBoxToInfinity", "", drawing("0 0 1e-37 1e-37", "<rect width=\"1e10\" height=\"1e10\" fill=\"#000\"/>"), "", "has a point at (inf, 0) m; " + outOfScale},
+		{"TinyViewBox", "", drawing("0 0 1e-30 1e-30", "<rect width=\"100\" height=\"100\" fill=\"#000\"/>"), "", "has a point at (1e+32, 0) m"},
+		{"HugeCoordinates", "", drawing("0 0 100 100", "<path d=\"M0 0 L3e38 0 L3e38 3e38 Z\" fill=\"#000\"/>"), "", "has a point at (3e+36, 0) m"},
+		{"InfiniteCoordinates", "", drawing("0 0 100 100", "<path d=\"M0 0 L1e39 0 L0 100 Z\" fill=\"#000\"/>"), "", "mapped onto face front of part 'a', has a point at"},
+		{"FarViewBoxOrigin", "", drawing("1e9 0 100 100", "<rect width=\"100\" height=\"100\" fill=\"#000\"/>"), "", "has a point at (-1e+07, 0) m"},
+		{"HugeStroke", "", drawing("0 0 100 100", "<rect width=\"100\" height=\"100\" fill=\"#000\" stroke=\"#fff\" stroke-width=\"1e38\"/>"), "", "has a stroke 1e+36 m wide"},
+		{"AreaDrawingToInfinity",
+		 placed + "<useAreas><drawing file=\"area.svg\" minX=\"-1\" minY=\"2\" maxX=\"1\" maxY=\"4\"/></useAreas>",
+		 "",
+		 "",
+		 "drawing 'area.svg', mapped onto the drawing rectangle of the use area, has a point at (inf, 0) m"},
+		// Lengths the XML writes past the limit.
+		{"FootprintRect", box(rect(-3e38F, 0, 3e38F, 1)) + placed, "", "", "part 'a''s footprint has minX -3e+38; " + pastLimit},
+		{"FootprintRound", box("<round radius=\"1e20\" sides=\"8\"/>") + placed, "", "", "part 'a''s footprint has radius 1e+20"},
+		{"FootprintCentre", box("<round x=\"2000\" radius=\"1\" sides=\"8\"/>") + placed, "", "", "part 'a''s footprint has x 2000"},
+		{"Height", box(unit, "<height bottom=\"0\" top=\"3e38\"/>") + placed, "", "", "part 'a''s height has top 3e+38"},
+		{"Offset", box(unit) + "<placements><place part=\"a\" y=\"-1e30\"/></placements>", "", "", "a <place> of part 'a' has y -1e+30"},
+		{"Around", box(unit) + placed + "<useAreas><around distanceMeters=\"3e38\"/></useAreas>", "", "", "the use area has distanceMeters 3e+38"},
+		{"Circle", box(unit) + placed + "<useAreas><circle x=\"0\" y=\"3\" radius=\"3e38\"/></useAreas>", "", "", "the use area has radius 3e+38"},
+		{"AreaRect", box(unit) + placed + "<useAreas><area name=\"front\">" + rect(-3e38F, 2, 3e38F, 3) + "</area></useAreas>", "", "", "use area 'front' has minX -3e+38"},
+		{"Margin", box(unit) + placed + "<clearance marginMeters=\"3e38\"/>", "", "", "the clearance has marginMeters 3e+38"},
+		// A script's numbers pass no XML reader: infinity and NaN reach the loader as they are.
+		{"ScriptOffset", box(unit) + "<partsScript>parts.lua</partsScript>", "", "asset:place{ part = 'a', x = 1 / 0 }\n", "a <place> of part 'a' has x inf"},
+		{"ScriptTurn", box(unit) + "<partsScript>parts.lua</partsScript>", "", "asset:place{ part = 'a', turnDegrees = 1e300 }\n", "has turnDegrees inf; a turn is a finite number"},
+		{"ScriptFootprint",
+		 box(unit) + placed + "<partsScript>parts.lua</partsScript>",
+		 "",
+		 "asset:setFootprint('a', { rect = { minX = 0, minY = 0, maxX = 0 / 0, maxY = 1 } })\n",
+		 "part 'a''s footprint has maxX"},
+		{"ScriptCircle",
+		 box(unit) + placed + "<partsScript>parts.lua</partsScript>",
+		 "",
+		 "asset:addUseArea{ name = 'back', shapes = { { circle = { x = 0, y = -2, radius = 1 / 0 } } } }\n",
+		 "use area 'back' has radius inf"},
+	};
+	const ViewConfig& config = GameViewConfig::Get().config();
+	for (const Row& row : rows) {
+		SCOPED_TRACE(row.name);
+		const std::string square = drawing("0 0 100 100", "<rect width=\"100\" height=\"100\" fill=\"#000\"/>");
+		folder.write(row.name + "/front.svg", row.drawing.empty() ? square : row.drawing);
+		folder.write(row.name + "/area.svg", drawing("0 0 1e-37 1e-37", "<rect width=\"1e10\" height=\"1e10\" fill=\"#000\"/>"));
+		if (!row.script.empty()) {
+			folder.write(row.name + "/parts.lua", row.script);
+		}
+		writeDef(row.name, row.inner.empty() ? box(unit) + placed : row.inner.starts_with("<parts>") ? row.inner : box(unit) + row.inner);
+	}
+	const AssetDefinition* first = load(rows.front().name);
+	ASSERT_NE(first, nullptr);
+	for (const Row& row : rows) {
+		SCOPED_TRACE(row.name);
+		const AssetDefinition* def = AssetRegistry::Get().getDefinition(row.name);
+		ASSERT_NE(def, nullptr);
+		EXPECT_TRUE(hasIssue(row.name, row.message));
+		for (uint32_t turn = 0; turn < kTurnQuantaPerTurn; turn += 1500) {
+			const ItemView view = buildItemMesh(*def, turn, 0, config);
+			EXPECT_TRUE(std::all_of(view.mesh.vertices.begin(), view.mesh.vertices.end(), [](const Foundation::Vec2& vertex) {
+				return std::isfinite(vertex.x) && std::isfinite(vertex.y);
+			})) << "at " << turn;
+		}
+	}
+}
+
+TEST_F(PartsAssetTest, Rule13AnyFiniteTurnIsATurn) {
+	writeDef("Spun", "<parts>" + block("a", 0, 0, 1, 0.5F, 0, 1) + "</parts><placements>" + place("a", 0, 0, 3e38F) + place("a", 2, 0, -450) + "</placements>");
+	const AssetDefinition* def = load("Spun");
+	ASSERT_NE(def, nullptr);
+	EXPECT_TRUE(issues("Spun").empty()) << ::testing::PrintToString(issues("Spun"));
+	ASSERT_EQ(def->parts->placements.size(), 2U);
+	EXPECT_NEAR(def->parts->placements[0].turnRadians, std::fmod(3e38F, 360.0F) * std::numbers::pi_v<float> / 180.0F, 1e-6F);
+	EXPECT_NEAR(def->parts->placements[1].turnRadians, -0.5F * std::numbers::pi_v<float>, 1e-6F) << "-450 degrees is -90";
 }

@@ -47,6 +47,30 @@ namespace assets {
 			return "'" + text + "'";
 		}
 
+		/// Rule 13: a finite number within kLargestPartsLengthMeters of zero.
+		bool withinPartsLimit(float meters) {
+			return std::abs(meters) <= kLargestPartsLengthMeters;
+		}
+
+		struct NamedLength {
+			const char* name;
+			float		meters;
+		};
+
+		/// The first of `lengths` past rule 13's limit, as its error words it ("maxX 3e+38"); empty when none is.
+		std::string firstPastLimit(std::initializer_list<NamedLength> lengths) {
+			for (const NamedLength& length : lengths) {
+				if (!withinPartsLimit(length.meters)) {
+					return formatted("%s %g", length.name, static_cast<double>(length.meters));
+				}
+			}
+			return {};
+		}
+
+		std::string pastLimitMessage(const std::string& where, const std::string& offending) {
+			return where + " has " + offending + formatted("; a parts length is a finite number within %g m", static_cast<double>(kLargestPartsLengthMeters));
+		}
+
 		// ─── Reading the XML ─────────────────────────────────────────────────────────────────────────
 
 		class XmlReader {
@@ -529,26 +553,21 @@ namespace assets {
 		}
 
 		/// The shape moved from viewBox units onto [0, size] metres: vertices scaled, stroke width by the mean
-		/// scale, and the gradient's transform composed with the inverse, so each vertex keeps its colour.
-		renderer::LoadedSVGShape mapped(renderer::LoadedSVGShape shape, glm::vec2 origin, glm::vec2 scale, glm::vec2 sizeMeters) {
+		/// scale, and the gradient's transform composed with the inverse, so each vertex keeps its colour. NanoSVG has
+		/// already moved the viewBox's origin to 0, the vertices and the gradient alike.
+		renderer::LoadedSVGShape mapped(renderer::LoadedSVGShape shape, glm::vec2 scale, glm::vec2 sizeMeters) {
 			for (renderer::VectorPath& path : shape.paths) {
 				for (Foundation::Vec2& vertex : path.vertices) {
-					vertex.x = (vertex.x - origin.x) * scale.x;
-					vertex.y = (vertex.y - origin.y) * scale.y;
+					vertex.x *= scale.x;
+					vertex.y *= scale.y;
 				}
 			}
 			shape.strokeWidth *= std::sqrt(scale.x * scale.y);
 			float(&xform)[6] = shape.gradient.xform;
-			const float a = xform[0];
-			const float b = xform[1];
-			const float c = xform[2];
-			const float d = xform[3];
-			xform[4] += a * origin.x + c * origin.y;
-			xform[5] += b * origin.x + d * origin.y;
-			xform[0] = a / scale.x;
-			xform[1] = b / scale.x;
-			xform[2] = c / scale.y;
-			xform[3] = d / scale.y;
+			xform[0] /= scale.x;
+			xform[1] /= scale.x;
+			xform[2] /= scale.y;
+			xform[3] /= scale.y;
 			shape.width = sizeMeters.x;
 			shape.height = sizeMeters.y;
 			return shape;
@@ -622,6 +641,27 @@ namespace assets {
 				return {0.0F, 0.0F, 0.0F, 1.0F};
 			}
 			return {static_cast<float>(total.r / total.a), static_cast<float>(total.g / total.a), static_cast<float>(total.b / total.a), 1.0F};
+		}
+
+		/// Rule 13 on a drawing mapped onto what it covers: what passes kLargestPartsLengthMeters, as the error words it
+		/// ("a point at (1e+30, 0) m"), or a gradient a viewBox too large for its scale left with no finite transform;
+		/// nothing when it is within the limit.
+		std::optional<std::string> mappedPastLimit(const renderer::LoadedSVGShape& shape) {
+			for (const renderer::VectorPath& path : shape.paths) {
+				for (const Foundation::Vec2& vertex : path.vertices) {
+					if (!withinPartsLimit(vertex.x) || !withinPartsLimit(vertex.y)) {
+						return formatted("a point at (%g, %g) m", static_cast<double>(vertex.x), static_cast<double>(vertex.y));
+					}
+				}
+			}
+			if (shape.hasStroke && !withinPartsLimit(shape.strokeWidth)) {
+				return formatted("a stroke %g m wide", static_cast<double>(shape.strokeWidth));
+			}
+			if (shape.gradient.type != renderer::GradientFill::Type::None &&
+				!std::all_of(std::begin(shape.gradient.xform), std::end(shape.gradient.xform), [](float value) { return std::isfinite(value); })) {
+				return std::string("a gradient with no finite size");
+			}
+			return std::nullopt;
 		}
 
 		float aspectDifference(glm::vec2 drawing, glm::vec2 covered) {
@@ -730,9 +770,9 @@ namespace assets {
 						error("drawing", "drawing " + inQuotes(file) + ": " + issue, resolved.string(), fileParts);
 					}
 
-					const glm::vec2				   origin{(*box)[0], (*box)[1]};
-					std::map<std::pair<long, long>, uint32_t> mappedBySize;
+					std::map<std::pair<long long, long long>, uint32_t> mappedBySize;
 					bool						   proportionReported = false;
+					bool						   limitReported = false;
 					for (DrawingUse* use : fileUses) {
 						DrawingUseCheck& check = checks.emplace_back(checkOf(*use));
 						check.viewBoxSize = viewBoxSize;
@@ -754,22 +794,42 @@ namespace assets {
 							continue;
 						}
 						const glm::vec2 scale = use->coversMeters / viewBoxSize;
+						const auto		tooLarge = [&](const std::string& offending) {
+							 use->failed = true;
+							 check.verdict = DrawingUseCheck::Verdict::TooLarge;
+							 if (!limitReported) {
+								 error(
+									 "drawing",
+									 "drawing " + inQuotes(file) + ", mapped onto " + use->what + ", has " + offending +
+										 formatted("; a mapped drawing stays within %g m", static_cast<double>(kLargestPartsLengthMeters)),
+									 resolved.string(),
+									 fileParts
+								 );
+								 limitReported = true;
+							 }
+						};
 						if (use->fillGroups != nullptr) {
-							size_t filled = 0;
+							std::vector<renderer::LoadedSVGShape> fills;
+							std::optional<std::string>			  offending;
 							for (const LodSvgShape& loaded : svg.shapes) {
-								if (!loaded.shape.hasFill) {
-									continue;
+								if (loaded.shape.hasFill && !offending.has_value()) {
+									offending = mappedPastLimit(fills.emplace_back(mapped(loaded.shape, scale, use->coversMeters)));
 								}
+							}
+							if (offending.has_value()) {
+								tooLarge(*offending);
+								continue;
+							}
+							for (const renderer::LoadedSVGShape& fill : fills) {
 								std::vector<Ring2>& group = use->fillGroups->emplace_back();
-								for (const renderer::VectorPath& path : mapped(loaded.shape, origin, scale, use->coversMeters).paths) {
+								for (const renderer::VectorPath& path : fill.paths) {
 									Ring2& ring = group.emplace_back();
 									for (const Foundation::Vec2& vertex : path.vertices) {
 										ring.push_back(use->originMeters + glm::vec2{vertex.x, vertex.y});
 									}
 								}
-								++filled;
 							}
-							if (filled == 0) {
+							if (fills.empty()) {
 								use->failed = true;
 								check.verdict = DrawingUseCheck::Verdict::NoFill;
 								error("useAreas", "area drawing " + inQuotes(file) + " has no filled shape", use->what);
@@ -777,15 +837,25 @@ namespace assets {
 							continue;
 						}
 						// Sizes equal to a micrometre are one size: a round's faces differ in their last float bits.
-						const auto key = std::make_pair(std::lround(use->coversMeters.x * 1.0e6F), std::lround(use->coversMeters.y * 1.0e6F));
+						// In long long: a 2 km face is 2e9 micrometres, past a 32-bit long.
+						const auto key = std::make_pair(std::llround(use->coversMeters.x * 1.0e6F), std::llround(use->coversMeters.y * 1.0e6F));
 						auto	   found = mappedBySize.find(key);
 						if (found == mappedBySize.end()) {
-							ItemDrawing drawing{.file = file, .sizeMeters = use->coversMeters, .shapes = {}};
+							ItemDrawing				   drawing{.file = file, .sizeMeters = use->coversMeters, .shapes = {}};
+							std::optional<std::string> offending;
 							for (const LodSvgShape& loaded : svg.shapes) {
 								drawing.shapes.push_back(
-									{.shape = mapped(loaded.shape, origin, scale, use->coversMeters),
+									{.shape = mapped(loaded.shape, scale, use->coversMeters),
 									 .minPixelsPerMeter = svg.elements[loaded.element].minPixelsPerMeter}
 								);
+								offending = mappedPastLimit(drawing.shapes.back().shape);
+								if (offending.has_value()) {
+									break;
+								}
+							}
+							if (offending.has_value()) {
+								tooLarge(*offending);
+								continue;
 							}
 							drawing.averageColor = averageColorOf(drawing.shapes, drawing.sizeMeters);
 							checkOverflow(drawing, use->what, use->partName);
@@ -840,6 +910,30 @@ namespace assets {
 			}
 			const double inradius = static_cast<double>(footprint.radius) * std::cos(std::numbers::pi / static_cast<double>(footprint.sides));
 			return inradius < kOverlapToleranceMeters * 0.5;
+		}
+
+		/// A footprint's first length past rule 13's limit, as its error words it; empty when none is.
+		std::string footprintPastLimit(const AuthoredFootprint& footprint) {
+			if (footprint.shape == AuthoredFootprint::Shape::Rect) {
+				return firstPastLimit({{"minX", footprint.minX}, {"minY", footprint.minY}, {"maxX", footprint.maxX}, {"maxY", footprint.maxY}});
+			}
+			return firstPastLimit({{"x", footprint.x}, {"y", footprint.y}, {"radius", footprint.radius}});
+		}
+
+		/// An area shape's first length past rule 13's limit, as its error words it; empty when none is.
+		std::string areaShapePastLimit(const AuthoredAreaShape& shape) {
+			switch (shape.kind) {
+				case AuthoredAreaShape::Kind::Around:
+					return firstPastLimit({{"distanceMeters", shape.distanceMeters}});
+				case AuthoredAreaShape::Kind::Margin:
+					return firstPastLimit({{"marginMeters", shape.distanceMeters}});
+				case AuthoredAreaShape::Kind::Circle:
+					return firstPastLimit({{"x", shape.x}, {"y", shape.y}, {"radius", shape.radius}});
+				case AuthoredAreaShape::Kind::Rect:
+				case AuthoredAreaShape::Kind::Drawing:
+					return firstPastLimit({{"minX", shape.minX}, {"minY", shape.minY}, {"maxX", shape.maxX}, {"maxY", shape.maxY}});
+			}
+			return {};
 		}
 
 		/// A footprint's polygon in the part's frame, or empty when rule 3 refuses it.
@@ -1159,8 +1253,13 @@ namespace assets {
 			if (written.footprint.shapeCount != 1) {
 				partError("parts", where + " needs one footprint, a <rect> or a <round>", where);
 			}
-			part.footprint = footprintPolygon(written.footprint);
-			if (written.footprint.shapeCount == 1 && part.footprint.empty()) {
+			const std::string pastLimit = footprintPastLimit(written.footprint);
+			if (pastLimit.empty()) {
+				part.footprint = footprintPolygon(written.footprint);
+			}
+			if (written.footprint.shapeCount == 1 && !pastLimit.empty()) {
+				partError("parts", pastLimitMessage(where + "'s footprint", pastLimit), where);
+			} else if (written.footprint.shapeCount == 1 && part.footprint.empty()) {
 				partError(
 					"parts",
 					written.footprint.shape == AuthoredFootprint::Shape::Rect ? where + "'s footprint rect needs max > min on both axes"
@@ -1182,6 +1281,8 @@ namespace assets {
 
 			if (!written.hasHeight) {
 				partError("parts", where + " needs a <height bottom top>", where);
+			} else if (const std::string heightPastLimit = firstPastLimit({{"bottom", written.bottom}, {"top", written.top}}); !heightPastLimit.empty()) {
+				partError("parts", pastLimitMessage(where + "'s height", heightPastLimit), where);
 			} else if (!(written.bottom >= 0.0F && written.bottom <= written.top)) {
 				partError("parts", where + formatted(" has bottom %g and top %g; 0 <= bottom <= top", static_cast<double>(written.bottom), static_cast<double>(written.top)), where);
 			} else {
@@ -1306,7 +1407,20 @@ namespace assets {
 				continue;
 			}
 			placed[found->second] = true;
-			asset.placements.push_back({.part = found->second, .offsetMeters = {written.x, written.y}, .turnRadians = written.turnDegrees * kPi / 180.0F});
+			const std::string where = "a <place> of part " + inQuotes(written.part);
+			if (const std::string pastLimit = firstPastLimit({{"x", written.x}, {"y", written.y}}); !pastLimit.empty()) {
+				error("placements", pastLimitMessage(where, pastLimit), "", {written.part});
+				continue;
+			}
+			// Any finite turn is a turn: taken modulo 360 (exact) before it becomes radians, so 3e38 degrees doesn't
+			// overflow to infinity on the way.
+			if (!std::isfinite(written.turnDegrees)) {
+				error("placements", where + formatted(" has turnDegrees %g; a turn is a finite number", static_cast<double>(written.turnDegrees)), "", {written.part});
+				continue;
+			}
+			asset.placements.push_back(
+				{.part = found->second, .offsetMeters = {written.x, written.y}, .turnRadians = std::fmod(written.turnDegrees, 360.0F) * kPi / 180.0F}
+			);
 		}
 		if (authored.placements.empty()) {
 			error("placements", "the item places no parts; it needs at least one <place>");
@@ -1514,6 +1628,10 @@ namespace assets {
 		const auto shapesOf = [&](const AuthoredArea& area, const std::string& field, const std::string& where) {
 			PendingArea pending{.name = area.name, .field = field, .groups = {}, .shapes = area.shapes};
 			for (const AuthoredAreaShape& shape : area.shapes) {
+				if (const std::string pastLimit = areaShapePastLimit(shape); !pastLimit.empty()) {
+					error(field, pastLimitMessage(where, pastLimit));
+					continue;
+				}
 				switch (shape.kind) {
 					case AuthoredAreaShape::Kind::Around:
 					case AuthoredAreaShape::Kind::Margin:
@@ -1580,7 +1698,8 @@ namespace assets {
 		// Area drawings, read with the parts' drawings so a file used twice is read once.
 		const auto queueAreaDrawings = [&](const AuthoredArea& area, PendingArea& pending, const std::string& where) {
 			for (const AuthoredAreaShape& shape : area.shapes) {
-				if (shape.kind == AuthoredAreaShape::Kind::Drawing && !shape.file.empty() && shape.maxX > shape.minX && shape.maxY > shape.minY) {
+				if (shape.kind == AuthoredAreaShape::Kind::Drawing && !shape.file.empty() && shape.maxX > shape.minX && shape.maxY > shape.minY &&
+					areaShapePastLimit(shape).empty()) {
 					uses.push_back(
 						{.file = shape.file,
 						 .coversMeters = {shape.maxX - shape.minX, shape.maxY - shape.minY},
