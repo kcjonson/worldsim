@@ -143,6 +143,79 @@ TEST(AssetValidatorTest, ReferencedMotionFileIsNotAnOrphan) {
 	EXPECT_EQ(mismatches, 1);
 }
 
+TEST(AssetValidatorTest, ACreatureFoldersConfigIsCheckedByItsOwnFinder) {
+	TempAssets t;
+	t.writeXml("creatures/Cow", oneDef("<defName>Cow</defName><assetType>simple</assetType><svgPath>cow.svg</svgPath>"), "Cow");
+	t.writeFile("creatures/Cow/cow.svg", "<svg/>");
+	for (const char* root : {"Mood", "Memory", "Traits", "Attributes", "Needs"}) {
+		t.writeFile(std::string("creatures/Cow/") + root + ".config.xml", std::string("<") + root + "/>");
+	}
+	t.writeFile("Stone/mood.xml", "<Mood/>");
+
+	const auto mismatches = [](const ValidationReport& report) {
+		std::vector<std::string> flagged;
+		for (const auto& issue : report.issues) {
+			if (issue.message.find("does not match its folder") != std::string::npos) {
+				flagged.push_back(fs::path(issue.context).filename().string());
+			}
+		}
+		return flagged;
+	};
+	const ValidationReport clean = AssetValidator::validate(t.root, "");
+	EXPECT_EQ(clean.errorCount(), 0);
+	EXPECT_EQ(mismatches(clean), (std::vector<std::string>{"mood.xml"})) << "only the file outside a creature folder";
+
+	t.writeFile("creatures/Cow/broken.xml", "<Mood>");
+	const ValidationReport	 broken = AssetValidator::validate(t.root, "");
+	std::vector<std::string> errors;
+	for (const auto& issue : broken.issues) {
+		if (issue.severity == Severity::Error) {
+			errors.push_back(issue.defName + " | " + issue.message);
+		}
+	}
+	ASSERT_EQ(errors.size(), 1U) << ::testing::PrintToString(errors);
+	EXPECT_EQ(errors.front().rfind("Cow | [creatures] broken.xml: not readable XML: ", 0), 0U) << errors.front();
+	EXPECT_EQ(mismatches(broken), (std::vector<std::string>{"mood.xml"})) << "and never also as a stray file";
+}
+
+TEST(AssetValidatorTest, ACreatureFolderWithOnlyItsDefinitionAndArtIsClean) {
+	TempAssets t;
+	t.writeXml("creatures/Deer", oneDef("<defName>Deer</defName><assetType>simple</assetType><svgPath>deer.svg</svgPath>"), "Deer");
+	t.writeFile("creatures/Deer/deer.svg", "<svg/>");
+
+	const ValidationReport r = AssetValidator::validate(t.root, "");
+	EXPECT_EQ(r.errorCount(), 0);
+	EXPECT_FALSE(hasMessageContaining(r, Severity::Warning, "does not match its folder"));
+}
+
+TEST(AssetValidatorTest, ACreatureFolderWithoutAReadableDefinitionGetsOnlyTheWalksMessages) {
+	TempAssets t;
+	t.writeFile("creatures/Ghost/mood.xml", "<Mood/>");
+	const ValidationReport noDefinition = AssetValidator::validate(t.root, "");
+	EXPECT_EQ(noDefinition.errorCount(), 0) << "no finder ran on a folder with no definition";
+	EXPECT_TRUE(hasMessageContaining(noDefinition, Severity::Warning, "does not match its folder")) << "walked as any folder";
+
+	TempAssets broken;
+	broken.writeXml("creatures/Cow", "<AssetDefinitions><AssetDef>", "Cow");
+	broken.writeFile("creatures/Cow/herd.xml", "<Herd/>");
+	const ValidationReport r = AssetValidator::validate(broken.root, "");
+	ASSERT_EQ(r.issues.size(), 1U) << "one fault, one message";
+	EXPECT_EQ(r.issues.front().severity, Severity::Error);
+	EXPECT_NE(r.issues.front().message.find("XML parse error"), std::string::npos) << r.issues.front().message;
+	EXPECT_EQ(r.issues.front().message.find("[creatures]"), std::string::npos) << "the walk's own message, not the finder's";
+}
+
+TEST(AssetValidatorTest, OnlyAFolderDirectlyUnderTheRootsCreaturesIsACreature) {
+	TempAssets t;
+	t.writeXml("flora/creatures/Bush", oneDef("<defName>Bush</defName><assetType>simple</assetType><svgPath>bush.svg</svgPath>"), "Bush");
+	t.writeFile("flora/creatures/Bush/bush.svg", "<svg/>");
+	t.writeFile("flora/creatures/Bush/mood.xml", "<Mood/>");
+
+	const ValidationReport r = AssetValidator::validate(t.root, "");
+	EXPECT_EQ(r.errorCount(), 0) << "no creature check ran on it";
+	EXPECT_TRUE(hasMessageContaining(r, Severity::Warning, "does not match its folder"));
+}
+
 TEST(AssetValidatorTest, IgnoredVariationIsWarning) {
 	TempAssets t;
 	t.writeXml("Stone", oneDef("<defName>Stone</defName><assetType>simple</assetType><svgPath>stone.svg</svgPath><variation><color/></variation>"));

@@ -1,6 +1,7 @@
 #include "assets/WorkConfig.h"
 
 #include "assets/ActionTypeRegistry.h"
+#include "assets/ConfigFiles.h"
 #include "assets/ConfigValidator.h"
 #include "assets/ConstructionRegistry.h"
 #include "assets/MemoryConfig.h"
@@ -9,9 +10,13 @@
 #include "assets/TaskChainRegistry.h"
 #include "assets/WorkTypeRegistry.h"
 
+#include <cassert>
+
 namespace assets {
 
-	std::vector<std::string> loadWorkConfig(const std::filesystem::path& configRoot) {
+	std::vector<std::string> loadWorkConfig(const std::filesystem::path& configRoot, const CreatureConfigFiles& human) {
+		assert(human.errors.empty() && "loadWorkConfig takes a human folder with no errors; its errors are the load's");
+		assert(human.mood.size() == 1 && human.memory.size() == 1 && "loadWorkConfig reads the human's one <Mood> and one <Memory> file");
 		ActionTypeRegistry::Get().clear();
 		TaskChainRegistry::Get().clear();
 		WorkTypeRegistry::Get().clear();
@@ -65,13 +70,13 @@ namespace assets {
 			return loadFailure(construction);
 		}
 
-		const std::filesystem::path mood = "colonists/mood.xml";
-		if (!MoodConfig::Get().loadFromFile(configRoot, mood)) {
+		const std::filesystem::path mood = configFileName(human.mood.front(), human.folder);
+		if (!MoodConfig::Get().loadFromFile(human.folder, mood)) {
 			return loadFailure(mood, MoodConfig::Get().problems());
 		}
 
-		const std::filesystem::path memory = "colonists/memory.xml";
-		if (!MemoryConfig::Get().loadFromFile(configRoot, memory)) {
+		const std::filesystem::path memory = configFileName(human.memory.front(), human.folder);
+		if (!MemoryConfig::Get().loadFromFile(human.folder, memory)) {
 			return loadFailure(memory, MemoryConfig::Get().problems());
 		}
 

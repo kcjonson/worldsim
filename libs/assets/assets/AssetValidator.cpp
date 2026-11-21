@@ -1,6 +1,7 @@
 #include "assets/AssetValidator.h"
 
 #include "assets/AssetDefinition.h"
+#include "assets/CreatureConfigFiles.h"
 #include "assets/GroundLayer.h"
 #include "assets/GroundSvg.h"
 #include "assets/GroundTint.h"
@@ -282,6 +283,21 @@ namespace assets {
 			return false;
 		}
 
+		// True when `folder` holds a file named exactly <folder>.xml, the way the registry's walk matches a
+		// definition; the filesystem is not asked, since it ignores case on Windows.
+		bool hasDefinitionNamedForFolder(const fs::path& folder) {
+			const fs::path		   expected = folder.filename().string() + ".xml";
+			std::error_code		   ec;
+			fs::directory_iterator entries(folder, ec);
+			for (const fs::directory_iterator end; !ec && entries != end; entries.increment(ec)) {
+				std::error_code entryEc;
+				if (entries->path().filename() == expected && entries->is_regular_file(entryEc)) {
+					return true;
+				}
+			}
+			return false;
+		}
+
 	} // namespace
 
 	ValidationReport AssetValidator::validate(const fs::path& assetsRoot, const fs::path& sharedScriptsPath) {
@@ -309,6 +325,50 @@ namespace assets {
 		// Ground layer size -> the first def baking layers of it.
 		std::map<int, std::string> groundLayerSizes;
 
+		// Each creature folder (<root>/creatures/<Name>) with its definition holds its config beside it, checked by the
+		// finder the game's config loading uses, so a structural fault is an error here as it is in the game. A folder
+		// with no definition is walked as any other folder. One whose definition this walk itself flags (unreadable,
+		// no <AssetDefinitions>) gets that one message: the finder adds nothing, and its other files no warning.
+		std::vector<fs::path> creatureFolders;
+		std::error_code		  creaturesEc;
+		const fs::path		  creaturesRoot = assetsRoot / "creatures";
+		if (fs::is_directory(creaturesRoot, creaturesEc)) {
+			fs::directory_iterator creatures(creaturesRoot, creaturesEc);
+			for (const fs::directory_iterator creaturesEnd; !creaturesEc && creatures != creaturesEnd; creatures.increment(creaturesEc)) {
+				const fs::path	folder = creatures->path().lexically_normal();
+				std::error_code folderEc;
+				const bool		isFolder = creatures->is_directory(folderEc);
+				if (folderEc) {
+					report.add(Severity::Warning, "", "", "Could not read a creature folder: " + folderEc.message(), folder.string());
+					continue;
+				}
+				if (!isFolder || !hasDefinitionNamedForFolder(folder)) {
+					continue;
+				}
+				creatureFolders.push_back(folder);
+				pugi::xml_document definition;
+				if (!definition.load_file((folder / (folder.filename().string() + ".xml")).string().c_str()) ||
+					!definition.child("AssetDefinitions")) {
+					continue;
+				}
+				for (const std::string& error : creatureConfigFiles(folder).errors) {
+					report.add(Severity::Error, folder.filename().string(), "", error, folder.string());
+				}
+			}
+			if (creaturesEc) {
+				report.add(
+					Severity::Warning, "", "", "Stopped scanning the creature folders after a filesystem error", creaturesEc.message()
+				);
+			}
+		}
+		const auto isUnderCreatureFolder = [&creatureFolders](const fs::path& file) {
+			const fs::path normal = file.lexically_normal();
+			return std::ranges::any_of(creatureFolders, [&normal](const fs::path& folder) {
+				const fs::path relative = normal.lexically_relative(folder);
+				return !relative.empty() && *relative.begin() != "..";
+			});
+		};
+
 		std::error_code						   iterEc;
 		fs::recursive_directory_iterator	   it(assetsRoot, iterEc);
 		const fs::recursive_directory_iterator end;
@@ -327,7 +387,8 @@ namespace assets {
 			const std::string stem = entry.path().stem().string();
 			const std::string parentFolder = entry.path().parent_path().filename().string();
 			if (stem != parentFolder) {
-				if (isReferencedMotionFile(entry.path())) {
+				// A creature folder's other files were checked above, by the config loading's own finder.
+				if (isReferencedMotionFile(entry.path()) || isUnderCreatureFolder(entry.path())) {
 					continue;
 				}
 				report.add(Severity::Warning, "", "", "XML filename does not match its folder; the loader skips it", entry.path().string());

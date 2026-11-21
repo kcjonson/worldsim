@@ -12,6 +12,8 @@ Asset definitions are XML files that describe what assets exist in the game. The
 
 This approach is inspired by RimWorld's Def system, which has proven highly moddable and extensible.
 
+Player-placed items (furniture, stations, storage) are a third type, `parts`, defined in [Rotatable placed items](../rendering/rotatable-placed-items.md#4-asset-schema).
+
 **Key change**: Each asset lives in its own folder with all resources co-located. Paths in definitions are **relative to the asset folder**.
 
 ## Design Principles
@@ -257,7 +259,7 @@ To inherit from an asset in a different folder, use `@defName`:
 | `defName` | Yes | Unique identifier (e.g., `MapleTree`) |
 | `label` | Yes | Human-readable name |
 | `description` | No | Tooltip/documentation text |
-| `assetType` | Yes | `simple`, `procedural`, or `parts` |
+| `assetType` | Yes | `simple`, `procedural`, or `parts` (a player-placed item, see [Rotatable placed items](../rendering/rotatable-placed-items.md#4-asset-schema)) |
 
 ### Simple Asset Elements
 
@@ -278,18 +280,7 @@ To inherit from an asset in a different folder, use `@defName`:
 
 ### Parts Asset Elements
 
-A placed item (furniture, a workstation) built of upright parts, each a rect or regular n-sided footprint with a bottom and top height, colours, and one SVG per drawing in the item's folder. [Rotatable placed items](../rendering/rotatable-placed-items.md) section 4 has the schema and section 5 the validation; `assets/PartsAsset.h` holds what loading produces.
-
-| Element | Required | Description |
-|---------|----------|-------------|
-| `parts` | Yes | The `<part>`s: `<footprint>` (`<rect>` or `<round>`), `<height bottom top>`, `<top>`, `<sides>` with `<face>`s |
-| `placements` | Yes | `<place part x y turnDegrees>`, one or more; a part may be placed several times |
-| `useAreas` | No | Where the item is used from; the collider grown by `pathingClearanceMeters` (0.7 m) when left out |
-| `clearance` | No | Space other items and walls keep out of |
-| `partsScript` | No | A Lua script in the item's folder that may add parts, placements, and area shapes at load |
-| `detailLevels` | No | The screen densities its views are built for |
-
-A parts def has no `svgPath`, `worldHeight`, `variantCount`, `placement`, `collision`, or `generator`. Its collider is derived: the union of the footprints of its parts with height. The registry builds no template mesh for it; `getTemplate` answers null.
+The schema is [Rotatable placed items](../rendering/rotatable-placed-items.md#4-asset-schema) section 4 and the checks its section 5. Loading produces `assets::PartsAsset` (`assets/PartsAsset.h`) on `AssetDefinition::parts`, and the derived collider's rings on `AssetDefinition::partsColliders`; its section 5 errors go into the registry's validation report. The registry builds no template mesh for a parts def, so `getTemplate` answers null for it.
 
 ### Age classes
 

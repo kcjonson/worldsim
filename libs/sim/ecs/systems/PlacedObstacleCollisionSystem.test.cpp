@@ -5,6 +5,7 @@
 
 #include "../World.h"
 #include "../components/AgentRadius.h"
+#include "../components/Appearance.h"
 #include "../components/Colonist.h"
 #include "../components/Transform.h"
 
@@ -855,4 +856,45 @@ TEST_F(PlacedObstacleCollisionSystemTest, ColliderFarFromItsPositionIsFound) {
 	) << "the far collider was not found";
 	EXPECT_FLOAT_EQ(world.getComponent<Position>(onPosition)->value.x, atOrigin.x);
 	EXPECT_FLOAT_EQ(world.getComponent<Position>(onPosition)->value.y, atOrigin.y);
+}
+
+// An ECS entity with a collider, as spawning makes it, is a body like a placed one once nav has it in
+// the mesh: an agent inside it is pushed out. Moved, it is pushed against where it now stands and no
+// longer where it stood; removed, nowhere.
+TEST_F(PlacedObstacleCollisionSystemTest, AgentInsideAColliderEntityIsPushedOut) {
+	AssetRegistry&	reg = AssetRegistry::Get();
+	AssetDefinition box;
+	box.defName = "Test_SpawnedColliderBox";
+	box.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.5F, 0.5F}});
+	reg.registerTestDefinition(box);
+
+	const glm::vec2	  boxAt{20.0F, 20.0F};
+	const glm::vec2	  movedTo{30.0F, 20.0F};
+	const glm::vec2	  offset{0.1F, 0.05F};
+	PlacementExecutor executor(reg);
+	World			  world;
+	const EntityID	  entity = world.createEntity();
+	world.addComponent<Position>(entity, Position{boxAt});
+	world.addComponent<Rotation>(entity, Rotation{0.0F});
+	world.addComponent<Appearance>(entity, Appearance{"Test_SpawnedColliderBox"});
+	const EntityID				   inside = spawnAgent(world, boxAt + offset);
+	PlacedObstacleCollisionSystem& sys	  = wire(world, executor);
+	auto&						   nav	  = world.getSystem<NavigationSystem>();
+	ASSERT_TRUE(nav.placedObstacleInNavMesh(entity));
+	sys.update(0.0F);
+	EXPECT_NEAR(world.getComponent<Position>(inside)->value.x, boxAt.x + 0.5F + kPadMeters, kLandingMeters) << "not pushed out of the entity";
+
+	world.getComponent<Position>(entity)->value = movedTo;
+	const EntityID atOld = spawnAgent(world, boxAt + offset);
+	const EntityID atNew = spawnAgent(world, movedTo + offset);
+	nav.finishPendingBuilds();
+	sys.update(0.0F);
+	EXPECT_EQ(world.getComponent<Position>(atOld)->value, boxAt + offset) << "pushed against where it stood";
+	EXPECT_NEAR(world.getComponent<Position>(atNew)->value.x, movedTo.x + 0.5F + kPadMeters, kLandingMeters) << "not pushed out where it stands";
+
+	world.destroyEntity(entity);
+	const EntityID afterRemoval = spawnAgent(world, movedTo + offset);
+	nav.finishPendingBuilds();
+	sys.update(0.0F);
+	EXPECT_EQ(world.getComponent<Position>(afterRemoval)->value, movedTo + offset) << "pushed against a removed entity";
 }

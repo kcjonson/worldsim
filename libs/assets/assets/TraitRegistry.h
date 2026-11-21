@@ -2,9 +2,9 @@
 
 // The traits a colonist can have: an id conditions name (trait(volatile)), a display name, a one-line
 // description, how many a colonist gets, and which pairs never go together. A trait carries no effect of
-// its own; effects come through conditions in thought and behavior XML. Every .xml file under
-// assets/config/colonists/traits adds to the set, so a mod adds or replaces traits with a file of its own.
-// See /docs/design/game-systems/colonists/attributes.md (Traits).
+// its own; effects come through conditions in thought and behavior XML. Every file with a <Traits> root in
+// the human's folder (assets/world/creatures/Human) adds to the set, so a later file adds or replaces
+// traits. See /docs/design/game-systems/colonists/attributes.md (Traits).
 
 #include <cstddef>
 #include <filesystem>
@@ -30,12 +30,13 @@ namespace assets {
 
 	class TraitRegistry {
 	  public:
-		/// Replace everything with the .xml files under `folder`: its own files first, then its subfolders'
-		/// files, each in path order. A later file replaces a trait of the same id (logged at info level,
-		/// naming both files) and may replace <Count>; exclusions accumulate, so a trait in several groups is
-		/// excluded from all of their members. Returns every problem found, each naming its file; any problem
-		/// leaves the registry empty, and an empty list means the set loaded clean.
-		[[nodiscard]] std::vector<std::string> loadFromFolder(const std::filesystem::path& folder);
+		/// Replace everything with `files`, in their order, each named relative to `folder`. A later file
+		/// replaces a trait of the same id (logged at info level, naming both files) and may replace <Count>;
+		/// exclusions accumulate, so a trait in several groups is excluded from all of their members. Returns
+		/// every problem found, each naming its file; any problem leaves the registry empty, and an empty list
+		/// means the set loaded clean.
+		[[nodiscard]] std::vector<std::string>
+		loadFromFiles(const std::vector<std::filesystem::path>& files, const std::filesystem::path& folder);
 
 		/// In the order first declared; an index into this is what reachable() takes.
 		[[nodiscard]] const std::vector<TraitDef>& traits() const { return traitList; }

@@ -33,7 +33,7 @@ The developer client is an external TypeScript/Vite web application that connect
   the game would not build on and answer a 400 with `{"error":...}` when they create nothing: spawn
   sets furniture (a crafting station or storage container) only where its footprint is clear ground
   out of any fordable stream and anything else on clear ground, a ford included, and refuses when no
-  scattered spot takes it; foundation refuses a footprint on water, a ford, or unmeshed ground (a tree
+  scattered spot takes it, and answers the ids it created (`"entities":[<id>,...]`); foundation refuses a footprint on water, a ford, or unmeshed ground (a tree
   or rock on it is cleared first); walls refuses a chain any point of which is on water, a ford, a
   placed obstacle, or unmeshed ground. `ground?pts=x,y;...` reads each point's verdicts: `valid`
   (clear to stand on), `buildable` (a foundation may go there once it is cleared), and `buildableNow`

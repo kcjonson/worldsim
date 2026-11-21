@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   Thoughts about a need changing level. They carry no mood effect: a low need already lowers mood
-  through the needs score (assets/config/colonists/mood.xml). Thresholds are in
-  assets/config/colonists/needs/; the <source> form is described in events.xml.
+  through the needs score (assets/world/creatures/Human/mood.xml). Thresholds are in
+  assets/world/creatures/Human/needs.xml; the <source> form is described in events.xml.
 -->
 <thoughts>
   <thought id="getting_peckish" label="Getting peckish" importance="trivial">

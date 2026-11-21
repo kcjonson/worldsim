@@ -33,7 +33,8 @@
 //
 // The PlacementExecutor and the NavigationSystem are injected by the caller (either null => no-op).
 // Obstacles are gathered LOCALLY per agent each frame from placement (no caching): the chunks around
-// the agent, out to nav::placedObstacleReachMeters, for entities whose def has a blocking collider.
+// the agent, out to nav::placedObstacleReachMeters, for entities whose def has a blocking collider,
+// and, the same way, from the ECS entities with a collider NavigationSystem::colliderEntities holds.
 
 #include "../ISystem.h"
 
