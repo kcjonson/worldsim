@@ -510,7 +510,7 @@ on at all by a builder of the default radius, the selected wall's panel, which a
 reads "No ground to build from" (`ecs::noGroundToBuildFrom`).
 With no mesh yet the stand point itself is the target. A wall's goal with no construction world wired
 has the nearest walkable point to its centre as its one target. An opening's Build, and a Deconstruct
-of a built wall or a window, is worked from a stand point beside the wall the target lies in, and a
+of a built wall or a window, is worked from a stand point beside the built wall the target lies in, and a
 built door's Deconstruct from its doorway (below). Deconstruct takes no claim either.
 
 A wall whose work reaches its total completes only on a tick in which time passes and nothing holds it
