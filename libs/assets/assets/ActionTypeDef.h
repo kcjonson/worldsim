@@ -9,7 +9,7 @@
 namespace assets {
 
 	/// Definition of an action type.
-	/// Loaded from assets/config/actions/action-types.xml
+	/// Loaded from assets/config/legacy/action-types.xml
 	struct ActionTypeDef {
 		/// Unique identifier (e.g., "Eat", "Pickup", "Sleep")
 		std::string defName;

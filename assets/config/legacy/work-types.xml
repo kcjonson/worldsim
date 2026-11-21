@@ -25,7 +25,6 @@
       <label>Rescue</label>
       <description>Carry incapacitated colonists to safety</description>
       <triggerCapability>Incapacitated</triggerCapability>
-      <taskChain>Chain_Rescue</taskChain>
     </WorkType>
 
     <WorkType defName="Work_Firefight">
@@ -90,7 +89,6 @@
       <label>Craft</label>
       <description>Craft items at a crafting station</description>
       <triggerCapability>Craftable</triggerCapability>
-      <taskChain>Chain_CraftWithGather</taskChain>
     </WorkType>
   </Category>
 
@@ -127,7 +125,6 @@
       <filter>
         <looseItem>true</looseItem>
       </filter>
-      <taskChain>Chain_PickupDeposit</taskChain>
     </WorkType>
 
     <WorkType defName="Work_HaulToWorkbench">
@@ -138,7 +135,6 @@
       <filter>
         <neededByRecipe>true</neededByRecipe>
       </filter>
-      <taskChain>Chain_PickupDeposit</taskChain>
     </WorkType>
 
     <WorkType defName="Work_PlaceItem">
@@ -148,7 +144,6 @@
       <filter>
         <hasPlacementTarget>true</hasPlacementTarget>
       </filter>
-      <taskChain>Chain_PlaceItem</taskChain>
     </WorkType>
   </Category>
 

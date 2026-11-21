@@ -42,7 +42,7 @@ namespace assets {
 	};
 
 	/// Definition of a work type
-	/// Loaded from assets/config/work/work-types.xml
+	/// Loaded from assets/config/legacy/work-types.xml
 	struct WorkTypeDef {
 		/// Unique identifier (e.g., "Work_HarvestWild")
 		std::string defName;
@@ -64,9 +64,6 @@ namespace assets {
 
 		/// Minimum skill level required
 		float minSkillLevel = 0.0F;
-
-		/// Task chain to use for multi-step tasks
-		std::optional<std::string> taskChain;
 
 		/// Filter conditions for when this work type applies
 		WorkTypeFilter filter;

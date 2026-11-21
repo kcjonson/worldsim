@@ -50,9 +50,9 @@ The code that hard-wires what a creature can do and how each thing is done:
 - The fixed need list: `NeedType`, `kNeedLabels`, the fixed-size array in `NeedsComponent`,
   `kActionableNeeds`, `needToCapability`, `getFirstActionDefName`, the decay literals in `Needs.cpp`,
   `findToiletLocation`, whose rules become facts of a query, and every `switch` over a need.
-- The config that described this without being run: `assets/config/work/task-chains.xml` with
-  `TaskChainRegistry`, `assets/config/work/work-types.xml` with `WorkTypeRegistry`, and
-  `assets/config/actions/action-types.xml` with `ActionTypeRegistry`.
+- The config that described this without being run: `task-chains.xml` with `TaskChainRegistry`,
+  `assets/config/legacy/work-types.xml` with `WorkTypeRegistry`, and `assets/config/legacy/action-types.xml`
+  with `ActionTypeRegistry`.
 
 ### Kept
 
@@ -179,11 +179,15 @@ errors.
 Every entry has an `id` and, where the player sees it, a `label`. An entry is defined with `id` and
 referred to by the same id; there is no second name. Ids are case-sensitive paths. The shipped library
 names its files and entries in snake_case; a creature's folder part is its definition name as written.
+Every declared id, and every file and folder name an id is made from, is letters, digits, and underscores,
+case as written; anything else is a load error showing the text. The entries of `actions/`, `work/`,
+`orders/`, and `facts/` take top-level ids, so a subfolder in one of those folders is a load error.
 
-Ids are unique per entry type: need, behavior, chain, query, action (actions and action groups
-together), work, order, and category. The attribute that refers to an entry names its type
-(`chain="human/sleep"`, `action="human/sleep"`, `query=`, `work=`), so a chain and an action may share
-an id, and a work entry and its chain often do.
+Ids are unique per entry type: behavior, chain, query, action (actions and action groups together), work,
+order, and category. A need is keyed by its behavior and its id, so two behaviors may each bring a need of
+one id, and the creature that includes both settles which one it takes. The attribute that refers to an
+entry names its type (`chain="human/sleep"`, `action="human/sleep"`, `query=`, `work=`), so a chain and an
+action may share an id, and a work entry and its chain often do.
 
 A behavior's id is its path under `assets/config/behaviors/` without the extension:
 `assets/config/behaviors/human/eating.xml` is `human/eating`, and
@@ -324,7 +328,9 @@ registry and beside the colonist rules, reads the rest:
 - The creature's order is the primary block's `<behavior>` includes in the order written, then each
   `<creature>` file's includes in file name order, then the creature's own behavior files in file name
   order, then mods' additions in mod load order.
-- The same behavior included twice is a load error naming both places. Two rows that set the same
+- The same behavior included twice is a load error naming both places. A creature's own behavior file
+  is included by being in its folder, and a `<behavior id>` row naming it places it in the order without
+  including it twice. Two rows that set the same
   value of the same need (an override, a settling row, a `<moodCost>`) are a load error naming both
   files.
 - Traits and attributes keep their own loaders' rule: a later file replaces a trait or an attribute of
@@ -628,12 +634,12 @@ with no hand-written predecessor, enjoying nature among them. Each block below i
   </action>
   <action id="defecate" seconds="4" hands="any" interruptable="false">
     <restore need="digestion" amount="100"/>
-    <spawn def="BioPile"/>
+    <spawn def="Misc_BioPile"/>
   </action>
   <action id="relieve_both" seconds="5" hands="any" interruptable="false">
     <restore need="bladder" amount="100"/>
     <restore need="digestion" amount="100"/>
-    <spawn def="BioPile"/>
+    <spawn def="Misc_BioPile"/>
   </action>
 </behavior>
 
@@ -2000,6 +2006,22 @@ The following he settled with "Yes to all" when they were put to him:
 - 2026-11-17: Temperature's mood cost is 60, up from 40.
 - 2026-11-20: A mood episode bumps another colonist's claim on its target held on a lower rung (the `low_mood` rung is a bumping rung).
 - 2026-11-20: A player's order bumps another colonist's claim on its target held on a lower rung (the `player_order` rung is a bumping rung).
+
+Corrections from the first build of the loaders (WOR-1067, Entry loaders for actions, queries, chains, and
+behaviors):
+
+- 2026-11-21: The relieving examples spawn `Misc_BioPile`, the bio pile's definition name.
+- 2026-11-21: A need is not among the entry types whose ids are unique; it is keyed by its behavior and its
+  id and settled per creature, as the human's and the deer's `hunger` require.
+- 2026-11-21: A creature naming its own behavior file in a `<behavior id>` row places it in the order and
+  is not the included-twice error, as the cow example requires.
+
+Rules from the first build of the loaders:
+
+- 2026-11-21: Every declared id, and every file and folder name an id is made from, is letters, digits, and
+  underscores, case as written.
+- 2026-11-21: A subfolder under `actions/`, `work/`, `orders/`, or `facts/` is a load error, since their
+  entries take top-level ids.
 
 Choices made in writing this document, not put to the owner:
 

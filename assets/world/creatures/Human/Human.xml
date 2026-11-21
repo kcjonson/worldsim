@@ -8,6 +8,8 @@
     <svgPath>human.svg</svgPath>
     <motion>biped.motion.xml</motion>
     <worldHeight>1.0</worldHeight>
+    <!-- The creature: its behaviors and mood costs, read by the creature loader, not the asset registry. -->
+    <creature mood="true"/>
   </AssetDef>
 
   <!-- Directional variants -->

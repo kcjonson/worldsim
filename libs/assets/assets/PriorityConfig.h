@@ -1,8 +1,9 @@
 #pragma once
 
 // Priority Configuration
-// Tunable weights for task priority calculations loaded from XML.
-// Last in the config load order - depends on WorkTypeRegistry.
+// The arbitration file (assets/config/arbitration/, root <arbitration>): the ladder of named rungs, and the
+// tunable weights for task priority calculations. Last in the work config's load order; depends on
+// WorkTypeRegistry.
 //
 // The AI arbitrates by a lexicographic (tier, score) key: <TaskTiers> gives each task type its base
 // tier, and the <Bonuses> weights make up the within-tier score.
@@ -14,6 +15,10 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+namespace pugi {
+	class xml_node;
+}
 
 namespace assets {
 
@@ -56,7 +61,7 @@ namespace assets {
 	};
 
 	/// Priority tuning configuration
-	/// Loaded from assets/config/work/priority-tuning.xml
+	/// Loaded from assets/config/arbitration/priority-tuning.xml
 	class PriorityConfig {
 	  public:
 		/// Get the singleton config instance
@@ -76,6 +81,9 @@ namespace assets {
 
 		/// Moves on every load and clear, so a reader that caches values can tell they may have changed.
 		[[nodiscard]] uint64_t generation() const { return m_generation; }
+
+		/// The ladder's rung names, highest first; a rung's position is its tier.
+		[[nodiscard]] const std::vector<std::string>& rungs() const { return rungNames; }
 
 		// --- Task Tier Queries (arbitration) ---
 
@@ -132,6 +140,9 @@ namespace assets {
 	  private:
 		PriorityConfig() = default;
 
+		/// Read the one <ladder> under `root` into rungNames, adding what is wrong with it to `problems`.
+		void parseLadder(const pugi::xml_node& root, const std::string& source, std::vector<std::string>& problems);
+
 		/// Parse per-task-type tier table from XML node
 		void parseTaskTiers(const void* node, ConfigReader& reader);
 
@@ -145,6 +156,9 @@ namespace assets {
 
 		/// Per-task-type base tier for the (tier, score) arbitration (lower number = higher priority)
 		std::unordered_map<std::string, int> taskTiers;
+
+		/// The ladder's rung names, highest first
+		std::vector<std::string> rungNames;
 
 		/// Bonus configs
 		DistanceFactorConfig  distanceFactorConfig;

@@ -56,16 +56,21 @@ namespace {
 		std::filesystem::path folder;
 	};
 
-	constexpr const char* kRoots = "(<Mood>, <Memory>, <Traits>, <Attributes>, <Needs>)";
+	constexpr const char* kRoots = "(<Mood>, <Memory>, <Traits>, <Attributes>, <Needs>, <creature>, <behavior>)";
 
 } // namespace
 
 TEST_F(CreatureConfigFilesTest, EachFileGoesToItsRootsListInFileNameOrder) {
 	write("a-more-traits.xml", "<!-- a comment first --><Traits/>");
 	write("notes.txt", "not xml");
+	write("herd.xml", "<creature/>");
+	write("being_milked.xml", "<behavior/>");
+	write("grazing.xml", "<behavior/>");
 
 	const CreatureConfigFiles found = creatureConfigFiles(folder);
 	EXPECT_TRUE(found.errors.empty()) << ::testing::PrintToString(found.errors);
+	EXPECT_EQ(names(found.creature), (std::vector<std::string>{"herd.xml"}));
+	EXPECT_EQ(names(found.behaviors), (std::vector<std::string>{"being_milked.xml", "grazing.xml"}));
 	EXPECT_EQ(names(found.traits), (std::vector<std::string>{"a-more-traits.xml", "traits.xml"}));
 	EXPECT_EQ(names(found.mood), (std::vector<std::string>{"mood.xml"}));
 	EXPECT_EQ(names(found.memory), (std::vector<std::string>{"memory.xml"}));

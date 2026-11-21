@@ -230,9 +230,11 @@ moves, so nothing unloads; in the game a dev-spawned tree is lost when its chunk
 Asset definitions and recipes already load without GL through `assets::initializeAssetSystem`
 (AssetBootstrap.cpp); `asset-cli` opens GL only for its `render` command. The work configs load
 through `assets::loadWorkConfig(configRoot, human)` (libs/assets/assets/WorkConfig.cpp, done in build step 2):
-action types, task chains, work types, priority tuning with the required-tier check, construction, the
-human's mood and memory (from `assets/world/creatures/Human/`), and cross-validation, returning the errors rather than logging them. The loading scene calls it
-(`GameLoadingScene::initializeWorldSystems`) and clears `GoalTaskRegistry` itself; that one sim-side line moves to
+action types and work types (from `legacy/`), the arbitration file with the required-tier check,
+construction, the human's mood and memory (from `assets/world/creatures/Human/`), and cross-validation,
+returning the errors rather than logging them. The loading scene (`GameLoadingScene::initializeWorldSystems`)
+calls `world_sim::loadGameConfig`, which runs it, then the behavior library and creature loader
+(`assets::loadEntries`), then the colonist rules, and clears `GoalTaskRegistry` itself; that one sim-side line moves to
 session construction. sim-cli takes `--config-root <dir>` (default: the staged
 `assets/config`) so a sweep can point it at a patched copy. The human's folder is a second input:
 `--config-root` does not reach mood, memory, traits, attributes, or needs, which `assets::creatureConfigFiles`
@@ -248,7 +250,7 @@ namespace-scope, excluding `const` and `constexpr`), with a verdict on each:
 |---|---|
 | Chain id counter | Done (build step 3): the three per-system `nextChainId` statics became one `GoalTaskRegistry` counter; WOR-46 later deleted chain ids, which nothing read. The registry's claim sequence counter, which `clear()` resets at session construction, is the one left. |
 | `GoalTaskRegistry` instance | Cleared at session construction. |
-| Work-config registries (`ActionTypeRegistry`, `TaskChainRegistry`, `WorkTypeRegistry`, `PriorityConfig`, `ConstructionRegistry`) and `ConfigValidator::errors` | Cleared and reloaded by `loadWorkConfig`. |
+| Work-config registries (`ActionTypeRegistry`, `WorkTypeRegistry`, `PriorityConfig`, `ConstructionRegistry`) and `ConfigValidator::errors` | Cleared and reloaded by `loadWorkConfig`. |
 | `AssetRegistry`, `RecipeRegistry`, `GeneratorRegistry` | Loaded once per process; definitions don't change between sessions. The synthetic `Terrain_Shore` def is registered idempotently (`AssetRegistry::registerSyntheticDefinition`, called from `VisionSystem::ensureTerrainDefinitionsRegistered`), so ids match across sessions. |
 | The edible item list | No static: `AssetRegistry::edibleItemNames()` is built with the definitions and cleared with them. |
 | `GameWorldState::s_pending` (app) | Handled by the loading scene, above. |
@@ -765,7 +767,7 @@ so they can stage "the last ingredient unit" and "the last berries".
 ## Experiments
 
 Experiments sweep parameters and compare outcomes, for example haul tiers in
-`assets/config/work/priority-tuning.xml` against idle time across seeds. They are phase 2.
+`assets/config/arbitration/priority-tuning.xml` against idle time across seeds. They are phase 2.
 
 `sim-cli run <file> --json-summary` prints one summary object as its last stdout line:
 
@@ -783,7 +785,7 @@ temp directory per variant, patches the named values, and runs sim-cli once per 
 
 ```
 node tools/sim-sweep.mjs --scenario apps/sim-cli/scenarios/colony-day.sim
-    --set "work/priority-tuning.xml:TaskTiers/Haul@tier=4,5,6"
+    --set "arbitration/priority-tuning.xml:TaskTiers/Haul@tier=4,5,6"
     --seeds 1-10 --var colonists=8 --var days=3
     --out sweep.jsonl
 ```
