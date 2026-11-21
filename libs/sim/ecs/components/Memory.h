@@ -15,6 +15,7 @@
 #include <glm/vec2.hpp>
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <span>
 #include <unordered_map>
@@ -32,8 +33,45 @@ namespace ecs {
 	struct KnownWorldEntity {
 		uint32_t  defNameId;		  // Asset definition ID from AssetRegistry::getDefNameId()
 		glm::vec2 position;			  // World position in meters
-		uint32_t  defSlot = 0;		  // Index of this entity's key in Memory::worldEntitiesByDef[defNameId]
+		uint32_t  defSlot = 0;		  // Index of this entity's key in its RememberedOfDefinition::keys
+		uint32_t  cellSlot = 0;		  // Index of this entity's key in its MemoryCell::keys
 		uint16_t  capabilityMask = 0; // The capabilities it was remembered with (its capability-index sets)
+	};
+
+	/// The side of a square cell of the grid remembered things are filed under, per definition.
+	inline constexpr float kMemoryCellMeters = 16.0F;
+
+	/// One cell of a definition's grid: the keys of its remembered things that lie in it, in no order.
+	struct MemoryCell {
+		int32_t				  x = 0;
+		int32_t				  y = 0;
+		std::vector<uint64_t> keys; // swap-removed: KnownWorldEntity::cellSlot is each key's index
+	};
+
+	/// The cell a position lies in, as one key for MemoryCell lookups.
+	[[nodiscard]] inline int32_t memoryCellCoordinate(float meters) {
+		return static_cast<int32_t>(std::floor(meters / kMemoryCellMeters));
+	}
+	[[nodiscard]] inline uint64_t memoryCellKey(int32_t x, int32_t y) {
+		return (static_cast<uint64_t>(static_cast<uint32_t>(x)) << 32) | static_cast<uint32_t>(y);
+	}
+
+	/// What a creature remembers of one definition: every key in no order, and the same keys by the grid
+	/// cell they lie in, so a walk nearest first opens only the cells near enough to matter
+	/// (/docs/technical/queries-and-chains.md, Evaluation).
+	struct RememberedOfDefinition {
+		std::vector<uint64_t>				   keys;	  // swap-removed: KnownWorldEntity::defSlot is each key's index
+		std::vector<MemoryCell>				   cells;	  // only cells holding a key; swap-removed when emptied
+		std::unordered_map<uint64_t, uint32_t> cellIndex; // memoryCellKey -> index in cells
+		/// How many of its things carry each capability, and while one does, the definition's index in
+		/// Memory::definitionsWithCapability for it.
+		std::array<uint32_t, assets::kCapabilityNames.size()> capabilityCounts{};
+		std::array<uint32_t, assets::kCapabilityNames.size()> capabilitySlots{};
+
+		[[nodiscard]] const MemoryCell* cellAt(int32_t x, int32_t y) const {
+			const auto found = cellIndex.find(memoryCellKey(x, y));
+			return found == cellIndex.end() ? nullptr : &cells[found->second];
+		}
 	};
 
 	/// A mover the colonist has seen (another colonist; animals later), as it was at the last sighting.
@@ -98,10 +136,13 @@ namespace ecs {
 		/// capabilityIndex[capabilityType] contains all entity keys with that capability
 		std::array<std::unordered_set<uint64_t>, kCapabilityTypeCount> capabilityIndex;
 
-		/// The keys of every remembered world entity, by def, in no order. Kept beside the capability
-		/// index (same remember/forget points) so a question about one item visits only that item's
-		/// entries. Swap-removed: KnownWorldEntity::defSlot is each key's index in its list.
-		std::unordered_map<uint32_t, std::vector<uint64_t>> worldEntitiesByDef;
+		/// Every remembered world entity by def: its keys and its grid. Kept beside the capability index
+		/// (same remember/forget points) so a question about one item visits only that item's entries, and a
+		/// query walks them nearest first.
+		std::unordered_map<uint32_t, RememberedOfDefinition> worldEntitiesByDef;
+
+		/// The defs at least one remembered thing of which carries each capability, in no order.
+		std::array<std::vector<uint32_t>, kCapabilityTypeCount> definitionsWithCapability;
 
 		// --- LRU Eviction ---
 		//
@@ -218,9 +259,30 @@ namespace ecs {
 			}
 
 			// Add to primary storage
-			auto& ofDef = worldEntitiesByDef[defNameId];
-			knownWorldEntities[key] = KnownWorldEntity{defNameId, position, static_cast<uint32_t>(ofDef.size()), capabilityMask};
-			ofDef.push_back(key);
+			RememberedOfDefinition& ofDef = worldEntitiesByDef[defNameId];
+			const int32_t			cellX = memoryCellCoordinate(position.x);
+			const int32_t			cellY = memoryCellCoordinate(position.y);
+			const auto [cellAt, newCell] =
+				ofDef.cellIndex.try_emplace(memoryCellKey(cellX, cellY), static_cast<uint32_t>(ofDef.cells.size()));
+			if (newCell) {
+				ofDef.cells.push_back(MemoryCell{.x = cellX, .y = cellY, .keys = {}});
+			}
+			MemoryCell& cell = ofDef.cells[cellAt->second];
+			knownWorldEntities[key] = KnownWorldEntity{
+				.defNameId = defNameId,
+				.position = position,
+				.defSlot = static_cast<uint32_t>(ofDef.keys.size()),
+				.cellSlot = static_cast<uint32_t>(cell.keys.size()),
+				.capabilityMask = capabilityMask
+			};
+			ofDef.keys.push_back(key);
+			cell.keys.push_back(key);
+			for (size_t cap = 0; cap < kCapabilityTypeCount; ++cap) {
+				if ((capabilityMask & (1 << cap)) != 0 && ofDef.capabilityCounts[cap]++ == 0) {
+					ofDef.capabilitySlots[cap] = static_cast<uint32_t>(definitionsWithCapability[cap].size());
+					definitionsWithCapability[cap].push_back(defNameId);
+				}
+			}
 			++worldEntityVersion;
 
 			// Add to capability indices
@@ -285,6 +347,9 @@ namespace ecs {
 				index.clear();
 			}
 			worldEntitiesByDef.clear();
+			for (auto& definitions : definitionsWithCapability) {
+				definitions.clear();
+			}
 			lru.reset();
 			knownSegments.clear();
 			knownOpenings.clear();
@@ -311,7 +376,19 @@ namespace ecs {
 		/// The keys of the remembered world entities of one def, in no order.
 		[[nodiscard]] std::span<const uint64_t> worldEntitiesOfDef(uint32_t defNameId) const {
 			const auto it = worldEntitiesByDef.find(defNameId);
-			return it != worldEntitiesByDef.end() ? std::span<const uint64_t>(it->second) : std::span<const uint64_t>();
+			return it != worldEntitiesByDef.end() ? std::span<const uint64_t>(it->second.keys) : std::span<const uint64_t>();
+		}
+
+		/// What is remembered of one def, keys and grid; nullptr when nothing of it ever was.
+		[[nodiscard]] const RememberedOfDefinition* rememberedOfDefinition(uint32_t defNameId) const {
+			const auto it = worldEntitiesByDef.find(defNameId);
+			return it != worldEntitiesByDef.end() ? &it->second : nullptr;
+		}
+
+		/// The defs at least one remembered thing of which carries `capability`, in no order.
+		[[nodiscard]] std::span<const uint32_t> definitionsWith(assets::CapabilityType capability) const {
+			const auto index = static_cast<size_t>(capability);
+			return index < kCapabilityTypeCount ? std::span<const uint32_t>(definitionsWithCapability[index]) : std::span<const uint32_t>();
 		}
 
 		/// Get the KnownWorldEntity for a given key
@@ -478,13 +555,47 @@ namespace ecs {
 				for (auto& index : capabilityIndex) {
 					index.erase(key);
 				}
-				auto&		   ofDef = worldEntitiesByDef[it->second.defNameId];
-				const uint32_t slot = it->second.defSlot;
-				const uint64_t moved = ofDef.back();
-				ofDef[slot] = moved;
-				ofDef.pop_back();
+				const KnownWorldEntity& known = it->second;
+				RememberedOfDefinition& ofDef = worldEntitiesByDef.find(known.defNameId)->second;
+				const uint32_t			slot = known.defSlot;
+				const uint64_t			moved = ofDef.keys.back();
+				ofDef.keys[slot] = moved;
+				ofDef.keys.pop_back();
 				if (moved != key) {
 					knownWorldEntities.find(moved)->second.defSlot = slot;
+				}
+
+				const auto cellAt =
+					ofDef.cellIndex.find(memoryCellKey(memoryCellCoordinate(known.position.x), memoryCellCoordinate(known.position.y)));
+				const uint32_t cellIndex = cellAt->second;
+				MemoryCell&	   cell = ofDef.cells[cellIndex];
+				const uint64_t movedInCell = cell.keys.back();
+				cell.keys[known.cellSlot] = movedInCell;
+				cell.keys.pop_back();
+				if (movedInCell != key) {
+					knownWorldEntities.find(movedInCell)->second.cellSlot = known.cellSlot;
+				}
+				if (cell.keys.empty()) {
+					ofDef.cellIndex.erase(cellAt);
+					if (cellIndex + 1 != ofDef.cells.size()) {
+						ofDef.cells[cellIndex] = std::move(ofDef.cells.back());
+						ofDef.cellIndex[memoryCellKey(ofDef.cells[cellIndex].x, ofDef.cells[cellIndex].y)] = cellIndex;
+					}
+					ofDef.cells.pop_back();
+				}
+
+				for (size_t cap = 0; cap < kCapabilityTypeCount; ++cap) {
+					if ((known.capabilityMask & (1 << cap)) == 0 || --ofDef.capabilityCounts[cap] != 0) {
+						continue;
+					}
+					std::vector<uint32_t>& definitions = definitionsWithCapability[cap];
+					const uint32_t		   capabilitySlot = ofDef.capabilitySlots[cap];
+					const uint32_t		   movedDefinition = definitions.back();
+					definitions[capabilitySlot] = movedDefinition;
+					definitions.pop_back();
+					if (movedDefinition != known.defNameId) {
+						worldEntitiesByDef.find(movedDefinition)->second.capabilitySlots[cap] = capabilitySlot;
+					}
 				}
 				knownWorldEntities.erase(it);
 				++worldEntityVersion;

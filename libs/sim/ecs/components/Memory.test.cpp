@@ -173,10 +173,14 @@ TEST(MemoryComponent, ClearResetsLru) {
 
 namespace {
 
-	/// Every remembered key sits in its def's list at its defSlot, and the lists hold nothing else.
+	/// Every remembered key sits in its def's list at its defSlot and in the grid cell it lies in at its
+	/// cellSlot, the lists and cells hold nothing else, and each def is listed under exactly the
+	/// capabilities its remembered things carry.
 	void expectDefListsMatch(const ecs::Memory& m) {
 		size_t listed = 0;
-		for (const auto& [defNameId, keys] : m.worldEntitiesByDef) {
+		size_t filed = 0;
+		for (const auto& [defNameId, remembered] : m.worldEntitiesByDef) {
+			const auto& keys = remembered.keys;
 			listed += keys.size();
 			for (size_t slot = 0; slot < keys.size(); ++slot) {
 				const ecs::KnownWorldEntity* entity = m.getWorldEntity(keys[slot]);
@@ -184,8 +188,28 @@ namespace {
 				EXPECT_EQ(entity->defNameId, defNameId);
 				EXPECT_EQ(entity->defSlot, slot);
 			}
+			EXPECT_EQ(remembered.cellIndex.size(), remembered.cells.size());
+			for (size_t index = 0; index < remembered.cells.size(); ++index) {
+				const ecs::MemoryCell& cell = remembered.cells[index];
+				EXPECT_FALSE(cell.keys.empty()) << "an empty cell is kept";
+				EXPECT_EQ(remembered.cellAt(cell.x, cell.y), &cell);
+				filed += cell.keys.size();
+				for (size_t slot = 0; slot < cell.keys.size(); ++slot) {
+					const ecs::KnownWorldEntity* entity = m.getWorldEntity(cell.keys[slot]);
+					ASSERT_NE(entity, nullptr) << "def " << defNameId << " files a forgotten key";
+					EXPECT_EQ(entity->cellSlot, slot);
+					EXPECT_EQ(ecs::memoryCellCoordinate(entity->position.x), cell.x);
+					EXPECT_EQ(ecs::memoryCellCoordinate(entity->position.y), cell.y);
+				}
+			}
+			for (size_t capability = 0; capability < ecs::Memory::kCapabilityTypeCount; ++capability) {
+				const auto& withCapability = m.definitionsWithCapability[capability];
+				const bool	isListed = std::find(withCapability.begin(), withCapability.end(), defNameId) != withCapability.end();
+				EXPECT_EQ(isListed, remembered.capabilityCounts[capability] > 0) << "def " << defNameId << " capability " << capability;
+			}
 		}
 		EXPECT_EQ(listed, m.worldEntityCount());
+		EXPECT_EQ(filed, m.worldEntityCount());
 	}
 
 } // namespace
@@ -211,6 +235,14 @@ TEST(MemoryComponent, DefListsFollowRememberForgetAndEvict) {
 	ecs::Memory copy = m;
 	copy.forgetWorldEntity(posFor(1), kOtherDefId);
 	expectDefListsMatch(copy);
+	expectDefListsMatch(m);
+
+	// A def is listed under a capability while any of its things carries it.
+	constexpr uint32_t kThirdDefId = 9;
+	m.rememberWorldEntity({-1.0F, 40.0F}, kDefId, 0b110);
+	m.rememberWorldEntity({-2.0F, 40.0F}, kThirdDefId, 0b100);
+	expectDefListsMatch(m);
+	m.forgetWorldEntity({-1.0F, 40.0F}, kDefId);
 	expectDefListsMatch(m);
 
 	// Fill to capacity and overflow: evictions leave the lists in step.
