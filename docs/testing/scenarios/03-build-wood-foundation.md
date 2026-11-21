@@ -1,7 +1,7 @@
 # Scenario 03: Build wood foundation over trees
 
 **Status:** ready  
-**Last verified:** 2026-11-20 (steps 44 and 53 are person-only and were not run. Steps 9 and 10 ran again on a built L foundation: the armful became a heap where Bob stood, and the dossier, opened with the panel's eye button, listed the Deconstruct structure row under Known work on its Tasks tab. On that run (17, 2) to (20, 5) held one tree, not three, and no tree stood at (31, 4.6).)
+**Last verified:** 2026-11-20, steps 1 to 11 at (18, 7) to (21, 10) and X=26, Y=1.5 (the three trees and the spawned bush were cleared and no Berry was delivered; the notch's oak stood through Clearing and the build; the armful became a heap where Bob stood; the Deconstruct structure row showed in the Tasks panel and under Known work, and left both). Not seen on that run: step 4, since the cleared trees' logs covered all 18 Wood and no tree was felled during AwaitingMaterials; step 2's bush was the spawned one, as no generated bush stands near the footprint; step 8's packaged box. Steps 12 to 61 rely on the earlier 2026-11-20 run (44 and 53 are person-only and were not run).
 
 Verifies the full foundation construction lifecycle: a colonist clears on-footprint trees, chops
 for materials, and builds a `Wood` foundation to completion, unaided, without freezing.
@@ -28,8 +28,9 @@ curl.exe "http://127.0.0.1:<PORT>/api/dev/teleport?colonist=<BOB_ID>&to=12,8"
 ```
 
 Choose a ~3x3 area on the east bank with at least one or two trees and a berry bush
-(`Flora_BerryBush`) standing on it: at the Quick Start landing (17, 2) to (20, 5) holds three trees, and
-`spawn?def=Flora_BerryBush&at=18,3.2` adds the bush. A tree or bush placed with `/api/dev/spawn` blocks the footprint and is cleared the same way
+(`Flora_BerryBush`) standing on it: at the Quick Start landing (18, 7) to (21, 10) holds three trees (an oak
+and two maples; a fourth maple stands just outside its south edge), and
+`spawn?def=Flora_BerryBush&at=20,7.8` adds the bush. A tree or bush placed with `/api/dev/spawn` blocks the footprint and is cleared the same way
 as world-generated ones. Note the corner coordinates as `FX0,FY0` and `FX1,FY1`.
 
 Blueprint the foundation (built=0 queues the colonist to build it):
@@ -114,7 +115,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 8. Blueprint an L-shaped foundation beside the first (six points: an 8 m square with its north-east
    quarter cut away, `pts=X,Y;X+8,Y;X+8,Y+4;X+4,Y+4;X+4,Y+8;X,Y+8`), placed so a tree stands in the
-   notch (`X+6,Y+6`) and grass grows there (at the Quick Start landing X=25, Y=-1.5 puts a maple at (31, 4.6) in the notch). Bob does not clear the notch's tree (no "Clearing ...
+   notch (`X+6,Y+6`) and grass grows there (at the Quick Start landing X=26, Y=1.5 puts an oak at (31.34, 8.36) in the notch). Bob does not clear the notch's tree (no "Clearing ...
    from build site" for it), the site leaves `Clearing` with it standing (he may still cut it later
    for Wood, as any tree), and once built the notch's grass is still drawn while the floor is bare. A packaged box (one not yet placed) lying on its floor before the blueprint was drawn sits
    just outside the floor once building starts; one lying in the notch has not moved.
