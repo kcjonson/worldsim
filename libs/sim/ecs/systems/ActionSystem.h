@@ -16,9 +16,9 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <random>
-#include <memory>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -27,6 +27,7 @@
 namespace construction {
 	class ConstructionWorld;
 	class WallClosure;
+	using SegmentId = std::uint64_t;
 } // namespace construction
 
 namespace ecs {
@@ -286,7 +287,9 @@ private:
 	bool clearWallToComplete(EntityID blueprintEntity);
 
 	/// What completing the wall `blueprintEntity` closes, worked out again when the topology has changed.
-	const construction::WallClosure& wallClosure(EntityID blueprintEntity, std::uint64_t segment);
+	const construction::WallClosure& wallClosure(EntityID blueprintEntity, construction::SegmentId segment);
+	/// Whether 	ask is a Build on a wall blueprint.
+	[[nodiscard]] bool buildsAWall(const struct Task& task) const;
 	/// Drop what is kept for a wall: its hold toast and its closure. Done as it completes, and in update for
 	/// walls that are gone or complete.
 	void forgetWall(EntityID blueprintEntity);
@@ -404,8 +407,10 @@ private:
 	WallHeldCallback					   onWallHeld = nullptr;
 	std::unordered_set<EntityID>		   wallsHeldByControlled;
 	struct CachedClosure {
-		std::uint64_t									 segment = 0;
+		construction::SegmentId							 segment = 0;
 		std::uint64_t									 version = 0;
+		// Shared, not unique: WallClosure is only declared here, and a shared_ptr's deleter is fixed where it is
+		// made, so ActionSystem's implicit destructor needs no complete type.
 		std::shared_ptr<const construction::WallClosure> closure;
 	};
 	std::unordered_map<EntityID, CachedClosure> wallClosures;

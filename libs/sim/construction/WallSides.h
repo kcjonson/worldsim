@@ -31,13 +31,14 @@ namespace construction {
 		// (the builder takes the nearer). Left (+90 degrees of v0 to v1) comes first. Empty for an unknown
 		// segment.
 		[[nodiscard]] const std::vector<WallStand>& stands() const { return sides; }
-		// Whether completing the segment leaves `position` in a region with no way out while the other side
-		// has one: a builder there would be shut in.
+		// Whether `position` lies in the region completing the segment would shut in: the side with no way out,
+		// when the other side has one. Another sealed room elsewhere is not this wall's.
 		[[nodiscard]] bool shutsIn(glm::vec2 position) const;
 
 	  private:
 		std::vector<WallStand>	 sides;
 		bool					 oneSideOut = false;
+		std::size_t				 shutRoot = 0; // the region root of the side with no way out, when oneSideOut
 		std::vector<RoomFace>	 rooms;
 		std::vector<std::size_t> regionRoots; // per room, then open ground last: the region it joins through doors
 	};

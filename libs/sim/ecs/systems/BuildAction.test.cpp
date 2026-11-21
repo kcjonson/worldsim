@@ -658,4 +658,44 @@ namespace ecs::test {
 		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::Complete) << "those staying inside are not waited for";
 	}
 
+	// Neither someone inside whose route out was found wanting, nor a colonist the player controls inside
+	// (out of the band), is waited for.
+	TEST_F(WallBandHoldTest, AClosingWallDoesNotWaitForAFailedRouteOrAControlledColonistInside) {
+		const EntityID blueprint = wallSite(closingWallOfASquare());
+		const EntityID stuck = colonistAt({1.0F, 2.0F}, false);
+		Task walkOut;
+		walkOut.type = TaskType::Wander;
+		walkOut.state = TaskState::Moving;
+		walkOut.navState = NavState::CantFindWayTo;
+		walkOut.targetPosition = {2.0F, -3.0F};
+		world->addComponent<Task>(stuck, walkOut);
+		const EntityID controlled = colonistAt({3.0F, 2.0F}, true);
+		walkOut.navState = NavState::Traveling;
+		world->addComponent<Task>(controlled, walkOut);
+
+		world->update(0.5F);
+		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::Complete);
+	}
+
+	// A builder of another wall, inside the room this one would close, holds it with his work left going:
+	// that wall completes first and frees him.
+	TEST_F(WallBandHoldTest, AClosingWallWaitsForABuilderOfAnotherWallInsideTheRoom) {
+		const EntityID blueprint = wallSite(closingWallOfASquare());
+		const EntityID otherWall = createBlueprint(1000.0F);
+		world->addComponent<Structure>(otherWall, Structure{.kind = StructureKind::Wall, .graphId = wall({1.0F, 1.0F}, {1.0F, 3.0F}, false)});
+		const EntityID otherBuilder = createBuilder(0.0F, {1.6F, 2.0F});
+		assignBuildTask(otherBuilder, otherWall);
+		world->getComponent<Task>(otherBuilder)->targetPosition = {1.6F, 2.0F};
+
+		world->update(0.5F);
+		world->update(0.5F);
+		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::UnderConstruction);
+		EXPECT_TRUE(world->getComponent<Action>(otherBuilder)->isActive()) << "his own work goes on";
+
+		world->getComponent<StructureBlueprint>(otherWall)->phase = StructureBlueprint::BuildPhase::Complete;
+		world->getComponent<Task>(otherBuilder)->clear();
+		world->update(0.5F);
+		EXPECT_EQ(phaseOf(blueprint), StructureBlueprint::BuildPhase::Complete);
+	}
+
 } // namespace ecs::test

@@ -209,6 +209,11 @@ namespace ecs {
 		}
 	} // namespace
 
+	bool ActionSystem::buildsAWall(const Task& task) const {
+		const auto* structure = task.type == TaskType::Build ? world->getComponent<Structure>(static_cast<EntityID>(task.buildBlueprintEntityId)) : nullptr;
+		return structure != nullptr && structure->kind == StructureKind::Wall;
+	}
+
 	const construction::WallClosure& ActionSystem::wallClosure(EntityID blueprintEntity, construction::SegmentId segment) {
 		auto cached = wallClosures.find(blueprintEntity);
 		if (cached == wallClosures.end() || cached->second.segment != segment || cached->second.version != constructionWorld->version()) {
@@ -250,8 +255,9 @@ namespace ecs {
 
 		// What holds the wall, moving nobody: a builder of it it would shut in, whose work ends so he decides
 		// again and goes to a side it allows; anyone else not under the player's control it would shut in who
-		// is on the way out (leaving); and a colonist the player controls in its band. Someone who stays
-		// inside by choice is not waited for.
+		// is building another wall (that wall completes first, and frees him) or is on the way out (leaving);
+		// and a colonist the player controls in its band. Someone whose task keeps them inside is not waited
+		// for.
 		const construction::WallClosure& closure = wallClosure(blueprintEntity, segment->id);
 		bool							 shutsInSomeone = false;
 		for (auto [colonist, position, task] : world->view<Position, Task>()) {
@@ -263,7 +269,7 @@ namespace ecs {
 				if (auto* work = world->getComponent<Action>(colonist)) {
 					work->clear();
 				}
-			} else if (world->getComponent<PlayerControlled>(colonist) == nullptr && leaving(task, closure)) {
+			} else if (world->getComponent<PlayerControlled>(colonist) == nullptr && (buildsAWall(task) || leaving(task, closure))) {
 				shutsInSomeone = true;
 			}
 		}

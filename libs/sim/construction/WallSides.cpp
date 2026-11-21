@@ -146,16 +146,24 @@ namespace construction {
 			regionRoots[region] = rootOf(regionRoots, region);
 		}
 		const std::size_t open = regionRoots[rooms.size()];
-		const bool		  leftOut = regionRoots[regionAt(rooms, sideProbe(first->pos, second->pos, 0.5, true))] == open;
-		const bool		  rightOut = regionRoots[regionAt(rooms, sideProbe(first->pos, second->pos, 0.5, false))] == open;
-		oneSideOut = leftOut != rightOut;
-		if (oneSideOut) {
-			sides = {leftOut ? leftStand : rightStand};
+		const std::size_t leftRoot = regionRoots[regionAt(rooms, sideProbe(first->pos, second->pos, 0.5, true))];
+		const std::size_t rightRoot = regionRoots[regionAt(rooms, sideProbe(first->pos, second->pos, 0.5, false))];
+		oneSideOut = (leftRoot == open) != (rightRoot == open);
+		if (!oneSideOut) {
+			return;
 		}
+		shutRoot = leftRoot == open ? rightRoot : leftRoot;
+		WallStand outside = leftRoot == open ? leftStand : rightStand;
+		for (std::size_t room = 0; room < rooms.size(); ++room) {
+			if (regionRoots[room] == shutRoot) {
+				outside.shutRegion.push_back({.ring = rooms[room].ring, .holes = rooms[room].holes});
+			}
+		}
+		sides = {std::move(outside)};
 	}
 
 	bool WallClosure::shutsIn(glm::vec2 position) const {
-		return oneSideOut && regionRoots[regionAt(rooms, toMillimeters(position))] != regionRoots[rooms.size()];
+		return oneSideOut && regionRoots[regionAt(rooms, toMillimeters(position))] == shutRoot;
 	}
 
 	std::vector<WallStand> wallStands(const ConstructionWorld& world, SegmentId segment) {
