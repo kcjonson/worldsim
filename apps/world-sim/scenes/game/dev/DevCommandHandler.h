@@ -113,9 +113,11 @@ namespace world_sim {
 		// added and asked, and with shortfall (what was in the way) when it added fewer than asked. A give
 		// that added nothing is a 400 naming why, as is one with nowhere or nothing to give.
 		app::DevResponse devGive(const app::DevRequest& cmd);
-		// spawn?def=&at=x,y&n=&scatter=: spawnGroundRefusal at the centre and at each scattered spot, which is
-		// snapped off water and skipped when refused; a 400 when nothing is spawned. Answers ok with the ids
-		// of the entities it created, in the order spawned.
+		// spawn?def=&at=x,y&n=&scatter=&turn=: spawnGroundRefusal at the centre and at each scattered spot, which is
+		// snapped off water and skipped when refused; a 400 when nothing is spawned. turn= is degrees clockwise,
+		// the front down the screen at 0 (default), set as each entity's ecs::Rotation rounded to the turn
+		// quantum (rotatable-placed-items 3); only a parts def draws turned. Answers ok with the ids of the
+		// entities it created, in the order spawned.
 		app::DevResponse devSpawn(const app::DevRequest& cmd);
 		// colonist?at=x,y&n=&name=: refused on water or a placed obstacle (moverGroundRefusal).
 		DevRefusal devColonist(const app::DevRequest& cmd);

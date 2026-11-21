@@ -398,6 +398,8 @@ namespace world_sim {
 		const long			   nRaw = std::strtol(param(cmd, "n", "1").c_str(), nullptr, 10);
 		const long			   n = nRaw < 1 ? 1 : nRaw;
 		const float			   scatter = std::strtof(param(cmd, "scatter", "0").c_str(), nullptr);
+		// Degrees clockwise, the front down the screen at 0, rounded to the turn quantum (rotatable-placed-items 3).
+		const float turn = assets::turnRadiansFromQuanta(assets::turnQuantaFromDegrees(std::strtod(param(cmd, "turn", "0").c_str(), nullptr)));
 
 		// The gate took the CENTER, but each scattered offset is its own point that can land in a
 		// river. Snap every scattered position onto walkable ground with the same primitive the
@@ -411,7 +413,11 @@ namespace world_sim {
 			if (!placed.has_value() || !spawnGroundRefusal(*m_ctx.placement, m_ctx.navigation, def, {placed->x, placed->y}).empty()) {
 				continue;
 			}
-			spawned.push_back(m_ctx.placement->spawnEntity(def, {placed->x, placed->y}));
+			const ecs::EntityID entity = m_ctx.placement->spawnEntity(def, {placed->x, placed->y});
+			if (auto* rotation = m_ctx.world->getComponent<ecs::Rotation>(entity)) {
+				rotation->radians = turn;
+			}
+			spawned.push_back(entity);
 		}
 		if (spawned.empty()) {
 			return reject("spawn: none of the " + std::to_string(n) + " scattered spots near (" + std::to_string(at.x) + ", " +
