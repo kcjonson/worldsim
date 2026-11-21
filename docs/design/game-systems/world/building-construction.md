@@ -344,7 +344,7 @@ Same pathfinding rationale as foundations: a gap between walls is either zero (j
 
 ### Lifecycle
 
-Same as foundations: blueprint → haul → build → built. Work is length × thickness × material work factor. Wall blueprints do not block colonist pathing; built walls do. A wall segment completes only once no colonist the player controls stands in its footprint; any other colonist in it is stepped out, to a side its builders use, as it completes. Builders stand beside the wall, never on its line, and when the segment would close a room with no way out (no built door to open ground, room to room), on the outside; it does not complete while one of its builders is still inside such a room, so finishing it never shuts a builder in.
+Same as foundations: blueprint → haul → build → built. Work is length × thickness × material work factor. Wall blueprints do not block colonist pathing; built walls do. A wall segment completes only once no colonist the player controls stands in its footprint; any other colonist in it is stepped out, to a side its builders use, as it completes. Builders stand beside the wall, never on its line, and when the segment would close a room with no way out (no built door to open ground, room to room), on the outside. It does not complete while one of its builders, or anyone else on their way out of such a room, is still inside it; someone who stays inside by choice is not waited for.
 
 ### Segments and Demolition
 
