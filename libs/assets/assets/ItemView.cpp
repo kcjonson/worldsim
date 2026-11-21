@@ -508,8 +508,6 @@ namespace assets {
 		std::vector<Band>
 		bandsOf(const std::vector<ColliderEdge>& edges, std::vector<float> vertexX, float halfWidth, const ViewConfig& config) {
 			constexpr float kSameX = 1.0e-5F;
-			// A gap measured as its join gap at the x it was cut at may read a hair wider there.
-			constexpr float kJoinSlack = 1.0e-5F;
 			std::sort(vertexX.begin(), vertexX.end());
 			vertexX.erase(std::unique(vertexX.begin(), vertexX.end(), [](float left, float right) { return right - left < kSameX; }), vertexX.end());
 			std::vector<float> boundaries;
@@ -561,12 +559,14 @@ namespace assets {
 					band.maxX = i + 1 == count ? to : from + width * static_cast<float>(i + 1) / static_cast<float>(count);
 					band.intervals = intervalsBetween(edges, band.minX, band.maxX);
 					// Facing edges closer than the outline's whole width across the gap: their outlines can meet on the screen,
-					// and nothing can stand between them, so the two sides are one strip, sorted from the south.
+					// and nothing can stand between them, so the two sides are one strip, sorted from the south. Between
+					// kept cuts the gap is on one side of the join gap throughout, so the band's middle decides, with no
+					// slack, and it agrees with the cuts even where a cut a hair from a span end was dropped.
+					const float middleX = (band.minX + band.maxX) * 0.5F;
 					for (size_t index = 0; index + 1 < band.intervals.size();) {
 						Interval&		north = band.intervals[index];
 						const Interval& south = band.intervals[index + 1];
-						if (std::max(gapAt(north, south, band.minX), gapAt(north, south, band.maxX)) <=
-							joinGap(north, south, halfWidth) + kJoinSlack) {
+						if (gapAt(north, south, middleX) < joinGap(north, south, halfWidth)) {
 							north = {.north = north.north, .south = south.south, .anchor = south.anchor, .rise = south.rise};
 							band.intervals.erase(band.intervals.begin() + static_cast<std::ptrdiff_t>(index) + 1);
 						} else {

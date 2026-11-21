@@ -1466,17 +1466,19 @@ TEST_F(ItemViewTest, IntervalsJoinOnlyWhereTheirOutlinesCanMeet) {
 				}
 				std::sort(crossings.begin(), crossings.end(), [](const Crossing& left, const Crossing& right) { return left.y < right.y; });
 				size_t groups = 1;
+				size_t joinedHere = 0;
 				bool   ambiguous = false;
 				for (size_t i = 2; i + 1 < crossings.size(); i += 2) {
 					const float gap = crossings[i].y - crossings[i - 1].y;
 					const float join = crossings[i].reach + crossings[i - 1].reach;
 					ambiguous = ambiguous || std::abs(gap - join) < 1.0e-3F;
 					groups += gap > join ? 1 : 0;
-					joined += gap > join ? 0 : 1;
+					joinedHere += gap > join ? 0 : 1;
 				}
 				if (ambiguous) {
 					continue;
 				}
+				joined += joinedHere;
 				size_t strips = 0;
 				for (const ItemStrip& strip : layout.strips) {
 					strips += std::any_of(
@@ -1495,6 +1497,41 @@ TEST_F(ItemViewTest, IntervalsJoinOnlyWhereTheirOutlinesCanMeet) {
 	}
 	EXPECT_GT(checked, 0U);
 	EXPECT_GT(joined, 0U) << "some line crosses a gap narrow enough to join";
+}
+
+TEST_F(ItemViewTest, AGapClosingAHairFromACutStillJoinsItsBand) {
+	// Two blocks meeting only at a corner at the origin, a V open to the east between them: the north one's southern
+	// edge runs to (1, -1.55) m and the south one's northern edge to (2, 1.204) m, so the gap widens 2.152 a metre from
+	// the apex and reaches the outline's whole width across it (0.015 * (1.8446 / 1 + 2.3345 / 2) = 0.04518 m) at
+	// x 0.0209931. The collider is on a millimetre grid, and a third block far south puts a vertex at x 0.021, 6.9
+	// micrometres past that crossing: too near for a cut of its own, and the gap there is 1.5e-5 m over the join gap.
+	// The band from the apex to it is joined, as all but its last micrometres are narrower than the outline.
+	const float northLength = std::hypot(1.0F, 1.55F);
+	const float northTurn = std::atan2(-1.55F, 1.0F) * 180.0F / std::numbers::pi_v<float>;
+	const float southLength = std::hypot(2.0F, 1.204F);
+	const float southTurn = std::atan2(1.204F, 2.0F) * 180.0F / std::numbers::pi_v<float>;
+	writeDef(
+		"Vee",
+		"<parts>" + block("north", 0.0F, -0.3F, northLength, 0.0F, 0.0F, 0.9F) + block("south", 0.0F, 0.0F, southLength, 0.3F, 0.0F, 0.9F) +
+			block("far", 0.021F, 3.0F, 0.321F, 3.3F, 0.0F, 0.9F) + "</parts><placements>" + place("north", 0.0F, 0.0F, northTurn) +
+			place("south", 0.0F, 0.0F, southTurn) + place("far") + "</placements>"
+	);
+	const AssetDefinition* def = load("Vee");
+	ASSERT_NE(def, nullptr);
+	ASSERT_TRUE(issues("Vee").empty()) << ::testing::PrintToString(issues("Vee"));
+	const StripLayout layout = stripLayout(*def, 0, viewConfig());
+	for (const float x : {0.002F, 0.01F, 0.019F}) {
+		size_t strips = 0;
+		for (const ItemStrip& strip : layout.strips) {
+			strips +=
+				std::any_of(
+					strip.pieces.begin(), strip.pieces.end(), [&](const StripPiece& piece) { return piece.minX < x && x < piece.maxX; }
+				)
+					? 1
+					: 0;
+		}
+		EXPECT_EQ(strips, 1U) << "the blocks either side of the narrow gap are one strip at x " << x;
+	}
 }
 
 TEST_F(ItemViewTest, ADrawingsAverageColourIsWhatShows) {
