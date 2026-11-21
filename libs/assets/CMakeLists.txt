@@ -16,6 +16,7 @@ add_library(assets
     assets/TraitRegistry.cpp
     assets/TreeTraits.cpp
     assets/ConstructionRegistry.cpp
+    assets/DefinitionNames.cpp
     assets/AssetBatcher.cpp
     assets/ConditionConfig.cpp
     assets/ConfigFiles.cpp

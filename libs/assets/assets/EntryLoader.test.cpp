@@ -654,15 +654,24 @@ TEST_F(ActionLoaderTest, TheSharedActionsLoadAndTheGroupResolvesItsMembers) {
 	EXPECT_EQ(std::get<WorkEffect>(deconstruct.effects.front()).direction, WorkDirection::Down);
 }
 
-TEST_F(ActionLoaderTest, ACraftTakesTheJobsWorkAmountAtItsSkillsRate) {
+TEST_F(ActionLoaderTest, ACraftTakesTheJobsWorkAmountAtTheFixedRate) {
 	write("config/actions/craft.xml", R"(<actions>
-  <action id="craft" workFrom="job" skill="crafting" hands="free" interruptable="false"><craft/></action>
+  <action id="craft" workFrom="job" hands="free" interruptable="false"><craft/></action>
 </actions>)");
 	const EntryLoad loaded = clean();
 	ASSERT_TRUE(loaded.library.findAction("craft").valid());
 	const ActionEntry& craft = loaded.library.actions[loaded.library.findAction("craft").index];
 	EXPECT_EQ(craft.duration, ActionDuration::FromJob);
-	EXPECT_EQ(craft.skill, "crafting");
+	EXPECT_TRUE(craft.skill.empty());
+
+	write("config/actions/craft.xml", R"(<actions>
+  <action id="craft" workFrom="job" skill="Crafting" hands="free" interruptable="false"><craft/></action>
+</actions>)");
+	EXPECT_EQ(
+		onlyError(),
+		"[actions] craft.xml: <action id=\"craft\"> skill must be left out; a job's work amount is worked at a fixed rate of 100 work "
+		"ticks a second, got \"Crafting\""
+	);
 }
 
 TEST_F(ActionLoaderTest, AnEffectMayNameANeedTheSimTracksBeforeAnyBehaviorBringsIt) {

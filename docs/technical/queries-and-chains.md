@@ -48,7 +48,7 @@ The code that hard-wires what a creature can do and how each thing is done:
 - The per-chain-shape claim recording in `ChainClaims.cpp` (`recordChainClaims`), replaced by claims
   named on steps.
 - The fixed need list: `NeedType`, `kNeedLabels`, the fixed-size array in `NeedsComponent`,
-  `kActionableNeeds`, `needToCapability`, `getFirstActionDefName`, the decay literals in `Needs.cpp`,
+  `kActionableNeeds`, `needToCapability`, `firstAction`, the decay literals in `Needs.cpp`,
   `findToiletLocation`, whose rules become facts of a query, and every `switch` over a need.
 - The config that described this without being run: `task-chains.xml` with `TaskChainRegistry`,
   `assets/config/legacy/work-types.xml` with `WorkTypeRegistry`, and `assets/config/legacy/action-types.xml`
@@ -497,7 +497,7 @@ offers it to colony members. The care work's rung is its work entry's.
 | `NeedsComponent`'s array of every need | the creature's own list: its need ids and their values, inline with a fixed capacity of 16, so no creature's needs are on the heap; levels and rates are read from the entries |
 | `kActionableNeeds` | a need with a `<satisfiedBy>` |
 | `needToCapability`, the Hunger special case | the satisfying chains' queries |
-| `startNeedAction`, `getFirstActionDefName` | the chain's `do` steps and the action entries' `hands` |
+| `startNeedAction`, `firstAction` | the chain's `do` steps and the action entries' `hands` |
 | `Task::needToFulfill`, `criticalNeedsAtDecision` as a bit per `NeedType` | the option's need id, and a bit per slot in the creature's need list |
 | the sim filling the condition vocabulary's `need` set from `kNeedLabels` | every loaded need id |
 | thought triggers `needFalls` and `needRises` checking `kNeedLabels` | the same check against the creature's needs |
@@ -719,10 +719,11 @@ Effect rows carry no `when`: an action whose effects differ is two actions.
 
 ### An action entry
 
-- Duration is one of `seconds`, a fixed time; `workFrom="durability" skill="harvesting"`, the target's
-  durability over the work rate that skill gives; `workFrom="job" skill="crafting"`, the station's current
-  job's work amount over the crafter's work rate; or nothing, with an open-ended effect (`<work>`, or a
-  `<restore>` with `upTo`), so the action runs until its bound.
+- Duration is one of `seconds`, a fixed time; `workFrom="durability" skill="Harvesting"`, the target's
+  durability over the work rate that skill gives; `workFrom="job"`, the station's current job's work amount
+  at the fixed rate of 100 work ticks a second, with no `skill`; or nothing, with an open-ended effect
+  (`<work>`, or a `<restore>` with `upTo`), so the action runs until its bound. A skill is named as the sim
+  names it, case included.
 - `hands="free"` means the action needs free hands, and the hands rules run when its chain is selected
   ([Hands](#hands)); `hands="any"`, the default, means the creature keeps carrying.
 - `interruptable` is whether a running action yields to an option of the same or a higher rung; one
@@ -759,18 +760,20 @@ every target its step's query can return is a load error naming the ones left ou
 
 ### The shared actions
 
-These are in `assets/config/actions/`, with the values the hand-written factories use.
+These are in `assets/config/actions/`, with the values the hand-written factories use. `clear` arrives with
+the site clear's path (behavior-data-migration.md, ticket 38) and the `take` group with the eating path
+(ticket 24); the rest ship with the action entries (ticket 11).
 
 | Action | Effects | Duration | Hands | Interruptable | Pays |
 |---|---|---|---|---|---|
-| harvest (`on` harvestable) | take | from durability, harvesting | free | no | end |
-| clear (`on` harvestable) | take, clears | from durability, harvesting | free | no | end |
+| harvest (`on` harvestable) | take | from durability, Harvesting | free | no | end |
+| clear (`on` harvestable) | take, clears | from durability, Harvesting | free | no | end |
 | pickup (`on` loose_item) | take | 0.5 s | free | no | end |
 | withdraw (`on` storage) | take | 0.5 s | free | no | end |
 | deposit | put | 1 s | any | no | end |
-| craft | craft | from the job's work amount, crafting (`workFrom="job"`) | free | no | end |
-| build | work, construction, up | open-ended | free | no | along |
-| deconstruct | work, construction, down | open-ended | free | no | along |
+| craft | craft | the job's work amount at 100 work ticks a second (`workFrom="job"`) | free | no | end |
+| build | work, Construction, up | open-ended | free | no | along |
+| deconstruct | work, Construction, down | open-ended | free | no | along |
 | pickup_packaged (`on` packaged) | take | 1.5 s | free | no | end |
 | place_packaged | install | 2 s | free | no | end |
 
@@ -2026,9 +2029,12 @@ Rules from the first build of the loaders:
 
 Forms added by the first build of the action entries (WOR-1069, Action entries as the one source of action values):
 
-- 2026-11-21: `workFrom="job"` with `skill`, the station's current job's work amount over the crafter's work
-  rate, so the `craft` entry reproduces the shipped fixed-duration craft. The open-ended craft of
-  [Interruptable crafts](#interruptable-crafts) stays a later behavior change.
+- 2026-11-21: `workFrom="job"`, the station's current job's work amount at the fixed rate of 100 work ticks a
+  second, with no `skill`, so the `craft` entry reproduces the shipped fixed-duration craft. The crafter's
+  skill setting that rate, and the open-ended craft of [Interruptable crafts](#interruptable-crafts), belong
+  to the later interruptable-crafts change.
+- 2026-11-21: Skill names (`skill`, `<work rate>`) are the sim's skill names as written, case included
+  (`Harvesting`, `Construction`).
 
 Choices made in writing this document, not put to the owner:
 

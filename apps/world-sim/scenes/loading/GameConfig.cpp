@@ -109,6 +109,7 @@ namespace world_sim {
 		}
 		if (!load.errors.empty()) {
 			load.entries = assets::EntryLibrary{};
+			load.actions = ecs::ActionEntries{};
 			return load;
 		}
 		// A warning is worth reading only about a config that loaded; a failed load's errors say what to fix first.

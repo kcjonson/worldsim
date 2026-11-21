@@ -6,6 +6,7 @@
 // Actions have duration and apply effects when complete.
 // See /docs/design/game-systems/colonists/needs.md for design details.
 
+#include "../ActionEntries.h"
 #include "../DropResourceCallback.h"
 #include "../EntityID.h"
 #include "../ISystem.h"

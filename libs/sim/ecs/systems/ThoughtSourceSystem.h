@@ -10,6 +10,8 @@
 #include "ActionSystem.h"
 #include "VisionSystem.h"
 
+#include <assets/Entries.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <vector>

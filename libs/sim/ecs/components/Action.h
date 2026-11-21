@@ -542,7 +542,7 @@ namespace ecs {
 			return action;
 		}
 
-		/// Factory: Craft action - craft items at a station, for the job's work amount at the crafter's work rate.
+		/// Factory: Craft action - craft items at a station, for the job's work amount at the fixed rate of `workFrom="job"`.
 		/// @param recipeDefName Recipe to craft
 		/// @param stationEntityId Entity ID of the crafting station
 		/// @param stationPos Position of the station
@@ -559,9 +559,7 @@ namespace ecs {
 			const std::vector<std::pair<std::string, uint32_t>>& outputs
 		) {
 			Action action = fromEntry(ActionType::Craft, actions.craft);
-			// Every crafter works 100 work ticks a second, whatever its skill.
-			constexpr float kWorkTicksPerSecond = 100.0F;
-			action.duration = workAmount / kWorkTicksPerSecond;
+			action.duration = workAmount / assets::kJobWorkTicksPerSecond;
 			action.targetPosition = stationPos;
 
 			CraftingEffect craftEff;

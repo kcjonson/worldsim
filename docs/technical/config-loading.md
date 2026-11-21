@@ -180,13 +180,16 @@ chains](./queries-and-chains.md) defines into an `assets::EntryLibrary` (libs/as
 `GameLoadingScene` hands to `GameScene` through `GameWorldState` beside the colonist rules. The tickets of
 [Behavior data migration](./behavior-data-migration.md) are what read it when a creature decides.
 
-Until the need entries land, the loader is given the sim's fixed list of needs as need ids
-(`EntrySources::trackedNeeds`, from `ecs::trackedNeedIds`), so an action's `<restore>` may name `hunger` while no
-behavior brings it. Once the library loads clean, `ecs::resolveActionEntries` (libs/sim/ecs/ActionEntries.h)
-resolves each entry the hand-written action factories and the hands rule read (`human/eat`, `common/drink`,
-`pickup`, `craft`, and the rest) to its handle and plain values, once, so nothing reads the library when an
-action starts. An entry missing, or of a shape its factory cannot read, is an error naming the entry's file and
-id (`[behaviors] human/eating.xml: action "human/eat" takes a fixed duration (seconds) in the sim`).
+The loader is given the sim's fixed list of needs as need ids (`EntrySources::trackedNeeds`, from
+`ecs::trackedNeedIds`), so an action's `<restore>` may name `hunger` with no behavior bringing it
+([Behavior data migration](./behavior-data-migration.md), Seams). Once the library loads clean,
+`ecs::resolveActionEntries` (libs/sim/ecs/ActionEntries.h) resolves each entry the hand-written action factories
+and the hands rule read (`human/eat`, `common/drink`, `pickup`, `craft`, and the rest) to its handle and plain
+values, once, so nothing reads the library when an action starts. Each factory reads a fixed shape, listed in that
+header; an entry missing, or with anything its factory does not read, is an error naming the file, the entry, and
+the element (`[behaviors] human/washing.xml: <action id="wash"> effect 2 <consume> is not an effect the sim's Wash
+action performs`; a missing one, `action "human/wash" is missing; the sim's Wash action reads it from
+behaviors/human/washing.xml`).
 `GameScene` holds the resolved `ecs::ActionEntries` and hands it to `ActionSystem` and `AIDecisionSystem`.
 
 | Folder | Root | Prefix |

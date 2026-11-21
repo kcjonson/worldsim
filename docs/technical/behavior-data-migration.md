@@ -25,7 +25,7 @@ All of it is on `main` and on this branch.
   (`<Kind name="colonist" mover="Human"/>`), and in the facing variants.
 - Options: `AIDecisionSystem.cpp` (about 4,000 lines). The needs loop with its hunger special case
   (about lines 2,560 to 2,956, with the gather-food option built inside it), `needToCapability`,
-  `getFirstActionDefName`, `taskFirstActionNeedsHands`, `findToiletLocation`
+  `firstAction`, `taskFirstActionNeedsHands`, `findToiletLocation`
   (`components/ToiletLocationFinder.cpp`, a 3 m grid out to 25 m, with no unit test),
   `evaluateHaulOptions`, `evaluateCarryInOptions`, `evaluateHarvestOptions`, `evaluateBuildOptions`,
   `evaluateDeconstructOptions`, `evaluatePlacePackagedOptions`, the craft station options, wander,
@@ -104,10 +104,10 @@ During the move both paths run, on disjoint ground that phase 7 deletes:
   case, so the tests change once.
 - Need ids before the need entries: the entry loader takes the sim's fixed list of needs as need ids
   (`EntrySources::trackedNeeds`, `ecs::trackedNeedIds`), so the action entries' `<restore>` rows name
-  `hunger` and the rest while no behavior brings a need. The need-entries ticket deletes it.
+  `hunger` and the rest with no behavior bringing the need. Ticket 16 deletes it.
 - Action values: the hand-written factories take their durations, interruptability, amounts, and hands
-  from the shipped action entries, resolved once at load (`ecs::ActionEntries`), until each path deletes
-  its factory.
+  from the shipped action entries, resolved once at load (`ecs::ActionEntries`, `resolveActionEntries`).
+  Each path's ticket deletes its factory and its field; ticket 44 deletes the rest with the factories.
 - No cargo handoff spans two runners: gather food moves with Eat, and the box-to-box pull moves after
   the gathering.
 
@@ -170,7 +170,7 @@ scenario.
 
 Wash, Drink, relieving, Sleep, then Eat with gather food. Each moves its chain, queries, action, and
 `<satisfiedBy>`, and deletes its cases from the needs loop, `needToCapability`,
-`getFirstActionDefName`, `startNeedAction`, and the factories, in one change. The food services are
+`firstAction`, `startNeedAction`, and the factories, in one change. The food services are
 first extracted from the old hunger code as a refactor, so the Eat change is smaller. After their paths
 have moved, the need-side behavior changes follow, each signed off by the owner: the urgent-need rung,
 the sleep curve, eating to full at a place to eat, food preference, and the sampled relief spots.
@@ -336,7 +336,8 @@ marked "behavior change" lands only with the owner's sign-off.
     - Built: the human behaviors' `<need>` entries without `<satisfiedBy>`; the human's includes;
       levels and drains read from entries; the costs from `needs.xml` as `<moodCost>` rows; the fixed
       array kept; `assets/config/thoughts/needs.xml` renamed to need ids (`hunger`).
-    - Deleted: `needs.xml`, `NeedLevels`' fixed list, the decay literals.
+    - Deleted: `needs.xml`, `NeedLevels`' fixed list, the decay literals, `EntrySources::trackedNeeds`,
+      `ecs::trackedNeedIds`.
     - Must pass: suite unchanged, scenario 19 rewritten.
     - Depends on: 9.
 17. Enjoy nature (WOR-1054, owner-requested new behavior).
@@ -399,7 +400,7 @@ marked "behavior change" lands only with the owner's sign-off.
     - Built: the `take` group, `human/eating` (`eat_from_pack`, `fetch_food`, `food_to_eat`,
       `gather_food` as an idle row), the condition term `carried_food`, the meal resized at each
       decision.
-    - Deleted: the needs loop, `needToCapability`, `getFirstActionDefName` for needs,
+    - Deleted: the needs loop, `needToCapability`, `firstAction` for needs,
       `startNeedAction`, `kActionableNeeds`, `NeedType`, `Task::need*`, `NeedEffect` and
       `ConsumptionEffect`, the gather option and its sentinel in `classifyTier`.
     - Must pass: every hunger test in `ChainClaims.test.cpp`, `FoodSkipsEveryUnreachableNearerSource`,
@@ -570,7 +571,7 @@ marked "behavior change" lands only with the owner's sign-off.
 44. Delete the closed lists.
     - Built: nothing new.
     - Deleted: `TaskType`, `kTaskTypeNames`, `ActionType`, `kActionTypeNames`, the effect variant, the
-      factories, the claim holder's task type, `EvaluatedOption::taskType` and `needType`, the rest of
+      factories, `ecs::ActionEntries` and `resolveActionEntries`, the claim holder's task type, `EvaluatedOption::taskType` and `needType`, the rest of
       `classifyTier`, `ConfigValidator`'s work checks, `assets/config/legacy/`.
     - Must pass: suite, the full scenario list, the perf check.
     - Depends on: 31, 41, 43.

@@ -3594,7 +3594,7 @@ namespace ecs::test {
 		EXPECT_EQ(droppedQty, 14U);
 	}
 
-	TEST_F(AIDecisionSystemTest, TaskFirstActionNeedsHandsMapping) {
+	TEST_F(AIDecisionSystemTest, TheShippedActionEntriesSayWhichNeedFreeHands) {
 		// The hands rule reads whether a task's first action needs free hands from that action's entry.
 		const ActionEntries& actions = ecs::testing::shippedActions();
 		EXPECT_TRUE(actions.pickup.freeHands) << "Pickup action should need hands";

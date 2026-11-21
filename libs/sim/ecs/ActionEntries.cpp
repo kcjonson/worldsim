@@ -11,53 +11,332 @@ namespace ecs {
 
 	namespace {
 
-		/// What a factory reads from its entry.
-		enum class Shape : uint8_t {
-			/// A fixed duration and nothing else read.
-			Fixed,
-			/// A fixed duration and one or two restores by an amount.
-			Restores,
-			/// A fixed duration, a consume, and one or two restores scaled by the food's nutrition.
-			Meal,
-			/// A fixed duration and one restore by an amount scaled by the sleep quality.
-			Sleep,
-			/// A duration from the target's durability at a skill's work rate.
-			FromDurability,
-			/// A duration from the job's work amount at a skill's work rate.
-			FromJob,
-			/// Open-ended work at a skill's work rate, counting the work up or down.
-			WorkUp,
-			WorkDown,
-		};
+		/// The one effect besides `<restore>` and `<spawn>` an action's factory performs, required exactly once.
+		enum class Performs : uint8_t { Nothing, Consume, Take, Put, Craft, Install, WorkUp, WorkDown };
 
+		/// How the action's `<restore>` rows are written.
+		enum class RestoreForm : uint8_t { None, Amount, Nutrition, SleepQuality };
+
+		/// Everything a factory reads from its entry, the only shape its entry may have.
 		struct Expected {
 			std::string_view id;
-			ActionValues ActionEntries::* values;
-			Shape						  shape;
+			std::string_view factory;
+			std::string_view file;
+			ActionValues ActionEntries::*		values;
+			assets::ActionDuration				duration;
+			assets::Pays						pays;
+			bool								asleep;
+			std::optional<assets::ActionTarget> on;
+			Performs							performs;
+			RestoreForm							restoreForm;
+			/// The need the action serves, restored by its primary row; Count for none.
+			NeedType primary;
+			bool	 spawns;
 		};
 
+		using assets::ActionDuration;
+		using assets::ActionTarget;
+		using assets::CapabilityType;
+		using assets::Pays;
+
+		constexpr ActionTarget kLooseItem{.kind = ActionTarget::Kind::LooseItem};
+		constexpr ActionTarget kPackaged{.kind = ActionTarget::Kind::Packaged};
+		constexpr ActionTarget kStorage{.kind = ActionTarget::Kind::Capability, .capability = CapabilityType::Storage};
+		constexpr ActionTarget kHarvestable{.kind = ActionTarget::Kind::Capability, .capability = CapabilityType::Harvestable};
+
 		constexpr std::array<Expected, 16> kExpected = {{
-			{.id = "human/eat", .values = &ActionEntries::eat, .shape = Shape::Meal},
-			{.id = "common/drink", .values = &ActionEntries::drink, .shape = Shape::Restores},
-			{.id = "human/wash", .values = &ActionEntries::wash, .shape = Shape::Restores},
-			{.id = "human/sleep", .values = &ActionEntries::sleep, .shape = Shape::Sleep},
-			{.id = "human/urinate", .values = &ActionEntries::urinate, .shape = Shape::Restores},
-			{.id = "human/defecate", .values = &ActionEntries::defecate, .shape = Shape::Restores},
-			{.id = "human/relieve_both", .values = &ActionEntries::relieveBoth, .shape = Shape::Restores},
-			{.id = "pickup", .values = &ActionEntries::pickup, .shape = Shape::Fixed},
-			{.id = "withdraw", .values = &ActionEntries::withdraw, .shape = Shape::Fixed},
-			{.id = "harvest", .values = &ActionEntries::harvest, .shape = Shape::FromDurability},
-			{.id = "craft", .values = &ActionEntries::craft, .shape = Shape::FromJob},
-			{.id = "deposit", .values = &ActionEntries::deposit, .shape = Shape::Fixed},
-			{.id = "build", .values = &ActionEntries::build, .shape = Shape::WorkUp},
-			{.id = "deconstruct", .values = &ActionEntries::deconstruct, .shape = Shape::WorkDown},
-			{.id = "pickup_packaged", .values = &ActionEntries::pickupPackaged, .shape = Shape::Fixed},
-			{.id = "place_packaged", .values = &ActionEntries::placePackaged, .shape = Shape::Fixed},
+			{"human/eat",
+			 "Eat",
+			 "behaviors/human/eating.xml",
+			 &ActionEntries::eat,
+			 ActionDuration::Seconds,
+			 Pays::End,
+			 false,
+			 std::nullopt,
+			 Performs::Consume,
+			 RestoreForm::Nutrition,
+			 NeedType::Hunger,
+			 false},
+			{"common/drink",
+			 "Drink",
+			 "behaviors/common/drinking_at_water.xml",
+			 &ActionEntries::drink,
+			 ActionDuration::Seconds,
+			 Pays::End,
+			 false,
+			 std::nullopt,
+			 Performs::Nothing,
+			 RestoreForm::Amount,
+			 NeedType::Thirst,
+			 false},
+			{"human/wash",
+			 "Wash",
+			 "behaviors/human/washing.xml",
+			 &ActionEntries::wash,
+			 ActionDuration::Seconds,
+			 Pays::End,
+			 false,
+			 std::nullopt,
+			 Performs::Nothing,
+			 RestoreForm::Amount,
+			 NeedType::Hygiene,
+			 false},
+			{"human/sleep",
+			 "Sleep",
+			 "behaviors/human/sleeping.xml",
+			 &ActionEntries::sleep,
+			 ActionDuration::Seconds,
+			 Pays::End,
+			 true,
+			 std::nullopt,
+			 Performs::Nothing,
+			 RestoreForm::SleepQuality,
+			 NeedType::Energy,
+			 false},
+			{"human/urinate",
+			 "Toilet",
+			 "behaviors/human/relieving.xml",
+			 &ActionEntries::urinate,
+			 ActionDuration::Seconds,
+			 Pays::End,
+			 false,
+			 std::nullopt,
+			 Performs::Nothing,
+			 RestoreForm::Amount,
+			 NeedType::Bladder,
+			 false},
+			{"human/defecate",
+			 "Toilet",
+			 "behaviors/human/relieving.xml",
+			 &ActionEntries::defecate,
+			 ActionDuration::Seconds,
+			 Pays::End,
+			 false,
+			 std::nullopt,
+			 Performs::Nothing,
+			 RestoreForm::Amount,
+			 NeedType::Digestion,
+			 true},
+			{"human/relieve_both",
+			 "Toilet",
+			 "behaviors/human/relieving.xml",
+			 &ActionEntries::relieveBoth,
+			 ActionDuration::Seconds,
+			 Pays::End,
+			 false,
+			 std::nullopt,
+			 Performs::Nothing,
+			 RestoreForm::Amount,
+			 NeedType::Bladder,
+			 true},
+			{"pickup",
+			 "Pickup",
+			 "actions/",
+			 &ActionEntries::pickup,
+			 ActionDuration::Seconds,
+			 Pays::End,
+			 false,
+			 kLooseItem,
+			 Performs::Take,
+			 RestoreForm::None,
+			 NeedType::Count,
+			 false},
+			{"withdraw",
+			 "Withdraw",
+			 "actions/",
+			 &ActionEntries::withdraw,
+			 ActionDuration::Seconds,
+			 Pays::End,
+			 false,
+			 kStorage,
+			 Performs::Take,
+			 RestoreForm::None,
+			 NeedType::Count,
+			 false},
+			{"harvest",
+			 "Harvest",
+			 "actions/",
+			 &ActionEntries::harvest,
+			 ActionDuration::FromDurability,
+			 Pays::End,
+			 false,
+			 kHarvestable,
+			 Performs::Take,
+			 RestoreForm::None,
+			 NeedType::Count,
+			 false},
+			{"craft",
+			 "Craft",
+			 "actions/",
+			 &ActionEntries::craft,
+			 ActionDuration::FromJob,
+			 Pays::End,
+			 false,
+			 std::nullopt,
+			 Performs::Craft,
+			 RestoreForm::None,
+			 NeedType::Count,
+			 false},
+			{"deposit",
+			 "Deposit",
+			 "actions/",
+			 &ActionEntries::deposit,
+			 ActionDuration::Seconds,
+			 Pays::End,
+			 false,
+			 std::nullopt,
+			 Performs::Put,
+			 RestoreForm::None,
+			 NeedType::Count,
+			 false},
+			{"build",
+			 "Build",
+			 "actions/",
+			 &ActionEntries::build,
+			 ActionDuration::OpenEnded,
+			 Pays::Along,
+			 false,
+			 std::nullopt,
+			 Performs::WorkUp,
+			 RestoreForm::None,
+			 NeedType::Count,
+			 false},
+			{"deconstruct",
+			 "Deconstruct",
+			 "actions/",
+			 &ActionEntries::deconstruct,
+			 ActionDuration::OpenEnded,
+			 Pays::Along,
+			 false,
+			 std::nullopt,
+			 Performs::WorkDown,
+			 RestoreForm::None,
+			 NeedType::Count,
+			 false},
+			{"pickup_packaged",
+			 "PickupPackaged",
+			 "actions/",
+			 &ActionEntries::pickupPackaged,
+			 ActionDuration::Seconds,
+			 Pays::End,
+			 false,
+			 kPackaged,
+			 Performs::Take,
+			 RestoreForm::None,
+			 NeedType::Count,
+			 false},
+			{"place_packaged",
+			 "PlacePackaged",
+			 "actions/",
+			 &ActionEntries::placePackaged,
+			 ActionDuration::Seconds,
+			 Pays::End,
+			 false,
+			 std::nullopt,
+			 Performs::Install,
+			 RestoreForm::None,
+			 NeedType::Count,
+			 false},
 		}};
 
-		[[nodiscard]] std::optional<std::size_t> sleepQualityFact() {
-			const auto found = std::ranges::find(assets::kFacts, std::string_view("sleep_quality"), &assets::FactDeclaration::name);
-			return found == assets::kFacts.end() ? std::nullopt : std::optional<std::size_t>(found - assets::kFacts.begin());
+		/// The one definition the engine spawns for a relief (ticket 13 moves the spawn effect to data).
+		constexpr std::string_view kSpawnedDefinition = "Misc_BioPile";
+
+		constexpr std::size_t factIndex(std::string_view name) {
+			for (std::size_t index = 0; index < assets::kFacts.size(); ++index) {
+				if (assets::kFacts[index].name == name) {
+					return index;
+				}
+			}
+			return assets::kFacts.size();
+		}
+
+		constexpr std::size_t kSleepQualityFact = factIndex("sleep_quality");
+		static_assert(kSleepQualityFact < assets::kFacts.size(), "the sim provides the sleep_quality fact");
+
+		[[nodiscard]] std::string_view shortOf(std::string_view id) {
+			const std::size_t slash = id.rfind('/');
+			return slash == std::string_view::npos ? id : id.substr(slash + 1);
+		}
+
+		[[nodiscard]] std::string targetName(const ActionTarget& target) {
+			switch (target.kind) {
+				case ActionTarget::Kind::LooseItem:
+					return "loose_item";
+				case ActionTarget::Kind::Packaged:
+					return "packaged";
+				case ActionTarget::Kind::Capability:
+					break;
+			}
+			return assets::capabilityName(target.capability);
+		}
+
+		[[nodiscard]] bool sameTarget(const ActionTarget& left, const ActionTarget& right) {
+			return left.kind == right.kind && (left.kind != ActionTarget::Kind::Capability || left.capability == right.capability);
+		}
+
+		[[nodiscard]] const char* durationName(ActionDuration duration) {
+			switch (duration) {
+				case ActionDuration::Seconds:
+					return "a fixed duration (seconds)";
+				case ActionDuration::FromDurability:
+					return "a duration from the target's durability (workFrom=\"durability\")";
+				case ActionDuration::FromJob:
+					return "a duration from the job's work amount (workFrom=\"job\")";
+				case ActionDuration::OpenEnded:
+					break;
+			}
+			return "no duration, running until its <work> reaches its bound";
+		}
+
+		[[nodiscard]] const char* performedElement(Performs performs) {
+			switch (performs) {
+				case Performs::Consume:
+					return "consume";
+				case Performs::Take:
+					return "take";
+				case Performs::Put:
+					return "put";
+				case Performs::Craft:
+					return "craft";
+				case Performs::Install:
+					return "install";
+				case Performs::WorkUp:
+				case Performs::WorkDown:
+					return "work";
+				case Performs::Nothing:
+					break;
+			}
+			return "";
+		}
+
+		[[nodiscard]] Performs performedBy(const assets::EffectRow& row) {
+			if (std::holds_alternative<assets::ConsumeEffect>(row)) {
+				return Performs::Consume;
+			}
+			if (std::holds_alternative<assets::TakeEffect>(row)) {
+				return Performs::Take;
+			}
+			if (std::holds_alternative<assets::PutEffect>(row)) {
+				return Performs::Put;
+			}
+			if (std::holds_alternative<assets::CraftEffect>(row)) {
+				return Performs::Craft;
+			}
+			if (std::holds_alternative<assets::InstallEffect>(row)) {
+				return Performs::Install;
+			}
+			if (const auto* work = std::get_if<assets::WorkEffect>(&row)) {
+				return work->direction == assets::WorkDirection::Down ? Performs::WorkDown : Performs::WorkUp;
+			}
+			return Performs::Nothing;
+		}
+
+		[[nodiscard]] const char* elementOf(const assets::EffectRow& row) {
+			static constexpr std::array<const char*, 9> kElements = {
+				"restore", "consume", "take", "put", "work", "craft", "spawn", "install", "damage"
+			};
+			return kElements[row.index()];
 		}
 
 		class Resolver {
@@ -70,117 +349,189 @@ namespace ecs {
 				ActionValues								   values;
 				const assets::EntryHandle<assets::ActionEntry> handle = library.findAction(expected.id);
 				if (!handle.valid()) {
-					errors.push_back("[actions] no action \"" + std::string(expected.id) + "\": the sim's action factories read it");
+					errors.push_back(
+						"action \"" + std::string(expected.id) + "\" is missing; the sim's " + std::string(expected.factory) +
+						" action reads it from " + std::string(expected.file)
+					);
 					return values;
 				}
 				const assets::ActionEntry& entry = library.actions[handle.index];
-				where = entry.file + ": action \"" + entry.id + "\"";
+				factory = expected.factory;
+				where = entry.file + ": <" + (entry.group ? "actionGroup" : "action") + " id=\"" + std::string(shortOf(entry.id)) + "\">";
 				if (entry.group) {
-					errors.push_back(where + " is an action group; the sim's action factories read an action");
+					refuse("is an action group; the sim's " + factory + " action reads one action");
 					return values;
 				}
 				values.entry = handle;
 				values.interruptable = entry.interruptable;
 				values.freeHands = entry.hands == assets::Hands::Free;
-				readDuration(entry, expected.shape, values);
-				readEffects(entry, expected.shape, values);
+				readEntry(entry, expected, values);
+				readEffects(entry, expected, values);
 				return values;
 			}
 
 		  private:
 			void refuse(const std::string& problem) { errors.push_back(where + " " + problem); }
 
-			void readDuration(const assets::ActionEntry& entry, Shape shape, ActionValues& values) {
-				const bool fromDurability = shape == Shape::FromDurability;
-				const bool fromJob = shape == Shape::FromJob;
-				const bool work = shape == Shape::WorkUp || shape == Shape::WorkDown;
-				if (fromDurability || fromJob) {
-					const assets::ActionDuration wanted =
-						fromDurability ? assets::ActionDuration::FromDurability : assets::ActionDuration::FromJob;
-					if (entry.duration != wanted) {
+			void readEntry(const assets::ActionEntry& entry, const Expected& expected, ActionValues& values) {
+				if (entry.duration != expected.duration) {
+					refuse("takes " + std::string(durationName(expected.duration)) + " in the sim's " + factory + " action");
+				} else if (entry.duration == ActionDuration::Seconds) {
+					values.seconds = entry.seconds;
+				} else if (entry.duration == ActionDuration::FromDurability) {
+					values.skill = entry.skill;
+				}
+				if (entry.pays != expected.pays) {
+					refuse(
+						expected.pays == Pays::End ? "pays must be end; the sim's " + factory + " action pays when it completes"
+												   : "pays must be along; the sim's " + factory + " action advances its work as it goes"
+					);
+				}
+				if (entry.asleep != expected.asleep) {
+					refuse(
+						expected.asleep ? "asleep must be true; the sim's " + factory + " action is sleep"
+										: "asleep must be left out; the sim's " + factory + " action is not sleep"
+					);
+				}
+				if (expected.on && (!entry.on || !sameTarget(*entry.on, *expected.on))) {
+					refuse("on must be " + targetName(*expected.on) + ", what the sim's " + factory + " action works on");
+				} else if (!expected.on && entry.on) {
+					refuse("on must be left out; the sim's " + factory + " action is chosen by no target");
+				}
+			}
+
+			void readEffects(const assets::ActionEntry& entry, const Expected& expected, ActionValues& values) {
+				std::size_t performed = 0;
+				bool		primaryFound = false;
+				std::size_t sideRows = 0;
+				std::size_t spawns = 0;
+				for (std::size_t index = 0; index < entry.effects.size(); ++index) {
+					const assets::EffectRow& row = entry.effects[index];
+					const std::string		 effect = "effect " + std::to_string(index + 1) + " <" + elementOf(row) + ">";
+					if (const auto* restore = std::get_if<assets::RestoreEffect>(&row)) {
+						if (expected.restoreForm == RestoreForm::None) {
+							refuse(effect + " is not an effect the sim's " + factory + " action performs");
+						} else if (readRestore(*restore, expected, effect, values, primaryFound, sideRows)) {
+							continue;
+						}
+					} else if (const auto* spawn = std::get_if<assets::SpawnEffect>(&row)) {
+						if (!expected.spawns) {
+							refuse(effect + " is not an effect the sim's " + factory + " action performs");
+						} else if (spawn->def != kSpawnedDefinition || spawn->intoHands) {
+							refuse(
+								effect + " must be def=\"" + std::string(kSpawnedDefinition) +
+								"\" with no into: the engine spawns only that definition here (ticket 13 moves the effect to data)"
+							);
+						}
+						++spawns;
+					} else if (performedBy(row) == Performs::Nothing || performedBy(row) != expected.performs) {
+						refuse(effect + " is not an effect the sim's " + factory + " action performs");
+					} else {
+						++performed;
+						readPerformed(row, effect, values);
+					}
+				}
+				if (expected.performs != Performs::Nothing && performed != 1) {
+					refuse(
+						"has " + std::to_string(performed) + " <" + performedElement(expected.performs) + "> effects; the sim's " +
+						factory + " action performs one"
+					);
+				}
+				if (expected.primary != NeedType::Count && !primaryFound) {
+					refuse(
+						"has no <restore> of " + conditions::conditionName(needLabel(expected.primary)) + ", the need the sim's " +
+						factory + " action serves"
+					);
+				}
+				if (expected.spawns && spawns != 1) {
+					refuse("has " + std::to_string(spawns) + " <spawn> effects; the sim's " + factory + " action spawns one bio pile");
+				}
+				values.spawns = expected.spawns;
+			}
+
+			void readPerformed(const assets::EffectRow& row, const std::string& effect, ActionValues& values) {
+				if (const auto* consume = std::get_if<assets::ConsumeEffect>(&row)) {
+					if (consume->capability != CapabilityType::Edible || consume->upTo) {
 						refuse(
-							std::string("takes its duration from ") + (fromDurability ? "workFrom=\"durability\"" : "workFrom=\"job\"") +
-							" in the sim"
+							effect + " must consume capability=\"edible\" with no seconds, upTo, or need; the sim's " + factory +
+							" action eats one food at a time"
 						);
 					}
-					values.skill = entry.skill;
-				} else if (work) {
-					if (entry.duration != assets::ActionDuration::OpenEnded) {
-						refuse("is open-ended work in the sim; it takes a <work> effect and no duration");
-					}
-				} else if (entry.duration != assets::ActionDuration::Seconds) {
-					refuse("takes a fixed duration (seconds) in the sim");
-				} else {
-					values.seconds = entry.seconds;
+					values.consumes = static_cast<uint32_t>(consume->count);
+				} else if (const auto* take = std::get_if<assets::TakeEffect>(&row); take != nullptr && take->clears) {
+					refuse(effect + " clears must be left out; the sim's " + factory + " action takes without clearing");
+				} else if (const auto* work = std::get_if<assets::WorkEffect>(&row)) {
+					values.skill = work->rate;
 				}
 			}
 
-			void readEffects(const assets::ActionEntry& entry, Shape shape, ActionValues& values) {
-				std::size_t restores = 0;
-				for (const assets::EffectRow& row : entry.effects) {
-					if (const auto* restore = std::get_if<assets::RestoreEffect>(&row)) {
-						readRestore(*restore, shape, restores++, values);
-					} else if (const auto* consume = std::get_if<assets::ConsumeEffect>(&row)) {
-						if (shape != Shape::Meal || consume->upTo) {
-							refuse("consumes in a way the sim's factory does not read");
-						}
-						values.consumes = static_cast<uint32_t>(consume->count);
-					} else if (const auto* work = std::get_if<assets::WorkEffect>(&row)) {
-						const assets::WorkDirection wanted =
-							shape == Shape::WorkDown ? assets::WorkDirection::Down : assets::WorkDirection::Up;
-						if ((shape != Shape::WorkUp && shape != Shape::WorkDown) || work->direction != wanted) {
-							refuse("has a <work> effect the sim's factory does not read");
-						}
-						values.skill = work->rate;
-					} else if (std::holds_alternative<assets::SpawnEffect>(row)) {
-						values.spawns = true;
-					}
-				}
-				const bool		  takesRestores = shape == Shape::Restores || shape == Shape::Meal || shape == Shape::Sleep;
-				const std::size_t most = shape == Shape::Sleep ? 1 : values.restores.size();
-				if (takesRestores && (restores == 0 || restores > most)) {
-					refuse(
-						"has " + std::to_string(restores) + " <restore> rows; the sim's factory reads " + (most == 1 ? "one" : "one or two")
-					);
-				} else if (!takesRestores && restores > 0) {
-					refuse("restores a need; the sim's factory restores none");
-				}
-				if (shape == Shape::Meal && values.consumes == 0) {
-					refuse("consumes nothing; the sim's factory eats what it consumes");
-				}
-				if ((shape == Shape::WorkUp || shape == Shape::WorkDown) && values.skill.empty()) {
-					refuse("has no <work> effect; the sim's factory advances work");
-				}
-			}
-
-			void readRestore(const assets::RestoreEffect& restore, Shape shape, std::size_t index, ActionValues& values) {
-				if (index >= values.restores.size()) {
-					return;
-				}
+			/// True when the row is read as the primary or the side-effect restore.
+			bool readRestore(
+				const assets::RestoreEffect& restore,
+				const Expected&				 expected,
+				const std::string&			 effect,
+				ActionValues&				 values,
+				bool&						 primaryFound,
+				std::size_t&				 sideRows
+			) {
 				const std::string& needId = library.needIds[restore.need.index];
 				const auto		   tracked =
 					std::ranges::find_if(kNeedLabels, [&needId](const char* label) { return conditions::conditionName(label) == needId; });
 				if (tracked == kNeedLabels.end()) {
-					refuse("restores need \"" + needId + "\", which the sim does not track");
-					return;
+					refuse(effect + " need \"" + needId + "\" is no need the sim tracks");
+					return false;
 				}
+				const auto need = static_cast<NeedType>(tracked - kNeedLabels.begin());
 				const bool fromNutrition = restore.from.has_value();
-				const bool scaledBySleep = restore.scaleBy.has_value() && restore.scaleBy->fact == sleepQualityFact();
-				if (restore.onTarget || restore.upTo || fromNutrition != (shape == Shape::Meal) ||
-					(restore.scaleBy.has_value() != (shape == Shape::Sleep)) || (shape == Shape::Sleep && !scaledBySleep)) {
-					refuse("restores \"" + needId + "\" in a way the sim's factory does not read");
-					return;
+				const bool scaled = restore.scaleBy.has_value();
+				const bool wantsNutrition = expected.restoreForm == RestoreForm::Nutrition;
+				const bool wantsSleep = expected.restoreForm == RestoreForm::SleepQuality;
+				if (restore.onTarget || restore.upTo || fromNutrition != wantsNutrition || scaled != wantsSleep ||
+					(scaled && restore.scaleBy->fact != kSleepQualityFact)) {
+					refuse(
+						effect + " must restore " +
+						(wantsNutrition ? std::string("from=\"nutrition\" with a scale")
+						 : wantsSleep	? std::string("an amount with scaleBy=\"sleep_quality\"")
+										: std::string("a plain amount")) +
+						", the creature's own, with no seconds or upTo; that is what the sim's " + factory + " action applies"
+					);
+					return false;
 				}
-				values.restores[index] = RestoreValue{
-					.need = static_cast<NeedType>(tracked - kNeedLabels.begin()),
-					.amount = fromNutrition ? restore.scale : restore.amount.value_or(0.0F),
-				};
-				values.restoreCount = static_cast<uint8_t>(index + 1);
+				const float amount = fromNutrition ? restore.scale : *restore.amount;
+				const bool	primary = need == expected.primary;
+				if (primary && primaryFound) {
+					refuse(effect + " restores " + needId + " a second time; the sim's " + factory + " action restores it once");
+					return false;
+				}
+				if (primary && amount <= 0.0F) {
+					refuse(
+						effect + " restores " + needId + ", the need the sim's " + factory +
+						" action serves, so its amount must be above 0; only its side effect may lower a need"
+					);
+					return false;
+				}
+				if (!primary && (wantsSleep || sideRows > 0)) {
+					refuse(
+						effect + " restores " + needId + "; the sim's " + factory + " action restores " +
+						conditions::conditionName(needLabel(expected.primary)) + (wantsSleep ? " alone" : " and at most one side effect")
+					);
+					return false;
+				}
+				const std::size_t slot = primary ? 0 : 1;
+				values.restores[slot] = RestoreValue{.need = need, .amount = amount};
+				if (primary) {
+					primaryFound = true;
+				} else {
+					++sideRows;
+				}
+				values.restoreCount = static_cast<uint8_t>(primaryFound ? 1 + sideRows : 0);
+				return true;
 			}
 
 			const assets::EntryLibrary& library;
 			std::vector<std::string>&	errors;
 			std::string					where;
+			std::string					factory;
 		};
 
 	} // namespace
@@ -199,9 +550,7 @@ namespace ecs {
 		for (const Expected& expected : kExpected) {
 			load.actions.*(expected.values) = resolver.resolve(expected);
 		}
-		if (const std::optional<std::size_t> fact = sleepQualityFact()) {
-			load.actions.groundSleepQuality = library.factTuning[*fact];
-		}
+		load.actions.groundSleepQuality = library.factTuning[kSleepQualityFact];
 		return load;
 	}
 

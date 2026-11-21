@@ -4,9 +4,8 @@
 // shipped asset definitions' names, found as the game finds them.
 
 #include "assets/CreatureConfigFiles.h"
+#include "assets/DefinitionNames.h"
 #include "assets/EntryLoader.h"
-
-#include <pugixml.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -31,17 +30,8 @@ namespace assets::testing {
 	inline const std::map<std::string, uint32_t, std::less<>>& shippedDefinitionNames() {
 		static const std::map<std::string, uint32_t, std::less<>> names = [] {
 			std::map<std::string, uint32_t, std::less<>> found;
-			for (const auto& entry : std::filesystem::recursive_directory_iterator(shippedRepoRoot() / "assets" / "world")) {
-				if (!entry.is_regular_file() || entry.path().extension() != ".xml") {
-					continue;
-				}
-				pugi::xml_document document;
-				if (!document.load_file(entry.path().string().c_str())) {
-					continue;
-				}
-				for (const pugi::xml_node definition : document.child("AssetDefinitions").children("AssetDef")) {
-					found.try_emplace(definition.child_value("defName"), static_cast<uint32_t>(found.size()));
-				}
+			for (std::string& name : definitionNamesIn(shippedRepoRoot() / "assets" / "world")) {
+				found.try_emplace(std::move(name), static_cast<uint32_t>(found.size()));
 			}
 			return found;
 		}();

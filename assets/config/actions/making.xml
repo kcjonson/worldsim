@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Crafting, building, and placing what was made. See /docs/technical/queries-and-chains.md (The shared actions). -->
 <actions>
-  <action id="craft" workFrom="job" skill="Crafting" hands="free" interruptable="false">
+  <action id="craft" workFrom="job" hands="free" interruptable="false">
     <craft/>
   </action>
   <action id="build" hands="free" interruptable="false" pays="along">

@@ -215,13 +215,14 @@ By separating actions from effects:
 
 ## Factory Pattern for Actions
 
-Actions use static factory methods instead of constructors:
+Actions use static factory methods instead of constructors. Each takes the action entries resolved at load
+(`ecs::ActionEntries`), from which it reads its duration, interruptability, and amounts:
 
 ```cpp
 // Good - factory with meaningful name and clear parameters
-auto action = Action::Eat(itemDefName, nutrition);
-auto action = Action::Sleep(quality);
-auto action = Action::Craft(recipeId, ingredients);
+auto action = Action::Eat(actionEntries, itemDefName, nutrition);
+auto action = Action::Sleep(actionEntries, quality);
+auto action = Action::Craft(actionEntries, recipeDefName, stationId, stationPos, workAmount, inputs, outputs);
 
 // Avoid - constructor with many parameters (no longer valid)
 // Action action(ActionType::Eat, ...);

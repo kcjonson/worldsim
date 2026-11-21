@@ -171,7 +171,11 @@ namespace assets::entry_loading {
 			if (const std::optional<std::size_t> from = choice(node, "workFrom", label, kWorkFrom, true)) {
 				entry.duration = *from == 0 ? ActionDuration::FromDurability : ActionDuration::FromJob;
 			}
-			entry.skill = required(node, "skill", label);
+			if (entry.duration == ActionDuration::FromDurability) {
+				entry.skill = required(node, "skill", label);
+			} else if (!node.attribute("skill").empty()) {
+				refuse(label, node, "skill", "left out; a job's work amount is worked at a fixed rate of 100 work ticks a second");
+			}
 		} else if (openEnded) {
 			entry.duration = ActionDuration::OpenEnded;
 		} else {
