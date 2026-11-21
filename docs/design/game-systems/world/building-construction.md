@@ -341,6 +341,7 @@ Same pathfinding rationale as foundations: a gap between walls is either zero (j
 | Overlap | Walls can't overlap other walls; they may only meet at junction points | — |
 | Containment | The wall's full thickness footprint must lie within the foundation | — |
 | Crossing | Drawing across an existing wall snaps to a junction on it rather than crossing (no X-crossings in v1; make two T-junctions) | — |
+| Opening clearance | An opening keeps its clearance from a wall junction whichever is placed first: a wall can't end on, or run through, a wall or vertex where it would leave a door or window nearer a junction than an opening may sit | — |
 
 ### Lifecycle
 

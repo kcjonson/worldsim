@@ -43,6 +43,8 @@ namespace assets {
 	struct ThicknessPreset {
 		/// Display name, e.g. "Light", "Standard", "Heavy".
 		std::string name;
+		/// The wall material this preset belongs to (a key for getThicknessPreset).
+		std::string material;
 		/// Thickness in meters (floating-point, for UI display).
 		float thicknessMeters = 0.0F;
 		/// Pre-quantized thickness: round(thicknessMeters * 1000). Integer mm.

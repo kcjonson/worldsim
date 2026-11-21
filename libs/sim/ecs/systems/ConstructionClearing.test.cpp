@@ -129,8 +129,10 @@ namespace ecs::test {
 				registry.registerTestDefinition(std::move(bush));
 
 				world = std::make_unique<World>();
-				world->registerSystem<AIDecisionSystem>(registry, assets::RecipeRegistry::Get(), kTestRngSeed);
-				auto& action = world->registerSystem<ActionSystem>(kTestRngSeed);
+				world->registerSystem<AIDecisionSystem>(
+					registry, assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), kTestRngSeed
+				);
+				auto& action = world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 				action.setTakeSourceCallback(
 					[this](const std::string& defName, float x, float y, ActionSystem::SourceTake take, float seconds) {
 						return takeWorldSource(executor, *world, pendingRemoval, defName, {x, y}, take, seconds);

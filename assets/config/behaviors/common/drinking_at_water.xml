@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- common/drinking_at_water. See /docs/technical/queries-and-chains.md (Behaviors). -->
+<behavior id="drinking_at_water" label="Drinking at water">
+  <action id="drink" seconds="1.5" hands="free" interruptable="false">
+    <restore need="thirst" amount="100"/>
+    <restore need="bladder" amount="-15"/>
+  </action>
+</behavior>

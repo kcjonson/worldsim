@@ -49,19 +49,19 @@ namespace ecs::test {
 
 		constexpr std::string_view kActionTypes = R"(
   <thought id="dozing_off" label="Dozing off" importance="trivial">
-    <source trigger="actionStarts" action="Sleep"/>
+    <source trigger="actionStarts" action="human/sleep"/>
     <feeling is="content"/>
   </thought>
   <thought id="slept_rough" label="Slept rough" importance="normal">
-    <source trigger="actionFinishes" action="Sleep" on="ground"/>
+    <source trigger="actionFinishes" action="human/sleep" on="ground"/>
     <feeling is="annoyed" mood="-5" hours="8"/>
   </thought>
   <thought id="slept_well" label="Slept well" importance="normal">
-    <source trigger="actionFinishes" action="Sleep" on="sleepable"/>
+    <source trigger="actionFinishes" action="human/sleep" on="sleepable"/>
     <feeling is="content"/>
   </thought>
   <thought id="first_night_there" label="First night there" importance="normal">
-    <source trigger="actionFinishes" action="Sleep" first="true"/>
+    <source trigger="actionFinishes" action="human/sleep" first="true"/>
     <feeling is="delighted"/>
   </thought>
 )";
@@ -89,7 +89,7 @@ namespace ecs::test {
 				thoughts = &world.registerSystem<ThoughtSystem>(rules.types, seed);
 				vision = &world.registerSystem<VisionSystem>();
 				vision->setUpdateInterval(1);
-				ActionSystem& actions = world.registerSystem<ActionSystem>(seed);
+				ActionSystem& actions = world.registerSystem<ActionSystem>(ecs::testing::shippedActions(), seed);
 				world.registerSystem<ThoughtSourceSystem>(rules.types, seed).listenTo(actions, *vision);
 				thoughts->addArrivedObserver([this](EntityID who, const Thought& thought, ThoughtArrival arrival) {
 					if (who != colonist) {

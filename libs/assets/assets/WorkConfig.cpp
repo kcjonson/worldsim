@@ -1,6 +1,5 @@
 #include "assets/WorkConfig.h"
 
-#include "assets/ActionTypeRegistry.h"
 #include "assets/ConfigFiles.h"
 #include "assets/ConfigValidator.h"
 #include "assets/ConstructionRegistry.h"
@@ -16,7 +15,6 @@ namespace assets {
 	std::vector<std::string> loadWorkConfig(const std::filesystem::path& configRoot, const CreatureConfigFiles& human) {
 		assert(human.errors.empty() && "loadWorkConfig takes a human folder with no errors; its errors are the load's");
 		assert(human.mood.size() == 1 && human.memory.size() == 1 && "loadWorkConfig reads the human's one <Mood> and one <Memory> file");
-		ActionTypeRegistry::Get().clear();
 		WorkTypeRegistry::Get().clear();
 		PriorityConfig::Get().clear();
 		ConstructionRegistry::Get().clear();
@@ -30,11 +28,6 @@ namespace assets {
 			}
 			return std::vector<std::string>{"Failed to load " + file.generic_string()};
 		};
-
-		const std::filesystem::path actionTypes = "legacy/action-types.xml";
-		if (!ActionTypeRegistry::Get().loadFromFile(configRoot, actionTypes)) {
-			return loadFailure(actionTypes, ActionTypeRegistry::Get().problems());
-		}
 
 		const std::filesystem::path workTypes = "legacy/work-types.xml";
 		if (!WorkTypeRegistry::Get().loadFromFile(configRoot, workTypes)) {

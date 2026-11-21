@@ -24,8 +24,6 @@ Everything not listed here must be given. Leaving one of these out has the state
 
 | Loader | File | Attribute | Left out means |
 |--------|------|-----------|----------------|
-| ActionTypeRegistry | `legacy/action-types.xml` | `<Action needsHands>` | the action leaves the hands free (false) |
-| ActionTypeRegistry | `legacy/action-types.xml` | `<description>` | no description |
 | WorkTypeRegistry | `legacy/work-types.xml` | `<Category canDisable>` | the player can disable the category |
 | WorkTypeRegistry | `legacy/work-types.xml` | `<WorkType><minSkillLevel>` | no minimum skill level (0); when given, a number, 0 or more |
 | WorkTypeRegistry | `legacy/work-types.xml` | `<filter>` elements `<looseItem>`, `<indoor>`, `<neededByRecipe>`, `<neededByBlueprint>`, `<hasPlacementTarget>` | no condition on that property; when given, `true` or `false` |
@@ -37,7 +35,7 @@ Everything not listed here must be given. Leaving one of these out has the state
 | ThoughtConfig | `thoughts/*.xml` | a feeling's `mood` | the feeling has no mood effect |
 | ThoughtConfig | `thoughts/*.xml` | `stacks`, an action source's `first` | false |
 
-The `<Action needsHands>`, `<Category canDisable>`, and `<innate>` values above are `true` or `false` when given. What the behavior library's entries may leave out is in [Queries and chains](./queries-and-chains.md); the loader is [below](#the-behavior-library-and-the-creatures).
+The `<Category canDisable>` and `<innate>` values above are `true` or `false` when given. What the behavior library's entries may leave out is in [Queries and chains](./queries-and-chains.md); the loader is [below](#the-behavior-library-and-the-creatures).
 
 Required tuning includes a work category's `tier` (a number, 0 or more), the arbitration file's `<ladder>` of `<rung name>` entries, a recipe's `<workAmount>` (work ticks, 0 or more), and `<RecentSighting gameMinutes>` in the human's `memory.xml`, beside the priority, mood, needs, attribute, trait, condition, and thought numbers. A recipe is one `<RecipeDef>` root per file whose `<input>` and `<output>` lines name their item with `thing`. Each `thing`, and a `<station>` other than `none`, must name a loaded asset definition. A name the definition index holds with no definition behind it (a harvest yield no definition defines, or a synthetic terrain name such as the shore's `Terrain_Shore`) is not one; neither is crafted, hauled, or used as a station. One that names no definition is a problem in the file, as in `[recipes] tools/AxePrimitive.xml: <RecipeDef defName="Recipe_AxePrimitive"> input thing "Wod" names no definition`. The asset manager's Reload loads the recipes the same way and shows their problems: counted in its header's errors and listed in full at the top of its asset tree, cleared and read again on every Reload.
 
@@ -85,19 +83,19 @@ Loading at app startup (Main.cpp) would require a full restart to change mods. B
 Configs load in dependency order:
 
 ```
-1. ActionTypeRegistry    ← No dependencies (legacy/action-types.xml)
-2. WorkTypeRegistry      ← No dependencies (legacy/work-types.xml)
-3. PriorityConfig        ← References WorkTypes (arbitration/: the ladder and the bonuses)
-4. ConstructionRegistry, MoodConfig, MemoryConfig
-5. ConfigValidator       ← Validates cross-references
-6. The behavior library and the creatures   ← References the ladder's rungs and the asset definitions
-7. The colonist rules    ← traits, attributes, needs, conditions, thoughts
+1. WorkTypeRegistry      ← No dependencies (legacy/work-types.xml)
+2. PriorityConfig        ← References WorkTypes (arbitration/: the ladder and the bonuses)
+3. ConstructionRegistry, MoodConfig, MemoryConfig
+4. ConfigValidator       ← Validates cross-references
+5. The behavior library and the creatures   ← References the ladder's rungs and the asset definitions;
+                                              the action factories' entries are resolved from it
+6. The colonist rules    ← traits, attributes, needs, conditions, thoughts; the thought sources'
+                           actions are resolved against the behavior library
 ```
 
 ### Base Game Paths
 
 ```
-assets/config/legacy/action-types.xml
 assets/config/legacy/work-types.xml
 assets/config/arbitration/priority-tuning.xml
 assets/config/behaviors/<folder>/*.xml
@@ -116,8 +114,8 @@ assets/world/creatures/Human/attributes.xml
 assets/world/creatures/Human/needs.xml
 ```
 
-`legacy/` holds the two files that later tickets of the behavior data migration replace with entries, so no
-folder the entry loaders own holds a root they do not own. The arbitration folder holds one file, whose root is
+`legacy/` holds `work-types.xml`, which a later ticket of the behavior data migration replaces with entries, so
+no folder the entry loaders own holds a root they do not own. The arbitration folder holds one file, whose root is
 `<arbitration>`: its `<ladder>` of `<rung name>` entries, given once, at most 256 rungs and one of them
 `survival`, and `<TaskTiers>`, `<WorkCategoryOrder>`, and `<Bonuses>`; any other element is an error, and a
 second file in the folder is an error naming both
@@ -182,6 +180,18 @@ chains](./queries-and-chains.md) defines into an `assets::EntryLibrary` (libs/as
 `GameLoadingScene` hands to `GameScene` through `GameWorldState` beside the colonist rules. The tickets of
 [Behavior data migration](./behavior-data-migration.md) are what read it when a creature decides.
 
+The loader is given the sim's fixed list of needs as need ids (`EntrySources::trackedNeeds`, from
+`ecs::trackedNeedIds`), so an action's `<restore>` may name `hunger` with no behavior bringing it
+([Behavior data migration](./behavior-data-migration.md), Seams). Once the library loads clean,
+`ecs::resolveActionEntries` (libs/sim/ecs/ActionEntries.h) resolves each entry the hand-written action factories
+and the hands rule read (`human/eat`, `common/drink`, `pickup`, `craft`, and the rest) to its handle and plain
+values, once, so nothing reads the library when an action starts. Each factory reads a fixed shape, listed in that
+header; an entry missing, or with anything its factory does not read, is an error naming the file, the entry, and
+the element (`[behaviors] human/washing.xml: <action id="wash"> effect 2 <consume> is not an effect the sim's Wash
+action performs`; a missing one, `action "human/wash" is missing; the sim's Wash action reads it from
+behaviors/human/washing.xml`).
+`GameScene` holds the resolved `ecs::ActionEntries` and hands it to `ActionSystem` and `AIDecisionSystem`.
+
 | Folder | Root | Prefix |
 |---|---|---|
 | `behaviors/<folder>/` | `<behavior>` | `[behaviors]` |
@@ -214,7 +224,10 @@ load logs its counts at info level.
 The names an entry borrows from config that loads after it, a `<scale trait>`, a `<from kind>`, and a
 `<think thought>`, are checked by `assets::checkEntryNames` once `loadColonistRules` has loaded the traits,
 the condition vocabulary, and the thought types, and each one that names nothing is an error in the same
-shape. Conditions (`when`, `per`) and skill names (`skill`, `<work rate>`) are kept as written and checked by
+shape. A thought source's `action` names an action entry by its id (`human/eat`, `craft`); once both have
+loaded, `ThoughtTypes::resolveActions` resolves each, and one that names no action, or names an action group,
+is an error (`[thoughts] events.xml: thought 'ate_good_meal' source 1: no action is called 'human/eats'`).
+Conditions (`when`, `per`) and skill names (`skill`, `<work rate>`) are kept as written and checked by
 nothing at load: the conditions wait on the vocabulary owning the loaded need ids, and no loaded config
 declares the skills.
 
@@ -302,7 +315,7 @@ shipped entry's full id is the duplicate-id error ([Queries and chains](./querie
 ### Loading the work config
 
 `assets::loadWorkConfig(configRoot, human)` (libs/assets/assets/WorkConfig.h) clears the work-config
-registries (ActionTypeRegistry, WorkTypeRegistry, PriorityConfig, ConstructionRegistry, MoodConfig,
+registries (WorkTypeRegistry, PriorityConfig, ConstructionRegistry, MoodConfig,
 MemoryConfig, and ConfigValidator's errors), loads them from `configRoot` in the order above, checks that
 the arbitration file gives every task type an arbitration tier, loads construction, then mood and memory
 from the human's one `<Mood>` and one `<Memory>` file (its caller has already refused none, or more than
@@ -319,6 +332,7 @@ ecs::GoalTaskRegistry::Get().clear();
 world_sim::GameConfigLoad config = world_sim::loadGameConfig("assets/config", "assets/world/creatures");
 worldState->colonistRules = std::move(config.rules);
 worldState->entries = std::move(config.entries);
+worldState->actionEntries = std::move(config.actions);
 if (!config.errors.empty()) {
     fail(std::move(config.errors));
     return;

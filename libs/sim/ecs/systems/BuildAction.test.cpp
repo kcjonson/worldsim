@@ -62,7 +62,7 @@ namespace ecs::test {
 	// =============================================================================
 
 	TEST(BuildActionFactoryTest, BuildActionCreation) {
-		auto action = Action::Build(42, {3.0F, 4.0F}, 5.0F);
+		auto action = Action::Build(ecs::testing::shippedActions(), 42, {3.0F, 4.0F}, 5.0F);
 
 		EXPECT_EQ(action.type, ActionType::Build);
 		EXPECT_EQ(action.state, ActionState::Starting);
@@ -78,7 +78,7 @@ namespace ecs::test {
 	}
 
 	TEST(BuildActionFactoryTest, DeconstructActionCreation) {
-		auto action = Action::Deconstruct(7, {1.0F, 2.0F}, 12.0F);
+		auto action = Action::Deconstruct(ecs::testing::shippedActions(), 7, {1.0F, 2.0F}, 12.0F);
 
 		EXPECT_EQ(action.type, ActionType::Deconstruct);
 		ASSERT_TRUE(action.hasProgressEffect());
@@ -96,7 +96,7 @@ namespace ecs::test {
 	  protected:
 		void SetUp() override {
 			world = std::make_unique<World>();
-			actionSystem = &world->registerSystem<ActionSystem>(kTestRngSeed);
+			actionSystem = &world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), kTestRngSeed);
 		}
 
 		void TearDown() override { world.reset(); }

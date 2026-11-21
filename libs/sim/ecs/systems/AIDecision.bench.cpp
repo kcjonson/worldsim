@@ -315,7 +315,9 @@ namespace {
 		for (auto _ : state) {
 			ecs::GoalTaskRegistry::Get().clear();
 			ecs::World				world;
-			ecs::AIDecisionSystem&	ai = world.registerSystem<ecs::AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234U);
+			ecs::AIDecisionSystem&	ai = world.registerSystem<ecs::AIDecisionSystem>(
+				 assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), 1234U
+			 );
 			wantWood(world);
 
 			// One memory of trees within 100 m of the colony, which every colonist holds. Memory keys a

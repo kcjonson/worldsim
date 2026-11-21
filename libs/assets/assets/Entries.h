@@ -226,7 +226,11 @@ namespace assets {
 		CapabilityType capability = CapabilityType::Edible;
 	};
 
-	enum class ActionDuration : uint8_t { Seconds, FromDurability, OpenEnded };
+	enum class ActionDuration : uint8_t { Seconds, FromDurability, FromJob, OpenEnded };
+
+	/// `workFrom="job"`: the station's current job's work amount, worked at this fixed rate whatever the crafter.
+	inline constexpr float kJobWorkTicksPerSecond = 100.0F;
+
 	enum class Hands : uint8_t { Any, Free };
 	enum class Pays : uint8_t { End, Along };
 
@@ -237,7 +241,7 @@ namespace assets {
 		std::string	   file;
 		ActionDuration duration = ActionDuration::Seconds;
 		float		   seconds = 0.0F;
-		/// The skill whose work rate a durability-based duration uses.
+		/// The skill whose work rate a duration from the target's durability uses.
 		std::string								 skill;
 		Hands									 hands = Hands::Any;
 		bool									 interruptable = false;

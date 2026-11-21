@@ -729,7 +729,7 @@ instance and the AI reads it.
 ### Interruption by the colonist's own needs
 
 The colonist stows or drops carried goods (`AIDecisionSystem::handleChainInterruption`, driven by
-`needsHands` and `handsRequired`; see [Task Chains](../design/game-systems/colonists/task-chains.md)).
+the first action's entry's `hands` and the goods' `handsRequired`; see [Task Chains](../design/game-systems/colonists/task-chains.md)).
 A one-hand item goes to the belt, else the pack; a two-hand armful, or one-hand goods with no belt or
 pack room, go through `storeOrDrop`: into a box within reach that takes them, else onto the ground as a
 pile, when the selected task's first action needs free hands. A carry-in delivers what the colonist

@@ -2,6 +2,7 @@
 
 // The game's shipped config for sim tests and benchmarks. A broken shipped config stops the run.
 
+#include "ActionEntries.h"
 #include "ColonistRules.h"
 #include "NeedLevels.h"
 #include "components/Needs.h"
@@ -9,6 +10,8 @@
 #include "components/Attributes.h"
 
 #include <assets/CreatureConfigFiles.h>
+#include <assets/EntryLoader.h>
+#include <assets/ShippedEntries.test.h>
 #include <assets/TraitRegistry.h>
 
 #include <cstdio>
@@ -84,6 +87,29 @@ namespace ecs::testing {
 	/// A colonist's needs as the game spawns them.
 	inline NeedsComponent shippedNeeds() {
 		return NeedsComponent(shippedNeedLevels());
+	}
+
+	/// The shipped behavior library, loaded once. It is given no ladder: the shipped entries hold no work entry, the
+	/// one reader of the rungs.
+	inline const assets::EntryLibrary& shippedEntries() {
+		static const assets::EntryLibrary library = [] {
+			const assets::testing::ShippedEntrySources shipped = assets::testing::shippedEntrySources({}, trackedNeedIds());
+			stopOnErrors("creature folders", shipped.errors);
+			assets::EntryLoad load = assets::loadEntries(shipped.sources);
+			stopOnErrors("entries", load.errors);
+			return std::move(load.library);
+		}();
+		return library;
+	}
+
+	/// The shipped action entries the factories and the hands rule read, resolved once.
+	inline const ActionEntries& shippedActions() {
+		static const ActionEntries actions = [] {
+			ActionEntriesLoad load = resolveActionEntries(shippedEntries());
+			stopOnErrors("action entries", load.errors);
+			return std::move(load.actions);
+		}();
+		return actions;
 	}
 
 } // namespace ecs::testing
