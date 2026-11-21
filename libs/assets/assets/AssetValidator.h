@@ -22,12 +22,16 @@ namespace assets {
 		std::string field;	 // empty if not field-specific
 		std::string message;
 		std::string context; // e.g. the offending raw value or resolved path
+		std::vector<std::string> parts; // a parts def's parts the issue is about, where the loader knows them
 	};
 
 	struct ValidationReport {
 		std::vector<ValidationIssue> issues;
 
-		void add(Severity severity, std::string defName, std::string field, std::string message, std::string context = "");
+		void add(
+			Severity severity, std::string defName, std::string field, std::string message, std::string context = "",
+			std::vector<std::string> parts = {}
+		);
 		[[nodiscard]] int	errorCount() const;
 		[[nodiscard]] int	warningCount() const;
 		[[nodiscard]] bool	hasErrors() const;

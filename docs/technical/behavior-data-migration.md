@@ -91,8 +91,8 @@ During the move both paths run, on disjoint ground that phase 7 deletes:
 - Idle: the human's `<idle>` rows against the old wander and gather-food builders.
 - Work: per goal type and source, by which `evaluate*Options` call remains against which `<work>`
   entries exist.
-- Starts: `ActionSystem::startAction` sends `TaskType::Chain` to the one chain start path and every
-  other type to the old routines until they are deleted.
+- Starts: `ActionSystem::update` sends a `TaskType::Chain` task to the chain runner, whose do steps start
+  through one start path, and every other type to the old routines until they are deleted.
 - `TaskType::Chain` is the one task type every chain runs under until phase 7. Its consumers are
   handled in the chains-in-the-decision ticket: `isOptionCurrentTask` (by the spec's identity rule),
   `classifyTier`, `verdictKeyOf`, the trace names, the claim holder's task type, `current_task` and the
@@ -328,7 +328,11 @@ marked "behavior change" lands only with the owner's sign-off.
       `have`; `run`, `think`, `need`, `drop`, and `leave_colony` steps. `Action::fromEntry` takes an
       action type while any factory remains.
     - Deleted: none.
-    - Must pass: `Chains.test.cpp`, the 22 runner requirements on synthetic chains.
+    - Must pass: `Chains.test.cpp`, the 22 runner requirements on synthetic chains, except what the runner
+      does not meet on its own: requirement 3, requirement 4's yield to the same rung, requirement 8's
+      verdict, requirement 14's total order, requirement 15, and requirement 18, whose named tests ticket 15
+      owns.
+    - `leave_colony` is refused at load: it ends colony membership, which ticket 32 builds at runtime.
     - Depends on: 12, 13.
 15. Chains in the decision.
     - Built: chain options; identity in `isOptionCurrentTask`; claims on steps sized at selection; one
@@ -336,7 +340,21 @@ marked "behavior change" lands only with the owner's sign-off.
       naming entries; every `TaskType::Chain` consumer listed under Seams.
     - Also: `QueryEvaluator::forget` called when a creature is destroyed; one decision's route answers
       shared by every query that asks; the claim holder given the need id and rung the eater rule needs,
-      in place of the `TaskType::FulfillNeed` task type and the idle rung the evaluator's `takes()` reads.
+      in place of the `TaskType::FulfillNeed` task type and the idle rung the evaluator's `takes()` reads
+      (until then a chain's claims take a thing from another creature only on the idle rung).
+    - With the runner: call `ActionSystem::startChain` and handle its false return for a chain that
+      finished at once; append the task to the claim index after selection and wire `ChainWiring::appendClaims`
+      to `AIDecisionSystem::appendClaims`; replace the interim `chainHolds` rule with identity plus
+      hysteresis (requirement 3, and requirement 4's yield to the same rung); wire `setChains` in GameScene
+      with a kept EntryLibrary, a kept ChainEntries, and one QueryEvaluator shared with the decision; give
+      the runner the colony's box list and `QueryRequest::goal`; fill `ChainGoal::goalId`,
+      `ChainGoal::cargo`, and `ChainGoal::expectedYield` from the option (ticket 39 supplies the handed
+      cargo value); pass the decision's resolved target to a `go` inside an unmet `have`'s fetch; re-query a
+      target claimed against or given a route verdict mid-walk, and a box, entity, or creature target gone
+      mid-walk.
+    - Owns the named tests of requirement 3 (hysteresis on a chain), requirement 8 (`verdictKeyOf`'s chain
+      branch, which needs a mesh), requirement 14 (total order), requirement 15 (bounded lookups), and
+      requirement 18.
     - Deleted: none.
     - Must pass: `Chains.test.cpp` decision cases, the validator on, `BM_WorkDecision` and
       `BM_ClaimIndexRebuild` within noise.
@@ -372,6 +390,9 @@ marked "behavior change" lands only with the owner's sign-off.
 19. Wash.
     - Built: `human/washing`'s chain and action, its `<satisfiedBy>`.
     - Deleted: the Hygiene cases, `Action::Wash`.
+    - A chain's action names its entry id in the log and the dev API (`Started human/wash action`), so
+      scenario 21 steps 6 and 7 change; this ticket edits `docs/testing/scenarios/21-colonists-wash.md` to
+      match.
     - Must pass: `GrubbyColonistWithNoKnownWaterDoesNothingAboutIt`,
       `GrubbyColonistWalksToKnownWaterAndWashes`, `ThirstyAndGrubbyColonistDrinksThenWashes`,
       `EquallyLowThirstAndHygieneAtOneShoreTieBreakToThirst`,
@@ -380,6 +401,8 @@ marked "behavior change" lands only with the owner's sign-off.
 20. Drink.
     - Built: `common/drinking_at_water`, with the Bladder effect.
     - Deleted: the Thirst cases, `Action::Drink`.
+    - The log and dev API name the entry id, so scenario 23 step 14 changes; this ticket edits
+      `docs/testing/scenarios/23-colonists-relieve-themselves.md` to match.
     - Must pass: `ThreeThirstyColonistsAllDrinkAtOneShorePoint`, `StartsDrinkActionOnArrival`,
       `DrinkFillsBladder`, `HungerClaimsTheBushItWalksToAndThirstClaimsNothing`.
     - Depends on: 19.
@@ -394,6 +417,9 @@ marked "behavior change" lands only with the owner's sign-off.
       test, the relieving scenario. A test that depends on the on-arrival choice of both needs is
       ported to the choice at setting off, as the spec's Relief decided before setting off states, and
       its changed expectation is listed in the PR.
+    - The log names the entry id (`Started human/urinate action (2.0s duration)`), so scenario 23 steps 4,
+      6, 12, and 17 change; this ticket edits `docs/testing/scenarios/23-colonists-relieve-themselves.md`
+      to match.
     - Depends on: 2, 20.
 22. Sleep (pays at its end).
     - Built: `human/sleeping` with the bed-before-ground prefer row, `sleep_quality`, the `asleep`
@@ -403,6 +429,11 @@ marked "behavior change" lands only with the owner's sign-off.
     - Must pass: `StartsSleepActionOnArrival`, `SleepRestorationAffectedByQuality`,
       `WokenSleeperCarriesOutTheNewTask`, `EnergyNeedUsesGroundFallback`,
       `AWokenSleeperWhoseGoodsWereFetchedByAnotherDropsHisRecord`, the sleep scenario.
+    - The claim index keeps reading only the Task: ActionSystem sets a Task flag while an `asleep` action
+      runs and clears it with the action, and `ClaimIndex::addSuspended` reads that flag in place of the
+      Energy check.
+    - The log names the entry id, so scenario 22 steps 5, 7, and 13 change; this ticket edits
+      `docs/testing/scenarios/22-colonists-sleep.md` to match.
     - Depends on: 21.
 23. Food services extracted (refactor).
     - Built: the meal amount, the free-before-held line, the nearest-of request among survivors, and
@@ -414,7 +445,8 @@ marked "behavior change" lands only with the owner's sign-off.
     - Built: the `take` group, `human/eating` (`eat_from_pack`, `fetch_food`, `food_to_eat`,
       `gather_food` as an idle row), the condition term `carried_food`, the meal resized at each
       decision. The consumed unit and its nutrition come from the `<consume>` row and the effect
-      context, as the primitive sets them.
+      context, as the primitive sets them. The meal travels in `ChainStart` (the target's source-quantity
+      claim), is resized at each decision that keeps the task, and its source claim follows.
     - Deleted: the needs loop, `needToCapability`, `firstAction` for needs,
       `startNeedAction`, `kActionableNeeds`, `NeedType`, `Task::need*`, `Action::Eat` and the eat
       factory row, the gather option and its sentinel in `classifyTier`.
@@ -483,7 +515,7 @@ marked "behavior change" lands only with the owner's sign-off.
     - Depends on: 15, 21 (`relieve_here` performs `human/urinate`).
 32. Colony membership.
     - Built: membership as engine state, granted when the colony spawns a human and removed by
-      `<leave_colony/>`; the condition kind `colonist` as a human who is a member; colony work, the
+      `<leave_colony/>`: this ticket lifts its load refusal in `ChainEntries.cpp` and runs it; the condition kind `colonist` as a human who is a member; colony work, the
       colonist UI, and sight counted for members. A human who is not a member keeps its mood,
       thoughts, and traits; only what the player sees follows membership.
     - Deleted: `kinds.xml`'s mover mapping for `colonist`.
@@ -536,8 +568,9 @@ marked "behavior change" lands only with the owner's sign-off.
       `FootprintClearingTest` tests, scenario 03.
     - Depends on: 35, 36.
 39. The gathering: cut, pile haul, and carry-in.
-    - Built: the entries with `gathers`, the cargo handoff between tasks, the decision at once after a
-      landed cut or a gathering pickup; the work gates (the tool to cut, room to carry the yield, a box's
+    - Built: the entries with `gathers`, the cargo handoff between tasks (a start form carrying the handed
+      claims and the instance identity), the decision at once after a landed cut or a gathering pickup
+      (`requestDecision`); the work gates (the tool to cut, room to carry the yield, a box's
       room) as the query request's definition gate.
     - Deleted: `evaluateHarvestOptions`, the pile part of `evaluateHaulOptions`,
       `evaluateCarryInOptions`, `headToDeposit`, `carryHarvestIn`, `startHarvestAction`, the pile part
@@ -596,7 +629,7 @@ marked "behavior change" lands only with the owner's sign-off.
       factories, `FactoryAction` and the factory shape layer of `resolveActionEntries` (every entry's
       resolution stays), the claim holder's task type,
       `EvaluatedOption::taskType` and `needType`, the rest of `classifyTier`, `ConfigValidator`'s work
-      checks, `assets/config/legacy/`.
+      checks, `assets/config/legacy/`. Tests asserting `ActionType::Chain` change here.
     - Must pass: suite, the full scenario list, the perf check.
     - Depends on: 31, 41, 43.
 45. Docs to the code, and the development log entry.

@@ -1,7 +1,7 @@
 # Scenario 25: rotatable items
 
 **Status:** draft  
-**Last verified:** 2026-11-21, steps 1 to 5, 7, 8, 10 to 15, 17 to 21, 23 to 26, 28, 29, 32 and 33; 9 and 16 the same day before PR 542 merged (6: the second box's spawn was moved off the first's collider, so they didn't overlap; 22, 30 and 31 need a held Alt, which injected input can't send; 27 not run); 34 to 56 on 2026-11-21 after PR 543 merged; 57 to 66 on 2026-11-21 on the use areas branch (67 not run: the unit tests cover it)
+**Last verified:** 2026-11-21, steps 1 to 5, 7, 8, 10 to 15, 17 to 21, 23 to 26, 28, 29, 32 and 33; 9 and 16 the same day before PR 542 merged (6: the second box's spawn was moved off the first's collider, so they didn't overlap; 22, 30 and 31 need a held Alt, which injected input can't send; 27 not run); 34 to 56 on 2026-11-21 after PR 543 merged; 63 to 72 on 2026-11-21 on the use areas branch (73 not run: the unit tests cover it)
 
 A parts item draws at any turn with the faces the turn shows, sorts against a colonist and another item along its whole length, doesn't pop at the edge of the screen, draws its detail levels as the camera zooms, selects by its turned shape, and is turned while placing it with Q/E or a drag, snapped square to a wall and flush against it. Placed, it is an obstacle colonists walk round; a ghost over another item, across a wall, or in a clearance is refused with the reason, and a wall can't be drawn through an item or its clearance. A colonist works an item from its use area; one with nowhere to stand shows a marker, a panel note, and one toast, its orders wait, and a ghost that would leave an item no room, or have none itself, is refused. Spec: [rotatable-placed-items.md](../../technical/rendering/rotatable-placed-items.md), sections 3, 6.8, 8, 9, 10, 11, 12, 13, 14, and 15.
 
@@ -17,7 +17,7 @@ Read Bob's `id`, `x` and `y` from `/api/state?what=colonists` (BID, BX, BY) and 
 
 Obstacles and refusals (steps 34 on), at the Quick Start landing on open ground clear of trees: kill every box; spawn a `TestPartsBox` at `30,27` turned 30 and a `TestClearanceBench` (a bench 1.6 m by 0.5 m keeping a strip 0.6 m deep clear along its front, +y at turn 0) at `30,31` turned 0; `package?def=TestPartsBox&at=24,31&target=37,31.5` (a crate waiting to be installed at 37,31.5); `walls?pts=38.5,25;38.5,29&host=0&built=1`; `foundation?pts=26,30;40,30;40,33;26,33&material=Wood&built=1`. Select Bob, click Draft in his panel, and `teleport?colonist=<BID>&to=27,27`. To order him to a point, jump the camera there at zoom 6 and right-click the window's centre. After step 35, `time?speed=0`, so no colonist installs the crate.
 
-Use areas (steps 57 on), on open ground clear of trees near Bob, its centre UX,UY: `time?speed=1`, click Draft again in Bob's panel so he works on his own, then `spawn?def=TestPartsStation&at=<UX>,<UY>&n=1&scatter=0&turn=0` (a bench 1.2 m by 0.6 m worked only from a drawn strip 0.3 m to 1.1 m in front of it, +y at turn 0, with an arrow on its top pointing to the front), `give?material=SmallStone&n=4&where=colonist&at=<BX>,<BY>` and the same for `Stick` and `PlantFiber` with `n=2`, and `craft?recipe=Recipe_AxePrimitive&n=3&at=<UX>,<UY>`. `what=placement` lists each parts item's `useAreas` and `standing` (where a colonist may stand in them) and `use`; `what=colonists` gives Bob's `task.standPoint`.
+Use areas (steps 63 on), on open ground clear of trees near Bob, its centre UX,UY: `time?speed=1`, click Draft again in Bob's panel so he works on his own, then `spawn?def=TestPartsStation&at=<UX>,<UY>&n=1&scatter=0&turn=0` (a bench 1.2 m by 0.6 m worked only from a drawn strip 0.3 m to 1.1 m in front of it, +y at turn 0, with an arrow on its top pointing to the front), `give?material=SmallStone&n=4&where=colonist&at=<BX>,<BY>` and the same for `Stick` and `PlantFiber` with `n=2`, and `craft?recipe=Recipe_AxePrimitive&n=3&at=<UX>,<UY>`. `what=placement` lists each parts item's `useAreas` and `standing` (where a colonist may stand in them) and `use`; `what=colonists` gives Bob's `task.standPoint`.
 
 Placing (steps 19 on): `curl.exe "http://127.0.0.1:<PORT>/api/dev/place?def=TestPartsBox"` starts placing it; pointer moves, keys, presses and releases go in through `/api/input` (`ev=move,<x>,<y>`, `ev=keydown,e`, one key a request, `ev=down,<x>,<y>`, `ev=up,<x>,<y>`, `ev=click,<x>,<y>,right`). `/api/state?what=placement` reads the ghost's `turnDegrees` and position and lists placed parts items with their turns. The wall of steps 26 to 31 is `/api/dev/walls?pts=<WX>,<WY>;<WX+5.64>,<WY+2.05>&host=0&built=1`, 6 m at 20 degrees on open ground. Injected input can't hold Alt: steps 22, 30 and 31 are done on the keyboard. Exit is `curl.exe "http://127.0.0.1:<PORT>/api/control?action=exit"`.
 
@@ -99,15 +99,21 @@ Steps 19 on start with game time running again (`...dev/time?speed=1`).
 54. Press Esc until the wall tool closes (`tool` `none`).
 55. `spawn?def=TestPartsBox&at=30.2,27&n=1&scatter=0`, into the box: a 400 naming "Overlaps an item".
 56. `spawn?def=TestPartsBox&at=30,31.6&n=1&scatter=0`, into the bench's clearance: a 400 naming "Too close".
-57. Watch Bob: he carries the materials to the bench and crafts standing in front of it, on the arrow's side, never behind it or at its ends (`what=colonists` `x`,`y` within 1.1 m in front of `<UY>` and 0.6 m either side of `<UX>`).
-58. `what=stations`: the bench has `"blocked":false` and `"use":"usable"`.
-59. `walls?pts=<UX-1.5>,<UY+0.7>;<UX+1.5>,<UY+0.7>&host=0&built=1`, a wall across the strip: an orange marker with an exclamation mark shows over the bench, and one toast reads "Test parts station blocked" with "Nowhere to stand". A craft already under way finishes first.
-60. `what=stations`: `"blocked":true`, `"use":"blocked"`, and its job still listed.
-61. Click the bench: its panel opens with "Blocked: Nowhere to stand" first, then what to do about it.
-62. Open Tasks: the bench's rows read "Blocked: nowhere to stand - move what is in the way", and Bob does other work.
-63. Wait: no second toast while it stays blocked.
-64. Click the wall, then Demolish: once Bob has torn it down the marker and the panel note go, no toast shows, and Bob goes back to crafting (`what=stations` `completed` rises).
-65. `spawn?def=TestPartsBox&at=<UX>,<UY+0.75>&n=1&scatter=0`, into the bench's strip: a 400 naming "Blocks another item".
-66. `walls?pts=<UX+4>,<UY+0.7>;<UX+6>,<UY+0.7>&host=0&built=1`, then `spawn?def=TestPartsStation&at=<UX+5>,<UY>&n=1&scatter=0&turn=0`, its strip across that wall: a 400 naming "No room to use it". The same with `turn=180` is placed.
-67. `reveal?on=0`, then `place?def=TestPartsStation`, turn the ghost with E until its arrow points away from explored ground, and move it to the edge of what has been seen, its body on seen ground and its strip on unseen ground: the ghost is red and `what=placement` `reason` is "Use area unexplored". Press Esc.
-68. Exit the game.
+57. Start placing `TestPartsAreas` (`curl.exe "http://127.0.0.1:<PORT>/api/dev/place?def=TestPartsAreas"`) and hold the pointer over open ground: under the see-through box lie its blue `front`, `side` and `back` use areas, each named on a dark plate, its clearance hatched with a dashed edge, and its collider in cyan.
+58. Press E: the box and its overlays turn together.
+59. Move the pointer onto a tree trunk: the box and every overlay turn red, with the reason beside it.
+60. Press Esc: placement ends.
+61. `package?def=TestPartsAreas&at=<RX>,<RY>&target=<RX+4>,<RY>&turn=30`: the target shows a see-through box with the same overlays, turned 30.
+62. `package?def=TestPartsAreas&at=<RX>,<RY>&target=<RX+8>,<RY>&turn=120`: a second target shows its box and overlays turned 120, the first unchanged.
+63. Watch Bob: he carries the materials to the bench and crafts standing in front of it, on the arrow's side, never behind it or at its ends (`what=colonists` `x`,`y` within 1.1 m in front of `<UY>` and 0.6 m either side of `<UX>`).
+64. `what=stations`: the bench has `"blocked":false` and `"use":"usable"`.
+65. `walls?pts=<UX-1.5>,<UY+0.7>;<UX+1.5>,<UY+0.7>&host=0&built=1`, a wall across the strip: an orange marker with an exclamation mark shows over the bench, and one toast reads "Test parts station blocked" with "Nowhere to stand". A craft already under way finishes first.
+66. `what=stations`: `"blocked":true`, `"use":"blocked"`, and its job still listed.
+67. Click the bench: its panel opens with "Blocked: Nowhere to stand" first, then what to do about it.
+68. Open Tasks: the bench's rows read "Blocked: nowhere to stand - move what is in the way", and Bob does other work.
+69. Wait: no second toast while it stays blocked.
+70. Click the wall, then Demolish: once Bob has torn it down the marker and the panel note go, no toast shows, and Bob goes back to crafting (`what=stations` `completed` rises).
+71. `spawn?def=TestPartsBox&at=<UX>,<UY+0.75>&n=1&scatter=0`, into the bench's strip: a 400 naming "Blocks another item".
+72. `walls?pts=<UX+4>,<UY+0.7>;<UX+6>,<UY+0.7>&host=0&built=1`, then `spawn?def=TestPartsStation&at=<UX+5>,<UY>&n=1&scatter=0&turn=0`, its strip across that wall: a 400 naming "No room to use it". The same with `turn=180` is placed.
+73. `reveal?on=0`, then `place?def=TestPartsStation`, turn the ghost with E until its arrow points away from explored ground, and move it to the edge of what has been seen, its body on seen ground and its strip on unseen ground: the ghost is red and `what=placement` `reason` is "Use area unexplored". Press Esc.
+74. Exit the game.

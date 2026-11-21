@@ -11,6 +11,7 @@ add_library(assets
     assets/PartsAsset.cpp
     assets/UseAreaRoom.cpp
     assets/ItemView.cpp
+    assets/ItemOverlays.cpp
     assets/TurnQuanta.cpp
     assets/MeshSilhouette.cpp
     assets/ViewConfig.cpp

@@ -4,6 +4,7 @@
 // Tracks the current task a colonist is performing.
 // See /docs/design/game-systems/colonists/ai-behavior.md for design details.
 
+#include "ChainProgress.h"
 #include "Needs.h"
 
 #include <glm/vec2.hpp>
@@ -195,7 +196,8 @@ enum class TaskType : uint8_t {
 	PlacePackaged, // Carrying packaged items to placement: committed_work if serving/carrying, else opportunistic_work
 	Build,		   // Advancing construction on a blueprint: committed_work
 	Deconstruct,   // Tearing down a structure: committed_work
-	Wander		   // Random exploration: idle
+	Wander,		   // Random exploration: idle
+	Chain		   // A chain from the behavior library, run by ActionSystem's chain runner: the rung of whoever started it
 };
 
 /// Task state machine
@@ -327,6 +329,9 @@ struct Task {
 	/// committed_work in the (tier, score) arbitration (see colonist-task-arbitration.md).
 	uint8_t chainStep = 0;
 
+	/// A Chain task's progress: its chain and step, its targets, and what its takes lifted. Reset by clear().
+	ChainProgress chain;
+
 	/// Time since last decision re-evaluation (seconds)
 	float timeSinceEvaluation = 0.0F;
 
@@ -340,6 +345,10 @@ struct Task {
 	/// since: a further failure, the next pick's included, waits for the re-decide interval. Survives
 	/// clear(), like the timer.
 	bool routeFailureDecided = false;
+
+	/// The task ended on a start that started nothing: the next decision waits for the re-decide interval instead of
+	/// coming at once, so a refusal never repeats every frame. Survives clear(), like the timer; the decision resets it.
+	bool decideAtInterval = false;
 
 	/// Arbitration tier of this task when selected: its rung's position in the ladder (lower = higher
 	/// priority), kUnrankedTier until the decision ranks it. Paired with `priority` (the within-tier score)
@@ -425,6 +434,7 @@ struct Task {
 		placeTargetPosition = glm::vec2{0.0F, 0.0F};
 		placeTargetRotation.reset();
 		chainStep = 0;
+		chain = ChainProgress{};
 		priorityTier = kUnrankedTier;
 		priority = 0.0F;
 		// Note: timeSinceEvaluation NOT reset here - caller handles timer logic

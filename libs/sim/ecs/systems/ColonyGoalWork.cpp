@@ -43,6 +43,11 @@ namespace ecs {
 				case TaskType::PlacePackaged:
 					addWorker(workersByGoal, goalWorking(task.placePackagedEntityId, GoalType::PlacePackaged), colonist);
 					break;
+				case TaskType::Chain:
+					if (task.chain.goal.rootGoalId != 0) {
+						addWorker(workersByGoal, task.chain.goal.rootGoalId, colonist);
+					}
+					break;
 				case TaskType::FulfillNeed:
 				case TaskType::Wander:
 				case TaskType::None:
@@ -83,6 +88,9 @@ namespace ecs {
 					case TaskType::FulfillNeed:
 					case TaskType::Wander:
 					case TaskType::None:
+						break;
+					case TaskType::Chain:
+						// The decision offers no chain option, so none names a goal.
 						break;
 				}
 				if (goal == 0) {

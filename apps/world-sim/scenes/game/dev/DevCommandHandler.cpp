@@ -1547,7 +1547,7 @@ namespace world_sim {
 				serializeThoughts(out, *thoughts);
 			}
 			if (const auto* action = m_ctx.world->getComponent<ecs::Action>(entity)) {
-				out << ",\"action\":\"" << ecs::actionTypeName(action->type) << "\"";
+				out << ",\"action\":\"" << ecs::actionName(*action) << "\"";
 			}
 			// Where his task sends him and what it works on there: a stand point beside its target, or the target itself.
 			if (const auto* task = m_ctx.world->getComponent<ecs::Task>(entity); task != nullptr && task->isActive()) {

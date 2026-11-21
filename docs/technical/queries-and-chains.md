@@ -426,8 +426,9 @@ set, follows membership. The condition kind `colonist` is a human who is a membe
 A deer would include `herbivore/eating` too, with its own drain, and a human's `hunger` comes from
 `human/eating`: the same need id, met in different ways. The care goal's destination is the cow. `milk` restores the target's Milking and puts the milk in the
 milker's hands; the milk is then carried to storage by carry-in from possession when a box takes milk,
-or put down by the idle rule when none does. A cow is a mover, so the claim is on a mobile target, and
-the go step ends with `target_left` when the cow walks off
+or put down by the idle rule when none does. A cow is a mover, so the claim is on a mobile target: the
+go step follows the cow when it walks off, and the milk step ends with `target_left` if the cow has moved
+more than 0.5 m since it began
 ([Task claims](./task-claims.md#built-now-and-planned), mobile targets).
 
 ---
@@ -1051,7 +1052,7 @@ kinds provided in C++. A leg is a `go` step and the `do` step after it.
 | `<go query="..."/>` or `<go to="..."/>` | walks to the target a query picks, or to a target the option already has: `target` (an order's or a low-mood behavior's), `source` (the work option's source), `destination` (the goal's destination) |
 | `<do action="..."/>` | performs an action, or an action group's member for the target, where the creature stands; `on` names the thing it works on when that is not the step it walked to (`on="destination"`) |
 | `<have item="..." fetch="..."/>` or `<have capability="...">` | a goal: met when the creature carries the option's planned amount of the item beyond the cargo it was handed, or for a packaged target, carries that one thing, or the packaged thing is already at its placement target; otherwise it runs the named chain, which gets it |
-| `<think thought="..." to="self"/>` | gives a thought to `self`, `target`, or `witnesses` (every human who saw the step) |
+| `<think thought="..." to="self"/>` | gives a thought to `self`, `target`, or `witnesses` (every other creature that has thoughts and sees the step) |
 | `<need id="..." change="..."/>` | moves one of the creature's needs by a signed amount |
 | `<drop/>` | sets down what the chain's steps took, by the drop path (a box within reach that takes it, else a pile) |
 | `<run chain="..."/>` | runs another chain as this step; chains nest |
@@ -1101,9 +1102,18 @@ box, so a step whose query can return either names both, and its target holds th
 - A claim on a later step is sized at selection from the chain's planned amount. For a haul, source
   quantity is the take's amount Q, and inbound and in-flight are Q plus the cargo handed over. For a
   cut, inbound is the cargo C already carried and in-flight is C plus the cut's expected yield E.
-- When a take completes, the claims that follow the goods (inbound, in-flight) are rewritten to what
-  it lifted, and its own source claim drops. Any other claim is held until the step naming it
-  completes. The task's last step completing ends the task and every claim with it.
+- The option carries the cargo C handed to it and, for a cut, the expected yield E, which size these
+  claims; an inbound of nothing is not taken, so a cut that has not landed claims no goods as carried.
+- When a take completes, the claims that follow the goods (inbound, in-flight) are rewritten to the
+  cargo plus what it lifted, capped at the root's live remaining need net of others' in-flight plus the
+  cargo, and its own source claim drops; a cut that set out with no cargo takes its inbound then. A take
+  that lifts nothing ends the task at the source unless it carries cargo, which is the cargo handed over
+  plus what the chain's takes already lifted of the item, never a reading of its claims; carrying some, it
+  goes on with its goods' claims at the amount an earlier take's rewrite left, else at the handed cargo. A
+  root gone by then ends the task too. Any other claim is held until the step naming it completes. The task's last step
+  completing ends the task and every claim with it.
+- A craft's slot is the station's one unnumbered slot. A build takes the numbered slot of the builder
+  spot its source is, and a build with no spot takes no slot.
 - A task whose route failed holds only the cargo it carries: inbound less the source quantity still to
   take.
 - A chain naming more claims than a task holds (four on the task, two on a suspended record) is a load
@@ -1158,6 +1168,62 @@ which keeps every hard-won fix that lives there:
   low-mood behavior) and its target, with the entry's label as its reason text; the trace lists every
   option offered, and a query's early stop applies inside the query only. `current_task(...)` reads
   chain ids and the declared task groups, which list chain ids.
+
+### How the runner reads a step
+
+- A target is the same spot within 0.5 m. A `go` or `do` step's thing target has gone when the creature
+  no longer remembers it; an entity or box target has gone when it no longer exists or stands more than
+  0.5 m from where it stood when the step began; a creature target has gone when it no longer exists, and
+  has left when it stands more than 0.5 m from there.
+- An event that ends a `go` ends the chain, since the action after it cannot run on a target that is not
+  there. An event that ends a `do` ends that step, releases the claims it names, and the chain goes on with
+  the next step. A `go` to a creature follows it: when the creature has moved more than 0.5 m, the go
+  heads to where it stands.
+- `held_gone` ends only a `do`. It watches the food the creature would eat when the step began, for an
+  action that consumes, and otherwise the chain's goods: the item its takes lifted, else the goal's item.
+- A `drop` sets down the last item the chain's takes lifted, as much of it as they lifted and the creature
+  still holds, and releases the inbound and in-flight claims for that item.
+- A `have` with no planned amount is met by one unit, always beyond the cargo the chain was handed.
+- A `think` step's thought is about the step's target: the thing or creature the last `go` walked to,
+  else the option's target. Its witnesses are the other creatures with thoughts whose sight holds the
+  creature's position when the step runs.
+- A nested chain run by `run` or an unmet `have` that fails ends the whole task, and nothing of what it
+  did is undone.
+- A `go` runs its query when it starts, and again only when its remembered target is forgotten on the way.
+  A target the option named that is gone on the way ends the chain.
+- A `do` start that finds its thing no longer what it was (no longer remembered as that definition, or
+  with nothing a member of its group acts on) forgets it. A start that starts nothing ends the chain, and
+  the creature decides again at its normal interval, not at once, so a refusal never repeats every frame.
+- The runner takes the claims a step names on any target it resolves itself (a query's pick when its go
+  starts or asks again) and files them with the claim index at once, so a creature whose query reads the
+  index later in the same update sees them. Every release (a step done, an event ending a step, a drop, a
+  take that lifted nothing, the chain ending by any path) reaches the index at once too.
+- Once a take of the goal's item has completed in a chain, its inbound and in-flight follow what the take
+  lifted and are not sized from the plan again by a later step. A take of another item (a tool a `have`
+  fetches) leaves them to the plan. A `drop` of the goal's item releases them and returns them to the plan
+  until the next take. A later step that names them while the task holds none (a deposit in a nested
+  chain, which selection did not claim) takes them at the amount the last take's rewrite left, and none
+  when that rewrite capped them to nothing. A take that lifts nothing leaves them at that amount too.
+- The packaged thing a `place_packaged` installs is the one the creature carries, else the option's
+  `target` when that is a packaged thing, else the step's own target when that is one.
+- A `put` with no `amount` puts what the creature carries toward the root, capped at the goal's planned
+  amount plus its handed cargo when the goal plans one; the root's need, the destination's room, and what
+  was lifted are already in that, through the claims and the put's own metering. `amount="carried"` puts
+  the cargo the task's inbound claim covers.
+
+The loader refuses, besides the rules above:
+
+- a `drop` with no take before it in its chain or the chains it runs;
+- `inbound` or `in_flight` named on a take, since the goods' claims are on the step that delivers them;
+- a `do` whose action acts on a target (a take, a put, a work, a craft, a restore of the target's need)
+  with no `on` and no `go` before it;
+- an action that names what it acts on (`on`) used after a `go` whose query can return nothing of that
+  kind, such as a harvest after a query of piles;
+- `held_gone` on a `go`;
+- `inbound` without `in_flight` on a `do`, or `in_flight` without `inbound`;
+- a `do` whose action's rows act on two kinds of target (a take, a put, a work, a craft, an install), a take
+  with an install on one packaged thing excepted;
+- `run` and unmet `have` chains nested more than four deep.
 
 ---
 
@@ -1225,6 +1291,9 @@ A `do` step that takes or puts has an amount, given by `amount`:
   from the world, less others' in-flight), the source's available quantity, the destination's room
   net of others' inbound, and what the creature can carry, less its own cargo toward the root
   ([Availability](./task-claims.md#availability), [Remaining need](./task-claims.md#remaining-need)).
+  The option sizes this as its planned amount at selection; a take asks for it, and a put with no
+  `amount` puts no more than it plus the handed cargo of what the creature carries, the destination
+  metering the rest.
   No goal keeps a counter.
 - `meal`: what takes the need back to its seek level at the item's nutrition, at least one unit,
   capped by what a pile or box has left for the creature; a bush is cut whole
@@ -1232,7 +1301,8 @@ A `do` step that takes or puts has an amount, given by `amount`:
 - `carried`: what the creature carries toward the root.
 
 A take asks for its amount and takes what is there up to it; the claims that follow the goods are
-rewritten to what it lifted, and a take that lifts nothing ends the task at the source. A put is
+rewritten to what it lifted, and a take that lifts nothing ends the task at the source unless it carries
+cargo. A put is
 metered to what the destination still needs and has room for: a station takes exactly the recipe's
 remaining need and the rest stays carried with no claim. What a box or a hand cannot take bounces back
 to the carrier, and a deposit into a full box keeps the goods and does not finish. A cut gives its whole
@@ -2133,6 +2203,49 @@ Rules from the first build of the primitive effects (WOR-1071, Primitive effects
   craft output's order: hands, belt, pack, then stored or dropped.
 - 2026-11-21: `clears` belongs to the site clear's own entry; the shared `harvest` refuses it.
 - 2026-11-21: `<damage>` is refused, since nothing in the sim has a condition for it to lower.
+
+Rules from the first build of the chain runner:
+
+- 2026-11-21: A target is the same spot within 0.5 m.
+- 2026-11-21: target_gone and target_left measure from where the target stood when the step began.
+- 2026-11-21: A creature target has gone when it no longer exists.
+- 2026-11-21: An event ending a `go` ends the chain.
+- 2026-11-21: An event ending a `do` ends that step, releases its claims, and the chain goes on.
+- 2026-11-21: A `go` to a creature follows it once it has moved more than 0.5 m.
+- 2026-11-21: `held_gone` ends only a `do`.
+- 2026-11-21: `held_gone` watches the food an action that consumes would eat, else the chain's goods.
+- 2026-11-21: `drop` sets down the last item taken.
+- 2026-11-21: `drop` releases the inbound and in-flight of what it sets down.
+- 2026-11-21: A `have` with no planned amount is met by one unit beyond the handed cargo.
+- 2026-11-21: A `think` is about the step's target.
+- 2026-11-21: A `think`'s witnesses are the other creatures with thoughts whose sight holds the step's position.
+- 2026-11-21: A nested chain's failure ends the whole task, and nothing it did is undone.
+- 2026-11-21: A `go` asks its query again only when its remembered target is forgotten.
+- 2026-11-21: An option target gone on the way ends the chain.
+- 2026-11-21: A start that finds its thing no longer what it was forgets it.
+- 2026-11-21: A start that starts nothing ends the chain.
+- 2026-11-21: After a start that started nothing the creature decides again at its interval, not at once.
+- 2026-11-21: Claims the runner takes on targets it resolves itself reach the claim index in the same update.
+- 2026-11-21: Every claim the runner releases leaves the claim index in the same update.
+- 2026-11-21: Claims are sized at the start with the handed cargo and a cut's expected yield.
+- 2026-11-21: After a take, the goods' claims are rewritten to the cargo plus what it lifted.
+- 2026-11-21: That rewrite is capped at the root's live need net of others' in-flight, plus the cargo.
+- 2026-11-21: Once a take of the goal's item has completed, the goods' claims are not sized from the plan again.
+- 2026-11-21: A take of another item leaves the goods' claims to the plan.
+- 2026-11-21: A `drop` of the goal's item returns the goods' claims to the plan until the next take.
+- 2026-11-21: A step naming the goods' claims after a take, with none held, takes them at the amount the last take's rewrite left.
+- 2026-11-21: The cargo a take reads is the handed cargo plus what the chain took of the item, never its claims.
+- 2026-11-21: A take that lifts nothing while carrying no cargo ends the task at the source.
+- 2026-11-21: A take that lifts nothing while carrying cargo goes on with its goods' claims at the last rewrite's amount, else the handed cargo.
+- 2026-11-21: A build with no builder spot takes no slot.
+- 2026-11-21: `place_packaged` installs the package carried, else the option's `target`, else the step's own target.
+- 2026-11-21: A `put` with no `amount` puts what is carried, capped at the goal's planned amount plus the handed cargo.
+- 2026-11-21: `amount="carried"` puts the cargo its inbound claim covers.
+- 2026-11-21: The loader refuses a `drop` with no take before it.
+- 2026-11-21: The loader refuses inbound or in-flight named on a take.
+- 2026-11-21: The loader refuses a `do` acting on a target with no `on` and no `go` before it.
+- 2026-11-21: The loader refuses an action used on a kind its `go`'s query never returns.
+- 2026-11-21: The loader refuses `held_gone` on a `go`.
 
 Choices made in writing this document, not put to the owner:
 

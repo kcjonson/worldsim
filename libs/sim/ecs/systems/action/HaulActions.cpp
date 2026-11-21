@@ -265,7 +265,7 @@ namespace ecs {
 		auto&			   registry = assets::AssetRegistry::Get();
 		const std::string& haulItem = registry.getDefName(task.haulItemDefNameId);
 
-		constexpr float kPositionTolerance = 0.5F;
+		constexpr float kPositionTolerance = kSameSpotMeters;
 
 		// Inventory-source haul: the colonist already carries the harvested items, so there is
 		// no ground pickup. It walks to the destination and deposits. Single-phase. The deposit
@@ -476,7 +476,7 @@ namespace ecs {
 		// Primary phase detection uses position, but we also check inventory state for
 		// robustness in edge cases (e.g., colonist not exactly at expected position).
 
-		constexpr float kPlacementPositionTolerance = 0.5F;
+		constexpr float kPlacementPositionTolerance = kSameSpotMeters;
 
 		const bool atSource = task.standsAt(task.placeSourcePosition, position.value, kPlacementPositionTolerance);
 		const bool atTarget = task.standsAt(task.placeTargetPosition, position.value, kPlacementPositionTolerance);

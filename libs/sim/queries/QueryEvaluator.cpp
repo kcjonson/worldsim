@@ -1,6 +1,8 @@
 #include "QueryEvaluator.h"
 
+#include <ecs/GoalTaskRegistry.h>
 #include <ecs/LoosePileIndex.h>
+#include <ecs/PlacedItemIndex.h>
 #include <ecs/World.h>
 #include <ecs/components/Memory.h>
 #include <ecs/components/ResourceStack.h>
@@ -735,6 +737,11 @@ namespace queries {
 			if (!haveMesh) {
 				return target;
 			}
+			// An item used from its use areas is reached at its stand point on his own component (rotatable-placed-items 12).
+			if (const ecs::PlacedItemIndex::Entry* item = world.placedItems != nullptr ? world.placedItems->installedAt(target) : nullptr;
+				item != nullptr && !item->world.useAreas.empty()) {
+				return hisLabel != geometry::nav::kNoComponent ? world.navigation->standPointIn(item->standing, request.position, hisLabel) : std::nullopt;
+			}
 			const geometry::nav::ComponentLabel label = world.navigation->componentAt(target);
 			if (label != geometry::nav::kNoComponent) {
 				return label == hisLabel ? std::optional<glm::vec2>(target) : std::nullopt;
@@ -1463,7 +1470,8 @@ namespace queries {
 						);
 						break;
 					case assets::CandidateSource::GoalDestination:
-						if (!placesBelow && request.goal != nullptr) {
+						// An item with nowhere to stand is no destination (rotatable-placed-items 12).
+						if (!placesBelow && request.goal != nullptr && !ecs::GoalTaskRegistry::Get().nowhereToStand(request.goal->goalId)) {
 							QueryCandidate candidate =
 								directCandidate(CandidateKind::Destination, source, fallbackPhase, request.goal->destinationPosition);
 							candidate.key = request.goal->destination;

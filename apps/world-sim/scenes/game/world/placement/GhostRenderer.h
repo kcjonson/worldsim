@@ -2,9 +2,11 @@
 
 // GhostRenderer - Renders a semi-transparent preview of an entity during placement.
 // A parts item is drawn from its item view at the ghost's turn (assets::buildItemMesh, the builder the placed
-// item's view comes from), any other def from its template, upright; both on the CPU batch with alpha.
+// item's view comes from), any other def from its template, upright; both through worldview::drawItemView with alpha,
+// tinted where placement is refused. Under a parts item, its use areas, clearance, and collider (assets::itemOverlays,
+// drawn by worldview::drawItemOverlays).
 
-#include <graphics/Color.h>
+#include <assets/ItemOverlays.h>
 #include <math/Types.h>
 #include <vector/Types.h>
 #include <world/camera/WorldCamera.h>
@@ -14,7 +16,6 @@
 #include <string>
 #include <string_view>
 #include <tuple>
-#include <vector>
 
 namespace world_sim {
 
@@ -35,36 +36,43 @@ class GhostRenderer {
 	/// @param camera World camera for coordinate transforms
 	/// @param viewportWidth Viewport width in pixels
 	/// @param viewportHeight Viewport height in pixels
+	/// @param placing The ghost being placed, drawn over every pending install's; false for a pending install
 	/// @param isValid Whether the placement position is valid (affects tint color)
+	/// @param uiScale The interface size: a logical pixel of the overlays' lines and labels is this many screen pixels
 	void render(const std::string& defName,
 				Foundation::Vec2 worldPos,
 				uint32_t turnQuanta,
 				const world::WorldCamera& camera,
 				int viewportWidth,
 				int viewportHeight,
-				bool isValid = true);
+				bool placing,
+				bool isValid,
+				float uiScale);
 
 	/// The reason a ghost at `worldPos` can't go there (rotatable-placed-items 14.4), a short label beside it in the
 	/// invalid tint, sized by the interface scale.
 	void renderRefusal(std::string_view label, Foundation::Vec2 worldPos, const world::WorldCamera& camera, int viewportWidth, int viewportHeight, float uiScale);
 
+	/// The use areas of the item a ghost would leave with nowhere to stand, at its own spot and turn, in the refused tint
+	/// (rotatable-placed-items 14.4, "Blocks another item").
+	void renderBlockedUseAreas(
+		const std::string& defName, Foundation::Vec2 worldPos, uint32_t turnQuanta, const world::WorldCamera& camera, int viewportWidth,
+		int viewportHeight, float uiScale
+	);
+
 	/// Drops the views no ghost drew this frame, so a drag through many turns keeps only the one it shows.
 	void endFrame();
 
   private:
+	// A parts ghost's view and overlays: the placing ghost and every pending install each hold one.
 	struct HeldView {
 		renderer::TessellatedMesh mesh;
+		assets::ItemOverlays	  overlays;
 		bool					  drawn = false;
 	};
 	// By (def, turn, level), under the registry generation they were built in.
 	std::map<std::tuple<std::string, uint32_t, uint8_t>, HeldView> views;
 	uint64_t													   viewsGeneration = 0;
-
-	void draw(const renderer::TessellatedMesh& mesh, Foundation::Vec2 offset, const world::WorldCamera& camera, int viewportWidth, int viewportHeight, bool isValid);
-
-	// Per-frame buffers for transformed mesh (reused to avoid allocations)
-	std::vector<Foundation::Vec2> m_transformedVertices;
-	std::vector<Foundation::Color> m_ghostColors;
 };
 
 } // namespace world_sim

@@ -390,6 +390,9 @@ namespace assets {
 			std::vector<std::vector<Ring2>>* fillGroups = nullptr; ///< an area drawing's filled shapes go here, a nonzero group each
 			glm::vec2				 originMeters{0.0F}; ///< where an area drawing's top left lands in the item's frame
 			bool					 failed = false;
+			std::optional<uint32_t>	 part; ///< the part whose top or face it is
+			std::string				 partName;
+			DrawingUseCheck::Kind	 kind = DrawingUseCheck::Kind::Face;
 		};
 
 		std::string withoutSpaces(std::string_view text) {
@@ -529,8 +532,12 @@ namespace assets {
 			return {static_cast<float>(total.r / total.a), static_cast<float>(total.g / total.a), static_cast<float>(total.b / total.a), 1.0F};
 		}
 
+		float aspectDifference(glm::vec2 drawing, glm::vec2 covered) {
+			return std::abs((drawing.x / drawing.y) / (covered.x / covered.y) - 1.0F);
+		}
+
 		bool sameAspect(glm::vec2 drawing, glm::vec2 covered, float tolerance) {
-			return std::abs((drawing.x / drawing.y) / (covered.x / covered.y) - 1.0F) <= tolerance;
+			return aspectDifference(drawing, covered) <= tolerance;
 		}
 
 		std::string describeAspect(glm::vec2 size) {
@@ -545,21 +552,32 @@ namespace assets {
 				  config(newConfig),
 				  report(newReport) {}
 
-			void error(const std::string& field, const std::string& message, const std::string& context = "") {
-				report.add(Severity::Error, defName, field, message, context);
+			void error(const std::string& field, const std::string& message, const std::string& context = "", std::vector<std::string> parts = {}) {
+				report.add(Severity::Error, defName, field, message, context, std::move(parts));
 			}
 
 			/// Reads every used drawing once and maps it onto each size it covers.
-			void loadDrawings(std::vector<DrawingUse>& uses, std::vector<ItemDrawing>& drawings) {
+			void loadDrawings(std::vector<DrawingUse>& uses, std::vector<ItemDrawing>& drawings, std::vector<DrawingUseCheck>& checks) {
 				std::map<std::string, std::vector<DrawingUse*>> byFile;
 				for (DrawingUse& use : uses) {
 					byFile[use.file].push_back(&use);
 				}
+				const auto checkOf = [](const DrawingUse& use) {
+					return DrawingUseCheck{.file = use.file, .kind = use.kind, .covers = use.what, .part = use.part, .coversMeters = use.coversMeters};
+				};
 				for (auto& [file, fileUses] : byFile) {
+					// Every part the file is drawn on: a problem with the file is each one's.
+					std::vector<std::string> fileParts;
+					for (const DrawingUse* use : fileUses) {
+						if (!use->partName.empty() && std::find(fileParts.begin(), fileParts.end(), use->partName) == fileParts.end()) {
+							fileParts.push_back(use->partName);
+						}
+					}
 					const auto fail = [&](const std::string& message, const std::string& context) {
-						error("drawing", message, context);
+						error("drawing", message, context, fileParts);
 						for (DrawingUse* use : fileUses) {
 							use->failed = true;
+							checks.push_back(checkOf(*use));
 						}
 					};
 					const std::filesystem::path relative(file);
@@ -590,7 +608,7 @@ namespace assets {
 					std::vector<renderer::svg::Problem> problems;
 					renderer::svg::checkArt(file, bytes, problems);
 					for (const renderer::svg::Problem& problem : problems) {
-						error("drawing", "drawing " + problem.text(), resolved.string());
+						error("drawing", "drawing " + problem.text(), resolved.string(), fileParts);
 					}
 
 					// An area drawing's fills are unioned by the nonzero rule, so an even-odd fill would read as another shape.
@@ -617,21 +635,27 @@ namespace assets {
 						if (issue == "draws no shapes" && artSaysNothing) {
 							continue;
 						}
-						error("drawing", "drawing " + inQuotes(file) + ": " + issue, resolved.string());
+						error("drawing", "drawing " + inQuotes(file) + ": " + issue, resolved.string(), fileParts);
 					}
 
 					const glm::vec2				   origin{(*box)[0], (*box)[1]};
 					std::map<std::pair<long, long>, uint32_t> mappedBySize;
 					bool						   proportionReported = false;
 					for (DrawingUse* use : fileUses) {
-						if (!sameAspect(viewBoxSize, use->coversMeters, config.aspectToleranceRelative)) {
+						DrawingUseCheck& check = checks.emplace_back(checkOf(*use));
+						check.viewBoxSize = viewBoxSize;
+						check.aspectDifference = aspectDifference(viewBoxSize, use->coversMeters);
+						check.verdict = sameAspect(viewBoxSize, use->coversMeters, config.aspectToleranceRelative) ? DrawingUseCheck::Verdict::Matches
+																												   : DrawingUseCheck::Verdict::Mismatch;
+						if (check.verdict == DrawingUseCheck::Verdict::Mismatch) {
 							use->failed = true;
 							if (!proportionReported) {
 								error(
 									"drawing",
-									"drawing " + inQuotes(file) + "'s viewBox is " + describeAspect(viewBoxSize) + ", but " + use->what + " is " +
+									"the viewBox of drawing " + inQuotes(file) + " is " + describeAspect(viewBoxSize) + ", but " + use->what + " is " +
 										describeAspect(use->coversMeters) + "; their proportions must match",
-									resolved.string()
+									resolved.string(),
+									fileParts
 								);
 								proportionReported = true;
 							}
@@ -655,6 +679,7 @@ namespace assets {
 							}
 							if (filled == 0) {
 								use->failed = true;
+								check.verdict = DrawingUseCheck::Verdict::NoFill;
 								error("useAreas", "area drawing " + inQuotes(file) + " has no filled shape", use->what);
 							}
 							continue;
@@ -671,7 +696,7 @@ namespace assets {
 								);
 							}
 							drawing.averageColor = averageColorOf(drawing.shapes, drawing.sizeMeters);
-							checkOverflow(drawing, use->what);
+							checkOverflow(drawing, use->what, use->partName);
 							found = mappedBySize.emplace(key, static_cast<uint32_t>(drawings.size())).first;
 							drawings.push_back(std::move(drawing));
 						}
@@ -682,7 +707,7 @@ namespace assets {
 
 		  private:
 			/// Rule 8: art past the viewBox by more than overflowMeters is lost to the face's clip; a warning.
-			void checkOverflow(const ItemDrawing& drawing, const std::string& what) {
+			void checkOverflow(const ItemDrawing& drawing, const std::string& what, const std::string& partName) {
 				const float limit = config.overflowMeters;
 				for (const ItemDrawingShape& item : drawing.shapes) {
 					const float halfStroke = item.shape.hasStroke ? item.shape.strokeWidth * 0.5F : 0.0F;
@@ -696,7 +721,8 @@ namespace assets {
 									"drawing",
 									"drawing " + inQuotes(drawing.file) + " draws past its viewBox by more than " +
 										formatted("%g", static_cast<double>(limit)) + " m on " + what + "; art past the edge is clipped away",
-									(folder / drawing.file).string()
+									(folder / drawing.file).string(),
+									partName.empty() ? std::vector<std::string>{} : std::vector<std::string>{partName}
 								);
 								return;
 							}
@@ -1001,7 +1027,7 @@ namespace assets {
 			readAreaShapes(clearance, area, "<clearance>", reader);
 			// A margin of 0 is no margin, not the collider itself.
 			if (const float margin = reader.number(clearance, "marginMeters", "<clearance>", 0.0F); margin != 0.0F) {
-				area.shapes.insert(area.shapes.begin(), {.kind = AuthoredAreaShape::Kind::Around, .distanceMeters = margin});
+				area.shapes.insert(area.shapes.begin(), {.kind = AuthoredAreaShape::Kind::Margin, .distanceMeters = margin});
 			}
 		}
 
@@ -1016,8 +1042,8 @@ namespace assets {
 		ResolvedParts resolved;
 		PartsAsset&	  asset = resolved.asset;
 		Resolver	  resolver(folder, defName, config, report);
-		const auto	  error = [&](const std::string& field, const std::string& message, const std::string& context = "") {
-			   resolver.error(field, message, context);
+		const auto	  error = [&](const std::string& field, const std::string& message, const std::string& context = "", std::vector<std::string> parts = {}) {
+			   resolver.error(field, message, context, std::move(parts));
 		};
 		std::vector<DrawingUse> uses;
 
@@ -1029,25 +1055,28 @@ namespace assets {
 			PartDefinition& part = asset.parts.emplace_back();
 			part.name = written.name;
 			const std::string where = "part " + inQuotes(written.name);
+			const auto		  partError = [&](const std::string& field, const std::string& message, const std::string& context = "") {
+				   error(field, message, context, written.name.empty() ? std::vector<std::string>{} : std::vector<std::string>{written.name});
+			};
 			if (written.name.empty()) {
-				error("parts", "a part has no name");
+				partError("parts", "a part has no name");
 			} else if (!partIndex.emplace(written.name, static_cast<uint32_t>(asset.parts.size() - 1)).second) {
-				error("parts", "two parts are named " + inQuotes(written.name) + "; part names are unique");
+				partError("parts", "two parts are named " + inQuotes(written.name) + "; part names are unique");
 			}
 
 			if (written.footprint.shapeCount != 1) {
-				error("parts", where + " needs one footprint, a <rect> or a <round>", where);
+				partError("parts", where + " needs one footprint, a <rect> or a <round>", where);
 			}
 			part.footprint = footprintPolygon(written.footprint);
 			if (written.footprint.shapeCount == 1 && part.footprint.empty()) {
-				error(
+				partError(
 					"parts",
 					written.footprint.shape == AuthoredFootprint::Shape::Rect ? where + "'s footprint rect needs max > min on both axes"
 																			   : where + "'s footprint round needs a radius over 0 and a whole number of sides, 3 to 32",
 					where
 				);
 			} else if (!part.footprint.empty() && thinnerThanOverlapTolerance(written.footprint)) {
-				error(
+				partError(
 					"parts",
 					where + formatted(
 								"'s footprint is thinner than the overlap tolerance; a rect needs both sides at least %g m, a round an inradius of at least %g m",
@@ -1060,16 +1089,16 @@ namespace assets {
 			}
 
 			if (!written.hasHeight) {
-				error("parts", where + " needs a <height bottom top>", where);
+				partError("parts", where + " needs a <height bottom top>", where);
 			} else if (!(written.bottom >= 0.0F && written.bottom <= written.top)) {
-				error("parts", where + formatted(" has bottom %g and top %g; 0 <= bottom <= top", static_cast<double>(written.bottom), static_cast<double>(written.top)), where);
+				partError("parts", where + formatted(" has bottom %g and top %g; 0 <= bottom <= top", static_cast<double>(written.bottom), static_cast<double>(written.top)), where);
 			} else {
 				part.bottomMeters = written.bottom;
 				part.topMeters = written.top;
 			}
 			const bool flat = part.flat();
 			if (flat && written.hasSides) {
-				error("parts", where + " is flat (top equals bottom), so it has no sides; drop its <sides>", where);
+				partError("parts", where + " is flat (top equals bottom), so it has no sides; drop its <sides>", where);
 			}
 
 			if (!part.footprint.empty()) {
@@ -1083,12 +1112,20 @@ namespace assets {
 			if (const std::optional<Foundation::Color> color = parseRgbHexColor(written.topColor); color.has_value()) {
 				part.topColor = *color;
 			} else if (!written.topColor.empty()) {
-				error("parts", where + "'s top color " + inQuotes(written.topColor) + " is not #RRGGBB", where);
+				partError("parts", where + "'s top color " + inQuotes(written.topColor) + " is not #RRGGBB", where);
 			} else if (written.topDrawing.empty()) {
-				error("parts", where + "'s <top> needs a color or a drawing", where);
+				partError("parts", where + "'s <top> needs a color or a drawing", where);
 			}
 			if (!written.topDrawing.empty() && !part.footprint.empty()) {
-				uses.push_back({.file = written.topDrawing, .coversMeters = part.boundsMax - part.boundsMin, .what = "the top of " + where, .target = &part.topDrawing});
+				uses.push_back(
+					{.file = written.topDrawing,
+					 .coversMeters = part.boundsMax - part.boundsMin,
+					 .what = "the top of " + where,
+					 .target = &part.topDrawing,
+					 .part = static_cast<uint32_t>(asset.parts.size() - 1),
+					 .partName = written.name,
+					 .kind = DrawingUseCheck::Kind::Top}
+				);
 			}
 
 			// Faces: a drawing named by a <face>, else the <sides> drawing, else plain.
@@ -1097,15 +1134,15 @@ namespace assets {
 			std::vector<bool>		 named(part.footprint.size(), false);
 			for (const AuthoredFace& face : written.faces) {
 				if (face.sides.empty()) {
-					error("parts", where + " has a <face> that names no side", where);
+					partError("parts", where + " has a <face> that names no side", where);
 				}
 				if (face.drawing.empty()) {
-					error("parts", where + " has a <face> with no drawing; a face without one takes the <sides> drawing or colour, so leave it out", where);
+					partError("parts", where + " has a <face> with no drawing; a face without one takes the <sides> drawing or colour, so leave it out", where);
 				}
 				for (const std::string& side : face.sides) {
 					const auto found = std::find(kRectFaceNames.begin(), kRectFaceNames.end(), side);
 					if (!rect || found == kRectFaceNames.end()) {
-						error(
+						partError(
 							"parts",
 							where + " has no face " + inQuotes(side) +
 								(rect ? "; a rect's faces are front, back, left, and right" : "; a round's faces have no names, they all take the <sides> drawing"),
@@ -1118,7 +1155,7 @@ namespace assets {
 						continue;
 					}
 					if (named[index]) {
-						error("parts", where + " names face " + inQuotes(side) + " more than once", where);
+						partError("parts", where + " names face " + inQuotes(side) + " more than once", where);
 					}
 					named[index] = true;
 					if (!face.drawing.empty()) {
@@ -1131,9 +1168,9 @@ namespace assets {
 				if (sideColor.has_value()) {
 					part.sideColor = *sideColor;
 				} else if (!written.sideColor.empty()) {
-					error("parts", where + "'s side color " + inQuotes(written.sideColor) + " is not #RRGGBB", where);
+					partError("parts", where + "'s side color " + inQuotes(written.sideColor) + " is not #RRGGBB", where);
 				} else if (std::any_of(faceDrawing.begin(), faceDrawing.end(), [](const std::string& file) { return file.empty(); })) {
-					error("parts", where + " has a plain face, so its <sides> needs a color", where);
+					partError("parts", where + " has a plain face, so its <sides> needs a color", where);
 				}
 				part.faces.resize(part.footprint.size());
 				for (size_t i = 0; i < part.footprint.size(); ++i) {
@@ -1161,7 +1198,9 @@ namespace assets {
 					{.file = file,
 					 .coversMeters = {part.faces[i].lengthMeters, part.topMeters - part.bottomMeters},
 					 .what = faceName + " of part " + inQuotes(part.name),
-					 .target = &part.faces[i].drawing}
+					 .target = &part.faces[i].drawing,
+					 .part = static_cast<uint32_t>(partNumber),
+					 .partName = part.name}
 				);
 			}
 		}
@@ -1182,7 +1221,7 @@ namespace assets {
 		}
 		for (size_t partNumber = 0; partNumber < asset.parts.size(); ++partNumber) {
 			if (!placed[partNumber] && !asset.parts[partNumber].name.empty()) {
-				error("placements", "part " + inQuotes(asset.parts[partNumber].name) + " is placed nowhere");
+				error("placements", "part " + inQuotes(asset.parts[partNumber].name) + " is placed nowhere", "", {asset.parts[partNumber].name});
 			}
 		}
 
@@ -1256,7 +1295,7 @@ namespace assets {
 			const double withPart = regionArea(unionInMeters({supports}));
 			if (withPart - supported > 1.0e-6) {
 				error("parts", "part " + inQuotes(part.name) + formatted(" is flat and raised %g m, but rests on nothing there: ", static_cast<double>(part.bottomMeters)) +
-								   "it must lie within the footprints of parts with height whose top is at or below its bottom");
+								   "it must lie within the footprints of parts with height whose top is at or below its bottom", "", {part.name});
 			}
 		}
 
@@ -1277,7 +1316,9 @@ namespace assets {
 				if (!firstAbove && !secondAbove) {
 					error(
 						"parts",
-						"parts " + inQuotes(first.name) + " and " + inQuotes(second.name) + " overlap in plan and in height; one's bottom must be at or above the other's top"
+						"parts " + inQuotes(first.name) + " and " + inQuotes(second.name) + " overlap in plan and in height; one's bottom must be at or above the other's top",
+						"",
+						{first.name, second.name}
 					);
 				} else if (firstAbove != secondAbove) {
 					asset.planOrder[i * count + j] = static_cast<int8_t>(firstAbove ? 1 : -1);
@@ -1352,7 +1393,7 @@ namespace assets {
 					parts += (parts.empty() ? "" : ", ") + name;
 				}
 				const auto degrees = [](float radians) { return static_cast<double>(std::fmod(radians, 2.0F * kPi) * 180.0F / kPi); };
-				error("parts", formatted("parts order cycles between %.1f and %.1f degrees: ", degrees(run.from), degrees(run.to)) + parts);
+				error("parts", formatted("parts order cycles between %.1f and %.1f degrees: ", degrees(run.from), degrees(run.to)) + parts, "", run.parts);
 			}
 		}
 
@@ -1375,12 +1416,15 @@ namespace assets {
 			std::string						name;
 			std::string						field;
 			std::vector<std::vector<Ring2>> groups;
+			std::vector<AuthoredAreaShape>  shapes;
+			bool							defaulted = false;
 		};
 		const auto shapesOf = [&](const AuthoredArea& area, const std::string& field, const std::string& where) {
-			PendingArea pending{.name = area.name, .field = field, .groups = {}};
+			PendingArea pending{.name = area.name, .field = field, .groups = {}, .shapes = area.shapes};
 			for (const AuthoredAreaShape& shape : area.shapes) {
 				switch (shape.kind) {
 					case AuthoredAreaShape::Kind::Around:
+					case AuthoredAreaShape::Kind::Margin:
 						if (shape.distanceMeters < 0.0F) {
 							error(field, where + formatted(" grows the collider by %g m; the distance can't be negative", static_cast<double>(shape.distanceMeters)));
 						} else {
@@ -1434,6 +1478,7 @@ namespace assets {
 			AuthoredArea defaultArea;
 			defaultArea.shapes.push_back({.kind = AuthoredAreaShape::Kind::Around, .distanceMeters = config.defaultUseDistanceMeters});
 			pendingUse.push_back(shapesOf(defaultArea, "useAreas", "the default use area"));
+			pendingUse.back().defaulted = true;
 		}
 		std::optional<PendingArea> pendingClearance;
 		if (authored.clearance.has_value()) {
@@ -1447,9 +1492,10 @@ namespace assets {
 					uses.push_back(
 						{.file = shape.file,
 						 .coversMeters = {shape.maxX - shape.minX, shape.maxY - shape.minY},
-						 .what = where + "'s drawing rectangle",
+						 .what = "the drawing rectangle of " + where,
 						 .fillGroups = &pending.groups,
-						 .originMeters = {shape.minX, shape.minY}}
+						 .originMeters = {shape.minX, shape.minY},
+						 .kind = DrawingUseCheck::Kind::Area}
 					);
 				}
 			}
@@ -1464,10 +1510,10 @@ namespace assets {
 			queueAreaDrawings(*authored.clearance, *pendingClearance, "the clearance");
 		}
 
-		resolver.loadDrawings(uses, asset.drawings);
+		resolver.loadDrawings(uses, asset.drawings, asset.drawingChecks);
 
 		for (PendingArea& pending : pendingUse) {
-			ItemArea area{.name = pending.name, .polygons = unionInMeters(pending.groups)};
+			ItemArea area{.name = pending.name, .polygons = unionInMeters(pending.groups), .shapes = pending.shapes, .defaulted = pending.defaulted};
 			const std::string where = pending.name.empty() ? std::string("the use area") : "use area " + inQuotes(pending.name);
 			// Rule 11: one colonist fits, on open ground beside nothing but the item itself.
 			if (standingRegion(area.polygons, colliderRings, nullptr, kLargestColonistRadiusMeters).empty()) {
@@ -1479,7 +1525,7 @@ namespace assets {
 			asset.useAreas.push_back(std::move(area));
 		}
 		if (pendingClearance.has_value()) {
-			asset.clearance = {.name = {}, .polygons = unionInMeters(pendingClearance->groups)};
+			asset.clearance = {.name = {}, .polygons = unionInMeters(pendingClearance->groups), .shapes = pendingClearance->shapes};
 		}
 		return resolved;
 	}

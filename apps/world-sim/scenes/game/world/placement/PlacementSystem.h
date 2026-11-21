@@ -133,6 +133,7 @@ class PlacementSystem {
 	/// Render ghost preview (call during render phase)
 	/// Renders both the active placement ghost AND ghosts for all packaged
 	/// items awaiting colonist delivery (those with targetPosition set), and beside a refused ghost the reason.
+	/// @param uiScale The interface size, which the overlays' lines and labels follow
 	void render(int viewportW, int viewportH, float uiScale);
 
 	// --- State Queries ---
@@ -243,6 +244,10 @@ class PlacementSystem {
 	std::optional<PointerState> lastMove;
 	/// Why the ghost can't go where it was last settled.
 	std::optional<construction::PlacementRefusal> refusal;
+	/// The item the ghost would leave with nowhere to stand, when that is its refusal; its use areas are drawn refused.
+	ecs::EntityID blockedItem = ecs::kInvalidEntity;
+	/// The item the last BlocksAnotherItem refusal named (useRefusal).
+	mutable ecs::EntityID lastBlockedItem = ecs::kInvalidEntity;
 
 	/// The pointer state now, with the world's revisions.
 	[[nodiscard]] PointerState pointerState(glm::vec2 pointerMeters, bool freeform) const;

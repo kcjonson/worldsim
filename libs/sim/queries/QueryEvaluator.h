@@ -38,6 +38,7 @@ namespace world {
 namespace ecs {
 	class LoosePileIndex;
 	class NavigationSystem;
+	class PlacedItemIndex;
 	class World;
 	struct Memory;
 	struct SourceReachMemo;
@@ -157,6 +158,8 @@ namespace queries {
 		/// With `piles`, a remembered pile's live count.
 		const ecs::World*		   world = nullptr;
 		const ecs::LoosePileIndex* piles = nullptr;
+		/// The placed items: a target that is one is reached at its stand point in its use areas.
+		const ecs::PlacedItemIndex* placedItems = nullptr;
 		std::span<const KnownBox>  boxes;
 		/// Moves whenever `boxes` or what they hold changes; a recorded wait and colony_stock read it.
 		uint64_t			 boxesStamp = 0;

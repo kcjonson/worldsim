@@ -7,11 +7,16 @@
 // See /docs/design/game-systems/colonists/needs.md for design details.
 
 #include "../ActionEntries.h"
+#include "../ChainEntries.h"
 #include "../DropResourceCallback.h"
 #include "../EntityID.h"
 #include "../ISystem.h"
 #include "../LoosePileIndex.h"
 #include "../components/Action.h"
+#include "../components/ChainProgress.h"
+#include "../components/Task.h"
+
+#include <queries/QueryEvaluator.h>
 
 #include <glm/vec2.hpp>
 
@@ -51,6 +56,42 @@ struct ActionEvent {
 };
 
 using ActionObserver = std::function<void(const ActionEvent& event)>;
+
+/// What the chain runner reads beyond the action entries. Everything named must outlive the ActionSystem.
+struct ChainWiring {
+	const assets::EntryLibrary* library = nullptr;
+	const ChainEntries*			chains = nullptr;
+	/// The one query evaluator, shared with the decision, which a `go` step's query runs on.
+	queries::QueryEvaluator* evaluator = nullptr;
+	/// The terrain a query's water facts read; none knows no water.
+	const world::ChunkManager* chunks = nullptr;
+	/// When a remembered harvestable regrowing is ready again; none reads every source as ready.
+	queries::RegrowthQuery regrowth;
+	/// assets::MemoryConfig::recentSightingGameMinutes, for `<from kind>` rows naming a mover.
+	double recentSightingGameMinutes = 0.0;
+	/// Files a task's claims with the claim index once the runner has taken claims on a target it resolved itself, so a
+	/// creature whose query runs later in the same update reads them (AIDecisionSystem::appendClaims). None files nothing
+	/// until the next rebuild.
+	std::function<void(EntityID creature, const Task& task)> appendClaims;
+};
+
+/// A chain to start on a creature, at a step, with the targets its option already has: the decision's selection, or
+/// the chain test helper.
+struct ChainStart {
+	assets::EntryHandle<assets::ChainEntry> chain;
+	uint8_t									step = 0;
+	/// The option's target (an order's, a low-mood behavior's, or the first step's target the decision resolved), and a
+	/// work option's source and destination.
+	ChainTarget target;
+	ChainTarget source;
+	ChainTarget destination;
+	ChainGoal	goal;
+	/// The rung whoever selected it ranked it on, as a ladder position.
+	uint8_t tier = kUnrankedTier;
+};
+
+/// A query's pick as a chain's target, with the claim the query says it takes.
+[[nodiscard]] ChainTarget chainTargetOf(const queries::QueryCandidate& candidate);
 
 class ActionSystem : public ISystem {
 public:
@@ -163,9 +204,36 @@ public:
 	using WallHeldCallback = std::function<void(EntityID blueprintEntity, EntityID colonist)>;
 	void setWallHeldCallback(WallHeldCallback callback) { onWallHeld = std::move(callback); }
 
+	/// Give the chain runner the library, its resolved chains, and the query evaluator. Unwired, a Chain task is an
+	/// error and ends at once. Every Chain task holds handles into `wiring.library`, so whoever reloads the library ends
+	/// every Chain task first.
+	void setChains(ChainWiring wiring) { chainWiring = std::move(wiring); }
+
+	/// Start `start.chain` on `entity` at `start.step`: its action in progress is cleared, its task becomes the chain
+	/// (a new claim identity), the claims of every step whose target is already known are taken, and the steps run up
+	/// to the first that waits (a `go` walking, a `do` acting). False, with the task ended and the reason logged, when
+	/// the chain cannot start (no step target found, a claim it cannot size), or when it finished at once.
+	bool startChain(EntityID entity, const ChainStart& start);
+
+	/// A point this close to where a target was is the same spot: a target moved further has gone, a creature target
+	/// further has left, and a leg's source or target is reached within it.
+	static constexpr float kSameSpotMeters = 0.5F;
+
 private:
+	/// Within this of its task's target a colonist acts. Colonists bound for one point (a station, a shore point) push
+	/// one another apart, so no more than one could ever reach the point itself. Inside the haul and placement legs'
+	/// kSameSpotMeters, so a leg that arrives this way is at its source or target.
+	static constexpr float kActionReachMeters = 0.4F;
+
+	/// How far outside a footprint a clear's surplus drops: past the edge by about a pile's width.
+	static constexpr float kClearDropMargin = 0.5F;
+
 	/// The values every action this system starts takes from its entry.
 	const ActionEntries& actionEntries;
+
+	ChainWiring chainWiring;
+	/// A Chain task met with the runner unwired has been reported.
+	bool reportedUnwiredChains = false;
 
 	/// Random number generator for yield calculations
 	std::mt19937 m_rng;
@@ -242,6 +310,154 @@ private:
 	/// Pay the `<restore>` row at `index` of the action's values `amount`, counting it toward what the action reports
 	/// it restored when the row is the need it serves.
 	void payRestore(std::size_t index, const RestoreRow& row, float amount, struct Action& action, struct NeedsComponent& needs);
+
+	/// An action just started (its start routine filled it in): a duration from the target's durability turned into
+	/// seconds at the creature's work rate in the entry's skill, the start logged and, unless it takes up work already
+	/// begun, reported.
+	void actionStarted(EntityID entity, struct Task& task, struct Action& action, const struct Memory& memory);
+
+	/// The rows a completing action has not yet paid, applied in the order written, its completion logged, and its
+	/// finish reported when every row took. True when they all took.
+	bool finishAction(
+		EntityID			   entity,
+		const struct Position& position,
+		struct Action&		   action,
+		struct NeedsComponent& needs,
+		struct Task&		   task,
+		struct Inventory&	   inventory,
+		struct Memory&		   memory
+	);
+
+	// --- The chain runner: a Task of type Chain, its steps run in order (systems/action/ChainRunner.cpp). ---
+
+	/// How a `do` step's start went.
+	enum class DoStart : uint8_t {
+		Started,
+		/// A take whose goods the creature already carries: done as having lifted them, with no action.
+		AlreadyHeld,
+		/// Nothing to start: the target gone or no longer what it was, a tool missing, nothing to act on.
+		Refused,
+	};
+
+	/// What a take lifted: units of an item.
+	struct ChainLift {
+		uint32_t item = 0;
+		uint32_t quantity = 0;
+	};
+
+	/// The creature's components the runner reads and changes.
+	struct ChainActor {
+		EntityID			   entity;
+		struct Position&	   position;
+		struct Task&		   task;
+		struct Action&		   action;
+		struct NeedsComponent& needs;
+		struct Memory&		   memory;
+		struct Inventory&	   inventory;
+	};
+
+	/// One tick of a Chain task: its step's end events, a `go` arriving, a `do` starting, advancing, and completing,
+	/// and the steps after them run up to the next that waits.
+	void runChain(float deltaTime, const ChainActor& actor);
+
+	/// Run the steps from the current one up to the first that waits (a `go` walking, a `do` to act). The first `go`
+	/// run walks to `given` when it is set (the target the option already resolved) instead of finding its own. False
+	/// once the chain has ended, finished or not.
+	bool runSteps(const ChainActor& actor, const ChainTarget* given);
+
+	/// The step the chain is on: the innermost running chain's current step.
+	[[nodiscard]] const assets::ChainStep& currentStep(const struct Task& task) const;
+
+	/// The current step is done: the next one in its chain.
+	static void nextStep(struct Task& task);
+
+	/// End the chain and the task, its action and claims with it; `why` is logged. The creature decides again at once.
+	void endChain(const ChainActor& actor, const char* why);
+
+	/// File the task's claims as they now stand with the claim index (a released claim leaves it), so a creature reading
+	/// the index later in the same update sees them.
+	void fileClaims(const ChainActor& actor);
+
+	/// A `do` start that started nothing ends the chain as endChain does, and the creature decides again at its normal
+	/// interval rather than at once, so a refusal never repeats every frame.
+	void refuseChain(const ChainActor& actor, const char* why);
+
+	/// The target a `go` walks to: its query's pick, or the option's target it names. Unresolved when there is none.
+	[[nodiscard]] ChainTarget goTarget(const ChainActor& actor, const assets::GoStep& step);
+
+	/// A `go` walked to `target`: the claims the `do` after it names are taken on it. False (logged) when they cannot be.
+	bool claimForGo(const ChainActor& actor, const ChainTarget& target);
+
+	/// Point the current `go` at `target`: the task's target, the stand point beside an obstacle, a fresh route.
+	void headToTarget(EntityID entity, struct Task& task, const ChainTarget& target);
+	/// Whether `target` is an item used from its use areas, whose stand point a creature must reach, not just come near.
+	[[nodiscard]] bool usedFromUseArea(const ChainTarget& target) const;
+
+	/// The `do` step after the current `go`, which acts on what it walks to; null when the next step is anything else.
+	[[nodiscard]] const assets::DoStep* doStepAfterGo(const struct Task& task) const;
+
+	/// The target a `do` step acts on: the option's target it names with `on`, else what the last `go` walked to.
+	[[nodiscard]] static const ChainTarget& doTarget(const struct Task& task, const assets::DoStep& step);
+
+	/// The one start path of every `do` step: the action entry (an action group's member for the target), with the
+	/// step's target, item, and amount as its effect context and target data, and its duration from the entry, the
+	/// target's durability, or the station's job.
+	DoStart startChainAction(const ChainActor& actor, const assets::DoStep& step, ChainLift& alreadyHeld);
+
+	// The start path's builders, one per kind of target data (systems/action/ChainRunnerActions.cpp). Each fills
+	// `started`'s effect, false (logged) when there is nothing to act on.
+
+	/// The member of action group `group` whose `on` matches `target`; none when no member acts on it.
+	[[nodiscard]] assets::EntryHandle<assets::ActionEntry> memberFor(const assets::ActionEntry& group, const ChainTarget& target) const;
+	/// `<take>`: from a packaged thing, a box, a harvestable, or a loose pile. AlreadyHeld when the chain's goods beyond
+	/// what it was handed and has taken are carried already.
+	DoStart
+		 buildTake(const ChainActor& actor, const assets::DoStep& step, const ChainTarget& target, Action& started, ChainLift& alreadyHeld);
+	bool buildPut(const ChainActor& actor, const assets::DoStep& step, const ChainTarget& target, Action& started);
+	bool buildWork(const ChainActor& actor, const ChainTarget& target, Action& started);
+	bool buildCraft(const ChainTarget& target, Action& started);
+	bool buildInstall(const ChainActor& actor, const ChainTarget& target, Action& started);
+
+	/// Units of `item` the creature carries toward the chain's root: all it holds of anything but food, of food only
+	/// what its claims carry; all it holds when the chain has no root.
+	[[nodiscard]] uint32_t carriedForChain(const ChainActor& actor, uint32_t item) const;
+
+	/// A `do` step completed with its effect taken: its own claims drop, and after a take the claims that follow the
+	/// goods are rewritten to what it lifted, capped at the root's live need plus the handed cargo. False when the chain
+	/// ends there: a take that lifted nothing with no cargo on its claims, or a root that is gone.
+	bool doStepDone(const ChainActor& actor, const assets::DoStep& step, ChainLift lifted, bool took);
+
+	/// The claims `step` names drop: its use or source share on its target, its slot, and the goods it delivered.
+	void releaseStepClaims(struct Task& task, const assets::DoStep& step) const;
+
+	/// Take the claims `step` names on `target`, where the creature does not hold them yet (raising one it holds smaller),
+	/// and file them with the claim index. False (logged) when a claim cannot be sized or the task has no room for it.
+	bool takeStepClaims(const ChainActor& actor, const assets::DoStep& step, const ChainTarget& target);
+
+	/// Whether one of the events `ends` names has happened to the current step.
+	[[nodiscard]] bool stepEndEvent(const ChainActor& actor, uint8_t ends) const;
+
+	/// Units of `item` the creature carries, which `held_gone` watches.
+	[[nodiscard]] static uint32_t heldUnits(const ChainActor& actor, uint32_t item);
+
+	/// Whether a `have` is met: the creature carries the planned amount beyond the cargo it was handed, or the packaged
+	/// target is carried or already at its placement target.
+	[[nodiscard]] bool haveMet(const ChainActor& actor, const assets::HaveStep& step) const;
+
+	/// `<think>`: the thought to its recipients.
+	void giveThought(const ChainActor& actor, const assets::ThinkStep& step, ThoughtEventTypeId thought);
+
+	/// `<drop>`: what the chain's takes lifted set down by the drop path, and the claims that followed it released.
+	void dropTaken(const ChainActor& actor);
+
+	/// The world a runner's query reads.
+	[[nodiscard]] queries::QueryWorld chainQueryWorld();
+
+	/// TimeSystem::simulationSeconds, or 0 in a world with no clock.
+	[[nodiscard]] double clockSeconds() const;
+
+	/// A held food's nutrition (0-1 scale), 0.3 for one whose definition gives none.
+	[[nodiscard]] static float nutritionOf(const std::string& food);
 
 	/// Complete an action and apply effects
 	void completeAction(
@@ -337,8 +553,19 @@ private:
 	/// when the package is gone or already placed.
 	bool applyInstall(const struct Action& action, struct Inventory& inventory);
 
-	/// Start a crafting action on the task's recipe: the `<craft>` service's start, which sums the recipe's repeated
-	/// input lines and starts nothing unless the station's store holds every input.
+	/// A craft the `<craft>` service may start: its effect (the recipe's repeated input lines summed) and the job's work
+	/// amount.
+	struct CraftReady {
+		CraftingEffect effect;
+		float		   workAmount = 0.0F;
+		std::string	   label;
+	};
+
+	/// The `<craft>` service's start: the recipe at the station, when the station's store holds every input; none
+	/// (logged) otherwise.
+	[[nodiscard]] std::optional<CraftReady> craftReady(const std::string& recipeDefName, uint64_t stationEntityId) const;
+
+	/// Start a crafting action on the task's recipe, as craftReady lets it.
 	void startCraftAction(struct Task& task, struct Action& action);
 
 	/// Start a Build or Deconstruct action on the task's blueprint, once the `<work>` guards let it start.

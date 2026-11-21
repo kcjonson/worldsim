@@ -7,17 +7,30 @@
 // its first variant tiled 3x3 beside the grid, so seams show. Right, the
 // asset's facts, its validation issues, and its source XML in a scrolling well. A ground def also gets a
 // Vectors / Bake switch; Bake swaps both columns for its GroundBakeView.
+//
+// A parts def (rotatable-placed-items.md, section 16) shows its item view at a turn instead: step buttons, a
+// degrees entry, and Left / Right (Alt for 1 degree) once the preview has focus; overlay toggles that are the
+// legend; a level picker; and a sheet of the item every 15 degrees, a click on one turning the large view to it.
+// Its right column lists its counts, every drawing use with what it maps onto, its size in metres and its
+// proportion check, and the validation issues by part.
 
 #include "AssetThumbnail.h"
+#include "PartsPreview.h"
 
 #include <ui/Component.h>
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace Renderer {
 	class CoordinateSystem;
+}
+
+namespace ui {
+	class TextInput;
 }
 
 namespace asset_manager {
@@ -33,15 +46,24 @@ namespace asset_manager {
 
 		void setAsset(const std::string& defName); // empty shows a placeholder
 
+		/// A parts def's preview turn, as the turn entry and the keys set it.
+		void		   setPartsTurn(uint32_t turnQuanta);
+		[[nodiscard]] uint32_t partsTurn() const { return partsTurnQuanta; }
+
 		[[nodiscard]] const char* typeName() const override { return "AssetDetailView"; }
 
 	  protected:
 		void onMount() override;
+		void update(float dt) override;
 
 	  private:
 		void build();
 		void preview(ui::Ref<ui::Component> column);
 		void info(ui::Ref<ui::Component> column);
+		void partsPreview(ui::Ref<ui::Component> column);
+		void partsInfo(ui::Ref<ui::Component> column);
+		void definitionWell(ui::Ref<ui::Component> column, bool fill);
+		void applyOverlays();
 		void applyVariantSeeds();
 		void randomize(); // advance to the next set of variant seeds
 
@@ -50,12 +72,22 @@ namespace asset_manager {
 		std::string									   defName;
 		Renderer::CoordinateSystem*					   coordinateSystem;
 		bool										   procedural = false;
+		bool										   parts = false;
 		bool										   ground = false;
 		bool										   bakeMode = false; // kept across selections
 		uint32_t									   variantBase = 1U;
 		ui::Ref<ui::Component>						   content;
 		std::array<ui::Ref<AssetThumbnail>, kVariants> variants;
 		ui::Ref<AssetThumbnail>						   tiling; // a ground tile's first variant, 3x3
+
+		// A parts def's preview; the turn, the overlays, and the level are kept across selections.
+		uint32_t						 partsTurnQuanta = 0;
+		PartsOverlays					 partsOverlays;
+		std::optional<uint8_t>			 partsLevel; // unset: the finest
+		bool							 pendingBuild = false; // a level picked: rebuilt after the event that picked it
+		ui::Ref<PartsPreview>			 largePreview;
+		std::vector<ui::Ref<PartsPreview>> sheetPreviews;
+		ui::Ref<ui::TextInput>			 turnEntry;
 	};
 
 } // namespace asset_manager

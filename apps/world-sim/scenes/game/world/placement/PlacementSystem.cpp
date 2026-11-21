@@ -294,12 +294,14 @@ namespace world_sim {
 			}
 		}
 		refusal = refusalAt(defName, {position.x, position.y}, turnQuanta, relocatingEntityId, PlacementRules::Player);
+		blockedItem = refusal == construction::PlacementRefusal::BlocksAnotherItem ? lastBlockedItem : ecs::kInvalidEntity;
 		// The slide is a help: one that would take the ghost from a spot it can stand on to one it can't is not taken.
 		if (refusal.has_value() && position != rawPosition) {
 			if (const std::optional<construction::PlacementRefusal> unslid = refusalAt(defName, {rawPosition.x, rawPosition.y}, turnQuanta, relocatingEntityId, PlacementRules::Player);
 				!unslid.has_value()) {
 				position = rawPosition;
 				refusal.reset();
+				blockedItem = ecs::kInvalidEntity;
 			}
 		}
 		placementMode.updateGhost({position.x, position.y}, turnQuanta, !refusal.has_value());
@@ -424,6 +426,7 @@ namespace world_sim {
 				continue;
 			}
 			if (ecs::judgeUse(*navigation, items, other->world, other->position, held.collider, visibility, other->entity, ignore).use != ecs::UseState::Usable) {
+				lastBlockedItem = other->entity;
 				return construction::PlacementRefusal::BlocksAnotherItem;
 			}
 		}
@@ -506,11 +509,21 @@ namespace world_sim {
 		// Render active placement ghost (during placement mode)
 		if (placementMode.state() == PlacementState::Placing) {
 			ghostRenderer.render(
-				placementMode.selectedDefName(), placementMode.ghostPosition(), placementMode.ghostTurnQuanta(), *camera, viewportW, viewportH,
-				placementMode.isValidPlacement()
+				placementMode.selectedDefName(), placementMode.ghostPosition(), placementMode.ghostTurnQuanta(), *camera, viewportW, viewportH, true,
+				placementMode.isValidPlacement(),
+				uiScale
 			);
 			if (refusal.has_value()) {
 				ghostRenderer.renderRefusal(construction::placementRefusalLabel(*refusal), placementMode.ghostPosition(), *camera, viewportW, viewportH, uiScale);
+			}
+			// The item it would block: its use areas, refused (rotatable-placed-items 14.4).
+			const ecs::PlacedItemIndex*		   items = placedItems();
+			const ecs::PlacedItemIndex::Entry* blocked = items != nullptr && blockedItem != ecs::kInvalidEntity ? items->find(blockedItem) : nullptr;
+			if (blocked != nullptr) {
+				ghostRenderer.renderBlockedUseAreas(
+					blocked->defName, {blocked->position.x, blocked->position.y}, assets::turnQuantaFromRadians(blocked->turnRadians), *camera, viewportW,
+					viewportH, uiScale
+				);
 			}
 		}
 
@@ -529,7 +542,9 @@ namespace world_sim {
 						*camera,
 						viewportW,
 						viewportH,
-						true // Valid placement (already confirmed)
+						false, // a pending install
+						true,  // Valid placement (already confirmed)
+						uiScale
 					);
 				}
 			}
