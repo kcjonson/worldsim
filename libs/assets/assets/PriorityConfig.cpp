@@ -33,12 +33,22 @@ namespace assets {
 
 		const std::string	 source = file.generic_string();
 		pugi::xml_document	 document;
-		const pugi::xml_node root = readRootElement(document, configRoot / file, "PriorityTuning", source, problemList);
+		const pugi::xml_node root = readRootElement(document, configRoot / file, "arbitration", source, problemList);
 		if (!root) {
 			return false;
 		}
 
-		ConfigReader reader(source);
+		ConfigReader			 reader(source);
+		std::vector<std::string> structure;
+		onlyAttributes(root, {}, "<arbitration>", source, structure);
+		for (const pugi::xml_node child : root.children()) {
+			const std::string_view element = child.name();
+			if (child.type() == pugi::node_element && element != "ladder" && element != "TaskTiers" && element != "WorkCategoryOrder" &&
+				element != "Bonuses") {
+				structure.push_back(source + ": <arbitration>: unknown element <" + std::string(element) + ">");
+			}
+		}
+		parseLadder(root, source, structure);
 
 		if (auto tiersNode = root.child("TaskTiers")) {
 			parseTaskTiers(&tiersNode, reader);
@@ -51,7 +61,9 @@ namespace assets {
 			parseCategoryOrder(&orderNode, reader);
 		}
 
-		std::vector<std::string> problems = reader.takeProblems();
+		std::vector<std::string> problems = std::move(structure);
+		std::vector<std::string> numbers = reader.takeProblems();
+		problems.insert(problems.end(), numbers.begin(), numbers.end());
 		if (!problems.empty()) {
 			clear();
 			problemList = std::move(problems);
@@ -66,6 +78,7 @@ namespace assets {
 	void PriorityConfig::clear() {
 		++m_generation;
 		taskTiers.clear();
+		rungNames.clear();
 
 		distanceFactorConfig = DistanceFactorConfig{};
 		inProgressConfig = InProgressBonusConfig{};
@@ -149,6 +162,49 @@ namespace assets {
 		taskAgeConfig.bonusPerMinute =
 			static_cast<int16_t>(reader.childInteger(ageNode, "TaskAge", "bonusPerMinute", kInt16Min, kInt16Max));
 		taskAgeConfig.maxBonus = static_cast<int16_t>(reader.childInteger(ageNode, "TaskAge", "maxBonus", kInt16Min, kInt16Max));
+	}
+
+	void PriorityConfig::parseLadder(const pugi::xml_node& root, const std::string& source, std::vector<std::string>& problems) {
+		const auto ladders = root.children("ladder");
+		const auto count = std::distance(ladders.begin(), ladders.end());
+		if (count != 1) {
+			problems.push_back(source + ": <arbitration> has " + std::to_string(count) + " <ladder> elements; the ladder is declared once");
+			return;
+		}
+		const pugi::xml_node ladder = root.child("ladder");
+		onlyAttributes(ladder, {}, "<ladder>", source, problems);
+		const std::size_t problemsBefore = problems.size();
+		std::size_t		  index = 0;
+		for (const pugi::xml_node rung : ladder.children()) {
+			if (rung.type() != pugi::node_element) {
+				continue;
+			}
+			if (std::string_view(rung.name()) != "rung") {
+				problems.push_back(source + ": <ladder>: unknown element <" + std::string(rung.name()) + ">");
+				continue;
+			}
+			const std::string label = "<ladder> rung " + std::to_string(++index);
+			onlyAttributes(rung, {"name"}, label, source, problems);
+			const std::string name = rung.attribute("name").value();
+			if (name.empty()) {
+				problems.push_back(source + ": " + label + " name is missing");
+			} else if (std::ranges::find(rungNames, name) != rungNames.end()) {
+				problems.push_back(source + ": " + label + " name \"" + name + "\" is given twice");
+			} else {
+				rungNames.push_back(name);
+			}
+		}
+		// A rung's position is stored in eight bits, and survival is the rung the loaders keep for threats.
+		constexpr std::size_t kMaxRungs = 256;
+		if (index == 0) {
+			problems.push_back(source + ": <ladder> has no <rung>");
+		} else if (index > kMaxRungs) {
+			problems.push_back(
+				source + ": <ladder> has " + std::to_string(index) + " rungs; it holds at most " + std::to_string(kMaxRungs)
+			);
+		} else if (problems.size() == problemsBefore && std::ranges::find(rungNames, "survival") == rungNames.end()) {
+			problems.push_back(source + ": <ladder> has no rung named \"survival\", which is reserved for threats");
+		}
 	}
 
 	void PriorityConfig::parseCategoryOrder(const void* nodePtr, ConfigReader& reader) {

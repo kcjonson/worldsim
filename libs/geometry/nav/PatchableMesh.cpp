@@ -3004,6 +3004,10 @@ namespace geometry::nav {
 			if (reg.live) {
 				m.ringGridOf(reg.polygon).erase(id, reg.lo, reg.hi);
 				m.unindexRingEdges(id);
+				const auto group = m.blockerGroupRings.find(reg.polygon.provenanceId);
+				if (group != m.blockerGroupRings.end() && group->second == id) {
+					m.blockerGroupRings.erase(group);
+				}
 			}
 			if (!c.hasNew) {
 				reg = {};
@@ -3011,6 +3015,10 @@ namespace geometry::nav {
 				continue;
 			}
 			m.ringGridOf(c.polygon).insert(id, c.lo, c.hi);
+			assert(c.polygon.blockerGroup.empty() != isBlockerGroupTag(c.polygon.provenanceId));
+			if (!c.polygon.blockerGroup.empty()) {
+				m.blockerGroupRings[c.polygon.provenanceId] = id;
+			}
 			reg.polygon	  = std::move(c.polygon);
 			reg.sample	  = std::move(c.sample);
 			reg.edgeBoxes = std::move(c.edgeBoxes);
@@ -3628,6 +3636,11 @@ namespace geometry::nav {
 			view.triangles.of(mesh.tris);
 			view.live.of(mesh.live);
 		};
+		v.blockerGroupIn = [](const void* owner, std::int64_t tag) -> const std::vector<std::int64_t>* {
+			const PatchableMesh& mesh  = *static_cast<const PatchableMesh*>(owner);
+			const auto			 found = mesh.blockerGroupRings.find(tag);
+			return found != mesh.blockerGroupRings.end() ? &mesh.ring(found->second).polygon.blockerGroup : nullptr;
+		};
 		return v;
 	}
 
@@ -3681,6 +3694,23 @@ namespace geometry::nav {
 					return err.str();
 				}
 				freedRing[static_cast<std::size_t>(r)] = 1;
+			}
+			std::size_t groups = 0;
+			for (std::size_t r = 0; r < rings.size(); ++r) {
+				const RegisteredRing& reg = rings[r];
+				if (!reg.live || reg.polygon.blockerGroup.empty()) {
+					continue;
+				}
+				++groups;
+				const auto found = blockerGroupRings.find(reg.polygon.provenanceId);
+				if (found == blockerGroupRings.end() || found->second != static_cast<RingId>(r)) {
+					fail() << "blocker group " << reg.polygon.provenanceId << " not indexed to its ring " << r;
+					return err.str();
+				}
+			}
+			if (groups != blockerGroupRings.size()) {
+				fail() << blockerGroupRings.size() << " blocker groups indexed for " << groups << " rings";
+				return err.str();
 			}
 			std::vector<std::uint8_t> seen(tris.size(), 0);
 			for (std::int32_t t : freeTriangles) {

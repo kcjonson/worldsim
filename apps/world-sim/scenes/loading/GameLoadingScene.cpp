@@ -362,8 +362,9 @@ namespace {
 			// Load work configuration first. Goals are process-wide too; a new game starts with none.
 			updateStatusText("Loading configuration...");
 			ecs::GoalTaskRegistry::Get().clear();
-			world_sim::GameConfigLoad config = world_sim::loadGameConfig("assets/config", "assets/world/creatures/Human");
+			world_sim::GameConfigLoad config = world_sim::loadGameConfig("assets/config", "assets/world/creatures");
 			worldState->colonistRules = std::move(config.rules);
+			worldState->entries = std::move(config.entries);
 			if (!config.errors.empty()) {
 				fail(std::move(config.errors));
 				return;

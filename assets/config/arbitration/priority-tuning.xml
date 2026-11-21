@@ -9,9 +9,25 @@
     - score = distanceFactor + skillBonus + taskAgeBonus + hysteresisBonus, compared only WITHIN
       a tier. It can never lift an option across a tier boundary.
 
+  The ladder is the rungs in order, highest first; an entry names a rung, never a tier number
+  (see /docs/technical/queries-and-chains.md, Rungs). survival is reserved and no entry names it.
+
   See /docs/design/game-systems/colonists/priority-config.md for details.
 -->
-<PriorityTuning>
+<arbitration>
+  <ladder>
+    <rung name="survival"/>
+    <rung name="critical_need"/>
+    <rung name="low_mood"/>
+    <rung name="player_order"/>
+    <rung name="urgent_need"/>
+    <rung name="own_unfinished_work"/>
+    <rung name="committed_work"/>
+    <rung name="ordinary_need"/>
+    <rung name="opportunistic_work"/>
+    <rung name="idle"/>
+  </ladder>
+
   <!--
     AI arbitration tiers, per task type. Lower number = higher priority; tier is compared before
     score. These are BASE tiers; AIDecisionSystem promotes specific options at runtime:
@@ -75,4 +91,4 @@
       <weight>300</weight>
     </StoragePriority>
   </Bonuses>
-</PriorityTuning>
+</arbitration>

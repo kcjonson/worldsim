@@ -23,7 +23,7 @@ There are **two separate ordering systems**:
 | System | Purpose | Includes | Used By |
 |--------|---------|----------|---------|
 | **Global Display Priority** | UI ordering for player | Base priority + distance from reference | GlobalTaskListView |
-| **Colonist Selection Priority** | Which task a colonist picks | Base + distance + skill + chain + in-progress | AIDecisionSystem |
+| **Colonist Selection Priority** | Which task a colonist picks | Base + distance + skill + in-progress | AIDecisionSystem |
 
 ### Global Display Priority (UI)
 
@@ -34,7 +34,6 @@ The global task list shows tasks ordered by:
 **Does NOT include:**
 - Skill bonuses (which colonist's skills?)
 - Work preference filtering (which colonist's preferences?)
-- Chain continuation bonus (which colonist's chain?)
 - In-progress bonus (which colonist's current task?)
 
 ```cpp
@@ -199,7 +198,6 @@ All tasks known to ANY colonist, ordered by:
 
 - Per-colonist priority scoring
 - Skill bonuses (would need to pick a colonist)
-- Chain bonuses (specific to one colonist)
 - Whether a specific colonist would choose this task
 
 ### Example UI
@@ -363,22 +361,17 @@ Configs must load in dependency order. Each stage validates references to previo
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ 1. action-types.xml (no dependencies)                           │
+│ 1. legacy/action-types.xml (no dependencies)                    │
 │    └─► ActionTypeRegistry populated                             │
 ├─────────────────────────────────────────────────────────────────┤
-│ 2. task-chains.xml                                              │
-│    └─► Validate: step.actionDefName exists in ActionTypeRegistry│
-│    └─► TaskChainRegistry populated                              │
-├─────────────────────────────────────────────────────────────────┤
-│ 3. work-types.xml                                               │
-│    └─► Validate: taskChain exists in TaskChainRegistry          │
+│ 2. legacy/work-types.xml                                        │
 │    └─► Validate: triggerCapability is valid CapabilityType      │
 │    └─► Validate: skillRequired exists (if specified)            │
 │    └─► WorkTypeRegistry populated                               │
 ├─────────────────────────────────────────────────────────────────┤
-│ 4. priority-tuning.xml                                          │
+│ 3. arbitration/priority-tuning.xml                              │
 │    └─► Validate: WorkCategoryOrder categories exist             │
-│    └─► PriorityConfig populated                                 │
+│    └─► PriorityConfig populated (the ladder and the bonuses)    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -390,36 +383,35 @@ Every error is fatal: the load fails and the message reaches the loading scene.
 |------------|---------|
 | XML syntax error | Missing closing tag |
 | Missing required field | WorkType without defName |
-| Malformed value | `<Category tier="1x">`, `optional="ture"` |
-| Invalid reference | `taskChain="Chain_Typo"` |
+| Malformed value | `<Category tier="1x">`, `canDisable="ture"` |
+| Invalid reference | `<WorkCategoryOrder><Category name="Farmnig">` |
 | Duplicate defName | Two WorkTypes with the same name |
 | Unknown element or attribute | `<WorkType foo="bar">` |
 
 ### Implementation
 
-`assets::loadWorkConfig(configRoot, human)` (libs/assets/assets/WorkConfig.h) is the one entry point. It clears the registries, loads each file in the order above (`ActionTypeRegistry`, then `TaskChainRegistry::loadFromFile(configRoot, "work/task-chains.xml")`, `WorkTypeRegistry::loadFromFile(configRoot, "work/work-types.xml")`, and `PriorityConfig::loadFromFile(configRoot, "work/priority-tuning.xml")`), stops at the first file with problems and returns that registry's `problems()`, and ends with `ConfigValidator::validateAll()` for the cross-references. An empty list means the config is loaded. [Config Loading](./config-loading.md) lists the values a file may leave out and the shape of each message.
+`assets::loadWorkConfig(configRoot, human)` (libs/assets/assets/WorkConfig.h) is the one entry point. It clears the registries, loads each file in the order above (`ActionTypeRegistry`, then `WorkTypeRegistry::loadFromFile(configRoot, "legacy/work-types.xml")`, and `PriorityConfig::loadFromFile(configRoot / "arbitration", "priority-tuning.xml")`), stops at the first file with problems and returns that registry's `problems()`, and ends with `ConfigValidator::validateAll()` for the cross-references. An empty list means the config is loaded. [Config Loading](./config-loading.md) lists the values a file may leave out and the shape of each message.
 
 ### Error Message Format
 
 A cross-reference error names the config it came from and the reference, with what would be valid:
 
 ```
-[TaskChains] Chain 'Chain_PickupDeposit' step 1 references unknown action 'Depositt' (Available actions: Pickup, Deposit, Place, Eat, Drink, Sleep, Harvest, Craft, Build)
+[PriorityConfig] WorkCategoryOrder references unknown category 'Farmnig' (Available categories: Emergency, Medical, Farming, Crafting, Construction, Hauling, Cleaning)
 ```
 
-A file's own problems name the file, the element by its instance, and the attribute, as in `work/task-chains.xml: <Chain defName="Chain_Haul"> step 2 optional must be true or false, got "ture"`.
+A file's own problems name the file, the element by its instance, and the attribute, as in `legacy/work-types.xml: <Category defName="Medical"> canDisable must be true or false, got "ture"`.
 
 ### Mod Loading
 
 Mods load after base game configs, following the same validation:
 
 ```
-Base: assets/config/work/*.xml
-Mods: mods/my-mod/config/work/*.xml (alphabetical order)
+Base: assets/config/legacy/*.xml
+Mods: mods/my-mod/config/legacy/*.xml (alphabetical order)
 ```
 
 Each mod config is validated against the accumulated registry. A mod can:
-- ✅ Add new work types referencing base game chains
-- ✅ Add new chains referencing base game actions
+- ✅ Add new work types and categories
 - ✅ Override base game definitions (same defName)
 - ❌ Reference another mod's definitions (unless loaded earlier alphabetically)

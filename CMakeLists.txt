@@ -73,7 +73,7 @@ include(cmake/test-data.cmake)
 include(FetchContent)
 FetchContent_Declare(salal
     GIT_REPOSITORY https://github.com/kcjonson/salal.git
-    GIT_TAG        v0.43.0
+    GIT_TAG        v0.44.0
     GIT_SHALLOW    TRUE
 )
 set(SALAL_BUILD_APP ON)

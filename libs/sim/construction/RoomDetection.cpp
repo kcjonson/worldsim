@@ -111,7 +111,7 @@ namespace construction {
 		return geometry::PointInPolygon::Inside;
 	}
 
-	std::vector<RoomFace> detectRooms(const ConstructionWorld& world) {
+	std::vector<RoomFace> detectRooms(const ConstructionWorld& world, SegmentId takenAsBuilt) {
 		// Gather built wall centerlines as arrangement input, tagged with the wall
 		// SegmentId so extracted faces carry it back as provenance. Openings
 		// (doors/windows) do NOT split a segment -- a doored wall is still one
@@ -119,7 +119,7 @@ namespace construction {
 		std::vector<geometry::InputSegment> inputs;
 		inputs.reserve(world.segments().size());
 		for (const WallSegment& seg : world.segments()) {
-			if (seg.state != FoundationState::Built) {
+			if (seg.state != FoundationState::Built && seg.id != takenAsBuilt) {
 				continue;
 			}
 			const Vertex* v0 = world.getVertex(seg.v0);

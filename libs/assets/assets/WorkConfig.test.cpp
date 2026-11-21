@@ -1,6 +1,6 @@
 // Unit tests for Work Configuration System
-// Tests ActionTypeRegistry, TaskChainRegistry, WorkTypeRegistry,
-// PriorityConfig, ConfigValidator, and loadWorkConfig.
+// Tests ActionTypeRegistry, WorkTypeRegistry, PriorityConfig (the arbitration file),
+// ConfigValidator, and loadWorkConfig.
 
 #include "assets/WorkConfig.h"
 #include "assets/ActionTypeRegistry.h"
@@ -9,7 +9,6 @@
 #include "assets/MemoryConfig.h"
 #include "assets/MoodConfig.h"
 #include "assets/PriorityConfig.h"
-#include "assets/TaskChainRegistry.h"
 #include "assets/WorkTypeRegistry.h"
 
 #include <gtest/gtest.h>
@@ -36,7 +35,6 @@ class WorkConfigTest : public ::testing::Test {
 	void SetUp() override {
 		// Clear all registries before each test
 		ActionTypeRegistry::Get().clear();
-		TaskChainRegistry::Get().clear();
 		WorkTypeRegistry::Get().clear();
 		PriorityConfig::Get().clear();
 		ConstructionRegistry::Get().clear();
@@ -150,86 +148,6 @@ TEST_F(WorkConfigTest, ActionTypeRegistry_HasAction) {
 }
 
 // ============================================================================
-// TaskChainRegistry Tests
-// ============================================================================
-
-TEST_F(WorkConfigTest, TaskChainRegistry_LoadValidXML) {
-	std::string xml = R"(<?xml version="1.0"?>
-<TaskChains>
-  <Chain defName="Chain_Haul">
-    <label>Haul Item</label>
-    <steps>
-      <Step order="0" action="Pickup" target="source"/>
-      <Step order="1" action="Deposit" target="destination"/>
-    </steps>
-  </Chain>
-</TaskChains>)";
-
-	std::string path = writeTempFile(xml, ".xml");
-	bool		loaded = loadTemp(TaskChainRegistry::Get(), path);
-
-	EXPECT_TRUE(loaded);
-	EXPECT_EQ(TaskChainRegistry::Get().size(), 1);
-}
-
-TEST_F(WorkConfigTest, TaskChainRegistry_GetChain) {
-	std::string xml = R"(<?xml version="1.0"?>
-<TaskChains>
-  <Chain defName="Chain_Test">
-    <label>Test Chain</label>
-    <steps>
-      <Step order="0" action="Action1" target="t1"/>
-      <Step order="1" action="Action2" target="t2" optional="true"/>
-    </steps>
-  </Chain>
-</TaskChains>)";
-
-	std::string path = writeTempFile(xml, ".xml");
-	loadTemp(TaskChainRegistry::Get(), path);
-
-	const auto* chain = TaskChainRegistry::Get().getChain("Chain_Test");
-	ASSERT_NE(chain, nullptr);
-	EXPECT_EQ(chain->defName, "Chain_Test");
-	EXPECT_EQ(chain->label, "Test Chain");
-	EXPECT_EQ(chain->stepCount(), 2);
-}
-
-TEST_F(WorkConfigTest, TaskChainRegistry_ChainSteps) {
-	std::string xml = R"(<?xml version="1.0"?>
-<TaskChains>
-  <Chain defName="Chain_Multi">
-    <steps>
-      <Step order="0" action="A" target="t1"/>
-      <Step order="1" action="B" target="t2" requiresPreviousStep="true"/>
-      <Step order="2" action="C" target="t3" optional="true"/>
-    </steps>
-  </Chain>
-</TaskChains>)";
-
-	std::string path = writeTempFile(xml, ".xml");
-	loadTemp(TaskChainRegistry::Get(), path);
-
-	const auto* chain = TaskChainRegistry::Get().getChain("Chain_Multi");
-	ASSERT_NE(chain, nullptr);
-
-	const auto* step0 = chain->getStep(0);
-	ASSERT_NE(step0, nullptr);
-	EXPECT_EQ(step0->actionDefName, "A");
-
-	const auto* step1 = chain->getStep(1);
-	ASSERT_NE(step1, nullptr);
-	EXPECT_TRUE(step1->requiresPreviousStep);
-
-	const auto* step2 = chain->getStep(2);
-	ASSERT_NE(step2, nullptr);
-	EXPECT_TRUE(step2->optional);
-
-	const auto* nextStep = chain->getNextStep(0);
-	ASSERT_NE(nextStep, nullptr);
-	EXPECT_EQ(nextStep->actionDefName, "B");
-}
-
-// ============================================================================
 // WorkTypeRegistry Tests
 // ============================================================================
 
@@ -324,7 +242,8 @@ TEST_F(WorkConfigTest, WorkTypeRegistry_CategoriesSortedByTier) {
 
 TEST_F(WorkConfigTest, PriorityConfig_LoadValidXML) {
 	std::string xml = R"(<?xml version="1.0"?>
-<PriorityTuning>
+<arbitration>
+  <ladder><rung name="survival"/><rung name="critical_need"/><rung name="idle"/></ladder>
   <Bonuses>
     <DistanceFactor><maxDistance>60</maxDistance><maxFactor>300</maxFactor></DistanceFactor>
     <InProgress>
@@ -333,13 +252,14 @@ TEST_F(WorkConfigTest, PriorityConfig_LoadValidXML) {
     <TaskAge><bonusPerMinute>1</bonusPerMinute><maxBonus>100</maxBonus></TaskAge>
     <StoragePriority><weight>300</weight></StoragePriority>
   </Bonuses>
-</PriorityTuning>)";
+</arbitration>)";
 
 	std::string path = writeTempFile(xml, ".xml");
 	bool		loaded = loadTemp(PriorityConfig::Get(), path);
 
 	EXPECT_TRUE(loaded);
 	EXPECT_EQ(PriorityConfig::Get().getInProgressBonus(), 40);
+	EXPECT_EQ(PriorityConfig::Get().rungs(), (std::vector<std::string>{"survival", "critical_need", "idle"}));
 }
 
 // ============================================================================
@@ -356,26 +276,11 @@ TEST_F(WorkConfigTest, ConfigValidator_ValidConfig) {
 	std::string actionPath = writeTempFile(actionXml, "_actions.xml");
 	loadTemp(ActionTypeRegistry::Get(), actionPath);
 
-	// Load valid chains that reference valid actions
-	std::string chainXml = R"(<?xml version="1.0"?>
-<TaskChains>
-  <Chain defName="Chain_Haul">
-    <steps>
-      <Step order="0" action="Pickup" target="source"/>
-      <Step order="1" action="Deposit" target="dest"/>
-    </steps>
-  </Chain>
-</TaskChains>)";
-	std::string chainPath = writeTempFile(chainXml, "_chains.xml");
-	loadTemp(TaskChainRegistry::Get(), chainPath);
-
-	// Load valid work types that reference valid chains
 	std::string workXml = R"(<?xml version="1.0"?>
 <WorkTypes>
   <Category defName="Hauling" tier="6">
     <WorkType defName="Work_Haul">
       <triggerCapability>Carryable</triggerCapability>
-      <taskChain>Chain_Haul</taskChain>
     </WorkType>
   </Category>
 </WorkTypes>)";
@@ -384,75 +289,8 @@ TEST_F(WorkConfigTest, ConfigValidator_ValidConfig) {
 
 	// Validate
 	EXPECT_TRUE(ConfigValidator::validateActionTypes());
-	EXPECT_TRUE(ConfigValidator::validateTaskChains());
 	EXPECT_TRUE(ConfigValidator::validateWorkTypes());
 	EXPECT_EQ(ConfigValidator::getErrorCount(), 0);
-}
-
-TEST_F(WorkConfigTest, ConfigValidator_InvalidChainActionReference) {
-	// Load action types
-	std::string actionXml = R"(<?xml version="1.0"?>
-<ActionTypes>
-  <Action defName="Pickup" needsHands="true"/>
-</ActionTypes>)";
-	std::string actionPath = writeTempFile(actionXml, "_actions.xml");
-	loadTemp(ActionTypeRegistry::Get(), actionPath);
-
-	// Load chain with invalid action reference
-	std::string chainXml = R"(<?xml version="1.0"?>
-<TaskChains>
-  <Chain defName="Chain_Bad">
-    <steps>
-      <Step order="0" action="Pickup" target="source"/>
-      <Step order="1" action="NonExistentAction" target="dest"/>
-    </steps>
-  </Chain>
-</TaskChains>)";
-	std::string chainPath = writeTempFile(chainXml, "_chains.xml");
-	loadTemp(TaskChainRegistry::Get(), chainPath);
-
-	// Validate should fail
-	EXPECT_FALSE(ConfigValidator::validateTaskChains());
-	EXPECT_GT(ConfigValidator::getErrorCount(), 0);
-}
-
-TEST_F(WorkConfigTest, ConfigValidator_InvalidWorkTypeChainReference) {
-	// Load action types
-	std::string actionXml = R"(<?xml version="1.0"?>
-<ActionTypes>
-  <Action defName="Test" needsHands="true"/>
-</ActionTypes>)";
-	std::string actionPath = writeTempFile(actionXml, "_actions.xml");
-	loadTemp(ActionTypeRegistry::Get(), actionPath);
-
-	// Load valid chain
-	std::string chainXml = R"(<?xml version="1.0"?>
-<TaskChains>
-  <Chain defName="Chain_Valid">
-    <steps>
-      <Step order="0" action="Test" target="t"/>
-    </steps>
-  </Chain>
-</TaskChains>)";
-	std::string chainPath = writeTempFile(chainXml, "_chains.xml");
-	loadTemp(TaskChainRegistry::Get(), chainPath);
-
-	// Load work type with invalid chain reference
-	std::string workXml = R"(<?xml version="1.0"?>
-<WorkTypes>
-  <Category defName="Test" tier="5">
-    <WorkType defName="Work_Bad">
-      <triggerCapability>Test</triggerCapability>
-      <taskChain>Chain_NonExistent</taskChain>
-    </WorkType>
-  </Category>
-</WorkTypes>)";
-	std::string workPath = writeTempFile(workXml, "_work.xml");
-	loadTemp(WorkTypeRegistry::Get(), workPath);
-
-	// Validate should fail
-	EXPECT_FALSE(ConfigValidator::validateWorkTypes());
-	EXPECT_GT(ConfigValidator::getErrorCount(), 0);
 }
 
 // ============================================================================
@@ -473,21 +311,7 @@ TEST_F(WorkConfigTest, Integration_FullConfigLoad) {
 	std::string actionPath = writeTempFile(actionXml, "_actions.xml");
 	ASSERT_TRUE(loadTemp(ActionTypeRegistry::Get(), actionPath));
 
-	// 2. Task chains (deps: actions)
-	std::string chainXml = R"(<?xml version="1.0"?>
-<TaskChains>
-  <Chain defName="Chain_PickupDeposit">
-    <steps>
-      <Step order="0" action="Pickup" target="source"/>
-      <Step order="1" action="Deposit" target="dest"/>
-    </steps>
-  </Chain>
-</TaskChains>)";
-	std::string chainPath = writeTempFile(chainXml, "_chains.xml");
-	ASSERT_TRUE(loadTemp(TaskChainRegistry::Get(), chainPath));
-	ASSERT_TRUE(ConfigValidator::validateTaskChains());
-
-	// 3. Work types (deps: chains)
+	// 2. Work types
 	std::string workXml = R"(<?xml version="1.0"?>
 <WorkTypes>
   <Category defName="Farming" tier="3">
@@ -498,7 +322,6 @@ TEST_F(WorkConfigTest, Integration_FullConfigLoad) {
   <Category defName="Hauling" tier="6">
     <WorkType defName="Work_Haul">
       <triggerCapability>Carryable</triggerCapability>
-      <taskChain>Chain_PickupDeposit</taskChain>
     </WorkType>
   </Category>
 </WorkTypes>)";
@@ -506,9 +329,10 @@ TEST_F(WorkConfigTest, Integration_FullConfigLoad) {
 	ASSERT_TRUE(loadTemp(WorkTypeRegistry::Get(), workPath));
 	ASSERT_TRUE(ConfigValidator::validateWorkTypes());
 
-	// 4. Priority config (deps: work types for category order)
+	// 3. The arbitration file (deps: work types for category order)
 	std::string priorityXml = R"(<?xml version="1.0"?>
-<PriorityTuning>
+<arbitration>
+  <ladder><rung name="survival"/><rung name="idle"/></ladder>
   <WorkCategoryOrder>
     <Category name="Farming" tier="3"/>
     <Category name="Hauling" tier="6"/>
@@ -519,14 +343,13 @@ TEST_F(WorkConfigTest, Integration_FullConfigLoad) {
     <TaskAge><bonusPerMinute>1</bonusPerMinute><maxBonus>100</maxBonus></TaskAge>
     <StoragePriority><weight>300</weight></StoragePriority>
   </Bonuses>
-</PriorityTuning>)";
+</arbitration>)";
 	std::string priorityPath = writeTempFile(priorityXml, "_priority.xml");
 	ASSERT_TRUE(loadTemp(PriorityConfig::Get(), priorityPath));
 	ASSERT_TRUE(ConfigValidator::validatePriorityConfig());
 
 	// Verify everything loaded correctly
 	EXPECT_EQ(ActionTypeRegistry::Get().size(), 4);
-	EXPECT_EQ(TaskChainRegistry::Get().size(), 1);
 	EXPECT_EQ(WorkTypeRegistry::Get().categoryCount(), 2);
 	EXPECT_EQ(WorkTypeRegistry::Get().workTypeCount(), 2);
 }
@@ -566,17 +389,17 @@ TEST_F(WorkConfigTest, LoadWorkConfig_ShippedConfigLoadsClean) {
 		ADD_FAILURE() << error;
 	}
 	EXPECT_GT(ActionTypeRegistry::Get().size(), 0);
-	EXPECT_GT(TaskChainRegistry::Get().size(), 0);
 	EXPECT_GT(WorkTypeRegistry::Get().workTypeCount(), 0);
 	EXPECT_TRUE(ConstructionRegistry::Get().materialsLoaded());
 }
 
 namespace {
 	std::string priorityTuningWith(const std::string& maxDistance, const std::string& tier = "5") {
-		return "<PriorityTuning><TaskTiers><Task name=\"Craft\" tier=\"" + tier + "\"/></TaskTiers><Bonuses>" + "<DistanceFactor>" +
-			   maxDistance + "<maxFactor>300</maxFactor></DistanceFactor>" + "<InProgress><bonus>50</bonus></InProgress>" +
+		return "<arbitration><ladder><rung name=\"survival\"/></ladder><TaskTiers><Task name=\"Craft\" tier=\"" + tier +
+			   "\"/></TaskTiers><Bonuses>" + "<DistanceFactor>" + maxDistance + "<maxFactor>300</maxFactor></DistanceFactor>" +
+			   "<InProgress><bonus>50</bonus></InProgress>" +
 			   "<TaskAge><bonusPerMinute>1</bonusPerMinute><maxBonus>100</maxBonus></TaskAge>" +
-			   "<StoragePriority><weight>300</weight></StoragePriority></Bonuses></PriorityTuning>";
+			   "<StoragePriority><weight>300</weight></StoragePriority></Bonuses></arbitration>";
 	}
 
 	std::string moodWith(const std::string& easing) {
@@ -587,9 +410,24 @@ namespace {
 } // namespace
 
 TEST_F(WorkConfigTest, PriorityConfig_ShippedValuesArePinned) {
-	ASSERT_TRUE(PriorityConfig::Get().loadFromFile(shippedConfigRoot(), "work/priority-tuning.xml"));
+	ASSERT_TRUE(PriorityConfig::Get().loadFromFile(shippedConfigRoot(), "arbitration/priority-tuning.xml"));
 	const PriorityConfig& config = PriorityConfig::Get();
 	EXPECT_TRUE(config.problems().empty());
+	EXPECT_EQ(
+		config.rungs(),
+		(std::vector<std::string>{
+			"survival",
+			"critical_need",
+			"low_mood",
+			"player_order",
+			"urgent_need",
+			"own_unfinished_work",
+			"committed_work",
+			"ordinary_need",
+			"opportunistic_work",
+			"idle"
+		})
+	);
 	EXPECT_FLOAT_EQ(config.getDistanceFactorConfig().maxDistance, 60.0F);
 	EXPECT_FLOAT_EQ(config.getDistanceFactorConfig().maxFactor, 300.0F);
 	EXPECT_EQ(config.getInProgressBonus(), 50);
@@ -648,9 +486,10 @@ TEST_F(WorkConfigTest, PriorityConfig_BadNumbersAreErrorsNamingFileElementAndAtt
 
 TEST_F(WorkConfigTest, PriorityConfig_ElementTextIsTrimmedAndALeadingPlusIsRead) {
 	const std::string path = writeTempFile(
-		"<PriorityTuning><Bonuses><DistanceFactor><maxDistance>\n  60\n</maxDistance><maxFactor>+300</maxFactor></DistanceFactor>"
+		"<arbitration><ladder><rung name=\"survival\"/></ladder><Bonuses><DistanceFactor><maxDistance>\n  60\n</maxDistance>"
+		"<maxFactor>+300</maxFactor></DistanceFactor>"
 		"<InProgress><bonus>-32768</bonus></InProgress><TaskAge><bonusPerMinute> 1 </bonusPerMinute><maxBonus>32767</maxBonus></TaskAge>"
-		"<StoragePriority><weight>32767</weight></StoragePriority></Bonuses></PriorityTuning>",
+		"<StoragePriority><weight>32767</weight></StoragePriority></Bonuses></arbitration>",
 		".xml"
 	);
 	ASSERT_TRUE(loadTemp(PriorityConfig::Get(), path));
@@ -664,9 +503,10 @@ TEST_F(WorkConfigTest, PriorityConfig_ElementTextIsTrimmedAndALeadingPlusIsRead)
 
 TEST_F(WorkConfigTest, PriorityConfig_NumbersInSixteenBitFieldsAreRangeChecked) {
 	const std::string path = writeTempFile(
-		"<PriorityTuning><Bonuses><DistanceFactor><maxDistance>\n  60\n</maxDistance><maxFactor>+300</maxFactor></DistanceFactor>"
+		"<arbitration><ladder><rung name=\"survival\"/></ladder><Bonuses><DistanceFactor><maxDistance>\n  60\n</maxDistance>"
+		"<maxFactor>+300</maxFactor></DistanceFactor>"
 		"<InProgress><bonus>40000</bonus></InProgress><TaskAge><bonusPerMinute> 1 </bonusPerMinute><maxBonus>-32769</maxBonus></TaskAge>"
-		"<StoragePriority><weight>32767</weight></StoragePriority></Bonuses></PriorityTuning>",
+		"<StoragePriority><weight>32767</weight></StoragePriority></Bonuses></arbitration>",
 		".xml"
 	);
 	EXPECT_FALSE(loadTemp(PriorityConfig::Get(), path));
@@ -747,20 +587,6 @@ TEST_F(WorkConfigTest, ConfigValidator_MemoryWindowMustBeAPositiveNumber) {
 TEST_F(WorkConfigTest, LoadWorkConfig_ShippedValuesArePinned) {
 	ASSERT_TRUE(loadWorkConfig(shippedConfigRoot(), shippedHuman()).empty());
 
-	const TaskChainDef* haul = TaskChainRegistry::Get().getChain("Chain_PickupDeposit");
-	ASSERT_NE(haul, nullptr);
-	ASSERT_EQ(haul->stepCount(), 2U);
-	EXPECT_EQ(haul->steps[0].order, 0);
-	EXPECT_EQ(haul->steps[1].order, 1);
-	const TaskChainDef* craft = TaskChainRegistry::Get().getChain("Chain_CraftWithGather");
-	ASSERT_NE(craft, nullptr);
-	ASSERT_EQ(craft->stepCount(), 3U);
-	EXPECT_EQ(craft->steps[2].order, 2);
-	EXPECT_EQ(craft->steps[2].actionDefName, "Deposit");
-	EXPECT_EQ(craft->steps[2].target, "outputStorage");
-	EXPECT_TRUE(craft->steps[2].optional);
-	EXPECT_FALSE(craft->steps[1].optional) << "optional left out means the step must be done";
-	EXPECT_TRUE(craft->steps[1].requiresPreviousStep) << "requiresPreviousStep left out means it waits";
 	EXPECT_TRUE(WorkTypeRegistry::Get().getWorkType("Work_HaulToStorage")->filter.looseItem.value_or(false));
 	EXPECT_FALSE(WorkTypeRegistry::Get().getWorkType("Work_HaulToStorage")->filter.indoor.has_value())
 		<< "a filter element left out is no condition";
@@ -856,62 +682,58 @@ TEST_F(WorkConfigTest, ActionTypeRegistry_MistakesNameTheActionAndLoadNothing) {
 	EXPECT_NE(ActionTypeRegistry::Get().problems().front().find(": no <Action>"), std::string::npos);
 }
 
-TEST_F(WorkConfigTest, TaskChainRegistry_MistakesNameTheChainAndLoadNothing) {
-	const auto problemsFor = [this](const std::string& steps) {
-		const std::string path = writeTempFile(
-			"<TaskChains><Chain defName=\"Chain_Ok\"><steps><Step order=\"0\" action=\"A\" target=\"t\"/></steps></Chain>"
-			"<Chain defName=\"Chain_Haul\"><steps>" +
-				steps + "</steps></Chain></TaskChains>",
-			".xml"
-		);
-		EXPECT_FALSE(loadTemp(TaskChainRegistry::Get(), path));
-		EXPECT_EQ(TaskChainRegistry::Get().size(), 0U) << "a file with any mistake loads no chain";
-		std::vector<std::string> problems = TaskChainRegistry::Get().problems();
+TEST_F(WorkConfigTest, PriorityConfig_LadderMistakesNameTheFileAndLoadNothing) {
+	const auto problemsFor = [this](const std::string& ladder, const std::string& extra = "") {
+		const std::string bonuses = "<Bonuses><DistanceFactor><maxDistance>60</maxDistance><maxFactor>300</maxFactor></DistanceFactor>"
+									"<InProgress><bonus>50</bonus></InProgress><TaskAge><bonusPerMinute>1</bonusPerMinute>"
+									"<maxBonus>100</maxBonus></TaskAge><StoragePriority><weight>300</weight></StoragePriority></Bonuses>";
+		const std::string path = writeTempFile("<arbitration>" + ladder + extra + bonuses + "</arbitration>", ".xml");
+		EXPECT_FALSE(loadTemp(PriorityConfig::Get(), path));
+		EXPECT_TRUE(PriorityConfig::Get().rungs().empty()) << "a file with any mistake loads no rung";
+		std::vector<std::string> problems = PriorityConfig::Get().problems();
 		for (std::string& problem : problems) {
 			EXPECT_EQ(problem.rfind(fileNameOf(path) + ": ", 0), 0U) << problem;
 			problem.erase(0, fileNameOf(path).size() + 2);
 		}
 		return problems;
 	};
-	const std::string pickup = "<Step order=\"0\" action=\"Pickup\" target=\"source\"/>";
 
+	EXPECT_EQ(problemsFor(""), std::vector<std::string>{"<arbitration> has 0 <ladder> elements; the ladder is declared once"});
 	EXPECT_EQ(
-		problemsFor(pickup + "<Step action=\"Deposit\" target=\"dest\"/>"),
-		std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2 order is missing"}
+		problemsFor("<ladder><rung name=\"idle\"/></ladder><ladder><rung name=\"idle\"/></ladder>"),
+		std::vector<std::string>{"<arbitration> has 2 <ladder> elements; the ladder is declared once"}
+	);
+	EXPECT_EQ(problemsFor("<ladder/>"), std::vector<std::string>{"<ladder> has no <rung>"});
+	EXPECT_EQ(
+		problemsFor("<ladder><rung name=\"survival\"/><rung name=\"idle\"/><rung name=\"idle\"/></ladder>"),
+		std::vector<std::string>{"<ladder> rung 3 name \"idle\" is given twice"}
 	);
 	EXPECT_EQ(
-		problemsFor(pickup + "<Step order=\"1x\" action=\"Deposit\" target=\"dest\"/>"),
-		std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2 order must be a whole number from 0 to 255, got \"1x\""}
+		problemsFor("<ladder><rung name=\"survival\"/><rung/></ladder>"), std::vector<std::string>{"<ladder> rung 2 name is missing"}
 	);
 	EXPECT_EQ(
-		problemsFor(pickup + "<Step order=\"256\" action=\"Deposit\" target=\"dest\"/>"),
-		std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2 order must be a whole number from 0 to 255, got \"256\""}
+		problemsFor("<ladder><rung name=\"survival\"/><rung name=\"idle\" tier=\"9\"/></ladder>"),
+		std::vector<std::string>{"<ladder> rung 2: unknown attribute 'tier'"}
 	);
 	EXPECT_EQ(
-		problemsFor(pickup + "<Step order=\"1\" target=\"dest\"/>"),
-		std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2 has no action"}
+		problemsFor("<ladder><step name=\"idle\"/></ladder>"),
+		(std::vector<std::string>{"<ladder>: unknown element <step>", "<ladder> has no <rung>"})
 	);
 	EXPECT_EQ(
-		problemsFor(pickup + "<Step order=\"1\" action=\"Deposit\" target=\"dest\" priority=\"2\"/>"),
-		std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2: unknown attribute 'priority'"}
-	);
-	EXPECT_EQ(problemsFor(""), std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> has no <Step>"});
-	EXPECT_EQ(
-		problemsFor(pickup + "<Step order=\"1\" action=\"Deposit\"/>"),
-		std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2 has no target"}
+		problemsFor("<ladder><rung name=\"survival\"/></ladder>", "<Chains/>"),
+		std::vector<std::string>{"<arbitration>: unknown element <Chains>"}
 	);
 	EXPECT_EQ(
-		problemsFor(pickup + "<Step order=\"0\" action=\"Deposit\" target=\"dest\"/>"),
-		std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2 order must be different from every other step's order, got \"0\""}
+		problemsFor("<ladder><rung name=\"idle\"/></ladder>"),
+		std::vector<std::string>{"<ladder> has no rung named \"survival\", which is reserved for threats"}
 	);
-	EXPECT_EQ(
-		problemsFor(pickup + "<Step order=\"1\" action=\"Deposit\" target=\"dest\" optional=\"yes\"/>"),
-		std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2 optional must be true or false, got \"yes\""}
-	);
-	EXPECT_EQ(
-		problemsFor(pickup + "<Step order=\"1\" action=\"Deposit\" target=\"dest\" requiresPreviousStep=\"ture\"/>"),
-		std::vector<std::string>{"<Chain defName=\"Chain_Haul\"> step 2 requiresPreviousStep must be true or false, got \"ture\""}
-	);
+	EXPECT_EQ(problemsFor("<ladder><rung/></ladder>"), std::vector<std::string>{"<ladder> rung 1 name is missing"})
+		<< "a nameless rung is the one error, not also the missing survival rung";
+	std::string manyRungs = "<ladder><rung name=\"survival\"/>";
+	for (int rung = 1; rung < 257; ++rung) {
+		manyRungs += "<rung name=\"rung_" + std::to_string(rung) + "\"/>";
+	}
+	EXPECT_EQ(problemsFor(manyRungs + "</ladder>"), std::vector<std::string>{"<ladder> has 257 rungs; it holds at most 256"});
 }
 
 TEST_F(WorkConfigTest, WorkTypeRegistry_MistakesNameTheInstanceAndLoadNothing) {
@@ -950,6 +772,10 @@ TEST_F(WorkConfigTest, WorkTypeRegistry_MistakesNameTheInstanceAndLoadNothing) {
 		problemsFor(" tier=\"2\"", "<skill>Medicine</skill>"),
 		std::vector<std::string>{"<WorkType defName=\"Work_Doctoring\">: unknown element <skill>"}
 	);
+	EXPECT_EQ(
+		problemsFor(" tier=\"2\"", "<taskChain>Chain_Rescue</taskChain>"),
+		std::vector<std::string>{"<WorkType defName=\"Work_Doctoring\">: unknown element <taskChain>"}
+	) << "task-chains.xml is gone, so a leftover chain name is no longer read";
 	EXPECT_EQ(
 		problemsFor(" tier=\"-1\"", ""),
 		std::vector<std::string>{"<Category defName=\"Medical\"> tier must be a number, 0 or more, got \"-1\""}
@@ -994,23 +820,27 @@ TEST_F(WorkConfigTest, LoadWorkConfig_ErrorsNameFilesRelativeToTheConfigRoot) {
 		text.replace(text.find(from), from.size(), to);
 		std::ofstream(root / file) << text;
 	};
-	replaceIn(
-		"work/task-chains.xml",
-		"<Step order=\"1\" action=\"Deposit\" target=\"destination\"",
-		"<Step order=\"one\" action=\"Deposit\" target=\"destination\""
-	);
+	replaceIn("arbitration/priority-tuning.xml", "<bonus>50</bonus>", "<bonus>fifty</bonus>");
 	EXPECT_EQ(
 		loadWorkConfig(root, shippedHuman()),
 		std::vector<std::string>{
-			"work/task-chains.xml: <Chain defName=\"Chain_PickupDeposit\"> step 2 order must be a whole number from 0 to 255, got \"one\""
+			"[arbitration] priority-tuning.xml: <InProgress> bonus must be a whole number from -32768 to 32767, got \"fifty\""
 		}
 	);
-	EXPECT_EQ(TaskChainRegistry::Get().size(), 0U);
+	EXPECT_TRUE(PriorityConfig::Get().rungs().empty());
 
-	replaceIn("actions/action-types.xml", "<Action defName=\"Eat\" needsHands=\"true\">", "<Action defName=\"Eat\" needsHands=\"ture\">");
+	std::ofstream(root / "arbitration" / "more-rungs.xml") << "<arbitration/>";
 	EXPECT_EQ(
 		loadWorkConfig(root, shippedHuman()),
-		std::vector<std::string>{"actions/action-types.xml: <Action defName=\"Eat\"> needsHands must be true or false, got \"ture\""}
+		std::vector<std::string>{
+			"[arbitration] arbitration: 2 files; one file declares the ladder and the bonuses (more-rungs.xml, priority-tuning.xml)"
+		}
+	);
+
+	replaceIn("legacy/action-types.xml", "<Action defName=\"Eat\" needsHands=\"true\">", "<Action defName=\"Eat\" needsHands=\"ture\">");
+	EXPECT_EQ(
+		loadWorkConfig(root, shippedHuman()),
+		std::vector<std::string>{"legacy/action-types.xml: <Action defName=\"Eat\"> needsHands must be true or false, got \"ture\""}
 	);
 	EXPECT_EQ(ActionTypeRegistry::Get().size(), 0U);
 	std::filesystem::remove_all(root);
