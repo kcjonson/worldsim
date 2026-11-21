@@ -672,6 +672,11 @@ TEST_F(ActionLoaderTest, ACraftTakesTheJobsWorkAmountAtTheFixedRate) {
 		"[actions] craft.xml: <action id=\"craft\"> skill must be left out; a job's work amount is worked at a fixed rate of 100 work "
 		"ticks a second, got \"Crafting\""
 	);
+
+	write("config/actions/craft.xml", R"(<actions>
+  <action id="craft" workFrom="jobs" skill="Crafting" hands="free" interruptable="false"><craft/></action>
+</actions>)");
+	EXPECT_EQ(onlyError(), "[actions] craft.xml: <action id=\"craft\"> workFrom must be one of durability, job, got \"jobs\"");
 }
 
 TEST_F(ActionLoaderTest, AnEffectMayNameANeedTheSimTracksBeforeAnyBehaviorBringsIt) {

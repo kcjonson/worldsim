@@ -230,6 +230,7 @@ namespace assets {
 
 	/// `workFrom="job"`: the station's current job's work amount, worked at this fixed rate whatever the crafter.
 	inline constexpr float kJobWorkTicksPerSecond = 100.0F;
+
 	enum class Hands : uint8_t { Any, Free };
 	enum class Pays : uint8_t { End, Along };
 

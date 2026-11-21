@@ -5,8 +5,8 @@
 // action starts. See /docs/technical/queries-and-chains.md (Actions) and behavior-data-migration.md (ticket 11).
 //
 // An entry never says one thing while the sim does another: every factory reads a fixed shape, and anything else in
-// its entry is a load error naming the file, the entry, and the element. Every entry gives `hands` and
-// `interruptable`, which are read as written. Besides those, each reads:
+// its entry is a load error naming the file, the entry, and the element. Every entry's `interruptable` and `hands`
+// (left out, any) are read as written. Besides those, each reads:
 //
 // - human/eat (Eat): `seconds`; one `<consume capability="edible" count>`; a `<restore need="hunger"
 //   from="nutrition" scale>` above 0, and at most one other `<restore from="nutrition">`, its side effect.
@@ -22,8 +22,8 @@
 // - craft (Craft): `workFrom="job"`; one `<craft>`.
 // - deposit (Deposit): `seconds`; one `<put>`.
 // - place_packaged (PlacePackaged): `seconds`; one `<install>`.
-// - build, deconstruct (Build, Deconstruct): `pays="along"`; one `<work rate direction>`, up and down, the rate the
-//   skill whose level sets the work rate.
+// - build, deconstruct (Build, Deconstruct): `pays="along"` with no `curve`; one `<work rate direction>`, up and
+//   down, the rate the skill whose level sets the work rate.
 //
 // Every other entry pays at its end, is not asleep, and has no `on`. Any other effect, attribute, or value is refused.
 
@@ -34,9 +34,13 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ecs {
+
+	/// The one definition the engine spawns for a relief, where the creature stands; a relief entry's `<spawn>` names it.
+	inline constexpr std::string_view kReliefSpawnDefinition = "Misc_BioPile";
 
 	/// A `<restore>` row as a factory applies it: the need, and its amount, or for an action that consumes food, the
 	/// scale of the food's nutrition.

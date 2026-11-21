@@ -760,9 +760,8 @@ every target its step's query can return is a load error naming the ones left ou
 
 ### The shared actions
 
-These are in `assets/config/actions/`, with the values the hand-written factories use. `clear` arrives with
-the site clear's path (behavior-data-migration.md, ticket 38) and the `take` group with the eating path
-(ticket 24); the rest ship with the action entries (ticket 11).
+These are in `assets/config/actions/`, with the values the hand-written factories use. `clear` is the site
+clear's own action.
 
 | Action | Effects | Duration | Hands | Interruptable | Pays |
 |---|---|---|---|---|---|

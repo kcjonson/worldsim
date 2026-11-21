@@ -168,13 +168,21 @@ namespace assets::entry_loading {
 			entry.seconds = boundedNumber(node, "seconds", label, 0.0F, std::numeric_limits<float>::max(), true);
 		} else if (hasWorkFrom) {
 			static constexpr std::array<std::string_view, 2> kWorkFrom = {"durability", "job"};
-			if (const std::optional<std::size_t> from = choice(node, "workFrom", label, kWorkFrom, true)) {
-				entry.duration = *from == 0 ? ActionDuration::FromDurability : ActionDuration::FromJob;
-			}
-			if (entry.duration == ActionDuration::FromDurability) {
+			const std::optional<std::size_t>				 from = choice(node, "workFrom", label, kWorkFrom, true);
+			if (from == 0U) {
+				entry.duration = ActionDuration::FromDurability;
 				entry.skill = required(node, "skill", label);
-			} else if (!node.attribute("skill").empty()) {
-				refuse(label, node, "skill", "left out; a job's work amount is worked at a fixed rate of 100 work ticks a second");
+			} else if (from == 1U) {
+				entry.duration = ActionDuration::FromJob;
+				if (!node.attribute("skill").empty()) {
+					refuse(
+						label,
+						node,
+						"skill",
+						"left out; a job's work amount is worked at a fixed rate of " +
+							std::to_string(static_cast<int>(kJobWorkTicksPerSecond)) + " work ticks a second"
+					);
+				}
 			}
 		} else if (openEnded) {
 			entry.duration = ActionDuration::OpenEnded;

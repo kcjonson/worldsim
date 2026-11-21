@@ -571,8 +571,9 @@ marked "behavior change" lands only with the owner's sign-off.
 44. Delete the closed lists.
     - Built: nothing new.
     - Deleted: `TaskType`, `kTaskTypeNames`, `ActionType`, `kActionTypeNames`, the effect variant, the
-      factories, `ecs::ActionEntries` and `resolveActionEntries`, the claim holder's task type, `EvaluatedOption::taskType` and `needType`, the rest of
-      `classifyTier`, `ConfigValidator`'s work checks, `assets/config/legacy/`.
+      factories, `ecs::ActionEntries` and `resolveActionEntries`, the claim holder's task type,
+      `EvaluatedOption::taskType` and `needType`, the rest of `classifyTier`, `ConfigValidator`'s work
+      checks, `assets/config/legacy/`.
     - Must pass: suite, the full scenario list, the perf check.
     - Depends on: 31, 41, 43.
 45. Docs to the code, and the development log entry.

@@ -1,4 +1,4 @@
-#include "assets/DefinitionNames.h"
+#include "assets-testing/DefinitionNames.h"
 
 #include <pugixml.hpp>
 

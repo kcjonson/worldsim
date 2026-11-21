@@ -399,7 +399,7 @@ namespace ecs {
 		auto bioPile = world->createEntity();
 		world->addComponent<Position>(bioPile, Position{action.targetPosition});
 		world->addComponent<Rotation>(bioPile, Rotation{0.0F});
-		world->addComponent<Appearance>(bioPile, Appearance{"Misc_BioPile", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		world->addComponent<Appearance>(bioPile, Appearance{std::string(kReliefSpawnDefinition), 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 		LOG_INFO(Engine, "[Action] Spawned Bio Pile at (%.1f, %.1f)", action.targetPosition.x, action.targetPosition.y);
 	}
 

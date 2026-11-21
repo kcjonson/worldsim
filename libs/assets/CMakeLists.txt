@@ -16,7 +16,6 @@ add_library(assets
     assets/TraitRegistry.cpp
     assets/TreeTraits.cpp
     assets/ConstructionRegistry.cpp
-    assets/DefinitionNames.cpp
     assets/AssetBatcher.cpp
     assets/ConditionConfig.cpp
     assets/ConfigFiles.cpp
@@ -91,6 +90,15 @@ target_include_directories(assets
 
 # Tests
 if(BUILD_TESTING)
+    # What tests and benchmarks of assets, sim, and the game read the shipped config with, kept out of the
+    # assets library: the shipped definition names (assets-testing/DefinitionNames.h).
+    add_library(assets-test-support STATIC
+        test-support/assets-testing/DefinitionNames.cpp
+    )
+    target_include_directories(assets-test-support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/test-support)
+    target_compile_features(assets-test-support PUBLIC cxx_std_20)
+    target_link_libraries(assets-test-support PRIVATE pugixml::pugixml)
+
     file(GLOB_RECURSE ASSETS_TEST_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/*.test.cpp"
     )
@@ -107,6 +115,7 @@ if(BUILD_TESTING)
         target_link_libraries(assets-tests
             PRIVATE
                 assets
+                assets-test-support
                 world-view
                 OpenGL::GL
                 GLEW::GLEW

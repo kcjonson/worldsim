@@ -4,8 +4,9 @@
 // shipped asset definitions' names, found as the game finds them.
 
 #include "assets/CreatureConfigFiles.h"
-#include "assets/DefinitionNames.h"
 #include "assets/EntryLoader.h"
+
+#include <assets-testing/DefinitionNames.h>
 
 #include <algorithm>
 #include <cstdint>
