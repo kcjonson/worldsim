@@ -1,6 +1,7 @@
 #include "CraftingGoalSystem.h"
 
 #include "GoalSystemHelpers.h"
+#include "PlacedItemSystem.h"
 
 #include "../GoalTaskRegistry.h"
 #include "../World.h"
@@ -129,7 +130,12 @@ namespace ecs {
 			// pile; with neither, a Haul waits NoSource. A child only marks which source kind is open; how
 			// much more to bring is the Craft root's remaining need net of in-flight, so an input is
 			// provisioned unit after unit of a multi-unit job without rebuilding anything.
-			bool allStaged = true;
+			// A station with nowhere to stand (rotatable-placed-items 12) has its craft and every child NowhereToStand in
+			// place of what its own state says, so nothing for it is offered; its bills stay on its WorkQueue, and the
+			// next poll after room returns writes its own state again.
+			const bool noRoom = nowhereToStand(*world, entity);
+			const auto statusOf = [noRoom](GoalStatus own) { return noRoom ? GoalStatus::NowhereToStand : own; };
+			bool	   allStaged = true;
 			for (const auto& input : recipe->inputs) {
 				const uint32_t inputId = assetRegistry.getDefNameId(input.defName);
 				if (inputId == 0) {
@@ -139,7 +145,8 @@ namespace ecs {
 				allStaged = allStaged && !needed;
 				const bool stockKnown = needed && colonyKnowsStock(world, inputId);
 				const bool harvestKnown = needed && colonyKnowsHarvestableSource(world, assetRegistry, inputId);
-				const auto keep = [&](GoalType type, bool wanted, GoalStatus status) {
+				const auto keep = [&](GoalType type, bool wanted, GoalStatus own) {
+					const GoalStatus status = statusOf(own);
 					const GoalTask* child = nullptr;
 					for (const auto* candidate : goalRegistry.getChildGoals(craftId)) {
 						if (candidate->type == type && !candidate->acceptedDefNameIds.empty() && candidate->acceptedDefNameIds.front() == inputId) {
@@ -160,7 +167,7 @@ namespace ecs {
 				keep(GoalType::Harvest, harvestKnown, GoalStatus::Available);
 			}
 
-			const GoalStatus craftStatus = allStaged ? GoalStatus::Available : GoalStatus::Blocked;
+			const GoalStatus craftStatus = statusOf(allStaged ? GoalStatus::Available : GoalStatus::Blocked);
 			goalRegistry.updateGoal(craftId, [craftStatus](GoalTask& goal) { goal.status = craftStatus; });
 			stationsWithGoals.erase(entity);
 			activeGoalCount++;

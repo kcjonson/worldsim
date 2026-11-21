@@ -1,6 +1,7 @@
 #include "StorageGoalSystem.h"
 
 #include "GoalSystemHelpers.h"
+#include "PlacedItemSystem.h"
 
 #include "../GoalTaskRegistry.h"
 #include "../World.h"
@@ -99,6 +100,19 @@ namespace ecs {
 			}
 
 			reconcileStockingHarvests(registry, assetRegistry, config, umbrellaId);
+
+			// A box with nowhere to stand (rotatable-placed-items 12): the umbrella and its children NowhereToStand, so
+			// nothing is hauled into it or cut for it, until a poll after room returns.
+			const GoalStatus status = nowhereToStand(*world, entity) ? GoalStatus::NowhereToStand : GoalStatus::Available;
+			const auto		 write = [status](GoalTask& goal) { goal.status = status; };
+			registry.updateGoal(umbrellaId, write);
+			std::vector<uint64_t> children;
+			for (const auto* child : registry.getChildGoals(umbrellaId)) {
+				children.push_back(child->id);
+			}
+			for (const uint64_t child : children) {
+				registry.updateGoal(child, write);
+			}
 
 			storagesWithGoals.erase(entity);
 			activeGoalCount++;

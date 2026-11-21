@@ -1187,6 +1187,19 @@ namespace ecs {
 		for (std::size_t i = 0; i < runningJob.onPatched.size(); ++i) {
 			runningJob.onPatched[i](runningJob.reports[i], runningJob.patchMs[i]);
 		}
+		for (const gnav::PatchReport& report : runningJob.reports) {
+			if (!report.changes.empty()) {
+				landedPatchBoxes.emplace_back(nav::toMeters(report.lo), nav::toMeters(report.hi));
+			}
+		}
+		// Untaken (no placed item system), they are kept as one box rather than without bound.
+		if (landedPatchBoxes.size() > kMaxLandedPatchBoxes) {
+			std::pair<glm::vec2, glm::vec2> whole = landedPatchBoxes.front();
+			for (const auto& [lower, upper] : landedPatchBoxes) {
+				whole = {glm::min(whole.first, lower), glm::max(whole.second, upper)};
+			}
+			landedPatchBoxes.assign(1, whole);
+		}
 		routeReports.insert(routeReports.end(), std::make_move_iterator(runningJob.reports.begin()), std::make_move_iterator(runningJob.reports.end()));
 		runningJob.reports.clear();
 		if (runningJob.onDoorsAdded) {
@@ -2304,6 +2317,76 @@ namespace ecs {
 			}
 		}
 		return stands;
+	}
+
+	NavigationSystem::UseGround NavigationSystem::openGround(glm::vec2 lower, glm::vec2 upper, const std::vector<glm::vec2>& seeds) const {
+		join();
+		UseGround					 found;
+		const geometry::Vec2i64		 low = nav::toMm(lower);
+		const geometry::Vec2i64		 high = nav::toMm(upper);
+		const auto					 open = [this](std::int32_t triangle) {
+			return gnav::truthTraversable(detailMesh.triangles()[static_cast<std::size_t>(triangle)]);
+		};
+		const auto meetsBox = [&](const std::array<geometry::Vec2i64, 3>& corners) {
+			const auto [minX, maxX] = std::minmax({corners[0].x, corners[1].x, corners[2].x});
+			const auto [minY, maxY] = std::minmax({corners[0].y, corners[1].y, corners[2].y});
+			return maxX >= low.x && minX <= high.x && maxY >= low.y && minY <= high.y;
+		};
+		std::vector<std::int32_t>		 pending;
+		std::unordered_set<std::int32_t> reached;
+		for (const glm::vec2 seed : seeds) {
+			const std::int32_t triangle = detailMesh.locate(nav::toMm(seed));
+			if (triangle < 0) {
+				found.reachesUnmeshed = true;
+			} else if (reached.insert(triangle).second) {
+				pending.push_back(triangle);
+			}
+		}
+		while (!pending.empty()) {
+			const std::int32_t triangle = pending.back();
+			pending.pop_back();
+			const std::array<geometry::Vec2i64, 3> corners = triangleCorners(detailMesh, triangle);
+			const gnav::NavTriangle&			   face = detailMesh.triangles()[static_cast<std::size_t>(triangle)];
+			const bool							   standable = open(triangle);
+			if (standable) {
+				found.ground.faces.push_back({corners[0], corners[1], corners[2]});
+			}
+			for (std::size_t edge = 0; edge < 3; ++edge) {
+				const std::int32_t across = face.neighbor[edge];
+				if (across < 0) {
+					found.reachesUnmeshed = found.reachesUnmeshed || meetsBox({corners[edge], corners[(edge + 1) % 3], corners[edge]});
+				}
+				if (standable && (across < 0 || !open(across))) {
+					found.ground.edges.emplace_back(corners[edge], corners[(edge + 1) % 3]);
+				}
+				if (across >= 0 && !reached.contains(across) && meetsBox(triangleCorners(detailMesh, across))) {
+					reached.insert(across);
+					pending.push_back(across);
+				}
+			}
+		}
+		return found;
+	}
+
+	std::optional<glm::vec2> NavigationSystem::standPointIn(const assets::StandingRegion& region, glm::vec2 from, gnav::ComponentLabel label) const {
+		std::optional<glm::vec2> best;
+		float					 bestDistance = 0.0F;
+		for (const geometry::RegionPolygon& piece : region.pieces) {
+			if (label != gnav::kNoComponent && componentAt(assets::pointInside(piece)) != label) {
+				continue;
+			}
+			const glm::vec2 point = assets::nearestPointIn(piece, from);
+			const float		distance = dist2(point, from);
+			if (!best.has_value() || distance < bestDistance) {
+				best = point;
+				bestDistance = distance;
+			}
+		}
+		return best;
+	}
+
+	std::vector<std::pair<glm::vec2, glm::vec2>> NavigationSystem::takeLandedPatchBoxes() {
+		return std::exchange(landedPatchBoxes, {});
 	}
 
 	bool NavigationSystem::isPointBuildableNow(glm::vec2 meters) const {

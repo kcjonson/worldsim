@@ -47,7 +47,8 @@ namespace ecs {
 	enum class GoalStatus : uint8_t {
 		Available,		 // Can be worked on now
 		Blocked,		 // Craft waiting for all materials to be delivered
-		NoSource		 // Need known, but no source (stock or harvestable) is known yet
+		NoSource,		 // Need known, but no source (stock or harvestable) is known yet
+		NowhereToStand	 // Its destination is an item with no room in any use area: nothing is offered for it
 	};
 
 	/// Systems that can own/create goals
@@ -233,6 +234,10 @@ namespace ecs {
 		/// The root of `goalId`'s hierarchy (itself when it has no parent): the goal in-flight claims
 		/// count toward. 0 when `goalId` is not a goal.
 		[[nodiscard]] uint64_t rootOf(uint64_t goalId) const;
+
+		/// Whether `goalId`, or its root, is NowhereToStand: nothing toward it is offered, and a task serving it is
+		/// dropped (rotatable-placed-items 12). False when `goalId` is not a goal.
+		[[nodiscard]] bool nowhereToStand(uint64_t goalId) const;
 
 		/// How many more of an item root goal `rootGoalId` needs, in items: its target minus what has
 		/// landed at its destination (task-claims.md, Remaining need). A craft's target is the bill of

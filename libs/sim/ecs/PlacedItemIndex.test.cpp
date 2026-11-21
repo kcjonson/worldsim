@@ -1,6 +1,5 @@
 #include "PlacedItemIndex.h"
 
-#include "ColliderEntityIndex.h"
 #include "World.h"
 #include "components/Appearance.h"
 #include "components/Packaged.h"
@@ -58,14 +57,12 @@ namespace {
 			return entity;
 		}
 
-		// What a tick does: nav refreshes the obstacles, then the placed item system the index.
+		// What a tick does: the placed item system refreshes the index.
 		void refresh() {
-			static_cast<void>(obstacles.refresh(world, AssetRegistry::Get()));
-			index.refresh(obstacles, world, AssetRegistry::Get());
+			index.refresh(world, AssetRegistry::Get());
 		}
 
 		World				world;
-		ColliderEntityIndex obstacles;
 		PlacedItemIndex		index;
 	};
 
@@ -183,4 +180,33 @@ TEST_F(PlacedItemIndexTest, AReloadIsSeenWhateverReadTheOutlinesFirst) {
 	refresh();
 	ASSERT_NE(index.find(item), nullptr);
 	EXPECT_NEAR(index.find(item)->lower.x, 9.0F, 1e-4F) << "re-read at 2 m wide";
+}
+
+// A flat item (no collider, so no obstacle) with a use area is held with its use area in the world, turned with it; a
+// box meeting only the use area finds it, and the refresh that added it names its box among the changed ones.
+TEST_F(PlacedItemIndexTest, HoldsAFlatItemByItsUseArea) {
+	AssetDefinition mat;
+	mat.defName = "Test_PlacedItemMat";
+	mat.assetType = assets::AssetType::Parts;
+	assets::PartsAsset parts;
+	parts.useAreas.push_back({.name = {}, .polygons = {{.outer = {{-0.5F, 0.4F}, {0.5F, 0.4F}, {0.5F, 1.2F}, {-0.5F, 1.2F}}}}});
+	mat.parts = std::make_shared<const assets::PartsAsset>(std::move(parts));
+	AssetRegistry::Get().registerTestDefinition(mat);
+
+	const EntityID entity = place(world, "Test_PlacedItemMat", {5.0F, 5.0F}, std::numbers::pi_v<float> * 0.5F);
+	refresh();
+	const PlacedItemIndex::Entry* entry = index.find(entity);
+	ASSERT_NE(entry, nullptr);
+	EXPECT_TRUE(entry->world.collider.empty());
+	ASSERT_EQ(entry->world.useAreas.size(), 1U);
+	EXPECT_NEAR(entry->useLower.x, 3.8F, 1e-4F) << "a quarter turn puts the front area on the -x side";
+	EXPECT_NEAR(entry->useUpper.x, 4.6F, 1e-4F);
+	EXPECT_FALSE(index.changedBoxes().empty());
+	EXPECT_EQ(index.installedAt({5.0F, 5.0F}), entry);
+
+	std::vector<const PlacedItemIndex::Entry*> found;
+	index.query({4.0F, 5.0F}, {4.1F, 5.1F}, found);
+	EXPECT_EQ(found.size(), 1U) << "a box in the use area alone";
+	refresh();
+	EXPECT_TRUE(index.changedBoxes().empty()) << "nothing moved";
 }

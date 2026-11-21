@@ -32,6 +32,7 @@
 #include "ActionSystem.h"
 #include "ChainClaims.h"
 #include "NavigationSystem.h"
+#include "PlacedItemSystem.h"
 #include "TimeSystem.h"
 #include "WorkSources.h"
 
@@ -57,6 +58,26 @@
 namespace ecs {
 
 	namespace {
+
+		/// Whether `task` serves a goal that is, or whose root is, NowhereToStand: a haul or a cut toward it, or the
+		/// craft or deposit at its item.
+		[[nodiscard]] bool servesNowhereToStand(const Task& task) {
+			const GoalTaskRegistry& goals = GoalTaskRegistry::Get();
+			const auto				atItem = [&goals](uint64_t entity) {
+				 const GoalTask* goal = entity != 0 ? goals.getGoalByDestination(static_cast<EntityID>(entity)) : nullptr;
+				 return goal != nullptr && goal->status == GoalStatus::NowhereToStand;
+			};
+			return goals.nowhereToStand(task.haulGoalId) || goals.nowhereToStand(task.harvestGoalId) || atItem(task.targetStationId) ||
+				   atItem(task.haulDestinationId);
+		}
+
+		/// The installed item a task aiming at `target` uses from its use areas (a parts item stands exactly there); null
+		/// for any other target, which is reached as before.
+		[[nodiscard]] const PlacedItemIndex::Entry* itemUsedAt(World& world, glm::vec2 target) {
+			const PlacedItemSystem* items = world.tryGetSystem<PlacedItemSystem>();
+			const PlacedItemIndex::Entry* item = items != nullptr ? items->items().installedAt(target) : nullptr;
+			return item != nullptr && !item->world.useAreas.empty() ? item : nullptr;
+		}
 
 		/// The actionable needs that are critical now, one bit per NeedType (Task::criticalNeedsAtDecision).
 		[[nodiscard]] uint8_t criticalNeedMask(const NeedsComponent& needs) {
@@ -980,6 +1001,10 @@ namespace ecs {
 			};
 
 			goalRegistry.forEachGoalOfType(GoalType::Haul, [&](const GoalTask& goal) {
+				// Nothing is brought to an item with nowhere to stand.
+				if (goalRegistry.nowhereToStand(goal.id)) {
+					return;
+				}
 				// A craft's fetch child: bring remembered loose stock to the station.
 				if (goal.parentGoalId.has_value()) {
 					const auto* craft = goalRegistry.getGoal(goal.parentGoalId.value());
@@ -1144,6 +1169,9 @@ namespace ecs {
 			}
 
 			const auto offer = [&](const GoalTask& root) {
+				if (root.status == GoalStatus::NowhereToStand) {
+					return;
+				}
 				const bool storage = root.owner == GoalOwner::StorageGoalSystem;
 				for (const CarriedKind& kind : carried) {
 					const uint32_t cargo = cargoToward(supply.task, root.id, kind.item, kind.quantity, kind.edible);
@@ -1225,8 +1253,8 @@ namespace ecs {
 
 			const auto offerCut = [&](const GoalTask& cutGoal) {
 				const GoalTask* goal = &cutGoal;
-				// Skip goals that aren't workable yet.
-				if (goal->status == GoalStatus::Blocked) {
+				// Skip goals that aren't workable yet, and cuts for an item with nowhere to stand.
+				if (goal->status == GoalStatus::Blocked || goalRegistry.nowhereToStand(goal->id)) {
 					return;
 				}
 
@@ -2228,10 +2256,10 @@ namespace ecs {
 						// Biological necessities (Eat, Drink, Toilet) cannot be interrupted
 						shouldSwitch = false;
 						task.timeSinceEvaluation = 0.0F; // Reset timer, we did evaluate
-					} else if (newTier > currentTier) {
-						// A lower-tier challenger never preempts in-progress work. (A higher tier
-						// always interrupts; a same-tier winner already beat the hysteresis margin at
-						// selection, so it is honored.)
+					} else if (newTier > currentTier && !servesNowhereToStand(task)) {
+						// A lower-tier challenger never preempts in-progress work, unless that work's item has
+						// nowhere to stand. (A higher tier always interrupts; a same-tier winner already beat the
+						// hysteresis margin at selection, so it is honored.)
 						shouldSwitch = false;
 						task.timeSinceEvaluation = 0.0F; // Reset timer, we did evaluate
 					}
@@ -2413,6 +2441,11 @@ namespace ecs {
 			return true;
 		}
 
+		// Its item has nowhere to stand: the task is dropped at once (rotatable-placed-items 12).
+		if (servesNowhereToStand(task)) {
+			return true;
+		}
+
 		// A need crossing into critical decides at once (critical_need interrupts every lower rung); one that
 		// stays critical waits for the interval, so a colonist with nothing reachable doesn't decide
 		// every frame. Already serving a critical need, he isn't interrupted for another.
@@ -2497,6 +2530,10 @@ namespace ecs {
 		const auto routeEndOf = [&](const glm::vec2& target) -> std::optional<glm::vec2> {
 			if (!haveMesh) {
 				return target;
+			}
+			// An item used from its use areas is reached at its stand point on his own component, or not at all.
+			if (const PlacedItemIndex::Entry* item = itemUsedAt(*world, target)) {
+				return hisLabel != geometry::nav::kNoComponent ? m_navSystem->standPointIn(item->standing, position.value, hisLabel) : std::nullopt;
 			}
 			const geometry::nav::ComponentLabel label = m_navSystem->componentAt(target);
 			if (label != geometry::nav::kNoComponent) {
@@ -3008,6 +3045,11 @@ namespace ecs {
 		for (const SharedWork::Station& station : m_sharedWork.stations(*world, m_recipeRegistry)) {
 			const EntityID	 stationEntity = station.entity;
 			const glm::vec2& stationPos = station.position;
+			// No craft at a station with nowhere to stand; its bills wait on it.
+			if (const GoalTask* craft = GoalTaskRegistry::Get().getGoalByDestination(stationEntity);
+				craft != nullptr && craft->status == GoalStatus::NowhereToStand) {
+				continue;
+			}
 
 			// Add craft option with skill bonus
 			EvaluatedOption craftOption;
@@ -3655,6 +3697,15 @@ namespace ecs {
 
 	StandPoints AIDecisionSystem::standPointFor(glm::vec2 target, glm::vec2 from, float radius, bool placedTarget) const {
 		StandPoints stands;
+		// An item used from its use areas: its stand point on his component (rotatable-placed-items 12).
+		if (m_navSystem != nullptr) {
+			if (const PlacedItemIndex::Entry* item = itemUsedAt(*world, target)) {
+				if (const std::optional<glm::vec2> stand = m_navSystem->standPointIn(item->standing, from, m_navSystem->componentAt(from))) {
+					stands.push(*stand);
+				}
+				return stands;
+			}
+		}
 		// Water and unmeshed ground are left to the route: off every face a mover may stand on (isOnMesh).
 		if (m_navSystem == nullptr || (!placedTarget && !m_navSystem->isOnMesh(target))) {
 			stands.push(target);

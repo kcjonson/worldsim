@@ -7,7 +7,6 @@
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
 #include <assets/PartsAsset.h>
-#include <ecs/ColliderEntityIndex.h>
 #include <ecs/World.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Packaged.h>
@@ -70,8 +69,7 @@ namespace {
 		}
 
 		void refresh() {
-			static_cast<void>(obstacles.refresh(world, AssetRegistry::Get()));
-			items.refresh(obstacles, world, AssetRegistry::Get());
+			items.refresh(world, AssetRegistry::Get());
 		}
 
 		ecs::EntityID install(const char* defName, glm::vec2 at, float turnRadians = 0.0F) {
@@ -102,7 +100,6 @@ namespace {
 		}
 
 		ecs::World				 world;
-		ecs::ColliderEntityIndex obstacles;
 		ecs::PlacedItemIndex	 items;
 		ConstructionWorld		 walls;
 	};

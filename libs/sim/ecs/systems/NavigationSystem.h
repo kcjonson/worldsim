@@ -77,6 +77,8 @@
 #include "../ISystem.h"
 #include "StandPoints.h"
 
+#include <assets/UseAreaRoom.h>
+
 #include <core/Vec2i64.h>
 
 #include <nav/NavMesh.h>
@@ -385,6 +387,25 @@ class NavigationSystem : public ISystem {
 	// Empty off meshed ground, and when no spot beside the obstacle or the band stands clear. Never a
 	// point inside a placed obstacle or a built wall.
 	[[nodiscard]] StandPoints standPointsBeside(glm::vec2 target, glm::vec2 from, float agentRadiusMeters) const;
+
+	// The meshed ground a mover may stand on (walkable in truth) among the faces that meet the box from `lower` to
+	// `upper`, reached from the mesh faces under `seeds`, and the edges where it ends: against water, walls, placed
+	// obstacles, or the mesh's edge. The ground a use area's room is tested on (rotatable-placed-items 4.2).
+	struct UseGround {
+		assets::OpenGround ground;
+		// Some of the box is not meshed: a seed off the mesh, or the mesh's edge inside the box.
+		bool reachesUnmeshed = false;
+	};
+	[[nodiscard]] UseGround openGround(glm::vec2 lower, glm::vec2 upper, const std::vector<glm::vec2>& seeds) const;
+
+	// Where a colonist at `from` stands to use an item whose standing region is `region` (rotatable-placed-items
+	// 12): the point of the region nearest `from` by straight line among its pieces on faces labelled `label`, so
+	// connected to him by construction; any piece with kNoComponent. nullopt when no piece has that label.
+	[[nodiscard]] std::optional<glm::vec2> standPointIn(const assets::StandingRegion& region, glm::vec2 from, geometry::nav::ComponentLabel label) const;
+
+	// The boxes of the mesh patches that landed since the last call, emptied by it: where ground, walls, water, or
+	// placed obstacles may have changed what a use area holds. PlacedItemSystem, the one reader, takes them each tick.
+	[[nodiscard]] std::vector<std::pair<glm::vec2, glm::vec2>> takeLandedPatchBoxes();
 
 	// The nearest point where a mover of radius `agentRadiusMeters` stands: his whole disc on ground a
 	// route crosses, clear of water, placed obstacles and the mesh's edge, and of the BUILT-wall
@@ -777,6 +798,9 @@ class NavigationSystem : public ISystem {
 	std::uint64_t										   routeTick = 0; // updates so far
 	// The nav mesh's reports since the last slice, collected from its jobs.
 	std::vector<geometry::nav::PatchReport> routeReports;
+	// The boxes of the patches collected since takeLandedPatchBoxes last emptied them.
+	std::vector<std::pair<glm::vec2, glm::vec2>> landedPatchBoxes;
+	static constexpr std::size_t				 kMaxLandedPatchBoxes = 1024;
 	bool									sliceStarted	 = false;
 	double									sliceMs			 = 0.0; // written by the route worker
 	bool									holdingLimits	 = false;

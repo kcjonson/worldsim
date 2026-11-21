@@ -1,7 +1,7 @@
 #include "PlacedItemIndex.h"
 
-#include "ColliderEntityIndex.h"
 #include "World.h"
+#include "components/AgentRadius.h"
 #include "components/Appearance.h"
 #include "components/Packaged.h"
 #include "components/Transform.h"
@@ -31,38 +31,65 @@ namespace ecs {
 		for (const assets::AreaPolygon& polygon : assets::reservedRegion(def)) {
 			outlines.reserved.push_back(polygon.outer);
 		}
+		for (const assets::ItemArea& area : def.parts->useAreas) {
+			if (!area.polygons.empty()) {
+				outlines.useAreas.push_back(area.polygons);
+			}
+		}
 		return outlines;
 	}
 
 	ItemOutlines placedOutlines(const ItemOutlines& local, glm::vec2 position, float turnRadians) {
 		const assets::InstanceTransform placed(position, turnRadians, 1.0F);
-		const auto						 place = [&placed](const std::vector<std::vector<glm::vec2>>& rings) {
+		const auto						 moveRing = [&placed](const std::vector<glm::vec2>& ring) {
+			std::vector<glm::vec2> moved;
+			moved.reserve(ring.size());
+			for (const glm::vec2 point : ring) {
+				moved.push_back(placed.toWorld(point));
+			}
+			return moved;
+		};
+		const auto place = [&moveRing](const std::vector<std::vector<glm::vec2>>& rings) {
 			std::vector<std::vector<glm::vec2>> out;
 			out.reserve(rings.size());
 			for (const std::vector<glm::vec2>& ring : rings) {
-				std::vector<glm::vec2>& moved = out.emplace_back();
-				moved.reserve(ring.size());
-				for (const glm::vec2 point : ring) {
-					moved.push_back(placed.toWorld(point));
-				}
+				out.push_back(moveRing(ring));
 			}
 			return out;
 		};
-		return {.collider = place(local.collider), .reserved = place(local.reserved)};
+		ItemOutlines out{.collider = place(local.collider), .reserved = place(local.reserved)};
+		for (const std::vector<assets::AreaPolygon>& area : local.useAreas) {
+			std::vector<assets::AreaPolygon>& moved = out.useAreas.emplace_back();
+			for (const assets::AreaPolygon& polygon : area) {
+				moved.push_back({.outer = moveRing(polygon.outer), .holes = place(polygon.holes)});
+			}
+		}
+		return out;
 	}
 
 	namespace {
 		void boxOf(PlacedItemIndex::Entry& entry) {
-			entry.lower = entry.position;
-			entry.upper = entry.position;
-			bool first = true;
+			const auto grow = [](glm::vec2& lower, glm::vec2& upper, bool& first, const std::vector<glm::vec2>& ring) {
+				for (const glm::vec2 point : ring) {
+					lower = first ? point : glm::min(lower, point);
+					upper = first ? point : glm::max(upper, point);
+					first = false;
+				}
+			};
+			entry.useLower = entry.position;
+			entry.useUpper = entry.position;
+			bool firstUse = true;
+			for (const std::vector<assets::AreaPolygon>& area : entry.world.useAreas) {
+				for (const assets::AreaPolygon& polygon : area) {
+					grow(entry.useLower, entry.useUpper, firstUse, polygon.outer);
+				}
+			}
+			entry.lower = entry.useLower;
+			entry.upper = entry.useUpper;
+			bool first = firstUse;
 			for (const std::vector<std::vector<glm::vec2>>* rings : {&entry.world.collider, &entry.world.reserved}) {
 				for (const std::vector<glm::vec2>& ring : *rings) {
-					for (const glm::vec2 point : ring) {
-						entry.lower = first ? point : glm::min(entry.lower, point);
-						entry.upper = first ? point : glm::max(entry.upper, point);
-						first = false;
-					}
+					grow(entry.lower, entry.upper, first, ring);
 				}
 			}
 		}
@@ -91,68 +118,70 @@ namespace ecs {
 
 	bool PlacedItemIndex::place(Key key, const std::string& defName, glm::vec2 position, float turnRadians, const assets::AssetRegistry& registry) {
 		const auto held = entries.find(key);
+		// A moved item keeps its use state until it is worked out again, so leaving one blocked spot for another is no
+		// new blocking.
+		UseState use = UseState::Usable;
 		if (held != entries.end()) {
 			Entry& entry = held->second;
 			entry.pass = pass;
 			if (entry.defName == defName && entry.position == position && entry.turnRadians == turnRadians) {
 				return false;
 			}
+			use = entry.use;
 			unlist(key, entry);
 			entries.erase(held);
 		}
-		Entry entry{.entity = key.entity, .defName = defName, .position = position, .turnRadians = turnRadians, .pending = key.pending, .pass = pass};
+		Entry entry{.entity = key.entity, .defName = defName, .position = position, .turnRadians = turnRadians, .pending = key.pending, .use = use, .pass = pass};
 		entry.world = placedOutlines(outlinesOf(defName, registry), position, turnRadians);
 		boxOf(entry);
 		eachBucket(entry.lower, entry.upper, [&](BucketKey bucket) { buckets[bucket].push_back(key); });
+		changed.emplace_back(entry.lower, entry.upper);
 		entries.emplace(key, std::move(entry));
 		return true;
 	}
 
-	void PlacedItemIndex::refresh(const ColliderEntityIndex& obstacles, World& world, const assets::AssetRegistry& registry) {
+	void PlacedItemIndex::refresh(World& world, const assets::AssetRegistry& registry) {
 		++pass;
-		bool changed = !heldTargets.empty();
+		changed.clear();
+		bool moved = !heldTargets.empty();
+		for (const Entry& held : heldTargets) {
+			changed.emplace_back(held.lower, held.upper);
+		}
 		heldTargets.clear();
 		// Its own record of the registry's generation: outlinesOf, read by placement between refreshes, keeps another.
-		const bool reloaded = registry.generation() != registrySeen;
-		registrySeen = registry.generation();
-
-		const bool rereadInstalled = reloaded || obstacles.revision() != obstaclesSeen;
-		obstaclesSeen = obstacles.revision();
-		if (reloaded) {
+		if (registry.generation() != registrySeen) {
+			registrySeen = registry.generation();
 			for (const auto& [key, entry] : entries) {
 				unlist(key, entry);
 			}
 			entries.clear();
-			changed = true;
+			moved = true;
 		}
-		if (rereadInstalled) {
-			for (const auto& [entity, obstacle] : obstacles.all()) {
-				if (!outlinesOf(obstacle.placed.defName, registry).empty()) {
-					changed = place({entity, false}, obstacle.placed.defName, obstacle.placed.position, obstacle.placed.rotation, registry) || changed;
-				}
-			}
-		}
-		for (auto [entity, packaged, appearance] : world.view<Packaged, Appearance>()) {
-			// A crate waiting for the player stands nowhere yet; one with a target stands at its target.
-			if (!packaged.targetPosition.has_value() || outlinesOf(appearance.defName, registry).empty()) {
+		for (auto [entity, position, appearance] : world.view<Position, Appearance>()) {
+			// A mover is no item; a crate stands at its target, or nowhere while it waits for the player.
+			if (world.getComponent<AgentRadius>(entity) != nullptr || outlinesOf(appearance.defName, registry).empty()) {
 				continue;
 			}
 			const Rotation* rotation = world.getComponent<Rotation>(entity);
-			const float		turn = packaged.targetRotation.value_or(rotation != nullptr ? rotation->radians : 0.0F);
-			changed = place({entity, true}, appearance.defName, *packaged.targetPosition, turn, registry) || changed;
+			const float		turn = rotation != nullptr ? rotation->radians : 0.0F;
+			if (const Packaged* packaged = world.getComponent<Packaged>(entity)) {
+				if (packaged->targetPosition.has_value()) {
+					moved = place({entity, true}, appearance.defName, *packaged->targetPosition, packaged->targetRotation.value_or(turn), registry) || moved;
+				}
+				continue;
+			}
+			moved = place({entity, false}, appearance.defName, position.value, turn, registry) || moved;
 		}
 		for (auto held = entries.begin(); held != entries.end();) {
-			// An installed entry is kept until the obstacles are read again; a pending one only while its crate is seen.
-			const bool seen = held->second.pass == pass || (!held->first.pending && !rereadInstalled);
-			if (seen) {
+			if (held->second.pass == pass) {
 				++held;
 				continue;
 			}
 			unlist(held->first, held->second);
 			held = entries.erase(held);
-			changed = true;
+			moved = true;
 		}
-		if (changed) {
+		if (moved) {
 			++revisionCount;
 		}
 	}
@@ -180,6 +209,7 @@ namespace ecs {
 	}
 
 	void PlacedItemIndex::unlist(const Key& key, const Entry& entry) {
+		changed.emplace_back(entry.lower, entry.upper);
 		eachBucket(entry.lower, entry.upper, [&](BucketKey bucket) {
 			std::vector<Key>& listed = buckets.at(bucket);
 			std::erase_if(listed, [&key](const Key& other) { return other.entity == key.entity && other.pending == key.pending; });
@@ -210,6 +240,29 @@ namespace ecs {
 				out.push_back(&held);
 			}
 		}
+	}
+
+	const PlacedItemIndex::Entry* PlacedItemIndex::installedAt(glm::vec2 position) const {
+		std::vector<const Entry*> near;
+		query(position, position, near);
+		for (const Entry* entry : near) {
+			if (!entry->pending && entry->entity != kInvalidEntity && entry->position == position) {
+				return entry;
+			}
+		}
+		return nullptr;
+	}
+
+	void PlacedItemIndex::setUse(EntityID entity, bool pending, UseState use, assets::StandingRegion standing) {
+		const auto found = entries.find({entity, pending});
+		if (found == entries.end()) {
+			return;
+		}
+		if (found->second.use != use) {
+			++revisionCount;
+		}
+		found->second.use = use;
+		found->second.standing = std::move(standing);
 	}
 
 	const PlacedItemIndex::Entry* PlacedItemIndex::find(EntityID entity) const {

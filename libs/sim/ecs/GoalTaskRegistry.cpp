@@ -258,6 +258,15 @@ namespace ecs {
 		}
 	}
 
+	bool GoalTaskRegistry::nowhereToStand(uint64_t goalId) const {
+		const GoalTask* goal = getGoal(goalId);
+		if (goal == nullptr) {
+			return false;
+		}
+		const GoalTask* root = getGoal(rootOf(goalId));
+		return goal->status == GoalStatus::NowhereToStand || (root != nullptr && root->status == GoalStatus::NowhereToStand);
+	}
+
 	uint64_t GoalTaskRegistry::rootOf(uint64_t goalId) const {
 		auto it = goals.find(goalId);
 		if (it == goals.end()) {
