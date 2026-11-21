@@ -258,17 +258,6 @@ namespace ecs {
 			return conditions::conditionName(needLabel(need));
 		}
 
-		/// The sim's need for a need id; none for a need it does not track.
-		[[nodiscard]] std::optional<NeedType> trackedNeed(const assets::EntryLibrary& library, assets::NeedId id) {
-			const std::string& needId = library.needIds[id.index];
-			const auto		   tracked =
-				std::ranges::find_if(kNeedLabels, [&needId](const char* label) { return conditions::conditionName(label) == needId; });
-			if (tracked == kNeedLabels.end()) {
-				return std::nullopt;
-			}
-			return static_cast<NeedType>(tracked - kNeedLabels.begin());
-		}
-
 		[[nodiscard]] std::string whereOf(const assets::ActionEntry& entry) {
 			return entry.file + ": <" + (entry.group ? "actionGroup" : "action") + " id=\"" + std::string(shortOf(entry.id)) + "\">";
 		}
@@ -646,6 +635,15 @@ namespace ecs {
 			ids.push_back(conditions::conditionName(label));
 		}
 		return ids;
+	}
+
+	std::optional<NeedType> trackedNeed(const assets::EntryLibrary& library, assets::NeedId id) {
+		const std::string& needId = library.needIds[id.index];
+		const auto tracked = std::ranges::find_if(kNeedLabels, [&needId](const char* label) { return conditions::conditionName(label) == needId; });
+		if (tracked == kNeedLabels.end()) {
+			return std::nullopt;
+		}
+		return static_cast<NeedType>(tracked - kNeedLabels.begin());
 	}
 
 	ActionValuesLoad resolveAction(const assets::EntryLibrary& library, assets::EntryHandle<assets::ActionEntry> action) {

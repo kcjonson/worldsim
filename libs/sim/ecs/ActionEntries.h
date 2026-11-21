@@ -43,6 +43,7 @@
 #include <cassert>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -197,6 +198,9 @@ namespace ecs {
 	/// The need ids of the sim's fixed list of needs, its labels as conditions write them (hunger), which the entry
 	/// loader takes as needs an action's effect may name (behavior-data-migration.md, Seams).
 	[[nodiscard]] std::vector<std::string> trackedNeedIds();
+
+	/// The sim's need for a need id of `library`; none for a need it does not track. Resolved at load, never per tick.
+	[[nodiscard]] std::optional<NeedType> trackedNeed(const assets::EntryLibrary& library, assets::NeedId id);
 
 	/// The action `action` of `library` as the engine runs it, with one error for each thing in it the engine's rules
 	/// (above) refuse.

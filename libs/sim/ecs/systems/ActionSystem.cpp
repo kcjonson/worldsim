@@ -29,11 +29,6 @@
 namespace ecs {
 
 	namespace {
-		// Within this of its task's target a colonist acts. Colonists bound for one point (a station, a shore
-		// point) push one another apart, so no more than one could ever reach the point itself. Inside the
-		// haul and placement legs' 0.5 m tolerance, so a leg that arrives this way is at its source or target.
-		constexpr float kActionReachMeters = 0.4F;
-
 		bool actsOnArrival(TaskType type) {
 			return type == TaskType::FulfillNeed || type == TaskType::Craft || type == TaskType::Haul || type == TaskType::PlacePackaged ||
 				   type == TaskType::Harvest || type == TaskType::Build || type == TaskType::Deconstruct;
@@ -62,6 +57,14 @@ namespace ecs {
 		// what it has paid.
 		for (auto [entity, position, task, action, needs, memory, inventory] :
 			 world->view<Position, Task, Action, NeedsComponent, Memory, Inventory>()) {
+
+			if (task.type == TaskType::Chain) {
+				runChain(
+					scaledDt,
+					{.entity = entity, .position = position, .task = task, .action = action, .needs = needs, .memory = memory, .inventory = inventory}
+				);
+				continue;
+			}
 
 			if (task.state == TaskState::Moving && actsOnArrival(task.type) &&
 				glm::distance(position.value, task.targetPosition) <= kActionReachMeters) {
@@ -93,32 +96,10 @@ namespace ecs {
 					startAction(entity, task, action, position, memory, needs, inventory);
 				}
 
-				// A duration from the target's durability is work, not a fixed time: the action is created with
-				// the durability (work units) in `duration`, which we convert to seconds here using the
-				// colonist's level in the entry's skill (time = durability / rate). A skilled chopper fells a
-				// tree faster. Sampled once per action; other actions keep their authored seconds.
-				if (action.isActive() && action.values->duration == assets::ActionDuration::FromDurability) {
-					float skillLevel = 0.0F;
-					if (const auto* skills = world->getComponent<Skills>(entity)) {
-						skillLevel = skills->getLevel(action.values->skill);
-					}
-					action.duration /= harvestWorkRate(skillLevel);
-				}
-
-				// Only log a genuine start. A start routine may decline to start an action (no
-				// reachable pickup, or a chain handoff that re-points the task), leaving it None;
-				// logging "Started None action" then is just noise.
+				// Only a genuine start counts. A start routine may decline to start an action (no reachable pickup,
+				// or a chain handoff that re-points the task), leaving it None.
 				if (action.isActive()) {
-					LOG_INFO(
-						Engine,
-						"[Action] Entity %llu: Started %s action (%.1fs duration)",
-						static_cast<unsigned long long>(entity),
-						actionTypeName(action.type),
-						action.duration
-					);
-					if (!continuesWork(action)) {
-						reportAction(entity, action, ActionMoment::Started, task, memory);
-					}
+					actionStarted(entity, task, action, memory);
 				}
 
 				// A start routine that starts nothing has either handed the task to its next leg (a haul
@@ -167,6 +148,27 @@ namespace ecs {
 			}
 		}
 		m_reportedActions.clear();
+	}
+
+	void ActionSystem::actionStarted(EntityID entity, Task& task, Action& action, const Memory& memory) {
+		// A duration from the target's durability is work, not a fixed time: the action is created with the durability
+		// (work units) in `duration`, converted to seconds here using the colonist's level in the entry's skill (time =
+		// durability / rate). A skilled chopper fells a tree faster. Sampled once per action; other actions keep their
+		// authored seconds.
+		if (action.values->duration == assets::ActionDuration::FromDurability) {
+			float skillLevel = 0.0F;
+			if (const auto* skills = world->getComponent<Skills>(entity)) {
+				skillLevel = skills->getLevel(action.values->skill);
+			}
+			action.duration /= harvestWorkRate(skillLevel);
+		}
+		LOG_INFO(
+			Engine, "[Action] Entity %llu: Started %s action (%.1fs duration)", static_cast<unsigned long long>(entity), actionName(action),
+			action.duration
+		);
+		if (!continuesWork(action)) {
+			reportAction(entity, action, ActionMoment::Started, task, memory);
+		}
 	}
 
 	void ActionSystem::startAction(
@@ -354,7 +356,7 @@ namespace ecs {
 		return target != nullptr ? &target->get(row.need) : nullptr;
 	}
 
-	void ActionSystem::completeAction(
+	bool ActionSystem::finishAction(
 		EntityID		entity,
 		const Position& position,
 		Action&			action,
@@ -363,17 +365,6 @@ namespace ecs {
 		Inventory&		inventory,
 		Memory&			memory
 	) {
-		// What a cut or a pickup lands is what its collection adds to the colonist; what it held of the
-		// item before is not this chain's.
-		const bool		   cutLands = task.type == TaskType::Harvest && action.type == ActionType::Harvest;
-		const bool		   haulLifts = task.type == TaskType::Haul && (action.type == ActionType::Pickup || action.type == ActionType::Withdraw);
-		const std::string& yieldDefName = assets::AssetRegistry::Get().getDefName(cutLands ? task.harvestYieldDefNameId : 0U);
-		const uint32_t	   heldBefore = cutLands	? ecs::availableQuantity(inventory, yieldDefName)
-											: haulLifts ? ecs::availableQuantity(inventory, assets::AssetRegistry::Get().getDefName(task.haulItemDefNameId))
-														: 0U;
-		// Goods a pile pickup took over from earlier legs of a gathering ride along with what it lifts.
-		const uint32_t carriedBefore = haulLifts ? std::min(taskCargo(task), heldBefore) : 0U;
-
 		// The rows not yet paid apply in the order written, and the action finishes only when every one takes: a
 		// restore, a spawn, and a construction bound reached always take; the rest can find their thing gone at
 		// completion, which stops the rows after it. An action paying along has paid its restores; an open-ended
@@ -407,12 +398,36 @@ namespace ecs {
 			Engine,
 			"[Action] Entity %llu: Completed %s action (restored %.1f%%)",
 			static_cast<unsigned long long>(entity),
-			actionTypeName(action.type),
+			actionName(action),
 			restored
 		);
 		if (took) {
 			reportAction(entity, action, ActionMoment::Finished, task, memory);
 		}
+		return took;
+	}
+
+	void ActionSystem::completeAction(
+		EntityID		entity,
+		const Position& position,
+		Action&			action,
+		NeedsComponent& needs,
+		Task&			task,
+		Inventory&		inventory,
+		Memory&			memory
+	) {
+		// What a cut or a pickup lands is what its collection adds to the colonist; what it held of the
+		// item before is not this chain's.
+		const bool		   cutLands = task.type == TaskType::Harvest && action.type == ActionType::Harvest;
+		const bool		   haulLifts = task.type == TaskType::Haul && (action.type == ActionType::Pickup || action.type == ActionType::Withdraw);
+		const std::string& yieldDefName = assets::AssetRegistry::Get().getDefName(cutLands ? task.harvestYieldDefNameId : 0U);
+		const uint32_t	   heldBefore = cutLands	? ecs::availableQuantity(inventory, yieldDefName)
+											: haulLifts ? ecs::availableQuantity(inventory, assets::AssetRegistry::Get().getDefName(task.haulItemDefNameId))
+														: 0U;
+		// Goods a pile pickup took over from earlier legs of a gathering ride along with what it lifts.
+		const uint32_t carriedBefore = haulLifts ? std::min(taskCargo(task), heldBefore) : 0U;
+
+		const bool took = finishAction(entity, position, action, needs, task, inventory, memory);
 
 		// Special handling for Haul tasks - may need to continue to deposit phase
 		// NOTE: This intentionally returns early WITHOUT clearing the task. Haul is a
@@ -528,6 +543,8 @@ namespace ecs {
 			about = registry.getDefNameId(action.collectionEffect().sourceDefName);
 		} else if (action.hasDepositEffect()) {
 			about = registry.getDefNameId(action.depositEffect().itemDefName);
+		} else if (task.type == TaskType::Chain) {
+			about = task.chain.stepTarget.defNameId;
 		} else if (const KnownWorldEntity* source = memory.getWorldEntity(task.needSourceKey); source != nullptr) {
 			about = source->defNameId;
 		}

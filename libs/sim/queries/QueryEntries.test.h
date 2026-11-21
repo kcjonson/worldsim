@@ -1,20 +1,13 @@
 #pragma once
 
-// Query entries for tests, read by the real loader: the XML is written as one behavior file under a temp
-// folder unique to the run, beside the shipped fact tuning, and loaded with loadEntries.
+// Query entries for tests, read by the real loader: the XML is written as one behavior file under a temp folder
+// unique to the run, beside the shipped fact tuning, and loaded with loadEntries (ecs::testing::SyntheticEntries).
 
-#include <assets/AssetRegistry.h>
-#include <assets/EntryLoader.h>
+#include <ecs/SyntheticEntries.test.h>
 
 #include <gtest/gtest.h>
 
-#include <cstdint>
-#include <filesystem>
-#include <fstream>
-#include <optional>
-#include <random>
 #include <string>
-#include <string_view>
 #include <utility>
 
 namespace queries::test_entries {
@@ -24,33 +17,12 @@ namespace queries::test_entries {
 	/// a query may read the goal), with the shipped facts/ tuning. A load error fails the test and leaves the
 	/// library empty.
 	inline assets::EntryLibrary loadQueryEntries(const std::string& queries, const std::string& workQueries = {}) {
-		static const std::string runToken = [] {
-			std::random_device device;
-			return std::to_string(device()) + "_" + std::to_string(device());
-		}();
-		static int					loads = 0;
-		const std::filesystem::path root =
-			std::filesystem::temp_directory_path() / ("worldsim-queries-" + runToken + "-" + std::to_string(++loads));
-		std::filesystem::remove_all(root);
-		for (const char* folder : {"behaviors/test", "actions", "work", "orders", "facts"}) {
-			std::filesystem::create_directories(root / folder);
-		}
-		std::filesystem::copy_file(std::filesystem::path(SIM_TEST_REPO_DIR) / "assets/config/facts/facts.xml", root / "facts/facts.xml");
-		std::ofstream(root / "behaviors/test/sample.xml") << "<behavior id=\"sample\">" << queries << "</behavior>";
+		const ecs::testing::SyntheticEntries entries("queries");
+		entries.write("behaviors/test/sample.xml", "<behavior id=\"sample\">" + queries + "</behavior>");
 		if (!workQueries.empty()) {
-			std::ofstream(root / "work/queries.xml") << "<colonyWork>" << workQueries << "</colonyWork>";
+			entries.write("work/queries.xml", "<colonyWork>" + workQueries + "</colonyWork>");
 		}
-
-		const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
-		const assets::EntrySources	 sources{
-			  .configRoot = root,
-			  .definitionId = [&registry](std::string_view name) -> std::optional<uint32_t> {
-				  const uint32_t definition = registry.getDefNameId(std::string(name));
-				  return registry.getDefinitionById(definition) == nullptr ? std::nullopt : std::optional<uint32_t>(definition);
-			  },
-		  };
-		assets::EntryLoad loaded = assets::loadEntries(sources);
-		std::filesystem::remove_all(root);
+		assets::EntryLoad loaded = entries.load();
 		EXPECT_TRUE(loaded.errors.empty()) << ::testing::PrintToString(loaded.errors);
 		return std::move(loaded.library);
 	}
