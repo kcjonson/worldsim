@@ -6183,12 +6183,20 @@ namespace ecs::test {
 	}
 
 	// He is heading for the west of a door when a wall built close beside it leaves nowhere to stand there:
-	// asked again, the door has the east side alone, and he supplies and builds it from there.
+	// asked again, the door has the east side alone, and the same delivery takes him there, where he
+	// supplies and builds it.
 	TEST_F(AIDecisionWallTest, ASideLostOnTheWaySendsHimToTheOtherSide) {
 		const auto [site, colonist] = headForTheWestOfADoor();
+		const std::uint64_t delivery = getTask(colonist)->instanceId;
 		wallOffSideOfTheDoor(colonist, -1.0F);
 
-		EXPECT_FALSE(routeFailedBeforeWorked(colonist, site)) << "a route to the door failed";
+		bool sameDelivery = true;
+		EXPECT_FALSE(routeFailedBeforeWorked(colonist, site, [&] {
+			if (getTask(colonist)->type == TaskType::Haul) {
+				sameDelivery = sameDelivery && getTask(colonist)->instanceId == delivery;
+			}
+		})) << "a route to the door failed";
+		EXPECT_TRUE(sameDelivery) << "the delivery he set off on ended before the Wood was in";
 		EXPECT_GT(world->getComponent<StructureBlueprint>(site)->workDone, 0.0F) << "the door was never worked";
 		EXPECT_GT(world->getComponent<Position>(colonist)->value.x, kDoorAt.x) << "he works it from the east";
 	}
