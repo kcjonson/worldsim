@@ -524,6 +524,17 @@ TEST(PathQuery, BeliefKnowingAnyWallOfAJunctionBlocksIt) {
 	EXPECT_EQ(patchedAround.points, around.points);
 	EXPECT_TRUE(pathHitsRing(pathThrough(patched.view(), kSouthOfT, kNorthOfT, 0, BeliefFilter{&noSegs, &noOps}), kTJunctionRing));
 
+	// A group tag whose list the mesh has lost reads as known, so it never opens a way where knowing
+	// nothing would cross it. A debug build stops at the assert first.
+	NavView lost		= navView(m);
+	lost.blockerGroupIn = [](const void*, std::int64_t) -> const std::vector<std::int64_t>* { return nullptr; };
+	EXPECT_DEBUG_DEATH(
+		{
+			const PathResult lostPath = pathThrough(lost, kSouthOfT, kNorthOfT, 0, BeliefFilter{&noSegs, &noOps});
+			EXPECT_FALSE(pathHitsRing(lostPath, kTJunctionRing));
+		},
+		"");
+
 	// Truth is what it was with the junction tagged as one plain wall.
 	const NavMesh plain = buildNavMesh(tJunction(/*junctionIsGroup=*/false));
 	const PathResult truth = pathThrough(m, kSouthOfT, kNorthOfT, 0);
@@ -622,8 +633,9 @@ TEST(PathQuery, BlockerGroupFollowsItsRingThroughPatches) {
 // corner's higher id, then one arm of the cross. Its junction blocks; with none known it is absent.
 TEST(PathQuery, BeliefKnowingOneBlockerOfACornerOrACrossBlocksTheJunction) {
 	const std::vector<Vec2i64> square	= {{1900, 1900}, {2100, 1900}, {2100, 2100}, {1900, 2100}};
-	const Vec2i64			   southEast{2600, 1400};
-	const Vec2i64			   northWest{1400, 2600};
+	// Off the square's diagonal, so the straight line crosses its sides, not its corners.
+	const Vec2i64			   southEast{2700, 1400};
+	const Vec2i64			   northWest{1300, 2700};
 	const NavInputPolygon	   west		= blocked({{0, 1900}, {1900, 1900}, {1900, 2100}, {0, 2100}}, 30);
 	const NavInputPolygon	   north	= blocked({{1900, 2100}, {2100, 2100}, {2100, 4000}, {1900, 4000}}, 31);
 	const NavInputPolygon	   east		= blocked({{2100, 1900}, {4000, 1900}, {4000, 2100}, {2100, 2100}}, 32);
