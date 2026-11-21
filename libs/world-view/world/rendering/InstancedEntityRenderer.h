@@ -13,20 +13,20 @@
 #include "world/rendering/RenderStats.h"
 #include "world/rendering/RunPlanner.h"
 #include "world/rendering/SelectionOutline.h"
+#include "world/rendering/StripRuns.h"
 #include "world/rendering/TemplateLevelBuilder.h"
 
+#include <assets/ItemView.h>
 #include <graphics/Color.h>
 #include <math/Types.h>
+#include <vector/Types.h>
 
 #include <cstdint>
 #include <deque>
 #include <optional>
 #include <span>
+#include <unordered_map>
 #include <vector>
-
-namespace renderer {
-struct TessellatedMesh;
-}
 
 namespace worldview {
 
@@ -57,6 +57,8 @@ class InstancedEntityRenderer {
 		uint32_t		 pendingRequests = 0; // levels wanted and not yet uploaded
 		uint32_t		 residentLevels = 0;  // non-reference level meshes on the GPU
 		size_t			 residentBytes = 0;   // and their vertex, index, and instance buffer bytes
+		uint32_t		 residentViews = 0;	  // parts item views on the GPU
+		size_t			 residentViewBytes = 0; // and their vertex, index, and instance buffer bytes
 	};
 
 	/// Emit the pre-sorted upright stream in order (ascending anchorY).
@@ -73,6 +75,10 @@ class InstancedEntityRenderer {
 	// it at the next power of two that holds the run, so a template drawn a few times a
 	// frame costs 128 KB and one carpeting a zoomed-out view grows to fit.
 	static constexpr uint32_t kInitialInstanceCapacity = 4096;
+
+	// Instance room an item view's mesh handle starts with (rotatable-placed-items 9.1): a view is drawn a few times
+	// a frame, so 512 bytes, doubling as a run outgrows it.
+	static constexpr uint32_t kInitialViewInstanceCapacity = 16;
 
 	// An entity whose screen bounds are at most this many pixels on their longer side is small,
 	// and two small entities may draw in either order: they share a few pixels at most, and
@@ -148,14 +154,41 @@ class InstancedEntityRenderer {
 	uint64_t			 frameIndex = 0;
 	LevelStats			 lastLevelStats;
 
-	// This frame's runs, by the index the planner gave them; the planner says the order they draw in.
+	// A parts item's view (def, turn, level) on the GPU (rotatable-placed-items 9.2 and 10), uploaded once: its
+	// mesh, kept to re-upload when its instance buffer grows, and each depth strip's index range, in the
+	// layout's order. A reference view is built on the main thread the first time it is wanted and stays until
+	// the renderer goes.
+	struct ViewSlot {
+		Renderer::InstancedMeshHandle  handle;
+		renderer::TessellatedMesh	   mesh;
+		std::vector<assets::ViewStrip> strips;
+		uint32_t					   capacity = 0;
+		SlotState					   state = SlotState::Absent;
+	};
+	std::vector<ViewSlot>				   viewSlots;
+	std::unordered_map<uint64_t, uint32_t> viewOfKey; // (template id, turn quanta, level) -> viewSlots
+
+	static constexpr uint32_t kNoView = kNotAView;
+
+	// Per kept strip layout (ItemLayout::id): the view this frame draws its strips from, settled at its first strip.
+	struct LayoutFrame {
+		uint64_t frame = 0;
+		uint32_t view = kNoView;
+	};
+	std::vector<LayoutFrame> layoutFrames;
+
+	// This frame's runs, by the index the planner gave them; the planner says the order they draw in. A run of a
+	// template draws its slot's mesh; a run of a depth strip (view != kNoView) draws that strip of the view.
 	struct Run {
 		uint32_t							slot = 0;
+		uint32_t							view = kNoView;
+		uint32_t							strip = 0;
 		std::vector<Renderer::InstanceData> instances;
 	};
-	std::vector<Run> runs;
-	uint32_t		 runCount = 0;
-	RunPlanner		 planner;
+	std::vector<Run>	 runs;
+	uint32_t			 runCount = 0;
+	RunPlanner			 planner;
+	std::vector<RunSpan> runSpans; // a close's draws, reused
 
 	// Per-frame CPU geometry for animated entities (per-part deformed, so not GPU-instanceable):
 	// their parts are transformed on the CPU and flushed at their sorted position.
@@ -192,6 +225,10 @@ class InstancedEntityRenderer {
 
 	/// Releases the non-reference levels not drawn for kEvictAfterFrames, and counts the rest.
 	void evictStale();
+
+	/// The view a parts item's strips draw from this frame, built and uploaded now the first time it is wanted;
+	/// kNoView when it failed (logged once).
+	uint32_t viewFor(const assets::ItemLayout& layout, const assets::PlacedEntity& entity);
 
 	/// Append one animated entity's per-part-deformed, screen-space triangles to
 	/// the CPU batch (anim*). animVertexBase tracks the batch's 16-bit index base.

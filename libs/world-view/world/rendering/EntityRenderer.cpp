@@ -65,6 +65,7 @@ namespace worldview {
 		m_lastUprightDrawCallCount = stats.uprightDrawCalls;
 		m_lastUprightTriangleCount = stats.uprightTriangles;
 		m_lastUprightOverlapSplits = stats.uprightOverlapSplits;
+		m_lastItemDrawCallCount = stats.itemDrawCalls;
 	}
 
 	// A worker bake arrives with each placement of a chunk, the first and every reload: the baked

@@ -137,6 +137,58 @@ namespace worldview {
 		}
 		lastLevelStats.residentLevels = resident;
 		lastLevelStats.residentBytes = bytes;
+
+		uint32_t views = 0;
+		size_t	 viewBytes = 0;
+		for (const ViewSlot& view : viewSlots) {
+			if (view.state != SlotState::Ready) {
+				continue;
+			}
+			++views;
+			viewBytes += (view.mesh.vertices.size() * (sizeof(Foundation::Vec2) + sizeof(Foundation::Color))) + (view.mesh.indices.size() * sizeof(uint16_t)) +
+						 (static_cast<size_t>(view.capacity) * sizeof(Renderer::InstanceData));
+		}
+		lastLevelStats.residentViews = views;
+		lastLevelStats.residentViewBytes = viewBytes;
+	}
+
+	uint32_t InstancedEntityRenderer::viewFor(const assets::ItemLayout& layout, const assets::PlacedEntity& entity) {
+		const uint8_t  level = levelsOf(layout.templateId).reference;
+		const uint64_t key = (static_cast<uint64_t>(layout.templateId) << 24U) | (static_cast<uint64_t>(layout.turnQuanta) << 8U) | level;
+		const auto [found, inserted] = viewOfKey.try_emplace(key, static_cast<uint32_t>(viewSlots.size()));
+		if (inserted) {
+			ViewSlot& slot = viewSlots.emplace_back();
+			slot.state = SlotState::Failed;
+			const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(entity.defName);
+			if (def == nullptr) {
+				LOG_ERROR(Engine, "No definition %s for its item view", entity.defName.c_str());
+				return kNoView;
+			}
+			// The reference level on this thread at its first want, uploaded at once, so the item draws on the frame
+			// it first appears (rotatable-placed-items 10).
+			assets::ItemView view = assets::buildItemMesh(*def, layout.turnQuanta, level, assets::GameViewConfig::Get().config());
+			if (!view.error.empty()) {
+				LOG_ERROR(Engine, "No view of %s at %u quanta: %s", entity.defName.c_str(), layout.turnQuanta, view.error.c_str());
+				return kNoView;
+			}
+			if (view.strips.size() != layout.layout.strips.size()) {
+				LOG_ERROR(
+					Engine, "The view of %s at %u quanta has %zu strips where its layout has %zu", entity.defName.c_str(), layout.turnQuanta,
+					view.strips.size(), layout.layout.strips.size()
+				);
+				return kNoView;
+			}
+			slot.handle = Renderer::Primitives::uploadInstancedMesh(view.mesh, kInitialViewInstanceCapacity);
+			if (!slot.handle.isValid()) {
+				LOG_ERROR(Engine, "The view of %s at %u quanta failed to upload", entity.defName.c_str(), layout.turnQuanta);
+				return kNoView;
+			}
+			slot.capacity = kInitialViewInstanceCapacity;
+			slot.mesh = std::move(view.mesh);
+			slot.strips = std::move(view.strips);
+			slot.state = SlotState::Ready;
+		}
+		return viewSlots[found->second].state == SlotState::Ready ? found->second : kNoView;
 	}
 
 	void InstancedEntityRenderer::emitAnimated(
@@ -240,7 +292,9 @@ namespace worldview {
 		const uint32_t		   slotBound = (assets::AssetRegistry::Get().templateCount() + 1) * static_cast<uint32_t>(assets::kMaxDetailLevels);
 		LevelStats			   levelStats{.screenPixelsPerMeter = scale};
 		const Foundation::Vec2 screenOffset{halfViewW - (camX * scale), halfViewH - (camY * scale)};
-		planner.beginFrame(ctx.viewportWidth, ctx.viewportHeight, slotBound);
+		// Every strip of every kept layout has its own planner mesh id after the template slots (the layouts were
+		// made with the items, before this).
+		planner.beginFrame(ctx.viewportWidth, ctx.viewportHeight, slotBound + assets::AssetRegistry::Get().stripLayoutStripCount());
 		runCount = 0;
 
 		// drawInstanced draws immediately; the CPU triangle batch only draws when the
@@ -248,9 +302,46 @@ namespace worldview {
 		// interleaving animated entity (so the runs sit behind it), and force the anim batch
 		// out (drawTriangles + flush) before the next instanced entity opens or joins a run
 		// (so the anim sits behind it). Only one of the two kinds is ever pending at a time.
+		// One ranged draw of `strips` consecutive depth strips of a view, from the run's strip on.
+		auto drawStrips = [&](Run& run, uint32_t strips) {
+			ViewSlot&  view = viewSlots[run.view];
+			const auto count = static_cast<uint32_t>(run.instances.size());
+			if (view.state == SlotState::Ready && count > view.capacity) {
+				uint32_t capacity = view.capacity;
+				while (capacity < count) {
+					capacity *= 2;
+				}
+				view.handle = Renderer::Primitives::uploadInstancedMesh(view.mesh, capacity);
+				view.capacity = capacity;
+				if (!view.handle.isValid()) {
+					LOG_ERROR(Engine, "Item view %u failed to grow to %u instances; it is dropped", run.view, capacity);
+					view.state = SlotState::Failed;
+				}
+			}
+			if (view.state != SlotState::Ready) {
+				return;
+			}
+			const assets::ViewStrip& first = view.strips[run.strip];
+			const assets::ViewStrip& last = view.strips[run.strip + strips - 1];
+			const uint32_t			 indices = last.firstIndex + last.indexCount - first.firstIndex;
+			Renderer::Primitives::drawInstanced(view.handle, run.instances.data(), count, camera, {.first = first.firstIndex, .count = indices});
+			stats.uprightDrawCalls++;
+			stats.itemDrawCalls++;
+			stats.uprightTriangles += count * (indices / 3);
+		};
+
 		auto flushRuns = [&]() {
-			for (const uint32_t r : planner.close()) {
-				Run&	   run = runs[r];
+			const std::span<const uint32_t> closing = planner.close();
+			spanRuns(planner, closing, runs, runSpans);
+			for (const RunSpan& span : runSpans) {
+				Run& run = runs[closing[span.first]];
+				if (run.view != kNoView) {
+					drawStrips(run, span.count);
+					for (uint32_t i = 0; i < span.count; ++i) {
+						runs[closing[span.first + i]].instances.clear();
+					}
+					continue;
+				}
 				MeshSlot&  slot = meshSlots[run.slot];
 				const auto count = static_cast<uint32_t>(run.instances.size());
 				if (slot.state == SlotState::Ready && count > slot.capacity) {
@@ -343,6 +434,46 @@ namespace worldview {
 			}
 
 			const assets::Upright& upright = *item.upright;
+
+			// A parts item's depth strip: drawn as an index range of its view, placed like any instanced entity
+			// with the strip as its mesh (rotatable-placed-items 9.2).
+			if (upright.itemLayout != nullptr) {
+				const assets::ItemLayout& layout = *upright.itemLayout;
+				if (layout.id >= layoutFrames.size()) {
+					layoutFrames.resize(static_cast<size_t>(layout.id) + 1);
+				}
+				LayoutFrame& settled = layoutFrames[layout.id];
+				if (settled.frame != frameIndex) {
+					settled.frame = frameIndex;
+					settled.view = viewFor(layout, *upright.entity);
+					// In the stored order, ascending anchor, as the stream brings them, so each strip ranks after
+					// the strips of its item it shares cells with and stays in their layer.
+					planner.reserveOrders(slotBound + layout.firstStrip, static_cast<uint32_t>(layout.layout.strips.size()));
+				}
+				if (settled.view == kNoView || viewSlots[settled.view].strips[upright.strip].indexCount == 0) {
+					continue;
+				}
+				const assets::ItemStrip& box = layout.layout.strips[upright.strip];
+				const Foundation::Vec2	 position{upright.position.x, upright.position.y};
+				const Foundation::Vec2	 pixelMin = ((position + Foundation::Vec2{box.minX, box.minY}) * scale) + screenOffset;
+				const Foundation::Vec2	 pixelMax = ((position + Foundation::Vec2{box.maxX, box.maxY}) * scale) + screenOffset;
+				const bool				 small = std::max(pixelMax.x - pixelMin.x, pixelMax.y - pixelMin.y) <= kUnorderedFootprintPixels;
+
+				flushAnim(); // draw any pending anim behind this strip
+				const uint32_t r = planner.place(slotBound + layout.firstStrip + upright.strip, planner.cellsOf(pixelMin, pixelMax), small);
+				if (r == runCount) {
+					if (runCount == runs.size()) {
+						runs.emplace_back();
+					}
+					Run& run = runs[runCount++];
+					run.view = settled.view;
+					run.strip = upright.strip;
+				}
+				runs[r].instances.emplace_back(position, 0.0F, 1.0F, upright.colorTint);
+				stats.entities++;
+				continue;
+			}
+
 			const uint32_t		   templateId = upright.templateId;
 			TemplateLevels&		   levels =
 				  templateId < templateLevels.size() && templateLevels[templateId].resolved ? templateLevels[templateId] : levelsOf(templateId);
@@ -399,7 +530,9 @@ namespace worldview {
 				if (runCount == runs.size()) {
 					runs.emplace_back();
 				}
-				runs[runCount++].slot = slot;
+				Run& run = runs[runCount++];
+				run.slot = slot;
+				run.view = kNoView;
 			}
 			runs[r].instances.emplace_back(position, upright.rotation, upright.scale, upright.colorTint);
 			stats.entities++;
