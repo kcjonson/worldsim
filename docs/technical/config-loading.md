@@ -188,11 +188,18 @@ chains](./queries-and-chains.md) defines into an `assets::EntryLibrary` (libs/as
 The loader is given the sim's fixed list of needs as need ids (`EntrySources::trackedNeeds`, from
 `ecs::trackedNeedIds`), so an action's `<restore>` may name `hunger` with no behavior bringing it
 ([Behavior data migration](./behavior-data-migration.md), Seams). Once the library loads clean,
-`ecs::resolveActionEntries` (libs/sim/ecs/ActionEntries.h) resolves each entry the hand-written action factories
-and the hands rule read (`human/eat`, `common/drink`, `pickup`, `craft`, and the rest) to its handle and plain
-values, once, so nothing reads the library when an action starts. Each factory reads a fixed shape, listed in that
-header; an entry missing, or with anything its factory does not read, is an error naming the file, the entry, and
-the element (`[behaviors] human/washing.xml: <action id="wash"> effect 2 <consume> is not an effect the sim's Wash
+`ecs::resolveActionEntries` (libs/sim/ecs/ActionEntries.h) resolves every action entry, once, to its handle and
+plain values in a table by handle, so nothing reads the library when an action runs. That pass refuses what the
+engine cannot do, each an error naming the file, the entry, and the element: a need the sim does not track, a
+`scaleBy` other than `sleep_quality`, a `<damage>`, a `<consume>` of other than edible units or of more than one
+unit beside a `from="nutrition"` restore, a row that can take nothing written after a `<restore>` or `<spawn>`, such a
+row in a fixed-duration action paying along, a second bound in an open-ended action, an open-ended `<restore>` of
+amount 0, and a `<spawn>` on the ground of a carryable, harvestable, craftable, or storage definition (`[actions]
+extra.xml: <action id="bash"> effect 1 <damage> lowers a condition, which nothing in the sim has`). The
+loader itself refuses `pays="end"` and a `curve` on an open-ended action. Over those rules, each entry the
+hand-written action factories and the hands rule read (`human/eat`, `common/drink`, `pickup`, `craft`, and the rest)
+is checked against the fixed shape its factory reads, listed in that header; an entry missing, or with anything its
+factory does not read, is an error the same way (`[behaviors] human/washing.xml: <action id="wash"> effect 2 <consume> is not an effect the sim's Wash
 action performs`; a missing one, `action "human/wash" is missing; the sim's Wash action reads it from
 behaviors/human/washing.xml`).
 `GameScene` holds the resolved `ecs::ActionEntries` and hands it to `ActionSystem` and `AIDecisionSystem`.

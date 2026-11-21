@@ -48,6 +48,9 @@ namespace ecs {
 	} // namespace
 
 	bool ActionSystem::applyCraft(const Action& action, Inventory& inventory) {
+		if (!action.hasCraftingEffect()) {
+			return refuseWithoutTarget(action, "craft");
+		}
 		const auto& craftEff = action.craftingEffect();
 
 		auto& assetRegistry = assets::AssetRegistry::Get();

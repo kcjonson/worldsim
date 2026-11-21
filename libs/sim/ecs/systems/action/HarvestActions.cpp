@@ -64,8 +64,10 @@ namespace ecs {
 		if (action.hasPlacePackagedEffect()) {
 			return liftPackaged(action, inventory);
 		}
-		// A harvest the factory started for a footprint clear clears whatever its row says: the site clear's own
-		// `clear` entry, with `<take clears="true"/>`, is not shipped until the site clear moves to data.
+		if (!action.hasCollectionEffect()) {
+			return refuseWithoutTarget(action, "take");
+		}
+		// The harvest factory clears for a footprint clear goal; the site clear's own entry says it in its row.
 		return takeFromSource(row.clears || action.collectionEffect().clearsSource, action, colonistPosition, inventory, memory);
 	}
 

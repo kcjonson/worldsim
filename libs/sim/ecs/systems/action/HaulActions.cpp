@@ -29,6 +29,9 @@
 namespace ecs {
 
 	bool ActionSystem::applyPut(const Action& action, Inventory& inventory) {
+		if (!action.hasDepositEffect()) {
+			return refuseWithoutTarget(action, "put");
+		}
 		const auto& depEff = action.depositEffect();
 
 		auto&	   registry = assets::AssetRegistry::Get();
@@ -202,6 +205,9 @@ namespace ecs {
 	}
 
 	bool ActionSystem::applyInstall(const Action& action, Inventory& inventory) {
+		if (!action.hasPlacePackagedEffect()) {
+			return refuseWithoutTarget(action, "install");
+		}
 		const auto& placeEff = action.placePackagedEffect();
 
 		// Get the packaged entity

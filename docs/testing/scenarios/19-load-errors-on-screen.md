@@ -53,6 +53,8 @@ Edit only the staged copies beside the exe, the human's folder `build/apps/world
 40. Write a staged `config/arbitration/rungs.xml` holding `<arbitration/>`.
 41. Launch as in step 19: exactly one message, `[arbitration] arbitration: 2 files; one file declares the ladder and the bonuses (priority-tuning.xml, rungs.xml)`.
 42. `/api/control?action=exit`, then delete the staged `rungs.xml`.
-43. `diff -r assets/world/creatures/Human build/apps/world-sim/RelWithDebInfo/assets/world/creatures/Human` and `diff -r assets/config build/apps/world-sim/RelWithDebInfo/assets/config` print nothing.
-44. Launch as in step 19: the game scene loads, and `/api/state?what=scene` names `game`.
-45. `/api/control?action=exit`.
+43. Write a staged `config/actions/extra.xml` holding `<actions><action id="bash" seconds="1" interruptable="false"><damage amount="2"/></action></actions>`.
+44. Launch as in step 19: every action entry is resolved at load, so exactly one message, `[actions] extra.xml: <action id="bash"> effect 1 <damage> lowers a condition, which nothing in the sim has`; then `/api/control?action=exit` and delete the staged `extra.xml`.
+45. `diff -r assets/world/creatures/Human build/apps/world-sim/RelWithDebInfo/assets/world/creatures/Human` and `diff -r assets/config build/apps/world-sim/RelWithDebInfo/assets/config` print nothing.
+46. Launch as in step 19: the game scene loads, and `/api/state?what=scene` names `game`.
+47. `/api/control?action=exit`.

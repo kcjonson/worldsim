@@ -106,11 +106,12 @@ struct Action {
 
 **Pattern 1: Check-and-access (simple cases)**
 ```cpp
-void ActionSystem::completeAction(Action& action, NeedsComponent& needs) {
-    if (action.hasNeedEffect()) {
-        const auto& effect = action.needEffect();
-        needs.get(effect.need).restore(effect.restoreAmount);
+bool ActionSystem::applyPut(const Action& action, Inventory& inventory) {
+    if (!action.hasDepositEffect()) {
+        return refuseWithoutTarget(action, "put");
     }
+    const auto& effect = action.depositEffect();
+    // ... move effect.quantity of effect.itemDefName into effect.storageEntityId
 }
 ```
 

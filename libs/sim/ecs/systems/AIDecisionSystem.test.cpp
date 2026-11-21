@@ -3598,12 +3598,12 @@ namespace ecs::test {
 	TEST_F(AIDecisionSystemTest, TheShippedActionEntriesSayWhichNeedFreeHands) {
 		// The hands rule reads whether a task's first action needs free hands from that action's entry.
 		const ActionEntries& actions = ecs::testing::shippedActions();
-		EXPECT_TRUE(actions.pickup.freeHands) << "Pickup action should need hands";
-		EXPECT_TRUE(actions.craft.freeHands) << "Craft action should need hands";
-		EXPECT_TRUE(actions.harvest.freeHands) << "Harvest action should need hands";
-		EXPECT_FALSE(actions.sleep.freeHands) << "Sleep action should NOT need hands";
-		EXPECT_FALSE(actions.urinate.freeHands) << "Relieving should NOT need hands";
-		EXPECT_TRUE(actions.eat.freeHands) << "Eat action should need hands";
+		EXPECT_TRUE(actions.pickup().freeHands) << "Pickup action should need hands";
+		EXPECT_TRUE(actions.craft().freeHands) << "Craft action should need hands";
+		EXPECT_TRUE(actions.harvest().freeHands) << "Harvest action should need hands";
+		EXPECT_FALSE(actions.sleep().freeHands) << "Sleep action should NOT need hands";
+		EXPECT_FALSE(actions.urinate().freeHands) << "Relieving should NOT need hands";
+		EXPECT_TRUE(actions.eat().freeHands) << "Eat action should need hands";
 	}
 
 	// =============================================================================

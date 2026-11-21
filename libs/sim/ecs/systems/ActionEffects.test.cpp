@@ -2,6 +2,7 @@
 // resolved by resolveAction, and run by the ActionSystem. Each effect row kind, the order rows are written in, pays end
 // against along with a curve, and the open-ended upTo forms. See /docs/technical/queries-and-chains.md (Actions).
 
+#include "AIDecisionSystem.h"
 #include "ActionSystem.h"
 
 #include "../InventoryMass.h"
@@ -20,6 +21,7 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/EntryLoader.h>
+#include <assets/RecipeRegistry.h>
 #include <assets/ShippedEntries.test.h>
 
 #include <gtest/gtest.h>
@@ -44,7 +46,7 @@ namespace ecs::test {
     <restore need="thirst" amount="-10"/>
   </action>
   <action id="snack" seconds="1" interruptable="false">
-    <consume capability="edible" count="2"/>
+    <consume capability="edible" count="1"/>
     <restore need="hunger" from="nutrition" scale="50"/>
   </action>
   <action id="snooze" seconds="4" interruptable="true" asleep="true">
@@ -54,9 +56,8 @@ namespace ecs::test {
     <restore need="hygiene" amount="30" who="target"/>
   </action>
   <action id="tidy" seconds="1" interruptable="false">
-    <restore need="hygiene" amount="10"/>
     <consume capability="edible" count="1"/>
-    <restore need="hunger" amount="10"/>
+    <restore need="hygiene" amount="10"/>
   </action>
   <action id="nap" seconds="4" interruptable="true">
     <restore need="energy" amount="40"/>
@@ -67,17 +68,22 @@ namespace ecs::test {
   <action id="doze" seconds="4" interruptable="true" pays="along" curve="2">
     <restore need="energy" amount="40"/>
   </action>
+  <action id="glow" seconds="4" interruptable="true" pays="along">
+    <restore need="energy" amount="40"/>
+    <spawn def="Misc_BioPile"/>
+  </action>
   <action id="unwind" interruptable="true" pays="along">
     <restore need="recreation" amount="2" seconds="60" upTo="90"/>
+    <restore need="hygiene" amount="10"/>
   </action>
-  <action id="feast" interruptable="false" pays="along">
+  <action id="feast" interruptable="true">
     <consume capability="edible" count="1" seconds="2" upTo="95" need="hunger"/>
     <restore need="hunger" from="nutrition" scale="100"/>
   </action>
   <action id="lift" seconds="1" interruptable="false"><take/></action>
   <action id="stow" seconds="1" interruptable="false"><put/></action>
-  <action id="raise" interruptable="false" pays="along"><work rate="Construction" direction="up"/></action>
-  <action id="raze" interruptable="false" pays="along"><work rate="Construction" direction="down"/></action>
+  <action id="raise" interruptable="false"><work rate="Construction" direction="up"/></action>
+  <action id="raze" interruptable="false"><work rate="Construction" direction="down"/></action>
   <action id="make" workFrom="job" interruptable="false"><craft/></action>
   <action id="leave_mark" seconds="1" interruptable="false"><spawn def="Misc_BioPile"/></action>
   <action id="pick_berry" seconds="1" interruptable="false"><spawn def="Berry" into="hands"/></action>
@@ -90,10 +96,13 @@ namespace ecs::test {
   <action id="bash" seconds="1" interruptable="false"><damage amount="2"/></action>
   <action id="mope" seconds="1" interruptable="false"><restore need="mojo" amount="5"/></action>
   <action id="primp" seconds="1" interruptable="false"><restore need="hygiene" amount="5" scaleBy="quality"/></action>
-  <action id="loaf" interruptable="true"><restore need="recreation" amount="2" seconds="60" upTo="90"/></action>
-  <action id="sprawl" interruptable="true" pays="along" curve="2"><restore need="recreation" amount="2" seconds="60" upTo="90"/></action>
-  <action id="dither" interruptable="true" pays="along"><restore need="recreation" amount="0" seconds="60" upTo="90"/></action>
-  <action id="juggle" interruptable="false" pays="along"><work rate="Construction" direction="up"/><restore need="recreation" amount="2" seconds="60" upTo="90"/></action>
+  <action id="dither" interruptable="true"><restore need="recreation" amount="0" seconds="60" upTo="90"/></action>
+  <action id="juggle" interruptable="false"><work rate="Construction" direction="up"/><restore need="recreation" amount="2" seconds="60" upTo="90"/></action>
+  <action id="late" seconds="1" interruptable="false"><restore need="hygiene" amount="5"/><consume capability="edible" count="1"/></action>
+  <action id="drip" seconds="2" interruptable="false" pays="along"><take/><restore need="hygiene" amount="5"/></action>
+  <action id="gorge" seconds="1" interruptable="false"><consume capability="edible" count="2"/><restore need="hunger" from="nutrition" scale="50"/></action>
+  <action id="sip" seconds="1" interruptable="false"><consume capability="drinkable" count="1"/></action>
+  <action id="drop_stone" seconds="1" interruptable="false"><spawn def="SmallStone"/></action>
 </actions>)";
 
 		/// Synthetic action entries loaded through the real loader from a fresh temp root, run by an ActionSystem.
@@ -113,13 +122,8 @@ namespace ecs::test {
 				}
 				write("actions/synthetic.xml", kSyntheticActions);
 
-				assets::AssetDefinition berry;
-				berry.defName = "Berry";
-				berry.label = "Berry";
-				berry.itemProperties = assets::ItemProperties{};
-				berry.itemProperties->stackSize = 20;
-				berry.itemProperties->edible = assets::EdibleCapability{0.3F, assets::CapabilityQuality::Normal, true};
-				assets::AssetRegistry::Get().registerTestDefinition(std::move(berry));
+				registerFood("Berry", 0.3F);
+				registerFood("Bread", 0.2F);
 
 				world = std::make_unique<World>();
 				actionSystem = &world->registerSystem<ActionSystem>(ecs::testing::shippedActions(), 42U);
@@ -136,12 +140,22 @@ namespace ecs::test {
 				std::filesystem::remove_all(root);
 			}
 
+			static void registerFood(const std::string& name, float nutrition) {
+				assets::AssetDefinition food;
+				food.defName = name;
+				food.label = name;
+				food.itemProperties = assets::ItemProperties{};
+				food.itemProperties->stackSize = 20;
+				food.itemProperties->edible = assets::EdibleCapability{nutrition, assets::CapabilityQuality::Normal, true};
+				assets::AssetRegistry::Get().registerTestDefinition(std::move(food));
+			}
+
 			void write(const std::string& relative, const std::string& body) const {
 				std::filesystem::create_directories((root / relative).parent_path());
 				std::ofstream(root / relative) << body;
 			}
 
-			/// The library in the temp root; fails the test when it does not load.
+			/// The library in the temp root; a fatal failure when it does not load.
 			void load() {
 				assets::EntrySources sources{.configRoot = root, .trackedNeeds = trackedNeedIds()};
 				sources.definitionId = [](std::string_view name) -> std::optional<uint32_t> {
@@ -155,9 +169,6 @@ namespace ecs::test {
 
 			/// The action `id`, resolved with no error; kept for the test, since an action points at its values.
 			const ActionValues& values(const std::string& id) {
-				if (library.actions.empty()) {
-					load();
-				}
 				ActionValuesLoad resolved = resolveAction(library, library.findAction(id));
 				EXPECT_TRUE(resolved.errors.empty()) << ::testing::PrintToString(resolved.errors);
 				resolvedValues.push_back(std::make_unique<ActionValues>(std::move(resolved.values)));
@@ -184,6 +195,16 @@ namespace ecs::test {
 				*world->getComponent<Action>(colonist) = action;
 			}
 
+			/// Take control of `colonist`, as the player does: the real path that abandons a task and its action.
+			void takeControl(EntityID colonist) {
+				if (ai == nullptr) {
+					ai = &world->registerSystem<AIDecisionSystem>(
+						assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), ecs::testing::shippedActions(), 42U
+					);
+				}
+				ai->enterControl(colonist);
+			}
+
 			[[nodiscard]] float need(EntityID colonist, NeedType type) {
 				return world->getComponent<NeedsComponent>(colonist)->get(type).value;
 			}
@@ -193,21 +214,12 @@ namespace ecs::test {
 			[[nodiscard]] Inventory& inventory(EntityID colonist) { return *world->getComponent<Inventory>(colonist); }
 			[[nodiscard]] Action&	 action(EntityID colonist) { return *world->getComponent<Action>(colonist); }
 
-			/// An action eating `item`, its nutrition in the context.
-			static Action eating(const ActionValues& values, const std::string& item, float nutrition) {
-				Action action = Action::fromEntry(ActionType::Eat, values);
-				action.context.nutrition = nutrition;
-				ConsumptionEffect effect;
-				effect.itemDefName = item;
-				action.effect = effect;
-				return action;
-			}
-
 			std::filesystem::path					   root;
 			assets::EntryLibrary					   library;
 			std::vector<std::unique_ptr<ActionValues>> resolvedValues;
 			std::unique_ptr<World>					   world;
 			ActionSystem*							   actionSystem = nullptr;
+			AIDecisionSystem*						   ai = nullptr;
 			std::map<EntityID, int>					   finished;
 		};
 
@@ -219,27 +231,41 @@ namespace ecs::test {
 			"behaviors/test/mojo.xml",
 			R"(<behavior id="mojo"><need id="mojo" label="Mojo" seek="50" urgent="25" critical="10"><drains perGameMinute="0.1"/></need></behavior>)"
 		);
-		load();
+		assets::AssetDefinition stone;
+		stone.defName = "SmallStone";
+		stone.capabilities.carryable = assets::CarryableCapability{};
+		assets::AssetRegistry::Get().registerTestDefinition(std::move(stone));
+		ASSERT_NO_FATAL_FAILURE(load());
 		const std::string									   faulty = "[actions] faulty.xml: ";
 		const std::vector<std::pair<std::string, std::string>> cases = {
 			{"both", faulty + "<actionGroup id=\"both\"> is an action group; the engine performs one action"},
-			{"bash", faulty + "<action id=\"bash\"> effect 1 <damage> lowers a condition, and nothing in the sim has one yet"},
+			{"bash", faulty + "<action id=\"bash\"> effect 1 <damage> lowers a condition, which nothing in the sim has"},
 			{"mope", faulty + "<action id=\"mope\"> effect 1 <restore> need \"mojo\" is no need the sim tracks"},
 			{"primp",
 			 faulty +
 				 "<action id=\"primp\"> effect 1 <restore> scaleBy must be sleep_quality, the one fact of a target the engine scales an "
 				 "action by"},
-			{"loaf", faulty + "<action id=\"loaf\"> pays must be along; an open-ended action pays at its rate as it goes"},
-			{"sprawl",
-			 faulty +
-				 "<action id=\"sprawl\"> curve must be left out; an open-ended action pays at its rate, with no fraction done to shape"},
 			{"dither",
 			 faulty + "<action id=\"dither\"> effect 1 <restore> amount must not be 0; an open-ended restore moves its need toward upTo"},
 			{"juggle", faulty + "<action id=\"juggle\"> effect 2 <restore> is a second bound; an open-ended action runs until one"},
+			{"late",
+			 faulty + "<action id=\"late\"> effect 2 <consume> comes after a <restore>; a row that can take nothing is written before "
+					  "every <restore> and <spawn>"},
+			{"drip",
+			 faulty + "<action id=\"drip\"> effect 1 <take> can take nothing, so its action cannot pay along; give it pays=\"end\""},
+			{"gorge", faulty + "<action id=\"gorge\"> effect 1 <consume> count must be 1; a restore from nutrition credits one unit's"},
+			{"sip",
+			 faulty +
+				 "<action id=\"sip\"> effect 1 <consume> capability must be edible, the one capability the engine finds held units of"},
+			{"drop_stone",
+			 faulty + "<action id=\"drop_stone\"> effect 1 <spawn> def \"SmallStone\" is carryable, whose components a spawn on the ground "
+					  "does not build; it spawns only a definition that is none of carryable, harvestable, craftable, and storage"},
 		};
 		for (const auto& [id, error] : cases) {
 			SCOPED_TRACE(id);
-			EXPECT_EQ(resolveAction(library, library.findAction(id)).errors, std::vector<std::string>{error});
+			const assets::EntryHandle<assets::ActionEntry> handle = library.findAction(id);
+			ASSERT_TRUE(handle.valid());
+			EXPECT_EQ(resolveAction(library, handle).errors, std::vector<std::string>{error});
 		}
 
 		const ActionValues& soak = values("soak");
@@ -250,9 +276,11 @@ namespace ecs::test {
 		const ActionValues& unwind = values("unwind");
 		EXPECT_EQ(unwind.bound, ActionBound::Restore);
 		EXPECT_EQ(unwind.boundRow, 0U);
+		EXPECT_EQ(values("feast").pays, assets::Pays::Along) << "an open-ended action pays as it goes, pays left out";
 	}
 
 	TEST_F(ActionEffectsTest, RestoreMovesItsNeedByEachFormOfItsRow) {
+		ASSERT_NO_FATAL_FAILURE(load());
 		const EntityID bob = createColonist();
 
 		// A plain amount: a rise stops at 100, a fall at 0.
@@ -266,7 +294,7 @@ namespace ecs::test {
 		// From what the action consumes: the unit's nutrition times the scale.
 		setNeed(bob, NeedType::Hunger, 20.0F);
 		inventory(bob).addItem("Berry", 3);
-		start(bob, eating(values("snack"), "Berry", 0.3F));
+		start(bob, Action::fromEntry(ActionType::Eat, values("snack")));
 		world->update(1.0F);
 		EXPECT_FLOAT_EQ(need(bob, NeedType::Hunger), 35.0F);
 
@@ -291,34 +319,34 @@ namespace ecs::test {
 	}
 
 	TEST_F(ActionEffectsTest, ConsumeUsesUpItsCountAndAConsumeThatFindsNothingStopsTheRowsAfterIt) {
+		ASSERT_NO_FATAL_FAILURE(load());
 		const EntityID bob = createColonist();
 		inventory(bob).addItem("Berry", 3);
 		setNeed(bob, NeedType::Hunger, 20.0F);
-		start(bob, eating(values("snack"), "Berry", 0.3F));
+		start(bob, Action::fromEntry(ActionType::Eat, values("snack")));
 		world->update(1.0F);
-		EXPECT_EQ(inventory(bob).getQuantity("Berry"), 1U);
+		EXPECT_EQ(inventory(bob).getQuantity("Berry"), 2U);
 		EXPECT_EQ(finished[bob], 1);
 
-		// Effects apply in the order written: the restore before the consume applies, the one after it does not, and
+		// Effects apply in the order written: the consume finds nothing, so the restore after it does not apply and
 		// the action does not finish.
-		inventory(bob).removeItem("Berry", 1);
+		inventory(bob).removeItem("Berry", 2);
 		setNeed(bob, NeedType::Hygiene, 50.0F);
-		setNeed(bob, NeedType::Hunger, 50.0F);
-		start(bob, eating(values("tidy"), "Berry", 0.3F));
+		start(bob, Action::fromEntry(ActionType::Eat, values("tidy")));
 		world->update(1.0F);
-		EXPECT_FLOAT_EQ(need(bob, NeedType::Hygiene), 60.0F);
-		EXPECT_FLOAT_EQ(need(bob, NeedType::Hunger), 50.0F);
+		EXPECT_FLOAT_EQ(need(bob, NeedType::Hygiene), 50.0F);
 		EXPECT_EQ(finished[bob], 1);
 
 		inventory(bob).addItem("Berry", 1);
-		start(bob, eating(values("tidy"), "Berry", 0.3F));
+		start(bob, Action::fromEntry(ActionType::Eat, values("tidy")));
 		world->update(1.0F);
-		EXPECT_FLOAT_EQ(need(bob, NeedType::Hygiene), 70.0F);
-		EXPECT_FLOAT_EQ(need(bob, NeedType::Hunger), 60.0F);
+		EXPECT_FLOAT_EQ(need(bob, NeedType::Hygiene), 60.0F);
+		EXPECT_EQ(inventory(bob).getQuantity("Berry"), 0U);
 		EXPECT_EQ(finished[bob], 2);
 	}
 
 	TEST_F(ActionEffectsTest, TakeAndPutMoveGoodsBetweenABoxAndTheCreature) {
+		ASSERT_NO_FATAL_FAILURE(load());
 		const EntityID bob = createColonist();
 		const EntityID box = world->createEntity();
 		world->addComponent<Position>(box, Position{{0.5F, 0.0F}});
@@ -350,7 +378,25 @@ namespace ecs::test {
 		EXPECT_EQ(finished[bob], 2);
 	}
 
+	TEST_F(ActionEffectsTest, APrimitiveWithNoTargetTakesNothingAndNeverThrows) {
+		ASSERT_NO_FATAL_FAILURE(load());
+		const EntityID bob = createColonist();
+		for (const char* id : {"lift", "stow", "make", "settle"}) {
+			SCOPED_TRACE(id);
+			Action untargeted = Action::fromEntry(ActionType::Deposit, values(id));
+			untargeted.duration = 1.0F;
+			start(bob, untargeted);
+			world->update(1.0F);
+			EXPECT_FALSE(action(bob).isActive());
+		}
+		start(bob, Action::fromEntry(ActionType::Build, values("raise")));
+		world->update(1.0F);
+		EXPECT_FALSE(action(bob).isActive()) << "work with no blueprint ends";
+		EXPECT_EQ(finished[bob], 0);
+	}
+
 	TEST_F(ActionEffectsTest, WorkPaysAlongAtItsRateAndKeepsTheConstructionGuards) {
+		ASSERT_NO_FATAL_FAILURE(load());
 		int built = 0;
 		int tornDown = 0;
 		actionSystem->setStructureCompletedCallback([&built](EntityID) { ++built; });
@@ -371,6 +417,9 @@ namespace ecs::test {
 			action.effect = progress;
 			return action;
 		};
+		const auto blueprint = [this](EntityID entity) {
+			return world->getComponent<StructureBlueprint>(entity);
+		};
 
 		// Two builders on one site: the work adds up, and completion fires once.
 		const EntityID site = blueprintOf(0.0F, 20.0F);
@@ -379,7 +428,8 @@ namespace ecs::test {
 		start(bob, working(values("raise"), site));
 		start(eve, working(values("raise"), site));
 		world->update(1.0F);
-		EXPECT_EQ(world->getComponent<StructureBlueprint>(site)->phase, StructureBlueprint::BuildPhase::Complete);
+		ASSERT_NE(blueprint(site), nullptr);
+		EXPECT_EQ(blueprint(site)->phase, StructureBlueprint::BuildPhase::Complete);
 		EXPECT_EQ(built, 1);
 		start(bob, working(values("raise"), site));
 		world->update(1.0F);
@@ -388,18 +438,18 @@ namespace ecs::test {
 
 		// A site ordered demolished takes no build work.
 		const EntityID demolished = blueprintOf(5.0F, 20.0F);
-		world->getComponent<StructureBlueprint>(demolished)->demolishing = true;
+		blueprint(demolished)->demolishing = true;
 		start(bob, working(values("raise"), demolished));
 		world->update(1.0F);
 		EXPECT_FALSE(action(bob).isActive());
-		EXPECT_FLOAT_EQ(world->getComponent<StructureBlueprint>(demolished)->workDone, 5.0F);
+		EXPECT_FLOAT_EQ(blueprint(demolished)->workDone, 5.0F);
 
 		// A teardown begins once it takes work off, and is refunded once, at 0.
 		const EntityID standing = blueprintOf(15.0F, 20.0F);
 		start(bob, working(values("raze"), standing));
 		world->update(1.0F);
-		EXPECT_FLOAT_EQ(world->getComponent<StructureBlueprint>(standing)->workDone, 5.0F);
-		EXPECT_TRUE(world->getComponent<StructureBlueprint>(standing)->teardownBegun);
+		EXPECT_FLOAT_EQ(blueprint(standing)->workDone, 5.0F);
+		EXPECT_TRUE(blueprint(standing)->teardownBegun);
 		EXPECT_EQ(tornDown, 0);
 		world->update(1.0F);
 		EXPECT_EQ(tornDown, 1);
@@ -410,6 +460,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(ActionEffectsTest, TheCraftServiceSpendsTheStoreMakesTheOutputAndAdvancesTheJob) {
+		ASSERT_NO_FATAL_FAILURE(load());
 		const EntityID station = world->createEntity();
 		world->addComponent<Position>(station, Position{{0.5F, 0.0F}});
 		WorkQueue queue;
@@ -437,7 +488,9 @@ namespace ecs::test {
 		EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Stick"), 0U);
 		EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Stone"), 0U);
 		EXPECT_EQ(availableQuantity(inventory(bob), "Berry"), 1U);
-		EXPECT_EQ(world->getComponent<WorkQueue>(station)->getNextJob()->completed, 1U);
+		const CraftingJob* job = world->getComponent<WorkQueue>(station)->getNextJob();
+		ASSERT_NE(job, nullptr);
+		EXPECT_EQ(job->completed, 1U);
 		EXPECT_EQ(finished[bob], 1);
 
 		// Checked again at completion: a store short of an input makes and spends nothing.
@@ -446,15 +499,16 @@ namespace ecs::test {
 		world->update(1.0F);
 		EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Stick"), 2U);
 		EXPECT_EQ(availableQuantity(inventory(bob), "Berry"), 1U);
-		EXPECT_EQ(world->getComponent<WorkQueue>(station)->getNextJob()->completed, 1U);
+		job = world->getComponent<WorkQueue>(station)->getNextJob();
+		ASSERT_NE(job, nullptr);
+		EXPECT_EQ(job->completed, 1U);
 		EXPECT_EQ(finished[bob], 1);
 	}
 
 	TEST_F(ActionEffectsTest, SpawnMakesItsDefinitionWhereTheCreatureStandsOrInItsHands) {
+		ASSERT_NO_FATAL_FAILURE(load());
 		const EntityID bob = createColonist({3.0F, 4.0F});
-		Action		   mark = Action::fromEntry(ActionType::Toilet, values("leave_mark"));
-		mark.targetPosition = {3.0F, 4.0F};
-		start(bob, mark);
+		start(bob, Action::fromEntry(ActionType::Toilet, values("leave_mark")));
 		world->update(1.0F);
 		int piles = 0;
 		for (auto [entity, position, appearance] : world->view<Position, Appearance>()) {
@@ -470,9 +524,20 @@ namespace ecs::test {
 		world->update(1.0F);
 		ASSERT_TRUE(inventory(bob).rightHand.has_value());
 		EXPECT_EQ(inventory(bob).rightHand->defName, "Berry");
+
+		// With both hands full it goes where a crafted output does: belt, pack, then stored or dropped.
+		inventory(bob).leftHand = ItemStack{"Stick", 1};
+		inventory(bob).rightHand = ItemStack{"Stick", 1};
+		start(bob, Action::fromEntry(ActionType::Toilet, values("pick_berry")));
+		world->update(1.0F);
+		ASSERT_TRUE(inventory(bob).rightHand.has_value());
+		EXPECT_EQ(inventory(bob).rightHand->defName, "Stick");
+		ASSERT_TRUE(inventory(bob).belt[0].has_value());
+		EXPECT_EQ(inventory(bob).belt[0]->defName, "Berry");
 	}
 
 	TEST_F(ActionEffectsTest, InstallPutsTheCarriedPackageDownAtItsTarget) {
+		ASSERT_NO_FATAL_FAILURE(load());
 		const EntityID bob = createColonist();
 		const EntityID shelf = world->createEntity();
 		world->addComponent<Position>(shelf, Position{{0.0F, 0.0F}});
@@ -489,6 +554,7 @@ namespace ecs::test {
 		start(bob, settle);
 		world->update(1.0F);
 		EXPECT_FALSE(world->hasComponent<Packaged>(shelf));
+		ASSERT_NE(world->getComponent<Position>(shelf), nullptr);
 		EXPECT_FLOAT_EQ(world->getComponent<Position>(shelf)->value.x, 5.0F);
 		EXPECT_FALSE(inventory(bob).leftHand.has_value());
 		EXPECT_FALSE(inventory(bob).carryingPackagedEntity.has_value());
@@ -496,6 +562,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(ActionEffectsTest, PaysEndGivesNothingUntilItCompletesAndAlongPaysAsItGoesByItsCurve) {
+		ASSERT_NO_FATAL_FAILURE(load());
 		const EntityID nap = createColonist();
 		const EntityID rest = createColonist({1.0F, 0.0F});
 		const EntityID doze = createColonist({2.0F, 0.0F});
@@ -516,62 +583,92 @@ namespace ecs::test {
 			EXPECT_FLOAT_EQ(need(colonist, NeedType::Energy), 50.0F) << "a whole action earns the whole, and completion adds nothing";
 		}
 
-		// Interrupted halfway: along keeps what it earned, end keeps nothing.
+		// Interrupted halfway, by taking control: along keeps what it earned, end keeps nothing, and neither finishes.
 		for (const EntityID colonist : {nap, doze}) {
 			setNeed(colonist, NeedType::Energy, 10.0F);
 		}
 		start(nap, Action::fromEntry(ActionType::Sleep, values("nap")));
 		start(doze, Action::fromEntry(ActionType::Sleep, values("doze")));
 		world->update(2.0F);
-		action(nap).clear();
-		action(doze).clear();
-		world->getComponent<Task>(nap)->clear();
-		world->getComponent<Task>(doze)->clear();
-		world->update(2.0F);
+		const int finishedBefore = finished[nap] + finished[doze];
+		takeControl(nap);
+		takeControl(doze);
+		EXPECT_FALSE(action(nap).isActive());
+		EXPECT_FALSE(action(doze).isActive());
 		EXPECT_FLOAT_EQ(need(nap, NeedType::Energy), 10.0F);
 		EXPECT_FLOAT_EQ(need(doze, NeedType::Energy), 20.0F);
+		EXPECT_EQ(finished[nap] + finished[doze], finishedBefore);
+	}
+
+	TEST_F(ActionEffectsTest, RowsBesideAlongPaidRestoresApplyAtCompletion) {
+		ASSERT_NO_FATAL_FAILURE(load());
+		const EntityID bob = createColonist({3.0F, 4.0F});
+		setNeed(bob, NeedType::Energy, 10.0F);
+		start(bob, Action::fromEntry(ActionType::Sleep, values("glow")));
+		const auto piles = [this] {
+			int count = 0;
+			for (auto [entity, appearance] : world->view<Appearance>()) {
+				count += appearance.defName == "Misc_BioPile" ? 1 : 0;
+			}
+			return count;
+		};
+		world->update(2.0F);
+		EXPECT_FLOAT_EQ(need(bob, NeedType::Energy), 30.0F);
+		EXPECT_EQ(piles(), 0) << "the spawn waits for completion";
+		world->update(2.0F);
+		EXPECT_FLOAT_EQ(need(bob, NeedType::Energy), 50.0F);
+		EXPECT_EQ(piles(), 1);
+		EXPECT_EQ(finished[bob], 1);
 	}
 
 	TEST_F(ActionEffectsTest, AnOpenEndedRestoreRunsAtItsRateUntilItsNeedReachesUpTo) {
+		ASSERT_NO_FATAL_FAILURE(load());
 		const EntityID bob = createColonist();
 		setNeed(bob, NeedType::Recreation, 80.0F);
+		setNeed(bob, NeedType::Hygiene, 50.0F);
 		start(bob, Action::fromEntry(ActionType::Wash, values("unwind")));
 		world->update(60.0F);
 		EXPECT_FLOAT_EQ(need(bob, NeedType::Recreation), 82.0F);
+		EXPECT_FLOAT_EQ(need(bob, NeedType::Hygiene), 50.0F) << "the row beside the bound waits for the end";
 		EXPECT_TRUE(action(bob).isActive());
 		world->update(600.0F);
 		EXPECT_FLOAT_EQ(need(bob, NeedType::Recreation), 90.0F) << "it stops at upTo";
+		EXPECT_FLOAT_EQ(need(bob, NeedType::Hygiene), 60.0F) << "and the row beside it applies once, at the end";
 		EXPECT_FALSE(action(bob).isActive());
 		EXPECT_EQ(finished[bob], 1);
 
+		// Already at its bound: nothing happens and nothing finishes.
 		setNeed(bob, NeedType::Recreation, 95.0F);
 		start(bob, Action::fromEntry(ActionType::Wash, values("unwind")));
 		world->update(1.0F);
-		EXPECT_FALSE(action(bob).isActive()) << "a need already at its bound ends the action at once";
+		EXPECT_FALSE(action(bob).isActive());
 		EXPECT_FLOAT_EQ(need(bob, NeedType::Recreation), 95.0F);
+		EXPECT_FLOAT_EQ(need(bob, NeedType::Hygiene), 60.0F);
+		EXPECT_EQ(finished[bob], 1);
 	}
 
 	TEST_F(ActionEffectsTest, AnOpenEndedConsumeEatsAUnitARoundUntilItsNeedReachesUpTo) {
+		ASSERT_NO_FATAL_FAILURE(load());
 		const EntityID bob = createColonist();
 		inventory(bob).addItem("Berry", 3);
 		setNeed(bob, NeedType::Hunger, 60.0F);
-		start(bob, eating(values("feast"), "Berry", 0.2F));
+		start(bob, Action::fromEntry(ActionType::Eat, values("feast")));
 		world->update(1.0F);
 		EXPECT_FLOAT_EQ(need(bob, NeedType::Hunger), 60.0F) << "a round pays at the end of its seconds";
 		world->update(1.0F);
-		EXPECT_FLOAT_EQ(need(bob, NeedType::Hunger), 80.0F);
+		EXPECT_FLOAT_EQ(need(bob, NeedType::Hunger), 90.0F);
 		EXPECT_EQ(inventory(bob).getQuantity("Berry"), 2U);
 		world->update(2.0F);
-		EXPECT_FLOAT_EQ(need(bob, NeedType::Hunger), 100.0F);
+		EXPECT_FLOAT_EQ(need(bob, NeedType::Hunger), 100.0F) << "the last unit may pass upTo, and the need stops at 100";
 		EXPECT_EQ(inventory(bob).getQuantity("Berry"), 1U);
 		EXPECT_FALSE(action(bob).isActive()) << "past upTo after a round, it ends";
 		EXPECT_EQ(finished[bob], 1);
 
 		// Out of food after a round: it ends, finished, with what it ate.
 		setNeed(bob, NeedType::Hunger, 60.0F);
-		start(bob, eating(values("feast"), "Berry", 0.2F));
+		start(bob, Action::fromEntry(ActionType::Eat, values("feast")));
 		world->update(4.0F);
-		EXPECT_FLOAT_EQ(need(bob, NeedType::Hunger), 80.0F);
+		EXPECT_FLOAT_EQ(need(bob, NeedType::Hunger), 90.0F);
 		EXPECT_EQ(inventory(bob).getQuantity("Berry"), 0U);
 		EXPECT_FALSE(action(bob).isActive());
 		EXPECT_EQ(finished[bob], 2);
@@ -579,11 +676,43 @@ namespace ecs::test {
 		// Already there: it ends at once and finishes nothing.
 		inventory(bob).addItem("Berry", 1);
 		setNeed(bob, NeedType::Hunger, 96.0F);
-		start(bob, eating(values("feast"), "Berry", 0.2F));
+		start(bob, Action::fromEntry(ActionType::Eat, values("feast")));
 		world->update(2.0F);
 		EXPECT_EQ(inventory(bob).getQuantity("Berry"), 1U);
 		EXPECT_FALSE(action(bob).isActive());
 		EXPECT_EQ(finished[bob], 2);
+	}
+
+	TEST_F(ActionEffectsTest, AConsumeChoosesEachRoundsUnitByCapabilityAndCreditsItsNutrition) {
+		ASSERT_NO_FATAL_FAILURE(load());
+		const EntityID bob = createColonist();
+		inventory(bob).addItem("Bread", 2);
+		inventory(bob).addItem("Berry", 1);
+		setNeed(bob, NeedType::Hunger, 10.0F);
+		start(bob, Action::fromEntry(ActionType::Eat, values("feast")));
+		world->update(2.0F);
+		EXPECT_FLOAT_EQ(need(bob, NeedType::Hunger), 40.0F) << "the berry first, by name, at its 0.3";
+		EXPECT_EQ(inventory(bob).getQuantity("Berry"), 0U);
+		world->update(10.0F);
+		EXPECT_FLOAT_EQ(need(bob, NeedType::Hunger), 80.0F) << "then each bread at its 0.2";
+		EXPECT_EQ(inventory(bob).getQuantity("Bread"), 0U);
+		EXPECT_FALSE(action(bob).isActive()) << "a meal of one berry and two breads eats all three";
+		EXPECT_EQ(finished[bob], 1);
+	}
+
+	TEST_F(ActionEffectsTest, AnOpenEndedConsumeInterruptedKeepsWhatItAteAndFinishesNothing) {
+		ASSERT_NO_FATAL_FAILURE(load());
+		const EntityID bob = createColonist();
+		inventory(bob).addItem("Berry", 3);
+		setNeed(bob, NeedType::Hunger, 10.0F);
+		start(bob, Action::fromEntry(ActionType::Eat, values("feast")));
+		world->update(4.0F);
+		EXPECT_FLOAT_EQ(need(bob, NeedType::Hunger), 70.0F);
+		takeControl(bob);
+		EXPECT_FALSE(action(bob).isActive());
+		EXPECT_FLOAT_EQ(need(bob, NeedType::Hunger), 70.0F);
+		EXPECT_EQ(inventory(bob).getQuantity("Berry"), 1U);
+		EXPECT_EQ(finished[bob], 0);
 	}
 
 } // namespace ecs::test

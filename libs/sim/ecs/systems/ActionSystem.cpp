@@ -58,7 +58,8 @@ namespace ecs {
 		// colonist loses the task another way (direct control, or a snap back onto the
 		// nav mesh), which clears the action with it. When AIDecisionSystem switches away
 		// from an interruptable one, it clears the action with the task, and nothing
-		// resumes: an interrupted sleep pays out nothing.
+		// resumes: an action paying at its end pays nothing, and one paying along keeps
+		// what it has paid.
 		for (auto [entity, position, task, action, needs, memory, inventory] :
 			 world->view<Position, Task, Action, NeedsComponent, Memory, Inventory>()) {
 
@@ -152,19 +153,6 @@ namespace ecs {
 
 			// Complete action if done
 			if (action.isComplete()) {
-				float restoreAmount = 0.0F;
-				if (action.hasNeedEffect()) {
-					restoreAmount = action.needEffect().restoreAmount;
-				} else if (action.hasConsumptionEffect()) {
-					restoreAmount = action.consumptionEffect().restoreAmount;
-				}
-				LOG_INFO(
-					Engine,
-					"[Action] Entity %llu: Completed %s action (restored %.1f%%)",
-					static_cast<unsigned long long>(entity),
-					actionTypeName(action.type),
-					restoreAmount
-				);
 				completeAction(entity, position, action, needs, task, inventory, memory);
 			}
 		}
@@ -251,12 +239,13 @@ namespace ecs {
 	}
 
 	void ActionSystem::payAlong(Action& action, NeedsComponent& needs) {
-		const float done = action.duration > 0.0F ? std::min(action.elapsed / action.duration, 1.0F) : 1.0F;
-		const float share = earnedShare(action.paidFraction, done, action.values->curve);
+		const ActionValues& values = *action.values;
+		const float			done = action.duration > 0.0F ? std::min(action.elapsed / action.duration, 1.0F) : 1.0F;
+		const float			share = earnedShare(action.paidFraction, done, values.curve);
 		action.paidFraction = done;
-		for (const EffectRow& row : action.values->effects) {
-			if (const auto* restore = std::get_if<RestoreRow>(&row)) {
-				applyRestore(*restore, restoredAmount(*restore, action.context) * share, action.context, needs);
+		for (std::size_t index = 0; index < values.effects.size(); ++index) {
+			if (const auto* restore = std::get_if<RestoreRow>(&values.effects[index])) {
+				payRestore(index, *restore, restoredAmount(*restore, action.context) * share, action, needs);
 			}
 		}
 	}
@@ -276,9 +265,18 @@ namespace ecs {
 			return;
 		}
 		const float toBound = row.upTo - need->value;
-		applyRestore(row, rate > 0.0F ? std::min(rate * deltaTime, toBound) : std::max(rate * deltaTime, toBound), action.context, needs);
+		const float step = rate > 0.0F ? std::min(rate * deltaTime, toBound) : std::max(rate * deltaTime, toBound);
+		payRestore(action.values->boundRow, row, step, action, needs);
+		++action.rounds;
 		if (reached()) {
 			action.state = ActionState::Complete;
+		}
+	}
+
+	void ActionSystem::payRestore(std::size_t index, const RestoreRow& row, float amount, Action& action, NeedsComponent& needs) {
+		applyRestore(row, amount, action.context, needs);
+		if (index == action.values->primaryRow) {
+			action.restored += amount;
 		}
 	}
 
@@ -310,7 +308,7 @@ namespace ecs {
 			}
 			bool took = true;
 			if (const auto* restore = std::get_if<RestoreRow>(&row)) {
-				applyRestore(*restore, restoredAmount(*restore, action.context), action.context, actor.needs);
+				payRestore(index, *restore, restoredAmount(*restore, action.context), action, actor.needs);
 			} else if (const auto* consume = std::get_if<ConsumeRow>(&row)) {
 				took = applyConsume(*consume, action, actor.inventory);
 			} else if (const auto* take = std::get_if<TakeRow>(&row)) {
@@ -318,11 +316,11 @@ namespace ecs {
 			} else if (std::holds_alternative<PutRow>(row)) {
 				took = applyPut(action, actor.inventory);
 			} else if (const auto* work = std::get_if<WorkRow>(&row)) {
-				completeWork(*work, action);
+				took = completeWork(*work, action);
 			} else if (std::holds_alternative<CraftRow>(row)) {
 				took = applyCraft(action, actor.inventory);
 			} else if (const auto* spawn = std::get_if<SpawnRow>(&row)) {
-				took = applySpawn(*spawn, action.targetPosition, actor.inventory);
+				took = applySpawn(*spawn, actor.position, actor.inventory);
 			} else if (std::holds_alternative<InstallRow>(row)) {
 				took = applyInstall(action, actor.inventory);
 			}
@@ -331,6 +329,11 @@ namespace ecs {
 			}
 		}
 		return true;
+	}
+
+	bool ActionSystem::refuseWithoutTarget(const Action& action, const char* element) {
+		LOG_WARNING(Engine, "[Action] %s: its <%s> has no target to act on, so it takes nothing", action.values->id.c_str(), element);
+		return false;
 	}
 
 	void ActionSystem::applyRestore(const RestoreRow& row, float amount, const EffectContext& context, NeedsComponent& needs) {
@@ -371,7 +374,8 @@ namespace ecs {
 		// restore, a spawn, and a construction bound reached always take; the rest can find their thing gone at
 		// completion, which stops the rows after it. An action paying along has paid its restores; an open-ended
 		// one has paid its bound (a work bound's row completing signals the layer above, which knows the
-		// ConstructionWorld), and an open-ended consume has applied every row once per round.
+		// ConstructionWorld), and an open-ended consume has applied every row once per round. An open-ended
+		// restore or consume already at its bound when it started has paid nothing and finishes nothing.
 		const ActionValues& values = *action.values;
 		const Actor			actor{.entity = entity, .position = position.value, .needs = needs, .inventory = inventory, .memory = memory};
 		bool				took = true;
@@ -383,12 +387,19 @@ namespace ecs {
 				took = applyRows(actor, action, RowsDue::All);
 				break;
 			case ActionBound::Restore:
-				took = applyRows(actor, action, RowsDue::AllButBound);
+				took = action.rounds > 0 && applyRows(actor, action, RowsDue::AllButBound);
 				break;
 			case ActionBound::Consume:
 				took = action.rounds > 0;
 				break;
 		}
+		LOG_INFO(
+			Engine,
+			"[Action] Entity %llu: Completed %s action (restored %.1f%%)",
+			static_cast<unsigned long long>(entity),
+			actionTypeName(action.type),
+			action.restored
+		);
 		if (took) {
 			reportAction(entity, action, ActionMoment::Finished, task, memory);
 		}
@@ -499,8 +510,8 @@ namespace ecs {
 		}
 		const auto& registry = assets::AssetRegistry::Get();
 		uint32_t	about = 0;
-		if (action.hasConsumptionEffect()) {
-			about = registry.getDefNameId(action.consumptionEffect().itemDefName);
+		if (action.context.consumedDefNameId != 0) {
+			about = action.context.consumedDefNameId;
 		} else if (action.hasCraftingEffect() && !action.craftingEffect().outputs.empty()) {
 			about = registry.getDefNameId(action.craftingEffect().outputs.front().first);
 		} else if (action.hasCollectionEffect()) {

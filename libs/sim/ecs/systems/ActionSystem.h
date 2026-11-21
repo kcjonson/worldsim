@@ -239,6 +239,10 @@ private:
 	/// Apply the action's due rows in the order written. A row that takes nothing stops the rest; false then.
 	bool applyRows(const Actor& actor, struct Action& action, RowsDue due);
 
+	/// Pay the `<restore>` row at `index` of the action's values `amount`, counting it toward what the action reports
+	/// it restored when the row is the need it serves.
+	void payRestore(std::size_t index, const RestoreRow& row, float amount, struct Action& action, struct NeedsComponent& needs);
+
 	/// Complete an action and apply effects
 	void completeAction(
 		EntityID entity,
@@ -274,9 +278,17 @@ private:
 	/// The need a `<restore>` row moves: the creature's own, or the target creature's; null when the target has none.
 	[[nodiscard]] struct Need* restoredNeed(const RestoreRow& row, const EffectContext& context, struct NeedsComponent& needs);
 
-	/// `<consume>`: use up the row's count of the held item the action eats (its ConsumptionEffect). False when the
-	/// item is no longer there.
-	bool applyConsume(const ConsumeRow& row, const struct Action& action, struct Inventory& inventory);
+	/// `<consume>`: use up the row's count of a held unit with its capability, chosen as it applies, and set the
+	/// action's context to that unit and its nutrition. False, using up nothing, when no such unit is held.
+	bool applyConsume(const ConsumeRow& row, struct Action& action, struct Inventory& inventory);
+
+	/// The held unit a `<consume>` row uses up, edible being the one capability the resolver lets it name: the first,
+	/// by name, of the pack's edible units; null when it holds none.
+	[[nodiscard]] static const std::string* heldEdibleUnit(const struct Inventory& inventory);
+
+	/// The action is missing the target data a primitive acts on (one started without the factory that supplies it):
+	/// a warning naming the action, and the row takes nothing.
+	bool refuseWithoutTarget(const struct Action& action, const char* element);
 
 	/// `<take>`: take from the action's target into hands or pack. A harvestable, a loose pile, or a box (its
 	/// CollectionEffect): pool-withdraw vs single-shot, source removal or cooldown, the row's `clears` removing the
@@ -307,8 +319,9 @@ private:
 	/// blueprint's manifest), metered to what it still needs and has room for. False when the target took nothing.
 	bool applyPut(const struct Action& action, struct Inventory& inventory);
 
-	/// `<work>` completing: the bound is crossed, so the structure is built, or torn down and refunded.
-	void completeWork(const WorkRow& row, const struct Action& action);
+	/// `<work>` completing: the bound is crossed, so the structure is built, or torn down and refunded. False when the
+	/// action has no work target.
+	bool completeWork(const WorkRow& row, const struct Action& action);
 
 	/// `<craft>`: the completion service (see startCraftAction for its start). Checks again that the station's store
 	/// holds every input, spends them, makes the outputs (furniture packaged through the deferred spawn queue, anything
@@ -316,9 +329,9 @@ private:
 	/// job. False, making and spending nothing, when the store no longer holds every input.
 	bool applyCraft(const struct Action& action, struct Inventory& inventory);
 
-	/// `<spawn>`: a thing of the row's definition where the creature stands (`at`), or with `into="hands"` given to it,
-	/// hands first, as a crafted output is.
-	bool applySpawn(const SpawnRow& row, glm::vec2 at, struct Inventory& inventory);
+	/// `<spawn>`: a thing of the row's definition where the creature stands (`standing`), or with `into="hands"` given
+	/// to it, hands first, then belt, pack, and stored or dropped, as a crafted output is.
+	bool applySpawn(const SpawnRow& row, glm::vec2 standing, struct Inventory& inventory);
 
 	/// `<install>`: put the packaged item the creature carries down at its placement target and unpackage it. False
 	/// when the package is gone or already placed.

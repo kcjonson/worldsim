@@ -22,7 +22,10 @@
 
 namespace ecs {
 
-	void ActionSystem::completeWork(const WorkRow& row, const Action& action) {
+	bool ActionSystem::completeWork(const WorkRow& row, const Action& action) {
+		if (!action.hasProgressEffect()) {
+			return refuseWithoutTarget(action, "work");
+		}
 		const auto& progressEff = action.progressEffect();
 		auto		blueprintEntity = static_cast<EntityID>(progressEff.targetEntityId);
 
@@ -49,6 +52,7 @@ namespace ecs {
 				LOG_WARNING(Engine, "[Action] No structure-completed callback set - structure state not flipped");
 			}
 		}
+		return true;
 	}
 
 	void ActionSystem::startBuildAction(EntityID entity, Task& task, Action& action) {
@@ -66,7 +70,7 @@ namespace ecs {
 		}
 
 		const bool			deconstruct = (task.type == TaskType::Deconstruct);
-		const ActionValues& values = deconstruct ? actionEntries.deconstruct : actionEntries.build;
+		const ActionValues& values = deconstruct ? actionEntries.deconstruct() : actionEntries.build();
 		const auto&			work = std::get<WorkRow>(values.effects[values.boundRow]);
 
 		// A start the guards refuse clears the action so the colonist re-evaluates rather than spinning on a
@@ -124,6 +128,11 @@ namespace ecs {
 		// Transition Starting -> InProgress on the first tick, mirroring processAction.
 		if (action.state == ActionState::Starting) {
 			action.state = ActionState::InProgress;
+		}
+		if (!action.hasProgressEffect()) {
+			refuseWithoutTarget(action, "work");
+			action.clear();
+			return false;
 		}
 
 		const auto& progressEff = action.progressEffect();

@@ -105,9 +105,11 @@ During the move both paths run, on disjoint ground that phase 7 deletes:
 - Need ids before the need entries: the entry loader takes the sim's fixed list of needs as need ids
   (`EntrySources::trackedNeeds`, `ecs::trackedNeedIds`), so the action entries' `<restore>` rows name
   `hunger` and the rest with no behavior bringing the need. Ticket 16 deletes it.
-- Action values: the hand-written factories take their durations, interruptability, amounts, and hands
-  from the shipped action entries, resolved once at load (`ecs::ActionEntries`, `resolveActionEntries`).
-  Each path's ticket deletes its factory and its field; ticket 44 deletes the rest with the factories.
+- Action values: every action entry is resolved at load (`ecs::ActionEntries`, `resolveActionEntries`), and
+  every action applies its entry's resolved rows through the one primitive per effect kind. The
+  hand-written factories take their durations, interruptability, and hands from the entries, and supply
+  only the targets and context the rows act on. Each path's ticket deletes its factory; ticket 44 deletes
+  the rest with the factories.
 - No cargo handoff spans two runners: gather food moves with Eat, and the box-to-box pull moves after
   the gathering.
 
@@ -309,15 +311,22 @@ marked "behavior change" lands only with the owner's sign-off.
       bench within noise.
     - Depends on: 9. Parallel with 10 and 11.
 13. Primitive effects.
-    - Built: the `apply*Effect` functions take values from entry effect rows; `pays` and `curve`;
-      `upTo`; the `<craft>` completion service; the construction guards.
-    - Deleted: none (the factories go with their paths).
+    - Built: one primitive per effect kind, taking the resolved row and the action's context, which
+      every action applies in the order written; every action entry resolved at load, with the engine's
+      rules as load errors; `pays` and `curve`; the open-ended forms (`<work>`, `<restore upTo>`, and
+      `<consume upTo>` in rounds); the `<craft>` service at start and completion; the construction
+      guards in the `<work>` primitive.
+    - Deleted: the old `apply*Effect` functions; `NeedEffect`, `ConsumptionEffect`,
+      `ProgressEffect::deconstruct`, `Action::spawnBioPile`, and the factories' copies of entry values
+      (`restores`, `consumes`, `spawns`).
     - Must pass: effect unit tests, suite unchanged.
     - Depends on: 11.
 14. Chain runner.
     - Built: `TaskType::Chain`; chain fields on `Task` with their `clear()` rules; the one `do` start
-      path; `go` through `headTo`; step end events; `have`; `run`, `think`, `need`, `drop`, and
-      `leave_colony` steps.
+      path, which supplies the step's target, item, and amount to the action's effect context and target
+      data, and the durations from durability and from the job; `go` through `headTo`; step end events;
+      `have`; `run`, `think`, `need`, `drop`, and `leave_colony` steps. `Action::fromEntry` takes an
+      action type while any factory remains.
     - Deleted: none.
     - Must pass: `Chains.test.cpp`, the 22 runner requirements on synthetic chains.
     - Depends on: 12, 13.
@@ -373,8 +382,9 @@ marked "behavior change" lands only with the owner's sign-off.
     - Depends on: 19.
 21. Relieving.
     - Built: `human/relieving` with the relief query (latrines, the grid, the fallback, `is_place`, the
-      proximity sums), `seeking(need)`, the three actions, and `spawn`.
-    - Deleted: the Bladder and Digestion cases, `Action::Toilet`, `findToiletLocation`.
+      proximity sums), `seeking(need)`, and the three actions through the spawn primitive.
+    - Deleted: the Bladder and Digestion cases, `Action::Toilet` and its three entries' factory rows in
+      `ActionEntries` (`FactoryAction::Urinate`, `Defecate`, `RelieveBoth`), `findToiletLocation`.
     - Must pass: the `ToiletActionCreation_*` tests ported to the entries, `StartsToiletActionOnArrival`,
       `ToiletFullyRelievesBladder`, `PoopingSpawnsBioPile`, `PeeingDoesNotSpawnBioPile`,
       `BladderNeedUsesGroundFallback`, `UnreachableBedAndToiletFallBackToGround`, the relief-spot
@@ -385,7 +395,8 @@ marked "behavior change" lands only with the owner's sign-off.
 22. Sleep (pays at its end).
     - Built: `human/sleeping` with the bed-before-ground prefer row, `sleep_quality`, the `asleep`
       property, `ClaimIndex` reading it.
-    - Deleted: the Energy cases, `Action::Sleep`, `ClaimIndex`'s Energy check.
+    - Deleted: the Energy cases, `Action::Sleep` and the sleep factory row in `ActionEntries`,
+      `ClaimIndex`'s Energy check.
     - Must pass: `StartsSleepActionOnArrival`, `SleepRestorationAffectedByQuality`,
       `WokenSleeperCarriesOutTheNewTask`, `EnergyNeedUsesGroundFallback`,
       `AWokenSleeperWhoseGoodsWereFetchedByAnotherDropsHisRecord`, the sleep scenario.
@@ -399,10 +410,11 @@ marked "behavior change" lands only with the owner's sign-off.
 24. Eat and gather food.
     - Built: the `take` group, `human/eating` (`eat_from_pack`, `fetch_food`, `food_to_eat`,
       `gather_food` as an idle row), the condition term `carried_food`, the meal resized at each
-      decision.
+      decision. The consumed unit and its nutrition come from the `<consume>` row and the effect
+      context, as the primitive sets them.
     - Deleted: the needs loop, `needToCapability`, `firstAction` for needs,
-      `startNeedAction`, `kActionableNeeds`, `NeedType`, `Task::need*`, `NeedEffect` and
-      `ConsumptionEffect`, the gather option and its sentinel in `classifyTier`.
+      `startNeedAction`, `kActionableNeeds`, `NeedType`, `Task::need*`, `Action::Eat` and the eat
+      factory row, the gather option and its sentinel in `classifyTier`.
     - Must pass: every hunger test in `ChainClaims.test.cpp`, `FoodSkipsEveryUnreachableNearerSource`,
       `AGonePileIsForgottenAndOtherFoodFound`, `EatWhoseFoodVanishedFinishesNothing`,
       `EatStartsOnArrivalAndFinishesOnceFed`, `HungerHarvestsTheSourceTheDecisionNamed`,
@@ -418,12 +430,16 @@ marked "behavior change" lands only with the owner's sign-off.
       family and of the decide-at-once tests, listed in the PR.
     - Depends on: 24.
 26. Sleep curve (behavior change).
-    - Built: `pays="along" curve="2"` on `human/sleep`, the sleep factors in `sleep_quality`.
+    - Built: `pays="along" curve="2"` on `human/sleep` and the sleep factory shape that reads it, on the
+      engine ticket 13 built for paying along by a curve; the sleep factors in `sleep_quality`.
     - Deleted: none.
     - Must pass: a new test; `WokenSleeperCarriesOutTheNewTask`'s changed need values.
     - Depends on: 22.
 27. Eating to full, at a place to eat (behavior change).
-    - Built: open-ended `human/eat` to 95, `eat_a_meal`, `place_to_eat`.
+    - Built: open-ended `human/eat` to 95 on the round engine ticket 13 built, `eat_a_meal`,
+      `place_to_eat`. For the owner with this ticket: whether a meal of several units fires one finished
+      event and thought or one per unit, and what `count` above 1 means beside a `from="nutrition"`
+      restore, which the resolver refuses meanwhile.
     - Deleted: `eat_from_pack` and `fetch_food` as Hunger's rows.
     - Must pass: new tests; `EatStartsOnArrivalAndFinishesOnceFed`'s changed expectations; scenario 12
       updated.
@@ -548,8 +564,10 @@ marked "behavior change" lands only with the owner's sign-off.
     - Depends on: 40.
 42. Interruptable crafts (behavior change, the AI and action half of WOR-822, Interruptable crafts:
     saved progress, what interrupts, and the crafter's hold on the station).
-    - Built: craft progress on the job as `<work>`; interruptable craft, build, and deconstruct; the
-      crafter's hold and the `own_unfinished_work` rung. WOR-822 on the board is re-scoped to what is
+    - Built: craft progress on the job as `<work>`, which needs the work primitive's target generalized
+      from a structure blueprint to a job, a fixed-rate work form with no skill, and no structure
+      callbacks for a job; interruptable craft, build, and deconstruct; the crafter's hold and the
+      `own_unfinished_work` rung. WOR-822 on the board is re-scoped to what is
       not AI: the job's storage, the hold's UI, the bench's look.
     - Deleted: the fixed-duration `craft` duration.
     - Must pass: the WOR-822 tests; the changed expectations of the craft and build interruption tests,
@@ -571,7 +589,8 @@ marked "behavior change" lands only with the owner's sign-off.
 44. Delete the closed lists.
     - Built: nothing new.
     - Deleted: `TaskType`, `kTaskTypeNames`, `ActionType`, `kActionTypeNames`, the effect variant, the
-      factories, `ecs::ActionEntries` and `resolveActionEntries`, the claim holder's task type,
+      factories, `FactoryAction` and the factory shape layer of `resolveActionEntries` (every entry's
+      resolution stays), the claim holder's task type,
       `EvaluatedOption::taskType` and `needType`, the rest of `classifyTier`, `ConfigValidator`'s work
       checks, `assets/config/legacy/`.
     - Must pass: suite, the full scenario list, the perf check.

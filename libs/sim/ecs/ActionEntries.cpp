@@ -1,5 +1,6 @@
 #include "ActionEntries.h"
 
+#include <assets/AssetRegistry.h>
 #include <conditions/ColonistTerms.h>
 
 #include <algorithm>
@@ -24,21 +25,19 @@ namespace ecs {
 
 		/// Everything a factory reads from its entry, the only shape its entry may have.
 		struct Expected {
-			std::string_view id;
-			std::string_view factory;
-			std::string_view file;
-			ActionValues ActionEntries::* values = nullptr;
-			ActionDuration				  duration = ActionDuration::Seconds;
-			Pays						  pays = Pays::End;
-			bool						  asleep = false;
-			std::optional<ActionTarget>	  on;
-			Performs					  performs = Performs::Nothing;
-			RestoreForm					  restoreForm = RestoreForm::None;
+			std::string_view			id;
+			std::string_view			factory;
+			std::string_view			file;
+			FactoryAction				action = FactoryAction::Count;
+			ActionDuration				duration = ActionDuration::Seconds;
+			Pays						pays = Pays::End;
+			bool						asleep = false;
+			std::optional<ActionTarget> on;
+			Performs					performs = Performs::Nothing;
+			RestoreForm					restoreForm = RestoreForm::None;
 			/// The need the action serves, restored by its primary row; Count for none.
 			NeedType primary = NeedType::Count;
 			bool	 spawns = false;
-			/// The action's `<take>` may clear its source.
-			bool clears = false;
 		};
 
 		constexpr ActionTarget kLooseItem{.kind = ActionTarget::Kind::LooseItem};
@@ -46,108 +45,107 @@ namespace ecs {
 		constexpr ActionTarget kStorage{.kind = ActionTarget::Kind::Capability, .capability = CapabilityType::Storage};
 		constexpr ActionTarget kHarvestable{.kind = ActionTarget::Kind::Capability, .capability = CapabilityType::Harvestable};
 
-		constexpr std::array<Expected, 16> kExpected = {{
+		constexpr std::array<Expected, static_cast<std::size_t>(FactoryAction::Count)> kExpected = {{
 			{.id = "human/eat",
 			 .factory = "Eat",
 			 .file = "behaviors/human/eating.xml",
-			 .values = &ActionEntries::eat,
+			 .action = FactoryAction::Eat,
 			 .performs = Performs::Consume,
 			 .restoreForm = RestoreForm::Nutrition,
 			 .primary = NeedType::Hunger},
 			{.id = "common/drink",
 			 .factory = "Drink",
 			 .file = "behaviors/common/drinking_at_water.xml",
-			 .values = &ActionEntries::drink,
+			 .action = FactoryAction::Drink,
 			 .restoreForm = RestoreForm::Amount,
 			 .primary = NeedType::Thirst},
 			{.id = "human/wash",
 			 .factory = "Wash",
 			 .file = "behaviors/human/washing.xml",
-			 .values = &ActionEntries::wash,
+			 .action = FactoryAction::Wash,
 			 .restoreForm = RestoreForm::Amount,
 			 .primary = NeedType::Hygiene},
 			{.id = "human/sleep",
 			 .factory = "Sleep",
 			 .file = "behaviors/human/sleeping.xml",
-			 .values = &ActionEntries::sleep,
+			 .action = FactoryAction::Sleep,
 			 .asleep = true,
 			 .restoreForm = RestoreForm::SleepQuality,
 			 .primary = NeedType::Energy},
 			{.id = "human/urinate",
 			 .factory = "Toilet",
 			 .file = "behaviors/human/relieving.xml",
-			 .values = &ActionEntries::urinate,
+			 .action = FactoryAction::Urinate,
 			 .restoreForm = RestoreForm::Amount,
 			 .primary = NeedType::Bladder},
 			{.id = "human/defecate",
 			 .factory = "Toilet",
 			 .file = "behaviors/human/relieving.xml",
-			 .values = &ActionEntries::defecate,
+			 .action = FactoryAction::Defecate,
 			 .restoreForm = RestoreForm::Amount,
 			 .primary = NeedType::Digestion,
 			 .spawns = true},
 			{.id = "human/relieve_both",
 			 .factory = "Toilet",
 			 .file = "behaviors/human/relieving.xml",
-			 .values = &ActionEntries::relieveBoth,
+			 .action = FactoryAction::RelieveBoth,
 			 .restoreForm = RestoreForm::Amount,
 			 .primary = NeedType::Bladder,
 			 .spawns = true},
 			{.id = "pickup",
 			 .factory = "Pickup",
 			 .file = "actions/carrying.xml",
-			 .values = &ActionEntries::pickup,
+			 .action = FactoryAction::Pickup,
 			 .on = kLooseItem,
 			 .performs = Performs::Take},
 			{.id = "withdraw",
 			 .factory = "Withdraw",
 			 .file = "actions/carrying.xml",
-			 .values = &ActionEntries::withdraw,
+			 .action = FactoryAction::Withdraw,
 			 .on = kStorage,
 			 .performs = Performs::Take},
 			{.id = "harvest",
 			 .factory = "Harvest",
 			 .file = "actions/carrying.xml",
-			 .values = &ActionEntries::harvest,
+			 .action = FactoryAction::Harvest,
 			 .duration = ActionDuration::FromDurability,
 			 .on = kHarvestable,
-			 .performs = Performs::Take,
-			 .clears = true},
+			 .performs = Performs::Take},
 			{.id = "craft",
 			 .factory = "Craft",
 			 .file = "actions/making.xml",
-			 .values = &ActionEntries::craft,
+			 .action = FactoryAction::Craft,
 			 .duration = ActionDuration::FromJob,
 			 .performs = Performs::Craft},
 			{.id = "deposit",
 			 .factory = "Deposit",
 			 .file = "actions/carrying.xml",
-			 .values = &ActionEntries::deposit,
+			 .action = FactoryAction::Deposit,
 			 .performs = Performs::Put},
 			{.id = "build",
 			 .factory = "Build",
 			 .file = "actions/making.xml",
-			 .values = &ActionEntries::build,
+			 .action = FactoryAction::Build,
 			 .duration = ActionDuration::OpenEnded,
 			 .pays = Pays::Along,
 			 .performs = Performs::WorkUp},
 			{.id = "deconstruct",
 			 .factory = "Deconstruct",
 			 .file = "actions/making.xml",
-			 .values = &ActionEntries::deconstruct,
+			 .action = FactoryAction::Deconstruct,
 			 .duration = ActionDuration::OpenEnded,
 			 .pays = Pays::Along,
 			 .performs = Performs::WorkDown},
 			{.id = "pickup_packaged",
 			 .factory = "PickupPackaged",
 			 .file = "actions/making.xml",
-			 .values = &ActionEntries::pickupPackaged,
+			 .action = FactoryAction::PickupPackaged,
 			 .on = kPackaged,
 			 .performs = Performs::Take},
 			{.id = "place_packaged",
 			 .factory = "PlacePackaged",
 			 .file = "actions/making.xml",
-			 .values = &ActionEntries::placePackaged,
+			 .action = FactoryAction::PlacePackaged,
 			 .performs = Performs::Install},
 		}};
 
@@ -167,6 +165,10 @@ namespace ecs {
 		constexpr std::array<const char*, 9> kEffectElements =
 			{"restore", "consume", "take", "put", "work", "craft", "spawn", "install", "damage"};
 		static_assert(kEffectElements.size() == std::variant_size_v<assets::EffectRow>, "an element for every effect");
+
+		/// The capabilities whose things need components a `<spawn>` on the ground does not build.
+		constexpr std::array<CapabilityType, 4> kBuiltCapabilities =
+			{CapabilityType::Carryable, CapabilityType::Harvestable, CapabilityType::Craftable, CapabilityType::Storage};
 
 		[[nodiscard]] std::string_view shortOf(std::string_view id) {
 			const std::size_t slash = id.rfind('/');
@@ -246,6 +248,12 @@ namespace ecs {
 			return Performs::Nothing;
 		}
 
+		/// A row that can take nothing, which stops the rows after it and leaves the action unfinished.
+		[[nodiscard]] bool canFail(const assets::EffectRow& row) {
+			const Performs performs = performedBy(row);
+			return performs != Performs::Nothing && performs != Performs::WorkUp && performs != Performs::WorkDown;
+		}
+
 		[[nodiscard]] std::string needIdOf(NeedType need) {
 			return conditions::conditionName(needLabel(need));
 		}
@@ -263,6 +271,23 @@ namespace ecs {
 
 		[[nodiscard]] std::string whereOf(const assets::ActionEntry& entry) {
 			return entry.file + ": <" + (entry.group ? "actionGroup" : "action") + " id=\"" + std::string(shortOf(entry.id)) + "\">";
+		}
+
+		/// The capabilities of `def` a ground spawn does not build the components of, by name; empty when it has none,
+		/// or the asset registry does not hold it.
+		[[nodiscard]] std::vector<std::string> capabilitiesNeedingComponents(const std::string& def) {
+			const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
+			std::vector<std::string>	 found;
+			if (registry.getDefinition(def) == nullptr) {
+				return found;
+			}
+			const uint32_t id = registry.getDefNameId(def);
+			for (const CapabilityType capability : kBuiltCapabilities) {
+				if (registry.hasCapability(id, capability)) {
+					found.emplace_back(assets::capabilityName(capability));
+				}
+			}
+			return found;
 		}
 
 		/// `row` as the engine applies it; none for a `<damage>` or a need the sim does not track.
@@ -332,13 +357,13 @@ namespace ecs {
 
 		/// What every action entry has, read as written: its timing, hands, payout, and effect rows.
 		void readCommon(const assets::ActionEntry& entry, const assets::EntryLibrary& library, ActionValues& values) {
+			values.id = entry.id;
 			values.duration = entry.duration;
 			values.seconds = entry.seconds;
 			values.interruptable = entry.interruptable;
 			values.freeHands = entry.hands == assets::Hands::Free;
 			values.pays = entry.pays;
 			values.curve = entry.curve;
-			values.asleep = entry.asleep;
 			if (entry.duration == ActionDuration::FromDurability) {
 				values.skill = entry.skill;
 			}
@@ -347,45 +372,116 @@ namespace ecs {
 				if (!resolved) {
 					continue;
 				}
+				const auto index = static_cast<uint8_t>(values.effects.size());
 				if (const auto* work = std::get_if<WorkRow>(&*resolved)) {
 					values.skill = work->skill;
 				}
 				if (const ActionBound bound = boundOf(*resolved); bound != ActionBound::None && values.bound == ActionBound::None) {
 					values.bound = bound;
-					values.boundRow = static_cast<uint8_t>(values.effects.size());
+					values.boundRow = index;
+				}
+				if (const auto* restore = std::get_if<RestoreRow>(&*resolved);
+					restore != nullptr && restore->amount > 0.0F && values.primaryRow == kNoRow) {
+					values.primaryRow = index;
 				}
 				values.effects.push_back(std::move(*resolved));
 			}
 		}
 
+		/// The engine's rules for one action entry.
+		void checkEngineRules(const assets::ActionEntry& entry, const assets::EntryLibrary& library, std::vector<std::string>& errors) {
+			const std::string		   where = whereOf(entry);
+			const bool				   fixedAlong = entry.duration != ActionDuration::OpenEnded && entry.pays == Pays::Along;
+			const char*				   paying = nullptr;
+			std::size_t				   bounds = 0;
+			bool					   fromNutrition = false;
+			std::optional<std::string> countedConsume;
+			for (std::size_t index = 0; index < entry.effects.size(); ++index) {
+				const assets::EffectRow& row = entry.effects[index];
+				const char*				 element = kEffectElements[row.index()];
+				const std::string		 effect = where + " effect " + std::to_string(index + 1) + " <" + element + ">";
+				if (const auto* restore = std::get_if<assets::RestoreEffect>(&row)) {
+					paying = paying != nullptr ? paying : "restore";
+					fromNutrition = fromNutrition || restore->from.has_value();
+					if (!trackedNeed(library, restore->need)) {
+						errors.push_back(effect + " need \"" + library.needIds[restore->need.index] + "\" is no need the sim tracks");
+					} else if (restore->scaleBy && restore->scaleBy->fact != kSleepQualityFact) {
+						errors.push_back(
+							effect + " scaleBy must be sleep_quality, the one fact of a target the engine scales an action by"
+						);
+					} else if (restore->upTo && restore->amount.value_or(0.0F) == 0.0F) {
+						errors.push_back(effect + " amount must not be 0; an open-ended restore moves its need toward upTo");
+					}
+				} else if (const auto* spawn = std::get_if<assets::SpawnEffect>(&row)) {
+					paying = paying != nullptr ? paying : "spawn";
+					if (const std::vector<std::string> built =
+							spawn->intoHands ? std::vector<std::string>{} : capabilitiesNeedingComponents(spawn->def);
+						!built.empty()) {
+						std::string names;
+						for (const std::string& name : built) {
+							names += (names.empty() ? "" : ", ") + name;
+						}
+						errors.push_back(
+							effect + " def \"" + spawn->def + "\" is " + names +
+							", whose components a spawn on the ground does not build; it spawns only a definition that is none of "
+							"carryable, harvestable, craftable, and storage"
+						);
+					}
+				} else if (std::holds_alternative<assets::DamageEffect>(row)) {
+					errors.push_back(effect + " lowers a condition, which nothing in the sim has");
+				} else if (canFail(row) && paying != nullptr) {
+					errors.push_back(
+						effect + " comes after a <" + paying +
+						">; a row that can take nothing is written before every <restore> and <spawn>"
+					);
+				} else if (canFail(row) && fixedAlong) {
+					errors.push_back(effect + " can take nothing, so its action cannot pay along; give it pays=\"end\"");
+				} else if (const auto* consume = std::get_if<assets::ConsumeEffect>(&row)) {
+					if (consume->capability != CapabilityType::Edible) {
+						errors.push_back(effect + " capability must be edible, the one capability the engine finds held units of");
+					} else if (consume->need && !trackedNeed(library, *consume->need)) {
+						errors.push_back(effect + " need \"" + library.needIds[consume->need->index] + "\" is no need the sim tracks");
+					} else if (consume->count != 1) {
+						countedConsume = effect;
+					}
+				}
+				if (const std::optional<EffectRow> resolved = resolveRow(row, library);
+					resolved && boundOf(*resolved) != ActionBound::None && ++bounds > 1) {
+					errors.push_back(effect + " is a second bound; an open-ended action runs until one");
+				}
+			}
+			if (fromNutrition && countedConsume) {
+				errors.push_back(*countedConsume + " count must be 1; a restore from nutrition credits one unit's");
+			}
+		}
+
+		/// The factories' shapes, a layer over the engine's rules: what those refuse is not refused again here.
 		class Resolver {
 		  public:
 			Resolver(const assets::EntryLibrary& newLibrary, std::vector<std::string>& newErrors)
 				: library(newLibrary),
 				  errors(newErrors) {}
 
-			ActionValues resolve(const Expected& expected) {
-				ActionValues								   values;
+			/// The factory's entry, checked against its shape; none when it is missing or an action group.
+			assets::EntryHandle<assets::ActionEntry> check(const Expected& expected) {
 				const assets::EntryHandle<assets::ActionEntry> handle = library.findAction(expected.id);
 				if (!handle.valid()) {
 					errors.push_back(
 						"action \"" + std::string(expected.id) + "\" is missing; the sim's " + std::string(expected.factory) +
 						" action reads it from " + std::string(expected.file)
 					);
-					return values;
+					return {};
 				}
 				const assets::ActionEntry& entry = library.actions[handle.index];
 				factory = expected.factory;
 				where = whereOf(entry);
 				if (entry.group) {
 					refuse("is an action group; the sim's " + factory + " action reads one action");
-					return values;
+					return {};
 				}
-				values.entry = handle;
-				readCommon(entry, library, values);
 				readEntry(entry, expected);
-				readEffects(entry, expected, values);
-				return values;
+				readEffects(entry, expected);
+				return handle;
 			}
 
 		  private:
@@ -394,24 +490,21 @@ namespace ecs {
 				std::size_t performed = 0;
 				std::size_t spawns = 0;
 				std::size_t sideRows = 0;
-				/// A row names the need the action serves, read or refused.
+				/// A row names the need the action serves.
 				bool primarySeen = false;
-				bool primaryRead = false;
 			};
 
 			void refuse(const std::string& problem) { errors.push_back(where + " " + problem); }
 
 			void readEntry(const assets::ActionEntry& entry, const Expected& expected) {
 				if (entry.duration != expected.duration) {
+					// An open-ended entry pays along by definition; the duration is the one fault.
 					refuse("takes " + std::string(durationName(expected.duration)) + " in the sim's " + factory + " action");
-				}
-				if (entry.pays != expected.pays) {
+				} else if (entry.pays != expected.pays) {
 					refuse(
 						expected.pays == Pays::End ? "pays must be end; the sim's " + factory + " action pays when it completes"
 												   : "pays must be along; the sim's " + factory + " action advances its work as it goes"
 					);
-				} else if (entry.curve != 1.0F) {
-					refuse("curve must be left out; the sim's " + factory + " action advances its work evenly");
 				}
 				if (entry.asleep != expected.asleep) {
 					refuse(
@@ -426,7 +519,7 @@ namespace ecs {
 				}
 			}
 
-			void readEffects(const assets::ActionEntry& entry, const Expected& expected, ActionValues& values) {
+			void readEffects(const assets::ActionEntry& entry, const Expected& expected) {
 				EffectTally tally;
 				for (std::size_t index = 0; index < entry.effects.size(); ++index) {
 					const assets::EffectRow& row = entry.effects[index];
@@ -436,7 +529,7 @@ namespace ecs {
 						if (expected.restoreForm == RestoreForm::None) {
 							refuse(effect + " is not an effect the sim's " + factory + " action performs");
 						} else {
-							readRestore(*restore, expected, effect, values, tally);
+							readRestore(*restore, expected, effect, tally);
 						}
 					} else if (std::holds_alternative<assets::SpawnEffect>(row)) {
 						if (!expected.spawns) {
@@ -444,12 +537,14 @@ namespace ecs {
 						} else if (++tally.spawns > 1) {
 							refuse(effect + " is a second <spawn>; the sim's " + factory + " action spawns one bio pile");
 						}
+					} else if (std::holds_alternative<assets::DamageEffect>(row)) {
+						continue;
 					} else if (performs == Performs::Nothing || performs != expected.performs) {
 						refuse(effect + " is not an effect the sim's " + factory + " action performs");
 					} else if (++tally.performed > 1) {
 						refuse(effect + " is a second <" + performedElement(performs) + ">; the sim's " + factory + " action performs one");
 					} else {
-						readPerformed(row, expected, effect, values);
+						readPerformed(row, effect);
 					}
 				}
 				if (expected.performs != Performs::Nothing && tally.performed == 0) {
@@ -464,39 +559,28 @@ namespace ecs {
 				if (expected.spawns && tally.spawns == 0) {
 					refuse("has no <spawn> effect; the sim's " + factory + " action spawns one bio pile");
 				}
-				values.restoreCount = static_cast<uint8_t>(tally.primaryRead ? 1 + tally.sideRows : 0);
-				values.spawns = expected.spawns;
 			}
 
-			void readPerformed(const assets::EffectRow& row, const Expected& expected, const std::string& effect, ActionValues& values) {
-				if (const auto* consume = std::get_if<assets::ConsumeEffect>(&row)) {
-					if (consume->capability != CapabilityType::Edible || consume->upTo) {
-						refuse(
-							effect + " must consume capability=\"edible\" with no seconds, upTo, or need; the sim's " + factory +
-							" action eats one food at a time"
-						);
-					}
-					values.consumes = static_cast<uint32_t>(consume->count);
-				} else if (const auto* take = std::get_if<assets::TakeEffect>(&row); take != nullptr && take->clears && !expected.clears) {
+			void readPerformed(const assets::EffectRow& row, const std::string& effect) {
+				if (const auto* consume = std::get_if<assets::ConsumeEffect>(&row); consume != nullptr && consume->upTo) {
+					refuse(
+						effect + " must consume capability=\"edible\" with no seconds, upTo, or need; the sim's " + factory +
+						" action eats one food at a time"
+					);
+				} else if (const auto* take = std::get_if<assets::TakeEffect>(&row); take != nullptr && take->clears) {
 					refuse(effect + " clears must be left out; the sim's " + factory + " action takes without clearing");
 				}
 			}
 
-			void readRestore(
-				const assets::RestoreEffect& restore,
-				const Expected&				 expected,
-				const std::string&			 effect,
-				ActionValues&				 values,
-				EffectTally&				 tally
-			) {
-				const std::string&			  needId = library.needIds[restore.need.index];
+			void
+			readRestore(const assets::RestoreEffect& restore, const Expected& expected, const std::string& effect, EffectTally& tally) {
 				const std::optional<NeedType> tracked = trackedNeed(library, restore.need);
 				if (!tracked) {
-					refuse(effect + " need \"" + needId + "\" is no need the sim tracks");
 					return;
 				}
-				const NeedType need = *tracked;
-				const bool	   primary = need == expected.primary;
+				const std::string& needId = library.needIds[restore.need.index];
+				const NeedType	   need = *tracked;
+				const bool		   primary = need == expected.primary;
 				if (primary && tally.primarySeen) {
 					refuse(effect + " restores " + needId + " a second time; the sim's " + factory + " action restores it once");
 					return;
@@ -531,10 +615,7 @@ namespace ecs {
 					);
 					return;
 				}
-				values.restores[primary ? 0 : 1] = RestoreValue{.need = need, .amount = amount};
-				if (primary) {
-					tally.primaryRead = true;
-				} else {
+				if (!primary) {
 					++tally.sideRows;
 				}
 			}
@@ -558,56 +639,32 @@ namespace ecs {
 	ActionValuesLoad resolveAction(const assets::EntryLibrary& library, assets::EntryHandle<assets::ActionEntry> action) {
 		ActionValuesLoad		   load;
 		const assets::ActionEntry& entry = library.actions[action.index];
-		const std::string		   where = whereOf(entry);
 		if (entry.group) {
-			load.errors.push_back(where + " is an action group; the engine performs one action");
+			load.errors.push_back(whereOf(entry) + " is an action group; the engine performs one action");
 			return load;
 		}
 		load.values.entry = action;
 		readCommon(entry, library, load.values);
-		std::size_t bounds = 0;
-		for (std::size_t index = 0; index < entry.effects.size(); ++index) {
-			const assets::EffectRow& row = entry.effects[index];
-			const std::string		 effect = where + " effect " + std::to_string(index + 1) + " <" + kEffectElements[row.index()] + ">";
-			if (const auto* restore = std::get_if<assets::RestoreEffect>(&row)) {
-				if (!trackedNeed(library, restore->need)) {
-					load.errors.push_back(effect + " need \"" + library.needIds[restore->need.index] + "\" is no need the sim tracks");
-				} else if (restore->scaleBy && restore->scaleBy->fact != kSleepQualityFact) {
-					load.errors.push_back(
-						effect + " scaleBy must be sleep_quality, the one fact of a target the engine scales an action by"
-					);
-				} else if (restore->upTo && restore->amount.value_or(0.0F) == 0.0F) {
-					load.errors.push_back(effect + " amount must not be 0; an open-ended restore moves its need toward upTo");
-				}
-			} else if (const auto* consume = std::get_if<assets::ConsumeEffect>(&row); consume != nullptr && consume->need) {
-				if (!trackedNeed(library, *consume->need)) {
-					load.errors.push_back(effect + " need \"" + library.needIds[consume->need->index] + "\" is no need the sim tracks");
-				}
-			} else if (std::holds_alternative<assets::DamageEffect>(row)) {
-				load.errors.push_back(effect + " lowers a condition, and nothing in the sim has one yet");
-			}
-			if (const std::optional<EffectRow> resolved = resolveRow(row, library);
-				resolved && boundOf(*resolved) != ActionBound::None && ++bounds > 1) {
-				load.errors.push_back(effect + " is a second bound; an open-ended action runs until one");
-			}
-		}
-		if (entry.duration == ActionDuration::OpenEnded) {
-			if (entry.pays != assets::Pays::Along) {
-				load.errors.push_back(where + " pays must be along; an open-ended action pays at its rate as it goes");
-			} else if (entry.curve != 1.0F) {
-				load.errors.push_back(
-					where + " curve must be left out; an open-ended action pays at its rate, with no fraction done to shape"
-				);
-			}
-		}
+		checkEngineRules(entry, library, load.errors);
 		return load;
 	}
 
 	ActionEntriesLoad resolveActionEntries(const assets::EntryLibrary& library) {
 		ActionEntriesLoad load;
-		Resolver		  resolver(library, load.errors);
+		load.actions.entries.reserve(library.actions.size());
+		for (uint32_t index = 0; index < library.actions.size(); ++index) {
+			const assets::ActionEntry& entry = library.actions[index];
+			if (entry.group) {
+				load.actions.entries.emplace_back();
+				continue;
+			}
+			ActionValuesLoad resolved = resolveAction(library, {index});
+			load.errors.insert(load.errors.end(), resolved.errors.begin(), resolved.errors.end());
+			load.actions.entries.push_back(std::move(resolved.values));
+		}
+		Resolver resolver(library, load.errors);
 		for (const Expected& expected : kExpected) {
-			load.actions.*(expected.values) = resolver.resolve(expected);
+			load.actions.factories[static_cast<std::size_t>(expected.action)] = resolver.check(expected);
 		}
 		load.actions.groundSleepQuality = library.factTuning[kSleepQualityFact];
 		return load;
